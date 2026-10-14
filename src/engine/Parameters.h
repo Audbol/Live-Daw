@@ -7,12 +7,15 @@
 #include <array>
 #include <atomic>
 
+#include <juce_core/juce_core.h>
+
 namespace livedaw
 {
 
-/** Maximum number of aux/group buses. Buses live in fixed slots so channel sends
-    can refer to them by index without any locking. */
-constexpr int kMaxBuses = 32;
+/** Upper bound on bus slots. Send storage grows in pages as buses are added, so
+    this ceiling costs nothing until it's used (2 KB of page pointers per strip);
+    in practice the number of buses is limited by CPU, like the number of channels. */
+constexpr int kMaxBuses = 16384;
 
 /** Number of insert slots per strip for VST/AU/LV2 plugins. */
 constexpr int kNumInsertSlots = 8;
@@ -107,6 +110,70 @@ struct SendParams
     AB enabled { false };
     AF levelDb { 0.0f };
     AB preFader { true };
+
+    /** Gain ramp state, owned by the audio task that sums the destination bus. */
+    float lastGain = 0.0f;
+};
+
+/** A strip's sends to every bus slot, allocated in pages as buses are created.
+
+    Pages are only ever added (by the message thread) and are freed with the strip,
+    so the audio thread can read them lock-free: a slot whose page doesn't exist
+    yet simply has no send. */
+class SendBank
+{
+public:
+    static constexpr int kPageSize = 64;
+    static constexpr int kNumPages = (kMaxBuses + kPageSize - 1) / kPageSize;
+
+    SendBank()
+    {
+        for (auto& p : pages)
+            p.store (nullptr, std::memory_order_relaxed);
+    }
+
+    ~SendBank()
+    {
+        for (auto& p : pages)
+            delete p.load();
+    }
+
+    SendBank (const SendBank&) = delete;
+    SendBank& operator= (const SendBank&) = delete;
+
+    /** Audio thread (or any thread): the send for `slot`, or nullptr if it was never touched. */
+    SendParams* find (int slot) const noexcept
+    {
+        if (slot < 0 || slot >= kMaxBuses)
+            return nullptr;
+
+        auto* page = pages[(size_t) (slot / kPageSize)].load (std::memory_order_acquire);
+        return page != nullptr ? &page->sends[(size_t) (slot % kPageSize)] : nullptr;
+    }
+
+    /** Message thread: the send for `slot`, allocating its page if needed. */
+    SendParams& operator[] (size_t slot)
+    {
+        jassert (slot < (size_t) kMaxBuses);
+        auto& pagePtr = pages[slot / kPageSize];
+        auto* page = pagePtr.load (std::memory_order_acquire);
+
+        if (page == nullptr)
+        {
+            page = new Page();
+            pagePtr.store (page, std::memory_order_release);
+        }
+
+        return page->sends[slot % kPageSize];
+    }
+
+private:
+    struct Page
+    {
+        std::array<SendParams, kPageSize> sends;
+    };
+
+    std::array<std::atomic<Page*>, kNumPages> pages;
 };
 
 struct StripParams
@@ -140,7 +207,7 @@ struct StripParams
     AI outputLeft { -1 }, outputRight { -1 };
 
     // Sends from this strip to each bus slot (input strips only).
-    std::array<SendParams, kMaxBuses> sends;
+    SendBank sends;
 
     // Scene recalls skip this strip entirely (snippets still apply).
     AB recallSafe { false };

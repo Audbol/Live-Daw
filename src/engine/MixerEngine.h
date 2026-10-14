@@ -51,7 +51,7 @@ public:
     /** Adds an input channel. `id` restores a saved id (ignored if already taken). */
     Strip* addInput (int id = -1);
     /** Adds an aux or group bus in the first free slot (or `slot` if it's free).
-        Returns nullptr when all kMaxBuses slots are used. */
+        Returns nullptr only if all kMaxBuses (16384) slots are used. */
     Strip* addBus (StripKind kind, int slot = -1);
     void removeStrip (Strip* strip);
 

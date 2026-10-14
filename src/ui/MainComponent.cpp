@@ -339,7 +339,7 @@ void MainComponent::addBus (StripKind kind)
     if (engine.addBus (kind) == nullptr)
     {
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Live DAW",
-                                                "All " + juce::String (kMaxBuses) + " bus slots are in use.");
+                                                "No more bus slots are available (" + juce::String (kMaxBuses) + ").");
         return;
     }
 

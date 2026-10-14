@@ -105,6 +105,36 @@ public:
             expectEquals (show.getCurrentSceneIndex(), 0);
         }
 
+        beginTest ("Scenes recall sends to high-numbered buses");
+        {
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            engine.setNumInputs (2);
+            for (int i = 0; i < 80; ++i)
+                engine.addBus (StripKind::Aux);
+
+            auto& send = engine.getInputs()[1]->params.sends[(size_t) 79];
+            send.enabled = true;
+            send.levelDb = -7.0f;
+            show.addScene ("High sends");
+
+            send.enabled = false;
+            send.levelDb = 0.0f;
+            show.recallScene (0);
+            expect (send.enabled.load());
+            expectEquals (send.levelDb.load(), -7.0f);
+
+            // And through a show file.
+            auto xml = show.toXml();
+            MixerEngine e2 (0);
+            Show loaded (e2, host);
+            expect (loaded.loadFromXml (*xml).wasOk());
+            expectEquals ((int) e2.getBuses().size(), 80);
+            auto* restored = e2.getInputs()[1]->params.sends.find (79);
+            expect (restored != nullptr && restored->enabled.load());
+        }
+
         beginTest ("Recall scope limits what a scene changes");
         {
             MixerEngine engine (0);

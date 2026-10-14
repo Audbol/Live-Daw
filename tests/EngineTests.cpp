@@ -96,6 +96,39 @@ public:
             expectWithinAbsoluteError (rig.out (4), 0.0f, 1.0e-6f);
         }
 
+        beginTest ("Bus count is not capped at 32");
+        {
+            MixerEngine engine (2);
+            OfflineRig rig (engine, 1, 4);
+            engine.setNumInputs (1);
+
+            Strip* last = nullptr;
+            for (int i = 0; i < 100; ++i)
+                last = engine.addBus (i % 2 == 0 ? StripKind::Aux : StripKind::Group);
+
+            expect (last != nullptr);
+            expectEquals ((int) engine.getBuses().size(), 100);
+
+            last->params.stereo = false;
+            last->params.mainAssign = false;
+            last->params.outputLeft = 3;
+            auto& send = engine.getInputs()[0]->params.sends[(size_t) last->getId()];
+            send.enabled = true;
+            send.preFader = true;
+
+            rig.setInput (0, 0.5f);
+            rig.run();
+            expectWithinAbsoluteError (rig.out (3), 0.5f, 1.0e-5f);
+
+            // Removing a bus frees its slot for reuse, with the old send cleared.
+            const int slot = last->getId();
+            engine.removeStrip (last);
+            auto* reused = engine.addBus (StripKind::Aux);
+            expectEquals (reused->getId(), slot);
+            expect (! engine.getInputs()[0]->params.sends[(size_t) slot].enabled.load());
+            engine.getGarbage().collectAllNow();
+        }
+
         beginTest ("Group bus routes to master");
         {
             MixerEngine engine (2);

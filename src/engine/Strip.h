@@ -43,7 +43,7 @@ public:
     StripKind getKind() const noexcept { return kind; }
     bool isBus() const noexcept { return kind == StripKind::Aux || kind == StripKind::Group; }
 
-    /** Inputs: a stable id. Buses: the bus slot (0..kMaxBuses-1) that sends refer to. */
+    /** Inputs: a stable id. Buses: the bus slot that sends refer to. */
     int getId() const noexcept { return id; }
 
     // Message thread ------------------------------------------------------------
@@ -87,8 +87,7 @@ public:
     float getPanLeft() const noexcept { return panLeft; }
     float getPanRight() const noexcept { return panRight; }
 
-    /** Per-destination gain ramp state, owned by whichever task sums this strip. */
-    std::array<float, kMaxBuses> lastSendGain {};
+    /** Gain ramp state, owned by whichever task sums this strip (send ramps live in SendParams). */
     float lastMainAssignGain = 0.0f;
     float lastSoloGain = 0.0f;
 

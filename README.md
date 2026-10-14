@@ -24,7 +24,7 @@ processing, it can be routed to buses, and it can be sent to any hardware output
   - **Compressor:** `C` switches it on and off. The bar shows gain reduction, and dragging
     it sets the threshold.
   - The **Channel** tab below the mixer has every parameter for the selected strip.
-- **Buses:** up to 32 aux buses (monitor mixes, FX) and group buses (subgroups), with
+- **Buses:** any number of aux buses (monitor mixes, FX) and group buses (subgroups), limited by CPU like channels, with
   pre- or post-fader sends. PFL/AFL solo goes to a dedicated monitor bus. Every bus and
   each channel's direct out can be routed to any hardware output.
 - **Layers (X32/Wing style):** a layer selector beside the faders, with the master

@@ -52,7 +52,16 @@ namespace
         Skip         // safe mode
     };
 
-    std::unique_ptr<juce::XmlElement> captureStrip (const Strip& s, juce::uint32 sections)
+    /** Slots of the buses that exist: sends are captured for these only. */
+    std::vector<int> busSlots (const MixerEngine& engine)
+    {
+        std::vector<int> slots;
+        for (auto& b : engine.getBuses())
+            slots.push_back (b->getId());
+        return slots;
+    }
+
+    std::unique_ptr<juce::XmlElement> captureStrip (const Strip& s, juce::uint32 sections, const std::vector<int>& slots)
     {
         auto e = std::make_unique<juce::XmlElement> ("Strip");
         const auto& p = s.params;
@@ -133,14 +142,25 @@ namespace
         if ((sections & Sends) && s.getKind() == StripKind::Input)
         {
             auto* sends = e->createNewChildElement ("Sends");
-            for (size_t slot = 0; slot < p.sends.size(); ++slot)
+            for (const int slot : slots)
             {
-                const auto& send = p.sends[slot];
                 auto* se = sends->createNewChildElement ("Send");
-                se->setAttribute ("slot", static_cast<int> (slot));
-                setAttr (*se, "on", send.enabled);
-                setAttr (*se, "level", send.levelDb);
-                setAttr (*se, "pre", send.preFader);
+                se->setAttribute ("slot", slot);
+
+                if (const auto* send = p.sends.find (slot))
+                {
+                    setAttr (*se, "on", send->enabled);
+                    setAttr (*se, "level", send->levelDb);
+                    setAttr (*se, "pre", send->preFader);
+                }
+                else
+                {
+                    // Never touched: record the defaults so a recall resets it.
+                    const SendParams defaults;
+                    setAttr (*se, "on", defaults.enabled);
+                    setAttr (*se, "level", defaults.levelDb);
+                    setAttr (*se, "pre", defaults.preFader);
+                }
             }
         }
 
@@ -424,10 +444,11 @@ std::unique_ptr<juce::XmlElement> capture (const MixerEngine& engine, juce::uint
     auto state = std::make_unique<juce::XmlElement> ("State");
     state->setAttribute ("sections", static_cast<int> (sections));
 
+    const auto slots = busSlots (engine);
     auto add = [&] (const Strip& s)
     {
         if (contains (only, StripRef::of (s)))
-            state->addChildElement (captureStrip (s, sections).release());
+            state->addChildElement (captureStrip (s, sections, slots).release());
     };
 
     add (engine.getMaster());
@@ -484,9 +505,10 @@ std::unique_ptr<juce::XmlElement> saveConsole (const MixerEngine& engine)
 {
     auto console = std::make_unique<juce::XmlElement> ("Console");
 
-    auto save = [] (const Strip& s)
+    const auto slots = busSlots (engine);
+    auto save = [&slots] (const Strip& s)
     {
-        auto e = captureStrip (s, AllSections);
+        auto e = captureStrip (s, AllSections, slots);
         e->setAttribute ("kind", livedaw::toString (s.getKind()));
         e->setAttribute ("id", s.getId());
         e->setAttribute ("recallSafe", s.params.recallSafe.load() ? 1 : 0);

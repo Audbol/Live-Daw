@@ -118,40 +118,44 @@ Strip* MixerEngine::addBus (StripKind kind, int requestedSlot)
     JUCE_ASSERT_MESSAGE_THREAD
     jassert (kind == StripKind::Aux || kind == StripKind::Group);
 
-    if (requestedSlot >= 0 && (requestedSlot >= kMaxBuses || getBusInSlot (requestedSlot) != nullptr))
-        requestedSlot = -1;
+    std::vector<bool> used ((size_t) kMaxBuses, false);
+    for (auto& b : buses)
+        used[(size_t) b->getId()] = true;
 
-    for (int slot = 0; slot < kMaxBuses; ++slot)
+    int slot = -1;
+    if (juce::isPositiveAndBelow (requestedSlot, kMaxBuses) && ! used[(size_t) requestedSlot])
+        slot = requestedSlot;
+    else
+        for (int i = 0; i < kMaxBuses && slot < 0; ++i)
+            if (! used[(size_t) i])
+                slot = i;
+
+    if (slot < 0)
+        return nullptr;
+
+    // Make sure no channel still carries a send from an old bus in this slot.
+    // (The ramp state is left alone: an audio callback may still be finishing
+    // with a bus just removed from this slot. It settles to the new target.)
+    for (auto& in : inputs)
     {
-        if (requestedSlot >= 0 && slot != requestedSlot)
-            continue;
-
-        if (getBusInSlot (slot) != nullptr)
-            continue;
-
-        // Make sure no channel still carries a send from an old bus in this slot.
-        for (auto& in : inputs)
-        {
-            in->params.sends[(size_t) slot].enabled = false;
-            in->params.sends[(size_t) slot].levelDb = 0.0f;
-            in->params.sends[(size_t) slot].preFader = (kind == StripKind::Aux);
-        }
-
-        auto strip = std::make_unique<Strip> (kind, slot, garbage);
-        int count = 1;
-        for (auto& b : buses)
-            if (b->getKind() == kind)
-                ++count;
-        strip->name = (kind == StripKind::Aux ? "Aux " : "Group ") + juce::String (count);
-        prepareStrip (*strip);
-
-        auto* raw = strip.get();
-        buses.push_back (std::move (strip));
-        publishTopology();
-        return raw;
+        auto& send = in->params.sends[(size_t) slot];
+        send.enabled = false;
+        send.levelDb = 0.0f;
+        send.preFader = (kind == StripKind::Aux);
     }
 
-    return nullptr;
+    auto strip = std::make_unique<Strip> (kind, slot, garbage);
+    int count = 1;
+    for (auto& b : buses)
+        if (b->getKind() == kind)
+            ++count;
+    strip->name = (kind == StripKind::Aux ? "Aux " : "Group ") + juce::String (count);
+    prepareStrip (*strip);
+
+    auto* raw = strip.get();
+    buses.push_back (std::move (strip));
+    publishTopology();
+    return raw;
 }
 
 Strip* MixerEngine::getBusInSlot (int slot) const noexcept
@@ -179,7 +183,8 @@ void MixerEngine::removeStrip (Strip* strip)
 
                 if (owned->isBus())
                     for (auto& in : inputs)
-                        in->params.sends[(size_t) owned->getId()].enabled = false;
+                        if (auto* send = in->params.sends.find (owned->getId()))
+                send->enabled = false;
 
                 garbage.retire (std::move (owned));
                 return;
@@ -446,17 +451,20 @@ void MixerEngine::sumSendsIntoBus (Strip& bus, const std::vector<Strip*>& ins, i
 {
     bus.beginSummedBlock (n);
 
-    const auto slot = static_cast<size_t> (bus.getId());
     const bool busStereo = bus.getNumChannels() == 2;
     auto* const* dst = bus.getWorkBuffers();
 
     for (auto* in : ins)
     {
-        const auto& send = in->params.sends[slot];
+        auto* sendPtr = in->params.sends.find (bus.getId());
+        if (sendPtr == nullptr)
+            continue; // never configured: no send
+
+        auto& send = *sendPtr;
         const float target = send.enabled.load (std::memory_order_relaxed)
                                  ? dsp::dbToGain (send.levelDb.load (std::memory_order_relaxed))
                                  : 0.0f;
-        float& last = in->lastSendGain[slot];
+        float& last = send.lastGain;
 
         if (target == 0.0f && last == 0.0f)
             continue;

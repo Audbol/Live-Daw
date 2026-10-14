@@ -416,22 +416,28 @@ namespace
     class SendsSection final : public Section
     {
     public:
-        SendsSection (Strip& s, MixerEngine& engine) : Section ("Sends", 330)
+        SendsSection (Strip& s, MixerEngine& engine) : Section ("Sends", 340)
         {
+            // Rows live in a scrolling list, so any number of buses fits.
+            viewport.setViewedComponent (&list, false);
+            viewport.setScrollBarsShown (true, false);
+            addAndMakeVisible (viewport);
+
             for (auto& bus : engine.getBuses())
             {
                 auto& send = s.params.sends[(size_t) bus->getId()];
                 Row row;
-                row.label = &make<juce::Label>();
+                row.label = add (std::make_unique<juce::Label>());
                 row.label->setText (bus->name, juce::dontSendNotification);
                 row.label->setFont (juce::FontOptions (12.0f));
                 row.label->setColour (juce::Label::textColourId, bus->colour.brighter (0.4f));
-                row.on = &make<ParamButton> (send.enabled, "ON", Colours::active);
-                row.pre = &make<ParamButton> (send.preFader, "PRE", Colours::solo);
-                row.level = &make<ParamSlider> (send.levelDb, -100.0, 10.0, 0.1, " dB", juce::Slider::LinearHorizontal);
+                row.on = add (std::make_unique<ParamButton> (send.enabled, "ON", Colours::active));
+                row.pre = add (std::make_unique<ParamButton> (send.preFader, "PRE", Colours::solo));
+                row.level = add (std::make_unique<ParamSlider> (send.levelDb, -100.0, 10.0, 0.1, " dB", juce::Slider::LinearHorizontal));
                 row.level->setSkewFactorFromMidPoint (-12.0);
                 row.level->setTextBoxStyle (juce::Slider::TextBoxRight, false, 56, 18);
                 row.level->setDoubleClickReturnValue (true, 0.0);
+                row.level->setScrollWheelEnabled (false); // scrolling the list must never move a mix
                 rows.push_back (row);
             }
 
@@ -445,16 +451,24 @@ namespace
             }
         }
 
+        ~SendsSection() override { viewport.setViewedComponent (nullptr, false); }
+
         void resized() override
         {
             auto b = contentArea();
             if (emptyHint != nullptr)
                 emptyHint->setBounds (b.removeFromTop (40));
 
-            const int h = rows.empty() ? 0 : juce::jlimit (16, 24, b.getHeight() / static_cast<int> (rows.size()));
+            viewport.setBounds (b);
+            constexpr int rowHeight = 24;
+            const int listWidth = b.getWidth() - viewport.getScrollBarThickness();
+            list.setSize (listWidth, rowHeight * static_cast<int> (rows.size()));
+
+            int y = 0;
             for (auto& row : rows)
             {
-                auto r = b.removeFromTop (h);
+                auto r = juce::Rectangle<int> (0, y, listWidth, rowHeight);
+                y += rowHeight;
                 row.label->setBounds (r.removeFromLeft (80));
                 row.on->setBounds (r.removeFromLeft (34).reduced (1));
                 row.pre->setBounds (r.removeFromLeft (38).reduced (1));
@@ -463,6 +477,15 @@ namespace
         }
 
     private:
+        template <typename T>
+        T* add (std::unique_ptr<T> c)
+        {
+            auto* raw = c.get();
+            list.addAndMakeVisible (raw);
+            listItems.add (c.release());
+            return raw;
+        }
+
         struct Row
         {
             juce::Label* label = nullptr;
@@ -470,6 +493,9 @@ namespace
             ParamSlider* level = nullptr;
         };
 
+        juce::Viewport viewport;
+        juce::Component list;
+        juce::OwnedArray<juce::Component> listItems;
         std::vector<Row> rows;
         juce::Label* emptyHint = nullptr;
     };

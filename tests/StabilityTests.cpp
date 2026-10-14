@@ -171,7 +171,7 @@ public:
                             else
                                 s.inserts.setPlugin (slot, nullptr);
                             s.params.stereo = rng.nextBool();
-                            s.params.sends[(size_t) rng.nextInt (kMaxBuses)].enabled = rng.nextBool();
+                            s.params.sends[(size_t) rng.nextInt (128)].enabled = rng.nextBool();
                         }
                         break;
                     case 4: show.addScene ("S" + juce::String (operations)); break;
