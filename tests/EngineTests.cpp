@@ -1,48 +1,11 @@
-#include "engine/MixerEngine.h"
-#include "engine/PluginHost.h"
-#include "engine/Session.h"
+#include "TestHelpers.h"
 
 #include <vector>
 
 using namespace livedaw;
 
-namespace
-{
-/** Drives a MixerEngine with constant (DC) inputs and captures its outputs. */
-struct OfflineRig
-{
-    static constexpr int kBlock = 128;
-
-    OfflineRig (MixerEngine& e, int numIns, int numOuts) : engine (e)
-    {
-        engine.prepareOffline (48000.0, kBlock, numIns, numOuts);
-        inputs.assign ((size_t) numIns, std::vector<float> (kBlock, 0.0f));
-        outputs.assign ((size_t) numOuts, std::vector<float> (kBlock, 0.0f));
-    }
-
-    void setInput (int ch, float value) { std::fill (inputs[(size_t) ch].begin(), inputs[(size_t) ch].end(), value); }
-
-    void run (int numBlocks = 20)
-    {
-        std::vector<const float*> in;
-        std::vector<float*> out;
-        for (auto& v : inputs)
-            in.push_back (v.data());
-        for (auto& v : outputs)
-            out.push_back (v.data());
-
-        for (int b = 0; b < numBlocks; ++b)
-            engine.processBlock (in.data(), (int) in.size(), out.data(), (int) out.size(), kBlock);
-    }
-
-    float out (int ch) const { return outputs[(size_t) ch].back(); }
-
-    MixerEngine& engine;
-    std::vector<std::vector<float>> inputs, outputs;
-};
-
-constexpr float kCentre = 0.70710678f; // constant-power pan at centre
-} // namespace
+using livedaw::test::OfflineRig;
+using livedaw::test::kCentre;
 
 class EngineTests final : public juce::UnitTest
 {
@@ -96,6 +59,7 @@ public:
             OfflineRig rig (engine, 2, 2);
             engine.setNumInputs (1);
             auto& p = engine.getInputs()[0]->params;
+            p.stereo = true;
             p.inputLeft = 0;
             p.inputRight = 1;
             rig.setInput (0, 0.25f);
@@ -239,57 +203,6 @@ public:
                         + juce::String (budget, 2) + " ms (" + juce::String (100.0 * msPerBlock / budget, 1)
                         + "% of the realtime budget, " + juce::String (engine.getNumWorkerThreads() + 1) + " threads)");
             expect (msPerBlock > 0.0);
-        }
-
-        beginTest ("Session round trip");
-        {
-            MixerEngine engine (0);
-            PluginHost host (nullptr);
-            engine.setNumInputs (3);
-            auto* aux = engine.addBus (StripKind::Aux);
-            engine.addBus (StripKind::Group);
-            aux->name = "Wedge 1";
-            aux->params.outputLeft = 5;
-
-            auto& p = engine.getInputs()[1]->params;
-            engine.getInputs()[1]->name = "Kick";
-            p.trimDb = 12.0f;
-            p.hpfEnabled = true;
-            p.gate.enabled = true;
-            p.gate.thresholdDb = -33.0f;
-            p.eq.bands[2].gainDb = -4.5f;
-            p.comp.ratio = 6.0f;
-            p.sends[(size_t) aux->getId()].enabled = true;
-            p.sends[(size_t) aux->getId()].levelDb = -3.0f;
-            engine.monitorOutputLeft = 6;
-
-            auto xml = session::save (engine);
-
-            MixerEngine restored (0);
-            const auto result = session::load (restored, *xml, host);
-            expect (result.wasOk(), result.getErrorMessage());
-            expectEquals ((int) restored.getInputs().size(), 3);
-            expectEquals ((int) restored.getBuses().size(), 2);
-
-            auto& r = restored.getInputs()[1]->params;
-            expectEquals (restored.getInputs()[1]->name, juce::String ("Kick"));
-            expectEquals (r.trimDb.load(), 12.0f);
-            expect (r.hpfEnabled.load());
-            expect (r.gate.enabled.load());
-            expectEquals (r.gate.thresholdDb.load(), -33.0f);
-            expectEquals (r.eq.bands[2].gainDb.load(), -4.5f);
-            expectEquals (r.comp.ratio.load(), 6.0f);
-
-            auto* raux = restored.getBusInSlot (aux->getId());
-            expect (raux != nullptr);
-            if (raux != nullptr)
-            {
-                expectEquals (raux->name, juce::String ("Wedge 1"));
-                expectEquals (raux->params.outputLeft.load(), 5);
-                expect (r.sends[(size_t) raux->getId()].enabled.load());
-                expectEquals (r.sends[(size_t) raux->getId()].levelDb.load(), -3.0f);
-            }
-            expectEquals (restored.monitorOutputLeft.load(), 6);
         }
     }
 };

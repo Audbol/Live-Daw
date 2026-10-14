@@ -21,6 +21,9 @@ namespace livedaw
 
     Plugins always run in stereo; a mono strip feeds both plugin inputs and takes
     the left output back.
+
+    Stability: a plugin whose output contains NaN/inf, or that throws, is bypassed
+    on the spot (its input passes through unchanged) and flagged as faulted.
 */
 class PluginChain
 {
@@ -52,6 +55,14 @@ public:
 
     bool isEmpty() const noexcept;
 
+    /** True if the plugin in this slot was auto-bypassed because it produced NaN/inf
+        or threw an exception. Cleared by setPlugin() or clearFault(). */
+    bool isFaulted (int slotIndex) const noexcept;
+    void clearFault (int slotIndex) noexcept;
+
+    /** Smoothed processing time of the slot's plugin as a fraction of the block duration. */
+    float getSlotLoad (int slotIndex) const noexcept;
+
     /** Sum of the reported latencies of the active plugins, in samples. */
     int getTotalLatencySamples() const noexcept;
 
@@ -62,6 +73,8 @@ private:
     RtGarbage& garbage;
     std::array<std::atomic<Slot*>, kNumInsertSlots> slots {};
     std::array<std::atomic<bool>, kNumInsertSlots> bypass {};
+    std::array<std::atomic<bool>, kNumInsertSlots> faulted {};
+    std::array<std::atomic<float>, kNumInsertSlots> slotLoad {};
     double sampleRate = 48000.0;
     int blockSize = 512;
 

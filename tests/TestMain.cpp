@@ -1,9 +1,24 @@
+#include "engine/PluginScanner.h"
+
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init; // engine uses the message manager / timers
+
+    // The out-of-process plugin scanner relaunches this executable as its worker.
+    {
+        juce::StringArray args;
+        for (int i = 1; i < argc; ++i)
+            args.add (argv[i]);
+
+        if (auto worker = livedaw::PluginScannerWorker::tryToStart (args.joinIntoString (" ")))
+        {
+            juce::MessageManager::getInstance()->runDispatchLoop();
+            return 0;
+        }
+    }
 
     juce::UnitTestRunner runner;
     runner.setAssertOnFailure (false);

@@ -129,18 +129,21 @@ struct StripParams
     AB solo { false };
     AB mainAssign { true };
 
-    // Input routing (input strips): hardware input channel numbers, -1 = none.
-    // A strip is stereo when inputRight >= 0.
-    AI inputLeft { -1 }, inputRight { -1 };
-
-    // Width (buses only; input strips derive width from their routing).
+    // Channel width: mono or stereo (input channels and buses; the master is always stereo).
     AB stereo { true };
+
+    // Input routing (input strips): hardware input channel numbers, -1 = none.
+    // inputRight is only used when the channel is stereo.
+    AI inputLeft { -1 }, inputRight { -1 };
 
     // Direct hardware outputs (buses, master and input direct outs), -1 = none.
     AI outputLeft { -1 }, outputRight { -1 };
 
     // Sends from this strip to each bus slot (input strips only).
     std::array<SendParams, kMaxBuses> sends;
+
+    // Scene recalls skip this strip entirely (snippets still apply).
+    AB recallSafe { false };
 };
 
 } // namespace livedaw

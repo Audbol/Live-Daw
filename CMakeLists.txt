@@ -20,6 +20,12 @@ set(LIVEDAW_JUCE_DIR "" CACHE PATH "Path to a local JUCE checkout (otherwise JUC
 set(LIVEDAW_JUCE_TAG "8.0.9" CACHE STRING "JUCE git tag to fetch when LIVEDAW_JUCE_DIR is empty")
 set(LIVEDAW_ASIO_SDK_DIR "" CACHE PATH "Windows only: path to the Steinberg ASIO SDK (enables ASIO)")
 set(LIVEDAW_VST2_SDK_DIR "" CACHE PATH "Optional: path to a legacy VST2 SDK (enables VST2 hosting)")
+set(LIVEDAW_SANITIZE "" CACHE STRING "Build with sanitizers (GCC/Clang), e.g. 'address,undefined' or 'thread'")
+
+if(LIVEDAW_SANITIZE AND NOT MSVC)
+    add_compile_options(-fsanitize=${LIVEDAW_SANITIZE} -fno-omit-frame-pointer -fno-sanitize-recover=undefined)
+    add_link_options(-fsanitize=${LIVEDAW_SANITIZE})
+endif()
 
 #-------------------------------------------------------------------------------
 # JUCE
@@ -60,7 +66,9 @@ set(LIVEDAW_ENGINE_SOURCES
     src/engine/Strip.cpp
     src/engine/MixerEngine.cpp
     src/engine/PluginHost.cpp
-    src/engine/Session.cpp)
+    src/engine/PluginScanner.cpp
+    src/engine/ConsoleState.cpp
+    src/engine/Show.cpp)
 
 # Linked after JUCE's recommended warnings so these flags come last on the command line.
 add_library(livedaw_warning_overrides INTERFACE)
@@ -139,9 +147,13 @@ target_sources(LiveDAW PRIVATE
     ${LIVEDAW_ENGINE_SOURCES}
     src/ui/LookAndFeel.cpp
     src/ui/MeterComponent.cpp
+    src/ui/PluginMenu.cpp
+    src/ui/StripHandles.cpp
     src/ui/StripComponent.cpp
     src/ui/EqEditor.cpp
     src/ui/StripDetailPanel.cpp
+    src/ui/ShowPanel.cpp
+    src/ui/SystemPanel.cpp
     src/ui/MainComponent.cpp)
 
 livedaw_configure_juce_target(LiveDAW)
@@ -158,6 +170,9 @@ if(LIVEDAW_BUILD_TESTS)
         tests/DspTests.cpp
         tests/WorkerPoolTests.cpp
         tests/EngineTests.cpp
+        tests/ShowTests.cpp
+        tests/StabilityTests.cpp
+        tests/PluginHostingTests.cpp
         ${LIVEDAW_ENGINE_SOURCES})
     livedaw_configure_juce_target(LiveDAWTests)
 

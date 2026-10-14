@@ -4,9 +4,13 @@
 namespace livedaw::ui
 {
 
-StripComponent::StripComponent (Strip& s, MixerEngine& e)
+StripComponent::StripComponent (Strip& s, UiContext& c)
     : strip (s),
-      engine (e),
+      ctx (c),
+      inserts (s, c),
+      gate (s),
+      eq (s, c),
+      comp (s),
       pan (s.params.pan, -1.0, 1.0, 0.01, ""),
       mute (s.params.mute, "MUTE", Colours::mute),
       solo (s.params.solo, "SOLO", Colours::solo),
@@ -14,6 +18,8 @@ StripComponent::StripComponent (Strip& s, MixerEngine& e)
       meter ([&s] (int ch) { return s.outputPeak[(size_t) ch].exchange (0.0f); },
              [&s] { return s.getKind() == StripKind::Master ? 2 : s.currentWidth.load(); })
 {
+    const bool isMaster = strip.getKind() == StripKind::Master;
+
     nameLabel.setText (strip.name, juce::dontSendNotification);
     nameLabel.setJustificationType (juce::Justification::centred);
     nameLabel.setFont (juce::FontOptions (13.0f, juce::Font::bold));
@@ -23,26 +29,33 @@ StripComponent::StripComponent (Strip& s, MixerEngine& e)
     addAndMakeVisible (nameLabel);
 
     routeButton.onClick = [this] { showRoutingMenu(); };
-    routeButton.setVisible (strip.getKind() != StripKind::Master);
+    routeButton.setTooltip (strip.getKind() == StripKind::Input ? "Input patch" : "Bus width");
+    widthButton.onClick = [this] { toggleWidth(); };
+    widthButton.setTooltip ("Mono / stereo");
+    widthButton.setColour (juce::TextButton::buttonOnColourId, Colours::accent);
     addChildComponent (routeButton);
+    addChildComponent (widthButton);
+    routeButton.setVisible (! isMaster);
+    widthButton.setVisible (! isMaster);
+
+    for (auto* h : std::initializer_list<juce::Component*> { &inserts, &gate, &eq, &comp })
+        addAndMakeVisible (h);
 
     pan.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     pan.setDoubleClickReturnValue (true, 0.0);
-    pan.setTooltip ("Pan / balance");
+    pan.setTooltip ("Pan / balance (double-click to centre)");
     addAndMakeVisible (pan);
 
     addAndMakeVisible (mute);
     addChildComponent (solo);
-    solo.setVisible (strip.getKind() != StripKind::Master);
+    solo.setVisible (! isMaster);
 
-    selectButton.setClickingTogglesState (false);
+    selectButton.onClick = [this] { if (ctx.selectStrip) ctx.selectStrip (&strip); };
     selectButton.setColour (juce::TextButton::buttonOnColourId, Colours::accent);
-    selectButton.onClick = [this] { if (onSelect) onSelect (strip); };
     addAndMakeVisible (selectButton);
 
     fader.setSkewFactorFromMidPoint (-12.0);
     fader.setDoubleClickReturnValue (true, 0.0);
-    fader.setScrollWheelEnabled (true);
     addAndMakeVisible (fader);
     addAndMakeVisible (meter);
 
@@ -51,7 +64,7 @@ StripComponent::StripComponent (Strip& s, MixerEngine& e)
     levelLabel.setColour (juce::Label::textColourId, Colours::textDim);
     addAndMakeVisible (levelLabel);
 
-    startTimerHz (15);
+    startTimerHz (10);
     timerCallback();
 }
 
@@ -62,25 +75,41 @@ void StripComponent::setSelected (bool shouldBeSelected)
     repaint();
 }
 
+void StripComponent::setNumInsertRows (int rows)
+{
+    if (rows != insertRows)
+    {
+        insertRows = rows;
+        inserts.setNumRows (rows);
+        resized();
+    }
+}
+
 juce::String StripComponent::routingText() const
 {
     const auto& p = strip.params;
 
-    if (strip.getKind() == StripKind::Input)
-    {
-        const int l = p.inputLeft.load(), r = p.inputRight.load();
-        if (l < 0)
-            return "No input";
-        return r >= 0 ? "In " + juce::String (l + 1) + "/" + juce::String (r + 1)
-                      : "In " + juce::String (l + 1);
-    }
+    if (strip.getKind() != StripKind::Input)
+        return "Bus";
 
-    return p.stereo.load() ? "Stereo" : "Mono";
+    const int l = p.inputLeft.load();
+    if (l < 0)
+        return "No input";
+
+    if (! p.stereo.load())
+        return "In " + juce::String (l + 1);
+
+    const int r = p.inputRight.load() >= 0 ? p.inputRight.load() : l + 1;
+    return "In " + juce::String (l + 1) + "/" + juce::String (r + 1);
 }
 
 void StripComponent::timerCallback()
 {
     routeButton.setButtonText (routingText());
+
+    const bool stereo = strip.params.stereo.load();
+    widthButton.setButtonText (stereo ? "ST" : "MO");
+    widthButton.setToggleState (stereo, juce::dontSendNotification);
 
     if (! nameLabel.isBeingEdited() && nameLabel.getText() != strip.name)
         nameLabel.setText (strip.name, juce::dontSendNotification);
@@ -88,10 +117,24 @@ void StripComponent::timerCallback()
     const float db = strip.params.faderDb.load();
     levelLabel.setText (db <= dsp::kMinusInfDb ? "-inf" : juce::String (db, 1), juce::dontSendNotification);
 
-    shownGateGain = strip.gateGain.load();
-    shownReduction = strip.compReductionDb.load();
+    const bool safe = strip.params.recallSafe.load();
+    if (safe != (bool) getProperties()["safe"])
+    {
+        getProperties().set ("safe", safe);
+        repaint();
+    }
+}
 
-    repaint (indicatorArea);
+void StripComponent::toggleWidth()
+{
+    auto& p = strip.params;
+    const bool toStereo = ! p.stereo.load();
+
+    if (toStereo && strip.getKind() == StripKind::Input && p.inputRight.load() < 0 && p.inputLeft.load() >= 0)
+        p.inputRight = p.inputLeft.load() + 1;
+
+    p.stereo = toStereo;
+    timerCallback();
 }
 
 void StripComponent::paint (juce::Graphics& g)
@@ -109,58 +152,47 @@ void StripComponent::paint (juce::Graphics& g)
     g.setColour (strip.colour);
     g.fillRect (b.reduced (4, 0).removeFromTop (4).translated (0, 3));
 
-    // Processing indicators: HPF, gate, EQ, comp.
-    const auto& p = strip.params;
-    struct Ind
+    if (strip.params.recallSafe.load())
     {
-        const char* text;
-        bool on;
-        juce::Colour colour;
-    };
-
-    const bool gateClosing = p.gate.enabled.load() && shownGateGain < 0.5f;
-    const bool compActive = p.comp.enabled.load() && shownReduction > 0.5f;
-    const Ind inds[] = {
-        { "HP", p.hpfEnabled.load(), Colours::accent },
-        { "G", p.gate.enabled.load(), gateClosing ? Colours::mute : Colours::active },
-        { "EQ", p.eq.enabled.load(), Colours::accent },
-        { "C", p.comp.enabled.load(), compActive ? Colours::solo : Colours::active },
-        { "FX", ! strip.inserts.isEmpty(), Colours::accent },
-    };
-
-    auto area = indicatorArea;
-    const int w = area.getWidth() / static_cast<int> (std::size (inds));
-    g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
-
-    for (const auto& ind : inds)
-    {
-        auto cell = area.removeFromLeft (w).reduced (1);
-        g.setColour (ind.on ? ind.colour.withAlpha (0.85f) : juce::Colours::black.withAlpha (0.35f));
-        g.fillRoundedRectangle (cell.toFloat(), 2.0f);
-        g.setColour (ind.on ? juce::Colours::black : Colours::textDim);
-        g.drawText (ind.text, cell, juce::Justification::centred);
+        // Recall-safe badge across the colour bar.
+        auto badge = juce::Rectangle<int> (34, 11).withCentre ({ b.getCentreX(), 8 });
+        g.setColour (Colours::solo);
+        g.fillRoundedRectangle (badge.toFloat(), 2.0f);
+        g.setColour (juce::Colours::black);
+        g.setFont (juce::FontOptions (9.0f, juce::Font::bold));
+        g.drawText ("SAFE", badge, juce::Justification::centred);
     }
 }
 
 void StripComponent::resized()
 {
     auto b = getLocalBounds().reduced (4);
-    b.removeFromTop (6);
-    nameLabel.setBounds (b.removeFromTop (20));
+    b.removeFromTop (10);
+    nameLabel.setBounds (b.removeFromTop (18));
     b.removeFromTop (2);
 
+    auto route = b.removeFromTop (18);
     if (strip.getKind() != StripKind::Master)
-        routeButton.setBounds (b.removeFromTop (20));
-    else
-        b.removeFromTop (20);
+    {
+        widthButton.setBounds (route.removeFromRight (26));
+        route.removeFromRight (2);
+        routeButton.setBounds (route);
+    }
+    b.removeFromTop (4);
 
+    inserts.setBounds (b.removeFromTop (insertRows * InsertSlotsHandle::kRowHeight));
+    b.removeFromTop (4);
+    gate.setBounds (b.removeFromTop (16));
     b.removeFromTop (3);
-    indicatorArea = b.removeFromTop (14);
+    eq.setBounds (b.removeFromTop (40));
     b.removeFromTop (3);
-    pan.setBounds (b.removeFromTop (40).withSizeKeepingCentre (40, 40));
+    comp.setBounds (b.removeFromTop (16));
     b.removeFromTop (3);
 
-    auto buttons = b.removeFromTop (22);
+    pan.setBounds (b.removeFromTop (32).withSizeKeepingCentre (32, 32));
+    b.removeFromTop (3);
+
+    auto buttons = b.removeFromTop (20);
     if (strip.getKind() == StripKind::Master)
     {
         mute.setBounds (buttons);
@@ -171,10 +203,10 @@ void StripComponent::resized()
         solo.setBounds (buttons.reduced (1, 0));
     }
     b.removeFromTop (3);
-    selectButton.setBounds (b.removeFromTop (20));
+    selectButton.setBounds (b.removeFromTop (18));
     b.removeFromTop (4);
 
-    levelLabel.setBounds (b.removeFromBottom (16));
+    levelLabel.setBounds (b.removeFromBottom (14));
     auto faderArea = b;
     meter.setBounds (faderArea.removeFromRight (16));
     fader.setBounds (faderArea);
@@ -184,41 +216,38 @@ void StripComponent::mouseDown (const juce::MouseEvent& e)
 {
     if (e.mods.isPopupMenu())
         showContextMenu();
-    else if (onSelect)
-        onSelect (strip);
+    else if (ctx.selectStrip)
+        ctx.selectStrip (&strip);
 }
 
 void StripComponent::showRoutingMenu()
 {
+    if (strip.getKind() != StripKind::Input)
+    {
+        toggleWidth();
+        return;
+    }
+
     juce::PopupMenu menu;
     auto& p = strip.params;
+    const auto& names = ctx.engine.getHardwareInputNames();
+    const bool stereo = p.stereo.load();
 
-    if (strip.getKind() == StripKind::Input)
+    auto inputMenu = [&] (std::atomic<int>& target)
     {
-        const auto& names = engine.getHardwareInputNames();
-        juce::PopupMenu mono, stereo;
-
+        juce::PopupMenu m;
+        m.addItem ("None", true, target.load() < 0, [&target] { target = -1; });
         for (int i = 0; i < names.size(); ++i)
-        {
-            mono.addItem (names[i], true, p.inputLeft.load() == i && p.inputRight.load() < 0,
-                          [this, i] { strip.params.inputLeft = i; strip.params.inputRight = -1; });
+            m.addItem (juce::String (i + 1) + ": " + names[i], true, target.load() == i, [&target, i] { target = i; });
+        return m;
+    };
 
-            if (i + 1 < names.size())
-                stereo.addItem (names[i] + " + " + names[i + 1], true,
-                                p.inputLeft.load() == i && p.inputRight.load() == i + 1,
-                                [this, i] { strip.params.inputLeft = i; strip.params.inputRight = i + 1; });
-        }
-
-        menu.addItem ("No input", true, p.inputLeft.load() < 0,
-                      [this] { strip.params.inputLeft = -1; strip.params.inputRight = -1; });
-        menu.addSubMenu ("Mono input", mono, names.size() > 0);
-        menu.addSubMenu ("Stereo input pair", stereo, names.size() > 1);
-    }
-    else
-    {
-        menu.addItem ("Mono bus", true, ! p.stereo.load(), [this] { strip.params.stereo = false; });
-        menu.addItem ("Stereo bus", true, p.stereo.load(), [this] { strip.params.stereo = true; });
-    }
+    menu.addItem ("Mono", true, ! stereo, [this] { if (strip.params.stereo.load()) toggleWidth(); });
+    menu.addItem ("Stereo", true, stereo, [this] { if (! strip.params.stereo.load()) toggleWidth(); });
+    menu.addSeparator();
+    menu.addSubMenu (stereo ? "Left input" : "Input", inputMenu (p.inputLeft));
+    if (stereo)
+        menu.addSubMenu ("Right input", inputMenu (p.inputRight));
 
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (routeButton));
 }
@@ -227,6 +256,8 @@ void StripComponent::showContextMenu()
 {
     juce::PopupMenu menu;
     menu.addItem ("Rename", [this] { nameLabel.showEditor(); });
+    menu.addItem ("Recall safe", true, strip.params.recallSafe.load(),
+                  [this] { strip.params.recallSafe = ! strip.params.recallSafe.load(); repaint(); });
 
     juce::PopupMenu colours;
     const std::pair<const char*, juce::uint32> palette[] = {

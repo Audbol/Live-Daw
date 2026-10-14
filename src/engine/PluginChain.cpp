@@ -1,4 +1,5 @@
 #include "engine/PluginChain.h"
+#include "dsp/DspUtils.h"
 
 namespace livedaw
 {
@@ -37,6 +38,10 @@ PluginChain::PluginChain (RtGarbage& g) : garbage (g)
         s.store (nullptr);
     for (auto& b : bypass)
         b.store (false);
+    for (auto& f : faulted)
+        f.store (false);
+    for (auto& l : slotLoad)
+        l.store (0.0f);
 }
 
 PluginChain::~PluginChain()
@@ -75,6 +80,8 @@ void PluginChain::setPlugin (int slotIndex, std::unique_ptr<juce::AudioPluginIns
 
     std::unique_ptr<Slot> old (slots[(size_t) slotIndex].exchange (newSlot.release(), std::memory_order_acq_rel));
     bypass[(size_t) slotIndex].store (false);
+    faulted[(size_t) slotIndex].store (false);
+    slotLoad[(size_t) slotIndex].store (0.0f);
     garbage.retire (std::move (old));
 }
 
@@ -94,6 +101,21 @@ void PluginChain::setBypassed (int slotIndex, bool bypassed) noexcept
 bool PluginChain::isBypassed (int slotIndex) const noexcept
 {
     return bypass[(size_t) slotIndex].load();
+}
+
+bool PluginChain::isFaulted (int slotIndex) const noexcept
+{
+    return faulted[(size_t) slotIndex].load();
+}
+
+void PluginChain::clearFault (int slotIndex) noexcept
+{
+    faulted[(size_t) slotIndex].store (false);
+}
+
+float PluginChain::getSlotLoad (int slotIndex) const noexcept
+{
+    return slotLoad[(size_t) slotIndex].load (std::memory_order_relaxed);
 }
 
 bool PluginChain::isEmpty() const noexcept
@@ -127,9 +149,11 @@ void PluginChain::process (float* const* channels, int numChannels, int numSampl
             continue;
 
         auto& scratch = slot->scratch;
+        const auto startTicks = juce::Time::getHighResolutionTicks();
+        bool ok = true;
 
         // Hosts must never pass more samples than were prepared; chunk if needed.
-        for (int start = 0; start < numSamples; start += blockSize)
+        for (int start = 0; start < numSamples && ok; start += blockSize)
         {
             const int n = juce::jmin (blockSize, numSamples - start);
 
@@ -140,11 +164,34 @@ void PluginChain::process (float* const* channels, int numChannels, int numSampl
 
             juce::AudioBuffer<float> view (scratch.getArrayOfWritePointers(), slot->numPluginChannels, n);
             slot->midi.clear();
-            slot->plugin->processBlock (view, slot->midi);
 
-            for (int ch = 0; ch < numChannels; ++ch)
-                juce::FloatVectorOperations::copy (channels[ch] + start, scratch.getReadPointer (ch), n);
+            try
+            {
+                slot->plugin->processBlock (view, slot->midi);
+            }
+            catch (...)
+            {
+                ok = false;
+            }
+
+            for (int ch = 0; ch < numChannels && ok; ++ch)
+                ok = dsp::allFinite (scratch.getReadPointer (ch), n);
+
+            // On failure the channels keep the plugin's input: the slot is bypassed.
+            if (ok)
+                for (int ch = 0; ch < numChannels; ++ch)
+                    juce::FloatVectorOperations::copy (channels[ch] + start, scratch.getReadPointer (ch), n);
         }
+
+        if (! ok)
+        {
+            bypass[i].store (true, std::memory_order_relaxed);
+            faulted[i].store (true, std::memory_order_relaxed);
+        }
+
+        const auto seconds = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - startTicks);
+        const auto load = static_cast<float> (seconds * sampleRate / juce::jmax (1, numSamples));
+        slotLoad[i].store (0.9f * slotLoad[i].load (std::memory_order_relaxed) + 0.1f * load, std::memory_order_relaxed);
     }
 }
 

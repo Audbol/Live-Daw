@@ -1,5 +1,7 @@
 #include "engine/WorkerPool.h"
 
+#include <juce_audio_basics/juce_audio_basics.h>
+
 #include <thread>
 
 namespace livedaw
@@ -25,6 +27,8 @@ public:
 
     void run() override
     {
+        // Denormal flushing is per thread; workers run strip DSP too.
+        const juce::ScopedNoDenormals noDenormals;
         uint32_t seen = pool.wakeSignal.load (std::memory_order_acquire);
 
         while (! pool.shouldExit.load (std::memory_order_acquire))

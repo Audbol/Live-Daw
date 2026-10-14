@@ -48,7 +48,8 @@ public:
         hardware input N (when it exists). */
     void setNumInputs (int numInputs);
 
-    Strip* addInput();
+    /** Adds an input channel. `id` restores a saved id (ignored if already taken). */
+    Strip* addInput (int id = -1);
     /** Adds an aux or group bus in the first free slot (or `slot` if it's free).
         Returns nullptr when all kMaxBuses slots are used. */
     Strip* addBus (StripKind kind, int slot = -1);
@@ -67,6 +68,23 @@ public:
     std::atomic<int> monitorOutputLeft { -1 }, monitorOutputRight { -1 };
     std::array<std::atomic<float>, 2> monitorPeak {};
     std::atomic<bool> anySoloActive { false };
+
+    //==============================================================================
+    // Stability / protection
+    std::atomic<bool> outputProtection { true };   // brick-wall safety clip on every hardware output
+    std::atomic<float> outputCeilingDb { 0.0f };
+    std::atomic<int> outputClipEvents { 0 };       // blocks in which the safety clip engaged
+
+    /** Millisecond counter (juce::Time::getMillisecondCounter) of the last audio callback. */
+    juce::uint32 getLastCallbackTime() const noexcept { return lastCallbackMs.load (std::memory_order_relaxed); }
+    bool isDeviceRunning() const noexcept { return deviceRunning.load(); }
+
+    /** Sum of the NaN/inf faults caught on all strips and the number of auto-bypassed plugins. */
+    int getTotalDspFaults() const;
+    int getNumFaultedPlugins() const;
+
+    /** Called on the message thread when the device reports an error. */
+    std::function<void (const juce::String&)> onDeviceError;
 
     //==============================================================================
     // Device information (message thread)
@@ -88,6 +106,7 @@ public:
     // AudioIODeviceCallback
     void audioDeviceAboutToStart (juce::AudioIODevice* device) override;
     void audioDeviceStopped() override;
+    void audioDeviceError (const juce::String& errorMessage) override;
     void audioDeviceIOCallbackWithContext (const float* const* inputChannelData,
                                            int numInputChannels,
                                            float* const* outputChannelData,
@@ -113,7 +132,7 @@ private:
     void timerCallback() override;
     void publishTopology();
     void prepareAll();
-    std::unique_ptr<Strip> createInputStrip();
+    std::unique_ptr<Strip> createInputStrip (int requestedId = -1);
     void prepareStrip (Strip&);
     void setupChannelMaps (const juce::BigInteger& activeIns, const juce::BigInteger& activeOuts,
                            int numHwIns, int numHwOuts);
@@ -124,6 +143,7 @@ private:
     void buildMonitor (const Topology&, int numSamples) noexcept;
     void writeOutputs (const Topology&, int numSamples) noexcept;
     void addToOutput (int hwChannel, const float* src, int numSamples) noexcept;
+    void protectOutputs (int numSamples) noexcept;
 
     RtGarbage garbage;
     WorkerPool pool;
@@ -145,6 +165,8 @@ private:
     juce::AudioBuffer<float> monitorBuffer;
     float lastMonitorGain = 0.0f, lastMasterToMonitor = 1.0f;
     std::atomic<float> dspLoad { 0.0f };
+    std::atomic<juce::uint32> lastCallbackMs { 0 };
+    std::atomic<bool> deviceRunning { false };
     std::shared_ptr<bool> aliveFlag = std::make_shared<bool> (true);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MixerEngine)

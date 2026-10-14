@@ -58,52 +58,102 @@ namespace
     {
     public:
         InputSection (Strip& s, MixerEngine& engine)
-            : Section (s.getKind() == StripKind::Input ? "Input" : "Output", 230),
-              trim (make<Knob> ("Trim", s.params.trimDb, s.getKind() == StripKind::Input ? -20.0 : -20.0,
-                                s.getKind() == StripKind::Input ? 40.0 : 20.0, 0.1, " dB")),
+            : Section (s.getKind() == StripKind::Input ? "Input" : "Output", 250),
+              strip (s),
+              trim (make<Knob> ("Trim", s.params.trimDb, -20.0, s.getKind() == StripKind::Input ? 40.0 : 20.0, 0.1, " dB")),
               hpfFreq (make<Knob> ("HPF", s.params.hpfFrequency, 20.0, 400.0, 1.0, " Hz")),
               polarity (make<ParamButton> (s.params.polarityInvert, juce::String (juce::CharPointer_UTF8 ("\xc3\x98")))),
               hpfOn (make<ParamButton> (s.params.hpfEnabled, "HPF")),
+              stereo (make<ParamButton> (s.params.stereo, "Stereo")),
+              safe (make<ParamButton> (s.params.recallSafe, "Safe", Colours::solo)),
               mainAssign (make<ParamButton> (s.params.mainAssign, "To Master", Colours::active)),
+              inLeft (make<ParamCombo> (s.params.inputLeft)),
+              inRight (make<ParamCombo> (s.params.inputRight)),
               outLeft (make<ParamCombo> (s.params.outputLeft)),
               outRight (make<ParamCombo> (s.params.outputRight)),
+              inLabel (make<juce::Label>()),
               outLabel (make<juce::Label>())
         {
+            const bool isInput = s.getKind() == StripKind::Input;
             hpfFreq.slider.setSkewAround (80.0);
+            stereo.setTooltip ("Mono / stereo channel");
+            safe.setTooltip ("Recall safe: scenes won't change this strip");
+
+            addInputItems (inLeft, engine.getHardwareInputNames());
+            addInputItems (inRight, engine.getHardwareInputNames());
             addOutputItems (outLeft, engine.getHardwareOutputNames());
             addOutputItems (outRight, engine.getHardwareOutputNames());
-            outLabel.setText (s.getKind() == StripKind::Input ? "Direct out L / R" : "Hardware out L / R",
-                              juce::dontSendNotification);
-            outLabel.setFont (juce::FontOptions (11.0f));
-            outLabel.setColour (juce::Label::textColourId, Colours::textDim);
+
+            for (auto* l : { &inLabel, &outLabel })
+            {
+                l->setFont (juce::FontOptions (11.0f));
+                l->setColour (juce::Label::textColourId, Colours::textDim);
+            }
+            inLabel.setText ("Input L / R", juce::dontSendNotification);
+            outLabel.setText (isInput ? "Direct out L / R" : "Hardware out L / R", juce::dontSendNotification);
+
+            stereo.onClick = [this]
+            {
+                auto& p = strip.params;
+                if (stereo.getToggleState() && p.inputRight.load() < 0 && p.inputLeft.load() >= 0)
+                    p.inputRight = p.inputLeft.load() + 1;
+                p.stereo = stereo.getToggleState();
+            };
+
+            inLabel.setVisible (isInput);
+            inLeft.setVisible (isInput);
+            inRight.setVisible (isInput);
+            stereo.setVisible (s.getKind() != StripKind::Master);
             mainAssign.setVisible (s.getKind() != StripKind::Master);
         }
 
         void resized() override
         {
             auto b = contentArea();
-            auto knobs = b.removeFromTop (78);
+            auto knobs = b.removeFromTop (72);
             trim.setBounds (knobs.removeFromLeft (70));
             hpfFreq.setBounds (knobs.removeFromLeft (70));
-            auto toggles = knobs.reduced (4, 8);
-            polarity.setBounds (toggles.removeFromTop (24));
-            toggles.removeFromTop (6);
-            hpfOn.setBounds (toggles.removeFromTop (24));
+            auto toggles = knobs.reduced (4, 2);
+            polarity.setBounds (toggles.removeFromTop (22));
+            toggles.removeFromTop (4);
+            hpfOn.setBounds (toggles.removeFromTop (22));
 
-            b.removeFromTop (6);
-            mainAssign.setBounds (b.removeFromTop (24));
-            b.removeFromTop (6);
-            outLabel.setBounds (b.removeFromTop (16));
-            auto outs = b.removeFromTop (24);
-            outLeft.setBounds (outs.removeFromLeft (outs.getWidth() / 2).reduced (1, 0));
-            outRight.setBounds (outs.reduced (1, 0));
+            b.removeFromTop (4);
+            auto row = b.removeFromTop (22);
+            const int w = row.getWidth() / 3;
+            stereo.setBounds (row.removeFromLeft (w).reduced (1, 0));
+            safe.setBounds (row.removeFromLeft (w).reduced (1, 0));
+            mainAssign.setBounds (row.reduced (1, 0));
+
+            auto combos = [&] (juce::Label& label, ParamCombo& l, ParamCombo& r)
+            {
+                if (! l.isVisible())
+                    return;
+                b.removeFromTop (2);
+                label.setBounds (b.removeFromTop (14));
+                auto outs = b.removeFromTop (22);
+                l.setBounds (outs.removeFromLeft (outs.getWidth() / 2).reduced (1, 0));
+                r.setBounds (outs.reduced (1, 0));
+            };
+
+            combos (inLabel, inLeft, inRight);
+            combos (outLabel, outLeft, outRight);
         }
 
     private:
+        static void addInputItems (ParamCombo& combo, const juce::StringArray& names)
+        {
+            combo.addValue ("-", -1);
+            for (int i = 0; i < names.size(); ++i)
+                combo.addValue (juce::String (i + 1) + ": " + names[i], i);
+            combo.refresh();
+        }
+
+        Strip& strip;
         Knob &trim, &hpfFreq;
-        ParamButton &polarity, &hpfOn, &mainAssign;
-        ParamCombo &outLeft, &outRight;
-        juce::Label& outLabel;
+        ParamButton &polarity, &hpfOn, &stereo, &safe, &mainAssign;
+        ParamCombo &inLeft, &inRight, &outLeft, &outRight;
+        juce::Label &inLabel, &outLabel;
     };
 
     //==============================================================================
@@ -274,23 +324,29 @@ namespace
     class InsertsSection final : public Section, private juce::Timer
     {
     public:
-        InsertsSection (Strip& s, MixerEngine& e, PluginHost& h, StripDetailPanel& p)
-            : Section ("Inserts", 210), strip (s), engine (e), host (h), panel (p)
+        InsertsSection (Strip& s, UiContext& c)
+            : Section ("Inserts", 230), strip (s), ctx (c)
         {
             for (int i = 0; i < kNumInsertSlots; ++i)
             {
                 auto& row = rows[i];
                 row.name = &make<juce::TextButton>();
-                row.name->onClick = [this, i] { showSlotMenu (i); };
+                row.name->onClick = [this, i] { clickInsertSlot (ctx, strip, i, rows[i].name); };
+                row.menu = &make<juce::TextButton> ("...");
+                row.menu->onClick = [this, i] { showInsertSlotMenu (ctx, strip, i, rows[i].menu); };
                 row.bypass = &make<juce::TextButton> ("BYP");
                 row.bypass->setClickingTogglesState (true);
                 row.bypass->setColour (juce::TextButton::buttonOnColourId, Colours::solo);
-                row.bypass->onClick = [this, i] { strip.inserts.setBypassed (i, rows[i].bypass->getToggleState()); };
+                row.bypass->onClick = [this, i]
+                {
+                    strip.inserts.clearFault (i);
+                    strip.inserts.setBypassed (i, rows[i].bypass->getToggleState());
+                };
             }
 
-            latencyLabel = &make<juce::Label>();
-            latencyLabel->setFont (juce::FontOptions (11.0f));
-            latencyLabel->setColour (juce::Label::textColourId, Colours::textDim);
+            infoLabel = &make<juce::Label>();
+            infoLabel->setFont (juce::FontOptions (11.0f));
+            infoLabel->setColour (juce::Label::textColourId, Colours::textDim);
 
             timerCallback();
             startTimerHz (4);
@@ -299,12 +355,14 @@ namespace
         void resized() override
         {
             auto b = contentArea();
-            latencyLabel->setBounds (b.removeFromBottom (16));
+            infoLabel->setBounds (b.removeFromBottom (16));
             const int h = juce::jmin (24, b.getHeight() / kNumInsertSlots);
             for (auto& row : rows)
             {
                 auto r = b.removeFromTop (h).reduced (0, 1);
-                row.bypass->setBounds (r.removeFromRight (40));
+                row.bypass->setBounds (r.removeFromRight (38));
+                r.removeFromRight (2);
+                row.menu->setBounds (r.removeFromRight (24));
                 r.removeFromRight (2);
                 row.name->setBounds (r);
             }
@@ -313,102 +371,45 @@ namespace
     private:
         void timerCallback() override
         {
+            float totalLoad = 0.0f;
+
             for (int i = 0; i < kNumInsertSlots; ++i)
             {
                 auto* plugin = strip.inserts.getPlugin (i);
-                rows[i].name->setButtonText (plugin != nullptr ? plugin->getName() : juce::String (i + 1) + ": -");
+                const bool faulted = strip.inserts.isFaulted (i);
+                juce::String text = juce::String (i + 1) + ": -";
+
+                if (plugin != nullptr)
+                {
+                    const float load = strip.inserts.getSlotLoad (i);
+                    totalLoad += load;
+                    text = (faulted ? "FAULT " : "") + plugin->getName() + "  " + juce::String (juce::roundToInt (load * 100.0f)) + "%";
+                }
+
+                rows[i].name->setButtonText (text);
+                rows[i].name->setColour (juce::TextButton::buttonColourId, faulted ? Colours::mute : Colours::panelLight);
                 rows[i].bypass->setEnabled (plugin != nullptr);
                 rows[i].bypass->setToggleState (strip.inserts.isBypassed (i), juce::dontSendNotification);
             }
 
             const int latency = strip.inserts.getTotalLatencySamples();
-            latencyLabel->setText (latency > 0 ? "Plugin latency: " + juce::String (latency) + " smp ("
-                                                     + juce::String (1000.0 * latency / engine.getSampleRate(), 1) + " ms)"
-                                               : juce::String(),
-                                   juce::dontSendNotification);
-        }
-
-        void showSlotMenu (int slot)
-        {
-            juce::PopupMenu menu;
-            auto* existing = strip.inserts.getPlugin (slot);
-
-            if (existing != nullptr)
-            {
-                menu.addItem ("Open editor", [this, slot] { if (panel.onOpenPluginEditor) panel.onOpenPluginEditor (strip, slot); });
-                menu.addItem ("Remove", [this, slot] { setPlugin (slot, nullptr); });
-                menu.addSeparator();
-            }
-
-            juce::PopupMenu plugins;
-            const auto types = host.getSortedTypes();
-            juce::String currentMaker;
-            juce::PopupMenu makerMenu;
-
-            auto flushMaker = [&]
-            {
-                if (currentMaker.isNotEmpty())
-                    plugins.addSubMenu (currentMaker, makerMenu);
-                makerMenu = {};
-            };
-
-            for (const auto& desc : types)
-            {
-                if (desc.isInstrument)
-                    continue;
-
-                const auto maker = desc.manufacturerName.isEmpty() ? juce::String ("Unknown") : desc.manufacturerName;
-                if (maker != currentMaker)
-                {
-                    flushMaker();
-                    currentMaker = maker;
-                }
-
-                makerMenu.addItem (desc.name + " (" + desc.pluginFormatName + ")", [this, slot, desc]
-                {
-                    juce::String error;
-                    auto instance = host.createInstance (desc, engine.getSampleRate(), engine.getBlockSize(), error);
-                    if (instance == nullptr)
-                    {
-                        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
-                                                                "Could not load plugin", desc.name + "\n" + error);
-                        return;
-                    }
-                    setPlugin (slot, std::move (instance));
-                    if (panel.onOpenPluginEditor)
-                        panel.onOpenPluginEditor (strip, slot);
-                });
-            }
-            flushMaker();
-
-            menu.addSubMenu (existing != nullptr ? "Replace with" : "Insert plugin", plugins, ! types.isEmpty());
-            menu.addItem ("Scan for plugins...", [this] { if (panel.onShowPluginScanner) panel.onShowPluginScanner(); });
-
-            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (rows[slot].name));
-        }
-
-        void setPlugin (int slot, std::unique_ptr<juce::AudioPluginInstance> plugin)
-        {
-            if (auto* old = strip.inserts.getPlugin (slot))
-                if (panel.onPluginRemoved)
-                    panel.onPluginRemoved (old);
-
-            strip.inserts.setPlugin (slot, std::move (plugin));
-            timerCallback();
+            juce::String info;
+            if (latency > 0)
+                info << "Latency " << latency << " smp (" << juce::String (1000.0 * latency / ctx.engine.getSampleRate(), 1) << " ms)  ";
+            if (totalLoad > 0.0f)
+                info << "CPU " << juce::roundToInt (totalLoad * 100.0f) << "% of block";
+            infoLabel->setText (info, juce::dontSendNotification);
         }
 
         struct Row
         {
-            juce::TextButton* name = nullptr;
-            juce::TextButton* bypass = nullptr;
+            juce::TextButton *name = nullptr, *menu = nullptr, *bypass = nullptr;
         };
 
         Strip& strip;
-        MixerEngine& engine;
-        PluginHost& host;
-        StripDetailPanel& panel;
+        UiContext& ctx;
         Row rows[kNumInsertSlots];
-        juce::Label* latencyLabel = nullptr;
+        juce::Label* infoLabel = nullptr;
     };
 
     //==============================================================================
@@ -523,13 +524,14 @@ namespace
 class StripDetailPanel::Content final : public juce::Component
 {
 public:
-    Content (Strip& s, MixerEngine& engine, PluginHost& host, StripDetailPanel& panel)
+    Content (Strip& s, UiContext& ctx)
     {
+        auto& engine = ctx.engine;
         add (std::make_unique<InputSection> (s, engine));
         add (std::make_unique<GateSection> (s));
         add (std::make_unique<EqSection> (s, engine));
         add (std::make_unique<CompSection> (s));
-        add (std::make_unique<InsertsSection> (s, engine, host, panel));
+        add (std::make_unique<InsertsSection> (s, ctx));
 
         if (s.getKind() == StripKind::Input)
             add (std::make_unique<SendsSection> (s, engine));
@@ -563,7 +565,7 @@ private:
 };
 
 //==============================================================================
-StripDetailPanel::StripDetailPanel (MixerEngine& e, PluginHost& h) : engine (e), host (h)
+StripDetailPanel::StripDetailPanel (UiContext& c) : ctx (c)
 {
     viewport.setScrollBarsShown (false, true);
     addAndMakeVisible (viewport);
@@ -583,7 +585,7 @@ void StripDetailPanel::setStrip (Strip* strip)
 
     if (strip != nullptr)
     {
-        content = std::make_unique<Content> (*strip, engine, host, *this);
+        content = std::make_unique<Content> (*strip, ctx);
         viewport.setViewedComponent (content.get(), false);
         resized();
         viewport.setViewPosition (scroll);

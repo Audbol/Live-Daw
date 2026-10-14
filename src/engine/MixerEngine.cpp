@@ -60,21 +60,29 @@ void MixerEngine::prepareAll()
     pool.setBlockDurationHint (sampleRate, blockSize);
 }
 
-std::unique_ptr<Strip> MixerEngine::createInputStrip()
+std::unique_ptr<Strip> MixerEngine::createInputStrip (int requestedId)
 {
     const int index = static_cast<int> (inputs.size());
-    auto strip = std::make_unique<Strip> (StripKind::Input, nextInputId++, garbage);
+
+    bool idFree = requestedId > 0;
+    for (auto& s : inputs)
+        idFree = idFree && s->getId() != requestedId;
+
+    const int id = idFree ? requestedId : nextInputId;
+    nextInputId = juce::jmax (nextInputId, id + 1);
+
+    auto strip = std::make_unique<Strip> (StripKind::Input, id, garbage);
     strip->name = "Ch " + juce::String (index + 1);
     strip->params.inputLeft = (inputNames.isEmpty() || index < inputNames.size()) ? index : -1;
     prepareStrip (*strip);
     return strip;
 }
 
-Strip* MixerEngine::addInput()
+Strip* MixerEngine::addInput (int requestedId)
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
-    auto* raw = inputs.emplace_back (createInputStrip()).get();
+    auto* raw = inputs.emplace_back (createInputStrip (requestedId)).get();
     publishTopology();
     return raw;
 }
@@ -245,6 +253,7 @@ void MixerEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     // Strips are owned by the message thread; JUCE calls this from the thread that
     // (re)starts the device, which is the message thread for AudioDeviceManager.
     prepareAll();
+    deviceRunning = true;
     garbage.setDeviceRunning (true);
 
     juce::MessageManager::callAsync ([this, alive = std::weak_ptr<bool> (aliveFlag)]
@@ -256,7 +265,43 @@ void MixerEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 
 void MixerEngine::audioDeviceStopped()
 {
+    deviceRunning = false;
     garbage.setDeviceRunning (false);
+}
+
+void MixerEngine::audioDeviceError (const juce::String& errorMessage)
+{
+    juce::MessageManager::callAsync ([this, errorMessage, alive = std::weak_ptr<bool> (aliveFlag)]
+    {
+        if (alive.lock() != nullptr && onDeviceError)
+            onDeviceError (errorMessage);
+    });
+}
+
+int MixerEngine::getTotalDspFaults() const
+{
+    int total = master->dspFaults.load();
+    for (auto* list : { &inputs, &buses })
+        for (auto& s : *list)
+            total += s->dspFaults.load();
+    return total;
+}
+
+int MixerEngine::getNumFaultedPlugins() const
+{
+    int total = 0;
+    auto count = [&total] (const Strip& s)
+    {
+        for (int slot = 0; slot < kNumInsertSlots; ++slot)
+            if (s.inserts.isFaulted (slot))
+                ++total;
+    };
+
+    count (*master);
+    for (auto* list : { &inputs, &buses })
+        for (auto& s : *list)
+            count (*s);
+    return total;
 }
 
 void MixerEngine::prepareOffline (double newSampleRate, int newBlockSize, int numHwIns, int numHwOuts)
@@ -298,7 +343,9 @@ void MixerEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 void MixerEngine::processBlock (const float* const* ins, int numIns,
                                 float* const* outs, int numOuts, int numSamples) noexcept
 {
+    const juce::ScopedNoDenormals noDenormals;
     garbage.audioCallbackStarted();
+    lastCallbackMs.store (juce::Time::getMillisecondCounter(), std::memory_order_relaxed);
 
     for (int i = 0; i < numOuts; ++i)
         if (outs[i] != nullptr)
@@ -359,6 +406,40 @@ void MixerEngine::processChunk (const Topology& topo, int n) noexcept
 
     // 5. Hardware outputs
     writeOutputs (topo, n);
+
+    // 6. Safety clip: nothing above the ceiling ever reaches the amplifiers.
+    protectOutputs (n);
+}
+
+void MixerEngine::protectOutputs (int n) noexcept
+{
+    if (! outputProtection.load (std::memory_order_relaxed))
+        return;
+
+    const float ceiling = juce::jlimit (0.0f, 4.0f, dsp::dbToGain (outputCeilingDb.load (std::memory_order_relaxed)));
+    bool engaged = false;
+
+    for (auto* out : hwOutPtrs)
+    {
+        if (out == nullptr)
+            continue;
+
+        if (! dsp::allFinite (out, n))
+        {
+            juce::FloatVectorOperations::clear (out, n);
+            engaged = true;
+            continue;
+        }
+
+        if (dsp::peakLevel (out, n) > ceiling)
+        {
+            juce::FloatVectorOperations::clip (out, out, -ceiling, ceiling, n);
+            engaged = true;
+        }
+    }
+
+    if (engaged)
+        outputClipEvents.fetch_add (1, std::memory_order_relaxed);
 }
 
 void MixerEngine::sumSendsIntoBus (Strip& bus, const std::vector<Strip*>& ins, int n) noexcept

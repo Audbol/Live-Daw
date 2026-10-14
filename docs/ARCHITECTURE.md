@@ -67,10 +67,59 @@ hardware channel numbers to active-buffer indices when the device starts. Strips
 always refer to hardware channel numbers, so enabling or disabling channels in Audio
 Setup doesn't move your patching.
 
+## Shows, scenes and snippets
+
+`src/engine/ConsoleState.*` serialises strips **per section** (Name, Routing, Preamp,
+Gate, EQ, Comp, Inserts, Sends, Fader). Every captured strip records which sections
+it holds, and `apply()` only touches the intersection of *captured* and *requested*
+sections. Strips are referenced by a stable `StripRef` (kind + id). Input ids are
+saved and restored, so references survive removing channels and reloading the show.
+
+`src/engine/Show.*`:
+
+```
+Show
+ ├─ Console     full structure (+ plugin instances), loaded with loadConsole()
+ └─ Scene[]     State (all sections) + recall scope + fade time + notes
+     └─ Snippet[]   State (chosen strips × chosen sections) + "fire with scene"
+```
+
+- Scene recall applies the state within the scene's scope and skips recall-safe strips.
+  It then applies the scene's auto-fire snippets.
+- Snippets ignore recall safes, which makes them the tool for deliberately changing a
+  protected channel.
+- Fades collect `FadeTarget`s (fader, pan and send levels) instead of setting them, and
+  a 60 Hz message-thread timer interpolates the atomics. A new recall finishes any fade
+  still running.
+- Inserts are recalled as *plugin state only*, and only when the same plugin is already
+  in that slot. Recalls never instantiate plugins.
+
+## Stability mechanisms
+
+- `PluginChain::process` wraps each plugin in `try/catch` and checks its output with
+  `dsp::allFinite`. On failure it keeps the dry signal, then sets `bypass` and `faulted`.
+- `Strip::process` checks the post-chain signal. NaN/Inf is cleared, the filters and
+  dynamics reset, and `dspFaults` incremented.
+- `MixerEngine::protectOutputs` clips every hardware output at the ceiling and zeroes
+  any non-finite block.
+- `OutOfProcessScanner` / `PluginScannerWorker` scan plugins in a child copy of the app
+  (`ChildProcessCoordinator`). If the child dies, that plugin is marked failed and a new
+  scanner is started.
+- `PluginHost::createInstance` writes a "plugin being loaded" marker. On the next start,
+  `checkForCrashDuringPluginLoad()` blacklists the plugin if the marker is still there.
+- `DeviceWatchdog` (Main.cpp) watches the device manager and the engine's
+  last-callback timestamp. It reopens the device with a back-off.
+- A `running.lock` file marks an unclean exit. The next start loads the autosave
+  without plugins (safe mode) and autosaves to a separate file until the user reloads
+  the plugins.
+
 ## Known limitations / roadmap
+- Plugins run inside the mixer process. Bad output and exceptions are contained, but
+  a plugin that segfaults takes the app down (safe mode then recovers the show).
+  Hosting each plugin in a sandbox process is the next step for full isolation.
 - No plugin delay compensation. Insert latency is shown per strip. Live mixing
   normally avoids high-latency plugins anyway.
 - Plugins always run in stereo. A mono strip feeds both plugin inputs and takes the
   left output back.
-- Planned: DCAs/mute groups, scenes/snapshots, a matrix, sidechain keys for
+- Planned: DCAs/mute groups, a matrix, sidechain keys for
   gate/comp, OSC/MIDI remote control, multitrack recording to disk.

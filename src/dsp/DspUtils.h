@@ -90,6 +90,18 @@ inline void addWithGainRamp (float* dst, const float* src, int numSamples, float
     }
 }
 
+/** True if the block contains no NaN or infinity. */
+inline bool allFinite (const float* data, int numSamples) noexcept
+{
+    // Multiplying by zero turns any inf/NaN into NaN, and the sum stays NaN.
+    float acc = 0.0f;
+
+    for (int i = 0; i < numSamples; ++i)
+        acc += data[i] * 0.0f;
+
+    return acc == 0.0f;
+}
+
 inline float peakLevel (const float* data, int numSamples) noexcept
 {
     float peak = 0.0f;

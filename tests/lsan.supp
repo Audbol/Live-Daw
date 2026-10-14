@@ -1,0 +1,3 @@
+# Leaks inside third-party plugin libraries' static initialisers (run at dlopen time).
+# They are owned by the plugin, not by Live DAW.
+leak:_dl_init

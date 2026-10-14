@@ -37,6 +37,7 @@ Strip::Strip (StripKind k, int stripId, RtGarbage& garbage)
     {
         case StripKind::Input:
             params.mainAssign = true;
+            params.stereo = false;
             colour = juce::Colour (0xff3d7ab8);
             break;
         case StripKind::Aux:
@@ -80,8 +81,13 @@ void Strip::prepare (double newSampleRate, int maxBlockSize)
 void Strip::readHardwareInputs (const float* const* hwInputs, int numHwInputs, int numSamples) noexcept
 {
     const int left = params.inputLeft.load (std::memory_order_relaxed);
-    const int right = params.inputRight.load (std::memory_order_relaxed);
-    numChannels = right >= 0 ? 2 : 1;
+    int right = params.inputRight.load (std::memory_order_relaxed);
+    numChannels = params.stereo.load (std::memory_order_relaxed) ? 2 : 1;
+
+    // A stereo channel without an explicit right input uses the next hardware input.
+    if (numChannels == 2 && right < 0 && left >= 0)
+        right = left + 1;
+
     currentWidth.store (numChannels, std::memory_order_relaxed);
 
     const int sources[2] = { left, right };
@@ -117,7 +123,31 @@ void Strip::process (int numSamples) noexcept
             dsp::atomicMax (inputPeak[(size_t) ch], dsp::peakLevel (work.getReadPointer (ch), numSamples));
 
     runChain (numSamples);
+
+    // Never let NaN/inf escape a strip: it would poison every bus it feeds and the
+    // filter states downstream. Silence this block, reset the DSP and report it.
+    bool finite = true;
+    for (int c = 0; c < numChannels; ++c)
+        finite = finite && dsp::allFinite (work.getReadPointer (c), numSamples);
+
+    if (! finite)
+    {
+        for (int c = 0; c < 2; ++c)
+            work.clear (c, 0, numSamples);
+
+        resetDsp();
+        dspFaults.fetch_add (1, std::memory_order_relaxed);
+    }
+
     runOutputStage (numSamples);
+}
+
+void Strip::resetDsp() noexcept
+{
+    hpf.reset();
+    gate.reset();
+    eq.reset();
+    comp.reset();
 }
 
 void Strip::runChain (int numSamples) noexcept

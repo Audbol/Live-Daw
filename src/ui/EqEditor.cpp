@@ -32,6 +32,12 @@ EqEditor::EqEditor (EqParams& p, std::function<double()> sr)
     startTimerHz (20);
 }
 
+void EqEditor::setCompact (bool shouldBeCompact)
+{
+    compact = shouldBeCompact;
+    repaint();
+}
+
 void EqEditor::timerCallback()
 {
     const auto s = params.snapshot();
@@ -69,8 +75,9 @@ juce::Point<float> EqEditor::handlePosition (int band) const
 
 int EqEditor::hitTestBand (juce::Point<float> pos) const
 {
+    const float radius = compact ? 7.0f : 10.0f;
     for (int b = dsp::ParametricEq::kNumBands; --b >= 0;)
-        if (handlePosition (b).getDistanceFrom (pos) < 10.0f)
+        if (handlePosition (b).getDistanceFrom (pos) < radius)
             return b;
 
     return -1;
@@ -90,8 +97,10 @@ void EqEditor::paint (juce::Graphics& g)
     for (float f : { 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f })
     {
         const float x = freqToX (f);
-        g.setColour (Colours::outline.withAlpha (0.6f));
+        g.setColour (Colours::outline.withAlpha (compact ? 0.3f : 0.6f));
         g.drawVerticalLine (juce::roundToInt (x), bounds.getY(), bounds.getBottom());
+        if (compact)
+            continue;
         g.setColour (Colours::textDim);
         g.drawText (f >= 1000.0f ? juce::String (f / 1000.0f, 0) + "k" : juce::String (f, 0),
                     juce::Rectangle<float> (x + 2.0f, bounds.getBottom() - 12.0f, 30.0f, 10.0f),
@@ -100,6 +109,9 @@ void EqEditor::paint (juce::Graphics& g)
 
     for (float db : { -12.0f, -6.0f, 0.0f, 6.0f, 12.0f })
     {
+        if (compact && db != 0.0f)
+            continue;
+
         g.setColour (Colours::outline.withAlpha (db == 0.0f ? 1.0f : 0.5f));
         g.drawHorizontalLine (juce::roundToInt (dbToY (db)), bounds.getX(), bounds.getRight());
     }
@@ -126,14 +138,21 @@ void EqEditor::paint (juce::Graphics& g)
     g.setColour (curveColour.withAlpha (0.15f));
     g.fillPath (fill);
     g.setColour (curveColour);
-    g.strokePath (curve, juce::PathStrokeType (2.0f));
+    g.strokePath (curve, juce::PathStrokeType (compact ? 1.5f : 2.0f));
 
     // Band handles
     for (int b = 0; b < dsp::ParametricEq::kNumBands; ++b)
     {
         const auto pos = handlePosition (b);
-        const bool on = lastDrawn.bands[(size_t) b].enabled;
+        const bool on = lastDrawn.bands[(size_t) b].enabled && lastDrawn.enabled;
         g.setColour (bandColours[b].withAlpha (on ? 1.0f : 0.35f));
+
+        if (compact)
+        {
+            g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre (pos));
+            continue;
+        }
+
         g.fillEllipse (juce::Rectangle<float> (12.0f, 12.0f).withCentre (pos));
         g.setColour (juce::Colours::black);
         g.setFont (juce::FontOptions (9.0f, juce::Font::bold));
@@ -144,6 +163,9 @@ void EqEditor::paint (juce::Graphics& g)
 void EqEditor::mouseDown (const juce::MouseEvent& e)
 {
     dragBand = hitTestBand (e.position);
+
+    if (dragBand < 0 && onBackgroundClick)
+        onBackgroundClick();
 }
 
 void EqEditor::mouseDrag (const juce::MouseEvent& e)

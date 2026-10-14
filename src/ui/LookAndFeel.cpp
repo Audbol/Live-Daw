@@ -23,6 +23,13 @@ ConsoleLookAndFeel::ConsoleLookAndFeel()
     setColour (juce::ComboBox::backgroundColourId, Colours::panelLight);
     setColour (juce::ComboBox::outlineColourId, Colours::outline);
     setColour (juce::PopupMenu::backgroundColourId, Colours::panel);
+    setColour (juce::TextEditor::backgroundColourId, juce::Colours::black.withAlpha (0.3f));
+    setColour (juce::TextEditor::outlineColourId, Colours::outline);
+    setColour (juce::TextEditor::textColourId, Colours::text);
+    setColour (juce::ListBox::backgroundColourId, juce::Colours::black.withAlpha (0.3f));
+    setColour (juce::TabbedButtonBar::tabTextColourId, Colours::textDim);
+    setColour (juce::TabbedButtonBar::frontTextColourId, Colours::accent);
+    setColour (juce::TabbedComponent::outlineColourId, juce::Colours::transparentBlack);
 }
 
 void ConsoleLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,

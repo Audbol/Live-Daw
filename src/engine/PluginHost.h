@@ -20,7 +20,13 @@ public:
     /** File used by the scanner to blacklist plugins that crash during a scan. */
     juce::File getDeadMansPedalFile() const;
 
-    /** Synchronously instantiates a plugin (message thread). */
+    /** If the previous run crashed while instantiating a plugin, blacklists that
+        plugin and returns its name (empty otherwise). Call once at startup. */
+    juce::String checkForCrashDuringPluginLoad();
+
+    /** Synchronously instantiates a plugin (message thread). The plugin being
+        loaded is recorded on disk first, so a crash inside its constructor can be
+        traced and that plugin blacklisted on the next start. */
     std::unique_ptr<juce::AudioPluginInstance> createInstance (const juce::PluginDescription& description,
                                                                double sampleRate, int blockSize,
                                                                juce::String& errorMessage);
@@ -30,6 +36,7 @@ public:
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    juce::File getPendingLoadFile() const;
 
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList knownPlugins;

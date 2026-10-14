@@ -61,6 +61,9 @@ public:
     std::atomic<float> gateGain { 1.0f }, compReductionDb { 0.0f };
     std::atomic<int> currentWidth { 1 };
 
+    /** Number of blocks that produced NaN/inf and were silenced (stability monitor). */
+    std::atomic<int> dspFaults { 0 };
+
     // Audio thread --------------------------------------------------------------
     /** Number of channels this block (1 = mono, 2 = stereo). */
     int getNumChannels() const noexcept { return numChannels; }
@@ -91,6 +94,7 @@ public:
 
 private:
     void runChain (int numSamples) noexcept;
+    void resetDsp() noexcept;
     void runOutputStage (int numSamples) noexcept;
 
     const StripKind kind;

@@ -1,4 +1,5 @@
 #include "engine/PluginHost.h"
+#include "engine/PluginScanner.h"
 
 namespace livedaw
 {
@@ -14,6 +15,9 @@ PluginHost::PluginHost (juce::PropertiesFile* s) : settings (s)
             knownPlugins.recreateFromXml (*xml);
 
     knownPlugins.addChangeListener (this);
+
+    // A plugin that crashes during scanning only takes down the scanner process.
+    knownPlugins.setCustomScanner (std::make_unique<OutOfProcessScanner>());
 }
 
 PluginHost::~PluginHost()
@@ -41,11 +45,41 @@ void PluginHost::changeListenerCallback (juce::ChangeBroadcaster*)
     }
 }
 
+juce::File PluginHost::getPendingLoadFile() const
+{
+    return getDeadMansPedalFile().getSiblingFile ("PluginBeingLoaded");
+}
+
+juce::String PluginHost::checkForCrashDuringPluginLoad()
+{
+    const auto file = getPendingLoadFile();
+
+    if (! file.existsAsFile())
+        return {};
+
+    const auto lines = juce::StringArray::fromLines (file.loadFileAsString());
+    file.deleteFile();
+
+    const auto identifier = lines[0].trim();
+    if (identifier.isEmpty())
+        return {};
+
+    knownPlugins.addToBlacklist (identifier);
+    return lines[1].isNotEmpty() ? lines[1] : identifier;
+}
+
 std::unique_ptr<juce::AudioPluginInstance> PluginHost::createInstance (const juce::PluginDescription& description,
                                                                        double sampleRate, int blockSize,
                                                                        juce::String& errorMessage)
 {
-    return formatManager.createPluginInstance (description, sampleRate, blockSize, errorMessage);
+    const auto pending = getPendingLoadFile();
+    pending.getParentDirectory().createDirectory();
+    pending.replaceWithText (description.fileOrIdentifier + "\n" + description.name);
+
+    auto instance = formatManager.createPluginInstance (description, sampleRate, blockSize, errorMessage);
+
+    pending.deleteFile();
+    return instance;
 }
 
 juce::Array<juce::PluginDescription> PluginHost::getSortedTypes() const

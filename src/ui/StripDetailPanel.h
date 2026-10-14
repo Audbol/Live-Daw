@@ -1,7 +1,6 @@
 #pragma once
 
-#include "engine/MixerEngine.h"
-#include "engine/PluginHost.h"
+#include "ui/UiContext.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -16,7 +15,7 @@ namespace livedaw::ui
 class StripDetailPanel final : public juce::Component
 {
 public:
-    StripDetailPanel (MixerEngine& engine, PluginHost& host);
+    explicit StripDetailPanel (UiContext&);
     ~StripDetailPanel() override;
 
     /** Shows `strip` (nullptr shows a placeholder). Rebuilds all controls. */
@@ -26,18 +25,13 @@ public:
     /** Rebuilds the controls for the current strip (e.g. after buses changed). */
     void refresh() { setStrip (current); }
 
-    std::function<void (Strip&, int slot)> onOpenPluginEditor;
-    std::function<void (juce::AudioProcessor*)> onPluginRemoved;
-    std::function<void()> onShowPluginScanner;
-
     void paint (juce::Graphics&) override;
     void resized() override;
 
 private:
     class Content;
 
-    MixerEngine& engine;
-    PluginHost& host;
+    UiContext& ctx;
     Strip* current = nullptr;
 
     juce::Viewport viewport;

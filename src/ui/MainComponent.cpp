@@ -1,5 +1,4 @@
 #include "ui/MainComponent.h"
-#include "engine/Session.h"
 
 namespace livedaw::ui
 {
@@ -27,10 +26,11 @@ public:
 
     void closeButtonPressed() override
     {
-        juce::MessageManager::callAsync ([o = juce::Component::SafePointer<MainComponent> (&owner), this]
+        juce::MessageManager::callAsync ([o = juce::Component::SafePointer<MainComponent> (&owner),
+                                          w = juce::Component::SafePointer<PluginWindow> (this)]
         {
-            if (o != nullptr)
-                o->pluginWindows.removeObject (this);
+            if (o != nullptr && w != nullptr)
+                o->pluginWindows.removeObject (w.getComponent());
         });
     }
 
@@ -49,60 +49,83 @@ public:
 
     int getPreferredWidth() const
     {
-        int w = 0;
-        StripKind lastKind = StripKind::Input;
-        for (auto* s : strips)
-        {
-            if (s->getStrip().isBus() && lastKind == StripKind::Input)
-                w += kGap;
-            lastKind = s->getStrip().getKind();
-            w += StripComponent::kWidth;
-        }
-        return w;
+        int x = 0;
+        layout ([&x] (StripComponent*, int left) { x = left + StripComponent::kWidth; });
+        return x;
     }
 
     void resized() override
     {
+        layout ([this] (StripComponent* s, int left) { s->setBounds (left, 0, StripComponent::kWidth, getHeight()); });
+    }
+
+private:
+    template <typename Fn>
+    void layout (Fn&& place) const
+    {
         int x = 0;
-        StripKind lastKind = StripKind::Input;
+        bool inBuses = false;
         for (auto* s : strips)
         {
-            if (s->getStrip().isBus() && lastKind == StripKind::Input)
+            if (s->getStrip().isBus() && ! inBuses)
+            {
                 x += kGap;
-            lastKind = s->getStrip().getKind();
-            s->setBounds (x, 0, StripComponent::kWidth, getHeight());
+                inBuses = true;
+            }
+            place (s, x);
             x += StripComponent::kWidth;
         }
     }
 
-private:
     static constexpr int kGap = 12;
     juce::OwnedArray<StripComponent>& strips;
 };
 
 //==============================================================================
-MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, PluginHost& h, juce::PropertiesFile& s)
-    : deviceManager (dm), engine (e), host (h), settings (s), detailPanel (e, h)
+MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, PluginHost& h, Show& s,
+                              EventLog& l, juce::PropertiesFile& props)
+    : deviceManager (dm),
+      engine (e),
+      show (s),
+      log (l),
+      settings (props),
+      ctx { e, h, s, l, {}, {}, {}, {}, {} },
+      detailPanel (ctx),
+      showPanel (ctx),
+      systemPanel (ctx, dm)
 {
+    ctx.openPluginEditor = [this] (Strip& strip, int slot) { openPluginEditor (strip, slot); };
+    ctx.pluginRemoved = [this] (juce::AudioProcessor* p) { closePluginWindowsFor (p); };
+    ctx.showPluginScanner = [this] { showPluginScanner(); };
+    ctx.selectStrip = [this] (Strip* strip) { selectStrip (strip); };
+    ctx.getSelectedStrip = [this] { return detailPanel.getStrip(); };
+
     setLookAndFeel (&lookAndFeel);
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
 
-    for (auto* b : { &audioButton, &pluginsButton, &newButton, &openButton, &saveButton,
-                     &addAuxButton, &addGroupButton, &fewerButton, &moreButton })
+    for (auto* b : { &audioButton, &pluginsButton, &showButton, &addAuxButton, &addGroupButton,
+                     &fewerButton, &moreButton, &prevSceneButton, &goButton, &panelButton })
         addAndMakeVisible (b);
 
     audioButton.onClick = [this] { showAudioSettings(); };
     pluginsButton.onClick = [this] { showPluginScanner(); };
-    newButton.onClick = [this] { newSession(); };
-    openButton.onClick = [this] { openSession(); };
-    saveButton.onClick = [this] { saveSession(); };
+    showButton.onClick = [this] { showShowMenu(); };
     addAuxButton.onClick = [this] { addBus (StripKind::Aux); };
     addGroupButton.onClick = [this] { addBus (StripKind::Group); };
     fewerButton.onClick = [this] { setChannelCount (static_cast<int> (engine.getInputs().size()) - 1); };
     moreButton.onClick = [this] { setChannelCount (static_cast<int> (engine.getInputs().size()) + 1); };
+    prevSceneButton.onClick = [this] { recall (&Show::recallPrevious); };
+    goButton.onClick = [this] { recall (&Show::recallNext); };
+    panelButton.onClick = [this] { setPanelVisible (! panelVisible); };
 
+    showButton.setTooltip ("New / open / save show");
     addAuxButton.setTooltip ("Add an aux bus (monitor mix / FX send)");
     addGroupButton.setTooltip ("Add a group (subgroup routed to master)");
+    prevSceneButton.setTooltip ("Recall the previous scene");
+    goButton.setTooltip ("Recall the next scene");
+    goButton.setColour (juce::TextButton::buttonColourId, Colours::active.darker (0.3f));
+    panelButton.setTooltip ("Show / hide the bottom panel");
+    panelButton.setClickingTogglesState (false);
 
     channelsCaption.setText ("Channels", juce::dontSendNotification);
     channelsCaption.setColour (juce::Label::textColourId, Colours::textDim);
@@ -115,6 +138,12 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     channelCountLabel.onTextChange = [this] { setChannelCount (channelCountLabel.getText().getIntValue()); };
     addAndMakeVisible (channelCountLabel);
 
+    sceneLabel.setJustificationType (juce::Justification::centred);
+    sceneLabel.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+    sceneLabel.setColour (juce::Label::backgroundColourId, juce::Colours::black.withAlpha (0.35f));
+    sceneLabel.setColour (juce::Label::textColourId, Colours::active);
+    addAndMakeVisible (sceneLabel);
+
     statusLabel.setJustificationType (juce::Justification::centredRight);
     statusLabel.setColour (juce::Label::textColourId, Colours::textDim);
     statusLabel.setFont (juce::FontOptions (12.0f));
@@ -125,31 +154,38 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     stripViewport.setScrollBarsShown (false, true);
     addAndMakeVisible (stripViewport);
 
-    detailPanel.onOpenPluginEditor = [this] (Strip& strip, int slot) { openPluginEditor (strip, slot); };
-    detailPanel.onPluginRemoved = [this] (juce::AudioProcessor* p) { closePluginWindowsFor (p); };
-    detailPanel.onShowPluginScanner = [this] { showPluginScanner(); };
-    addAndMakeVisible (detailPanel);
+    const auto tabColour = Colours::background.darker (0.2f);
+    tabs.addTab ("Channel", tabColour, &detailPanel, false);
+    tabs.addTab ("Show", tabColour, &showPanel, false);
+    tabs.addTab ("System", tabColour, &systemPanel, false);
+    tabs.setTabBarDepth (26);
+    tabs.setOutline (0);
+    addAndMakeVisible (tabs);
 
-    engine.onDeviceChanged = [this]
+    engine.onDeviceChanged = [this] { detailPanel.refresh(); };
+
+    show.onChanged = [this]
     {
-        // Hardware channel names may have changed.
-        detailPanel.refresh();
+        showPanel.refresh();
+        updateSceneControls();
     };
 
     rebuildStrips();
-    updateTitle();
-    setSize (1400, 900);
+    updateSceneControls();
+    setSize (1500, 950);
     startTimerHz (2);
 }
 
 MainComponent::~MainComponent()
 {
+    show.onChanged = nullptr;
     engine.onDeviceChanged = nullptr;
-    pluginWindows.clear();
+    closeAllPluginWindows();
     scannerWindow.reset();
     if (audioSettingsWindow != nullptr)
         delete audioSettingsWindow.getComponent();
 
+    tabs.clearTabs();
     stripViewport.setViewedComponent (nullptr, false);
     detailPanel.setStrip (nullptr);
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
@@ -166,9 +202,9 @@ void MainComponent::rebuildStrips()
 
     auto addStrip = [this, &selected, &selectedStillExists] (Strip& s)
     {
-        auto* comp = strips.add (new StripComponent (s, engine));
-        comp->onSelect = [this] (Strip& st) { selectStrip (&st); };
+        auto* comp = strips.add (new StripComponent (s, ctx));
         comp->onRemove = [this] (Strip& st) { removeStrip (st); };
+        comp->setNumInsertRows (insertRows);
         stripsContainer->addAndMakeVisible (comp);
         selectedStillExists = selectedStillExists || &s == selected;
     };
@@ -178,33 +214,74 @@ void MainComponent::rebuildStrips()
     for (auto& s : engine.getBuses())
         addStrip (*s);
 
-    masterStrip = std::make_unique<StripComponent> (engine.getMaster(), engine);
-    masterStrip->onSelect = [this] (Strip& st) { selectStrip (&st); };
+    masterStrip = std::make_unique<StripComponent> (engine.getMaster(), ctx);
+    masterStrip->setNumInsertRows (insertRows);
     addAndMakeVisible (*masterStrip);
 
     channelCountLabel.setText (juce::String (engine.getInputs().size()), juce::dontSendNotification);
 
-    selectStrip (selectedStillExists ? selected : nullptr);
+    selectStrip (selectedStillExists ? selected : nullptr, false);
     resized();
     stripsContainer->resized(); // its size may not have changed, but its children did
+    showPanel.refresh();
 }
 
-void MainComponent::selectStrip (Strip* strip)
+void MainComponent::updateInsertRows()
+{
+    // Every strip shows the same number of slots (so the handles line up), enough
+    // for the highest slot in use anywhere plus one free.
+    int highest = -1;
+    auto scan = [&highest] (const Strip& s)
+    {
+        for (int i = kNumInsertSlots; --i > highest;)
+            if (s.inserts.getPlugin (i) != nullptr)
+                highest = i;
+    };
+
+    scan (engine.getMaster());
+    for (auto& s : engine.getInputs())
+        scan (*s);
+    for (auto& s : engine.getBuses())
+        scan (*s);
+
+    const int rows = juce::jlimit (3, kNumInsertSlots, highest + 2);
+    if (rows == insertRows)
+        return;
+
+    insertRows = rows;
+    for (auto* s : strips)
+        s->setNumInsertRows (rows);
+    if (masterStrip != nullptr)
+        masterStrip->setNumInsertRows (rows);
+}
+
+void MainComponent::selectStrip (Strip* strip, bool reveal)
 {
     for (auto* s : strips)
         s->setSelected (&s->getStrip() == strip);
     if (masterStrip != nullptr)
         masterStrip->setSelected (strip == &engine.getMaster());
 
-    detailPanel.setStrip (strip);
+    if (detailPanel.getStrip() != strip)
+        detailPanel.setStrip (strip);
+
+    if (strip != nullptr && reveal)
+    {
+        tabs.setCurrentTabIndex (0);
+        setPanelVisible (true);
+    }
 }
 
 void MainComponent::removeStrip (Strip& strip)
 {
     // Defer: this is called from inside the strip component's own menu callback.
-    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MainComponent> (this), s = &strip]
+    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MainComponent> (this), ref = state::StripRef::of (strip)]
     {
         if (safe == nullptr)
+            return;
+
+        auto* s = state::findStrip (safe->engine, ref);
+        if (s == nullptr)
             return;
 
         if (safe->detailPanel.getStrip() == s)
@@ -212,6 +289,7 @@ void MainComponent::removeStrip (Strip& strip)
 
         safe->closePluginWindowsFor (*s);
         const bool wasBus = s->isBus();
+        safe->log.info ("Removed " + s->name);
         safe->engine.removeStrip (s);
         safe->rebuildStrips();
 
@@ -224,14 +302,12 @@ void MainComponent::setChannelCount (int count)
 {
     count = juce::jlimit (0, 4096, count);
 
-    // Close editors of plugins on channels that are about to disappear.
     for (size_t i = static_cast<size_t> (count); i < engine.getInputs().size(); ++i)
+    {
         closePluginWindowsFor (*engine.getInputs()[i]);
-
-    if (auto* sel = detailPanel.getStrip())
-        for (size_t i = static_cast<size_t> (count); i < engine.getInputs().size(); ++i)
-            if (engine.getInputs()[i].get() == sel)
-                detailPanel.setStrip (nullptr);
+        if (engine.getInputs()[i].get() == detailPanel.getStrip())
+            detailPanel.setStrip (nullptr);
+    }
 
     engine.setNumInputs (count);
     rebuildStrips();
@@ -250,6 +326,47 @@ void MainComponent::addBus (StripKind kind)
     detailPanel.refresh();
 }
 
+void MainComponent::setPanelVisible (bool shouldBeVisible)
+{
+    if (panelVisible == shouldBeVisible)
+        return;
+
+    panelVisible = shouldBeVisible;
+    tabs.setVisible (panelVisible);
+    resized();
+}
+
+//==============================================================================
+void MainComponent::recall (state::ApplyResult (Show::*fn)())
+{
+    if (show.getNumScenes() == 0)
+        return;
+
+    const auto result = (show.*fn)();
+    const int index = show.getCurrentSceneIndex();
+    if (auto* scene = show.getScene (index))
+        logRecall (ctx, "scene " + juce::String (index + 1) + " \"" + scene->name + "\"", result);
+}
+
+void MainComponent::updateSceneControls()
+{
+    const int index = show.getCurrentSceneIndex();
+    auto* scene = show.getScene (index);
+
+    sceneLabel.setText (scene != nullptr ? juce::String (index + 1).paddedLeft ('0', 2) + "  " + scene->name
+                                         : (show.getNumScenes() > 0 ? juce::String ("No scene recalled") : juce::String ("No scenes")),
+                        juce::dontSendNotification);
+
+    if (auto* next = show.getScene (index + 1))
+        goButton.setTooltip ("Recall next scene: " + next->name);
+    else
+        goButton.setTooltip ("No next scene");
+
+    prevSceneButton.setEnabled (index > 0);
+    goButton.setEnabled (index + 1 < show.getNumScenes());
+    updateTitle();
+}
+
 //==============================================================================
 void MainComponent::paint (juce::Graphics& g)
 {
@@ -263,30 +380,33 @@ void MainComponent::resized()
     auto b = getLocalBounds();
     auto bar = b.removeFromTop (44).reduced (8, 8);
 
-    for (auto* button : { &audioButton, &pluginsButton })
+    for (auto* button : { &audioButton, &pluginsButton, &showButton })
     {
-        button->setBounds (bar.removeFromLeft (100));
+        button->setBounds (bar.removeFromLeft (button == &audioButton ? 96 : 70));
         bar.removeFromLeft (6);
     }
-    bar.removeFromLeft (12);
-    for (auto* button : { &newButton, &openButton, &saveButton })
-    {
-        button->setBounds (bar.removeFromLeft (60));
-        bar.removeFromLeft (6);
-    }
-    bar.removeFromLeft (12);
-    channelsCaption.setBounds (bar.removeFromLeft (64));
-    fewerButton.setBounds (bar.removeFromLeft (28));
-    channelCountLabel.setBounds (bar.removeFromLeft (50).reduced (2, 0));
-    moreButton.setBounds (bar.removeFromLeft (28));
-    bar.removeFromLeft (12);
-    addAuxButton.setBounds (bar.removeFromLeft (70));
+    bar.removeFromLeft (10);
+    channelsCaption.setBounds (bar.removeFromLeft (62));
+    fewerButton.setBounds (bar.removeFromLeft (26));
+    channelCountLabel.setBounds (bar.removeFromLeft (46).reduced (2, 0));
+    moreButton.setBounds (bar.removeFromLeft (26));
+    bar.removeFromLeft (10);
+    addAuxButton.setBounds (bar.removeFromLeft (62));
     bar.removeFromLeft (6);
-    addGroupButton.setBounds (bar.removeFromLeft (80));
-    bar.removeFromLeft (12);
+    addGroupButton.setBounds (bar.removeFromLeft (72));
+    bar.removeFromLeft (16);
+    prevSceneButton.setBounds (bar.removeFromLeft (30));
+    bar.removeFromLeft (4);
+    sceneLabel.setBounds (bar.removeFromLeft (220));
+    bar.removeFromLeft (4);
+    goButton.setBounds (bar.removeFromLeft (64));
+    bar.removeFromLeft (10);
+    panelButton.setBounds (bar.removeFromRight (60));
+    bar.removeFromRight (8);
     statusLabel.setBounds (bar);
 
-    detailPanel.setBounds (b.removeFromBottom (juce::jlimit (330, 380, getHeight() * 38 / 100)));
+    if (panelVisible)
+        tabs.setBounds (b.removeFromBottom (juce::jlimit (330, 400, getHeight() * 38 / 100)));
 
     auto console = b.reduced (4);
     if (masterStrip != nullptr)
@@ -300,31 +420,30 @@ void MainComponent::resized()
 
 void MainComponent::timerCallback()
 {
+    updateInsertRows();
+
     juce::String status;
 
     if (auto* device = deviceManager.getCurrentAudioDevice())
-    {
-        status << device->getTypeName() << ": " << device->getName() << "  |  "
-               << juce::String (device->getCurrentSampleRate() / 1000.0, 1) << " kHz, "
-               << device->getCurrentBufferSizeSamples() << " smp ("
-               << juce::String (1000.0 * device->getCurrentBufferSizeSamples() / device->getCurrentSampleRate(), 1)
-               << " ms)  |  ";
-    }
+        status << device->getTypeName() << "  " << juce::String (device->getCurrentSampleRate() / 1000.0, 1) << " kHz / "
+               << device->getCurrentBufferSizeSamples() << "  |  ";
     else
-    {
-        status << "No audio device  |  ";
-    }
+        status << "NO AUDIO DEVICE  |  ";
 
-    status << "DSP " << juce::roundToInt (engine.getDspLoad() * 100.0f) << "%  |  "
-           << (engine.getNumWorkerThreads() + 1) << " threads";
+    status << "DSP " << juce::roundToInt (engine.getDspLoad() * 100.0f) << "%";
+
+    const int faults = engine.getNumFaultedPlugins();
+    if (faults > 0)
+        status << "  |  " << faults << " PLUGIN FAULT" << (faults > 1 ? "S" : "");
 
     if (engine.anySoloActive.load())
-        status << "  |  SOLO ACTIVE";
+        status << "  |  SOLO";
 
     statusLabel.setText (status, juce::dontSendNotification);
+
+    const bool alarm = engine.getDspLoad() > 0.85f || faults > 0 || deviceManager.getCurrentAudioDevice() == nullptr;
     statusLabel.setColour (juce::Label::textColourId,
-                           engine.getDspLoad() > 0.85f ? Colours::mute
-                                                       : (engine.anySoloActive.load() ? Colours::solo : Colours::textDim));
+                           alarm ? Colours::mute : (engine.anySoloActive.load() ? Colours::solo : Colours::textDim));
 }
 
 //==============================================================================
@@ -361,29 +480,34 @@ void MainComponent::showPluginScanner()
     class ScannerWindow final : public juce::DocumentWindow
     {
     public:
-        ScannerWindow (PluginHost& h, std::unique_ptr<juce::DocumentWindow>& o)
-            : juce::DocumentWindow ("Plugins (VST3 / AU / LV2)", Colours::panel, closeButton), owner (o)
+        ScannerWindow (PluginHost& h, MainComponent& o)
+            : juce::DocumentWindow ("Plugins (VST3 / AU / LV2) - scanned in a separate process", Colours::panel, closeButton),
+              owner (o)
         {
             setUsingNativeTitleBar (true);
             auto* list = new juce::PluginListComponent (h.getFormatManager(), h.getKnownPlugins(),
                                                         h.getDeadMansPedalFile(), h.getSettings(), true);
-            list->setSize (700, 500);
+            list->setSize (720, 500);
             setContentOwned (list, true);
             setResizable (true, false);
-            centreWithSize (700, 500);
+            centreWithSize (720, 500);
             setVisible (true);
         }
 
         void closeButtonPressed() override
         {
-            juce::MessageManager::callAsync ([&o = owner] { o.reset(); });
+            juce::MessageManager::callAsync ([o = juce::Component::SafePointer<MainComponent> (&owner)]
+            {
+                if (o != nullptr)
+                    o->scannerWindow.reset();
+            });
         }
 
     private:
-        std::unique_ptr<juce::DocumentWindow>& owner;
+        MainComponent& owner;
     };
 
-    scannerWindow = std::make_unique<ScannerWindow> (host, scannerWindow);
+    scannerWindow = std::make_unique<ScannerWindow> (ctx.host, *this);
 }
 
 void MainComponent::openPluginEditor (Strip& strip, int slot)
@@ -418,29 +542,54 @@ void MainComponent::closePluginWindowsFor (Strip& strip)
             closePluginWindowsFor (p);
 }
 
-//==============================================================================
-void MainComponent::newSession()
+void MainComponent::closeAllPluginWindows()
 {
-    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "New session",
-                                        "Clear the console and start a new session?", "New", "Cancel", this,
+    pluginWindows.clear();
+}
+
+//==============================================================================
+void MainComponent::showShowMenu()
+{
+    juce::PopupMenu menu;
+    menu.addItem ("New show", [this] { newShow(); });
+    menu.addItem ("Open show...", [this] { openShow(); });
+    menu.addItem ("Save show", [this] { saveShow (false); });
+    menu.addItem ("Save show as...", [this] { saveShow (true); });
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (showButton));
+}
+
+void MainComponent::newShow()
+{
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "New show",
+                                        "Clear the console and all scenes and start a new show?", "New", "Cancel", this,
                                         juce::ModalCallbackFunction::create ([this] (int result)
     {
         if (result == 0)
             return;
 
-        pluginWindows.clear();
+        closeAllPluginWindows();
         detailPanel.setStrip (nullptr);
-        engine.reset();
-        engine.setNumInputs (16);
-        sessionFile = juce::File();
+        show.clear (16);
+        showFile = juce::File();
         rebuildStrips();
         updateTitle();
+        log.info ("New show");
     }));
 }
 
-void MainComponent::openSession()
+juce::Result MainComponent::reloadShow (const juce::File& file, bool loadPlugins)
 {
-    fileChooser = std::make_unique<juce::FileChooser> ("Open session", sessionFile, "*.livedaw");
+    closeAllPluginWindows();
+    detailPanel.setStrip (nullptr);
+    const auto result = show.loadFromFile (file, loadPlugins);
+    rebuildStrips();
+    updateSceneControls();
+    return result;
+}
+
+void MainComponent::openShow()
+{
+    fileChooser = std::make_unique<juce::FileChooser> ("Open show", showFile, "*.lshow;*.livedaw");
     fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                               [this] (const juce::FileChooser& fc)
     {
@@ -448,50 +597,64 @@ void MainComponent::openSession()
         if (file == juce::File())
             return;
 
-        pluginWindows.clear();
-        detailPanel.setStrip (nullptr);
-        const auto result = session::loadFromFile (engine, file, host);
-        sessionFile = file;
-        rebuildStrips();
+        const auto result = reloadShow (file, true);
+        showFile = file.hasFileExtension (Show::fileExtension) ? file : juce::File();
         updateTitle();
-
-        if (result.failed())
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Open session",
-                                                    result.getErrorMessage());
-    });
-}
-
-void MainComponent::saveSession()
-{
-    fileChooser = std::make_unique<juce::FileChooser> ("Save session", sessionFile, "*.livedaw");
-    fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
-                                  | juce::FileBrowserComponent::warnAboutOverwriting,
-                              [this] (const juce::FileChooser& fc)
-    {
-        auto file = fc.getResult();
-        if (file == juce::File())
-            return;
-
-        file = file.withFileExtension ("livedaw");
-        const auto result = session::saveToFile (engine, file);
+        log.info ("Opened show " + file.getFileName());
 
         if (result.failed())
         {
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Save session",
+            log.warning (result.getErrorMessage());
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Open show",
+                                                    result.getErrorMessage());
+        }
+    });
+}
+
+void MainComponent::saveShow (bool saveAs)
+{
+    auto writeTo = [this] (juce::File file)
+    {
+        file = file.withFileExtension (Show::fileExtension);
+        if (show.name == "Untitled show" || show.name == "Imported session")
+            show.name = file.getFileNameWithoutExtension();
+
+        const auto result = show.saveToFile (file);
+
+        if (result.failed())
+        {
+            log.error ("Save failed: " + result.getErrorMessage());
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Save show",
                                                     result.getErrorMessage());
             return;
         }
 
-        sessionFile = file;
+        showFile = file;
+        log.info ("Saved show " + file.getFileName());
         updateTitle();
+        showPanel.refresh();
+    };
+
+    if (! saveAs && showFile != juce::File())
+    {
+        writeTo (showFile);
+        return;
+    }
+
+    fileChooser = std::make_unique<juce::FileChooser> ("Save show", showFile, "*.lshow");
+    fileChooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                                  | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [writeTo] (const juce::FileChooser& fc)
+    {
+        if (fc.getResult() != juce::File())
+            writeTo (fc.getResult());
     });
 }
 
 void MainComponent::updateTitle()
 {
     if (auto* window = findParentComponentOfClass<juce::DocumentWindow>())
-        window->setName ("Live DAW" + (sessionFile.existsAsFile() ? " - " + sessionFile.getFileNameWithoutExtension()
-                                                                  : juce::String()));
+        window->setName ("Live DAW - " + show.name + (showFile != juce::File() ? " (" + showFile.getFileName() + ")" : juce::String()));
 }
 
 } // namespace livedaw::ui
