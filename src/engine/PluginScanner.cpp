@@ -142,7 +142,7 @@ namespace
                          private juce::AsyncUpdater
     {
     public:
-        Worker() { formatManager.addDefaultFormats(); }
+        Worker() { juce::addDefaultFormatsToManager (formatManager); }
 
         using juce::ChildProcessWorker::initialiseFromCommandLine;
 

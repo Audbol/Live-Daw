@@ -7,6 +7,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+if(MSVC)
+    # Static runtime: the .exe runs on any Windows PC without the VC++ redistributable.
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 if(APPLE)
     # std::atomic::wait (used by the realtime worker pool) needs macOS 11+.
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
@@ -17,8 +22,9 @@ endif()
 #-------------------------------------------------------------------------------
 option(LIVEDAW_BUILD_TESTS "Build the unit test runner" ON)
 set(LIVEDAW_JUCE_DIR "" CACHE PATH "Path to a local JUCE checkout (otherwise JUCE is fetched)")
-set(LIVEDAW_JUCE_TAG "8.0.9" CACHE STRING "JUCE git tag to fetch when LIVEDAW_JUCE_DIR is empty")
-set(LIVEDAW_ASIO_SDK_DIR "" CACHE PATH "Windows only: path to the Steinberg ASIO SDK (enables ASIO)")
+set(LIVEDAW_JUCE_TAG "8.0.15" CACHE STRING "JUCE git tag to fetch when LIVEDAW_JUCE_DIR is empty")
+option(LIVEDAW_ASIO "Windows only: enable ASIO (uses the ASIO SDK bundled with JUCE, GPLv3)" ON)
+set(LIVEDAW_ASIO_SDK_DIR "" CACHE PATH "Windows only, optional: use this ASIO SDK instead of JUCE's bundled copy")
 set(LIVEDAW_VST2_SDK_DIR "" CACHE PATH "Optional: path to a legacy VST2 SDK (enables VST2 hosting)")
 set(LIVEDAW_SANITIZE "" CACHE STRING "Build with sanitizers (GCC/Clang), e.g. 'address,undefined' or 'thread'")
 
@@ -102,15 +108,19 @@ function(livedaw_configure_juce_target target)
     endif()
 
     if(WIN32)
-        target_compile_definitions(${target} PRIVATE JUCE_WASAPI=1 JUCE_DIRECTSOUND=0)
-        if(LIVEDAW_ASIO_SDK_DIR)
+        target_compile_definitions(${target} PRIVATE JUCE_WASAPI=1 JUCE_DIRECTSOUND=1)
+
+        if(LIVEDAW_ASIO)
+            # JUCE 8.0.11+ ships the ASIO SDK headers (Steinberg relicensed them under GPLv3).
             target_compile_definitions(${target} PRIVATE JUCE_ASIO=1)
-            target_include_directories(${target} PRIVATE
-                "${LIVEDAW_ASIO_SDK_DIR}/common"
-                "${LIVEDAW_ASIO_SDK_DIR}/host"
-                "${LIVEDAW_ASIO_SDK_DIR}/host/pc")
-        else()
-            message(WARNING "LIVEDAW_ASIO_SDK_DIR not set: building without ASIO support (WASAPI only).")
+
+            if(LIVEDAW_ASIO_SDK_DIR)
+                target_compile_definitions(${target} PRIVATE JUCE_ASIO_USE_EXTERNAL_SDK=1)
+                target_include_directories(${target} PRIVATE
+                    "${LIVEDAW_ASIO_SDK_DIR}/common"
+                    "${LIVEDAW_ASIO_SDK_DIR}/host"
+                    "${LIVEDAW_ASIO_SDK_DIR}/host/pc")
+            endif()
         endif()
     endif()
 
@@ -177,6 +187,7 @@ if(LIVEDAW_BUILD_TESTS)
         tests/StabilityTests.cpp
         tests/PluginHostingTests.cpp
         tests/LayerTests.cpp
+        tests/DeviceTests.cpp
         ${LIVEDAW_ENGINE_SOURCES})
     livedaw_configure_juce_target(LiveDAWTests)
 

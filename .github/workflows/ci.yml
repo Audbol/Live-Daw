@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
@@ -12,12 +13,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux (ALSA + JACK)
-            os: ubuntu-24.04
-          - name: macOS (CoreAudio)
-            os: macos-14
           - name: Windows (ASIO + WASAPI)
             os: windows-2022
+            artifact: LiveDAW-Windows
+            parallel: 4
+          - name: macOS (CoreAudio)
+            os: macos-14
+            artifact: LiveDAW-macOS
+            parallel: 4
+          - name: Linux (ALSA + JACK)
+            os: ubuntu-24.04
+            artifact: LiveDAW-Linux
+            parallel: 2   # two JUCE targets with LTO exhaust the runner's memory at higher counts
 
     steps:
       - uses: actions/checkout@v4
@@ -29,29 +36,45 @@ jobs:
           sudo apt-get install -y ninja-build libasound2-dev libjack-jackd2-dev \
             libfreetype-dev libfontconfig1-dev libx11-dev libxcomposite-dev \
             libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev \
-            lsp-plugins-lv2   # real plugins for the hosting integration test
-
-      - name: Fetch ASIO SDK (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          Invoke-WebRequest -Uri "https://www.steinberg.net/asiosdk" -OutFile asiosdk.zip
-          Expand-Archive asiosdk.zip -DestinationPath asio
-          $dir = (Get-ChildItem asio -Directory | Select-Object -First 1).FullName
-          "ASIO_SDK_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append
+            lsp-plugins-lv2
 
       - name: Configure
-        shell: bash
-        run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-            ${ASIO_SDK_DIR:+-DLIVEDAW_ASIO_SDK_DIR="$ASIO_SDK_DIR"}
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release --parallel ${{ matrix.parallel }}
 
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item "build/LiveDAW_artefacts/Release/Live DAW.exe" dist/
+          Copy-Item README.md dist/
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist
+          ditto -c -k --keepParent "build/LiveDAW_artefacts/Release/Live DAW.app" "dist/Live DAW.app.zip"
+          cp README.md dist/
+
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist
+          cp "build/LiveDAW_artefacts/Release/Live DAW" dist/
+          cp README.md dist/
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/
+          retention-days: 30
 
   sanitizers:
     name: Linux ${{ matrix.sanitizer }}
@@ -75,7 +98,7 @@ jobs:
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DLIVEDAW_SANITIZE=${{ matrix.sanitizer }}
 
       - name: Build tests
-        run: cmake --build build --target LiveDAWTests --parallel
+        run: cmake --build build --target LiveDAWTests --parallel 2
 
       - name: Test
         env:

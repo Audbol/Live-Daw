@@ -211,6 +211,10 @@ public:
         if (error.isNotEmpty())
             log.error ("Audio device: " + error);
 
+        // First launch: prefer a low-latency driver (ASIO on Windows) over the OS default.
+        if (savedDevice == nullptr)
+            preferLowLatencyDriver();
+
         deviceManager.addAudioCallback (engine.get());
         watchdog = std::make_unique<DeviceWatchdog> (deviceManager, *engine, log);
 
@@ -296,6 +300,31 @@ private:
     juce::File getAutosaveTarget() const
     {
         return safeMode ? getDataDirectory().getChildFile ("autosave-safemode.lshow") : getAutosaveFile();
+    }
+
+    void preferLowLatencyDriver()
+    {
+        for (const auto* typeName : { "ASIO", "JACK" })
+        {
+            for (auto* type : deviceManager.getAvailableDeviceTypes())
+            {
+                if (type->getTypeName() != typeName)
+                    continue;
+
+                type->scanForDevices();
+                const auto devices = type->getDeviceNames (false);
+                if (devices.isEmpty())
+                    continue;
+
+                deviceManager.setCurrentAudioDeviceType (typeName, true);
+
+                if (auto* device = deviceManager.getCurrentAudioDevice())
+                {
+                    log.info (juce::String (typeName) + " driver selected: " + device->getName());
+                    return;
+                }
+            }
+        }
     }
 
     void offerSafeModeRecovery (const juce::String& crashedPlugin)

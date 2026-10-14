@@ -8,7 +8,7 @@ static constexpr const char* kPluginListKey = "pluginList";
 
 PluginHost::PluginHost (juce::PropertiesFile* s) : settings (s)
 {
-    formatManager.addDefaultFormats();
+    juce::addDefaultFormatsToManager (formatManager);
 
     if (settings != nullptr)
         if (auto xml = settings->getXmlValue (kPluginListKey))

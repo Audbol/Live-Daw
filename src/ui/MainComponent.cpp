@@ -12,7 +12,7 @@ public:
     {
         setUsingNativeTitleBar (true);
 
-        juce::AudioProcessorEditor* editor = processor.hasEditor() ? processor.createEditorIfNeeded() : nullptr;
+        juce::AudioProcessorEditor* editor = processor.hasEditor() ? processor.createEditorAndMakeActive() : nullptr;
         if (editor == nullptr)
             editor = new juce::GenericAudioProcessorEditor (processor);
 

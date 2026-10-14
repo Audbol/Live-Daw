@@ -94,14 +94,28 @@ Use small ALSA periods or run through JACK.
 
 ### Windows (ASIO)
 
-The ASIO SDK isn't bundled with this repository. Download it from Steinberg
-(<https://www.steinberg.net/developers/>) and point CMake at the extracted folder:
+ASIO is built in by default. JUCE (8.0.11 and later) bundles the ASIO SDK, which
+Steinberg relicensed under GPLv3 in October 2025, so there is nothing to download.
+The `.exe` uses the static MSVC runtime, so it runs on any Windows 10/11 PC without
+installing the VC++ redistributable.
 
 ```bat
-cmake -S . -B build -DLIVEDAW_ASIO_SDK_DIR=C:/SDKs/asiosdk_2.3.3
+cmake -S . -B build
+cmake --build build --config Release
 ```
 
-If you don't set it, the app builds with WASAPI only and CMake prints a warning.
+On first launch, Live DAW selects ASIO automatically if an ASIO driver is installed.
+Use your interface's own ASIO driver for the lowest latency (ASIO4ALL or FlexASIO
+also work). The driver's control panel (buffer size and so on) is in **Audio Setup**.
+
+Options: `-DLIVEDAW_ASIO=OFF` builds without ASIO.
+`-DLIVEDAW_ASIO_SDK_DIR=C:/path/to/asiosdk` uses a different copy of the SDK.
+
+### Download a build
+
+Every push builds Windows, macOS and Linux versions on GitHub Actions. Open the
+repository's **Actions** tab, select the latest **CI** run and download
+**LiveDAW-Windows** (or macOS/Linux) from *Artifacts*.
 
 ### macOS
 
@@ -155,4 +169,5 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the signal flow and the rea
 ## Licensing note
 
 Live DAW is built on [JUCE](https://juce.com). JUCE 8 is dual-licensed under AGPLv3
-or a commercial JUCE licence. Distributing builds of this app requires one of the two.
+or a commercial JUCE licence. Distributing builds of this app requires one of the two. Windows builds also
+include the ASIO SDK, which is GPLv3 (compatible with the AGPLv3).
