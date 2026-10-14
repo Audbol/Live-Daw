@@ -1,0 +1,10 @@
+/build*/
+/out/
+/.cache/
+/.vs/
+/.vscode/
+/.idea/
+CMakeUserPresets.json
+compile_commands.json
+*.swp
+.DS_Store

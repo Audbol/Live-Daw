@@ -1,0 +1,165 @@
+cmake_minimum_required(VERSION 3.22)
+
+project(LiveDAW VERSION 0.1.0 LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+if(APPLE)
+    # std::atomic::wait (used by the realtime worker pool) needs macOS 11+.
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
+endif()
+
+#-------------------------------------------------------------------------------
+# Options
+#-------------------------------------------------------------------------------
+option(LIVEDAW_BUILD_TESTS "Build the unit test runner" ON)
+set(LIVEDAW_JUCE_DIR "" CACHE PATH "Path to a local JUCE checkout (otherwise JUCE is fetched)")
+set(LIVEDAW_JUCE_TAG "8.0.9" CACHE STRING "JUCE git tag to fetch when LIVEDAW_JUCE_DIR is empty")
+set(LIVEDAW_ASIO_SDK_DIR "" CACHE PATH "Windows only: path to the Steinberg ASIO SDK (enables ASIO)")
+set(LIVEDAW_VST2_SDK_DIR "" CACHE PATH "Optional: path to a legacy VST2 SDK (enables VST2 hosting)")
+
+#-------------------------------------------------------------------------------
+# JUCE
+#-------------------------------------------------------------------------------
+if(LIVEDAW_JUCE_DIR)
+    add_subdirectory(${LIVEDAW_JUCE_DIR} ${CMAKE_BINARY_DIR}/JUCE EXCLUDE_FROM_ALL)
+else()
+    include(FetchContent)
+    FetchContent_Declare(JUCE
+        GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+        GIT_TAG        ${LIVEDAW_JUCE_TAG}
+        GIT_SHALLOW    TRUE)
+    FetchContent_MakeAvailable(JUCE)
+endif()
+
+#-------------------------------------------------------------------------------
+# Pure C++ DSP library (no JUCE dependency, unit-testable in isolation)
+#-------------------------------------------------------------------------------
+add_library(livedaw_dsp STATIC
+    src/dsp/Biquad.cpp
+    src/dsp/ParametricEq.cpp
+    src/dsp/NoiseGate.cpp
+    src/dsp/Compressor.cpp)
+target_include_directories(livedaw_dsp PUBLIC src)
+set_target_properties(livedaw_dsp PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+    target_compile_options(livedaw_dsp PRIVATE /W4)
+else()
+    target_compile_options(livedaw_dsp PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+#-------------------------------------------------------------------------------
+# Shared engine sources + JUCE configuration (used by the app and the tests)
+#-------------------------------------------------------------------------------
+set(LIVEDAW_ENGINE_SOURCES
+    src/engine/WorkerPool.cpp
+    src/engine/PluginChain.cpp
+    src/engine/Strip.cpp
+    src/engine/MixerEngine.cpp
+    src/engine/PluginHost.cpp
+    src/engine/Session.cpp)
+
+# Linked after JUCE's recommended warnings so these flags come last on the command line.
+add_library(livedaw_warning_overrides INTERFACE)
+if(NOT MSVC)
+    # Exact float comparisons are intentional (e.g. skipping unity/zero gain ramps).
+    target_compile_options(livedaw_warning_overrides INTERFACE -Wno-float-equal)
+endif()
+
+function(livedaw_configure_juce_target target)
+    target_include_directories(${target} PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+    target_compile_definitions(${target} PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_STRICT_REFCOUNTEDPOINTER=1
+        JUCE_PLUGINHOST_VST3=1
+        JUCE_PLUGINHOST_LV2=1
+        JUCE_USE_FLAC=0
+        JUCE_USE_OGGVORBIS=0
+        JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:${target},JUCE_PRODUCT_NAME>"
+        JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:${target},JUCE_VERSION>")
+
+    if(APPLE)
+        target_compile_definitions(${target} PRIVATE JUCE_PLUGINHOST_AU=1)
+    endif()
+
+    if(UNIX AND NOT APPLE)
+        # ALSA is on by default in JUCE; JACK is enabled as a bonus for pro Linux setups.
+        target_compile_definitions(${target} PRIVATE JUCE_ALSA=1 JUCE_JACK=1)
+    endif()
+
+    if(WIN32)
+        target_compile_definitions(${target} PRIVATE JUCE_WASAPI=1 JUCE_DIRECTSOUND=0)
+        if(LIVEDAW_ASIO_SDK_DIR)
+            target_compile_definitions(${target} PRIVATE JUCE_ASIO=1)
+            target_include_directories(${target} PRIVATE
+                "${LIVEDAW_ASIO_SDK_DIR}/common"
+                "${LIVEDAW_ASIO_SDK_DIR}/host"
+                "${LIVEDAW_ASIO_SDK_DIR}/host/pc")
+        else()
+            message(WARNING "LIVEDAW_ASIO_SDK_DIR not set: building without ASIO support (WASAPI only).")
+        endif()
+    endif()
+
+    if(LIVEDAW_VST2_SDK_DIR)
+        juce_set_vst2_sdk_path(${LIVEDAW_VST2_SDK_DIR})
+        target_compile_definitions(${target} PRIVATE JUCE_PLUGINHOST_VST=1)
+    endif()
+
+    target_link_libraries(${target}
+        PRIVATE
+            livedaw_dsp
+            juce::juce_audio_utils
+            juce::juce_audio_devices
+            juce::juce_audio_processors
+            juce::juce_dsp
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_lto_flags
+            juce::juce_recommended_warning_flags
+            livedaw_warning_overrides)
+endfunction()
+
+#-------------------------------------------------------------------------------
+# Application
+#-------------------------------------------------------------------------------
+juce_add_gui_app(LiveDAW
+    PRODUCT_NAME "Live DAW"
+    COMPANY_NAME "LiveDAW"
+    BUNDLE_ID "org.livedaw.app"
+    MICROPHONE_PERMISSION_ENABLED TRUE
+    MICROPHONE_PERMISSION_TEXT "Live DAW needs access to your audio inputs to mix them.")
+
+target_sources(LiveDAW PRIVATE
+    src/Main.cpp
+    ${LIVEDAW_ENGINE_SOURCES}
+    src/ui/LookAndFeel.cpp
+    src/ui/MeterComponent.cpp
+    src/ui/StripComponent.cpp
+    src/ui/EqEditor.cpp
+    src/ui/StripDetailPanel.cpp
+    src/ui/MainComponent.cpp)
+
+livedaw_configure_juce_target(LiveDAW)
+
+#-------------------------------------------------------------------------------
+# Tests
+#-------------------------------------------------------------------------------
+if(LIVEDAW_BUILD_TESTS)
+    enable_testing()
+
+    juce_add_console_app(LiveDAWTests PRODUCT_NAME "LiveDAW Tests")
+    target_sources(LiveDAWTests PRIVATE
+        tests/TestMain.cpp
+        tests/DspTests.cpp
+        tests/WorkerPoolTests.cpp
+        tests/EngineTests.cpp
+        ${LIVEDAW_ENGINE_SOURCES})
+    livedaw_configure_juce_target(LiveDAWTests)
+
+    add_test(NAME LiveDAWTests COMMAND LiveDAWTests)
+endif()
