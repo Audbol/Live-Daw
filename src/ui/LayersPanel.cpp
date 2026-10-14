@@ -244,14 +244,18 @@ LayersPanel::LayersPanel (UiContext& c) : ctx (c)
     bankLabel.setFont (juce::FontOptions (11.0f));
     addAndMakeVisible (bankLabel);
 
-    for (int size : { 8, 12, 16, 24, 32, 48 })
+    // Item id 1 = Auto (bank size 0); other ids are the strip count.
+    bankSize.addItem ("Auto (fit window)", 1);
+    for (int size : { 8, 12, 16, 24, 32, 48, 64 })
         bankSize.addItem (juce::String (size) + " strips", size);
-    bankSize.setTooltip ("How many strips each default layer holds");
+    bankSize.setTooltip ("How many strips each default layer holds. Auto fits as many as the window shows.");
     bankSize.onChange = [this]
     {
-        if (bankSize.getSelectedId() > 0 && bankSize.getSelectedId() != ctx.show.layers.getBankSize())
+        const int id = bankSize.getSelectedId();
+        const int size = id == 1 ? LayerSet::kAutoBankSize : id;
+        if (id > 0 && size != ctx.show.layers.getBankSize())
         {
-            ctx.show.layers.setBankSize (bankSize.getSelectedId());
+            ctx.show.layers.setBankSize (size);
             changed();
         }
     };
@@ -322,7 +326,7 @@ void LayersPanel::refresh()
         b->setEnabled (user);
     boardList->setEnabled (user);
 
-    bankSize.setSelectedId (ctx.show.layers.getBankSize(), juce::dontSendNotification);
+    bankSize.setSelectedId (ctx.show.layers.isAutoBankSize() ? 1 : ctx.show.layers.getBankSize(), juce::dontSendNotification);
 
     hintLabel.setText (user ? "User layer: add any channels, buses or the master from the board, in any order. "
                               "Double-click a board strip to add it."
@@ -357,7 +361,7 @@ void LayersPanel::resized()
         auto r = layersArea.reduced (10).withTrimmedTop (18);
         auto bank = r.removeFromBottom (24);
         bankLabel.setBounds (bank.removeFromLeft (70));
-        bankSize.setBounds (bank.removeFromLeft (120));
+        bankSize.setBounds (bank.removeFromLeft (150));
         r.removeFromBottom (4);
         auto buttons = r.removeFromBottom (26);
         const int w = buttons.getWidth() / 5;

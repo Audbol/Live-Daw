@@ -41,47 +41,6 @@ private:
 };
 
 //==============================================================================
-/** Lays out input strips, then buses, horizontally. */
-class MainComponent::StripsContainer final : public juce::Component
-{
-public:
-    explicit StripsContainer (juce::OwnedArray<StripComponent>& s) : strips (s) {}
-
-    int getPreferredWidth() const
-    {
-        int x = 0;
-        layout ([&x] (StripComponent*, int left) { x = left + StripComponent::kWidth; });
-        return x;
-    }
-
-    void resized() override
-    {
-        layout ([this] (StripComponent* s, int left) { s->setBounds (left, 0, StripComponent::kWidth, getHeight()); });
-    }
-
-private:
-    template <typename Fn>
-    void layout (Fn&& place) const
-    {
-        // A gap separates runs of input channels from runs of buses/master.
-        int x = 0;
-        const Strip* previous = nullptr;
-        for (auto* s : strips)
-        {
-            const bool isInput = s->getStrip().getKind() == StripKind::Input;
-            if (previous != nullptr && isInput != (previous->getKind() == StripKind::Input))
-                x += kGap;
-            previous = &s->getStrip();
-            place (s, x);
-            x += StripComponent::kWidth;
-        }
-    }
-
-    static constexpr int kGap = 12;
-    juce::OwnedArray<StripComponent>& strips;
-};
-
-//==============================================================================
 MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, PluginHost& h, Show& s,
                               EventLog& l, juce::PropertiesFile& props)
     : deviceManager (dm),
@@ -160,8 +119,8 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     statusLabel.setFont (juce::FontOptions (12.0f));
     addAndMakeVisible (statusLabel);
 
-    stripsContainer = std::make_unique<StripsContainer> (strips);
-    stripViewport.setViewedComponent (stripsContainer.get(), false);
+    stripViewport.setViewedComponent (&stripsContainer, false);
+    stripViewport.onVisibleAreaChanged = [this] { updateVisibleStrips(); };
     stripViewport.setScrollBarsShown (false, true);
     addAndMakeVisible (stripViewport);
 
@@ -216,20 +175,13 @@ void MainComponent::rebuildStrips()
             selectedStillExists = selectedStillExists || s.get() == selected;
 
     strips.clear();
+    stripComps.clear();
 
-    // Only the current layer's strips get components: big consoles stay light.
     auto& layers = show.layers;
     const auto layer = layers.findLayer (engine, layers.selectedLayerId);
     layers.selectedLayerId = layer.id;
-
-    for (auto* s : LayerSet::resolve (engine, layer))
-    {
-        auto* comp = strips.add (new StripComponent (*s, ctx));
-        comp->onRemove = [this] (Strip& st) { removeStrip (st); };
-        comp->setNumInsertRows (insertRows);
-        comp->setSelected (s == selected);
-        stripsContainer->addAndMakeVisible (comp);
-    }
+    layerStrips = LayerSet::resolve (engine, layer);
+    stripComps.assign (layerStrips.size(), nullptr);
 
     stripViewport.setViewPosition (0, 0);
     layerBar.refresh();
@@ -243,8 +195,109 @@ void MainComponent::rebuildStrips()
 
     selectStrip (selectedStillExists ? selected : nullptr, false);
     resized();
-    stripsContainer->resized(); // its size may not have changed, but its children did
+    layoutStrips();
     showPanel.refresh();
+}
+
+int MainComponent::computeFittedStripCount() const
+{
+    return juce::jmax (4, stripViewport.getWidth() / StripComponent::kWidth);
+}
+
+void MainComponent::applyFittedBankSize()
+{
+    fitPending = false;
+    auto& layers = show.layers;
+    const int fitted = computeFittedStripCount();
+
+    if (! layers.isAutoBankSize() || fitted == layers.getEffectiveBankSize())
+        return;
+
+    // Stay on the same strips: find the new bank holding the first strip shown now.
+    const auto current = layers.findLayer (engine, layers.selectedLayerId);
+    const bool onDefaultBank = ! current.user && current.id != "all" && ! current.strips.empty();
+    const auto anchor = onDefaultBank ? current.strips.front() : state::StripRef();
+
+    layers.setFittedBankSize (fitted);
+
+    if (onDefaultBank)
+    {
+        const auto id = layers.findDefaultLayerContaining (engine, anchor);
+        if (id.isNotEmpty())
+            layers.selectedLayerId = id;
+    }
+
+    rebuildStrips();
+}
+
+void MainComponent::layoutStrips()
+{
+    // A gap separates runs of input channels from runs of buses/master.
+    constexpr int gap = 12, maxStripWidth = 140;
+    const int n = static_cast<int> (layerStrips.size());
+    const int available = stripViewport.getWidth();
+
+    int gaps = 0;
+    for (int i = 1; i < n; ++i)
+        if ((layerStrips[(size_t) i]->getKind() == StripKind::Input) != (layerStrips[(size_t) i - 1]->getKind() == StripKind::Input))
+            gaps += gap;
+
+    // When the layer fits, stretch strips to use the whole width (ultrawide friendly).
+    stripWidth = StripComponent::kWidth;
+    if (n > 0 && n * StripComponent::kWidth + gaps <= available)
+        stripWidth = juce::jmin (maxStripWidth, (available - gaps) / n);
+
+    stripX.assign ((size_t) n, 0);
+    int x = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        if (i > 0 && (layerStrips[(size_t) i]->getKind() == StripKind::Input) != (layerStrips[(size_t) i - 1]->getKind() == StripKind::Input))
+            x += gap;
+        stripX[(size_t) i] = x;
+        x += stripWidth;
+    }
+
+    const int height = stripViewport.getHeight() - (x > available ? stripViewport.getScrollBarThickness() : 0);
+    stripsContainer.setSize (juce::jmax (available, x), juce::jmax (0, height));
+
+    for (int i = 0; i < n; ++i)
+        if (auto* comp = stripComps[(size_t) i])
+            comp->setBounds (stripX[(size_t) i], 0, stripWidth, stripsContainer.getHeight());
+
+    updateVisibleStrips();
+}
+
+void MainComponent::updateVisibleStrips()
+{
+    // Only strips in (or next to) the visible area get components, so a layer
+    // with thousands of strips costs no more than the ones on screen.
+    if (stripComps.size() != layerStrips.size() || stripX.size() != layerStrips.size())
+        return;
+
+    const auto view = stripViewport.getViewArea();
+    const int left = view.getX() - stripWidth, right = view.getRight() + stripWidth;
+    auto* selected = detailPanel.getStrip();
+
+    for (size_t i = 0; i < layerStrips.size(); ++i)
+    {
+        const bool visible = stripX[i] + stripWidth > left && stripX[i] < right;
+
+        if (visible && stripComps[i] == nullptr)
+        {
+            auto* comp = strips.add (new StripComponent (*layerStrips[i], ctx));
+            comp->onRemove = [this] (Strip& st) { removeStrip (st); };
+            comp->setNumInsertRows (insertRows);
+            comp->setSelected (layerStrips[i] == selected);
+            comp->setBounds (stripX[i], 0, stripWidth, stripsContainer.getHeight());
+            stripsContainer.addAndMakeVisible (comp);
+            stripComps[i] = comp;
+        }
+        else if (! visible && stripComps[i] != nullptr)
+        {
+            strips.removeObject (stripComps[i]);
+            stripComps[i] = nullptr;
+        }
+    }
 }
 
 void MainComponent::updateInsertRows()
@@ -437,8 +490,23 @@ void MainComponent::resized()
     console.removeFromRight (8);
 
     stripViewport.setBounds (console);
-    stripsContainer->setSize (juce::jmax (console.getWidth(), stripsContainer->getPreferredWidth()),
-                              console.getHeight() - stripViewport.getScrollBarThickness());
+
+    // Auto bank size: re-bank when the number of strips that fit changes.
+    if (show.layers.isAutoBankSize() && computeFittedStripCount() != show.layers.getEffectiveBankSize())
+    {
+        if (! fitPending)
+        {
+            fitPending = true;
+            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MainComponent> (this)]
+            {
+                if (safe != nullptr)
+                    safe->applyFittedBankSize();
+            });
+        }
+        return;
+    }
+
+    layoutStrips();
 }
 
 bool MainComponent::keyPressed (const juce::KeyPress& key)

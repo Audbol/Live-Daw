@@ -84,6 +84,9 @@ public:
     const float* const* getPostFader() const noexcept { return post.getArrayOfReadPointers(); }   // pre-pan
     const float* const* getMainOut() const noexcept { return main.getArrayOfReadPointers(); }     // stereo, panned
 
+    /** True when the last block took the silent fast path (all outputs are zero). */
+    bool isIdle() const noexcept { return idle; }
+
     float getPanLeft() const noexcept { return panLeft; }
     float getPanRight() const noexcept { return panRight; }
 
@@ -102,6 +105,7 @@ private:
     double sampleRate = 48000.0;
     int maxBlock = 512;
     int numChannels = 1;
+    bool inputConnected = true, idle = false;
 
     juce::AudioBuffer<float> work, pre, post, main;
 

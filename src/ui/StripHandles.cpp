@@ -26,6 +26,23 @@ InsertSlotsHandle::InsertSlotsHandle (Strip& s, UiContext& c) : strip (s), ctx (
     startTimerHz (4);
 }
 
+void InsertSlotsHandle::timerCallback()
+{
+    juce::String signature;
+    for (int i = 0; i < numRows; ++i)
+    {
+        auto* p = strip.inserts.getPlugin (i);
+        signature << (p != nullptr ? p->getName() : juce::String()) << (strip.inserts.isBypassed (i) ? "b" : "")
+                  << (strip.inserts.isFaulted (i) ? "f" : "") << "|";
+    }
+
+    if (signature != lastSignature)
+    {
+        lastSignature = signature;
+        repaint();
+    }
+}
+
 void InsertSlotsHandle::setNumRows (int rows)
 {
     numRows = juce::jlimit (1, kNumInsertSlots, rows);
@@ -105,7 +122,15 @@ void GateHandle::timerCallback()
     const float peak = juce::jmax (strip.inputPeak[0].exchange (0.0f), strip.inputPeak[1].exchange (0.0f));
     const float db = dsp::gainToDb (peak);
     levelDb = db > levelDb ? db : juce::jmax (db, levelDb - 1.5f);
-    repaint();
+
+    const auto& gp = strip.params.gate;
+    const auto signature = juce::String (juce::roundToInt (levelDb * 2.0f)) + ":" + juce::String (gp.thresholdDb.load(), 1)
+                           + ":" + juce::String ((int) gp.enabled.load()) + ":" + juce::String ((int) (strip.gateGain.load() < 0.5f));
+    if (signature != lastSignature)
+    {
+        lastSignature = signature;
+        repaint();
+    }
 }
 
 void GateHandle::paint (juce::Graphics& g)
@@ -173,7 +198,15 @@ void CompHandle::timerCallback()
 {
     const float r = strip.compReductionDb.load();
     reductionDb = r > reductionDb ? r : reductionDb * 0.85f + r * 0.15f;
-    repaint();
+
+    const auto& cp = strip.params.comp;
+    const auto signature = juce::String (juce::roundToInt (reductionDb * 4.0f)) + ":" + juce::String (cp.thresholdDb.load(), 1)
+                           + ":" + juce::String (cp.ratio.load(), 1) + ":" + juce::String ((int) cp.enabled.load());
+    if (signature != lastSignature)
+    {
+        lastSignature = signature;
+        repaint();
+    }
 }
 
 void CompHandle::paint (juce::Graphics& g)

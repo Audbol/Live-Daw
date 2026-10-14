@@ -23,12 +23,13 @@ public:
     juce::String getTooltip() override { return "Inserts: click to load or open, right-click for options"; }
 
 private:
-    void timerCallback() override { repaint(); }
+    void timerCallback() override;
     int rowAt (juce::Point<int>) const;
 
     Strip& strip;
     UiContext& ctx;
     int numRows = 4;
+    juce::String lastSignature;
 };
 
 /** Gate on a mixer strip: [G] toggles, the bar shows the input level against the
@@ -49,6 +50,7 @@ private:
     Strip& strip;
     float levelDb = -100.0f, dragStartThreshold = 0.0f;
     bool draggingBar = false;
+    juce::String lastSignature;
 };
 
 /** Compressor on a mixer strip: [C] toggles, the bar shows gain reduction.
@@ -69,6 +71,7 @@ private:
     Strip& strip;
     float reductionDb = 0.0f, dragStartThreshold = 0.0f;
     bool draggingBar = false;
+    juce::String lastSignature;
 };
 
 /** Tiny painted on/off toggle bound to an atomic<bool> (fits where a TextButton can't). */

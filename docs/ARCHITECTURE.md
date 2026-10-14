@@ -104,8 +104,18 @@ Show
   changes.
 - User layers store ordered `StripRef`s and are saved in the show (`<Layers>`). A
   reference to a removed strip is skipped by `resolve()`.
-- The UI builds components only for the current layer's strips. The master strip is
-  pinned on the right.
+- Bank size 0 means Auto. The UI reports how many strips fit
+  (`setFittedBankSize`), and on a resize it re-selects the bank holding the first
+  visible strip (`findDefaultLayerContaining`).
+- The mixer view is virtualised: components exist only for strips inside the
+  viewport (plus one strip each side), and meters and handles repaint only when their
+  displayed value changes. The master strip is pinned on the right.
+
+## Idle channels
+
+An input strip with no hardware input connected and no inserts takes a fast path:
+its buffers are zeroed and the chain is skipped, and the bus and master summing skip
+it too. Its DSP state is reset when it becomes active again, so it can't click.
 
 ## Stability mechanisms
 

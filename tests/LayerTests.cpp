@@ -58,6 +58,28 @@ public:
             expectEquals (layers.getDefaultLayers (engine)[1].id, juce::String ("in-2"));
         }
 
+        beginTest ("Auto bank size follows the strips that fit the window");
+        {
+            MixerEngine engine (0);
+            LayerSet layers;
+            engine.setNumInputs (100);
+            expect (layers.isAutoBankSize());
+
+            layers.setFittedBankSize (48); // e.g. an ultrawide monitor
+            expectEquals (names (layers.getDefaultLayers (engine)).joinIntoString ("|"),
+                          juce::String ("Ch 1-48|Ch 49-96|Ch 97-100|All"));
+
+            // After a resize, the bank holding channel 60 is found again.
+            const auto ch60 = state::StripRef::of (*engine.getInputs()[59]);
+            expectEquals (layers.findDefaultLayerContaining (engine, ch60), juce::String ("in-2"));
+            layers.setFittedBankSize (20);
+            expectEquals (layers.findDefaultLayerContaining (engine, ch60), juce::String ("in-3"));
+
+            // A fixed bank size overrides the window.
+            layers.setBankSize (32);
+            expectEquals (layers.getEffectiveBankSize(), 32);
+        }
+
         beginTest ("User layers hold any strips in any order");
         {
             MixerEngine engine (0);

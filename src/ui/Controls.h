@@ -155,11 +155,18 @@ private:
     {
         const float v = reader();
         value = v > value ? v : value * 0.85f + v * 0.15f;
-        repaint();
+
+        const int shown = juce::roundToInt (value * 10.0f);
+        if (shown != lastShown)
+        {
+            lastShown = shown;
+            repaint();
+        }
     }
 
     std::function<float()> reader;
     float range, value = 0.0f;
+    int lastShown = -1;
 };
 
 } // namespace livedaw::ui

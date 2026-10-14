@@ -44,6 +44,7 @@ StripComponent::StripComponent (Strip& s, UiContext& c)
     pan.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     pan.setDoubleClickReturnValue (true, 0.0);
     pan.setTooltip ("Pan / balance (double-click to centre)");
+    pan.setScrollWheelEnabled (false); // the wheel scrolls the mixer; it must never move a mix
     addAndMakeVisible (pan);
 
     addAndMakeVisible (mute);
@@ -56,6 +57,7 @@ StripComponent::StripComponent (Strip& s, UiContext& c)
 
     fader.setSkewFactorFromMidPoint (-12.0);
     fader.setDoubleClickReturnValue (true, 0.0);
+    fader.setScrollWheelEnabled (false);
     addAndMakeVisible (fader);
     addAndMakeVisible (meter);
 

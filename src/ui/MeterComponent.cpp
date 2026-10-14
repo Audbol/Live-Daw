@@ -44,12 +44,23 @@ void MeterComponent::timerCallback()
             clipped[(size_t) ch] = true;
     }
 
-    repaint();
+    // Only repaint when what's drawn changes (quantised to 0.25 dB): idle meters cost nothing.
+    juce::int64 signature = n;
+    for (int ch = 0; ch < 2; ++ch)
+        signature = signature * 1000003 + juce::roundToInt (levelDb[(size_t) ch] * 4.0f) * 7919
+                    + juce::roundToInt (holdDb[(size_t) ch] * 4.0f) * 31 + (clipped[(size_t) ch] ? 1 : 0);
+
+    if (signature != lastSignature)
+    {
+        lastSignature = signature;
+        repaint();
+    }
 }
 
 void MeterComponent::mouseDown (const juce::MouseEvent&)
 {
     clipped = { false, false };
+    repaint();
 }
 
 void MeterComponent::paint (juce::Graphics& g)

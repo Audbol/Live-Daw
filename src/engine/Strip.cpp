@@ -70,6 +70,9 @@ void Strip::prepare (double newSampleRate, int maxBlockSize)
     for (auto* b : { &work, &pre, &post, &main })
         b->setSize (2, maxBlock, false, true, false);
 
+    // Reallocated buffers aren't guaranteed to be zero: make an idle strip clear them again.
+    idle = false;
+
     hpf.reset();
     lastHpfFreq = -1.0f;
     gate.prepare (sampleRate);
@@ -92,14 +95,36 @@ void Strip::readHardwareInputs (const float* const* hwInputs, int numHwInputs, i
 
     const int sources[2] = { left, right };
 
+    // Already idle and still unpatched: the buffers are still zero from when the
+    // strip went idle, so there's nothing to do at all.
+    if (idle)
+    {
+        bool anyConnected = false;
+        for (int ch = 0; ch < numChannels; ++ch)
+            anyConnected = anyConnected || (sources[ch] >= 0 && sources[ch] < numHwInputs && hwInputs[sources[ch]] != nullptr);
+
+        if (! anyConnected)
+        {
+            inputConnected = false;
+            return;
+        }
+    }
+
+    inputConnected = false;
+
     for (int ch = 0; ch < numChannels; ++ch)
     {
         const int hw = sources[ch];
 
         if (hw >= 0 && hw < numHwInputs && hwInputs[hw] != nullptr)
+        {
             work.copyFrom (ch, 0, hwInputs[hw], numSamples);
+            inputConnected = true;
+        }
         else
+        {
             work.clear (ch, 0, numSamples);
+        }
 
         dsp::atomicMax (inputPeak[(size_t) ch], dsp::peakLevel (work.getReadPointer (ch), numSamples));
     }
@@ -117,6 +142,29 @@ void Strip::beginSummedBlock (int numSamples) noexcept
 void Strip::process (int numSamples) noexcept
 {
     jassert (numSamples <= maxBlock);
+
+    // Fast path: an input channel with nothing patched and no plugins can only
+    // output silence, so skip its DSP entirely. Large consoles with many unused
+    // channels then cost almost nothing for them.
+    if (kind == StripKind::Input && ! inputConnected && inserts.isEmpty())
+    {
+        if (! idle) // clear once on entering idle; nothing writes the buffers after that
+            for (auto* b : { &work, &pre, &post, &main })
+                for (int c = 0; c < 2; ++c)
+                    b->clear (c, 0, maxBlock);
+
+        gateGain.store (1.0f, std::memory_order_relaxed);
+        compReductionDb.store (0.0f, std::memory_order_relaxed);
+        idle = true;
+        return;
+    }
+
+    if (idle)
+    {
+        // Coming back from idle: don't let stale filter/dynamics state click.
+        resetDsp();
+        idle = false;
+    }
 
     if (kind != StripKind::Input)
         for (int ch = 0; ch < numChannels; ++ch)

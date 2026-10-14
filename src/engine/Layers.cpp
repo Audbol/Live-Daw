@@ -38,10 +38,10 @@ std::vector<Layer> LayerSet::getDefaultLayers (const MixerEngine& engine) const
     if (inputs.empty())
         layers.push_back ({ "in-1", "Inputs", {}, false });
     else
-        addBanks (layers, inputs, bankSize, "in", "Ch");
+        addBanks (layers, inputs, getEffectiveBankSize(), "in", "Ch");
 
-    addBanks (layers, auxes, bankSize, "aux", "Aux");
-    addBanks (layers, groups, bankSize, "groups", "Groups");
+    addBanks (layers, auxes, getEffectiveBankSize(), "aux", "Aux");
+    addBanks (layers, groups, getEffectiveBankSize(), "groups", "Groups");
 
     all = inputs;
     all.insert (all.end(), auxes.begin(), auxes.end());
@@ -67,6 +67,15 @@ Layer LayerSet::findLayer (const MixerEngine& engine, const juce::String& id) co
             return l;
 
     return layers.front();
+}
+
+juce::String LayerSet::findDefaultLayerContaining (const MixerEngine& engine, const state::StripRef& ref) const
+{
+    for (auto& layer : getDefaultLayers (engine))
+        if (layer.id != "all" && std::find (layer.strips.begin(), layer.strips.end(), ref) != layer.strips.end())
+            return layer.id;
+
+    return {};
 }
 
 std::vector<Strip*> LayerSet::resolve (MixerEngine& engine, const Layer& layer)
@@ -170,7 +179,7 @@ std::unique_ptr<juce::XmlElement> LayerSet::toXml() const
 void LayerSet::fromXml (const juce::XmlElement& xml)
 {
     reset();
-    setBankSize (xml.getIntAttribute ("bankSize", kDefaultBankSize));
+    setBankSize (xml.getIntAttribute ("bankSize", kAutoBankSize));
     selectedLayerId = xml.getStringAttribute ("selected", selectedLayerId);
 
     for (auto* e : xml.getChildWithTagNameIterator ("Layer"))
@@ -193,7 +202,7 @@ void LayerSet::fromXml (const juce::XmlElement& xml)
 void LayerSet::reset()
 {
     userLayers.clear();
-    bankSize = kDefaultBankSize;
+    bankSize = kAutoBankSize;
     selectedLayerId = "in-1";
 }
 

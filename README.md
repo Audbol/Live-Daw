@@ -30,14 +30,20 @@ processing, it can be routed to buses, and it can be sent to any hardware output
 - **Layers (X32/Wing style):** a layer selector beside the faders, with the master
   always visible on the right.
   - **Default layers** are generated from the console and always cover every strip:
-    input banks (`Ch 1-16`, `Ch 17-32`, …), aux banks, group banks and `All`. They
-    follow the console as channels and buses are added or removed. The bank size
-    (8–48) can be changed.
+    input banks, aux banks, group banks and `All`. They follow the console as
+    channels and buses are added or removed. The bank size is **Auto** by default:
+    each bank holds as many strips as fit the window (e.g. 35 on a 3440-pixel
+    ultrawide), re-banks when you resize while staying on the same channels, and
+    stretches strips to fill the width. Fixed sizes (8–64) are available too.
   - **User layers** hold any strips on the board (inputs, auxes, groups, master) in any
     order. Build them in the **Layers** tab, or right-click a strip and choose
     *User layers*.
-  - `Ctrl/Cmd + 1..9` selects layers. Layers are saved with the show. Only the visible
-    layer's strips are drawn, so very large consoles stay responsive.
+  - `Ctrl/Cmd + 1..9` selects layers, and the layer list scrolls. Layers are saved with
+    the show. Only the strips actually on screen get UI components, and meters redraw
+    only when they change, so even the `All` layer of a 4096-channel console stays
+    responsive. The mouse wheel scrolls the mixer; it never moves a fader or pan.
+- **Unused channels are free:** a channel with no input patched and no plugins skips
+  its DSP entirely, so a big console only costs CPU for the channels you use.
 - **Show > Scene > Snippet:**
   - A **show** is the file. It holds the console setup (channels, buses, plugins,
     patching) and all of its scenes.

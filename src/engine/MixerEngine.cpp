@@ -466,8 +466,11 @@ void MixerEngine::sumSendsIntoBus (Strip& bus, const std::vector<Strip*>& ins, i
                                  : 0.0f;
         float& last = send.lastGain;
 
-        if (target == 0.0f && last == 0.0f)
+        if ((target == 0.0f && last == 0.0f) || in->isIdle())
+        {
+            last = target; // an idle strip's buffers are silent: nothing to add
             continue;
+        }
 
         const auto* const* src = send.preFader.load (std::memory_order_relaxed) ? in->getPreFader()
                                                                                  : in->getPostFader();
@@ -503,6 +506,12 @@ void MixerEngine::sumMaster (const Topology& topo, int n) noexcept
     auto addStrip = [&] (Strip& s)
     {
         const float target = s.params.mainAssign.load (std::memory_order_relaxed) ? 1.0f : 0.0f;
+
+        if (s.isIdle())
+        {
+            s.lastMainAssignGain = target;
+            return;
+        }
 
         if (target != 0.0f || s.lastMainAssignGain != 0.0f)
         {

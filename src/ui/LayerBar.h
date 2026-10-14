@@ -13,6 +13,7 @@ public:
     static constexpr int kWidth = 108;
 
     explicit LayerBar (UiContext&);
+    ~LayerBar() override;
 
     /** Rebuilds the buttons (after the console or the layers changed). */
     void refresh();
@@ -23,8 +24,14 @@ public:
     void resized() override;
 
 private:
+    void layoutButtons();
+
     UiContext& ctx;
+    juce::Viewport viewport;   // scrolls when there are more layers than fit
+    juce::Component list;
     juce::OwnedArray<juce::TextButton> buttons;
+    juce::Label userCaption;
+    int selectedIndex = -1;
     juce::TextButton editButton { "Edit layers" };
     int numDefault = 0;
 };

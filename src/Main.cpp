@@ -206,14 +206,15 @@ public:
         if (engine->getInputs().empty() && engine->getBuses().empty())
             engine->setNumInputs (kDefaultChannelCount);
 
+        // First launch: open a low-latency driver (ASIO on Windows, JACK on Linux)
+        // directly, instead of trying the OS default device first.
         auto savedDevice = settings.getXmlValue ("audioDevice");
+        if (savedDevice == nullptr)
+            savedDevice = makePreferredDeviceState();
+
         const auto error = deviceManager.initialise (kMaxDeviceChannels, kMaxDeviceChannels, savedDevice.get(), true);
         if (error.isNotEmpty())
             log.error ("Audio device: " + error);
-
-        // First launch: prefer a low-latency driver (ASIO on Windows) over the OS default.
-        if (savedDevice == nullptr)
-            preferLowLatencyDriver();
 
         deviceManager.addAudioCallback (engine.get());
         watchdog = std::make_unique<DeviceWatchdog> (deviceManager, *engine, log);
@@ -302,7 +303,9 @@ private:
         return safeMode ? getDataDirectory().getChildFile ("autosave-safemode.lshow") : getAutosaveFile();
     }
 
-    void preferLowLatencyDriver()
+    /** Device state selecting the first ASIO (or JACK) device, or nullptr to use
+        the OS default. Uses the same format as AudioDeviceManager::createStateXml(). */
+    std::unique_ptr<juce::XmlElement> makePreferredDeviceState()
     {
         for (const auto* typeName : { "ASIO", "JACK" })
         {
@@ -316,15 +319,17 @@ private:
                 if (devices.isEmpty())
                     continue;
 
-                deviceManager.setCurrentAudioDeviceType (typeName, true);
-
-                if (auto* device = deviceManager.getCurrentAudioDevice())
-                {
-                    log.info (juce::String (typeName) + " driver selected: " + device->getName());
-                    return;
-                }
+                log.info (juce::String (typeName) + " driver found: " + devices[0]);
+                auto xml = std::make_unique<juce::XmlElement> ("DEVICESETUP");
+                xml->setAttribute ("deviceType", typeName);
+                xml->setAttribute ("audioOutputDeviceName", devices[0]);
+                xml->setAttribute ("audioInputDeviceName",
+                                   type->hasSeparateInputsAndOutputs() ? type->getDeviceNames (true)[0] : devices[0]);
+                return xml;
             }
         }
+
+        return nullptr;
     }
 
     void offerSafeModeRecovery (const juce::String& crashedPlugin)

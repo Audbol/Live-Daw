@@ -39,7 +39,22 @@ public:
 
 private:
     class PluginWindow;
-    class StripsContainer;
+
+    /** Notifies when scrolled, so only the visible strips need components. */
+    struct StripViewport final : public juce::Viewport
+    {
+        std::function<void()> onVisibleAreaChanged;
+        void visibleAreaChanged (const juce::Rectangle<int>&) override
+        {
+            if (onVisibleAreaChanged)
+                onVisibleAreaChanged();
+        }
+    };
+
+    void layoutStrips();
+    void updateVisibleStrips();
+    void applyFittedBankSize();
+    int computeFittedStripCount() const;
 
     void timerCallback() override;
 
@@ -81,9 +96,14 @@ private:
     juce::TextButton prevSceneButton { "<" }, goButton { "GO >" }, panelButton { "Panel" };
     juce::Label channelsCaption, channelCountLabel, sceneLabel, statusLabel;
 
-    juce::Viewport stripViewport;
-    std::unique_ptr<StripsContainer> stripsContainer;
-    juce::OwnedArray<StripComponent> strips;
+    StripViewport stripViewport;
+    juce::Component stripsContainer;
+    std::vector<Strip*> layerStrips;          // every strip of the current layer
+    std::vector<int> stripX;                  // their x positions in the container
+    std::vector<StripComponent*> stripComps;  // component per strip, nullptr when off screen
+    juce::OwnedArray<StripComponent> strips;  // the components that currently exist
+    int stripWidth = StripComponent::kWidth;
+    bool fitPending = false;
     std::unique_ptr<StripComponent> masterStrip;
     int insertRows = 3;
 

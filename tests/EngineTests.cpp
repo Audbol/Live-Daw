@@ -96,6 +96,40 @@ public:
             expectWithinAbsoluteError (rig.out (4), 0.0f, 1.0e-6f);
         }
 
+        beginTest ("Unpatched channels are skipped and resume cleanly");
+        {
+            MixerEngine engine (livedaw::WorkerPool::defaultNumWorkers());
+            constexpr int numCh = 4096;
+            OfflineRig rig (engine, 8, 2); // a typical interface: far fewer inputs than channels
+            engine.setNumInputs (numCh);
+            for (auto& in : engine.getInputs())
+            {
+                in->params.gate.enabled = true;
+                in->params.comp.enabled = true;
+            }
+
+            for (int i = 0; i < 8; ++i)
+                rig.setInput (i, 0.01f);
+
+            rig.run (10);
+            const auto start = juce::Time::getMillisecondCounterHiRes();
+            rig.run (200);
+            const double msPerBlock = (juce::Time::getMillisecondCounterHiRes() - start) / 200.0;
+            logMessage ("4096 channels, 8 patched: " + juce::String (msPerBlock, 3) + " ms per "
+                        + juce::String (1000.0 * OfflineRig::kBlock / 48000.0, 2) + " ms block");
+
+            // Re-patching an idle channel brings its signal straight back.
+            auto& ch = *engine.getInputs()[100];
+            ch.params.gate.enabled = false;
+            ch.params.comp.enabled = false;
+            ch.params.inputLeft = 0;
+            engine.getInputs()[0]->params.mute = true;
+            for (int i = 1; i < 8; ++i)
+                engine.getInputs()[(size_t) i]->params.mute = true;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (0), 0.01f * kCentre, 1.0e-5f);
+        }
+
         beginTest ("Bus count is not capped at 32");
         {
             MixerEngine engine (2);

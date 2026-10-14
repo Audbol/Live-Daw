@@ -28,6 +28,7 @@ private:
     std::array<float, 2> levelDb { -100.0f, -100.0f }, holdDb { -100.0f, -100.0f };
     std::array<int, 2> holdFrames {};
     std::array<bool, 2> clipped {};
+    juce::int64 lastSignature = -1;
 };
 
 } // namespace livedaw::ui
