@@ -168,6 +168,28 @@ void StripComponent::paint (juce::Graphics& g)
 
 void StripComponent::resized()
 {
+    // The fader always gets at least kMinFader px. When the strip is short, the
+    // least important sections are dropped first: inserts, then the mini EQ,
+    // then the gate/comp handles.
+    constexpr int kMinFader = 110;
+    const int eqHeight = juce::jlimit (40, 110, getHeight() / 12);
+    const int panSize = juce::jlimit (32, 52, getWidth() / 3);
+    const int insertsHeight = insertRows * InsertSlotsHandle::kRowHeight + 4;
+    const int dynamicsHeight = 16 + 3 + 16 + 3;
+
+    // Name, routing, pan, mute/solo, select, level label and padding.
+    const int essentials = 8 + 10 + 20 + 22 + panSize + 3 + 23 + 22 + 14;
+    int spare = getHeight() - essentials - kMinFader;
+
+    const bool showInserts = (spare -= insertsHeight) >= 0;
+    const bool showEq = showInserts ? (spare -= eqHeight + 3) >= 0 : false;
+    const bool showDynamics = showEq ? (spare -= dynamicsHeight) >= 0 : false;
+
+    inserts.setVisible (showInserts);
+    eq.setVisible (showEq);
+    gate.setVisible (showDynamics);
+    comp.setVisible (showDynamics);
+
     auto b = getLocalBounds().reduced (4);
     b.removeFromTop (10);
     nameLabel.setBounds (b.removeFromTop (18));
@@ -182,16 +204,32 @@ void StripComponent::resized()
     }
     b.removeFromTop (4);
 
-    inserts.setBounds (b.removeFromTop (insertRows * InsertSlotsHandle::kRowHeight));
-    b.removeFromTop (4);
-    gate.setBounds (b.removeFromTop (16));
-    b.removeFromTop (3);
-    eq.setBounds (b.removeFromTop (40));
-    b.removeFromTop (3);
-    comp.setBounds (b.removeFromTop (16));
-    b.removeFromTop (3);
+    if (showInserts)
+    {
+        inserts.setBounds (b.removeFromTop (insertRows * InsertSlotsHandle::kRowHeight));
+        b.removeFromTop (4);
+    }
 
-    pan.setBounds (b.removeFromTop (32).withSizeKeepingCentre (32, 32));
+    if (showDynamics)
+    {
+        gate.setBounds (b.removeFromTop (16));
+        b.removeFromTop (3);
+    }
+
+    if (showEq)
+    {
+        // The mini EQ and pan knob grow with the strip (tall windows, wide strips).
+        eq.setBounds (b.removeFromTop (eqHeight));
+        b.removeFromTop (3);
+    }
+
+    if (showDynamics)
+    {
+        comp.setBounds (b.removeFromTop (16));
+        b.removeFromTop (3);
+    }
+
+    pan.setBounds (b.removeFromTop (panSize).withSizeKeepingCentre (panSize, panSize));
     b.removeFromTop (3);
 
     auto buttons = b.removeFromTop (20);
@@ -210,7 +248,7 @@ void StripComponent::resized()
 
     levelLabel.setBounds (b.removeFromBottom (14));
     auto faderArea = b;
-    meter.setBounds (faderArea.removeFromRight (16));
+    meter.setBounds (faderArea.removeFromRight (juce::jlimit (16, 24, getWidth() / 6)));
     fader.setBounds (faderArea);
 }
 

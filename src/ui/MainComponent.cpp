@@ -88,6 +88,33 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     goButton.onClick = [this] { recall (&Show::recallNext); };
     panelButton.onClick = [this] { setPanelVisible (! panelVisible); };
 
+    addAndMakeVisible (viewButton);
+    viewButton.setTooltip ("Interface scale, strip width and layout");
+    viewButton.onClick = [this] { showViewMenu(); };
+
+    // Draggable dividers: bottom panel height and layer bar width. Double-click resets.
+    panelResizer.setTooltip ("Drag to resize the panel, double-click to reset");
+    panelResizer.onDrag = [this] (int delta)
+    {
+        panelHeight = getPanelHeight() - delta;
+        resized();
+    };
+    panelResizer.onDoubleClick = [this] { panelHeight = -1; resized(); saveLayoutSettings(); };
+    panelResizer.onDragEnd = [this] { saveLayoutSettings(); };
+    addChildComponent (panelResizer);
+
+    layerResizer.setTooltip ("Drag to resize the layer list, double-click to reset");
+    layerResizer.onDrag = [this] (int delta)
+    {
+        layerBarWidth = juce::jlimit (70, 300, layerBarWidth + delta);
+        resized();
+    };
+    layerResizer.onDoubleClick = [this] { layerBarWidth = LayerBar::kWidth; resized(); saveLayoutSettings(); };
+    layerResizer.onDragEnd = [this] { saveLayoutSettings(); };
+    addAndMakeVisible (layerResizer);
+
+    loadLayoutSettings();
+
     showButton.setTooltip ("New / open / save show");
     addAuxButton.setTooltip ("Add an aux bus (monitor mix / FX send)");
     addGroupButton.setTooltip ("Add a group (subgroup routed to master)");
@@ -201,7 +228,7 @@ void MainComponent::rebuildStrips()
 
 int MainComponent::computeFittedStripCount() const
 {
-    return juce::jmax (4, stripViewport.getWidth() / StripComponent::kWidth);
+    return juce::jmax (4, stripViewport.getWidth() / baseStripWidth);
 }
 
 void MainComponent::applyFittedBankSize()
@@ -233,7 +260,7 @@ void MainComponent::applyFittedBankSize()
 void MainComponent::layoutStrips()
 {
     // A gap separates runs of input channels from runs of buses/master.
-    constexpr int gap = 12, maxStripWidth = 140;
+    constexpr int gap = 12, maxStripWidth = 200;
     const int n = static_cast<int> (layerStrips.size());
     const int available = stripViewport.getWidth();
 
@@ -243,9 +270,9 @@ void MainComponent::layoutStrips()
             gaps += gap;
 
     // When the layer fits, stretch strips to use the whole width (ultrawide friendly).
-    stripWidth = StripComponent::kWidth;
-    if (n > 0 && n * StripComponent::kWidth + gaps <= available)
-        stripWidth = juce::jmin (maxStripWidth, (available - gaps) / n);
+    stripWidth = baseStripWidth;
+    if (n > 0 && n * baseStripWidth + gaps <= available)
+        stripWidth = juce::jmin (juce::jmax (maxStripWidth, baseStripWidth), (available - gaps) / n);
 
     stripX.assign ((size_t) n, 0);
     int x = 0;
@@ -408,6 +435,7 @@ void MainComponent::setPanelVisible (bool shouldBeVisible)
     panelVisible = shouldBeVisible;
     tabs.setVisible (panelVisible);
     resized();
+    saveLayoutSettings();
 }
 
 //==============================================================================
@@ -454,39 +482,53 @@ void MainComponent::resized()
     auto b = getLocalBounds();
     auto bar = b.removeFromTop (44).reduced (8, 8);
 
-    for (auto* button : { &audioButton, &pluginsButton, &showButton })
+    // Toolbar: natural widths, scaled down together when the window is narrow.
+    struct Item
     {
-        button->setBounds (bar.removeFromLeft (button == &audioButton ? 96 : 70));
-        bar.removeFromLeft (6);
+        juce::Component* comp;
+        int width, gapAfter;
+    };
+
+    const Item left[] = { { &audioButton, 96, 6 }, { &pluginsButton, 70, 6 }, { &showButton, 70, 16 },
+                          { &channelsCaption, 62, 0 }, { &fewerButton, 26, 0 }, { &channelCountLabel, 46, 0 },
+                          { &moreButton, 26, 10 }, { &addAuxButton, 62, 6 }, { &addGroupButton, 72, 16 },
+                          { &prevSceneButton, 30, 4 }, { &sceneLabel, 240, 4 }, { &goButton, 64, 10 } };
+    const Item right[] = { { &panelButton, 60, 6 }, { &viewButton, 56, 8 } };
+    constexpr int minStatusWidth = 160;
+
+    int natural = minStatusWidth;
+    for (auto& item : left)
+        natural += item.width + item.gapAfter;
+    for (auto& item : right)
+        natural += item.width + item.gapAfter;
+
+    const float k = juce::jmin (1.0f, static_cast<float> (bar.getWidth()) / static_cast<float> (natural));
+    auto scaled = [k] (int w) { return juce::roundToInt (static_cast<float> (w) * k); };
+
+    for (auto& item : left)
+    {
+        item.comp->setBounds (bar.removeFromLeft (scaled (item.width)));
+        bar.removeFromLeft (scaled (item.gapAfter));
     }
-    bar.removeFromLeft (10);
-    channelsCaption.setBounds (bar.removeFromLeft (62));
-    fewerButton.setBounds (bar.removeFromLeft (26));
-    channelCountLabel.setBounds (bar.removeFromLeft (46).reduced (2, 0));
-    moreButton.setBounds (bar.removeFromLeft (26));
-    bar.removeFromLeft (10);
-    addAuxButton.setBounds (bar.removeFromLeft (62));
-    bar.removeFromLeft (6);
-    addGroupButton.setBounds (bar.removeFromLeft (72));
-    bar.removeFromLeft (16);
-    prevSceneButton.setBounds (bar.removeFromLeft (30));
-    bar.removeFromLeft (4);
-    sceneLabel.setBounds (bar.removeFromLeft (220));
-    bar.removeFromLeft (4);
-    goButton.setBounds (bar.removeFromLeft (64));
-    bar.removeFromLeft (10);
-    panelButton.setBounds (bar.removeFromRight (60));
-    bar.removeFromRight (8);
+    for (auto& item : right)
+    {
+        item.comp->setBounds (bar.removeFromRight (scaled (item.width)));
+        bar.removeFromRight (scaled (item.gapAfter));
+    }
     statusLabel.setBounds (bar);
 
+    panelResizer.setVisible (panelVisible);
     if (panelVisible)
-        tabs.setBounds (b.removeFromBottom (juce::jlimit (330, 400, getHeight() * 38 / 100)));
+    {
+        tabs.setBounds (b.removeFromBottom (getPanelHeight()));
+        panelResizer.setBounds (b.removeFromBottom (6));
+    }
 
     auto console = b.reduced (4);
-    layerBar.setBounds (console.removeFromLeft (LayerBar::kWidth));
-    console.removeFromLeft (6);
+    layerBar.setBounds (console.removeFromLeft (layerBarWidth));
+    layerResizer.setBounds (console.removeFromLeft (6));
     if (masterStrip != nullptr)
-        masterStrip->setBounds (console.removeFromRight (StripComponent::kWidth));
+        masterStrip->setBounds (console.removeFromRight (baseStripWidth));
     console.removeFromRight (8);
 
     stripViewport.setBounds (console);
@@ -507,6 +549,80 @@ void MainComponent::resized()
     }
 
     layoutStrips();
+}
+
+int MainComponent::getPanelHeight() const
+{
+    // The panel can take anything between 150 px and all but 300 px of the window
+    // (strips need ~300 px for a usable fader; they shed handles below that).
+    const int available = getHeight() - 44;
+    const int maxHeight = juce::jmax (150, available - 300);
+    const int wanted = panelHeight > 0 ? panelHeight : getHeight() * 38 / 100;
+    return juce::jlimit (150, maxHeight, wanted);
+}
+
+void MainComponent::loadLayoutSettings()
+{
+    panelHeight = settings.getIntValue ("ui.panelHeight", -1);
+    layerBarWidth = juce::jlimit (70, 300, settings.getIntValue ("ui.layerBarWidth", LayerBar::kWidth));
+    baseStripWidth = juce::jlimit (60, 160, settings.getIntValue ("ui.stripWidth", StripComponent::kWidth));
+    panelVisible = settings.getBoolValue ("ui.panelVisible", true);
+    tabs.setVisible (panelVisible);
+    setUiScale (static_cast<float> (settings.getDoubleValue ("ui.scale", 1.0)));
+}
+
+void MainComponent::saveLayoutSettings()
+{
+    settings.setValue ("ui.panelHeight", panelHeight);
+    settings.setValue ("ui.layerBarWidth", layerBarWidth);
+    settings.setValue ("ui.stripWidth", baseStripWidth);
+    settings.setValue ("ui.panelVisible", panelVisible);
+    settings.setValue ("ui.scale", static_cast<double> (uiScale));
+    settings.saveIfNeeded();
+}
+
+void MainComponent::setUiScale (float scale)
+{
+    uiScale = juce::jlimit (0.5f, 3.0f, scale);
+    // Scales every window of the app (the mixer, plugin editors, dialogs).
+    juce::Desktop::getInstance().setGlobalScaleFactor (uiScale);
+}
+
+void MainComponent::setBaseStripWidth (int width)
+{
+    baseStripWidth = juce::jlimit (60, 160, width);
+    saveLayoutSettings();
+    resized();
+    rebuildStrips(); // bank size (Auto) and master width depend on it
+}
+
+void MainComponent::showViewMenu()
+{
+    juce::PopupMenu scaleMenu;
+    for (int percent : { 75, 90, 100, 110, 125, 150, 175, 200 })
+        scaleMenu.addItem (juce::String (percent) + "%", true, juce::roundToInt (uiScale * 100.0f) == percent,
+                           [this, percent] { setUiScale (static_cast<float> (percent) / 100.0f); saveLayoutSettings(); });
+
+    juce::PopupMenu widthMenu;
+    const std::pair<const char*, int> widths[] = { { "Narrow", 72 }, { "Normal", StripComponent::kWidth }, { "Wide", 120 }, { "Extra wide", 150 } };
+    for (auto& [name, width] : widths)
+        widthMenu.addItem (name, true, baseStripWidth == width, [this, w = width] { setBaseStripWidth (w); });
+
+    juce::PopupMenu menu;
+    menu.addSubMenu ("Interface scale", scaleMenu);
+    menu.addSubMenu ("Strip width", widthMenu);
+    menu.addItem ("Show bottom panel", true, panelVisible, [this] { setPanelVisible (! panelVisible); });
+    menu.addSeparator();
+    menu.addItem ("Reset layout", [this]
+    {
+        panelHeight = -1;
+        layerBarWidth = LayerBar::kWidth;
+        setPanelVisible (true);
+        setUiScale (1.0f);
+        setBaseStripWidth (StripComponent::kWidth);
+    });
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (viewButton));
 }
 
 bool MainComponent::keyPressed (const juce::KeyPress& key)

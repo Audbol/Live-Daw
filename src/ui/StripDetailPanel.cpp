@@ -17,6 +17,10 @@ namespace
 
         int getPreferredWidth() const noexcept { return width; }
 
+        /** Share of any spare width this section takes when the panel is wider than needed. */
+        float getFlex() const noexcept { return flex; }
+        void setFlex (float f) noexcept { flex = f; }
+
         void paint (juce::Graphics& g) override
         {
             auto b = getLocalBounds().toFloat().reduced (2.0f);
@@ -42,6 +46,7 @@ namespace
     private:
         juce::String title;
         int width;
+        float flex = 1.0f;
         juce::OwnedArray<juce::Component> owned;
     };
 
@@ -110,9 +115,10 @@ namespace
         void resized() override
         {
             auto b = contentArea();
-            auto knobs = b.removeFromTop (72);
-            trim.setBounds (knobs.removeFromLeft (70));
-            hpfFreq.setBounds (knobs.removeFromLeft (70));
+            auto knobs = b.removeFromTop (juce::jlimit (72, 150, b.getHeight() * 40 / 100));
+            const int knobWidth = knobs.getWidth() / 3;
+            trim.setBounds (knobs.removeFromLeft (knobWidth));
+            hpfFreq.setBounds (knobs.removeFromLeft (knobWidth));
             auto toggles = knobs.reduced (4, 2);
             polarity.setBounds (toggles.removeFromTop (22));
             toggles.removeFromTop (4);
@@ -183,12 +189,13 @@ namespace
             top.removeFromLeft (6);
             meter.setBounds (top.reduced (0, 4));
             b.removeFromTop (6);
-            auto row1 = b.removeFromTop (78);
+            const int rowHeight = juce::jlimit (70, 170, b.getHeight() / 2);
+            auto row1 = b.removeFromTop (rowHeight);
             const int w = row1.getWidth() / 3;
             threshold.setBounds (row1.removeFromLeft (w));
             range.setBounds (row1.removeFromLeft (w));
             attack.setBounds (row1);
-            auto row2 = b.removeFromTop (78);
+            auto row2 = b.removeFromTop (rowHeight);
             hold.setBounds (row2.removeFromLeft (w));
             release.setBounds (row2.removeFromLeft (w));
         }
@@ -240,7 +247,7 @@ namespace
         void resized() override
         {
             auto b = contentArea();
-            auto left = b.removeFromLeft (230);
+            auto left = b.removeFromLeft (juce::jmax (230, b.getWidth() * 42 / 100));
             on.setBounds (left.removeFromTop (24).removeFromLeft (50));
             left.removeFromTop (6);
             editor.setBounds (left);
@@ -303,12 +310,13 @@ namespace
             top.removeFromLeft (6);
             meter.setBounds (top.reduced (0, 4));
             b.removeFromTop (6);
-            auto row1 = b.removeFromTop (78);
+            const int rowHeight = juce::jlimit (70, 170, b.getHeight() / 2);
+            auto row1 = b.removeFromTop (rowHeight);
             const int w = row1.getWidth() / 3;
             threshold.setBounds (row1.removeFromLeft (w));
             ratio.setBounds (row1.removeFromLeft (w));
             knee.setBounds (row1);
-            auto row2 = b.removeFromTop (78);
+            auto row2 = b.removeFromTop (rowHeight);
             attack.setBounds (row2.removeFromLeft (w));
             release.setBounds (row2.removeFromLeft (w));
             makeup.setBounds (row2);
@@ -529,7 +537,8 @@ namespace
             b.removeFromRight (6);
             afl.setBounds (b.removeFromTop (24));
             b.removeFromTop (4);
-            level.setBounds (b.removeFromTop (78).withSizeKeepingCentre (80, 78));
+            const int knobSize = juce::jlimit (78, 150, b.getHeight() * 45 / 100);
+            level.setBounds (b.removeFromTop (knobSize).withSizeKeepingCentre (knobSize, knobSize));
             b.removeFromTop (4);
             label.setBounds (b.removeFromTop (16));
             auto outs = b.removeFromTop (24);
@@ -553,16 +562,16 @@ public:
     Content (Strip& s, UiContext& ctx)
     {
         auto& engine = ctx.engine;
-        add (std::make_unique<InputSection> (s, engine));
-        add (std::make_unique<GateSection> (s));
-        add (std::make_unique<EqSection> (s, engine));
-        add (std::make_unique<CompSection> (s));
-        add (std::make_unique<InsertsSection> (s, ctx));
+        add (std::make_unique<InputSection> (s, engine), 0.8f);
+        add (std::make_unique<GateSection> (s), 1.0f);
+        add (std::make_unique<EqSection> (s, engine), 2.5f);
+        add (std::make_unique<CompSection> (s), 1.0f);
+        add (std::make_unique<InsertsSection> (s, ctx), 0.8f);
 
         if (s.getKind() == StripKind::Input)
-            add (std::make_unique<SendsSection> (s, engine));
+            add (std::make_unique<SendsSection> (s, engine), 1.4f);
         else if (s.getKind() == StripKind::Master)
-            add (std::make_unique<MonitorSection> (engine));
+            add (std::make_unique<MonitorSection> (engine), 0.8f);
     }
 
     int getPreferredWidth() const
@@ -575,14 +584,27 @@ public:
 
     void resized() override
     {
-        auto b = getLocalBounds();
+        // Every section gets at least its preferred width; spare width is shared by flex.
+        float totalFlex = 0.0f;
         for (auto* s : sections)
-            s->setBounds (b.removeFromLeft (s->getPreferredWidth()));
+            totalFlex += s->getFlex();
+
+        const int spare = juce::jmax (0, getWidth() - getPreferredWidth());
+        auto b = getLocalBounds();
+
+        for (int i = 0; i < sections.size(); ++i)
+        {
+            auto* s = sections[i];
+            const int extra = totalFlex > 0.0f ? juce::roundToInt (spare * s->getFlex() / totalFlex) : 0;
+            const int w = i == sections.size() - 1 ? b.getWidth() : s->getPreferredWidth() + extra;
+            s->setBounds (b.removeFromLeft (w));
+        }
     }
 
 private:
-    void add (std::unique_ptr<Section> s)
+    void add (std::unique_ptr<Section> s, float flex)
     {
+        s->setFlex (flex);
         addAndMakeVisible (*s);
         sections.add (s.release());
     }
@@ -649,8 +671,12 @@ void StripDetailPanel::resized()
     viewport.setBounds (b);
 
     if (content != nullptr)
+    {
+        // Stretch to fill; scroll horizontally only when the panel is narrower than needed.
+        const bool scrolls = content->getPreferredWidth() > b.getWidth();
         content->setSize (juce::jmax (b.getWidth(), content->getPreferredWidth()),
-                          b.getHeight() - viewport.getScrollBarThickness());
+                          b.getHeight() - (scrolls ? viewport.getScrollBarThickness() : 0));
+    }
 }
 
 } // namespace livedaw::ui

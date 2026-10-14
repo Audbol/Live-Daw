@@ -221,7 +221,7 @@ public:
 
         auto* main = new ui::MainComponent (deviceManager, *engine, *pluginHost, *show, log, settings);
         mainComponent = main;
-        mainWindow = std::make_unique<MainWindow> (getApplicationName(), main);
+        mainWindow = std::make_unique<MainWindow> (getApplicationName(), main, settings.getValue ("ui.windowState"));
         main->setShowFile (juce::File (settings.getValue ("lastShowFile")).existsAsFile()
                                ? juce::File (settings.getValue ("lastShowFile")) : juce::File());
 
@@ -263,14 +263,18 @@ private:
     class MainWindow final : public juce::DocumentWindow
     {
     public:
-        MainWindow (const juce::String& name, juce::Component* content)
+        MainWindow (const juce::String& name, juce::Component* content, const juce::String& savedState)
             : DocumentWindow (name, ui::Colours::background, DocumentWindow::allButtons)
         {
             setUsingNativeTitleBar (true);
             setContentOwned (content, true);
             setResizable (true, true);
-            setResizeLimits (1000, 650, 10000, 10000);
-            centreWithSize (getWidth(), getHeight());
+            setResizeLimits (720, 480, 32768, 32768);
+
+            // Reopen where it was (size, position, maximised); fall back to centred.
+            if (savedState.isEmpty() || ! restoreWindowStateFromString (savedState))
+                centreWithSize (getWidth(), getHeight());
+
             setVisible (true);
         }
 
@@ -366,6 +370,8 @@ private:
             settings.setValue ("audioDevice", xml.get());
         if (mainComponent != nullptr)
             settings.setValue ("lastShowFile", mainComponent->getShowFile().getFullPathName());
+        if (mainWindow != nullptr)
+            settings.setValue ("ui.windowState", mainWindow->getWindowStateAsString());
         settings.saveIfNeeded();
 
         const auto result = show->saveToFile (getAutosaveTarget());

@@ -93,7 +93,7 @@ private:
     juce::TextButton audioButton { "Audio Setup" }, pluginsButton { "Plugins" }, showButton { "Show" };
     juce::TextButton addAuxButton { "+ Aux" }, addGroupButton { "+ Group" };
     juce::TextButton fewerButton { "-" }, moreButton { "+" };
-    juce::TextButton prevSceneButton { "<" }, goButton { "GO >" }, panelButton { "Panel" };
+    juce::TextButton prevSceneButton { "<" }, goButton { "GO >" }, panelButton { "Panel" }, viewButton { "View" };
     juce::Label channelsCaption, channelCountLabel, sceneLabel, statusLabel;
 
     StripViewport stripViewport;
@@ -114,6 +114,20 @@ private:
     SystemPanel systemPanel;
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
     bool panelVisible = true;
+
+    // Resizable layout (persisted in the settings file)
+    ResizerBar panelResizer { false }, layerResizer { true };
+    int panelHeight = -1;                         // -1 = automatic
+    int layerBarWidth = LayerBar::kWidth;
+    int baseStripWidth = StripComponent::kWidth;  // strip width when the layer doesn't fit
+    float uiScale = 1.0f;
+
+    void showViewMenu();
+    void loadLayoutSettings();
+    void saveLayoutSettings();
+    void setUiScale (float scale);
+    void setBaseStripWidth (int width);
+    int getPanelHeight() const;
 
     juce::OwnedArray<PluginWindow> pluginWindows;
     std::unique_ptr<juce::DocumentWindow> scannerWindow;

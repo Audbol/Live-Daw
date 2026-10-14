@@ -126,6 +126,62 @@ private:
     juce::Label label;
 };
 
+/** A draggable divider between two areas. A vertical bar is dragged left/right,
+    a horizontal one up/down. Reports incremental drag deltas. */
+class ResizerBar : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    explicit ResizerBar (bool isVertical) : vertical (isVertical)
+    {
+        setMouseCursor (vertical ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::UpDownResizeCursor);
+        setRepaintsOnMouseActivity (true);
+    }
+
+    std::function<void (int delta)> onDrag;
+    std::function<void()> onDragEnd, onDoubleClick;
+
+    void paint (juce::Graphics& g) override
+    {
+        const bool hot = isMouseOverOrDragging();
+        auto b = getLocalBounds().toFloat();
+        g.setColour (hot ? Colours::accent.withAlpha (0.6f) : Colours::outline.withAlpha (0.5f));
+
+        // A short grip in the middle of the bar.
+        const auto grip = vertical ? juce::Rectangle<float> (2.0f, 36.0f).withCentre (b.getCentre())
+                                   : juce::Rectangle<float> (36.0f, 2.0f).withCentre (b.getCentre());
+        g.fillRoundedRectangle (grip, 1.0f);
+
+        if (hot)
+            g.fillRect (vertical ? b.withSizeKeepingCentre (1.0f, b.getHeight()) : b.withSizeKeepingCentre (b.getWidth(), 1.0f));
+    }
+
+    void mouseDown (const juce::MouseEvent&) override { lastDistance = 0; }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        const int distance = vertical ? e.getDistanceFromDragStartX() : e.getDistanceFromDragStartY();
+        if (distance != lastDistance && onDrag)
+            onDrag (distance - lastDistance);
+        lastDistance = distance;
+    }
+
+    void mouseUp (const juce::MouseEvent&) override
+    {
+        if (onDragEnd)
+            onDragEnd();
+    }
+
+    void mouseDoubleClick (const juce::MouseEvent&) override
+    {
+        if (onDoubleClick)
+            onDoubleClick();
+    }
+
+private:
+    bool vertical;
+    int lastDistance = 0;
+};
+
 /** Small horizontal meter showing gain reduction in dB (0 .. maxDb). */
 class GainReductionMeter : public juce::Component, private juce::Timer
 {

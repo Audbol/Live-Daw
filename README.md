@@ -42,6 +42,16 @@ processing, it can be routed to buses, and it can be sent to any hardware output
     the show. Only the strips actually on screen get UI components, and meters redraw
     only when they change, so even the `All` layer of a 4096-channel console stays
     responsive. The mouse wheel scrolls the mixer; it never moves a fader or pan.
+- **Fully resizable interface:**
+  - Drag the dividers to size the bottom panel and the layer list (double-click one to
+    reset it).
+  - Every panel stretches to fill the window.
+  - Strips grow with the window and shed their least important parts (inserts, then
+    the mini EQ, then the dynamics handles) on small screens, so the fader is always
+    usable.
+  - **View** sets the interface scale (75–200%) and strip width (Narrow, Normal, Wide,
+    Extra wide), and can reset the layout. Window position and size, panel sizes and
+    scale are remembered.
 - **Unused channels are free:** a channel with no input patched and no plugins skips
   its DSP entirely, so a big console only costs CPU for the channels you use.
 - **Show > Scene > Snippet:**
