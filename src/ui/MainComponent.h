@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ui/LayerBar.h"
+#include "ui/LayersPanel.h"
 #include "ui/LookAndFeel.h"
 #include "ui/ShowPanel.h"
 #include "ui/StripComponent.h"
@@ -23,6 +25,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    bool keyPressed (const juce::KeyPress&) override;
 
     /** Recreates all strip components (after structural changes or loading a show). */
     void rebuildStrips();
@@ -84,8 +87,10 @@ private:
     std::unique_ptr<StripComponent> masterStrip;
     int insertRows = 3;
 
+    LayerBar layerBar;
     StripDetailPanel detailPanel;
     ShowPanel showPanel;
+    LayersPanel layersPanel;
     SystemPanel systemPanel;
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
     bool panelVisible = true;

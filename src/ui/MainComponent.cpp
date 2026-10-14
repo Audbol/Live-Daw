@@ -63,15 +63,15 @@ private:
     template <typename Fn>
     void layout (Fn&& place) const
     {
+        // A gap separates runs of input channels from runs of buses/master.
         int x = 0;
-        bool inBuses = false;
+        const Strip* previous = nullptr;
         for (auto* s : strips)
         {
-            if (s->getStrip().isBus() && ! inBuses)
-            {
+            const bool isInput = s->getStrip().getKind() == StripKind::Input;
+            if (previous != nullptr && isInput != (previous->getKind() == StripKind::Input))
                 x += kGap;
-                inBuses = true;
-            }
+            previous = &s->getStrip();
             place (s, x);
             x += StripComponent::kWidth;
         }
@@ -89,9 +89,11 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
       show (s),
       log (l),
       settings (props),
-      ctx { e, h, s, l, {}, {}, {}, {}, {} },
+      ctx { e, h, s, l, {}, {}, {}, {}, {}, {} },
+      layerBar (ctx),
       detailPanel (ctx),
       showPanel (ctx),
+      layersPanel (ctx),
       systemPanel (ctx, dm)
 {
     ctx.openPluginEditor = [this] (Strip& strip, int slot) { openPluginEditor (strip, slot); };
@@ -99,6 +101,15 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     ctx.showPluginScanner = [this] { showPluginScanner(); };
     ctx.selectStrip = [this] (Strip* strip) { selectStrip (strip); };
     ctx.getSelectedStrip = [this] { return detailPanel.getStrip(); };
+    ctx.layersChanged = [this] { rebuildStrips(); };
+
+    layerBar.onEditLayers = [this]
+    {
+        tabs.setCurrentTabIndex (2);
+        setPanelVisible (true);
+    };
+    addAndMakeVisible (layerBar);
+    setWantsKeyboardFocus (true);
 
     setLookAndFeel (&lookAndFeel);
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
@@ -157,6 +168,7 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     const auto tabColour = Colours::background.darker (0.2f);
     tabs.addTab ("Channel", tabColour, &detailPanel, false);
     tabs.addTab ("Show", tabColour, &showPanel, false);
+    tabs.addTab ("Layers", tabColour, &layersPanel, false);
     tabs.addTab ("System", tabColour, &systemPanel, false);
     tabs.setTabBarDepth (26);
     tabs.setOutline (0);
@@ -195,24 +207,33 @@ MainComponent::~MainComponent()
 //==============================================================================
 void MainComponent::rebuildStrips()
 {
+    // The selection survives layer changes as long as the strip still exists
+    // (pointer comparison only: a removed strip must not be dereferenced).
     auto* selected = detailPanel.getStrip();
     bool selectedStillExists = selected == &engine.getMaster();
+    for (auto* list : { &engine.getInputs(), &engine.getBuses() })
+        for (auto& s : *list)
+            selectedStillExists = selectedStillExists || s.get() == selected;
 
     strips.clear();
 
-    auto addStrip = [this, &selected, &selectedStillExists] (Strip& s)
+    // Only the current layer's strips get components: big consoles stay light.
+    auto& layers = show.layers;
+    const auto layer = layers.findLayer (engine, layers.selectedLayerId);
+    layers.selectedLayerId = layer.id;
+
+    for (auto* s : LayerSet::resolve (engine, layer))
     {
-        auto* comp = strips.add (new StripComponent (s, ctx));
+        auto* comp = strips.add (new StripComponent (*s, ctx));
         comp->onRemove = [this] (Strip& st) { removeStrip (st); };
         comp->setNumInsertRows (insertRows);
+        comp->setSelected (s == selected);
         stripsContainer->addAndMakeVisible (comp);
-        selectedStillExists = selectedStillExists || &s == selected;
-    };
+    }
 
-    for (auto& s : engine.getInputs())
-        addStrip (*s);
-    for (auto& s : engine.getBuses())
-        addStrip (*s);
+    stripViewport.setViewPosition (0, 0);
+    layerBar.refresh();
+    layersPanel.refresh();
 
     masterStrip = std::make_unique<StripComponent> (engine.getMaster(), ctx);
     masterStrip->setNumInsertRows (insertRows);
@@ -409,6 +430,8 @@ void MainComponent::resized()
         tabs.setBounds (b.removeFromBottom (juce::jlimit (330, 400, getHeight() * 38 / 100)));
 
     auto console = b.reduced (4);
+    layerBar.setBounds (console.removeFromLeft (LayerBar::kWidth));
+    console.removeFromLeft (6);
     if (masterStrip != nullptr)
         masterStrip->setBounds (console.removeFromRight (StripComponent::kWidth));
     console.removeFromRight (8);
@@ -416,6 +439,29 @@ void MainComponent::resized()
     stripViewport.setBounds (console);
     stripsContainer->setSize (juce::jmax (console.getWidth(), stripsContainer->getPreferredWidth()),
                               console.getHeight() - stripViewport.getScrollBarThickness());
+}
+
+bool MainComponent::keyPressed (const juce::KeyPress& key)
+{
+    // Ctrl/Cmd + 1..9 selects a layer, like the layer keys on a console.
+    if (key.getModifiers().isCommandDown())
+    {
+        const auto c = key.getTextCharacter();
+        const int index = (c >= '1' && c <= '9') ? c - '1' : (key.getKeyCode() >= '1' && key.getKeyCode() <= '9' ? key.getKeyCode() - '1' : -1);
+
+        if (index >= 0)
+        {
+            const auto layers = show.layers.getAllLayers (engine);
+            if (index < static_cast<int> (layers.size()))
+            {
+                show.layers.selectedLayerId = layers[(size_t) index].id;
+                rebuildStrips();
+            }
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void MainComponent::timerCallback()

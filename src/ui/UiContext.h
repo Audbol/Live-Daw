@@ -25,7 +25,17 @@ struct UiContext
     std::function<void()> showPluginScanner;
     std::function<void (Strip*)> selectStrip;
     std::function<Strip*()> getSelectedStrip;
+
+    /** Call after editing show.layers (or to switch layer: set selectedLayerId first). */
+    std::function<void()> layersChanged;
 };
+
+/** Calls ctx.layersChanged asynchronously: safe to use from a callback of a
+    component that the rebuild will delete. */
+inline void notifyLayersChangedAsync (UiContext& ctx)
+{
+    juce::MessageManager::callAsync ([&ctx] { if (ctx.layersChanged) ctx.layersChanged(); });
+}
 
 /** Logs the outcome of a scene/snippet recall. */
 void logRecall (UiContext&, const juce::String& what, const state::ApplyResult&);

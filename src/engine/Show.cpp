@@ -263,6 +263,7 @@ std::unique_ptr<juce::XmlElement> Show::toXml() const
     root->setAttribute ("name", name);
     root->setAttribute ("currentScene", currentScene);
     root->addChildElement (state::saveConsole (engine).release());
+    root->addChildElement (layers.toXml().release());
 
     auto* scenesXml = root->createNewChildElement ("Scenes");
     for (auto& scene : scenes)
@@ -299,6 +300,7 @@ juce::Result Show::loadFromXml (const juce::XmlElement& xml, bool loadPlugins)
     if (xml.hasTagName ("LiveDAWSession"))
     {
         scenes.clear();
+        layers.reset();
         currentScene = -1;
         name = "Imported session";
 
@@ -323,6 +325,12 @@ juce::Result Show::loadFromXml (const juce::XmlElement& xml, bool loadPlugins)
 
     scenes.clear();
     name = xml.getStringAttribute ("name", "Untitled show");
+
+    if (auto* layersXml = xml.getChildByName ("Layers"))
+        layers.fromXml (*layersXml);
+    else
+        layers.reset();
+
     const auto result = state::loadConsole (engine, *console, host, loadPlugins);
 
     if (auto* scenesXml = xml.getChildByName ("Scenes"))
@@ -406,6 +414,7 @@ void Show::clear (int numChannels)
     scenes.clear();
     currentScene = -1;
     name = "Untitled show";
+    layers.reset();
     engine.reset();
     engine.setNumInputs (numChannels);
     changed();

@@ -94,6 +94,19 @@ Show
 - Inserts are recalled as *plugin state only*, and only when the same plugin is already
   in that slot. Recalls never instantiate plugins.
 
+## Layers
+
+`src/engine/Layers.*` (`LayerSet`, owned by the `Show`):
+
+- `getDefaultLayers()` is computed from the console every time, so default layers can't
+  go stale. Inputs, auxes and groups are chunked by the bank size, and the ids are
+  stable (`in-2`, `aux-1`, `groups-1`, `all`) so the selected layer survives topology
+  changes.
+- User layers store ordered `StripRef`s and are saved in the show (`<Layers>`). A
+  reference to a removed strip is skipped by `resolve()`.
+- The UI builds components only for the current layer's strips. The master strip is
+  pinned on the right.
+
 ## Stability mechanisms
 
 - `PluginChain::process` wraps each plugin in `try/catch` and checks its output with

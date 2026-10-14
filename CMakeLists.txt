@@ -68,6 +68,7 @@ set(LIVEDAW_ENGINE_SOURCES
     src/engine/PluginHost.cpp
     src/engine/PluginScanner.cpp
     src/engine/ConsoleState.cpp
+    src/engine/Layers.cpp
     src/engine/Show.cpp)
 
 # Linked after JUCE's recommended warnings so these flags come last on the command line.
@@ -153,6 +154,8 @@ target_sources(LiveDAW PRIVATE
     src/ui/EqEditor.cpp
     src/ui/StripDetailPanel.cpp
     src/ui/ShowPanel.cpp
+    src/ui/LayerBar.cpp
+    src/ui/LayersPanel.cpp
     src/ui/SystemPanel.cpp
     src/ui/MainComponent.cpp)
 
@@ -173,6 +176,7 @@ if(LIVEDAW_BUILD_TESTS)
         tests/ShowTests.cpp
         tests/StabilityTests.cpp
         tests/PluginHostingTests.cpp
+        tests/LayerTests.cpp
         ${LIVEDAW_ENGINE_SOURCES})
     livedaw_configure_juce_target(LiveDAWTests)
 

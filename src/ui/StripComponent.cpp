@@ -259,6 +259,30 @@ void StripComponent::showContextMenu()
     menu.addItem ("Recall safe", true, strip.params.recallSafe.load(),
                   [this] { strip.params.recallSafe = ! strip.params.recallSafe.load(); repaint(); });
 
+    // Layers: put this strip on any user layer.
+    juce::PopupMenu layersMenu;
+    const auto ref = state::StripRef::of (strip);
+    for (auto& layer : ctx.show.layers.getUserLayers())
+    {
+        const bool onLayer = std::find (layer.strips.begin(), layer.strips.end(), ref) != layer.strips.end();
+        layersMenu.addItem (layer.name, true, onLayer, [this, ref, id = layer.id, onLayer]
+        {
+            if (onLayer)
+                ctx.show.layers.removeFromUserLayer (id, ref);
+            else
+                ctx.show.layers.addToUserLayer (id, ref);
+            notifyLayersChangedAsync (ctx);
+        });
+    }
+    if (! ctx.show.layers.getUserLayers().empty())
+        layersMenu.addSeparator();
+    layersMenu.addItem ("New user layer with this strip", [this, ref]
+    {
+        ctx.show.layers.addUserLayer ("User " + juce::String (ctx.show.layers.getUserLayers().size() + 1), { ref });
+        notifyLayersChangedAsync (ctx);
+    });
+    menu.addSubMenu ("User layers", layersMenu);
+
     juce::PopupMenu colours;
     const std::pair<const char*, juce::uint32> palette[] = {
         { "Blue", 0xff3d7ab8 }, { "Green", 0xff3daa6e }, { "Orange", 0xffb8863d },

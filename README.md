@@ -27,6 +27,17 @@ processing, it can be routed to buses, and it can be sent to any hardware output
 - **Buses:** up to 32 aux buses (monitor mixes, FX) and group buses (subgroups), with
   pre- or post-fader sends. PFL/AFL solo goes to a dedicated monitor bus. Every bus and
   each channel's direct out can be routed to any hardware output.
+- **Layers (X32/Wing style):** a layer selector beside the faders, with the master
+  always visible on the right.
+  - **Default layers** are generated from the console and always cover every strip:
+    input banks (`Ch 1-16`, `Ch 17-32`, …), aux banks, group banks and `All`. They
+    follow the console as channels and buses are added or removed. The bank size
+    (8–48) can be changed.
+  - **User layers** hold any strips on the board (inputs, auxes, groups, master) in any
+    order. Build them in the **Layers** tab, or right-click a strip and choose
+    *User layers*.
+  - `Ctrl/Cmd + 1..9` selects layers. Layers are saved with the show. Only the visible
+    layer's strips are drawn, so very large consoles stay responsive.
 - **Show > Scene > Snippet:**
   - A **show** is the file. It holds the console setup (channels, buses, plugins,
     patching) and all of its scenes.
@@ -115,17 +126,19 @@ copy, pass `-DLIVEDAW_VST2_SDK_DIR=/path/to/vstsdk` to enable VST2 hosting.
 2. **Channels:** set the count with `-` / `+`, or double-click the number and type it.
    On each strip, the input button patches the channel and **MO/ST** switches it between
    mono and stereo.
-3. Work directly on the strips (insert slots, gate, mini EQ, compressor, pan, fader).
+3. Pick a layer on the left of the faders (or `Ctrl+1..9`). Build your own layers in
+   the **Layers** tab: **+ New**, then double-click strips on the board to add them.
+4. Work directly on the strips (insert slots, gate, mini EQ, compressor, pan, fader).
    **SEL** opens every parameter in the **Channel** tab.
-4. **+ Aux** / **+ Group** add buses. Set sends in the *Sends* section of each channel,
+5. **+ Aux** / **+ Group** add buses. Set sends in the *Sends* section of each channel,
    and give buses hardware outputs.
-5. **Show tab:**
+6. **Show tab:**
    - **+ New** captures the current console as a scene.
    - Set its recall scope, fade and notes.
    - Add snippets to it: choose the strips and sections, and optionally *Fire with scene*.
    - **GO** (or double-click) recalls.
-6. Right-click a strip to rename it, recolour it, make it **recall safe** or remove it.
-7. **Show > Save** writes a `.lshow` file. **Plugins** opens the scanner (it runs out of process).
+7. Right-click a strip to rename it, recolour it, make it **recall safe** or remove it.
+8. **Show > Save** writes a `.lshow` file. **Plugins** opens the scanner (it runs out of process).
 
 ## Project layout
 

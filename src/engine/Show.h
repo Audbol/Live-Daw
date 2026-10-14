@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/ConsoleState.h"
+#include "engine/Layers.h"
 
 #include <juce_events/juce_events.h>
 
@@ -53,6 +54,9 @@ public:
     ~Show() override;
 
     juce::String name { "Untitled show" };
+
+    /** Fader layers (default banks + user layers), saved with the show. */
+    LayerSet layers;
 
     //==============================================================================
     // Scenes
