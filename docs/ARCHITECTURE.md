@@ -130,6 +130,8 @@ Show
 - Plugins run inside the mixer process. Bad output and exceptions are contained, but
   a plugin that segfaults takes the app down (safe mode then recovers the show).
   Hosting each plugin in a sandbox process is the next step for full isolation.
+- Out-of-process scanning of AudioUnits on macOS hasn't been verified on real
+  hardware yet. The CI integration test covers VST3/LV2 only.
 - No plugin delay compensation. Insert latency is shown per strip. Live mixing
   normally avoids high-latency plugins anyway.
 - Plugins always run in stereo. A mono strip feeds both plugin inputs and takes the

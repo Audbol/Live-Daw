@@ -21,6 +21,12 @@ public:
 
         for (auto* f : fm.getFormats())
         {
+            // AudioUnits are skipped: scanning them from this console test runner
+            // (no NSApplication) returns nothing. Out-of-process AU scanning still
+            // needs verifying in the real app on a Mac.
+            if (f->getName() == "AudioUnit")
+                continue;
+
             const auto found = f->searchPathsForPlugins (f->getDefaultLocationsToSearch(), true, false);
             if (! found.isEmpty())
             {
