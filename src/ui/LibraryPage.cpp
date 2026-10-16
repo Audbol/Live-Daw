@@ -68,7 +68,7 @@ public:
         makeKey (keys, *this, "CLOSE", Icon::ClearCircle)->onClick = [&ctx] { if (ctx.newShow) ctx.newShow(); };
         makeKey (keys, *this, "SAVE AS", Icon::SaveTray)->onClick = [&ctx] { if (ctx.saveShow) ctx.saveShow (true); };
         makeKey (keys, *this, "ADD ITEM\nTO SHOW", Icon::Plus, false); // needs the file browser (G-N3)
-        makeKey (keys, *this, "EDIT\nTAG", Icon::Tag, false);          // session E1: scene tags
+        makeKey (keys, *this, "EDIT\nTAG", Icon::Tag)->onClick = [this] { editTag(); };
         makeKey (keys, *this, "SEND\nMIDI", Icon::Edit, false);        // needs MIDI (G-N1)
         rows = { { {}, { keys[0], keys[1] }, { keys[2] } }, { {}, { keys[3] }, { keys[4] } }, { {}, { keys[5] }, { keys[7], keys[6] } } };
     }
@@ -92,6 +92,28 @@ public:
     }
 
 private:
+    /** EDIT TAG: the selected scene's tag, #1..#128 (recalled by tag from MIDI or a custom control). */
+    void editTag()
+    {
+        const int index = page.selectedScene();
+        const auto scene = page.ctx.show.getScene (index);
+        if (! scene)
+            return;
+        auto* w = new juce::AlertWindow ("EDIT TAG", "Tag of \"" + scene->name + "\" (1-" + juce::String (Show::maxSceneTag) + ", empty for none):",
+                                         juce::MessageBoxIconType::NoIcon, this);
+        w->addTextEditor ("tag", scene->tag > 0 ? juce::String (scene->tag) : juce::String());
+        w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        w->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        juce::Component::SafePointer<ShowTab> safe (this);
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([safe, w, index] (int r)
+        {
+            if (r == 0 || safe == nullptr)
+                return;
+            safe->page.ctx.show.setSceneTag (index, w->getTextEditorContents ("tag").retainCharacters ("0123456789").getIntValue());
+            safe->page.list->refresh();
+        }), true);
+    }
+
     LibraryPage& page;
     juce::OwnedArray<WingKey> keys;
     std::vector<KeyRow> rows;

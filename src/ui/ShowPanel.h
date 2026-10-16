@@ -8,7 +8,9 @@ namespace livedaw::ui
 /** The left half of the LIBRARY screen with a show open (manual 5.6, fig. 45):
     the list toolbar (INT | USB | SHOW, REMOVE, RENAME, SKIP, LINK, UP, DOWN)
     and the show's scenes, each followed by its snippets (indented; a green bar
-    links the ones that fire with their scene). Rows whose type doesn't match
+    links the ones that fire with their scene, and a scene to the one below it
+    that it LINKs). Scene tags show as "#n", skipped scenes dimmed with the SKIP
+    mark. Rows whose type doesn't match
     the open tab on the right are greyed, as on the console. */
 class ShowPanel final : public juce::Component
 {
@@ -48,6 +50,7 @@ private:
     void renameSelected();
     void moveSelected (int delta);
     void linkSelected();
+    void skipSelected();
     void updateKeys();
 
     UiContext& ctx;

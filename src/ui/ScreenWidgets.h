@@ -71,6 +71,23 @@ namespace prefs
     constexpr const char* layerLink = "setup.faderScreenLayerLink";       // VIEW screens follow the section's layer
     constexpr const char* brightnessPrefix = "setup.brightness.";
 
+    /** SETUP > SURFACE > METERING: PRE or POST for the meters of each strip type. */
+    constexpr int kNumMeterTaps = 5;
+    constexpr const char* meterTapNames[kNumMeterTaps] = { "CHANNEL METERS", "BUS METERS", "MAIN METERS", "MATRIX METERS", "DCA METERS" };
+    constexpr bool meterTapDefaultPre[kNumMeterTaps] = { true, false, false, false, true }; // the console's defaults
+    inline juce::String meterTapKey (int i) { return "setup.meterTapPre." + juce::String (i); }
+    inline bool meterTapPre (UiContext& ctx, int i)
+    {
+        i = juce::jlimit (0, kNumMeterTaps - 1, i);
+        return ctx.settings.getBoolValue (meterTapKey (i), meterTapDefaultPre[i]);
+    }
+    /** Where a strip type's meters measure (aux channels follow CHANNEL METERS; DCA METERS is index 4). */
+    inline MeterPoint meterPoint (UiContext& ctx, StripKind kind)
+    {
+        const int i = kind == StripKind::Bus ? 1 : kind == StripKind::Main ? 2 : kind == StripKind::Matrix ? 3 : 0;
+        return meterTapPre (ctx, i) ? MeterPoint::PreFader : MeterPoint::Output;
+    }
+
     inline bool confirmLoad (UiContext& ctx) { return ctx.settings.getBoolValue (confirmLibraryLoad, true); }
     inline int faderResolution (UiContext& ctx) { return ctx.settings.getIntValue (touchFaderRes, 2); }
     inline bool screenFollowsLayer (UiContext& ctx) { return ctx.settings.getBoolValue (layerLink, true); }

@@ -216,10 +216,9 @@ bool MetersPage::isMuted (const Group& group, int index) const
 
 float MetersPage::levelOf (const Group& group, int index, int channel) const
 {
-    // The console's meters here are pre-fader; ours read the post-fader output
-    // until the engine has a pre-fader tap (session E11: pre-fader meter taps).
+    // The METERS screen shows pre-fader levels (manual 5.3).
     if (! group.dca)
-        return meterPos (dsp::gainToDb (ctx.meters.get (stripOf (group, index), false, channel)));
+        return meterPos (dsp::gainToDb (ctx.meters.get (stripOf (group, index), MeterPoint::PreFader, channel)));
 
     // A DCA shows the loudest of its members.
     const uint32_t bit = 1u << (uint32_t) (group.first + index);
@@ -227,7 +226,7 @@ float MetersPage::levelOf (const Group& group, int index, int channel) const
     for (auto kind : { StripKind::Channel, StripKind::Aux, StripKind::Bus, StripKind::Main, StripKind::Matrix })
         for (auto& s : ctx.engine.getStrips (kind))
             if ((s->params.dcaMask.load() & bit) != 0)
-                peak = juce::jmax (peak, ctx.meters.get (s.get(), false, channel));
+                peak = juce::jmax (peak, ctx.meters.get (s.get(), MeterPoint::PreFader, channel));
     return meterPos (dsp::gainToDb (peak));
 }
 

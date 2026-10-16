@@ -542,13 +542,58 @@ void ViewPage::resized()
 //==============================================================================
 namespace
 {
-    /** The rows of an OVERVIEW strip, top to bottom. */
+    /** The rows of an OVERVIEW strip, top to bottom: five processing blocks
+        with the level bar among them where the fader sits. */
     struct OverviewRows
     {
-        juce::Rectangle<float> name, number, input, slots[4], bar, post, pan, sends;
+        juce::Rectangle<float> name, number, input, blocks[5], bar, pan, sends;
     };
 
-    OverviewRows overviewRows (juce::Rectangle<int> column)
+    /** The processing blocks of a strip in its WING order (HomeTab::Home = an
+        empty position), and how many come before the fader. */
+    struct Blocks
+    {
+        std::array<HomeTab, 5> tabs { HomeTab::Home, HomeTab::Home, HomeTab::Home, HomeTab::Home, HomeTab::Home };
+        int beforeFader = 4;
+    };
+
+    Blocks blocksOf (const Strip& s)
+    {
+        Blocks b;
+        if (s.isOutput())
+        {
+            // Buses, mains, matrices: DYN, INS 1, fader, EQ, INS 2.
+            b.tabs = { HomeTab::Home, HomeTab::Dynamics, HomeTab::PreInsert, HomeTab::Eq, HomeTab::PostInsert };
+            b.beforeFader = 3;
+            return b;
+        }
+        if (! s.hasSelectableTap())
+        {
+            // Aux: DYN, EQ, INS 1 before the fader; no INS 2.
+            b.tabs = { HomeTab::Home, HomeTab::Dynamics, HomeTab::Eq, HomeTab::PreInsert, HomeTab::Home };
+            return b;
+        }
+        // Input channels: G, E, D, I in their process order, then INS 2.
+        const auto order = models::list (models::ProcessOrders)[juce::jlimit (0, 23, (int) s.params.processOrder.load())];
+        size_t i = 0;
+        for (auto letter : order)
+        {
+            if (i >= 4)
+                break;
+            if (letter == 'G')
+                b.tabs[i++] = HomeTab::Gate;
+            else if (letter == 'E')
+                b.tabs[i++] = HomeTab::Eq;
+            else if (letter == 'D')
+                b.tabs[i++] = HomeTab::Dynamics;
+            else if (letter == 'I')
+                b.tabs[i++] = HomeTab::PreInsert;
+        }
+        b.tabs[4] = HomeTab::PostInsert;
+        return b;
+    }
+
+    OverviewRows overviewRows (juce::Rectangle<int> column, int beforeFader)
     {
         OverviewRows r;
         auto c = column.toFloat();
@@ -561,42 +606,26 @@ namespace
         const float gap = 3.0f;
         const float blockH = (c.getHeight() - barH - gap * 9.0f) / 8.0f;
         r.input = c.removeFromTop (blockH);
-        for (auto& s : r.slots)
+        for (int i = 0; i < 5; ++i)
+        {
+            if (i == beforeFader)
+            {
+                c.removeFromTop (gap);
+                r.bar = c.removeFromTop (barH);
+            }
+            c.removeFromTop (gap);
+            r.blocks[i] = c.removeFromTop (blockH);
+        }
+        if (beforeFader >= 5)
         {
             c.removeFromTop (gap);
-            s = c.removeFromTop (blockH);
+            r.bar = c.removeFromTop (barH);
         }
-        c.removeFromTop (gap);
-        r.bar = c.removeFromTop (barH);
-        c.removeFromTop (gap);
-        r.post = c.removeFromTop (blockH);
         c.removeFromTop (gap);
         r.pan = c.removeFromTop (blockH);
         c.removeFromTop (gap);
         r.sends = c.removeFromTop (blockH);
         return r;
-    }
-
-    /** The blocks in a strip's four processing slots (G, E, D, I in its process order). */
-    std::array<HomeTab, 4> slotTabs (const Strip& s)
-    {
-        std::array<HomeTab, 4> tabs { HomeTab::Gate, HomeTab::Eq, HomeTab::Dynamics, HomeTab::PreInsert };
-        const auto order = models::list (models::ProcessOrders)[juce::jlimit (0, 23, (int) s.params.processOrder.load())];
-        size_t i = 0;
-        for (auto letter : order)
-        {
-            if (i >= tabs.size())
-                break;
-            if (letter == 'G')
-                tabs[i++] = HomeTab::Gate;
-            else if (letter == 'E')
-                tabs[i++] = HomeTab::Eq;
-            else if (letter == 'D')
-                tabs[i++] = HomeTab::Dynamics;
-            else if (letter == 'I')
-                tabs[i++] = HomeTab::PreInsert;
-        }
-        return tabs;
     }
 
     void paintInsertBlock (juce::Graphics& g, juce::Rectangle<float> r, UiContext& ctx, Strip& s, bool post)
@@ -675,7 +704,7 @@ namespace
     {
         block (g, r);
         auto inner = r.reduced (3.0f);
-        const float level = meterPos (dsp::gainToDb (ctx.meters.get (&s, true, 0)));
+        const float level = meterPos (dsp::gainToDb (ctx.meters.get (&s, MeterPoint::Trim, 0)));
         verticalMeter (g, inner.removeFromRight (juce::jmax (3.0f, inner.getWidth() * 0.1f)), level, Colours::meterGreen);
         inner.removeFromRight (2.0f);
         auto& p = s.params;
@@ -696,7 +725,7 @@ namespace
         auto meter = inner.removeFromRight (juce::jmax (6.0f, inner.getWidth() * 0.16f));
         for (int ch = 0; ch < 2; ++ch)
             verticalMeter (g, meter.withWidth (meter.getWidth() / 2.0f - 1.0f).translated ((float) ch * meter.getWidth() / 2.0f, 0.0f),
-                           meterPos (dsp::gainToDb (ctx.meters.get (&s, false, ch))), Colours::meterGreen);
+                           meterPos (dsp::gainToDb (ctx.meters.get (&s, prefs::meterPoint (ctx, s.getKind()), ch))), Colours::meterGreen);
         inner.removeFromRight (2.0f);
         if (s.getKind() != StripKind::Main && s.getKind() != StripKind::Matrix)
         {
@@ -723,7 +752,8 @@ void OverviewViewPage::paintContent (juce::Graphics& g)
         const auto t = resolve (ctx, faders[i]);
         if (! t.isValid())
             continue;
-        const auto rows = overviewRows (cols[i].withTrimmedBottom (6));
+        const auto blocks = t.strip != nullptr ? blocksOf (*t.strip) : Blocks {};
+        const auto rows = overviewRows (cols[i].withTrimmedBottom (6), blocks.beforeFader);
         paintNameBar (g, rows.name, colourOf (ctx, t), barName (ctx, t));
         paintNumberTile (g, rows.number, t);
         levelBar (g, rows.bar, faderOf (ctx, t).load(), muteOf (ctx, t).load());
@@ -732,31 +762,26 @@ void OverviewViewPage::paintContent (juce::Graphics& g)
 
         auto& s = *t.strip;
         paintInputBlock (g, rows.input, ctx, s);
-        const auto tabs = slotTabs (s);
-        for (size_t k = 0; k < tabs.size(); ++k)
+        for (size_t k = 0; k < blocks.tabs.size(); ++k)
         {
-            switch (tabs[k])
+            switch (blocks.tabs[k])
             {
-                case HomeTab::Gate:
-                    if (s.getKind() == StripKind::Channel)
-                        paintDynBlock (g, rows.slots[k], s, true);
-                    break;
-                case HomeTab::Dynamics:  paintDynBlock (g, rows.slots[k], s, false); break;
-                case HomeTab::Eq:        paintEqBlock (g, rows.slots[k], s); break;
-                case HomeTab::PreInsert: paintInsertBlock (g, rows.slots[k], ctx, s, false); break;
+                case HomeTab::Gate:       paintDynBlock (g, rows.blocks[k], s, true); break;
+                case HomeTab::Dynamics:   paintDynBlock (g, rows.blocks[k], s, false); break;
+                case HomeTab::Eq:         paintEqBlock (g, rows.blocks[k], s); break;
+                case HomeTab::PreInsert:  paintInsertBlock (g, rows.blocks[k], ctx, s, false); break;
+                case HomeTab::PostInsert: paintInsertBlock (g, rows.blocks[k], ctx, s, true); break;
                 case HomeTab::Home:
                 case HomeTab::Icon:
                 case HomeTab::Tags:
                 case HomeTab::Input:
                 case HomeTab::Filter:
-                case HomeTab::PostInsert:
                 case HomeTab::Main:
                 case HomeTab::Sends:
                 case HomeTab::Name:
                     break;
             }
         }
-        paintInsertBlock (g, rows.post, ctx, s, true);
         paintPanBlock (g, rows.pan, ctx, s);
         block (g, rows.sends);
         sendCells (g, rows.sends.reduced (3.0f), ctx, s);
@@ -778,7 +803,8 @@ void OverviewViewPage::mouseUp (const juce::MouseEvent& e)
         if (! cols[i].toFloat().contains (pos))
             continue;
         const auto t = resolve (ctx, faders[i]);
-        const auto rows = overviewRows (cols[i].withTrimmedBottom (6));
+        const auto blocks = t.strip != nullptr ? blocksOf (*t.strip) : Blocks {};
+        const auto rows = overviewRows (cols[i].withTrimmedBottom (6), blocks.beforeFader);
         if (t.dca >= 0)
         {
             if (rows.name.contains (pos) || rows.number.contains (pos))
@@ -790,14 +816,10 @@ void OverviewViewPage::mouseUp (const juce::MouseEvent& e)
         auto tab = HomeTab::Home;
         if (rows.input.contains (pos))
             tab = HomeTab::Input;
-        for (size_t k = 0; k < 4; ++k)
-            if (rows.slots[k].contains (pos))
-                tab = slotTabs (*t.strip)[k];
-        if (tab == HomeTab::Gate && t.strip->getKind() != StripKind::Channel)
-            tab = HomeTab::Home;
-        if (rows.post.contains (pos))
-            tab = HomeTab::PostInsert;
-        else if (rows.pan.contains (pos))
+        for (size_t k = 0; k < blocks.tabs.size(); ++k)
+            if (rows.blocks[k].contains (pos))
+                tab = blocks.tabs[k];
+        if (rows.pan.contains (pos))
             tab = HomeTab::Main;
         else if (rows.sends.contains (pos))
             tab = HomeTab::Sends;
@@ -926,7 +948,7 @@ void FadersViewPage::paintContent (juce::Graphics& g)
             auto meter = faderArea.removeFromRight (juce::jmax (5.0f, faderArea.getWidth() * 0.12f));
             for (int ch = 0; ch < 2; ++ch)
                 verticalMeter (g, meter.withWidth (meter.getWidth() / 2.0f - 0.5f).translated ((float) ch * meter.getWidth() / 2.0f, 0.0f),
-                               meterPos (dsp::gainToDb (ctx.meters.get (&s, false, ch))), Colours::meterGreen);
+                               meterPos (dsp::gainToDb (ctx.meters.get (&s, prefs::meterPoint (ctx, s.getKind()), ch))), Colours::meterGreen);
             paintAssignments (g, rows.assign.reduced (3.0f, 0.0f), s);
         }
         paintFader (g, faderArea, faderOf (ctx, t).load(), Dark::faderFill, true);
@@ -1217,7 +1239,7 @@ void SendsViewPage::paintContent (juce::Graphics& g)
         if (t.strip != nullptr)
             for (int ch = 0; ch < 2; ++ch)
                 verticalMeter (g, meter.withWidth (meter.getWidth() / 2.0f - 0.5f).translated ((float) ch * meter.getWidth() / 2.0f, 0.0f),
-                               meterPos (dsp::gainToDb (ctx.meters.get (t.strip, false, ch))), Colours::meterGreen);
+                               meterPos (dsp::gainToDb (ctx.meters.get (t.strip, prefs::meterPoint (ctx, t.strip->getKind()), ch))), Colours::meterGreen);
         if (sends)
             paintFader (g, c.reduced (2.0f, 2.0f), level != nullptr ? level->load() : -100.0f, sendRed, isOn);
         g.setColour (Dark::textDim);

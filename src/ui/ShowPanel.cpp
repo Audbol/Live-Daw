@@ -97,6 +97,7 @@ private:
         }
 
         auto t = r.reduced (8.0f, 2.0f);
+        auto bars = t.removeFromRight (12.0f); // the LINK bars, right of the chips
         if (item.isSnippet())
             t.removeFromLeft (24.0f);
 
@@ -112,7 +113,7 @@ private:
         g.drawText (number, chipColumn.withTop (chip.getBottom()).toNearestInt(), juce::Justification::centredRight);
 
         // Snippets that fire with their scene: a green bar down the chip column (the console's LINK).
-        const float barX = chipColumn.getRight() + 3.0f;
+        const float barX = bars.getX() + 1.0f;
         g.setColour (FileColours::wav);
         if (! item.isSnippet() && linkContinues (row))
             g.fillRect (barX, r.getCentreY(), 4.0f, r.getBottom() + 1.0f - r.getCentreY());
@@ -122,6 +123,19 @@ private:
             const bool continues = linkContinues (row);
             if (linked || continues)
                 g.fillRect (barX, r.getY(), 4.0f, (continues ? r.getBottom() + 1.0f : r.getCentreY()) - r.getY());
+        }
+
+        // A scene that LINKs to the scene below: a green bar joins them, and the
+        // linked scene is indented.
+        const auto previous = item.scene > 0 ? show.getScene (item.scene - 1) : std::nullopt;
+        const bool linkedFromAbove = ! item.isSnippet() && previous && previous->linkNext;
+        const float sceneBarX = bars.getX() + 7.0f;
+        if (scene->linkNext && item.scene < show.getNumScenes() - 1)
+            g.fillRect (sceneBarX, item.isSnippet() ? r.getY() : r.getCentreY(), 4.0f, item.isSnippet() ? r.getHeight() + 1.0f : r.getBottom() + 1.0f - r.getCentreY());
+        if (linkedFromAbove)
+        {
+            g.fillRect (sceneBarX, r.getY(), 4.0f, r.getCentreY() - r.getY());
+            t.removeFromLeft (16.0f);
         }
 
         if (item.isSnippet())
@@ -147,7 +161,25 @@ private:
             t.removeFromLeft (4.0f);
         }
 
-        g.setColour (normal ? Dark::text : Dark::textDim.withAlpha (0.6f));
+        if (! item.isSnippet())
+        {
+            // The scene tag (#1..#128) in a small blue chip at the top left.
+            if (scene->tag > 0)
+            {
+                drawChip (g, juce::Rectangle<float> (t.getX(), t.getY() + 1.0f, 30.0f, juce::jlimit (10.0f, 14.0f, t.getHeight() * 0.32f)),
+                          "#" + juce::String (scene->tag), Dark::choice.withMultipliedAlpha (normal ? 1.0f : 0.5f), juce::Colours::black);
+                t.removeFromTop (juce::jlimit (6.0f, 10.0f, t.getHeight() * 0.22f));
+            }
+            // A skipped scene: the SKIP mark, and the name dimmed.
+            if (scene->skip)
+            {
+                drawIcon (g, Icon::Skip, t.removeFromLeft (16.0f).withSizeKeepingCentre (12.0f, 12.0f), Dark::on.withMultipliedAlpha (normal ? 1.0f : 0.5f));
+                t.removeFromLeft (4.0f);
+            }
+        }
+
+        const bool dim = ! normal || (! item.isSnippet() && scene->skip);
+        g.setColour (dim ? Dark::textDim.withAlpha (0.6f) : Dark::text);
         g.setFont (juce::FontOptions (juce::jlimit (12.0f, 24.0f, t.getHeight() * 0.62f), juce::Font::bold));
         g.drawFittedText ((item.isSnippet() ? snippet->name : scene->name).toUpperCase(), t.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
     }
@@ -181,7 +213,14 @@ ShowPanel::ShowPanel (UiContext& c) : ctx (c)
     showKey.litColour = FileColours::show;
     showKey.isLit = [] { return true; };
     showKey.caption = [this] { return juce::String (ctx.show.getNumScenes()) + " SCNS"; };
-    skipKey.setEnabled (false); // session E2: SKIP
+    skipKey.litColour = Dark::on;
+    skipKey.isLit = [this]
+    {
+        const auto i = getSelected();
+        const auto sc = i.isValid() && ! i.isSnippet() ? ctx.show.getScene (i.scene) : std::nullopt;
+        return sc && sc->skip;
+    };
+    skipKey.onClick = [this] { skipSelected(); };
 
     removeKey.onClick = [this] { removeSelected(); };
     renameKey.onClick = [this] { renameSelected(); };
@@ -241,13 +280,19 @@ void ShowPanel::updateKeys()
     const auto item = getSelected();
     removeKey.setEnabled (item.isValid());
     renameKey.setEnabled (item.isValid());
-    // A scene links to the next scene with session E3; a snippet links to its scene.
-    linkKey.setEnabled (item.isSnippet());
+    // SKIP: scenes. LINK: a scene to the scene below it, a snippet to its scene (fire with it).
+    skipKey.setEnabled (item.isValid() && ! item.isSnippet());
+    linkKey.setEnabled (item.isSnippet() || (item.isValid() && item.scene < ctx.show.getNumScenes() - 1));
     linkKey.isLit = [this]
     {
         const auto i = getSelected();
-        const auto sn = i.isSnippet() ? ctx.show.getSnippet (i.scene, i.snippet) : std::nullopt;
-        return sn && sn->fireWithScene;
+        if (i.isSnippet())
+        {
+            const auto sn = ctx.show.getSnippet (i.scene, i.snippet);
+            return sn && sn->fireWithScene;
+        }
+        const auto sc = ctx.show.getScene (i.scene);
+        return sc && sc->linkNext;
     };
     linkKey.litColour = FileColours::wav;
     upKey.setEnabled (item.isValid() && ! item.isSnippet() && item.scene > 0);
@@ -321,14 +366,26 @@ void ShowPanel::moveSelected (int delta)
 void ShowPanel::linkSelected()
 {
     const auto item = getSelected();
-    if (! item.isSnippet())
-        return;
-    if (const auto sn = ctx.show.getSnippet (item.scene, item.snippet))
+    if (item.isSnippet())
     {
-        ctx.show.setSnippetFireWithScene (item.scene, item.snippet, ! sn->fireWithScene);
-        list->repaint();
-        linkKey.repaint();
+        if (const auto sn = ctx.show.getSnippet (item.scene, item.snippet))
+            ctx.show.setSnippetFireWithScene (item.scene, item.snippet, ! sn->fireWithScene);
     }
+    else if (const auto sc = ctx.show.getScene (item.scene))
+        ctx.show.setSceneLink (item.scene, ! sc->linkNext);
+    list->repaint();
+    linkKey.repaint();
+}
+
+void ShowPanel::skipSelected()
+{
+    const auto item = getSelected();
+    if (item.isSnippet())
+        return;
+    if (const auto sc = ctx.show.getScene (item.scene))
+        ctx.show.setSceneSkip (item.scene, ! sc->skip);
+    list->repaint();
+    skipKey.repaint();
 }
 
 void ShowPanel::paint (juce::Graphics& g)

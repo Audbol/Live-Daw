@@ -1,3 +1,4 @@
+#include "engine/Models.h"
 #include "ui/Pages.h"
 #include "ui/ScreenWidgets.h"
 
@@ -10,7 +11,7 @@ namespace livedaw::ui
 // INITIALIZE CONSOLE and SHUTDOWN on the tab row, and an app-specific PLUGINS
 // tab. Settings that only make sense on the hardware are drawn disabled so the
 // screens keep the console's layout; so are the ones waiting for engine or
-// session support (each marked with its item, e.g. "session E8").
+// support from files this page doesn't own (each marked with its item).
 
 namespace
 {
@@ -488,10 +489,13 @@ namespace
             inputSelect.addRow ({}, std::make_unique<InputSelectGrid>(), 0.0f, false, false, 4.4f);
             addAndMakeVisible (inputSelect);
 
-            prefsPanel.addRow ("MAIN LINK", fixedChoice ({ "OFF", "1>2", "1>2-3", "1>2-4" }, 0), 6.4f, false); // session E8: MAIN LINK
-            prefsPanel.addRow ("DCA MUTEGROUPS", OnKey::fixed (true), 1.3f, false);         // session E6: DCA MUTEGROUPS (always on today)
+            prefsPanel.addRow ("MAIN LINK",
+                               std::make_unique<ChoiceKeys> (models::list (models::MainLinkModes), [this] { return (int) ctx.engine.mainLink.load(); },
+                                                             [this] (int i) { ctx.engine.mainLink = i; }),
+                               6.4f);
+            prefsPanel.addRow ("DCA MUTEGROUPS", OnKey::forAtomic (ctx.engine.dcaMuteGroups), 1.3f);
             prefsPanel.addRow ("MUTEGROUP/SIP OVERRIDE", OnKey::fixed (false), 1.3f, false); // engine E7
-            prefsPanel.addRow ("STARTUP MAIN MUTE", OnKey::fixed (false), 1.3f, false);     // session E9: STARTUP MAIN MUTE
+            prefsPanel.addRow ("STARTUP MAIN MUTE", OnKey::forAtomic (ctx.engine.startupMainMute), 1.3f);
             prefsPanel.addRow ("GLOBAL INPUT SELECT OVERRIDE", OnKey::fixed (false), 1.3f, false); // E-ALT
             prefsPanel.newBox();
             prefsPanel.addRow ("SOURCE SOLO", fixedChoice ({ "OFF", "CH39", "AUX7" }, 0), 4.8f, false);
@@ -510,16 +514,15 @@ namespace
 
             solo.addRow ("SOLO MODE", fixedChoice ({ "LIVE", "STUDIO", "SIP" }, 1, { Dark::olive, Dark::olive, Dark::olive }), 5.4f, false); // engine E5
             solo.newBox();
-            // Until per-kind taps exist (session E4), one switch sets PFL/AFL for every strip.
-            solo.addRow ("CHANNEL SOLO",
-                         std::make_unique<ChoiceKeys> (juce::StringArray { "PFL", "AFL" }, [this] { return ctx.engine.soloAfl.load() ? 1 : 0; },
-                                                       [this] (int i) { ctx.engine.soloAfl = i == 1; }, ChoiceKeys::prePost()),
-                         3.6f);
-            for (auto* name : { "BUS SOLO", "MAIN SOLO", "MATRIX SOLO" })
+            // PFL or AFL per strip type (CHANNEL SOLO covers the aux channels too).
+            for (auto [name, kind] : { std::pair { "CHANNEL SOLO", StripKind::Channel }, std::pair { "BUS SOLO", StripKind::Bus },
+                                       std::pair { "MAIN SOLO", StripKind::Main }, std::pair { "MATRIX SOLO", StripKind::Matrix } })
             {
-                auto k = std::make_unique<ChoiceKeys> (juce::StringArray { "PFL", "AFL" }, [this] { return ctx.engine.soloAfl.load() ? 1 : 0; }, nullptr,
-                                                       ChoiceKeys::prePost());
-                solo.addRow (name, std::move (k), 3.6f, false); // session E4: PFL/AFL per strip type
+                const auto k = kind;
+                solo.addRow (name,
+                             std::make_unique<ChoiceKeys> (juce::StringArray { "PFL", "AFL" }, [this, k] { return ctx.engine.isSoloAfl (k) ? 1 : 0; },
+                                                           [this, k] (int i) { ctx.engine.setSoloAfl (k, i == 1); }, ChoiceKeys::prePost()),
+                             3.6f);
             }
             solo.newBox();
             // Solo/select behaviour (G18) lives in the fader strips.
@@ -533,8 +536,8 @@ namespace
             device.addRow ({}, std::make_unique<DropdownField> ("IN/OUT", [this] { return channelsText(); }), 0.0f, false, false, 1.7f);
             addAndMakeVisible (device);
 
-            automix.addRow ("X ENABLE", OnKey::fixed (true), 1.3f, false); // session E10: AUTOMIX X/Y ENABLE
-            automix.addRow ("Y ENABLE", OnKey::fixed (true), 1.3f, false);
+            automix.addRow ("X ENABLE", OnKey::forAtomic (ctx.engine.automixEnable[0]), 1.3f);
+            automix.addRow ("Y ENABLE", OnKey::forAtomic (ctx.engine.automixEnable[1]), 1.3f);
             addAndMakeVisible (automix);
 
             clearKey.offColour = Dark::header;
@@ -669,9 +672,14 @@ namespace
         {
             // Needs the surface's LED meter (SurfaceSections) to follow it.
             metering.addRow ("MAIN METER", std::make_unique<DropdownField> ("SOURCE", [] { return juce::String ("MAIN.1"); }), 5.0f, false, false, 1.6f);
-            metering.addRow ("MAIN METER TAP", fixedChoice ({ "AUTO", "PRE", "POST" }, 0, ChoiceKeys::autoPrePost()), 5.0f, false); // session E11
-            for (auto* name : { "CHANNEL METERS", "BUS METERS", "MAIN METERS", "MATRIX METERS", "DCA METERS" })
-                metering.addRow (name, fixedChoice ({ "PRE", "POST" }, 1, ChoiceKeys::prePost()), 3.4f, false); // session E11: meters are post-fader today
+            metering.addRow ("MAIN METER TAP", fixedChoice ({ "AUTO", "PRE", "POST" }, 0, ChoiceKeys::autoPrePost()), 5.0f, false);
+            // PRE or POST per strip type: the VIEW screens' meters follow these (the
+            // surface's LED meters can read them with prefs::meterPoint).
+            for (int i = 0; i < prefs::kNumMeterTaps; ++i)
+                metering.addRow (prefs::meterTapNames[i],
+                                 std::make_unique<ChoiceKeys> (juce::StringArray { "PRE", "POST" }, [this, i] { return prefs::meterTapPre (ctx, i) ? 0 : 1; },
+                                                               [this, i] (int v) { ctx.settings.setValue (prefs::meterTapKey (i), v == 0); }, ChoiceKeys::prePost()),
+                                 3.4f);
             addAndMakeVisible (metering);
 
             // These change how the fader strips and the status bar behave (G18, G19).
