@@ -3,6 +3,60 @@
 namespace livedaw::ui
 {
 
+namespace
+{
+    juce::String tokenOf (const models::Param& p) { return models::model (static_cast<models::Table> (p.table), p.model).token; }
+
+    bool atEnd (const models::Param& p, float v, bool top)
+    {
+        const float end = top ? p.max : p.min;
+        return std::abs (v - end) <= 1.0e-3f * std::abs (p.max - p.min);
+    }
+} // namespace
+
+juce::String consoleLabel (const models::Param& p)
+{
+    if (p.table == models::Dynamics && p.id == "ingain" && tokenOf (p) == "L100")
+        return "OUT GAIN";
+    return p.label;
+}
+
+juce::String consoleText (const models::Param& p, float v)
+{
+    const bool dyn = p.table == models::Dynamics;
+    const bool eq = p.table == models::ChannelEq || p.table == models::BusEq;
+    if (! dyn && ! eq)
+        return p.display (v);
+    const auto token = tokenOf (p);
+    if (dyn && token == "E88C" && p.id == "ratio" && atEnd (p, v, true))
+        return "LIM";
+    if (dyn && token == "E88C" && p.id == "rel" && atEnd (p, v, true))
+        return "AUTO";
+    if (dyn && token == "E88" && p.id == "hyst" && atEnd (p, v, false))
+        return "EXP";
+    if (dyn && token == "2250" && p.id == "thr" && p.unit.isEmpty())
+    {
+        // The knob's 0..10 run from +10 dB down to -20 dB.
+        const float db = 10.0f - 30.0f * (v - p.min) / juce::jmax (1.0e-6f, p.max - p.min);
+        return (db > 0.05f ? "+" : "") + juce::String (db, 1) + " dB";
+    }
+    if (eq && token == "SOUL" && (p.id == "lmq" || p.id == "hmq"))
+    {
+        // Narrow (2.5) to wide (0.3) clockwise.
+        const float t = juce::jlimit (0.0f, 1.0f, (v - p.min) / juce::jmax (1.0e-6f, p.max - p.min));
+        return juce::String (2.5f * std::pow (0.3f / 2.5f, t), 2);
+    }
+    return p.display (v);
+}
+
+KnobBinding bindConsoleParam (std::atomic<float>& v, const models::Param& p)
+{
+    auto b = bindModelParam (v, p);
+    b.label = consoleLabel (p);
+    b.text = [&v, p] { return consoleText (p, v.load()); };
+    return b;
+}
+
 static const char* categoryName (models::Category c)
 {
     switch (c)
@@ -26,7 +80,7 @@ ModelParamControl::ModelParamControl (std::atomic<float>& v, const models::Param
 {
     if (param.kind == models::ParamKind::Toggle)
     {
-        toggle = std::make_unique<juce::TextButton> (param.label);
+        toggle = std::make_unique<juce::TextButton> (consoleLabel (param));
         toggle->setClickingTogglesState (true);
         toggle->setColour (juce::TextButton::buttonOnColourId, Colours::block);
         toggle->onClick = [this] { value.store (toggle->getToggleState() ? 1.0f : 0.0f); };
@@ -48,7 +102,7 @@ ModelParamControl::ModelParamControl (std::atomic<float>& v, const models::Param
     {
         knob = std::make_unique<DisplayKnob>();
         knob->setCompact (true);
-        knob->setBinding (bindModelParam (value, param));
+        knob->setBinding (bindConsoleParam (value, param));
         addAndMakeVisible (*knob);
     }
 
@@ -76,7 +130,7 @@ void ModelParamControl::paint (juce::Graphics& g)
 
     g.setColour (Colours::accent);
     g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
-    g.drawFittedText (choice != nullptr ? param.label : juce::String(), getLocalBounds().removeFromTop (14), juce::Justification::centred, 1);
+    g.drawFittedText (choice != nullptr ? consoleLabel (param) : juce::String(), getLocalBounds().removeFromTop (14), juce::Justification::centred, 1);
 }
 
 void ModelParamControl::resized()
@@ -145,7 +199,7 @@ std::vector<KnobBinding> ModelParamGrid::bindings (int n) const
 
     const auto& spec = models::model (table, (int) model->load());
     for (size_t i = 0; i < spec.params.size() && (int) out.size() < n; ++i)
-        out.push_back (bindModelParam (values[i], spec.params[i]));
+        out.push_back (bindConsoleParam (values[i], spec.params[i]));
     return out;
 }
 

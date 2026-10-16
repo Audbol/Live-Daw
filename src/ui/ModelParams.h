@@ -8,6 +8,18 @@
 namespace livedaw::ui
 {
 
+/** A model parameter's caption and value text as the console prints them.
+    Mostly the model table's own (models::Param), with the few places where a
+    unit's panel says something else: Even 88 Comp RATIO "LIM" and RELEASE
+    "AUTO" at the end of their travel, Even 88 Gate HYST "EXP" at 0, PIA 2250
+    THR in dB (+10 .. -20), SOUL EQ Q from 2.5 (narrow) to 0.3 (wide), LTA100
+    GAIN (an output gain). */
+juce::String consoleLabel (const models::Param&);
+juce::String consoleText (const models::Param&, float value);
+
+/** bindModelParam with the console's caption and value text. */
+KnobBinding bindConsoleParam (std::atomic<float>& value, const models::Param&);
+
 /** One model parameter as a control: a knob (continuous, value lists,
     integers), a toggle, or a choice box. */
 class ModelParamControl final : public juce::Component, private juce::Timer

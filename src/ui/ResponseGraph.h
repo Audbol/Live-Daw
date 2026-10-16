@@ -8,8 +8,12 @@ namespace livedaw::ui
 {
 
 /** Frequency response of a strip's EQ or FILTER, computed by the engine's own
-    filters (ld_strip_response). With the WING EQ (STD) loaded, the bands are
-    shown as handles: drag to set frequency and gain, mouse wheel for Q. */
+    filters (ld_strip_response), drawn like the WING: a black graph with a grey
+    log grid, the EQ curve in amber with a translucent fill, a frequency ruler
+    along the bottom. With the WING EQ (STD) loaded, the bands are shown as
+    "+" handles: drag to set frequency and gain, mouse wheel for Q. The FILTER
+    view draws the filter response in blue over the EQ curve, with the low and
+    high cut as vertical LC / HC lines whose handles drag the frequencies. */
 class ResponseGraph final : public juce::Component, private juce::Timer
 {
 public:
@@ -38,6 +42,7 @@ public:
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
     static constexpr float kRangeDb = 18.0f;
@@ -58,12 +63,14 @@ private:
     juce::Rectangle<float> plot() const;
     bool showLabels() const;
     int bandAt (juce::Point<float>) const;
+    int cutLineAt (juce::Point<float>) const;
+    juce::Path curveOf (const std::vector<double>&) const;
 
     Strip* strip = nullptr;
     Block block = Eq;
-    std::vector<double> freqs, response;
+    std::vector<double> freqs, response, eqResponse;
     std::vector<Band> bands;
-    int builtModel = -1, selectedBand = -1, dragBand = -1;
+    int builtModel = -1, selectedBand = -1, dragBand = -1, dragLine = -1;
 };
 
 } // namespace livedaw::ui

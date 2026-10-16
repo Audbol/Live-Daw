@@ -46,7 +46,15 @@ enum class Icon
     LowShelf,
     HighShelf,
     Usb,         // USB trident
-    Circle       // the MONO key
+    Circle,      // the MONO key
+    Copy,       // status key COPY
+    Maxer,      // tool filters
+    AllPass90,
+    AllPass180,
+    DeltaT,     // delay
+    Invert,     // polarity
+    Cancel,     // circled x: NONE
+    UsbStick    // USB stick (status bar)
 };
 
 /** Draws `icon` fitted into `area` (stroked or filled as the icon needs). */

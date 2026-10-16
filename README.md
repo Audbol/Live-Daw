@@ -67,19 +67,25 @@ Barlow Condensed.
   their send to it; select an input and the bus, main and matrix faders set its sends.
 - Surface keys act on a press; keys with a second function act on **hold** (half a
   second, or right-click): slot on/off, VIEW for CONFIG, the shift keys.
-- **Main display**, with the screen keys on its left:
-  - The **status bar**: the selected channel's amber tab (number, icon, name; click for
-    HOME), sample rate / clock / DSP / protection chips, the current scene (click for
-    LIBRARY), **TOOLS** (UTILITY), **SETTINGS** (SETUP) and the clock.
+- **Main display**, a 16:10 screen with the seven screen keys on its left (over its
+  full height) and, on its right, **CLR SOLO**, the main L/R meter (right-click: MONITOR
+  or MAIN 1-4), the knob for fine adjustments of the last touched control and the
+  blank key:
+  - The **status bar**: the selected channel's tab in its colour (number box, icon,
+    name; the number opens **CHANNEL SELECT**, the rest Channel Home), the status
+    tiles, the screen's own keys (INIT / COPY / SETTINGS on HOME) and the clock.
   - The **parameter bar** under the screen: six controls that follow what the screen
-    shows (drag, mouse wheel, double-click to reset).
-  - **HOME** for the selected strip: the block column (INPUT, the GATE / EQ / DYN /
-    INS blocks in the strip's process order with their on keys, POST INS, MAIN, SENDS,
-    and the wrench for the process order and send tap), the **OVERVIEW** (INPUT,
+    shows (drag, mouse wheel, double-click to reset), values coloured by type as on
+    the console; touching one outlines the control it changes.
+  - **HOME** for the selected strip: the toolbar (thumbnails at the WING's fixed rows,
+    the fader bar with the TAP point, MAIN, SENDS; on Channel Home also the on keys
+    and the wrench to drag the slots and the TAP point), the **OVERVIEW** (INPUT,
     FILTER, LEVEL, EQ and MAIN panels), **ICON/COLOR**, **NAME**, **TAGS** and the
-    **SAFE** key. Each block opens its screen with the model menu and the model's
-    parameters; the EQ screen has the response graph with draggable bands and the
-    band keys (LOW, 1-4, HIGH).
+    **SAFE** key. The slot screens follow chapter 6 of the manual: INPUT (CHANNEL
+    INPUT, TRIM & BALANCE pad, FILTER, DELAY), FILTER SETUP, GATE / COMP with the
+    model's faceplate, EQ, INS 1 / INS 2 (with automix), MAIN SENDS and BUS / MATRIX
+    SENDS. **INIT** and **COPY** open CHANNEL INIT / COPY (scope and destinations);
+    a bus, main or matrix's feed grid opens its **FEED CONFIGURATION**.
   - **EFFECTS:** the FX rack, slots 1-8 premium and 9-16 standard. Each slot shows its
     device, the strip using it (PRE/POST), ON and its mix. Tapping a slot opens the
     device on its **faceplate**, drawn like the hardware it recreates (a LARC remote
