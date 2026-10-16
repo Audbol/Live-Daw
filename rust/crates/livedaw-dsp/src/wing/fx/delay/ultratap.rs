@@ -14,8 +14,6 @@ const MAX_MS: f32 = 500.0 + 2000.0 * 2.0;
 const FADE_MS: f32 = 60.0;
 /// Diffusion allpasses per channel.
 const DIFF_MS: [[f32; 3]; 2] = [[7.1, 11.3, 17.9], [7.9, 12.7, 19.3]];
-/// FOCUS / SPREAD tap spacing curve.
-const CURVE: f32 = 1.7;
 
 /// One layout of the taps: delay (samples) and left/right gain of each.
 #[derive(Clone, Copy, PartialEq)]
@@ -42,20 +40,22 @@ impl TapSet {
         set.n = n;
         let mut power = 0.0;
         let taps = set.d.iter_mut().zip(set.gl.iter_mut()).zip(set.gr.iter_mut()).enumerate().take(n);
+        // SPREAD: the first two taps centred, then widening to hard left/right
+        // by the last (so it needs three taps for any stereo); FOCUS mirrors it.
+        let fan = |k: usize| if n > 2 { k.saturating_sub(1) as f32 / (n - 2) as f32 } else { 0.0 };
         for (i, ((d, gl), gr)) in taps {
-            let t = (i + 1) as f32 / n as f32;
             // 0 at the first tap, 1 at the last.
             let u = if n > 1 { i as f32 / (n - 1) as f32 } else { 0.0 };
             let side = if i % 2 == 0 { -1.0 } else { 1.0 };
-            let (pos, pan) = match mode {
-                0 => (t, 2.0 * u - 1.0),
-                1 => (t, side),
-                2 => (1.0 - (1.0 - t).powf(CURVE), side * (1.0 - u)),
-                _ => (t.powf(CURVE), side * u),
+            let pan = match mode {
+                0 => 2.0 * u - 1.0,
+                1 => side,
+                2 => side * fan(n - 1 - i),
+                _ => side * fan(i),
             };
             let pan = if n > 1 { pan * width } else { 0.0 };
             let level = db_to_gain(slope * u - top);
-            *d = (ms(pre + span * pos, sr).round() as usize).clamp(1, max);
+            *d = (ms(pre + span * (i + 1) as f32 / n as f32, sr).round() as usize).clamp(1, max);
             *gl = level * (1.0 - pan).min(1.0);
             *gr = level * (1.0 + pan).min(1.0);
             power += level * level;
@@ -82,17 +82,19 @@ impl TapSet {
 
 /// Ultratap Delay (Korg SDD-3000 / Eventide Ultratap style multitap).
 ///
-/// REPEATS (1-16) taps of the mono input spread over TIME x FACTOR after PRE
-/// DLY, without feedback. SLOPE tilts their levels from the first to the
-/// last tap (negative = fading echoes, positive = swelling); the total is
-/// normalised so more taps don't get louder. MODE sets spacing and panning:
-/// MOVE evenly spaced taps sweeping left to right, JUMP evenly spaced taps
-/// alternating left/right, FOCUS taps that crowd together towards the end
-/// and close in from the sides to the centre, SPREAD taps that spread out
-/// and fan out from the centre. WIDTH scales the panning (negative mirrors
-/// it). DIFFUSION smears every tap through allpasses into a short cloud; LO
-/// / HI CUT filter the output. Any change of the tap layout crossfades to
-/// the new one.
+/// The mono input, through LO / HI CUT, feeds REPEATS (1-16) evenly spaced
+/// taps over TIME x FACTOR after PRE DLY, without feedback. SLOPE
+/// progressively attenuates (negative) or amplifies (positive) the
+/// repetitions, from the first to the last; the total is normalised so more
+/// taps don't get louder. MODE sets the panning, as the manual describes:
+/// MOVE pans linearly from one side to the other; JUMP alternates hard left
+/// and hard right; FOCUS starts hard left and alternates sides while closing
+/// in to the centre; SPREAD is the opposite, the first two repetitions
+/// centred and the rest alternating while widening to hard left and right.
+/// WIDTH scales the panning (negative mirrors it). DIFFUSION blends each
+/// repetition into an allpass-smeared cloud, like early reflections instead
+/// of the direct sound. Any change of the tap layout crossfades to the new
+/// one.
 pub(super) struct Ultratap {
     line: DelayLine,
     sr: f32,
@@ -153,7 +155,7 @@ impl FxAlgo for Ultratap {
                     self.fade = self.step;
                 }
             }
-            self.line.push(0.5 * (*l + *r));
+            self.line.push(self.cut.tick(0, 0.5 * (*l + *r)));
             let (mut yl, mut yr) = self.cur.read(&self.line);
             if self.fade > 0.0 {
                 let (bl, br) = self.next.read(&self.line);
@@ -175,7 +177,7 @@ impl FxAlgo for Ultratap {
                     ap.gain = g;
                     z = ap.tick(z);
                 }
-                *x = self.cut.tick(ch, y + (z - y) * amt);
+                *x = y + (z - y) * amt;
             }
         }
     }
@@ -229,6 +231,47 @@ mod tests {
         assert!(second_r > 0.05 && second_l < 1e-3, "{second_l} {second_r}");
         // -12 dB from the first tap to the last.
         assert!((second_r / first_l - 0.25).abs() < 0.03, "{}", second_r / first_l);
+    }
+
+    /// (left, right) peak of each of `rep` taps 100 ms apart in MODE `mode`.
+    fn tap_pans(mode: f32, rep: usize) -> Vec<(f32, f32)> {
+        let settings = [
+            ("rep", rep as f32),
+            ("mode", mode),
+            ("time", 100.0 * rep as f32),
+            ("slp", 0.0),
+            ("wid", 100.0),
+            ("diff", 0.0),
+            ("hc", 20_000.0),
+        ];
+        let (mut dev, v) = device("TAP-DL", &settings);
+        let (l, r) = impulse(&mut dev, &v, 0.1 * rep as f32 + 0.1);
+        let ms = |t: f32| (t * 0.001 * SR) as usize;
+        (1..=rep)
+            .map(|k| {
+                let (a, b) = (ms(100.0 * k as f32 - 10.0), ms(100.0 * k as f32 + 10.0));
+                (peak(&l, a, b).1, peak(&r, a, b).1)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn panning_modes() {
+        let centred = |(l, r): (f32, f32)| (l - r).abs() < 1e-4 && l > 0.1;
+        let left = |(l, r): (f32, f32)| l > 0.1 && r < 1e-4;
+        let right = |(l, r): (f32, f32)| r > 0.1 && l < 1e-4;
+        // SPREAD: the first two repetitions centred, then alternating ever wider.
+        let spread = tap_pans(3.0, 4);
+        assert!(centred(spread[0]) && centred(spread[1]), "{spread:?}");
+        assert!(spread[2].0 > spread[2].1 && spread[2].1 > 0.1, "half left: {spread:?}");
+        assert!(right(spread[3]), "{spread:?}");
+        assert!(tap_pans(3.0, 2).into_iter().all(centred), "two repetitions stay centred");
+        // FOCUS: from hard left, alternating, closing in to the centre.
+        let focus = tap_pans(2.0, 4);
+        assert!(left(focus[0]) && focus[1].1 > focus[1].0 && centred(focus[2]) && centred(focus[3]), "{focus:?}");
+        // MOVE: from one side to the other.
+        let mv = tap_pans(0.0, 3);
+        assert!(left(mv[0]) && centred(mv[1]) && right(mv[2]), "{mv:?}");
     }
 
     #[test]

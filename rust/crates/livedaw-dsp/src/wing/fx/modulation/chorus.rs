@@ -1,7 +1,7 @@
 //! DIMCRS, CHORUS and FLANGER: short delay lines swept by LFOs and read with
 //! Hermite interpolation, so the modulation is smooth and alias-free.
 
-use super::shared::{advance, loop_limit, ms, CutFilter};
+use super::shared::{advance, loop_limit, ms, sine_tri, CutFilter};
 use crate::wing::fx::blocks::{shape, DelayLine, Smoothed, Svf, Wave};
 use crate::wing::fx::{FxAlgo, FxContext};
 use crate::wing::Params;
@@ -24,17 +24,19 @@ const DIM_CROSS: f32 = 0.3;
 /// Keeps the wet level close to the dry level after the cross-feed.
 const DIM_NORM: f32 = 1.15;
 
-/// Dimension Chorus (Roland SDD-320 "Dimension D" style).
+/// Dimension Chorus (Dimension CRS: the late-1970s Roland SDD-320
+/// "Dimension D", subtle modulation that widens the stereo image).
 ///
 /// Two bucket-brigade lines around 5 ms are swept by one rounded-triangle LFO
 /// in opposite phase; each output carries its own line plus an inverted
 /// share of the other, which gives width without an obvious wobble (the
-/// modulation partly cancels in mono). SW 1-4 select rate/depth presets and
-/// combine: the fastest pressed rate and the sum of the pressed depths
-/// (capped at 2.5 ms). With no switch pressed the effect is bypassed (dry
-/// only when DRY is on). IN MODE MONO feeds both lines the mono sum, STEREO
-/// feeds each line its own channel. DRY on mixes dry and wet 1:1 inside the
-/// device, as the original does; off outputs the wet signal only.
+/// modulation partly cancels in mono). Buttons 1-4 (SW 1-4) are increasing
+/// levels of modulation and can be combined: the fastest pressed rate and
+/// the sum of the pressed depths (capped at 2.5 ms). With none pressed (the
+/// console's OFF button) there is no effect: dry only when DRY is on. MODE
+/// (IN MODE) MONO sums the inputs to feed both lines, STEREO feeds each line
+/// its own channel. MIX (DRY) on adds the dry signal to the output, 1:1 as
+/// the original does; off outputs the wet signal only.
 pub(super) struct Dimension {
     sr: f32,
     lines: [DelayLine; 2],
@@ -151,8 +153,8 @@ const CHORUS_MAX_SWEEP_MS: f32 = 8.0;
 /// Stereo Chorus (Boss CE-2 flavoured).
 ///
 /// Each channel has its own delay line (DELAY L/R, 5-50 ms) swept by a shared
-/// LFO whose WAVEFORM blends triangle (0) into sine (100); the right sweep is
-/// PHASE degrees behind the left. DEPTH L/R sets the sweep as a share of the
+/// LFO (SPEED) whose WAVE morphs from sine (0) to triangle (100), as the
+/// manual describes it; the right sweep is PHASE degrees behind the left. DEPTH L/R sets the sweep as a share of the
 /// channel's delay (100 % = +-40 %, at most +-8 ms). SPREAD narrows the wet
 /// signal from full L/R separation (100 %) to mono (0 %). LO/HI CUT filter
 /// the wet signal; MIX is the device's own dry/wet balance.
@@ -165,8 +167,8 @@ pub(super) struct Chorus {
     base: [Smoothed; 2],
     /// Sweep amplitudes in samples.
     depth: [Smoothed; 2],
-    /// 0 = triangle .. 1 = sine.
-    blend: Smoothed,
+    /// 0 = sine .. 1 = triangle.
+    tri: Smoothed,
     /// Right LFO phase offset, cycles.
     offset: Smoothed,
     spread: Smoothed,
@@ -187,7 +189,7 @@ impl Chorus {
             inc: 0.0,
             base: [s(ms(15.0, sr), 120.0), s(ms(20.0, sr), 120.0)],
             depth: [s(0.0, 60.0), s(0.0, 60.0)],
-            blend: s(0.5, 30.0),
+            tri: s(0.5, 30.0),
             offset: s(0.25, 120.0),
             spread: s(0.5, 30.0),
             mix: s(0.5, 20.0),
@@ -199,15 +201,8 @@ impl Chorus {
     fn smoothers(&mut self) -> [&mut Smoothed; 8] {
         let [b0, b1] = &mut self.base;
         let [d0, d1] = &mut self.depth;
-        [b0, b1, d0, d1, &mut self.blend, &mut self.offset, &mut self.spread, &mut self.mix]
+        [b0, b1, d0, d1, &mut self.tri, &mut self.offset, &mut self.spread, &mut self.mix]
     }
-}
-
-/// Triangle blended into sine (`blend` 0..1).
-#[inline]
-fn tri_sine(phase: f32, blend: f32) -> f32 {
-    let t = shape(Wave::Triangle, phase);
-    t + (shape(Wave::Sine, phase) - t) * blend
 }
 
 impl FxAlgo for Chorus {
@@ -218,7 +213,7 @@ impl FxAlgo for Chorus {
             self.base[ch].target = ms(d, sr);
             self.depth[ch].target = ms((p.f(dep) * 0.01 * 0.4 * d).min(CHORUS_MAX_SWEEP_MS), sr);
         }
-        self.blend.target = p.f("wave") * 0.01;
+        self.tri.target = p.f("wave") * 0.01;
         self.offset.target = p.f("phase") / 360.0;
         self.spread.target = p.f("sprd") * 0.01;
         self.mix.target = p.f("mix") * 0.01;
@@ -239,10 +234,10 @@ impl FxAlgo for Chorus {
             self.lines[0].push(dl);
             self.lines[1].push(dr);
             advance(&mut self.phase, self.inc);
-            let blend = self.blend.tick();
+            let tri = self.tri.tick();
             let off = self.offset.tick();
-            let ml = tri_sine(self.phase, blend);
-            let mr = tri_sine(self.phase + off, blend);
+            let ml = sine_tri(self.phase, tri);
+            let mr = sine_tri(self.phase + off, tri);
             let yl = self.lines[0].tap_hermite(self.base[0].tick() + self.depth[0].tick() * ml);
             let yr = self.lines[1].tap_hermite(self.base[1].tick() + self.depth[1].tick() * mr);
 
