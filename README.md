@@ -37,28 +37,45 @@ be sent to any hardware output.
 ## The surface
 
 The window is a WING control surface and resizes to any screen, including ultrawides.
+The screens follow the WING's own: the same panels, keys, colours and layout, set in
+Barlow Condensed.
 
 - **Three fader sections:** left (12 faders, inputs), center (8, buses and DCAs) and
   right (4, mains and matrices). Each has its own **bank buttons**: CH 1-12 ... CH 37-40
   · AUX 1-8, BUS, DCA, MAIN · MTX, ALL, plus **user banks** with any strips and DCAs.
   Arrows page through banks longer than the section. Set a section to **Auto** (SETUP >
   SURFACE) and it shows as many faders as fit, which suits big channel counts.
-- **Fader strips** have the colour bar and scribble strip (number, name, icon), SEL,
-  the GATE and DYN LEDs, SOLO, MUTE, a meter and the fader.
+- **Fader strips** have the WING's colour scribble strip (label, MONO/ST, icon, the name
+  on a bar in the strip's colour), SEL, the GATE and DYN LEDs, SOLO, MUTE, a meter and
+  the fader.
 - **SOF (Sends on Fader):** select a bus and the input faders set their send to it;
   select an input and the bus faders set its sends.
-- **Main display** with the WING's screens:
-  - **HOME** for the selected strip: the signal chain as yellow blocks (click to edit,
-    right-click to switch on/off), EQ curve, levels, process order and tap, and the
-    **INPUT, FILTER, GATE, EQ, DYNAMICS, PRE INS, POST INS, MAIN, BUS SENDS and
-    ICON/COLOR** screens. Each processing screen has the model menu and all of the
-    model's parameters; the EQ graph has draggable bands.
-  - **EFFECTS** (the 16 FX slots), **METERS** (every signal path with mute status),
-    **ROUTING** (channel sources, outputs, monitor), **SETUP** (audio device, console
-    size, surface, global recall safes, DCA and mute group names, plugin scanning),
-    **LIBRARY** (show files, scenes and snippets, user banks) and **UTILITY** (system
-    health and event log).
-  - The **six knobs under the display** follow what the screen shows.
+- **Main display**, with the screen keys on its left:
+  - The **status bar**: the selected channel's amber tab (number, icon, name; click for
+    HOME), sample rate / clock / DSP / protection chips, the current scene (click for
+    LIBRARY), **TOOLS** (UTILITY), **SETTINGS** (SETUP) and the clock.
+  - The **parameter bar** under the screen: six controls that follow what the screen
+    shows (drag, mouse wheel, double-click to reset).
+  - **HOME** for the selected strip: the block column (INPUT, the GATE / EQ / DYN /
+    INS blocks in the strip's process order with their on keys, POST INS, MAIN, SENDS,
+    and the wrench for the process order and send tap), the **OVERVIEW** (INPUT,
+    FILTER, LEVEL, EQ and MAIN panels), **ICON/COLOR**, **NAME**, **TAGS** and the
+    **SAFE** key. Each block opens its screen with the model menu and the model's
+    parameters; the EQ screen has the response graph with draggable bands and the
+    band keys (LOW, 1-4, HIGH).
+  - **EFFECTS:** the FX rack, slots 1-8 premium and 9-16 standard. A loaded slot shows
+    its plugin, the strip using it (PRE/POST), ON and its mix; an empty slot a "+".
+  - **METERS:** channels in groups of eight, AUX, BUS 1-8 / 9-16, DCA, MAIN and MATRIX,
+    with number keys (select the strip) and M keys (mute). Bigger consoles page.
+  - **ROUTING:** channel tiles on the left, a group of 48 sources on the right: pick a
+    channel, then its source. **+1 AUTO** moves on to the next channel; the lock (red
+    when locked, green when open) protects the patch. OUTPUTS patches the strips'
+    outputs the same way; MONITOR sets the monitor outputs, PFL/AFL and level.
+  - **SETUP:** GENERAL (console info, channel and bus count, preferences, clock,
+    INIT CONSOLE), AUDIO, SURFACE, SAFES, DCA / MUTE names and PLUGINS.
+  - **LIBRARY:** SHOW (name, NEW, OPEN, SAVE), SCENES and SNIPPETS as library lists
+    with GO, GO+PREV, GO+NEXT, PREV and NEXT, and user BANKS.
+  - **UTILITY:** system health and the event log.
 - **Channel strip section** (top left): gain, low cut, gate, dynamics, insert and pan
   on dedicated knobs, and the EQ section (four band knobs, GAIN/WIDTH/FREQ, SHIFT, MIX).
 - **Monitor and show control** (top right): main/solo meter, monitor level, DIM, AFL,
@@ -184,18 +201,20 @@ copy, pass `-DLIVEDAW_VST2_SDK_DIR=/path/to/vstsdk` to enable VST2 hosting.
 ## Using it
 
 1. **SETUP > AUDIO:** choose the driver (ASIO, CoreAudio, ALSA, JACK...), the device,
-   the sample rate and the buffer size. **SETUP > CONSOLE** sets the channel count
+   the sample rate and the buffer size. **SETUP > GENERAL** sets the channel count
    (40 like a WING, or as many as your CPU allows) and adds buses.
-2. **ROUTING:** patch each channel's source (and right source for stereo channels),
-   and give mains, buses and matrices their outputs.
+2. **ROUTING:** pick a channel tile, then its source (right-click or shift-click sets
+   the right source of a stereo channel). **OUTPUTS** gives mains, buses and matrices
+   their outputs.
 3. Pick banks on each fader section. **SEL** a strip to edit it on the HOME screen and
    the channel strip section; the six knobs under the display follow the screen.
 4. Load plugins into FX slots on **EFFECTS**, then assign the slots to inserts on
    **PRE INS** / **POST INS**.
-5. **LIBRARY > SCENES / SNIPPETS:** **+ New** captures the console as a scene; set its
-   recall scope, fade and notes, add snippets. **GO** recalls.
+5. **LIBRARY > SCENES:** **NEW** captures the console as a scene; set its recall scope,
+   fade and notes. **LIBRARY > SNIPPETS** adds snippets to the selected scene. **GO**
+   recalls, **GO+NEXT** steps through the show.
 6. **LIBRARY > SHOW** saves and opens `.lshow` files (`Ctrl+S`, `Ctrl+O`).
-   **LIBRARY > USER BANKS** builds your own fader banks.
+   **LIBRARY > BANKS** builds your own fader banks.
 
 ## Project layout
 
@@ -206,6 +225,7 @@ rust/crates/livedaw-session/ Rust sessions: console state, Show > Scene > Snippe
 rust/crates/livedaw-ffi/     C ABI over the engine and model tables + C++ header (include/livedaw_engine.h)
 src/engine/   C++ side: facades over the Rust code, FX slot plugin hosting
 src/ui/       JUCE UI: the WING surface (fader sections, main display screens, channel strip, monitor)
+resources/    Barlow Condensed fonts (SIL Open Font License)
 tools/wing/   Generator for the model tables (from libwing's parameter map)
 tests/        Unit tests (run with ctest)
 docs/         Architecture notes
@@ -218,3 +238,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the signal flow and the rea
 Live DAW is built on [JUCE](https://juce.com). JUCE 8 is dual-licensed under AGPLv3
 or a commercial JUCE licence. Distributing builds of this app requires one of the two. Windows builds also
 include the ASIO SDK, which is GPLv3 (compatible with the AGPLv3).
+
+The UI font, Barlow Condensed (© The Barlow Project Authors), is licensed under the SIL Open Font
+License 1.1 (`resources/fonts/OFL.txt`).
+
+Behringer and WING are trademarks of their owners. Live DAW is an independent project,
+not affiliated with or endorsed by Behringer or Music Tribe.
