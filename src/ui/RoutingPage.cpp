@@ -1,3 +1,4 @@
+#include "dsp/DspUtils.h"
 #include "ui/Pages.h"
 
 namespace livedaw::ui
@@ -7,21 +8,10 @@ namespace
 {
     constexpr int kTilesPerRow = 8, kTargetsPerPage = 48, kPortsPerGroup = 48;
 
-    const juce::Colour navy (0xff27344d), tileOff (0xff2b2b2b), tileOn (0xff5c5c5c), lime (0xffc8d72b);
+    const juce::Colour navy (0xff27344d), tileOff (0xff2b2b2b), tileOn (0xff4a4a4a), unpatched (0xff3a6ea5), monoLabel (0xff5aa0e8),
+        stereoLabel (0xffc8b43a);
 
-    juce::String shortLabel (const Strip& s)
-    {
-        const auto n = juce::String (s.getNumber());
-        switch (s.getKind())
-        {
-            case StripKind::Channel: return n;
-            case StripKind::Aux:     return "A" + n;
-            case StripKind::Bus:     return "B" + n;
-            case StripKind::Main:    return "M" + n;
-            case StripKind::Matrix:  return "MX" + n;
-        }
-        return n;
-    }
+    const char* const signalGroups[] = { "CHANNEL", "AUX", "BUS", "MAIN", "MATRIX", "MONITOR" };
 
     bool hasCustomName (const Strip& s)
     {
@@ -36,50 +26,47 @@ namespace
         return items;
     }
 
-    /** MONITOR mode: outputs, PFL / AFL and level, in the console's panels. */
+    /** The monitor setup: outputs, PFL / AFL and level (SETUP > MONITORS until
+        the console's MONITORS screen exists). */
     class MonitorPanel final : public juce::Component
     {
     public:
-        explicit MonitorPanel (UiContext& c) : ctx (c)
+        explicit MonitorPanel (UiContext& c)
+            : ctx (c),
+              solo ({ "PFL", "AFL" }, [&c] { return c.engine.soloAfl.load() ? 1 : 0; }, [&c] (int i) { c.engine.soloAfl = i == 1; }, ChoiceKeys::prePost())
         {
             const auto outs = numbered (ctx.engine.getHardwareOutputNames(), juce::jmax (64, ctx.engine.getHardwareOutputNames().size()));
             left.setItems (outs, "OFF");
             right.setItems (outs, "OFF");
             left.bind (&ctx.engine.monitorOutputLeft);
             right.bind (&ctx.engine.monitorOutputRight);
-            pfl.onClick = [this] { ctx.engine.soloAfl = false; };
-            afl.onClick = [this] { ctx.engine.soloAfl = true; };
-            for (auto* b : { &pfl, &afl })
-                b->setColour (juce::TextButton::buttonOnColourId, Colours::yellow);
             level.setBinding (bindLinear ("LEVEL", ctx.engine.monitorLevelDb, -60.0f, 10.0f, " dB", 1, 0.0f));
-            for (auto* c2 : { (juce::Component*) &left, (juce::Component*) &right, (juce::Component*) &pfl, (juce::Component*) &afl,
-                              (juce::Component*) &level })
+            for (auto* c2 : { (juce::Component*) &left, (juce::Component*) &right, (juce::Component*) &solo, (juce::Component*) &level })
                 addAndMakeVisible (c2);
         }
 
         void paint (juce::Graphics& g) override
         {
-            pfl.setToggleState (! ctx.engine.soloAfl.load(), juce::dontSendNotification);
-            afl.setToggleState (ctx.engine.soloAfl.load(), juce::dontSendNotification);
-            drawSectionBox (g, outputBox, "MONITOR OUTPUT");
-            drawSectionBox (g, soloBox, "SOLO MODE");
-            drawSectionBox (g, levelBox, "MONITOR LEVEL");
-            g.setColour (Colours::textDim);
+            drawDarkPanel (g, outputBox, "MONITOR OUTPUT");
+            drawDarkPanel (g, soloBox, "SOLO");
+            drawDarkPanel (g, levelBox, "MONITOR LEVEL");
+            g.setColour (Dark::textDim);
             g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
             g.drawText ("LEFT", leftLabel, juce::Justification::centredLeft);
             g.drawText ("RIGHT", rightLabel, juce::Justification::centredLeft);
-            g.drawFittedText ("Without a solo, the monitor follows MAIN 1.", noteArea, juce::Justification::topLeft, 2);
+            g.drawFittedText ("Without a solo, the monitor follows MAIN 1. The monitor can also feed any output on ROUTING > OUTPUTS (source group MONITOR).",
+                              noteArea, juce::Justification::topLeft, 3);
         }
 
         void resized() override
         {
-            auto b = getLocalBounds();
+            auto b = getLocalBounds().reduced (12, 0);
             auto top = b.removeFromTop (b.getHeight() / 2);
-            outputBox = top.removeFromLeft (top.getWidth() * 55 / 100).reduced (0, 0).withTrimmedRight (8);
+            outputBox = top.removeFromLeft (top.getWidth() * 55 / 100).withTrimmedRight (8);
             soloBox = top;
             levelBox = b.withTrimmedTop (8).withWidth (juce::jmin (b.getWidth(), 280));
 
-            auto o = sectionContent (outputBox, true);
+            auto o = darkPanelBody (outputBox, true).reduced (8, 4);
             leftLabel = o.removeFromTop (20);
             left.setBounds (o.removeFromTop (34));
             o.removeFromTop (8);
@@ -88,69 +75,136 @@ namespace
             o.removeFromTop (8);
             noteArea = o;
 
-            auto s = sectionContent (soloBox, true).withSizeKeepingCentre (juce::jmin (260, soloBox.getWidth() - 20), 48);
-            pfl.setBounds (s.removeFromLeft (s.getWidth() / 2).reduced (2, 0));
-            afl.setBounds (s.reduced (2, 0));
-            level.setBounds (sectionContent (levelBox, true));
+            solo.setBounds (darkPanelBody (soloBox, true).withSizeKeepingCentre (juce::jmin (220, soloBox.getWidth() - 20), 44));
+            level.setBounds (darkPanelBody (levelBox, true));
         }
 
     private:
         UiContext& ctx;
         IntCombo left, right;
-        juce::TextButton pfl { "PFL" }, afl { "AFL" };
+        ChoiceKeys solo;
         DisplayKnob level;
         juce::Rectangle<int> outputBox, soloBox, levelBox, leftLabel, rightLabel, noteArea;
     };
+
+    void drawKey (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& text, bool on, juce::Colour onColour, bool enabled = true)
+    {
+        if (r.isEmpty())
+            return;
+        auto fill = on ? onColour : Dark::key;
+        if (! enabled)
+            fill = fill.darker (0.55f);
+        g.setColour (fill);
+        g.fillRect (r);
+        g.setColour (on ? Dark::choiceInk : (enabled ? Dark::text : Dark::textDim.darker (0.3f)));
+        g.setFont (juce::FontOptions (juce::jmin (18.0f, (float) r.getHeight() * 0.5f), juce::Font::bold));
+        g.drawFittedText (text, r.reduced (2, 0), juce::Justification::centred, 2, 0.7f);
+    }
+
+    /** An icon over a small caption (NONE, RENAME). */
+    void drawIconKey (juce::Graphics& g, juce::Rectangle<int> r, Icon icon, const juce::String& text, bool enabled = true)
+    {
+        if (r.isEmpty())
+            return;
+        const auto ink = enabled ? Dark::text : Dark::textDim.withAlpha (0.5f);
+        auto f = r.toFloat();
+        auto label = f.removeFromBottom (f.getHeight() * 0.36f);
+        drawIcon (g, icon, f.reduced (f.getHeight() * 0.12f), ink);
+        g.setColour (ink);
+        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 13.0f, label.getHeight() * 0.85f), juce::Font::bold));
+        g.drawFittedText (text, label.toNearestInt(), juce::Justification::centredTop, 1);
+    }
+
+    /** A group selector: icon, caption over the group's name, and a down-arrow key. */
+    void drawSelector (juce::Graphics& g, juce::Rectangle<int> r, Icon icon, const juce::String& caption, const juce::String& value)
+    {
+        g.setColour (Dark::well);
+        g.fillRect (r);
+        auto arrow = r.removeFromRight (r.getHeight() * 2 / 3);
+        g.setColour (Dark::key);
+        g.fillRect (arrow.withTrimmedLeft (3));
+        juce::Path tri;
+        const auto c = arrow.withTrimmedLeft (3).getCentre().toFloat();
+        tri.addTriangle (c.x - 7.0f, c.y - 4.0f, c.x + 7.0f, c.y - 4.0f, c.x, c.y + 5.0f);
+        g.setColour (Dark::text);
+        g.fillPath (tri);
+        auto ib = r.removeFromLeft (r.getHeight()).reduced (6);
+        drawIcon (g, icon, ib.toFloat(), Dark::text);
+        r.removeFromLeft (4);
+        g.setColour (Dark::textDim);
+        g.setFont (juce::FontOptions (juce::jmin (13.0f, (float) r.getHeight() * 0.3f), juce::Font::bold));
+        g.drawText (caption, r.removeFromTop (r.getHeight() * 42 / 100), juce::Justification::bottomLeft);
+        g.setColour (Dark::text);
+        g.setFont (juce::FontOptions (juce::jmin (22.0f, (float) r.getHeight() * 0.8f), juce::Font::bold));
+        g.drawFittedText (value, r, juce::Justification::centredLeft, 1);
+    }
 } // namespace
+
+std::unique_ptr<juce::Component> makeMonitorPanel (UiContext& ctx)
+{
+    return std::make_unique<MonitorPanel> (ctx);
+}
 
 RoutingPage::RoutingPage (UiContext& c) : ctx (c)
 {
-    monitorPanel = std::make_unique<MonitorPanel> (ctx);
-    addChildComponent (*monitorPanel);
     startTimerHz (5);
 }
 
 RoutingPage::~RoutingPage() = default;
 
-std::vector<Strip*> RoutingPage::allTargets() const
+std::vector<StatusKey> RoutingPage::getStatusKeys()
+{
+    return { { "CHANNELS", Icon::Faders, mode == Mode::Channels, [this] { setMode (Mode::Channels); } },
+             { "SOURCES", Icon::SourcesIn, mode == Mode::Sources, [this] { setMode (Mode::Sources); } },
+             { "OUTPUTS", Icon::OutputsOut, mode == Mode::Outputs, [this] { setMode (Mode::Outputs); } } };
+}
+
+std::vector<Strip*> RoutingPage::channelTargets() const
 {
     std::vector<Strip*> list;
-    auto add = [this, &list] (StripKind k)
-    {
+    for (auto k : { StripKind::Channel, StripKind::Aux })
         for (auto& s : ctx.engine.getStrips (k))
             list.push_back (s.get());
-    };
-    if (mode == Mode::Outputs)
-        for (auto k : { StripKind::Main, StripKind::Matrix, StripKind::Bus, StripKind::Channel, StripKind::Aux })
-            add (k);
-    else
-        for (auto k : { StripKind::Channel, StripKind::Aux })
-            add (k);
+    return list;
+}
+
+std::vector<RoutingPage::Signal> RoutingPage::signals() const
+{
+    std::vector<Signal> list;
+    if (signalGroup == 5)
+        return { { nullptr, 0 }, { nullptr, 1 } };
+    const StripKind kinds[] = { StripKind::Channel, StripKind::Aux, StripKind::Bus, StripKind::Main, StripKind::Matrix };
+    for (auto& s : ctx.engine.getStrips (kinds[juce::jlimit (0, 4, signalGroup)]))
+    {
+        list.push_back ({ s.get(), 0 });
+        if (s->isOutput() || s->params.stereo.load())
+            list.push_back ({ s.get(), 1 });
+    }
     return list;
 }
 
 int RoutingPage::numTargetPages() const
 {
-    return juce::jmax (1, ((int) allTargets().size() + kTargetsPerPage - 1) / kTargetsPerPage);
+    return juce::jmax (1, ((int) channelTargets().size() + kTargetsPerPage - 1) / kTargetsPerPage);
 }
 
-int RoutingPage::numPorts() const
+int RoutingPage::numPorts (bool outputs) const
 {
-    const auto& names = mode == Mode::Outputs ? ctx.engine.getHardwareOutputNames() : ctx.engine.getHardwareInputNames();
+    const auto& names = outputs ? ctx.engine.getHardwareOutputNames() : ctx.engine.getHardwareInputNames();
     return juce::jmax (kPortsPerGroup, (names.size() + kPortsPerGroup - 1) / kPortsPerGroup * kPortsPerGroup);
 }
 
-int RoutingPage::numPortGroups() const
+int RoutingPage::numPortGroups (bool outputs) const
 {
-    return numPorts() / kPortsPerGroup;
+    return numPorts (outputs) / kPortsPerGroup;
 }
 
-juce::String RoutingPage::portName (int index) const
+juce::String RoutingPage::portName (int index, bool output) const
 {
-    const auto& names = mode == Mode::Outputs ? ctx.engine.getHardwareOutputNames() : ctx.engine.getHardwareInputNames();
+    const auto& names = output ? ctx.engine.getHardwareOutputNames() : ctx.engine.getHardwareInputNames();
     if (index < names.size() && names[index].isNotEmpty())
         return names[index].toUpperCase();
-    return (mode == Mode::Outputs ? "OUT " : "IN ") + juce::String (index + 1);
+    return (output ? "OUT " : "IN ") + juce::String (index + 1);
 }
 
 Strip* RoutingPage::selectedStrip() const
@@ -161,7 +215,7 @@ Strip* RoutingPage::selectedStrip() const
 
 void RoutingPage::select (Strip* s)
 {
-    if (s == nullptr)
+    if (s == nullptr || ! s->isInput())
         return;
     selectedKind = s->getKind();
     auto& strips = ctx.engine.getStrips (selectedKind);
@@ -170,7 +224,7 @@ void RoutingPage::select (Strip* s)
             selectedIndex = (int) i;
 
     // Keep the selection on screen.
-    const auto list = allTargets();
+    const auto list = channelTargets();
     for (size_t i = 0; i < list.size(); ++i)
         if (list[i] == s && (int) i / kTargetsPerPage != targetPage)
         {
@@ -183,19 +237,20 @@ void RoutingPage::select (Strip* s)
 void RoutingPage::setMode (Mode m)
 {
     mode = m;
-    targetPage = portGroup = 0;
-    if (auto* s = selectedStrip(); s == nullptr || (m == Mode::Channels && ! s->isInput()))
+    if (auto* s = selectedStrip(); s == nullptr || ! s->isInput())
     {
         selectedKind = StripKind::Channel;
         selectedIndex = 0;
     }
-    monitorPanel->setVisible (m == Mode::Monitor);
     resized();
     repaint();
+    notifyStatusKeysChanged();
 }
 
 void RoutingPage::refresh()
 {
+    if (auto* s = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr; s != nullptr && s->isInput())
+        select (s);
     layoutTiles();
     repaint();
 }
@@ -210,45 +265,65 @@ void RoutingPage::timerCallback()
 void RoutingPage::resized()
 {
     auto b = getLocalBounds();
-    auto top = b.removeFromTop (juce::jmin (44, b.getHeight() / 10));
-    auto keys = top.removeFromRight (juce::jmin (420, top.getWidth() / 2));
-    for (int i = 2; i >= 0; --i)
-        modeKeys[i] = keys.removeFromRight (keys.getWidth() / (i + 1)).reduced (3, 2);
-    b.removeFromTop (6);
-    monitorPanel->setBounds (b);
-
-    leftPanel = b.removeFromLeft (b.getWidth() * 44 / 100);
+    leftPanel = b.removeFromLeft (b.getWidth() * (mode == Mode::Sources ? 52 : 46) / 100);
     b.removeFromLeft (8);
     rightPanel = b;
 
-    const int headerH = juce::jmin (64, leftPanel.getHeight() / 7);
+    const int headerH = juce::jlimit (44, 64, getHeight() / 8);
     leftHeader = leftPanel.withHeight (headerH);
     rightHeader = rightPanel.withHeight (headerH);
 
-    // Left header: MONO/ST (channels), +1 AUTO, locks, pages.
-    auto lh = leftHeader.reduced (8, 7);
-    unlockKey = lh.removeFromRight (lh.getHeight());
-    lh.removeFromRight (2);
-    lockKey = lh.removeFromRight (lh.getHeight());
-    lh.removeFromRight (8);
-    autoKey = lh.removeFromRight (juce::jmin (72, lh.getWidth() / 4));
-    lh.removeFromRight (8);
-    const bool paged = numTargetPages() > 1;
-    nextPage = paged ? lh.removeFromRight (lh.getHeight()) : juce::Rectangle<int>();
-    if (paged)
+    for (auto* r : { &inputCaption, &mainKey, &altKey, &stereoKey, &autoKey, &lockKey, &unlockKey, &prevPage, &nextPage, &leftSelector, &rightSelector,
+                     &noneKey, &copyCaption, &srcToChKey, &chToSrcKey, &renameKey })
+        *r = {};
+
+    auto lh = leftHeader.reduced (6, 6);
+    if (mode == Mode::Sources)
+    {
+        renameKey = lh.removeFromRight (lh.getHeight() + 10);
+        lh.removeFromRight (8);
+        leftSelector = lh.withWidth (juce::jmin (lh.getWidth(), 300));
+    }
+    else
+    {
+        unlockKey = lh.removeFromRight (lh.getHeight());
         lh.removeFromRight (2);
-    prevPage = paged ? lh.removeFromRight (lh.getHeight()) : juce::Rectangle<int>();
-    lh.removeFromRight (6);
-    auto modeArea = lh.withTrimmedTop (16).withWidth (juce::jmin (lh.getWidth(), 170));
-    monoKey = mode == Mode::Channels ? modeArea.removeFromLeft (modeArea.getWidth() / 2) : juce::Rectangle<int>();
-    stereoKey = mode == Mode::Channels ? modeArea : juce::Rectangle<int>();
+        lockKey = lh.removeFromRight (lh.getHeight());
+        lh.removeFromRight (8);
+        autoKey = lh.removeFromRight (juce::jmin (64, lh.getWidth() / 5));
+        lh.removeFromRight (8);
+        if (mode == Mode::Channels)
+        {
+            const bool paged = numTargetPages() > 1;
+            nextPage = paged ? lh.removeFromRight (lh.getHeight()) : juce::Rectangle<int>();
+            if (paged)
+                lh.removeFromRight (2);
+            prevPage = paged ? lh.removeFromRight (lh.getHeight()) : juce::Rectangle<int>();
+            auto input = lh.withWidth (juce::jmin (lh.getWidth(), 210));
+            inputCaption = input.removeFromTop (input.getHeight() * 38 / 100);
+            mainKey = input.removeFromLeft (input.getWidth() * 4 / 10).reduced (1, 1);
+            altKey = input.removeFromLeft (input.getWidth() * 4 / 6).reduced (1, 1);
+            stereoKey = input.reduced (4, 1);
+        }
+        else
+            leftSelector = lh.withWidth (juce::jmin (lh.getWidth(), 300));
+    }
 
-    // Right header: group selector and OFF.
-    auto rh = rightHeader.reduced (8, 7);
-    offKey = rh.removeFromRight (juce::jmin (90, rh.getWidth() / 4));
-    rh.removeFromRight (8);
-    groupSelector = rh.withWidth (juce::jmin (rh.getWidth(), 300));
-
+    auto rh = rightHeader.reduced (6, 6);
+    if (mode == Mode::Channels)
+    {
+        auto copy = rh.removeFromRight (juce::jmin (170, rh.getWidth() / 3));
+        copyCaption = copy.removeFromTop (copy.getHeight() * 38 / 100);
+        srcToChKey = copy.removeFromLeft (copy.getWidth() / 2).reduced (1, 1);
+        chToSrcKey = copy.reduced (1, 1);
+        rh.removeFromRight (8);
+    }
+    if (mode != Mode::Sources)
+    {
+        noneKey = rh.removeFromRight (rh.getHeight() + 10);
+        rh.removeFromRight (8);
+        rightSelector = rh.withWidth (juce::jmin (rh.getWidth(), 300));
+    }
     layoutTiles();
 }
 
@@ -256,102 +331,130 @@ void RoutingPage::layoutTiles()
 {
     layoutVersion = ctx.engine.getStructureVersion();
     targetPage = juce::jlimit (0, numTargetPages() - 1, targetPage);
-    portGroup = juce::jlimit (0, numPortGroups() - 1, portGroup);
-    targetTiles.clear();
-    portTiles.clear();
+    inputGroup = juce::jlimit (0, numPortGroups (false) - 1, inputGroup);
+    outputGroup = juce::jlimit (0, numPortGroups (true) - 1, outputGroup);
+    channelTiles.clear();
+    leftPorts.clear();
+    rightPorts.clear();
+    signalTiles.clear();
     separator = {};
-    if (mode == Mode::Monitor || leftPanel.isEmpty())
+    if (leftPanel.isEmpty())
         return;
 
-    // Left grid: up to 48 targets, with a gap before the first aux (channels mode).
-    const auto list = allTargets();
-    const int first = targetPage * kTargetsPerPage;
-    const int count = juce::jmin (kTargetsPerPage, (int) list.size() - first);
     auto grid = leftPanel.withTrimmedTop (leftHeader.getHeight() + 6).reduced (6);
-    const int sepH = 14;
-    const int rowsNeeded = (count + kTilesPerRow - 1) / kTilesPerRow;
-    const int rows = juce::jmax (6, rowsNeeded);
-    const int tileW = grid.getWidth() / kTilesPerRow;
-    const int tileH = (grid.getHeight() - sepH) / rows;
-    int row = 0, col = 0;
-    bool separated = false;
-    for (int i = 0; i < count; ++i)
+    auto rightGrid = rightPanel.withTrimmedTop (rightHeader.getHeight() + 6).reduced (6);
+    auto portGrid = [] (juce::Rectangle<int> area, int count, int rows, std::vector<juce::Rectangle<int>>& out)
     {
-        auto* s = list[(size_t) (first + i)];
-        if (! separated && mode == Mode::Channels && s->getKind() == StripKind::Aux && i > 0)
+        const int w = area.getWidth() / kTilesPerRow, h = juce::jmin (area.getHeight() / rows, w * 5 / 4);
+        for (int i = 0; i < count; ++i)
+            out.push_back (juce::Rectangle<int> (area.getX() + (i % kTilesPerRow) * w, area.getY() + (i / kTilesPerRow) * h, w, h).reduced (3));
+    };
+
+    if (mode == Mode::Channels)
+    {
+        // Up to 48 channels, with a gap before the first aux.
+        const auto list = channelTargets();
+        const int first = targetPage * kTargetsPerPage;
+        const int count = juce::jmin (kTargetsPerPage, (int) list.size() - first);
+        const int sepH = 14;
+        const int rows = juce::jmax (6, (count + kTilesPerRow - 1) / kTilesPerRow);
+        const int tileW = grid.getWidth() / kTilesPerRow;
+        const int tileH = juce::jmin ((grid.getHeight() - sepH) / rows, tileW * 5 / 4);
+        int row = 0, col = 0;
+        bool separated = false;
+        for (int i = 0; i < count; ++i)
         {
-            if (col != 0)
+            auto* s = list[(size_t) (first + i)];
+            if (! separated && s->getKind() == StripKind::Aux && i > 0)
+            {
+                if (col != 0)
+                {
+                    col = 0;
+                    ++row;
+                }
+                separator = juce::Rectangle<int> (grid.getX() + 8, grid.getY() + row * tileH + sepH / 2 - 1, grid.getWidth() - 16, 2);
+                separated = true;
+            }
+            const int y = grid.getY() + row * tileH + (separated ? sepH : 0);
+            channelTiles.push_back ({ juce::Rectangle<int> (grid.getX() + col * tileW, y, tileW, tileH).reduced (3), s });
+            if (++col == kTilesPerRow)
             {
                 col = 0;
                 ++row;
             }
-            separator = juce::Rectangle<int> (grid.getX() + 8, grid.getY() + row * tileH + sepH / 2 - 1, grid.getWidth() - 16, 3);
-            separated = true;
         }
-        const int y = grid.getY() + row * tileH + (separated ? sepH : 0);
-        targetTiles.push_back ({ juce::Rectangle<int> (grid.getX() + col * tileW, y, tileW, tileH).reduced (3), s });
-        if (++col == kTilesPerRow)
-        {
-            col = 0;
-            ++row;
-        }
+        portGrid (rightGrid, kPortsPerGroup, kPortsPerGroup / kTilesPerRow, rightPorts);
     }
-
-    // Right grid: one group of 48 ports.
-    auto ports = rightPanel.withTrimmedTop (rightHeader.getHeight() + 6).reduced (6);
-    const int pw = ports.getWidth() / kTilesPerRow, ph = ports.getHeight() / (kPortsPerGroup / kTilesPerRow);
-    for (int i = 0; i < kPortsPerGroup; ++i)
-        portTiles.push_back (juce::Rectangle<int> (ports.getX() + (i % kTilesPerRow) * pw, ports.getY() + (i / kTilesPerRow) * ph, pw, ph).reduced (3));
+    else if (mode == Mode::Sources)
+        portGrid (grid, kPortsPerGroup, kPortsPerGroup / kTilesPerRow, leftPorts);
+    else
+    {
+        portGrid (grid, kPortsPerGroup, kPortsPerGroup / kTilesPerRow, leftPorts);
+        const auto list = signals();
+        const int pages = juce::jmax (1, ((int) list.size() + kTargetsPerPage - 1) / kTargetsPerPage);
+        signalPage = juce::jlimit (0, pages - 1, signalPage);
+        std::vector<juce::Rectangle<int>> areas;
+        portGrid (rightGrid, kTargetsPerPage, kTargetsPerPage / kTilesPerRow, areas);
+        for (int i = 0; i < kTargetsPerPage && signalPage * kTargetsPerPage + i < (int) list.size(); ++i)
+            signalTiles.push_back ({ areas[(size_t) i], list[(size_t) (signalPage * kTargetsPerPage + i)] });
+    }
 }
 
-juce::String RoutingPage::portUsers (int port, bool& usedBySelected) const
+juce::String RoutingPage::inputUsers (int port) const
 {
-    usedBySelected = false;
-    auto* sel = selectedStrip();
-    juce::String users;
-    auto note = [&] (Strip* s)
-    {
-        if (s == sel)
-            usedBySelected = true;
-        if (users.isEmpty())
-            users = hasCustomName (*s) ? stripName (*s).toUpperCase() : s->getLabel();
-    };
-
-    if (mode == Mode::Outputs)
-    {
-        for (auto* s : allTargets())
-            if (s->params.outputLeft.load() == port || s->params.outputRight.load() == port)
-                note (s);
-        if (users.isEmpty() && (ctx.engine.monitorOutputLeft.load() == port || ctx.engine.monitorOutputRight.load() == port))
-            users = "MONITOR";
-        return users;
-    }
-
-    for (auto* s : allTargets())
+    juce::StringArray users;
+    for (auto* s : channelTargets())
     {
         const int l = s->params.inputLeft.load(), r = s->params.inputRight.load();
         const bool stereo = s->params.stereo.load();
         if (l == port || (stereo && (r == port || (r < 0 && l >= 0 && l + 1 == port))))
-            note (s);
+            users.add (hasCustomName (*s) ? s->getLabel() + " " + stripName (*s).toUpperCase() : s->getLabel());
     }
-    return users;
+    return users.joinIntoString (", ");
 }
 
-void RoutingPage::paintTarget (juce::Graphics& g, const TargetTile& t, bool selected) const
+RoutingPage::Signal RoutingPage::feederOf (int port) const
 {
-    auto r = t.area.toFloat();
-    auto& p = t.strip->params;
-    const int port = mode == Mode::Outputs ? p.outputLeft.load() : p.inputLeft.load();
+    for (int k = 0; k < kNumStripKinds; ++k)
+        for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
+        {
+            if (s->params.outputLeft.load() == port)
+                return { s.get(), 0 };
+            if (s->params.outputRight.load() == port)
+                return { s.get(), 1 };
+        }
+    if (ctx.engine.monitorOutputLeft.load() == port)
+        return { nullptr, 0 };
+    if (ctx.engine.monitorOutputRight.load() == port)
+        return { nullptr, 1 };
+    return { nullptr, -1 };
+}
+
+juce::String RoutingPage::signalLabel (const Signal& sig) const
+{
+    if (sig.channel < 0)
+        return {};
+    if (sig.strip == nullptr)
+        return sig.channel == 0 ? "MON L" : "MON R";
+    const bool stereo = sig.strip->isOutput() || sig.strip->params.stereo.load();
+    return shortStripLabel (*sig.strip) + (stereo ? (sig.channel == 0 ? " L" : " R") : juce::String());
+}
+
+void RoutingPage::paintChannelTile (juce::Graphics& g, juce::Rectangle<int> area, Strip& s, bool selected) const
+{
+    auto r = area.toFloat();
+    auto& p = s.params;
+    const int port = p.inputLeft.load();
     const bool patched = port >= 0;
 
     auto bar = r.removeFromTop (juce::jmax (12.0f, r.getHeight() * 0.22f));
-    g.setColour (patched || hasCustomName (*t.strip) ? t.strip->getColour() : navy);
+    g.setColour (patched || hasCustomName (s) ? s.getColour() : unpatched);
     g.fillRect (bar);
-    if (hasCustomName (*t.strip))
+    if (hasCustomName (s))
     {
         g.setColour (juce::Colours::black);
         g.setFont (juce::FontOptions (juce::jmin (15.0f, bar.getHeight() * 0.95f), juce::Font::bold));
-        g.drawFittedText (stripName (*t.strip).toUpperCase(), bar.toNearestInt().reduced (2, 0), juce::Justification::centred, 1);
+        g.drawFittedText (stripName (s).toUpperCase(), bar.toNearestInt().reduced (2, 0), juce::Justification::centred, 1);
     }
     g.setColour (patched ? tileOn : tileOff);
     g.fillRect (r);
@@ -359,11 +462,13 @@ void RoutingPage::paintTarget (juce::Graphics& g, const TargetTile& t, bool sele
     auto label = r.removeFromBottom (juce::jmin (20.0f, r.getHeight() * 0.36f));
     if (patched)
     {
-        drawIcon (g, mode == Mode::Outputs ? Icon::Speaker : stripIcon (t.strip->getKind()), r.reduced (r.getWidth() * 0.25f, 2.0f), juce::Colours::white);
-        g.setColour (lime);
+        drawIcon (g, stripIcon (s.getKind()), r.reduced (r.getWidth() * 0.25f, 2.0f), juce::Colours::white);
+        // Mono sources in blue, stereo in olive.
+        const bool stereo = p.stereo.load();
+        g.setColour (stereo ? stereoLabel : monoLabel);
         g.setFont (juce::FontOptions (juce::jmin (15.0f, label.getHeight() * 0.9f), juce::Font::bold));
-        juce::String text = portName (port);
-        if (mode == Mode::Channels && p.stereo.load())
+        juce::String text = portName (port, false);
+        if (stereo)
             text = juce::String (port + 1) + "/" + juce::String ((p.inputRight.load() >= 0 ? p.inputRight.load() : port + 1) + 1);
         g.drawFittedText (text, label.toNearestInt().reduced (2, 0), juce::Justification::centred, 1);
     }
@@ -371,193 +476,295 @@ void RoutingPage::paintTarget (juce::Graphics& g, const TargetTile& t, bool sele
     {
         g.setColour (Colours::text);
         g.setFont (juce::FontOptions (juce::jmin (16.0f, label.getHeight() * 0.95f), juce::Font::bold));
-        g.drawFittedText (shortLabel (*t.strip), label.toNearestInt(), juce::Justification::centred, 1);
+        g.drawFittedText (shortStripLabel (s), label.toNearestInt(), juce::Justification::centred, 1);
     }
 
     if (selected)
-    {
-        g.setColour (Colours::yellow);
-        g.drawRect (t.area.toFloat().expanded (2.0f), 3.0f);
-    }
-}
-
-void RoutingPage::paintPort (juce::Graphics& g, juce::Rectangle<int> area, int port) const
-{
-    bool mine = false;
-    const auto users = portUsers (port, mine);
-    auto r = area.toFloat();
-    auto bar = r.removeFromTop (juce::jmax (12.0f, r.getHeight() * 0.22f));
-    g.setColour (users.isNotEmpty() ? Colours::amber : navy);
-    g.fillRect (bar);
-    if (users.isNotEmpty())
-    {
-        g.setColour (juce::Colours::black);
-        g.setFont (juce::FontOptions (juce::jmin (15.0f, bar.getHeight() * 0.95f), juce::Font::bold));
-        g.drawFittedText (users, bar.toNearestInt().reduced (2, 0), juce::Justification::centred, 1);
-    }
-    g.setColour (users.isNotEmpty() ? tileOn : tileOff);
-    g.fillRect (r);
-    auto label = r.removeFromBottom (juce::jmin (20.0f, r.getHeight() * 0.38f));
-    if (users.isNotEmpty())
-        drawIcon (g, mode == Mode::Outputs ? Icon::Speaker : Icon::Xlr, r.reduced (r.getWidth() * 0.3f, 2.0f), juce::Colours::white);
-    g.setColour (users.isNotEmpty() ? lime : Colours::cyan);
-    g.setFont (juce::FontOptions (juce::jmin (15.0f, label.getHeight() * 0.9f), juce::Font::bold));
-    g.drawFittedText (portName (port), label.toNearestInt().reduced (2, 0), juce::Justification::centred, 1);
-
-    if (mine)
     {
         g.setColour (Colours::yellow);
         g.drawRect (area.toFloat().expanded (2.0f), 3.0f);
     }
 }
 
-void RoutingPage::paint (juce::Graphics& g)
+void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, int port, bool marked) const
 {
-    g.fillAll (Colours::screen);
+    auto r = area.toFloat();
+    g.setColour (navy);
+    g.fillRect (r.removeFromTop (juce::jmax (10.0f, r.getHeight() * 0.18f)));
+    g.setColour (tileOff);
+    g.fillRect (r);
+    auto label = r.removeFromBottom (juce::jmin (20.0f, r.getHeight() * 0.38f));
+    drawIcon (g, Icon::Xlr, r.reduced (r.getWidth() * 0.3f, 2.0f), Dark::textDim);
+    g.setColour (monoLabel);
+    g.setFont (juce::FontOptions (juce::jmin (15.0f, label.getHeight() * 0.9f), juce::Font::bold));
+    g.drawFittedText (portName (port, false), label.toNearestInt().reduced (2, 0), juce::Justification::centred, 1);
+    if (marked)
+    {
+        g.setColour (Colours::yellow);
+        g.drawRect (area.toFloat().expanded (2.0f), 3.0f);
+    }
+}
 
-    // Mode keys.
-    const std::tuple<const char*, Icon> keys[] = { { "CHANNELS", Icon::Xlr }, { "OUTPUTS", Icon::Speaker }, { "MONITOR", Icon::Headphones } };
+void RoutingPage::paintOutputPort (juce::Graphics& g, juce::Rectangle<int> area, int port, bool selected) const
+{
+    const auto feeder = feederOf (port);
+    const bool fed = feeder.channel >= 0;
+    auto r = area.toFloat();
+    auto bar = r.removeFromTop (juce::jmax (12.0f, r.getHeight() * 0.22f));
+    g.setColour (feeder.strip != nullptr ? feeder.strip->getColour() : (fed ? Colours::lime : navy));
+    g.fillRect (bar);
+    if (feeder.strip != nullptr && hasCustomName (*feeder.strip))
+    {
+        g.setColour (juce::Colours::black);
+        g.setFont (juce::FontOptions (juce::jmin (15.0f, bar.getHeight() * 0.95f), juce::Font::bold));
+        g.drawFittedText (stripName (*feeder.strip).toUpperCase(), bar.toNearestInt().reduced (2, 0), juce::Justification::centred, 1);
+    }
+    g.setColour (fed ? tileOn : tileOff);
+    g.fillRect (r);
+    auto label = r.removeFromBottom (juce::jmin (20.0f, r.getHeight() * 0.38f));
+    auto icon = r.reduced (r.getWidth() * 0.28f, 2.0f);
+    drawIcon (g, Icon::Speaker, icon, fed ? juce::Colours::white : Dark::textDim);
+    g.setColour (Dark::textDim);
+    g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+    g.drawText (juce::String (port + 1), r.reduced (3.0f, 1.0f).toNearestInt(), juce::Justification::topLeft);
+    g.setColour (fed ? monoLabel : Dark::textDim);
+    g.setFont (juce::FontOptions (juce::jmin (15.0f, label.getHeight() * 0.9f), juce::Font::bold));
+    g.drawFittedText (fed ? signalLabel (feeder) : portName (port, true), label.toNearestInt().reduced (2, 0), juce::Justification::centred, 1);
+    if (selected)
+    {
+        g.setColour (Colours::yellow);
+        g.drawRect (area.toFloat().expanded (2.0f), 3.0f);
+    }
+}
+
+void RoutingPage::paintSignal (juce::Graphics& g, juce::Rectangle<int> area, const Signal& sig, bool marked) const
+{
+    auto r = area.toFloat();
+    auto bar = r.removeFromTop (juce::jmax (12.0f, r.getHeight() * 0.22f));
+    g.setColour (sig.strip != nullptr ? sig.strip->getColour() : Colours::lime);
+    g.fillRect (bar);
+    g.setColour (juce::Colours::black);
+    g.setFont (juce::FontOptions (juce::jmin (15.0f, bar.getHeight() * 0.95f), juce::Font::bold));
+    const juce::String name = sig.strip != nullptr ? (hasCustomName (*sig.strip) ? stripName (*sig.strip).toUpperCase() : juce::String())
+                                                   : (sig.channel == 0 ? juce::String ("PHONES") : juce::String ("SPEAKERS"));
+    g.drawFittedText (name, bar.toNearestInt().reduced (2, 0), juce::Justification::centred, 1);
+    g.setColour (tileOn);
+    g.fillRect (r);
+    auto label = r.removeFromBottom (juce::jmin (20.0f, r.getHeight() * 0.38f));
+    drawIcon (g, sig.strip != nullptr ? stripIcon (sig.strip->getKind()) : (sig.channel == 0 ? Icon::Headphones : Icon::Speakers),
+              r.reduced (r.getWidth() * 0.28f, 2.0f), juce::Colours::white);
+    const bool stereo = sig.strip == nullptr || sig.strip->isOutput() || sig.strip->params.stereo.load();
+    g.setColour (stereo ? stereoLabel : monoLabel);
+    g.setFont (juce::FontOptions (juce::jmin (15.0f, label.getHeight() * 0.9f), juce::Font::bold));
+    g.drawFittedText (signalLabel (sig), label.toNearestInt().reduced (2, 0), juce::Justification::centred, 1);
+    if (marked)
+    {
+        g.setColour (Colours::yellow);
+        g.drawRect (area.toFloat().expanded (2.0f), 3.0f);
+    }
+}
+
+void RoutingPage::paintSourcePanel (juce::Graphics& g) const
+{
+    // The selected source's settings. Sources (names, gain, +48V, polarity,
+    // mono/stereo grouping) don't exist yet: channels patch hardware inputs
+    // directly, so these are drawn disabled.
+    auto r = rightPanel;
+    g.setColour (Dark::body);
+    g.fillRect (r);
+    auto tabs = r.removeFromTop (juce::jlimit (30, 40, r.getHeight() / 11));
+    const char* names[] = { "SETTINGS", "ICON/COLOR", "TAGS" };
+    const int tw = tabs.getWidth() / 3;
     for (int i = 0; i < 3; ++i)
     {
-        const bool on = (int) mode == i;
-        auto k = modeKeys[i].toFloat();
-        g.setColour (on ? juce::Colour (0xffbdbdbd) : Colours::screenHeader);
-        g.fillRoundedRectangle (k, 2.0f);
-        auto icon = k.removeFromLeft (k.getHeight()).reduced (k.getHeight() * 0.2f);
-        drawIcon (g, std::get<1> (keys[i]), icon, on ? juce::Colours::black : Colours::text);
-        g.setColour (on ? juce::Colours::black : Colours::text);
-        g.setFont (juce::FontOptions (juce::jmin (17.0f, k.getHeight() * 0.48f), juce::Font::bold));
-        g.drawFittedText (std::get<0> (keys[i]), k.toNearestInt().reduced (2, 0), juce::Justification::centredLeft, 1);
+        auto t = tabs.removeFromLeft (tw).reduced (1, 0);
+        g.setColour (i == 0 ? Dark::tabOn : Dark::tabOff);
+        g.fillRect (t);
+        if (i == 0)
+        {
+            g.setColour (Colours::yellow);
+            g.fillRect (t.withHeight (3));
+        }
+        g.setColour (i == 0 ? Colours::yellow : Dark::textDim);
+        g.setFont (juce::FontOptions (juce::jmin (17.0f, (float) t.getHeight() * 0.5f), juce::Font::bold));
+        g.drawText (names[i], t, juce::Justification::centred);
     }
-    g.setColour (Colours::text);
-    g.setFont (juce::FontOptions (juce::jmin (24.0f, modeKeys[0].getHeight() * 0.7f), juce::Font::bold));
-    g.drawText ("ROUTING", getLocalBounds().withHeight (modeKeys[0].getBottom() + 2).withTrimmedLeft (8), juce::Justification::centredLeft);
+    r.removeFromTop (6);
+    auto banner = r.removeFromTop (juce::jlimit (30, 46, r.getHeight() / 9)).reduced (6, 0);
+    g.setColour (Dark::header);
+    g.fillRect (banner);
+    const auto users = inputUsers (selectedSource);
+    g.setColour (users.isEmpty() ? Dark::textDim : Dark::text);
+    g.setFont (juce::FontOptions (juce::jmin (18.0f, (float) banner.getHeight() * 0.5f), juce::Font::bold));
+    g.drawFittedText (users.isEmpty() ? juce::String ("NO CONNECTIONS") : users, banner.reduced (8, 0), juce::Justification::centred, 2);
+    r.removeFromTop (8);
 
-    if (mode == Mode::Monitor)
-        return;
+    auto body = r.reduced (6, 0);
+    auto left = body.removeFromLeft (body.getWidth() / 2);
+    const float dim = 0.4f;
+    auto key = [&g, dim] (juce::Rectangle<int> k, const juce::String& text, bool lit)
+    {
+        g.setColour ((lit ? Dark::choice : Dark::key).withMultipliedAlpha (dim + 0.2f));
+        g.fillRect (k);
+        g.setColour (Dark::text.withAlpha (dim));
+        g.setFont (juce::FontOptions (juce::jmin (16.0f, (float) k.getHeight() * 0.45f), juce::Font::bold));
+        g.drawFittedText (text, k.reduced (4, 0), juce::Justification::centred, 1);
+    };
+    const int kh = juce::jlimit (26, 40, body.getHeight() / 8);
+    key (left.removeFromTop (kh).withWidth (juce::jmin (left.getWidth(), 160)), "INITIALIZE", false);
+    left.removeFromTop (10);
+    g.setColour (Dark::text.withAlpha (dim));
+    g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+    g.drawText (portName (selectedSource, false), left.removeFromTop (20), juce::Justification::centredLeft);
+    for (auto [text, lit] : { std::pair { "MONO", true }, std::pair { "STEREO", false }, std::pair { "MID/SIDE", false } })
+    {
+        key (left.removeFromTop (kh).withWidth (juce::jmin (left.getWidth(), 160)), text, lit);
+        left.removeFromTop (4);
+    }
+    auto level = body.reduced (8, 0);
+    for (auto* text : { "+48V", "POL", "MUTE" })
+    {
+        key (level.removeFromTop (kh).withWidth (juce::jmin (level.getWidth(), 110)), text, false);
+        level.removeFromTop (4);
+    }
+    level.removeFromTop (6);
+    g.setColour (Dark::textDim);
+    g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+    g.drawFittedText ("SOURCE SETTINGS ARE NOT AVAILABLE YET. CHANNELS USE THE INPUTS DIRECTLY: SET MONO / STEREO ON THE CHANNEL'S INPUT SCREEN.", level,
+                      juce::Justification::topLeft, 5);
+}
 
-    // Panels.
+void RoutingPage::paint (juce::Graphics& g)
+{
+    g.fillAll (juce::Colours::black);
+
     for (auto panel : { leftPanel, rightPanel })
     {
-        g.setColour (Colours::screenPanel);
+        g.setColour (Dark::body);
         g.fillRect (panel);
     }
-    for (auto header : { leftHeader, rightHeader })
-    {
-        g.setColour (Colours::screenHeader);
-        g.fillRect (header);
-    }
-    g.setColour (juce::Colour (0xff1c1c1c));
-    for (auto panel : { leftPanel, rightPanel })
-        g.fillRect (panel.withTrimmedTop (leftHeader.getHeight() + 6).reduced (2));
+    g.setColour (Dark::header);
+    g.fillRect (leftHeader);
+    if (mode != Mode::Sources)
+        g.fillRect (rightHeader);
 
     auto* sel = selectedStrip();
-    auto key = [&g] (juce::Rectangle<int> r, const juce::String& text, bool on, juce::Colour onColour)
+    auto caption = [&g] (juce::Rectangle<int> r, const juce::String& text)
     {
         if (r.isEmpty())
             return;
-        g.setColour (on ? onColour : juce::Colour (0xff5a5a5a));
+        g.setColour (juce::Colours::black);
         g.fillRect (r);
-        g.setColour (on ? juce::Colours::black : Colours::text);
-        g.setFont (juce::FontOptions (juce::jmin (20.0f, r.getHeight() * 0.55f), juce::Font::bold));
-        g.drawFittedText (text, r.reduced (2, 0), juce::Justification::centred, 1);
+        g.setColour (Dark::text);
+        g.setFont (juce::FontOptions (juce::jmin (12.0f, (float) r.getHeight() * 0.8f), juce::Font::bold));
+        g.drawText (text, r, juce::Justification::centred);
     };
 
+    // Left header.
     if (mode == Mode::Channels)
     {
-        g.setColour (juce::Colours::black);
-        g.fillRect (monoKey.getUnion (stereoKey).withHeight (16).translated (0, -16));
-        g.setColour (Colours::text);
-        g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-        g.drawText ("CHANNEL MODE", monoKey.getUnion (stereoKey).withHeight (16).translated (0, -16), juce::Justification::centred);
-        const bool stereo = sel != nullptr && sel->params.stereo.load();
-        key (monoKey, "MONO", ! stereo, Colours::cyan);
-        key (stereoKey, "STEREO", stereo, Colours::cyan);
+        // The channel's MAIN / ALT input: no ALT inputs yet (engine E-ALT). ST pairs the input with the next one.
+        caption (inputCaption, "CHANNEL INPUT");
+        drawKey (g, mainKey, "MAIN", true, Dark::choice);
+        drawKey (g, altKey, "ALT", false, Dark::choice, false);
+        drawKey (g, stereoKey, "ST", sel != nullptr && sel->params.stereo.load(), Dark::choice);
+        drawKey (g, prevPage, "<", false, Dark::choice);
+        drawKey (g, nextPage, ">", false, Dark::choice);
     }
-    g.setColour (autoAdvance ? Colours::yellow : Colours::text);
-    g.setFont (juce::FontOptions (juce::jmin (18.0f, autoKey.getHeight() * 0.42f), juce::Font::bold));
-    g.drawFittedText ("+1\nAUTO", autoKey, juce::Justification::centred, 2);
-    // Locked: the closed lock lit red; unlocked: the open lock lit green (as on the console).
-    g.setColour (locked ? juce::Colour (0xffe8344a) : juce::Colour (0xff3a3a3a));
-    g.fillRect (lockKey);
-    drawIcon (g, Icon::LockClosed, lockKey.toFloat().reduced (lockKey.getHeight() * 0.2f), locked ? juce::Colours::black : Colours::text);
-    g.setColour (! locked ? Colours::green : juce::Colour (0xff3a3a3a));
-    g.fillRect (unlockKey);
-    drawIcon (g, Icon::LockOpen, unlockKey.toFloat().reduced (unlockKey.getHeight() * 0.2f), ! locked ? juce::Colours::black : Colours::text);
-    key (prevPage, "<", false, Colours::text);
-    key (nextPage, ">", false, Colours::text);
-
-    // Group selector: icon, title, name, arrow.
+    if (mode == Mode::Sources)
     {
-        auto r = groupSelector;
-        g.setColour (juce::Colour (0xff5a5a5a));
-        g.fillRect (r);
-        auto arrow = r.removeFromRight (r.getHeight() * 2 / 3);
-        g.setColour (juce::Colour (0xff6c6c6c));
-        g.fillRect (arrow);
-        juce::Path tri;
-        const auto c = arrow.getCentre().toFloat();
-        tri.addTriangle (c.x - 8.0f, c.y - 4.0f, c.x + 8.0f, c.y - 4.0f, c.x, c.y + 5.0f);
-        g.setColour (Colours::text);
-        g.fillPath (tri);
-        auto icon = r.removeFromLeft (r.getHeight()).reduced (6);
-        g.setColour (juce::Colours::black);
-        g.fillRect (icon);
-        drawIcon (g, mode == Mode::Outputs ? Icon::Speaker : Icon::Xlr, icon.toFloat().reduced (5.0f), Colours::text);
-        r.removeFromLeft (8);
-        g.setColour (Colours::text);
-        g.setFont (juce::FontOptions (juce::jmin (16.0f, r.getHeight() * 0.32f), juce::Font::bold));
-        g.drawText (mode == Mode::Outputs ? "OUTPUT GROUP" : "SOURCE GROUP", r.removeFromTop (r.getHeight() * 45 / 100), juce::Justification::bottomLeft);
-        g.setFont (juce::FontOptions (juce::jmin (26.0f, r.getHeight() * 0.8f), juce::Font::bold));
-        const int a = portGroup * kPortsPerGroup + 1;
-        g.drawFittedText ((mode == Mode::Outputs ? "AUDIO OUT " : "AUDIO IN ") + juce::String (a) + "-" + juce::String (a + kPortsPerGroup - 1), r,
-                          juce::Justification::centredLeft, 1);
+        drawSelector (g, leftSelector, Icon::Xlr, "SOURCE GROUP",
+                      "AUDIO IN " + juce::String (inputGroup * kPortsPerGroup + 1) + "-" + juce::String (inputGroup * kPortsPerGroup + kPortsPerGroup));
+        drawIconKey (g, renameKey, Icon::Edit, "RENAME", false);
     }
-    key (offKey, mode == Mode::Outputs ? "UNPATCH" : "OFF", false, Colours::text);
+    else
+    {
+        if (mode == Mode::Outputs)
+            drawSelector (g, leftSelector, Icon::Speaker, "OUTPUT GROUP",
+                          "AUDIO OUT " + juce::String (outputGroup * kPortsPerGroup + 1) + "-" + juce::String (outputGroup * kPortsPerGroup + kPortsPerGroup));
+        drawKey (g, autoKey, "+1\nAUTO", autoAdvance, Colours::yellow);
+        // Locked: the closed lock lit red; unlocked: the open lock lit green (as on the console).
+        g.setColour (locked ? juce::Colour (0xffe8344a) : Dark::key);
+        g.fillRect (lockKey);
+        drawIcon (g, Icon::LockClosed, lockKey.toFloat().reduced ((float) lockKey.getHeight() * 0.2f), locked ? juce::Colours::black : Dark::text);
+        g.setColour (! locked ? Colours::green : Dark::key);
+        g.fillRect (unlockKey);
+        drawIcon (g, Icon::LockOpen, unlockKey.toFloat().reduced ((float) unlockKey.getHeight() * 0.2f), ! locked ? juce::Colours::black : Dark::text);
+    }
 
-    // Tiles.
+    // Right header.
+    if (mode == Mode::Channels)
+    {
+        drawSelector (g, rightSelector, Icon::Xlr, "SOURCE GROUP",
+                      "AUDIO IN " + juce::String (inputGroup * kPortsPerGroup + 1) + "-" + juce::String (inputGroup * kPortsPerGroup + kPortsPerGroup));
+        // Source customization doesn't exist yet.
+        caption (copyCaption, "COPY CUSTOMIZATION");
+        drawKey (g, srcToChKey, "SRC->CH", false, Dark::choice, false);
+        drawKey (g, chToSrcKey, "CH->SRC", false, Dark::choice, false);
+    }
+    else if (mode == Mode::Outputs)
+        drawSelector (g, rightSelector, Icon::Bus, "SOURCE GROUP", signalGroups[juce::jlimit (0, 5, signalGroup)]);
+    if (mode != Mode::Sources)
+        drawIconKey (g, noneKey, Icon::ClearCircle, "NONE");
+
+    // Grids.
+    for (auto panel : { leftPanel, rightPanel })
+        if (mode != Mode::Sources || panel == leftPanel)
+        {
+            g.setColour (juce::Colour (0xff141414));
+            g.fillRect (panel.withTrimmedTop (leftHeader.getHeight() + 6).reduced (2));
+        }
     if (! separator.isEmpty())
     {
         g.setColour (juce::Colour (0xff6a6a6a));
         g.fillRect (separator);
     }
-    for (auto& t : targetTiles)
-        paintTarget (g, t, t.strip == sel);
-    for (size_t i = 0; i < portTiles.size(); ++i)
-        paintPort (g, portTiles[i], portGroup * kPortsPerGroup + (int) i);
 
-    if (locked)
+    if (mode == Mode::Channels)
+    {
+        for (auto& [area, strip] : channelTiles)
+            paintChannelTile (g, area, *strip, strip == sel);
+        for (size_t i = 0; i < rightPorts.size(); ++i)
+        {
+            const int port = inputGroup * kPortsPerGroup + (int) i;
+            bool mine = false;
+            if (sel != nullptr)
+            {
+                const int l = sel->params.inputLeft.load(), r = sel->params.inputRight.load();
+                mine = l == port || (sel->params.stereo.load() && (r == port || (r < 0 && l >= 0 && l + 1 == port)));
+            }
+            paintInputPort (g, rightPorts[i], port, mine);
+        }
+    }
+    else if (mode == Mode::Sources)
+    {
+        for (size_t i = 0; i < leftPorts.size(); ++i)
+            paintInputPort (g, leftPorts[i], inputGroup * kPortsPerGroup + (int) i, inputGroup * kPortsPerGroup + (int) i == selectedSource);
+        paintSourcePanel (g);
+    }
+    else
+    {
+        for (size_t i = 0; i < leftPorts.size(); ++i)
+            paintOutputPort (g, leftPorts[i], outputGroup * kPortsPerGroup + (int) i, outputGroup * kPortsPerGroup + (int) i == selectedPort);
+        const auto feeder = feederOf (selectedPort);
+        for (auto& [area, sig] : signalTiles)
+            paintSignal (g, area, sig, feeder.channel >= 0 && feeder.strip == sig.strip && feeder.channel == sig.channel);
+    }
+
+    if (locked && mode != Mode::Sources)
     {
         g.setColour (juce::Colours::black.withAlpha (0.25f));
         g.fillRect (rightPanel.withTrimmedTop (rightHeader.getHeight() + 6));
     }
 }
 
-void RoutingPage::assign (int port, bool right)
+void RoutingPage::assignInput (int port, bool right)
 {
     auto* s = selectedStrip();
     if (s == nullptr || locked)
         return;
     auto& p = s->params;
-
-    if (mode == Mode::Outputs)
-    {
-        const bool stereo = p.stereo.load() || s->isOutput();
-        if (p.outputLeft.load() == port)
-        {
-            // Clicking the strip's own output again removes it.
-            p.outputLeft = -1;
-            p.outputRight = -1;
-        }
-        else if (right)
-            p.outputRight = port;
-        else
-        {
-            p.outputLeft = port;
-            p.outputRight = stereo ? port + 1 : -1;
-        }
-    }
-    else if (right)
+    if (right)
         p.inputRight = port;
     else
     {
@@ -567,7 +774,7 @@ void RoutingPage::assign (int port, bool right)
 
     if (autoAdvance && ! right)
     {
-        const auto list = allTargets();
+        const auto list = channelTargets();
         for (size_t i = 0; i + 1 < list.size(); ++i)
             if (list[i] == s)
             {
@@ -578,40 +785,87 @@ void RoutingPage::assign (int port, bool right)
     repaint();
 }
 
-void RoutingPage::showGroupMenu()
+void RoutingPage::clearOutput (int port)
+{
+    for (int k = 0; k < kNumStripKinds; ++k)
+        for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
+        {
+            if (s->params.outputLeft.load() == port)
+                s->params.outputLeft = -1;
+            if (s->params.outputRight.load() == port)
+                s->params.outputRight = -1;
+        }
+    if (ctx.engine.monitorOutputLeft.load() == port)
+        ctx.engine.monitorOutputLeft = -1;
+    if (ctx.engine.monitorOutputRight.load() == port)
+        ctx.engine.monitorOutputRight = -1;
+}
+
+void RoutingPage::assignOutput (int port, const Signal& sig)
+{
+    if (locked)
+        return;
+    // One signal per output. A strip has one output pair, so patching it to a
+    // new output moves it there (engine item E4: many outputs per signal).
+    clearOutput (port);
+    if (sig.strip == nullptr)
+        (sig.channel == 0 ? ctx.engine.monitorOutputLeft : ctx.engine.monitorOutputRight) = port;
+    else
+        (sig.channel == 0 ? sig.strip->params.outputLeft : sig.strip->params.outputRight) = port;
+    if (autoAdvance)
+        selectedPort = juce::jmin (numPorts (true) - 1, selectedPort + 1);
+    if (selectedPort / kPortsPerGroup != outputGroup)
+    {
+        outputGroup = selectedPort / kPortsPerGroup;
+        layoutTiles();
+    }
+    repaint();
+}
+
+void RoutingPage::showGroupMenu (bool rightSide)
 {
     juce::PopupMenu menu;
-    for (int i = 0; i < numPortGroups(); ++i)
+    int current = 0;
+    if (mode == Mode::Outputs && rightSide)
     {
-        const int a = i * kPortsPerGroup + 1;
-        menu.addItem (i + 1, (mode == Mode::Outputs ? "AUDIO OUT " : "AUDIO IN ") + juce::String (a) + "-" + juce::String (a + kPortsPerGroup - 1), true,
-                      i == portGroup);
+        for (int i = 0; i < (int) std::size (signalGroups); ++i)
+            menu.addItem (i + 1, signalGroups[i], true, i == signalGroup);
+        current = 1;
+    }
+    else
+    {
+        const bool outputs = mode == Mode::Outputs;
+        for (int i = 0; i < numPortGroups (outputs); ++i)
+        {
+            const int a = i * kPortsPerGroup + 1;
+            menu.addItem (i + 1, (outputs ? "AUDIO OUT " : "AUDIO IN ") + juce::String (a) + "-" + juce::String (a + kPortsPerGroup - 1), true,
+                          i == (outputs ? outputGroup : inputGroup));
+        }
+        current = outputs ? 2 : 0;
     }
     juce::Component::SafePointer<RoutingPage> safe (this);
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (groupSelector)),
-                        [safe] (int r)
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (rightSide ? rightSelector : leftSelector)),
+                        [safe, current] (int r)
                         {
-                            if (safe != nullptr && r > 0)
+                            if (safe == nullptr || r <= 0)
+                                return;
+                            if (current == 1)
                             {
-                                safe->portGroup = r - 1;
-                                safe->layoutTiles();
-                                safe->repaint();
+                                safe->signalGroup = r - 1;
+                                safe->signalPage = 0;
                             }
+                            else if (current == 2)
+                                safe->outputGroup = r - 1;
+                            else
+                                safe->inputGroup = r - 1;
+                            safe->layoutTiles();
+                            safe->repaint();
                         });
 }
 
 void RoutingPage::mouseUp (const juce::MouseEvent& e)
 {
     const auto pos = e.getPosition();
-    for (int i = 0; i < 3; ++i)
-        if (modeKeys[i].contains (pos))
-        {
-            setMode (static_cast<Mode> (i));
-            return;
-        }
-    if (mode == Mode::Monitor)
-        return;
-
     if (autoKey.contains (pos))
         autoAdvance = ! autoAdvance;
     else if (lockKey.contains (pos))
@@ -623,37 +877,58 @@ void RoutingPage::mouseUp (const juce::MouseEvent& e)
         targetPage = (targetPage + (nextPage.contains (pos) ? 1 : numTargetPages() - 1)) % numTargetPages();
         layoutTiles();
     }
-    else if (groupSelector.contains (pos))
-        showGroupMenu();
-    else if (monoKey.contains (pos) || stereoKey.contains (pos))
+    else if (leftSelector.contains (pos))
+        showGroupMenu (false);
+    else if (rightSelector.contains (pos))
+        showGroupMenu (true);
+    else if (stereoKey.contains (pos))
     {
         if (auto* s = selectedStrip(); s != nullptr && ! locked)
-            s->params.stereo = stereoKey.contains (pos);
+            s->params.stereo = ! s->params.stereo.load();
     }
-    else if (offKey.contains (pos))
+    else if (noneKey.contains (pos))
     {
-        if (auto* s = selectedStrip(); s != nullptr && ! locked)
+        if (locked)
+            return;
+        if (mode == Mode::Outputs)
+            clearOutput (selectedPort);
+        else if (auto* s = selectedStrip())
         {
-            auto& p = s->params;
-            (mode == Mode::Outputs ? p.outputLeft : p.inputLeft) = -1;
-            (mode == Mode::Outputs ? p.outputRight : p.inputRight) = -1;
+            s->params.inputLeft = -1;
+            s->params.inputRight = -1;
         }
     }
     else
     {
-        for (auto& t : targetTiles)
-            if (t.area.contains (pos))
+        for (auto& [area, strip] : channelTiles)
+            if (area.contains (pos))
             {
-                select (t.strip);
+                select (strip);
                 if (ctx.selectStrip)
-                    ctx.selectStrip (t.strip);
+                    ctx.selectStrip (strip);
                 return;
             }
-        for (size_t i = 0; i < portTiles.size(); ++i)
-            if (portTiles[i].contains (pos))
+        for (size_t i = 0; i < rightPorts.size(); ++i)
+            if (rightPorts[i].contains (pos))
             {
-                // Right click or shift: the right input/output of a stereo strip.
-                assign (portGroup * kPortsPerGroup + (int) i, e.mods.isPopupMenu() || e.mods.isShiftDown());
+                // Right click or shift: the right input of a stereo channel.
+                assignInput (inputGroup * kPortsPerGroup + (int) i, e.mods.isPopupMenu() || e.mods.isShiftDown());
+                return;
+            }
+        for (size_t i = 0; i < leftPorts.size(); ++i)
+            if (leftPorts[i].contains (pos))
+            {
+                if (mode == Mode::Sources)
+                    selectedSource = inputGroup * kPortsPerGroup + (int) i;
+                else
+                    selectedPort = outputGroup * kPortsPerGroup + (int) i;
+                repaint();
+                return;
+            }
+        for (auto& [area, sig] : signalTiles)
+            if (area.contains (pos))
+            {
+                assignOutput (selectedPort, sig);
                 return;
             }
     }

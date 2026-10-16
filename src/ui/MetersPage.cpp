@@ -216,8 +216,9 @@ bool MetersPage::isMuted (const Group& group, int index) const
 
 float MetersPage::levelOf (const Group& group, int index, int channel) const
 {
+    // The METERS screen shows pre-fader levels (manual 5.3).
     if (! group.dca)
-        return meterPos (dsp::gainToDb (ctx.meters.get (stripOf (group, index), false, channel)));
+        return meterPos (dsp::gainToDb (ctx.meters.get (stripOf (group, index), MeterPoint::PreFader, channel)));
 
     // A DCA shows the loudest of its members.
     const uint32_t bit = 1u << (uint32_t) (group.first + index);
@@ -225,7 +226,7 @@ float MetersPage::levelOf (const Group& group, int index, int channel) const
     for (auto kind : { StripKind::Channel, StripKind::Aux, StripKind::Bus, StripKind::Main, StripKind::Matrix })
         for (auto& s : ctx.engine.getStrips (kind))
             if ((s->params.dcaMask.load() & bit) != 0)
-                peak = juce::jmax (peak, ctx.meters.get (s.get(), false, channel));
+                peak = juce::jmax (peak, ctx.meters.get (s.get(), MeterPoint::PreFader, channel));
     return meterPos (dsp::gainToDb (peak));
 }
 
@@ -305,8 +306,15 @@ void MetersPage::paint (juce::Graphics& g)
             const auto cell = s.reduced (juce::jmin (2.0f, s.getWidth() * 0.08f), 0.0f);
             auto* strip = stripOf (group, i);
             const int number = group.first + i + 1;
-            numberKey (g, cell.withY ((float) numbers.getY()).withHeight ((float) numbers.getHeight()), number,
-                       strip != nullptr && strip == selected ? Colours::amber : Colours::cyan);
+            // Number keys in the strip's colour; the selected strip gets a white frame.
+            const auto numberArea = cell.withY ((float) numbers.getY()).withHeight ((float) numbers.getHeight());
+            numberKey (g, numberArea, number, group.dca ? wingColour (ctx.engine.getDca (group.first + i).colour.load())
+                                                 : (strip != nullptr ? strip->getColour() : Colours::cyan));
+            if (strip != nullptr && strip == selected)
+            {
+                g.setColour (juce::Colours::white);
+                g.drawRoundedRectangle (numberArea.expanded (1.5f), 2.0f, 2.0f);
+            }
 
             // LED meter: two narrow columns (one for mono), green / yellow / red, with peak hold.
             const bool stereo = isStereo (group, i);
@@ -323,35 +331,47 @@ void MetersPage::paint (juce::Graphics& g)
                 for (int k = 0; k < segments; ++k)
                 {
                     const float pos = ((float) k + 0.5f) / (float) segments;
-                    const bool lit = level >= pos || k == holdSeg;
+                    const bool lit = level >= pos;
                     juce::Colour c = juce::Colour (0xff4a4a4a);
                     if (lit)
                         c = pos > meterPos (-0.5f) ? Colours::mute : (pos > meterPos (-12.0f) ? Colours::meterYellow : Colours::meterGreen);
+                    else if (k == holdSeg)
+                        c = Colours::amber; // the peak-hold dash
                     g.setColour (c);
                     g.fillRect (x, meterBottom - (float) (k + 1) * segH + 0.5f, colW, juce::jmax (1.0f, segH - 1.5f));
                 }
             }
 
-            // Mute key.
+            // Mute: an empty square, filled red while muted.
             const auto m = cell.withY ((float) mutes.getY()).withHeight ((float) mutes.getHeight()).withSizeKeepingCentre (
-                juce::jmin (cell.getWidth(), (float) mutes.getHeight() * 1.1f), (float) mutes.getHeight());
-            const bool muted = isMuted (group, i);
-            g.setColour (muted ? Colours::mute : juce::Colour (0xff4a4a4a));
-            g.fillRoundedRectangle (m, 2.0f);
-            g.setColour (muted ? juce::Colours::black : Colours::textDim);
-            g.setFont (juce::FontOptions (m.getHeight() * 0.72f, juce::Font::bold));
-            g.drawText ("M", m, juce::Justification::centred);
+                juce::jmin (cell.getWidth(), (float) mutes.getHeight()), (float) mutes.getHeight()).reduced (1.0f);
+            if (isMuted (group, i))
+            {
+                g.setColour (Colours::mute);
+                g.fillRect (m);
+            }
+            g.setColour (juce::Colour (0xff5a5a5a));
+            g.drawRect (m, 1.0f);
         }
     }
 }
 
-void MetersPage::bringToSection (const Group& group, Strip* s)
+void MetersPage::bringToSection (const Group& group, int index)
 {
-    juce::String bank;
+    // The section selects the layer key holding the fader and scrolls it into view.
+    std::optional<state::FaderRef> fader;
     if (group.dca)
-        bank = ctx.show.layers.findDefaultLayerContaining (ctx.engine, group.section, state::FaderRef::ofDca (group.first));
-    else if (s != nullptr)
-        bank = ctx.show.layers.findDefaultLayerContaining (ctx.engine, group.section, state::FaderRef::of (state::StripRef::of (*s)));
+        fader = state::FaderRef::ofDca (group.first + juce::jmax (0, index));
+    else if (auto* s = stripOf (group, juce::jmax (0, index)))
+        fader = state::FaderRef::of (state::StripRef::of (*s));
+    if (! fader)
+        return;
+    if (ctx.revealFader)
+    {
+        ctx.revealFader (group.section, *fader);
+        return;
+    }
+    const auto bank = ctx.show.layers.findDefaultLayerContaining (ctx.engine, group.section, *fader);
     if (bank.isNotEmpty() && bank != ctx.show.layers.getSelectedLayerId (group.section))
     {
         ctx.show.layers.setSelectedLayerId (group.section, bank);
@@ -375,7 +395,11 @@ void MetersPage::mouseDown (const juce::MouseEvent& e)
     {
         if (group.header.contains (pos))
         {
-            bringToSection (group, stripOf (group, 0));
+            // Touching a group opens the FADERS screen of its section.
+            bringToSection (group, 0);
+            ctx.viewSection = group.section;
+            if (ctx.showScreen)
+                ctx.showScreen (Screen::Faders);
             return;
         }
         if (! group.body.contains (pos))
@@ -396,10 +420,10 @@ void MetersPage::mouseDown (const juce::MouseEvent& e)
             {
                 if (ctx.selectStrip)
                     ctx.selectStrip (s);
-                bringToSection (group, s);
+                bringToSection (group, i);
             }
             else
-                bringToSection (group, nullptr);
+                bringToSection (group, i);
             repaint();
             return;
         }

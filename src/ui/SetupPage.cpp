@@ -1,42 +1,192 @@
+#include "engine/Models.h"
 #include "ui/Pages.h"
-#include "ui/WingWidgets.h"
+#include "ui/ScreenWidgets.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>
 
 namespace livedaw::ui
 {
 
+// SETUP (manual 5.5): five tabs GENERAL | AUDIO | SURFACE | REMOTE | DAW with
+// INITIALIZE CONSOLE and SHUTDOWN on the tab row, and an app-specific PLUGINS
+// tab. Settings that only make sense on the hardware are drawn disabled so the
+// screens keep the console's layout; so are the ones waiting for engine or
+// support from files this page doesn't own (each marked with its item).
+
 namespace
 {
-    void styleCaption (juce::Label& l, const juce::String& text, float size = 12.0f, juce::Colour c = Colours::textDim)
+    /** Row height that fits `rows` rows in `height` px. */
+    int fitRowHeight (int height, float rows, int minH = 18, int maxH = 30)
     {
-        l.setText (text, juce::dontSendNotification);
-        l.setFont (juce::FontOptions (size, juce::Font::bold));
-        l.setColour (juce::Label::textColourId, c);
+        return juce::jlimit (minH, maxH, (int) ((float) height / juce::jmax (1.0f, rows)));
     }
 
-    /** GENERAL, like the console's: CONSOLE info, CONFIGURATION (channels and
-        buses), PREFERENCES, CLOCK and INITIALIZE. */
-    class GeneralTab final : public juce::Component, private juce::Timer
+    std::unique_ptr<ChoiceKeys> fixedChoice (juce::StringArray labels, int lit, std::vector<juce::Colour> colours = {})
+    {
+        auto k = std::make_unique<ChoiceKeys> (std::move (labels), [lit] { return lit; }, nullptr, std::move (colours));
+        k->setEnabled (false);
+        return k;
+    }
+
+    void editText (juce::Component* parent, const juce::String& title, const juce::String& current, std::function<void (const juce::String&)> done)
+    {
+        auto* w = new juce::AlertWindow (title, {}, juce::MessageBoxIconType::NoIcon, parent);
+        w->addTextEditor ("text", current);
+        w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        w->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        w->enterModalState (true, juce::ModalCallbackFunction::create ([w, done] (int r)
+        {
+            if (r == 1)
+                done (w->getTextEditorContents ("text").trim());
+        }), true);
+    }
+
+    juce::File dataDirectory()
+    {
+        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("LiveDAW");
+    }
+
+    //==============================================================================
+    /** A lighting tile of SETUP > GENERAL: a ring gauge and "NN %". Drag up or
+        down, or turn the wheel, to change it. */
+    class LightTile final : public juce::Component
     {
     public:
-        explicit GeneralTab (UiContext& c)
-            : ctx (c),
-              protection (c.engine.outputProtection),
-              solo ({ "PFL", "AFL" }, [&c] { return c.engine.soloAfl.load() ? 1 : 0; }, [&c] (int i) { c.engine.soloAfl = i == 1; })
+        LightTile (UiContext& c, juce::String captionText, juce::String id, int defaultValue, juce::Colour tintColour)
+            : ctx (c), caption (std::move (captionText)), key (prefs::brightnessPrefix + id), fallback (defaultValue), tint (tintColour)
+        {
+        }
+
+        int value() const { return isEnabled() ? juce::jlimit (0, 100, ctx.settings.getIntValue (key, fallback)) : 0; }
+
+        void paint (juce::Graphics& g) override
+        {
+            auto r = getLocalBounds().toFloat();
+            const float alpha = isEnabled() ? 1.0f : 0.45f;
+            g.setColour (tint.withMultipliedAlpha (alpha));
+            g.fillRect (r);
+            auto ring = r.removeFromLeft (r.getHeight()).reduced (r.getHeight() * 0.16f);
+            const float a0 = -juce::MathConstants<float>::pi * 0.78f, a1 = juce::MathConstants<float>::pi * 0.78f;
+            const float rad = ring.getWidth() * 0.4f, thick = juce::jmax (2.0f, ring.getWidth() * 0.16f);
+            juce::Path track, arc;
+            track.addCentredArc (ring.getCentreX(), ring.getCentreY(), rad, rad, 0.0f, a0, a1, true);
+            arc.addCentredArc (ring.getCentreX(), ring.getCentreY(), rad, rad, 0.0f, a0, a0 + (a1 - a0) * (float) value() / 100.0f, true);
+            g.setColour (juce::Colours::black.withAlpha (0.45f));
+            g.strokePath (track, juce::PathStrokeType (thick));
+            g.setColour (Dark::text.withAlpha (alpha));
+            g.strokePath (arc, juce::PathStrokeType (thick));
+
+            auto t = r.reduced (2.0f, 3.0f);
+            g.setColour (Dark::text.withAlpha (0.85f * alpha));
+            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 13.0f, t.getHeight() * 0.3f), juce::Font::bold));
+            g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 0.4f).toNearestInt(), juce::Justification::bottomLeft, 1);
+            g.setColour (Dark::text.withAlpha (alpha));
+            g.setFont (juce::FontOptions (juce::jlimit (12.0f, 24.0f, t.getHeight() * 0.8f), juce::Font::bold));
+            g.drawFittedText (juce::String (value()) + " %", t.toNearestInt(), juce::Justification::centredLeft, 1);
+        }
+
+        void mouseDown (const juce::MouseEvent&) override { dragStart = value(); }
+
+        void mouseDrag (const juce::MouseEvent& e) override
+        {
+            if (isEnabled())
+                set (dragStart - e.getDistanceFromDragStartY() / 2);
+        }
+
+        void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w) override
+        {
+            if (isEnabled())
+                set (value() + (w.deltaY > 0.0f ? 5 : -5));
+        }
+
+        void mouseDoubleClick (const juce::MouseEvent&) override
+        {
+            if (isEnabled())
+                set (fallback);
+        }
+
+    private:
+        void set (int v)
+        {
+            ctx.settings.setValue (key, juce::jlimit (0, 100, v));
+            repaint();
+        }
+
+        UiContext& ctx;
+        juce::String caption, key;
+        int fallback, dragStart = 0;
+        juce::Colour tint;
+    };
+
+    /** The TIME / DATE tiles: the clock, and a menu for its format. */
+    class ClockTile final : public juce::Component
+    {
+    public:
+        ClockTile (UiContext& c, bool isDate) : ctx (c), date (isDate) {}
+
+        juce::String text() const
+        {
+            const auto now = juce::Time::getCurrentTime();
+            if (date)
+                return now.formatted (ctx.settings.getBoolValue (prefs::dateDayFirst, false) ? "%d-%m-%Y" : "%Y-%m-%d");
+            return now.formatted (ctx.settings.getBoolValue (prefs::clock12h, false) ? "%I:%M:%S %p" : "%H:%M:%S");
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            auto r = getLocalBounds();
+            auto key = r.removeFromRight (juce::jmin (22, r.getWidth() / 6));
+            g.setColour (juce::Colour (0xff393939));
+            g.fillRect (r);
+            g.setColour (Dark::key);
+            g.fillRect (key.withTrimmedLeft (2));
+            const auto kc = key.withTrimmedLeft (2).getCentre().toFloat();
+            g.setColour (Dark::text);
+            for (int i = -1; i <= 1; ++i)
+                g.fillEllipse (juce::Rectangle<float> (4.0f, 4.0f).withCentre (kc.translated (0.0f, (float) i * 8.0f)));
+            auto t = r.reduced (6, 3);
+            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 13.0f, (float) t.getHeight() * 0.3f), juce::Font::bold));
+            g.drawFittedText (date ? "DATE" : "TIME", t.removeFromTop (t.getHeight() * 4 / 10), juce::Justification::bottomLeft, 1);
+            g.setFont (juce::FontOptions (juce::jlimit (12.0f, 24.0f, (float) t.getHeight() * 0.85f), juce::Font::bold));
+            g.drawFittedText (text(), t, juce::Justification::centredLeft, 1, 0.8f);
+        }
+
+        void mouseUp (const juce::MouseEvent&) override
+        {
+            juce::PopupMenu m;
+            const char* key = date ? prefs::dateDayFirst : prefs::clock12h;
+            const bool alt = ctx.settings.getBoolValue (key, false);
+            m.addItem (1, date ? "YYYY-MM-DD" : "24 HOURS", true, ! alt);
+            m.addItem (2, date ? "DD-MM-YYYY" : "12 HOURS", true, alt);
+            m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [this, key] (int r)
+            {
+                if (r > 0)
+                {
+                    ctx.settings.setValue (key, r == 2);
+                    repaint();
+                }
+            });
+        }
+
+    private:
+        UiContext& ctx;
+        bool date;
+    };
+
+    //==============================================================================
+    /** CONSOLE: name, software, engine, audio device, the console size and the data folders. */
+    class ConsolePanel final : public juce::Component
+    {
+    public:
+        explicit ConsolePanel (UiContext& c) : ctx (c)
         {
             editKey.onClick = [this]
             {
-                auto* w = new juce::AlertWindow ("Show name", "Name of the show (saved with it):", juce::MessageBoxIconType::NoIcon, this);
-                w->addTextEditor ("name", ctx.show.getName());
-                w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-                w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-                w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int r)
+                editText (this, "CONSOLE NAME", ctx.settings.getValue (prefs::consoleName, "LIVE-DAW"), [this] (const juce::String& name)
                 {
-                    if (r == 1)
-                        ctx.show.setName (w->getTextEditorContents ("name").trim());
+                    ctx.settings.setValue (prefs::consoleName, name.isNotEmpty() ? name.toUpperCase() : juce::String ("LIVE-DAW"));
                     repaint();
-                }), true);
+                });
             };
             chMinus.onClick = [this] { setChannels ((int) ctx.engine.getChannels().size() - 1); };
             chPlus.onClick = [this] { setChannels ((int) ctx.engine.getChannels().size() + 1); };
@@ -64,181 +214,102 @@ namespace
                         ctx.structureChanged();
                 }
             };
-
-            ceiling.setSliderStyle (juce::Slider::LinearHorizontal);
-            ceiling.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-            ceiling.setRange (-24.0, 6.0, 0.1);
-            ceiling.setDoubleClickReturnValue (true, 0.0);
-            ceiling.onValueChange = [this] { ctx.engine.outputCeilingDb = (float) ceiling.getValue(); repaint(); };
-
-            initKey.outlined = true;
-            initKey.offColour = Colours::screenPanel;
-            initKey.onClick = [this]
+            dataKey.onClick = [] { dataDirectory().createDirectory(); dataDirectory().revealToUser(); };
+            showKey.onClick = [this]
             {
-                juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, "Initialize console",
-                                                    "Reset every strip, DCA, mute group and FX setting to a fresh 40 channel WING? "
-                                                    "Scenes are kept.", "Initialize", "Cancel", this,
-                                                    juce::ModalCallbackFunction::create ([this] (int r)
-                {
-                    if (r == 0)
-                        return;
-                    for (int i = 0; i < kNumFx; ++i)
-                        clearFx (ctx, i);
-                    ctx.engine.reset();
-                    ctx.engine.setNumChannels (kWingChannels);
-                    ctx.log.info ("Console initialized");
-                    if (ctx.structureChanged)
-                        ctx.structureChanged();
-                }));
+                const juce::File f (ctx.settings.getValue ("lastShowFile"));
+                if (f.existsAsFile())
+                    f.revealToUser();
             };
-
-            for (juce::Component* comp : { (juce::Component*) &editKey, (juce::Component*) &chMinus, (juce::Component*) &chPlus,
-                                           (juce::Component*) &chWing, (juce::Component*) &busMinus, (juce::Component*) &busPlus,
-                                           (juce::Component*) &protection, (juce::Component*) &ceiling, (juce::Component*) &solo,
-                                           (juce::Component*) &initKey })
-                addAndMakeVisible (comp);
-            startTimerHz (2);
-            timerCallback();
+            styleIconKey (editKey, true);
+            for (auto* k : { &dataKey, &showKey })
+                styleIconKey (*k);
+            for (auto* k : { &chMinus, &chPlus, &chWing, &busMinus, &busPlus })
+                k->offColour = Dark::key;
+            for (auto* k : { &editKey, &chMinus, &chPlus, &chWing, &busMinus, &busPlus, &dataKey, &showKey })
+                addAndMakeVisible (k);
         }
 
-        void timerCallback() override
+        void update()
         {
-            if (! ceiling.isMouseButtonDown())
-                ceiling.setValue (ctx.engine.outputCeilingDb.load(), juce::dontSendNotification);
-            busMinus.setEnabled (ctx.engine.getBuses().size() > (size_t) kWingBuses);
-            chMinus.setEnabled (! ctx.engine.getChannels().empty());
-            solo.repaint();
+            enableKey (busMinus, ctx.engine.getBuses().size() > (size_t) kWingBuses);
+            enableKey (chMinus, ! ctx.engine.getChannels().empty());
+            enableKey (showKey, juce::File (ctx.settings.getValue ("lastShowFile")).existsAsFile());
             repaint();
         }
 
         void paint (juce::Graphics& g) override
         {
-            g.fillAll (Colours::screen);
-            for (auto [box, title] : { std::pair { consoleBox, "CONSOLE" }, std::pair { configBox, "CONFIGURATION" },
-                                       std::pair { prefsBox, "PREFERENCES" }, std::pair { clockBox, "CLOCK" }, std::pair { initBox, "INITIALIZE" } })
-                drawSectionBox (g, box, title);
+            auto body = drawDarkPanel (g, getLocalBounds(), "CONSOLE");
+            g.setColour (Dark::box);
+            g.fillRect (infoBox);
+            drawDarkPanel (g, dataBox, "DATA", juce::jmin (kDarkHeaderHeight, dataBox.getHeight() / 2));
+            (void) body;
 
-            // Console info: grey caption over a white value.
             auto* device = ctx.deviceManager.getCurrentAudioDevice();
             const std::pair<juce::String, juce::String> info[] = {
-                { "SHOW NAME", ctx.show.getName().isNotEmpty() ? ctx.show.getName() : juce::String ("UNTITLED") },
-                { "SOFTWARE", "LIVE DAW " + juce::String (JUCE_APPLICATION_VERSION_STRING) },
+                { "CONSOLE NAME (network)", ctx.settings.getValue (prefs::consoleName, "LIVE-DAW") },
                 { "ENGINE", "RUST, " + juce::String (ctx.engine.getNumWorkerThreads()) + " DSP THREADS" },
-                { "AUDIO DEVICE", device != nullptr ? device->getName() + "  " + juce::String (juce::roundToInt (device->getCurrentSampleRate())) + " Hz"
-                                                    : juce::String ("NONE") } };
-            auto r = infoArea;
-            const int rowH = r.getHeight() / (int) std::size (info);
+                { "SOFTWARE", "LIVE DAW " + juce::String (JUCE_APPLICATION_VERSION_STRING) },
+                { "AUDIO DEVICE", device != nullptr ? device->getName().toUpperCase() : juce::String ("NONE") },
+            };
             for (size_t i = 0; i < std::size (info); ++i)
             {
-                auto row = r.removeFromTop (rowH);
-                g.setColour (Colours::textDim);
-                g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-                g.drawText (info[i].first, row.removeFromTop (16), juce::Justification::bottomLeft);
-                g.setColour (Colours::text);
-                g.setFont (juce::FontOptions (juce::jmin (i == 0 ? 26.0f : 19.0f, (float) row.getHeight() * 0.9f), juce::Font::bold));
-                g.drawFittedText (info[i].second, row.withTrimmedRight (i == 0 ? editKey.getWidth() + 4 : 0), juce::Justification::centredLeft, 1);
+                auto row = infoRows[i];
+                g.setColour (Dark::textDim);
+                g.setFont (juce::FontOptions (juce::jlimit (6.0f, 12.0f, (float) row.getHeight() * 0.3f), juce::Font::bold));
+                g.drawText (info[i].first, row.removeFromTop (row.getHeight() * 36 / 100), juce::Justification::bottomLeft);
+                g.setColour (Dark::text);
+                g.setFont (juce::FontOptions (juce::jlimit (8.0f, i == 0 ? 24.0f : 18.0f, (float) row.getHeight() * (i == 0 ? 0.6f : 0.55f)), juce::Font::bold));
+                g.drawFittedText (info[i].second, row.withTrimmedRight (i == 0 ? editKey.getWidth() + 4 : 0), juce::Justification::centredLeft, 1, 0.8f);
             }
 
-            // Configuration rows.
-            g.setColour (Colours::text);
-            g.setFont (juce::FontOptions (juce::jmin (20.0f, (float) chRow.getHeight() * 0.5f), juce::Font::bold));
-            g.drawText ("CHANNELS", chRow, juce::Justification::centredLeft);
-            g.drawText ("BUSES", busRow, juce::Justification::centredLeft);
-            g.setFont (juce::FontOptions (juce::jmin (26.0f, (float) chRow.getHeight() * 0.7f), juce::Font::bold));
-            g.drawText (juce::String ((int) ctx.engine.getChannels().size()), chValue, juce::Justification::centred);
-            g.drawText (juce::String ((int) ctx.engine.getBuses().size()), busValue, juce::Justification::centred);
-            g.setColour (Colours::textDim);
-            g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-            g.drawFittedText ("Only the CPU limits channels and buses. Buses 9 and up can feed buses 1-8.", configNote, juce::Justification::topLeft, 2);
-
-            // Preference rows.
-            g.setColour (juce::Colour (0xff1c1c1c));
-            for (int i = 1; i < (int) std::size (prefRows); ++i)
-                g.fillRect (prefRows[i].withHeight (2).translated (0, -1));
-            g.setColour (Colours::text);
-            g.setFont (juce::FontOptions (juce::jmin (19.0f, (float) prefRows[0].getHeight() * 0.42f), juce::Font::bold));
-            const char* prefNames[] = { "OUTPUT PROTECTION", "PROTECTION CEILING", "SOLO MODE" };
-            for (size_t i = 0; i < std::size (prefRows); ++i)
-                g.drawText (prefNames[i], prefRows[i].reduced (10, 0), juce::Justification::centredLeft);
-            g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-            g.drawText (juce::String (ctx.engine.outputCeilingDb.load(), 1) + " dB", ceilingValue, juce::Justification::centredRight);
-
-            // Clock: time and date boxes.
-            const auto now = juce::Time::getCurrentTime();
-            for (auto [box, title, value] : { std::tuple { timeBox, "TIME", now.formatted ("%H:%M:%S") }, std::tuple { dateBox, "DATE", now.formatted ("%Y-%m-%d") } })
+            g.setColour (Dark::textDim);
+            g.setFont (juce::FontOptions (juce::jlimit (6.0f, 12.0f, (float) chRow.getHeight() * 0.36f), juce::Font::bold));
+            g.drawText ("CONFIGURATION", configCaption, juce::Justification::bottomLeft);
+            for (auto [row, label, value, valueArea] : { std::tuple { chRow, "CHANNELS", (int) ctx.engine.getChannels().size(), chValue },
+                                                         std::tuple { busRow, "BUSES", (int) ctx.engine.getBuses().size(), busValue } })
             {
-                g.setColour (juce::Colour (0xff1e1e1e));
-                g.fillRect (box);
-                g.setColour (Colours::screenTile);
-                g.drawRect (box, 1);
-                auto t = box.reduced (8, 4);
-                g.setColour (Colours::text);
-                g.setFont (juce::FontOptions (juce::jmin (17.0f, (float) t.getHeight() * 0.36f), juce::Font::bold));
-                g.drawText (title, t.removeFromTop (t.getHeight() * 4 / 10), juce::Justification::bottomLeft);
-                g.setFont (juce::FontOptions (juce::jmin (26.0f, (float) t.getHeight() * 0.8f), juce::Font::bold));
-                g.drawText (value, t, juce::Justification::centredLeft);
+                g.setColour (Dark::text);
+                g.setFont (juce::FontOptions (juce::jlimit (8.0f, 16.0f, (float) row.getHeight() * 0.55f), juce::Font::bold));
+                g.drawText (label, row, juce::Justification::centredLeft);
+                g.setFont (juce::FontOptions (juce::jlimit (8.0f, 20.0f, (float) row.getHeight() * 0.7f), juce::Font::bold));
+                g.drawText (juce::String (value), valueArea, juce::Justification::centred);
             }
         }
 
         void resized() override
         {
-            auto b = getLocalBounds().reduced (0, 6);
-            const int gap = juce::jmax (8, b.getWidth() / 24);
-            auto left = b.removeFromLeft (b.getWidth() * 30 / 100);
-            b.removeFromLeft (gap);
-            auto right = b.removeFromRight (b.getWidth() * 33 / 100);
-            b.removeFromRight (gap);
-            auto middle = b;
+            auto b = darkPanelBody (getLocalBounds(), true);
+            dataBox = b.removeFromBottom (juce::jmin (kDarkHeaderHeight + 48, b.getHeight() / 3));
+            b.removeFromBottom (4);
+            infoBox = b;
+            auto r = b.reduced (8, 4);
+            const int configH = juce::jmin (84, r.getHeight() * 32 / 100);
+            auto config = r.removeFromBottom (configH);
+            const int rowH = r.getHeight() / 4;
+            for (auto& row : infoRows)
+                row = r.removeFromTop (rowH);
+            editKey.setBounds (infoRows[0].withTrimmedLeft (infoRows[0].getWidth() - juce::jmin (52, rowH + 12)).reduced (0, 2));
 
-            consoleBox = left.removeFromTop (left.getHeight() * 56 / 100);
-            left.removeFromTop (6);
-            configBox = left;
-            prefsBox = middle.withHeight (juce::jmin (middle.getHeight(), kPanelHeaderHeight + 30 + 3 * 54));
-            clockBox = right.removeFromTop (right.getHeight() * 56 / 100);
-            right.removeFromTop (6);
-            initBox = right;
-
-            infoArea = sectionContent (consoleBox, true);
-            editKey.setBounds (infoArea.getRight() - 56, infoArea.getY() + 4, 56, 40);
-
-            auto cfg = sectionContent (configBox, true);
-            const int rowH = juce::jmin (40, cfg.getHeight() / 3);
+            configCaption = config.removeFromTop (config.getHeight() / 4);
+            const int h = config.getHeight() / 2;
             for (auto [row, minus, value, plus] : { std::tuple { &chRow, &chMinus, &chValue, &chPlus }, std::tuple { &busRow, &busMinus, &busValue, &busPlus } })
             {
-                auto r = cfg.removeFromTop (rowH);
-                cfg.removeFromTop (4);
-                *row = r;
-                auto keys = r.removeFromRight (juce::jmin (r.getWidth() * 62 / 100, 220));
+                auto rr = config.removeFromTop (h).reduced (0, 2);
+                *row = rr;
+                auto keys = rr.removeFromRight (juce::jmin (rr.getWidth() * 62 / 100, 200));
+                auto wing = keys.removeFromRight (keys.getWidth() / 3);
                 if (row == &chRow)
-                {
-                    chWing.setBounds (keys.removeFromRight (keys.getWidth() / 3).reduced (2, 2));
-                    keys.removeFromRight (4);
-                }
-                minus->setBounds (keys.removeFromLeft (rowH).reduced (2));
-                plus->setBounds (keys.removeFromRight (rowH).reduced (2));
+                    chWing.setBounds (wing.reduced (2, 0));
+                minus->setBounds (keys.removeFromLeft (rr.getHeight() + 6).reduced (2, 0));
+                plus->setBounds (keys.removeFromRight (rr.getHeight() + 6).reduced (2, 0));
                 *value = keys;
             }
-            busValue = busValue.withWidth (chValue.getWidth());
-            busPlus.setBounds (busPlus.getBounds().withX (chPlus.getX()));
-            configNote = cfg;
 
-            auto prefs = sectionContent (prefsBox, true).expanded (8, 6);
-            const int ph = prefs.getHeight() / (int) std::size (prefRows);
-            for (auto& row : prefRows)
-                row = prefs.removeFromTop (ph);
-            protection.setBounds (prefRows[0].reduced (10, 0).removeFromRight (48).withSizeKeepingCentre (48, juce::jmin (36, ph - 12)));
-            auto c = prefRows[1].reduced (10, 0).removeFromRight (prefRows[1].getWidth() / 2);
-            ceilingValue = c.removeFromLeft (64);
-            ceiling.setBounds (c.withSizeKeepingCentre (c.getWidth() - 6, 24));
-            solo.setBounds (prefRows[2].reduced (10, 0).removeFromRight (130).withSizeKeepingCentre (130, juce::jmin (40, ph - 10)));
-
-            auto clock = sectionContent (clockBox, true);
-            const int boxH = juce::jmin (64, clock.getHeight() / 2 - 8);
-            timeBox = clock.removeFromTop (boxH).withTrimmedRight (clock.getWidth() / 6);
-            clock.removeFromTop (12);
-            dateBox = clock.removeFromTop (boxH).withTrimmedRight (clock.getWidth() / 6);
-
-            initKey.setBounds (sectionContent (initBox, true).withSizeKeepingCentre (juce::jmin (210, initBox.getWidth() - 30), 56));
+            auto d = darkPanelBody (dataBox, true, juce::jmin (kDarkHeaderHeight, dataBox.getHeight() / 2)).reduced (6, 5);
+            dataKey.setBounds (d.removeFromLeft (d.getWidth() / 2).reduced (3, 0));
+            showKey.setBounds (d.reduced (3, 0));
         }
 
     private:
@@ -255,378 +326,875 @@ namespace
 
         UiContext& ctx;
         WingKey editKey { "EDIT", Icon::Edit }, chMinus { "-" }, chPlus { "+" }, chWing { "WING" }, busMinus { "-" }, busPlus { "+" },
-            initKey { "INIT CONSOLE", Icon::Reset };
-        OnChip protection;
-        juce::Slider ceiling;
-        SegmentedKeys solo;
-        juce::Rectangle<int> consoleBox, configBox, prefsBox, clockBox, initBox, infoArea, chRow, busRow, chValue, busValue, configNote,
-            ceilingValue, timeBox, dateBox;
-        juce::Rectangle<int> prefRows[3];
+            dataKey { "DATA FOLDER", Icon::Folder }, showKey { "SHOW FOLDER", Icon::Folder };
+        juce::Rectangle<int> infoBox, dataBox, infoRows[4], configCaption, chRow, busRow, chValue, busValue;
     };
 
-    /** Width of each fader section, as segmented keys. */
+    //==============================================================================
+    /** GENERAL (fig. 33): lighting and clock tiles, then CONSOLE | OPERATION | OPTIONS. */
+    class GeneralTab final : public juce::Component, private juce::Timer
+    {
+    public:
+        explicit GeneralTab (UiContext& c) : ctx (c), console (c)
+        {
+            // Brightness (stored; the surface's lamps aren't emulated yet) and the
+            // rear-panel / external lamps, which this console doesn't have.
+            const juce::Colour blue (0xff142a3f), red (0xff3d1715), purple (0xff3b033d), violet (0xff4a1f5c), olive (0xff383407);
+            struct Spec { const char* caption; const char* id; int value; juce::Colour tint; bool enabled; };
+            const Spec specs[] = { { "MAIN LCD", "mainLcd", 80, blue, true }, { "BTN LCD", "btnLcd", 80, blue, true },
+                                   { "BTNS/LEDS", "btnsLeds", 90, red, true }, { "BACKLIGHT", "backlight", 25, red, true },
+                                   { "METERS", "meters", 40, red, true }, { "COLOR LED", "colorLed", 25, violet, true },
+                                   { "SCRIBBLE", "scribble", 60, purple, true }, { "SCR CONT", "scrCont", 50, purple, true },
+                                   { "PATCH", "patch", 0, olive, false }, { "LAMP", "lamp", 0, olive, false } };
+            for (auto& s : specs)
+            {
+                auto* t = lights.add (new LightTile (ctx, s.caption, s.id, s.value, s.tint));
+                t->setEnabled (s.enabled);
+                addAndMakeVisible (t);
+            }
+            addAndMakeVisible (time);
+            addAndMakeVisible (date);
+            addAndMakeVisible (console);
+
+            operation.addRow ("CONFIRM LIBRARY LOAD", OnKey::forSetting (ctx.settings, prefs::confirmLibraryLoad, true), 1.3f);
+            operation.addRow ("SHOW METER PAGE WHEN LOCKED", OnKey::fixed (false), 1.3f, false); // no screen lock
+            // Needs the status bar's title tile to show the scene (MainDisplay, G14).
+            operation.addRow ("ALWAYS SHOW ACTIVE SCENE", OnKey::fixed (false), 1.3f, false);
+            addAndMakeVisible (operation);
+
+            options.addRow ("TOUCH FADER SELECT", OnKey::fixed (false), 1.3f, false); // no encoder beside the display
+            options.addRow ("TOUCH FADER RES",
+                            std::make_unique<ChoiceKeys> (juce::StringArray { "NORM", "FINE", "AUTO" },
+                                                          [this] { return prefs::faderResolution (ctx); },
+                                                          [this] (int i) { ctx.settings.setValue (prefs::touchFaderRes, i); }),
+                            5.0f);
+            options.newBox();
+            options.addRow ("MOUSE DISABLES TOUCH", OnKey::fixed (false), 1.3f, false);
+            options.addRow ("MOUSE SPEED", std::make_unique<juce::Slider> (juce::Slider::LinearHorizontal, juce::Slider::NoTextBox), 5.0f, false);
+            options.newBox();
+            options.addRow ("USB HOST SPEED", fixedChoice ({ "FS", "HS" }, 0, { Dark::orange, Dark::choice }), 3.2f, false, true);
+            addAndMakeVisible (options);
+
+            startTimerHz (1);
+        }
+
+        void timerCallback() override
+        {
+            time.repaint();
+            date.repaint();
+            console.update();
+        }
+
+        void refresh() { console.update(); }
+
+        void paint (juce::Graphics& g) override { g.fillAll (juce::Colours::black); }
+
+        void resized() override
+        {
+            auto b = getLocalBounds();
+            auto top = b.removeFromTop (juce::jlimit (70, 120, b.getHeight() * 22 / 100));
+            b.removeFromTop (6);
+            const int gap = 4;
+            const int timeW = top.getWidth() * 16 / 100;
+            auto clock = top.removeFromRight (timeW);
+            const int w = (top.getWidth() - gap) / 6;
+            const int h = (top.getHeight() - gap) / 2;
+            // Four columns of two brightness tiles, then the PATCH and LAMP columns.
+            for (int i = 0; i < lights.size(); ++i)
+            {
+                const int col = i < 8 ? i / 2 : i - 4, row = i < 8 ? i % 2 : 0;
+                lights[i]->setBounds (top.getX() + col * w, top.getY() + row * (h + gap), w - gap, h);
+            }
+            time.setBounds (clock.removeFromTop (h));
+            clock.removeFromTop (gap);
+            date.setBounds (clock.withHeight (h));
+
+            const int colW = (b.getWidth() - 2 * gap) / 3;
+            auto consoleArea = b.removeFromLeft (colW);
+            b.removeFromLeft (gap);
+            auto operationArea = b.removeFromLeft (colW);
+            b.removeFromLeft (gap);
+            auto optionsArea = b;
+            console.setBounds (consoleArea);
+            const int rowH = fitRowHeight (optionsArea.getHeight() - kDarkHeaderHeight - 24, 5.0f);
+            operation.rowHeight = options.rowHeight = rowH;
+            operation.setBounds (operationArea.withHeight (juce::jmin (operationArea.getHeight(), operation.preferredHeight())));
+            options.setBounds (optionsArea.withHeight (juce::jmin (optionsArea.getHeight(), options.preferredHeight())));
+        }
+
+    private:
+        UiContext& ctx;
+        juce::OwnedArray<LightTile> lights;
+        ClockTile time { ctx, false }, date { ctx, true };
+        ConsolePanel console;
+        SettingsPanel operation { "OPERATION" }, options { "OPTIONS" };
+    };
+
+    //==============================================================================
+    /** The INPUT SELECT channel grid (40 + 8): disabled until channels have ALT inputs. */
+    class InputSelectGrid final : public juce::Component
+    {
+    public:
+        void paint (juce::Graphics& g) override
+        {
+            auto r = getLocalBounds().toFloat().reduced (4.0f);
+            g.setColour (Dark::well);
+            g.fillRect (getLocalBounds());
+            g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+            const float captionH = 13.0f;
+            const float cell = juce::jmin ((r.getWidth()) / 8.0f, (r.getHeight() - captionH * 2.0f - 6.0f) / 6.0f);
+            auto drawGrid = [&] (const char* caption, int rows)
+            {
+                g.setColour (Dark::textDim);
+                g.drawText (caption, r.removeFromTop (captionH), juce::Justification::centred);
+                for (int i = 0; i < rows * 8; ++i)
+                {
+                    auto c = juce::Rectangle<float> (r.getCentreX() - cell * 4.0f + cell * (float) (i % 8), r.getY() + cell * (float) (i / 8), cell, cell).reduced (1.0f);
+                    g.setColour (Dark::choice.darker (0.9f));
+                    g.fillRect (c);
+                }
+                r.removeFromTop (cell * (float) rows + 6.0f);
+            };
+            drawGrid ("CHANNEL", 5);
+            drawGrid ("AUX", 1);
+        }
+    };
+
+    /** The audio device chooser, opened from the DEVICE field. */
+    class DeviceBody final : public juce::Component
+    {
+    public:
+        explicit DeviceBody (juce::AudioDeviceManager& dm) : selector (dm, 0, 256, 0, 256, false, false, false, false) { addAndMakeVisible (selector); }
+        void resized() override { selector.setBounds (getLocalBounds().reduced (12, 0)); }
+
+    private:
+        juce::AudioDeviceSelectorComponent selector;
+    };
+
+    /** AUDIO (fig. 34): AUDIO CLOCK + INPUT SELECT | PREFERENCES | SOLO SYSTEM | AUDIO DEVICE + AUTOMIX + AUDIO ERRORS. */
+    class AudioTab final : public juce::Component, private juce::Timer
+    {
+    public:
+        AudioTab (UiContext& c, std::function<void (const juce::String&, std::unique_ptr<juce::Component>)> overlay)
+            : ctx (c), showOverlay (std::move (overlay))
+        {
+            clock.addRow ({}, std::make_unique<DropdownField> ("CLOCK RATE", [this] { return rateText(); }, [this] (DropdownField& f) { showRates (f); }), 0.0f,
+                          true, false, 1.7f);
+            // The sync source is the audio interface's business.
+            clock.addRow ({}, std::make_unique<DropdownField> ("SYNC SOURCE", [] { return juce::String ("INTERNAL"); }), 0.0f, false, false, 1.7f);
+            addAndMakeVisible (clock);
+
+            // Channels have no ALT input yet (E-ALT): MAIN only.
+            inputSelect.addRow ({}, fixedChoice ({ "MAIN", "ALT" }, 0), 0.0f, false);
+            inputSelect.addRow ({}, std::make_unique<InputSelectGrid>(), 0.0f, false, false, 4.4f);
+            addAndMakeVisible (inputSelect);
+
+            prefsPanel.addRow ("MAIN LINK",
+                               std::make_unique<ChoiceKeys> (models::list (models::MainLinkModes), [this] { return (int) ctx.engine.mainLink.load(); },
+                                                             [this] (int i) { ctx.engine.mainLink = i; }),
+                               6.4f);
+            prefsPanel.addRow ("DCA MUTEGROUPS", OnKey::forAtomic (ctx.engine.dcaMuteGroups), 1.3f);
+            prefsPanel.addRow ("MUTEGROUP/SIP OVERRIDE", OnKey::fixed (false), 1.3f, false); // engine E7
+            prefsPanel.addRow ("STARTUP MAIN MUTE", OnKey::forAtomic (ctx.engine.startupMainMute), 1.3f);
+            prefsPanel.addRow ("GLOBAL INPUT SELECT OVERRIDE", OnKey::fixed (false), 1.3f, false); // E-ALT
+            prefsPanel.newBox();
+            prefsPanel.addRow ("SOURCE SOLO", fixedChoice ({ "OFF", "CH39", "AUX7" }, 0), 4.8f, false);
+            prefsPanel.addRow ("TALKBACK", fixedChoice ({ "OFF", "CH40", "AUX8" }, 0), 4.8f, false);
+            prefsPanel.newBox();
+            prefsPanel.addRow ("OUTPUT PROTECTION", OnKey::forAtomic (ctx.engine.outputProtection), 1.3f);
+            auto ceilingSlider = std::make_unique<juce::Slider> (juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
+            ceilingSlider->setRange (-24.0, 6.0, 0.1);
+            ceilingSlider->setTextValueSuffix (" dB");
+            ceilingSlider->setTextBoxStyle (juce::Slider::TextBoxRight, false, 64, 20);
+            ceilingSlider->setDoubleClickReturnValue (true, 0.0);
+            ceiling = ceilingSlider.get();
+            ceiling->onValueChange = [this] { ctx.engine.outputCeilingDb = (float) ceiling->getValue(); };
+            prefsPanel.addRow ("CEILING", std::move (ceilingSlider), 7.0f);
+            addAndMakeVisible (prefsPanel);
+
+            solo.addRow ("SOLO MODE", fixedChoice ({ "LIVE", "STUDIO", "SIP" }, 1, { Dark::olive, Dark::olive, Dark::olive }), 5.4f, false); // engine E5
+            solo.newBox();
+            // PFL or AFL per strip type (CHANNEL SOLO covers the aux channels too).
+            for (auto [name, kind] : { std::pair { "CHANNEL SOLO", StripKind::Channel }, std::pair { "BUS SOLO", StripKind::Bus },
+                                       std::pair { "MAIN SOLO", StripKind::Main }, std::pair { "MATRIX SOLO", StripKind::Matrix } })
+            {
+                const auto k = kind;
+                solo.addRow (name,
+                             std::make_unique<ChoiceKeys> (juce::StringArray { "PFL", "AFL" }, [this, k] { return ctx.engine.isSoloAfl (k) ? 1 : 0; },
+                                                           [this, k] (int i) { ctx.engine.setSoloAfl (k, i == 1); }, ChoiceKeys::prePost()),
+                             3.6f);
+            }
+            solo.newBox();
+            // Solo/select behaviour (G18) lives in the fader strips.
+            for (auto* name : { "EXCLUSIVE SOLO", "SOLO FOLLOWS SELECT", "SELECT FOLLOWS SOLO", "BUS SoF/SPILL ACTIVATES SOLO" })
+                solo.addRow (name, OnKey::fixed (false), 1.3f, false);
+            addAndMakeVisible (solo);
+
+            device.addRow ({}, std::make_unique<DropdownField> ("DEVICE", [this] { return deviceName(); },
+                                                                [this] (DropdownField&) { showOverlay ("AUDIO DEVICE", std::make_unique<DeviceBody> (ctx.deviceManager)); }),
+                           0.0f, true, false, 1.7f);
+            device.addRow ({}, std::make_unique<DropdownField> ("IN/OUT", [this] { return channelsText(); }), 0.0f, false, false, 1.7f);
+            addAndMakeVisible (device);
+
+            automix.addRow ("X ENABLE", OnKey::forAtomic (ctx.engine.automixEnable[0]), 1.3f);
+            automix.addRow ("Y ENABLE", OnKey::forAtomic (ctx.engine.automixEnable[1]), 1.3f);
+            addAndMakeVisible (automix);
+
+            clearKey.offColour = Dark::header;
+            clearKey.iconAbove = true;
+            clearKey.onClick = [this] { ctx.engine.outputClipEvents = 0; repaint(); };
+            addAndMakeVisible (clearKey);
+            startTimerHz (2);
+            timerCallback();
+        }
+
+        void timerCallback() override
+        {
+            if (ceiling != nullptr && ! ceiling->isMouseButtonDown())
+                ceiling->setValue (ctx.engine.outputCeilingDb.load(), juce::dontSendNotification);
+            repaint (errorsArea);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            g.fillAll (juce::Colours::black);
+            auto body = drawDarkPanel (g, errorsArea, "ERRORS");
+            auto* d = ctx.deviceManager.getCurrentAudioDevice();
+            const std::pair<const char*, juce::String> rows[] = { { "XRUNS", d != nullptr ? juce::String (d->getXRunCount()) : juce::String ("-") },
+                                                                  { "SAFETY CLIPS", juce::String (ctx.engine.outputClipEvents.load()) } };
+            auto r = body.reduced (8, 4);
+            const int h = juce::jmin (24, r.getHeight() / 2);
+            for (auto& [label, value] : rows)
+            {
+                auto row = r.removeFromTop (h);
+                g.setColour (Dark::text);
+                g.setFont (juce::FontOptions (juce::jmin (14.0f, (float) h * 0.6f), juce::Font::bold));
+                g.drawText (label, row, juce::Justification::centredLeft);
+                g.setColour (Dark::textDim);
+                g.drawText (value, row, juce::Justification::centredRight);
+            }
+        }
+
+        void resized() override
+        {
+            auto b = getLocalBounds();
+            const int gap = 4, total = b.getWidth() - 3 * gap;
+            auto c1 = b.removeFromLeft (total * 19 / 100);
+            b.removeFromLeft (gap);
+            auto c2 = b.removeFromLeft (total * 30 / 100);
+            b.removeFromLeft (gap);
+            auto c3 = b.removeFromLeft (total * 29 / 100);
+            b.removeFromLeft (gap);
+            auto c4 = b;
+
+            const int rowH = fitRowHeight (getHeight() - kDarkHeaderHeight - 30, 11.0f);
+            for (auto* p : { &clock, &inputSelect, &prefsPanel, &solo, &device, &automix })
+                p->rowHeight = rowH;
+
+            clock.setBounds (c1.removeFromTop (clock.preferredHeight()));
+            c1.removeFromTop (gap);
+            inputSelect.setBounds (c1.withHeight (juce::jmin (c1.getHeight(), inputSelect.preferredHeight())));
+            prefsPanel.setBounds (c2.withHeight (juce::jmin (c2.getHeight(), prefsPanel.preferredHeight())));
+            solo.setBounds (c3.withHeight (juce::jmin (c3.getHeight(), solo.preferredHeight())));
+            device.setBounds (c4.removeFromTop (device.preferredHeight()));
+            c4.removeFromTop (gap);
+            automix.setBounds (c4.removeFromTop (automix.preferredHeight()));
+            c4.removeFromTop (gap);
+            errorsArea = c4.withHeight (juce::jmin (c4.getHeight(), kDarkHeaderHeight + 2 + rowH * 2 + 12));
+            clearKey.setBounds (errorsArea.withHeight (kDarkHeaderHeight).removeFromRight (kDarkHeaderHeight + 16).reduced (2, 1));
+        }
+
+    private:
+        juce::String rateText() const
+        {
+            if (auto* d = ctx.deviceManager.getCurrentAudioDevice())
+            {
+                const double sr = d->getCurrentSampleRate();
+                return juce::String (sr / 1000.0, std::fmod (sr, 1000.0) == 0.0 ? 0 : 1) + "K";
+            }
+            return "--";
+        }
+
+        juce::String deviceName() const
+        {
+            auto* d = ctx.deviceManager.getCurrentAudioDevice();
+            return d != nullptr ? d->getName().toUpperCase() : juce::String ("NONE");
+        }
+
+        juce::String channelsText() const
+        {
+            auto* d = ctx.deviceManager.getCurrentAudioDevice();
+            if (d == nullptr)
+                return "-";
+            return juce::String (d->getActiveInputChannels().countNumberOfSetBits()) + "/" + juce::String (d->getActiveOutputChannels().countNumberOfSetBits())
+                   + " CH";
+        }
+
+        void showRates (DropdownField& f)
+        {
+            auto* d = ctx.deviceManager.getCurrentAudioDevice();
+            if (d == nullptr)
+                return;
+            juce::PopupMenu m;
+            const auto rates = d->getAvailableSampleRates();
+            for (int i = 0; i < rates.size(); ++i)
+                m.addItem (i + 1, juce::String (rates[i] / 1000.0, std::fmod (rates[i], 1000.0) == 0.0 ? 0 : 1) + "K", true,
+                           std::abs (rates[i] - d->getCurrentSampleRate()) < 1.0);
+            m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&f), [this, rates] (int r)
+            {
+                if (r <= 0)
+                    return;
+                juce::AudioDeviceManager::AudioDeviceSetup setup;
+                ctx.deviceManager.getAudioDeviceSetup (setup);
+                setup.sampleRate = rates[r - 1];
+                const auto error = ctx.deviceManager.setAudioDeviceSetup (setup, true);
+                if (error.isNotEmpty())
+                    ctx.log.warning ("Clock rate: " + error);
+                repaint();
+            });
+        }
+
+        UiContext& ctx;
+        std::function<void (const juce::String&, std::unique_ptr<juce::Component>)> showOverlay;
+        SettingsPanel clock { "AUDIO CLOCK" }, inputSelect { "INPUT SELECT" }, prefsPanel { "PREFERENCES" }, solo { "SOLO SYSTEM" },
+            device { "AUDIO DEVICE" }, automix { "AUTOMIX" };
+        juce::Slider* ceiling = nullptr;
+        WingKey clearKey { "CLEAR", Icon::ClearCircle };
+        juce::Rectangle<int> errorsArea;
+    };
+
+    //==============================================================================
+    /** SURFACE (fig. 40): METERING | GENERAL | FADERS, plus the app's section widths. */
     class SurfaceTab final : public juce::Component
     {
     public:
         explicit SurfaceTab (UiContext& c) : ctx (c)
         {
+            // The L/R meter beside the display: the monitor or a main (ui.mainMeter: 0 MONITOR, 1-4 MAIN n).
+            metering.addRow ("MAIN METER",
+                             std::make_unique<DropdownField> ("SOURCE",
+                                                              [this]
+                                                              {
+                                                                  const int v = juce::jlimit (0, kNumMains, ctx.settings.getIntValue ("ui.mainMeter", 0));
+                                                                  return v == 0 ? juce::String ("MONITOR") : "MAIN." + juce::String (v);
+                                                              },
+                                                              [this] (DropdownField& f)
+                                                              {
+                                                                  juce::PopupMenu m;
+                                                                  const int v = ctx.settings.getIntValue ("ui.mainMeter", 0);
+                                                                  m.addItem ("MONITOR", true, v == 0, [this] { ctx.settings.setValue ("ui.mainMeter", juce::var (0)); });
+                                                                  for (int i = 1; i <= kNumMains; ++i)
+                                                                      m.addItem ("MAIN." + juce::String (i), true, v == i, [this, i] { ctx.settings.setValue ("ui.mainMeter", i); });
+                                                                  m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&f));
+                                                              }),
+                             5.0f, true, false, 1.6f);
+            metering.addRow ("MAIN METER TAP", fixedChoice ({ "AUTO", "PRE", "POST" }, 0, ChoiceKeys::autoPrePost()), 5.0f, false);
+            // PRE or POST per strip type: the VIEW screens' meters follow these (the
+            // surface's LED meters can read them with prefs::meterPoint).
+            for (int i = 0; i < prefs::kNumMeterTaps; ++i)
+                metering.addRow (prefs::meterTapNames[i],
+                                 std::make_unique<ChoiceKeys> (juce::StringArray { "PRE", "POST" }, [this, i] { return prefs::meterTapPre (ctx, i) ? 0 : 1; },
+                                                               [this, i] (int v) { ctx.settings.setValue (prefs::meterTapKey (i), v == 0); }, ChoiceKeys::prePost()),
+                                 3.4f);
+            addAndMakeVisible (metering);
+
+            // SELECT on the selected strip again (ui.selDblClick: 0 HOME, 1 BUSFX, 2 OFF).
+            general.addRow ("SEL DBL CLICK",
+                            std::make_unique<ChoiceKeys> (juce::StringArray { "OFF", "HOME", "BUSFX" },
+                                                          [this]
+                                                          {
+                                                              const int v = ctx.settings.getIntValue ("ui.selDblClick", 0);
+                                                              return v == 2 ? 0 : v == 1 ? 2 : 1;
+                                                          },
+                                                          [this] (int i)
+                                                          {
+                                                              ctx.settings.setValue ("ui.selDblClick", i == 0 ? 2 : i == 2 ? 1 : 0);
+                                                              notifyLayersChangedAsync (ctx);
+                                                          }),
+                            5.0f);
+            // The rest change how the fader strips and the status bar behave (G18, G19).
+            general.addRow ("TAP TEMPO FLASH", fixedChoice ({ "OFF", "8X", "ON" }, 0), 5.0f, false);
+            general.addRow ("SOF BUTTON", fixedChoice ({ "AUTO", "ON", "FLASH" }, 0), 5.0f, false);
+            general.addRow ("SHOW SOF FRAME", OnKey::fixed (false), 1.3f, false);
+            general.addRow ("SHOW SOURCE ON SCRIBBLE", OnKey::fixed (false), 1.3f, false);
+            general.addRow ("SHOW FADER VALUE ON SCRIBBLE", OnKey::fixed (false), 1.3f, false);
+            general.addRow ("SCREEN FOLLOWS CH STRIP", OnKey::fixed (false), 1.3f, false);
+            general.newBox();
+            // App-specific: the dB value under every fader (ui.faderValues).
+            general.addRow ("FADER VALUES",
+                            std::make_unique<OnKey> ([this] { return ctx.settings.getBoolValue ("ui.faderValues", false); },
+                                                     [this] (bool v)
+                                                     {
+                                                         ctx.settings.setValue ("ui.faderValues", v);
+                                                         notifyLayersChangedAsync (ctx);
+                                                     }),
+                            1.3f);
+            addAndMakeVisible (general);
+
+            faders.addRow ("FADER SPEED", fixedChoice ({ "SLOW", "MED", "FAST" }, 2), 5.0f, false);
+            faders.addRow ("FULL FADER PAGING", OnKey::fixed (false), 1.3f, false);
+            faders.addRow ("FADER/SCREEN LAYER LINK", OnKey::forSetting (ctx.settings, prefs::layerLink, true), 1.3f);
+            faders.addRow ("ALTERNATIVE SOF MODE", OnKey::fixed (false), 1.3f, false);
+            faders.addRow ("RIGHT SECTION SENDS ON FADERS", OnKey::fixed (false), 1.3f, false);
+            faders.addRow ("USER LAYER LINK", OnKey::fixed (false), 1.3f, false);
+            faders.addRow ("DCA SPILL", OnKey::fixed (false), 1.3f, false); // engine E13
+            faders.newBox();
+            // App-specific: faders scrolled per press of the shift keys (ui.shiftStep).
+            faders.addRow ("SHIFT STEP",
+                           std::make_unique<ChoiceKeys> (juce::StringArray { "4", "8", "12" },
+                                                         [this]
+                                                         {
+                                                             const int v = ctx.settings.getIntValue ("ui.shiftStep", 4);
+                                                             return v == 12 ? 2 : v == 8 ? 1 : 0;
+                                                         },
+                                                         [this] (int i)
+                                                         {
+                                                             ctx.settings.setValue ("ui.shiftStep", (i + 1) * 4);
+                                                             notifyLayersChangedAsync (ctx);
+                                                         }),
+                           4.2f);
+            faders.addCaption ("SECTION WIDTH", false);
             static constexpr int widths[] = { LayerSet::kAutoWidth, 4, 8, 12, 16, 24, 32 };
+            const char* names[] = { "LEFT", "CENTER", "RIGHT" };
             for (int s = 0; s < LayerSet::kNumSections; ++s)
             {
                 const auto section = static_cast<LayerSet::Section> (s);
-                rows.add (new SegmentedKeys ({ "AUTO", "4", "8", "12", "16", "24", "32" },
-                                             [this, section]
-                                             {
-                                                 const int w = ctx.show.layers.getWidth (section);
-                                                 for (int i = 0; i < (int) std::size (widths); ++i)
-                                                     if (widths[i] == w)
-                                                         return i;
-                                                 return -1;
-                                             },
-                                             [this, section] (int i)
-                                             {
-                                                 ctx.show.layers.setWidth (section, widths[i]);
-                                                 notifyLayersChangedAsync (ctx);
-                                             }));
-                addAndMakeVisible (rows.getLast());
+                faders.addRow (names[s],
+                               std::make_unique<ChoiceKeys> (juce::StringArray { "AUTO", "4", "8", "12", "16", "24", "32" },
+                                                             [this, section]
+                                                             {
+                                                                 const int w = ctx.show.layers.getWidth (section);
+                                                                 for (int i = 0; i < (int) std::size (widths); ++i)
+                                                                     if (widths[i] == w)
+                                                                         return i;
+                                                                 return -1;
+                                                             },
+                                                             [this, section] (int i)
+                                                             {
+                                                                 ctx.show.layers.setWidth (section, widths[i]);
+                                                                 notifyLayersChangedAsync (ctx);
+                                                             }),
+                               8.4f);
             }
+            addAndMakeVisible (faders);
         }
 
-        void refresh()
-        {
-            for (auto* r : rows)
-                r->repaint();
-        }
-
-        void paint (juce::Graphics& g) override
-        {
-            g.fillAll (Colours::screen);
-            drawSectionBox (g, box, "FADER SECTIONS");
-            const char* names[] = { "LEFT SECTION", "CENTER SECTION", "RIGHT SECTION" };
-            const char* wing[] = { "WING: 12", "WING: 8", "WING: 4" };
-            for (int s = 0; s < LayerSet::kNumSections; ++s)
-            {
-                auto r = labels[s];
-                g.setColour (Colours::text);
-                g.setFont (juce::FontOptions (juce::jmin (20.0f, (float) r.getHeight() * 0.42f), juce::Font::bold));
-                g.drawText (names[s], r.removeFromTop (r.getHeight() * 6 / 10), juce::Justification::bottomLeft);
-                g.setColour (Colours::textDim);
-                g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-                g.drawText (wing[s], r, juce::Justification::topLeft);
-            }
-            g.setColour (Colours::textDim);
-            g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
-            g.drawFittedText ("AUTO suits wide screens: the section shows as many faders as fit. Banks are cut to the section's width.", hint,
-                              juce::Justification::topLeft, 2);
-        }
+        void paint (juce::Graphics& g) override { g.fillAll (juce::Colours::black); }
 
         void resized() override
         {
-            box = getLocalBounds().reduced (0, 6).withWidth (juce::jmin (getWidth(), 760));
-            auto b = sectionContent (box, true);
-            const int h = juce::jmin (60, b.getHeight() / 4);
-            for (int s = 0; s < LayerSet::kNumSections; ++s)
+            auto b = getLocalBounds();
+            const int gap = 4, w = (b.getWidth() - 2 * gap) / 3;
+            const int rowH = fitRowHeight (getHeight() - kDarkHeaderHeight - 24, 13.0f);
+            for (auto* p : { &metering, &general, &faders })
+                p->rowHeight = rowH;
+            for (auto* p : { &metering, &general, &faders })
             {
-                auto row = b.removeFromTop (h);
-                labels[s] = row.removeFromLeft (row.getWidth() * 32 / 100);
-                rows[s]->setBounds (row.withSizeKeepingCentre (row.getWidth(), juce::jmin (42, h - 12)));
+                auto col = b.removeFromLeft (w);
+                b.removeFromLeft (gap);
+                p->setBounds (col.withHeight (juce::jmin (col.getHeight(), p->preferredHeight())));
             }
-            hint = b.reduced (0, 6);
         }
 
     private:
         UiContext& ctx;
-        juce::OwnedArray<SegmentedKeys> rows;
-        juce::Rectangle<int> box, labels[LayerSet::kNumSections], hint;
+        SettingsPanel metering { "METERING" }, general { "GENERAL" }, faders { "FADERS" };
     };
 
-    /** GLOBAL safes: strips that scene recalls leave alone. */
-    class SafesTab final : public juce::Component, private juce::ListBoxModel
+    //==============================================================================
+    /** Four number boxes (IP ADDRESS, SUBNET MASK, GATEWAY). */
+    class OctetBoxes final : public juce::Component
     {
     public:
-        explicit SafesTab (UiContext& c) : ctx (c)
-        {
-            styleCaption (hint, "RECALL SAFE strips are skipped by scene recalls (snippets still apply).");
-            addAndMakeVisible (hint);
-            list.setModel (this);
-            list.setRowHeight (30);
-            list.setColour (juce::ListBox::backgroundColourId, juce::Colour (0xff1e1e1e));
-            addAndMakeVisible (list);
-            allOff.onClick = [this]
-            {
-                for (auto* s : strips)
-                    s->params.recallSafe = false;
-                list.repaint();
-            };
-            addAndMakeVisible (allOff);
-            refresh();
-        }
-
-        ~SafesTab() override { list.setModel (nullptr); }
-
-        void refresh()
-        {
-            strips.clear();
-            for (int k = 0; k < kNumStripKinds; ++k)
-                for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
-                    strips.push_back (s.get());
-            list.updateContent();
-            list.repaint();
-        }
-
-        int getNumRows() override { return (int) strips.size(); }
-
-        void paintListBoxItem (int row, juce::Graphics& g, int width, int height, bool) override
-        {
-            if (! juce::isPositiveAndBelow (row, (int) strips.size()))
-                return;
-            auto* s = strips[(size_t) row];
-            auto r = juce::Rectangle<int> (width, height).reduced (8, 2);
-            const bool safe = s->params.recallSafe.load();
-            auto badge = r.removeFromRight (130);
-            drawChip (g, badge.toFloat(), safe ? "RECALL SAFE" : "-", safe ? Colours::mute : juce::Colour (0xff4b4b4b),
-                      safe ? juce::Colours::black : Colours::textDim);
-            g.setColour (s->getColour());
-            g.fillRect (r.removeFromLeft (6));
-            r.removeFromLeft (8);
-            g.setColour (Colours::text);
-            g.setFont (juce::FontOptions (17.0f, juce::Font::bold));
-            g.drawText (describeStrip (*s), r, juce::Justification::centredLeft);
-        }
-
-        void listBoxItemClicked (int row, const juce::MouseEvent&) override
-        {
-            if (juce::isPositiveAndBelow (row, (int) strips.size()))
-            {
-                auto& p = strips[(size_t) row]->params.recallSafe;
-                p = ! p.load();
-                list.repaintRow (row);
-            }
-        }
+        explicit OctetBoxes (juce::StringArray v) : values (std::move (v)) {}
 
         void paint (juce::Graphics& g) override
         {
-            g.fillAll (Colours::screen);
-            drawSectionBox (g, getLocalBounds().reduced (0, 6), "GLOBAL SAFES");
-        }
-
-        void resized() override
-        {
-            auto b = sectionContent (getLocalBounds().reduced (0, 6), true);
-            auto top = b.removeFromTop (34);
-            allOff.setBounds (top.removeFromRight (160));
-            hint.setBounds (top);
-            b.removeFromTop (6);
-            list.setBounds (b);
+            auto r = getLocalBounds().toFloat();
+            const float w = r.getWidth() / 4.0f;
+            for (int i = 0; i < 4; ++i)
+            {
+                auto k = juce::Rectangle<float> (r.getX() + w * (float) i, r.getY(), w, r.getHeight()).reduced (2.0f, 0.0f);
+                g.setColour (juce::Colour (0xff5a5a5a).withAlpha (isEnabled() ? 1.0f : 0.5f));
+                g.fillRect (k);
+                g.setColour (juce::Colours::black.withAlpha (isEnabled() ? 1.0f : 0.6f));
+                g.setFont (juce::FontOptions (juce::jmin (15.0f, k.getHeight() * 0.62f), juce::Font::bold));
+                g.drawFittedText (values[i], k.toNearestInt(), juce::Justification::centred, 1);
+            }
         }
 
     private:
-        UiContext& ctx;
-        juce::Label hint;
-        juce::ListBox list;
-        juce::TextButton allOff { "ALL SAFES OFF" };
-        std::vector<Strip*> strips;
+        juce::StringArray values;
     };
 
-    /** DCA and mute group names and colours. */
-    class GroupsTab final : public juce::Component
+    /** REMOTE (fig. 42): MIDI REMOTE CONTROL | HA REMOTE | NETWORK + REMOTE LOCK, disabled (no MIDI remote yet, G-N1). */
+    class RemoteTab final : public juce::Component
     {
     public:
-        explicit GroupsTab (UiContext& c) : ctx (c)
+        RemoteTab()
         {
-            styleCaption (dcaCaption, "DCA NAMES");
-            styleCaption (mgCaption, "MUTE GROUP NAMES");
-            addAndMakeVisible (dcaCaption);
-            addAndMakeVisible (mgCaption);
-            for (int i = 0; i < kNumDcas; ++i)
-            {
-                auto* e = dcaNames.add (new juce::TextEditor());
-                e->onTextChange = [this, i, e] { ctx.engine.setDcaName (i, e->getText()); };
-                addAndMakeVisible (e);
-                auto* col = dcaColours.add (new juce::TextButton());
-                col->onClick = [this, i, col]
-                {
-                    juce::PopupMenu m;
-                    for (int k = 1; k <= 18; ++k)
-                        m.addColouredItem (k, wingColourName (k), wingColour (k), true, ctx.engine.getDca (i).colour.load() == k);
-                    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (col), [this, i, col] (int r)
-                    {
-                        if (r > 0)
-                        {
-                            ctx.engine.getDca (i).colour = r;
-                            col->setColour (juce::TextButton::buttonColourId, wingColour (r));
-                        }
-                    });
-                };
-                addAndMakeVisible (col);
-            }
-            for (int i = 0; i < kNumMuteGroups; ++i)
-            {
-                auto* e = mgNames.add (new juce::TextEditor());
-                e->onTextChange = [this, i, e] { ctx.engine.setMuteGroupName (i, e->getText()); };
-                addAndMakeVisible (e);
-            }
-            refresh();
-        }
+            const std::vector<juce::Colour> offLit { juce::Colour (0xffc6c6c6), Dark::choice, Dark::choice };
+            for (auto* name : { "CH CONTROL (FDR/MUTE/PAN)", "FX PARAMETER CONTROL", "CUSTOM CONTROLS (RX ONLY)", "SYSEX CONTROL",
+                                "EXTERNAL MIDI CONTROL", "SCENE CHANGE", "SHOW CONTROL", "SCENE MIDI TX" })
+                midi.addRow (name, fixedChoice ({ "OFF", "DIN", "USB" }, 0, offLit), 4.8f, false, true);
+            addAndMakeVisible (midi);
 
-        void refresh()
-        {
-            for (int i = 0; i < kNumDcas; ++i)
+            // AES50 preamp remote control: hardware only.
+            ha.addCaption ("ENABLE HA REMOTE     ENABLE CUST SYNC");
+            for (auto* port : { "AES50 A", "AES50 B", "AES50 C" })
             {
-                dcaNames[i]->setText (ctx.engine.getDcaName (i), false);
-                dcaColours[i]->setColour (juce::TextButton::buttonColourId, wingColour (ctx.engine.getDca (i).colour.load()));
+                auto pair = std::make_unique<juce::Component>();
+                auto* a = OnKey::fixed (false).release();
+                auto* b = OnKey::fixed (false).release();
+                pair->addAndMakeVisible (a);
+                pair->addAndMakeVisible (b);
+                pairs.add (a);
+                pairs.add (b);
+                pairLayouts.push_back ({ pair.get(), a, b });
+                ha.addRow (port, std::move (pair), 4.0f, false);
             }
-            for (int i = 0; i < kNumMuteGroups; ++i)
-                mgNames[i]->setText (ctx.engine.getMuteGroupName (i), false);
+            addAndMakeVisible (ha);
+
+            // The computer's own network settings (read-only).
+            const auto ip = juce::IPAddress::getLocalAddress().toString();
+            juce::StringArray octets;
+            octets.addTokens (ip, ".", {});
+            while (octets.size() < 4)
+                octets.add ("0");
+            network.addRow ({}, std::make_unique<DropdownField> ("IP MODE", [] { return juce::String ("SYSTEM"); }), 0.0f, false, false, 1.6f);
+            network.addCaption ("IP ADDRESS", false);
+            network.addRow ({}, std::make_unique<OctetBoxes> (octets), 0.0f, false);
+            network.addCaption ("SUBNET MASK", false);
+            network.addRow ({}, std::make_unique<OctetBoxes> (juce::StringArray { "-", "-", "-", "-" }), 0.0f, false);
+            network.addCaption ("GATEWAY", false);
+            network.addRow ({}, std::make_unique<OctetBoxes> (juce::StringArray { "-", "-", "-", "-" }), 0.0f, false);
+            addAndMakeVisible (network);
+
+            lock.addRow ("OSC", OnKey::fixed (false), 1.3f, false, true);
+            lock.addRow ("TCP", OnKey::fixed (false), 1.3f, false, true);
+            addAndMakeVisible (lock);
         }
 
         void paint (juce::Graphics& g) override
         {
-            g.fillAll (Colours::screen);
-            drawSectionBox (g, dcaBox, "DCA NAMES");
-            drawSectionBox (g, mgBox, "MUTE GROUP NAMES");
+            g.fillAll (juce::Colours::black);
+            g.setColour (Dark::textDim);
+            g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+            g.drawFittedText ("MIDI REMOTE CONTROL AND REMOTE APPS ARE NOT AVAILABLE IN LIVE DAW YET.", note, juce::Justification::topLeft, 3);
         }
 
         void resized() override
         {
-            auto all = getLocalBounds().reduced (0, 6);
-            dcaBox = all.removeFromLeft (all.getWidth() * 2 / 3);
-            mgBox = all.withTrimmedLeft (6);
-            auto b = sectionContent (mgBox, true);
-            auto left = sectionContent (dcaBox, true);
-            dcaCaption.setVisible (false);
-            mgCaption.setVisible (false);
-            const int h = juce::jmin (36, left.getHeight() / 8);
-            const int w = left.getWidth() / 2;
-            for (int i = 0; i < kNumDcas; ++i)
+            auto b = getLocalBounds();
+            const int rowH = fitRowHeight (getHeight() - kDarkHeaderHeight - 30, 10.0f);
+            for (auto* p : { &midi, &ha, &network, &lock })
+                p->rowHeight = rowH;
+            const int gap = 4;
+            auto c1 = b.removeFromLeft (b.getWidth() * 40 / 100);
+            b.removeFromLeft (gap);
+            auto c2 = b.removeFromLeft (b.getWidth() * 43 / 100);
+            auto c4 = b.removeFromRight (b.getWidth() * 60 / 100);
+            midi.setBounds (c1.removeFromTop (juce::jmin (c1.getHeight(), midi.preferredHeight())));
+            note = c1.reduced (8, 10);
+            ha.setBounds (c2.withHeight (juce::jmin (c2.getHeight(), ha.preferredHeight())));
+            network.setBounds (c4.removeFromTop (juce::jmin (c4.getHeight() - lock.preferredHeight() - gap, network.preferredHeight())));
+            c4.removeFromTop (gap);
+            lock.setBounds (c4.withHeight (juce::jmin (c4.getHeight(), lock.preferredHeight())));
+            for (auto& p : pairLayouts)
             {
-                auto r = juce::Rectangle<int> (left.getX() + (i / 8) * w, left.getY() + (i % 8) * h, w - 8, h - 4);
-                dcaColours[i]->setBounds (r.removeFromLeft (22));
-                dcaNames[i]->setBounds (r.withTrimmedLeft (4));
+                auto r = p.parent->getLocalBounds();
+                const int w = juce::jmin (r.getHeight() * 3 / 2, r.getWidth() / 2 - 4);
+                p.a->setBounds (r.removeFromLeft (r.getWidth() / 2).withSizeKeepingCentre (w, r.getHeight()));
+                p.b->setBounds (r.withSizeKeepingCentre (w, r.getHeight()));
             }
-            for (int i = 0; i < kNumMuteGroups; ++i)
-                mgNames[i]->setBounds (b.removeFromTop (h).reduced (0, 2));
         }
 
     private:
-        UiContext& ctx;
-        juce::Rectangle<int> dcaBox, mgBox;
-        juce::Label dcaCaption, mgCaption;
-        juce::OwnedArray<juce::TextEditor> dcaNames, mgNames;
-        juce::OwnedArray<juce::TextButton> dcaColours;
+        struct Pair
+        {
+            juce::Component* parent;
+            juce::Component* a;
+            juce::Component* b;
+        };
+
+        SettingsPanel midi { "MIDI REMOTE CONTROL" }, ha { "HA REMOTE" }, network { "NETWORK" }, lock { "REMOTE LOCK" };
+        juce::OwnedArray<juce::Component> pairs;
+        std::vector<Pair> pairLayouts;
+        juce::Rectangle<int> note;
     };
 
-    /** Plugin scanning (the plugins become FX slot devices). */
+    /** The surface drawing of DAW CONTROL: the fader groups each emulated controller drives. */
+    class DawSurface final : public juce::Component
+    {
+    public:
+        void paint (juce::Graphics& g) override
+        {
+            auto r = getLocalBounds().toFloat().reduced (2.0f);
+            g.setColour (juce::Colour (0xff3a3a3a));
+            g.fillRoundedRectangle (r, 4.0f);
+            auto top = r.removeFromTop (r.getHeight() * 0.42f).reduced (8.0f, 6.0f);
+            g.setColour (juce::Colour (0xff222222));
+            g.fillRect (top.withSizeKeepingCentre (top.getWidth() * 0.34f, top.getHeight()));
+            auto faders = r.reduced (8.0f, 6.0f);
+            const float unit = faders.getWidth() / 25.0f;
+            const std::pair<float, const char*> groups[] = { { 12.0f, "1" }, { 8.0f, "2" }, { 4.0f, "3" } };
+            float x = faders.getX();
+            for (auto& [n, label] : groups)
+            {
+                auto block = juce::Rectangle<float> (x, faders.getY(), unit * n, faders.getHeight()).reduced (2.0f, 0.0f);
+                g.setColour (Dark::on.withAlpha (0.35f));
+                g.fillRect (block);
+                g.setColour (juce::Colour (0xff1a1a1a));
+                for (int i = 0; i < (int) n; ++i)
+                    g.fillRect (block.getX() + unit * ((float) i + 0.45f), block.getY() + 4.0f, 2.0f, block.getHeight() - 8.0f);
+                g.setColour (juce::Colours::black);
+                g.setFont (juce::FontOptions (juce::jmin (28.0f, block.getHeight() * 0.5f), juce::Font::bold));
+                g.drawText (label, block, juce::Justification::centred);
+                x += unit * (n + 0.33f);
+            }
+        }
+    };
+
+    /** The PRESET field with its LOAD key. */
+    class PresetRow final : public juce::Component
+    {
+    public:
+        PresetRow()
+        {
+            styleIconKey (load);
+            addAndMakeVisible (field);
+            addAndMakeVisible (load);
+        }
+
+        void resized() override
+        {
+            auto b = getLocalBounds();
+            load.setBounds (b.removeFromRight (juce::jmin (100, b.getWidth() * 2 / 5)).reduced (0, 2));
+            b.removeFromRight (6);
+            field.setBounds (b);
+        }
+
+    private:
+        DropdownField field { "PRESET", [] { return juce::String ("CUBASE"); } };
+        WingKey load { "LOAD", Icon::LoadTray };
+    };
+
+    /** DAW (fig. 43): DAW CONTROL, disabled until MCU/HUI emulation exists (G-N2). */
+    class DawTab final : public juce::Component
+    {
+    public:
+        DawTab()
+        {
+            daw.addRow ("DAW ENABLE", OnKey::fixed (false), 1.3f, false);
+            daw.addRow ("CONNECTION", fixedChoice ({ "DIN", "USB" }, 1, { Dark::post, Dark::post }), 3.2f, false);
+            daw.addRow ("EMULATION", fixedChoice ({ "MCU", "HUI" }, 0), 3.2f, false);
+            daw.addRow ("USE UPPER CC FOR DAW", OnKey::fixed (false), 1.3f, false);
+            daw.addRow ("DISABLE WHEEL DURING PLAY", OnKey::fixed (true), 1.3f, false);
+            daw.newBox();
+            daw.addRow ({}, std::make_unique<DropdownField> ("CONFIGURATION", [] { return juce::String ("MCU + 2x EXTENDER"); }), 0.0f, false, false, 1.6f);
+            daw.addRow ({}, std::make_unique<PresetRow>(), 0.0f, false, false, 1.6f);
+            addAndMakeVisible (daw);
+            addAndMakeVisible (surface);
+            surface.setEnabled (false);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            g.fillAll (juce::Colours::black);
+            drawDarkPanel (g, panel, "DAW CONTROL");
+            g.setColour (Dark::textDim);
+            g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+            g.drawFittedText ("All third-party DAW trademarks are the property of their respective owners. Their use neither constitutes a claim of the "
+                              "trademark nor affiliation of the trademark owners with the makers of this software. Product names are mentioned solely as "
+                              "a reference for compatibility.",
+                              disclaimer, juce::Justification::bottomLeft, 3);
+            g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+            g.drawFittedText ("DAW CONTROL (MCU / HUI OVER MIDI) IS NOT AVAILABLE IN LIVE DAW YET.", note, juce::Justification::topLeft, 3);
+        }
+
+        void resized() override
+        {
+            auto b = getLocalBounds();
+            disclaimer = b.removeFromBottom (44).reduced (6, 2);
+            auto area = b.withWidth (b.getWidth() * 60 / 100);
+            daw.rowHeight = fitRowHeight (area.getHeight() - kDarkHeaderHeight - 20, 9.0f);
+            panel = area.withHeight (juce::jmin (area.getHeight(), daw.preferredHeight() + kDarkHeaderHeight + 2));
+            auto body = darkPanelBody (panel, true);
+            auto right = body.removeFromRight (body.getWidth() / 2);
+            daw.setBounds (body);
+            surface.setBounds (right.withHeight (juce::jmin (right.getHeight(), right.getWidth() * 50 / 100)).reduced (6));
+            note = b.withTrimmedLeft (panel.getRight() + 12 - b.getX()).reduced (0, 8);
+        }
+
+    private:
+        SettingsPanel daw;
+        DawSurface surface;
+        juce::Rectangle<int> panel, disclaimer, note;
+    };
+
+    //==============================================================================
+    /** PLUGINS (app-specific): plugin scanning; the plugins become FX slot devices. */
     class PluginsTab final : public juce::Component, private juce::ChangeListener
     {
     public:
         explicit PluginsTab (UiContext& c) : ctx (c)
         {
-            styleCaption (info, "", 16.0f, Colours::text);
             scan.onClick = [this] { if (ctx.showPluginScanner) ctx.showPluginScanner(); };
-            addAndMakeVisible (info);
+            styleIconKey (scan);
             addAndMakeVisible (scan);
             ctx.host.getKnownPlugins().addChangeListener (this);
-            update();
         }
 
         ~PluginsTab() override { ctx.host.getKnownPlugins().removeChangeListener (this); }
 
-        void changeListenerCallback (juce::ChangeBroadcaster*) override { update(); }
-
-        void update()
-        {
-            const auto types = ctx.host.getSortedTypes();
-            juce::String text;
-            text << types.size() << " plugins known (VST3, AU, LV2" << (ctx.host.getFormatManager().getNumFormats() > 3 ? ", VST2" : "")
-                 << "). Load them into FX slots on the EFFECTS screen, then assign the slots to channel inserts.\n"
-                 << "Plugins are scanned in a separate process, so a crashing plugin can't take the console down.";
-            info.setText (text, juce::dontSendNotification);
-        }
+        void changeListenerCallback (juce::ChangeBroadcaster*) override { repaint(); }
 
         void paint (juce::Graphics& g) override
         {
-            g.fillAll (Colours::screen);
-            drawSectionBox (g, getLocalBounds().reduced (0, 6).withWidth (juce::jmin (getWidth(), 760)), "PLUGINS");
+            g.fillAll (juce::Colours::black);
+            auto body = drawDarkPanel (g, box, "PLUGINS");
+            auto r = body.reduced (12, 10);
+            const auto types = ctx.host.getSortedTypes();
+            g.setColour (Dark::text);
+            g.setFont (juce::FontOptions (24.0f, juce::Font::bold));
+            g.drawText (juce::String (types.size()) + " PLUGINS KNOWN", r.removeFromTop (34), juce::Justification::centredLeft);
+            g.setColour (Dark::textDim);
+            g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+            juce::String text;
+            text << "VST3, AU, LV2" << (ctx.host.getFormatManager().getNumFormats() > 3 ? ", VST2" : "")
+                 << ". Load them into FX slots on the EFFECTS screen (device EXT), then assign the slots to channel inserts. "
+                 << "Plugins are scanned in a separate process, so a crashing plugin can't take the console down.";
+            g.drawFittedText (text, r.removeFromTop (70), juce::Justification::topLeft, 4);
         }
 
         void resized() override
         {
-            auto b = sectionContent (getLocalBounds().reduced (0, 6).withWidth (juce::jmin (getWidth(), 760)), true);
-            info.setBounds (b.removeFromTop (90));
-            b.removeFromTop (8);
-            scan.setBounds (b.removeFromTop (48).removeFromLeft (260));
+            box = getLocalBounds().withWidth (juce::jmin (getWidth(), 720)).withHeight (juce::jmin (getHeight(), 240));
+            scan.setBounds (darkPanelBody (box, true).reduced (12, 10).removeFromBottom (44).removeFromLeft (260));
         }
 
     private:
         UiContext& ctx;
-        juce::Label info;
         WingKey scan { "SCAN FOR PLUGINS", Icon::Folder };
-    };
-
-    class AudioTab final : public juce::Component
-    {
-    public:
-        explicit AudioTab (UiContext& c)
-            : selector (c.deviceManager, 0, 256, 0, 256, false, false, false, false)
-        {
-            addAndMakeVisible (selector);
-        }
-
-        void paint (juce::Graphics& g) override
-        {
-            g.fillAll (Colours::screen);
-            drawSectionBox (g, getLocalBounds().reduced (0, 6), "AUDIO DEVICE");
-        }
-
-        void resized() override { selector.setBounds (sectionContent (getLocalBounds().reduced (0, 6), true)); }
-
-    private:
-        juce::AudioDeviceSelectorComponent selector;
+        juce::Rectangle<int> box;
     };
 } // namespace
 
+//==============================================================================
 SetupPage::SetupPage (UiContext& c) : ctx (c)
 {
-    tabs.setTabBarDepth (44);
-    tabs.setOutline (0);
-    tabs.setColour (juce::TabbedComponent::backgroundColourId, juce::Colours::transparentBlack);
-    const auto tabColour = Colours::screenPanel;
-    tabs.addTab ("GENERAL", tabColour, new GeneralTab (ctx), true);
-    tabs.addTab ("AUDIO", tabColour, new AudioTab (ctx), true);
-    tabs.addTab ("SURFACE", tabColour, new SurfaceTab (ctx), true);
-    tabs.addTab ("SAFES", tabColour, new SafesTab (ctx), true);
-    tabs.addTab ("DCA / MUTE", tabColour, new GroupsTab (ctx), true);
-    tabs.addTab ("PLUGINS", tabColour, new PluginsTab (ctx), true);
-    addAndMakeVisible (tabs);
+    tabRow.setTabs ({ { "GENERAL" }, { "AUDIO" }, { "SURFACE" }, { "REMOTE" }, { "DAW" }, { "PLUGINS", Dark::gold, true, 10 } });
+    tabRow.onChange = [this] (int) { showTab(); };
+    addAndMakeVisible (tabRow);
+
+    auto overlay = [this] (const juce::String& title, std::unique_ptr<juce::Component> body) { overlays.show (*this, title, std::move (body)); };
+    general = std::make_unique<GeneralTab> (ctx);
+    pages.push_back (general.get());
+    pages.push_back (ownedPages.add (new AudioTab (ctx, overlay)));
+    pages.push_back (ownedPages.add (new SurfaceTab (ctx)));
+    pages.push_back (ownedPages.add (new RemoteTab()));
+    pages.push_back (ownedPages.add (new DawTab()));
+    pages.push_back (ownedPages.add (new PluginsTab (ctx)));
+    for (auto* p : pages)
+        addChildComponent (p);
+
+    styleIconKey (initKey);
+    styleIconKey (shutdownKey);
+    initKey.onClick = [this]
+    {
+        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, "INITIALIZE CONSOLE",
+                                            "Reset every strip, DCA, mute group and FX slot to a fresh 40-channel console? "
+                                            "GLOBAL safes are overwritten too. Scenes are kept.",
+                                            "INITIALIZE", "CANCEL", this, juce::ModalCallbackFunction::create ([this] (int r)
+        {
+            if (r == 0)
+                return;
+            for (int i = 0; i < kNumFx; ++i)
+                clearFx (ctx, i);
+            ctx.engine.reset();
+            ctx.engine.setNumChannels (kWingChannels);
+            ctx.log.info ("Console initialized");
+            if (ctx.structureChanged)
+                ctx.structureChanged();
+        }));
+    };
+    shutdownKey.onClick = [this]
+    {
+        // The console state is saved when the app quits.
+        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::NoIcon, "SHUTDOWN", "IT IS SAFE TO SWITCH DOWN THE CONSOLE NOW", "QUIT", "CANCEL", this,
+                                            juce::ModalCallbackFunction::create ([] (int r)
+        {
+            if (r != 0)
+                if (auto* app = juce::JUCEApplicationBase::getInstance())
+                    app->systemRequestedQuit();
+        }));
+    };
+    addAndMakeVisible (initKey);
+    addAndMakeVisible (shutdownKey);
+    showTab();
 }
 
 SetupPage::~SetupPage() = default;
 
+std::vector<StatusKey> SetupPage::getStatusKeys()
+{
+    return {
+        { "MONITORS", Icon::Monitors, false, [this] { overlays.show (*this, "MONITORS", makeMonitorPanel (ctx)); } },
+        // Custom controls (CC EDIT) aren't built yet.
+        { "CC EDIT", Icon::CcEdit, false,
+          [this]
+          {
+              overlays.show (*this, "CUSTOM CONTROLS",
+                             std::make_unique<MessageBody> ("CUSTOM CONTROLS ARE NOT AVAILABLE YET",
+                                                            "On the console, CC EDIT assigns functions to the custom control knobs and buttons "
+                                                            "beside the display. Live DAW doesn't have custom controls yet."));
+          } },
+    };
+}
+
+void SetupPage::showTab()
+{
+    for (size_t i = 0; i < pages.size(); ++i)
+        pages[i]->setVisible ((int) i == tabRow.getCurrent());
+    overlays.close();
+}
+
 void SetupPage::refresh()
 {
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
-    {
-        if (auto* s = dynamic_cast<SafesTab*> (tabs.getTabContentComponent (i)))
-            s->refresh();
-        if (auto* g = dynamic_cast<GroupsTab*> (tabs.getTabContentComponent (i)))
-            g->refresh();
-        if (auto* f = dynamic_cast<SurfaceTab*> (tabs.getTabContentComponent (i)))
-            f->refresh();
-    }
+    if (auto* g = dynamic_cast<GeneralTab*> (general.get()))
+        g->refresh();
+    for (auto* p : pages)
+        p->repaint();
 }
 
 void SetupPage::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::screen);
-    // The console's tab bar sits on a grey strip.
-    g.setColour (Colours::screenHeader.darker (0.15f));
-    g.fillRect (getLocalBounds().withHeight (tabs.getTabBarDepth()));
+    g.fillAll (juce::Colours::black);
+    g.setColour (Dark::tabBar);
+    g.fillRect (tabRow.getBounds().withLeft (0).withRight (getWidth()));
 }
 
 void SetupPage::resized()
 {
-    tabs.setBounds (getLocalBounds());
+    auto b = getLocalBounds();
+    auto row = b.removeFromTop (juce::jlimit (30, 44, getHeight() / 12));
+    b.removeFromTop (6);
+    const int keyW = juce::jmin (180, getWidth() * 13 / 100);
+    // Narrow screens: the icon over a one-word caption.
+    const bool narrow = keyW < 110;
+    initKey.iconAbove = shutdownKey.iconAbove = narrow;
+    initKey.setButtonText (narrow ? "INITIALIZE" : "INITIALIZE\nCONSOLE");
+    shutdownKey.setBounds (row.removeFromRight (keyW).reduced (2, 2));
+    row.removeFromRight (4);
+    initKey.setBounds (row.removeFromRight (keyW).reduced (2, 2));
+    row.removeFromRight (8);
+    // Tabs about 12 % of the screen wide, as on the console, if all six fit.
+    const float tabPx = juce::jmin ((float) getWidth() * 0.12f, (float) (row.getWidth() - 12) / 6.0f);
+    tabRow.tabFraction = tabPx / (float) juce::jmax (1, row.getWidth());
+    tabRow.setBounds (row);
+    for (auto* p : pages)
+        p->setBounds (b);
+    overlays.layout (getLocalBounds());
 }
 
 } // namespace livedaw::ui

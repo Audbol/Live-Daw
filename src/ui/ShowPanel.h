@@ -1,73 +1,64 @@
 #pragma once
 
-#include "ui/UiContext.h"
-#include "ui/WingWidgets.h"
+#include "ui/ScreenWidgets.h"
 
 namespace livedaw::ui
 {
 
-/** Show > Scene > Snippet manager in the style of the console's library: a
-    list on the left, the selected item's settings on the right and the GO /
-    PREV / NEXT keys below. The SCENES view lists the show's scenes (recall
-    scope, fade, notes); the SNIPPETS view the snippets of the selected scene. */
+/** The left half of the LIBRARY screen with a show open (manual 5.6, fig. 45):
+    the list toolbar (INT | USB | SHOW, REMOVE, RENAME, SKIP, LINK, UP, DOWN)
+    and the show's scenes, each followed by its snippets (indented; a green bar
+    links the ones that fire with their scene, and a scene to the one below it
+    that it LINKs). Scene tags show as "#n", skipped scenes dimmed with the SKIP
+    mark. Rows whose type doesn't match
+    the open tab on the right are greyed, as on the console. */
 class ShowPanel final : public juce::Component
 {
 public:
     explicit ShowPanel (UiContext&);
     ~ShowPanel() override;
 
-    enum class View
+    /** A row: a scene, or a snippet of a scene. */
+    struct Item
     {
-        Scenes,
-        Snippets
+        int scene = -1, snippet = -1;
+        bool isValid() const noexcept { return scene >= 0; }
+        bool isSnippet() const noexcept { return snippet >= 0; }
+        bool operator== (const Item& o) const noexcept { return scene == o.scene && snippet == o.snippet; }
     };
 
-    void setView (View);
-    View getView() const noexcept { return view; }
+    Item getSelected() const;
+    void select (Item);
+
+    /** Which rows are shown normally: 0 all (SHOW), 1 scenes (SNAP), 2 snippets (SNIP), -1 none. */
+    void setTypeFilter (int filter);
 
     /** Re-reads the show (call after it changed). */
     void refresh();
+
+    std::function<void (Item)> onSelectionChanged;
+    /** A row was double-clicked (GO on it). */
+    std::function<void (Item)> onActivated;
 
     void paint (juce::Graphics&) override;
     void resized() override;
 
 private:
-    class SceneList;
-    class SnippetList;
-    class SectionToggles;
-    class StripChooser;
+    class List;
 
-    int selectedScene() const;
-    int selectedSnippet() const;
-    std::optional<Show::Scene> currentSceneObject() const;
-    std::optional<Show::Snippet> currentSnippetObject() const;
-    void updateSceneEditor();
-    void updateSnippetEditor();
-    /** Moves the selection of the current view by `delta`, recalling the result if asked. */
-    void step (int delta, bool recall);
+    void removeSelected();
+    void renameSelected();
+    void moveSelected (int delta);
+    void linkSelected();
+    void skipSelected();
+    void updateKeys();
 
     UiContext& ctx;
-    View view = View::Scenes;
-
-    std::unique_ptr<SceneList> sceneList;
-    WingKey storeSceneButton { "STORE", Icon::Disk }, newSceneButton { "NEW", Icon::Plus }, deleteSceneButton { "DELETE", Icon::Trash },
-        upButton { "UP" }, downButton { "DOWN" };
-    juce::Label sceneNameLabel, fadeLabel, notesLabel;
-    juce::Slider fadeSlider;
-    juce::TextEditor notesEditor;
-    std::unique_ptr<SectionToggles> sceneScope;
-
-    std::unique_ptr<SnippetList> snippetList;
-    WingKey storeSnippetButton { "STORE", Icon::Disk }, newSnippetButton { "NEW", Icon::Plus }, deleteSnippetButton { "DELETE", Icon::Trash },
-        autoFireKey { "FIRE WITH SCENE" };
-    juce::Label snippetNameLabel;
-    std::unique_ptr<SectionToggles> snippetSections;
-    std::unique_ptr<StripChooser> stripChooser;
-
-    WingKey goPrevButton { "GO\n+PREV" }, goNextButton { "GO\n+NEXT" }, prevButton { "PREV", Icon::ChevronLeft },
-        nextButton { "NEXT", Icon::ChevronRight }, goButton { "GO", Icon::Play };
-
-    juce::Rectangle<int> keyBar, listArea, editorArea, transportArea, keyBarTitle;
+    std::unique_ptr<List> list;
+    ToolKey intKey { "INT", Icon::Storage }, usbKey { "USB", Icon::UsbStick }, showKey { "SHOW", Icon::ShowFile },
+        removeKey { "REMOVE", Icon::RemoveCircle }, renameKey { "RENAME", Icon::Edit }, skipKey { "SKIP", Icon::Skip, Dark::on },
+        linkKey { "LINK", Icon::Link, FileColours::wav }, upKey { "UP", Icon::ChevronUp }, downKey { "DOWN", Icon::ChevronDown };
+    juce::Rectangle<int> toolbar, listArea;
 };
 
 } // namespace livedaw::ui
