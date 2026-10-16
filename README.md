@@ -146,6 +146,10 @@ CoreAudio and AU hosting work out of the box. The minimum deployment target is m
 ```bash
 cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DLIVEDAW_SANITIZE=address,undefined
 cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DLIVEDAW_SANITIZE=thread
+# run the TSan tests with TSAN_OPTIONS=suppressions=tests/tsan.supp (the Rust part is not instrumented there)
+
+# Rust engine under ThreadSanitizer (nightly):
+cd rust && RUSTFLAGS=-Zsanitizer=thread cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu --workspace
 ```
 
 ### VST2 (optional)

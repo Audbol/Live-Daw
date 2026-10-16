@@ -1,0 +1,7 @@
+# The Rust engine (rust/) is not built with -Zsanitizer=thread in the C++ sanitizer
+# jobs, so TSan cannot see the Rust atomics that order its threads: it only sees
+# intercepted memcpy/memset/malloc calls made from Rust and reports them as races.
+# The Rust engine is checked under its own ThreadSanitizer run (CI job "Rust TSan").
+race:livedaw_engine
+race:livedaw_dsp
+race:livedaw_ffi
