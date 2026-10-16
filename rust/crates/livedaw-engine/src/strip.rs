@@ -705,7 +705,8 @@ impl Strip {
         self.meters.output_peak[1].fetch_max(peak_level(o1));
     }
 
-    /// Engine automix pass: scales everything after the fader by `gain`.
+    /// Engine automix pass: scales everything after INS 2 (where automix sits)
+    /// by `gain`; the POST FDR tap, before INS 2, keeps the plain fader level.
     ///
     /// # Safety
     /// Audio thread, after the input stage, before anything reads this strip.
@@ -715,7 +716,7 @@ impl Strip {
         let nc = d.num_channels;
         for ch in 0..nc {
             apply_gain_ramp(&mut d.post[ch][..n], last, gain);
-            if d.tap_point >= tap::AFL {
+            if d.tap_point == tap::POST {
                 apply_gain_ramp(&mut d.tap[ch][..n], last, gain);
             }
         }

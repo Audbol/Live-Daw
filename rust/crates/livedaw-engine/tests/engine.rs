@@ -821,7 +821,7 @@ fn group_sends_ignore_the_send_level_and_reversed_pan_link() {
 
 #[test]
 fn automix_enables_input_channels_only_and_follows_the_fader() {
-    let mut rig = Rig::new(1, 2, 2);
+    let mut rig = Rig::new(1, 2, 4);
     rig.engine.set_num_channels(2);
     rig.ch(1).params.input_left.store(1, Relaxed);
     rig.set_input(0, 0.5);
@@ -835,6 +835,18 @@ fn automix_enables_input_channels_only_and_follows_the_fader() {
     let shared = 0.5 * CENTRE * 2.0 * CENTRE;
     assert!(close(rig.out(0), shared, 1e-3), "{}", rig.out(0));
     assert!(close(rig.ch(0).meters.automix_db.load(), -3.0103, 0.05));
+
+    // Automix sits in INS 2: the POST FDR tap is before it, POST PROC after it.
+    let a = rig.ch(0);
+    a.sends.get_or_create(5).unwrap().enabled.store(true, Relaxed);
+    rig.strip(StripKind::Bus, 5).params.output_left.store(2, Relaxed);
+    a.params.tap.store(6, Relaxed); // POST FDR
+    rig.run(50);
+    assert!(close(rig.out(2), 0.5 * CENTRE, 1e-3), "{}", rig.out(2));
+    a.params.tap.store(7, Relaxed); // POST PROC
+    rig.run(50);
+    assert!(close(rig.out(2), 0.5 * CENTRE * CENTRE, 1e-3), "{}", rig.out(2));
+    a.params.tap.store(5, Relaxed);
 
     // X ENABLE off: both glide back to unity.
     rig.engine.controls.automix_enable[0].store(false, Relaxed);
