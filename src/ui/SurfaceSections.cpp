@@ -773,34 +773,27 @@ MonitorSection::MonitorSection (UiContext& c) : ctx (c)
         addAndMakeVisible (k);
     }
 
-    // DIM: attenuates the monitor output (lit while dimmed).
-    dimKey.shape = SurfaceKey::Shape::Square;
-    dimKey.ledColour = Colours::yellow;
-    dimKey.setTooltip ("DIM: attenuate the monitor output by 20 dB");
-    dimKey.onPress = [this] { toggleDim(); };
-    dimKey.ledState = [this] { return dimmed ? SurfaceKey::Lit : SurfaceKey::Off; };
-    addAndMakeVisible (dimKey);
-
-    monoKey.shape = SurfaceKey::Shape::Square;
-    monoKey.ledColour = Colours::yellow;
-    monoKey.setEnabled (false);
-    monoKey.setTooltip ("MONO: the monitor mono sum is not available yet");
-    addAndMakeVisible (monoKey);
-}
-
-void MonitorSection::toggleDim()
-{
-    // Until the engine has a dim stage: lower the monitor level by 20 dB and restore it.
-    dimmed = ! dimmed;
-    if (dimmed)
+    // DIM attenuates the monitor by the DIM amount (lit); held, it mutes the
+    // monitor (blinking). MONO sums the monitor to mono (lit); held, it swaps
+    // left and right (blinking). A press while blinking disengages (manual 4.7).
+    auto monitorKey = [this] (SurfaceKey& key, std::atomic<bool>& pressed, std::atomic<bool>& held, const juce::String& tip)
     {
-        dimRestoreDb = ctx.engine.monitorLevelDb.load();
-        ctx.engine.monitorLevelDb = dimRestoreDb - 20.0f;
-    }
-    else
-    {
-        ctx.engine.monitorLevelDb = dimRestoreDb;
-    }
+        key.shape = SurfaceKey::Shape::Square;
+        key.ledColour = Colours::yellow;
+        key.setTooltip (tip);
+        key.onPress = [&pressed, &held]
+        {
+            if (held.load())
+                held = false;
+            else
+                pressed = ! pressed.load();
+        };
+        key.onHold = [&held] { held = ! held.load(); };
+        key.ledState = [&pressed, &held] { return held.load() ? SurfaceKey::Blink : (pressed.load() ? SurfaceKey::Lit : SurfaceKey::Off); };
+        addAndMakeVisible (key);
+    };
+    monitorKey (dimKey, ctx.engine.monitorDim, ctx.engine.monitorMute, "DIM: attenuate the monitor by the DIM amount (hold: mute the monitor)");
+    monitorKey (monoKey, ctx.engine.monitorMono, ctx.engine.monitorSwap, "MONO: sum the monitor to mono (hold: swap left and right)");
 }
 
 void MonitorSection::paint (juce::Graphics& g)

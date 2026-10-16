@@ -103,8 +103,9 @@ Barlow Condensed.
   (press: show it on the screen, again: next parameter; hold: on/off); CHANNEL
   EQUALIZER with SHIFT, four band encoders, BLEND/MIX, EQ and GAIN / WIDTH / FREQ;
   VIEW opens the shown slot on HOME.
-- **USB / monitoring panel** (top right): VIEW, MONITOR LEVEL and DIM (talkback,
-  phones and mono come later).
+- **USB / monitoring panel** (top right): VIEW, MONITOR LEVEL, **DIM** (hold: mute the
+  monitor) and **MONO** (hold: swap left and right); held functions blink, a press
+  ends them. Talkback and the phones level come later.
 - **Custom controls** (between the center and right sections): the lower layers
   **MUTE GROUPS** (the eight mute groups) and **SHOW CNTRL** (scene back, GO, SCENES);
   the assignable upper part is empty for now.

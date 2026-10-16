@@ -88,15 +88,12 @@ public:
     void resized() override;
 
 private:
-    void toggleDim();
-
     UiContext& ctx;
     ViewKey viewKey;
     DisplayKnob talkLevel, phonesLevel, monitorLevel;
     SurfaceKey talkA { "A" }, talkB { "B" }, dimKey { "DIM" }, monoKey { {}, Icon::Circle };
     juce::Rectangle<int> wingPanel, usbPlate, monitorTitle, usbTitle;
-    float dimRestoreDb = 0.0f;
-    bool dimmed = false, viewOpened = false;
+    bool viewOpened = false;
 };
 
 /** The CUSTOM CONTROLS section between the center and right fader sections
