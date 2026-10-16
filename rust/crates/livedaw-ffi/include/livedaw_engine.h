@@ -6,6 +6,13 @@
 // the same size and bit layout as Rust's AtomicU32 (f32 bits) / AtomicBool /
 // AtomicI32. ld::verifyLayout() compares both sides at startup.
 //
+// The layout follows the Behringer WING: every strip has an INPUT block, a
+// FILTER, a GATE slot and a DYNAMICS slot (each holding any of the 32 dynamics
+// models), an EQ (one of the EQ models), PRE and POST inserts (FX slots),
+// sends to buses, the 4 mains and the 8 matrices, DCA and mute group masks.
+// Model parameters are stored by index in the model's table; ld_model_* below
+// describes the tables (names, ranges, units, choices) for the UI.
+//
 // If you change a struct here, change it in Rust too (and bump LD_ABI_VERSION).
 
 #pragma once
@@ -21,68 +28,136 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 2;
+constexpr int kAbiVersion = 3;
 constexpr int kMaxBuses = 16384;
-constexpr int kNumInsertSlots = 8;
-constexpr int kNumEqBands = 4;
+constexpr int kNumMains = 4;
+constexpr int kNumMatrices = 8;
+constexpr int kNumAux = 8;
+constexpr int kNumDcas = 16;
+constexpr int kNumMuteGroups = 8;
+constexpr int kNumFx = 16;
+constexpr int kWingChannels = 40;
+constexpr int kWingBuses = 16;
+constexpr int kMaxDynParams = 20;
+constexpr int kMaxEqParams = 32;
+constexpr int kMaxToolParams = 2;
 
 enum StripKindId : int32_t
 {
-    kInput = 0,
+    kChannel = 0,
     kAux = 1,
-    kGroup = 2,
-    kMaster = 3
+    kBus = 2,
+    kMain = 3,
+    kMatrix = 4
 };
 
-struct GateParams
+/// Fader reference kind for DCAs (strip kinds are 0..4).
+constexpr int32_t kFaderDca = 5;
+
+/// Tap points (index into list 1).
+enum TapPoint : int32_t
 {
-    std::atomic<bool> enabled;
-    std::atomic<float> thresholdDb, rangeDb, attackMs, holdMs, releaseMs;
+    kTapIn = 0,
+    kTapFilter = 1,
+    kTapPfl = 5,
+    kTapAfl = 6,
+    kTapPost = 7
 };
 
-struct CompParams
+struct InputParams
 {
-    std::atomic<bool> enabled;
-    std::atomic<float> thresholdDb, ratio, attackMs, releaseMs, kneeDb, makeupDb;
+    std::atomic<float> trimDb, balanceDb;
+    std::atomic<bool> invert, delayOn;
+    std::atomic<int32_t> delayMode; // list 5: M, FT, MS, SMP
+    std::atomic<float> delay;
 };
 
-struct EqBandParams
+struct FilterParams
 {
-    std::atomic<int32_t> type;
-    std::atomic<float> frequency, gainDb, q;
-    std::atomic<bool> enabled;
+    std::atomic<bool> lowCut, highCut, tool;
+    std::atomic<float> lowCutFreq;
+    std::atomic<int32_t> lowCutSlope; // list 8
+    std::atomic<float> highCutFreq;
+    std::atomic<int32_t> highCutSlope; // list 9
+    std::atomic<int32_t> toolModel;    // table 3
+    std::atomic<float> toolParams[kMaxToolParams];
 };
 
-struct EqParams
+struct DynSlotParams
 {
-    std::atomic<bool> enabled;
-    EqBandParams bands[kNumEqBands];
+    std::atomic<bool> on;
+    std::atomic<int32_t> model; // table 0 (use ld_strip_set_model to change it)
+    std::atomic<float> values[kMaxDynParams];
+    std::atomic<float> mix, gain;
+    std::atomic<int32_t> scFilter; // list 2
+    std::atomic<float> scFreq, scQ;
+    std::atomic<int32_t> scSource, scTap; // source -1 = self, else channel index
+    std::atomic<int32_t> xoKind; // list 3
+    std::atomic<float> xoFreq, xoQ, xoDepth;
+};
+
+struct EqBlockParams
+{
+    std::atomic<bool> on;
+    std::atomic<int32_t> model; // table 1 (channels, aux) or 2 (buses, mains, matrices)
+    std::atomic<float> mix;
+    std::atomic<float> values[kMaxEqParams];
+};
+
+struct InsertParams
+{
+    std::atomic<bool> on;
+    std::atomic<int32_t> fx;   // FX slot, -1 = none
+    std::atomic<int32_t> mode; // post insert: list 6 (FX, AUTO_X, AUTO_Y)
+    std::atomic<float> weight; // automix weight, dB
+};
+
+struct MainSendParams
+{
+    std::atomic<bool> on, pre;
+    std::atomic<float> levelDb;
+};
+
+struct MatrixSendParams
+{
+    std::atomic<bool> on, pre;
+    std::atomic<float> levelDb, pan;
 };
 
 struct StripParams
 {
-    // Input stage
-    std::atomic<float> trimDb;
-    std::atomic<bool> polarityInvert;
-    std::atomic<bool> hpfEnabled;
-    std::atomic<float> hpfFrequency;
+    InputParams input;
+    FilterParams filter;
+    DynSlotParams gate;
+    EqBlockParams eq;
+    DynSlotParams dynamics;
+    InsertParams preInsert, postInsert;
+    std::atomic<int32_t> processOrder; // list 0
+    std::atomic<int32_t> tap;          // list 1
 
-    // Processing
-    GateParams gate;
-    EqParams eq;
-    CompParams comp;
-
-    // Output stage
     std::atomic<float> faderDb;
-    std::atomic<float> pan;
-    std::atomic<bool> mute;
-    std::atomic<bool> solo;
-    std::atomic<bool> mainAssign;
+    std::atomic<float> pan;   // -100..100
+    std::atomic<float> width; // -150..150 %
+    std::atomic<bool> mute, solo, soloSafe;
+    std::atomic<int32_t> monitorBus; // list 7
 
-    std::atomic<bool> stereo;
+    std::atomic<bool> stereo, mono;
     std::atomic<int32_t> inputLeft, inputRight;
     std::atomic<int32_t> outputLeft, outputRight;
 
+    MainSendParams mains[kNumMains];
+    MatrixSendParams matrix[kNumMatrices];
+
+    std::atomic<uint32_t> dcaMask, muteGroupMask;
+
+    // Matrices: direct input from a channel.
+    std::atomic<bool> directOn, directInvert, directPre;
+    std::atomic<int32_t> directSource;
+    std::atomic<float> directLevelDb;
+
+    std::atomic<int32_t> colour; // WING colour 1..18 (ld_colour_rgb)
+    std::atomic<int32_t> icon;
+    std::atomic<bool> led;
     std::atomic<bool> recallSafe;
 };
 
@@ -90,18 +165,32 @@ struct StripMeters
 {
     std::atomic<float> inputPeak[2];
     std::atomic<float> outputPeak[2];
-    std::atomic<float> gateGain;
-    std::atomic<float> compReductionDb;
+    std::atomic<float> gateReductionDb, dynReductionDb;
+    std::atomic<bool> gateActive, dynActive;
     std::atomic<int32_t> currentWidth;
     std::atomic<int32_t> dspFaults;
+    std::atomic<float> automixDb;
 };
 
 struct SendParams
 {
-    std::atomic<bool> enabled;
-    std::atomic<float> levelDb;
-    std::atomic<bool> preFader;
-    float lastGain_; // owned by the audio thread: do not touch
+    std::atomic<bool> enabled, panLink;
+    std::atomic<int32_t> mode; // list 4: PRE, POST, GRP
+    std::atomic<float> levelDb, pan;
+    float lastGain_[2]; // owned by the audio thread: do not touch
+};
+
+struct DcaParams
+{
+    std::atomic<float> faderDb;
+    std::atomic<bool> mute, solo;
+    std::atomic<int32_t> colour;
+};
+
+struct FxParams
+{
+    std::atomic<bool> bypass;
+    std::atomic<float> mix;
 };
 
 struct EngineControls
@@ -116,26 +205,26 @@ struct EngineControls
     std::atomic<float> monitorPeak[2];
     std::atomic<float> dspLoad;
     std::atomic<int32_t> engineFaults;
+    std::atomic<uint32_t> muteGroups;
+    DcaParams dcas[kNumDcas];
+    FxParams fx[kNumFx];
 };
 
 struct LayoutInfo
 {
-    int32_t abiVersion, stripParamsSize, gateOffset, eqOffset, compOffset, faderOffset, stereoOffset,
-        outputRightOffset, recallSafeOffset, gateSize, eqSize, compSize, metersSize, metersDspFaultsOffset,
-        sendSize, sendPreFaderOffset, controlsSize, controlsMonitorPeakOffset, controlsEngineFaultsOffset;
+    int32_t abiVersion, stripParams, input, filter, dynSlot, eqBlock, insert, mainSend, matrixSend, meters, send, dca,
+        fx, controls, offFilter, offGate, offEq, offDynamics, offPostInsert, offFader, offStereo, offMains, offMatrix,
+        offDcaMask, offDirectLevel, offColour, offRecallSafe, offDynValues, offDynXoDepth, offEqValues, offSendPan,
+        offMetersAutomix, offControlsDcas, offControlsFx;
 };
 
-struct EqBandSnapshot
+struct ParamInfo
 {
-    int32_t type;
-    float frequency, gainDb, q;
-    int32_t enabled;
-};
-
-struct EqSnapshot
-{
-    int32_t enabled;
-    EqBandSnapshot bands[kNumEqBands];
+    int32_t kind; // 0 linear, 1 log, 2 choice, 3 values, 4 toggle, 5 integer
+    float min, max;
+    int32_t steps;
+    float defaultValue;
+    int32_t numChoices;
 };
 
 /// Processes numChannels (1 or 2) channels in place; return 0 on success.
@@ -163,25 +252,33 @@ struct StripRefC
     int32_t kind, id;
 };
 
+/// A fader on the surface: kind 0..4 = strip kinds, kFaderDca = DCA (id 0..15).
+struct FaderRefC
+{
+    int32_t kind, id;
+};
+
 struct ApplyResultC
 {
     int32_t stripsApplied, stripsSkippedSafe, stripsMissing;
     LdString* warnings; // '\n'-separated, or null; caller frees
 };
 
-/** Writes the <PLUGIN> description XML and base64 state of insert `slot`; false if empty. */
-using CaptureInsertFn = bool (*) (void* ctx, const Strip*, int32_t slot, LdSink* description, LdSink* state);
+/** Writes the <PLUGIN> description XML and base64 state of FX slot `slot`; false if empty. */
+using CaptureFxFn = bool (*) (void* ctx, int32_t slot, LdSink* description, LdSink* state);
 /** mode 0 = restore state into the plugin already loaded, 1 = create the plugin.
     Returns 0 ok, 1 different plugin loaded (mode 0), 2 failed (message in `error`). */
-using RestoreInsertFn = int32_t (*) (void* ctx, const Strip*, int32_t slot, int32_t mode,
-                                     const char* description, size_t descriptionLen,
-                                     const char* state, size_t stateLen, LdSink* error);
+using RestoreFxFn = int32_t (*) (void* ctx, int32_t slot, int32_t mode, const char* description, size_t descriptionLen,
+                                 const char* state, size_t stateLen, LdSink* error);
+/** Empties FX slot `slot` (show load). */
+using ClearFxFn = void (*) (void* ctx, int32_t slot);
 
 struct PluginBridge
 {
     void* ctx;
-    CaptureInsertFn capture;
-    RestoreInsertFn restore;
+    CaptureFxFn capture;
+    RestoreFxFn restore;
+    ClearFxFn clear;
 };
 
 extern "C"
@@ -207,20 +304,33 @@ extern "C"
     void ld_engine_collect_all_now (const Engine*);
     int32_t ld_engine_pending_garbage (const Engine*);
 
-    Strip* ld_engine_add_input (const Engine*, int32_t requestedId);
-    void ld_engine_set_num_inputs (const Engine*, int32_t count);
-    int32_t ld_engine_num_inputs (const Engine*);
-    Strip* ld_engine_input_at (const Engine*, int32_t index);
-    Strip* ld_engine_add_bus (const Engine*, int32_t kind, int32_t requestedSlot);
-    int32_t ld_engine_num_buses (const Engine*);
-    Strip* ld_engine_bus_at (const Engine*, int32_t index);
+    // Structure (message thread)
+    int32_t ld_engine_num_strips (const Engine*, int32_t kind);
+    Strip* ld_engine_strip_at (const Engine*, int32_t kind, int32_t index);
+    Strip* ld_engine_add_channel (const Engine*, int32_t requestedId);
+    void ld_engine_set_num_channels (const Engine*, int32_t count);
+    /** Adds a bus beyond the console's 16 (null if no slot is free). */
+    Strip* ld_engine_add_bus (const Engine*, int32_t requestedSlot);
     Strip* ld_engine_bus_in_slot (const Engine*, int32_t slot);
-    Strip* ld_engine_master (const Engine*);
+    /** Removes a channel or an added bus (the console's 16 buses stay). */
     bool ld_engine_remove_strip (const Engine*, const Strip*);
     void ld_engine_reset (const Engine*);
     int32_t ld_engine_total_dsp_faults (const Engine*);
-    int32_t ld_engine_num_faulted_plugins (const Engine*);
+    int32_t ld_engine_num_faulted_fx (const Engine*);
+    /** group: 0 = DCA, 1 = mute group. */
+    LdString* ld_engine_group_name (const Engine*, int32_t group, int32_t index);
+    void ld_engine_set_group_name (const Engine*, int32_t group, int32_t index, const char* utf8, size_t len);
 
+    // FX slots (message thread)
+    void ld_fx_set (const Engine*, int32_t slot, const InsertCallbacks* callbacks);
+    void* ld_fx_ctx (const Engine*, int32_t slot);
+    /** what: 0 = loaded, 1 = faulted (auto-bypassed), 2 = double-assigned. */
+    bool ld_fx_state (const Engine*, int32_t slot, int32_t what);
+    void ld_fx_clear_flags (const Engine*, int32_t slot);
+    float ld_fx_load (const Engine*, int32_t slot);
+    int32_t ld_fx_num_users (const Engine*, int32_t slot);
+
+    // Strips
     int32_t ld_strip_kind (const Strip*);
     int32_t ld_strip_id (const Strip*);
     StripParams* ld_strip_params (const Strip*);
@@ -229,22 +339,35 @@ extern "C"
     bool ld_strip_is_idle (const Strip*);
     SendParams* ld_strip_send (const Strip*, int32_t slot);
     SendParams* ld_strip_find_send (const Strip*, int32_t slot);
-
-    void ld_strip_set_insert (const Engine*, const Strip*, int32_t slot, const InsertCallbacks* callbacks);
-    bool ld_strip_insert_is_bypassed (const Strip*, int32_t slot);
-    void ld_strip_insert_set_bypassed (const Strip*, int32_t slot, bool bypassed);
-    bool ld_strip_insert_is_faulted (const Strip*, int32_t slot);
-    void ld_strip_insert_clear_fault (const Strip*, int32_t slot);
-    float ld_strip_insert_load (const Strip*, int32_t slot);
-
-    double ld_eq_response_db (const EqSnapshot* settings, double freq, double sampleRate);
-
-    // Strip metadata (message thread)
     LdString* ld_strip_name (const Strip*);
     void ld_strip_set_name (const Strip*, const char* utf8, size_t len);
-    uint32_t ld_strip_colour (const Strip*);
-    void ld_strip_set_colour (const Strip*, uint32_t argb);
-    void* ld_strip_insert_ctx (const Strip*, int32_t slot);
+    /** block: 0 = gate slot, 1 = EQ, 2 = dynamics slot, 3 = filter tool. Loads the model's defaults. */
+    void ld_strip_set_model (const Strip*, int32_t block, int32_t model);
+    /** Response in dB of the EQ (block 1) or FILTER (block 3) at `count` frequencies. */
+    void ld_strip_response (const Strip*, int32_t block, const double* freqs, double* outDb, int32_t count, double sampleRate);
+
+    // Model tables: 0 = dynamics models, 1 = channel EQ models, 2 = bus EQ models, 3 = filter tools.
+    int32_t ld_model_count (int32_t table);
+    /** what: 0 = token ("COMP"), 1 = display name. */
+    LdString* ld_model_text (int32_t table, int32_t model, int32_t what);
+    /** 0 gate, 1 compressor, 2 special, 3 EQ, 4 filter. */
+    int32_t ld_model_category (int32_t table, int32_t model);
+    int32_t ld_model_find (int32_t table, const char* utf8, size_t len);
+    int32_t ld_model_num_params (int32_t table, int32_t model);
+    bool ld_model_param_info (int32_t table, int32_t model, int32_t param, ParamInfo* out);
+    /** what: 0 = id ("thr"), 1 = label ("THR"), 2 = unit ("dB"). */
+    LdString* ld_model_param_text (int32_t table, int32_t model, int32_t param, int32_t what);
+    LdString* ld_model_param_choice (int32_t table, int32_t model, int32_t param, int32_t index);
+    LdString* ld_model_param_display (int32_t table, int32_t model, int32_t param, float value);
+    float ld_model_param_to_normalised (int32_t table, int32_t model, int32_t param, float value);
+    float ld_model_param_from_normalised (int32_t table, int32_t model, int32_t param, float position);
+
+    // Lists: 0 process orders, 1 tap points, 2 sidechain filters, 3 crossover types, 4 send modes,
+    // 5 delay units, 6 post insert modes, 7 monitor buses, 8 low-cut slopes, 9 high-cut slopes,
+    // 10 aux dynamics models, 11 colours.
+    int32_t ld_list_count (int32_t list);
+    LdString* ld_list_item (int32_t list, int32_t index);
+    uint32_t ld_colour_rgb (int32_t index);
 
     // Strings
     const char* ld_string_data (const LdString*);
@@ -303,31 +426,32 @@ extern "C"
     bool ld_show_load_file (Show*, const Engine*, const char* path, size_t len, bool loadPlugins, LdString** message);
     void ld_show_clear (Show*, const Engine*, int32_t numChannels);
 
-    // Layers (message thread)
+    // Layers (message thread). Sections: 0 = left (12 faders), 1 = center (8), 2 = right (4).
     LayerSet* ld_show_layers (Show*);
     LayerSet* ld_layers_create();
     void ld_layers_destroy (LayerSet*);
-    int32_t ld_layers_bank_size (LayerSet*);
-    void ld_layers_set_bank_size (LayerSet*, int32_t size);
-    void ld_layers_set_fitted_bank_size (LayerSet*, int32_t size);
-    int32_t ld_layers_effective_bank_size (LayerSet*);
-    LdString* ld_layers_selected (LayerSet*);
-    void ld_layers_set_selected (LayerSet*, const char* utf8, size_t len);
-    LdString* ld_layers_find_default_containing (LayerSet*, const Engine*, StripRefC ref);
-    /** which: 0 default, 1 default + user, 2 user only, 3 the layer `id` (or the first). */
-    LayerList* ld_layers_list (LayerSet*, const Engine*, int32_t which, const char* id, size_t idLen);
+    /** 0 = Auto (fit the window). */
+    int32_t ld_layers_width (LayerSet*, int32_t section);
+    void ld_layers_set_width (LayerSet*, int32_t section, int32_t width);
+    void ld_layers_set_fitted_width (LayerSet*, int32_t section, int32_t width);
+    int32_t ld_layers_effective_width (LayerSet*, int32_t section);
+    LdString* ld_layers_selected (LayerSet*, int32_t section);
+    void ld_layers_set_selected (LayerSet*, int32_t section, const char* utf8, size_t len);
+    LdString* ld_layers_find_default_containing (LayerSet*, const Engine*, int32_t section, FaderRefC ref);
+    /** which: 0 default, 1 default + user, 2 user only, 3 the layer `id` (or the section's first). */
+    LayerList* ld_layers_list (LayerSet*, const Engine*, int32_t section, int32_t which, const char* id, size_t idLen);
     void ld_layer_list_free (LayerList*);
     int32_t ld_layer_list_len (const LayerList*);
     LdString* ld_layer_list_id (const LayerList*, int32_t i);
     LdString* ld_layer_list_name (const LayerList*, int32_t i);
     bool ld_layer_list_is_user (const LayerList*, int32_t i);
-    int32_t ld_layer_list_strips (const LayerList*, int32_t i, StripRefC* out, int32_t capacity);
-    LdString* ld_layers_add_user (LayerSet*, const char* name, size_t len, const StripRefC* strips, int32_t n);
+    int32_t ld_layer_list_faders (const LayerList*, int32_t i, FaderRefC* out, int32_t capacity);
+    LdString* ld_layers_add_user (LayerSet*, const char* name, size_t len, const FaderRefC* faders, int32_t n);
     void ld_layers_remove_user (LayerSet*, const char* id, size_t len);
     void ld_layers_rename_user (LayerSet*, const char* id, size_t len, const char* name, size_t nameLen);
     void ld_layers_move_user (LayerSet*, const char* id, size_t len, int32_t delta);
-    void ld_layers_add_to_user (LayerSet*, const char* id, size_t len, StripRefC ref);
-    void ld_layers_remove_from_user (LayerSet*, const char* id, size_t len, StripRefC ref);
+    void ld_layers_add_to_user (LayerSet*, const char* id, size_t len, FaderRefC ref);
+    void ld_layers_remove_from_user (LayerSet*, const char* id, size_t len, FaderRefC ref);
     void ld_layers_move_within_user (LayerSet*, const char* id, size_t len, int32_t index, int32_t delta);
     LdString* ld_layers_to_xml (LayerSet*);
     bool ld_layers_from_xml (LayerSet*, const char* utf8, size_t len);
@@ -340,25 +464,54 @@ inline const char* verifyLayout()
     LayoutInfo info {};
     ld_layout_info (&info);
 
-    if (info.abiVersion != kAbiVersion)                                        return "ABI version";
-    if (info.stripParamsSize != (int) sizeof (StripParams))                    return "StripParams size";
-    if (info.gateOffset != (int) offsetof (StripParams, gate))                 return "StripParams.gate";
-    if (info.eqOffset != (int) offsetof (StripParams, eq))                     return "StripParams.eq";
-    if (info.compOffset != (int) offsetof (StripParams, comp))                 return "StripParams.comp";
-    if (info.faderOffset != (int) offsetof (StripParams, faderDb))             return "StripParams.faderDb";
-    if (info.stereoOffset != (int) offsetof (StripParams, stereo))             return "StripParams.stereo";
-    if (info.outputRightOffset != (int) offsetof (StripParams, outputRight))   return "StripParams.outputRight";
-    if (info.recallSafeOffset != (int) offsetof (StripParams, recallSafe))     return "StripParams.recallSafe";
-    if (info.gateSize != (int) sizeof (GateParams))                            return "GateParams size";
-    if (info.eqSize != (int) sizeof (EqParams))                                return "EqParams size";
-    if (info.compSize != (int) sizeof (CompParams))                            return "CompParams size";
-    if (info.metersSize != (int) sizeof (StripMeters))                         return "StripMeters size";
-    if (info.metersDspFaultsOffset != (int) offsetof (StripMeters, dspFaults)) return "StripMeters.dspFaults";
-    if (info.sendSize != (int) sizeof (SendParams))                            return "SendParams size";
-    if (info.sendPreFaderOffset != (int) offsetof (SendParams, preFader))      return "SendParams.preFader";
-    if (info.controlsSize != (int) sizeof (EngineControls))                    return "EngineControls size";
-    if (info.controlsMonitorPeakOffset != (int) offsetof (EngineControls, monitorPeak))   return "EngineControls.monitorPeak";
-    if (info.controlsEngineFaultsOffset != (int) offsetof (EngineControls, engineFaults)) return "EngineControls.engineFaults";
+    struct Check
+    {
+        int32_t rust;
+        size_t cpp;
+        const char* what;
+    };
+
+    const Check checks[] = {
+        { info.stripParams, sizeof (StripParams), "StripParams size" },
+        { info.input, sizeof (InputParams), "InputParams size" },
+        { info.filter, sizeof (FilterParams), "FilterParams size" },
+        { info.dynSlot, sizeof (DynSlotParams), "DynSlotParams size" },
+        { info.eqBlock, sizeof (EqBlockParams), "EqBlockParams size" },
+        { info.insert, sizeof (InsertParams), "InsertParams size" },
+        { info.mainSend, sizeof (MainSendParams), "MainSendParams size" },
+        { info.matrixSend, sizeof (MatrixSendParams), "MatrixSendParams size" },
+        { info.meters, sizeof (StripMeters), "StripMeters size" },
+        { info.send, sizeof (SendParams), "SendParams size" },
+        { info.dca, sizeof (DcaParams), "DcaParams size" },
+        { info.fx, sizeof (FxParams), "FxParams size" },
+        { info.controls, sizeof (EngineControls), "EngineControls size" },
+        { info.offFilter, offsetof (StripParams, filter), "StripParams.filter" },
+        { info.offGate, offsetof (StripParams, gate), "StripParams.gate" },
+        { info.offEq, offsetof (StripParams, eq), "StripParams.eq" },
+        { info.offDynamics, offsetof (StripParams, dynamics), "StripParams.dynamics" },
+        { info.offPostInsert, offsetof (StripParams, postInsert), "StripParams.postInsert" },
+        { info.offFader, offsetof (StripParams, faderDb), "StripParams.faderDb" },
+        { info.offStereo, offsetof (StripParams, stereo), "StripParams.stereo" },
+        { info.offMains, offsetof (StripParams, mains), "StripParams.mains" },
+        { info.offMatrix, offsetof (StripParams, matrix), "StripParams.matrix" },
+        { info.offDcaMask, offsetof (StripParams, dcaMask), "StripParams.dcaMask" },
+        { info.offDirectLevel, offsetof (StripParams, directLevelDb), "StripParams.directLevelDb" },
+        { info.offColour, offsetof (StripParams, colour), "StripParams.colour" },
+        { info.offRecallSafe, offsetof (StripParams, recallSafe), "StripParams.recallSafe" },
+        { info.offDynValues, offsetof (DynSlotParams, values), "DynSlotParams.values" },
+        { info.offDynXoDepth, offsetof (DynSlotParams, xoDepth), "DynSlotParams.xoDepth" },
+        { info.offEqValues, offsetof (EqBlockParams, values), "EqBlockParams.values" },
+        { info.offSendPan, offsetof (SendParams, pan), "SendParams.pan" },
+        { info.offMetersAutomix, offsetof (StripMeters, automixDb), "StripMeters.automixDb" },
+        { info.offControlsDcas, offsetof (EngineControls, dcas), "EngineControls.dcas" },
+        { info.offControlsFx, offsetof (EngineControls, fx), "EngineControls.fx" },
+    };
+
+    if (info.abiVersion != kAbiVersion)
+        return "ABI version";
+    for (const auto& c : checks)
+        if (c.rust != (int32_t) c.cpp)
+            return c.what;
     return nullptr;
 }
 

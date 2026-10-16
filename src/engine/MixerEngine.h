@@ -1,9 +1,11 @@
 #pragma once
 
+#include "engine/FxSlots.h"
 #include "engine/Strip.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
+#include <array>
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -13,17 +15,21 @@
 namespace livedaw
 {
 
-/** The live mixing engine: a C++ facade over the Rust engine (rust/crates/livedaw-engine).
+/** The live mixing engine, laid out like a Behringer WING: a C++ facade over
+    the Rust engine (rust/crates/livedaw-engine).
 
     Signal flow per audio block (all in Rust):
-      1. every input strip reads its hardware input(s) and runs its chain   (parallel)
-      2. every bus sums the channel sends feeding it and runs its chain     (parallel)
-      3. the master sums assigned channels and groups and runs its chain
-      4. solo (PFL/AFL) builds the monitor bus, or the monitor follows master
-      5. master, buses, direct outs and monitor are written to the hardware outputs
+      1. channels and aux channels read their inputs and run their chains (parallel)
+      2. automix groups X/Y share gain between their channels
+      3. buses sum the sends feeding them (buses 9+ first, they can feed 1-8) (parallel)
+      4. the 4 mains sum their sends, the 8 matrices their sends + direct inputs
+      5. solo (PFL/AFL) builds the monitor bus, or the monitor follows Main 1
+      6. mains, buses, matrices, direct outs and monitor go to the hardware outputs
 
-    The number of input channels is only limited by CPU: strips are processed in
-    parallel on realtime worker threads (started here, run by the engine).
+    DCAs (16) and mute groups (8) act on any strip; the 16 FX slots hold the
+    plugins the strips' inserts use. The number of channels is only limited by
+    CPU: strips run in parallel on realtime worker threads (started here, run by
+    the engine), and more buses than the WING's 16 can be added.
 
     Structure changes happen on the message thread; the engine publishes a new
     immutable topology and frees removed strips later (ld_engine_collect).
@@ -38,31 +44,51 @@ public:
 
     //==============================================================================
     // Structure (message thread only)
-    const std::vector<std::unique_ptr<Strip>>& getInputs() const noexcept { return inputs; }
-    const std::vector<std::unique_ptr<Strip>>& getBuses() const noexcept { return buses; }
-    Strip& getMaster() noexcept { return *master; }
-    const Strip& getMaster() const noexcept { return *master; }
+    using StripList = std::vector<std::unique_ptr<Strip>>;
 
-    /** Grows or shrinks the number of input channels. New channel N is patched to
+    const StripList& getStrips (StripKind kind) const noexcept { return lists[(size_t) kind]; }
+    const StripList& getChannels() const noexcept { return getStrips (StripKind::Channel); }
+    const StripList& getAux() const noexcept { return getStrips (StripKind::Aux); }
+    const StripList& getBuses() const noexcept { return getStrips (StripKind::Bus); }
+    const StripList& getMains() const noexcept { return getStrips (StripKind::Main); }
+    const StripList& getMatrices() const noexcept { return getStrips (StripKind::Matrix); }
+    /** Main 1 (the default monitor source). */
+    Strip& getMain (int index = 0) const noexcept { return *getMains()[(size_t) juce::jlimit (0, kNumMains - 1, index)]; }
+
+    /** Grows or shrinks the number of channels. New channel N is patched to
         hardware input N (when it exists). */
-    void setNumInputs (int numInputs);
+    void setNumChannels (int numChannels);
 
-    /** Adds an input channel. `id` restores a saved id (ignored if already taken). */
-    Strip* addInput (int id = -1);
-    /** Adds an aux or group bus in the first free slot (or `slot` if it's free).
-        Returns nullptr only if all kMaxBuses (16384) slots are used. */
-    Strip* addBus (StripKind kind, int slot = -1);
+    /** Adds a channel. `id` restores a saved id (ignored if already taken). */
+    Strip* addChannel (int id = -1);
+    /** Adds a bus beyond the console's 16 in the first free slot (or `slot` if
+        free). Returns nullptr only if all kMaxBuses slots are used. */
+    Strip* addBus (int slot = -1);
+    /** Removes a channel, or a bus beyond the console's 16. */
     void removeStrip (Strip* strip);
 
-    /** Finds a bus by its slot id. */
     Strip* getBusInSlot (int slot) const noexcept;
+    Strip* findChannel (int id) const noexcept;
 
-    /** Removes all inputs and buses and resets the master (used when loading sessions). */
+    /** Back to a fresh console: no channels, default aux/buses/mains/matrices,
+        DCAs, mute groups and FX settings. */
     void reset();
 
     /** Rebuilds the strip lists from the engine after a change made directly in
         Rust (e.g. loading a show). Wrappers of strips that still exist are kept. */
     void syncStrips();
+
+    /** Bumped by every structural change (for views that cache strip pointers). */
+    int getStructureVersion() const noexcept { return structureVersion; }
+
+    //==============================================================================
+    // Groups and FX
+    DcaParams& getDca (int index) const noexcept { return controls.dcas[juce::jlimit (0, kNumDcas - 1, index)]; }
+    juce::String getDcaName (int index) const { return takeString (ld::ld_engine_group_name (engine, 0, index)); }
+    void setDcaName (int index, const juce::String&);
+    juce::String getMuteGroupName (int index) const { return takeString (ld::ld_engine_group_name (engine, 1, index)); }
+    void setMuteGroupName (int index, const juce::String&);
+    FxSlots& getFx() noexcept { return fx; }
 
 private:
     ld::Engine* engine;
@@ -78,6 +104,9 @@ public:
     std::atomic<float> (&monitorPeak)[2];
     std::atomic<bool>& anySoloActive;
 
+    /** Bit n = mute group n+1 engaged. */
+    std::atomic<uint32_t>& muteGroups;
+
     //==============================================================================
     // Stability / protection
     std::atomic<bool>& outputProtection;      // brick-wall safety clip on every hardware output
@@ -88,9 +117,9 @@ public:
     juce::uint32 getLastCallbackTime() const noexcept { return lastCallbackMs.load (std::memory_order_relaxed); }
     bool isDeviceRunning() const noexcept { return deviceRunning.load(); }
 
-    /** Sum of the NaN/inf faults caught on all strips and the number of auto-bypassed plugins. */
+    /** Sum of the NaN/inf faults caught on all strips and the number of auto-bypassed FX slots. */
     int getTotalDspFaults() const;
-    int getNumFaultedPlugins() const;
+    int getNumFaultedFx() const;
     /** Panics caught inside the engine (should stay 0). */
     int getEngineFaults() const noexcept { return controls.engineFaults.load(); }
 
@@ -158,10 +187,11 @@ private:
     void startWorkers (double sampleRate, int blockSize);
 
     Garbage garbage;
+    FxSlots fx;
     std::vector<std::unique_ptr<Worker>> workers;
 
-    std::vector<std::unique_ptr<Strip>> inputs, buses;
-    std::unique_ptr<Strip> master;
+    std::array<StripList, kNumStripKinds> lists;
+    int structureVersion = 0;
 
     juce::StringArray inputNames, outputNames;
     std::atomic<juce::uint32> lastCallbackMs { 0 };

@@ -5,7 +5,8 @@
 //! models, 2 = bus/main/matrix EQ models, 3 = filter tools. Lists: 0 = process
 //! orders, 1 = tap points, 2 = sidechain filters, 3 = crossover types,
 //! 4 = bus send modes, 5 = delay units, 6 = post insert modes, 7 = monitor
-//! buses, 8 = low-cut slopes, 9 = high-cut slopes, 10 = aux dynamics models.
+//! buses, 8 = low-cut slopes, 9 = high-cut slopes, 10 = aux dynamics models,
+//! 11 = strip colours (index 0 = WING colour 1).
 
 use crate::session::LdString;
 use livedaw_dsp::delay::DELAY_MODES;
@@ -16,7 +17,7 @@ use livedaw_dsp::wing::{
     ModelCategory, ModelSpec, ParamKind, ParamSpec, AUX_DYN_MODELS, DYN_MODELS, EQ_MODELS_BUS, EQ_MODELS_CH, FILTER_TOOLS,
     MAX_EQ_PARAMS, PROCESS_ORDERS, TAP_POINTS,
 };
-use livedaw_engine::params::{MONITOR_BUSES, POST_INSERT_MODES};
+use livedaw_engine::params::{colour_rgb, MONITOR_BUSES, POST_INSERT_MODES, WING_COLOURS};
 use livedaw_engine::{Strip, SEND_MODES};
 
 fn table(t: i32) -> &'static [ModelSpec] {
@@ -49,8 +50,25 @@ fn list(l: i32) -> &'static [&'static str] {
         8 => &LOW_CUT_SLOPES,
         9 => &HIGH_CUT_SLOPES,
         10 => AUX_DYN_MODELS,
+        11 => &COLOUR_NAMES,
         _ => &[],
     }
+}
+
+static COLOUR_NAMES: [&str; WING_COLOURS.len()] = {
+    let mut names = [""; WING_COLOURS.len()];
+    let mut i = 0;
+    while i < names.len() {
+        names[i] = WING_COLOURS[i].0;
+        i += 1;
+    }
+    names
+};
+
+/// RGB (0xRRGGBB) of WING colour `index` (1..18).
+#[no_mangle]
+pub extern "C" fn ld_colour_rgb(index: i32) -> u32 {
+    colour_rgb(index)
 }
 
 #[no_mangle]

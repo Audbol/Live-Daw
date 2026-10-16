@@ -1,4 +1,5 @@
 #include "TestHelpers.h"
+#include "engine/Models.h"
 #include "engine/Show.h"
 
 using namespace livedaw;
@@ -16,29 +17,38 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumInputs (3);
-            auto* aux = engine.addBus (StripKind::Aux);
-            engine.addBus (StripKind::Group);
-            aux->setName ("Wedge 1");
-            aux->params.outputLeft = 5;
+            engine.setNumChannels (3);
+            auto* extraBus = engine.addBus();
+            auto* bus = engine.getBusInSlot (0);
+            bus->setName ("Wedge 1");
+            bus->params.outputLeft = 5;
 
-            auto* kick = engine.getInputs()[1].get();
+            auto* kick = engine.getChannels()[1].get();
             auto& p = kick->params;
             kick->setName ("Kick");
+            kick->setColourIndex (9);
             p.stereo = true;
-            p.trimDb = 12.0f;
-            p.hpfEnabled = true;
-            p.gate.thresholdDb = -33.0f;
-            p.eq.bands[2].gainDb = -4.5f;
-            p.comp.ratio = 6.0f;
+            p.input.trimDb = 12.0f;
+            p.filter.lowCut = true;
+            p.gate.values[0] = -33.0f; // GATE thr
+            p.eq.values[7] = -4.5f;    // STD 2g
+            kick->setModel (ModelBlock::Dynamics, models::findModel (models::Dynamics, "B560"));
+            p.processOrder = 7;
             p.recallSafe = true;
-            kick->sends[(size_t) aux->getId()].enabled = true;
-            kick->sends[(size_t) aux->getId()].levelDb = -3.0f;
+            p.dcaMask = 0b101u;
+            p.mains[2].on = true;
+            kick->sends[0].enabled = true;
+            kick->sends[0].levelDb = -3.0f;
+            kick->sends[(size_t) extraBus->getId()].enabled = true;
             engine.monitorOutputLeft = 6;
             engine.outputCeilingDb = -1.0f;
+            engine.setDcaName (2, "Drums");
+            engine.getDca (2).faderDb = -5.0f;
+            engine.setMuteGroupName (0, "Band");
+            engine.muteGroups = 1u;
 
             // Remove channel 1 so ids are no longer contiguous: they must survive.
-            engine.removeStrip (engine.getInputs()[0].get());
+            engine.removeStrip (engine.getChannels()[0].get());
             const int kickId = kick->getId();
 
             auto xml = show.toXml();
@@ -47,30 +57,40 @@ public:
             Show restored (restoredEngine, host);
             const auto result = restored.loadFromXml (*xml);
             expect (result.wasOk(), result.getErrorMessage());
-            expectEquals ((int) restoredEngine.getInputs().size(), 2);
-            expectEquals ((int) restoredEngine.getBuses().size(), 2);
+            expectEquals ((int) restoredEngine.getChannels().size(), 2);
+            expectEquals ((int) restoredEngine.getBuses().size(), 17);
 
-            auto* r = state::findStrip (restoredEngine, { StripKind::Input, kickId });
+            auto* r = state::findStrip (restoredEngine, { StripKind::Channel, kickId });
             expect (r != nullptr);
             if (r == nullptr)
                 return;
 
             expectEquals (r->getName(), juce::String ("Kick"));
+            expectEquals (r->getColourIndex(), 9);
             expect (r->params.stereo.load());
-            expectEquals (r->params.trimDb.load(), 12.0f);
-            expect (r->params.hpfEnabled.load());
-            expectEquals (r->params.gate.thresholdDb.load(), -33.0f);
-            expectEquals (r->params.eq.bands[2].gainDb.load(), -4.5f);
-            expectEquals (r->params.comp.ratio.load(), 6.0f);
+            expectEquals (r->params.input.trimDb.load(), 12.0f);
+            expect (r->params.filter.lowCut.load());
+            expectEquals (r->params.gate.values[0].load(), -33.0f);
+            expectEquals (r->params.eq.values[7].load(), -4.5f);
+            expectEquals (models::model (models::Dynamics, r->params.dynamics.model.load()).token, juce::String ("B560"));
+            expectEquals (r->params.processOrder.load(), 7);
             expect (r->params.recallSafe.load());
-            expect (r->sends[(size_t) aux->getId()].enabled.load());
-            expectEquals (r->sends[(size_t) aux->getId()].levelDb.load(), -3.0f);
+            expectEquals ((int) r->params.dcaMask.load(), 0b101);
+            expect (r->params.mains[2].on.load());
+            expect (r->sends[0].enabled.load());
+            expectEquals (r->sends[0].levelDb.load(), -3.0f);
+            expect (r->sends[(size_t) extraBus->getId()].enabled.load());
             expectEquals (restoredEngine.monitorOutputLeft.load(), 6);
             expectEquals (restoredEngine.outputCeilingDb.load(), -1.0f);
-            expectEquals (restoredEngine.getBusInSlot (aux->getId())->getName(), juce::String ("Wedge 1"));
+            expectEquals (restoredEngine.getBusInSlot (0)->getName(), juce::String ("Wedge 1"));
+            expectEquals (restoredEngine.getDcaName (2), juce::String ("Drums"));
+            expectEquals (restoredEngine.getDca (2).faderDb.load(), -5.0f);
+            expectEquals (restoredEngine.getMuteGroupName (0), juce::String ("Band"));
+            expectEquals ((int) restoredEngine.muteGroups.load(), 1);
 
             // New channels must not reuse a restored id.
-            expect (restoredEngine.addInput()->getId() > kickId);
+            expect (restoredEngine.addChannel()->getId() > kickId);
+            engine.getGarbage().collectAllNow();
         }
 
         beginTest ("Scenes store and recall the console");
@@ -78,21 +98,21 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumInputs (2);
-            auto& ch1 = engine.getInputs()[0]->params;
+            engine.setNumChannels (2);
+            auto& ch1 = engine.getChannels()[0]->params;
 
             ch1.faderDb = -10.0f;
-            ch1.eq.bands[1].gainDb = 4.0f;
+            ch1.eq.values[4] = 4.0f;
             expectEquals (show.addScene ("Verse"), 0);
 
             ch1.faderDb = 3.0f;
-            ch1.eq.bands[1].gainDb = -2.0f;
+            ch1.eq.values[4] = -2.0f;
             ch1.mute = true;
             expectEquals (show.addScene ("Chorus"), 1);
 
             show.recallScene (0);
             expectEquals (ch1.faderDb.load(), -10.0f);
-            expectEquals (ch1.eq.bands[1].gainDb.load(), 4.0f);
+            expectEquals (ch1.eq.values[4].load(), 4.0f);
             expect (! ch1.mute.load());
             expectEquals (show.getCurrentSceneIndex(), 0);
 
@@ -110,11 +130,11 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumInputs (2);
-            for (int i = 0; i < 80; ++i)
-                engine.addBus (StripKind::Aux);
+            engine.setNumChannels (2);
+            for (int i = 0; i < 80 - kWingBuses; ++i)
+                engine.addBus();
 
-            auto& send = engine.getInputs()[1]->sends[(size_t) 79];
+            auto& send = engine.getChannels()[1]->sends[(size_t) 79];
             send.enabled = true;
             send.levelDb = -7.0f;
             show.addScene ("High sends");
@@ -131,7 +151,7 @@ public:
             Show loaded (e2, host);
             expect (loaded.loadFromXml (*xml).wasOk());
             expectEquals ((int) e2.getBuses().size(), 80);
-            auto* restored = e2.getInputs()[1]->sends.find (79);
+            auto* restored = e2.getChannels()[1]->sends.find (79);
             expect (restored != nullptr && restored->enabled.load());
         }
 
@@ -140,22 +160,22 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumInputs (1);
-            auto& p = engine.getInputs()[0]->params;
+            engine.setNumChannels (1);
+            auto& p = engine.getChannels()[0]->params;
 
             p.faderDb = -20.0f;
-            p.comp.thresholdDb = -30.0f;
+            p.dynamics.values[0] = -30.0f;
             p.inputLeft = 0;
             show.addScene ("A");
             show.setSceneScope (0, state::Fader); // only faders
 
             p.faderDb = 0.0f;
-            p.comp.thresholdDb = -10.0f;
+            p.dynamics.values[0] = -10.0f;
             p.inputLeft = 5;
             show.recallScene (0);
 
             expectEquals (p.faderDb.load(), -20.0f);
-            expectEquals (p.comp.thresholdDb.load(), -10.0f); // out of scope
+            expectEquals (p.dynamics.values[0].load(), -10.0f); // out of scope
             expectEquals (p.inputLeft.load(), 5);              // routing is never in the default scope
         }
 
@@ -164,14 +184,14 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumInputs (2);
-            auto& safe = engine.getInputs()[0]->params;
-            auto& other = engine.getInputs()[1]->params;
+            engine.setNumChannels (2);
+            auto& safe = engine.getChannels()[0]->params;
+            auto& other = engine.getChannels()[1]->params;
 
             safe.faderDb = -5.0f;
             other.faderDb = -5.0f;
             show.addScene ("A");
-            show.addSnippet (0, "Safe fader", state::Fader, { state::StripRef::of (*engine.getInputs()[0]) });
+            show.addSnippet (0, "Safe fader", state::Fader, { state::StripRef::of (*engine.getChannels()[0]) });
 
             safe.faderDb = 0.0f;
             other.faderDb = 0.0f;
@@ -191,23 +211,23 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumInputs (2);
-            auto& a = engine.getInputs()[0]->params;
-            auto& b = engine.getInputs()[1]->params;
+            engine.setNumChannels (2);
+            auto& a = engine.getChannels()[0]->params;
+            auto& b = engine.getChannels()[1]->params;
 
             show.addScene ("Base");
             a.faderDb = -7.0f;
-            a.eq.bands[0].gainDb = 5.0f;
+            a.eq.values[0] = 5.0f;
             b.faderDb = -7.0f;
-            show.addSnippet (0, "Ch1 fader", state::Fader, { state::StripRef::of (*engine.getInputs()[0]) });
+            show.addSnippet (0, "Ch1 fader", state::Fader, { state::StripRef::of (*engine.getChannels()[0]) });
 
             a.faderDb = 0.0f;
-            a.eq.bands[0].gainDb = 0.0f;
+            a.eq.values[0] = 0.0f;
             b.faderDb = 0.0f;
             show.recallSnippet (0, 0);
 
             expectEquals (a.faderDb.load(), -7.0f);
-            expectEquals (a.eq.bands[0].gainDb.load(), 0.0f); // section not in snippet
+            expectEquals (a.eq.values[0].load(), 0.0f); // section not in snippet
             expectEquals (b.faderDb.load(), 0.0f);            // strip not in snippet
         }
 
@@ -216,13 +236,13 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumInputs (1);
-            auto& p = engine.getInputs()[0]->params;
+            engine.setNumChannels (1);
+            auto& p = engine.getChannels()[0]->params;
 
             p.faderDb = -12.0f;
             show.addScene ("Scene");
             p.faderDb = -3.0f;
-            const int snip = show.addSnippet (0, "Override", state::Fader, { state::StripRef::of (*engine.getInputs()[0]) });
+            const int snip = show.addSnippet (0, "Override", state::Fader, { state::StripRef::of (*engine.getChannels()[0]) });
             show.setSnippetFireWithScene (0, snip, true);
 
             p.faderDb = 0.0f;
@@ -235,8 +255,8 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumInputs (1);
-            auto& p = engine.getInputs()[0]->params;
+            engine.setNumChannels (1);
+            auto& p = engine.getChannels()[0]->params;
 
             p.faderDb = -40.0f;
             p.mute = true;
@@ -256,16 +276,15 @@ public:
             expectEquals (p.faderDb.load(), -40.0f);
         }
 
-        beginTest ("Scene recall restores plugin state but never swaps plugins");
+        beginTest ("Scene recall restores FX state but never swaps plugins");
         {
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumInputs (1);
-            auto& strip = *engine.getInputs()[0];
+            auto& fx = engine.getFx();
 
             auto* plugin = new FakePlugin (0.5f);
-            strip.inserts.setPlugin (0, std::unique_ptr<juce::AudioPluginInstance> (plugin));
+            fx.setPlugin (0, std::unique_ptr<juce::AudioPluginInstance> (plugin));
             show.addScene ("Half");
 
             plugin->gain = 0.9f;
@@ -273,11 +292,11 @@ public:
             expectEquals (plugin->gain.load(), 0.5f);
 
             // A different plugin in the slot is left alone and reported.
-            strip.inserts.setPlugin (0, std::make_unique<FakePlugin> (0.25f, FakePlugin::Mode::Gain, "other"));
+            fx.setPlugin (0, std::make_unique<FakePlugin> (0.25f, FakePlugin::Mode::Gain, "other"));
             const auto result = show.recallScene (0);
             expectEquals (result.warnings.size(), 1);
-            expect (strip.inserts.getPlugin (0) != nullptr);
-            expectEquals (dynamic_cast<FakePlugin*> (strip.inserts.getPlugin (0))->gain.load(), 0.25f);
+            expect (fx.getPlugin (0) != nullptr);
+            expectEquals (dynamic_cast<FakePlugin*> (fx.getPlugin (0))->gain.load(), 0.25f);
             engine.getGarbage().collectAllNow();
         }
 
@@ -286,10 +305,10 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumInputs (4);
+            engine.setNumChannels (4);
             show.addScene ("One");
             show.addSnippet (0, "Snip", state::Fader | state::Sends,
-                             { state::StripRef::of (*engine.getInputs()[2]) });
+                             { state::StripRef::of (*engine.getChannels()[2]) });
             show.setSceneNotes (0, "Opening");
             show.setSceneFadeSeconds (0, 1.5);
 
@@ -299,7 +318,7 @@ public:
             const auto file = dir.getChildFile ("test.lshow");
 
             expect (show.saveToFile (file).wasOk());
-            engine.setNumInputs (6);
+            engine.setNumChannels (6);
             expect (show.saveToFile (file).wasOk()); // second save makes a .bak
             const auto backup = file.withFileExtension (".lshow.bak");
             expect (backup.existsAsFile());
@@ -307,7 +326,7 @@ public:
             MixerEngine e2 (0);
             Show loaded (e2, host);
             expect (loaded.loadFromFile (file).wasOk());
-            expectEquals ((int) e2.getInputs().size(), 6);
+            expectEquals ((int) e2.getChannels().size(), 6);
             expectEquals (loaded.getNumScenes(), 1);
             expectEquals (loaded.getScene (0)->notes, juce::String ("Opening"));
             expectEquals (loaded.getScene (0)->fadeSeconds, 1.5);
@@ -319,12 +338,12 @@ public:
             MixerEngine e3 (0);
             Show recovered (e3, host);
             expect (recovered.loadFromFile (file).wasOk());
-            expectEquals ((int) e3.getInputs().size(), 4);
+            expectEquals ((int) e3.getChannels().size(), 4);
 
             dir.deleteRecursively();
         }
 
-        beginTest ("Show files written by earlier (C++) versions load");
+        beginTest ("Show files written by earlier versions load in the WING layout");
         {
             PluginHost host (nullptr);
 
@@ -334,11 +353,12 @@ public:
             MixerEngine engine (0);
             Show show (engine, host);
             expect (show.loadFromFile (legacy).wasOk());
-            expectEquals ((int) engine.getInputs().size(), 19);
-            expectEquals ((int) engine.getBuses().size(), 1);
+            expectEquals ((int) engine.getChannels().size(), 19);
+            expectEquals ((int) engine.getBuses().size(), 16);
             expectEquals (engine.getBuses()[0]->getName(), juce::String ("Aux 1"));
-            expectEquals (engine.getInputs()[0]->getName(), juce::String ("Ch 1"));
-            expect (engine.getMaster().getColour().getARGB() == 0xffb83d4fu);
+            expect (! engine.getBuses()[0]->params.mains[0].on.load(), "an aux stays off the main");
+            expectEquals (engine.getChannels()[0]->getName(), juce::String ("Ch 1"));
+            expectEquals (engine.getMain().getColourIndex(), 9);
 
             // Scenes, snippets, plugins and awkward text, written by JUCE.
             juce::XmlElement root ("LiveDAWShow");
@@ -380,17 +400,22 @@ public:
             const auto result = loaded.loadFromFile (file);
             expect (result.failed()); // the plugin can't be created here...
             expect (result.getErrorMessage().contains ("Missing Reverb"));
-            expectEquals ((int) e2.getInputs().size(), 1); // ...but everything else loads
+            expectEquals ((int) e2.getChannels().size(), 1); // ...but everything else loads
+            auto& ch = *e2.getChannels()[0];
+            expectEquals (ch.params.preInsert.fx.load(), 0, "the plugin moved to FX slot 1");
             expectEquals (loaded.getName(), juce::String ("Gig \"A\" & <B>\nline 2"));
-            expectEquals (e2.getInputs()[0]->getName(), juce::String::fromUTF8 ("Gr\xc3\xbc\xc3\x9f Gott \xe2\x99\xab"));
-            expectEquals (e2.getInputs()[0]->params.faderDb.load(), -12.5f);
+            expectEquals (ch.getName(), juce::String::fromUTF8 ("Gr\xc3\xbc\xc3\x9f Gott \xe2\x99\xab"));
+            expectEquals (ch.params.faderDb.load(), -12.5f);
             expectEquals (loaded.getScene (0)->name, juce::String ("Verse"));
             expectEquals (loaded.getScene (0)->fadeSeconds, 2.5);
-            expectEquals ((int) loaded.getSnippet (0, 0)->strips.size(), 2);
-            expect (loaded.getSnippet (0, 0)->fireWithScene);
+            const auto snip = loaded.getSnippet (0, 0);
+            expectEquals ((int) snip->strips.size(), 2);
+            expect (snip->strips[0] == state::StripRef { StripKind::Channel, 7 });
+            expect (snip->strips[1] == state::StripRef { StripKind::Main, 0 });
+            expect (snip->fireWithScene);
             loaded.setSceneFadeSeconds (0, 0.0);
             loaded.recallScene (0);
-            expectEquals (e2.getInputs()[0]->params.faderDb.load(), -3.0f);
+            expectEquals (ch.params.faderDb.load(), -3.0f);
             file.deleteFile();
         }
 
@@ -399,20 +424,20 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumInputs (1);
-            engine.getInputs()[0]->inserts.setPlugin (0, std::make_unique<FakePlugin>());
+            engine.setNumChannels (1);
+            engine.getFx().setPlugin (0, std::make_unique<FakePlugin>());
             auto xml = show.toXml();
 
             MixerEngine e2 (0);
             Show safe (e2, host);
             expect (safe.loadFromXml (*xml, false).wasOk());
-            expect (e2.getInputs()[0]->inserts.isEmpty());
+            expect (! e2.getFx().isLoaded (0));
 
             // Normal mode reports the plugin it can't create (no "Fake" format) but loads the rest.
             MixerEngine e3 (0);
             Show normal (e3, host);
             expect (normal.loadFromXml (*xml, true).failed());
-            expectEquals ((int) e3.getInputs().size(), 1);
+            expectEquals ((int) e3.getChannels().size(), 1);
             engine.getGarbage().collectAllNow();
         }
     }

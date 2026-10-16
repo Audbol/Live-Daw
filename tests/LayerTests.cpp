@@ -16,138 +16,136 @@ public:
         return n;
     }
 
+    static std::vector<Strip*> resolve (const MixerEngine& engine, const Layer& layer)
+    {
+        std::vector<Strip*> strips;
+        for (auto& f : layer.faders)
+            if (! f.dca)
+                if (auto* s = state::findStrip (engine, f.strip))
+                    strips.push_back (s);
+        return strips;
+    }
+
     void runTest() override
     {
-        beginTest ("Default layers bank every strip of the console");
+        using S = LayerSet::Section;
+
+        beginTest ("Default banks follow the WING's three fader sections");
         {
             MixerEngine engine (0);
             LayerSet layers;
-            engine.setNumInputs (40);
-            engine.addBus (StripKind::Aux);
-            engine.addBus (StripKind::Aux);
-            engine.addBus (StripKind::Group);
+            engine.setNumChannels (40);
 
-            const auto defaults = layers.getDefaultLayers (engine);
-            expectEquals (names (defaults).joinIntoString ("|"),
-                          juce::String ("Ch 1-16|Ch 17-32|Ch 33-40|Aux|Groups|All"));
-            expectEquals ((int) defaults[0].strips.size(), 16);
-            expectEquals ((int) defaults[2].strips.size(), 8);
-            expectEquals ((int) defaults[3].strips.size(), 2);
-            expectEquals ((int) defaults.back().strips.size(), 43);
+            expectEquals (names (layers.getDefaultLayers (engine, S::Left)).joinIntoString ("|"),
+                          juce::String::fromUTF8 ("CH 1-12|CH 13-24|CH 25-36|CH 37-40 \xc2\xb7 AUX 1-8|BUS 1-12|BUS 13-16|"
+                                                  "DCA 1-12|DCA 13-16|MAIN 1-4 \xc2\xb7 MTX 1-8|ALL"));
+            expectEquals (layers.getSelectedLayer (engine, S::Center).name, juce::String ("BUS 1-8"));
+            expectEquals (layers.getSelectedLayer (engine, S::Right).name, juce::String ("MAIN 1-4"));
 
-            // Every strip except the (always visible) master is on some bank layer.
-            int covered = 0;
-            for (size_t i = 0; i + 1 < defaults.size(); ++i)
-                covered += (int) defaults[i].strips.size();
-            expectEquals (covered, 43);
+            const auto all = layers.getDefaultLayers (engine, S::Left).back();
+            expectEquals ((int) all.faders.size(), 40 + 8 + 16 + 4 + 8 + 16);
+
+            const auto dcas = layers.findLayer (engine, S::Center, "dca-2");
+            expect (dcas.faders[0].dca && dcas.faders[0].dcaIndex == 8);
         }
 
-        beginTest ("Defaults follow the console and the bank size");
+        beginTest ("Banks follow the console and the section width");
         {
             MixerEngine engine (0);
             LayerSet layers;
-            engine.setNumInputs (8);
-            expectEquals (names (layers.getDefaultLayers (engine)).joinIntoString ("|"), juce::String ("Ch|All"));
+            engine.setNumChannels (8);
+            expectEquals (layers.getDefaultLayers (engine, S::Left)[0].name, juce::String::fromUTF8 ("CH 1-8 \xc2\xb7 AUX 1-4"));
 
-            engine.setNumInputs (20);
-            layers.setBankSize (8);
-            expectEquals (names (layers.getDefaultLayers (engine)).joinIntoString ("|"),
-                          juce::String ("Ch 1-8|Ch 9-16|Ch 17-20|All"));
-
-            // Bank ids are stable so the selection survives topology changes.
-            expectEquals (layers.getDefaultLayers (engine)[1].id, juce::String ("in-2"));
-        }
-
-        beginTest ("Auto bank size follows the strips that fit the window");
-        {
-            MixerEngine engine (0);
-            LayerSet layers;
-            engine.setNumInputs (100);
-            expect (layers.isAutoBankSize());
-
-            layers.setFittedBankSize (48); // e.g. an ultrawide monitor
-            expectEquals (names (layers.getDefaultLayers (engine)).joinIntoString ("|"),
-                          juce::String ("Ch 1-48|Ch 49-96|Ch 97-100|All"));
+            engine.setNumChannels (100);
+            layers.setWidth (S::Left, LayerSet::kAutoWidth);
+            layers.setFittedWidth (S::Left, 48); // e.g. an ultrawide monitor
+            const auto banks = layers.getDefaultLayers (engine, S::Left);
+            expectEquals (banks[0].name, juce::String ("CH 1-48"));
+            expectEquals (banks[2].name, juce::String::fromUTF8 ("CH 97-100 \xc2\xb7 AUX 1-8"));
 
             // After a resize, the bank holding channel 60 is found again.
-            const auto ch60 = state::StripRef::of (*engine.getInputs()[59]);
-            expectEquals (layers.findDefaultLayerContaining (engine, ch60), juce::String ("in-2"));
-            layers.setFittedBankSize (20);
-            expectEquals (layers.findDefaultLayerContaining (engine, ch60), juce::String ("in-3"));
+            const auto ch60 = state::FaderRef::of (state::StripRef::of (*engine.getChannels()[59]));
+            expectEquals (layers.findDefaultLayerContaining (engine, S::Left, ch60), juce::String ("in-2"));
+            layers.setFittedWidth (S::Left, 20);
+            expectEquals (layers.findDefaultLayerContaining (engine, S::Left, ch60), juce::String ("in-3"));
 
-            // A fixed bank size overrides the window.
-            layers.setBankSize (32);
-            expectEquals (layers.getEffectiveBankSize(), 32);
+            layers.setWidth (S::Left, 12);
+            expectEquals (layers.getEffectiveWidth (S::Left), 12);
         }
 
-        beginTest ("User layers hold any strips in any order");
+        beginTest ("User banks hold any faders in any order");
         {
             MixerEngine engine (0);
             LayerSet layers;
-            engine.setNumInputs (4);
-            auto* aux = engine.addBus (StripKind::Aux);
-            auto& ch3 = *engine.getInputs()[2];
-            auto& ch1 = *engine.getInputs()[0];
+            engine.setNumChannels (4);
+            auto& bus = *engine.getBusInSlot (3);
+            auto& ch3 = *engine.getChannels()[2];
+            auto& ch1 = *engine.getChannels()[0];
 
             const auto id = layers.addUserLayer ("Vocals + wedge");
-            layers.addToUserLayer (id, state::StripRef::of (engine.getMaster()));
-            layers.addToUserLayer (id, state::StripRef::of (ch3));
-            layers.addToUserLayer (id, state::StripRef::of (*aux));
-            layers.addToUserLayer (id, state::StripRef::of (ch1));
-            layers.addToUserLayer (id, state::StripRef::of (ch3)); // duplicate ignored
+            layers.addToUserLayer (id, state::FaderRef::of (state::StripRef::of (engine.getMain())));
+            layers.addToUserLayer (id, state::FaderRef::of (state::StripRef::of (ch3)));
+            layers.addToUserLayer (id, state::FaderRef::of (state::StripRef::of (bus)));
+            layers.addToUserLayer (id, state::FaderRef::ofDca (5));
+            layers.addToUserLayer (id, state::FaderRef::of (state::StripRef::of (ch1)));
+            layers.addToUserLayer (id, state::FaderRef::of (state::StripRef::of (ch3))); // duplicate ignored
 
-            auto strips = LayerSet::resolve (engine, layers.findLayer (engine, id));
-            expectEquals ((int) strips.size(), 4);
-            expect (strips[0] == &engine.getMaster());
+            auto layer = layers.findLayer (engine, S::Center, id);
+            expectEquals ((int) layer.faders.size(), 5);
+            expect (layer.faders[3].dca && layer.faders[3].dcaIndex == 5);
+            auto strips = resolve (engine, layer);
+            expect (strips[0] == &engine.getMain());
             expect (strips[1] == &ch3);
-            expect (strips[2] == aux);
+            expect (strips[2] == &bus);
             expect (strips[3] == &ch1);
 
-            layers.moveWithinUserLayer (id, 3, -2); // ch1 before the aux... then before ch3
-            strips = LayerSet::resolve (engine, layers.findLayer (engine, id));
-            expect (strips[1] == &ch1);
+            layers.moveWithinUserLayer (id, 4, -1);
+            layers.moveWithinUserLayer (id, 3, -1);
+            strips = resolve (engine, layers.findLayer (engine, S::Center, id));
+            expect (strips[2] == &ch1);
 
-            // Removed strips simply disappear from the layer.
+            // Removed strips simply disappear from the bank.
             engine.removeStrip (&ch3);
-            strips = LayerSet::resolve (engine, layers.findLayer (engine, id));
+            strips = resolve (engine, layers.findLayer (engine, S::Center, id));
             expectEquals ((int) strips.size(), 3);
             engine.getGarbage().collectAllNow();
         }
 
-        beginTest ("Unknown layer ids fall back to the first layer");
+        beginTest ("Unknown bank ids fall back to the section's first bank");
         {
             MixerEngine engine (0);
             LayerSet layers;
-            engine.setNumInputs (2);
-            expectEquals (layers.findLayer (engine, "groups-3").id, juce::String ("in-1"));
+            engine.setNumChannels (2);
+            expectEquals (layers.findLayer (engine, S::Right, "groups-3").id, juce::String ("in-1"));
         }
 
-        beginTest ("Layers are saved with the show");
+        beginTest ("Banks are saved with the show");
         {
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumInputs (6);
-            auto* group = engine.addBus (StripKind::Group);
-            show.layers.setBankSize (12);
-            const auto id = show.layers.addUserLayer ("Band", { state::StripRef::of (*engine.getInputs()[5]),
-                                                                state::StripRef::of (*group) });
-            show.layers.setSelectedLayerId (id);
+            engine.setNumChannels (6);
+            show.layers.setWidth (S::Left, LayerSet::kAutoWidth);
+            const auto id = show.layers.addUserLayer ("Band", { state::FaderRef::of (state::StripRef::of (*engine.getChannels()[5])),
+                                                                state::FaderRef::ofDca (0) });
+            show.layers.setSelectedLayerId (S::Right, id);
 
             auto xml = show.toXml();
             MixerEngine e2 (0);
             Show loaded (e2, host);
             expect (loaded.loadFromXml (*xml).wasOk());
 
-            expectEquals (loaded.layers.getBankSize(), 12);
-            expectEquals (loaded.layers.getSelectedLayerId(), id);
+            expect (loaded.layers.isAutoWidth (S::Left));
+            expectEquals (loaded.layers.getSelectedLayerId (S::Right), id);
+            expectEquals (loaded.layers.getSelectedLayerId (S::Left), juce::String ("in-1"));
             expectEquals ((int) loaded.layers.getUserLayers().size(), 1);
-            const auto strips = LayerSet::resolve (e2, loaded.layers.findLayer (e2, id));
-            expectEquals ((int) strips.size(), 2);
-            expect (strips[1]->getKind() == StripKind::Group);
+            const auto layer = loaded.layers.findLayer (e2, S::Right, id);
+            expectEquals ((int) layer.faders.size(), 2);
+            expect (layer.faders[1].dca);
 
             loaded.clear (4);
             expect (loaded.layers.getUserLayers().empty());
+            expectEquals ((int) e2.getChannels().size(), 4);
         }
     }
 };

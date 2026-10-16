@@ -265,7 +265,9 @@ impl Converter {
                     [("threshold", "thr"), ("range", "range"), ("attack", "att"), ("hold", "hld"), ("release", "rel")]
                 {
                     if g.has_attr(from) {
-                        param(gate, to, g.double_or(from, 0.0));
+                        let v = g.double_or(from, 0.0);
+                        // The old gate stored its range as a negative gain.
+                        param(gate, to, if to == "range" { v.abs() } else { v });
                     }
                 }
             } else {
@@ -441,7 +443,7 @@ mod tests {
             r#"<Strip ref="input:4" sections="511" name="Kick" colour="ffe83a3a" stereo="0" inL="3" inR="-1"
                  outL="-1" outR="-1" mainAssign="1" trimDb="6" polarity="1" hpf="1" hpfFreq="90"
                  faderDb="-5" pan="-0.5" mute="1">
-               <Gate on="1" threshold="-33" range="40" attack="1" hold="20" release="150"/>
+               <Gate on="1" threshold="-33" range="-40" attack="1" hold="20" release="150"/>
                <Eq on="1">
                  <Band index="0" type="1" freq="120" gain="3" q="0.7" on="1"/>
                  <Band index="1" type="0" freq="400" gain="-4" q="2" on="1"/>
@@ -465,6 +467,7 @@ mod tests {
         let gate = s.child("Gate").unwrap();
         assert_eq!(p(gate, "thr"), Some(-33.0));
         assert_eq!(p(gate, "hld"), Some(20.0));
+        assert_eq!(p(gate, "range"), Some(40.0));
         let eq = s.child("Eq").unwrap();
         assert_eq!((p(eq, "lf"), p(eq, "lg"), p(eq, "leq")), (Some(120.0), Some(3.0), Some(1.0)));
         assert_eq!((p(eq, "2f"), p(eq, "2g"), p(eq, "2q")), (Some(400.0), Some(-4.0), Some(2.0)));

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "engine/Parameters.h"
-#include "engine/PluginChain.h"
 #include "engine/RustStrings.h"
 
 #include <juce_graphics/juce_graphics.h>
@@ -9,16 +8,29 @@
 namespace livedaw
 {
 
+/** The WING's strip types. */
 enum class StripKind
 {
-    Input = ld::kInput,  // fed by hardware inputs
-    Aux = ld::kAux,      // fed by channel sends, usually sent to a hardware output
-    Group = ld::kGroup,  // fed by channel sends, usually routed to the master
-    Master = ld::kMaster // main L/R
+    Channel = ld::kChannel, // input channel (40 on the console, more here if the CPU allows)
+    Aux = ld::kAux,         // aux input channel (8)
+    Bus = ld::kBus,         // stereo mix bus (16, more can be added)
+    Main = ld::kMain,       // stereo main bus (4)
+    Matrix = ld::kMatrix    // stereo matrix bus (8)
 };
 
+constexpr int kNumStripKinds = 5;
+
+/** Name used in show files ("ch", "aux", "bus", "main", "mtx"). */
 const char* toString (StripKind kind) noexcept;
 StripKind stripKindFromString (const juce::String& s) noexcept;
+/** Scribble strip label ("CH", "AUX", "BUS", "MAIN", "MTX"). */
+const char* label (StripKind kind) noexcept;
+
+inline bool isInputKind (StripKind k) noexcept { return k == StripKind::Channel || k == StripKind::Aux; }
+
+/** The WING colour palette (index 1..18). */
+juce::Colour wingColour (int index) noexcept;
+juce::String wingColourName (int index);
 
 /** A strip's sends to every bus slot (storage in the Rust engine, grown on demand). */
 class SendBank
@@ -41,22 +53,40 @@ private:
     ld::Strip* strip;
 };
 
-/** C++ view of one console strip of the Rust engine: trim -> polarity -> HPF ->
-    gate -> 4-band EQ -> compressor -> inserts -> mute -> fader -> pan.
+/** Blocks that hold a model (see ld_strip_set_model). */
+enum class ModelBlock : int32_t
+{
+    Gate = 0,
+    Eq = 1,
+    Dynamics = 2,
+    FilterTool = 3
+};
 
-    Stateless: parameters, meters, name, colour and plugin slots all live in the
-    engine, so a Strip can be recreated for the same handle at any time.
-    Message thread only (the audio thread is in Rust). */
+/** C++ view of one strip of the Rust engine: INPUT -> FILTER -> GATE, EQ,
+    DYNAMICS and PRE INSERT in the selected process order -> fader, DCAs, mute
+    groups -> POST INSERT -> pan/width -> sends to buses, mains and matrices.
+
+    Stateless: parameters, meters and the name live in the engine, so a Strip
+    can be recreated for the same handle at any time. Message thread only (the
+    audio thread is in Rust). */
 class Strip
 {
 public:
     Strip (ld::Engine* engine, ld::Strip* handle);
 
     StripKind getKind() const noexcept { return kind; }
-    bool isBus() const noexcept { return kind == StripKind::Aux || kind == StripKind::Group; }
+    bool isInput() const noexcept { return isInputKind (kind); }
+    bool isOutput() const noexcept { return ! isInput(); }
+    bool isBus() const noexcept { return kind == StripKind::Bus; }
 
-    /** Inputs: a stable id. Buses: the bus slot sends refer to. Master: 0. */
+    /** Channels: a stable id. Aux, buses, mains and matrices: their 0-based slot. */
     int getId() const noexcept { return id; }
+
+    /** Position-based number shown on the scribble strip (1-based, set by MixerEngine). */
+    int getNumber() const noexcept { return number; }
+    void setNumber (int n) noexcept { number = n; }
+    /** "CH 3", "BUS 12", ... */
+    juce::String getLabel() const { return juce::String (livedaw::label (kind)) + " " + juce::String (number); }
 
     ld::Strip* getHandle() const noexcept { return handle; }
 
@@ -67,20 +97,22 @@ public:
         ld::ld_strip_set_name (handle, u.data, u.size);
     }
 
-    juce::Colour getColour() const noexcept { return juce::Colour (ld::ld_strip_colour (handle)); }
-    void setColour (juce::Colour c) const noexcept { ld::ld_strip_set_colour (handle, c.getARGB()); }
+    int getColourIndex() const noexcept { return params.colour.load(); }
+    void setColourIndex (int index) const noexcept { params.colour.store (juce::jlimit (1, 18, index)); }
+    juce::Colour getColour() const noexcept { return wingColour (getColourIndex()); }
+
+    /** Selects a model for a block and loads its defaults. */
+    void setModel (ModelBlock block, int model) const noexcept
+    {
+        ld::ld_strip_set_model (handle, static_cast<int32_t> (block), model);
+    }
+
+    /** The model table of this strip's EQ (1 = channel EQs, 2 = bus EQs). */
+    int getEqTable() const noexcept { return isOutput() ? 2 : 1; }
 
     StripParams& params;
     SendBank sends;
-    PluginChain inserts;
-
-    // Meters (peaks are "max since last read": exchange with 0 to read)
-    std::atomic<float> (&inputPeak)[2];
-    std::atomic<float> (&outputPeak)[2];
-    std::atomic<float>& gateGain;
-    std::atomic<float>& compReductionDb;
-    std::atomic<int32_t>& currentWidth;
-    std::atomic<int32_t>& dspFaults;
+    ld::StripMeters& meters;
 
     int getNumChannels() const noexcept { return ld::ld_strip_num_channels (handle); }
     bool isIdle() const noexcept { return ld::ld_strip_is_idle (handle); }
@@ -89,7 +121,7 @@ private:
     ld::Strip* handle;
     StripKind kind;
     int id;
-    ld::StripMeters& meters;
+    int number = 1;
 
     JUCE_DECLARE_NON_COPYABLE (Strip)
 };

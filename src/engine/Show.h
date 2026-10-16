@@ -18,8 +18,8 @@ namespace livedaw
     hold snippets. Implemented in Rust (crate livedaw-session); this class is the
     C++ interface and hosts the plugins the session refers to.
 
-      Show     - the whole file: console structure (channels, buses, plugins,
-                 patching) and every scene.
+      Show     - the whole file: console structure (channels, buses, FX slot
+                 plugins, patching), DCAs, mute groups, fader banks and every scene.
       Scene    - a snapshot of the console. Recalling it applies the sections in
                  its recall scope to every strip that isn't recall-safe. It can
                  glide faders, pans and send levels over a fade time.
@@ -63,7 +63,7 @@ public:
     juce::String getName() const { return takeString (ld::ld_show_name (handle)); }
     void setName (const juce::String&);
 
-    /** Fader layers (default banks + user layers), saved with the show. */
+    /** Fader banks of the three sections (default + user banks), saved with the show. */
     LayerSet layers;
 
     //==============================================================================
@@ -123,11 +123,14 @@ public:
     juce::Result saveToFile (const juce::File&) const;
     juce::Result loadFromFile (const juce::File&, bool loadPlugins = true);
 
-    /** Clears scenes and resets the console to `numChannels` inputs. */
+    /** Clears scenes and resets the console to `numChannels` channels (the WING has 40). */
     void clear (int numChannels);
 
     /** Called after any change to the scene list or current scene. */
     std::function<void()> onChanged;
+
+    /** Called before a show load empties FX slot `slot` (close its plugin editor here). */
+    std::function<void (int slot)> onFxCleared;
 
     static constexpr const char* fileExtension = ".lshow";
 
@@ -137,10 +140,10 @@ private:
     state::ApplyResult afterRecall (ld::ApplyResultC&);
     juce::Result afterLoad (bool ok, ld::LdString* message);
 
-    static bool captureInsert (void* ctx, const ld::Strip*, int32_t slot, ld::LdSink* description, ld::LdSink* state);
-    static int32_t restoreInsert (void* ctx, const ld::Strip*, int32_t slot, int32_t mode,
-                                  const char* description, size_t descriptionLen,
-                                  const char* state, size_t stateLen, ld::LdSink* error);
+    static bool captureFx (void* ctx, int32_t slot, ld::LdSink* description, ld::LdSink* state);
+    static int32_t restoreFx (void* ctx, int32_t slot, int32_t mode, const char* description, size_t descriptionLen,
+                              const char* state, size_t stateLen, ld::LdSink* error);
+    static void clearFx (void* ctx, int32_t slot);
 
     JUCE_DECLARE_NON_COPYABLE (Show)
 };

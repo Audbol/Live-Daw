@@ -1,9 +1,9 @@
-#include "engine/PluginChain.h"
+#include "engine/FxSlots.h"
 
 namespace livedaw
 {
 
-struct PluginChain::Holder
+struct FxSlots::Holder
 {
     std::unique_ptr<juce::AudioPluginInstance> plugin;
     juce::AudioBuffer<float> scratch;
@@ -74,19 +74,15 @@ namespace
     }
 } // namespace
 
-PluginChain::PluginChain (ld::Engine* e, ld::Strip* s) : engine (e), strip (s) {}
-
-PluginChain::Holder* PluginChain::holderAt (int slot) const noexcept
+FxSlots::Holder* FxSlots::holderAt (int slot) const noexcept
 {
-    // Every insert callback context registered with the engine is a Holder (see setPlugin).
-    return juce::isPositiveAndBelow (slot, kNumInsertSlots)
-               ? static_cast<Holder*> (ld::ld_strip_insert_ctx (strip, slot))
-               : nullptr;
+    // Every slot context registered with the engine is a Holder (see setPlugin).
+    return juce::isPositiveAndBelow (slot, kNumFx) ? static_cast<Holder*> (ld::ld_fx_ctx (engine, slot)) : nullptr;
 }
 
-void PluginChain::prepare (double sampleRate, int maxBlockSize)
+void FxSlots::prepare (double sampleRate, int maxBlockSize)
 {
-    for (int slot = 0; slot < kNumInsertSlots; ++slot)
+    for (int slot = 0; slot < kNumFx; ++slot)
     {
         if (auto* h = holderAt (slot))
         {
@@ -96,59 +92,38 @@ void PluginChain::prepare (double sampleRate, int maxBlockSize)
     }
 }
 
-void PluginChain::setPlugin (int slot, std::unique_ptr<juce::AudioPluginInstance> plugin)
+void FxSlots::setPlugin (int slot, std::unique_ptr<juce::AudioPluginInstance> plugin)
 {
-    if (! juce::isPositiveAndBelow (slot, kNumInsertSlots))
+    if (! juce::isPositiveAndBelow (slot, kNumFx))
         return;
 
-    Holder* holder = nullptr;
-
-    if (plugin != nullptr)
+    if (plugin == nullptr)
     {
-        holder = new Holder();
-        holder->plugin = std::move (plugin);
-        configureForStereo (*holder->plugin);
-        holder->prepare (ld::ld_engine_sample_rate (engine), ld::ld_engine_block_size (engine));
+        ld::ld_fx_set (engine, slot, nullptr);
+        return;
     }
 
-    if (holder != nullptr)
-    {
-        const ld::InsertCallbacks callbacks { &Holder::process, &Holder::release, holder };
-        ld::ld_strip_set_insert (engine, strip, slot, &callbacks);
-    }
-    else
-    {
-        ld::ld_strip_set_insert (engine, strip, slot, nullptr);
-    }
+    auto* holder = new Holder();
+    holder->plugin = std::move (plugin);
+    configureForStereo (*holder->plugin);
+    holder->prepare (ld::ld_engine_sample_rate (engine), ld::ld_engine_block_size (engine));
+
+    const ld::InsertCallbacks callbacks { &Holder::process, &Holder::release, holder };
+    ld::ld_fx_set (engine, slot, &callbacks);
 }
 
-juce::AudioPluginInstance* PluginChain::getPlugin (int slot) const noexcept
+juce::AudioPluginInstance* FxSlots::getPlugin (int slot) const noexcept
 {
     auto* h = holderAt (slot);
     return h != nullptr ? h->plugin.get() : nullptr;
 }
 
-void PluginChain::setBypassed (int slot, bool bypassed) noexcept { ld::ld_strip_insert_set_bypassed (strip, slot, bypassed); }
-bool PluginChain::isBypassed (int slot) const noexcept         { return ld::ld_strip_insert_is_bypassed (strip, slot); }
-bool PluginChain::isFaulted (int slot) const noexcept          { return ld::ld_strip_insert_is_faulted (strip, slot); }
-void PluginChain::clearFault (int slot) noexcept                { ld::ld_strip_insert_clear_fault (strip, slot); }
-float PluginChain::getSlotLoad (int slot) const noexcept       { return ld::ld_strip_insert_load (strip, slot); }
-
-bool PluginChain::isEmpty() const noexcept
+juce::String FxSlots::describe (int slot) const
 {
-    for (int slot = 0; slot < kNumInsertSlots; ++slot)
-        if (holderAt (slot) != nullptr)
-            return false;
-    return true;
-}
-
-int PluginChain::getTotalLatencySamples() const noexcept
-{
-    int total = 0;
-    for (int i = 0; i < kNumInsertSlots; ++i)
-        if (auto* p = getPlugin (i); p != nullptr && ! isBypassed (i))
-            total += p->getLatencySamples();
-    return total;
+    juce::String s ("FX " + juce::String (slot + 1));
+    if (auto* p = getPlugin (slot))
+        s << ": " << p->getName();
+    return s;
 }
 
 } // namespace livedaw

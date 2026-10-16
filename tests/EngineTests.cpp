@@ -1,4 +1,5 @@
 #include "TestHelpers.h"
+#include "engine/Models.h"
 
 #include <vector>
 
@@ -20,51 +21,120 @@ public:
             expect (mismatch == nullptr, mismatch != nullptr ? juce::String (mismatch) : juce::String());
         }
 
-        beginTest ("Input channel reaches the master through pan law");
+        beginTest ("The console has the WING layout");
+        {
+            MixerEngine engine (0);
+            engine.setNumChannels (kWingChannels);
+            expectEquals ((int) engine.getChannels().size(), 40);
+            expectEquals ((int) engine.getAux().size(), 8);
+            expectEquals ((int) engine.getBuses().size(), 16);
+            expectEquals ((int) engine.getMains().size(), 4);
+            expectEquals ((int) engine.getMatrices().size(), 8);
+            expectEquals (engine.getChannels()[39]->getLabel(), juce::String ("CH 40"));
+            expectEquals (engine.getBuses()[15]->getLabel(), juce::String ("BUS 16"));
+            expectEquals (engine.getMain().getLabel(), juce::String ("MAIN 1"));
+            expect (engine.getChannels()[0]->params.mains[0].on.load(), "channels feed Main 1");
+            expect (! engine.getBuses()[0]->params.mains[0].on.load(), "buses start as aux mixes");
+            expect (engine.getChannels()[0]->getColour() == wingColour (1));
+            expectEquals (wingColourName (9), juce::String ("Red"));
+
+            // Wrappers survive structure changes; numbering follows position.
+            auto* ch5 = engine.getChannels()[4].get();
+            engine.removeStrip (engine.getChannels()[0].get());
+            expect (engine.getChannels()[3].get() == ch5);
+            expectEquals (ch5->getNumber(), 4);
+            expectEquals (ch5->getId(), 5);
+            engine.getGarbage().collectAllNow();
+        }
+
+        beginTest ("Model tables describe the processing for the UI");
+        {
+            expectEquals ((int) models::table (models::Dynamics).size(), 32);
+            expectEquals ((int) models::table (models::ChannelEq).size(), 7);
+            const int comp = models::findModel (models::Dynamics, "COMP");
+            expect (comp >= 0);
+            const auto& m = models::model (models::Dynamics, comp);
+            expectEquals (m.name, juce::String ("Compressor"));
+            const int ratio = m.find ("ratio");
+            expect (ratio >= 0 && m.params[(size_t) ratio].kind == models::ParamKind::Values);
+            expectEquals (m.params[(size_t) m.find ("thr")].display (-20.0f), juce::String ("-20.0 dB"));
+            expectEquals (models::list (models::TapPoints)[5], juce::String ("PFL"));
+            expectEquals (models::list (models::ProcessOrders).size(), 24);
+
+            MixerEngine engine (0);
+            engine.setNumChannels (1);
+            auto& ch = *engine.getChannels()[0];
+            const int la = models::findModel (models::Dynamics, "LA");
+            ch.setModel (ModelBlock::Dynamics, la);
+            expectEquals ((int) ch.params.dynamics.model.load(), la);
+            const auto& laModel = models::model (models::Dynamics, la);
+            expectEquals (ch.params.dynamics.values[laModel.find ("peak")].load(), laModel.params[(size_t) laModel.find ("peak")].defaultValue);
+
+            double freqs[] = { 100.0, 1000.0 }, db[2] = { 1.0, 1.0 };
+            ld::ld_strip_response (ch.getHandle(), 1, freqs, db, 2, 48000.0);
+            expectWithinAbsoluteError (db[1], 0.0, 0.01);
+        }
+
+        beginTest ("A channel reaches Main 1 through the pan law");
         {
             MixerEngine engine (2);
             OfflineRig rig (engine, 4, 8);
-            engine.setNumInputs (2);
+            engine.setNumChannels (2);
             rig.setInput (0, 0.5f);
             rig.run();
 
             expectWithinAbsoluteError (rig.out (0), 0.5f * kCentre, 1.0e-5f);
             expectWithinAbsoluteError (rig.out (1), 0.5f * kCentre, 1.0e-5f);
 
-            engine.getInputs()[0]->params.pan = -1.0f;
+            engine.getChannels()[0]->params.pan = -100.0f;
             rig.run();
             expectWithinAbsoluteError (rig.out (0), 0.5f, 1.0e-5f);
             expectWithinAbsoluteError (rig.out (1), 0.0f, 1.0e-5f);
         }
 
-        beginTest ("Mute, fader and main assign");
+        beginTest ("Mute, fader, DCAs, mute groups and main sends");
         {
             MixerEngine engine (2);
             OfflineRig rig (engine, 2, 2);
-            engine.setNumInputs (1);
-            auto& p = engine.getInputs()[0]->params;
+            engine.setNumChannels (1);
+            auto& p = engine.getChannels()[0]->params;
             rig.setInput (0, 0.5f);
 
             p.faderDb = -6.0206f;
             rig.run();
             expectWithinAbsoluteError (rig.out (0), 0.25f * kCentre, 1.0e-4f);
 
+            p.dcaMask = 1u << 2;
+            engine.getDca (2).faderDb = -6.0206f;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (0), 0.125f * kCentre, 1.0e-4f);
+            engine.getDca (2).mute = true;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (0), 0.0f, 1.0e-6f);
+            engine.getDca (2).mute = false;
+
+            p.muteGroupMask = 1u << 1;
+            engine.muteGroups = 1u << 1;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (0), 0.0f, 1.0e-6f);
+            engine.muteGroups = 0u;
+
             p.mute = true;
             rig.run();
             expectWithinAbsoluteError (rig.out (0), 0.0f, 1.0e-6f);
 
             p.mute = false;
-            p.mainAssign = false;
+            p.mains[0].on = false;
             rig.run();
             expectWithinAbsoluteError (rig.out (0), 0.0f, 1.0e-6f);
         }
 
-        beginTest ("Stereo channel uses balance and both inputs");
+        beginTest ("Stereo channel uses both inputs and its width");
         {
             MixerEngine engine (1);
             OfflineRig rig (engine, 2, 2);
-            engine.setNumInputs (1);
-            auto& p = engine.getInputs()[0]->params;
+            engine.setNumChannels (1);
+            auto& p = engine.getChannels()[0]->params;
             p.stereo = true;
             p.inputLeft = 0;
             p.inputRight = 1;
@@ -73,33 +143,116 @@ public:
             rig.run();
             expectWithinAbsoluteError (rig.out (0), 0.25f, 1.0e-5f);
             expectWithinAbsoluteError (rig.out (1), -0.5f, 1.0e-5f);
+
+            p.width = 0.0f;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (0), -0.125f, 1.0e-5f);
         }
 
-        beginTest ("Pre-fader aux send to a hardware output");
+        beginTest ("Bus sends: PRE, POST and GRP");
         {
             MixerEngine engine (2);
             OfflineRig rig (engine, 2, 6);
-            engine.setNumInputs (2);
-            auto* aux = engine.addBus (StripKind::Aux);
-            expect (aux != nullptr && ! aux->params.stereo.load());
-            aux->params.outputLeft = 4;
-
-            auto& p = engine.getInputs()[1]->params;
-            p.inputLeft = 1;
-            p.faderDb = -100.0f; // fader down: pre-fader send must still be live
-            auto& send = engine.getInputs()[1]->sends[(size_t) aux->getId()];
+            engine.setNumChannels (1);
+            auto& ch = *engine.getChannels()[0];
+            auto& bus = *engine.getBusInSlot (2);
+            bus.params.outputLeft = 2;
+            bus.params.outputRight = 3;
+            auto& send = ch.sends[2];
             send.enabled = true;
-            send.preFader = true;
-            send.levelDb = 0.0f;
 
-            rig.setInput (1, 0.5f);
+            rig.setInput (0, 0.5f);
+            ch.params.faderDb = -100.0f; // PRE: the fader doesn't matter
             rig.run();
-            expectWithinAbsoluteError (rig.out (4), 0.5f, 1.0e-5f);
-            expectWithinAbsoluteError (rig.out (0), 0.0f, 1.0e-6f); // nothing on master
+            expectWithinAbsoluteError (rig.out (2), 0.5f * kCentre, 1.0e-5f);
 
-            send.preFader = false; // post-fader send follows the closed fader
+            send.mode = (int32_t) SendMode::Post;
             rig.run();
-            expectWithinAbsoluteError (rig.out (4), 0.0f, 1.0e-6f);
+            expectWithinAbsoluteError (rig.out (2), 0.0f, 1.0e-4f);
+
+            ch.params.faderDb = 0.0f;
+            send.mode = (int32_t) SendMode::Group;
+            ch.params.mains[0].on = false;
+            bus.params.mains[0].on = true;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (0), 0.5f * kCentre, 1.0e-5f);
+        }
+
+        beginTest ("Matrix: mains plus a mix-minus direct input");
+        {
+            MixerEngine engine (2);
+            OfflineRig rig (engine, 2, 6);
+            engine.setNumChannels (2);
+            engine.getChannels()[1]->params.inputLeft = 1;
+            rig.setInput (0, 0.5f);
+            rig.setInput (1, 0.25f);
+            engine.getMain().params.matrix[0].on = true;
+            auto& mtx = *engine.getMatrices()[0];
+            mtx.params.outputLeft = 4;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (4), 0.75f * kCentre, 1.0e-4f);
+
+            mtx.params.directOn = true;
+            mtx.params.directSource = 1;
+            mtx.params.directInvert = true;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (4), 0.5f * kCentre, 1.0e-4f);
+        }
+
+        beginTest ("Buses beyond the WING's 16");
+        {
+            MixerEngine engine (2);
+            OfflineRig rig (engine, 1, 4);
+            engine.setNumChannels (1);
+
+            Strip* last = nullptr;
+            for (int i = 0; i < 100; ++i)
+                last = engine.addBus();
+
+            expect (last != nullptr);
+            expectEquals ((int) engine.getBuses().size(), 116);
+
+            last->params.outputLeft = 3;
+            auto& send = engine.getChannels()[0]->sends[(size_t) last->getId()];
+            send.enabled = true;
+
+            rig.setInput (0, 0.5f);
+            rig.run();
+            expectWithinAbsoluteError (rig.out (3), 0.5f * kCentre, 1.0e-5f);
+
+            // Removing a bus frees its slot for reuse, with the old send cleared.
+            const int slot = last->getId();
+            engine.removeStrip (last);
+            auto* reused = engine.addBus();
+            expectEquals (reused->getId(), slot);
+            expect (! engine.getChannels()[0]->sends[(size_t) slot].enabled.load());
+
+            // The console's 16 can't be removed.
+            engine.removeStrip (engine.getBuses()[0].get());
+            expectEquals ((int) engine.getBuses().size(), 116);
+            engine.getGarbage().collectAllNow();
+        }
+
+        beginTest ("PFL solo replaces Main 1 on the monitor outputs");
+        {
+            MixerEngine engine (2);
+            OfflineRig rig (engine, 2, 4);
+            engine.setNumChannels (2);
+            engine.getChannels()[1]->params.inputLeft = 1;
+            engine.monitorOutputLeft = 2;
+            engine.monitorOutputRight = 3;
+            rig.setInput (0, 0.5f);
+            rig.setInput (1, 0.25f);
+
+            rig.run();
+            expectWithinAbsoluteError (rig.out (2), 0.75f * kCentre, 1.0e-4f);
+
+            engine.getChannels()[1]->params.solo = true;
+            engine.getChannels()[1]->params.faderDb = -100.0f;
+            rig.run();
+            expect (engine.anySoloActive.load());
+            expectWithinAbsoluteError (rig.out (2), 0.25f, 1.0e-4f);
+            expectWithinAbsoluteError (rig.out (0), 0.5f * kCentre, 1.0e-4f);
         }
 
         beginTest ("Unpatched channels are skipped and resume cleanly");
@@ -107,11 +260,11 @@ public:
             MixerEngine engine (-1);
             constexpr int numCh = 4096;
             OfflineRig rig (engine, 8, 2); // a typical interface: far fewer inputs than channels
-            engine.setNumInputs (numCh);
-            for (auto& in : engine.getInputs())
+            engine.setNumChannels (numCh);
+            for (auto& ch : engine.getChannels())
             {
-                in->params.gate.enabled = true;
-                in->params.comp.enabled = true;
+                ch->params.gate.on = true;
+                ch->params.dynamics.on = true;
             }
 
             for (int i = 0; i < 8; ++i)
@@ -124,91 +277,14 @@ public:
             logMessage ("4096 channels, 8 patched: " + juce::String (msPerBlock, 3) + " ms per "
                         + juce::String (1000.0 * OfflineRig::kBlock / 48000.0, 2) + " ms block");
 
-            // Re-patching an idle channel brings its signal straight back.
-            auto& ch = *engine.getInputs()[100];
-            ch.params.gate.enabled = false;
-            ch.params.comp.enabled = false;
+            auto& ch = *engine.getChannels()[100];
+            ch.params.gate.on = false;
+            ch.params.dynamics.on = false;
             ch.params.inputLeft = 0;
-            engine.getInputs()[0]->params.mute = true;
-            for (int i = 1; i < 8; ++i)
-                engine.getInputs()[(size_t) i]->params.mute = true;
+            for (int i = 0; i < 8; ++i)
+                engine.getChannels()[(size_t) i]->params.mute = true;
             rig.run();
             expectWithinAbsoluteError (rig.out (0), 0.01f * kCentre, 1.0e-5f);
-        }
-
-        beginTest ("Bus count is not capped at 32");
-        {
-            MixerEngine engine (2);
-            OfflineRig rig (engine, 1, 4);
-            engine.setNumInputs (1);
-
-            Strip* last = nullptr;
-            for (int i = 0; i < 100; ++i)
-                last = engine.addBus (i % 2 == 0 ? StripKind::Aux : StripKind::Group);
-
-            expect (last != nullptr);
-            expectEquals ((int) engine.getBuses().size(), 100);
-
-            last->params.stereo = false;
-            last->params.mainAssign = false;
-            last->params.outputLeft = 3;
-            auto& send = engine.getInputs()[0]->sends[(size_t) last->getId()];
-            send.enabled = true;
-            send.preFader = true;
-
-            rig.setInput (0, 0.5f);
-            rig.run();
-            expectWithinAbsoluteError (rig.out (3), 0.5f, 1.0e-5f);
-
-            // Removing a bus frees its slot for reuse, with the old send cleared.
-            const int slot = last->getId();
-            engine.removeStrip (last);
-            auto* reused = engine.addBus (StripKind::Aux);
-            expectEquals (reused->getId(), slot);
-            expect (! engine.getInputs()[0]->sends[(size_t) slot].enabled.load());
-            engine.getGarbage().collectAllNow();
-        }
-
-        beginTest ("Group bus routes to master");
-        {
-            MixerEngine engine (2);
-            OfflineRig rig (engine, 1, 2);
-            engine.setNumInputs (1);
-            auto* group = engine.addBus (StripKind::Group);
-            auto& p = engine.getInputs()[0]->params;
-            p.mainAssign = false;
-            engine.getInputs()[0]->sends[(size_t) group->getId()].enabled = true;
-            engine.getInputs()[0]->sends[(size_t) group->getId()].preFader = false;
-
-            rig.setInput (0, 0.5f);
-            rig.run();
-            expectWithinAbsoluteError (rig.out (0), 0.5f * kCentre, 1.0e-5f);
-
-            group->params.mute = true;
-            rig.run();
-            expectWithinAbsoluteError (rig.out (0), 0.0f, 1.0e-6f);
-        }
-
-        beginTest ("PFL solo replaces master on the monitor outputs");
-        {
-            MixerEngine engine (2);
-            OfflineRig rig (engine, 2, 4);
-            engine.setNumInputs (2);
-            engine.getInputs()[1]->params.inputLeft = 1;
-            engine.monitorOutputLeft = 2;
-            engine.monitorOutputRight = 3;
-            rig.setInput (0, 0.5f);
-            rig.setInput (1, 0.25f);
-
-            rig.run();
-            expectWithinAbsoluteError (rig.out (2), 0.75f * kCentre, 1.0e-5f); // follows master
-
-            engine.getInputs()[1]->params.solo = true;
-            engine.getInputs()[1]->params.faderDb = -100.0f;
-            rig.run();
-            expect (engine.anySoloActive.load());
-            expectWithinAbsoluteError (rig.out (2), 0.25f, 1.0e-5f); // PFL ignores the fader
-            expectWithinAbsoluteError (rig.out (0), 0.5f * kCentre, 1.0e-5f); // master unaffected
         }
 
         beginTest ("Many channels processed in parallel sum correctly");
@@ -216,25 +292,24 @@ public:
             MixerEngine engine (3);
             constexpr int numCh = 256;
             OfflineRig rig (engine, numCh, 2);
-            engine.setNumInputs (numCh);
+            engine.setNumChannels (numCh);
             for (int i = 0; i < numCh; ++i)
                 rig.setInput (i, 0.001f);
             rig.run();
             expectWithinAbsoluteError (rig.out (0), numCh * 0.001f * kCentre, 1.0e-4f);
 
-            // Shrink while "running": the next block must reflect the new topology.
-            engine.setNumInputs (16);
+            engine.setNumChannels (16);
             rig.run();
             expectWithinAbsoluteError (rig.out (0), 16 * 0.001f * kCentre, 1.0e-5f);
-            expectEquals ((int) engine.getInputs().size(), 16);
+            expectEquals ((int) engine.getChannels().size(), 16);
         }
 
         beginTest ("Hardware channel maps skip unavailable inputs");
         {
             MixerEngine engine (0);
             OfflineRig rig (engine, 2, 2);
-            engine.setNumInputs (3); // channel 3 has no hardware input
-            expectEquals (engine.getInputs()[2]->params.inputLeft.load(), -1);
+            engine.setNumChannels (3); // channel 3 has no hardware input
+            expectEquals (engine.getChannels()[2]->params.inputLeft.load(), -1);
             rig.setInput (0, 0.1f);
             rig.setInput (1, 0.1f);
             rig.run();
@@ -243,28 +318,27 @@ public:
 
         beginTest ("Throughput (informational)");
         {
-            // 128 mono channels with gate, EQ and compressor active, 8 buses, 48 kHz / 128 samples.
+            // A full WING: 40 channels with gate, EQ and dynamics, 16 bus sends each, 48 kHz / 128 samples.
             MixerEngine engine (-1);
-            constexpr int numCh = 128;
+            constexpr int numCh = kWingChannels;
             OfflineRig rig (engine, numCh, 16);
-            engine.setNumInputs (numCh);
-            for (int b = 0; b < 8; ++b)
-                engine.addBus (StripKind::Aux);
+            engine.setNumChannels (numCh);
 
             juce::Random rng (1);
             for (int i = 0; i < numCh; ++i)
             {
-                auto& p = engine.getInputs()[(size_t) i]->params;
-                p.gate.enabled = true;
-                p.comp.enabled = true;
-                p.hpfEnabled = true;
-                p.eq.bands[1].gainDb = 3.0f;
-                p.eq.bands[2].gainDb = -3.0f;
-                for (int b = 0; b < 8; ++b)
-                    engine.getInputs()[(size_t) i]->sends[(size_t) b].enabled = true;
+                auto& ch = *engine.getChannels()[(size_t) i];
+                ch.params.gate.on = true;
+                ch.params.dynamics.on = true;
+                ch.params.filter.lowCut = true;
+                ch.params.eq.values[4] = 3.0f;
+                for (int b = 0; b < kWingBuses; ++b)
+                    ch.sends[(size_t) b].enabled = true;
                 for (auto& v : rig.inputs[(size_t) i])
                     v = rng.nextFloat() * 0.2f - 0.1f;
             }
+            for (auto& b : engine.getBuses())
+                b->params.dynamics.on = true;
 
             rig.run (10);
             const auto start = juce::Time::getMillisecondCounterHiRes();
@@ -272,7 +346,7 @@ public:
             rig.run (blocks);
             const double msPerBlock = (juce::Time::getMillisecondCounterHiRes() - start) / blocks;
             const double budget = 1000.0 * OfflineRig::kBlock / 48000.0;
-            logMessage ("128 ch + 8 aux: " + juce::String (msPerBlock, 3) + " ms per block of "
+            logMessage ("40 ch + 16 bus: " + juce::String (msPerBlock, 3) + " ms per block of "
                         + juce::String (budget, 2) + " ms (" + juce::String (100.0 * msPerBlock / budget, 1)
                         + "% of the realtime budget, " + juce::String (engine.getNumWorkerThreads() + 1) + " threads)");
             expect (msPerBlock > 0.0);

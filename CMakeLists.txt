@@ -70,7 +70,8 @@ endif()
 # Shared engine sources + JUCE configuration (used by the app and the tests)
 #-------------------------------------------------------------------------------
 set(LIVEDAW_ENGINE_SOURCES
-    src/engine/PluginChain.cpp
+    src/engine/FxSlots.cpp
+    src/engine/Models.cpp
     src/engine/Strip.cpp
     src/engine/MixerEngine.cpp
     src/engine/PluginHost.cpp

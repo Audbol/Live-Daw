@@ -5,9 +5,9 @@ namespace livedaw
 
 namespace
 {
-    ld::Show* createShow (Show* owner, ld::CaptureInsertFn capture, ld::RestoreInsertFn restore)
+    ld::Show* createShow (Show* owner, ld::CaptureFxFn capture, ld::RestoreFxFn restore, ld::ClearFxFn clear)
     {
-        const ld::PluginBridge bridge { owner, capture, restore };
+        const ld::PluginBridge bridge { owner, capture, restore, clear };
         auto* s = ld::ld_show_create (&bridge);
         if (s == nullptr)
             std::abort();
@@ -28,7 +28,7 @@ namespace
 Show::Show (MixerEngine& e, PluginHost& h)
     : engine (e),
       host (h),
-      handle (createShow (this, &Show::captureInsert, &Show::restoreInsert)),
+      handle (createShow (this, &Show::captureFx, &Show::restoreFx, &Show::clearFx)),
       layers (ld::ld_show_layers (handle))
 {
 }
@@ -54,14 +54,13 @@ void Show::setName (const juce::String& newName)
 //==============================================================================
 // Plugin bridge: the Rust session asks for plugin state and plugin creation here.
 
-bool Show::captureInsert (void* ctx, const ld::Strip* strip, int32_t slot, ld::LdSink* description, ld::LdSink* state)
+bool Show::captureFx (void* ctx, int32_t slot, ld::LdSink* description, ld::LdSink* state)
 {
     auto& self = *static_cast<Show*> (ctx);
 
     try
     {
-        const PluginChain chain (self.engine.getHandle(), const_cast<ld::Strip*> (strip));
-        auto* plugin = chain.getPlugin (slot);
+        auto* plugin = self.engine.getFx().getPlugin (slot);
         if (plugin == nullptr)
             return false;
 
@@ -79,9 +78,8 @@ bool Show::captureInsert (void* ctx, const ld::Strip* strip, int32_t slot, ld::L
     }
 }
 
-int32_t Show::restoreInsert (void* ctx, const ld::Strip* strip, int32_t slot, int32_t mode,
-                             const char* descriptionUtf8, size_t descriptionLen,
-                             const char* stateUtf8, size_t stateLen, ld::LdSink* error)
+int32_t Show::restoreFx (void* ctx, int32_t slot, int32_t mode, const char* descriptionUtf8, size_t descriptionLen,
+                         const char* stateUtf8, size_t stateLen, ld::LdSink* error)
 {
     auto& self = *static_cast<Show*> (ctx);
 
@@ -96,11 +94,11 @@ int32_t Show::restoreInsert (void* ctx, const ld::Strip* strip, int32_t slot, in
         }
 
         const auto state = juce::String::fromUTF8 (stateUtf8, (int) stateLen);
-        PluginChain chain (self.engine.getHandle(), const_cast<ld::Strip*> (strip));
+        auto& fx = self.engine.getFx();
 
         if (mode == 0) // recall: only into the same plugin already loaded
         {
-            auto* current = chain.getPlugin (slot);
+            auto* current = fx.getPlugin (slot);
             if (current == nullptr
                 || current->getPluginDescription().createIdentifierString() != desc.createIdentifierString())
                 return 1;
@@ -119,7 +117,7 @@ int32_t Show::restoreInsert (void* ctx, const ld::Strip* strip, int32_t slot, in
         }
 
         restorePluginState (*instance, state);
-        chain.setPlugin (slot, std::move (instance));
+        fx.setPlugin (slot, std::move (instance));
         return 0;
     }
     catch (const std::exception& e)
@@ -131,6 +129,14 @@ int32_t Show::restoreInsert (void* ctx, const ld::Strip* strip, int32_t slot, in
         appendTo (error, "the plugin threw an exception");
     }
     return 2;
+}
+
+void Show::clearFx (void* ctx, int32_t slot)
+{
+    auto& self = *static_cast<Show*> (ctx);
+    if (self.onFxCleared)
+        self.onFxCleared (slot);
+    self.engine.getFx().setPlugin (slot, nullptr);
 }
 
 //==============================================================================

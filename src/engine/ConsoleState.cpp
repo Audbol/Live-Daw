@@ -15,13 +15,14 @@ const char* sectionName (Section s) noexcept
     {
         case Name:        return "Name";
         case Routing:     return "Routing";
-        case Preamp:      return "Preamp";
+        case Preamp:      return "Input";
         case Gate:        return "Gate";
         case Eq:          return "EQ";
-        case Comp:        return "Comp";
+        case Dynamics:    return "Dynamics";
         case Inserts:     return "Inserts";
         case Sends:       return "Sends";
         case Fader:       return "Fader";
+        case Groups:      return "DCA/Mute";
         case AllSections: return "All";
     }
     return "";
@@ -43,34 +44,31 @@ StripRef StripRef::of (const Strip& s) noexcept
     return { s.getKind(), s.getId() };
 }
 
-Strip* findStrip (MixerEngine& engine, const StripRef& ref) noexcept
+Strip* findStrip (const MixerEngine& engine, const StripRef& ref) noexcept
 {
     switch (ref.kind)
     {
-        case StripKind::Master:
-            return &engine.getMaster();
+        case StripKind::Channel:
+            return engine.findChannel (ref.id);
+
+        case StripKind::Bus:
+            return engine.getBusInSlot (ref.id);
 
         case StripKind::Aux:
-        case StripKind::Group:
+        case StripKind::Main:
+        case StripKind::Matrix:
         {
-            auto* bus = engine.getBusInSlot (ref.id);
-            return bus != nullptr && bus->getKind() == ref.kind ? bus : nullptr;
+            const auto& list = engine.getStrips (ref.kind);
+            return juce::isPositiveAndBelow (ref.id, (int) list.size()) ? list[(size_t) ref.id].get() : nullptr;
         }
-
-        case StripKind::Input:
-            for (auto& s : engine.getInputs())
-                if (s->getId() == ref.id)
-                    return s.get();
-            return nullptr;
     }
 
     return nullptr;
 }
 
-//==============================================================================
 StripRef StripRef::fromC (ld::StripRefC r) noexcept
 {
-    const auto kind = juce::isPositiveAndBelow (r.kind, 4) ? static_cast<StripKind> (r.kind) : StripKind::Input;
+    const auto kind = juce::isPositiveAndBelow (r.kind, kNumStripKinds) ? static_cast<StripKind> (r.kind) : StripKind::Channel;
     return { kind, r.id };
 }
 
@@ -81,6 +79,18 @@ std::vector<ld::StripRefC> toC (const std::vector<StripRef>& refs)
     for (auto& r : refs)
         out.push_back (r.toC());
     return out;
+}
+
+ld::FaderRefC FaderRef::toC() const noexcept
+{
+    return dca ? ld::FaderRefC { ld::kFaderDca, dcaIndex } : ld::FaderRefC { static_cast<int32_t> (strip.kind), strip.id };
+}
+
+FaderRef FaderRef::fromC (ld::FaderRefC r) noexcept
+{
+    if (r.kind == ld::kFaderDca)
+        return ofDca (r.id);
+    return of (StripRef::fromC ({ r.kind, r.id }));
 }
 
 ApplyResult ApplyResult::fromC (ld::ApplyResultC& r)

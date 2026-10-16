@@ -63,7 +63,7 @@ public:
 
             MixerEngine engine (1);
             OfflineRig rig (engine, 2, 2);
-            engine.setNumInputs (1);
+            engine.setNumChannels (1);
 
             juce::String error;
             auto instance = host.createInstance (*desc, 48000.0, OfflineRig::kBlock, error);
@@ -74,21 +74,24 @@ public:
             }
 
             logMessage ("Hosting " + desc->name);
-            auto& strip = *engine.getInputs()[0];
-            strip.inserts.setPlugin (0, std::move (instance));
+            auto& strip = *engine.getChannels()[0];
+            auto& fx = engine.getFx();
+            fx.setPlugin (0, std::move (instance));
+            strip.params.preInsert.on = true;
+            strip.params.preInsert.fx = 0;
             rig.setInput (0, 0.25f);
             rig.run (200);
 
-            expect (! strip.inserts.isFaulted (0), "plugin faulted");
+            expect (! fx.isFaulted (0), "plugin faulted");
             expect (std::isfinite (rig.out (0)));
-            expect (strip.inserts.getSlotLoad (0) >= 0.0f);
+            expect (fx.getLoad (0) >= 0.0f);
 
             // Plugin state survives a capture/restore cycle.
             juce::MemoryBlock state;
-            strip.inserts.getPlugin (0)->getStateInformation (state);
+            fx.getPlugin (0)->getStateInformation (state);
             logMessage ("State size: " + juce::String ((int) state.getSize()) + " bytes");
 
-            strip.inserts.setPlugin (0, nullptr);
+            fx.setPlugin (0, nullptr);
             engine.getGarbage().collectAllNow();
             return;
         }

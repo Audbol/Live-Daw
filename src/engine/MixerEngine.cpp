@@ -56,10 +56,12 @@ MixerEngine::MixerEngine (int numWorkerThreads)
       monitorOutputRight (controls.monitorOutputRight),
       monitorPeak (controls.monitorPeak),
       anySoloActive (controls.anySoloActive),
+      muteGroups (controls.muteGroups),
       outputProtection (controls.outputProtection),
       outputCeilingDb (controls.outputCeilingDb),
       outputClipEvents (controls.outputClipEvents),
-      garbage (engine)
+      garbage (engine),
+      fx (engine)
 {
     syncStrips();
     startWorkers (getSampleRate(), getBlockSize());
@@ -75,9 +77,8 @@ MixerEngine::~MixerEngine()
         w->stopThread (2000);
     workers.clear();
 
-    inputs.clear();
-    buses.clear();
-    master.reset();
+    for (auto& list : lists)
+        list.clear();
     ld::ld_engine_destroy (engine); // releases the plugins still loaded
 }
 
@@ -100,71 +101,76 @@ void MixerEngine::syncStrips()
     // stay valid; strips removed from the engine lose theirs. (A removed strip is
     // only freed by a later collect, so its address can't be reused before this.)
     std::unordered_map<ld::Strip*, std::unique_ptr<Strip>> old;
-    for (auto* list : { &inputs, &buses })
-        for (auto& s : *list)
+    for (auto& list : lists)
+        for (auto& s : list)
             old.emplace (s->getHandle(), std::move (s));
-    if (master != nullptr)
-        old.emplace (master->getHandle(), std::move (master));
 
-    auto take = [this, &old] (ld::Strip* handle)
+    for (int k = 0; k < kNumStripKinds; ++k)
     {
-        jassert (handle != nullptr);
-        auto it = old.find (handle);
-        if (it == old.end())
-            return std::make_unique<Strip> (engine, handle);
-        auto s = std::move (it->second);
-        old.erase (it);
-        return s;
-    };
+        auto& list = lists[(size_t) k];
+        const int n = ld::ld_engine_num_strips (engine, k);
+        list.clear();
+        list.reserve ((size_t) n);
 
-    const int numInputs = ld::ld_engine_num_inputs (engine);
-    const int numBuses = ld::ld_engine_num_buses (engine);
-    inputs.clear();
-    buses.clear();
-    inputs.reserve ((size_t) numInputs);
-    buses.reserve ((size_t) numBuses);
+        for (int i = 0; i < n; ++i)
+        {
+            auto* handle = ld::ld_engine_strip_at (engine, k, i);
+            jassert (handle != nullptr);
+            auto it = old.find (handle);
+            auto& s = list.emplace_back (it != old.end() ? std::move (it->second) : std::make_unique<Strip> (engine, handle));
+            if (it != old.end())
+                old.erase (it);
+            // Buses keep their slot number; the others are numbered by position.
+            s->setNumber (k == (int) StripKind::Bus ? s->getId() + 1 : i + 1);
+        }
+    }
 
-    for (int i = 0; i < numInputs; ++i)
-        inputs.push_back (take (ld::ld_engine_input_at (engine, i)));
-    for (int i = 0; i < numBuses; ++i)
-        buses.push_back (take (ld::ld_engine_bus_at (engine, i)));
-    master = take (ld::ld_engine_master (engine));
+    ++structureVersion;
 }
 
-Strip* MixerEngine::addInput (int requestedId)
+Strip* MixerEngine::addChannel (int requestedId)
 {
     JUCE_ASSERT_MESSAGE_THREAD
-    auto* handle = ld::ld_engine_add_input (engine, requestedId);
+    auto* handle = ld::ld_engine_add_channel (engine, requestedId);
     if (handle == nullptr)
         return nullptr;
 
-    return inputs.emplace_back (std::make_unique<Strip> (engine, handle)).get();
+    syncStrips();
+    return getChannels().back().get();
 }
 
-void MixerEngine::setNumInputs (int numInputs)
+void MixerEngine::setNumChannels (int numChannels)
 {
     JUCE_ASSERT_MESSAGE_THREAD
-    ld::ld_engine_set_num_inputs (engine, juce::jmax (0, numInputs));
+    ld::ld_engine_set_num_channels (engine, juce::jmax (0, numChannels));
     syncStrips();
 }
 
-Strip* MixerEngine::addBus (StripKind kind, int requestedSlot)
+Strip* MixerEngine::addBus (int requestedSlot)
 {
     JUCE_ASSERT_MESSAGE_THREAD
-    jassert (kind == StripKind::Aux || kind == StripKind::Group);
-
-    auto* handle = ld::ld_engine_add_bus (engine, static_cast<int32_t> (kind), requestedSlot);
+    auto* handle = ld::ld_engine_add_bus (engine, requestedSlot);
     if (handle == nullptr)
         return nullptr;
 
-    return buses.emplace_back (std::make_unique<Strip> (engine, handle)).get();
+    syncStrips();
+    return getBusInSlot (ld::ld_strip_id (handle));
 }
 
 Strip* MixerEngine::getBusInSlot (int slot) const noexcept
 {
-    for (auto& b : buses)
+    for (auto& b : getBuses())
         if (b->getId() == slot)
             return b.get();
+
+    return nullptr;
+}
+
+Strip* MixerEngine::findChannel (int id) const noexcept
+{
+    for (auto& s : getChannels())
+        if (s->getId() == id)
+            return s.get();
 
     return nullptr;
 }
@@ -172,19 +178,8 @@ Strip* MixerEngine::getBusInSlot (int slot) const noexcept
 void MixerEngine::removeStrip (Strip* strip)
 {
     JUCE_ASSERT_MESSAGE_THREAD
-
-    for (auto* list : { &inputs, &buses })
-    {
-        for (auto it = list->begin(); it != list->end(); ++it)
-        {
-            if (it->get() == strip)
-            {
-                ld::ld_engine_remove_strip (engine, strip->getHandle());
-                list->erase (it);
-                return;
-            }
-        }
-    }
+    if (strip != nullptr && ld::ld_engine_remove_strip (engine, strip->getHandle()))
+        syncStrips();
 }
 
 void MixerEngine::reset()
@@ -192,6 +187,18 @@ void MixerEngine::reset()
     JUCE_ASSERT_MESSAGE_THREAD
     ld::ld_engine_reset (engine);
     syncStrips();
+}
+
+void MixerEngine::setDcaName (int index, const juce::String& name)
+{
+    const Utf8 u (name);
+    ld::ld_engine_set_group_name (engine, 0, index, u.data, u.size);
+}
+
+void MixerEngine::setMuteGroupName (int index, const juce::String& name)
+{
+    const Utf8 u (name);
+    ld::ld_engine_set_group_name (engine, 1, index, u.data, u.size);
 }
 
 void MixerEngine::timerCallback()
@@ -204,9 +211,9 @@ int MixerEngine::getTotalDspFaults() const
     return ld::ld_engine_total_dsp_faults (engine);
 }
 
-int MixerEngine::getNumFaultedPlugins() const
+int MixerEngine::getNumFaultedFx() const
 {
-    return ld::ld_engine_num_faulted_plugins (engine);
+    return ld::ld_engine_num_faulted_fx (engine);
 }
 
 //==============================================================================
@@ -230,10 +237,7 @@ void MixerEngine::prepare (double sampleRate, int blockSize, const juce::BigInte
                            outMap.data(), (int32_t) outMap.size());
 
     // Plugins live on the C++ side and are prepared here, also while the device is stopped.
-    for (auto* list : { &inputs, &buses })
-        for (auto& s : *list)
-            s->inserts.prepare (sampleRate, blockSize);
-    master->inserts.prepare (sampleRate, blockSize);
+    fx.prepare (sampleRate, blockSize);
 }
 
 void MixerEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
