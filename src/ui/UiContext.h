@@ -15,7 +15,8 @@
 namespace livedaw::ui
 {
 
-/** The main display's screens (the buttons left of the WING's display). */
+/** The main display's screens: the seven keys left of the WING's display, then
+    the VIEW screens the fader sections' VIEW keys open (manual 5.7-5.11). */
 enum class Screen
 {
     Home,
@@ -24,7 +25,12 @@ enum class Screen
     Routing,
     Setup,
     Library,
-    Utility
+    Utility,
+    Overview,
+    Faders,
+    Sends,
+    Config,
+    MuteGroups
 };
 
 /** The HOME screen's tabs for the selected strip: the overview group

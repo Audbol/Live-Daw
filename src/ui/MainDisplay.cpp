@@ -6,8 +6,13 @@ namespace livedaw::ui
 
 namespace
 {
+    // The keys left of the display.
     constexpr Screen screens[] = { Screen::Home, Screen::Effects, Screen::Meters, Screen::Routing,
                                    Screen::Setup, Screen::Library, Screen::Utility };
+    // Every page, including the VIEW screens.
+    constexpr Screen allScreens[] = { Screen::Home,    Screen::Effects,  Screen::Meters, Screen::Routing,
+                                      Screen::Setup,   Screen::Library,  Screen::Utility, Screen::Overview,
+                                      Screen::Faders,  Screen::Sends,    Screen::Config,  Screen::MuteGroups };
 
     const char* screenName (Screen s)
     {
@@ -20,6 +25,12 @@ namespace
             case Screen::Setup:   return "SETUP";
             case Screen::Library: return "LIBRARY";
             case Screen::Utility: return "UTILITY";
+            case Screen::Overview:
+            case Screen::Faders:
+            case Screen::Sends:
+            case Screen::Config:
+            case Screen::MuteGroups:
+                return viewScreenName (s);
         }
         return "";
     }
@@ -34,13 +45,22 @@ MainDisplay::MainDisplay (UiContext& c) : ctx (c)
     setup = std::make_unique<SetupPage> (ctx);
     library = std::make_unique<LibraryPage> (ctx);
     utility = std::make_unique<UtilityPage> (ctx);
+    overview = std::make_unique<OverviewViewPage> (ctx);
+    faders = std::make_unique<FadersViewPage> (ctx);
+    sends = std::make_unique<SendsViewPage> (ctx);
+    config = std::make_unique<ConfigViewPage> (ctx);
+    muteGroups = std::make_unique<MuteGroupsViewPage> (ctx);
 
-    for (auto s : screens)
+    for (auto s : allScreens)
     {
         auto* p = page (s);
         p->knobsChanged = [this, s] { if (screen == s) updateKnobs(); };
+        p->statusKeysChanged = [this, s] { if (screen == s) updateFrame(); };
         addChildComponent (p);
+    }
 
+    for (auto s : screens)
+    {
         // The keys left of the display: grey hardware keys that light up.
         auto* b = screenButtons.add (new juce::TextButton (screenName (s)));
         b->setColour (juce::TextButton::buttonOnColourId, Colours::text);
@@ -70,6 +90,11 @@ DisplayPage* MainDisplay::page (Screen s) const
         case Screen::Setup:   return setup.get();
         case Screen::Library: return library.get();
         case Screen::Utility: return utility.get();
+        case Screen::Overview: return overview.get();
+        case Screen::Faders: return faders.get();
+        case Screen::Sends: return sends.get();
+        case Screen::Config: return config.get();
+        case Screen::MuteGroups: return muteGroups.get();
     }
     return home.get();
 }
@@ -77,12 +102,12 @@ DisplayPage* MainDisplay::page (Screen s) const
 void MainDisplay::showScreen (Screen s)
 {
     screen = s;
+    for (auto sc : allScreens)
+        page (sc)->setVisible (sc == s);
     for (size_t i = 0; i < std::size (screens); ++i)
-    {
-        page (screens[i])->setVisible (screens[i] == s);
         screenButtons[(int) i]->setToggleState (screens[i] == s, juce::dontSendNotification);
-    }
     page (s)->refresh();
+    updateFrame();
     updateKnobs();
     repaint();
 }
@@ -90,14 +115,7 @@ void MainDisplay::showScreen (Screen s)
 void MainDisplay::showHomeTab (HomeTab t)
 {
     if (screen != Screen::Home)
-    {
-        screen = Screen::Home;
-        for (size_t i = 0; i < std::size (screens); ++i)
-        {
-            page (screens[i])->setVisible (screens[i] == Screen::Home);
-            screenButtons[(int) i]->setToggleState (screens[i] == Screen::Home, juce::dontSendNotification);
-        }
-    }
+        showScreen (Screen::Home);
     home->showTab (t);
     updateKnobs();
     repaint();
@@ -116,6 +134,18 @@ void MainDisplay::refreshLibrary()
 {
     library->refresh();
     repaint (statusArea);
+}
+
+void MainDisplay::updateFrame()
+{
+    statusKeys = page (screen)->getStatusKeys();
+    if (statusKeys.empty())
+    {
+        statusKeys.push_back ({ "TOOLS", Icon::Tools, screen == Screen::Utility, [this] { showScreen (Screen::Utility); } });
+        statusKeys.push_back ({ "SETTINGS", Icon::Gear, screen == Screen::Setup, [this] { showScreen (Screen::Setup); } });
+    }
+    resized();
+    repaint();
 }
 
 void MainDisplay::updateKnobs()
@@ -212,16 +242,27 @@ void MainDisplay::paintStatusBar (juce::Graphics& g)
     g.drawFittedText (scene ? juce::String (index + 1).paddedLeft ('0', 2) + "  " + scene->name : juce::String ("NONE"), sc,
                       juce::Justification::centredLeft, 1);
 
-    // TOOLS and SETTINGS keys.
-    for (auto [area, icon, text] : { std::tuple { toolsKey, Icon::Tools, "TOOLS" }, std::tuple { settingsKey, Icon::Gear, "SETTINGS" } })
+    // The screen's keys.
+    for (size_t i = 0; i < statusKeys.size() && i < statusKeyAreas.size(); ++i)
     {
-        tile (area);
+        const auto& key = statusKeys[i];
+        const auto area = statusKeyAreas[i];
+        g.setColour (key.lit ? Colours::text : Colours::screenHeader);
+        g.fillRoundedRectangle (area.toFloat(), 3.0f);
+        const auto ink = key.lit ? juce::Colours::black : Colours::text;
         auto k = area.toFloat().reduced (3.0f);
-        auto label = k.removeFromBottom (14.0f);
-        drawIcon (g, icon, k, Colours::text);
-        g.setColour (Colours::text);
+        g.setColour (ink);
         g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-        g.drawFittedText (text, label.toNearestInt(), juce::Justification::centred, 1);
+        if (key.icon)
+        {
+            auto label = k.removeFromBottom (14.0f);
+            drawIcon (g, *key.icon, k, ink);
+            g.drawFittedText (key.text, label.toNearestInt(), juce::Justification::centred, 1);
+        }
+        else
+        {
+            g.drawFittedText (key.text, k.toNearestInt(), juce::Justification::centred, 2);
+        }
     }
 
     // Clock.
@@ -260,11 +301,14 @@ void MainDisplay::editFx (int slot)
 void MainDisplay::mouseUp (const juce::MouseEvent& e)
 {
     const auto p = e.getPosition();
-    if (settingsKey.contains (p))
-        showScreen (Screen::Setup);
-    else if (toolsKey.contains (p))
-        showScreen (Screen::Utility);
-    else if (sceneTile.contains (p))
+    for (size_t i = 0; i < statusKeys.size() && i < statusKeyAreas.size(); ++i)
+        if (statusKeyAreas[i].contains (p))
+        {
+            if (auto f = statusKeys[i].onClick)
+                f(); // a copy: the click may change the keys
+            return;
+        }
+    if (sceneTile.contains (p))
         showScreen (Screen::Library);
     else if (channelTab.contains (p))
         showHomeTab (HomeTab::Home);
@@ -282,29 +326,42 @@ void MainDisplay::resized()
     auto s = screenArea;
     const int statusH = juce::jlimit (44, 64, s.getHeight() / 12);
     statusArea = s.removeFromTop (statusH);
-    slotArea = s.removeFromBottom (juce::jlimit (36, 48, s.getHeight() / 13));
+    const bool knobs = page (screen)->usesKnobs();
+    slotArea = knobs ? s.removeFromBottom (juce::jlimit (36, 48, s.getHeight() / 13)) : juce::Rectangle<int>();
     s.removeFromTop (4);
+    if (! knobs)
+        s.removeFromBottom (4);
 
-    for (auto sc : screens)
+    for (auto sc : allScreens)
         page (sc)->setBounds (s);
 
+    layoutStatusBar();
+
+    for (auto& slot : slots)
+        slot.setVisible (knobs);
+    auto k = slotArea.reduced (8, 0);
+    const int w = k.getWidth() / 6;
+    for (auto& slot : slots)
+        slot.setBounds (k.removeFromLeft (w).reduced (8, 0));
+}
+
+void MainDisplay::layoutStatusBar()
+{
     auto st = statusArea.reduced (4, 4);
     clockTile = st.removeFromRight (juce::jmin (150, st.getWidth() / 7));
     st.removeFromRight (6);
-    settingsKey = st.removeFromRight (juce::jmin (78, st.getWidth() / 10));
-    st.removeFromRight (6);
-    toolsKey = st.removeFromRight (juce::jmin (70, st.getWidth() / 10));
-    st.removeFromRight (6);
+    statusKeyAreas.clear();
+    const int keyW = juce::jmin (78, st.getWidth() / 10);
+    for (size_t i = 0; i < statusKeys.size(); ++i)
+    {
+        statusKeyAreas.insert (statusKeyAreas.begin(), st.removeFromRight (keyW));
+        st.removeFromRight (6);
+    }
     channelTab = st.removeFromLeft (st.getWidth() * 45 / 100);
     st.removeFromLeft (6);
     chipsTile = st.removeFromLeft (juce::jmin (120, st.getWidth() / 2));
     st.removeFromLeft (6);
     sceneTile = st;
-
-    auto k = slotArea.reduced (8, 0);
-    const int w = k.getWidth() / 6;
-    for (auto& slot : slots)
-        slot.setBounds (k.removeFromLeft (w).reduced (8, 0));
 }
 
 } // namespace livedaw::ui

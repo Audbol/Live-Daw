@@ -2,6 +2,7 @@
 
 #include "ui/HomePage.h"
 #include "ui/Pages.h"
+#include "ui/ViewPages.h"
 
 namespace livedaw::ui
 {
@@ -34,6 +35,9 @@ public:
 private:
     void timerCallback() override;
     void updateKnobs();
+    /** Status keys and the parameter bar follow the page. */
+    void updateFrame();
+    void layoutStatusBar();
     DisplayPage* page (Screen) const;
     void paintStatusBar (juce::Graphics&);
 
@@ -46,11 +50,14 @@ private:
     std::unique_ptr<SetupPage> setup;
     std::unique_ptr<LibraryPage> library;
     std::unique_ptr<UtilityPage> utility;
+    std::unique_ptr<ViewPage> overview, faders, sends, config, muteGroups;
 
     juce::OwnedArray<juce::TextButton> screenButtons;
     ParamSlot slots[6];
     juce::Rectangle<int> screenArea, statusArea, slotArea;
-    juce::Rectangle<int> channelTab, chipsTile, sceneTile, toolsKey, settingsKey, clockTile;
+    juce::Rectangle<int> channelTab, chipsTile, sceneTile, clockTile;
+    std::vector<StatusKey> statusKeys;
+    std::vector<juce::Rectangle<int>> statusKeyAreas;
     juce::String shownTime;
     juce::uint32 shownHash = 0;
 };
