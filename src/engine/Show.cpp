@@ -151,7 +151,25 @@ const std::optional<Show::Scene> Show::getScene (int index) const
     s.scope = ld::ld_scene_scope (handle, index);
     s.fadeSeconds = ld::ld_scene_fade_seconds (handle, index);
     s.numSnippets = ld::ld_scene_num_snippets (handle, index);
+    s.tag = ld::ld_scene_tag (handle, index);
+    s.skip = ld::ld_scene_skip (handle, index);
+    s.linkNext = ld::ld_scene_link (handle, index);
     return s;
+}
+
+void Show::setSceneTag (int index, int tag)
+{
+    ld::ld_scene_set_tag (handle, index, tag);
+}
+
+void Show::setSceneSkip (int index, bool skip)
+{
+    ld::ld_scene_set_skip (handle, index, skip);
+}
+
+void Show::setSceneLink (int index, bool linkNext)
+{
+    ld::ld_scene_set_link (handle, index, linkNext);
 }
 
 void Show::setSceneName (int index, const juce::String& text)
@@ -233,6 +251,13 @@ state::ApplyResult Show::recallPrevious()
 {
     ld::ApplyResultC r {};
     ld::ld_show_recall_scene (handle, engine.getHandle(), 2, 0, &r);
+    return afterRecall (r);
+}
+
+state::ApplyResult Show::recallSceneByTag (int tag)
+{
+    ld::ApplyResultC r {};
+    ld::ld_show_recall_scene (handle, engine.getHandle(), 3, tag, &r);
     return afterRecall (r);
 }
 

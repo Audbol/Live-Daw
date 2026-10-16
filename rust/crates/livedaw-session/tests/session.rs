@@ -565,3 +565,195 @@ fn builtin_fx_devices_save_load_and_recall() {
     assert_eq!(e2.controls.fx[0].model_index(), livedaw_engine::params::FX_EXT);
     assert!(host2.plugins.contains_key(&0));
 }
+
+// ---- WING console settings and scene list features ------------------------------
+
+fn round_trip(engine: &Engine, show: &Show) -> (Engine, Show) {
+    let text = show.to_xml(engine, &mut NoPlugins).to_document();
+    let e2 = Engine::new(0);
+    let mut loaded = Show::new();
+    loaded.load_from_text(&e2, &mut NoPlugins, &text, true).unwrap();
+    (e2, loaded)
+}
+
+#[test]
+fn wing_settings_survive_a_show_round_trip() {
+    let engine = Engine::new(0);
+    engine.set_num_channels(1);
+    let c = &engine.controls;
+    let a = ch(&engine, 0);
+    let send = a.sends.get_or_create(3).unwrap();
+    send.ignore_mute.store(true, Relaxed);
+    send.pan_reversed.store(true, Relaxed);
+    a.params.matrix[2].ignore_mute.store(true, Relaxed);
+    c.bus_solo_afl.store(false, Relaxed);
+    c.main_solo_afl.store(false, Relaxed);
+    c.matrix_solo_afl.store(false, Relaxed);
+    c.monitor_dim_db.store(12.0);
+    c.monitor_dim.store(true, Relaxed);
+    c.monitor_mono.store(true, Relaxed);
+    c.dca_mute_groups.store(false, Relaxed);
+    c.main_link.store(3, Relaxed);
+    c.startup_main_mute.store(true, Relaxed);
+    c.automix_enable[1].store(false, Relaxed);
+
+    let (e2, _) = round_trip(&engine, &Show::new());
+    let c2 = &e2.controls;
+    let b = ch(&e2, 0);
+    let send = b.sends.find(3).unwrap();
+    assert!(send.ignore_mute.load(Relaxed) && send.pan_reversed.load(Relaxed));
+    assert!(!b.sends.find(4).unwrap().ignore_mute.load(Relaxed), "untouched sends keep the WING default");
+    assert!(b.params.matrix[2].ignore_mute.load(Relaxed) && !b.params.matrix[1].ignore_mute.load(Relaxed));
+    assert!(!c2.bus_solo_afl.load(Relaxed) && !c2.main_solo_afl.load(Relaxed) && !c2.matrix_solo_afl.load(Relaxed));
+    assert_eq!(c2.monitor_dim_db.load(), 12.0);
+    assert!(c2.monitor_dim.load(Relaxed) && c2.monitor_mono.load(Relaxed));
+    assert!(!c2.dca_mute_groups.load(Relaxed));
+    assert_eq!(c2.main_link.load(Relaxed), 3);
+    assert!(c2.startup_main_mute.load(Relaxed));
+    assert!(c2.automix_enable[0].load(Relaxed) && !c2.automix_enable[1].load(Relaxed));
+}
+
+#[test]
+fn shows_without_the_new_settings_load_with_the_old_behaviour() {
+    let engine = Engine::new(0);
+    engine.set_num_channels(1);
+    let a = ch(&engine, 0);
+    a.sends.get_or_create(3).unwrap().enabled.store(true, Relaxed); // PRE
+    let post = a.sends.get_or_create(4).unwrap();
+    post.mode.store(1, Relaxed);
+    a.params.matrix[0].pre.store(true, Relaxed);
+    let mut show = Show::new();
+    show.add_scene(&engine, &mut NoPlugins, "A", -1);
+    let mut text = show.to_xml(&engine, &mut NoPlugins).to_document();
+    for attr in [" ignmute=\"0\"", " prev=\"0\"", " tag=\"0\"", " skip=\"0\"", " link=\"0\""] {
+        text = text.replace(attr, "");
+    }
+    assert!(text.contains("<Prefs") && !text.contains("ignmute"));
+    let start = text.find("<Prefs").unwrap();
+    let end = start + text[start..].find("/>").unwrap() + 2;
+    text.replace_range(start..end, "");
+
+    let e2 = Engine::new(0);
+    e2.controls.bus_solo_afl.store(false, Relaxed);
+    e2.controls.dca_mute_groups.store(false, Relaxed);
+    let mut loaded = Show::new();
+    loaded.load_from_text(&e2, &mut NoPlugins, &text, true).unwrap();
+    let b = ch(&e2, 0);
+    // Pre-fader sends of old shows never followed the channel mute.
+    assert!(b.sends.find(3).unwrap().ignore_mute.load(Relaxed));
+    assert!(!b.sends.find(4).unwrap().ignore_mute.load(Relaxed));
+    assert!(b.params.matrix[0].ignore_mute.load(Relaxed) && !b.params.matrix[1].ignore_mute.load(Relaxed));
+    assert!(e2.controls.bus_solo_afl.load(Relaxed), "buses soloed AFL");
+    assert!(e2.controls.dca_mute_groups.load(Relaxed), "DCA mutes muted their strips");
+    let scene = loaded.scene(0).unwrap();
+    assert_eq!((scene.tag, scene.skip, scene.link_next), (0, false, false));
+}
+
+#[test]
+fn scenes_recall_solo_and_automix_settings_but_not_preferences_or_keys() {
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    let c = &engine.controls;
+    let mut show = Show::new();
+    show.add_scene(&engine, &mut np, "A", -1);
+    show.scene_mut(0).unwrap().scope = section::ALL;
+    c.bus_solo_afl.store(false, Relaxed);
+    c.automix_enable[0].store(false, Relaxed);
+    c.monitor_dim_db.store(10.0);
+    c.main_link.store(2, Relaxed);
+    c.dca_mute_groups.store(false, Relaxed);
+    c.monitor_dim.store(true, Relaxed);
+    show.recall_scene(&engine, &mut np, 0);
+    assert!(c.bus_solo_afl.load(Relaxed), "solo PFL/AFL recalls with ROUTING");
+    assert!(c.automix_enable[0].load(Relaxed), "automix enables recall with INSERTS");
+    assert_eq!(c.monitor_dim_db.load(), 20.0);
+    assert_eq!(c.main_link.load(Relaxed), 2, "preferences are not in scenes");
+    assert!(!c.dca_mute_groups.load(Relaxed));
+    assert!(c.monitor_dim.load(Relaxed), "the DIM key is not in scenes");
+
+    // Outside the scope, nothing changes.
+    c.bus_solo_afl.store(false, Relaxed);
+    c.automix_enable[0].store(false, Relaxed);
+    show.scene_mut(0).unwrap().scope = section::FADER;
+    show.recall_scene(&engine, &mut np, 0);
+    assert!(!c.bus_solo_afl.load(Relaxed) && !c.automix_enable[0].load(Relaxed));
+}
+
+#[test]
+fn scene_tags_skip_and_link() {
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    engine.set_num_channels(1);
+    let a = ch(&engine, 0);
+    let mut show = Show::new();
+    for i in 0..5 {
+        a.params.fader_db.store(-(i as f32) - 1.0); // scene i: -(i+1) dB
+        show.add_scene(&engine, &mut np, &format!("S{i}"), -1);
+    }
+    let fader = || a.params.fader_db.load();
+    show.recall_scene(&engine, &mut np, 0);
+    assert_eq!(fader(), -1.0);
+
+    // SKIP: GO NEXT / GO PREV and direct recalls pass over it.
+    show.scene_mut(1).unwrap().skip = true;
+    show.recall_next(&engine, &mut np);
+    assert_eq!((show.current_scene(), fader()), (2, -3.0));
+    show.recall_previous(&engine, &mut np);
+    assert_eq!((show.current_scene(), fader()), (0, -1.0));
+    let r = show.recall_scene(&engine, &mut np, 1);
+    assert_eq!((r.strips_applied, show.current_scene()), (0, 0));
+
+    // At the ends GO NEXT / GO PREV stay on the last / first playable scene.
+    show.scene_mut(4).unwrap().skip = true;
+    show.recall_scene(&engine, &mut np, 3);
+    show.recall_next(&engine, &mut np);
+    assert_eq!(show.current_scene(), 3);
+
+    // Tags
+    show.scene_mut(3).unwrap().tag = 7;
+    show.scene_mut(4).unwrap().tag = 7; // skipped: not found
+    assert_eq!(show.find_scene_by_tag(7), 3);
+    assert_eq!(show.find_scene_by_tag(8), -1);
+    assert_eq!(show.find_scene_by_tag(0), -1);
+    show.recall_scene(&engine, &mut np, 0);
+    show.recall_by_tag(&engine, &mut np, 7);
+    assert_eq!((show.current_scene(), fader()), (3, -4.0));
+
+    // LINK: scene 2 also recalls scene 3 (the later one wins); the chain stops at a skipped scene.
+    show.scene_mut(1).unwrap().skip = false;
+    show.scene_mut(2).unwrap().link_next = true;
+    show.recall_scene(&engine, &mut np, 0);
+    let r = show.recall_scene(&engine, &mut np, 2);
+    assert_eq!((show.current_scene(), fader()), (3, -4.0));
+    assert_eq!(r.strips_applied, 2 * (1 + 8 + 16 + 4 + 8));
+    show.scene_mut(3).unwrap().link_next = true; // 4 is skipped
+    show.recall_scene(&engine, &mut np, 2);
+    assert_eq!(show.current_scene(), 3);
+
+    // The link moves with its scene: scene 2 (linked) moved to the end links to nothing.
+    show.scene_mut(3).unwrap().link_next = false;
+    show.move_scene(2, 4);
+    assert!(show.scene(4).unwrap().link_next);
+    show.recall_scene(&engine, &mut np, 0);
+    show.scene_mut(4).unwrap().skip = false;
+    show.recall_scene(&engine, &mut np, 4);
+    assert_eq!((show.current_scene(), fader()), (4, -3.0));
+
+    // Every scene linked: each recalled once.
+    for i in 0..5 {
+        show.scene_mut(i).unwrap().link_next = true;
+        show.scene_mut(i).unwrap().skip = false;
+    }
+    let r = show.recall_scene(&engine, &mut np, 0);
+    assert_eq!(r.strips_applied, 5 * (1 + 8 + 16 + 4 + 8));
+
+    // Saved with the show.
+    show.scene_mut(1).unwrap().skip = true;
+    show.scene_mut(0).unwrap().tag = 128;
+    show.scene_mut(1).unwrap().link_next = false;
+    let (_, loaded) = round_trip(&engine, &show);
+    let s0 = loaded.scene(0).unwrap();
+    let s1 = loaded.scene(1).unwrap();
+    assert_eq!((s0.tag, s0.skip, s0.link_next), (128, false, true));
+    assert_eq!((s1.tag, s1.skip, s1.link_next), (0, true, false));
+}
