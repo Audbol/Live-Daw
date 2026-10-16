@@ -18,6 +18,8 @@ public:
 
     void showScreen (Screen);
     void showHomeTab (HomeTab);
+    /** EFFECTS, with slot `slot` open in the device editor. */
+    void editFx (int slot);
     Screen getScreen() const noexcept { return screen; }
 
     /** Selection or structure changed. */

@@ -274,7 +274,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "D241G",
-        name: "Draw 241 Gate",
+        name: "Draw More 241",
         category: ModelCategory::Gate,
         params: &[
             ParamSpec {
@@ -301,7 +301,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "DS902",
-        name: "De-Esser 902",
+        name: "BDX 902 De-Esser",
         category: ModelCategory::Special,
         params: &[
             ParamSpec {
@@ -832,7 +832,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "WARM",
-        name: "Warm Harmonics",
+        name: "Soul Warmth Pre",
         category: ModelCategory::Special,
         params: &[
             ParamSpec {
@@ -889,7 +889,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "COMP",
-        name: "Compressor",
+        name: "Wing Compressor",
         category: ModelCategory::Compressor,
         params: &[
             ParamSpec {
@@ -979,7 +979,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "EXP",
-        name: "Expander",
+        name: "Wing Expander",
         category: ModelCategory::Compressor,
         params: &[
             ParamSpec {
@@ -1069,7 +1069,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "B160",
-        name: "160 VCA Comp",
+        name: "BDX 160 Comp",
         category: ModelCategory::Compressor,
         params: &[
             ParamSpec { id: "thr", label: "THR", unit: "", kind: ParamKind::Log, min: 0.01, max: 5.0, steps: 121, default: 0.5 },
@@ -1087,7 +1087,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "B560",
-        name: "560 Easy Comp",
+        name: "BDX 560 Easy",
         category: ModelCategory::Compressor,
         params: &[
             ParamSpec {
@@ -1124,7 +1124,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "D241C",
-        name: "Draw 241 Comp/Lim",
+        name: "Draw More Comp",
         category: ModelCategory::Compressor,
         params: &[
             ParamSpec {
@@ -1203,7 +1203,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "ECL33",
-        name: "ECL 33 Comp/Lim",
+        name: "Even Comp/Lim",
         category: ModelCategory::Compressor,
         params: &[
             ParamSpec {
@@ -1310,7 +1310,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "9000C",
-        name: "Soul 9000 Comp",
+        name: "Soul 9000",
         category: ModelCategory::Compressor,
         params: &[
             ParamSpec {
@@ -1416,7 +1416,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "RED3",
-        name: "Red 3 Comp",
+        name: "Red3 Compressor",
         category: ModelCategory::Compressor,
         params: &[
             ParamSpec {
@@ -1473,7 +1473,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "76LA",
-        name: "76 Limiting Amp",
+        name: "76 Limiter Amp",
         category: ModelCategory::Compressor,
         params: &[
             ParamSpec {
@@ -1567,7 +1567,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "F670",
-        name: "Fair Kid 670",
+        name: "Fair Kid",
         category: ModelCategory::Compressor,
         params: &[
             ParamSpec {
@@ -1749,7 +1749,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "2250",
-        name: "2250 Comp",
+        name: "PIA2250 Rack",
         category: ModelCategory::Compressor,
         params: &[
             ParamSpec {
@@ -1816,7 +1816,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "L100",
-        name: "L100 Leveler",
+        name: "LTA100 Leveler",
         category: ModelCategory::Compressor,
         params: &[
             ParamSpec {
@@ -1930,7 +1930,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "LMT",
-        name: "LMT Transient Comp",
+        name: "Transient Limiter",
         category: ModelCategory::Compressor,
         params: &[
             ParamSpec {
@@ -2163,7 +2163,7 @@ pub static EQ_MODELS_CH: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "SOUL",
-        name: "Soul Analogue EQ",
+        name: "Soul Analogue",
         category: ModelCategory::Eq,
         params: &[
             ParamSpec {
@@ -2290,7 +2290,7 @@ pub static EQ_MODELS_CH: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "E88",
-        name: "Even 88 EQ",
+        name: "Even 88 Formant",
         category: ModelCategory::Eq,
         params: &[
             ParamSpec {
@@ -2437,7 +2437,7 @@ pub static EQ_MODELS_CH: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "E84",
-        name: "Even 84 EQ",
+        name: "Even 84",
         category: ModelCategory::Eq,
         params: &[
             ParamSpec {
@@ -2524,7 +2524,7 @@ pub static EQ_MODELS_CH: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "F110",
-        name: "Fortissimo 110 EQ",
+        name: "Fortissimo 110",
         category: ModelCategory::Eq,
         params: &[
             ParamSpec {
@@ -2681,7 +2681,7 @@ pub static EQ_MODELS_CH: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "PULSAR",
-        name: "Pulsar EQ",
+        name: "Pulsar",
         category: ModelCategory::Eq,
         params: &[
             ParamSpec {
@@ -3138,7 +3138,7 @@ pub static EQ_MODELS_BUS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "SOUL",
-        name: "Soul Analogue EQ",
+        name: "Soul Analogue",
         category: ModelCategory::Eq,
         params: &[
             ParamSpec {
@@ -3265,7 +3265,7 @@ pub static EQ_MODELS_BUS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "E88",
-        name: "Even 88 EQ",
+        name: "Even 88 Formant",
         category: ModelCategory::Eq,
         params: &[
             ParamSpec {
@@ -3412,7 +3412,7 @@ pub static EQ_MODELS_BUS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "E84",
-        name: "Even 84 EQ",
+        name: "Even 84",
         category: ModelCategory::Eq,
         params: &[
             ParamSpec {
@@ -3499,7 +3499,7 @@ pub static EQ_MODELS_BUS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "F110",
-        name: "Fortissimo 110 EQ",
+        name: "Fortissimo 110",
         category: ModelCategory::Eq,
         params: &[
             ParamSpec {
@@ -3656,7 +3656,7 @@ pub static EQ_MODELS_BUS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "PULSAR",
-        name: "Pulsar EQ",
+        name: "Pulsar",
         category: ModelCategory::Eq,
         params: &[
             ParamSpec {
@@ -3823,7 +3823,7 @@ pub static EQ_MODELS_BUS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "PIA",
-        name: "PIA Graphic EQ",
+        name: "PIA 560 EQ",
         category: ModelCategory::Eq,
         params: &[
             ParamSpec {

@@ -1,4 +1,5 @@
 #include "ui/HomeScreens.h"
+#include "ui/Faceplate.h"
 #include "ui/WingWidgets.h"
 #include "ui/Controls.h"
 #include "ui/MeterComponent.h"
@@ -335,7 +336,7 @@ private:
 
 //==============================================================================
 /** GATE or DYNAMICS slot: model, parameters, sidechain (and crossover). */
-class DynTab final : public HomeScreen
+class DynTab final : public HomeScreen, private juce::Timer
 {
 public:
     DynTab (UiContext& c, Strip& s, bool gateSlot) : HomeScreen (c, s), isGate (gateSlot), slot (gateSlot ? s.params.gate : s.params.dynamics)
@@ -344,14 +345,25 @@ public:
         model = &make<ModelSelector>();
         const auto allowed = strip.getKind() == StripKind::Aux && ! isGate ? models::list (models::AuxDynModels) : juce::StringArray();
         model->bind (models::Dynamics, &slot.model,
-                     [this] (int m) { strip.setModel (isGate ? ModelBlock::Gate : ModelBlock::Dynamics, m); }, allowed);
+                     [this] (int m) { strip.setModel (isGate ? ModelBlock::Gate : ModelBlock::Dynamics, m); }, allowed,
+                     isGate ? ModelSelector::gateSlotGroups() : ModelSelector::dynamicsSlotGroups());
         mix = &knob (bindLinear ("MIX", slot.mix, 0.0f, 100.0f, "%", 0, 100.0f));
         gain = &knob (bindLinear ("GAIN", slot.gain, -6.0f, 12.0f, " dB", 1, 0.0f));
         gr = &make<GainReductionMeter> ([this] { return isGate ? strip.meters.gateReductionDb.load() : strip.meters.dynReductionDb.load(); },
                                         isGate ? 40.0f : 24.0f);
-        params = &make<ModelParamGrid>();
-        params->bind (models::Dynamics, &slot.model, slot.values);
-        params->onModelChanged = [this] { if (knobsChanged) knobsChanged(); };
+        // The model's front panel.
+        face = &make<Faceplate>();
+        face->onTouched = [this] (int param)
+        {
+            if (param / 6 != knobPage)
+            {
+                knobPage = param / 6;
+                if (knobsChanged)
+                    knobsChanged();
+            }
+        };
+        bindFace();
+        startTimerHz (8);
 
         scCaption = &label ("SIDECHAIN FILTER / SOURCE / TAP");
         scFilter = &combo (models::list (models::SidechainFilters), &slot.scFilter);
@@ -368,7 +380,14 @@ public:
         }
     }
 
-    std::vector<KnobBinding> knobs() override { return params->bindings (6); }
+    std::vector<KnobBinding> knobs() override
+    {
+        std::vector<KnobBinding> k;
+        const auto& spec = models::model (models::Dynamics, slot.model.load());
+        for (int i = knobPage * 6; i < juce::jmin ((int) spec.params.size(), knobPage * 6 + 6); ++i)
+            k.push_back (bindModelParam (slot.values[i], spec.params[(size_t) i]));
+        return k;
+    }
 
     void resized() override
     {
@@ -382,8 +401,11 @@ public:
         header.removeFromRight (8);
         model->setBounds (header);
 
-        auto side = b.removeFromRight (juce::jmin (300, b.getWidth() * 2 / 5));
-        auto sc = box (side.removeFromTop (isGate ? side.getHeight() : side.getHeight() * 3 / 5), "SIDECHAIN");
+        // Side column: sidechain, crossover (dynamics slot) and output.
+        auto side = b.removeFromRight (juce::jmin (280, b.getWidth() * 36 / 100));
+        auto out = box (side.removeFromBottom (juce::jlimit (96, 120, side.getHeight() / 4)), "OUTPUT");
+        layoutRow (out, { mix, gain });
+        auto sc = box (side.removeFromTop (isGate ? side.getHeight() : side.getHeight() * 55 / 100), "SIDECHAIN");
         scCaption->setBounds (sc.removeFromTop (14));
         layoutRow (sc.removeFromTop (kKeyHeight), { scFilter, scSource, scTap });
         sc.removeFromTop (4);
@@ -397,9 +419,8 @@ public:
             layoutRow (xo, { xoFreq, xoQ });
         }
 
-        auto bottom = b.removeFromBottom (juce::jlimit (110, 140, b.getHeight() / 3));
-        layoutRow (box (bottom, "OUTPUT"), { mix, gain });
-        params->setBounds (box (b, "PARAMETERS"));
+        b.removeFromRight (6);
+        face->setBounds (b.reduced (0, 4));
     }
 
 private:
@@ -409,13 +430,30 @@ private:
     ModelSelector* model = nullptr;
     DisplayKnob *mix = nullptr, *gain = nullptr, *scFreq = nullptr, *scQ = nullptr, *xoFreq = nullptr, *xoQ = nullptr;
     GainReductionMeter* gr = nullptr;
-    ModelParamGrid* params = nullptr;
+    Faceplate* face = nullptr;
     juce::Label* scCaption = nullptr;
     IntCombo *scFilter = nullptr, *scSource = nullptr, *scTap = nullptr, *xoKind = nullptr;
+    int shownModel = -1, knobPage = 0;
+
+    void bindFace()
+    {
+        shownModel = slot.model.load();
+        face->bind (models::Dynamics, shownModel, slot.values,
+                    [this] { return -(isGate ? strip.meters.gateReductionDb.load() : strip.meters.dynReductionDb.load()); });
+        knobPage = 0;
+        if (knobsChanged)
+            knobsChanged();
+    }
+
+    void timerCallback() override
+    {
+        if (slot.model.load() != shownModel)
+            bindFace();
+    }
 };
 
 //==============================================================================
-class EqTab final : public HomeScreen
+class EqTab final : public HomeScreen, private juce::Timer
 {
 public:
     EqTab (UiContext& c, Strip& s) : HomeScreen (c, s)
@@ -424,20 +462,31 @@ public:
         const auto table = static_cast<models::Table> (strip.getEqTable());
         on = &toggle ("ON", eq.on);
         model = &make<ModelSelector>();
-        model->bind (table, &eq.model, [this] (int m) { strip.setModel (ModelBlock::Eq, m); });
+        // The console doesn't offer the MACH EQ4 on aux channels.
+        juce::StringArray allowed;
+        if (strip.getKind() == StripKind::Aux)
+            for (auto& m : models::table (table))
+                if (m.token != "MACH4")
+                    allowed.add (m.token);
+        model->bind (table, &eq.model, [this] (int m) { strip.setModel (ModelBlock::Eq, m); }, allowed);
         mix = &knob (bindLinear ("MIX", eq.mix, 0.0f, 125.0f, "%", 0, 100.0f));
         graph = &make<ResponseGraph>();
         graph->setStrip (&strip, ResponseGraph::Eq);
         graph->onBandSelected = [this] (int) { bindBand(); };
-        params = &make<ModelParamGrid>();
-        params->bind (table, &eq.model, eq.values);
-        params->onModelChanged = [this]
+        // Analog models show their front panel.
+        face = &make<Faceplate>();
+        face->onTouched = [this] (int param)
         {
-            updateBands();
-            resized();
-            if (knobsChanged)
-                knobsChanged();
+            if (param / 6 != knobPage)
+            {
+                knobPage = param / 6;
+                if (knobsChanged)
+                    knobsChanged();
+            }
         };
+        shownModel = eq.model.load();
+        face->bind (table, shownModel, eq.values);
+        startTimerHz (8);
 
         // The WING EQ: one key per band, the selected band on four knobs.
         bandKeys = &make<SegmentedKeys> (juce::StringArray(),
@@ -457,7 +506,16 @@ public:
     {
         auto& eq = strip.params.eq;
         if (bands.isEmpty())
-            return params->bindings (6);
+        {
+            std::vector<KnobBinding> k;
+            const auto& spec = models::model (static_cast<models::Table> (strip.getEqTable()), eq.model.load());
+            for (int i = knobPage * 6; i < juce::jmin ((int) spec.params.size(), knobPage * 6 + 5); ++i)
+                k.push_back (bindModelParam (eq.values[i], spec.params[(size_t) i]));
+            while (k.size() < 5)
+                k.push_back ({});
+            k.push_back (bindLinear ("EQ MIX", eq.mix, 0.0f, 125.0f, "%", 0, 100.0f));
+            return k;
+        }
         auto k = bandBindings();
         k.push_back ({});
         k.push_back (bindLinear ("EQ MIX", eq.mix, 0.0f, 125.0f, "%", 0, 100.0f));
@@ -477,16 +535,16 @@ public:
         model->setBounds (header);
 
         const bool wingEq = ! bands.isEmpty();
-        params->setVisible (! wingEq);
+        face->setVisible (! wingEq);
         bandKeys->setVisible (wingEq);
         for (auto* k : bandKnobs)
             k->setVisible (wingEq);
 
-        auto graphArea = b.removeFromTop (b.getHeight() * (wingEq ? 50 : 42) / 100);
+        auto graphArea = b.removeFromTop (b.getHeight() * (wingEq ? 50 : 34) / 100);
         graph->setBounds (box (graphArea, {}));
         if (! wingEq)
         {
-            params->setBounds (box (b, "PARAMETERS"));
+            face->setBounds (b.withTrimmedTop (6));
             return;
         }
 
@@ -554,14 +612,29 @@ private:
             knobsChanged();
     }
 
+    void timerCallback() override
+    {
+        auto& eq = strip.params.eq;
+        if (eq.model.load() == shownModel)
+            return;
+        shownModel = eq.model.load();
+        face->bind (static_cast<models::Table> (strip.getEqTable()), shownModel, eq.values);
+        knobPage = 0;
+        updateBands();
+        resized();
+        if (knobsChanged)
+            knobsChanged();
+    }
+
     BoolButton* on = nullptr;
     ModelSelector* model = nullptr;
     DisplayKnob* mix = nullptr;
     ResponseGraph* graph = nullptr;
-    ModelParamGrid* params = nullptr;
+    Faceplate* face = nullptr;
     SegmentedKeys* bandKeys = nullptr;
     DisplayKnob* bandKnobs[4] {};
     juce::StringArray bands;
+    int shownModel = -1, knobPage = 0;
 };
 
 //==============================================================================
@@ -585,10 +658,23 @@ public:
 
         status = &label ("", 13.0f, Colours::text);
         status->setJustificationType (juce::Justification::topLeft);
-        openButton = &make<juce::TextButton> ("OPEN EDITOR");
-        openButton->onClick = [this] { if (ins.fx.load() >= 0 && ctx.openPluginEditor) ctx.openPluginEditor (ins.fx.load()); };
-        loadButton = &make<juce::TextButton> ("LOAD / REPLACE...");
-        loadButton->onClick = [this] { if (ins.fx.load() >= 0) showFxSlotMenu (ctx, ins.fx.load(), loadButton); };
+        openButton = &make<juce::TextButton> ("OPEN");
+        openButton->onClick = [this]
+        {
+            const int slot = ins.fx.load();
+            if (slot < 0)
+                return;
+            if (ctx.engine.getFx().hasPlugin (slot) && ctx.openPluginEditor)
+                ctx.openPluginEditor (slot);
+            else if (ctx.editFx)
+                ctx.editFx (slot);
+        };
+        loadButton = &make<juce::TextButton> ("DEVICE...");
+        loadButton->onClick = [this]
+        {
+            if (const int slot = ins.fx.load(); slot >= 0)
+                showFxDeviceMenu (ctx, slot, loadButton, [this, slot] { if (ctx.editFx) ctx.editFx (slot); });
+        };
         effectsButton = &make<juce::TextButton> ("EFFECTS SCREEN");
         effectsButton->onClick = [this] { if (ctx.showScreen) ctx.showScreen (Screen::Effects); };
         mixKnob = &knob ({});
@@ -629,12 +715,12 @@ public:
         {
             text << fx.describe (slot) << "\n";
             if (! fx.isLoaded (slot))
-                text << "The slot is empty: load a plugin into it.";
+                text << "The slot is empty: choose a device (or a plugin) for it.";
             else
             {
                 text << "Load " << juce::roundToInt (fx.getLoad (slot) * 100.0f) << "%   users " << fx.getNumUsers (slot);
                 if (fx.isFaulted (slot))
-                    text << "\nFAULT: auto-bypassed (plugin failed or produced NaN)";
+                    text << "\nFAULT: auto-bypassed (the device failed or produced NaN)";
                 if (fx.isDoubleAssigned (slot))
                     text << "\nDOUBLE ASSIGNED: another insert uses this slot";
             }

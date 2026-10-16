@@ -54,7 +54,7 @@ public:
             const int comp = models::findModel (models::Dynamics, "COMP");
             expect (comp >= 0);
             const auto& m = models::model (models::Dynamics, comp);
-            expectEquals (m.name, juce::String ("Compressor"));
+            expectEquals (m.name, juce::String ("Wing Compressor"));
             const int ratio = m.find ("ratio");
             expect (ratio >= 0 && m.params[(size_t) ratio].kind == models::ParamKind::Values);
             expectEquals (m.params[(size_t) m.find ("thr")].display (-20.0f), juce::String ("-20.0 dB"));

@@ -189,28 +189,84 @@ ModelSelector::ModelSelector()
 }
 
 void ModelSelector::bind (models::Table t, std::atomic<int32_t>* m, std::function<void (int)> onSelect,
-                          const juce::StringArray& allowed)
+                          const juce::StringArray& allowed, const std::vector<Group>& groups)
 {
     model = m;
     select = std::move (onSelect);
     clear (juce::dontSendNotification);
 
     const auto& all = models::table (t);
-    int lastCategory = -1;
-    for (auto& spec : all)
+    auto ok = [&allowed] (const models::Model& spec) { return allowed.isEmpty() || allowed.contains (spec.token); };
+
+    if (! groups.empty())
     {
-        if (! allowed.isEmpty() && ! allowed.contains (spec.token))
-            continue;
-        if ((int) spec.category != lastCategory)
+        juce::StringArray shown;
+        for (auto& group : groups)
         {
-            addSectionHeading (categoryName (spec.category));
-            lastCategory = (int) spec.category;
+            bool heading = false;
+            for (auto& token : group.tokens)
+            {
+                const int i = models::findModel (t, token);
+                if (i < 0 || shown.contains (token) || ! ok (all[(size_t) i]))
+                    continue;
+                if (! heading)
+                {
+                    addSectionHeading (group.heading);
+                    heading = true;
+                }
+                addItem (all[(size_t) i].name.toUpperCase(), i + 1);
+                shown.add (token);
+            }
         }
-        addItem (spec.name + "  (" + spec.token + ")", spec.index + 1);
+        bool heading = false;
+        for (auto& spec : all)
+        {
+            if (shown.contains (spec.token) || ! ok (spec))
+                continue;
+            if (! heading)
+            {
+                addSectionHeading ("MORE");
+                heading = true;
+            }
+            addItem (spec.name.toUpperCase(), spec.index + 1);
+        }
+    }
+    else
+    {
+        int lastCategory = -1;
+        for (auto& spec : all)
+        {
+            if (! ok (spec))
+                continue;
+            if ((int) spec.category != lastCategory)
+            {
+                addSectionHeading (categoryName (spec.category));
+                lastCategory = (int) spec.category;
+            }
+            addItem (spec.name.toUpperCase(), spec.index + 1);
+        }
     }
 
     setEnabled (model != nullptr);
     timerCallback();
+}
+
+namespace
+{
+    // As the console's documentation lists the gate-slot and compressor-slot models.
+    const juce::StringArray gateModels { "GATE", "DUCK", "9000G", "E88", "D241G", "DS902", "76LA", "LA", "PSE", "WAVE", "RIDE", "WARM", "DEQ" };
+    const juce::StringArray compModels { "COMP", "EXP",  "B160", "B560", "D241C", "RED3", "9000C", "SBUS", "ECL33",
+                                         "BLISS", "76LA", "LA",   "F670", "NSTR",  "2250", "L100",  "WAVE", "RIDE" };
+} // namespace
+
+std::vector<ModelSelector::Group> ModelSelector::gateSlotGroups()
+{
+    return { { "GATE MODELS", gateModels }, { "COMPRESSOR MODELS", compModels } };
+}
+
+std::vector<ModelSelector::Group> ModelSelector::dynamicsSlotGroups()
+{
+    return { { "COMPRESSOR MODELS", compModels }, { "GATE MODELS", gateModels } };
 }
 
 void ModelSelector::timerCallback()

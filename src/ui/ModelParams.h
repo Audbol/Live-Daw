@@ -68,9 +68,22 @@ class ModelSelector final : public juce::ComboBox, private juce::Timer
 public:
     ModelSelector();
 
-    /** `allowed` (tokens) restricts the list, e.g. the aux channels' dynamics models. */
+    /** A section of the menu: a heading and its models (tokens) in order. */
+    struct Group
+    {
+        juce::String heading;
+        juce::StringArray tokens;
+    };
+
+    /** `allowed` (tokens) restricts the list, e.g. the aux channels' dynamics models.
+        With `groups`, the menu lists those sections in order (a model appears once),
+        then the remaining models under MORE. */
     void bind (models::Table, std::atomic<int32_t>* model, std::function<void (int)> onSelect,
-               const juce::StringArray& allowed = {});
+               const juce::StringArray& allowed = {}, const std::vector<Group>& groups = {});
+
+    /** The console's gate-slot and compressor-slot model lists. */
+    static std::vector<Group> gateSlotGroups();
+    static std::vector<Group> dynamicsSlotGroups();
 
 private:
     void timerCallback() override;

@@ -163,6 +163,7 @@ target_sources(LiveDAW PRIVATE
     src/ui/Icons.cpp
     src/ui/Knobs.cpp
     src/ui/ModelParams.cpp
+    src/ui/Faceplate.cpp
     src/ui/MeterComponent.cpp
     src/ui/PluginMenu.cpp
     src/ui/FaderStrip.cpp

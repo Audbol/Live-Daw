@@ -1,4 +1,5 @@
 #include "ui/UiContext.h"
+#include "engine/Models.h"
 
 namespace livedaw::ui
 {
@@ -126,12 +127,59 @@ void showFxSlotMenu (UiContext& ctx, int slot, juce::Component* target)
     menu.showMenuAsync (options);
 }
 
+void showFxDeviceMenu (UiContext& ctx, int slot, juce::Component* target, std::function<void()> chosen)
+{
+    auto& fx = ctx.engine.getFx();
+    const auto& devices = models::table (models::Fx);
+    const int current = fx.getModel (slot);
+    juce::PopupMenu premium, standard, channel;
+    for (const auto& m : devices)
+    {
+        auto* sub = m.category == models::Category::FxPremium    ? &premium
+                    : m.category == models::Category::FxStandard ? &standard
+                    : m.category == models::Category::FxChannel  ? &channel
+                                                                  : nullptr;
+        if (sub != nullptr)
+            sub->addItem (m.index + 1, m.name.toUpperCase(), FxSlots::isAllowed (m.index, slot), m.index == current);
+    }
+
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("FX " + juce::String (slot + 1));
+    menu.addSubMenu (slot < 8 ? "PREMIUM FX" : "PREMIUM FX (slots 1-8 only)", premium, slot < 8);
+    menu.addSubMenu ("STANDARD FX", standard);
+    menu.addSubMenu ("CHANNEL STRIPS", channel);
+    menu.addSeparator();
+    menu.addItem (-2, "PLUGIN (EXT)...", true, current == ld::kFxExt);
+    menu.addItem (-1, "NONE", true, current == ld::kFxNone);
+
+    juce::Component::SafePointer<juce::Component> safeTarget (target);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target), [&ctx, slot, safeTarget, chosen] (int r)
+    {
+        auto& slots = ctx.engine.getFx();
+        if (r == -2)
+        {
+            showFxSlotMenu (ctx, slot, safeTarget.getComponent());
+            return;
+        }
+        if (r == 0)
+            return;
+        if (slots.hasPlugin (slot))
+            clearFx (ctx, slot); // closes the plugin's editor first
+        slots.setModel (slot, r == -1 ? ld::kFxNone : r - 1);
+        if (chosen)
+            chosen();
+    });
+}
+
 void clickFxSlot (UiContext& ctx, int slot, juce::Component* target)
 {
-    if (ctx.engine.getFx().getPlugin (slot) != nullptr && ctx.openPluginEditor)
+    auto& fx = ctx.engine.getFx();
+    if (fx.getPlugin (slot) != nullptr && ctx.openPluginEditor)
         ctx.openPluginEditor (slot);
+    else if (fx.getModel (slot) > ld::kFxExt && ctx.editFx)
+        ctx.editFx (slot);
     else
-        showFxSlotMenu (ctx, slot, target);
+        showFxDeviceMenu (ctx, slot, target, [&ctx, slot] { if (ctx.editFx) ctx.editFx (slot); });
 }
 
 void logRecall (UiContext& ctx, const juce::String& what, const state::ApplyResult& r)

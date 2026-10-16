@@ -73,6 +73,8 @@ struct UiContext
 
     // FX slots / plugins
     std::function<void (int slot)> openPluginEditor;
+    /** Opens FX slot `slot` on the EFFECTS screen's device editor. */
+    std::function<void (int slot)> editFx;
     std::function<void (juce::AudioProcessor*)> pluginRemoved;
     std::function<void()> showPluginScanner;
 
@@ -111,6 +113,10 @@ void clearFx (UiContext&, int slot);
 
 /** Default click on a slot: open the editor if loaded, otherwise show the menu. */
 void clickFxSlot (UiContext&, int slot, juce::Component* target);
+
+/** The device menu of a slot: premium (slots 1-8), standard and channel-strip
+    devices, a plugin (EXT) or none. `chosen` runs after a device was selected. */
+void showFxDeviceMenu (UiContext&, int slot, juce::Component* target, std::function<void()> chosen = {});
 
 /** "CH 3 Kick" */
 juce::String describeStrip (const Strip&);

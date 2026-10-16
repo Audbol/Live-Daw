@@ -23,11 +23,16 @@ public:
     void resized() override;
     void paint (juce::Graphics&) override;
 
+    /** Shows slot `slot` in the device editor (-1 = back to the rack). */
+    void editSlot (int slot);
+
     class Tile;
+    class Editor;
 
 private:
     UiContext& ctx;
     juce::OwnedArray<Tile> tiles;
+    std::unique_ptr<Editor> editor;
     juce::Rectangle<int> rack, premiumLabel, standardLabel;
     int selected = 0;
 };

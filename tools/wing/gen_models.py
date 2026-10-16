@@ -14,15 +14,15 @@ import sys
 rows = [json.loads(l) for l in open(sys.argv[1])]
 by_name = {r["fullname"]: r for r in rows}
 
-DYN_NAMES = {
+DYN_NAMES = {  # as the console names them
     "GATE": "Gate/Expander", "DUCK": "Ducker", "E88": "Even 88 Gate", "9000G": "Soul 9000 Gate",
-    "D241G": "Draw 241 Gate", "DS902": "De-Esser 902", "DEQ": "Dynamic EQ", "DEQ2": "Dual Dynamic EQ",
+    "D241G": "Draw More 241", "DS902": "BDX 902 De-Esser", "DEQ": "Dynamic EQ", "DEQ2": "Dual Dynamic EQ",
     "WAVE": "Wave Designer", "PSE": "Source Extractor", "CMB": "Extractor + Leveler", "RIDE": "Auto Rider",
-    "WARM": "Warm Harmonics", "COMP": "Compressor", "EXP": "Expander", "B160": "160 VCA Comp",
-    "B560": "560 Easy Comp", "D241C": "Draw 241 Comp/Lim", "ECL33": "ECL 33 Comp/Lim", "9000C": "Soul 9000 Comp",
-    "SBUS": "Soul Bus Comp", "RED3": "Red 3 Comp", "76LA": "76 Limiting Amp", "LA": "LA Leveler",
-    "F670": "Fair Kid 670", "BLISS": "Eternal Bliss", "NSTR": "No-Stressor", "2250": "2250 Comp",
-    "L100": "L100 Leveler", "E88C": "Even 88 Comp", "LMT": "LMT Transient Comp", "ONEC": "One-Knob Comp",
+    "WARM": "Soul Warmth Pre", "COMP": "Wing Compressor", "EXP": "Wing Expander", "B160": "BDX 160 Comp",
+    "B560": "BDX 560 Easy", "D241C": "Draw More Comp", "ECL33": "Even Comp/Lim", "9000C": "Soul 9000",
+    "SBUS": "Soul Bus Comp", "RED3": "Red3 Compressor", "76LA": "76 Limiter Amp", "LA": "LA Leveler",
+    "F670": "Fair Kid", "BLISS": "Eternal Bliss", "NSTR": "No-Stressor", "2250": "PIA2250 Rack",
+    "L100": "LTA100 Leveler", "E88C": "Even 88 Comp", "LMT": "Transient Limiter", "ONEC": "One-Knob Comp",
 }
 DYN_KIND = {  # broad category, used to group the model menu like the console
     "GATE": "gate", "DUCK": "gate", "E88": "gate", "9000G": "gate", "D241G": "gate", "PSE": "gate",
@@ -30,8 +30,8 @@ DYN_KIND = {  # broad category, used to group the model menu like the console
     "RIDE": "special", "WARM": "special",
 }
 EQ_NAMES = {
-    "STD": "WING EQ", "SOUL": "Soul Analogue EQ", "E88": "Even 88 EQ", "E84": "Even 84 EQ",
-    "F110": "Fortissimo 110 EQ", "PULSAR": "Pulsar EQ", "MACH4": "Mach EQ4", "PIA": "PIA Graphic EQ",
+    "STD": "WING EQ", "SOUL": "Soul Analogue", "E88": "Even 88 Formant", "E84": "Even 84",
+    "F110": "Fortissimo 110", "PULSAR": "Pulsar", "MACH4": "Mach EQ4", "PIA": "PIA 560 EQ",
 }
 TOOL_NAMES = {"TILT": "Tilt EQ", "MAX": "Maxer", "AP1": "All-Pass 1st", "AP2": "All-Pass 2nd"}
 

@@ -251,6 +251,12 @@ void MainDisplay::paint (juce::Graphics& g)
     paintStatusBar (g);
 }
 
+void MainDisplay::editFx (int slot)
+{
+    showScreen (Screen::Effects);
+    effects->editSlot (slot);
+}
+
 void MainDisplay::mouseUp (const juce::MouseEvent& e)
 {
     const auto p = e.getPosition();
