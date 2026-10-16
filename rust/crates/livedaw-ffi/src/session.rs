@@ -313,16 +313,25 @@ pub unsafe extern "C" fn ld_show_move_scene(s: *mut LdShow, from: i32, to: i32) 
     }
 }
 
-/// which: 0 = the scene at `index`, 1 = next, 2 = previous.
+/// which: 0 = the scene at `index`, 1 = next (GO NEXT), 2 = previous (GO PREV),
+/// 3 = the first scene tagged `index` (#1..#128). Skipped scenes are passed
+/// over; a linked scene also recalls the one below it.
 #[no_mangle]
 pub unsafe extern "C" fn ld_show_recall_scene(s: *mut LdShow, e: *const Engine, which: i32, index: i32, out: *mut LdApplyResult) {
     let (Some(s), Some(e)) = (show(s), eng(e)) else { return write_result(out, ApplyResult::default()) };
     let r = guard(ApplyResult::default(), || match which {
         1 => s.show.recall_next(e, &mut s.bridge),
         2 => s.show.recall_previous(e, &mut s.bridge),
+        3 => s.show.recall_by_tag(e, &mut s.bridge, index),
         _ => s.show.recall_scene(e, &mut s.bridge, index),
     });
     write_result(out, r);
+}
+
+/// The first (non-skipped) scene tagged `tag`, or -1.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_find_scene_by_tag(s: *mut LdShow, tag: i32) -> i32 {
+    show(s).map_or(-1, |s| s.show.find_scene_by_tag(tag))
 }
 
 // Scene fields -----------------------------------------------------------------------
@@ -355,6 +364,45 @@ pub unsafe extern "C" fn ld_scene_fade_seconds(s: *mut LdShow, scene: i32) -> f6
 #[no_mangle]
 pub unsafe extern "C" fn ld_scene_num_snippets(s: *mut LdShow, scene: i32) -> i32 {
     show(s).and_then(|s| s.show.scene(scene)).map_or(0, |sc| sc.snippets.len() as i32)
+}
+
+/// EDIT TAG: #1..#128, 0 = none.
+#[no_mangle]
+pub unsafe extern "C" fn ld_scene_tag(s: *mut LdShow, scene: i32) -> i32 {
+    show(s).and_then(|s| s.show.scene(scene)).map_or(0, |sc| sc.tag)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_scene_skip(s: *mut LdShow, scene: i32) -> bool {
+    show(s).and_then(|s| s.show.scene(scene)).is_some_and(|sc| sc.skip)
+}
+
+/// LINK: recalling the scene also recalls the one below it.
+#[no_mangle]
+pub unsafe extern "C" fn ld_scene_link(s: *mut LdShow, scene: i32) -> bool {
+    show(s).and_then(|s| s.show.scene(scene)).is_some_and(|sc| sc.link_next)
+}
+
+/// Out-of-range tags clear the tag.
+#[no_mangle]
+pub unsafe extern "C" fn ld_scene_set_tag(s: *mut LdShow, scene: i32, tag: i32) {
+    if let Some(sc) = show(s).and_then(|s| s.show.scene_mut(scene)) {
+        sc.tag = livedaw_session::show::clamp_scene_tag(tag);
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_scene_set_skip(s: *mut LdShow, scene: i32, skip: bool) {
+    if let Some(sc) = show(s).and_then(|s| s.show.scene_mut(scene)) {
+        sc.skip = skip;
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_scene_set_link(s: *mut LdShow, scene: i32, link: bool) {
+    if let Some(sc) = show(s).and_then(|s| s.show.scene_mut(scene)) {
+        sc.link_next = link;
+    }
 }
 
 #[no_mangle]
@@ -832,6 +880,17 @@ mod tests {
             assert_eq!(take(ld_scene_name(s, 0)), "Intro");
             ld_scene_set_fade_seconds(s, 0, 1000.0);
             assert_eq!(ld_scene_fade_seconds(s, 0), 60.0);
+            ld_scene_set_tag(s, 0, 12);
+            ld_scene_set_link(s, 0, true);
+            assert_eq!((ld_scene_tag(s, 0), ld_scene_skip(s, 0), ld_scene_link(s, 0)), (12, false, true));
+            assert_eq!(ld_show_find_scene_by_tag(s, 12), 0);
+            ld_scene_set_tag(s, 0, 129);
+            assert_eq!(ld_scene_tag(s, 0), 0);
+            ld_scene_set_skip(s, 0, true);
+            assert!(ld_scene_skip(s, 0));
+            ld_scene_set_skip(s, 0, false);
+            ld_scene_set_link(s, 0, false);
+            ld_scene_set_tag(s, 0, 12);
 
             let refs = [LdStripRef { kind: 0, id: 1 }];
             let faders = [LdFaderRef { kind: 0, id: 1 }, LdFaderRef { kind: FADER_DCA, id: 3 }];
@@ -845,6 +904,10 @@ mod tests {
             ld_show_recall_scene(s, e, 0, 0, &mut r);
             assert_eq!(r.strips_applied, 2 + 8 + 16 + 4 + 8);
             assert!(r.warnings.is_null());
+            ld_show_recall_scene(s, e, 3, 12, &mut r); // by tag
+            assert_eq!(r.strips_applied, 2 + 8 + 16 + 4 + 8);
+            ld_show_recall_scene(s, e, 3, 13, &mut r);
+            assert_eq!(r.strips_applied, 0);
 
             let xml = take(ld_show_to_xml(s, e));
             let mut msg = std::ptr::null_mut();

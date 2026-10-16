@@ -62,9 +62,24 @@ enum class ModelBlock : int32_t
     FilterTool = 3
 };
 
-/** C++ view of one strip of the Rust engine: INPUT -> FILTER -> GATE, EQ,
-    DYNAMICS and PRE INSERT in the selected process order -> fader, DCAs, mute
-    groups -> POST INSERT -> pan/width -> sends to buses, mains and matrices.
+/** Where a strip's peak meters measure (Strip::peakMeter). */
+enum class MeterPoint
+{
+    Input,    // the raw input (before trim)
+    Trim,     // after trim, balance and polarity (the INPUT screen's "post TRIM" meter)
+    PreFader, // at the PFL point (the METERS screen; "PRE" meter setting)
+    Output    // after the fader and pan ("POST" meter setting)
+};
+
+/** C++ view of one strip of the Rust engine, processed as on the WING:
+      input channels: INPUT -> FILTER -> GATE, EQ, DYNAMICS and INS 1 in the
+        selected process order -> fader, DCAs, mute groups -> INS 2 (or automix)
+        -> DELAY (POST) -> pan/width;
+      aux channels: INPUT -> delay -> DYNAMICS -> EQ -> INS 1 -> fader (no INS 2);
+      buses, mains, matrices: INPUT -> DYNAMICS -> INS 1 -> fader -> EQ -> INS 2
+        -> delay -> pan/width;
+    then sends to buses, mains and matrices. Aux, buses, mains and matrices tap
+    TAP-mode sends after INS 1 (pre-fader).
 
     Stateless: parameters, meters and the name live in the engine, so a Strip
     can be recreated for the same handle at any time. Message thread only (the
@@ -109,6 +124,36 @@ public:
 
     /** The model table of this strip's EQ (1 = channel EQs, 2 = bus EQs). */
     int getEqTable() const noexcept { return isOutput() ? 2 : 1; }
+
+    // What the WING gives each strip type (Operation Manual, chapter 6).
+    /** INS 2 (the post insert): every type but aux. */
+    bool hasPostInsert() const noexcept { return kind != StripKind::Aux; }
+    /** Automix X/Y (in INS 2): the input channels only. */
+    bool hasAutomix() const noexcept { return kind == StripKind::Channel; }
+    /** A selectable TAP point and process order: input channels only (the
+        others tap after INS 1, pre-fader, and have a fixed order). */
+    bool hasSelectableTap() const noexcept { return kind == StripKind::Channel; }
+    /** Buses, mains and matrices run their EQ after the fader. */
+    bool hasPostFaderEq() const noexcept { return isOutput(); }
+    /** The delay is post-fader everywhere but on aux channels. */
+    bool hasPostFaderDelay() const noexcept { return kind != StripKind::Aux; }
+    /** IGNORE CHANNEL MUTE applies to this strip's TAP-mode sends (input and aux channels). */
+    bool canIgnoreMuteOnSends() const noexcept { return isInput(); }
+
+    /** A peak meter (channel 0/1): "max since last read", so exactly one reader
+        (the UI's meter bank) exchanges it with 0. */
+    std::atomic<float>& peakMeter (MeterPoint point, int channel) const noexcept
+    {
+        const auto ch = (size_t) juce::jlimit (0, 1, channel);
+        switch (point)
+        {
+            case MeterPoint::Trim:     return meters.trimPeak[ch];
+            case MeterPoint::PreFader: return meters.pflPeak[ch];
+            case MeterPoint::Output:   return meters.outputPeak[ch];
+            case MeterPoint::Input:    break;
+        }
+        return meters.inputPeak[ch];
+    }
 
     StripParams& params;
     SendBank sends;
