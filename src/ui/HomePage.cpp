@@ -134,7 +134,7 @@ namespace
                 else if (letter == 'I' && p.preInsert.on.load() && p.preInsert.fx.load() >= 0 && ctx.engine.getFx().isLoaded (p.preInsert.fx.load()))
                     tabs.push_back (HomeTab::PreInsert);
             }
-            if (strip.getKind() != StripKind::Aux && p.postInsert.on.load() && p.postInsert.mode.load() == 0 && p.postInsert.fx.load() >= 0
+            if (strip.hasPostInsert() && p.postInsert.on.load() && p.postInsert.mode.load() == 0 && p.postInsert.fx.load() >= 0
                 && ctx.engine.getFx().isLoaded (p.postInsert.fx.load()))
                 tabs.push_back (HomeTab::PostInsert);
             return tabs;
@@ -714,22 +714,26 @@ public:
         // The slots between INPUT and MAIN, with the fader bar after `pre` of them.
         std::vector<std::optional<HomeTab>> slots;
         int pre = 4;
-        if (kind == StripKind::Channel)
+        if (strip->hasSelectableTap())
         {
             const juce::String order = models::list (models::ProcessOrders)[juce::jlimit (0, 23, (int) strip->params.processOrder.load())];
             for (auto letter : order)
                 slots.push_back (tabFor (letter));
             slots.push_back (HomeTab::PostInsert);
         }
-        else if (kind == StripKind::Aux)
+        else if (! strip->hasPostFaderEq())
         {
-            // Fig. 68: DYN, EQ, INS; no post-fader insert (engine E2: aux order D-E-I, no INS 2).
+            // Aux (Fig. 68): DYN, EQ, INS 1, then the fader.
             slots = { std::nullopt, HomeTab::Dynamics, HomeTab::Eq, HomeTab::PreInsert, std::nullopt };
+            if (strip->hasPostInsert())
+                slots.back() = HomeTab::PostInsert;
         }
         else
         {
-            // Figs. 69-71: COMP, INS 1, fader, EQ (post-fader), INS 2 (engine E1 moves the EQ post-fader).
-            slots = { std::nullopt, HomeTab::Dynamics, HomeTab::PreInsert, HomeTab::Eq, HomeTab::PostInsert };
+            // Buses, mains, matrices (Figs. 69-71): COMP, INS 1, fader, EQ, INS 2.
+            slots = { std::nullopt, HomeTab::Dynamics, HomeTab::PreInsert, HomeTab::Eq, std::nullopt };
+            if (strip->hasPostInsert())
+                slots.back() = HomeTab::PostInsert;
             pre = 3;
         }
 
@@ -776,7 +780,7 @@ public:
             y += rowH;
 
         // The wrench (input channels: the slot order and TAP point can be dragged).
-        wrench = keys && kind == StripKind::Channel
+        wrench = keys && strip->hasSelectableTap()
                      ? juce::Rectangle<int> (keyX, juce::roundToInt (y - rowH), keyW, juce::roundToInt (rowH) - gap).withSizeKeepingCentre (keyW, juce::jmin (keyW, juce::roundToInt (rowH) - gap))
                      : juce::Rectangle<int>();
         thumbWidth = thumbW;
@@ -832,7 +836,7 @@ public:
     {
         dragTab.reset();
         draggingTap = false;
-        if (strip == nullptr || ! editing || strip->getKind() != StripKind::Channel)
+        if (strip == nullptr || ! editing || ! strip->hasSelectableTap())
             return;
         const auto pos = e.getPosition();
         if (const int tap = tapIndex(); tap >= 0 && tap < (int) tapY.size()
@@ -956,7 +960,7 @@ private:
     /** Index of a pre-fader block of an input channel (0-3), or -1. */
     int preIndex (HomeTab t) const
     {
-        if (strip == nullptr || strip->getKind() != StripKind::Channel)
+        if (strip == nullptr || ! strip->hasSelectableTap())
             return -1;
         if (t != HomeTab::Gate && t != HomeTab::Eq && t != HomeTab::Dynamics && t != HomeTab::PreInsert)
             return -1;
@@ -998,15 +1002,10 @@ private:
     {
         if (strip == nullptr)
             return -1;
-        switch (strip->getKind())
-        {
-            case StripKind::Channel: return juce::jlimit (0, 7, (int) strip->params.tap.load());
-            case StripKind::Aux:
-            case StripKind::Bus:     return ld::kTapPfl; // fixed: after the pre-fader insert (engine E2)
-            case StripKind::Main:
-            case StripKind::Matrix:  return -1;
-        }
-        return -1;
+        if (strip->hasSelectableTap())
+            return juce::jlimit (0, 7, (int) strip->params.tap.load());
+        // Fixed after INS 1, pre-fader; matrices send nowhere.
+        return strip->getKind() == StripKind::Matrix ? -1 : ld::kTapPfl;
     }
 
     static Icon keyIcon (HomeTab t)
@@ -1341,13 +1340,13 @@ private:
             juce::StringArray names;
             for (auto letter : orders[i])
                 names.add (letter == 'G' ? "GATE" : letter == 'E' ? "EQ" : letter == 'D' ? "DYN" : "INS 1");
-            menu.addItem (names.joinIntoString ("  >  "), s->getKind() == StripKind::Channel, s->params.processOrder.load() == i,
+            menu.addItem (names.joinIntoString ("  >  "), s->hasSelectableTap(), s->params.processOrder.load() == i,
                           [this, i] { if (strip != nullptr) { strip->params.processOrder = i; setStrip (strip); } });
         }
         juce::PopupMenu taps;
         const auto tapNames = tapPointNames();
         for (int i = 0; i < tapNames.size(); ++i)
-            taps.addItem (tapNames[i], true, s->params.tap.load() == i, [this, i] { if (strip != nullptr) strip->params.tap = i; });
+            taps.addItem (tapNames[i], s->hasSelectableTap(), s->params.tap.load() == i, [this, i] { if (strip != nullptr) strip->params.tap = i; });
         menu.addSubMenu ("TAP POINT", taps);
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (wrench)));
     }
@@ -1397,7 +1396,7 @@ bool HomePage::isAvailable (HomeTab t, const Strip* s) const
     if (t == HomeTab::Filter || t == HomeTab::Gate)
         return s->getKind() == StripKind::Channel;
     if (t == HomeTab::PostInsert)
-        return s->getKind() != StripKind::Aux; // engine E2: aux has no post-fader insert
+        return s->hasPostInsert();
     if (t == HomeTab::Sends)
         return s->getKind() != StripKind::Matrix;
     return true;

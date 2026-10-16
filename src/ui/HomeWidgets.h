@@ -753,7 +753,7 @@ public:
         g.setFont (juce::FontOptions (juce::jlimit (9.0f, 14.0f, r.getHeight() * 0.28f), juce::Font::bold));
         g.drawText (binding.label, r.removeFromTop (r.getHeight() * 0.4f).toNearestInt(), juce::Justification::bottomLeft);
         g.setFont (juce::FontOptions (juce::jlimit (12.0f, 26.0f, r.getHeight() * 0.8f), juce::Font::bold));
-        g.drawFittedText (enabled && binding.text ? binding.text() : juce::String ("--"), r.toNearestInt(), juce::Justification::topLeft, 1, 0.8f);
+        g.drawFittedText (binding.text ? binding.text() : juce::String ("--"), r.toNearestInt(), juce::Justification::topLeft, 1, 0.8f);
     }
 
     void mouseDown (const juce::MouseEvent&) override { start = binding.isValid() ? binding.get() : 0.0f; }

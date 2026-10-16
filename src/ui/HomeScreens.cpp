@@ -550,8 +550,8 @@ public:
           trimMeter (
               [this] (int ch)
               {
-                  // engine E10: trimPeak (post-trim meter). Until then the input
-                  // peak scaled by the trim and balance gives the same reading.
+                  // Post TRIM: the meter bank only reads the input peak (the engine's
+                  // trimPeak isn't in it yet), so scale it by the trim and balance.
                   const float bal = strip.getNumChannels() == 2 ? strip.params.input.balanceDb.load() : 0.0f;
                   const float gainDb = strip.params.input.trimDb.load() + (ch == 0 ? -juce::jmax (0.0f, bal) : juce::jmin (0.0f, bal) * -1.0f);
                   return ctx.meters.get (&strip, true, ch) * juce::Decibels::decibelsToGain (gainDb);
@@ -710,8 +710,7 @@ public:
         }
         if (delay != nullptr)
         {
-            const bool post = strip.getKind() != StripKind::Aux;
-            delay->setBounds (box (right, post ? "DELAY (POST)" : "DELAY"));
+            delay->setBounds (box (right, strip.hasPostFaderDelay() ? "DELAY (POST)" : "DELAY"));
         }
     }
 
@@ -1435,7 +1434,7 @@ public:
         hint = &label ({}, 15.0f, Colours::textDim);
         hint->setJustificationType (juce::Justification::centred);
 
-        if (post && strip.getKind() == StripKind::Channel)
+        if (post && strip.hasAutomix())
         {
             // FX | AUTO - X | AUTO - Y (automix only on the input channels).
             modeKeys = &make<Segmented> (juce::StringArray { "FX", "AUTO - X", "AUTO - Y" }, [this] { return ins.mode.load(); },
@@ -1444,11 +1443,11 @@ public:
                                              ins.mode = m;
                                              rebuildAutomix();
                                          });
-            // engine E8: automix group enables X ENABLE / Y ENABLE.
+            // The automix groups' global enables.
             xEnable = &key ("X ENABLE", std::nullopt, colours::fader);
-            xEnable->setEnabled (false);
+            bindKey (*xEnable, ctx.engine.automixEnable[0]);
             yEnable = &key ("Y ENABLE", std::nullopt, Colours::active);
-            yEnable->setEnabled (false);
+            bindKey (*yEnable, ctx.engine.automixEnable[1]);
         }
         startTimerHz (4);
         rebuildAutomix();
@@ -1463,7 +1462,7 @@ public:
         processor->setItems (items, "NONE");
     }
 
-    bool automix() const { return post && strip.getKind() == StripKind::Channel && ins.mode.load() > 0; }
+    bool automix() const { return post && strip.hasAutomix() && ins.mode.load() > 0; }
 
     void rebuildAutomix()
     {
@@ -1830,24 +1829,52 @@ void paintSendPan (juce::Graphics& g, juce::Rectangle<float> r, float pan, bool 
     g.drawLine (c.x, c.y, c.x + std::sin (a) * rad * 0.8f, c.y - std::cos (a) * rad * 0.8f, juce::jmax (1.2f, size * 0.04f));
 }
 
-/** The pop-up of a send's pan knob: MODE, IGNORE CHANNEL MUTE, LINK SEND PAN
-    TO CHANNEL PAN and the send pan. */
-class SendOptions final : public juce::Component
+/** The pop-up of a send's pan knob: MODE, IGNORE CHANNEL MUTE (TAP mode
+    only), LINK SEND PAN TO CHANNEL PAN and the send pan. */
+class SendOptions final : public juce::Component, private juce::Timer
 {
 public:
-    SendOptions (SendParams& s, bool inputSource)
-        : send (s),
-          mode (juce::StringArray { sendModeName (0, inputSource), "POST", "GROUP" }, [&s] { return s.mode.load(); }, [&s] (int m) { s.mode = m; }),
-          panBox (wingPan ("PAN", s.pan))
+    /** A bus send: TAP (PRE) / POST / GROUP. */
+    SendOptions (SendParams& s, bool inputSource, bool canIgnoreMute)
+        : mode (juce::StringArray { sendModeName (0, inputSource), "POST", "GROUP" }, [&s] { return s.mode.load(); }, [&s] (int m) { s.mode = m; }),
+          panBox (wingPan ("PAN", s.pan)), canIgnore (canIgnoreMute)
     {
-        // engine E6: IGNORE CHANNEL MUTE (TAP-mode sends).
-        ignoreMute.setEnabled (false);
+        bindKey (ignoreMute, s.ignoreMute);
+        bindKey (link, s.panLink);
+        isTap = [&s] { return s.mode.load() == 0; };
+        isLinked = [&s] { return s.panLink.load(); };
+        setUp();
+    }
+
+    /** A matrix send: TAP (PRE) / POST, no pan link. */
+    SendOptions (MatrixSendParams& m, bool inputSource, bool canIgnoreMute)
+        : mode (juce::StringArray { sendModeName (0, inputSource), "POST" }, [&m] { return m.pre.load() ? 0 : 1; }, [&m] (int i) { m.pre = i == 0; }),
+          panBox (wingPan ("PAN", m.pan)), canIgnore (canIgnoreMute)
+    {
+        bindKey (ignoreMute, m.ignoreMute);
+        link.setVisible (false);
+        isTap = [&m] { return m.pre.load(); };
+        isLinked = [] { return false; };
+        setUp();
+    }
+
+    void setUp()
+    {
         ignoreMute.twoLines = true;
-        bindKey (link, send.panLink);
         link.twoLines = true;
-        for (juce::Component* c : { (juce::Component*) &mode, (juce::Component*) &ignoreMute, (juce::Component*) &link, (juce::Component*) &panBox })
+        for (juce::Component* c : { (juce::Component*) &mode, (juce::Component*) &ignoreMute, (juce::Component*) &panBox })
             addAndMakeVisible (c);
+        addChildComponent (link);
+        link.setVisible (isLinked != nullptr && link.onClick != nullptr);
+        timerCallback();
+        startTimerHz (6);
         setSize (300, 210);
+    }
+
+    void timerCallback() override
+    {
+        ignoreMute.setEnabled (canIgnore && isTap());
+        panBox.setEnabled (! isLinked());
     }
 
     void paint (juce::Graphics& g) override
@@ -1869,14 +1896,14 @@ public:
         link.setBounds (row.reduced (2, 0));
         r.removeFromTop (8);
         panBox.setBounds (r.removeFromTop (44));
-        panBox.setEnabled (! send.panLink.load());
     }
 
 private:
-    SendParams& send;
     Segmented mode;
-    IconKey ignoreMute { "IGNORE CHANNEL MUTE", std::nullopt }, link { "LINK SEND PAN TO CHANNEL PAN", std::nullopt, Colours::yellow };
+    IconKey ignoreMute { "IGNORE CHANNEL MUTE", std::nullopt, Colours::yellow }, link { "LINK SEND PAN TO CHANNEL PAN", std::nullopt, Colours::yellow };
     KnobBox panBox;
+    bool canIgnore;
+    std::function<bool()> isTap, isLinked;
 };
 
 /** One column of BUS SENDS / MATRIX SENDS. */
@@ -1948,14 +1975,15 @@ public:
         // The pan knob, PAN LINK under it.
         panArea = r.removeFromTop (juce::jlimit (18.0f, 40.0f, r.getWidth() * 0.9f));
         const bool linked = send != nullptr && send->panLink.load();
-        const float panValue = linked ? src.params.pan.load() : (send != nullptr ? send->pan.load() : mtx->pan.load());
+        const float chPan = send != nullptr && send->panReversed.load() ? -src.params.pan.load() : src.params.pan.load();
+        const float panValue = linked ? chPan : (send != nullptr ? send->pan.load() : mtx->pan.load());
         paintSendPan (g, panArea, panValue, enabled);
         auto linkArea = r.removeFromTop (12.0f);
         if (linked)
         {
             g.setColour (colours::stereo);
             g.setFont (juce::FontOptions (9.5f, juce::Font::bold));
-            g.drawFittedText ("PAN LINK", linkArea.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+            g.drawFittedText (send->panReversed.load() ? "LINK REV" : "PAN LINK", linkArea.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         }
         if (selected)
         {
@@ -1983,16 +2011,9 @@ public:
             onSelect();
         if (panArea.contains (e.position) && enabled)
         {
-            if (send != nullptr)
-            {
-                auto options = std::make_unique<SendOptions> (*send, src.isInput());
-                juce::CallOutBox::launchAsynchronously (std::move (options), localAreaToGlobal (panArea.toNearestInt()), nullptr);
-            }
-            else
-            {
-                // Matrix sends: PRE / POST.
-                mtx->pre = ! mtx->pre.load();
-            }
+            auto options = send != nullptr ? std::make_unique<SendOptions> (*send, src.isInput(), src.canIgnoreMuteOnSends())
+                                           : std::make_unique<SendOptions> (*mtx, src.isInput(), src.canIgnoreMuteOnSends());
+            juce::CallOutBox::launchAsynchronously (std::move (options), localAreaToGlobal (panArea.toNearestInt()), nullptr);
         }
         else if (modeArea.contains (e.position) && enabled)
         {
@@ -2444,6 +2465,8 @@ void copyStripParams (MixerEngine& engine, const Strip& src, const Strip& dst, j
             auto& to = dst.sends[(size_t) id];
             to.enabled = from != nullptr && from->enabled.load();
             to.panLink = from != nullptr ? from->panLink.load() : true;
+            to.ignoreMute = from != nullptr && from->ignoreMute.load();
+            to.panReversed = from != nullptr && from->panReversed.load();
             to.mode = from != nullptr ? from->mode.load() : 1;
             to.levelDb = from != nullptr ? from->levelDb.load() : -100.0f;
             to.pan = from != nullptr ? from->pan.load() : 0.0f;
@@ -2453,6 +2476,7 @@ void copyStripParams (MixerEngine& engine, const Strip& src, const Strip& dst, j
             {
                 d.matrix[i].on = s.matrix[i].on.load();
                 d.matrix[i].pre = s.matrix[i].pre.load();
+                d.matrix[i].ignoreMute = s.matrix[i].ignoreMute.load();
                 d.matrix[i].levelDb = s.matrix[i].levelDb.load();
                 d.matrix[i].pan = s.matrix[i].pan.load();
             }
@@ -2732,13 +2756,14 @@ public:
         const bool mainTarget = s.getKind() == StripKind::Main;
         modeKeys = std::make_unique<Segmented> (mainTarget || ! busTarget ? juce::StringArray { "KEEP", "TAP/PRE", "POST" } : juce::StringArray { "KEEP", "TAP/PRE", "POST", "GROUP" },
                                                 [this] { return modeChoice; }, [this] (int i) { modeChoice = i; }, Colours::yellow);
-        ignoreKeys = std::make_unique<Segmented> (juce::StringArray { "KEEP", "SET OFF", "SET ON" }, [] { return 0; }, [] (int) {}, Colours::yellow);
-        ignoreKeys->setEnabled (false); // engine E6: IGNORE CHANNEL MUTE
+        ignoreKeys = std::make_unique<Segmented> (juce::StringArray { "KEEP", "SET OFF", "SET ON" }, [this] { return ignoreChoice; },
+                                                  [this] (int i) { ignoreChoice = i; }, Colours::yellow);
+        ignoreKeys->setEnabled (! mainTarget); // main sends have no IGNORE CHANNEL MUTE
         panKeys = std::make_unique<Segmented> (juce::StringArray { "KEEP", "SET TO\nCENTER", "SET TO\nCH PAN", "LINK\nTO CH PAN", "LINK\nREVERSED" },
                                                [this] { return panChoice; }, [this] (int i) { panChoice = i; }, Colours::yellow);
         panKeys->twoLines = true;
-        // engine E6: LINK REVERSED; mains have no send pan.
-        panKeys->isEnabledAt = [mainTarget, busTarget] (int i) { return ! mainTarget && i != 4 && (busTarget || i != 3); };
+        // Mains have no send pan, matrix sends no pan link.
+        panKeys->isEnabledAt = [mainTarget, busTarget] (int i) { return i == 0 || (! mainTarget && (busTarget || i < 3)); };
         levelKeys = std::make_unique<Segmented> (juce::StringArray { "KEEP", "SET TO\n-oo dB", "SET TO\n-10 dB", "SET TO\n0 dB" },
                                                  [this] { return levelChoice; }, [this] (int i) { levelChoice = i; }, Colours::yellow);
         levelKeys->twoLines = true;
@@ -2920,7 +2945,7 @@ private:
                 on = send->enabled.load();
                 mode = send->mode.load();
                 link = send->panLink.load();
-                pan = link ? src.params.pan.load() : send->pan.load();
+                pan = link ? (send->panReversed.load() ? -src.params.pan.load() : src.params.pan.load()) : send->pan.load();
             }
             return;
         }
@@ -2951,7 +2976,7 @@ private:
 
     void timerCallback() override
     {
-        applyKey.setEnabled (! selection.empty() && (modeChoice != 0 || panChoice != 0 || levelChoice != 0 || enableChoice != 0));
+        applyKey.setEnabled (! selection.empty() && (modeChoice != 0 || ignoreChoice != 0 || panChoice != 0 || levelChoice != 0 || enableChoice != 0));
     }
 
     void apply()
@@ -2976,18 +3001,19 @@ private:
                 auto& send = src->sends[(size_t) dst->getId()];
                 if (modeChoice > 0)
                     send.mode = modeChoice - 1; // TAP/PRE, POST, GROUP
-                if (panChoice == 1)
+                if (ignoreChoice > 0 && src->canIgnoreMuteOnSends())
+                    send.ignoreMute = ignoreChoice == 2;
+                if (panChoice == 1 || panChoice == 2)
                 {
                     send.panLink = false;
-                    send.pan = 0.0f;
+                    send.panReversed = false;
+                    send.pan = panChoice == 1 ? 0.0f : src->params.pan.load();
                 }
-                else if (panChoice == 2)
+                else if (panChoice == 3 || panChoice == 4)
                 {
-                    send.panLink = false;
-                    send.pan = src->params.pan.load();
-                }
-                else if (panChoice == 3)
                     send.panLink = true;
+                    send.panReversed = panChoice == 4;
+                }
                 if (levelChoice > 0)
                     send.levelDb = levels[levelChoice];
                 if (enableChoice > 0)
@@ -3008,6 +3034,8 @@ private:
                 auto& m = src->params.matrix[juce::jlimit (0, kNumMatrices - 1, dst->getId())];
                 if (modeChoice > 0)
                     m.pre = modeChoice == 1;
+                if (ignoreChoice > 0 && src->canIgnoreMuteOnSends())
+                    m.ignoreMute = ignoreChoice == 2;
                 if (panChoice == 1)
                     m.pan = 0.0f;
                 else if (panChoice == 2)
@@ -3028,7 +3056,7 @@ private:
     IconKey noneKey { "NONE", Icon::Cancel }, allChannels { "ALL CH", std::nullopt }, applyKey { "APPLY", Icon::Check, Colours::yellow };
     std::unique_ptr<Segmented> modeKeys, ignoreKeys, panKeys, levelKeys, enableKeys;
     juce::Rectangle<int> gridArea, captions[5];
-    int modeChoice = 0, panChoice = 0, levelChoice = 0, enableChoice = 0;
+    int modeChoice = 0, ignoreChoice = 0, panChoice = 0, levelChoice = 0, enableChoice = 0;
     bool dragAdds = true;
 };
 
