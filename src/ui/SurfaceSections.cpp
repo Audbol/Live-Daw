@@ -1,166 +1,305 @@
 #include "ui/SurfaceSections.h"
+#include "dsp/DspUtils.h"
+#include "ui/FaderStrip.h"
 #include "ui/ResponseGraph.h"
 
 namespace livedaw::ui
 {
 
-BlockKey::BlockKey (const juce::String& keyText) : juce::TextButton (keyText)
+namespace
 {
-    setColour (buttonOnColourId, Colours::block);
-    setColour (buttonColourId, Colours::panelLight.darker (0.2f));
-    setTooltip (keyText + ": click to edit, right-click to switch on/off");
-    startTimerHz (8);
-}
+    // The LED panel's meters (manual fig. 15).
+    constexpr float kLevelThresholds[] = { -0.1f, -3.0f, -6.0f, -12.0f, -18.0f, -24.0f, -36.0f, -48.0f };
+    constexpr const char* kLevelLabels[] = { "CLIP", "-3", "-6", "-12", "-18", "-24", "-36", "-48" };
+    constexpr float kGrThresholds[] = { 2.0f, 4.0f, 6.0f, 8.0f, 12.0f, 15.0f, 18.0f, 21.0f };
 
-void BlockKey::mouseUp (const juce::MouseEvent& e)
-{
-    if (e.mods.isPopupMenu() || e.mods.isCommandDown())
+    KnobBinding delayBinding (InputParams& in)
     {
-        if (onToggle && getLocalBounds().contains (e.getPosition()))
-            onToggle();
-        juce::TextButton::mouseUp (e.withNewPosition (juce::Point<float> (-1.0f, -1.0f))); // release without clicking
-        return;
+        KnobBinding b;
+        b.label = "DELAY";
+        auto maxFor = [&in] { static const float max[] = { 150.0f, 500.0f, 500.0f, 24000.0f }; return max[juce::jlimit (0, 3, (int) in.delayMode.load())]; };
+        b.get = [&in, maxFor] { return juce::jlimit (0.0f, 1.0f, std::sqrt (in.delay.load() / maxFor())); };
+        b.set = [&in, maxFor] (float p) { in.delay = p * p * maxFor(); };
+        b.text = [&in]
+        {
+            static const char* units[] = { " m", " ft", " ms", " smp" };
+            const int mode = juce::jlimit (0, 3, (int) in.delayMode.load());
+            return juce::String (in.delay.load(), mode == 3 ? 0 : 1) + units[mode];
+        };
+        b.reset = [&in] { in.delay = 0.0f; };
+        return b;
     }
-    juce::TextButton::mouseUp (e);
-}
 
-void BlockKey::timerCallback()
-{
-    const bool on = isOn && isOn();
-    if (getToggleState() != on)
-        setToggleState (on, juce::dontSendNotification);
-}
+    /** Draws a printed connector line between two points of the panel. */
+    void drawConnector (juce::Graphics& g, float x1, float x2, float y)
+    {
+        if (x2 - x1 > 4.0f)
+        {
+            g.setColour (Colours::silk.withAlpha (0.55f));
+            g.fillRect (x1 + 2.0f, y - 0.75f, x2 - x1 - 4.0f, 1.5f);
+        }
+    }
+} // namespace
 
 //==============================================================================
-ChannelStripSection::ChannelStripSection (UiContext& c)
-    : ctx (c),
-      inMeter ([this] (int ch) { return ctx.meters.get (strip, true, ch); }, [this] { return strip != nullptr ? strip->getNumChannels() : 1; }),
-      outMeter ([this] (int ch) { return ctx.meters.get (strip, false, ch); }, [this] { return strip != nullptr ? strip->getNumChannels() : 1; })
+ChannelStripSection::ChannelStripSection (UiContext& c) : ctx (c)
 {
-    addAndMakeVisible (inMeter);
-    addAndMakeVisible (outMeter);
-
-    const char* names[kNumBlocks] = { "INPUT", "FILTER", "GATE", "DYN", "INSERT", "MAIN" };
-    const HomeTab tabs[kNumBlocks] = { HomeTab::Input, HomeTab::Filter, HomeTab::Gate, HomeTab::Dynamics, HomeTab::PreInsert, HomeTab::Main };
-    for (int i = 0; i < kNumBlocks; ++i)
+    const char* names[kNumSlots] = { "INPUT", "FILTER", "GATE", "COMP", "INSERT", "MAIN" };
+    for (int i = 0; i < kNumSlots; ++i)
     {
-        blockKnobs[i].setCompact (true);
-        addAndMakeVisible (blockKnobs[i]);
-        blockKeys[i] = std::make_unique<BlockKey> (names[i]);
-        const auto tab = tabs[i];
-        blockKeys[i]->onOpen = [this, tab] { if (ctx.showHomeTab) ctx.showHomeTab (tab); };
-        blockKeys[i]->onClick = [this, tab] { if (ctx.showHomeTab) ctx.showHomeTab (tab); };
-        addAndMakeVisible (*blockKeys[i]);
+        slotKnobs[i].setHardware (true);
+        slotKnobs[i].onTouch = [this, i] { showSlot (i); };
+        addAndMakeVisible (slotKnobs[i]);
+
+        auto& key = *(slotKeys[i] = std::make_unique<SurfaceKey> (names[i]));
+        key.ledColour = Colours::block;
+        key.setTooltip (juce::String (names[i]) + ": press to show it on the screen (again: next parameter), hold to switch it on/off");
+        key.onPress = [this, i] { pressSlot (i); };
+        key.onHold = [this, i] { toggleSlot (i); };
+        key.ledState = [this, i] { return slotOn (i) ? SurfaceKey::Lit : SurfaceKey::Off; };
+        addAndMakeVisible (key);
     }
 
-    for (auto& k : eqKnobs)
+    for (int i = 0; i < 4; ++i)
     {
-        k.setCompact (true);
-        addAndMakeVisible (k);
+        eqKnobs[i].setHardware (true);
+        eqKnobs[i].onTouch = [this, i]
+        {
+            eqBand = i;
+            eqMixShown = false;
+            showSlot (EqSlot);
+        };
+        addAndMakeVisible (eqKnobs[i]);
     }
-    eqMix.setCompact (true);
+    eqMix.setHardware (true);
+    eqMix.onTouch = [this]
+    {
+        eqMixShown = true;
+        showSlot (EqSlot);
+    };
     addAndMakeVisible (eqMix);
 
-    eqKey = std::make_unique<BlockKey> ("EQ");
-    eqKey->onClick = [this] { if (ctx.showHomeTab) ctx.showHomeTab (HomeTab::Eq); };
-    eqKey->isOn = [this] { return strip != nullptr && strip->params.eq.on.load(); };
-    eqKey->onToggle = [this] { if (strip != nullptr) strip->params.eq.on = ! strip->params.eq.on.load(); };
-    addAndMakeVisible (*eqKey);
+    shiftKey.shape = SurfaceKey::Shape::Square;
+    shiftKey.ledColour = Colours::silk;
+    shiftKey.setTooltip ("SHIFT: the shelving filters (bus EQs: bands 5-8)");
+    shiftKey.onPress = [this] { eqShift = ! eqShift; bindEq(); };
+    shiftKey.ledState = [this] { return eqShift ? SurfaceKey::Lit : SurfaceKey::Off; };
 
-    for (auto* b : { &gainButton, &widthButton, &freqButton, &shiftButton })
+    eqKey.ledColour = Colours::block;
+    eqKey.setTooltip ("EQ: press to show it on the screen, hold to switch it on/off");
+    eqKey.onPress = [this] { eqMixShown = false; showSlot (EqSlot); };
+    eqKey.onHold = [this] { if (strip != nullptr) strip->params.eq.on = ! strip->params.eq.on.load(); };
+    eqKey.ledState = [this] { return strip != nullptr && strip->params.eq.on.load() ? SurfaceKey::Lit : SurfaceKey::Off; };
+
+    SurfaceKey* elements[] = { &gainKey, &widthKey, &freqKey };
+    for (int i = 0; i < 3; ++i)
     {
-        b->setColour (juce::TextButton::buttonOnColourId, Colours::accent);
-        addAndMakeVisible (b);
+        auto& key = *elements[i];
+        key.shape = SurfaceKey::Shape::Square;
+        key.ledColour = Colours::silk;
+        key.onPress = [this, i] { eqElement = i; eqMixShown = false; bindEq(); showSlot (EqSlot); };
+        key.ledState = [this, i] { return eqElement == i ? SurfaceKey::Lit : SurfaceKey::Off; };
     }
-    gainButton.onClick = [this] { eqElement = 0; bindEq(); };
-    widthButton.onClick = [this] { eqElement = 1; bindEq(); };
-    freqButton.onClick = [this] { eqElement = 2; bindEq(); };
-    shiftButton.onClick = [this] { eqShift = ! eqShift; bindEq(); };
 
-    startTimerHz (5);
+    listenKey.dark = true;
+    listenKey.setEnabled (false);
+    listenKey.setTooltip ("LISTEN (EQ band solo): not available yet");
+
+    viewKey.setTooltip ("VIEW: the shown slot on the HOME screen");
+    viewKey.onPress = [this]
+    {
+        static const HomeTab tabs[] = { HomeTab::Input, HomeTab::Filter, HomeTab::Gate, HomeTab::Dynamics, HomeTab::PreInsert, HomeTab::Main, HomeTab::Eq };
+        if (ctx.showHomeTab)
+            ctx.showHomeTab (tabs[juce::jlimit (0, (int) EqSlot, shownSlot)]);
+        viewOpened = true;
+    };
+    viewKey.isActive = [this]
+    {
+        // Lit from the press until the display leaves HOME.
+        viewOpened = viewOpened && ctx.getScreen && ctx.getScreen() == Screen::Home;
+        return viewOpened;
+    };
+
+    for (juce::Component* k : { (juce::Component*) &shiftKey, (juce::Component*) &eqKey, (juce::Component*) &listenKey,
+                                (juce::Component*) &gainKey, (juce::Component*) &widthKey, (juce::Component*) &freqKey,
+                                (juce::Component*) &viewKey })
+        addAndMakeVisible (k);
+
+    startTimerHz (20);
     refresh();
 }
 
 void ChannelStripSection::refresh()
 {
     strip = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr;
-    shownName = {};
-
-    for (int i = 0; i < kNumBlocks; ++i)
+    const bool channel = strip != nullptr && strip->getKind() == StripKind::Channel;
+    for (int i = 0; i < kNumSlots; ++i)
     {
-        blockKnobs[i].setBinding ({});
-        blockKeys[i]->isOn = nullptr;
-        blockKeys[i]->onToggle = nullptr;
-        blockKeys[i]->setEnabled (strip != nullptr);
+        slotKeys[i]->setEnabled (strip != nullptr && ((i != Filter && i != Gate) || channel));
+        if (strip != nullptr)
+        {
+            // Gate and compressor start on their threshold.
+            if (i == Gate || i == Comp)
+            {
+                auto& slot = i == Gate ? strip->params.gate : strip->params.dynamics;
+                paramIndex[i] = juce::jmax (0, models::model (models::Dynamics, slot.model.load()).find ("thr"));
+            }
+            else
+            {
+                paramIndex[i] = 0;
+            }
+        }
+        bindSlot (i);
     }
-
+    // Buses have no FILTER or GATE slot.
+    if (shownSlot < kNumSlots && ! slotKeys[shownSlot]->isEnabled())
+        shownSlot = Input;
     if (strip != nullptr)
     {
         auto& p = strip->params;
-        auto threshold = [] (DynSlotParams& slot, const juce::String& label) -> KnobBinding
-        {
-            const auto& spec = models::model (models::Dynamics, slot.model.load());
-            if (spec.params.empty())
-                return {};
-            const int i = juce::jmax (0, spec.find ("thr"));
-            auto b = bindModelParam (slot.values[i], spec.params[(size_t) i]);
-            b.label = label;
-            return b;
-        };
-
-        blockKnobs[0].setBinding (bindLinear ("GAIN", p.input.trimDb, -18.0f, 18.0f, " dB", 1, 0.0f));
-        blockKeys[0]->isOn = [&p] { return p.input.invert.load(); };
-        blockKeys[0]->onToggle = [&p] { p.input.invert = ! p.input.invert.load(); };
-
-        const bool channel = strip->getKind() == StripKind::Channel;
-        blockKeys[1]->setEnabled (channel);
-        blockKeys[2]->setEnabled (channel);
-        if (channel)
-        {
-            blockKnobs[1].setBinding (bindFreq ("LO CUT", p.filter.lowCutFreq, 20.0f, 2000.0f, 80.0f));
-            blockKeys[1]->isOn = [&p] { return p.filter.lowCut.load(); };
-            blockKeys[1]->onToggle = [&p] { p.filter.lowCut = ! p.filter.lowCut.load(); };
-            blockKnobs[2].setBinding (threshold (p.gate, "GATE"));
-            blockKeys[2]->isOn = [&p] { return p.gate.on.load(); };
-            blockKeys[2]->onToggle = [&p] { p.gate.on = ! p.gate.on.load(); };
-        }
-
-        blockKnobs[3].setBinding (threshold (p.dynamics, "DYN"));
-        blockKeys[3]->isOn = [&p] { return p.dynamics.on.load(); };
-        blockKeys[3]->onToggle = [&p] { p.dynamics.on = ! p.dynamics.on.load(); };
-
-        if (const int slot = p.preInsert.fx.load(); slot >= 0)
-            blockKnobs[4].setBinding (bindLinear ("FX MIX", ctx.engine.getFx().params (slot).mix, 0.0f, 100.0f, "%", 0, 100.0f));
-        blockKeys[4]->isOn = [&p] { return p.preInsert.on.load() && p.preInsert.fx.load() >= 0; };
-        blockKeys[4]->onToggle = [&p] { p.preInsert.on = ! p.preInsert.on.load(); };
-
-        blockKnobs[5].setBinding (bindPan ("PAN", p.pan));
-        blockKeys[5]->isOn = [&p] { return p.mains[0].on.load(); };
-        blockKeys[5]->onToggle = [&p] { p.mains[0].on = ! p.mains[0].on.load(); };
+        const int models[] = { p.filter.toolModel.load(), p.gate.model.load(), p.dynamics.model.load(), p.preInsert.fx.load() };
+        std::copy (std::begin (models), std::end (models), std::begin (boundModels));
     }
-
     eqModel = -1;
     bindEq();
+    shownState = {};
     repaint();
+}
+
+std::vector<KnobBinding> ChannelStripSection::slotParams (int slot) const
+{
+    std::vector<KnobBinding> list;
+    if (strip == nullptr)
+        return list;
+    auto& p = strip->params;
+    const bool channel = strip->getKind() == StripKind::Channel;
+
+    auto modelParams = [&list] (models::Table table, int model, std::atomic<float>* values)
+    {
+        const auto& spec = models::model (table, model);
+        for (size_t i = 0; i < spec.params.size(); ++i)
+            list.push_back (bindModelParam (values[i], spec.params[i]));
+    };
+
+    switch (slot)
+    {
+        case Input:
+            list.push_back (bindLinear ("TRIM", p.input.trimDb, -18.0f, 18.0f, " dB", 1, 0.0f));
+            list.push_back (bindLinear ("BALANCE", p.input.balanceDb, -9.0f, 9.0f, " dB", 1, 0.0f));
+            list.push_back (delayBinding (p.input));
+            break;
+        case Filter:
+            if (channel)
+            {
+                list.push_back (bindFreq ("LO CUT", p.filter.lowCutFreq, 20.0f, 2000.0f, 80.0f));
+                list.push_back (bindFreq ("HI CUT", p.filter.highCutFreq, 200.0f, 20000.0f, 10000.0f));
+                modelParams (models::FilterTools, p.filter.toolModel.load(), p.filter.toolParams);
+            }
+            break;
+        case Gate:
+            if (channel)
+                modelParams (models::Dynamics, p.gate.model.load(), p.gate.values);
+            break;
+        case Comp:
+            modelParams (models::Dynamics, p.dynamics.model.load(), p.dynamics.values);
+            break;
+        case Insert:
+            if (const int fx = p.preInsert.fx.load(); fx >= 0)
+                list.push_back (bindLinear ("FX MIX", ctx.engine.getFx().params (fx).mix, 0.0f, 100.0f, "%", 0, 100.0f));
+            break;
+        case Main:
+            list.push_back (bindPan ("PAN", p.pan));
+            list.push_back (bindLinear ("WIDTH", p.width, -150.0f, 150.0f, "%", 0, 100.0f));
+            list.push_back (bindFader ("MAIN 1", p.mains[0].levelDb));
+            break;
+        default:
+            break;
+    }
+    return list;
+}
+
+void ChannelStripSection::bindSlot (int slot)
+{
+    auto list = slotParams (slot);
+    numParams[slot] = (int) list.size();
+    if (list.empty())
+    {
+        slotKnobs[slot].setBinding ({});
+        return;
+    }
+    paramIndex[slot] = juce::jlimit (0, (int) list.size() - 1, paramIndex[slot]);
+    slotKnobs[slot].setBinding (list[(size_t) paramIndex[slot]]);
+}
+
+void ChannelStripSection::showSlot (int slot)
+{
+    if (shownSlot != slot)
+    {
+        shownSlot = slot;
+        repaint (screenArea);
+    }
+}
+
+void ChannelStripSection::pressSlot (int slot)
+{
+    // Pressed again: the next parameter on the encoder above.
+    if (shownSlot == slot && numParams[slot] > 1)
+    {
+        paramIndex[slot] = (paramIndex[slot] + 1) % numParams[slot];
+        bindSlot (slot);
+    }
+    showSlot (slot);
+    repaint (screenArea);
+}
+
+bool ChannelStripSection::slotOn (int slot) const
+{
+    if (strip == nullptr)
+        return false;
+    auto& p = strip->params;
+    switch (slot)
+    {
+        case Input:  return p.input.invert.load();
+        case Filter: return p.filter.lowCut.load() || p.filter.highCut.load() || p.filter.tool.load();
+        case Gate:   return p.gate.on.load();
+        case Comp:   return p.dynamics.on.load();
+        case Insert: return p.preInsert.on.load() && p.preInsert.fx.load() >= 0;
+        case Main:   return p.mains[0].on.load();
+        default:     return false;
+    }
+}
+
+void ChannelStripSection::toggleSlot (int slot)
+{
+    if (strip == nullptr)
+        return;
+    auto& p = strip->params;
+    auto flip = [] (std::atomic<bool>& b) { b = ! b.load(); };
+    switch (slot)
+    {
+        case Input:  flip (p.input.invert); break;
+        case Filter: flip (p.filter.lowCut); break;
+        case Gate:   flip (p.gate.on); break;
+        case Comp:   flip (p.dynamics.on); break;
+        case Insert: flip (p.preInsert.on); break;
+        case Main:   flip (p.mains[0].on); break;
+        default:     break;
+    }
+    showSlot (slot);
 }
 
 void ChannelStripSection::bindEq()
 {
-    gainButton.setToggleState (eqElement == 0, juce::dontSendNotification);
-    widthButton.setToggleState (eqElement == 1, juce::dontSendNotification);
-    freqButton.setToggleState (eqElement == 2, juce::dontSendNotification);
-    shiftButton.setToggleState (eqShift, juce::dontSendNotification);
-
     for (auto& k : eqKnobs)
         k.setBinding ({});
     eqMix.setBinding ({});
-    eqKey->setEnabled (strip != nullptr);
+    eqKey.setEnabled (strip != nullptr);
     if (strip == nullptr)
         return;
 
     auto& eq = strip->params.eq;
     eqModel = eq.model.load();
-    eqMix.setBinding (bindLinear ("MIX", eq.mix, 0.0f, 125.0f, "%", 0, 100.0f));
+    eqMix.setBinding (bindLinear ("BLEND/MIX", eq.mix, 0.0f, 125.0f, "%", 0, 100.0f));
     const auto& spec = models::model (static_cast<models::Table> (strip->getEqTable()), eqModel);
     const auto bands = ResponseGraph::stdBands (*strip);
 
@@ -176,7 +315,7 @@ void ChannelStripSection::bindEq()
         return;
     }
 
-    // WING EQ: bands 1-4, SHIFT for the shelves (and bus bands 5-6).
+    // WING EQ: bands 1-4, SHIFT for the shelves (and bus bands 5-8).
     juce::StringArray shown;
     for (auto& b : bands)
         if (b != "l" && b != "h")
@@ -198,7 +337,8 @@ void ChannelStripSection::bindEq()
         if (index >= 0)
         {
             auto b = bindModelParam (eq.values[index], spec.params[(size_t) index]);
-            b.label = shown[i].toUpperCase() + " " + spec.params[(size_t) index].label.upToFirstOccurrenceOf (" ", false, false);
+            const auto band = shown[i] == "l" ? juce::String ("LOW SHELF") : (shown[i] == "h" ? juce::String ("HIGH SHELF") : "BAND " + shown[i].toUpperCase());
+            b.label = band + " " + spec.params[(size_t) index].label.upToFirstOccurrenceOf (" ", false, false);
             eqKnobs[i].setBinding (b);
         }
     }
@@ -209,12 +349,54 @@ void ChannelStripSection::timerCallback()
     if (strip != nullptr && strip->params.eq.model.load() != eqModel)
         bindEq();
 
-    const auto name = strip != nullptr ? describeStrip (*strip) : juce::String();
-    if (name != shownName)
+    // Model changes (filter tool, gate, comp, insert FX) change the slots' parameter lists.
+    if (strip != nullptr)
     {
-        shownName = name;
-        repaint (lcdArea);
+        auto& p = strip->params;
+        const int models[] = { p.filter.toolModel.load(), p.gate.model.load(), p.dynamics.model.load(), p.preInsert.fx.load() };
+        const int slots[] = { Filter, Gate, Comp, Insert };
+        for (int i = 0; i < 4; ++i)
+        {
+            if (models[i] != boundModels[i])
+            {
+                boundModels[i] = models[i];
+                bindSlot (slots[i]);
+            }
+        }
     }
+
+    const auto state = panelState();
+    if (state != shownState)
+    {
+        shownState = state;
+        repaint (panelArea);
+    }
+}
+
+juce::String ChannelStripSection::panelState() const
+{
+    // Everything the LED panel and its screen show, to repaint only on changes.
+    if (strip == nullptr)
+        return "-";
+    juce::String s;
+    auto& p = strip->params;
+    auto bit = [] (bool b) { return b ? '1' : '0'; };
+    for (float thr : kLevelThresholds)
+        for (int ch = 0; ch < 2; ++ch)
+            s << bit (dsp::gainToDb (ctx.meters.get (strip, true, ch)) >= thr);
+    s << juce::roundToInt (strip->meters.dynReductionDb.load()) << bit (slotOn (Input)) << bit (p.filter.lowCut.load())
+      << bit (p.filter.highCut.load()) << bit (p.filter.tool.load()) << p.filter.toolModel.load() << bit (p.input.delayOn.load())
+      << bit (p.stereo.load()) << (int) p.dcaMask.load() << ':' << (int) p.muteGroupMask.load() << ':' << p.postInsert.mode.load();
+    for (auto& m : p.mains)
+        s << bit (m.on.load());
+    for (int i = 0; i < 16; ++i)
+        if (auto* send = strip->sends.find (i))
+            s << (send->enabled.load() ? i : 0) << ',';
+    s << stripName (*strip) << strip->getColourIndex() << shownSlot << eqBand << bit (eqMixShown) << bit (eqShift);
+    auto knob = shownSlot == EqSlot ? (eqMixShown ? &eqMix : &eqKnobs[eqBand]) : &slotKnobs[shownSlot];
+    if (knob->getBinding().isValid())
+        s << knob->getBinding().label << knob->getBinding().text();
+    return s;
 }
 
 void ChannelStripSection::paint (juce::Graphics& g)
@@ -223,229 +405,832 @@ void ChannelStripSection::paint (juce::Graphics& g)
     g.setColour (Colours::outline);
     g.drawRect (getLocalBounds().removeFromRight (1));
 
-    // The section's display, styled like a scribble strip: label, icon and the
-    // name on a bar in the strip's colour.
-    auto lcd = lcdArea.toFloat();
-    g.setColour (juce::Colours::black);
-    g.fillRoundedRectangle (lcd, 3.0f);
-    auto t = lcdArea.reduced (8, 5).withTrimmedRight (48).toFloat();
-    if (strip != nullptr)
+    paintPanel (g);
+
+    drawSilk (g, processingHeading.toFloat(), "CHANNEL PROCESSING", 12.0f);
+    drawSilk (g, eqHeading.toFloat(), "CHANNEL EQUALIZER", 12.0f);
+
+    // Printed lines joining the slot keys, and SHIFT to the band encoders.
+    for (int i = 0; i + 1 < kNumSlots; ++i)
+        drawConnector (g, (float) slotKeys[i]->getRight(), (float) slotKeys[i + 1]->getX(), (float) slotKeys[i]->getBounds().getCentreY());
+    const float eqY = (float) eqKnobs[0].getBounds().getCentreY();
+    drawConnector (g, (float) shiftKey.getRight(), (float) eqKnobs[0].getX(), eqY);
+    for (int i = 0; i < 3; ++i)
+        drawConnector (g, (float) eqKnobs[i].getRight(), (float) eqKnobs[i + 1].getX(), eqY);
+
+    // Captions.
+    const float small = 9.0f;
+    auto below = [] (juce::Component& c, int h) { return c.getBounds().withY (c.getBottom() + 1).withHeight (h).expanded (16, 0).toFloat(); };
+    drawSilk (g, below (*slotKeys[Input], 12), "(HOLD FOR ON/OFF)", small);
+    drawSilk (g, below (eqKey, 12), "(HOLD FOR ON/OFF)", small);
+    drawSilk (g, shiftKey.getBounds().withHeight (12).translated (0, -13).expanded (8, 0).toFloat(), "SHIFT", small);
+    drawSilk (g, below (shiftKey, 12), "5-8", small);
+    drawSilk (g, below (gainKey, 12), "GAIN", small);
+    drawSilk (g, below (widthKey, 12), "WIDTH", small);
+    drawSilk (g, below (freqKey, 12), "FREQ", small);
+    drawSilk (g, below (listenKey, 12), "EQ-BAND/KEY", small);
+    drawSilk (g, below (eqMix, 12), "BLEND/MIX", small);
+    for (int i = 0; i < 4; ++i)
     {
-        auto icon = t.removeFromLeft (t.getHeight());
-        drawIcon (g, stripIcon (strip->getKind()), icon.reduced (4.0f), juce::Colours::white);
-        t.removeFromLeft (6.0f);
-        auto top = t.removeFromTop (t.getHeight() * 0.4f);
-        g.setColour (Colours::text);
-        g.setFont (juce::FontOptions (juce::jmin (15.0f, top.getHeight()), juce::Font::bold));
-        g.drawText (strip->getLabel() + "   " + (strip->isOutput() || strip->params.stereo.load() ? "ST" : "MONO"), top.toNearestInt(),
-                    juce::Justification::centredLeft);
-        t.removeFromTop (2.0f);
-        g.setColour (strip->getColour());
-        g.fillRect (t);
-        g.setColour (strip->getColour().getPerceivedBrightness() > 0.45f ? juce::Colours::black : juce::Colours::white);
-        g.setFont (juce::FontOptions (juce::jlimit (13.0f, 22.0f, t.getHeight() * 0.8f), juce::Font::bold));
-        g.drawFittedText (shownName, t.toNearestInt().reduced (6, 0), juce::Justification::centredLeft, 1);
-    }
-    else
-    {
-        g.setColour (Colours::textDim);
-        g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
-        g.drawFittedText ("PRESS SEL ON A STRIP", t.toNearestInt(), juce::Justification::centredLeft, 1);
+        // "[1] 5": the band digit inverted; the selected band's box lit.
+        auto cap = below (eqKnobs[i], 12).withSizeKeepingCentre (26.0f, 12.0f);
+        auto box = cap.removeFromLeft (12.0f);
+        const bool selected = shownSlot == EqSlot && ! eqMixShown && eqBand == i;
+        g.setColour (selected ? Colours::yellow : Colours::silk);
+        g.fillRect (box);
+        drawSilk (g, box, juce::String (i + 1), small, juce::Justification::centred, Colours::panel);
+        drawSilk (g, cap, juce::String (i + 5), small, juce::Justification::centred, eqShift ? Colours::yellow : Colours::silk);
     }
 
-    // Silk-screen outlines around the knob groups.
-    g.setColour (Colours::outline);
-    g.drawRoundedRectangle (blockArea.toFloat().expanded (4.0f, 2.0f), 4.0f, 1.0f);
-    g.drawRoundedRectangle (eqArea.toFloat().expanded (4.0f, 0.0f), 4.0f, 1.0f);
-    g.setColour (Colours::textDim);
-    g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-    g.drawText ("EQ", eqArea.removeFromTop (14).reduced (6, 0), juce::Justification::centredLeft);
+    // The black legend plates beside GAIN / WIDTH / FREQ.
+    for (auto [plate, icons] : { std::pair { legendLow, std::array<Icon, 3> { Icon::LowCut, Icon::Bell, Icon::LowShelf } },
+                                 std::pair { legendHigh, std::array<Icon, 3> { Icon::HighShelf, Icon::Bell, Icon::HighCut } } })
+    {
+        g.setColour (juce::Colours::black);
+        g.fillRoundedRectangle (plate.toFloat(), 3.0f);
+        auto r = plate.toFloat().reduced (4.0f, 2.0f);
+        const float w = r.getWidth() / 3.0f;
+        for (auto icon : icons)
+            drawIcon (g, icon, r.removeFromLeft (w).reduced (1.0f), Colours::silk);
+    }
+}
+
+void ChannelStripSection::paintPanel (juce::Graphics& g)
+{
+    auto panel = panelArea.toFloat();
+    g.setColour (juce::Colours::black);
+    g.fillRoundedRectangle (panel, 5.0f);
+
+    auto r = panel.reduced (8.0f, 5.0f);
+    const float titleH = juce::jlimit (11.0f, 16.0f, r.getHeight() * 0.13f);
+    const float rowH = (r.getHeight() - titleH - 2.0f) / 8.0f;
+    const float font = juce::jlimit (6.5f, 11.0f, juce::jmin (rowH * 0.78f, r.getWidth() * 0.0185f));
+    const float titleFont = juce::jlimit (8.0f, 13.0f, titleH * 0.95f);
+    const float led = juce::jlimit (3.0f, 7.0f, rowH * 0.42f);
+    const float top = r.getY() + titleH + 2.0f;
+    auto rowY = [&] (int row) { return top + rowH * (float) row; };
+    auto ledAt = [&] (float x, int row, bool on, juce::Colour colour = juce::Colours::white)
+    {
+        g.setColour (on ? colour : Colours::ledOff);
+        g.fillRect (x, rowY (row) + (rowH - led * 0.75f) * 0.5f, led, led * 0.75f);
+    };
+    auto text = [&] (float x, float w, int row, const juce::String& t, juce::Justification j = juce::Justification::centredLeft)
+    {
+        drawSilk (g, { x, rowY (row), w, rowH }, t, font, j, Colours::silk);
+    };
+    auto title = [&] (float x, float w, const juce::String& t, juce::Justification j = juce::Justification::centred)
+    {
+        drawSilk (g, { x, r.getY(), w, titleH }, t, titleFont, j, Colours::silk);
+    };
+    auto rule = [&] (float x)
+    {
+        g.setColour (Colours::silk.withAlpha (0.7f));
+        g.fillRect (x, top, 1.5f, rowH * 8.0f);
+    };
+
+    const float W = r.getWidth();
+    float x = r.getX();
+    auto column = [&] (float fraction) { const float c = x; x += W * fraction; return c; };
+    const float details = column (0.37f), level = column (0.095f), screen = column (0.215f), gr = column (0.075f);
+    const float busSend = column (0.105f), groups = column (0.14f);
+
+    // With no strip selected every LED is off.
+    const bool any = strip != nullptr;
+    StripParams* p = any ? &strip->params : nullptr;
+
+    // CHANNEL STRIP DETAILS: two LED columns.
+    {
+        title (details, W * 0.36f, "CHANNEL STRIP DETAILS", juce::Justification::centredLeft);
+        const float c1 = details, c2 = details + W * 0.165f, labelW = W * 0.15f;
+        const bool input = any && strip->isInput();
+        juce::String toolToken;
+        if (any && p->filter.tool.load())
+            toolToken = models::model (models::FilterTools, p->filter.toolModel.load()).token;
+        const std::tuple<float, int, const char*, bool> items[] = {
+            { c1, 0, "MAIN SOURCE", input },
+            { c1, 1, "ALT SOURCE", false },
+            { c1, 3, "48 V", false },
+            { c1, 4, "INVERT", any && p->input.invert.load() },
+            { c1, 6, "STEREO", any && (strip->isOutput() || p->stereo.load()) },
+            { c1, 7, "MONO", any && strip->isInput() && ! p->stereo.load() },
+            { c2, 0, "24 dB LOW-CUT", any && p->filter.lowCut.load() },
+            { c2, 1, "12 dB HIGH-CUT", any && p->filter.highCut.load() },
+            { c2, 2, "ALLPASS", toolToken.startsWith ("AP") },
+            { c2, 3, "TILT EQUALIZER", toolToken == "TILT" },
+            { c2, 4, "SOUND MAXER", toolToken == "MAX" },
+            { c2, 7, "INPUT DELAY", any && p->input.delayOn.load() },
+        };
+        for (auto [cx, row, label, on] : items)
+        {
+            ledAt (cx, row, on);
+            text (cx + led + 4.0f, labelW, row, label);
+        }
+        rule (c2 - W * 0.012f);
+        rule (level - W * 0.01f);
+    }
+
+    // LEVEL: input level, stereo.
+    {
+        title (level, W * 0.085f, "LEVEL");
+        const int channels = any ? juce::jlimit (1, 2, strip->getNumChannels()) : 1;
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const float db = any ? dsp::gainToDb (ctx.meters.get (strip, true, juce::jmin (ch, channels - 1))) : -200.0f;
+            for (int i = 0; i < 8; ++i)
+                ledAt (level + (float) ch * (led + 3.0f), i, db >= kLevelThresholds[i], leds::meterColour (kLevelThresholds[i]));
+        }
+        for (int i = 0; i < 8; ++i)
+            text (level + led * 2.0f + 6.0f, W * 0.05f, i, kLevelLabels[i]);
+    }
+
+    // The section's screen.
+    screenArea = juce::Rectangle<float> (screen, r.getY() + 1.0f, W * 0.205f, r.getHeight() - 2.0f).toNearestInt();
+    paintScreen (g, screenArea.toFloat());
+
+    // GR: gain reduction of the compressor, lit from the top.
+    {
+        title (gr, W * 0.07f, "GR");
+        const float reduction = any ? strip->meters.dynReductionDb.load() : 0.0f;
+        for (int i = 0; i < 8; ++i)
+        {
+            text (gr, W * 0.04f, i, "-" + juce::String ((int) kGrThresholds[i]), juce::Justification::centredRight);
+            ledAt (gr + W * 0.045f, i, reduction >= kGrThresholds[i], Colours::meterYellow);
+        }
+        rule (busSend - W * 0.008f);
+    }
+
+    // BUS SEND: the sends to buses 1-16 that are on.
+    {
+        title (busSend, W * 0.1f, "BUS SEND");
+        for (int i = 0; i < 16; ++i)
+        {
+            const int row = i / 2;
+            const bool left = i % 2 == 0;
+            auto* send = any ? strip->sends.find (i) : nullptr;
+            const bool on = send != nullptr && send->enabled.load() && ctx.engine.getBusInSlot (i) != nullptr;
+            const float lx = busSend + W * (left ? 0.03f : 0.055f);
+            ledAt (lx, row, on);
+            if (left)
+                text (busSend, W * 0.027f, row, juce::String (i + 1), juce::Justification::centredRight);
+            else
+                text (lx + led + 3.0f, W * 0.03f, row, juce::String (i + 1));
+        }
+    }
+
+    // GROUPS: mains, automix, DCAs and mute groups.
+    {
+        title (groups, W * 0.14f, "GROUPS");
+        const float step = led + juce::jmax (3.0f, W * 0.012f);
+        auto rowOf = [&] (int row, int count, std::function<bool (int)> on)
+        {
+            for (int i = 0; i < count; ++i)
+                ledAt (groups + step * (float) i, row, on (i));
+        };
+        rowOf (0, 4, [&] (int i) { return any && p->mains[i].on.load(); });
+        const float labelX = groups + step * 4.0f + 1.0f, labelW = W * 0.06f;
+        text (labelX, labelW, 0, "MAIN");
+
+        const int automix = any ? p->postInsert.mode.load() : 0;
+        text (groups, step, 1, "X", juce::Justification::centred);
+        ledAt (groups + step, 1, automix == (int) PostInsertMode::AutomixX);
+        text (groups + step * 2.0f, step, 1, "Y", juce::Justification::centred);
+        ledAt (groups + step * 3.0f, 1, automix == (int) PostInsertMode::AutomixY);
+        text (labelX, labelW, 1, "AUTO");
+
+        // Eight DCA LEDs for 16 DCAs: LED i shows DCA i or i + 8.
+        const auto dcas = any ? p->dcaMask.load() : 0u;
+        rowOf (3, 4, [&] (int i) { return ((dcas >> i) | (dcas >> (i + 8))) & 1u; });
+        rowOf (4, 4, [&] (int i) { return ((dcas >> (i + 4)) | (dcas >> (i + 12))) & 1u; });
+        drawSilk (g, { labelX, rowY (3), labelW, rowH * 2.0f }, "DCA", font, juce::Justification::centredLeft, Colours::silk);
+        const auto mutes = any ? p->muteGroupMask.load() : 0u;
+        rowOf (6, 4, [&] (int i) { return (mutes >> i) & 1u; });
+        rowOf (7, 4, [&] (int i) { return (mutes >> (i + 4)) & 1u; });
+        drawSilk (g, { labelX, rowY (6), labelW, rowH * 2.0f }, "MUTE", font, juce::Justification::centredLeft, Colours::silk);
+    }
+}
+
+void ChannelStripSection::paintScreen (juce::Graphics& g, juce::Rectangle<float> area)
+{
+    g.setColour (juce::Colour (0xff101113));
+    g.fillRect (area);
+    g.setColour (juce::Colour (0xff4a4c50));
+    g.drawRect (area, 1.0f);
+    auto r = area.reduced (3.0f);
+    if (strip == nullptr)
+    {
+        g.setColour (Colours::textDim);
+        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+        g.drawFittedText ("PRESS SELECT", r.toNearestInt(), juce::Justification::centred, 2);
+        return;
+    }
+
+    // The selected channel: number in a black box, the name on its colour.
+    const auto colour = strip->getColour();
+    auto tile = r.removeFromTop (juce::jmax (14.0f, r.getHeight() * 0.26f));
+    g.setColour (colour);
+    g.fillRect (tile);
+    const auto number = strip->getLabel().removeCharacters (" ");
+    g.setFont (juce::FontOptions (juce::jlimit (9.0f, 16.0f, tile.getHeight() * 0.75f), juce::Font::bold));
+    auto box = tile.removeFromLeft (juce::jmin (tile.getWidth() * 0.4f,
+                                                juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), number) + 8.0f)).reduced (1.0f);
+    g.setColour (juce::Colours::black);
+    g.fillRect (box);
+    g.setColour (colour);
+    g.drawText (number, box, juce::Justification::centred);
+    g.setColour (colour.getPerceivedBrightness() > 0.45f ? juce::Colours::black : juce::Colours::white);
+    g.drawFittedText (stripName (*strip), tile.reduced (3.0f, 0.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+
+    // The slot, the parameter on its encoder and the value.
+    static const char* slotNames[] = { "INPUT", "FILTER", "GATE", "COMP", "INSERT", "MAIN", "EQ" };
+    const bool eq = shownSlot == EqSlot;
+    const auto& knob = eq ? (eqMixShown ? eqMix : eqKnobs[eqBand]) : slotKnobs[shownSlot];
+    const bool on = eq ? strip->params.eq.on.load() : slotOn (shownSlot);
+    r.removeFromTop (2.0f);
+    auto head = r.removeFromTop (r.getHeight() * 0.28f);
+    g.setFont (juce::FontOptions (juce::jlimit (9.0f, 15.0f, head.getHeight() * 0.8f), juce::Font::bold));
+    g.setColour (Colours::text);
+    g.drawText (slotNames[juce::jlimit (0, 6, shownSlot)], head, juce::Justification::centredLeft);
+    drawChip (g, head.removeFromRight (juce::jmin (26.0f, head.getWidth() * 0.3f)).reduced (0.0f, head.getHeight() * 0.12f),
+              on ? "ON" : "OFF", on ? Colours::yellow : Colours::screenHeader, on ? juce::Colours::black : Colours::textDim);
+
+    if (const auto& b = knob.getBinding(); b.isValid())
+    {
+        auto label = r.removeFromTop (r.getHeight() * 0.4f);
+        g.setColour (Colours::textDim);
+        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 13.0f, label.getHeight() * 0.8f), juce::Font::bold));
+        g.drawFittedText (b.label.toUpperCase(), label.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+        auto value = r.withTrimmedBottom (r.getHeight() * 0.18f);
+        g.setColour (Colours::text);
+        g.setFont (juce::FontOptions (juce::jlimit (10.0f, 22.0f, value.getHeight() * 0.85f), juce::Font::bold));
+        g.drawFittedText (b.text ? b.text() : juce::String(), value.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+    }
+
+    // Dots: how many parameters the slot's encoder steps through.
+    const int n = eq ? 0 : numParams[shownSlot];
+    if (n > 1)
+    {
+        const float d = juce::jlimit (2.0f, 4.0f, area.getHeight() * 0.03f);
+        float dx = area.getRight() - 4.0f - (float) n * (d + 2.0f);
+        for (int i = 0; i < n; ++i, dx += d + 2.0f)
+        {
+            g.setColour (i == paramIndex[shownSlot] ? Colours::text : Colours::screenTile);
+            g.fillEllipse (dx, area.getBottom() - 4.0f - d, d, d);
+        }
+    }
 }
 
 void ChannelStripSection::resized()
 {
     auto b = getLocalBounds().reduced (8, 6);
-    lcdArea = b.removeFromTop (juce::jlimit (44, 64, b.getHeight() / 6));
-    auto meters = lcdArea.reduced (6, 6).removeFromRight (40);
-    inMeter.setBounds (meters.removeFromLeft (18));
-    meters.removeFromLeft (4);
-    outMeter.setBounds (meters.removeFromLeft (18));
-    b.removeFromTop (8);
+    panelArea = b.removeFromTop (juce::jlimit (96, 200, b.getHeight() * 30 / 100));
+    b.removeFromTop (4);
 
-    blockArea = b.removeFromTop (b.getHeight() / 2);
-    const int w = blockArea.getWidth() / kNumBlocks;
-    for (int i = 0; i < kNumBlocks; ++i)
-    {
-        auto cell = juce::Rectangle<int> (blockArea.getX() + i * w, blockArea.getY(), w, blockArea.getHeight()).reduced (3, 0);
-        blockKeys[i]->setBounds (cell.removeFromBottom (30).reduced (0, 2));
-        // Keep the knob, its caption and value together rather than spread over a tall cell.
-        blockKnobs[i].setBounds (cell.removeFromBottom (juce::jmin (cell.getHeight(), cell.getWidth() * 3 / 2)));
-    }
+    // Six columns, with VIEW in a margin on the left.
+    const int margin = juce::jlimit (34, 60, b.getWidth() / 10);
+    auto viewColumn = b.removeFromLeft (margin);
+    const float colW = (float) b.getWidth() / (float) kNumSlots;
+    auto colCentre = [&] (float i) { return b.getX() + juce::roundToInt (colW * (i + 0.5f)); };
 
-    b.removeFromTop (6);
-    eqArea = b;
-    auto e = b.withTrimmedTop (14);
-    auto keys = e.removeFromBottom (30).reduced (0, 2);
-    const int kw = keys.getWidth() / 6;
-    eqKey->setBounds (keys.removeFromLeft (kw).reduced (2, 0));
-    for (auto* button : { &gainButton, &widthButton, &freqButton, &shiftButton })
-        button->setBounds (keys.removeFromLeft (kw).reduced (2, 0));
-    const int ew = e.getWidth() / 5;
-    auto fit = [] (juce::Rectangle<int> r) { return r.removeFromBottom (juce::jmin (r.getHeight(), r.getWidth() * 3 / 2)); };
-    for (auto& k : eqKnobs)
-        k.setBounds (fit (e.removeFromLeft (ew).reduced (3, 2)));
-    eqMix.setBounds (fit (e.reduced (3, 2)));
+    const int h = b.getHeight();
+    const int headingH = 14, keyH = juce::jlimit (18, 28, h / 15), captionH = 12;
+    const int knob = juce::jlimit (26, 64, juce::jmin ((int) (colW * 0.62f), (h - 2 * headingH - 2 * keyH - 3 * captionH - 30) / 2));
+    const int keyW = juce::jmin ((int) (colW * 0.66f), 64);
+
+    // Spread what's left over the gaps between the rows.
+    const int used = 2 * headingH + 2 * (knob + 4) + 2 * keyH + 2 + 3 * captionH + 18;
+    const int gap = juce::jlimit (0, 30, (h - used) / 5);
+    b.removeFromTop (gap / 2);
+
+    processingHeading = b.removeFromTop (headingH);
+    auto knobRow = b.removeFromTop (knob + 4);
+    for (int i = 0; i < kNumSlots; ++i)
+        slotKnobs[i].setBounds (juce::Rectangle<int> (knob, knob).withCentre ({ colCentre ((float) i), knobRow.getCentreY() }));
+    const int viewSize = juce::jmin (margin - 4, 44);
+    viewKey.setBounds (juce::Rectangle<int> (viewSize, viewSize).withCentre ({ viewColumn.getCentreX(), knobRow.getCentreY() }));
+
+    b.removeFromTop (4 + gap / 2);
+    auto keyRow = b.removeFromTop (keyH);
+    for (int i = 0; i < kNumSlots; ++i)
+        slotKeys[i]->setBounds (juce::Rectangle<int> (keyW, keyH).withCentre ({ colCentre ((float) i), keyRow.getCentreY() }));
+    b.removeFromTop (captionH + 2 + gap);
+
+    eqHeading = b.removeFromTop (headingH);
+    b.removeFromTop (captionH - 4 + gap / 2); // room for "SHIFT" over its key
+    auto eqRow = b.removeFromTop (knob + 4);
+    const int square = juce::jmin (keyH + 4, knob);
+    shiftKey.setBounds (juce::Rectangle<int> (square, square).withCentre ({ colCentre (0.0f), eqRow.getCentreY() }));
+    for (int i = 0; i < 4; ++i)
+        eqKnobs[i].setBounds (juce::Rectangle<int> (knob, knob).withCentre ({ colCentre ((float) i + 1.0f), eqRow.getCentreY() }));
+    eqMix.setBounds (juce::Rectangle<int> (knob, knob).withCentre ({ colCentre (5.0f), eqRow.getCentreY() }));
+    b.removeFromTop (captionH + 4 + gap);
+
+    // EQ - legend - GAIN WIDTH FREQ - legend - LISTEN.
+    auto bottom = b.removeFromTop (keyH + 2);
+    const int cy = bottom.getCentreY();
+    eqKey.setBounds (juce::Rectangle<int> (keyW, keyH).withCentre ({ colCentre (0.0f), cy }));
+    listenKey.setBounds (juce::Rectangle<int> (keyW, keyH).withCentre ({ colCentre (5.0f), cy }));
+    const int sq = keyH + 2;
+    const float pitch = colW * 0.62f;
+    gainKey.setBounds (juce::Rectangle<int> (sq, sq).withCentre ({ colCentre (2.5f) - juce::roundToInt (pitch), cy }));
+    widthKey.setBounds (juce::Rectangle<int> (sq, sq).withCentre ({ colCentre (2.5f), cy }));
+    freqKey.setBounds (juce::Rectangle<int> (sq, sq).withCentre ({ colCentre (2.5f) + juce::roundToInt (pitch), cy }));
+    const int plateW = juce::jmin ((int) (colW * 0.8f), 76);
+    legendLow = juce::Rectangle<int> (plateW, juce::jmax (12, keyH - 6)).withCentre ({ colCentre (1.0f), cy });
+    legendHigh = juce::Rectangle<int> (plateW, juce::jmax (12, keyH - 6)).withCentre ({ colCentre (4.0f), cy });
 }
 
 //==============================================================================
-MonitorSection::MonitorSection (UiContext& c)
-    : ctx (c),
-      meter ([this] (int ch) { return ctx.meters.getMonitor (ch); }, [] { return 2; })
+MonitorSection::MonitorSection (UiContext& c) : ctx (c)
 {
-    meter.setShowScale (true);
-    addAndMakeVisible (meter);
-    level.setCompact (true);
-    level.setBinding (bindLinear ("MONITOR", ctx.engine.monitorLevelDb, -60.0f, 10.0f, " dB", 1, 0.0f));
-    addAndMakeVisible (level);
-
-    dimButton.setClickingTogglesState (true);
-    dimButton.setColour (juce::TextButton::buttonOnColourId, Colours::solo);
-    dimButton.onClick = [this]
+    viewKey.setTooltip ("VIEW: the monitor settings (ROUTING > MONITOR)");
+    viewKey.onPress = [this]
     {
-        if (dimButton.getToggleState())
-        {
-            dimRestoreDb = ctx.engine.monitorLevelDb.load();
-            ctx.engine.monitorLevelDb = dimRestoreDb - 20.0f;
-        }
-        else
-        {
-            ctx.engine.monitorLevelDb = dimRestoreDb;
-        }
-        dimmed = dimButton.getToggleState();
+        if (ctx.showScreen)
+            ctx.showScreen (Screen::Routing);
+        viewOpened = true;
     };
-    aflButton.setClickingTogglesState (true);
-    aflButton.setColour (juce::TextButton::buttonOnColourId, Colours::solo);
-    aflButton.setTooltip ("Solo after fader (off: pre fader listen)");
-    aflButton.onClick = [this] { ctx.engine.soloAfl = aflButton.getToggleState(); };
-    clearSoloButton.setColour (juce::TextButton::buttonOnColourId, Colours::solo);
-    clearSoloButton.onClick = [this]
+    viewKey.isActive = [this]
     {
-        for (int k = 0; k < kNumStripKinds; ++k)
-            for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
-                s->params.solo = false;
-        for (int i = 0; i < kNumDcas; ++i)
-            ctx.engine.getDca (i).solo = false;
+        viewOpened = viewOpened && ctx.getScreen && ctx.getScreen() == Screen::Routing;
+        return viewOpened;
     };
+    addAndMakeVisible (viewKey);
 
-    prevButton.onClick = [this] { logRecall (ctx, "previous scene", ctx.show.recallPrevious()); };
-    goButton.setColour (juce::TextButton::buttonColourId, Colours::active.darker (0.4f));
-    goButton.setTooltip ("Recall the next scene (Ctrl+G)");
-    goButton.onClick = [this] { logRecall (ctx, "next scene", ctx.show.recallNext()); };
-    scenesButton.onClick = [this] { if (ctx.showScreen) ctx.showScreen (Screen::Library); };
-
-    for (int i = 0; i < kNumMuteGroups; ++i)
+    for (auto* k : { &talkLevel, &phonesLevel, &monitorLevel })
     {
-        auto* b = muteGroupButtons.add (new juce::TextButton (juce::String (i + 1)));
-        b->setColour (juce::TextButton::buttonOnColourId, Colours::mute);
-        b->onClick = [this, i] { ctx.engine.muteGroups = ctx.engine.muteGroups.load() ^ (1u << i); };
-        addAndMakeVisible (b);
+        k->setHardware (true);
+        addAndMakeVisible (k);
+    }
+    monitorLevel.setBinding (bindLinear ("MONITOR LEVEL", ctx.engine.monitorLevelDb, -60.0f, 10.0f, " dB", 1, 0.0f));
+    talkLevel.setTooltip ("TALK LEVEL: talkback is not available yet");
+    phonesLevel.setTooltip ("PHONES LEVEL: there's no separate phones output yet; MONITOR LEVEL sets the monitor output");
+
+    for (auto* k : { &talkA, &talkB })
+    {
+        k->shape = SurfaceKey::Shape::Square;
+        k->setEnabled (false);
+        k->setTooltip ("Talkback is not available yet");
+        addAndMakeVisible (k);
     }
 
-    for (auto* b : { &dimButton, &aflButton, &clearSoloButton, &prevButton, &goButton, &scenesButton })
-        addAndMakeVisible (b);
-    startTimerHz (8);
-    refresh();
-}
-
-void MonitorSection::refresh()
-{
-    const int i = ctx.show.getCurrentSceneIndex();
-    const auto scene = ctx.show.getScene (i);
-    sceneText = scene ? juce::String (i + 1).paddedLeft ('0', 2) + "  " + scene->name : juce::String ("no scene");
-    prevButton.setEnabled (ctx.show.getNumScenes() > 0);
-    goButton.setEnabled (ctx.show.getNumScenes() > 0);
-    repaint (sceneArea);
-}
-
-void MonitorSection::timerCallback()
-{
-    aflButton.setToggleState (ctx.engine.soloAfl.load(), juce::dontSendNotification);
-    clearSoloButton.setToggleState (ctx.engine.anySoloActive.load(), juce::dontSendNotification);
-    const auto groups = ctx.engine.muteGroups.load();
-    for (int i = 0; i < muteGroupButtons.size(); ++i)
+    // DIM attenuates the monitor by the DIM amount (lit); held, it mutes the
+    // monitor (blinking). MONO sums the monitor to mono (lit); held, it swaps
+    // left and right (blinking). A press while blinking disengages (manual 4.7).
+    auto monitorKey = [this] (SurfaceKey& key, std::atomic<bool>& pressed, std::atomic<bool>& held, const juce::String& tip)
     {
-        muteGroupButtons[i]->setToggleState ((groups >> i) & 1u, juce::dontSendNotification);
-        muteGroupButtons[i]->setTooltip (ctx.engine.getMuteGroupName (i));
-    }
-    repaint (meterArea.withHeight (16));
+        key.shape = SurfaceKey::Shape::Square;
+        key.ledColour = Colours::yellow;
+        key.setTooltip (tip);
+        key.onPress = [&pressed, &held]
+        {
+            if (held.load())
+                held = false;
+            else
+                pressed = ! pressed.load();
+        };
+        key.onHold = [&held] { held = ! held.load(); };
+        key.ledState = [&pressed, &held] { return held.load() ? SurfaceKey::Blink : (pressed.load() ? SurfaceKey::Lit : SurfaceKey::Off); };
+        addAndMakeVisible (key);
+    };
+    monitorKey (dimKey, ctx.engine.monitorDim, ctx.engine.monitorMute, "DIM: attenuate the monitor by the DIM amount (hold: mute the monitor)");
+    monitorKey (monoKey, ctx.engine.monitorMono, ctx.engine.monitorSwap, "MONO: sum the monitor to mono (hold: swap left and right)");
 }
 
 void MonitorSection::paint (juce::Graphics& g)
 {
     g.fillAll (Colours::panel);
-    g.setColour (Colours::textDim);
-    g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-    g.drawText (ctx.engine.anySoloActive.load() ? "SOLO" : "MAIN 1", meterArea.withHeight (16), juce::Justification::centred);
 
-    // Silk-screen outlines with their titles.
-    for (auto [area, title] : { std::pair { monitorArea, "MONITOR" }, std::pair { sceneArea, "SHOW CONTROL" }, std::pair { mgArea, "MUTE GROUPS" } })
-    {
-        g.setColour (Colours::outline);
-        g.drawRoundedRectangle (area.toFloat().withTrimmedTop (7.0f), 4.0f, 1.0f);
-        auto label = area.withHeight (14).withTrimmedLeft (10);
-        const int w = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), title) + 10;
-        g.setColour (Colours::panel);
-        g.fillRect (label.withWidth (w));
-        g.setColour (Colours::textDim);
-        g.drawText (title, label.withWidth (w), juce::Justification::centred);
-    }
+    g.setColour (Colours::outline);
+    g.drawRoundedRectangle (wingPanel.toFloat(), 6.0f, 1.0f);
+    drawSilk (g, usbTitle.toFloat(), "USB AUDIO/DATA", 12.0f);
+    drawSilk (g, monitorTitle.toFloat(), "MONITORING/TALKBACK", 12.0f);
+    g.setColour (Colours::silk.withAlpha (0.6f));
+    g.fillRect (monitorTitle.getX() + monitorTitle.getWidth() / 10, monitorTitle.getY() - 8, monitorTitle.getWidth() * 8 / 10, 1);
 
+    // The USB socket plate: socket, 5V 1000mA, the USB mark and the ACCESS LED.
+    auto plate = usbPlate.toFloat();
     g.setColour (juce::Colours::black);
-    g.fillRoundedRectangle (sceneDisplay.toFloat(), 3.0f);
-    g.setColour (Colours::active);
-    g.setFont (juce::FontOptions (juce::jmin (18.0f, sceneDisplay.getHeight() * 0.6f), juce::Font::bold));
-    g.drawFittedText (sceneText, sceneDisplay.reduced (8, 0), juce::Justification::centredLeft, 1);
+    g.fillRoundedRectangle (plate, 3.0f);
+    auto inner = plate.reduced (6.0f, 4.0f);
+    auto caption = inner.removeFromTop (inner.getHeight() * 0.3f);
+    drawSilk (g, caption.withWidth (caption.getWidth() * 0.55f), "5V  1000mA", 8.0f, juce::Justification::centredLeft);
+    drawSilk (g, caption.withTrimmedLeft (caption.getWidth() * 0.6f), "ACCESS", 8.0f, juce::Justification::centredLeft);
+    auto socket = inner.removeFromLeft (inner.getWidth() * 0.5f).reduced (2.0f, 1.0f);
+    g.setColour (Colours::silk);
+    g.drawRoundedRectangle (socket, 2.0f, 1.5f);
+    g.drawRect (socket.reduced (socket.getWidth() * 0.18f, socket.getHeight() * 0.3f), 1.0f);
+    drawIcon (g, Icon::Usb, inner.removeFromLeft (inner.getWidth() * 0.4f), Colours::silk);
+    g.setColour (Colours::ledOff.brighter (0.2f));
+    g.fillRect (inner.withSizeKeepingCentre (juce::jmin (16.0f, inner.getWidth() * 0.8f), 5.0f));
+
+    // Captions under the pots and keys.
+    auto below = [] (juce::Component& c, int h) { return c.getBounds().withY (c.getBottom() + 3).withHeight (h).expanded (24, 0).toFloat(); };
+    drawSilk (g, below (talkLevel, 12), "TALK LEVEL", 10.0f);
+    drawSilk (g, below (phonesLevel, 12), "PHONES LEVEL", 10.0f);
+    drawSilk (g, below (monitorLevel, 12), "MONITOR LEVEL", 10.0f);
+    drawSilk (g, below (talkA, 12), "TALK A", 9.0f);
+    drawSilk (g, below (talkB, 12), "TALK B", 9.0f);
+    drawSilk (g, below (dimKey, 12), "ATTENUATE", 9.0f);
+    drawSilk (g, below (monoKey, 12), "MONO", 9.0f);
 }
 
 void MonitorSection::resized()
 {
     auto b = getLocalBounds().reduced (8, 6);
-    meterArea = b.removeFromLeft (juce::jlimit (44, 64, b.getWidth() / 5));
-    meter.setBounds (meterArea.withTrimmedTop (18));
-    b.removeFromLeft (8);
+    wingPanel = b;
 
-    const int gap = 8;
-    const int sceneH = juce::jmin (120, b.getHeight() / 4);
-    const int mgH = juce::jmin (130, b.getHeight() / 4);
-    monitorArea = b.removeFromTop (b.getHeight() - sceneH - mgH - gap * 2);
-    b.removeFromTop (gap);
-    sceneArea = b.removeFromTop (sceneH);
-    b.removeFromTop (gap);
-    mgArea = b;
+    // VIEW top left; USB AUDIO/DATA with its plate; MONITORING/TALKBACK below a rule.
+    auto p = wingPanel.reduced (10, 8);
+    const int viewSize = juce::jlimit (30, 44, p.getWidth() / 9);
+    viewKey.setBounds (p.getX(), p.getY(), viewSize, viewSize);
+    usbTitle = p.removeFromTop (16).withTrimmedLeft (viewSize);
+    const int plateH = juce::jlimit (30, 52, p.getHeight() / 7);
+    usbPlate = p.removeFromTop (plateH + 4).withSizeKeepingCentre (juce::jmin (150, p.getWidth() / 2), plateH).translated (viewSize / 3, 0);
+    p.removeFromTop (juce::jmax (18, p.getHeight() / 8));
+    monitorTitle = p.removeFromTop (16);
 
-    auto m = monitorArea.withTrimmedTop (16).reduced (8, 6);
-    level.setBounds (m.removeFromLeft (juce::jmin (130, m.getWidth() / 2)).withSizeKeepingCentre (juce::jmin (130, m.getWidth() / 2), juce::jmin (m.getHeight(), 150)));
-    m.removeFromLeft (6);
-    const int h = juce::jmin (36, m.getHeight() / 3);
-    auto keys = m.withSizeKeepingCentre (m.getWidth(), h * 3);
-    dimButton.setBounds (keys.removeFromTop (h).reduced (2));
-    aflButton.setBounds (keys.removeFromTop (h).reduced (2));
-    clearSoloButton.setBounds (keys.removeFromTop (h).reduced (2));
+    const int keyH = juce::jlimit (24, 40, p.getHeight() / 6);
+    auto keys = p.removeFromBottom (keyH + 16).withTrimmedBottom (16);
+    p.removeFromBottom (p.getHeight() / 8);
+    const int pot = juce::jlimit (32, 84, juce::jmin (p.getWidth() / 5, p.getHeight() - 24));
+    auto pots = p.withSizeKeepingCentre (p.getWidth(), pot).translated (0, -6);
+    const int third = pots.getWidth() / 3;
+    talkLevel.setBounds (juce::Rectangle<int> (pot, pot).withCentre ({ pots.getX() + third / 2, pots.getCentreY() }));
+    phonesLevel.setBounds (juce::Rectangle<int> (pot, pot).withCentre ({ pots.getCentreX(), pots.getCentreY() }));
+    monitorLevel.setBounds (juce::Rectangle<int> (pot, pot).withCentre ({ pots.getRight() - third / 2, pots.getCentreY() }));
 
-    auto s2 = sceneArea.withTrimmedTop (16).reduced (8, 6);
-    const int rowH = juce::jmin (34, (s2.getHeight() - 6) / 2);
-    sceneDisplay = s2.removeFromTop (rowH);
-    s2.removeFromTop (6);
-    auto row = s2.removeFromTop (rowH);
-    prevButton.setBounds (row.removeFromLeft (row.getWidth() / 4).reduced (2, 0));
-    scenesButton.setBounds (row.removeFromRight (row.getWidth() / 3).reduced (2, 0));
-    goButton.setBounds (row.reduced (2, 0));
+    // A  B  (gap)  DIM  MONO
+    const float slot = (float) keys.getWidth() / 5.0f;
+    SurfaceKey* row[] = { &talkA, &talkB, nullptr, &dimKey, &monoKey };
+    for (int i = 0; i < 5; ++i)
+        if (row[i] != nullptr)
+            row[i]->setBounds (juce::Rectangle<int> (keyH, keyH).withCentre ({ keys.getX() + juce::roundToInt (slot * ((float) i + 0.5f)), keys.getCentreY() }));
+}
 
-    auto mg = mgArea.withTrimmedTop (16).reduced (8, 6);
-    const int w = mg.getWidth() / 4, mh = juce::jmin (40, mg.getHeight() / 2);
-    mg = mg.withSizeKeepingCentre (mg.getWidth(), mh * 2);
-    for (int i = 0; i < muteGroupButtons.size(); ++i)
-        muteGroupButtons[i]->setBounds (mg.getX() + (i % 4) * w, mg.getY() + (i / 4) * mh, w - 3, mh - 3);
+//==============================================================================
+CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
+{
+    // Upper part: 16 layers of four encoders and eight keys, empty until custom
+    // controls can be assigned.
+    upperView.setEnabled (false);
+    upperView.setTooltip ("VIEW: CC EDIT (custom controls can't be assigned yet)");
+    upKey.onPress = [this] { upperLayer = (upperLayer + 1) % 16; repaint (layerDisplay); };
+    downKey.onPress = [this] { upperLayer = (upperLayer + 15) % 16; repaint (layerDisplay); };
+    upKey.setTooltip ("Next custom control layer");
+    downKey.setTooltip ("Previous custom control layer");
+    for (auto& e : encoders)
+    {
+        e.setHardware (true);
+        addAndMakeVisible (e);
+    }
+    for (int i = 0; i < 8; ++i)
+    {
+        auto* k = upperKeys.add (new SurfaceKey());
+        k->shape = SurfaceKey::Shape::Square;
+        k->setEnabled (false);
+        addAndMakeVisible (k);
+    }
+
+    // Lower part: its layer keys and eight keys.
+    const char* layerNames[kNumLowerLayers] = { "USER", "2-TRACK\nTRANSP", "MULTI\nTRANSP", "MUTE\nGROUPS", "SHOW\nCNTRL" };
+    for (int i = 0; i < kNumLowerLayers; ++i)
+    {
+        auto* k = layerKeys.add (new SurfaceKey (layerNames[i]));
+        k->ledColour = Colours::silk;
+        k->onPress = [this, i] { setLowerLayer (i); };
+        k->ledState = [this, i] { return lowerLayer == i ? SurfaceKey::Lit : SurfaceKey::Off; };
+        addAndMakeVisible (k);
+    }
+    layerKeys[TwoTrack]->setEnabled (false);
+    layerKeys[TwoTrack]->setTooltip ("2-TRACK TRANSP: there's no USB recorder yet");
+    layerKeys[MultiTrack]->setEnabled (false);
+    layerKeys[MultiTrack]->setTooltip ("MULTI TRANSP: there's no multitrack recorder yet");
+    layerKeys[User]->setTooltip ("USER: custom controls (not assignable yet)");
+
+    for (int i = 0; i < 8; ++i)
+    {
+        auto* k = lowerKeys.add (new SurfaceKey());
+        k->shape = SurfaceKey::Shape::Square;
+        k->onPress = [this, i] { pressLowerKey (i); };
+        k->ledState = [this, i] { return lowerKeyLit (i) ? SurfaceKey::Lit : SurfaceKey::Off; };
+        addAndMakeVisible (k);
+    }
+
+    lowerView.setTooltip ("VIEW: the MUTE GROUPS screen, or the scenes for SHOW CNTRL");
+    lowerView.onPress = [this]
+    {
+        if (ctx.showScreen && lowerLayer == MuteGroups)
+            ctx.showScreen (Screen::MuteGroups);
+        else if (ctx.showScreen && lowerLayer == ShowControl)
+            ctx.showScreen (Screen::Library);
+        viewOpened = true;
+    };
+    lowerView.isActive = [this]
+    {
+        const auto screen = ctx.getScreen ? ctx.getScreen() : Screen::Home;
+        viewOpened = viewOpened && ((lowerLayer == MuteGroups && screen == Screen::MuteGroups)
+                                    || (lowerLayer == ShowControl && screen == Screen::Library));
+        return viewOpened || screen == Screen::MuteGroups;
+    };
+
+    dawKey.dark = true;
+    dawKey.setEnabled (false);
+    dawKey.setTooltip ("DAW remote control is not available yet");
+
+    // Navigation arrows and the wheel.
+    const int arrows[] = { -2, 2, -1, 1 };
+    SurfaceKey* nav[] = { &navUp, &navDown, &navLeft, &navRight };
+    for (int i = 0; i < 4; ++i)
+    {
+        nav[i]->arrow = arrows[i];
+        nav[i]->shape = SurfaceKey::Shape::Square;
+        nav[i]->setEnabled (false);
+        nav[i]->setTooltip ("Navigation arrows: not available yet");
+        addAndMakeVisible (nav[i]);
+    }
+    wheel.setHardware (true);
+    wheel.setTooltip ("Scroll wheel: not available yet");
+    addAndMakeVisible (wheel);
+
+    for (juce::Component* k : { (juce::Component*) &upperView, (juce::Component*) &lowerView, (juce::Component*) &upKey,
+                                (juce::Component*) &downKey, (juce::Component*) &dawKey })
+        addAndMakeVisible (k);
+
+    setLowerLayer (MuteGroups);
+    startTimerHz (8);
+}
+
+void CustomControlSection::setLowerLayer (int layer)
+{
+    lowerLayer = layer;
+    for (int i = 0; i < lowerKeys.size(); ++i)
+    {
+        const auto name = lowerKeyName (i);
+        lowerKeys[i]->setLabel (name);
+        lowerKeys[i]->setEnabled (name.isNotEmpty());
+        lowerKeys[i]->ledColour = layer == MuteGroups ? Colours::mute : Colours::silk;
+        lowerKeys[i]->setTooltip (layer == MuteGroups ? "Mute group " + juce::String (i + 1) + ": " + ctx.engine.getMuteGroupName (i) : juce::String());
+    }
+    shownState = {};
+    repaint();
+}
+
+juce::String CustomControlSection::lowerKeyName (int key) const
+{
+    switch (lowerLayer)
+    {
+        case MuteGroups: return juce::String (key + 1);
+        case ShowControl:
+        {
+            static const char* names[] = { "PREV", "GO", "SCENES" };
+            return key < 3 ? names[key] : "";
+        }
+        default: return {};
+    }
+}
+
+void CustomControlSection::pressLowerKey (int key)
+{
+    if (lowerLayer == MuteGroups)
+    {
+        ctx.engine.muteGroups = ctx.engine.muteGroups.load() ^ (1u << key);
+    }
+    else if (lowerLayer == ShowControl)
+    {
+        if (key == 0)
+            logRecall (ctx, "previous scene", ctx.show.recallPrevious());
+        else if (key == 1)
+            logRecall (ctx, "next scene", ctx.show.recallNext());
+        else if (key == 2 && ctx.showScreen)
+            ctx.showScreen (Screen::Library);
+    }
+}
+
+bool CustomControlSection::lowerKeyLit (int key) const
+{
+    if (lowerLayer == MuteGroups)
+        return (ctx.engine.muteGroups.load() >> key) & 1u;
+    return false;
+}
+
+void CustomControlSection::refresh()
+{
+    shownState = {};
+    repaint (lowerLcd);
+}
+
+void CustomControlSection::setCompact (bool c)
+{
+    if (compact == c)
+        return;
+    compact = c;
+    juce::Array<juce::Component*> upper { &upperView, &upKey, &downKey, &wheel, &navUp, &navDown, &navLeft, &navRight };
+    for (auto& e : encoders)
+        upper.add (&e);
+    for (auto* k : upperKeys)
+        upper.add (k);
+    for (auto* comp : upper)
+        comp->setVisible (! compact);
+    resized();
+    repaint();
+}
+
+void CustomControlSection::timerCallback()
+{
+    // The lower LCD follows the mute group names and the scenes.
+    juce::String state (lowerLayer);
+    if (lowerLayer == MuteGroups)
+        for (int i = 0; i < kNumMuteGroups; ++i)
+            state << ctx.engine.getMuteGroupName (i) << '|';
+    else if (lowerLayer == ShowControl)
+        state << ctx.show.getCurrentSceneIndex() << ctx.show.getNumScenes();
+    if (state != shownState)
+    {
+        shownState = state;
+        repaint (lowerLcd);
+    }
+}
+
+void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> area, bool colourBars, bool upper)
+{
+    g.setColour (juce::Colours::black);
+    g.fillRoundedRectangle (area.toFloat(), 4.0f);
+    auto r = area.reduced (3, 4);
+    const int w = r.getWidth() / 4;
+
+    auto scene = [this] (int index) -> juce::String
+    {
+        if (const auto s = ctx.show.getScene (index))
+            return juce::String (index + 1).paddedLeft ('0', 2) + " " + s->name;
+        return "-";
+    };
+
+    for (int i = 0; i < 4; ++i)
+    {
+        auto cell = juce::Rectangle<int> (r.getX() + i * w, r.getY(), w, r.getHeight()).reduced (2, 0);
+        if (colourBars)
+        {
+            drawLightBar (g, cell.removeFromTop (juce::jmax (4, cell.getHeight() / 9)).toFloat(), Colours::ledOff, false);
+            cell.removeFromTop (juce::jmax (3, cell.getHeight() / 8));
+        }
+        ScribbleInfo info;
+        if (upper)
+        {
+            info.number = "CC" + juce::String (i + 1);
+            info.line2 = "LAYER " + juce::String (upperLayer + 1);
+            info.name = "not assigned";
+        }
+        else if (lowerLayer == MuteGroups)
+        {
+            // The names of the groups on the keys below: top row, then bottom row.
+            info.number = ctx.engine.getMuteGroupName (i);
+            info.name = ctx.engine.getMuteGroupName (i + 4);
+        }
+        else if (lowerLayer == ShowControl)
+        {
+            const int current = ctx.show.getCurrentSceneIndex();
+            static const char* titles[] = { "PREV", "GO", "SCENES", "" };
+            info.number = titles[i];
+            if (i == 0)
+                info.name = current > 0 ? scene (current - 1) : "-";
+            else if (i == 1)
+                info.name = scene (current + 1);
+            else if (i == 2)
+                info.name = ctx.show.getNumScenes() > 0 ? scene (current) : juce::String ("no scene");
+            info.line2 = i == 1 ? "next" : (i == 2 ? "current" : "");
+        }
+        else
+        {
+            info.number = layerKeys[lowerLayer]->getLabel().replace ("\n", " ");
+            info.name = lowerLayer == User ? "not assigned" : "N/A";
+        }
+        drawScribble (g, cell.toFloat(), info);
+    }
+}
+
+void CustomControlSection::paint (juce::Graphics& g)
+{
+    g.fillAll (Colours::panel);
+    g.setColour (Colours::outline);
+    g.fillRect (getWidth() - 1, 0, 1, getHeight());
+
+    paintLcd (g, lowerLcd, false, false);
+    drawSilk (g, dawKey.getBounds().translated (0, -24).withHeight (22).expanded (10, 0).toFloat(), "REMOTE\nCONTROL", 9.0f);
+    if (compact)
+    {
+        drawSilk (g, heading.toFloat(), "CUSTOM CONTROLS", 11.0f);
+        return;
+    }
+    paintLcd (g, upperLcd, true, true);
+
+    // The two-digit layer display.
+    g.setColour (juce::Colours::black);
+    g.fillRoundedRectangle (layerDisplay.toFloat(), 2.0f);
+    g.setColour (Colours::mute.brighter (0.2f));
+    g.setFont (juce::FontOptions ((float) layerDisplay.getHeight() * 0.85f, juce::Font::bold));
+    g.drawText (juce::String (upperLayer + 1), layerDisplay, juce::Justification::centred);
+
+    drawSilk (g, heading.toFloat(), "CUSTOM CONTROLS", 11.0f);
+    g.setColour (Colours::silk.withAlpha (0.6f));
+    g.fillRect (divider);
+}
+
+void CustomControlSection::resized()
+{
+    auto b = getLocalBounds().reduced (6, 6);
+    const int keyColumn = juce::jlimit (40, 56, b.getWidth() / 5);
+    const int h = b.getHeight();
+    const int lcdH = juce::jlimit (40, 76, h / 8);
+    const int keyH = juce::jlimit (16, 30, h / 18);
+    const int knob = juce::jlimit (22, 46, h / 12);
+    const int viewSize = juce::jmin (keyColumn - 6, 42);
+
+    auto left = [&] (juce::Rectangle<int> row) { return row.withWidth (keyColumn); };
+    auto right = [&] (juce::Rectangle<int> row) { return row.withTrimmedLeft (keyColumn); };
+    auto cells = [&] (juce::Rectangle<int> row, int i, int w, int hh)
+    {
+        const int cw = row.getWidth() / 4;
+        return juce::Rectangle<int> (w, hh).withCentre ({ row.getX() + cw * i + cw / 2, row.getCentreY() });
+    };
+
+    if (compact)
+    {
+        // The lower part only: heading, layer keys, VIEW + LCD, DAW + eight keys.
+        const int k = juce::jlimit (16, 30, (h - 16) / 7);
+        heading = b.removeFromTop (16);
+        auto row = b.removeFromTop (k + 6);
+        layerKeys[User]->setBounds (left (row).withSizeKeepingCentre (keyColumn - 8, k + 4));
+        for (int i = 1; i < kNumLowerLayers; ++i)
+            layerKeys[i]->setBounds (cells (right (row), i - 1, juce::jmin (right (row).getWidth() / 4 - 4, 52), k + 4));
+        b.removeFromTop (4);
+        row = b.removeFromTop (juce::jmax (lcdH * 3 / 4, k * 2));
+        lowerView.setBounds (juce::Rectangle<int> (viewSize, viewSize).withCentre (left (row).getCentre()));
+        lowerLcd = right (row);
+        b.removeFromTop (juce::jmax (6, b.getHeight() - 2 * (k + 6)));
+        for (int r = 0; r < 2; ++r)
+        {
+            row = b.removeFromTop (k + 6);
+            if (r == 1)
+                dawKey.setBounds (left (row).withSizeKeepingCentre (keyColumn - 8, k));
+            for (int i = 0; i < 4; ++i)
+                lowerKeys[r * 4 + i]->setBounds (cells (right (row), i, k + 4, k));
+        }
+        return;
+    }
+
+    // Upper part.
+    auto row = b.removeFromTop (lcdH);
+    upperView.setBounds (juce::Rectangle<int> (viewSize, viewSize).withCentre (left (row).getCentre()));
+    upperLcd = right (row);
+    b.removeFromTop (4);
+    row = b.removeFromTop (16);
+    layerDisplay = left (row).withSizeKeepingCentre (juce::jmin (keyColumn - 8, 30), 18);
+    heading = right (row);
+    row = b.removeFromTop (knob + 4);
+    for (int i = 0; i < 4; ++i)
+        encoders[i].setBounds (cells (right (row), i, knob, knob));
+    b.removeFromTop (2);
+    for (int r = 0; r < 2; ++r)
+    {
+        row = b.removeFromTop (keyH + 4);
+        (r == 0 ? upKey : downKey).setBounds (left (row).withSizeKeepingCentre (keyColumn - 8, keyH));
+        for (int i = 0; i < 4; ++i)
+            upperKeys[r * 4 + i]->setBounds (cells (right (row), i, keyH + 2, keyH));
+    }
+
+    // Divider, then the lower part.
+    b.removeFromTop (4);
+    divider = right (b.removeFromTop (1));
+    b.removeFromTop (5);
+    row = b.removeFromTop (keyH + 6);
+    layerKeys[User]->setBounds (left (row).withSizeKeepingCentre (keyColumn - 8, keyH + 4));
+    for (int i = 1; i < kNumLowerLayers; ++i)
+        layerKeys[i]->setBounds (cells (right (row), i - 1, juce::jmin (right (row).getWidth() / 4 - 4, 52), keyH + 4));
+    b.removeFromTop (4);
+    row = b.removeFromTop (lcdH * 3 / 4);
+    lowerView.setBounds (juce::Rectangle<int> (viewSize, viewSize).withCentre (left (row).getCentre()));
+    lowerLcd = right (row);
+    b.removeFromTop (26);
+    for (int r = 0; r < 2; ++r)
+    {
+        row = b.removeFromTop (keyH + 4);
+        if (r == 0)
+            dawKey.setBounds (left (row).withSizeKeepingCentre (keyColumn - 8, keyH).translated (0, (keyH + 4) / 2));
+        for (int i = 0; i < 4; ++i)
+            lowerKeys[r * 4 + i]->setBounds (cells (right (row), i, keyH + 2, keyH));
+    }
+
+    // Navigation arrows (a diamond) and the scroll wheel.
+    b.removeFromTop (6);
+    const int nav = juce::jlimit (14, 24, b.getHeight() / 5);
+    const int wheelSize = juce::jmin (b.getHeight() - 4, b.getWidth() / 2);
+    auto wheelArea = b.removeFromRight (wheelSize + 8);
+    wheel.setBounds (wheelArea.withSizeKeepingCentre (wheelSize, wheelSize));
+    const auto c = b.getCentre();
+    navUp.setBounds (juce::Rectangle<int> (nav, nav).withCentre ({ c.x, c.y - nav }));
+    navDown.setBounds (juce::Rectangle<int> (nav, nav).withCentre ({ c.x, c.y + nav }));
+    navLeft.setBounds (juce::Rectangle<int> (nav, nav).withCentre ({ c.x - nav - 2, c.y }));
+    navRight.setBounds (juce::Rectangle<int> (nav, nav).withCentre ({ c.x + nav + 2, c.y }));
 }
 
 } // namespace livedaw::ui

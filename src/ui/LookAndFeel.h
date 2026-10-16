@@ -44,6 +44,14 @@ namespace Colours
     const juce::Colour meterGreen { 0xff35d05a };
     const juce::Colour meterYellow { 0xffe8d23a };
     const juce::Colour meterRed { 0xffe8413a };
+
+    // Control surface hardware
+    const juce::Colour keyBody { 0xff36383d };      // an unlit key
+    const juce::Colour keyEdge { 0xff0d0e10 };
+    const juce::Colour silk { 0xffc4c7cc };         // panel print
+    const juce::Colour layerColumn { 0xff1c1d20 };  // the darker layer key columns
+    const juce::Colour ledOff { 0xff2c2d30 };       // an unlit LED
+    const juce::Colour viewGreen { 0xff52d36b };    // lit VIEW keys
 } // namespace Colours
 
 /** The WING look: Barlow Condensed type (a DIN-style condensed face like the
@@ -95,5 +103,10 @@ juce::Rectangle<int> sectionContent (juce::Rectangle<int> area, bool hasTitle);
 
 /** A small rounded label chip ("48K", "PRE", "SNAP"). */
 void drawChip (juce::Graphics&, juce::Rectangle<float> r, const juce::String& text, juce::Colour fill, juce::Colour textColour);
+
+/** Panel print on the control surface (captions, headings): bold caps, one
+    line per '\n'. */
+void drawSilk (juce::Graphics&, juce::Rectangle<float> area, const juce::String& text, float fontSize,
+               juce::Justification = juce::Justification::centred, juce::Colour = Colours::silk);
 
 } // namespace livedaw::ui

@@ -54,6 +54,33 @@ Layer LayerSet::findLayer (const MixerEngine& engine, Section s, const juce::Str
     return layers.empty() ? Layer {} : std::move (layers.front());
 }
 
+juce::String LayerSet::keyLabel (const Layer& layer)
+{
+    if (layer.id.startsWith ("in-"))
+    {
+        // "CH 37-40 · AUX 1-8" -> "37-40" / "AUX IN"
+        juce::StringArray lines;
+        for (auto part : juce::StringArray::fromTokens (layer.name, juce::String::fromUTF8 ("\xc2\xb7"), {}))
+        {
+            part = part.trim();
+            if (part.startsWith ("CH "))
+                lines.add (part.fromFirstOccurrenceOf ("CH ", false, false));
+            else if (part.startsWith ("AUX"))
+                lines.add ("AUX IN");
+        }
+        return lines.isEmpty() ? juce::String ("INPUTS") : lines.joinIntoString ("\n");
+    }
+
+    static const std::pair<const char*, const char*> keys[] = {
+        { "bus-1", "BUS\nMASTER" }, { "dca-1", "DCA" },       { "out-1", "MAIN\nMATRIX" }, { "aux", "AUX IN" },
+        { "inputs", "INPUTS" },     { "user-1", "USER 1" },   { "user-2", "USER 2" },
+    };
+    for (auto [id, label] : keys)
+        if (layer.id == id)
+            return label;
+    return layer.name.toUpperCase();
+}
+
 void LayerSet::setSelectedLayerId (Section s, const juce::String& id)
 {
     const Utf8 u (id);

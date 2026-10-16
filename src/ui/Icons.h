@@ -37,7 +37,16 @@ enum class Icon
     Stop,
     ChevronLeft,
     ChevronRight,
-    Disk
+    Disk,
+    // Printed on the channel strip and monitoring keys
+    GainArrows,  // ↕ (EQ GAIN)
+    WidthArrows, // ↔ (EQ WIDTH)
+    FreqMarker,  // ‹|› (EQ FREQ)
+    Bell,        // EQ band legend
+    LowShelf,
+    HighShelf,
+    Usb,         // USB trident
+    Circle       // the MONO key
 };
 
 /** Draws `icon` fitted into `area` (stroked or filled as the icon needs). */

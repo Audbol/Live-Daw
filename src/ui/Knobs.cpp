@@ -166,9 +166,25 @@ DisplayKnob::DisplayKnob()
         }
     };
     slider.onDragEnd = [this] { timerCallback(); };
+    slider.onDragStart = [this] { if (onTouch) onTouch(); };
     slider.setDoubleClickReturnValue (false, 0.0);
+    slider.addMouseListener (this, false);
     addAndMakeVisible (slider);
     startTimerHz (20);
+}
+
+void DisplayKnob::setHardware (bool h)
+{
+    hardware = h;
+    slider.getProperties().set ("hardware", h);
+    resized();
+    repaint();
+}
+
+void DisplayKnob::mouseEnter (const juce::MouseEvent&)
+{
+    if (onTouch && slider.isEnabled())
+        onTouch();
 }
 
 void DisplayKnob::setBinding (KnobBinding b)
@@ -203,6 +219,8 @@ void DisplayKnob::timerCallback()
 
 void DisplayKnob::paint (juce::Graphics& g)
 {
+    if (hardware)
+        return;
     auto b = getLocalBounds();
     const float captionSize = compact ? 14.0f : 16.0f;
     g.setColour (binding.isValid() ? Colours::textDim : Colours::textDim.withAlpha (0.3f));
@@ -217,6 +235,12 @@ void DisplayKnob::paint (juce::Graphics& g)
 void DisplayKnob::resized()
 {
     auto b = getLocalBounds();
+    if (hardware)
+    {
+        const int size = juce::jmin (b.getWidth(), b.getHeight());
+        slider.setBounds (b.withSizeKeepingCentre (size, size));
+        return;
+    }
     const int caption = compact ? 16 : 18;
     b.removeFromTop (caption);
     b.removeFromBottom (caption + 2);
