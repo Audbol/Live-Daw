@@ -794,6 +794,122 @@ private:
 };
 
 //==============================================================================
+/** The feed grid of a bus, main or matrix INPUT panel: a cell per source,
+    green while it sends to this strip. Click to open the Feed Configuration. */
+class FeedGrid final : public juce::Component, private juce::Timer
+{
+public:
+    FeedGrid (UiContext& c, Strip& s, std::function<void()> open) : ctx (c), strip (s), onOpen (std::move (open))
+    {
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        startTimerHz (4);
+    }
+
+    /** Whether `src` feeds this strip (and whether that send can exist at all). */
+    static bool feeds (const Strip& target, const Strip& src, bool& possible)
+    {
+        possible = true;
+        switch (target.getKind())
+        {
+            case StripKind::Bus:
+            {
+                if (&src == &target || (src.isBus() && ! (src.getId() >= kBusToBusTargets && target.getId() < kBusToBusTargets)))
+                {
+                    possible = false;
+                    return false;
+                }
+                auto* send = src.sends.find (target.getId());
+                return send != nullptr && send->enabled.load();
+            }
+            case StripKind::Main:
+                if (src.getKind() == StripKind::Main || src.getKind() == StripKind::Matrix)
+                {
+                    possible = false;
+                    return false;
+                }
+                return src.params.mains[juce::jlimit (0, kNumMains - 1, target.getId())].on.load();
+            case StripKind::Matrix:
+                if (src.getKind() == StripKind::Matrix)
+                {
+                    possible = false;
+                    return false;
+                }
+                return src.params.matrix[juce::jlimit (0, kNumMatrices - 1, target.getId())].on.load();
+            case StripKind::Channel:
+            case StripKind::Aux:
+                break;
+        }
+        possible = false;
+        return false;
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto& e = ctx.engine;
+        struct Group
+        {
+            const char* caption;
+            const MixerEngine::StripList* list;
+            int columns;
+        };
+        std::vector<Group> groups { { "CHANNEL", &e.getChannels(), 8 }, { "BUS", &e.getBuses(), 8 }, { "AUX", &e.getAux(), 8 } };
+        if (strip.getKind() == StripKind::Matrix)
+            groups.push_back ({ "MAIN", &e.getMains(), 4 });
+
+        // Two columns: CHANNEL and AUX left, BUS (and MAIN) right.
+        auto r = getLocalBounds().toFloat();
+        auto left = r.removeFromLeft (r.getWidth() * 0.52f);
+        r.removeFromLeft (r.getWidth() * 0.04f);
+        auto right = r;
+        const int chRows = juce::jmax (1, ((int) e.getChannels().size() + 7) / 8);
+        const int busRows = juce::jmax (1, juce::jmin (2, ((int) e.getBuses().size() + 7) / 8));
+        const float captionH = juce::jlimit (9.0f, 13.0f, getHeight() * 0.08f);
+        const float cellH = juce::jmin ((left.getHeight() - 2.0f * captionH - 6.0f) / (float) (chRows + 1), left.getWidth() / 8.0f * 0.75f);
+
+        auto drawGroup = [&] (juce::Rectangle<float>& area, const Group& grp, int maxRows)
+        {
+            g.setColour (Colours::textDim);
+            g.setFont (juce::FontOptions (captionH, juce::Font::bold));
+            g.drawText (grp.caption, area.removeFromTop (captionH).toNearestInt(), juce::Justification::centred);
+            const int n = juce::jmin ((int) grp.list->size(), maxRows * grp.columns);
+            const float w = area.getWidth() / 8.0f;
+            const int rows = (n + grp.columns - 1) / grp.columns;
+            for (int i = 0; i < n; ++i)
+            {
+                auto& src = *(*grp.list)[(size_t) i];
+                bool possible = true;
+                const bool on = feeds (strip, src, possible);
+                auto cell = juce::Rectangle<float> (area.getX() + (float) (i % grp.columns) * w, area.getY() + (float) (i / grp.columns) * cellH, w, cellH).reduced (1.0f);
+                g.setColour (on ? colours::feedOn : (possible ? juce::Colour (0xff262626) : juce::Colour (0xff1a1a1a)));
+                g.fillRect (cell);
+                g.setColour (on ? juce::Colours::black : (possible ? Colours::textDim : Colours::textDim.withAlpha (0.3f)));
+                g.setFont (juce::FontOptions (juce::jlimit (7.0f, 12.0f, cellH * 0.62f), juce::Font::bold));
+                g.drawFittedText (juce::String (src.getNumber()), cell.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+            }
+            area.removeFromTop ((float) rows * cellH + 4.0f);
+        };
+        drawGroup (left, groups[0], chRows);
+        drawGroup (left, groups[2], 1);
+        drawGroup (right, groups[1], busRows);
+        if (groups.size() > 3)
+            drawGroup (right, groups[3], 1);
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (getLocalBounds().contains (e.getPosition()) && onOpen)
+            onOpen();
+    }
+
+private:
+    void timerCallback() override { repaint(); }
+
+    UiContext& ctx;
+    Strip& strip;
+    std::function<void()> onOpen;
+};
+
+//==============================================================================
 /** A strip tile (Channel Select, INIT/COPY destinations, ROUTING-style grids):
     a name strip in the strip's colour, its icon and its number. */
 inline void paintStripTile (juce::Graphics& g, juce::Rectangle<float> r, const Strip& s, bool selected, bool dim = false)

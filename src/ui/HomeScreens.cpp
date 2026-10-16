@@ -585,8 +585,8 @@ public:
         else
         {
             feed = &key ("FEED CONFIGURATION", std::nullopt);
-            feed->twoLines = true;
             feed->onClick = [this] { if (openFeedConfig) openFeedConfig(); };
+            feedGrid = &make<FeedGrid> (ctx, strip, [this] { if (openFeedConfig) openFeedConfig(); });
             mono = &key ("MONO", std::nullopt, Colours::yellow);
             mono->setTooltip ("Sum to mono");
             bindKey (*mono, p.mono);
@@ -667,12 +667,14 @@ public:
         }
         else
         {
-            auto f = box (left, "FEED");
-            feed->setBounds (f.removeFromTop (juce::jlimit (30, 56, f.getHeight() / 4)));
-            f.removeFromTop (8);
+            auto feedArea = directOn != nullptr ? left.removeFromTop (left.getHeight() * 55 / 100) : left;
+            auto f = box (feedArea, "FEED");
+            feed->setBounds (f.removeFromBottom (juce::jlimit (24, 36, f.getHeight() / 6)));
+            f.removeFromBottom (6);
+            feedGrid->setBounds (f);
             if (directOn != nullptr)
             {
-                auto d = box (juce::Rectangle<int> (left.getX(), f.getY() + 4, left.getWidth(), left.getBottom() - f.getY() - 4), "DIRECT INPUT");
+                auto d = box (left, "DIRECT INPUT");
                 const int kh = juce::jlimit (22, 32, d.getHeight() / 5);
                 auto row = d.removeFromTop (kh);
                 directOn->setBounds (row.removeFromLeft (row.getWidth() / 4));
@@ -723,6 +725,7 @@ private:
     TrimBalancePad* pad = nullptr;
     LedMeter trimMeter;
     IconKey *invert = nullptr, *stereo = nullptr, *mono = nullptr, *inputSelectLabel = nullptr, *feed = nullptr;
+    FeedGrid* feedGrid = nullptr;
     IconKey *loCut = nullptr, *hiCut = nullptr, *tool = nullptr;
     IconKey *directOn = nullptr, *directInvert = nullptr, *directPre = nullptr;
     IntCombo* directSource = nullptr;
