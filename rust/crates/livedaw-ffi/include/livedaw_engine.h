@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 4;
+constexpr int kAbiVersion = 5;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -58,7 +58,9 @@ enum StripKindId : int32_t
 /// Fader reference kind for DCAs (strip kinds are 0..4).
 constexpr int32_t kFaderDca = 5;
 
-/// Tap points (index into list 1).
+/// Tap points (index into list 1). WING names: INPUT, FILTER, TAP 3-5, PRE FDR,
+/// POST FDR, POST PROC. Only input channels choose theirs; aux, buses, mains and
+/// matrices always tap at kTapPfl (after INS 1, pre-fader).
 enum TapPoint : int32_t
 {
     kTapIn = 0,
@@ -66,6 +68,15 @@ enum TapPoint : int32_t
     kTapPfl = 5,
     kTapAfl = 6,
     kTapPost = 7
+};
+
+/// MAIN LINK (EngineControls::mainLink, list 12): Main 1's fader also moves Mains 2..N.
+enum MainLinkMode : int32_t
+{
+    kMainLinkOff = 0,
+    kMainLink2 = 1,   // 1>2
+    kMainLink2_3 = 2, // 1>2-3
+    kMainLink2_4 = 3  // 1>2-4
 };
 
 struct InputParams
@@ -118,13 +129,14 @@ struct InsertParams
 
 struct MainSendParams
 {
-    std::atomic<bool> on, pre;
+    std::atomic<bool> on, pre; // pre: from the tap point (the strip's mute still cuts it)
     std::atomic<float> levelDb;
 };
 
 struct MatrixSendParams
 {
     std::atomic<bool> on, pre;
+    std::atomic<bool> ignoreMute; // IGNORE CHANNEL MUTE (input/aux channels, pre/TAP mode only)
     std::atomic<float> levelDb, pan;
 };
 
@@ -135,9 +147,9 @@ struct StripParams
     DynSlotParams gate;
     EqBlockParams eq;
     DynSlotParams dynamics;
-    InsertParams preInsert, postInsert;
-    std::atomic<int32_t> processOrder; // list 0
-    std::atomic<int32_t> tap;          // list 1
+    InsertParams preInsert, postInsert; // aux channels have no post insert (INS 2)
+    std::atomic<int32_t> processOrder; // list 0 (input channels only)
+    std::atomic<int32_t> tap;          // list 1 (input channels only)
 
     std::atomic<float> faderDb;
     std::atomic<float> pan;   // -100..100
@@ -174,12 +186,16 @@ struct StripMeters
     std::atomic<int32_t> currentWidth;
     std::atomic<int32_t> dspFaults;
     std::atomic<float> automixDb;
+    std::atomic<float> trimPeak[2]; // after trim/balance/polarity ("post TRIM")
+    std::atomic<float> pflPeak[2];  // pre-fader, at the PFL point (METERS screen)
 };
 
 struct SendParams
 {
     std::atomic<bool> enabled, panLink;
-    std::atomic<int32_t> mode; // list 4: PRE, POST, GRP
+    std::atomic<bool> ignoreMute;  // IGNORE CHANNEL MUTE (input/aux channels, PRE/TAP mode only)
+    std::atomic<bool> panReversed; // with panLink: LINK REVERSED (mirrored channel pan)
+    std::atomic<int32_t> mode; // list 4: PRE (TAP), POST, GRP (GROUP: no send level)
     std::atomic<float> levelDb, pan;
     float lastGain_[2]; // owned by the audio thread: do not touch
 };
@@ -202,7 +218,7 @@ struct FxParams
 
 struct EngineControls
 {
-    std::atomic<bool> soloAfl;
+    std::atomic<bool> soloAfl; // CHANNEL SOLO (input and aux channels): AFL
     std::atomic<bool> anySoloActive;
     std::atomic<bool> outputProtection;
     std::atomic<float> monitorLevelDb;
@@ -215,6 +231,14 @@ struct EngineControls
     std::atomic<uint32_t> muteGroups;
     DcaParams dcas[kNumDcas];
     FxParams fx[kNumFx];
+
+    std::atomic<bool> busSoloAfl, mainSoloAfl, matrixSoloAfl; // BUS / MAIN / MATRIX SOLO: AFL (default)
+    std::atomic<bool> monitorDim, monitorMute, monitorMono, monitorSwap;
+    std::atomic<bool> dcaMuteGroups;   // DCA MUTEGROUPS (default on)
+    std::atomic<bool> startupMainMute; // STARTUP MAIN MUTE (ld_engine_apply_startup_main_mute)
+    std::atomic<bool> automixEnable[2]; // X ENABLE, Y ENABLE
+    std::atomic<float> monitorDimDb;    // DIM amount (attenuation in dB, default 20)
+    std::atomic<int32_t> mainLink;      // MainLinkMode
 };
 
 struct LayoutInfo
@@ -222,7 +246,9 @@ struct LayoutInfo
     int32_t abiVersion, stripParams, input, filter, dynSlot, eqBlock, insert, mainSend, matrixSend, meters, send, dca,
         fx, controls, offFilter, offGate, offEq, offDynamics, offPostInsert, offFader, offStereo, offMains, offMatrix,
         offDcaMask, offDirectLevel, offColour, offRecallSafe, offDynValues, offDynXoDepth, offEqValues, offSendPan,
-        offMetersAutomix, offControlsDcas, offControlsFx, offFxValues;
+        offMetersAutomix, offControlsDcas, offControlsFx, offFxValues, offSendMode, offMatrixSendLevel,
+        offMetersTrimPeak, offMetersPflPeak, offControlsBusSoloAfl, offControlsAutomixEnable, offControlsDimDb,
+        offControlsMainLink;
 };
 
 struct ParamInfo
@@ -306,6 +332,8 @@ extern "C"
     double ld_engine_sample_rate (const Engine*);
     int32_t ld_engine_block_size (const Engine*);
     EngineControls* ld_engine_controls (const Engine*);
+    /** Once at start-up: STARTUP MAIN MUTE mutes every main if the preference is on. */
+    bool ld_engine_apply_startup_main_mute (const Engine*);
 
     void ld_engine_collect (const Engine*);
     void ld_engine_collect_all_now (const Engine*);
@@ -377,7 +405,7 @@ extern "C"
 
     // Lists: 0 process orders, 1 tap points, 2 sidechain filters, 3 crossover types, 4 send modes,
     // 5 delay units, 6 post insert modes, 7 monitor buses, 8 low-cut slopes, 9 high-cut slopes,
-    // 10 aux dynamics models, 11 colours.
+    // 10 aux dynamics models, 11 colours, 12 MAIN LINK modes.
     int32_t ld_list_count (int32_t list);
     LdString* ld_list_item (int32_t list, int32_t index);
     uint32_t ld_colour_rgb (int32_t index);
@@ -399,8 +427,12 @@ extern "C"
     void ld_show_store_scene (Show*, const Engine*, int32_t index);
     void ld_show_remove_scene (Show*, int32_t index);
     void ld_show_move_scene (Show*, int32_t from, int32_t to);
-    /** which: 0 = scene `index`, 1 = next, 2 = previous. */
+    /** which: 0 = scene `index`, 1 = next (GO NEXT), 2 = previous (GO PREV), 3 = the first scene
+        tagged `index` (#1..#128). Skipped scenes are passed over; a linked scene also recalls the
+        one below it. */
     void ld_show_recall_scene (Show*, const Engine*, int32_t which, int32_t index, ApplyResultC* out);
+    /** The first non-skipped scene tagged `tag`, or -1. */
+    int32_t ld_show_find_scene_by_tag (Show*, int32_t tag);
 
     bool ld_scene_exists (Show*, int32_t scene);
     LdString* ld_scene_name (Show*, int32_t scene);
@@ -412,6 +444,13 @@ extern "C"
     void ld_scene_set_notes (Show*, int32_t scene, const char* utf8, size_t len);
     void ld_scene_set_scope (Show*, int32_t scene, uint32_t scope);
     void ld_scene_set_fade_seconds (Show*, int32_t scene, double seconds);
+    /** EDIT TAG #1..#128 (0 = none; out-of-range values clear it), SKIP, LINK (to the scene below). */
+    int32_t ld_scene_tag (Show*, int32_t scene);
+    bool ld_scene_skip (Show*, int32_t scene);
+    bool ld_scene_link (Show*, int32_t scene);
+    void ld_scene_set_tag (Show*, int32_t scene, int32_t tag);
+    void ld_scene_set_skip (Show*, int32_t scene, bool skip);
+    void ld_scene_set_link (Show*, int32_t scene, bool link);
 
     int32_t ld_show_add_snippet (Show*, const Engine*, int32_t scene, const char* name, size_t len,
                                  uint32_t sections, const StripRefC* strips, int32_t numStrips);
@@ -519,6 +558,14 @@ inline const char* verifyLayout()
         { info.offControlsDcas, offsetof (EngineControls, dcas), "EngineControls.dcas" },
         { info.offControlsFx, offsetof (EngineControls, fx), "EngineControls.fx" },
         { info.offFxValues, offsetof (FxParams, values), "FxParams.values" },
+        { info.offSendMode, offsetof (SendParams, mode), "SendParams.mode" },
+        { info.offMatrixSendLevel, offsetof (MatrixSendParams, levelDb), "MatrixSendParams.levelDb" },
+        { info.offMetersTrimPeak, offsetof (StripMeters, trimPeak), "StripMeters.trimPeak" },
+        { info.offMetersPflPeak, offsetof (StripMeters, pflPeak), "StripMeters.pflPeak" },
+        { info.offControlsBusSoloAfl, offsetof (EngineControls, busSoloAfl), "EngineControls.busSoloAfl" },
+        { info.offControlsAutomixEnable, offsetof (EngineControls, automixEnable), "EngineControls.automixEnable" },
+        { info.offControlsDimDb, offsetof (EngineControls, monitorDimDb), "EngineControls.monitorDimDb" },
+        { info.offControlsMainLink, offsetof (EngineControls, mainLink), "EngineControls.mainLink" },
     };
 
     if (info.abiVersion != kAbiVersion)

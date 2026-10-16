@@ -24,14 +24,14 @@ pub const CONSOLE_VERSION: i32 = 3;
 /// Parameter groups of a strip. Scenes and snippets recall a chosen set (their scope).
 pub mod section {
     pub const NAME: u32 = 1 << 0; // name, colour, icon, scribble light
-    pub const ROUTING: u32 = 1 << 1; // input patch, mono/stereo, outputs, monitor bus (+ monitor setup)
+    pub const ROUTING: u32 = 1 << 1; // input patch, mono/stereo, outputs, monitor bus (+ monitor setup, solo PFL/AFL)
     pub const PREAMP: u32 = 1 << 2; // INPUT block (trim, balance, polarity, delay) and FILTER
     pub const GATE: u32 = 1 << 3;
     pub const EQ: u32 = 1 << 4;
     pub const DYNAMICS: u32 = 1 << 5;
     /// Older name of [`DYNAMICS`].
     pub const COMP: u32 = DYNAMICS;
-    pub const INSERTS: u32 = 1 << 6; // insert points, process order, tap (+ FX slot states)
+    pub const INSERTS: u32 = 1 << 6; // insert points, process order, tap (+ FX slot states, automix X/Y enables)
     pub const SENDS: u32 = 1 << 7; // bus, main and matrix sends, matrix direct input
     pub const FADER: u32 = 1 << 8; // fader, pan, width, mute (+ DCA levels)
     pub const GROUPS: u32 = 1 << 9; // DCA and mute group membership (+ mute group states)
@@ -405,6 +405,7 @@ fn capture_strip(s: &Strip, sections: u32, slots: &[usize]) -> Element {
                 x.set("i", i);
                 put_b(x, "on", &ms.on);
                 put_b(x, "pre", &ms.pre);
+                put_b(x, "ignmute", &ms.ignore_mute);
                 put_f(x, "lvl", &ms.level_db);
                 put_f(x, "pan", &ms.pan);
             }
@@ -432,10 +433,18 @@ fn capture_strip(s: &Strip, sections: u32, slots: &[usize]) -> Element {
                         put_i(x, "mode", &send.mode);
                         put_f(x, "pan", &send.pan);
                         put_b(x, "plink", &send.pan_link);
+                        put_b(x, "prev", &send.pan_reversed);
+                        put_b(x, "ignmute", &send.ignore_mute);
                     }
                     None => {
                         // Never touched: record the defaults so a recall resets it.
-                        x.set("on", 0).set("lvl", 0).set("mode", 0).set("pan", 0).set("plink", 1);
+                        x.set("on", 0)
+                            .set("lvl", 0)
+                            .set("mode", 0)
+                            .set("pan", 0)
+                            .set("plink", 1)
+                            .set("prev", 0)
+                            .set("ignmute", 0);
                     }
                 }
             }
@@ -464,22 +473,82 @@ fn capture_strip(s: &Strip, sections: u32, slots: &[usize]) -> Element {
     e
 }
 
-fn capture_monitor(engine: &Engine, parent: &mut Element) {
+/// IGNORE CHANNEL MUTE. Shows from before the flag had pre-fader sends that
+/// never followed the channel mute: such a send (`pre`) loads with the flag on.
+fn get_ignore_mute(e: &Element, v: &AtomicBool, pre: bool) {
+    v.store(e.bool_or("ignmute", pre), Relaxed);
+}
+
+/// The monitor setup (scenes recall it with ROUTING). `keys` adds the monitor
+/// keys (DIM, mute, MONO, swap), which only show files keep.
+fn capture_monitor(engine: &Engine, parent: &mut Element, keys: bool) {
     let c = &engine.controls;
     let m = parent.add_new("Monitor");
     put_b(m, "afl", &c.solo_afl);
+    put_b(m, "aflBus", &c.bus_solo_afl);
+    put_b(m, "aflMain", &c.main_solo_afl);
+    put_b(m, "aflMtx", &c.matrix_solo_afl);
     put_f(m, "levelDb", &c.monitor_level_db);
+    put_f(m, "dimDb", &c.monitor_dim_db);
     put_i(m, "outL", &c.monitor_output_left);
     put_i(m, "outR", &c.monitor_output_right);
+    if keys {
+        put_b(m, "dim", &c.monitor_dim);
+        put_b(m, "mute", &c.monitor_mute);
+        put_b(m, "mono", &c.monitor_mono);
+        put_b(m, "swap", &c.monitor_swap);
+    }
 }
 
+/// Missing attributes (older shows) leave today's values: shows load into a
+/// reset engine (buses, mains and matrices solo AFL, as before per-type solo).
 fn apply_monitor(engine: &Engine, parent: &Element) {
     if let Some(m) = parent.child("Monitor") {
         let c = &engine.controls;
         get_b(m, "afl", &c.solo_afl);
+        get_b(m, "aflBus", &c.bus_solo_afl);
+        get_b(m, "aflMain", &c.main_solo_afl);
+        get_b(m, "aflMtx", &c.matrix_solo_afl);
         get_f(m, "levelDb", &c.monitor_level_db);
+        get_f(m, "dimDb", &c.monitor_dim_db);
         get_i(m, "outL", &c.monitor_output_left);
         get_i(m, "outR", &c.monitor_output_right);
+        get_b(m, "dim", &c.monitor_dim);
+        get_b(m, "mute", &c.monitor_mute);
+        get_b(m, "mono", &c.monitor_mono);
+        get_b(m, "swap", &c.monitor_swap);
+    }
+}
+
+/// Automix X/Y ENABLE (scenes recall them with INSERTS).
+fn capture_automix(engine: &Engine, parent: &mut Element) {
+    let a = parent.add_new("Automix");
+    put_b(a, "x", &engine.controls.automix_enable[0]);
+    put_b(a, "y", &engine.controls.automix_enable[1]);
+}
+
+fn apply_automix(engine: &Engine, parent: &Element) {
+    if let Some(a) = parent.child("Automix") {
+        get_b(a, "x", &engine.controls.automix_enable[0]);
+        get_b(a, "y", &engine.controls.automix_enable[1]);
+    }
+}
+
+/// SETUP > PREFERENCES kept with the show (scenes don't recall them).
+fn capture_prefs(engine: &Engine, parent: &mut Element) {
+    let c = &engine.controls;
+    let p = parent.add_new("Prefs");
+    put_b(p, "dcaMuteGroups", &c.dca_mute_groups);
+    put_i(p, "mainLink", &c.main_link);
+    put_b(p, "startupMainMute", &c.startup_main_mute);
+}
+
+fn apply_prefs(engine: &Engine, parent: &Element) {
+    if let Some(p) = parent.child("Prefs") {
+        let c = &engine.controls;
+        get_b(p, "dcaMuteGroups", &c.dca_mute_groups);
+        get_i(p, "mainLink", &c.main_link);
+        get_b(p, "startupMainMute", &c.startup_main_mute);
     }
 }
 
@@ -631,7 +700,7 @@ pub fn capture(engine: &Engine, sections: u32, only: Option<&[StripRef]>, bridge
     }
     if only.is_none() {
         if sections & section::ROUTING != 0 {
-            capture_monitor(engine, &mut state);
+            capture_monitor(engine, &mut state, false);
         }
         if sections & section::FADER != 0 {
             capture_dcas(engine, &mut state, sections & section::NAME != 0);
@@ -641,6 +710,7 @@ pub fn capture(engine: &Engine, sections: u32, only: Option<&[StripRef]>, bridge
         }
         if sections & section::INSERTS != 0 {
             capture_fx(engine, &mut state, bridge);
+            capture_automix(engine, &mut state);
         }
     }
     state
@@ -723,6 +793,7 @@ fn apply_strip(s: &Arc<Strip>, e: &Element, requested: u32, fades: &mut Option<&
                 let Some(ms) = p.matrix.get(i) else { continue };
                 get_b(x, "on", &ms.on);
                 get_b(x, "pre", &ms.pre);
+                get_ignore_mute(x, &ms.ignore_mute, ms.pre.load(Relaxed));
                 get_fadable(x, "lvl", FadeParam::MatrixLevel(s.clone(), i), fades);
                 get_f(x, "pan", &ms.pan);
             }
@@ -748,6 +819,8 @@ fn apply_strip(s: &Arc<Strip>, e: &Element, requested: u32, fades: &mut Option<&
                 get_i(x, "mode", &send.mode);
                 get_f(x, "pan", &send.pan);
                 get_b(x, "plink", &send.pan_link);
+                send.pan_reversed.store(x.bool_or("prev", false), Relaxed);
+                get_ignore_mute(x, &send.ignore_mute, send.mode.load(Relaxed) == livedaw_engine::sends::send_mode::PRE);
             }
         }
         if let Some(d) = e.child("Dir") {
@@ -820,6 +893,7 @@ pub fn apply(
         }
         if effective & section::INSERTS != 0 {
             apply_fx(engine, state, Some(InsertMode::StateOnly), bridge, &mut result.warnings);
+            apply_automix(engine, state);
         }
     }
     result
@@ -843,7 +917,9 @@ pub fn save_console(engine: &Engine, bridge: &mut dyn PluginBridge) -> Element {
     console.set("version", CONSOLE_VERSION);
     put_b(&mut console, "outputProtection", &engine.controls.output_protection);
     put_f(&mut console, "outputCeilingDb", &engine.controls.output_ceiling_db);
-    capture_monitor(engine, &mut console);
+    capture_monitor(engine, &mut console, true);
+    capture_prefs(engine, &mut console);
+    capture_automix(engine, &mut console);
     capture_dcas(engine, &mut console, true);
     capture_mute_groups(engine, &mut console, true);
     capture_fx(engine, &mut console, bridge);
@@ -869,6 +945,8 @@ pub fn load_console(engine: &Engine, console: &Element, bridge: &mut dyn PluginB
     get_b(console, "outputProtection", &engine.controls.output_protection);
     get_f(console, "outputCeilingDb", &engine.controls.output_ceiling_db);
     apply_monitor(engine, console);
+    apply_prefs(engine, console);
+    apply_automix(engine, console);
     apply_dcas(engine, console);
     apply_mute_groups(engine, console);
     for i in 0..NUM_FX {

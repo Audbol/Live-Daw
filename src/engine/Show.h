@@ -46,7 +46,12 @@ public:
         juce::uint32 scope = 0;
         double fadeSeconds = 0.0;
         int numSnippets = 0;
+        int tag = 0;           // EDIT TAG #1..#128 (0 = none)
+        bool skip = false;     // SKIP: GO PREV/NEXT and recalls pass over it
+        bool linkNext = false; // LINK: recalling it also recalls the scene below
     };
+
+    static constexpr int maxSceneTag = 128;
 
     /** A copy of a snippet's settings. */
     struct Snippet
@@ -79,6 +84,13 @@ public:
     void setSceneNotes (int index, const juce::String&);
     void setSceneScope (int index, juce::uint32 scope);
     void setSceneFadeSeconds (int index, double seconds);
+    /** 1..128; anything else clears the tag. */
+    void setSceneTag (int index, int tag);
+    void setSceneSkip (int index, bool skip);
+    /** The link follows the scene: after a move it links to its new neighbour below. */
+    void setSceneLink (int index, bool linkNext);
+    /** The first scene tagged `tag` that isn't skipped, or -1. */
+    int findSceneByTag (int tag) const noexcept { return ld::ld_show_find_scene_by_tag (handle, tag); }
 
     /** Captures the current console as a new scene (appended, or inserted at `index`). */
     int addScene (const juce::String& sceneName, int index = -1);
@@ -86,10 +98,14 @@ public:
     void removeScene (int index);
     void moveScene (int from, int to);
 
-    /** Recalls a scene (and its auto-fire snippets). */
+    /** Recalls a scene (and its auto-fire snippets), then the scenes it links to.
+        A skipped scene is not recalled. The current scene becomes the last one recalled. */
     state::ApplyResult recallScene (int index);
+    /** GO NEXT / GO PREV: the next / previous scene that isn't skipped. */
     state::ApplyResult recallNext();
     state::ApplyResult recallPrevious();
+    /** Recalls the first non-skipped scene tagged `tag` (nothing if none). */
+    state::ApplyResult recallSceneByTag (int tag);
 
     //==============================================================================
     // Snippets
