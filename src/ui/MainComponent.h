@@ -14,8 +14,9 @@ namespace livedaw::ui
 {
 
 /** The window: a WING surface. Top: the channel strip section, the main
-    display and the monitor / show control section. Bottom: the left (12),
-    center (8) and right (4) fader sections with their banks. */
+    display and the monitoring panel. Bottom: the left (12) and center (8)
+    fader sections, the custom controls section and the right (4) fader
+    section, each fader section with its layer keys. */
 class MainComponent final : public juce::Component
 {
 public:
@@ -35,11 +36,15 @@ public:
 
 private:
     class PluginWindow;
+    class LockOverlay;
 
     void selectStrip (Strip*);
+    void saveScreenshot();
+    void setSurfaceLocked (bool);
     Strip* getSelectedStrip() const;
     void refreshAll();
     void refreshSections();
+    void layoutTopRow();
     void layoutSections();
 
     void showPluginScanner();
@@ -70,6 +75,9 @@ private:
     std::unique_ptr<MainDisplay> display;
     std::unique_ptr<MonitorSection> monitor;
     std::unique_ptr<FaderSection> sections[LayerSet::kNumSections];
+    std::unique_ptr<CustomControlSection> customControls;
+    bool ccInBottomRow = true; // else docked under the monitoring panel
+    std::unique_ptr<LockOverlay> lockOverlay;
     ResizerBar splitter { false };
     float topFraction = 0.52f;
 

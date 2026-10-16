@@ -40,16 +40,22 @@ The window is a WING control surface and resizes to any screen, including ultraw
 The screens follow the WING's own: the same panels, keys, colours and layout, set in
 Barlow Condensed.
 
-- **Three fader sections:** left (12 faders, inputs), center (8, buses and DCAs) and
-  right (4, mains and matrices). Each has its own **bank buttons**: CH 1-12 ... CH 37-40
-  · AUX 1-8, BUS, DCA, MAIN · MTX, ALL, plus **user banks** with any strips and DCAs.
-  Arrows page through banks longer than the section. Set a section to **Auto** (SETUP >
-  SURFACE) and it shows as many faders as fit, which suits big channel counts.
-- **Fader strips** have the WING's colour scribble strip (label, MONO/ST, icon, the name
-  on a bar in the strip's colour), SEL, the GATE and DYN LEDs, SOLO, MUTE, a meter and
-  the fader.
-- **SOF (Sends on Fader):** select a bus and the input faders set their send to it;
-  select an input and the bus faders set its sends.
+- **Three fader sections:** left (12 faders), center (8) and right (4), each with the
+  WING's layer column: **VIEW** (the section's OVERVIEW; hold for CONFIG), seven layer
+  keys (left `1-12` ... `37-40 AUX IN`, `BUS MASTER`; center `DCA`, `MAIN MATRIX`,
+  `AUX IN`, `INPUTS`, `BUS MASTER`; right `MAIN MATRIX`, `DCA`, `INPUTS`, `AUX IN`,
+  `BUS MASTER`; all with `USER 1` / `USER 2` for your own banks) and the shift keys
+  **◄4 / 4►**, which scroll longer layers four faders at a time (hold: to the start /
+  end). Set a section to **Auto** (SETUP > SURFACE) and it shows as many faders as fit,
+  which suits big channel counts.
+- **Fader strips** follow the WING's: a colour light bar, the scribble strip (number,
+  source ports or mono, icon, the name on an inverted bar), SELECT, SOLO, the meter
+  block (DYN LED, a stereo six-segment input meter, GATE LED), MUTE and the fader with
+  its printed scale. SELECT on the selected strip again opens its HOME screen.
+- **SOF FLIP (Sends on Fader):** select a bus, main or matrix and the input faders set
+  their send to it; select an input and the bus, main and matrix faders set its sends.
+- Surface keys act on a press; keys with a second function act on **hold** (half a
+  second, or right-click): slot on/off, VIEW for CONFIG, the shift keys.
 - **Main display**, with the screen keys on its left:
   - The **status bar**: the selected channel's amber tab (number, icon, name; click for
     HOME), sample rate / clock / DSP / protection chips, the current scene (click for
@@ -76,10 +82,17 @@ Barlow Condensed.
   - **LIBRARY:** SHOW (name, NEW, OPEN, SAVE), SCENES and SNIPPETS as library lists
     with GO, GO+PREV, GO+NEXT, PREV and NEXT, and user BANKS.
   - **UTILITY:** system health and the event log.
-- **Channel strip section** (top left): gain, low cut, gate, dynamics, insert and pan
-  on dedicated knobs, and the EQ section (four band knobs, GAIN/WIDTH/FREQ, SHIFT, MIX).
-- **Monitor and show control** (top right): main/solo meter, monitor level, DIM, AFL,
-  CLR SOLO, scene GO / back, and the mute group keys.
+- **Channel strip section** (top left): the CHANNEL STRIP DETAILS LED panel (sources,
+  filters, LEVEL and GR meters, bus sends, groups) around a small screen; CHANNEL
+  PROCESSING with an encoder over each of INPUT, FILTER, GATE, COMP, INSERT and MAIN
+  (press: show it on the screen, again: next parameter; hold: on/off); CHANNEL
+  EQUALIZER with SHIFT, four band encoders, BLEND/MIX, EQ and GAIN / WIDTH / FREQ;
+  VIEW opens the shown slot on HOME.
+- **USB / monitoring panel** (top right): VIEW, MONITOR LEVEL and DIM (talkback,
+  phones and mono come later).
+- **Custom controls** (between the center and right sections): the lower layers
+  **MUTE GROUPS** (the eight mute groups) and **SHOW CNTRL** (scene back, GO, SCENES);
+  the assignable upper part is empty for now.
 
 ## Shows, scenes and snippets
 
@@ -206,8 +219,8 @@ copy, pass `-DLIVEDAW_VST2_SDK_DIR=/path/to/vstsdk` to enable VST2 hosting.
 2. **ROUTING:** pick a channel tile, then its source (right-click or shift-click sets
    the right source of a stereo channel). **OUTPUTS** gives mains, buses and matrices
    their outputs.
-3. Pick banks on each fader section. **SEL** a strip to edit it on the HOME screen and
-   the channel strip section; the six knobs under the display follow the screen.
+3. Pick layers on each fader section. **SELECT** a strip to edit it on the HOME screen
+   and the channel strip section; the six knobs under the display follow the screen.
 4. Load plugins into FX slots on **EFFECTS**, then assign the slots to inserts on
    **PRE INS** / **POST INS**.
 5. **LIBRARY > SCENES:** **NEW** captures the console as a scene; set its recall scope,

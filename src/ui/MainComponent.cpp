@@ -41,6 +41,34 @@ private:
 };
 
 //==============================================================================
+/** Surface lock: covers the surface (everything but the main display), ignores
+    its input and shows a lock. */
+class MainComponent::LockOverlay final : public juce::Component
+{
+public:
+    explicit LockOverlay (MainComponent& o) : owner (o) {}
+
+    bool hitTest (int x, int y) override { return ! owner.display->getBounds().contains (x, y); }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.excludeClipRegion (owner.display->getBounds());
+        g.fillAll (juce::Colours::black.withAlpha (0.45f));
+        const auto faders = owner.sections[0]->getBounds().getUnion (owner.sections[LayerSet::kNumSections - 1]->getBounds());
+        auto badge = juce::Rectangle<int> (300, 64).withCentre (faders.getCentre());
+        g.setColour (Colours::screenPanel.withAlpha (0.95f));
+        g.fillRoundedRectangle (badge.toFloat(), 6.0f);
+        drawIcon (g, Icon::LockClosed, badge.removeFromLeft (64).reduced (14).toFloat(), Colours::yellow);
+        g.setColour (Colours::text);
+        g.setFont (juce::FontOptions (20.0f, juce::Font::bold));
+        g.drawText ("SURFACE LOCKED  (Ctrl+L)", badge, juce::Justification::centredLeft);
+    }
+
+private:
+    MainComponent& owner;
+};
+
+//==============================================================================
 MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, PluginHost& h, Show& s,
                               EventLog& l, juce::PropertiesFile& props)
     : deviceManager (dm),
@@ -65,14 +93,19 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     ctx.structureChanged = [this] { refreshAll(); };
     ctx.layersChanged = [this] { refreshSections(); };
     ctx.sofChanged = [this] { for (auto& sec : sections) sec->refreshFaders(); };
+    ctx.getScreen = [this] { return display != nullptr ? display->getScreen() : Screen::Home; };
+    ctx.revealFader = [this] (LayerSet::Section section, const state::FaderRef& f) { sections[section]->reveal (f); };
+    ctx.takeScreenshot = [this] { saveScreenshot(); };
+    ctx.setSurfaceLocked = [this] (bool locked) { setSurfaceLocked (locked); };
+    ctx.isSurfaceLocked = [this] { return lockOverlay != nullptr; };
     ctx.newShow = [this] { newShow(); };
     ctx.openShow = [this] { openShow(); };
     ctx.saveShow = [this] (bool saveAs) { saveShow (saveAs); };
 
     show.onChanged = [this]
     {
-        if (monitor != nullptr)
-            monitor->refresh();
+        if (customControls != nullptr)
+            customControls->refresh();
         if (display != nullptr)
             display->refreshLibrary();
     };
@@ -85,10 +118,11 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     channelStrip = std::make_unique<ChannelStripSection> (ctx);
     display = std::make_unique<MainDisplay> (ctx);
     monitor = std::make_unique<MonitorSection> (ctx);
-    sections[0] = std::make_unique<FaderSection> (ctx, LayerSet::Left, "INPUTS");
-    sections[1] = std::make_unique<FaderSection> (ctx, LayerSet::Center, "BUS / DCA");
-    sections[2] = std::make_unique<FaderSection> (ctx, LayerSet::Right, "MAIN / MTX");
-    for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) display.get(), (juce::Component*) monitor.get() })
+    for (int i = 0; i < LayerSet::kNumSections; ++i)
+        sections[i] = std::make_unique<FaderSection> (ctx, static_cast<LayerSet::Section> (i));
+    customControls = std::make_unique<CustomControlSection> (ctx);
+    for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) display.get(), (juce::Component*) monitor.get(),
+                                (juce::Component*) customControls.get() })
         addAndMakeVisible (c);
     for (auto& sec : sections)
         addAndMakeVisible (*sec);
@@ -117,10 +151,12 @@ MainComponent::~MainComponent()
 {
     show.onChanged = nullptr;
     show.onFxCleared = nullptr;
+    lockOverlay.reset();
     closeAllPluginWindows();
     scannerWindow.reset();
     for (auto& sec : sections)
         sec.reset();
+    customControls.reset();
     monitor.reset();
     display.reset();
     channelStrip.reset();
@@ -164,7 +200,7 @@ void MainComponent::refreshAll()
     channelStrip->refresh();
     display->refresh();
     display->refreshLibrary();
-    monitor->refresh();
+    customControls->refresh();
 }
 
 void MainComponent::refreshSections()
@@ -198,18 +234,40 @@ void MainComponent::layoutSections()
             fixedStrips += widths[s];
     }
 
+    // The custom controls section (between center and right) is about four
+    // strips wide plus a key column. When the window is too narrow for usable
+    // strips, its lower part moves under the monitoring panel instead.
     const int total = b.getWidth();
     const int banks = LayerSet::kNumSections * FaderSection::kBankColumnWidth;
-    const int stripW = juce::jlimit (40, 120, (total - banks) / juce::jmax (1, fixedStrips + autoCount * 12));
+    const int strips = juce::jmax (1, fixedStrips + autoCount * 12);
+    constexpr int ccStrips = 4, minStripWithCc = 50;
+    int stripW = (total - banks - FaderSection::kBankColumnWidth) / (strips + ccStrips);
+    const bool withCc = stripW >= minStripWithCc;
+    if (! withCc)
+        stripW = (total - banks) / strips;
+    stripW = juce::jlimit (40, 120, stripW);
+    const int ccW = withCc ? FaderSection::kBankColumnWidth + ccStrips * stripW : 0;
+    if (withCc != ccInBottomRow)
+    {
+        ccInBottomRow = withCc;
+        customControls->setCompact (! withCc);
+        layoutTopRow();
+    }
 
     int x = 0;
-    int remaining = total;
+    int remaining = total - ccW;
     for (int s = 0; s < LayerSet::kNumSections; ++s)
         if (widths[s] != LayerSet::kAutoWidth)
             remaining -= FaderSection::widthFor (widths[s], stripW);
 
     for (int s = 0; s < LayerSet::kNumSections; ++s)
     {
+        if (s == LayerSet::Right && withCc)
+        {
+            customControls->setBounds (x, b.getY(), ccW, b.getHeight());
+            x += ccW;
+        }
+
         int w;
         if (widths[s] == LayerSet::kAutoWidth)
         {
@@ -227,18 +285,28 @@ void MainComponent::layoutSections()
     }
 }
 
-void MainComponent::resized()
+void MainComponent::layoutTopRow()
 {
     auto b = getLocalBounds();
     const int topH = juce::jlimit (300, juce::jmax (300, b.getHeight() - 260), juce::roundToInt ((float) b.getHeight() * topFraction));
     auto top = b.removeFromTop (topH);
     splitter.setBounds (b.removeFromTop (6));
 
-    const int stripW = juce::jlimit (300, 520, top.getWidth() * 25 / 100);
-    const int monitorW = juce::jlimit (240, 400, top.getWidth() * 18 / 100);
+    // Channel strip section about 29%, the monitoring panel about 22%, the main
+    // display (keys, screen and its right-hand column) in between.
+    const int stripW = juce::jlimit (330, 620, top.getWidth() * 29 / 100);
+    const int monitorW = juce::jlimit (260, 460, top.getWidth() * 22 / 100);
     channelStrip->setBounds (top.removeFromLeft (stripW));
-    monitor->setBounds (top.removeFromRight (monitorW));
+    auto right = top.removeFromRight (monitorW);
+    if (! ccInBottomRow)
+        customControls->setBounds (right.removeFromBottom (right.getHeight() * 45 / 100));
+    monitor->setBounds (right);
     display->setBounds (top);
+}
+
+void MainComponent::resized()
+{
+    layoutTopRow();
 
     // Auto-width sections may now hold a different number of faders.
     int before[LayerSet::kNumSections];
@@ -248,6 +316,9 @@ void MainComponent::resized()
     for (int s = 0; s < LayerSet::kNumSections; ++s)
         if (show.layers.getEffectiveWidth (static_cast<LayerSet::Section> (s)) != before[s])
             sections[s]->refresh();
+
+    if (lockOverlay != nullptr)
+        lockOverlay->setBounds (getLocalBounds());
 }
 
 bool MainComponent::keyPressed (const juce::KeyPress& key)
@@ -270,8 +341,55 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
             logRecall (ctx, "next scene", show.recallNext());
             return true;
         }
+        if (c == 'p' || key.getKeyCode() == 'P')
+        {
+            saveScreenshot();
+            return true;
+        }
+        if (c == 'l' || key.getKeyCode() == 'L')
+        {
+            setSurfaceLocked (lockOverlay == nullptr);
+            return true;
+        }
     }
     return false;
+}
+
+void MainComponent::saveScreenshot()
+{
+    const auto dir = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Live DAW").getChildFile ("screens");
+    const auto file = dir.getChildFile ("screen-" + juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S") + ".png");
+    const auto image = display->createComponentSnapshot (display->getLocalBounds());
+
+    juce::PNGImageFormat png;
+    bool ok = dir.createDirectory().wasOk();
+    if (ok)
+    {
+        file.deleteFile();
+        juce::FileOutputStream out (file);
+        ok = out.openedOk() && png.writeImageToStream (image, out);
+    }
+    if (ok)
+        log.info ("Screenshot saved to " + file.getFullPathName());
+    else
+        log.warning ("Couldn't save the screenshot to " + file.getFullPathName());
+}
+
+void MainComponent::setSurfaceLocked (bool locked)
+{
+    if (locked == (lockOverlay != nullptr))
+        return;
+    if (locked)
+    {
+        lockOverlay = std::make_unique<LockOverlay> (*this);
+        addAndMakeVisible (*lockOverlay);
+        lockOverlay->setBounds (getLocalBounds());
+    }
+    else
+    {
+        lockOverlay.reset();
+    }
+    log.info (locked ? "Surface locked" : "Surface unlocked");
 }
 
 //==============================================================================
