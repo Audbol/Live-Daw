@@ -1396,7 +1396,7 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
     }
     for (auto* k : { &clearKey, &renameKey, &newKey, &deleteKey })
     {
-        styleIconKey (*k, k != &newKey && k != &deleteKey);
+        styleIconKey (*k, k != &deleteKey);
         addAndMakeVisible (k);
     }
     newKey.setTooltip ("A new user layer, copied from the layer shown");
@@ -1414,6 +1414,7 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
             for (auto& f : layer.faders)
                 ctx.show.layers.removeFromUserLayer (id, f);
             notifyLayersChangedAsync (ctx);
+            resized();
             repaint();
         }));
     };
@@ -1536,8 +1537,8 @@ void ConfigViewPage::layoutContent()
     for (int i = 0; i < 3; ++i)
         categoryKeys.push_back (top.removeFromLeft (kw).reduced (2, 2));
     top.removeFromLeft (6);
-    deleteKey.setBounds (top.removeFromRight (kw * 3 / 4).reduced (2, 2));
-    newKey.setBounds (top.removeFromRight (kw / 2).reduced (2, 2));
+    deleteKey.setBounds (top.removeFromRight (kw).reduced (2, 2));
+    newKey.setBounds (top.removeFromRight (kw * 2 / 3).reduced (2, 2));
     renameKey.setBounds (top.removeFromRight (kw * 3 / 4).reduced (2, 2));
     clearKey.setBounds (top.removeFromRight (kw * 3 / 4).reduced (2, 2));
     top.removeFromRight (6);
@@ -1647,7 +1648,7 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
     {
         g.setColour (Dark::text);
         g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
-        g.drawFittedText ("DEFAULT LAYER (READ ONLY): PRESS + TO EDIT A COPY", hintArea.withTrimmedBottom (14).reduced (8, 0), juce::Justification::centred, 1);
+        g.drawFittedText ("DEFAULT LAYER (READ ONLY): PRESS NEW TO EDIT A COPY", hintArea.withTrimmedBottom (14).reduced (8, 0), juce::Justification::centred, 1);
     }
 
     // The item being dragged.
@@ -1694,6 +1695,7 @@ void ConfigViewPage::insertAt (const std::vector<state::FaderRef>& items, int sl
         ++index;
     }
     notifyLayersChangedAsync (ctx);
+    resized(); // the layer column shows the new pages
 }
 
 void ConfigViewPage::mouseDown (const juce::MouseEvent& e)
@@ -1753,6 +1755,7 @@ void ConfigViewPage::mouseUp (const juce::MouseEvent& e)
                 // Dragged off the layer: remove the fader.
                 ctx.show.layers.removeFromUserLayer (userLayerId (layer, false), faders[(size_t) dragSlot]);
                 notifyLayersChangedAsync (ctx);
+                resized();
             }
             else if (target >= 0 && target != dragSlot)
                 insertAt ({ faders[(size_t) dragSlot] }, target + (target > dragSlot ? 1 : 0));

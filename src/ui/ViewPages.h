@@ -141,7 +141,7 @@ private:
     drag them to the layer's slots at the bottom (or click a slot), drag a slot
     away to remove it, drag within the slots to reorder. USER 1 / USER 2 and
     further user layers are editable; the other layer keys are read-only
-    (session item E19): "+" makes a user layer from the shown one. */
+    (session item E19): NEW makes a user layer from the shown one. */
 class ConfigViewPage final : public ViewPage
 {
 public:
@@ -170,7 +170,7 @@ private:
     std::vector<juce::Rectangle<int>> categoryKeys, sourceTiles, slotAreas;
     juce::Rectangle<int> sourceArea, slotsArea, hintArea;
     juce::OwnedArray<DropdownField> fields;
-    WingKey clearKey { "CLEAR", Icon::Trash }, renameKey { "RENAME", Icon::Edit }, newKey { {}, Icon::Plus }, deleteKey { "DELETE" };
+    WingKey clearKey { "CLEAR", Icon::Trash }, renameKey { "RENAME", Icon::Edit }, newKey { "NEW", Icon::Plus }, deleteKey { "DELETE" };
 
     // Dragging: from the source grid (dragSlot < 0) or from a slot.
     bool dragActive = false;
