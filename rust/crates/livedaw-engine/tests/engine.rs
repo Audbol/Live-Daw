@@ -551,3 +551,63 @@ fn stress_structural_changes_while_audio_runs() {
     assert!(blocks.load(Relaxed) > 100);
     assert_eq!(rig.engine.garbage().num_pending(), 0);
 }
+
+#[test]
+fn builtin_fx_devices_run_in_slots() {
+    use livedaw_dsp::wing::fx::model_index as fx;
+    use livedaw_engine::params::FX_NONE;
+    let mut rig = Rig::new(1, 1, 2);
+    rig.engine.set_num_channels(1);
+    let a = rig.ch(0);
+    let engine = rig.engine.clone();
+
+    // A flat graphic EQ with +6 dB trim on a pre insert doubles the signal.
+    let geq = fx("GEQ").unwrap();
+    assert!(engine.set_fx_model(9, geq, true));
+    assert!(engine.fx(9).unwrap().has_device());
+    a.params.pre_insert.on.store(true, Relaxed);
+    a.params.pre_insert.fx.store(9, Relaxed);
+    rig.set_input(0, 0.25);
+    rig.run(40);
+    let flat = rig.out(0);
+    assert!(close(flat, 0.25 * CENTRE, 1e-3), "{flat}");
+    engine.controls.fx[9].param("TRIM").unwrap().store(6.0206);
+    rig.run(40);
+    assert!(close(rig.out(0), 2.0 * flat, 2e-3), "{}", rig.out(0));
+
+    // FX MIX 0 is dry; bypass is dry.
+    engine.controls.fx[9].mix.store(0.0);
+    rig.run(10);
+    assert!(close(rig.out(0), flat, 1e-3));
+    engine.controls.fx[9].mix.store(100.0);
+    engine.controls.fx[9].bypass.store(true, Relaxed);
+    rig.run(10);
+    assert!(close(rig.out(0), flat, 1e-3));
+    engine.controls.fx[9].bypass.store(false, Relaxed);
+
+    // A hall reverb rings on after the input stops (premium: slots 1-8 only).
+    let hall = fx("HALL").unwrap();
+    assert!(!engine.set_fx_model(9, hall, true));
+    assert!(engine.set_fx_model(0, hall, true));
+    a.params.pre_insert.fx.store(0, Relaxed);
+    rig.run(20);
+    rig.set_input(0, 0.0);
+    rig.run(30);
+    let tail: f32 = (0..20)
+        .map(|_| {
+            rig.run(1);
+            rig.out(0).abs()
+        })
+        .fold(0.0, f32::max);
+    assert!(tail > 1e-5, "no reverb tail: {tail}");
+
+    // A model set through the shared parameters gets its device on collect.
+    engine.controls.fx[1].set_model(fx("CHORUS").unwrap(), true);
+    assert!(!engine.fx(1).unwrap().has_device());
+    engine.collect();
+    assert!(engine.fx(1).unwrap().has_device());
+
+    // NONE removes the device.
+    assert!(engine.set_fx_model(0, FX_NONE, true));
+    assert!(!engine.fx(0).unwrap().has_device());
+}

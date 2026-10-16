@@ -1042,7 +1042,12 @@ private:
                 g.setColour (Colours::textDim);
                 g.setFont (juce::FontOptions (juce::jmin (16.0f, r.getHeight() * 0.95f), juce::Font::bold));
                 auto* plugin = slot >= 0 && mode == 0 ? fx.getPlugin (slot) : nullptr;
-                g.drawFittedText (plugin != nullptr ? plugin->getName().toUpperCase() : juce::String(), r.toNearestInt(), juce::Justification::bottomRight, 1);
+                juce::String device;
+                if (plugin != nullptr)
+                    device = plugin->getName().toUpperCase();
+                else if (slot >= 0 && mode == 0 && fx.getModel (slot) > ld::kFxExt)
+                    device = models::model (models::Fx, fx.getModel (slot)).name.toUpperCase();
+                g.drawFittedText (device, r.toNearestInt(), juce::Justification::bottomRight, 1);
                 return;
             }
 

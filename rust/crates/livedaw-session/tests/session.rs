@@ -520,3 +520,47 @@ fn capture_and_apply_by_section() {
     let r = console::apply(&engine, &state, section::ALL, None, true, None, &mut np);
     assert_eq!(r.strips_missing, 1);
 }
+
+#[test]
+fn builtin_fx_devices_save_load_and_recall() {
+    use livedaw_dsp::wing::FX_MODELS;
+    let fx = |t: &str| model_index(FX_MODELS, t).unwrap();
+    let engine = Engine::new(0);
+    let mut host = FakeHost::default();
+
+    // A hall reverb in FX 1 with a long decay, a graphic EQ in FX 9.
+    assert!(engine.set_fx_model(0, fx("HALL"), true));
+    engine.controls.fx[0].param("dcy").unwrap().store(3.5);
+    engine.controls.fx[0].mix.store(40.0);
+    assert!(engine.set_fx_model(8, fx("GEQ"), true));
+    assert!(!engine.set_fx_model(9, fx("HALL"), true), "premium devices need slots 1-8");
+
+    let mut show = Show::new();
+    show.add_scene(&engine, &mut Bridge { host: &mut host, engine: &engine }, "A", -1);
+    let text = show.to_xml(&engine, &mut Bridge { host: &mut host, engine: &engine }).to_document();
+
+    let e2 = Engine::new(0);
+    let mut host2 = FakeHost::default();
+    let mut loaded = Show::new();
+    let warnings = loaded.load_from_text(&e2, &mut Bridge { host: &mut host2, engine: &e2 }, &text, true).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(e2.controls.fx[0].model_index(), fx("HALL"));
+    assert_eq!(e2.controls.fx[0].param("dcy").unwrap().load(), 3.5);
+    assert_eq!(e2.controls.fx[0].mix.load(), 40.0);
+    assert!(e2.fx(0).unwrap().has_device());
+    assert_eq!(e2.controls.fx[8].model_index(), fx("GEQ"));
+
+    // Recalls switch built-in devices (creating one is safe at any time).
+    assert!(e2.set_fx_model(0, fx("ST-DL"), true));
+    let r = loaded.recall_scene(&e2, &mut Bridge { host: &mut host2, engine: &e2 }, 0);
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert_eq!(e2.controls.fx[0].model_index(), fx("HALL"));
+    assert_eq!(e2.controls.fx[0].param("dcy").unwrap().load(), 3.5);
+
+    // ... but never replace a plugin.
+    host2.load(&e2, 0, "Comp", "x");
+    let r = loaded.recall_scene(&e2, &mut Bridge { host: &mut host2, engine: &e2 }, 0);
+    assert_eq!(r.warnings.len(), 1);
+    assert_eq!(e2.controls.fx[0].model_index(), livedaw_engine::params::FX_EXT);
+    assert!(host2.plugins.contains_key(&0));
+}
