@@ -96,6 +96,11 @@ struct UiContext
         sends to it; with an input selected the bus faders show its sends. */
     bool sendsOnFader = false;
     std::function<void()> sofChanged;
+
+    /** The fader section the VIEW screens show (OVERVIEW, FADERS, SENDS, CONFIG).
+        A section's VIEW key sets it, then opens the screen with showScreen; the
+        screens' LEFT / CENTER / RIGHT keys change it too. */
+    LayerSet::Section viewSection = LayerSet::Center;
 };
 
 /** Calls ctx.layersChanged asynchronously: safe to use from a callback of a

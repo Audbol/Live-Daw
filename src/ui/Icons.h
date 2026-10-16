@@ -37,7 +37,38 @@ enum class Icon
     Stop,
     ChevronLeft,
     ChevronRight,
-    Disk
+    Disk,
+    // SETUP, LIBRARY, VIEW and ROUTING screens
+    Power,         // SHUTDOWN
+    RemoveCircle,  // REMOVE (a dot in a ring)
+    MinusCircle,   // REMOVE ITEMS
+    ClearCircle,   // CLEAR / NONE (a cross in a ring)
+    Info,          // the circled "i" after some labels
+    Skip,          // SKIP (play + bar)
+    Link,          // LINK (chain)
+    Tag,           // EDIT TAG
+    UsbStick,      // USB location
+    Storage,       // INT location (internal storage)
+    ShowFile,      // SHOW location (film frame)
+    GoPrev,        // GO PREV (play + <)
+    GoNext,        // GO NEXT (play + >)
+    SortDate,      // sort by date (calendar)
+    Overview,      // VIEW: OVERVIEW (grid)
+    Faders,        // VIEW: FADERS, ROUTING: CHANNELS
+    Sends,         // VIEW: SENDS
+    Layers,        // fader layer (status title of the VIEW screens)
+    LayersGear,    // VIEW: CONFIG
+    MuteGroup,     // VIEW: MUTEGRP (speaker with a cross)
+    Monitors,      // SETUP: MONITORS
+    CcEdit,        // SETUP: CC EDIT
+    Pause,
+    Record,
+    SaveTray,      // SAVE (arrow down into a tray)
+    LoadTray,      // LOAD (arrow up out of a tray)
+    SourcesIn,     // ROUTING: SOURCES (arrow into a ring)
+    OutputsOut,    // ROUTING: OUTPUTS (arrow out of a ring)
+    ChevronUp,
+    ChevronDown
 };
 
 /** Draws `icon` fitted into `area` (stroked or filled as the icon needs). */
