@@ -64,7 +64,8 @@ impl Rotor {
 /// slower); the rotors get there with inertia set by HORN ACCEL and DRUM
 /// ACCEL (the heavy drum takes several seconds), and STOP lets them coast to
 /// a halt. DISTANCE moves the mics away: less modulation, a narrower image
-/// and more reflection. BALANCE -100 is horn only, +100 drum only. MIX is the
+/// and more reflection. BALANCE mixes the two (the console's knob runs from
+/// BASS to HORN): -100 is the bass drum only, +100 the horn only. MIX is the
 /// device's own dry/wet balance.
 pub(super) struct Rotary {
     sr: f32,
@@ -135,8 +136,8 @@ impl FxAlgo for Rotary {
         self.horn.set_inertia(tau(HORN_TAU, p.f("hac")), sr);
         self.drum.set_inertia(tau(DRUM_TAU, p.f("dac")), sr);
         let bal = p.f("bal") * 0.01;
-        self.horn_gain.target = (1.0 - bal).min(1.0);
-        self.drum_gain.target = (1.0 + bal).min(1.0);
+        self.horn_gain.target = (1.0 + bal).min(1.0);
+        self.drum_gain.target = (1.0 - bal).min(1.0);
         self.mix.target = p.f("mix") * 0.01;
         self.dist.target = p.f("dist") * 0.01;
         if !self.primed {
@@ -256,5 +257,27 @@ mod tests {
         assert!(rot.horn.rate > 0.5 * fast);
         run(&mut rot, 20.0);
         assert!(rot.horn.rate < 0.01 && rot.drum.rate < 0.05);
+    }
+
+    #[test]
+    fn balance_runs_from_bass_to_horn() {
+        let sr = 48_000.0;
+        let spec = &FX_MODELS[model_index(FX_MODELS, "ROTARY").unwrap()];
+        let level = |bal: f32, hz: f32| {
+            let mut v = [0.0; MAX_FX_PARAMS];
+            spec.defaults_into(&mut v);
+            v[spec.param_index("bal").unwrap()] = bal;
+            let mut rot = Rotary::new(FxContext { sample_rate: sr, max_block: 480 });
+            rot.set_params(&Params::new(spec, &v));
+            let mut l: Vec<f32> = (0..48_000).map(|i| 0.3 * (std::f32::consts::TAU * hz * i as f32 / sr).sin()).collect();
+            let mut r = l.clone();
+            for (cl, cr) in l.chunks_mut(480).zip(r.chunks_mut(480)) {
+                rot.process(cl, cr);
+            }
+            l[24_000..].iter().map(|x| x * x).sum::<f32>()
+        };
+        // -100 = BASS: the drum's low end only; +100 = HORN: the highs only.
+        assert!(level(-100.0, 4000.0) < 0.01 * level(100.0, 4000.0));
+        assert!(level(100.0, 80.0) < 0.01 * level(-100.0, 80.0));
     }
 }

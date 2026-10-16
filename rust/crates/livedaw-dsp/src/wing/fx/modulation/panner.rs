@@ -1,6 +1,6 @@
 //! PANNER: LFO tremolo / auto-pan with envelope control.
 
-use super::shared::{advance, skew_tri};
+use super::shared::{advance, tri_sine_square};
 use crate::wing::fx::blocks::{coef, Envelope, Smoothed};
 use crate::wing::fx::{FxAlgo, FxContext};
 use crate::wing::Params;
@@ -11,8 +11,9 @@ const ENV_SPEED_OCTAVES: f32 = 2.0;
 
 /// Tremolo Panner.
 ///
-/// One LFO (SPEED, WAVE -50 falling ramp .. 0 triangle .. +50 rising ramp)
-/// drives a gain per channel; the right channel's LFO runs PHASE degrees
+/// One LFO (SPEED; SHAPE morphs triangle (-50) through sine (0) to square
+/// (+50), the square with rounded edges so it never clicks) drives a gain
+/// per channel; the right channel's LFO runs PHASE L/R degrees
 /// apart, so 0 is a tremolo, +-180 an auto-pan and anything between a
 /// rotating mix of both. The gains follow a sine law (equal power when
 /// panning) and DEPTH scales the swing. An envelope follower (ATTACK, HOLD,
@@ -29,9 +30,10 @@ pub(super) struct Panner {
     depth: Smoothed,
     /// Right LFO offset, cycles.
     offset: Smoothed,
-    skew: Smoothed,
+    /// SHAPE, -1 triangle .. 0 sine .. 1 square.
+    shape: Smoothed,
     env: Envelope,
-    /// Smoothed channel gains (no clicks on the ramp returns).
+    /// Smoothed channel gains (no clicks at the square's edges).
     gain: [f32; 2],
     gain_a: f32,
     primed: bool,
@@ -49,7 +51,7 @@ impl Panner {
             edep: s(0.0, 30.0),
             depth: s(0.7, 30.0),
             offset: s(0.5, 100.0),
-            skew: s(0.0, 50.0),
+            shape: s(0.0, 50.0),
             env: Envelope::default(),
             gain: [1.0; 2],
             gain_a: coef(1.5, sr),
@@ -58,13 +60,13 @@ impl Panner {
     }
 
     fn smoothers(&mut self) -> [&mut Smoothed; 5] {
-        [&mut self.espd, &mut self.edep, &mut self.depth, &mut self.offset, &mut self.skew]
+        [&mut self.espd, &mut self.edep, &mut self.depth, &mut self.offset, &mut self.shape]
     }
 
     /// Channel gains for the current LFO position (no smoothing).
-    fn target_gains(&self, depth: f32, offset: f32, skew: f32) -> [f32; 2] {
+    fn target_gains(&self, depth: f32, offset: f32, shape: f32) -> [f32; 2] {
         let g = |w: f32| 1.0 - depth + depth * (FRAC_PI_4 * (1.0 + w)).sin();
-        [g(skew_tri(self.phase, skew)), g(skew_tri(self.phase + offset, skew))]
+        [g(tri_sine_square(self.phase, shape)), g(tri_sine_square(self.phase + offset, shape))]
     }
 }
 
@@ -75,14 +77,14 @@ impl FxAlgo for Panner {
         self.edep.target = p.f("edep") * 0.01;
         self.depth.target = p.f("depth") * 0.01;
         self.offset.target = p.f("phase") / 360.0;
-        self.skew.target = p.f("wave") / 50.0;
+        self.shape.target = p.f("wave") / 50.0;
         self.env.set(p.f("att"), p.f("hld"), p.f("rel"), self.sr);
         if !self.primed {
             self.primed = true;
             for s in self.smoothers() {
                 s.snap(s.target);
             }
-            self.gain = self.target_gains(self.depth.value, self.offset.value, self.skew.value);
+            self.gain = self.target_gains(self.depth.value, self.offset.value, self.shape.value);
         }
     }
 
@@ -94,8 +96,8 @@ impl FxAlgo for Panner {
             advance(&mut self.phase, (rate * inv_sr).min(0.5));
             let edep = self.edep.tick();
             let depth = self.depth.tick() * (1.0 - edep + edep * level);
-            let (offset, skew) = (self.offset.tick(), self.skew.tick());
-            let target = self.target_gains(depth, offset, skew);
+            let (offset, shape) = (self.offset.tick(), self.shape.tick());
+            let target = self.target_gains(depth, offset, shape);
             for (g, t) in self.gain.iter_mut().zip(target) {
                 *g += (t - *g) * self.gain_a;
             }
@@ -110,7 +112,7 @@ impl FxAlgo for Panner {
         for s in self.smoothers() {
             s.snap(s.target);
         }
-        self.gain = self.target_gains(self.depth.value, self.offset.value, self.skew.value);
+        self.gain = self.target_gains(self.depth.value, self.offset.value, self.shape.value);
     }
 }
 

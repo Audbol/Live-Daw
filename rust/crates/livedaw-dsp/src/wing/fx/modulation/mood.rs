@@ -53,7 +53,7 @@ fn ramp(phase: f32) -> f32 {
     2.0 * p * p - 1.0
 }
 
-/// Mood Filter.
+/// Mood Filter (the filter section of a 1970s analog synthesizer).
 ///
 /// A four-pole zero-delay-feedback ladder with a saturating input stage;
 /// mixing its stage outputs gives TYPE LP/HP/BP/NOTCH at SLOPE 12 or 24

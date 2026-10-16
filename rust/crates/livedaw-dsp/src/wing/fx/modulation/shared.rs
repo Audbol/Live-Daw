@@ -1,8 +1,8 @@
 //! Helpers shared by the modulation and delay devices: the LO CUT / HI CUT
 //! filter pair, a feedback-loop limiter, delay-time glide, the fade used to
-//! switch discrete settings without clicks and a skewable LFO shape.
+//! switch discrete settings without clicks and the LFO shapes.
 
-use crate::wing::fx::blocks::{coef, fast_tanh, Svf};
+use crate::wing::fx::blocks::{coef, fast_tanh, shape, Svf, Wave};
 use std::f32::consts::FRAC_1_SQRT_2;
 
 /// Milliseconds to (fractional) samples, without the 1-sample floor of
@@ -21,17 +21,29 @@ pub(crate) fn advance(phase: &mut f32, inc: f32) {
     }
 }
 
-/// A triangle with a movable peak, -1..1 over one cycle of `phase`: `skew`
-/// -1 = falling ramp, 0 = triangle, 1 = rising ramp. The ramps keep a 2 %
-/// return slope so a sweep never jumps.
+/// A triangle in phase with `sin(2 pi phase)` (zero at 0, peak at 0.25), -1..1.
 #[inline]
-pub(crate) fn skew_tri(phase: f32, skew: f32) -> f32 {
-    let p = phase.rem_euclid(1.0);
-    let a = (0.5 + 0.5 * skew).clamp(0.02, 0.98);
-    if p < a {
-        -1.0 + 2.0 * p / a
+pub(crate) fn triangle(phase: f32) -> f32 {
+    shape(Wave::Triangle, phase + 0.25)
+}
+
+/// Triangle blended into sine, `tri` 0 = sine .. 1 = triangle (the chorus WAVE).
+#[inline]
+pub(crate) fn sine_tri(phase: f32, tri: f32) -> f32 {
+    let s = shape(Wave::Sine, phase);
+    s + (triangle(phase) - s) * tri
+}
+
+/// The SHAPE control of the phaser and the tremolo/panner, -1..1 over one
+/// cycle: `morph` -1 = triangle, 0 = sine, 1 = square. The square is a
+/// saturated sine with rounded edges, so a sweep or a gain never jumps.
+#[inline]
+pub(crate) fn tri_sine_square(phase: f32, morph: f32) -> f32 {
+    if morph <= 0.0 {
+        sine_tri(phase, (-morph).min(1.0))
     } else {
-        (1.0 - 2.0 * (p - a) / (1.0 - a)).max(-1.0)
+        let k = 0.01 + 16.0 * morph.min(1.0);
+        fast_tanh(k * shape(Wave::Sine, phase)) / fast_tanh(k)
     }
 }
 
@@ -217,15 +229,20 @@ mod tests {
 
     #[test]
     fn shapes_and_limiter() {
-        assert_eq!(skew_tri(0.0, 0.0), -1.0);
-        assert!((skew_tri(0.5, 0.0) - 1.0).abs() < 1e-6);
-        assert!((skew_tri(0.25, 0.0)).abs() < 1e-6);
+        // The triangle is in phase with the sine, so the blends keep their peaks.
+        assert!(triangle(0.0).abs() < 1e-6 && (triangle(0.25) - 1.0).abs() < 1e-6);
+        assert!((triangle(0.75) + 1.0).abs() < 1e-6);
         for i in 0..1000 {
             let p = i as f32 / 1000.0;
-            for s in [-1.0, -0.3, 0.0, 0.7, 1.0] {
-                assert!((-1.0..=1.0).contains(&skew_tri(p, s)));
+            for m in [-1.0, -0.3, 0.0, 0.7, 1.0] {
+                assert!((-1.0..=1.0).contains(&tri_sine_square(p, m)));
             }
         }
+        // SHAPE: -1 triangle, 0 sine, +1 a (rounded) square.
+        assert!((tri_sine_square(0.1, -1.0) - triangle(0.1)).abs() < 1e-6);
+        assert!((tri_sine_square(0.1, 0.0) - (0.2 * std::f32::consts::PI).sin()).abs() < 1e-3);
+        assert!(tri_sine_square(0.1, 1.0) > 0.99 && tri_sine_square(0.6, 1.0) < -0.99);
+        assert!((sine_tri(0.3, 1.0) - triangle(0.3)).abs() < 1e-6);
         assert_eq!(loop_limit(0.5), 0.5);
         assert!(loop_limit(100.0) <= 2.05 && loop_limit(-100.0) >= -2.05);
         assert!((loop_limit(1.001) - 1.001).abs() < 1e-4);

@@ -1,17 +1,18 @@
 //! PHASER: a chain of swept first-order allpasses with feedback.
 
-use super::shared::{advance, loop_limit, skew_tri, Morph};
+use super::shared::{advance, loop_limit, tri_sine_square, Morph};
 use crate::wing::fx::blocks::{coef, Envelope, Smoothed};
 use crate::wing::fx::{FxAlgo, FxContext};
 use crate::wing::Params;
 use std::f32::consts::PI;
 
 const MAX_STAGES: usize = 12;
-/// RANGE 0..100 % places the sweep centre between 40 Hz and 16 kHz (log).
-const RANGE_LO_HZ: f32 = 40.0;
-const RANGE_SPAN: f32 = 400.0;
-/// Sweep at 100 % DEPTH: +-3 octaves around the centre.
-const DEPTH_OCTAVES: f32 = 3.0;
+/// RANGE 0..100 % sets the bottom of the sweep: 20 Hz plus up to 8 octaves
+/// (2 % = 22 Hz, 50 % = 320 Hz, 98 % = 4.6 kHz).
+const RANGE_LO_HZ: f32 = 20.0;
+const RANGE_OCTAVES: f32 = 8.0;
+/// Sweep at 100 % DEPTH: 4 octaves up from the bottom.
+const DEPTH_OCTAVES: f32 = 4.0;
 /// ENV MOD at +-100 % with a full-scale envelope: +-3 octaves.
 const ENV_OCTAVES: f32 = 3.0;
 
@@ -19,21 +20,24 @@ const ENV_OCTAVES: f32 = 3.0;
 ///
 /// STAGES (2-12) zero-delay-feedback first-order allpasses share one swept
 /// break frequency per channel; mixed with the dry signal (MIX 50 % gives
-/// the deepest notches) they cut STAGES/2 moving notches. RANGE sets the
-/// centre of the sweep (40 Hz .. 16 kHz), DEPTH its width (up to +-3
-/// octaves), SPEED the LFO rate and WAVE its shape (-50 falling ramp, 0
-/// triangle, +50 rising ramp). PHASE delays the right channel's LFO. ENV
-/// MOD moves the sweep with the input level (envelope with ATTACK, HOLD and
-/// RELEASE); negative values sweep down. RESO feeds the chain's output back
-/// to its input for sharper, ringing notches.
+/// the deepest notches) they cut STAGES/2 moving notches. As the manual has
+/// it, RANGE sets the lowest point the sweep reaches (22 Hz .. 4.6 kHz) and
+/// DEPTH how far the LFO sweeps up from there (up to 4 octaves); SPEED is
+/// the LFO rate and SHAPE (WAVE) morphs its waveform from triangle (-50)
+/// through sine (0) to square (+50). PHASE L/R delays the right channel's
+/// LFO. ENV MOD moves the sweep with the input level (envelope with ATTACK,
+/// HOLD and RELEASE): up for positive values, down for negative ones.
+/// RESONANCE feeds the chain's output back to its input to accentuate the
+/// peaks.
 pub(super) struct Phaser {
     sr: f32,
     phase: f32,
     inc: f32,
-    skew: Smoothed,
+    /// SHAPE, -1 triangle .. 0 sine .. 1 square.
+    shape: Smoothed,
     offset: Smoothed,
-    /// log2 of the sweep centre in Hz.
-    centre: Smoothed,
+    /// log2 of the bottom of the sweep in Hz.
+    bottom: Smoothed,
     /// Octaves.
     depth: Smoothed,
     /// Octaves at full envelope.
@@ -41,7 +45,7 @@ pub(super) struct Phaser {
     fb: Smoothed,
     mix: Smoothed,
     env: Envelope,
-    /// LFO after a short smoothing (rounds the ramp returns).
+    /// LFO after a short smoothing (rounds the square's edges further).
     sweep: [f32; 2],
     sweep_a: f32,
     state: [[f32; MAX_STAGES]; 2],
@@ -60,9 +64,9 @@ impl Phaser {
             sr,
             phase: 0.0,
             inc: 0.0,
-            skew: s(0.0, 50.0),
+            shape: s(0.0, 50.0),
             offset: s(0.25, 100.0),
-            centre: s(10.0, 50.0),
+            bottom: s(8.0, 50.0),
             depth: s(2.0, 50.0),
             emod: s(0.0, 50.0),
             fb: s(0.3, 30.0),
@@ -80,7 +84,7 @@ impl Phaser {
     }
 
     fn smoothers(&mut self) -> [&mut Smoothed; 7] {
-        [&mut self.skew, &mut self.offset, &mut self.centre, &mut self.depth, &mut self.emod, &mut self.fb, &mut self.mix]
+        [&mut self.shape, &mut self.offset, &mut self.bottom, &mut self.depth, &mut self.emod, &mut self.fb, &mut self.mix]
     }
 
     fn clear(&mut self) {
@@ -93,9 +97,9 @@ impl FxAlgo for Phaser {
     fn set_params(&mut self, p: &Params) {
         let sr = self.sr;
         self.inc = (p.f("spd") / sr).min(0.5);
-        self.skew.target = p.f("wave") / 50.0;
+        self.shape.target = p.f("wave") / 50.0;
         self.offset.target = p.f("phase") / 360.0;
-        self.centre.target = RANGE_LO_HZ.log2() + p.f("range") * 0.01 * RANGE_SPAN.log2();
+        self.bottom.target = RANGE_LO_HZ.log2() + p.f("range") * 0.01 * RANGE_OCTAVES;
         self.depth.target = p.f("depth") * 0.01 * DEPTH_OCTAVES;
         self.emod.target = p.f("emod") * 0.01 * ENV_OCTAVES;
         self.fb.target = p.f("reso") * 0.01;
@@ -123,18 +127,19 @@ impl FxAlgo for Phaser {
             let level = self.env.tick(0.5 * (l.abs() + r.abs()));
             let env_oct = self.emod.tick() * (2.0 * level).min(2.0);
             advance(&mut self.phase, self.inc);
-            let centre = self.centre.tick() + env_oct;
+            let bottom = self.bottom.tick() + env_oct;
             let depth = self.depth.tick();
-            let skew = self.skew.tick();
+            let shape = self.shape.tick();
             let off = self.offset.tick();
             let fb = self.fb.tick();
             let mix = self.mix.tick();
             let wet_g = self.morph.gain();
             let stages = self.stages;
             for (ch, x) in [l, r].into_iter().enumerate() {
-                let w = skew_tri(self.phase + off * ch as f32, skew);
+                // The LFO sweeps up from the bottom (0..1).
+                let w = 0.5 + 0.5 * tri_sine_square(self.phase + off * ch as f32, shape);
                 self.sweep[ch] += (w - self.sweep[ch]) * self.sweep_a;
-                let hz = (centre + depth * self.sweep[ch]).exp2().clamp(20.0, nyq);
+                let hz = (bottom + depth * self.sweep[ch]).exp2().clamp(20.0, nyq);
                 let g = (PI * hz / sr).tan();
                 let gg = g / (1.0 + g);
                 let mut y = loop_limit(*x + fb * self.last[ch]);

@@ -123,11 +123,16 @@ mod tests {
 
     /// Runs `secs` of a unit impulse (both channels) through the device.
     pub(super) fn impulse(dev: &mut FxDevice, v: &[f32], secs: f32) -> (Vec<f32>, Vec<f32>) {
+        impulse_lr(dev, v, secs, 1.0, 1.0)
+    }
+
+    /// Runs `secs` of an impulse of `left` / `right` through the device.
+    pub(super) fn impulse_lr(dev: &mut FxDevice, v: &[f32], secs: f32, left: f32, right: f32) -> (Vec<f32>, Vec<f32>) {
         let n = (secs * SR) as usize;
         let mut l = vec![0.0; n];
         let mut r = vec![0.0; n];
-        l[0] = 1.0;
-        r[0] = 1.0;
+        l[0] = left;
+        r[0] = right;
         for (cl, cr) in l.chunks_mut(256).zip(r.chunks_mut(256)) {
             dev.process(v, cl, cr);
         }
