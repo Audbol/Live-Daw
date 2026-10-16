@@ -1,24 +1,29 @@
-//! Enhancers: the Ultra Enhancer (a dynamic three-band harmonic/phase
-//! enhancer) and the Exciter (after the Aphex Aural Exciter).
+//! The aural exciters (WING manual 11.8).
 //!
-//! Ultra Enhancer: the input is split into a bass band (low-pass at BASS FREQ,
-//! 30..400 Hz), a mid band (band-pass at 1.2 kHz, MID Q 0.4..8) and a high
-//! band (high-pass at HIGH FREQ, 1..12 kHz). Each band adds back a phase-shifted
-//! copy of itself plus generated harmonics; the copy is ducked by the band's
-//! own envelope, so the enhancement is strongest on quiet detail and backs off
-//! on loud passages. BASS/MID/HIGH GAIN set the amounts. The enhancement is
-//! then split into mono and stereo parts: MONO LVL and ST LVL scale them
-//! (-100 % = off, 0 % = as made, +100 % = double), MONO PAN and ST PAN place
-//! them, and LMF SPRD spreads the bass and mid enhancement across the stereo
-//! field (positive adds a decorrelated copy to the side, negative narrows it).
-//! GAIN is the output level; SOLO outputs the enhancement only.
+//! Ultra Enhancer, after the tube version of a German stereo processor from
+//! the 1990s, made to "unmask" sounds for more intelligible, detailed mixes.
+//! The input is split into a bass band (low-pass at BASS FREQ, 30..400 Hz), a
+//! mid band (band-pass at 1.2 kHz, MID Q 0.4..8) and a high band (high-pass at
+//! HIGH FREQ, 1..12 kHz). Each band adds back a phase-shifted copy of itself
+//! plus generated harmonics, accentuating its range; the copy is ducked by the
+//! band's own envelope, so the enhancement is strongest on quiet detail and
+//! backs off on loud passages. BASS/MID/HIGH GAIN set the amounts. The output
+//! is then split into its stereo (side) and mono (mid) information: ST LVL and
+//! MONO LVL set their levels (-100 % = off, 0 % = unchanged, +100 % = double),
+//! ST PAN and MONO PAN pan them, and LMF SPRD sets the stereo width of the
+//! low-mid content (150 Hz .. 1.5 kHz: -100 % = mono, +100 % = double side).
+//! GAIN is the overall output level; SOLO outputs only the added enhancement.
 //!
-//! Exciter: a side chain high-passed at TUNE (PEAK adds resonance at the
-//! corner; ZFILL fills in below it with a gentler slope) drives a harmonics
-//! generator. HARM sets how much of the side chain is harmonics, TIMBRE
-//! balances even (warm, negative) against odd (bright, positive) harmonics, and
-//! MIX sets how much of it is added to the signal. DRY OFF outputs the exciter
-//! signal alone.
+//! Exciter, after the mid-1970s aural exciter that added harmonics while
+//! keeping the output level: a side chain low-cut at TUNE (PEAK is its
+//! resonance: it emphasises TUNE and deepens the dip just below it, where the
+//! side chain is out of phase with the signal; ZERO FILL smooths that dip with
+//! a gentler slope) drives a harmonics generator. HARMONICS sets the amount of
+//! harmonics (the filtered side chain still brightens with it at minimum),
+//! TIMBRE adds odd (negative) or even (positive) harmonics, and MIX sets the
+//! balance between processed and unprocessed signal (the processed signal is
+//! the input plus the exciter signal). DRY OFF removes the unprocessed signal,
+//! leaving the exciter signal alone (for send/return use).
 
 use super::{dial50, rail, sub_blocks, Glide};
 use crate::wing::fx::blocks::{coef, db_to_gain, fast_tanh, Biquad, BiquadCoeffs, Smoothed};
@@ -69,7 +74,8 @@ pub(crate) struct Enhancer {
     high: Biquad,
     mid_phase: Allpass1,
     high_phase: Allpass1,
-    spread_ap: Allpass1,
+    /// The low-mid range of the side signal (LMF SPRD).
+    low_mid: Biquad,
     /// ln(bass Hz), ln(mid Q), ln(high Hz).
     glide: Glide<3>,
     env: [[f32; 2]; 3],
@@ -91,8 +97,8 @@ impl Enhancer {
         let sm = |v: f32| Smoothed::new(v, 30.0, sr);
         let mut mid_phase = Allpass1::default();
         mid_phase.set(MID_HZ as f32, sr);
-        let mut spread_ap = Allpass1::default();
-        spread_ap.set(250.0, sr);
+        let mut low_mid = Biquad::default();
+        low_mid.set_coefficients(BiquadCoeffs::band_pass(sr as f64, 475.0, 0.45));
         let mut s = Self {
             sr,
             bass: Biquad::default(),
@@ -100,7 +106,7 @@ impl Enhancer {
             high: Biquad::default(),
             mid_phase,
             high_phase: Allpass1::default(),
-            spread_ap,
+            low_mid,
             glide: Glide::new(0.0),
             env: [[0.0; 2]; 3],
             env_att: coef(5.0, sr),
@@ -184,8 +190,7 @@ impl FxAlgo for Enhancer {
             for (l, r) in left[a..b].iter_mut().zip(right[a..b].iter_mut()) {
                 let [gb, gm, gh] = [self.amount[0].tick(), self.amount[1].tick(), self.amount[2].tick()];
                 let x = [*l, *r];
-                let mut low_mid = [0.0f32; 2];
-                let mut hi = [0.0f32; 2];
+                let mut enh = [0.0f32; 2];
                 for c in 0..2 {
                     let bands = [self.bass.tick(x[c], c), self.mid.tick(x[c], c), self.high.tick(x[c], c)];
                     let mut duck = [0.0f32; 3];
@@ -197,29 +202,20 @@ impl FxAlgo for Enhancer {
                     let eb = gb * (duck[0] * bands[0] + 1.5 * harmonics(bands[0], 2.0));
                     let em = gm * (duck[1] * self.mid_phase.tick(bands[1], c) + harmonics(bands[1], 2.5));
                     let eh = gh * (duck[2] * self.high_phase.tick(bands[2], c) + 2.0 * harmonics(bands[2], 4.0));
-                    low_mid[c] = eb + em;
-                    hi[c] = eh;
+                    enh[c] = eb + em + eh;
                 }
-                // Mono and stereo parts of the enhancement.
-                let e = [low_mid[0] + hi[0], low_mid[1] + hi[1]];
-                let mid = 0.5 * (e[0] + e[1]);
-                let mut side = 0.5 * (e[0] - e[1]);
-                let spread = self.spread.tick();
-                if spread >= 0.0 {
-                    side += spread * self.spread_ap.tick(0.5 * (low_mid[0] + low_mid[1]), 0);
-                } else {
-                    self.spread_ap.tick(0.5 * (low_mid[0] + low_mid[1]), 0);
-                    side += spread * 0.5 * (low_mid[0] - low_mid[1]);
-                }
+                let dry = 1.0 - self.solo.tick();
+                let y = [x[0] * dry + enh[0], x[1] * dry + enh[1]];
+                // Mono and stereo information, the low-mid width, levels and pans.
+                let mid = 0.5 * (y[0] + y[1]);
+                let mut side = 0.5 * (y[0] - y[1]);
+                side += self.spread.tick() * self.low_mid.tick(side, 0);
                 let mid = mid * self.mono_lvl.tick();
                 let side = side * self.st_lvl.tick();
                 let (pm, ps) = (self.mono_pan.tick(), self.st_pan.tick());
-                let el = mid * (1.0 - pm).min(1.0) + side * (1.0 - ps).min(1.0);
-                let er = mid * (1.0 + pm).min(1.0) - side * (1.0 + ps).min(1.0);
-                let dry = 1.0 - self.solo.tick();
                 let g = self.gain.tick();
-                *l = rail((x[0] * dry + el) * g);
-                *r = rail((x[1] * dry + er) * g);
+                *l = rail((mid * (1.0 - pm).min(1.0) + side * (1.0 - ps).min(1.0)) * g);
+                *r = rail((mid * (1.0 + pm).min(1.0) - side * (1.0 + ps).min(1.0)) * g);
             }
         });
     }
@@ -230,7 +226,7 @@ impl FxAlgo for Enhancer {
         self.high.reset();
         self.mid_phase.reset();
         self.high_phase.reset();
-        self.spread_ap.reset();
+        self.low_mid.reset();
         self.env = [[0.0; 2]; 3];
         for s in self.smoothers() {
             s.snap(s.target);
@@ -332,7 +328,7 @@ impl FxAlgo for Exciter {
                     let u = d * s;
                     let odd = fast_tanh(u) / d;
                     let even = fast_tanh(u * u.abs()) / d;
-                    let gen = 0.5 * (1.0 + t) * odd + 0.5 * (1.0 - t) * even;
+                    let gen = 0.5 * (1.0 - t) * odd + 0.5 * (1.0 + t) * even;
                     let side = self.post.tick((1.0 - h) * s + h * 2.0 * gen, c);
                     *x = *x * dry + mix * side;
                 }
@@ -377,5 +373,22 @@ mod tests {
         rig.set("mix", 100.0);
         let high = rig.sine_gain_db(8000.0, 0.2);
         assert!(high > 1.0, "{high}");
+    }
+
+    #[test]
+    fn exciter_peak_makes_the_dip_and_the_peak() {
+        // As in the manual's response plots: a dip just below TUNE, a peak just above.
+        let response = |peak: f32, freq: f32| {
+            let mut rig = Rig::new("EXCITER");
+            rig.set("tune", 1000.0).set("peak", peak).set("zero", 0.0).set("hrm", 0.0).set("mix", 50.0);
+            rig.sine_gain_db(freq, 0.01)
+        };
+        assert!(response(100.0, 800.0) < -2.0);
+        assert!(response(100.0, 1300.0) > 4.0);
+        assert!(response(0.0, 800.0) > response(100.0, 800.0) + 1.0);
+        // ZERO FILL smooths the dip.
+        let mut rig = Rig::new("EXCITER");
+        rig.set("tune", 1000.0).set("peak", 100.0).set("zero", 100.0).set("hrm", 0.0).set("mix", 50.0);
+        assert!(rig.sine_gain_db(800.0, 0.01) > response(100.0, 800.0));
     }
 }

@@ -1,20 +1,26 @@
-//! Precision Limiter: a mastering brickwall limiter with look-ahead.
+//! Precision Limiter: precise peak control against digital clipping (WING
+//! manual 11.2): a brickwall limiter at 0 dBFS with look-ahead.
 //!
-//! IN GAIN drives the limiter; OUT GAIN is the ceiling no sample passes.
-//! SQUEEZE blends in a soft saturator (referenced to the ceiling) ahead of the
-//! limiter, rounding peaks so the limiter works less and the result gets
-//! louder. KNEE (0..10 dB) softens the onset below the ceiling. ATTACK
-//! (0.05..1 ms) is the length of the gain ramp ahead of each peak; RELEASE is
-//! the recovery time. AUTO GAIN level-matches the output (takes IN GAIN back
-//! off) so the limiting can be judged without the loudness gain.
+//! IN GAIN drives the limiter; OUT GAIN is applied after limiting, so it sets
+//! the output peak level. SQUEEZE raises the perceived loudness by blending in
+//! a soft saturator ahead of the limiter, which rounds peaks so the limiter
+//! works less (high settings distort audibly, as on the unit). KNEE goes from
+//! a hard knee (0) to a wide soft knee (10: the onset starts 5 dB under full
+//! scale). ATTACK (50 us .. 1 ms) is the length of the gain ramp ahead of each
+//! peak; RELEASE (20 ms .. 2 s) the recovery time. AUTO GAIN adds a long-term
+//! gain detection ahead of the limiter: a slow automatic gain control that
+//! brings the program's long-term level (RMS over seconds, ignoring silence)
+//! toward -18 dBFS, within +-12 dB, so material with a wide dynamic range hits
+//! the limiter evenly and IN GAIN sets how hard.
 //!
-//! How the ceiling is held: the gain each sample needs is held over the whole
+//! How 0 dBFS is held: the gain each sample needs is held over the whole
 //! look-ahead window (a sliding minimum), released exponentially, and then
 //! averaged over the attack length. Every averaged value is at most the gain
-//! the delayed sample needs, so the output never exceeds the ceiling, and the
+//! the delayed sample needs, so the output never exceeds full scale, and the
 //! averaging turns each reduction into a smooth ramp that ends on the peak.
 //! The audio is delayed by the longest attack (1 ms), a fixed latency.
 
+use super::{db_gain, power_db};
 use crate::wing::fx::blocks::{coef, db_to_gain, fast_tanh, gain_to_db, DelayLine, Smoothed};
 use crate::wing::fx::FxAlgo;
 use crate::wing::Params;
@@ -40,9 +46,18 @@ pub(crate) struct PrecisionLimiter {
     released: f32,
     rel_coef: f32,
     in_gain: Smoothed,
-    ceiling: Smoothed,
-    makeup: Smoothed,
+    out_gain: Smoothed,
     squeeze: Smoothed,
+    // AUTO GAIN: long-term level (mean square) and the current correction in dB.
+    agc_on: bool,
+    agc_ms: f32,
+    agc_ms_coef: f32,
+    agc_slow: f32,
+    agc_db: f32,
+    agc_rise: f32,
+    agc_fall: f32,
+    agc_move: f32,
+    agc_off: f32,
     knee_db: f32,
     reduction_db: f32,
     primed: bool,
@@ -70,9 +85,17 @@ impl PrecisionLimiter {
             released: 1.0,
             rel_coef: coef(200.0, sr),
             in_gain: Smoothed::new(1.0, 20.0, sr),
-            ceiling: Smoothed::new(1.0, 20.0, sr),
-            makeup: Smoothed::new(1.0, 20.0, sr),
+            out_gain: Smoothed::new(1.0, 20.0, sr),
             squeeze: Smoothed::new(0.0, 20.0, sr),
+            agc_on: false,
+            agc_ms: 0.0,
+            agc_ms_coef: coef(200.0, sr),
+            agc_slow: 0.0,
+            agc_db: 0.0,
+            agc_rise: coef(300.0, sr),
+            agc_fall: coef(3000.0, sr),
+            agc_move: coef(1000.0, sr),
+            agc_off: coef(100.0, sr),
             knee_db: 2.0,
             reduction_db: 0.0,
             primed: false,
@@ -81,22 +104,47 @@ impl PrecisionLimiter {
         s
     }
 
-    /// Gain (<= 1) that brings a peak of `peak` under the ceiling `c` with the soft knee.
+    /// Gain (<= 1) that brings a peak of `peak` under full scale with the soft knee.
     #[inline]
-    fn required_gain(&self, peak: f32, c: f32) -> f32 {
+    fn required_gain(&self, peak: f32) -> f32 {
         let k = self.knee_db;
         if k <= 0.0 {
-            return if peak > c { c / peak } else { 1.0 };
+            return if peak > 1.0 { 1.0 / peak } else { 1.0 };
         }
-        // The knee spans c - k/2 .. c + k/2 (dB); the output never passes c.
-        if peak <= c * db_to_gain(-0.5 * k) {
+        // The knee spans -k/2 .. +k/2 dBFS; the output never passes 0 dBFS.
+        if peak <= db_to_gain(-0.5 * k) {
             return 1.0;
         }
         let x = gain_to_db(peak);
-        let cd = gain_to_db(c);
-        let over = x - cd + 0.5 * k;
-        let y = if over >= k { cd } else { x - over * over / (2.0 * k) };
-        db_to_gain(y - x).min(c / peak.max(1e-9) * 1.000_001).min(1.0)
+        let over = x + 0.5 * k;
+        let y = if over >= k { 0.0 } else { x - over * over / (2.0 * k) };
+        db_to_gain(y - x).min(1.000_001 / peak.max(1e-9)).min(1.0)
+    }
+
+    /// AUTO GAIN: the long-term correction (dB) for one input sample.
+    #[inline]
+    fn auto_gain(&mut self, l: f32, r: f32) -> f32 {
+        /// Long-term level the correction aims for, its range and the level below which it holds.
+        const REF_DB: f32 = -18.0;
+        const RANGE_DB: f32 = 12.0;
+        const GATE_MS: f32 = 1e-5; // -50 dBFS
+        if self.agc_on {
+            let x = 0.5 * (l * l + r * r);
+            // Mean square, then a long-term level that rises in ~0.3 s and falls in ~3 s.
+            self.agc_ms += (x - self.agc_ms) * self.agc_ms_coef;
+            let ms = self.agc_ms;
+            self.agc_slow += (ms - self.agc_slow) * if ms > self.agc_slow { self.agc_rise } else { self.agc_fall };
+            if self.agc_slow > GATE_MS {
+                let want = (REF_DB - power_db(self.agc_slow)).clamp(-RANGE_DB, RANGE_DB);
+                self.agc_db += (want - self.agc_db) * self.agc_move;
+            }
+        } else if self.agc_db != 0.0 {
+            self.agc_db -= self.agc_db * self.agc_off;
+            if self.agc_db.abs() < 1e-4 {
+                self.agc_db = 0.0;
+            }
+        }
+        self.agc_db
     }
 
     /// Sum of the last `ramp` released gains.
@@ -107,10 +155,9 @@ impl PrecisionLimiter {
 
 impl FxAlgo for PrecisionLimiter {
     fn set_params(&mut self, p: &Params) {
-        let gin = p.f("gin");
-        self.in_gain.target = db_to_gain(gin);
-        self.ceiling.target = db_to_gain(p.f("gout"));
-        self.makeup.target = if p.on("again") { db_to_gain(-gin) } else { 1.0 };
+        self.in_gain.target = db_to_gain(p.f("gin"));
+        self.out_gain.target = db_to_gain(p.f("gout"));
+        self.agc_on = p.on("again");
         self.squeeze.target = p.f("sqz") / 100.0;
         self.knee_db = p.f("knee");
         self.rel_coef = coef(p.f("rel"), self.sr);
@@ -121,8 +168,7 @@ impl FxAlgo for PrecisionLimiter {
         }
         if !self.primed {
             self.in_gain.snap(self.in_gain.target);
-            self.ceiling.snap(self.ceiling.target);
-            self.makeup.snap(self.makeup.target);
+            self.out_gain.snap(self.out_gain.target);
             self.squeeze.snap(self.squeeze.target);
             self.primed = true;
         }
@@ -132,16 +178,16 @@ impl FxAlgo for PrecisionLimiter {
         let look = self.look;
         let mut lowest = 1.0f32;
         for (l, r) in left.iter_mut().zip(right.iter_mut()) {
-            let gi = self.in_gain.tick();
-            let c = self.ceiling.tick();
-            let mk = self.makeup.tick();
+            let agc = self.auto_gain(*l, *r);
+            let gi = self.in_gain.tick() * if agc != 0.0 { db_gain(agc) } else { 1.0 };
+            let go = self.out_gain.tick();
             let (mut xl, mut xr) = (*l * gi, *r * gi);
             let s = self.squeeze.tick();
             if s > 1e-6 {
-                xl += s * (c * fast_tanh(xl / c) - xl);
-                xr += s * (c * fast_tanh(xr / c) - xr);
+                xl += s * (fast_tanh(xl) - xl);
+                xr += s * (fast_tanh(xr) - xr);
             }
-            let need = self.required_gain(xl.abs().max(xr.abs()), c);
+            let need = self.required_gain(xl.abs().max(xr.abs()));
 
             // Sliding minimum over the window [count - look, count].
             let n = self.count;
@@ -170,8 +216,8 @@ impl FxAlgo for PrecisionLimiter {
 
             self.delay[0].push(xl);
             self.delay[1].push(xr);
-            *l = self.delay[0].tap(look) * g * mk;
-            *r = self.delay[1].tap(look) * g * mk;
+            *l = self.delay[0].tap(look) * g * go;
+            *r = self.delay[1].tap(look) * g * go;
         }
         self.reduction_db = gain_to_db(lowest).min(0.0);
     }
@@ -188,9 +234,11 @@ impl FxAlgo for PrecisionLimiter {
         self.sum = self.ramp as f64;
         self.released = 1.0;
         self.reduction_db = 0.0;
+        self.agc_ms = 0.0;
+        self.agc_slow = 0.0;
+        self.agc_db = 0.0;
         self.in_gain.snap(self.in_gain.target);
-        self.ceiling.snap(self.ceiling.target);
-        self.makeup.snap(self.makeup.target);
+        self.out_gain.snap(self.out_gain.target);
         self.squeeze.snap(self.squeeze.target);
     }
 
@@ -220,6 +268,22 @@ mod tests {
             assert!(peak <= ceiling * 1.0001, "knee {knee}: peak {peak} over ceiling {ceiling}");
             assert!(peak > ceiling * 0.8, "knee {knee}: limited far too much ({peak})");
             assert!(rig.dev.meter() < -3.0);
+        }
+    }
+
+    #[test]
+    fn auto_gain_levels_the_program() {
+        // A quiet program (-43 dBFS RMS) comes up by the full 12 dB, a hot one (-9) goes down.
+        for (amp, expect) in [(0.01f32, 12.0f32), (0.5, -9.0)] {
+            let mut rig = Rig::new("LIMITER");
+            rig.set("again", 1.0);
+            let n = 48_000 * 8;
+            let x: Vec<f32> = (0..n).map(|i| (TAU * 440.0 * i as f32 / 48_000.0).sin() * amp).collect();
+            let (mut l, mut r) = (x.clone(), x.clone());
+            rig.run(&mut l, &mut r);
+            let rms = |v: &[f32]| (v.iter().map(|s| s * s).sum::<f32>() / v.len() as f32).sqrt();
+            let g = 20.0 * (rms(&l[n - 48_000..]) / rms(&x[n - 48_000..])).log10();
+            assert!((g - expect).abs() < 1.0, "{amp}: {g} dB");
         }
     }
 

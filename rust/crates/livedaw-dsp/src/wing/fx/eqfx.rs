@@ -14,18 +14,18 @@
 //! * The mastering chain also uses the standard TAPE, ENHANCE and LIMITER
 //!   devices.
 //!
-//! The strips, in signal order:
+//! The strips (WING manual 11.3), FX rack inserts, in signal order:
 //!
-//! * *EVEN* Even Channel (Neve): E88 gate (g_*, G-ON), E88 EQ (EQ-ON, EQMIX)
-//!   and the 2254-style comp/limiter (d_*: the ECL33 model, whose LIM ON and
-//!   CMP ON switch its two stages; GAIN is its makeup).
-//! * *SOUL* Soul Channel (SSL): 9000 gate/expander (g_*, G-ON), SOUL EQ
-//!   (EQ-ON, EQMIX), 9000 compressor (d_*, D-ON).
-//! * *VINTAGE* Vintage Channel: 76 limiting amp / 1176 (d_*, D-ON), Pulsar EQ
-//!   (its own EQ1/EQ5 switches), LA leveler / LA-2A (l_*, LVL-ON).
-//! * *BUS* Bus Channel: warm harmonics (w_*, W-ON), Even 84 EQ (EQ-ON,
-//!   EQMIX), Soul bus compressor (d_*, D-ON; GAIN is its makeup).
-//! * *MASTER* Mastering: tape machine (t_*, T-ON), Mach EQ4 (EQ-ON), Ultra
+//! * *EVEN* EVEN Channel: Even 88 Gate (g_*, G-ON), Even 88-Formant EQ (EQ-ON,
+//!   EQMIX) and Even Comp/Lim (d_*: the ECL33 model, whose LIM ON and CMP ON
+//!   switch its two stages; GAIN is its makeup).
+//! * *SOUL* SOUL Channel: SOUL 9000 Gate/Expander (g_*, G-ON), SOUL Analog EQ
+//!   (EQ-ON, EQMIX), SOUL 9000 compressor (d_*, D-ON).
+//! * *VINTAGE* Vintage Channel: 76 Limiter Amp (d_*, D-ON), Pulsar EQ (its
+//!   own EQ1/EQ5 switches), LA Leveler (l_*, LVL-ON).
+//! * *BUS* Bus Channel: SOUL Warmth (w_*, W-ON), Even 84 EQ (EQ-ON, EQMIX),
+//!   SOUL Bus Comp (d_*, D-ON; GAIN is its makeup).
+//! * *MASTER* Mastering: Tape Machine (t_*, T-ON), Mach EQ4 (EQ-ON), Ultra
 //!   Enhancer (e_*, ENH-ON), Precision Limiter (l_*, LIM-ON).
 //!
 //! A block whose ON switch is off passes the signal through; switching

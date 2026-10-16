@@ -1,17 +1,19 @@
-//! Graphic EQs.
+//! Graphic EQs (WING manual 11.1).
 //!
 //! * GEQ - 31 bands on the ISO 1/3-octave centres (20 Hz .. 20 kHz, +-15 dB).
 //!   STD behaves like an analog graphic: proportional-Q bands (broad for small
 //!   moves, 1/3 octave at full throw) whose skirts add up, so neighbouring
-//!   faders raise each other. TRU ("true response") draws what you set: the
-//!   band gains are solved by weighted least squares so the combined response
-//!   passes through every fader (and, more loosely, through the average of
-//!   neighbours between them), then refined against the real response a few
-//!   times. The solve runs in `set_params`, only when a fader moves. TRIM is
-//!   the output level.
-//! * PIA - an API 560 style 10-band (31 Hz .. 16 kHz, +-12 dB) with proportional
-//!   Q. MIX (0..125 %) scales every band like the channel EQ's MIX; GAIN is the
-//!   output level.
+//!   faders raise each other and the curve ripples. TRU is the TRUE CURVE
+//!   function, which minimises the interaction between overlapping filters:
+//!   the band gains are solved by weighted least squares so the combined
+//!   response passes through every fader (and, more loosely, through the
+//!   average of neighbours between them, so it doesn't ripple), then refined
+//!   against the real response a few times. The solve runs in `set_params`,
+//!   only when a fader moves. TRIM is the output level.
+//! * PIA - the PIA 560 GEQ, after a 500-series (API 560) graphic: 10 bands an
+//!   octave apart (31 Hz .. 16 kHz, +-12 dB) whose bandwidth narrows as the
+//!   boost or cut grows. MIX (0..125 %) scales every band as all the console's
+//!   EQ MIX controls do; GAIN is the output level.
 //!
 //! Only bands that are off zero run, so a flat graphic costs nothing and is
 //! bit-transparent.
