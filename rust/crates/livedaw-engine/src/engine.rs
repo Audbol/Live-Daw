@@ -93,6 +93,7 @@ const DEFAULT_BLOCK: usize = 512;
 impl Engine {
     pub fn new(num_workers: usize) -> Self {
         let master = Arc::new(Strip::new(StripKind::Master, 0));
+        master.set_name("Master");
         // SAFETY: not published yet.
         unsafe { master.prepare(DEFAULT_SAMPLE_RATE, DEFAULT_BLOCK) };
 
@@ -160,6 +161,7 @@ impl Engine {
         st.next_input_id = st.next_input_id.max(id + 1);
 
         let strip = Arc::new(Strip::new(StripKind::Input, id));
+        strip.set_name(&format!("Ch {}", index + 1));
         let patched = st.device.num_hw_inputs == 0 || index < st.device.num_hw_inputs;
         strip.params.input_left.store(if patched { index as i32 } else { -1 }, Relaxed);
         // SAFETY: not published yet.
@@ -217,6 +219,8 @@ impl Engine {
         }
 
         let strip = Arc::new(Strip::new(kind, slot as i32));
+        let count = 1 + st.buses.iter().filter(|b| b.kind() == kind).count();
+        strip.set_name(&format!("{} {count}", if kind == StripKind::Aux { "Aux" } else { "Group" }));
         // SAFETY: not published yet.
         unsafe { strip.prepare(st.device.sample_rate, st.device.block_size) };
         st.buses.push(strip.clone());
@@ -248,6 +252,7 @@ impl Engine {
     pub fn reset(&self) {
         let mut st = self.lock();
         let master = Arc::new(Strip::new(StripKind::Master, 0));
+        master.set_name("Master");
         // SAFETY: not published yet.
         unsafe { master.prepare(st.device.sample_rate, st.device.block_size) };
         st.master = master;

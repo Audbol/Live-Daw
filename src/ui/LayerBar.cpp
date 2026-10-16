@@ -33,7 +33,7 @@ void LayerBar::refresh()
     buttons.clear();
 
     const auto layers = ctx.show.layers.getAllLayers (ctx.engine);
-    const auto current = ctx.show.layers.findLayer (ctx.engine, ctx.show.layers.selectedLayerId).id;
+    const auto current = ctx.show.layers.findLayer (ctx.engine, ctx.show.layers.getSelectedLayerId()).id;
     numDefault = 0;
     selectedIndex = -1;
 
@@ -56,7 +56,7 @@ void LayerBar::refresh()
 
         b->onClick = [this, id = layer.id]
         {
-            ctx.show.layers.selectedLayerId = id;
+            ctx.show.layers.setSelectedLayerId (id);
             notifyLayersChangedAsync (ctx); // the rebuild deletes this button
         };
 

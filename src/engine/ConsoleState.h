@@ -1,7 +1,6 @@
 #pragma once
 
 #include "engine/MixerEngine.h"
-#include "engine/PluginHost.h"
 
 #include <juce_core/juce_core.h>
 
@@ -41,16 +40,14 @@ struct StripRef
     juce::String toString() const;
     static StripRef fromString (const juce::String&);
     static StripRef of (const Strip&) noexcept;
+
+    ld::StripRefC toC() const noexcept { return { static_cast<int32_t> (kind), id }; }
+    static StripRef fromC (ld::StripRefC r) noexcept;
 };
+
+std::vector<ld::StripRefC> toC (const std::vector<StripRef>&);
 
 Strip* findStrip (MixerEngine&, const StripRef&) noexcept;
-
-/** Values that should glide (fader, pan, send levels) instead of jumping on recall. */
-struct FadeTarget
-{
-    std::atomic<float>* param;
-    float target;
-};
 
 struct ApplyResult
 {
@@ -58,22 +55,13 @@ struct ApplyResult
     int stripsSkippedSafe = 0;
     int stripsMissing = 0;
     juce::StringArray warnings;
+
+    /** Converts (and frees) a result from the Rust session layer. */
+    static ApplyResult fromC (ld::ApplyResultC&);
 };
 
-/** Captures `sections` of every strip (or only `only`) into a <State> element. */
-std::unique_ptr<juce::XmlElement> capture (const MixerEngine&, juce::uint32 sections,
-                                           const std::vector<StripRef>* only = nullptr);
-
-/** Applies a <State> element. Only the intersection of `sections` and what was
-    captured is touched. Plugins are never created or destroyed here: inserts are
-    recalled only when the same plugin is already loaded in that slot. If `fades`
-    is given, continuous values are appended to it instead of being set. */
-ApplyResult apply (MixerEngine&, const juce::XmlElement& state, juce::uint32 sections,
-                   const std::vector<StripRef>* only, bool respectRecallSafe,
-                   std::vector<FadeTarget>* fades = nullptr);
-
-/** Full console, including its structure and plugin instances (used by show files). */
-std::unique_ptr<juce::XmlElement> saveConsole (const MixerEngine&);
-juce::Result loadConsole (MixerEngine&, const juce::XmlElement& console, PluginHost&, bool loadPlugins = true);
+// Capturing and applying console state (per section), saving and loading the
+// full console, and show files are implemented in Rust (crate livedaw-session);
+// see Show for the C++ interface.
 
 } // namespace livedaw::state

@@ -61,7 +61,7 @@ MixerEngine::MixerEngine (int numWorkerThreads)
       outputClipEvents (controls.outputClipEvents),
       garbage (engine)
 {
-    master = wrap (ld::ld_engine_master (engine));
+    syncStrips();
     startWorkers (getSampleRate(), getBlockSize());
     startTimerHz (10);
 }
@@ -92,52 +92,43 @@ void MixerEngine::startWorkers (double sampleRate, int blockSize)
 }
 
 //==============================================================================
-std::unique_ptr<Strip> MixerEngine::wrap (ld::Strip* handle)
+void MixerEngine::syncStrips()
 {
-    jassert (handle != nullptr);
-    auto strip = std::make_unique<Strip> (engine, handle);
+    JUCE_ASSERT_MESSAGE_THREAD
 
-    switch (strip->getKind())
+    // Keep the wrapper of every strip that still exists, so Strip* held by the UI
+    // stay valid; strips removed from the engine lose theirs. (A removed strip is
+    // only freed by a later collect, so its address can't be reused before this.)
+    std::unordered_map<ld::Strip*, std::unique_ptr<Strip>> old;
+    for (auto* list : { &inputs, &buses })
+        for (auto& s : *list)
+            old.emplace (s->getHandle(), std::move (s));
+    if (master != nullptr)
+        old.emplace (master->getHandle(), std::move (master));
+
+    auto take = [this, &old] (ld::Strip* handle)
     {
-        case StripKind::Input:
-            strip->name = "Ch " + juce::String (inputs.size() + 1);
-            break;
-        case StripKind::Aux:
-        case StripKind::Group:
-        {
-            int count = 1;
-            for (auto& b : buses)
-                if (b->getKind() == strip->getKind())
-                    ++count;
-            strip->name = (strip->getKind() == StripKind::Aux ? "Aux " : "Group ") + juce::String (count);
-            break;
-        }
-        case StripKind::Master:
-            strip->name = "Master";
-            break;
-    }
+        jassert (handle != nullptr);
+        auto it = old.find (handle);
+        if (it == old.end())
+            return std::make_unique<Strip> (engine, handle);
+        auto s = std::move (it->second);
+        old.erase (it);
+        return s;
+    };
 
-    return strip;
-}
+    const int numInputs = ld::ld_engine_num_inputs (engine);
+    const int numBuses = ld::ld_engine_num_buses (engine);
+    inputs.clear();
+    buses.clear();
+    inputs.reserve ((size_t) numInputs);
+    buses.reserve ((size_t) numBuses);
 
-void MixerEngine::syncInputs()
-{
-    const auto n = static_cast<size_t> (ld::ld_engine_num_inputs (engine));
-
-    // Strips are only ever appended or removed from the end, except by removeStrip().
-    if (inputs.size() > n)
-        inputs.resize (n);
-
-    for (size_t i = 0; i < n; ++i)
-    {
-        auto* handle = ld::ld_engine_input_at (engine, (int32_t) i);
-        if (i < inputs.size())
-        {
-            jassert (inputs[i]->getHandle() == handle);
-            continue;
-        }
-        inputs.push_back (wrap (handle));
-    }
+    for (int i = 0; i < numInputs; ++i)
+        inputs.push_back (take (ld::ld_engine_input_at (engine, i)));
+    for (int i = 0; i < numBuses; ++i)
+        buses.push_back (take (ld::ld_engine_bus_at (engine, i)));
+    master = take (ld::ld_engine_master (engine));
 }
 
 Strip* MixerEngine::addInput (int requestedId)
@@ -147,14 +138,14 @@ Strip* MixerEngine::addInput (int requestedId)
     if (handle == nullptr)
         return nullptr;
 
-    return inputs.emplace_back (wrap (handle)).get();
+    return inputs.emplace_back (std::make_unique<Strip> (engine, handle)).get();
 }
 
 void MixerEngine::setNumInputs (int numInputs)
 {
     JUCE_ASSERT_MESSAGE_THREAD
     ld::ld_engine_set_num_inputs (engine, juce::jmax (0, numInputs));
-    syncInputs();
+    syncStrips();
 }
 
 Strip* MixerEngine::addBus (StripKind kind, int requestedSlot)
@@ -166,7 +157,7 @@ Strip* MixerEngine::addBus (StripKind kind, int requestedSlot)
     if (handle == nullptr)
         return nullptr;
 
-    return buses.emplace_back (wrap (handle)).get();
+    return buses.emplace_back (std::make_unique<Strip> (engine, handle)).get();
 }
 
 Strip* MixerEngine::getBusInSlot (int slot) const noexcept
@@ -200,10 +191,7 @@ void MixerEngine::reset()
 {
     JUCE_ASSERT_MESSAGE_THREAD
     ld::ld_engine_reset (engine);
-
-    inputs.clear();
-    buses.clear();
-    master = wrap (ld::ld_engine_master (engine));
+    syncStrips();
 }
 
 void MixerEngine::timerCallback()

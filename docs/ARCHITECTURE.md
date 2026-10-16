@@ -33,11 +33,15 @@ Live DAW is a hybrid:
 |---|---|---|
 | DSP (biquads, EQ, gate, compressor) | Rust | `rust/crates/livedaw-dsp` |
 | Realtime engine (strips, routing, sends, solo, monitor, output protection, worker pool, deferred frees) | Rust | `rust/crates/livedaw-engine` |
+| Sessions (per-section console state, Show > Scene > Snippet, fades, layers, show files) | Rust | `rust/crates/livedaw-session` |
 | C ABI | Rust + C++ header | `rust/crates/livedaw-ffi`, `include/livedaw_engine.h` |
-| Audio devices (ASIO, CoreAudio, ALSA, JACK, WASAPI), plugin hosting (VST3/AU/LV2), UI, shows/scenes/snippets, layers | C++ / JUCE | `src/` |
+| Audio devices (ASIO, CoreAudio, ALSA, JACK, WASAPI), plugin hosting (VST3/AU/LV2), UI | C++ / JUCE | `src/` |
 
-`src/engine/MixerEngine`, `Strip` and `PluginChain` are thin C++ facades over the
-Rust engine with the API the rest of the app uses.
+`src/engine/MixerEngine`, `Strip`, `PluginChain`, `Show` and `LayerSet` are thin C++
+facades over the Rust code with the API the rest of the app uses. `Strip` and
+`PluginChain` are stateless views: names, colours and plugin slots live in the engine,
+and `MixerEngine::syncStrips()` rebuilds the views after a show load changes the
+console from Rust.
 
 * **Shared parameters.** Strip parameters, meters, sends and engine controls are
   `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same memory as
@@ -51,6 +55,10 @@ Rust engine with the API the rest of the app uses.
   C++ exception is caught in the callback) or returns NaN/inf. A replaced plugin's
   `release` callback runs on the message thread once no audio callback can still
   reach it.
+* **Plugins in sessions.** Shows and scenes refer to plugins, but the plugin
+  instances belong to JUCE. The session reaches them through a *plugin bridge* of two
+  C callbacks implemented by `Show`: capture a slot (description XML + base64 state)
+  and restore one (into the plugin already loaded, or by creating it on show load).
 * **Panics.** Every FFI entry point and every worker task runs under `catch_unwind`.
   A panic in the audio path outputs silence for that block and increments
   `engineFaults`. It never unwinds into C++.
@@ -96,17 +104,19 @@ Setup doesn't move your patching.
 
 ## Shows, scenes and snippets
 
-`src/engine/ConsoleState.*` serialises strips **per section** (Name, Routing, Preamp,
-Gate, EQ, Comp, Inserts, Sends, Fader). Every captured strip records which sections
-it holds, and `apply()` only touches the intersection of *captured* and *requested*
-sections. Strips are referenced by a stable `StripRef` (kind + id). Input ids are
-saved and restored, so references survive removing channels and reloading the show.
+`livedaw-session/src/console.rs` serialises strips **per section** (Name, Routing,
+Preamp, Gate, EQ, Comp, Inserts, Sends, Fader). Every captured strip records which
+sections it holds, and `apply()` only touches the intersection of *captured* and
+*requested* sections. Strips are referenced by a stable `StripRef` (kind + id). Input
+ids are saved and restored, so references survive removing channels and reloading the
+show.
 
-`src/engine/Show.*`:
+`livedaw-session/src/show.rs`:
 
 ```
 Show
- ├─ Console     full structure (+ plugin instances), loaded with loadConsole()
+ ├─ Console     full structure (+ plugins via the bridge), loaded with load_console()
+ ├─ Layers      user layers, bank size, selected layer
  └─ Scene[]     State (all sections) + recall scope + fade time + notes
      └─ Snippet[]   State (chosen strips × chosen sections) + "fire with scene"
 ```
@@ -115,15 +125,20 @@ Show
   It then applies the scene's auto-fire snippets.
 - Snippets ignore recall safes, which makes them the tool for deliberately changing a
   protected channel.
-- Fades collect `FadeTarget`s (fader, pan and send levels) instead of setting them, and
-  a 60 Hz message-thread timer interpolates the atomics. A new recall finishes any fade
-  still running.
+- Fades collect fade targets (fader, pan and send levels) instead of setting them, and
+  a 60 Hz message-thread timer (`ld_show_tick`) interpolates the atomics. A fade target
+  holds its strip (`Arc`), so removing a strip mid-fade is safe. A new recall finishes
+  any fade still running.
 - Inserts are recalled as *plugin state only*, and only when the same plugin is already
   in that slot. Recalls never instantiate plugins.
+- Show files are XML in the format Live DAW has always written (a small built-in
+  parser reads files written by JUCE, with a depth limit and no panics on bad input).
+  Saving writes a temporary file, verifies it, renames it over the show and keeps the
+  previous version as `.bak`; loading falls back to the `.bak` if the show is damaged.
 
 ## Layers
 
-`src/engine/Layers.*` (`LayerSet`, owned by the `Show`):
+`livedaw-session/src/layers.rs` (`LayerSet`, owned by the show; C++ view in `src/engine/Layers.*`):
 
 - `getDefaultLayers()` is computed from the console every time, so default layers can't
   go stale. Inputs, auxes and groups are chunked by the bank size, and the ids are

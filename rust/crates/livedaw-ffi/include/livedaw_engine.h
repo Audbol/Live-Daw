@@ -21,7 +21,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 1;
+constexpr int kAbiVersion = 2;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumInsertSlots = 8;
 constexpr int kNumEqBands = 4;
@@ -150,8 +150,39 @@ struct InsertCallbacks
     void* ctx;
 };
 
-struct Engine; // opaque
-struct Strip;  // opaque
+struct Engine;    // opaque
+struct Strip;     // opaque
+struct LdString;  // opaque owned UTF-8 string: ld_string_data/len, free with ld_string_free
+struct LdSink;    // opaque string the host appends to (ld_sink_append) from callbacks
+struct Show;      // opaque
+struct LayerSet;  // opaque
+struct LayerList; // opaque
+
+struct StripRefC
+{
+    int32_t kind, id;
+};
+
+struct ApplyResultC
+{
+    int32_t stripsApplied, stripsSkippedSafe, stripsMissing;
+    LdString* warnings; // '\n'-separated, or null; caller frees
+};
+
+/** Writes the <PLUGIN> description XML and base64 state of insert `slot`; false if empty. */
+using CaptureInsertFn = bool (*) (void* ctx, const Strip*, int32_t slot, LdSink* description, LdSink* state);
+/** mode 0 = restore state into the plugin already loaded, 1 = create the plugin.
+    Returns 0 ok, 1 different plugin loaded (mode 0), 2 failed (message in `error`). */
+using RestoreInsertFn = int32_t (*) (void* ctx, const Strip*, int32_t slot, int32_t mode,
+                                     const char* description, size_t descriptionLen,
+                                     const char* state, size_t stateLen, LdSink* error);
+
+struct PluginBridge
+{
+    void* ctx;
+    CaptureInsertFn capture;
+    RestoreInsertFn restore;
+};
 
 extern "C"
 {
@@ -207,6 +238,100 @@ extern "C"
     float ld_strip_insert_load (const Strip*, int32_t slot);
 
     double ld_eq_response_db (const EqSnapshot* settings, double freq, double sampleRate);
+
+    // Strip metadata (message thread)
+    LdString* ld_strip_name (const Strip*);
+    void ld_strip_set_name (const Strip*, const char* utf8, size_t len);
+    uint32_t ld_strip_colour (const Strip*);
+    void ld_strip_set_colour (const Strip*, uint32_t argb);
+    void* ld_strip_insert_ctx (const Strip*, int32_t slot);
+
+    // Strings
+    const char* ld_string_data (const LdString*);
+    size_t ld_string_len (const LdString*);
+    void ld_string_free (LdString*);
+    void ld_sink_append (LdSink*, const char* utf8, size_t len);
+
+    // Shows (message thread)
+    Show* ld_show_create (const PluginBridge*);
+    void ld_show_destroy (Show*);
+    LdString* ld_show_name (Show*);
+    void ld_show_set_name (Show*, const char* utf8, size_t len);
+    int32_t ld_show_num_scenes (Show*);
+    int32_t ld_show_current_scene (Show*);
+    int32_t ld_show_add_scene (Show*, const Engine*, const char* name, size_t len, int32_t index);
+    void ld_show_store_scene (Show*, const Engine*, int32_t index);
+    void ld_show_remove_scene (Show*, int32_t index);
+    void ld_show_move_scene (Show*, int32_t from, int32_t to);
+    /** which: 0 = scene `index`, 1 = next, 2 = previous. */
+    void ld_show_recall_scene (Show*, const Engine*, int32_t which, int32_t index, ApplyResultC* out);
+
+    bool ld_scene_exists (Show*, int32_t scene);
+    LdString* ld_scene_name (Show*, int32_t scene);
+    LdString* ld_scene_notes (Show*, int32_t scene);
+    uint32_t ld_scene_scope (Show*, int32_t scene);
+    double ld_scene_fade_seconds (Show*, int32_t scene);
+    int32_t ld_scene_num_snippets (Show*, int32_t scene);
+    void ld_scene_set_name (Show*, int32_t scene, const char* utf8, size_t len);
+    void ld_scene_set_notes (Show*, int32_t scene, const char* utf8, size_t len);
+    void ld_scene_set_scope (Show*, int32_t scene, uint32_t scope);
+    void ld_scene_set_fade_seconds (Show*, int32_t scene, double seconds);
+
+    int32_t ld_show_add_snippet (Show*, const Engine*, int32_t scene, const char* name, size_t len,
+                                 uint32_t sections, const StripRefC* strips, int32_t numStrips);
+    void ld_show_store_snippet (Show*, const Engine*, int32_t scene, int32_t snippet);
+    void ld_show_remove_snippet (Show*, int32_t scene, int32_t snippet);
+    void ld_show_recall_snippet (Show*, const Engine*, int32_t scene, int32_t snippet, ApplyResultC* out);
+    bool ld_snippet_exists (Show*, int32_t scene, int32_t snippet);
+    LdString* ld_snippet_name (Show*, int32_t scene, int32_t snippet);
+    uint32_t ld_snippet_sections (Show*, int32_t scene, int32_t snippet);
+    bool ld_snippet_fire_with_scene (Show*, int32_t scene, int32_t snippet);
+    int32_t ld_snippet_strips (Show*, int32_t scene, int32_t snippet, StripRefC* out, int32_t capacity);
+    void ld_snippet_set_name (Show*, int32_t scene, int32_t snippet, const char* utf8, size_t len);
+    void ld_snippet_set_sections (Show*, int32_t scene, int32_t snippet, uint32_t sections);
+    void ld_snippet_set_fire_with_scene (Show*, int32_t scene, int32_t snippet, bool fire);
+    void ld_snippet_set_strips (Show*, int32_t scene, int32_t snippet, const StripRefC* strips, int32_t n);
+
+    bool ld_show_is_fading (Show*);
+    void ld_show_cancel_fade (Show*);
+    bool ld_show_tick (Show*);
+
+    LdString* ld_show_to_xml (Show*, const Engine*);
+    /** False if nothing was loaded (error in *message); true may still set *message (warnings). */
+    bool ld_show_load_xml (Show*, const Engine*, const char* utf8, size_t len, bool loadPlugins, LdString** message);
+    bool ld_show_save_file (Show*, const Engine*, const char* path, size_t len, LdString** error);
+    bool ld_show_load_file (Show*, const Engine*, const char* path, size_t len, bool loadPlugins, LdString** message);
+    void ld_show_clear (Show*, const Engine*, int32_t numChannels);
+
+    // Layers (message thread)
+    LayerSet* ld_show_layers (Show*);
+    LayerSet* ld_layers_create();
+    void ld_layers_destroy (LayerSet*);
+    int32_t ld_layers_bank_size (LayerSet*);
+    void ld_layers_set_bank_size (LayerSet*, int32_t size);
+    void ld_layers_set_fitted_bank_size (LayerSet*, int32_t size);
+    int32_t ld_layers_effective_bank_size (LayerSet*);
+    LdString* ld_layers_selected (LayerSet*);
+    void ld_layers_set_selected (LayerSet*, const char* utf8, size_t len);
+    LdString* ld_layers_find_default_containing (LayerSet*, const Engine*, StripRefC ref);
+    /** which: 0 default, 1 default + user, 2 user only, 3 the layer `id` (or the first). */
+    LayerList* ld_layers_list (LayerSet*, const Engine*, int32_t which, const char* id, size_t idLen);
+    void ld_layer_list_free (LayerList*);
+    int32_t ld_layer_list_len (const LayerList*);
+    LdString* ld_layer_list_id (const LayerList*, int32_t i);
+    LdString* ld_layer_list_name (const LayerList*, int32_t i);
+    bool ld_layer_list_is_user (const LayerList*, int32_t i);
+    int32_t ld_layer_list_strips (const LayerList*, int32_t i, StripRefC* out, int32_t capacity);
+    LdString* ld_layers_add_user (LayerSet*, const char* name, size_t len, const StripRefC* strips, int32_t n);
+    void ld_layers_remove_user (LayerSet*, const char* id, size_t len);
+    void ld_layers_rename_user (LayerSet*, const char* id, size_t len, const char* name, size_t nameLen);
+    void ld_layers_move_user (LayerSet*, const char* id, size_t len, int32_t delta);
+    void ld_layers_add_to_user (LayerSet*, const char* id, size_t len, StripRefC ref);
+    void ld_layers_remove_from_user (LayerSet*, const char* id, size_t len, StripRefC ref);
+    void ld_layers_move_within_user (LayerSet*, const char* id, size_t len, int32_t index, int32_t delta);
+    LdString* ld_layers_to_xml (LayerSet*);
+    bool ld_layers_from_xml (LayerSet*, const char* utf8, size_t len);
+    void ld_layers_reset (LayerSet*);
 }
 
 /// Returns nullptr if the C++ and Rust layouts agree, else a description of the mismatch.

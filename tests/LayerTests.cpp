@@ -132,7 +132,7 @@ public:
             show.layers.setBankSize (12);
             const auto id = show.layers.addUserLayer ("Band", { state::StripRef::of (*engine.getInputs()[5]),
                                                                 state::StripRef::of (*group) });
-            show.layers.selectedLayerId = id;
+            show.layers.setSelectedLayerId (id);
 
             auto xml = show.toXml();
             MixerEngine e2 (0);
@@ -140,7 +140,7 @@ public:
             expect (loaded.loadFromXml (*xml).wasOk());
 
             expectEquals (loaded.layers.getBankSize(), 12);
-            expectEquals (loaded.layers.selectedLayerId, id);
+            expectEquals (loaded.layers.getSelectedLayerId(), id);
             expectEquals ((int) loaded.layers.getUserLayers().size(), 1);
             const auto strips = LayerSet::resolve (e2, loaded.layers.findLayer (e2, id));
             expectEquals ((int) strips.size(), 2);

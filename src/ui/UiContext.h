@@ -26,7 +26,7 @@ struct UiContext
     std::function<void (Strip*)> selectStrip;
     std::function<Strip*()> getSelectedStrip;
 
-    /** Call after editing show.layers (or to switch layer: set selectedLayerId first). */
+    /** Call after editing show.layers (or to switch layer: call setSelectedLayerId first). */
     std::function<void()> layersChanged;
 };
 

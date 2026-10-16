@@ -76,11 +76,19 @@ namespace
 
 PluginChain::PluginChain (ld::Engine* e, ld::Strip* s) : engine (e), strip (s) {}
 
+PluginChain::Holder* PluginChain::holderAt (int slot) const noexcept
+{
+    // Every insert callback context registered with the engine is a Holder (see setPlugin).
+    return juce::isPositiveAndBelow (slot, kNumInsertSlots)
+               ? static_cast<Holder*> (ld::ld_strip_insert_ctx (strip, slot))
+               : nullptr;
+}
+
 void PluginChain::prepare (double sampleRate, int maxBlockSize)
 {
-    for (auto* h : holders)
+    for (int slot = 0; slot < kNumInsertSlots; ++slot)
     {
-        if (h != nullptr)
+        if (auto* h = holderAt (slot))
         {
             h->plugin->releaseResources();
             h->prepare (sampleRate, maxBlockSize);
@@ -103,8 +111,6 @@ void PluginChain::setPlugin (int slot, std::unique_ptr<juce::AudioPluginInstance
         holder->prepare (ld::ld_engine_sample_rate (engine), ld::ld_engine_block_size (engine));
     }
 
-    holders[(size_t) slot] = holder;
-
     if (holder != nullptr)
     {
         const ld::InsertCallbacks callbacks { &Holder::process, &Holder::release, holder };
@@ -118,10 +124,7 @@ void PluginChain::setPlugin (int slot, std::unique_ptr<juce::AudioPluginInstance
 
 juce::AudioPluginInstance* PluginChain::getPlugin (int slot) const noexcept
 {
-    if (! juce::isPositiveAndBelow (slot, kNumInsertSlots))
-        return nullptr;
-
-    auto* h = holders[(size_t) slot];
+    auto* h = holderAt (slot);
     return h != nullptr ? h->plugin.get() : nullptr;
 }
 
@@ -133,7 +136,10 @@ float PluginChain::getSlotLoad (int slot) const noexcept       { return ld::ld_s
 
 bool PluginChain::isEmpty() const noexcept
 {
-    return std::all_of (holders.begin(), holders.end(), [] (auto* h) { return h == nullptr; });
+    for (int slot = 0; slot < kNumInsertSlots; ++slot)
+        if (holderAt (slot) != nullptr)
+            return false;
+    return true;
 }
 
 int PluginChain::getTotalLatencySamples() const noexcept

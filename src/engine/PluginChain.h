@@ -4,7 +4,6 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
-#include <array>
 #include <memory>
 
 namespace livedaw
@@ -43,9 +42,12 @@ public:
 private:
     struct Holder;
 
+    Holder* holderAt (int slot) const noexcept;
+
+    // Stateless view: the plugin holders are owned by the engine (insert contexts)
+    // until it releases them, so any number of PluginChains may view one strip.
     ld::Engine* engine;
     ld::Strip* strip;
-    std::array<Holder*, kNumInsertSlots> holders {}; // owned by the engine until released
 
     JUCE_DECLARE_NON_COPYABLE (PluginChain)
 };

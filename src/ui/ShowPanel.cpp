@@ -44,8 +44,8 @@ private:
 
     void paintListBoxItem (int row, juce::Graphics& g, int width, int height, bool rowSelected) override
     {
-        auto* scene = panel.ctx.show.getScene (row);
-        if (scene == nullptr)
+        const auto scene = panel.ctx.show.getScene (row);
+        if (! scene)
             return;
 
         const bool current = row == panel.ctx.show.getCurrentSceneIndex();
@@ -78,8 +78,8 @@ private:
         juce::String info;
         if (scene->fadeSeconds > 0.0)
             info << "fade " << juce::String (scene->fadeSeconds, 1) << "s  ";
-        if (! scene->snippets.empty())
-            info << scene->snippets.size() << " snip";
+        if (scene->numSnippets > 0)
+            info << scene->numSnippets << " snip";
         g.drawText (info, right.reduced (4, 0), juce::Justification::centredRight);
     }
 
@@ -113,17 +113,17 @@ public:
 private:
     int getNumRows() override
     {
-        auto* scene = panel.currentSceneObject();
-        return scene != nullptr ? static_cast<int> (scene->snippets.size()) : 0;
+        const auto scene = panel.currentSceneObject();
+        return scene ? scene->numSnippets : 0;
     }
 
     void paintListBoxItem (int row, juce::Graphics& g, int width, int height, bool rowSelected) override
     {
-        auto* scene = panel.currentSceneObject();
-        if (scene == nullptr || ! juce::isPositiveAndBelow (row, static_cast<int> (scene->snippets.size())))
+        const auto found = panel.ctx.show.getSnippet (panel.selectedScene(), row);
+        if (! found)
             return;
 
-        auto& snippet = *scene->snippets[(size_t) row];
+        const auto& snippet = *found;
         auto r = juce::Rectangle<int> (width, height).reduced (6, 0);
 
         if (rowSelected)
@@ -234,23 +234,24 @@ public:
         addAndMakeVisible (viewport);
     }
 
-    std::function<Show::Snippet*()> getSnippet;
+    std::function<std::optional<Show::Snippet>()> getSnippet;
+    std::function<void (const std::vector<state::StripRef>&)> setStrips;
     std::function<void()> onChanged;
 
     void refresh()
     {
         buttons.clear();
-        auto* snippet = getSnippet ? getSnippet() : nullptr;
+        const auto snippet = getSnippet ? getSnippet() : std::nullopt;
 
         auto add = [&] (Strip& s)
         {
             const auto ref = state::StripRef::of (s);
-            auto* b = buttons.add (new juce::TextButton (s.name));
+            auto* b = buttons.add (new juce::TextButton (s.getName()));
             b->setClickingTogglesState (true);
-            b->setColour (juce::TextButton::buttonOnColourId, s.colour);
-            b->setEnabled (snippet != nullptr);
+            b->setColour (juce::TextButton::buttonOnColourId, s.getColour());
+            b->setEnabled (snippet.has_value());
 
-            if (snippet != nullptr)
+            if (snippet)
             {
                 auto& strips = snippet->strips;
                 b->setToggleState (std::find (strips.begin(), strips.end(), ref) != strips.end(), juce::dontSendNotification);
@@ -258,14 +259,15 @@ public:
 
             b->onClick = [this, ref, b]
             {
-                auto* sn = getSnippet ? getSnippet() : nullptr;
-                if (sn == nullptr)
+                auto sn = getSnippet ? getSnippet() : std::nullopt;
+                if (! sn || ! setStrips)
                     return;
 
-                auto& strips = sn->strips;
+                auto strips = sn->strips;
                 strips.erase (std::remove (strips.begin(), strips.end(), ref), strips.end());
                 if (b->getToggleState())
                     strips.push_back (ref);
+                setStrips (strips);
 
                 if (onChanged)
                     onChanged();
@@ -325,7 +327,7 @@ ShowPanel::ShowPanel (UiContext& c) : ctx (c)
     storeSceneButton.onClick = [this]
     {
         const int index = selectedScene();
-        if (auto* scene = currentSceneObject())
+        if (const auto scene = currentSceneObject())
         {
             juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Store scene",
                                                 "Overwrite \"" + scene->name + "\" with the current console?",
@@ -352,7 +354,7 @@ ShowPanel::ShowPanel (UiContext& c) : ctx (c)
     deleteSceneButton.onClick = [this]
     {
         const int index = selectedScene();
-        if (auto* scene = currentSceneObject())
+        if (const auto scene = currentSceneObject())
         {
             juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, "Delete scene",
                                                 "Delete \"" + scene->name + "\" and its snippets?", "Delete", "Cancel", this,
@@ -394,9 +396,9 @@ ShowPanel::ShowPanel (UiContext& c) : ctx (c)
     sceneNameLabel.setColour (juce::Label::backgroundColourId, juce::Colours::black.withAlpha (0.25f));
     sceneNameLabel.onTextChange = [this]
     {
-        if (auto* scene = currentSceneObject())
+        if (selectedScene() >= 0)
         {
-            scene->name = sceneNameLabel.getText();
+            ctx.show.setSceneName (selectedScene(), sceneNameLabel.getText());
             sceneList->repaint();
         }
     };
@@ -409,9 +411,9 @@ ShowPanel::ShowPanel (UiContext& c) : ctx (c)
     fadeSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 56, 20);
     fadeSlider.onValueChange = [this]
     {
-        if (auto* scene = currentSceneObject())
+        if (selectedScene() >= 0)
         {
-            scene->fadeSeconds = fadeSlider.getValue();
+            ctx.show.setSceneFadeSeconds (selectedScene(), fadeSlider.getValue());
             sceneList->repaint();
         }
     };
@@ -421,8 +423,8 @@ ShowPanel::ShowPanel (UiContext& c) : ctx (c)
     notesEditor.setReturnKeyStartsNewLine (true);
     notesEditor.onTextChange = [this]
     {
-        if (auto* scene = currentSceneObject())
-            scene->notes = notesEditor.getText();
+        if (selectedScene() >= 0)
+            ctx.show.setSceneNotes (selectedScene(), notesEditor.getText());
     };
     addAndMakeVisible (notesEditor);
 
@@ -455,15 +457,15 @@ ShowPanel::ShowPanel (UiContext& c) : ctx (c)
     newSnippetButton.setTooltip ("New snippet in the selected scene (starts with the selected channel)");
     newSnippetButton.onClick = [this]
     {
-        auto* scene = currentSceneObject();
-        if (scene == nullptr)
+        const auto scene = currentSceneObject();
+        if (! scene)
             return;
 
         std::vector<state::StripRef> strips;
         if (auto* selected = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr)
             strips.push_back (state::StripRef::of (*selected));
 
-        const int index = ctx.show.addSnippet (selectedScene(), "Snippet " + juce::String (scene->snippets.size() + 1),
+        const int index = ctx.show.addSnippet (selectedScene(), "Snippet " + juce::String (scene->numSnippets + 1),
                                                state::Fader | state::Sends, std::move (strips));
         snippetList->updateContent();
         snippetList->selectRow (index);
@@ -478,9 +480,9 @@ ShowPanel::ShowPanel (UiContext& c) : ctx (c)
     autoFireToggle.setTooltip ("Recall this snippet automatically right after its scene");
     autoFireToggle.onClick = [this]
     {
-        if (auto* snippet = currentSnippetObject())
+        if (selectedSnippet() >= 0)
         {
-            snippet->fireWithScene = autoFireToggle.getToggleState();
+            ctx.show.setSnippetFireWithScene (selectedScene(), selectedSnippet(), autoFireToggle.getToggleState());
             snippetList->repaint();
         }
     };
@@ -491,9 +493,9 @@ ShowPanel::ShowPanel (UiContext& c) : ctx (c)
     snippetNameLabel.setColour (juce::Label::backgroundColourId, juce::Colours::black.withAlpha (0.25f));
     snippetNameLabel.onTextChange = [this]
     {
-        if (auto* snippet = currentSnippetObject())
+        if (selectedSnippet() >= 0)
         {
-            snippet->name = snippetNameLabel.getText();
+            ctx.show.setSnippetName (selectedScene(), selectedSnippet(), snippetNameLabel.getText());
             snippetList->repaint();
         }
     };
@@ -504,6 +506,11 @@ ShowPanel::ShowPanel (UiContext& c) : ctx (c)
 
     stripChooser = std::make_unique<StripChooser> (ctx);
     stripChooser->getSnippet = [this] { return currentSnippetObject(); };
+    stripChooser->setStrips = [this] (const std::vector<state::StripRef>& strips)
+    {
+        if (selectedSnippet() >= 0)
+            ctx.show.setSnippetStrips (selectedScene(), selectedSnippet(), strips);
+    };
     stripChooser->onChanged = [this] { snippetList->repaint(); };
     addAndMakeVisible (*stripChooser);
 
@@ -520,25 +527,20 @@ int ShowPanel::selectedScene() const
 
 int ShowPanel::selectedSnippet() const
 {
-    auto* scene = currentSceneObject();
+    const auto scene = currentSceneObject();
     const int row = snippetList->getSelectedRow();
-    return scene != nullptr && juce::isPositiveAndBelow (row, static_cast<int> (scene->snippets.size())) ? row : -1;
+    return scene && juce::isPositiveAndBelow (row, scene->numSnippets) ? row : -1;
 }
 
-Show::Scene* ShowPanel::currentSceneObject() const
+std::optional<Show::Scene> ShowPanel::currentSceneObject() const
 {
     return ctx.show.getScene (selectedScene());
 }
 
-Show::Snippet* ShowPanel::currentSnippetObject() const
+std::optional<Show::Snippet> ShowPanel::currentSnippetObject() const
 {
-    auto* scene = currentSceneObject();
     const int row = snippetList != nullptr ? snippetList->getSelectedRow() : -1;
-
-    if (scene == nullptr || ! juce::isPositiveAndBelow (row, static_cast<int> (scene->snippets.size())))
-        return nullptr;
-
-    return scene->snippets[(size_t) row].get();
+    return ctx.show.getSnippet (selectedScene(), row);
 }
 
 void ShowPanel::refresh()
@@ -555,8 +557,8 @@ void ShowPanel::refresh()
 
 void ShowPanel::updateSceneEditor()
 {
-    auto* scene = currentSceneObject();
-    const bool has = scene != nullptr;
+    const auto scene = currentSceneObject();
+    const bool has = scene.has_value();
 
     for (juce::Component* c : { (juce::Component*) &sceneNameLabel, (juce::Component*) &fadeSlider, (juce::Component*) &notesEditor,
                                 (juce::Component*) &goButton, (juce::Component*) &storeSceneButton,
@@ -571,8 +573,8 @@ void ShowPanel::updateSceneEditor()
 
     if (has)
     {
-        sceneScope->getMask = [this] { auto* s = currentSceneObject(); return s != nullptr ? s->scope : 0u; };
-        sceneScope->setMask = [this] (juce::uint32 m) { if (auto* s = currentSceneObject()) s->scope = m; };
+        sceneScope->getMask = [this] { const auto s = currentSceneObject(); return s ? s->scope : 0u; };
+        sceneScope->setMask = [this] (juce::uint32 m) { if (selectedScene() >= 0) ctx.show.setSceneScope (selectedScene(), m); };
     }
     else
     {
@@ -589,8 +591,8 @@ void ShowPanel::updateSceneEditor()
 
 void ShowPanel::updateSnippetEditor()
 {
-    auto* snippet = currentSnippetObject();
-    const bool has = snippet != nullptr;
+    const auto snippet = currentSnippetObject();
+    const bool has = snippet.has_value();
 
     for (juce::Component* c : { (juce::Component*) &recallSnippetButton, (juce::Component*) &storeSnippetButton,
                                 (juce::Component*) &deleteSnippetButton, (juce::Component*) &autoFireToggle,
@@ -602,12 +604,12 @@ void ShowPanel::updateSnippetEditor()
 
     if (has)
     {
-        snippetSections->getMask = [this] { auto* s = currentSnippetObject(); return s != nullptr ? s->sections : 0u; };
+        snippetSections->getMask = [this] { const auto s = currentSnippetObject(); return s ? s->sections : 0u; };
         snippetSections->setMask = [this] (juce::uint32 m)
         {
-            if (auto* s = currentSnippetObject())
+            if (selectedSnippet() >= 0)
             {
-                s->sections = m;
+                ctx.show.setSnippetSections (selectedScene(), selectedSnippet(), m);
                 snippetList->repaint();
             }
         };
@@ -635,10 +637,10 @@ void ShowPanel::paint (juce::Graphics& g)
         g.drawText (title, r.reduced (10, 6).removeFromTop (14), juce::Justification::centredLeft);
     };
 
-    auto* scene = currentSceneObject();
-    drawBox (sceneArea, "SCENES - " + ctx.show.name.toUpperCase());
+    const auto scene = currentSceneObject();
+    drawBox (sceneArea, "SCENES - " + ctx.show.getName().toUpperCase());
     drawBox (scopeArea, "SCENE: RECALL SCOPE / FADE / NOTES");
-    drawBox (snippetArea, "SNIPPETS" + (scene != nullptr ? " IN \"" + scene->name.toUpperCase() + "\"" : juce::String()));
+    drawBox (snippetArea, "SNIPPETS" + (scene ? " IN \"" + scene->name.toUpperCase() + "\"" : juce::String()));
 }
 
 void ShowPanel::resized()

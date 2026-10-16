@@ -18,12 +18,12 @@ struct Layer
     bool user = false;
 };
 
-/** Fader layers in the style of X32/Wing.
+/** Fader layers in the style of X32/Wing (implemented in Rust, livedaw-session).
 
-    Default layers are generated from the console whenever it's asked, so they
-    always cover every strip: input banks (Ch 1-16, Ch 17-32, ...), aux banks,
-    group banks, and "All". User layers hold any strips of the board (inputs,
-    buses, master) in any order and are saved with the show.
+    Default layers are generated from the console whenever they're asked for, so
+    they always cover every strip: input banks (Ch 1-16, Ch 17-32, ...), aux
+    banks, group banks, and "All". User layers hold any strips of the board
+    (inputs, buses, master) in any order and are saved with the show.
 
     Message thread only.
 */
@@ -35,13 +35,19 @@ public:
     static constexpr int kAutoBankSize = 0;
     static constexpr int kFallbackBankSize = 16;
 
-    int getBankSize() const noexcept { return bankSize; }
-    void setBankSize (int size) noexcept { bankSize = size <= 0 ? kAutoBankSize : juce::jlimit (4, 256, size); }
-    bool isAutoBankSize() const noexcept { return bankSize == kAutoBankSize; }
+    /** A standalone layer set. */
+    LayerSet();
+    /** A view of a layer set owned elsewhere (a show's). */
+    explicit LayerSet (ld::LayerSet* borrowed) noexcept : handle (borrowed), owned (false) {}
+    ~LayerSet();
+
+    int getBankSize() const noexcept { return ld::ld_layers_bank_size (handle); }
+    void setBankSize (int size) noexcept { ld::ld_layers_set_bank_size (handle, size); }
+    bool isAutoBankSize() const noexcept { return getBankSize() == kAutoBankSize; }
 
     /** How many strips fit the mixer right now (used when the bank size is Auto). */
-    void setFittedBankSize (int size) noexcept { fittedBankSize = juce::jlimit (4, 256, size); }
-    int getEffectiveBankSize() const noexcept { return isAutoBankSize() ? fittedBankSize : bankSize; }
+    void setFittedBankSize (int size) noexcept { ld::ld_layers_set_fitted_bank_size (handle, size); }
+    int getEffectiveBankSize() const noexcept { return ld::ld_layers_effective_bank_size (handle); }
 
     /** The default layer of the same family (inputs/aux/groups) that contains
         `ref`, for staying on the same strips when the bank size changes. */
@@ -61,12 +67,15 @@ public:
 
     //==============================================================================
     // User layers
-    const std::vector<Layer>& getUserLayers() const noexcept { return userLayers; }
-    Layer* getUserLayer (const juce::String& id) noexcept;
+    /** A snapshot of the user layers (refreshed by every call). */
+    const std::vector<Layer>& getUserLayers() const;
+    /** Points into the snapshot: valid until the next call to either getter. */
+    const Layer* getUserLayer (const juce::String& id) const;
 
     /** Creates a user layer and returns its id. */
-    juce::String addUserLayer (const juce::String& name, std::vector<state::StripRef> strips = {});
+    juce::String addUserLayer (const juce::String& name, const std::vector<state::StripRef>& strips = {});
     void removeUserLayer (const juce::String& id);
+    void renameUserLayer (const juce::String& id, const juce::String& name);
     void moveUserLayer (const juce::String& id, int delta);
 
     /** Adds a strip to a user layer (no duplicates). */
@@ -75,16 +84,19 @@ public:
     void moveWithinUserLayer (const juce::String& layerId, int index, int delta);
 
     //==============================================================================
-    juce::String selectedLayerId { "in-1" };
+    juce::String getSelectedLayerId() const { return takeString (ld::ld_layers_selected (handle)); }
+    void setSelectedLayerId (const juce::String& id);
 
-    std::unique_ptr<juce::XmlElement> toXml() const;
-    void fromXml (const juce::XmlElement&);
-    void reset();
+    void reset() noexcept { ld::ld_layers_reset (handle); }
 
 private:
-    int bankSize = kAutoBankSize;
-    int fittedBankSize = kFallbackBankSize;
-    std::vector<Layer> userLayers;
+    std::vector<Layer> list (const MixerEngine*, int which, const juce::String& id = {}) const;
+
+    ld::LayerSet* handle;
+    bool owned;
+    mutable std::vector<Layer> userSnapshot;
+
+    JUCE_DECLARE_NON_COPYABLE (LayerSet)
 };
 
 } // namespace livedaw

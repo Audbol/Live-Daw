@@ -1,0 +1,639 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<LiveDAWShow version="2" name="Untitled show" currentScene="-1">
+  <Console outputProtection="1" outputCeilingDb="0.0">
+    <Monitor afl="0" levelDb="0.0" outL="-1" outR="-1"/>
+    <Master>
+      <Strip ref="master:0" sections="511" name="Master" colour="ffb83d4f"
+             stereo="1" inL="-1" inR="-1" outL="0" outR="1" mainAssign="0"
+             trimDb="0.0" polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0"
+             pan="0.0" mute="0" kind="master" id="0" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+    </Master>
+    <Buses>
+      <Strip ref="aux:0" sections="511" name="Aux 1" colour="ff3daa6e" stereo="0"
+             inL="-1" inR="-1" outL="-1" outR="-1" mainAssign="0" trimDb="0.0"
+             polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0" pan="0.0" mute="0"
+             kind="aux" id="0" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+    </Buses>
+    <Inputs>
+      <Strip ref="input:1" sections="511" name="Ch 1" colour="ff3d7ab8" stereo="0"
+             inL="0" inR="-1" outL="-1" outR="-1" mainAssign="1" trimDb="0.0"
+             polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0" pan="0.0" mute="0"
+             kind="input" id="1" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:2" sections="511" name="Ch 2" colour="ff3d7ab8" stereo="0"
+             inL="1" inR="-1" outL="-1" outR="-1" mainAssign="1" trimDb="0.0"
+             polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0" pan="0.0" mute="0"
+             kind="input" id="2" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:3" sections="511" name="Ch 3" colour="ff3d7ab8" stereo="0"
+             inL="2" inR="-1" outL="-1" outR="-1" mainAssign="1" trimDb="0.0"
+             polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0" pan="0.0" mute="0"
+             kind="input" id="3" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:4" sections="511" name="Ch 4" colour="ff3d7ab8" stereo="0"
+             inL="3" inR="-1" outL="-1" outR="-1" mainAssign="1" trimDb="0.0"
+             polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0" pan="0.0" mute="0"
+             kind="input" id="4" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:5" sections="511" name="Ch 5" colour="ff3d7ab8" stereo="0"
+             inL="4" inR="-1" outL="-1" outR="-1" mainAssign="1" trimDb="0.0"
+             polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0" pan="0.0" mute="0"
+             kind="input" id="5" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:6" sections="511" name="Ch 6" colour="ff3d7ab8" stereo="0"
+             inL="5" inR="-1" outL="-1" outR="-1" mainAssign="1" trimDb="0.0"
+             polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0" pan="0.0" mute="0"
+             kind="input" id="6" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:7" sections="511" name="Ch 7" colour="ff3d7ab8" stereo="0"
+             inL="6" inR="-1" outL="-1" outR="-1" mainAssign="1" trimDb="0.0"
+             polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0" pan="0.0" mute="0"
+             kind="input" id="7" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:8" sections="511" name="Ch 8" colour="ff3d7ab8" stereo="0"
+             inL="7" inR="-1" outL="-1" outR="-1" mainAssign="1" trimDb="0.0"
+             polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0" pan="0.0" mute="0"
+             kind="input" id="8" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:9" sections="511" name="Ch 9" colour="ff3d7ab8" stereo="0"
+             inL="8" inR="-1" outL="-1" outR="-1" mainAssign="1" trimDb="0.0"
+             polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0" pan="0.0" mute="0"
+             kind="input" id="9" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:10" sections="511" name="Ch 10" colour="ff3d7ab8"
+             stereo="0" inL="9" inR="-1" outL="-1" outR="-1" mainAssign="1"
+             trimDb="0.0" polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0"
+             pan="0.0" mute="0" kind="input" id="10" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:11" sections="511" name="Ch 11" colour="ff3d7ab8"
+             stereo="0" inL="10" inR="-1" outL="-1" outR="-1" mainAssign="1"
+             trimDb="0.0" polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0"
+             pan="0.0" mute="0" kind="input" id="11" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:12" sections="511" name="Ch 12" colour="ff3d7ab8"
+             stereo="0" inL="11" inR="-1" outL="-1" outR="-1" mainAssign="1"
+             trimDb="0.0" polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0"
+             pan="0.0" mute="0" kind="input" id="12" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:13" sections="511" name="Ch 13" colour="ff3d7ab8"
+             stereo="0" inL="12" inR="-1" outL="-1" outR="-1" mainAssign="1"
+             trimDb="0.0" polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0"
+             pan="0.0" mute="0" kind="input" id="13" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:14" sections="511" name="Ch 14" colour="ff3d7ab8"
+             stereo="0" inL="13" inR="-1" outL="-1" outR="-1" mainAssign="1"
+             trimDb="0.0" polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0"
+             pan="0.0" mute="0" kind="input" id="14" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:15" sections="511" name="Ch 15" colour="ff3d7ab8"
+             stereo="0" inL="14" inR="-1" outL="-1" outR="-1" mainAssign="1"
+             trimDb="0.0" polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0"
+             pan="0.0" mute="0" kind="input" id="15" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:16" sections="511" name="Ch 16" colour="ff3d7ab8"
+             stereo="0" inL="15" inR="-1" outL="-1" outR="-1" mainAssign="1"
+             trimDb="0.0" polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0"
+             pan="0.0" mute="0" kind="input" id="16" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:17" sections="511" name="Ch 17" colour="ff3d7ab8"
+             stereo="0" inL="16" inR="-1" outL="-1" outR="-1" mainAssign="1"
+             trimDb="0.0" polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0"
+             pan="0.0" mute="0" kind="input" id="17" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:18" sections="511" name="Ch 18" colour="ff3d7ab8"
+             stereo="0" inL="17" inR="-1" outL="-1" outR="-1" mainAssign="1"
+             trimDb="0.0" polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0"
+             pan="0.0" mute="0" kind="input" id="18" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+      <Strip ref="input:19" sections="511" name="Ch 19" colour="ff3d7ab8"
+             stereo="0" inL="18" inR="-1" outL="-1" outR="-1" mainAssign="1"
+             trimDb="0.0" polarity="0" hpf="0" hpfFreq="80.0" faderDb="0.0"
+             pan="0.0" mute="0" kind="input" id="19" recallSafe="0">
+        <Gate on="0" threshold="-50.0" range="-80.0" attack="0.5" hold="50.0"
+              release="150.0"/>
+        <Eq on="1">
+          <Band index="0" type="1" freq="100.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+          <Band index="1" type="0" freq="400.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="2" type="0" freq="2500.0" gain="0.0" q="1.0" on="1"/>
+          <Band index="3" type="2" freq="8000.0" gain="0.0" q="0.7070000171661377"
+                on="1"/>
+        </Eq>
+        <Comp on="0" threshold="-20.0" ratio="4.0" attack="10.0" release="120.0"
+              knee="6.0" makeup="0.0"/>
+        <Sends>
+          <Send slot="0" on="0" level="0.0" pre="1"/>
+        </Sends>
+        <Inserts>
+          <Insert slot="0"/>
+          <Insert slot="1"/>
+          <Insert slot="2"/>
+          <Insert slot="3"/>
+          <Insert slot="4"/>
+          <Insert slot="5"/>
+          <Insert slot="6"/>
+          <Insert slot="7"/>
+        </Inserts>
+      </Strip>
+    </Inputs>
+  </Console>
+  <Layers bankSize="0" selected="in-1"/>
+  <Scenes/>
+</LiveDAWShow>

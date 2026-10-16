@@ -20,11 +20,11 @@ StripComponent::StripComponent (Strip& s, UiContext& c)
 {
     const bool isMaster = strip.getKind() == StripKind::Master;
 
-    nameLabel.setText (strip.name, juce::dontSendNotification);
+    nameLabel.setText (strip.getName(), juce::dontSendNotification);
     nameLabel.setJustificationType (juce::Justification::centred);
     nameLabel.setFont (juce::FontOptions (13.0f, juce::Font::bold));
     nameLabel.setEditable (false, true);
-    nameLabel.onTextChange = [this] { strip.name = nameLabel.getText(); };
+    nameLabel.onTextChange = [this] { strip.setName (nameLabel.getText()); };
     nameLabel.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (nameLabel);
 
@@ -113,8 +113,8 @@ void StripComponent::timerCallback()
     widthButton.setButtonText (stereo ? "ST" : "MO");
     widthButton.setToggleState (stereo, juce::dontSendNotification);
 
-    if (! nameLabel.isBeingEdited() && nameLabel.getText() != strip.name)
-        nameLabel.setText (strip.name, juce::dontSendNotification);
+    if (! nameLabel.isBeingEdited() && nameLabel.getText() != strip.getName())
+        nameLabel.setText (strip.getName(), juce::dontSendNotification);
 
     const float db = strip.params.faderDb.load();
     levelLabel.setText (db <= dsp::kMinusInfDb ? "-inf" : juce::String (db, 1), juce::dontSendNotification);
@@ -151,7 +151,7 @@ void StripComponent::paint (juce::Graphics& g)
         g.drawRoundedRectangle (b.toFloat().reduced (1.5f), 4.0f, 1.5f);
     }
 
-    g.setColour (strip.colour);
+    g.setColour (strip.getColour());
     g.fillRect (b.reduced (4, 0).removeFromTop (4).translated (0, 3));
 
     if (strip.params.recallSafe.load())
@@ -329,7 +329,7 @@ void StripComponent::showContextMenu()
         { "Red", 0xffb83d4f }, { "Purple", 0xff8a4fc4 }, { "Teal", 0xff3aa6a6 }, { "Grey", 0xff7a7f87 },
     };
     for (auto& [name, argb] : palette)
-        colours.addItem (name, [this, c = juce::Colour (argb)] { strip.colour = c; repaint(); });
+        colours.addItem (name, [this, c = juce::Colour (argb)] { strip.setColour (c); repaint(); });
     menu.addSubMenu ("Colour", colours);
 
     if (strip.getKind() != StripKind::Master)

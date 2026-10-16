@@ -3,79 +3,55 @@
 namespace livedaw
 {
 
-namespace
+LayerSet::LayerSet() : handle (ld::ld_layers_create()), owned (true) {}
+
+LayerSet::~LayerSet()
 {
-    void addBanks (std::vector<Layer>& layers, const std::vector<state::StripRef>& refs, int bankSize,
-                   const juce::String& idPrefix, const juce::String& namePrefix)
-    {
-        const int count = static_cast<int> (refs.size());
+    if (owned)
+        ld::ld_layers_destroy (handle);
+}
 
-        for (int start = 0, bank = 1; start < count; start += bankSize, ++bank)
-        {
-            const int end = juce::jmin (count, start + bankSize);
-            Layer layer;
-            layer.id = idPrefix + "-" + juce::String (bank);
-            layer.name = count <= bankSize ? namePrefix
-                                           : namePrefix + " " + juce::String (start + 1) + "-" + juce::String (end);
-            layer.strips.assign (refs.begin() + start, refs.begin() + end);
-            layers.push_back (std::move (layer));
-        }
-    }
-} // namespace
-
-std::vector<Layer> LayerSet::getDefaultLayers (const MixerEngine& engine) const
+std::vector<Layer> LayerSet::list (const MixerEngine* engine, int which, const juce::String& id) const
 {
-    std::vector<state::StripRef> inputs, auxes, groups, all;
-
-    for (auto& s : engine.getInputs())
-        inputs.push_back (state::StripRef::of (*s));
-
-    for (auto& b : engine.getBuses())
-        (b->getKind() == StripKind::Aux ? auxes : groups).push_back (state::StripRef::of (*b));
+    const Utf8 u (id);
+    auto* l = ld::ld_layers_list (handle, engine != nullptr ? engine->getHandle() : nullptr, which, u.data, u.size);
 
     std::vector<Layer> layers;
+    const int n = ld::ld_layer_list_len (l);
+    layers.reserve ((size_t) n);
 
-    if (inputs.empty())
-        layers.push_back ({ "in-1", "Inputs", {}, false });
-    else
-        addBanks (layers, inputs, getEffectiveBankSize(), "in", "Ch");
+    std::vector<ld::StripRefC> refs;
+    for (int i = 0; i < n; ++i)
+    {
+        Layer layer;
+        layer.id = takeString (ld::ld_layer_list_id (l, i));
+        layer.name = takeString (ld::ld_layer_list_name (l, i));
+        layer.user = ld::ld_layer_list_is_user (l, i);
 
-    addBanks (layers, auxes, getEffectiveBankSize(), "aux", "Aux");
-    addBanks (layers, groups, getEffectiveBankSize(), "groups", "Groups");
+        refs.resize ((size_t) ld::ld_layer_list_strips (l, i, nullptr, 0));
+        ld::ld_layer_list_strips (l, i, refs.data(), (int32_t) refs.size());
+        for (auto r : refs)
+            layer.strips.push_back (state::StripRef::fromC (r));
 
-    all = inputs;
-    all.insert (all.end(), auxes.begin(), auxes.end());
-    all.insert (all.end(), groups.begin(), groups.end());
-    layers.push_back ({ "all", "All", std::move (all), false });
+        layers.push_back (std::move (layer));
+    }
 
+    ld::ld_layer_list_free (l);
     return layers;
-}
-
-std::vector<Layer> LayerSet::getAllLayers (const MixerEngine& engine) const
-{
-    auto layers = getDefaultLayers (engine);
-    layers.insert (layers.end(), userLayers.begin(), userLayers.end());
-    return layers;
-}
-
-Layer LayerSet::findLayer (const MixerEngine& engine, const juce::String& id) const
-{
-    auto layers = getAllLayers (engine);
-
-    for (auto& l : layers)
-        if (l.id == id)
-            return l;
-
-    return layers.front();
 }
 
 juce::String LayerSet::findDefaultLayerContaining (const MixerEngine& engine, const state::StripRef& ref) const
 {
-    for (auto& layer : getDefaultLayers (engine))
-        if (layer.id != "all" && std::find (layer.strips.begin(), layer.strips.end(), ref) != layer.strips.end())
-            return layer.id;
+    return takeString (ld::ld_layers_find_default_containing (handle, engine.getHandle(), ref.toC()));
+}
 
-    return {};
+std::vector<Layer> LayerSet::getDefaultLayers (const MixerEngine& engine) const { return list (&engine, 0); }
+std::vector<Layer> LayerSet::getAllLayers (const MixerEngine& engine) const     { return list (&engine, 1); }
+
+Layer LayerSet::findLayer (const MixerEngine& engine, const juce::String& id) const
+{
+    auto layers = list (&engine, 3, id);
+    return layers.empty() ? Layer {} : std::move (layers.front());
 }
 
 std::vector<Strip*> LayerSet::resolve (MixerEngine& engine, const Layer& layer)
@@ -90,120 +66,68 @@ std::vector<Strip*> LayerSet::resolve (MixerEngine& engine, const Layer& layer)
 }
 
 //==============================================================================
-Layer* LayerSet::getUserLayer (const juce::String& id) noexcept
+const std::vector<Layer>& LayerSet::getUserLayers() const
 {
-    for (auto& l : userLayers)
+    userSnapshot = list (nullptr, 2);
+    return userSnapshot;
+}
+
+const Layer* LayerSet::getUserLayer (const juce::String& id) const
+{
+    for (auto& l : getUserLayers())
         if (l.id == id)
             return &l;
 
     return nullptr;
 }
 
-juce::String LayerSet::addUserLayer (const juce::String& name, std::vector<state::StripRef> strips)
+juce::String LayerSet::addUserLayer (const juce::String& name, const std::vector<state::StripRef>& strips)
 {
-    Layer layer;
-    layer.id = "user-" + juce::Uuid().toString();
-    layer.name = name;
-    layer.strips = std::move (strips);
-    layer.user = true;
-    userLayers.push_back (std::move (layer));
-    return userLayers.back().id;
+    const Utf8 u (name);
+    const auto refs = state::toC (strips);
+    return takeString (ld::ld_layers_add_user (handle, u.data, u.size, refs.data(), (int32_t) refs.size()));
 }
 
 void LayerSet::removeUserLayer (const juce::String& id)
 {
-    userLayers.erase (std::remove_if (userLayers.begin(), userLayers.end(), [&] (const Layer& l) { return l.id == id; }),
-                      userLayers.end());
+    const Utf8 u (id);
+    ld::ld_layers_remove_user (handle, u.data, u.size);
+}
+
+void LayerSet::renameUserLayer (const juce::String& id, const juce::String& name)
+{
+    const Utf8 u (id), n (name);
+    ld::ld_layers_rename_user (handle, u.data, u.size, n.data, n.size);
 }
 
 void LayerSet::moveUserLayer (const juce::String& id, int delta)
 {
-    for (size_t i = 0; i < userLayers.size(); ++i)
-    {
-        if (userLayers[i].id != id)
-            continue;
-
-        const auto target = static_cast<int> (i) + delta;
-        if (juce::isPositiveAndBelow (target, static_cast<int> (userLayers.size())))
-            std::swap (userLayers[i], userLayers[(size_t) target]);
-        return;
-    }
+    const Utf8 u (id);
+    ld::ld_layers_move_user (handle, u.data, u.size, delta);
 }
 
 void LayerSet::addToUserLayer (const juce::String& layerId, const state::StripRef& ref)
 {
-    if (auto* l = getUserLayer (layerId))
-        if (std::find (l->strips.begin(), l->strips.end(), ref) == l->strips.end())
-            l->strips.push_back (ref);
+    const Utf8 u (layerId);
+    ld::ld_layers_add_to_user (handle, u.data, u.size, ref.toC());
 }
 
 void LayerSet::removeFromUserLayer (const juce::String& layerId, const state::StripRef& ref)
 {
-    if (auto* l = getUserLayer (layerId))
-        l->strips.erase (std::remove (l->strips.begin(), l->strips.end(), ref), l->strips.end());
+    const Utf8 u (layerId);
+    ld::ld_layers_remove_from_user (handle, u.data, u.size, ref.toC());
 }
 
 void LayerSet::moveWithinUserLayer (const juce::String& layerId, int index, int delta)
 {
-    if (auto* l = getUserLayer (layerId))
-    {
-        const int target = index + delta;
-        const int size = static_cast<int> (l->strips.size());
-        if (juce::isPositiveAndBelow (index, size) && juce::isPositiveAndBelow (target, size))
-            std::swap (l->strips[(size_t) index], l->strips[(size_t) target]);
-    }
+    const Utf8 u (layerId);
+    ld::ld_layers_move_within_user (handle, u.data, u.size, index, delta);
 }
 
-//==============================================================================
-std::unique_ptr<juce::XmlElement> LayerSet::toXml() const
+void LayerSet::setSelectedLayerId (const juce::String& id)
 {
-    auto xml = std::make_unique<juce::XmlElement> ("Layers");
-    xml->setAttribute ("bankSize", bankSize);
-    xml->setAttribute ("selected", selectedLayerId);
-
-    for (auto& l : userLayers)
-    {
-        auto* e = xml->createNewChildElement ("Layer");
-        e->setAttribute ("id", l.id);
-        e->setAttribute ("name", l.name);
-
-        juce::StringArray refs;
-        for (auto& r : l.strips)
-            refs.add (r.toString());
-        e->setAttribute ("strips", refs.joinIntoString (","));
-    }
-
-    return xml;
-}
-
-void LayerSet::fromXml (const juce::XmlElement& xml)
-{
-    reset();
-    setBankSize (xml.getIntAttribute ("bankSize", kAutoBankSize));
-    selectedLayerId = xml.getStringAttribute ("selected", selectedLayerId);
-
-    for (auto* e : xml.getChildWithTagNameIterator ("Layer"))
-    {
-        Layer layer;
-        layer.id = e->getStringAttribute ("id");
-        if (! layer.id.startsWith ("user-"))
-            layer.id = "user-" + juce::Uuid().toString();
-        layer.name = e->getStringAttribute ("name", "User");
-        layer.user = true;
-
-        for (auto& part : juce::StringArray::fromTokens (e->getStringAttribute ("strips"), ",", ""))
-            if (part.isNotEmpty())
-                layer.strips.push_back (state::StripRef::fromString (part));
-
-        userLayers.push_back (std::move (layer));
-    }
-}
-
-void LayerSet::reset()
-{
-    userLayers.clear();
-    bankSize = kAutoBankSize;
-    selectedLayerId = "in-1";
+    const Utf8 u (id);
+    ld::ld_layers_set_selected (handle, u.data, u.size);
 }
 
 } // namespace livedaw

@@ -100,6 +100,17 @@ impl InsertChain {
         }
     }
 
+    /// Message thread only: the host context of the plugin in `slot` (null if empty).
+    /// Slots are only replaced on the message thread, so the pointer is stable there.
+    pub fn ctx(&self, slot: usize) -> *mut c_void {
+        if slot >= NUM_INSERT_SLOTS {
+            return std::ptr::null_mut();
+        }
+        let p = self.slots[slot].load(Acquire);
+        // SAFETY: a non-null slot stays alive until replaced (message thread) and collected.
+        unsafe { p.as_ref() }.map_or(std::ptr::null_mut(), |s| s.cb.ctx)
+    }
+
     pub fn is_loaded(&self, slot: usize) -> bool {
         slot < NUM_INSERT_SLOTS && !self.slots[slot].load(Relaxed).is_null()
     }

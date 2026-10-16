@@ -5,39 +5,38 @@ namespace livedaw
 
 namespace
 {
-    constexpr int kShowVersion = 2;
-
-    juce::String refsToString (const std::vector<state::StripRef>& refs)
+    ld::Show* createShow (Show* owner, ld::CaptureInsertFn capture, ld::RestoreInsertFn restore)
     {
-        juce::StringArray parts;
-        for (auto& r : refs)
-            parts.add (r.toString());
-        return parts.joinIntoString (",");
+        const ld::PluginBridge bridge { owner, capture, restore };
+        auto* s = ld::ld_show_create (&bridge);
+        if (s == nullptr)
+            std::abort();
+        return s;
     }
 
-    std::vector<state::StripRef> refsFromString (const juce::String& s)
+    void restorePluginState (juce::AudioPluginInstance& plugin, const juce::String& base64)
     {
-        std::vector<state::StripRef> refs;
-        for (auto& part : juce::StringArray::fromTokens (s, ",", ""))
-            if (part.isNotEmpty())
-                refs.push_back (state::StripRef::fromString (part));
-        return refs;
-    }
+        if (base64.isEmpty())
+            return;
 
-    void mergeResult (state::ApplyResult& into, const state::ApplyResult& from)
-    {
-        into.stripsApplied += from.stripsApplied;
-        into.stripsSkippedSafe += from.stripsSkippedSafe;
-        into.stripsMissing += from.stripsMissing;
-        into.warnings.addArray (from.warnings);
+        juce::MemoryBlock block;
+        if (block.fromBase64Encoding (base64))
+            plugin.setStateInformation (block.getData(), static_cast<int> (block.getSize()));
     }
 } // namespace
 
-Show::Show (MixerEngine& e, PluginHost& h) : engine (e), host (h) {}
+Show::Show (MixerEngine& e, PluginHost& h)
+    : engine (e),
+      host (h),
+      handle (createShow (this, &Show::captureInsert, &Show::restoreInsert)),
+      layers (ld::ld_show_layers (handle))
+{
+}
 
 Show::~Show()
 {
     stopTimer();
+    ld::ld_show_destroy (handle);
 }
 
 void Show::changed()
@@ -46,377 +45,334 @@ void Show::changed()
         onChanged();
 }
 
-//==============================================================================
-Show::Scene* Show::getScene (int index) const noexcept
+void Show::setName (const juce::String& newName)
 {
-    return juce::isPositiveAndBelow (index, getNumScenes()) ? scenes[(size_t) index].get() : nullptr;
+    const Utf8 u (newName);
+    ld::ld_show_set_name (handle, u.data, u.size);
+}
+
+//==============================================================================
+// Plugin bridge: the Rust session asks for plugin state and plugin creation here.
+
+bool Show::captureInsert (void* ctx, const ld::Strip* strip, int32_t slot, ld::LdSink* description, ld::LdSink* state)
+{
+    auto& self = *static_cast<Show*> (ctx);
+
+    try
+    {
+        const PluginChain chain (self.engine.getHandle(), const_cast<ld::Strip*> (strip));
+        auto* plugin = chain.getPlugin (slot);
+        if (plugin == nullptr)
+            return false;
+
+        const auto desc = plugin->getPluginDescription().createXml();
+        appendTo (description, desc->toString (juce::XmlElement::TextFormat().singleLine().withoutHeader()));
+
+        juce::MemoryBlock data;
+        plugin->getStateInformation (data);
+        appendTo (state, data.toBase64Encoding());
+        return true;
+    }
+    catch (...)
+    {
+        return false; // a plugin that throws from getStateInformation is saved without state
+    }
+}
+
+int32_t Show::restoreInsert (void* ctx, const ld::Strip* strip, int32_t slot, int32_t mode,
+                             const char* descriptionUtf8, size_t descriptionLen,
+                             const char* stateUtf8, size_t stateLen, ld::LdSink* error)
+{
+    auto& self = *static_cast<Show*> (ctx);
+
+    try
+    {
+        juce::PluginDescription desc;
+        const auto descXml = juce::parseXML (juce::String::fromUTF8 (descriptionUtf8, (int) descriptionLen));
+        if (descXml == nullptr || ! desc.loadFromXml (*descXml))
+        {
+            appendTo (error, "invalid plugin description");
+            return 2;
+        }
+
+        const auto state = juce::String::fromUTF8 (stateUtf8, (int) stateLen);
+        PluginChain chain (self.engine.getHandle(), const_cast<ld::Strip*> (strip));
+
+        if (mode == 0) // recall: only into the same plugin already loaded
+        {
+            auto* current = chain.getPlugin (slot);
+            if (current == nullptr
+                || current->getPluginDescription().createIdentifierString() != desc.createIdentifierString())
+                return 1;
+
+            restorePluginState (*current, state);
+            return 0;
+        }
+
+        // Show load: create the plugin.
+        juce::String message;
+        auto instance = self.host.createInstance (desc, self.engine.getSampleRate(), self.engine.getBlockSize(), message);
+        if (instance == nullptr)
+        {
+            appendTo (error, message.isNotEmpty() ? message : juce::String ("could not be created"));
+            return 2;
+        }
+
+        restorePluginState (*instance, state);
+        chain.setPlugin (slot, std::move (instance));
+        return 0;
+    }
+    catch (const std::exception& e)
+    {
+        appendTo (error, e.what());
+    }
+    catch (...)
+    {
+        appendTo (error, "the plugin threw an exception");
+    }
+    return 2;
+}
+
+//==============================================================================
+const std::optional<Show::Scene> Show::getScene (int index) const
+{
+    if (! ld::ld_scene_exists (handle, index))
+        return std::nullopt;
+
+    Scene s;
+    s.name = takeString (ld::ld_scene_name (handle, index));
+    s.notes = takeString (ld::ld_scene_notes (handle, index));
+    s.scope = ld::ld_scene_scope (handle, index);
+    s.fadeSeconds = ld::ld_scene_fade_seconds (handle, index);
+    s.numSnippets = ld::ld_scene_num_snippets (handle, index);
+    return s;
+}
+
+void Show::setSceneName (int index, const juce::String& text)
+{
+    const Utf8 u (text);
+    ld::ld_scene_set_name (handle, index, u.data, u.size);
+}
+
+void Show::setSceneNotes (int index, const juce::String& text)
+{
+    const Utf8 u (text);
+    ld::ld_scene_set_notes (handle, index, u.data, u.size);
+}
+
+void Show::setSceneScope (int index, juce::uint32 scope)
+{
+    ld::ld_scene_set_scope (handle, index, scope);
+}
+
+void Show::setSceneFadeSeconds (int index, double seconds)
+{
+    ld::ld_scene_set_fade_seconds (handle, index, seconds);
 }
 
 int Show::addScene (const juce::String& sceneName, int index)
 {
-    auto scene = std::make_unique<Scene>();
-    scene->name = sceneName;
-    scene->state = state::capture (engine, state::AllSections);
-
-    index = juce::isPositiveAndBelow (index, getNumScenes() + 1) ? index : getNumScenes();
-    scenes.insert (scenes.begin() + index, std::move (scene));
-    currentScene = index;
+    const Utf8 u (sceneName);
+    const int result = ld::ld_show_add_scene (handle, engine.getHandle(), u.data, u.size, index);
     changed();
-    return index;
+    return result;
 }
 
 void Show::storeScene (int index)
 {
-    if (auto* scene = getScene (index))
-    {
-        scene->state = state::capture (engine, state::AllSections);
-        currentScene = index;
-        changed();
-    }
+    ld::ld_show_store_scene (handle, engine.getHandle(), index);
+    changed();
 }
 
 void Show::removeScene (int index)
 {
-    if (getScene (index) == nullptr)
-        return;
-
-    scenes.erase (scenes.begin() + index);
-
-    if (currentScene == index)
-        currentScene = -1;
-    else if (currentScene > index)
-        --currentScene;
-
+    ld::ld_show_remove_scene (handle, index);
     changed();
 }
 
 void Show::moveScene (int from, int to)
 {
-    if (getScene (from) == nullptr || ! juce::isPositiveAndBelow (to, getNumScenes()) || from == to)
-        return;
-
-    auto scene = std::move (scenes[(size_t) from]);
-    scenes.erase (scenes.begin() + from);
-    scenes.insert (scenes.begin() + to, std::move (scene));
-
-    if (currentScene == from)
-        currentScene = to;
-    else if (from < currentScene && to >= currentScene)
-        --currentScene;
-    else if (from > currentScene && to <= currentScene)
-        ++currentScene;
-
+    ld::ld_show_move_scene (handle, from, to);
     changed();
 }
 
-state::ApplyResult Show::recallScene (int index)
+state::ApplyResult Show::afterRecall (ld::ApplyResultC& r)
 {
-    state::ApplyResult result;
-    auto* scene = getScene (index);
+    auto result = state::ApplyResult::fromC (r);
 
-    if (scene == nullptr || scene->state == nullptr)
-        return result;
+    if (isFading())
+        startTimerHz (60);
+    else
+        stopTimer();
 
-    cancelFade();
-
-    std::vector<state::FadeTarget> targets;
-    const bool fade = scene->fadeSeconds > 0.0;
-    result = state::apply (engine, *scene->state, scene->scope, nullptr, true, fade ? &targets : nullptr);
-
-    // Auto-fire snippets apply on top of the scene (they ignore recall safes, like
-    // a manual snippet). Their continuous values override the scene's fade targets.
-    for (auto& snippet : scene->snippets)
-    {
-        if (! snippet->fireWithScene || snippet->state == nullptr)
-            continue;
-
-        mergeResult (result, state::apply (engine, *snippet->state, snippet->sections,
-                                           &snippet->strips, false, fade ? &targets : nullptr));
-    }
-
-    if (fade)
-        startFade (std::move (targets), scene->fadeSeconds);
-
-    currentScene = index;
     changed();
     return result;
 }
 
+state::ApplyResult Show::recallScene (int index)
+{
+    ld::ApplyResultC r {};
+    ld::ld_show_recall_scene (handle, engine.getHandle(), 0, index, &r);
+    return afterRecall (r);
+}
+
 state::ApplyResult Show::recallNext()
 {
-    return recallScene (juce::jmin (currentScene + 1, getNumScenes() - 1));
+    ld::ApplyResultC r {};
+    ld::ld_show_recall_scene (handle, engine.getHandle(), 1, 0, &r);
+    return afterRecall (r);
 }
 
 state::ApplyResult Show::recallPrevious()
 {
-    return recallScene (juce::jmax (0, currentScene - 1));
+    ld::ApplyResultC r {};
+    ld::ld_show_recall_scene (handle, engine.getHandle(), 2, 0, &r);
+    return afterRecall (r);
 }
 
 //==============================================================================
-int Show::addSnippet (int sceneIndex, const juce::String& snippetName, juce::uint32 sections,
-                      std::vector<state::StripRef> strips)
+const std::optional<Show::Snippet> Show::getSnippet (int sceneIndex, int snippetIndex) const
 {
-    auto* scene = getScene (sceneIndex);
-    if (scene == nullptr)
-        return -1;
+    if (! ld::ld_snippet_exists (handle, sceneIndex, snippetIndex))
+        return std::nullopt;
 
-    auto snippet = std::make_unique<Snippet>();
-    snippet->name = snippetName;
-    snippet->sections = sections;
-    snippet->strips = std::move (strips);
-    snippet->state = state::capture (engine, sections, &snippet->strips);
-    scene->snippets.push_back (std::move (snippet));
+    Snippet s;
+    s.name = takeString (ld::ld_snippet_name (handle, sceneIndex, snippetIndex));
+    s.sections = ld::ld_snippet_sections (handle, sceneIndex, snippetIndex);
+    s.fireWithScene = ld::ld_snippet_fire_with_scene (handle, sceneIndex, snippetIndex);
+
+    std::vector<ld::StripRefC> refs ((size_t) ld::ld_snippet_strips (handle, sceneIndex, snippetIndex, nullptr, 0));
+    ld::ld_snippet_strips (handle, sceneIndex, snippetIndex, refs.data(), (int32_t) refs.size());
+    for (auto r : refs)
+        s.strips.push_back (state::StripRef::fromC (r));
+    return s;
+}
+
+int Show::addSnippet (int sceneIndex, const juce::String& snippetName, juce::uint32 sections,
+                      const std::vector<state::StripRef>& strips)
+{
+    const Utf8 u (snippetName);
+    const auto refs = state::toC (strips);
+    const int result = ld::ld_show_add_snippet (handle, engine.getHandle(), sceneIndex, u.data, u.size, sections,
+                                                refs.data(), (int32_t) refs.size());
     changed();
-    return static_cast<int> (scene->snippets.size()) - 1;
+    return result;
 }
 
 void Show::storeSnippet (int sceneIndex, int snippetIndex)
 {
-    if (auto* scene = getScene (sceneIndex))
-    {
-        if (juce::isPositiveAndBelow (snippetIndex, static_cast<int> (scene->snippets.size())))
-        {
-            auto& snippet = *scene->snippets[(size_t) snippetIndex];
-            snippet.state = state::capture (engine, snippet.sections, &snippet.strips);
-            changed();
-        }
-    }
+    ld::ld_show_store_snippet (handle, engine.getHandle(), sceneIndex, snippetIndex);
+    changed();
 }
 
 void Show::removeSnippet (int sceneIndex, int snippetIndex)
 {
-    if (auto* scene = getScene (sceneIndex))
-    {
-        if (juce::isPositiveAndBelow (snippetIndex, static_cast<int> (scene->snippets.size())))
-        {
-            scene->snippets.erase (scene->snippets.begin() + snippetIndex);
-            changed();
-        }
-    }
+    ld::ld_show_remove_snippet (handle, sceneIndex, snippetIndex);
+    changed();
 }
 
 state::ApplyResult Show::recallSnippet (int sceneIndex, int snippetIndex)
 {
-    if (auto* scene = getScene (sceneIndex))
-    {
-        if (juce::isPositiveAndBelow (snippetIndex, static_cast<int> (scene->snippets.size())))
-        {
-            auto& snippet = *scene->snippets[(size_t) snippetIndex];
-            if (snippet.state != nullptr)
-                return state::apply (engine, *snippet.state, snippet.sections, &snippet.strips, false);
-        }
-    }
+    ld::ApplyResultC r {};
+    ld::ld_show_recall_snippet (handle, engine.getHandle(), sceneIndex, snippetIndex, &r);
+    return state::ApplyResult::fromC (r);
+}
 
-    return {};
+void Show::setSnippetName (int sceneIndex, int snippetIndex, const juce::String& text)
+{
+    const Utf8 u (text);
+    ld::ld_snippet_set_name (handle, sceneIndex, snippetIndex, u.data, u.size);
+}
+
+void Show::setSnippetSections (int sceneIndex, int snippetIndex, juce::uint32 sections)
+{
+    ld::ld_snippet_set_sections (handle, sceneIndex, snippetIndex, sections);
+}
+
+void Show::setSnippetStrips (int sceneIndex, int snippetIndex, const std::vector<state::StripRef>& strips)
+{
+    const auto refs = state::toC (strips);
+    ld::ld_snippet_set_strips (handle, sceneIndex, snippetIndex, refs.data(), (int32_t) refs.size());
+}
+
+void Show::setSnippetFireWithScene (int sceneIndex, int snippetIndex, bool fire)
+{
+    ld::ld_snippet_set_fire_with_scene (handle, sceneIndex, snippetIndex, fire);
 }
 
 //==============================================================================
-void Show::startFade (std::vector<state::FadeTarget> targets, double seconds)
-{
-    fades.clear();
-
-    for (auto& t : targets)
-    {
-        // A later target for the same parameter (e.g. from a snippet) wins.
-        auto existing = std::find_if (fades.begin(), fades.end(), [&] (const Fade& f) { return f.param == t.param; });
-        if (existing != fades.end())
-            existing->target = t.target;
-        else
-            fades.push_back ({ t.param, t.param->load(), t.target });
-    }
-
-    fadeStartMs = juce::Time::getMillisecondCounterHiRes();
-    fadeDurationMs = seconds * 1000.0;
-    startTimerHz (60);
-}
-
 void Show::cancelFade()
 {
-    // Jump to the end of a running fade so the previous scene is fully applied.
-    for (auto& f : fades)
-        f.param->store (f.target);
-
-    fades.clear();
+    ld::ld_show_cancel_fade (handle);
     stopTimer();
 }
 
 void Show::timerCallback()
 {
-    const auto t = juce::jlimit (0.0, 1.0, (juce::Time::getMillisecondCounterHiRes() - fadeStartMs)
-                                               / juce::jmax (1.0, fadeDurationMs));
-
-    for (auto& f : fades)
-        f.param->store (f.start + static_cast<float> (t) * (f.target - f.start));
-
-    if (t >= 1.0)
-    {
-        fades.clear();
+    if (! ld::ld_show_tick (handle))
         stopTimer();
-    }
 }
 
 //==============================================================================
+juce::String Show::toXmlString() const
+{
+    return takeString (ld::ld_show_to_xml (handle, engine.getHandle()));
+}
+
 std::unique_ptr<juce::XmlElement> Show::toXml() const
 {
-    auto root = std::make_unique<juce::XmlElement> ("LiveDAWShow");
-    root->setAttribute ("version", kShowVersion);
-    root->setAttribute ("name", name);
-    root->setAttribute ("currentScene", currentScene);
-    root->addChildElement (state::saveConsole (engine).release());
-    root->addChildElement (layers.toXml().release());
+    return juce::parseXML (toXmlString());
+}
 
-    auto* scenesXml = root->createNewChildElement ("Scenes");
-    for (auto& scene : scenes)
-    {
-        auto* sx = scenesXml->createNewChildElement ("Scene");
-        sx->setAttribute ("name", scene->name);
-        sx->setAttribute ("notes", scene->notes);
-        sx->setAttribute ("scope", static_cast<int> (scene->scope));
-        sx->setAttribute ("fade", scene->fadeSeconds);
-        if (scene->state != nullptr)
-            sx->addChildElement (new juce::XmlElement (*scene->state));
+juce::Result Show::afterLoad (bool ok, ld::LdString* message)
+{
+    const auto text = takeString (message);
+    stopTimer();
+    engine.syncStrips();
+    changed();
 
-        auto* snippetsXml = sx->createNewChildElement ("Snippets");
-        for (auto& snippet : scene->snippets)
-        {
-            auto* nx = snippetsXml->createNewChildElement ("Snippet");
-            nx->setAttribute ("name", snippet->name);
-            nx->setAttribute ("sections", static_cast<int> (snippet->sections));
-            nx->setAttribute ("strips", refsToString (snippet->strips));
-            nx->setAttribute ("fireWithScene", snippet->fireWithScene ? 1 : 0);
-            if (snippet->state != nullptr)
-                nx->addChildElement (new juce::XmlElement (*snippet->state));
-        }
-    }
-
-    return root;
+    if (! ok)
+        return juce::Result::fail (text);
+    if (text.isNotEmpty())
+        return juce::Result::fail ("Some plugins could not be loaded:\n" + text);
+    return juce::Result::ok();
 }
 
 juce::Result Show::loadFromXml (const juce::XmlElement& xml, bool loadPlugins)
 {
-    cancelFade();
-
-    // Version 1 files were a bare console ("session").
-    if (xml.hasTagName ("LiveDAWSession"))
-    {
-        scenes.clear();
-        layers.reset();
-        currentScene = -1;
-        name = "Imported session";
-
-        juce::XmlElement console ("Console");
-        for (auto* child : xml.getChildIterator())
-            console.addChildElement (new juce::XmlElement (*child));
-
-        const auto result = state::loadConsole (engine, console, host, loadPlugins);
-        changed();
-        return result;
-    }
-
-    if (! xml.hasTagName ("LiveDAWShow"))
-        return juce::Result::fail ("Not a Live DAW show file");
-
-    if (xml.getIntAttribute ("version") > kShowVersion)
-        return juce::Result::fail ("This show was saved by a newer version of Live DAW");
-
-    auto* console = xml.getChildByName ("Console");
-    if (console == nullptr)
-        return juce::Result::fail ("The show file has no console section");
-
-    scenes.clear();
-    name = xml.getStringAttribute ("name", "Untitled show");
-
-    if (auto* layersXml = xml.getChildByName ("Layers"))
-        layers.fromXml (*layersXml);
-    else
-        layers.reset();
-
-    const auto result = state::loadConsole (engine, *console, host, loadPlugins);
-
-    if (auto* scenesXml = xml.getChildByName ("Scenes"))
-    {
-        for (auto* sx : scenesXml->getChildWithTagNameIterator ("Scene"))
-        {
-            auto scene = std::make_unique<Scene>();
-            scene->name = sx->getStringAttribute ("name");
-            scene->notes = sx->getStringAttribute ("notes");
-            scene->scope = static_cast<juce::uint32> (sx->getIntAttribute ("scope", static_cast<int> (scene->scope)));
-            scene->fadeSeconds = juce::jlimit (0.0, 60.0, sx->getDoubleAttribute ("fade"));
-            if (auto* st = sx->getChildByName ("State"))
-                scene->state = std::make_unique<juce::XmlElement> (*st);
-
-            if (auto* snippetsXml = sx->getChildByName ("Snippets"))
-            {
-                for (auto* nx : snippetsXml->getChildWithTagNameIterator ("Snippet"))
-                {
-                    auto snippet = std::make_unique<Snippet>();
-                    snippet->name = nx->getStringAttribute ("name");
-                    snippet->sections = static_cast<juce::uint32> (nx->getIntAttribute ("sections"));
-                    snippet->strips = refsFromString (nx->getStringAttribute ("strips"));
-                    snippet->fireWithScene = nx->getBoolAttribute ("fireWithScene");
-                    if (auto* st = nx->getChildByName ("State"))
-                        snippet->state = std::make_unique<juce::XmlElement> (*st);
-                    scene->snippets.push_back (std::move (snippet));
-                }
-            }
-
-            scenes.push_back (std::move (scene));
-        }
-    }
-
-    currentScene = juce::jlimit (-1, getNumScenes() - 1, xml.getIntAttribute ("currentScene", -1));
-    changed();
-    return result;
+    const auto text = xml.toString();
+    const Utf8 u (text);
+    ld::LdString* message = nullptr;
+    const bool ok = ld::ld_show_load_xml (handle, engine.getHandle(), u.data, u.size, loadPlugins, &message);
+    return afterLoad (ok, message);
 }
 
 juce::Result Show::saveToFile (const juce::File& file) const
 {
-    const auto text = toXml()->toString();
+    const auto path = file.getFullPathName();
+    const Utf8 u (path);
+    ld::LdString* error = nullptr;
 
-    if (file.existsAsFile())
-        file.copyFileTo (file.withFileExtension (file.getFileExtension() + ".bak"));
+    if (ld::ld_show_save_file (handle, engine.getHandle(), u.data, u.size, &error))
+        return juce::Result::ok();
 
-    juce::TemporaryFile temp (file);
-
-    if (! temp.getFile().replaceWithText (text))
-        return juce::Result::fail ("Could not write " + temp.getFile().getFullPathName());
-
-    // Verify what hit the disk before it replaces the real file.
-    if (juce::parseXML (temp.getFile()) == nullptr)
-        return juce::Result::fail ("Verification of the saved show failed");
-
-    if (! temp.overwriteTargetFileWithTemporary())
-        return juce::Result::fail ("Could not replace " + file.getFullPathName());
-
-    return juce::Result::ok();
+    return juce::Result::fail (takeString (error));
 }
 
 juce::Result Show::loadFromFile (const juce::File& file, bool loadPlugins)
 {
-    auto xml = juce::parseXML (file);
-
-    if (xml == nullptr)
-    {
-        // Fall back to the backup made by the previous save.
-        const auto backup = file.withFileExtension (file.getFileExtension() + ".bak");
-        xml = juce::parseXML (backup);
-
-        if (xml == nullptr)
-            return juce::Result::fail ("Could not read " + file.getFullPathName());
-    }
-
-    return loadFromXml (*xml, loadPlugins);
+    const auto path = file.getFullPathName();
+    const Utf8 u (path);
+    ld::LdString* message = nullptr;
+    const bool ok = ld::ld_show_load_file (handle, engine.getHandle(), u.data, u.size, loadPlugins, &message);
+    return afterLoad (ok, message);
 }
 
 void Show::clear (int numChannels)
 {
-    cancelFade();
-    scenes.clear();
-    currentScene = -1;
-    name = "Untitled show";
-    layers.reset();
-    engine.reset();
-    engine.setNumInputs (numChannels);
+    stopTimer();
+    ld::ld_show_clear (handle, engine.getHandle(), numChannels);
+    engine.syncStrips();
     changed();
 }
 

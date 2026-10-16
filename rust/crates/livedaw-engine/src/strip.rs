@@ -7,7 +7,8 @@ use crate::sends::SendBank;
 use livedaw_dsp::util::*;
 use livedaw_dsp::{Biquad, BiquadCoeffs, Compressor, NoiseGate, ParametricEq};
 use std::cell::UnsafeCell;
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
+use std::sync::Mutex;
 
 /// Realtime state, touched by exactly one audio task at a time (see the
 /// stage rules on [`Strip`]).
@@ -88,6 +89,9 @@ pub struct Strip {
     pub meters: StripMeters,
     pub sends: SendBank,
     pub inserts: InsertChain,
+    /// UI metadata (never touched by the audio thread).
+    name: Mutex<String>,
+    colour: AtomicU32,
     dsp: UnsafeCell<StripDsp>,
     last_main_assign: UnsafeCell<f32>,
     last_solo: UnsafeCell<f32>,
@@ -106,6 +110,8 @@ impl Strip {
             meters: StripMeters::default(),
             sends: SendBank::default(),
             inserts: InsertChain::default(),
+            name: Mutex::new(String::new()),
+            colour: AtomicU32::new(Self::default_colour(kind)),
             dsp: UnsafeCell::new(StripDsp::new()),
             last_main_assign: UnsafeCell::new(0.0),
             last_solo: UnsafeCell::new(0.0),
@@ -119,6 +125,33 @@ impl Strip {
     /// Inputs: a stable id. Buses: the bus slot sends refer to. Master: 0.
     pub fn id(&self) -> i32 {
         self.id
+    }
+
+    /// Default strip colour per kind (0xAARRGGBB).
+    pub fn default_colour(kind: StripKind) -> u32 {
+        match kind {
+            StripKind::Input => 0xff3d7ab8,
+            StripKind::Aux => 0xff3daa6e,
+            StripKind::Group => 0xffb8863d,
+            StripKind::Master => 0xffb83d4f,
+        }
+    }
+
+    pub fn name(&self) -> String {
+        self.name.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    pub fn set_name(&self, name: &str) {
+        *self.name.lock().unwrap_or_else(|e| e.into_inner()) = name.to_owned();
+    }
+
+    /// 0xAARRGGBB
+    pub fn colour(&self) -> u32 {
+        self.colour.load(Relaxed)
+    }
+
+    pub fn set_colour(&self, argb: u32) {
+        self.colour.store(argb, Relaxed);
     }
 
     /// # Safety

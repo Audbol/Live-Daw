@@ -15,7 +15,9 @@ use std::mem::{offset_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-pub const LD_ABI_VERSION: i32 = 1;
+pub mod session;
+
+pub const LD_ABI_VERSION: i32 = 2;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -321,6 +323,41 @@ pub unsafe extern "C" fn ld_strip_send(s: *const Strip, slot: i32) -> *const Sen
         return std::ptr::null();
     }
     guard(std::ptr::null(), || s.sends.get_or_create(slot as usize).map_or(std::ptr::null(), |p| p as *const _))
+}
+
+/// Message thread: the strip's name (free with `ld_string_free`).
+#[no_mangle]
+pub unsafe extern "C" fn ld_strip_name(s: *const Strip) -> *mut session::LdString {
+    session::LdString::new(strip(s).map(|s| s.name()).unwrap_or_default())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_strip_set_name(s: *const Strip, utf8: *const u8, len: usize) {
+    if let Some(s) = strip(s) {
+        guard((), || s.set_name(&session::str_arg(utf8, len)));
+    }
+}
+
+/// 0xAARRGGBB
+#[no_mangle]
+pub unsafe extern "C" fn ld_strip_colour(s: *const Strip) -> u32 {
+    strip(s).map_or(0, |s| s.colour())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_strip_set_colour(s: *const Strip, argb: u32) {
+    if let Some(s) = strip(s) {
+        s.set_colour(argb);
+    }
+}
+
+/// Message thread: the host context registered for insert `slot` (null if empty).
+#[no_mangle]
+pub unsafe extern "C" fn ld_strip_insert_ctx(s: *const Strip, slot: i32) -> *mut std::ffi::c_void {
+    match strip(s) {
+        Some(s) if slot >= 0 => s.inserts.ctx(slot as usize),
+        _ => std::ptr::null_mut(),
+    }
 }
 
 /// Any thread: the send to bus `slot` if it was ever configured, else null.

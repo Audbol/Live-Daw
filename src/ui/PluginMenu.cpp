@@ -10,7 +10,7 @@ bool loadPluginIntoSlot (UiContext& ctx, Strip& strip, int slot, const juce::Plu
 
     if (instance == nullptr)
     {
-        ctx.log.warning ("Could not load " + desc.name + " on " + strip.name + ": " + error);
+        ctx.log.warning ("Could not load " + desc.name + " on " + strip.getName() + ": " + error);
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
                                                 "Could not load plugin", desc.name + "\n" + error);
         return false;
@@ -21,7 +21,7 @@ bool loadPluginIntoSlot (UiContext& ctx, Strip& strip, int slot, const juce::Plu
             ctx.pluginRemoved (old);
 
     strip.inserts.setPlugin (slot, std::move (instance));
-    ctx.log.info ("Loaded " + desc.name + " on " + strip.name + " insert " + juce::String (slot + 1));
+    ctx.log.info ("Loaded " + desc.name + " on " + strip.getName() + " insert " + juce::String (slot + 1));
     return true;
 }
 

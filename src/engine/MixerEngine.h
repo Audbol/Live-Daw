@@ -7,6 +7,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 namespace livedaw
@@ -26,7 +27,7 @@ namespace livedaw
 
     Structure changes happen on the message thread; the engine publishes a new
     immutable topology and frees removed strips later (ld_engine_collect).
-    This class keeps a Strip wrapper per engine strip for the UI metadata. */
+    This class keeps a (stateless) Strip view per engine strip for the UI. */
 class MixerEngine final : public juce::AudioIODeviceCallback,
                           private juce::Timer
 {
@@ -58,6 +59,10 @@ public:
 
     /** Removes all inputs and buses and resets the master (used when loading sessions). */
     void reset();
+
+    /** Rebuilds the strip lists from the engine after a change made directly in
+        Rust (e.g. loading a show). Wrappers of strips that still exist are kept. */
+    void syncStrips();
 
 private:
     ld::Engine* engine;
@@ -151,8 +156,6 @@ private:
     void prepare (double sampleRate, int blockSize, const juce::BigInteger& activeIns,
                   const juce::BigInteger& activeOuts);
     void startWorkers (double sampleRate, int blockSize);
-    std::unique_ptr<Strip> wrap (ld::Strip* handle);
-    void syncInputs();
 
     Garbage garbage;
     std::vector<std::unique_ptr<Worker>> workers;

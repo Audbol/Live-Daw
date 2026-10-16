@@ -2,6 +2,7 @@
 
 #include "engine/Parameters.h"
 #include "engine/PluginChain.h"
+#include "engine/RustStrings.h"
 
 #include <juce_graphics/juce_graphics.h>
 
@@ -43,8 +44,9 @@ private:
 /** C++ view of one console strip of the Rust engine: trim -> polarity -> HPF ->
     gate -> 4-band EQ -> compressor -> inserts -> mute -> fader -> pan.
 
-    Parameters and meters are the engine's own atomics. The name and colour are
-    UI metadata kept here. Message thread only (the audio thread is in Rust). */
+    Stateless: parameters, meters, name, colour and plugin slots all live in the
+    engine, so a Strip can be recreated for the same handle at any time.
+    Message thread only (the audio thread is in Rust). */
 class Strip
 {
 public:
@@ -58,8 +60,15 @@ public:
 
     ld::Strip* getHandle() const noexcept { return handle; }
 
-    juce::String name;
-    juce::Colour colour;
+    juce::String getName() const { return takeString (ld::ld_strip_name (handle)); }
+    void setName (const juce::String& newName) const
+    {
+        const Utf8 u (newName);
+        ld::ld_strip_set_name (handle, u.data, u.size);
+    }
+
+    juce::Colour getColour() const noexcept { return juce::Colour (ld::ld_strip_colour (handle)); }
+    void setColour (juce::Colour c) const noexcept { ld::ld_strip_set_colour (handle, c.getARGB()); }
 
     StripParams& params;
     SendBank sends;

@@ -6,11 +6,12 @@
 //! verify the layout at startup (`ld_layout_info`).
 
 use crate::atomic::AtomicF32;
-use livedaw_dsp::{BandType, CompressorSettings, EqBand, EqSettings, GateSettings, NUM_BANDS};
+pub use livedaw_dsp::NUM_BANDS;
+use livedaw_dsp::{BandType, CompressorSettings, EqBand, EqSettings, GateSettings};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering::Relaxed};
 
 #[repr(i32)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum StripKind {
     Input = 0,
     Aux = 1,
@@ -31,6 +32,26 @@ impl StripKind {
 
     pub fn is_bus(self) -> bool {
         matches!(self, Self::Aux | Self::Group)
+    }
+
+    /// Name used in show files ("input", "aux", "group", "master").
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Aux => "aux",
+            Self::Group => "group",
+            Self::Master => "master",
+        }
+    }
+
+    /// Inverse of [`as_str`](Self::as_str); unknown names are inputs.
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "aux" => Self::Aux,
+            "group" => Self::Group,
+            "master" => Self::Master,
+            _ => Self::Input,
+        }
     }
 }
 

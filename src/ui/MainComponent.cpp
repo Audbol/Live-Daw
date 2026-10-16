@@ -205,8 +205,8 @@ void MainComponent::rebuildStrips()
     stripComps.clear();
 
     auto& layers = show.layers;
-    const auto layer = layers.findLayer (engine, layers.selectedLayerId);
-    layers.selectedLayerId = layer.id;
+    const auto layer = layers.findLayer (engine, layers.getSelectedLayerId());
+    layers.setSelectedLayerId (layer.id);
     layerStrips = LayerSet::resolve (engine, layer);
     stripComps.assign (layerStrips.size(), nullptr);
 
@@ -241,7 +241,7 @@ void MainComponent::applyFittedBankSize()
         return;
 
     // Stay on the same strips: find the new bank holding the first strip shown now.
-    const auto current = layers.findLayer (engine, layers.selectedLayerId);
+    const auto current = layers.findLayer (engine, layers.getSelectedLayerId());
     const bool onDefaultBank = ! current.user && current.id != "all" && ! current.strips.empty();
     const auto anchor = onDefaultBank ? current.strips.front() : state::StripRef();
 
@@ -251,7 +251,7 @@ void MainComponent::applyFittedBankSize()
     {
         const auto id = layers.findDefaultLayerContaining (engine, anchor);
         if (id.isNotEmpty())
-            layers.selectedLayerId = id;
+            layers.setSelectedLayerId (id);
     }
 
     rebuildStrips();
@@ -390,7 +390,7 @@ void MainComponent::removeStrip (Strip& strip)
 
         safe->closePluginWindowsFor (*s);
         const bool wasBus = s->isBus();
-        safe->log.info ("Removed " + s->name);
+        safe->log.info ("Removed " + s->getName());
         safe->engine.removeStrip (s);
         safe->rebuildStrips();
 
@@ -446,20 +446,20 @@ void MainComponent::recall (state::ApplyResult (Show::*fn)())
 
     const auto result = (show.*fn)();
     const int index = show.getCurrentSceneIndex();
-    if (auto* scene = show.getScene (index))
+    if (const auto scene = show.getScene (index))
         logRecall (ctx, "scene " + juce::String (index + 1) + " \"" + scene->name + "\"", result);
 }
 
 void MainComponent::updateSceneControls()
 {
     const int index = show.getCurrentSceneIndex();
-    auto* scene = show.getScene (index);
+    const auto scene = show.getScene (index);
 
-    sceneLabel.setText (scene != nullptr ? juce::String (index + 1).paddedLeft ('0', 2) + "  " + scene->name
+    sceneLabel.setText (scene ? juce::String (index + 1).paddedLeft ('0', 2) + "  " + scene->name
                                          : (show.getNumScenes() > 0 ? juce::String ("No scene recalled") : juce::String ("No scenes")),
                         juce::dontSendNotification);
 
-    if (auto* next = show.getScene (index + 1))
+    if (const auto next = show.getScene (index + 1))
         goButton.setTooltip ("Recall next scene: " + next->name);
     else
         goButton.setTooltip ("No next scene");
@@ -638,7 +638,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
             const auto layers = show.layers.getAllLayers (engine);
             if (index < static_cast<int> (layers.size()))
             {
-                show.layers.selectedLayerId = layers[(size_t) index].id;
+                show.layers.setSelectedLayerId (layers[(size_t) index].id);
                 rebuildStrips();
             }
             return true;
@@ -755,7 +755,7 @@ void MainComponent::openPluginEditor (Strip& strip, int slot)
         }
     }
 
-    pluginWindows.add (new PluginWindow (*plugin, strip.name + " - " + plugin->getName(), *this));
+    pluginWindows.add (new PluginWindow (*plugin, strip.getName() + " - " + plugin->getName(), *this));
 }
 
 void MainComponent::closePluginWindowsFor (juce::AudioProcessor* processor)
@@ -846,8 +846,8 @@ void MainComponent::saveShow (bool saveAs)
     auto writeTo = [this] (juce::File file)
     {
         file = file.withFileExtension (Show::fileExtension);
-        if (show.name == "Untitled show" || show.name == "Imported session")
-            show.name = file.getFileNameWithoutExtension();
+        if (show.getName() == "Untitled show" || show.getName() == "Imported session")
+            show.setName (file.getFileNameWithoutExtension());
 
         const auto result = show.saveToFile (file);
 
@@ -884,7 +884,7 @@ void MainComponent::saveShow (bool saveAs)
 void MainComponent::updateTitle()
 {
     if (auto* window = findParentComponentOfClass<juce::DocumentWindow>())
-        window->setName ("Live DAW - " + show.name + (showFile != juce::File() ? " (" + showFile.getFileName() + ")" : juce::String()));
+        window->setName ("Live DAW - " + show.getName() + (showFile != juce::File() ? " (" + showFile.getFileName() + ")" : juce::String()));
 }
 
 } // namespace livedaw::ui

@@ -436,9 +436,9 @@ namespace
                 auto& send = s.sends[(size_t) bus->getId()];
                 Row row;
                 row.label = add (std::make_unique<juce::Label>());
-                row.label->setText (bus->name, juce::dontSendNotification);
+                row.label->setText (bus->getName(), juce::dontSendNotification);
                 row.label->setFont (juce::FontOptions (12.0f));
-                row.label->setColour (juce::Label::textColourId, bus->colour.brighter (0.4f));
+                row.label->setColour (juce::Label::textColourId, bus->getColour().brighter (0.4f));
                 row.on = add (std::make_unique<ParamButton> (send.enabled, "ON", Colours::active));
                 row.pre = add (std::make_unique<ParamButton> (send.preFader, "PRE", Colours::solo));
                 row.level = add (std::make_unique<ParamSlider> (send.levelDb, -100.0, 10.0, 0.1, " dB", juce::Slider::LinearHorizontal));
@@ -656,11 +656,11 @@ void StripDetailPanel::paint (juce::Graphics& g)
         return;
     }
 
-    g.setColour (current->colour);
+    g.setColour (current->getColour());
     g.fillRect (header.removeFromLeft (6).reduced (0, 5));
     header.removeFromLeft (6);
     g.setColour (Colours::text);
-    g.drawText (current->name + "  -  " + juce::String (toString (current->getKind())).toUpperCase(),
+    g.drawText (current->getName() + "  -  " + juce::String (toString (current->getKind())).toUpperCase(),
                 header, juce::Justification::centredLeft);
 }
 

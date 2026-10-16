@@ -2,18 +2,21 @@
 
 #include "engine/ConsoleState.h"
 #include "engine/Layers.h"
+#include "engine/PluginHost.h"
 
 #include <juce_events/juce_events.h>
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace livedaw
 {
 
 /** A show: the console setup plus an ordered list of scenes, each of which can
-    hold snippets.
+    hold snippets. Implemented in Rust (crate livedaw-session); this class is the
+    C++ interface and hosts the plugins the session refers to.
 
       Show     - the whole file: console structure (channels, buses, plugins,
                  patching) and every scene.
@@ -31,38 +34,51 @@ namespace livedaw
 */
 class Show final : private juce::Timer
 {
-public:
-    struct Snippet
-    {
-        juce::String name;
-        juce::uint32 sections = state::Fader | state::Sends;
-        std::vector<state::StripRef> strips;
-        bool fireWithScene = false;
-        std::unique_ptr<juce::XmlElement> state;
-    };
+    MixerEngine& engine;
+    PluginHost& host;
+    ld::Show* handle; // declared before `layers`, which views the show's layer set
 
+public:
+    /** A copy of a scene's settings (change them with the setters below). */
     struct Scene
     {
         juce::String name, notes;
-        juce::uint32 scope = state::AllSections & ~state::Routing;
+        juce::uint32 scope = 0;
         double fadeSeconds = 0.0;
-        std::unique_ptr<juce::XmlElement> state;
-        std::vector<std::unique_ptr<Snippet>> snippets;
+        int numSnippets = 0;
+    };
+
+    /** A copy of a snippet's settings. */
+    struct Snippet
+    {
+        juce::String name;
+        juce::uint32 sections = 0;
+        std::vector<state::StripRef> strips;
+        bool fireWithScene = false;
     };
 
     Show (MixerEngine&, PluginHost&);
     ~Show() override;
 
-    juce::String name { "Untitled show" };
+    juce::String getName() const { return takeString (ld::ld_show_name (handle)); }
+    void setName (const juce::String&);
 
     /** Fader layers (default banks + user layers), saved with the show. */
     LayerSet layers;
 
     //==============================================================================
     // Scenes
-    int getNumScenes() const noexcept { return static_cast<int> (scenes.size()); }
-    Scene* getScene (int index) const noexcept;
-    int getCurrentSceneIndex() const noexcept { return currentScene; }
+    int getNumScenes() const noexcept { return ld::ld_show_num_scenes (handle); }
+    /** A copy (const, so that writing to it by mistake doesn't compile: use the setters). */
+    const std::optional<Scene> getScene (int index) const;
+    int getCurrentSceneIndex() const noexcept { return ld::ld_show_current_scene (handle); }
+
+    // Editing a scene or snippet's settings doesn't call onChanged (the editor
+    // that made the change updates itself).
+    void setSceneName (int index, const juce::String&);
+    void setSceneNotes (int index, const juce::String&);
+    void setSceneScope (int index, juce::uint32 scope);
+    void setSceneFadeSeconds (int index, double seconds);
 
     /** Captures the current console as a new scene (appended, or inserted at `index`). */
     int addScene (const juce::String& sceneName, int index = -1);
@@ -77,19 +93,26 @@ public:
 
     //==============================================================================
     // Snippets
+    const std::optional<Snippet> getSnippet (int sceneIndex, int snippetIndex) const;
     int addSnippet (int sceneIndex, const juce::String& snippetName, juce::uint32 sections,
-                    std::vector<state::StripRef> strips);
+                    const std::vector<state::StripRef>& strips);
     void storeSnippet (int sceneIndex, int snippetIndex);
     void removeSnippet (int sceneIndex, int snippetIndex);
     state::ApplyResult recallSnippet (int sceneIndex, int snippetIndex);
 
+    void setSnippetName (int sceneIndex, int snippetIndex, const juce::String&);
+    void setSnippetSections (int sceneIndex, int snippetIndex, juce::uint32 sections);
+    void setSnippetStrips (int sceneIndex, int snippetIndex, const std::vector<state::StripRef>&);
+    void setSnippetFireWithScene (int sceneIndex, int snippetIndex, bool fire);
+
     //==============================================================================
-    bool isFading() const noexcept { return ! fades.empty(); }
+    bool isFading() const noexcept { return ld::ld_show_is_fading (handle); }
     void cancelFade();
 
     //==============================================================================
     // Files
     std::unique_ptr<juce::XmlElement> toXml() const;
+    juce::String toXmlString() const;
 
     /** Loads a show (or a v1 session file). With loadPlugins false (safe mode) the
         console is restored without instantiating any plugins. */
@@ -110,23 +133,14 @@ public:
 
 private:
     void timerCallback() override;
-    void startFade (std::vector<state::FadeTarget>, double seconds);
     void changed();
+    state::ApplyResult afterRecall (ld::ApplyResultC&);
+    juce::Result afterLoad (bool ok, ld::LdString* message);
 
-    MixerEngine& engine;
-    PluginHost& host;
-
-    std::vector<std::unique_ptr<Scene>> scenes;
-    int currentScene = -1;
-
-    struct Fade
-    {
-        std::atomic<float>* param;
-        float start, target;
-    };
-
-    std::vector<Fade> fades;
-    double fadeStartMs = 0.0, fadeDurationMs = 0.0;
+    static bool captureInsert (void* ctx, const ld::Strip*, int32_t slot, ld::LdSink* description, ld::LdSink* state);
+    static int32_t restoreInsert (void* ctx, const ld::Strip*, int32_t slot, int32_t mode,
+                                  const char* description, size_t descriptionLen,
+                                  const char* state, size_t stateLen, ld::LdSink* error);
 
     JUCE_DECLARE_NON_COPYABLE (Show)
 };

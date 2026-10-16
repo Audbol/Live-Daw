@@ -27,8 +27,8 @@ private:
 
     int selectedScene() const;
     int selectedSnippet() const;
-    Show::Scene* currentSceneObject() const;
-    Show::Snippet* currentSnippetObject() const;
+    std::optional<Show::Scene> currentSceneObject() const;
+    std::optional<Show::Snippet> currentSnippetObject() const;
     void updateSceneEditor();
     void updateSnippetEditor();
 

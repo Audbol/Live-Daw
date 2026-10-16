@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include "ui/UiContext.h"
 
 namespace livedaw::ui
@@ -24,7 +26,7 @@ private:
     class BoardList;
 
     Layer currentLayer() const;
-    Layer* currentUserLayer() const;
+    std::optional<Layer> currentUserLayer() const;
     void changed();
     void addSelectedBoardStrips();
 

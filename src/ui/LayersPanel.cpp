@@ -12,13 +12,13 @@ namespace
             g.fillAll (Colours::accent.withAlpha (0.35f));
 
         auto r = juce::Rectangle<int> (width, height).reduced (6, 0);
-        g.setColour (s != nullptr ? s->colour : Colours::outline);
+        g.setColour (s != nullptr ? s->getColour() : Colours::outline);
         g.fillRect (r.removeFromLeft (4).reduced (0, 4));
         r.removeFromLeft (6);
 
         g.setFont (juce::FontOptions (13.0f));
         g.setColour (s != nullptr ? Colours::text : Colours::textDim);
-        g.drawText (s != nullptr ? s->name : fallback, r, juce::Justification::centredLeft);
+        g.drawText (s != nullptr ? s->getName() : fallback, r, juce::Justification::centredLeft);
 
         if (s != nullptr)
         {
@@ -69,9 +69,9 @@ private:
             return;
 
         // The edited layer is the one on the mixer.
-        if (panel.ctx.show.layers.selectedLayerId != panel.layers[(size_t) row].id)
+        if (panel.ctx.show.layers.getSelectedLayerId() != panel.layers[(size_t) row].id)
         {
-            panel.ctx.show.layers.selectedLayerId = panel.layers[(size_t) row].id;
+            panel.ctx.show.layers.setSelectedLayerId (panel.layers[(size_t) row].id);
             panel.changed();
         }
     }
@@ -165,7 +165,7 @@ LayersPanel::LayersPanel (UiContext& c) : ctx (c)
 
         const auto id = ctx.show.layers.addUserLayer ("User " + juce::String (ctx.show.layers.getUserLayers().size() + 1),
                                                       std::move (strips));
-        ctx.show.layers.selectedLayerId = id;
+        ctx.show.layers.setSelectedLayerId (id);
         changed();
     };
 
@@ -173,27 +173,27 @@ LayersPanel::LayersPanel (UiContext& c) : ctx (c)
     duplicateButton.onClick = [this]
     {
         const auto layer = currentLayer();
-        ctx.show.layers.selectedLayerId = ctx.show.layers.addUserLayer (layer.name + " copy", layer.strips);
+        ctx.show.layers.setSelectedLayerId (ctx.show.layers.addUserLayer (layer.name + " copy", layer.strips));
         changed();
     };
 
     deleteButton.onClick = [this]
     {
-        if (auto* layer = currentUserLayer())
+        if (auto layer = currentUserLayer())
         {
             ctx.show.layers.removeUserLayer (layer->id);
-            ctx.show.layers.selectedLayerId = "in-1";
+            ctx.show.layers.setSelectedLayerId ("in-1");
             changed();
         }
     };
 
-    layerUpButton.onClick = [this] { if (auto* l = currentUserLayer()) { ctx.show.layers.moveUserLayer (l->id, -1); changed(); } };
-    layerDownButton.onClick = [this] { if (auto* l = currentUserLayer()) { ctx.show.layers.moveUserLayer (l->id, 1); changed(); } };
+    layerUpButton.onClick = [this] { if (auto l = currentUserLayer()) { ctx.show.layers.moveUserLayer (l->id, -1); changed(); } };
+    layerDownButton.onClick = [this] { if (auto l = currentUserLayer()) { ctx.show.layers.moveUserLayer (l->id, 1); changed(); } };
 
     removeButton.onClick = [this]
     {
-        auto* layer = currentUserLayer();
-        if (layer == nullptr)
+        auto layer = currentUserLayer();
+        if (! layer)
             return;
 
         const auto rows = memberList->getSelectedRows();
@@ -211,9 +211,9 @@ LayersPanel::LayersPanel (UiContext& c) : ctx (c)
 
     auto moveMember = [this] (int delta)
     {
-        auto* layer = currentUserLayer();
+        auto layer = currentUserLayer();
         const int row = memberList->getSelectedRow();
-        if (layer == nullptr || row < 0)
+        if (! layer || row < 0)
             return;
 
         ctx.show.layers.moveWithinUserLayer (layer->id, row, delta);
@@ -231,9 +231,9 @@ LayersPanel::LayersPanel (UiContext& c) : ctx (c)
     nameLabel.setColour (juce::Label::backgroundColourId, juce::Colours::black.withAlpha (0.25f));
     nameLabel.onTextChange = [this]
     {
-        if (auto* layer = currentUserLayer())
+        if (auto layer = currentUserLayer())
         {
-            layer->name = nameLabel.getText();
+            ctx.show.layers.renameUserLayer (layer->id, nameLabel.getText());
             changed();
         }
     };
@@ -273,12 +273,14 @@ LayersPanel::~LayersPanel() = default;
 
 Layer LayersPanel::currentLayer() const
 {
-    return ctx.show.layers.findLayer (ctx.engine, ctx.show.layers.selectedLayerId);
+    return ctx.show.layers.findLayer (ctx.engine, ctx.show.layers.getSelectedLayerId());
 }
 
-Layer* LayersPanel::currentUserLayer() const
+std::optional<Layer> LayersPanel::currentUserLayer() const
 {
-    return ctx.show.layers.getUserLayer (currentLayer().id);
+    if (auto* l = ctx.show.layers.getUserLayer (currentLayer().id))
+        return *l;
+    return std::nullopt;
 }
 
 void LayersPanel::changed()
@@ -291,8 +293,8 @@ void LayersPanel::changed()
 
 void LayersPanel::addSelectedBoardStrips()
 {
-    auto* layer = currentUserLayer();
-    if (layer == nullptr)
+    auto layer = currentUserLayer();
+    if (! layer)
         return;
 
     const auto rows = boardList->getSelectedRows();

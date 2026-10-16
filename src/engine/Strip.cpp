@@ -23,21 +23,6 @@ StripKind stripKindFromString (const juce::String& s) noexcept
     return StripKind::Input;
 }
 
-namespace
-{
-    juce::Colour defaultColour (StripKind kind)
-    {
-        switch (kind)
-        {
-            case StripKind::Input:  return juce::Colour (0xff3d7ab8);
-            case StripKind::Aux:    return juce::Colour (0xff3daa6e);
-            case StripKind::Group:  return juce::Colour (0xffb8863d);
-            case StripKind::Master: return juce::Colour (0xffb83d4f);
-        }
-        return juce::Colour (0xff3d7ab8);
-    }
-} // namespace
-
 Strip::Strip (ld::Engine* engine, ld::Strip* h)
     : params (*ld::ld_strip_params (h)),
       sends (h),
@@ -53,7 +38,6 @@ Strip::Strip (ld::Engine* engine, ld::Strip* h)
       id (ld::ld_strip_id (h)),
       meters (*ld::ld_strip_meters (h))
 {
-    colour = defaultColour (kind);
 }
 
 } // namespace livedaw
