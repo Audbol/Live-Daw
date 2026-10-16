@@ -1,19 +1,24 @@
-//! 2 Band De-Esser, after the SPL De-Esser: no threshold to set. Each band
-//! compares its sibilance band with the whole signal and reduces the band when
-//! sibilance dominates, so the result doesn't depend on the input level.
+//! 2-Band De-Esser, after a German-made (SPL) dual-band de-esser, FX rack
+//! only (WING manual 11.2): no threshold to set. Each band compares its
+//! sibilance band with the whole signal and reduces the band when sibilance
+//! dominates, so the result doesn't depend on the input level.
 //!
-//! LOW and HIGH (0..50) set the largest reduction of the two bands (up to
-//! 20 dB). GENDER moves the bands: f = 6 kHz and 10 kHz, m = 4.5 kHz and
-//! 7.5 kHz. MODE st works on left and right with linked detection; ms works on
-//! mid and side, the side using LOW (S) and HIGH (S). The reduction is a
-//! dynamic cut of the band only (signal plus a scaled band-pass of itself).
+//! LOW and HIGH set how much the lower and the higher de-essing filter
+//! attenuate. The knobs are a relative 1..50 scale (not dB); here 50 allows
+//! up to 20 dB. FEMALE/MALE moves the centre of the lower filter (6.5 kHz /
+//! 5 kHz); the higher one stays at 9.5 kHz. MODE st works on left and right
+//! with linked detection; in M/S mode LOW and HIGH act on the mid channel and
+//! LOW (S) and HIGH (S) on the side. The reduction is a dynamic cut of the
+//! band only (signal plus a scaled band-pass of itself).
 
 use super::{db_gain, level_db};
 use crate::wing::fx::blocks::{coef, Biquad, BiquadCoeffs};
 use crate::wing::fx::FxAlgo;
 use crate::wing::Params;
 
-const FREQS: [[f64; 2]; 2] = [[6000.0, 10_000.0], [4500.0, 7500.0]];
+/// [female, male] centre of the lower filter, and the higher filter's centre.
+const LOW_HZ: [f64; 2] = [6500.0, 5000.0];
+const HIGH_HZ: f64 = 9500.0;
 const BAND_Q: f64 = 1.6;
 /// Sibilance this far below the whole signal starts the reduction ...
 const ONSET_DB: f32 = -16.0;
@@ -63,9 +68,9 @@ impl DeEsser {
     fn set_gender(&mut self, g: usize) {
         if g != self.gender {
             self.gender = g;
-            for (b, f) in self.bands.iter_mut().zip(FREQS[g.min(1)]) {
-                b.set_coefficients(BiquadCoeffs::band_pass(self.sr as f64, f, BAND_Q));
-            }
+            let sr = self.sr as f64;
+            self.bands[0].set_coefficients(BiquadCoeffs::band_pass(sr, LOW_HZ[g.min(1)], BAND_Q));
+            self.bands[1].set_coefficients(BiquadCoeffs::band_pass(sr, HIGH_HZ.min(sr * 0.45), BAND_Q));
         }
     }
 }

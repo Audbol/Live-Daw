@@ -1,17 +1,21 @@
-//! Speaker Manager: a loudspeaker processor.
+//! Speaker Manager: processing for PA, wedge and in-ear outputs (WING manual
+//! 11.11), in three sections: FILTER, DYN EQ and LIMITER.
 //!
 //! Signal flow: crossover high- and low-pass (HP/LP FREQ and TYPE: FLAT or
-//! Butterworth/Bessel/Linkwitz-Riley at 6..48 dB/oct) -> TILT (shelves of
-//! +-TILT/2 around TILT F) -> PHASE -> INVERT -> dynamic EQ band -> LIMITER ->
-//! alignment delay.
+//! Butterworth/Bessel/Linkwitz-Riley at 6..48 dB/oct) -> TILT EQ (shelves of
+//! +-TILT/2 around TILT F) -> PHASE -> polarity (INVERT) -> dynamic EQ band ->
+//! LIMITER -> alignment delay.
 //!
-//! PHASE (0..180 degrees) is a first-order all-pass that shifts the phase by
-//! exactly that much at the crossover frequency (the HP frequency when the HP
-//! is on, else the LP frequency when the LP is on, else 1 kHz): 0 is no
-//! filter, 180 approaches a polarity flip. DIST (0..5 m) delays both channels
-//! by the distance at 343 m/s; POS (-5..5 m) adds a delay to one side
-//! (positive delays the left, negative the right) to centre the image.
-//! The dynamic EQ band works like a Triple DEQ band. The limiter is a
+//! PHASE offsets the signal's phase by 0..180 degrees at all frequencies: an
+//! all-pass pair 90 degrees apart across the audio band (a Hilbert
+//! transformer) is mixed by the cosine and sine of the angle. At 0 the signal
+//! passes untouched (moving off 0 fades the pair in over 10 ms); 180 is the
+//! inverted (all-pass) signal. DIST, the precision delay, delays both channels
+//! by the distance at 343 m/s. POS sets the delay between the channels from
+//! the difference in the speakers' distance to the listening position:
+//! negative values mean the left speaker is closer, so the left channel is
+//! delayed, positive values delay the right. The DYN EQ band works like a
+//! Triple DEQ band (Flat = full-range dynamics). The limiter is a
 //! feed-forward stereo-linked limiter at LIM THR, on peaks or RMS (LIMRMS),
 //! with RELEASE. `meter()` shows the deeper of the limiter's and the dynamic
 //! EQ's reductions.
@@ -21,33 +25,50 @@ use super::{db_gain, level_db, power_db, push_cut, sub_blocks, Cascade, Design, 
 use crate::wing::fx::blocks::{coef, BiquadCoeffs, DelayLine, Smoothed};
 use crate::wing::fx::FxAlgo;
 use crate::wing::Params;
-use std::f32::consts::PI;
 
 const SPEED_OF_SOUND: f32 = 343.0;
 /// Longest alignment delay: DIST + |POS|.
 const MAX_DIST_M: f32 = 10.0;
 const DEQ_IDS: [&str; 9] = ["deqthr", "deqratio", "deqatt", "deqrel", "deqfilt", "deqg", "deqf", "deqq", "deqmode"];
 
-/// First-order all-pass on two channels, `a` = coefficient.
+/// Two all-pass chains whose outputs are 90 degrees apart (within about a
+/// degree) over the audio band: Olli Niemitalo's polyphase IIR Hilbert
+/// transformer. Each section is `y[n] = a^2 (x[n] + y[n-2]) - x[n-2]`; the
+/// first chain's output is delayed by one sample.
 #[derive(Clone, Copy, Default)]
-struct PhaseShift {
-    a: f32,
-    x1: [f32; 2],
-    y1: [f32; 2],
+struct Quadrature {
+    /// [channel][chain][section]: x[n-1], x[n-2], y[n-1], y[n-2].
+    state: [[[[f64; 4]; 4]; 2]; 2],
+    /// The first chain's one-sample delay, per channel.
+    held: [f64; 2],
 }
 
-impl PhaseShift {
+impl Quadrature {
+    const CHAINS: [[f64; 4]; 2] = [
+        [0.692_387_8, 0.936_065_432_295_9, 0.988_229_522_686, 0.998_748_845_273_7],
+        [0.402_192_116_242_6, 0.856_171_088_242, 0.972_290_954_565_1, 0.995_288_479_127_8],
+    ];
+
+    /// The in-phase and quadrature outputs for one input sample of channel `ch`.
     #[inline]
-    fn tick(&mut self, x: f32, ch: usize) -> f32 {
-        let y = self.a * x + self.x1[ch] - self.a * self.y1[ch];
-        self.x1[ch] = x;
-        self.y1[ch] = y;
-        y
+    fn tick(&mut self, x: f32, ch: usize) -> (f32, f32) {
+        let mut out = [0.0f64; 2];
+        for ((o, coefs), chain) in out.iter_mut().zip(&Self::CHAINS).zip(self.state[ch].iter_mut()) {
+            let mut v = x as f64;
+            for (a, s) in coefs.iter().zip(chain.iter_mut()) {
+                let y = a * a * (v + s[3]) - s[1];
+                *s = [v, s[0], y, s[2]];
+                v = y;
+            }
+            *o = v;
+        }
+        let i = self.held[ch];
+        self.held[ch] = out[0];
+        (i as f32, out[1] as f32)
     }
 
     fn reset(&mut self) {
-        self.x1 = [0.0; 2];
-        self.y1 = [0.0; 2];
+        *self = Self::default();
     }
 }
 
@@ -58,8 +79,11 @@ pub(crate) struct SpeakerManager {
     lp_kind: &'static str,
     /// ln(HP Hz), ln(LP Hz), ln(TILT F), TILT dB, PHASE degrees.
     glide: Glide<5>,
-    phase: PhaseShift,
-    phase_on: bool,
+    quadrature: Quadrature,
+    /// cos and sin of the glided PHASE.
+    rotation: (f32, f32),
+    /// 0 at PHASE 0 (signal untouched), 1 otherwise.
+    phase_mix: Smoothed,
     polarity: Smoothed,
     delay: [DelayLine; 2],
     delay_samples: [Smoothed; 2],
@@ -87,8 +111,9 @@ impl SpeakerManager {
             hp_kind: "FLAT",
             lp_kind: "FLAT",
             glide: Glide::new(0.0),
-            phase: PhaseShift::default(),
-            phase_on: false,
+            quadrature: Quadrature::default(),
+            rotation: (1.0, 0.0),
+            phase_mix: sm(0.0, 10.0),
             polarity: sm(1.0, 5.0),
             delay: [DelayLine::new(max_delay), DelayLine::new(max_delay)],
             delay_samples: [sm(0.0, 50.0), sm(0.0, 50.0)],
@@ -123,25 +148,8 @@ impl SpeakerManager {
             d.push(BiquadCoeffs::high_shelf(sr, tf, 0.5, 0.5 * tilt as f64));
         }
         self.filters.set(d.sections());
-
-        // Phase: a first-order all-pass with `deg` of lag at the crossover frequency.
-        let on = deg >= 0.25;
-        if on != self.phase_on {
-            self.phase.reset();
-            self.phase_on = on;
-        }
-        if on {
-            let fref = if self.hp_kind != "FLAT" {
-                hp
-            } else if self.lp_kind != "FLAT" {
-                lp
-            } else {
-                1000.0
-            } as f32;
-            let wref = (PI * fref.min(self.sr * 0.45) / self.sr).tan();
-            let t = (0.5 * deg.min(179.0).to_radians()).tan() / wref;
-            self.phase.a = (1.0 - t) / (1.0 + t);
-        }
+        let (sin, cos) = deg.to_radians().sin_cos();
+        self.rotation = (cos, sin);
     }
 
     /// Feed-forward limiter gain for one stereo sample.
@@ -169,10 +177,12 @@ impl FxAlgo for SpeakerManager {
         self.lp_kind = lp_kind;
         self.glide.tgt = [p.f("hpf").ln(), p.f("lpf").ln(), p.f("tiltf").ln(), p.f("tiltg"), p.f("phase")];
         self.polarity.target = if p.on("invert") { -1.0 } else { 1.0 };
+        self.phase_mix.target = if p.f("phase") > 0.0 { 1.0 } else { 0.0 };
+        // Negative POS: the left speaker is closer, so the left waits.
         let pos = p.f("pos");
         let to_samples = |m: f32| m / SPEED_OF_SOUND * self.sr;
-        self.delay_samples[0].target = to_samples(p.f("dist") + pos.max(0.0));
-        self.delay_samples[1].target = to_samples(p.f("dist") + (-pos).max(0.0));
+        self.delay_samples[0].target = to_samples(p.f("dist") + (-pos).max(0.0));
+        self.delay_samples[1].target = to_samples(p.f("dist") + pos.max(0.0));
         self.dyn_eq.set(&DynEqSettings::read(p, &DEQ_IDS));
         self.dyn_on.target = if p.on("dyneq") { 1.0 } else { 0.0 };
         self.lim_on.target = if p.on("lim") { 1.0 } else { 0.0 };
@@ -182,7 +192,7 @@ impl FxAlgo for SpeakerManager {
         if !self.primed {
             self.glide.snap();
             self.dyn_eq.snap();
-            for s in [&mut self.polarity, &mut self.dyn_on, &mut self.lim_on] {
+            for s in [&mut self.polarity, &mut self.dyn_on, &mut self.lim_on, &mut self.phase_mix] {
                 s.snap(s.target);
             }
             for s in &mut self.delay_samples {
@@ -204,16 +214,15 @@ impl FxAlgo for SpeakerManager {
             }
             let (l, r) = (&mut left[a..b], &mut right[a..b]);
             self.filters.process(l, r);
-            if self.phase_on {
-                for (x, y) in l.iter_mut().zip(r.iter_mut()) {
-                    *x = self.phase.tick(*x, 0);
-                    *y = self.phase.tick(*y, 1);
-                }
-            }
+            // The quadrature pair always runs, so fading the phase in never starts it cold.
+            let (cos, sin) = self.rotation;
             for (x, y) in l.iter_mut().zip(r.iter_mut()) {
+                let (il, ql) = self.quadrature.tick(*x, 0);
+                let (ir, qr) = self.quadrature.tick(*y, 1);
+                let w = self.phase_mix.tick();
                 let pol = self.polarity.tick();
-                *x *= pol;
-                *y *= pol;
+                *x = (*x + w * (cos * il + sin * ql - *x)) * pol;
+                *y = (*y + w * (cos * ir + sin * qr - *y)) * pol;
             }
             // Dynamic EQ, faded in and out with its switch.
             if self.dyn_on.value > 0.0 || self.dyn_on.target > 0.0 {
@@ -250,7 +259,7 @@ impl FxAlgo for SpeakerManager {
 
     fn reset(&mut self) {
         self.filters.reset();
-        self.phase.reset();
+        self.quadrature.reset();
         for d in &mut self.delay {
             d.clear();
         }
@@ -259,7 +268,7 @@ impl FxAlgo for SpeakerManager {
         self.lim_gr = 0.0;
         self.meter = 0.0;
         self.glide.snap();
-        for s in [&mut self.polarity, &mut self.dyn_on, &mut self.lim_on] {
+        for s in [&mut self.polarity, &mut self.dyn_on, &mut self.lim_on, &mut self.phase_mix] {
             s.snap(s.target);
         }
         for s in &mut self.delay_samples {
@@ -276,6 +285,8 @@ impl FxAlgo for SpeakerManager {
 #[cfg(test)]
 mod tests {
     use super::super::tests::Rig;
+    use super::Quadrature;
+    use std::f32::consts::TAU;
 
     #[test]
     fn defaults_are_transparent() {
@@ -293,24 +304,47 @@ mod tests {
         assert!(rig.sine_gain_db(50.0, 0.1) < -20.0);
         assert!(rig.sine_gain_db(2000.0, 0.1).abs() < 0.2);
 
-        // 3.43 m = 10 ms.
+        // 3.43 m = 10 ms on both channels; POS -1.715 m (left closer) adds 5 ms on the left.
         let mut rig = Rig::new("SPKMAN");
-        rig.set("dist", 3.43);
+        rig.set("dist", 3.43).set("pos", -1.715);
         let mut l = vec![0.0f32; 1024];
         let mut r = vec![0.0f32; 1024];
         l[0] = 1.0;
         r[0] = 1.0;
         rig.run(&mut l, &mut r);
-        let at = l.iter().position(|x| x.abs() > 0.5).unwrap();
-        assert_eq!(at, 480);
+        assert_eq!(l.iter().position(|x| x.abs() > 0.5), Some(720));
+        assert_eq!(r.iter().position(|x| x.abs() > 0.5), Some(480));
+    }
+
+    #[test]
+    fn quadrature_pair_is_90_degrees_apart() {
+        for freq in [40.0, 200.0, 1000.0, 5000.0, 15_000.0] {
+            let mut q = Quadrature::default();
+            let (mut ii, mut qq, mut iq) = (0.0f64, 0.0f64, 0.0f64);
+            for n in 0..96_000 {
+                let (i, o) = q.tick((TAU * freq * n as f32 / 48_000.0).sin(), 0);
+                if n >= 48_000 {
+                    ii += (i * i) as f64;
+                    qq += (o * o) as f64;
+                    iq += (i * o) as f64;
+                }
+            }
+            // Equal levels and uncorrelated: cos(angle) = iq / sqrt(ii qq) ~ 0.
+            assert!((ii / qq - 1.0).abs() < 0.01, "{freq} Hz: levels {ii} vs {qq}");
+            assert!((iq / (ii * qq).sqrt()).abs() < 0.03, "{freq} Hz: not in quadrature");
+        }
     }
 
     #[test]
     fn phase_and_limiter() {
-        // 180 degrees at 1 kHz (no crossover) is close to a polarity flip there.
-        let mut rig = Rig::new("SPKMAN");
-        rig.set("phase", 180.0);
-        assert!(rig.sine_gain_db(1000.0, 0.1).abs() < 0.01);
+        // Any phase offset keeps the level at every frequency.
+        for deg in [45.0, 90.0, 180.0] {
+            for freq in [100.0, 1000.0, 10_000.0] {
+                let mut rig = Rig::new("SPKMAN");
+                rig.set("phase", deg);
+                assert!(rig.sine_gain_db(freq, 0.1).abs() < 0.1, "{deg} deg at {freq} Hz");
+            }
+        }
 
         let mut rig = Rig::new("SPKMAN");
         rig.set("lim", 1.0).set("limthr", -12.0);

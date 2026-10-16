@@ -1,5 +1,5 @@
-//! Tape Machine: record/playback colour of an analog tape recorder, without
-//! the hiss.
+//! Tape Machine (WING manual 11.8): record/playback colour of an analog tape
+//! recorder, without the hiss.
 //!
 //! DRIVE (dB) sets the level onto the tape. The record path pre-emphasises the
 //! highs (corner set by the tape speed, like the NAB/IEC curves), saturates
@@ -11,11 +11,14 @@
 //! harmonics. The direction is tracked over the distance the signal travels,
 //! not over time, so the loop is continuous and independent of frequency.
 //!
-//! SPEED (7.5..30 ips) moves the playback response: the high-frequency loss
-//! (about 8 kHz at 7.5 ips, 14 kHz at 15 ips, 24 kHz at 30 ips) and the head
-//! bump (about 26, 48 and 90 Hz). LOW BUMP switches on the head bump (a lift,
-//! a dip an octave above and the low roll-off below it), HIGH SHELV the
-//! playback high shelf that brightens the top. OUT GAIN is the output level.
+//! SPEED (7.5..30 ips) moves the playback response: lower speeds sound darker
+//! (high-frequency loss from about 8 kHz at 7.5 ips, 14 kHz at 15 ips, 24 kHz
+//! at 30 ips) and move the head bump down (about 26, 48 and 90 Hz). LOW BUMP
+//! emulates the low-frequency irregularities of tape playback (the head bump:
+//! a lift, a dip an octave above and the low roll-off below it). HIGH SHELV
+//! enables the playback high shelf that restores the highs the slower speeds
+//! lose (+4 dB at 7.5 ips, +2.5 dB at 15 ips, +1 dB at 30 ips). OUT GAIN is
+//! the output level.
 
 use super::{sub_blocks, Cascade, Design, Glide};
 use crate::wing::fx::blocks::{db_to_gain, fast_tanh, Biquad, BiquadCoeffs, Smoothed};
@@ -79,7 +82,8 @@ impl Tape {
         d.push(BiquadCoeffs::peak(sr, fb * 2.4, 1.0, -1.5 * bump));
         // Low roll-off under the bump; with the bump off it moves down out of the way.
         d.push(BiquadCoeffs::high_pass(sr, (fb / 3.0).powf(bump) * 8f64.powf(1.0 - bump), 0.6));
-        d.push(BiquadCoeffs::high_shelf(sr, (5000.0 * k.sqrt()).min(nyq), 0.7, 2.5 * shelf));
+        let shelf_db = 2.5 - 1.5 * k.log2();
+        d.push(BiquadCoeffs::high_shelf(sr, (5000.0 * k.sqrt()).min(nyq), 0.7, shelf_db * shelf));
         d.push(BiquadCoeffs::low_pass(sr, (14_000.0 * k.powf(0.8)).min(nyq), 0.6));
         self.playback.set(d.sections());
     }
@@ -159,6 +163,17 @@ mod tests {
         rig.set("drv", 20.0);
         let loud = rig.sine_gain_db(1000.0, 0.5);
         assert!(loud < -6.0, "{loud}");
+    }
+
+    #[test]
+    fn high_shelf_restores_the_top() {
+        for spd in [7.5, 15.0] {
+            let mut off = Rig::new("TAPE");
+            off.set("spd", spd).set("hi", 0.0);
+            let mut on = Rig::new("TAPE");
+            on.set("spd", spd).set("hi", 1.0);
+            assert!(on.sine_gain_db(8000.0, 0.01) > off.sine_gain_db(8000.0, 0.01) + 1.5, "{spd} ips");
+        }
     }
 
     #[test]

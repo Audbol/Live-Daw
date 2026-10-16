@@ -1,16 +1,20 @@
-//! Dynamic EQ bands and the Triple DEQ.
+//! Dynamic EQ bands and the Triple DEQ (WING manual 11.1).
 //!
-//! A band is a filter (FILTER: BP bell, LP6/LP12 low shelf, HP6/HP12 high
-//! shelf; OFF = bell with full-band detection) whose gain moves from 0 dB
-//! toward GAIN as the level in the band passes THR: in MODE high it acts above
-//! the threshold, in MODE low below it. RATIO sets how fast the gain follows
-//! the level (1 - 1/ratio dB per dB) and ATT/REL how quickly it moves. So a
-//! negative GAIN in high mode is a band compressor limited to GAIN, a positive
-//! GAIN in low mode lifts the band when it gets quiet, and so on.
+//! A band is a filter (FILTER: BP parametric, LP6/LP12 low shelf, HP6/HP12
+//! high shelf at 6 or 12 dB/oct; the first choice is Flat, where the band is a
+//! full-range dynamics processor) whose gain moves from 0 dB toward GAIN, the
+//! largest adjustment, as the level in the band passes THR: in MODE high
+//! (Above) it acts above the threshold, in MODE low (Below) below it. RATIO
+//! sets how far the gain moves per dB past the threshold (at 2:1, 2 dB past
+//! it give 1 dB of change) and ATT/REL how quickly it moves. So, as in the
+//! manual: negative GAIN + Above = downward compressor, negative + Below =
+//! downward expander, positive + Below = upward compressor, positive + Above =
+//! upward expander. Q only affects the parametric filter.
 //!
-//! The band is applied as `x + (g - 1) * F(x)`, where F is the band filter, so
-//! the filter is never redesigned per sample and 0 dB is exactly transparent.
-//! The detector runs on the same filter output (linked across both channels).
+//! The band is applied as `x + (g - 1) * F(x)`, where F is the band filter
+//! (identity for Flat), so the filter is never redesigned per sample and 0 dB
+//! is exactly transparent. The detector runs on the same filter output (linked
+//! across both channels).
 //!
 //! Triple DEQ: three such bands in series. The speaker manager uses one too.
 
@@ -27,7 +31,7 @@ pub(super) struct DynEqSettings {
     pub ratio: f32,
     pub att_ms: f32,
     pub rel_ms: f32,
-    /// 0 OFF, 1 BP, 2 LP6, 3 LP12, 4 HP6, 5 HP12.
+    /// 0 Flat (full range), 1 BP, 2 LP6, 3 LP12, 4 HP6, 5 HP12.
     pub filter: usize,
     pub gain_db: f32,
     pub freq: f32,
@@ -122,7 +126,9 @@ impl DynEqBand {
             3 => BiquadCoeffs::low_pass(sr, f, FRAC_1_SQRT_2),
             4 => BiquadCoeffs::high_pass_1(sr, f),
             5 => BiquadCoeffs::high_pass(sr, f, FRAC_1_SQRT_2),
-            _ => BiquadCoeffs::band_pass(sr, f, q),
+            1 => BiquadCoeffs::band_pass(sr, f, q),
+            // Flat: the whole signal is detected and moved.
+            _ => BiquadCoeffs::identity(),
         });
     }
 
@@ -152,7 +158,7 @@ impl DynEqBand {
             for (l, r) in left[a..b].iter_mut().zip(right[a..b].iter_mut()) {
                 let fl = self.filter.tick(*l, 0);
                 let fr = self.filter.tick(*r, 1);
-                let det = if self.kind == 0 { l.abs().max(r.abs()) } else { fl.abs().max(fr.abs()) };
+                let det = fl.abs().max(fr.abs());
                 self.env = if det > self.env { det } else { self.env + (det - self.env) * self.env_rel };
                 let want = if self.target_db == 0.0 { 0.0 } else { self.gain_for(level_db(self.env)) };
                 let c = if want.abs() > self.gain_db.abs() { self.att } else { self.rel };
@@ -242,6 +248,19 @@ mod tests {
         let mut rig = Rig::new("DEQ3");
         let quiet = rig.sine_gain_db(2000.0, 0.01);
         assert!(quiet.abs() < 0.1, "{quiet}");
+    }
+
+    #[test]
+    fn flat_band_is_full_range() {
+        // Band 2 Flat, the others out of the way: a downward compressor on everything.
+        let mut rig = Rig::new("DEQ3");
+        rig.set("1-g", 0.0).set("3-g", 0.0).set("2-filt", 0.0);
+        for f in [100.0, 2000.0, 10_000.0] {
+            let mut rig2 = Rig::new("DEQ3");
+            rig2.values = rig.values;
+            let g = rig2.sine_gain_db(f, 0.5);
+            assert!((g + 6.0).abs() < 0.3, "{g} dB at {f} Hz");
+        }
     }
 
     #[test]
