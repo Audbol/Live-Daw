@@ -307,3 +307,9 @@ blinking LEDs.
 - Not yet: the alternate (ALT) channel input, assignable custom controls (the
   section's upper part and USER layer are empty), the 4-Channel section, talkback,
   OSC/MIDI remote control and recording.
+- Shown on the screens but disabled until the engine supports them (the WING manual
+  describes them): SOLO MODE LIVE / STUDIO / SIP, TAP WIDTH and TAP EQ on sends,
+  KEY / XOVER / BAND SOLO, the RTA, the LR vector scope, the Sources screen's
+  per-source settings, partial scene load/update and restore, per-strip scene
+  scopes, DCA / mute group / FX safes, snippet recording, and send / FX / MIDI CC
+  faders in custom layers.
