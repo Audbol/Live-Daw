@@ -257,8 +257,13 @@ blinking LEDs.
   the INIT / COPY / SETTINGS / FEED overlays; `HomeScreens.*`: INPUT, FILTER SETUP,
   GATE / COMP, EQ, INS 1 / INS 2, MAIN SENDS, BUS / MATRIX SENDS and the overlays;
   `HomeWidgets.h`: their shared widgets),
-  EFFECTS, METERS, ROUTING, SETUP, LIBRARY (`ShowPanel.*` for scenes and snippets) and
-  UTILITY.
+  EFFECTS, METERS, ROUTING, SETUP, LIBRARY (`ShowPanel.*`: the scene / snippet list;
+  `ScopeWindow.*`: the SCOPE and GLOBAL window) and UTILITY, and the VIEW screens
+  (`ViewPages.*`: OVERVIEW, FADERS, SENDS, CONFIG, MUTE GROUPS, for the section in
+  `UiContext::viewSection`). `ScreenWidgets.h` holds the darker widgets of the SETUP,
+  LIBRARY and VIEW screens (tab row, choice keys, ON key, dropdown fields, settings
+  panels, overlays) and the console preferences kept in the app settings
+  (`prefs::`, e.g. CONFIRM LIBRARY LOAD, TOUCH FADER RES, the meter taps).
 - **Faceplates** (`Faceplate.*`): every FX device and dynamics/EQ model is drawn as the
   unit it recreates (panel colour, knob style, VU or LED meter, faders for graphic EQs
   and remotes, rack ears or wood cheeks), styled per model token. EFFECTS opens a
@@ -266,7 +271,8 @@ blinking LEDs.
   The device menu groups the table like the console (PREMIUM, STANDARD, CHANNEL
   STRIPS, PLUGIN).
 - Views poll the shared atomics on timers (4-25 Hz); meters read `MeterBank`, the one
-  reader of the engine's "peak since last read" meters.
+  reader of the engine's "peak since last read" meters (input, post-trim, pre-fader
+  and output).
 
 ## Stability mechanisms
 

@@ -92,16 +92,27 @@ Barlow Condensed.
     for the vintage reverbs, a black 1176-style limiter with its VU meter...), with the
     device menu grouped PREMIUM / STANDARD / CHANNEL STRIPS / PLUGIN. The GATE, EQ and
     DYNAMICS screens show their model's faceplate too.
-  - **METERS:** channels in groups of eight, AUX, BUS 1-8 / 9-16, DCA, MAIN and MATRIX,
-    with number keys (select the strip) and M keys (mute). Bigger consoles page.
-  - **ROUTING:** channel tiles on the left, a group of 48 sources on the right: pick a
-    channel, then its source. **+1 AUTO** moves on to the next channel; the lock (red
-    when locked, green when open) protects the patch. OUTPUTS patches the strips'
-    outputs the same way; MONITOR sets the monitor outputs, PFL/AFL and level.
-  - **SETUP:** GENERAL (console info, channel and bus count, preferences, clock,
-    INIT CONSOLE), AUDIO, SURFACE, SAFES, DCA / MUTE names and PLUGINS.
-  - **LIBRARY:** SHOW (name, NEW, OPEN, SAVE), SCENES and SNIPPETS as library lists
-    with GO, GO+PREV, GO+NEXT, PREV and NEXT, and user BANKS.
+  - **METERS:** pre-fader meters of the channels in groups of eight, AUX, BUS 1-8 / 9-16,
+    DCA, MAIN and MATRIX, with number keys in the strips' colours (select) and mute
+    squares. A group's header opens its section's FADERS screen. Bigger consoles page.
+  - **ROUTING** (status-bar keys CHANNELS / SOURCES / OUTPUTS): pick a channel, then its
+    source. **+1 AUTO** moves on to the next channel; the lock (red when locked, green
+    when open) protects the patch. SOURCES shows which channels use each input. OUTPUTS
+    works output-first: pick an output, then the signal feeding it (a strip's L / R, or
+    the MONITOR).
+  - **SETUP:** GENERAL (lighting, clock, console info and size, OPERATION, OPTIONS),
+    AUDIO (clock rate, preferences such as MAIN LINK and DCA MUTEGROUPS, SOLO SYSTEM
+    with PFL/AFL per strip type, audio device, AUTOMIX), SURFACE (meter taps, SEL DBL
+    CLICK, layer link, section widths), REMOTE and DAW (not available yet, drawn as on
+    the console) and PLUGINS, with INITIALIZE CONSOLE and SHUTDOWN. The status bar has
+    MONITORS (monitor outputs, PFL/AFL, level) and CC EDIT.
+  - **LIBRARY:** the show's scenes and snippets in one list (tags, SKIP, LINK, REMOVE,
+    RENAME, UP / DOWN), the SHOW, SNAP and SNIP tabs, GO PREV / GO NEXT / PREV / NEXT /
+    GO, the SCOPE window (EDIT SCOPE, REC FOCUS, ADD / REMOVE ITEMS) and the GLOBAL
+    safes in the status bar.
+  - **VIEW screens** (a fader section's VIEW key): OVERVIEW (every strip's blocks),
+    FADERS, SENDS (sends on faders to one bus, main or matrix), CONFIG (edit the USER
+    layers by dragging) and MUTE GROUPS (members, names, group keys).
   - **UTILITY:** system health and the event log.
 - **Channel strip section** (top left): the CHANNEL STRIP DETAILS LED panel (sources,
   filters, LEVEL and GR meters, bus sends, groups) around a small screen; CHANNEL
@@ -235,21 +246,23 @@ copy, pass `-DLIVEDAW_VST2_SDK_DIR=/path/to/vstsdk` to enable VST2 hosting.
 
 ## Using it
 
-1. **SETUP > AUDIO:** choose the driver (ASIO, CoreAudio, ALSA, JACK...), the device,
-   the sample rate and the buffer size. **SETUP > GENERAL** sets the channel count
-   (40 like a WING, or as many as your CPU allows) and adds buses.
+1. **SETUP > AUDIO:** the DEVICE field opens the driver (ASIO, CoreAudio, ALSA,
+   JACK...), device and buffer settings; CLOCK RATE sets the sample rate. **SETUP >
+   GENERAL** sets the channel count (40 like a WING, or as many as your CPU allows) and
+   adds buses.
 2. **ROUTING:** pick a channel tile, then its source (right-click or shift-click sets
-   the right source of a stereo channel). **OUTPUTS** gives mains, buses and matrices
-   their outputs.
+   the right source of a stereo channel). **OUTPUTS:** pick an output, then the signal
+   that feeds it.
 3. Pick layers on each fader section. **SELECT** a strip to edit it on the HOME screen
    and the channel strip section; the six knobs under the display follow the screen.
 4. Pick devices (or load plugins) for the FX slots on **EFFECTS**, then assign the
    slots to inserts on **PRE INS** / **POST INS**.
-5. **LIBRARY > SCENES:** **NEW** captures the console as a scene; set its recall scope,
-   fade and notes. **LIBRARY > SNIPPETS** adds snippets to the selected scene. **GO**
-   recalls, **GO+NEXT** steps through the show.
-6. **LIBRARY > SHOW** saves and opens `.lshow` files (`Ctrl+S`, `Ctrl+O`).
-   **LIBRARY > BANKS** builds your own fader banks.
+5. **LIBRARY > SNAP:** **SAVE** captures the console as a scene; **EDIT SCOPE** sets
+   what it recalls, with its fade and notes below. **LIBRARY > SNIP** saves snippets of
+   the selected scene (**REC FOCUS** chooses their strips and sections). **GO**
+   recalls, **GO NEXT** steps through the show.
+6. **LIBRARY > SHOW** saves and opens `.lshow` files (`Ctrl+S`, `Ctrl+O`). The VIEW
+   screens' **CONFIG** builds your own fader layers (USER 1 / USER 2).
 
 ## Project layout
 
