@@ -4,7 +4,8 @@
 //! A model's controls are turned into up to [`MAX_SECTIONS`] biquads plus an
 //! output gain. The console's MIX control (0..125 %) scales every band gain,
 //! so 100 % is the EQ as set, lower values soften it and higher values
-//! intensify it.
+//! intensify it. Curves, ranges and switch meanings follow the WING
+//! operation manual (section 11.1; page numbers in the comments below).
 
 use super::{dial_log, ModelSpec, ParamKind, Params, MAX_EQ_PARAMS};
 use crate::biquad::{Biquad, BiquadCoeffs};
@@ -178,13 +179,15 @@ fn design_soul(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
     let g = |id: &str| p.f(id) * 3.0 * k; // dial +-5 -> +-15 dB
     let lg = g("lg");
     push_gain(d, lg, || low_shelf(sr, dial_log(p.f("lf"), 30.0, 450.0), 0.7, lg));
+    // The Q knobs run from narrow (2.5) to wide (0.3) clockwise, and the mid
+    // bands narrow further as their gain goes up (p.96 and its panel).
     let lmg = g("lmg");
     let lmf = dial_log(p.f("lmf"), 200.0, 2500.0) / if p.on("lmf3") { 3.0 } else { 1.0 };
-    let lmq = proportional_q(dial_log(p.f("lmq"), 0.5, 3.0), lmg);
+    let lmq = proportional_q(dial_log(p.f("lmq"), 2.5, 0.3), lmg);
     push_gain(d, lmg, || peak(sr, lmf, lmq, lmg));
     let hmg = g("hmg");
     let hmf = (dial_log(p.f("hmf"), 600.0, 7000.0) * if p.on("hmf3") { 3.0 } else { 1.0 }).min(20000.0);
-    let hmq = proportional_q(dial_log(p.f("hmq"), 0.5, 3.0), hmg);
+    let hmq = proportional_q(dial_log(p.f("hmq"), 2.5, 0.3), hmg);
     push_gain(d, hmg, || peak(sr, hmf, hmq, hmg));
     let hg = g("hg");
     push_gain(d, hg, || high_shelf(sr, dial_log(p.f("hf"), 1500.0, 16000.0), 0.7, hg));
@@ -192,18 +195,9 @@ fn design_soul(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
 
 fn design_e88(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
     let g = |id: &str| p.f(id) * 3.0 * k;
+    // LOW and HIGH: bell or shelf; HI-Q switches their Q from 0.7 to 2.0 (p.97).
     let outer = |d: &mut EqDesign, f: f32, gain: f32, shelf: bool, high_q: bool, high: bool| {
-        let q = if shelf {
-            if high_q {
-                1.0
-            } else {
-                0.6
-            }
-        } else if high_q {
-            1.5
-        } else {
-            0.7
-        };
+        let q = if high_q { 2.0 } else { 0.7 };
         push_gain(d, gain, || match (shelf, high) {
             (true, false) => low_shelf(sr, f, q, gain),
             (true, true) => high_shelf(sr, f, q, gain),
@@ -220,24 +214,61 @@ fn design_e88(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
     outer(d, dial_log(p.f("hf"), 1500.0, 18000.0), g("hg"), p.text("ht") == "SHELV", p.text("hq") == "HIGH", true);
 }
 
+/// How strongly the Even 84's shelves pull on each other (see [`shared_shelves`]).
+const E84_COUPLING: f64 = 0.25;
+
 fn design_e84(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
-    let g = |id: &str| p.f(id) * 3.2 * k; // dial +-5 -> +-16 dB
-    if let Some(f) = p.freq_choice("lf") {
-        let lg = g("lg");
+    // LOW +-15 dB, MID and HIGH +-20 dB (p.97).
+    let lg = p.f("lg") * 3.0 * k;
+    let mg = p.f("mg") * 4.0 * k;
+    let hg = p.f("hg") * 4.0 * k;
+    let (lf, hf) = (p.freq_choice("lf"), p.freq_choice("hf"));
+    if let Some(f) = lf {
         // Inductor shelves have a little resonance at the corner.
         push_gain(d, lg, || low_shelf(sr, f, 0.9, lg));
     }
+    if let Some(f) = hf {
+        push_gain(d, hg, || high_shelf(sr, f, 0.8, hg));
+    }
+    if let (Some(fl), Some(fh)) = (lf, hf) {
+        if lg.abs() > 1e-3 && hg.abs() > 1e-3 {
+            d.push(shared_shelves(sr, fl, lg, fh, hg));
+        }
+    }
     if let Some(f) = p.freq_choice("mf") {
-        let mg = g("mg");
         let q = if p.text("mq") == "HIGH" { 1.8 } else { 0.7 };
         push_gain(d, mg, || peak(sr, f, q, mg));
     }
-    if let Some(f) = p.freq_choice("hf") {
-        let hg = g("hg");
-        push_gain(d, hg, || high_shelf(sr, f, 0.8, hg));
-    }
     d.out_gain_db = p.f("g");
 }
+
+/// The Even 84's two shelves are one shared filter circuit, so setting one
+/// changes the other's response (p.97). Modelled on first-order prototypes as
+/// the ratio between the two shelves summed in one network,
+/// `1 + a LP(fl) + b HP(fh)`, and the same shelves in series: a biquad that is
+/// 0 dB at DC and at the top, flat when either shelf is at 0 dB, and in
+/// between takes some of the mid lift away when both shelves boost (scaled by
+/// [`E84_COUPLING`] for the steeper second-order shelves).
+fn shared_shelves(sr: f64, fl: f32, lg_db: f32, fh: f32, hg_db: f32) -> BiquadCoeffs {
+    let warp = |f: f32| 2.0 * sr * (std::f64::consts::PI * (f as f64).clamp(10.0, sr * 0.45) / sr).tan();
+    let (wl, wh) = (warp(fl), warp(fh));
+    let a = 10f64.powf(lg_db as f64 / 20.0) - 1.0;
+    let b = 10f64.powf(hg_db as f64 / 20.0) - 1.0;
+    let (c0, c2) = (1.0 + a, (1.0 + b) / (wl * wh));
+    let n1 = 1.0 / wl + (1.0 + a + b) / wh;
+    let d1 = (1.0 / wl + (1.0 + a + b + E84_COUPLING * a * b) / wh).max(0.1 / wl);
+    bilinear([c0, n1, c2], [c0, d1, c2], 2.0 * sr)
+}
+
+/// Bilinear transform of `(n0 + n1 s + n2 s^2) / (d0 + d1 s + d2 s^2)`, with
+/// `k` = 2 * sample rate (frequencies pre-warped by the caller).
+fn bilinear(n: [f64; 3], d: [f64; 3], k: f64) -> BiquadCoeffs {
+    let z = |p: [f64; 3]| [p[0] + p[1] * k + p[2] * k * k, 2.0 * (p[0] - p[2] * k * k), p[0] - p[1] * k + p[2] * k * k];
+    let (b, a) = (z(n), z(d));
+    BiquadCoeffs { b0: b[0] / a[0], b1: b[1] / a[0], b2: b[2] / a[0], a1: a[1] / a[0], a2: a[2] / a[0] }
+}
+
+const F110_SHELF_Q: f32 = 1.1;
 
 fn design_f110(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
     if p.on("peq") {
@@ -252,14 +283,19 @@ fn design_f110(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
         push_gain(d, hmg, || peak(sr, hmf, hmq, hmg));
     }
     if p.on("shv") {
+        // Higher-order shelves (p.97-98): two resonant sections each, steeper
+        // than a plain shelf, with the slight dip before the shelf that gives
+        // the enhancer-like character.
         let g = |id: &str| p.f(id) * 3.2 * k;
         if let Some(f) = p.freq_choice("lf") {
             let lg = g("lg");
-            push_gain(d, lg, || low_shelf(sr, f, 0.7, lg));
+            push_gain(d, lg, || low_shelf(sr, f, F110_SHELF_Q, lg * 0.5));
+            push_gain(d, lg, || low_shelf(sr, f, F110_SHELF_Q, lg * 0.5));
         }
         if let Some(f) = p.freq_choice("hf") {
             let hg = g("hg");
-            push_gain(d, hg, || high_shelf(sr, f, 0.7, hg));
+            push_gain(d, hg, || high_shelf(sr, f, F110_SHELF_Q, hg * 0.5));
+            push_gain(d, hg, || high_shelf(sr, f, F110_SHELF_Q, hg * 0.5));
         }
     }
     d.out_gain_db = p.f("g");
@@ -267,11 +303,16 @@ fn design_f110(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
 
 fn design_pulsar(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
     if p.on("eq1") {
+        // HI-LO EQ1: LO ATT low shelf, LO BOOST, HI BOOST parametric, HI ATT
+        // high shelf (p.98-99). LO BOOST is a resonant shelf - a slight peak
+        // around the selected frequency with the boost held below it - so
+        // that boosting and cutting together gives the dip just above the
+        // low-end boost the manual describes (a plain bell would leave only
+        // the cut below the boost); the cut shelf sits higher than the boost.
         let lf = p.freq_choice("1lf").unwrap_or(60.0);
         let boost = p.f("1lb") * 1.35 * k; // 0..13.5 dB
         let att = -p.f("1latt") * 1.75 * k; // 0..-17.5 dB
-                                            // Boost and cut together give the classic bump-and-dip: the cut shelf sits higher.
-        push_gain(d, boost, || low_shelf(sr, lf, 0.5, boost));
+        push_gain(d, boost, || low_shelf(sr, lf, 1.0, boost));
         push_gain(d, att, || low_shelf(sr, lf * 1.8, 0.5, att));
         let hb = p.f("1hb") * 1.6 * k; // 0..16 dB
         let hq = dial_log(10.0 - p.f("1hw"), 0.4, 2.5); // WIDTH 10 = broad
@@ -295,27 +336,35 @@ fn design_pulsar(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
 }
 
 fn design_mach4(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
+    // Fixed bands as on the panel (p.100): SUB, 40, 160 and 650 Hz bells, a
+    // 2.5 kHz shelf and the AIR shelf.
     let g = |id: &str| p.f(id) * 2.5 * k; // dial +-5 -> +-12.5 dB
-    let mut sum = 0.0;
     let sub = g("sub");
-    push_gain(d, sub, || low_shelf(sr, 20.0, 0.7, sub));
-    sum += sub;
-    for (id, f) in [("40", 40.0), ("160", 160.0), ("650", 650.0), ("2k5", 2500.0)] {
+    push_gain(d, sub, || peak(sr, 10.0, 0.5, sub));
+    for (id, f) in [("40", 40.0), ("160", 160.0), ("650", 650.0)] {
         let gain = g(id);
         push_gain(d, gain, || peak(sr, f, 0.6, gain));
-        sum += gain;
     }
+    let hi = g("2k5");
+    push_gain(d, hi, || high_shelf(sr, 2500.0, 0.5, hi));
     if let Some(f) = p.freq_choice("airm") {
         let air = p.f("air") * 1.5 * k; // 0..15 dB
                                         // Air bands above Nyquist still lift the top octave a little.
         let fc = f.min((sr * 0.42) as f32);
         let air = if f > fc { air * fc / f } else { air };
         push_gain(d, air, || high_shelf(sr, fc, 0.5, air));
-        sum += air * 0.5;
     }
     if p.on("again") {
-        d.out_gain_db = -0.4 * sum / 3.0;
+        // AUTO: undo the level change the EQ makes - the mean of its response
+        // over the audio band, one point per octave (31 Hz - 16 kHz).
+        let mean = (0..10).map(|i| d.response_db(31.25 * f64::from(1u32 << i), sr)).sum::<f64>() / 10.0;
+        d.out_gain_db = -mean as f32;
     }
+}
+
+/// PIA 560: each band narrows as it is boosted or cut further (p.94).
+fn pia_q(g: f32) -> f32 {
+    0.7 + 1.1 * (g.abs() / 12.0).min(1.0)
 }
 
 fn design_pia(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
@@ -332,7 +381,7 @@ fn design_pia(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
         ("16k", 16000.0),
     ] {
         let gain = p.f(id) * k;
-        push_gain(d, gain, || peak(sr, f, 1.41, gain));
+        push_gain(d, gain, || peak(sr, f, pia_q(gain), gain));
     }
     d.out_gain_db = p.f("g");
 }
@@ -576,6 +625,147 @@ mod tests {
                 assert!(r <= *at_least, "{token}: {r} dB at {freq}");
             }
         }
+    }
+
+    fn designed(table: &[ModelSpec], token: &str, sets: &[(&str, f32)]) -> EqDesign {
+        let (m, mut v) = defaults(table, token);
+        for (id, x) in sets {
+            set(table, m, &mut v, id, *x);
+        }
+        design(&table[m], &v, 48000.0, 1.0)
+    }
+
+    fn choice(table: &[ModelSpec], token: &str, id: &str, item: &str) -> f32 {
+        let m = model_index(table, token).unwrap();
+        let ParamKind::Choice(items) = table[m].params[table[m].param_index(id).unwrap()].kind else { panic!() };
+        items.iter().position(|t| *t == item).unwrap() as f32
+    }
+
+    const SR: f64 = 48000.0;
+
+    #[test]
+    fn soul_q_knobs_run_from_narrow_to_wide() {
+        // Full gain: the proportional-Q factor is 1, so the Q is the knob's.
+        let f = dial_log(5.0, 200.0, 2500.0);
+        for (dial, q) in [(0.0, 2.5), (10.0, 0.3)] {
+            let d = designed(EQ_MODELS_CH, "SOUL", &[("lmg", 5.0), ("lmq", dial)]);
+            let want = BiquadCoeffs::peak(SR, f as f64, q, 15.0);
+            let (a, b) = (d.response_db(2.0 * f as f64, SR), 20.0 * want.magnitude_at(2.0 * f as f64, SR).log10());
+            assert!((a - b).abs() < 0.01, "dial {dial}: {a} vs {b}");
+        }
+        // ... and narrower again as the gain goes up.
+        let soft = designed(EQ_MODELS_CH, "SOUL", &[("lmg", 1.0)]);
+        let hard = designed(EQ_MODELS_CH, "SOUL", &[("lmg", 5.0)]);
+        let at = |d: &EqDesign, g: f64| d.response_db(2.0 * f as f64, SR) / g;
+        assert!(at(&hard, 15.0) < at(&soft, 3.0));
+    }
+
+    #[test]
+    fn even88_hi_q_switches_between_q_0_7_and_2() {
+        let f = dial_log(5.0, 33.0, 440.0) as f64;
+        let bell = choice(EQ_MODELS_CH, "E88", "lt", "BELL");
+        let shelf = choice(EQ_MODELS_CH, "E88", "lt", "SHELV");
+        let high = choice(EQ_MODELS_CH, "E88", "lq", "HIGH");
+        let low = choice(EQ_MODELS_CH, "E88", "lq", "LOW");
+        for (lt, lq, want) in [
+            (bell, low, BiquadCoeffs::peak(SR, f, 0.7, 15.0)),
+            (bell, high, BiquadCoeffs::peak(SR, f, 2.0, 15.0)),
+            (shelf, low, BiquadCoeffs::low_shelf(SR, f, 0.7, 15.0)),
+            (shelf, high, BiquadCoeffs::low_shelf(SR, f, 2.0, 15.0)),
+        ] {
+            let d = designed(EQ_MODELS_CH, "E88", &[("lg", 5.0), ("lt", lt), ("lq", lq)]);
+            for x in [f / 3.0, f * 1.5, f * 3.0] {
+                let b = 20.0 * want.magnitude_at(x, SR).log10();
+                assert!((d.response_db(x, SR) - b).abs() < 0.01, "lt {lt} lq {lq} at {x}");
+            }
+        }
+    }
+
+    #[test]
+    fn even84_band_ranges() {
+        // LOW +-15 dB, MID +-20 dB, HIGH +-20 dB (p.97).
+        let low = designed(EQ_MODELS_CH, "E84", &[("lg", 5.0)]);
+        assert!((low.response_db(10.0, SR) - 15.0).abs() < 0.3);
+        let mid = designed(EQ_MODELS_CH, "E84", &[("mg", -5.0)]);
+        assert!((mid.response_db(1600.0, SR) + 20.0).abs() < 0.05);
+        let high = designed(EQ_MODELS_CH, "E84", &[("hg", 5.0)]);
+        assert!((high.response_db(22000.0, SR) - 20.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn even84_shelves_interact() {
+        let (lf, hf) = (choice(EQ_MODELS_CH, "E84", "lf", "220"), choice(EQ_MODELS_CH, "E84", "hf", "10k"));
+        let one = |id: &str, g: f32| designed(EQ_MODELS_CH, "E84", &[("lf", lf), ("hf", hf), (id, g)]);
+        let both = |lg: f32, hg: f32| designed(EQ_MODELS_CH, "E84", &[("lf", lf), ("hf", hf), ("lg", lg), ("hg", hg)]);
+        // Boosting both shelves takes some of the mid lift away ...
+        let x = 1000.0;
+        let apart = one("lg", 5.0).response_db(x, SR) + one("hg", 5.0).response_db(x, SR);
+        let together = both(5.0, 5.0).response_db(x, SR);
+        assert!(together < apart - 0.5, "{together} vs {apart}");
+        // ... but leaves the shelves' own ranges (and DC/top) alone.
+        assert!((both(5.0, 5.0).response_db(10.0, SR) - 15.0).abs() < 0.3);
+        assert!((both(5.0, 5.0).response_db(22000.0, SR) - 20.0).abs() < 0.5);
+        // One shelf alone: no coupling section at all.
+        assert_eq!(one("lg", 5.0).len, 1);
+        // Every combination is stable (poles inside the unit circle).
+        for lg in [-5.0, -2.0, 2.0, 5.0] {
+            for hg in [-5.0, -2.0, 2.0, 5.0] {
+                for c in &both(lg, hg).sections[..both(lg, hg).len] {
+                    assert!(c.a2.abs() < 1.0 && c.a1.abs() < 1.0 + c.a2, "lg {lg} hg {hg}: {c:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fortissimo_shelves_are_higher_order() {
+        // Steeper than one second-order shelf, with a dip below the boost.
+        let d = designed(EQ_MODELS_CH, "F110", &[("hg", 5.0)]); // 10 kHz, +16 dB
+        let plain = BiquadCoeffs::high_shelf(SR, 10000.0, 0.7, 16.0);
+        let plain_db = |f: f64| 20.0 * plain.magnitude_at(f, SR).log10();
+        assert!(d.response_db(5000.0, SR) < -0.5, "no dip: {}", d.response_db(5000.0, SR));
+        assert!(plain_db(5000.0) > 0.5);
+        assert!(d.response_db(15000.0, SR) > plain_db(15000.0));
+        assert!((d.response_db(10000.0, SR) - 8.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn pulsar_low_boost_and_cut_dip() {
+        // Boost and cut together: a low-end boost with a dip just above it (p.98).
+        let d = designed(EQ_MODELS_CH, "PULSAR", &[("1lb", 10.0), ("1latt", 5.0)]);
+        assert!(d.response_db(30.0, SR) > 3.0);
+        assert!(d.response_db(100.0, SR) < -3.0);
+        // HI WIDTH: low values narrower.
+        let narrow = designed(EQ_MODELS_CH, "PULSAR", &[("1hb", 10.0), ("1hw", 0.0)]);
+        let broad = designed(EQ_MODELS_CH, "PULSAR", &[("1hb", 10.0), ("1hw", 10.0)]);
+        assert!(narrow.response_db(4000.0, SR) < broad.response_db(4000.0, SR));
+    }
+
+    #[test]
+    fn mach4_bands_and_auto_gain() {
+        // SUB is a bell (it falls back below its frequency), 2.5 kHz a shelf (p.100).
+        let sub = designed(EQ_MODELS_CH, "MACH4", &[("sub", 5.0)]);
+        assert!((sub.response_db(10.0, SR) - 12.5).abs() < 0.1);
+        assert!(sub.response_db(1.0, SR) < 3.0);
+        let hi = designed(EQ_MODELS_CH, "MACH4", &[("2k5", 5.0)]);
+        assert!((hi.response_db(20000.0, SR) - 12.5).abs() < 0.5);
+        assert!(hi.response_db(100.0, SR).abs() < 0.1);
+        // AUTO cancels the EQ's overall level change.
+        let sets = [("2k5", 5.0), ("40", 3.0), ("air", 6.0)];
+        let plain = designed(EQ_MODELS_CH, "MACH4", &sets);
+        let auto = designed(EQ_MODELS_CH, "MACH4", &[sets[0], sets[1], sets[2], ("again", 1.0)]);
+        let mean = |d: &EqDesign| (0..10).map(|i| d.response_db(31.25 * f64::from(1u32 << i), SR)).sum::<f64>() / 10.0;
+        assert!(mean(&plain) > 3.0);
+        assert!(mean(&auto).abs() < 1e-3, "{}", mean(&auto));
+    }
+
+    #[test]
+    fn pia_bands_narrow_as_the_gain_grows() {
+        let small = designed(EQ_MODELS_BUS, "PIA", &[("1k", 3.0)]);
+        let large = designed(EQ_MODELS_BUS, "PIA", &[("1k", 12.0)]);
+        assert!((large.response_db(1000.0, SR) - 12.0).abs() < 0.05);
+        let skirt = |d: &EqDesign, g: f64| d.response_db(1500.0, SR) / g;
+        assert!(skirt(&large, 12.0) < skirt(&small, 3.0) * 0.7);
     }
 
     #[test]

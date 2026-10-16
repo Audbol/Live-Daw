@@ -46,6 +46,10 @@ DEFAULTS = {
     ("DS902", "f"): 5000, ("DS902", "range"): 6,
     ("DEQ", "thr"): -20, ("DEQ", "ratio"): 2, ("DEQ", "att"): 10, ("DEQ", "rel"): 150, ("DEQ", "filt"): "BP",
     ("DEQ", "g"): 0, ("DEQ", "f"): 3000, ("DEQ", "q"): 2, ("DEQ", "mode"): "high",
+    # Dual DEQ: the panel of manual Fig. 91 (GAIN 0 dB = the band does nothing).
+    **{("DEQ2", f"{b}-{k}"): v for b, f in (("1", 200), ("2", 2000)) for k, v in
+       (("thr", -20), ("ratio", 2), ("att", 50), ("rel", 300), ("filt", "BP"), ("g", 0), ("f", f), ("q", 1),
+        ("mode", "low"))},
     ("WAVE", "att"): 0, ("WAVE", "sust"): 0, ("WAVE", "g"): 0,
     ("PSE", "thr"): -20, ("PSE", "depth"): 10, ("CMB", "thr"): -20, ("CMB", "depth"): 10,
     ("CMB", "ingain"): 50, ("CMB", "cpeak"): 30,
@@ -66,7 +70,8 @@ DEFAULTS = {
     ("RED3", "thr"): -20, ("RED3", "ratio"): 3, ("RED3", "att"): 10, ("RED3", "rel"): 300,
     ("76LA", "in"): -24, ("76LA", "out"): -24, ("76LA", "att"): 4, ("76LA", "rel"): 4, ("76LA", "ratio"): "4",
     ("LA", "ingain"): 50, ("LA", "peak"): 30,
-    ("F670", "in"): -10, ("F670", "thr"): 5, ("F670", "time"): 2, ("F670", "bias"): 0.5,
+    # DC BIAS: 1.00 is the factory calibration (manual p.115).
+    ("F670", "in"): -10, ("F670", "thr"): 5, ("F670", "time"): 2, ("F670", "bias"): 1.0,
     ("BLISS", "thr"): -20, ("BLISS", "ratio"): 2, ("BLISS", "att"): 10, ("BLISS", "rel"): 150, ("BLISS", "glim"): -12,
     ("NSTR", "in"): 5, ("NSTR", "out"): 5, ("NSTR", "att"): 5, ("NSTR", "rel"): 5, ("NSTR", "ratio"): "4:1",
     ("2250", "thr"): 5, ("2250", "ratio"): 3, ("2250", "att"): "MED", ("2250", "rel"): 300,

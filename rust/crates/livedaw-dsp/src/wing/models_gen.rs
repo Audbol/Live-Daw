@@ -437,7 +437,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
                 min: -60.0,
                 max: 0.0,
                 steps: 121,
-                default: 0.0,
+                default: -20.0,
             },
             ParamSpec {
                 id: "1-ratio",
@@ -447,7 +447,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
                 min: 0.0,
                 max: 6.0,
                 steps: 7,
-                default: 0.0,
+                default: 3.0,
             },
             ParamSpec {
                 id: "1-att",
@@ -457,7 +457,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
                 min: 0.0,
                 max: 200.0,
                 steps: 201,
-                default: 0.0,
+                default: 50.0,
             },
             ParamSpec {
                 id: "1-rel",
@@ -467,7 +467,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
                 min: 20.0,
                 max: 4000.0,
                 steps: 130,
-                default: 282.8427,
+                default: 300.0,
             },
             ParamSpec {
                 id: "1-filt",
@@ -477,7 +477,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
                 min: 0.0,
                 max: 5.0,
                 steps: 6,
-                default: 0.0,
+                default: 1.0,
             },
             ParamSpec {
                 id: "1-g",
@@ -497,7 +497,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
                 min: 20.0,
                 max: 20000.002,
                 steps: 961,
-                default: 632.4556,
+                default: 200.0,
             },
             ParamSpec {
                 id: "1-q",
@@ -507,7 +507,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
                 min: 0.442,
                 max: 10.0,
                 steps: 181,
-                default: 2.1024,
+                default: 1.0,
             },
             ParamSpec {
                 id: "1-mode",
@@ -527,7 +527,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
                 min: -60.0,
                 max: 0.0,
                 steps: 121,
-                default: 0.0,
+                default: -20.0,
             },
             ParamSpec {
                 id: "2-ratio",
@@ -537,7 +537,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
                 min: 0.0,
                 max: 6.0,
                 steps: 7,
-                default: 0.0,
+                default: 3.0,
             },
             ParamSpec {
                 id: "2-att",
@@ -547,7 +547,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
                 min: 0.0,
                 max: 200.0,
                 steps: 201,
-                default: 0.0,
+                default: 50.0,
             },
             ParamSpec {
                 id: "2-rel",
@@ -557,7 +557,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
                 min: 20.0,
                 max: 4000.0,
                 steps: 130,
-                default: 282.8427,
+                default: 300.0,
             },
             ParamSpec {
                 id: "2-filt",
@@ -567,7 +567,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
                 min: 0.0,
                 max: 5.0,
                 steps: 6,
-                default: 0.0,
+                default: 1.0,
             },
             ParamSpec {
                 id: "2-g",
@@ -587,7 +587,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
                 min: 20.0,
                 max: 20000.002,
                 steps: 961,
-                default: 632.4556,
+                default: 2000.0,
             },
             ParamSpec {
                 id: "2-q",
@@ -597,7 +597,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
                 min: 0.442,
                 max: 10.0,
                 steps: 181,
-                default: 2.1024,
+                default: 1.0,
             },
             ParamSpec {
                 id: "2-mode",
@@ -1599,7 +1599,7 @@ pub static DYN_MODELS: &[ModelSpec] = &[
                 min: 0.0,
                 max: 1.0,
                 steps: 101,
-                default: 0.5,
+                default: 1.0,
             },
         ],
     },
