@@ -204,23 +204,113 @@ void DisplayKnob::timerCallback()
 void DisplayKnob::paint (juce::Graphics& g)
 {
     auto b = getLocalBounds();
-    const float captionSize = compact ? 10.5f : 12.0f;
-    g.setColour (binding.isValid() ? Colours::accent : Colours::textDim.withAlpha (0.4f));
+    const float captionSize = compact ? 14.0f : 16.0f;
+    g.setColour (binding.isValid() ? Colours::textDim : Colours::textDim.withAlpha (0.3f));
     g.setFont (juce::FontOptions (captionSize, juce::Font::bold));
-    g.drawFittedText (binding.isValid() ? binding.label : juce::String ("-"), b.removeFromTop ((int) captionSize + 3), juce::Justification::centred, 1);
+    g.drawFittedText (binding.isValid() ? binding.label.toUpperCase() : juce::String(), b.removeFromTop ((int) captionSize + 2),
+                      juce::Justification::centred, 1);
     g.setColour (Colours::text);
-    g.setFont (juce::FontOptions (compact ? 11.0f : 13.0f));
-    g.drawFittedText (valueText, b.removeFromBottom ((int) captionSize + 5), juce::Justification::centred, 1);
+    g.setFont (juce::FontOptions (compact ? 15.0f : 18.0f, juce::Font::bold));
+    g.drawFittedText (valueText, b.removeFromBottom ((int) captionSize + 4), juce::Justification::centred, 1);
 }
 
 void DisplayKnob::resized()
 {
     auto b = getLocalBounds();
-    const int caption = compact ? 14 : 15;
+    const int caption = compact ? 16 : 18;
     b.removeFromTop (caption);
-    b.removeFromBottom (caption + 1);
+    b.removeFromBottom (caption + 2);
     const int size = juce::jmin (b.getWidth(), b.getHeight());
     slider.setBounds (b.withSizeKeepingCentre (size, size));
+}
+
+//==============================================================================
+ParamSlot::ParamSlot()
+{
+    setRepaintsOnMouseActivity (true);
+    startTimerHz (20);
+}
+
+void ParamSlot::setBinding (KnobBinding b)
+{
+    binding = std::move (b);
+    valueText = {};
+    timerCallback();
+    repaint();
+}
+
+void ParamSlot::timerCallback()
+{
+    if (! binding.isValid())
+        return;
+    const float p = binding.get();
+    const auto t = binding.text ? binding.text() : juce::String();
+    if (std::abs (p - position) > 1.0e-5f || t != valueText)
+    {
+        position = p;
+        valueText = t;
+        repaint();
+    }
+}
+
+void ParamSlot::setPosition (float p)
+{
+    if (! binding.isValid() || ! binding.set)
+        return;
+    p = juce::jlimit (0.0f, 1.0f, p);
+    if (binding.steps > 1.0f)
+        p = std::round (p * (binding.steps - 1.0f)) / (binding.steps - 1.0f);
+    binding.set (p);
+    timerCallback();
+}
+
+void ParamSlot::paint (juce::Graphics& g)
+{
+    if (! binding.isValid())
+        return;
+
+    auto b = getLocalBounds().reduced (6, 2);
+    auto bar = b.removeFromBottom (8).toFloat();
+    g.setColour (isMouseOver() ? Colours::yellow : Colours::text);
+    g.setFont (juce::FontOptions (juce::jlimit (14.0f, 22.0f, (float) b.getHeight() * 0.75f), juce::Font::bold));
+    g.drawFittedText (binding.label.toUpperCase(), b, juce::Justification::centredLeft, 1);
+    g.setColour (Colours::text);
+    g.drawFittedText (valueText, b, juce::Justification::centredRight, 1);
+
+    // Position bar: a grey line, the value in lime (from the centre when bipolar), a white thumb.
+    const float y = bar.getCentreY();
+    g.setColour (Colours::screenLine);
+    g.fillRect (bar.getX(), y - 1.0f, bar.getWidth(), 2.0f);
+    const float x = bar.getX() + position * bar.getWidth();
+    const float from = binding.bipolar ? bar.getCentreX() : bar.getX();
+    g.setColour (Colours::lime);
+    g.fillRect (juce::jmin (from, x), y - 2.5f, std::abs (x - from), 5.0f);
+    g.setColour (Colours::text);
+    g.fillRect (x - 1.5f, bar.getY(), 3.0f, bar.getHeight());
+}
+
+void ParamSlot::mouseDown (const juce::MouseEvent&)
+{
+    dragStart = position;
+}
+
+void ParamSlot::mouseDrag (const juce::MouseEvent& e)
+{
+    const float sensitivity = e.mods.isShiftDown() ? 0.2f : 1.0f;
+    setPosition (dragStart + sensitivity * (float) (e.getDistanceFromDragStartX() - e.getDistanceFromDragStartY()) / (float) juce::jmax (100, getWidth() * 2));
+}
+
+void ParamSlot::mouseDoubleClick (const juce::MouseEvent&)
+{
+    if (binding.reset)
+        binding.reset();
+    timerCallback();
+}
+
+void ParamSlot::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
+{
+    const float step = binding.steps > 1.0f ? 1.0f / (binding.steps - 1.0f) : 0.01f;
+    setPosition (position + (wheel.deltaY > 0 ? step : -step) * (binding.steps > 1.0f ? 1.0f : 2.0f));
 }
 
 //==============================================================================

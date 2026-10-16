@@ -51,6 +51,7 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
       meterBank (e),
       ctx { e, h, s, l, dm, props, meterBank }
 {
+    juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
     setLookAndFeel (&lookAndFeel);
 
     ctx.selectStrip = [this] (Strip* strip) { selectStrip (strip); };
@@ -98,9 +99,9 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
         resized();
     };
     splitter.onDragEnd = [this] { settings.setValue ("ui.topFraction", topFraction); };
-    splitter.onDoubleClick = [this] { topFraction = 0.47f; resized(); };
+    splitter.onDoubleClick = [this] { topFraction = 0.52f; resized(); };
     addAndMakeVisible (splitter);
-    topFraction = (float) settings.getDoubleValue ("ui.topFraction", 0.47);
+    topFraction = (float) settings.getDoubleValue ("ui.topFraction", 0.52);
 
     if (! engine.getChannels().empty())
         selectStrip (engine.getChannels()[0].get());
@@ -123,6 +124,7 @@ MainComponent::~MainComponent()
     display.reset();
     channelStrip.reset();
     setLookAndFeel (nullptr);
+    juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
 }
 
 //==============================================================================
@@ -231,7 +233,7 @@ void MainComponent::resized()
     auto top = b.removeFromTop (topH);
     splitter.setBounds (b.removeFromTop (6));
 
-    const int stripW = juce::jlimit (300, 560, top.getWidth() * 28 / 100);
+    const int stripW = juce::jlimit (300, 520, top.getWidth() * 25 / 100);
     const int monitorW = juce::jlimit (240, 400, top.getWidth() * 18 / 100);
     channelStrip->setBounds (top.removeFromLeft (stripW));
     monitor->setBounds (top.removeFromRight (monitorW));

@@ -1,5 +1,7 @@
 #include "ui/FaderStrip.h"
 
+#include <optional>
+
 namespace livedaw::ui
 {
 
@@ -197,60 +199,65 @@ void FaderStrip::paint (juce::Graphics& g)
     g.setColour (Colours::panel);
     g.fillRect (b.reduced (1, 0));
 
-    // Scribble strip: colour bar + LCD.
+    // Scribble strip, like the console's colour LCD: label and format top left,
+    // the kind's icon top right, the name on a bar in the strip's colour.
     auto s = scribbleArea;
     juce::Colour colour = Colours::outline;
-    juce::String label, icon;
+    juce::String label, format;
+    std::optional<Icon> kindIcon;
 
     if (strip != nullptr)
     {
         colour = strip->getColour();
         label = strip->getLabel();
-        if (const int i = strip->params.icon.load(); i > 0)
-            icon = "#" + juce::String (i);
+        format = strip->isOutput() || strip->params.stereo.load() ? "ST" : "MONO";
+        kindIcon = stripIcon (strip->getKind());
     }
     else if (dca >= 0)
     {
         colour = wingColour (ctx.engine.getDca (dca).colour.load());
         label = "DCA " + juce::String (dca + 1);
+        format = "DCA";
     }
-
-    g.setColour (target ? colour : Colours::outline.darker (0.3f));
-    g.fillRect (s.removeFromTop (5).reduced (2, 0));
-    s.removeFromTop (1);
 
     auto lcd = s.reduced (2, 0).toFloat();
     g.setColour (juce::Colours::black);
     g.fillRoundedRectangle (lcd, 2.0f);
-    if (shownSelected)
-    {
-        g.setColour (Colours::select);
-        g.drawRoundedRectangle (lcd.reduced (0.5f), 2.0f, 1.5f);
-    }
 
     if (target)
     {
-        auto t = lcd.reduced (4.0f, 2.0f).toNearestInt();
-        auto top = t.removeFromTop (13);
-        g.setColour (colour.withMultipliedBrightness (1.15f));
-        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-        g.drawText (label, top, juce::Justification::centredLeft);
-        g.setColour (Colours::textDim);
-        g.setFont (juce::FontOptions (10.0f));
-        g.drawText (icon, top, juce::Justification::centredRight);
+        auto t = lcd.reduced (3.0f, 2.0f);
+        auto bar = t.removeFromBottom (juce::jmax (14.0f, t.getHeight() * 0.36f));
+        g.setColour (colour);
+        g.fillRect (bar);
+        g.setColour (colour.getPerceivedBrightness() > 0.45f ? juce::Colours::black : juce::Colours::white);
+        g.setFont (juce::FontOptions (juce::jlimit (11.0f, 16.0f, bar.getHeight() * 0.82f), juce::Font::bold));
+        g.drawFittedText (shownName.isNotEmpty() ? shownName : label, bar.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.75f);
 
+        t.removeFromBottom (1.0f);
+        auto icon = t.removeFromRight (juce::jmin (t.getHeight(), t.getWidth() * 0.4f));
+        if (kindIcon.has_value())
+            drawIcon (g, *kindIcon, icon.reduced (2.0f), juce::Colours::white);
+        g.setColour (Colours::text);
+        g.setFont (juce::FontOptions (juce::jlimit (10.0f, 14.0f, t.getHeight() * 0.42f), juce::Font::bold));
+        g.drawFittedText (label, t.removeFromTop (t.getHeight() / 2.0f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.7f);
         if (sendSource != nullptr)
         {
-            auto bottom = t.removeFromBottom (12);
             g.setColour (Colours::solo);
-            g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
-            g.drawFittedText (sendSource == strip ? "> BUS " + juce::String (sendSlot + 1) : "< " + sendSource->getLabel(),
-                              bottom, juce::Justification::centred, 1, 0.8f);
+            g.drawFittedText (sendSource == strip ? "> BUS " + juce::String (sendSlot + 1) : "< " + sendSource->getLabel(), t.toNearestInt(),
+                              juce::Justification::topLeft, 1, 0.7f);
         }
+        else
+        {
+            g.setColour (Colours::textDim);
+            g.drawFittedText (format, t.toNearestInt(), juce::Justification::topLeft, 1, 0.7f);
+        }
+    }
 
-        g.setColour (Colours::text);
-        g.setFont (juce::FontOptions (juce::jlimit (11.0f, 15.0f, (float) getWidth() / 5.5f), juce::Font::bold));
-        g.drawFittedText (shownName.isNotEmpty() ? shownName : label, t, juce::Justification::centred, 2, 0.8f);
+    if (shownSelected)
+    {
+        g.setColour (Colours::select);
+        g.drawRoundedRectangle (lcd.reduced (0.5f), 2.0f, 2.0f);
     }
 
     // GATE / DYN LEDs.
@@ -280,7 +287,7 @@ void FaderStrip::paint (juce::Graphics& g)
 void FaderStrip::resized()
 {
     auto b = getLocalBounds().reduced (2, 2);
-    const int scribbleH = juce::jlimit (40, 60, b.getHeight() / 8);
+    const int scribbleH = juce::jlimit (46, 70, b.getHeight() / 7);
     scribbleArea = b.removeFromTop (scribbleH);
     b.removeFromTop (3);
 

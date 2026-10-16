@@ -223,26 +223,42 @@ void ChannelStripSection::paint (juce::Graphics& g)
     g.setColour (Colours::outline);
     g.drawRect (getLocalBounds().removeFromRight (1));
 
-    // The section's small display.
+    // The section's display, styled like a scribble strip: label, icon and the
+    // name on a bar in the strip's colour.
     auto lcd = lcdArea.toFloat();
     g.setColour (juce::Colours::black);
     g.fillRoundedRectangle (lcd, 3.0f);
-    auto t = lcdArea.reduced (10, 4);
-    g.setColour (Colours::accent);
-    g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
-    g.drawText ("CHANNEL STRIP", t.removeFromTop (14), juce::Justification::centredLeft);
+    auto t = lcdArea.reduced (8, 5).withTrimmedRight (48).toFloat();
     if (strip != nullptr)
     {
+        auto icon = t.removeFromLeft (t.getHeight());
+        drawIcon (g, stripIcon (strip->getKind()), icon.reduced (4.0f), juce::Colours::white);
+        t.removeFromLeft (6.0f);
+        auto top = t.removeFromTop (t.getHeight() * 0.4f);
+        g.setColour (Colours::text);
+        g.setFont (juce::FontOptions (juce::jmin (15.0f, top.getHeight()), juce::Font::bold));
+        g.drawText (strip->getLabel() + "   " + (strip->isOutput() || strip->params.stereo.load() ? "ST" : "MONO"), top.toNearestInt(),
+                    juce::Justification::centredLeft);
+        t.removeFromTop (2.0f);
         g.setColour (strip->getColour());
-        g.fillRect (t.removeFromLeft (5));
-        t.removeFromLeft (8);
+        g.fillRect (t);
+        g.setColour (strip->getColour().getPerceivedBrightness() > 0.45f ? juce::Colours::black : juce::Colours::white);
+        g.setFont (juce::FontOptions (juce::jlimit (13.0f, 22.0f, t.getHeight() * 0.8f), juce::Font::bold));
+        g.drawFittedText (shownName, t.toNearestInt().reduced (6, 0), juce::Justification::centredLeft, 1);
     }
-    g.setColour (Colours::text);
-    g.setFont (juce::FontOptions (juce::jlimit (14.0f, 22.0f, (float) lcdArea.getHeight() * 0.4f), juce::Font::bold));
-    g.drawFittedText (strip != nullptr ? shownName : juce::String ("press SEL on a strip"), t.withTrimmedRight (50), juce::Justification::centredLeft, 1);
+    else
+    {
+        g.setColour (Colours::textDim);
+        g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+        g.drawFittedText ("PRESS SEL ON A STRIP", t.toNearestInt(), juce::Justification::centredLeft, 1);
+    }
 
+    // Silk-screen outlines around the knob groups.
+    g.setColour (Colours::outline);
+    g.drawRoundedRectangle (blockArea.toFloat().expanded (4.0f, 2.0f), 4.0f, 1.0f);
+    g.drawRoundedRectangle (eqArea.toFloat().expanded (4.0f, 0.0f), 4.0f, 1.0f);
     g.setColour (Colours::textDim);
-    g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+    g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
     g.drawText ("EQ", eqArea.removeFromTop (14).reduced (6, 0), juce::Justification::centredLeft);
 }
 
@@ -261,22 +277,24 @@ void ChannelStripSection::resized()
     for (int i = 0; i < kNumBlocks; ++i)
     {
         auto cell = juce::Rectangle<int> (blockArea.getX() + i * w, blockArea.getY(), w, blockArea.getHeight()).reduced (3, 0);
-        blockKeys[i]->setBounds (cell.removeFromBottom (26));
-        blockKnobs[i].setBounds (cell.reduced (0, 2));
+        blockKeys[i]->setBounds (cell.removeFromBottom (30).reduced (0, 2));
+        // Keep the knob, its caption and value together rather than spread over a tall cell.
+        blockKnobs[i].setBounds (cell.removeFromBottom (juce::jmin (cell.getHeight(), cell.getWidth() * 3 / 2)));
     }
 
     b.removeFromTop (6);
     eqArea = b;
     auto e = b.withTrimmedTop (14);
-    auto keys = e.removeFromBottom (26);
+    auto keys = e.removeFromBottom (30).reduced (0, 2);
     const int kw = keys.getWidth() / 6;
     eqKey->setBounds (keys.removeFromLeft (kw).reduced (2, 0));
     for (auto* button : { &gainButton, &widthButton, &freqButton, &shiftButton })
         button->setBounds (keys.removeFromLeft (kw).reduced (2, 0));
     const int ew = e.getWidth() / 5;
+    auto fit = [] (juce::Rectangle<int> r) { return r.removeFromBottom (juce::jmin (r.getHeight(), r.getWidth() * 3 / 2)); };
     for (auto& k : eqKnobs)
-        k.setBounds (e.removeFromLeft (ew).reduced (3, 2));
-    eqMix.setBounds (e.reduced (3, 2));
+        k.setBounds (fit (e.removeFromLeft (ew).reduced (3, 2)));
+    eqMix.setBounds (fit (e.reduced (3, 2)));
 }
 
 //==============================================================================
@@ -366,18 +384,27 @@ void MonitorSection::paint (juce::Graphics& g)
 {
     g.fillAll (Colours::panel);
     g.setColour (Colours::textDim);
-    g.setFont (juce::FontOptions (10.5f, juce::Font::bold));
+    g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
     g.drawText (ctx.engine.anySoloActive.load() ? "SOLO" : "MAIN 1", meterArea.withHeight (16), juce::Justification::centred);
-    g.drawText ("MONITOR", monitorArea.withHeight (14), juce::Justification::centredLeft);
-    g.drawText ("SHOW CONTROL", sceneArea.withHeight (14), juce::Justification::centredLeft);
-    g.drawText ("MUTE GROUPS", mgArea.withHeight (14), juce::Justification::centredLeft);
 
-    auto scene = sceneArea.withTrimmedTop (16).removeFromTop (30);
+    // Silk-screen outlines with their titles.
+    for (auto [area, title] : { std::pair { monitorArea, "MONITOR" }, std::pair { sceneArea, "SHOW CONTROL" }, std::pair { mgArea, "MUTE GROUPS" } })
+    {
+        g.setColour (Colours::outline);
+        g.drawRoundedRectangle (area.toFloat().withTrimmedTop (7.0f), 4.0f, 1.0f);
+        auto label = area.withHeight (14).withTrimmedLeft (10);
+        const int w = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), title) + 10;
+        g.setColour (Colours::panel);
+        g.fillRect (label.withWidth (w));
+        g.setColour (Colours::textDim);
+        g.drawText (title, label.withWidth (w), juce::Justification::centred);
+    }
+
     g.setColour (juce::Colours::black);
-    g.fillRoundedRectangle (scene.toFloat(), 3.0f);
+    g.fillRoundedRectangle (sceneDisplay.toFloat(), 3.0f);
     g.setColour (Colours::active);
-    g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
-    g.drawFittedText (sceneText, scene.reduced (8, 0), juce::Justification::centredLeft, 1);
+    g.setFont (juce::FontOptions (juce::jmin (18.0f, sceneDisplay.getHeight() * 0.6f), juce::Font::bold));
+    g.drawFittedText (sceneText, sceneDisplay.reduced (8, 0), juce::Justification::centredLeft, 1);
 }
 
 void MonitorSection::resized()
@@ -387,24 +414,36 @@ void MonitorSection::resized()
     meter.setBounds (meterArea.withTrimmedTop (18));
     b.removeFromLeft (8);
 
-    monitorArea = b.removeFromTop (b.getHeight() * 40 / 100);
-    auto m = monitorArea.withTrimmedTop (14);
-    level.setBounds (m.removeFromLeft (juce::jmin (90, m.getWidth() / 2)));
-    const int h = juce::jmin (28, m.getHeight() / 3);
-    dimButton.setBounds (m.removeFromTop (h).reduced (2));
-    aflButton.setBounds (m.removeFromTop (h).reduced (2));
-    clearSoloButton.setBounds (m.removeFromTop (h).reduced (2));
-
-    sceneArea = b.removeFromTop (b.getHeight() / 2);
-    auto s = sceneArea.withTrimmedTop (50);
-    auto row = s.removeFromTop (juce::jmin (32, s.getHeight()));
-    prevButton.setBounds (row.removeFromLeft (row.getWidth() / 4).reduced (2));
-    scenesButton.setBounds (row.removeFromRight (row.getWidth() / 3).reduced (2));
-    goButton.setBounds (row.reduced (2));
-
+    const int gap = 8;
+    const int sceneH = juce::jmin (120, b.getHeight() / 4);
+    const int mgH = juce::jmin (130, b.getHeight() / 4);
+    monitorArea = b.removeFromTop (b.getHeight() - sceneH - mgH - gap * 2);
+    b.removeFromTop (gap);
+    sceneArea = b.removeFromTop (sceneH);
+    b.removeFromTop (gap);
     mgArea = b;
-    auto mg = b.withTrimmedTop (16);
-    const int w = mg.getWidth() / 4, mh = juce::jmin (30, mg.getHeight() / 2);
+
+    auto m = monitorArea.withTrimmedTop (16).reduced (8, 6);
+    level.setBounds (m.removeFromLeft (juce::jmin (130, m.getWidth() / 2)).withSizeKeepingCentre (juce::jmin (130, m.getWidth() / 2), juce::jmin (m.getHeight(), 150)));
+    m.removeFromLeft (6);
+    const int h = juce::jmin (36, m.getHeight() / 3);
+    auto keys = m.withSizeKeepingCentre (m.getWidth(), h * 3);
+    dimButton.setBounds (keys.removeFromTop (h).reduced (2));
+    aflButton.setBounds (keys.removeFromTop (h).reduced (2));
+    clearSoloButton.setBounds (keys.removeFromTop (h).reduced (2));
+
+    auto s2 = sceneArea.withTrimmedTop (16).reduced (8, 6);
+    const int rowH = juce::jmin (34, (s2.getHeight() - 6) / 2);
+    sceneDisplay = s2.removeFromTop (rowH);
+    s2.removeFromTop (6);
+    auto row = s2.removeFromTop (rowH);
+    prevButton.setBounds (row.removeFromLeft (row.getWidth() / 4).reduced (2, 0));
+    scenesButton.setBounds (row.removeFromRight (row.getWidth() / 3).reduced (2, 0));
+    goButton.setBounds (row.reduced (2, 0));
+
+    auto mg = mgArea.withTrimmedTop (16).reduced (8, 6);
+    const int w = mg.getWidth() / 4, mh = juce::jmin (40, mg.getHeight() / 2);
+    mg = mg.withSizeKeepingCentre (mg.getWidth(), mh * 2);
     for (int i = 0; i < muteGroupButtons.size(); ++i)
         muteGroupButtons[i]->setBounds (mg.getX() + (i % 4) * w, mg.getY() + (i / 4) * mh, w - 3, mh - 3);
 }

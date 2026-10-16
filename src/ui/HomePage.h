@@ -1,15 +1,18 @@
 #pragma once
 
 #include "ui/DisplayPage.h"
+#include "ui/HomeScreens.h"
 
 #include <memory>
 
 namespace livedaw::ui
 {
 
-/** The HOME screen of the selected strip: an overview of its processing chain
-    and, in the left-hand column, the INPUT, FILTER, GATE, EQ, DYNAMICS, PRE INS,
-    POST INS, MAIN, BUS SENDS and NAME/COLOR screens. */
+/** The HOME screen of the selected strip, as on the WING: a column of
+    processing-block thumbnails in signal order (each with a key that switches
+    the block, the wrench sets the process order), the OVERVIEW / ICON/COLOR /
+    NAME / TAGS tabs with the SAFE key, and the block screens (INPUT, FILTER,
+    GATE, EQ, DYNAMICS, PRE/POST INSERT, MAIN, BUS SENDS). */
 class HomePage final : public DisplayPage
 {
 public:
@@ -25,17 +28,21 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    class Tab;
+    class BlockColumn;
 
 private:
     void rebuild();
     bool isAvailable (HomeTab, const Strip*) const;
+    static bool isOverviewGroup (HomeTab t) { return t == HomeTab::Home || t == HomeTab::Icon || t == HomeTab::Name || t == HomeTab::Tags; }
 
     UiContext& ctx;
     HomeTab current = HomeTab::Home;
     Strip* strip = nullptr;
-    juce::OwnedArray<juce::TextButton> tabButtons;
-    std::unique_ptr<Tab> content;
+    std::unique_ptr<BlockColumn> column;
+    juce::OwnedArray<juce::TextButton> topTabs;
+    std::unique_ptr<juce::TextButton> safeKey;
+    std::unique_ptr<HomeScreen> content;
+    juce::Rectangle<int> titleArea;
 };
 
 } // namespace livedaw::ui

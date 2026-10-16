@@ -82,7 +82,7 @@ private:
     juce::TextButton dimButton { "DIM" }, aflButton { "AFL" }, clearSoloButton { "CLR SOLO" };
     juce::TextButton prevButton { "<" }, goButton { "GO >" }, scenesButton { "SCENES" };
     juce::OwnedArray<juce::TextButton> muteGroupButtons;
-    juce::Rectangle<int> meterArea, sceneArea, mgArea, monitorArea;
+    juce::Rectangle<int> meterArea, sceneArea, mgArea, monitorArea, sceneDisplay;
     float dimRestoreDb = 0.0f;
     bool dimmed = false;
     juce::String sceneText;

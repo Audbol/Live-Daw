@@ -5,10 +5,6 @@ namespace livedaw::ui
 
 UtilityPage::UtilityPage (UiContext& c) : ctx (c)
 {
-    stats.setJustificationType (juce::Justification::topLeft);
-    stats.setFont (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 12.5f, juce::Font::plain));
-    addAndMakeVisible (stats);
-
     clearFaultsButton.setTooltip ("Clears the FX fault and double-assignment markers (a faulted plugin is bypassed until cleared)");
     clearFaultsButton.onClick = [this]
     {
@@ -20,8 +16,8 @@ UtilityPage::UtilityPage (UiContext& c) : ctx (c)
     addAndMakeVisible (clearClipsButton);
 
     logList.setModel (this);
-    logList.setRowHeight (18);
-    logList.setColour (juce::ListBox::backgroundColourId, juce::Colours::black);
+    logList.setRowHeight (26);
+    logList.setColour (juce::ListBox::backgroundColourId, juce::Colour (0xff1e1e1e));
     addAndMakeVisible (logList);
 
     ctx.log.addChangeListener (this);
@@ -57,10 +53,12 @@ void UtilityPage::paintListBoxItem (int row, juce::Graphics& g, int width, int h
     if (selected)
         g.fillAll (Colours::accent.withAlpha (0.3f));
 
-    auto r = juce::Rectangle<int> (width, height).reduced (6, 0);
-    g.setFont (juce::FontOptions (12.0f));
+    auto r = juce::Rectangle<int> (width, height).reduced (8, 0);
+    g.setColour (juce::Colour (0xff2c2c2c));
+    g.fillRect (0, height - 1, width, 1);
+    g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
     g.setColour (Colours::textDim);
-    g.drawText (e.time.formatted ("%H:%M:%S"), r.removeFromLeft (64), juce::Justification::centredLeft);
+    g.drawText (e.time.formatted ("%H:%M:%S"), r.removeFromLeft (76), juce::Justification::centredLeft);
     g.setColour (e.level == EventLog::Level::Error     ? Colours::mute
                  : e.level == EventLog::Level::Warning ? Colours::solo
                                                        : Colours::text);
@@ -70,35 +68,33 @@ void UtilityPage::paintListBoxItem (int row, juce::Graphics& g, int width, int h
 void UtilityPage::timerCallback()
 {
     auto& engine = ctx.engine;
-    juce::String text;
+    health.clear();
 
     if (auto* device = ctx.deviceManager.getCurrentAudioDevice())
     {
         const auto age = juce::Time::getMillisecondCounter() - engine.getLastCallbackTime();
-        text << "Device       " << device->getTypeName() << " / " << device->getName() << "\n"
-             << "Format       " << juce::String (device->getCurrentSampleRate(), 0) << " Hz, "
-             << device->getCurrentBufferSizeSamples() << " samples\n"
-             << "Latency      in " << device->getInputLatencyInSamples() << " / out "
-             << device->getOutputLatencyInSamples() << " samples\n"
-             << "Callbacks    " << (engine.isDeviceRunning() && age < 500 ? "running" : "STALLED") << "\n"
-             << "Xruns        " << device->getXRunCount() << "\n";
+        const bool running = engine.isDeviceRunning() && age < 500;
+        health.push_back ({ "DEVICE", device->getTypeName() + " / " + device->getName(), 0 });
+        health.push_back ({ "FORMAT", juce::String (device->getCurrentSampleRate(), 0) + " Hz, " + juce::String (device->getCurrentBufferSizeSamples()) + " samples", 0 });
+        health.push_back ({ "LATENCY", "IN " + juce::String (device->getInputLatencyInSamples()) + " / OUT " + juce::String (device->getOutputLatencyInSamples()), 0 });
+        health.push_back ({ "CALLBACKS", running ? "RUNNING" : "STALLED", running ? 0 : 2 });
+        health.push_back ({ "XRUNS", juce::String (device->getXRunCount()), device->getXRunCount() > 0 ? 1 : 0 });
     }
     else
     {
-        text << "Device       none\n\n\n\n\n";
+        health.push_back ({ "DEVICE", "NONE", 2 });
     }
 
-    text << "DSP load     " << juce::roundToInt (engine.getDspLoad() * 100.0f) << "% ("
-         << (engine.getNumWorkerThreads() + 1) << " threads)\n"
-         << "Console      " << (int) engine.getChannels().size() << " ch, " << (int) engine.getAux().size() << " aux, "
-         << (int) engine.getBuses().size() << " bus, " << (int) engine.getMains().size() << " main, "
-         << (int) engine.getMatrices().size() << " mtx\n"
-         << "DSP faults   " << engine.getTotalDspFaults() << " blocks silenced\n"
-         << "FX faults    " << engine.getNumFaultedFx() << " slots auto-bypassed\n"
-         << "Engine       " << engine.getEngineFaults() << " caught faults\n"
-         << "Output clips " << engine.outputClipEvents.load() << " blocks limited";
-
-    stats.setText (text, juce::dontSendNotification);
+    const int load = juce::roundToInt (engine.getDspLoad() * 100.0f);
+    health.push_back ({ "DSP LOAD", juce::String (load) + " %  (" + juce::String (engine.getNumWorkerThreads() + 1) + " THREADS)", load > 80 ? 2 : (load > 60 ? 1 : 0) });
+    health.push_back ({ "CONSOLE", juce::String ((int) engine.getChannels().size()) + " CH, " + juce::String ((int) engine.getAux().size()) + " AUX, "
+                                       + juce::String ((int) engine.getBuses().size()) + " BUS, " + juce::String ((int) engine.getMains().size()) + " MAIN, "
+                                       + juce::String ((int) engine.getMatrices().size()) + " MTX", 0 });
+    health.push_back ({ "DSP FAULTS", juce::String (engine.getTotalDspFaults()) + " BLOCKS SILENCED", engine.getTotalDspFaults() > 0 ? 2 : 0 });
+    health.push_back ({ "FX FAULTS", juce::String (engine.getNumFaultedFx()) + " SLOTS BYPASSED", engine.getNumFaultedFx() > 0 ? 2 : 0 });
+    health.push_back ({ "ENGINE", juce::String (engine.getEngineFaults()) + " CAUGHT FAULTS", engine.getEngineFaults() > 0 ? 2 : 0 });
+    health.push_back ({ "OUTPUT CLIPS", juce::String (engine.outputClipEvents.load()) + " BLOCKS LIMITED", engine.outputClipEvents.load() > 0 ? 1 : 0 });
+    repaint (statsArea);
 }
 
 void UtilityPage::paint (juce::Graphics& g)
@@ -106,20 +102,44 @@ void UtilityPage::paint (juce::Graphics& g)
     g.fillAll (Colours::screen);
     drawSectionBox (g, leftArea, "SYSTEM HEALTH");
     drawSectionBox (g, rightArea, "EVENT LOG");
+
+    auto r = statsArea;
+    const int h = juce::jmin (34, r.getHeight() / juce::jmax (1, (int) health.size()));
+    for (auto& row : health)
+    {
+        auto line = r.removeFromTop (h);
+        g.setColour (juce::Colour (0xff2c2c2c));
+        g.fillRect (line.withHeight (1));
+        g.setColour (Colours::textDim);
+        g.setFont (juce::FontOptions (juce::jmin (16.0f, h * 0.5f), juce::Font::bold));
+        g.drawText (row.label, line.removeFromLeft (line.getWidth() * 34 / 100), juce::Justification::centredLeft);
+        if (row.state != 0)
+        {
+            auto chip = line.removeFromRight (16).withSizeKeepingCentre (12, 12).toFloat();
+            g.setColour (row.state == 2 ? Colours::mute : Colours::amber);
+            g.fillEllipse (chip);
+            line.removeFromRight (6);
+        }
+        g.setColour (row.state == 2 ? Colours::mute : Colours::text);
+        g.setFont (juce::FontOptions (juce::jmin (18.0f, h * 0.56f), juce::Font::bold));
+        g.drawFittedText (row.value, line, juce::Justification::centredLeft, 1);
+    }
 }
 
 void UtilityPage::resized()
 {
-    auto b = getLocalBounds().reduced (2);
-    leftArea = b.removeFromLeft (juce::jmax (340, b.getWidth() * 2 / 5));
+    auto b = getLocalBounds().reduced (0, 6);
+    leftArea = b.removeFromLeft (juce::jmax (340, b.getWidth() * 45 / 100));
+    b.removeFromLeft (8);
     rightArea = b;
 
-    auto l = leftArea.reduced (10).withTrimmedTop (18);
-    auto row = l.removeFromBottom (28);
+    auto l = sectionContent (leftArea, true);
+    auto row = l.removeFromBottom (40);
     clearFaultsButton.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (2, 0));
     clearClipsButton.setBounds (row.reduced (2, 0));
-    stats.setBounds (l);
-    logList.setBounds (rightArea.reduced (10).withTrimmedTop (18));
+    l.removeFromBottom (6);
+    statsArea = l;
+    logList.setBounds (sectionContent (rightArea, true));
 }
 
 } // namespace livedaw::ui

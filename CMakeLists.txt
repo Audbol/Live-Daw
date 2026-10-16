@@ -160,6 +160,7 @@ target_sources(LiveDAW PRIVATE
     src/Main.cpp
     ${LIVEDAW_ENGINE_SOURCES}
     src/ui/LookAndFeel.cpp
+    src/ui/Icons.cpp
     src/ui/Knobs.cpp
     src/ui/ModelParams.cpp
     src/ui/MeterComponent.cpp
@@ -167,6 +168,7 @@ target_sources(LiveDAW PRIVATE
     src/ui/FaderStrip.cpp
     src/ui/FaderSection.cpp
     src/ui/ResponseGraph.cpp
+    src/ui/HomeScreens.cpp
     src/ui/HomePage.cpp
     src/ui/EffectsPage.cpp
     src/ui/MetersPage.cpp
@@ -180,6 +182,13 @@ target_sources(LiveDAW PRIVATE
     src/ui/MainComponent.cpp)
 
 livedaw_configure_juce_target(LiveDAW)
+
+# Barlow Condensed (SIL Open Font License, resources/fonts/OFL.txt): a DIN-style
+# condensed face like the WING's screen font.
+juce_add_binary_data(LiveDAWResources SOURCES
+    resources/fonts/BarlowCondensed-Medium.ttf
+    resources/fonts/BarlowCondensed-SemiBold.ttf)
+target_link_libraries(LiveDAW PRIVATE LiveDAWResources)
 
 #-------------------------------------------------------------------------------
 # Tests

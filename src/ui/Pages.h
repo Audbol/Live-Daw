@@ -3,13 +3,16 @@
 #include "ui/DisplayPage.h"
 
 #include <memory>
+#include <unordered_map>
 
 namespace livedaw::ui
 {
 
 class ShowPanel;
 
-/** EFFECTS: the 16 FX slots (VST/AU/LV2 plugins), used by the strips' inserts. */
+/** EFFECTS: the console's FX rack. 16 slots (VST/AU/LV2 plugins) used by the
+    strips' inserts; slots 1-8 are the premium column, 9-16 the standard one.
+    Each loaded slot shows its source strip, PRE/POST, ON and its mix. */
 class EffectsPage final : public DisplayPage
 {
 public:
@@ -25,11 +28,13 @@ public:
 private:
     UiContext& ctx;
     juce::OwnedArray<Tile> tiles;
+    juce::Rectangle<int> rack, premiumLabel, standardLabel;
     int selected = 0;
 };
 
-/** METERS: every signal path of the console with mute status. Click a group to
-    bring it to a fader section, a meter to select its strip. */
+/** METERS: like the console's meter screen. Channels and buses in groups of
+    eight with number keys (select) and M keys (mute), AUX, DCA, MAIN and MATRIX.
+    Consoles with more than 40 channels or 16 buses page through them. */
 class MetersPage final : public DisplayPage, private juce::Timer
 {
 public:
@@ -45,21 +50,45 @@ private:
         juce::String title;
         StripKind kind;
         bool dca = false;
+        int first = 0, count = 0;
         LayerSet::Section section;
-        juce::String bank;
-        juce::Rectangle<int> area;
+        juce::Rectangle<int> header, body;
+    };
+
+    struct Hold
+    {
+        float level = 0.0f;
+        int frames = 0;
     };
 
     void timerCallback() override;
-    int count (const Group&) const;
+    static float unitsOf (const std::vector<Group*>&);
+    static void layoutRow (juce::Rectangle<int> row, float unit, std::vector<Group*> left, std::vector<Group*> centre, std::vector<Group*> right);
+    int numPages() const;
+    juce::Rectangle<int> numberRow (const Group&) const;
+    juce::Rectangle<int> muteRow (const Group&) const;
+    juce::Rectangle<float> slot (const Group&, int index) const;
+    float levelOf (const Group&, int index, int channel) const;
+    bool isStereo (const Group&, int index) const;
+    bool isMuted (const Group&, int index) const;
+    Strip* stripOf (const Group&, int index) const;
+    void paintScale (juce::Graphics&, juce::Rectangle<int> column, const Group& reference) const;
+    void bringToSection (const Group&, Strip*);
 
     UiContext& ctx;
     std::vector<Group> groups;
+    juce::Rectangle<int> titleArea, prevKey, nextKey, scaleTop, scaleBottom;
+    int page = 0;
     std::vector<int> laidOutCounts;
+    std::unordered_map<const void*, Hold> holds;
 };
 
-/** ROUTING: channel sources, outputs and the monitor. */
-class RoutingPage final : public DisplayPage
+/** ROUTING: like the console's routing screen. CHANNELS: channel and aux
+    tiles on the left, a group of 48 sources on the right; pick a channel, then
+    its source (+1 AUTO moves on to the next channel, the lock protects the
+    patch). OUTPUTS: the same for the strips' outputs. MONITOR: monitor outputs,
+    PFL/AFL and level. */
+class RoutingPage final : public DisplayPage, private juce::Timer
 {
 public:
     explicit RoutingPage (UiContext&);
@@ -68,17 +97,50 @@ public:
     void refresh() override;
     void resized() override;
     void paint (juce::Graphics&) override;
-
-    class Model;
+    void mouseUp (const juce::MouseEvent&) override;
 
 private:
-    void setMode (int);
+    enum class Mode
+    {
+        Channels,
+        Outputs,
+        Monitor
+    };
+
+    struct TargetTile
+    {
+        juce::Rectangle<int> area;
+        Strip* strip;
+    };
+
+    void timerCallback() override;
+    void setMode (Mode);
+    std::vector<Strip*> allTargets() const;
+    int numTargetPages() const;
+    int numPorts() const;
+    int numPortGroups() const;
+    juce::String portName (int index) const;
+    Strip* selectedStrip() const;
+    void select (Strip*);
+    void layoutTiles();
+    void assign (int port, bool right);
+    void showGroupMenu();
+    juce::String portUsers (int port, bool& usedBySelected) const;
+
+    void paintTarget (juce::Graphics&, const TargetTile&, bool selected) const;
+    void paintPort (juce::Graphics&, juce::Rectangle<int>, int port) const;
 
     UiContext& ctx;
-    int mode = 0;
-    juce::TextButton inputsButton { "CHANNEL INPUTS" }, outputsButton { "OUTPUTS" }, monitorButton { "MONITOR" };
-    std::unique_ptr<Model> model;
-    juce::ListBox list;
+    Mode mode = Mode::Channels;
+    int targetPage = 0, portGroup = 0, layoutVersion = -1;
+    StripKind selectedKind = StripKind::Channel;
+    int selectedIndex = 0;
+    bool autoAdvance = true, locked = false;
+
+    juce::Rectangle<int> modeKeys[3], leftPanel, rightPanel, leftHeader, rightHeader;
+    juce::Rectangle<int> monoKey, stereoKey, autoKey, lockKey, unlockKey, prevPage, nextPage, groupSelector, offKey, separator;
+    std::vector<TargetTile> targetTiles;
+    std::vector<juce::Rectangle<int>> portTiles;
     std::unique_ptr<juce::Component> monitorPanel;
 };
 
@@ -113,9 +175,22 @@ public:
     void showScenes();
 
 private:
+    /** Tabs that report the change of tab. */
+    struct Tabs final : public juce::TabbedComponent
+    {
+        Tabs() : juce::TabbedComponent (juce::TabbedButtonBar::TabsAtTop) {}
+        std::function<void (int)> onTabChanged;
+        void currentTabChanged (int index, const juce::String&) override
+        {
+            if (onTabChanged)
+                onTabChanged (index);
+        }
+    };
+
     UiContext& ctx;
-    juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
+    Tabs tabs;
     ShowPanel* showPanel = nullptr;
+    std::unique_ptr<juce::Component> ownedShowPanel;
 };
 
 /** UTILITY: system health and the event log. */
@@ -134,11 +209,17 @@ private:
     int getNumRows() override;
     void paintListBoxItem (int row, juce::Graphics&, int width, int height, bool selected) override;
 
+    struct HealthRow
+    {
+        juce::String label, value;
+        int state = 0; // 0 fine, 1 note, 2 fault
+    };
+
     UiContext& ctx;
-    juce::Label stats;
+    std::vector<HealthRow> health;
     juce::TextButton clearFaultsButton { "CLEAR FX FAULTS" }, clearClipsButton { "RESET COUNTERS" };
     juce::ListBox logList;
-    juce::Rectangle<int> leftArea, rightArea;
+    juce::Rectangle<int> leftArea, rightArea, statsArea;
 };
 
 } // namespace livedaw::ui

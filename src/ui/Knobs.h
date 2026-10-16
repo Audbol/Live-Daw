@@ -74,6 +74,32 @@ private:
     bool compact = false;
 };
 
+/** One of the six parameter slots along the bottom of the WING's display:
+    the parameter name and value above a position bar. Drag sideways or turn the
+    mouse wheel to change it, double-click to reset. */
+class ParamSlot final : public juce::Component, private juce::Timer
+{
+public:
+    ParamSlot();
+
+    void setBinding (KnobBinding);
+    const KnobBinding& getBinding() const noexcept { return binding; }
+
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+
+private:
+    void timerCallback() override;
+    void setPosition (float);
+
+    KnobBinding binding;
+    float position = 0.0f, dragStart = 0.0f;
+    juce::String valueText;
+};
+
 /** Toggle button bound to an atomic<bool> (polled). */
 class BoolButton final : public juce::TextButton, private juce::Timer
 {

@@ -6,9 +6,10 @@
 namespace livedaw::ui
 {
 
-/** The WING's main display: status bar, the screen buttons on the left (HOME,
-    EFFECTS, METERS, ROUTING, SETUP, LIBRARY, UTILITY), the current screen and
-    the six knobs underneath, which follow what the screen shows. */
+/** The WING's main display: the screen keys left of it (HOME, EFFECTS, METERS,
+    ROUTING, SETUP, LIBRARY, UTILITY), the status bar (selected channel tab,
+    audio status, scene, SETTINGS/TOOLS, clock), the current screen, and the
+    parameter bar of the six knobs underneath, which follow the screen. */
 class MainDisplay final : public juce::Component, private juce::Timer
 {
 public:
@@ -26,11 +27,13 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseUp (const juce::MouseEvent&) override;
 
 private:
     void timerCallback() override;
     void updateKnobs();
     DisplayPage* page (Screen) const;
+    void paintStatusBar (juce::Graphics&);
 
     UiContext& ctx;
     Screen screen = Screen::Home;
@@ -43,11 +46,11 @@ private:
     std::unique_ptr<UtilityPage> utility;
 
     juce::OwnedArray<juce::TextButton> screenButtons;
-    DisplayKnob knobs[6];
-    juce::Rectangle<int> statusArea, knobArea;
-    juce::String statusLeft, statusRight;
-    juce::Colour statusColour;
-    bool alert = false;
+    ParamSlot slots[6];
+    juce::Rectangle<int> screenArea, statusArea, slotArea;
+    juce::Rectangle<int> channelTab, chipsTile, sceneTile, toolsKey, settingsKey, clockTile;
+    juce::String shownTime;
+    juce::uint32 shownHash = 0;
 };
 
 } // namespace livedaw::ui

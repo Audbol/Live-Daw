@@ -71,7 +71,7 @@ private:
     std::unique_ptr<MonitorSection> monitor;
     std::unique_ptr<FaderSection> sections[LayerSet::kNumSections];
     ResizerBar splitter { false };
-    float topFraction = 0.47f;
+    float topFraction = 0.52f;
 
     juce::OwnedArray<PluginWindow> pluginWindows;
     std::unique_ptr<juce::DocumentWindow> scannerWindow;

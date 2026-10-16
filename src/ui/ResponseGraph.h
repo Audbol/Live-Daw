@@ -25,6 +25,11 @@ public:
 
     /** Band index (into the STD bands) last touched, or -1. */
     int getSelectedBand() const noexcept { return selectedBand; }
+    void setSelectedBand (int band)
+    {
+        selectedBand = band;
+        repaint();
+    }
     std::function<void (int band)> onBandSelected;
 
     /** STD EQ band ids of a strip ("l", "1", ... "h"). */
@@ -51,6 +56,7 @@ private:
     float yForDb (float db) const;
     float dbForY (float y) const;
     juce::Rectangle<float> plot() const;
+    bool showLabels() const;
     int bandAt (juce::Point<float>) const;
 
     Strip* strip = nullptr;

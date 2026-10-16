@@ -1,32 +1,28 @@
 #include "ui/Pages.h"
 #include "ui/ShowPanel.h"
+#include "ui/WingWidgets.h"
 
 namespace livedaw::ui
 {
 
 namespace
 {
-    /** Show file: name, new/open/save. */
+    /** SHOW: the show's name, file keys and what a show holds. */
     class ShowTab final : public juce::Component, private juce::Timer
     {
     public:
         explicit ShowTab (UiContext& c) : ctx (c)
         {
-            caption.setText ("SHOW NAME", juce::dontSendNotification);
-            caption.setColour (juce::Label::textColourId, Colours::accent);
-            caption.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-            name.setFont (juce::FontOptions (20.0f, juce::Font::bold));
+            name.setFont (juce::FontOptions (26.0f, juce::Font::bold));
+            name.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff1e1e1e));
             name.onTextChange = [this] { ctx.show.setName (name.getText()); };
             name.onReturnKey = [this] { unfocusAllComponents(); };
-            info.setColour (juce::Label::textColourId, Colours::textDim);
-            info.setJustificationType (juce::Justification::topLeft);
 
             newButton.onClick = [this] { if (ctx.newShow) ctx.newShow(); };
             openButton.onClick = [this] { if (ctx.openShow) ctx.openShow(); };
             saveButton.onClick = [this] { if (ctx.saveShow) ctx.saveShow (false); };
             saveAsButton.onClick = [this] { if (ctx.saveShow) ctx.saveShow (true); };
-            for (juce::Component* comp : { (juce::Component*) &caption, (juce::Component*) &name, (juce::Component*) &info,
-                                           (juce::Component*) &newButton, (juce::Component*) &openButton,
+            for (juce::Component* comp : { (juce::Component*) &name, (juce::Component*) &newButton, (juce::Component*) &openButton,
                                            (juce::Component*) &saveButton, (juce::Component*) &saveAsButton })
                 addAndMakeVisible (comp);
             startTimerHz (2);
@@ -37,36 +33,76 @@ namespace
         {
             if (! name.hasKeyboardFocus (true) && name.getText() != ctx.show.getName())
                 name.setText (ctx.show.getName(), false);
-
-            juce::String text;
-            text << ctx.show.getNumScenes() << " scenes.  A show holds the whole console: "
-                 << (int) ctx.engine.getChannels().size() << " channels, " << (int) ctx.engine.getBuses().size()
-                 << " buses, the FX slot plugins, DCAs, mute groups, fader banks and every scene.\n\n"
-                 << "Shows are saved atomically with a backup (.bak) and autosaved every 30 seconds. "
-                 << "Older Live DAW shows are converted to the WING layout when they load.";
-            info.setText (text, juce::dontSendNotification);
+            repaint();
         }
 
-        void paint (juce::Graphics& g) override { g.fillAll (Colours::screen); }
+        void paint (juce::Graphics& g) override
+        {
+            g.fillAll (Colours::screen);
+            drawSectionBox (g, showBox, "SHOW");
+            drawSectionBox (g, infoBox, "CONTENTS");
+
+            g.setColour (Colours::textDim);
+            g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+            g.drawText ("SHOW NAME", nameCaption, juce::Justification::bottomLeft);
+
+            const std::pair<juce::String, juce::String> rows[] = {
+                { "SCENES", juce::String (ctx.show.getNumScenes()) },
+                { "CHANNELS", juce::String ((int) ctx.engine.getChannels().size()) },
+                { "BUSES", juce::String ((int) ctx.engine.getBuses().size()) },
+                { "FX SLOTS LOADED", [this] { int n = 0; for (int i = 0; i < kNumFx; ++i) n += ctx.engine.getFx().isLoaded (i) ? 1 : 0; return juce::String (n); }() },
+                { "USER BANKS", juce::String ((int) ctx.show.layers.getUserLayers().size()) } };
+            auto r = infoRows;
+            const int h = juce::jmin (40, r.getHeight() / (int) std::size (rows));
+            for (auto& [label, value] : rows)
+            {
+                auto row = r.removeFromTop (h);
+                g.setColour (juce::Colour (0xff1c1c1c));
+                g.fillRect (row.withHeight (1));
+                g.setColour (Colours::text);
+                g.setFont (juce::FontOptions (juce::jmin (19.0f, h * 0.5f), juce::Font::bold));
+                g.drawText (label, row, juce::Justification::centredLeft);
+                g.setFont (juce::FontOptions (juce::jmin (24.0f, h * 0.62f), juce::Font::bold));
+                g.drawText (value, row, juce::Justification::centredRight);
+            }
+            g.setColour (Colours::textDim);
+            g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+            g.drawFittedText ("A show holds the whole console: strips, FX slot plugins, DCAs, mute groups, fader banks and every scene. "
+                              "Shows are saved atomically with a backup (.bak) and autosaved every 30 seconds; older Live DAW shows "
+                              "are converted to the WING layout when they load.",
+                              note, juce::Justification::topLeft, 4);
+        }
 
         void resized() override
         {
-            auto b = getLocalBounds().reduced (14);
-            caption.setBounds (b.removeFromTop (18));
-            name.setBounds (b.removeFromTop (36).removeFromLeft (juce::jmin (520, b.getWidth())));
-            b.removeFromTop (12);
-            auto row = b.removeFromTop (34);
-            for (auto* button : { &newButton, &openButton, &saveButton, &saveAsButton })
-                button->setBounds (row.removeFromLeft (130).reduced (3, 0));
-            b.removeFromTop (14);
-            info.setBounds (b.removeFromTop (100));
+            auto b = getLocalBounds().reduced (0, 6);
+            showBox = b.removeFromLeft (b.getWidth() * 48 / 100);
+            b.removeFromLeft (8);
+            infoBox = b;
+
+            auto s2 = sectionContent (showBox, true);
+            nameCaption = s2.removeFromTop (18);
+            name.setBounds (s2.removeFromTop (44));
+            s2.removeFromTop (12);
+            const int kh = juce::jmin (56, (s2.getHeight() - 8) / 2);
+            auto row = s2.removeFromTop (kh);
+            newButton.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (3));
+            openButton.setBounds (row.reduced (3));
+            row = s2.removeFromTop (kh);
+            saveButton.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (3));
+            saveAsButton.setBounds (row.reduced (3));
+
+            auto i = sectionContent (infoBox, true);
+            note = i.removeFromBottom (juce::jmin (80, i.getHeight() / 3));
+            infoRows = i;
         }
 
     private:
         UiContext& ctx;
-        juce::Label caption, info;
         juce::TextEditor name;
-        juce::TextButton newButton { "NEW" }, openButton { "OPEN..." }, saveButton { "SAVE" }, saveAsButton { "SAVE AS..." };
+        WingKey newButton { "NEW", Icon::Plus }, openButton { "OPEN", Icon::Folder }, saveButton { "SAVE", Icon::Disk },
+            saveAsButton { "SAVE AS", Icon::Disk };
+        juce::Rectangle<int> showBox, infoBox, nameCaption, infoRows, note;
     };
 
     juce::String describeFader (UiContext& ctx, const state::FaderRef& f)
@@ -190,29 +226,29 @@ namespace
             g.fillAll (Colours::screen);
             drawSectionBox (g, bankArea, "USER BANKS");
             drawSectionBox (g, memberArea, "FADERS IN THE BANK");
-            drawSectionBox (g, boardArea, "CONSOLE (double-click to add)");
+            drawSectionBox (g, boardArea, "CONSOLE (DOUBLE-CLICK TO ADD)");
         }
 
         void resized() override
         {
-            auto b = getLocalBounds().reduced (4);
-            bankArea = b.removeFromLeft (b.getWidth() / 4);
+            auto b = getLocalBounds().reduced (0, 6);
+            bankArea = b.removeFromLeft (b.getWidth() * 30 / 100);
             memberArea = b.removeFromLeft (b.getWidth() / 2);
             boardArea = b;
 
-            auto r = bankArea.reduced (8).withTrimmedTop (16);
-            auto buttons = r.removeFromBottom (28);
+            auto r = sectionContent (bankArea, true);
+            auto buttons = r.removeFromBottom (40);
             layoutButtons (buttons, { &newButton, &renameButton, &deleteButton });
-            banks.list.setBounds (r.withTrimmedBottom (4));
+            banks.list.setBounds (r.withTrimmedBottom (6));
 
-            r = memberArea.reduced (8).withTrimmedTop (16);
-            buttons = r.removeFromBottom (28);
+            r = sectionContent (memberArea, true);
+            buttons = r.removeFromBottom (40);
             layoutButtons (buttons, { &removeButton, &upButton, &downButton });
-            members.list.setBounds (r.withTrimmedBottom (4));
+            members.list.setBounds (r.withTrimmedBottom (6));
 
-            r = boardArea.reduced (8).withTrimmedTop (16);
-            addButton.setBounds (r.removeFromBottom (28).removeFromLeft (120));
-            board.list.setBounds (r.withTrimmedBottom (4));
+            r = sectionContent (boardArea, true);
+            addButton.setBounds (r.removeFromBottom (40).removeFromLeft (140));
+            board.list.setBounds (r.withTrimmedBottom (6));
         }
 
     private:
@@ -237,8 +273,8 @@ namespace
             List()
             {
                 list.setModel (&model);
-                list.setRowHeight (22);
-                list.setColour (juce::ListBox::backgroundColourId, juce::Colours::black);
+                list.setRowHeight (34);
+                list.setColour (juce::ListBox::backgroundColourId, juce::Colour (0xff1e1e1e));
             }
             ~List() { list.setModel (nullptr); }
             ListModel model;
@@ -247,17 +283,23 @@ namespace
 
         static void paintRow (juce::Graphics& g, int w, int h, bool sel, const juce::String& text, const juce::String& right, juce::Colour c)
         {
+            auto row = juce::Rectangle<int> (w, h).reduced (3, 2);
+            g.setColour (sel ? juce::Colour (0xff6b5a17) : juce::Colours::black);
+            g.fillRect (row);
             if (sel)
-                g.fillAll (Colours::accent.withAlpha (0.35f));
-            auto r = juce::Rectangle<int> (w, h).reduced (8, 0);
+            {
+                g.setColour (Colours::yellow);
+                g.drawRect (row, 2);
+            }
+            auto r = row.reduced (8, 0);
             g.setColour (c);
-            g.fillRect (r.removeFromLeft (3).reduced (0, 4));
-            r.removeFromLeft (6);
+            g.fillRect (r.removeFromLeft (4).reduced (0, 5));
+            r.removeFromLeft (8);
             g.setColour (Colours::text);
-            g.setFont (juce::FontOptions (13.0f));
+            g.setFont (juce::FontOptions (18.0f, juce::Font::bold));
             g.drawText (text, r, juce::Justification::centredLeft);
             g.setColour (Colours::textDim);
-            g.setFont (juce::FontOptions (11.0f));
+            g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
             g.drawText (right, r, juce::Justification::centredRight);
         }
 
@@ -323,25 +365,40 @@ namespace
         List banks, members, board;
         std::vector<Layer> userLayers;
         std::vector<state::FaderRef> boardFaders;
-        juce::TextButton newButton { "+ NEW" }, deleteButton { "DELETE" }, renameButton { "RENAME" }, addButton { "< ADD" },
-            removeButton { "REMOVE" }, upButton { "UP" }, downButton { "DOWN" };
+        WingKey newButton { "NEW", Icon::Plus }, deleteButton { "DELETE", Icon::Trash }, renameButton { "RENAME", Icon::Edit },
+            addButton { "ADD", Icon::ChevronLeft }, removeButton { "REMOVE" }, upButton { "UP" }, downButton { "DOWN" };
         juce::Rectangle<int> bankArea, memberArea, boardArea;
     };
 } // namespace
 
 LibraryPage::LibraryPage (UiContext& c) : ctx (c)
 {
-    tabs.setTabBarDepth (30);
+    tabs.setTabBarDepth (44);
+    tabs.setOutline (0);
+    tabs.setColour (juce::TabbedComponent::backgroundColourId, juce::Colours::transparentBlack);
     const auto tabColour = Colours::screenPanel;
     tabs.addTab ("SHOW", tabColour, new ShowTab (ctx), true);
-    showPanel = new ShowPanel (ctx);
-    tabs.addTab ("SCENES / SNIPPETS", tabColour, showPanel, true);
-    tabs.addTab ("USER BANKS", tabColour, new BanksTab (ctx), true);
-    tabs.setCurrentTabIndex (1);
+    tabs.addTab ("SCENES", tabColour, new juce::Component(), true);
+    tabs.addTab ("SNIPPETS", tabColour, new juce::Component(), true);
+    tabs.addTab ("BANKS", tabColour, new BanksTab (ctx), true);
+    tabs.onTabChanged = [this] (int index)
+    {
+        showPanel->setVisible (index == 1 || index == 2);
+        showPanel->setView (index == 2 ? ShowPanel::View::Snippets : ShowPanel::View::Scenes);
+    };
     addAndMakeVisible (tabs);
+
+    showPanel = new ShowPanel (ctx);
+    ownedShowPanel.reset (showPanel);
+    addAndMakeVisible (showPanel);
+    tabs.setCurrentTabIndex (1);
 }
 
-LibraryPage::~LibraryPage() = default;
+LibraryPage::~LibraryPage()
+{
+    // The tabs outlive the show panel: stop them reporting changes to it.
+    tabs.onTabChanged = nullptr;
+}
 
 void LibraryPage::showScenes()
 {
@@ -359,11 +416,14 @@ void LibraryPage::refresh()
 void LibraryPage::paint (juce::Graphics& g)
 {
     g.fillAll (Colours::screen);
+    g.setColour (Colours::screenHeader.darker (0.15f));
+    g.fillRect (getLocalBounds().withHeight (tabs.getTabBarDepth()));
 }
 
 void LibraryPage::resized()
 {
     tabs.setBounds (getLocalBounds());
+    showPanel->setBounds (getLocalBounds().withTrimmedTop (tabs.getTabBarDepth()).withTrimmedTop (6));
 }
 
 } // namespace livedaw::ui

@@ -3,6 +3,15 @@
 namespace livedaw::ui
 {
 
+juce::String stripName (const Strip& s)
+{
+    const auto name = s.getName();
+    const auto label = s.getLabel();
+    if (name.isEmpty() || name.removeCharacters (" ").equalsIgnoreCase (label.removeCharacters (" ")))
+        return label;
+    return name;
+}
+
 juce::String describeStrip (const Strip& s)
 {
     const auto name = s.getName();

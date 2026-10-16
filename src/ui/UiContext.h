@@ -4,6 +4,7 @@
 #include "engine/MixerEngine.h"
 #include "engine/PluginHost.h"
 #include "engine/Show.h"
+#include "ui/Icons.h"
 #include "ui/MeterBank.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -26,10 +27,13 @@ enum class Screen
     Utility
 };
 
-/** The HOME screen's tabs for the selected strip. */
+/** The HOME screen's tabs for the selected strip: the overview group
+    (OVERVIEW, ICON/COLOR, NAME, TAGS) and the processing blocks. */
 enum class HomeTab
 {
     Home,
+    Icon,
+    Tags,
     Input,
     Filter,
     Gate,
@@ -110,5 +114,22 @@ void clickFxSlot (UiContext&, int slot, juce::Component* target);
 
 /** "CH 3 Kick" */
 juce::String describeStrip (const Strip&);
+
+/** The strip's name, or its label ("CH 3") when it has a default name. */
+juce::String stripName (const Strip&);
+
+/** The icon of a kind of strip (XLR for channels, jack for aux, ...). */
+inline Icon stripIcon (StripKind k)
+{
+    switch (k)
+    {
+        case StripKind::Channel: return Icon::Xlr;
+        case StripKind::Aux:     return Icon::Jack;
+        case StripKind::Bus:     return Icon::Bus;
+        case StripKind::Main:    return Icon::Speakers;
+        case StripKind::Matrix:  return Icon::Matrix;
+    }
+    return Icon::Xlr;
+}
 
 } // namespace livedaw::ui
