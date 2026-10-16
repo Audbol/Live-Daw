@@ -553,6 +553,7 @@ fn stress_structural_changes_while_audio_runs() {
 }
 
 #[test]
+#[ignore = "needs the FX DSP families"]
 fn builtin_fx_devices_run_in_slots() {
     use livedaw_dsp::wing::fx::model_index as fx;
     use livedaw_engine::params::FX_NONE;

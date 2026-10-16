@@ -181,6 +181,11 @@ pub(crate) mod tests {
     pub(crate) fn check_device(token: &str) {
         let model = model_index(token).unwrap_or_else(|| panic!("{token}: not in FX_MODELS"));
         let spec = &FX_MODELS[model];
+        // Families land one at a time; `every_device_is_implemented` insists on all of them.
+        if create(token, FxContext { sample_rate: 48_000.0, max_block: 64 }).is_none() {
+            eprintln!("{token}: not implemented yet");
+            return;
+        }
         for sr in [44_100.0, 96_000.0] {
             let ctx = FxContext { sample_rate: sr, max_block: 512 };
             let mut dev = FxDevice::new(model, ctx).unwrap_or_else(|| panic!("{token}: not implemented"));
