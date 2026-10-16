@@ -18,13 +18,15 @@
 //! drops it (and any removed strips) once the audio thread is done with it.
 
 use crate::denormals::ScopedNoDenormals;
-use crate::fx::FxRack;
+use crate::fx::{FxRack, InsertCallbacks};
 use crate::garbage::Garbage;
 use crate::params::*;
 use crate::pool::WorkerPool;
 use crate::sends::MAX_BUSES;
 use crate::strip::{ProcessContext, Strip};
 use livedaw_dsp::util::*;
+use livedaw_dsp::wing::fx::{allowed_in_slot, FxContext, FxDevice};
+use livedaw_dsp::wing::FX_MODELS;
 use std::cell::UnsafeCell;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicPtr, Ordering::*};
@@ -461,9 +463,67 @@ impl Engine {
         self.fx.iter().filter(|f| f.is_faulted()).count()
     }
 
-    /// Message thread: frees what the audio thread can no longer see.
+    /// Message thread: frees what the audio thread can no longer see, and
+    /// creates the devices of FX slots whose model was changed directly through
+    /// the shared parameters (e.g. by a recall).
     pub fn collect(&self) {
+        self.sync_fx_devices();
         self.garbage.collect();
+    }
+
+    /// Message thread: selects the device of FX slot `i` (an index into
+    /// `FX_MODELS`), creating it now. With `defaults`, its settings are reset to
+    /// the device's defaults. Premium devices are refused in slots 9-16.
+    pub fn set_fx_model(&self, i: usize, model: usize, defaults: bool) -> bool {
+        let (Some(rack), Some(params)) = (self.fx.get(i), self.controls.fx.get(i)) else { return false };
+        if model >= FX_MODELS.len() || !allowed_in_slot(model, i) {
+            return false;
+        }
+        params.set_model(model, defaults);
+        self.install_fx_device(i, rack, model);
+        true
+    }
+
+    /// Message thread: installs (or removes, with None) the plugin of FX slot
+    /// `i`. Installing a plugin makes the slot an EXT slot; removing it empties
+    /// an EXT slot.
+    pub fn set_fx_plugin(&self, i: usize, cb: Option<InsertCallbacks>) {
+        let (Some(rack), Some(params)) = (self.fx.get(i), self.controls.fx.get(i)) else { return };
+        rack.set(cb, &self.garbage);
+        if cb.is_some() {
+            self.set_fx_model(i, FX_EXT, true);
+        } else if params.model_index() == FX_EXT {
+            self.set_fx_model(i, FX_NONE, true);
+        }
+    }
+
+    fn fx_context(&self) -> FxContext {
+        let st = self.lock();
+        FxContext { sample_rate: st.device.sample_rate as f32, max_block: st.device.block_size }
+    }
+
+    /// Creates (or removes) the built-in device of slot `i` for `model`.
+    fn install_fx_device(&self, i: usize, rack: &FxRack, model: usize) {
+        let ctx = self.fx_context();
+        if rack.device_info() == Some((model, ctx)) {
+            return;
+        }
+        let device = if model == FX_NONE || model == FX_EXT || !allowed_in_slot(model, i) {
+            None
+        } else {
+            FxDevice::new(model, ctx).map(Box::new)
+        };
+        rack.set_device(device, &self.garbage);
+    }
+
+    fn sync_fx_devices(&self) {
+        for (i, (rack, params)) in self.fx.iter().zip(self.controls.fx.iter()).enumerate() {
+            let model = params.model_index();
+            let wanted = !(model == FX_NONE || model == FX_EXT);
+            if rack.device_info().map(|(m, _)| m) != wanted.then_some(model) {
+                self.install_fx_device(i, rack, model);
+            }
+        }
     }
 
     pub fn set_device_running(&self, running: bool) {
@@ -497,6 +557,11 @@ impl Engine {
         }
         for f in self.fx.iter() {
             f.prepare(block_size);
+        }
+        drop(st);
+        // Devices are built for a sample rate and block size: rebuild them.
+        for (i, (rack, params)) in self.fx.iter().zip(self.controls.fx.iter()).enumerate() {
+            self.install_fx_device(i, rack, params.model_index());
         }
         self.pool.set_block_duration_hint(sample_rate, block_size);
     }

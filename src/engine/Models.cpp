@@ -39,7 +39,7 @@ static std::vector<Model> build (Table t)
         model.index = m;
         model.token = takeString (ld::ld_model_text (t, m, 0));
         model.name = takeString (ld::ld_model_text (t, m, 1));
-        model.category = static_cast<Category> (juce::jlimit (0, 4, (int) ld::ld_model_category (t, m)));
+        model.category = static_cast<Category> (juce::jlimit (0, 9, (int) ld::ld_model_category (t, m)));
 
         const int np = ld::ld_model_num_params (t, m);
         for (int p = 0; p < np; ++p)
@@ -72,8 +72,8 @@ static std::vector<Model> build (Table t)
 
 const std::vector<Model>& table (Table t)
 {
-    static const std::vector<Model> tables[] = { build (Dynamics), build (ChannelEq), build (BusEq), build (FilterTools) };
-    return tables[juce::jlimit (0, 3, (int) t)];
+    static const std::vector<Model> tables[] = { build (Dynamics), build (ChannelEq), build (BusEq), build (FilterTools), build (Fx) };
+    return tables[juce::jlimit (0, 4, (int) t)];
 }
 
 const Model& model (Table t, int index)

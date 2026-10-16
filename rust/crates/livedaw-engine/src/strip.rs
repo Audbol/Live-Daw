@@ -607,7 +607,7 @@ impl Strip {
         let nc = d.num_channels;
         let [w0, w1] = &mut d.work;
         let mut chans: [&mut [f32]; 2] = [&mut w0[..n], &mut w1[..n]];
-        rack.process(&mut chans[..nc], d.sample_rate, fxp.bypass.load(Relaxed), fxp.mix.load() / 100.0, ctx.block);
+        rack.process(&mut chans[..nc], d.sample_rate, fxp, ctx.block);
     }
 
     fn run_output_stage(&self, d: &mut StripDsp, n: usize) {

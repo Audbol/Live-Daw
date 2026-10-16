@@ -9,9 +9,10 @@
 namespace livedaw
 {
 
-/** The 16 FX slots of the EFFECTS screen. Each slot can hold a VST/AU/LV2
-    plugin (the WING's "EXT" device); strips use a slot through their PRE or
-    POST insert. The plugin instances live here (JUCE); the Rust engine calls
+/** The 16 FX slots of the EFFECTS screen. Each slot runs one of the
+    console's built-in devices (reverbs, delays, EQs, amps... implemented in
+    Rust, model table 4) or, with the EXT model, a VST/AU/LV2 plugin; strips use
+    a slot through their PRE or POST insert. Premium devices run in slots 1-8. The plugin instances live here (JUCE); the Rust engine calls
     them from the audio thread through a callback per slot, checks their output
     and auto-bypasses a plugin that throws or emits NaN/inf. A slot runs for one
     strip per block: two inserts pointing at the same slot are flagged as
@@ -37,7 +38,19 @@ public:
     /** Message thread only. */
     juce::AudioPluginInstance* getPlugin (int slot) const noexcept;
 
-    bool isLoaded (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 0); }
+    /** The slot's model (index into model table 4: kFxNone, kFxExt or a device). */
+    int getModel (int slot) const noexcept { return params (slot).model.load(); }
+    /** Selects a built-in device (removing a plugin first). False if not allowed in the slot. */
+    bool setModel (int slot, int model);
+    /** Whether `model` may run in `slot` (premium devices need slots 1-8). */
+    static bool isAllowed (int model, int slot);
+
+    /** The slot is in use (a plugin or a built-in device). */
+    bool isLoaded (int slot) const noexcept { return hasPlugin (slot) || getModel (slot) > ld::kFxExt; }
+    bool hasPlugin (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 0); }
+    bool hasDevice (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 3); }
+    /** Gain reduction of the slot's device (dB, <= 0). */
+    float getMeter (int slot) const noexcept { return ld::ld_fx_meter (engine, slot); }
     bool isFaulted (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 1); }
     bool isDoubleAssigned (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 2); }
     void clearFlags (int slot) noexcept { ld::ld_fx_clear_flags (engine, slot); }
@@ -48,7 +61,7 @@ public:
 
     FxParams& params (int slot) const noexcept { return ld::ld_engine_controls (engine)->fx[juce::jlimit (0, kNumFx - 1, slot)]; }
 
-    /** "FX 3: TAL-Reverb" or "FX 3" for an empty slot. */
+    /** "FX 3: Hall Reverb", "FX 3: TAL-Reverb" or "FX 3" for an empty slot. */
     juce::String describe (int slot) const;
 
 private:

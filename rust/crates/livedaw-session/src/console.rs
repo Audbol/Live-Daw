@@ -7,9 +7,11 @@
 
 use crate::refs::StripRef;
 use crate::xml::{fmt_f32, parse, Element};
-use livedaw_dsp::wing::{model_index, ModelSpec, DYN_MODELS, EQ_MODELS_BUS, EQ_MODELS_CH, FILTER_TOOLS};
+use livedaw_dsp::wing::{model_index, ModelSpec, DYN_MODELS, EQ_MODELS_BUS, EQ_MODELS_CH, FILTER_TOOLS, FX_MODELS};
 use livedaw_engine::atomic::AtomicF32;
-use livedaw_engine::params::{DynSlotParams, EqBlockParams, InsertParams, NUM_DCAS, NUM_FX, NUM_MUTE_GROUPS, WING_BUSES};
+use livedaw_engine::params::{
+    DynSlotParams, EqBlockParams, InsertParams, FX_EXT, FX_NONE, NUM_DCAS, NUM_FX, NUM_MUTE_GROUPS, WING_BUSES,
+};
 use livedaw_engine::{Engine, Strip, StripKind, MAX_BUSES};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering::Relaxed};
@@ -537,6 +539,12 @@ fn capture_fx(engine: &Engine, parent: &mut Element, bridge: &mut dyn PluginBrid
         let p = &engine.controls.fx[i];
         put_b(x, "bypass", &p.bypass);
         put_f(x, "mix", &p.mix);
+        let model = p.model_index();
+        x.set("mdl", FX_MODELS[model].token);
+        if model != FX_EXT {
+            put_model_params(x, &FX_MODELS[model], &p.values);
+            continue;
+        }
         if !engine.fx(i).is_some_and(|r| r.is_loaded()) {
             continue;
         }
@@ -548,6 +556,10 @@ fn capture_fx(engine: &Engine, parent: &mut Element, bridge: &mut dyn PluginBrid
     }
 }
 
+/// Restores the FX slots. Built-in devices are selected and set (creating a
+/// device is safe at any time); plugins (EXT) follow `mode`: none in safe mode
+/// (`None`), state only for recalls, instantiated for show loads. A recall never
+/// removes or creates a plugin.
 fn apply_fx(
     engine: &Engine,
     parent: &Element,
@@ -558,12 +570,42 @@ fn apply_fx(
     let Some(fx) = parent.child("Fx") else { return };
     for x in fx.children_named("Slot") {
         let Ok(i) = usize::try_from(x.int_or("i", -1)) else { continue };
-        let Some(p) = engine.controls.fx.get(i) else { continue };
+        let (Some(p), Some(rack)) = (engine.controls.fx.get(i), engine.fx(i)) else { continue };
         get_b(x, "bypass", &p.bypass);
         get_f(x, "mix", &p.mix);
+
+        // Shows from before the FX rack hold plugins only.
+        let saved = match x.attr("mdl") {
+            Some(t) => model_index(FX_MODELS, t).unwrap_or(FX_NONE),
+            None if x.child("PLUGIN").is_some() => FX_EXT,
+            None => FX_NONE,
+        };
+        let current = p.model_index();
+        let recall = mode == Some(InsertMode::StateOnly);
+
+        if saved != FX_EXT {
+            if current == FX_EXT && rack.is_loaded() {
+                if recall {
+                    warnings.push(format!("FX {}: a plugin is loaded, {} not recalled", i + 1, FX_MODELS[saved].name));
+                    continue;
+                }
+                bridge.clear_fx(i);
+            }
+            get_model_params(x, FX_MODELS, current, &p.values, |m| p.set_model(m, true));
+            if !engine.set_fx_model(i, saved, false) {
+                warnings.push(format!("FX {}: {} needs a premium slot (FX 1-8)", i + 1, FX_MODELS[saved].name));
+                engine.set_fx_model(i, FX_NONE, true);
+            }
+            continue;
+        }
+
         let Some(mode) = mode else { continue };
         let Some(desc) = x.child("PLUGIN") else { continue };
         let name = desc.str_or("name", "plugin");
+        if recall && current != FX_EXT {
+            warnings.push(format!("FX {}: {name} isn't loaded, not recalled", i + 1));
+            continue;
+        }
         let state = x.child("State").map(Element::text).unwrap_or_default();
         match bridge.restore_fx(i, mode, &desc.to_compact(), &state) {
             Ok(()) => {}

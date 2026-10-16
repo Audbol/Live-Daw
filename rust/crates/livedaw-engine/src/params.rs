@@ -10,7 +10,8 @@ use crate::atomic::AtomicF32;
 use livedaw_dsp::wing::{
     dynamics::{SidechainSettings, XoverSettings},
     filter::FilterSettings,
-    model_index, DYN_MODELS, EQ_MODELS_BUS, EQ_MODELS_CH, FILTER_TOOLS, MAX_DYN_PARAMS, MAX_EQ_PARAMS, MAX_TOOL_PARAMS,
+    model_index, DYN_MODELS, EQ_MODELS_BUS, EQ_MODELS_CH, FILTER_TOOLS, FX_MODELS, MAX_DYN_PARAMS, MAX_EQ_PARAMS, MAX_FX_PARAMS,
+    MAX_TOOL_PARAMS,
 };
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering::Relaxed};
 
@@ -20,6 +21,10 @@ pub const NUM_AUX: usize = 8;
 pub const NUM_DCAS: usize = 16;
 pub const NUM_MUTE_GROUPS: usize = 8;
 pub const NUM_FX: usize = 16;
+/// FX slot models (indices into `FX_MODELS`): an empty slot, and EXT (a plugin
+/// hosted by the application).
+pub const FX_NONE: usize = 0;
+pub const FX_EXT: usize = 1;
 /// The WING's channel and bus counts (this console can grow beyond them).
 pub const WING_CHANNELS: usize = 40;
 pub const WING_BUSES: usize = 16;
@@ -587,11 +592,51 @@ pub struct FxParams {
     pub bypass: AtomicBool,
     /// Wet/dry in %.
     pub mix: AtomicF32,
+    /// Index into `FX_MODELS`: `FX_NONE`, `FX_EXT` (a plugin) or a built-in device.
+    pub model: AtomicI32,
+    /// The device's parameters, in its table order.
+    pub values: [AtomicF32; MAX_FX_PARAMS],
 }
 
 impl Default for FxParams {
     fn default() -> Self {
-        Self { bypass: AtomicBool::new(false), mix: AtomicF32::new(100.0) }
+        Self {
+            bypass: AtomicBool::new(false),
+            mix: AtomicF32::new(100.0),
+            model: AtomicI32::new(FX_NONE as i32),
+            values: std::array::from_fn(|_| AtomicF32::new(0.0)),
+        }
+    }
+}
+
+impl FxParams {
+    pub fn model_index(&self) -> usize {
+        (self.model.load(Relaxed).max(0) as usize).min(FX_MODELS.len() - 1)
+    }
+
+    /// Selects a model; with `defaults`, loads the device's default settings.
+    /// (The engine creates the device itself: use `Engine::set_fx_model`.)
+    pub fn set_model(&self, model: usize, defaults: bool) {
+        let Some(spec) = FX_MODELS.get(model) else { return };
+        if defaults {
+            let mut d = [0.0; MAX_FX_PARAMS];
+            spec.defaults_into(&mut d);
+            for (v, x) in self.values.iter().zip(d) {
+                v.store(x);
+            }
+        }
+        self.model.store(model as i32, Relaxed);
+    }
+
+    /// A parameter of the current device by its console id ("dcy").
+    pub fn param(&self, id: &str) -> Option<&AtomicF32> {
+        self.values.get(FX_MODELS[self.model_index()].param_index(id)?)
+    }
+
+    pub fn values_snapshot(&self, out: &mut [f32; MAX_FX_PARAMS]) {
+        for (o, v) in out.iter_mut().zip(&self.values) {
+            *o = v.load();
+        }
     }
 }
 
@@ -655,6 +700,7 @@ impl EngineControls {
         for f in &self.fx {
             f.bypass.store(false, Relaxed);
             f.mix.store(100.0);
+            f.set_model(FX_NONE, true);
         }
     }
 }

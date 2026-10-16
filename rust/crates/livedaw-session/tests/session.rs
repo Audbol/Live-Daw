@@ -26,7 +26,7 @@ struct FakeHost {
 impl FakeHost {
     fn load(&mut self, engine: &Engine, slot: usize, name: &str, state: &str) {
         let cb = InsertCallbacks { process: pass_through, release: None, ctx: std::ptr::null_mut() };
-        engine.fx(slot).unwrap().set(Some(cb), engine.garbage());
+        engine.set_fx_plugin(slot, Some(cb));
         self.plugins.insert(slot, (name.into(), state.into()));
     }
 }
@@ -67,7 +67,7 @@ impl PluginBridge for Bridge<'_> {
 
     fn clear_fx(&mut self, slot: usize) {
         self.host.plugins.remove(&slot);
-        self.engine.fx(slot).unwrap().set(None, self.engine.garbage());
+        self.engine.set_fx_plugin(slot, None);
     }
 }
 

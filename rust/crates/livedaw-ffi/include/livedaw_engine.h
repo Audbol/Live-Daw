@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 3;
+constexpr int kAbiVersion = 4;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -41,6 +41,10 @@ constexpr int kWingBuses = 16;
 constexpr int kMaxDynParams = 20;
 constexpr int kMaxEqParams = 32;
 constexpr int kMaxToolParams = 2;
+constexpr int kMaxFxParams = 36;
+/** FX slot models (indices into model table 4): an empty slot, and EXT (a plugin). */
+constexpr int kFxNone = 0;
+constexpr int kFxExt = 1;
 
 enum StripKindId : int32_t
 {
@@ -191,6 +195,9 @@ struct FxParams
 {
     std::atomic<bool> bypass;
     std::atomic<float> mix;
+    /** Index into the FX table (kFxNone, kFxExt or a built-in device). */
+    std::atomic<int32_t> model;
+    std::atomic<float> values[kMaxFxParams];
 };
 
 struct EngineControls
@@ -215,7 +222,7 @@ struct LayoutInfo
     int32_t abiVersion, stripParams, input, filter, dynSlot, eqBlock, insert, mainSend, matrixSend, meters, send, dca,
         fx, controls, offFilter, offGate, offEq, offDynamics, offPostInsert, offFader, offStereo, offMains, offMatrix,
         offDcaMask, offDirectLevel, offColour, offRecallSafe, offDynValues, offDynXoDepth, offEqValues, offSendPan,
-        offMetersAutomix, offControlsDcas, offControlsFx;
+        offMetersAutomix, offControlsDcas, offControlsFx, offFxValues;
 };
 
 struct ParamInfo
@@ -324,8 +331,14 @@ extern "C"
     // FX slots (message thread)
     void ld_fx_set (const Engine*, int32_t slot, const InsertCallbacks* callbacks);
     void* ld_fx_ctx (const Engine*, int32_t slot);
-    /** what: 0 = loaded, 1 = faulted (auto-bypassed), 2 = double-assigned. */
+    /** what: 0 = a plugin is loaded, 1 = faulted (auto-bypassed), 2 = double-assigned,
+        3 = a built-in device is running. */
     bool ld_fx_state (const Engine*, int32_t slot, int32_t what);
+    /** Selects a slot's device (FX table index), creating it now; `defaults` resets its
+        settings. False if not allowed there (premium devices need slots 1-8). */
+    bool ld_fx_set_model (const Engine*, int32_t slot, int32_t model, bool defaults);
+    /** Gain reduction of a slot's device in dB (<= 0). */
+    float ld_fx_meter (const Engine*, int32_t slot);
     void ld_fx_clear_flags (const Engine*, int32_t slot);
     float ld_fx_load (const Engine*, int32_t slot);
     int32_t ld_fx_num_users (const Engine*, int32_t slot);
@@ -505,6 +518,7 @@ inline const char* verifyLayout()
         { info.offMetersAutomix, offsetof (StripMeters, automixDb), "StripMeters.automixDb" },
         { info.offControlsDcas, offsetof (EngineControls, dcas), "EngineControls.dcas" },
         { info.offControlsFx, offsetof (EngineControls, fx), "EngineControls.fx" },
+        { info.offFxValues, offsetof (FxParams, values), "FxParams.values" },
     };
 
     if (info.abiVersion != kAbiVersion)

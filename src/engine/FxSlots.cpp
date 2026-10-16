@@ -1,4 +1,5 @@
 #include "engine/FxSlots.h"
+#include "engine/Models.h"
 
 namespace livedaw
 {
@@ -118,11 +119,32 @@ juce::AudioPluginInstance* FxSlots::getPlugin (int slot) const noexcept
     return h != nullptr ? h->plugin.get() : nullptr;
 }
 
+bool FxSlots::isAllowed (int model, int slot)
+{
+    const auto& table = models::table (models::Fx);
+    if (! juce::isPositiveAndBelow (model, (int) table.size()))
+        return false;
+    return table[(size_t) model].category != models::Category::FxPremium || slot < 8;
+}
+
+bool FxSlots::setModel (int slot, int model)
+{
+    if (! juce::isPositiveAndBelow (slot, kNumFx) || ! isAllowed (model, slot))
+        return false;
+    if (model == ld::kFxExt)
+        return true; // EXT: the slot becomes a plugin slot when a plugin is loaded
+    if (hasPlugin (slot))
+        setPlugin (slot, nullptr);
+    return ld::ld_fx_set_model (engine, slot, model, true);
+}
+
 juce::String FxSlots::describe (int slot) const
 {
     juce::String s ("FX " + juce::String (slot + 1));
     if (auto* p = getPlugin (slot))
         s << ": " << p->getName();
+    else if (const int m = getModel (slot); m > ld::kFxExt)
+        s << ": " << models::model (models::Fx, m).name;
     return s;
 }
 

@@ -12,6 +12,11 @@ static const char* categoryName (models::Category c)
         case models::Category::Special:    return "SPECIAL";
         case models::Category::Eq:         return "EQUALIZERS";
         case models::Category::Filter:     return "FILTERS";
+        case models::Category::FxNone:     return "";
+        case models::Category::FxExternal: return "EXTERNAL";
+        case models::Category::FxPremium:  return "PREMIUM FX";
+        case models::Category::FxStandard: return "STANDARD FX";
+        case models::Category::FxChannel:  return "CHANNEL";
     }
     return "";
 }

@@ -15,7 +15,8 @@ enum Table : int
     Dynamics = 0,    // the 32 gate/dynamics models (both slots)
     ChannelEq = 1,   // channel and aux EQ models
     BusEq = 2,       // bus, main and matrix EQ models
-    FilterTools = 3  // the FILTER block's tool filters
+    FilterTools = 3, // the FILTER block's tool filters
+    Fx = 4           // the FX rack's devices (NONE, EXT = plugin, premium, standard, channel strips)
 };
 
 /** Choice lists. */
@@ -51,7 +52,12 @@ enum class Category
     Compressor,
     Special,
     Eq,
-    Filter
+    Filter,
+    FxNone,
+    FxExternal,
+    FxPremium,  // FX slots 1-8 only
+    FxStandard,
+    FxChannel
 };
 
 struct Param

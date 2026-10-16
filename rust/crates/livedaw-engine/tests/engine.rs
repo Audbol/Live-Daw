@@ -387,12 +387,11 @@ fn fx_slots_as_inserts_and_faulty_ones_are_auto_bypassed() {
     let (a, b) = (rig.ch(0), rig.ch(1));
     b.params.input_left.store(1, Relaxed);
     let engine = rig.engine.clone();
-    let g = engine.garbage();
 
     let (half, released) = fake(0.5, 0);
-    engine.fx(0).unwrap().set(Some(half), g);
-    engine.fx(1).unwrap().set(Some(fake(1.0, 1).0), g); // NaN
-    engine.fx(2).unwrap().set(Some(fake(1.0, 2).0), g); // failing
+    engine.set_fx_plugin(0, Some(half));
+    engine.set_fx_plugin(1, Some(fake(1.0, 1).0)); // NaN
+    engine.set_fx_plugin(2, Some(fake(1.0, 2).0)); // failing
     a.params.pre_insert.on.store(true, Relaxed);
     a.params.pre_insert.fx.store(0, Relaxed);
     rig.set_input(0, 0.5);
@@ -421,7 +420,7 @@ fn fx_slots_as_inserts_and_faulty_ones_are_auto_bypassed() {
     assert_eq!(engine.fx_users(0).len(), 2);
 
     // Replacing a processor releases the old one once the audio thread is done with it.
-    engine.fx(0).unwrap().set(None, g);
+    engine.set_fx_plugin(0, None);
     rig.run(2);
     engine.set_device_running(true);
     engine.collect();
@@ -513,9 +512,9 @@ fn stress_structural_changes_while_audio_runs() {
             3 => {
                 let slot = rand(16) as usize;
                 if rand(2) == 0 {
-                    e.fx(slot).unwrap().set(Some(fake(0.5, 0).0), e.garbage());
+                    e.set_fx_plugin(slot, Some(fake(0.5, 0).0));
                 } else {
-                    e.fx(slot).unwrap().set(None, e.garbage());
+                    e.set_fx_plugin(slot, None);
                 }
             }
             4 => {

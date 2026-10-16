@@ -19,7 +19,7 @@ use std::mem::{offset_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-pub const LD_ABI_VERSION: i32 = 3;
+pub const LD_ABI_VERSION: i32 = 4;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -78,6 +78,7 @@ pub struct LdLayoutInfo {
     pub off_meters_automix: i32,
     pub off_controls_dcas: i32,
     pub off_controls_fx: i32,
+    pub off_fx_values: i32,
 }
 
 #[no_mangle]
@@ -118,6 +119,7 @@ pub unsafe extern "C" fn ld_layout_info(out: *mut LdLayoutInfo) {
         off_meters_automix: offset_of!(StripMeters, automix_db) as i32,
         off_controls_dcas: offset_of!(EngineControls, dcas) as i32,
         off_controls_fx: offset_of!(EngineControls, fx) as i32,
+        off_fx_values: offset_of!(FxParams, values) as i32,
     };
 }
 
@@ -331,9 +333,29 @@ pub unsafe extern "C" fn ld_engine_set_group_name(e: *const Engine, group: i32, 
 #[no_mangle]
 pub unsafe extern "C" fn ld_fx_set(e: *const Engine, slot: i32, callbacks: *const InsertCallbacks) {
     let Some(e) = engine(e) else { return };
-    let Some(rack) = e.fx(slot.max(0) as usize).filter(|_| slot >= 0) else { return };
+    if slot < 0 || slot as usize >= e.num_fx() {
+        return;
+    }
     let cb = callbacks.as_ref().copied();
-    guard((), || rack.set(cb, e.garbage()));
+    guard((), || e.set_fx_plugin(slot as usize, cb));
+}
+
+/// Message thread: selects the device of a slot (index into the FX table,
+/// model table 4), creating it now; `defaults` resets its settings. Returns
+/// false if the device isn't allowed there (premium devices need slots 1-8).
+#[no_mangle]
+pub unsafe extern "C" fn ld_fx_set_model(e: *const Engine, slot: i32, model: i32, defaults: bool) -> bool {
+    let Some(e) = engine(e) else { return false };
+    if slot < 0 || model < 0 {
+        return false;
+    }
+    guard(false, || e.set_fx_model(slot as usize, model as usize, defaults))
+}
+
+/// The meter of a slot's built-in device: gain reduction in dB (<= 0).
+#[no_mangle]
+pub unsafe extern "C" fn ld_fx_meter(e: *const Engine, slot: i32) -> f32 {
+    engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)).map_or(0.0, |r| r.meter())
 }
 
 /// Message thread: the host context of slot `slot` (null if empty).
@@ -342,14 +364,16 @@ pub unsafe extern "C" fn ld_fx_ctx(e: *const Engine, slot: i32) -> *mut std::ffi
     engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)).map_or(std::ptr::null_mut(), |r| r.ctx())
 }
 
-/// what: 0 = loaded, 1 = faulted, 2 = double-assigned.
+/// what: 0 = a plugin is loaded, 1 = faulted, 2 = double-assigned, 3 = a
+/// built-in device is running.
 #[no_mangle]
 pub unsafe extern "C" fn ld_fx_state(e: *const Engine, slot: i32, what: i32) -> bool {
     let Some(r) = engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)) else { return false };
     match what {
         0 => r.is_loaded(),
         1 => r.is_faulted(),
-        _ => r.is_double_assigned(),
+        2 => r.is_double_assigned(),
+        _ => r.has_device(),
     }
 }
 
