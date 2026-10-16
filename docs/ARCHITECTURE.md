@@ -238,11 +238,15 @@ show control and mute groups (top right); and the main display with the screen k
   rings, cyan selections) and uses Barlow Condensed (SIL OFL, `resources/fonts/`,
   embedded with `juce_add_binary_data`). `Icons.*` draws the screen icons as vectors;
   `WingWidgets.h` has the screen keys, ON chips and segmented keys.
-- **Main display** (`MainDisplay.*`): the status bar (channel tab, sample rate /
-  clock / DSP / protection chips, scene, TOOLS, SETTINGS, clock), the screen, and the
-  parameter bar with six controls that follow the screen (`DisplayPage::getKnobs`).
-- **Screens:** HOME (`HomePage.*`: the block column, OVERVIEW, ICON/COLOR, NAME, TAGS;
-  `HomeScreens.*`: INPUT, FILTER, GATE, EQ, DYNAMICS, PRE/POST INSERT, MAIN, SENDS),
+- **Main display** (`MainDisplay.*`): the screen keys, the 16:10 screen and the column
+  right of it (CLR SOLO, main meter, fine-adjust knob, blank key); the status bar
+  (channel tab in the strip's colour, status tiles, the page's `getStatusKeys()`,
+  clock), the page, and the parameter bar with six controls that follow the page
+  (`DisplayPage::getKnobs`, styled by `getKnobStyles`), plus CHANNEL SELECT.
+- **Screens:** HOME (`HomePage.*`: the toolbar, OVERVIEW, ICON/COLOR, NAME, TAGS and
+  the INIT / COPY / SETTINGS / FEED overlays; `HomeScreens.*`: INPUT, FILTER SETUP,
+  GATE / COMP, EQ, INS 1 / INS 2, MAIN SENDS, BUS / MATRIX SENDS and the overlays;
+  `HomeWidgets.h`: their shared widgets),
   EFFECTS, METERS, ROUTING, SETUP, LIBRARY (`ShowPanel.*` for scenes and snippets) and
   UTILITY.
 - **Faceplates** (`Faceplate.*`): every FX device and dynamics/EQ model is drawn as the
