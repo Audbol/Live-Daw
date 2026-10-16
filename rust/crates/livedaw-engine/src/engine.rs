@@ -10,7 +10,8 @@
 //!  4. buses 1-8 sum input sends and sends from buses 9+               (parallel)
 //!  5. mains sum channel/aux/bus main sends                            (parallel)
 //!  6. matrices sum matrix sends from all strips + their direct input  (parallel)
-//!  7. solo (PFL/AFL) builds the monitor bus, else it follows Main 1
+//!  7. solo (PFL/AFL per strip type) builds the monitor bus, else it follows
+//!     Main 1; then the monitor level, DIM, mute, MONO and SWAP
 //!  8. outputs are written, then safety-clipped
 //!
 //! Structure changes happen on the message thread by publishing a new
@@ -22,7 +23,7 @@ use crate::fx::{FxRack, InsertCallbacks};
 use crate::garbage::Garbage;
 use crate::params::*;
 use crate::pool::WorkerPool;
-use crate::sends::MAX_BUSES;
+use crate::sends::{send_mode, MAX_BUSES};
 use crate::strip::{ProcessContext, Strip};
 use livedaw_dsp::util::*;
 use livedaw_dsp::wing::fx::{allowed_in_slot, FxContext, FxDevice};
@@ -128,8 +129,23 @@ struct AudioState {
     hw_out_ptrs: Vec<*mut f32>,
     monitor: [Vec<f32>; 2],
     last_monitor_gain: f32,
+    /// MONO / SWAP: 2x2 matrix (ll, rl, lr, rr) of the last block.
+    last_monitor_matrix: [f32; 4],
     last_main_to_monitor: f32,
     block_counter: u64,
+}
+
+/// Monitor matrices (out_l = m[0]*L + m[1]*R, out_r = m[2]*L + m[3]*R).
+const MONITOR_STEREO: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+const MONITOR_MONO: [f32; 4] = [0.5, 0.5, 0.5, 0.5];
+const MONITOR_SWAP: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
+
+/// Console-wide group settings read once per block.
+struct GroupState {
+    mute_groups: u32,
+    dca_mute_groups: bool,
+    main_link_last: usize,
+    main_link_db: f32,
 }
 
 /// Shares raw pointers with the parallel tasks (they are only read).
@@ -201,6 +217,7 @@ impl Engine {
                 hw_out_ptrs: Vec::new(),
                 monitor: [vec![0.0; DEFAULT_BLOCK], vec![0.0; DEFAULT_BLOCK]],
                 last_monitor_gain: 0.0,
+                last_monitor_matrix: MONITOR_STEREO,
                 last_main_to_monitor: 1.0,
                 block_counter: 0,
             }),
@@ -419,6 +436,19 @@ impl Engine {
     /// Main 1 (the default monitor source).
     pub fn main(&self, i: usize) -> Option<Arc<Strip>> {
         self.strip_at(StripKind::Main, i)
+    }
+
+    /// STARTUP MAIN MUTE: the application calls this once at start-up (after
+    /// loading its show). Mutes every main if the preference is on; returns
+    /// whether it did.
+    pub fn apply_startup_main_mute(&self) -> bool {
+        if !self.controls.startup_main_mute.load(Relaxed) {
+            return false;
+        }
+        for m in self.strips(StripKind::Main) {
+            m.params.mute.store(true, Relaxed);
+        }
+        true
     }
 
     pub fn dca_name(&self, i: usize) -> String {
@@ -645,9 +675,14 @@ impl Engine {
     unsafe fn process_chunk(&self, topo: &Topology, a: &mut AudioState, n: usize) {
         let hw = SharedPtrs(&a.hw_in_ptrs);
         let hw = &hw;
-        let mute_groups = self.controls.mute_groups.load(Relaxed);
+        let groups = GroupState {
+            mute_groups: self.controls.mute_groups.load(Relaxed),
+            dca_mute_groups: self.controls.dca_mute_groups.load(Relaxed),
+            main_link_last: self.controls.main_link_last(),
+            main_link_db: topo.mains.first().map_or(0.0, |m| m.params.fader_db.load()),
+        };
         let block = a.block_counter;
-        let ctx_of = |hw| self.context(topo, hw, mute_groups, block);
+        let ctx_of = |hw| self.context(topo, hw, &groups, block);
         let ctx_of = &ctx_of;
 
         // 1. Channels and aux channels (parallel)
@@ -705,52 +740,64 @@ impl Engine {
         self.protect_outputs(a, n);
     }
 
-    fn context<'a>(&'a self, topo: &'a Topology, hw: &'a [*const f32], mute_groups: u32, block: u64) -> ProcessContext<'a> {
+    fn context<'a>(&'a self, topo: &'a Topology, hw: &'a [*const f32], g: &GroupState, block: u64) -> ProcessContext<'a> {
         ProcessContext {
             fx: &self.fx,
             fx_params: &self.controls.fx,
             dcas: &self.controls.dcas,
-            mute_groups,
+            mute_groups: g.mute_groups,
+            dca_mute_groups: g.dca_mute_groups,
+            main_link_last: g.main_link_last,
+            main_link_db: g.main_link_db,
             hw_inputs: hw,
             channels: &topo.channels,
             block,
         }
     }
 
-    /// Gain sharing between channels whose post insert is set to AUTO_X / AUTO_Y.
+    /// Gain sharing between input channels whose INS 2 is set to AUTO_X /
+    /// AUTO_Y, for the groups whose X / Y ENABLE is on. Channels leaving
+    /// automix (or in a disabled group) glide back to unity.
     unsafe fn automix(&self, topo: &Topology, n: usize) {
-        let mut totals = [0.0f32; 2];
+        let enabled = [self.controls.automix_enable[0].load(Relaxed), self.controls.automix_enable[1].load(Relaxed)];
         let group_of = |s: &Strip| -> Option<usize> {
-            let ins = &s.params.post_insert;
-            match ins.mode.load(Relaxed) {
-                1 if ins.on.load(Relaxed) => Some(0),
-                2 if ins.on.load(Relaxed) => Some(1),
-                _ => None,
+            if !s.has_automix() {
+                return None;
             }
+            let ins = &s.params.post_insert;
+            let group = match ins.mode.load(Relaxed) {
+                1 if ins.on.load(Relaxed) => 0,
+                2 if ins.on.load(Relaxed) => 1,
+                _ => return None,
+            };
+            enabled[group].then_some(group)
         };
-        for s in topo.inputs() {
+        let mut totals = [0.0f32; 2];
+        for s in topo.active() {
             if let Some(g) = group_of(s) {
                 totals[g] += s.dsp().automix_power();
             }
         }
-        if totals == [0.0, 0.0] {
-            return;
-        }
-        for s in topo.inputs() {
-            if let Some(g) = group_of(s) {
-                let share = if totals[g] > 1e-12 { s.dsp().automix_power() / totals[g] } else { 0.0 };
+        for s in topo.active() {
+            let gain = match group_of(s) {
                 // Power share -> gain; never below -40 dB so nobody vanishes completely.
-                let gain = share.sqrt().max(0.01);
+                Some(g) if totals[g] > 1e-12 => (s.dsp().automix_power() / totals[g]).sqrt().max(0.01),
+                // A silent group keeps its gains: the last active channel stays on.
+                Some(_) => s.dsp().automix_gain(),
+                None => 1.0,
+            };
+            if gain != 1.0 || s.dsp().automix_gain() != 1.0 {
                 s.apply_automix(gain, n);
             }
         }
     }
 
     unsafe fn build_monitor(&self, topo: &Topology, a: &mut AudioState, n: usize) {
-        let dcas = &self.controls.dcas;
+        let c = &self.controls;
+        let dcas = &c.dcas;
         let solo = topo.all().any(|s| s.is_soloed(dcas));
-        self.controls.any_solo_active.store(solo, Relaxed);
-        let afl = self.controls.solo_afl.load(Relaxed);
+        c.any_solo_active.store(solo, Relaxed);
+        let afl = StripKind::ALL.map(|k| c.solo_is_afl(k)); // indexed by kind
 
         let [m0, m1] = &mut a.monitor;
         let (m0, m1) = (&mut m0[..n], &mut m1[..n]);
@@ -762,7 +809,7 @@ impl Engine {
             let last = s.last_solo();
             if target != 0.0 || *last != 0.0 {
                 let d = s.dsp();
-                if afl || s.kind().is_output() {
+                if afl[s.kind() as usize] {
                     add_with_gain_ramp(m0, d.out(0, n), *last, target);
                     add_with_gain_ramp(m1, d.out(1, n), *last, target);
                 } else {
@@ -782,13 +829,31 @@ impl Engine {
         }
         a.last_main_to_monitor = main_target;
 
-        let level = db_to_gain(self.controls.monitor_level_db.load());
+        // Level, DIM and the monitor mute (all ramped together).
+        let mut level = db_to_gain(c.monitor_level_db.load());
+        if c.monitor_dim.load(Relaxed) {
+            level *= db_to_gain(-c.monitor_dim_db.load().max(0.0));
+        }
+        if c.monitor_mute.load(Relaxed) {
+            level = 0.0;
+        }
         apply_gain_ramp(m0, a.last_monitor_gain, level);
         apply_gain_ramp(m1, a.last_monitor_gain, level);
         a.last_monitor_gain = level;
 
-        self.controls.monitor_peak[0].fetch_max(peak_level(m0));
-        self.controls.monitor_peak[1].fetch_max(peak_level(m1));
+        // MONO (L+R)/2 on both sides, else SWAP L and R; crossfaded over a block.
+        let matrix = if c.monitor_mono.load(Relaxed) {
+            MONITOR_MONO
+        } else if c.monitor_swap.load(Relaxed) {
+            MONITOR_SWAP
+        } else {
+            MONITOR_STEREO
+        };
+        apply_monitor_matrix(m0, m1, a.last_monitor_matrix, matrix);
+        a.last_monitor_matrix = matrix;
+
+        c.monitor_peak[0].fetch_max(peak_level(m0));
+        c.monitor_peak[1].fetch_max(peak_level(m1));
     }
 
     unsafe fn write_outputs(&self, topo: &Topology, a: &mut AudioState, n: usize) {
@@ -852,6 +917,22 @@ impl Engine {
     }
 }
 
+/// Applies a 2x2 matrix to the monitor pair, crossfading from `last` to `target`.
+fn apply_monitor_matrix(l: &mut [f32], r: &mut [f32], last: [f32; 4], target: [f32; 4]) {
+    if last == MONITOR_STEREO && target == MONITOR_STEREO {
+        return;
+    }
+    let step = 1.0 / l.len().max(1) as f32;
+    let mut t = 0.0;
+    for (x, y) in l.iter_mut().zip(r.iter_mut()) {
+        t += step;
+        let m: [f32; 4] = std::array::from_fn(|i| last[i] + (target[i] - last[i]) * t);
+        let (a, b) = (*x, *y);
+        *x = m[0] * a + m[1] * b;
+        *y = m[2] * a + m[3] * b;
+    }
+}
+
 /// Adds a stereo pair into `dst`'s work buffers with ramped gains.
 #[inline]
 unsafe fn add_pair(dst: &Strip, n: usize, l: &[f32], r: &[f32], last: &mut [f32; 2], target: [f32; 2]) {
@@ -874,6 +955,13 @@ unsafe fn pre_gains(src: &Strip, pan: Option<f32>) -> [f32; 2] {
     }
 }
 
+/// A TAP-mode (pre-fader) send is cut while its source is muted, unless it is
+/// an input or aux channel's send set to IGNORE CHANNEL MUTE.
+#[inline]
+unsafe fn tap_send_muted(src: &Strip, ignore_mute: bool) -> bool {
+    src.dsp().muted() && !(ignore_mute && src.kind().is_input())
+}
+
 /// # Safety
 /// Bus task only, after the stages feeding it.
 unsafe fn sum_bus<'a>(bus: &Strip, sources: impl Iterator<Item = &'a Arc<Strip>>, n: usize) {
@@ -882,20 +970,36 @@ unsafe fn sum_bus<'a>(bus: &Strip, sources: impl Iterator<Item = &'a Arc<Strip>>
 
     for s in sources {
         let Some(send) = s.sends.find(slot) else { continue };
-        let level = if send.enabled.load(Relaxed) { db_to_gain(send.level_db.load()) } else { 0.0 };
+        let mode = send.mode.load(Relaxed);
+        let level = if !send.enabled.load(Relaxed) {
+            0.0
+        } else if mode == send_mode::GROUP {
+            1.0 // GROUP has no send level
+        } else if mode == send_mode::PRE && tap_send_muted(s, send.ignore_mute.load(Relaxed)) {
+            0.0
+        } else {
+            db_to_gain(send.level_db.load())
+        };
         let last = &mut *send.last_gain.get();
         let src = s.dsp();
         if (level == 0.0 && *last == [0.0, 0.0]) || src.idle() {
             *last = [0.0, 0.0]; // silent strips have nothing to add
             continue;
         }
-        match send.mode.load(Relaxed) {
-            2 => add_pair(bus, n, src.out(0, n), src.out(1, n), last, [level, level]),
+        match mode {
+            send_mode::GROUP => add_pair(bus, n, src.out(0, n), src.out(1, n), last, [level, level]),
             mode => {
-                let pan = if send.pan_link.load(Relaxed) { None } else { Some(send.pan.load() / 100.0) };
+                let pan = match (send.pan_link.load(Relaxed), send.pan_reversed.load(Relaxed)) {
+                    (true, false) => None,
+                    (true, true) => Some(-s.params.pan.load() / 100.0), // LINK REVERSED
+                    (false, _) => Some(send.pan.load() / 100.0),
+                };
                 let g = pre_gains(s, pan);
-                let (l, r) =
-                    if mode == 0 { (src.tap_signal(0, n), src.tap_signal(1, n)) } else { (src.post(0, n), src.post(1, n)) };
+                let (l, r) = if mode == send_mode::PRE {
+                    (src.tap_signal(0, n), src.tap_signal(1, n))
+                } else {
+                    (src.post(0, n), src.post(1, n))
+                };
                 add_pair(bus, n, l, r, last, [level * g[0], level * g[1]]);
             }
         }
@@ -908,14 +1012,17 @@ unsafe fn sum_main<'a>(main: &Strip, index: usize, sources: impl Iterator<Item =
     main.begin_summed_block(n);
     for s in sources {
         let send = &s.params.mains[index];
-        let level = if send.on.load(Relaxed) { db_to_gain(send.level_db.load()) } else { 0.0 };
+        let pre = send.pre.load(Relaxed);
+        // Pre-fader main sends still follow the strip's mute.
+        let on = send.on.load(Relaxed) && !(pre && s.dsp().muted());
+        let level = if on { db_to_gain(send.level_db.load()) } else { 0.0 };
         let last = s.last_main(index);
         let src = s.dsp();
         if (level == 0.0 && *last == [0.0, 0.0]) || src.idle() {
             *last = [0.0, 0.0];
             continue;
         }
-        if send.pre.load(Relaxed) {
+        if pre {
             let g = pre_gains(s, None);
             add_pair(main, n, src.tap_signal(0, n), src.tap_signal(1, n), last, [level * g[0], level * g[1]]);
         } else {
@@ -930,7 +1037,8 @@ unsafe fn sum_matrix(mtx: &Strip, index: usize, topo: &Topology, n: usize) {
     mtx.begin_summed_block(n);
     for s in topo.active().iter().chain(topo.buses()).chain(&topo.mains) {
         let send = &s.params.matrix[index];
-        let level = if send.on.load(Relaxed) { db_to_gain(send.level_db.load()) } else { 0.0 };
+        let on = send.on.load(Relaxed) && !(send.pre.load(Relaxed) && tap_send_muted(s, send.ignore_mute.load(Relaxed)));
+        let level = if on { db_to_gain(send.level_db.load()) } else { 0.0 };
         let last = s.last_mtx(index);
         let src = s.dsp();
         if (level == 0.0 && *last == [0.0, 0.0]) || src.idle() {

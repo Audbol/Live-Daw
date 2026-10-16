@@ -7,7 +7,7 @@
 //! orders, 1 = tap points, 2 = sidechain filters, 3 = crossover types,
 //! 4 = bus send modes, 5 = delay units, 6 = post insert modes, 7 = monitor
 //! buses, 8 = low-cut slopes, 9 = high-cut slopes, 10 = aux dynamics models,
-//! 11 = strip colours (index 0 = WING colour 1).
+//! 11 = strip colours (index 0 = WING colour 1), 12 = MAIN LINK modes.
 
 use crate::session::LdString;
 use livedaw_dsp::delay::DELAY_MODES;
@@ -18,7 +18,7 @@ use livedaw_dsp::wing::{
     ModelCategory, ModelSpec, ParamKind, ParamSpec, AUX_DYN_MODELS, DYN_MODELS, EQ_MODELS_BUS, EQ_MODELS_CH, FILTER_TOOLS,
     FX_MODELS, MAX_EQ_PARAMS, PROCESS_ORDERS, TAP_POINTS,
 };
-use livedaw_engine::params::{colour_rgb, MONITOR_BUSES, POST_INSERT_MODES, WING_COLOURS};
+use livedaw_engine::params::{colour_rgb, MAIN_LINK_MODES, MONITOR_BUSES, POST_INSERT_MODES, WING_COLOURS};
 use livedaw_engine::{Strip, SEND_MODES};
 
 fn table(t: i32) -> &'static [ModelSpec] {
@@ -53,6 +53,7 @@ fn list(l: i32) -> &'static [&'static str] {
         9 => &HIGH_CUT_SLOPES,
         10 => AUX_DYN_MODELS,
         11 => &COLOUR_NAMES,
+        12 => &MAIN_LINK_MODES,
         _ => &[],
     }
 }
