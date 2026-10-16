@@ -417,6 +417,8 @@ private:
 
     void timerCallback() override
     {
+        // SETUP can change the source too.
+        source = juce::jlimit (0, kNumMains, ctx.settings.getIntValue ("ui.mainMeter", source));
         bool changed = false;
         for (int ch = 0; ch < 2; ++ch)
         {
