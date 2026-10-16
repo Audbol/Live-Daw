@@ -21,6 +21,39 @@ struct StatusKey
     std::function<void()> onClick;
 };
 
+/** How the parameter bar shows one of the six knobs. The WING colours each value
+    by its type (levels and frequencies blue, width green, distance yellow, tilt
+    cyan, trim and pan white) and draws a matching track under it: a fill from the
+    left for levels, a fill from the centre for width, only a thumb for pan, trim
+    and balance, and a strip of segments for selectors. */
+struct KnobStyle
+{
+    enum class Bar
+    {
+        Auto,     // chosen from the binding (label, steps, bipolar)
+        Fill,     // filled from the left
+        Centre,   // filled from the centre, with a centre tick
+        Thumb,    // a thumb on a grey line
+        Segments  // one lit segment per step (BUS 1-16, MATRIX 1-8)
+    };
+
+    Bar bar = Bar::Auto;
+    juce::Colour colour {}; // transparent: chosen from the label
+    int segments = 0;       // Bar::Segments: how many (0 = the binding's steps)
+    /** The on-screen control the knob changes: outlined while the knob is touched. */
+    juce::Component::SafePointer<juce::Component> target;
+};
+
+/** The parameter bar's value colours. */
+namespace KnobColours
+{
+    const juce::Colour blue { 0xff4aa3e0 };   // levels, frequencies, selector pages
+    const juce::Colour green { 0xff52c43c };  // width
+    const juce::Colour yellow { 0xfff5d63a }; // distance, selector positions
+    const juce::Colour cyan { 0xff4fd6dc };   // tilt, tool filter parameters
+    const juce::Colour white { 0xffffffff };  // trim, pan, balance
+} // namespace KnobColours
+
 /** A screen of the main display. */
 class DisplayPage : public juce::Component
 {
@@ -30,13 +63,23 @@ public:
     /** The six knobs under the display for what this page shows (fewer is fine). */
     virtual std::vector<KnobBinding> getKnobs() { return {}; }
 
+    /** How to show each of getKnobs() (fewer, or none: chosen from the bindings). */
+    virtual std::vector<KnobStyle> getKnobStyles() { return {}; }
+
     /** False for screens that don't use the six knobs: the display then hides
         the parameter bar and gives the page its space. */
     virtual bool usesKnobs() const { return true; }
 
     /** The keys this screen puts at the right of the status bar, left to right
-        (the clock always follows). Empty: the display's default keys. */
+        (the clock always follows). Empty: none, as on the WING's CUSTOM CONTROLS
+        and MONITORS screens. */
     virtual std::vector<StatusKey> getStatusKeys() { return {}; }
+
+    /** The blank key under the knob right of the display: "performs various
+        functions depending on the active screen, such as acting as a tap tempo
+        button when editing delay effects". Its LED is lit while this returns true. */
+    virtual bool hasBlankKeyFunction() const { return false; }
+    virtual void blankKeyPressed() {}
 
     /** The selected strip or the console structure changed. */
     virtual void refresh() {}

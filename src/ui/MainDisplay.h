@@ -7,10 +7,13 @@
 namespace livedaw::ui
 {
 
-/** The WING's main display: the screen keys left of it (HOME, EFFECTS, METERS,
-    ROUTING, SETUP, LIBRARY, UTILITY), the status bar (selected channel tab,
-    audio status, scene, SETTINGS/TOOLS, clock), the current screen, and the
-    parameter bar of the six knobs underneath, which follow the screen. */
+/** The WING's main display and its frame (manual 4.1, Fig. 8): the seven
+    screen keys left of it over its full height (HOME, EFFECTS, METERS,
+    ROUTING, SETUP, LIBRARY, UTILITY); right of it CLR SOLO, the main L/R
+    meter, the knob for fine adjustments and the blank key; and the 16:10
+    screen itself: the status bar (the selected channel's tab in its colour,
+    the status tiles, the screen's own keys, the clock), the current screen, and
+    the parameter bar of the six knobs underneath, which follow the screen. */
 class MainDisplay final : public juce::Component, private juce::Timer
 {
 public:
@@ -32,6 +35,13 @@ public:
     void resized() override;
     void mouseUp (const juce::MouseEvent&) override;
 
+    class ParamBarSlot;
+    class ContextKnob;
+    class MainMeter;
+    class Highlight;
+    class ChannelSelect;
+    class FocusTracker;
+
 private:
     void timerCallback() override;
     void updateKnobs();
@@ -40,6 +50,10 @@ private:
     void layoutStatusBar();
     DisplayPage* page (Screen) const;
     void paintStatusBar (juce::Graphics&);
+    void clearSolo();
+    void showChannelSelect (bool);
+    /** The knob right of the display adjusts this (the last touched control). */
+    void setFocus (const KnobBinding&, juce::Component* target);
 
     UiContext& ctx;
     Screen screen = Screen::Home;
@@ -53,13 +67,22 @@ private:
     std::unique_ptr<ViewPage> overview, faders, sends, config, muteGroups;
 
     juce::OwnedArray<juce::TextButton> screenButtons;
-    ParamSlot slots[6];
-    juce::Rectangle<int> screenArea, statusArea, slotArea;
-    juce::Rectangle<int> channelTab, chipsTile, sceneTile, clockTile;
+    juce::OwnedArray<ParamBarSlot> slots;
+    std::unique_ptr<juce::TextButton> clearSoloKey, blankKey;
+    std::unique_ptr<MainMeter> mainMeter;
+    std::unique_ptr<ContextKnob> contextKnob;
+    std::unique_ptr<Highlight> highlight;
+    std::unique_ptr<ChannelSelect> channelSelect;
+    std::unique_ptr<FocusTracker> focusTracker;
+
+    juce::Rectangle<int> screenArea, statusArea, slotArea, pageArea;
+    juce::Rectangle<int> channelTab, numberBox, chipsTile, usbTile, clockTile;
     std::vector<StatusKey> statusKeys;
     std::vector<juce::Rectangle<int>> statusKeyAreas;
     juce::String shownTime;
     juce::uint32 shownHash = 0;
+    int touchedSlot = -1;
+    bool blink = false;
 };
 
 } // namespace livedaw::ui

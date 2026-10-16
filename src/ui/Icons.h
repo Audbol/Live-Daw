@@ -37,7 +37,15 @@ enum class Icon
     Stop,
     ChevronLeft,
     ChevronRight,
-    Disk
+    Disk,
+    Copy,       // status key COPY
+    Maxer,      // tool filters
+    AllPass90,
+    AllPass180,
+    DeltaT,     // delay
+    Invert,     // polarity
+    Cancel,     // circled x: NONE
+    Usb
 };
 
 /** Draws `icon` fitted into `area` (stroked or filled as the icon needs). */
