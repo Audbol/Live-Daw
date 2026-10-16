@@ -14,9 +14,12 @@
 pub mod dynamics;
 pub mod eq;
 pub mod filter;
+pub mod fx;
 mod models_gen;
 
-pub use models_gen::{AUX_DYN_MODELS, DYN_MODELS, EQ_MODELS_BUS, EQ_MODELS_CH, FILTER_TOOLS, PROCESS_ORDERS, TAP_POINTS};
+pub use models_gen::{
+    AUX_DYN_MODELS, DYN_MODELS, EQ_MODELS_BUS, EQ_MODELS_CH, FILTER_TOOLS, FX_MODELS, PROCESS_ORDERS, TAP_POINTS,
+};
 
 /// Parameter slots per dynamics model (the largest, DEQ2, uses 18).
 pub const MAX_DYN_PARAMS: usize = 20;
@@ -24,6 +27,8 @@ pub const MAX_DYN_PARAMS: usize = 20;
 pub const MAX_EQ_PARAMS: usize = 32;
 /// Parameter slots per filter tool.
 pub const MAX_TOOL_PARAMS: usize = 2;
+/// Parameter slots per FX device (the graphic EQ and the channel strips use 33).
+pub const MAX_FX_PARAMS: usize = 36;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelCategory {
@@ -32,6 +37,22 @@ pub enum ModelCategory {
     Special,
     Eq,
     Filter,
+    /// FX rack: an empty slot.
+    FxNone,
+    /// FX rack: a VST3/AU/LV2 plugin (the console's EXT device).
+    FxExternal,
+    /// FX rack: devices for slots 1-8 only.
+    FxPremium,
+    /// FX rack: devices for any slot.
+    FxStandard,
+    /// FX rack: channel strips (any slot).
+    FxChannel,
+}
+
+impl ModelCategory {
+    pub fn is_fx(self) -> bool {
+        matches!(self, Self::FxNone | Self::FxExternal | Self::FxPremium | Self::FxStandard | Self::FxChannel)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -266,11 +287,16 @@ mod tests {
         assert_eq!(EQ_MODELS_CH.len(), 7);
         assert_eq!(EQ_MODELS_BUS.len(), 7);
         assert_eq!(PROCESS_ORDERS.len(), 24);
-        for table in [DYN_MODELS, EQ_MODELS_CH, EQ_MODELS_BUS, FILTER_TOOLS] {
+        assert_eq!(FX_MODELS.len(), 65);
+        assert_eq!(FX_MODELS.iter().filter(|m| m.category == ModelCategory::FxStandard).count(), 32);
+        assert_eq!(FX_MODELS.iter().filter(|m| m.category == ModelCategory::FxPremium).count(), 26);
+        assert_eq!(FX_MODELS.iter().filter(|m| m.category == ModelCategory::FxChannel).count(), 5);
+        for table in [DYN_MODELS, EQ_MODELS_CH, EQ_MODELS_BUS, FILTER_TOOLS, FX_MODELS] {
             for m in table {
                 let max = match m.category {
                     ModelCategory::Eq => MAX_EQ_PARAMS,
                     ModelCategory::Filter => MAX_TOOL_PARAMS,
+                    c if c.is_fx() => MAX_FX_PARAMS,
                     _ => MAX_DYN_PARAMS,
                 };
                 assert!(m.params.len() <= max, "{} has {} params", m.token, m.params.len());

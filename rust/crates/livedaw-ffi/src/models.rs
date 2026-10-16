@@ -2,7 +2,8 @@
 //! switches, labels, value text) from the same tables the DSP uses.
 //!
 //! Tables: 0 = dynamics models (GATE and DYNAMICS slots), 1 = channel EQ
-//! models, 2 = bus/main/matrix EQ models, 3 = filter tools. Lists: 0 = process
+//! models, 2 = bus/main/matrix EQ models, 3 = filter tools, 4 = FX rack devices.
+//! Lists: 0 = process
 //! orders, 1 = tap points, 2 = sidechain filters, 3 = crossover types,
 //! 4 = bus send modes, 5 = delay units, 6 = post insert modes, 7 = monitor
 //! buses, 8 = low-cut slopes, 9 = high-cut slopes, 10 = aux dynamics models,
@@ -15,7 +16,7 @@ use livedaw_dsp::wing::eq::design;
 use livedaw_dsp::wing::filter::{HIGH_CUT_SLOPES, LOW_CUT_SLOPES};
 use livedaw_dsp::wing::{
     ModelCategory, ModelSpec, ParamKind, ParamSpec, AUX_DYN_MODELS, DYN_MODELS, EQ_MODELS_BUS, EQ_MODELS_CH, FILTER_TOOLS,
-    MAX_EQ_PARAMS, PROCESS_ORDERS, TAP_POINTS,
+    FX_MODELS, MAX_EQ_PARAMS, PROCESS_ORDERS, TAP_POINTS,
 };
 use livedaw_engine::params::{colour_rgb, MONITOR_BUSES, POST_INSERT_MODES, WING_COLOURS};
 use livedaw_engine::{Strip, SEND_MODES};
@@ -25,6 +26,7 @@ fn table(t: i32) -> &'static [ModelSpec] {
         1 => EQ_MODELS_CH,
         2 => EQ_MODELS_BUS,
         3 => FILTER_TOOLS,
+        4 => FX_MODELS,
         _ => DYN_MODELS,
     }
 }
@@ -83,7 +85,8 @@ pub extern "C" fn ld_model_text(t: i32, m: i32, what: i32) -> *mut LdString {
     LdString::new(s.to_owned())
 }
 
-/// 0 = gate, 1 = compressor, 2 = special, 3 = EQ, 4 = filter.
+/// 0 = gate, 1 = compressor, 2 = special, 3 = EQ, 4 = filter; FX devices:
+/// 5 = none, 6 = external (plugin), 7 = premium, 8 = standard, 9 = channel strip.
 #[no_mangle]
 pub extern "C" fn ld_model_category(t: i32, m: i32) -> i32 {
     model(t, m).map_or(0, |m| match m.category {
@@ -92,6 +95,11 @@ pub extern "C" fn ld_model_category(t: i32, m: i32) -> i32 {
         ModelCategory::Special => 2,
         ModelCategory::Eq => 3,
         ModelCategory::Filter => 4,
+        ModelCategory::FxNone => 5,
+        ModelCategory::FxExternal => 6,
+        ModelCategory::FxPremium => 7,
+        ModelCategory::FxStandard => 8,
+        ModelCategory::FxChannel => 9,
     })
 }
 
