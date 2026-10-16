@@ -92,22 +92,35 @@ void ConsoleLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int 
         return;
     }
 
-    // Surface fader: dark slot, scale ticks, a long grey cap with a white line.
-    const auto slot = juce::Rectangle<float> (bounds.getCentreX() - 2.5f, bounds.getY(), 5.0f, bounds.getHeight());
+    // Surface fader: dark slot with the printed scale (10 .. -60, -oo) to its
+    // right when there's room, and a long grey cap with a white line.
+    const bool numerals = width > 34;
+    const float slotX = numerals ? bounds.getX() + bounds.getWidth() * 0.4f : bounds.getCentreX();
+    const auto slot = juce::Rectangle<float> (slotX - 2.5f, bounds.getY(), 5.0f, bounds.getHeight());
     g.setColour (juce::Colours::black);
     g.fillRoundedRectangle (slot, 2.5f);
 
-    g.setColour (Colours::textDim.withAlpha (0.5f));
-    for (double db : { 10.0, 5.0, 0.0, -5.0, -10.0, -20.0, -30.0, -40.0, -50.0, -60.0 })
+    const float capW = numerals ? juce::jmin (bounds.getWidth() * 0.5f, 34.0f) : juce::jmin (bounds.getWidth() * 0.62f, 38.0f);
+    const float textX = slotX + capW * 0.5f + 2.0f;
+    g.setFont (juce::FontOptions (juce::jlimit (8.0f, 11.0f, bounds.getWidth() * 0.16f), juce::Font::bold));
+    for (double db : { 10.0, 5.0, 0.0, -5.0, -10.0, -20.0, -30.0, -40.0, -50.0, -60.0, -100.0 })
     {
         const auto ty = static_cast<float> (slider.getPositionOfValue (db));
         const float w = db == 0.0 ? 9.0f : 5.0f;
-        g.fillRect (slot.getX() - w - 2.0f, ty, w, 1.0f);
+        g.setColour (Colours::textDim.withAlpha (0.5f));
+        if (! numerals)
+            g.fillRect (slot.getX() - w - 2.0f, ty, w, 1.0f);
         g.fillRect (slot.getRight() + 2.0f, ty, w, 1.0f);
+        if (numerals)
+        {
+            const auto text = db <= -90.0 ? juce::String::fromUTF8 ("\xe2\x88\x9e") : juce::String ((int) db);
+            g.setColour (Colours::textDim);
+            g.drawText (text, juce::Rectangle<float> (textX, ty - 6.0f, bounds.getRight() - textX, 12.0f), juce::Justification::centredRight);
+        }
     }
 
     const float capH = juce::jlimit (18.0f, 34.0f, bounds.getHeight() * 0.09f);
-    const auto cap = juce::Rectangle<float> (juce::jmin (bounds.getWidth() * 0.62f, 38.0f), capH).withCentre ({ bounds.getCentreX(), sliderPos });
+    const auto cap = juce::Rectangle<float> (capW, capH).withCentre ({ slotX, sliderPos });
     juce::ColourGradient grad (juce::Colour (0xff5d6168), cap.getX(), cap.getY(), juce::Colour (0xff2c2f34), cap.getX(), cap.getBottom(), false);
     g.setGradientFill (grad);
     g.fillRoundedRectangle (cap, 2.5f);
@@ -120,10 +133,35 @@ void ConsoleLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int 
 void ConsoleLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
                                            float pos, float startAngle, float endAngle, juce::Slider& slider)
 {
-    // The WING's knob: a thick ring (lime value arc on a dark track) around a black centre.
     const auto bounds = juce::Rectangle<int> (x, y, width, height).toFloat().reduced (2.0f);
     const float radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
     const auto centre = bounds.getCentre();
+
+    if (slider.getProperties().getWithDefault ("hardware", false))
+    {
+        // A surface encoder: a dark knurled body with a white pointer line.
+        const float angle = startAngle + pos * (endAngle - startAngle);
+        const auto body = juce::Rectangle<float> (radius * 2.0f, radius * 2.0f).withCentre (centre);
+        g.setColour (juce::Colours::black.withAlpha (0.5f));
+        g.fillEllipse (body.translated (0.0f, 1.5f));
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff4a4d53), centre.x, body.getY(), juce::Colour (0xff1d1e21),
+                                                 centre.x, body.getBottom(), false));
+        g.fillEllipse (body);
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        for (int i = 0; i < 24; ++i)
+        {
+            const float a = (float) i * juce::MathConstants<float>::twoPi / 24.0f;
+            g.drawLine (juce::Line<float> (centre.getPointOnCircumference (radius * 0.86f, a), centre.getPointOnCircumference (radius, a)), 1.0f);
+        }
+        g.setColour (juce::Colour (0xff2b2d31));
+        g.fillEllipse (body.reduced (radius * 0.2f));
+        g.setColour (slider.isEnabled() ? Colours::text : Colours::textDim.withAlpha (0.4f));
+        g.drawLine (juce::Line<float> (centre.getPointOnCircumference (radius * 0.3f, angle), centre.getPointOnCircumference (radius * 0.78f, angle)),
+                    juce::jmax (1.5f, radius * 0.1f));
+        return;
+    }
+
+    // The WING's knob: a thick ring (lime value arc on a dark track) around a black centre.
     const float thickness = juce::jmax (3.0f, radius * 0.3f);
     const float arcRadius = radius - thickness * 0.5f;
     const float angle = startAngle + pos * (endAngle - startAngle);
@@ -273,6 +311,15 @@ void drawChip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& 
     g.setColour (textColour);
     g.setFont (juce::FontOptions (juce::jlimit (9.0f, 18.0f, r.getHeight() * 0.86f), juce::Font::bold));
     g.drawFittedText (text, r.toNearestInt(), juce::Justification::centred, 1);
+}
+
+void drawSilk (juce::Graphics& g, juce::Rectangle<float> area, const juce::String& text, float fontSize,
+               juce::Justification justification, juce::Colour colour)
+{
+    const auto lines = juce::StringArray::fromLines (text);
+    g.setColour (colour);
+    g.setFont (juce::FontOptions (fontSize, juce::Font::bold));
+    g.drawFittedText (text, area.toNearestInt(), justification, lines.size(), 0.8f);
 }
 
 } // namespace livedaw::ui
