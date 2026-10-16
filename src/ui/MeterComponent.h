@@ -35,4 +35,22 @@ private:
     bool showScale = false;
 };
 
+/** The surface's LED meters: a column of square LEDs, top to bottom. */
+namespace leds
+{
+    /** How many of `thresholds` (top to bottom, descending) `value` reaches. */
+    int countLit (const float* thresholds, int numSegments, float value) noexcept;
+
+    /** Draws `numSegments` LEDs into `area`, the bottom `lit` of them lit in
+        `colour (segment)` (segment 0 = top). */
+    void drawColumn (juce::Graphics&, juce::Rectangle<float> area, int numSegments, int lit,
+                     const std::function<juce::Colour (int)>& colour);
+
+    /** Draws a column lit from the top (gain reduction). */
+    void drawColumnFromTop (juce::Graphics&, juce::Rectangle<float> area, int numSegments, int lit, juce::Colour colour);
+
+    /** The usual meter colours: red at clip, yellow from -6 dB, else green. */
+    juce::Colour meterColour (float thresholdDb) noexcept;
+} // namespace leds
+
 } // namespace livedaw::ui

@@ -62,8 +62,18 @@ public:
     /** Size of the caption and value fonts. */
     void setCompact (bool c) { compact = c; resized(); }
 
+    /** A plain encoder of the control surface: no value ring, caption or value
+        (those are printed on the panel or shown on a screen). */
+    void setHardware (bool);
+
+    /** Called when the knob is touched: hovered or grabbed. */
+    std::function<void()> onTouch;
+
+    void setTooltip (const juce::String& tip) { slider.setTooltip (tip); }
+
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseEnter (const juce::MouseEvent&) override;
 
 private:
     void timerCallback() override;
@@ -71,7 +81,7 @@ private:
     KnobBinding binding;
     juce::Slider slider;
     juce::String valueText;
-    bool compact = false;
+    bool compact = false, hardware = false;
 };
 
 /** One of the six parameter slots along the bottom of the WING's display:

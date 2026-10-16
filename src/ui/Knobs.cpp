@@ -138,11 +138,8 @@ KnobBinding bindChoice (const juce::String& label, std::atomic<int32_t>& v, cons
 KnobBinding bindPan (const juce::String& label, std::atomic<float>& v)
 {
     auto b = bindLinear (label, v, -100.0f, 100.0f, {}, 0, 0.0f);
-    b.text = [&v]
-    {
-        const int p = juce::roundToInt (v.load());
-        return p == 0 ? juce::String ("C") : (p < 0 ? "L" + juce::String (-p) : "R" + juce::String (p));
-    };
+    // The WING shows pan as a signed number: -100 (left) .. 0 .. 100 (right).
+    b.text = [&v] { return juce::String (juce::roundToInt (v.load())); };
     return b;
 }
 
@@ -166,9 +163,25 @@ DisplayKnob::DisplayKnob()
         }
     };
     slider.onDragEnd = [this] { timerCallback(); };
+    slider.onDragStart = [this] { if (onTouch) onTouch(); };
     slider.setDoubleClickReturnValue (false, 0.0);
+    slider.addMouseListener (this, false);
     addAndMakeVisible (slider);
     startTimerHz (20);
+}
+
+void DisplayKnob::setHardware (bool h)
+{
+    hardware = h;
+    slider.getProperties().set ("hardware", h);
+    resized();
+    repaint();
+}
+
+void DisplayKnob::mouseEnter (const juce::MouseEvent&)
+{
+    if (onTouch && slider.isEnabled())
+        onTouch();
 }
 
 void DisplayKnob::setBinding (KnobBinding b)
@@ -203,6 +216,8 @@ void DisplayKnob::timerCallback()
 
 void DisplayKnob::paint (juce::Graphics& g)
 {
+    if (hardware)
+        return;
     auto b = getLocalBounds();
     const float captionSize = compact ? 14.0f : 16.0f;
     g.setColour (binding.isValid() ? Colours::textDim : Colours::textDim.withAlpha (0.3f));
@@ -217,6 +232,12 @@ void DisplayKnob::paint (juce::Graphics& g)
 void DisplayKnob::resized()
 {
     auto b = getLocalBounds();
+    if (hardware)
+    {
+        const int size = juce::jmin (b.getWidth(), b.getHeight());
+        slider.setBounds (b.withSizeKeepingCentre (size, size));
+        return;
+    }
     const int caption = compact ? 16 : 18;
     b.removeFromTop (caption);
     b.removeFromBottom (caption + 2);

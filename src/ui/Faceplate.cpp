@@ -1,4 +1,5 @@
 #include "ui/Faceplate.h"
+#include "ui/ModelParams.h"
 
 #include <cmath>
 #include <map>
@@ -657,7 +658,7 @@ void Faceplate::paintControl (juce::Graphics& g, const Control& ctl) const
     auto a = ctl.area.reduced (3.0f, 2.0f);
     const bool touched = ctl.param == lastTouched;
     const float labelH = juce::jlimit (10.0f, 15.0f, a.getHeight() * 0.16f);
-    const auto label = fit (p.label.isNotEmpty() ? p.label : p.id);
+    const auto label = fit (p.label.isNotEmpty() ? consoleLabel (p) : p.id);
 
     switch (ctl.kind)
     {
@@ -673,7 +674,7 @@ void Faceplate::paintControl (juce::Graphics& g, const Control& ctl) const
             paintKnob (g, k, pos, p.min < 0.0f && p.max > 0.0f && p.isContinuous());
             g.setColour (touched ? style.accent : style.text.withAlpha (0.85f));
             g.setFont (juce::FontOptions (labelH * 0.92f, juce::Font::bold));
-            g.drawFittedText (p.display (v), val.toNearestInt(), juce::Justification::centred, 1, 0.7f);
+            g.drawFittedText (consoleText (p, v), val.toNearestInt(), juce::Justification::centred, 1, 0.7f);
             break;
         }
         case Kind::Fader:
@@ -682,7 +683,7 @@ void Faceplate::paintControl (juce::Graphics& g, const Control& ctl) const
             auto lab = a.removeFromBottom (labelH);
             g.setColour (touched ? style.accent : style.text.withAlpha (0.85f));
             g.setFont (juce::FontOptions (labelH * 0.85f, juce::Font::bold));
-            g.drawFittedText (p.display (v), val.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+            g.drawFittedText (consoleText (p, v), val.toNearestInt(), juce::Justification::centred, 1, 0.6f);
             g.setColour (style.text);
             g.drawFittedText (label, lab.toNearestInt(), juce::Justification::centred, 1, 0.6f);
             auto slot = a.reduced (0.0f, 6.0f);
@@ -771,10 +772,10 @@ void Faceplate::paint (juce::Graphics& g)
             const auto& p = spec->params[(size_t) i];
             g.setColour (style.lcdText.withAlpha (0.65f));
             g.setFont (juce::FontOptions (juce::jmin (12.0f, cell.getHeight() * 0.36f), juce::Font::bold));
-            g.drawFittedText (fit (p.label), cell.removeFromTop (cell.getHeight() * 0.42f).toNearestInt(), juce::Justification::centredLeft, 1, 0.6f);
+            g.drawFittedText (fit (consoleLabel (p)), cell.removeFromTop (cell.getHeight() * 0.42f).toNearestInt(), juce::Justification::centredLeft, 1, 0.6f);
             g.setColour (style.lcdText);
             g.setFont (juce::FontOptions (juce::jmin (20.0f, cell.getHeight() * 0.9f), juce::Font::bold));
-            g.drawFittedText (p.display (value (i)), cell.toNearestInt(), juce::Justification::centredLeft, 1, 0.6f);
+            g.drawFittedText (consoleText (p, value (i)), cell.toNearestInt(), juce::Justification::centredLeft, 1, 0.6f);
         }
     }
 

@@ -3,78 +3,167 @@
 namespace livedaw::ui
 {
 
-FaderSection::FaderSection (UiContext& c, LayerSet::Section s, const juce::String& t) : ctx (c), section (s), title (t)
+FaderSection::FaderSection (UiContext& c, LayerSet::Section s) : ctx (c), section (s)
 {
-    bankViewport.setViewedComponent (&bankContent, false);
-    bankViewport.setScrollBarsShown (true, false);
-    bankViewport.setScrollBarThickness (6);
-    addAndMakeVisible (bankViewport);
+    // VIEW: the section's OVERVIEW; hold for CONFIG (manual table 4.2).
+    viewKey.setTooltip ("VIEW: overview of this section (hold: CONFIG)");
+    viewKey.onPress = [this]
+    {
+        ctx.viewSection = section;
+        if (ctx.showScreen)
+            ctx.showScreen (Screen::Overview);
+    };
+    viewKey.onHold = [this]
+    {
+        ctx.viewSection = section;
+        if (ctx.showScreen)
+            ctx.showScreen (Screen::Config);
+    };
+    viewKey.isActive = [this]
+    {
+        if (! ctx.getScreen || ctx.viewSection != section)
+            return false;
+        const auto screen = ctx.getScreen();
+        return screen == Screen::Overview || screen == Screen::Config || screen == Screen::Faders || screen == Screen::Sends;
+    };
+    addAndMakeVisible (viewKey);
 
-    for (auto* b : { &pageLeft, &pageRight })
-        addAndMakeVisible (b);
-    pageLeft.onClick = [this] { if (page > 0) { --page; refreshFaders(); } };
-    pageRight.onClick = [this] { ++page; refreshFaders(); };
-    pageLabel.setJustificationType (juce::Justification::centred);
-    pageLabel.setFont (juce::FontOptions (10.0f));
-    pageLabel.setColour (juce::Label::textColourId, Colours::textDim);
-    addAndMakeVisible (pageLabel);
+    // Shift keys: scroll by the shift step, lit while there's more to scroll to;
+    // hold for the first / last faders of the layer.
+    for (auto* k : { &shiftLeft, &shiftRight })
+    {
+        const int direction = k == &shiftLeft ? -1 : 1;
+        k->arrow = direction;
+        k->ledColour = Colours::silk;
+        k->onPress = [this, direction] { shift (direction); };
+        k->onHold = [this, direction] { jumpToEnd (direction); };
+        k->ledState = [this, direction]
+        {
+            const int total = (int) layer.faders.size();
+            const bool more = direction < 0 ? offset > 0 : offset + strips.size() < total;
+            return more ? SurfaceKey::Lit : SurfaceKey::Off;
+        };
+        addAndMakeVisible (k);
+    }
 
     if (section == LayerSet::Center)
     {
-        sofButton.setClickingTogglesState (true);
-        sofButton.setColour (juce::TextButton::buttonOnColourId, Colours::solo);
-        sofButton.setTooltip ("Sends on Fader: select a bus to set every input's send to it on the input faders, "
-                              "or select an input to set its sends on the bus faders");
-        sofButton.onClick = [this]
+        sofKey.ledColour = Colours::solo;
+        sofKey.setTooltip ("SOF FLIP (Sends on Fader): select a bus, main or matrix to set every input's send to it "
+                           "on the input faders, or select an input to set its sends on the bus, main and matrix faders");
+        sofKey.ledState = [this] { return ctx.sendsOnFader ? SurfaceKey::Lit : SurfaceKey::Off; };
+        sofKey.onPress = [this]
         {
-            ctx.sendsOnFader = sofButton.getToggleState();
+            ctx.sendsOnFader = ! ctx.sendsOnFader;
             if (ctx.sofChanged)
                 ctx.sofChanged();
         };
-        addAndMakeVisible (sofButton);
+        addAndMakeVisible (sofKey);
     }
+}
+
+int FaderSection::shiftStep() const
+{
+    // SETUP > SURFACE: scroll 4, 8 or 12 faders at a time.
+    const int step = ctx.settings.getIntValue ("ui.shiftStep", 4);
+    return step == 8 || step == 12 ? step : 4;
 }
 
 void FaderSection::refresh()
 {
-    bankButtons.clear();
-    const auto layers = ctx.show.layers.getAllLayers (ctx.engine, section);
-
-    for (auto& l : layers)
+    // The seven layer keys, then the user layers that have no USER key.
+    keys = ctx.show.layers.getDefaultLayers (ctx.engine, section);
+    numFixedKeys = (int) keys.size();
+    const auto& user = ctx.show.layers.getUserLayers();
+    for (size_t i = 0; i < user.size(); ++i)
     {
-        auto* b = bankButtons.add (new juce::TextButton (l.name));
-        b->setClickingTogglesState (false);
-        b->setColour (juce::TextButton::buttonOnColourId, l.user ? Colours::block : Colours::accent);
-        b->setColour (juce::TextButton::buttonColourId, Colours::panelLight.darker (0.25f));
-        b->setTooltip (l.name + (l.user ? " (user bank)" : ""));
-        const auto id = l.id;
-        b->getProperties().set ("bank", id);
-        b->onClick = [this, id] { selectBank (id); };
-        bankContent.addAndMakeVisible (b);
+        if (i < 2)
+            userIds[i] = user[i].id;
+        else
+            keys.push_back (user[i]);
     }
+    for (size_t i = user.size(); i < 2; ++i)
+        userIds[i] = {};
 
+    layerKeys.clear();
+    for (size_t i = 0; i < keys.size(); ++i)
+    {
+        auto* k = layerKeys.add (new SurfaceKey (LayerSet::keyLabel (keys[i])));
+        k->ledColour = Colours::select;
+        k->setTooltip (keys[i].name + (keys[i].user ? " (user layer)" : ""));
+        k->onPress = [this, id = keys[i].id] { selectLayer (id); };
+        k->ledState = [this, i] { return i < keys.size() && isKeyLit (keys[i]) ? SurfaceKey::Lit : SurfaceKey::Off; };
+        addAndMakeVisible (k);
+    }
+    shiftLeft.setLabel (juce::String (shiftStep()));
+    shiftRight.setLabel (juce::String (shiftStep()));
+
+    const auto previous = layer.id;
     layer = ctx.show.layers.getSelectedLayer (ctx.engine, section);
-    for (auto* b : bankButtons)
-        b->setToggleState (b->getProperties()["bank"].toString() == layer.id, juce::dontSendNotification);
+    if (layer.id != previous)
+        offset = 0;
 
-    layoutBanks();
+    resized();
     refreshFaders();
 }
 
-void FaderSection::selectBank (const juce::String& id)
+bool FaderSection::isKeyLit (const Layer& key) const
+{
+    if (key.id == layer.id)
+        return true;
+    // A user layer selected by its id lights its USER key.
+    for (int i = 0; i < 2; ++i)
+        if (userIds[i].isNotEmpty() && layer.id == userIds[i] && key.id == "user-" + juce::String (i + 1))
+            return true;
+    return false;
+}
+
+void FaderSection::selectLayer (const juce::String& id)
 {
     ctx.show.layers.setSelectedLayerId (section, id);
-    page = 0;
+    offset = 0;
     layer = ctx.show.layers.getSelectedLayer (ctx.engine, section);
-    for (auto* b : bankButtons)
-        b->setToggleState (b->getProperties()["bank"].toString() == layer.id, juce::dontSendNotification);
     refreshFaders();
+}
+
+void FaderSection::shift (int direction)
+{
+    offset += direction * shiftStep();
+    refreshFaders();
+}
+
+void FaderSection::jumpToEnd (int direction)
+{
+    offset = direction < 0 ? 0 : (int) layer.faders.size();
+    refreshFaders();
+}
+
+void FaderSection::reveal (const state::FaderRef& fader)
+{
+    const auto id = ctx.show.layers.findDefaultLayerContaining (ctx.engine, section, fader);
+    if (id.isEmpty())
+        return;
+    if (id != layer.id)
+        selectLayer (id);
+
+    const int n = strips.size();
+    for (int i = 0; i < (int) layer.faders.size(); ++i)
+    {
+        if (layer.faders[(size_t) i] == fader)
+        {
+            if (i < offset || i >= offset + n)
+            {
+                const int step = shiftStep();
+                offset = i / step * step;
+                refreshFaders();
+            }
+            return;
+        }
+    }
 }
 
 void FaderSection::refreshFaders()
 {
-    sofButton.setToggleState (ctx.sendsOnFader, juce::dontSendNotification);
-
     const int n = juce::jmax (1, ctx.show.layers.getEffectiveWidth (section));
     if (strips.size() != n)
     {
@@ -85,65 +174,113 @@ void FaderSection::refreshFaders()
     }
 
     const int total = (int) layer.faders.size();
-    const int pages = juce::jmax (1, (total + n - 1) / n);
-    page = juce::jlimit (0, pages - 1, page);
-    pageLeft.setEnabled (page > 0);
-    pageRight.setEnabled (page < pages - 1);
-    pageLabel.setText (pages > 1 ? juce::String (page + 1) + "/" + juce::String (pages) : juce::String(), juce::dontSendNotification);
+    offset = juce::jlimit (0, juce::jmax (0, total - n), offset);
 
     for (int i = 0; i < n; ++i)
     {
-        const int index = page * n + i;
+        const int index = offset + i;
         strips[i]->setTarget (index < total ? std::optional<state::FaderRef> (layer.faders[(size_t) index]) : std::nullopt);
     }
+    repaint();
 }
 
 void FaderSection::paint (juce::Graphics& g)
 {
-    g.setColour (Colours::background);
-    g.fillAll();
-    auto bank = getLocalBounds().removeFromLeft (kBankColumnWidth);
-    g.setColour (Colours::panel.darker (0.2f));
-    g.fillRect (bank.reduced (1, 0));
-    g.setColour (Colours::textDim);
-    g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-    g.drawText (title, bank.removeFromTop (20).reduced (6, 0), juce::Justification::centredLeft);
+    g.fillAll (Colours::panel);
+
+    // The darker layer column.
+    g.setColour (Colours::layerColumn);
+    g.fillRect (column.reduced (3, 0));
+
     g.setColour (Colours::outline);
     g.fillRect (getWidth() - 1, 0, 1, getHeight());
 }
 
-void FaderSection::layoutBanks()
+void FaderSection::paintOverChildren (juce::Graphics& g)
 {
-    const int w = bankViewport.getWidth() - (bankViewport.isVerticalScrollBarShown() ? bankViewport.getScrollBarThickness() : 0);
-    const int h = 26;
-    for (int i = 0; i < bankButtons.size(); ++i)
-        bankButtons[i]->setBounds (2, i * h, juce::jmax (10, w - 4), h - 3);
-    bankContent.setSize (juce::jmax (10, w), bankButtons.size() * h);
+    if (strips.isEmpty())
+        return;
+
+    // Strips come in modules of four (their LCD and meter panels run across the
+    // module), with the meter scale printed between strips.
+    const auto meter = strips[0]->getMeterArea();
+    const int y0 = strips[0]->getY();
+    for (int first = 0; first < strips.size(); first += 4)
+    {
+        const int last = juce::jmin (strips.size(), first + 4) - 1;
+        if (last + 1 < strips.size())
+        {
+            g.setColour (Colours::background);
+            g.fillRect (strips[last]->getRight() - 1, 0, 2, getHeight());
+        }
+
+        const float rowH = (float) meter.getHeight() / (float) FaderStrip::kMeterRows;
+        const float size = juce::jlimit (7.0f, 11.0f, rowH * 0.9f);
+        for (int i = first; i < last; ++i)
+        {
+            const float x = (float) strips[i]->getRight();
+            const float w = juce::jmin (22.0f, (float) strips[i]->getWidth() * 0.36f);
+            auto row = [&] (int r) { return juce::Rectangle<float> (x - w * 0.5f, (float) (y0 + meter.getY()) + rowH * (float) r, w, rowH); };
+            for (int r = 0; r < FaderStrip::kMeterSegments; ++r)
+                drawSilk (g, row (r + 1), FaderStrip::kMeterLabels[r], size);
+
+            // DYN outlined, GATE inverse, as printed.
+            auto dyn = row (0).reduced (0.0f, rowH * 0.06f);
+            g.setColour (Colours::silk);
+            g.drawRoundedRectangle (dyn, 2.0f, 1.0f);
+            drawSilk (g, dyn, "DYN", size * 0.9f);
+            auto gate = row (FaderStrip::kMeterRows - 1).reduced (0.0f, rowH * 0.06f);
+            g.setColour (Colours::silk);
+            g.fillRoundedRectangle (gate, 2.0f);
+            drawSilk (g, gate, "GATE", size * 0.9f, juce::Justification::centred, Colours::panel);
+        }
+    }
 }
 
 void FaderSection::resized()
 {
     auto b = getLocalBounds();
-    auto bank = b.removeFromLeft (kBankColumnWidth).reduced (4, 0);
-    bank.removeFromTop (20);
-
-    auto bottom = bank.removeFromBottom (section == LayerSet::Center ? 64 : 34);
-    if (section == LayerSet::Center)
-        sofButton.setBounds (bottom.removeFromBottom (28).reduced (0, 2));
-    auto pager = bottom.removeFromTop (28);
-    pageLeft.setBounds (pager.removeFromLeft (26).reduced (0, 2));
-    pageRight.setBounds (pager.removeFromRight (26).reduced (0, 2));
-    pageLabel.setBounds (pager);
-
-    bankViewport.setBounds (bank);
-    layoutBanks();
+    column = b.removeFromLeft (kBankColumnWidth);
 
     const int n = strips.size();
-    if (n == 0)
-        return;
-    const int w = b.getWidth() / n;
-    for (int i = 0; i < n; ++i)
-        strips[i]->setBounds (b.getX() + i * w, b.getY(), w, b.getHeight());
+    if (n > 0)
+    {
+        const int w = b.getWidth() / n;
+        for (int i = 0; i < n; ++i)
+        {
+            strips[i]->setBounds (b.getX() + i * w, b.getY(), w, b.getHeight());
+            strips[i]->setModuleEdges (i % 4 == 0, i % 4 == 3 || i == n - 1);
+        }
+    }
+
+    // VIEW level with the scribble strips; the layer keys from the SELECT row down.
+    auto c = column.reduced (5, 0);
+    const auto scribble = n > 0 ? strips[0]->getScribbleArea() : juce::Rectangle<int> (0, 4, 10, 56);
+    const int viewSize = juce::jmin (c.getWidth() - 6, 42);
+    viewKey.setBounds (juce::Rectangle<int> (viewSize, viewSize).withCentre ({ c.getCentreX(), scribble.getCentreY() }));
+
+    c.setTop (scribble.getBottom() + 8);
+    if (section == LayerSet::Center)
+        sofKey.setBounds (c.removeFromBottom (36).withSizeKeepingCentre (c.getWidth(), 30));
+    c.removeFromBottom (6);
+
+    const int numKeys = layerKeys.size() + 2;
+    const int pitch = juce::jlimit (18, 38, c.getHeight() / juce::jmax (1, numKeys));
+    const int keyH = juce::jmin (30, pitch - juce::jmax (3, pitch / 6));
+    auto place = [&] (juce::Component& k)
+    {
+        const auto cell = c.removeFromTop (pitch);
+        k.setVisible (cell.getBottom() <= column.getBottom() && cell.getHeight() == pitch);
+        k.setBounds (cell.withSizeKeepingCentre (c.getWidth(), keyH));
+    };
+    // The seven keys, the shift keys, then further user layers.
+    const int fixed = juce::jmin (layerKeys.size(), numFixedKeys);
+    for (int i = 0; i < fixed; ++i)
+        place (*layerKeys[i]);
+    place (shiftLeft);
+    place (shiftRight);
+    for (int i = fixed; i < layerKeys.size(); ++i)
+        place (*layerKeys[i]);
 }
 
 } // namespace livedaw::ui

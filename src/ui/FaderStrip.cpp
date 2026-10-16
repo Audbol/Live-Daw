@@ -1,20 +1,72 @@
 #include "ui/FaderStrip.h"
+#include "dsp/DspUtils.h"
 
 #include <optional>
 
 namespace livedaw::ui
 {
 
-FaderStrip::FaderStrip (UiContext& c)
-    : ctx (c),
-      meter ([this] (int ch) { return sendSource != nullptr ? 0.0f : ctx.meters.get (strip, false, ch); },
-             [this] { return strip != nullptr ? strip->getNumChannels() : 1; })
+void drawLightBar (juce::Graphics& g, juce::Rectangle<float> bar, juce::Colour colour, bool on)
+{
+    const float radius = bar.getHeight() * 0.5f;
+    g.setColour (on ? colour : Colours::ledOff);
+    g.fillRoundedRectangle (bar, radius);
+    if (on)
+    {
+        g.setColour (juce::Colours::white.withAlpha (0.25f));
+        g.fillRoundedRectangle (bar.withHeight (bar.getHeight() * 0.4f).reduced (radius, 0.0f), radius * 0.4f);
+    }
+}
+
+void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const ScribbleInfo& info)
+{
+    // A dark grey LCD (the console's dark rendering) on the black display panel.
+    g.setColour (juce::Colour (0xff232427));
+    g.fillRect (lcd);
+    if (info.number.isEmpty() && info.name.isEmpty())
+        return;
+
+    auto t = lcd.reduced (juce::jmax (2.0f, lcd.getWidth() * 0.05f), 2.0f);
+    const float h = t.getHeight();
+
+    // The name on an inverted bar.
+    auto bar = t.removeFromBottom (juce::jmax (11.0f, h * 0.27f));
+    g.setColour (juce::Colours::white);
+    g.fillRect (bar.expanded (1.0f, 0.0f));
+    g.setColour (juce::Colours::black);
+    g.setFont (juce::FontOptions (juce::jlimit (9.0f, 15.0f, bar.getHeight() * 0.86f), juce::Font::bold));
+    g.drawFittedText (info.name, bar.toNearestInt().reduced (1, 0), juce::Justification::centredLeft, 1, 0.7f);
+    t.removeFromBottom (1.0f);
+
+    // Number (large) with the icon top right, then the two source lines.
+    auto top = t.removeFromTop (t.getHeight() * 0.48f);
+    if (info.icon.has_value())
+    {
+        const float s = juce::jmin (top.getHeight(), top.getWidth() * 0.34f);
+        drawIcon (g, *info.icon, top.removeFromRight (s).withSizeKeepingCentre (s, s).reduced (1.0f), juce::Colours::white);
+    }
+    g.setColour (Colours::text);
+    g.setFont (juce::FontOptions (juce::jlimit (10.0f, 22.0f, top.getHeight() * 0.95f)));
+    g.drawFittedText (info.number, top.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+
+    const float lineH = t.getHeight() * 0.5f;
+    g.setFont (juce::FontOptions (juce::jlimit (8.0f, 13.0f, lineH * 0.95f)));
+    g.setColour (info.line2Colour);
+    g.drawFittedText (info.line2, t.removeFromTop (lineH).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+    g.setColour (Colours::textDim);
+    g.drawFittedText (info.line3, t.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+}
+
+//==============================================================================
+FaderStrip::FaderStrip (UiContext& c) : ctx (c)
 {
     fader.setSliderStyle (juce::Slider::LinearVertical);
     fader.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
     fader.setNormalisableRange (fader::range());
     fader.setDoubleClickReturnValue (true, 0.0);
     fader.setMouseDragSensitivity (400);
+    fader.textFromValueFunction = [] (double db) { return fader::text ((float) db); };
+    fader.setPopupDisplayEnabled (true, false, this);
     fader.onValueChange = [this]
     {
         if (auto* p = faderParam())
@@ -22,43 +74,50 @@ FaderStrip::FaderStrip (UiContext& c)
     };
     addAndMakeVisible (fader);
 
-    selButton.setColour (juce::TextButton::buttonOnColourId, Colours::select);
-    soloButton.setColour (juce::TextButton::buttonOnColourId, Colours::solo);
-    muteButton.setColour (juce::TextButton::buttonOnColourId, Colours::mute);
-    for (auto* b : { &selButton, &soloButton, &muteButton })
-    {
-        b->setColour (juce::TextButton::buttonColourId, Colours::panelLight.darker (0.2f));
-        addAndMakeVisible (b);
-    }
+    selectKey.ledColour = Colours::select;
+    soloKey.ledColour = Colours::solo;
+    muteKey.ledColour = Colours::mute;
+    for (auto* k : { &selectKey, &soloKey, &muteKey })
+        addAndMakeVisible (k);
 
-    selButton.onClick = [this]
-    {
-        if (strip != nullptr && ctx.selectStrip)
-            ctx.selectStrip (strip);
-    };
+    selectKey.onPress = [this] { pressSelect(); };
+    selectKey.ledState = [this] { return strip != nullptr && ctx.getSelectedStrip && ctx.getSelectedStrip() == strip ? SurfaceKey::Lit : SurfaceKey::Off; };
 
-    soloButton.onClick = [this]
+    soloKey.onPress = [this]
     {
         if (strip != nullptr)
             strip->params.solo = ! strip->params.solo.load();
         else if (dca >= 0)
             ctx.engine.getDca (dca).solo = ! ctx.engine.getDca (dca).solo.load();
     };
-
-    muteButton.onClick = [this]
+    soloKey.ledState = [this]
     {
-        if (sendSource != nullptr)
-        {
-            auto& send = sendSource->sends[(size_t) sendSlot];
-            send.enabled = ! send.enabled.load();
-        }
+        const bool on = strip != nullptr ? strip->params.solo.load() : (dca >= 0 && ctx.engine.getDca (dca).solo.load());
+        return on ? SurfaceKey::Lit : SurfaceKey::Off;
+    };
+
+    // Under Sends on Fader, MUTE switches the send (lit while it's off).
+    muteKey.onPress = [this]
+    {
+        if (send)
+            send->on->store (! send->on->load());
         else if (strip != nullptr)
             strip->params.mute = ! strip->params.mute.load();
         else if (dca >= 0)
             ctx.engine.getDca (dca).mute = ! ctx.engine.getDca (dca).mute.load();
     };
+    muteKey.ledState = [this]
+    {
+        bool on = false;
+        if (send)
+            on = ! send->on->load();
+        else if (strip != nullptr)
+            on = strip->params.mute.load();
+        else if (dca >= 0)
+            on = ctx.engine.getDca (dca).mute.load();
+        return on ? SurfaceKey::Lit : SurfaceKey::Off;
+    };
 
-    addAndMakeVisible (meter);
     startTimerHz (25);
 }
 
@@ -72,8 +131,7 @@ void FaderStrip::refresh()
 {
     strip = nullptr;
     dca = -1;
-    sendSource = nullptr;
-    sendSlot = -1;
+    send.reset();
 
     if (target)
     {
@@ -83,31 +141,60 @@ void FaderStrip::refresh()
             strip = state::findStrip (ctx.engine, target->strip);
     }
 
-    // Sends on Fader between the selected strip and this one.
+    // Sends on Fader between the selected strip and this one: the send from an
+    // input (or bus) to a bus, main or matrix.
     if (ctx.sendsOnFader && strip != nullptr)
     {
         auto* sel = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr;
-        auto feeds = [] (const Strip& from, const Strip& bus)
+        auto sendOf = [] (Strip& from, Strip& to) -> std::optional<SendTarget>
         {
-            if (! bus.isBus() || &from == &bus)
-                return false;
-            return from.isInput() || (from.isBus() && from.getId() >= kBusToBusTargets && bus.getId() < kBusToBusTargets);
+            if (&from == &to)
+                return std::nullopt;
+            const auto tag = juce::String (label (to.getKind())) + " " + juce::String (to.getNumber());
+            switch (to.getKind())
+            {
+                case StripKind::Bus:
+                    if (from.isInput() || (from.isBus() && from.getId() >= kBusToBusTargets && to.getId() < kBusToBusTargets))
+                    {
+                        auto& s = from.sends[(size_t) to.getId()];
+                        return SendTarget { &s.levelDb, &s.enabled, tag };
+                    }
+                    break;
+                case StripKind::Main:
+                    if (from.isInput() || from.isBus())
+                    {
+                        auto& s = from.params.mains[juce::jlimit (0, kNumMains - 1, to.getId())];
+                        return SendTarget { &s.levelDb, &s.on, tag };
+                    }
+                    break;
+                case StripKind::Matrix:
+                    if (from.isInput() || from.isBus() || from.getKind() == StripKind::Main)
+                    {
+                        auto& s = from.params.matrix[juce::jlimit (0, kNumMatrices - 1, to.getId())];
+                        return SendTarget { &s.levelDb, &s.on, tag };
+                    }
+                    break;
+                case StripKind::Channel:
+                case StripKind::Aux:
+                    break;
+            }
+            return std::nullopt;
         };
 
         if (sel != nullptr && sel != strip)
         {
-            if (feeds (*strip, *sel))
-            {
-                sendSource = strip;
-                sendSlot = sel->getId();
-            }
-            else if (feeds (*sel, *strip))
-            {
-                sendSource = sel;
-                sendSlot = strip->getId();
-            }
+            // A destination selected: this fader sets its send to it. A source
+            // selected: this destination's fader sets the source's send to it.
+            if ((send = sendOf (*strip, *sel)))
+                send->tag = "> " + send->tag;
+            else if ((send = sendOf (*sel, *strip)))
+                send->tag = "< " + sel->getLabel().removeCharacters (" ");
         }
     }
+
+    // SETUP > SURFACE may have switched the value readout under the fader.
+    if (showValue != ctx.settings.getBoolValue ("ui.faderValues", false))
+        resized();
 
     bindControls();
     repaint();
@@ -115,8 +202,8 @@ void FaderStrip::refresh()
 
 std::atomic<float>* FaderStrip::faderParam() const noexcept
 {
-    if (sendSource != nullptr)
-        return &sendSource->sends[(size_t) sendSlot].levelDb;
+    if (send)
+        return send->level;
     if (strip != nullptr)
         return &strip->params.faderDb;
     if (dca >= 0)
@@ -128,13 +215,69 @@ void FaderStrip::bindControls()
 {
     const bool any = strip != nullptr || dca >= 0;
     fader.setEnabled (any);
-    selButton.setEnabled (strip != nullptr);
-    soloButton.setEnabled (any && sendSource == nullptr);
-    muteButton.setEnabled (any);
-    meter.setVisible (strip != nullptr);
-    fader.setColour (juce::Slider::thumbColourId, sendSource != nullptr ? Colours::solo : Colours::text);
+    selectKey.setEnabled (strip != nullptr);
+    soloKey.setEnabled (any && ! send);
+    muteKey.setEnabled (any);
+    fader.setColour (juce::Slider::thumbColourId, send ? Colours::solo : Colours::text);
     shownName = {};
     timerCallback();
+}
+
+void FaderStrip::pressSelect()
+{
+    if (strip == nullptr)
+        return;
+
+    // SELECT on the selected strip again (SETUP > GENERAL > SEL DBL CLICK):
+    // 0 = Channel Home, 1 = INS1 for buses (Channel Home otherwise), 2 = nothing.
+    if (ctx.getSelectedStrip && ctx.getSelectedStrip() == strip)
+    {
+        const int mode = ctx.settings.getIntValue ("ui.selDblClick", 0);
+        if (mode != 2 && ctx.showHomeTab)
+            ctx.showHomeTab (mode == 1 && strip->isBus() ? HomeTab::PreInsert : HomeTab::Home);
+        return;
+    }
+    if (ctx.selectStrip)
+        ctx.selectStrip (strip);
+}
+
+ScribbleInfo FaderStrip::scribbleInfo() const
+{
+    ScribbleInfo info;
+    if (strip != nullptr)
+    {
+        info.number = strip->getLabel().removeCharacters (" ");
+        info.name = shownName;
+        info.icon = stripIcon (strip->getKind());
+        if (strip->isInput())
+        {
+            // The source ports: "IN 01" / "IN 02", or "IN 03" / "mono".
+            auto port = [] (int i) { return i < 0 ? juce::String ("OFF") : "IN " + juce::String (i + 1).paddedLeft ('0', 2); };
+            const int left = strip->params.inputLeft.load();
+            info.line2 = port (left);
+            if (strip->params.stereo.load())
+            {
+                const int right = strip->params.inputRight.load();
+                info.line3 = port (right >= 0 ? right : (left >= 0 ? left + 1 : -1));
+            }
+            else
+            {
+                info.line3 = "mono";
+            }
+        }
+    }
+    else if (dca >= 0)
+    {
+        info.number = "DCA" + juce::String (dca + 1);
+        info.name = shownName;
+    }
+
+    if (send)
+    {
+        info.line2 = send->tag;
+        info.line2Colour = Colours::solo;
+    }
+    return info;
 }
 
 void FaderStrip::timerCallback()
@@ -146,178 +289,164 @@ void FaderStrip::timerCallback()
             fader.setValue (v, juce::dontSendNotification);
     }
 
-    bool sel = false, solo = false, mute = false, gate = false, dyn = false;
-    juce::String name, value;
+    bool gate = false, dyn = false, light = false;
+    int colour = 0;
+    juce::String name, value, source;
+    std::array<int, 2> lit {};
 
-    if (sendSource != nullptr)
-    {
-        auto& send = sendSource->sends[(size_t) sendSlot];
-        mute = ! send.enabled.load();
-        value = fader::text (send.levelDb.load());
-    }
+    if (auto* p = faderParam())
+        value = fader::text (p->load());
 
     if (strip != nullptr)
     {
-        sel = ctx.getSelectedStrip && ctx.getSelectedStrip() == strip;
-        solo = strip->params.solo.load();
-        if (sendSource == nullptr)
-        {
-            mute = strip->params.mute.load();
-            value = fader::text (strip->params.faderDb.load());
-        }
         gate = strip->meters.gateActive.load();
         dyn = strip->meters.dynActive.load();
-        name = strip->getName();
+        name = stripName (*strip);
+        light = strip->params.led.load();
+        colour = strip->getColourIndex();
+        source = juce::String (strip->params.inputLeft.load()) + "/" + juce::String (strip->params.inputRight.load())
+                 + (strip->params.stereo.load() ? "s" : "m");
+
+        // Input level, like the console's strip meters.
+        const int channels = juce::jlimit (1, 2, strip->getNumChannels());
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const float db = dsp::gainToDb (ctx.meters.get (strip, true, juce::jmin (ch, channels - 1)));
+            lit[(size_t) ch] = leds::countLit (kMeterThresholds, kMeterSegments, db);
+        }
     }
     else if (dca >= 0)
     {
         auto& d = ctx.engine.getDca (dca);
-        solo = d.solo.load();
-        mute = d.mute.load();
-        value = fader::text (d.faderDb.load());
         name = ctx.engine.getDcaName (dca);
+        light = true;
+        colour = d.colour.load();
     }
 
-    selButton.setToggleState (sel, juce::dontSendNotification);
-    soloButton.setToggleState (solo, juce::dontSendNotification);
-    muteButton.setToggleState (mute, juce::dontSendNotification);
-
-    if (name != shownName || value != shownValue || sel != shownSelected || gate != shownGate || dyn != shownDyn)
+    if (name != shownName || colour != shownColour || light != shownLight || source != shownSource)
     {
         shownName = name;
-        shownValue = value;
-        shownSelected = sel;
+        shownColour = colour;
+        shownLight = light;
+        shownSource = source;
+        repaint (scribbleArea);
+    }
+    if (lit != shownLit || gate != shownGate || dyn != shownDyn)
+    {
+        shownLit = lit;
         shownGate = gate;
         shownDyn = dyn;
-        repaint();
+        repaint (meterArea);
     }
+    if (value != shownValue)
+    {
+        shownValue = value;
+        if (showValue)
+            repaint (valueArea);
+    }
+}
+
+void FaderStrip::setModuleEdges (bool first, bool last)
+{
+    moduleFirst = first;
+    moduleLast = last;
+    repaint();
 }
 
 void FaderStrip::paint (juce::Graphics& g)
 {
-    auto b = getLocalBounds();
-    g.setColour (Colours::panel);
-    g.fillRect (b.reduced (1, 0));
+    g.fillAll (Colours::panel);
 
-    // Scribble strip, like the console's colour LCD: label and format top left,
-    // the kind's icon top right, the name on a bar in the strip's colour.
-    auto s = scribbleArea;
-    juce::Colour colour = Colours::outline;
-    juce::String label, format;
-    std::optional<Icon> kindIcon;
-
-    if (strip != nullptr)
+    // The black display panel and the darker meter panel run across the strips
+    // of a module of four, rounded at its outer edges.
+    auto band = [this, &g] (juce::Rectangle<int> rows, int margin, juce::Colour colour)
     {
-        colour = strip->getColour();
-        label = strip->getLabel();
-        format = strip->isOutput() || strip->params.stereo.load() ? "ST" : "MONO";
-        kindIcon = stripIcon (strip->getKind());
-    }
-    else if (dca >= 0)
-    {
-        colour = wingColour (ctx.engine.getDca (dca).colour.load());
-        label = "DCA " + juce::String (dca + 1);
-        format = "DCA";
-    }
-
-    auto lcd = s.reduced (2, 0).toFloat();
-    g.setColour (juce::Colours::black);
-    g.fillRoundedRectangle (lcd, 2.0f);
-
-    if (target)
-    {
-        auto t = lcd.reduced (3.0f, 2.0f);
-        auto bar = t.removeFromBottom (juce::jmax (14.0f, t.getHeight() * 0.36f));
+        const float left = moduleFirst ? 3.0f : 0.0f, right = (float) getWidth() - (moduleLast ? 3.0f : 0.0f);
+        juce::Path p;
+        p.addRoundedRectangle (left, (float) (rows.getY() - margin), right - left, (float) (rows.getHeight() + 2 * margin), 4.0f, 4.0f,
+                               moduleFirst, moduleLast, moduleFirst, moduleLast);
         g.setColour (colour);
-        g.fillRect (bar);
-        g.setColour (colour.getPerceivedBrightness() > 0.45f ? juce::Colours::black : juce::Colours::white);
-        g.setFont (juce::FontOptions (juce::jlimit (11.0f, 16.0f, bar.getHeight() * 0.82f), juce::Font::bold));
-        g.drawFittedText (shownName.isNotEmpty() ? shownName : label, bar.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.75f);
+        g.fillPath (p);
+    };
+    band (scribbleArea, 4, juce::Colours::black);
+    band (meterArea, 4, juce::Colour (0xff141517));
 
-        t.removeFromBottom (1.0f);
-        auto icon = t.removeFromRight (juce::jmin (t.getHeight(), t.getWidth() * 0.4f));
-        if (kindIcon.has_value())
-            drawIcon (g, *kindIcon, icon.reduced (2.0f), juce::Colours::white);
-        g.setColour (Colours::text);
-        g.setFont (juce::FontOptions (juce::jlimit (10.0f, 14.0f, t.getHeight() * 0.42f), juce::Font::bold));
-        g.drawFittedText (label, t.removeFromTop (t.getHeight() / 2.0f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.7f);
-        if (sendSource != nullptr)
-        {
-            g.setColour (Colours::solo);
-            g.drawFittedText (sendSource == strip ? "> BUS " + juce::String (sendSlot + 1) : "< " + sendSource->getLabel(), t.toNearestInt(),
-                              juce::Justification::topLeft, 1, 0.7f);
-        }
-        else
-        {
-            g.setColour (Colours::textDim);
-            g.drawFittedText (format, t.toNearestInt(), juce::Justification::topLeft, 1, 0.7f);
-        }
-    }
+    // Colour light bar and scribble strip.
+    const juce::Colour colour = strip != nullptr ? strip->getColour() : (dca >= 0 ? wingColour (shownColour) : Colours::ledOff);
+    drawLightBar (g, barArea.toFloat(), colour, target.has_value() && shownLight);
+    drawScribble (g, lcdArea.toFloat(), target ? scribbleInfo() : ScribbleInfo {});
 
-    if (shownSelected)
-    {
-        g.setColour (Colours::select);
-        g.drawRoundedRectangle (lcd.reduced (0.5f), 2.0f, 2.0f);
-    }
-
-    // GATE / DYN LEDs.
+    // Meter block: DYN LED, two 6-segment columns (input level), GATE LED.
     if (strip != nullptr)
     {
-        auto leds = ledArea;
-        auto drawLed = [&g] (juce::Rectangle<int> r, bool on, juce::Colour c, const char* text)
+        auto m = meterArea.toFloat();
+        const float rowH = m.getHeight() / (float) kMeterRows;
+        const float ledW = juce::jlimit (5.0f, 10.0f, m.getWidth() * 0.14f);
+        const float pairW = ledW * 2.8f;
+        auto row = [&] (int i) { return juce::Rectangle<float> (m.getX(), m.getY() + rowH * (float) i, m.getWidth(), rowH); };
+        auto barLed = [&] (int i, bool on, juce::Colour c)
         {
-            const auto pill = r.reduced (1, 0).toFloat();
-            g.setColour (on ? c : c.withAlpha (0.12f));
-            g.fillRoundedRectangle (pill, 3.0f);
-            g.setColour (on ? juce::Colours::black : Colours::textDim);
-            g.setFont (juce::FontOptions (8.5f, juce::Font::bold));
-            g.drawText (text, r, juce::Justification::centred);
+            auto r = row (i).withSizeKeepingCentre (pairW, juce::jmax (2.0f, rowH * 0.55f));
+            g.setColour (on ? c : Colours::ledOff);
+            g.fillRect (r);
         };
-        const int half = leds.getWidth() / 2;
-        drawLed (leds.removeFromLeft (half), shownGate, Colours::active, "GATE");
-        drawLed (leds, shownDyn, Colours::block, "DYN");
+        barLed (0, shownDyn, Colours::block);
+        barLed (kMeterRows - 1, shownGate, Colours::active);
+
+        auto columns = juce::Rectangle<float> (m.getCentreX() - pairW * 0.5f, m.getY() + rowH, pairW, rowH * kMeterSegments);
+        const bool stereo = strip->getNumChannels() > 1;
+        auto colourFor = [] (int i) { return leds::meterColour (kMeterThresholds[i]); };
+        leds::drawColumn (g, columns.removeFromLeft (ledW), kMeterSegments, shownLit[0], colourFor);
+        leds::drawColumn (g, columns.removeFromRight (ledW), kMeterSegments, stereo ? shownLit[1] : shownLit[0], colourFor);
     }
 
-    // Fader value.
-    g.setColour (sendSource != nullptr ? Colours::solo : Colours::text);
-    g.setFont (juce::FontOptions (11.0f));
-    g.drawText (target ? shownValue : juce::String(), valueArea, juce::Justification::centred);
+    if (showValue && target)
+    {
+        g.setColour (send ? Colours::solo : Colours::textDim);
+        g.setFont (juce::FontOptions (11.0f));
+        g.drawText (shownValue, valueArea, juce::Justification::centred);
+    }
 }
 
 void FaderStrip::resized()
 {
-    auto b = getLocalBounds().reduced (2, 2);
-    const int scribbleH = juce::jlimit (46, 70, b.getHeight() / 7);
-    scribbleArea = b.removeFromTop (scribbleH);
-    b.removeFromTop (3);
+    auto b = getLocalBounds().reduced (2, 3);
+    const int w = b.getWidth();
+    const int innerW = juce::roundToInt ((float) w * 0.88f);
 
-    const int buttonH = juce::jlimit (16, 26, b.getHeight() / 16);
-    selButton.setBounds (b.removeFromTop (buttonH).reduced (1, 1));
-    ledArea = b.removeFromTop (12).reduced (2, 0);
-    soloButton.setBounds (b.removeFromTop (buttonH).reduced (1, 1));
-    muteButton.setBounds (b.removeFromTop (buttonH).reduced (1, 1));
-    b.removeFromTop (3);
+    // Colour bar above the LCD (about a fifth of its height, half of that apart).
+    const int lcdH = juce::jlimit (42, 78, juce::roundToInt ((float) w * 0.9f));
+    const int barH = juce::jlimit (4, 8, lcdH / 7);
+    scribbleArea = b.removeFromTop (barH + 4 + lcdH).withSizeKeepingCentre (innerW, barH + 4 + lcdH);
+    barArea = scribbleArea.withHeight (barH);
+    lcdArea = scribbleArea.withTrimmedTop (barH + 4);
+    b.removeFromTop (8);
 
-    valueArea = b.removeFromBottom (14);
-    auto meterArea = b.removeFromLeft (juce::jlimit (8, 14, b.getWidth() / 6));
-    meter.setBounds (meterArea.reduced (0, 4));
+    const int keyH = juce::jlimit (18, 30, juce::roundToInt ((float) w * 0.46f));
+    const int keyW = juce::roundToInt ((float) w * 0.76f);
+    auto key = [&] (SurfaceKey& k)
+    {
+        k.setBounds (b.removeFromTop (keyH).withSizeKeepingCentre (keyW, keyH));
+    };
+    key (selectKey);
+    b.removeFromTop (5);
+    key (soloKey);
+    b.removeFromTop (8);
+    meterArea = b.removeFromTop (juce::jlimit (56, 100, juce::roundToInt ((float) keyH * 3.3f)));
+    b.removeFromTop (8);
+    key (muteKey);
+    b.removeFromTop (6);
+
+    showValue = ctx.settings.getBoolValue ("ui.faderValues", false);
+    valueArea = showValue ? b.removeFromBottom (14) : juce::Rectangle<int>();
     fader.setBounds (b);
 }
 
 void FaderStrip::mouseDown (const juce::MouseEvent& e)
 {
-    if (scribbleArea.contains (e.getPosition()) && strip != nullptr && ctx.selectStrip)
-        ctx.selectStrip (strip);
-}
-
-void FaderStrip::mouseDoubleClick (const juce::MouseEvent& e)
-{
-    if (scribbleArea.contains (e.getPosition()) && strip != nullptr && ctx.showHomeTab)
-    {
-        if (ctx.selectStrip)
-            ctx.selectStrip (strip);
-        ctx.showHomeTab (HomeTab::Name);
-    }
+    // Touching the scribble strip acts like SELECT.
+    if (scribbleArea.contains (e.getPosition()))
+        pressSelect();
 }
 
 } // namespace livedaw::ui

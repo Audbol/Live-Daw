@@ -97,10 +97,23 @@ struct UiContext
     bool sendsOnFader = false;
     std::function<void()> sofChanged;
 
-    /** The fader section the VIEW screens show (OVERVIEW, FADERS, SENDS, CONFIG).
-        A section's VIEW key sets it, then opens the screen with showScreen; the
-        screens' LEFT / CENTER / RIGHT keys change it too. */
-    LayerSet::Section viewSection = LayerSet::Center;
+    /** The screen the main display shows (the VIEW keys light while theirs is up). */
+    std::function<Screen()> getScreen;
+    /** The fader section whose VIEW key opened the current VIEW screen
+        (OVERVIEW / CONFIG show that section). */
+    LayerSet::Section viewSection = LayerSet::Left;
+    /** Brings `fader` onto a section: selects the layer key holding it and
+        scrolls it into view. */
+    std::function<void (LayerSet::Section, const state::FaderRef&)> revealFader;
+
+    // Shortcuts (manual chapter 10)
+    /** Saves the main display as a PNG in Documents/Live DAW/screens (on the
+        console: hold CLR SOLO, press UTILITY). */
+    std::function<void()> takeScreenshot;
+    /** Surface lock (on the console: hold HOME): every control but the main
+        display ignores input. */
+    std::function<void (bool locked)> setSurfaceLocked;
+    std::function<bool()> isSurfaceLocked;
 };
 
 /** Calls ctx.layersChanged asynchronously: safe to use from a callback of a

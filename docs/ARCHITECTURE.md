@@ -221,28 +221,42 @@ Show
 
 - Three sections like the WING's surface: left 12 faders, center 8, right 4. A width
   of 0 means Auto: the UI reports how many faders fit (`setFittedWidth`).
-- Default banks are computed from the console whenever they're asked for, so they
-  can't go stale (CH 1-12 ... CH 37-40 · AUX 1-8, BUS, DCA, MAIN · MTX, ALL), with
-  stable ids so the selected bank survives topology changes.
-- A bank holds `FaderRef`s: a strip or a DCA. User banks are saved with the show; a
-  reference to a removed strip is skipped.
+- Each section has the WING's seven layer keys, computed from the console whenever
+  they're asked for so they can't go stale: left `1-12` `13-24` `25-36`
+  `37-40 AUX IN` `BUS MASTER` `USER 1` `USER 2`; center `DCA` `MAIN MATRIX` `AUX IN`
+  `INPUTS` `BUS MASTER` `USER 1` `USER 2`; right `MAIN MATRIX` `DCA` `INPUTS` `AUX IN`
+  `BUS MASTER` `USER 1` `USER 2`. A layer longer than its section stays one key; the
+  surface scrolls it with the shift keys. Ids are stable, and ids of older shows
+  (`bus-2`, `dca-2`, `all`, ...) resolve to the key that holds those faders now.
+- A bank holds `FaderRef`s: a strip or a DCA. User banks are saved with the show; the
+  first two are on the USER 1 / USER 2 keys, further ones get keys of their own under
+  the shift keys. A reference to a removed strip is skipped.
 
 ## The UI
 
-`src/ui/` draws the WING surface: three fader sections with scribble strips, SEL /
-SOLO / MUTE and the bank keys; the channel strip section (top left); the monitor,
-show control and mute groups (top right); and the main display with the screen keys.
+`src/ui/` draws the WING surface: three fader sections (`FaderSection.*`,
+`FaderStrip.*`) with VIEW, the layer and shift keys, colour bars and scribble strips,
+SELECT / SOLO / MUTE, LED meters and scaled faders; the custom controls section
+between the center and right sections (mute groups, show control); the channel strip
+section with its LED panel and screen (top left); the USB / monitoring panel (top
+right, `SurfaceSections.*`); and the main display with the screen keys. Surface keys
+(`SurfaceKey` in `WingWidgets.h`) know press, hold (500 ms or right-click) and
+blinking LEDs.
 
 - **Look.** `ConsoleLookAndFeel` (`LookAndFeel.*`) holds the WING palette (black
   screen, grey panels with header bars, amber channel tab, yellow ON keys, lime knob
   rings, cyan selections) and uses Barlow Condensed (SIL OFL, `resources/fonts/`,
   embedded with `juce_add_binary_data`). `Icons.*` draws the screen icons as vectors;
   `WingWidgets.h` has the screen keys, ON chips and segmented keys.
-- **Main display** (`MainDisplay.*`): the status bar (channel tab, sample rate /
-  clock / DSP / protection chips, scene, TOOLS, SETTINGS, clock), the screen, and the
-  parameter bar with six controls that follow the screen (`DisplayPage::getKnobs`).
-- **Screens:** HOME (`HomePage.*`: the block column, OVERVIEW, ICON/COLOR, NAME, TAGS;
-  `HomeScreens.*`: INPUT, FILTER, GATE, EQ, DYNAMICS, PRE/POST INSERT, MAIN, SENDS),
+- **Main display** (`MainDisplay.*`): the screen keys, the 16:10 screen and the column
+  right of it (CLR SOLO, main meter, fine-adjust knob, blank key); the status bar
+  (channel tab in the strip's colour, status tiles, the page's `getStatusKeys()`,
+  clock), the page, and the parameter bar with six controls that follow the page
+  (`DisplayPage::getKnobs`, styled by `getKnobStyles`), plus CHANNEL SELECT.
+- **Screens:** HOME (`HomePage.*`: the toolbar, OVERVIEW, ICON/COLOR, NAME, TAGS and
+  the INIT / COPY / SETTINGS / FEED overlays; `HomeScreens.*`: INPUT, FILTER SETUP,
+  GATE / COMP, EQ, INS 1 / INS 2, MAIN SENDS, BUS / MATRIX SENDS and the overlays;
+  `HomeWidgets.h`: their shared widgets),
   EFFECTS, METERS, ROUTING, SETUP, LIBRARY (`ShowPanel.*` for scenes and snippets) and
   UTILITY.
 - **Faceplates** (`Faceplate.*`): every FX device and dynamics/EQ model is drawn as the
@@ -284,5 +298,6 @@ show control and mute groups (top right); and the main display with the screen k
   left output back (built-in devices return the average of both).
 - Solo safe and the monitor A/B bus choice are saved with the show but not used by the
   engine yet; there is one monitor output pair.
-- Not yet: the alternate (ALT) channel input, the WING's USER / custom control
-  sections, OSC/MIDI remote control and recording.
+- Not yet: the alternate (ALT) channel input, assignable custom controls (the
+  section's upper part and USER layer are empty), the 4-Channel section, talkback,
+  OSC/MIDI remote control and recording.

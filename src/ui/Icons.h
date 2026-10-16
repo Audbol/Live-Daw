@@ -38,6 +38,23 @@ enum class Icon
     ChevronLeft,
     ChevronRight,
     Disk,
+    // Printed on the channel strip and monitoring keys
+    GainArrows,  // ↕ (EQ GAIN)
+    WidthArrows, // ↔ (EQ WIDTH)
+    FreqMarker,  // ‹|› (EQ FREQ)
+    Bell,        // EQ band legend
+    LowShelf,
+    HighShelf,
+    Usb,         // USB trident
+    Circle,      // the MONO key
+    Copy,       // status key COPY
+    Maxer,      // tool filters
+    AllPass90,
+    AllPass180,
+    DeltaT,     // delay
+    Invert,     // polarity
+    Cancel,     // circled x: NONE
+    UsbStick,   // USB stick (status bar)
     // SETUP, LIBRARY, VIEW and ROUTING screens
     Power,         // SHUTDOWN
     RemoveCircle,  // REMOVE (a dot in a ring)
@@ -47,7 +64,6 @@ enum class Icon
     Skip,          // SKIP (play + bar)
     Link,          // LINK (chain)
     Tag,           // EDIT TAG
-    UsbStick,      // USB location
     Storage,       // INT location (internal storage)
     ShowFile,      // SHOW location (film frame)
     GoPrev,        // GO PREV (play + <)
