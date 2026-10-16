@@ -4,7 +4,9 @@
 #include "engine/MixerEngine.h"
 #include "engine/PluginHost.h"
 #include "engine/Show.h"
+#include "ui/MeterBank.h"
 
+#include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <functional>
@@ -12,22 +14,76 @@
 namespace livedaw::ui
 {
 
-/** What a strip-level view needs: the engine plus app-level actions. */
+/** The main display's screens (the buttons left of the WING's display). */
+enum class Screen
+{
+    Home,
+    Effects,
+    Meters,
+    Routing,
+    Setup,
+    Library,
+    Utility
+};
+
+/** The HOME screen's tabs for the selected strip. */
+enum class HomeTab
+{
+    Home,
+    Input,
+    Filter,
+    Gate,
+    Eq,
+    Dynamics,
+    PreInsert,
+    PostInsert,
+    Main,
+    Sends,
+    Name
+};
+
+/** What the views share: the engine, the show, app-level actions, the
+    selected strip and the Sends-on-Fader state. Message thread only. */
 struct UiContext
 {
+    UiContext (MixerEngine& e, PluginHost& h, Show& s, EventLog& l, juce::AudioDeviceManager& dm, juce::PropertiesFile& p, MeterBank& m)
+        : engine (e), host (h), show (s), log (l), deviceManager (dm), settings (p), meters (m)
+    {
+    }
+
     MixerEngine& engine;
     PluginHost& host;
     Show& show;
     EventLog& log;
+    juce::AudioDeviceManager& deviceManager;
+    juce::PropertiesFile& settings;
+    MeterBank& meters;
 
-    std::function<void (Strip&, int slot)> openPluginEditor;
-    std::function<void (juce::AudioProcessor*)> pluginRemoved;
-    std::function<void()> showPluginScanner;
+    // Selection (one SELECT at a time). The strip may disappear: resolve every time.
     std::function<void (Strip*)> selectStrip;
     std::function<Strip*()> getSelectedStrip;
 
-    /** Call after editing show.layers (or to switch layer: call setSelectedLayerId first). */
+    // Navigation
+    std::function<void (Screen)> showScreen;
+    std::function<void (HomeTab)> showHomeTab;
+
+    // FX slots / plugins
+    std::function<void (int slot)> openPluginEditor;
+    std::function<void (juce::AudioProcessor*)> pluginRemoved;
+    std::function<void()> showPluginScanner;
+
+    // Structure and fader banks: call after changes so the surface rebuilds.
+    std::function<void()> structureChanged;
     std::function<void()> layersChanged;
+
+    // Show files
+    std::function<void()> newShow, openShow;
+    std::function<void (bool saveAs)> saveShow;
+
+    /** Sends on Fader (SOF FLIP): with a bus selected the input faders show their
+        sends to it; with an input selected the bus faders show its sends. */
+    bool sendsOnFader = false;
+    std::function<void()> sofChanged;
 };
 
 /** Calls ctx.layersChanged asynchronously: safe to use from a callback of a
@@ -40,16 +96,19 @@ inline void notifyLayersChangedAsync (UiContext& ctx)
 /** Logs the outcome of a scene/snippet recall. */
 void logRecall (UiContext&, const juce::String& what, const state::ApplyResult&);
 
-/** The insert slot menu: load / replace / remove / bypass / open editor. */
-void showInsertSlotMenu (UiContext&, Strip&, int slot, juce::Component* target);
+/** The FX slot menu: load / replace / remove / bypass / open editor. */
+void showFxSlotMenu (UiContext&, int slot, juce::Component* target);
 
-/** Loads `desc` into a slot (closing any editor of the plugin it replaces). */
-bool loadPluginIntoSlot (UiContext&, Strip&, int slot, const juce::PluginDescription& desc);
+/** Loads `desc` into an FX slot (closing any editor of the plugin it replaces). */
+bool loadPluginIntoFx (UiContext&, int slot, const juce::PluginDescription& desc);
 
-/** Removes the plugin in a slot (closing its editor first). */
-void clearSlot (UiContext&, Strip&, int slot);
+/** Removes the plugin in an FX slot (closing its editor first). */
+void clearFx (UiContext&, int slot);
 
 /** Default click on a slot: open the editor if loaded, otherwise show the menu. */
-void clickInsertSlot (UiContext&, Strip&, int slot, juce::Component* target);
+void clickFxSlot (UiContext&, int slot, juce::Component* target);
+
+/** "CH 3 Kick" */
+juce::String describeStrip (const Strip&);
 
 } // namespace livedaw::ui

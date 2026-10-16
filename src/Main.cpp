@@ -14,7 +14,8 @@ namespace livedaw
 
 /** Enough to open every channel of large ASIO/CoreAudio/ALSA/JACK interfaces. */
 constexpr int kMaxDeviceChannels = 256;
-constexpr int kDefaultChannelCount = 16;
+/** A fresh console is a WING: 40 channels. */
+constexpr int kDefaultChannelCount = kWingChannels;
 
 //==============================================================================
 /** Keeps audio running: reopens the device if it disappears, stops calling back
@@ -214,8 +215,8 @@ public:
                 log.warning (result.getErrorMessage());
         }
 
-        if (engine->getInputs().empty() && engine->getBuses().empty())
-            engine->setNumInputs (kDefaultChannelCount);
+        if (engine->getChannels().empty())
+            engine->setNumChannels (kDefaultChannelCount);
 
         // First launch: open a low-latency driver (ASIO on Windows, JACK on Linux)
         // directly, instead of trying the OS default device first.

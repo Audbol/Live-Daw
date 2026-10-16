@@ -3,72 +3,76 @@
 namespace livedaw::ui
 {
 
-bool loadPluginIntoSlot (UiContext& ctx, Strip& strip, int slot, const juce::PluginDescription& desc)
+juce::String describeStrip (const Strip& s)
+{
+    const auto name = s.getName();
+    const auto label = s.getLabel();
+    // Default names ("Ch 3") just repeat the number.
+    if (name.isEmpty() || name.equalsIgnoreCase (label) || name.removeCharacters (" ").equalsIgnoreCase (label.removeCharacters (" ")))
+        return label;
+    return label + " " + name;
+}
+
+bool loadPluginIntoFx (UiContext& ctx, int slot, const juce::PluginDescription& desc)
 {
     juce::String error;
     auto instance = ctx.host.createInstance (desc, ctx.engine.getSampleRate(), ctx.engine.getBlockSize(), error);
 
     if (instance == nullptr)
     {
-        ctx.log.warning ("Could not load " + desc.name + " on " + strip.getName() + ": " + error);
+        ctx.log.warning ("Could not load " + desc.name + " into FX " + juce::String (slot + 1) + ": " + error);
         juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
                                                 "Could not load plugin", desc.name + "\n" + error);
         return false;
     }
 
-    if (auto* old = strip.inserts.getPlugin (slot))
+    auto& fx = ctx.engine.getFx();
+    if (auto* old = fx.getPlugin (slot))
         if (ctx.pluginRemoved)
             ctx.pluginRemoved (old);
 
-    strip.inserts.setPlugin (slot, std::move (instance));
-    ctx.log.info ("Loaded " + desc.name + " on " + strip.getName() + " insert " + juce::String (slot + 1));
+    fx.setPlugin (slot, std::move (instance));
+    fx.clearFlags (slot);
+    ctx.log.info ("Loaded " + desc.name + " into FX " + juce::String (slot + 1));
     return true;
 }
 
-void clearSlot (UiContext& ctx, Strip& strip, int slot)
+void clearFx (UiContext& ctx, int slot)
 {
-    if (auto* old = strip.inserts.getPlugin (slot))
+    auto& fx = ctx.engine.getFx();
+    if (auto* old = fx.getPlugin (slot))
     {
         if (ctx.pluginRemoved)
             ctx.pluginRemoved (old);
 
-        strip.inserts.setPlugin (slot, nullptr);
+        fx.setPlugin (slot, nullptr);
+        fx.clearFlags (slot);
     }
 }
 
-void showInsertSlotMenu (UiContext& ctx, Strip& strip, int slot, juce::Component* target)
+void showFxSlotMenu (UiContext& ctx, int slot, juce::Component* target)
 {
-    // Menus are asynchronous: resolve the strip again when an item is chosen, in
-    // case it was removed while the menu was open.
-    const auto ref = state::StripRef::of (strip);
-    auto withStrip = [&ctx, ref] (auto fn)
-    {
-        return [&ctx, ref, fn]
-        {
-            if (auto* s = state::findStrip (ctx.engine, ref))
-                fn (*s);
-        };
-    };
-
+    auto& fx = ctx.engine.getFx();
     juce::PopupMenu menu;
-    auto* existing = strip.inserts.getPlugin (slot);
+    auto* existing = fx.getPlugin (slot);
+
+    menu.addSectionHeader ("FX " + juce::String (slot + 1) + (existing != nullptr ? ": " + existing->getName() : juce::String (" (empty)")));
 
     if (existing != nullptr)
     {
-        menu.addSectionHeader (existing->getName());
-        menu.addItem ("Open editor", withStrip ([&ctx, slot] (Strip& s) { if (ctx.openPluginEditor) ctx.openPluginEditor (s, slot); }));
+        menu.addItem ("Open editor", [&ctx, slot] { if (ctx.openPluginEditor) ctx.openPluginEditor (slot); });
 
-        const bool bypassed = strip.inserts.isBypassed (slot);
-        menu.addItem (bypassed ? "Un-bypass" : "Bypass", withStrip ([slot, bypassed] (Strip& s)
+        const bool bypassed = fx.params (slot).bypass.load();
+        menu.addItem (bypassed ? "Un-bypass" : "Bypass", [&ctx, slot, bypassed]
         {
-            s.inserts.clearFault (slot);
-            s.inserts.setBypassed (slot, ! bypassed);
-        }));
+            ctx.engine.getFx().clearFlags (slot);
+            ctx.engine.getFx().params (slot).bypass = ! bypassed;
+        });
 
-        if (strip.inserts.isFaulted (slot))
-            menu.addItem ("Clear fault (keep bypassed)", withStrip ([slot] (Strip& s) { s.inserts.clearFault (slot); }));
+        if (fx.isFaulted (slot) || fx.isDoubleAssigned (slot))
+            menu.addItem ("Clear fault / double-assignment", [&ctx, slot] { ctx.engine.getFx().clearFlags (slot); });
 
-        menu.addItem ("Remove", withStrip ([&ctx, slot] (Strip& s) { clearSlot (ctx, s, slot); }));
+        menu.addItem ("Remove", [&ctx, slot] { clearFx (ctx, slot); });
         menu.addSeparator();
     }
 
@@ -96,21 +100,29 @@ void showInsertSlotMenu (UiContext& ctx, Strip& strip, int slot, juce::Component
             currentMaker = maker;
         }
 
-        makerMenu.addItem (desc.name + " (" + desc.pluginFormatName + ")", withStrip ([&ctx, slot, desc] (Strip& s)
+        makerMenu.addItem (desc.name + " (" + desc.pluginFormatName + ")", [&ctx, slot, desc]
         {
-            if (loadPluginIntoSlot (ctx, s, slot, desc) && ctx.openPluginEditor)
-                ctx.openPluginEditor (s, slot);
-        }));
+            if (loadPluginIntoFx (ctx, slot, desc) && ctx.openPluginEditor)
+                ctx.openPluginEditor (slot);
+        });
     }
     flushMaker();
 
-    menu.addSubMenu (existing != nullptr ? "Replace with" : "Insert plugin", plugins, ! types.isEmpty());
+    menu.addSubMenu (existing != nullptr ? "Replace with" : "Load plugin (EXT)", plugins, ! types.isEmpty());
     menu.addItem ("Scan for plugins...", [&ctx] { if (ctx.showPluginScanner) ctx.showPluginScanner(); });
 
     auto options = juce::PopupMenu::Options();
     if (target != nullptr)
         options = options.withTargetComponent (target);
     menu.showMenuAsync (options);
+}
+
+void clickFxSlot (UiContext& ctx, int slot, juce::Component* target)
+{
+    if (ctx.engine.getFx().getPlugin (slot) != nullptr && ctx.openPluginEditor)
+        ctx.openPluginEditor (slot);
+    else
+        showFxSlotMenu (ctx, slot, target);
 }
 
 void logRecall (UiContext& ctx, const juce::String& what, const state::ApplyResult& r)
@@ -124,14 +136,6 @@ void logRecall (UiContext& ctx, const juce::String& what, const state::ApplyResu
 
     for (auto& w : r.warnings)
         ctx.log.warning (w);
-}
-
-void clickInsertSlot (UiContext& ctx, Strip& strip, int slot, juce::Component* target)
-{
-    if (strip.inserts.getPlugin (slot) != nullptr && ctx.openPluginEditor)
-        ctx.openPluginEditor (strip, slot);
-    else
-        showInsertSlotMenu (ctx, strip, slot, target);
 }
 
 } // namespace livedaw::ui

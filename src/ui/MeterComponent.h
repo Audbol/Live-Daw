@@ -12,8 +12,11 @@ namespace livedaw::ui
 class MeterComponent final : public juce::Component, private juce::Timer
 {
 public:
-    /** `readAndReset(ch)` returns the linear peak since the last call. */
-    MeterComponent (std::function<float (int)> readAndReset, std::function<int()> numChannels);
+    /** `read(ch)` returns the current linear peak of channel ch. */
+    MeterComponent (std::function<float (int)> read, std::function<int()> numChannels);
+
+    /** Draws the dB scale next to the bars. */
+    void setShowScale (bool s) { showScale = s; repaint(); }
 
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override; // clears clip indicators
@@ -29,6 +32,7 @@ private:
     std::array<int, 2> holdFrames {};
     std::array<bool, 2> clipped {};
     juce::int64 lastSignature = -1;
+    bool showScale = false;
 };
 
 } // namespace livedaw::ui

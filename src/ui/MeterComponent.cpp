@@ -5,8 +5,8 @@
 namespace livedaw::ui
 {
 
-MeterComponent::MeterComponent (std::function<float (int)> readAndReset, std::function<int()> numChannels)
-    : reader (std::move (readAndReset)), channelCount (std::move (numChannels))
+MeterComponent::MeterComponent (std::function<float (int)> read, std::function<int()> numChannels)
+    : reader (std::move (read)), channelCount (std::move (numChannels))
 {
     startTimerHz (30);
 }
@@ -68,6 +68,20 @@ void MeterComponent::paint (juce::Graphics& g)
     const int n = juce::jlimit (1, 2, channelCount());
     auto bounds = getLocalBounds().toFloat();
     const float gap = 2.0f;
+
+    if (showScale && bounds.getWidth() > 30.0f)
+    {
+        auto scale = bounds.removeFromRight (18.0f);
+        const float top = scale.getY() + 6.0f, height = scale.getHeight() - 6.0f;
+        g.setColour (Colours::textDim);
+        g.setFont (juce::FontOptions (9.0f));
+        for (float db : { 0.0f, -6.0f, -12.0f, -18.0f, -30.0f, -40.0f, -60.0f })
+        {
+            const float y = top + height * (1.0f - dbToProportion (db));
+            g.drawText (juce::String ((int) -db), juce::Rectangle<float> (scale.getX(), y - 5.0f, scale.getWidth(), 10.0f),
+                        juce::Justification::centred);
+        }
+    }
     const float barWidth = (bounds.getWidth() - gap * static_cast<float> (n - 1)) / static_cast<float> (n);
 
     for (int ch = 0; ch < n; ++ch)

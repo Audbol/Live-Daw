@@ -1,12 +1,11 @@
 #pragma once
 
-#include "ui/LayerBar.h"
-#include "ui/LayersPanel.h"
+#include "ui/Controls.h"
+#include "ui/FaderSection.h"
 #include "ui/LookAndFeel.h"
-#include "ui/ShowPanel.h"
-#include "ui/StripComponent.h"
-#include "ui/StripDetailPanel.h"
-#include "ui/SystemPanel.h"
+#include "ui/MainDisplay.h"
+#include "ui/MeterBank.h"
+#include "ui/SurfaceSections.h"
 #include "ui/UiContext.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -14,10 +13,10 @@
 namespace livedaw::ui
 {
 
-/** Top-level window content: toolbar with scene controls, the mixer page
-    (inputs, buses, master, each with processing handles) and a tabbed panel
-    (selected channel, show/scenes/snippets, system). */
-class MainComponent final : public juce::Component, private juce::Timer
+/** The window: a WING surface. Top: the channel strip section, the main
+    display and the monitor / show control section. Bottom: the left (12),
+    center (8) and right (4) fader sections with their banks. */
+class MainComponent final : public juce::Component
 {
 public:
     MainComponent (juce::AudioDeviceManager&, MixerEngine&, PluginHost&, Show&, EventLog&, juce::PropertiesFile&);
@@ -26,9 +25,6 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
-
-    /** Recreates all strip components (after structural changes or loading a show). */
-    void rebuildStrips();
 
     /** File the show was last opened from / saved to. */
     juce::File getShowFile() const { return showFile; }
@@ -40,98 +36,45 @@ public:
 private:
     class PluginWindow;
 
-    /** Notifies when scrolled, so only the visible strips need components. */
-    struct StripViewport final : public juce::Viewport
-    {
-        std::function<void()> onVisibleAreaChanged;
-        void visibleAreaChanged (const juce::Rectangle<int>&) override
-        {
-            if (onVisibleAreaChanged)
-                onVisibleAreaChanged();
-        }
-    };
+    void selectStrip (Strip*);
+    Strip* getSelectedStrip() const;
+    void refreshAll();
+    void refreshSections();
+    void layoutSections();
 
-    void layoutStrips();
-    void updateVisibleStrips();
-    void applyFittedBankSize();
-    int computeFittedStripCount() const;
-
-    void timerCallback() override;
-
-    void showAudioSettings();
     void showPluginScanner();
-    void openPluginEditor (Strip&, int slot);
+    void openPluginEditor (int slot);
     void closePluginWindowsFor (juce::AudioProcessor*);
-    void closePluginWindowsFor (Strip&);
     void closeAllPluginWindows();
 
-    void selectStrip (Strip*, bool reveal = true);
-    void removeStrip (Strip&);
-    void setChannelCount (int);
-    void addBus (StripKind);
-    void updateInsertRows();
-    void setPanelVisible (bool);
-
-    void showShowMenu();
     void newShow();
     void openShow();
     void saveShow (bool saveAs);
     void updateTitle();
-    void updateSceneControls();
-    void recall (state::ApplyResult (Show::*) ());
 
     juce::AudioDeviceManager& deviceManager;
     MixerEngine& engine;
     Show& show;
     EventLog& log;
     juce::PropertiesFile& settings;
+    MeterBank meterBank;
     UiContext ctx;
 
     ConsoleLookAndFeel lookAndFeel;
     juce::TooltipWindow tooltips { this };
 
-    juce::TextButton audioButton { "Audio Setup" }, pluginsButton { "Plugins" }, showButton { "Show" };
-    juce::TextButton addAuxButton { "+ Aux" }, addGroupButton { "+ Group" };
-    juce::TextButton fewerButton { "-" }, moreButton { "+" };
-    juce::TextButton prevSceneButton { "<" }, goButton { "GO >" }, panelButton { "Panel" }, viewButton { "View" };
-    juce::Label channelsCaption, channelCountLabel, sceneLabel, statusLabel;
+    state::StripRef selected;
+    bool hasSelection = false;
 
-    StripViewport stripViewport;
-    juce::Component stripsContainer;
-    std::vector<Strip*> layerStrips;          // every strip of the current layer
-    std::vector<int> stripX;                  // their x positions in the container
-    std::vector<StripComponent*> stripComps;  // component per strip, nullptr when off screen
-    juce::OwnedArray<StripComponent> strips;  // the components that currently exist
-    int stripWidth = StripComponent::kWidth;
-    bool fitPending = false;
-    std::unique_ptr<StripComponent> masterStrip;
-    int insertRows = 3;
-
-    LayerBar layerBar;
-    StripDetailPanel detailPanel;
-    ShowPanel showPanel;
-    LayersPanel layersPanel;
-    SystemPanel systemPanel;
-    juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
-    bool panelVisible = true;
-
-    // Resizable layout (persisted in the settings file)
-    ResizerBar panelResizer { false }, layerResizer { true };
-    int panelHeight = -1;                         // -1 = automatic
-    int layerBarWidth = LayerBar::kWidth;
-    int baseStripWidth = StripComponent::kWidth;  // strip width when the layer doesn't fit
-    float uiScale = 1.0f;
-
-    void showViewMenu();
-    void loadLayoutSettings();
-    void saveLayoutSettings();
-    void setUiScale (float scale);
-    void setBaseStripWidth (int width);
-    int getPanelHeight() const;
+    std::unique_ptr<ChannelStripSection> channelStrip;
+    std::unique_ptr<MainDisplay> display;
+    std::unique_ptr<MonitorSection> monitor;
+    std::unique_ptr<FaderSection> sections[LayerSet::kNumSections];
+    ResizerBar splitter { false };
+    float topFraction = 0.47f;
 
     juce::OwnedArray<PluginWindow> pluginWindows;
     std::unique_ptr<juce::DocumentWindow> scannerWindow;
-    juce::Component::SafePointer<juce::DialogWindow> audioSettingsWindow;
     std::unique_ptr<juce::FileChooser> fileChooser;
     juce::File showFile;
 

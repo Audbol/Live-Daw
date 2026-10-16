@@ -160,16 +160,23 @@ target_sources(LiveDAW PRIVATE
     src/Main.cpp
     ${LIVEDAW_ENGINE_SOURCES}
     src/ui/LookAndFeel.cpp
+    src/ui/Knobs.cpp
+    src/ui/ModelParams.cpp
     src/ui/MeterComponent.cpp
     src/ui/PluginMenu.cpp
-    src/ui/StripHandles.cpp
-    src/ui/StripComponent.cpp
-    src/ui/EqEditor.cpp
-    src/ui/StripDetailPanel.cpp
+    src/ui/FaderStrip.cpp
+    src/ui/FaderSection.cpp
+    src/ui/ResponseGraph.cpp
+    src/ui/HomePage.cpp
+    src/ui/EffectsPage.cpp
+    src/ui/MetersPage.cpp
+    src/ui/RoutingPage.cpp
+    src/ui/SetupPage.cpp
+    src/ui/LibraryPage.cpp
+    src/ui/UtilityPage.cpp
     src/ui/ShowPanel.cpp
-    src/ui/LayerBar.cpp
-    src/ui/LayersPanel.cpp
-    src/ui/SystemPanel.cpp
+    src/ui/MainDisplay.cpp
+    src/ui/SurfaceSections.cpp
     src/ui/MainComponent.cpp)
 
 livedaw_configure_juce_target(LiveDAW)

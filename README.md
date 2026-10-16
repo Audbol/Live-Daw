@@ -1,70 +1,94 @@
 # Live DAW
 
-Live DAW turns an ordinary computer into a digital mixing console for live sound.
-Inputs from your audio interface are channels on a console. Each channel has
-processing, it can be routed to buses, and it can be sent to any hardware output.
+Live DAW turns an ordinary computer into a digital mixing console for live sound,
+laid out and working like a **Behringer WING**. Inputs from your audio interface
+are channels on the console; they feed buses, mains and matrices, and anything can
+be sent to any hardware output.
 
-## Features
+## A WING on your computer
+
+- **Console topology:** 40 input channels, 8 aux channels, 16 stereo buses, 4 stereo
+  mains, 8 stereo matrices, 16 DCAs, 8 mute groups and 16 FX slots. Unlike the
+  hardware, the channel count is only limited by CPU and more buses can be added.
+- **Channel processing, in the WING's order:**
+  - **INPUT:** trim, balance, polarity and delay (m, ft, ms or samples).
+  - **FILTER:** low cut (6-24 dB/oct), high cut (6/12 dB/oct) and the tool filter
+    (TILT, MAX, AP1, AP2).
+  - **GATE slot and DYNAMICS slot:** each holds any of the WING's **32 dynamics models**
+    (gate, ducker, Even 88, Soul 9000, 160 VCA, LA leveler, 1176-style, Fair Kid,
+    Bus comp, NSTR, limiters, de-esser...), with sidechain filter, source and tap,
+    and a crossover band on the dynamics slot.
+  - **EQ:** the 6-band WING EQ (8 bands on buses) or the analog models (SOUL, E88,
+    E84, F110, PULSAR, MACH4, PIA on buses), with blend/mix.
+  - **PRE INSERT and POST INSERT** use the 16 FX slots; the post insert can also join
+    automix group X or Y (gain sharing).
+  - Gate, EQ, dynamics and the pre insert run in any of the **24 process orders**, and
+    bus sends tap at IN, FILT, 3, 4, 5, PFL, AFL or POST.
+  - Fader, DCAs, mute groups, width and pan; sends to the 16 buses (PRE, POST or GRP
+    mode, with pan), to the 4 mains and the 8 matrices.
+- **Buses 9+ feed buses 1-8**, matrices take the mains and a **direct input** from any
+  channel (invert it for a mix-minus).
+- **FX slots:** the WING's EXT device: each of the 16 slots hosts a **VST3, AU (macOS)
+  or LV2 (Linux) plugin**, used by any strip's insert.
+- Processing models are recreated from the WING's parameter set (controls, ranges and
+  behaviour), not circuit-modelled. The model tables are generated from the console's
+  published parameter map.
+
+## The surface
+
+The window is a WING control surface and resizes to any screen, including ultrawides.
+
+- **Three fader sections:** left (12 faders, inputs), center (8, buses and DCAs) and
+  right (4, mains and matrices). Each has its own **bank buttons**: CH 1-12 ... CH 37-40
+  · AUX 1-8, BUS, DCA, MAIN · MTX, ALL, plus **user banks** with any strips and DCAs.
+  Arrows page through banks longer than the section. Set a section to **Auto** (SETUP >
+  SURFACE) and it shows as many faders as fit, which suits big channel counts.
+- **Fader strips** have the colour bar and scribble strip (number, name, icon), SEL,
+  the GATE and DYN LEDs, SOLO, MUTE, a meter and the fader.
+- **SOF (Sends on Fader):** select a bus and the input faders set their send to it;
+  select an input and the bus faders set its sends.
+- **Main display** with the WING's screens:
+  - **HOME** for the selected strip: the signal chain as yellow blocks (click to edit,
+    right-click to switch on/off), EQ curve, levels, process order and tap, and the
+    **INPUT, FILTER, GATE, EQ, DYNAMICS, PRE INS, POST INS, MAIN, BUS SENDS and
+    ICON/COLOR** screens. Each processing screen has the model menu and all of the
+    model's parameters; the EQ graph has draggable bands.
+  - **EFFECTS** (the 16 FX slots), **METERS** (every signal path with mute status),
+    **ROUTING** (channel sources, outputs, monitor), **SETUP** (audio device, console
+    size, surface, global recall safes, DCA and mute group names, plugin scanning),
+    **LIBRARY** (show files, scenes and snippets, user banks) and **UTILITY** (system
+    health and event log).
+  - The **six knobs under the display** follow what the screen shows.
+- **Channel strip section** (top left): gain, low cut, gate, dynamics, insert and pan
+  on dedicated knobs, and the EQ section (four band knobs, GAIN/WIDTH/FREQ, SHIFT, MIX).
+- **Monitor and show control** (top right): main/solo meter, monitor level, DIM, AFL,
+  CLR SOLO, scene GO / back, and the mute group keys.
+
+## Shows, scenes and snippets
+
+- A **show** is the file. It holds the console (channels, buses, FX slot plugins,
+  patching, DCAs, mute groups, fader banks) and all of its scenes.
+- A **scene** is a console snapshot with a **recall scope** (Name, Routing, Input,
+  Gate, EQ, Dynamics, Inserts, Sends, Fader, DCA/Mute), an optional **fade time** for
+  faders, pans and send levels, and notes. **Recall-safe** strips are skipped. Use
+  **GO >** and **<** (or `Ctrl+G`) to step through scenes during a show.
+- A **snippet** belongs to a scene and recalls only the strips and sections you choose.
+  Fire it by hand, or mark it to **fire with its scene**.
+- Recalling a scene or snippet never creates or destroys channels or plugins, so it
+  can't cause a dropout.
+- Shows from earlier Live DAW versions are converted when they load: channels stay
+  channels, aux and group buses become buses, the master becomes Main 1, the gate,
+  4-band EQ and compressor become the GATE, WING EQ and COMP models, and each strip's
+  plugins move to FX slots on its inserts.
+
+## Drivers and performance
 
 - **Audio drivers:** ASIO and WASAPI on Windows, CoreAudio on macOS, ALSA and JACK on Linux.
-- **Any number of channels.** You pick the channel count and CPU is the only limit.
-  Channels and buses are processed in parallel on a pool of realtime worker threads.
-- **Each channel can be mono or stereo.** Switch with **MO/ST** on the strip and
-  patch the left and right inputs independently.
-- **Every strip (channels, buses and master) has:** trim, polarity, high-pass filter,
-  **noise gate**, **4-band parametric EQ**, **compressor**, **8 plugin insert slots**
-  (VST3, AU on macOS, LV2 on Linux), mute, fader, pan, solo and meters.
-- **Processing handles on the mixer page.** You don't have to open the channel to work with it:
-  - **Inserts:** click an empty slot to load a plugin, click a loaded one to open its
-    editor, right-click to bypass, replace or remove. Faulted plugins show in red.
-  - **Gate:** `G` switches it on and off. The bar shows the input level against the
-    threshold, and dragging it sets the threshold.
-  - **EQ:** a mini curve with draggable band handles (the mouse wheel sets Q), plus EQ
-    and HPF on/off toggles.
-  - **Compressor:** `C` switches it on and off. The bar shows gain reduction, and dragging
-    it sets the threshold.
-  - The **Channel** tab below the mixer has every parameter for the selected strip.
-- **Buses:** any number of aux buses (monitor mixes, FX) and group buses (subgroups), limited by CPU like channels, with
-  pre- or post-fader sends. PFL/AFL solo goes to a dedicated monitor bus. Every bus and
-  each channel's direct out can be routed to any hardware output.
-- **Layers (X32/Wing style):** a layer selector beside the faders, with the master
-  always visible on the right.
-  - **Default layers** are generated from the console and always cover every strip:
-    input banks, aux banks, group banks and `All`. They follow the console as
-    channels and buses are added or removed. The bank size is **Auto** by default:
-    each bank holds as many strips as fit the window (e.g. 35 on a 3440-pixel
-    ultrawide), re-banks when you resize while staying on the same channels, and
-    stretches strips to fill the width. Fixed sizes (8–64) are available too.
-  - **User layers** hold any strips on the board (inputs, auxes, groups, master) in any
-    order. Build them in the **Layers** tab, or right-click a strip and choose
-    *User layers*.
-  - `Ctrl/Cmd + 1..9` selects layers, and the layer list scrolls. Layers are saved with
-    the show. Only the strips actually on screen get UI components, and meters redraw
-    only when they change, so even the `All` layer of a 4096-channel console stays
-    responsive. The mouse wheel scrolls the mixer; it never moves a fader or pan.
-- **Fully resizable interface:**
-  - Drag the dividers to size the bottom panel and the layer list (double-click one to
-    reset it).
-  - Every panel stretches to fill the window.
-  - Strips grow with the window and shed their least important parts (inserts, then
-    the mini EQ, then the dynamics handles) on small screens, so the fader is always
-    usable.
-  - **View** sets the interface scale (75–200%) and strip width (Narrow, Normal, Wide,
-    Extra wide), and can reset the layout. Window position and size, panel sizes and
-    scale are remembered.
-- **Unused channels are free:** a channel with no input patched and no plugins skips
-  its DSP entirely, so a big console only costs CPU for the channels you use.
-- **Show > Scene > Snippet:**
-  - A **show** is the file. It holds the console setup (channels, buses, plugins,
-    patching) and all of its scenes.
-  - A **scene** is a console snapshot with a **recall scope** (which sections it
-    recalls: Name, Routing, Preamp, Gate, EQ, Comp, Inserts, Sends, Fader), an optional
-    **fade time** for faders, pans and sends, and notes. **Recall-safe** channels are
-    skipped. Use **GO >** and **<** in the toolbar to step through scenes during a show.
-  - A **snippet** belongs to a scene and recalls only the strips and sections you choose.
-    You can fire it by hand, or mark it to **fire with its scene**.
-  - Recalling a scene or snippet never creates or destroys channels or plugins, so it
-    can't cause a dropout.
+- Strips are processed in parallel on a pool of realtime worker threads. A full
+  40-channel console with gates, EQs, dynamics and 16 bus sends per channel takes about
+  0.45 ms of a 2.7 ms block (48 kHz, 128 samples) in the test suite.
+- **Unused channels are free:** a channel with no input patched skips its DSP, so a big
+  console only costs CPU for the channels you use.
 
 ## Stability
 
@@ -73,7 +97,7 @@ Live sound gets no second take, so stability is designed in at every layer:
 | Layer | Protection |
 |---|---|
 | Audio thread | No allocations, locks or file I/O. Denormals are flushed. Channel/bus/plugin changes are lock-free swaps with deferred deletion. |
-| Plugins | A plugin that outputs NaN/Inf or throws is **auto-bypassed on the spot**. Its input passes through, and the slot is flagged red. Per-plugin CPU is measured. |
+| Plugins | A plugin that outputs NaN/Inf or throws is **auto-bypassed on the spot**. Its input passes through, and the FX slot is flagged. Two inserts on one slot never run it concurrently. Per-slot CPU is measured. |
 | Plugin scanning | Scans run **in a separate process**, so a plugin that crashes during a scan only kills the scanner. |
 | Plugin loading | The plugin being loaded is recorded on disk first. If it crashes the app, it's blacklisted on the next start. |
 | Strips | Every strip checks its own output. NaN/Inf is silenced and the DSP reset before it can poison a bus. |
@@ -84,7 +108,7 @@ Live sound gets no second take, so stability is designed in at every layer:
 | Shutdown | SIGTERM/SIGINT quit cleanly (state saved), so OS shutdowns aren't mistaken for crashes. |
 | Testing | Unit, integration (real LV2 plugins) and multi-threaded stress tests run under AddressSanitizer, UndefinedBehaviorSanitizer and ThreadSanitizer in CI. |
 
-The **System** tab shows device health, xruns, DSP load, fault counters and an event log.
+The **UTILITY** screen shows device health, xruns, DSP load, fault counters and an event log.
 
 ## Building
 
@@ -159,34 +183,30 @@ copy, pass `-DLIVEDAW_VST2_SDK_DIR=/path/to/vstsdk` to enable VST2 hosting.
 
 ## Using it
 
-1. **Audio Setup:** choose the driver (ASIO, CoreAudio, ALSA, JACK…), the device,
-   the sample rate and the buffer size.
-2. **Channels:** set the count with `-` / `+`, or double-click the number and type it.
-   On each strip, the input button patches the channel and **MO/ST** switches it between
-   mono and stereo.
-3. Pick a layer on the left of the faders (or `Ctrl+1..9`). Build your own layers in
-   the **Layers** tab: **+ New**, then double-click strips on the board to add them.
-4. Work directly on the strips (insert slots, gate, mini EQ, compressor, pan, fader).
-   **SEL** opens every parameter in the **Channel** tab.
-5. **+ Aux** / **+ Group** add buses. Set sends in the *Sends* section of each channel,
-   and give buses hardware outputs.
-6. **Show tab:**
-   - **+ New** captures the current console as a scene.
-   - Set its recall scope, fade and notes.
-   - Add snippets to it: choose the strips and sections, and optionally *Fire with scene*.
-   - **GO** (or double-click) recalls.
-7. Right-click a strip to rename it, recolour it, make it **recall safe** or remove it.
-8. **Show > Save** writes a `.lshow` file. **Plugins** opens the scanner (it runs out of process).
+1. **SETUP > AUDIO:** choose the driver (ASIO, CoreAudio, ALSA, JACK...), the device,
+   the sample rate and the buffer size. **SETUP > CONSOLE** sets the channel count
+   (40 like a WING, or as many as your CPU allows) and adds buses.
+2. **ROUTING:** patch each channel's source (and right source for stereo channels),
+   and give mains, buses and matrices their outputs.
+3. Pick banks on each fader section. **SEL** a strip to edit it on the HOME screen and
+   the channel strip section; the six knobs under the display follow the screen.
+4. Load plugins into FX slots on **EFFECTS**, then assign the slots to inserts on
+   **PRE INS** / **POST INS**.
+5. **LIBRARY > SCENES / SNIPPETS:** **+ New** captures the console as a scene; set its
+   recall scope, fade and notes, add snippets. **GO** recalls.
+6. **LIBRARY > SHOW** saves and opens `.lshow` files (`Ctrl+S`, `Ctrl+O`).
+   **LIBRARY > USER BANKS** builds your own fader banks.
 
 ## Project layout
 
 ```
-rust/crates/livedaw-dsp/     Rust DSP: biquads, 4-band EQ, gate, compressor
-rust/crates/livedaw-engine/  Rust realtime engine: strips, routing, sends, solo, worker pool, deferred frees
-rust/crates/livedaw-session/ Rust sessions: console state, Show > Scene > Snippet, fades, layers, show files
-rust/crates/livedaw-ffi/     C ABI over the engine + C++ header (include/livedaw_engine.h)
-src/engine/   C++ side: facades over the Rust code, plugin hosting
-src/ui/       JUCE UI: console strips, selected-channel panel, EQ editor, meters
+rust/crates/livedaw-dsp/     Rust DSP: the WING models (filter, EQ models, 32 dynamics models), delay, biquads
+rust/crates/livedaw-engine/  Rust realtime engine: WING topology, strips, sends, DCAs, mute groups, FX slots, solo, worker pool
+rust/crates/livedaw-session/ Rust sessions: console state, Show > Scene > Snippet, fades, fader banks, show files, legacy import
+rust/crates/livedaw-ffi/     C ABI over the engine and model tables + C++ header (include/livedaw_engine.h)
+src/engine/   C++ side: facades over the Rust code, FX slot plugin hosting
+src/ui/       JUCE UI: the WING surface (fader sections, main display screens, channel strip, monitor)
+tools/wing/   Generator for the model tables (from libwing's parameter map)
 tests/        Unit tests (run with ctest)
 docs/         Architecture notes
 ```

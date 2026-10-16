@@ -204,16 +204,17 @@ public:
 
     void resized() override
     {
-        // Three columns.
+        // Five columns, two rows.
         auto b = getLocalBounds();
-        const int rows = (buttons.size() + 2) / 3;
-        const int h = juce::jmin (24, b.getHeight() / juce::jmax (1, rows));
+        constexpr int columns = 5;
+        const int rows = (buttons.size() + columns - 1) / columns;
+        const int h = juce::jmin (26, b.getHeight() / juce::jmax (1, rows));
         for (int r = 0; r < rows; ++r)
         {
             auto row = b.removeFromTop (h);
-            const int w = row.getWidth() / 3;
-            for (int c = 0; c < 3; ++c)
-                if (auto* button = buttons[r * 3 + c])
+            const int w = row.getWidth() / columns;
+            for (int c = 0; c < columns; ++c)
+                if (auto* button = buttons[r * columns + c])
                     button->setBounds (row.removeFromLeft (w).reduced (1));
         }
     }
@@ -246,7 +247,8 @@ public:
         auto add = [&] (Strip& s)
         {
             const auto ref = state::StripRef::of (s);
-            auto* b = buttons.add (new juce::TextButton (s.getName()));
+            auto* b = buttons.add (new juce::TextButton (s.getName().isNotEmpty() ? s.getName() : s.getLabel()));
+            b->setTooltip (describeStrip (s));
             b->setClickingTogglesState (true);
             b->setColour (juce::TextButton::buttonOnColourId, s.getColour());
             b->setEnabled (snippet.has_value());
@@ -275,11 +277,9 @@ public:
             content.addAndMakeVisible (b);
         };
 
-        for (auto& in : ctx.engine.getInputs())
-            add (*in);
-        for (auto& bus : ctx.engine.getBuses())
-            add (*bus);
-        add (ctx.engine.getMaster());
+        for (int k = 0; k < kNumStripKinds; ++k)
+            for (auto& strip : ctx.engine.getStrips (static_cast<StripKind> (k)))
+                add (*strip);
 
         resized();
     }
@@ -626,16 +626,9 @@ void ShowPanel::updateSnippetEditor()
 
 void ShowPanel::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::background.darker (0.2f));
+    g.fillAll (Colours::screen);
 
-    auto drawBox = [&g] (juce::Rectangle<int> r, const juce::String& title)
-    {
-        g.setColour (Colours::panel);
-        g.fillRoundedRectangle (r.toFloat().reduced (2.0f), 5.0f);
-        g.setColour (Colours::textDim);
-        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-        g.drawText (title, r.reduced (10, 6).removeFromTop (14), juce::Justification::centredLeft);
-    };
+    auto drawBox = [&g] (juce::Rectangle<int> r, const juce::String& title) { drawSectionBox (g, r, title); };
 
     const auto scene = currentSceneObject();
     drawBox (sceneArea, "SCENES - " + ctx.show.getName().toUpperCase());
@@ -646,8 +639,9 @@ void ShowPanel::paint (juce::Graphics& g)
 void ShowPanel::resized()
 {
     auto b = getLocalBounds().reduced (2);
-    sceneArea = b.removeFromLeft (juce::jmax (320, b.getWidth() * 30 / 100));
-    scopeArea = b.removeFromLeft (juce::jmax (280, b.getWidth() * 35 / 100));
+    // Scenes on the left; the selected scene's settings and its snippets on the right.
+    sceneArea = b.removeFromLeft (b.getWidth() * 40 / 100);
+    scopeArea = b.removeFromTop (b.getHeight() * 45 / 100);
     snippetArea = b;
 
     // Scenes
@@ -664,12 +658,13 @@ void ShowPanel::resized()
     // Scene editor
     {
         auto r = scopeArea.reduced (10).withTrimmedTop (18);
-        sceneNameLabel.setBounds (r.removeFromTop (24));
+        auto top = r.removeFromTop (38);
+        auto fade = top.removeFromRight (top.getWidth() * 2 / 5);
+        fadeLabel.setBounds (fade.removeFromTop (14));
+        fadeSlider.setBounds (fade);
+        sceneNameLabel.setBounds (top.withTrimmedTop (10).withTrimmedRight (8));
         r.removeFromTop (6);
-        sceneScope->setBounds (r.removeFromTop (72));
-        r.removeFromTop (6);
-        fadeLabel.setBounds (r.removeFromTop (14));
-        fadeSlider.setBounds (r.removeFromTop (24));
+        sceneScope->setBounds (r.removeFromTop (54));
         r.removeFromTop (4);
         notesLabel.setBounds (r.removeFromTop (14));
         notesEditor.setBounds (r);
@@ -691,7 +686,7 @@ void ShowPanel::resized()
         autoFireToggle.setBounds (top.removeFromRight (130));
         snippetNameLabel.setBounds (top);
         r.removeFromTop (6);
-        snippetSections->setBounds (r.removeFromTop (72));
+        snippetSections->setBounds (r.removeFromTop (54));
         r.removeFromTop (6);
         stripChooser->setBounds (r);
     }
