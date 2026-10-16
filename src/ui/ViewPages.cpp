@@ -300,8 +300,10 @@ const char* viewScreenName (Screen s)
 }
 
 //==============================================================================
-/** The layer column of the VIEW screens: the section's default layers (left),
-    user layers and ALL (right), LEFT / CENTER / RIGHT and the page keys. */
+/** The layer column of the VIEW screens: the section's seven layer keys (and
+    any further user layers) on the right with LEFT / CENTER / RIGHT under them;
+    on the left, the pages of the layer shown ("1-8", "9-16", ...), with the
+    page keys at the bottom. */
 class ViewPage::LayerColumn final : public juce::Component
 {
 public:
@@ -310,20 +312,22 @@ public:
     void rebuild()
     {
         keys.clear();
+        pageKeys.clear();
         auto b = getLocalBounds().reduced (3);
         auto pager = b.removeFromBottom (juce::jlimit (20, 34, getHeight() / 14));
         prevKey = pager.removeFromLeft (pager.getWidth() / 2).reduced (2, 0);
         nextKey = pager.reduced (2, 0);
         b.removeFromBottom (6);
 
-        const auto layers = page.ctx.show.layers.getAllLayers (page.ctx.engine, page.section());
-        std::vector<const Layer*> left, right;
-        for (auto& l : layers)
-            (l.user || l.id == "all" ? right : left).push_back (&l);
-        std::stable_partition (right.begin(), right.end(), [] (const Layer* l) { return l->user; });
+        auto& layers = page.ctx.show.layers;
+        std::vector<Layer> right = layers.getDefaultLayers (page.ctx.engine, page.section());
+        const auto& user = layers.getUserLayers();
+        for (size_t i = 2; i < user.size(); ++i)
+            right.push_back (user[i]); // user layers without a USER key
 
-        const int rowsNeeded = juce::jmax ((int) left.size(), (int) right.size() + 4);
-        const int keyH = juce::jlimit (14, 32, b.getHeight() / juce::jmax (1, rowsNeeded));
+        const int numPages = page.numPages();
+        const int rowsNeeded = juce::jmax (numPages, (int) right.size() + 4);
+        const int keyH = juce::jlimit (16, 40, b.getHeight() / juce::jmax (1, rowsNeeded));
         const int colW = (b.getWidth() - 4) / 2;
         auto lc = b.removeFromLeft (colW);
         b.removeFromLeft (4);
@@ -331,13 +335,34 @@ public:
         for (int i = 2; i >= 0; --i)
             sectionKeys[i] = rc.removeFromBottom (keyH).reduced (0, 2);
         rc.removeFromBottom (keyH / 2);
-        for (auto* l : left)
-            if (lc.getHeight() >= keyH)
-                keys.push_back ({ lc.removeFromTop (keyH).reduced (0, 2), l->id, l->name });
-        for (auto* l : right)
+        for (auto& l : right)
             if (rc.getHeight() >= keyH)
-                keys.push_back ({ rc.removeFromTop (keyH).reduced (0, 2), l->id, l->name });
+                keys.push_back ({ rc.removeFromTop (keyH).reduced (0, 2), l.id, l.user ? l.name.toUpperCase() : LayerSet::keyLabel (l) });
+
+        // The pages of the layer, labelled by their first and last fader.
+        const auto layer = page.currentLayer();
+        const int size = page.pageSize();
+        for (int i = 0; i < numPages && lc.getHeight() >= keyH; ++i)
+        {
+            const int first = i * size, last = juce::jmin ((int) layer.faders.size(), first + size) - 1;
+            juce::String label = juce::String (i + 1);
+            if (last >= first)
+            {
+                const auto a = resolve (page.ctx, layer.faders[(size_t) first]), z = resolve (page.ctx, layer.faders[(size_t) last]);
+                if (a.isValid() && z.isValid())
+                    label = first == last ? numberOf (a) : numberOf (a) + "-" + numberOf (z);
+            }
+            pageKeys.push_back ({ lc.removeFromTop (keyH).reduced (0, 2), juce::String (i), label });
+        }
+        shownLayer = layer.id;
         repaint();
+    }
+
+    /** The layer shown changed elsewhere (the section's layer keys). */
+    void followLayer()
+    {
+        if (page.currentLayerId() != shownLayer)
+            rebuild();
     }
 
     void resized() override { rebuild(); }
@@ -352,13 +377,19 @@ public:
             g.setColour (fill);
             g.fillRect (r);
             g.setColour (ink);
-            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 15.0f, (float) r.getHeight() * 0.55f), juce::Font::bold));
-            g.drawFittedText (text, r.reduced (2, 0), juce::Justification::centred, 1, 0.6f);
+            const int lines = text.containsChar ('\n') ? 2 : 1;
+            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 15.0f, (float) r.getHeight() * (lines == 2 ? 0.4f : 0.55f)), juce::Font::bold));
+            g.drawFittedText (text, r.reduced (2, 0), juce::Justification::centred, lines, 0.6f);
         };
         for (auto& k : keys)
         {
             const bool on = k.id == current;
-            key (k.area, k.name.toUpperCase(), on ? Dark::layer : juce::Colour (0xff303030), on ? juce::Colours::white : Dark::text);
+            key (k.area, k.name, on ? Dark::layer : juce::Colour (0xff303030), on ? juce::Colours::white : Dark::text);
+        }
+        for (auto& k : pageKeys)
+        {
+            const bool on = k.id.getIntValue() == page.page && pageKeys.size() > 1;
+            key (k.area, k.name, on ? Dark::layer : juce::Colour (0xff262626), on ? juce::Colours::white : Dark::textDim);
         }
         const char* names[] = { "LEFT", "CENTER", "RIGHT" };
         for (int i = 0; i < 3; ++i)
@@ -385,6 +416,12 @@ public:
                 page.selectLayer (k.id);
                 return;
             }
+        for (auto& k : pageKeys)
+            if (k.area.contains (pos))
+            {
+                page.stepPage (k.id.getIntValue() - page.page);
+                return;
+            }
         for (int i = 0; i < 3; ++i)
             if (sectionKeys[i].contains (pos))
             {
@@ -405,8 +442,9 @@ private:
     };
 
     ViewPage& page;
-    std::vector<Key> keys;
+    std::vector<Key> keys, pageKeys;
     juce::Rectangle<int> sectionKeys[3], prevKey, nextKey;
+    juce::String shownLayer;
 };
 
 //==============================================================================
@@ -437,8 +475,11 @@ void ViewPage::refresh()
 
 void ViewPage::timerCallback()
 {
-    if (isShowing())
-        repaint();
+    if (! isShowing())
+        return;
+    if (hasLayerColumn())
+        column->followLayer();
+    repaint();
 }
 
 juce::String ViewPage::currentLayerId() const
@@ -498,7 +539,7 @@ void ViewPage::selectLayer (const juce::String& id)
     }
     page = 0;
     layerChanged();
-    column->repaint();
+    column->rebuild();
     repaint();
 }
 
@@ -515,7 +556,7 @@ void ViewPage::stepPage (int delta)
 {
     page = juce::jlimit (0, numPages() - 1, page + delta);
     layerChanged();
-    column->repaint();
+    column->rebuild();
     repaint();
 }
 
@@ -1362,15 +1403,16 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
     clearKey.onClick = [this]
     {
         const auto layer = currentLayer();
-        if (! layer.user)
+        const auto id = userLayerId (layer, false);
+        if (id.isEmpty())
             return;
         juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "CLEAR", "Remove every fader from \"" + layer.name + "\"?", "CLEAR",
-                                            "CANCEL", this, juce::ModalCallbackFunction::create ([this, layer] (int r)
+                                            "CANCEL", this, juce::ModalCallbackFunction::create ([this, layer, id] (int r)
         {
             if (r == 0)
                 return;
             for (auto& f : layer.faders)
-                ctx.show.layers.removeFromUserLayer (layer.id, f);
+                ctx.show.layers.removeFromUserLayer (id, f);
             notifyLayersChangedAsync (ctx);
             repaint();
         }));
@@ -1378,13 +1420,13 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
     renameKey.onClick = [this]
     {
         const auto layer = currentLayer();
-        if (! layer.user)
+        const auto id = userLayerId (layer, true);
+        if (id.isEmpty())
             return;
         auto* w = new juce::AlertWindow ("RENAME LAYER", {}, juce::MessageBoxIconType::NoIcon, this);
         w->addTextEditor ("name", layer.name);
         w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
         w->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-        const auto id = layer.id;
         w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, id] (int r)
         {
             if (r != 0 && w->getTextEditorContents ("name").trim().isNotEmpty())
@@ -1398,7 +1440,7 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
     newKey.onClick = [this]
     {
         const auto layer = currentLayer();
-        const auto name = layer.user ? "USER " + juce::String ((int) ctx.show.layers.getUserLayers().size() + 1) : layer.name;
+        const auto name = isEditable (layer) ? "USER " + juce::String ((int) ctx.show.layers.getUserLayers().size() + 1) : layer.name;
         const auto id = ctx.show.layers.addUserLayer (name, layer.faders);
         notifyLayersChangedAsync (ctx);
         selectLayer (id);
@@ -1407,14 +1449,15 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
     deleteKey.onClick = [this]
     {
         const auto layer = currentLayer();
-        if (! layer.user)
+        const auto id = userLayerId (layer, false);
+        if (id.isEmpty())
             return;
         juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, "DELETE LAYER", "Delete the user layer \"" + layer.name + "\"?", "DELETE",
-                                            "CANCEL", this, juce::ModalCallbackFunction::create ([this, layer] (int r)
+                                            "CANCEL", this, juce::ModalCallbackFunction::create ([this, id] (int r)
         {
             if (r == 0)
                 return;
-            ctx.show.layers.removeUserLayer (layer.id);
+            ctx.show.layers.removeUserLayer (id);
             const auto defaults = ctx.show.layers.getDefaultLayers (ctx.engine, section());
             if (! defaults.empty())
                 selectLayer (defaults.front().id);
@@ -1429,11 +1472,33 @@ void ConfigViewPage::layerChanged()
     updateKeys();
 }
 
+bool ConfigViewPage::isEditable (const Layer& layer)
+{
+    return layer.user || layer.id == "user-1" || layer.id == "user-2";
+}
+
+juce::String ConfigViewPage::userLayerId (const Layer& layer, bool create)
+{
+    if (layer.user)
+        return layer.id;
+    if (layer.id != "user-1" && layer.id != "user-2")
+        return {};
+    // USER 1 / USER 2 show the first two user layers: make them on first use.
+    auto& layers = ctx.show.layers;
+    const size_t index = layer.id == "user-1" ? 0 : 1;
+    while (create && layers.getUserLayers().size() <= index)
+        layers.addUserLayer ("USER " + juce::String ((int) layers.getUserLayers().size() + 1));
+    const auto& user = layers.getUserLayers();
+    return index < user.size() ? user[index].id : juce::String();
+}
+
 void ConfigViewPage::updateKeys()
 {
-    const bool user = currentLayer().user;
-    for (auto* k : { &clearKey, &renameKey, &deleteKey })
+    const auto layer = currentLayer();
+    const bool user = isEditable (layer);
+    for (auto* k : { &clearKey, &renameKey })
         enableKey (*k, user);
+    enableKey (deleteKey, userLayerId (layer, false).isNotEmpty());
 }
 
 std::vector<state::FaderRef> ConfigViewPage::sourceItems() const
@@ -1559,7 +1624,7 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
     // The layer's slots, in groups of four framed in blue.
     const auto layer = currentLayer();
     const auto faders = pageFaders();
-    const float alpha = layer.user ? 1.0f : 0.45f;
+    const float alpha = isEditable (layer) ? 1.0f : 0.45f;
     for (size_t i = 0; i < slotAreas.size(); ++i)
     {
         auto r = slotAreas[i].toFloat();
@@ -1578,7 +1643,7 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
             g.drawRect (slotAreas[i].getUnion (last).expanded (2, 3).toFloat(), 1.5f);
         }
     }
-    if (! layer.user)
+    if (! isEditable (layer))
     {
         g.setColour (Dark::text);
         g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
@@ -1601,14 +1666,15 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
 void ConfigViewPage::insertAt (const std::vector<state::FaderRef>& items, int slot)
 {
     const auto layer = currentLayer();
-    if (! layer.user || items.empty())
+    const auto id = userLayerId (layer, true);
+    if (id.isEmpty() || items.empty())
         return;
     auto& layers = ctx.show.layers;
     int index = juce::jlimit (0, (int) layer.faders.size(), page * pageSize() + slot);
     for (auto& f : items)
     {
         // Moving an item that is already in the layer: take it out first.
-        const auto* current = layers.getUserLayer (layer.id);
+        const auto* current = layers.getUserLayer (id);
         if (current == nullptr)
             return;
         const auto existing = std::find (current->faders.begin(), current->faders.end(), f);
@@ -1616,15 +1682,15 @@ void ConfigViewPage::insertAt (const std::vector<state::FaderRef>& items, int sl
         {
             if ((int) (existing - current->faders.begin()) < index)
                 --index;
-            layers.removeFromUserLayer (layer.id, f);
+            layers.removeFromUserLayer (id, f);
         }
-        layers.addToUserLayer (layer.id, f);
-        const auto* updated = layers.getUserLayer (layer.id);
+        layers.addToUserLayer (id, f);
+        const auto* updated = layers.getUserLayer (id);
         if (updated == nullptr)
             return;
         // Appended at the end: bubble it down to its slot.
         for (int k = (int) updated->faders.size() - 1; k > index; --k)
-            layers.moveWithinUserLayer (layer.id, k, -1);
+            layers.moveWithinUserLayer (id, k, -1);
         ++index;
     }
     notifyLayersChangedAsync (ctx);
@@ -1635,7 +1701,7 @@ void ConfigViewPage::mouseDown (const juce::MouseEvent& e)
     dragActive = false;
     dragSlot = -1;
     dragPoint = e.getPosition();
-    if (currentLayer().user)
+    if (isEditable (currentLayer()))
         for (size_t i = 0; i < slotAreas.size() && i < pageFaders().size(); ++i)
             if (slotAreas[i].contains (e.getPosition()))
                 dragSlot = (int) i;
@@ -1685,7 +1751,7 @@ void ConfigViewPage::mouseUp (const juce::MouseEvent& e)
             if (target < 0 && ! slotsArea.contains (pos))
             {
                 // Dragged off the layer: remove the fader.
-                ctx.show.layers.removeFromUserLayer (layer.id, faders[(size_t) dragSlot]);
+                ctx.show.layers.removeFromUserLayer (userLayerId (layer, false), faders[(size_t) dragSlot]);
                 notifyLayersChangedAsync (ctx);
             }
             else if (target >= 0 && target != dragSlot)

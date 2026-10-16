@@ -670,8 +670,24 @@ namespace
     public:
         explicit SurfaceTab (UiContext& c) : ctx (c)
         {
-            // Needs the surface's LED meter (SurfaceSections) to follow it.
-            metering.addRow ("MAIN METER", std::make_unique<DropdownField> ("SOURCE", [] { return juce::String ("MAIN.1"); }), 5.0f, false, false, 1.6f);
+            // The L/R meter beside the display: the monitor or a main (ui.mainMeter: 0 MONITOR, 1-4 MAIN n).
+            metering.addRow ("MAIN METER",
+                             std::make_unique<DropdownField> ("SOURCE",
+                                                              [this]
+                                                              {
+                                                                  const int v = juce::jlimit (0, kNumMains, ctx.settings.getIntValue ("ui.mainMeter", 0));
+                                                                  return v == 0 ? juce::String ("MONITOR") : "MAIN." + juce::String (v);
+                                                              },
+                                                              [this] (DropdownField& f)
+                                                              {
+                                                                  juce::PopupMenu m;
+                                                                  const int v = ctx.settings.getIntValue ("ui.mainMeter", 0);
+                                                                  m.addItem ("MONITOR", true, v == 0, [this] { ctx.settings.setValue ("ui.mainMeter", juce::var (0)); });
+                                                                  for (int i = 1; i <= kNumMains; ++i)
+                                                                      m.addItem ("MAIN." + juce::String (i), true, v == i, [this, i] { ctx.settings.setValue ("ui.mainMeter", i); });
+                                                                  m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&f));
+                                                              }),
+                             5.0f, true, false, 1.6f);
             metering.addRow ("MAIN METER TAP", fixedChoice ({ "AUTO", "PRE", "POST" }, 0, ChoiceKeys::autoPrePost()), 5.0f, false);
             // PRE or POST per strip type: the VIEW screens' meters follow these (the
             // surface's LED meters can read them with prefs::meterPoint).
@@ -682,24 +698,61 @@ namespace
                                  3.4f);
             addAndMakeVisible (metering);
 
-            // These change how the fader strips and the status bar behave (G18, G19).
-            general.addRow ("SEL DBL CLICK", fixedChoice ({ "OFF", "HOME", "BUSFX" }, 0), 5.0f, false);
+            // SELECT on the selected strip again (ui.selDblClick: 0 HOME, 1 BUSFX, 2 OFF).
+            general.addRow ("SEL DBL CLICK",
+                            std::make_unique<ChoiceKeys> (juce::StringArray { "OFF", "HOME", "BUSFX" },
+                                                          [this]
+                                                          {
+                                                              const int v = ctx.settings.getIntValue ("ui.selDblClick", 0);
+                                                              return v == 2 ? 0 : v == 1 ? 2 : 1;
+                                                          },
+                                                          [this] (int i)
+                                                          {
+                                                              ctx.settings.setValue ("ui.selDblClick", i == 0 ? 2 : i == 2 ? 1 : 0);
+                                                              notifyLayersChangedAsync (ctx);
+                                                          }),
+                            5.0f);
+            // The rest change how the fader strips and the status bar behave (G18, G19).
             general.addRow ("TAP TEMPO FLASH", fixedChoice ({ "OFF", "8X", "ON" }, 0), 5.0f, false);
             general.addRow ("SOF BUTTON", fixedChoice ({ "AUTO", "ON", "FLASH" }, 0), 5.0f, false);
             general.addRow ("SHOW SOF FRAME", OnKey::fixed (false), 1.3f, false);
             general.addRow ("SHOW SOURCE ON SCRIBBLE", OnKey::fixed (false), 1.3f, false);
             general.addRow ("SHOW FADER VALUE ON SCRIBBLE", OnKey::fixed (false), 1.3f, false);
             general.addRow ("SCREEN FOLLOWS CH STRIP", OnKey::fixed (false), 1.3f, false);
+            general.newBox();
+            // App-specific: the dB value under every fader (ui.faderValues).
+            general.addRow ("FADER VALUES",
+                            std::make_unique<OnKey> ([this] { return ctx.settings.getBoolValue ("ui.faderValues", false); },
+                                                     [this] (bool v)
+                                                     {
+                                                         ctx.settings.setValue ("ui.faderValues", v);
+                                                         notifyLayersChangedAsync (ctx);
+                                                     }),
+                            1.3f);
             addAndMakeVisible (general);
 
             faders.addRow ("FADER SPEED", fixedChoice ({ "SLOW", "MED", "FAST" }, 2), 5.0f, false);
-            faders.addRow ("FULL FADER PAGING", OnKey::fixed (true), 1.3f, false);
+            faders.addRow ("FULL FADER PAGING", OnKey::fixed (false), 1.3f, false);
             faders.addRow ("FADER/SCREEN LAYER LINK", OnKey::forSetting (ctx.settings, prefs::layerLink, true), 1.3f);
             faders.addRow ("ALTERNATIVE SOF MODE", OnKey::fixed (false), 1.3f, false);
             faders.addRow ("RIGHT SECTION SENDS ON FADERS", OnKey::fixed (false), 1.3f, false);
             faders.addRow ("USER LAYER LINK", OnKey::fixed (false), 1.3f, false);
             faders.addRow ("DCA SPILL", OnKey::fixed (false), 1.3f, false); // engine E13
             faders.newBox();
+            // App-specific: faders scrolled per press of the shift keys (ui.shiftStep).
+            faders.addRow ("SHIFT STEP",
+                           std::make_unique<ChoiceKeys> (juce::StringArray { "4", "8", "12" },
+                                                         [this]
+                                                         {
+                                                             const int v = ctx.settings.getIntValue ("ui.shiftStep", 4);
+                                                             return v == 12 ? 2 : v == 8 ? 1 : 0;
+                                                         },
+                                                         [this] (int i)
+                                                         {
+                                                             ctx.settings.setValue ("ui.shiftStep", (i + 1) * 4);
+                                                             notifyLayersChangedAsync (ctx);
+                                                         }),
+                           4.2f);
             faders.addCaption ("SECTION WIDTH", false);
             static constexpr int widths[] = { LayerSet::kAutoWidth, 4, 8, 12, 16, 24, 32 };
             const char* names[] = { "LEFT", "CENTER", "RIGHT" };
@@ -732,7 +785,7 @@ namespace
         {
             auto b = getLocalBounds();
             const int gap = 4, w = (b.getWidth() - 2 * gap) / 3;
-            const int rowH = fitRowHeight (getHeight() - kDarkHeaderHeight - 24, 10.0f);
+            const int rowH = fitRowHeight (getHeight() - kDarkHeaderHeight - 24, 13.0f);
             for (auto* p : { &metering, &general, &faders })
                 p->rowHeight = rowH;
             for (auto* p : { &metering, &general, &faders })

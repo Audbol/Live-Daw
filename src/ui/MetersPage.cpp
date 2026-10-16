@@ -356,13 +356,22 @@ void MetersPage::paint (juce::Graphics& g)
     }
 }
 
-void MetersPage::bringToSection (const Group& group, Strip* s)
+void MetersPage::bringToSection (const Group& group, int index)
 {
-    juce::String bank;
+    // The section selects the layer key holding the fader and scrolls it into view.
+    std::optional<state::FaderRef> fader;
     if (group.dca)
-        bank = ctx.show.layers.findDefaultLayerContaining (ctx.engine, group.section, state::FaderRef::ofDca (group.first));
-    else if (s != nullptr)
-        bank = ctx.show.layers.findDefaultLayerContaining (ctx.engine, group.section, state::FaderRef::of (state::StripRef::of (*s)));
+        fader = state::FaderRef::ofDca (group.first + juce::jmax (0, index));
+    else if (auto* s = stripOf (group, juce::jmax (0, index)))
+        fader = state::FaderRef::of (state::StripRef::of (*s));
+    if (! fader)
+        return;
+    if (ctx.revealFader)
+    {
+        ctx.revealFader (group.section, *fader);
+        return;
+    }
+    const auto bank = ctx.show.layers.findDefaultLayerContaining (ctx.engine, group.section, *fader);
     if (bank.isNotEmpty() && bank != ctx.show.layers.getSelectedLayerId (group.section))
     {
         ctx.show.layers.setSelectedLayerId (group.section, bank);
@@ -387,7 +396,7 @@ void MetersPage::mouseDown (const juce::MouseEvent& e)
         if (group.header.contains (pos))
         {
             // Touching a group opens the FADERS screen of its section.
-            bringToSection (group, stripOf (group, 0));
+            bringToSection (group, 0);
             ctx.viewSection = group.section;
             if (ctx.showScreen)
                 ctx.showScreen (Screen::Faders);
@@ -411,10 +420,10 @@ void MetersPage::mouseDown (const juce::MouseEvent& e)
             {
                 if (ctx.selectStrip)
                     ctx.selectStrip (s);
-                bringToSection (group, s);
+                bringToSection (group, i);
             }
             else
-                bringToSection (group, nullptr);
+                bringToSection (group, i);
             repaint();
             return;
         }

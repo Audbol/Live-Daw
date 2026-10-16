@@ -519,6 +519,36 @@ void EffectsPage::editSlot (int slot)
 
 EffectsPage::~EffectsPage() = default;
 
+int EffectsPage::tapParam() const
+{
+    if (editor == nullptr || ! editor->isVisible())
+        return -1;
+    const auto& spec = models::model (models::Fx, ctx.engine.getFx().getModel (editor->getSlot()));
+    for (size_t i = 0; i < spec.params.size(); ++i)
+    {
+        const auto& p = spec.params[i];
+        if (p.unit == "ms" && p.isContinuous() && (p.id == "time" || p.id == "dly" || p.label.equalsIgnoreCase ("TIME")))
+            return (int) i;
+    }
+    return -1;
+}
+
+void EffectsPage::blankKeyPressed()
+{
+    // Tap tempo: the time between two taps (0.1 to 3 s) becomes the delay time.
+    const int param = tapParam();
+    if (param < 0)
+        return;
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    const double interval = now - lastTap;
+    lastTap = now;
+    if (interval < 100.0 || interval > 3000.0)
+        return;
+    const int slot = editor->getSlot();
+    const auto& p = models::model (models::Fx, ctx.engine.getFx().getModel (slot)).params[(size_t) param];
+    ctx.engine.getFx().params (slot).values[param].store (juce::jlimit (p.min, p.max, (float) interval));
+}
+
 std::vector<KnobBinding> EffectsPage::getKnobs()
 {
     if (editor != nullptr && editor->isVisible())

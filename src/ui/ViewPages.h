@@ -139,8 +139,9 @@ private:
 
 /** CONFIG (fig. 58): edits the fader layers. Pick items in the top grid and
     drag them to the layer's slots at the bottom (or click a slot), drag a slot
-    away to remove it, drag within the slots to reorder. Default layers are
-    read-only (session item E19): "+" makes a user layer from the shown one. */
+    away to remove it, drag within the slots to reorder. USER 1 / USER 2 and
+    further user layers are editable; the other layer keys are read-only
+    (session item E19): "+" makes a user layer from the shown one. */
 class ConfigViewPage final : public ViewPage
 {
 public:
@@ -156,6 +157,11 @@ protected:
 
 private:
     std::vector<state::FaderRef> sourceItems() const;
+    /** User layers and the USER 1 / USER 2 keys can be edited. */
+    static bool isEditable (const Layer&);
+    /** The user layer behind `layer` (USER 1 / 2: the first two user layers,
+        created when `create`); empty for the default layers. */
+    juce::String userLayerId (const Layer&, bool create);
     void insertAt (const std::vector<state::FaderRef>&, int slot);
     void updateKeys();
 

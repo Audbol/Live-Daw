@@ -23,6 +23,10 @@ public:
     void resized() override;
     void paint (juce::Graphics&) override;
 
+    /** The blank key beside the display taps the tempo of a delay open in the editor. */
+    bool hasBlankKeyFunction() const override { return tapParam() >= 0; }
+    void blankKeyPressed() override;
+
     /** Shows slot `slot` in the device editor (-1 = back to the rack). */
     void editSlot (int slot);
 
@@ -30,9 +34,13 @@ public:
     class Editor;
 
 private:
+    /** The TIME (ms) parameter of the device open in the editor, or -1. */
+    int tapParam() const;
+
     UiContext& ctx;
     juce::OwnedArray<Tile> tiles;
     std::unique_ptr<Editor> editor;
+    double lastTap = 0.0;
     juce::Rectangle<int> rack, premiumLabel, standardLabel;
     int selected = 0;
 };
@@ -81,7 +89,7 @@ private:
     bool isMuted (const Group&, int index) const;
     Strip* stripOf (const Group&, int index) const;
     void paintScale (juce::Graphics&, juce::Rectangle<int> column, const Group& reference) const;
-    void bringToSection (const Group&, Strip*);
+    void bringToSection (const Group&, int index);
 
     UiContext& ctx;
     std::vector<Group> groups;
