@@ -138,11 +138,8 @@ KnobBinding bindChoice (const juce::String& label, std::atomic<int32_t>& v, cons
 KnobBinding bindPan (const juce::String& label, std::atomic<float>& v)
 {
     auto b = bindLinear (label, v, -100.0f, 100.0f, {}, 0, 0.0f);
-    b.text = [&v]
-    {
-        const int p = juce::roundToInt (v.load());
-        return p == 0 ? juce::String ("C") : (p < 0 ? "L" + juce::String (-p) : "R" + juce::String (p));
-    };
+    // The WING shows pan as a signed number: -100 (left) .. 0 .. 100 (right).
+    b.text = [&v] { return juce::String (juce::roundToInt (v.load())); };
     return b;
 }
 
