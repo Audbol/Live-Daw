@@ -14,12 +14,12 @@ namespace livedaw::state
 enum Section : juce::uint32
 {
     Name     = 1u << 0, // name, colour, icon, scribble light
-    Routing  = 1u << 1, // input patch, mono/stereo, outputs, monitor bus (+ monitor setup)
+    Routing  = 1u << 1, // input patch, mono/stereo, outputs, monitor bus (+ monitor setup, solo PFL/AFL per type)
     Preamp   = 1u << 2, // INPUT block (trim, balance, polarity, delay) and FILTER
     Gate     = 1u << 3,
     Eq       = 1u << 4,
     Dynamics = 1u << 5,
-    Inserts  = 1u << 6, // insert points, process order, tap (+ FX slot states; plugins are only created by show loads)
+    Inserts  = 1u << 6, // insert points, process order, tap (+ FX slot states, automix X/Y enables; plugins are only created by show loads)
     Sends    = 1u << 7, // bus, main and matrix sends, matrix direct input
     Fader    = 1u << 8, // fader, pan, width, mute (+ DCA levels)
     Groups   = 1u << 9, // DCA and mute group assignments (+ mute group states)
