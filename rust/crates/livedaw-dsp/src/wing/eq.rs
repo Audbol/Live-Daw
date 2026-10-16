@@ -270,7 +270,7 @@ fn design_pulsar(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
         let lf = p.freq_choice("1lf").unwrap_or(60.0);
         let boost = p.f("1lb") * 1.35 * k; // 0..13.5 dB
         let att = -p.f("1latt") * 1.75 * k; // 0..-17.5 dB
-        // Boost and cut together give the classic bump-and-dip: the cut shelf sits higher.
+                                            // Boost and cut together give the classic bump-and-dip: the cut shelf sits higher.
         push_gain(d, boost, || low_shelf(sr, lf, 0.5, boost));
         push_gain(d, att, || low_shelf(sr, lf * 1.8, 0.5, att));
         let hb = p.f("1hb") * 1.6 * k; // 0..16 dB
@@ -307,7 +307,7 @@ fn design_mach4(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
     }
     if let Some(f) = p.freq_choice("airm") {
         let air = p.f("air") * 1.5 * k; // 0..15 dB
-        // Air bands above Nyquist still lift the top octave a little.
+                                        // Air bands above Nyquist still lift the top octave a little.
         let fc = f.min((sr * 0.42) as f32);
         let air = if f > fc { air * fc / f } else { air };
         push_gain(d, air, || high_shelf(sr, fc, 0.5, air));
@@ -319,9 +319,18 @@ fn design_mach4(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
 }
 
 fn design_pia(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
-    for (id, f) in
-        [("31", 31.0), ("63", 63.0), ("125", 125.0), ("250", 250.0), ("500", 500.0), ("1k", 1000.0), ("2k", 2000.0), ("4k", 4000.0), ("8k", 8000.0), ("16k", 16000.0)]
-    {
+    for (id, f) in [
+        ("31", 31.0),
+        ("63", 63.0),
+        ("125", 125.0),
+        ("250", 250.0),
+        ("500", 500.0),
+        ("1k", 1000.0),
+        ("2k", 2000.0),
+        ("4k", 4000.0),
+        ("8k", 8000.0),
+        ("16k", 16000.0),
+    ] {
         let gain = p.f(id) * k;
         push_gain(d, gain, || peak(sr, f, 1.41, gain));
     }
@@ -371,7 +380,15 @@ impl WingEq {
     }
 
     /// Processes `chans` in place. `table` is the channel or bus model table.
-    pub fn process(&mut self, chans: &mut [&mut [f32]], table: &[ModelSpec], model: usize, on: bool, mix_pct: f32, values: &[f32]) {
+    pub fn process(
+        &mut self,
+        chans: &mut [&mut [f32]],
+        table: &[ModelSpec],
+        model: usize,
+        on: bool,
+        mix_pct: f32,
+        values: &[f32],
+    ) {
         let Some(spec) = table.get(model) else { return };
         let key = (model, std::ptr::eq(table.as_ptr(), super::EQ_MODELS_BUS.as_ptr()));
         let target_scale = if on { mix_pct.clamp(0.0, 125.0) / 100.0 } else { 0.0 };

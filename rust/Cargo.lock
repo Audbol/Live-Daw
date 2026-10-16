@@ -26,5 +26,6 @@ dependencies = [
 name = "livedaw-session"
 version = "0.2.0"
 dependencies = [
+ "livedaw-dsp",
  "livedaw-engine",
 ]

@@ -79,7 +79,9 @@ struct GateCfg {
 enum Release {
     Fixed,
     /// Release time grows with sustained gain reduction (up to `max_ms`).
-    Auto { max_ms: f32 },
+    Auto {
+        max_ms: f32,
+    },
     /// Opto cell: fast first stage, slow program-dependent tail.
     Opto,
     /// Constant recovery rate in dB/s (VCA "release rate" designs).
@@ -159,12 +161,39 @@ enum Config {
     /// Two compressors in series (e.g. limiter + compressor).
     Dual(CompCfg, CompCfg),
     Combo(GateCfg, CompCfg),
-    DeEss { freq: f32, range: f32, full_band: bool },
+    DeEss {
+        freq: f32,
+        range: f32,
+        full_band: bool,
+    },
     DynEq([DeqBand; 2], usize),
-    Wave { attack: f32, sustain: f32, gain: f32 },
-    Ride { thr: f32, target: f32, speed_db_s: f32, amount: f32, hold: u32, range: f32 },
-    Warm { drive: f32, harm: f32, colour: f32, trim: f32, mix: f32 },
-    Lmt { speed: f32, trans: f32, trans_gain: f32, trans_on: bool, comp: CompCfg },
+    Wave {
+        attack: f32,
+        sustain: f32,
+        gain: f32,
+    },
+    Ride {
+        thr: f32,
+        target: f32,
+        speed_db_s: f32,
+        amount: f32,
+        hold: u32,
+        range: f32,
+    },
+    Warm {
+        drive: f32,
+        harm: f32,
+        colour: f32,
+        trim: f32,
+        mix: f32,
+    },
+    Lmt {
+        speed: f32,
+        trans: f32,
+        trans_gain: f32,
+        trans_on: bool,
+        comp: CompCfg,
+    },
 }
 
 fn ms_choice(text: &str, default: f32) -> f32 {
@@ -237,7 +266,14 @@ fn configure(spec: &ModelSpec, v: &[f32], sr: f32) -> Config {
         }
         "D241G" => {
             let slow = p.on("slow");
-            let mut g = gate(p.f("thr"), 80.0, 0.0, if slow { 2.0 } else { 0.2 }, if slow { 150.0 } else { 50.0 }, if slow { 500.0 } else { 100.0 });
+            let mut g = gate(
+                p.f("thr"),
+                80.0,
+                0.0,
+                if slow { 2.0 } else { 0.2 },
+                if slow { 150.0 } else { 50.0 },
+                if slow { 500.0 } else { 100.0 },
+            );
             g.close = g.thr - 4.0;
             Config::Gate(g)
         }
@@ -329,7 +365,8 @@ fn configure(spec: &ModelSpec, v: &[f32], sr: f32) -> Config {
         }
         "B560" => {
             let knee = if p.on("easy") { 12.0 } else { 0.0 };
-            let c = CompCfg { rms: true, release: Release::Rate(120.0), ..comp(dbu(p.f("thr")), p.f("ratio"), knee, 10.0, 100.0) };
+            let c =
+                CompCfg { rms: true, release: Release::Rate(120.0), ..comp(dbu(p.f("thr")), p.f("ratio"), knee, 10.0, 100.0) };
             Config::Comp(c)
         }
         "D241C" => {
@@ -852,12 +889,9 @@ impl WingDynamics {
                 for (i, b) in bands.iter().take(count).enumerate() {
                     let det = if b.filter == 0 { key } else { self.aux_filters[i * 2].tick(key, 0) };
                     let lvl = gain_to_db(det.abs() + 1e-9);
-                    let target = if b.high {
-                        comp_curve(lvl, b.thr, b.slope, 3.0)
-                    } else {
-                        -comp_curve(-lvl, -b.thr, b.slope, 3.0)
-                    }
-                    .clamp(-24.0, 24.0);
+                    let target =
+                        if b.high { comp_curve(lvl, b.thr, b.slope, 3.0) } else { -comp_curve(-lvl, -b.thr, b.slope, 3.0) }
+                            .clamp(-24.0, 24.0);
                     let g = &mut self.aux_gain[i];
                     let c = if target < *g { b.att } else { b.rel };
                     *g = c * *g + (1.0 - c) * target;
@@ -1172,7 +1206,10 @@ mod tests {
 
     #[test]
     fn compressors_reduce_loud_signals() {
-        for token in ["COMP", "B160", "B560", "D241C", "ECL33", "9000C", "SBUS", "RED3", "LA", "F670", "BLISS", "NSTR", "2250", "E88C", "ONEC"] {
+        for token in [
+            "COMP", "B160", "B560", "D241C", "ECL33", "9000C", "SBUS", "RED3", "LA", "F670", "BLISS", "NSTR", "2250", "E88C",
+            "ONEC",
+        ] {
             let (m, v) = defaults(token);
             let (_, s) = run(m, &v, &sine(1.0, 200.0, 48000));
             assert!(s.gain_reduction_db > 1.0, "{token} didn't compress ({} dB)", s.gain_reduction_db);

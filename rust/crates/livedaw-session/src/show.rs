@@ -14,6 +14,7 @@
 
 use crate::console::{self, section, ApplyResult, FadeParam, FadeTarget, PluginBridge};
 use crate::layers::LayerSet;
+use crate::legacy::{self, Converter};
 use crate::refs::{refs_from_string, refs_to_string, StripRef};
 use crate::xml::{self, Element};
 use livedaw_engine::Engine;
@@ -22,7 +23,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-pub const SHOW_VERSION: i32 = 2;
+pub const SHOW_VERSION: i32 = 3;
 pub const MAX_FADE_SECONDS: f64 = 60.0;
 
 #[derive(Debug, Clone)]
@@ -361,9 +362,10 @@ impl Show {
         root
     }
 
-    /// Loads a show (or a version 1 session file). With `load_plugins` false
-    /// (safe mode) the console is restored without instantiating plugins.
-    /// Ok carries warnings (e.g. plugins that failed to load); Err means nothing was loaded.
+    /// Loads a show (version 3, or an older show or version 1 session file,
+    /// converted to the WING layout). With `load_plugins` false (safe mode) the
+    /// console is restored without instantiating plugins. Ok carries warnings
+    /// (e.g. plugins that failed to load); Err means nothing was loaded.
     pub fn load_from_xml(
         &mut self,
         engine: &Engine,
@@ -379,8 +381,11 @@ impl Show {
             self.layers.reset();
             self.current_scene = -1;
             self.name = "Imported session".into();
-            let console = Element { name: "Console".into(), ..xml.clone() };
-            return Ok(console::load_console(engine, &console, bridge, load_plugins));
+            let mut converter = Converter::default();
+            let console = converter.convert_console(xml);
+            let mut warnings = converter.warnings;
+            warnings.extend(console::load_console(engine, &console, bridge, load_plugins));
+            return Ok(warnings);
         }
 
         if !xml.has_tag("LiveDAWShow") {
@@ -393,14 +398,30 @@ impl Show {
             return Err("The show file has no console section".into());
         };
 
+        let mut converter = legacy::is_legacy(console_xml).then(Converter::default);
+        let converted_console = converter.as_mut().map(|c| c.convert_console(console_xml));
+        let console_xml = converted_console.as_ref().unwrap_or(console_xml);
+
         self.scenes.clear();
         self.name = xml.str_or("name", "Untitled show").to_owned();
         match xml.child("Layers") {
+            Some(l) if converter.is_some() => self.layers.from_xml(&legacy::convert_layers(l)),
             Some(l) => self.layers.from_xml(l),
             None => self.layers.reset(),
         }
 
-        let warnings = console::load_console(engine, console_xml, bridge, load_plugins);
+        let mut warnings = console::load_console(engine, console_xml, bridge, load_plugins);
+
+        let is_legacy = converter.is_some();
+        let mut state_of = |e: &Element| -> Option<Element> {
+            let st = e.child("State")?;
+            Some(match converter.as_mut() {
+                Some(c) if legacy::is_legacy(st) => c.convert_state(st),
+                _ => st.clone(),
+            })
+        };
+        let refs_of =
+            |s: &str, legacy: bool| if legacy { refs_from_string(&legacy::convert_refs(s)) } else { refs_from_string(s) };
 
         if let Some(scenes) = xml.child("Scenes") {
             for sx in scenes.children_named("Scene") {
@@ -410,7 +431,7 @@ impl Show {
                     notes: sx.str_or("notes", "").to_owned(),
                     scope: sx.int_or("scope", defaults.scope as i32) as u32,
                     fade_seconds: sx.double_or("fade", 0.0).clamp(0.0, MAX_FADE_SECONDS),
-                    state: sx.child("State").cloned(),
+                    state: state_of(sx),
                     snippets: Vec::new(),
                 };
                 if let Some(snippets) = sx.child("Snippets") {
@@ -418,9 +439,9 @@ impl Show {
                         scene.snippets.push(Snippet {
                             name: nx.str_or("name", "").to_owned(),
                             sections: nx.int_or("sections", 0) as u32,
-                            strips: refs_from_string(nx.str_or("strips", "")),
+                            strips: refs_of(nx.str_or("strips", ""), is_legacy),
                             fire_with_scene: nx.bool_or("fireWithScene", false),
-                            state: nx.child("State").cloned(),
+                            state: state_of(nx),
                         });
                     }
                 }
@@ -428,6 +449,11 @@ impl Show {
             }
         }
 
+        if let Some(c) = converter {
+            let mut all = c.warnings;
+            all.append(&mut warnings);
+            warnings = all;
+        }
         self.current_scene = xml.int_or("currentScene", -1).clamp(-1, self.scenes.len() as i32 - 1);
         Ok(warnings)
     }
@@ -465,7 +491,7 @@ impl Show {
         }
     }
 
-    /// Clears scenes and resets the console to `num_channels` inputs.
+    /// Clears scenes and resets the console to `num_channels` channels (the WING has 40).
     pub fn clear(&mut self, engine: &Engine, num_channels: usize) {
         self.cancel_fade();
         self.scenes.clear();
@@ -473,7 +499,7 @@ impl Show {
         self.name = "Untitled show".into();
         self.layers.reset();
         engine.reset();
-        engine.set_num_inputs(num_channels);
+        engine.set_num_channels(num_channels);
     }
 }
 

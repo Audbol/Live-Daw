@@ -1,4 +1,4 @@
-//! Live DAW realtime mixing engine.
+//! Live DAW realtime mixing engine, laid out like a Behringer WING.
 //!
 //! The engine owns all strips and their parameters. Parameters and meters are
 //! lock-free atomics shared with the UI; the audio path never allocates, locks
@@ -7,15 +7,15 @@
 pub mod atomic;
 pub mod denormals;
 pub mod engine;
+pub mod fx;
 pub mod garbage;
-pub mod inserts;
 pub mod params;
 pub mod pool;
 pub mod sends;
 pub mod strip;
 
 pub use engine::Engine;
-pub use inserts::{InsertCallbacks, NUM_INSERT_SLOTS};
+pub use fx::{FxRack, InsertCallbacks};
 pub use params::{EngineControls, StripKind, StripMeters, StripParams};
-pub use sends::{SendParams, MAX_BUSES};
+pub use sends::{SendParams, MAX_BUSES, SEND_MODES};
 pub use strip::Strip;

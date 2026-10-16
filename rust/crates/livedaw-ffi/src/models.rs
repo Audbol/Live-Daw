@@ -1,0 +1,192 @@
+//! Model metadata for the host UI: the UI builds its controls (knobs, choices,
+//! switches, labels, value text) from the same tables the DSP uses.
+//!
+//! Tables: 0 = dynamics models (GATE and DYNAMICS slots), 1 = channel EQ
+//! models, 2 = bus/main/matrix EQ models, 3 = filter tools. Lists: 0 = process
+//! orders, 1 = tap points, 2 = sidechain filters, 3 = crossover types,
+//! 4 = bus send modes, 5 = delay units, 6 = post insert modes, 7 = monitor
+//! buses, 8 = low-cut slopes, 9 = high-cut slopes, 10 = aux dynamics models.
+
+use crate::session::LdString;
+use livedaw_dsp::delay::DELAY_MODES;
+use livedaw_dsp::wing::dynamics::{SC_FILTERS, XOVER_TYPES};
+use livedaw_dsp::wing::eq::design;
+use livedaw_dsp::wing::filter::{HIGH_CUT_SLOPES, LOW_CUT_SLOPES};
+use livedaw_dsp::wing::{
+    ModelCategory, ModelSpec, ParamKind, ParamSpec, AUX_DYN_MODELS, DYN_MODELS, EQ_MODELS_BUS, EQ_MODELS_CH, FILTER_TOOLS,
+    MAX_EQ_PARAMS, PROCESS_ORDERS, TAP_POINTS,
+};
+use livedaw_engine::params::{MONITOR_BUSES, POST_INSERT_MODES};
+use livedaw_engine::{Strip, SEND_MODES};
+
+fn table(t: i32) -> &'static [ModelSpec] {
+    match t {
+        1 => EQ_MODELS_CH,
+        2 => EQ_MODELS_BUS,
+        3 => FILTER_TOOLS,
+        _ => DYN_MODELS,
+    }
+}
+
+fn model(t: i32, m: i32) -> Option<&'static ModelSpec> {
+    table(t).get(usize::try_from(m).ok()?)
+}
+
+fn param(t: i32, m: i32, p: i32) -> Option<&'static ParamSpec> {
+    model(t, m)?.params.get(usize::try_from(p).ok()?)
+}
+
+fn list(l: i32) -> &'static [&'static str] {
+    match l {
+        0 => PROCESS_ORDERS,
+        1 => TAP_POINTS,
+        2 => &SC_FILTERS,
+        3 => &XOVER_TYPES,
+        4 => &SEND_MODES,
+        5 => &DELAY_MODES,
+        6 => &POST_INSERT_MODES,
+        7 => &MONITOR_BUSES,
+        8 => &LOW_CUT_SLOPES,
+        9 => &HIGH_CUT_SLOPES,
+        10 => AUX_DYN_MODELS,
+        _ => &[],
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn ld_model_count(t: i32) -> i32 {
+    table(t).len() as i32
+}
+
+/// what: 0 = token ("COMP"), 1 = display name.
+#[no_mangle]
+pub extern "C" fn ld_model_text(t: i32, m: i32, what: i32) -> *mut LdString {
+    let s = model(t, m).map_or("", |m| if what == 0 { m.token } else { m.name });
+    LdString::new(s.to_owned())
+}
+
+/// 0 = gate, 1 = compressor, 2 = special, 3 = EQ, 4 = filter.
+#[no_mangle]
+pub extern "C" fn ld_model_category(t: i32, m: i32) -> i32 {
+    model(t, m).map_or(0, |m| match m.category {
+        ModelCategory::Gate => 0,
+        ModelCategory::Compressor => 1,
+        ModelCategory::Special => 2,
+        ModelCategory::Eq => 3,
+        ModelCategory::Filter => 4,
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_model_find(t: i32, utf8: *const u8, len: usize) -> i32 {
+    let token = crate::session::str_arg(utf8, len);
+    table(t).iter().position(|m| m.token == token).map_or(-1, |i| i as i32)
+}
+
+#[no_mangle]
+pub extern "C" fn ld_model_num_params(t: i32, m: i32) -> i32 {
+    model(t, m).map_or(0, |m| m.params.len() as i32)
+}
+
+#[repr(C)]
+#[derive(Default)]
+pub struct LdParamInfo {
+    /// 0 = linear, 1 = log, 2 = choice, 3 = values, 4 = toggle, 5 = integer.
+    pub kind: i32,
+    pub min: f32,
+    pub max: f32,
+    pub steps: i32,
+    pub default_value: f32,
+    /// Number of choices (choice/values kinds).
+    pub num_choices: i32,
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_model_param_info(t: i32, m: i32, p: i32, out: *mut LdParamInfo) -> bool {
+    let (Some(spec), Some(out)) = (param(t, m, p), out.as_mut()) else { return false };
+    let (kind, num) = match spec.kind {
+        ParamKind::Linear => (0, 0),
+        ParamKind::Log => (1, 0),
+        ParamKind::Choice(items) => (2, items.len()),
+        ParamKind::Values(items) => (3, items.len()),
+        ParamKind::Toggle => (4, 0),
+        ParamKind::Int => (5, 0),
+    };
+    *out = LdParamInfo {
+        kind,
+        min: spec.min,
+        max: spec.max,
+        steps: spec.steps as i32,
+        default_value: spec.default,
+        num_choices: num as i32,
+    };
+    true
+}
+
+/// what: 0 = id ("thr"), 1 = label ("THR"), 2 = unit ("dB").
+#[no_mangle]
+pub extern "C" fn ld_model_param_text(t: i32, m: i32, p: i32, what: i32) -> *mut LdString {
+    let s = param(t, m, p).map_or("", |p| match what {
+        0 => p.id,
+        1 => p.label,
+        _ => p.unit,
+    });
+    LdString::new(s.to_owned())
+}
+
+/// Text of choice `i` of a choice/values parameter.
+#[no_mangle]
+pub extern "C" fn ld_model_param_choice(t: i32, m: i32, p: i32, i: i32) -> *mut LdString {
+    let s = param(t, m, p).map(|p| p.display(i as f32)).unwrap_or_default();
+    LdString::new(s)
+}
+
+/// Console-style text for a value ("-20.0 dB", "1:2", "8k").
+#[no_mangle]
+pub extern "C" fn ld_model_param_display(t: i32, m: i32, p: i32, value: f32) -> *mut LdString {
+    LdString::new(param(t, m, p).map(|p| p.display(value)).unwrap_or_default())
+}
+
+/// Knob position 0..1 for a value (log taper for log parameters).
+#[no_mangle]
+pub extern "C" fn ld_model_param_to_normalised(t: i32, m: i32, p: i32, value: f32) -> f32 {
+    param(t, m, p).map_or(0.0, |p| p.to_normalised(value))
+}
+
+#[no_mangle]
+pub extern "C" fn ld_model_param_from_normalised(t: i32, m: i32, p: i32, pos: f32) -> f32 {
+    param(t, m, p).map_or(0.0, |p| p.from_normalised(pos))
+}
+
+#[no_mangle]
+pub extern "C" fn ld_list_count(l: i32) -> i32 {
+    list(l).len() as i32
+}
+
+#[no_mangle]
+pub extern "C" fn ld_list_item(l: i32, i: i32) -> *mut LdString {
+    LdString::new(usize::try_from(i).ok().and_then(|i| list(l).get(i)).copied().unwrap_or("").to_owned())
+}
+
+/// See `ld_strip_response`.
+pub(crate) fn strip_response(s: &Strip, block: i32, freqs: &[f64], out: &mut [f64], sr: f64) {
+    if block == 3 {
+        let settings = s.params.filter.snapshot();
+        let (coeffs, n) = settings.design(sr);
+        for (f, o) in freqs.iter().zip(out.iter_mut()) {
+            let mag: f64 = coeffs[..n].iter().map(|c| c.magnitude_at(*f, sr)).product();
+            *o = 20.0 * mag.max(1e-9).log10();
+        }
+        return;
+    }
+    let eq = &s.params.eq;
+    let table = if s.kind().is_output() { EQ_MODELS_BUS } else { EQ_MODELS_CH };
+    let spec = &table[(eq.model.load(std::sync::atomic::Ordering::Relaxed).max(0) as usize).min(table.len() - 1)];
+    let mut values = [0.0; MAX_EQ_PARAMS];
+    eq.values_snapshot(&mut values);
+    let on = eq.on.load(std::sync::atomic::Ordering::Relaxed);
+    let d = design(spec, &values[..spec.params.len()], sr, if on { eq.mix.load() / 100.0 } else { 0.0 });
+    for (f, o) in freqs.iter().zip(out.iter_mut()) {
+        *o = d.response_db(*f, sr);
+    }
+}

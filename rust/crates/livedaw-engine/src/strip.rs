@@ -1,14 +1,47 @@
-//! One console strip: trim -> polarity -> HPF -> gate -> EQ -> compressor ->
-//! plugin inserts -> mute -> fader -> pan. Used for inputs, buses and the master.
+//! One console strip, processed the WING way:
+//!
+//! INPUT (trim, balance, polarity, delay) -> FILTER -> the GATE slot, EQ,
+//! DYNAMICS slot and PRE INSERT in the strip's process order -> fader (with
+//! DCAs, mute and mute groups) -> POST INSERT -> width/pan -> output delay.
+//! Signal taps along the way feed pre-fader sends, solo and direct outs.
+//!
+//! Channels use every block; aux channels have no filter or gate; buses, mains
+//! and matrices run EQ -> DYNAMICS -> PRE INSERT and delay their output.
 
-use crate::inserts::InsertChain;
-use crate::params::{StripKind, StripMeters, StripParams};
+use crate::fx::FxRack;
+use crate::params::{DcaParams, FxParams, StripKind, StripMeters, StripParams, NUM_MAINS, NUM_MATRICES};
 use crate::sends::SendBank;
+use livedaw_dsp::delay::{delay_to_ms, DelayLine};
 use livedaw_dsp::util::*;
-use livedaw_dsp::{Biquad, BiquadCoeffs, Compressor, NoiseGate, ParametricEq};
+use livedaw_dsp::wing::dynamics::{DynStatus, WingDynamics};
+use livedaw_dsp::wing::eq::WingEq;
+use livedaw_dsp::wing::filter::WingFilter;
+use livedaw_dsp::wing::{EQ_MODELS_BUS, EQ_MODELS_CH, MAX_DYN_PARAMS, MAX_EQ_PARAMS, PROCESS_ORDERS};
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
-use std::sync::Mutex;
+use std::sync::atomic::Ordering::Relaxed;
+use std::sync::{Arc, Mutex};
+
+/// Tap points (TAP_POINTS order): IN, FILT, after 1st/2nd/3rd block, PFL, AFL, POST.
+pub mod tap {
+    pub const IN: usize = 0;
+    pub const FILT: usize = 1;
+    pub const PFL: usize = 5;
+    pub const AFL: usize = 6;
+    pub const POST: usize = 7;
+}
+
+/// What a strip needs from the engine while processing.
+pub(crate) struct ProcessContext<'a> {
+    pub fx: &'a [FxRack],
+    pub fx_params: &'a [FxParams],
+    pub dcas: &'a [DcaParams],
+    pub mute_groups: u32,
+    /// Hardware inputs by hardware channel (null = inactive).
+    pub hw_inputs: &'a [*const f32],
+    /// The input channels (for sidechain keys from other channels).
+    pub channels: &'a [Arc<Strip>],
+    pub block: u64,
+}
 
 /// Realtime state, touched by exactly one audio task at a time (see the
 /// stage rules on [`Strip`]).
@@ -19,22 +52,30 @@ pub(crate) struct StripDsp {
     input_connected: bool,
     idle: bool,
     work: [Vec<f32>; 2],
-    pre: [Vec<f32>; 2],
+    tap: [Vec<f32>; 2],
+    pfl: [Vec<f32>; 2],
     post: [Vec<f32>; 2],
-    main: [Vec<f32>; 2],
-    hpf: Biquad,
-    last_hpf_freq: f32,
-    hpf_was_on: bool,
-    gate: NoiseGate,
-    eq: ParametricEq,
-    comp: Compressor,
-    last_trim: f32,
-    last_mute: f32,
-    last_fader: f32,
-    pan_left: f32,
-    pan_right: f32,
-    last_pan_left: f32,
-    last_pan_right: f32,
+    out: [Vec<f32>; 2],
+    key: Vec<f32>,
+    delay: DelayLine,
+    filter: WingFilter,
+    gate: WingDynamics,
+    eq: WingEq,
+    dynamics: WingDynamics,
+    gate_values: [f32; MAX_DYN_PARAMS],
+    dyn_values: [f32; MAX_DYN_PARAMS],
+    eq_values: [f32; MAX_EQ_PARAMS],
+    last_in: [f32; 2],
+    last_gain: f32,
+    /// 2x2 output matrix (ll, rl, lr, rr): out_l = ll*L + rl*R, out_r = lr*L + rr*R.
+    out_matrix: [f32; 4],
+    /// Pan gains for taking pre-fader signals into stereo destinations.
+    pan_gains: [f32; 2],
+    automix_gain: f32,
+    automix_power: f32,
+    tap_point: usize,
+    /// Matrices: ramp of the direct input (owned by the matrix task).
+    last_direct: f32,
 }
 
 impl StripDsp {
@@ -46,40 +87,52 @@ impl StripDsp {
             input_connected: true,
             idle: false,
             work: [Vec::new(), Vec::new()],
-            pre: [Vec::new(), Vec::new()],
+            tap: [Vec::new(), Vec::new()],
+            pfl: [Vec::new(), Vec::new()],
             post: [Vec::new(), Vec::new()],
-            main: [Vec::new(), Vec::new()],
-            hpf: Biquad::default(),
-            last_hpf_freq: -1.0,
-            hpf_was_on: false,
-            gate: NoiseGate::default(),
-            eq: ParametricEq::default(),
-            comp: Compressor::default(),
-            last_trim: 1.0,
-            last_mute: 1.0,
-            last_fader: 1.0,
-            pan_left: 1.0,
-            pan_right: 1.0,
-            last_pan_left: 1.0,
-            last_pan_right: 1.0,
+            out: [Vec::new(), Vec::new()],
+            key: Vec::new(),
+            delay: DelayLine::default(),
+            filter: WingFilter::default(),
+            gate: WingDynamics::default(),
+            eq: WingEq::default(),
+            dynamics: WingDynamics::default(),
+            gate_values: [0.0; MAX_DYN_PARAMS],
+            dyn_values: [0.0; MAX_DYN_PARAMS],
+            eq_values: [0.0; MAX_EQ_PARAMS],
+            last_in: [1.0; 2],
+            last_gain: 1.0,
+            out_matrix: [0.0; 4],
+            pan_gains: [1.0; 2],
+            automix_gain: 1.0,
+            automix_power: 0.0,
+            tap_point: tap::PFL,
+            last_direct: 0.0,
         }
     }
 
     fn reset_dsp(&mut self) {
-        self.hpf.reset();
+        self.filter.reset();
         self.gate.reset();
         self.eq.reset();
-        self.comp.reset();
+        self.dynamics.reset();
+        self.delay.reset();
+    }
+
+    fn buffers_mut(&mut self) -> [&mut [Vec<f32>; 2]; 5] {
+        [&mut self.work, &mut self.tap, &mut self.pfl, &mut self.post, &mut self.out]
     }
 }
 
 /// A console strip.
 ///
-/// Thread rules for the realtime state (`dsp`, `last_main_assign`, `last_solo`):
-/// * stage 1 (inputs) / stage 2 (buses): the task processing a strip owns its `dsp`;
-///   bus tasks only *read* input strips' output buffers, which are complete by then;
-/// * master and monitor stages run on the audio thread alone and own the
-///   per-strip summing ramps (`last_main_assign`, `last_solo`);
+/// Thread rules for the realtime state (`dsp` and the `last_*` ramps):
+/// * the stage task processing a strip owns its `dsp`; later stages only *read*
+///   the buffers of strips processed in earlier stages;
+/// * each destination task owns the ramps of the sends feeding it: bus tasks the
+///   `SendParams::last_gain` of their slot, main task `i` `last_main[i]`, matrix
+///   task `j` `last_mtx[j]`;
+/// * the monitor stage runs on the audio thread alone and owns `last_solo`;
 /// * the message thread only touches `dsp` through `prepare`, while the strip is
 ///   not reachable by the audio thread (device stopped, or not yet published).
 pub struct Strip {
@@ -87,13 +140,13 @@ pub struct Strip {
     id: i32,
     pub params: StripParams,
     pub meters: StripMeters,
+    /// Sends to buses (channels/aux: all buses; buses 9+: buses 1-8).
     pub sends: SendBank,
-    pub inserts: InsertChain,
     /// UI metadata (never touched by the audio thread).
     name: Mutex<String>,
-    colour: AtomicU32,
     dsp: UnsafeCell<StripDsp>,
-    last_main_assign: UnsafeCell<f32>,
+    last_main: [UnsafeCell<[f32; 2]>; NUM_MAINS],
+    last_mtx: [UnsafeCell<[f32; 2]>; NUM_MATRICES],
     last_solo: UnsafeCell<f32>,
 }
 
@@ -109,11 +162,10 @@ impl Strip {
             params: StripParams::new(kind),
             meters: StripMeters::default(),
             sends: SendBank::default(),
-            inserts: InsertChain::default(),
             name: Mutex::new(String::new()),
-            colour: AtomicU32::new(Self::default_colour(kind)),
             dsp: UnsafeCell::new(StripDsp::new()),
-            last_main_assign: UnsafeCell::new(0.0),
+            last_main: Default::default(),
+            last_mtx: Default::default(),
             last_solo: UnsafeCell::new(0.0),
         }
     }
@@ -122,19 +174,9 @@ impl Strip {
         self.kind
     }
 
-    /// Inputs: a stable id. Buses: the bus slot sends refer to. Master: 0.
+    /// Channels: a stable id. Buses: the slot sends refer to. Others: 0-based index.
     pub fn id(&self) -> i32 {
         self.id
-    }
-
-    /// Default strip colour per kind (0xAARRGGBB).
-    pub fn default_colour(kind: StripKind) -> u32 {
-        match kind {
-            StripKind::Input => 0xff3d7ab8,
-            StripKind::Aux => 0xff3daa6e,
-            StripKind::Group => 0xffb8863d,
-            StripKind::Master => 0xffb83d4f,
-        }
     }
 
     pub fn name(&self) -> String {
@@ -145,13 +187,19 @@ impl Strip {
         *self.name.lock().unwrap_or_else(|e| e.into_inner()) = name.to_owned();
     }
 
-    /// 0xAARRGGBB
-    pub fn colour(&self) -> u32 {
-        self.colour.load(Relaxed)
+    /// True if this strip feeds `slot` from its pre/post insert.
+    pub fn uses_fx(&self, slot: usize) -> bool {
+        let p = &self.params;
+        (p.pre_insert.on.load(Relaxed) && p.pre_insert.fx.load(Relaxed) == slot as i32)
+            || (p.post_insert.on.load(Relaxed)
+                && p.post_insert.mode.load(Relaxed) == 0
+                && p.post_insert.fx.load(Relaxed) == slot as i32)
     }
 
-    pub fn set_colour(&self, argb: u32) {
-        self.colour.store(argb, Relaxed);
+    fn has_inserts(&self) -> bool {
+        let p = &self.params;
+        (p.pre_insert.on.load(Relaxed) && p.pre_insert.fx.load(Relaxed) >= 0)
+            || (p.post_insert.on.load(Relaxed) && p.post_insert.mode.load(Relaxed) == 0 && p.post_insert.fx.load(Relaxed) >= 0)
     }
 
     /// # Safety
@@ -161,19 +209,21 @@ impl Strip {
         let d = &mut *self.dsp.get();
         d.sample_rate = sample_rate;
         d.max_block = max_block.max(1);
-        for buffers in [&mut d.work, &mut d.pre, &mut d.post, &mut d.main] {
+        let mb = d.max_block;
+        for buffers in d.buffers_mut() {
             for b in buffers.iter_mut() {
                 b.clear();
-                b.resize(d.max_block, 0.0); // zeroed: an idle strip relies on it
+                b.resize(mb, 0.0); // zeroed: an idle strip relies on it
             }
         }
+        d.key.clear();
+        d.key.resize(mb, 0.0);
         d.idle = false;
-        d.hpf.reset();
-        d.last_hpf_freq = -1.0;
+        d.filter.prepare(sample_rate);
         d.gate.prepare(sample_rate);
         d.eq.prepare(sample_rate);
-        d.comp.prepare(sample_rate);
-        self.inserts.prepare(d.max_block);
+        d.dynamics.prepare(sample_rate);
+        d.delay.prepare(sample_rate);
     }
 
     // ---- read-only views (valid after the strip's stage has run) ------------
@@ -191,8 +241,14 @@ impl Strip {
 
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    pub(crate) unsafe fn last_main_assign(&self) -> &mut f32 {
-        &mut *self.last_main_assign.get()
+    pub(crate) unsafe fn last_main(&self, main: usize) -> &mut [f32; 2] {
+        &mut *self.last_main[main].get()
+    }
+
+    #[inline]
+    #[allow(clippy::mut_from_ref)]
+    pub(crate) unsafe fn last_mtx(&self, mtx: usize) -> &mut [f32; 2] {
+        &mut *self.last_mtx[mtx].get()
     }
 
     #[inline]
@@ -212,14 +268,41 @@ impl Strip {
         unsafe { std::ptr::read_volatile(&(*self.dsp.get()).idle) }
     }
 
+    /// Effective mute: own mute, a muted DCA or an engaged mute group.
+    pub(crate) fn is_muted(&self, dcas: &[DcaParams], mute_groups: u32) -> bool {
+        let p = &self.params;
+        if p.mute.load(Relaxed) || p.mute_group_mask.load(Relaxed) & mute_groups != 0 {
+            return true;
+        }
+        let mask = p.dca_mask.load(Relaxed);
+        mask != 0 && dcas.iter().enumerate().any(|(i, d)| mask & (1 << i) != 0 && d.mute.load(Relaxed))
+    }
+
+    /// Effective solo: own solo or a soloed DCA.
+    pub(crate) fn is_soloed(&self, dcas: &[DcaParams]) -> bool {
+        let p = &self.params;
+        if p.solo.load(Relaxed) {
+            return true;
+        }
+        let mask = p.dca_mask.load(Relaxed);
+        mask != 0 && dcas.iter().enumerate().any(|(i, d)| mask & (1 << i) != 0 && d.solo.load(Relaxed))
+    }
+
+    fn dca_offset_db(&self, dcas: &[DcaParams]) -> f32 {
+        let mask = self.params.dca_mask.load(Relaxed);
+        if mask == 0 {
+            return 0.0;
+        }
+        dcas.iter().enumerate().filter(|(i, _)| mask & (1 << i) != 0).map(|(_, d)| d.fader_db.load()).sum()
+    }
+
     // ---- audio thread ---------------------------------------------------------
 
-    /// Inputs: pull from the hardware inputs (indexed by hardware channel; null = inactive).
+    /// Input channels: pull from the hardware inputs.
     ///
     /// # Safety
-    /// Stage-1 task for this strip only. Non-null pointers must be valid for `n` samples.
-    pub(crate) unsafe fn read_hardware_inputs(&self, hw: &[*const f32], n: usize) {
-        let d = self.dsp_mut();
+    /// Owning task only. Non-null pointers must be valid for `n` samples.
+    unsafe fn read_hardware_inputs(&self, d: &mut StripDsp, hw: &[*const f32], n: usize) {
         let p = &self.params;
         let left = p.input_left.load(Relaxed);
         let mut right = p.input_right.load(Relaxed);
@@ -230,10 +313,7 @@ impl Strip {
         self.meters.current_width.store(d.num_channels as i32, Relaxed);
 
         let sources = [left, right];
-        let source = |ch: usize| -> Option<*const f32> {
-            let hw_index = sources[ch];
-            (hw_index >= 0 && (hw_index as usize) < hw.len() && !hw[hw_index as usize].is_null()).then(|| hw[hw_index as usize])
-        };
+        let source = |ch: usize| hw_ptr(hw, sources[ch]);
 
         // Already idle and still unpatched: buffers are still zero, nothing to do.
         if d.idle && (0..d.num_channels).all(|ch| source(ch).is_none()) {
@@ -255,41 +335,50 @@ impl Strip {
         }
     }
 
-    /// Buses/master: clear the work buffer before sums are accumulated into it.
+    /// Summing buses: clear the work buffer before sums are accumulated into it.
     ///
     /// # Safety
     /// Owning task only.
     pub(crate) unsafe fn begin_summed_block(&self, n: usize) {
         let d = self.dsp_mut();
-        let stereo = self.kind == StripKind::Master || self.params.stereo.load(Relaxed);
-        d.num_channels = if stereo { 2 } else { 1 };
-        self.meters.current_width.store(d.num_channels as i32, Relaxed);
-        for ch in 0..d.num_channels {
+        d.num_channels = 2;
+        self.meters.current_width.store(2, Relaxed);
+        for ch in 0..2 {
             d.work[ch][..n].fill(0.0);
         }
     }
 
-    /// Runs the chain and output stage on the work buffer.
+    /// Runs the whole strip for one block.
     ///
     /// # Safety
-    /// Owning task only.
-    pub(crate) unsafe fn process(&self, n: usize) {
+    /// Owning task only; inputs are read from `ctx.hw_inputs`, summing buses must
+    /// have accumulated their input with `begin_summed_block` + sums first.
+    pub(crate) unsafe fn process(&self, ctx: &ProcessContext, n: usize) {
         let d = self.dsp_mut();
         debug_assert!(n <= d.max_block);
 
-        // Fast path: an input with nothing patched and no plugins can only output
-        // silence, so skip its DSP entirely (big consoles with unused channels).
-        if self.kind == StripKind::Input && !d.input_connected && self.inserts.is_empty() {
-            if !d.idle {
-                // Clear once on entering idle; nothing writes the buffers after that.
-                for buffers in [&mut d.work, &mut d.pre, &mut d.post, &mut d.main] {
-                    buffers.iter_mut().for_each(|b| b.fill(0.0));
+        if self.kind.is_input() {
+            self.read_hardware_inputs(d, ctx.hw_inputs, n);
+            // Fast path: an unpatched input without inserts can only output
+            // silence, so skip its DSP entirely (big consoles with unused channels).
+            if !d.input_connected && !self.has_inserts() {
+                if !d.idle {
+                    // Clear once on entering idle; nothing writes the buffers after that.
+                    for buffers in d.buffers_mut() {
+                        buffers.iter_mut().for_each(|b| b.fill(0.0));
+                    }
                 }
+                self.meters.gate_reduction_db.store(0.0);
+                self.meters.dyn_reduction_db.store(0.0);
+                self.meters.gate_active.store(false, Relaxed);
+                self.meters.dyn_active.store(false, Relaxed);
+                d.idle = true;
+                return;
             }
-            self.meters.gate_gain.store(1.0);
-            self.meters.comp_reduction_db.store(0.0);
-            d.idle = true;
-            return;
+        } else {
+            for ch in 0..d.num_channels {
+                self.meters.input_peak[ch].fetch_max(peak_level(&d.work[ch][..n]));
+            }
         }
 
         if d.idle {
@@ -297,18 +386,14 @@ impl Strip {
             d.idle = false;
         }
 
-        if self.kind != StripKind::Input {
-            for ch in 0..d.num_channels {
-                self.meters.input_peak[ch].fetch_max(peak_level(&d.work[ch][..n]));
-            }
-        }
-
-        self.run_chain(d, n);
+        self.run_chain(d, ctx, n);
 
         // Never let NaN/inf escape a strip: it would poison every bus it feeds.
-        let finite = (0..d.num_channels).all(|ch| all_finite(&d.work[ch][..n]));
+        let finite = (0..d.num_channels).all(|ch| all_finite(&d.work[ch][..n]) && all_finite(&d.post[ch][..n]));
         if !finite {
-            d.work.iter_mut().for_each(|b| b[..n].fill(0.0));
+            for buffers in d.buffers_mut() {
+                buffers.iter_mut().for_each(|b| b[..n].fill(0.0));
+            }
             d.reset_dsp();
             self.meters.dsp_faults.fetch_add(1, Relaxed);
         }
@@ -316,85 +401,283 @@ impl Strip {
         self.run_output_stage(d, n);
     }
 
-    fn run_chain(&self, d: &mut StripDsp, n: usize) {
+    fn copy_tap(d: &mut StripDsp, point: usize, n: usize) {
+        if d.tap_point == point {
+            let nc = d.num_channels;
+            let (work, tap) = (&d.work, &mut d.tap);
+            for ch in 0..nc {
+                tap[ch][..n].copy_from_slice(&work[ch][..n]);
+            }
+        }
+    }
+
+    unsafe fn run_chain(&self, d: &mut StripDsp, ctx: &ProcessContext, n: usize) {
         let p = &self.params;
         let nc = d.num_channels;
+        let sr = d.sample_rate;
+        d.tap_point = (p.tap.load(Relaxed).clamp(0, 7)) as usize;
 
-        // Trim + polarity
-        let polarity = if p.polarity_invert.load(Relaxed) { -1.0 } else { 1.0 };
-        let trim = db_to_gain(p.trim_db.load()) * polarity;
+        // INPUT: trim, balance, polarity
+        let polarity = if p.input.invert.load(Relaxed) { -1.0 } else { 1.0 };
+        let trim = db_to_gain(p.input.trim_db.load()) * polarity;
+        let bal = if nc == 2 { p.input.balance_db.load() } else { 0.0 };
+        let gains = [trim * db_to_gain(-bal.max(0.0)), trim * db_to_gain(bal.min(0.0))];
+        for (ch, &gain) in gains.iter().enumerate().take(nc) {
+            apply_gain_ramp(&mut d.work[ch][..n], d.last_in[ch], gain);
+        }
+        d.last_in = gains;
+
+        // Channel delay (outputs delay at the end of the chain).
+        if self.kind.is_input() {
+            self.apply_delay(d, n);
+        }
+        Self::copy_tap(d, tap::IN, n);
+
+        // FILTER (channels only)
+        if self.kind == StripKind::Channel {
+            let settings = p.filter.snapshot();
+            if settings.is_active() {
+                let [w0, w1] = &mut d.work;
+                let mut chans: [&mut [f32]; 2] = [&mut w0[..n], &mut w1[..n]];
+                d.filter.process(&mut chans[..nc], &settings);
+            }
+        }
+        Self::copy_tap(d, tap::FILT, n);
+
+        // The four reorderable blocks.
+        let order: &[u8] = match self.kind {
+            StripKind::Channel => {
+                let i = p.process_order.load(Relaxed).clamp(0, PROCESS_ORDERS.len() as i32 - 1) as usize;
+                PROCESS_ORDERS[i].as_bytes()
+            }
+            _ => b"EDI",
+        };
+        for (pos, block) in order.iter().enumerate() {
+            match block {
+                b'G' => self.run_gate(d, ctx, n),
+                b'E' => self.run_eq(d, n),
+                b'D' => self.run_dynamics(d, ctx, n),
+                b'I' => self.run_insert(d, ctx, n, false),
+                _ => {}
+            }
+            // Tap points "3", "4", "5" sit after the 1st, 2nd and 3rd block.
+            if pos < 3 {
+                Self::copy_tap(d, 2 + pos, n);
+            }
+        }
+        let _ = sr;
+
+        // PFL: pre-fader, after processing (solo, direct outs, PFL taps).
         for ch in 0..nc {
-            apply_gain_ramp(&mut d.work[ch][..n], d.last_trim, trim);
+            d.pfl[ch][..n].copy_from_slice(&d.work[ch][..n]);
         }
-        d.last_trim = trim;
+        Self::copy_tap(d, tap::PFL, n);
 
-        // High-pass filter (12 dB/oct)
-        if p.hpf_enabled.load(Relaxed) {
-            let f = p.hpf_frequency.load();
-            if !d.hpf_was_on {
-                d.hpf.reset();
-            }
-            if f != d.last_hpf_freq {
-                d.hpf.set_coefficients(BiquadCoeffs::high_pass(d.sample_rate, f as f64, std::f64::consts::FRAC_1_SQRT_2));
-                d.last_hpf_freq = f;
-            }
-            for ch in 0..nc {
-                d.hpf.process(&mut d.work[ch][..n], ch);
-            }
-            d.hpf_was_on = true;
-        } else {
-            d.hpf_was_on = false;
+        // Fader with DCAs, mute and mute groups.
+        let muted = self.is_muted(ctx.dcas, ctx.mute_groups);
+        let gain = if muted { 0.0 } else { db_to_gain(p.fader_db.load() + self.dca_offset_db(ctx.dcas)) };
+        for ch in 0..nc {
+            apply_gain_ramp(&mut d.work[ch][..n], d.last_gain, gain);
+        }
+        d.last_gain = gain;
+        Self::copy_tap(d, tap::AFL, n);
+
+        // POST INSERT (automix is applied by the engine after all channels ran).
+        if p.post_insert.mode.load(Relaxed) == 0 {
+            self.run_insert(d, ctx, n, true);
+        }
+        if self.kind.is_input() && p.post_insert.on.load(Relaxed) && p.post_insert.mode.load(Relaxed) != 0 {
+            let power: f32 = (0..nc).map(|ch| d.pfl[ch][..n].iter().map(|x| x * x).sum::<f32>()).sum::<f32>() / (n * nc) as f32;
+            let c = 0.7;
+            d.automix_power = c * d.automix_power + (1.0 - c) * power * db_to_gain(p.post_insert.weight.load() * 2.0);
         }
 
+        // Output delay (buses, mains, matrices).
+        if self.kind.is_output() {
+            self.apply_delay(d, n);
+        }
+        for ch in 0..nc {
+            d.post[ch][..n].copy_from_slice(&d.work[ch][..n]);
+        }
+        Self::copy_tap(d, tap::POST, n);
+    }
+
+    fn apply_delay(&self, d: &mut StripDsp, n: usize) {
+        let p = &self.params.input;
+        if !p.delay_on.load(Relaxed) {
+            return;
+        }
+        let ms = delay_to_ms(p.delay.load(), p.delay_mode.load(Relaxed).clamp(0, 3) as usize, d.sample_rate);
+        let samples = (ms.max(0.0) * 0.001 * d.sample_rate as f32).round() as usize;
+        let nc = d.num_channels;
         let [w0, w1] = &mut d.work;
         let mut chans: [&mut [f32]; 2] = [&mut w0[..n], &mut w1[..n]];
-        let chans = &mut chans[..nc];
+        d.delay.process(&mut chans[..nc], samples);
+    }
 
-        d.gate.set_settings(p.gate.snapshot());
-        d.gate.process(chans);
-        self.meters.gate_gain.store(d.gate.last_block_min_gain());
+    /// Key signal for a dynamics slot: another channel's input, or None (self).
+    unsafe fn key_for(&self, d: &mut StripDsp, ctx: &ProcessContext, source: i32, n: usize) -> bool {
+        if source < 0 {
+            return false;
+        }
+        let Some(ch) = ctx.channels.get(source as usize) else { return false };
+        let ptr = hw_ptr(ctx.hw_inputs, ch.params.input_left.load(Relaxed));
+        match ptr {
+            Some(src) => d.key[..n].copy_from_slice(std::slice::from_raw_parts(src, n)),
+            None => d.key[..n].fill(0.0),
+        }
+        true
+    }
 
-        d.eq.set_settings(p.eq.snapshot());
-        d.eq.process(chans);
+    unsafe fn run_gate(&self, d: &mut StripDsp, ctx: &ProcessContext, n: usize) {
+        let slot = &self.params.gate;
+        if !slot.on.load(Relaxed) {
+            self.meters.gate_reduction_db.store(0.0);
+            self.meters.gate_active.store(false, Relaxed);
+            return;
+        }
+        slot.values_snapshot(&mut d.gate_values);
+        let external = self.key_for(d, ctx, slot.sc_source.load(Relaxed), n);
+        let nc = d.num_channels;
+        let [w0, w1] = &mut d.work;
+        let mut chans: [&mut [f32]; 2] = [&mut w0[..n], &mut w1[..n]];
+        let key = if external { Some(&d.key[..n]) } else { None };
+        let status: DynStatus = d.gate.process(
+            &mut chans[..nc],
+            key,
+            slot.model_index(),
+            &d.gate_values,
+            &slot.sidechain(),
+            &slot.xover(),
+            slot.mix.load() / 100.0,
+            slot.gain.load(),
+        );
+        self.meters.gate_reduction_db.store(status.gain_reduction_db);
+        self.meters.gate_active.store(status.active, Relaxed);
+    }
 
-        d.comp.set_settings(p.comp.snapshot());
-        d.comp.process(chans);
-        self.meters.comp_reduction_db.store(d.comp.last_block_gain_reduction_db());
+    unsafe fn run_dynamics(&self, d: &mut StripDsp, ctx: &ProcessContext, n: usize) {
+        let slot = &self.params.dynamics;
+        if !slot.on.load(Relaxed) {
+            self.meters.dyn_reduction_db.store(0.0);
+            self.meters.dyn_active.store(false, Relaxed);
+            return;
+        }
+        slot.values_snapshot(&mut d.dyn_values);
+        let external = self.key_for(d, ctx, slot.sc_source.load(Relaxed), n);
+        let nc = d.num_channels;
+        let [w0, w1] = &mut d.work;
+        let mut chans: [&mut [f32]; 2] = [&mut w0[..n], &mut w1[..n]];
+        let key = if external { Some(&d.key[..n]) } else { None };
+        let status = d.dynamics.process(
+            &mut chans[..nc],
+            key,
+            slot.model_index(),
+            &d.dyn_values,
+            &slot.sidechain(),
+            &slot.xover(),
+            slot.mix.load() / 100.0,
+            slot.gain.load(),
+        );
+        self.meters.dyn_reduction_db.store(status.gain_reduction_db);
+        self.meters.dyn_active.store(status.active, Relaxed);
+    }
 
-        // SAFETY: this task owns the strip, so it owns the insert chain's scratch.
-        unsafe { self.inserts.process(chans, d.sample_rate) };
+    fn run_eq(&self, d: &mut StripDsp, n: usize) {
+        let eq = &self.params.eq;
+        eq.values_snapshot(&mut d.eq_values);
+        let table = if self.kind.is_output() { EQ_MODELS_BUS } else { EQ_MODELS_CH };
+        let model = (eq.model.load(Relaxed).max(0) as usize).min(table.len() - 1);
+        let nc = d.num_channels;
+        let [w0, w1] = &mut d.work;
+        let mut chans: [&mut [f32]; 2] = [&mut w0[..n], &mut w1[..n]];
+        d.eq.process(&mut chans[..nc], table, model, eq.on.load(Relaxed), eq.mix.load(), &d.eq_values);
+    }
+
+    unsafe fn run_insert(&self, d: &mut StripDsp, ctx: &ProcessContext, n: usize, post: bool) {
+        let ins = if post { &self.params.post_insert } else { &self.params.pre_insert };
+        if !ins.on.load(Relaxed) {
+            return;
+        }
+        let slot = ins.fx.load(Relaxed);
+        let (Some(rack), Some(fxp)) = (ctx.fx.get(slot.max(0) as usize), ctx.fx_params.get(slot.max(0) as usize)) else { return };
+        if slot < 0 {
+            return;
+        }
+        let nc = d.num_channels;
+        let [w0, w1] = &mut d.work;
+        let mut chans: [&mut [f32]; 2] = [&mut w0[..n], &mut w1[..n]];
+        rack.process(&mut chans[..nc], d.sample_rate, fxp.bypass.load(Relaxed), fxp.mix.load() / 100.0, ctx.block);
     }
 
     fn run_output_stage(&self, d: &mut StripDsp, n: usize) {
         let p = &self.params;
         let nc = d.num_channels;
-        let mute = if p.mute.load(Relaxed) { 0.0 } else { 1.0 };
-        let fader = db_to_gain(p.fader_db.load());
+        let pan = p.pan.load() / 100.0;
 
-        for ch in 0..nc {
-            d.pre[ch][..n].copy_from_slice(&d.work[ch][..n]);
-            apply_gain_ramp(&mut d.pre[ch][..n], d.last_mute, mute);
-            d.post[ch][..n].copy_from_slice(&d.pre[ch][..n]);
-            apply_gain_ramp(&mut d.post[ch][..n], d.last_fader, fader);
+        let target = if nc == 1 {
+            let (l, r) = constant_power_pan(pan);
+            d.pan_gains = [l, r];
+            [l, 0.0, r, 0.0]
+        } else {
+            let (gl, gr) = stereo_balance(pan);
+            d.pan_gains = [gl, gr];
+            let w = (p.width.load() / 100.0).clamp(-1.5, 1.5);
+            let (same, cross) = ((1.0 + w) * 0.5, (1.0 - w) * 0.5);
+            [gl * same, gl * cross, gr * cross, gr * same]
+        };
+        let mono = self.kind.is_output() && p.mono.load(Relaxed);
+
+        let last = d.out_matrix;
+        let right = if nc > 1 { 1 } else { 0 };
+        let [o0, o1] = &mut d.out;
+        let (o0, o1) = (&mut o0[..n], &mut o1[..n]);
+        o0.fill(0.0);
+        o1.fill(0.0);
+        add_with_gain_ramp(o0, &d.post[0][..n], last[0], target[0]);
+        add_with_gain_ramp(o1, &d.post[0][..n], last[2], target[2]);
+        if nc > 1 {
+            add_with_gain_ramp(o0, &d.post[right][..n], last[1], target[1]);
+            add_with_gain_ramp(o1, &d.post[right][..n], last[3], target[3]);
         }
-        d.last_mute = mute;
-        d.last_fader = fader;
+        d.out_matrix = target;
+        if mono {
+            for (l, r) in o0.iter_mut().zip(o1.iter_mut()) {
+                let m = (*l + *r) * 0.5;
+                *l = m;
+                *r = m;
+            }
+        }
 
-        let pan = p.pan.load();
-        (d.pan_left, d.pan_right) = if nc == 1 { constant_power_pan(pan) } else { stereo_balance(pan) };
-
-        let right_src = if nc > 1 { 1 } else { 0 };
-        let [m0, m1] = &mut d.main;
-        m0[..n].copy_from_slice(&d.post[0][..n]);
-        m1[..n].copy_from_slice(&d.post[right_src][..n]);
-        apply_gain_ramp(&mut m0[..n], d.last_pan_left, d.pan_left);
-        apply_gain_ramp(&mut m1[..n], d.last_pan_right, d.pan_right);
-        d.last_pan_left = d.pan_left;
-        d.last_pan_right = d.pan_right;
-
-        self.meters.output_peak[0].fetch_max(peak_level(&m0[..n]));
-        self.meters.output_peak[1].fetch_max(peak_level(&m1[..n]));
+        self.meters.output_peak[0].fetch_max(peak_level(o0));
+        self.meters.output_peak[1].fetch_max(peak_level(o1));
     }
+
+    /// Engine automix pass: scales everything after the fader by `gain`.
+    ///
+    /// # Safety
+    /// Audio thread, after the input stage, before anything reads this strip.
+    pub(crate) unsafe fn apply_automix(&self, gain: f32, n: usize) {
+        let d = self.dsp_mut();
+        let last = d.automix_gain;
+        let nc = d.num_channels;
+        for ch in 0..nc {
+            apply_gain_ramp(&mut d.post[ch][..n], last, gain);
+            if d.tap_point >= tap::AFL {
+                apply_gain_ramp(&mut d.tap[ch][..n], last, gain);
+            }
+        }
+        for ch in 0..2 {
+            apply_gain_ramp(&mut d.out[ch][..n], last, gain);
+        }
+        d.automix_gain = gain;
+        self.meters.automix_db.store(gain_to_db(gain));
+    }
+}
+
+fn hw_ptr(hw: &[*const f32], index: i32) -> Option<*const f32> {
+    let i = usize::try_from(index).ok()?;
+    hw.get(i).copied().filter(|p| !p.is_null())
 }
 
 /// Read access to a processed strip's signal taps (valid after its stage).
@@ -407,25 +690,46 @@ impl StripDsp {
     pub(crate) fn idle(&self) -> bool {
         self.idle
     }
+    /// Right-channel index for this strip's width (mono strips repeat the left).
     #[inline]
-    pub(crate) fn post_chain(&self, ch: usize, n: usize) -> &[f32] {
-        &self.work[ch][..n]
+    fn rc(&self, ch: usize) -> usize {
+        if self.num_channels > 1 {
+            ch.min(1)
+        } else {
+            0
+        }
     }
     #[inline]
-    pub(crate) fn pre_fader(&self, ch: usize, n: usize) -> &[f32] {
-        &self.pre[ch][..n]
+    pub(crate) fn tap_signal(&self, ch: usize, n: usize) -> &[f32] {
+        &self.tap[self.rc(ch)][..n]
     }
     #[inline]
-    pub(crate) fn post_fader(&self, ch: usize, n: usize) -> &[f32] {
-        &self.post[ch][..n]
+    pub(crate) fn pfl(&self, ch: usize, n: usize) -> &[f32] {
+        &self.pfl[self.rc(ch)][..n]
     }
     #[inline]
-    pub(crate) fn main_out(&self, ch: usize, n: usize) -> &[f32] {
-        &self.main[ch][..n]
+    pub(crate) fn post(&self, ch: usize, n: usize) -> &[f32] {
+        &self.post[self.rc(ch)][..n]
     }
     #[inline]
-    pub(crate) fn pan(&self) -> (f32, f32) {
-        (self.pan_left, self.pan_right)
+    pub(crate) fn out(&self, ch: usize, n: usize) -> &[f32] {
+        &self.out[ch.min(1)][..n]
+    }
+    #[inline]
+    pub(crate) fn pan_gains(&self) -> [f32; 2] {
+        self.pan_gains
+    }
+    #[inline]
+    pub(crate) fn automix_power(&self) -> f32 {
+        self.automix_power
+    }
+    #[inline]
+    pub(crate) fn last_direct(&self) -> f32 {
+        self.last_direct
+    }
+    #[inline]
+    pub(crate) fn set_last_direct(&mut self, g: f32) {
+        self.last_direct = g;
     }
     #[inline]
     pub(crate) fn work_mut(&mut self, ch: usize, n: usize) -> &mut [f32] {

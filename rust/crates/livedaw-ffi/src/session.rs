@@ -5,9 +5,9 @@
 //! owned `LdString` handles coming out (free with `ld_string_free`).
 
 use super::guard;
-use livedaw_engine::{Engine, Strip, StripKind};
+use livedaw_engine::{Engine, StripKind};
 use livedaw_session::console::{CapturedInsert, InsertMode, PluginBridge, RestoreError};
-use livedaw_session::layers::{Layer, LayerSet};
+use livedaw_session::layers::{FaderRef, Layer, LayerSet};
 use livedaw_session::{ApplyResult, Show, StripRef};
 use std::borrow::Cow;
 use std::ffi::c_void;
@@ -61,17 +61,15 @@ pub unsafe extern "C" fn ld_sink_append(sink: *mut LdSink, utf8: *const u8, len:
 
 // ---- plugin bridge ----------------------------------------------------------------------
 
-/// Writes the plugin description (`<PLUGIN .../>` XML) and base64 state of insert
-/// `slot`; returns false if the slot holds no plugin.
-pub type CaptureInsertFn =
-    unsafe extern "C" fn(ctx: *mut c_void, strip: *const Strip, slot: i32, description: *mut LdSink, state: *mut LdSink) -> bool;
+/// Writes the plugin description (`<PLUGIN .../>` XML) and base64 state of FX
+/// slot `slot`; returns false if the slot holds no plugin.
+pub type CaptureFxFn = unsafe extern "C" fn(ctx: *mut c_void, slot: i32, description: *mut LdSink, state: *mut LdSink) -> bool;
 
 /// mode 0 = restore state into the plugin already loaded, 1 = create the plugin.
 /// Returns 0 on success, 1 if a different plugin is loaded (mode 0), 2 on failure
 /// (with a message written to `error`).
-pub type RestoreInsertFn = unsafe extern "C" fn(
+pub type RestoreFxFn = unsafe extern "C" fn(
     ctx: *mut c_void,
-    strip: *const Strip,
     slot: i32,
     mode: i32,
     description: *const u8,
@@ -81,52 +79,46 @@ pub type RestoreInsertFn = unsafe extern "C" fn(
     error: *mut LdSink,
 ) -> i32;
 
+/// Empties FX slot `slot` (show load, before the saved plugins are created).
+pub type ClearFxFn = unsafe extern "C" fn(ctx: *mut c_void, slot: i32);
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct LdPluginBridge {
     pub ctx: *mut c_void,
-    pub capture: Option<CaptureInsertFn>,
-    pub restore: Option<RestoreInsertFn>,
+    pub capture: Option<CaptureFxFn>,
+    pub restore: Option<RestoreFxFn>,
+    pub clear: Option<ClearFxFn>,
 }
 
 impl PluginBridge for LdPluginBridge {
-    fn capture_insert(&mut self, strip: &Strip, slot: usize) -> Option<CapturedInsert> {
+    fn capture_fx(&mut self, slot: usize) -> Option<CapturedInsert> {
         let f = self.capture?;
         let (mut desc, mut state) = (LdSink(String::new()), LdSink(String::new()));
-        // SAFETY: host contract (see CaptureInsertFn).
-        let ok = unsafe { f(self.ctx, strip, slot as i32, &mut desc, &mut state) };
+        // SAFETY: host contract (see CaptureFxFn).
+        let ok = unsafe { f(self.ctx, slot as i32, &mut desc, &mut state) };
         ok.then_some(CapturedInsert { description: desc.0, state: state.0 })
     }
 
-    fn restore_insert(
-        &mut self,
-        strip: &Strip,
-        slot: usize,
-        mode: InsertMode,
-        description: &str,
-        state: &str,
-    ) -> Result<(), RestoreError> {
+    fn restore_fx(&mut self, slot: usize, mode: InsertMode, description: &str, state: &str) -> Result<(), RestoreError> {
         let Some(f) = self.restore else { return Err(RestoreError::Failed("plugin hosting is not available".into())) };
         let mut error = LdSink(String::new());
         let mode = if mode == InsertMode::Instantiate { 1 } else { 0 };
-        // SAFETY: host contract (see RestoreInsertFn).
+        // SAFETY: host contract (see RestoreFxFn).
         let status = unsafe {
-            f(
-                self.ctx,
-                strip,
-                slot as i32,
-                mode,
-                description.as_ptr(),
-                description.len(),
-                state.as_ptr(),
-                state.len(),
-                &mut error,
-            )
+            f(self.ctx, slot as i32, mode, description.as_ptr(), description.len(), state.as_ptr(), state.len(), &mut error)
         };
         match status {
             0 => Ok(()),
             1 => Err(RestoreError::Mismatch),
             _ => Err(RestoreError::Failed(if error.0.is_empty() { "unknown error".into() } else { error.0 })),
+        }
+    }
+
+    fn clear_fx(&mut self, slot: usize) {
+        if let Some(f) = self.clear {
+            // SAFETY: host contract (see ClearFxFn).
+            unsafe { f(self.ctx, slot as i32) };
         }
     }
 }
@@ -148,7 +140,7 @@ impl From<StripRef> for LdStripRef {
 
 impl LdStripRef {
     fn to_ref(self) -> StripRef {
-        StripRef::new(StripKind::from_i32(self.kind).unwrap_or(StripKind::Input), self.id)
+        StripRef::new(StripKind::from_i32(self.kind).unwrap_or(StripKind::Channel), self.id)
     }
 }
 
@@ -166,6 +158,51 @@ unsafe fn refs_out(refs: &[StripRef], out: *mut LdStripRef, capacity: i32) -> i3
         }
     }
     refs.len() as i32
+}
+
+/// A fader on the surface: kind 0..4 = strip kinds (see `LdStripRef`), 5 = DCA (id 0..15).
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct LdFaderRef {
+    pub kind: i32,
+    pub id: i32,
+}
+
+pub const FADER_DCA: i32 = 5;
+
+impl From<FaderRef> for LdFaderRef {
+    fn from(f: FaderRef) -> Self {
+        match f {
+            FaderRef::Strip(r) => Self { kind: r.kind as i32, id: r.id },
+            FaderRef::Dca(i) => Self { kind: FADER_DCA, id: i },
+        }
+    }
+}
+
+impl LdFaderRef {
+    fn to_ref(self) -> FaderRef {
+        if self.kind == FADER_DCA {
+            FaderRef::Dca(self.id)
+        } else {
+            FaderRef::Strip(LdStripRef { kind: self.kind, id: self.id }.to_ref())
+        }
+    }
+}
+
+unsafe fn faders_arg(p: *const LdFaderRef, n: i32) -> Vec<FaderRef> {
+    if p.is_null() || n <= 0 {
+        return Vec::new();
+    }
+    std::slice::from_raw_parts(p, n as usize).iter().map(|r| r.to_ref()).collect()
+}
+
+unsafe fn faders_out(faders: &[FaderRef], out: *mut LdFaderRef, capacity: i32) -> i32 {
+    if !out.is_null() {
+        for (i, f) in faders.iter().take(capacity.max(0) as usize).enumerate() {
+            *out.add(i) = (*f).into();
+        }
+    }
+    faders.len() as i32
 }
 
 #[repr(C)]
@@ -211,7 +248,12 @@ unsafe fn eng<'a>(e: *const Engine) -> Option<&'a Engine> {
 
 #[no_mangle]
 pub unsafe extern "C" fn ld_show_create(bridge: *const LdPluginBridge) -> *mut LdShow {
-    let bridge = bridge.as_ref().copied().unwrap_or(LdPluginBridge { ctx: std::ptr::null_mut(), capture: None, restore: None });
+    let bridge = bridge.as_ref().copied().unwrap_or(LdPluginBridge {
+        ctx: std::ptr::null_mut(),
+        capture: None,
+        restore: None,
+        clear: None,
+    });
     guard(std::ptr::null_mut(), || Box::into_raw(Box::new(LdShow { show: Show::new(), bridge })))
 }
 
@@ -577,57 +619,66 @@ unsafe fn layers<'a>(l: *mut LayerSet) -> Option<&'a mut LayerSet> {
     l.as_mut()
 }
 
+/// Section: 0 = left (12 faders on the WING), 1 = center (8), 2 = right (4).
+/// Width 0 = Auto (as many faders as fit, see `ld_layers_set_fitted_width`).
 #[no_mangle]
-pub unsafe extern "C" fn ld_layers_bank_size(l: *mut LayerSet) -> i32 {
-    layers(l).map_or(0, |l| l.bank_size())
+pub unsafe extern "C" fn ld_layers_width(l: *mut LayerSet, section: i32) -> i32 {
+    layers(l).map_or(0, |l| l.width(section as usize))
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ld_layers_set_bank_size(l: *mut LayerSet, size: i32) {
+pub unsafe extern "C" fn ld_layers_set_width(l: *mut LayerSet, section: i32, width: i32) {
     if let Some(l) = layers(l) {
-        l.set_bank_size(size);
+        l.set_width(section as usize, width);
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ld_layers_set_fitted_bank_size(l: *mut LayerSet, size: i32) {
+pub unsafe extern "C" fn ld_layers_set_fitted_width(l: *mut LayerSet, section: i32, width: i32) {
     if let Some(l) = layers(l) {
-        l.set_fitted_bank_size(size);
+        l.set_fitted_width(section as usize, width);
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ld_layers_effective_bank_size(l: *mut LayerSet) -> i32 {
-    layers(l).map_or(livedaw_session::layers::FALLBACK_BANK_SIZE, |l| l.effective_bank_size())
+pub unsafe extern "C" fn ld_layers_effective_width(l: *mut LayerSet, section: i32) -> i32 {
+    layers(l).map_or(1, |l| l.effective_width(section as usize))
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ld_layers_selected(l: *mut LayerSet) -> *mut LdString {
-    LdString::new(layers(l).map(|l| l.selected_layer_id.clone()).unwrap_or_default())
+pub unsafe extern "C" fn ld_layers_selected(l: *mut LayerSet, section: i32) -> *mut LdString {
+    LdString::new(layers(l).map(|l| l.selected(section as usize).to_owned()).unwrap_or_default())
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ld_layers_set_selected(l: *mut LayerSet, utf8: *const u8, len: usize) {
+pub unsafe extern "C" fn ld_layers_set_selected(l: *mut LayerSet, section: i32, utf8: *const u8, len: usize) {
     if let Some(l) = layers(l) {
-        l.selected_layer_id = str_arg(utf8, len).into_owned();
+        l.select(section as usize, &str_arg(utf8, len));
     }
 }
 
-/// The default layer containing `r`, or an empty string.
+/// The section's default layer containing `f`, or an empty string.
 #[no_mangle]
-pub unsafe extern "C" fn ld_layers_find_default_containing(l: *mut LayerSet, e: *const Engine, r: LdStripRef) -> *mut LdString {
+pub unsafe extern "C" fn ld_layers_find_default_containing(
+    l: *mut LayerSet,
+    e: *const Engine,
+    section: i32,
+    f: LdFaderRef,
+) -> *mut LdString {
     let (Some(l), Some(e)) = (layers(l), eng(e)) else { return LdString::new(String::new()) };
-    LdString::new(guard(None, || l.find_default_layer_containing(e, &r.to_ref())).unwrap_or_default())
+    LdString::new(guard(None, || l.find_default_layer_containing(e, section as usize, &f.to_ref())).unwrap_or_default())
 }
 
 pub struct LdLayerList(Vec<Layer>);
 
-/// which: 0 = default layers, 1 = default + user layers, 2 = user layers only,
-/// 3 = the single layer `id` (or the first layer if it doesn't exist).
+/// The layers of a section. which: 0 = default layers, 1 = default + user
+/// layers, 2 = user layers only, 3 = the single layer `id` (or the section's
+/// first layer if it doesn't exist).
 #[no_mangle]
 pub unsafe extern "C" fn ld_layers_list(
     l: *mut LayerSet,
     e: *const Engine,
+    section: i32,
     which: i32,
     id: *const u8,
     id_len: usize,
@@ -636,9 +687,9 @@ pub unsafe extern "C" fn ld_layers_list(
     let id = str_arg(id, id_len);
     let list = guard(Vec::new(), || match (which, eng(e)) {
         (2, _) => l.user_layers().to_vec(),
-        (0, Some(e)) => l.default_layers(e),
-        (1, Some(e)) => l.all_layers(e),
-        (3, Some(e)) => vec![l.find_layer(e, &id)],
+        (0, Some(e)) => l.default_layers(e, section as usize),
+        (1, Some(e)) => l.all_layers(e, section as usize),
+        (3, Some(e)) => vec![l.find_layer(e, section as usize, &id)],
         _ => Vec::new(),
     });
     Box::into_raw(Box::new(LdLayerList(list)))
@@ -676,8 +727,8 @@ pub unsafe extern "C" fn ld_layer_list_is_user(list: *const LdLayerList, i: i32)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ld_layer_list_strips(list: *const LdLayerList, i: i32, out: *mut LdStripRef, capacity: i32) -> i32 {
-    layer_at(list, i).map_or(0, |l| refs_out(&l.strips, out, capacity))
+pub unsafe extern "C" fn ld_layer_list_faders(list: *const LdLayerList, i: i32, out: *mut LdFaderRef, capacity: i32) -> i32 {
+    layer_at(list, i).map_or(0, |l| faders_out(&l.faders, out, capacity))
 }
 
 /// Returns the new layer's id.
@@ -686,12 +737,12 @@ pub unsafe extern "C" fn ld_layers_add_user(
     l: *mut LayerSet,
     name: *const u8,
     name_len: usize,
-    strips: *const LdStripRef,
+    faders: *const LdFaderRef,
     n: i32,
 ) -> *mut LdString {
     let Some(l) = layers(l) else { return LdString::new(String::new()) };
-    let strips = refs_arg(strips, n);
-    LdString::new(l.add_user_layer(&str_arg(name, name_len), strips))
+    let faders = faders_arg(faders, n);
+    LdString::new(l.add_user_layer(&str_arg(name, name_len), faders))
 }
 
 #[no_mangle]
@@ -716,14 +767,14 @@ pub unsafe extern "C" fn ld_layers_move_user(l: *mut LayerSet, id: *const u8, le
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ld_layers_add_to_user(l: *mut LayerSet, id: *const u8, len: usize, r: LdStripRef) {
+pub unsafe extern "C" fn ld_layers_add_to_user(l: *mut LayerSet, id: *const u8, len: usize, r: LdFaderRef) {
     if let Some(l) = layers(l) {
         l.add_to_user_layer(&str_arg(id, len), r.to_ref());
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ld_layers_remove_from_user(l: *mut LayerSet, id: *const u8, len: usize, r: LdStripRef) {
+pub unsafe extern "C" fn ld_layers_remove_from_user(l: *mut LayerSet, id: *const u8, len: usize, r: LdFaderRef) {
     if let Some(l) = layers(l) {
         l.remove_from_user_layer(&str_arg(id, len), &r.to_ref());
     }
@@ -774,7 +825,7 @@ mod tests {
     fn show_through_the_c_abi() {
         unsafe {
             let e = crate::ld_engine_create(0);
-            crate::ld_engine_set_num_inputs(e, 2);
+            crate::ld_engine_set_num_channels(e, 2);
             let s = ld_show_create(std::ptr::null());
             let idx = ld_show_add_scene(s, e, b"Intro".as_ptr(), 5, -1);
             assert_eq!(idx, 0);
@@ -783,6 +834,7 @@ mod tests {
             assert_eq!(ld_scene_fade_seconds(s, 0), 60.0);
 
             let refs = [LdStripRef { kind: 0, id: 1 }];
+            let faders = [LdFaderRef { kind: 0, id: 1 }, LdFaderRef { kind: FADER_DCA, id: 3 }];
             assert_eq!(ld_show_add_snippet(s, e, 0, b"S".as_ptr(), 1, 1 << 8, refs.as_ptr(), 1), 0);
             let mut out = [LdStripRef::default(); 4];
             assert_eq!(ld_snippet_strips(s, 0, 0, out.as_mut_ptr(), 4), 1);
@@ -791,7 +843,7 @@ mod tests {
             let mut r =
                 LdApplyResult { strips_applied: 0, strips_skipped_safe: 0, strips_missing: 0, warnings: std::ptr::null_mut() };
             ld_show_recall_scene(s, e, 0, 0, &mut r);
-            assert_eq!(r.strips_applied, 3);
+            assert_eq!(r.strips_applied, 2 + 8 + 16 + 4 + 8);
             assert!(r.warnings.is_null());
 
             let xml = take(ld_show_to_xml(s, e));
@@ -802,14 +854,20 @@ mod tests {
             assert_eq!(take(msg), "Not a Live DAW show file");
 
             let l = ld_show_layers(s);
-            let id = take(ld_layers_add_user(l, b"U".as_ptr(), 1, refs.as_ptr(), 1));
-            let list = ld_layers_list(l, e, 1, std::ptr::null(), 0);
+            let id = take(ld_layers_add_user(l, b"U".as_ptr(), 1, faders.as_ptr(), 2));
+            let list = ld_layers_list(l, e, 0, 1, std::ptr::null(), 0);
             let n = ld_layer_list_len(list);
             assert_eq!(take(ld_layer_list_id(list, n - 1)), id);
             assert!(ld_layer_list_is_user(list, n - 1));
+            let mut f = [LdFaderRef::default(); 4];
+            assert_eq!(ld_layer_list_faders(list, n - 1, f.as_mut_ptr(), 4), 2);
+            assert_eq!((f[1].kind, f[1].id), (FADER_DCA, 3));
+            assert_eq!(take(ld_layer_list_name(list, 0)), "CH 1-2 · AUX 1-8");
             ld_layer_list_free(list);
+            assert_eq!(take(ld_layers_selected(l, 2)), "out-1");
+            assert_eq!(ld_layers_effective_width(l, 1), 8);
 
-            let strip = crate::ld_engine_input_at(e, 0);
+            let strip = crate::ld_engine_strip_at(e, 0, 0);
             crate::ld_strip_set_name(strip, "Bass".as_ptr(), 4);
             assert_eq!(take(crate::ld_strip_name(strip)), "Bass");
 

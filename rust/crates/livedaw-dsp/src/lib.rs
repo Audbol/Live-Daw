@@ -1,16 +1,12 @@
 //! Realtime-safe DSP building blocks for Live DAW.
 //!
-//! Nothing in this crate allocates, locks or panics on the audio path.
+//! Nothing in this crate allocates, locks or panics on the audio path. The
+//! WING's processing (filter, EQ models, gate and dynamics models) lives in
+//! [`wing`]; it is built from the biquads, delay lines and helpers here.
 
 pub mod biquad;
-pub mod comp;
 pub mod delay;
-pub mod eq;
-pub mod gate;
 pub mod util;
 pub mod wing;
 
 pub use biquad::{Biquad, BiquadCoeffs};
-pub use comp::{Compressor, CompressorSettings};
-pub use eq::{BandType, EqBand, EqSettings, ParametricEq, NUM_BANDS};
-pub use gate::{GateSettings, NoiseGate};

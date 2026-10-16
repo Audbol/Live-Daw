@@ -8,16 +8,18 @@
 
 #![allow(clippy::missing_safety_doc)]
 
-use livedaw_dsp::{BandType, EqBand, EqSettings, ParametricEq};
-use livedaw_engine::params::{CompParams, EqParams, GateParams};
+pub mod models;
+pub mod session;
+
+use livedaw_engine::params::{
+    DcaParams, DynSlotParams, EqBlockParams, FilterParams, FxParams, InputParams, InsertParams, MainSendParams, MatrixSendParams,
+};
 use livedaw_engine::{Engine, EngineControls, InsertCallbacks, SendParams, Strip, StripKind, StripMeters, StripParams};
 use std::mem::{offset_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-pub mod session;
-
-pub const LD_ABI_VERSION: i32 = 2;
+pub const LD_ABI_VERSION: i32 = 3;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -38,56 +40,85 @@ fn ptr(s: Option<Arc<Strip>>) -> *const Strip {
 
 // ---- layout verification -----------------------------------------------------
 
-/// Sizes and offsets of the shared structs, checked by the C++ side at startup.
+/// Sizes and offsets of the shared structs, compared with the C++ side at startup.
 #[repr(C)]
 #[derive(Default)]
 pub struct LdLayoutInfo {
     pub abi_version: i32,
-    pub strip_params_size: i32,
-    pub gate_offset: i32,
-    pub eq_offset: i32,
-    pub comp_offset: i32,
-    pub fader_offset: i32,
-    pub stereo_offset: i32,
-    pub output_right_offset: i32,
-    pub recall_safe_offset: i32,
-    pub gate_size: i32,
-    pub eq_size: i32,
-    pub comp_size: i32,
-    pub meters_size: i32,
-    pub meters_dsp_faults_offset: i32,
-    pub send_size: i32,
-    pub send_pre_fader_offset: i32,
-    pub controls_size: i32,
-    pub controls_monitor_peak_offset: i32,
-    pub controls_engine_faults_offset: i32,
+    pub strip_params: i32,
+    pub input: i32,
+    pub filter: i32,
+    pub dyn_slot: i32,
+    pub eq_block: i32,
+    pub insert: i32,
+    pub main_send: i32,
+    pub matrix_send: i32,
+    pub meters: i32,
+    pub send: i32,
+    pub dca: i32,
+    pub fx: i32,
+    pub controls: i32,
+    pub off_filter: i32,
+    pub off_gate: i32,
+    pub off_eq: i32,
+    pub off_dynamics: i32,
+    pub off_post_insert: i32,
+    pub off_fader: i32,
+    pub off_stereo: i32,
+    pub off_mains: i32,
+    pub off_matrix: i32,
+    pub off_dca_mask: i32,
+    pub off_direct_level: i32,
+    pub off_colour: i32,
+    pub off_recall_safe: i32,
+    pub off_dyn_values: i32,
+    pub off_dyn_xo_depth: i32,
+    pub off_eq_values: i32,
+    pub off_send_pan: i32,
+    pub off_meters_automix: i32,
+    pub off_controls_dcas: i32,
+    pub off_controls_fx: i32,
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn ld_layout_info(out: *mut LdLayoutInfo) {
-    if let Some(out) = out.as_mut() {
-        *out = LdLayoutInfo {
-            abi_version: LD_ABI_VERSION,
-            strip_params_size: size_of::<StripParams>() as i32,
-            gate_offset: offset_of!(StripParams, gate) as i32,
-            eq_offset: offset_of!(StripParams, eq) as i32,
-            comp_offset: offset_of!(StripParams, comp) as i32,
-            fader_offset: offset_of!(StripParams, fader_db) as i32,
-            stereo_offset: offset_of!(StripParams, stereo) as i32,
-            output_right_offset: offset_of!(StripParams, output_right) as i32,
-            recall_safe_offset: offset_of!(StripParams, recall_safe) as i32,
-            gate_size: size_of::<GateParams>() as i32,
-            eq_size: size_of::<EqParams>() as i32,
-            comp_size: size_of::<CompParams>() as i32,
-            meters_size: size_of::<StripMeters>() as i32,
-            meters_dsp_faults_offset: offset_of!(StripMeters, dsp_faults) as i32,
-            send_size: size_of::<SendParams>() as i32,
-            send_pre_fader_offset: offset_of!(SendParams, pre_fader) as i32,
-            controls_size: size_of::<EngineControls>() as i32,
-            controls_monitor_peak_offset: offset_of!(EngineControls, monitor_peak) as i32,
-            controls_engine_faults_offset: offset_of!(EngineControls, engine_faults) as i32,
-        };
-    }
+    let Some(out) = out.as_mut() else { return };
+    *out = LdLayoutInfo {
+        abi_version: LD_ABI_VERSION,
+        strip_params: size_of::<StripParams>() as i32,
+        input: size_of::<InputParams>() as i32,
+        filter: size_of::<FilterParams>() as i32,
+        dyn_slot: size_of::<DynSlotParams>() as i32,
+        eq_block: size_of::<EqBlockParams>() as i32,
+        insert: size_of::<InsertParams>() as i32,
+        main_send: size_of::<MainSendParams>() as i32,
+        matrix_send: size_of::<MatrixSendParams>() as i32,
+        meters: size_of::<StripMeters>() as i32,
+        send: size_of::<SendParams>() as i32,
+        dca: size_of::<DcaParams>() as i32,
+        fx: size_of::<FxParams>() as i32,
+        controls: size_of::<EngineControls>() as i32,
+        off_filter: offset_of!(StripParams, filter) as i32,
+        off_gate: offset_of!(StripParams, gate) as i32,
+        off_eq: offset_of!(StripParams, eq) as i32,
+        off_dynamics: offset_of!(StripParams, dynamics) as i32,
+        off_post_insert: offset_of!(StripParams, post_insert) as i32,
+        off_fader: offset_of!(StripParams, fader_db) as i32,
+        off_stereo: offset_of!(StripParams, stereo) as i32,
+        off_mains: offset_of!(StripParams, mains) as i32,
+        off_matrix: offset_of!(StripParams, matrix) as i32,
+        off_dca_mask: offset_of!(StripParams, dca_mask) as i32,
+        off_direct_level: offset_of!(StripParams, direct_level_db) as i32,
+        off_colour: offset_of!(StripParams, colour) as i32,
+        off_recall_safe: offset_of!(StripParams, recall_safe) as i32,
+        off_dyn_values: offset_of!(DynSlotParams, values) as i32,
+        off_dyn_xo_depth: offset_of!(DynSlotParams, xo_depth) as i32,
+        off_eq_values: offset_of!(EqBlockParams, values) as i32,
+        off_send_pan: offset_of!(SendParams, pan) as i32,
+        off_meters_automix: offset_of!(StripMeters, automix_db) as i32,
+        off_controls_dcas: offset_of!(EngineControls, dcas) as i32,
+        off_controls_fx: offset_of!(EngineControls, fx) as i32,
+    };
 }
 
 // ---- engine lifetime ----------------------------------------------------------
@@ -189,7 +220,7 @@ pub unsafe extern "C" fn ld_engine_controls(e: *const Engine) -> *const EngineCo
 
 // ---- garbage -----------------------------------------------------------------
 
-/// Message thread: frees removed strips/plugins the audio thread can no longer see.
+/// Message thread: frees removed strips/processors the audio thread can no longer see.
 #[no_mangle]
 pub unsafe extern "C" fn ld_engine_collect(e: *const Engine) {
     if let Some(e) = engine(e) {
@@ -213,42 +244,36 @@ pub unsafe extern "C" fn ld_engine_pending_garbage(e: *const Engine) -> i32 {
 // ---- structure (message thread) ---------------------------------------------------
 
 #[no_mangle]
-pub unsafe extern "C" fn ld_engine_add_input(e: *const Engine, requested_id: i32) -> *const Strip {
-    engine(e).map_or(std::ptr::null(), |e| guard(std::ptr::null(), || ptr(Some(e.add_input(requested_id)))))
+pub unsafe extern "C" fn ld_engine_num_strips(e: *const Engine, kind: i32) -> i32 {
+    let (Some(e), Some(kind)) = (engine(e), StripKind::from_i32(kind)) else { return 0 };
+    e.num_strips(kind) as i32
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ld_engine_set_num_inputs(e: *const Engine, count: i32) {
+pub unsafe extern "C" fn ld_engine_strip_at(e: *const Engine, kind: i32, index: i32) -> *const Strip {
+    let (Some(e), Some(kind)) = (engine(e), StripKind::from_i32(kind)) else { return std::ptr::null() };
+    if index < 0 {
+        return std::ptr::null();
+    }
+    ptr(e.strip_at(kind, index as usize))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_add_channel(e: *const Engine, requested_id: i32) -> *const Strip {
+    engine(e).map_or(std::ptr::null(), |e| guard(std::ptr::null(), || ptr(Some(e.add_channel(requested_id)))))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_set_num_channels(e: *const Engine, count: i32) {
     if let Some(e) = engine(e) {
-        guard((), || e.set_num_inputs(count.max(0) as usize));
+        guard((), || e.set_num_channels(count.max(0) as usize));
     }
 }
 
+/// Adds a bus beyond the console's 16 (null if no slot is free).
 #[no_mangle]
-pub unsafe extern "C" fn ld_engine_num_inputs(e: *const Engine) -> i32 {
-    engine(e).map_or(0, |e| e.num_inputs() as i32)
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn ld_engine_input_at(e: *const Engine, index: i32) -> *const Strip {
-    engine(e).map_or(std::ptr::null(), |e| ptr(e.input_at(index.max(0) as usize)))
-}
-
-/// kind: 1 = aux, 2 = group. Returns null if no slot is free.
-#[no_mangle]
-pub unsafe extern "C" fn ld_engine_add_bus(e: *const Engine, kind: i32, requested_slot: i32) -> *const Strip {
-    let (Some(e), Some(kind)) = (engine(e), StripKind::from_i32(kind)) else { return std::ptr::null() };
-    guard(std::ptr::null(), || ptr(e.add_bus(kind, requested_slot)))
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn ld_engine_num_buses(e: *const Engine) -> i32 {
-    engine(e).map_or(0, |e| e.num_buses() as i32)
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn ld_engine_bus_at(e: *const Engine, index: i32) -> *const Strip {
-    engine(e).map_or(std::ptr::null(), |e| ptr(e.bus_at(index.max(0) as usize)))
+pub unsafe extern "C" fn ld_engine_add_bus(e: *const Engine, requested_slot: i32) -> *const Strip {
+    engine(e).map_or(std::ptr::null(), |e| guard(std::ptr::null(), || ptr(e.add_bus(requested_slot))))
 }
 
 #[no_mangle]
@@ -256,11 +281,7 @@ pub unsafe extern "C" fn ld_engine_bus_in_slot(e: *const Engine, slot: i32) -> *
     engine(e).map_or(std::ptr::null(), |e| ptr(e.bus_in_slot(slot)))
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn ld_engine_master(e: *const Engine) -> *const Strip {
-    engine(e).map_or(std::ptr::null(), |e| ptr(Some(e.master())))
-}
-
+/// Removes a channel or an added bus (the console's 16 buses stay).
 #[no_mangle]
 pub unsafe extern "C" fn ld_engine_remove_strip(e: *const Engine, s: *const Strip) -> bool {
     engine(e).is_some_and(|e| guard(false, || e.remove_strip(s)))
@@ -279,8 +300,77 @@ pub unsafe extern "C" fn ld_engine_total_dsp_faults(e: *const Engine) -> i32 {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ld_engine_num_faulted_plugins(e: *const Engine) -> i32 {
-    engine(e).map_or(0, |e| e.num_faulted_plugins() as i32)
+pub unsafe extern "C" fn ld_engine_num_faulted_fx(e: *const Engine) -> i32 {
+    engine(e).map_or(0, |e| e.num_faulted_fx() as i32)
+}
+
+/// group: 0 = DCA, 1 = mute group.
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_group_name(e: *const Engine, group: i32, index: i32) -> *mut session::LdString {
+    let name =
+        engine(e).map(|e| if group == 0 { e.dca_name(index.max(0) as usize) } else { e.mute_group_name(index.max(0) as usize) });
+    session::LdString::new(name.unwrap_or_default())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_set_group_name(e: *const Engine, group: i32, index: i32, utf8: *const u8, len: usize) {
+    let Some(e) = engine(e) else { return };
+    let name = session::str_arg(utf8, len);
+    if group == 0 {
+        e.set_dca_name(index.max(0) as usize, &name);
+    } else {
+        e.set_mute_group_name(index.max(0) as usize, &name);
+    }
+}
+
+// ---- FX slots ---------------------------------------------------------------------
+
+/// Message thread: installs a processor in FX slot `slot` (or clears it when
+/// `callbacks` is null). The engine calls `release(ctx)` on the message thread
+/// once it can no longer call `process`.
+#[no_mangle]
+pub unsafe extern "C" fn ld_fx_set(e: *const Engine, slot: i32, callbacks: *const InsertCallbacks) {
+    let Some(e) = engine(e) else { return };
+    let Some(rack) = e.fx(slot.max(0) as usize).filter(|_| slot >= 0) else { return };
+    let cb = callbacks.as_ref().copied();
+    guard((), || rack.set(cb, e.garbage()));
+}
+
+/// Message thread: the host context of slot `slot` (null if empty).
+#[no_mangle]
+pub unsafe extern "C" fn ld_fx_ctx(e: *const Engine, slot: i32) -> *mut std::ffi::c_void {
+    engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)).map_or(std::ptr::null_mut(), |r| r.ctx())
+}
+
+/// what: 0 = loaded, 1 = faulted, 2 = double-assigned.
+#[no_mangle]
+pub unsafe extern "C" fn ld_fx_state(e: *const Engine, slot: i32, what: i32) -> bool {
+    let Some(r) = engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)) else { return false };
+    match what {
+        0 => r.is_loaded(),
+        1 => r.is_faulted(),
+        _ => r.is_double_assigned(),
+    }
+}
+
+/// Clears the fault (auto-bypass) and double-assignment flags of a slot.
+#[no_mangle]
+pub unsafe extern "C" fn ld_fx_clear_flags(e: *const Engine, slot: i32) {
+    if let Some(r) = engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)) {
+        r.clear_fault();
+        r.clear_double_assigned();
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_fx_load(e: *const Engine, slot: i32) -> f32 {
+    engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)).map_or(0.0, |r| r.slot_load())
+}
+
+/// Number of strip inserts currently pointing at slot `slot`.
+#[no_mangle]
+pub unsafe extern "C" fn ld_fx_num_users(e: *const Engine, slot: i32) -> i32 {
+    engine(e).map_or(0, |e| if slot >= 0 { e.fx_users(slot as usize).len() as i32 } else { 0 })
 }
 
 // ---- strips ---------------------------------------------------------------------
@@ -325,6 +415,16 @@ pub unsafe extern "C" fn ld_strip_send(s: *const Strip, slot: i32) -> *const Sen
     guard(std::ptr::null(), || s.sends.get_or_create(slot as usize).map_or(std::ptr::null(), |p| p as *const _))
 }
 
+/// Any thread: the send to bus `slot` if it was ever configured, else null.
+#[no_mangle]
+pub unsafe extern "C" fn ld_strip_find_send(s: *const Strip, slot: i32) -> *const SendParams {
+    let Some(s) = strip(s) else { return std::ptr::null() };
+    if slot < 0 {
+        return std::ptr::null();
+    }
+    s.sends.find(slot as usize).map_or(std::ptr::null(), |p| p as *const _)
+}
+
 /// Message thread: the strip's name (free with `ld_string_free`).
 #[no_mangle]
 pub unsafe extern "C" fn ld_strip_name(s: *const Strip) -> *mut session::LdString {
@@ -338,117 +438,37 @@ pub unsafe extern "C" fn ld_strip_set_name(s: *const Strip, utf8: *const u8, len
     }
 }
 
-/// 0xAARRGGBB
+/// Blocks with a model: 0 = gate slot, 1 = EQ, 2 = dynamics slot, 3 = filter tool.
 #[no_mangle]
-pub unsafe extern "C" fn ld_strip_colour(s: *const Strip) -> u32 {
-    strip(s).map_or(0, |s| s.colour())
+pub unsafe extern "C" fn ld_strip_set_model(s: *const Strip, block: i32, model: i32) {
+    let Some(s) = strip(s) else { return };
+    let m = model.max(0) as usize;
+    guard((), || match block {
+        0 => s.params.gate.set_model(m),
+        1 => s.params.eq.set_model(m, s.kind().is_output()),
+        2 => s.params.dynamics.set_model(m),
+        _ => s.params.filter.set_tool_model(m),
+    });
 }
 
+/// Writes the response (dB) of a strip's EQ (block 1) or FILTER (block 3) at
+/// `count` frequencies - the same filters the engine runs.
 #[no_mangle]
-pub unsafe extern "C" fn ld_strip_set_colour(s: *const Strip, argb: u32) {
-    if let Some(s) = strip(s) {
-        s.set_colour(argb);
-    }
-}
-
-/// Message thread: the host context registered for insert `slot` (null if empty).
-#[no_mangle]
-pub unsafe extern "C" fn ld_strip_insert_ctx(s: *const Strip, slot: i32) -> *mut std::ffi::c_void {
-    match strip(s) {
-        Some(s) if slot >= 0 => s.inserts.ctx(slot as usize),
-        _ => std::ptr::null_mut(),
-    }
-}
-
-/// Any thread: the send to bus `slot` if it was ever configured, else null.
-#[no_mangle]
-pub unsafe extern "C" fn ld_strip_find_send(s: *const Strip, slot: i32) -> *const SendParams {
-    let Some(s) = strip(s) else { return std::ptr::null() };
-    if slot < 0 {
-        return std::ptr::null();
-    }
-    s.sends.find(slot as usize).map_or(std::ptr::null(), |p| p as *const _)
-}
-
-// ---- inserts ----------------------------------------------------------------------
-
-/// Message thread: installs a plugin (or clears the slot when `callbacks` is null).
-/// The engine calls `release(ctx)` on the message thread once it can no longer
-/// call `process` - including when the strip itself is freed.
-#[no_mangle]
-pub unsafe extern "C" fn ld_strip_set_insert(e: *const Engine, s: *const Strip, slot: i32, callbacks: *const InsertCallbacks) {
-    let (Some(e), Some(s)) = (engine(e), strip(s)) else { return };
-    if slot < 0 {
+pub unsafe extern "C" fn ld_strip_response(
+    s: *const Strip,
+    block: i32,
+    freqs: *const f64,
+    out_db: *mut f64,
+    count: i32,
+    sample_rate: f64,
+) {
+    let Some(s) = strip(s) else { return };
+    if freqs.is_null() || out_db.is_null() || count <= 0 {
         return;
     }
-    let cb = callbacks.as_ref().copied();
-    guard((), || s.inserts.set(slot as usize, cb, e.garbage()));
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn ld_strip_insert_is_bypassed(s: *const Strip, slot: i32) -> bool {
-    strip(s).is_some_and(|s| slot >= 0 && s.inserts.is_bypassed(slot as usize))
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn ld_strip_insert_set_bypassed(s: *const Strip, slot: i32, bypassed: bool) {
-    if let (Some(s), true) = (strip(s), slot >= 0) {
-        s.inserts.set_bypassed(slot as usize, bypassed);
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn ld_strip_insert_is_faulted(s: *const Strip, slot: i32) -> bool {
-    strip(s).is_some_and(|s| slot >= 0 && s.inserts.is_faulted(slot as usize))
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn ld_strip_insert_clear_fault(s: *const Strip, slot: i32) {
-    if let (Some(s), true) = (strip(s), slot >= 0) {
-        s.inserts.clear_fault(slot as usize);
-    }
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn ld_strip_insert_load(s: *const Strip, slot: i32) -> f32 {
-    strip(s).map_or(0.0, |s| if slot >= 0 { s.inserts.slot_load(slot as usize) } else { 0.0 })
-}
-
-// ---- EQ curve (for the UI) ---------------------------------------------------------
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct LdEqBand {
-    pub band_type: i32,
-    pub frequency: f32,
-    pub gain_db: f32,
-    pub q: f32,
-    pub enabled: i32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct LdEqSettings {
-    pub enabled: i32,
-    pub bands: [LdEqBand; 4],
-}
-
-/// Combined magnitude response in dB of an EQ at `freq` - the same maths the engine runs.
-#[no_mangle]
-pub unsafe extern "C" fn ld_eq_response_db(settings: *const LdEqSettings, freq: f64, sample_rate: f64) -> f64 {
-    let Some(s) = settings.as_ref() else { return 0.0 };
-    let band = |b: &LdEqBand| EqBand {
-        band_type: BandType::from_i32(b.band_type),
-        frequency: b.frequency,
-        gain_db: b.gain_db,
-        q: b.q,
-        enabled: b.enabled != 0,
-    };
-    let eq = EqSettings {
-        enabled: s.enabled != 0,
-        bands: [band(&s.bands[0]), band(&s.bands[1]), band(&s.bands[2]), band(&s.bands[3])],
-    };
-    ParametricEq::response_db(&eq, freq, sample_rate)
+    let freqs = std::slice::from_raw_parts(freqs, count as usize);
+    let out = std::slice::from_raw_parts_mut(out_db, count as usize);
+    guard((), || models::strip_response(s, block, freqs, out, sample_rate));
 }
 
 #[cfg(test)]
@@ -460,20 +480,28 @@ mod tests {
         let mut info = LdLayoutInfo::default();
         unsafe { ld_layout_info(&mut info) };
         assert_eq!(info.abi_version, LD_ABI_VERSION);
-        assert!(info.strip_params_size > 0 && info.send_size == 16);
+        assert!(info.strip_params > 0 && info.send == 24);
     }
 
     #[test]
     fn engine_round_trip_through_the_c_abi() {
         unsafe {
             let e = ld_engine_create(0);
-            ld_engine_set_num_inputs(e, 4);
-            assert_eq!(ld_engine_num_inputs(e), 4);
-            let bus = ld_engine_add_bus(e, StripKind::Aux as i32, -1);
+            ld_engine_set_num_channels(e, 4);
+            assert_eq!(ld_engine_num_strips(e, 0), 4);
+            assert_eq!(ld_engine_num_strips(e, StripKind::Bus as i32), 16);
+            let bus = ld_engine_add_bus(e, -1);
             assert!(!bus.is_null());
-            let ch = ld_engine_input_at(e, 0);
+            let ch = ld_engine_strip_at(e, 0, 0);
+            ld_strip_send(ch, ld_strip_id(bus));
             assert!(!ld_strip_find_send(ch, ld_strip_id(bus)).is_null());
             assert!(ld_engine_remove_strip(e, bus));
+            ld_strip_set_model(ch, 2, 3);
+            assert_eq!((*ld_strip_params(ch)).dynamics.model_index(), 3);
+            let freqs = [100.0, 1000.0];
+            let mut out = [1.0; 2];
+            ld_strip_response(ch, 1, freqs.as_ptr(), out.as_mut_ptr(), 2, 48000.0);
+            assert!(out[0].abs() < 0.01 && out[1].abs() < 0.01);
             ld_engine_collect(e);
             ld_engine_destroy(e);
         }

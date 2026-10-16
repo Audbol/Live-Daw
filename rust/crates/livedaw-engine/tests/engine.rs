@@ -1,6 +1,8 @@
-//! Engine behaviour tests (ported from the C++ EngineTests/StabilityTests).
+//! Engine behaviour tests: the WING signal flow end to end.
 
-use livedaw_engine::{Engine, InsertCallbacks, Strip, StripKind};
+use livedaw_dsp::wing::{model_index, DYN_MODELS, PROCESS_ORDERS};
+use livedaw_engine::params::{StripKind, NUM_AUX, NUM_MAINS, NUM_MATRICES, WING_BUSES};
+use livedaw_engine::{Engine, InsertCallbacks, Strip};
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 use std::sync::Arc;
@@ -50,8 +52,12 @@ impl Rig {
         *self.outputs[ch].last().unwrap()
     }
 
-    fn input(&self, i: usize) -> Arc<Strip> {
-        self.engine.input_at(i).unwrap()
+    fn ch(&self, i: usize) -> Arc<Strip> {
+        self.engine.channel_at(i).unwrap()
+    }
+
+    fn strip(&self, kind: StripKind, i: usize) -> Arc<Strip> {
+        self.engine.strip_at(kind, i).unwrap()
     }
 }
 
@@ -69,42 +75,80 @@ fn close(a: f32, b: f32, tol: f32) -> bool {
 }
 
 #[test]
-fn input_reaches_master_through_pan_law() {
+fn console_has_the_wing_layout() {
+    let e = Engine::new(0);
+    assert_eq!(e.num_strips(StripKind::Channel), 0);
+    assert_eq!(e.num_strips(StripKind::Aux), NUM_AUX);
+    assert_eq!(e.num_strips(StripKind::Bus), WING_BUSES);
+    assert_eq!(e.num_strips(StripKind::Main), NUM_MAINS);
+    assert_eq!(e.num_strips(StripKind::Matrix), NUM_MATRICES);
+    assert_eq!(e.num_fx(), 16);
+    e.set_num_channels(40);
+    assert_eq!(e.channel_at(39).unwrap().name(), "Ch 40");
+    assert_eq!(e.strip_at(StripKind::Bus, 15).unwrap().name(), "Bus 16");
+    // Wing buses can't be removed; extra ones can.
+    let bus = e.strip_at(StripKind::Bus, 0).unwrap();
+    assert!(!e.remove_strip(Arc::as_ptr(&bus)));
+    let extra = e.add_bus(-1).unwrap();
+    assert_eq!(extra.id(), 16);
+    assert!(e.remove_strip(Arc::as_ptr(&extra)));
+}
+
+#[test]
+fn channel_reaches_main_1_through_pan_law() {
     let mut rig = Rig::new(2, 4, 8);
-    rig.engine.set_num_inputs(2);
+    rig.engine.set_num_channels(2);
     rig.set_input(0, 0.5);
     rig.run(20);
     assert!(close(rig.out(0), 0.5 * CENTRE, 1e-5));
     assert!(close(rig.out(1), 0.5 * CENTRE, 1e-5));
 
-    rig.input(0).params.pan.store(-1.0);
+    rig.ch(0).params.pan.store(-100.0);
     rig.run(20);
     assert!(close(rig.out(0), 0.5, 1e-5) && close(rig.out(1), 0.0, 1e-5));
 }
 
 #[test]
-fn mute_fader_and_main_assign() {
+fn mute_fader_dcas_and_mute_groups() {
     let mut rig = Rig::new(2, 2, 2);
-    rig.engine.set_num_inputs(1);
-    let ch = rig.input(0);
+    rig.engine.set_num_channels(1);
+    let ch = rig.ch(0);
     rig.set_input(0, 0.5);
     ch.params.fader_db.store(-6.0206);
     rig.run(20);
     assert!(close(rig.out(0), 0.25 * CENTRE, 1e-4));
+
+    // DCA 3 adds its fader to the channel's.
+    ch.params.dca_mask.store(1 << 2, Relaxed);
+    rig.engine.controls.dcas[2].fader_db.store(-6.0206);
+    rig.run(20);
+    assert!(close(rig.out(0), 0.125 * CENTRE, 1e-4));
+    rig.engine.controls.dcas[2].mute.store(true, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(0), 0.0, 1e-6));
+    rig.engine.controls.dcas[2].mute.store(false, Relaxed);
+
+    // Mute group 2
+    ch.params.mute_group_mask.store(1 << 1, Relaxed);
+    rig.engine.controls.mute_groups.store(1 << 1, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(0), 0.0, 1e-6));
+    rig.engine.controls.mute_groups.store(0, Relaxed);
+
     ch.params.mute.store(true, Relaxed);
     rig.run(20);
     assert!(close(rig.out(0), 0.0, 1e-6));
     ch.params.mute.store(false, Relaxed);
-    ch.params.main_assign.store(false, Relaxed);
+    ch.params.mains[0].on.store(false, Relaxed);
     rig.run(20);
     assert!(close(rig.out(0), 0.0, 1e-6));
 }
 
 #[test]
-fn stereo_channel_uses_both_inputs_and_can_switch_live() {
+fn stereo_channel_width_and_inputs() {
     let mut rig = Rig::new(1, 2, 2);
-    rig.engine.set_num_inputs(1);
-    let ch = rig.input(0);
+    rig.engine.set_num_channels(1);
+    let ch = rig.ch(0);
     rig.set_input(0, 0.25);
     rig.set_input(1, -0.5);
     rig.run(20);
@@ -114,102 +158,161 @@ fn stereo_channel_uses_both_inputs_and_can_switch_live() {
     rig.run(20);
     assert_eq!(ch.num_channels(), 2);
     assert!(close(rig.out(0), 0.25, 1e-5) && close(rig.out(1), -0.5, 1e-5));
+
+    ch.params.width.store(0.0); // mono
+    rig.run(20);
+    assert!(close(rig.out(0), -0.125, 1e-5) && close(rig.out(1), -0.125, 1e-5));
 }
 
 #[test]
-fn pre_fader_aux_send_to_hardware_output() {
+fn bus_sends_pre_post_and_subgroup() {
     let mut rig = Rig::new(2, 2, 6);
-    rig.engine.set_num_inputs(2);
-    let aux = rig.engine.add_bus(StripKind::Aux, -1).unwrap();
-    aux.params.output_left.store(4, Relaxed);
-    let ch = rig.input(1);
-    ch.params.fader_db.store(-100.0); // fader down: a pre-fader send stays live
-    let send = ch.sends.get_or_create(aux.id() as usize).unwrap();
-    send.enabled.store(true, Relaxed);
-    send.pre_fader.store(true, Relaxed);
-    rig.set_input(1, 0.5);
-    rig.run(20);
-    assert!(close(rig.out(4), 0.5, 1e-5));
-    assert!(close(rig.out(0), 0.0, 1e-6));
-
-    send.pre_fader.store(false, Relaxed);
-    rig.run(20);
-    assert!(close(rig.out(4), 0.0, 1e-6));
-}
-
-#[test]
-fn group_bus_routes_to_master() {
-    let mut rig = Rig::new(2, 1, 2);
-    rig.engine.set_num_inputs(1);
-    let group = rig.engine.add_bus(StripKind::Group, -1).unwrap();
-    let ch = rig.input(0);
-    ch.params.main_assign.store(false, Relaxed);
-    let send = ch.sends.get_or_create(group.id() as usize).unwrap();
-    send.enabled.store(true, Relaxed);
-    send.pre_fader.store(false, Relaxed);
+    rig.engine.set_num_channels(1);
+    let ch = rig.ch(0);
     rig.set_input(0, 0.5);
+    let bus = rig.strip(StripKind::Bus, 2);
+    bus.params.output_left.store(2, Relaxed);
+    bus.params.output_right.store(3, Relaxed);
+    let send = ch.sends.get_or_create(2).unwrap();
+    send.enabled.store(true, Relaxed);
+
+    // PRE (tap PFL): the channel fader doesn't matter.
+    ch.params.fader_db.store(-100.0);
     rig.run(20);
-    assert!(close(rig.out(0), 0.5 * CENTRE, 1e-5));
-    group.params.mute.store(true, Relaxed);
+    assert!(close(rig.out(2), 0.5 * CENTRE, 1e-5), "{}", rig.out(2));
+
+    // POST follows the fader.
+    send.mode.store(1, Relaxed);
     rig.run(20);
-    assert!(close(rig.out(0), 0.0, 1e-6));
+    assert!(rig.out(2).abs() < 1e-4);
+    ch.params.fader_db.store(0.0);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.5 * CENTRE, 1e-5));
+
+    // Send pan not linked to the channel pan.
+    send.pan_link.store(false, Relaxed);
+    send.pan.store(100.0);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.0, 1e-5) && close(rig.out(3), 0.5, 1e-5));
+
+    // GRP: post-fader, post-pan; the bus feeds Main 1.
+    send.mode.store(2, Relaxed);
+    ch.params.mains[0].on.store(false, Relaxed);
+    bus.params.mains[0].on.store(true, Relaxed);
+    ch.params.pan.store(-100.0);
+    rig.run(20);
+    assert!(close(rig.out(0), 0.5, 1e-5) && close(rig.out(1), 0.0, 1e-5));
 }
 
 #[test]
-fn pfl_solo_replaces_master_on_monitor_outputs() {
-    let mut rig = Rig::new(2, 2, 4);
-    rig.engine.set_num_inputs(2);
-    rig.input(1).params.input_left.store(1, Relaxed);
-    rig.engine.controls.monitor_output_left.store(2, Relaxed);
-    rig.engine.controls.monitor_output_right.store(3, Relaxed);
+fn upper_buses_feed_buses_1_to_8() {
+    let mut rig = Rig::new(2, 1, 4);
+    rig.engine.set_num_channels(1);
+    let ch = rig.ch(0);
+    ch.params.mains[0].on.store(false, Relaxed);
+    rig.set_input(0, 0.5);
+    let fx_bus = rig.strip(StripKind::Bus, 12);
+    let bus1 = rig.strip(StripKind::Bus, 0);
+    ch.sends.get_or_create(12).unwrap().enabled.store(true, Relaxed);
+    fx_bus.sends.get_or_create(0).unwrap().enabled.store(true, Relaxed);
+    fx_bus.sends.get_or_create(0).unwrap().mode.store(1, Relaxed);
+    bus1.params.output_left.store(2, Relaxed);
+    rig.run(20);
+    // Mono channel -> stereo bus 13 at -3 dB per side -> bus 1 (post, centred).
+    assert!(close(rig.out(2), 0.5 * CENTRE, 1e-4), "{}", rig.out(2));
+}
+
+#[test]
+fn matrix_takes_mains_and_mix_minus_direct_input() {
+    let mut rig = Rig::new(2, 2, 6);
+    rig.engine.set_num_channels(2);
+    rig.ch(1).params.input_left.store(1, Relaxed);
     rig.set_input(0, 0.5);
     rig.set_input(1, 0.25);
+    let main = rig.strip(StripKind::Main, 0);
+    let mtx = rig.strip(StripKind::Matrix, 0);
+    main.params.matrix[0].on.store(true, Relaxed);
+    mtx.params.output_left.store(4, Relaxed);
     rig.run(20);
-    assert!(close(rig.out(2), 0.75 * CENTRE, 1e-5));
+    assert!(close(rig.out(4), 0.75 * CENTRE, 1e-4));
 
-    rig.input(1).params.solo.store(true, Relaxed);
-    rig.input(1).params.fader_db.store(-100.0);
+    // Mix-minus: subtract channel 2 (post fader, panned) with the direct input.
+    mtx.params.direct_on.store(true, Relaxed);
+    mtx.params.direct_source.store(1, Relaxed);
+    mtx.params.direct_invert.store(true, Relaxed);
     rig.run(20);
+    assert!(close(rig.out(4), 0.5 * CENTRE, 1e-4), "{}", rig.out(4));
+}
+
+#[test]
+fn solo_pfl_goes_to_the_monitor() {
+    let mut rig = Rig::new(1, 2, 4);
+    rig.engine.set_num_channels(2);
+    rig.ch(1).params.input_left.store(1, Relaxed);
+    rig.set_input(0, 0.5);
+    rig.set_input(1, 0.25);
+    rig.engine.controls.monitor_output_left.store(2, Relaxed);
+    rig.engine.controls.monitor_output_right.store(3, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.75 * CENTRE, 1e-4)); // follows Main 1
+
+    let ch = rig.ch(1);
+    ch.params.fader_db.store(-100.0);
+    ch.params.solo.store(true, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.25, 1e-4), "{}", rig.out(2)); // PFL: pre fader, mono both sides
     assert!(rig.engine.controls.any_solo_active.load(Relaxed));
-    assert!(close(rig.out(2), 0.25, 1e-5)); // PFL ignores the fader
-    assert!(close(rig.out(0), 0.5 * CENTRE, 1e-5)); // master unaffected
 }
 
 #[test]
-fn many_channels_in_parallel_and_shrinking_live() {
-    let mut rig = Rig::new(3, 256, 2);
-    rig.engine.set_num_inputs(256);
-    for i in 0..256 {
-        rig.set_input(i, 0.001);
+fn gate_model_and_process_order() {
+    let mut rig = Rig::new(1, 1, 2);
+    rig.engine.set_num_channels(1);
+    let ch = rig.ch(0);
+    rig.set_input(0, 0.001); // -60 dB, below the -40 dB default threshold
+    ch.params.gate.on.store(true, Relaxed);
+    rig.run(200);
+    assert!(rig.out(0).abs() < 1e-5, "gate didn't close: {}", rig.out(0));
+    assert!(ch.meters.gate_active.load(Relaxed));
+
+    // The gate slot can hold a compressor model too.
+    ch.params.gate.set_model(model_index(DYN_MODELS, "COMP").unwrap());
+    rig.run(50);
+    assert!(close(rig.out(0), 0.001 * CENTRE, 1e-5));
+
+    // Any of the 24 orders runs.
+    for i in 0..PROCESS_ORDERS.len() {
+        ch.params.process_order.store(i as i32, Relaxed);
+        rig.run(2);
+        assert!(rig.out(0).is_finite());
     }
-    rig.run(20);
-    assert!(close(rig.out(0), 256.0 * 0.001 * CENTRE, 1e-4));
-    rig.engine.set_num_inputs(16);
-    rig.run(20);
-    assert!(close(rig.out(0), 16.0 * 0.001 * CENTRE, 1e-5));
 }
 
 #[test]
-fn channels_beyond_the_interface_are_unpatched() {
-    let mut rig = Rig::new(0, 2, 2);
-    rig.engine.set_num_inputs(3);
-    assert_eq!(rig.input(2).params.input_left.load(Relaxed), -1);
-    rig.set_input(0, 0.1);
-    rig.set_input(1, 0.1);
-    rig.run(20);
-    assert!(close(rig.out(0), 0.2 * CENTRE, 1e-5));
+fn input_delay_shifts_the_signal() {
+    let mut rig = Rig::new(0, 1, 2);
+    rig.engine.set_num_channels(1);
+    let ch = rig.ch(0);
+    ch.params.input.delay_on.store(true, Relaxed);
+    ch.params.input.delay_mode.store(3, Relaxed); // samples
+    ch.params.input.delay.store(64.0);
+    rig.inputs[0][0] = 1.0;
+    rig.run(1);
+    // (Gains ramp in from silence during the first block, so the impulse is small.)
+    let first = rig.outputs[0].iter().position(|x| x.abs() > 0.01).unwrap();
+    assert_eq!(first, 64);
 }
 
 #[test]
 fn unpatched_channels_idle_and_resume_cleanly() {
     let mut rig = Rig::new(Engine::default_num_workers(), 8, 2);
-    rig.engine.set_num_inputs(4096);
+    rig.engine.set_num_channels(4096);
     for i in 0..8 {
         rig.set_input(i, 0.01);
     }
     rig.run(10);
-    assert!(rig.input(100).is_idle());
-    assert!(!rig.input(3).is_idle());
+    assert!(rig.ch(100).is_idle());
+    assert!(!rig.ch(3).is_idle());
 
     let start = std::time::Instant::now();
     rig.run(200);
@@ -217,41 +320,31 @@ fn unpatched_channels_idle_and_resume_cleanly() {
     println!("4096 channels, 8 patched: {ms:.3} ms per {:.2} ms block", 1000.0 * BLOCK as f64 / 48000.0);
 
     for i in 0..8 {
-        rig.input(i).params.mute.store(true, Relaxed);
+        rig.ch(i).params.mute.store(true, Relaxed);
     }
-    rig.input(100).params.input_left.store(0, Relaxed);
+    rig.ch(100).params.input_left.store(0, Relaxed);
     rig.run(20);
     assert!(close(rig.out(0), 0.01 * CENTRE, 1e-5));
 }
 
 #[test]
-fn bus_count_is_not_capped_at_32() {
-    let mut rig = Rig::new(2, 1, 4);
-    rig.engine.set_num_inputs(1);
-    let mut last = None;
-    for i in 0..100 {
-        last = rig.engine.add_bus(if i % 2 == 0 { StripKind::Aux } else { StripKind::Group }, -1);
-    }
-    let last = last.unwrap();
-    assert_eq!(rig.engine.num_buses(), 100);
-    last.params.stereo.store(false, Relaxed);
-    last.params.main_assign.store(false, Relaxed);
-    last.params.output_left.store(3, Relaxed);
-    let ch = rig.input(0);
-    let send = ch.sends.get_or_create(last.id() as usize).unwrap();
-    send.enabled.store(true, Relaxed);
+fn automix_shares_gain() {
+    let mut rig = Rig::new(1, 2, 2);
+    rig.engine.set_num_channels(2);
+    rig.ch(1).params.input_left.store(1, Relaxed);
     rig.set_input(0, 0.5);
-    rig.run(20);
-    assert!(close(rig.out(3), 0.5, 1e-5));
-
-    let slot = last.id();
-    assert!(rig.engine.remove_strip(Arc::as_ptr(&last)));
-    let reused = rig.engine.add_bus(StripKind::Aux, -1).unwrap();
-    assert_eq!(reused.id(), slot);
-    assert!(!rig.input(0).sends.find(slot as usize).unwrap().enabled.load(Relaxed));
+    rig.set_input(1, 0.5);
+    for i in 0..2 {
+        let ins = &rig.ch(i).params.post_insert;
+        ins.on.store(true, Relaxed);
+        ins.mode.store(1, Relaxed); // AUTO_X
+    }
+    rig.run(50);
+    // Two equal talkers: each gets half the power (-3 dB), the sum stays at one talker's level.
+    assert!(close(rig.out(0), 0.5 * CENTRE * 2.0 * CENTRE, 1e-3), "{}", rig.out(0));
 }
 
-// ---- plugins through the C ABI ---------------------------------------------
+// ---- FX slots through the C ABI --------------------------------------------
 
 struct FakePlugin {
     gain: f32,
@@ -288,46 +381,62 @@ fn fake(gain: f32, mode: u8) -> (InsertCallbacks, Arc<AtomicBool>) {
 }
 
 #[test]
-fn plugins_run_and_faulty_ones_are_auto_bypassed() {
-    let mut rig = Rig::new(1, 1, 2);
-    rig.engine.set_num_inputs(1);
-    let ch = rig.input(0);
+fn fx_slots_as_inserts_and_faulty_ones_are_auto_bypassed() {
+    let mut rig = Rig::new(1, 2, 2);
+    rig.engine.set_num_channels(2);
+    let (a, b) = (rig.ch(0), rig.ch(1));
+    b.params.input_left.store(1, Relaxed);
     let engine = rig.engine.clone();
     let g = engine.garbage();
 
-    let (nan, _) = fake(1.0, 1);
-    let (failing, _) = fake(1.0, 2);
     let (half, released) = fake(0.5, 0);
-    ch.inserts.set(0, Some(nan), g);
-    ch.inserts.set(1, Some(failing), g);
-    ch.inserts.set(2, Some(half), g);
+    engine.fx(0).unwrap().set(Some(half), g);
+    engine.fx(1).unwrap().set(Some(fake(1.0, 1).0), g); // NaN
+    engine.fx(2).unwrap().set(Some(fake(1.0, 2).0), g); // failing
+    a.params.pre_insert.on.store(true, Relaxed);
+    a.params.pre_insert.fx.store(0, Relaxed);
     rig.set_input(0, 0.5);
     rig.run(20);
+    assert!(close(rig.out(0), 0.25 * CENTRE, 1e-5));
 
-    assert!(ch.inserts.is_faulted(0) && ch.inserts.is_bypassed(0));
-    assert!(ch.inserts.is_faulted(1));
-    assert!(!ch.inserts.is_faulted(2));
-    assert!(close(rig.out(0), 0.25 * CENTRE, 1e-5)); // the healthy plugin still runs
-    assert_eq!(rig.engine.num_faulted_plugins(), 2);
+    // Post insert with a NaN plugin: auto-bypassed, signal kept.
+    a.params.post_insert.on.store(true, Relaxed);
+    a.params.post_insert.fx.store(1, Relaxed);
+    rig.run(20);
+    assert!(engine.fx(1).unwrap().is_faulted());
+    assert!(close(rig.out(0), 0.25 * CENTRE, 1e-5));
 
-    // Replacing a plugin releases the old one once the audio thread is done with it.
-    ch.inserts.set(2, None, g);
+    // Failing plugin on another strip.
+    b.params.pre_insert.on.store(true, Relaxed);
+    b.params.pre_insert.fx.store(2, Relaxed);
+    rig.run(5);
+    assert!(engine.fx(2).unwrap().is_faulted());
+    assert_eq!(engine.num_faulted_fx(), 2);
+
+    // Two strips on one slot: never concurrent, reported.
+    b.params.pre_insert.fx.store(0, Relaxed);
+    rig.set_input(1, 0.5);
+    rig.run(5);
+    assert!(engine.fx(0).unwrap().is_double_assigned());
+    assert_eq!(engine.fx_users(0).len(), 2);
+
+    // Replacing a processor releases the old one once the audio thread is done with it.
+    engine.fx(0).unwrap().set(None, g);
     rig.run(2);
-    rig.engine.set_device_running(true);
-    rig.engine.collect();
+    engine.set_device_running(true);
+    engine.collect();
     assert!(released.load(Relaxed));
 }
 
 #[test]
 fn nan_input_never_reaches_buses_or_outputs() {
     let mut rig = Rig::new(1, 2, 2);
-    rig.engine.set_num_inputs(2);
-    rig.input(1).params.input_left.store(1, Relaxed);
-    rig.input(0).params.eq.bands[1].gain_db.store(6.0);
+    rig.engine.set_num_channels(2);
+    rig.ch(1).params.input_left.store(1, Relaxed);
     rig.set_input(0, f32::NAN);
     rig.set_input(1, 0.25);
     rig.run(4);
-    assert!(rig.input(0).meters.dsp_faults.load(Relaxed) > 0);
+    assert!(rig.ch(0).meters.dsp_faults.load(Relaxed) > 0);
     assert!(close(rig.out(0), 0.25 * CENTRE, 1e-5));
 
     rig.set_input(0, 0.25);
@@ -338,8 +447,8 @@ fn nan_input_never_reaches_buses_or_outputs() {
 #[test]
 fn output_protection_clips_at_the_ceiling() {
     let mut rig = Rig::new(0, 1, 2);
-    rig.engine.set_num_inputs(1);
-    rig.input(0).params.fader_db.store(10.0);
+    rig.engine.set_num_channels(1);
+    rig.ch(0).params.fader_db.store(10.0);
     rig.set_input(0, 0.9);
     rig.run(20);
     assert!(close(rig.out(0), 1.0, 1e-6));
@@ -358,7 +467,7 @@ fn stress_structural_changes_while_audio_runs() {
     for i in 0..8 {
         rig.set_input(i, 0.01 * (i + 1) as f32);
     }
-    rig.engine.set_num_inputs(8);
+    rig.engine.set_num_channels(8);
     rig.engine.set_device_running(true); // garbage must now wait for callbacks
 
     let engine = rig.engine.clone();
@@ -392,29 +501,39 @@ fn stress_structural_changes_while_audio_runs() {
     let mut ops = 0;
     while std::time::Instant::now() < end {
         let e = &rig.engine;
-        match rand(5) {
-            0 => e.set_num_inputs(rand(64) as usize),
+        match rand(6) {
+            0 => e.set_num_channels(rand(64) as usize),
             1 => {
-                e.add_bus(if rand(2) == 0 { StripKind::Aux } else { StripKind::Group }, -1);
+                e.add_bus(-1);
             }
             2 => {
                 let buses = e.buses();
-                if !buses.is_empty() {
-                    e.remove_strip(Arc::as_ptr(&buses[rand(buses.len() as u32) as usize]));
-                }
+                e.remove_strip(Arc::as_ptr(&buses[rand(buses.len() as u32) as usize]));
             }
             3 => {
-                if let Some(s) = e.input_at(rand(e.num_inputs().max(1) as u32) as usize) {
-                    let slot = rand(8) as usize;
-                    if rand(2) == 0 {
-                        s.inserts.set(slot, Some(fake(0.5, 0).0), e.garbage());
-                    } else {
-                        s.inserts.set(slot, None, e.garbage());
-                    }
-                    s.params.stereo.store(rand(2) == 0, Relaxed);
-                    if let Some(send) = s.sends.get_or_create(rand(128) as usize) {
+                let slot = rand(16) as usize;
+                if rand(2) == 0 {
+                    e.fx(slot).unwrap().set(Some(fake(0.5, 0).0), e.garbage());
+                } else {
+                    e.fx(slot).unwrap().set(None, e.garbage());
+                }
+            }
+            4 => {
+                if let Some(s) = e.channel_at(rand(e.num_channels().max(1) as u32) as usize) {
+                    let p = &s.params;
+                    p.pre_insert.on.store(rand(2) == 0, Relaxed);
+                    p.pre_insert.fx.store(rand(17) as i32 - 1, Relaxed);
+                    p.stereo.store(rand(2) == 0, Relaxed);
+                    p.gate.on.store(rand(2) == 0, Relaxed);
+                    p.dynamics.set_model(rand(DYN_MODELS.len() as u32) as usize);
+                    p.dynamics.on.store(true, Relaxed);
+                    p.eq.set_model(rand(7) as usize, false);
+                    p.process_order.store(rand(24) as i32, Relaxed);
+                    if let Some(send) = s.sends.get_or_create(rand(24) as usize) {
                         send.enabled.store(rand(2) == 0, Relaxed);
+                        send.mode.store(rand(3) as i32, Relaxed);
                     }
+                    p.matrix[rand(8) as usize].on.store(rand(2) == 0, Relaxed);
                 }
             }
             _ => e.reset(),

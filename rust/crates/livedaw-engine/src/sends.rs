@@ -2,7 +2,7 @@
 
 use crate::atomic::AtomicF32;
 use std::cell::UnsafeCell;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
 
 /// Upper bound on bus slots. Pages are allocated on demand, so the ceiling costs
 /// only the page-pointer table (2 KB per strip); in practice CPU is the limit.
@@ -10,14 +10,22 @@ pub const MAX_BUSES: usize = 16384;
 pub const PAGE_SIZE: usize = 64;
 const NUM_PAGES: usize = MAX_BUSES.div_ceil(PAGE_SIZE);
 
+/// Bus send modes: pre-fader (at the strip's tap point), post-fader, or
+/// subgroup (post-fader and post-pan, like routing the strip to a group).
+pub const SEND_MODES: [&str; 3] = ["PRE", "POST", "GRP"];
+
 #[repr(C)]
 #[derive(Debug)]
 pub struct SendParams {
     pub enabled: AtomicBool,
+    /// Pan follows the strip's pan (else `pan` is used).
+    pub pan_link: AtomicBool,
+    /// Index into [`SEND_MODES`].
+    pub mode: AtomicI32,
     pub level_db: AtomicF32,
-    pub pre_fader: AtomicBool,
-    /// Gain ramp state, owned by the audio task that sums the destination bus.
-    pub(crate) last_gain: UnsafeCell<f32>,
+    pub pan: AtomicF32,
+    /// Gain ramp state (left, right), owned by the audio task that sums the destination bus.
+    pub(crate) last_gain: UnsafeCell<[f32; 2]>,
 }
 
 // SAFETY: `last_gain` is only touched by the single audio task that sums the bus
@@ -28,9 +36,11 @@ impl Default for SendParams {
     fn default() -> Self {
         Self {
             enabled: AtomicBool::new(false),
+            pan_link: AtomicBool::new(true),
+            mode: AtomicI32::new(0),
             level_db: AtomicF32::new(0.0),
-            pre_fader: AtomicBool::new(true),
-            last_gain: UnsafeCell::new(0.0),
+            pan: AtomicF32::new(0.0),
+            last_gain: UnsafeCell::new([0.0; 2]),
         }
     }
 }
