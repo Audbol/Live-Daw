@@ -100,7 +100,6 @@ public:
             // An empty slot: a blank rack unit with a "+".
             g.setColour (juce::Colour (0xff2a2a2a));
             g.fillRect (deviceArea);
-            segmentMeter (g, meterArea, 0.0f);
             const float d = juce::jmin (deviceArea.getHeight() * 0.6f, 34.0f);
             auto circle = juce::Rectangle<float> (d, d).withCentre (deviceArea.getCentre());
             g.setColour (juce::Colour (0xff7a7a7a));
@@ -168,20 +167,29 @@ public:
         sourceArea = left;
         if (user.strip != nullptr)
         {
+            // The destination: its name in a bar of its colour (plain when it has
+            // its default name), its icon, and its default label under the icon.
             auto src = left;
             auto bar = src.removeFromTop (juce::jmax (10.0f, src.getHeight() * 0.18f));
             g.setColour (user.strip->getColour());
             g.fillRect (bar);
+            if (stripName (*user.strip) != user.strip->getLabel())
+            {
+                g.setColour (juce::Colours::black);
+                g.setFont (juce::FontOptions (juce::jmin (13.0f, bar.getHeight() * 0.9f), juce::Font::bold));
+                g.drawFittedText (stripName (*user.strip).toUpperCase(), bar.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.6f);
+            }
             g.setColour (juce::Colour (0xff5a5a5a));
             g.fillRect (src);
             auto name = src.removeFromBottom (juce::jmin (18.0f, src.getHeight() * 0.32f));
             drawIcon (g, stripIcon (user.strip->getKind()), src.reduced (src.getWidth() * 0.22f, 3.0f), juce::Colours::white);
             g.setColour (juce::Colours::white);
             g.setFont (juce::FontOptions (juce::jmin (14.0f, name.getHeight()), juce::Font::bold));
-            g.drawFittedText (stripName (*user.strip).toUpperCase(), name.toNearestInt(), juce::Justification::centred, 1);
+            g.drawFittedText (user.strip->getLabel(), name.toNearestInt(), juce::Justification::centred, 1, 0.7f);
 
+            // PRE lit red, POST green, as on the console.
             auto pre = prePostArea.removeFromLeft (prePostArea.getWidth() / 2.0f);
-            drawChip (g, pre, "PRE", user.post ? juce::Colour (0xff4a4a4a) : Colours::pink, user.post ? Colours::textDim : juce::Colours::black);
+            drawChip (g, pre, "PRE", user.post ? juce::Colour (0xff4a4a4a) : Colours::mute, user.post ? Colours::textDim : juce::Colours::black);
             drawChip (g, prePostArea, "POST", user.post ? Colours::green : juce::Colour (0xff4a4a4a), user.post ? juce::Colours::black : Colours::textDim);
             prePostArea = pre.getUnion (prePostArea);
         }

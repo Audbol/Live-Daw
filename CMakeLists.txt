@@ -178,6 +178,7 @@ target_sources(LiveDAW PRIVATE
     src/ui/LibraryPage.cpp
     src/ui/UtilityPage.cpp
     src/ui/ShowPanel.cpp
+    src/ui/ScopeWindow.cpp
     src/ui/ViewPages.cpp
     src/ui/MainDisplay.cpp
     src/ui/SurfaceSections.cpp

@@ -1,14 +1,14 @@
 #pragma once
 
 #include "ui/DisplayPage.h"
+#include "ui/ScreenWidgets.h"
+#include "ui/ShowPanel.h"
 
 #include <memory>
 #include <unordered_map>
 
 namespace livedaw::ui
 {
-
-class ShowPanel;
 
 /** EFFECTS: the console's FX rack. 16 slots (VST/AU/LV2 plugins) used by the
     strips' inserts; slots 1-8 are the premium column, 9-16 the standard one.
@@ -37,13 +37,16 @@ private:
     int selected = 0;
 };
 
-/** METERS: like the console's meter screen. Channels and buses in groups of
-    eight with number keys (select) and M keys (mute), AUX, DCA, MAIN and MATRIX.
-    Consoles with more than 40 channels or 16 buses page through them. */
+/** METERS (manual 5.3): channels and buses in groups of eight with number keys
+    in the strips' colours (select) and mute squares, AUX, DCA, MAIN and MATRIX.
+    Touching a group's header opens its section's FADERS screen. Consoles with
+    more than 40 channels or 16 buses page through them. */
 class MetersPage final : public DisplayPage, private juce::Timer
 {
 public:
     explicit MetersPage (UiContext&);
+
+    bool usesKnobs() const override { return false; }
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -88,17 +91,19 @@ private:
     std::unordered_map<const void*, Hold> holds;
 };
 
-/** ROUTING: like the console's routing screen. CHANNELS: channel and aux
-    tiles on the left, a group of 48 sources on the right; pick a channel, then
-    its source (+1 AUTO moves on to the next channel, the lock protects the
-    patch). OUTPUTS: the same for the strips' outputs. MONITOR: monitor outputs,
-    PFL/AFL and level. */
+/** ROUTING (manual 5.4), switched with the status-bar keys CHANNELS, SOURCES
+    and OUTPUTS. CHANNELS: pick a channel on the left, then its source on the
+    right (+1 AUTO moves on to the next channel; the lock protects the patch).
+    SOURCES: the inputs and which channels use them. OUTPUTS: pick an output on
+    the left, then the signal that feeds it (a strip's L / R, or the monitor). */
 class RoutingPage final : public DisplayPage, private juce::Timer
 {
 public:
     explicit RoutingPage (UiContext&);
     ~RoutingPage() override;
 
+    bool usesKnobs() const override { return false; }
+    std::vector<StatusKey> getStatusKeys() override;
     void refresh() override;
     void resized() override;
     void paint (juce::Graphics&) override;
@@ -108,94 +113,154 @@ private:
     enum class Mode
     {
         Channels,
-        Outputs,
-        Monitor
+        Sources,
+        Outputs
     };
 
-    struct TargetTile
+    /** A signal that can feed an output: a strip's left or right channel, or the monitor (strip == nullptr). */
+    struct Signal
     {
-        juce::Rectangle<int> area;
-        Strip* strip;
+        Strip* strip = nullptr;
+        int channel = 0;
     };
 
     void timerCallback() override;
     void setMode (Mode);
-    std::vector<Strip*> allTargets() const;
+    std::vector<Strip*> channelTargets() const;
+    std::vector<Signal> signals() const;
     int numTargetPages() const;
-    int numPorts() const;
-    int numPortGroups() const;
-    juce::String portName (int index) const;
+    int numPorts (bool outputs) const;
+    int numPortGroups (bool outputs) const;
+    juce::String portName (int index, bool output) const;
     Strip* selectedStrip() const;
     void select (Strip*);
     void layoutTiles();
-    void assign (int port, bool right);
-    void showGroupMenu();
-    juce::String portUsers (int port, bool& usedBySelected) const;
+    void assignInput (int port, bool right);
+    void assignOutput (int port, const Signal&);
+    void clearOutput (int port);
+    /** What feeds output `port` (strip nullptr + channel -1: nothing). */
+    Signal feederOf (int port) const;
+    juce::String signalLabel (const Signal&) const;
+    juce::String inputUsers (int port) const;
+    void showGroupMenu (bool rightSide);
 
-    void paintTarget (juce::Graphics&, const TargetTile&, bool selected) const;
-    void paintPort (juce::Graphics&, juce::Rectangle<int>, int port) const;
+    void paintChannelTile (juce::Graphics&, juce::Rectangle<int>, Strip&, bool selected) const;
+    void paintInputPort (juce::Graphics&, juce::Rectangle<int>, int port, bool marked) const;
+    void paintOutputPort (juce::Graphics&, juce::Rectangle<int>, int port, bool selected) const;
+    void paintSignal (juce::Graphics&, juce::Rectangle<int>, const Signal&, bool marked) const;
+    void paintSourcePanel (juce::Graphics&) const;
 
     UiContext& ctx;
     Mode mode = Mode::Channels;
-    int targetPage = 0, portGroup = 0, layoutVersion = -1;
+    int targetPage = 0, inputGroup = 0, outputGroup = 0, signalGroup = 2, signalPage = 0, layoutVersion = -1;
+    int selectedPort = 0, selectedSource = 0;
     StripKind selectedKind = StripKind::Channel;
     int selectedIndex = 0;
     bool autoAdvance = true, locked = false;
 
-    juce::Rectangle<int> modeKeys[3], leftPanel, rightPanel, leftHeader, rightHeader;
-    juce::Rectangle<int> monoKey, stereoKey, autoKey, lockKey, unlockKey, prevPage, nextPage, groupSelector, offKey, separator;
-    std::vector<TargetTile> targetTiles;
-    std::vector<juce::Rectangle<int>> portTiles;
-    std::unique_ptr<juce::Component> monitorPanel;
+    juce::Rectangle<int> leftPanel, rightPanel, leftHeader, rightHeader;
+    juce::Rectangle<int> inputCaption, mainKey, altKey, stereoKey, autoKey, lockKey, unlockKey, prevPage, nextPage, leftSelector, rightSelector,
+        noneKey, copyCaption, srcToChKey, chToSrcKey, separator, renameKey;
+    std::vector<std::pair<juce::Rectangle<int>, Strip*>> channelTiles;
+    std::vector<juce::Rectangle<int>> leftPorts, rightPorts;
+    std::vector<std::pair<juce::Rectangle<int>, Signal>> signalTiles;
 };
 
-/** SETUP: audio device, console size, surface, global safes, group names, plugins. */
+/** SETUP (manual 5.5): the tabs GENERAL | AUDIO | SURFACE | REMOTE | DAW (and
+    the app's PLUGINS) with INITIALIZE CONSOLE and SHUTDOWN on the tab row;
+    MONITORS and CC EDIT in the status bar. Settings are changed by touch, so
+    the parameter bar is hidden. */
 class SetupPage final : public DisplayPage
 {
 public:
     explicit SetupPage (UiContext&);
     ~SetupPage() override;
 
+    bool usesKnobs() const override { return false; }
+    std::vector<StatusKey> getStatusKeys() override;
     void refresh() override;
     void resized() override;
     void paint (juce::Graphics&) override;
 
 private:
+    void showTab();
+
     UiContext& ctx;
-    juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
+    TabRow tabRow;
+    std::unique_ptr<juce::Component> general;
+    juce::OwnedArray<juce::Component> ownedPages;
+    std::vector<juce::Component*> pages;
+    WingKey initKey { "INITIALIZE\nCONSOLE", Icon::Reset }, shutdownKey { "SHUTDOWN", Icon::Power };
+    OverlayHolder overlays;
 };
 
-/** LIBRARY: show files, scenes and snippets, user fader banks. */
-class LibraryPage final : public DisplayPage
+/** The monitor setup (outputs, PFL/AFL, level), shown by SETUP's MONITORS key
+    until the console's MONITORS screen exists. */
+std::unique_ptr<juce::Component> makeMonitorPanel (UiContext&);
+
+/** LIBRARY (manual 5.6): the open show's scenes and snippets on the left
+    (ShowPanel), the tabs SHOW | SNAP | SNIP | CLIP | FX | CHAN on the right
+    with the GO PREV / GO NEXT / PREV / NEXT / GO transport, the SCOPE window,
+    and the GLOBAL (safes) key in the status bar. */
+class LibraryPage final : public DisplayPage, private juce::Timer
 {
 public:
     explicit LibraryPage (UiContext&);
     ~LibraryPage() override;
 
+    bool usesKnobs() const override { return false; }
+    std::vector<StatusKey> getStatusKeys() override;
     void refresh() override;
     void resized() override;
     void paint (juce::Graphics&) override;
 
-    /** Shows the scenes tab. */
+    /** Shows the SNAP tab. */
     void showScenes();
 
+    class ShowTab;
+    class SnapTab;
+    class SnipTab;
+    class PlaceholderTab;
+
 private:
-    /** Tabs that report the change of tab. */
-    struct Tabs final : public juce::TabbedComponent
+    enum Tab
     {
-        Tabs() : juce::TabbedComponent (juce::TabbedButtonBar::TabsAtTop) {}
-        std::function<void (int)> onTabChanged;
-        void currentTabChanged (int index, const juce::String&) override
-        {
-            if (onTabChanged)
-                onTabChanged (index);
-        }
+        TabShow,
+        TabSnap,
+        TabSnip,
+        TabClip,
+        TabFx,
+        TabChan
     };
 
+    void timerCallback() override;
+    void showTab (int);
+    void updateTransport();
+    /** The scene of the selected row (or the current scene). */
+    int selectedScene() const;
+    /** Runs `action` after the CONFIRM LIBRARY LOAD question, if that's on. */
+    void confirmLoad (const juce::String& what, std::function<void()> action);
+    void load (ShowPanel::Item);
+    void openScope (int mode, const juce::String& title, juce::uint32 sections, std::vector<state::StripRef> strips,
+                    std::function<void (juce::uint32, const std::vector<state::StripRef>&)> save);
+    void closeScope();
+    void openGlobal();
+    bool anyGlobalSafe() const;
+
     UiContext& ctx;
-    Tabs tabs;
-    ShowPanel* showPanel = nullptr;
-    std::unique_ptr<juce::Component> ownedShowPanel;
+    std::unique_ptr<ShowPanel> list;
+    TabRow tabs;
+    juce::OwnedArray<juce::Component> tabPages;
+    WingKey goPrevKey { "GO\nPREV", Icon::GoPrev }, goNextKey { "GO\nNEXT", Icon::GoNext }, prevKey { "PREV", Icon::ChevronLeft },
+        nextKey { "NEXT", Icon::ChevronRight }, goKey { "GO", Icon::Play };
+    std::unique_ptr<juce::Component> scope;
+    juce::Rectangle<int> rightPanel, transportArea;
+
+    // The snippet REC FOCUS: what SAVE on the SNIP tab captures.
+    juce::uint32 focusSections = 0;
+    std::vector<state::StripRef> focusStrips;
+    bool focusEdited = false;
+    bool shownGlobal = false;
 };
 
 /** UTILITY: system health and the event log. */

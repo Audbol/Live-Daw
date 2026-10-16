@@ -216,6 +216,8 @@ bool MetersPage::isMuted (const Group& group, int index) const
 
 float MetersPage::levelOf (const Group& group, int index, int channel) const
 {
+    // The console's meters here are pre-fader; ours read the post-fader output
+    // until the engine has a pre-fader tap (session E11: pre-fader meter taps).
     if (! group.dca)
         return meterPos (dsp::gainToDb (ctx.meters.get (stripOf (group, index), false, channel)));
 
@@ -305,8 +307,15 @@ void MetersPage::paint (juce::Graphics& g)
             const auto cell = s.reduced (juce::jmin (2.0f, s.getWidth() * 0.08f), 0.0f);
             auto* strip = stripOf (group, i);
             const int number = group.first + i + 1;
-            numberKey (g, cell.withY ((float) numbers.getY()).withHeight ((float) numbers.getHeight()), number,
-                       strip != nullptr && strip == selected ? Colours::amber : Colours::cyan);
+            // Number keys in the strip's colour; the selected strip gets a white frame.
+            const auto numberArea = cell.withY ((float) numbers.getY()).withHeight ((float) numbers.getHeight());
+            numberKey (g, numberArea, number, group.dca ? wingColour (ctx.engine.getDca (group.first + i).colour.load())
+                                                 : (strip != nullptr ? strip->getColour() : Colours::cyan));
+            if (strip != nullptr && strip == selected)
+            {
+                g.setColour (juce::Colours::white);
+                g.drawRoundedRectangle (numberArea.expanded (1.5f), 2.0f, 2.0f);
+            }
 
             // LED meter: two narrow columns (one for mono), green / yellow / red, with peak hold.
             const bool stereo = isStereo (group, i);
@@ -323,24 +332,27 @@ void MetersPage::paint (juce::Graphics& g)
                 for (int k = 0; k < segments; ++k)
                 {
                     const float pos = ((float) k + 0.5f) / (float) segments;
-                    const bool lit = level >= pos || k == holdSeg;
+                    const bool lit = level >= pos;
                     juce::Colour c = juce::Colour (0xff4a4a4a);
                     if (lit)
                         c = pos > meterPos (-0.5f) ? Colours::mute : (pos > meterPos (-12.0f) ? Colours::meterYellow : Colours::meterGreen);
+                    else if (k == holdSeg)
+                        c = Colours::amber; // the peak-hold dash
                     g.setColour (c);
                     g.fillRect (x, meterBottom - (float) (k + 1) * segH + 0.5f, colW, juce::jmax (1.0f, segH - 1.5f));
                 }
             }
 
-            // Mute key.
+            // Mute: an empty square, filled red while muted.
             const auto m = cell.withY ((float) mutes.getY()).withHeight ((float) mutes.getHeight()).withSizeKeepingCentre (
-                juce::jmin (cell.getWidth(), (float) mutes.getHeight() * 1.1f), (float) mutes.getHeight());
-            const bool muted = isMuted (group, i);
-            g.setColour (muted ? Colours::mute : juce::Colour (0xff4a4a4a));
-            g.fillRoundedRectangle (m, 2.0f);
-            g.setColour (muted ? juce::Colours::black : Colours::textDim);
-            g.setFont (juce::FontOptions (m.getHeight() * 0.72f, juce::Font::bold));
-            g.drawText ("M", m, juce::Justification::centred);
+                juce::jmin (cell.getWidth(), (float) mutes.getHeight()), (float) mutes.getHeight()).reduced (1.0f);
+            if (isMuted (group, i))
+            {
+                g.setColour (Colours::mute);
+                g.fillRect (m);
+            }
+            g.setColour (juce::Colour (0xff5a5a5a));
+            g.drawRect (m, 1.0f);
         }
     }
 }
@@ -375,7 +387,11 @@ void MetersPage::mouseDown (const juce::MouseEvent& e)
     {
         if (group.header.contains (pos))
         {
+            // Touching a group opens the FADERS screen of its section.
             bringToSection (group, stripOf (group, 0));
+            ctx.viewSection = group.section;
+            if (ctx.showScreen)
+                ctx.showScreen (Screen::Faders);
             return;
         }
         if (! group.body.contains (pos))

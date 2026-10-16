@@ -1,429 +1,822 @@
 #include "ui/Pages.h"
-#include "ui/ShowPanel.h"
-#include "ui/WingWidgets.h"
+#include "ui/ScopeWindow.h"
 
 namespace livedaw::ui
 {
 
 namespace
 {
-    /** SHOW: the show's name, file keys and what a show holds. */
-    class ShowTab final : public juce::Component, private juce::Timer
+    /** Rows of outlined keys on dark bands, as on the LIBRARY tabs. */
+    struct KeyRow
     {
-    public:
-        explicit ShowTab (UiContext& c) : ctx (c)
-        {
-            name.setFont (juce::FontOptions (26.0f, juce::Font::bold));
-            name.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff1e1e1e));
-            name.onTextChange = [this] { ctx.show.setName (name.getText()); };
-            name.onReturnKey = [this] { unfocusAllComponents(); };
-
-            newButton.onClick = [this] { if (ctx.newShow) ctx.newShow(); };
-            openButton.onClick = [this] { if (ctx.openShow) ctx.openShow(); };
-            saveButton.onClick = [this] { if (ctx.saveShow) ctx.saveShow (false); };
-            saveAsButton.onClick = [this] { if (ctx.saveShow) ctx.saveShow (true); };
-            for (juce::Component* comp : { (juce::Component*) &name, (juce::Component*) &newButton, (juce::Component*) &openButton,
-                                           (juce::Component*) &saveButton, (juce::Component*) &saveAsButton })
-                addAndMakeVisible (comp);
-            startTimerHz (2);
-            timerCallback();
-        }
-
-        void timerCallback() override
-        {
-            if (! name.hasKeyboardFocus (true) && name.getText() != ctx.show.getName())
-                name.setText (ctx.show.getName(), false);
-            repaint();
-        }
-
-        void paint (juce::Graphics& g) override
-        {
-            g.fillAll (Colours::screen);
-            drawSectionBox (g, showBox, "SHOW");
-            drawSectionBox (g, infoBox, "CONTENTS");
-
-            g.setColour (Colours::textDim);
-            g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-            g.drawText ("SHOW NAME", nameCaption, juce::Justification::bottomLeft);
-
-            const std::pair<juce::String, juce::String> rows[] = {
-                { "SCENES", juce::String (ctx.show.getNumScenes()) },
-                { "CHANNELS", juce::String ((int) ctx.engine.getChannels().size()) },
-                { "BUSES", juce::String ((int) ctx.engine.getBuses().size()) },
-                { "FX SLOTS LOADED", [this] { int n = 0; for (int i = 0; i < kNumFx; ++i) n += ctx.engine.getFx().isLoaded (i) ? 1 : 0; return juce::String (n); }() },
-                { "USER BANKS", juce::String ((int) ctx.show.layers.getUserLayers().size()) } };
-            auto r = infoRows;
-            const int h = juce::jmin (40, r.getHeight() / (int) std::size (rows));
-            for (auto& [label, value] : rows)
-            {
-                auto row = r.removeFromTop (h);
-                g.setColour (juce::Colour (0xff1c1c1c));
-                g.fillRect (row.withHeight (1));
-                g.setColour (Colours::text);
-                g.setFont (juce::FontOptions (juce::jmin (19.0f, h * 0.5f), juce::Font::bold));
-                g.drawText (label, row, juce::Justification::centredLeft);
-                g.setFont (juce::FontOptions (juce::jmin (24.0f, h * 0.62f), juce::Font::bold));
-                g.drawText (value, row, juce::Justification::centredRight);
-            }
-            g.setColour (Colours::textDim);
-            g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
-            g.drawFittedText ("A show holds the whole console: strips, FX slot plugins, DCAs, mute groups, fader banks and every scene. "
-                              "Shows are saved atomically with a backup (.bak) and autosaved every 30 seconds; older Live DAW shows "
-                              "are converted to the WING layout when they load.",
-                              note, juce::Justification::topLeft, 4);
-        }
-
-        void resized() override
-        {
-            auto b = getLocalBounds().reduced (0, 6);
-            showBox = b.removeFromLeft (b.getWidth() * 48 / 100);
-            b.removeFromLeft (8);
-            infoBox = b;
-
-            auto s2 = sectionContent (showBox, true);
-            nameCaption = s2.removeFromTop (18);
-            name.setBounds (s2.removeFromTop (44));
-            s2.removeFromTop (12);
-            const int kh = juce::jmin (56, (s2.getHeight() - 8) / 2);
-            auto row = s2.removeFromTop (kh);
-            newButton.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (3));
-            openButton.setBounds (row.reduced (3));
-            row = s2.removeFromTop (kh);
-            saveButton.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (3));
-            saveAsButton.setBounds (row.reduced (3));
-
-            auto i = sectionContent (infoBox, true);
-            note = i.removeFromBottom (juce::jmin (80, i.getHeight() / 3));
-            infoRows = i;
-        }
-
-    private:
-        UiContext& ctx;
-        juce::TextEditor name;
-        WingKey newButton { "NEW", Icon::Plus }, openButton { "OPEN", Icon::Folder }, saveButton { "SAVE", Icon::Disk },
-            saveAsButton { "SAVE AS", Icon::Disk };
-        juce::Rectangle<int> showBox, infoBox, nameCaption, infoRows, note;
+        juce::Rectangle<int> band;
+        std::vector<juce::Component*> left, right;
     };
 
-    juce::String describeFader (UiContext& ctx, const state::FaderRef& f)
+    void layoutKeyRows (juce::Rectangle<int> area, std::vector<KeyRow>& rows, int rowH, int gap)
     {
-        if (f.dca)
-            return "DCA " + juce::String (f.dcaIndex + 1) + " " + ctx.engine.getDcaName (f.dcaIndex);
-        if (auto* s = state::findStrip (ctx.engine, f.strip))
-            return describeStrip (*s);
-        return f.strip.toString() + " (missing)";
+        for (auto& row : rows)
+        {
+            row.band = area.removeFromTop (rowH);
+            area.removeFromTop (gap);
+            auto r = row.band.reduced (4, 4);
+            const int w = juce::jmin (150, r.getWidth() * 30 / 100);
+            for (auto* c : row.left)
+            {
+                c->setBounds (r.removeFromLeft (w));
+                r.removeFromLeft (4);
+            }
+            for (auto* c : row.right)
+            {
+                c->setBounds (r.removeFromRight (w));
+                r.removeFromRight (4);
+            }
+        }
     }
 
-    /** User fader banks: any strips and DCAs in any order. */
-    class BanksTab final : public juce::Component
+    void paintKeyRows (juce::Graphics& g, const std::vector<KeyRow>& rows)
     {
-    public:
-        explicit BanksTab (UiContext& c) : ctx (c)
+        for (auto& row : rows)
         {
-            banks.model.getNumRowsFn = [this] { return (int) userLayers.size(); };
-            banks.model.paintFn = [this] (int row, juce::Graphics& g, int w, int h, bool sel)
-            {
-                paintRow (g, w, h, sel, userLayers[(size_t) row].name, juce::String (userLayers[(size_t) row].faders.size()) + " faders", Colours::block);
-            };
-            banks.model.selectedFn = [this] (int) { refreshMembers(); };
-            members.model.getNumRowsFn = [this] { const auto* l = currentLayer(); return l != nullptr ? (int) l->faders.size() : 0; };
-            members.model.paintFn = [this] (int row, juce::Graphics& g, int w, int h, bool sel)
-            {
-                if (const auto* l = currentLayer(); l != nullptr && row < (int) l->faders.size())
-                    paintRow (g, w, h, sel, describeFader (ctx, l->faders[(size_t) row]), {}, Colours::accent);
-            };
-            board.model.getNumRowsFn = [this] { return (int) boardFaders.size(); };
-            board.model.paintFn = [this] (int row, juce::Graphics& g, int w, int h, bool sel)
-            {
-                paintRow (g, w, h, sel, describeFader (ctx, boardFaders[(size_t) row]), {}, Colours::textDim);
-            };
-            board.model.doubleClickFn = [this] (int) { addSelected(); };
-            board.list.setMultipleSelectionEnabled (true);
+            g.setColour (Dark::body);
+            g.fillRect (row.band);
+        }
+    }
 
-            for (auto* l : { &banks, &members, &board })
-                addAndMakeVisible (l->list);
+    WingKey* makeKey (juce::OwnedArray<WingKey>& keys, juce::Component& parent, const juce::String& text, Icon icon, bool enabled = true)
+    {
+        auto* k = keys.add (new WingKey (text, icon));
+        styleIconKey (*k);
+        enableKey (*k, enabled);
+        parent.addAndMakeVisible (k);
+        return k;
+    }
+} // namespace
 
-            newButton.onClick = [this]
-            {
-                const auto id = ctx.show.layers.addUserLayer ("User " + juce::String ((int) userLayers.size() + 1));
-                refresh();
-                for (size_t i = 0; i < userLayers.size(); ++i)
-                    if (userLayers[i].id == id)
-                        banks.list.selectRow ((int) i);
-                notifyLayersChangedAsync (ctx);
-            };
-            deleteButton.onClick = [this]
-            {
-                if (const auto* l = currentLayer())
-                {
-                    ctx.show.layers.removeUserLayer (l->id);
-                    refresh();
-                    notifyLayersChangedAsync (ctx);
-                }
-            };
-            renameButton.onClick = [this]
-            {
-                const auto* l = currentLayer();
-                if (l == nullptr)
-                    return;
-                auto* w = new juce::AlertWindow ("Rename bank", {}, juce::MessageBoxIconType::NoIcon);
-                w->addTextEditor ("name", l->name);
-                w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-                w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-                const auto id = l->id;
-                w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, id] (int r)
+//==============================================================================
+/** SHOW (fig. 44/45): show files. A show is always open here, so OPEN and
+    CREATE stay available; CLOSE starts a new show. */
+class LibraryPage::ShowTab final : public juce::Component
+{
+public:
+    explicit ShowTab (LibraryPage& p) : page (p)
+    {
+        auto& ctx = page.ctx;
+        makeKey (keys, *this, "OPEN", Icon::Folder)->onClick = [&ctx] { if (ctx.openShow) ctx.openShow(); };
+        makeKey (keys, *this, "CREATE", Icon::Edit)->onClick = [&ctx] { if (ctx.newShow) ctx.newShow(); };
+        makeKey (keys, *this, "SAVE", Icon::SaveTray)->onClick = [&ctx] { if (ctx.saveShow) ctx.saveShow (false); };
+        makeKey (keys, *this, "CLOSE", Icon::ClearCircle)->onClick = [&ctx] { if (ctx.newShow) ctx.newShow(); };
+        makeKey (keys, *this, "SAVE AS", Icon::SaveTray)->onClick = [&ctx] { if (ctx.saveShow) ctx.saveShow (true); };
+        makeKey (keys, *this, "ADD ITEM\nTO SHOW", Icon::Plus, false); // needs the file browser (G-N3)
+        makeKey (keys, *this, "EDIT\nTAG", Icon::Tag, false);          // session E1: scene tags
+        makeKey (keys, *this, "SEND\nMIDI", Icon::Edit, false);        // needs MIDI (G-N1)
+        rows = { { {}, { keys[0], keys[1] }, { keys[2] } }, { {}, { keys[3] }, { keys[4] } }, { {}, { keys[5] }, { keys[7], keys[6] } } };
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        paintKeyRows (g, rows);
+        auto& ctx = page.ctx;
+        g.setColour (Dark::textDim);
+        g.setFont (juce::FontOptions (juce::jmin (16.0f, (float) info.getHeight() * 0.4f), juce::Font::bold));
+        g.drawFittedText ("SHOW: " + ctx.show.getName().toUpperCase() + "\n" + juce::String (ctx.show.getNumScenes()) + " SCENES", info,
+                          juce::Justification::bottomLeft, 2);
+    }
+
+    void resized() override
+    {
+        auto b = getLocalBounds();
+        const int rowH = juce::jlimit (36, 56, getHeight() / 5);
+        layoutKeyRows (b, rows, rowH, 4);
+        info = b.withTop (rows.back().band.getBottom() + 8).reduced (8, 4);
+    }
+
+private:
+    LibraryPage& page;
+    juce::OwnedArray<WingKey> keys;
+    std::vector<KeyRow> rows;
+    juce::Rectangle<int> info;
+};
+
+//==============================================================================
+/** SNAP (fig. 46): our scenes are the show's snapshots. */
+class LibraryPage::SnapTab final : public juce::Component, private juce::Timer
+{
+public:
+    explicit SnapTab (LibraryPage& p) : page (p)
+    {
+        save = makeKey (keys, *this, "SAVE", Icon::SaveTray);
+        saveScope = makeKey (keys, *this, "SAVE\n+SCOPE", Icon::SaveTray);
+        update = makeKey (keys, *this, "UPDATE", Icon::Edit);
+        partialUpdate = makeKey (keys, *this, "PARTIAL\nUPDATE", Icon::Edit, false); // engine E12
+        editScope = makeKey (keys, *this, "EDIT\nSCOPE", Icon::Overview);
+        loadKey = makeKey (keys, *this, "LOAD", Icon::LoadTray);
+        partialLoad = makeKey (keys, *this, "PARTIAL\nLOAD", Icon::LoadTray, false); // engine E12
+        restore = makeKey (keys, *this, "RESTORE", Icon::Reset, false);              // engine E12
+        rows = { { {}, { save, saveScope }, {} }, { {}, { update, partialUpdate }, { editScope } }, { {}, { loadKey, partialLoad }, { restore } } };
+
+        save->onClick = [this] { addScene (false); };
+        saveScope->onClick = [this] { addScene (true); };
+        update->onClick = [this]
+        {
+            const int index = page.selectedScene();
+            if (const auto scene = page.ctx.show.getScene (index))
+                juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "UPDATE", "Overwrite \"" + scene->name + "\" with the current console?",
+                                                    "UPDATE", "CANCEL", this, juce::ModalCallbackFunction::create ([this, index] (int r)
                 {
                     if (r != 0)
                     {
-                        ctx.show.layers.renameUserLayer (id, w->getTextEditorContents ("name"));
-                        refresh();
-                        notifyLayersChangedAsync (ctx);
+                        page.ctx.show.storeScene (index);
+                        page.ctx.log.info ("Updated scene " + juce::String (index + 1));
                     }
-                }), true);
-            };
-            addButton.onClick = [this] { addSelected(); };
-            removeButton.onClick = [this]
+                }));
+        };
+        editScope->onClick = [this] { openScope (page.selectedScene()); };
+        loadKey->onClick = [this]
+        {
+            if (page.selectedScene() >= 0)
+                page.load ({ page.selectedScene(), -1 });
+        };
+
+        // App extras: the fade time and notes of the selected scene.
+        fade.setSliderStyle (juce::Slider::LinearHorizontal);
+        fade.setRange (0.0, 30.0, 0.1);
+        fade.setSkewFactorFromMidPoint (3.0);
+        fade.setTextValueSuffix (" s");
+        fade.setTextBoxStyle (juce::Slider::TextBoxRight, false, 64, 24);
+        fade.onValueChange = [this]
+        {
+            if (page.selectedScene() >= 0)
             {
-                const auto* l = currentLayer();
-                const int row = members.list.getSelectedRow();
-                if (l != nullptr && juce::isPositiveAndBelow (row, (int) l->faders.size()))
+                page.ctx.show.setSceneFadeSeconds (page.selectedScene(), fade.getValue());
+                page.list->repaint();
+            }
+        };
+        notes.setMultiLine (true);
+        notes.setReturnKeyStartsNewLine (true);
+        notes.setColour (juce::TextEditor::backgroundColourId, Dark::well);
+        notes.setColour (juce::TextEditor::outlineColourId, Dark::key);
+        notes.onTextChange = [this]
+        {
+            if (page.selectedScene() >= 0)
+                page.ctx.show.setSceneNotes (page.selectedScene(), notes.getText());
+        };
+        addAndMakeVisible (fade);
+        addAndMakeVisible (notes);
+        startTimerHz (2);
+    }
+
+    void refresh()
+    {
+        const auto scene = page.ctx.show.getScene (page.selectedScene());
+        for (auto* k : { update, editScope, loadKey })
+            enableKey (*k, scene.has_value());
+        fade.setEnabled (scene.has_value());
+        notes.setEnabled (scene.has_value());
+        if (! fade.isMouseButtonDown())
+            fade.setValue (scene ? scene->fadeSeconds : 0.0, juce::dontSendNotification);
+        if (! notes.hasKeyboardFocus (true))
+            notes.setText (scene ? scene->notes : juce::String(), false);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        paintKeyRows (g, rows);
+        auto body = drawDarkPanel (g, extras, "SCENE");
+        juce::ignoreUnused (body);
+        g.setColour (Dark::textDim);
+        g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        g.drawText ("FADE (FADERS, PANS, SENDS)", fadeLabel, juce::Justification::centredLeft);
+        g.drawText ("NOTES", notesLabel, juce::Justification::bottomLeft);
+    }
+
+    void resized() override
+    {
+        auto b = getLocalBounds();
+        const int rowH = juce::jlimit (36, 56, getHeight() / 6);
+        layoutKeyRows (b, rows, rowH, 4);
+        extras = b.withTop (rows.back().band.getBottom() + 8);
+        auto e = darkPanelBody (extras, true).reduced (8, 4);
+        auto f = e.removeFromTop (28);
+        fadeLabel = f.removeFromLeft (juce::jmin (190, f.getWidth() / 2));
+        fade.setBounds (f);
+        notesLabel = e.removeFromTop (18);
+        notes.setBounds (e.withTrimmedTop (2));
+    }
+
+private:
+    void timerCallback() override { refresh(); }
+
+    void addScene (bool withScope)
+    {
+        auto& show = page.ctx.show;
+        const int at = page.selectedScene() >= 0 ? page.selectedScene() + 1 : show.getNumScenes();
+        const int index = show.addScene ("Scene " + juce::String (show.getNumScenes() + 1), at);
+        page.list->refresh();
+        page.list->select ({ index, -1 });
+        if (withScope)
+            openScope (index);
+    }
+
+    void openScope (int index)
+    {
+        const auto scene = page.ctx.show.getScene (index);
+        if (! scene)
+            return;
+        page.openScope ((int) ScopeWindow::Mode::SceneScope, "EDIT SCOPE: " + scene->name.toUpperCase(), scene->scope, {},
+                        [this, index] (juce::uint32 sections, const std::vector<state::StripRef>&)
+                        {
+                            page.ctx.show.setSceneScope (index, sections);
+                        });
+    }
+
+    LibraryPage& page;
+    juce::OwnedArray<WingKey> keys;
+    WingKey *save, *saveScope, *update, *partialUpdate, *editScope, *loadKey, *partialLoad, *restore;
+    std::vector<KeyRow> rows;
+    juce::Slider fade;
+    juce::TextEditor notes;
+    juce::Rectangle<int> extras, fadeLabel, notesLabel;
+};
+
+//==============================================================================
+/** SNIP (fig. 49): snippets of the selected scene. SAVE captures the REC FOCUS
+    (strips x sections); REC / STOP wait for parameter recording (engine E14). */
+class LibraryPage::SnipTab final : public juce::Component, private juce::Timer
+{
+public:
+    explicit SnipTab (LibraryPage& p) : page (p)
+    {
+        save = makeKey (keys, *this, "SAVE", Icon::SaveTray);
+        update = makeKey (keys, *this, "UPDATE", Icon::Edit);
+        loadFocus = makeKey (keys, *this, "LOAD\nFOCUS", Icon::LoadTray);
+        loadKey = makeKey (keys, *this, "LOAD", Icon::LoadTray);
+        partialLoad = makeKey (keys, *this, "PARTIAL\nLOAD", Icon::LoadTray, false); // engine E12
+        rec = makeKey (keys, *this, "REC", Icon::Record, false);                      // engine E14
+        stop = makeKey (keys, *this, "STOP", Icon::Stop, false);                      // engine E14
+        recFocus = makeKey (keys, *this, "REC\nFOCUS", Icon::Overview);
+        addItems = makeKey (keys, *this, "ADD\nITEMS", Icon::Plus);
+        removeItems = makeKey (keys, *this, "REMOVE\nITEMS", Icon::MinusCircle);
+        clearAll = makeKey (keys, *this, "CLEAR\nALL", Icon::Trash);
+        recFocus->isOn = [this] { return page.focusEdited; };
+        rows = { { {}, { save }, {} }, { {}, { update }, { loadFocus } }, { {}, { loadKey, partialLoad }, {} }, { {}, { rec, stop }, { recFocus } },
+                 { {}, { addItems, removeItems }, { clearAll } } };
+
+        save->onClick = [this] { addSnippet(); };
+        update->onClick = [this]
+        {
+            const auto item = page.list->getSelected();
+            if (item.isSnippet())
+            {
+                page.ctx.show.storeSnippet (item.scene, item.snippet);
+                page.ctx.log.info ("Updated snippet " + juce::String (item.scene + 1) + "." + juce::String (item.snippet + 1));
+            }
+        };
+        loadFocus->onClick = [this]
+        {
+            const auto item = page.list->getSelected();
+            if (const auto sn = page.ctx.show.getSnippet (item.scene, item.snippet))
+            {
+                page.focusSections = sn->sections;
+                page.focusStrips = sn->strips;
+                page.focusEdited = true;
+                recFocus->repaint();
+            }
+        };
+        loadKey->onClick = [this]
+        {
+            const auto item = page.list->getSelected();
+            if (item.isSnippet())
+                page.load (item);
+        };
+        recFocus->onClick = [this]
+        {
+            auto [sections, strips] = defaultFocus();
+            page.openScope ((int) ScopeWindow::Mode::SnippetFocus, "REC FOCUS", sections, strips,
+                            [this] (juce::uint32 s, const std::vector<state::StripRef>& st)
+                            {
+                                page.focusSections = s;
+                                page.focusStrips = st;
+                                page.focusEdited = true;
+                            });
+        };
+        addItems->onClick = [this] { editItems (true); };
+        removeItems->onClick = [this] { editItems (false); };
+        clearAll->onClick = [this]
+        {
+            const auto item = page.list->getSelected();
+            if (const auto sn = page.ctx.show.getSnippet (item.scene, item.snippet))
+                juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "CLEAR ALL", "Remove every item from \"" + sn->name + "\"?",
+                                                    "CLEAR", "CANCEL", this, juce::ModalCallbackFunction::create ([this, item] (int r)
                 {
-                    ctx.show.layers.removeFromUserLayer (l->id, l->faders[(size_t) row]);
-                    refreshAfterEdit();
-                }
+                    if (r != 0)
+                    {
+                        page.ctx.show.setSnippetStrips (item.scene, item.snippet, {});
+                        page.list->refresh();
+                    }
+                }));
+        };
+        startTimerHz (2);
+    }
+
+    void refresh()
+    {
+        const auto item = page.list->getSelected();
+        const bool snippet = item.isSnippet();
+        enableKey (*save, page.ctx.show.getScene (item.scene).has_value());
+        for (auto* k : { update, loadFocus, loadKey, addItems, removeItems, clearAll })
+            enableKey (*k, snippet);
+        repaint (counter);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        paintKeyRows (g, rows);
+        // The parameter counter (the selected snippet's strips x sections).
+        const auto item = page.list->getSelected();
+        const auto sn = page.ctx.show.getSnippet (item.scene, item.snippet);
+        int count = 0;
+        if (sn)
+            for (int i = 0; i < state::kNumSections; ++i)
+                count += (sn->sections & state::sectionAt (i)) != 0 ? (int) sn->strips.size() : 0;
+        g.setColour (juce::Colours::black);
+        g.fillRect (counter);
+        auto c = counter.reduced (2);
+        g.setColour (Dark::text);
+        g.setFont (juce::FontOptions (juce::jmin (22.0f, (float) c.getHeight() * 0.6f), juce::Font::bold));
+        g.drawText (juce::String (count), c.removeFromTop (c.getHeight() * 62 / 100), juce::Justification::centred);
+        g.setColour (Dark::orange.brighter (0.4f));
+        g.setFont (juce::FontOptions (juce::jmin (11.0f, (float) c.getHeight() * 0.9f), juce::Font::bold));
+        g.drawText ("PARAMETER", c, juce::Justification::centredTop);
+    }
+
+    void resized() override
+    {
+        auto b = getLocalBounds();
+        const int rowH = juce::jlimit (32, 52, getHeight() / 6);
+        layoutKeyRows (b, rows, rowH, 4);
+        // REC and STOP are narrower, to make room for the parameter counter.
+        auto band = rows[3].band.reduced (4, 4);
+        const int w = juce::jmin (rec->getWidth(), (recFocus->getX() - band.getX() - 90) / 2 - 4);
+        rec->setBounds (rec->getBounds().withWidth (w));
+        stop->setBounds (stop->getBounds().withX (rec->getRight() + 4).withWidth (w));
+        counter = juce::Rectangle<int> (stop->getRight() + 8, band.getY(), juce::jmin (100, recFocus->getX() - stop->getRight() - 16), band.getHeight());
+    }
+
+private:
+    void timerCallback() override { refresh(); }
+
+    std::pair<juce::uint32, std::vector<state::StripRef>> defaultFocus() const
+    {
+        if (page.focusEdited)
+            return { page.focusSections, page.focusStrips };
+        // Until the focus is edited: the selected channel's fader and sends.
+        std::vector<state::StripRef> strips;
+        if (auto* s = page.ctx.getSelectedStrip ? page.ctx.getSelectedStrip() : nullptr)
+            strips.push_back (state::StripRef::of (*s));
+        return { state::Fader | state::Sends, strips };
+    }
+
+    void addSnippet()
+    {
+        auto& show = page.ctx.show;
+        const auto item = page.list->getSelected();
+        const auto scene = show.getScene (item.scene);
+        if (! scene)
+            return;
+        auto [sections, strips] = defaultFocus();
+        const int index = show.addSnippet (item.scene, "Snippet " + juce::String (scene->numSnippets + 1), sections, strips);
+        page.list->refresh();
+        page.list->select ({ item.scene, index });
+    }
+
+    void editItems (bool add)
+    {
+        const auto item = page.list->getSelected();
+        const auto sn = page.ctx.show.getSnippet (item.scene, item.snippet);
+        if (! sn)
+            return;
+        page.openScope ((int) (add ? ScopeWindow::Mode::SnippetAdd : ScopeWindow::Mode::SnippetRemove), (add ? "ADD ITEMS: " : "REMOVE ITEMS: ") + sn->name.toUpperCase(),
+                        0, {}, [this, item, add] (juce::uint32 sections, const std::vector<state::StripRef>& chosen)
+                        {
+                            auto& show = page.ctx.show;
+                            const auto current = show.getSnippet (item.scene, item.snippet);
+                            if (! current)
+                                return;
+                            auto strips = current->strips;
+                            for (auto& r : chosen)
+                            {
+                                strips.erase (std::remove (strips.begin(), strips.end(), r), strips.end());
+                                if (add)
+                                    strips.push_back (r);
+                            }
+                            show.setSnippetStrips (item.scene, item.snippet, strips);
+                            show.setSnippetSections (item.scene, item.snippet, add ? (current->sections | sections) : (current->sections & ~sections));
+                            // Added items take the console's current settings.
+                            if (add)
+                                show.storeSnippet (item.scene, item.snippet);
+                            page.list->refresh();
+                        });
+    }
+
+    LibraryPage& page;
+    juce::OwnedArray<WingKey> keys;
+    WingKey *save, *update, *loadFocus, *loadKey, *partialLoad, *rec, *stop, *recFocus, *addItems, *removeItems, *clearAll;
+    std::vector<KeyRow> rows;
+    juce::Rectangle<int> counter;
+};
+
+//==============================================================================
+/** CLIP, FX and CHAN: the clip player (chapter 8), FX presets (G-N4) and
+    channel presets (G-N5) aren't built yet; their tabs show the console's
+    layout dimmed. */
+class LibraryPage::PlaceholderTab final : public juce::Component
+{
+public:
+    PlaceholderTab (LibraryPage& p, int which) : page (p), tab (which)
+    {
+        if (tab == TabClip)
+        {
+            for (auto [text, icon] : { std::pair { "PLAY", Icon::Play }, std::pair { "PAUSE", Icon::Pause }, std::pair { "STOP", Icon::Stop } })
+                makeKey (keys, *this, text, icon, false);
+            rows = { { {}, { keys[0], keys[1] }, { keys[2] } } };
+        }
+        else if (tab == TabFx)
+        {
+            makeKey (keys, *this, "SAVE", Icon::SaveTray, false);
+            makeKey (keys, *this, "LOAD", Icon::LoadTray, false);
+            rows = { { {}, { keys[0] }, {} }, { {}, { keys[1] }, {} } };
+        }
+        else
+        {
+            makeKey (keys, *this, "SAVE", Icon::SaveTray, false);
+            makeKey (keys, *this, "UPDATE\nSCOPE", Icon::Overview, false);
+            makeKey (keys, *this, "LOAD", Icon::LoadTray, false);
+            rows = { { {}, { keys[0], keys[1] }, {} }, { {}, { keys[2] }, {} } };
+        }
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        paintKeyRows (g, rows);
+        auto r = graphic;
+        const float dim = 0.4f;
+        if (tab == TabClip)
+        {
+            // The 4-track player: meter, status, time, reels and format chips.
+            g.setColour (Dark::body);
+            g.fillRect (r);
+            auto meter = r.removeFromLeft (r.getHeight() * 2 / 3).reduced (6);
+            g.setColour (juce::Colours::black);
+            g.fillRect (meter);
+            auto body = r.reduced (8, 6);
+            auto status = body.removeFromLeft (14).withHeight (14).toFloat();
+            g.setColour (Dark::on.withAlpha (dim));
+            g.fillRect (status);
+            body.removeFromLeft (8);
+            g.setColour (Dark::pre.withAlpha (dim));
+            g.setFont (juce::FontOptions (juce::jmin (30.0f, (float) body.getHeight() * 0.36f), juce::Font::bold));
+            g.drawText ("0:00:00", body.removeFromTop (body.getHeight() * 45 / 100), juce::Justification::centredLeft);
+            for (int i = 0; i < 2; ++i)
+            {
+                const float d = (float) juce::jmin (body.getHeight() - 16, 44);
+                auto reel = juce::Rectangle<float> ((float) body.getX() + (float) i * (d + 8.0f), (float) body.getY() + 4.0f, d, d);
+                g.setColour (Dark::text.withAlpha (dim));
+                g.drawEllipse (reel, 2.0f);
+                g.fillEllipse (reel.withSizeKeepingCentre (d * 0.2f, d * 0.2f));
+            }
+            g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+            g.drawText ("4-TRACK PLAYER", body, juce::Justification::bottomRight);
+            auto chips = juce::Rectangle<float> ((float) body.getRight() - 90.0f, (float) body.getY(), 90.0f, 34.0f);
+            for (auto [i, text] : { std::pair { 0, "WAV" }, std::pair { 1, "4-CH" }, std::pair { 2, "48K" }, std::pair { 3, "24 bit" } })
+                drawChip (g, juce::Rectangle<float> (chips.getX() + (float) (i % 2) * 46.0f, chips.getY() + (float) (i / 2) * 18.0f, 43.0f, 15.0f), text,
+                          Dark::key.withAlpha (dim), Dark::text.withAlpha (dim));
+        }
+        else if (tab == TabFx)
+        {
+            // The preset and the slot it loads into.
+            auto preset = r.removeFromLeft (r.getWidth() * 42 / 100).reduced (4, r.getHeight() / 5);
+            auto arrow = r.removeFromLeft (30);
+            auto slot = r.reduced (4, r.getHeight() / 6);
+            g.setColour (Dark::key.withAlpha (dim));
+            g.fillRect (preset);
+            g.fillRect (slot);
+            g.setColour (FileColours::fx.withAlpha (dim));
+            g.fillRect (slot.removeFromTop (14));
+            g.setColour (Dark::text.withAlpha (dim));
+            g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+            g.drawText ("PRESET", preset, juce::Justification::centred);
+            g.drawText (">>", arrow, juce::Justification::centred);
+            g.drawText ("FX SLOT", slot, juce::Justification::centred);
+        }
+        else
+        {
+            // The channel preset's scope, laid out like a channel strip.
+            const char* top[] = { "CONN", "CONFIG", "CUST", "TAGS", "", "SEND", "MAIN", "NONE", "ALL" };
+            const char* second[] = { "IN", "FILTER", "DELAY", "GATE", "DYN", "EQ", "", "PAN", "FDR", "MUTE" };
+            const float w = (float) r.getWidth() / 10.0f, h = juce::jmin (34.0f, (float) r.getHeight() / 4.0f);
+            auto cell = [&] (int col, int row, const char* text)
+            {
+                if (*text == 0)
+                    return;
+                auto c = juce::Rectangle<float> ((float) r.getX() + w * (float) col, (float) r.getY() + h * (float) row, w, h).reduced (1.5f);
+                g.setColour (Dark::on.withAlpha (0.25f));
+                g.fillRect (c);
+                g.setColour (Dark::text.withAlpha (dim));
+                g.setFont (juce::FontOptions (juce::jmin (11.0f, h * 0.4f), juce::Font::bold));
+                g.drawFittedText (text, c.toNearestInt(), juce::Justification::centredBottom, 1, 0.6f);
             };
-            upButton.onClick = [this] { moveMember (-1); };
-            downButton.onClick = [this] { moveMember (1); };
-
-            for (auto* b : { &newButton, &deleteButton, &renameButton, &addButton, &removeButton, &upButton, &downButton })
-                addAndMakeVisible (b);
-            refresh();
+            for (int i = 0; i < 9; ++i)
+                cell (i, 0, top[i]);
+            for (int i = 0; i < 10; ++i)
+                cell (i, 1, second[i]);
+            cell (0, 2, "PRE");
+            cell (0, 3, "POST");
         }
+        g.setColour (Dark::textDim);
+        g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+        const char* what = tab == TabClip ? "THE CLIP PLAYER IS NOT AVAILABLE YET." : tab == TabFx ? "FX PRESETS ARE NOT AVAILABLE YET." : "CHANNEL PRESETS ARE NOT AVAILABLE YET.";
+        g.drawFittedText (what, note, juce::Justification::topLeft, 2);
+    }
 
-        void refresh()
+    void resized() override
+    {
+        auto b = getLocalBounds();
+        const int rowH = juce::jlimit (36, 56, getHeight() / 6);
+        if (tab == TabClip)
         {
-            const int selected = banks.list.getSelectedRow();
-            userLayers = ctx.show.layers.getUserLayers();
-            boardFaders.clear();
-            for (int k = 0; k < kNumStripKinds; ++k)
-                for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
-                    boardFaders.push_back (state::FaderRef::of (state::StripRef::of (*s)));
-            for (int i = 0; i < kNumDcas; ++i)
-                boardFaders.push_back (state::FaderRef::ofDca (i));
-
-            banks.list.updateContent();
-            board.list.updateContent();
-            if (selected >= 0 && selected < (int) userLayers.size())
-                banks.list.selectRow (selected);
-            else if (! userLayers.empty())
-                banks.list.selectRow (0);
-            refreshMembers();
-            repaint();
+            graphic = b.removeFromTop (juce::jmin (120, b.getHeight() / 3));
+            b.removeFromTop (4);
         }
+        layoutKeyRows (b, rows, rowH, 4);
+        b = b.withTop (rows.back().band.getBottom() + 8);
+        if (tab != TabClip)
+            graphic = b.removeFromTop (juce::jmin (150, b.getHeight() * 2 / 3)).reduced (4, 0);
+        note = b.reduced (8, 6);
+    }
 
-        void paint (juce::Graphics& g) override
-        {
-            g.fillAll (Colours::screen);
-            drawSectionBox (g, bankArea, "USER BANKS");
-            drawSectionBox (g, memberArea, "FADERS IN THE BANK");
-            drawSectionBox (g, boardArea, "CONSOLE (DOUBLE-CLICK TO ADD)");
-        }
+private:
+    LibraryPage& page;
+    int tab;
+    juce::OwnedArray<WingKey> keys;
+    std::vector<KeyRow> rows;
+    juce::Rectangle<int> graphic, note;
+};
 
-        void resized() override
-        {
-            auto b = getLocalBounds().reduced (0, 6);
-            bankArea = b.removeFromLeft (b.getWidth() * 30 / 100);
-            memberArea = b.removeFromLeft (b.getWidth() / 2);
-            boardArea = b;
-
-            auto r = sectionContent (bankArea, true);
-            auto buttons = r.removeFromBottom (40);
-            layoutButtons (buttons, { &newButton, &renameButton, &deleteButton });
-            banks.list.setBounds (r.withTrimmedBottom (6));
-
-            r = sectionContent (memberArea, true);
-            buttons = r.removeFromBottom (40);
-            layoutButtons (buttons, { &removeButton, &upButton, &downButton });
-            members.list.setBounds (r.withTrimmedBottom (6));
-
-            r = sectionContent (boardArea, true);
-            addButton.setBounds (r.removeFromBottom (40).removeFromLeft (140));
-            board.list.setBounds (r.withTrimmedBottom (6));
-        }
-
-    private:
-        struct ListModel final : public juce::ListBoxModel
-        {
-            std::function<int()> getNumRowsFn;
-            std::function<void (int, juce::Graphics&, int, int, bool)> paintFn;
-            std::function<void (int)> selectedFn, doubleClickFn;
-
-            int getNumRows() override { return getNumRowsFn ? getNumRowsFn() : 0; }
-            void paintListBoxItem (int row, juce::Graphics& g, int w, int h, bool sel) override
-            {
-                if (paintFn && row < getNumRows())
-                    paintFn (row, g, w, h, sel);
-            }
-            void selectedRowsChanged (int row) override { if (selectedFn) selectedFn (row); }
-            void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override { if (doubleClickFn) doubleClickFn (row); }
-        };
-
-        struct List
-        {
-            List()
-            {
-                list.setModel (&model);
-                list.setRowHeight (34);
-                list.setColour (juce::ListBox::backgroundColourId, juce::Colour (0xff1e1e1e));
-            }
-            ~List() { list.setModel (nullptr); }
-            ListModel model;
-            juce::ListBox list;
-        };
-
-        static void paintRow (juce::Graphics& g, int w, int h, bool sel, const juce::String& text, const juce::String& right, juce::Colour c)
-        {
-            auto row = juce::Rectangle<int> (w, h).reduced (3, 2);
-            g.setColour (sel ? juce::Colour (0xff6b5a17) : juce::Colours::black);
-            g.fillRect (row);
-            if (sel)
-            {
-                g.setColour (Colours::yellow);
-                g.drawRect (row, 2);
-            }
-            auto r = row.reduced (8, 0);
-            g.setColour (c);
-            g.fillRect (r.removeFromLeft (4).reduced (0, 5));
-            r.removeFromLeft (8);
-            g.setColour (Colours::text);
-            g.setFont (juce::FontOptions (18.0f, juce::Font::bold));
-            g.drawText (text, r, juce::Justification::centredLeft);
-            g.setColour (Colours::textDim);
-            g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
-            g.drawText (right, r, juce::Justification::centredRight);
-        }
-
-        static void layoutButtons (juce::Rectangle<int> r, std::initializer_list<juce::Button*> buttons)
-        {
-            const int w = r.getWidth() / (int) buttons.size();
-            for (auto* b : buttons)
-                b->setBounds (r.removeFromLeft (w).reduced (2, 0));
-        }
-
-        const Layer* currentLayer() const
-        {
-            const int row = banks.list.getSelectedRow();
-            return juce::isPositiveAndBelow (row, (int) userLayers.size()) ? &userLayers[(size_t) row] : nullptr;
-        }
-
-        void refreshMembers()
-        {
-            members.list.updateContent();
-            members.list.repaint();
-            const bool has = currentLayer() != nullptr;
-            for (auto* b : { &deleteButton, &renameButton, &addButton, &removeButton, &upButton, &downButton })
-                b->setEnabled (has);
-        }
-
-        void refreshAfterEdit()
-        {
-            const int memberRow = members.list.getSelectedRow();
-            userLayers = ctx.show.layers.getUserLayers();
-            banks.list.repaint();
-            refreshMembers();
-            members.list.selectRow (memberRow);
-            notifyLayersChangedAsync (ctx);
-        }
-
-        void addSelected()
-        {
-            const auto* l = currentLayer();
-            if (l == nullptr)
-                return;
-            const auto id = l->id;
-            const auto rows = board.list.getSelectedRows();
-            for (int i = 0; i < rows.size(); ++i)
-                if (juce::isPositiveAndBelow (rows[i], (int) boardFaders.size()))
-                    ctx.show.layers.addToUserLayer (id, boardFaders[(size_t) rows[i]]);
-            refreshAfterEdit();
-        }
-
-        void moveMember (int delta)
-        {
-            const auto* l = currentLayer();
-            const int row = members.list.getSelectedRow();
-            if (l == nullptr || row < 0)
-                return;
-            ctx.show.layers.moveWithinUserLayer (l->id, row, delta);
-            userLayers = ctx.show.layers.getUserLayers();
-            refreshMembers();
-            members.list.selectRow (juce::jlimit (0, juce::jmax (0, members.list.getListBoxModel()->getNumRows() - 1), row + delta));
-            notifyLayersChangedAsync (ctx);
-        }
-
-        UiContext& ctx;
-        List banks, members, board;
-        std::vector<Layer> userLayers;
-        std::vector<state::FaderRef> boardFaders;
-        WingKey newButton { "NEW", Icon::Plus }, deleteButton { "DELETE", Icon::Trash }, renameButton { "RENAME", Icon::Edit },
-            addButton { "ADD", Icon::ChevronLeft }, removeButton { "REMOVE" }, upButton { "UP" }, downButton { "DOWN" };
-        juce::Rectangle<int> bankArea, memberArea, boardArea;
-    };
-} // namespace
-
+//==============================================================================
 LibraryPage::LibraryPage (UiContext& c) : ctx (c)
 {
-    tabs.setTabBarDepth (44);
-    tabs.setOutline (0);
-    tabs.setColour (juce::TabbedComponent::backgroundColourId, juce::Colours::transparentBlack);
-    const auto tabColour = Colours::screenPanel;
-    tabs.addTab ("SHOW", tabColour, new ShowTab (ctx), true);
-    tabs.addTab ("SCENES", tabColour, new juce::Component(), true);
-    tabs.addTab ("SNIPPETS", tabColour, new juce::Component(), true);
-    tabs.addTab ("BANKS", tabColour, new BanksTab (ctx), true);
-    tabs.onTabChanged = [this] (int index)
+    list = std::make_unique<ShowPanel> (ctx);
+    list->onSelectionChanged = [this] (ShowPanel::Item item)
     {
-        showPanel->setVisible (index == 1 || index == 2);
-        showPanel->setView (index == 2 ? ShowPanel::View::Snippets : ShowPanel::View::Scenes);
+        // A scene row opens SNAP, a snippet row SNIP (SHOW stays).
+        if (tabs.getCurrent() == TabSnap && item.isSnippet())
+            tabs.setCurrent (TabSnip);
+        else if (tabs.getCurrent() == TabSnip && item.isValid() && ! item.isSnippet())
+            tabs.setCurrent (TabSnap);
+        if (auto* snap = dynamic_cast<SnapTab*> (tabPages[TabSnap]))
+            snap->refresh();
+        if (auto* snip = dynamic_cast<SnipTab*> (tabPages[TabSnip]))
+            snip->refresh();
     };
+    list->onActivated = [this] (ShowPanel::Item item) { load (item); };
+    addAndMakeVisible (*list);
+
+    tabs.tabFraction = 0.0f;
+    tabs.setTabs ({ { "SHOW", FileColours::show }, { "SNAP", FileColours::snap }, { "SNIP", FileColours::snip }, { "CLIP", FileColours::clip },
+                    { "FX", FileColours::fx }, { "CHAN", FileColours::chan } });
+    tabs.onChange = [this] (int t) { showTab (t); };
     addAndMakeVisible (tabs);
 
-    showPanel = new ShowPanel (ctx);
-    ownedShowPanel.reset (showPanel);
-    addAndMakeVisible (showPanel);
-    tabs.setCurrentTabIndex (1);
+    tabPages.add (new ShowTab (*this));
+    tabPages.add (new SnapTab (*this));
+    tabPages.add (new SnipTab (*this));
+    tabPages.add (new PlaceholderTab (*this, TabClip));
+    tabPages.add (new PlaceholderTab (*this, TabFx));
+    tabPages.add (new PlaceholderTab (*this, TabChan));
+    for (auto* p : tabPages)
+        addChildComponent (p);
+
+    for (auto* k : { &goPrevKey, &goNextKey, &prevKey, &nextKey, &goKey })
+    {
+        styleIconKey (*k);
+        addAndMakeVisible (k);
+    }
+    goPrevKey.onClick = [this]
+    {
+        confirmLoad ("the previous scene", [this]
+        {
+            logRecall (ctx, "previous scene", ctx.show.recallPrevious());
+            list->refresh();
+            list->select ({ ctx.show.getCurrentSceneIndex(), -1 });
+        });
+    };
+    goNextKey.onClick = [this]
+    {
+        confirmLoad ("the next scene", [this]
+        {
+            logRecall (ctx, "next scene", ctx.show.recallNext());
+            list->refresh();
+            list->select ({ ctx.show.getCurrentSceneIndex(), -1 });
+        });
+    };
+    prevKey.onClick = [this] { list->select ({ juce::jmax (0, selectedScene() - 1), -1 }); };
+    nextKey.onClick = [this] { list->select ({ juce::jmin (ctx.show.getNumScenes() - 1, selectedScene() + 1), -1 }); };
+    goKey.onClick = [this] { load (list->getSelected()); };
+
+    showTab (TabSnap);
+    tabs.setCurrent (TabSnap, false);
+    shownGlobal = anyGlobalSafe();
+    startTimerHz (2);
 }
 
-LibraryPage::~LibraryPage()
+LibraryPage::~LibraryPage() = default;
+
+std::vector<StatusKey> LibraryPage::getStatusKeys()
 {
-    // The tabs outlive the show panel: stop them reporting changes to it.
-    tabs.onTabChanged = nullptr;
+    // GLOBAL: an open padlock without global safes, closed (lit) with some.
+    const bool safe = anyGlobalSafe();
+    return { { "GLOBAL", safe ? Icon::LockClosed : Icon::LockOpen, safe, [this] { openGlobal(); } } };
+}
+
+bool LibraryPage::anyGlobalSafe() const
+{
+    for (int k = 0; k < kNumStripKinds; ++k)
+        for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
+            if (s->params.recallSafe.load())
+                return true;
+    return false;
+}
+
+void LibraryPage::timerCallback()
+{
+    // The HOME SAFE key changes the safes too.
+    if (anyGlobalSafe() != shownGlobal)
+    {
+        shownGlobal = ! shownGlobal;
+        notifyStatusKeysChanged();
+    }
+    updateTransport();
 }
 
 void LibraryPage::showScenes()
 {
-    tabs.setCurrentTabIndex (1);
+    tabs.setCurrent (TabSnap);
+}
+
+void LibraryPage::showTab (int t)
+{
+    for (int i = 0; i < tabPages.size(); ++i)
+        tabPages[i]->setVisible (i == t);
+    list->setTypeFilter (t == TabShow ? 0 : t == TabSnap ? 1 : t == TabSnip ? 2 : -1);
+}
+
+int LibraryPage::selectedScene() const
+{
+    const auto item = list->getSelected();
+    if (item.isValid())
+        return item.scene;
+    return ctx.show.getCurrentSceneIndex();
+}
+
+void LibraryPage::updateTransport()
+{
+    // Dimmed while the show has no scenes.
+    const bool any = ctx.show.getNumScenes() > 0;
+    for (auto* k : { &goPrevKey, &goNextKey, &prevKey, &nextKey, &goKey })
+        enableKey (*k, any);
+}
+
+void LibraryPage::confirmLoad (const juce::String& what, std::function<void()> action)
+{
+    if (! prefs::confirmLoad (ctx))
+    {
+        action();
+        return;
+    }
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "LOAD", "Load " + what + "?", "LOAD", "CANCEL", this,
+                                        juce::ModalCallbackFunction::create ([action] (int r)
+    {
+        if (r != 0)
+            action();
+    }));
+}
+
+void LibraryPage::load (ShowPanel::Item item)
+{
+    if (item.isSnippet())
+    {
+        if (const auto sn = ctx.show.getSnippet (item.scene, item.snippet))
+            confirmLoad ("\"" + sn->name + "\"", [this, item]
+            {
+                logRecall (ctx, "snippet " + juce::String (item.scene + 1) + "." + juce::String (item.snippet + 1), ctx.show.recallSnippet (item.scene, item.snippet));
+            });
+    }
+    else if (const auto scene = ctx.show.getScene (item.scene))
+        confirmLoad ("\"" + scene->name + "\"", [this, item]
+        {
+            logRecall (ctx, "scene " + juce::String (item.scene + 1), ctx.show.recallScene (item.scene));
+            list->refresh();
+        });
+}
+
+void LibraryPage::openScope (int scopeMode, const juce::String& scopeTitle, juce::uint32 sections, std::vector<state::StripRef> strips,
+                             std::function<void (juce::uint32, const std::vector<state::StripRef>&)> save)
+{
+    auto window = std::make_unique<ScopeWindow> (ctx, static_cast<ScopeWindow::Mode> (scopeMode), scopeTitle, ScopeWindow::Selection { sections, std::move (strips) });
+    window->onCancel = [this] { closeScope(); };
+    window->onSave = [this, save] (const ScopeWindow::Selection& s)
+    {
+        if (save)
+            save (s.sections, s.strips);
+        closeScope();
+    };
+    scope = std::move (window);
+    addAndMakeVisible (*scope);
+    scope->setBounds (getLocalBounds());
+}
+
+void LibraryPage::closeScope()
+{
+    // Called from the window's own keys: delete it once the click is done.
+    juce::Component::SafePointer<LibraryPage> safe (this);
+    juce::MessageManager::callAsync ([safe]
+    {
+        if (safe != nullptr)
+        {
+            safe->scope.reset();
+            safe->list->refresh();
+            safe->notifyStatusKeysChanged();
+        }
+    });
+}
+
+void LibraryPage::openGlobal()
+{
+    // GLOBAL safes: strips that scene recalls leave alone (DCA, mute group, FX
+    // and content safes are engine item E17).
+    std::vector<state::StripRef> safes;
+    for (int k = 0; k < kNumStripKinds; ++k)
+        for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
+            if (s->params.recallSafe.load())
+                safes.push_back (state::StripRef::of (*s));
+    openScope ((int) ScopeWindow::Mode::Global, "GLOBAL SAFE", 0, safes, [this] (juce::uint32, const std::vector<state::StripRef>& chosen)
+    {
+        for (int k = 0; k < kNumStripKinds; ++k)
+            for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
+                s->params.recallSafe = std::find (chosen.begin(), chosen.end(), state::StripRef::of (*s)) != chosen.end();
+        shownGlobal = anyGlobalSafe();
+    });
 }
 
 void LibraryPage::refresh()
 {
-    showPanel->refresh();
-    for (int i = 0; i < tabs.getNumTabs(); ++i)
-        if (auto* b = dynamic_cast<BanksTab*> (tabs.getTabContentComponent (i)))
-            b->refresh();
+    list->refresh();
+    if (auto* snap = dynamic_cast<SnapTab*> (tabPages[TabSnap]))
+        snap->refresh();
+    if (auto* snip = dynamic_cast<SnipTab*> (tabPages[TabSnip]))
+        snip->refresh();
+    tabPages[TabShow]->repaint();
+    updateTransport();
 }
 
 void LibraryPage::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::screen);
-    g.setColour (Colours::screenHeader.darker (0.15f));
-    g.fillRect (getLocalBounds().withHeight (tabs.getTabBarDepth()));
+    g.fillAll (juce::Colours::black);
+    g.setColour (Dark::header);
+    g.fillRect (transportArea);
 }
 
 void LibraryPage::resized()
 {
-    tabs.setBounds (getLocalBounds());
-    showPanel->setBounds (getLocalBounds().withTrimmedTop (tabs.getTabBarDepth()).withTrimmedTop (6));
+    auto b = getLocalBounds();
+    list->setBounds (b.removeFromLeft (b.getWidth() * 51 / 100));
+    b.removeFromLeft (6);
+    rightPanel = b;
+    tabs.setBounds (b.removeFromTop (juce::jlimit (36, 52, getHeight() * 11 / 100)));
+    b.removeFromTop (4);
+    transportArea = b.removeFromBottom (juce::jlimit (52, 96, getHeight() * 16 / 100));
+    b.removeFromBottom (4);
+    for (auto* p : tabPages)
+        p->setBounds (b);
+
+    // GO PREV, GO NEXT, a gap, PREV over NEXT, GO (icons over the text when narrow).
+    auto t = transportArea.reduced (4);
+    const int w = t.getWidth() / 5;
+    for (auto* k : { &goPrevKey, &goNextKey, &goKey })
+    {
+        k->iconAbove = w < 120;
+        k->setButtonText (k == &goKey ? "GO" : (w < 120 ? juce::String (k == &goPrevKey ? "GO PREV" : "GO NEXT") : juce::String (k == &goPrevKey ? "GO\nPREV" : "GO\nNEXT")));
+    }
+    goPrevKey.setBounds (t.removeFromLeft (w).reduced (2));
+    goNextKey.setBounds (t.removeFromLeft (w).reduced (2));
+    goKey.setBounds (t.removeFromRight (w).reduced (2));
+    auto steps = t.removeFromRight (w);
+    prevKey.setBounds (steps.removeFromTop (steps.getHeight() / 2).reduced (2, 1));
+    nextKey.setBounds (steps.reduced (2, 1));
+
+    if (scope != nullptr)
+        scope->setBounds (getLocalBounds());
 }
 
 } // namespace livedaw::ui
