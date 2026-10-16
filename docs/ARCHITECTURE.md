@@ -10,15 +10,15 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
  hardware inputs
        │
        ▼
-┌──────────── channels and aux (parallel stage 1) ───────────────────────────────────────┐
-│ INPUT: trim · balance · Ø · delay ─ IN                                                 │
-│ FILTER: low cut · high cut · tool (channels) ─ FILT                                    │
-│ G / E / D / I in one of 24 process orders (aux: E D I) ─ taps 3, 4, 5                  │
-│ ─ PFL ─ fader (+ DCAs; mute, mute groups, DCA mutes) ─ AFL ─ POST INSERT ─ POST         │
-│ ─ width / pan ─► out                                                                   │
+┌──────────── input channels and aux (parallel stage 1) ─────────────────────────────────┐
+│ channel: INPUT trim · balance · Ø ─ IN ─ FILTER ─ FILT                                 │
+│          G / E / D / INS 1 in one of 24 process orders ─ taps 3, 4, 5                  │
+│          ─ PFL ─ fader (+ DCAs; mute, mute groups, DCA mutes) ─ AFL                    │
+│          ─ INS 2 (FX slot or automix X/Y) ─ DELAY (POST) ─ POST ─ width / pan ─► out   │
+│ aux:     INPUT ─ delay ─ DYN ─ EQ ─ INS 1 ─ PFL (= tap) ─ fader ─ POST ─ pan ─► out    │
 └───┬──────────────────────────────────┬──────────────────────────────┬──────────────────┘
-    │ bus sends (PRE at the tap point,  │ main sends (pre: tap, else out) │ matrix sends, direct outs
-    │ POST, GRP)                        │                                │
+    │ bus sends (TAP/PRE at the tap     │ main sends (pre: tap, else out) │ matrix sends, direct outs
+    │ point, POST, GROUP)               │                                │
     ▼                                   │                                │
  buses 9+  (parallel stage 2) ──► sends │                                │
     ▼                                   │                                │
@@ -28,18 +28,46 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
     ▼                                                                    ▼
  matrices 1-8 (parallel stage 5: inputs, buses, mains + a direct input from any channel)
     │
- solo (PFL/AFL) ─► monitor (follows Main 1 when nothing is soloed) ─► monitor outputs
+ solo (PFL/AFL per strip type) ─► monitor (follows Main 1 when nothing is soloed)
+    ─► level · DIM · mute · MONO / SWAP ─► monitor outputs
  every strip ─► its hardware outputs ─► output protection (safety clip)
+
+ bus / main / matrix strip:
+   summed sends ─ INPUT trim · balance ─ DYN ─ INS 1 ─ PFL (= tap) ─ fader (+ DCAs,
+   mutes; Mains 2-4 + Main 1's level with MAIN LINK) ─ EQ (post-fader) ─ INS 2 ─ delay
+   ─ POST ─ width / pan ─► out
 ```
 
-- Buses, mains and matrices run the same strip code with the EQ / DYN / INS blocks
-  (`"EDI"`), the 8-band bus EQ table and an output delay instead of the input delay.
+- The order follows the WING Operation Manual (chapter 6). Input channels choose their
+  process order and tap point (`TAP_POINTS`: INPUT, FILTER, TAP 3-5, PRE FDR, POST FDR,
+  POST PROC); aux, buses, mains and matrices tap after INS 1 (`tap::PFL`), whatever
+  `StripParams::tap` says. Aux channels have no filter, gate or INS 2 and delay before the
+  fader; everything else delays after INS 2.
+- Buses, mains and matrices use the 8-band bus EQ table. `ld_strip_response` draws the
+  EQ alone, so its graph doesn't depend on where the EQ sits.
+- PFL solo, direct outs, the matrix direct input (`direct_pre`) and the pre-fader meter
+  (`StripMeters::pfl_peak`) read the PFL copy; AFL solo and post-fader sends read the
+  output. `trim_peak` measures after trim, `input_peak` before it.
+- Send modes: TAP/PRE reads the tap point and is cut while the source is muted (own
+  mute, mute groups, DCA mutes when DCA MUTEGROUPS is on), unless an input or aux
+  channel's send has IGNORE CHANNEL MUTE (`SendParams::ignore_mute`,
+  `MatrixSendParams::ignore_mute`); pre-fader main sends always follow the mute. POST
+  reads after INS 2 and the delay, panned with the send pan (linked, linked reversed or
+  its own). GROUP reads the panned output at unity: it has no send level.
 - Bus sends are stored in a paged `SendBank`, so buses can be added beyond the WING's
   16. Buses 9 and up can feed buses 1-8 (`BUS_TO_BUS_TARGETS`).
 - A matrix's direct input takes any channel's PFL or output; inverted, it builds a
   mix-minus.
-- The post insert can run an FX slot or join automix group X or Y. The audio thread
-  computes the gain sharing between stages 1 and 2 (`engine.rs`, `automix`).
+- INS 2 of input channels can run an FX slot or join automix group X or Y (each with its
+  ENABLE switch in `EngineControls::automix_enable`). The audio thread computes the
+  gain sharing between stages 1 and 2 (`engine.rs`, `automix`) from the post-fader level,
+  so the channel fader shapes it; channels leaving automix glide back to unity.
+- Console-wide switches in `EngineControls`: PFL/AFL per strip type (`solo_afl` for
+  input and aux channels, `bus_solo_afl`, `main_solo_afl`, `matrix_solo_afl`), the
+  monitor keys (`monitor_dim` with `monitor_dim_db`, `monitor_mute`, `monitor_mono`,
+  `monitor_swap`, ramped so they don't click), `dca_mute_groups`, `main_link` and
+  `startup_main_mute` (applied by the application through
+  `ld_engine_apply_startup_main_mute`).
 
 ## Processing models
 
@@ -72,7 +100,7 @@ views after a show load changes the console from Rust.
   engine controls are `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same
   memory as `std::atomic<float/bool/int32_t>` structs, and the UI writes them directly
   with no FFI call. Both sides describe the layout; `ld::verifyLayout()` compares the
-  two at startup and in the tests (ABI version 4), and the app refuses to run if they
+  two at startup and in the tests (ABI version 5), and the app refuses to run if they
   differ.
 - **FX slots.** The 16 slots are the WING's FX rack. Each holds one device from the
   console's FX table (`FX_MODELS`, generated like the processing models): the 26

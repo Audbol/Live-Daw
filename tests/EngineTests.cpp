@@ -255,6 +255,145 @@ public:
             expectWithinAbsoluteError (rig.out (0), 0.5f * kCentre, 1.0e-4f);
         }
 
+        beginTest ("Solo is PFL or AFL per strip type; DIM and MONO act on the monitor only");
+        {
+            MixerEngine engine (0);
+            OfflineRig rig (engine, 1, 4);
+            engine.setNumChannels (1);
+            engine.monitorOutputLeft = 2;
+            engine.monitorOutputRight = 3;
+            expect (! engine.isSoloAfl (StripKind::Channel) && engine.isSoloAfl (StripKind::Bus));
+            expect (engine.isSoloAfl (StripKind::Main) && engine.isSoloAfl (StripKind::Matrix));
+
+            auto& ch = *engine.getChannels()[0];
+            ch.params.pan = -100.0f;
+            ch.sends[3].enabled = true;
+            auto& bus = *engine.getBusInSlot (3);
+            bus.params.faderDb = -100.0f;
+            bus.params.solo = true;
+            rig.setInput (0, 0.5f);
+            rig.run();
+            expectWithinAbsoluteError (rig.out (2), 0.0f, 1.0e-6f); // AFL: the bus fader is down
+
+            engine.setSoloAfl (StripKind::Bus, false);
+            expect (! engine.busSoloAfl.load());
+            rig.run();
+            expectWithinAbsoluteError (rig.out (2), 0.5f, 1.0e-5f); // PFL, panned hard left
+            bus.params.solo = false;
+            rig.run();
+
+            engine.monitorDim = true; // default 20 dB
+            rig.run();
+            expectWithinAbsoluteError (rig.out (2), 0.05f, 1.0e-5f);
+            expectEquals (engine.monitorLevelDb.load(), 0.0f);
+            engine.monitorDimDb = 6.0206f;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (2), 0.25f, 1.0e-4f);
+            engine.monitorDim = false;
+            engine.monitorMono = true;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (2), 0.25f, 1.0e-5f);
+            expectWithinAbsoluteError (rig.out (3), 0.25f, 1.0e-5f);
+            engine.monitorMono = false;
+            engine.monitorSwap = true;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (3), 0.5f, 1.0e-5f);
+            engine.monitorMute = true;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (3), 0.0f, 1.0e-7f);
+            expectWithinAbsoluteError (rig.out (0), 0.5f, 1.0e-5f); // Main 1 untouched
+        }
+
+        beginTest ("WING strip types: fixed taps, no aux INS 2, post-fader bus EQ, meters");
+        {
+            MixerEngine engine (0);
+            OfflineRig rig (engine, 1, 4);
+            engine.setNumChannels (1);
+            auto& ch = *engine.getChannels()[0];
+            auto& aux = *engine.getAux()[0];
+            auto& bus = *engine.getBuses()[0];
+            expect (ch.hasSelectableTap() && ch.hasAutomix() && ch.hasPostInsert() && ch.hasPostFaderDelay());
+            expect (! aux.hasSelectableTap() && ! aux.hasAutomix() && ! aux.hasPostInsert() && ! aux.hasPostFaderDelay());
+            expect (! bus.hasSelectableTap() && bus.hasPostInsert() && bus.hasPostFaderEq() && ! ch.hasPostFaderEq());
+            expect (aux.canIgnoreMuteOnSends() && ! bus.canIgnoreMuteOnSends());
+
+            rig.setInput (0, 0.25f);
+            ch.params.input.trimDb = 6.0206f;
+            ch.params.faderDb = -100.0f;
+            rig.run();
+            for (auto p : { MeterPoint::Input, MeterPoint::Trim, MeterPoint::PreFader, MeterPoint::Output })
+                ch.peakMeter (p, 0).store (0.0f);
+            rig.run (2);
+            expectWithinAbsoluteError (ch.peakMeter (MeterPoint::Input, 0).load(), 0.25f, 1.0e-5f);
+            expectWithinAbsoluteError (ch.peakMeter (MeterPoint::Trim, 0).load(), 0.5f, 1.0e-4f);
+            expectWithinAbsoluteError (ch.peakMeter (MeterPoint::PreFader, 0).load(), 0.5f, 1.0e-4f);
+            expectWithinAbsoluteError (ch.peakMeter (MeterPoint::Output, 0).load(), 0.0f, 1.0e-6f);
+            expect (&ch.peakMeter (MeterPoint::Trim, 1) == &ch.meters.trimPeak[1]);
+        }
+
+        beginTest ("TAP sends follow the channel mute unless IGNORE CHANNEL MUTE");
+        {
+            MixerEngine engine (0);
+            OfflineRig rig (engine, 1, 4);
+            engine.setNumChannels (1);
+            auto& ch = *engine.getChannels()[0];
+            auto& send = ch.sends[2];
+            send.enabled = true;
+            engine.getBusInSlot (2)->params.outputLeft = 2;
+            rig.setInput (0, 0.5f);
+            rig.run();
+            expectWithinAbsoluteError (rig.out (2), 0.5f * kCentre, 1.0e-5f);
+            ch.params.mute = true;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (2), 0.0f, 1.0e-6f);
+            send.ignoreMute = true;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (2), 0.5f * kCentre, 1.0e-5f);
+
+            // GROUP mode has no send level.
+            ch.params.mute = false;
+            send.mode = (int32_t) SendMode::Group;
+            send.levelDb = -100.0f;
+            ch.params.mains[0].on = false;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (2), 0.5f * kCentre, 1.0e-5f);
+        }
+
+        beginTest ("Preferences: DCA MUTEGROUPS, MAIN LINK, STARTUP MAIN MUTE, automix enables");
+        {
+            MixerEngine engine (0);
+            OfflineRig rig (engine, 1, 4);
+            engine.setNumChannels (1);
+            auto& ch = *engine.getChannels()[0];
+            rig.setInput (0, 0.5f);
+            expect (engine.dcaMuteGroups.load() && engine.automixEnable[0].load() && engine.automixEnable[1].load());
+            ch.params.dcaMask = 1u;
+            engine.getDca (0).mute = true;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (0), 0.0f, 1.0e-6f);
+            engine.dcaMuteGroups = false;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (0), 0.5f * kCentre, 1.0e-5f);
+
+            ch.params.mains[1].on = true;
+            engine.getMain (1).params.outputLeft = 2;
+            engine.getMain().params.faderDb = -6.0206f;
+            engine.mainLink = (int32_t) MainLink::To2;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (2), 0.25f * kCentre, 1.0e-4f);
+            expectEquals (models::list (models::MainLinkModes)[3], juce::String ("1>2-4"));
+
+            expect (! engine.applyStartupMainMute());
+            engine.startupMainMute = true;
+            expect (engine.applyStartupMainMute());
+            for (auto& m : engine.getMains())
+                expect (m->params.mute.load());
+
+            engine.reset();
+            expect (! engine.startupMainMute.load() && engine.dcaMuteGroups.load());
+            expectEquals (engine.mainLink.load(), (int32_t) MainLink::Off);
+        }
+
         beginTest ("Unpatched channels are skipped and resume cleanly");
         {
             MixerEngine engine (-1);

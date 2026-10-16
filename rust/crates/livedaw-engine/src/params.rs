@@ -357,7 +357,8 @@ impl Default for InsertParams {
 #[derive(Debug)]
 pub struct MainSendParams {
     pub on: AtomicBool,
-    /// Taken at the strip's tap point instead of post-fader.
+    /// Taken at the strip's tap point instead of post-fader (the strip's mute
+    /// still cuts it).
     pub pre: AtomicBool,
     pub level_db: AtomicF32,
 }
@@ -367,7 +368,11 @@ pub struct MainSendParams {
 #[derive(Debug)]
 pub struct MatrixSendParams {
     pub on: AtomicBool,
+    /// TAP mode: taken at the strip's tap point (pre-fader for buses and mains).
     pub pre: AtomicBool,
+    /// IGNORE CHANNEL MUTE (input and aux channels, TAP mode only): the send
+    /// stays on while the channel is muted.
+    pub ignore_mute: AtomicBool,
     pub level_db: AtomicF32,
     pub pan: AtomicF32,
 }
@@ -386,9 +391,11 @@ pub struct StripParams {
     pub dynamics: DynSlotParams,
     pub pre_insert: InsertParams,
     pub post_insert: InsertParams,
-    /// Index into `PROCESS_ORDERS` (channels and aux).
+    /// Index into `PROCESS_ORDERS` (input channels; aux, buses, mains and
+    /// matrices have a fixed order).
     pub process_order: AtomicI32,
-    /// Index into `TAP_POINTS`: where pre-fader sends are taken.
+    /// Index into `TAP_POINTS`: where TAP-mode sends are taken (input channels;
+    /// aux, buses, mains and matrices are fixed at PFL, after the pre insert).
     pub tap: AtomicI32,
 
     pub fader_db: AtomicF32,
@@ -499,6 +506,7 @@ impl StripParams {
         let new_mtx = |_| MatrixSendParams {
             on: AtomicBool::new(false),
             pre: AtomicBool::new(false),
+            ignore_mute: AtomicBool::new(false),
             level_db: AtomicF32::new(0.0),
             pan: AtomicF32::new(0.0),
         };
@@ -562,6 +570,10 @@ pub struct StripMeters {
     pub dsp_faults: AtomicI32,
     /// Automix gain applied in the last block, dB.
     pub automix_db: AtomicF32,
+    /// After trim, balance and polarity (the INPUT screen's "post TRIM" meter).
+    pub trim_peak: [AtomicF32; 2],
+    /// Pre-fader, at the PFL point (the METERS screen).
+    pub pfl_peak: [AtomicF32; 2],
 }
 
 /// A DCA group.
@@ -640,10 +652,18 @@ impl FxParams {
     }
 }
 
+/// MAIN LINK choices (SETUP > PREFERENCES): Main 1's fader also moves Main 2
+/// (1>2), Mains 2-3 (1>2-3) or Mains 2-4 (1>2-4), like a DCA.
+pub const MAIN_LINK_MODES: [&str; 4] = ["OFF", "1>2", "1>2-3", "1>2-4"];
+
+/// Default monitor DIM amount in dB.
+pub const DEFAULT_DIM_DB: f32 = 20.0;
+
 /// Engine-wide controls and status, shared with the UI.
 #[repr(C)]
 #[derive(Debug)]
 pub struct EngineControls {
+    /// CHANNEL SOLO (input and aux channels): AFL instead of PFL.
     pub solo_afl: AtomicBool,
     pub any_solo_active: AtomicBool,
     pub output_protection: AtomicBool,
@@ -662,6 +682,27 @@ pub struct EngineControls {
     pub mute_groups: AtomicU32,
     pub dcas: [DcaParams; NUM_DCAS],
     pub fx: [FxParams; NUM_FX],
+
+    /// BUS / MAIN / MATRIX SOLO: AFL (the default) instead of PFL.
+    pub bus_solo_afl: AtomicBool,
+    pub main_solo_afl: AtomicBool,
+    pub matrix_solo_afl: AtomicBool,
+    /// Monitor keys: DIM attenuates by `monitor_dim_db`, MUTE (hold DIM)
+    /// silences, MONO sums L and R, SWAP (hold MONO) swaps them.
+    pub monitor_dim: AtomicBool,
+    pub monitor_mute: AtomicBool,
+    pub monitor_mono: AtomicBool,
+    pub monitor_swap: AtomicBool,
+    /// DCA MUTEGROUPS: a muted DCA also mutes its strips.
+    pub dca_mute_groups: AtomicBool,
+    /// STARTUP MAIN MUTE: the application mutes the mains when it starts.
+    pub startup_main_mute: AtomicBool,
+    /// Automix X ENABLE / Y ENABLE.
+    pub automix_enable: [AtomicBool; 2],
+    /// DIM amount in dB (an attenuation, >= 0).
+    pub monitor_dim_db: AtomicF32,
+    /// Index into [`MAIN_LINK_MODES`].
+    pub main_link: AtomicI32,
 }
 
 impl Default for EngineControls {
@@ -681,14 +722,55 @@ impl Default for EngineControls {
             mute_groups: AtomicU32::new(0),
             dcas: Default::default(),
             fx: Default::default(),
+            bus_solo_afl: AtomicBool::new(true),
+            main_solo_afl: AtomicBool::new(true),
+            matrix_solo_afl: AtomicBool::new(true),
+            monitor_dim: AtomicBool::new(false),
+            monitor_mute: AtomicBool::new(false),
+            monitor_mono: AtomicBool::new(false),
+            monitor_swap: AtomicBool::new(false),
+            dca_mute_groups: AtomicBool::new(true),
+            startup_main_mute: AtomicBool::new(false),
+            automix_enable: [AtomicBool::new(true), AtomicBool::new(true)],
+            monitor_dim_db: AtomicF32::new(DEFAULT_DIM_DB),
+            main_link: AtomicI32::new(0),
         }
     }
 }
 
 impl EngineControls {
+    /// Solo on a strip of `kind` listens after the fader (AFL), else before it (PFL).
+    pub fn solo_is_afl(&self, kind: StripKind) -> bool {
+        match kind {
+            StripKind::Channel | StripKind::Aux => &self.solo_afl,
+            StripKind::Bus => &self.bus_solo_afl,
+            StripKind::Main => &self.main_solo_afl,
+            StripKind::Matrix => &self.matrix_solo_afl,
+        }
+        .load(Relaxed)
+    }
+
+    /// Main 2-4 linked to Main 1's fader (MAIN LINK): the highest linked main index.
+    pub fn main_link_last(&self) -> usize {
+        self.main_link.load(Relaxed).clamp(0, MAIN_LINK_MODES.len() as i32 - 1) as usize
+    }
+
     /// Resets the console-wide settings (not the status counters).
     pub fn reset(&self) {
         self.solo_afl.store(false, Relaxed);
+        for afl in [&self.bus_solo_afl, &self.main_solo_afl, &self.matrix_solo_afl] {
+            afl.store(true, Relaxed);
+        }
+        for key in [&self.monitor_dim, &self.monitor_mute, &self.monitor_mono, &self.monitor_swap] {
+            key.store(false, Relaxed);
+        }
+        self.monitor_dim_db.store(DEFAULT_DIM_DB);
+        self.dca_mute_groups.store(true, Relaxed);
+        self.startup_main_mute.store(false, Relaxed);
+        for enable in &self.automix_enable {
+            enable.store(true, Relaxed);
+        }
+        self.main_link.store(0, Relaxed);
         self.monitor_level_db.store(0.0);
         self.mute_groups.store(0, Relaxed);
         for d in &self.dcas {

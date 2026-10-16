@@ -611,3 +611,386 @@ fn builtin_fx_devices_run_in_slots() {
     assert!(engine.set_fx_model(0, FX_NONE, true));
     assert!(!engine.fx(0).unwrap().has_device());
 }
+
+// ---- WING processing order, taps and console settings ------------------------
+
+/// DC gain of a strip's EQ as the engine runs it.
+fn eq_dc_gain(s: &Strip) -> f32 {
+    use livedaw_dsp::wing::{eq::design, EQ_MODELS_BUS, EQ_MODELS_CH, MAX_EQ_PARAMS};
+    let table = if s.kind().is_output() { EQ_MODELS_BUS } else { EQ_MODELS_CH };
+    let spec = &table[s.params.eq.model_index(s.kind().is_output())];
+    let mut v = [0.0; MAX_EQ_PARAMS];
+    s.params.eq.values_snapshot(&mut v);
+    let d = design(spec, &v[..spec.params.len()], 48000.0, s.params.eq.mix.load() / 100.0);
+    10f32.powf(d.response_db(1.0, 48000.0) as f32 / 20.0)
+}
+
+#[test]
+fn bus_runs_dyn_ins1_fader_eq_ins2_with_the_tap_after_ins1() {
+    let mut rig = Rig::new(1, 1, 6);
+    rig.engine.set_num_channels(1);
+    let engine = rig.engine.clone();
+    let ch = rig.ch(0);
+    ch.params.mains[0].on.store(false, Relaxed);
+    rig.set_input(0, 0.5);
+    engine.set_fx_plugin(0, Some(fake(0.5, 0).0));
+    engine.set_fx_plugin(1, Some(fake(0.25, 0).0));
+
+    let fx_bus = rig.strip(StripKind::Bus, 12);
+    let bus1 = rig.strip(StripKind::Bus, 0);
+    ch.sends.get_or_create(12).unwrap().enabled.store(true, Relaxed);
+    let p = &fx_bus.params;
+    p.pre_insert.on.store(true, Relaxed);
+    p.pre_insert.fx.store(0, Relaxed);
+    p.post_insert.on.store(true, Relaxed);
+    p.post_insert.fx.store(1, Relaxed);
+    p.eq.param("lg", true).unwrap().store(6.0);
+    p.tap.store(0, Relaxed); // ignored: a bus taps after INS 1
+    p.fader_db.store(-100.0);
+    p.output_left.store(4, Relaxed);
+    fx_bus.sends.get_or_create(0).unwrap().enabled.store(true, Relaxed); // PRE
+    bus1.params.output_left.store(2, Relaxed);
+    rig.run(40);
+
+    // The tap carries INS 1 but neither the fader, the EQ nor INS 2.
+    assert!(close(rig.out(2), 0.5 * CENTRE * 0.5, 1e-4), "{}", rig.out(2));
+    assert!(rig.out(4).abs() < 1e-6);
+    assert!(close(fx_bus.meters.pfl_peak[0].load(), 0.25 * CENTRE, 1e-4));
+
+    // The output runs the EQ and INS 2 after the fader.
+    p.fader_db.store(0.0);
+    rig.run(40);
+    let eq = eq_dc_gain(&fx_bus);
+    assert!(eq > 1.9, "{eq}");
+    assert!(close(rig.out(4), 0.25 * CENTRE * eq * 0.25, 1e-3), "{} vs {}", rig.out(4), 0.25 * CENTRE * eq * 0.25);
+}
+
+#[test]
+fn aux_has_no_post_insert_and_taps_after_ins1() {
+    let mut rig = Rig::new(1, 2, 4);
+    let engine = rig.engine.clone();
+    let aux = rig.strip(StripKind::Aux, 0);
+    aux.params.input_left.store(0, Relaxed);
+    rig.set_input(0, 0.5);
+    engine.set_fx_plugin(0, Some(fake(0.5, 0).0));
+    engine.set_fx_plugin(1, Some(fake(0.25, 0).0));
+    let p = &aux.params;
+    p.pre_insert.on.store(true, Relaxed);
+    p.pre_insert.fx.store(0, Relaxed);
+    p.post_insert.on.store(true, Relaxed); // the aux has no INS 2: ignored
+    p.post_insert.fx.store(1, Relaxed);
+    p.tap.store(0, Relaxed); // ignored: aux taps after INS 1, pre-fader
+    p.fader_db.store(-6.0206);
+    aux.sends.get_or_create(2).unwrap().enabled.store(true, Relaxed);
+    rig.strip(StripKind::Bus, 2).params.output_left.store(2, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(0), 0.5 * 0.5 * 0.5 * CENTRE, 1e-4), "{}", rig.out(0));
+    assert!(close(rig.out(2), 0.5 * 0.5 * CENTRE, 1e-4), "{}", rig.out(2));
+    assert!(!aux.uses_fx(1) && aux.uses_fx(0));
+    assert_eq!(engine.fx_users(1).len(), 0);
+
+    // Aux can't join automix either.
+    p.post_insert.mode.store(1, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(0), 0.5 * 0.5 * 0.5 * CENTRE, 1e-4));
+}
+
+#[test]
+fn channel_delay_is_post_fader() {
+    let mut rig = Rig::new(0, 1, 4);
+    rig.engine.set_num_channels(1);
+    let ch = rig.ch(0);
+    ch.params.input.delay_on.store(true, Relaxed);
+    ch.params.input.delay_mode.store(3, Relaxed); // samples
+    ch.params.input.delay.store(64.0);
+    ch.sends.get_or_create(1).unwrap().enabled.store(true, Relaxed); // TAP at PRE FDR
+    rig.strip(StripKind::Bus, 1).params.output_left.store(2, Relaxed);
+    rig.run(10); // ramps settle in silence
+    rig.inputs[0][10] = 1.0;
+    rig.run(1);
+    let first = |ch: usize| rig.outputs[ch].iter().position(|x| x.abs() > 0.1).unwrap();
+    assert_eq!(first(0), 74, "the main output is delayed");
+    assert_eq!(first(2), 10, "the pre-fader tap is not");
+}
+
+#[test]
+fn tap_sends_follow_the_channel_mute_unless_ignored() {
+    let mut rig = Rig::new(1, 1, 8);
+    rig.engine.set_num_channels(1);
+    let ch = rig.ch(0);
+    rig.set_input(0, 0.5);
+    let send = ch.sends.get_or_create(2).unwrap();
+    send.enabled.store(true, Relaxed);
+    rig.strip(StripKind::Bus, 2).params.output_left.store(2, Relaxed);
+    ch.params.matrix[0].on.store(true, Relaxed);
+    ch.params.matrix[0].pre.store(true, Relaxed);
+    rig.strip(StripKind::Matrix, 0).params.output_left.store(4, Relaxed);
+    ch.params.mains[1].on.store(true, Relaxed);
+    ch.params.mains[1].pre.store(true, Relaxed);
+    rig.strip(StripKind::Main, 1).params.output_left.store(6, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.5 * CENTRE, 1e-5));
+    assert!(close(rig.out(4), 0.5 * CENTRE, 1e-5));
+    assert!(close(rig.out(6), 0.5 * CENTRE, 1e-5));
+
+    // Muted (own mute, DCA mute or mute group): TAP sends are cut too.
+    for how in 0..3 {
+        match how {
+            0 => ch.params.mute.store(true, Relaxed),
+            1 => {
+                ch.params.dca_mask.store(1, Relaxed);
+                rig.engine.controls.dcas[0].mute.store(true, Relaxed);
+            }
+            _ => {
+                ch.params.mute_group_mask.store(1, Relaxed);
+                rig.engine.controls.mute_groups.store(1, Relaxed);
+            }
+        }
+        rig.run(20);
+        assert!(rig.out(2).abs() < 1e-6 && rig.out(4).abs() < 1e-6 && rig.out(6).abs() < 1e-6, "mute {how}");
+        ch.params.mute.store(false, Relaxed);
+        rig.engine.controls.dcas[0].mute.store(false, Relaxed);
+        rig.engine.controls.mute_groups.store(0, Relaxed);
+    }
+
+    // IGNORE CHANNEL MUTE keeps bus and matrix TAP sends (not the main send).
+    ch.params.mute.store(true, Relaxed);
+    send.ignore_mute.store(true, Relaxed);
+    ch.params.matrix[0].ignore_mute.store(true, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.5 * CENTRE, 1e-5));
+    assert!(close(rig.out(4), 0.5 * CENTRE, 1e-5));
+    assert!(rig.out(6).abs() < 1e-6);
+
+    // POST sends follow the fader and mute regardless.
+    send.mode.store(1, Relaxed);
+    rig.run(20);
+    assert!(rig.out(2).abs() < 1e-6);
+}
+
+#[test]
+fn bus_pre_sends_follow_the_bus_mute() {
+    let mut rig = Rig::new(1, 1, 4);
+    rig.engine.set_num_channels(1);
+    let ch = rig.ch(0);
+    ch.params.mains[0].on.store(false, Relaxed);
+    rig.set_input(0, 0.5);
+    let fx_bus = rig.strip(StripKind::Bus, 12);
+    ch.sends.get_or_create(12).unwrap().enabled.store(true, Relaxed);
+    let send = fx_bus.sends.get_or_create(0).unwrap();
+    send.enabled.store(true, Relaxed);
+    send.ignore_mute.store(true, Relaxed); // only input and aux channels have it
+    rig.strip(StripKind::Bus, 0).params.output_left.store(2, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.5 * CENTRE, 1e-5));
+    fx_bus.params.mute.store(true, Relaxed);
+    rig.run(20);
+    assert!(rig.out(2).abs() < 1e-6);
+}
+
+#[test]
+fn group_sends_ignore_the_send_level_and_reversed_pan_link() {
+    let mut rig = Rig::new(1, 1, 4);
+    rig.engine.set_num_channels(1);
+    let ch = rig.ch(0);
+    ch.params.mains[0].on.store(false, Relaxed);
+    rig.set_input(0, 0.5);
+    let send = ch.sends.get_or_create(2).unwrap();
+    send.enabled.store(true, Relaxed);
+    let bus = rig.strip(StripKind::Bus, 2);
+    bus.params.output_left.store(2, Relaxed);
+    bus.params.output_right.store(3, Relaxed);
+
+    // LINK REVERSED: the send pan mirrors the channel pan.
+    ch.params.pan.store(-100.0);
+    send.pan_reversed.store(true, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.0, 1e-5) && close(rig.out(3), 0.5, 1e-5), "{} {}", rig.out(2), rig.out(3));
+    send.pan_reversed.store(false, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.5, 1e-5) && close(rig.out(3), 0.0, 1e-5));
+
+    // GROUP: post-fader, post-pan, no send level.
+    send.mode.store(2, Relaxed);
+    send.level_db.store(-100.0);
+    ch.params.fader_db.store(-6.0206);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.25, 1e-4), "{}", rig.out(2));
+}
+
+#[test]
+fn automix_enables_input_channels_only_and_follows_the_fader() {
+    let mut rig = Rig::new(1, 2, 4);
+    rig.engine.set_num_channels(2);
+    rig.ch(1).params.input_left.store(1, Relaxed);
+    rig.set_input(0, 0.5);
+    rig.set_input(1, 0.5);
+    for i in 0..2 {
+        let ins = &rig.ch(i).params.post_insert;
+        ins.on.store(true, Relaxed);
+        ins.mode.store(1, Relaxed); // AUTO_X
+    }
+    rig.run(50);
+    let shared = 0.5 * CENTRE * 2.0 * CENTRE;
+    assert!(close(rig.out(0), shared, 1e-3), "{}", rig.out(0));
+    assert!(close(rig.ch(0).meters.automix_db.load(), -3.0103, 0.05));
+
+    // Automix sits in INS 2: the POST FDR tap is before it, POST PROC after it.
+    let a = rig.ch(0);
+    a.sends.get_or_create(5).unwrap().enabled.store(true, Relaxed);
+    rig.strip(StripKind::Bus, 5).params.output_left.store(2, Relaxed);
+    a.params.tap.store(6, Relaxed); // POST FDR
+    rig.run(50);
+    assert!(close(rig.out(2), 0.5 * CENTRE, 1e-3), "{}", rig.out(2));
+    a.params.tap.store(7, Relaxed); // POST PROC
+    rig.run(50);
+    assert!(close(rig.out(2), 0.5 * CENTRE * CENTRE, 1e-3), "{}", rig.out(2));
+    a.params.tap.store(5, Relaxed);
+
+    // X ENABLE off: both glide back to unity.
+    rig.engine.controls.automix_enable[0].store(false, Relaxed);
+    rig.run(50);
+    assert!(close(rig.out(0), 2.0 * 0.5 * CENTRE, 1e-4), "{}", rig.out(0));
+    rig.engine.controls.automix_enable[0].store(true, Relaxed);
+    rig.run(50);
+    assert!(close(rig.out(0), shared, 1e-3));
+
+    // Pulling one fader down hands its share to the other channel.
+    rig.ch(1).params.fader_db.store(-100.0);
+    rig.run(200);
+    assert!(close(rig.out(0), 0.5 * CENTRE, 1e-3), "{}", rig.out(0));
+}
+
+#[test]
+fn trim_and_pre_fader_meters() {
+    let mut rig = Rig::new(0, 1, 2);
+    rig.engine.set_num_channels(1);
+    let ch = rig.ch(0);
+    rig.set_input(0, 0.25);
+    ch.params.input.trim_db.store(6.0206);
+    ch.params.fader_db.store(-100.0);
+    rig.run(20);
+    let m = &ch.meters;
+    for v in [&m.input_peak[0], &m.trim_peak[0], &m.pfl_peak[0], &m.output_peak[0]] {
+        v.store(0.0);
+    }
+    rig.run(2);
+    assert!(close(m.input_peak[0].load(), 0.25, 1e-5));
+    assert!(close(m.trim_peak[0].load(), 0.5, 1e-4));
+    assert!(close(m.pfl_peak[0].load(), 0.5, 1e-4));
+    assert!(m.output_peak[0].load() < 1e-6);
+}
+
+#[test]
+fn monitor_dim_mute_mono_and_swap() {
+    let mut rig = Rig::new(0, 1, 4);
+    rig.engine.set_num_channels(1);
+    let engine = rig.engine.clone();
+    let c = &engine.controls;
+    c.monitor_output_left.store(2, Relaxed);
+    c.monitor_output_right.store(3, Relaxed);
+    rig.ch(0).params.pan.store(-100.0);
+    rig.set_input(0, 0.5);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.5, 1e-5) && close(rig.out(3), 0.0, 1e-5));
+
+    c.monitor_dim.store(true, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.05, 1e-5), "{}", rig.out(2));
+    c.monitor_dim_db.store(6.0206);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.25, 1e-4));
+    c.monitor_mute.store(true, Relaxed);
+    rig.run(20);
+    assert!(rig.out(2).abs() < 1e-7);
+    c.monitor_mute.store(false, Relaxed);
+    c.monitor_dim.store(false, Relaxed);
+    assert_eq!(c.monitor_level_db.load(), 0.0, "DIM never touches the level");
+
+    c.monitor_mono.store(true, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.25, 1e-5) && close(rig.out(3), 0.25, 1e-5));
+    c.monitor_mono.store(false, Relaxed);
+    c.monitor_swap.store(true, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.0, 1e-5) && close(rig.out(3), 0.5, 1e-5));
+    // Main 1 itself is unaffected.
+    assert!(close(rig.out(0), 0.5, 1e-5));
+}
+
+#[test]
+fn solo_pfl_or_afl_per_strip_type() {
+    let mut rig = Rig::new(0, 1, 4);
+    rig.engine.set_num_channels(1);
+    let engine = rig.engine.clone();
+    let c = &engine.controls;
+    c.monitor_output_left.store(2, Relaxed);
+    let ch = rig.ch(0);
+    rig.set_input(0, 0.5);
+    ch.sends.get_or_create(3).unwrap().enabled.store(true, Relaxed);
+    let bus = rig.strip(StripKind::Bus, 3);
+    bus.params.fader_db.store(-100.0);
+    bus.params.solo.store(true, Relaxed);
+
+    // BUS SOLO defaults to AFL: the bus fader is down, nothing to hear.
+    rig.run(20);
+    assert!(rig.out(2).abs() < 1e-6);
+    c.bus_solo_afl.store(false, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.5 * CENTRE, 1e-5), "{}", rig.out(2));
+
+    // CHANNEL SOLO covers aux channels too.
+    bus.params.solo.store(false, Relaxed);
+    let aux = rig.strip(StripKind::Aux, 0);
+    aux.params.input_left.store(0, Relaxed);
+    aux.params.fader_db.store(-100.0);
+    aux.params.solo.store(true, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.5, 1e-5), "PFL: {}", rig.out(2));
+    c.solo_afl.store(true, Relaxed);
+    rig.run(20);
+    assert!(rig.out(2).abs() < 1e-6);
+}
+
+#[test]
+fn dca_mutegroups_main_link_and_startup_main_mute() {
+    let mut rig = Rig::new(1, 1, 6);
+    rig.engine.set_num_channels(1);
+    let engine = rig.engine.clone();
+    let c = &engine.controls;
+    let ch = rig.ch(0);
+    rig.set_input(0, 0.5);
+    ch.params.dca_mask.store(1, Relaxed);
+    c.dcas[0].mute.store(true, Relaxed);
+    rig.run(20);
+    assert!(rig.out(0).abs() < 1e-6);
+    c.dca_mute_groups.store(false, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(0), 0.5 * CENTRE, 1e-5), "the DCA mute no longer mutes its strips");
+    c.dcas[0].mute.store(false, Relaxed);
+
+    // MAIN LINK 1>2: Main 1's fader also acts on Main 2, not on Main 3.
+    for i in 1..3 {
+        ch.params.mains[i].on.store(true, Relaxed);
+        rig.strip(StripKind::Main, i).params.output_left.store(2 * i as i32, Relaxed);
+    }
+    let main1 = rig.strip(StripKind::Main, 0);
+    main1.params.fader_db.store(-6.0206);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.5 * CENTRE, 1e-5));
+    c.main_link.store(1, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(0), 0.25 * CENTRE, 1e-4));
+    assert!(close(rig.out(2), 0.25 * CENTRE, 1e-4), "{}", rig.out(2));
+    assert!(close(rig.out(4), 0.5 * CENTRE, 1e-5));
+    c.main_link.store(2, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(4), 0.25 * CENTRE, 1e-4));
+
+    // STARTUP MAIN MUTE
+    assert!(!engine.apply_startup_main_mute());
+    assert!(!main1.params.mute.load(Relaxed));
+    c.startup_main_mute.store(true, Relaxed);
+    assert!(engine.apply_startup_main_mute());
+    assert!((0..NUM_MAINS).all(|i| rig.strip(StripKind::Main, i).params.mute.load(Relaxed)));
+}

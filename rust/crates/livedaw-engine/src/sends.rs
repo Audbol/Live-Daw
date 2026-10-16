@@ -10,9 +10,17 @@ pub const MAX_BUSES: usize = 16384;
 pub const PAGE_SIZE: usize = 64;
 const NUM_PAGES: usize = MAX_BUSES.div_ceil(PAGE_SIZE);
 
-/// Bus send modes: pre-fader (at the strip's tap point), post-fader, or
-/// subgroup (post-fader and post-pan, like routing the strip to a group).
+/// Bus send modes: TAP (the WING's name for input channels; pre-fader for
+/// buses), post-fader, or GROUP (post-fader and post-pan, like routing the
+/// strip to a group: no send level).
 pub const SEND_MODES: [&str; 3] = ["PRE", "POST", "GRP"];
+
+/// Send modes (indices into [`SEND_MODES`]).
+pub mod send_mode {
+    pub const PRE: i32 = 0;
+    pub const POST: i32 = 1;
+    pub const GROUP: i32 = 2;
+}
 
 #[repr(C)]
 #[derive(Debug)]
@@ -20,6 +28,11 @@ pub struct SendParams {
     pub enabled: AtomicBool,
     /// Pan follows the strip's pan (else `pan` is used).
     pub pan_link: AtomicBool,
+    /// IGNORE CHANNEL MUTE (input and aux channels, PRE/TAP mode only): the send
+    /// stays on while the channel is muted.
+    pub ignore_mute: AtomicBool,
+    /// With `pan_link`: follow the strip's pan mirrored (LINK REVERSED).
+    pub pan_reversed: AtomicBool,
     /// Index into [`SEND_MODES`].
     pub mode: AtomicI32,
     pub level_db: AtomicF32,
@@ -37,7 +50,9 @@ impl Default for SendParams {
         Self {
             enabled: AtomicBool::new(false),
             pan_link: AtomicBool::new(true),
-            mode: AtomicI32::new(0),
+            ignore_mute: AtomicBool::new(false),
+            pan_reversed: AtomicBool::new(false),
+            mode: AtomicI32::new(send_mode::PRE),
             level_db: AtomicF32::new(0.0),
             pan: AtomicF32::new(0.0),
             last_gain: UnsafeCell::new([0.0; 2]),

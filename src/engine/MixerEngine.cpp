@@ -51,12 +51,24 @@ MixerEngine::MixerEngine (int numWorkerThreads)
     : engine (createEngine (numWorkerThreads)),
       controls (*ld::ld_engine_controls (engine)),
       soloAfl (controls.soloAfl),
+      busSoloAfl (controls.busSoloAfl),
+      mainSoloAfl (controls.mainSoloAfl),
+      matrixSoloAfl (controls.matrixSoloAfl),
       monitorLevelDb (controls.monitorLevelDb),
+      monitorDim (controls.monitorDim),
+      monitorDimDb (controls.monitorDimDb),
+      monitorMute (controls.monitorMute),
+      monitorMono (controls.monitorMono),
+      monitorSwap (controls.monitorSwap),
       monitorOutputLeft (controls.monitorOutputLeft),
       monitorOutputRight (controls.monitorOutputRight),
       monitorPeak (controls.monitorPeak),
       anySoloActive (controls.anySoloActive),
       muteGroups (controls.muteGroups),
+      automixEnable (controls.automixEnable),
+      dcaMuteGroups (controls.dcaMuteGroups),
+      mainLink (controls.mainLink),
+      startupMainMute (controls.startupMainMute),
       outputProtection (controls.outputProtection),
       outputCeilingDb (controls.outputCeilingDb),
       outputClipEvents (controls.outputClipEvents),
@@ -204,6 +216,37 @@ void MixerEngine::setMuteGroupName (int index, const juce::String& name)
 void MixerEngine::timerCallback()
 {
     garbage.collect();
+}
+
+bool MixerEngine::isSoloAfl (StripKind kind) const noexcept
+{
+    switch (kind)
+    {
+        case StripKind::Bus:    return busSoloAfl.load();
+        case StripKind::Main:   return mainSoloAfl.load();
+        case StripKind::Matrix: return matrixSoloAfl.load();
+        case StripKind::Channel:
+        case StripKind::Aux:    break;
+    }
+    return soloAfl.load();
+}
+
+void MixerEngine::setSoloAfl (StripKind kind, bool afl) noexcept
+{
+    switch (kind)
+    {
+        case StripKind::Bus:    busSoloAfl = afl; return;
+        case StripKind::Main:   mainSoloAfl = afl; return;
+        case StripKind::Matrix: matrixSoloAfl = afl; return;
+        case StripKind::Channel:
+        case StripKind::Aux:    break;
+    }
+    soloAfl = afl;
+}
+
+bool MixerEngine::applyStartupMainMute()
+{
+    return ld::ld_engine_apply_startup_main_mute (engine);
 }
 
 int MixerEngine::getTotalDspFaults() const

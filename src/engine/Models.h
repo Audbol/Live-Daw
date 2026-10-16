@@ -33,7 +33,8 @@ enum List : int
     LowCutSlopes = 8,
     HighCutSlopes = 9,
     AuxDynModels = 10,
-    Colours = 11
+    Colours = 11,
+    MainLinkModes = 12
 };
 
 enum class ParamKind

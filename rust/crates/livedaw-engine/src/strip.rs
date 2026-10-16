@@ -1,12 +1,16 @@
-//! One console strip, processed the WING way:
+//! One console strip, processed the WING way (Operation Manual, chapter 6):
 //!
-//! INPUT (trim, balance, polarity, delay) -> FILTER -> the GATE slot, EQ,
-//! DYNAMICS slot and PRE INSERT in the strip's process order -> fader (with
-//! DCAs, mute and mute groups) -> POST INSERT -> width/pan -> output delay.
-//! Signal taps along the way feed pre-fader sends, solo and direct outs.
+//! * input channels: INPUT (trim, balance, polarity) -> FILTER -> the GATE
+//!   slot, EQ, DYNAMICS slot and INS 1 in the strip's process order -> fader
+//!   (with DCAs, mute and mute groups) -> INS 2 (or automix) -> delay (post-fader)
+//!   -> width/pan. The TAP point is selectable.
+//! * aux channels: INPUT -> delay (pre-fader) -> DYNAMICS -> EQ -> INS 1 ->
+//!   fader. No filter, gate or INS 2; the TAP point is fixed after INS 1.
+//! * buses, mains and matrices: INPUT -> DYNAMICS -> INS 1 -> fader -> EQ
+//!   (post-fader) -> INS 2 -> delay -> width/pan. The TAP point is fixed after
+//!   INS 1 (pre-fader).
 //!
-//! Channels use every block; aux channels have no filter or gate; buses, mains
-//! and matrices run EQ -> DYNAMICS -> PRE INSERT and delay their output.
+//! Signal taps along the way feed TAP-mode sends, solo (PFL/AFL) and direct outs.
 
 use crate::fx::FxRack;
 use crate::params::{DcaParams, FxParams, StripKind, StripMeters, StripParams, NUM_MAINS, NUM_MATRICES};
@@ -21,7 +25,9 @@ use std::cell::UnsafeCell;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Mutex};
 
-/// Tap points (TAP_POINTS order): IN, FILT, after 1st/2nd/3rd block, PFL, AFL, POST.
+/// Tap points (TAP_POINTS order). WING names: INPUT, FILTER, TAP 3/4/5 (after
+/// the 1st/2nd/3rd block), PRE FDR, POST FDR (before INS 2), POST PROC (after
+/// INS 2 and the post-fader delay, before width/pan).
 pub mod tap {
     pub const IN: usize = 0;
     pub const FILT: usize = 1;
@@ -36,6 +42,11 @@ pub(crate) struct ProcessContext<'a> {
     pub fx_params: &'a [FxParams],
     pub dcas: &'a [DcaParams],
     pub mute_groups: u32,
+    /// DCA MUTEGROUPS: a muted DCA mutes its strips.
+    pub dca_mute_groups: bool,
+    /// MAIN LINK: mains 2..=`main_link_last` (0-based 1..) add Main 1's fader level.
+    pub main_link_last: usize,
+    pub main_link_db: f32,
     /// Hardware inputs by hardware channel (null = inactive).
     pub hw_inputs: &'a [*const f32],
     /// The input channels (for sidechain keys from other channels).
@@ -74,6 +85,8 @@ pub(crate) struct StripDsp {
     automix_gain: f32,
     automix_power: f32,
     tap_point: usize,
+    /// Effective mute in the last block (TAP-mode sends follow it).
+    muted: bool,
     /// Matrices: ramp of the direct input (owned by the matrix task).
     last_direct: f32,
 }
@@ -107,6 +120,7 @@ impl StripDsp {
             automix_gain: 1.0,
             automix_power: 0.0,
             tap_point: tap::PFL,
+            muted: false,
             last_direct: 0.0,
         }
     }
@@ -187,19 +201,37 @@ impl Strip {
         *self.name.lock().unwrap_or_else(|e| e.into_inner()) = name.to_owned();
     }
 
+    /// The strip has an INS 2 slot (every kind but aux).
+    pub fn has_post_insert(&self) -> bool {
+        self.kind != StripKind::Aux
+    }
+
+    /// The strip can join automix X/Y (the INS 2 of input channels only).
+    pub fn has_automix(&self) -> bool {
+        self.kind == StripKind::Channel
+    }
+
+    /// The TAP point can be chosen (input channels; the others are fixed after INS 1).
+    pub fn has_selectable_tap(&self) -> bool {
+        self.kind == StripKind::Channel
+    }
+
+    /// The INS 2 slot runs an FX slot (not automix), with `fx` its slot index.
+    fn post_insert_fx(&self) -> Option<i32> {
+        let ins = &self.params.post_insert;
+        (self.has_post_insert() && ins.on.load(Relaxed) && ins.mode.load(Relaxed) == 0).then(|| ins.fx.load(Relaxed))
+    }
+
     /// True if this strip feeds `slot` from its pre/post insert.
     pub fn uses_fx(&self, slot: usize) -> bool {
         let p = &self.params;
         (p.pre_insert.on.load(Relaxed) && p.pre_insert.fx.load(Relaxed) == slot as i32)
-            || (p.post_insert.on.load(Relaxed)
-                && p.post_insert.mode.load(Relaxed) == 0
-                && p.post_insert.fx.load(Relaxed) == slot as i32)
+            || self.post_insert_fx() == Some(slot as i32)
     }
 
     fn has_inserts(&self) -> bool {
         let p = &self.params;
-        (p.pre_insert.on.load(Relaxed) && p.pre_insert.fx.load(Relaxed) >= 0)
-            || (p.post_insert.on.load(Relaxed) && p.post_insert.mode.load(Relaxed) == 0 && p.post_insert.fx.load(Relaxed) >= 0)
+        (p.pre_insert.on.load(Relaxed) && p.pre_insert.fx.load(Relaxed) >= 0) || self.post_insert_fx().is_some_and(|fx| fx >= 0)
     }
 
     /// # Safety
@@ -268,14 +300,15 @@ impl Strip {
         unsafe { std::ptr::read_volatile(&(*self.dsp.get()).idle) }
     }
 
-    /// Effective mute: own mute, a muted DCA or an engaged mute group.
-    pub(crate) fn is_muted(&self, dcas: &[DcaParams], mute_groups: u32) -> bool {
+    /// Effective mute: own mute, an engaged mute group or (with DCA MUTEGROUPS)
+    /// a muted DCA.
+    pub(crate) fn is_muted(&self, dcas: &[DcaParams], mute_groups: u32, dca_mute_groups: bool) -> bool {
         let p = &self.params;
         if p.mute.load(Relaxed) || p.mute_group_mask.load(Relaxed) & mute_groups != 0 {
             return true;
         }
         let mask = p.dca_mask.load(Relaxed);
-        mask != 0 && dcas.iter().enumerate().any(|(i, d)| mask & (1 << i) != 0 && d.mute.load(Relaxed))
+        dca_mute_groups && mask != 0 && dcas.iter().enumerate().any(|(i, d)| mask & (1 << i) != 0 && d.mute.load(Relaxed))
     }
 
     /// Effective solo: own solo or a soloed DCA.
@@ -411,11 +444,25 @@ impl Strip {
         }
     }
 
+    /// The pre-fader blocks in processing order: input channels use their
+    /// process order, aux channels run DYNAMICS, EQ, INS 1 (Fig. 68), and
+    /// buses, mains and matrices DYNAMICS and INS 1 (their EQ is post-fader).
+    fn pre_fader_order(&self) -> &'static [u8] {
+        match self.kind {
+            StripKind::Channel => {
+                let i = self.params.process_order.load(Relaxed).clamp(0, PROCESS_ORDERS.len() as i32 - 1) as usize;
+                PROCESS_ORDERS[i].as_bytes()
+            }
+            StripKind::Aux => b"DEI",
+            _ => b"DI",
+        }
+    }
+
     unsafe fn run_chain(&self, d: &mut StripDsp, ctx: &ProcessContext, n: usize) {
         let p = &self.params;
         let nc = d.num_channels;
-        let sr = d.sample_rate;
-        d.tap_point = (p.tap.load(Relaxed).clamp(0, 7)) as usize;
+        let kind = self.kind;
+        d.tap_point = if self.has_selectable_tap() { p.tap.load(Relaxed).clamp(0, 7) as usize } else { tap::PFL };
 
         // INPUT: trim, balance, polarity
         let polarity = if p.input.invert.load(Relaxed) { -1.0 } else { 1.0 };
@@ -424,17 +471,18 @@ impl Strip {
         let gains = [trim * db_to_gain(-bal.max(0.0)), trim * db_to_gain(bal.min(0.0))];
         for (ch, &gain) in gains.iter().enumerate().take(nc) {
             apply_gain_ramp(&mut d.work[ch][..n], d.last_in[ch], gain);
+            self.meters.trim_peak[ch].fetch_max(peak_level(&d.work[ch][..n]));
         }
         d.last_in = gains;
 
-        // Channel delay (outputs delay at the end of the chain).
-        if self.kind.is_input() {
+        // Aux channels delay before the fader; the others after it (below).
+        if kind == StripKind::Aux {
             self.apply_delay(d, n);
         }
         Self::copy_tap(d, tap::IN, n);
 
-        // FILTER (channels only)
-        if self.kind == StripKind::Channel {
+        // FILTER (input channels only)
+        if kind == StripKind::Channel {
             let settings = p.filter.snapshot();
             if settings.is_active() {
                 let [w0, w1] = &mut d.work;
@@ -444,15 +492,7 @@ impl Strip {
         }
         Self::copy_tap(d, tap::FILT, n);
 
-        // The four reorderable blocks.
-        let order: &[u8] = match self.kind {
-            StripKind::Channel => {
-                let i = p.process_order.load(Relaxed).clamp(0, PROCESS_ORDERS.len() as i32 - 1) as usize;
-                PROCESS_ORDERS[i].as_bytes()
-            }
-            _ => b"EDI",
-        };
-        for (pos, block) in order.iter().enumerate() {
+        for (pos, block) in self.pre_fader_order().iter().enumerate() {
             match block {
                 b'G' => self.run_gate(d, ctx, n),
                 b'E' => self.run_eq(d, n),
@@ -465,35 +505,47 @@ impl Strip {
                 Self::copy_tap(d, 2 + pos, n);
             }
         }
-        let _ = sr;
 
-        // PFL: pre-fader, after processing (solo, direct outs, PFL taps).
+        // PFL: pre-fader, after INS 1 (solo, direct outs, the fixed tap of aux,
+        // buses, mains and matrices, the METERS screen).
         for ch in 0..nc {
             d.pfl[ch][..n].copy_from_slice(&d.work[ch][..n]);
+            self.meters.pfl_peak[ch].fetch_max(peak_level(&d.pfl[ch][..n]));
         }
         Self::copy_tap(d, tap::PFL, n);
 
-        // Fader with DCAs, mute and mute groups.
-        let muted = self.is_muted(ctx.dcas, ctx.mute_groups);
-        let gain = if muted { 0.0 } else { db_to_gain(p.fader_db.load() + self.dca_offset_db(ctx.dcas)) };
+        // Fader with DCAs, mute and mute groups (and Main 1's level on linked mains).
+        let muted = self.is_muted(ctx.dcas, ctx.mute_groups, ctx.dca_mute_groups);
+        d.muted = muted;
+        let mut level = p.fader_db.load() + self.dca_offset_db(ctx.dcas);
+        if kind == StripKind::Main && (1..=ctx.main_link_last).contains(&(self.id.max(0) as usize)) {
+            level += ctx.main_link_db;
+        }
+        let gain = if muted { 0.0 } else { db_to_gain(level) };
         for ch in 0..nc {
             apply_gain_ramp(&mut d.work[ch][..n], d.last_gain, gain);
         }
         d.last_gain = gain;
         Self::copy_tap(d, tap::AFL, n);
 
-        // POST INSERT (automix is applied by the engine after all channels ran).
-        if p.post_insert.mode.load(Relaxed) == 0 {
+        // Buses, mains and matrices: the EQ is post-fader.
+        if kind.is_output() {
+            self.run_eq(d, n);
+        }
+
+        // INS 2 (automix is applied by the engine after all channels ran; it
+        // follows the post-fader level, so the fader shapes the automix response).
+        if self.post_insert_fx().is_some() {
             self.run_insert(d, ctx, n, true);
         }
-        if self.kind.is_input() && p.post_insert.on.load(Relaxed) && p.post_insert.mode.load(Relaxed) != 0 {
-            let power: f32 = (0..nc).map(|ch| d.pfl[ch][..n].iter().map(|x| x * x).sum::<f32>()).sum::<f32>() / (n * nc) as f32;
+        if self.has_automix() && p.post_insert.on.load(Relaxed) && p.post_insert.mode.load(Relaxed) != 0 {
+            let power: f32 = (0..nc).map(|ch| d.work[ch][..n].iter().map(|x| x * x).sum::<f32>()).sum::<f32>() / (n * nc) as f32;
             let c = 0.7;
             d.automix_power = c * d.automix_power + (1.0 - c) * power * db_to_gain(p.post_insert.weight.load() * 2.0);
         }
 
-        // Output delay (buses, mains, matrices).
-        if self.kind.is_output() {
+        // Post-fader delay: input channels (DELAY (POST)), buses, mains, matrices.
+        if kind != StripKind::Aux {
             self.apply_delay(d, n);
         }
         for ch in 0..nc {
@@ -653,7 +705,8 @@ impl Strip {
         self.meters.output_peak[1].fetch_max(peak_level(o1));
     }
 
-    /// Engine automix pass: scales everything after the fader by `gain`.
+    /// Engine automix pass: scales everything after INS 2 (where automix sits)
+    /// by `gain`; the POST FDR tap, before INS 2, keeps the plain fader level.
     ///
     /// # Safety
     /// Audio thread, after the input stage, before anything reads this strip.
@@ -663,7 +716,7 @@ impl Strip {
         let nc = d.num_channels;
         for ch in 0..nc {
             apply_gain_ramp(&mut d.post[ch][..n], last, gain);
-            if d.tap_point >= tap::AFL {
+            if d.tap_point == tap::POST {
                 apply_gain_ramp(&mut d.tap[ch][..n], last, gain);
             }
         }
@@ -722,6 +775,15 @@ impl StripDsp {
     #[inline]
     pub(crate) fn automix_power(&self) -> f32 {
         self.automix_power
+    }
+    #[inline]
+    pub(crate) fn automix_gain(&self) -> f32 {
+        self.automix_gain
+    }
+    /// The strip was muted (own mute, mute group, DCA) in this block.
+    #[inline]
+    pub(crate) fn muted(&self) -> bool {
+        self.muted
     }
     #[inline]
     pub(crate) fn last_direct(&self) -> f32 {
