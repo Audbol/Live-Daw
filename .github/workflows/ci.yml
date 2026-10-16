@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Publish the Windows build as a prerelease with this tag (e.g. v0.1.0-wing-test.1)"
+        required: false
+        default: ""
 
 jobs:
   rust:
@@ -156,15 +161,17 @@ jobs:
           LSAN_OPTIONS: suppressions=${{ github.workspace }}/tests/lsan.supp
         run: ./build/LiveDAWTests_artefacts/Debug/LiveDAWTests
 
-  # Pushing a tag (e.g. v0.1.0-wing-test.1) publishes the tested Windows build as a
-  # GitHub prerelease.
+  # Pushing a tag (e.g. v0.1.0-wing-test.1), or running the workflow by hand with a
+  # release_tag, publishes the tested Windows build as a GitHub prerelease.
   release:
     name: Publish test release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: [ build, rust, sanitizers ]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+    env:
+      TAG: ${{ inputs.release_tag || github.ref_name }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -172,7 +179,7 @@ jobs:
           path: LiveDAW-Windows
 
       - name: Zip
-        run: cd LiveDAW-Windows && zip -r "../LiveDAW-Windows-${GITHUB_REF_NAME}.zip" .
+        run: cd LiveDAW-Windows && zip -r "../LiveDAW-Windows-${TAG}.zip" .
 
       - name: Create prerelease
         env:
@@ -190,6 +197,7 @@ jobs:
           This is a test release of the Behringer WING emulation; see README.md in the zip.
           Live DAW is not affiliated with or endorsed by Behringer or Music Tribe.
           EOF
-          gh release create "$GITHUB_REF_NAME" "LiveDAW-Windows-${GITHUB_REF_NAME}.zip" \
+          # Creates the tag at the tested commit if it doesn't exist yet.
+          gh release create "$TAG" "LiveDAW-Windows-${TAG}.zip" --target "$GITHUB_SHA" \
             --repo "$GITHUB_REPOSITORY" --prerelease \
-            --title "Live DAW ${GITHUB_REF_NAME} (Windows test build)" --notes-file notes.md
+            --title "Live DAW ${TAG} (Windows test build)" --notes-file notes.md
