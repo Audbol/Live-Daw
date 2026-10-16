@@ -97,8 +97,26 @@ private:
 public:
     //==============================================================================
     // Monitor / solo (the engine's own atomics)
-    std::atomic<bool>& soloAfl;               // false = PFL, true = AFL
+
+    /** CHANNEL SOLO (input and aux channels): false = PFL (default), true = AFL. */
+    std::atomic<bool>& soloAfl;
+    /** BUS / MAIN / MATRIX SOLO: true = AFL (default), false = PFL. */
+    std::atomic<bool>& busSoloAfl;
+    std::atomic<bool>& mainSoloAfl;
+    std::atomic<bool>& matrixSoloAfl;
+    /** PFL or AFL per strip type (SETUP: solo "on Channels, Buses, Mains and Matrices"). */
+    bool isSoloAfl (StripKind kind) const noexcept;
+    void setSoloAfl (StripKind kind, bool afl) noexcept;
+
     std::atomic<float>& monitorLevelDb;
+    /** Monitor keys, applied in the engine after the level: DIM attenuates by
+        monitorDimDb, mute (hold DIM) silences, MONO sums L and R, swap (hold
+        MONO) swaps them. None of them changes monitorLevelDb. */
+    std::atomic<bool>& monitorDim;
+    std::atomic<float>& monitorDimDb; // attenuation in dB (>= 0), default 20
+    std::atomic<bool>& monitorMute;
+    std::atomic<bool>& monitorMono;
+    std::atomic<bool>& monitorSwap;
     std::atomic<int32_t>& monitorOutputLeft;
     std::atomic<int32_t>& monitorOutputRight;
     std::atomic<float> (&monitorPeak)[2];
@@ -106,6 +124,22 @@ public:
 
     /** Bit n = mute group n+1 engaged. */
     std::atomic<uint32_t>& muteGroups;
+
+    /** Automix X ENABLE / Y ENABLE (default on). */
+    std::atomic<bool> (&automixEnable)[2];
+
+    //==============================================================================
+    // Preferences (SETUP > PREFERENCES), saved with the show
+
+    /** DCA MUTEGROUPS: a muted DCA also mutes its strips (default on). */
+    std::atomic<bool>& dcaMuteGroups;
+    /** MAIN LINK (ld::MainLinkMode, names in list 12): Main 1's fader also moves Mains 2..N. */
+    std::atomic<int32_t>& mainLink;
+    /** STARTUP MAIN MUTE: call applyStartupMainMute() once at start-up. */
+    std::atomic<bool>& startupMainMute;
+    /** Mutes every main if STARTUP MAIN MUTE is on (call after loading the
+        start-up show). Returns whether it did. */
+    bool applyStartupMainMute();
 
     //==============================================================================
     // Stability / protection

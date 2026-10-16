@@ -181,11 +181,6 @@ pub(crate) mod tests {
     pub(crate) fn check_device(token: &str) {
         let model = model_index(token).unwrap_or_else(|| panic!("{token}: not in FX_MODELS"));
         let spec = &FX_MODELS[model];
-        // Families land one at a time; `every_device_is_implemented` insists on all of them.
-        if create(token, FxContext { sample_rate: 48_000.0, max_block: 64 }).is_none() {
-            eprintln!("{token}: not implemented yet");
-            return;
-        }
         for sr in [44_100.0, 96_000.0] {
             let ctx = FxContext { sample_rate: sr, max_block: 512 };
             let mut dev = FxDevice::new(model, ctx).unwrap_or_else(|| panic!("{token}: not implemented"));
@@ -268,10 +263,11 @@ pub(crate) mod tests {
     }
 
     #[test]
-    #[ignore = "enable once every family is implemented"]
     fn every_device_is_implemented() {
+        // The families' own tests run the full checks; here, every table entry has a device.
+        let ctx = FxContext { sample_rate: 48_000.0, max_block: 64 };
         for m in FX_MODELS.iter().filter(|m| !matches!(m.category, ModelCategory::FxNone | ModelCategory::FxExternal)) {
-            check_device(m.token);
+            assert!(create(m.token, ctx).is_some(), "{}: not implemented", m.token);
         }
     }
 }

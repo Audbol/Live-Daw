@@ -35,12 +35,24 @@ using SendParams = ld::SendParams;
 using DcaParams = ld::DcaParams;
 using FxParams = ld::FxParams;
 
-/** Bus send modes (list 4). */
+/** Bus send modes (list 4). Pre is the WING's TAP mode on input and aux
+    channels (taken at the tap point; cut by the channel mute unless the send's
+    ignoreMute is set) and pre-fader on buses. Group is post-fader and post-pan
+    with no send level. */
 enum class SendMode : int32_t
 {
     Pre = 0,
     Post = 1,
     Group = 2
+};
+
+/** MAIN LINK (EngineControls::mainLink, list 12). */
+enum class MainLink : int32_t
+{
+    Off = ld::kMainLinkOff,
+    To2 = ld::kMainLink2,    // 1>2
+    To3 = ld::kMainLink2_3,  // 1>2-3
+    To4 = ld::kMainLink2_4   // 1>2-4
 };
 
 /** Post insert modes (list 6). */

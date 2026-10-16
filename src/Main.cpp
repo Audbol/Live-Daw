@@ -218,6 +218,11 @@ public:
         if (engine->getChannels().empty())
             engine->setNumChannels (kDefaultChannelCount);
 
+        // STARTUP MAIN MUTE: the mains start muted (before any audio runs) when
+        // the show asks for it.
+        if (engine->applyStartupMainMute())
+            log.info ("Mains muted at start-up (STARTUP MAIN MUTE)");
+
         // First launch: open a low-latency driver (ASIO on Windows, JACK on Linux)
         // directly, instead of trying the OS default device first.
         auto savedDevice = settings.getXmlValue ("audioDevice");

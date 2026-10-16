@@ -9,6 +9,11 @@
 //! * Snippet - a partial snapshot that belongs to a scene: chosen strips x chosen
 //!   sections. Fired on its own, or automatically straight after its scene.
 //!
+//! As on the WING's LIBRARY screen, a scene can carry a tag (#1-#128, for
+//! recall by tag), be skipped (GO PREV/NEXT and recalls pass over it) and be
+//! linked to the scene below it (recalling it recalls that one too; the link
+//! follows the scene, so after a move it links to its new neighbour).
+//!
 //! Scene and snippet recall never create or destroy channels or plugins, so
 //! recalling during a show can't cause dropouts. Message thread only.
 
@@ -25,6 +30,8 @@ use std::time::{Duration, Instant};
 
 pub const SHOW_VERSION: i32 = 3;
 pub const MAX_FADE_SECONDS: f64 = 60.0;
+/// Scene tags are #1..#128 (0 = no tag).
+pub const MAX_SCENE_TAG: i32 = 128;
 
 #[derive(Debug, Clone)]
 pub struct Snippet {
@@ -53,6 +60,12 @@ pub struct Scene {
     pub notes: String,
     pub scope: u32,
     pub fade_seconds: f64,
+    /// EDIT TAG: #1..#128, 0 = none.
+    pub tag: i32,
+    /// SKIP: GO PREV/NEXT and recalls ignore the scene.
+    pub skip: bool,
+    /// LINK: recalling this scene also recalls the one below it.
+    pub link_next: bool,
     pub state: Option<Element>,
     pub snippets: Vec<Snippet>,
 }
@@ -64,9 +77,21 @@ impl Default for Scene {
             notes: String::new(),
             scope: section::ALL & !section::ROUTING,
             fade_seconds: 0.0,
+            tag: 0,
+            skip: false,
+            link_next: false,
             state: None,
             snippets: Vec::new(),
         }
+    }
+}
+
+/// A valid scene tag (0 = none).
+pub fn clamp_scene_tag(tag: i32) -> i32 {
+    if (1..=MAX_SCENE_TAG).contains(&tag) {
+        tag
+    } else {
+        0
     }
 }
 
@@ -187,8 +212,42 @@ impl Show {
         }
     }
 
-    /// Recalls a scene (and its auto-fire snippets).
+    /// Recalls a scene (and its auto-fire snippets), then the scenes it is
+    /// linked to. A skipped scene is not recalled (and ends a chain of links).
+    /// In a chain each scene applies in turn, so a later one wins where they
+    /// overlap and only the last one's fade glides. The current scene becomes
+    /// the last one recalled.
     pub fn recall_scene(&mut self, engine: &Engine, bridge: &mut dyn PluginBridge, index: i32) -> ApplyResult {
+        let mut result = ApplyResult::default();
+        // Each scene at most once (indices only grow).
+        for i in index.. {
+            let Some(scene) = self.scene(i).filter(|s| !s.skip) else { break };
+            let linked = scene.link_next;
+            result.merge(self.recall_one(engine, bridge, i));
+            if !linked {
+                break;
+            }
+        }
+        result
+    }
+
+    /// The first scene tagged `tag` that isn't skipped, or -1.
+    pub fn find_scene_by_tag(&self, tag: i32) -> i32 {
+        if clamp_scene_tag(tag) == 0 {
+            return -1;
+        }
+        self.scenes.iter().position(|s| s.tag == tag && !s.skip).map_or(-1, |i| i as i32)
+    }
+
+    /// Recalls the first scene tagged `tag` (custom controls / MIDI); nothing if none.
+    pub fn recall_by_tag(&mut self, engine: &Engine, bridge: &mut dyn PluginBridge, tag: i32) -> ApplyResult {
+        match self.find_scene_by_tag(tag) {
+            -1 => ApplyResult::default(),
+            index => self.recall_scene(engine, bridge, index),
+        }
+    }
+
+    fn recall_one(&mut self, engine: &Engine, bridge: &mut dyn PluginBridge, index: i32) -> ApplyResult {
         let mut result = ApplyResult::default();
         let Some(scene) = self.scene(index) else { return result };
         let Some(state) = scene.state.clone() else { return result };
@@ -223,14 +282,20 @@ impl Show {
         result
     }
 
+    /// GO NEXT: the next scene that isn't skipped (at the end, the last one again).
     pub fn recall_next(&mut self, engine: &Engine, bridge: &mut dyn PluginBridge) -> ApplyResult {
-        let index = (self.current_scene + 1).min(self.scenes.len() as i32 - 1);
-        self.recall_scene(engine, bridge, index)
+        let n = self.scenes.len() as i32;
+        let playable = |i: &i32| !self.scenes[*i as usize].skip;
+        let index = ((self.current_scene + 1).max(0)..n).find(playable).or_else(|| (0..n).rev().find(playable));
+        index.map_or_else(ApplyResult::default, |i| self.recall_scene(engine, bridge, i))
     }
 
+    /// GO PREV: the previous scene that isn't skipped (at the start, the first one again).
     pub fn recall_previous(&mut self, engine: &Engine, bridge: &mut dyn PluginBridge) -> ApplyResult {
-        let index = (self.current_scene - 1).max(0);
-        self.recall_scene(engine, bridge, index)
+        let n = self.scenes.len() as i32;
+        let playable = |i: &i32| !self.scenes[*i as usize].skip;
+        let index = (0..self.current_scene.min(n)).rev().find(playable).or_else(|| (0..n).find(playable));
+        index.map_or_else(ApplyResult::default, |i| self.recall_scene(engine, bridge, i))
     }
 
     // ---- snippets --------------------------------------------------------------------
@@ -343,7 +408,10 @@ impl Show {
             sx.set("name", &scene.name)
                 .set("notes", &scene.notes)
                 .set("scope", scene.scope as i32)
-                .set("fade", scene.fade_seconds);
+                .set("fade", scene.fade_seconds)
+                .set("tag", scene.tag)
+                .set_bool("skip", scene.skip)
+                .set_bool("link", scene.link_next);
             if let Some(st) = &scene.state {
                 sx.add(st.clone());
             }
@@ -431,6 +499,9 @@ impl Show {
                     notes: sx.str_or("notes", "").to_owned(),
                     scope: sx.int_or("scope", defaults.scope as i32) as u32,
                     fade_seconds: sx.double_or("fade", 0.0).clamp(0.0, MAX_FADE_SECONDS),
+                    tag: clamp_scene_tag(sx.int_or("tag", 0)),
+                    skip: sx.bool_or("skip", false),
+                    link_next: sx.bool_or("link", false),
                     state: state_of(sx),
                     snippets: Vec::new(),
                 };

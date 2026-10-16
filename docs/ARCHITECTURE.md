@@ -10,15 +10,15 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
  hardware inputs
        │
        ▼
-┌──────────── channels and aux (parallel stage 1) ───────────────────────────────────────┐
-│ INPUT: trim · balance · Ø · delay ─ IN                                                 │
-│ FILTER: low cut · high cut · tool (channels) ─ FILT                                    │
-│ G / E / D / I in one of 24 process orders (aux: E D I) ─ taps 3, 4, 5                  │
-│ ─ PFL ─ fader (+ DCAs; mute, mute groups, DCA mutes) ─ AFL ─ POST INSERT ─ POST         │
-│ ─ width / pan ─► out                                                                   │
+┌──────────── input channels and aux (parallel stage 1) ─────────────────────────────────┐
+│ channel: INPUT trim · balance · Ø ─ IN ─ FILTER ─ FILT                                 │
+│          G / E / D / INS 1 in one of 24 process orders ─ taps 3, 4, 5                  │
+│          ─ PFL ─ fader (+ DCAs; mute, mute groups, DCA mutes) ─ AFL                    │
+│          ─ INS 2 (FX slot or automix X/Y) ─ DELAY (POST) ─ POST ─ width / pan ─► out   │
+│ aux:     INPUT ─ delay ─ DYN ─ EQ ─ INS 1 ─ PFL (= tap) ─ fader ─ POST ─ pan ─► out    │
 └───┬──────────────────────────────────┬──────────────────────────────┬──────────────────┘
-    │ bus sends (PRE at the tap point,  │ main sends (pre: tap, else out) │ matrix sends, direct outs
-    │ POST, GRP)                        │                                │
+    │ bus sends (TAP/PRE at the tap     │ main sends (pre: tap, else out) │ matrix sends, direct outs
+    │ point, POST, GROUP)               │                                │
     ▼                                   │                                │
  buses 9+  (parallel stage 2) ──► sends │                                │
     ▼                                   │                                │
@@ -28,18 +28,46 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
     ▼                                                                    ▼
  matrices 1-8 (parallel stage 5: inputs, buses, mains + a direct input from any channel)
     │
- solo (PFL/AFL) ─► monitor (follows Main 1 when nothing is soloed) ─► monitor outputs
+ solo (PFL/AFL per strip type) ─► monitor (follows Main 1 when nothing is soloed)
+    ─► level · DIM · mute · MONO / SWAP ─► monitor outputs
  every strip ─► its hardware outputs ─► output protection (safety clip)
+
+ bus / main / matrix strip:
+   summed sends ─ INPUT trim · balance ─ DYN ─ INS 1 ─ PFL (= tap) ─ fader (+ DCAs,
+   mutes; Mains 2-4 + Main 1's level with MAIN LINK) ─ EQ (post-fader) ─ INS 2 ─ delay
+   ─ POST ─ width / pan ─► out
 ```
 
-- Buses, mains and matrices run the same strip code with the EQ / DYN / INS blocks
-  (`"EDI"`), the 8-band bus EQ table and an output delay instead of the input delay.
+- The order follows the WING Operation Manual (chapter 6). Input channels choose their
+  process order and tap point (`TAP_POINTS`: INPUT, FILTER, TAP 3-5, PRE FDR, POST FDR,
+  POST PROC); aux, buses, mains and matrices tap after INS 1 (`tap::PFL`), whatever
+  `StripParams::tap` says. Aux channels have no filter, gate or INS 2 and delay before the
+  fader; everything else delays after INS 2.
+- Buses, mains and matrices use the 8-band bus EQ table. `ld_strip_response` draws the
+  EQ alone, so its graph doesn't depend on where the EQ sits.
+- PFL solo, direct outs, the matrix direct input (`direct_pre`) and the pre-fader meter
+  (`StripMeters::pfl_peak`) read the PFL copy; AFL solo and post-fader sends read the
+  output. `trim_peak` measures after trim, `input_peak` before it.
+- Send modes: TAP/PRE reads the tap point and is cut while the source is muted (own
+  mute, mute groups, DCA mutes when DCA MUTEGROUPS is on), unless an input or aux
+  channel's send has IGNORE CHANNEL MUTE (`SendParams::ignore_mute`,
+  `MatrixSendParams::ignore_mute`); pre-fader main sends always follow the mute. POST
+  reads after INS 2 and the delay, panned with the send pan (linked, linked reversed or
+  its own). GROUP reads the panned output at unity: it has no send level.
 - Bus sends are stored in a paged `SendBank`, so buses can be added beyond the WING's
   16. Buses 9 and up can feed buses 1-8 (`BUS_TO_BUS_TARGETS`).
 - A matrix's direct input takes any channel's PFL or output; inverted, it builds a
   mix-minus.
-- The post insert can run an FX slot or join automix group X or Y. The audio thread
-  computes the gain sharing between stages 1 and 2 (`engine.rs`, `automix`).
+- INS 2 of input channels can run an FX slot or join automix group X or Y (each with its
+  ENABLE switch in `EngineControls::automix_enable`). The audio thread computes the
+  gain sharing between stages 1 and 2 (`engine.rs`, `automix`) from the post-fader level,
+  so the channel fader shapes it; channels leaving automix glide back to unity.
+- Console-wide switches in `EngineControls`: PFL/AFL per strip type (`solo_afl` for
+  input and aux channels, `bus_solo_afl`, `main_solo_afl`, `matrix_solo_afl`), the
+  monitor keys (`monitor_dim` with `monitor_dim_db`, `monitor_mute`, `monitor_mono`,
+  `monitor_swap`, ramped so they don't click), `dca_mute_groups`, `main_link` and
+  `startup_main_mute` (applied by the application through
+  `ld_engine_apply_startup_main_mute`).
 
 ## Processing models
 
@@ -57,7 +85,7 @@ same tables through `ld_model_*` (`livedaw-ffi/src/models.rs`, `src/engine/Model
 
 | Layer | Language | Where |
 |---|---|---|
-| DSP (filters, EQ models, dynamics models, delay) | Rust | `rust/crates/livedaw-dsp` |
+| DSP (filters, EQ models, dynamics models, the FX rack's devices, delay) | Rust | `rust/crates/livedaw-dsp` |
 | Realtime engine (WING topology, strips, sends, DCAs, mute groups, FX slots, automix, solo, monitor, output protection, worker pool, deferred frees) | Rust | `rust/crates/livedaw-engine` |
 | Sessions (console state, Show > Scene > Snippet, fades, fader banks, show files, legacy import) | Rust | `rust/crates/livedaw-session` |
 | C ABI | Rust + C++ header | `rust/crates/livedaw-ffi`, `include/livedaw_engine.h` |
@@ -72,21 +100,37 @@ views after a show load changes the console from Rust.
   engine controls are `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same
   memory as `std::atomic<float/bool/int32_t>` structs, and the UI writes them directly
   with no FFI call. Both sides describe the layout; `ld::verifyLayout()` compares the
-  two at startup and in the tests (ABI version 3), and the app refuses to run if they
+  two at startup and in the tests (ABI version 5), and the app refuses to run if they
   differ.
-- **FX slots.** The 16 slots are the WING's FX rack, holding VST3/AU/LV2 plugins (the
-  "EXT" device). Plugin instances stay in C++ (`FxSlots`). Each loaded slot registers
-  `process` and `release` callbacks with the engine (`ld_fx_set`). Rust calls `process`
-  from whichever thread runs the strip whose PRE or POST insert uses the slot, keeps a
-  dry copy for the slot's mix, and auto-bypasses the slot if the callback reports an
-  error (a C++ exception is caught in the callback) or returns NaN/inf. A slot runs for
-  one strip per block: a second insert on the same slot passes its signal through and
-  the slot is flagged as double assigned. The engine measures each slot's load. A
-  replaced plugin's `release` runs on the message thread once no audio callback can
-  still reach it.
-- **Plugins in sessions.** The session reaches the plugins through a *plugin bridge*
-  implemented by `Show`: capture a slot (description XML + base64 state), restore one
-  (state only, or by creating the plugin on show load) and clear one.
+- **FX slots.** The 16 slots are the WING's FX rack. Each holds one device from the
+  console's FX table (`FX_MODELS`, generated like the processing models): the 26
+  premium effects (reverbs, chorus/flanger/phaser, delays, pitch; slots 1-8 only), the
+  32 standard effects (EQs, dynamics, enhancers, amps, utilities) and the 5 channel
+  strips, or **EXT**, a VST3/AU/LV2 plugin.
+  - Built-in devices live in `livedaw-dsp/src/wing/fx` (one module per family, shared
+    building blocks in `blocks.rs`). A device is an `FxAlgo`: it is created on the
+    message thread (allocating its buffers for the sample rate and block size), then
+    swapped into the slot (`AtomicPtr`) and runs on the audio thread without
+    allocating or locking. `FxDevice` feeds it the slot's parameter atomics
+    (`FxParams::values`) when they change. A replaced device is freed through the
+    epoch garbage list. Setting the model through the parameters (a scene recall, the
+    UI) is picked up by `ld_engine_collect`, which builds the device.
+  - Plugin instances stay in C++ (`FxSlots`). Each loaded slot registers `process`
+    and `release` callbacks with the engine (`ld_fx_set`, which also sets the model to
+    EXT). A replaced plugin's `release` runs on the message thread once no audio
+    callback can still reach it.
+  - Rust runs the slot from whichever thread runs the strip whose PRE or POST insert
+    uses it, keeps a dry copy for the slot's FX MIX, and auto-bypasses the slot if a
+    plugin reports an error (a C++ exception is caught in the callback) or a device or
+    plugin returns NaN/inf. A slot runs for one strip per block: a second insert on
+    the same slot passes its signal through and the slot is flagged as double
+    assigned. The engine measures each slot's load.
+  - Devices are stereo. A mono strip feeds both inputs and takes the average of the
+    two outputs back.
+- **FX in sessions.** A slot saves its device and parameter values. Plugins are
+  reached through a *plugin bridge* implemented by `Show`: capture a slot (description
+  XML + base64 state), restore one (state only, or by creating the plugin on show load)
+  and clear one.
 - **Panics.** Every FFI entry point and every worker task runs under `catch_unwind`.
   A panic in the audio path outputs silence for that block and increments
   `engineFaults`. It never unwinds into C++.
@@ -158,8 +202,9 @@ Show
 - Fades collect fade targets (fader, pan and send levels) instead of setting them, and
   `ld_show_tick` interpolates the atomics. A fade target holds its strip (`Arc`), so
   removing a strip mid-fade is safe. A new recall finishes any fade still running.
-- FX slots are recalled as *plugin state only*, and only when the same plugin is
-  already in that slot. Recalls never instantiate plugins.
+- FX slots recall their built-in device and its parameters. A plugin's state is
+  recalled only when the same plugin is already in that slot; recalls never
+  instantiate or remove plugins, and a premium device is refused in slots 9-16.
 - Show files are XML. Saving writes a temporary file, verifies it, renames it over the
   show and keeps the previous version as `.bak`; loading falls back to the `.bak` if
   the show is damaged.
@@ -200,6 +245,12 @@ show control and mute groups (top right); and the main display with the screen k
   `HomeScreens.*`: INPUT, FILTER, GATE, EQ, DYNAMICS, PRE/POST INSERT, MAIN, SENDS),
   EFFECTS, METERS, ROUTING, SETUP, LIBRARY (`ShowPanel.*` for scenes and snippets) and
   UTILITY.
+- **Faceplates** (`Faceplate.*`): every FX device and dynamics/EQ model is drawn as the
+  unit it recreates (panel colour, knob style, VU or LED meter, faders for graphic EQs
+  and remotes, rack ears or wood cheeks), styled per model token. EFFECTS opens a
+  slot's faceplate in its editor; the GATE, EQ and DYNAMICS screens show the model's.
+  The device menu groups the table like the console (PREMIUM, STANDARD, CHANNEL
+  STRIPS, PLUGIN).
 - Views poll the shared atomics on timers (4-25 Hz); meters read `MeterBank`, the one
   reader of the engine's "peak since last read" meters.
 
@@ -226,11 +277,11 @@ show control and mute groups (top right); and the main display with the screen k
 - Plugins run inside the mixer process. Bad output and exceptions are contained, but
   a plugin that segfaults takes the app down (safe mode then recovers the show).
   Hosting each plugin in a sandbox process is the next step for full isolation.
-- The WING's own FX algorithms (reverbs, delays, channel FX) aren't recreated; FX
-  slots host plugins.
+- The FX devices recreate each unit's controls and characteristic sound, not the
+  console's exact algorithms.
 - No plugin delay compensation.
 - Plugins always run in stereo. A mono strip feeds both plugin inputs and takes the
-  left output back.
+  left output back (built-in devices return the average of both).
 - Solo safe and the monitor A/B bus choice are saved with the show but not used by the
   engine yet; there is one monitor output pair.
 - Not yet: the alternate (ALT) channel input, the WING's USER / custom control

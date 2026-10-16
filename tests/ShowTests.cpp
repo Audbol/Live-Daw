@@ -440,6 +440,88 @@ public:
             expectEquals ((int) e3.getChannels().size(), 1);
             engine.getGarbage().collectAllNow();
         }
+
+        beginTest ("Scene tags, SKIP and LINK");
+        {
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            engine.setNumChannels (1);
+            auto& fader = engine.getChannels()[0]->params.faderDb;
+            for (int i = 0; i < 4; ++i)
+            {
+                fader = -1.0f - (float) i;
+                show.addScene ("S" + juce::String (i));
+            }
+
+            show.setSceneSkip (1, true);
+            show.setSceneTag (3, 42);
+            show.setSceneLink (2, true);
+            auto scene = show.getScene (1);
+            expect (scene->skip && ! scene->linkNext && scene->tag == 0);
+            expect (show.getScene (2)->linkNext);
+            expectEquals (show.getScene (3)->tag, 42);
+            show.setSceneTag (3, 500);
+            expectEquals (show.getScene (3)->tag, 0);
+            show.setSceneTag (3, 42);
+
+            show.recallScene (0);
+            show.recallNext(); // passes over scene 1; scene 2 links to 3
+            expectEquals (show.getCurrentSceneIndex(), 3);
+            expectEquals (fader.load(), -4.0f);
+            show.recallPrevious(); // 2, which recalls 3 again
+            expectEquals (show.getCurrentSceneIndex(), 3);
+            show.setSceneLink (2, false);
+            show.recallPrevious();
+            expectEquals (show.getCurrentSceneIndex(), 2);
+            show.recallPrevious();
+            expectEquals (show.getCurrentSceneIndex(), 0);
+
+            expectEquals (show.findSceneByTag (42), 3);
+            expectEquals (show.recallSceneByTag (42).stripsApplied, 1 + 8 + 16 + 4 + 8);
+            expectEquals (show.getCurrentSceneIndex(), 3);
+            expectEquals (show.recallSceneByTag (7).stripsApplied, 0);
+
+            auto xml = show.toXml();
+            MixerEngine e2 (0);
+            Show loaded (e2, host);
+            expect (loaded.loadFromXml (*xml).wasOk());
+            expect (loaded.getScene (1)->skip);
+            expectEquals (loaded.getScene (3)->tag, 42);
+        }
+
+        beginTest ("WING console settings are saved with the show");
+        {
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            engine.setNumChannels (1);
+            auto& ch = *engine.getChannels()[0];
+            ch.sends[2].ignoreMute = true;
+            ch.sends[2].panReversed = true;
+            ch.params.matrix[1].ignoreMute = true;
+            engine.setSoloAfl (StripKind::Main, false);
+            engine.monitorDimDb = 15.0f;
+            engine.dcaMuteGroups = false;
+            engine.mainLink = (int32_t) MainLink::To3;
+            engine.startupMainMute = true;
+            engine.automixEnable[0] = false;
+            auto xml = show.toXml();
+
+            MixerEngine e2 (0);
+            Show loaded (e2, host);
+            expect (loaded.loadFromXml (*xml).wasOk());
+            auto& c2 = *e2.getChannels()[0];
+            expect (c2.sends[2].ignoreMute.load() && c2.sends[2].panReversed.load());
+            expect (c2.params.matrix[1].ignoreMute.load() && ! c2.params.matrix[0].ignoreMute.load());
+            expect (! e2.isSoloAfl (StripKind::Main) && e2.isSoloAfl (StripKind::Bus));
+            expectEquals (e2.monitorDimDb.load(), 15.0f);
+            expect (! e2.dcaMuteGroups.load() && e2.startupMainMute.load());
+            expectEquals (e2.mainLink.load(), (int32_t) MainLink::To3);
+            expect (! e2.automixEnable[0].load() && e2.automixEnable[1].load());
+            expect (e2.applyStartupMainMute());
+            expect (e2.getMain (3).params.mute.load());
+        }
     }
 };
 

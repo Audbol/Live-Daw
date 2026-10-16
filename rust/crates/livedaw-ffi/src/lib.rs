@@ -19,7 +19,7 @@ use std::mem::{offset_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-pub const LD_ABI_VERSION: i32 = 4;
+pub const LD_ABI_VERSION: i32 = 5;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -79,6 +79,15 @@ pub struct LdLayoutInfo {
     pub off_controls_dcas: i32,
     pub off_controls_fx: i32,
     pub off_fx_values: i32,
+    // ABI 5
+    pub off_send_mode: i32,
+    pub off_matrix_send_level: i32,
+    pub off_meters_trim_peak: i32,
+    pub off_meters_pfl_peak: i32,
+    pub off_controls_bus_solo_afl: i32,
+    pub off_controls_automix_enable: i32,
+    pub off_controls_dim_db: i32,
+    pub off_controls_main_link: i32,
 }
 
 #[no_mangle]
@@ -120,6 +129,14 @@ pub unsafe extern "C" fn ld_layout_info(out: *mut LdLayoutInfo) {
         off_controls_dcas: offset_of!(EngineControls, dcas) as i32,
         off_controls_fx: offset_of!(EngineControls, fx) as i32,
         off_fx_values: offset_of!(FxParams, values) as i32,
+        off_send_mode: offset_of!(SendParams, mode) as i32,
+        off_matrix_send_level: offset_of!(MatrixSendParams, level_db) as i32,
+        off_meters_trim_peak: offset_of!(StripMeters, trim_peak) as i32,
+        off_meters_pfl_peak: offset_of!(StripMeters, pfl_peak) as i32,
+        off_controls_bus_solo_afl: offset_of!(EngineControls, bus_solo_afl) as i32,
+        off_controls_automix_enable: offset_of!(EngineControls, automix_enable) as i32,
+        off_controls_dim_db: offset_of!(EngineControls, monitor_dim_db) as i32,
+        off_controls_main_link: offset_of!(EngineControls, main_link) as i32,
     };
 }
 
@@ -218,6 +235,13 @@ pub unsafe extern "C" fn ld_engine_block_size(e: *const Engine) -> i32 {
 #[no_mangle]
 pub unsafe extern "C" fn ld_engine_controls(e: *const Engine) -> *const EngineControls {
     engine(e).map_or(std::ptr::null(), |e| &e.controls as *const _)
+}
+
+/// Message thread, once at start-up: STARTUP MAIN MUTE mutes every main if the
+/// preference is on. Returns whether it did.
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_apply_startup_main_mute(e: *const Engine) -> bool {
+    engine(e).is_some_and(|e| guard(false, || e.apply_startup_main_mute()))
 }
 
 // ---- garbage -----------------------------------------------------------------
