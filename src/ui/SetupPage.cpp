@@ -257,23 +257,23 @@ namespace
             {
                 auto row = infoRows[i];
                 g.setColour (Dark::textDim);
-                g.setFont (juce::FontOptions (juce::jlimit (9.0f, 12.0f, (float) row.getHeight() * 0.3f), juce::Font::bold));
+                g.setFont (juce::FontOptions (juce::jlimit (6.0f, 12.0f, (float) row.getHeight() * 0.3f), juce::Font::bold));
                 g.drawText (info[i].first, row.removeFromTop (row.getHeight() * 36 / 100), juce::Justification::bottomLeft);
                 g.setColour (Dark::text);
-                g.setFont (juce::FontOptions (juce::jlimit (12.0f, i == 0 ? 24.0f : 18.0f, (float) row.getHeight() * (i == 0 ? 0.8f : 0.66f)), juce::Font::bold));
+                g.setFont (juce::FontOptions (juce::jlimit (8.0f, i == 0 ? 24.0f : 18.0f, (float) row.getHeight() * (i == 0 ? 0.6f : 0.55f)), juce::Font::bold));
                 g.drawFittedText (info[i].second, row.withTrimmedRight (i == 0 ? editKey.getWidth() + 4 : 0), juce::Justification::centredLeft, 1, 0.8f);
             }
 
             g.setColour (Dark::textDim);
-            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 12.0f, (float) chRow.getHeight() * 0.36f), juce::Font::bold));
+            g.setFont (juce::FontOptions (juce::jlimit (6.0f, 12.0f, (float) chRow.getHeight() * 0.36f), juce::Font::bold));
             g.drawText ("CONFIGURATION", configCaption, juce::Justification::bottomLeft);
             for (auto [row, label, value, valueArea] : { std::tuple { chRow, "CHANNELS", (int) ctx.engine.getChannels().size(), chValue },
                                                          std::tuple { busRow, "BUSES", (int) ctx.engine.getBuses().size(), busValue } })
             {
                 g.setColour (Dark::text);
-                g.setFont (juce::FontOptions (juce::jlimit (11.0f, 16.0f, (float) row.getHeight() * 0.55f), juce::Font::bold));
+                g.setFont (juce::FontOptions (juce::jlimit (8.0f, 16.0f, (float) row.getHeight() * 0.55f), juce::Font::bold));
                 g.drawText (label, row, juce::Justification::centredLeft);
-                g.setFont (juce::FontOptions (juce::jlimit (12.0f, 20.0f, (float) row.getHeight() * 0.7f), juce::Font::bold));
+                g.setFont (juce::FontOptions (juce::jlimit (8.0f, 20.0f, (float) row.getHeight() * 0.7f), juce::Font::bold));
                 g.drawText (juce::String (value), valueArea, juce::Justification::centred);
             }
         }
@@ -1180,6 +1180,10 @@ void SetupPage::resized()
     auto row = b.removeFromTop (juce::jlimit (30, 44, getHeight() / 12));
     b.removeFromTop (6);
     const int keyW = juce::jmin (180, getWidth() * 13 / 100);
+    // Narrow screens: the icon over a one-word caption.
+    const bool narrow = keyW < 110;
+    initKey.iconAbove = shutdownKey.iconAbove = narrow;
+    initKey.setButtonText (narrow ? "INITIALIZE" : "INITIALIZE\nCONSOLE");
     shutdownKey.setBounds (row.removeFromRight (keyW).reduced (2, 2));
     row.removeFromRight (4);
     initKey.setBounds (row.removeFromRight (keyW).reduced (2, 2));
