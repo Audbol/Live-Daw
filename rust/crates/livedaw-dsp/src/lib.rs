@@ -4,9 +4,11 @@
 
 pub mod biquad;
 pub mod comp;
+pub mod delay;
 pub mod eq;
 pub mod gate;
 pub mod util;
+pub mod wing;
 
 pub use biquad::{Biquad, BiquadCoeffs};
 pub use comp::{Compressor, CompressorSettings};

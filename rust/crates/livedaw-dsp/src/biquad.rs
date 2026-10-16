@@ -83,6 +83,42 @@ impl BiquadCoeffs {
         normalise((1.0 - p.cosw) * 0.5, 1.0 - p.cosw, (1.0 - p.cosw) * 0.5, 1.0 + p.alpha, -2.0 * p.cosw, 1.0 - p.alpha)
     }
 
+    /// First-order low pass (bilinear, 6 dB/oct).
+    pub fn low_pass_1(sr: f64, freq: f64) -> Self {
+        let k = (PI * freq.clamp(10.0, sr * 0.49) / sr).tan();
+        normalise(k, k, 0.0, k + 1.0, k - 1.0, 0.0)
+    }
+
+    /// First-order high pass (bilinear, 6 dB/oct).
+    pub fn high_pass_1(sr: f64, freq: f64) -> Self {
+        let k = (PI * freq.clamp(10.0, sr * 0.49) / sr).tan();
+        normalise(1.0, -1.0, 0.0, k + 1.0, k - 1.0, 0.0)
+    }
+
+    /// First-order all pass (90 degrees at `freq`).
+    pub fn all_pass_1(sr: f64, freq: f64) -> Self {
+        let k = (PI * freq.clamp(10.0, sr * 0.49) / sr).tan();
+        let a = (k - 1.0) / (k + 1.0);
+        Self { b0: a, b1: 1.0, b2: 0.0, a1: a, a2: 0.0 }
+    }
+
+    /// Second-order all pass (180 degrees at `freq`).
+    pub fn all_pass_2(sr: f64, freq: f64, q: f64) -> Self {
+        let p = prewarp(sr, freq, q);
+        normalise(1.0 - p.alpha, -2.0 * p.cosw, 1.0 + p.alpha, 1.0 + p.alpha, -2.0 * p.cosw, 1.0 - p.alpha)
+    }
+
+    /// Band pass with 0 dB peak gain.
+    pub fn band_pass(sr: f64, freq: f64, q: f64) -> Self {
+        let p = prewarp(sr, freq, q);
+        normalise(p.alpha, 0.0, -p.alpha, 1.0 + p.alpha, -2.0 * p.cosw, 1.0 - p.alpha)
+    }
+
+    pub fn notch(sr: f64, freq: f64, q: f64) -> Self {
+        let p = prewarp(sr, freq, q);
+        normalise(1.0, -2.0 * p.cosw, 1.0, 1.0 + p.alpha, -2.0 * p.cosw, 1.0 - p.alpha)
+    }
+
     /// Linear magnitude response at `freq` (used to draw EQ curves).
     pub fn magnitude_at(&self, freq: f64, sample_rate: f64) -> f64 {
         let w = 2.0 * PI * freq / sample_rate;
@@ -118,6 +154,18 @@ impl Biquad {
         self.z2 = [0.0; 2];
     }
 
+    /// Filters one sample of `channel` (for per-sample sidechains and envelopes).
+    #[inline]
+    pub fn tick(&mut self, x: f32, channel: usize) -> f32 {
+        let c = self.coeffs;
+        let ch = channel.min(1);
+        let input = x as f64;
+        let out = c.b0 * input + self.z1[ch];
+        self.z1[ch] = c.b1 * input - c.a1 * out + self.z2[ch];
+        self.z2[ch] = c.b2 * input - c.a2 * out;
+        out as f32
+    }
+
     #[inline]
     pub fn process(&mut self, data: &mut [f32], channel: usize) {
         let c = self.coeffs;
@@ -147,5 +195,21 @@ mod tests {
         let hp = BiquadCoeffs::high_pass(48000.0, 100.0, std::f64::consts::FRAC_1_SQRT_2);
         assert!((gain_to_db(hp.magnitude_at(100.0, 48000.0) as f32) + 3.01).abs() < 0.05);
         assert!(hp.magnitude_at(20.0, 48000.0) < 0.05);
+    }
+
+    #[test]
+    fn first_order_and_all_pass_designs() {
+        let sr = 48000.0;
+        let lp = BiquadCoeffs::low_pass_1(sr, 1000.0);
+        assert!((gain_to_db(lp.magnitude_at(1000.0, sr) as f32) + 3.01).abs() < 0.05);
+        let hp = BiquadCoeffs::high_pass_1(sr, 1000.0);
+        assert!((gain_to_db(hp.magnitude_at(1000.0, sr) as f32) + 3.01).abs() < 0.05);
+        for c in [BiquadCoeffs::all_pass_1(sr, 500.0), BiquadCoeffs::all_pass_2(sr, 2000.0, 0.7)] {
+            for f in [50.0, 500.0, 2000.0, 15000.0] {
+                assert!((c.magnitude_at(f, sr) - 1.0).abs() < 1e-6);
+            }
+        }
+        assert!((BiquadCoeffs::band_pass(sr, 3000.0, 2.0).magnitude_at(3000.0, sr) - 1.0).abs() < 1e-6);
+        assert!(BiquadCoeffs::notch(sr, 3000.0, 2.0).magnitude_at(3000.0, sr) < 1e-6);
     }
 }

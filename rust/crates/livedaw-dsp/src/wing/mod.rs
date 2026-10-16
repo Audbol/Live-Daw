@@ -1,0 +1,304 @@
+//! WING-style processing models: the parameter tables of every gate/dynamics,
+//! EQ and filter-tool model, and their DSP.
+//!
+//! Every model is a list of [`ParamSpec`]s. A model's state is a flat `[f32]`
+//! in that order: real values for continuous parameters, 0/1 for toggles and
+//! the item index for choices. The DSP reads values by parameter id through
+//! [`Params`], so the tables (generated from the console's parameter tree) are
+//! the single source of truth for names, ranges and defaults.
+//!
+//! The models reproduce each processor's controls and characteristic behaviour
+//! (detector, knee, time constants, curve shapes, colouration). They are not
+//! circuit-level emulations.
+
+pub mod dynamics;
+pub mod eq;
+pub mod filter;
+mod models_gen;
+
+pub use models_gen::{AUX_DYN_MODELS, DYN_MODELS, EQ_MODELS_BUS, EQ_MODELS_CH, FILTER_TOOLS, PROCESS_ORDERS, TAP_POINTS};
+
+/// Parameter slots per dynamics model (the largest, DEQ2, uses 18).
+pub const MAX_DYN_PARAMS: usize = 20;
+/// Parameter slots per EQ model (the bus STD EQ uses 27).
+pub const MAX_EQ_PARAMS: usize = 32;
+/// Parameter slots per filter tool.
+pub const MAX_TOOL_PARAMS: usize = 2;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelCategory {
+    Gate,
+    Compressor,
+    Special,
+    Eq,
+    Filter,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ParamKind {
+    Linear,
+    Log,
+    /// Value is the index of the choice.
+    Choice(&'static [&'static str]),
+    /// Value is the index into a list of numbers.
+    Values(&'static [f32]),
+    Toggle,
+    Int,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParamSpec {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub unit: &'static str,
+    pub kind: ParamKind,
+    /// May be greater than `max` (the knob runs the other way).
+    pub min: f32,
+    pub max: f32,
+    pub steps: u32,
+    pub default: f32,
+}
+
+impl ParamSpec {
+    pub fn lo(&self) -> f32 {
+        self.min.min(self.max)
+    }
+
+    pub fn hi(&self) -> f32 {
+        self.min.max(self.max)
+    }
+
+    /// Clamps (and for discrete kinds rounds) a value into range.
+    pub fn sanitise(&self, v: f32) -> f32 {
+        let v = if v.is_finite() { v } else { self.default };
+        let v = v.clamp(self.lo(), self.hi());
+        match self.kind {
+            ParamKind::Linear | ParamKind::Log => v,
+            _ => v.round(),
+        }
+    }
+
+    pub fn is_continuous(&self) -> bool {
+        matches!(self.kind, ParamKind::Linear | ParamKind::Log)
+    }
+
+    /// Value at `pos` 0..1 along the control (log taper for log parameters).
+    pub fn from_normalised(&self, pos: f32) -> f32 {
+        let pos = pos.clamp(0.0, 1.0);
+        let v = match self.kind {
+            ParamKind::Log if self.min > 0.0 && self.max > 0.0 => self.min * (self.max / self.min).powf(pos),
+            _ => self.min + (self.max - self.min) * pos,
+        };
+        self.sanitise(v)
+    }
+
+    pub fn to_normalised(&self, v: f32) -> f32 {
+        let v = self.sanitise(v);
+        let pos = match self.kind {
+            ParamKind::Log if self.min > 0.0 && self.max > 0.0 => (v / self.min).ln() / (self.max / self.min).ln(),
+            _ if self.max != self.min => (v - self.min) / (self.max - self.min),
+            _ => 0.0,
+        };
+        pos.clamp(0.0, 1.0)
+    }
+
+    /// Text for a value, as the console shows it ("-20.0 dB", "1:2", "8k").
+    pub fn display(&self, v: f32) -> String {
+        let v = self.sanitise(v);
+        match self.kind {
+            ParamKind::Choice(items) => items.get(v as usize).copied().unwrap_or("?").to_string(),
+            ParamKind::Values(items) => {
+                let x = items.get(v as usize).copied().unwrap_or(0.0);
+                if x >= 999.0 {
+                    "INF".into()
+                } else {
+                    format_number(x, self.unit)
+                }
+            }
+            ParamKind::Toggle => if v >= 0.5 { "ON" } else { "OFF" }.into(),
+            ParamKind::Int => format!("{}", v as i64),
+            ParamKind::Linear | ParamKind::Log => format_number(v, self.unit),
+        }
+    }
+}
+
+fn format_number(v: f32, unit: &str) -> String {
+    match unit {
+        "Hz" if v >= 1000.0 => format!("{:.2} kHz", v / 1000.0),
+        "Hz" => format!("{v:.0} Hz"),
+        "ms" if v >= 1000.0 => format!("{:.2} s", v / 1000.0),
+        "ms" if v < 10.0 => format!("{v:.1} ms"),
+        "ms" => format!("{v:.0} ms"),
+        "" => {
+            if v.abs() >= 100.0 {
+                format!("{v:.0}")
+            } else {
+                format!("{v:.2}")
+            }
+        }
+        u => format!("{v:.1} {u}"),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ModelSpec {
+    pub token: &'static str,
+    pub name: &'static str,
+    pub category: ModelCategory,
+    pub params: &'static [ParamSpec],
+}
+
+impl ModelSpec {
+    pub fn param_index(&self, id: &str) -> Option<usize> {
+        self.params.iter().position(|p| p.id == id)
+    }
+
+    /// Writes the model's defaults into `out` (the rest is zeroed).
+    pub fn defaults_into(&self, out: &mut [f32]) {
+        out.fill(0.0);
+        for (o, p) in out.iter_mut().zip(self.params) {
+            *o = p.default;
+        }
+    }
+}
+
+/// Finds a model by token in a table.
+pub fn model_index(table: &[ModelSpec], token: &str) -> Option<usize> {
+    table.iter().position(|m| m.token == token)
+}
+
+/// Read access to a model's parameter values by id.
+#[derive(Clone, Copy)]
+pub struct Params<'a> {
+    pub spec: &'a ModelSpec,
+    pub values: &'a [f32],
+}
+
+impl<'a> Params<'a> {
+    pub fn new(spec: &'a ModelSpec, values: &'a [f32]) -> Self {
+        Self { spec, values }
+    }
+
+    fn raw(&self, id: &str) -> Option<(f32, &ParamSpec)> {
+        let i = self.spec.param_index(id)?;
+        let p = &self.spec.params[i];
+        Some((p.sanitise(self.values.get(i).copied().unwrap_or(p.default)), p))
+    }
+
+    /// Continuous value (or the number a Values item stands for).
+    pub fn f(&self, id: &str) -> f32 {
+        match self.raw(id) {
+            Some((v, p)) => match p.kind {
+                ParamKind::Values(items) => items.get(v as usize).copied().unwrap_or(0.0),
+                _ => v,
+            },
+            None => 0.0,
+        }
+    }
+
+    pub fn on(&self, id: &str) -> bool {
+        self.raw(id).is_some_and(|(v, _)| v >= 0.5)
+    }
+
+    /// Choice index.
+    pub fn choice(&self, id: &str) -> usize {
+        self.raw(id).map_or(0, |(v, _)| v.max(0.0) as usize)
+    }
+
+    /// Choice text ("" if missing).
+    pub fn text(&self, id: &str) -> &'static str {
+        match self.raw(id) {
+            Some((v, p)) => match p.kind {
+                ParamKind::Choice(items) => items.get(v as usize).copied().unwrap_or(""),
+                _ => "",
+            },
+            None => "",
+        }
+    }
+
+    /// A choice like "1k6", "35", "OFF" parsed as Hz (None for OFF/unparsable).
+    pub fn freq_choice(&self, id: &str) -> Option<f32> {
+        parse_freq(self.text(id))
+    }
+}
+
+/// Parses console frequency labels: "35", "1k6", "3k", "10k", "1k5".
+pub fn parse_freq(s: &str) -> Option<f32> {
+    if s.is_empty() || s.eq_ignore_ascii_case("off") {
+        return None;
+    }
+    if let Some((a, b)) = s.split_once('k') {
+        // "1k6" = 1.6 kHz; parsed without allocating (called on the audio thread).
+        let whole: f32 = if a.is_empty() { 0.0 } else { a.parse().ok()? };
+        let frac: f32 = if b.is_empty() { 0.0 } else { b.parse::<u32>().ok()? as f32 / 10f32.powi(b.len() as i32) };
+        return Some((whole + frac) * 1000.0);
+    }
+    s.parse().ok()
+}
+
+/// Maps a 0..10 dial to `lo..hi` logarithmically (analog-style frequency knobs).
+pub fn dial_log(dial: f32, lo: f32, hi: f32) -> f32 {
+    lo * (hi / lo).powf((dial / 10.0).clamp(0.0, 1.0))
+}
+
+/// Maps a 0..10 dial to `lo..hi` linearly.
+pub fn dial_lin(dial: f32, lo: f32, hi: f32) -> f32 {
+    lo + (hi - lo) * (dial / 10.0).clamp(0.0, 1.0)
+}
+
+/// Gentle, level-preserving saturation used for analog colouration.
+#[inline]
+pub fn colour(x: f32, amount: f32) -> f32 {
+    if amount <= 0.0 {
+        x
+    } else {
+        (1.0 - amount) * x + amount * x.tanh()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tables_are_consistent() {
+        assert_eq!(DYN_MODELS.len(), 32);
+        assert_eq!(EQ_MODELS_CH.len(), 7);
+        assert_eq!(EQ_MODELS_BUS.len(), 7);
+        assert_eq!(PROCESS_ORDERS.len(), 24);
+        for table in [DYN_MODELS, EQ_MODELS_CH, EQ_MODELS_BUS, FILTER_TOOLS] {
+            for m in table {
+                let max = match m.category {
+                    ModelCategory::Eq => MAX_EQ_PARAMS,
+                    ModelCategory::Filter => MAX_TOOL_PARAMS,
+                    _ => MAX_DYN_PARAMS,
+                };
+                assert!(m.params.len() <= max, "{} has {} params", m.token, m.params.len());
+                for p in m.params {
+                    assert_eq!(p.sanitise(p.default), p.default, "{}/{} default out of range", m.token, p.id);
+                }
+            }
+        }
+        for t in AUX_DYN_MODELS {
+            assert!(model_index(DYN_MODELS, t).is_some());
+        }
+    }
+
+    #[test]
+    fn values_and_display() {
+        let comp = &DYN_MODELS[model_index(DYN_MODELS, "COMP").unwrap()];
+        let mut v = [0.0; MAX_DYN_PARAMS];
+        comp.defaults_into(&mut v);
+        let p = Params::new(comp, &v);
+        assert_eq!(p.f("thr"), -20.0);
+        assert_eq!(p.f("ratio"), 3.0);
+        assert_eq!(p.text("det"), "RMS");
+        let rel = &comp.params[comp.param_index("rel").unwrap()];
+        assert!((rel.from_normalised(rel.to_normalised(150.0)) - 150.0).abs() < 0.01);
+        assert_eq!(rel.display(1500.0), "1.50 s");
+        assert_eq!(parse_freq("1k6"), Some(1600.0));
+        assert_eq!(parse_freq("35"), Some(35.0));
+        assert_eq!(parse_freq("OFF"), None);
+        assert!((dial_log(10.0, 30.0, 450.0) - 450.0).abs() < 0.01);
+    }
+}
