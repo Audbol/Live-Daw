@@ -101,6 +101,7 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item "build/LiveDAW_artefacts/Release/Live DAW.exe" dist/
           Copy-Item README.md dist/
+          Copy-Item resources/fonts/OFL.txt dist/FONT-LICENSE.txt
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
@@ -108,6 +109,7 @@ jobs:
           mkdir -p dist
           ditto -c -k --keepParent "build/LiveDAW_artefacts/Release/Live DAW.app" "dist/Live DAW.app.zip"
           cp README.md dist/
+          cp resources/fonts/OFL.txt dist/FONT-LICENSE.txt
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
@@ -115,6 +117,7 @@ jobs:
           mkdir -p dist
           cp "build/LiveDAW_artefacts/Release/Live DAW" dist/
           cp README.md dist/
+          cp resources/fonts/OFL.txt dist/FONT-LICENSE.txt
 
       - name: Upload build
         uses: actions/upload-artifact@v4
@@ -152,3 +155,41 @@ jobs:
           TSAN_OPTIONS: halt_on_error=1 suppressions=${{ github.workspace }}/tests/tsan.supp
           LSAN_OPTIONS: suppressions=${{ github.workspace }}/tests/lsan.supp
         run: ./build/LiveDAWTests_artefacts/Debug/LiveDAWTests
+
+  # Pushing a tag (e.g. v0.1.0-wing-test.1) publishes the tested Windows build as a
+  # GitHub prerelease.
+  release:
+    name: Publish test release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [ build, rust, sanitizers ]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: LiveDAW-Windows
+          path: LiveDAW-Windows
+
+      - name: Zip
+        run: cd LiveDAW-Windows && zip -r "../LiveDAW-Windows-${GITHUB_REF_NAME}.zip" .
+
+      - name: Create prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<EOF
+          Test build of Live DAW for Windows 10/11 (64-bit), built and tested by CI from ${GITHUB_SHA::7}.
+
+          **Install:** unzip and run \`Live DAW.exe\`. No installer and no runtime to install.
+          The exe isn't code-signed, so Windows SmartScreen may warn; choose *More info > Run anyway*.
+
+          **Audio:** ASIO (your interface's driver, ASIO4ALL or FlexASIO) and WASAPI.
+          Choose the driver and device in SETUP > AUDIO.
+
+          This is a test release of the Behringer WING emulation; see README.md in the zip.
+          Live DAW is not affiliated with or endorsed by Behringer or Music Tribe.
+          EOF
+          gh release create "$GITHUB_REF_NAME" "LiveDAW-Windows-${GITHUB_REF_NAME}.zip" \
+            --repo "$GITHUB_REPOSITORY" --prerelease \
+            --title "Live DAW ${GITHUB_REF_NAME} (Windows test build)" --notes-file notes.md
