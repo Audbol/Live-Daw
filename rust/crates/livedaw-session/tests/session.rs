@@ -370,7 +370,7 @@ fn clear_builds_a_wing() {
     assert_eq!(engine.num_strips(StripKind::Matrix), 8);
     let left: Vec<_> = show.layers.default_layers(&engine, LEFT).into_iter().map(|l| l.name).collect();
     assert_eq!(&left[..4], ["CH 1-12", "CH 13-24", "CH 25-36", "CH 37-40 · AUX 1-8"]);
-    assert_eq!(show.layers.selected_layer(&engine, CENTER).name, "BUS 1-8");
+    assert_eq!(show.layers.selected_layer(&engine, CENTER).name, "DCA 1-16");
 }
 
 #[test]

@@ -30,23 +30,37 @@ public:
     {
         using S = LayerSet::Section;
 
-        beginTest ("Default banks follow the WING's three fader sections");
+        beginTest ("Layer keys follow the WING's three fader sections");
         {
             MixerEngine engine (0);
             LayerSet layers;
             engine.setNumChannels (40);
 
+            auto labels = [&] (S section)
+            {
+                juce::StringArray l;
+                for (auto& layer : layers.getDefaultLayers (engine, section))
+                    l.add (LayerSet::keyLabel (layer).replace ("\n", " "));
+                return l.joinIntoString ("|");
+            };
+            expectEquals (labels (S::Left), juce::String ("1-12|13-24|25-36|37-40 AUX IN|BUS MASTER|USER 1|USER 2"));
+            expectEquals (labels (S::Center), juce::String ("DCA|MAIN MATRIX|AUX IN|INPUTS|BUS MASTER|USER 1|USER 2"));
+            expectEquals (labels (S::Right), juce::String ("MAIN MATRIX|DCA|INPUTS|AUX IN|BUS MASTER|USER 1|USER 2"));
             expectEquals (names (layers.getDefaultLayers (engine, S::Left)).joinIntoString ("|"),
-                          juce::String::fromUTF8 ("CH 1-12|CH 13-24|CH 25-36|CH 37-40 \xc2\xb7 AUX 1-8|BUS 1-12|BUS 13-16|"
-                                                  "DCA 1-12|DCA 13-16|MAIN 1-4 \xc2\xb7 MTX 1-8|ALL"));
-            expectEquals (layers.getSelectedLayer (engine, S::Center).name, juce::String ("BUS 1-8"));
-            expectEquals (layers.getSelectedLayer (engine, S::Right).name, juce::String ("MAIN 1-4"));
+                          juce::String::fromUTF8 ("CH 1-12|CH 13-24|CH 25-36|CH 37-40 \xc2\xb7 AUX 1-8|BUS 1-16|USER 1|USER 2"));
 
-            const auto all = layers.getDefaultLayers (engine, S::Left).back();
-            expectEquals ((int) all.faders.size(), 40 + 8 + 16 + 4 + 8 + 16);
+            // The first key of each section is lit after a reset; long layers stay one key.
+            expectEquals (layers.getSelectedLayer (engine, S::Center).name, juce::String ("DCA 1-16"));
+            expectEquals (layers.getSelectedLayer (engine, S::Right).name, juce::String::fromUTF8 ("MAIN 1-4 \xc2\xb7 MTX 1-8"));
+            expectEquals ((int) layers.findLayer (engine, S::Center, "inputs").faders.size(), 40);
 
+            // Layer ids of older shows still resolve.
             const auto dcas = layers.findLayer (engine, S::Center, "dca-2");
-            expect (dcas.faders[0].dca && dcas.faders[0].dcaIndex == 8);
+            expectEquals (dcas.id, juce::String ("dca-1"));
+            expect (dcas.faders[8].dca && dcas.faders[8].dcaIndex == 8);
+            expectEquals (layers.findLayer (engine, S::Left, "bus-2").id, juce::String ("bus-1"));
+            expectEquals (layers.findLayer (engine, S::Right, "in-2").id, juce::String ("inputs"));
+            expectEquals (layers.findLayer (engine, S::Left, "all").id, juce::String ("in-1"));
         }
 
         beginTest ("Banks follow the console and the section width");
@@ -54,7 +68,8 @@ public:
             MixerEngine engine (0);
             LayerSet layers;
             engine.setNumChannels (8);
-            expectEquals (layers.getDefaultLayers (engine, S::Left)[0].name, juce::String::fromUTF8 ("CH 1-8 \xc2\xb7 AUX 1-4"));
+            expectEquals (layers.getDefaultLayers (engine, S::Left)[0].name, juce::String::fromUTF8 ("CH 1-8 \xc2\xb7 AUX 1-8"));
+            expectEquals (LayerSet::keyLabel (layers.getDefaultLayers (engine, S::Left)[0]), juce::String ("1-8\nAUX IN"));
 
             engine.setNumChannels (100);
             layers.setWidth (S::Left, LayerSet::kAutoWidth);
@@ -104,6 +119,13 @@ public:
             strips = resolve (engine, layers.findLayer (engine, S::Center, id));
             expect (strips[2] == &ch1);
 
+            // The first user bank is on every section's USER 1 key.
+            const auto user1 = layers.findLayer (engine, S::Left, "user-1");
+            expectEquals (user1.name, juce::String ("Vocals + wedge"));
+            expectEquals (LayerSet::keyLabel (user1), juce::String ("USER 1"));
+            expectEquals ((int) user1.faders.size(), 5);
+            expect (layers.findLayer (engine, S::Right, "user-2").faders.empty());
+
             // Removed strips simply disappear from the bank.
             engine.removeStrip (&ch3);
             strips = resolve (engine, layers.findLayer (engine, S::Center, id));
@@ -116,7 +138,8 @@ public:
             MixerEngine engine (0);
             LayerSet layers;
             engine.setNumChannels (2);
-            expectEquals (layers.findLayer (engine, S::Right, "groups-3").id, juce::String ("in-1"));
+            expectEquals (layers.findLayer (engine, S::Right, "groups-3").id, juce::String ("out-1"));
+            expectEquals (layers.findLayer (engine, S::Left, "groups-3").id, juce::String ("in-1"));
         }
 
         beginTest ("Banks are saved with the show");

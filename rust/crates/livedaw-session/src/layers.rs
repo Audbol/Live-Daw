@@ -1,13 +1,20 @@
 //! Fader layers like the WING's three fader sections.
 //!
 //! The surface has a left section (12 faders), a center section (8) and a
-//! right section (4), each with its own layer selection. Default layers are
-//! generated from the console whenever they're asked for, so they always cover
-//! every strip: input banks (CH 1-12, ..., CH 37-40 · AUX 1-8), bus banks, DCA
-//! banks, main/matrix banks and ALL, cut to the width of the section. User
-//! layers hold any faders (strips and DCAs) in any order and are saved with
-//! the show. A section can also fit as many faders as its space allows (width
-//! "Auto"), for big channel counts on wide screens.
+//! right section (4), each with its own layer selection. Each section has the
+//! WING's seven layer keys (manual 4.2), generated from the console whenever
+//! they're asked for so they always cover every strip:
+//!
+//! - left: `1-12`, `13-24`, `25-36`, `37-40 AUX IN`, `BUS MASTER`, `USER 1`, `USER 2`
+//! - center: `DCA`, `MAIN MATRIX`, `AUX IN`, `INPUTS`, `BUS MASTER`, `USER 1`, `USER 2`
+//! - right: `MAIN MATRIX`, `DCA`, `INPUTS`, `AUX IN`, `BUS MASTER`, `USER 1`, `USER 2`
+//!
+//! A layer longer than its section stays one layer: the surface scrolls it with
+//! the shift keys. Bigger consoles get more input keys on the left. `USER 1` and
+//! `USER 2` show the first two user layers, which hold any faders (strips and
+//! DCAs) in any order and are saved with the show. A section can also fit as
+//! many faders as its space allows (width "Auto"), for big channel counts on
+//! wide screens.
 
 use crate::refs::StripRef;
 use crate::xml::{parse_int_prefix, Element};
@@ -60,7 +67,8 @@ pub fn faders_from_string(s: &str) -> Vec<FaderRef> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Layer {
-    /// Stable: "in-1", "bus-1", "dca-1", "out-1", "all", "user-<uuid>".
+    /// Stable: "in-1".."in-<n>", "bus-1", "dca-1", "out-1", "aux", "inputs",
+    /// "user-1", "user-2" (the USER keys) or "user-<uuid>" (a user layer).
     pub id: String,
     pub name: String,
     pub faders: Vec<FaderRef>,
@@ -76,7 +84,12 @@ pub const WING_WIDTHS: [i32; NUM_SECTIONS] = [12, 8, 4];
 /// Width 0 = Auto: the section holds as many faders as fit.
 pub const AUTO_WIDTH: i32 = 0;
 pub const MAX_WIDTH: i32 = 256;
-pub const DEFAULT_SELECTION: [&str; NUM_SECTIONS] = ["in-1", "bus-1", "out-1"];
+/// The first key of each section, lit after a reset (manual fig. 9).
+pub const DEFAULT_SELECTION: [&str; NUM_SECTIONS] = ["in-1", "dca-1", "out-1"];
+/// Channels per input key on the left section (`1-12`, `13-24`, ...).
+pub const INPUT_KEY_CHANNELS: usize = 12;
+/// The ids of the USER 1 and USER 2 keys.
+pub const USER_KEYS: [&str; 2] = ["user-1", "user-2"];
 
 #[derive(Debug, Clone)]
 pub struct LayerSet {
@@ -163,15 +176,39 @@ fn bank_name(chunk: &[Labelled]) -> String {
     parts.join(" · ")
 }
 
-fn add_banks(layers: &mut Vec<Layer>, faders: &[Labelled], width: usize, id_prefix: &str) {
-    for (bank, chunk) in faders.chunks(width.max(1)).enumerate() {
-        layers.push(Layer {
-            id: format!("{id_prefix}-{}", bank + 1),
-            name: bank_name(chunk),
-            faders: chunk.iter().map(|l| l.fader).collect(),
-            user: false,
-        });
+fn layer(id: &str, faders: &[Labelled], fallback_name: &str) -> Layer {
+    Layer {
+        id: id.into(),
+        name: if faders.is_empty() { fallback_name.into() } else { bank_name(faders) },
+        faders: faders.iter().map(|l| l.fader).collect(),
+        user: false,
     }
+}
+
+/// The left section's input keys: channels in chunks of `size`, the last chunk
+/// followed by the aux inputs ("CH 1-12", ..., "CH 37-40 · AUX 1-8").
+fn input_keys(channels: &[Labelled], auxes: &[Labelled], size: usize) -> Vec<Layer> {
+    let mut chunks: Vec<Vec<Labelled>> = channels.chunks(size.max(1)).map(<[Labelled]>::to_vec).collect();
+    match chunks.last_mut() {
+        Some(last) => last.extend_from_slice(auxes),
+        None => chunks.push(auxes.to_vec()),
+    }
+    chunks.iter().enumerate().map(|(i, c)| layer(&format!("in-{}", i + 1), c, "CH")).collect()
+}
+
+/// The key that now holds the faders of a layer id from an older show ("bus-2",
+/// "dca-2", "out-3", input banks of another width), if the section has one.
+fn legacy_layer_id(id: &str, layers: &[Layer]) -> Option<&'static str> {
+    let has = |key: &str| layers.iter().any(|l| l.id == key);
+    let key = match id.split_once('-').map_or(id, |(prefix, _)| prefix) {
+        "bus" => "bus-1",
+        "dca" => "dca-1",
+        "out" => "out-1",
+        "in" if has("inputs") => "inputs",
+        "in" => "in-1",
+        _ => return None,
+    };
+    has(key).then_some(key)
 }
 
 impl LayerSet {
@@ -210,26 +247,41 @@ impl LayerSet {
 
     // ---- layers ----------------------------------------------------------------------
 
+    /// The section's layer keys, top to bottom (see the module docs).
     pub fn default_layers_for(&self, section: usize, console: &ConsoleRefs) -> Vec<Layer> {
-        let width = self.effective_width(section) as usize;
-        let mut layers = Vec::new();
-
-        let inputs: Vec<Labelled> = labelled(&console.channels, "CH").chain(labelled(&console.auxes, "AUX")).collect();
-        if inputs.is_empty() {
-            layers.push(Layer { id: "in-1".into(), name: "CH".into(), faders: Vec::new(), user: false });
-        } else {
-            add_banks(&mut layers, &inputs, width, "in");
-        }
+        let channels: Vec<Labelled> = labelled(&console.channels, "CH").collect();
+        let auxes: Vec<Labelled> = labelled(&console.auxes, "AUX").collect();
         let buses: Vec<Labelled> = labelled(&console.buses, "BUS").collect();
-        add_banks(&mut layers, &buses, width, "bus");
         let dcas: Vec<Labelled> =
             (0..console.num_dcas).map(|i| Labelled { fader: FaderRef::Dca(i as i32), label: "DCA", number: i + 1 }).collect();
-        add_banks(&mut layers, &dcas, width, "dca");
         let outputs: Vec<Labelled> = labelled(&console.mains, "MAIN").chain(labelled(&console.matrices, "MTX")).collect();
-        add_banks(&mut layers, &outputs, width, "out");
 
-        let all = inputs.iter().chain(&buses).chain(&outputs).chain(&dcas).map(|l| l.fader).collect();
-        layers.push(Layer { id: "all".into(), name: "ALL".into(), faders: all, user: false });
+        let bus = layer("bus-1", &buses, "BUS");
+        let dca = layer("dca-1", &dcas, "DCA");
+        let out = layer("out-1", &outputs, "MAIN");
+        let aux = layer("aux", &auxes, "AUX");
+        let inputs = layer("inputs", &channels, "CH");
+
+        let mut layers = match section {
+            CENTER => vec![dca, out, aux, inputs, bus],
+            RIGHT => vec![out, dca, inputs, aux, bus],
+            _ => {
+                // A section wider than 12 (Auto width on a big screen) gets longer input keys.
+                let size = INPUT_KEY_CHANNELS.max(self.effective_width(section).max(1) as usize);
+                let mut keys = input_keys(&channels, &auxes, size);
+                keys.push(bus);
+                keys
+            }
+        };
+        for (i, id) in USER_KEYS.iter().enumerate() {
+            let user = self.user_layers.get(i);
+            layers.push(Layer {
+                id: (*id).into(),
+                name: user.map_or_else(|| format!("USER {}", i + 1), |l| l.name.clone()),
+                faders: user.map(|l| l.faders.clone()).unwrap_or_default(),
+                user: false,
+            });
+        }
         layers
     }
 
@@ -244,13 +296,21 @@ impl LayerSet {
         layers
     }
 
-    /// Finds a layer by id (falls back to the section's first layer if it no longer exists).
+    /// Finds a layer by id. Ids from older shows map to the key that holds those
+    /// faders now; anything else falls back to the section's first layer.
     pub fn find_layer(&self, engine: &Engine, section: usize, id: &str) -> Layer {
-        let mut layers = self.all_layers(engine, section);
-        match layers.iter().position(|l| l.id == id) {
-            Some(i) => layers.swap_remove(i),
-            None => layers.swap_remove(0),
-        }
+        self.find_layer_for(section, &ConsoleRefs::of(engine), id)
+    }
+
+    pub fn find_layer_for(&self, section: usize, console: &ConsoleRefs, id: &str) -> Layer {
+        let mut layers = self.default_layers_for(section, console);
+        layers.extend(self.user_layers.iter().cloned());
+        let index = layers
+            .iter()
+            .position(|l| l.id == id)
+            .or_else(|| legacy_layer_id(id, &layers).and_then(|key| layers.iter().position(|l| l.id == key)))
+            .unwrap_or(0);
+        layers.swap_remove(index)
     }
 
     /// The layer a section shows now.
@@ -258,9 +318,12 @@ impl LayerSet {
         self.find_layer(engine, section, self.selected(section))
     }
 
-    /// The default bank of a section that contains `fader` (not ALL).
+    /// The default layer of a section that contains `fader` (not the USER keys).
     pub fn find_default_layer_containing(&self, engine: &Engine, section: usize, fader: &FaderRef) -> Option<String> {
-        self.default_layers(engine, section).into_iter().find(|l| l.id != "all" && l.faders.contains(fader)).map(|l| l.id)
+        self.default_layers(engine, section)
+            .into_iter()
+            .find(|l| !USER_KEYS.contains(&l.id.as_str()) && l.faders.contains(fader))
+            .map(|l| l.id)
     }
 
     pub fn selected(&self, section: usize) -> &str {
@@ -409,8 +472,12 @@ mod tests {
         FaderRef::Strip(StripRef::new(StripKind::Channel, i))
     }
 
+    fn ids(layers: &[Layer]) -> Vec<&str> {
+        layers.iter().map(|l| l.id.as_str()).collect()
+    }
+
     #[test]
-    fn wing_default_banks() {
+    fn wing_layer_keys() {
         let set = LayerSet::default();
         let console = ConsoleRefs::wing(40);
 
@@ -423,28 +490,89 @@ mod tests {
                 ("in-2", "CH 13-24"),
                 ("in-3", "CH 25-36"),
                 ("in-4", "CH 37-40 · AUX 1-8"),
-                ("bus-1", "BUS 1-12"),
-                ("bus-2", "BUS 13-16"),
-                ("dca-1", "DCA 1-12"),
-                ("dca-2", "DCA 13-16"),
-                ("out-1", "MAIN 1-4 · MTX 1-8"),
-                ("all", "ALL"),
+                ("bus-1", "BUS 1-16"),
+                ("user-1", "USER 1"),
+                ("user-2", "USER 2"),
             ]
         );
         assert_eq!(left[3].faders[4], FaderRef::Strip(StripRef::new(StripKind::Aux, 0)));
-        assert_eq!(left.last().unwrap().faders.len(), 40 + 8 + 16 + 4 + 8 + 16);
+        assert_eq!(left[4].faders.len(), 16);
+        assert!(left[5].faders.is_empty());
 
+        // Layers longer than the section stay one key (the shift keys scroll them).
         let center = set.default_layers_for(CENTER, &console);
-        assert_eq!(center.iter().find(|l| l.id == "bus-1").unwrap().name, "BUS 1-8");
-        assert_eq!(center.iter().find(|l| l.id == "dca-2").unwrap().faders[0], FaderRef::Dca(8));
+        assert_eq!(ids(&center), ["dca-1", "out-1", "aux", "inputs", "bus-1", "user-1", "user-2"]);
+        assert_eq!(center[0].name, "DCA 1-16");
+        assert_eq!(center[0].faders[8], FaderRef::Dca(8));
+        assert_eq!(center[1].name, "MAIN 1-4 · MTX 1-8");
+        assert_eq!(center[2].name, "AUX 1-8");
+        assert_eq!(center[3].name, "CH 1-40");
 
         let right = set.default_layers_for(RIGHT, &console);
-        let out: Vec<_> = right.iter().filter(|l| l.id.starts_with("out")).map(|l| l.name.as_str()).collect();
-        assert_eq!(out, ["MAIN 1-4", "MTX 1-4", "MTX 5-8"]);
+        assert_eq!(ids(&right), ["out-1", "dca-1", "inputs", "aux", "bus-1", "user-1", "user-2"]);
+        assert_eq!(right[0].faders.len(), 12);
 
         let empty = set.default_layers_for(LEFT, &ConsoleRefs::default());
-        assert_eq!(empty[0].id, "in-1");
+        assert_eq!(ids(&empty), ["in-1", "bus-1", "user-1", "user-2"]);
         assert_eq!(empty[0].name, "CH");
+        assert_eq!(empty[1].name, "BUS");
+    }
+
+    #[test]
+    fn input_keys_follow_the_console() {
+        let mut set = LayerSet::default();
+        let names = |set: &LayerSet, console: &ConsoleRefs| -> Vec<String> {
+            set.default_layers_for(LEFT, console).into_iter().filter(|l| l.id.starts_with("in-")).map(|l| l.name).collect()
+        };
+
+        assert_eq!(names(&set, &ConsoleRefs::wing(2)), ["CH 1-2 · AUX 1-8"]);
+        assert_eq!(names(&set, &ConsoleRefs::wing(48))[3..], ["CH 37-48 · AUX 1-8"]);
+        assert_eq!(names(&set, &ConsoleRefs::wing(64)).len(), 6);
+
+        // A wide Auto section gets keys as wide as the section; never narrower than 12.
+        set.set_width(LEFT, AUTO_WIDTH);
+        set.set_fitted_width(LEFT, 30);
+        assert_eq!(names(&set, &ConsoleRefs::wing(40)), ["CH 1-30", "CH 31-40 · AUX 1-8"]);
+        set.set_fitted_width(LEFT, 4);
+        assert_eq!(names(&set, &ConsoleRefs::wing(40)).len(), 4);
+    }
+
+    #[test]
+    fn user_keys_show_the_first_user_layers() {
+        let mut set = LayerSet::default();
+        let console = ConsoleRefs::wing(8);
+        let drums = set.add_user_layer("Drums", vec![ch(1), ch(2)]);
+        set.add_user_layer("Vox", vec![FaderRef::Dca(0)]);
+        set.add_user_layer("Spare", vec![]);
+
+        let right = set.default_layers_for(RIGHT, &console);
+        let user1 = right.iter().find(|l| l.id == "user-1").unwrap();
+        assert_eq!((user1.name.as_str(), user1.faders.len(), user1.user), ("Drums", 2, false));
+        assert_eq!(right.iter().find(|l| l.id == "user-2").unwrap().faders, [FaderRef::Dca(0)]);
+
+        // A user layer can still be selected by its own id.
+        assert_eq!(set.find_layer_for(LEFT, &console, &drums).name, "Drums");
+        assert!(set.find_layer_for(LEFT, &console, &drums).user);
+    }
+
+    #[test]
+    fn layer_ids_of_older_shows_still_resolve() {
+        let set = LayerSet::default();
+        let console = ConsoleRefs::wing(40);
+        let find = |section, id| set.find_layer_for(section, &console, id).id;
+
+        assert_eq!(find(LEFT, "in-3"), "in-3");
+        assert_eq!(find(LEFT, "bus-2"), "bus-1");
+        assert_eq!(find(LEFT, "in-5"), "in-1");
+        assert_eq!(find(LEFT, "dca-2"), "in-1"); // no DCA key on the left
+        assert_eq!(find(CENTER, "dca-2"), "dca-1");
+        assert_eq!(find(CENTER, "in-3"), "inputs");
+        assert_eq!(find(CENTER, "all"), "dca-1");
+        assert_eq!(find(RIGHT, "out-3"), "out-1");
+        assert_eq!(find(RIGHT, "user-0123"), "out-1");
+
+        let default: Vec<_> = (0..NUM_SECTIONS).map(|s| set.find_layer_for(s, &console, set.selected(s)).id).collect();
+        assert_eq!(default, ["in-1", "dca-1", "out-1"]);
     }
 
     #[test]
