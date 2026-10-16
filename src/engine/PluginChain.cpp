@@ -1,198 +1,148 @@
 #include "engine/PluginChain.h"
-#include "dsp/DspUtils.h"
 
 namespace livedaw
 {
+
+struct PluginChain::Holder
+{
+    std::unique_ptr<juce::AudioPluginInstance> plugin;
+    juce::AudioBuffer<float> scratch;
+    juce::MidiBuffer midi;
+    int numPluginChannels = 2;
+    int blockSize = 512;
+
+    void prepare (double sampleRate, int maxBlock)
+    {
+        blockSize = juce::jmax (1, maxBlock);
+        plugin->setRateAndBufferSizeDetails (sampleRate, blockSize);
+        plugin->prepareToPlay (sampleRate, blockSize);
+        numPluginChannels = juce::jmax (2, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels());
+        scratch.setSize (numPluginChannels, blockSize, false, true, false);
+        midi.ensureSize (256);
+    }
+
+    /** Audio thread (called by the engine). Returns non-zero if the plugin threw. */
+    static int32_t process (void* ctx, float* const* channels, int32_t numChannels, int32_t numSamples)
+    {
+        auto& h = *static_cast<Holder*> (ctx);
+
+        try
+        {
+            for (int start = 0; start < numSamples; start += h.blockSize)
+            {
+                const int n = juce::jmin (h.blockSize, numSamples - start);
+
+                h.scratch.copyFrom (0, 0, channels[0] + start, n);
+                h.scratch.copyFrom (1, 0, channels[numChannels > 1 ? 1 : 0] + start, n);
+                for (int ch = 2; ch < h.numPluginChannels; ++ch)
+                    h.scratch.clear (ch, 0, n);
+
+                juce::AudioBuffer<float> view (h.scratch.getArrayOfWritePointers(), h.numPluginChannels, n);
+                h.midi.clear();
+                h.plugin->processBlock (view, h.midi);
+
+                for (int ch = 0; ch < numChannels; ++ch)
+                    juce::FloatVectorOperations::copy (channels[ch] + start, h.scratch.getReadPointer (ch), n);
+            }
+        }
+        catch (...)
+        {
+            return 1; // the engine restores the dry signal and bypasses the slot
+        }
+
+        return 0;
+    }
+
+    /** Message thread (from ld_engine_collect / engine destruction). */
+    static void release (void* ctx)
+    {
+        delete static_cast<Holder*> (ctx);
+    }
+};
 
 namespace
 {
     void configureForStereo (juce::AudioPluginInstance& plugin)
     {
-        // Prefer a plain stereo-in/stereo-out layout; keep the plugin's own layout
-        // (e.g. sidechain buses) if it refuses.
         auto layout = plugin.getBusesLayout();
-
         if (layout.inputBuses.size() > 0)
             layout.inputBuses.getReference (0) = juce::AudioChannelSet::stereo();
         if (layout.outputBuses.size() > 0)
             layout.outputBuses.getReference (0) = juce::AudioChannelSet::stereo();
-
         if (plugin.checkBusesLayoutSupported (layout))
             plugin.setBusesLayout (layout);
     }
-
-    void prepareSlot (PluginChain::Slot& slot, double sampleRate, int blockSize)
-    {
-        auto& p = *slot.plugin;
-        p.setRateAndBufferSizeDetails (sampleRate, blockSize);
-        p.prepareToPlay (sampleRate, blockSize);
-        slot.numPluginChannels = juce::jmax (2, p.getTotalNumInputChannels(), p.getTotalNumOutputChannels());
-        slot.scratch.setSize (slot.numPluginChannels, blockSize, false, true, false);
-        slot.midi.ensureSize (256);
-    }
 } // namespace
 
-PluginChain::PluginChain (RtGarbage& g) : garbage (g)
-{
-    for (auto& s : slots)
-        s.store (nullptr);
-    for (auto& b : bypass)
-        b.store (false);
-    for (auto& f : faulted)
-        f.store (false);
-    for (auto& l : slotLoad)
-        l.store (0.0f);
-}
+PluginChain::PluginChain (ld::Engine* e, ld::Strip* s) : engine (e), strip (s) {}
 
-PluginChain::~PluginChain()
+void PluginChain::prepare (double sampleRate, int maxBlockSize)
 {
-    // The owner guarantees the audio thread no longer references this chain.
-    for (auto& s : slots)
-        delete s.exchange (nullptr);
-}
-
-void PluginChain::prepare (double newSampleRate, int maxBlockSize)
-{
-    sampleRate = newSampleRate;
-    blockSize = maxBlockSize;
-
-    for (auto& s : slots)
-        if (auto* slot = s.load())
+    for (auto* h : holders)
+    {
+        if (h != nullptr)
         {
-            slot->plugin->releaseResources();
-            prepareSlot (*slot, sampleRate, blockSize);
+            h->plugin->releaseResources();
+            h->prepare (sampleRate, maxBlockSize);
         }
+    }
 }
 
-void PluginChain::setPlugin (int slotIndex, std::unique_ptr<juce::AudioPluginInstance> plugin)
+void PluginChain::setPlugin (int slot, std::unique_ptr<juce::AudioPluginInstance> plugin)
 {
-    jassert (juce::isPositiveAndBelow (slotIndex, kNumInsertSlots));
+    if (! juce::isPositiveAndBelow (slot, kNumInsertSlots))
+        return;
 
-    std::unique_ptr<Slot> newSlot;
+    Holder* holder = nullptr;
 
     if (plugin != nullptr)
     {
-        newSlot = std::make_unique<Slot>();
-        newSlot->plugin = std::move (plugin);
-        configureForStereo (*newSlot->plugin);
-        prepareSlot (*newSlot, sampleRate, blockSize);
+        holder = new Holder();
+        holder->plugin = std::move (plugin);
+        configureForStereo (*holder->plugin);
+        holder->prepare (ld::ld_engine_sample_rate (engine), ld::ld_engine_block_size (engine));
     }
 
-    std::unique_ptr<Slot> old (slots[(size_t) slotIndex].exchange (newSlot.release(), std::memory_order_acq_rel));
-    bypass[(size_t) slotIndex].store (false);
-    faulted[(size_t) slotIndex].store (false);
-    slotLoad[(size_t) slotIndex].store (0.0f);
-    garbage.retire (std::move (old));
+    holders[(size_t) slot] = holder;
+
+    if (holder != nullptr)
+    {
+        const ld::InsertCallbacks callbacks { &Holder::process, &Holder::release, holder };
+        ld::ld_strip_set_insert (engine, strip, slot, &callbacks);
+    }
+    else
+    {
+        ld::ld_strip_set_insert (engine, strip, slot, nullptr);
+    }
 }
 
-juce::AudioPluginInstance* PluginChain::getPlugin (int slotIndex) const noexcept
+juce::AudioPluginInstance* PluginChain::getPlugin (int slot) const noexcept
 {
-    if (auto* slot = slots[(size_t) slotIndex].load())
-        return slot->plugin.get();
+    if (! juce::isPositiveAndBelow (slot, kNumInsertSlots))
+        return nullptr;
 
-    return nullptr;
+    auto* h = holders[(size_t) slot];
+    return h != nullptr ? h->plugin.get() : nullptr;
 }
 
-void PluginChain::setBypassed (int slotIndex, bool bypassed) noexcept
-{
-    bypass[(size_t) slotIndex].store (bypassed);
-}
-
-bool PluginChain::isBypassed (int slotIndex) const noexcept
-{
-    return bypass[(size_t) slotIndex].load();
-}
-
-bool PluginChain::isFaulted (int slotIndex) const noexcept
-{
-    return faulted[(size_t) slotIndex].load();
-}
-
-void PluginChain::clearFault (int slotIndex) noexcept
-{
-    faulted[(size_t) slotIndex].store (false);
-}
-
-float PluginChain::getSlotLoad (int slotIndex) const noexcept
-{
-    return slotLoad[(size_t) slotIndex].load (std::memory_order_relaxed);
-}
+void PluginChain::setBypassed (int slot, bool bypassed) noexcept { ld::ld_strip_insert_set_bypassed (strip, slot, bypassed); }
+bool PluginChain::isBypassed (int slot) const noexcept         { return ld::ld_strip_insert_is_bypassed (strip, slot); }
+bool PluginChain::isFaulted (int slot) const noexcept          { return ld::ld_strip_insert_is_faulted (strip, slot); }
+void PluginChain::clearFault (int slot) noexcept                { ld::ld_strip_insert_clear_fault (strip, slot); }
+float PluginChain::getSlotLoad (int slot) const noexcept       { return ld::ld_strip_insert_load (strip, slot); }
 
 bool PluginChain::isEmpty() const noexcept
 {
-    for (auto& s : slots)
-        if (s.load (std::memory_order_relaxed) != nullptr)
-            return false;
-
-    return true;
+    return std::all_of (holders.begin(), holders.end(), [] (auto* h) { return h == nullptr; });
 }
 
 int PluginChain::getTotalLatencySamples() const noexcept
 {
     int total = 0;
-
-    for (size_t i = 0; i < slots.size(); ++i)
-        if (auto* slot = slots[i].load())
-            if (! bypass[i].load())
-                total += slot->plugin->getLatencySamples();
-
+    for (int i = 0; i < kNumInsertSlots; ++i)
+        if (auto* p = getPlugin (i); p != nullptr && ! isBypassed (i))
+            total += p->getLatencySamples();
     return total;
-}
-
-void PluginChain::process (float* const* channels, int numChannels, int numSamples) noexcept
-{
-    for (size_t i = 0; i < slots.size(); ++i)
-    {
-        auto* slot = slots[i].load (std::memory_order_acquire);
-
-        if (slot == nullptr || bypass[i].load (std::memory_order_relaxed))
-            continue;
-
-        auto& scratch = slot->scratch;
-        const auto startTicks = juce::Time::getHighResolutionTicks();
-        bool ok = true;
-
-        // Hosts must never pass more samples than were prepared; chunk if needed.
-        for (int start = 0; start < numSamples && ok; start += blockSize)
-        {
-            const int n = juce::jmin (blockSize, numSamples - start);
-
-            scratch.copyFrom (0, 0, channels[0] + start, n);
-            scratch.copyFrom (1, 0, channels[numChannels > 1 ? 1 : 0] + start, n);
-            for (int ch = 2; ch < slot->numPluginChannels; ++ch)
-                scratch.clear (ch, 0, n);
-
-            juce::AudioBuffer<float> view (scratch.getArrayOfWritePointers(), slot->numPluginChannels, n);
-            slot->midi.clear();
-
-            try
-            {
-                slot->plugin->processBlock (view, slot->midi);
-            }
-            catch (...)
-            {
-                ok = false;
-            }
-
-            for (int ch = 0; ch < numChannels && ok; ++ch)
-                ok = dsp::allFinite (scratch.getReadPointer (ch), n);
-
-            // On failure the channels keep the plugin's input: the slot is bypassed.
-            if (ok)
-                for (int ch = 0; ch < numChannels; ++ch)
-                    juce::FloatVectorOperations::copy (channels[ch] + start, scratch.getReadPointer (ch), n);
-        }
-
-        if (! ok)
-        {
-            bypass[i].store (true, std::memory_order_relaxed);
-            faulted[i].store (true, std::memory_order_relaxed);
-        }
-
-        const auto seconds = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - startTicks);
-        const auto load = static_cast<float> (seconds * sampleRate / juce::jmax (1, numSamples));
-        slotLoad[i].store (0.9f * slotLoad[i].load (std::memory_order_relaxed) + 0.1f * load, std::memory_order_relaxed);
-    }
 }
 
 } // namespace livedaw

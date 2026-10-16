@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = ["crates/livedaw-dsp", "crates/livedaw-engine", "crates/livedaw-ffi"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+rust-version = "1.83"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = 1
+
+[profile.dev]
+opt-level = 1

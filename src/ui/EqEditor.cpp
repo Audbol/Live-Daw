@@ -8,22 +8,6 @@ namespace
 {
     const juce::Colour bandColours[] = { juce::Colour (0xffe8743a), juce::Colour (0xffe8d23a),
                                          juce::Colour (0xff45c46b), juce::Colour (0xff4fa3ff) };
-
-    bool sameSettings (const dsp::ParametricEq::Settings& a, const dsp::ParametricEq::Settings& b)
-    {
-        if (a.enabled != b.enabled)
-            return false;
-
-        for (size_t i = 0; i < a.bands.size(); ++i)
-        {
-            const auto& x = a.bands[i];
-            const auto& y = b.bands[i];
-            if (x.type != y.type || x.frequency != y.frequency || x.gainDb != y.gainDb || x.q != y.q || x.enabled != y.enabled)
-                return false;
-        }
-
-        return true;
-    }
 } // namespace
 
 EqEditor::EqEditor (EqParams& p, std::function<double()> sr)
@@ -40,8 +24,7 @@ void EqEditor::setCompact (bool shouldBeCompact)
 
 void EqEditor::timerCallback()
 {
-    const auto s = params.snapshot();
-    if (! sameSettings (s, lastDrawn))
+    if (! (snapshotEq (params) == lastDrawn))
         repaint();
 }
 
@@ -68,15 +51,14 @@ float EqEditor::yToDb (float y) const
 juce::Point<float> EqEditor::handlePosition (int band) const
 {
     const auto& b = params.bands[(size_t) band];
-    const auto type = static_cast<dsp::ParametricEq::BandType> (b.type.load());
-    const bool isCut = type == dsp::ParametricEq::BandType::LowCut || type == dsp::ParametricEq::BandType::HighCut;
-    return { freqToX (b.frequency.load()), dbToY (isCut ? 0.0f : b.gainDb.load()) };
+    const bool cut = isCut (static_cast<EqBandType> (b.type.load()));
+    return { freqToX (b.frequency.load()), dbToY (cut ? 0.0f : b.gainDb.load()) };
 }
 
 int EqEditor::hitTestBand (juce::Point<float> pos) const
 {
     const float radius = compact ? 7.0f : 10.0f;
-    for (int b = dsp::ParametricEq::kNumBands; --b >= 0;)
+    for (int b = kNumEqBands; --b >= 0;)
         if (handlePosition (b).getDistanceFrom (pos) < radius)
             return b;
 
@@ -85,7 +67,7 @@ int EqEditor::hitTestBand (juce::Point<float> pos) const
 
 void EqEditor::paint (juce::Graphics& g)
 {
-    lastDrawn = params.snapshot();
+    lastDrawn = snapshotEq (params);
     const double sr = juce::jmax (8000.0, getSampleRate());
     auto bounds = getLocalBounds().toFloat();
 
@@ -121,7 +103,7 @@ void EqEditor::paint (juce::Graphics& g)
     const int w = getWidth();
     for (int x = 0; x <= w; x += 2)
     {
-        const auto db = static_cast<float> (dsp::ParametricEq::responseDb (lastDrawn, xToFreq (static_cast<float> (x)), sr));
+        const auto db = static_cast<float> (eqResponseDb (lastDrawn, xToFreq (static_cast<float> (x)), sr));
         const float y = dbToY (juce::jlimit (-kRangeDb - 6.0f, kRangeDb + 6.0f, db));
         if (x == 0)
             curve.startNewSubPath (0.0f, y);
@@ -134,17 +116,17 @@ void EqEditor::paint (juce::Graphics& g)
     fill.lineTo (0.0f, dbToY (0.0f));
     fill.closeSubPath();
 
-    const auto curveColour = lastDrawn.enabled ? Colours::accent : Colours::textDim;
+    const auto curveColour = lastDrawn.enabled != 0 ? Colours::accent : Colours::textDim;
     g.setColour (curveColour.withAlpha (0.15f));
     g.fillPath (fill);
     g.setColour (curveColour);
     g.strokePath (curve, juce::PathStrokeType (compact ? 1.5f : 2.0f));
 
     // Band handles
-    for (int b = 0; b < dsp::ParametricEq::kNumBands; ++b)
+    for (int b = 0; b < kNumEqBands; ++b)
     {
         const auto pos = handlePosition (b);
-        const bool on = lastDrawn.bands[(size_t) b].enabled && lastDrawn.enabled;
+        const bool on = lastDrawn.bands[b].enabled != 0 && lastDrawn.enabled != 0;
         g.setColour (bandColours[b].withAlpha (on ? 1.0f : 0.35f));
 
         if (compact)
@@ -176,8 +158,7 @@ void EqEditor::mouseDrag (const juce::MouseEvent& e)
     auto& b = params.bands[(size_t) dragBand];
     b.frequency = juce::jlimit (kMinFreq, kMaxFreq, xToFreq (e.position.x));
 
-    const auto type = static_cast<dsp::ParametricEq::BandType> (b.type.load());
-    if (type != dsp::ParametricEq::BandType::LowCut && type != dsp::ParametricEq::BandType::HighCut)
+    if (! isCut (static_cast<EqBandType> (b.type.load())))
         b.gainDb = std::round (yToDb (e.position.y) * 10.0f) / 10.0f;
 
     repaint();

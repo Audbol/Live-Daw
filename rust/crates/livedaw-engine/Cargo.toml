@@ -1,0 +1,10 @@
+[package]
+name = "livedaw-engine"
+description = "Live DAW realtime mixing engine: strips, routing, parallel processing, stability guards"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+livedaw-dsp = { path = "../livedaw-dsp" }

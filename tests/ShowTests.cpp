@@ -32,8 +32,8 @@ public:
             p.eq.bands[2].gainDb = -4.5f;
             p.comp.ratio = 6.0f;
             p.recallSafe = true;
-            p.sends[(size_t) aux->getId()].enabled = true;
-            p.sends[(size_t) aux->getId()].levelDb = -3.0f;
+            kick->sends[(size_t) aux->getId()].enabled = true;
+            kick->sends[(size_t) aux->getId()].levelDb = -3.0f;
             engine.monitorOutputLeft = 6;
             engine.outputCeilingDb = -1.0f;
 
@@ -63,8 +63,8 @@ public:
             expectEquals (r->params.eq.bands[2].gainDb.load(), -4.5f);
             expectEquals (r->params.comp.ratio.load(), 6.0f);
             expect (r->params.recallSafe.load());
-            expect (r->params.sends[(size_t) aux->getId()].enabled.load());
-            expectEquals (r->params.sends[(size_t) aux->getId()].levelDb.load(), -3.0f);
+            expect (r->sends[(size_t) aux->getId()].enabled.load());
+            expectEquals (r->sends[(size_t) aux->getId()].levelDb.load(), -3.0f);
             expectEquals (restoredEngine.monitorOutputLeft.load(), 6);
             expectEquals (restoredEngine.outputCeilingDb.load(), -1.0f);
             expectEquals (restoredEngine.getBusInSlot (aux->getId())->name, juce::String ("Wedge 1"));
@@ -114,7 +114,7 @@ public:
             for (int i = 0; i < 80; ++i)
                 engine.addBus (StripKind::Aux);
 
-            auto& send = engine.getInputs()[1]->params.sends[(size_t) 79];
+            auto& send = engine.getInputs()[1]->sends[(size_t) 79];
             send.enabled = true;
             send.levelDb = -7.0f;
             show.addScene ("High sends");
@@ -131,7 +131,7 @@ public:
             Show loaded (e2, host);
             expect (loaded.loadFromXml (*xml).wasOk());
             expectEquals ((int) e2.getBuses().size(), 80);
-            auto* restored = e2.getInputs()[1]->params.sends.find (79);
+            auto* restored = e2.getInputs()[1]->sends.find (79);
             expect (restored != nullptr && restored->enabled.load());
         }
 

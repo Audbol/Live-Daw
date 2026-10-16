@@ -22,44 +22,71 @@
  solo (PFL/AFL) ─────────┴──► monitor bus (follows master when nothing is soloed) → monitor outputs
 ```
 
-Every strip type uses the same `Strip` class (`src/engine/Strip.h`). The engine decides
-what feeds a strip and where its output goes.
+Every strip type uses the same strip code. The engine decides what feeds a strip and
+where its output goes.
+
+## Rust engine and C++ host
+
+Live DAW is a hybrid:
+
+| Layer | Language | Where |
+|---|---|---|
+| DSP (biquads, EQ, gate, compressor) | Rust | `rust/crates/livedaw-dsp` |
+| Realtime engine (strips, routing, sends, solo, monitor, output protection, worker pool, deferred frees) | Rust | `rust/crates/livedaw-engine` |
+| C ABI | Rust + C++ header | `rust/crates/livedaw-ffi`, `include/livedaw_engine.h` |
+| Audio devices (ASIO, CoreAudio, ALSA, JACK, WASAPI), plugin hosting (VST3/AU/LV2), UI, shows/scenes/snippets, layers | C++ / JUCE | `src/` |
+
+`src/engine/MixerEngine`, `Strip` and `PluginChain` are thin C++ facades over the
+Rust engine with the API the rest of the app uses.
+
+* **Shared parameters.** Strip parameters, meters, sends and engine controls are
+  `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same memory as
+  `std::atomic<float/bool/int32_t>` structs (identical size and layout to Rust's
+  `AtomicU32`/`AtomicBool`/`AtomicI32`). The UI writes them directly with no FFI call.
+  Both sides describe the layout. `ld::verifyLayout()` compares the two at startup and in
+  the tests, and the app refuses to run if they differ.
+* **Plugins.** Plugin instances stay in C++. Each loaded insert slot registers a
+  `process` callback with the engine. Rust calls it from the audio or worker thread,
+  keeps a dry copy, and auto-bypasses the slot if the callback reports an error (a
+  C++ exception is caught in the callback) or returns NaN/inf. A replaced plugin's
+  `release` callback runs on the message thread once no audio callback can still
+  reach it.
+* **Panics.** Every FFI entry point and every worker task runs under `catch_unwind`.
+  A panic in the audio path outputs silence for that block and increments
+  `engineFaults`. It never unwinds into C++.
 
 ## Threads
 
 | Thread | Does |
 |---|---|
-| Message (UI) thread | Owns all `Strip` objects. Adds/removes strips, loads plugins, writes parameters. |
-| Audio thread | `MixerEngine::processBlock`. Never allocates, locks or frees. |
-| DSP workers | Realtime-priority threads in `WorkerPool`. They process strips in parallel with the audio thread. |
+| Message (UI) thread | Adds/removes strips, loads plugins, writes parameters, collects garbage (`ld_engine_collect`, 10 Hz). |
+| Audio thread | `ld_engine_process`. Never allocates, locks or frees. |
+| DSP workers | Realtime-priority JUCE threads lent to the Rust pool (`ld_engine_run_worker`). They process strips in parallel with the audio thread. |
 
 ### Parameters
-All parameters are `std::atomic`s in `StripParams` (`src/engine/Parameters.h`). The UI
-writes them and the audio thread snapshots them once per block. Gains are ramped
-linearly across the block. EQ frequency, gain and Q are smoothed, and coefficients
-are recomputed every 32 samples.
+The UI writes the shared atomics and the audio thread snapshots them once per block.
+Gains are ramped linearly across the block. EQ frequency, gain and Q are smoothed, and
+coefficients are recomputed every 32 samples.
 
 ### Structure changes
-`MixerEngine` keeps an immutable `Topology` (a list of strip pointers) behind a
-`std::atomic<Topology*>`. Adding or removing a strip builds a new topology on the
-message thread and swaps the pointer. The old topology and any removed strips go to
-`RtGarbage`. It destroys them on the message thread once the audio callback has
+The engine keeps an immutable topology (`Arc<Strip>` lists) behind an `AtomicPtr`.
+Adding or removing a strip builds a new topology on the message thread and swaps the
+pointer. The old topology, removed strips and released plugins go to an epoch-based
+`Garbage` list. It frees them on the message thread once the audio callback has
 completed a full cycle, so no running callback can still hold a pointer to them.
 
-Plugin inserts use the same scheme per slot (`PluginChain`). A plugin is created,
-set to stereo and prepared on the message thread, then published atomically.
-
 ### Parallel processing
-`WorkerPool::parallelFor` is a fork/join with no allocation. The audio thread
+`WorkerPool::parallel_for` is a fork/join with no allocation. The audio thread
 publishes a job (generation, task count and next index packed into one 64-bit atomic),
-wakes the workers (`std::atomic::wait/notify`) and helps with the work itself.
-Workers claim indices with CAS. Each block has two parallel stages:
+wakes the workers (spin, then park/unpark) and helps with the work itself. Workers claim
+indices with CAS. Each block has two parallel stages:
 
 1. all input strips (read hardware → chain → output stage)
 2. all buses (sum sends → chain → output stage)
 
 Summing into the master, building the monitor bus and writing the outputs is cheap
-and runs on the audio thread.
+and runs on the audio thread. Idle strips (no input patched, nothing to process) take
+a fast path, so thousands of unused channels cost almost nothing.
 
 ## Hardware channels
 JUCE delivers only the *active* device channels, packed together. The engine maps

@@ -88,13 +88,17 @@ The **System** tab shows device health, xruns, DSP load, fault counters and an e
 
 ## Building
 
-You need CMake 3.22 or newer and a C++20 compiler: MSVC 2022, Xcode 14+ or GCC 11+/Clang 14+.
-CMake fetches JUCE 8 for you. To use a local checkout instead, pass `-DLIVEDAW_JUCE_DIR=/path/to/JUCE`.
+You need CMake 3.22 or newer, a C++20 compiler (MSVC 2022, Xcode 14+ or GCC 11+/Clang 14+) and
+a stable Rust toolchain, 1.83 or newer ([rustup](https://rustup.rs)). The audio engine and DSP are written in Rust
+(`rust/`) and linked into the JUCE app as a static library through
+[Corrosion](https://github.com/corrosion-rs/corrosion). CMake fetches JUCE 8 and Corrosion for you. To use a local checkout instead, pass `-DLIVEDAW_JUCE_DIR=/path/to/JUCE`.
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release --parallel
-ctest --test-dir build -C Release --output-on-failure   # DSP, engine, show, stability, plugin tests
+ctest --test-dir build -C Release --output-on-failure   # engine, show, stability, plugin tests
+
+cd rust && cargo test --workspace                       # Rust DSP + engine tests
 ```
 
 ### Linux
@@ -173,8 +177,10 @@ copy, pass `-DLIVEDAW_VST2_SDK_DIR=/path/to/vstsdk` to enable VST2 hosting.
 ## Project layout
 
 ```
-src/dsp/      Pure C++ DSP (no JUCE): biquads, 4-band EQ, gate, compressor
-src/engine/   Mixer engine, strips, plugin chains, realtime worker pool, sessions
+rust/crates/livedaw-dsp/     Rust DSP: biquads, 4-band EQ, gate, compressor
+rust/crates/livedaw-engine/  Rust realtime engine: strips, routing, sends, solo, worker pool, deferred frees
+rust/crates/livedaw-ffi/     C ABI over the engine + C++ header (include/livedaw_engine.h)
+src/engine/   C++ side: engine facade, plugin hosting, shows/scenes/snippets, layers
 src/ui/       JUCE UI: console strips, selected-channel panel, EQ editor, meters
 tests/        Unit tests (run with ctest)
 docs/         Architecture notes

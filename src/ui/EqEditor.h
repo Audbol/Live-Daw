@@ -39,7 +39,7 @@ private:
 
     EqParams& params;
     std::function<double()> getSampleRate;
-    dsp::ParametricEq::Settings lastDrawn;
+    ld::EqSnapshot lastDrawn {};
     int dragBand = -1;
     bool compact = false;
 

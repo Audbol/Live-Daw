@@ -1,123 +1,86 @@
 #pragma once
 
-#include "dsp/Biquad.h"
-#include "dsp/Compressor.h"
-#include "dsp/NoiseGate.h"
-#include "dsp/ParametricEq.h"
 #include "engine/Parameters.h"
 #include "engine/PluginChain.h"
 
-#include <juce_audio_basics/juce_audio_basics.h>
-
-#include <array>
-#include <atomic>
+#include <juce_graphics/juce_graphics.h>
 
 namespace livedaw
 {
 
 enum class StripKind
 {
-    Input,  // fed by hardware inputs
-    Aux,    // fed by channel sends, usually sent to a hardware output (monitor mix, FX return)
-    Group,  // fed by channel sends, usually routed to the master (subgroup)
-    Master  // main L/R
+    Input = ld::kInput,  // fed by hardware inputs
+    Aux = ld::kAux,      // fed by channel sends, usually sent to a hardware output
+    Group = ld::kGroup,  // fed by channel sends, usually routed to the master
+    Master = ld::kMaster // main L/R
 };
 
 const char* toString (StripKind kind) noexcept;
 StripKind stripKindFromString (const juce::String& s) noexcept;
 
-/** One console strip: trim -> polarity -> HPF -> gate -> 4-band EQ -> compressor
-    -> plugin inserts -> mute -> fader -> pan.
+/** A strip's sends to every bus slot (storage in the Rust engine, grown on demand). */
+class SendBank
+{
+public:
+    explicit SendBank (ld::Strip* s) : strip (s) {}
 
-    The same class is used for input channels, aux/group buses and the master;
-    the engine decides what feeds it and where its output goes.
+    /** Message thread: the send for `slot`, allocated if needed. */
+    SendParams& operator[] (size_t slot) const
+    {
+        auto* p = ld::ld_strip_send (strip, static_cast<int32_t> (slot));
+        jassert (p != nullptr);
+        return *p;
+    }
 
-    Thread model: params are atomics written from the UI. Everything else in the
-    "audio thread" section is touched by exactly one audio task at a time.
-*/
+    /** Any thread: the send for `slot` if it was ever configured, else nullptr. */
+    SendParams* find (int slot) const noexcept { return ld::ld_strip_find_send (strip, slot); }
+
+private:
+    ld::Strip* strip;
+};
+
+/** C++ view of one console strip of the Rust engine: trim -> polarity -> HPF ->
+    gate -> 4-band EQ -> compressor -> inserts -> mute -> fader -> pan.
+
+    Parameters and meters are the engine's own atomics. The name and colour are
+    UI metadata kept here. Message thread only (the audio thread is in Rust). */
 class Strip
 {
 public:
-    Strip (StripKind kind, int id, RtGarbage& garbage);
+    Strip (ld::Engine* engine, ld::Strip* handle);
 
     StripKind getKind() const noexcept { return kind; }
     bool isBus() const noexcept { return kind == StripKind::Aux || kind == StripKind::Group; }
 
-    /** Inputs: a stable id. Buses: the bus slot that sends refer to. */
+    /** Inputs: a stable id. Buses: the bus slot sends refer to. Master: 0. */
     int getId() const noexcept { return id; }
 
-    // Message thread ------------------------------------------------------------
+    ld::Strip* getHandle() const noexcept { return handle; }
+
     juce::String name;
     juce::Colour colour;
 
-    StripParams params;
+    StripParams& params;
+    SendBank sends;
     PluginChain inserts;
 
-    void prepare (double sampleRate, int maxBlockSize);
+    // Meters (peaks are "max since last read": exchange with 0 to read)
+    std::atomic<float> (&inputPeak)[2];
+    std::atomic<float> (&outputPeak)[2];
+    std::atomic<float>& gateGain;
+    std::atomic<float>& compReductionDb;
+    std::atomic<int32_t>& currentWidth;
+    std::atomic<int32_t>& dspFaults;
 
-    // Peak meters: written by the audio thread as "max since last read"; one UI
-    // reader each (exchange with 0). Dynamics meters hold the latest block's value.
-    std::array<std::atomic<float>, 2> inputPeak {}, outputPeak {};
-    std::atomic<float> gateGain { 1.0f }, compReductionDb { 0.0f };
-    std::atomic<int> currentWidth { 1 };
-
-    /** Number of blocks that produced NaN/inf and were silenced (stability monitor). */
-    std::atomic<int> dspFaults { 0 };
-
-    // Audio thread --------------------------------------------------------------
-    /** Number of channels this block (1 = mono, 2 = stereo). */
-    int getNumChannels() const noexcept { return numChannels; }
-
-    /** Inputs: pull from the hardware inputs (indexed by hardware channel; nullptr = inactive). */
-    void readHardwareInputs (const float* const* hwInputs, int numHwInputs, int numSamples) noexcept;
-
-    /** Buses/master: clear the work buffer before sums are accumulated into it. */
-    void beginSummedBlock (int numSamples) noexcept;
-    float* const* getWorkBuffers() noexcept { return work.getArrayOfWritePointers(); }
-
-    /** Runs the processing chain and output stage on whatever is in the work buffer. */
-    void process (int numSamples) noexcept;
-
-    // Signal taps, valid after process():
-    const float* const* getPostChain() const noexcept { return work.getArrayOfReadPointers(); }   // PFL / direct out
-    const float* const* getPreFader() const noexcept { return pre.getArrayOfReadPointers(); }     // post-mute
-    const float* const* getPostFader() const noexcept { return post.getArrayOfReadPointers(); }   // pre-pan
-    const float* const* getMainOut() const noexcept { return main.getArrayOfReadPointers(); }     // stereo, panned
-
-    /** True when the last block took the silent fast path (all outputs are zero). */
-    bool isIdle() const noexcept { return idle; }
-
-    float getPanLeft() const noexcept { return panLeft; }
-    float getPanRight() const noexcept { return panRight; }
-
-    /** Gain ramp state, owned by whichever task sums this strip (send ramps live in SendParams). */
-    float lastMainAssignGain = 0.0f;
-    float lastSoloGain = 0.0f;
+    int getNumChannels() const noexcept { return ld::ld_strip_num_channels (handle); }
+    bool isIdle() const noexcept { return ld::ld_strip_is_idle (handle); }
 
 private:
-    void runChain (int numSamples) noexcept;
-    void resetDsp() noexcept;
-    void runOutputStage (int numSamples) noexcept;
-
-    const StripKind kind;
-    const int id;
-
-    double sampleRate = 48000.0;
-    int maxBlock = 512;
-    int numChannels = 1;
-    bool inputConnected = true, idle = false;
-
-    juce::AudioBuffer<float> work, pre, post, main;
-
-    dsp::Biquad hpf;
-    float lastHpfFreq = -1.0f;
-    bool hpfWasOn = false;
-    dsp::NoiseGate gate;
-    dsp::ParametricEq eq;
-    dsp::Compressor comp;
-
-    float lastTrim = 1.0f, lastMute = 1.0f, lastFader = 1.0f;
-    float panLeft = 1.0f, panRight = 1.0f, lastPanLeft = 1.0f, lastPanRight = 1.0f;
+    ld::Strip* handle;
+    StripKind kind;
+    int id;
+    ld::StripMeters& meters;
 
     JUCE_DECLARE_NON_COPYABLE (Strip)
 };

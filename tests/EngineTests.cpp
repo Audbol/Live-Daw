@@ -14,6 +14,12 @@ public:
 
     void runTest() override
     {
+        beginTest ("C++ and Rust agree on the shared parameter layout");
+        {
+            const char* mismatch = ld::verifyLayout();
+            expect (mismatch == nullptr, mismatch != nullptr ? juce::String (mismatch) : juce::String());
+        }
+
         beginTest ("Input channel reaches the master through pan law");
         {
             MixerEngine engine (2);
@@ -81,7 +87,7 @@ public:
             auto& p = engine.getInputs()[1]->params;
             p.inputLeft = 1;
             p.faderDb = -100.0f; // fader down: pre-fader send must still be live
-            auto& send = p.sends[(size_t) aux->getId()];
+            auto& send = engine.getInputs()[1]->sends[(size_t) aux->getId()];
             send.enabled = true;
             send.preFader = true;
             send.levelDb = 0.0f;
@@ -98,7 +104,7 @@ public:
 
         beginTest ("Unpatched channels are skipped and resume cleanly");
         {
-            MixerEngine engine (livedaw::WorkerPool::defaultNumWorkers());
+            MixerEngine engine (-1);
             constexpr int numCh = 4096;
             OfflineRig rig (engine, 8, 2); // a typical interface: far fewer inputs than channels
             engine.setNumInputs (numCh);
@@ -146,7 +152,7 @@ public:
             last->params.stereo = false;
             last->params.mainAssign = false;
             last->params.outputLeft = 3;
-            auto& send = engine.getInputs()[0]->params.sends[(size_t) last->getId()];
+            auto& send = engine.getInputs()[0]->sends[(size_t) last->getId()];
             send.enabled = true;
             send.preFader = true;
 
@@ -159,7 +165,7 @@ public:
             engine.removeStrip (last);
             auto* reused = engine.addBus (StripKind::Aux);
             expectEquals (reused->getId(), slot);
-            expect (! engine.getInputs()[0]->params.sends[(size_t) slot].enabled.load());
+            expect (! engine.getInputs()[0]->sends[(size_t) slot].enabled.load());
             engine.getGarbage().collectAllNow();
         }
 
@@ -171,8 +177,8 @@ public:
             auto* group = engine.addBus (StripKind::Group);
             auto& p = engine.getInputs()[0]->params;
             p.mainAssign = false;
-            p.sends[(size_t) group->getId()].enabled = true;
-            p.sends[(size_t) group->getId()].preFader = false;
+            engine.getInputs()[0]->sends[(size_t) group->getId()].enabled = true;
+            engine.getInputs()[0]->sends[(size_t) group->getId()].preFader = false;
 
             rig.setInput (0, 0.5f);
             rig.run();
@@ -238,7 +244,7 @@ public:
         beginTest ("Throughput (informational)");
         {
             // 128 mono channels with gate, EQ and compressor active, 8 buses, 48 kHz / 128 samples.
-            MixerEngine engine (livedaw::WorkerPool::defaultNumWorkers());
+            MixerEngine engine (-1);
             constexpr int numCh = 128;
             OfflineRig rig (engine, numCh, 16);
             engine.setNumInputs (numCh);
@@ -255,7 +261,7 @@ public:
                 p.eq.bands[1].gainDb = 3.0f;
                 p.eq.bands[2].gainDb = -3.0f;
                 for (int b = 0; b < 8; ++b)
-                    p.sends[(size_t) b].enabled = true;
+                    engine.getInputs()[(size_t) i]->sends[(size_t) b].enabled = true;
                 for (auto& v : rig.inputs[(size_t) i])
                     v = rng.nextFloat() * 0.2f - 0.1f;
             }

@@ -48,26 +48,28 @@ else()
 endif()
 
 #-------------------------------------------------------------------------------
-# Pure C++ DSP library (no JUCE dependency, unit-testable in isolation)
+# Rust engine (rust/): DSP, mixing, routing and stability core, linked as a
+# static library through a C ABI (rust/crates/livedaw-ffi/include/livedaw_engine.h)
 #-------------------------------------------------------------------------------
-add_library(livedaw_dsp STATIC
-    src/dsp/Biquad.cpp
-    src/dsp/ParametricEq.cpp
-    src/dsp/NoiseGate.cpp
-    src/dsp/Compressor.cpp)
-target_include_directories(livedaw_dsp PUBLIC src)
-set_target_properties(livedaw_dsp PROPERTIES POSITION_INDEPENDENT_CODE ON)
+include(FetchContent)
+FetchContent_Declare(Corrosion
+    GIT_REPOSITORY https://github.com/corrosion-rs/corrosion.git
+    GIT_TAG        v0.6.1
+    GIT_SHALLOW    TRUE)
+FetchContent_MakeAvailable(Corrosion)
+
+corrosion_import_crate(MANIFEST_PATH rust/Cargo.toml CRATES livedaw-ffi CRATE_TYPES staticlib)
+target_include_directories(livedaw_ffi INTERFACE ${CMAKE_SOURCE_DIR}/rust/crates/livedaw-ffi/include)
+
 if(MSVC)
-    target_compile_options(livedaw_dsp PRIVATE /W4)
-else()
-    target_compile_options(livedaw_dsp PRIVATE -Wall -Wextra -Wpedantic)
+    # Match the app's static C runtime (portable .exe).
+    corrosion_add_target_rustflags(livedaw_ffi -Ctarget-feature=+crt-static)
 endif()
 
 #-------------------------------------------------------------------------------
 # Shared engine sources + JUCE configuration (used by the app and the tests)
 #-------------------------------------------------------------------------------
 set(LIVEDAW_ENGINE_SOURCES
-    src/engine/WorkerPool.cpp
     src/engine/PluginChain.cpp
     src/engine/Strip.cpp
     src/engine/MixerEngine.cpp
@@ -131,7 +133,7 @@ function(livedaw_configure_juce_target target)
 
     target_link_libraries(${target}
         PRIVATE
-            livedaw_dsp
+            livedaw_ffi
             juce::juce_audio_utils
             juce::juce_audio_devices
             juce::juce_audio_processors
@@ -180,8 +182,6 @@ if(LIVEDAW_BUILD_TESTS)
     juce_add_console_app(LiveDAWTests PRODUCT_NAME "LiveDAW Tests")
     target_sources(LiveDAWTests PRIVATE
         tests/TestMain.cpp
-        tests/DspTests.cpp
-        tests/WorkerPoolTests.cpp
         tests/EngineTests.cpp
         tests/ShowTests.cpp
         tests/StabilityTests.cpp

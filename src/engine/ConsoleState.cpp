@@ -115,7 +115,7 @@ namespace
         {
             auto* eq = e->createNewChildElement ("Eq");
             setAttr (*eq, "on", p.eq.enabled);
-            for (size_t i = 0; i < p.eq.bands.size(); ++i)
+            for (size_t i = 0; i < (size_t) kNumEqBands; ++i)
             {
                 auto* band = eq->createNewChildElement ("Band");
                 band->setAttribute ("index", static_cast<int> (i));
@@ -147,7 +147,7 @@ namespace
                 auto* se = sends->createNewChildElement ("Send");
                 se->setAttribute ("slot", slot);
 
-                if (const auto* send = p.sends.find (slot))
+                if (const auto* send = s.sends.find (slot))
                 {
                     setAttr (*se, "on", send->enabled);
                     setAttr (*se, "level", send->levelDb);
@@ -156,10 +156,10 @@ namespace
                 else
                 {
                     // Never touched: record the defaults so a recall resets it.
-                    const SendParams defaults;
-                    setAttr (*se, "on", defaults.enabled);
-                    setAttr (*se, "level", defaults.levelDb);
-                    setAttr (*se, "pre", defaults.preFader);
+                    // (Matches SendParams::default() in the Rust engine.)
+                    se->setAttribute ("on", 0);
+                    se->setAttribute ("level", 0.0);
+                    se->setAttribute ("pre", 1);
                 }
             }
         }
@@ -254,7 +254,7 @@ namespace
             for (auto* band : eq->getChildWithTagNameIterator ("Band"))
             {
                 const int i = band->getIntAttribute ("index", -1);
-                if (! juce::isPositiveAndBelow (i, static_cast<int> (p.eq.bands.size())))
+                if (! juce::isPositiveAndBelow (i, kNumEqBands))
                     continue;
 
                 auto& b = p.eq.bands[(size_t) i];
@@ -285,7 +285,7 @@ namespace
                 if (! juce::isPositiveAndBelow (slot, kMaxBuses))
                     continue;
 
-                auto& send = p.sends[(size_t) slot];
+                auto& send = s.sends[(size_t) slot];
                 getAttr (*se, "on", send.enabled);
                 getFadable (*se, "level", send.levelDb, fades);
                 getAttr (*se, "pre", send.preFader);

@@ -1,8 +1,6 @@
 #pragma once
 
-#include "engine/RtGarbage.h"
 #include "engine/Strip.h"
-#include "engine/WorkerPool.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
@@ -14,9 +12,9 @@
 namespace livedaw
 {
 
-/** The live mixing engine.
+/** The live mixing engine: a C++ facade over the Rust engine (rust/crates/livedaw-engine).
 
-    Signal flow per audio block:
+    Signal flow per audio block (all in Rust):
       1. every input strip reads its hardware input(s) and runs its chain   (parallel)
       2. every bus sums the channel sends feeding it and runs its chain     (parallel)
       3. the master sums assigned channels and groups and runs its chain
@@ -24,17 +22,17 @@ namespace livedaw
       5. master, buses, direct outs and monitor are written to the hardware outputs
 
     The number of input channels is only limited by CPU: strips are processed in
-    parallel on a realtime worker pool.
+    parallel on realtime worker threads (started here, run by the engine).
 
-    Structure (adding/removing strips) is changed on the message thread by
-    building a new immutable Topology and swapping it in atomically. Removed
-    strips are destroyed later on the message thread (see RtGarbage).
-*/
+    Structure changes happen on the message thread; the engine publishes a new
+    immutable topology and frees removed strips later (ld_engine_collect).
+    This class keeps a Strip wrapper per engine strip for the UI metadata. */
 class MixerEngine final : public juce::AudioIODeviceCallback,
                           private juce::Timer
 {
 public:
-    explicit MixerEngine (int numWorkerThreads = WorkerPool::defaultNumWorkers());
+    /** numWorkerThreads < 0 picks a default from the number of CPU cores. */
+    explicit MixerEngine (int numWorkerThreads = -1);
     ~MixerEngine() override;
 
     //==============================================================================
@@ -61,19 +59,25 @@ public:
     /** Removes all inputs and buses and resets the master (used when loading sessions). */
     void reset();
 
+private:
+    ld::Engine* engine;
+    ld::EngineControls& controls;
+
+public:
     //==============================================================================
-    // Monitor / solo
-    std::atomic<bool> soloAfl { false };  // false = PFL, true = AFL
-    std::atomic<float> monitorLevelDb { 0.0f };
-    std::atomic<int> monitorOutputLeft { -1 }, monitorOutputRight { -1 };
-    std::array<std::atomic<float>, 2> monitorPeak {};
-    std::atomic<bool> anySoloActive { false };
+    // Monitor / solo (the engine's own atomics)
+    std::atomic<bool>& soloAfl;               // false = PFL, true = AFL
+    std::atomic<float>& monitorLevelDb;
+    std::atomic<int32_t>& monitorOutputLeft;
+    std::atomic<int32_t>& monitorOutputRight;
+    std::atomic<float> (&monitorPeak)[2];
+    std::atomic<bool>& anySoloActive;
 
     //==============================================================================
     // Stability / protection
-    std::atomic<bool> outputProtection { true };   // brick-wall safety clip on every hardware output
-    std::atomic<float> outputCeilingDb { 0.0f };
-    std::atomic<int> outputClipEvents { 0 };       // blocks in which the safety clip engaged
+    std::atomic<bool>& outputProtection;      // brick-wall safety clip on every hardware output
+    std::atomic<float>& outputCeilingDb;
+    std::atomic<int32_t>& outputClipEvents;   // blocks in which the safety clip engaged
 
     /** Millisecond counter (juce::Time::getMillisecondCounter) of the last audio callback. */
     juce::uint32 getLastCallbackTime() const noexcept { return lastCallbackMs.load (std::memory_order_relaxed); }
@@ -82,25 +86,43 @@ public:
     /** Sum of the NaN/inf faults caught on all strips and the number of auto-bypassed plugins. */
     int getTotalDspFaults() const;
     int getNumFaultedPlugins() const;
+    /** Panics caught inside the engine (should stay 0). */
+    int getEngineFaults() const noexcept { return controls.engineFaults.load(); }
 
     /** Called on the message thread when the device reports an error. */
     std::function<void (const juce::String&)> onDeviceError;
 
     //==============================================================================
     // Device information (message thread)
-    double getSampleRate() const noexcept { return sampleRate; }
-    int getBlockSize() const noexcept { return blockSize; }
+    double getSampleRate() const noexcept { return ld::ld_engine_sample_rate (engine); }
+    int getBlockSize() const noexcept { return ld::ld_engine_block_size (engine); }
     const juce::StringArray& getHardwareInputNames() const noexcept { return inputNames; }
     const juce::StringArray& getHardwareOutputNames() const noexcept { return outputNames; }
-    int getNumWorkerThreads() const noexcept { return pool.getNumWorkers(); }
+    int getNumWorkerThreads() const noexcept { return ld::ld_engine_num_workers (engine); }
 
     /** Called (on the message thread) whenever the audio device or its channel layout changes. */
     std::function<void()> onDeviceChanged;
 
     /** Average time spent in the audio callback relative to the block duration (0..1+). */
-    float getDspLoad() const noexcept { return dspLoad.load (std::memory_order_relaxed); }
+    float getDspLoad() const noexcept { return controls.dspLoad.load (std::memory_order_relaxed); }
 
-    RtGarbage& getGarbage() noexcept { return garbage; }
+    /** Deferred destruction of removed strips/plugins (collected by a timer). */
+    class Garbage
+    {
+    public:
+        explicit Garbage (ld::Engine* e) : engine (e) {}
+        void collect() { ld::ld_engine_collect (engine); }
+        /** Frees everything now; only valid while no audio callback can run. */
+        void collectAllNow() { ld::ld_engine_collect_all_now (engine); }
+        void setDeviceRunning (bool running) { ld::ld_engine_set_device_running (engine, running); }
+        int numPending() const { return ld::ld_engine_pending_garbage (engine); }
+
+    private:
+        ld::Engine* engine;
+    };
+
+    Garbage& getGarbage() noexcept { return garbage; }
+    ld::Engine* getHandle() const noexcept { return engine; }
 
     //==============================================================================
     // AudioIODeviceCallback
@@ -123,48 +145,22 @@ public:
                        float* const* outputs, int numOutputs, int numSamples) noexcept;
 
 private:
-    struct Topology
-    {
-        std::vector<Strip*> inputs, buses;
-        Strip* master = nullptr;
-    };
+    class Worker;
 
     void timerCallback() override;
-    void publishTopology();
-    void prepareAll();
-    std::unique_ptr<Strip> createInputStrip (int requestedId = -1);
-    void prepareStrip (Strip&);
-    void setupChannelMaps (const juce::BigInteger& activeIns, const juce::BigInteger& activeOuts,
-                           int numHwIns, int numHwOuts);
+    void prepare (double sampleRate, int blockSize, const juce::BigInteger& activeIns,
+                  const juce::BigInteger& activeOuts);
+    void startWorkers (double sampleRate, int blockSize);
+    std::unique_ptr<Strip> wrap (ld::Strip* handle);
+    void syncInputs();
 
-    void processChunk (const Topology&, int numSamples) noexcept;
-    static void sumSendsIntoBus (Strip& bus, const std::vector<Strip*>& inputs, int numSamples) noexcept;
-    void sumMaster (const Topology&, int numSamples) noexcept;
-    void buildMonitor (const Topology&, int numSamples) noexcept;
-    void writeOutputs (const Topology&, int numSamples) noexcept;
-    void addToOutput (int hwChannel, const float* src, int numSamples) noexcept;
-    void protectOutputs (int numSamples) noexcept;
-
-    RtGarbage garbage;
-    WorkerPool pool;
+    Garbage garbage;
+    std::vector<std::unique_ptr<Worker>> workers;
 
     std::vector<std::unique_ptr<Strip>> inputs, buses;
     std::unique_ptr<Strip> master;
-    int nextInputId = 1;
 
-    std::atomic<Topology*> topology { nullptr };
-
-    // Device state: only modified while the device is stopped.
-    double sampleRate = 48000.0;
-    int blockSize = 512;
     juce::StringArray inputNames, outputNames;
-    std::vector<int> hwInToActive, hwOutToActive;
-    std::vector<const float*> hwInPtrs;   // indexed by hardware channel, per chunk
-    std::vector<float*> hwOutPtrs;        // indexed by hardware channel, per chunk
-
-    juce::AudioBuffer<float> monitorBuffer;
-    float lastMonitorGain = 0.0f, lastMasterToMonitor = 1.0f;
-    std::atomic<float> dspLoad { 0.0f };
     std::atomic<juce::uint32> lastCallbackMs { 0 };
     std::atomic<bool> deviceRunning { false };
     std::shared_ptr<bool> aliveFlag = std::make_shared<bool> (true);

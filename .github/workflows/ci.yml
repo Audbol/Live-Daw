@@ -6,6 +6,35 @@ on:
   workflow_dispatch:
 
 jobs:
+  rust:
+    name: Rust engine (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-24.04, windows-2022, macos-14 ]
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: rustup component add rustfmt clippy
+
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test (debug)
+        run: cargo test --workspace
+
+      - name: Test (release)
+        run: cargo test --workspace --release
+
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}

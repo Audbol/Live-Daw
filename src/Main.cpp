@@ -176,6 +176,17 @@ public:
         properties.setStorageParameters (options);
         auto& settings = *properties.getUserSettings();
 
+        if (const char* mismatch = ld::verifyLayout())
+        {
+            // A mismatched engine library would corrupt the shared parameter blocks.
+            const auto message = juce::String ("The audio engine library does not match this build (")
+                                 + mismatch + "). Please reinstall Live DAW.";
+            juce::NativeMessageBox::showAsync (juce::MessageBoxOptions::makeOptionsOk (juce::MessageBoxIconType::WarningIcon,
+                                                                                       "Live DAW", message),
+                                               [] (int) { quit(); });
+            return;
+        }
+
         getDataDirectory().createDirectory();
 
         // Did the previous run end without a clean shutdown?
@@ -239,6 +250,9 @@ public:
             scannerWorker.reset();
             return;
         }
+
+        if (engine == nullptr) // refused to start
+            return;
 
         signalQuitter.reset();
         autosaveTimer.reset();

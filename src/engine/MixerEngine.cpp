@@ -1,20 +1,68 @@
 #include "engine/MixerEngine.h"
-#include "dsp/DspUtils.h"
 
 namespace livedaw
 {
 
-MixerEngine::MixerEngine (int numWorkerThreads)
-    : pool (numWorkerThreads)
+/** A realtime thread lent to the engine's worker pool. ld_engine_run_worker
+    returns only once ld_engine_shutdown_workers has been called. */
+class MixerEngine::Worker final : public juce::Thread
 {
-    for (auto& p : monitorPeak)
-        p.store (0.0f);
+public:
+    Worker (ld::Engine* e, int i)
+        : juce::Thread ("LiveDAW DSP worker " + juce::String (i)), engine (e), index (i)
+    {
+    }
 
-    master = std::make_unique<Strip> (StripKind::Master, 0, garbage);
-    master->name = "Master";
-    monitorBuffer.setSize (2, blockSize);
+    void start (double sampleRate, int blockSize)
+    {
+        const auto options = juce::Thread::RealtimeOptions {}
+                                 .withPriority (9)
+                                 .withApproximateAudioProcessingTime (blockSize, sampleRate);
 
-    publishTopology();
+        if (! startRealtimeThread (options))
+            startThread (juce::Thread::Priority::highest);
+    }
+
+    void run() override { ld::ld_engine_run_worker (engine, index); }
+
+private:
+    ld::Engine* engine;
+    int index;
+};
+
+//==============================================================================
+static ld::Engine* createEngine (int numWorkerThreads)
+{
+    if (const char* mismatch = ld::verifyLayout())
+    {
+        // The C++ header and the Rust library disagree: sharing parameter blocks
+        // would corrupt memory, so refuse to run at all.
+        juce::Logger::writeToLog (juce::String ("Rust engine layout mismatch: ") + mismatch);
+        std::abort();
+    }
+
+    auto* e = ld::ld_engine_create (numWorkerThreads);
+    if (e == nullptr)
+        std::abort();
+    return e;
+}
+
+MixerEngine::MixerEngine (int numWorkerThreads)
+    : engine (createEngine (numWorkerThreads)),
+      controls (*ld::ld_engine_controls (engine)),
+      soloAfl (controls.soloAfl),
+      monitorLevelDb (controls.monitorLevelDb),
+      monitorOutputLeft (controls.monitorOutputLeft),
+      monitorOutputRight (controls.monitorOutputRight),
+      monitorPeak (controls.monitorPeak),
+      anySoloActive (controls.anySoloActive),
+      outputProtection (controls.outputProtection),
+      outputCeilingDb (controls.outputCeilingDb),
+      outputClipEvents (controls.outputClipEvents),
+      garbage (engine)
+{
+    master = wrap (ld::ld_engine_master (engine));
+    startWorkers (getSampleRate(), getBlockSize());
     startTimerHz (10);
 }
 
@@ -22,95 +70,91 @@ MixerEngine::~MixerEngine()
 {
     stopTimer();
     // The device manager must have removed this callback before destruction.
-    delete topology.exchange (nullptr);
-    garbage.collectAllNow();
+    ld::ld_engine_shutdown_workers (engine);
+    for (auto& w : workers)
+        w->stopThread (2000);
+    workers.clear();
+
+    inputs.clear();
+    buses.clear();
+    master.reset();
+    ld::ld_engine_destroy (engine); // releases the plugins still loaded
+}
+
+void MixerEngine::startWorkers (double sampleRate, int blockSize)
+{
+    const int n = ld::ld_engine_num_workers (engine);
+    for (int i = 0; i < n; ++i)
+    {
+        auto& w = workers.emplace_back (std::make_unique<Worker> (engine, i));
+        w->start (sampleRate, blockSize);
+    }
 }
 
 //==============================================================================
-void MixerEngine::publishTopology()
+std::unique_ptr<Strip> MixerEngine::wrap (ld::Strip* handle)
 {
-    JUCE_ASSERT_MESSAGE_THREAD
+    jassert (handle != nullptr);
+    auto strip = std::make_unique<Strip> (engine, handle);
 
-    auto next = std::make_unique<Topology>();
-    next->master = master.get();
+    switch (strip->getKind())
+    {
+        case StripKind::Input:
+            strip->name = "Ch " + juce::String (inputs.size() + 1);
+            break;
+        case StripKind::Aux:
+        case StripKind::Group:
+        {
+            int count = 1;
+            for (auto& b : buses)
+                if (b->getKind() == strip->getKind())
+                    ++count;
+            strip->name = (strip->getKind() == StripKind::Aux ? "Aux " : "Group ") + juce::String (count);
+            break;
+        }
+        case StripKind::Master:
+            strip->name = "Master";
+            break;
+    }
 
-    for (auto& s : inputs)
-        next->inputs.push_back (s.get());
-    for (auto& s : buses)
-        next->buses.push_back (s.get());
-
-    std::unique_ptr<Topology> old (topology.exchange (next.release(), std::memory_order_acq_rel));
-    garbage.retire (std::move (old));
-}
-
-void MixerEngine::prepareStrip (Strip& s)
-{
-    s.prepare (sampleRate, blockSize);
-}
-
-void MixerEngine::prepareAll()
-{
-    for (auto& s : inputs)
-        prepareStrip (*s);
-    for (auto& s : buses)
-        prepareStrip (*s);
-    prepareStrip (*master);
-
-    monitorBuffer.setSize (2, blockSize, false, true, false);
-    pool.setBlockDurationHint (sampleRate, blockSize);
-}
-
-std::unique_ptr<Strip> MixerEngine::createInputStrip (int requestedId)
-{
-    const int index = static_cast<int> (inputs.size());
-
-    bool idFree = requestedId > 0;
-    for (auto& s : inputs)
-        idFree = idFree && s->getId() != requestedId;
-
-    const int id = idFree ? requestedId : nextInputId;
-    nextInputId = juce::jmax (nextInputId, id + 1);
-
-    auto strip = std::make_unique<Strip> (StripKind::Input, id, garbage);
-    strip->name = "Ch " + juce::String (index + 1);
-    strip->params.inputLeft = (inputNames.isEmpty() || index < inputNames.size()) ? index : -1;
-    prepareStrip (*strip);
     return strip;
+}
+
+void MixerEngine::syncInputs()
+{
+    const auto n = static_cast<size_t> (ld::ld_engine_num_inputs (engine));
+
+    // Strips are only ever appended or removed from the end, except by removeStrip().
+    if (inputs.size() > n)
+        inputs.resize (n);
+
+    for (size_t i = 0; i < n; ++i)
+    {
+        auto* handle = ld::ld_engine_input_at (engine, (int32_t) i);
+        if (i < inputs.size())
+        {
+            jassert (inputs[i]->getHandle() == handle);
+            continue;
+        }
+        inputs.push_back (wrap (handle));
+    }
 }
 
 Strip* MixerEngine::addInput (int requestedId)
 {
     JUCE_ASSERT_MESSAGE_THREAD
+    auto* handle = ld::ld_engine_add_input (engine, requestedId);
+    if (handle == nullptr)
+        return nullptr;
 
-    auto* raw = inputs.emplace_back (createInputStrip (requestedId)).get();
-    publishTopology();
-    return raw;
+    return inputs.emplace_back (wrap (handle)).get();
 }
 
 void MixerEngine::setNumInputs (int numInputs)
 {
     JUCE_ASSERT_MESSAGE_THREAD
-    numInputs = juce::jmax (0, numInputs);
-    const auto target = static_cast<size_t> (numInputs);
-
-    if (target == inputs.size())
-        return;
-
-    std::vector<std::unique_ptr<Strip>> removed;
-
-    while (inputs.size() < target)
-        inputs.push_back (createInputStrip());
-
-    while (inputs.size() > target)
-    {
-        removed.push_back (std::move (inputs.back()));
-        inputs.pop_back();
-    }
-
-    publishTopology();
-
-    for (auto& s : removed)
-        garbage.retire (std::move (s));
+    ld::ld_engine_set_num_inputs (engine, juce::jmax (0, numInputs));
+    syncInputs();
 }
 
 Strip* MixerEngine::addBus (StripKind kind, int requestedSlot)
@@ -118,44 +162,11 @@ Strip* MixerEngine::addBus (StripKind kind, int requestedSlot)
     JUCE_ASSERT_MESSAGE_THREAD
     jassert (kind == StripKind::Aux || kind == StripKind::Group);
 
-    std::vector<bool> used ((size_t) kMaxBuses, false);
-    for (auto& b : buses)
-        used[(size_t) b->getId()] = true;
-
-    int slot = -1;
-    if (juce::isPositiveAndBelow (requestedSlot, kMaxBuses) && ! used[(size_t) requestedSlot])
-        slot = requestedSlot;
-    else
-        for (int i = 0; i < kMaxBuses && slot < 0; ++i)
-            if (! used[(size_t) i])
-                slot = i;
-
-    if (slot < 0)
+    auto* handle = ld::ld_engine_add_bus (engine, static_cast<int32_t> (kind), requestedSlot);
+    if (handle == nullptr)
         return nullptr;
 
-    // Make sure no channel still carries a send from an old bus in this slot.
-    // (The ramp state is left alone: an audio callback may still be finishing
-    // with a bus just removed from this slot. It settles to the new target.)
-    for (auto& in : inputs)
-    {
-        auto& send = in->params.sends[(size_t) slot];
-        send.enabled = false;
-        send.levelDb = 0.0f;
-        send.preFader = (kind == StripKind::Aux);
-    }
-
-    auto strip = std::make_unique<Strip> (kind, slot, garbage);
-    int count = 1;
-    for (auto& b : buses)
-        if (b->getKind() == kind)
-            ++count;
-    strip->name = (kind == StripKind::Aux ? "Aux " : "Group ") + juce::String (count);
-    prepareStrip (*strip);
-
-    auto* raw = strip.get();
-    buses.push_back (std::move (strip));
-    publishTopology();
-    return raw;
+    return buses.emplace_back (wrap (handle)).get();
 }
 
 Strip* MixerEngine::getBusInSlot (int slot) const noexcept
@@ -177,16 +188,8 @@ void MixerEngine::removeStrip (Strip* strip)
         {
             if (it->get() == strip)
             {
-                auto owned = std::move (*it);
+                ld::ld_engine_remove_strip (engine, strip->getHandle());
                 list->erase (it);
-                publishTopology();
-
-                if (owned->isBus())
-                    for (auto& in : inputs)
-                        if (auto* send = in->params.sends.find (owned->getId()))
-                send->enabled = false;
-
-                garbage.retire (std::move (owned));
                 return;
             }
         }
@@ -196,29 +199,11 @@ void MixerEngine::removeStrip (Strip* strip)
 void MixerEngine::reset()
 {
     JUCE_ASSERT_MESSAGE_THREAD
-
-    std::vector<std::unique_ptr<Strip>> removed;
-    for (auto& s : inputs)
-        removed.push_back (std::move (s));
-    for (auto& s : buses)
-        removed.push_back (std::move (s));
-    removed.push_back (std::move (master));
+    ld::ld_engine_reset (engine);
 
     inputs.clear();
     buses.clear();
-    nextInputId = 1;
-
-    master = std::make_unique<Strip> (StripKind::Master, 0, garbage);
-    master->name = "Master";
-    prepareStrip (*master);
-
-    publishTopology();
-
-    for (auto& s : removed)
-        garbage.retire (std::move (s));
-
-    soloAfl = false;
-    monitorLevelDb = 0.0f;
+    master = wrap (ld::ld_engine_master (engine));
 }
 
 void MixerEngine::timerCallback()
@@ -226,38 +211,53 @@ void MixerEngine::timerCallback()
     garbage.collect();
 }
 
-//==============================================================================
-void MixerEngine::setupChannelMaps (const juce::BigInteger& activeIns, const juce::BigInteger& activeOuts,
-                                    int numHwIns, int numHwOuts)
+int MixerEngine::getTotalDspFaults() const
 {
-    auto build = [] (const juce::BigInteger& active, int numHw, std::vector<int>& map)
+    return ld::ld_engine_total_dsp_faults (engine);
+}
+
+int MixerEngine::getNumFaultedPlugins() const
+{
+    return ld::ld_engine_num_faulted_plugins (engine);
+}
+
+//==============================================================================
+void MixerEngine::prepare (double sampleRate, int blockSize, const juce::BigInteger& activeIns,
+                           const juce::BigInteger& activeOuts)
+{
+    auto build = [] (const juce::BigInteger& active, int numHw)
     {
-        map.assign ((size_t) numHw, -1);
+        std::vector<int32_t> map ((size_t) numHw, -1);
         int next = 0;
         for (int hw = 0; hw < numHw; ++hw)
             if (active[hw])
                 map[(size_t) hw] = next++;
+        return map;
     };
 
-    build (activeIns, numHwIns, hwInToActive);
-    build (activeOuts, numHwOuts, hwOutToActive);
-    hwInPtrs.assign ((size_t) numHwIns, nullptr);
-    hwOutPtrs.assign ((size_t) numHwOuts, nullptr);
+    const auto inMap = build (activeIns, inputNames.size());
+    const auto outMap = build (activeOuts, outputNames.size());
+
+    ld::ld_engine_prepare (engine, sampleRate, blockSize, inMap.data(), (int32_t) inMap.size(),
+                           outMap.data(), (int32_t) outMap.size());
+
+    // Plugins live on the C++ side and are prepared here, also while the device is stopped.
+    for (auto* list : { &inputs, &buses })
+        for (auto& s : *list)
+            s->inserts.prepare (sampleRate, blockSize);
+    master->inserts.prepare (sampleRate, blockSize);
 }
 
 void MixerEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 {
-    sampleRate = device->getCurrentSampleRate();
-    blockSize = device->getCurrentBufferSizeSamples();
     inputNames = device->getInputChannelNames();
     outputNames = device->getOutputChannelNames();
 
-    setupChannelMaps (device->getActiveInputChannels(), device->getActiveOutputChannels(),
-                      inputNames.size(), outputNames.size());
+    // JUCE calls this from the thread that (re)starts the device, which is the
+    // message thread for AudioDeviceManager.
+    prepare (device->getCurrentSampleRate(), device->getCurrentBufferSizeSamples(),
+             device->getActiveInputChannels(), device->getActiveOutputChannels());
 
-    // Strips are owned by the message thread; JUCE calls this from the thread that
-    // (re)starts the device, which is the message thread for AudioDeviceManager.
-    prepareAll();
     deviceRunning = true;
     garbage.setDeviceRunning (true);
 
@@ -283,39 +283,11 @@ void MixerEngine::audioDeviceError (const juce::String& errorMessage)
     });
 }
 
-int MixerEngine::getTotalDspFaults() const
+void MixerEngine::prepareOffline (double sampleRate, int blockSize, int numHwIns, int numHwOuts)
 {
-    int total = master->dspFaults.load();
-    for (auto* list : { &inputs, &buses })
-        for (auto& s : *list)
-            total += s->dspFaults.load();
-    return total;
-}
-
-int MixerEngine::getNumFaultedPlugins() const
-{
-    int total = 0;
-    auto count = [&total] (const Strip& s)
-    {
-        for (int slot = 0; slot < kNumInsertSlots; ++slot)
-            if (s.inserts.isFaulted (slot))
-                ++total;
-    };
-
-    count (*master);
-    for (auto* list : { &inputs, &buses })
-        for (auto& s : *list)
-            count (*s);
-    return total;
-}
-
-void MixerEngine::prepareOffline (double newSampleRate, int newBlockSize, int numHwIns, int numHwOuts)
-{
-    sampleRate = newSampleRate;
-    blockSize = newBlockSize;
-
     inputNames.clear();
     outputNames.clear();
+
     for (int i = 0; i < numHwIns; ++i)
         inputNames.add ("In " + juce::String (i + 1));
     for (int i = 0; i < numHwOuts; ++i)
@@ -324,8 +296,7 @@ void MixerEngine::prepareOffline (double newSampleRate, int newBlockSize, int nu
     juce::BigInteger ins, outs;
     ins.setRange (0, numHwIns, true);
     outs.setRange (0, numHwOuts, true);
-    setupChannelMaps (ins, outs, numHwIns, numHwOuts);
-    prepareAll();
+    prepare (sampleRate, blockSize, ins, outs);
 }
 
 void MixerEngine::audioDeviceIOCallbackWithContext (const float* const* inputChannelData,
@@ -335,308 +306,14 @@ void MixerEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                                     int numSamples,
                                                     const juce::AudioIODeviceCallbackContext&)
 {
-    const auto startTicks = juce::Time::getHighResolutionTicks();
-
     processBlock (inputChannelData, numInputChannels, outputChannelData, numOutputChannels, numSamples);
-
-    const auto elapsed = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - startTicks);
-    const auto load = static_cast<float> (elapsed * sampleRate / juce::jmax (1, numSamples));
-    dspLoad.store (0.9f * dspLoad.load (std::memory_order_relaxed) + 0.1f * load, std::memory_order_relaxed);
 }
 
-//==============================================================================
 void MixerEngine::processBlock (const float* const* ins, int numIns,
                                 float* const* outs, int numOuts, int numSamples) noexcept
 {
-    const juce::ScopedNoDenormals noDenormals;
-    garbage.audioCallbackStarted();
     lastCallbackMs.store (juce::Time::getMillisecondCounter(), std::memory_order_relaxed);
-
-    for (int i = 0; i < numOuts; ++i)
-        if (outs[i] != nullptr)
-            juce::FloatVectorOperations::clear (outs[i], numSamples);
-
-    if (auto* topo = topology.load (std::memory_order_acquire))
-    {
-        // Devices may deliver more samples than announced; process in prepared-size chunks.
-        for (int start = 0; start < numSamples; start += blockSize)
-        {
-            const int n = juce::jmin (blockSize, numSamples - start);
-
-            for (size_t hw = 0; hw < hwInPtrs.size(); ++hw)
-            {
-                const int a = hwInToActive[hw];
-                hwInPtrs[hw] = (a >= 0 && a < numIns && ins[a] != nullptr) ? ins[a] + start : nullptr;
-            }
-
-            for (size_t hw = 0; hw < hwOutPtrs.size(); ++hw)
-            {
-                const int a = hwOutToActive[hw];
-                hwOutPtrs[hw] = (a >= 0 && a < numOuts && outs[a] != nullptr) ? outs[a] + start : nullptr;
-            }
-
-            processChunk (*topo, n);
-        }
-    }
-
-    garbage.audioCallbackFinished();
-}
-
-void MixerEngine::processChunk (const Topology& topo, int n) noexcept
-{
-    const auto* const* hwIns = hwInPtrs.data();
-    const int numHwIns = static_cast<int> (hwInPtrs.size());
-
-    // 1. Input channels (parallel)
-    pool.parallelFor (static_cast<int> (topo.inputs.size()), [&] (int i)
-    {
-        auto& s = *topo.inputs[(size_t) i];
-        s.readHardwareInputs (hwIns, numHwIns, n);
-        s.process (n);
-    });
-
-    // 2. Buses (parallel; each bus owns its own send ramp state on every input)
-    pool.parallelFor (static_cast<int> (topo.buses.size()), [&] (int i)
-    {
-        auto& bus = *topo.buses[(size_t) i];
-        sumSendsIntoBus (bus, topo.inputs, n);
-        bus.process (n);
-    });
-
-    // 3. Master
-    sumMaster (topo, n);
-
-    // 4. Solo / monitor
-    buildMonitor (topo, n);
-
-    // 5. Hardware outputs
-    writeOutputs (topo, n);
-
-    // 6. Safety clip: nothing above the ceiling ever reaches the amplifiers.
-    protectOutputs (n);
-}
-
-void MixerEngine::protectOutputs (int n) noexcept
-{
-    if (! outputProtection.load (std::memory_order_relaxed))
-        return;
-
-    const float ceiling = juce::jlimit (0.0f, 4.0f, dsp::dbToGain (outputCeilingDb.load (std::memory_order_relaxed)));
-    bool engaged = false;
-
-    for (auto* out : hwOutPtrs)
-    {
-        if (out == nullptr)
-            continue;
-
-        if (! dsp::allFinite (out, n))
-        {
-            juce::FloatVectorOperations::clear (out, n);
-            engaged = true;
-            continue;
-        }
-
-        if (dsp::peakLevel (out, n) > ceiling)
-        {
-            juce::FloatVectorOperations::clip (out, out, -ceiling, ceiling, n);
-            engaged = true;
-        }
-    }
-
-    if (engaged)
-        outputClipEvents.fetch_add (1, std::memory_order_relaxed);
-}
-
-void MixerEngine::sumSendsIntoBus (Strip& bus, const std::vector<Strip*>& ins, int n) noexcept
-{
-    bus.beginSummedBlock (n);
-
-    const bool busStereo = bus.getNumChannels() == 2;
-    auto* const* dst = bus.getWorkBuffers();
-
-    for (auto* in : ins)
-    {
-        auto* sendPtr = in->params.sends.find (bus.getId());
-        if (sendPtr == nullptr)
-            continue; // never configured: no send
-
-        auto& send = *sendPtr;
-        const float target = send.enabled.load (std::memory_order_relaxed)
-                                 ? dsp::dbToGain (send.levelDb.load (std::memory_order_relaxed))
-                                 : 0.0f;
-        float& last = send.lastGain;
-
-        if ((target == 0.0f && last == 0.0f) || in->isIdle())
-        {
-            last = target; // an idle strip's buffers are silent: nothing to add
-            continue;
-        }
-
-        const auto* const* src = send.preFader.load (std::memory_order_relaxed) ? in->getPreFader()
-                                                                                 : in->getPostFader();
-        const bool srcStereo = in->getNumChannels() == 2;
-
-        if (busStereo)
-        {
-            // Sends follow the channel pan/balance into stereo buses.
-            const float l = in->getPanLeft(), r = in->getPanRight();
-            dsp::addWithGainRamp (dst[0], src[0], n, last * l, target * l);
-            dsp::addWithGainRamp (dst[1], src[srcStereo ? 1 : 0], n, last * r, target * r);
-        }
-        else if (srcStereo)
-        {
-            dsp::addWithGainRamp (dst[0], src[0], n, last * 0.5f, target * 0.5f);
-            dsp::addWithGainRamp (dst[0], src[1], n, last * 0.5f, target * 0.5f);
-        }
-        else
-        {
-            dsp::addWithGainRamp (dst[0], src[0], n, last, target);
-        }
-
-        last = target;
-    }
-}
-
-void MixerEngine::sumMaster (const Topology& topo, int n) noexcept
-{
-    auto& m = *topo.master;
-    m.beginSummedBlock (n);
-    auto* const* dst = m.getWorkBuffers();
-
-    auto addStrip = [&] (Strip& s)
-    {
-        const float target = s.params.mainAssign.load (std::memory_order_relaxed) ? 1.0f : 0.0f;
-
-        if (s.isIdle())
-        {
-            s.lastMainAssignGain = target;
-            return;
-        }
-
-        if (target != 0.0f || s.lastMainAssignGain != 0.0f)
-        {
-            const auto* const* src = s.getMainOut();
-            dsp::addWithGainRamp (dst[0], src[0], n, s.lastMainAssignGain, target);
-            dsp::addWithGainRamp (dst[1], src[1], n, s.lastMainAssignGain, target);
-        }
-
-        s.lastMainAssignGain = target;
-    };
-
-    for (auto* s : topo.inputs)
-        addStrip (*s);
-    for (auto* s : topo.buses)
-        addStrip (*s);
-
-    m.process (n);
-}
-
-void MixerEngine::buildMonitor (const Topology& topo, int n) noexcept
-{
-    bool solo = false;
-    for (auto* s : topo.inputs)
-        solo = solo || s->params.solo.load (std::memory_order_relaxed);
-    for (auto* s : topo.buses)
-        solo = solo || s->params.solo.load (std::memory_order_relaxed);
-
-    anySoloActive.store (solo, std::memory_order_relaxed);
-
-    monitorBuffer.clear (0, n);
-    auto* const* mon = monitorBuffer.getArrayOfWritePointers();
-    const bool afl = soloAfl.load (std::memory_order_relaxed);
-
-    auto addSolo = [&] (Strip& s)
-    {
-        const float target = (solo && s.params.solo.load (std::memory_order_relaxed)) ? 1.0f : 0.0f;
-
-        if (target != 0.0f || s.lastSoloGain != 0.0f)
-        {
-            if (afl)
-            {
-                const auto* const* src = s.getMainOut();
-                dsp::addWithGainRamp (mon[0], src[0], n, s.lastSoloGain, target);
-                dsp::addWithGainRamp (mon[1], src[1], n, s.lastSoloGain, target);
-            }
-            else
-            {
-                const auto* const* src = s.getPostChain();
-                const bool stereo = s.getNumChannels() == 2;
-                dsp::addWithGainRamp (mon[0], src[0], n, s.lastSoloGain, target);
-                dsp::addWithGainRamp (mon[1], src[stereo ? 1 : 0], n, s.lastSoloGain, target);
-            }
-        }
-
-        s.lastSoloGain = target;
-    };
-
-    for (auto* s : topo.inputs)
-        addSolo (*s);
-    for (auto* s : topo.buses)
-        addSolo (*s);
-
-    // With nothing soloed the monitor follows the master.
-    const float masterTarget = solo ? 0.0f : 1.0f;
-    const auto* const* m = topo.master->getMainOut();
-    dsp::addWithGainRamp (mon[0], m[0], n, lastMasterToMonitor, masterTarget);
-    dsp::addWithGainRamp (mon[1], m[1], n, lastMasterToMonitor, masterTarget);
-    lastMasterToMonitor = masterTarget;
-
-    const float level = dsp::dbToGain (monitorLevelDb.load (std::memory_order_relaxed));
-    dsp::applyGainRamp (mon[0], n, lastMonitorGain, level);
-    dsp::applyGainRamp (mon[1], n, lastMonitorGain, level);
-    lastMonitorGain = level;
-
-    for (int c = 0; c < 2; ++c)
-        dsp::atomicMax (monitorPeak[(size_t) c], dsp::peakLevel (mon[c], n));
-}
-
-void MixerEngine::addToOutput (int hw, const float* src, int n) noexcept
-{
-    if (hw >= 0 && hw < static_cast<int> (hwOutPtrs.size()))
-        if (auto* dst = hwOutPtrs[(size_t) hw])
-            juce::FloatVectorOperations::add (dst, src, n);
-}
-
-void MixerEngine::writeOutputs (const Topology& topo, int n) noexcept
-{
-    auto writeStrip = [&] (const Strip& s, bool directOut)
-    {
-        const int l = s.params.outputLeft.load (std::memory_order_relaxed);
-        const int r = s.params.outputRight.load (std::memory_order_relaxed);
-
-        if (l < 0 && r < 0)
-            return;
-
-        if (directOut)
-        {
-            // Input direct outs carry the processed signal before the fader (for recording).
-            const auto* const* src = s.getPostChain();
-            addToOutput (l, src[0], n);
-            addToOutput (r, src[s.getNumChannels() > 1 ? 1 : 0], n);
-        }
-        else if (s.getNumChannels() == 1)
-        {
-            // Mono buses feed the same signal to both assigned outputs.
-            addToOutput (l, s.getPostFader()[0], n);
-            addToOutput (r, s.getPostFader()[0], n);
-        }
-        else
-        {
-            addToOutput (l, s.getMainOut()[0], n);
-            addToOutput (r, s.getMainOut()[1], n);
-        }
-    };
-
-    writeStrip (*topo.master, false);
-
-    for (auto* s : topo.buses)
-        writeStrip (*s, false);
-
-    for (auto* s : topo.inputs)
-        writeStrip (*s, true);
-
-    addToOutput (monitorOutputLeft.load (std::memory_order_relaxed), monitorBuffer.getReadPointer (0), n);
-    addToOutput (monitorOutputRight.load (std::memory_order_relaxed), monitorBuffer.getReadPointer (1), n);
+    ld::ld_engine_process (engine, ins, numIns, outs, numOuts, numSamples);
 }
 
 } // namespace livedaw

@@ -1,0 +1,9 @@
+[package]
+name = "livedaw-dsp"
+description = "Realtime-safe DSP for Live DAW: biquads, 4-band EQ, gate, compressor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]

@@ -215,26 +215,26 @@ namespace
               on (make<ParamButton> (s.params.eq.enabled, "ON", Colours::active)),
               editor (make<EqEditor> (s.params.eq, [&engine] { return engine.getSampleRate(); }))
         {
-            for (int b = 0; b < dsp::ParametricEq::kNumBands; ++b)
+            for (int b = 0; b < kNumEqBands; ++b)
             {
                 auto& band = s.params.eq.bands[(size_t) b];
                 auto& ctl = bands[b];
                 ctl.on = &make<ParamButton> (band.enabled, juce::String (b + 1), Colours::active);
                 ctl.type = &make<ParamCombo> (band.type);
-                using T = dsp::ParametricEq::BandType;
+                using T = EqBandType;
                 ctl.type->addValue ("Bell", static_cast<int> (T::Bell));
                 if (b == 0)
                 {
                     ctl.type->addValue ("Shelf", static_cast<int> (T::LowShelf));
                     ctl.type->addValue ("Cut", static_cast<int> (T::LowCut));
                 }
-                if (b == dsp::ParametricEq::kNumBands - 1)
+                if (b == kNumEqBands - 1)
                 {
                     ctl.type->addValue ("Shelf", static_cast<int> (T::HighShelf));
                     ctl.type->addValue ("Cut", static_cast<int> (T::HighCut));
                 }
                 ctl.type->refresh();
-                ctl.type->setEnabled (b == 0 || b == dsp::ParametricEq::kNumBands - 1);
+                ctl.type->setEnabled (b == 0 || b == kNumEqBands - 1);
 
                 ctl.freq = &make<Knob> ("Freq", band.frequency, 20.0, 20000.0, 1.0, " Hz");
                 ctl.freq->slider.setSkewAround (1000.0);
@@ -253,7 +253,7 @@ namespace
             editor.setBounds (left);
             b.removeFromLeft (8);
 
-            const int colW = b.getWidth() / dsp::ParametricEq::kNumBands;
+            const int colW = b.getWidth() / kNumEqBands;
             for (auto& ctl : bands)
             {
                 auto col = b.removeFromLeft (colW).reduced (2, 0);
@@ -279,7 +279,7 @@ namespace
 
         ParamButton& on;
         EqEditor& editor;
-        BandControls bands[dsp::ParametricEq::kNumBands];
+        BandControls bands[kNumEqBands];
     };
 
     //==============================================================================
@@ -433,7 +433,7 @@ namespace
 
             for (auto& bus : engine.getBuses())
             {
-                auto& send = s.params.sends[(size_t) bus->getId()];
+                auto& send = s.sends[(size_t) bus->getId()];
                 Row row;
                 row.label = add (std::make_unique<juce::Label>());
                 row.label->setText (bus->name, juce::dontSendNotification);
