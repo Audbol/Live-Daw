@@ -232,15 +232,15 @@ public:
         }
         const auto ink = on ? juce::Colours::black : (isEnabled() ? Colours::text : Colours::textDim.withAlpha (0.6f));
         g.setColour (ink);
-        const auto text = getButtonText();
+        const auto keyText = getButtonText();
 
         if (! icon.has_value())
         {
             g.setFont (juce::FontOptions (juce::jlimit (11.0f, 21.0f, r.getHeight() * (twoLines ? 0.34f : 0.48f)), juce::Font::bold));
-            g.drawFittedText (text, r.toNearestInt().reduced (3, 0), juce::Justification::centred, twoLines ? 2 : 1, 0.8f);
+            g.drawFittedText (keyText, r.toNearestInt().reduced (3, 0), juce::Justification::centred, twoLines ? 2 : 1, 0.8f);
             return;
         }
-        if (text.isEmpty())
+        if (keyText.isEmpty())
         {
             drawIcon (g, *icon, r.reduced (r.getHeight() * 0.2f), ink);
             return;
@@ -251,14 +251,14 @@ public:
             drawIcon (g, *icon, r.reduced (r.getHeight() * 0.1f), ink);
             g.setColour (ink);
             g.setFont (juce::FontOptions (juce::jlimit (9.0f, 14.0f, label.getHeight() * 0.85f), juce::Font::bold));
-            g.drawFittedText (text, label.toNearestInt().reduced (1, 0), juce::Justification::centredTop, 1, 0.8f);
+            g.drawFittedText (keyText, label.toNearestInt().reduced (1, 0), juce::Justification::centredTop, 1, 0.8f);
             return;
         }
         auto iconBox = r.removeFromLeft (juce::jmin (r.getHeight(), r.getWidth() * 0.4f)).reduced (r.getHeight() * 0.2f);
         drawIcon (g, *icon, iconBox, ink);
         g.setColour (ink);
         g.setFont (juce::FontOptions (juce::jlimit (10.0f, 19.0f, r.getHeight() * 0.42f), juce::Font::bold));
-        g.drawFittedText (text, r.toNearestInt().reduced (2, 0), juce::Justification::centredLeft, 1, 0.8f);
+        g.drawFittedText (keyText, r.toNearestInt().reduced (2, 0), juce::Justification::centredLeft, 1, 0.8f);
     }
 
 private:

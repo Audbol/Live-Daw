@@ -174,7 +174,12 @@ void ResponseGraph::paint (juce::Graphics& g)
         g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
         g.setColour (Colours::textDim);
         for (float f : { 20.0f, 50.0f, 100.0f, 200.0f, 300.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f, 20000.0f })
-            g.drawText (rulerText (f), juce::Rectangle<float> (xForFreq (f) - 18.0f, (float) getHeight() - 14.0f, 36.0f, 13.0f), juce::Justification::centred);
+        {
+            auto r = juce::Rectangle<float> (xForFreq (f) - 18.0f, (float) getHeight() - 14.0f, 36.0f, 13.0f);
+            r = r.withX (juce::jlimit (0.0f, (float) getWidth() - r.getWidth(), r.getX()));
+            const auto just = f <= 20.0f ? juce::Justification::centredLeft : (f >= 20000.0f ? juce::Justification::centredRight : juce::Justification::centred);
+            g.drawText (rulerText (f), r, just);
+        }
         if (block == Eq)
             for (int i = -2; i <= 2; ++i)
             {

@@ -469,9 +469,11 @@ public:
         // height); EQ under INPUT, MAIN under FILTER; equal halves.
         levelArea = b.removeFromRight (b.getWidth() * 22 / 100);
         auto top = b.removeFromTop (b.getHeight() / 2);
-        inputArea = top.removeFromLeft (top.getWidth() * 79 / 100);
+        // FILTER / MAIN keep room for their titles on small screens.
+        const int sideW = juce::jmax (top.getWidth() * 21 / 100, juce::jmin (112, top.getWidth() / 3));
+        inputArea = top.removeFromLeft (top.getWidth() - sideW);
         filterArea = top;
-        eqArea = b.removeFromLeft (b.getWidth() * 79 / 100);
+        eqArea = b.removeFromLeft (b.getWidth() - sideW);
         mainArea = b;
 
         // INPUT: source tile (or feed grid), trim, processor thumbnails.
@@ -829,7 +831,8 @@ public:
         int pre = 4;
         if (kind == StripKind::Channel)
         {
-            for (auto letter : models::list (models::ProcessOrders)[juce::jlimit (0, 23, (int) strip->params.processOrder.load())])
+            const juce::String order = models::list (models::ProcessOrders)[juce::jlimit (0, 23, (int) strip->params.processOrder.load())];
+            for (auto letter : order)
                 slots.push_back (tabFor (letter));
             slots.push_back (HomeTab::PostInsert);
         }

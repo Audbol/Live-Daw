@@ -90,7 +90,7 @@ KnobBinding thresholdBinding (DynSlotParams& slot, const juce::String& label)
     if (spec.params.empty())
         return {};
     const int i = juce::jmax (0, spec.find ("thr"));
-    auto b = bindModelParam (slot.values[i], spec.params[(size_t) i]);
+    auto b = bindConsoleParam (slot.values[i], spec.params[(size_t) i]);
     b.label = label;
     return b;
 }
@@ -795,7 +795,7 @@ public:
         // The tool filter's parameters (TILT...) in the middle, HC FREQ always on the 6th knob.
         const auto& spec = models::model (models::FilterTools, f.toolModel.load());
         for (int i = 0; i < (int) spec.params.size() && i < 4; ++i)
-            k.push_back ({ bindModelParam (f.toolParams[i], spec.params[(size_t) i]), toolStyle (graph) });
+            k.push_back ({ bindConsoleParam (f.toolParams[i], spec.params[(size_t) i]), toolStyle (graph) });
         while (k.size() < 5)
             k.push_back ({});
         k.push_back ({ wingFreq ("HC FREQ", f.highCutFreq, 200.0f, 20000.0f, 10000.0f), freqStyle (graph) });
@@ -885,8 +885,8 @@ public:
         model->bind (models::Dynamics, &slot.model,
                      [this] (int m) { strip.setModel (isGate ? ModelBlock::Gate : ModelBlock::Dynamics, m); }, allowed,
                      isGate ? ModelSelector::gateSlotGroups() : ModelSelector::dynamicsSlotGroups());
-        mix = &knob (bindLinear ("MIX", slot.mix, 0.0f, 100.0f, " %", 0, 100.0f));
-        gain = &knob (bindLinear ("GAIN", slot.gain, -6.0f, 12.0f, " dB", 1, 0.0f));
+        mix = &make<KnobBox> (bindLinear ("MIX", slot.mix, 0.0f, 100.0f, " %", 0, 100.0f));
+        gain = &make<KnobBox> (bindLinear ("GAIN", slot.gain, -6.0f, 12.0f, " dB", 1, 0.0f));
         gr = &make<GainReductionMeter> ([this] { return isGate ? strip.meters.gateReductionDb.load() : strip.meters.dynReductionDb.load(); },
                                         isGate ? 40.0f : 24.0f);
         // The model's front panel.
@@ -908,8 +908,8 @@ public:
         keyFilter = &combo (models::list (models::SidechainFilters), &slot.scFilter);
         keyTapCaption = &label ("KEY TAP", 12.0f);
         keyTap = &combo (tapPointNames(), &slot.scTap);
-        keyFreq = &knob (wingFreq ("FREQ", slot.scFreq, 20.0f, 20000.0f, 1000.0f));
-        keyQ = &knob (bindLog ("Q", slot.scQ, 0.5f, 10.0f, {}, 1.0f));
+        keyFreq = &make<KnobBox> (wingFreq ("FREQ", slot.scFreq, 20.0f, 20000.0f, 1000.0f));
+        keyQ = &make<KnobBox> (bindLog ("Q", slot.scQ, 0.5f, 10.0f, {}, 1.0f));
         // Needs the engine's solo tap for the key signal (report E9).
         keySolo = &key ("KEY SOLO");
         keySolo->setEnabled (false);
@@ -918,9 +918,9 @@ public:
         {
             xoModeCaption = &label ("XOVER MODE", 12.0f);
             xoMode = &combo (models::list (models::XoverTypes), &slot.xoKind);
-            xoFreq = &knob (wingFreq ("FREQ", slot.xoFreq, 20.0f, 20000.0f, 1000.0f));
-            xoDepth = &knob (bindLinear ("DEPTH", slot.xoDepth, -40.0f, 0.0f, " dB", 1, -40.0f));
-            xoQ = &knob (bindLog ("Q", slot.xoQ, 0.5f, 10.0f, {}, 1.0f));
+            xoFreq = &make<KnobBox> (wingFreq ("FREQ", slot.xoFreq, 20.0f, 20000.0f, 1000.0f));
+            xoDepth = &make<KnobBox> (bindLinear ("DEPTH", slot.xoDepth, -40.0f, 0.0f, " dB", 1, -40.0f));
+            xoQ = &make<KnobBox> (bindLog ("Q", slot.xoQ, 0.5f, 10.0f, {}, 1.0f));
             xoSolo = &key ("XOVER SOLO");
             xoSolo->setEnabled (false); // report E9
         }
@@ -931,7 +931,7 @@ public:
         std::vector<HomeKnob> k;
         const auto& spec = models::model (models::Dynamics, slot.model.load());
         for (int i = knobPage * 6; i < juce::jmin ((int) spec.params.size(), knobPage * 6 + 6); ++i)
-            k.push_back ({ bindModelParam (slot.values[i], spec.params[(size_t) i]), styleOf (KnobStyle::Bar::Auto, {}, face) });
+            k.push_back ({ bindConsoleParam (slot.values[i], spec.params[(size_t) i]), styleOf (KnobStyle::Bar::Auto, {}, face) });
         return k;
     }
 
@@ -951,32 +951,34 @@ public:
         b.removeFromTop (4);
 
         // Side column: KEY, XOVER (COMP slot) and the output.
-        auto side = b.removeFromRight (juce::jmin (300, b.getWidth() * 38 / 100));
-        auto out = box (side.removeFromBottom (juce::jlimit (80, 110, side.getHeight() / 4)), "OUTPUT");
-        layoutRow (out, { mix, gain });
-        auto keyArea = box (side.removeFromTop (isGate ? side.getHeight() : side.getHeight() * 54 / 100), "KEY");
-        const int ch = 13, kh = juce::jlimit (20, kKeyHeight, keyArea.getHeight() / 7);
+        auto side = b.removeFromRight (juce::jmin (320, b.getWidth() * 40 / 100));
+        const int boxH = juce::jlimit (26, 40, side.getHeight() / 11);
+        auto out = box (side.removeFromBottom (boxH + kPanelHeaderHeight + 20), "OUTPUT");
+        layoutRow (out.withSizeKeepingCentre (out.getWidth(), boxH), { mix, gain }, 6);
+        auto keyArea = box (side.removeFromTop (isGate ? side.getHeight() : side.getHeight() * 52 / 100), "KEY");
+        const int ch = 13, kh = juce::jlimit (20, kKeyHeight, keyArea.getHeight() / 6);
         auto captions = keyArea.removeFromTop (ch);
         layoutRow (captions, { keySourceCaption, keyFilterCaption, keyTapCaption });
         layoutRow (keyArea.removeFromTop (kh), { keySource, keyFilter, keyTap });
-        keyArea.removeFromTop (4);
-        auto knobRow = keyArea.removeFromTop (juce::jmin (84, keyArea.getHeight()));
-        keySolo->setBounds (knobRow.removeFromRight (knobRow.getWidth() / 3).withSizeKeepingCentre (knobRow.getWidth() / 3 - 4, juce::jmin (kh, knobRow.getHeight())));
-        layoutRow (knobRow, { keyFreq, keyQ });
+        keyArea.removeFromTop (6);
+        auto knobRow = keyArea.removeFromTop (juce::jmin (boxH, keyArea.getHeight()));
+        keySolo->setBounds (knobRow.removeFromRight (knobRow.getWidth() / 3).reduced (3, 0));
+        layoutRow (knobRow, { keyFreq, keyQ }, 6);
         if (! isGate)
         {
             auto xo = box (side, "XOVER");
             xoModeCaption->setBounds (xo.removeFromTop (ch));
             auto row = xo.removeFromTop (kh);
-            xoSolo->setBounds (row.removeFromRight (row.getWidth() / 3).reduced (2, 0));
-            xoMode->setBounds (row.reduced (2, 0));
-            xo.removeFromTop (2);
+            xoSolo->setBounds (row.removeFromRight (row.getWidth() / 3).reduced (3, 0));
+            xoMode->setBounds (row.withTrimmedRight (3));
+            xo.removeFromTop (6);
             const bool peak = models::list (models::XoverTypes)[slot.xoKind.load()].containsIgnoreCase ("PEAK");
             xoQ->setVisible (peak);
+            auto boxRow = xo.removeFromTop (juce::jmin (boxH, xo.getHeight()));
             if (peak)
-                layoutRow (xo, { xoFreq, xoDepth, xoQ });
+                layoutRow (boxRow, { xoFreq, xoDepth, xoQ }, 6);
             else
-                layoutRow (xo, { xoFreq, xoDepth });
+                layoutRow (boxRow.withWidth (boxRow.getWidth() * 2 / 3), { xoFreq, xoDepth }, 6);
         }
 
         b.removeFromRight (6);
@@ -999,7 +1001,7 @@ private:
     DynSlotParams& slot;
     IconKey *on = nullptr, *keySolo = nullptr, *xoSolo = nullptr;
     ModelSelector* model = nullptr;
-    DisplayKnob *mix = nullptr, *gain = nullptr, *keyFreq = nullptr, *keyQ = nullptr, *xoFreq = nullptr, *xoDepth = nullptr, *xoQ = nullptr;
+    KnobBox *mix = nullptr, *gain = nullptr, *keyFreq = nullptr, *keyQ = nullptr, *xoFreq = nullptr, *xoDepth = nullptr, *xoQ = nullptr;
     GainReductionMeter* gr = nullptr;
     Faceplate* face = nullptr;
     juce::Label *keySourceCaption = nullptr, *keyFilterCaption = nullptr, *keyTapCaption = nullptr, *xoModeCaption = nullptr;
@@ -1099,7 +1101,7 @@ public:
         {
             const auto& spec = models::model (static_cast<models::Table> (strip.getEqTable()), eq.model.load());
             for (int i = knobPage * 6; i < juce::jmin ((int) spec.params.size(), knobPage * 6 + 5); ++i)
-                k.push_back ({ bindModelParam (eq.values[i], spec.params[(size_t) i]), styleOf (KnobStyle::Bar::Auto, {}, face) });
+                k.push_back ({ bindConsoleParam (eq.values[i], spec.params[(size_t) i]), styleOf (KnobStyle::Bar::Auto, {}, face) });
         }
         else
             for (auto& b : bandBindings())
@@ -1190,7 +1192,7 @@ public:
             juce::String text = id == "l" ? "LOW" : (id == "h" ? "HIGH" : id.toUpperCase() + " PEQ");
             if (id == "l" || id == "h")
                 if (const int t = spec.find (id + "eq"); t >= 0)
-                    text << "  " << spec.params[(size_t) t].display (strip.params.eq.values[t].load());
+                    text << "  " << consoleText (spec.params[(size_t) t], strip.params.eq.values[t].load());
             g.drawFittedText (text, k.toNearestInt().reduced (4, 0), juce::Justification::centredLeft, 1, 0.7f);
         }
     }
@@ -1226,7 +1228,7 @@ private:
         for (auto suffix : { "g", "f", "q", "eq" })
         {
             const int i = spec.find (band + suffix);
-            auto b = i >= 0 ? bindModelParam (eq.values[i], spec.params[(size_t) i]) : KnobBinding {};
+            auto b = i >= 0 ? bindConsoleParam (eq.values[i], spec.params[(size_t) i]) : KnobBinding {};
             if (i >= 0)
             {
                 const juce::String s (suffix);
@@ -1487,7 +1489,7 @@ public:
             return { { bindLinear ("FX MIX", fx.params (slot).mix, 0.0f, 100.0f, " %", 0, 100.0f), styleOf (KnobStyle::Bar::Fill, KnobColours::white) } };
         const auto& spec = models::model (models::Fx, fx.getModel (slot));
         for (int i = knobPage * 6; i < juce::jmin ((int) spec.params.size(), knobPage * 6 + 6); ++i)
-            k.push_back ({ bindModelParam (fx.params (slot).values[i], spec.params[(size_t) i]), styleOf (KnobStyle::Bar::Auto, {}, face) });
+            k.push_back ({ bindConsoleParam (fx.params (slot).values[i], spec.params[(size_t) i]), styleOf (KnobStyle::Bar::Auto, {}, face) });
         return k;
     }
 
@@ -2031,13 +2033,17 @@ public:
     SendsTab (UiContext& c, Strip& s, bool matrixPage) : HomeScreen (c, s), matrix (matrixPage || s.getKind() == StripKind::Main)
     {
         // engine (report E7): TAP WIDTH and TAP EQ of the TAP-mode sends.
-        tapWidth = &make<KnobBox> (KnobBinding {});
+        KnobBinding width;
+        width.label = "TAP WIDTH";
+        width.get = [] { return 0.75f; };
+        width.text = [] { return juce::String ("100 %"); };
+        tapWidth = &make<KnobBox> (width);
         tapWidth->setEnabled (false);
         tapEq = &key ("TAP EQ", std::nullopt);
         tapEq->setEnabled (false);
         if (strip.getKind() == StripKind::Channel)
         {
-            tapMenu = &key ({}, Icon::ChevronRight);
+            tapMenu = &key (juce::String::fromUTF8 ("\xe2\x96\xbc"), std::nullopt);
             tapMenu->onClick = [this]
             {
                 juce::PopupMenu m;
@@ -2208,7 +2214,8 @@ private:
         juce::StringArray blocks { "INPUT", "FILTER" };
         if (strip.getKind() == StripKind::Channel)
         {
-            for (auto letter : models::list (models::ProcessOrders)[juce::jlimit (0, 23, (int) strip.params.processOrder.load())])
+            const juce::String order = models::list (models::ProcessOrders)[juce::jlimit (0, 23, (int) strip.params.processOrder.load())];
+            for (auto letter : order)
                 blocks.add (letter == 'G' ? "GATE" : letter == 'E' ? "EQ" : letter == 'D' ? "COMP" : "INS 1");
         }
         else
@@ -2682,7 +2689,7 @@ private:
             copyStripParams (ctx.engine, *src, *dst, scope);
             ++done;
         }
-        ctx.log.add (copy ? "Channel copy" : "Channel init", juce::String (done) + " strip(s)");
+        ctx.log.add (EventLog::Level::Info, juce::String (copy ? "Channel copy: " : "Channel init: ") + juce::String (done) + " strip(s)");
         if (onClose)
             onClose();
     }

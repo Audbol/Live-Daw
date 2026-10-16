@@ -66,10 +66,10 @@ namespace
                 return;
             }
             g.setColour (lit ? juce::Colours::black : Colours::text);
-            const auto text = getButtonText();
-            const bool twoLines = text.containsChar ('\n');
+            const auto keyText = getButtonText();
+            const bool twoLines = keyText.containsChar ('\n');
             g.setFont (juce::FontOptions (juce::jlimit (10.0f, 15.0f, r.getHeight() * (twoLines ? 0.3f : 0.36f)), juce::Font::bold));
-            g.drawFittedText (text, r.toNearestInt().reduced (2, 0), juce::Justification::centred, twoLines ? 2 : 1, 0.7f);
+            g.drawFittedText (keyText, r.toNearestInt().reduced (2, 0), juce::Justification::centred, twoLines ? 2 : 1, 0.7f);
         }
     };
 
@@ -129,7 +129,8 @@ public:
         startTimerHz (20);
     }
 
-    std::function<void (bool touched)> onTouch;
+    /** Hovered or dragged (`touched`); `pressed` when clicked. */
+    std::function<void (bool touched, bool pressed)> onTouch;
 
     void setBinding (KnobBinding b, KnobStyle s)
     {
@@ -212,18 +213,18 @@ public:
 
     float getPosition() const noexcept { return position; }
 
-    void mouseEnter (const juce::MouseEvent&) override { touch (true); }
+    void mouseEnter (const juce::MouseEvent&) override { touch (true, false); }
     void mouseExit (const juce::MouseEvent&) override
     {
         if (! isMouseButtonDown())
-            touch (false);
+            touch (false, false);
     }
     void mouseDown (const juce::MouseEvent&) override
     {
         dragStart = position;
-        touch (true);
+        touch (true, true);
     }
-    void mouseUp (const juce::MouseEvent&) override { touch (isMouseOver()); }
+    void mouseUp (const juce::MouseEvent&) override { touch (isMouseOver(), false); }
     void mouseDrag (const juce::MouseEvent& e) override
     {
         const float sensitivity = e.mods.isShiftDown() ? 0.2f : 1.0f;
@@ -242,10 +243,10 @@ public:
     }
 
 private:
-    void touch (bool t)
+    void touch (bool t, bool pressed)
     {
         if (onTouch)
-            onTouch (t);
+            onTouch (t, pressed);
         repaint();
     }
 
@@ -453,9 +454,12 @@ public:
     }
 
     juce::Component::SafePointer<juce::Component> touched, focus;
+    std::function<bool()> suppressed;
 
     void paint (juce::Graphics& g) override
     {
+        if (suppressed && suppressed())
+            return;
         auto outline = [&] (juce::Component* c, float thickness, float alpha)
         {
             if (c == nullptr || ! c->isShowing() || ! getParentComponent()->isParentOf (c))
@@ -516,10 +520,11 @@ public:
         const int busRows = juce::jmax (1, ((int) ctx.engine.getBuses().size() + 7) / 8);
         auto left = gridLeft, right = gridRight;
         group (left, "CHANNEL", StripKind::Channel, 8, chRows);
-        const int unit = right.getHeight() / (2 + busRows + 1 + 1);
+        // AUX, BUS, then MAIN and MATRIX: rows as tall as the channels' where they fit.
+        const int unit = juce::jmin ((right.getHeight() - 3 * 16) / (2 + busRows), (left.getHeight() - 16) / chRows);
         group (right.removeFromTop (unit * 1 + 16), "AUX", StripKind::Aux, 8, 1);
         group (right.removeFromTop (unit * busRows + 16), "BUS", StripKind::Bus, 8, busRows);
-        auto last = right;
+        auto last = right.removeFromTop (unit + 16);
         group (last.removeFromLeft (last.getWidth() * 4 / 12), "MAIN", StripKind::Main, 4, 1);
         last.removeFromLeft (8);
         group (last, "MATRIX", StripKind::Matrix, 8, 1);
@@ -618,13 +623,14 @@ MainDisplay::MainDisplay (UiContext& c) : ctx (c)
     for (int i = 0; i < 6; ++i)
     {
         auto* slot = slots.add (new ParamBarSlot());
-        slot->onTouch = [this, i, slot] (bool touched)
+        slot->onTouch = [this, i, slot] (bool touched, bool pressed)
         {
             if (touched)
             {
                 touchedSlot = i;
                 highlight->touched = slot->getStyle().target;
-                setFocus (slot->getBinding(), slot->getStyle().target != nullptr ? slot->getStyle().target.getComponent() : slot);
+                if (pressed)
+                    setFocus (slot->getBinding(), slot->getStyle().target.getComponent());
             }
             else if (touchedSlot == i)
             {
@@ -657,6 +663,7 @@ MainDisplay::MainDisplay (UiContext& c) : ctx (c)
     addChildComponent (*channelSelect);
 
     highlight = std::make_unique<Highlight>();
+    highlight->suppressed = [this] { return channelSelect != nullptr && channelSelect->isVisible(); };
     addAndMakeVisible (*highlight);
     focusTracker = std::make_unique<FocusTracker> (*this);
 
