@@ -522,7 +522,6 @@ fn capture_and_apply_by_section() {
 }
 
 #[test]
-#[ignore = "needs the FX DSP families"]
 fn builtin_fx_devices_save_load_and_recall() {
     use livedaw_dsp::wing::FX_MODELS;
     let fx = |t: &str| model_index(FX_MODELS, t).unwrap();

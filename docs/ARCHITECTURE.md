@@ -57,7 +57,7 @@ same tables through `ld_model_*` (`livedaw-ffi/src/models.rs`, `src/engine/Model
 
 | Layer | Language | Where |
 |---|---|---|
-| DSP (filters, EQ models, dynamics models, delay) | Rust | `rust/crates/livedaw-dsp` |
+| DSP (filters, EQ models, dynamics models, the FX rack's devices, delay) | Rust | `rust/crates/livedaw-dsp` |
 | Realtime engine (WING topology, strips, sends, DCAs, mute groups, FX slots, automix, solo, monitor, output protection, worker pool, deferred frees) | Rust | `rust/crates/livedaw-engine` |
 | Sessions (console state, Show > Scene > Snippet, fades, fader banks, show files, legacy import) | Rust | `rust/crates/livedaw-session` |
 | C ABI | Rust + C++ header | `rust/crates/livedaw-ffi`, `include/livedaw_engine.h` |
@@ -72,21 +72,37 @@ views after a show load changes the console from Rust.
   engine controls are `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same
   memory as `std::atomic<float/bool/int32_t>` structs, and the UI writes them directly
   with no FFI call. Both sides describe the layout; `ld::verifyLayout()` compares the
-  two at startup and in the tests (ABI version 3), and the app refuses to run if they
+  two at startup and in the tests (ABI version 4), and the app refuses to run if they
   differ.
-- **FX slots.** The 16 slots are the WING's FX rack, holding VST3/AU/LV2 plugins (the
-  "EXT" device). Plugin instances stay in C++ (`FxSlots`). Each loaded slot registers
-  `process` and `release` callbacks with the engine (`ld_fx_set`). Rust calls `process`
-  from whichever thread runs the strip whose PRE or POST insert uses the slot, keeps a
-  dry copy for the slot's mix, and auto-bypasses the slot if the callback reports an
-  error (a C++ exception is caught in the callback) or returns NaN/inf. A slot runs for
-  one strip per block: a second insert on the same slot passes its signal through and
-  the slot is flagged as double assigned. The engine measures each slot's load. A
-  replaced plugin's `release` runs on the message thread once no audio callback can
-  still reach it.
-- **Plugins in sessions.** The session reaches the plugins through a *plugin bridge*
-  implemented by `Show`: capture a slot (description XML + base64 state), restore one
-  (state only, or by creating the plugin on show load) and clear one.
+- **FX slots.** The 16 slots are the WING's FX rack. Each holds one device from the
+  console's FX table (`FX_MODELS`, generated like the processing models): the 26
+  premium effects (reverbs, chorus/flanger/phaser, delays, pitch; slots 1-8 only), the
+  32 standard effects (EQs, dynamics, enhancers, amps, utilities) and the 5 channel
+  strips, or **EXT**, a VST3/AU/LV2 plugin.
+  - Built-in devices live in `livedaw-dsp/src/wing/fx` (one module per family, shared
+    building blocks in `blocks.rs`). A device is an `FxAlgo`: it is created on the
+    message thread (allocating its buffers for the sample rate and block size), then
+    swapped into the slot (`AtomicPtr`) and runs on the audio thread without
+    allocating or locking. `FxDevice` feeds it the slot's parameter atomics
+    (`FxParams::values`) when they change. A replaced device is freed through the
+    epoch garbage list. Setting the model through the parameters (a scene recall, the
+    UI) is picked up by `ld_engine_collect`, which builds the device.
+  - Plugin instances stay in C++ (`FxSlots`). Each loaded slot registers `process`
+    and `release` callbacks with the engine (`ld_fx_set`, which also sets the model to
+    EXT). A replaced plugin's `release` runs on the message thread once no audio
+    callback can still reach it.
+  - Rust runs the slot from whichever thread runs the strip whose PRE or POST insert
+    uses it, keeps a dry copy for the slot's FX MIX, and auto-bypasses the slot if a
+    plugin reports an error (a C++ exception is caught in the callback) or a device or
+    plugin returns NaN/inf. A slot runs for one strip per block: a second insert on
+    the same slot passes its signal through and the slot is flagged as double
+    assigned. The engine measures each slot's load.
+  - Devices are stereo. A mono strip feeds both inputs and takes the average of the
+    two outputs back.
+- **FX in sessions.** A slot saves its device and parameter values. Plugins are
+  reached through a *plugin bridge* implemented by `Show`: capture a slot (description
+  XML + base64 state), restore one (state only, or by creating the plugin on show load)
+  and clear one.
 - **Panics.** Every FFI entry point and every worker task runs under `catch_unwind`.
   A panic in the audio path outputs silence for that block and increments
   `engineFaults`. It never unwinds into C++.
@@ -158,8 +174,9 @@ Show
 - Fades collect fade targets (fader, pan and send levels) instead of setting them, and
   `ld_show_tick` interpolates the atomics. A fade target holds its strip (`Arc`), so
   removing a strip mid-fade is safe. A new recall finishes any fade still running.
-- FX slots are recalled as *plugin state only*, and only when the same plugin is
-  already in that slot. Recalls never instantiate plugins.
+- FX slots recall their built-in device and its parameters. A plugin's state is
+  recalled only when the same plugin is already in that slot; recalls never
+  instantiate or remove plugins, and a premium device is refused in slots 9-16.
 - Show files are XML. Saving writes a temporary file, verifies it, renames it over the
   show and keeps the previous version as `.bak`; loading falls back to the `.bak` if
   the show is damaged.
@@ -200,6 +217,12 @@ show control and mute groups (top right); and the main display with the screen k
   `HomeScreens.*`: INPUT, FILTER, GATE, EQ, DYNAMICS, PRE/POST INSERT, MAIN, SENDS),
   EFFECTS, METERS, ROUTING, SETUP, LIBRARY (`ShowPanel.*` for scenes and snippets) and
   UTILITY.
+- **Faceplates** (`Faceplate.*`): every FX device and dynamics/EQ model is drawn as the
+  unit it recreates (panel colour, knob style, VU or LED meter, faders for graphic EQs
+  and remotes, rack ears or wood cheeks), styled per model token. EFFECTS opens a
+  slot's faceplate in its editor; the GATE, EQ and DYNAMICS screens show the model's.
+  The device menu groups the table like the console (PREMIUM, STANDARD, CHANNEL
+  STRIPS, PLUGIN).
 - Views poll the shared atomics on timers (4-25 Hz); meters read `MeterBank`, the one
   reader of the engine's "peak since last read" meters.
 
@@ -226,11 +249,11 @@ show control and mute groups (top right); and the main display with the screen k
 - Plugins run inside the mixer process. Bad output and exceptions are contained, but
   a plugin that segfaults takes the app down (safe mode then recovers the show).
   Hosting each plugin in a sandbox process is the next step for full isolation.
-- The WING's own FX algorithms (reverbs, delays, channel FX) aren't recreated; FX
-  slots host plugins.
+- The FX devices recreate each unit's controls and characteristic sound, not the
+  console's exact algorithms.
 - No plugin delay compensation.
 - Plugins always run in stereo. A mono strip feeds both plugin inputs and takes the
-  left output back.
+  left output back (built-in devices return the average of both).
 - Solo safe and the monitor A/B bus choice are saved with the show but not used by the
   engine yet; there is one monitor output pair.
 - Not yet: the alternate (ALT) channel input, the WING's USER / custom control

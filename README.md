@@ -28,8 +28,19 @@ be sent to any hardware output.
     mode, with pan), to the 4 mains and the 8 matrices.
 - **Buses 9+ feed buses 1-8**, matrices take the mains and a **direct input** from any
   channel (invert it for a mix-minus).
-- **FX slots:** the WING's EXT device: each of the 16 slots hosts a **VST3, AU (macOS)
-  or LV2 (Linux) plugin**, used by any strip's insert.
+- **FX rack:** 16 slots, used by any strip's insert, each holding one of the WING's
+  devices:
+  - **26 premium effects** (slots 1-8): 16 reverbs (hall, room, chamber, plate,
+    concert, ambience, vintage room/reverb/plate, gated, reverse, delay+reverb,
+    shimmer, spring, VSS3, blue plate), dimension chorus, stereo chorus and flanger,
+    stereo, ultratap, tape, oil can and BBD delays, stereo and dual pitch.
+  - **32 standard effects:** graphic EQs, the analog EQs (Soul, Even 88/84,
+    Fortissimo 110, Pulsar, Mach EQ4), dynamic EQ, multiband compressor, limiter,
+    de-esser, enhancer, exciter, psycho bass, sub octaver and sub monster, phaser,
+    tremolo/panner, rotary speaker, mood filter, tape machine, double vocal, pitch fix,
+    five guitar/bass amps, body resonance, stereo imager and speaker manager.
+  - **5 channel strips:** EVEN, SOUL, VINTAGE, BUS and MASTER.
+  - **EXT:** a **VST3, AU (macOS) or LV2 (Linux) plugin**.
 - Processing models are recreated from the WING's parameter set (controls, ranges and
   behaviour), not circuit-modelled. The model tables are generated from the console's
   published parameter map.
@@ -63,8 +74,12 @@ Barlow Condensed.
     **SAFE** key. Each block opens its screen with the model menu and the model's
     parameters; the EQ screen has the response graph with draggable bands and the
     band keys (LOW, 1-4, HIGH).
-  - **EFFECTS:** the FX rack, slots 1-8 premium and 9-16 standard. A loaded slot shows
-    its plugin, the strip using it (PRE/POST), ON and its mix; an empty slot a "+".
+  - **EFFECTS:** the FX rack, slots 1-8 premium and 9-16 standard. Each slot shows its
+    device, the strip using it (PRE/POST), ON and its mix. Tapping a slot opens the
+    device on its **faceplate**, drawn like the hardware it recreates (a LARC remote
+    for the vintage reverbs, a black 1176-style limiter with its VU meter...), with the
+    device menu grouped PREMIUM / STANDARD / CHANNEL STRIPS / PLUGIN. The GATE, EQ and
+    DYNAMICS screens show their model's faceplate too.
   - **METERS:** channels in groups of eight, AUX, BUS 1-8 / 9-16, DCA, MAIN and MATRIX,
     with number keys (select the strip) and M keys (mute). Bigger consoles page.
   - **ROUTING:** channel tiles on the left, a group of 48 sources on the right: pick a
@@ -83,7 +98,7 @@ Barlow Condensed.
 
 ## Shows, scenes and snippets
 
-- A **show** is the file. It holds the console (channels, buses, FX slot plugins,
+- A **show** is the file. It holds the console (channels, buses, FX devices and plugins,
   patching, DCAs, mute groups, fader banks) and all of its scenes.
 - A **scene** is a console snapshot with a **recall scope** (Name, Routing, Input,
   Gate, EQ, Dynamics, Inserts, Sends, Fader, DCA/Mute), an optional **fade time** for
@@ -92,7 +107,7 @@ Barlow Condensed.
 - A **snippet** belongs to a scene and recalls only the strips and sections you choose.
   Fire it by hand, or mark it to **fire with its scene**.
 - Recalling a scene or snippet never creates or destroys channels or plugins, so it
-  can't cause a dropout.
+  can't cause a dropout. Built-in FX devices and their settings are recalled.
 - Shows from earlier Live DAW versions are converted when they load: channels stay
   channels, aux and group buses become buses, the master becomes Main 1, the gate,
   4-band EQ and compressor become the GATE, WING EQ and COMP models, and each strip's
@@ -208,8 +223,8 @@ copy, pass `-DLIVEDAW_VST2_SDK_DIR=/path/to/vstsdk` to enable VST2 hosting.
    their outputs.
 3. Pick banks on each fader section. **SEL** a strip to edit it on the HOME screen and
    the channel strip section; the six knobs under the display follow the screen.
-4. Load plugins into FX slots on **EFFECTS**, then assign the slots to inserts on
-   **PRE INS** / **POST INS**.
+4. Pick devices (or load plugins) for the FX slots on **EFFECTS**, then assign the
+   slots to inserts on **PRE INS** / **POST INS**.
 5. **LIBRARY > SCENES:** **NEW** captures the console as a scene; set its recall scope,
    fade and notes. **LIBRARY > SNIPPETS** adds snippets to the selected scene. **GO**
    recalls, **GO+NEXT** steps through the show.
@@ -219,7 +234,7 @@ copy, pass `-DLIVEDAW_VST2_SDK_DIR=/path/to/vstsdk` to enable VST2 hosting.
 ## Project layout
 
 ```
-rust/crates/livedaw-dsp/     Rust DSP: the WING models (filter, EQ models, 32 dynamics models), delay, biquads
+rust/crates/livedaw-dsp/     Rust DSP: the WING models (filter, EQ models, 32 dynamics models), FX rack devices, delay, biquads
 rust/crates/livedaw-engine/  Rust realtime engine: WING topology, strips, sends, DCAs, mute groups, FX slots, solo, worker pool
 rust/crates/livedaw-session/ Rust sessions: console state, Show > Scene > Snippet, fades, fader banks, show files, legacy import
 rust/crates/livedaw-ffi/     C ABI over the engine and model tables + C++ header (include/livedaw_engine.h)
