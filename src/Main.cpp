@@ -3,6 +3,7 @@
 #include "engine/PluginHost.h"
 #include "engine/PluginScanner.h"
 #include "engine/Show.h"
+#include "engine/VirtualAudioDevice.h"
 #include "ui/MainComponent.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -222,6 +223,12 @@ public:
         // the show asks for it.
         if (engine->applyStartupMainMute())
             log.info ("Mains muted at start-up (STARTUP MAIN MUTE)");
+
+        // A device with no hardware behind it, for machines without a sound card.
+        // Added after the platform's types (created by getAvailableDeviceTypes),
+        // so it is never picked by default over real hardware.
+        deviceManager.getAvailableDeviceTypes();
+        deviceManager.addAudioDeviceType (std::make_unique<VirtualAudioIODeviceType>());
 
         // First launch: open a low-latency driver (ASIO on Windows, JACK on Linux)
         // directly, instead of trying the OS default device first.

@@ -26,7 +26,12 @@ namespace livedaw
 
     The project itself (tracks, clips, edits, undo, files) belongs to the UI.
     The recorder only knows the playlist it was last given and the takes it
-    recorded. Every method is for the message thread. */
+    recorded. Every method is for the message thread.
+
+    The engine side is rust/crates/livedaw-recorder (ld_rec_*): the audio
+    thread owns the transport and only copies to / from lock-free rings; a
+    reader thread renders the playlist ahead of the play position, a writer
+    thread writes the takes. */
 class Recorder
 {
 public:
@@ -37,8 +42,18 @@ public:
     /** Resolution of the peaks returned by getRecordingPeaks(). */
     static constexpr int kSamplesPerPeak = 256;
 
-    Recorder();
+    explicit Recorder (ld::Engine* engine);
     ~Recorder();
+
+    /** Input index of playback channel n, and back (-1 if `input` isn't one). */
+    static constexpr int playbackSource (int channel) noexcept { return kPlaybackSourceBase + channel; }
+    static constexpr int playbackChannelOf (int input) noexcept
+    {
+        return input >= kPlaybackSourceBase && input < kPlaybackSourceBase + kNumPlaybackChannels ? input - kPlaybackSourceBase : -1;
+    }
+    static constexpr bool isPlaybackSource (int input) noexcept { return playbackChannelOf (input) >= 0; }
+    /** "PLAY 1" .. "PLAY 64". */
+    static juce::String playbackSourceName (int channel) { return "PLAY " + juce::String (channel + 1); }
 
     //==============================================================================
     // Transport
@@ -69,6 +84,8 @@ public:
     /** Playback wraps from `end` to `start` while enabled (not while recording). */
     void setLoop (int64_t start, int64_t end, bool enabled);
     bool isLoopEnabled() const;
+    int64_t getLoopStart() const;
+    int64_t getLoopEnd() const;
 
     //==============================================================================
     // Playback
@@ -175,9 +192,12 @@ public:
     /** The fullest record buffer / emptiest playback buffer, 0..1 (1 = in trouble). */
     float getDiskLoad() const;
 
+    /** Offline use (tests, rendering faster than real time): waits until the
+        disk threads have caught up with what they can do now. */
+    bool waitForDisk (int timeoutMs = 10000);
+
 private:
-    struct Impl;
-    std::unique_ptr<Impl> impl;
+    ld::Engine* engine;
 
     JUCE_DECLARE_NON_COPYABLE (Recorder)
 };

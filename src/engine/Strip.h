@@ -155,6 +155,43 @@ public:
         return meters.inputPeak[ch];
     }
 
+    //==============================================================================
+    // Input sources (input and aux channels). A source is a hardware input
+    // (0-based) or a recorder playback channel (Recorder::playbackSource (n)).
+
+    /** The MAIN input (-1 = none; the right one is used when stereo, -1 = left + 1). */
+    int getInputLeft() const noexcept { return params.inputLeft.load(); }
+    int getInputRight() const noexcept { return params.inputRight.load(); }
+
+    /** The ALT input (WING INPUT SELECT): -1 = none. */
+    int getAltInputLeft() const noexcept { return params.altInputLeft.load(); }
+    int getAltInputRight() const noexcept { return params.altInputRight.load(); }
+    bool hasAltInput() const noexcept { return isInput() && getAltInputLeft() >= 0; }
+    void setAltInput (int left, int right = -1) const noexcept
+    {
+        params.altInputLeft.store (left < 0 ? -1 : left);
+        params.altInputRight.store (right < 0 ? -1 : right);
+    }
+
+    /** The strip's own MAIN / ALT switch (it decides unless INPUT SELECT is global). */
+    bool isAltSelected() const noexcept { return params.altSelected.load(); }
+    void setAltSelected (bool alt) const noexcept { params.altSelected.store (alt); }
+
+    /** True if the strip listens to its ALT input now: it has one and ALT is
+        selected (MixerEngine::inputSelectGlobal ? globalAlt : isAltSelected()). */
+    bool isUsingAltInput() const noexcept
+    {
+        if (! hasAltInput())
+            return false;
+        if (controls != nullptr && controls->inputSelectGlobal.load())
+            return controls->globalAlt.load();
+        return isAltSelected();
+    }
+
+    /** The source in use (MAIN or ALT). */
+    int getActiveInputLeft() const noexcept { return isUsingAltInput() ? getAltInputLeft() : getInputLeft(); }
+    int getActiveInputRight() const noexcept { return isUsingAltInput() ? getAltInputRight() : getInputRight(); }
+
     StripParams& params;
     SendBank sends;
     ld::StripMeters& meters;
@@ -163,6 +200,7 @@ public:
     bool isIdle() const noexcept { return ld::ld_strip_is_idle (handle); }
 
 private:
+    const ld::EngineControls* controls;
     ld::Strip* handle;
     StripKind kind;
     int id;

@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 5;
+constexpr int kAbiVersion = 6;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -45,6 +45,12 @@ constexpr int kMaxFxParams = 36;
 /** FX slot models (indices into model table 4): an empty slot, and EXT (a plugin). */
 constexpr int kFxNone = 0;
 constexpr int kFxExt = 1;
+/** The recorder's mono playback channels: input index kPlaybackSourceBase + n
+    (in inputLeft/Right, altInputLeft/Right, record ports) is playback channel n. */
+constexpr int kNumPlaybackChannels = 64;
+constexpr int32_t kPlaybackSourceBase = 0x10000;
+constexpr int kMaxRecordTracks = 64;
+constexpr int kSamplesPerPeak = 256;
 
 enum StripKindId : int32_t
 {
@@ -175,6 +181,11 @@ struct StripParams
     std::atomic<int32_t> icon;
     std::atomic<bool> led;
     std::atomic<bool> recallSafe;
+
+    // ALT input (WING INPUT SELECT; input and aux channels): used instead of
+    // inputLeft/Right while ALT is selected (-1 = none; right used when stereo).
+    std::atomic<int32_t> altInputLeft, altInputRight;
+    std::atomic<bool> altSelected; // the strip's MAIN / ALT switch (unless INPUT SELECT is global)
 };
 
 struct StripMeters
@@ -239,6 +250,10 @@ struct EngineControls
     std::atomic<bool> automixEnable[2]; // X ENABLE, Y ENABLE
     std::atomic<float> monitorDimDb;    // DIM amount (attenuation in dB, default 20)
     std::atomic<int32_t> mainLink;      // MainLinkMode
+    // INPUT SELECT: global = every input strip follows globalAlt, else each
+    // strip's altSelected. A strip uses ALT only if it has an ALT source.
+    std::atomic<bool> inputSelectGlobal;
+    std::atomic<bool> globalAlt;
 };
 
 struct LayoutInfo
@@ -248,7 +263,10 @@ struct LayoutInfo
         offDcaMask, offDirectLevel, offColour, offRecallSafe, offDynValues, offDynXoDepth, offEqValues, offSendPan,
         offMetersAutomix, offControlsDcas, offControlsFx, offFxValues, offSendMode, offMatrixSendLevel,
         offMetersTrimPeak, offMetersPflPeak, offControlsBusSoloAfl, offControlsAutomixEnable, offControlsDimDb,
-        offControlsMainLink;
+        offControlsMainLink,
+        // ABI 6
+        offAltInputLeft, offAltSelected, offControlsInputSelectGlobal, offControlsGlobalAlt, recClip,
+        recPlaybackTrack, recRecordTrack, recTake;
 };
 
 struct ParamInfo
@@ -312,6 +330,46 @@ struct PluginBridge
     CaptureFxFn capture;
     RestoreFxFn restore;
     ClearFxFn clear;
+};
+
+// Recorder (ld_rec_*)
+
+/** A clip of the playlist: file frame fileOffset plays at timeline `start`. */
+struct RecClipC
+{
+    const char* path;
+    size_t pathLen;
+    int64_t fileOffset, start, length, fadeIn, fadeOut;
+    float gain;
+    int32_t fadeInShape, fadeOutShape; // 0 Linear, 1 EqualPower, 2 SCurve
+};
+
+/** A playback track; its clips are clips[firstClip .. firstClip + numClips). */
+struct RecPlaybackTrackC
+{
+    int32_t channel, numChannels;
+    float gain;
+    bool mute;
+    int32_t firstClip, numClips;
+};
+
+struct RecRecordTrackC
+{
+    int32_t track;
+    int32_t sourceKind; // 0 hardware input (port), 1 strip pre-fader, 2 strip post-fader
+    int32_t port;
+    int32_t stripKind, stripNumber; // as shown: CH 3 = (kChannel, 3), BUS 12 = (kBus, 12)
+    int32_t numChannels;
+    const char* path;
+    size_t pathLen;
+};
+
+/** A finished take; free `path` with ld_string_free. */
+struct RecTakeC
+{
+    int32_t track, numChannels;
+    int64_t start, length;
+    LdString* path;
 };
 
 extern "C"
@@ -508,6 +566,35 @@ extern "C"
     LdString* ld_layers_to_xml (LayerSet*);
     bool ld_layers_from_xml (LayerSet*, const char* utf8, size_t len);
     void ld_layers_reset (LayerSet*);
+
+    // Recorder (message thread; the audio side runs in ld_engine_process)
+    /** 0 Stopped, 1 Starting, 2 Playing, 3 Recording (commands not yet taken by the
+        audio thread already show: play reads Starting at once). */
+    int32_t ld_rec_state (const Engine*);
+    int64_t ld_rec_position (const Engine*);
+    void ld_rec_play (const Engine*);
+    void ld_rec_stop (const Engine*);
+    void ld_rec_locate (const Engine*, int64_t position);
+    void ld_rec_set_loop (const Engine*, int64_t start, int64_t end, bool enabled);
+    /** Writes the loop range (pointers may be null); returns whether it is enabled. */
+    bool ld_rec_loop (const Engine*, int64_t* start, int64_t* end);
+    /** Copies the playlist (the arrays may be freed afterwards). */
+    void ld_rec_set_playlist (const Engine*, const RecPlaybackTrackC* tracks, int32_t numTracks,
+                              const RecClipC* clips, int32_t numClips);
+    /** Creates the files and starts recording; false sets *error (may be null; free it). */
+    bool ld_rec_record (const Engine*, const RecRecordTrackC* tracks, int32_t numTracks, LdString** error);
+    /** The next finalized take; false if none. */
+    bool ld_rec_pop_take (const Engine*, RecTakeC* out);
+    /** Linear peak of a recording track's channel since the last call. */
+    float ld_rec_record_level (const Engine*, int32_t track, int32_t channel);
+    /** minMax holds maxPeaks * 2 * ld_rec_record_track_channels() floats. */
+    int32_t ld_rec_recording_peaks (const Engine*, int32_t track, int64_t firstPeak, int32_t maxPeaks, float* minMax);
+    int32_t ld_rec_record_track_channels (const Engine*, int32_t track);
+    int64_t ld_rec_recorded_length (const Engine*);
+    int32_t ld_rec_dropouts (const Engine*);
+    float ld_rec_disk_load (const Engine*);
+    /** Waits until the disk threads caught up (offline use, faster than real time). */
+    bool ld_rec_wait_for_disk (const Engine*, int32_t timeoutMs);
 }
 
 /// Returns nullptr if the C++ and Rust layouts agree, else a description of the mismatch.
@@ -566,6 +653,14 @@ inline const char* verifyLayout()
         { info.offControlsAutomixEnable, offsetof (EngineControls, automixEnable), "EngineControls.automixEnable" },
         { info.offControlsDimDb, offsetof (EngineControls, monitorDimDb), "EngineControls.monitorDimDb" },
         { info.offControlsMainLink, offsetof (EngineControls, mainLink), "EngineControls.mainLink" },
+        { info.offAltInputLeft, offsetof (StripParams, altInputLeft), "StripParams.altInputLeft" },
+        { info.offAltSelected, offsetof (StripParams, altSelected), "StripParams.altSelected" },
+        { info.offControlsInputSelectGlobal, offsetof (EngineControls, inputSelectGlobal), "EngineControls.inputSelectGlobal" },
+        { info.offControlsGlobalAlt, offsetof (EngineControls, globalAlt), "EngineControls.globalAlt" },
+        { info.recClip, sizeof (RecClipC), "RecClipC size" },
+        { info.recPlaybackTrack, sizeof (RecPlaybackTrackC), "RecPlaybackTrackC size" },
+        { info.recRecordTrack, sizeof (RecRecordTrackC), "RecRecordTrackC size" },
+        { info.recTake, sizeof (RecTakeC), "RecTakeC size" },
     };
 
     if (info.abiVersion != kAbiVersion)

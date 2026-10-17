@@ -655,6 +655,11 @@ impl Recorder {
         s.levels[t.first_stream + channel].exchange(0.0)
     }
 
+    /// Channels of `track` in the current (or last) recording (0 if it isn't in it).
+    pub fn record_track_channels(&self, track: i32) -> usize {
+        self.current_session().and_then(|s| s.tracks.iter().find(|t| t.track == track).map(|t| t.num_channels)).unwrap_or(0)
+    }
+
     /// Peaks of the current (or last) recording of `track`, from peak
     /// `first`: min/max pairs per channel, interleaved. Returns the number of
     /// peaks written.

@@ -170,6 +170,7 @@ impl AudioSide {
             used.store(false, Release);
         }
         s.playback_buffered.store(0, Relaxed);
+        s.disk_load.store(0.0);
     }
 
     fn stop_now(&mut self, s: &Shared) {
