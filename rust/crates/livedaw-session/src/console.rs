@@ -474,6 +474,10 @@ fn capture_strip(s: &Strip, sections: u32, slots: &[usize]) -> Element {
         let g = e.add_new("Grp");
         put_u(g, "dca", &p.dca_mask);
         put_u(g, "mgrp", &p.mute_group_mask);
+        let tags = s.tags();
+        if !tags.is_empty() {
+            g.set("tags", tags);
+        }
     }
     e
 }
@@ -865,6 +869,7 @@ fn apply_strip(s: &Arc<Strip>, e: &Element, requested: u32, fades: &mut Option<&
     if let Some(g) = e.child("Grp").filter(|_| sections & GROUPS != 0) {
         get_u(g, "dca", &p.dca_mask);
         get_u(g, "mgrp", &p.mute_group_mask);
+        s.set_tags(g.attr("tags").unwrap_or_default());
     }
 
     result.strips_applied += 1;

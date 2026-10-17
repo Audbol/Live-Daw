@@ -171,6 +171,8 @@ pub struct Strip {
     pub sends: SendBank,
     /// UI metadata (never touched by the audio thread).
     name: Mutex<String>,
+    /// The free tags of HOME > TAGS, comma-separated (the WING's `/ch/n/tags`).
+    tags: Mutex<String>,
     dsp: UnsafeCell<StripDsp>,
     last_main: [UnsafeCell<[f32; 2]>; NUM_MAINS],
     last_mtx: [UnsafeCell<[f32; 2]>; NUM_MATRICES],
@@ -190,6 +192,7 @@ impl Strip {
             meters: StripMeters::default(),
             sends: SendBank::default(),
             name: Mutex::new(String::new()),
+            tags: Mutex::new(String::new()),
             dsp: UnsafeCell::new(StripDsp::new()),
             last_main: Default::default(),
             last_mtx: Default::default(),
@@ -212,6 +215,15 @@ impl Strip {
 
     pub fn set_name(&self, name: &str) {
         *self.name.lock().unwrap_or_else(|e| e.into_inner()) = name.to_owned();
+    }
+
+    /// The free tags (HOME > TAGS), comma-separated.
+    pub fn tags(&self) -> String {
+        self.tags.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    pub fn set_tags(&self, tags: &str) {
+        *self.tags.lock().unwrap_or_else(|e| e.into_inner()) = tags.to_owned();
     }
 
     /// The strip has an INS 2 slot (every kind but aux).
