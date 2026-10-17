@@ -57,6 +57,28 @@ IconKey& HomeScreen::key (const juce::String& text, std::optional<Icon> icon, ju
     return make<IconKey> (text, icon, on);
 }
 
+ChoiceField& HomeScreen::field (const juce::String& caption, const juce::StringArray& items, std::atomic<int32_t>& value, const juce::String& noneText)
+{
+    return make<ChoiceField> (caption,
+                              [items, &value, noneText]
+                              {
+                                  const int v = value.load();
+                                  return v < 0 ? noneText : items[v];
+                              },
+                              [items, &value, noneText, caption] (ChoiceField& f)
+                              {
+                                  juce::StringArray list;
+                                  if (noneText.isNotEmpty())
+                                      list.add (noneText);
+                                  list.addArray (items);
+                                  const int offset = noneText.isNotEmpty() ? 1 : 0;
+                                  popups::ListOptions options;
+                                  options.columns = list.size() > 30 ? 3 : (list.size() > 12 ? 2 : 1);
+                                  options.caption = caption;
+                                  popups::chooseFrom (f, list, value.load() + offset, [&value, offset] (int i) { value = i - offset; }, options);
+                              });
+}
+
 juce::Rectangle<int> HomeScreen::box (juce::Rectangle<int> area, const juce::String& title, bool chevron)
 {
     boxes.push_back ({ area, title, chevron });
@@ -586,7 +608,7 @@ public:
         g.setColour (juce::Colour (0xff3a3a3a));
         g.fillRect (inner);
         auto label = inner.removeFromBottom (juce::jlimit (12.0f, 22.0f, inner.getHeight() * 0.26f));
-        drawIcon (g, stripIcon (strip.getKind()), inner.reduced (inner.getHeight() * 0.2f), Colours::textDim);
+        drawChannelIcon (g, strip.params.icon.load(), strip.getKind(), inner.reduced (inner.getHeight() * 0.2f), colours::ink);
         g.setColour (juce::Colour (0xff262626));
         g.fillRect (label);
         const bool st = strip.params.stereo.load();
@@ -609,7 +631,7 @@ private:
 
     void timerCallback() override
     {
-        const auto now = port() + stripName (strip) + juce::String (strip.getColourIndex());
+        const auto now = port() + stripName (strip) + juce::String (strip.getColourIndex()) + "|" + juce::String (strip.params.icon.load());
         if (now != shown)
         {
             shown = now;
@@ -734,7 +756,7 @@ public:
             // engine E11 would add AES/EBU, phones, speakers and solo bus sources.
             directOn = &key ("ON", std::nullopt, colours::accent);
             bindKey (*directOn, p.directOn);
-            directSource = &combo (channelNames (ctx.engine), &p.directSource, "NONE");
+            directSource = &field ("SOURCE", channelNames (ctx.engine), p.directSource, "NONE");
             directInvert = &key (juce::String::fromUTF8 ("\xc3\x98 INVERT"), std::nullopt, colours::accent);
             bindKey (*directInvert, p.directInvert);
             directPre = &key ("PRE", std::nullopt, colours::accent);
@@ -844,7 +866,7 @@ private:
     FeedGrid* feedGrid = nullptr;
     IconKey *loCut = nullptr, *hiCut = nullptr, *tool = nullptr;
     IconKey *directOn = nullptr, *directInvert = nullptr, *directPre = nullptr;
-    IntCombo* directSource = nullptr;
+    ChoiceField* directSource = nullptr;
     KnobBox* directLevel = nullptr;
     Segmented *inputSel = nullptr, *selectMode = nullptr;
     Bracket* bracket = nullptr;
@@ -1011,13 +1033,16 @@ public:
     DynTab (UiContext& c, Strip& s, bool gateSlot) : HomeScreen (c, s), isGate (gateSlot), slot (gateSlot ? s.params.gate : s.params.dynamics)
     {
         on = &key ("ON", std::nullopt, colours::accent);
-        on->outlined = true;
         bindKey (*on, slot.on);
-        model = &make<ModelSelector>();
-        const auto allowed = strip.getKind() == StripKind::Aux && ! isGate ? models::list (models::AuxDynModels) : juce::StringArray();
-        model->bind (models::Dynamics, &slot.model,
-                     [this] (int m) { strip.setModel (isGate ? ModelBlock::Gate : ModelBlock::Dynamics, m); }, allowed,
-                     isGate ? ModelSelector::gateSlotGroups() : ModelSelector::dynamicsSlotGroups());
+        allowed = strip.getKind() == StripKind::Aux && ! isGate ? models::list (models::AuxDynModels) : juce::StringArray();
+        model = &make<ChoiceField> (isGate ? "GATE MODEL" : "COMP MODEL",
+                                    [this] { return models::model (models::Dynamics, slot.model.load()).name.toUpperCase(); },
+                                    [this] (ChoiceField& f)
+                                    {
+                                        ModelSelector::choose (f, models::Dynamics, slot.model.load(),
+                                                               [this] (int m) { strip.setModel (isGate ? ModelBlock::Gate : ModelBlock::Dynamics, m); },
+                                                               allowed, isGate ? ModelSelector::gateSlotGroups() : ModelSelector::dynamicsSlotGroups());
+                                    });
         mix = &make<KnobBox> (bindLinear ("MIX", slot.mix, 0.0f, 100.0f, " %", 0, 100.0f));
         gain = &make<KnobBox> (bindLinear ("GAIN", slot.gain, -6.0f, 12.0f, " dB", 1, 0.0f));
         gr = &make<GainReductionMeter> ([this] { return isGate ? strip.meters.gateReductionDb.load() : strip.meters.dynReductionDb.load(); },
@@ -1035,12 +1060,9 @@ public:
         bindFace();
         startTimerHz (8);
 
-        keySourceCaption = &label ("KEY SOURCE", 12.0f);
-        keySource = &combo (channelNames (ctx.engine), &slot.scSource, "SELF");
-        keyFilterCaption = &label ("KEY FILTER", 12.0f);
-        keyFilter = &combo (models::list (models::SidechainFilters), &slot.scFilter);
-        keyTapCaption = &label ("KEY TAP", 12.0f);
-        keyTap = &combo (tapPointNames(), &slot.scTap);
+        keySource = &field ("KEY SOURCE", channelNames (ctx.engine), slot.scSource, "SELF");
+        keyFilter = &field ("KEY FILTER", models::list (models::SidechainFilters), slot.scFilter);
+        keyTap = &field ("KEY TAP", tapPointNames(), slot.scTap);
         keyFreq = &make<KnobBox> (wingFreq ("FREQ", slot.scFreq, 20.0f, 20000.0f, 1000.0f));
         keyQ = &make<KnobBox> (bindLog ("Q", slot.scQ, 0.5f, 10.0f, {}, 1.0f));
         // Needs the engine's solo tap for the key signal (report E9).
@@ -1049,8 +1071,7 @@ public:
 
         if (! isGate)
         {
-            xoModeCaption = &label ("XOVER MODE", 12.0f);
-            xoMode = &combo (models::list (models::XoverTypes), &slot.xoKind);
+            xoMode = &field ("XOVER MODE", models::list (models::XoverTypes), slot.xoKind);
             xoFreq = &make<KnobBox> (wingFreq ("FREQ", slot.xoFreq, 20.0f, 20000.0f, 1000.0f));
             xoDepth = &make<KnobBox> (bindLinear ("DEPTH", slot.xoDepth, -40.0f, 0.0f, " dB", 1, -40.0f));
             xoQ = &make<KnobBox> (bindLog ("Q", slot.xoQ, 0.5f, 10.0f, {}, 1.0f));
@@ -1072,16 +1093,17 @@ public:
     {
         clearBoxes();
         auto b = getLocalBounds();
-        // The header: ON, the slot's name, the model, gain reduction.
-        header = b.removeFromTop (juce::jlimit (32, 46, b.getHeight() / 9));
-        auto h = header.reduced (4, 4);
-        h.removeFromLeft (juce::jmin (90, h.getWidth() / 7)); // the title
-        on->setBounds (h.removeFromLeft (56));
-        h.removeFromLeft (8);
-        gr->setBounds (h.removeFromRight (juce::jmin (160, h.getWidth() / 3)).reduced (0, 4));
-        h.removeFromRight (8);
-        model->setBounds (h);
-        b.removeFromTop (4);
+        // The header as on the 3.1 EQ screen: ON, the model field, the gain
+        // reduction at the right.
+        header = b.removeFromTop (juce::jlimit (32, 60, b.getHeight() / 9));
+        const float u = (float) header.getWidth() / 1160.0f;
+        auto h = header.reduced (0, juce::jmax (3, header.getHeight() / 9));
+        auto span = [&h, u, this] (float x0, float x1)
+        { return juce::Rectangle<int> (header.getX() + juce::roundToInt (x0 * u), h.getY(), juce::roundToInt ((x1 - x0) * u), h.getHeight()); };
+        on->setBounds (span (16.0f, 112.0f));
+        model->setBounds (span (128.0f, 520.0f));
+        gr->setBounds (span (900.0f, 1144.0f).reduced (0, h.getHeight() / 5));
+        b.removeFromTop (juce::jmax (4, getHeight() / 100));
 
         // Side column: KEY, XOVER (COMP slot) and the output.
         auto side = b.removeFromRight (juce::jmin (320, b.getWidth() * 40 / 100));
@@ -1089,9 +1111,7 @@ public:
         auto out = box (side.removeFromBottom (boxH + kPanelHeaderHeight + 20), "OUTPUT");
         layoutRow (out.withSizeKeepingCentre (out.getWidth(), boxH), { mix, gain }, 6);
         auto keyArea = box (side.removeFromTop (isGate ? side.getHeight() : side.getHeight() * 52 / 100), "KEY");
-        const int ch = 13, kh = juce::jlimit (20, kKeyHeight, keyArea.getHeight() / 6);
-        auto captions = keyArea.removeFromTop (ch);
-        layoutRow (captions, { keySourceCaption, keyFilterCaption, keyTapCaption });
+        const int kh = juce::jlimit (28, 48, keyArea.getHeight() / 4);
         layoutRow (keyArea.removeFromTop (kh), { keySource, keyFilter, keyTap });
         keyArea.removeFromTop (6);
         auto knobRow = keyArea.removeFromTop (juce::jmin (boxH, keyArea.getHeight()));
@@ -1100,7 +1120,6 @@ public:
         if (! isGate)
         {
             auto xo = box (side, "XOVER");
-            xoModeCaption->setBounds (xo.removeFromTop (ch));
             auto row = xo.removeFromTop (kh);
             xoSolo->setBounds (row.removeFromRight (row.getWidth() / 3).reduced (3, 0));
             xoMode->setBounds (row.withTrimmedRight (3));
@@ -1121,24 +1140,20 @@ public:
     void paint (juce::Graphics& g) override
     {
         HomeScreen::paint (g);
-        auto h = header.toFloat();
         g.setColour (colours::panel);
-        g.fillRect (h);
-        g.setColour (Colours::text);
-        g.setFont (juce::FontOptions (juce::jlimit (14.0f, 22.0f, h.getHeight() * 0.55f), juce::Font::bold));
-        g.drawText (isGate ? "GATE" : "COMP", h.reduced (8.0f, 0.0f).withWidth (juce::jmin (90.0f, h.getWidth() / 7.0f)).toNearestInt(), juce::Justification::centredLeft);
+        g.fillRect (header);
     }
 
 private:
     bool isGate;
     DynSlotParams& slot;
     IconKey *on = nullptr, *keySolo = nullptr, *xoSolo = nullptr;
-    ModelSelector* model = nullptr;
+    ChoiceField* model = nullptr;
+    juce::StringArray allowed;
     KnobBox *mix = nullptr, *gain = nullptr, *keyFreq = nullptr, *keyQ = nullptr, *xoFreq = nullptr, *xoDepth = nullptr, *xoQ = nullptr;
     GainReductionMeter* gr = nullptr;
     Faceplate* face = nullptr;
-    juce::Label *keySourceCaption = nullptr, *keyFilterCaption = nullptr, *keyTapCaption = nullptr, *xoModeCaption = nullptr;
-    IntCombo *keySource = nullptr, *keyFilter = nullptr, *keyTap = nullptr, *xoMode = nullptr;
+    ChoiceField *keySource = nullptr, *keyFilter = nullptr, *keyTap = nullptr, *xoMode = nullptr;
     juce::Rectangle<int> header;
     int shownModel = -1, shownXo = -1, knobPage = 0;
 
@@ -1510,7 +1525,7 @@ public:
         g.setFont (juce::FontOptions (top.getHeight() * 0.85f, juce::Font::bold));
         g.drawText (juce::String (strip.getNumber()), top.toNearestInt(), juce::Justification::centred);
         auto iconArea = r.removeFromTop (r.getHeight() * 0.1f);
-        drawIcon (g, stripIcon (strip.getKind()), iconArea.reduced (iconArea.getHeight() * 0.15f), Colours::textDim);
+        drawChannelIcon (g, strip.params.icon.load(), strip.getKind(), iconArea.reduced (iconArea.getHeight() * 0.15f), colours::caption);
         auto name = r.removeFromTop (14.0f);
         g.setColour (Colours::text);
         g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
@@ -2897,6 +2912,7 @@ void copyStripParams (MixerEngine& engine, const Strip& src, const Strip& dst, j
     {
         d.dcaMask = s.dcaMask.load();
         d.muteGroupMask = s.muteGroupMask.load();
+        setStripTags (dst, stripTags (src));
     }
     if (has (In))
     {
@@ -3552,9 +3568,10 @@ private:
 };
 
 //==============================================================================
-/** RTA SETTINGS / EQ/RTA SETTINGS (Figs. 24-25). The console's RTA is not
-    modelled: its rows are shown disabled. EQ/RTA SETTINGS sets the low and
-    high bands of the WING EQ to shelving or parametric. */
+/** RTA SETTINGS / EQ/RTA SETTINGS (Figs. 24-25, D10), docked at the right:
+    LO BAND / HI BAND fields (the WING EQ's low and high band types), then the
+    RTA rows with the console's choices (`/cfg/rta`, `/$ctl/cfg/rta`). The RTA
+    itself is not modelled (W35): its rows show the defaults, disabled. */
 class SettingsScreen final : public OverlayScreen
 {
 public:
@@ -3575,69 +3592,113 @@ public:
                     names.add (c.toUpperCase());
                 if (names.isEmpty())
                     names = { "PARAMETRIC", "SHELVING" };
-                auto* seg = bands.add (new Segmented (names, [&value] { return juce::roundToInt (value.load()); },
-                                                      [&value] (int v) { value = (float) v; }));
-                bandCaptions.add (caption);
-                addAndMakeVisible (seg);
+                auto* field = bands.add (new ChoiceField (caption, [names, &value] { return names[juce::roundToInt (value.load())]; },
+                                                          [names, &value] (ChoiceField& f)
+                                                          {
+                                                              popups::chooseFrom (f, names, juce::roundToInt (value.load()), [&value] (int v) { value = (float) v; });
+                                                          }));
+                field->dotsKey = true;
+                addAndMakeVisible (field);
             }
         }
-        const juce::StringArray rows[] = { eq ? juce::StringArray { "PRE", "POST" } : juce::StringArray { "IN", "EQ", "POST" },
-                                           { "30 dB", "60 dB" }, { "SLOW", "MED", "FAST" }, { "PEAK", "RMS", "AVG" }, { "ON" } };
-        for (auto& r : rows)
+        // Label, the console's choices, the default shown.
+        struct Row
         {
-            auto* seg = rta.add (new Segmented (r, [] { return -1; }, [] (int) {}));
-            seg->setEnabled (false); // the RTA is not modelled
-            addAndMakeVisible (seg);
+            const char* label;
+            juce::StringArray choices;
+            int shown;
+        };
+        const Row rows[] = { { "RTA SOURCE", eq ? juce::StringArray { "PRE", "POST" } : juce::StringArray { "IN", "EQ", "POST" }, eq ? 1 : 2 },
+                             { "RTA RANGE", { "30 dB", "60 dB" }, 1 },
+                             { "RTA DECAY", { "SLOW", "MED", "FAST" }, 1 },
+                             { "RTA DETECTOR", { "PEAK", "RMS", "AVG" }, 1 } };
+        for (auto& row : rows)
+        {
+            auto* field = rta.add (new ChoiceField ({}, [text = row.choices[row.shown]] { return text; }, {}));
+            field->dotsKey = true;
+            field->setEnabled (false);
+            rtaLabels.add (row.label);
+            addAndMakeVisible (field);
         }
+        autoGain.setEnabled (false);
+        addAndMakeVisible (autoGain);
+        sizeMode = std::make_unique<ChoiceField> ("SIZE/MODE", [this] { return juce::String (eq ? "1/4" : "1/3"); }, nullptr);
+        colour = std::make_unique<ChoiceField> ("COLOR", [] { return juce::String ("BL75"); }, nullptr);
+        KnobBinding gain;
+        gain.label = "FIXED GAIN";
+        gain.get = [] { return 0.1f; };
+        gain.text = [] { return juce::String ("0 dB"); };
+        fixedGain = std::make_unique<KnobBox> (gain);
+        for (juce::Component* c : { (juce::Component*) sizeMode.get(), (juce::Component*) colour.get(), (juce::Component*) fixedGain.get() })
+        {
+            c->setEnabled (false);
+            addAndMakeVisible (c);
+        }
+        sizeMode->dotsKey = colour->dotsKey = true;
     }
 
     void paint (juce::Graphics& g) override
     {
         OverlayScreen::paint (g);
-        g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
-        for (int i = 0; i < bands.size(); ++i)
-        {
-            g.setColour (Colours::text);
-            g.drawText (bandCaptions[i], bands[i]->getBounds().withX (labelX).withWidth (bands[i]->getX() - labelX - 8), juce::Justification::centredLeft);
-        }
-        static const char* names[] = { "RTA SOURCE", "RTA RANGE", "RTA DECAY", "RTA DETECTOR", "RTA AUTOGAIN" };
+        g.setColour (colours::panel);
+        g.fillRect (body);
+        g.setFont (juce::FontOptions (juce::jlimit (12.0f, 18.0f, (float) rowH * 0.4f), juce::Font::plain));
         for (int i = 0; i < rta.size(); ++i)
         {
-            g.setColour (Colours::textDim);
-            g.drawText (names[i], rta[i]->getBounds().withX (labelX).withWidth (rta[i]->getX() - labelX - 8), juce::Justification::centredLeft);
+            g.setColour (colours::dim);
+            g.drawText (rtaLabels[i], rta[i]->getBounds().withX (labelX).withWidth (rta[i]->getX() - labelX - 8), juce::Justification::centredLeft);
         }
-        g.setColour (Colours::textDim);
-        g.setFont (juce::FontOptions (13.0f, juce::Font::plain));
+        g.drawText ("RTA AUTOGAIN", autoGain.getBounds().withX (labelX).withWidth (autoGain.getX() - labelX - 8), juce::Justification::centredLeft);
+        g.setFont (juce::FontOptions (12.0f, juce::Font::plain));
         g.drawText ("The RTA (analyser) is not available.", note, juce::Justification::centredLeft);
     }
 
     void layoutContent (juce::Rectangle<int> b) override
     {
-        b = b.reduced (16, 8);
+        body = b;
+        b = b.reduced (juce::jmax (8, b.getWidth() / 40), 6);
         labelX = b.getX();
-        const int rowH = juce::jlimit (26, 40, b.getHeight() / 9);
-        auto place = [&] (juce::Component* c, int width)
+        rowH = juce::jlimit (26, 52, b.getHeight() / 9);
+        if (! bands.isEmpty())
         {
             auto row = b.removeFromTop (rowH);
-            b.removeFromTop (6);
-            c->setBounds (row.withTrimmedLeft (juce::jmin (220, row.getWidth() / 3)).withWidth (width));
+            const int w = (row.getWidth() - 8) / 2;
+            for (auto* f : bands)
+            {
+                f->setBounds (row.removeFromLeft (w));
+                row.removeFromLeft (8);
+            }
+            b.removeFromTop (rowH / 3);
+        }
+        auto control = [&b, this] (juce::Component& c, int width)
+        {
+            auto row = b.removeFromTop (rowH);
+            b.removeFromTop (rowH / 6);
+            c.setBounds (row.removeFromRight (width).reduced (0, rowH / 10));
         };
-        for (auto* s : bands)
-            place (s, juce::jmin (320, b.getWidth() / 2));
-        if (! bands.isEmpty())
-            b.removeFromTop (10);
-        for (int i = 0; i < rta.size(); ++i)
-            place (rta[i], juce::jmin (90 * (i == 0 ? (eq ? 2 : 3) : (i == 4 ? 1 : (i == 1 ? 2 : 3))), b.getWidth() / 2));
-        note = b.removeFromTop (24);
+        const int fieldW = b.getWidth() * 44 / 100;
+        for (auto* f : rta)
+            control (*f, fieldW);
+        control (autoGain, rowH * 3 / 2);
+        auto row = b.removeFromTop (rowH);
+        b.removeFromTop (rowH / 6);
+        sizeMode->setBounds (row.removeFromLeft (fieldW));
+        fixedGain->setBounds (row.removeFromRight (fieldW));
+        colour->setBounds (b.removeFromTop (rowH).withWidth (fieldW));
+        b.removeFromTop (rowH / 6);
+        note = b.removeFromTop (20);
     }
 
 private:
     Strip& strip;
     bool eq;
-    juce::OwnedArray<Segmented> bands, rta;
-    juce::StringArray bandCaptions;
-    juce::Rectangle<int> note;
-    int labelX = 0;
+    juce::OwnedArray<ChoiceField> bands, rta;
+    juce::StringArray rtaLabels;
+    IconKey autoGain { "ON", std::nullopt, colours::accent };
+    std::unique_ptr<ChoiceField> sizeMode, colour;
+    std::unique_ptr<KnobBox> fixedGain;
+    juce::Rectangle<int> body, note;
+    int labelX = 0, rowH = 30;
 };
 
 } // namespace
@@ -3664,7 +3725,10 @@ std::unique_ptr<OverlayScreen> makeFeedConfigScreen (UiContext& c, Strip& s)
 
 std::unique_ptr<OverlayScreen> makeSettingsScreen (UiContext&, Strip& s, bool eqSettings)
 {
-    return std::make_unique<SettingsScreen> (s, eqSettings);
+    // Docked at the right over the dimmed page, as EQ/RTA SETTINGS on the 3.1 screens.
+    auto screen = std::make_unique<SettingsScreen> (s, eqSettings);
+    screen->setPlacement (OverlayScreen::Placement::DockRight, 0.46f);
+    return screen;
 }
 
 } // namespace livedaw::ui

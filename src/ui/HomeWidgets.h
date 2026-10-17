@@ -3,6 +3,7 @@
 #include "dsp/DspUtils.h"
 #include "ui/DisplayPage.h"
 #include "ui/Faceplate.h"
+#include "ui/HomeIcons.h"
 #include "ui/Icons.h"
 #include "ui/Knobs.h"
 #include "ui/UiContext.h"
@@ -1079,6 +1080,49 @@ private:
 };
 
 //==============================================================================
+/** The strip's free tags (HOME > TAGS; the WING's comma-separated `/ch/n/tags`). */
+inline juce::StringArray stripTags (const Strip& s)
+{
+    juce::StringArray tags;
+    tags.addTokens (takeString (ld::ld_strip_tags (s.getHandle())), ",", "");
+    tags.trim();
+    tags.removeEmptyStrings();
+    return tags;
+}
+
+inline void setStripTags (const Strip& s, const juce::StringArray& tags)
+{
+    const auto joined = tags.joinIntoString (",");
+    const Utf8 u (joined);
+    ld::ld_strip_set_tags (s.getHandle(), u.data, u.size);
+}
+
+/** A tag chip (I12): a green tag shape with a dot at its point and the text in
+    black. Returns the width it took. */
+inline float paintTagChip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, juce::Colour fill = colours::post)
+{
+    const juce::Font font (juce::FontOptions (r.getHeight() * 0.78f, juce::Font::plain));
+    const float tip = r.getHeight() * 0.45f;
+    const float w = juce::jmin (r.getWidth(), tip + r.getHeight() * 0.5f + juce::GlyphArrangement::getStringWidth (font, text) + r.getHeight() * 0.4f);
+    auto chip = r.withWidth (w);
+    juce::Path shape;
+    shape.startNewSubPath (chip.getX(), chip.getCentreY());
+    shape.lineTo (chip.getX() + tip, chip.getY());
+    shape.lineTo (chip.getRight(), chip.getY());
+    shape.lineTo (chip.getRight(), chip.getBottom());
+    shape.lineTo (chip.getX() + tip, chip.getBottom());
+    shape.closeSubPath();
+    g.setColour (fill);
+    g.fillPath (shape);
+    const float d = r.getHeight() * 0.22f;
+    g.setColour (juce::Colours::black);
+    g.fillEllipse (juce::Rectangle<float> (d, d).withCentre ({ chip.getX() + tip * 0.85f, chip.getCentreY() }));
+    g.setFont (font);
+    g.drawFittedText (text, chip.withTrimmedLeft (tip + d).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+    return w;
+}
+
+//==============================================================================
 /** A strip tile (Channel Select, INIT/COPY destinations, ROUTING-style grids):
     a name strip in the strip's colour, its icon and its number. */
 inline void paintStripTile (juce::Graphics& g, juce::Rectangle<float> r, const Strip& s, bool selected, bool dim = false)
@@ -1094,7 +1138,7 @@ inline void paintStripTile (juce::Graphics& g, juce::Rectangle<float> r, const S
     g.setFont (juce::FontOptions (juce::jlimit (8.0f, 14.0f, strip.getHeight() * 0.85f), juce::Font::bold));
     g.drawFittedText (hasDefaultName (s) ? juce::String() : stripName (s).toUpperCase(), strip.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
     auto number = inner.removeFromBottom (juce::jmax (10.0f, inner.getHeight() * 0.36f));
-    drawIcon (g, stripIcon (s.getKind()), inner.reduced (inner.getHeight() * 0.12f), dim ? colours::dim.withAlpha (0.5f) : colours::caption);
+    drawChannelIcon (g, s.params.icon.load(), s.getKind(), inner.reduced (inner.getHeight() * 0.12f), dim ? colours::dim.withAlpha (0.5f) : colours::caption);
     g.setColour (dim ? colours::dim : colours::ink);
     g.setFont (juce::FontOptions (juce::jlimit (8.0f, 15.0f, number.getHeight() * 0.9f), juce::Font::bold));
     g.drawFittedText (shortLabel (s), number.toNearestInt(), juce::Justification::centred, 1);
@@ -1113,9 +1157,29 @@ class OverlayScreen : public juce::Component
 public:
     explicit OverlayScreen (const juce::String& t) : title (t)
     {
+        closeKey.offInk = colours::caption;
         closeKey.onClick = [this] { if (onClose) onClose(); };
         addAndMakeVisible (closeKey);
         setInterceptsMouseClicks (true, true);
+    }
+
+    /** Where the window floats over the page (1.12): the whole page, docked
+        at the right (EQ/RTA SETTINGS, 46 % wide) or centred. The rest of the
+        page shows through a 75 % black scrim; touching it closes the window. */
+    enum class Placement
+    {
+        FullPage,
+        DockRight,
+        Centred
+    };
+
+    void setPlacement (Placement p, float widthFraction = 1.0f, float heightFraction = 1.0f)
+    {
+        placement = p;
+        widthFrac = widthFraction;
+        heightFrac = heightFraction;
+        resized();
+        repaint();
     }
 
     std::function<void()> onClose;
@@ -1128,30 +1192,61 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (Colours::screen);
+        const auto window = windowArea();
+        if (window != getLocalBounds())
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.75f));
+            g.fillAll();
+        }
+        g.setColour (Colours::screen);
+        g.fillRect (window);
         auto bar = titleBar().toFloat();
         g.setColour (colours::panel);
         g.fillRect (bar);
         g.setColour (colours::caption);
-        g.setFont (juce::FontOptions (juce::jlimit (14.0f, 22.0f, bar.getHeight() * 0.56f), juce::Font::bold));
-        g.drawFittedText (title, bar.toNearestInt(), juce::Justification::centred, 1);
+        g.setFont (juce::FontOptions (juce::jlimit (14.0f, 24.0f, bar.getHeight() * 0.5f), juce::Font::plain));
+        // Docked settings windows have their title at the left.
+        const auto just = placement == Placement::DockRight ? juce::Justification::centredLeft : juce::Justification::centred;
+        g.drawFittedText (title, bar.toNearestInt().reduced (juce::roundToInt (bar.getHeight() * 0.4f), 0), just, 1);
     }
 
     void resized() override
     {
         auto bar = titleBar();
-        closeKey.setBounds (bar.removeFromRight (juce::jmin (110, bar.getWidth() / 5)).reduced (2));
+        closeKey.setBounds (bar.removeFromRight (juce::jmin (130, bar.getWidth() / 4)).reduced (bar.getHeight() / 10));
         layoutContent (content());
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (! windowArea().contains (e.getPosition()) && onClose)
+            onClose();
     }
 
 protected:
     virtual void layoutContent (juce::Rectangle<int>) {}
-    juce::Rectangle<int> titleBar() const { return getLocalBounds().removeFromTop (juce::jlimit (28, 40, getHeight() / 12)); }
-    juce::Rectangle<int> content() const { return getLocalBounds().withTrimmedTop (titleBar().getHeight() + 6); }
+
+    juce::Rectangle<int> windowArea() const
+    {
+        auto b = getLocalBounds();
+        switch (placement)
+        {
+            case Placement::FullPage:  return b;
+            case Placement::DockRight: return b.removeFromRight (juce::roundToInt ((float) b.getWidth() * widthFrac));
+            case Placement::Centred:
+                return b.withSizeKeepingCentre (juce::roundToInt ((float) b.getWidth() * widthFrac), juce::roundToInt ((float) b.getHeight() * heightFrac));
+        }
+        return b;
+    }
+
+    juce::Rectangle<int> titleBar() const { return windowArea().removeFromTop (juce::jlimit (28, 48, getHeight() / 10)); }
+    juce::Rectangle<int> content() const { return windowArea().withTrimmedTop (titleBar().getHeight() + 6); }
 
 private:
     juce::String title;
     IconKey closeKey { "CLOSE", Icon::Check };
+    Placement placement = Placement::FullPage;
+    float widthFrac = 1.0f, heightFrac = 1.0f;
 };
 
 //==============================================================================
