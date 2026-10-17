@@ -5,26 +5,38 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <algorithm>
 #include <atomic>
 #include <functional>
 #include <optional>
+#include <utility>
+#include <vector>
 
 namespace livedaw::ui
 {
 
-/** A flat screen key like the console's: grey, optional icon left of the text,
-    lit in `onColour` (with black ink) while `isOn` returns true. */
+/** The cap height of key text on the screen: about 2 % of the screen height,
+    and at most `fraction` of the key's height. */
+inline float wingKeyCap (float keyHeight, float fraction = 0.34f)
+{
+    return juce::jmin (0.02f * getWingScreenHeight(), keyHeight * fraction);
+}
+
+/** A flat screen key like the console's: #303030 framed in black, optional icon
+    left of the text, lit in `onColour` (with black ink) while `isOn` returns
+    true. An unlit toggle (one with `isOn`) has grey text, an action key white;
+    an outlined key (SAFE, FILTER LO/HI) has a grey frame. */
 class WingKey : public juce::Button, private juce::Timer
 {
 public:
-    WingKey (const juce::String& keyText, std::optional<Icon> keyIcon = std::nullopt, juce::Colour on = Colours::yellow)
+    WingKey (const juce::String& keyText, std::optional<Icon> keyIcon = std::nullopt, juce::Colour on = Colours::gold)
         : juce::Button (keyText), icon (keyIcon), onColour (on)
     {
         startTimerHz (6);
     }
 
     std::function<bool()> isOn;
-    juce::Colour offColour = juce::Colour (0xff5a5a5a);
+    juce::Colour offColour = Colours::screenKey;
     /** The icon's colour while the key is off (the recorder's red record dot). */
     std::optional<juce::Colour> iconColour;
     bool outlined = false;
@@ -44,19 +56,17 @@ public:
             fill = fill.darker (0.4f);
         g.setColour (fill);
         g.fillRect (r);
-        if (outlined)
-        {
-            g.setColour (juce::Colour (0xffbdbdbd));
-            g.drawRect (r, 1.0f);
-        }
-        const auto ink = on ? juce::Colours::black : (isEnabled() ? Colours::text : Colours::textDim);
+        g.setColour (outlined && ! on ? Colours::textDim : juce::Colours::black);
+        g.drawRect (r, outlined ? 1.5f : 1.0f);
+        const auto ink = on ? juce::Colours::black
+                            : (! isEnabled() ? Colours::textDim.darker (0.3f) : (isOn != nullptr && ! outlined ? Colours::textDim : Colours::caption));
         if (iconAbove && icon.has_value())
         {
             auto label = r.removeFromBottom (r.getHeight() * 0.36f);
             drawIcon (g, *icon, r.reduced (r.getHeight() * 0.12f), ink);
             g.setColour (ink);
-            g.setFont (juce::FontOptions (juce::jlimit (10.0f, 15.0f, label.getHeight() * 0.8f), juce::Font::bold));
-            g.drawFittedText (getButtonText(), label.toNearestInt().reduced (2, 0), juce::Justification::centredTop, 1);
+            g.setFont (wingFontPx (juce::jmin (TypeScale::statusCaption * getWingScreenHeight(), label.getHeight() * 0.6f)));
+            g.drawFittedText (getButtonText(), label.toNearestInt().reduced (2, 0), juce::Justification::centredTop, 1, 0.75f);
             return;
         }
         auto content = r.reduced (juce::jmin (10.0f, r.getHeight() * 0.18f), 0.0f);
@@ -69,9 +79,10 @@ public:
         }
         if (getButtonText().isNotEmpty())
         {
+            const int lines = juce::StringArray::fromLines (getButtonText()).size();
             g.setColour (ink);
-            g.setFont (juce::FontOptions (juce::jlimit (12.0f, 22.0f, r.getHeight() * 0.46f), juce::Font::bold));
-            g.drawFittedText (getButtonText(), content.toNearestInt(), juce::Justification::centred, 2);
+            g.setFont (wingFontPx (wingKeyCap (r.getHeight(), lines > 1 ? 0.26f : 0.34f)));
+            g.drawFittedText (getButtonText(), content.toNearestInt(), juce::Justification::centred, 2, 0.75f);
         }
     }
 
@@ -90,15 +101,14 @@ private:
     bool lastOn = false;
 };
 
-/** The console's "ON" chip: yellow while the bound flag is set, click toggles it. */
+/** The console's "ON" chip: gold while the bound flag is set, click toggles it. */
 class OnChip final : public WingKey
 {
 public:
     explicit OnChip (std::atomic<bool>& flag) : WingKey ("ON"), value (flag)
     {
         isOn = [this] { return value.load(); };
-        offColour = juce::Colour (0xff4b4b4b);
-        outlined = true;
+        offColour = Colours::screenKey;
         onClick = [this] { value = ! value.load(); };
     }
 
@@ -106,11 +116,12 @@ private:
     std::atomic<bool>& value;
 };
 
-/** A row of keys of which one is lit (NORM | FINE | AUTO on the console). */
+/** A row of keys of which one is lit (NORM | FINE | AUTO on the console): the
+    keys sit in a black frame, unlit #303030 with grey text. */
 class SegmentedKeys final : public juce::Component
 {
 public:
-    SegmentedKeys (juce::StringArray labels, std::function<int()> get, std::function<void (int)> set, juce::Colour on = Colours::yellow)
+    SegmentedKeys (juce::StringArray labels, std::function<int()> get, std::function<void (int)> set, juce::Colour on = Colours::gold)
         : names (std::move (labels)), getter (std::move (get)), setter (std::move (set)), onColour (on)
     {
     }
@@ -119,18 +130,19 @@ public:
     {
         const int current = getter != nullptr ? getter() : -1;
         auto r = getLocalBounds().toFloat();
-        g.setColour (juce::Colour (0xff1e1e1e));
+        g.setColour (juce::Colours::black);
         g.fillRect (r);
+        r = r.reduced (1.0f);
         const float w = r.getWidth() / (float) juce::jmax (1, names.size());
         for (int i = 0; i < names.size(); ++i)
         {
-            auto k = juce::Rectangle<float> (r.getX() + w * (float) i, r.getY(), w, r.getHeight()).reduced (1.0f);
+            auto k = juce::Rectangle<float> (r.getX() + w * (float) i, r.getY(), w, r.getHeight()).reduced (1.0f, 0.0f);
             const bool on = i == current;
-            g.setColour (on ? onColour : juce::Colour (0xff4b4b4b));
+            g.setColour (on ? onColour : Colours::screenKey);
             g.fillRect (k);
-            g.setColour (on ? juce::Colours::black : Colours::text);
-            g.setFont (juce::FontOptions (juce::jlimit (12.0f, 22.0f, k.getHeight() * 0.48f), juce::Font::bold));
-            g.drawFittedText (names[i], k.toNearestInt().reduced (2, 0), juce::Justification::centred, 1);
+            g.setColour (on ? juce::Colours::black : Colours::caption);
+            g.setFont (wingFontPx (wingKeyCap (k.getHeight())));
+            g.drawFittedText (names[i], k.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.75f);
         }
     }
 
@@ -147,6 +159,65 @@ private:
     std::function<int()> getter;
     std::function<void (int)> setter;
     juce::Colour onColour;
+};
+
+//==============================================================================
+/** The pop-ups open on the screen that close as soon as a key of the surface is
+    pressed ("most pop-ups automatically dismiss as soon as one of the buttons is
+    pressed"). Pop-ups register a closer while open; SurfaceKey (and the screen
+    keys beside the display) call closeAll() when pressed. Message thread only. */
+class TransientPopups
+{
+public:
+    using Closer = std::function<void()>;
+
+    static void add (const void* owner, Closer closer)
+    {
+        remove (owner);
+        list().push_back ({ owner, std::move (closer) });
+    }
+
+    static void remove (const void* owner)
+    {
+        auto& l = list();
+        l.erase (std::remove_if (l.begin(), l.end(), [owner] (const auto& e) { return e.first == owner; }), l.end());
+    }
+
+    static bool anyOpen() { return ! list().empty(); }
+
+    /** Closes every registered pop-up (each as if cancelled). */
+    static void closeAll()
+    {
+        auto open = std::move (list());
+        list().clear();
+        for (auto& e : open)
+            if (e.second != nullptr)
+                e.second();
+    }
+
+private:
+    static std::vector<std::pair<const void*, Closer>>& list()
+    {
+        static std::vector<std::pair<const void*, Closer>> open;
+        return open;
+    }
+};
+
+/** Brightness of the surface's key lighting (SETUP > GENERAL: BTNS/LEDS for lit
+    keys, BACKLIGHT for unlit ones), 0..1. The main display applies the settings. */
+struct SurfaceLighting
+{
+    static float& leds() { static float v = 0.9f; return v; }
+    static float& backlight() { static float v = 0.25f; return v; }
+
+    /** A lit key's colour at the LED brightness: dimmer toward the unlit body. */
+    static juce::Colour lit (juce::Colour led, juce::Colour body)
+    {
+        return body.interpolatedWith (led, juce::jlimit (0.0f, 1.0f, 0.35f + 0.65f * leds() / 0.9f));
+    }
+
+    /** An unlit key's body with the backlight: a faint lift of the print. */
+    static juce::Colour unlit (juce::Colour body) { return body.brighter (juce::jlimit (0.0f, 1.0f, backlight() - 0.25f) * 0.3f); }
 };
 
 /** A key of the control surface (as opposed to the touch screen): a rounded
@@ -185,7 +256,7 @@ public:
 
     std::function<void()> onPress, onHold;
     std::function<int()> ledState;
-    juce::Colour ledColour = Colours::yellow;
+    juce::Colour ledColour = Colours::ledYellow;
     Shape shape = Shape::Rect;
     /** A key printed dark (LISTEN, DAW). */
     bool dark = false;
@@ -216,7 +287,8 @@ public:
         const bool lit = shownLit && isEnabled();
         const bool down = isMouseButtonDown() && isEnabled();
 
-        auto body = lit ? ledColour : (dark ? juce::Colour (0xff141517) : Colours::keyBody);
+        const auto unlitBody = SurfaceLighting::unlit (dark ? juce::Colour (0xff141517) : Colours::keyBody);
+        auto body = lit ? SurfaceLighting::lit (ledColour, unlitBody) : unlitBody;
         if (down)
             body = body.darker (0.25f);
         else if (isMouseOver() && isEnabled())
@@ -268,7 +340,7 @@ public:
             const int lines = juce::StringArray::fromLines (label).size();
             const float size = juce::jlimit (7.0f, 16.0f, content.getHeight() * (lines > 1 ? 0.36f : 0.46f));
             g.setColour (ink);
-            g.setFont (juce::FontOptions (size, juce::Font::bold));
+            g.setFont (silkFont (size));
             if (arrow != 0)
             {
                 // Triangle and label centred together.
@@ -293,6 +365,8 @@ public:
     {
         if (! isEnabled())
             return;
+        // Pressing any key of the surface closes the screen's pop-ups.
+        TransientPopups::closeAll();
         pressed = false;
         holdDone = false;
         if (e.mods.isPopupMenu() || e.mods.isCommandDown())

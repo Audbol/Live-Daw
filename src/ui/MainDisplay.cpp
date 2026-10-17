@@ -1011,6 +1011,8 @@ void MainDisplay::resized()
     else
         h = w * 10 / 16;
     screenArea = juce::Rectangle<int> (avail.getX(), avail.getCentreY() - h / 2, w, h);
+    // The screen's type scale follows its height.
+    setWingScreenHeight ((float) screenArea.getHeight());
     auto right = getLocalBounds().withLeft (screenArea.getRight() + 10).reduced (6, 0);
 
     // The seven keys over the full height of the screen: HOME level with its
