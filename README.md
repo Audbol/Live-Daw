@@ -229,9 +229,9 @@ and open-source projects (see below), and it is **experimental**.
   settings. The rest (surface layers, user controls, talkback, cards, ...) is
   remembered so clients can read back what they wrote, but does nothing.
   `cargo run -p livedaw-wing --example wing_coverage` prints the full report.
-- **Files:** LIBRARY > SHOW > **IMPORT WING SNAP/SHOW...** applies a WING snapshot
-  (`.snap`) to the console, or adds a WING show's (`.show`) snapshots as scenes. The
-  log lists what could not be applied. **EXPORT WING SNAP...** writes the console as a
+- **Files:** LIBRARY > SHOW > **IMPORT WING** applies a WING snapshot (`.snap`) to
+  the console, or adds a WING show's (`.show`) snapshots as scenes. The log lists
+  what could not be applied. **EXPORT WING** writes the console as a
   WING snapshot (experimental: its format follows snapshots saved by WING consoles on
   firmware 2.1 and 3.1, and it reads back into Live DAW, but it has not been loaded
   into a WING or WING Edit).
