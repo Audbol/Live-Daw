@@ -430,10 +430,17 @@ int Session::getNumArmedChannels() const
 
 juce::int64 Session::getFreeDiskBytes() const
 {
-    auto folder = project.hasFolder() ? project.getFolder() : getProjectsFolder();
-    while (! folder.exists() && folder.getParentDirectory() != folder)
-        folder = folder.getParentDirectory();
-    return folder.getBytesFreeOnVolume();
+    // A statfs call: the views ask a few times a second, so it's cached for a second.
+    const auto now = juce::Time::getMillisecondCounter();
+    if (freeBytesTime == 0 || now - freeBytesTime > 1000)
+    {
+        auto folder = project.hasFolder() ? project.getFolder() : getProjectsFolder();
+        while (! folder.exists() && folder.getParentDirectory() != folder)
+            folder = folder.getParentDirectory();
+        freeBytes = folder.getBytesFreeOnVolume();
+        freeBytesTime = juce::jmax (1u, now);
+    }
+    return freeBytes;
 }
 
 double Session::getRecordSecondsLeft() const
@@ -603,6 +610,7 @@ void Session::importFiles (const juce::Array<juce::File>& files, int64 trackId, 
                 {
                     TrackData t;
                     t.name = r.name;
+                    t.source.port = project.getNumTracks(); // IN n for track n
                     t.stereo = r.numChannels > 1;
                     t.colour = 1 + (project.getNumTracks() % 18);
                     project.addTrack (t);

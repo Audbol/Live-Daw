@@ -342,6 +342,47 @@ blinking LEDs.
   reader of the engine's "peak since last read" meters (input, post-trim, pre-fader
   and output).
 
+### Multitrack projects, the editor and the recorder screen
+
+- **Project model** (`src/daw/`, no UI, unit tested in `tests/DawTests.cpp`).
+  `daw::Project` holds a project in a `juce::ValueTree` (tracks of clips, markers,
+  loop range, tempo / time signature for the grid, sample rate) and every edit goes
+  through its `UndoManager` (`beginEdit()` starts an action; arming and track heights
+  aren't undoable). A project is a folder `<name>/<name>.ldproj` (XML, written
+  atomically with a `.bak`) plus `Audio/` (takes, imports), `Peaks/` (cached
+  waveforms) and `Export/`; clip paths inside the folder are relative.
+  `clipmath` does the edit arithmetic (split, trims, moves, range clearing,
+  crossfades, fade curves), `TimeGrid` the snapping and time formats,
+  `AudioFiles` the import (any JUCE format incl. FLAC and MP3, resampled with a
+  windowed sinc to the project's rate, 32-bit float WAV) and the track export.
+- **`daw::Session`** ties the project to the engine's `Recorder`: it rebuilds the
+  playlist whenever the project changes (throttled during drags; muted, solo-excluded
+  tracks muted, muted clips and missing files left out), follows the loop, records the
+  armed tracks into `Audio/`, collects the takes into clips (one undoable "Record"
+  action, replacing what they cover) and saves the project, polls record levels and
+  the peaks of the takes in progress for the views, runs imports and exports on a
+  worker thread, autosaves to `<name>.ldproj.autosave` every 30 s (offered when the
+  project is opened next) and remembers recent projects. `MainComponent` owns it and
+  reopens the last project at start-up; `UiContext::recording` hands it to the views.
+- **Editor** (`src/ui/daw/`): `DawEditor` replaces the console view (Ctrl+E, EDIT,
+  the surface's DAW key; Esc / CONSOLE return). `DawEditorState` holds the view
+  (zoom, scroll, snap), the selection and a copy of the tracks and clips refreshed
+  once per message-loop turn after project changes, plus the edit operations.
+  `DawTrackList` / `DawTrackHeader` draw the headers (hit areas, no child buttons),
+  `DawRuler` the ruler, loop and markers, `DawLanes` the clips (waveforms from
+  `juce::AudioThumbnail` with a cache that keeps finished thumbnails in `Peaks/`;
+  takes in progress from `Recorder::getRecordingPeaks`). The lanes and ruler are
+  buffered to images, so the playhead (its own component, moved on a
+  `VBlankAttachment`) only blits; a growing take repaints only its new pixels.
+- **Recorder screen** (`RecorderPage`, `Screen::Recorder`): the WING-LIVE layout
+  (PLAYER, SESSIONS, MARKERS, the tracks to arm, RECORD ALL CHANNELS and VIRTUAL
+  SOUNDCHECK), opened from the status bar's LIVE card tile or MULTI TRANSP's VIEW.
+  VIRTUAL SOUNDCHECK sets each channel's ALT input to the playback channel of the
+  track recording it (`Session::virtualSoundcheckRoutes`) and switches INPUT SELECT
+  to GLOBAL ALT. ROUTING (MAIN / ALT keys, PLAY source groups), HOME > INPUT (ALT
+  tile, MAIN / ALT, INDIVIDUAL / GLOBAL) and SETUP > AUDIO (INPUT SELECT grid, GLOBAL
+  INPUT SELECT OVERRIDE) edit the ALT inputs.
+
 ## Stability mechanisms
 
 - The engine checks every strip's output: NaN/Inf is silenced, the strip's DSP reset
@@ -377,7 +418,10 @@ blinking LEDs.
 - Recorder: no transport without a running audio device (play stays in Starting);
   a loop change while rolling plays the old content for ~50 ms before the
   crossfade; take files are flushed every 2 s but only synced to disk when
-  finalized; no latency compensation of takes (the UI shifts them).
+  finalized; no latency compensation of takes (the UI doesn't shift them yet).
+- Projects: one tempo and time signature for the whole timeline (for the grid only);
+  Save As keeps referring to the old folder's audio instead of copying it; playback
+  assumes the project's sample rate is the console's (a mismatch is flagged).
 - Shown on the screens but disabled until the engine supports them (the WING manual
   describes them): SOLO MODE LIVE / STUDIO / SIP, TAP WIDTH and TAP EQ on sends,
   KEY / XOVER / BAND SOLO, the RTA, the LR vector scope, the Sources screen's

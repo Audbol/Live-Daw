@@ -584,6 +584,12 @@ void DawEditor::resized()
     lanes.setBounds (b);
     state.viewWidth = lanes.getWidth();
     state.viewHeight = lanes.getHeight();
+    if (! fitted && state.viewWidth > 100)
+    {
+        // The first layout: fit the project now that the lanes' width is known.
+        fitted = true;
+        state.zoomToFit();
+    }
     state.clampScroll();
     trackList.resized();
     updateScrollBars();

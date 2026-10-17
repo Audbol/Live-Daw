@@ -517,8 +517,9 @@ void RoutingPage::paintChannelTile (juce::Graphics& g, juce::Rectangle<int> area
     }
     if (usingAlt)
     {
-        auto tag = area.toFloat().removeFromBottom (juce::jmin (20.0f, area.toFloat().getHeight() * 0.36f) + 14.0f).removeFromTop (13.0f).removeFromRight (26.0f);
-        drawChip (g, tag.reduced (1.0f), "ALT", Dark::choice, juce::Colours::black);
+        // Under the colour bar, in the body's top-right corner.
+        auto tag = r.withHeight (12.0f).withTrimmedLeft (r.getWidth() - 24.0f).translated (-2.0f, 2.0f);
+        drawChip (g, tag, "ALT", Dark::choice, juce::Colours::black);
     }
     else
     {

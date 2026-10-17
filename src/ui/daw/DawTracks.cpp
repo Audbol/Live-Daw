@@ -126,7 +126,8 @@ void DawTrackHeader::paint (juce::Graphics& g)
     paintKey (g, muteKey, "M", t->mute, DawColours::mute);
     paintKey (g, soloKey, "S", t->solo, DawColours::solo);
 
-    paintField (g, sourceKey, "IN", daw::describeSource (t->source).replace ("IN ", ""));
+    const bool hardware = t->source.kind == Recorder::Source::Kind::HardwareInput;
+    paintField (g, sourceKey, hardware ? "IN" : "SRC", hardware ? juce::String (t->source.port + 1) : daw::describeSource (t->source));
     const juce::String pb = t->stereo ? juce::String (t->playChannel + 1) + "-" + juce::String (t->playChannel + 2) : juce::String (t->playChannel + 1);
     paintField (g, playbackKey, "PB", pb);
     paintField (g, gainKey, "GAIN", t->gainDb <= -60.0f ? juce::String ("-inf") : (t->gainDb > 0.0f ? "+" : "") + juce::String (t->gainDb, 1));

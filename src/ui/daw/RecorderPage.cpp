@@ -567,8 +567,10 @@ void RecorderPage::paintPlayer (juce::Graphics& g)
     else
     {
         const int count = (int) juce::jmin<size_t> (armed.size(), 64);
-        const float w = (float) (meterArea.getWidth() - 8) / (float) count;
+        // At most 16 px per bar, the bank centred like the WING-LIVE's.
+        const float w = juce::jmin (16.0f, (float) (meterArea.getWidth() - 8) / (float) count);
         auto area = meterArea.reduced (4, 4).toFloat();
+        area = area.withSizeKeepingCentre (w * (float) count, area.getHeight());
         // Scale lines at -12 and -36 like the WING's meter bank.
         g.setColour (Dark::key);
         for (float db : { -12.0f, -36.0f })
@@ -582,9 +584,16 @@ void RecorderPage::paintPlayer (juce::Graphics& g)
             auto bar = juce::Rectangle<float> (area.getX() + w * (float) i + 1.0f, area.getY(), juce::jmax (1.0f, w - 2.0f), area.getHeight());
             g.setColour (juce::Colour (0xff1a1a1a));
             g.fillRect (bar);
-            auto lit = bar.removeFromBottom (bar.getHeight() * pos);
-            g.setColour (db > -3.0f ? Colours::meterRed : (db > -12.0f ? Colours::meterYellow : Colours::meterGreen));
-            g.fillRect (lit);
+            // Green to -12 dB, yellow to -3 dB, red above.
+            const float h = bar.getHeight();
+            auto lit = bar.removeFromBottom (h * pos);
+            const float yellowFrom = lit.getBottom() - h * (48.0f / 60.0f), redFrom = lit.getBottom() - h * (57.0f / 60.0f);
+            g.setColour (Colours::meterGreen);
+            g.fillRect (lit.withTop (juce::jmax (lit.getY(), yellowFrom)));
+            g.setColour (Colours::meterYellow);
+            g.fillRect (lit.withTop (juce::jmax (lit.getY(), redFrom)).withBottom (juce::jmax (lit.getY(), yellowFrom)));
+            g.setColour (Colours::meterRed);
+            g.fillRect (lit.withBottom (juce::jmax (lit.getY(), redFrom)));
         }
     }
 

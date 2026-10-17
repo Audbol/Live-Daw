@@ -87,7 +87,7 @@ private:
     std::unique_ptr<juce::VBlankAttachment> vblank;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::Rectangle<int> corner;
-    bool updatingScrollBars = false;
+    bool updatingScrollBars = false, fitted = false;
     int lastPlayheadX = -1000;
 
     JUCE_DECLARE_NON_COPYABLE (DawEditor)

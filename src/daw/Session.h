@@ -222,6 +222,8 @@ private:
         float db[2] { -100.0f, -100.0f };
     };
     std::map<int64, Level> levels;
+    mutable juce::int64 freeBytes = 0;
+    mutable juce::uint32 freeBytesTime = 0;
 
     // Jobs
     std::unique_ptr<juce::Thread> worker;
