@@ -388,7 +388,7 @@ juce::String ChannelStripSection::panelState() const
             s << bit (dsp::gainToDb (ctx.meters.get (strip, true, ch)) >= thr);
     s << juce::roundToInt (strip->meters.dynReductionDb.load()) << bit (slotOn (Input)) << bit (p.filter.lowCut.load())
       << bit (p.filter.highCut.load()) << bit (p.filter.tool.load()) << p.filter.toolModel.load() << bit (p.input.delayOn.load())
-      << bit (p.stereo.load()) << (int) p.dcaMask.load() << ':' << (int) p.muteGroupMask.load() << ':' << p.postInsert.mode.load();
+      << bit (p.stereo.load()) << bit (strip->isUsingAltInput()) << (int) p.dcaMask.load() << ':' << (int) p.muteGroupMask.load() << ':' << p.postInsert.mode.load();
     for (auto& m : p.mains)
         s << bit (m.on.load());
     for (int i = 0; i < 16; ++i)
@@ -509,8 +509,8 @@ void ChannelStripSection::paintPanel (juce::Graphics& g)
         if (any && p->filter.tool.load())
             toolToken = models::model (models::FilterTools, p->filter.toolModel.load()).token;
         const std::tuple<float, int, const char*, bool> items[] = {
-            { c1, 0, "MAIN SOURCE", input },
-            { c1, 1, "ALT SOURCE", false },
+            { c1, 0, "MAIN SOURCE", input && ! strip->isUsingAltInput() },
+            { c1, 1, "ALT SOURCE", input && strip->isUsingAltInput() },
             { c1, 3, "48 V", false },
             { c1, 4, "INVERT", any && p->input.invert.load() },
             { c1, 6, "STEREO", any && (strip->isOutput() || p->stereo.load()) },

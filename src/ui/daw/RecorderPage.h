@@ -38,6 +38,8 @@ private:
     void recordAllChannels();
     void virtualSoundcheck();
     bool canVirtualSoundcheck() const;
+    /** The channels listen to the recorder (global INPUT SELECT on ALT). */
+    bool isVirtualSoundcheckOn() const;
     void locateFromTimeline (int x);
     daw::int64 timelineLength() const;
     int tracksPerPage() const;

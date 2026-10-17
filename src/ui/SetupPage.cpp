@@ -431,33 +431,80 @@ namespace
     };
 
     //==============================================================================
-    /** The INPUT SELECT channel grid (40 + 8): disabled until channels have ALT inputs. */
-    class InputSelectGrid final : public juce::Component
+    /** The INPUT SELECT channel grid (the first 40 channels + 8 aux): a cell
+        lights blue while its channel listens to its ALT input; a click
+        switches the channel's own MAIN / ALT (used unless INPUT SELECT is
+        GLOBAL). Cells of channels without an ALT input are dark. */
+    class InputSelectGrid final : public juce::Component, private juce::Timer
     {
     public:
+        explicit InputSelectGrid (UiContext& c) : ctx (c) { startTimerHz (4); }
+
         void paint (juce::Graphics& g) override
         {
+            cells.clear();
             auto r = getLocalBounds().toFloat().reduced (4.0f);
             g.setColour (Dark::well);
             g.fillRect (getLocalBounds());
-            g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
             const float captionH = 13.0f;
             const float cell = juce::jmin ((r.getWidth()) / 8.0f, (r.getHeight() - captionH * 2.0f - 6.0f) / 6.0f);
-            auto drawGrid = [&] (const char* caption, int rows)
+            auto drawGrid = [&] (const char* caption, StripKind kind, int rows)
             {
                 g.setColour (Dark::textDim);
+                g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
                 g.drawText (caption, r.removeFromTop (captionH), juce::Justification::centred);
+                const auto& strips = ctx.engine.getStrips (kind);
                 for (int i = 0; i < rows * 8; ++i)
                 {
                     auto c = juce::Rectangle<float> (r.getCentreX() - cell * 4.0f + cell * (float) (i % 8), r.getY() + cell * (float) (i / 8), cell, cell).reduced (1.0f);
-                    g.setColour (Dark::choice.darker (0.9f));
+                    auto* s = i < (int) strips.size() ? strips[(size_t) i].get() : nullptr;
+                    const bool has = s != nullptr && s->hasAltInput();
+                    const bool alt = s != nullptr && s->isUsingAltInput();
+                    g.setColour (alt ? Dark::choice : (has ? Dark::key : Dark::choice.darker (0.9f)));
                     g.fillRect (c);
+                    if (s != nullptr)
+                    {
+                        g.setColour (alt ? Dark::choiceInk : (has ? Dark::text : Dark::textDim.darker (0.4f)));
+                        g.setFont (juce::FontOptions (juce::jmin (12.0f, c.getHeight() * 0.5f), juce::Font::bold));
+                        g.drawText (juce::String (s->getNumber()), c, juce::Justification::centred);
+                        cells.push_back ({ c, s });
+                    }
                 }
                 r.removeFromTop (cell * (float) rows + 6.0f);
             };
-            drawGrid ("CHANNEL", 5);
-            drawGrid ("AUX", 1);
+            drawGrid ("CHANNEL", StripKind::Channel, 5);
+            drawGrid ("AUX", StripKind::Aux, 1);
         }
+
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            for (auto& [c, s] : cells)
+                if (c.contains (e.position))
+                {
+                    s->setAltSelected (! s->isAltSelected());
+                    repaint();
+                    return;
+                }
+        }
+
+    private:
+        void timerCallback() override
+        {
+            // Repaint when a channel's ALT state changes.
+            juce::String state;
+            for (auto kind : { StripKind::Channel, StripKind::Aux })
+                for (auto& s : ctx.engine.getStrips (kind))
+                    state << (s->isUsingAltInput() ? 'A' : (s->hasAltInput() ? 'h' : '-'));
+            if (state != shown)
+            {
+                shown = state;
+                repaint();
+            }
+        }
+
+        UiContext& ctx;
+        std::vector<std::pair<juce::Rectangle<float>, Strip*>> cells;
+        juce::String shown;
     };
 
     /** The audio device chooser, opened from the DEVICE field. */
@@ -484,9 +531,12 @@ namespace
             clock.addRow ({}, std::make_unique<DropdownField> ("SYNC SOURCE", [] { return juce::String ("INTERNAL"); }), 0.0f, false, false, 1.7f);
             addAndMakeVisible (clock);
 
-            // Channels have no ALT input yet (E-ALT): MAIN only.
-            inputSelect.addRow ({}, fixedChoice ({ "MAIN", "ALT" }, 0), 0.0f, false);
-            inputSelect.addRow ({}, std::make_unique<InputSelectGrid>(), 0.0f, false, false, 4.4f);
+            // The global MAIN / ALT switch (used by every channel while GLOBAL
+            // INPUT SELECT OVERRIDE is on) and the channels' own switches.
+            inputSelect.addRow ({}, std::make_unique<ChoiceKeys> (juce::StringArray { "MAIN", "ALT" }, [this] { return ctx.engine.isGlobalAlt() ? 1 : 0; },
+                                                                 [this] (int i) { ctx.engine.setGlobalAlt (i == 1); }),
+                                0.0f);
+            inputSelect.addRow ({}, std::make_unique<InputSelectGrid> (ctx), 0.0f, true, false, 4.4f);
             addAndMakeVisible (inputSelect);
 
             prefsPanel.addRow ("MAIN LINK",
@@ -496,7 +546,7 @@ namespace
             prefsPanel.addRow ("DCA MUTEGROUPS", OnKey::forAtomic (ctx.engine.dcaMuteGroups), 1.3f);
             prefsPanel.addRow ("MUTEGROUP/SIP OVERRIDE", OnKey::fixed (false), 1.3f, false); // engine E7
             prefsPanel.addRow ("STARTUP MAIN MUTE", OnKey::forAtomic (ctx.engine.startupMainMute), 1.3f);
-            prefsPanel.addRow ("GLOBAL INPUT SELECT OVERRIDE", OnKey::fixed (false), 1.3f, false); // E-ALT
+            prefsPanel.addRow ("GLOBAL INPUT SELECT OVERRIDE", OnKey::forAtomic (ctx.engine.inputSelectGlobal), 1.3f);
             prefsPanel.newBox();
             prefsPanel.addRow ("SOURCE SOLO", fixedChoice ({ "OFF", "CH39", "AUX7" }, 0), 4.8f, false);
             prefsPanel.addRow ("TALKBACK", fixedChoice ({ "OFF", "CH40", "AUX8" }, 0), 4.8f, false);

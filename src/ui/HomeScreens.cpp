@@ -422,27 +422,120 @@ private:
     std::pair<float, float> shown { 1.0e9f, 0.0f };
 };
 
-/** The ALT source tile: not modelled (engine: no ALT input), drawn empty. */
-class EmptySourceTile final : public juce::Component
+/** "IN 3", "PLAY 5" or "NONE" for a channel input index (stereo: "IN 3/4"). */
+juce::String inputSourceText (int left, int right, bool stereo)
+{
+    if (left < 0)
+        return "NONE";
+    const bool playback = Recorder::isPlaybackSource (left);
+    auto number = [playback] (int source) { return juce::String ((playback ? Recorder::playbackChannelOf (source) : source) + 1); };
+    const auto prefix = juce::String (playback ? "PLAY " : "IN ");
+    if (stereo)
+        return prefix + number (left) + "/" + number (right >= 0 ? right : left + 1);
+    return prefix + number (left);
+}
+
+/** The ALT input menu: NONE, the hardware inputs and the recorder's playback channels. */
+void showAltSourceMenu (UiContext& ctx, int current, juce::Component* target, std::function<void (int)> chosen)
+{
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("ALT SOURCE");
+    menu.addItem ("NONE", true, current < 0, [chosen] { chosen (-1); });
+    const auto& names = ctx.engine.getHardwareInputNames();
+    const int numInputs = names.isEmpty() ? 64 : names.size();
+    for (int g = 0; g < numInputs; g += 16)
+    {
+        juce::PopupMenu sub;
+        for (int i = g; i < juce::jmin (numInputs, g + 16); ++i)
+            sub.addItem ("IN " + juce::String (i + 1) + (i < names.size() && names[i].isNotEmpty() ? "  (" + names[i] + ")" : juce::String()), true,
+                         current == i, [chosen, i] { chosen (i); });
+        menu.addSubMenu ("AUDIO IN " + juce::String (g + 1) + "-" + juce::String (juce::jmin (numInputs, g + 16)), sub, true, nullptr,
+                         current >= g && current < g + 16);
+    }
+    for (int g = 0; g < Recorder::kNumPlaybackChannels; g += 16)
+    {
+        juce::PopupMenu sub;
+        for (int ch = g; ch < g + 16; ++ch)
+            sub.addItem (Recorder::playbackSourceName (ch), true, current == Recorder::playbackSource (ch),
+                         [chosen, ch] { chosen (Recorder::playbackSource (ch)); });
+        menu.addSubMenu ("RECORDER PLAY " + juce::String (g + 1) + "-" + juce::String (g + 16), sub, true, nullptr,
+                         Recorder::playbackChannelOf (current) >= g && Recorder::playbackChannelOf (current) < g + 16);
+    }
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target));
+}
+
+/** The ALT source tile (WING INPUT SELECT): the channel's ALT input, e.g. a
+    recorder playback channel for virtual soundcheck. Click to choose it. */
+class AltSourceTile final : public juce::Component, private juce::Timer
 {
 public:
+    AltSourceTile (UiContext& c, Strip& s) : ctx (c), strip (s)
+    {
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        startTimerHz (4);
+    }
+
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat();
         g.setColour (juce::Colours::black);
         g.fillRect (r);
+        const bool has = strip.hasAltInput();
+        const bool playback = has && Recorder::isPlaybackSource (strip.getAltInputLeft());
         auto inner = r.reduced (2.0f);
         auto header = inner.removeFromTop (juce::jlimit (12.0f, 22.0f, inner.getHeight() * 0.2f));
-        g.setColour (juce::Colour (0xff2a4a70));
+        g.setColour (playback ? juce::Colour (0xff2f5a32) : juce::Colour (0xff2a4a70));
         g.fillRect (header);
-        g.setColour (juce::Colour (0xff2a2a2a));
+        g.setColour (Colours::text.withAlpha (has ? 1.0f : 0.5f));
+        g.setFont (juce::FontOptions (header.getHeight() * 0.8f, juce::Font::bold));
+        g.drawText (playback ? "RECORDER" : "ALT", header.toNearestInt(), juce::Justification::centred);
+        g.setColour (has ? juce::Colour (0xff3a3a3a) : juce::Colour (0xff2a2a2a));
         g.fillRect (inner);
         auto label = inner.removeFromBottom (juce::jlimit (12.0f, 22.0f, inner.getHeight() * 0.26f));
-        drawIcon (g, Icon::Xlr, inner.reduced (inner.getHeight() * 0.2f), Colours::textDim.withAlpha (0.4f));
-        g.setColour (colours::mono.withAlpha (0.5f));
+        drawIcon (g, playback ? Icon::Waveform : Icon::Xlr, inner.reduced (inner.getHeight() * 0.2f), Colours::textDim.withAlpha (has ? 1.0f : 0.4f));
+        g.setColour (juce::Colour (0xff262626));
+        g.fillRect (label);
+        const bool st = strip.params.stereo.load();
+        g.setColour ((st ? colours::stereo : colours::mono).withAlpha (has ? 1.0f : 0.5f));
         g.setFont (juce::FontOptions (label.getHeight() * 0.8f, juce::Font::bold));
-        g.drawText ("NONE", label.toNearestInt(), juce::Justification::centred);
+        g.drawFittedText (inputSourceText (strip.getAltInputLeft(), strip.getAltInputRight(), st), label.toNearestInt(), juce::Justification::centred, 1, 0.7f);
+        if (strip.isUsingAltInput())
+        {
+            g.setColour (colours::fader);
+            g.drawRect (r, 2.0f);
+        }
     }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (! getLocalBounds().contains (e.getPosition()))
+            return;
+        juce::Component::SafePointer<AltSourceTile> safe (this);
+        showAltSourceMenu (ctx, strip.getAltInputLeft(), this, [safe] (int source)
+        {
+            if (safe != nullptr)
+            {
+                safe->strip.setAltInput (source);
+                safe->repaint();
+            }
+        });
+    }
+
+private:
+    void timerCallback() override
+    {
+        const auto now = juce::String (strip.getAltInputLeft()) + "|" + juce::String (strip.getAltInputRight()) + (strip.isUsingAltInput() ? "A" : "M")
+                         + (strip.params.stereo.load() ? "S" : "");
+        if (now != shown)
+        {
+            shown = now;
+            repaint();
+        }
+    }
+
+    UiContext& ctx;
+    Strip& strip;
+    juce::String shown;
 };
 
 /** The source tile of the INPUT screen: name strip, icon, port. Click to
@@ -493,15 +586,7 @@ public:
 private:
     juce::String port() const
     {
-        const int in = strip.params.inputLeft.load();
-        if (in < 0)
-            return "NONE";
-        if (strip.params.stereo.load())
-        {
-            const int right = strip.params.inputRight.load() >= 0 ? strip.params.inputRight.load() : in + 1;
-            return "IN " + juce::String (in + 1) + "/" + juce::String (right + 1);
-        }
-        return "IN " + juce::String (in + 1);
+        return inputSourceText (strip.getInputLeft(), strip.getInputRight(), strip.params.stereo.load());
     }
 
     void timerCallback() override
@@ -569,15 +654,25 @@ public:
         if (strip.isInput())
         {
             bracket = &make<Bracket>();
-            // engine: no ALT input (report E3) - MAIN shown lit, ALT disabled.
-            inputSel = &make<Segmented> (juce::StringArray { "MAIN", "ALT" }, [] { return 0; }, [] (int) {});
-            inputSel->isEnabledAt = [] (int i) { return i == 0; };
+            // MAIN / ALT: the channel's own switch, or the console's global one
+            // when INPUT SELECT is GLOBAL.
+            auto& engine = ctx.engine;
+            inputSel = &make<Segmented> (juce::StringArray { "MAIN", "ALT" },
+                                         [this, &engine] { return (engine.isInputSelectGlobal() ? engine.isGlobalAlt() : strip.isAltSelected()) ? 1 : 0; },
+                                         [this, &engine] (int i)
+                                         {
+                                             if (engine.isInputSelectGlobal())
+                                                 engine.setGlobalAlt (i == 1);
+                                             else
+                                                 strip.setAltSelected (i == 1);
+                                         });
             mainTile = &make<PatchTile> (ctx, strip);
-            altTile = &make<EmptySourceTile>();
+            altTile = &make<AltSourceTile> (ctx, strip);
             inputSelectLabel = &key ("INPUT SELECT");
-            inputSelectLabel->setEnabled (false);
-            selectMode = &make<Segmented> (juce::StringArray { "INDIVIDUAL", "GLOBAL" }, [] { return 0; }, [] (int) {});
-            selectMode->setEnabled (false);
+            inputSelectLabel->setTooltip ("The console's INPUT SELECT (SETUP > AUDIO)");
+            inputSelectLabel->onClick = [this] { if (ctx.showScreen) ctx.showScreen (Screen::Setup); };
+            selectMode = &make<Segmented> (juce::StringArray { "INDIVIDUAL", "GLOBAL" }, [&engine] { return engine.isInputSelectGlobal() ? 1 : 0; },
+                                           [&engine] (int i) { engine.setInputSelectGlobal (i == 1); });
             stereo = &key ("ST", std::nullopt, colours::stereo);
             stereo->setTooltip ("Stereo channel (two inputs)");
             bindKey (*stereo, p.stereo);
@@ -732,7 +827,7 @@ private:
     Segmented *inputSel = nullptr, *selectMode = nullptr;
     Bracket* bracket = nullptr;
     PatchTile* mainTile = nullptr;
-    EmptySourceTile* altTile = nullptr;
+    AltSourceTile* altTile = nullptr;
     DelayPanel* delay = nullptr;
     juce::Rectangle<int> filterHeader;
 };

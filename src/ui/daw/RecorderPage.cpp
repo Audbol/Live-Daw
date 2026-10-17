@@ -323,9 +323,8 @@ RecorderPage::RecorderPage (UiContext& c, daw::Session& s) : ctx (c), session (s
         }
     };
 
-    enableKey (soundcheckKey, canVirtualSoundcheck());
-    soundcheckKey.setTooltip (canVirtualSoundcheck() ? "Set each channel's ALT input to its track's playback channel"
-                                                     : "VIRTUAL SOUNDCHECK needs the channels' ALT inputs (not in this engine yet)");
+    soundcheckKey.isOn = [this] { return isVirtualSoundcheckOn(); };
+    soundcheckKey.setTooltip ("Each channel plays back its track: its ALT input becomes the track's playback channel and INPUT SELECT switches to GLOBAL ALT (again: back to MAIN)");
     startTimerHz (15);
 }
 
@@ -748,15 +747,57 @@ void RecorderPage::recordAllChannels()
 
 bool RecorderPage::canVirtualSoundcheck() const
 {
-    return false; // needs the channels' ALT inputs
+    return session.getProject().getNumTracks() > 0;
 }
 
-void RecorderPage::virtualSoundcheck() {}
+bool RecorderPage::isVirtualSoundcheckOn() const
+{
+    return ctx.engine.isInputSelectGlobal() && ctx.engine.isGlobalAlt();
+}
+
+void RecorderPage::virtualSoundcheck()
+{
+    auto& engine = ctx.engine;
+    if (isVirtualSoundcheckOn())
+    {
+        // Back to the live inputs.
+        engine.setGlobalAlt (false);
+        ctx.log.info ("Virtual soundcheck off: the channels listen to their MAIN inputs");
+        return;
+    }
+    std::vector<daw::Session::ChannelInfo> channels;
+    for (auto& s : engine.getChannels())
+    {
+        daw::Session::ChannelInfo ch;
+        ch.number = s->getNumber();
+        ch.stereo = s->params.stereo.load();
+        ch.inputPort = s->getInputLeft();
+        channels.push_back (ch);
+    }
+    const auto routes = session.virtualSoundcheckRoutes (channels);
+    if (routes.empty())
+    {
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Virtual soundcheck",
+                                                "No track records a channel's input or strip. RECORD ALL CHANNELS sets them up.");
+        return;
+    }
+    // Each channel's ALT input becomes its track's playback channel; the
+    // global INPUT SELECT then switches every channel to ALT at once.
+    for (auto& r : routes)
+        for (auto& s : engine.getChannels())
+            if (s->getNumber() == r.channelNumber)
+                s->setAltInput (Recorder::playbackSource (r.playChannel), r.stereo ? Recorder::playbackSource (r.playChannel + 1) : -1);
+    engine.setInputSelectGlobal (true);
+    engine.setGlobalAlt (true);
+    ctx.log.info ("Virtual soundcheck: " + juce::String ((int) routes.size()) + " channels play back their tracks (ALT inputs, INPUT SELECT GLOBAL)");
+}
 
 void RecorderPage::timerCallback()
 {
     auto& project = session.getProject();
     modeKey.setButtonText (session.isLoopEnabled() ? "LOOP" : "PLAY");
+    if (soundcheckKey.isEnabled() != canVirtualSoundcheck())
+        enableKey (soundcheckKey, canVirtualSoundcheck());
     // Lists follow project changes (a new project file: the session list too).
     const auto file = project.hasFolder() ? project.getFile() : juce::File();
     if (file != shownProject)
