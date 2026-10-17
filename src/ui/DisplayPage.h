@@ -44,14 +44,20 @@ struct KnobStyle
     juce::Component::SafePointer<juce::Component> target;
 };
 
-/** The parameter bar's value colours. */
+/** The parameter bar's value colours (WING firmware 3.1). */
 namespace KnobColours
 {
-    const juce::Colour blue { 0xff4aa3e0 };   // levels, frequencies, selector pages
-    const juce::Colour green { 0xff52c43c };  // width
-    const juce::Colour yellow { 0xfff5d63a }; // distance, selector positions
-    const juce::Colour cyan { 0xff4fd6dc };   // tilt, tool filter parameters
-    const juce::Colour white { 0xffffffff };  // trim, pan, balance
+    const juce::Colour blue { 0xff4890e0 };      // levels, frequencies, BAL, PAGE
+    const juce::Colour green { 0xff40a618 };     // width, EQ Q
+    const juce::Colour yellow { 0xffe0d400 };    // distance, AP frequency
+    const juce::Colour cyan { 0xff48f0f8 };      // tilt
+    const juce::Colour white { 0xfff8f8f8 };     // trim, pan, EQ gain
+    const juce::Colour orange { 0xfff8a008 };    // preamp gain, MAXER
+    const juce::Colour red { 0xfff75c58 };       // decay, reverb time
+    const juce::Colour timeGreen { 0xff1ed664 }; // pre-delay, multipliers, delay times
+    const juce::Colour gold { 0xfff0c858 };      // selectors (BUS 13): the value and the lit segment
+    const juce::Colour segmentOff { 0xff585858 };// a selector's other segments
+    const juce::Colour track { 0xff686868 };     // the grey line under a thumb
 } // namespace KnobColours
 
 /** What the status bar's title tile shows for a screen. The WING shows the

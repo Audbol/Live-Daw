@@ -14,37 +14,39 @@
 namespace livedaw::ui
 {
 
-/** The darker palette of the WING's SETUP, LIBRARY and VIEW screens (manual
-    figs 33-61): near-black panels, blue choice keys, red PRE/PFL and green
-    POST/AFL, the warm yellow ON chip and gold SETUP tabs. */
+/** The WING's screen palette (firmware 3.1) under the names the SETUP, LIBRARY
+    and VIEW screens use: #202020 panels, #303030 keys, #101010 wells, blue
+    choice keys, red PRE/PFL and green POST/AFL, the gold ON chip and tabs. The
+    same values as the screen tokens in Colours, so the app has one look. */
 namespace Dark
 {
-    const juce::Colour tabBar { 0xff111111 };
-    const juce::Colour tabOff { 0xff1d1d1d };
-    const juce::Colour tabOn { 0xff2f2f2f };
-    const juce::Colour header { 0xff262626 };
-    const juce::Colour body { 0xff1e1e1e };
-    const juce::Colour box { 0xff2a2a2a };       // sub-boxes and rows inside a panel
-    const juce::Colour key { 0xff3c3c3c };       // unlit keys
-    const juce::Colour keyOutline { 0xff8e8e8e };
-    const juce::Colour well { 0xff111111 };      // dropdown fields
-    const juce::Colour text { 0xffeeeeee };
-    const juce::Colour textDim { 0xff8a8a8a };
+    const juce::Colour tabBar = Colours::screen;
+    const juce::Colour tabOff = Colours::screenHeader;
+    const juce::Colour tabOn = Colours::screenTile;
+    const juce::Colour header = Colours::screenHeader;
+    const juce::Colour body = Colours::screenPanel;
+    const juce::Colour box = Colours::screenPanel;     // sub-boxes inside a panel (black gaps between them)
+    const juce::Colour key = Colours::screenKey;       // unlit keys
+    const juce::Colour keyOutline = Colours::textDim;  // outlined keys (SAFE, FILTER LO/HI)
+    const juce::Colour well = Colours::screenWell;     // dropdown fields, list rows
+    const juce::Colour text = Colours::text;
+    const juce::Colour textDim = Colours::textDim;
+    const juce::Colour caption = Colours::caption;     // unlit choice-key text, field captions
 
-    const juce::Colour choice { 0xff3e71cb };    // lit choice key (NORM|FINE|AUTO, MCU|HUI, ...)
+    const juce::Colour choice = Colours::valueBlue;    // lit choice key (MAIN, NORM|FINE|AUTO, MCU|HUI, ...)
     const juce::Colour choiceInk { 0xff0d1a33 };
-    const juce::Colour pre { 0xfffc3a3e };       // PRE, PFL
-    const juce::Colour post { 0xff02c136 };      // POST, AFL
-    const juce::Colour olive { 0xff819902 };     // LIVE|STUDIO|SIP
-    const juce::Colour orange { 0xffbe5e12 };    // USB HOST SPEED FS
-    const juce::Colour on { 0xfff3c650 };        // ON chip
-    const juce::Colour gold { 0xffe8c35a };      // SETUP tabs
+    const juce::Colour pre = Colours::pfl;             // PRE, PFL
+    const juce::Colour post = Colours::green;          // POST, AFL
+    const juce::Colour olive { 0xff809800 };           // LIVE|STUDIO|SIP
+    const juce::Colour orange = Colours::alt;          // ALT, USB HOST SPEED FS
+    const juce::Colour on = Colours::gold;             // ON chip
+    const juce::Colour gold = Colours::gold;           // tabs, selection
     const juce::Colour selectedRow { 0xff3b3215 };
-    const juce::Colour selectedOutline { 0xffc8a040 };
-    const juce::Colour layer { 0xff3d72ce };     // VIEW: the active layer
-    const juce::Colour section { 0xff829c01 };   // VIEW: the viewed fader section
-    const juce::Colour muteGroup { 0xfff24e52 }; // MUTE GROUPS headers and engaged keys
-    const juce::Colour faderFill { 0xff4f8de4 };
+    const juce::Colour selectedOutline = Colours::gold;
+    const juce::Colour layer { 0xff3d72ce };           // VIEW: the active layer
+    const juce::Colour section { 0xff829c01 };         // VIEW: the viewed fader section
+    const juce::Colour muteGroup { 0xfff24e52 };       // MUTE GROUPS headers and engaged keys
+    const juce::Colour faderFill = Colours::valueBlue;
     const juce::Colour muted { 0xffe0595b };
 } // namespace Dark
 
@@ -94,6 +96,14 @@ namespace prefs
 } // namespace prefs
 
 constexpr int kDarkHeaderHeight = 30;
+/** The black gap between a panel's header and its body. */
+constexpr int kDarkHeaderGap = 4;
+
+/** The font of panel header titles, fitted to a header `headerHeight` px tall. */
+inline juce::Font panelTitleFont (int headerHeight)
+{
+    return wingFontPx (juce::jmin (TypeScale::header * getWingScreenHeight(), (float) headerHeight * 0.42f));
+}
 
 /** Draws a dark WING panel: a header bar with the title centred, a thin black
     gap, then the body. Returns the body. An empty title draws only the body. */
@@ -104,10 +114,10 @@ inline juce::Rectangle<int> drawDarkPanel (juce::Graphics& g, juce::Rectangle<in
         auto header = area.removeFromTop (headerHeight);
         g.setColour (Dark::header);
         g.fillRect (header);
-        g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (juce::jmin (19.0f, (float) headerHeight * 0.62f), juce::Font::bold));
+        g.setColour (Dark::caption);
+        g.setFont (panelTitleFont (headerHeight));
         g.drawFittedText (title, header.reduced (6, 0), juce::Justification::centred, 1);
-        area.removeFromTop (2);
+        area.removeFromTop (kDarkHeaderGap);
     }
     g.setColour (Dark::body);
     g.fillRect (area);
@@ -117,7 +127,7 @@ inline juce::Rectangle<int> drawDarkPanel (juce::Graphics& g, juce::Rectangle<in
 /** The body of a panel drawn by drawDarkPanel. */
 inline juce::Rectangle<int> darkPanelBody (juce::Rectangle<int> area, bool hasTitle, int headerHeight = kDarkHeaderHeight)
 {
-    return hasTitle ? area.withTrimmedTop (headerHeight + 2) : area;
+    return hasTitle ? area.withTrimmedTop (headerHeight + kDarkHeaderGap) : area;
 }
 
 /** Enables or disables a key, dimming it when disabled (the console's
@@ -167,7 +177,7 @@ public:
         auto label = r.removeFromBottom (r.getHeight() * 0.34f);
         drawIcon (g, icon, r.reduced (r.getHeight() * 0.1f), c);
         g.setColour (c);
-        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 13.0f, label.getHeight() * 0.85f), juce::Font::bold));
+        g.setFont (wingFontPx (juce::jmin (TypeScale::statusCaption * getWingScreenHeight(), label.getHeight() * 0.62f)));
         g.drawFittedText (caption ? caption() : getButtonText(), label.toNearestInt().reduced (1, 0), juce::Justification::centredTop, 1, 0.7f);
     }
 
@@ -262,12 +272,14 @@ public:
             g.fillRect (r);
             if (sel)
             {
+                // The WING's 4 px top line (of a 56 px tab).
                 g.setColour (t.colour);
-                g.fillRect (r.withHeight (3.0f));
+                g.fillRect (r.withHeight (juce::jmax (2.0f, std::round (r.getHeight() * 0.07f))));
             }
             g.setColour (sel ? t.colour : (t.enabled ? Dark::textDim : Dark::textDim.withAlpha (0.4f)));
-            g.setFont (juce::FontOptions (juce::jlimit (12.0f, 22.0f, r.getHeight() * 0.5f), juce::Font::bold));
-            g.drawFittedText (t.name, r.toNearestInt().reduced (4, 0), juce::Justification::centred, 1);
+            const float cap = (sel ? TypeScale::tab : TypeScale::tab * 0.85f) * getWingScreenHeight();
+            g.setFont (wingFontPx (juce::jmin (cap, r.getHeight() * 0.38f)));
+            g.drawFittedText (t.name, r.toNearestInt().reduced (4, 0), juce::Justification::centred, 1, 0.8f);
         }
     }
 
@@ -304,13 +316,17 @@ public:
         shown = getter != nullptr ? getter() : -1;
         const bool enabled = isEnabled();
         auto r = getLocalBounds().toFloat();
+        // The keys sit in a black frame, as on the console.
+        g.setColour (juce::Colours::black);
+        g.fillRect (r);
+        r = r.reduced (1.0f);
         const float w = r.getWidth() / (float) juce::jmax (1, names.size());
         for (int i = 0; i < names.size(); ++i)
         {
             auto k = juce::Rectangle<float> (r.getX() + w * (float) i, r.getY(), w, r.getHeight()).reduced (1.0f, 0.0f);
             const bool on = i == shown;
             auto fill = on ? (i < (int) litColours.size() ? litColours[(size_t) i] : Dark::choice) : Dark::key;
-            auto ink = on ? Dark::choiceInk : Dark::text;
+            auto ink = on ? Dark::choiceInk : Dark::caption;
             if (! enabled)
             {
                 fill = fill.withMultipliedSaturation (0.5f).darker (0.55f);
@@ -319,7 +335,7 @@ public:
             g.setColour (fill);
             g.fillRect (k);
             g.setColour (on && ! enabled ? Dark::text.withAlpha (0.45f) : ink);
-            g.setFont (juce::FontOptions (juce::jlimit (10.0f, 18.0f, juce::jmin (k.getHeight() * 0.5f, k.getWidth() * 0.34f)), juce::Font::bold));
+            g.setFont (wingFontPx (juce::jmin (wingKeyCap (k.getHeight()), k.getWidth() * 0.22f)));
             g.drawFittedText (names[i], k.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
         }
     }
@@ -382,9 +398,11 @@ public:
         if (! isEnabled())
             fill = fill.withMultipliedSaturation (0.5f).darker (0.55f);
         g.setColour (fill);
-        g.fillRoundedRectangle (r, 2.0f);
-        g.setColour (shown ? (isEnabled() ? juce::Colours::black : juce::Colours::black.withAlpha (0.6f)) : (isEnabled() ? Dark::text : Dark::textDim.darker (0.3f)));
-        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 15.0f, r.getHeight() * 0.48f), juce::Font::bold));
+        g.fillRect (r);
+        g.setColour (juce::Colours::black);
+        g.drawRect (r, 1.0f);
+        g.setColour (shown ? (isEnabled() ? juce::Colours::black : juce::Colours::black.withAlpha (0.6f)) : (isEnabled() ? Dark::textDim : Dark::textDim.darker (0.3f)));
+        g.setFont (wingFontPx (wingKeyCap (r.getHeight(), 0.36f)));
         g.drawFittedText (text, r.toNearestInt(), juce::Justification::centred, 1);
     }
 
@@ -424,6 +442,10 @@ public:
     bool arrowKey = false;          // a down arrow instead of the dots
     std::optional<Icon> icon;       // drawn left of the caption (ROUTING group selectors)
 
+    /** While its list is open (popups::chooseFrom sets the anchor's
+        "wingListOpen" property) the field turns grey, as on the console. */
+    bool isListOpen() const { return getProperties().getWithDefault ("wingListOpen", false); }
+
     void paint (juce::Graphics& g) override
     {
         shownValue = getValue ? getValue() : juce::String();
@@ -431,7 +453,8 @@ public:
         auto key = r.removeFromRight (juce::jmin (r.getHeight() * 2 / 3, r.getWidth() / 4));
         r.removeFromRight (3);
         const float alpha = isEnabled() ? 1.0f : 0.45f;
-        g.setColour (Dark::well);
+        const bool open = isListOpen();
+        g.setColour (open ? Dark::textDim : Dark::well);
         g.fillRect (r);
         g.setColour (Dark::key.withAlpha (alpha));
         g.fillRect (key);
@@ -456,11 +479,12 @@ public:
             drawIcon (g, *icon, ib.toFloat(), Dark::text.withAlpha (alpha));
             t.removeFromLeft (6);
         }
-        g.setColour (Dark::textDim.withAlpha (alpha));
-        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 13.0f, (float) t.getHeight() * 0.3f), juce::Font::bold));
-        g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 38 / 100), juce::Justification::bottomLeft, 1);
+        const float screenH = getWingScreenHeight();
+        g.setColour ((open ? Dark::text : Dark::caption).withAlpha (alpha));
+        g.setFont (wingFontPx (juce::jmin (TypeScale::body * screenH, (float) t.getHeight() * 0.22f)));
+        g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 40 / 100), juce::Justification::centredLeft, 1, 0.8f);
         g.setColour (Dark::text.withAlpha (alpha));
-        g.setFont (juce::FontOptions (juce::jlimit (12.0f, 24.0f, (float) t.getHeight() * 0.85f), juce::Font::bold));
+        g.setFont (wingFontPx (juce::jmin (TypeScale::value * screenH, (float) t.getHeight() * 0.5f)));
         g.drawFittedText (shownValue, t, juce::Justification::centredLeft, 1, 0.8f);
     }
 
@@ -473,10 +497,14 @@ public:
 private:
     void timerCallback() override
     {
-        if (getValue && getValue() != shownValue)
+        if ((getValue && getValue() != shownValue) || isListOpen() != shownOpen)
+        {
+            shownOpen = isListOpen();
             repaint();
+        }
     }
 
+    bool shownOpen = false;
     juce::String caption, shownValue;
     std::function<juce::String()> getValue;
     std::function<void (DropdownField&)> showMenu;
@@ -525,25 +553,31 @@ public:
         for (auto& r : rows)
             units += r.heightRows;
         const int groups = rows.empty() ? 0 : rows.back().group + 1;
-        return (hasHeader() ? kDarkHeaderHeight + 2 : 0) + juce::roundToInt (units * (float) rowHeight) + groups * 8 + 4;
+        return (hasHeader() ? kDarkHeaderHeight + kDarkHeaderGap : 0) + juce::roundToInt (units * (float) rowHeight) + groups * 8 + juce::jmax (0, groups - 1) * kDarkHeaderGap;
     }
 
     void paint (juce::Graphics& g) override
     {
-        drawDarkPanel (g, getLocalBounds(), title);
-        for (auto& b : boxes)
+        // The body is cut into sub-boxes by black gaps (SOLO SYSTEM, OPTIONS).
+        const auto body = drawDarkPanel (g, getLocalBounds(), title);
+        if (boxes.size() > 1)
         {
-            g.setColour (Dark::box);
-            g.fillRect (b);
+            g.setColour (juce::Colours::black);
+            g.fillRect (body);
+            for (auto& b : boxes)
+            {
+                g.setColour (Dark::box);
+                g.fillRect (b);
+            }
         }
         for (auto& r : rows)
         {
             if (r.label.isEmpty())
                 continue;
             auto l = r.labelArea;
-            g.setColour (r.enabled ? Dark::text : Dark::textDim.darker (0.2f));
+            g.setColour (r.enabled ? Dark::caption : Dark::textDim.darker (0.2f));
             const bool caption = r.control == nullptr;
-            g.setFont (juce::FontOptions (juce::jlimit (10.0f, 15.0f, (float) rowHeight * (caption ? 0.4f : 0.5f)), juce::Font::bold));
+            g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), (float) rowHeight * (caption ? 0.26f : 0.34f))));
             const int textW = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), r.label);
             g.drawFittedText (r.label, l, caption && r.rightAligned ? juce::Justification::centredRight : juce::Justification::centredLeft, 1, 0.75f);
             if (r.info)
@@ -558,7 +592,7 @@ public:
 
     void resized() override
     {
-        auto b = darkPanelBody (getLocalBounds(), hasHeader()).reduced (4, 4);
+        auto b = darkPanelBody (getLocalBounds(), hasHeader());
         boxes.clear();
         int lastGroup = -1;
         juce::Rectangle<int> box;
@@ -568,16 +602,18 @@ public:
             {
                 if (lastGroup >= 0)
                 {
-                    boxes.push_back (box);
-                    b.removeFromTop (6);
+                    boxes.push_back (box.withBottom (box.getBottom() + 4));
+                    b.removeFromTop (4);
+                    b.removeFromTop (kDarkHeaderGap);
                 }
                 box = b.withHeight (0);
+                b.removeFromTop (4);
                 lastGroup = r.group;
             }
             const int h = juce::roundToInt ((float) rowHeight * r.heightRows);
             auto row = b.removeFromTop (h);
             box = box.getUnion (row);
-            auto inner = row.reduced (6, 0);
+            auto inner = row.reduced (10, 0);
             if (r.control != nullptr)
             {
                 const int ch = juce::jmin (inner.getHeight() - 4, juce::roundToInt ((float) rowHeight * r.heightRows) - 6);
@@ -596,7 +632,7 @@ public:
             r.labelArea = inner;
         }
         if (lastGroup >= 0)
-            boxes.push_back (box);
+            boxes.push_back (box.withBottom (getHeight()));
     }
 
 private:
@@ -619,53 +655,175 @@ private:
 };
 
 //==============================================================================
+/** Where a window sits over its page. The WING floats most windows over the
+    page dimmed by a 75 % black scrim (INPUT SELECT centred, EQ/RTA SETTINGS
+    docked at the right, SELECT MAIN INPUT under the status bar); CHANNEL
+    INIT/COPY, SCOPE and FILTER SETUP cover the page. */
+struct OverlayPlacement
+{
+    enum class Kind
+    {
+        FullPage,
+        Centred,
+        DockRight,
+        BelowStatus
+    };
+
+    Kind kind = Kind::FullPage;
+    float width = 1.0f, height = 1.0f; // shares of the page
+
+    static OverlayPlacement fullPage() { return {}; }
+    static OverlayPlacement centred (float w, float h) { return { Kind::Centred, w, h }; }
+    static OverlayPlacement dockRight (float w) { return { Kind::DockRight, w, 1.0f }; }
+    static OverlayPlacement belowStatus() { return { Kind::BelowStatus, 1.0f, 1.0f }; }
+
+    bool floats() const noexcept { return kind == Kind::Centred || kind == Kind::DockRight; }
+
+    /** The window's area within `page`. */
+    juce::Rectangle<int> windowIn (juce::Rectangle<int> page) const
+    {
+        switch (kind)
+        {
+            case Kind::Centred:
+                return page.withSizeKeepingCentre (juce::roundToInt ((float) page.getWidth() * width),
+                                                   juce::roundToInt ((float) page.getHeight() * height));
+            case Kind::DockRight:
+                return page.removeFromRight (juce::roundToInt ((float) page.getWidth() * width)).reduced (0, 4);
+            case Kind::FullPage:
+            case Kind::BelowStatus:
+                break;
+        }
+        return page;
+    }
+};
+
+/** The title bar's CLOSE key: the caption and a ticked box ("CLOSE ☑"). */
+class CloseKey final : public juce::Button
+{
+public:
+    explicit CloseKey (const juce::String& keyText = "CLOSE") : juce::Button (keyText) {}
+
+    void paintButton (juce::Graphics& g, bool over, bool down) override
+    {
+        auto r = getLocalBounds().toFloat();
+        if (over || down)
+        {
+            g.setColour (Colours::screenKey.withAlpha (down ? 1.0f : 0.6f));
+            g.fillRect (r);
+        }
+        const auto ink = isEnabled() ? Colours::caption : Colours::textDim;
+        auto box = r.removeFromRight (juce::jmin (r.getHeight(), r.getWidth() * 0.4f)).reduced (r.getHeight() * 0.14f);
+        drawIcon (g, Icon::Check, box, ink);
+        g.setColour (ink);
+        g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), r.getHeight() * 0.32f)));
+        g.drawFittedText (getButtonText(), r.toNearestInt().reduced (2, 0), juce::Justification::centredRight, 1, 0.8f);
+    }
+};
+
+/** Height of a window's title bar: 64 of the WING's 800 px. */
+inline int windowTitleHeight (int windowHeight)
+{
+    return juce::jlimit (24, juce::jmax (24, windowHeight / 5), juce::roundToInt (getWingScreenHeight() * 0.08f));
+}
+
+/** Paints a WING window's title bar (#202020, the title in caption grey, centred
+    or left-aligned) and returns the area below it. */
+inline juce::Rectangle<int> paintWindowTitle (juce::Graphics& g, juce::Rectangle<int> window, const juce::String& title,
+                                              bool leftAligned = false, juce::Colour bar = Colours::screenHeader,
+                                              juce::Colour ink = Colours::caption)
+{
+    auto titleBar = window.removeFromTop (windowTitleHeight (window.getHeight()));
+    g.setColour (bar);
+    g.fillRect (titleBar);
+    g.setColour (ink);
+    g.setFont (panelTitleFont (titleBar.getHeight()));
+    const int side = titleBar.getHeight() * 3;
+    g.drawFittedText (title, leftAligned ? titleBar.withTrimmedLeft (16).withTrimmedRight (side) : titleBar.reduced (side, 0),
+                      leftAligned ? juce::Justification::centredLeft : juce::Justification::centred, 1, 0.8f);
+    return window;
+}
+
+//==============================================================================
 /** A window over a screen (the WING's INPUT SELECT, SCOPE or SD CARD windows):
-    a title bar with a CLOSE key, and the content below. */
+    a title bar with the title and a CLOSE key, and the content below. A
+    floating window dims the rest of its page; clicking the dimmed part closes
+    it, as does any key of the surface. A full-page window covers the page. */
 class ScreenOverlay final : public juce::Component
 {
 public:
-    ScreenOverlay (juce::String titleText, std::unique_ptr<juce::Component> body) : title (std::move (titleText)), content (std::move (body))
+    ScreenOverlay (juce::String titleText, std::unique_ptr<juce::Component> body, OverlayPlacement where = {})
+        : title (std::move (titleText)), content (std::move (body)), placement (where)
     {
-        closeKey.offColour = Dark::key;
-        closeKey.onClick = [this] { if (onClose) onClose(); };
+        closeKey.onClick = [this] { requestClose(); };
         addAndMakeVisible (closeKey);
         if (content != nullptr)
             addAndMakeVisible (*content);
+        closesOnScrimClick = placement.floats();
+        if (placement.floats())
+            TransientPopups::add (this, [safe = juce::Component::SafePointer<ScreenOverlay> (this)] { if (safe != nullptr) safe->requestClose(); });
     }
 
+    ~ScreenOverlay() override { TransientPopups::remove (this); }
+
     std::function<void()> onClose;
+    /** A click on the dimmed page closes the window (floating windows). */
+    bool closesOnScrimClick = false;
+
     juce::Component* getContent() const noexcept { return content.get(); }
+    const OverlayPlacement& getPlacement() const noexcept { return placement; }
+
+    /** The CLOSE key's caption ("CLOSE", or "DONE" on FILTER SETUP of old firmware). */
+    void setCloseText (const juce::String& t) { closeKey.setButtonText (t); }
+
+    /** The window's area in this component (the rest is the dimmed page). */
+    juce::Rectangle<int> windowArea() const { return placement.windowIn (getLocalBounds()); }
 
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (juce::Colours::black);
-        auto bar = getLocalBounds().removeFromTop (barHeight());
-        g.setColour (Dark::header);
-        g.fillRect (bar);
-        g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (juce::jmin (22.0f, (float) bar.getHeight() * 0.55f), juce::Font::bold));
-        g.drawText (title, bar.reduced (12, 0), juce::Justification::centredLeft);
+        const auto window = windowArea();
+        if (placement.floats())
+        {
+            g.setColour (Colours::scrim);
+            g.fillRect (getLocalBounds());
+            g.setColour (Colours::screenPanel);
+            g.fillRect (window);
+        }
+        else
+        {
+            g.fillAll (juce::Colours::black);
+        }
+        paintWindowTitle (g, window, title, placement.kind == OverlayPlacement::Kind::DockRight);
     }
 
     void resized() override
     {
-        auto b = getLocalBounds();
-        auto bar = b.removeFromTop (barHeight());
-        closeKey.setBounds (bar.removeFromRight (juce::jmin (130, bar.getWidth() / 4)).reduced (4));
+        auto b = windowArea();
+        auto bar = b.removeFromTop (windowTitleHeight (b.getHeight()));
+        closeKey.setBounds (bar.removeFromRight (juce::jmin (bar.getHeight() * 3, bar.getWidth() / 3)).reduced (4, 6));
         b.removeFromTop (6);
         if (content != nullptr)
-            content->setBounds (b);
+            content->setBounds (placement.floats() ? b.reduced (6, 0).withTrimmedBottom (6) : b);
     }
 
-    // Swallow clicks that would reach the screen underneath.
-    void mouseDown (const juce::MouseEvent&) override {}
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        // Swallow clicks that would reach the screen underneath; a click on the
+        // dimmed page closes a floating window.
+        if (closesOnScrimClick && ! windowArea().contains (e.getPosition()))
+            requestClose();
+    }
 
 private:
-    int barHeight() const { return juce::jlimit (30, 44, getHeight() / 11); }
+    void requestClose()
+    {
+        if (onClose)
+            onClose();
+    }
 
     juce::String title;
     std::unique_ptr<juce::Component> content;
-    WingKey closeKey { "CLOSE", Icon::Check };
+    OverlayPlacement placement;
+    CloseKey closeKey;
 };
 
 /** A body for an overlay that only explains something. */
@@ -678,10 +836,10 @@ public:
     {
         auto r = getLocalBounds().reduced (24, 16);
         g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (juce::jmin (26.0f, (float) getHeight() * 0.08f), juce::Font::bold));
+        g.setFont (wingFontPx (juce::jmin (TypeScale::value * getWingScreenHeight() * 1.2f, (float) getHeight() * 0.06f)));
         g.drawFittedText (head, r.removeFromTop (juce::jmin (48, r.getHeight() / 3)), juce::Justification::centredLeft, 2);
-        g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+        g.setColour (Dark::caption);
+        g.setFont (wingFont (TypeScale::body));
         g.drawFittedText (body, r, juce::Justification::topLeft, 8);
     }
 
@@ -693,9 +851,9 @@ private:
 class OverlayHolder
 {
 public:
-    void show (juce::Component& parent, const juce::String& title, std::unique_ptr<juce::Component> body)
+    void show (juce::Component& parent, const juce::String& title, std::unique_ptr<juce::Component> body, OverlayPlacement placement = {})
     {
-        overlay = std::make_unique<ScreenOverlay> (title, std::move (body));
+        overlay = std::make_unique<ScreenOverlay> (title, std::move (body), placement);
         overlay->onClose = [this] { juce::MessageManager::callAsync ([this, alive = std::weak_ptr<bool> (token)] { if (! alive.expired()) overlay.reset(); }); };
         parent.addAndMakeVisible (*overlay);
         overlay->setBounds (parent.getLocalBounds());

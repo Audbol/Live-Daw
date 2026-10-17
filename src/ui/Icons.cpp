@@ -1,5 +1,7 @@
 #include "ui/Icons.h"
 
+#include "ui/LookAndFeel.h"
+
 namespace livedaw::ui
 {
 
@@ -712,6 +714,616 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
             return;
         }
     }
+}
+
+
+//==============================================================================
+// The WING's channel icons (/ch/n/icon), drawn as white line art on a 24-unit
+// grid in the style of the console's ICON/COLOR gallery.
+
+namespace
+{
+    struct WingIconName
+    {
+        int number;
+        const char* name;
+    };
+
+    // The console's icon numbers and names (as the Behringer Companion module lists them).
+    constexpr WingIconName wingIconNames[] = {
+        { 0, "Empty" }, { 1, "XLR Connector" }, { 2, "Jack Connector" }, { 3, "Mini Jack Connector" }, { 4, "RCA Connector" },
+        { 5, "Fader" }, { 6, "FX" }, { 7, "Matrix" }, { 8, "Bass Clef" }, { 9, "Treble Clef" }, { 10, "Routing" }, { 11, "Bus" },
+        { 12, "Sum" }, { 13, "Smile" }, { 14, "Wing Logo" },
+        { 100, "Microphone" }, { 101, "Wireless Microphone" }, { 102, "Handheld Microphone" }, { 103, "Condenser Microphone" },
+        { 104, "Boundary Microphone" }, { 105, "Lapel Microphone" }, { 106, "Boundary Microphone (Alternative)" },
+        { 107, "Headset Microphone" }, { 108, "Overhead Microphone" }, { 109, "Speaker Icon" }, { 110, "Studio Microphone" },
+        { 111, "Podcast Microphone" }, { 112, "Choir" }, { 113, "Female Vocal" }, { 114, "Male Vocal" },
+        { 200, "Kick In" }, { 201, "Kick Out" }, { 202, "Snare Top" }, { 203, "Snare Bottom" }, { 204, "Snare Drum" }, { 205, "Hi-Hat" },
+        { 206, "High Tom" }, { 207, "Mid Tom" }, { 208, "Low Tom" }, { 209, "Floor Tom" }, { 210, "Drum" }, { 211, "Crash Cymbal" },
+        { 212, "Ride Cymbal" }, { 213, "Cowbell" }, { 214, "Tambourine" }, { 215, "Bongos" }, { 216, "Conga" }, { 217, "Timpani" },
+        { 218, "Cajon" }, { 219, "Shaker" }, { 220, "Marimba" }, { 221, "Hang Drum" }, { 222, "Triangle" }, { 223, "Drum Machine" },
+        { 224, "Claps" },
+        { 300, "Electric Guitar 1" }, { 301, "Electric Guitar 2" }, { 302, "Violin" }, { 303, "Oud" }, { 304, "Acoustic Guitar" },
+        { 305, "Electric Guitar 3" }, { 306, "Electric Guitar 4" }, { 307, "Electric Guitar 5" }, { 308, "Double Bass" }, { 309, "Viola" },
+        { 310, "Cello" }, { 311, "Baritone" }, { 312, "Saxophone" }, { 313, "Trombone" }, { 314, "Trumpet" }, { 315, "Harp" },
+        { 316, "Organ" }, { 317, "Harmonica" }, { 318, "Transverse Flute" }, { 319, "Clarinet" },
+        { 400, "Grand Piano" }, { 401, "Upright Piano" }, { 402, "Synthesizer 1" }, { 403, "Synthesizer 2" }, { 404, "Synthesizer 3" },
+        { 405, "Synthesizer 4" }, { 406, "Keytar" }, { 407, "Piano Stand" }, { 408, "Piano Cross Stand" }, { 409, "Hammond Organ" },
+        { 500, "Full Amplifier" }, { 501, "2x2 Cabinet" }, { 502, "Cabinet" }, { 503, "Speaker" }, { 504, "Speaker Pair" },
+        { 505, "Speaker with Microphone Set" }, { 506, "Subwoofer" }, { 507, "Studio Monitor" }, { 508, "Studio Monitor 2" },
+        { 509, "Column Speaker" }, { 510, "Wall Speaker" }, { 511, "Hanging Speaker" }, { 512, "Speaker Stand" },
+        { 513, "Speaker Stand Pair" }, { 514, "Delay Speakers" }, { 515, "Left Monitor" }, { 516, "Right Monitor" }, { 517, "Monitor" },
+        { 518, "Large Monitor" }, { 519, "Large Monitor Pair" }, { 520, "Left Wedge Monitor" }, { 521, "Right Wedge Monitor" },
+        { 522, "Center Wedge Monitor" }, { 523, "Line Array" }, { 524, "Ceiling Speaker" },
+        { 600, "Hand" }, { 601, "Ear" }, { 602, "Headphones" }, { 603, "Speaker A" }, { 604, "Speaker B" }, { 605, "Laptop" },
+        { 606, "MP3 Player" }, { 607, "Smartphone" }, { 608, "USB Drive" }, { 609, "SD Card" }, { 610, "CD" }, { 611, "Turntable" },
+        { 612, "Reel-to-Reel Player" }, { 613, "Cassette Player" }, { 614, "Patchbay" },
+    };
+
+    /** Line art on a 24-unit grid fitted into a square. */
+    class Art
+    {
+    public:
+        Art (juce::Graphics& graphics, juce::Rectangle<float> area, juce::Colour c)
+            : g (graphics), u (juce::jmin (area.getWidth(), area.getHeight()) / 24.0f),
+              origin (area.getCentre() - juce::Point<float> (12.0f * u, 12.0f * u)),
+              stroke (juce::jmax (1.1f, u * 1.5f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded)
+        {
+            g.setColour (c);
+        }
+
+        ~Art() { draw(); }
+
+        juce::Point<float> P (float x, float y) const { return origin + juce::Point<float> (x * u, y * u); }
+
+        void line (float x0, float y0, float x1, float y1)
+        {
+            p.startNewSubPath (P (x0, y0));
+            p.lineTo (P (x1, y1));
+        }
+
+        void poly (std::initializer_list<float> xy, bool close = false)
+        {
+            const auto* v = xy.begin();
+            p.startNewSubPath (P (v[0], v[1]));
+            for (size_t i = 2; i + 1 < xy.size(); i += 2)
+                p.lineTo (P (v[i], v[i + 1]));
+            if (close)
+                p.closeSubPath();
+        }
+
+        void curve (float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3)
+        {
+            p.startNewSubPath (P (x0, y0));
+            p.cubicTo (P (x1, y1), P (x2, y2), P (x3, y3));
+        }
+
+        void circle (float cx, float cy, float r) { p.addEllipse (P (cx - r, cy - r).x, P (cx - r, cy - r).y, 2.0f * r * u, 2.0f * r * u); }
+        void ellipse (float cx, float cy, float rx, float ry) { p.addEllipse (P (cx - rx, cy - ry).x, P (cx - rx, cy - ry).y, 2.0f * rx * u, 2.0f * ry * u); }
+        void rect (float x, float y, float w, float h, float corner = 0.0f) { p.addRoundedRectangle (P (x, y).x, P (x, y).y, w * u, h * u, corner * u); }
+
+        /** An arc, angles in degrees clockwise from 12 o'clock. */
+        void arc (float cx, float cy, float rx, float ry, float from, float to)
+        {
+            p.addCentredArc (P (cx, cy).x, P (cx, cy).y, rx * u, ry * u, 0.0f, juce::degreesToRadians (from), juce::degreesToRadians (to), true);
+        }
+
+        void dot (float cx, float cy, float r) { g.fillEllipse (P (cx - r, cy - r).x, P (cx - r, cy - r).y, 2.0f * r * u, 2.0f * r * u); }
+        void block (float x, float y, float w, float h) { g.fillRect (P (x, y).x, P (x, y).y, w * u, h * u); }
+
+        void text (const juce::String& t, float x, float y, float w, float h)
+        {
+            draw();
+            g.setFont (wingFontPx (h * u * 0.78f, WingWeight::SemiBold));
+            g.drawText (t, juce::Rectangle<float> (P (x, y).x, P (x, y).y, w * u, h * u), juce::Justification::centred, false);
+        }
+
+        void draw()
+        {
+            if (! p.isEmpty())
+                g.strokePath (p, stroke);
+            p.clear();
+        }
+
+        // Shapes several icons share.
+        void stand (float top) // a mic stand: stem and base
+        {
+            line (12.0f, top, 12.0f, 21.0f);
+            line (8.0f, 21.0f, 16.0f, 21.0f);
+        }
+
+        void drumSide (float cx, float top, float rx, float height) // a drum seen from the side
+        {
+            ellipse (cx, top, rx, rx * 0.3f);
+            line (cx - rx, top, cx - rx, top + height);
+            line (cx + rx, top, cx + rx, top + height);
+            arc (cx, top + height, rx, rx * 0.3f, 90.0f, 270.0f);
+        }
+
+        void cymbal (float cx, float cy, float rx, float tilt) // a cymbal and its stand
+        {
+            juce::Path c;
+            c.addEllipse (-rx * u, -rx * 0.18f * u, 2.0f * rx * u, 0.36f * rx * u);
+            p.addPath (c, juce::AffineTransform::rotation (juce::degreesToRadians (tilt)).translated (P (cx, cy)));
+            line (cx, cy, cx, 20.5f);
+            line (cx, 20.5f, cx - 3.5f, 23.0f);
+            line (cx, 20.5f, cx + 3.5f, 23.0f);
+        }
+
+        void speakerBox (float x, float y, float w, float h) // a box with a woofer and a tweeter
+        {
+            rect (x, y, w, h, 0.8f);
+            const float r = w * 0.3f;
+            circle (x + w * 0.5f, y + h - r - w * 0.18f, r);
+            circle (x + w * 0.5f, y + w * 0.32f, w * 0.13f);
+        }
+
+        void wedge()
+        {
+            poly ({ 3.0f, 20.0f, 21.0f, 20.0f, 21.0f, 15.0f, 9.0f, 7.0f, 3.0f, 9.0f }, true);
+            line (8.5f, 10.5f, 18.0f, 16.5f);
+        }
+
+        void synth()
+        {
+            rect (2.0f, 6.0f, 20.0f, 12.0f, 1.0f);
+            line (2.0f, 11.0f, 22.0f, 11.0f);
+            for (int i = 1; i < 8; ++i)
+                line (2.0f + 2.5f * (float) i, 11.0f, 2.0f + 2.5f * (float) i, 18.0f);
+            for (float x : { 4.5f, 7.0f, 12.0f, 14.5f, 17.0f })
+                block (x - 0.6f, 11.0f, 1.2f, 4.0f);
+            for (float x : { 5.0f, 8.0f, 11.0f })
+                circle (x, 8.5f, 1.0f);
+        }
+
+        void electricGuitar()
+        {
+            p.startNewSubPath (P (11.0f, 12.5f));
+            p.cubicTo (P (13.5f, 15.0f), P (12.0f, 17.5f), P (10.0f, 18.0f));
+            p.cubicTo (P (11.5f, 21.5f), P (8.5f, 23.5f), P (5.0f, 22.0f));
+            p.cubicTo (P (1.5f, 20.5f), P (1.5f, 16.0f), P (4.5f, 14.5f));
+            p.cubicTo (P (4.5f, 11.5f), P (7.0f, 10.0f), P (9.0f, 11.0f));
+            p.closeSubPath();
+            line (9.5f, 14.5f, 20.0f, 4.0f);
+            poly ({ 19.0f, 3.5f, 21.0f, 1.5f, 22.5f, 3.0f, 20.5f, 5.0f }, true);
+            line (5.5f, 16.0f, 8.0f, 18.5f);
+        }
+
+        void bowed (float cx, float top, float scale, bool endpin) // violin family: two bouts, neck, f-holes
+        {
+            const auto Y = [&] (float v) { return top + v * scale; };
+            p.startNewSubPath (P (cx, Y (0.0f)));
+            p.lineTo (P (cx, Y (4.0f)));
+            ellipse (cx, Y (7.5f), 3.6f * scale, 3.4f * scale);
+            ellipse (cx, Y (14.0f), 4.6f * scale, 4.4f * scale);
+            line (cx - 1.6f * scale, Y (10.5f), cx - 1.6f * scale, Y (13.0f));
+            line (cx + 1.6f * scale, Y (10.5f), cx + 1.6f * scale, Y (13.0f));
+            if (endpin)
+                line (cx, Y (18.4f), cx, Y (20.0f));
+        }
+
+        void person (float cx, float headY, float headR)
+        {
+            circle (cx, headY, headR);
+            arc (cx, headY + headR + 7.5f, headR * 2.0f, 6.0f, -70.0f, 70.0f);
+        }
+
+    private:
+        juce::Graphics& g;
+        float u;
+        juce::Point<float> origin;
+        juce::PathStrokeType stroke;
+        juce::Path p;
+    };
+} // namespace
+
+juce::String wingIconName (int number)
+{
+    for (auto& i : wingIconNames)
+        if (i.number == number)
+            return i.name;
+    return {};
+}
+
+std::vector<int> wingIconNumbers (int category)
+{
+    std::vector<int> numbers;
+    for (auto& i : wingIconNames)
+        if (category < 0 || i.number / 100 == category)
+            numbers.push_back (i.number);
+    return numbers;
+}
+
+bool drawWingIcon (juce::Graphics& g, int number, juce::Rectangle<float> area, juce::Colour colour)
+{
+    // Icons this set draws with a shared design: their category's.
+    switch (number)
+    {
+        case 1:   drawIcon (g, Icon::Xlr, area, colour); return true;
+        case 5:   drawIcon (g, Icon::Faders, area, colour); return true;
+        case 7:   drawIcon (g, Icon::Matrix, area, colour); return true;
+        case 11:  drawIcon (g, Icon::Bus, area, colour); return true;
+        case 109: drawIcon (g, Icon::Speaker, area, colour); return true;
+        case 602: drawIcon (g, Icon::Headphones, area, colour); return true;
+        case 608: drawIcon (g, Icon::UsbStick, area, colour); return true;
+        case 609: drawIcon (g, Icon::SdCard, area, colour); return true;
+        default:  break;
+    }
+
+    if (number <= 0 || number > 699)
+        return false;
+
+    Art a (g, area, colour);
+    switch (number)
+    {
+        // General
+        case 2:
+            a.line (12.0f, 2.0f, 12.0f, 4.5f);
+            a.rect (10.6f, 4.5f, 2.8f, 6.0f);
+            a.rect (9.0f, 10.5f, 6.0f, 9.0f, 1.0f);
+            a.line (12.0f, 19.5f, 12.0f, 22.5f);
+            return true;
+        case 3:
+            a.line (12.0f, 4.0f, 12.0f, 6.0f);
+            a.rect (11.0f, 6.0f, 2.0f, 5.0f);
+            a.rect (9.8f, 11.0f, 4.4f, 7.0f, 1.0f);
+            a.line (12.0f, 18.0f, 12.0f, 22.0f);
+            return true;
+        case 4:
+            a.circle (12.0f, 12.0f, 8.5f);
+            a.circle (12.0f, 12.0f, 4.5f);
+            a.dot (12.0f, 12.0f, 1.6f);
+            return true;
+        case 6:  a.text ("FX", 1.0f, 4.0f, 22.0f, 16.0f); return true;
+        case 8:
+            a.curve (7.0f, 10.0f, 6.5f, 4.5f, 16.5f, 3.5f, 17.0f, 9.0f);
+            a.curve (17.0f, 9.0f, 17.5f, 15.0f, 11.0f, 19.5f, 5.5f, 21.0f);
+            a.dot (7.6f, 10.0f, 1.9f);
+            a.dot (20.5f, 7.5f, 1.2f);
+            a.dot (20.5f, 12.5f, 1.2f);
+            return true;
+        case 9:
+            a.curve (13.0f, 21.5f, 15.5f, 21.5f, 15.5f, 18.0f, 13.0f, 18.0f);
+            a.line (13.0f, 18.0f, 12.0f, 2.5f);
+            a.curve (12.0f, 2.5f, 17.0f, 5.0f, 16.0f, 9.0f, 10.5f, 12.5f);
+            a.curve (10.5f, 12.5f, 5.5f, 16.0f, 8.0f, 21.0f, 13.0f, 20.0f);
+            a.curve (13.0f, 20.0f, 18.0f, 19.0f, 17.0f, 12.5f, 12.5f, 13.0f);
+            return true;
+        case 10:
+            a.curve (2.5f, 7.0f, 10.0f, 7.0f, 12.0f, 17.0f, 19.5f, 17.0f);
+            a.curve (2.5f, 17.0f, 10.0f, 17.0f, 12.0f, 7.0f, 19.5f, 7.0f);
+            a.poly ({ 18.0f, 4.5f, 21.5f, 7.0f, 18.0f, 9.5f });
+            a.poly ({ 18.0f, 14.5f, 21.5f, 17.0f, 18.0f, 19.5f });
+            return true;
+        case 12: a.poly ({ 18.0f, 4.0f, 6.0f, 4.0f, 13.0f, 12.0f, 6.0f, 20.0f, 18.0f, 20.0f }); return true;
+        case 13:
+            a.circle (12.0f, 12.0f, 9.0f);
+            a.dot (9.0f, 9.5f, 1.2f);
+            a.dot (15.0f, 9.5f, 1.2f);
+            a.arc (12.0f, 12.0f, 5.0f, 5.0f, 115.0f, 245.0f);
+            return true;
+        case 14: a.text ("W", 2.0f, 3.0f, 20.0f, 18.0f); return true;
+
+        // Vocals and microphones
+        case 101:
+            a.circle (12.0f, 6.0f, 3.5f);
+            a.poly ({ 9.6f, 9.0f, 14.4f, 9.0f, 13.4f, 21.0f, 10.6f, 21.0f }, true);
+            a.arc (12.0f, 6.0f, 6.5f, 6.5f, 25.0f, 75.0f);
+            a.arc (12.0f, 6.0f, 9.0f, 9.0f, 25.0f, 75.0f);
+            return true;
+        case 102:
+        case 111:
+            a.circle (16.0f, 8.0f, 4.5f);
+            a.line (12.8f, 4.8f, 19.2f, 11.2f);
+            a.poly ({ 12.3f, 10.0f, 14.0f, 11.7f, 6.0f, 21.0f, 3.5f, 18.5f }, true);
+            return true;
+        case 103:
+            a.rect (8.0f, 2.0f, 8.0f, 13.0f, 4.0f);
+            a.line (8.0f, 8.5f, 16.0f, 8.5f);
+            a.arc (12.0f, 10.0f, 6.0f, 6.0f, 100.0f, 260.0f);
+            a.stand (16.0f);
+            return true;
+        case 104:
+        case 106:
+            a.poly ({ 3.0f, 18.0f, 21.0f, 18.0f, 18.0f, 13.0f, 6.0f, 13.0f }, true);
+            a.circle (12.0f, 10.5f, 2.5f);
+            return true;
+        case 105:
+            a.rect (10.5f, 3.0f, 3.0f, 7.0f, 1.5f);
+            a.rect (9.0f, 10.0f, 6.0f, 3.0f, 0.8f);
+            a.curve (12.0f, 13.0f, 12.0f, 18.0f, 8.0f, 19.0f, 8.0f, 22.0f);
+            return true;
+        case 107:
+            a.circle (12.0f, 11.0f, 6.0f);
+            a.arc (12.0f, 11.0f, 8.5f, 8.5f, -85.0f, 85.0f);
+            a.curve (4.0f, 13.0f, 4.0f, 17.5f, 6.5f, 19.0f, 10.0f, 18.5f);
+            a.dot (10.5f, 18.5f, 1.4f);
+            return true;
+        case 108:
+            a.line (2.5f, 4.0f, 15.5f, 4.0f);
+            a.line (15.5f, 4.0f, 15.5f, 6.0f);
+            a.rect (14.0f, 6.0f, 3.0f, 11.0f, 1.5f);
+            a.arc (15.5f, 18.5f, 4.0f, 3.0f, 120.0f, 240.0f);
+            return true;
+        case 110:
+            a.rect (9.0f, 3.0f, 6.0f, 10.0f, 3.0f);
+            a.circle (12.0f, 8.0f, 6.5f);
+            a.stand (14.5f);
+            return true;
+        case 112:
+            a.person (6.0f, 8.5f, 2.5f);
+            a.person (18.0f, 8.5f, 2.5f);
+            a.person (12.0f, 6.5f, 2.8f);
+            return true;
+        case 113:
+            a.circle (12.0f, 8.0f, 4.0f);
+            a.curve (8.0f, 8.0f, 7.0f, 12.0f, 7.0f, 14.0f, 6.0f, 15.5f);
+            a.curve (16.0f, 8.0f, 17.0f, 12.0f, 17.0f, 14.0f, 18.0f, 15.5f);
+            a.arc (12.0f, 23.0f, 8.0f, 6.5f, -70.0f, 70.0f);
+            return true;
+        case 114:
+            a.circle (12.0f, 8.0f, 4.2f);
+            a.arc (12.0f, 23.0f, 8.5f, 7.0f, -70.0f, 70.0f);
+            return true;
+
+        // Drums
+        case 200:
+            a.circle (12.0f, 12.0f, 9.5f);
+            a.circle (12.0f, 15.0f, 3.0f);
+            a.line (12.0f, 4.0f, 12.0f, 10.5f);
+            a.dot (12.0f, 10.5f, 1.4f);
+            return true;
+        case 201:
+            a.circle (10.5f, 11.0f, 8.5f);
+            a.circle (10.5f, 13.5f, 2.6f);
+            a.rect (19.0f, 15.0f, 3.0f, 6.5f, 1.5f);
+            return true;
+        case 202:
+        case 203:
+            a.drumSide (11.0f, 10.5f, 8.0f, 6.0f);
+            if (number == 202)
+                a.rect (15.0f, 1.5f, 3.0f, 6.0f, 1.5f);
+            else
+                a.rect (15.0f, 17.5f, 3.0f, 6.0f, 1.5f);
+            return true;
+        case 204:
+            a.drumSide (12.0f, 10.0f, 9.0f, 7.0f);
+            for (float x : { 6.0f, 12.0f, 18.0f })
+                a.line (x, 12.0f, x, 16.0f);
+            return true;
+        case 205:
+            a.ellipse (12.0f, 7.0f, 9.0f, 1.6f);
+            a.ellipse (12.0f, 10.0f, 9.0f, 1.6f);
+            a.line (12.0f, 5.0f, 12.0f, 20.5f);
+            a.line (12.0f, 20.5f, 8.5f, 23.0f);
+            a.line (12.0f, 20.5f, 15.5f, 23.0f);
+            return true;
+        case 206: a.drumSide (12.0f, 9.0f, 6.0f, 6.0f); return true;
+        case 207: a.drumSide (12.0f, 8.5f, 7.0f, 7.0f); return true;
+        case 208: a.drumSide (12.0f, 7.0f, 8.0f, 9.0f); return true;
+        case 209:
+            a.drumSide (12.0f, 5.0f, 8.0f, 11.0f);
+            a.line (4.0f, 16.0f, 3.0f, 22.5f);
+            a.line (20.0f, 16.0f, 21.0f, 22.5f);
+            return true;
+        case 211: a.cymbal (12.0f, 7.0f, 9.0f, -14.0f); return true;
+        case 212:
+            a.cymbal (12.0f, 7.0f, 10.0f, 0.0f);
+            a.arc (12.0f, 6.5f, 2.2f, 1.4f, -90.0f, 90.0f);
+            return true;
+
+        // Strings and winds
+        case 302:
+        case 309:
+            a.bowed (12.0f, 2.0f, 1.0f, false);
+            return true;
+        case 303:
+        case 304:
+            a.circle (8.5f, 16.0f, 5.5f);
+            a.arc (12.0f, 11.5f, 4.0f, 4.0f, -30.0f, 170.0f);
+            a.circle (9.5f, 14.5f, 1.6f);
+            a.line (12.5f, 10.5f, 20.0f, 3.5f);
+            a.poly ({ 19.0f, 3.0f, 21.0f, 1.0f, 22.5f, 2.5f, 20.5f, 4.5f }, true);
+            return true;
+        case 308:
+        case 310:
+            a.bowed (12.0f, 1.0f, 1.12f, true);
+            return true;
+        case 312:
+        case 311:
+            a.poly ({ 6.0f, 2.5f, 9.0f, 3.5f, 10.0f, 6.0f, 10.0f, 16.0f });
+            a.curve (10.0f, 16.0f, 10.0f, 21.5f, 17.0f, 21.5f, 17.0f, 16.0f);
+            a.line (17.0f, 16.0f, 17.0f, 12.0f);
+            a.ellipse (17.0f, 11.0f, 3.0f, 1.2f);
+            a.dot (10.0f, 9.5f, 1.0f);
+            a.dot (10.0f, 12.5f, 1.0f);
+            return true;
+        case 313:
+        case 314:
+            a.line (2.0f, 12.0f, 4.0f, 12.0f);
+            a.line (4.0f, 11.0f, 15.0f, 11.0f);
+            a.line (4.0f, 13.0f, 15.0f, 13.0f);
+            a.poly ({ 15.0f, 11.0f, 21.5f, 7.0f, 21.5f, 17.0f, 15.0f, 13.0f });
+            for (float x : { 7.0f, 9.5f, 12.0f })
+                a.rect (x, 6.0f, 1.5f, 5.0f);
+            a.rect (6.0f, 13.0f, 8.0f, 5.0f, 2.5f);
+            return true;
+
+        // Keys
+        case 400:
+            a.poly ({ 4.0f, 4.0f, 20.0f, 4.0f, 20.0f, 10.0f });
+            a.curve (20.0f, 10.0f, 20.0f, 15.0f, 14.0f, 14.0f, 12.0f, 20.0f);
+            a.poly ({ 12.0f, 20.0f, 4.0f, 20.0f, 4.0f, 4.0f });
+            a.line (4.0f, 7.5f, 20.0f, 7.5f);
+            for (float x : { 7.0f, 10.0f, 13.0f, 16.0f })
+                a.line (x, 4.0f, x, 7.5f);
+            return true;
+        case 401:
+            a.rect (4.0f, 3.0f, 16.0f, 12.0f, 0.8f);
+            a.rect (2.5f, 13.0f, 19.0f, 3.0f);
+            a.line (5.0f, 16.0f, 5.0f, 21.0f);
+            a.line (19.0f, 16.0f, 19.0f, 21.0f);
+            return true;
+        case 409:
+            a.rect (4.0f, 11.5f, 16.0f, 10.0f, 0.8f);
+            a.rect (3.0f, 6.0f, 18.0f, 2.8f);
+            a.rect (3.0f, 8.8f, 18.0f, 2.8f);
+            for (float x : { 7.0f, 9.0f, 11.0f, 13.0f, 15.0f })
+                a.line (x, 3.0f, x, 6.0f);
+            return true;
+
+        // Speakers
+        case 500:
+            a.rect (3.0f, 2.5f, 18.0f, 6.0f, 0.8f);
+            for (float x : { 6.0f, 9.0f, 12.0f })
+                a.circle (x, 5.5f, 1.0f);
+            a.rect (3.0f, 9.5f, 18.0f, 12.0f, 0.8f);
+            a.circle (8.0f, 15.5f, 3.4f);
+            a.circle (16.0f, 15.5f, 3.4f);
+            return true;
+        case 501:
+            a.rect (3.0f, 3.0f, 18.0f, 18.0f, 0.8f);
+            for (float x : { 8.0f, 16.0f })
+                for (float y : { 8.0f, 16.0f })
+                    a.circle (x, y, 3.3f);
+            return true;
+        case 502:
+        case 506:
+            a.rect (3.5f, 5.0f, 17.0f, 15.0f, 0.8f);
+            a.circle (12.0f, 12.5f, 5.5f);
+            return true;
+        case 504:
+        case 513:
+        case 514:
+        case 519:
+            a.speakerBox (2.0f, 4.0f, 9.0f, 16.0f);
+            a.speakerBox (13.0f, 4.0f, 9.0f, 16.0f);
+            return true;
+        case 507:
+        case 508:
+            a.speakerBox (7.0f, 4.0f, 10.0f, 15.0f);
+            return true;
+        case 509:
+            a.rect (9.0f, 1.5f, 6.0f, 21.0f, 0.8f);
+            for (float y : { 5.0f, 9.5f, 14.0f, 18.5f })
+                a.circle (12.0f, y, 1.8f);
+            return true;
+        case 515:
+        case 516:
+        case 517:
+        case 518:
+        case 520:
+        case 521:
+        case 522:
+        {
+            a.wedge();
+            const char* letter = number == 515 || number == 520 ? "L" : (number == 516 || number == 521 ? "R" : (number == 522 ? "C" : ""));
+            if (*letter != 0)
+                a.text (letter, 14.0f, 1.0f, 8.0f, 8.0f);
+            return true;
+        }
+        case 523:
+            a.line (12.0f, 0.5f, 12.0f, 3.0f);
+            a.rect (5.0f, 3.0f, 14.0f, 3.5f);
+            a.rect (5.5f, 7.0f, 13.0f, 3.5f);
+            a.rect (6.5f, 11.0f, 11.0f, 3.5f);
+            a.rect (8.0f, 15.0f, 8.0f, 3.5f);
+            return true;
+        case 524:
+            a.line (3.0f, 4.0f, 21.0f, 4.0f);
+            a.circle (12.0f, 13.0f, 8.0f);
+            for (float y : { 10.0f, 13.0f, 16.0f })
+                a.line (6.5f, y, 17.5f, y);
+            return true;
+
+        // Specials
+        case 600:
+            a.rect (7.0f, 11.0f, 10.0f, 10.0f, 3.0f);
+            a.rect (7.0f, 4.0f, 2.2f, 8.0f, 1.1f);
+            a.rect (9.6f, 2.5f, 2.2f, 9.0f, 1.1f);
+            a.rect (12.2f, 3.0f, 2.2f, 8.5f, 1.1f);
+            a.rect (14.8f, 5.0f, 2.2f, 7.0f, 1.1f);
+            a.line (7.0f, 16.0f, 3.5f, 12.0f);
+            return true;
+        case 601:
+            a.curve (8.0f, 9.5f, 8.0f, 3.0f, 18.0f, 2.0f, 18.0f, 9.0f);
+            a.curve (18.0f, 9.0f, 18.0f, 13.0f, 14.0f, 14.0f, 14.0f, 17.0f);
+            a.curve (14.0f, 17.0f, 14.0f, 21.5f, 9.0f, 22.0f, 8.0f, 19.0f);
+            a.curve (11.0f, 10.0f, 11.0f, 6.0f, 15.0f, 6.0f, 15.0f, 9.5f);
+            a.line (15.0f, 9.5f, 13.0f, 12.0f);
+            return true;
+        case 603:
+        case 604:
+            a.speakerBox (3.0f, 3.0f, 10.0f, 18.0f);
+            a.text (number == 603 ? "A" : "B", 13.5f, 2.0f, 9.0f, 10.0f);
+            return true;
+        case 605:
+            a.rect (5.0f, 5.0f, 14.0f, 10.0f, 1.0f);
+            a.poly ({ 2.0f, 17.0f, 22.0f, 17.0f, 20.0f, 19.5f, 4.0f, 19.5f }, true);
+            return true;
+        case 606:
+            a.rect (7.0f, 2.0f, 10.0f, 20.0f, 2.0f);
+            a.rect (9.0f, 4.0f, 6.0f, 6.0f);
+            a.circle (12.0f, 15.5f, 3.2f);
+            a.circle (12.0f, 15.5f, 1.0f);
+            return true;
+        case 607:
+            a.rect (7.0f, 2.0f, 10.0f, 20.0f, 2.0f);
+            a.rect (8.5f, 4.5f, 7.0f, 13.0f);
+            a.circle (12.0f, 19.8f, 0.9f);
+            return true;
+        case 610:
+            a.circle (12.0f, 12.0f, 9.5f);
+            a.circle (12.0f, 12.0f, 2.5f);
+            a.arc (12.0f, 12.0f, 6.0f, 6.0f, 200.0f, 250.0f);
+            return true;
+        case 611:
+            a.rect (2.0f, 4.0f, 20.0f, 16.0f, 1.5f);
+            a.circle (10.0f, 12.0f, 6.0f);
+            a.dot (10.0f, 12.0f, 0.9f);
+            a.poly ({ 19.0f, 6.0f, 18.5f, 15.0f, 15.0f, 17.0f });
+            return true;
+        case 612:
+            a.circle (7.0f, 8.0f, 4.5f);
+            a.circle (17.0f, 8.0f, 4.5f);
+            a.rect (3.0f, 14.0f, 18.0f, 7.0f, 1.0f);
+            return true;
+        case 613:
+            a.rect (2.0f, 5.0f, 20.0f, 14.0f, 1.5f);
+            a.circle (8.0f, 11.0f, 2.2f);
+            a.circle (16.0f, 11.0f, 2.2f);
+            a.poly ({ 6.0f, 19.0f, 7.5f, 15.5f, 16.5f, 15.5f, 18.0f, 19.0f });
+            return true;
+        case 614:
+            a.rect (2.0f, 7.0f, 20.0f, 10.0f, 1.0f);
+            for (int i = 0; i < 6; ++i)
+                for (float y : { 10.0f, 14.0f })
+                    a.circle (4.5f + 3.0f * (float) i, y, 0.9f);
+            return true;
+        default:
+            break;
+    }
+
+    // Other numbers: their category's icon.
+    switch (number / 100)
+    {
+        case 1:
+            a.rect (9.0f, 2.0f, 6.0f, 9.0f, 3.0f);
+            a.line (9.0f, 6.5f, 15.0f, 6.5f);
+            a.arc (12.0f, 8.5f, 5.5f, 5.5f, 95.0f, 265.0f);
+            a.stand (14.0f);
+            return true;
+        case 2:
+            a.drumSide (12.0f, 10.0f, 8.0f, 8.0f);
+            a.line (6.0f, 2.5f, 12.5f, 8.5f);
+            a.line (18.0f, 2.5f, 11.5f, 8.5f);
+            return true;
+        case 3:  a.electricGuitar(); return true;
+        case 4:  a.synth(); return true;
+        case 5:  a.speakerBox (6.0f, 2.0f, 12.0f, 20.0f); return true;
+        default: break;
+    }
+    return false;
 }
 
 } // namespace livedaw::ui

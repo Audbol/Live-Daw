@@ -456,26 +456,36 @@ pub struct StripParams {
     pub alt_selected: AtomicBool,
 }
 
-/// The WING's 18 strip colours (index 1..18 in `colour`), name and RGB.
+/// The WING's 18 strip colours (index 1..18 in `colour`): the console's names
+/// and the RGB it draws. 1-12 are measured on the console's screen (firmware
+/// 1.10 and 3.1 screenshots), as are 15 and 16; 13, 14, 17 and 18 are
+/// estimates in the same style.
 pub const WING_COLOURS: [(&str, u32); 18] = [
-    ("Blue", 0x3a6fe8),
-    ("Azure", 0x4fa6f7),
-    ("Indigo", 0x5a4fe0),
-    ("Turquoise", 0x2ec6c6),
-    ("Green", 0x2fb84a),
-    ("Lime", 0x9acd32),
-    ("Yellow", 0xf2d230),
-    ("Brown", 0xb07a3a),
-    ("Red", 0xe83a3a),
-    ("Salmon", 0xf07c6c),
-    ("Magenta", 0xe84aa8),
-    ("Purple", 0x9b4fe0),
-    ("Amber", 0xf0a030),
-    ("Sky Blue", 0x7ec8f0),
-    ("Orange Red", 0xf06030),
-    ("Mint Green", 0x6ee0b0),
-    ("Gray", 0x9a9a9a),
-    ("White", 0xf0f0f0),
+    ("Gray Blue", 0x4074c8),
+    ("Medium Blue", 0x00a4f8),
+    ("Dark Blue", 0x4000f8),
+    ("Turquoise", 0x00d0d0),
+    ("Green", 0x00bc00),
+    ("Olive Green", 0x809800),
+    ("Yellow", 0xe0d400),
+    ("Brown", 0xb86018),
+    ("Red", 0xe00040),
+    ("Coral", 0xf85c58),
+    ("Magenta", 0xd800f8),
+    ("Purple", 0x9800f8),
+    ("Orange", 0xf8a008),
+    ("Light Blue", 0x68c8f8),
+    ("Salmon", 0xf05c78),
+    ("Teal", 0x0088a0),
+    ("Dark Gray", 0x585858),
+    ("Light Gray", 0xb0b0b0),
+];
+
+/// The RGB values earlier versions used for the same 18 colours. Shows saved
+/// with ARGB colours (legacy files) used these, so they map back exactly.
+const PREVIOUS_RGB: [u32; 18] = [
+    0x3a6fe8, 0x4fa6f7, 0x5a4fe0, 0x2ec6c6, 0x2fb84a, 0x9acd32, 0xf2d230, 0xb07a3a, 0xe83a3a, 0xf07c6c, 0xe84aa8, 0x9b4fe0,
+    0xf0a030, 0x7ec8f0, 0xf06030, 0x6ee0b0, 0x9a9a9a, 0xf0f0f0,
 ];
 
 /// RGB of WING colour `index` (1..18; anything else is gray).
@@ -483,13 +493,35 @@ pub fn colour_rgb(index: i32) -> u32 {
     usize::try_from(index - 1).ok().and_then(|i| WING_COLOURS.get(i)).map_or(0x9a9a9a, |c| c.1)
 }
 
-/// The WING colour (1..18) closest to an RGB value.
+/// The WING colour (1..18) closest to an RGB value (against the console's
+/// colours and the values earlier versions saved).
 pub fn nearest_colour(rgb: u32) -> i32 {
     let split = |c: u32| [(c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff].map(|v| v as i32);
     let target = split(rgb);
     let distance = |c: u32| split(c).iter().zip(&target).map(|(a, b)| (a - b) * (a - b)).sum::<i32>();
-    let best = WING_COLOURS.iter().enumerate().min_by_key(|(_, c)| distance(c.1)).map_or(0, |(i, _)| i);
+    let best = WING_COLOURS
+        .iter()
+        .zip(PREVIOUS_RGB)
+        .enumerate()
+        .min_by_key(|(_, (c, previous))| distance(c.1).min(distance(*previous)))
+        .map_or(0, |(i, _)| i);
     best as i32 + 1
+}
+
+#[cfg(test)]
+mod colour_tests {
+    use super::*;
+
+    #[test]
+    fn colours_map_back_to_their_index() {
+        for (i, (c, previous)) in WING_COLOURS.iter().zip(PREVIOUS_RGB).enumerate() {
+            assert_eq!(colour_rgb(i as i32 + 1), c.1);
+            assert_eq!(nearest_colour(c.1), i as i32 + 1, "{}", c.0);
+            assert_eq!(nearest_colour(previous), i as i32 + 1, "previous {}", c.0);
+        }
+        assert_eq!(colour_rgb(0), 0x9a9a9a);
+        assert_eq!(nearest_colour(0xff0000), 9); // pure red is the WING's Red
+    }
 }
 
 /// Default WING colour per kind.

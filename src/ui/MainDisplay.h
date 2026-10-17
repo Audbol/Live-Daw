@@ -11,10 +11,17 @@ namespace livedaw::ui
 /** The WING's main display and its frame (manual 4.1, Fig. 8): the seven
     screen keys left of it over its full height (HOME, EFFECTS, METERS,
     ROUTING, SETUP, LIBRARY, UTILITY); right of it CLR SOLO, the main L/R
-    meter, the knob for fine adjustments and the blank key; and the 16:10
-    screen itself: the status bar (the selected channel's tab in its colour,
-    the status tiles, the screen's own keys, the clock), the current screen, and
-    the parameter bar of the six knobs underneath, which follow the screen. */
+    meter, the knob for fine adjustments and the blank key; the 16:10 screen
+    itself: the status bar (the title tile, the status tiles, the screen's own
+    keys, the clock), the current screen, and the parameter bar of the six
+    knobs underneath, which follow the screen; and the six touch encoders
+    under the screen.
+
+    The screen keys, CLR SOLO and the blank key (ALT) also form the console's
+    shortcuts: hold CLR SOLO and press UTILITY for a screenshot, hold HOME to
+    lock the surface, hold SETUP + ALT and press CLR SOLO to turn touch off
+    (ALT + CLR SOLO turns it on again), hold ALT and turn the knob for the
+    display's brightness. A right-click "holds" a key for a few seconds. */
 class MainDisplay final : public juce::Component, private juce::Timer
 {
 public:
@@ -32,6 +39,22 @@ public:
     /** Scenes changed. */
     void refreshLibrary();
 
+    /** The knob right of the display adjusts `binding` from now on, and the
+        screen outlines `target` (TOUCH FADER SELECT, a touched knob). */
+    void setFineTarget (const KnobBinding& binding, juce::Component* target);
+
+    /** USE CRSR/WHEEL: moves the focus frame over the screen's controls (the
+        parameter bar's slots, then the knobs on the page): dx steps through
+        them in order, dy moves to the nearest one above or below. */
+    void moveFocus (int dx, int dy);
+    /** Turns the focused control by `steps` detents. */
+    void turnFocus (int steps);
+
+    /** Touch off (SETUP + ALT + CLR SOLO): the screen ignores the mouse and the
+        status bar shows a small X. */
+    void setTouchDisabled (bool);
+    bool isTouchDisabled() const noexcept { return touchDisabled; }
+
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseUp (const juce::MouseEvent&) override;
@@ -42,6 +65,9 @@ public:
     class Highlight;
     class ChannelSelect;
     class FocusTracker;
+    class ConsoleKey;
+    class Overlay;
+    class Encoder;
 
 private:
     void timerCallback() override;
@@ -51,10 +77,20 @@ private:
     void layoutStatusBar();
     DisplayPage* page (Screen) const;
     void paintStatusBar (juce::Graphics&);
+    void paintTitleTile (juce::Graphics&);
+    void paintClock (juce::Graphics&);
     void clearSolo();
     void showChannelSelect (bool);
     /** The knob right of the display adjusts this (the last touched control). */
     void setFocus (const KnobBinding&, juce::Component* target);
+    void screenKeyPressed (Screen);
+    void utilityPressed();
+    void clearSoloPressed();
+    /** The focus model's targets, in order: the parameter bar's slots, then
+        the knobs on the page (top to bottom, left to right). */
+    std::vector<juce::Component*> focusTargets() const;
+    void applyLighting();
+    juce::Rectangle<int> wingRect (float x, float y, float w, float h) const;
 
     UiContext& ctx;
     Screen screen = Screen::Home;
@@ -68,23 +104,29 @@ private:
     std::unique_ptr<ViewPage> overview, faders, sends, config, muteGroups;
     std::unique_ptr<RecorderPage> recorder;
 
-    juce::OwnedArray<juce::TextButton> screenButtons;
+    juce::OwnedArray<ConsoleKey> screenButtons;
     juce::OwnedArray<ParamBarSlot> slots;
-    std::unique_ptr<juce::TextButton> clearSoloKey, blankKey;
+    juce::OwnedArray<Encoder> encoders;
+    std::unique_ptr<ConsoleKey> clearSoloKey, blankKey;
     std::unique_ptr<MainMeter> mainMeter;
     std::unique_ptr<ContextKnob> contextKnob;
     std::unique_ptr<Highlight> highlight;
     std::unique_ptr<ChannelSelect> channelSelect;
     std::unique_ptr<FocusTracker> focusTracker;
+    std::unique_ptr<Overlay> popupLayer, touchBlocker, lcdScrim;
 
-    juce::Rectangle<int> screenArea, statusArea, slotArea, pageArea;
+    juce::Rectangle<int> screenArea, statusArea, slotArea, pageArea, encoderArea;
     juce::Rectangle<int> channelTab, numberBox, chipsTile, usbTile, liveTile, clockTile;
     std::vector<StatusKey> statusKeys;
     std::vector<juce::Rectangle<int>> statusKeyAreas;
+    StatusTitle shownTitle;
     juce::String shownTime;
     juce::uint32 shownHash = 0;
     int touchedSlot = -1;
-    bool blink = false;
+    int focusIndex = -1;
+    int acknowledgedFaults = 0;
+    bool blink = false, flash = false, touchDisabled = false, liveWritable = true;
+    int ticks = 0;
 };
 
 } // namespace livedaw::ui

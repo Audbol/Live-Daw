@@ -877,11 +877,117 @@ namespace
         juce::StringArray values;
     };
 
-    /** REMOTE (fig. 42): MIDI REMOTE CONTROL | HA REMOTE | NETWORK + REMOTE LOCK, disabled (no MIDI remote yet, G-N1). */
-    class RemoteTab final : public juce::Component
+    /** WING REMOTE: a server's ON key and its port (click to change it). The
+        port turns red if the server is on but could not listen on it. */
+    class ServerRow final : public juce::Component
     {
     public:
-        RemoteTab()
+        ServerRow (UiContext& c, bool WingRemote::Settings::*enabledField, int WingRemote::Settings::*portField,
+                   juce::String portTitle, std::function<void (const WingRemote::Settings&)> applyChange,
+                   std::function<bool()> failedCheck)
+            : ctx (c), enabled (enabledField), port (portField), title (std::move (portTitle)), apply (std::move (applyChange)),
+              failed (std::move (failedCheck)),
+              key ([this] { return WingRemote::Settings::load (ctx.settings).*enabled; },
+                   [this] (bool on)
+                   {
+                       auto s = WingRemote::Settings::load (ctx.settings);
+                       s.*enabled = on;
+                       apply (s);
+                   })
+        {
+            addAndMakeVisible (key);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            auto r = portArea.toFloat();
+            g.setColour (failed() ? Dark::muted : juce::Colour (0xff5a5a5a));
+            g.fillRect (r);
+            g.setColour (juce::Colours::black);
+            g.setFont (juce::FontOptions (juce::jmin (15.0f, r.getHeight() * 0.62f), juce::Font::bold));
+            g.drawFittedText (juce::String (WingRemote::Settings::load (ctx.settings).*port), portArea, juce::Justification::centred, 1);
+        }
+
+        void resized() override
+        {
+            auto r = getLocalBounds();
+            key.setBounds (r.removeFromLeft (juce::jmin (r.getHeight() * 3 / 2, r.getWidth() / 3)));
+            r.removeFromLeft (4);
+            portArea = r;
+        }
+
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            if (! portArea.contains (e.getPosition()))
+                return;
+            const auto current = WingRemote::Settings::load (ctx.settings).*port;
+            editText (this, title, juce::String (current), [this] (const juce::String& text)
+            {
+                const int v = text.getIntValue();
+                if (v <= 0 || v > 65535)
+                    return;
+                auto s = WingRemote::Settings::load (ctx.settings);
+                s.*port = v;
+                apply (s);
+                repaint();
+            });
+        }
+
+    private:
+        UiContext& ctx;
+        bool WingRemote::Settings::*enabled;
+        int WingRemote::Settings::*port;
+        juce::String title;
+        std::function<void (const WingRemote::Settings&)> apply;
+        std::function<bool()> failed;
+        OnKey key;
+        juce::Rectangle<int> portArea;
+    };
+
+    /** WING REMOTE status: errors and the connected clients. */
+    class WingStatusView final : public juce::Component
+    {
+    public:
+        WingRemote::Status status;
+
+        void paint (juce::Graphics& g) override
+        {
+            g.fillAll (Dark::well);
+            auto r = getLocalBounds().reduced (8, 4);
+            const float fh = juce::jlimit (11.0f, 14.0f, (float) getHeight() / 6.0f);
+            const int lineH = juce::roundToInt (fh * 1.3f);
+            g.setFont (juce::FontOptions (fh, juce::Font::bold));
+            auto line = [&] (const juce::String& text, juce::Colour colour)
+            {
+                if (r.getHeight() < lineH)
+                    return;
+                g.setColour (colour);
+                g.drawFittedText (text, r.removeFromTop (lineH), juce::Justification::centredLeft, 1, 0.8f);
+            };
+
+            if (! status.running)
+            {
+                line ("WING REMOTE IS OFF", Dark::textDim);
+                return;
+            }
+            for (auto& e : status.errors)
+                line (e.toUpperCase(), Dark::muted);
+            line (juce::String ((int) status.clients.size()) + (status.clients.size() == 1 ? " CLIENT CONNECTED" : " CLIENTS CONNECTED"), Dark::text);
+            for (auto& c : status.clients)
+                line (juce::String (c.native ? "NATIVE  " : "OSC  ") + c.address
+                          + (c.subscribed ? (c.native ? "  METERS" : "  SUBSCRIBED") : "") + "  " + juce::String (c.seconds) + " S",
+                      Dark::textDim);
+        }
+    };
+
+    /** REMOTE (fig. 42): MIDI REMOTE CONTROL | HA REMOTE + WING REMOTE | NETWORK + REMOTE LOCK.
+        MIDI and HA remote are drawn disabled (no MIDI remote yet, G-N1). WING REMOTE runs Live
+        DAW's WING protocol servers (discovery, OSC, native) for WING remote apps; it starts
+        with the app when enabled. */
+    class RemoteTab final : public juce::Component, private juce::Timer
+    {
+    public:
+        explicit RemoteTab (UiContext& c) : ctx (c)
         {
             const std::vector<juce::Colour> offLit { juce::Colour (0xffc6c6c6), Dark::choice, Dark::choice };
             for (auto* name : { "CH CONTROL (FDR/MUTE/PAN)", "FX PARAMETER CONTROL", "CUSTOM CONTROLS (RX ONLY)", "SYSEX CONTROL",
@@ -923,6 +1029,61 @@ namespace
             lock.addRow ("OSC", OnKey::fixed (false), 1.3f, false, true);
             lock.addRow ("TCP", OnKey::fixed (false), 1.3f, false, true);
             addAndMakeVisible (lock);
+
+            // WING REMOTE (Live DAW): the settings live in the app settings.
+            auto change = [this] (const WingRemote::Settings& s)
+            {
+                s.save (ctx.settings);
+                applySettings();
+            };
+            wing.addRow ("ENABLE WING REMOTE",
+                         std::make_unique<OnKey> ([this] { return WingRemote::Settings::load (ctx.settings).enabled; },
+                                                  [this, change] (bool on)
+                                                  {
+                                                      auto s = WingRemote::Settings::load (ctx.settings);
+                                                      s.enabled = on;
+                                                      change (s);
+                                                  }),
+                         1.6f, true, true);
+            wing.addRow ({}, std::make_unique<DropdownField> ("CONSOLE NAME", [this] { return WingRemote::Settings::load (ctx.settings).name; },
+                                                               [this, change] (DropdownField& f)
+                                                               {
+                                                                   editText (&f, "CONSOLE NAME", WingRemote::Settings::load (ctx.settings).name,
+                                                                             [this, change] (const juce::String& name)
+                                                                             {
+                                                                                 auto s = WingRemote::Settings::load (ctx.settings);
+                                                                                 s.name = name.isNotEmpty() ? name.toUpperCase() : juce::String ("LIVE-DAW");
+                                                                                 change (s);
+                                                                             });
+                                                               }),
+                         0.0f, true, false, 1.3f);
+            wing.newBox();
+            using S = WingRemote::Settings;
+            // A server that is on but not listening (port in use) shows its port in red.
+            auto failed = [this] (bool S::*on, int WingRemote::Status::*bound)
+            {
+                return [this, on, bound]
+                {
+                    return wingStatus.status.running && WingRemote::Settings::load (ctx.settings).*on && wingStatus.status.*bound < 0;
+                };
+            };
+            wing.addRow ("DISCOVERY (UDP)",
+                         std::make_unique<ServerRow> (ctx, &S::discovery, &S::discoveryPort, "DISCOVERY PORT (UDP)", change,
+                                                      failed (&S::discovery, &WingRemote::Status::discoveryPort)),
+                         4.0f);
+            wing.addRow ("OSC (UDP)",
+                         std::make_unique<ServerRow> (ctx, &S::osc, &S::oscPort, "OSC PORT (UDP)", change, failed (&S::osc, &WingRemote::Status::oscPort)),
+                         4.0f);
+            wing.addRow ("NATIVE (TCP)",
+                         std::make_unique<ServerRow> (ctx, &S::native, &S::nativePort, "NATIVE PORT (TCP)", change,
+                                                      failed (&S::native, &WingRemote::Status::nativePort)),
+                         4.0f);
+            addAndMakeVisible (wing);
+            addAndMakeVisible (wingStatus);
+
+            // The SETUP page is built at start-up: start the servers if they were on.
+            applySettings();
+            startTimerHz (2);
         }
 
         void paint (juce::Graphics& g) override
@@ -930,7 +1091,10 @@ namespace
             g.fillAll (juce::Colours::black);
             g.setColour (Dark::textDim);
             g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-            g.drawFittedText ("MIDI REMOTE CONTROL AND REMOTE APPS ARE NOT AVAILABLE IN LIVE DAW YET.", note, juce::Justification::topLeft, 3);
+            g.drawFittedText ("MIDI REMOTE CONTROL IS NOT AVAILABLE IN LIVE DAW YET.\n\n"
+                              "WING REMOTE: WING REMOTE APPS (OSC AND THE NATIVE PROTOCOL) CAN CONNECT TO LIVE DAW. "
+                              "EXPERIMENTAL: TESTED WITH LIBWING AND THE COMPANION MODULE'S PATHS, NOT WITH WING EDIT OR WING COPILOT.",
+                              note, juce::Justification::topLeft, 8);
         }
 
         void resized() override
@@ -939,6 +1103,7 @@ namespace
             const int rowH = fitRowHeight (getHeight() - kDarkHeaderHeight - 30, 10.0f);
             for (auto* p : { &midi, &ha, &network, &lock })
                 p->rowHeight = rowH;
+            wing.rowHeight = juce::jmax (18, rowH * 4 / 5); // leaves room for the client list
             const int gap = 4;
             auto c1 = b.removeFromLeft (b.getWidth() * 40 / 100);
             b.removeFromLeft (gap);
@@ -946,7 +1111,13 @@ namespace
             auto c4 = b.removeFromRight (b.getWidth() * 60 / 100);
             midi.setBounds (c1.removeFromTop (juce::jmin (c1.getHeight(), midi.preferredHeight())));
             note = c1.reduced (8, 10);
-            ha.setBounds (c2.withHeight (juce::jmin (c2.getHeight(), ha.preferredHeight())));
+            ha.setBounds (c2.removeFromTop (juce::jmin (c2.getHeight(), ha.preferredHeight())));
+            c2.removeFromTop (gap);
+            // WING REMOTE also takes the free column left of NETWORK.
+            auto wingArea = c2.withRight (b.getRight() - gap);
+            wing.setBounds (wingArea.removeFromTop (juce::jmin (wingArea.getHeight(), wing.preferredHeight())));
+            wingArea.removeFromTop (gap);
+            wingStatus.setBounds (wingArea);
             network.setBounds (c4.removeFromTop (juce::jmin (c4.getHeight() - lock.preferredHeight() - gap, network.preferredHeight())));
             c4.removeFromTop (gap);
             lock.setBounds (c4.withHeight (juce::jmin (c4.getHeight(), lock.preferredHeight())));
@@ -967,7 +1138,38 @@ namespace
             juce::Component* b;
         };
 
-        SettingsPanel midi { "MIDI REMOTE CONTROL" }, ha { "HA REMOTE" }, network { "NETWORK" }, lock { "REMOTE LOCK" };
+        /** Starts, restarts or stops the WING remote to match the settings (also
+            when the console name changes on SETUP > GENERAL). */
+        void applySettings()
+        {
+            const auto s = WingRemote::Settings::load (ctx.settings);
+            applied = s;
+            auto errors = ctx.engine.getWing().apply (s);
+            for (auto& e : errors)
+                ctx.log.error ("WING remote: " + e);
+            if (s.enabled && errors.isEmpty())
+                ctx.log.info ("WING remote on as \"" + s.name + "\"");
+            wingStatus.status = ctx.engine.getWing().getStatus();
+            wingStatus.repaint();
+            wing.repaint();
+        }
+
+        void timerCallback() override
+        {
+            if (WingRemote::Settings::load (ctx.settings) != applied)
+                applySettings();
+            if (isShowing())
+            {
+                wingStatus.status = ctx.engine.getWing().getStatus();
+                wingStatus.repaint();
+                wing.repaint(); // the ports' listening state
+            }
+        }
+
+        UiContext& ctx;
+        SettingsPanel midi { "MIDI REMOTE CONTROL" }, ha { "HA REMOTE" }, network { "NETWORK" }, lock { "REMOTE LOCK" }, wing { "WING REMOTE" };
+        WingStatusView wingStatus;
+        WingRemote::Settings applied;
         juce::OwnedArray<juce::Component> pairs;
         std::vector<Pair> pairLayouts;
         juce::Rectangle<int> note;
@@ -1142,7 +1344,7 @@ SetupPage::SetupPage (UiContext& c) : ctx (c)
     pages.push_back (general.get());
     pages.push_back (ownedPages.add (new AudioTab (ctx, overlay)));
     pages.push_back (ownedPages.add (new SurfaceTab (ctx)));
-    pages.push_back (ownedPages.add (new RemoteTab()));
+    pages.push_back (ownedPages.add (new RemoteTab (ctx)));
     pages.push_back (ownedPages.add (new DawTab()));
     pages.push_back (ownedPages.add (new PluginsTab (ctx)));
     for (auto* p : pages)

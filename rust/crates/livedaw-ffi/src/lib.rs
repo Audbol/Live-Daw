@@ -11,6 +11,7 @@
 pub mod models;
 pub mod recorder;
 pub mod session;
+pub mod wing;
 
 use livedaw_engine::params::{
     DcaParams, DynSlotParams, EqBlockParams, FilterParams, FxParams, InputParams, InsertParams, MainSendParams, MatrixSendParams,
