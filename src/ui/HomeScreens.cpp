@@ -2744,8 +2744,10 @@ public:
             k.isOn = [this, i] { return selected == i; };
             k.onClick = [this, i] { select (i); };
             addAndMakeVisible (k);
-            for (auto binding : { bindLinear ("GAIN", b.gainDb, -15.0f, 15.0f, " dB", 1, 0.0f),
-                                  wingFreq ("FREQ", b.freq, 20.0f, 20000.0f, kDefaultFreqs[i]),
+            // FREQ without its unit, so the boxes stay narrow.
+            auto freq = wingFreq ("FREQ", b.freq, 20.0f, 20000.0f, kDefaultFreqs[i]);
+            freq.text = [&f = b.freq] { return wingHz (f.load(), false); };
+            for (auto binding : { bindLinear ("GAIN", b.gainDb, -15.0f, 15.0f, " dB", 1, 0.0f), freq,
                                   bindLog ("Q", b.q, 0.442f, 10.0f, {}, i == 1 ? 1.0f : 0.707f) })
                 addAndMakeVisible (boxes.add (new KnobBox (binding)));
         }
@@ -2776,7 +2778,7 @@ public:
         b.removeFromRight (8);
         on.setBounds (b.removeFromRight (b.getHeight() * 2).reduced (0, b.getHeight() / 10));
         r.removeFromTop (6);
-        auto side = r.removeFromRight (r.getWidth() * 34 / 100);
+        auto side = r.removeFromRight (r.getWidth() * 46 / 100);
         r.removeFromRight (8);
         graph = r.toFloat();
         const int rowH = side.getHeight() / ld::kTapEqBands;
@@ -2788,7 +2790,7 @@ public:
             const int w = (row.getWidth() - 8) / 3;
             for (int j = 0; j < 3; ++j)
             {
-                boxes[i * 3 + j]->setBounds (row.removeFromLeft (w).withHeight (juce::jmin (row.getHeight(), 44)));
+                boxes[i * 3 + j]->setBounds (row.removeFromLeft (w).withHeight (juce::jmin (row.getHeight(), 38)));
                 row.removeFromLeft (4);
             }
         }
