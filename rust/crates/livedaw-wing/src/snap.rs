@@ -7,8 +7,8 @@
 //! (`/$ctl/$globals`). Numbered nodes are objects keyed "1", "2"...; 0/1
 //! switches are booleans; faders at -oo are -144; enums are their item text;
 //! read-only and `$` nodes aren't saved. (Protocol document appendix "WING
-//! Snapshot and JSON Data Structure", and snapshots saved by consoles and
-//! WING Edit, firmware 2.x-3.1.)
+//! Snapshot and JSON Data Structure", snapshots saved by consoles on
+//! firmware 2.1 and 3.1, and shows saved by consoles and by WING Edit.)
 //!
 //! A show (`showfile.1`) lists scenes that refer to snapshot files by path
 //! (relative to the show, or console paths such as `I:/library/...`).

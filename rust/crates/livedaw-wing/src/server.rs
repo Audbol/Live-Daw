@@ -164,6 +164,8 @@ pub struct Shared {
     pub state: Arc<WingState>,
     /// Last values pushed to subscribers (None while nobody listens).
     notify: Mutex<Option<HashMap<Node, Value>>>,
+    /// Bumped (under `notify`) by every client change; see `poll_changes`.
+    generation: AtomicU64,
     clients: Mutex<Vec<Arc<NativeClient>>>,
     osc_sub: Mutex<Option<OscSubscription>>,
     osc_peers: Mutex<HashMap<SocketAddr, Instant>>,
@@ -198,6 +200,7 @@ impl Shared {
             engine,
             state,
             notify: Mutex::new(None),
+            generation: AtomicU64::new(0),
             clients: Mutex::default(),
             osc_sub: Mutex::new(None),
             osc_peers: Mutex::default(),
@@ -247,6 +250,7 @@ impl Shared {
         let mut cache = lock(&self.notify);
         let c = self.console();
         let v = f(&c)?;
+        self.generation.fetch_add(1, Ordering::AcqRel);
         if let Some(cache) = cache.as_mut() {
             if c.is_mapped(node) {
                 cache.insert(node, v.clone());
@@ -345,13 +349,20 @@ impl Shared {
 
     /// Finds what changed since the last poll and pushes it.
     pub fn poll_changes(&self) {
-        let mut cache = lock(&self.notify);
         if !self.has_listeners() {
-            *cache = None;
+            *lock(&self.notify) = None;
             return;
         }
+        // The snapshot is taken without the lock so that it never holds up a
+        // client's set. One that raced a client change may hold the old value,
+        // so it is dropped and the next poll tries again.
+        let generation = self.generation.load(Ordering::Acquire);
         let c = self.console();
         let now = self.snapshot(&c);
+        let mut cache = lock(&self.notify);
+        if self.generation.load(Ordering::Acquire) != generation {
+            return;
+        }
         match cache.as_mut() {
             None => *cache = Some(now.into_iter().collect()),
             Some(map) => {
