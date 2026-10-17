@@ -2,6 +2,8 @@
 
 #include <juce_graphics/juce_graphics.h>
 
+#include <vector>
+
 namespace livedaw::ui
 {
 
@@ -99,5 +101,20 @@ enum class Icon
 
 /** Draws `icon` fitted into `area` (stroked or filled as the icon needs). */
 void drawIcon (juce::Graphics&, Icon, juce::Rectangle<float> area, juce::Colour);
+
+/** Draws the WING channel icon `number` (/ch/n/icon: 1-14 general, the 100s
+    microphones and vocals, 200s drums, 300s strings and winds, 400s keys, 500s
+    speakers, 600s specials) as line art fitted into `area`. A number this set
+    has no drawing of its own gets its category's icon. Returns false, drawing
+    nothing, for 0 (no icon) and unknown numbers: draw the strip type's icon
+    (stripIcon) then. */
+bool drawWingIcon (juce::Graphics&, int number, juce::Rectangle<float> area, juce::Colour);
+
+/** The console's name for icon `number` ("Kick In"), or empty. */
+juce::String wingIconName (int number);
+
+/** The icon numbers of a category (0 general, 1 microphones and vocals, 2 drums,
+    3 strings and winds, 4 keys, 5 speakers, 6 specials), or all of them (-1). */
+std::vector<int> wingIconNumbers (int category = -1);
 
 } // namespace livedaw::ui
