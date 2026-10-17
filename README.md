@@ -106,18 +106,24 @@ Barlow Condensed.
   - **SETUP:** GENERAL (lighting, clock, console info and size, OPERATION, OPTIONS),
     AUDIO (clock rate, INPUT SELECT: the global MAIN / ALT switch and each channel's,
     preferences such as MAIN LINK, DCA MUTEGROUPS and GLOBAL INPUT SELECT OVERRIDE, SOLO SYSTEM
-    with PFL/AFL per strip type, audio device, AUTOMIX), SURFACE (meter taps, SEL DBL
-    CLICK, layer link, section widths), REMOTE and DAW (not available yet, drawn as on
-    the console) and PLUGINS, with INITIALIZE CONSOLE and SHUTDOWN. The status bar has
-    MONITORS (monitor outputs, PFL/AFL, level) and CC EDIT.
+    with PFL/AFL per strip type and the solo / select preferences, audio device,
+    AUTOMIX), SURFACE (meter taps, SEL DBL CLICK, SOF and scribble options, CH
+    AUTOSELECT, FADER SPEED, paging, user layer link, alternative SOF, section widths),
+    REMOTE and DAW (drawn as on the console), PLUGINS and LOG (system health and the
+    event log), with INITIALIZE CONSOLE and SHUTDOWN. The status bar has MONITORS (the
+    monitoring paths' toolbar, DIM amount, outputs, PFL/AFL, level; talkback and the
+    second path drawn disabled) and CC EDIT (also SETUP pressed twice): the custom
+    control layers, a function list and the target lists, COLOR, CLR ALL and NAME,
+    saved with the show.
   - **LIBRARY:** the show's scenes and snippets in one list (tags, SKIP, LINK, REMOVE,
     RENAME, UP / DOWN), the SHOW, SNAP and SNIP tabs, GO PREV / GO NEXT / PREV / NEXT /
     GO, the SCOPE window (EDIT SCOPE, REC FOCUS, ADD / REMOVE ITEMS) and the GLOBAL
     safes in the status bar.
   - **VIEW screens** (a fader section's VIEW key): OVERVIEW (every strip's blocks),
-    FADERS, SENDS (sends on faders to one bus, main or matrix), CONFIG (edit the USER
-    layers by dragging) and MUTE GROUPS (members, names, group keys).
-  - **UTILITY:** system health and the event log.
+    FADERS, SENDS (sends on faders to one bus, main or matrix), CONFIG (edit any layer
+    key by dragging onto or between slots, with a page map) and MUTE GROUPS (members,
+    names, group keys).
+  - **UTILITY:** system health and the event log (also on SETUP > LOG).
   - **RECORDER** (the status bar's **LIVE** card icon, red while recording): laid out
     like the WING-LIVE screens. See *Multitrack recording* below.
 - **Channel strip section** (top left): the CHANNEL STRIP DETAILS LED panel (sources,
@@ -126,14 +132,21 @@ Barlow Condensed.
   (press: show it on the screen, again: next parameter; hold: on/off); CHANNEL
   EQUALIZER with SHIFT, four band encoders, BLEND/MIX, EQ and GAIN / WIDTH / FREQ;
   VIEW opens the shown slot on HOME.
-- **USB / monitoring panel** (top right): VIEW, MONITOR LEVEL, **DIM** (hold: mute the
-  monitor) and **MONO** (hold: swap left and right); held functions blink, a press
-  ends them. Talkback and the phones level come later.
-- **Custom controls** (between the center and right sections): the lower layers
-  **MULTI TRANSP** (the recorder's transport: previous / next marker, MARK, LOOP over
-  START, STOP, PLAY, REC; VIEW opens the recorder screen), **MUTE GROUPS** (the eight
-  mute groups) and **SHOW CNTRL** (scene back, GO, SCENES); the **DAW** key opens the
-  multitrack editor. The assignable upper part is empty for now.
+- **USB / monitoring panel** (top right): VIEW (the MONITORS screen), MONITOR LEVEL,
+  **DIM** (hold: mute the monitor) and **MONO** (hold: swap left and right); held
+  functions blink, a press ends them. Talkback and the phones level come later.
+- **4-Channel section** (under the monitoring panel): GAIN, GATE, COMP, FILTER, F1-F3
+  and PAN keys give the four strips of the right fader section an encoder and a key
+  each (trim; gate / comp threshold and on; low / high cut; bus sends; pan / width and
+  MAIN 1), with their scribble strips on a four-way LCD.
+- **Custom controls** (between the center and right sections): the upper part's 16
+  layers of four encoders and eight keys (assigned on CC EDIT; UP / DOWN; names and
+  colours on the LCD), the lower layers **USER** (eight assignable keys), **MULTI
+  TRANSP** (the recorder's transport: previous / next marker, MARK, LOOP over START,
+  STOP, PLAY, REC; VIEW opens the recorder screen), **MUTE GROUPS** (the eight mute
+  groups) and **SHOW CNTRL** (scene back, GO, SCENES; the wheel picks the scene GO
+  recalls); the **DAW** key opens the multitrack editor. With USE CRSR/WHEEL the
+  arrows and the wheel edit the display.
 
 ## Multitrack recording
 

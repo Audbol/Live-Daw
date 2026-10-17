@@ -132,8 +132,8 @@ struct GroupNames {
 impl Default for GroupNames {
     fn default() -> Self {
         Self {
-            dcas: std::array::from_fn(|i| format!("DCA {}", i + 1)),
-            mute_groups: std::array::from_fn(|i| format!("Mute {}", i + 1)),
+            dcas: std::array::from_fn(|i| format!("DCA.{}", i + 1)),
+            mute_groups: std::array::from_fn(|i| format!("MGRP.{}", i + 1)),
         }
     }
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ui/ScreenWidgets.h"
+#include "ui/WingPopups.h"
 
 namespace livedaw::ui
 {
@@ -48,6 +49,7 @@ private:
 
     void removeSelected();
     void renameSelected();
+    juce::Component& popupHost();
     void moveSelected (int delta);
     void linkSelected();
     void skipSelected();

@@ -148,4 +148,25 @@ void LayerSet::moveWithinUserLayer (const juce::String& layerId, int index, int 
     ld::ld_layers_move_within_user (handle, u.data, u.size, index, delta);
 }
 
+void LayerSet::setDefaultOverride (Section s, const juce::String& id, const std::vector<state::FaderRef>& faders)
+{
+    const Utf8 u (id);
+    std::vector<ld::FaderRefC> refs;
+    for (auto& f : faders)
+        refs.push_back (f.toC());
+    ld::ld_layers_set_override (handle, s, u.data, u.size, refs.data(), (int32_t) refs.size());
+}
+
+void LayerSet::clearDefaultOverride (Section s, const juce::String& id)
+{
+    const Utf8 u (id);
+    ld::ld_layers_clear_override (handle, s, u.data, u.size);
+}
+
+bool LayerSet::hasDefaultOverride (Section s, const juce::String& id) const
+{
+    const Utf8 u (id);
+    return ld::ld_layers_has_override (handle, s, u.data, u.size);
+}
+
 } // namespace livedaw

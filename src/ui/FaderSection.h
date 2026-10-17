@@ -27,6 +27,8 @@ public:
 
     /** Number of strips shown right now. */
     int getNumStrips() const noexcept { return (int) strips.size(); }
+    /** The strip on fader `index` (nullptr for a DCA, an empty position or past the end). */
+    Strip* getStrip (int index) const { return juce::isPositiveAndBelow (index, strips.size()) ? strips[index]->getStrip() : nullptr; }
     /** Width needed for `n` strips of width `stripWidth`. */
     static int widthFor (int n, int stripWidth) { return kBankColumnWidth + n * stripWidth; }
 

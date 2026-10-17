@@ -53,7 +53,7 @@ namespace
             for (int i = 0; i < segments; ++i)
             {
                 const float pos = ((float) i + 0.5f) / (float) segments;
-                g.setColour (level >= pos ? (pos > 0.85f ? Colours::meterYellow : Colours::meterGreen) : juce::Colour (0xff3a3a3a));
+                g.setColour (level >= pos ? (pos > 0.85f ? Colours::meterYellow : Colours::meterGreen) : Colours::screenTile);
                 g.fillRect (r.getX() + (float) col * (w + 2.0f), r.getBottom() - (float) (i + 1) * h + 0.5f, w, juce::jmax (1.0f, h - 1.5f));
             }
         }
@@ -77,12 +77,12 @@ public:
 
         g.setColour (juce::Colours::black);
         g.fillRect (b);
-        g.setColour (sel ? juce::Colours::white : juce::Colour (0xff9a9a9a));
+        g.setColour (sel ? Colours::yellow : Colours::screenLine);
         g.drawRect (b, sel ? 2.5f : 1.5f);
 
         // Slot number, bottom right.
         auto number = juce::Rectangle<float> (b.getRight() - 22.0f, b.getBottom() - 18.0f, 20.0f, 16.0f);
-        g.setColour (juce::Colour (0xff6a6a6a));
+        g.setColour (Dark::textDim);
         g.fillRect (number);
         g.setColour (juce::Colours::black);
         g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
@@ -98,11 +98,11 @@ public:
         if (! loaded)
         {
             // An empty slot: a blank rack unit with a "+".
-            g.setColour (juce::Colour (0xff2a2a2a));
+            g.setColour (Colours::screenTile);
             g.fillRect (deviceArea);
             const float d = juce::jmin (deviceArea.getHeight() * 0.6f, 34.0f);
             auto circle = juce::Rectangle<float> (d, d).withCentre (deviceArea.getCentre());
-            g.setColour (juce::Colour (0xff7a7a7a));
+            g.setColour (Dark::textDim);
             g.drawEllipse (circle, 2.0f);
             g.fillRect (juce::Rectangle<float> (d * 0.5f, 2.0f).withCentre (circle.getCentre()));
             g.fillRect (juce::Rectangle<float> (2.0f, d * 0.5f).withCentre (circle.getCentre()));
@@ -171,7 +171,7 @@ public:
             // its default name), its icon, and its default label under the icon.
             auto src = left;
             auto bar = src.removeFromTop (juce::jmax (10.0f, src.getHeight() * 0.18f));
-            g.setColour (user.strip->getColour());
+            g.setColour (stripDisplayColour (*user.strip));
             g.fillRect (bar);
             if (stripName (*user.strip) != user.strip->getLabel())
             {
@@ -179,22 +179,22 @@ public:
                 g.setFont (juce::FontOptions (juce::jmin (13.0f, bar.getHeight() * 0.9f), juce::Font::bold));
                 g.drawFittedText (stripName (*user.strip).toUpperCase(), bar.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.6f);
             }
-            g.setColour (juce::Colour (0xff5a5a5a));
+            g.setColour (Colours::screenTile);
             g.fillRect (src);
             auto name = src.removeFromBottom (juce::jmin (18.0f, src.getHeight() * 0.32f));
-            drawIcon (g, stripIcon (user.strip->getKind()), src.reduced (src.getWidth() * 0.22f, 3.0f), juce::Colours::white);
+            drawStripIcon (g, *user.strip, src.reduced (src.getWidth() * 0.22f, 3.0f), juce::Colours::white);
             g.setColour (juce::Colours::white);
             g.setFont (juce::FontOptions (juce::jmin (14.0f, name.getHeight()), juce::Font::bold));
             g.drawFittedText (user.strip->getLabel(), name.toNearestInt(), juce::Justification::centred, 1, 0.7f);
 
             // PRE lit red, POST green, as on the console.
             auto pre = prePostArea.removeFromLeft (prePostArea.getWidth() / 2.0f);
-            drawChip (g, pre, "PRE", user.post ? juce::Colour (0xff4a4a4a) : Colours::mute, user.post ? Colours::textDim : juce::Colours::black);
-            drawChip (g, prePostArea, "POST", user.post ? Colours::green : juce::Colour (0xff4a4a4a), user.post ? juce::Colours::black : Colours::textDim);
+            drawChip (g, pre, "PRE", user.post ? Colours::screenTile : Dark::pre, user.post ? Dark::textDim : juce::Colours::black);
+            drawChip (g, prePostArea, "POST", user.post ? Dark::post : Colours::screenTile, user.post ? juce::Colours::black : Dark::textDim);
             prePostArea = pre.getUnion (prePostArea);
         }
         const bool on = ! params.bypass.load();
-        drawChip (g, onArea, "ON", on ? Colours::yellow : juce::Colour (0xff4a4a4a), on ? juce::Colours::black : Colours::textDim);
+        drawChip (g, onArea, "ON", on ? Colours::yellow : Colours::screenTile, on ? juce::Colours::black : Dark::textDim);
 
         // Ring and value: the device's key control (a plugin's: MIX).
         auto bottom = inner.withTrimmedTop (4.0f).withTrimmedRight (24.0f);
@@ -216,9 +216,9 @@ public:
         juce::Path track, value;
         track.addCentredArc (k.getCentreX(), k.getCentreY(), rad, rad, 0.0f, a0, a1, true);
         value.addCentredArc (k.getCentreX(), k.getCentreY(), rad, rad, 0.0f, a0, a0 + mix * (a1 - a0), true);
-        g.setColour (juce::Colour (0xff3a3a3a));
+        g.setColour (Colours::screenTile);
         g.strokePath (track, juce::PathStrokeType (thick));
-        g.setColour (on ? juce::Colour (0xffd8d8d8) : Colours::textDim);
+        g.setColour (on ? Colours::text : Dark::textDim);
         g.strokePath (value, juce::PathStrokeType (thick));
         bottom.removeFromLeft (6.0f);
         g.setColour (Colours::text);

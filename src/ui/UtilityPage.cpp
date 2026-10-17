@@ -3,7 +3,7 @@
 namespace livedaw::ui
 {
 
-UtilityPage::UtilityPage (UiContext& c) : ctx (c)
+UtilityPage::UtilityPage (UiContext& c, bool setup) : ctx (c), onSetup (setup)
 {
     clearFaultsButton.setTooltip ("Clears the FX fault and double-assignment markers (a faulted plugin is bypassed until cleared)");
     clearFaultsButton.onClick = [this]
@@ -12,17 +12,30 @@ UtilityPage::UtilityPage (UiContext& c) : ctx (c)
             ctx.engine.getFx().clearFlags (i);
     };
     clearClipsButton.onClick = [this] { ctx.engine.outputClipEvents = 0; };
+    styleIconKey (clearFaultsButton);
+    styleIconKey (clearClipsButton);
     addAndMakeVisible (clearFaultsButton);
     addAndMakeVisible (clearClipsButton);
 
     logList.setModel (this);
     logList.setRowHeight (26);
-    logList.setColour (juce::ListBox::backgroundColourId, juce::Colour (0xff1e1e1e));
+    logList.setColour (juce::ListBox::backgroundColourId, Dark::body);
     addAndMakeVisible (logList);
 
     ctx.log.addChangeListener (this);
     startTimerHz (4);
     timerCallback();
+}
+
+void UtilityPage::visibilityChanged()
+{
+    // The UTILITY screen hands over to SETUP > LOG.
+    if (! onSetup && isVisible())
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<UtilityPage> (this)]
+        {
+            if (safe != nullptr && safe->isVisible() && safe->ctx.showSetupTab)
+                safe->ctx.showSetupTab (6);
+        });
 }
 
 UtilityPage::~UtilityPage()
@@ -51,13 +64,13 @@ void UtilityPage::paintListBoxItem (int row, juce::Graphics& g, int width, int h
 
     const auto& e = entries.getReference (row);
     if (selected)
-        g.fillAll (Colours::accent.withAlpha (0.3f));
+        g.fillAll (Dark::selectedRow);
 
     auto r = juce::Rectangle<int> (width, height).reduced (8, 0);
-    g.setColour (juce::Colour (0xff2c2c2c));
+    g.setColour (juce::Colours::black);
     g.fillRect (0, height - 1, width, 1);
     g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
-    g.setColour (Colours::textDim);
+    g.setColour (Dark::textDim);
     g.drawText (e.time.formatted ("%H:%M:%S"), r.removeFromLeft (76), juce::Justification::centredLeft);
     g.setColour (e.level == EventLog::Level::Error     ? Colours::mute
                  : e.level == EventLog::Level::Warning ? Colours::solo
@@ -99,18 +112,18 @@ void UtilityPage::timerCallback()
 
 void UtilityPage::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::screen);
-    drawSectionBox (g, leftArea, "SYSTEM HEALTH");
-    drawSectionBox (g, rightArea, "EVENT LOG");
+    g.fillAll (juce::Colours::black);
+    drawDarkPanel (g, leftArea, "SYSTEM HEALTH");
+    drawDarkPanel (g, rightArea, "EVENT LOG");
 
     auto r = statsArea;
     const int h = juce::jmin (34, r.getHeight() / juce::jmax (1, (int) health.size()));
     for (auto& row : health)
     {
         auto line = r.removeFromTop (h);
-        g.setColour (juce::Colour (0xff2c2c2c));
+        g.setColour (juce::Colours::black);
         g.fillRect (line.withHeight (1));
-        g.setColour (Colours::textDim);
+        g.setColour (Dark::textDim);
         g.setFont (juce::FontOptions (juce::jmin (16.0f, h * 0.5f), juce::Font::bold));
         g.drawText (row.label, line.removeFromLeft (line.getWidth() * 34 / 100), juce::Justification::centredLeft);
         if (row.state != 0)
@@ -128,18 +141,18 @@ void UtilityPage::paint (juce::Graphics& g)
 
 void UtilityPage::resized()
 {
-    auto b = getLocalBounds().reduced (0, 6);
-    leftArea = b.removeFromLeft (juce::jmax (340, b.getWidth() * 45 / 100));
-    b.removeFromLeft (8);
+    auto b = getLocalBounds();
+    leftArea = b.removeFromLeft (juce::jmax (300, b.getWidth() * 42 / 100));
+    b.removeFromLeft (4);
     rightArea = b;
 
-    auto l = sectionContent (leftArea, true);
+    auto l = darkPanelBody (leftArea, true).reduced (8, 4);
     auto row = l.removeFromBottom (40);
     clearFaultsButton.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (2, 0));
     clearClipsButton.setBounds (row.reduced (2, 0));
     l.removeFromBottom (6);
     statsArea = l;
-    logList.setBounds (sectionContent (rightArea, true));
+    logList.setBounds (darkPanelBody (rightArea, true));
 }
 
 } // namespace livedaw::ui

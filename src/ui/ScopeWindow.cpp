@@ -5,8 +5,9 @@ namespace livedaw::ui
 
 namespace
 {
-    const juce::Colour tileBlue (0xff4690e4), tileYellow (0xfff1c951), configLit (0xff478fdd), configUnlit (0xff1f4973), tileOff (0xff3a3a3a),
-        groupHeader (0xff3e3e3e);
+    const juce::Colour tileBlue = Colours::valueBlue, tileYellow = Colours::gold, configLit = Colours::valueBlue, configUnlit (0xff1f4973),
+                       tileOff = Colours::screenTile,
+        groupHeader = Colours::screenLine;
 
     /** The CONTENTS keys and the console sections they map to (until E15
         splits our ten sections into the console's seventeen categories). */

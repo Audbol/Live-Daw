@@ -11,8 +11,9 @@ namespace
 {
     constexpr Screen viewScreens[] = { Screen::Overview, Screen::Faders, Screen::Sends, Screen::Config, Screen::MuteGroups };
 
-    const juce::Colour blockFill (0xff2c2c2c), blockOutline (0xff3c3c3c), chipOff (0xff3e3e3e), track (0xff141414), eqCurve (0xffe8a33a),
-        panGreen (0xff3cc04a), sendRed (0xfff8423f);
+    const juce::Colour blockFill = Colours::screenTile, blockOutline = Colours::screenLine, chipOff = Colours::chipOff, track = Colours::screenDark,
+                       eqCurve = Colours::amber,
+        panGreen = Colours::width, sendRed = Colours::tapRed;
 
     Icon viewIcon (Screen s)
     {
@@ -66,7 +67,7 @@ namespace
 
     juce::Colour colourOf (UiContext& ctx, const Target& t)
     {
-        return t.strip != nullptr ? t.strip->getColour() : wingColour (ctx.engine.getDca (t.dca).colour.load());
+        return t.strip != nullptr ? stripDisplayColour (*t.strip) : wingColour (ctx.engine.getDca (t.dca).colour.load());
     }
 
     /** The name shown in the name bar (empty for default names, as on the console). */
@@ -75,7 +76,7 @@ namespace
         if (t.strip != nullptr)
             return stripName (*t.strip) != t.strip->getLabel() ? stripName (*t.strip).toUpperCase() : juce::String();
         const auto name = ctx.engine.getDcaName (t.dca);
-        return name.removeCharacters (" ").equalsIgnoreCase ("DCA" + juce::String (t.dca + 1)) ? juce::String() : name.toUpperCase();
+        return name.removeCharacters (" .").equalsIgnoreCase ("DCA" + juce::String (t.dca + 1)) ? juce::String() : name.toUpperCase();
     }
 
     juce::String numberOf (const Target& t)
@@ -112,7 +113,7 @@ namespace
         const auto number = numberOf (t);
         g.drawFittedText (number, inner.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
         if (t.strip != nullptr && inner.getWidth() > inner.getHeight() * 2.2f)
-            drawIcon (g, stripIcon (t.strip->getKind()), inner.removeFromRight (inner.getHeight()).reduced (1.0f), Dark::textDim);
+            drawStripIcon (g, *t.strip, inner.removeFromRight (inner.getHeight()).reduced (1.0f), Dark::textDim);
     }
 
     void block (juce::Graphics& g, juce::Rectangle<float> r)
@@ -139,7 +140,7 @@ namespace
         for (int i = 0; i < segments; ++i)
         {
             const bool lit = level > ((float) i + 0.5f) / (float) segments;
-            g.setColour (lit ? c : juce::Colour (0xff1c1c1c));
+            g.setColour (lit ? c : Colours::screenDark);
             g.fillRect (r.getX(), r.getBottom() - (float) (i + 1) * h + 0.5f, r.getWidth(), juce::jmax (1.0f, h - 1.0f));
         }
     }
@@ -200,7 +201,7 @@ namespace
         for (size_t i = 0; i < sends.size(); ++i)
         {
             auto c = juce::Rectangle<float> (r.getX() + w * (float) ((int) i % cols), r.getY() + h * (float) ((int) i / cols), w, h).reduced (1.0f);
-            g.setColour (juce::Colour (0xff3a3a3a));
+            g.setColour (Colours::screenTile);
             g.fillRect (c);
             if (sends[i].first)
             {
@@ -231,7 +232,7 @@ namespace
         const float unity = lane.getBottom() - lane.getHeight() * fader::dbToPos (0.0f);
         g.fillEllipse (juce::Rectangle<float> (4.0f, 4.0f).withCentre ({ trk.getRight() + 6.0f, unity }));
         auto box = juce::Rectangle<float> (juce::jmin (r.getWidth(), 64.0f), boxH).withCentre ({ r.getCentreX(), y });
-        g.setColour (active ? juce::Colours::white : juce::Colour (0xff9a9a9a));
+        g.setColour (active ? juce::Colours::white : Colours::textDim);
         g.fillRoundedRectangle (box, 2.0f);
         g.setColour (juce::Colours::black);
         g.setFont (juce::FontOptions (juce::jmin (12.0f, boxH * 0.8f), juce::Font::bold));
@@ -250,32 +251,28 @@ namespace
         }
     }
 
-    void editDca (UiContext& ctx, int dca, juce::Component* target)
+    /** A DCA's name and colour: a list (NAME, then the 18 colours) under `anchor`. */
+    void editDca (UiContext& ctx, int dca, juce::Component& page, juce::Component& anchor)
     {
-        juce::PopupMenu m;
-        m.addSectionHeader ("DCA " + juce::String (dca + 1));
-        m.addItem (1000, "Rename...");
-        juce::PopupMenu colours;
+        juce::StringArray items { "NAME" };
         for (int k = 1; k <= 18; ++k)
-            colours.addColouredItem (k, wingColourName (k), wingColour (k), true, ctx.engine.getDca (dca).colour.load() == k);
-        m.addSubMenu ("Colour", colours);
-        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [&ctx, dca, target] (int r)
+            items.add (wingColourName (k).toUpperCase());
+        popups::ListOptions options;
+        options.caption = "DCA " + juce::String (dca + 1);
+        juce::Component::SafePointer<juce::Component> safePage (&page);
+        popups::chooseFrom (anchor, items, ctx.engine.getDca (dca).colour.load(), [&ctx, dca, safePage] (int r)
         {
             if (r >= 1 && r <= 18)
                 ctx.engine.getDca (dca).colour = r;
-            else if (r == 1000)
+            else if (r == 0 && safePage != nullptr)
             {
-                auto* w = new juce::AlertWindow ("DCA " + juce::String (dca + 1), {}, juce::MessageBoxIconType::NoIcon, target);
-                w->addTextEditor ("name", ctx.engine.getDcaName (dca));
-                w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-                w->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-                w->enterModalState (true, juce::ModalCallbackFunction::create ([&ctx, dca, w] (int result)
-                {
-                    if (result != 0)
-                        ctx.engine.setDcaName (dca, w->getTextEditorContents ("name").trim());
-                }), true);
+                // DCAs named MON A, MON B or MON LVL control the monitor level (firmware 1.09).
+                popups::TextOptions text;
+                text.suggestions = { "MON A", "MON B", "MON LVL" };
+                popups::editText (*safePage, "DCA " + juce::String (dca + 1) + " NAME", ctx.engine.getDcaName (dca),
+                                  [&ctx, dca] (const juce::String& name) { ctx.engine.setDcaName (dca, name.trim()); }, text);
             }
-        });
+        }, options);
     }
 } // namespace
 
@@ -371,7 +368,7 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        g.setColour (juce::Colour (0xff161616));
+        g.setColour (Colours::screenDark);
         g.fillRect (getLocalBounds());
         const auto current = page.currentLayerId();
         auto key = [&g] (juce::Rectangle<int> r, const juce::String& text, juce::Colour fill, juce::Colour ink)
@@ -386,24 +383,24 @@ public:
         for (auto& k : keys)
         {
             const bool on = k.id == current;
-            key (k.area, k.name, on ? Dark::layer : juce::Colour (0xff303030), on ? juce::Colours::white : Dark::text);
+            key (k.area, k.name, on ? Dark::layer : Colours::screenTile, on ? juce::Colours::white : Dark::text);
         }
         for (auto& k : pageKeys)
         {
             const bool on = k.id.getIntValue() == page.page && pageKeys.size() > 1;
-            key (k.area, k.name, on ? Dark::layer : juce::Colour (0xff262626), on ? juce::Colours::white : Dark::textDim);
+            key (k.area, k.name, on ? Dark::layer : Colours::screenPanel, on ? juce::Colours::white : Dark::textDim);
         }
         const char* names[] = { "LEFT", "CENTER", "RIGHT" };
         for (int i = 0; i < 3; ++i)
         {
             const bool on = (int) page.section() == i;
-            key (sectionKeys[i], names[i], on ? Dark::section : juce::Colour (0xff303030), on ? juce::Colours::black : Dark::text);
+            key (sectionKeys[i], names[i], on ? Dark::section : Colours::screenTile, on ? juce::Colours::black : Dark::text);
         }
         const bool paged = page.numPages() > 1;
         for (auto [r, icon, enabled] : { std::tuple { prevKey, Icon::ChevronLeft, paged && page.page > 0 },
                                          std::tuple { nextKey, Icon::ChevronRight, paged && page.page < page.numPages() - 1 } })
         {
-            g.setColour (juce::Colour (0xff262626));
+            g.setColour (Colours::screenPanel);
             g.fillRect (r);
             drawIcon (g, icon, r.toFloat().reduced ((float) r.getHeight() * 0.2f), enabled ? Dark::text : Dark::textDim.withAlpha (0.4f));
         }
@@ -454,10 +451,18 @@ ViewPage::ViewPage (UiContext& c, Screen s) : ctx (c), screen (s)
 {
     column = std::make_unique<LayerColumn> (*this);
     addChildComponent (*column);
+    anchor.setInterceptsMouseClicks (false, false);
+    addAndMakeVisible (anchor);
     startTimerHz (15);
 }
 
 ViewPage::~ViewPage() = default;
+
+juce::Component& ViewPage::anchorAt (juce::Rectangle<int> area)
+{
+    anchor.setBounds (area);
+    return anchor;
+}
 
 std::vector<StatusKey> ViewPage::getStatusKeys()
 {
@@ -468,11 +473,24 @@ std::vector<StatusKey> ViewPage::getStatusKeys()
     return keys;
 }
 
+StatusTitle ViewPage::getStatusTitle()
+{
+    // A dark tile with the section letter, the layers icon and the layer [I10].
+    StatusTitle t;
+    t.kind = StatusTitle::Kind::Layer;
+    const char letters[] = { 'L', 'C', 'R' };
+    t.prefix = juce::String::charToString ((juce::juce_wchar) letters[juce::jlimit (0, 2, (int) section())]);
+    t.text = currentLayer().name.toUpperCase();
+    t.icon = Icon::Layers;
+    return t;
+}
+
 void ViewPage::refresh()
 {
     page = juce::jlimit (0, numPages() - 1, page);
     resized();
     repaint();
+    notifyStatusKeysChanged();
 }
 
 void ViewPage::timerCallback()
@@ -481,6 +499,12 @@ void ViewPage::timerCallback()
         return;
     if (hasLayerColumn())
         column->followLayer();
+    // The title tile follows the layer (it may change from the surface).
+    if (const auto title = getStatusTitle(); title.prefix + title.text != shownTitle)
+    {
+        shownTitle = title.prefix + title.text;
+        notifyStatusKeysChanged();
+    }
     repaint();
 }
 
@@ -710,7 +734,7 @@ namespace
         {
             // Green while the gate is open.
             auto led = top.removeFromRight (top.getHeight()).reduced (top.getHeight() * 0.2f);
-            g.setColour (slot.on.load() && ! s.meters.gateActive.load() ? Colours::meterGreen : juce::Colour (0xff1c1c1c));
+            g.setColour (slot.on.load() && ! s.meters.gateActive.load() ? Colours::meterGreen : Colours::screenDark);
             g.fillRect (led);
             top.removeFromRight (2.0f);
         }
@@ -776,7 +800,7 @@ namespace
             const float h = mains.getHeight() / 4.0f;
             for (int i = 0; i < kNumMains; ++i)
             {
-                g.setColour (s.params.mains[i].on.load() ? Dark::faderFill : juce::Colour (0xff1c1c1c));
+                g.setColour (s.params.mains[i].on.load() ? Dark::faderFill : Colours::screenDark);
                 g.fillRect (mains.withHeight (h).translated (0.0f, h * (float) i).reduced (0.5f));
             }
             inner.removeFromRight (2.0f);
@@ -851,7 +875,7 @@ void OverviewViewPage::mouseUp (const juce::MouseEvent& e)
         if (t.dca >= 0)
         {
             if (rows.name.contains (pos) || rows.number.contains (pos))
-                editDca (ctx, t.dca, this);
+                editDca (ctx, t.dca, *this, anchorAt (cols[i]));
             return;
         }
         if (t.strip == nullptr)
@@ -924,7 +948,7 @@ namespace
             const float w = r.getWidth() / 16.0f;
             for (int i = 0; i < count; ++i)
             {
-                g.setColour (isOn (i) ? c : juce::Colour (0xff262626));
+                g.setColour (isOn (i) ? c : Colours::screenPanel);
                 g.fillRect (juce::Rectangle<float> (r.getX() + w * (float) i, r.getY() + rowH * (float) index, w, rowH).reduced (0.5f));
             }
         };
@@ -950,7 +974,7 @@ void FadersViewPage::paintContent (juce::Graphics& g)
         if (! t.isValid())
             continue;
         const auto rows = faderRows (cols[i].withTrimmedBottom (6));
-        g.setColour (juce::Colour (0xff1c1c1c));
+        g.setColour (Colours::screenDark);
         g.fillRect (rows.mute.getUnion (rows.label));
         paintNameBar (g, rows.name, colourOf (ctx, t), barName (ctx, t));
         paintNumberTile (g, rows.number, t);
@@ -976,7 +1000,7 @@ void FadersViewPage::paintContent (juce::Graphics& g)
                     auto square = bar.removeFromLeft (bar.getHeight());
                     if (k == 0 && isGate)
                     {
-                        g.setColour (slot.on.load() && ! s.meters.gateActive.load() ? Colours::meterGreen : juce::Colour (0xff262626));
+                        g.setColour (slot.on.load() && ! s.meters.gateActive.load() ? Colours::meterGreen : Colours::screenPanel);
                         g.fillRect (square.reduced (1.0f));
                     }
                     bar.removeFromLeft (2.0f);
@@ -1030,6 +1054,9 @@ void FadersViewPage::mouseDown (const juce::MouseEvent& e)
     {
         dragPos = fader::dbToPos (dragging->load());
         lastY = e.getPosition().y;
+        // TOUCH FADER SELECT: the knob right of the display fine-tunes the touched fader.
+        if (ctx.setFineTarget && ctx.settings.getBoolValue (uiprefs::touchFaderSelect, false))
+            ctx.setFineTarget (bindFader ("LEVEL", *dragging), this);
     }
 }
 
@@ -1067,7 +1094,7 @@ void FadersViewPage::mouseUp (const juce::MouseEvent& e)
         else if (rows.name.contains (pos) || rows.number.contains (pos))
         {
             if (t.dca >= 0)
-                editDca (ctx, t.dca, this);
+                editDca (ctx, t.dca, *this, anchorAt (cols[i]));
             else if (t.strip != nullptr)
             {
                 if (ctx.selectStrip)
@@ -1214,7 +1241,7 @@ void SendsViewPage::paintContent (juce::Graphics& g)
         const juce::String name = gi < busGroups ? "BUS " + juce::String (gi * 8 + 1) + "-" + juce::String (juce::jmin (buses, gi * 8 + 8))
                                                  : gi == busGroups ? juce::String ("MAIN") : juce::String ("MATRIX");
         const bool on = gi == group;
-        g.setColour (on ? Dark::layer : juce::Colour (0xff303030));
+        g.setColour (on ? Dark::layer : Colours::screenTile);
         g.fillRect (groupKeys[i]);
         g.setColour (on ? juce::Colours::white : Dark::text);
         g.setFont (juce::FontOptions (juce::jlimit (9.0f, 15.0f, (float) groupKeys[i].getHeight() * 0.4f), juce::Font::bold));
@@ -1233,7 +1260,7 @@ void SendsViewPage::paintContent (juce::Graphics& g)
             continue;
         auto& s = *list[(size_t) dests[i].index];
         auto header = r.removeFromTop (r.getHeight() * 0.28f);
-        g.setColour (s.getColour());
+        g.setColour (stripDisplayColour (s));
         g.fillRect (header);
         g.setColour (juce::Colours::black);
         g.setFont (juce::FontOptions (juce::jlimit (8.0f, 13.0f, header.getHeight() * 0.85f), juce::Font::bold));
@@ -1241,7 +1268,7 @@ void SendsViewPage::paintContent (juce::Graphics& g)
         g.setColour (blockFill);
         g.fillRect (r);
         auto name = r.removeFromBottom (r.getHeight() * 0.36f);
-        drawIcon (g, stripIcon (s.getKind()), r.reduced (r.getHeight() * 0.15f), Dark::textDim);
+        drawStripIcon (g, s, r.reduced (r.getHeight() * 0.15f), Dark::textDim);
         g.setColour (Dark::text);
         g.setFont (juce::FontOptions (juce::jlimit (8.0f, 12.0f, name.getHeight() * 0.9f), juce::Font::bold));
         g.drawFittedText (stripName (s).toUpperCase(), name.toNearestInt(), juce::Justification::centred, 1, 0.6f);
@@ -1276,7 +1303,7 @@ void SendsViewPage::paintContent (juce::Graphics& g)
         const bool sends = t.strip != nullptr && canSend (*t.strip);
         const bool isOn = on != nullptr && on->load();
         miniChip (g, onKey.reduced (onKey.getWidth() * 0.12f, 1.0f), "ON", isOn, Dark::on);
-        g.setColour (juce::Colour (0xff1c1c1c));
+        g.setColour (Colours::screenDark);
         g.fillRect (c);
         auto meter = c.removeFromRight (juce::jmax (5.0f, c.getWidth() * 0.12f));
         if (t.strip != nullptr)
@@ -1402,23 +1429,11 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
         addAndMakeVisible (k);
     }
     newKey.setTooltip ("A new user layer, copied from the layer shown");
+    deleteKey.setTooltip ("Delete the user layer, or give an edited layer key its own faders back");
     clearKey.onClick = [this]
     {
         const auto layer = currentLayer();
-        const auto id = userLayerId (layer, false);
-        if (id.isEmpty())
-            return;
-        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "CLEAR", "Remove every fader from \"" + layer.name + "\"?", "CLEAR",
-                                            "CANCEL", this, juce::ModalCallbackFunction::create ([this, layer, id] (int r)
-        {
-            if (r == 0)
-                return;
-            for (auto& f : layer.faders)
-                ctx.show.layers.removeFromUserLayer (id, f);
-            notifyLayersChangedAsync (ctx);
-            resized();
-            repaint();
-        }));
+        popups::confirm (*this, "CLEAR", "Remove every fader from \"" + layer.name + "\"?", "CLEAR", [this, layer] { setLayerFaders (layer, {}); }, true);
     };
     renameKey.onClick = [this]
     {
@@ -1426,24 +1441,23 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
         const auto id = userLayerId (layer, true);
         if (id.isEmpty())
             return;
-        auto* w = new juce::AlertWindow ("RENAME LAYER", {}, juce::MessageBoxIconType::NoIcon, this);
-        w->addTextEditor ("name", layer.name);
-        w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-        w->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-        w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, id] (int r)
+        popups::TextOptions options;
+        options.icon = Icon::Layers;
+        juce::Component::SafePointer<ConfigViewPage> safe (this);
+        popups::editText (*this, "LAYER NAME", layer.name, [safe, id] (const juce::String& text)
         {
-            if (r != 0 && w->getTextEditorContents ("name").trim().isNotEmpty())
-            {
-                ctx.show.layers.renameUserLayer (id, w->getTextEditorContents ("name").trim());
-                notifyLayersChangedAsync (ctx);
-                resized();
-            }
-        }), true);
+            if (safe == nullptr || text.trim().isEmpty())
+                return;
+            safe->ctx.show.layers.renameUserLayer (id, text.trim());
+            notifyLayersChangedAsync (safe->ctx);
+            safe->resized();
+            safe->notifyStatusKeysChanged();
+        }, options);
     };
     newKey.onClick = [this]
     {
         const auto layer = currentLayer();
-        const auto name = isEditable (layer) ? "USER " + juce::String ((int) ctx.show.layers.getUserLayers().size() + 1) : layer.name;
+        const auto name = layer.user || layer.id.startsWith ("user-") ? "USER " + juce::String ((int) ctx.show.layers.getUserLayers().size() + 1) : layer.name;
         const auto id = ctx.show.layers.addUserLayer (name, layer.faders);
         notifyLayersChangedAsync (ctx);
         selectLayer (id);
@@ -1452,32 +1466,34 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
     deleteKey.onClick = [this]
     {
         const auto layer = currentLayer();
-        const auto id = userLayerId (layer, false);
-        if (id.isEmpty())
-            return;
-        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, "DELETE LAYER", "Delete the user layer \"" + layer.name + "\"?", "DELETE",
-                                            "CANCEL", this, juce::ModalCallbackFunction::create ([this, id] (int r)
+        if (const auto id = userLayerId (layer, false); id.isNotEmpty())
         {
-            if (r == 0)
-                return;
-            ctx.show.layers.removeUserLayer (id);
-            const auto defaults = ctx.show.layers.getDefaultLayers (ctx.engine, section());
-            if (! defaults.empty())
-                selectLayer (defaults.front().id);
-            notifyLayersChangedAsync (ctx);
-            resized();
-        }));
+            popups::confirm (*this, "DELETE LAYER", "Delete the user layer \"" + layer.name + "\"?", "DELETE", [this, id]
+            {
+                ctx.show.layers.removeUserLayer (id);
+                const auto defaults = ctx.show.layers.getDefaultLayers (ctx.engine, section());
+                if (! defaults.empty())
+                    selectLayer (defaults.front().id);
+                notifyLayersChangedAsync (ctx);
+                resized();
+            }, true);
+        }
+        else if (ctx.show.layers.hasDefaultOverride (section(), layer.id))
+        {
+            popups::confirm (*this, "RESTORE LAYER", "Give \"" + layer.name + "\" its own faders back?", "RESTORE", [this, id = layer.id]
+            {
+                ctx.show.layers.clearDefaultOverride (section(), id);
+                notifyLayersChangedAsync (ctx);
+                resized();
+                repaint();
+            }, true);
+        }
     };
 }
 
 void ConfigViewPage::layerChanged()
 {
     updateKeys();
-}
-
-bool ConfigViewPage::isEditable (const Layer& layer)
-{
-    return layer.user || layer.id == "user-1" || layer.id == "user-2";
 }
 
 juce::String ConfigViewPage::userLayerId (const Layer& layer, bool create)
@@ -1495,13 +1511,35 @@ juce::String ConfigViewPage::userLayerId (const Layer& layer, bool create)
     return index < user.size() ? user[index].id : juce::String();
 }
 
+void ConfigViewPage::setLayerFaders (const Layer& layer, const std::vector<state::FaderRef>& faders)
+{
+    auto& layers = ctx.show.layers;
+    if (const auto id = userLayerId (layer, true); id.isNotEmpty())
+    {
+        // A user layer: empty it, then add the faders in order.
+        if (const auto* current = layers.getUserLayer (id))
+            for (const auto old = current->faders; const auto& f : old)
+                layers.removeFromUserLayer (id, f);
+        for (auto& f : faders)
+            layers.addToUserLayer (id, f);
+    }
+    else
+    {
+        // A default key keeps an edited copy in the show.
+        layers.setDefaultOverride (section(), layer.id, faders);
+    }
+    notifyLayersChangedAsync (ctx);
+    resized(); // the layer column and the page map show the new pages
+    repaint();
+}
+
 void ConfigViewPage::updateKeys()
 {
     const auto layer = currentLayer();
-    const bool user = isEditable (layer);
-    for (auto* k : { &clearKey, &renameKey })
-        enableKey (*k, user);
-    enableKey (deleteKey, userLayerId (layer, false).isNotEmpty());
+    enableKey (clearKey, ! layer.faders.empty());
+    enableKey (renameKey, layer.user || layer.id == "user-1" || layer.id == "user-2");
+    enableKey (deleteKey, userLayerId (layer, false).isNotEmpty() || ctx.show.layers.hasDefaultOverride (section(), layer.id));
+    deleteKey.setButtonText (! layer.user && ctx.show.layers.hasDefaultOverride (section(), layer.id) ? "RESTORE" : "DELETE");
 }
 
 std::vector<state::FaderRef> ConfigViewPage::sourceItems() const
@@ -1548,7 +1586,9 @@ void ConfigViewPage::layoutContent()
     for (auto* f : fields)
         f->setBounds (top.removeFromLeft (fw).reduced (2, 2));
 
-    // The layer's slots at the bottom, the source grid above.
+    // The page map at the very bottom, the layer's slots above it, the source grid on top.
+    mapArea = b.removeFromBottom (juce::jlimit (14, 22, getHeight() / 26));
+    b.removeFromBottom (4);
     slotsArea = b.removeFromBottom (juce::jlimit (50, 96, getHeight() * 17 / 100));
     b.removeFromBottom (8);
     sourceArea = b;
@@ -1577,6 +1617,20 @@ void ConfigViewPage::layoutContent()
     const int sw = s.getWidth() / juce::jmax (n, 8);
     for (int i = 0; i < n; ++i)
         slotAreas.push_back (juce::Rectangle<int> (s.getX() + i * sw, s.getY(), sw, s.getHeight()).reduced (3, 4));
+
+    // Every slot of the layer (whole pages, one more page to append to), in groups of four.
+    mapCells.clear();
+    const int slots = (numPages() + 1) * n;
+    const int groups = (slots + 3) / 4;
+    const float cell = juce::jmin ((float) mapArea.getHeight(), (float) mapArea.getWidth() / ((float) slots + (float) groups * 0.5f));
+    float x = (float) mapArea.getX();
+    for (int i = 0; i < slots; ++i)
+    {
+        if (i > 0 && i % 4 == 0)
+            x += cell * 0.5f;
+        mapCells.push_back (juce::Rectangle<float> (x, (float) mapArea.getY(), cell, (float) mapArea.getHeight()).reduced (1.0f, 0.0f).toNearestInt());
+        x += cell;
+    }
     updateKeys();
 }
 
@@ -1587,31 +1641,31 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
     for (int i = 0; i < 3; ++i)
     {
         const bool on = i == category;
-        g.setColour (on ? juce::Colour (0xffc6c6c6) : juce::Colour (0xff303030));
+        g.setColour (on ? Colours::caption : Dark::key);
         g.fillRect (categoryKeys[(size_t) i]);
         g.setColour (on ? juce::Colours::black : Dark::text);
         g.setFont (juce::FontOptions (juce::jlimit (9.0f, 15.0f, (float) categoryKeys[(size_t) i].getHeight() * 0.4f), juce::Font::bold));
         g.drawFittedText (names[i], categoryKeys[(size_t) i].reduced (2, 0), juce::Justification::centred, 1, 0.6f);
     }
 
-    auto tile = [this, &g] (juce::Rectangle<float> r, const state::FaderRef& f, bool highlighted, float alpha)
+    auto tile = [this, &g] (juce::Rectangle<float> r, const state::FaderRef& f, bool highlighted)
     {
         const auto t = resolve (ctx, f);
         if (! t.isValid())
             return;
         auto bar = r.removeFromTop (r.getHeight() * 0.36f);
-        paintNameBar (g, bar, colourOf (ctx, t).withMultipliedAlpha (alpha), barName (ctx, t));
-        g.setColour (blockFill.withMultipliedAlpha (alpha));
+        paintNameBar (g, bar, colourOf (ctx, t), barName (ctx, t));
+        g.setColour (blockFill);
         g.fillRect (r);
         auto inner = r.reduced (3.0f, 1.0f);
-        g.setColour (Dark::text.withMultipliedAlpha (alpha));
+        g.setColour (Dark::text);
         g.setFont (juce::FontOptions (juce::jlimit (8.0f, 18.0f, inner.getHeight() * 0.85f), juce::Font::bold));
         g.drawFittedText (numberOf (t), inner.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
         if (t.strip != nullptr && inner.getWidth() > inner.getHeight() * 2.5f)
-            drawIcon (g, stripIcon (t.strip->getKind()), inner.removeFromRight (inner.getHeight()), Dark::textDim.withMultipliedAlpha (alpha));
+            drawStripIcon (g, *t.strip, inner.removeFromRight (inner.getHeight()), Dark::textDim);
         if (highlighted)
         {
-            g.setColour (juce::Colours::white);
+            g.setColour (Colours::yellow);
             g.drawRect (bar.getUnion (r).expanded (1.0f), 2.0f);
         }
     };
@@ -1621,23 +1675,33 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
     for (size_t i = 0; i < items.size() && i < sourceTiles.size(); ++i)
     {
         const bool sel = std::find (selectedItems.begin(), selectedItems.end(), items[i]) != selectedItems.end();
-        tile (sourceTiles[i].toFloat(), items[i], sel, 1.0f);
+        tile (sourceTiles[i].toFloat(), items[i], sel);
     }
 
-    // The layer's slots, in groups of four framed in blue.
+    // The layer's slots, in groups of four framed in blue; an empty slot shows
+    // its number large and dim over EMPTY.
     const auto layer = currentLayer();
     const auto faders = pageFaders();
-    const float alpha = isEditable (layer) ? 1.0f : 0.45f;
     for (size_t i = 0; i < slotAreas.size(); ++i)
     {
         auto r = slotAreas[i].toFloat();
-        g.setColour (juce::Colour (0xff1a1a1a));
+        g.setColour (Dark::well);
         g.fillRect (r);
+        const int number = page * pageSize() + (int) i + 1;
         if (i < faders.size() && ! (dragActive && dragSlot == (int) i))
-            tile (r, faders[i], false, alpha);
+            tile (r, faders[i], false);
+        else
+        {
+            auto text = r.reduced (2.0f);
+            g.setColour (Dark::textDim.withAlpha (0.55f));
+            g.setFont (juce::FontOptions (juce::jlimit (10.0f, 30.0f, text.getHeight() * 0.5f), juce::Font::bold));
+            g.drawFittedText (juce::String (number), text.removeFromTop (text.getHeight() * 0.62f).toNearestInt(), juce::Justification::centredBottom, 1);
+            g.setFont (juce::FontOptions (juce::jlimit (8.0f, 13.0f, text.getHeight() * 0.8f), juce::Font::bold));
+            g.drawFittedText ("EMPTY", text.toNearestInt(), juce::Justification::centredTop, 1);
+        }
         g.setColour (Dark::textDim);
         g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-        g.drawText (juce::String (page * pageSize() + (int) i + 1), juce::Rectangle<int> (slotAreas[i].getX(), slotAreas[i].getBottom() + 3, slotAreas[i].getWidth(), 12),
+        g.drawText (juce::String (number), juce::Rectangle<int> (slotAreas[i].getX(), slotAreas[i].getBottom() + 3, slotAreas[i].getWidth(), 12),
                     juce::Justification::centred);
         if (i % 4 == 0)
         {
@@ -1646,11 +1710,49 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
             g.drawRect (slotAreas[i].getUnion (last).expanded (2, 3).toFloat(), 1.5f);
         }
     }
-    if (! isEditable (layer))
+
+    // While dragging: a blue line where the items would be inserted, or a
+    // frame on the slot they'd replace.
+    if (dragActive)
+        if (const auto drop = dropTargetAt (dragPoint); drop.index >= 0)
+        {
+            const int local = drop.index - page * pageSize();
+            g.setColour (Dark::layer.brighter (0.3f));
+            if (drop.insert && local >= 0 && local <= (int) slotAreas.size() && ! slotAreas.empty())
+            {
+                const int x = local < (int) slotAreas.size() ? slotAreas[(size_t) local].getX() - 3 : slotAreas.back().getRight() + 3;
+                g.fillRect (juce::Rectangle<int> (x - 2, slotAreas.front().getY() - 4, 4, slotAreas.front().getHeight() + 8));
+            }
+            else if (juce::isPositiveAndBelow (local, (int) slotAreas.size()))
+                g.drawRect (slotAreas[(size_t) local].expanded (2).toFloat(), 3.0f);
+        }
+
+    // The page map: every slot (filled where assigned), the shown window framed blue.
+    const int total = (int) layer.faders.size();
+    for (size_t i = 0; i < mapCells.size(); ++i)
+    {
+        g.setColour ((int) i < total ? Dark::textDim : Dark::key);
+        g.fillRect (mapCells[i]);
+        if (mapCells[i].getWidth() >= 12)
+        {
+            g.setColour ((int) i < total ? juce::Colours::black : Dark::textDim);
+            g.setFont (juce::FontOptions (juce::jmin (10.0f, (float) mapCells[i].getHeight() * 0.7f), juce::Font::bold));
+            g.drawFittedText (juce::String ((int) i + 1), mapCells[i], juce::Justification::centred, 1, 0.5f);
+        }
+    }
+    const int first = page * pageSize(), last = juce::jmin ((int) mapCells.size(), first + pageSize()) - 1;
+    if (juce::isPositiveAndBelow (first, (int) mapCells.size()) && last >= first)
+    {
+        g.setColour (Dark::layer.brighter (0.4f));
+        g.drawRect (mapCells[(size_t) first].getUnion (mapCells[(size_t) last]).expanded (2, 2).toFloat(), 2.0f);
+    }
+
+    if (! layer.user && ctx.show.layers.hasDefaultOverride (section(), layer.id) && faders.empty() && page == 0)
     {
         g.setColour (Dark::text);
         g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
-        g.drawFittedText ("DEFAULT LAYER (READ ONLY): PRESS NEW TO EDIT A COPY", hintArea.withTrimmedBottom (14).reduced (8, 0), juce::Justification::centred, 1);
+        g.drawFittedText ("EDITED LAYER KEY: RESTORE GIVES IT ITS OWN FADERS BACK", hintArea.withTrimmedBottom (14).reduced (8, 0),
+                          juce::Justification::centred, 1);
     }
 
     // The item being dragged.
@@ -1666,38 +1768,47 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
     }
 }
 
-void ConfigViewPage::insertAt (const std::vector<state::FaderRef>& items, int slot)
+ConfigViewPage::DropTarget ConfigViewPage::dropTargetAt (juce::Point<int> pos) const
 {
-    const auto layer = currentLayer();
-    const auto id = userLayerId (layer, true);
-    if (id.isEmpty() || items.empty())
-        return;
-    auto& layers = ctx.show.layers;
-    int index = juce::jlimit (0, (int) layer.faders.size(), page * pageSize() + slot);
-    for (auto& f : items)
+    // Near the edge between two slots: insert there; over a slot: replace it.
+    for (size_t i = 0; i < slotAreas.size(); ++i)
     {
-        // Moving an item that is already in the layer: take it out first.
-        const auto* current = layers.getUserLayer (id);
-        if (current == nullptr)
-            return;
-        const auto existing = std::find (current->faders.begin(), current->faders.end(), f);
-        if (existing != current->faders.end())
-        {
-            if ((int) (existing - current->faders.begin()) < index)
-                --index;
-            layers.removeFromUserLayer (id, f);
-        }
-        layers.addToUserLayer (id, f);
-        const auto* updated = layers.getUserLayer (id);
-        if (updated == nullptr)
-            return;
-        // Appended at the end: bubble it down to its slot.
-        for (int k = (int) updated->faders.size() - 1; k > index; --k)
-            layers.moveWithinUserLayer (id, k, -1);
-        ++index;
+        const auto r = slotAreas[i].expanded (3, 6);
+        if (! r.contains (pos))
+            continue;
+        const int edge = juce::jmax (6, r.getWidth() / 5);
+        const int index = page * pageSize() + (int) i;
+        if (pos.x < r.getX() + edge)
+            return { index, true };
+        if (pos.x > r.getRight() - edge)
+            return { index + 1, true };
+        return { index, false };
     }
-    notifyLayersChangedAsync (ctx);
-    resized(); // the layer column shows the new pages
+    return {};
+}
+
+void ConfigViewPage::placeAt (const std::vector<state::FaderRef>& items, int index, bool insert)
+{
+    if (items.empty())
+        return;
+    const auto layer = currentLayer();
+    auto faders = layer.faders;
+    // Items already in the layer move: take them out first (shifting the target).
+    for (auto& f : items)
+        if (const auto it = std::find (faders.begin(), faders.end(), f); it != faders.end())
+        {
+            const int at = (int) (it - faders.begin());
+            if (at < index)
+                --index;
+            else if (at == index && ! insert)
+                insert = true; // dropped onto its own slot: put it back there
+            faders.erase (it);
+        }
+    index = juce::jlimit (0, (int) faders.size(), index);
+    if (! insert && index < (int) faders.size())
+        faders.erase (faders.begin() + index);
+    faders.insert (faders.begin() + index, items.begin(), items.end());
+    setLayerFaders (layer, faders);
 }
 
 void ConfigViewPage::mouseDown (const juce::MouseEvent& e)
@@ -1705,10 +1816,9 @@ void ConfigViewPage::mouseDown (const juce::MouseEvent& e)
     dragActive = false;
     dragSlot = -1;
     dragPoint = e.getPosition();
-    if (isEditable (currentLayer()))
-        for (size_t i = 0; i < slotAreas.size() && i < pageFaders().size(); ++i)
-            if (slotAreas[i].contains (e.getPosition()))
-                dragSlot = (int) i;
+    for (size_t i = 0; i < slotAreas.size() && i < pageFaders().size(); ++i)
+        if (slotAreas[i].contains (e.getPosition()))
+            dragSlot = (int) i;
 }
 
 void ConfigViewPage::mouseDrag (const juce::MouseEvent& e)
@@ -1744,27 +1854,24 @@ void ConfigViewPage::mouseUp (const juce::MouseEvent& e)
     if (dragActive)
     {
         dragActive = false;
-        int target = -1;
-        for (size_t i = 0; i < slotAreas.size(); ++i)
-            if (slotAreas[i].expanded (3).contains (pos))
-                target = (int) i;
+        const auto drop = dropTargetAt (pos);
         const auto faders = pageFaders();
         if (dragSlot >= 0 && juce::isPositiveAndBelow (dragSlot, (int) faders.size()))
         {
             const auto layer = currentLayer();
-            if (target < 0 && ! slotsArea.contains (pos))
+            if (drop.index < 0 && ! slotsArea.contains (pos))
             {
                 // Dragged off the layer: remove the fader.
-                ctx.show.layers.removeFromUserLayer (userLayerId (layer, false), faders[(size_t) dragSlot]);
-                notifyLayersChangedAsync (ctx);
-                resized();
+                auto all = layer.faders;
+                all.erase (std::remove (all.begin(), all.end(), faders[(size_t) dragSlot]), all.end());
+                setLayerFaders (layer, all);
             }
-            else if (target >= 0 && target != dragSlot)
-                insertAt ({ faders[(size_t) dragSlot] }, target + (target > dragSlot ? 1 : 0));
+            else if (drop.index >= 0)
+                placeAt ({ faders[(size_t) dragSlot] }, drop.index, drop.insert);
         }
-        else if (target >= 0)
+        else if (drop.index >= 0)
         {
-            insertAt (selectedItems, target);
+            placeAt (selectedItems, drop.index, drop.insert);
             selectedItems.clear();
         }
         dragSlot = -1;
@@ -1782,6 +1889,15 @@ void ConfigViewPage::mouseUp (const juce::MouseEvent& e)
             return;
         }
 
+    // The page map pages the slots.
+    for (size_t i = 0; i < mapCells.size(); ++i)
+        if (mapCells[i].expanded (1, 4).contains (pos))
+        {
+            stepPage ((int) i / pageSize() - page);
+            resized();
+            return;
+        }
+
     // A click on a tile toggles it; a click on a slot places the selected tiles there.
     const auto items = sourceItems();
     for (size_t i = 0; i < items.size() && i < sourceTiles.size(); ++i)
@@ -1795,14 +1911,13 @@ void ConfigViewPage::mouseUp (const juce::MouseEvent& e)
             repaint();
             return;
         }
-    for (size_t i = 0; i < slotAreas.size(); ++i)
-        if (slotAreas[i].contains (pos) && ! selectedItems.empty())
-        {
-            insertAt (selectedItems, (int) i);
-            selectedItems.clear();
-            repaint();
-            return;
-        }
+    if (const auto drop = dropTargetAt (pos); drop.index >= 0 && ! selectedItems.empty())
+    {
+        placeAt (selectedItems, drop.index, drop.insert);
+        selectedItems.clear();
+        repaint();
+        return;
+    }
     dragSlot = -1;
 }
 
@@ -1886,7 +2001,7 @@ void MuteGroupsViewPage::paintContent (juce::Graphics& g)
     {
         const bool sel = gi == selectedGroup;
         auto col = columns[gi];
-        g.setColour (juce::Colour (0xff1c1c1c));
+        g.setColour (Colours::screenDark);
         g.fillRect (col.withTrimmedTop (headers[gi].getHeight() + 2));
         // Name on the salmon bar, then the number.
         g.setColour (Dark::muteGroup);
@@ -1895,7 +2010,7 @@ void MuteGroupsViewPage::paintContent (juce::Graphics& g)
         g.setFont (juce::FontOptions (juce::jlimit (9.0f, 15.0f, (float) headers[gi].getHeight() * 0.75f), juce::Font::bold));
         g.drawFittedText (ctx.engine.getMuteGroupName (gi).toUpperCase(), headers[gi].reduced (2, 0), juce::Justification::centred, 1, 0.6f);
         auto number = col.withTrimmedTop (headers[gi].getHeight() + 2).withHeight (juce::jlimit (16, 34, columns[gi].getHeight() / 15));
-        g.setColour (juce::Colour (0xff2e2e2e));
+        g.setColour (Colours::screenPanel);
         g.fillRect (number);
         g.setColour (Dark::textDim);
         g.setFont (juce::FontOptions ((float) number.getHeight() * 0.8f, juce::Font::bold));
@@ -1909,7 +2024,7 @@ void MuteGroupsViewPage::paintContent (juce::Graphics& g)
     for (auto& [area, text] : captions)
     {
         const bool sel = area.getX() >= columns[selectedGroup].getX() && area.getRight() <= columns[selectedGroup].getRight();
-        g.setColour (sel ? Dark::muteGroup.withAlpha (0.55f) : juce::Colour (0xff2a2a2a));
+        g.setColour (sel ? Dark::muteGroup.withAlpha (0.55f) : Colours::screenPanel);
         g.fillRect (area);
         g.setColour (sel ? juce::Colours::white : Dark::textDim);
         g.setFont (juce::FontOptions ((float) area.getHeight() * 0.85f, juce::Font::bold));
@@ -1927,11 +2042,11 @@ void MuteGroupsViewPage::paintContent (juce::Graphics& g)
     {
         const bool on = (c.strip->params.muteGroupMask.load() >> (uint32_t) c.group) & 1u;
         auto r = c.area.toFloat().reduced (0.5f);
-        g.setColour (on ? c.strip->getColour() : juce::Colour (0xff111111));
+        g.setColour (on ? stripDisplayColour (*c.strip) : Dark::well);
         g.fillRect (r);
         if (r.getHeight() >= 9.0f)
         {
-            g.setColour (on ? juce::Colours::black : juce::Colour (0xff5a5a5a));
+            g.setColour (on ? juce::Colours::black : Colours::chipOff);
             g.setFont (juce::FontOptions (juce::jmin (11.0f, r.getHeight() * 0.7f), juce::Font::bold));
             g.drawFittedText (juce::String (c.strip->getNumber()), r.toNearestInt(), juce::Justification::centred, 1, 0.5f);
         }
@@ -1943,7 +2058,7 @@ void MuteGroupsViewPage::paintContent (juce::Graphics& g)
     for (int gi = 0; gi < kNumMuteGroups; ++gi)
     {
         auto r = groupKeys[gi];
-        g.setColour (juce::Colour (0xff262626));
+        g.setColour (Colours::screenPanel);
         g.fillRect (r);
         auto num = r.removeFromTop (r.getHeight() * 40 / 100);
         g.setColour (Dark::textDim);
@@ -1951,7 +2066,7 @@ void MuteGroupsViewPage::paintContent (juce::Graphics& g)
         g.drawText (juce::String (gi + 1), num, juce::Justification::centred);
         auto key = r.reduced (r.getWidth() / 5, r.getHeight() / 6);
         const bool on = (engaged >> (uint32_t) gi) & 1u;
-        g.setColour (on ? juce::Colour (0xfff54c4d) : juce::Colour (0xff3a3a3a));
+        g.setColour (on ? Colours::mute : Colours::screenTile);
         g.fillRect (key);
         g.setColour (on ? juce::Colours::white : Dark::textDim);
         g.setFont (juce::FontOptions (juce::jlimit (10.0f, 16.0f, (float) key.getHeight() * 0.45f), juce::Font::bold));
@@ -1974,16 +2089,19 @@ void MuteGroupsViewPage::mouseUp (const juce::MouseEvent& e)
         {
             // Rename the group.
             selectedGroup = gi;
-            auto* w = new juce::AlertWindow ("MUTE GROUP " + juce::String (gi + 1), {}, juce::MessageBoxIconType::NoIcon, this);
-            w->addTextEditor ("name", ctx.engine.getMuteGroupName (gi));
-            w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-            w->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-            w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, gi] (int r)
-            {
-                if (r != 0)
-                    ctx.engine.setMuteGroupName (gi, w->getTextEditorContents ("name").trim());
-                repaint();
-            }), true);
+            popups::TextOptions options;
+            options.icon = Icon::MuteGroup;
+            juce::Component::SafePointer<MuteGroupsViewPage> safe (this);
+            popups::editText (*this, "MUTE GROUP " + juce::String (gi + 1) + " NAME", ctx.engine.getMuteGroupName (gi),
+                              [safe, gi] (const juce::String& text)
+                              {
+                                  if (safe == nullptr)
+                                      return;
+                                  safe->ctx.engine.setMuteGroupName (gi, text.trim());
+                                  safe->repaint();
+                              },
+                              options);
+            repaint();
             return;
         }
     }

@@ -308,7 +308,12 @@ Show
 SELECT / SOLO / MUTE, LED meters and scaled faders; the custom controls section
 between the center and right sections (mute groups, show control); the channel strip
 section with its LED panel and screen (top left); the USB / monitoring panel (top
-right, `SurfaceSections.*`); and the main display with the screen keys. Surface keys
+right, `SurfaceSections.*`) over the 4-Channel section (`FourChannelSection.*`, the
+right fader section's four strips); and the main display with the screen keys. SETUP
+shows CUSTOM CONTROLS (`CustomControlsPage.*`, also the assignments' model and what
+each function does) and MONITORS (`MonitorsPage.*`) in place of its tabs. The
+preferences the surface, the status bar and the pages share are `uiprefs::` keys in
+`UiContext.h`. Surface keys
 (`SurfaceKey` in `WingWidgets.h`) know press, hold (500 ms or right-click) and
 blinking LEDs.
 
@@ -468,9 +473,14 @@ on a console.
   left output back (built-in devices return the average of both).
 - Solo safe and the monitor A/B bus choice are saved with the show but not used by the
   engine yet; there is one monitor output pair.
-- Not yet: assignable custom controls (the section's upper part and USER layer are
-  empty), the 4-Channel section, talkback and MIDI remote control (WING network
-  remote control: see above).
+- Custom controls (`CustomControlsPage.*`; stored with the show by
+  `livedaw-session/custom.rs`) cover the phase-1 functions: faders, pan, DCAs, bus
+  sends, FX parameters, monitoring, mutes / solos, mute groups, sends on fader, pages,
+  show control, scene recall and single actions; DAW, MIDI, spill, USB / SD and GPIO
+  functions are listed disabled.
+- Not yet: talkback, a second monitoring path (the MONITORS screen draws them
+  disabled), source settings and MIDI remote control (WING network remote
+  control: see above).
 - Recorder: no transport without a running audio device (play stays in Starting);
   a loop change while rolling plays the old content for ~50 ms before the
   crossfade; take files are flushed every 2 s but only synced to disk when

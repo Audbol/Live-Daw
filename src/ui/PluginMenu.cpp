@@ -23,6 +23,13 @@ juce::String describeStrip (const Strip& s)
     return label + " " + name;
 }
 
+void drawStripIcon (juce::Graphics& g, const Strip& s, juce::Rectangle<float> area, juce::Colour colour)
+{
+    // The strip's WING icon (/ch/n/icon), else its type's icon.
+    if (! drawWingIcon (g, s.params.icon.load(), area, colour))
+        drawIcon (g, stripIcon (s.getKind()), area, colour);
+}
+
 bool loadPluginIntoFx (UiContext& ctx, int slot, const juce::PluginDescription& desc)
 {
     juce::String error;

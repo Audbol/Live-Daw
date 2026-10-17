@@ -7,6 +7,7 @@
 //! [`console::PluginBridge`].
 
 pub mod console;
+pub mod custom;
 pub mod layers;
 pub mod legacy;
 pub mod refs;
@@ -14,6 +15,7 @@ pub mod show;
 pub mod xml;
 
 pub use console::{section, ApplyResult, CapturedInsert, InsertMode, NoPlugins, PluginBridge, RestoreError};
+pub use custom::{CcControl, CcFunction, CustomControls};
 pub use layers::{FaderRef, Layer, LayerSet};
 pub use refs::StripRef;
 pub use show::{Scene, Show, Snippet};

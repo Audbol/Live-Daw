@@ -122,6 +122,12 @@ public:
     void setSnippetFireWithScene (int sceneIndex, int snippetIndex, bool fire);
 
     //==============================================================================
+    // Custom controls (CC EDIT): the assignments as a <CustomControls> element,
+    // saved with the show (the UI interprets the functions).
+    juce::String getCustomControlsXml() const;
+    bool setCustomControlsXml (const juce::String&);
+
+    //==============================================================================
     bool isFading() const noexcept { return ld::ld_show_is_fading (handle); }
     void cancelFade();
 

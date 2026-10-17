@@ -1,5 +1,8 @@
 #include "ui/MainComponent.h"
+#include "ui/WingPopups.h"
 #include "ui/daw/DawEditor.h"
+
+#include <set>
 
 namespace livedaw::ui
 {
@@ -70,6 +73,83 @@ private:
 };
 
 //==============================================================================
+/** SOLO SYSTEM (SETUP > AUDIO): EXCLUSIVE SOLO and SELECT FOLLOWS SOLO act on
+    every new solo, wherever it was switched on (surface, screens, custom
+    controls), so no control needs to know about them. */
+class MainComponent::SoloWatcher final : private juce::Timer
+{
+public:
+    explicit SoloWatcher (MainComponent& o) : owner (o)
+    {
+        snapshot();
+        startTimerHz (30);
+    }
+
+    /** Takes the solos as they are now as known (after the owner changed them). */
+    void snapshot() { known = current(); }
+
+    /** Clears every solo but `keep` (a strip handle or DCA, nullptr for none). */
+    void clearAllBut (const void* keep)
+    {
+        auto& engine = owner.engine;
+        for (int k = 0; k < kNumStripKinds; ++k)
+            for (auto& s : engine.getStrips (static_cast<StripKind> (k)))
+                if (s->getHandle() != keep)
+                    s->params.solo = false;
+        for (int i = 0; i < kNumDcas; ++i)
+            if (&engine.getDca (i) != keep)
+                engine.getDca (i).solo = false;
+    }
+
+private:
+    std::set<const void*> current() const
+    {
+        std::set<const void*> soloed;
+        auto& engine = owner.engine;
+        for (int k = 0; k < kNumStripKinds; ++k)
+            for (auto& s : engine.getStrips (static_cast<StripKind> (k)))
+                if (s->params.solo.load())
+                    soloed.insert (s->getHandle());
+        for (int i = 0; i < kNumDcas; ++i)
+            if (engine.getDca (i).solo.load())
+                soloed.insert (&engine.getDca (i));
+        return soloed;
+    }
+
+    Strip* stripOf (const void* key) const
+    {
+        for (int k = 0; k < kNumStripKinds; ++k)
+            for (auto& s : owner.engine.getStrips (static_cast<StripKind> (k)))
+                if (s->getHandle() == key)
+                    return s.get();
+        return nullptr;
+    }
+
+    void timerCallback() override
+    {
+        const auto now = current();
+        const void* added = nullptr;
+        for (auto* k : now)
+            if (known.count (k) == 0)
+                added = k;
+        known = now;
+        if (added == nullptr)
+            return;
+        if (owner.settings.getBoolValue (uiprefs::exclusiveSolo, false))
+        {
+            clearAllBut (added);
+            known = { added };
+        }
+        if (owner.settings.getBoolValue (uiprefs::selectFollowsSolo, false))
+            if (auto* s = stripOf (added); s != nullptr && s != owner.getSelectedStrip())
+                owner.selectStrip (s);
+    }
+
+    MainComponent& owner;
+    std::set<const void*> known;
+};
+
+//==============================================================================
 MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, PluginHost& h, Show& s,
                               EventLog& l, juce::PropertiesFile& props)
     : deviceManager (dm),
@@ -93,7 +173,14 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     ctx.showPluginScanner = [this] { showPluginScanner(); };
     ctx.structureChanged = [this] { refreshAll(); };
     ctx.layersChanged = [this] { refreshSections(); };
-    ctx.sofChanged = [this] { for (auto& sec : sections) sec->refreshFaders(); };
+    ctx.sofChanged = [this]
+    {
+        // BUS SoF ACTIVATES SOLO: entering Sends on Fader solos the destination.
+        if (auto* sel = getSelectedStrip(); sel != nullptr && ctx.sendsOnFader && sel->isOutput() && settings.getBoolValue (uiprefs::sofActivatesSolo, false))
+            sel->params.solo = true;
+        for (auto& sec : sections)
+            sec->refreshFaders();
+    };
     ctx.getScreen = [this] { return display != nullptr ? display->getScreen() : Screen::Home; };
     ctx.revealFader = [this] (LayerSet::Section section, const state::FaderRef& f) { sections[section]->reveal (f); };
     ctx.takeScreenshot = [this] { saveScreenshot(); };
@@ -116,6 +203,15 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     ctx.showEditor = [this] (bool shown) { showEditor (shown); };
     ctx.isEditorShown = [this] { return editorShown; };
 
+    // The custom control assignments live in the show (CC EDIT edits them).
+    customControlAssignments = std::make_unique<cc::Assignments> (show);
+    ctx.customControls = customControlAssignments.get();
+    ctx.customControlsChanged = [this]
+    {
+        if (customControls != nullptr)
+            customControls->refresh();
+    };
+
     show.onChanged = [this]
     {
         if (customControls != nullptr)
@@ -135,8 +231,11 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     for (int i = 0; i < LayerSet::kNumSections; ++i)
         sections[i] = std::make_unique<FaderSection> (ctx, static_cast<LayerSet::Section> (i));
     customControls = std::make_unique<CustomControlSection> (ctx);
+    // The 4-Channel section works on the right fader section's four strips.
+    fourChannel = std::make_unique<FourChannelSection> (ctx, [this] (int i) { return sections[LayerSet::Right] != nullptr ? sections[LayerSet::Right]->getStrip (i) : nullptr; });
+    soloWatcher = std::make_unique<SoloWatcher> (*this);
     for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) display.get(), (juce::Component*) monitor.get(),
-                                (juce::Component*) customControls.get() })
+                                (juce::Component*) customControls.get(), (juce::Component*) fourChannel.get() })
         addAndMakeVisible (c);
     for (auto& sec : sections)
         addAndMakeVisible (*sec);
@@ -166,12 +265,14 @@ MainComponent::~MainComponent()
 {
     // Unsaved project changes survive the quit in the autosave (offered on the next open).
     recording->autosave();
+    soloWatcher.reset();
     editor.reset();
     show.onChanged = nullptr;
     show.onFxCleared = nullptr;
     lockOverlay.reset();
     closeAllPluginWindows();
     scannerWindow.reset();
+    fourChannel.reset();
     for (auto& sec : sections)
         sec.reset();
     customControls.reset();
@@ -196,6 +297,15 @@ void MainComponent::selectStrip (Strip* strip)
     if (strip != nullptr)
         selected = state::StripRef::of (*strip);
 
+    // SOLO FOLLOWS SELECT: while anything is soloed, the solo moves to the selection.
+    if (strip != nullptr && soloWatcher != nullptr && settings.getBoolValue (uiprefs::soloFollowsSelect, false) && engine.anySoloActive.load()
+        && ! strip->params.solo.load())
+    {
+        soloWatcher->clearAllBut (nullptr);
+        strip->params.solo = true;
+        soloWatcher->snapshot();
+    }
+
     channelStrip->refresh();
     display->refresh();
     if (ctx.sendsOnFader)
@@ -205,6 +315,9 @@ void MainComponent::selectStrip (Strip* strip)
 
 void MainComponent::refreshAll()
 {
+    // A loaded or new show brings its own custom controls.
+    customControlAssignments->reload();
+
     // Keep a valid selection after structure changes and show loads.
     if (getSelectedStrip() == nullptr)
     {
@@ -228,6 +341,7 @@ void MainComponent::refreshSections()
     layoutSections();
     for (auto& sec : sections)
         sec->refresh();
+    fourChannel->refresh();
 }
 
 //==============================================================================
@@ -312,14 +426,20 @@ void MainComponent::layoutTopRow()
     auto top = b.removeFromTop (topH);
     splitter.setBounds (b.removeFromTop (6));
 
-    // Channel strip section about 29%, the monitoring panel about 22%, the main
-    // display (keys, screen and its right-hand column) in between.
+    // Channel strip section about 29%, the right column about 22%, the main
+    // display (keys, screen and its right-hand column) in between. The right
+    // column holds the monitoring panel over the 4-Channel section (which works
+    // on the right fader section below it); narrow windows put the lower part
+    // of the custom controls there instead of the 4-Channel section.
     const int stripW = juce::jlimit (330, 620, top.getWidth() * 29 / 100);
     const int monitorW = juce::jlimit (260, 460, top.getWidth() * 22 / 100);
     channelStrip->setBounds (top.removeFromLeft (stripW));
     auto right = top.removeFromRight (monitorW);
+    fourChannel->setVisible (ccInBottomRow && ! editorShown);
     if (! ccInBottomRow)
         customControls->setBounds (right.removeFromBottom (right.getHeight() * 45 / 100));
+    else
+        fourChannel->setBounds (right.removeFromBottom (right.getHeight() * 54 / 100));
     monitor->setBounds (right);
     display->setBounds (top);
 }
@@ -508,6 +628,7 @@ void MainComponent::showEditor (bool shown)
     for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) display.get(), (juce::Component*) monitor.get(),
                                 (juce::Component*) customControls.get(), (juce::Component*) &splitter })
         c->setVisible (! shown);
+    fourChannel->setVisible (! shown && ccInBottomRow);
     for (auto& sec : sections)
         sec->setVisible (! shown);
     if (lockOverlay != nullptr)
@@ -537,14 +658,16 @@ void MainComponent::openLastProject()
             log.warning ("Recording project: " + r.getErrorMessage());
         return;
     }
-    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Recording project",
-                                        "\"" + last.getFileNameWithoutExtension() + "\" has unsaved changes from the last session. Restore them?",
-                                        "RESTORE", "OPEN SAVED", this,
-                                        juce::ModalCallbackFunction::create ([this, last] (int r)
-    {
-        if (auto result = recording->openProject (last, r != 0); result.failed())
-            log.warning ("Recording project: " + result.getErrorMessage());
-    }));
+    // The saved version opens now; RESTORE reopens it with the autosave.
+    if (auto r = recording->openProject (last); r.failed())
+        log.warning ("Recording project: " + r.getErrorMessage());
+    popups::confirm (*display, "RECORDING PROJECT",
+                     "\"" + last.getFileNameWithoutExtension() + "\" has unsaved changes from the last session. Restore them?", "RESTORE",
+                     [this, last]
+                     {
+                         if (auto result = recording->openProject (last, true); result.failed())
+                             log.warning ("Recording project: " + result.getErrorMessage());
+                     });
 }
 
 //==============================================================================
@@ -561,14 +684,8 @@ void MainComponent::updateTitle()
 
 void MainComponent::newShow()
 {
-    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "New show",
-                                        "Clear the console and all scenes and start a new show (a 40 channel WING)?",
-                                        "New", "Cancel", this,
-                                        juce::ModalCallbackFunction::create ([this] (int result)
+    popups::confirm (*display, "NEW SHOW", "Clear the console and all scenes and start a new show (a 40 channel WING)?", "NEW", [this]
     {
-        if (result == 0)
-            return;
-
         closeAllPluginWindows();
         for (int i = 0; i < kNumFx; ++i)
             engine.getFx().setPlugin (i, nullptr);
@@ -578,7 +695,7 @@ void MainComponent::newShow()
         refreshAll();
         updateTitle();
         log.info ("New show");
-    }));
+    }, true);
 }
 
 juce::Result MainComponent::reloadShow (const juce::File& file, bool loadPlugins)
@@ -608,8 +725,7 @@ void MainComponent::openShow()
         if (result.failed())
         {
             log.warning (result.getErrorMessage());
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Open show",
-                                                    result.getErrorMessage());
+            popups::warn (*display, "OPEN SHOW", result.getErrorMessage());
         }
     });
 }
@@ -627,8 +743,7 @@ void MainComponent::saveShow (bool saveAs)
         if (result.failed())
         {
             log.error ("Save failed: " + result.getErrorMessage());
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Save show",
-                                                    result.getErrorMessage());
+            popups::warn (*display, "SAVE SHOW", result.getErrorMessage());
             return;
         }
 
