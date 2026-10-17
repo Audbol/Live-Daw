@@ -99,19 +99,19 @@ private:
         const auto scene = page.ctx.show.getScene (index);
         if (! scene)
             return;
-        auto* w = new juce::AlertWindow ("EDIT TAG", "Tag of \"" + scene->name + "\" (1-" + juce::String (Show::maxSceneTag) + ", empty for none):",
-                                         juce::MessageBoxIconType::NoIcon, this);
-        w->addTextEditor ("tag", scene->tag > 0 ? juce::String (scene->tag) : juce::String());
-        w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-        w->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        // The tag number on the keyboard window (empty for none).
+        popups::TextOptions options;
+        options.icon = Icon::Tag;
+        options.maxLength = 3;
         juce::Component::SafePointer<ShowTab> safe (this);
-        w->enterModalState (true, juce::ModalCallbackFunction::create ([safe, w, index] (int r)
+        popups::editText (page, "EDIT TAG (1-" + juce::String (Show::maxSceneTag) + "): " + scene->name.toUpperCase(),
+                          scene->tag > 0 ? juce::String (scene->tag) : juce::String(), [safe, index] (const juce::String& text)
         {
-            if (r == 0 || safe == nullptr)
+            if (safe == nullptr)
                 return;
-            safe->page.ctx.show.setSceneTag (index, w->getTextEditorContents ("tag").retainCharacters ("0123456789").getIntValue());
+            safe->page.ctx.show.setSceneTag (index, text.retainCharacters ("0123456789").getIntValue());
             safe->page.list->refresh();
-        }), true);
+        }, options);
     }
 
     LibraryPage& page;
@@ -143,15 +143,11 @@ public:
         {
             const int index = page.selectedScene();
             if (const auto scene = page.ctx.show.getScene (index))
-                juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "UPDATE", "Overwrite \"" + scene->name + "\" with the current console?",
-                                                    "UPDATE", "CANCEL", this, juce::ModalCallbackFunction::create ([this, index] (int r)
+                popups::confirm (page, "UPDATE", "Overwrite \"" + scene->name + "\" with the current console?", "UPDATE", [this, index]
                 {
-                    if (r != 0)
-                    {
-                        page.ctx.show.storeScene (index);
-                        page.ctx.log.info ("Updated scene " + juce::String (index + 1));
-                    }
-                }));
+                    page.ctx.show.storeScene (index);
+                    page.ctx.log.info ("Updated scene " + juce::String (index + 1));
+                });
         };
         editScope->onClick = [this] { openScope (page.selectedScene()); };
         loadKey->onClick = [this]
@@ -328,15 +324,11 @@ public:
         {
             const auto item = page.list->getSelected();
             if (const auto sn = page.ctx.show.getSnippet (item.scene, item.snippet))
-                juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "CLEAR ALL", "Remove every item from \"" + sn->name + "\"?",
-                                                    "CLEAR", "CANCEL", this, juce::ModalCallbackFunction::create ([this, item] (int r)
+                popups::confirm (page, "CLEAR ALL", "Remove every item from \"" + sn->name + "\"?", "CLEAR", [this, item]
                 {
-                    if (r != 0)
-                    {
-                        page.ctx.show.setSnippetStrips (item.scene, item.snippet, {});
-                        page.list->refresh();
-                    }
-                }));
+                    page.ctx.show.setSnippetStrips (item.scene, item.snippet, {});
+                    page.list->refresh();
+                }, true);
         };
         startTimerHz (2);
     }
@@ -661,6 +653,25 @@ std::vector<StatusKey> LibraryPage::getStatusKeys()
     return { { "GLOBAL", safe ? Icon::LockClosed : Icon::LockOpen, safe, [this] { openGlobal(); } } };
 }
 
+StatusTitle LibraryPage::getStatusTitle()
+{
+    // The active scene in the SNAP colour, with the show's name as the caption
+    // (ALWAYS SHOW ACTIVE SCENE shows it on the other screens too).
+    StatusTitle t;
+    t.kind = StatusTitle::Kind::Text;
+    t.icon = Icon::ShowFile;
+    t.prefix = ctx.show.getName().toUpperCase();
+    if (const auto scene = ctx.show.getScene (ctx.show.getCurrentSceneIndex()))
+    {
+        t.text = scene->name.toUpperCase();
+        t.fill = FileColours::snap;
+        t.ink = juce::Colours::black;
+    }
+    else
+        t.text = "NO SCENE";
+    return t;
+}
+
 bool LibraryPage::anyGlobalSafe() const
 {
     for (int k = 0; k < kNumStripKinds; ++k)
@@ -676,6 +687,12 @@ void LibraryPage::timerCallback()
     if (anyGlobalSafe() != shownGlobal)
     {
         shownGlobal = ! shownGlobal;
+        notifyStatusKeysChanged();
+    }
+    // The title tile shows the active scene.
+    if (const auto title = getStatusTitle(); title.prefix + title.text != shownTitle)
+    {
+        shownTitle = title.prefix + title.text;
         notifyStatusKeysChanged();
     }
     updateTransport();
@@ -716,12 +733,7 @@ void LibraryPage::confirmLoad (const juce::String& what, std::function<void()> a
         action();
         return;
     }
-    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "LOAD", "Load " + what + "?", "LOAD", "CANCEL", this,
-                                        juce::ModalCallbackFunction::create ([action] (int r)
-    {
-        if (r != 0)
-            action();
-    }));
+    popups::confirm (*this, "LOAD", "Load " + what + "?", "LOAD", std::move (action));
 }
 
 void LibraryPage::load (ShowPanel::Item item)

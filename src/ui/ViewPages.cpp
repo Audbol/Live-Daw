@@ -66,7 +66,7 @@ namespace
 
     juce::Colour colourOf (UiContext& ctx, const Target& t)
     {
-        return t.strip != nullptr ? t.strip->getColour() : wingColour (ctx.engine.getDca (t.dca).colour.load());
+        return t.strip != nullptr ? stripDisplayColour (*t.strip) : wingColour (ctx.engine.getDca (t.dca).colour.load());
     }
 
     /** The name shown in the name bar (empty for default names, as on the console). */
@@ -75,7 +75,7 @@ namespace
         if (t.strip != nullptr)
             return stripName (*t.strip) != t.strip->getLabel() ? stripName (*t.strip).toUpperCase() : juce::String();
         const auto name = ctx.engine.getDcaName (t.dca);
-        return name.removeCharacters (" ").equalsIgnoreCase ("DCA" + juce::String (t.dca + 1)) ? juce::String() : name.toUpperCase();
+        return name.removeCharacters (" .").equalsIgnoreCase ("DCA" + juce::String (t.dca + 1)) ? juce::String() : name.toUpperCase();
     }
 
     juce::String numberOf (const Target& t)
@@ -112,7 +112,7 @@ namespace
         const auto number = numberOf (t);
         g.drawFittedText (number, inner.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
         if (t.strip != nullptr && inner.getWidth() > inner.getHeight() * 2.2f)
-            drawIcon (g, stripIcon (t.strip->getKind()), inner.removeFromRight (inner.getHeight()).reduced (1.0f), Dark::textDim);
+            drawStripIcon (g, *t.strip, inner.removeFromRight (inner.getHeight()).reduced (1.0f), Dark::textDim);
     }
 
     void block (juce::Graphics& g, juce::Rectangle<float> r)
@@ -468,11 +468,24 @@ std::vector<StatusKey> ViewPage::getStatusKeys()
     return keys;
 }
 
+StatusTitle ViewPage::getStatusTitle()
+{
+    // A dark tile with the section letter, the layers icon and the layer [I10].
+    StatusTitle t;
+    t.kind = StatusTitle::Kind::Layer;
+    const char letters[] = { 'L', 'C', 'R' };
+    t.prefix = juce::String::charToString ((juce::juce_wchar) letters[juce::jlimit (0, 2, (int) section())]);
+    t.text = currentLayer().name.toUpperCase();
+    t.icon = Icon::Layers;
+    return t;
+}
+
 void ViewPage::refresh()
 {
     page = juce::jlimit (0, numPages() - 1, page);
     resized();
     repaint();
+    notifyStatusKeysChanged();
 }
 
 void ViewPage::timerCallback()
@@ -481,6 +494,12 @@ void ViewPage::timerCallback()
         return;
     if (hasLayerColumn())
         column->followLayer();
+    // The title tile follows the layer (it may change from the surface).
+    if (const auto title = getStatusTitle(); title.prefix + title.text != shownTitle)
+    {
+        shownTitle = title.prefix + title.text;
+        notifyStatusKeysChanged();
+    }
     repaint();
 }
 
@@ -1233,7 +1252,7 @@ void SendsViewPage::paintContent (juce::Graphics& g)
             continue;
         auto& s = *list[(size_t) dests[i].index];
         auto header = r.removeFromTop (r.getHeight() * 0.28f);
-        g.setColour (s.getColour());
+        g.setColour (stripDisplayColour (s));
         g.fillRect (header);
         g.setColour (juce::Colours::black);
         g.setFont (juce::FontOptions (juce::jlimit (8.0f, 13.0f, header.getHeight() * 0.85f), juce::Font::bold));
@@ -1241,7 +1260,7 @@ void SendsViewPage::paintContent (juce::Graphics& g)
         g.setColour (blockFill);
         g.fillRect (r);
         auto name = r.removeFromBottom (r.getHeight() * 0.36f);
-        drawIcon (g, stripIcon (s.getKind()), r.reduced (r.getHeight() * 0.15f), Dark::textDim);
+        drawStripIcon (g, s, r.reduced (r.getHeight() * 0.15f), Dark::textDim);
         g.setColour (Dark::text);
         g.setFont (juce::FontOptions (juce::jlimit (8.0f, 12.0f, name.getHeight() * 0.9f), juce::Font::bold));
         g.drawFittedText (stripName (s).toUpperCase(), name.toNearestInt(), juce::Justification::centred, 1, 0.6f);
@@ -1608,7 +1627,7 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
         g.setFont (juce::FontOptions (juce::jlimit (8.0f, 18.0f, inner.getHeight() * 0.85f), juce::Font::bold));
         g.drawFittedText (numberOf (t), inner.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
         if (t.strip != nullptr && inner.getWidth() > inner.getHeight() * 2.5f)
-            drawIcon (g, stripIcon (t.strip->getKind()), inner.removeFromRight (inner.getHeight()), Dark::textDim.withMultipliedAlpha (alpha));
+            drawStripIcon (g, *t.strip, inner.removeFromRight (inner.getHeight()), Dark::textDim.withMultipliedAlpha (alpha));
         if (highlighted)
         {
             g.setColour (juce::Colours::white);
@@ -1927,7 +1946,7 @@ void MuteGroupsViewPage::paintContent (juce::Graphics& g)
     {
         const bool on = (c.strip->params.muteGroupMask.load() >> (uint32_t) c.group) & 1u;
         auto r = c.area.toFloat().reduced (0.5f);
-        g.setColour (on ? c.strip->getColour() : juce::Colour (0xff111111));
+        g.setColour (on ? stripDisplayColour (*c.strip) : Dark::well);
         g.fillRect (r);
         if (r.getHeight() >= 9.0f)
         {

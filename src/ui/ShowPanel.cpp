@@ -299,6 +299,13 @@ void ShowPanel::updateKeys()
     downKey.setEnabled (item.isValid() && ! item.isSnippet() && item.scene < ctx.show.getNumScenes() - 1);
 }
 
+juce::Component& ShowPanel::popupHost()
+{
+    // The windows cover the whole LIBRARY screen, not just the list.
+    auto* parent = getParentComponent();
+    return parent != nullptr ? *parent : *this;
+}
+
 void ShowPanel::removeSelected()
 {
     const auto item = getSelected();
@@ -309,18 +316,19 @@ void ShowPanel::removeSelected()
     if (! scene || (item.isSnippet() && ! snippet))
         return;
     const auto name = item.isSnippet() ? snippet->name : scene->name;
-    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, "REMOVE",
-                                        "Remove \"" + name + "\"" + (item.isSnippet() ? juce::String ("?") : juce::String (" and its snippets?")), "REMOVE",
-                                        "CANCEL", this, juce::ModalCallbackFunction::create ([this, item] (int r)
-    {
-        if (r == 0)
-            return;
-        if (item.isSnippet())
-            ctx.show.removeSnippet (item.scene, item.snippet);
-        else
-            ctx.show.removeScene (item.scene);
-        refresh();
-    }));
+    juce::Component::SafePointer<ShowPanel> safe (this);
+    popups::confirm (popupHost(), "REMOVE", "Remove \"" + name + "\"" + (item.isSnippet() ? juce::String ("?") : juce::String (" and its snippets?")), "REMOVE",
+                     [safe, item]
+                     {
+                         if (safe == nullptr)
+                             return;
+                         if (item.isSnippet())
+                             safe->ctx.show.removeSnippet (item.scene, item.snippet);
+                         else
+                             safe->ctx.show.removeScene (item.scene);
+                         safe->refresh();
+                     },
+                     true);
 }
 
 void ShowPanel::renameSelected()
@@ -330,24 +338,22 @@ void ShowPanel::renameSelected()
     const auto snippet = item.isSnippet() ? ctx.show.getSnippet (item.scene, item.snippet) : std::nullopt;
     if (! scene || (item.isSnippet() && ! snippet))
         return;
-    auto* w = new juce::AlertWindow ("RENAME", {}, juce::MessageBoxIconType::NoIcon, this);
-    w->addTextEditor ("name", item.isSnippet() ? snippet->name : scene->name);
-    w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    w->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    popups::TextOptions options;
+    options.maxLength = 32;
     juce::Component::SafePointer<ShowPanel> safe (this);
-    w->enterModalState (true, juce::ModalCallbackFunction::create ([safe, w, item] (int r)
-    {
-        if (r == 0 || safe == nullptr)
-            return;
-        const auto name = w->getTextEditorContents ("name").trim();
-        if (name.isEmpty())
-            return;
-        if (item.isSnippet())
-            safe->ctx.show.setSnippetName (item.scene, item.snippet, name);
-        else
-            safe->ctx.show.setSceneName (item.scene, name);
-        safe->refresh();
-    }), true);
+    popups::editText (popupHost(), item.isSnippet() ? "SNIPPET NAME" : "SCENE NAME", item.isSnippet() ? snippet->name : scene->name,
+                      [safe, item] (const juce::String& text)
+                      {
+                          const auto name = text.trim();
+                          if (safe == nullptr || name.isEmpty())
+                              return;
+                          if (item.isSnippet())
+                              safe->ctx.show.setSnippetName (item.scene, item.snippet, name);
+                          else
+                              safe->ctx.show.setSceneName (item.scene, name);
+                          safe->refresh();
+                      },
+                      options);
 }
 
 void ShowPanel::moveSelected (int delta)

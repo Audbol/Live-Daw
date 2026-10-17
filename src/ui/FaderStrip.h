@@ -17,6 +17,7 @@ struct ScribbleInfo
 {
     juce::String number, line2, line3, name;
     std::optional<Icon> icon;
+    const Strip* strip = nullptr; // draws its WING icon in place of `icon`
     juce::Colour line2Colour = Colours::textDim;
 };
 

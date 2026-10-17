@@ -3,6 +3,7 @@
 #include "ui/DisplayPage.h"
 #include "ui/ScreenWidgets.h"
 #include "ui/ShowPanel.h"
+#include "ui/WingPopups.h"
 
 #include <memory>
 #include <unordered_map>
@@ -112,6 +113,7 @@ public:
 
     bool usesKnobs() const override { return false; }
     std::vector<StatusKey> getStatusKeys() override;
+    StatusTitle getStatusTitle() override;
     void refresh() override;
     void resized() override;
     void paint (juce::Graphics&) override;
@@ -159,6 +161,8 @@ private:
     /** "IN 3" (or the port's name), "PLAY 5", "NONE". */
     juce::String sourceName (int source) const;
     void showGroupMenu (bool rightSide);
+    /** The invisible component the drop-down lists open under, moved over `area`. */
+    juce::Component& anchorAt (juce::Rectangle<int> area);
 
     void paintChannelTile (juce::Graphics&, juce::Rectangle<int>, Strip&, bool selected) const;
     void paintInputPort (juce::Graphics&, juce::Rectangle<int>, int port, bool marked) const;
@@ -176,11 +180,12 @@ private:
     bool editAlt = false; // CHANNEL INPUT MAIN / ALT: which input the source grid patches
 
     juce::Rectangle<int> leftPanel, rightPanel, leftHeader, rightHeader;
-    juce::Rectangle<int> inputCaption, mainKey, altKey, stereoKey, autoKey, lockKey, unlockKey, prevPage, nextPage, leftSelector, rightSelector,
+    juce::Rectangle<int> inputField, stereoKey, autoKey, lockKey, unlockKey, prevPage, nextPage, leftSelector, rightSelector,
         noneKey, copyCaption, srcToChKey, chToSrcKey, separator, renameKey;
     std::vector<std::pair<juce::Rectangle<int>, Strip*>> channelTiles;
     std::vector<juce::Rectangle<int>> leftPorts, rightPorts;
     std::vector<std::pair<juce::Rectangle<int>, Signal>> signalTiles;
+    juce::Component anchor;
 };
 
 /** SETUP (manual 5.5): the tabs GENERAL | AUDIO | SURFACE | REMOTE | DAW (and
@@ -193,14 +198,29 @@ public:
     explicit SetupPage (UiContext&);
     ~SetupPage() override;
 
-    bool usesKnobs() const override { return false; }
+    /** Settings are changed by touch; CUSTOM CONTROLS and MONITORS use the knobs. */
+    bool usesKnobs() const override { return subScreen != nullptr && subScreen->usesKnobs(); }
+    std::vector<KnobBinding> getKnobs() override;
+    std::vector<KnobStyle> getKnobStyles() override;
     std::vector<StatusKey> getStatusKeys() override;
+    StatusTitle getStatusTitle() override;
     void refresh() override;
     void resized() override;
     void paint (juce::Graphics&) override;
+    void visibilityChanged() override;
+
+    /** CUSTOM CONTROLS (CC EDIT), at a layer when >= 0. */
+    void openCustomControls (int layer);
+    /** The MONITORS screen. */
+    void openMonitors();
 
 private:
+    class SetupKeyWatcher;
+
     void showTab();
+    /** Shows a screen of SETUP in place of its tabs (nullptr: back to the tabs). */
+    void showSubScreen (std::unique_ptr<DisplayPage>);
+    void closeSubScreen();
 
     UiContext& ctx;
     TabRow tabRow;
@@ -209,6 +229,8 @@ private:
     std::vector<juce::Component*> pages;
     WingKey initKey { "INITIALIZE\nCONSOLE", Icon::Reset }, shutdownKey { "SHUTDOWN", Icon::Power };
     OverlayHolder overlays;
+    std::unique_ptr<DisplayPage> subScreen;
+    std::unique_ptr<SetupKeyWatcher> setupKeyWatcher;
 };
 
 /** The monitor setup (outputs, PFL/AFL, level), shown by SETUP's MONITORS key
@@ -227,6 +249,7 @@ public:
 
     bool usesKnobs() const override { return false; }
     std::vector<StatusKey> getStatusKeys() override;
+    StatusTitle getStatusTitle() override;
     void refresh() override;
     void resized() override;
     void paint (juce::Graphics&) override;
@@ -278,6 +301,7 @@ private:
     std::vector<state::StripRef> focusStrips;
     bool focusEdited = false;
     bool shownGlobal = false;
+    juce::String shownTitle;
 };
 
 /** UTILITY: system health and the event log. */

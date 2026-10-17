@@ -22,6 +22,7 @@ public:
 
     bool usesKnobs() const override { return false; }
     std::vector<StatusKey> getStatusKeys() override;
+    StatusTitle getStatusTitle() override;
     void refresh() override;
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -60,6 +61,7 @@ protected:
 private:
     std::unique_ptr<LayerColumn> column;
     juce::String browsed[LayerSet::kNumSections];
+    juce::String shownTitle;
 };
 
 /** OVERVIEW (fig. 53-54): each strip of the layer as a column of mini blocks
@@ -185,6 +187,16 @@ class MuteGroupsViewPage final : public ViewPage
 public:
     explicit MuteGroupsViewPage (UiContext& c);
     void mouseUp (const juce::MouseEvent&) override;
+
+    /** A muted-speaker icon and MUTE GROUPS (manual fig. 61). */
+    StatusTitle getStatusTitle() override
+    {
+        StatusTitle t;
+        t.kind = StatusTitle::Kind::Text;
+        t.text = "MUTE GROUPS";
+        t.icon = Icon::MuteGroup;
+        return t;
+    }
 
 protected:
     bool hasLayerColumn() const override { return false; }

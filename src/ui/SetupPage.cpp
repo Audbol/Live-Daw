@@ -28,17 +28,14 @@ namespace
         return k;
     }
 
+    // ALT inputs and ALT-selected tiles [3.1].
+    const juce::Colour altOrange (0xffb86018);
+
     void editText (juce::Component* parent, const juce::String& title, const juce::String& current, std::function<void (const juce::String&)> done)
     {
-        auto* w = new juce::AlertWindow (title, {}, juce::MessageBoxIconType::NoIcon, parent);
-        w->addTextEditor ("text", current);
-        w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-        w->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-        w->enterModalState (true, juce::ModalCallbackFunction::create ([w, done] (int r)
-        {
-            if (r == 1)
-                done (w->getTextEditorContents ("text").trim());
-        }), true);
+        popups::TextOptions options;
+        options.maxLength = 24;
+        popups::editText (*parent, title, current, [done] (const juce::String& text) { done (text.trim()); }, options);
     }
 
     juce::File dataDirectory()
@@ -118,7 +115,8 @@ namespace
         juce::Colour tint;
     };
 
-    /** The TIME / DATE tiles: the clock, and a menu for its format. */
+    /** The TIME / DATE tiles: the clock, and a list for its format (12/24
+        hours, YYYY-MM-DD or DD-MM-YYYY), which the status bar's clock uses. */
     class ClockTile final : public juce::Component
     {
     public:
@@ -127,16 +125,14 @@ namespace
         juce::String text() const
         {
             const auto now = juce::Time::getCurrentTime();
-            if (date)
-                return now.formatted (ctx.settings.getBoolValue (prefs::dateDayFirst, false) ? "%d-%m-%Y" : "%Y-%m-%d");
-            return now.formatted (ctx.settings.getBoolValue (prefs::clock12h, false) ? "%I:%M:%S %p" : "%H:%M:%S");
+            return date ? uiprefs::formatDate (ctx.settings, now) : uiprefs::formatTime (ctx.settings, now);
         }
 
         void paint (juce::Graphics& g) override
         {
             auto r = getLocalBounds();
             auto key = r.removeFromRight (juce::jmin (22, r.getWidth() / 6));
-            g.setColour (juce::Colour (0xff393939));
+            g.setColour (Dark::box);
             g.fillRect (r);
             g.setColour (Dark::key);
             g.fillRect (key.withTrimmedLeft (2));
@@ -153,19 +149,23 @@ namespace
 
         void mouseUp (const juce::MouseEvent&) override
         {
-            juce::PopupMenu m;
-            const char* key = date ? prefs::dateDayFirst : prefs::clock12h;
-            const bool alt = ctx.settings.getBoolValue (key, false);
-            m.addItem (1, date ? "YYYY-MM-DD" : "24 HOURS", true, ! alt);
-            m.addItem (2, date ? "DD-MM-YYYY" : "12 HOURS", true, alt);
-            m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this), [this, key] (int r)
-            {
-                if (r > 0)
+            juce::Component::SafePointer<ClockTile> safe (this);
+            if (date)
+                popups::chooseFrom (*this, { "YYYY-MM-DD", "DD-MM-YYYY" }, uiprefs::dayFirst (ctx.settings) ? 1 : 0, [safe] (int i)
                 {
-                    ctx.settings.setValue (key, r == 2);
-                    repaint();
-                }
-            });
+                    if (safe == nullptr)
+                        return;
+                    safe->ctx.settings.setValue (uiprefs::dateFormat, i == 1 ? "DD-MM-YYYY" : "YYYY-MM-DD");
+                    safe->repaint();
+                });
+            else
+                popups::chooseFrom (*this, { "24 HOURS", "12 HOURS" }, uiprefs::use24h (ctx.settings) ? 0 : 1, [safe] (int i)
+                {
+                    if (safe == nullptr)
+                        return;
+                    safe->ctx.settings.setValue (uiprefs::clock24, i == 0);
+                    safe->repaint();
+                });
         }
 
     private:
@@ -337,15 +337,16 @@ namespace
     public:
         explicit GeneralTab (UiContext& c) : ctx (c), console (c)
         {
-            // Brightness (stored; the surface's lamps aren't emulated yet) and the
+            // Brightness (the main display, the surface LCDs, meters and colour bars) and the
             // rear-panel / external lamps, which this console doesn't have.
-            const juce::Colour blue (0xff142a3f), red (0xff3d1715), purple (0xff3b033d), violet (0xff4a1f5c), olive (0xff383407);
+            // The tiles' tints [I9]: displays blue, LEDs red, scribble strips purple, PATCH brown, LAMP olive.
+            const juce::Colour blue (0xff204878), red (0xff680000), purple (0xff780878), brown (0xff784800), olive (0xff686800);
             struct Spec { const char* caption; const char* id; int value; juce::Colour tint; bool enabled; };
             const Spec specs[] = { { "MAIN LCD", "mainLcd", 80, blue, true }, { "BTN LCD", "btnLcd", 80, blue, true },
                                    { "BTNS/LEDS", "btnsLeds", 90, red, true }, { "BACKLIGHT", "backlight", 25, red, true },
-                                   { "METERS", "meters", 40, red, true }, { "COLOR LED", "colorLed", 25, violet, true },
+                                   { "METERS", "meters", 40, red, true }, { "COLOR LED", "colorLed", 25, purple, true },
                                    { "SCRIBBLE", "scribble", 60, purple, true }, { "SCR CONT", "scrCont", 50, purple, true },
-                                   { "PATCH", "patch", 0, olive, false }, { "LAMP", "lamp", 0, olive, false } };
+                                   { "PATCH", "patch", 0, brown, false }, { "LAMP", "lamp", 0, olive, false } };
             for (auto& s : specs)
             {
                 auto* t = lights.add (new LightTile (ctx, s.caption, s.id, s.value, s.tint));
@@ -432,9 +433,10 @@ namespace
 
     //==============================================================================
     /** The INPUT SELECT channel grid (the first 40 channels + 8 aux): a cell
-        lights blue while its channel listens to its ALT input; a click
-        switches the channel's own MAIN / ALT (used unless INPUT SELECT is
-        GLOBAL). Cells of channels without an ALT input are dark. */
+        lights blue while its channel listens to its MAIN input and orange while
+        it listens to its ALT input [3.1]; a click switches the channel's own
+        MAIN / ALT (used unless INPUT SELECT is GLOBAL). Cells of channels
+        without an ALT input are dim. */
     class InputSelectGrid final : public juce::Component, private juce::Timer
     {
     public:
@@ -460,11 +462,11 @@ namespace
                     auto* s = i < (int) strips.size() ? strips[(size_t) i].get() : nullptr;
                     const bool has = s != nullptr && s->hasAltInput();
                     const bool alt = s != nullptr && s->isUsingAltInput();
-                    g.setColour (alt ? Dark::choice : (has ? Dark::key : Dark::choice.darker (0.9f)));
+                    g.setColour (alt ? altOrange : (has ? Dark::choice : Dark::choice.darker (0.7f)));
                     g.fillRect (c);
                     if (s != nullptr)
                     {
-                        g.setColour (alt ? Dark::choiceInk : (has ? Dark::text : Dark::textDim.darker (0.4f)));
+                        g.setColour (has ? juce::Colours::black : Dark::textDim);
                         g.setFont (juce::FontOptions (juce::jmin (12.0f, c.getHeight() * 0.5f), juce::Font::bold));
                         g.drawText (juce::String (s->getNumber()), c, juce::Justification::centred);
                         cells.push_back ({ c, s });
@@ -534,7 +536,7 @@ namespace
             // The global MAIN / ALT switch (used by every channel while GLOBAL
             // INPUT SELECT OVERRIDE is on) and the channels' own switches.
             inputSelect.addRow ({}, std::make_unique<ChoiceKeys> (juce::StringArray { "MAIN", "ALT" }, [this] { return ctx.engine.isGlobalAlt() ? 1 : 0; },
-                                                                 [this] (int i) { ctx.engine.setGlobalAlt (i == 1); }),
+                                                                 [this] (int i) { ctx.engine.setGlobalAlt (i == 1); }, std::vector<juce::Colour> { Dark::choice, altOrange }),
                                 0.0f);
             inputSelect.addRow ({}, std::make_unique<InputSelectGrid> (ctx), 0.0f, true, false, 4.4f);
             addAndMakeVisible (inputSelect);
@@ -685,22 +687,28 @@ namespace
             auto* d = ctx.deviceManager.getCurrentAudioDevice();
             if (d == nullptr)
                 return;
-            juce::PopupMenu m;
             const auto rates = d->getAvailableSampleRates();
+            juce::StringArray items;
+            int current = -1;
             for (int i = 0; i < rates.size(); ++i)
-                m.addItem (i + 1, juce::String (rates[i] / 1000.0, std::fmod (rates[i], 1000.0) == 0.0 ? 0 : 1) + "K", true,
-                           std::abs (rates[i] - d->getCurrentSampleRate()) < 1.0);
-            m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&f), [this, rates] (int r)
             {
-                if (r <= 0)
+                items.add (juce::String (rates[i] / 1000.0, std::fmod (rates[i], 1000.0) == 0.0 ? 0 : 1) + "K");
+                if (std::abs (rates[i] - d->getCurrentSampleRate()) < 1.0)
+                    current = i;
+            }
+            juce::Component::SafePointer<AudioTab> safe (this);
+            popups::chooseFrom (f, items, current, [safe, rates] (int r)
+            {
+                if (safe == nullptr || ! juce::isPositiveAndBelow (r, rates.size()))
                     return;
+                auto& c = safe->ctx;
                 juce::AudioDeviceManager::AudioDeviceSetup setup;
-                ctx.deviceManager.getAudioDeviceSetup (setup);
-                setup.sampleRate = rates[r - 1];
-                const auto error = ctx.deviceManager.setAudioDeviceSetup (setup, true);
+                c.deviceManager.getAudioDeviceSetup (setup);
+                setup.sampleRate = rates[r];
+                const auto error = c.deviceManager.setAudioDeviceSetup (setup, true);
                 if (error.isNotEmpty())
-                    ctx.log.warning ("Clock rate: " + error);
-                repaint();
+                    c.log.warning ("Clock rate: " + error);
+                safe->repaint();
             });
         }
 
@@ -730,12 +738,12 @@ namespace
                                                               },
                                                               [this] (DropdownField& f)
                                                               {
-                                                                  juce::PopupMenu m;
-                                                                  const int v = ctx.settings.getIntValue ("ui.mainMeter", 0);
-                                                                  m.addItem ("MONITOR", true, v == 0, [this] { ctx.settings.setValue ("ui.mainMeter", juce::var (0)); });
+                                                                  juce::StringArray items { "MONITOR" };
                                                                   for (int i = 1; i <= kNumMains; ++i)
-                                                                      m.addItem ("MAIN." + juce::String (i), true, v == i, [this, i] { ctx.settings.setValue ("ui.mainMeter", i); });
-                                                                  m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&f));
+                                                                      items.add ("MAIN." + juce::String (i));
+                                                                  auto& settings = ctx.settings;
+                                                                  popups::chooseFrom (f, items, ctx.settings.getIntValue ("ui.mainMeter", 0),
+                                                                                      [&settings] (int i) { settings.setValue ("ui.mainMeter", i); });
                                                               }),
                              5.0f, true, false, 1.6f);
             metering.addRow ("MAIN METER TAP", fixedChoice ({ "AUTO", "PRE", "POST" }, 0, ChoiceKeys::autoPrePost()), 5.0f, false);
@@ -1131,6 +1139,47 @@ namespace
 } // namespace
 
 //==============================================================================
+/** "Press SETUP twice for CC EDIT" (firmware 3.1): watches the screen keys for
+    a press of SETUP while SETUP is already up. A third press goes back to the
+    tabs. */
+class SetupPage::SetupKeyWatcher final : public juce::MouseListener
+{
+public:
+    explicit SetupKeyWatcher (SetupPage& p) : page (p) { juce::Desktop::getInstance().addGlobalMouseListener (this); }
+    ~SetupKeyWatcher() override { juce::Desktop::getInstance().removeGlobalMouseListener (this); }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        auto* button = dynamic_cast<juce::Button*> (e.eventComponent);
+        armed = button != nullptr && button->getButtonText() == "SETUP" && page.isShowing() && ! page.isParentOf (button);
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (! armed)
+            return;
+        armed = false;
+        if (auto* button = dynamic_cast<juce::Button*> (e.eventComponent); button == nullptr || ! button->isMouseOver())
+            return;
+        // After the key's own click (which shows SETUP again).
+        juce::Component::SafePointer<SetupPage> safe (&page);
+        juce::MessageManager::callAsync ([safe]
+        {
+            if (safe == nullptr)
+                return;
+            if (safe->subScreen != nullptr)
+                safe->closeSubScreen();
+            else
+                safe->openCustomControls (-1);
+        });
+    }
+
+private:
+    SetupPage& page;
+    bool armed = false;
+};
+
+//==============================================================================
 SetupPage::SetupPage (UiContext& c) : ctx (c)
 {
     tabRow.setTabs ({ { "GENERAL" }, { "AUDIO" }, { "SURFACE" }, { "REMOTE" }, { "DAW" }, { "PLUGINS", Dark::gold, true, 10 } });
@@ -1152,65 +1201,147 @@ SetupPage::SetupPage (UiContext& c) : ctx (c)
     styleIconKey (shutdownKey);
     initKey.onClick = [this]
     {
-        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, "INITIALIZE CONSOLE",
-                                            "Reset every strip, DCA, mute group and FX slot to a fresh 40-channel console? "
-                                            "GLOBAL safes are overwritten too. Scenes are kept.",
-                                            "INITIALIZE", "CANCEL", this, juce::ModalCallbackFunction::create ([this] (int r)
-        {
-            if (r == 0)
-                return;
-            for (int i = 0; i < kNumFx; ++i)
-                clearFx (ctx, i);
-            ctx.engine.reset();
-            ctx.engine.setNumChannels (kWingChannels);
-            ctx.log.info ("Console initialized");
-            if (ctx.structureChanged)
-                ctx.structureChanged();
-        }));
+        popups::confirm (*this, "INITIALIZE CONSOLE",
+                         "Reset every strip, DCA, mute group and FX slot to a fresh 40-channel console? "
+                         "GLOBAL safes are overwritten too. Scenes are kept.",
+                         "INITIALIZE", [this]
+                         {
+                             for (int i = 0; i < kNumFx; ++i)
+                                 clearFx (ctx, i);
+                             ctx.engine.reset();
+                             ctx.engine.setNumChannels (kWingChannels);
+                             ctx.log.info ("Console initialized");
+                             if (ctx.structureChanged)
+                                 ctx.structureChanged();
+                         },
+                         true);
     };
     shutdownKey.onClick = [this]
     {
         // The console state is saved when the app quits.
-        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::NoIcon, "SHUTDOWN", "IT IS SAFE TO SWITCH DOWN THE CONSOLE NOW", "QUIT", "CANCEL", this,
-                                            juce::ModalCallbackFunction::create ([] (int r)
+        popups::confirm (*this, "SHUTDOWN", "IT IS SAFE TO SWITCH DOWN THE CONSOLE NOW", "QUIT", []
         {
-            if (r != 0)
-                if (auto* app = juce::JUCEApplicationBase::getInstance())
-                    app->systemRequestedQuit();
-        }));
+            if (auto* app = juce::JUCEApplicationBase::getInstance())
+                app->systemRequestedQuit();
+        });
     };
     addAndMakeVisible (initKey);
     addAndMakeVisible (shutdownKey);
     showTab();
+
+    // The hooks other screens use to open SETUP's tabs and sub-screens.
+    ctx.showSetupTab = [this] (int tab)
+    {
+        if (ctx.showScreen)
+            ctx.showScreen (Screen::Setup);
+        closeSubScreen();
+        tabRow.setCurrent (juce::jlimit (0, (int) pages.size() - 1, tab));
+    };
+    ctx.showCustomControls = [this] (int layer)
+    {
+        if (ctx.showScreen)
+            ctx.showScreen (Screen::Setup);
+        openCustomControls (layer);
+    };
+    ctx.showMonitors = [this]
+    {
+        if (ctx.showScreen)
+            ctx.showScreen (Screen::Setup);
+        openMonitors();
+    };
+    setupKeyWatcher = std::make_unique<SetupKeyWatcher> (*this);
 }
 
-SetupPage::~SetupPage() = default;
+SetupPage::~SetupPage()
+{
+    ctx.showSetupTab = nullptr;
+    ctx.showCustomControls = nullptr;
+    ctx.showMonitors = nullptr;
+}
+
+void SetupPage::visibilityChanged()
+{
+    // Another screen key: SETUP opens on its tabs next time.
+    if (! isVisible())
+        closeSubScreen();
+}
+
+void SetupPage::showSubScreen (std::unique_ptr<DisplayPage> screen)
+{
+    overlays.close();
+    subScreen = std::move (screen);
+    if (subScreen != nullptr)
+    {
+        subScreen->knobsChanged = [this] { notifyKnobsChanged(); };
+        subScreen->statusKeysChanged = [this] { notifyStatusKeysChanged(); };
+        addAndMakeVisible (*subScreen);
+        subScreen->setBounds (getLocalBounds());
+        subScreen->refresh();
+    }
+    for (auto* c : { (juce::Component*) &tabRow, (juce::Component*) &initKey, (juce::Component*) &shutdownKey })
+        c->setVisible (subScreen == nullptr);
+    showTab();
+    notifyStatusKeysChanged();
+    notifyKnobsChanged();
+}
+
+void SetupPage::closeSubScreen()
+{
+    if (subScreen != nullptr)
+        showSubScreen (nullptr);
+}
+
+void SetupPage::openCustomControls (int layer)
+{
+    juce::ignoreUnused (layer);
+    overlays.show (*this, "CUSTOM CONTROLS",
+                   std::make_unique<MessageBody> ("CUSTOM CONTROLS ARE NOT AVAILABLE YET",
+                                                  "On the console, CC EDIT assigns functions to the custom control knobs and buttons "
+                                                  "beside the display. Live DAW doesn't have custom controls yet."));
+}
+
+void SetupPage::openMonitors()
+{
+    overlays.show (*this, "MONITORS", makeMonitorPanel (ctx));
+}
+
+std::vector<KnobBinding> SetupPage::getKnobs()
+{
+    return subScreen != nullptr ? subScreen->getKnobs() : std::vector<KnobBinding> {};
+}
+
+std::vector<KnobStyle> SetupPage::getKnobStyles()
+{
+    return subScreen != nullptr ? subScreen->getKnobStyles() : std::vector<KnobStyle> {};
+}
+
+StatusTitle SetupPage::getStatusTitle()
+{
+    return subScreen != nullptr ? subScreen->getStatusTitle() : StatusTitle {};
+}
 
 std::vector<StatusKey> SetupPage::getStatusKeys()
 {
+    // CUSTOM CONTROLS and MONITORS have no keys of their own.
+    if (subScreen != nullptr)
+        return subScreen->getStatusKeys();
     return {
-        { "MONITORS", Icon::Monitors, false, [this] { overlays.show (*this, "MONITORS", makeMonitorPanel (ctx)); } },
-        // Custom controls (CC EDIT) aren't built yet.
-        { "CC EDIT", Icon::CcEdit, false,
-          [this]
-          {
-              overlays.show (*this, "CUSTOM CONTROLS",
-                             std::make_unique<MessageBody> ("CUSTOM CONTROLS ARE NOT AVAILABLE YET",
-                                                            "On the console, CC EDIT assigns functions to the custom control knobs and buttons "
-                                                            "beside the display. Live DAW doesn't have custom controls yet."));
-          } },
+        { "MONITORS", Icon::Monitors, false, [this] { openMonitors(); } },
+        { "CC EDIT", Icon::CcEdit, false, [this] { openCustomControls (-1); } },
     };
 }
 
 void SetupPage::showTab()
 {
     for (size_t i = 0; i < pages.size(); ++i)
-        pages[i]->setVisible ((int) i == tabRow.getCurrent());
+        pages[i]->setVisible (subScreen == nullptr && (int) i == tabRow.getCurrent());
     overlays.close();
 }
 
 void SetupPage::refresh()
 {
+    if (subScreen != nullptr)
+        subScreen->refresh();
     if (auto* g = dynamic_cast<GeneralTab*> (general.get()))
         g->refresh();
     for (auto* p : pages)
@@ -1244,6 +1375,8 @@ void SetupPage::resized()
     tabRow.setBounds (row);
     for (auto* p : pages)
         p->setBounds (b);
+    if (subScreen != nullptr)
+        subScreen->setBounds (getLocalBounds());
     overlays.layout (getLocalBounds());
 }
 

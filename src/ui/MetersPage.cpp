@@ -292,7 +292,7 @@ void MetersPage::paint (juce::Graphics& g)
         g.setFont (juce::FontOptions (juce::jmin (20.0f, group.header.getHeight() * 0.68f), juce::Font::bold));
         g.drawFittedText (group.title, group.header.reduced (4, 0), juce::Justification::centred, 1);
 
-        g.setColour (juce::Colour (0xff262626));
+        g.setColour (Dark::body);
         g.fillRect (group.body);
 
         const auto numbers = numberRow (group), mutes = muteRow (group);
@@ -306,13 +306,13 @@ void MetersPage::paint (juce::Graphics& g)
             const auto cell = s.reduced (juce::jmin (2.0f, s.getWidth() * 0.08f), 0.0f);
             auto* strip = stripOf (group, i);
             const int number = group.first + i + 1;
-            // Number keys in the strip's colour; the selected strip gets a white frame.
+            // Number keys in the strip's colour; the selected strip gets an accent frame.
             const auto numberArea = cell.withY ((float) numbers.getY()).withHeight ((float) numbers.getHeight());
             numberKey (g, numberArea, number, group.dca ? wingColour (ctx.engine.getDca (group.first + i).colour.load())
-                                                 : (strip != nullptr ? strip->getColour() : Colours::cyan));
+                                                 : (strip != nullptr ? stripDisplayColour (*strip) : Colours::cyan));
             if (strip != nullptr && strip == selected)
             {
-                g.setColour (juce::Colours::white);
+                g.setColour (Colours::yellow);
                 g.drawRoundedRectangle (numberArea.expanded (1.5f), 2.0f, 2.0f);
             }
 
@@ -332,7 +332,7 @@ void MetersPage::paint (juce::Graphics& g)
                 {
                     const float pos = ((float) k + 0.5f) / (float) segments;
                     const bool lit = level >= pos;
-                    juce::Colour c = juce::Colour (0xff4a4a4a);
+                    juce::Colour c = Colours::screenTile;
                     if (lit)
                         c = pos > meterPos (-0.5f) ? Colours::mute : (pos > meterPos (-12.0f) ? Colours::meterYellow : Colours::meterGreen);
                     else if (k == holdSeg)
@@ -350,7 +350,7 @@ void MetersPage::paint (juce::Graphics& g)
                 g.setColour (Colours::mute);
                 g.fillRect (m);
             }
-            g.setColour (juce::Colour (0xff5a5a5a));
+            g.setColour (Colours::screenLine);
             g.drawRect (m, 1.0f);
         }
     }

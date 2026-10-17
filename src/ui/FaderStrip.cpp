@@ -43,7 +43,11 @@ void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const Scribble
     if (info.icon.has_value())
     {
         const float s = juce::jmin (top.getHeight(), top.getWidth() * 0.34f);
-        drawIcon (g, *info.icon, top.removeFromRight (s).withSizeKeepingCentre (s, s).reduced (1.0f), juce::Colours::white);
+        const auto iconArea = top.removeFromRight (s).withSizeKeepingCentre (s, s).reduced (1.0f);
+        if (info.strip != nullptr)
+            drawStripIcon (g, *info.strip, iconArea, juce::Colours::white);
+        else
+            drawIcon (g, *info.icon, iconArea, juce::Colours::white);
     }
     g.setColour (Colours::text);
     g.setFont (juce::FontOptions (juce::jlimit (10.0f, 22.0f, top.getHeight() * 0.95f)));
@@ -249,6 +253,7 @@ ScribbleInfo FaderStrip::scribbleInfo() const
         info.number = strip->getLabel().removeCharacters (" ");
         info.name = shownName;
         info.icon = stripIcon (strip->getKind());
+        info.strip = strip;
         if (strip->isInput())
         {
             // The source ports: "IN 01" / "IN 02", or "IN 03" / "mono".
@@ -305,7 +310,7 @@ void FaderStrip::timerCallback()
         light = strip->params.led.load();
         colour = strip->getColourIndex();
         source = juce::String (strip->params.inputLeft.load()) + "/" + juce::String (strip->params.inputRight.load())
-                 + (strip->params.stereo.load() ? "s" : "m");
+                 + (strip->params.stereo.load() ? "s" : "m") + juce::String (strip->getAltInputLeft());
 
         // Input level, like the console's strip meters.
         const int channels = juce::jlimit (1, 2, strip->getNumChannels());
@@ -372,7 +377,7 @@ void FaderStrip::paint (juce::Graphics& g)
     band (meterArea, 4, juce::Colour (0xff141517));
 
     // Colour light bar and scribble strip.
-    const juce::Colour colour = strip != nullptr ? strip->getColour() : (dca >= 0 ? wingColour (shownColour) : Colours::ledOff);
+    const juce::Colour colour = strip != nullptr ? stripDisplayColour (*strip) : (dca >= 0 ? wingColour (shownColour) : Colours::ledOff);
     drawLightBar (g, barArea.toFloat(), colour, target.has_value() && shownLight);
     drawScribble (g, lcdArea.toFloat(), target ? scribbleInfo() : ScribbleInfo {});
 
