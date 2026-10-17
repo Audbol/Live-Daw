@@ -21,6 +21,7 @@ dependencies = [
  "livedaw-dsp",
  "livedaw-engine",
  "livedaw-session",
+ "livedaw-wing",
 ]
 
 [[package]]

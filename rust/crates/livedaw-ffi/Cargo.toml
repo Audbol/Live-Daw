@@ -14,3 +14,4 @@ crate-type = ["staticlib", "rlib"]
 livedaw-engine = { path = "../livedaw-engine" }
 livedaw-dsp = { path = "../livedaw-dsp" }
 livedaw-session = { path = "../livedaw-session" }
+livedaw-wing = { path = "../livedaw-wing" }
