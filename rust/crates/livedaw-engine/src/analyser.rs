@@ -957,9 +957,15 @@ fn run_analysis(shared: &AnalysisShared) {
         rta.decay = settings.decay.load(Relaxed).clamp(0, 2) as usize;
         rta.detector = settings.detector.load(Relaxed).clamp(0, 2) as usize;
 
+        // Far behind (a stall, or audio arriving faster than real time):
+        // analyse only the newest audio, so every pass ends in a publication.
+        let max_backlog = 4 * buf.len() as u64;
+        read_pos = read_pos.max(shared.rta_ring.written().saturating_sub(max_backlog));
+        let pass_end = read_pos + max_backlog;
         let mut got = false;
-        loop {
-            let (start, frames) = shared.rta_ring.read(read_pos, &mut buf);
+        while read_pos < pass_end {
+            let want = ((pass_end - read_pos) as usize).min(buf.len());
+            let (start, frames) = shared.rta_ring.read(read_pos, &mut buf[..want]);
             if frames == 0 {
                 break;
             }
@@ -1125,7 +1131,7 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(30));
             a.read_rta(&mut levels, &mut peaks);
-            if levels[band_of(f)] > -9.0 || Instant::now() > deadline {
+            if levels[band_of(f)] > -7.0 || Instant::now() > deadline {
                 break;
             }
         }
