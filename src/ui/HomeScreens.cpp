@@ -2248,7 +2248,8 @@ public:
         auto box = boxArea;
         auto modeRow = box.removeFromTop (juce::jlimit (12.0f, 20.0f, boxArea.getHeight() * 0.24f));
         modeArea = modeRow;
-        g.setFont (juce::FontOptions (juce::jmin (14.0f, modeRow.getHeight() * 0.85f), juce::Font::plain));
+        // TAP | POST side by side: small enough for both words in the column.
+        g.setFont (homeFont (TypeScale::body, juce::jmin (modeRow.getHeight() * 0.85f, modeRow.getWidth() * 0.2f)));
         if (busSource())
         {
             g.setColour (colours::caption);
@@ -2267,10 +2268,10 @@ public:
         {
             const bool inputSource = src.isInput();
             g.setColour (mode == 0 ? colours::tap : colours::dim);
-            g.drawText (sendModeName (0, inputSource || mtx != nullptr ? inputSource : false), modeRow.withTrimmedRight (modeRow.getWidth() * 0.5f).toNearestInt(),
-                        juce::Justification::centred);
+            g.drawFittedText (sendModeName (0, inputSource || mtx != nullptr ? inputSource : false),
+                              modeRow.withTrimmedRight (modeRow.getWidth() * 0.5f).toNearestInt(), juce::Justification::centred, 1, 0.7f);
             g.setColour (mode == 1 ? colours::post : colours::dim);
-            g.drawText ("POST", modeRow.withTrimmedLeft (modeRow.getWidth() * 0.5f).toNearestInt(), juce::Justification::centred);
+            g.drawFittedText ("POST", modeRow.withTrimmedLeft (modeRow.getWidth() * 0.5f).toNearestInt(), juce::Justification::centred, 1, 0.7f);
         }
 
         // The pan ring, PAN LINK under it.
