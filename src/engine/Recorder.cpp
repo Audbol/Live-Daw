@@ -1,144 +1,128 @@
 #include "engine/Recorder.h"
 
-#include <juce_audio_formats/juce_audio_formats.h>
+#include <juce_audio_basics/juce_audio_basics.h>
 
 namespace livedaw
 {
 
-// Placeholder until the engine's recorder lands: a wall-clock transport, no
-// audio. A recording produces silent takes of the recorded length, so the UI's
-// whole flow can be exercised.
-struct Recorder::Impl
-{
-    double sampleRate = 48000.0;
-    State state = State::Stopped;
-    int64_t position = 0;          // at rollStartMs while rolling
-    double rollStartMs = 0.0;
-    int64_t loopStart = 0, loopEnd = 0;
-    bool loop = false;
-    std::vector<RecordTrack> recording;
-    int64_t recordStart = 0;
-    std::vector<Take> finished;
+static_assert (Recorder::kNumPlaybackChannels == ld::kNumPlaybackChannels);
+static_assert (Recorder::kPlaybackSourceBase == ld::kPlaybackSourceBase);
+static_assert (Recorder::kMaxRecordTracks == ld::kMaxRecordTracks);
+static_assert (Recorder::kSamplesPerPeak == ld::kSamplesPerPeak);
 
-    int64_t now() const
-    {
-        if (state != State::Playing && state != State::Recording)
-            return position;
-        auto p = position + (int64_t) ((juce::Time::getMillisecondCounterHiRes() - rollStartMs) * sampleRate / 1000.0);
-        if (loop && state == State::Playing && loopEnd > loopStart && p >= loopEnd)
-            p = loopStart + (p - loopStart) % (loopEnd - loopStart);
-        return p;
-    }
+static_assert ((int) Recorder::State::Stopped == 0 && (int) Recorder::State::Starting == 1
+               && (int) Recorder::State::Playing == 2 && (int) Recorder::State::Recording == 3);
+static_assert ((int) Recorder::FadeShape::Linear == 0 && (int) Recorder::FadeShape::EqualPower == 1
+               && (int) Recorder::FadeShape::SCurve == 2);
+static_assert ((int) Recorder::Source::Kind::HardwareInput == 0 && (int) Recorder::Source::Kind::StripPreFader == 1
+               && (int) Recorder::Source::Kind::StripPostFader == 2);
 
-    void roll (State s)
-    {
-        position = now();
-        rollStartMs = juce::Time::getMillisecondCounterHiRes();
-        state = s;
-    }
-
-    void finishRecording()
-    {
-        const auto length = juce::jmax<int64_t> (0, now() - recordStart);
-        for (auto& r : recording)
-        {
-            juce::WavAudioFormat wav;
-            r.file.getParentDirectory().createDirectory();
-            r.file.deleteFile();
-            if (auto out = std::unique_ptr<juce::OutputStream> (r.file.createOutputStream()))
-            {
-                const auto options = juce::AudioFormatWriterOptions().withSampleRate (sampleRate).withNumChannels (r.numChannels).withBitsPerSample (32).withSampleFormat (juce::AudioFormatWriterOptions::SampleFormat::floatingPoint);
-                if (auto writer = wav.createWriterFor (out, options))
-                {
-                    juce::AudioBuffer<float> silence (r.numChannels, 4096);
-                    silence.clear();
-                    for (int64_t done = 0; done < length; done += 4096)
-                        writer->writeFromAudioSampleBuffer (silence, 0, (int) juce::jmin<int64_t> (4096, length - done));
-                }
-            }
-            finished.push_back ({ r.track, r.file, recordStart, length, r.numChannels });
-        }
-        recording.clear();
-    }
-};
-
-Recorder::Recorder() : impl (std::make_unique<Impl>()) {}
+Recorder::Recorder (ld::Engine* e) : engine (e) {}
 Recorder::~Recorder() = default;
 
-Recorder::State Recorder::getState() const { return impl->state; }
-int64_t Recorder::getPosition() const { return impl->now(); }
-double Recorder::getSampleRate() const { return impl->sampleRate; }
+Recorder::State Recorder::getState() const { return static_cast<State> (ld::ld_rec_state (engine)); }
+int64_t Recorder::getPosition() const { return ld::ld_rec_position (engine); }
+double Recorder::getSampleRate() const { return ld::ld_engine_sample_rate (engine); }
 
-void Recorder::play()
+void Recorder::play() { ld::ld_rec_play (engine); }
+void Recorder::stop() { ld::ld_rec_stop (engine); }
+void Recorder::locate (int64_t position) { ld::ld_rec_locate (engine, juce::jmax<int64_t> (0, position)); }
+
+void Recorder::setLoop (int64_t start, int64_t end, bool enabled) { ld::ld_rec_set_loop (engine, start, end, enabled); }
+bool Recorder::isLoopEnabled() const { return ld::ld_rec_loop (engine, nullptr, nullptr); }
+
+int64_t Recorder::getLoopStart() const
 {
-    if (impl->state == State::Stopped)
-        impl->roll (State::Playing);
+    int64_t start = 0;
+    ld::ld_rec_loop (engine, &start, nullptr);
+    return start;
 }
 
-void Recorder::stop()
+int64_t Recorder::getLoopEnd() const
 {
-    if (impl->state == State::Recording)
-        impl->finishRecording();
-    impl->position = impl->now();
-    impl->state = State::Stopped;
+    int64_t end = 0;
+    ld::ld_rec_loop (engine, nullptr, &end);
+    return end;
 }
 
-void Recorder::locate (int64_t position)
+void Recorder::setPlaylist (const Playlist& playlist)
 {
-    impl->position = juce::jmax<int64_t> (0, position);
-    impl->rollStartMs = juce::Time::getMillisecondCounterHiRes();
+    // The paths must outlive the call: keep their UTF-8 here.
+    std::vector<std::string> paths;
+    std::vector<ld::RecClipC> clips;
+    std::vector<ld::RecPlaybackTrackC> tracks;
+    size_t numClips = 0;
+    for (const auto& t : playlist)
+        numClips += t.clips.size();
+    paths.reserve (numClips);
+    clips.reserve (numClips);
+    tracks.reserve (playlist.size());
+
+    for (const auto& t : playlist)
+    {
+        if (t.channel < 0 || t.channel >= kNumPlaybackChannels)
+            continue; // plays nowhere
+        tracks.push_back ({ t.channel, juce::jlimit (1, 2, t.numChannels), t.gain, t.mute, (int32_t) clips.size(),
+                            (int32_t) t.clips.size() });
+        for (const auto& c : t.clips)
+        {
+            const auto& path = paths.emplace_back (c.file.getFullPathName().toStdString());
+            clips.push_back ({ path.data(), path.size(), c.fileOffset, c.start, c.length, c.fadeIn, c.fadeOut, c.gain,
+                               (int32_t) c.fadeInShape, (int32_t) c.fadeOutShape });
+        }
+    }
+
+    ld::ld_rec_set_playlist (engine, tracks.data(), (int32_t) tracks.size(), clips.data(), (int32_t) clips.size());
 }
-
-void Recorder::setLoop (int64_t start, int64_t end, bool enabled)
-{
-    impl->position = impl->now();
-    impl->rollStartMs = juce::Time::getMillisecondCounterHiRes();
-    impl->loopStart = start;
-    impl->loopEnd = end;
-    impl->loop = enabled;
-}
-
-bool Recorder::isLoopEnabled() const { return impl->loop; }
-
-void Recorder::setPlaylist (const Playlist&) {}
 
 juce::Result Recorder::record (const std::vector<RecordTrack>& tracks)
 {
     if (tracks.empty())
         return juce::Result::fail ("No tracks are armed");
-    if (impl->state == State::Recording)
-        return juce::Result::fail ("Already recording");
-    impl->recording = tracks;
-    impl->roll (State::Recording);
-    impl->recordStart = impl->position;
-    return juce::Result::ok();
+
+    std::vector<std::string> paths;
+    std::vector<ld::RecRecordTrackC> specs;
+    paths.reserve (tracks.size());
+    specs.reserve (tracks.size());
+    for (const auto& t : tracks)
+    {
+        const auto& path = paths.emplace_back (t.file.getFullPathName().toStdString());
+        specs.push_back ({ t.track, (int32_t) t.source.kind, t.source.port, (int32_t) t.source.stripKind,
+                           t.source.stripNumber, t.numChannels, path.data(), path.size() });
+    }
+
+    ld::LdString* error = nullptr;
+    if (ld::ld_rec_record (engine, specs.data(), (int32_t) specs.size(), &error))
+        return juce::Result::ok();
+    return juce::Result::fail (error != nullptr ? takeString (error) : juce::String ("Recording failed"));
 }
 
-std::vector<Recorder::Take> Recorder::takeFinishedTakes() { return std::exchange (impl->finished, {}); }
+std::vector<Recorder::Take> Recorder::takeFinishedTakes()
+{
+    std::vector<Take> takes;
+    ld::RecTakeC t {};
+    while (ld::ld_rec_pop_take (engine, &t))
+        takes.push_back ({ t.track, juce::File (takeString (t.path)), t.start, t.length, t.numChannels });
+    return takes;
+}
 
-float Recorder::getRecordLevel (int, int) { return -100.0f; }
+float Recorder::getRecordLevel (int track, int channel)
+{
+    return juce::Decibels::gainToDecibels (ld::ld_rec_record_level (engine, track, channel), -100.0f);
+}
 
 int Recorder::getRecordingPeaks (int track, int64_t firstPeak, int maxPeaks, float* minMax) const
 {
-    if (impl->state != State::Recording)
+    if (minMax == nullptr || maxPeaks <= 0)
         return 0;
-    for (const auto& r : impl->recording)
-        if (r.track == track)
-        {
-            const auto available = getRecordedLength() / kSamplesPerPeak - firstPeak;
-            const int n = (int) juce::jlimit<int64_t> (0, maxPeaks, available);
-            std::fill (minMax, minMax + n * 2 * r.numChannels, 0.0f);
-            return n;
-        }
-    return 0;
+    return ld::ld_rec_recording_peaks (engine, track, firstPeak, maxPeaks, minMax);
 }
 
-int64_t Recorder::getRecordedLength() const
-{
-    return impl->state == State::Recording ? impl->now() - impl->recordStart : 0;
-}
+int64_t Recorder::getRecordedLength() const { return ld::ld_rec_recorded_length (engine); }
 
-int Recorder::getDropouts() const { return 0; }
-float Recorder::getDiskLoad() const { return 0.0f; }
+int Recorder::getDropouts() const { return ld::ld_rec_dropouts (engine); }
+float Recorder::getDiskLoad() const { return ld::ld_rec_disk_load (engine); }
+
+bool Recorder::waitForDisk (int timeoutMs) { return ld::ld_rec_wait_for_disk (engine, timeoutMs); }
 
 } // namespace livedaw

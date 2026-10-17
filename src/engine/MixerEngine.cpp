@@ -66,6 +66,8 @@ MixerEngine::MixerEngine (int numWorkerThreads)
       anySoloActive (controls.anySoloActive),
       muteGroups (controls.muteGroups),
       automixEnable (controls.automixEnable),
+      inputSelectGlobal (controls.inputSelectGlobal),
+      globalAlt (controls.globalAlt),
       dcaMuteGroups (controls.dcaMuteGroups),
       mainLink (controls.mainLink),
       startupMainMute (controls.startupMainMute),
@@ -91,7 +93,8 @@ MixerEngine::~MixerEngine()
 
     for (auto& list : lists)
         list.clear();
-    ld::ld_engine_destroy (engine); // releases the plugins still loaded
+    recorder.reset();
+    ld::ld_engine_destroy (engine); // releases the plugins still loaded; a recording is finalized
 }
 
 void MixerEngine::startWorkers (double sampleRate, int blockSize)

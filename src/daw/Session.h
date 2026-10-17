@@ -74,7 +74,12 @@ public:
 
     Recorder::State getState() const { return recorder.getState(); }
     bool isRolling() const { return recorder.isRolling(); }
-    bool isRecording() const { return recorder.getState() == Recorder::State::Recording; }
+    /** Recording, or priming to record (the recorder fills its buffers first). */
+    bool isRecording() const
+    {
+        const auto s = recorder.getState();
+        return s == Recorder::State::Recording || (recordRequested && s == Recorder::State::Starting);
+    }
     int64 getPosition() const { return recorder.getPosition(); }
     void play();
     void stop();
@@ -127,6 +132,17 @@ public:
         back on consecutive playback channels. One undoable action. */
     void setupRecordAllChannels (const std::vector<ChannelInfo>&);
     void armAll (bool arm);
+
+    /** VIRTUAL SOUNDCHECK: which channel plays back which track. A track
+        recording a channel's strip (pre / post fader) or the input port the
+        channel is patched to feeds that channel; each channel once. */
+    struct SoundcheckRoute
+    {
+        int channelNumber = 1;
+        int playChannel = 0;   // the track's first playback channel
+        bool stereo = false;
+    };
+    std::vector<SoundcheckRoute> virtualSoundcheckRoutes (const std::vector<ChannelInfo>&) const;
 
     //==============================================================================
     // Import / export (one job at a time, on a worker thread)
@@ -193,6 +209,7 @@ private:
 
     // The recording in progress: record track index -> track id.
     std::map<int, int64> recordTracks;
+    bool recordRequested = false;
     int64 recordStart = 0;
     struct Peaks
     {

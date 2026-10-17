@@ -133,6 +133,23 @@ public:
     std::atomic<bool> (&automixEnable)[2];
 
     //==============================================================================
+    // INPUT SELECT (WING SETUP > AUDIO): input and aux channels switch between
+    // their MAIN and ALT inputs (Strip::setAltInput), individually
+    // (Strip::setAltSelected) or all at once with the global MAIN / ALT switch.
+    // Saved in shows and recalled with ROUTING.
+
+    /** True: every input strip follows globalAlt; false: each its own switch. */
+    std::atomic<bool>& inputSelectGlobal;
+    /** The global MAIN / ALT switch (true = ALT). */
+    std::atomic<bool>& globalAlt;
+    bool isInputSelectGlobal() const noexcept { return inputSelectGlobal.load(); }
+    void setInputSelectGlobal (bool global) noexcept { inputSelectGlobal = global; }
+    bool isGlobalAlt() const noexcept { return globalAlt.load(); }
+    void setGlobalAlt (bool alt) noexcept { globalAlt = alt; }
+    /** True if `strip` listens to its ALT input now (Strip::isUsingAltInput). */
+    bool usesAltInput (const Strip& strip) const noexcept { return strip.isUsingAltInput(); }
+
+    //==============================================================================
     // Preferences (SETUP > PREFERENCES), saved with the show
 
     /** DCA MUTEGROUPS: a muted DCA also mutes its strips (default on). */
@@ -226,7 +243,7 @@ private:
 
     Garbage garbage;
     FxSlots fx;
-    std::unique_ptr<Recorder> recorder = std::make_unique<Recorder>();
+    std::unique_ptr<Recorder> recorder = std::make_unique<Recorder> (engine);
     std::vector<std::unique_ptr<Worker>> workers;
 
     std::array<StripList, kNumStripKinds> lists;

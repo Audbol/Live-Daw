@@ -2,6 +2,7 @@
 #include "daw/Project.h"
 #include "daw/Session.h"
 #include "daw/TimeGrid.h"
+#include "engine/MixerEngine.h"
 
 #include <juce_core/juce_core.h>
 
@@ -476,43 +477,100 @@ private:
             expect (p.getClips (snare).empty());
         }
 
-        beginTest ("Session: recording needs armed tracks; takes land on their tracks");
+        beginTest ("Session: record the armed tracks, the take becomes a clip and plays back through an ALT input");
         {
             TempFolder temp;
-            Recorder recorder;
+            MixerEngine engine (0);
+            engine.setNumChannels (2);
+            constexpr int kBlock = 128;
+            engine.prepareOffline (48000.0, kBlock, 2, 2);
+            auto& recorder = engine.getRecorder();
             Session session (recorder, nullptr);
             session.setDefaultFolder (temp.folder);
             auto& p = session.getProject();
-            const auto t = p.addTrack();
+            expectEquals (p.getSampleRate(), 48000.0);
+
+            // Runs the engine offline, giving the disk threads time before each block.
+            std::vector<float> in0 (kBlock), in1 (kBlock), out0 (kBlock), out1 (kBlock);
+            auto run = [&] (int blocks, float level)
+            {
+                for (int b = 0; b < blocks; ++b)
+                {
+                    recorder.waitForDisk();
+                    std::fill (in0.begin(), in0.end(), level);
+                    std::fill (in1.begin(), in1.end(), 0.0f);
+                    const float* ins[] = { in0.data(), in1.data() };
+                    float* outs[] = { out0.data(), out1.data() };
+                    engine.processBlock (ins, 2, outs, 2, kBlock);
+                }
+            };
+
+            TrackData td;
+            td.name = "Vox";
+            td.source.kind = Recorder::Source::Kind::HardwareInput;
+            td.source.port = 0;
+            const auto t = p.addTrack (td);
             expect (session.record().failed()); // nothing armed
             expect (! p.hasFolder());
 
             p.setTrackProperty (t, ids::arm, true, false);
             const auto result = session.record();
-            if (result.wasOk())
+            expect (result.wasOk(), result.getErrorMessage());
+            // The take gets a dated project folder when there was none.
+            expect (p.hasFolder());
+            expect (p.getFolder().isAChildOf (temp.folder));
+            expect (session.isRecordingTrack (t));
+            run (375, 0.25f); // one second of DC on input 1
+            session.stop();
+            run (8, 0.0f);
+            for (int i = 0; i < 500 && p.getClips (t).empty(); ++i)
             {
-                // The take gets a dated project folder when there was none.
-                expect (p.hasFolder());
-                expect (p.getFolder().isAChildOf (temp.folder));
-                expect (session.isRecordingTrack (t));
-                juce::Thread::sleep (30);
-                session.stop();
+                recorder.waitForDisk();
                 session.collectTakes();
-                const auto clips = p.getClips (t);
-                if (clips.size() == 1)
-                {
-                    expect (p.resolve (clips[0].file).isAChildOf (p.getAudioFolder()));
-                    expect (clips[0].length > 0);
-                    expect (! p.isDirty()); // saved with its takes
-                }
-                else
-                {
-                    logMessage ("(the recorder finalized no take without a running device)");
-                }
+                juce::Thread::sleep (2);
             }
-            else
+            const auto clips = p.getClips (t);
+            expectEquals ((int) clips.size(), 1);
+            if (clips.size() == 1)
             {
-                logMessage ("(the recorder can't record without a device: " + result.getErrorMessage() + ")");
+                const auto file = p.resolve (clips[0].file);
+                expect (file.isAChildOf (p.getAudioFolder()));
+                expectEquals (file.getFileName(), juce::String ("Vox.wav"));
+                expect (std::abs (clips[0].length - 48000) <= kBlock * 2, juce::String (clips[0].length));
+                expect (! p.isDirty()); // saved with its takes
+                std::unique_ptr<juce::AudioFormatReader> reader (session.getFormats().createReaderFor (file));
+                expect (reader != nullptr);
+                if (reader != nullptr)
+                {
+                    juce::AudioBuffer<float> b (1, 4800);
+                    reader->read (&b, 0, 4800, 24000, true, false);
+                    expectWithinAbsoluteError (b.getSample (0, 100), 0.25f, 0.001f);
+                }
+
+                // VIRTUAL SOUNDCHECK: channel 2 takes the track's playback channel as its ALT input.
+                Session::ChannelInfo ch2;
+                ch2.number = 2;
+                ch2.inputPort = 0; // patched to the input the track recorded
+                const auto routes = session.virtualSoundcheckRoutes ({ ch2 });
+                expectEquals ((int) routes.size(), 1);
+                expectEquals (routes[0].channelNumber, 2);
+                expectEquals (routes[0].playChannel, 0);
+                auto& strip = *engine.getChannels()[1];
+                strip.setAltInput (Recorder::playbackSource (routes[0].playChannel));
+                strip.params.inputLeft = -1;
+                engine.setInputSelectGlobal (true);
+                engine.setGlobalAlt (true);
+                expect (strip.isUsingAltInput());
+
+                // Play the take from the start: the channel's input meter shows it.
+                p.setTrackProperty (t, ids::arm, false, false);
+                session.locate (0);
+                session.play();
+                strip.peakMeter (MeterPoint::Input, 0).store (0.0f);
+                run (250, 0.0f);
+                expect (session.getState() == Recorder::State::Playing);
+                expectWithinAbsoluteError (strip.peakMeter (MeterPoint::Input, 0).load(), 0.25f, 0.01f);
+                session.stop();
             }
         }
     }
@@ -580,7 +638,8 @@ private:
     {
         beginTest ("RECORD ALL CHANNELS: a track per channel, armed, from its input");
         {
-            Recorder recorder;
+            MixerEngine engine (0);
+            auto& recorder = engine.getRecorder();
             Session session (recorder, nullptr);
             auto& p = session.getProject();
             const auto existing = p.addTrack();

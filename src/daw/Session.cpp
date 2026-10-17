@@ -266,6 +266,7 @@ void Session::play()
 
 void Session::stop()
 {
+    recordRequested = false;
     recorder.stop();
     collectTakes();
 }
@@ -323,6 +324,7 @@ juce::Result Session::record()
         return result;
     }
     recordTracks = map;
+    recordRequested = true;
     recordStart = recorder.getPosition();
     peaks.clear();
     for (auto& rt : list)
@@ -497,6 +499,40 @@ void Session::armAll (bool arm)
 {
     for (auto& t : project.getTracks())
         project.setTrackProperty (t.id, ids::arm, arm, false);
+}
+
+std::vector<Session::SoundcheckRoute> Session::virtualSoundcheckRoutes (const std::vector<ChannelInfo>& channels) const
+{
+    std::vector<SoundcheckRoute> routes;
+    auto taken = [&routes] (int number)
+    {
+        for (auto& r : routes)
+            if (r.channelNumber == number)
+                return true;
+        return false;
+    };
+    for (auto& t : project.getTracks())
+    {
+        int number = -1;
+        if (t.source.kind == Recorder::Source::Kind::HardwareInput)
+        {
+            for (auto& ch : channels)
+                if (ch.inputPort == t.source.port && ! taken (ch.number))
+                {
+                    number = ch.number;
+                    break;
+                }
+        }
+        else if (t.source.stripKind == StripKind::Channel)
+        {
+            for (auto& ch : channels)
+                if (ch.number == t.source.stripNumber && ! taken (ch.number))
+                    number = ch.number;
+        }
+        if (number > 0)
+            routes.push_back ({ number, t.playChannel, t.stereo });
+    }
+    return routes;
 }
 
 //==============================================================================
@@ -742,6 +778,8 @@ void Session::pollPeaks()
 void Session::timerCallback()
 {
     const auto now = juce::Time::getMillisecondCounter();
+    if (recordRequested && recorder.getState() == Recorder::State::Stopped)
+        recordRequested = false;
     collectTakes();
     if (isRecording())
     {

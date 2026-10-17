@@ -445,6 +445,15 @@ pub struct StripParams {
 
     /// Scene recalls skip this strip (snippets still apply).
     pub recall_safe: AtomicBool,
+
+    /// ALT input (WING INPUT SELECT, input and aux channels): the source used
+    /// instead of `input_left`/`input_right` when ALT is selected (-1 = none;
+    /// the right one is used when stereo). Like the main input, a hardware
+    /// input or a playback channel (`PLAYBACK_SOURCE_BASE + n`).
+    pub alt_input_left: AtomicI32,
+    pub alt_input_right: AtomicI32,
+    /// The strip's own MAIN / ALT switch (used unless INPUT SELECT is global).
+    pub alt_selected: AtomicBool,
 }
 
 /// The WING's 18 strip colours (index 1..18 in `colour`), name and RGB.
@@ -546,6 +555,9 @@ impl StripParams {
             icon: AtomicI32::new(0),
             led: AtomicBool::new(true),
             recall_safe: AtomicBool::new(false),
+            alt_input_left: AtomicI32::new(-1),
+            alt_input_right: AtomicI32::new(-1),
+            alt_selected: AtomicBool::new(false),
         };
         p.eq.on.store(true, Relaxed);
         p
@@ -703,6 +715,11 @@ pub struct EngineControls {
     pub monitor_dim_db: AtomicF32,
     /// Index into [`MAIN_LINK_MODES`].
     pub main_link: AtomicI32,
+    /// INPUT SELECT: true = every input strip follows `global_alt` (the
+    /// SETUP > AUDIO MAIN / ALT switch), false = each strip's `alt_selected`.
+    pub input_select_global: AtomicBool,
+    /// The global MAIN / ALT switch (true = ALT).
+    pub global_alt: AtomicBool,
 }
 
 impl Default for EngineControls {
@@ -734,6 +751,8 @@ impl Default for EngineControls {
             automix_enable: [AtomicBool::new(true), AtomicBool::new(true)],
             monitor_dim_db: AtomicF32::new(DEFAULT_DIM_DB),
             main_link: AtomicI32::new(0),
+            input_select_global: AtomicBool::new(false),
+            global_alt: AtomicBool::new(false),
         }
     }
 }
@@ -771,6 +790,8 @@ impl EngineControls {
             enable.store(true, Relaxed);
         }
         self.main_link.store(0, Relaxed);
+        self.input_select_global.store(false, Relaxed);
+        self.global_alt.store(false, Relaxed);
         self.monitor_level_db.store(0.0);
         self.mute_groups.store(0, Relaxed);
         for d in &self.dcas {
