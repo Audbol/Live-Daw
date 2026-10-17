@@ -644,6 +644,25 @@ pub unsafe extern "C" fn ld_show_clear(s: *mut LdShow, e: *const Engine, num_cha
 
 // ---- layers ------------------------------------------------------------------------------
 
+/// The show's custom control assignments as a `<CustomControls>` element.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_custom_controls(s: *mut LdShow) -> *mut LdString {
+    LdString::new(show(s).map(|s| s.show.custom.to_xml().to_compact()).unwrap_or_default())
+}
+
+/// Replaces the custom control assignments (false: not a `<CustomControls>` element).
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_set_custom_controls(s: *mut LdShow, utf8: *const u8, len: usize) -> bool {
+    let Some(s) = show(s) else { return false };
+    match livedaw_session::xml::parse(&str_arg(utf8, len)) {
+        Ok(xml) if xml.has_tag("CustomControls") => {
+            s.show.custom.from_xml(&xml);
+            true
+        }
+        _ => false,
+    }
+}
+
 /// The show's own layer set (valid as long as the show).
 #[no_mangle]
 pub unsafe extern "C" fn ld_show_layers(s: *mut LdShow) -> *mut LayerSet {
@@ -832,6 +851,36 @@ pub unsafe extern "C" fn ld_layers_remove_from_user(l: *mut LayerSet, id: *const
 pub unsafe extern "C" fn ld_layers_move_within_user(l: *mut LayerSet, id: *const u8, len: usize, index: i32, delta: i32) {
     if let Some(l) = layers(l) {
         l.move_within_user_layer(&str_arg(id, len), index, delta);
+    }
+}
+
+/// Replaces the faders of a section's default layer key (VIEW > CONFIG).
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_set_override(
+    l: *mut LayerSet,
+    section: i32,
+    id: *const u8,
+    len: usize,
+    faders: *const LdFaderRef,
+    n: i32,
+) {
+    if let (Some(l), Ok(section)) = (layers(l), usize::try_from(section)) {
+        l.set_default_override(section, &str_arg(id, len), faders_arg(faders, n));
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_clear_override(l: *mut LayerSet, section: i32, id: *const u8, len: usize) {
+    if let (Some(l), Ok(section)) = (layers(l), usize::try_from(section)) {
+        l.clear_default_override(section, &str_arg(id, len));
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_has_override(l: *mut LayerSet, section: i32, id: *const u8, len: usize) -> bool {
+    match (layers(l), usize::try_from(section)) {
+        (Some(l), Ok(section)) => l.has_default_override(section, &str_arg(id, len)),
+        _ => false,
     }
 }
 

@@ -535,6 +535,9 @@ extern "C"
     bool ld_show_save_file (Show*, const Engine*, const char* path, size_t len, LdString** error);
     bool ld_show_load_file (Show*, const Engine*, const char* path, size_t len, bool loadPlugins, LdString** message);
     void ld_show_clear (Show*, const Engine*, int32_t numChannels);
+    /** The CUSTOM CONTROLS assignments as a <CustomControls> element, and back. */
+    LdString* ld_show_custom_controls (Show*);
+    bool ld_show_set_custom_controls (Show*, const char* utf8, size_t len);
 
     // Layers (message thread). Sections: 0 = left (12 faders), 1 = center (8), 2 = right (4).
     LayerSet* ld_show_layers (Show*);
@@ -563,6 +566,9 @@ extern "C"
     void ld_layers_add_to_user (LayerSet*, const char* id, size_t len, FaderRefC ref);
     void ld_layers_remove_from_user (LayerSet*, const char* id, size_t len, FaderRefC ref);
     void ld_layers_move_within_user (LayerSet*, const char* id, size_t len, int32_t index, int32_t delta);
+    void ld_layers_set_override (LayerSet*, int32_t section, const char* id, size_t len, const FaderRefC* faders, int32_t n);
+    void ld_layers_clear_override (LayerSet*, int32_t section, const char* id, size_t len);
+    bool ld_layers_has_override (LayerSet*, int32_t section, const char* id, size_t len);
     LdString* ld_layers_to_xml (LayerSet*);
     bool ld_layers_from_xml (LayerSet*, const char* utf8, size_t len);
     void ld_layers_reset (LayerSet*);

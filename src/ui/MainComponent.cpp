@@ -203,6 +203,15 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     ctx.showEditor = [this] (bool shown) { showEditor (shown); };
     ctx.isEditorShown = [this] { return editorShown; };
 
+    // The custom control assignments live in the show (CC EDIT edits them).
+    customControlAssignments = std::make_unique<cc::Assignments> (show);
+    ctx.customControls = customControlAssignments.get();
+    ctx.customControlsChanged = [this]
+    {
+        if (customControls != nullptr)
+            customControls->refresh();
+    };
+
     show.onChanged = [this]
     {
         if (customControls != nullptr)
@@ -222,9 +231,11 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     for (int i = 0; i < LayerSet::kNumSections; ++i)
         sections[i] = std::make_unique<FaderSection> (ctx, static_cast<LayerSet::Section> (i));
     customControls = std::make_unique<CustomControlSection> (ctx);
+    // The 4-Channel section works on the right fader section's four strips.
+    fourChannel = std::make_unique<FourChannelSection> (ctx, [this] (int i) { return sections[LayerSet::Right] != nullptr ? sections[LayerSet::Right]->getStrip (i) : nullptr; });
     soloWatcher = std::make_unique<SoloWatcher> (*this);
     for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) display.get(), (juce::Component*) monitor.get(),
-                                (juce::Component*) customControls.get() })
+                                (juce::Component*) customControls.get(), (juce::Component*) fourChannel.get() })
         addAndMakeVisible (c);
     for (auto& sec : sections)
         addAndMakeVisible (*sec);
@@ -261,6 +272,7 @@ MainComponent::~MainComponent()
     lockOverlay.reset();
     closeAllPluginWindows();
     scannerWindow.reset();
+    fourChannel.reset();
     for (auto& sec : sections)
         sec.reset();
     customControls.reset();
@@ -303,6 +315,9 @@ void MainComponent::selectStrip (Strip* strip)
 
 void MainComponent::refreshAll()
 {
+    // A loaded or new show brings its own custom controls.
+    customControlAssignments->reload();
+
     // Keep a valid selection after structure changes and show loads.
     if (getSelectedStrip() == nullptr)
     {
@@ -326,6 +341,7 @@ void MainComponent::refreshSections()
     layoutSections();
     for (auto& sec : sections)
         sec->refresh();
+    fourChannel->refresh();
 }
 
 //==============================================================================
@@ -410,14 +426,20 @@ void MainComponent::layoutTopRow()
     auto top = b.removeFromTop (topH);
     splitter.setBounds (b.removeFromTop (6));
 
-    // Channel strip section about 29%, the monitoring panel about 22%, the main
-    // display (keys, screen and its right-hand column) in between.
+    // Channel strip section about 29%, the right column about 22%, the main
+    // display (keys, screen and its right-hand column) in between. The right
+    // column holds the monitoring panel over the 4-Channel section (which works
+    // on the right fader section below it); narrow windows put the lower part
+    // of the custom controls there instead of the 4-Channel section.
     const int stripW = juce::jlimit (330, 620, top.getWidth() * 29 / 100);
     const int monitorW = juce::jlimit (260, 460, top.getWidth() * 22 / 100);
     channelStrip->setBounds (top.removeFromLeft (stripW));
     auto right = top.removeFromRight (monitorW);
+    fourChannel->setVisible (ccInBottomRow && ! editorShown);
     if (! ccInBottomRow)
         customControls->setBounds (right.removeFromBottom (right.getHeight() * 45 / 100));
+    else
+        fourChannel->setBounds (right.removeFromBottom (right.getHeight() * 54 / 100));
     monitor->setBounds (right);
     display->setBounds (top);
 }
@@ -606,6 +628,7 @@ void MainComponent::showEditor (bool shown)
     for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) display.get(), (juce::Component*) monitor.get(),
                                 (juce::Component*) customControls.get(), (juce::Component*) &splitter })
         c->setVisible (! shown);
+    fourChannel->setVisible (! shown && ccInBottomRow);
     for (auto& sec : sections)
         sec->setVisible (! shown);
     if (lockOverlay != nullptr)

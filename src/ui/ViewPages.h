@@ -143,11 +143,13 @@ private:
     int lastY = 0;
 };
 
-/** CONFIG (fig. 58): edits the fader layers. Pick items in the top grid and
-    drag them to the layer's slots at the bottom (or click a slot), drag a slot
-    away to remove it, drag within the slots to reorder. USER 1 / USER 2 and
-    further user layers are editable; the other layer keys are read-only
-    (session item E19): NEW makes a user layer from the shown one. */
+/** CONFIG (fig. 58, [I10]): edits the fader layers. Pick items in the top grid
+    and drag them onto a slot (replaces it) or between two slots (a blue line:
+    inserts and shifts the rest), or click a slot; drag a slot away to remove
+    it, drag within the slots to reorder. Every layer key is editable: USER 1 /
+    USER 2 hold user layers, the other keys keep an edited copy in the show
+    (DELETE restores the generated one). The page map at the bottom shows every
+    slot of the layer and the window on screen; touch it to page. */
 class ConfigViewPage final : public ViewPage
 {
 public:
@@ -162,19 +164,28 @@ protected:
     void layerChanged() override;
 
 private:
+    /** Where a drop lands: on slot `index` (replace) or before it (insert). */
+    struct DropTarget
+    {
+        int index = -1;
+        bool insert = false;
+    };
+
     std::vector<state::FaderRef> sourceItems() const;
-    /** User layers and the USER 1 / USER 2 keys can be edited. */
-    static bool isEditable (const Layer&);
     /** The user layer behind `layer` (USER 1 / 2: the first two user layers,
         created when `create`); empty for the default layers. */
     juce::String userLayerId (const Layer&, bool create);
-    void insertAt (const std::vector<state::FaderRef>&, int slot);
+    /** Stores the layer's faders (a user layer's, or the default key's edited copy). */
+    void setLayerFaders (const Layer&, const std::vector<state::FaderRef>&);
+    /** Puts `items` at layer position `index`, replacing what's there or inserting. */
+    void placeAt (const std::vector<state::FaderRef>&, int index, bool insert);
+    DropTarget dropTargetAt (juce::Point<int>) const;
     void updateKeys();
 
     int category = 0;
     std::vector<state::FaderRef> selectedItems;
-    std::vector<juce::Rectangle<int>> categoryKeys, sourceTiles, slotAreas;
-    juce::Rectangle<int> sourceArea, slotsArea, hintArea;
+    std::vector<juce::Rectangle<int>> categoryKeys, sourceTiles, slotAreas, mapCells;
+    juce::Rectangle<int> sourceArea, slotsArea, hintArea, mapArea;
     juce::OwnedArray<DropdownField> fields;
     WingKey clearKey { "CLEAR", Icon::Trash }, renameKey { "RENAME", Icon::Edit }, newKey { "NEW", Icon::Plus }, deleteKey { "DELETE" };
 

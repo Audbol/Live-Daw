@@ -345,6 +345,18 @@ void Show::timerCallback()
 }
 
 //==============================================================================
+juce::String Show::getCustomControlsXml() const
+{
+    return takeString (ld::ld_show_custom_controls (handle));
+}
+
+bool Show::setCustomControlsXml (const juce::String& xml)
+{
+    const Utf8 u (xml);
+    return ld::ld_show_set_custom_controls (handle, u.data, u.size);
+}
+
+//==============================================================================
 juce::String Show::toXmlString() const
 {
     return takeString (ld::ld_show_to_xml (handle, engine.getHandle()));

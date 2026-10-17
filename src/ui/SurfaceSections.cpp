@@ -768,16 +768,17 @@ void ChannelStripSection::resized()
 //==============================================================================
 MonitorSection::MonitorSection (UiContext& c) : ctx (c)
 {
-    viewKey.setTooltip ("VIEW: the monitor settings (ROUTING > MONITOR)");
+    viewKey.setTooltip ("VIEW: the MONITORS screen");
     viewKey.onPress = [this]
     {
-        if (ctx.showScreen)
-            ctx.showScreen (Screen::Routing);
+        if (ctx.showMonitors)
+            ctx.showMonitors();
         viewOpened = true;
     };
     viewKey.isActive = [this]
     {
-        viewOpened = viewOpened && ctx.getScreen && ctx.getScreen() == Screen::Routing;
+        // Lit from the press until the display leaves SETUP.
+        viewOpened = viewOpened && ctx.getScreen && ctx.getScreen() == Screen::Setup;
         return viewOpened;
     };
     addAndMakeVisible (viewKey);
@@ -896,12 +897,17 @@ void MonitorSection::resized()
 //==============================================================================
 CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
 {
-    // Upper part: 16 layers of four encoders and eight keys, empty until custom
-    // controls can be assigned.
-    upperView.setEnabled (false);
-    upperView.setTooltip ("VIEW: CC EDIT (custom controls can't be assigned yet)");
-    upKey.onPress = [this] { upperLayer = (upperLayer + 1) % 16; repaint (layerDisplay); };
-    downKey.onPress = [this] { upperLayer = (upperLayer + 15) % 16; repaint (layerDisplay); };
+    // Upper part: 16 layers of four encoders and eight keys (CC EDIT assigns
+    // them); VIEW opens CC EDIT on the layer shown.
+    upperView.setTooltip ("VIEW: CUSTOM CONTROLS (CC EDIT) for this layer");
+    upperView.onPress = [this]
+    {
+        if (ctx.showCustomControls)
+            ctx.showCustomControls (currentLayer());
+        viewOpened = true;
+    };
+    upKey.onPress = [this] { stepLayer (1); };
+    downKey.onPress = [this] { stepLayer (-1); };
     upKey.setTooltip ("Next custom control layer");
     downKey.setTooltip ("Previous custom control layer");
     for (auto& e : encoders)
@@ -911,9 +917,11 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
     }
     for (int i = 0; i < 8; ++i)
     {
+        // Keys 0-3: the upper key of each control, 4-7: the lower one.
         auto* k = upperKeys.add (new SurfaceKey());
         k->shape = SurfaceKey::Shape::Square;
-        k->setEnabled (false);
+        k->onPress = [this, i] { cc::press (ctx, ccFunction (currentLayer(), i)); };
+        k->ledState = [this, i] { return cc::isLit (ctx, ccFunction (currentLayer(), i)) ? SurfaceKey::Lit : SurfaceKey::Off; };
         addAndMakeVisible (k);
     }
 
@@ -930,7 +938,7 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
     layerKeys[TwoTrack]->setEnabled (false);
     layerKeys[TwoTrack]->setTooltip ("2-TRACK TRANSP: there's no USB recorder yet");
     layerKeys[MultiTrack]->setTooltip ("MULTI TRANSP: the multitrack recorder's transport (VIEW: the recorder screen)");
-    layerKeys[User]->setTooltip ("USER: custom controls (not assignable yet)");
+    layerKeys[User]->setTooltip ("USER: eight custom control keys (CC EDIT, layer USER)");
 
     for (int i = 0; i < 8; ++i)
     {
@@ -1029,6 +1037,7 @@ juce::String CustomControlSection::lowerKeyName (int key) const
 {
     switch (lowerLayer)
     {
+        case User: return cc::describe (ctx, key < 4 ? cc::Slot::Upper : cc::Slot::Lower, ccFunction (cc::kUserLayer, key));
         case MuteGroups: return juce::String (key + 1);
         case ShowControl:
         {
@@ -1046,6 +1055,11 @@ juce::String CustomControlSection::lowerKeyName (int key) const
 
 void CustomControlSection::pressLowerKey (int key)
 {
+    if (lowerLayer == User)
+    {
+        cc::press (ctx, ccFunction (cc::kUserLayer, key));
+        return;
+    }
     if (lowerLayer == MuteGroups)
     {
         ctx.engine.muteGroups = ctx.engine.muteGroups.load() ^ (1u << key);
@@ -1094,6 +1108,54 @@ bool CustomControlSection::useCursorWheel() const
     return ctx.settings.getBoolValue (uiprefs::useCursorWheel, false);
 }
 
+int CustomControlSection::currentLayer() const
+{
+    return ctx.customControls != nullptr ? ctx.customControls->currentLayer : 0;
+}
+
+void CustomControlSection::stepLayer (int delta)
+{
+    if (ctx.customControls == nullptr)
+        return;
+    ctx.customControls->currentLayer = (currentLayer() + delta + cc::kNumLayers) % cc::kNumLayers;
+    if (ctx.customControlsChanged)
+        ctx.customControlsChanged();
+    else
+        bindCustomControls();
+}
+
+cc::Function CustomControlSection::ccFunction (int layer, int key) const
+{
+    if (ctx.customControls == nullptr)
+        return {};
+    const auto& c = ctx.customControls->get (layer, key % cc::kNumControls);
+    return key < cc::kNumControls ? c.upper : c.lower;
+}
+
+void CustomControlSection::bindCustomControls()
+{
+    // The upper part follows the layer, the assignments and the selection
+    // (SEL BUS SEND works on the selected strip).
+    shownCcRevision = ctx.customControls != nullptr ? ctx.customControls->getRevision() : 0;
+    shownCcLayer = currentLayer();
+    shownSelection = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr;
+    for (int i = 0; i < cc::kNumControls; ++i)
+    {
+        const auto control = ctx.customControls != nullptr ? ctx.customControls->get (shownCcLayer, i) : cc::Control {};
+        encoders[i].setBinding (cc::bindEncoder (ctx, control.encoder));
+        for (int row = 0; row < 2; ++row)
+        {
+            auto* k = upperKeys[row * cc::kNumControls + i];
+            k->setEnabled ((row == 0 ? control.upper : control.lower).isAssigned());
+            k->ledColour = control.colour > 0 ? wingColour (control.colour) : Colours::silk;
+        }
+    }
+    if (lowerLayer == User)
+        setLowerLayer (User);
+    shownState = {};
+    repaint();
+}
+
 int CustomControlSection::nextScene() const
 {
     return sceneCursor >= 0 ? sceneCursor : ctx.show.getCurrentSceneIndex() + 1;
@@ -1120,6 +1182,8 @@ void CustomControlSection::turnWheel (int steps)
 
 bool CustomControlSection::lowerKeyLit (int key) const
 {
+    if (lowerLayer == User)
+        return cc::isLit (ctx, ccFunction (cc::kUserLayer, key));
     if (lowerLayer == MuteGroups)
         return (ctx.engine.muteGroups.load() >> key) & 1u;
     if (lowerLayer == MultiTrack && ctx.recording != nullptr)
@@ -1139,7 +1203,7 @@ bool CustomControlSection::lowerKeyLit (int key) const
 
 void CustomControlSection::refresh()
 {
-    shownState = {};
+    bindCustomControls();
     repaint (lowerLcd);
 }
 
@@ -1161,6 +1225,12 @@ void CustomControlSection::setCompact (bool c)
 
 void CustomControlSection::timerCallback()
 {
+    // The custom controls follow the assignments, the layer and the selection.
+    if (ctx.customControls != nullptr
+        && (ctx.customControls->getRevision() != shownCcRevision || currentLayer() != shownCcLayer
+            || (ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr) != shownSelection))
+        bindCustomControls();
+
     // The wheel turns endlessly: centred again between turns.
     if (! wheel.isMouseButtonDown (true))
         *wheelPos = 0.5f;
@@ -1184,6 +1254,17 @@ void CustomControlSection::timerCallback()
         shownState = state;
         repaint (lowerLcd);
     }
+
+    // Names starting with '*' show their value on the upper LCD.
+    juce::String values;
+    for (auto& e : encoders)
+        if (const auto& b = e.getBinding(); b.isValid() && b.text)
+            values << b.text() << '|';
+    if (values != shownValues)
+    {
+        shownValues = values;
+        repaint (upperLcd);
+    }
 }
 
 void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> area, bool colourBars, bool upper)
@@ -1203,17 +1284,36 @@ void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> are
     for (int i = 0; i < 4; ++i)
     {
         auto cell = juce::Rectangle<int> (r.getX() + i * w, r.getY(), w, r.getHeight()).reduced (2, 0);
+        const int ccLayer = upper ? currentLayer() : cc::kUserLayer;
+        const auto control = ctx.customControls != nullptr ? ctx.customControls->get (ccLayer, i) : cc::Control {};
         if (colourBars)
         {
-            drawLightBar (g, cell.removeFromTop (juce::jmax (4, cell.getHeight() / 9)).toFloat(), Colours::ledOff, false);
+            // The control's colour (CC EDIT > COLOR).
+            drawLightBar (g, cell.removeFromTop (juce::jmax (4, cell.getHeight() / 9)).toFloat(),
+                          wingColour (juce::jmax (1, control.colour)).withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
+                          control.colour > 0);
             cell.removeFromTop (juce::jmax (3, cell.getHeight() / 8));
         }
         ScribbleInfo info;
-        if (upper)
+        info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
+        info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
+        if (upper || lowerLayer == User)
         {
-            info.number = "CC" + juce::String (i + 1);
-            info.line2 = "LAYER " + juce::String (upperLayer + 1);
-            info.name = "not assigned";
+            // The control's name (a name starting with '*' shows the encoder's
+            // value, "|word" is shown inverted), then its two keys.
+            auto name = control.name.isNotEmpty() ? control.name : cc::describe (ctx, cc::Slot::Encoder, control.encoder);
+            info.number = name.removeCharacters ("*|");
+            if (name.startsWith ("*"))
+                if (const auto b = cc::bindEncoder (ctx, control.encoder); b.isValid() && b.text)
+                    info.number = b.text();
+            if (name.containsChar ('|'))
+                info.name = name.fromFirstOccurrenceOf ("|", false, false).upToFirstOccurrenceOf (" ", false, false);
+            info.line2 = cc::describe (ctx, cc::Slot::Upper, control.upper);
+            info.line3 = cc::describe (ctx, cc::Slot::Lower, control.lower);
+            if (info.number.isEmpty() && info.line2.isEmpty() && info.line3.isEmpty())
+                info.number = upper ? "CC" + juce::String (i + 1) : "USER";
+            if (info.name.isEmpty())
+                info.name = upper ? "LAYER " + juce::String (ccLayer + 1) : juce::String ("USER");
         }
         else if (lowerLayer == MuteGroups)
         {
@@ -1255,7 +1355,7 @@ void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> are
         else
         {
             info.number = layerKeys[lowerLayer]->getLabel().replace ("\n", " ");
-            info.name = lowerLayer == User ? "not assigned" : "N/A";
+            info.name = "N/A";
         }
         drawScribble (g, cell.toFloat(), info);
     }
@@ -1281,7 +1381,7 @@ void CustomControlSection::paint (juce::Graphics& g)
     g.fillRoundedRectangle (layerDisplay.toFloat(), 2.0f);
     g.setColour (Colours::mute.brighter (0.2f));
     g.setFont (juce::FontOptions ((float) layerDisplay.getHeight() * 0.85f, juce::Font::bold));
-    g.drawText (juce::String (upperLayer + 1), layerDisplay, juce::Justification::centred);
+    g.drawText (juce::String (currentLayer() + 1), layerDisplay, juce::Justification::centred);
 
     drawSilk (g, heading.toFloat(), "CUSTOM CONTROLS", 11.0f);
     g.setColour (Colours::silk.withAlpha (0.6f));

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/CustomControlsPage.h"
 #include "ui/Knobs.h"
 #include "ui/MeterComponent.h"
 #include "ui/UiContext.h"
@@ -163,14 +164,24 @@ private:
     void paintLcd (juce::Graphics&, juce::Rectangle<int>, bool colourBars, bool upper);
     bool useCursorWheel() const;
     void turnWheel (int steps);
+    /** The custom control layer of the upper part (CC EDIT edits the same one). */
+    int currentLayer() const;
+    void stepLayer (int delta);
+    /** Key `key` of a custom control layer: 0-3 the upper keys, 4-7 the lower ones. */
+    cc::Function ccFunction (int layer, int key) const;
+    /** Binds the encoders and keys to the assignments. */
+    void bindCustomControls();
     /** The scene GO recalls next (the wheel on SHOW CNTRL moves it). */
     int nextScene() const;
 
     UiContext& ctx;
-    int upperLayer = 0, lowerLayer = MuteGroups;
+    int lowerLayer = MuteGroups;
     bool viewOpened = false, compact = false;
     std::shared_ptr<float> wheelPos = std::make_shared<float> (0.5f);
     int sceneCursor = -1; // -1: the scene after the current one
+    int shownCcRevision = -1, shownCcLayer = -1;
+    Strip* shownSelection = nullptr;
+    juce::String shownValues;
 
     ViewKey upperView, lowerView;
     SurfaceKey upKey { "UP" }, downKey { "DOWN" }, dawKey { "DAW" };

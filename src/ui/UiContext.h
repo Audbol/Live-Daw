@@ -23,6 +23,11 @@ namespace livedaw::ui
 
 struct KnobBinding;
 
+namespace cc
+{
+    class Assignments;
+}
+
 /** The main display's screens: the seven keys left of the WING's display, then
     the VIEW screens the fader sections' VIEW keys open (manual 5.7-5.11). */
 enum class Screen
@@ -153,6 +158,11 @@ struct UiContext
     /** TOUCH FADER SELECT: an on-screen fader that was touched becomes the
         target of the knob right of the display (set by the main display). */
     std::function<void (const KnobBinding&, juce::Component* target)> setFineTarget;
+
+    /** The custom control assignments of the show (owned by the main component). */
+    cc::Assignments* customControls = nullptr;
+    /** After the assignments or the custom control layer changed: the CC section redraws. */
+    std::function<void()> customControlsChanged;
 };
 
 /** SETUP settings that the status bar, the surface and the pages share. */

@@ -3,6 +3,7 @@
 #include "daw/Session.h"
 #include "ui/Controls.h"
 #include "ui/FaderSection.h"
+#include "ui/FourChannelSection.h"
 #include "ui/LookAndFeel.h"
 #include "ui/MainDisplay.h"
 #include "ui/MeterBank.h"
@@ -76,6 +77,7 @@ private:
     MeterBank meterBank;
     UiContext ctx;
     std::unique_ptr<daw::Session> recording;
+    std::unique_ptr<cc::Assignments> customControlAssignments;
     std::unique_ptr<DawEditor> editor;
     bool editorShown = false;
 
@@ -88,6 +90,7 @@ private:
     std::unique_ptr<ChannelStripSection> channelStrip;
     std::unique_ptr<MainDisplay> display;
     std::unique_ptr<MonitorSection> monitor;
+    std::unique_ptr<FourChannelSection> fourChannel;
     std::unique_ptr<FaderSection> sections[LayerSet::kNumSections];
     std::unique_ptr<CustomControlSection> customControls;
     bool ccInBottomRow = true; // else docked under the monitoring panel

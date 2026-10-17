@@ -100,6 +100,14 @@ public:
     void removeFromUserLayer (const juce::String& layerId, const state::FaderRef&);
     void moveWithinUserLayer (const juce::String& layerId, int index, int delta);
 
+    //==============================================================================
+    // Edited default layers ("the default layers are entirely user-assignable"):
+    // the faders a section's default key shows instead of the generated ones.
+    // Not for USER 1 / USER 2, which show user layers.
+    void setDefaultOverride (Section, const juce::String& id, const std::vector<state::FaderRef>&);
+    void clearDefaultOverride (Section, const juce::String& id);
+    bool hasDefaultOverride (Section, const juce::String& id) const;
+
     void reset() noexcept { ld::ld_layers_reset (handle); }
 
 private:

@@ -1,4 +1,6 @@
 #include "engine/Models.h"
+#include "ui/CustomControlsPage.h"
+#include "ui/MonitorsPage.h"
 #include "ui/Pages.h"
 #include "ui/ScreenWidgets.h"
 
@@ -1374,16 +1376,13 @@ void SetupPage::closeSubScreen()
 
 void SetupPage::openCustomControls (int layer)
 {
-    juce::ignoreUnused (layer);
-    overlays.show (*this, "CUSTOM CONTROLS",
-                   std::make_unique<MessageBody> ("CUSTOM CONTROLS ARE NOT AVAILABLE YET",
-                                                  "On the console, CC EDIT assigns functions to the custom control knobs and buttons "
-                                                  "beside the display. Live DAW doesn't have custom controls yet."));
+    if (ctx.customControls != nullptr)
+        showSubScreen (std::make_unique<CustomControlsPage> (ctx, *ctx.customControls, layer));
 }
 
 void SetupPage::openMonitors()
 {
-    overlays.show (*this, "MONITORS", makeMonitorPanel (ctx));
+    showSubScreen (std::make_unique<MonitorsPage> (ctx));
 }
 
 std::vector<KnobBinding> SetupPage::getKnobs()

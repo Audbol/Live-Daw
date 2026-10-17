@@ -81,75 +81,6 @@ namespace
         return stripName (s) != s.getLabel();
     }
 
-    juce::StringArray numbered (const juce::StringArray& names, int count)
-    {
-        juce::StringArray items;
-        for (int i = 0; i < count; ++i)
-            items.add (juce::String (i + 1) + ": " + (i < names.size() ? names[i] : juce::String ("(not available)")));
-        return items;
-    }
-
-    /** The monitor setup: outputs, PFL / AFL and level (SETUP > MONITORS until
-        the console's MONITORS screen exists). */
-    class MonitorPanel final : public juce::Component
-    {
-    public:
-        explicit MonitorPanel (UiContext& c)
-            : ctx (c),
-              solo ({ "PFL", "AFL" }, [&c] { return c.engine.soloAfl.load() ? 1 : 0; }, [&c] (int i) { c.engine.soloAfl = i == 1; }, ChoiceKeys::prePost())
-        {
-            const auto outs = numbered (ctx.engine.getHardwareOutputNames(), juce::jmax (64, ctx.engine.getHardwareOutputNames().size()));
-            left.setItems (outs, "OFF");
-            right.setItems (outs, "OFF");
-            left.bind (&ctx.engine.monitorOutputLeft);
-            right.bind (&ctx.engine.monitorOutputRight);
-            level.setBinding (bindLinear ("LEVEL", ctx.engine.monitorLevelDb, -60.0f, 10.0f, " dB", 1, 0.0f));
-            for (auto* c2 : { (juce::Component*) &left, (juce::Component*) &right, (juce::Component*) &solo, (juce::Component*) &level })
-                addAndMakeVisible (c2);
-        }
-
-        void paint (juce::Graphics& g) override
-        {
-            drawDarkPanel (g, outputBox, "MONITOR OUTPUT");
-            drawDarkPanel (g, soloBox, "SOLO");
-            drawDarkPanel (g, levelBox, "MONITOR LEVEL");
-            g.setColour (Dark::textDim);
-            g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
-            g.drawText ("LEFT", leftLabel, juce::Justification::centredLeft);
-            g.drawText ("RIGHT", rightLabel, juce::Justification::centredLeft);
-            g.drawFittedText ("Without a solo, the monitor follows MAIN 1. The monitor can also feed any output on ROUTING > OUTPUTS (source group MONITOR).",
-                              noteArea, juce::Justification::topLeft, 3);
-        }
-
-        void resized() override
-        {
-            auto b = getLocalBounds().reduced (12, 0);
-            auto top = b.removeFromTop (b.getHeight() / 2);
-            outputBox = top.removeFromLeft (top.getWidth() * 55 / 100).withTrimmedRight (8);
-            soloBox = top;
-            levelBox = b.withTrimmedTop (8).withWidth (juce::jmin (b.getWidth(), 280));
-
-            auto o = darkPanelBody (outputBox, true).reduced (8, 4);
-            leftLabel = o.removeFromTop (20);
-            left.setBounds (o.removeFromTop (34));
-            o.removeFromTop (8);
-            rightLabel = o.removeFromTop (20);
-            right.setBounds (o.removeFromTop (34));
-            o.removeFromTop (8);
-            noteArea = o;
-
-            solo.setBounds (darkPanelBody (soloBox, true).withSizeKeepingCentre (juce::jmin (220, soloBox.getWidth() - 20), 44));
-            level.setBounds (darkPanelBody (levelBox, true));
-        }
-
-    private:
-        UiContext& ctx;
-        IntCombo left, right;
-        ChoiceKeys solo;
-        DisplayKnob level;
-        juce::Rectangle<int> outputBox, soloBox, levelBox, leftLabel, rightLabel, noteArea;
-    };
-
     void drawKey (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& text, bool on, juce::Colour onColour, bool enabled = true)
     {
         if (r.isEmpty())
@@ -223,11 +154,6 @@ namespace
         g.drawFittedText (value, r, juce::Justification::centredLeft, 1);
     }
 } // namespace
-
-std::unique_ptr<juce::Component> makeMonitorPanel (UiContext& ctx)
-{
-    return std::make_unique<MonitorPanel> (ctx);
-}
 
 RoutingPage::RoutingPage (UiContext& c) : ctx (c)
 {

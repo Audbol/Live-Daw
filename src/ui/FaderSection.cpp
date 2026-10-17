@@ -158,10 +158,10 @@ void FaderSection::selectLayer (const juce::String& id)
         if (section != LayerSet::Center && ctx.settings.getBoolValue (uiprefs::userLayerLink[0], false)
             && ctx.settings.getBoolValue (uiprefs::userLayerLink[1], false))
         {
-            const auto far = section == LayerSet::Left ? LayerSet::Right : LayerSet::Left;
-            if (ctx.show.layers.getSelectedLayerId (far) != id)
+            const auto opposite = section == LayerSet::Left ? LayerSet::Right : LayerSet::Left;
+            if (ctx.show.layers.getSelectedLayerId (opposite) != id)
             {
-                ctx.show.layers.setSelectedLayerId (far, id);
+                ctx.show.layers.setSelectedLayerId (opposite, id);
                 changed = true;
             }
         }

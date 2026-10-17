@@ -18,6 +18,7 @@
 //! recalling during a show can't cause dropouts. Message thread only.
 
 use crate::console::{self, section, ApplyResult, FadeParam, FadeTarget, PluginBridge};
+use crate::custom::CustomControls;
 use crate::layers::LayerSet;
 use crate::legacy::{self, Converter};
 use crate::refs::{refs_from_string, refs_to_string, StripRef};
@@ -104,6 +105,8 @@ struct Fade {
 pub struct Show {
     pub name: String,
     pub layers: LayerSet,
+    /// The CUSTOM CONTROLS assignments (CC EDIT).
+    pub custom: CustomControls,
     scenes: Vec<Scene>,
     current_scene: i32,
     fades: Vec<Fade>,
@@ -116,6 +119,7 @@ impl Default for Show {
         Self {
             name: "Untitled show".into(),
             layers: LayerSet::default(),
+            custom: CustomControls::default(),
             scenes: Vec::new(),
             current_scene: -1,
             fades: Vec::new(),
@@ -401,6 +405,7 @@ impl Show {
         root.set("version", SHOW_VERSION).set("name", &self.name).set("currentScene", self.current_scene);
         root.add(console::save_console(engine, bridge));
         root.add(self.layers.to_xml());
+        root.add(self.custom.to_xml());
 
         let scenes = root.add_new("Scenes");
         for scene in &self.scenes {
@@ -447,6 +452,7 @@ impl Show {
         if xml.has_tag("LiveDAWSession") {
             self.scenes.clear();
             self.layers.reset();
+            self.custom.reset();
             self.current_scene = -1;
             self.name = "Imported session".into();
             let mut converter = Converter::default();
@@ -476,6 +482,10 @@ impl Show {
             Some(l) if converter.is_some() => self.layers.from_xml(&legacy::convert_layers(l)),
             Some(l) => self.layers.from_xml(l),
             None => self.layers.reset(),
+        }
+        match xml.child("CustomControls") {
+            Some(c) => self.custom.from_xml(c),
+            None => self.custom.reset(),
         }
 
         let mut warnings = console::load_console(engine, console_xml, bridge, load_plugins);
@@ -569,6 +579,7 @@ impl Show {
         self.current_scene = -1;
         self.name = "Untitled show".into();
         self.layers.reset();
+        self.custom.reset();
         engine.reset();
         engine.set_num_channels(num_channels);
     }

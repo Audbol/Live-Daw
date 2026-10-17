@@ -233,10 +233,6 @@ private:
     std::unique_ptr<SetupKeyWatcher> setupKeyWatcher;
 };
 
-/** The monitor setup (outputs, PFL/AFL, level), shown by SETUP's MONITORS key
-    until the console's MONITORS screen exists. */
-std::unique_ptr<juce::Component> makeMonitorPanel (UiContext&);
-
 /** LIBRARY (manual 5.6): the open show's scenes and snippets on the left
     (ShowPanel), the tabs SHOW | SNAP | SNIP | CLIP | FX | CHAN on the right
     with the GO PREV / GO NEXT / PREV / NEXT / GO transport, the SCOPE window,

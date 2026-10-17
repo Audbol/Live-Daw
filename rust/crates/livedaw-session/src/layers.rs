@@ -91,17 +91,32 @@ pub const INPUT_KEY_CHANNELS: usize = 12;
 /// The ids of the USER 1 and USER 2 keys.
 pub const USER_KEYS: [&str; 2] = ["user-1", "user-2"];
 
+/// A default layer key edited on VIEW > CONFIG: its faders replace the generated ones.
+#[derive(Debug, Clone, PartialEq)]
+struct Override {
+    section: usize,
+    id: String,
+    faders: Vec<FaderRef>,
+}
+
 #[derive(Debug, Clone)]
 pub struct LayerSet {
     widths: [i32; NUM_SECTIONS],
     fitted: [i32; NUM_SECTIONS],
     user_layers: Vec<Layer>,
     selected: [String; NUM_SECTIONS],
+    overrides: Vec<Override>,
 }
 
 impl Default for LayerSet {
     fn default() -> Self {
-        Self { widths: WING_WIDTHS, fitted: WING_WIDTHS, user_layers: Vec::new(), selected: DEFAULT_SELECTION.map(String::from) }
+        Self {
+            widths: WING_WIDTHS,
+            fitted: WING_WIDTHS,
+            user_layers: Vec::new(),
+            selected: DEFAULT_SELECTION.map(String::from),
+            overrides: Vec::new(),
+        }
     }
 }
 
@@ -273,6 +288,13 @@ impl LayerSet {
                 keys
             }
         };
+        // "The default layers are entirely user-assignable": edited keys keep
+        // their name and show the edited faders.
+        for l in &mut layers {
+            if let Some(o) = self.overrides.iter().find(|o| o.section == section && o.id == l.id) {
+                l.faders.clone_from(&o.faders);
+            }
+        }
         for (i, id) in USER_KEYS.iter().enumerate() {
             let user = self.user_layers.get(i);
             layers.push(Layer {
@@ -401,6 +423,29 @@ impl LayerSet {
         }
     }
 
+    // ---- edited default layers -----------------------------------------------------
+
+    /// Replaces the faders of a section's default key (not USER 1 / USER 2,
+    /// which show user layers).
+    pub fn set_default_override(&mut self, section: usize, id: &str, faders: Vec<FaderRef>) {
+        if section >= NUM_SECTIONS || id.is_empty() || id.starts_with("user-") {
+            return;
+        }
+        match self.overrides.iter_mut().find(|o| o.section == section && o.id == id) {
+            Some(o) => o.faders = faders,
+            None => self.overrides.push(Override { section, id: id.to_owned(), faders }),
+        }
+    }
+
+    /// Back to the generated faders.
+    pub fn clear_default_override(&mut self, section: usize, id: &str) {
+        self.overrides.retain(|o| o.section != section || o.id != id);
+    }
+
+    pub fn has_default_override(&self, section: usize, id: &str) -> bool {
+        self.overrides.iter().any(|o| o.section == section && o.id == id)
+    }
+
     // ---- persistence ---------------------------------------------------------------
 
     pub fn to_xml(&self) -> Element {
@@ -412,6 +457,9 @@ impl LayerSet {
             .set("right", self.selected(RIGHT));
         for l in &self.user_layers {
             xml.add_new("Layer").set("id", &l.id).set("name", &l.name).set("faders", faders_to_string(&l.faders));
+        }
+        for o in &self.overrides {
+            xml.add_new("Override").set("section", o.section).set("id", &o.id).set("faders", faders_to_string(&o.faders));
         }
         xml
     }
@@ -439,6 +487,10 @@ impl LayerSet {
                 faders: faders_from_string(e.str_or("faders", "")),
                 user: true,
             });
+        }
+        for e in xml.children_named("Override") {
+            let section = usize::try_from(parse_int_prefix(e.str_or("section", "-1"))).unwrap_or(NUM_SECTIONS);
+            self.set_default_override(section, e.str_or("id", ""), faders_from_string(e.str_or("faders", "")));
         }
     }
 
@@ -592,6 +644,30 @@ mod tests {
         let mut loaded = LayerSet::default();
         loaded.from_xml(&set.to_xml());
         assert_eq!([loaded.width(LEFT), loaded.width(CENTER), loaded.width(RIGHT)], [0, 0, 6]);
+    }
+
+    #[test]
+    fn default_keys_can_be_edited() {
+        let mut set = LayerSet::default();
+        let console = ConsoleRefs::wing(40);
+        set.set_default_override(LEFT, "in-1", vec![ch(5), FaderRef::Dca(1)]);
+        set.set_default_override(LEFT, "user-1", vec![ch(9)]); // the USER keys show user layers
+        set.set_default_override(7, "in-2", vec![ch(9)]);
+
+        let left = set.default_layers_for(LEFT, &console);
+        assert_eq!(left[0].name, "CH 1-12");
+        assert_eq!(left[0].faders, vec![ch(5), FaderRef::Dca(1)]);
+        assert!(left[5].faders.is_empty());
+        assert!(set.has_default_override(LEFT, "in-1"));
+        assert!(!set.has_default_override(CENTER, "in-1"));
+        assert_eq!(set.default_layers_for(CENTER, &console)[3].faders.len(), 40);
+
+        let mut loaded = LayerSet::default();
+        loaded.from_xml(&set.to_xml());
+        assert_eq!(loaded.default_layers_for(LEFT, &console)[0].faders, vec![ch(5), FaderRef::Dca(1)]);
+
+        loaded.clear_default_override(LEFT, "in-1");
+        assert_eq!(loaded.default_layers_for(LEFT, &console)[0].faders.len(), 12);
     }
 
     #[test]
