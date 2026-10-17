@@ -363,6 +363,78 @@ public:
     }
 };
 
+/** A WING drop-down field (EQ MODEL, FX PROCESSOR, KEY SOURCE...): a dark well
+    with a small caption over the value in large type, and its key at the right
+    (a down arrow or the vertical dots). Touching it calls `open`, which shows
+    the list (popups::chooseFrom) under the field. */
+class ChoiceField final : public juce::Component, private juce::Timer
+{
+public:
+    ChoiceField (juce::String captionText, std::function<juce::String()> value, std::function<void (ChoiceField&)> openList)
+        : caption (std::move (captionText)), getValue (std::move (value)), open (std::move (openList))
+    {
+        startTimerHz (4);
+    }
+
+    bool dotsKey = false;          // the vertical dots instead of the down arrow
+    std::optional<Icon> icon;      // drawn left of the caption
+
+    void paint (juce::Graphics& g) override
+    {
+        shown = getValue ? getValue() : juce::String();
+        auto r = getLocalBounds().toFloat();
+        auto key = r.removeFromRight (juce::jmin (r.getHeight() * 0.62f, r.getWidth() * 0.3f));
+        const bool enabled = isEnabled();
+        paintKeyBody (g, r, colours::well);
+        paintKeyBody (g, key, colours::keyOff);
+        g.setColour (enabled ? colours::ink : colours::dim);
+        const auto kc = key.getCentre();
+        const float s = juce::jlimit (3.0f, 8.0f, key.getWidth() * 0.22f);
+        if (dotsKey)
+        {
+            const float d = juce::jlimit (2.5f, 5.0f, key.getHeight() * 0.09f);
+            for (int i = -1; i <= 1; ++i)
+                g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (kc.translated (0.0f, (float) i * d * 2.2f)));
+        }
+        else
+        {
+            juce::Path tri;
+            tri.addTriangle (kc.x - s, kc.y - s * 0.55f, kc.x + s, kc.y - s * 0.55f, kc.x, kc.y + s * 0.65f);
+            g.fillPath (tri);
+        }
+        auto t = r.reduced (juce::jmax (4.0f, r.getHeight() * 0.12f), r.getHeight() * 0.08f);
+        if (icon.has_value())
+        {
+            drawIcon (g, *icon, t.removeFromLeft (t.getHeight()).reduced (t.getHeight() * 0.12f), enabled ? colours::ink : colours::dim);
+            t.removeFromLeft (t.getHeight() * 0.2f);
+        }
+        const float fullH = t.getHeight();
+        g.setColour (enabled ? colours::caption : colours::dim);
+        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 16.0f, fullH * 0.34f), juce::Font::plain));
+        g.drawFittedText (caption, t.removeFromTop (fullH * 0.38f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.8f);
+        g.setColour (enabled ? colours::ink : colours::dim);
+        g.setFont (juce::FontOptions (juce::jlimit (11.0f, 28.0f, fullH * 0.56f), juce::Font::plain));
+        g.drawFittedText (shown, t.toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (isEnabled() && open && getLocalBounds().contains (e.getPosition()))
+            open (*this);
+    }
+
+private:
+    void timerCallback() override
+    {
+        if (getValue && getValue() != shown)
+            repaint();
+    }
+
+    juce::String caption, shown;
+    std::function<juce::String()> getValue;
+    std::function<void (ChoiceField&)> open;
+};
+
 /** A row of keys of which one is lit; keys can be disabled. */
 class Segmented final : public juce::Component, private juce::Timer
 {

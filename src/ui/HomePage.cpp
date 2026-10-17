@@ -302,7 +302,7 @@ public:
             bindKey (*loCut, p.filter.lowCut);
             hiCut = &key ("HI CUT", Icon::HighCut, colours::eqOn);
             bindKey (*hiCut, p.filter.highCut);
-            tool = &key (toolFilterName (p.filter.toolModel.load()), toolFilterIcon (p.filter.toolModel.load()), colours::eqOn);
+            tool = &key (toolFilterName (p.filter.toolModel.load()), toolFilterIcon (p.filter.toolModel.load()), toolFilterColour (p.filter.toolModel.load()));
             bindKey (*tool, p.filter.tool);
         }
 
@@ -441,6 +441,7 @@ private:
         {
             tool->setButtonText (toolFilterName (strip.params.filter.toolModel.load()));
             tool->setIcon (toolFilterIcon (strip.params.filter.toolModel.load()));
+            tool->setOnColour (toolFilterColour (strip.params.filter.toolModel.load()));
         }
         if (strip.params.eq.model.load() != shownEq)
         {

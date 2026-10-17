@@ -8,12 +8,15 @@ namespace livedaw::ui
 {
 
 /** Frequency response of a strip's EQ or FILTER, computed by the engine's own
-    filters (ld_strip_response), drawn like the WING: a black graph with a grey
-    log grid, the EQ curve in amber with a translucent fill, a frequency ruler
-    along the bottom. With the WING EQ (STD) loaded, the bands are shown as
-    "+" handles: drag to set frequency and gain, mouse wheel for Q. The FILTER
-    view draws the filter response in blue over the EQ curve, with the low and
-    high cut as vertical LC / HC lines whose handles drag the frequencies. */
+    filters (ld_strip_response), drawn like the WING (firmware 3.1): a black
+    graph with a grey log grid, the EQ curve in amber over a dark amber fill, a
+    piano-key ruler (along the bottom, or at the top on the EQ screen) and the
+    frequencies as 20 ... 1K ... 20K. With the WING EQ (STD) loaded, each band
+    is a grey line from its label at the top with an open ring at its gain
+    (the selected band's line blue, its ring filled black): drag to set
+    frequency and gain, mouse wheel for Q. The FILTER view draws the filter in
+    blue over the EQ curve, LC / HC (and the all-pass AP, yellow) as vertical
+    lines labelled at the top with a ring handle near the bottom. */
 class ResponseGraph final : public juce::Component, private juce::Timer
 {
 public:
@@ -26,6 +29,22 @@ public:
     ResponseGraph();
 
     void setStrip (Strip*, Block);
+
+    /** Where the piano-key ruler goes. */
+    enum class Ruler
+    {
+        Bottom,
+        Top,
+        None
+    };
+    void setRuler (Ruler r)
+    {
+        ruler = r;
+        repaint();
+    }
+
+    /** The piano-key ruler: grey white keys, the black keys as dark notches. */
+    static void paintPianoRuler (juce::Graphics&, juce::Rectangle<float> area, std::function<float (float hz)> xForHz);
 
     /** Band index (into the STD bands) last touched, or -1. */
     int getSelectedBand() const noexcept { return selectedBand; }
@@ -68,6 +87,7 @@ private:
 
     Strip* strip = nullptr;
     Block block = Eq;
+    Ruler ruler = Ruler::Bottom;
     std::vector<double> freqs, response, eqResponse;
     std::vector<Band> bands;
     int builtModel = -1, selectedBand = -1, dragBand = -1, dragLine = -1;

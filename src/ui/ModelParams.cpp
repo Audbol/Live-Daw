@@ -1,4 +1,5 @@
 #include "ui/ModelParams.h"
+#include "ui/WingPopups.h"
 
 namespace livedaw::ui
 {
@@ -242,13 +243,9 @@ ModelSelector::ModelSelector()
     startTimerHz (8);
 }
 
-void ModelSelector::bind (models::Table t, std::atomic<int32_t>* m, std::function<void (int)> onSelect,
-                          const juce::StringArray& allowed, const std::vector<Group>& groups)
+std::vector<ModelSelector::Row> ModelSelector::rows (models::Table t, const juce::StringArray& allowed, const std::vector<Group>& groups)
 {
-    model = m;
-    select = std::move (onSelect);
-    clear (juce::dontSendNotification);
-
+    std::vector<Row> out;
     const auto& all = models::table (t);
     auto ok = [&allowed] (const models::Model& spec) { return allowed.isEmpty() || allowed.contains (spec.token); };
 
@@ -265,10 +262,10 @@ void ModelSelector::bind (models::Table t, std::atomic<int32_t>* m, std::functio
                     continue;
                 if (! heading)
                 {
-                    addSectionHeading (group.heading);
+                    out.push_back ({ group.heading, -1 });
                     heading = true;
                 }
-                addItem (all[(size_t) i].name.toUpperCase(), i + 1);
+                out.push_back ({ all[(size_t) i].name.toUpperCase(), i });
                 shown.add (token);
             }
         }
@@ -279,28 +276,67 @@ void ModelSelector::bind (models::Table t, std::atomic<int32_t>* m, std::functio
                 continue;
             if (! heading)
             {
-                addSectionHeading ("MORE");
+                out.push_back ({ "MORE", -1 });
                 heading = true;
             }
-            addItem (spec.name.toUpperCase(), spec.index + 1);
+            out.push_back ({ spec.name.toUpperCase(), spec.index });
         }
-    }
-    else
-    {
-        int lastCategory = -1;
-        for (auto& spec : all)
-        {
-            if (! ok (spec))
-                continue;
-            if ((int) spec.category != lastCategory)
-            {
-                addSectionHeading (categoryName (spec.category));
-                lastCategory = (int) spec.category;
-            }
-            addItem (spec.name.toUpperCase(), spec.index + 1);
-        }
+        return out;
     }
 
+    int lastCategory = -1;
+    for (auto& spec : all)
+    {
+        if (! ok (spec))
+            continue;
+        if ((int) spec.category != lastCategory)
+        {
+            if (const juce::String heading = categoryName (spec.category); heading.isNotEmpty())
+                out.push_back ({ heading, -1 });
+            lastCategory = (int) spec.category;
+        }
+        out.push_back ({ spec.name.toUpperCase(), spec.index });
+    }
+    return out;
+}
+
+void ModelSelector::choose (juce::Component& anchor, models::Table t, int current, std::function<void (int)> onSelect,
+                            const juce::StringArray& allowed, const std::vector<Group>& groups)
+{
+    const auto list = rows (t, allowed, groups);
+    juce::StringArray items;
+    popups::ListOptions options;
+    int selected = -1;
+    for (int i = 0; i < (int) list.size(); ++i)
+    {
+        const auto& row = list[(size_t) i];
+        items.add (row.model < 0 ? "- " + row.text + " -" : row.text);
+        if (row.model < 0)
+            options.disabled.push_back (i);
+        if (row.model == current)
+            selected = i;
+    }
+    options.columns = items.size() > 24 ? 2 : 1;
+    popups::chooseFrom (anchor, items, selected, [list, onSelect] (int i)
+    {
+        if (i >= 0 && i < (int) list.size() && list[(size_t) i].model >= 0 && onSelect)
+            onSelect (list[(size_t) i].model);
+    }, options);
+}
+
+void ModelSelector::bind (models::Table t, std::atomic<int32_t>* m, std::function<void (int)> onSelect,
+                          const juce::StringArray& allowed, const std::vector<Group>& groups)
+{
+    model = m;
+    select = std::move (onSelect);
+    clear (juce::dontSendNotification);
+    for (auto& row : rows (t, allowed, groups))
+    {
+        if (row.model < 0)
+            addSectionHeading (row.text);
+        else
+            addItem (row.text, row.model + 1);
+    }
     setEnabled (model != nullptr);
     timerCallback();
 }
