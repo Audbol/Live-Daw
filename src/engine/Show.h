@@ -139,6 +139,10 @@ public:
     juce::Result saveToFile (const juce::File&) const;
     juce::Result loadFromFile (const juce::File&, bool loadPlugins = true);
 
+    /** Adds the snapshot scenes of a WING .show file (see WingRemote::importShow);
+        `report` gets what was skipped. The console only grows to 40 channels. */
+    juce::Result importWingShow (ld::LdWing*, const juce::File&, juce::String& report);
+
     /** Clears scenes and resets the console to `numChannels` channels (the WING has 40). */
     void clear (int numChannels);
 

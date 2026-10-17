@@ -70,7 +70,12 @@ public:
         makeKey (keys, *this, "ADD ITEM\nTO SHOW", Icon::Plus, false); // needs the file browser (G-N3)
         makeKey (keys, *this, "EDIT\nTAG", Icon::Tag)->onClick = [this] { editTag(); };
         makeKey (keys, *this, "SEND\nMIDI", Icon::Edit, false);        // needs MIDI (G-N1)
-        rows = { { {}, { keys[0], keys[1] }, { keys[2] } }, { {}, { keys[3] }, { keys[4] } }, { {}, { keys[5] }, { keys[7], keys[6] } } };
+        // WING files (Live DAW): snapshots apply to the console, shows add scenes.
+        // IMPORT WING SNAP/SHOW... and EXPORT WING SNAP... (the file dialogs say which).
+        makeKey (keys, *this, "IMPORT\nWING", Icon::LoadTray)->onClick = [this] { importWing(); };
+        makeKey (keys, *this, "EXPORT\nWING", Icon::SaveTray)->onClick = [this] { exportWing(); };
+        rows = { { {}, { keys[0], keys[1] }, { keys[2] } }, { {}, { keys[3] }, { keys[4] } }, { {}, { keys[5] }, { keys[7], keys[6] } },
+                 { {}, { keys[8] }, { keys[9] } } };
     }
 
     void paint (juce::Graphics& g) override
@@ -114,10 +119,71 @@ private:
         }), true);
     }
 
+    /** IMPORT WING SNAP/SHOW: a .snap is applied to the console, a .show's
+        snapshots become scenes. The log gets what could not be applied. */
+    void importWing()
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Import a WING snapshot or show",
+                                                       juce::File::getSpecialLocation (juce::File::userDocumentsDirectory), "*.snap;*.show");
+        juce::Component::SafePointer<ShowTab> safe (this);
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [safe] (const juce::FileChooser& fc)
+        {
+            const auto file = fc.getResult();
+            if (safe == nullptr || file == juce::File())
+                return;
+            auto& ctx = safe->page.ctx;
+            juce::String report;
+            const auto result = file.hasFileExtension ("show") ? ctx.engine.getWing().importShow (ctx.show, file, report)
+                                                               : ctx.engine.getWing().importSnapshot (file, report);
+            juce::StringArray lines;
+            lines.addLines (report);
+            lines.removeEmptyStrings();
+            if (result.failed())
+                ctx.log.error (file.getFileName() + ": " + lines.joinIntoString ("; "));
+            else if (! lines.isEmpty())
+            {
+                ctx.log.info (file.getFileName() + ": " + lines[0]);
+                for (int i = 1; i < lines.size(); ++i)
+                    ctx.log.warning (lines[i].trim());
+            }
+            if (ctx.structureChanged)
+                ctx.structureChanged();
+            safe->page.list->refresh();
+            safe->repaint();
+        });
+    }
+
+    /** EXPORT WING SNAP: the console as a WING snapshot (experimental). */
+    void exportWing()
+    {
+        auto& ctx = page.ctx;
+        const auto name = juce::File::createLegalFileName (ctx.show.getName().isNotEmpty() ? ctx.show.getName() : juce::String ("Live DAW"));
+        chooser = std::make_unique<juce::FileChooser> ("Export a WING snapshot (experimental)",
+                                                       juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile (name + ".snap"),
+                                                       "*.snap");
+        juce::Component::SafePointer<ShowTab> safe (this);
+        chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles
+                                  | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [safe] (const juce::FileChooser& fc)
+        {
+            auto file = fc.getResult();
+            if (safe == nullptr || file == juce::File())
+                return;
+            file = file.withFileExtension ("snap");
+            auto& c = safe->page.ctx;
+            const auto result = c.engine.getWing().exportSnapshot (file);
+            if (result.wasOk())
+                c.log.info ("Exported WING snapshot (experimental): " + file.getFullPathName());
+            else
+                c.log.error ("WING snapshot export failed: " + result.getErrorMessage());
+        });
+    }
+
     LibraryPage& page;
     juce::OwnedArray<WingKey> keys;
     std::vector<KeyRow> rows;
     juce::Rectangle<int> info;
+    std::unique_ptr<juce::FileChooser> chooser;
 };
 
 //==============================================================================
