@@ -10,9 +10,16 @@
 //!  4. buses 1-8 sum input sends and sends from buses 9+               (parallel)
 //!  5. mains sum channel/aux/bus main sends                            (parallel)
 //!  6. matrices sum matrix sends from all strips + their direct input  (parallel)
-//!  7. solo (PFL/AFL per strip type) builds the monitor bus, else it follows
-//!     Main 1; then the monitor level, DIM, mute, MONO and SWAP
+//!  7. solo (PFL/AFL per strip type, routed by the SOLO MODE) builds the solo
+//!     buses of the two monitor paths (SPEAKERS and PHONES), each with
+//!     its SOURCE (Main 1 by default); then each path's level, DIM, mute,
+//!     MONO and SWAP
 //!  8. outputs are written, then safety-clipped
+//!
+//! Before stage 1, the sources (`sources.rs`) process the input ports the
+//! channels read, and the console works out the block's solos and mutes
+//! (`solo.rs`: SIP, MUTEGROUP/SIP OVERRIDE, talk tags) and its talkback
+//! (`talk.rs`), which the bus, main and matrix stages add to their sums.
 //!
 //! The recorder (`livedaw-recorder`) runs around every chunk: it may shorten
 //! the chunk (loop end, playback ring switch) so each chunk is contiguous on
@@ -31,14 +38,17 @@ use crate::garbage::Garbage;
 use crate::params::*;
 use crate::pool::WorkerPool;
 use crate::sends::{send_mode, MAX_BUSES};
+use crate::solo::{self, solo_mode, SoloBlock};
+use crate::sources::{SourceDsp, SourceTable};
 use crate::strip::{source_ptr, ProcessContext, Strip};
+use crate::talk::{TalkBlock, TalkGains, TalkRamps};
 use livedaw_dsp::util::*;
 use livedaw_dsp::wing::fx::{allowed_in_slot, FxContext, FxDevice};
 use livedaw_dsp::wing::FX_MODELS;
 use livedaw_recorder::{playback_channel, RecordStream, RecordTrackSpec, Recorder, SourceKind};
 use std::cell::UnsafeCell;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::atomic::{AtomicPtr, Ordering::*};
+use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering::*};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
@@ -63,7 +73,7 @@ unsafe impl Sync for Topology {}
 unsafe impl Send for Topology {}
 
 impl Topology {
-    fn inputs(&self) -> impl Iterator<Item = &Arc<Strip>> {
+    fn inputs(&self) -> impl Iterator<Item = &Arc<Strip>> + Clone {
         self.channels.iter().chain(&self.auxes)
     }
 
@@ -71,10 +81,10 @@ impl Topology {
     unsafe fn active(&self) -> &[Arc<Strip>] {
         &*self.active_inputs.get()
     }
-    fn buses(&self) -> impl Iterator<Item = &Arc<Strip>> {
+    fn buses(&self) -> impl Iterator<Item = &Arc<Strip>> + Clone {
         self.lower_buses.iter().chain(&self.upper_buses)
     }
-    fn all(&self) -> impl Iterator<Item = &Arc<Strip>> {
+    fn all(&self) -> impl Iterator<Item = &Arc<Strip>> + Clone {
         self.inputs().chain(self.buses()).chain(&self.mains).chain(&self.matrices)
     }
 
@@ -147,12 +157,29 @@ struct AudioState {
     hw_out_to_active: Vec<i32>,
     hw_in_ptrs: Vec<*const f32>,
     hw_out_ptrs: Vec<*mut f32>,
-    monitor: [Vec<f32>; 2],
-    last_monitor_gain: f32,
-    /// MONO / SWAP: 2x2 matrix (ll, rl, lr, rr) of the last block.
-    last_monitor_matrix: [f32; 4],
-    last_main_to_monitor: f32,
+    /// The monitor paths SPEAKERS (0) and PHONES (1), left and right.
+    monitor: [[Vec<f32>; 2]; 2],
+    monitor_ramps: [MonitorRamps; 2],
+    /// The sources' processing and the input pointers the channels read.
+    sources: SourceDsp,
     block_counter: u64,
+}
+
+/// A monitor path's ramps from the last block.
+#[derive(Clone, Copy)]
+struct MonitorRamps {
+    level: f32,
+    /// MONO / SWAP: 2x2 matrix (ll, rl, lr, rr).
+    matrix: [f32; 4],
+    /// The SOURCE's gain, and which source played.
+    source: f32,
+    source_index: i32,
+}
+
+impl Default for MonitorRamps {
+    fn default() -> Self {
+        Self { level: 0.0, matrix: MONITOR_STEREO, source: 1.0, source_index: 0 }
+    }
 }
 
 /// Monitor matrices (out_l = m[0]*L + m[1]*R, out_r = m[2]*L + m[3]*R).
@@ -193,6 +220,13 @@ pub struct Engine {
     recorder: Recorder,
     /// RTA, LR scope and LISTEN on one strip at a time (`analyser.rs`).
     analysis: Analyser,
+    /// ROUTING > SOURCES.
+    sources: SourceTable,
+    /// Talkback's ramps per destination (owned by the destination tasks).
+    talk_ramps: TalkRamps,
+    /// DCAs named MON A / MON B / MON LVL: bit n = DCA n+1 controls the
+    /// SPEAKERS path, bit 16 + n the PHONES path.
+    dca_monitor: AtomicU32,
 }
 
 // SAFETY: `audio` is only touched by the audio thread (process) or by prepare
@@ -211,6 +245,19 @@ fn default_name(kind: StripKind, index: usize) -> String {
         StripKind::Bus => format!("Bus {}", index + 1),
         StripKind::Main => format!("Main {}", index + 1),
         StripKind::Matrix => format!("Mtx {}", index + 1),
+    }
+}
+
+/// The monitor paths a DCA name controls (bit 0 = SPEAKERS, bit 1 = PHONES):
+/// "MON A" (PHONES, path 1 on the WING), "MON B" (SPEAKERS), "MON LVL" (both),
+/// ignoring case, spaces and dots.
+pub fn monitor_dca_paths(name: &str) -> u32 {
+    let key: String = name.chars().filter(|c| !matches!(c, ' ' | '.' | '_' | '-')).collect::<String>().to_ascii_uppercase();
+    match key.as_str() {
+        "MONA" => 2,
+        "MONB" => 1,
+        "MONLVL" => 3,
+        _ => 0,
     }
 }
 
@@ -238,22 +285,25 @@ impl Engine {
                 hw_out_to_active: Vec::new(),
                 hw_in_ptrs: Vec::new(),
                 hw_out_ptrs: Vec::new(),
-                monitor: [vec![0.0; DEFAULT_BLOCK], vec![0.0; DEFAULT_BLOCK]],
-                last_monitor_gain: 0.0,
-                last_monitor_matrix: MONITOR_STEREO,
-                last_main_to_monitor: 1.0,
+                monitor: std::array::from_fn(|_| [vec![0.0; DEFAULT_BLOCK], vec![0.0; DEFAULT_BLOCK]]),
+                monitor_ramps: Default::default(),
+                sources: SourceDsp::default(),
                 block_counter: 0,
             }),
             controls: EngineControls::default(),
             fx: (0..NUM_FX).map(|_| FxRack::default()).collect(),
             recorder: Recorder::new(),
             analysis: Analyser::new(),
+            sources: SourceTable::default(),
+            talk_ramps: TalkRamps::default(),
+            dca_monitor: AtomicU32::new(0),
         };
         // SAFETY: not published yet, no audio callback.
         unsafe {
             for f in engine.fx.iter() {
                 f.prepare(DEFAULT_BLOCK);
             }
+            (*engine.audio.get()).sources.prepare(0, DEFAULT_BLOCK);
         }
         let mut st = engine.lock();
         engine.build_fixed(&mut st);
@@ -420,7 +470,10 @@ impl Engine {
         self.publish(&st);
         self.controls.reset();
         self.analysis.reset();
-        *self.names.lock().unwrap_or_else(|e| e.into_inner()) = GroupNames::default();
+        self.sources.reset();
+        let mut names = self.names.lock().unwrap_or_else(|e| e.into_inner());
+        *names = GroupNames::default();
+        self.update_monitor_dcas(&names);
     }
 
     pub fn strips(&self, kind: StripKind) -> Vec<Arc<Strip>> {
@@ -525,9 +578,55 @@ impl Engine {
     }
 
     pub fn set_dca_name(&self, i: usize, name: &str) {
-        if let Some(n) = self.names.lock().unwrap_or_else(|e| e.into_inner()).dcas.get_mut(i) {
+        let mut names = self.names.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(n) = names.dcas.get_mut(i) {
             *n = name.to_owned();
         }
+        self.update_monitor_dcas(&names);
+    }
+
+    /// DCAs named MON A, MON B or MON LVL control the monitor level of the
+    /// PHONES, the SPEAKERS or both, as on the WING (firmware 1.09).
+    fn update_monitor_dcas(&self, names: &GroupNames) {
+        let roles = names.dcas.iter().enumerate().fold(0u32, |roles, (i, name)| {
+            let paths = monitor_dca_paths(name);
+            roles | (paths & 1) << i | (paths >> 1) << (16 + i)
+        });
+        self.dca_monitor.store(roles, Relaxed);
+    }
+
+    /// The monitor paths (bit 0 = SPEAKERS, bit 1 = PHONES) whose level DCA `i` controls.
+    pub fn dca_monitor_paths(&self, i: usize) -> u32 {
+        let roles = self.dca_monitor.load(Relaxed);
+        if i >= NUM_DCAS {
+            return 0;
+        }
+        (roles >> i) & 1 | ((roles >> (16 + i)) & 1) << 1
+    }
+
+    /// The level offset (dB) and mute the MON DCAs give monitor path `path`.
+    fn monitor_dca(&self, path: usize) -> (f32, bool) {
+        let roles = self.dca_monitor.load(Relaxed) >> (16 * path);
+        if roles & 0xffff == 0 {
+            return (0.0, false);
+        }
+        self.controls
+            .dcas
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| roles & (1 << i) != 0)
+            .fold((0.0, false), |(db, muted), (_, d)| (db + d.fader_db.load(), muted || d.mute.load(Relaxed)))
+    }
+
+    /// ROUTING > SOURCES: every input port's source.
+    pub fn sources(&self) -> &SourceTable {
+        &self.sources
+    }
+
+    /// Message thread: the MUTE key of a strip, with MUTEGROUP/SIP OVERRIDE
+    /// (see [`solo::press_mute`]).
+    pub fn press_mute(&self, s: &Strip) {
+        solo::press_mute(&self.controls, s);
     }
 
     pub fn mute_group_name(&self, i: usize) -> String {
@@ -649,7 +748,8 @@ impl Engine {
         a.hw_out_to_active = out_map.to_vec();
         a.hw_in_ptrs = vec![std::ptr::null(); in_map.len()];
         a.hw_out_ptrs = vec![std::ptr::null_mut(); out_map.len()];
-        a.monitor = [vec![0.0; block_size], vec![0.0; block_size]];
+        a.monitor = std::array::from_fn(|_| [vec![0.0; block_size], vec![0.0; block_size]]);
+        a.sources.prepare(in_map.len(), block_size);
 
         for s in st.all() {
             s.prepare(sample_rate, block_size);
@@ -748,13 +848,21 @@ impl Engine {
 
     unsafe fn process_chunk(&self, topo: &Topology, a: &mut AudioState, n: usize) {
         let rec = &self.recorder;
+        // Sources first: the channels and the recorder's input streams read
+        // the processed ports (gain, mute, polarity, stereo / mid-side pairs).
+        a.sources.process(&self.sources, &a.hw_in_ptrs, rec.playback_ptrs(), n);
         let streams = rec.record_streams();
         // Record hardware inputs (and playback channels) as they arrive.
-        self.record_inputs(streams, &a.hw_in_ptrs, n);
+        self.record_inputs(streams, a.sources.hw_ptrs(), a.sources.playback_ptrs(), n);
 
-        let hw = SharedPtrs(&a.hw_in_ptrs);
+        // Talkback and the console's solos and mutes for this block.
+        let talk = TalkBlock::new(&self.controls.talk, |kind, i| topo.by_number(kind, i as i32 + 1).map(|s| s.as_ref()));
+        let solo = solo::console_pass(&self.controls, topo.all(), talk.active);
+        let talk = &talk;
+
+        let hw = SharedPtrs(a.sources.hw_ptrs());
         let hw = &hw;
-        let playback = SharedPtrs(rec.playback_ptrs());
+        let playback = SharedPtrs(a.sources.playback_ptrs());
         let playback = &playback;
         let alt = (self.controls.input_select_global.load(Relaxed), self.controls.global_alt.load(Relaxed));
         let groups = GroupState {
@@ -792,14 +900,17 @@ impl Engine {
         self.automix(topo, n);
 
         // 3./4. Buses: 9+ first (they may feed buses 1-8), then 1-8.
+        let ramps = &self.talk_ramps;
         self.pool.parallel_for(topo.upper_buses.len(), &|i| {
             let bus = &topo.upper_buses[i];
             sum_bus(bus, topo.active().iter(), n);
+            add_talk(bus, talk.bus(bus.id() as usize), ramps.get(StripKind::Bus, bus.id() as usize), talk, n);
             bus.process(&ctx_of(hw.get()), n);
         });
         self.pool.parallel_for(topo.lower_buses.len(), &|i| {
             let bus = &topo.lower_buses[i];
             sum_bus(bus, topo.active().iter().chain(&topo.upper_buses), n);
+            add_talk(bus, talk.bus(bus.id() as usize), ramps.get(StripKind::Bus, bus.id() as usize), talk, n);
             bus.process(&ctx_of(hw.get()), n);
         });
 
@@ -807,6 +918,7 @@ impl Engine {
         self.pool.parallel_for(topo.mains.len(), &|i| {
             let main = &topo.mains[i];
             sum_main(main, i, topo.active().iter().chain(topo.buses()), n);
+            add_talk(main, talk.main(i), ramps.get(StripKind::Main, i), talk, n);
             main.process(&ctx_of(hw.get()), n);
         });
 
@@ -814,6 +926,7 @@ impl Engine {
         self.pool.parallel_for(topo.matrices.len(), &|i| {
             let mtx = &topo.matrices[i];
             sum_matrix(mtx, i, topo, n);
+            add_talk(mtx, talk.matrix(i), ramps.get(StripKind::Matrix, i), talk, n);
             mtx.process(&ctx_of(hw.get()), n);
         });
 
@@ -821,7 +934,7 @@ impl Engine {
         self.record_strips(topo, streams, n);
 
         // 7. Solo / monitor
-        self.build_monitor(topo, a, n);
+        self.build_monitor(topo, a, n, solo, talk);
 
         // 8. Outputs, then the safety clip
         self.write_outputs(topo, a, n);
@@ -859,11 +972,11 @@ impl Engine {
 
     /// Records the hardware-input streams of this chunk (a port can also be a
     /// playback channel).
-    unsafe fn record_inputs(&self, streams: &[RecordStream], hw: &[*const f32], n: usize) {
+    unsafe fn record_inputs(&self, streams: &[RecordStream], hw: &[*const f32], playback: &[*const f32], n: usize) {
         for (i, st) in streams.iter().enumerate() {
             if st.source.kind == SourceKind::HardwareInput {
                 let port = st.source.port + st.channel as i32;
-                let src = source_ptr(hw, self.recorder.playback_ptrs(), port).map(|p| std::slice::from_raw_parts(p, n));
+                let src = source_ptr(hw, playback, port).map(|p| std::slice::from_raw_parts(p, n));
                 self.recorder.write_record_stream(i, src, n);
             }
         }
@@ -921,73 +1034,136 @@ impl Engine {
         }
     }
 
-    unsafe fn build_monitor(&self, topo: &Topology, a: &mut AudioState, n: usize) {
+    /// Stage 7: the two monitor paths, SPEAKERS and PHONES. Soloed
+    /// strips go to the solo bus of the paths the SOLO MODE routes them to
+    /// (PFL attenuated by the path's PFL DIM); each path adds its SOURCE (at
+    /// SRC MIX while a solo reaches it), then its level (with the MON DCAs),
+    /// and on the selected path(s) DIM, mute, the talk MON DIM, MONO and SWAP.
+    unsafe fn build_monitor(&self, topo: &Topology, a: &mut AudioState, n: usize, solo: SoloBlock, talk: &TalkBlock) {
         let c = &self.controls;
-        let dcas = &c.dcas;
         // LISTEN (band / key / xover solo) replaces the soloed strips (analyser.rs).
         let listen = self.analysis.listen_overrides_solo();
-        let solo = listen || topo.all().any(|s| s.is_soloed(dcas));
-        c.any_solo_active.store(solo, Relaxed);
+        let any_solo = solo.any_solo || listen;
+        c.any_solo_active.store(any_solo, Relaxed);
+        if !any_solo && c.solo_bus_override.load(Relaxed) {
+            c.solo_bus_override.store(false, Relaxed);
+        }
+        let selected = solo::path_mask(c.solo_bus.load(Relaxed));
+        let live = c.solo_mode.load(Relaxed) == solo_mode::LIVE && !c.solo_bus_override.load(Relaxed);
         let afl = StripKind::ALL.map(|k| c.solo_is_afl(k)); // indexed by kind
+        let sources = [&c.speakers, &c.phones.source];
+        let pfl_dim = sources.map(|s| db_to_gain(-s.pfl_dim_db.load().max(0.0)));
 
-        let [m0, m1] = &mut a.monitor;
-        let (m0, m1) = (&mut m0[..n], &mut m1[..n]);
-        m0.fill(0.0);
-        m1.fill(0.0);
+        for path in &mut a.monitor {
+            for side in path.iter_mut() {
+                side[..n].fill(0.0);
+            }
+        }
 
+        // The solo buses.
+        let mut solo_paths = 0;
         for s in topo.all() {
-            let target = if solo && !listen && s.is_soloed(dcas) { 1.0 } else { 0.0 };
-            let last = s.last_solo();
-            if target != 0.0 || *last != 0.0 {
-                let d = s.dsp();
-                if afl[s.kind() as usize] {
-                    add_with_gain_ramp(m0, d.out(0, n), *last, target);
-                    add_with_gain_ramp(m1, d.out(1, n), *last, target);
+            let soloed = any_solo && !listen && s.console.is_soloed();
+            let route = match (soloed, live) {
+                (false, _) => 0,
+                (true, true) => solo::path_mask(s.params.monitor_bus.load(Relaxed)),
+                (true, false) => selected,
+            };
+            solo_paths |= route;
+            let is_afl = afl[s.kind() as usize];
+            for (path, bus) in a.monitor.iter_mut().enumerate() {
+                let target = if route & (1 << path) == 0 {
+                    0.0
+                } else if is_afl {
+                    1.0
                 } else {
-                    add_with_gain_ramp(m0, d.pfl(0, n), *last, target);
-                    add_with_gain_ramp(m1, d.pfl(1, n), *last, target);
+                    pfl_dim[path]
+                };
+                let last = if path == 0 { *s.last_solo() } else { s.console.solo_ramp_b.load() };
+                if target != 0.0 || last != 0.0 {
+                    let [l, r] = bus;
+                    add_with_gain_ramp(&mut l[..n], solo_tap(s, is_afl, 0, n), last, target);
+                    add_with_gain_ramp(&mut r[..n], solo_tap(s, is_afl, 1, n), last, target);
+                }
+                if path == 0 {
+                    *s.last_solo() = target;
+                } else {
+                    s.console.solo_ramp_b.store(target);
                 }
             }
-            *last = target;
         }
-        self.analysis.add_listen(m0, m1, n);
 
-        // With nothing soloed the monitor follows Main 1.
-        let main_target = if solo { 0.0 } else { 1.0 };
-        if let Some(main) = topo.mains.first() {
-            let md = main.dsp();
-            add_with_gain_ramp(m0, md.out(0, n), a.last_main_to_monitor, main_target);
-            add_with_gain_ramp(m1, md.out(1, n), a.last_main_to_monitor, main_target);
+        // LISTEN plays on the first selected path (the solo bus it replaces).
+        // Called every block: it runs its own fades in and out.
+        let listen_path = if selected & 1 != 0 { 0 } else { 1 };
+        {
+            let [l, r] = &mut a.monitor[listen_path];
+            self.analysis.add_listen(&mut l[..n], &mut r[..n], n);
         }
-        a.last_main_to_monitor = main_target;
-
-        // Level, DIM and the monitor mute (all ramped together).
-        let mut level = db_to_gain(c.monitor_level_db.load());
-        if c.monitor_dim.load(Relaxed) {
-            level *= db_to_gain(-c.monitor_dim_db.load().max(0.0));
+        if listen {
+            solo_paths |= 1 << listen_path;
         }
-        if c.monitor_mute.load(Relaxed) {
-            level = 0.0;
+
+        // Each path's SOURCE (Main 1 by default), crossfaded when it changes.
+        for (path, src) in sources.iter().enumerate() {
+            let index = src.source.load(Relaxed);
+            let mut target = db_to_gain(src.source_level_db.load());
+            if solo_paths & (1 << path) != 0 {
+                target *= db_to_gain(src.source_mix_db.load());
+            }
+            let r = &mut a.monitor_ramps[path];
+            let bus = &mut a.monitor[path];
+            if index != r.source_index {
+                add_monitor_source(topo, bus, r.source_index, r.source, 0.0, n);
+                r.source = 0.0;
+                r.source_index = index;
+            }
+            add_monitor_source(topo, bus, index, r.source, target, n);
+            r.source = target;
         }
-        apply_gain_ramp(m0, a.last_monitor_gain, level);
-        apply_gain_ramp(m1, a.last_monitor_gain, level);
-        a.last_monitor_gain = level;
 
-        // MONO (L+R)/2 on both sides, else SWAP L and R; crossfaded over a block.
-        let matrix = if c.monitor_mono.load(Relaxed) {
-            MONITOR_MONO
-        } else if c.monitor_swap.load(Relaxed) {
-            MONITOR_SWAP
-        } else {
-            MONITOR_STEREO
-        };
-        apply_monitor_matrix(m0, m1, a.last_monitor_matrix, matrix);
-        a.last_monitor_matrix = matrix;
+        // Level (+ MON DCAs); DIM, mute, talk MON DIM, MONO and SWAP on the selected path(s).
+        let (dim, mute) = (c.monitor_dim.load(Relaxed), c.monitor_mute.load(Relaxed));
+        let (mono, swap) = (c.monitor_mono.load(Relaxed), c.monitor_swap.load(Relaxed));
+        let talk_dim = talk.mon_dim();
+        for path in 0..2 {
+            let (level_db, dim_db, peak) = if path == 0 {
+                (&c.monitor_level_db, &c.monitor_dim_db, &c.monitor_peak)
+            } else {
+                (&c.phones.level_db, &c.phones.dim_db, &c.phones.peak)
+            };
+            let (dca_db, dca_muted) = self.monitor_dca(path);
+            let mut level = if dca_muted { 0.0 } else { db_to_gain(level_db.load() + dca_db) };
+            let on_selected = selected & (1 << path) != 0;
+            if on_selected {
+                if dim {
+                    level *= db_to_gain(-dim_db.load().max(0.0));
+                }
+                if mute {
+                    level = 0.0;
+                }
+                level *= talk_dim;
+            }
+            let r = &mut a.monitor_ramps[path];
+            let [l, rr] = &mut a.monitor[path];
+            let (l, rr) = (&mut l[..n], &mut rr[..n]);
+            apply_gain_ramp(l, r.level, level);
+            apply_gain_ramp(rr, r.level, level);
+            r.level = level;
 
-        c.monitor_peak[0].fetch_max(peak_level(m0));
-        c.monitor_peak[1].fetch_max(peak_level(m1));
+            // MONO (L+R)/2 on both sides, else SWAP L and R; crossfaded over a block.
+            let matrix = match (on_selected && mono, on_selected && swap) {
+                (true, _) => MONITOR_MONO,
+                (false, true) => MONITOR_SWAP,
+                _ => MONITOR_STEREO,
+            };
+            apply_monitor_matrix(l, rr, r.matrix, matrix);
+            r.matrix = matrix;
+
+            peak[0].fetch_max(peak_level(l));
+            peak[1].fetch_max(peak_level(rr));
+        }
     }
-
     unsafe fn write_outputs(&self, topo: &Topology, a: &mut AudioState, n: usize) {
         let outs = &a.hw_out_ptrs;
         let add_to = |hw: i32, src: &[f32]| {
@@ -1020,8 +1196,12 @@ impl Engine {
             }
         }
 
-        add_to(self.controls.monitor_output_left.load(Relaxed), &a.monitor[0][..n]);
-        add_to(self.controls.monitor_output_right.load(Relaxed), &a.monitor[1][..n]);
+        let c = &self.controls;
+        let [speakers, phones] = &a.monitor;
+        add_to(c.monitor_output_left.load(Relaxed), &speakers[0][..n]);
+        add_to(c.monitor_output_right.load(Relaxed), &speakers[1][..n]);
+        add_to(c.phones.output_left.load(Relaxed), &phones[0][..n]);
+        add_to(c.phones.output_right.load(Relaxed), &phones[1][..n]);
     }
 
     unsafe fn protect_outputs(&self, a: &AudioState, n: usize) {
@@ -1047,6 +1227,71 @@ impl Engine {
             self.controls.output_clip_events.fetch_add(1, Relaxed);
         }
     }
+}
+
+/// The signal a soloed strip puts on the solo bus: its PFL copy or, AFL, its
+/// output.
+///
+/// Solo-tap override hook: a solo that listens elsewhere in the strip (EQ
+/// band, gate key or crossover solo) replaces the signal here.
+#[inline]
+unsafe fn solo_tap(s: &Strip, afl: bool, ch: usize, n: usize) -> &[f32] {
+    let d = s.dsp();
+    if afl {
+        d.out(ch, n)
+    } else {
+        d.pfl(ch, n)
+    }
+}
+
+/// Adds monitor SOURCE `index` (a main, matrix, bus or aux output) to a
+/// monitor path with a ramped gain.
+unsafe fn add_monitor_source(topo: &Topology, bus: &mut [Vec<f32>; 2], index: i32, last: f32, target: f32, n: usize) {
+    if last == 0.0 && target == 0.0 {
+        return;
+    }
+    let strip = match monitor_source(index) {
+        Some((StripKind::Main, i)) => topo.mains.get(i),
+        Some((StripKind::Matrix, i)) => topo.matrices.get(i),
+        Some((StripKind::Bus, i)) => topo.buses().find(|b| b.id() as usize == i),
+        Some((StripKind::Aux, i)) => topo.auxes.get(i),
+        _ => None,
+    };
+    let Some(s) = strip else { return };
+    let d = s.dsp();
+    if d.idle() {
+        return;
+    }
+    let [l, r] = bus;
+    add_with_gain_ramp(&mut l[..n], d.out(0, n), last, target);
+    add_with_gain_ramp(&mut r[..n], d.out(1, n), last, target);
+}
+
+/// Talkback into a destination's sum (`talk.rs`): dims what the destination
+/// summed (BUS DIM) and adds the talkback channel's PFL signal, both ramped.
+///
+/// # Safety
+/// The destination's task only, after its sum and before it processes.
+unsafe fn add_talk(dst: &Strip, g: TalkGains, ramp: Option<&mut TalkGains>, talk: &TalkBlock, n: usize) {
+    let Some(ramp) = ramp else { return };
+    if g == TalkGains::NONE && *ramp == TalkGains::NONE {
+        return;
+    }
+    let d = dst.dsp_mut();
+    if g.dim != 1.0 || ramp.dim != 1.0 {
+        for ch in 0..2 {
+            apply_gain_ramp(d.work_mut(ch, n), ramp.dim, g.dim);
+        }
+    }
+    match talk.strip() {
+        Some(src) if !src.dsp().idle() => {
+            let s = src.dsp();
+            add_with_gain_ramp(d.work_mut(0, n), s.pfl(0, n), ramp.talk, g.talk);
+            add_with_gain_ramp(d.work_mut(1, n), s.pfl(1, n), ramp.talk, g.talk);
+        }
+        _ => {}
+    }
+    *ramp = g;
 }
 
 /// Applies a 2x2 matrix to the monitor pair, crossfading from `last` to `target`.

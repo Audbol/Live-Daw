@@ -595,12 +595,32 @@ namespace
                                                              [this] (int i) { ctx.engine.mainLink = i; }),
                                6.4f);
             prefsPanel.addRow ("DCA MUTEGROUPS", OnKey::forAtomic (ctx.engine.dcaMuteGroups), 1.3f);
-            prefsPanel.addRow ("MUTEGROUP/SIP OVERRIDE", OnKey::fixed (false), 1.3f, false); // engine E7
+            prefsPanel.addRow ("MUTEGROUP/SIP OVERRIDE", OnKey::forAtomic (ctx.engine.muteOverride), 1.3f);
             prefsPanel.addRow ("STARTUP MAIN MUTE", OnKey::forAtomic (ctx.engine.startupMainMute), 1.3f);
             prefsPanel.addRow ("GLOBAL INPUT SELECT OVERRIDE", OnKey::forAtomic (ctx.engine.inputSelectGlobal), 1.3f);
             prefsPanel.newBox();
             prefsPanel.addRow ("SOURCE SOLO", fixedChoice ({ "OFF", "CH39", "AUX7" }, 0), 4.8f, false);
-            prefsPanel.addRow ("TALKBACK", fixedChoice ({ "OFF", "CH40", "AUX8" }, 0), 4.8f, false);
+            // The channel hosting talkback (MONITORS > TALK can pick any input
+            // or aux channel; then neither key is lit).
+            prefsPanel.addRow ("TALKBACK",
+                               std::make_unique<ChoiceKeys> (juce::StringArray { "OFF", "CH40", "AUX8" },
+                                                             [this]
+                                                             {
+                                                                 const auto& t = ctx.engine.talk;
+                                                                 const int kind = t.assignKind.load(), index = t.assignIndex.load();
+                                                                 if (kind == ld::kTalkOff)
+                                                                     return 0;
+                                                                 if (kind == ld::kChannel && index == 39)
+                                                                     return 1;
+                                                                 return kind == ld::kAux && index == 7 ? 2 : -1;
+                                                             },
+                                                             [this] (int i)
+                                                             {
+                                                                 auto& t = ctx.engine.talk;
+                                                                 t.assignIndex = i == 2 ? 7 : 39;
+                                                                 t.assignKind = i == 0 ? ld::kTalkOff : (i == 2 ? ld::kAux : ld::kChannel);
+                                                             }),
+                               4.8f);
             prefsPanel.newBox();
             prefsPanel.addRow ("OUTPUT PROTECTION", OnKey::forAtomic (ctx.engine.outputProtection), 1.3f);
             auto ceilingSlider = std::make_unique<juce::Slider> (juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
@@ -613,7 +633,13 @@ namespace
             prefsPanel.addRow ("CEILING", std::move (ceilingSlider), 7.0f);
             addAndMakeVisible (prefsPanel);
 
-            solo.addRow ("SOLO MODE", fixedChoice ({ "LIVE", "STUDIO", "SIP" }, 1, { Dark::olive, Dark::olive, Dark::olive }), 5.4f, false); // engine E5
+            // LIVE: each channel's SOLO BUS (phones / speakers); STUDIO: the solo
+            // bus picked on MONITORS; SIP: solo in place (the SIP badge lights).
+            solo.addRow ("SOLO MODE",
+                         std::make_unique<ChoiceKeys> (juce::StringArray { "LIVE", "STUDIO", "SIP" }, [this] { return (int) ctx.engine.soloMode.load(); },
+                                                       [this] (int i) { ctx.engine.soloMode = i; },
+                                                       std::vector<juce::Colour> { Dark::olive, Dark::olive, Dark::olive }),
+                         5.4f);
             solo.newBox();
             // PFL or AFL per strip type (CHANNEL SOLO covers the aux channels too).
             for (auto [name, kind] : { std::pair { "CHANNEL SOLO", StripKind::Channel }, std::pair { "BUS SOLO", StripKind::Bus },

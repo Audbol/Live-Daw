@@ -228,6 +228,7 @@ if(LIVEDAW_BUILD_TESTS)
     target_sources(LiveDAWTests PRIVATE
         tests/TestMain.cpp
         tests/EngineTests.cpp
+        tests/ConsoleTests.cpp
         tests/ShowTests.cpp
         tests/StabilityTests.cpp
         tests/PluginHostingTests.cpp

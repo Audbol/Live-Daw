@@ -831,15 +831,29 @@ MonitorSection::MonitorSection (UiContext& c) : ctx (c)
         k->setHardware (true);
         addAndMakeVisible (k);
     }
+    // MONITOR LEVEL: the speakers (path A); PHONES LEVEL: the phones (path B).
     monitorLevel.setBinding (bindLinear ("MONITOR LEVEL", ctx.engine.monitorLevelDb, -60.0f, 10.0f, " dB", 1, 0.0f));
-    talkLevel.setTooltip ("TALK LEVEL: talkback is not available yet");
-    phonesLevel.setTooltip ("PHONES LEVEL: there's no separate phones output yet; MONITOR LEVEL sets the monitor output");
+    phonesLevel.setBinding (bindLinear ("PHONES LEVEL", ctx.engine.phones.levelDb, -60.0f, 10.0f, " dB", 1, 0.0f));
+    talkLevel.setBinding (bindLinear ("TALK LEVEL", ctx.engine.talk.levelDb, -60.0f, 10.0f, " dB", 1, 0.0f));
+    talkLevel.setTooltip ("TALK LEVEL: the talkback level (unless the path uses the talkback channel's send levels)");
+    phonesLevel.setTooltip ("PHONES LEVEL: the level of the PHONES monitor path");
 
-    for (auto* k : { &talkA, &talkB })
+    // TALK A / TALK B: talk while held (PUSH), toggle (LATCH) or either (AUTO),
+    // as the path's SWITCH MODE on the MONITORS screen says.
+    for (int path = 0; path < 2; ++path)
     {
-        k->shape = SurfaceKey::Shape::Square;
-        k->setEnabled (false);
-        k->setTooltip ("Talkback is not available yet");
+        auto& k = path == 0 ? talkA : talkB;
+        k.shape = SurfaceKey::Shape::Square;
+        k.ledColour = Colours::yellow;
+        k.onTalk = [this, path] (bool down) { ctx.engine.talkKey (path, down); };
+        // Lit while talking; blinking while the key is on without a talkback channel.
+        k.ledState = [this, path]
+        {
+            if (! ctx.engine.isTalkOn (path))
+                return SurfaceKey::Off;
+            return ctx.engine.getTalkStrip() != nullptr ? SurfaceKey::Lit : SurfaceKey::Blink;
+        };
+        k.setTooltip (juce::String ("TALK ") + (path == 0 ? "A" : "B") + ": talkback to the path's buses, matrices and mains (SETUP > TALKBACK picks the channel)");
         addAndMakeVisible (k);
     }
 

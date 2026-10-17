@@ -249,6 +249,109 @@ struct FxParams
     std::atomic<float> values[kMaxFxParams];
 };
 
+// ---- console level (ABI 7) ---------------------------------------------------
+
+/** SOLO MODE (EngineControls::soloMode). */
+enum SoloMode : int32_t
+{
+    kSoloLive = 0,   // each strip's SOLO BUS (monitorBus) chooses the path
+    kSoloStudio = 1, // solos go to the selected path (EngineControls::soloBus)
+    kSoloSip = 2     // as STUDIO, and inputs neither soloed nor solo safe are muted
+};
+
+/** A strip's MUTE as the surface shows it (ld_strip_mute_state). */
+enum MuteState : int32_t
+{
+    kMuteOff = 0,
+    kMuteOn = 1,         // its own MUTE
+    kMuteGroup = 2,      // muted by a mute group, a DCA mute or SIP (the key flashes)
+    kMuteOverridden = 3  // such a mute, unmuted by MUTEGROUP/SIP OVERRIDE
+};
+
+/** Talk key SWITCH MODE (TalkPathParams::mode). */
+enum TalkMode : int32_t
+{
+    kTalkAuto = 0, // held = push, a short press latches
+    kTalkPush = 1,
+    kTalkLatch = 2
+};
+
+/** HOME > TAGS talk tags (ld_strip_talk_tags bits). */
+enum TalkTag : uint32_t
+{
+    kTalkSolo = 1u << 0,
+    kTalkOn = 1u << 1,
+    kTalkASolo = 1u << 2,
+    kTalkAOn = 1u << 3,
+    kTalkBSolo = 1u << 4,
+    kTalkBOn = 1u << 5
+};
+
+/** Source pairing (SourceParams::mode). */
+enum SourceMode : int32_t
+{
+    kSourceMono = 0,
+    kSourceStereo = 1,
+    kSourceMidSide = 2
+};
+
+/** Sources: hardware ports 0..kNumHwSources-1, then the playback channels. */
+constexpr int kNumHwSources = 576;
+constexpr int kNumSources = kNumHwSources + kNumPlaybackChannels;
+/** Monitor SOURCE choices: MAIN.1-4, MTX.1-8, BUS.1-16, AUX.1-8. */
+constexpr int kNumMonitorSources = kNumMains + kNumMatrices + kWingBuses + kNumAux;
+/** TalkParams::assignKind without a talkback channel. */
+constexpr int32_t kTalkOff = -1;
+
+/** One talk path (TALK A or TALK B). */
+struct TalkPathParams
+{
+    std::atomic<bool> on;         // the key is on (the host applies AUTO / PUSH / LATCH)
+    std::atomic<bool> individual; // USE SEND LEVELS: the talkback channel's send levels
+    std::atomic<int32_t> mode;    // TalkMode
+    std::atomic<float> monDimDb, busDimDb; // AUTO DIM (attenuations, dB)
+    std::atomic<uint32_t> buses, matrices, mains; // TALK TO BUS 1-16 / MATRIX 1-8 / MAIN 1-4 (bit n = n+1)
+};
+
+/** Talkback: the talkback channel (kTalkOff, or kChannel / kAux and its 0-based
+    number: CH40 = (kChannel, 39), AUX8 = (kAux, 7)), TALK LEVEL and the paths. */
+struct TalkParams
+{
+    std::atomic<int32_t> assignKind, assignIndex;
+    std::atomic<float> levelDb;
+    TalkPathParams paths[2];
+};
+
+/** A monitor path's SOURCE (0..kNumMonitorSources-1), SRC LEVEL, SRC MIX
+    (the source's level while a solo reaches the path; -144 = off) and PFL DIM. */
+struct MonitorSourceParams
+{
+    std::atomic<int32_t> source;
+    std::atomic<float> sourceLevelDb, sourceMixDb, pflDimDb;
+};
+
+/** The PHONES monitor path. The SPEAKERS path is monitorLevelDb, monitorDimDb,
+    monitorOutputLeft/Right, monitorPeak plus EngineControls::speakers. */
+struct MonitorPathParams
+{
+    MonitorSourceParams source;
+    std::atomic<float> levelDb, dimDb;
+    std::atomic<int32_t> outputLeft, outputRight;
+    std::atomic<float> peak[2];
+};
+
+/** A source (ROUTING > SOURCES): gain, mute, polarity, +48 V (stored only),
+    pairing with its neighbour (a pair shares the first source's settings),
+    colour and icon, and its peak since the last read. ld_engine_sources. */
+struct SourceParams
+{
+    std::atomic<float> gainDb;
+    std::atomic<bool> mute, invert, phantom;
+    std::atomic<int32_t> mode; // SourceMode
+    std::atomic<int32_t> colour, icon;
+    std::atomic<float> peak;
+};
+
 struct EngineControls
 {
     std::atomic<bool> soloAfl; // CHANNEL SOLO (input and aux channels): AFL
@@ -276,6 +379,19 @@ struct EngineControls
     // strip's altSelected. A strip uses ALT only if it has an ALT source.
     std::atomic<bool> inputSelectGlobal;
     std::atomic<bool> globalAlt;
+
+    // ABI 7: console level
+    std::atomic<int32_t> soloMode; // SoloMode
+    /** The solo bus / selected monitoring path, as list 7 (0 = A PHONES,
+        1 = B SPEAKERS, 2 = A+B): STUDIO and SIP solo there; DIM, MUTE, MONO,
+        SWAP and the talk MON DIM act on it. */
+    std::atomic<int32_t> soloBus;
+    std::atomic<bool> soloBusOverride; // LIVE: soloBus overrides the strips until no solo is left
+    std::atomic<bool> muteOverride;    // MUTEGROUP/SIP OVERRIDE
+    std::atomic<bool> sipActive;       // status: SIP is muting (the SIP badge)
+    TalkParams talk;
+    MonitorSourceParams speakers; // the SPEAKERS path's SOURCE etc.
+    MonitorPathParams phones;     // the PHONES path
 };
 
 /// Where the RTA shows (AnalysisControls::view): its tap and settings follow.
@@ -338,7 +454,9 @@ struct LayoutInfo
         offAltInputLeft, offAltSelected, offControlsInputSelectGlobal, offControlsGlobalAlt, recClip,
         recPlaybackTrack, recRecordTrack, recTake,
         // ABI 7
-        offTapWidth, offTapEq, tapEq, analysis, offAnalysisEq, offAnalysisFilterTap;
+        offTapWidth, offTapEq, tapEq, analysis, offAnalysisEq, offAnalysisFilterTap,
+        talk, talkPath, monitorSource, monitorPath, source, offControlsSoloMode, offControlsTalk, offControlsSpeakers,
+        offControlsPhones, offTalkPaths, offMonitorPathPeak, offSourcePeak;
 };
 
 struct ParamInfo
@@ -713,6 +831,30 @@ extern "C"
     /** Adds a WING .show's snapshot scenes to the show (the console only grows to 40 channels). */
     bool ld_wing_import_show (LdWing*, Show*, const char* path, size_t len, LdString** report);
     LdString* ld_wing_coverage();
+
+    // Console level: sources, talk tags, MUTE state (message thread unless noted)
+    /** The source table (*count entries: hardware ports, then playback channels). */
+    SourceParams* ld_engine_sources (const Engine*, int32_t* count);
+    /** Source table index of an input port (hardware input or playback source), -1 if none. */
+    int32_t ld_source_index (int32_t port);
+    int32_t ld_source_port (int32_t index);
+    LdString* ld_source_name (const Engine*, int32_t index);
+    void ld_source_set_name (const Engine*, int32_t index, const char* utf8, size_t len);
+    /** SourceMode for the source and its pair partner (a new pair takes the first one's settings). */
+    void ld_source_set_mode (const Engine*, int32_t index, int32_t mode);
+    /** INITIALIZE (the pair's settings and names; the pairing stays). */
+    void ld_source_initialize (const Engine*, int32_t index);
+    /** Any thread: TalkTag bits. */
+    uint32_t ld_strip_talk_tags (const Strip*);
+    void ld_strip_set_talk_tags (const Strip*, uint32_t tags);
+    /** Any thread: MuteState of the last block. */
+    int32_t ld_strip_mute_state (const Strip*);
+    /** Any thread: soloed in the last block (own solo, a soloed DCA or TALK SOLO). */
+    bool ld_strip_is_soloed (const Strip*);
+    /** The MUTE key, MUTEGROUP/SIP OVERRIDE aware. */
+    void ld_engine_press_mute (const Engine*, const Strip*);
+    /** Monitor paths (bit 0 = SPEAKERS, bit 1 = PHONES) DCA `dca` controls (named MON A: PHONES, MON B: SPEAKERS, MON LVL). */
+    uint32_t ld_engine_dca_monitor_paths (const Engine*, int32_t dca);
 }
 
 /// Returns nullptr if the C++ and Rust layouts agree, else a description of the mismatch.
@@ -785,6 +927,18 @@ inline const char* verifyLayout()
         { info.analysis, sizeof (AnalysisControls), "AnalysisControls size" },
         { info.offAnalysisEq, offsetof (AnalysisControls, eq), "AnalysisControls.eq" },
         { info.offAnalysisFilterTap, offsetof (AnalysisControls, filterTap), "AnalysisControls.filterTap" },
+        { info.talk, sizeof (TalkParams), "TalkParams size" },
+        { info.talkPath, sizeof (TalkPathParams), "TalkPathParams size" },
+        { info.monitorSource, sizeof (MonitorSourceParams), "MonitorSourceParams size" },
+        { info.monitorPath, sizeof (MonitorPathParams), "MonitorPathParams size" },
+        { info.source, sizeof (SourceParams), "SourceParams size" },
+        { info.offControlsSoloMode, offsetof (EngineControls, soloMode), "EngineControls.soloMode" },
+        { info.offControlsTalk, offsetof (EngineControls, talk), "EngineControls.talk" },
+        { info.offControlsSpeakers, offsetof (EngineControls, speakers), "EngineControls.speakers" },
+        { info.offControlsPhones, offsetof (EngineControls, phones), "EngineControls.phones" },
+        { info.offTalkPaths, offsetof (TalkParams, paths), "TalkParams.paths" },
+        { info.offMonitorPathPeak, offsetof (MonitorPathParams, peak), "MonitorPathParams.peak" },
+        { info.offSourcePeak, offsetof (SourceParams, peak), "SourceParams.peak" },
     };
 
     if (info.abiVersion != kAbiVersion)

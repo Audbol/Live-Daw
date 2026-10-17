@@ -19,6 +19,7 @@ use crate::analyser::{listen_mode, rta_tap, Probes, StripProbe};
 use crate::fx::FxRack;
 use crate::params::{DcaParams, DynSlotParams, FxParams, StripKind, StripMeters, StripParams, NUM_MAINS, NUM_MATRICES};
 use crate::sends::SendBank;
+use crate::solo::StripConsole;
 use crate::tapsend::TapShaper;
 use livedaw_dsp::biquad::{Biquad, BiquadCoeffs};
 use livedaw_dsp::delay::{delay_to_ms, DelayLine};
@@ -204,6 +205,9 @@ pub struct Strip {
     name: Mutex<String>,
     /// The free tags of HOME > TAGS, comma-separated (the WING's `/ch/n/tags`).
     tags: Mutex<String>,
+    /// Console-level state: talk tags, MUTEGROUP/SIP OVERRIDE, the block's
+    /// effective solo and mute decision (`solo.rs`).
+    pub console: StripConsole,
     dsp: UnsafeCell<StripDsp>,
     last_main: [UnsafeCell<[f32; 2]>; NUM_MAINS],
     last_mtx: [UnsafeCell<[f32; 2]>; NUM_MATRICES],
@@ -224,6 +228,7 @@ impl Strip {
             sends: SendBank::default(),
             name: Mutex::new(String::new()),
             tags: Mutex::new(String::new()),
+            console: StripConsole::default(),
             dsp: UnsafeCell::new(StripDsp::new()),
             last_main: Default::default(),
             last_mtx: Default::default(),
@@ -631,8 +636,9 @@ impl Strip {
         }
         Self::copy_tap(d, tap::PFL, n);
 
-        // Fader with DCAs, mute and mute groups (and Main 1's level on linked mains).
-        let muted = self.is_muted(ctx.dcas, ctx.mute_groups, ctx.dca_mute_groups);
+        // Fader with DCAs, mute and mute groups (and Main 1's level on linked mains);
+        // the console decides over that mute (SIP, OVERRIDE, TALK ON: solo.rs).
+        let muted = self.console.apply_mute(self.is_muted(ctx.dcas, ctx.mute_groups, ctx.dca_mute_groups));
         d.muted = muted;
         let mut level = p.fader_db.load() + self.dca_offset_db(ctx.dcas);
         if kind == StripKind::Main && (1..=ctx.main_link_last).contains(&(self.id.max(0) as usize)) {

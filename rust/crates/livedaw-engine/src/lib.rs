@@ -15,7 +15,10 @@ pub mod listen;
 pub mod params;
 pub mod pool;
 pub mod sends;
+pub mod solo;
+pub mod sources;
 pub mod strip;
+pub mod talk;
 pub mod tapsend;
 
 pub use analyser::{Analyser, AnalysisControls};

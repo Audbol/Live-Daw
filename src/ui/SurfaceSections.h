@@ -103,6 +103,29 @@ private:
     juce::String shownState;
 };
 
+/** A TALK key: reports presses and releases, since the talk path's SWITCH
+    MODE (AUTO, PUSH, LATCH) needs both. */
+class TalkKey final : public SurfaceKey
+{
+public:
+    using SurfaceKey::SurfaceKey;
+    std::function<void (bool down)> onTalk;
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        SurfaceKey::mouseDown (e);
+        if (isEnabled() && onTalk != nullptr)
+            onTalk (true);
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        SurfaceKey::mouseUp (e);
+        if (isEnabled() && onTalk != nullptr)
+            onTalk (false);
+    }
+};
+
 /** The USB AUDIO/DATA and MONITORING/TALKBACK panel (top right, manual 4.7):
     VIEW, the USB socket plate, TALK / PHONES / MONITOR LEVEL and the TALK A,
     TALK B, DIM and MONO keys. */
@@ -118,7 +141,8 @@ private:
     UiContext& ctx;
     ViewKey viewKey;
     DisplayKnob talkLevel, phonesLevel, monitorLevel;
-    SurfaceKey talkA { "A" }, talkB { "B" }, dimKey { "DIM" }, monoKey { {}, Icon::Circle };
+    TalkKey talkA { "A" }, talkB { "B" };
+    SurfaceKey dimKey { "DIM" }, monoKey { {}, Icon::Circle };
     juce::Rectangle<int> wingPanel, usbPlate, monitorTitle, usbTitle;
     bool viewOpened = false;
 };

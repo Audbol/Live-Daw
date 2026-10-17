@@ -111,7 +111,7 @@ public:
     explicit RoutingPage (UiContext&);
     ~RoutingPage() override;
 
-    bool usesKnobs() const override { return false; }
+    bool usesKnobs() const override { return sourcesUseKnobs(); }
     std::vector<StatusKey> getStatusKeys() override;
     StatusTitle getStatusTitle() override;
     void refresh() override;
@@ -186,6 +186,32 @@ private:
     std::vector<juce::Rectangle<int>> leftPorts, rightPorts;
     std::vector<std::pair<juce::Rectangle<int>, Signal>> signalTiles;
     juce::Component anchor;
+
+public:
+    // SOURCES settings (fig. 31): the parameter bar holds the source's GAIN.
+    bool sourcesUseKnobs() const noexcept { return mode == Mode::Sources; }
+    std::vector<KnobBinding> getKnobs() override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+
+private:
+    /** The source table entry of an input port (nullptr if it has none). */
+    ld::SourceParams* sourceParams (int port) const;
+    void layoutSourcePanel();
+    void paintSourceSettings (juce::Graphics&, juce::Rectangle<int>) const;
+    void paintSourceLook (juce::Graphics&) const;
+    void renameSource();
+    void setSourceGainFromY (int y);
+
+    int sourceTab = 0; // SETTINGS, ICON/COLOR, TAGS
+    std::array<juce::Rectangle<int>, 3> sourceTabKeys, sourceModeKeys;
+    juce::Rectangle<int> sourceBanner, sourceBody, sourceInitKey, sourceBox, sourceMeter, sourcePhantomKey, sourcePolKey, sourceMuteKey,
+        sourceGainFader;
+    std::vector<std::pair<juce::Rectangle<int>, int>> sourceColourCells, sourceIconCells;
+    std::vector<float> sourcePeaks; // per tile of the source grid, decaying
+    float selectedSourcePeak = 0.0f;
+    bool draggingGain = false;
 };
 
 /** SETUP (manual 5.5): the tabs GENERAL | AUDIO | SURFACE | REMOTE | DAW (and
