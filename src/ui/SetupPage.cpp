@@ -1260,7 +1260,7 @@ private:
 //==============================================================================
 SetupPage::SetupPage (UiContext& c) : ctx (c)
 {
-    tabRow.setTabs ({ { "GENERAL" }, { "AUDIO" }, { "SURFACE" }, { "REMOTE" }, { "DAW" }, { "PLUGINS", Dark::gold, true, 10 } });
+    tabRow.setTabs ({ { "GENERAL" }, { "AUDIO" }, { "SURFACE" }, { "REMOTE" }, { "DAW" }, { "PLUGINS", Dark::gold, true, 10 }, { "LOG" } });
     tabRow.onChange = [this] (int) { showTab(); };
     addAndMakeVisible (tabRow);
 
@@ -1272,6 +1272,9 @@ SetupPage::SetupPage (UiContext& c) : ctx (c)
     pages.push_back (ownedPages.add (new RemoteTab()));
     pages.push_back (ownedPages.add (new DawTab()));
     pages.push_back (ownedPages.add (new PluginsTab (ctx)));
+    // LOG: system health and the event log (the UTILITY screen's content; the
+    // WING's UTILITY key has no screen of its own).
+    pages.push_back (ownedPages.add (new UtilityPage (ctx)));
     for (auto* p : pages)
         addChildComponent (p);
 
@@ -1447,8 +1450,8 @@ void SetupPage::resized()
     row.removeFromRight (4);
     initKey.setBounds (row.removeFromRight (keyW).reduced (2, 2));
     row.removeFromRight (8);
-    // Tabs about 12 % of the screen wide, as on the console, if all six fit.
-    const float tabPx = juce::jmin ((float) getWidth() * 0.12f, (float) (row.getWidth() - 12) / 6.0f);
+    // Tabs about 12 % of the screen wide, as on the console, if all seven fit.
+    const float tabPx = juce::jmin ((float) getWidth() * 0.12f, (float) (row.getWidth() - 12) / 7.0f);
     tabRow.tabFraction = tabPx / (float) juce::jmax (1, row.getWidth());
     tabRow.setBounds (row);
     for (auto* p : pages)

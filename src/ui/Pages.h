@@ -304,7 +304,8 @@ private:
     juce::String shownTitle;
 };
 
-/** UTILITY: system health and the event log. */
+/** System health and the event log: SETUP > LOG (and the UTILITY screen
+    until the UTILITY key becomes a context key). */
 class UtilityPage final : public DisplayPage, private juce::Timer, private juce::ChangeListener, private juce::ListBoxModel
 {
 public:
@@ -328,7 +329,7 @@ private:
 
     UiContext& ctx;
     std::vector<HealthRow> health;
-    juce::TextButton clearFaultsButton { "CLEAR FX FAULTS" }, clearClipsButton { "RESET COUNTERS" };
+    WingKey clearFaultsButton { "CLEAR FX FAULTS", Icon::ClearCircle }, clearClipsButton { "RESET COUNTERS", Icon::Reset };
     juce::ListBox logList;
     juce::Rectangle<int> leftArea, rightArea, statsArea;
 };
