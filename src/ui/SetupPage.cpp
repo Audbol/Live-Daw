@@ -877,13 +877,16 @@ namespace
         juce::StringArray values;
     };
 
-    /** WING REMOTE: a server's ON key and its port (click to change it). */
+    /** WING REMOTE: a server's ON key and its port (click to change it). The
+        port turns red if the server is on but could not listen on it. */
     class ServerRow final : public juce::Component
     {
     public:
         ServerRow (UiContext& c, bool WingRemote::Settings::*enabledField, int WingRemote::Settings::*portField,
-                   juce::String portTitle, std::function<void (const WingRemote::Settings&)> applyChange)
+                   juce::String portTitle, std::function<void (const WingRemote::Settings&)> applyChange,
+                   std::function<bool()> failedCheck)
             : ctx (c), enabled (enabledField), port (portField), title (std::move (portTitle)), apply (std::move (applyChange)),
+              failed (std::move (failedCheck)),
               key ([this] { return WingRemote::Settings::load (ctx.settings).*enabled; },
                    [this] (bool on)
                    {
@@ -898,7 +901,7 @@ namespace
         void paint (juce::Graphics& g) override
         {
             auto r = portArea.toFloat();
-            g.setColour (juce::Colour (0xff5a5a5a));
+            g.setColour (failed() ? Dark::muted : juce::Colour (0xff5a5a5a));
             g.fillRect (r);
             g.setColour (juce::Colours::black);
             g.setFont (juce::FontOptions (juce::jmin (15.0f, r.getHeight() * 0.62f), juce::Font::bold));
@@ -936,11 +939,12 @@ namespace
         int WingRemote::Settings::*port;
         juce::String title;
         std::function<void (const WingRemote::Settings&)> apply;
+        std::function<bool()> failed;
         OnKey key;
         juce::Rectangle<int> portArea;
     };
 
-    /** WING REMOTE status: what the servers listen on and who is connected. */
+    /** WING REMOTE status: errors and the connected clients. */
     class WingStatusView final : public juce::Component
     {
     public:
@@ -949,9 +953,9 @@ namespace
         void paint (juce::Graphics& g) override
         {
             g.fillAll (Dark::well);
-            auto r = getLocalBounds().reduced (8, 6);
-            const float fh = juce::jlimit (11.0f, 14.0f, (float) getHeight() / 10.0f);
-            const int lineH = juce::roundToInt (fh * 1.4f);
+            auto r = getLocalBounds().reduced (8, 4);
+            const float fh = juce::jlimit (11.0f, 14.0f, (float) getHeight() / 6.0f);
+            const int lineH = juce::roundToInt (fh * 1.3f);
             g.setFont (juce::FontOptions (fh, juce::Font::bold));
             auto line = [&] (const juce::String& text, juce::Colour colour)
             {
@@ -966,17 +970,9 @@ namespace
                 line ("WING REMOTE IS OFF", Dark::textDim);
                 return;
             }
-            auto server = [&] (const char* name, int port)
-            {
-                line (juce::String (name) + (port > 0 ? "  LISTENING ON PORT " + juce::String (port) : juce::String ("  OFF")),
-                      port > 0 ? Dark::text : Dark::textDim);
-            };
-            server ("DISCOVERY UDP", status.discoveryPort);
-            server ("OSC UDP", status.oscPort);
-            server ("NATIVE TCP", status.nativePort);
             for (auto& e : status.errors)
                 line (e.toUpperCase(), Dark::muted);
-            line (juce::String ((int) status.clients.size()) + (status.clients.size() == 1 ? " CLIENT" : " CLIENTS"), Dark::text);
+            line (juce::String ((int) status.clients.size()) + (status.clients.size() == 1 ? " CLIENT CONNECTED" : " CLIENTS CONNECTED"), Dark::text);
             for (auto& c : status.clients)
                 line (juce::String (c.native ? "NATIVE  " : "OSC  ") + c.address
                           + (c.subscribed ? (c.native ? "  METERS" : "  SUBSCRIBED") : "") + "  " + juce::String (c.seconds) + " S",
@@ -1060,13 +1056,28 @@ namespace
                                                                                  change (s);
                                                                              });
                                                                }),
-                         0.0f, true, false, 1.6f);
+                         0.0f, true, false, 1.3f);
             wing.newBox();
-            wing.addCaption ("ON     PORT");
             using S = WingRemote::Settings;
-            wing.addRow ("DISCOVERY (UDP)", std::make_unique<ServerRow> (ctx, &S::discovery, &S::discoveryPort, "DISCOVERY PORT (UDP)", change), 4.0f);
-            wing.addRow ("OSC (UDP)", std::make_unique<ServerRow> (ctx, &S::osc, &S::oscPort, "OSC PORT (UDP)", change), 4.0f);
-            wing.addRow ("NATIVE (TCP)", std::make_unique<ServerRow> (ctx, &S::native, &S::nativePort, "NATIVE PORT (TCP)", change), 4.0f);
+            // A server that is on but not listening (port in use) shows its port in red.
+            auto failed = [this] (bool S::*on, int WingRemote::Status::*bound)
+            {
+                return [this, on, bound]
+                {
+                    return wingStatus.status.running && WingRemote::Settings::load (ctx.settings).*on && wingStatus.status.*bound < 0;
+                };
+            };
+            wing.addRow ("DISCOVERY (UDP)",
+                         std::make_unique<ServerRow> (ctx, &S::discovery, &S::discoveryPort, "DISCOVERY PORT (UDP)", change,
+                                                      failed (&S::discovery, &WingRemote::Status::discoveryPort)),
+                         4.0f);
+            wing.addRow ("OSC (UDP)",
+                         std::make_unique<ServerRow> (ctx, &S::osc, &S::oscPort, "OSC PORT (UDP)", change, failed (&S::osc, &WingRemote::Status::oscPort)),
+                         4.0f);
+            wing.addRow ("NATIVE (TCP)",
+                         std::make_unique<ServerRow> (ctx, &S::native, &S::nativePort, "NATIVE PORT (TCP)", change,
+                                                      failed (&S::native, &WingRemote::Status::nativePort)),
+                         4.0f);
             addAndMakeVisible (wing);
             addAndMakeVisible (wingStatus);
 
@@ -1090,8 +1101,9 @@ namespace
         {
             auto b = getLocalBounds();
             const int rowH = fitRowHeight (getHeight() - kDarkHeaderHeight - 30, 10.0f);
-            for (auto* p : { &midi, &ha, &network, &lock, &wing })
+            for (auto* p : { &midi, &ha, &network, &lock })
                 p->rowHeight = rowH;
+            wing.rowHeight = juce::jmax (18, rowH * 4 / 5); // leaves room for the client list
             const int gap = 4;
             auto c1 = b.removeFromLeft (b.getWidth() * 40 / 100);
             b.removeFromLeft (gap);
@@ -1101,9 +1113,11 @@ namespace
             note = c1.reduced (8, 10);
             ha.setBounds (c2.removeFromTop (juce::jmin (c2.getHeight(), ha.preferredHeight())));
             c2.removeFromTop (gap);
-            wing.setBounds (c2.removeFromTop (juce::jmin (c2.getHeight(), wing.preferredHeight())));
-            c2.removeFromTop (gap);
-            wingStatus.setBounds (c2);
+            // WING REMOTE also takes the free column left of NETWORK.
+            auto wingArea = c2.withRight (b.getRight() - gap);
+            wing.setBounds (wingArea.removeFromTop (juce::jmin (wingArea.getHeight(), wing.preferredHeight())));
+            wingArea.removeFromTop (gap);
+            wingStatus.setBounds (wingArea);
             network.setBounds (c4.removeFromTop (juce::jmin (c4.getHeight() - lock.preferredHeight() - gap, network.preferredHeight())));
             c4.removeFromTop (gap);
             lock.setBounds (c4.withHeight (juce::jmin (c4.getHeight(), lock.preferredHeight())));
@@ -1137,6 +1151,7 @@ namespace
                 ctx.log.info ("WING remote on as \"" + s.name + "\"");
             wingStatus.status = ctx.engine.getWing().getStatus();
             wingStatus.repaint();
+            wing.repaint();
         }
 
         void timerCallback() override
@@ -1147,6 +1162,7 @@ namespace
             {
                 wingStatus.status = ctx.engine.getWing().getStatus();
                 wingStatus.repaint();
+                wing.repaint(); // the ports' listening state
             }
         }
 
