@@ -71,12 +71,20 @@ MixerEngine::MixerEngine (int numWorkerThreads)
       dcaMuteGroups (controls.dcaMuteGroups),
       mainLink (controls.mainLink),
       startupMainMute (controls.startupMainMute),
+      soloMode (controls.soloMode),
+      soloBus (controls.soloBus),
+      muteOverride (controls.muteOverride),
+      sipActive (controls.sipActive),
+      talk (controls.talk),
+      speakers (controls.speakers),
+      phones (controls.phones),
       outputProtection (controls.outputProtection),
       outputCeilingDb (controls.outputCeilingDb),
       outputClipEvents (controls.outputClipEvents),
       garbage (engine),
       fx (engine)
 {
+    sourceTable = ld::ld_engine_sources (engine, &numSources);
     syncStrips();
     startWorkers (getSampleRate(), getBlockSize());
     startTimerHz (10);
@@ -251,6 +259,86 @@ void MixerEngine::setSoloAfl (StripKind kind, bool afl) noexcept
 bool MixerEngine::applyStartupMainMute()
 {
     return ld::ld_engine_apply_startup_main_mute (engine);
+}
+
+//==============================================================================
+void MixerEngine::setSoloBus (int choice) noexcept
+{
+    soloBus = juce::jlimit (0, 2, choice);
+    if (soloMode.load() == ld::kSoloLive && anySoloActive.load())
+        controls.soloBusOverride = true;
+}
+
+Strip* MixerEngine::getTalkStrip() const noexcept
+{
+    const int kind = talk.assignKind.load(), index = talk.assignIndex.load();
+    if (kind != (int) StripKind::Channel && kind != (int) StripKind::Aux)
+        return nullptr;
+    const auto& list = getStrips (static_cast<StripKind> (kind));
+    return juce::isPositiveAndBelow (index, (int) list.size()) ? list[(size_t) index].get() : nullptr;
+}
+
+void MixerEngine::setTalkStrip (const Strip* strip) noexcept
+{
+    if (strip == nullptr || ! strip->isInput())
+    {
+        talk.assignKind = ld::kTalkOff;
+        return;
+    }
+    talk.assignIndex = strip->getNumber() - 1;
+    talk.assignKind = (int32_t) strip->getKind();
+}
+
+void MixerEngine::talkKey (int path, bool down) noexcept
+{
+    if (! juce::isPositiveAndBelow (path, 2))
+        return;
+    auto& p = talk.paths[path];
+    const auto now = juce::Time::getMillisecondCounter();
+    const auto i = (size_t) path;
+    switch (p.mode.load())
+    {
+        case ld::kTalkPush:
+            p.on = down;
+            break;
+        case ld::kTalkLatch:
+            if (down)
+                p.on = ! p.on.load();
+            break;
+        default:
+            // AUTO: a press turns talk on (or off when it's latched on); released
+            // after the hold time it was a push, so it ends; a short press latches.
+            if (down)
+            {
+                talkPressMs[i] = now;
+                talkEndsOnRelease[i] = ! p.on.load();
+                p.on = ! p.on.load();
+            }
+            else if (talkEndsOnRelease[i] && now - talkPressMs[i] >= kTalkHoldMs)
+            {
+                p.on = false;
+            }
+            break;
+    }
+}
+
+juce::String MixerEngine::monitorSourceName (int index)
+{
+    struct Group { const char* name; int count; };
+    const Group groups[] = { { "MAIN", kNumMains }, { "MTX", kNumMatrices }, { "BUS", kWingBuses }, { "AUX", kNumAux } };
+    for (auto& g : groups)
+    {
+        if (juce::isPositiveAndBelow (index, g.count))
+            return juce::String (g.name) + "." + juce::String (index + 1);
+        index -= g.count;
+    }
+    return "OFF";
+}
+
+void MixerEngine::setSourceName (int index, const juce::String& name)
+{
+    const Utf8 u (name);
+    ld::ld_source_set_name (engine, index, u.data, u.size);
 }
 
 int MixerEngine::getTotalDspFaults() const

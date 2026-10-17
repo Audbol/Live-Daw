@@ -507,6 +507,7 @@ fn capture_monitor(engine: &Engine, parent: &mut Element, keys: bool) {
         put_b(m, "mono", &c.monitor_mono);
         put_b(m, "swap", &c.monitor_swap);
     }
+    crate::globals::capture_monitor_paths(engine, m);
 }
 
 /// Missing attributes (older shows) leave today's values: shows load into a
@@ -526,6 +527,7 @@ fn apply_monitor(engine: &Engine, parent: &Element) {
         get_b(m, "mute", &c.monitor_mute);
         get_b(m, "mono", &c.monitor_mono);
         get_b(m, "swap", &c.monitor_swap);
+        crate::globals::apply_monitor_paths(engine, m);
     }
 }
 
@@ -966,6 +968,7 @@ pub fn save_console(engine: &Engine, bridge: &mut dyn PluginBridge) -> Element {
             list.add(e);
         }
     }
+    crate::globals::capture(engine, &mut console);
     console
 }
 
@@ -1018,5 +1021,6 @@ pub fn load_console(engine: &Engine, console: &Element, bridge: &mut dyn PluginB
         apply_strip(&s, e, section::ALL, &mut None, &mut result);
         s.params.recall_safe.store(e.bool_or("recallSafe", false), Relaxed);
     }
+    crate::globals::apply(engine, console);
     result.warnings
 }

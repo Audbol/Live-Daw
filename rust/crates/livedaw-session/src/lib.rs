@@ -8,6 +8,7 @@
 
 pub mod console;
 pub mod custom;
+pub mod globals;
 pub mod layers;
 pub mod legacy;
 pub mod refs;
