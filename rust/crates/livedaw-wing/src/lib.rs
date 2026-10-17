@@ -12,10 +12,17 @@
 //! Maillot's "WING Remote Protocols"), libwing and the Bitfocus Companion
 //! module; no Behringer firmware or WING Edit code is used.
 
+pub mod json;
 pub mod map;
+pub mod meters;
+pub mod native;
+pub mod osc;
 pub mod schema;
+pub mod server;
+pub mod snap;
 pub mod value;
 
 pub use map::{Console, Identity, SetError, WingState};
 pub use schema::{schema, Node};
+pub use server::{Config, EngineHandle, EnginePtr, Status, WingServer};
 pub use value::Value;

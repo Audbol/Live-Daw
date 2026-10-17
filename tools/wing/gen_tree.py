@@ -29,6 +29,7 @@ Format (little endian), read by livedaw-wing/src/schema.rs:
 """
 
 import json
+import re
 import struct
 import sys
 
@@ -98,10 +99,29 @@ def enum_of(r):
 defs, def_ix = [], {}
 
 
+# Parameters the sweep marks read-only only because of the console's state at
+# the time (a dynamics model without MIX/GAIN, a linked send's pan, a bus's send
+# to itself, a stereo-linked matrix): consoles save them in snapshots, so they
+# are writable here.
+STATE_READ_ONLY = [re.compile(p) for p in (
+    r"^/(ch|aux|bus|main|mtx)/\d+/(gate|dyn)/(mix|gain)$",
+    r"^/(ch|aux)/\d+/send/(\d+|MX\d)/pan$",
+    r"^/bus/\d+/send/\d+/(on|lvl|pre)$",
+    r"^/(bus|main|mtx)/\d+/(pan|wid)$",
+    r"^/io/in/[A-Z]+/\d+/mode$",
+)]
+
+
+def sweep_read_only(r):
+    if any(p.match(r["fullname"]) for p in STATE_READ_ONLY):
+        return False
+    return bool(r.get("read_only"))
+
+
 def def_of(r):
     t = TYPES[r["type"]]
     unit = UNITS[r.get("unit")]
-    flags = 1 if r.get("read_only") else 0
+    flags = 1 if sweep_read_only(r) else 0
     payload = b""
     if t in (1, 2):
         flags |= 2

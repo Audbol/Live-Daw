@@ -575,6 +575,21 @@ pub fn bindings() -> &'static [Binding] {
     })
 }
 
+/// The row of each input strip's main patch group (`/ch/N/in/conn/grp`).
+fn conn_rows() -> &'static HashMap<(StripKind, u16), u16> {
+    static R: OnceLock<HashMap<(StripKind, u16), u16>> = OnceLock::new();
+    R.get_or_init(|| {
+        bindings()
+            .iter()
+            .enumerate()
+            .filter_map(|(r, b)| match b {
+                Binding::Strip(kind, n, SF::Conn { alt: false, number: false }) => Some(((*kind, *n), r as u16)),
+                _ => None,
+            })
+            .collect()
+    })
+}
+
 // ---- level conversions ---------------------------------------------------------------
 
 /// Engine dB (<= -100 is silence) to WING dB (-144 = -oo).
@@ -808,10 +823,8 @@ fn param_from_wing(spec_param: &livedaw_dsp::wing::ParamSpec, wdef: &Def, v: &Va
                 Value::Str(s) => s.clone(),
                 other => value::display(wdef, other),
             };
-            match items.iter().position(|i| i.eq_ignore_ascii_case(text.trim())) {
-                Some(i) => i as f32,
-                None => value::enum_index(wdef, v)? as f32,
-            }
+            // None for a choice our model doesn't have (e.g. an aux EQ's CUT band type).
+            items.iter().position(|i| i.eq_ignore_ascii_case(text.trim()))? as f32
         }
         ParamKind::Values(items) => {
             let x = match v {
@@ -995,11 +1008,19 @@ impl<'a> Console<'a> {
             }
             Binding::SourceMode(group, n) => {
                 let src = port::wing_to_source(group, n as i32)?;
-                let stereo = self
-                    .channels
-                    .iter()
-                    .chain(&self.aux)
-                    .any(|s| s.params.input_left.load(Relaxed) == src && s.params.stereo.load(Relaxed));
+                // A stereo strip patched to this source (as the WING shows the patch).
+                let rows = conn_rows();
+                let stereo =
+                    [(StripKind::Channel, &self.channels), (StripKind::Aux, &self.aux)].into_iter().any(|(kind, list)| {
+                        list.iter().enumerate().any(|(i, s)| {
+                            let p = &s.params;
+                            p.input_left.load(Relaxed) == src
+                                && p.stereo.load(Relaxed)
+                                && rows
+                                    .get(&(kind, i as u16 + 1))
+                                    .is_some_and(|&r| self.conn_pair(r, p, false) == (group, n as i32))
+                        })
+                    });
                 if !stereo {
                     return None; // the source's own setting (shadow)
                 }
@@ -1037,6 +1058,30 @@ impl<'a> Console<'a> {
             return Some(("MON", 2));
         }
         None
+    }
+
+    /// The input patch of a strip as the WING shows it. Live DAW stores one
+    /// port per input; the (group, number) a client or snapshot set is kept, and
+    /// shown while it still names that port (LCL 5 and A 5 are the same port
+    /// here), or when Live DAW can't patch it at all (a bus as a source).
+    fn conn_pair(&self, row: u16, p: &StripParams, alt: bool) -> (&'static str, i32) {
+        let src = if alt { p.alt_input_left.load(Relaxed) } else { p.input_left.load(Relaxed) };
+        let (gname, nname) = if alt { ("altgrp", "altin") } else { ("grp", "in") };
+        let grp_row = self.sibling(row, gname);
+        let shadow = match (
+            grp_row.and_then(|r| self.state.shadow_get(ShadowKey::Row(r))),
+            self.sibling(row, nname).and_then(|r| self.state.shadow_get(ShadowKey::Row(r))),
+        ) {
+            (Some(Value::Str(g)), Some(n)) => def_items_find(grp_row, &g).map(|g| (g, n.as_i32().unwrap_or(1))),
+            _ => None,
+        };
+        match (shadow, port::source_to_wing(src)) {
+            (Some((g, k)), _) if port::wing_to_source(g, k) == Some(src) => (g, k),
+            (Some((g, k)), _) if src < 0 && port::wing_to_source(g, k).is_none() => (g, k),
+            (Some((_, k)), _) if src < 0 => ("OFF", k),
+            (_, Some(gk)) => gk,
+            _ => ("OFF", 1),
+        }
     }
 
     fn sibling(&self, row: u16, name: &str) -> Option<u16> {
@@ -1087,24 +1132,7 @@ impl<'a> Console<'a> {
             SF::AltSel => b(&p.alt_selected),
             SF::Mode => Value::str(if p.stereo.load(Relaxed) { "ST" } else { "M" }),
             SF::Conn { alt, number } => {
-                let src = if alt { p.alt_input_left.load(Relaxed) } else { p.input_left.load(Relaxed) };
-                let (mut g, mut k) = port::source_to_wing(src).unwrap_or(("OFF", 1));
-                if src < 0 {
-                    // An unmappable patch (e.g. a bus as source) the client set: keep showing it.
-                    let gname = if alt { "altgrp" } else { "grp" };
-                    let nname = if alt { "altin" } else { "in" };
-                    if let (Some(Value::Str(sg)), Some(sn)) = (
-                        self.sibling(row, gname).and_then(|r| self.state.shadow_get(ShadowKey::Row(r))),
-                        self.sibling(row, nname).and_then(|r| self.state.shadow_get(ShadowKey::Row(r))),
-                    ) {
-                        if port::wing_to_source(&sg, 1).is_none() {
-                            if let Some(gg) = def_items_find(self.sibling(row, gname), &sg) {
-                                g = gg;
-                            }
-                        }
-                        k = sn.as_i32().unwrap_or(1);
-                    }
-                }
+                let (g, k) = self.conn_pair(row, p, alt);
                 if number {
                     Value::Int(k)
                 } else {
@@ -1377,9 +1405,19 @@ impl<'a> Console<'a> {
                 self.state.shadow_set(ShadowKey::Row(row), v.clone());
                 if let Some(src) = port::wing_to_source(group, n as i32).filter(|s| *s >= 0) {
                     let stereo = !matches!(v, Value::Str(m) if m == "M");
-                    for s in self.channels.iter().chain(&self.aux) {
+                    let rows = conn_rows();
+                    let strips = self
+                        .channels
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| (StripKind::Channel, i, s))
+                        .chain(self.aux.iter().enumerate().map(|(i, s)| (StripKind::Aux, i, s)));
+                    for (kind, i, s) in strips {
                         let p = &s.params;
-                        if p.input_left.load(Relaxed) == src {
+                        // Strips patched to this source as the WING shows it (LCL 5 and
+                        // A 5 share a port here but are different sources there).
+                        let shown = rows.get(&(kind, i as u16 + 1)).map(|&r| self.conn_pair(r, p, false));
+                        if p.input_left.load(Relaxed) == src && shown.is_none_or(|gk| gk == (group, n as i32)) {
                             p.stereo.store(stereo, Relaxed);
                             p.input_right.store(if stereo { src + 1 } else { -1 }, Relaxed);
                         }
@@ -1445,9 +1483,8 @@ impl<'a> Console<'a> {
         if model == current {
             return Ok(());
         }
-        if model == FX_EXT {
-            return Err(SetError::Unsupported("EXT (a plugin) is loaded from Live DAW's EFFECTS screen".into()));
-        }
+        // EXT without a plugin is an empty plugin slot (plugins are loaded on
+        // Live DAW's EFFECTS screen); a loaded plugin isn't replaced remotely.
         if current == FX_EXT && self.engine.fx(i).is_some_and(|r| r.is_loaded()) {
             return Err(SetError::Unsupported(format!("FX {} holds a plugin", i + 1)));
         }

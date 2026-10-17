@@ -1,0 +1,216 @@
+{
+	"type": "snapshot.11",
+	"creator_fw": "3.1-0-gfixture:release",
+	"creator_sn": "FIXTURE01",
+	"creator_model": "wing-fullsize",
+	"creator_version": "SX45-XU2",
+	"creator_name": "FIXTURE-DESK",
+	"created": "2026-10-01 18:00:00",
+	"active_show": "",
+	"active_scene": "",
+	"ae_data": {
+		"cfg": {
+			"mainlink": "2",
+			"dcamgrp": false,
+			"mon": {
+				"1": {"inv": false, "pan": 0, "wid": 100, "lim": 0, "dly": {"on": false, "m": 0.100000001}, "dim": 20, "pfldim": 12, "srclvl": 0, "srcmix": -144, "src": "MAIN.1", "tags": ""},
+				"2": {"lvl": -6, "inv": false, "pan": 0, "wid": 100, "lim": 0, "dly": {"on": false, "m": 0.100000001}, "dim": 18, "pfldim": 12, "srclvl": 0, "srcmix": -144, "src": "MAIN.1", "tags": ""}
+			},
+			"solo": {"mode": "LIVE", "mon": "PH", "mute": false, "chtap": "AFL", "bustap": "AFL", "maintap": "PFL", "mtxtap": "PFL", "srcsolo": "OFF"},
+			"amix": {"x": true, "y": false}
+		},
+		"io": {
+			"altsw": false,
+			"autoaltovr": false,
+			"in": {
+				"A": {
+					"1": {"mode": "M", "g": 32.5, "vph": true, "mute": false, "pol": false, "col": 1, "name": "Kick In", "icon": 0, "tags": "", "rmt": "OFF", "rcvc": false},
+					"3": {"mode": "ST", "g": 10, "vph": false, "mute": false, "pol": false, "col": 6, "name": "Keys", "icon": 0, "tags": "", "rmt": "OFF", "rcvc": false}
+				}
+			},
+			"out": {
+				"A": {
+					"1": {"grp": "MAIN", "in": 1},
+					"2": {"grp": "MAIN", "in": 2},
+					"3": {"grp": "BUS", "in": 1},
+					"4": {"grp": "BUS", "in": 2},
+					"5": {"grp": "OSC", "in": 1}
+				}
+			}
+		},
+		"ch": {
+			"1": {
+				"in": {
+					"set": {"srcauto": false, "altsrc": false, "inv": true, "trim": -3.5, "bal": 0, "dlymode": "MS", "dly": 2.5, "dlyon": true},
+					"conn": {"grp": "A", "in": 1, "altgrp": "CRD", "altin": 1}
+				},
+				"flt": {"lc": true, "lcf": 80.19641876, "lcs": "18", "hc": false, "hcf": 10018.26074, "hcs": "12", "tf": false, "mdl": "TILT", "tilt": 1.5},
+				"clink": true,
+				"col": 9,
+				"name": "Kick",
+				"icon": 12,
+				"led": true,
+				"mute": false,
+				"fdr": -4.5,
+				"pan": -10,
+				"wid": 100,
+				"solosafe": false,
+				"mon": "A",
+				"proc": "GEDI",
+				"ptap": "PFL",
+				"peq": {"on": true, "1g": 2, "1f": 99.68543243, "1q": 0.997970223, "2g": 0, "2f": 999.2504883, "2q": 1.995881796, "3g": 0, "3f": 10016.52734, "3q": 0.997970223},
+				"gate": {"on": true, "mdl": "GATE", "mix": 100, "gain": 0, "thr": -35, "range": 30, "att": 1, "hld": 20, "rel": 150.3349457, "acc": 0, "ratio": "gate"},
+				"gatesc": {"type": "HP12", "f": 120.2, "q": 1.995881796, "src": "SELF", "tap": "IN"},
+				"eq": {"on": true, "mdl": "STD", "mix": 100, "lg": 3, "lf": 80.19641876, "lq": 0.997970223, "leq": "SHV", "1g": -4, "1f": 299.2471619, "1q": 1.995881796, "2g": 0, "2f": 601.3883667, "2q": 0.997970223, "3g": 2.5, "3f": 3990.524414, "3q": 0.997970223, "4g": 0, "4f": 3990.524414, "4q": 0.997970223, "hg": 1, "hf": 11999.27539, "hq": 0.997970223, "heq": "SHV"},
+				"dyn": {"on": true, "mdl": "COMP", "mix": 100, "gain": 2, "thr": -18, "ratio": 4, "knee": 2, "det": "PEAK", "att": 10, "hld": 20, "rel": 120.5, "env": "LOG", "auto": false},
+				"dynxo": {"depth": 6, "type": "OFF", "f": 1002.37439, "q": 0.400000006},
+				"dynsc": {"type": "OFF", "f": 1002.37439, "q": 1.995881796, "src": "CH.2", "tap": "PFL"},
+				"preins": {"on": true, "ins": "FX2"},
+				"main": {
+					"1": {"on": true, "lvl": 0, "pre": false},
+					"2": {"on": false, "lvl": -144, "pre": false},
+					"3": {"on": false, "lvl": -144, "pre": false},
+					"4": {"on": false, "lvl": -144, "pre": false}
+				},
+				"send": {
+					"1": {"on": true, "lvl": -6, "pon": true, "mode": "PRE", "plink": 0, "pan": 0},
+					"2": {"on": true, "lvl": -10.5, "pon": false, "mode": "POST", "plink": 1, "pan": 0},
+					"3": {"on": false, "lvl": -144, "pon": false, "mode": "PRE", "plink": 0, "pan": 0},
+					"9": {"on": true, "lvl": 0, "pon": false, "mode": "GRP", "plink": 2, "pan": 0},
+					"MX1": {"on": true, "lvl": -3, "pon": false, "mode": "PRE", "plink": 0, "pan": 20}
+				},
+				"tapwid": 100,
+				"postins": {"on": true, "mode": "FX", "ins": "FX1", "w": 0},
+				"tags": "#D1,#M1,kick"
+			},
+			"2": {
+				"in": {
+					"set": {"srcauto": false, "altsrc": false, "inv": false, "trim": 0, "bal": 0, "dlymode": "M", "dly": 0.100000001, "dlyon": false},
+					"conn": {"grp": "A", "in": 2, "altgrp": "OFF", "altin": 1}
+				},
+				"col": 9,
+				"name": "Snare",
+				"icon": 0,
+				"led": true,
+				"mute": true,
+				"fdr": -144,
+				"pan": 15,
+				"wid": 100,
+				"gate": {"on": false, "mdl": "E88", "mix": 100, "gain": 0},
+				"eq": {"on": true, "mdl": "SOUL", "mix": 100},
+				"dyn": {"on": true, "mdl": "LA", "mix": 80, "gain": 0},
+				"tags": "#D1"
+			},
+			"3": {
+				"in": {
+					"set": {"srcauto": false, "altsrc": false, "inv": false, "trim": 0, "bal": 0, "dlymode": "M", "dly": 0.100000001, "dlyon": false},
+					"conn": {"grp": "A", "in": 3, "altgrp": "OFF", "altin": 1}
+				},
+				"col": 6,
+				"name": "Keys",
+				"fdr": -2,
+				"mute": false,
+				"proc": "EGDI",
+				"ptap": "POST",
+				"tags": "#D2,#M2"
+			},
+			"4": {
+				"in": {"conn": {"grp": "BUS", "in": 5, "altgrp": "OFF", "altin": 1}},
+				"name": "From bus",
+				"fdr": 0
+			}
+		},
+		"aux": {
+			"1": {
+				"in": {
+					"set": {"srcauto": false, "altsrc": false, "inv": false, "trim": 6, "bal": 0, "dlymode": "M", "dly": 0.100000001, "dlyon": false},
+					"conn": {"grp": "CRD", "in": 41, "altgrp": "OFF", "altin": 1}
+				},
+				"col": 4,
+				"name": "Playback",
+				"mute": false,
+				"fdr": -8,
+				"pan": 0,
+				"wid": 100,
+				"dyn": {"on": false, "mdl": "COMP", "mix": 100, "gain": 0},
+				"main": {"1": {"on": true, "lvl": -2, "pre": false}},
+				"send": {"4": {"on": true, "lvl": -12, "pon": false, "mode": "PRE", "plink": 0, "pan": 0}}
+			}
+		},
+		"bus": {
+			"1": {
+				"in": {"set": {"inv": false, "trim": 0, "bal": 0}},
+				"col": 5,
+				"name": "Wedge 1",
+				"icon": 0,
+				"led": true,
+				"busmono": true,
+				"mute": false,
+				"fdr": -1.5,
+				"pan": 0,
+				"wid": 100,
+				"mon": "A",
+				"eq": {"on": true, "mdl": "STD", "mix": 100, "lg": 0, "lf": 60.13883591, "lq": 1.995881796, "leq": "SHV", "3g": -6, "3f": 699.4875488, "3q": 4},
+				"dyn": {"on": false, "mdl": "COMP", "mix": 100, "gain": 0, "thr": -10, "ratio": 3, "knee": 3, "det": "RMS", "att": 50, "hld": 20, "rel": 150.3349457, "env": "LOG", "auto": true},
+				"preins": {"on": false, "ins": "NONE"},
+				"main": {"1": {"on": false, "lvl": -144, "pre": false}},
+				"send": {"MX2": {"on": true, "lvl": -5, "pre": true}},
+				"postins": {"on": false, "ins": "NONE"},
+				"dly": {"on": true, "mode": "MS", "dly": 3},
+				"tags": ""
+			},
+			"10": {
+				"name": "Drum sub",
+				"send": {"2": {"on": true, "lvl": -4, "pre": false}}
+			}
+		},
+		"main": {
+			"1": {
+				"in": {"set": {"inv": false, "trim": 0, "bal": 0}},
+				"col": 9,
+				"name": "PA",
+				"busmono": false,
+				"mute": false,
+				"fdr": -3,
+				"pan": 0,
+				"wid": 100,
+				"eq": {"on": true, "mdl": "STD", "mix": 100},
+				"dyn": {"on": true, "mdl": "SBUS", "mix": 100, "gain": 0},
+				"send": {"MX1": {"on": true, "lvl": 0, "pre": false}},
+				"dly": {"on": false, "mode": "M", "dly": 0.100000001},
+				"tags": ""
+			}
+		},
+		"mtx": {
+			"1": {
+				"in": {"set": {"inv": false, "trim": 0, "bal": 0}},
+				"dir": {"on": true, "lvl": -10, "inv": false, "in": "AES"},
+				"col": 13,
+				"name": "Delay line",
+				"mute": false,
+				"fdr": -6,
+				"pan": 0,
+				"wid": 100
+			}
+		},
+		"dca": {
+			"1": {"name": "DRUMS", "col": 12, "icon": 0, "led": true, "mute": false, "fdr": -2, "mon": "A"},
+			"2": {"name": "KEYS", "col": 6, "icon": 0, "led": true, "mute": true, "fdr": 0, "mon": "A"}
+		},
+		"mgrp": {
+			"1": {"name": "BAND", "mute": false},
+			"2": {"name": "KEYS", "mute": true}
+		},
+		"fx": {
+			"1": {"mdl": "HALL", "fxmix": 100, "pdel": 25, "size": 60, "dcy": 2.2, "mult": 1, "damp": 6013.883789, "lc": 80.19641876, "hc": 10018.26074, "shp": 100, "sprd": 25, "diff": 20, "mspd": 30},
+			"2": {"mdl": "ST-DL", "fxmix": 80, "time": 375, "mode": "ST", "fact": "1", "pat": "1:1", "offs": 0, "feed": 35, "flc": 99.68543243, "fhc": 6013.883789, "lc": 80.19641876, "hc": 12000},
+			"9": {"mdl": "HALL", "fxmix": 100}
+		},
+		"cards": {"wlive": {"bogus": 1}}
+	},
+	"ce_data": {
+		"safes": {"ch": "                                        ", "aux": "        ", "dca": "                "}
+	},
+	"ae_globals": {"clkrate": 48000, "clksrc": "INT", "startmute": true, "usbacfg": "48/48", "sccfg": "AUTO"},
+	"ce_globals": {"fdrsel": false, "fdrres": "AUTO", "fdrspd": "MED"}
+}
