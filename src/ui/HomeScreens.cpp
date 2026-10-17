@@ -4,6 +4,7 @@
 #include "ui/MeterComponent.h"
 #include "ui/ModelParams.h"
 #include "ui/ResponseGraph.h"
+#include "ui/WingPopups.h"
 #include "ui/WingWidgets.h"
 
 namespace livedaw::ui
@@ -1888,23 +1889,27 @@ private:
 };
 
 //==============================================================================
-/** A send's pan knob: the green arc from the centre to the pan position. */
-void paintSendPan (juce::Graphics& g, juce::Rectangle<float> r, float pan, bool enabled)
+/** A send's pan knob, drawn like the channel's: a black ring whose green arc,
+    centred on the pan position, spans the stereo width, and a grey needle. */
+void paintSendPan (juce::Graphics& g, juce::Rectangle<float> r, float pan, float width, bool enabled)
 {
     const float size = juce::jmin (r.getWidth(), r.getHeight());
     const auto c = r.getCentre();
-    const float rad = size * 0.42f, t = rad * 0.32f, mid = rad - t * 0.5f;
+    const float rad = size * 0.46f, t = rad * 0.34f, mid = rad - t * 0.5f;
     juce::Path ring;
-    ring.addCentredArc (c.x, c.y, mid, mid, 0.0f, -juce::MathConstants<float>::pi * 0.75f, juce::MathConstants<float>::pi * 0.75f, true);
-    g.setColour (juce::Colour (0xff1a1a1a));
+    ring.addCentredArc (c.x, c.y, mid, mid, 0.0f, 0.0f, juce::MathConstants<float>::twoPi, true);
+    g.setColour (juce::Colours::black);
     g.strokePath (ring, juce::PathStrokeType (t));
-    const float a = pan / 100.0f * juce::MathConstants<float>::pi * 0.75f;
-    juce::Path arc;
-    arc.addCentredArc (c.x, c.y, mid, mid, 0.0f, juce::jmin (0.0f, a) - 0.05f, juce::jmax (0.0f, a) + 0.05f, true);
-    g.setColour (enabled ? colours::panArc : colours::panArc.withMultipliedBrightness (0.4f));
-    g.strokePath (arc, juce::PathStrokeType (t));
-    g.setColour (enabled ? juce::Colours::white : Colours::textDim);
-    g.drawLine (c.x, c.y, c.x + std::sin (a) * rad * 0.8f, c.y - std::cos (a) * rad * 0.8f, juce::jmax (1.2f, size * 0.04f));
+    const float a = PanWidthDisplay::panAngle (pan), hs = PanWidthDisplay::halfSpan (width);
+    if (hs > 0.01f)
+    {
+        juce::Path arc;
+        arc.addCentredArc (c.x, c.y, mid, mid, 0.0f, a - hs, a + hs, true);
+        g.setColour (enabled ? colours::panArc : colours::panArc.withMultipliedBrightness (0.4f));
+        g.strokePath (arc, juce::PathStrokeType (t, juce::PathStrokeType::mitered, juce::PathStrokeType::butt));
+    }
+    g.setColour (enabled ? juce::Colour (0xff909090) : colours::dim);
+    g.drawLine (c.x, c.y, c.x + std::sin (a) * rad, c.y - std::cos (a) * rad, juce::jmax (1.2f, size * 0.05f));
 }
 
 /** The pop-up of a send's pan knob: MODE, IGNORE CHANNEL MUTE (TAP mode
@@ -1984,7 +1989,11 @@ private:
     std::function<bool()> isTap, isLinked;
 };
 
-/** One column of BUS SENDS / MATRIX SENDS. */
+/** One column of BUS SENDS / MATRIX SENDS (3.1): the target's label on its
+    colour and its name; a box with TAP | POST (lit red / green; GROUP blue),
+    the pan ring and PAN LINK; the send fader filled in the mode's colour; ON.
+    A bus as the source shows BUS and a PRE key instead, and no pan. Sends that
+    can't exist (the bus itself) are an empty column. */
 class SendColumn final : public juce::Component, private juce::Timer
 {
 public:
@@ -1993,9 +2002,13 @@ public:
         : src (source), dst (target), send (s), mtx (m), enabled (possible), onSelect (std::move (select)),
           fader (s != nullptr ? s->levelDb : m->levelDb, false)
     {
-        fader.fillColour = [this] { return sendModeColour (modeOf()); };
+        fader.fillColour = [this]
+        {
+            const auto c = src.isBus() && modeOf() != 0 ? colours::post : sendModeColour (modeOf());
+            return isOnNow() ? c : c.withMultipliedBrightness (0.45f);
+        };
         fader.isOn = [this] { return isOnNow(); };
-        fader.setEnabled (enabled);
+        fader.wellColour = colours::panel;
         on.isOn = [this] { return isOnNow(); };
         on.onClick = [this]
         {
@@ -2006,64 +2019,95 @@ public:
             if (onSelect)
                 onSelect();
         };
-        on.setEnabled (enabled);
-        addAndMakeVisible (fader);
-        addAndMakeVisible (on);
+        pre.isOn = [this] { return modeOf() == 0; };
+        pre.onClick = [this]
+        {
+            if (send != nullptr)
+                send->mode = send->mode.load() == 0 ? 1 : 0;
+            if (onSelect)
+                onSelect();
+        };
+        addChildComponent (fader);
+        addChildComponent (on);
+        addChildComponent (pre);
+        fader.setVisible (enabled);
+        on.setVisible (enabled);
+        pre.setVisible (enabled && busSource());
         startTimerHz (8);
     }
 
     bool selected = false;
+    /** A touch on a send that can't exist (WING 3.0: the feedback-loop warning). */
+    std::function<void()> onImpossible;
     juce::Component* getFader() noexcept { return &fader; }
 
+    bool busSource() const { return src.isBus() && send != nullptr; }
     int modeOf() const { return send != nullptr ? send->mode.load() : (mtx->pre.load() ? 0 : 1); }
     bool isOnNow() const { return send != nullptr ? send->enabled.load() : mtx->on.load(); }
 
     void paint (juce::Graphics& g) override
     {
-        auto r = getLocalBounds().toFloat().reduced (1.5f, 0.0f);
-        const float alpha = enabled ? 1.0f : 0.35f;
-        auto strip = r.removeFromTop (stripH);
-        g.setColour (dst.getColour().withMultipliedAlpha (alpha));
-        g.fillRect (strip);
+        auto r = getLocalBounds().toFloat().reduced (juce::jmax (2.0f, getWidth() * 0.06f), 0.0f);
+        auto label = r.removeFromTop (stripH);
+        g.setColour (dst.getColour());
+        g.fillRect (label);
         g.setColour (juce::Colours::black);
-        g.setFont (juce::FontOptions (stripH * 0.8f, juce::Font::bold));
-        g.drawText (shortLabel (dst), strip.toNearestInt(), juce::Justification::centred);
-        auto name = r.removeFromTop (14.0f);
-        g.setColour (Colours::text.withMultipliedAlpha (alpha));
-        g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
-        g.drawFittedText (hasDefaultName (dst) ? juce::String() : stripName (dst).toUpperCase(), name.toNearestInt(), juce::Justification::centred, 1, 0.6f);
-        r.removeFromTop (2.0f);
+        g.setFont (juce::FontOptions (stripH * 0.82f, juce::Font::plain));
+        g.drawText (shortLabel (dst), label.toNearestInt(), juce::Justification::centred);
+        auto name = r.removeFromTop (nameH);
+        g.setColour (colours::caption);
+        g.setFont (juce::FontOptions (juce::jmin (13.0f, nameH * 0.7f), juce::Font::plain));
+        g.drawFittedText (hasDefaultName (dst) ? juce::String() : stripName (dst), name.toNearestInt(), juce::Justification::centred, 1, 0.6f);
 
-        // The mode: GROUP alone in blue, or TAP | POST (PRE | POST) with one lit.
-        modeArea = r.removeFromTop (juce::jlimit (12.0f, 18.0f, r.getHeight() * 0.06f));
+        // The mode and pan box.
+        g.setColour (colours::panel);
+        g.fillRect (boxArea);
+        auto box = boxArea;
+        auto modeRow = box.removeFromTop (juce::jlimit (12.0f, 20.0f, boxArea.getHeight() * 0.24f));
+        modeArea = modeRow;
+        g.setFont (juce::FontOptions (juce::jmin (14.0f, modeRow.getHeight() * 0.85f), juce::Font::plain));
+        if (busSource())
+        {
+            g.setColour (colours::caption);
+            g.drawText ("BUS", modeRow.toNearestInt(), juce::Justification::centred);
+            return;
+        }
+        if (! enabled)
+            return;
         const int mode = modeOf();
-        const bool inputSource = src.isInput();
         if (mode == 2)
-            drawChip (g, modeArea.reduced (2.0f, 0.0f), "GROUP", colours::group.withMultipliedAlpha (alpha), juce::Colours::black);
+        {
+            g.setColour (colours::group);
+            g.drawText ("GROUP", modeRow.toNearestInt(), juce::Justification::centred);
+        }
         else
         {
-            auto left = modeArea.withWidth (modeArea.getWidth() * 0.5f).reduced (1.0f, 0.0f);
-            auto right = modeArea.withTrimmedLeft (modeArea.getWidth() * 0.5f).reduced (1.0f, 0.0f);
-            drawChip (g, left, sendModeName (0, inputSource || mtx != nullptr ? inputSource : false), mode == 0 ? colours::tap.withMultipliedAlpha (alpha) : juce::Colour (0xff2a2a2a),
-                      mode == 0 ? juce::Colours::black : Colours::textDim);
-            drawChip (g, right, "POST", mode == 1 ? colours::post.withMultipliedAlpha (alpha) : juce::Colour (0xff2a2a2a), mode == 1 ? juce::Colours::black : Colours::textDim);
+            const bool inputSource = src.isInput();
+            g.setColour (mode == 0 ? colours::tap : colours::dim);
+            g.drawText (sendModeName (0, inputSource || mtx != nullptr ? inputSource : false), modeRow.withTrimmedRight (modeRow.getWidth() * 0.5f).toNearestInt(),
+                        juce::Justification::centred);
+            g.setColour (mode == 1 ? colours::post : colours::dim);
+            g.drawText ("POST", modeRow.withTrimmedLeft (modeRow.getWidth() * 0.5f).toNearestInt(), juce::Justification::centred);
         }
-        r.removeFromTop (3.0f);
 
-        // The pan knob, PAN LINK under it.
-        panArea = r.removeFromTop (juce::jlimit (18.0f, 40.0f, r.getWidth() * 0.9f));
+        // The pan ring, PAN LINK under it.
+        auto linkArea = box.removeFromBottom (juce::jlimit (10.0f, 18.0f, boxArea.getHeight() * 0.22f));
+        panArea = box.reduced (2.0f);
         const bool linked = send != nullptr && send->panLink.load();
         const float chPan = send != nullptr && send->panReversed.load() ? -src.params.pan.load() : src.params.pan.load();
         const float panValue = linked ? chPan : (send != nullptr ? send->pan.load() : mtx->pan.load());
-        paintSendPan (g, panArea, panValue, enabled);
-        auto linkArea = r.removeFromTop (12.0f);
-        if (linked)
+        paintSendPan (g, panArea, panValue, linked ? src.params.width.load() : 100.0f, isOnNow());
+        if (send != nullptr)
         {
-            g.setColour (colours::stereo);
-            g.setFont (juce::FontOptions (9.5f, juce::Font::bold));
-            g.drawFittedText (send->panReversed.load() ? "LINK REV" : "PAN LINK", linkArea.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+            g.setColour (linked ? colours::link : colours::dim);
+            g.setFont (juce::FontOptions (juce::jmin (13.0f, linkArea.getHeight() * 0.85f), juce::Font::plain));
+            g.drawFittedText (linked && send->panReversed.load() ? "LINK REV" : "PAN LINK", linkArea.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         }
-        if (selected)
+    }
+
+    void paintOverChildren (juce::Graphics& g) override
+    {
+        if (selected && enabled)
         {
             g.setColour (colours::accent);
             g.fillRect (on.getBounds().toFloat().withY ((float) on.getBottom() + 2.0f).withHeight (3.0f));
@@ -2072,35 +2116,51 @@ public:
 
     void resized() override
     {
-        stripH = (float) juce::jlimit (12, 18, getHeight() / 22);
-        auto r = getLocalBounds();
-        const int top = (int) (stripH + 14.0f + 2.0f + juce::jlimit (12.0f, 18.0f, getHeight() * 0.06f) + 3.0f + juce::jlimit (18.0f, 40.0f, getWidth() * 0.9f) + 12.0f);
-        r.removeFromTop (top + 4);
+        stripH = (float) juce::jlimit (11, 18, getHeight() / 33);
+        nameH = (float) juce::jlimit (12, 22, getHeight() / 26);
+        auto r = getLocalBounds().reduced (juce::jmax (2, getWidth() * 6 / 100), 0);
+        r.removeFromTop ((int) (stripH + nameH) + 2);
+        boxArea = r.removeFromTop (juce::jlimit (40, 96, getHeight() * 17 / 100)).toFloat();
+        r.removeFromTop (6);
+        if (busSource())
+            pre.setBounds (boxArea.toNearestInt().withTrimmedTop (juce::jlimit (12, 20, (int) (boxArea.getHeight() * 0.24f))).reduced (3, 4));
         r.removeFromBottom (6);
-        on.setBounds (r.removeFromBottom (juce::jlimit (18, 28, getHeight() / 12)).reduced (2, 0));
-        r.removeFromBottom (4);
+        on.setBounds (r.removeFromBottom (juce::jlimit (18, 34, getHeight() / 11)));
+        r.removeFromBottom (6);
         fader.setBounds (r);
-        fader.setVisible (modeOf() != 2); // GROUP sends have no level
+        fader.setVisible (enabled && modeOf() != 2); // GROUP sends have no level
     }
 
     void mouseUp (const juce::MouseEvent& e) override
     {
+        if (! enabled)
+        {
+            if (onImpossible && getLocalBounds().contains (e.getPosition()))
+                onImpossible();
+            return;
+        }
         if (onSelect)
             onSelect();
-        if (panArea.contains (e.position) && enabled)
+        if (busSource())
+            return;
+        if (panArea.contains (e.position))
         {
             auto options = send != nullptr ? std::make_unique<SendOptions> (*send, src.isInput(), src.canIgnoreMuteOnSends())
                                            : std::make_unique<SendOptions> (*mtx, src.isInput(), src.canIgnoreMuteOnSends());
             juce::CallOutBox::launchAsynchronously (std::move (options), localAreaToGlobal (panArea.toNearestInt()), nullptr);
         }
-        else if (modeArea.contains (e.position) && enabled)
+        else if (modeArea.contains (e.position))
         {
             if (send != nullptr)
                 send->mode = (send->mode.load() + 1) % 3;
             else
                 mtx->pre = ! mtx->pre.load();
+            if (onModeChanged)
+                onModeChanged (modeOf());
         }
     }
+
+    std::function<void (int mode)> onModeChanged;
 
 private:
     void timerCallback() override
@@ -2121,10 +2181,179 @@ private:
     bool enabled;
     std::function<void()> onSelect;
     ScreenFader fader;
-    IconKey on { "ON", std::nullopt, colours::accent };
-    juce::Rectangle<float> modeArea, panArea;
-    float stripH = 14.0f;
+    IconKey on { "ON", std::nullopt, colours::accent }, pre { "PRE", std::nullopt, colours::accent };
+    juce::Rectangle<float> boxArea, modeArea, panArea;
+    float stripH = 14.0f, nameH = 14.0f;
     int shownMode = -1;
+};
+
+/** The TAP POINT pop-up of BUS SENDS (3.1): the channel's processing chain
+    with a numbered node between the blocks,
+    `-(1)-[FILT]-(2)-[GATE]-(3)-[EQ]-(4)-[COMP]-(5)-[INS 1]-(6)-[FADER]-(7)-[INS 2]-(8)-[WIDTH]-|`,
+    the blocks in the channel's processing order, FADER and WIDTH framed green,
+    the current node a red disc. Touch a node to choose it. Aux and buses tap
+    at a fixed point: their chain is only shown. */
+class TapChain final : public juce::Component, private juce::Timer
+{
+public:
+    explicit TapChain (Strip& s) : strip (s) { startTimerHz (6); }
+
+    std::function<void (int tap)> onChosen;
+
+    struct Item
+    {
+        juce::String text;  // a block's name, or a node's caption
+        int node = -1;      // the tap index of a node, -1 for a block
+        bool green = false; // FADER, WIDTH
+    };
+
+    std::vector<Item> items() const
+    {
+        std::vector<Item> list;
+        auto block = [&list] (const juce::String& t, bool green = false) { list.push_back ({ t, -1, green }); };
+        auto node = [&list] (const juce::String& caption, int tap) { list.push_back ({ caption, tap, false }); };
+        const auto captions = tapPointNames();
+        if (strip.getKind() == StripKind::Channel)
+        {
+            node (captions[0], 0);
+            block ("FILT");
+            node (captions[1], 1);
+            const juce::String order = models::list (models::ProcessOrders)[juce::jlimit (0, 23, (int) strip.params.processOrder.load())];
+            for (int i = 0; i < order.length(); ++i)
+            {
+                const auto letter = order[i];
+                block (letter == 'G' ? "GATE" : letter == 'E' ? "EQ" : letter == 'D' ? "COMP" : "INS 1");
+                node (captions[2 + i], 2 + i);
+            }
+            block ("FADER", true);
+            node (captions[6], 6);
+            block ("INS 2");
+            node (captions[7], 7);
+            block ("WIDTH", true);
+            return list;
+        }
+        // Aux (DYN, EQ, INS 1) and buses (COMP, INS 1, then EQ, INS 2 after
+        // the fader): fixed after INS 1.
+        if (strip.getKind() == StripKind::Aux)
+            for (auto* b : { "DYN", "EQ", "INS 1" })
+                block (b);
+        else
+            for (auto* b : { "COMP", "INS 1" })
+                block (b);
+        node (captions[ld::kTapPfl], ld::kTapPfl);
+        block ("FADER", true);
+        if (strip.isBus())
+        {
+            block ("EQ");
+            block ("INS 2");
+        }
+        block ("WIDTH", true);
+        return list;
+    }
+
+    int current() const { return strip.hasSelectableTap() ? juce::jlimit (0, 7, (int) strip.params.tap.load()) : ld::kTapPfl; }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        g.setColour (juce::Colours::black);
+        g.fillRect (r);
+        g.setColour (juce::Colour (0xff282828));
+        g.fillRect (r.reduced (1.5f));
+
+        const auto list = items();
+        auto chain = r.reduced (r.getWidth() * 0.02f, 0.0f);
+        const float lineY = chain.getY() + chain.getHeight() * 0.36f;
+        const float nodeD = juce::jlimit (12.0f, 26.0f, chain.getHeight() * 0.22f);
+        const float blockH = nodeD * 1.25f;
+        int nodes = 0, blocks = 0;
+        for (auto& it : list)
+            (it.node >= 0 ? nodes : blocks) += 1;
+        // Blocks twice as wide as nodes, the rest spread evenly.
+        const float unit = chain.getWidth() / ((float) blocks * 2.6f + (float) nodes * 1.6f + 1.0f);
+        g.setColour (colours::ink);
+        g.fillRect (chain.getX(), lineY - 1.0f, chain.getWidth(), 2.0f);
+        g.fillEllipse (chain.getX() - 3.0f, lineY - 3.0f, 6.0f, 6.0f);
+        g.fillRect (chain.getRight() - 2.0f, lineY - blockH * 0.35f, 2.0f, blockH * 0.7f);
+
+        hits.clear();
+        float x = chain.getX() + unit * 0.5f;
+        const int tap = current();
+        for (auto& it : list)
+        {
+            if (it.node < 0)
+            {
+                auto b = juce::Rectangle<float> (x + unit * 0.2f, lineY - blockH * 0.5f, unit * 2.2f, blockH);
+                g.setColour (it.green ? juce::Colour (0xff206024) : juce::Colours::black);
+                g.fillRect (b);
+                g.setColour (colours::ink);
+                g.drawRect (b, 1.5f);
+                g.setFont (juce::FontOptions (blockH * 0.6f, juce::Font::plain));
+                g.drawFittedText (it.text, b.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.6f);
+                x += unit * 2.6f;
+                continue;
+            }
+            const auto c = juce::Point<float> (x + unit * 0.8f, lineY);
+            const bool sel = it.node == tap;
+            // The stem down to the caption.
+            g.setColour (sel ? colours::ink : colours::dim);
+            g.fillRect (c.x - 1.0f, lineY, 2.0f, chain.getHeight() * 0.22f);
+            g.fillEllipse (juce::Rectangle<float> (6.0f, 6.0f).withCentre ({ c.x, lineY + chain.getHeight() * 0.22f }));
+            auto disc = juce::Rectangle<float> (nodeD, nodeD).withCentre (c);
+            g.setColour (sel ? colours::tap : juce::Colours::black);
+            g.fillEllipse (disc);
+            if (! sel)
+            {
+                g.setColour (colours::ink);
+                g.drawEllipse (disc.reduced (0.75f), 1.5f);
+            }
+            g.setColour (colours::ink);
+            g.setFont (juce::FontOptions (nodeD * 0.7f, juce::Font::bold));
+            g.drawText (juce::String (it.node + 1), disc.toNearestInt(), juce::Justification::centred);
+            auto caption = juce::Rectangle<float> (unit * 2.6f, chain.getHeight() * 0.2f).withCentre ({ c.x, lineY + chain.getHeight() * 0.42f });
+            g.setColour (sel ? colours::ink : colours::caption);
+            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 16.0f, caption.getHeight() * 0.8f), juce::Font::plain));
+            g.drawFittedText (it.text, caption.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+            hits.push_back ({ disc.expanded (nodeD * 0.4f).getUnion (caption), it.node });
+            x += unit * 1.6f;
+        }
+        if (strip.hasSelectableTap())
+        {
+            // The end of the chain: post-processing sends.
+            g.setColour (colours::caption);
+            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 16.0f, chain.getHeight() * 0.16f), juce::Font::plain));
+            g.drawText ("[POST]", juce::Rectangle<float> (unit * 2.0f, chain.getHeight() * 0.2f).withCentre ({ chain.getRight() - unit, lineY + chain.getHeight() * 0.42f }).toNearestInt(),
+                        juce::Justification::centred);
+        }
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (! strip.hasSelectableTap())
+            return;
+        for (auto& [area, tap] : hits)
+            if (area.contains (e.position))
+            {
+                if (onChosen)
+                    onChosen (tap);
+                return;
+            }
+    }
+
+private:
+    void timerCallback() override
+    {
+        const auto now = std::make_pair ((int) strip.params.tap.load(), (int) strip.params.processOrder.load());
+        if (now != shown)
+        {
+            shown = now;
+            repaint();
+        }
+    }
+
+    Strip& strip;
+    std::vector<std::pair<juce::Rectangle<float>, int>> hits;
+    std::pair<int, int> shown { -1, -1 };
 };
 
 /** BUS SENDS / MATRIX SENDS (Figs. 66-67): the TAP POINT diagram, TAP WIDTH and
@@ -2140,22 +2369,45 @@ public:
         width.get = [] { return 0.75f; };
         width.text = [] { return juce::String ("100 %"); };
         tapWidth = &make<KnobBox> (width);
+        tapWidth->ringColour = colours::panArc;
         tapWidth->setEnabled (false);
         tapEq = &key ("TAP EQ", std::nullopt);
         tapEq->setEnabled (false);
-        if (strip.getKind() == StripKind::Channel)
+        tapEqMore = &key ({}, Icon::ChevronRight);
+        tapEqMore->setEnabled (false);
+        // SPILL puts the strip's sends on a fader section (the spill layers, W40).
+        spill = &key ("SPILL", Icon::Faders);
+        spill->setEnabled (false);
+        if (strip.getKind() != StripKind::Main && strip.getKind() != StripKind::Matrix)
         {
-            tapMenu = &key (juce::String::fromUTF8 ("\xe2\x96\xbc"), std::nullopt);
-            tapMenu->onClick = [this]
+            tapMenu = &key ({}, Icon::ChevronDown);
+            tapMenu->onClick = [this] { toggleChain(); };
+            chain = &make<TapChain> (strip);
+            chain->setVisible (false);
+            chain->onChosen = [this] (int tap)
             {
-                juce::PopupMenu m;
-                const auto names = tapPointNames();
-                for (int i = 0; i < names.size(); ++i)
-                    m.addItem (names[i], true, strip.params.tap.load() == i, [this, i] { strip.params.tap = i; repaint(); });
-                m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (tapMenu));
+                const int before = strip.params.tap.load();
+                strip.params.tap = tap;
+                chain->setVisible (false);
+                repaint();
+                // 1.12: "Additional info message when using post fader send tap".
+                if (tap != before && (tap == ld::kTapAfl || tap == ld::kTapPost))
+                    popups::warn (*this, "POST FADER TAP",
+                                  "The TAP sends of this channel now follow its fader" + juce::String (tap == ld::kTapPost ? ", INS 2 and width." : ".")
+                                      + " Choose a tap before the fader for monitor mixes that should not follow it.");
             };
         }
         build();
+    }
+
+    bool busToBus() const { return strip.isBus() && ! matrix; }
+
+    void toggleChain()
+    {
+        if (chain == nullptr)
+            return;
+        chain->setVisible (! chain->isVisible());
+        chain->toFront (false);
     }
 
     void build()
@@ -2175,15 +2427,32 @@ public:
             for (int i = 0; i < (int) buses.size() && i < 16; ++i)
             {
                 auto& bus = *buses[(size_t) i];
-                // Buses 9+ can feed buses 1-8; the others are shown disabled.
+                // Buses 9+ can feed buses 1-8; the others are shown empty.
                 const bool possible = &bus != &strip && ! (strip.isBus() && ! (strip.getId() >= kBusToBusTargets && bus.getId() < kBusToBusTargets));
                 auto* send = &strip.sends[(size_t) bus.getId()];
-                columns.push_back (&make<SendColumn> (strip, bus, send, nullptr, possible, [this, i] { select (i); }));
+                auto* col = &make<SendColumn> (strip, bus, send, nullptr, possible, [this, i] { select (i); });
+                const bool self = &bus == &strip;
+                col->onImpossible = [this, self, name = shortLabel (bus)]
+                {
+                    // WING 3.0: "Warning when a bus is sent to the same bus (feedback loop)".
+                    popups::warn (*this, "FEEDBACK LOOP",
+                                  self ? "A bus can't send to itself: the send would feed its own input."
+                                       : "Only buses 9-16 can send to buses 1-8: a send from " + shortLabel (strip) + " to " + name
+                                             + " could feed back into itself.");
+                };
+                col->onModeChanged = [this] (int mode)
+                {
+                    juce::ignoreUnused (mode);
+                    repaint();
+                };
+                columns.push_back (col);
             }
         }
         selected = juce::jlimit (0, juce::jmax (0, (int) columns.size() - 1), selected);
         for (int i = 0; i < (int) columns.size(); ++i)
             columns[(size_t) i]->selected = i == selected;
+        if (chain != nullptr)
+            chain->toFront (false);
         resized();
         repaint();
     }
@@ -2262,15 +2531,34 @@ public:
     {
         clearBoxes();
         auto b = getLocalBounds();
-        header = b.removeFromTop (juce::jlimit (32, 46, b.getHeight() / 9));
-        auto h = header.reduced (4, 3);
-        tapDiagram = h.removeFromLeft (h.getWidth() * 36 / 100);
+        // The 3.1 header (WING pixels from the content's left edge, 1160
+        // wide): TAP POINT 8-376, the title to 592, TAP WIDTH 592-764, TAP EQ
+        // 780-1008, SPILL 1024-1156.
+        header = b.removeFromTop (juce::jlimit (32, 60, b.getHeight() / 9));
+        auto h = header.reduced (0, juce::jmax (3, header.getHeight() / 9));
+        const float u = (float) header.getWidth() / 1160.0f;
+        auto span = [&h, u, this] (float x0, float x1)
+        { return juce::Rectangle<int> (header.getX() + juce::roundToInt (x0 * u), h.getY(), juce::roundToInt ((x1 - x0) * u), h.getHeight()); };
+        const bool tapped = tapMenu != nullptr && ! busToBus();
+        tapField = tapped ? span (8.0f, 376.0f) : juce::Rectangle<int>();
         if (tapMenu != nullptr)
-            tapMenu->setBounds (tapDiagram.removeFromRight (juce::jmin (28, tapDiagram.getHeight())));
-        auto right = h.removeFromRight (h.getWidth() * 48 / 100);
-        tapWidth->setBounds (right.removeFromLeft (right.getWidth() / 2).reduced (2, 0));
-        tapEq->setBounds (right.reduced (2, 0));
-        b.removeFromTop (6);
+        {
+            tapMenu->setVisible (tapped);
+            tapMenu->setBounds (tapField.withLeft (tapField.getRight() - tapField.getHeight() * 2 / 3));
+        }
+        titleArea = busToBus() ? span (8.0f, 1008.0f) : span (376.0f, 592.0f);
+        tapWidth->setVisible (! busToBus());
+        tapEq->setVisible (! busToBus());
+        tapEqMore->setVisible (! busToBus());
+        tapWidth->setBounds (span (592.0f, 764.0f));
+        auto eq = span (780.0f, 1008.0f);
+        tapEqMore->setBounds (eq.removeFromRight (eq.getHeight() * 2 / 3));
+        tapEq->setBounds (eq);
+        spill->setBounds (span (1024.0f, 1156.0f));
+        b.removeFromTop (juce::jmax (4, getHeight() / 100));
+
+        if (chain != nullptr)
+            chain->setBounds (b.removeFromTop (0).withHeight (juce::jlimit (70, 150, getHeight() / 5)));
 
         // 16 columns; the matrix page right-aligns its 8.
         const int slots = matrix ? 16 : juce::jmax (16, (int) columns.size());
@@ -2285,74 +2573,73 @@ public:
     {
         HomeScreen::paint (g);
         auto h = header.toFloat();
-        g.setColour (matrix ? juce::Colour (0xff2a3a50) : colours::panel);
+        g.setColour (colours::panel);
         g.fillRect (h);
-        // The title in the middle.
-        auto title = h.withTrimmedLeft ((float) (tapDiagram.getRight() - header.getX()) + 8.0f).withWidth (h.getWidth() * 0.16f + 40.0f);
-        g.setColour (Colours::text);
-        g.setFont (juce::FontOptions (juce::jlimit (14.0f, 20.0f, h.getHeight() * 0.5f), juce::Font::bold));
-        g.drawFittedText (matrix ? "MATRIX SENDS" : "BUS SENDS", title.toNearestInt(), juce::Justification::centred, 1, 0.7f);
-        paintTapDiagram (g, tapDiagram.toFloat());
+        g.setColour (colours::caption);
+        g.setFont (juce::FontOptions (juce::jlimit (14.0f, 24.0f, h.getHeight() * 0.42f), juce::Font::plain));
+        g.drawFittedText (matrix ? "MATRIX SENDS" : (busToBus() ? "BUS -> BUS SENDS" : "BUS SENDS"), titleArea, juce::Justification::centred, 1, 0.7f);
+        if (! tapField.isEmpty())
+            paintTapDiagram (g, tapField.toFloat().withTrimmedRight ((float) tapMenu->getWidth()));
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (tapField.contains (e.getPosition()))
+            toggleChain();
+        else if (chain != nullptr && chain->isVisible())
+            chain->setVisible (false);
     }
 
 private:
-    /** TAP POINT -[COMP]-(5)-[INS 1]-: the blocks around the tap point and its number. */
+    /** TAP POINT -[EQ]-(4)-[COMP]-: the blocks around the tap point and its
+        number, in a dark field (its key opens the whole chain). */
     void paintTapDiagram (juce::Graphics& g, juce::Rectangle<float> r)
     {
-        g.setColour (Colours::textDim);
-        g.setFont (juce::FontOptions (juce::jlimit (10.0f, 14.0f, r.getHeight() * 0.38f), juce::Font::bold));
-        auto caption = r.removeFromLeft (juce::jmin (r.getWidth() * 0.3f, 74.0f));
+        paintKeyBody (g, r, colours::well);
+        r = r.reduced (r.getHeight() * 0.12f, 0.0f);
+        g.setColour (colours::caption);
+        g.setFont (juce::FontOptions (juce::jlimit (10.0f, 18.0f, r.getHeight() * 0.36f), juce::Font::plain));
+        auto caption = r.removeFromLeft (r.getWidth() * 0.34f);
         g.drawFittedText ("TAP POINT", caption.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
 
-        int tap = ld::kTapPfl;
-        if (strip.getKind() == StripKind::Channel)
-            tap = juce::jlimit (0, 7, (int) strip.params.tap.load());
-        else if (strip.getKind() == StripKind::Main || strip.getKind() == StripKind::Matrix)
-            tap = -1;
-        if (tap < 0)
-            return;
-
-        // The blocks in signal order: INPUT, FILTER, the four slots, FADER, INS 2, OUT.
-        juce::StringArray blocks { "INPUT", "FILTER" };
-        if (strip.getKind() == StripKind::Channel)
-        {
-            const juce::String order = models::list (models::ProcessOrders)[juce::jlimit (0, 23, (int) strip.params.processOrder.load())];
-            for (auto letter : order)
-                blocks.add (letter == 'G' ? "GATE" : letter == 'E' ? "EQ" : letter == 'D' ? "COMP" : "INS 1");
-        }
-        else
-            blocks.addArray ({ "DYN", "EQ", "COMP", "INS 1" });
-        blocks.addArray ({ "FADER", "INS 2", "OUT" });
-        // Tap n sits between blocks[n] and blocks[n+1] (IN after INPUT, ...).
-        const auto before = blocks[juce::jlimit (0, blocks.size() - 1, tap)];
-        const auto after = blocks[juce::jlimit (0, blocks.size() - 1, tap + 1)];
-        const float bw = (r.getWidth() - r.getHeight()) * 0.5f - 10.0f;
-        auto b1 = r.removeFromLeft (bw).reduced (4.0f, r.getHeight() * 0.18f);
-        auto circle = r.removeFromLeft (r.getHeight()).reduced (r.getHeight() * 0.15f);
-        auto b2 = r.removeFromLeft (bw).reduced (4.0f, r.getHeight() * 0.18f);
-        g.setColour (Colours::textDim);
-        g.drawLine (b1.getX() - 4.0f, b1.getCentreY(), b2.getRight() + 4.0f, b1.getCentreY(), 1.5f);
+        const auto items = chain->items();
+        const int tap = chain->current();
+        juce::String before, after;
+        for (size_t i = 0; i < items.size(); ++i)
+            if (items[i].node == tap)
+            {
+                before = i > 0 ? items[i - 1].text : juce::String ("IN");
+                after = i + 1 < items.size() ? items[i + 1].text : juce::String ("OUT");
+            }
+        const float d = r.getHeight() * 0.42f;
+        const float bw = (r.getWidth() - d) * 0.5f - r.getHeight() * 0.3f;
+        g.setColour (colours::ink);
+        g.fillRect (r.getX(), r.getCentreY() - 0.75f, r.getWidth(), 1.5f);
+        auto b1 = juce::Rectangle<float> (r.getX() + r.getHeight() * 0.15f, r.getY(), bw, r.getHeight()).reduced (0.0f, r.getHeight() * 0.22f);
+        auto circle = juce::Rectangle<float> (d, d).withCentre ({ r.getCentreX(), r.getCentreY() });
+        auto b2 = b1.withX (r.getRight() - r.getHeight() * 0.15f - bw);
         for (auto [box, text] : { std::make_pair (b1, before), std::make_pair (b2, after) })
         {
-            g.setColour (colours::panel);
+            g.setColour (juce::Colours::black);
             g.fillRect (box);
-            g.setColour (Colours::text);
-            g.drawRect (box, 1.0f);
-            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 13.0f, box.getHeight() * 0.62f), juce::Font::bold));
-            g.drawFittedText (text, box.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+            g.setColour (colours::ink);
+            g.drawRect (box, 1.5f);
+            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 16.0f, box.getHeight() * 0.62f), juce::Font::plain));
+            g.drawFittedText (text, box.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.6f);
         }
-        g.setColour (Colours::mute);
+        g.setColour (colours::tap);
         g.fillEllipse (circle);
-        g.setColour (juce::Colours::white);
-        g.setFont (juce::FontOptions (circle.getHeight() * 0.7f, juce::Font::bold));
+        g.setColour (colours::ink);
+        g.setFont (juce::FontOptions (circle.getHeight() * 0.72f, juce::Font::bold));
         g.drawText (juce::String (tap + 1), circle.toNearestInt(), juce::Justification::centred);
     }
 
     bool matrix;
     std::vector<SendColumn*> columns;
     KnobBox* tapWidth = nullptr;
-    IconKey *tapEq = nullptr, *tapMenu = nullptr;
-    juce::Rectangle<int> header, tapDiagram;
+    IconKey *tapEq = nullptr, *tapEqMore = nullptr, *tapMenu = nullptr, *spill = nullptr;
+    TapChain* chain = nullptr;
+    juce::Rectangle<int> header, tapField, titleArea;
     int selected = 0;
 };
 

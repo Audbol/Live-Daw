@@ -601,6 +601,7 @@ public:
 
     std::function<juce::Colour()> fillColour;
     std::function<bool()> isOn;
+    juce::Colour wellColour = colours::well;  // the box behind the slot
 
     void paint (juce::Graphics& g) override
     {
@@ -624,7 +625,7 @@ public:
             g.drawText ("-oo", scaleArea.withY (slot.getBottom() - 7.0f).withHeight (14.0f).toNearestInt(), juce::Justification::centredRight);
         }
 
-        g.setColour (colours::well);
+        g.setColour (wellColour);
         g.fillRect (well);
         g.setColour (juce::Colours::black);
         g.fillRect (slot);
