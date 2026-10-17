@@ -276,8 +276,7 @@ private:
     /** Runs `action` after the CONFIRM LIBRARY LOAD question, if that's on. */
     void confirmLoad (const juce::String& what, std::function<void()> action);
     void load (ShowPanel::Item);
-    void openScope (int mode, const juce::String& title, juce::uint32 sections, std::vector<state::StripRef> strips,
-                    std::function<void (juce::uint32, const std::vector<state::StripRef>&)> save);
+    void openScope (int mode, const juce::String& title, state::Scope initial, std::function<void (const state::Scope&, bool noGlobal)> save);
     void closeScope();
     void openGlobal();
     bool anyGlobalSafe() const;
@@ -291,9 +290,8 @@ private:
     std::unique_ptr<juce::Component> scope;
     juce::Rectangle<int> rightPanel, transportArea;
 
-    // The snippet REC FOCUS: what SAVE on the SNIP tab captures.
-    juce::uint32 focusSections = 0;
-    std::vector<state::StripRef> focusStrips;
+    // The snippet REC FOCUS: what SAVE on the SNIP tab captures (or keeps of a recording).
+    state::Scope focus = state::Scope::none();
     bool focusEdited = false;
     bool shownGlobal = false;
     juce::String shownTitle;

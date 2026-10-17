@@ -43,9 +43,10 @@ namespace
         }
     }
 
-    WingKey* makeKey (juce::OwnedArray<WingKey>& keys, juce::Component& parent, const juce::String& text, Icon icon, bool enabled = true)
+    WingKey* makeKey (juce::OwnedArray<WingKey>& keys, juce::Component& parent, const juce::String& text, Icon icon, bool enabled = true,
+                      juce::Colour on = Colours::gold)
     {
-        auto* k = keys.add (new WingKey (text, icon));
+        auto* k = keys.add (new WingKey (text, icon, on));
         styleIconKey (*k);
         enableKey (*k, enabled);
         parent.addAndMakeVisible (k);
@@ -196,11 +197,11 @@ public:
         save = makeKey (keys, *this, "SAVE", Icon::SaveTray);
         saveScope = makeKey (keys, *this, "SAVE\n+SCOPE", Icon::SaveTray);
         update = makeKey (keys, *this, "UPDATE", Icon::Edit);
-        partialUpdate = makeKey (keys, *this, "PARTIAL\nUPDATE", Icon::Edit, false); // engine E12
+        partialUpdate = makeKey (keys, *this, "PARTIAL\nUPDATE", Icon::Edit);
         editScope = makeKey (keys, *this, "EDIT\nSCOPE", Icon::Overview);
         loadKey = makeKey (keys, *this, "LOAD", Icon::LoadTray);
-        partialLoad = makeKey (keys, *this, "PARTIAL\nLOAD", Icon::LoadTray, false); // engine E12
-        restore = makeKey (keys, *this, "RESTORE", Icon::Reset, false);              // engine E12
+        partialLoad = makeKey (keys, *this, "PARTIAL\nLOAD", Icon::LoadTray);
+        restore = makeKey (keys, *this, "RESTORE", Icon::Reset);
         rows = { { {}, { save, saveScope }, {} }, { {}, { update, partialUpdate }, { editScope } }, { {}, { loadKey, partialLoad }, { restore } } };
 
         save->onClick = [this] { addScene (false); };
@@ -215,11 +216,53 @@ public:
                     page.ctx.log.info ("Updated scene " + juce::String (index + 1));
                 });
         };
+        // PARTIAL UPDATE: a scope window; only its selection is stored (the scope is kept for next time).
+        partialUpdate->onClick = [this]
+        {
+            const int index = page.selectedScene();
+            const auto scene = page.ctx.show.getScene (index);
+            if (! scene)
+                return;
+            page.openScope ((int) ScopeWindow::Mode::PartialUpdate, "PARTIAL UPDATE: " + scene->name.toUpperCase(), page.ctx.show.getPartialScope(),
+                            [this, index] (const state::Scope& scope, bool)
+                            {
+                                page.ctx.show.storeScenePartial (index, scope);
+                                page.ctx.log.info ("Updated part of scene " + juce::String (index + 1));
+                            });
+        };
         editScope->onClick = [this] { openScope (page.selectedScene()); };
         loadKey->onClick = [this]
         {
             if (page.selectedScene() >= 0)
                 page.load ({ page.selectedScene(), -1 });
+        };
+        // PARTIAL LOAD: a scope window; NO GLOB ignores the GLOBAL safes for this load.
+        partialLoad->onClick = [this]
+        {
+            const int index = page.selectedScene();
+            const auto scene = page.ctx.show.getScene (index);
+            if (! scene)
+                return;
+            page.openScope ((int) ScopeWindow::Mode::PartialLoad, "PARTIAL LOAD: " + scene->name.toUpperCase(), page.ctx.show.getPartialScope(),
+                            [this, index] (const state::Scope& scope, bool noGlobal)
+                            {
+                                logRecall (page.ctx, "part of scene " + juce::String (index + 1) + (noGlobal ? " (NO GLOB)" : ""),
+                                           page.ctx.show.recallScenePartial (index, scope, noGlobal));
+                                page.list->refresh();
+                            });
+        };
+        // RESTORE: the whole scene regardless of its scope, GLOBAL safes included (a red question).
+        restore->onClick = [this]
+        {
+            const int index = page.selectedScene();
+            if (const auto scene = page.ctx.show.getScene (index))
+                popups::confirm (page, "RESTORE", "Restore all of \"" + scene->name + "\", ignoring its scope and the GLOBAL safes?", "RESTORE",
+                                 [this, index]
+                                 {
+                                     logRecall (page.ctx, "all of scene " + juce::String (index + 1), page.ctx.show.restoreScene (index));
+                                     page.list->refresh();
+                                 },
+                                 true);
         };
 
         // App extras: the fade time and notes of the selected scene.
@@ -253,7 +296,7 @@ public:
     void refresh()
     {
         const auto scene = page.ctx.show.getScene (page.selectedScene());
-        for (auto* k : { update, editScope, loadKey })
+        for (auto* k : { update, partialUpdate, editScope, loadKey, partialLoad, restore })
             enableKey (*k, scene.has_value());
         fade.setEnabled (scene.has_value());
         notes.setEnabled (scene.has_value());
@@ -302,16 +345,14 @@ private:
             openScope (index);
     }
 
+    /** EDIT SCOPE: what the scene recalls (strips, DCAs, mute groups, FX, console settings, contents). */
     void openScope (int index)
     {
         const auto scene = page.ctx.show.getScene (index);
         if (! scene)
             return;
-        page.openScope ((int) ScopeWindow::Mode::SceneScope, "EDIT SCOPE: " + scene->name.toUpperCase(), scene->scope, {},
-                        [this, index] (juce::uint32 sections, const std::vector<state::StripRef>&)
-                        {
-                            page.ctx.show.setSceneScope (index, sections);
-                        });
+        page.openScope ((int) ScopeWindow::Mode::SceneScope, "EDIT SCOPE: " + scene->name.toUpperCase(), page.ctx.show.getSceneRecallScope (index),
+                        [this, index] (const state::Scope& scope, bool) { page.ctx.show.setSceneRecallScope (index, scope); });
     }
 
     LibraryPage& page;
@@ -324,8 +365,9 @@ private:
 };
 
 //==============================================================================
-/** SNIP (fig. 49): snippets of the selected scene. SAVE captures the REC FOCUS
-    (strips x sections); REC / STOP wait for parameter recording (engine E14). */
+/** SNIP (fig. 49): snippets of the selected scene. REC, change parameters,
+    STOP and SAVE stores the changed parameters (within REC FOCUS when it was
+    edited); without a recording SAVE captures the REC FOCUS. */
 class LibraryPage::SnipTab final : public juce::Component, private juce::Timer
 {
 public:
@@ -335,14 +377,17 @@ public:
         update = makeKey (keys, *this, "UPDATE", Icon::Edit);
         loadFocus = makeKey (keys, *this, "LOAD\nFOCUS", Icon::LoadTray);
         loadKey = makeKey (keys, *this, "LOAD", Icon::LoadTray);
-        partialLoad = makeKey (keys, *this, "PARTIAL\nLOAD", Icon::LoadTray, false); // engine E12
-        rec = makeKey (keys, *this, "REC", Icon::Record, false);                      // engine E14
-        stop = makeKey (keys, *this, "STOP", Icon::Stop, false);                      // engine E14
-        recFocus = makeKey (keys, *this, "REC\nFOCUS", Icon::Overview);
+        partialLoad = makeKey (keys, *this, "PARTIAL\nLOAD", Icon::LoadTray);
+        rec = makeKey (keys, *this, "REC", Icon::Record, true, Colours::mute);
+        stop = makeKey (keys, *this, "STOP", Icon::Stop);
+        recFocus = makeKey (keys, *this, "REC\nFOCUS", Icon::Overview, true, Dark::choice);
         addItems = makeKey (keys, *this, "ADD\nITEMS", Icon::Plus);
         removeItems = makeKey (keys, *this, "REMOVE\nITEMS", Icon::MinusCircle);
         clearAll = makeKey (keys, *this, "CLEAR\nALL", Icon::Trash);
+        // REC FOCUS turns light blue once edited; REC lights red while recording.
         recFocus->isOn = [this] { return page.focusEdited; };
+        rec->isOn = [this] { return page.ctx.show.isRecordingSnippet(); };
+        rec->iconColour = Colours::text;
         rows = { { {}, { save }, {} }, { {}, { update }, { loadFocus } }, { {}, { loadKey, partialLoad }, {} }, { {}, { rec, stop }, { recFocus } },
                  { {}, { addItems, removeItems }, { clearAll } } };
 
@@ -361,8 +406,7 @@ public:
             const auto item = page.list->getSelected();
             if (const auto sn = page.ctx.show.getSnippet (item.scene, item.snippet))
             {
-                page.focusSections = sn->sections;
-                page.focusStrips = sn->strips;
+                page.focus = sn->scope;
                 page.focusEdited = true;
                 recFocus->repaint();
             }
@@ -373,61 +417,101 @@ public:
             if (item.isSnippet())
                 page.load (item);
         };
+        partialLoad->onClick = [this]
+        {
+            const auto item = page.list->getSelected();
+            const auto sn = page.ctx.show.getSnippet (item.scene, item.snippet);
+            if (! sn)
+                return;
+            page.openScope ((int) ScopeWindow::Mode::PartialLoad, "PARTIAL LOAD: " + sn->name.toUpperCase(), page.ctx.show.getPartialScope(),
+                            [this, item] (const state::Scope& scope, bool)
+                            {
+                                logRecall (page.ctx, "part of snippet " + juce::String (item.scene + 1) + "." + juce::String (item.snippet + 1),
+                                           page.ctx.show.recallSnippetPartial (item.scene, item.snippet, scope));
+                            });
+        };
+        rec->onClick = [this]
+        {
+            if (page.ctx.show.isRecordingSnippet())
+                return;
+            page.ctx.show.startSnippetRecording();
+            page.ctx.log.info ("Snippet recording started");
+            refresh();
+        };
+        stop->onClick = [this]
+        {
+            const int n = page.ctx.show.stopSnippetRecording();
+            page.ctx.log.info ("Snippet recording stopped: " + juce::String (n) + " parameters changed (SAVE stores them)");
+            refresh();
+        };
         recFocus->onClick = [this]
         {
-            auto [sections, strips] = defaultFocus();
-            page.openScope ((int) ScopeWindow::Mode::SnippetFocus, "REC FOCUS", sections, strips,
-                            [this] (juce::uint32 s, const std::vector<state::StripRef>& st)
-                            {
-                                page.focusSections = s;
-                                page.focusStrips = st;
-                                page.focusEdited = true;
-                            });
+            page.openScope ((int) ScopeWindow::Mode::SnippetFocus, "REC FOCUS", currentFocus(), [this] (const state::Scope& s, bool)
+            {
+                page.focus = s;
+                page.focusEdited = true;
+            });
         };
         addItems->onClick = [this] { editItems (true); };
         removeItems->onClick = [this] { editItems (false); };
+        // CLEAR ALL: the parameters being recorded, else every item of the snippet.
         clearAll->onClick = [this]
         {
+            auto& show = page.ctx.show;
+            if (show.isRecordingSnippet() || show.hasRecordedSnippet())
+            {
+                show.clearSnippetRecording();
+                refresh();
+                return;
+            }
             const auto item = page.list->getSelected();
-            if (const auto sn = page.ctx.show.getSnippet (item.scene, item.snippet))
+            if (const auto sn = show.getSnippet (item.scene, item.snippet))
                 popups::confirm (page, "CLEAR ALL", "Remove every item from \"" + sn->name + "\"?", "CLEAR", [this, item]
                 {
-                    page.ctx.show.setSnippetStrips (item.scene, item.snippet, {});
+                    auto everything = state::Scope::everything();
+                    everything.allStrips = false;
+                    page.ctx.show.removeSnippetItems (item.scene, item.snippet, everything);
                     page.list->refresh();
                 }, true);
         };
-        startTimerHz (2);
+        startTimerHz (4);
     }
 
     void refresh()
     {
+        auto& show = page.ctx.show;
         const auto item = page.list->getSelected();
         const bool snippet = item.isSnippet();
-        enableKey (*save, page.ctx.show.getScene (item.scene).has_value());
-        for (auto* k : { update, loadFocus, loadKey, addItems, removeItems, clearAll })
-            enableKey (*k, snippet);
+        const bool recording = show.isRecordingSnippet(), recorded = show.hasRecordedSnippet();
+        enableKey (*save, show.getScene (item.scene).has_value() && ! recording);
+        for (auto* k : { update, loadFocus, loadKey, partialLoad, addItems, removeItems })
+            enableKey (*k, snippet && ! recording);
+        enableKey (*stop, recording); // REC stays lit (red) while recording
+        enableKey (*clearAll, snippet || recording || recorded);
+        rec->repaint();
         repaint (counter);
     }
 
     void paint (juce::Graphics& g) override
     {
         paintKeyRows (g, rows);
-        // The parameter counter (the selected snippet's strips x sections).
-        const auto item = page.list->getSelected();
-        const auto sn = page.ctx.show.getSnippet (item.scene, item.snippet);
+        // The parameter counter: changed since REC (or by the last STOP), else the selected snippet's.
+        auto& show = page.ctx.show;
         int count = 0;
-        if (sn)
-            for (int i = 0; i < state::kNumSections; ++i)
-                count += (sn->sections & state::sectionAt (i)) != 0 ? (int) sn->strips.size() : 0;
+        if (show.isRecordingSnippet() || show.hasRecordedSnippet())
+            count = show.getRecordedParameterCount();
+        else if (const auto item = page.list->getSelected(); item.isSnippet())
+            if (const auto sn = show.getSnippet (item.scene, item.snippet))
+                count = sn->parameterCount;
         g.setColour (juce::Colours::black);
         g.fillRect (counter);
         auto c = counter.reduced (2);
-        g.setColour (Dark::text);
+        g.setColour (show.isRecordingSnippet() ? Colours::mute : Dark::text);
         g.setFont (juce::FontOptions (juce::jmin (22.0f, (float) c.getHeight() * 0.6f), juce::Font::bold));
         g.drawText (juce::String (count), c.removeFromTop (c.getHeight() * 62 / 100), juce::Justification::centred);
         g.setColour (Dark::orange.brighter (0.4f));
         g.setFont (juce::FontOptions (juce::jmin (11.0f, (float) c.getHeight() * 0.9f), juce::Font::bold));
-        g.drawText ("PARAMETER", c, juce::Justification::centredTop);
+        g.drawText (count == 1 ? "PARAMETER" : "PARAMETERS", c, juce::Justification::centredTop);
     }
 
     void resized() override
@@ -446,15 +530,15 @@ public:
 private:
     void timerCallback() override { refresh(); }
 
-    std::pair<juce::uint32, std::vector<state::StripRef>> defaultFocus() const
+    /** The REC FOCUS: as edited, else the selected channel's fader and sends. */
+    state::Scope currentFocus() const
     {
         if (page.focusEdited)
-            return { page.focusSections, page.focusStrips };
-        // Until the focus is edited: the selected channel's fader and sends.
+            return page.focus;
         std::vector<state::StripRef> strips;
         if (auto* s = page.ctx.getSelectedStrip ? page.ctx.getSelectedStrip() : nullptr)
             strips.push_back (state::StripRef::of (*s));
-        return { state::Fader | state::Sends, strips };
+        return state::Scope::only (state::Fader | state::Sends, strips);
     }
 
     void addSnippet()
@@ -464,8 +548,15 @@ private:
         const auto scene = show.getScene (item.scene);
         if (! scene)
             return;
-        auto [sections, strips] = defaultFocus();
-        const int index = show.addSnippet (item.scene, "Snippet " + juce::String (scene->numSnippets + 1), sections, strips);
+        const auto name = "Snippet " + juce::String (scene->numSnippets + 1);
+        int index = -1;
+        if (show.hasRecordedSnippet())
+        {
+            const auto focus = currentFocus();
+            index = show.addRecordedSnippet (item.scene, name, page.focusEdited ? &focus : nullptr);
+        }
+        else
+            index = show.addSnippet (item.scene, name, currentFocus());
         page.list->refresh();
         page.list->select ({ item.scene, index });
     }
@@ -477,24 +568,13 @@ private:
         if (! sn)
             return;
         page.openScope ((int) (add ? ScopeWindow::Mode::SnippetAdd : ScopeWindow::Mode::SnippetRemove), (add ? "ADD ITEMS: " : "REMOVE ITEMS: ") + sn->name.toUpperCase(),
-                        0, {}, [this, item, add] (juce::uint32 sections, const std::vector<state::StripRef>& chosen)
+                        state::Scope::none(), [this, item, add] (const state::Scope& items, bool)
                         {
-                            auto& show = page.ctx.show;
-                            const auto current = show.getSnippet (item.scene, item.snippet);
-                            if (! current)
-                                return;
-                            auto strips = current->strips;
-                            for (auto& r : chosen)
-                            {
-                                strips.erase (std::remove (strips.begin(), strips.end(), r), strips.end());
-                                if (add)
-                                    strips.push_back (r);
-                            }
-                            show.setSnippetStrips (item.scene, item.snippet, strips);
-                            show.setSnippetSections (item.scene, item.snippet, add ? (current->sections | sections) : (current->sections & ~sections));
                             // Added items take the console's current settings.
                             if (add)
-                                show.storeSnippet (item.scene, item.snippet);
+                                page.ctx.show.addSnippetItems (item.scene, item.snippet, items);
+                            else
+                                page.ctx.show.removeSnippetItems (item.scene, item.snippet, items);
                             page.list->refresh();
                         });
     }
@@ -744,6 +824,8 @@ StatusTitle LibraryPage::getStatusTitle()
 
 bool LibraryPage::anyGlobalSafe() const
 {
+    if (ctx.show.hasGlobalSafes())
+        return true;
     for (int k = 0; k < kNumStripKinds; ++k)
         for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
             if (s->params.recallSafe.load())
@@ -824,15 +906,15 @@ void LibraryPage::load (ShowPanel::Item item)
         });
 }
 
-void LibraryPage::openScope (int scopeMode, const juce::String& scopeTitle, juce::uint32 sections, std::vector<state::StripRef> strips,
-                             std::function<void (juce::uint32, const std::vector<state::StripRef>&)> save)
+void LibraryPage::openScope (int scopeMode, const juce::String& scopeTitle, state::Scope initial,
+                             std::function<void (const state::Scope&, bool noGlobal)> save)
 {
-    auto window = std::make_unique<ScopeWindow> (ctx, static_cast<ScopeWindow::Mode> (scopeMode), scopeTitle, ScopeWindow::Selection { sections, std::move (strips) });
+    auto window = std::make_unique<ScopeWindow> (ctx, static_cast<ScopeWindow::Mode> (scopeMode), scopeTitle, std::move (initial));
     window->onCancel = [this] { closeScope(); };
-    window->onSave = [this, save] (const ScopeWindow::Selection& s)
+    window->onSave = [this, save] (const state::Scope& s, bool noGlobal)
     {
         if (save)
-            save (s.sections, s.strips);
+            save (s, noGlobal);
         closeScope();
     };
     scope = std::move (window);
@@ -857,18 +939,22 @@ void LibraryPage::closeScope()
 
 void LibraryPage::openGlobal()
 {
-    // GLOBAL safes: strips that scene recalls leave alone (DCA, mute group, FX
-    // and content safes are engine item E17).
-    std::vector<state::StripRef> safes;
+    // GLOBAL safes: what scene recalls leave alone. Strips keep their own
+    // recall safe; DCAs, mute groups, FX slots, contents and the console
+    // settings are the show's global safes.
+    auto safe = ctx.show.getGlobalSafe();
+    safe.allStrips = false;
+    safe.strips.clear();
     for (int k = 0; k < kNumStripKinds; ++k)
         for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
             if (s->params.recallSafe.load())
-                safes.push_back (state::StripRef::of (*s));
-    openScope ((int) ScopeWindow::Mode::Global, "GLOBAL SAFE", 0, safes, [this] (juce::uint32, const std::vector<state::StripRef>& chosen)
+                safe.strips.push_back (state::StripRef::of (*s));
+    openScope ((int) ScopeWindow::Mode::Global, "GLOBAL SAFE", safe, [this] (const state::Scope& chosen, bool)
     {
         for (int k = 0; k < kNumStripKinds; ++k)
             for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
-                s->params.recallSafe = std::find (chosen.begin(), chosen.end(), state::StripRef::of (*s)) != chosen.end();
+                s->params.recallSafe = chosen.includes (state::StripRef::of (*s));
+        ctx.show.setGlobalSafe (chosen);
         shownGlobal = anyGlobalSafe();
     });
 }

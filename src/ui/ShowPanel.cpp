@@ -3,18 +3,6 @@
 namespace livedaw::ui
 {
 
-namespace
-{
-    /** "N PARS": a snippet's size, strips x sections (the closest thing to the console's parameter count). */
-    int parameterCount (const Show::Snippet& s)
-    {
-        int sections = 0;
-        for (int i = 0; i < state::kNumSections; ++i)
-            sections += (s.sections & state::sectionAt (i)) != 0 ? 1 : 0;
-        return (int) s.strips.size() * sections;
-    }
-} // namespace
-
 //==============================================================================
 class ShowPanel::List final : public juce::ListBox, private juce::ListBoxModel
 {
@@ -142,7 +130,8 @@ private:
         {
             g.setColour (Dark::textDim.withMultipliedAlpha (normal ? 1.0f : 0.5f));
             g.setFont (juce::FontOptions (juce::jlimit (9.0f, 12.0f, t.getHeight() * 0.28f), juce::Font::bold));
-            g.drawText (juce::String (parameterCount (*snippet)) + " PARS", t.removeFromRight (60.0f).withHeight (chipH + 4.0f).toNearestInt(),
+            // "N PARS": what REC recorded, else the values the snippet holds.
+            g.drawText (juce::String (snippet->parameterCount) + " PARS", t.removeFromRight (60.0f).withHeight (chipH + 4.0f).toNearestInt(),
                         juce::Justification::centredRight);
         }
         else if (scene->fadeSeconds > 0.0)
