@@ -198,15 +198,23 @@ target_sources(LiveDAW PRIVATE
     src/ui/daw/DawTracks.cpp
     src/ui/daw/DawEditor.cpp
     src/ui/daw/RecorderPage.cpp
+    src/ui/WingPopups.cpp
+    src/ui/CustomControlsPage.cpp
+    src/ui/MonitorsPage.cpp
+    src/ui/FourChannelSection.cpp
     src/ui/MainComponent.cpp)
 
 livedaw_configure_juce_target(LiveDAW)
 
-# Barlow Condensed (SIL Open Font License, resources/fonts/OFL.txt): a DIN-style
-# condensed face like the WING's screen font.
+# Barlow Condensed and Barlow Semi Condensed (SIL Open Font License,
+# resources/fonts/OFL.txt): DIN-style faces like the WING's. The semi-condensed
+# cut matches the width of the console's screen font; the surface print stays
+# condensed.
 juce_add_binary_data(LiveDAWResources SOURCES
     resources/fonts/BarlowCondensed-Medium.ttf
-    resources/fonts/BarlowCondensed-SemiBold.ttf)
+    resources/fonts/BarlowCondensed-SemiBold.ttf
+    resources/fonts/BarlowSemiCondensed-Medium.ttf
+    resources/fonts/BarlowSemiCondensed-SemiBold.ttf)
 target_link_libraries(LiveDAW PRIVATE LiveDAWResources)
 
 #-------------------------------------------------------------------------------

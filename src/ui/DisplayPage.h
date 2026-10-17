@@ -54,6 +54,27 @@ namespace KnobColours
     const juce::Colour white { 0xffffffff };  // trim, pan, balance
 } // namespace KnobColours
 
+/** What the status bar's title tile shows for a screen. The WING shows the
+    selected channel on most screens, a source or output on ROUTING's SOURCES /
+    OUTPUTS, the layer on the VIEW screens and a plain title on MUTE GROUPS or
+    CUSTOM CONTROLS. */
+struct StatusTitle
+{
+    enum class Kind
+    {
+        Channel, // the selected strip (number, icon, name in its colour): the default
+        Source,  // grey tile, black text, connector icon
+        Layer,   // dark tile, grey text, section letter + layers icon + layer name
+        Text     // icon and text
+    };
+
+    Kind kind = Kind::Channel;
+    juce::String prefix;       // e.g. the section letter or "A1"
+    juce::String text;
+    std::optional<Icon> icon;
+    juce::Colour fill {}, ink {}; // transparent: the kind's default colours
+};
+
 /** A screen of the main display. */
 class DisplayPage : public juce::Component
 {
@@ -80,6 +101,14 @@ public:
         button when editing delay effects". Its LED is lit while this returns true. */
     virtual bool hasBlankKeyFunction() const { return false; }
     virtual void blankKeyPressed() {}
+
+    /** The status bar's title tile for this screen. */
+    virtual StatusTitle getStatusTitle() { return {}; }
+
+    /** The UTILITY key "only lights up where it serves a specific function"
+        (manual 4.1): pages with one return true and act in utilityPressed(). */
+    virtual bool hasUtilityFunction() const { return false; }
+    virtual void utilityPressed() {}
 
     /** The selected strip or the console structure changed. */
     virtual void refresh() {}
