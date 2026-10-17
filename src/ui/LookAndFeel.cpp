@@ -18,7 +18,7 @@ namespace
             return capRatio;
         // The ink of a capital H (glyph boxes span the whole line height).
         juce::GlyphArrangement glyphs;
-        glyphs.addLineOfText (juce::Font (juce::FontOptions (kScreenTypefaceName, 100.0f, juce::Font::plain).withTypeface (face)), "H", 0.0f, 0.0f);
+        glyphs.addLineOfText (juce::Font (juce::FontOptions().withTypeface (face).withHeight (100.0f)), "H", 0.0f, 0.0f);
         juce::Path outline;
         glyphs.createPath (outline);
         const auto box = outline.getBounds();

@@ -891,7 +891,7 @@ namespace
                 textW = juce::jmax (textW, juce::GlyphArrangement::getStringWidth (font, s));
             const auto anchorArea = anchor != nullptr ? getLocalArea (anchor, anchor->getLocalBounds()) : bounds.withSizeKeepingCentre (200, 40);
             const int scrollW = scrolls ? juce::roundToInt ((float) rowHeight * 0.6f) : 0;
-            columnWidth = juce::roundToInt (textW) + rowHeight;
+            columnWidth = juce::jmax (juce::roundToInt (textW) + rowHeight, rowHeight * 2);
             if (options.columns == 1)
                 columnWidth = juce::jmax (columnWidth, anchorArea.getWidth() - scrollW);
             columnWidth = juce::jmin (columnWidth, (bounds.getWidth() - 8 - scrollW) / options.columns);

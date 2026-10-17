@@ -1498,6 +1498,8 @@ void MainDisplay::paintClock (juce::Graphics& g)
     // in grey below it (3.1); 24-hour mode without AM/PM.
     const float sh = (float) screenArea.getHeight();
     auto c = clockTile.toFloat().reduced (6.0f * sh / 800.0f, 4.0f * sh / 800.0f);
+    if (touchDisabled)
+        c.removeFromLeft (14.0f * sh / 800.0f); // room for the touch-off X
     const auto now = juce::Time::getCurrentTime();
     const auto [hm, ampm] = clockText (ctx.settings, now);
     const auto big = wingFontPx (0.034f * sh, WingWeight::SemiBold);
@@ -1626,7 +1628,7 @@ void MainDisplay::paintStatusBar (juce::Graphics& g)
     // Touch off: a small X.
     if (touchDisabled)
     {
-        const auto x = clockTile.toFloat().removeFromLeft (14.0f * k).withTrimmedTop (4.0f * k).withHeight (14.0f * k).translated (4.0f * k, 0.0f);
+        const auto x = juce::Rectangle<float> ((float) clockTile.getX() + 5.0f * k, (float) clockTile.getY() + 6.0f * k, 11.0f * k, 11.0f * k);
         g.setColour (Colours::mute);
         g.drawLine ({ x.getTopLeft(), x.getBottomRight() }, 2.0f);
         g.drawLine ({ x.getTopRight(), x.getBottomLeft() }, 2.0f);
