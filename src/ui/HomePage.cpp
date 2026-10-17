@@ -886,7 +886,7 @@ private:
 
 /** TAGS (I12): the DCA tiles (4 x 4: the DCA's name on a strip over a big
     D1, the strip lit while assigned), the mute group tiles (4 x 2, MG1...),
-    the TALK tag tiles (talkback is not modelled: shown off), the strip's tag
+    the TALK tag tiles (TALK ON / TALK SOLO, for both talk keys, A or B), the strip's tag
     chips with ADD TAG, and the LEVEL panel. */
 class TagsScreen final : public HomeScreen, private juce::Timer
 {
@@ -984,13 +984,19 @@ public:
             tile (r, engine.getMuteGroupName (i).toUpperCase(), "MG" + juce::String (i + 1), colours::muteTag, colours::mute, on);
             tiles.push_back ({ r.toNearestInt(), 100 + i });
         }
-        // TALK tags: need the talkback system (W34), shown off.
+        // TALK tags (manual p. 31): TALK ON unmutes and TALK SOLO solos the
+        // strip while talkback is on (A / B: only for that talk key). The
+        // tiles' order is the tag bits' (ld::TalkTag).
         auto talk = frame (talkFrame).toFloat();
         static const char* talkNames[][2] = { { "TALK", "SOLO" }, { "TALK", "ON" }, { "TALK A", "SOLO" }, { "TALK A", "ON" }, { "TALK B", "SOLO" }, { "TALK B", "ON" } };
         const float tw = talk.getWidth() / 6.0f;
+        const auto talkTags = strip.getTalkTags();
         for (int i = 0; i < 6; ++i)
-            tile (juce::Rectangle<float> (talk.getX() + tw * (float) i, talk.getY(), tw, talk.getHeight()).reduced (3.0f), talkNames[i][0], talkNames[i][1],
-                  colours::talkOff, colours::post, false, true);
+        {
+            auto r = juce::Rectangle<float> (talk.getX() + tw * (float) i, talk.getY(), tw, talk.getHeight()).reduced (3.0f);
+            tile (r, talkNames[i][0], talkNames[i][1], colours::talkOff, colours::post, (talkTags >> i) & 1u, true);
+            tiles.push_back ({ r.toNearestInt(), 200 + i });
+        }
 
         // The tag chips, each with its remove key.
         chips.clear();
@@ -1023,6 +1029,12 @@ public:
         for (auto& [area, index] : tiles)
             if (area.contains (pos))
             {
+                if (index >= 200)
+                {
+                    strip.setTalkTags (strip.getTalkTags() ^ (1u << (index - 200)));
+                    repaint();
+                    return;
+                }
                 auto& mask = index >= 100 ? strip.params.muteGroupMask : strip.params.dcaMask;
                 mask = mask.load() ^ (1u << (index % 100));
                 repaint();
@@ -1043,7 +1055,8 @@ public:
 private:
     void timerCallback() override
     {
-        const auto now = std::make_tuple (strip.params.dcaMask.load(), strip.params.muteGroupMask.load(), stripTags (strip).joinIntoString (","));
+        const auto now = std::make_tuple (strip.params.dcaMask.load(), strip.params.muteGroupMask.load(),
+                                          stripTags (strip).joinIntoString (",") + "|" + juce::String (strip.getTalkTags()));
         if (now != shown)
         {
             shown = now;

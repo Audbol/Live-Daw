@@ -32,8 +32,9 @@ namespace
         g.drawFittedText (title, header.reduced (6, 0), juce::Justification::centred, 1);
     }
 
-    /** A tab with an icon: lit with a yellow top line and yellow text. */
-    void tab (juce::Graphics& g, juce::Rectangle<int> r, Icon icon, const juce::String& text, bool on, bool enabled)
+    /** A tab with an icon (an `Icon`, or a WING icon number when `wingIcon` >= 0):
+        lit with a yellow top line and yellow text. */
+    void tab (juce::Graphics& g, juce::Rectangle<int> r, Icon icon, const juce::String& text, bool on, bool enabled, int wingIcon = -1)
     {
         g.setColour (on ? Dark::tabOn : Dark::tabOff);
         g.fillRect (r);
@@ -44,39 +45,57 @@ namespace
             g.fillRect (r.withHeight (3));
         }
         auto ib = r.removeFromLeft (r.getHeight()).reduced (r.getHeight() / 5);
+        auto draw = [&] (juce::Colour c)
+        {
+            if (wingIcon < 0 || ! drawWingIcon (g, wingIcon, ib.toFloat(), c))
+                drawIcon (g, icon, ib.toFloat(), c);
+        };
         if (on)
         {
             g.setColour (talkYellow);
             g.fillRect (ib.expanded (2));
-            drawIcon (g, icon, ib.toFloat(), juce::Colours::black);
+            draw (juce::Colours::black);
         }
         else
-            drawIcon (g, icon, ib.toFloat(), ink);
+            draw (ink);
         g.setColour (ink);
         g.setFont (juce::FontOptions (juce::jmin (18.0f, (float) r.getHeight() * 0.5f), juce::Font::bold));
         g.drawFittedText (text, r.reduced (6, 0), juce::Justification::centredLeft, 1);
     }
 
-    /** A grid of small tiles ("BUS" over "1"), all unselected and dim (talkback isn't here). */
-    void tileGrid (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& title, const juce::String& caption, int count, int columns)
+    /** The tiles of a grid (count tiles, `columns` wide) under its title row. */
+    std::vector<juce::Rectangle<int>> gridTiles (juce::Rectangle<int> area, int count, int columns)
+    {
+        area.removeFromTop (juce::jmin (16, area.getHeight() / 5) + 2);
+        const int rows = (count + columns - 1) / columns;
+        const int w = area.getWidth() / columns, h = area.getHeight() / juce::jmax (1, rows);
+        std::vector<juce::Rectangle<int>> tiles;
+        for (int i = 0; i < count; ++i)
+            tiles.push_back (juce::Rectangle<int> (area.getX() + (i % columns) * w, area.getY() + (i / columns) * h, w, h).reduced (2));
+        return tiles;
+    }
+
+    /** A TALK TO grid: the title row, then small tiles ("BUS" over "1"), lit
+        yellow for the destinations in `mask`. */
+    void tileGrid (juce::Graphics& g, juce::Rectangle<int> area, const std::vector<juce::Rectangle<int>>& tiles, const juce::String& title,
+                   const juce::String& caption, uint32_t mask)
     {
         auto head = area.removeFromTop (juce::jmin (16, area.getHeight() / 5));
-        g.setColour (Dark::key.withAlpha (0.6f));
+        g.setColour (Dark::key);
         g.fillRect (head);
         g.setColour (Dark::textDim);
         g.setFont (juce::FontOptions (juce::jmin (12.0f, (float) head.getHeight() * 0.8f), juce::Font::bold));
         g.drawText (title, head, juce::Justification::centred);
-        area.removeFromTop (2);
-        const int rows = (count + columns - 1) / columns;
-        const int w = area.getWidth() / columns, h = area.getHeight() / juce::jmax (1, rows);
-        for (int i = 0; i < count; ++i)
+        for (size_t i = 0; i < tiles.size(); ++i)
         {
-            auto t = juce::Rectangle<int> (area.getX() + (i % columns) * w, area.getY() + (i / columns) * h, w, h).reduced (2);
-            g.setColour (Dark::key.withAlpha (0.5f));
+            auto t = tiles[i];
+            const bool on = (mask >> i) & 1u;
+            g.setColour (on ? talkYellow : Dark::key);
             g.fillRect (t);
-            g.setColour (Dark::textDim.withAlpha (0.6f));
+            g.setColour (on ? juce::Colours::black : Dark::textDim);
             g.setFont (juce::FontOptions (juce::jmin (9.0f, (float) t.getHeight() * 0.35f), juce::Font::bold));
             g.drawText (caption, t.removeFromTop (t.getHeight() * 2 / 5), juce::Justification::centred);
+            g.setColour (on ? juce::Colours::black : Dark::text);
             g.setFont (juce::FontOptions (juce::jmin (15.0f, (float) t.getHeight() * 0.7f), juce::Font::bold));
             g.drawText (juce::String (i + 1), t, juce::Justification::centred);
         }
@@ -210,24 +229,28 @@ MonitorsPage::MonitorsPage (UiContext& c) : ctx (c)
 {
     auto& e = ctx.engine;
     auto flip = [] (std::atomic<bool>& b) { b = ! b.load(); };
+    // PHONES / SPEAKERS / PH+SPK pick the solo bus (the path the keys below act
+    // on) and show that path's settings.
+    auto pickPath = [this] (int choice)
+    {
+        ctx.engine.setSoloBus (choice);
+        if (choice != 2)
+            showPathTab (choice == 1 ? 0 : 1);
+    };
     tools = {
-        { "TALK A", Icon::ChevronUp, talkYellow, [] { return false; }, nullptr, {} },
-        { "TALK B", Icon::ChevronUp, talkYellow, [] { return false; }, nullptr, {} },
-        { "PHONES", Icon::Headphones, pathLime, [] { return false; }, nullptr, {} },
-        { "SPEAKERS", Icon::Speaker, pathLime, [] { return false; }, nullptr, {} },
-        { "PH+SPK", Icon::Speakers, pathLime, [] { return true; }, nullptr, {} },
+        { "TALK A", Icon::ChevronUp, talkYellow, [&e] { return e.isTalkOn (0); }, nullptr, {}, 0 },
+        { "TALK B", Icon::ChevronUp, talkYellow, [&e] { return e.isTalkOn (1); }, nullptr, {}, 1 },
+        { "PHONES", Icon::Headphones, pathLime, [&e] { return e.soloBus.load() == 1; }, [pickPath] { pickPath (1); }, {} },
+        { "SPEAKERS", Icon::Speaker, pathLime, [&e] { return e.soloBus.load() == 0; }, [pickPath] { pickPath (0); }, {} },
+        { "PH+SPK", Icon::Speakers, pathLime, [&e] { return e.soloBus.load() == 2; }, [pickPath] { pickPath (2); }, {} },
         { "DIM", Icon::ChevronDown, dimGreen, [&e] { return e.monitorDim.load(); }, [&e, flip] { flip (e.monitorDim); }, {} },
         { "MUTE", Icon::Cancel, muteRed, [&e] { return e.monitorMute.load(); }, [&e, flip] { flip (e.monitorMute); }, {} },
         { "MONO", Icon::Circle, monoOrange, [&e] { return e.monitorMono.load(); }, [&e, flip] { flip (e.monitorMono); }, {} },
         { "LR SWAP", Icon::WidthArrows, monoOrange, [&e] { return e.monitorSwap.load(); }, [&e, flip] { flip (e.monitorSwap); }, {} },
     };
 
-    // What the engine has; the rest is drawn as the console's controls, disabled.
-    dim.setBinding (bindLinear ("DIM", e.monitorDimDb, 0.0f, 40.0f, " dB", 0, 20.0f));
-    for (auto [k, label, value] : { std::tuple { &srcLevel, "SRC LEVEL", "0.0 dB" }, std::tuple { &srcMix, "SRC MIX", "-oo dB" },
-                                    std::tuple { &pflDim, "PFL DIM", "12 dB" }, std::tuple { &bandSolo, "BAND SOLO", "12 dB" },
-                                    std::tuple { &busDim, "BUS DIM", "9 dB" }, std::tuple { &monDim, "MON DIM", "9 dB" },
-                                    std::tuple { &limiter, "LIMITER", "0 dB" } })
+    // Not in the engine: drawn as the console's controls, disabled.
+    for (auto [k, label, value] : { std::tuple { &bandSolo, "BAND SOLO", "12 dB" }, std::tuple { &limiter, "LIMITER", "0 dB" } })
     {
         k->placeholder = label;
         k->placeholderValue = value;
@@ -238,9 +261,14 @@ MonitorsPage::MonitorsPage (UiContext& c) : ctx (c)
     soloKeys = std::make_unique<ChoiceKeys> (juce::StringArray { "PFL", "AFL" }, [&e] { return e.soloAfl.load() ? 1 : 0; },
                                              [&e] (int i) { e.soloAfl = i == 1; }, ChoiceKeys::prePost());
     addAndMakeVisible (*soloKeys);
-    switchMode = std::make_unique<ChoiceKeys> (juce::StringArray { "AUTO", "PUSH", "LATCH" }, [] { return 0; }, nullptr);
-    switchMode->setEnabled (false);
+    switchMode = std::make_unique<ChoiceKeys> (juce::StringArray { "AUTO", "PUSH", "LATCH" }, [this] { return (int) talkPath().mode.load(); },
+                                               [this] (int i) { talkPath().mode = i; });
     addAndMakeVisible (*switchMode);
+    sendLevels = std::make_unique<OnKey> ([this] { return talkPath().individual.load(); }, [this] (bool on) { talkPath().individual = on; });
+    addAndMakeVisible (*sendLevels);
+
+    showTalkTab (0);
+    showPathTab (0);
 
     anchor.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (anchor);
@@ -249,11 +277,60 @@ MonitorsPage::MonitorsPage (UiContext& c) : ctx (c)
 
 MonitorsPage::~MonitorsPage() = default;
 
+ld::MonitorSourceParams& MonitorsPage::pathSource() const noexcept
+{
+    return showsPhones() ? ctx.engine.phones.source : ctx.engine.speakers;
+}
+
+std::atomic<float>& MonitorsPage::pathLevel() const noexcept
+{
+    return showsPhones() ? ctx.engine.phones.levelDb : ctx.engine.monitorLevelDb;
+}
+
+std::atomic<float>& MonitorsPage::pathDim() const noexcept
+{
+    return showsPhones() ? ctx.engine.phones.dimDb : ctx.engine.monitorDimDb;
+}
+
+std::atomic<int32_t>& MonitorsPage::pathOutput (bool right) const noexcept
+{
+    if (showsPhones())
+        return right ? ctx.engine.phones.outputRight : ctx.engine.phones.outputLeft;
+    return right ? ctx.engine.monitorOutputRight : ctx.engine.monitorOutputLeft;
+}
+
+ld::TalkPathParams& MonitorsPage::talkPath() const noexcept
+{
+    return ctx.engine.talk.paths[juce::jlimit (0, 1, talkTab)];
+}
+
+void MonitorsPage::showTalkTab (int t)
+{
+    talkTab = juce::jlimit (0, 1, t);
+    auto& p = talkPath();
+    busDim.setBinding (bindLinear ("BUS DIM", p.busDimDb, 0.0f, 40.0f, " dB", 0, 9.0f));
+    monDim.setBinding (bindLinear ("MON DIM", p.monDimDb, 0.0f, 40.0f, " dB", 0, 9.0f));
+    repaint();
+}
+
+void MonitorsPage::showPathTab (int t)
+{
+    pathTab = juce::jlimit (0, 1, t);
+    auto& src = pathSource();
+    srcLevel.setBinding (bindFader ("SRC LEVEL", src.sourceLevelDb));
+    srcMix.setBinding (bindFader ("SRC MIX", src.sourceMixDb));
+    dim.setBinding (bindLinear ("DIM", pathDim(), 0.0f, 40.0f, " dB", 0, 20.0f));
+    pflDim.setBinding (bindLinear ("PFL DIM", src.pflDimDb, 0.0f, 40.0f, " dB", 0, 0.0f));
+    repaint();
+    notifyKnobsChanged(); // the parameter bar follows the path
+}
+
 std::vector<KnobBinding> MonitorsPage::getKnobs()
 {
-    // The parameter bar: TALK LVL, SRC LEVEL, SRC MIX, PFL DIM, DIST on the
-    // console; here the monitor level and the DIM amount.
-    return { bindLinear ("LEVEL", ctx.engine.monitorLevelDb, -60.0f, 10.0f, " dB", 1, 0.0f), dim.getBinding() };
+    // The parameter bar (fig. 72): TALK LVL, SRC LEVEL, SRC MIX, PFL DIM, then
+    // the shown path's level and DIM (DIST: no delay here).
+    return { bindFader ("TALK LVL", ctx.engine.talk.levelDb), srcLevel.getBinding(), srcMix.getBinding(), pflDim.getBinding(),
+             bindLinear (showsPhones() ? "PHONES" : "SPEAKERS", pathLevel(), -60.0f, 10.0f, " dB", 1, 0.0f), dim.getBinding() };
 }
 
 StatusTitle MonitorsPage::getStatusTitle()
@@ -273,16 +350,27 @@ juce::String MonitorsPage::outputName (int port) const
     return port < names.size() && names[port].isNotEmpty() ? names[port].toUpperCase() : "OUT " + juce::String (port + 1);
 }
 
+juce::String MonitorsPage::talkChannelName() const
+{
+    auto* s = ctx.engine.getTalkStrip();
+    if (s == nullptr)
+        return ctx.engine.talk.assignKind.load() == ld::kTalkOff ? "OFF" : "NONE";
+    // "CH40", "AUX8", plus a name of its own.
+    const auto label = juce::String (livedaw::label (s->getKind())) + juce::String (s->getNumber());
+    const auto name = stripName (*s);
+    return name == s->getLabel() ? label : label + " " + name.toUpperCase();
+}
+
 void MonitorsPage::chooseOutput (bool right)
 {
-    auto& target = right ? ctx.engine.monitorOutputRight : ctx.engine.monitorOutputLeft;
+    auto& target = pathOutput (right);
     juce::StringArray items { "OFF" };
     const int n = juce::jmax (64, ctx.engine.getHardwareOutputNames().size());
     for (int i = 0; i < n; ++i)
         items.add (outputName (i));
     popups::ListOptions options;
     options.columns = 2;
-    options.caption = right ? "MONITOR R" : "MONITOR L";
+    options.caption = (showsPhones() ? "PHONES " : "SPEAKERS ") + juce::String (right ? "R" : "L");
     anchor.setBounds (right ? rightField : leftField);
     juce::Component::SafePointer<MonitorsPage> safe (this);
     popups::chooseFrom (anchor, items, target.load() + 1, [safe, &target] (int i)
@@ -293,17 +381,72 @@ void MonitorsPage::chooseOutput (bool right)
     }, options);
 }
 
+void MonitorsPage::chooseSource()
+{
+    // What the path plays without a solo: MAIN.1-4, MTX.1-8, BUS.1-16, AUX.1-8.
+    auto& target = pathSource().source;
+    juce::StringArray items;
+    for (int i = 0; i < ld::kNumMonitorSources; ++i)
+        items.add (MixerEngine::monitorSourceName (i));
+    popups::ListOptions options;
+    options.columns = 4;
+    options.caption = "SOURCE";
+    anchor.setBounds (sourceField);
+    juce::Component::SafePointer<MonitorsPage> safe (this);
+    popups::chooseFrom (anchor, items, target.load(), [safe, &target] (int i)
+    {
+        target = i;
+        if (safe != nullptr)
+            safe->repaint();
+    }, options);
+}
+
+void MonitorsPage::chooseTalkChannel()
+{
+    // OFF, then every input and aux channel (the WING offers CH40 and AUX8).
+    std::vector<Strip*> strips;
+    juce::StringArray items { "OFF" };
+    for (auto kind : { StripKind::Channel, StripKind::Aux })
+        for (auto& s : ctx.engine.getStrips (kind))
+        {
+            strips.push_back (s.get());
+            items.add (juce::String (livedaw::label (kind)) + juce::String (s->getNumber()));
+        }
+    const auto* current = ctx.engine.getTalkStrip();
+    int selected = 0;
+    for (size_t i = 0; i < strips.size(); ++i)
+        if (strips[i] == current)
+            selected = (int) i + 1;
+    popups::ListOptions options;
+    options.columns = 6;
+    options.caption = "TALKBACK CHANNEL";
+    anchor.setBounds (talkChannelField);
+    juce::Component::SafePointer<MonitorsPage> safe (this);
+    popups::chooseFrom (anchor, items, selected, [safe, strips] (int i)
+    {
+        if (safe == nullptr)
+            return;
+        safe->ctx.engine.setTalkStrip (i > 0 ? strips[(size_t) i - 1] : nullptr);
+        safe->repaint();
+    }, options);
+}
+
 void MonitorsPage::timerCallback()
 {
-    std::array<float, 2> peak { ctx.meters.getMonitor (0), ctx.meters.getMonitor (1) };
-    for (auto& p : peak)
-        p = meterPos (dsp::gainToDb (p));
+    std::array<float, 2> peak {};
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        // The phones meter has no other reader; the speakers' comes from the meter bank.
+        phonesPeak[(size_t) ch] = juce::jmax (ctx.engine.phones.peak[ch].exchange (0.0f), phonesPeak[(size_t) ch] * 0.6f);
+        peak[(size_t) ch] = meterPos (dsp::gainToDb (showsPhones() ? phonesPeak[(size_t) ch] : ctx.meters.getMonitor (ch)));
+    }
     if (std::abs (peak[0] - shownPeak[0]) > 0.005f || std::abs (peak[1] - shownPeak[1]) > 0.005f)
     {
         shownPeak = peak;
         repaint (meterArea.getUnion (faderArea));
     }
     repaint (toolbar);
+    repaint (talkArea);
 }
 
 void MonitorsPage::paint (juce::Graphics& g)
@@ -322,7 +465,7 @@ void MonitorsPage::paintToolbar (juce::Graphics& g)
     for (auto& t : tools)
     {
         const bool lit = t.lit && t.lit();
-        const bool enabled = t.press != nullptr || lit;
+        const bool enabled = t.press != nullptr || t.talkPath >= 0 || lit;
         auto r = t.area.toFloat();
         g.setColour (lit ? t.colour : t.colour.withMultipliedBrightness (0.35f).withMultipliedAlpha (enabled ? 1.0f : 0.6f));
         g.fillRect (r);
@@ -337,36 +480,37 @@ void MonitorsPage::paintToolbar (juce::Graphics& g)
 
 void MonitorsPage::paintTalk (juce::Graphics& g)
 {
-    // TALK A / TALK B: talkback isn't in the engine yet, so all of it is dim.
-    tab (g, talkTabs.withWidth (talkTabs.getWidth() / 2).reduced (1, 0), Icon::Edit, "TALK A", true, false);
-    tab (g, talkTabs.withTrimmedLeft (talkTabs.getWidth() / 2).reduced (1, 0), Icon::Edit, "TALK B", false, false);
+    constexpr int handheldMic = 102; // the WING's talkback icon
+    tab (g, talkTabs.withWidth (talkTabs.getWidth() / 2).reduced (1, 0), Icon::Edit, "TALK A", talkTab == 0, true, handheldMic);
+    tab (g, talkTabs.withTrimmedLeft (talkTabs.getWidth() / 2).reduced (1, 0), Icon::Edit, "TALK B", talkTab == 1, true, handheldMic);
 
     g.setColour (Dark::body);
     g.fillRect (talkArea);
     auto left = switchBox;
     panel (g, left.removeFromTop (juce::jmin (kDarkHeaderHeight, left.getHeight() / 5)), "SWITCH MODE");
+    field (g, talkChannelField, "TALKBACK", talkChannelName(), true);
     auto dimArea = autoDimBox;
     panel (g, dimArea.removeFromTop (juce::jmin (kDarkHeaderHeight, dimArea.getHeight() / 4)), "AUTO DIM");
 
-    auto sendLevels = busGrid.withHeight (juce::jmin (22, busGrid.getHeight() / 6)).translated (0, -juce::jmin (26, busGrid.getHeight() / 5));
-    g.setColour (Dark::textDim.withAlpha (0.6f));
+    g.setColour (Dark::textDim);
     g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-    g.drawText ("USE SEND LEVELS", sendLevels, juce::Justification::centredLeft);
-    tileGrid (g, busGrid, "TALK TO BUS", "BUS", 16, 4);
-    tileGrid (g, mtxGrid, "TALK TO MATRIX", "MTX", 8, 4);
-    tileGrid (g, mainGrid, "TALK TO MAIN", "MAIN", 4, 4);
+    g.drawText ("USE SEND LEVELS", sendLevelsRow, juce::Justification::centredLeft);
+    const auto& p = talkPath();
+    tileGrid (g, busGrid, busTiles, "TALK TO BUS", "BUS", p.buses.load());
+    tileGrid (g, mtxGrid, mtxTiles, "TALK TO MATRIX", "MTX", p.matrices.load());
+    tileGrid (g, mainGrid, mainTiles, "TALK TO MAIN", "MAIN", p.mains.load());
 }
 
 void MonitorsPage::paintPath (juce::Graphics& g)
 {
-    tab (g, pathTabs.withWidth (pathTabs.getWidth() / 2).reduced (1, 0), Icon::Headphones, "PHONES", true, true);
-    tab (g, pathTabs.withTrimmedLeft (pathTabs.getWidth() / 2).reduced (1, 0), Icon::Speaker, "SPEAKERS", false, false);
-    panel (g, pathHeader, "PHONES SETTINGS");
+    tab (g, pathTabs.withWidth (pathTabs.getWidth() / 2).reduced (1, 0), Icon::Headphones, "PHONES", showsPhones(), true);
+    tab (g, pathTabs.withTrimmedLeft (pathTabs.getWidth() / 2).reduced (1, 0), Icon::Speaker, "SPEAKERS", ! showsPhones(), true);
+    panel (g, pathHeader, showsPhones() ? "PHONES SETTINGS" : "SPEAKERS SETTINGS");
     g.setColour (Dark::body);
     g.fillRect (pathArea);
 
-    // The monitor follows Main 1 without a solo; DIRECT IN, EQ, delay: not here yet.
-    field (g, sourceField, "SOURCE", "MAIN.1", false);
+    field (g, sourceField, "SOURCE", MixerEngine::monitorSourceName (pathSource().source.load()), true);
+    // DIRECT IN, EQ, INVERT and DELAY: not in the engine.
     field (g, directField, "DIRECT IN", "OFF", false);
     iconKey (g, eqKey, Icon::Eq, "EQ", false);
     iconKey (g, invertKey, Icon::Invert, "INVERT", false);
@@ -380,11 +524,12 @@ void MonitorsPage::paintPath (juce::Graphics& g)
     g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
     g.drawText ("0.1 m", distSlider.removeFromBottom (14), juce::Justification::centred);
 
-    // The outputs and PFL / AFL (the engine's monitor path).
+    // The path's outputs and PFL / AFL.
     auto o = outputBox;
     panel (g, o.removeFromTop (juce::jmin (22, o.getHeight() / 3)), "OUTPUT / SOLO");
-    field (g, leftField, "MONITOR L", outputName (ctx.engine.monitorOutputLeft.load()), true);
-    field (g, rightField, "MONITOR R", outputName (ctx.engine.monitorOutputRight.load()), true);
+    const juce::String side = showsPhones() ? "PHONES " : "SPEAKERS ";
+    field (g, leftField, side + "L", outputName (pathOutput (false).load()), true);
+    field (g, rightField, side + "R", outputName (pathOutput (true).load()), true);
 }
 
 void MonitorsPage::paintLevel (juce::Graphics& g)
@@ -419,11 +564,12 @@ void MonitorsPage::paintLevel (juce::Graphics& g)
         g.fillRect (lit);
     }
 
-    // The level fader: the monitor level, a lime fill and a value flag.
+    // The level fader (set by PHONES LEVEL / MONITOR LEVEL): a lime fill and a value flag.
+    const float levelDb = pathLevel().load();
     auto f = faderArea.toFloat();
     g.setColour (Dark::well);
     g.fillRect (f);
-    const float pos = fader::dbToPos (juce::jlimit (-144.0f, 10.0f, ctx.engine.monitorLevelDb.load()));
+    const float pos = fader::dbToPos (juce::jlimit (-144.0f, 10.0f, levelDb));
     auto slot = f.withSizeKeepingCentre (juce::jmin (10.0f, f.getWidth() * 0.3f), f.getHeight() - 16.0f);
     g.setColour (Dark::key);
     g.fillRect (slot);
@@ -435,7 +581,7 @@ void MonitorsPage::paintLevel (juce::Graphics& g)
     g.fillRect (flag);
     g.setColour (juce::Colours::black);
     g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-    g.drawFittedText (fader::text (ctx.engine.monitorLevelDb.load()) + " dB", flag.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+    g.drawFittedText (fader::text (levelDb) + " dB", flag.toNearestInt(), juce::Justification::centred, 1, 0.6f);
 }
 
 void MonitorsPage::resized()
@@ -469,19 +615,25 @@ void MonitorsPage::resized()
         col.removeFromTop (gap);
         autoDimBox = col;
         auto sw = switchBox.withTrimmedTop (juce::jmin (kDarkHeaderHeight, switchBox.getHeight() / 5) + 6).reduced (8, 0);
-        switchMode->setBounds (sw.withHeight (juce::jmin (sw.getHeight() / 3, 34)));
+        switchMode->setBounds (sw.removeFromTop (juce::jmin (sw.getHeight() / 3, 34)));
+        sw.removeFromTop (8);
+        talkChannelField = sw.removeFromTop (juce::jmin (sw.getHeight() - 4, 48));
         auto ad = autoDimBox.withTrimmedTop (juce::jmin (kDarkHeaderHeight, autoDimBox.getHeight() / 4) + 6).reduced (6, 0);
         const int kh = juce::jmin (48, ad.getHeight() / 2 - 4);
         busDim.setBounds (ad.removeFromTop (kh));
         ad.removeFromTop (6);
         monDim.setBounds (ad.removeFromTop (kh));
 
-        t.removeFromTop (juce::jmin (28, t.getHeight() / 8));
+        sendLevelsRow = t.removeFromTop (juce::jmin (28, t.getHeight() / 8));
+        sendLevels->setBounds (sendLevelsRow.removeFromRight (juce::jmin (48, sendLevelsRow.getWidth() / 4)).reduced (0, 3));
         busGrid = t.removeFromTop (t.getHeight() * 50 / 100);
         t.removeFromTop (6);
         mtxGrid = t.removeFromTop (t.getHeight() * 55 / 100);
         t.removeFromTop (6);
         mainGrid = t;
+        busTiles = gridTiles (busGrid, kWingBuses, 4);
+        mtxTiles = gridTiles (mtxGrid, kNumMatrices, 4);
+        mainTiles = gridTiles (mainGrid, kNumMains, 4);
     }
 
     auto level = right.removeFromRight (juce::jlimit (90, 200, right.getWidth() * 30 / 100));
@@ -538,8 +690,28 @@ void MonitorsPage::resized()
     }
 }
 
+void MonitorsPage::mouseDown (const juce::MouseEvent& e)
+{
+    // The TALK keys go down and up like the surface's (SWITCH MODE).
+    for (auto& t : tools)
+        if (t.talkPath >= 0 && t.area.contains (e.getPosition()))
+        {
+            pressedTalk = t.talkPath;
+            ctx.engine.talkKey (pressedTalk, true);
+            repaint (toolbar);
+            return;
+        }
+}
+
 void MonitorsPage::mouseUp (const juce::MouseEvent& e)
 {
+    if (pressedTalk >= 0)
+    {
+        ctx.engine.talkKey (pressedTalk, false);
+        pressedTalk = -1;
+        repaint (toolbar);
+        return;
+    }
     const auto pos = e.getPosition();
     for (auto& t : tools)
         if (t.area.contains (pos) && t.press)
@@ -548,7 +720,29 @@ void MonitorsPage::mouseUp (const juce::MouseEvent& e)
             repaint (toolbar);
             return;
         }
-    if (leftField.contains (pos))
+    auto toggle = [this] (const std::vector<juce::Rectangle<int>>& tiles, std::atomic<uint32_t>& mask, juce::Point<int> p)
+    {
+        for (size_t i = 0; i < tiles.size(); ++i)
+            if (tiles[i].contains (p))
+            {
+                mask = mask.load() ^ (1u << i);
+                repaint (talkArea);
+                return true;
+            }
+        return false;
+    };
+    auto& talkPathParams = talkPath();
+    if (toggle (busTiles, talkPathParams.buses, pos) || toggle (mtxTiles, talkPathParams.matrices, pos) || toggle (mainTiles, talkPathParams.mains, pos))
+        return;
+    if (talkTabs.contains (pos))
+        showTalkTab (pos.x < talkTabs.getCentreX() ? 0 : 1);
+    else if (pathTabs.contains (pos))
+        showPathTab (pos.x < pathTabs.getCentreX() ? 0 : 1);
+    else if (talkChannelField.contains (pos))
+        chooseTalkChannel();
+    else if (sourceField.contains (pos))
+        chooseSource();
+    else if (leftField.contains (pos))
         chooseOutput (false);
     else if (rightField.contains (pos))
         chooseOutput (true);
