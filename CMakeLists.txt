@@ -192,6 +192,11 @@ target_sources(LiveDAW PRIVATE
     src/ui/ViewPages.cpp
     src/ui/MainDisplay.cpp
     src/ui/SurfaceSections.cpp
+    src/ui/daw/DawCommon.cpp
+    src/ui/daw/DawTimeline.cpp
+    src/ui/daw/DawTracks.cpp
+    src/ui/daw/DawEditor.cpp
+    src/ui/daw/RecorderPage.cpp
     src/ui/MainComponent.cpp)
 
 livedaw_configure_juce_target(LiveDAW)
