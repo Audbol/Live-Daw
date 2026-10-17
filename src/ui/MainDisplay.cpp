@@ -467,11 +467,7 @@ public:
         g.drawFittedText (target.isValid() ? target.label.toUpperCase() : juce::String(), r.toNearestInt(), juce::Justification::centred, 1, 0.6f);
     }
 
-    void mouseDown (const juce::MouseEvent&) override
-    {
-        TransientPopups::closeAll();
-        lastY = 0;
-    }
+    void mouseDown (const juce::MouseEvent&) override { lastY = 0; }
 
     void mouseDrag (const juce::MouseEvent& e) override
     {
@@ -542,11 +538,7 @@ public:
     void resized() override { knob.setBounds (getLocalBounds()); }
     void mouseEnter (const juce::MouseEvent&) override { touch(); }
     void mouseExit (const juce::MouseEvent&) override { touch(); }
-    void mouseDown (const juce::MouseEvent&) override
-    {
-        TransientPopups::closeAll();
-        touch();
-    }
+    void mouseDown (const juce::MouseEvent&) override { touch(); }
     void mouseUp (const juce::MouseEvent&) override { touch(); }
 
 private:
