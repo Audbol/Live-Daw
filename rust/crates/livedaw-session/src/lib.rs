@@ -11,6 +11,7 @@ pub mod custom;
 pub mod layers;
 pub mod legacy;
 pub mod refs;
+pub mod scope;
 pub mod show;
 pub mod xml;
 
@@ -18,4 +19,5 @@ pub use console::{section, ApplyResult, CapturedInsert, InsertMode, NoPlugins, P
 pub use custom::{CcControl, CcFunction, CustomControls};
 pub use layers::{FaderRef, Layer, LayerSet};
 pub use refs::StripRef;
+pub use scope::{GlobalSafe, RecordedChanges, Scope};
 pub use show::{Scene, Show, Snippet};

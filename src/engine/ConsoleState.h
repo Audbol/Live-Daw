@@ -69,6 +69,36 @@ struct FaderRef
     static FaderRef fromC (ld::FaderRefC) noexcept;
 };
 
+/** What a recall, a partial update or a snippet touches (the LIBRARY's SCOPE
+    window): strip sections, strips (allStrips: every one), DCAs, mute groups
+    and FX slots (bit n = item n+1, recalled with FADER, GROUPS and INSERTS)
+    and the console-wide settings (monitor setup and INPUT SELECT with Routing,
+    automix enables with Inserts). Also holds the GLOBAL safes beyond strips. */
+struct Scope
+{
+    static constexpr juce::uint32 kAllDcas = 0xffffu, kAllMuteGroups = 0xffu, kAllFx = 0xffffu;
+
+    juce::uint32 sections = AllSections;
+    bool allStrips = true;
+    std::vector<StripRef> strips;
+    juce::uint32 dcas = kAllDcas, muteGroups = kAllMuteGroups, fx = kAllFx;
+    bool console = true;
+
+    /** The whole console within `sections`. */
+    static Scope everything (juce::uint32 sections = AllSections) { Scope s; s.sections = sections; return s; }
+    /** Only `sections` of `strips`: no DCAs, mute groups, FX slots or console settings. */
+    static Scope only (juce::uint32 sections, std::vector<StripRef> strips);
+    /** Nothing selected. */
+    static Scope none() { return only (0, {}); }
+
+    bool includes (const StripRef&) const;
+    bool operator== (const Scope&) const;
+
+    /** For the C ABI: `strips` must outlive the returned struct. */
+    ld::ScopeC toC (const std::vector<ld::StripRefC>& cStrips) const noexcept;
+    static Scope fromC (const ld::ScopeC&, const std::vector<ld::StripRefC>& strips);
+};
+
 struct ApplyResult
 {
     int stripsApplied = 0;

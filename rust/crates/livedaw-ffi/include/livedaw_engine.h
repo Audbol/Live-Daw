@@ -316,6 +316,18 @@ struct ApplyResultC
     LdString* warnings; // '\n'-separated, or null; caller frees
 };
 
+/// A recall scope: strip sections, strips (allStrips: every strip), DCAs, mute
+/// groups and FX slots (bit n = item n+1) and the console-wide settings. Going
+/// in, `strips` points at `numStrips` refs; coming out it is null and the
+/// strips go to a separate buffer.
+struct ScopeC
+{
+    uint32_t sections, dcas, muteGroups, fx;
+    bool console, allStrips;
+    const StripRefC* strips;
+    int32_t numStrips;
+};
+
 /** Writes the <PLUGIN> description XML and base64 state of FX slot `slot`; false if empty. */
 using CaptureFxFn = bool (*) (void* ctx, int32_t slot, LdSink* description, LdSink* state);
 /** mode 0 = restore state into the plugin already loaded, 1 = create the plugin.
@@ -528,6 +540,30 @@ extern "C"
     void ld_snippet_set_sections (Show*, int32_t scene, int32_t snippet, uint32_t sections);
     void ld_snippet_set_fire_with_scene (Show*, int32_t scene, int32_t snippet, bool fire);
     void ld_snippet_set_strips (Show*, int32_t scene, int32_t snippet, const StripRefC* strips, int32_t n);
+
+    // Scopes, GLOBAL safes, PARTIAL LOAD / UPDATE, RESTORE, snippet REC
+    /** A scene's recall scope; returns the strip count (strips copied up to `capacity`). */
+    int32_t ld_scene_get_scope (Show*, int32_t scene, ScopeC* out, StripRefC* strips, int32_t capacity);
+    void ld_scene_set_recall_scope (Show*, int32_t scene, const ScopeC*);
+    /** PARTIAL UPDATE: stores only `scope` into the scene. */
+    void ld_show_store_scene_partial (Show*, const Engine*, int32_t index, const ScopeC* scope);
+    /** PARTIAL LOAD (`scope`; ignoreSafes = NO GLOB) or RESTORE (scope null: all of it, safes included). */
+    void ld_show_recall_scene_with (Show*, const Engine*, int32_t index, const ScopeC* scope, bool ignoreSafes, ApplyResultC* out);
+    int32_t ld_show_partial_scope (Show*, ScopeC* out, StripRefC* strips, int32_t capacity);
+    /** GLOBAL safes beyond strips (no strips; the strips' own recall safe stays on them). */
+    void ld_show_global_safe (Show*, ScopeC* out);
+    void ld_show_set_global_safe (Show*, const ScopeC*);
+    int32_t ld_snippet_get_scope (Show*, int32_t scene, int32_t snippet, ScopeC* out, StripRefC* strips, int32_t capacity);
+    int32_t ld_snippet_parameter_count (Show*, int32_t scene, int32_t snippet);
+    int32_t ld_show_add_snippet_scoped (Show*, const Engine*, int32_t scene, const char* name, size_t len, const ScopeC* scope);
+    /** ADD ITEMS (add) or REMOVE ITEMS; no strips = every strip of the snippet. */
+    void ld_show_snippet_items (Show*, const Engine*, int32_t scene, int32_t snippet, bool add, const ScopeC* items);
+    /** PARTIAL LOAD of a snippet (limit null: all of it). */
+    void ld_show_recall_snippet_with (Show*, const Engine*, int32_t scene, int32_t snippet, const ScopeC* limit, ApplyResultC* out);
+    /** op: 0 REC, 1 STOP (returns the changed parameters), 2 CLEAR, 3 count, 4 recording?, 5 recorded and not saved? */
+    int32_t ld_show_snippet_rec (Show*, const Engine*, int32_t op);
+    /** SAVE after STOP: a snippet of the recorded parameters within `focus` (null: all); -1 if none. */
+    int32_t ld_show_add_recorded_snippet (Show*, const Engine*, int32_t scene, const char* name, size_t len, const ScopeC* focus);
 
     bool ld_show_is_fading (Show*);
     void ld_show_cancel_fade (Show*);

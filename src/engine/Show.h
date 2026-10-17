@@ -60,6 +60,10 @@ public:
         juce::uint32 sections = 0;
         std::vector<state::StripRef> strips;
         bool fireWithScene = false;
+        /** Its whole scope (strips, sections, DCAs, mute groups, FX, console). */
+        state::Scope scope = state::Scope::none();
+        /** The parameters REC recorded, else the values it holds. */
+        int parameterCount = 0;
     };
 
     Show (MixerEngine&, PluginHost&);
@@ -108,6 +112,26 @@ public:
     state::ApplyResult recallSceneByTag (int tag);
 
     //==============================================================================
+    // Scopes beyond sections, GLOBAL safes, PARTIAL LOAD / UPDATE, RESTORE
+
+    /** A scene's whole recall scope (its sections are Scene::scope). */
+    state::Scope getSceneRecallScope (int index) const;
+    void setSceneRecallScope (int index, const state::Scope&);
+    /** PARTIAL UPDATE: stores only `scope` into the scene. */
+    void storeScenePartial (int index, const state::Scope&);
+    /** PARTIAL LOAD: recalls only `scope` of the scene (noGlobal: NO GLOB, the
+        safes are ignored). No links, auto-fire snippets or fade. */
+    state::ApplyResult recallScenePartial (int index, const state::Scope&, bool noGlobal);
+    /** RESTORE: the whole scene regardless of its scope, safes included. */
+    state::ApplyResult restoreScene (int index);
+    /** The scope PARTIAL LOAD / UPDATE last used (they keep it). */
+    state::Scope getPartialScope() const;
+    /** GLOBAL safes beyond the strips' recall safe (strips are not used). */
+    state::Scope getGlobalSafe() const;
+    void setGlobalSafe (const state::Scope&);
+    bool hasGlobalSafes() const;
+
+    //==============================================================================
     // Snippets
     const std::optional<Snippet> getSnippet (int sceneIndex, int snippetIndex) const;
     int addSnippet (int sceneIndex, const juce::String& snippetName, juce::uint32 sections,
@@ -120,6 +144,27 @@ public:
     void setSnippetSections (int sceneIndex, int snippetIndex, juce::uint32 sections);
     void setSnippetStrips (int sceneIndex, int snippetIndex, const std::vector<state::StripRef>&);
     void setSnippetFireWithScene (int sceneIndex, int snippetIndex, bool fire);
+    /** A snippet of what `scope` covers (strips, sections, DCAs, mute groups, FX, console). */
+    int addSnippet (int sceneIndex, const juce::String& snippetName, const state::Scope&);
+    /** ADD ITEMS / REMOVE ITEMS: no strips in `items` means every strip of the snippet. */
+    void addSnippetItems (int sceneIndex, int snippetIndex, const state::Scope& items);
+    void removeSnippetItems (int sceneIndex, int snippetIndex, const state::Scope& items);
+    /** PARTIAL LOAD of a snippet: only what is in both its scope and `limit`. */
+    state::ApplyResult recallSnippetPartial (int sceneIndex, int snippetIndex, const state::Scope& limit);
+
+    // Snippet REC / STOP: the parameters changed between REC and STOP.
+    void startSnippetRecording();
+    /** Returns the number of changed parameters. */
+    int stopSnippetRecording();
+    void clearSnippetRecording();
+    bool isRecordingSnippet() const;
+    /** STOPped with changes that SAVE hasn't stored yet. */
+    bool hasRecordedSnippet() const;
+    /** The parameters changed so far (recording) or by the last STOP. */
+    int getRecordedParameterCount() const;
+    /** SAVE after STOP: a snippet of the recorded parameters within `focus` (REC
+        FOCUS; nullptr: all). -1 if nothing was recorded. */
+    int addRecordedSnippet (int sceneIndex, const juce::String& snippetName, const state::Scope* focus);
 
     //==============================================================================
     // Custom controls (CC EDIT): the assignments as a <CustomControls> element,

@@ -8,7 +8,7 @@ use super::guard;
 use livedaw_engine::{Engine, StripKind};
 use livedaw_session::console::{CapturedInsert, InsertMode, PluginBridge, RestoreError};
 use livedaw_session::layers::{FaderRef, Layer, LayerSet};
-use livedaw_session::{ApplyResult, Show, StripRef};
+use livedaw_session::{ApplyResult, GlobalSafe, Scope, Show, StripRef};
 use std::borrow::Cow;
 use std::ffi::c_void;
 use std::path::PathBuf;
@@ -534,6 +534,248 @@ pub unsafe extern "C" fn ld_snippet_set_strips(s: *mut LdShow, scene: i32, snipp
     if let Some(sn) = show(s).and_then(|s| s.show.snippet_mut(scene, snippet)) {
         sn.strips = refs;
     }
+}
+
+// ---- scopes, global safes, partial load / update, snippet REC ------------------------------
+
+/// A recall scope (see `livedaw_session::scope::Scope`). Going in, `strips`
+/// points at `num_strips` refs (ignored with `all_strips`); coming out, the
+/// strips go to a separate buffer and `strips` is null.
+#[repr(C)]
+pub struct LdScope {
+    pub sections: u32,
+    pub dcas: u32,
+    pub mute_groups: u32,
+    pub fx: u32,
+    pub console: bool,
+    pub all_strips: bool,
+    pub strips: *const LdStripRef,
+    pub num_strips: i32,
+}
+
+unsafe fn scope_arg(p: *const LdScope) -> Option<Scope> {
+    let p = p.as_ref()?;
+    Some(
+        Scope {
+            sections: p.sections,
+            strips: if p.all_strips { None } else { Some(refs_arg(p.strips, p.num_strips)) },
+            dcas: p.dcas,
+            mute_groups: p.mute_groups,
+            fx: p.fx,
+            console: p.console,
+        }
+        .sanitised(),
+    )
+}
+
+/// Writes `scope` to `out` and up to `capacity` strips to `strips`; returns the strip count.
+unsafe fn scope_out(scope: &Scope, out: *mut LdScope, strips: *mut LdStripRef, capacity: i32) -> i32 {
+    if let Some(o) = out.as_mut() {
+        *o = LdScope {
+            sections: scope.sections,
+            dcas: scope.dcas,
+            mute_groups: scope.mute_groups,
+            fx: scope.fx,
+            console: scope.console,
+            all_strips: scope.strips.is_none(),
+            strips: std::ptr::null(),
+            num_strips: scope.strips.as_ref().map_or(0, |s| s.len() as i32),
+        };
+    }
+    scope.strips.as_ref().map_or(0, |s| refs_out(s, strips, capacity))
+}
+
+/// A scene's recall scope; returns the number of strips (0 with all_strips).
+#[no_mangle]
+pub unsafe extern "C" fn ld_scene_get_scope(
+    s: *mut LdShow,
+    scene: i32,
+    out: *mut LdScope,
+    strips: *mut LdStripRef,
+    capacity: i32,
+) -> i32 {
+    match show(s).and_then(|s| s.show.scene(scene)) {
+        Some(sc) => scope_out(&sc.recall_scope(), out, strips, capacity),
+        None => scope_out(&Scope::default(), out, strips, capacity),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_scene_set_recall_scope(s: *mut LdShow, scene: i32, scope: *const LdScope) {
+    if let (Some(sc), Some(scope)) = (show(s).and_then(|s| s.show.scene_mut(scene)), scope_arg(scope)) {
+        sc.set_recall_scope(&scope);
+    }
+}
+
+/// PARTIAL UPDATE: stores only `scope` into the scene.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_store_scene_partial(s: *mut LdShow, e: *const Engine, index: i32, scope: *const LdScope) {
+    if let (Some(s), Some(e), Some(scope)) = (show(s), eng(e), scope_arg(scope)) {
+        guard((), || s.show.store_scene_partial(e, &mut s.bridge, index, &scope));
+    }
+}
+
+/// PARTIAL LOAD (`scope`; `ignore_safes` = NO GLOB) or RESTORE (`scope` null:
+/// the whole scene, safes included).
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_recall_scene_with(
+    s: *mut LdShow,
+    e: *const Engine,
+    index: i32,
+    scope: *const LdScope,
+    ignore_safes: bool,
+    out: *mut LdApplyResult,
+) {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return write_result(out, ApplyResult::default()) };
+    let scope = scope_arg(scope);
+    let r = guard(ApplyResult::default(), || s.show.recall_scene_with(e, &mut s.bridge, index, scope.as_ref(), ignore_safes));
+    write_result(out, r);
+}
+
+/// The scope PARTIAL LOAD / UPDATE last used.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_partial_scope(s: *mut LdShow, out: *mut LdScope, strips: *mut LdStripRef, capacity: i32) -> i32 {
+    match show(s) {
+        Some(s) => scope_out(&s.show.partial_scope, out, strips, capacity),
+        None => scope_out(&Scope::default(), out, strips, capacity),
+    }
+}
+
+/// The GLOBAL safes beyond strips (sections, DCAs, mute groups, FX, console; no strips).
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_global_safe(s: *mut LdShow, out: *mut LdScope) {
+    let g = show(s).map(|s| s.show.global_safe.clone()).unwrap_or_default();
+    let scope = Scope {
+        sections: g.sections,
+        strips: Some(Vec::new()),
+        dcas: g.dcas,
+        mute_groups: g.mute_groups,
+        fx: g.fx,
+        console: g.console,
+    };
+    scope_out(&scope, out, std::ptr::null_mut(), 0);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_set_global_safe(s: *mut LdShow, safe: *const LdScope) {
+    if let (Some(s), Some(g)) = (show(s), scope_arg(safe)) {
+        s.show.global_safe =
+            GlobalSafe { sections: g.sections, dcas: g.dcas, mute_groups: g.mute_groups, fx: g.fx, console: g.console }
+                .sanitised();
+    }
+}
+
+/// A snippet's scope (strips, sections, DCAs, mute groups, FX, console);
+/// returns the number of strips.
+#[no_mangle]
+pub unsafe extern "C" fn ld_snippet_get_scope(
+    s: *mut LdShow,
+    scene: i32,
+    snippet: i32,
+    out: *mut LdScope,
+    strips: *mut LdStripRef,
+    capacity: i32,
+) -> i32 {
+    match show(s).and_then(|s| s.show.snippet(scene, snippet)) {
+        Some(sn) => scope_out(&sn.scope(), out, strips, capacity),
+        None => scope_out(&Scope::strips(0, Vec::new()), out, strips, capacity),
+    }
+}
+
+/// The parameter count shown for a snippet (what REC recorded, else the values it holds).
+#[no_mangle]
+pub unsafe extern "C" fn ld_snippet_parameter_count(s: *mut LdShow, scene: i32, snippet: i32) -> i32 {
+    show(s).and_then(|s| s.show.snippet(scene, snippet)).map_or(0, |sn| sn.parameter_count() as i32)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_add_snippet_scoped(
+    s: *mut LdShow,
+    e: *const Engine,
+    scene: i32,
+    name: *const u8,
+    name_len: usize,
+    scope: *const LdScope,
+) -> i32 {
+    let (Some(s), Some(e), Some(scope)) = (show(s), eng(e), scope_arg(scope)) else { return -1 };
+    let name = str_arg(name, name_len);
+    guard(-1, || s.show.add_snippet_scoped(e, &mut s.bridge, scene, &name, &scope))
+}
+
+/// ADD ITEMS (`add`) or REMOVE ITEMS: no strips in `items` means every strip of the snippet.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_snippet_items(
+    s: *mut LdShow,
+    e: *const Engine,
+    scene: i32,
+    snippet: i32,
+    add: bool,
+    items: *const LdScope,
+) {
+    let (Some(s), Some(e), Some(items)) = (show(s), eng(e), scope_arg(items)) else { return };
+    guard((), || {
+        if add {
+            s.show.add_snippet_items(e, &mut s.bridge, scene, snippet, &items);
+        } else {
+            s.show.remove_snippet_items(scene, snippet, &items);
+        }
+    });
+}
+
+/// PARTIAL LOAD of a snippet (`limit` null: all of it).
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_recall_snippet_with(
+    s: *mut LdShow,
+    e: *const Engine,
+    scene: i32,
+    snippet: i32,
+    limit: *const LdScope,
+    out: *mut LdApplyResult,
+) {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return write_result(out, ApplyResult::default()) };
+    let limit = scope_arg(limit);
+    let r = guard(ApplyResult::default(), || s.show.recall_snippet_with(e, &mut s.bridge, scene, snippet, limit.as_ref()));
+    write_result(out, r);
+}
+
+/// Snippet REC. op: 0 REC, 1 STOP (returns the number of changed parameters),
+/// 2 CLEAR (drop the recording), 3 the count so far (while recording) or of
+/// the last STOP, 4 recording? (1/0), 5 a stopped recording waiting for SAVE? (1/0).
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_snippet_rec(s: *mut LdShow, e: *const Engine, op: i32) -> i32 {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return 0 };
+    guard(0, || match op {
+        0 => {
+            s.show.start_recording(e);
+            0
+        }
+        1 => s.show.stop_recording(e) as i32,
+        2 => {
+            s.show.clear_recording();
+            0
+        }
+        3 => s.show.recorded_count(e) as i32,
+        4 => i32::from(s.show.is_recording()),
+        5 => i32::from(s.show.recorded_changes(None).is_some_and(|c| !c.is_empty())),
+        _ => 0,
+    })
+}
+
+/// SAVE after STOP: a snippet of the recorded parameters within `focus` (null:
+/// all of them). -1 if nothing was recorded.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_add_recorded_snippet(
+    s: *mut LdShow,
+    e: *const Engine,
+    scene: i32,
+    name: *const u8,
+    name_len: usize,
+    focus: *const LdScope,
+) -> i32 {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return -1 };
+    let name = str_arg(name, name_len);
+    let focus = scope_arg(focus);
+    guard(-1, || s.show.add_recorded_snippet(e, &mut s.bridge, scene, &name, focus.as_ref()))
 }
 
 // Fades ---------------------------------------------------------------------------------
