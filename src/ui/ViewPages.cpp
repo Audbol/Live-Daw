@@ -62,7 +62,9 @@ namespace
     {
         if (f.dca)
             return { nullptr, juce::jlimit (0, kNumDcas - 1, f.dcaIndex) };
-        return { state::findStrip (ctx.engine, f.strip), -1 };
+        if (f.fxParam)
+            return {}; // FX parameters have no strip view here
+        return { state::findStrip (ctx.engine, f.strip), -1 }; // a send: its source
     }
 
     juce::Colour colourOf (UiContext& ctx, const Target& t)

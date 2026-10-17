@@ -856,7 +856,7 @@ namespace
             faders.addRow ("USER LAYER LINK", std::make_unique<ToggleKeys> (ctx, juce::StringArray { "L/C", "C/R" },
                                                                            std::vector<const char*> (std::begin (uiprefs::userLayerLink), std::end (uiprefs::userLayerLink))),
                            3.6f);
-            faders.addRow ("DCA SPILL", OnKey::fixed (false), 1.3f, false); // needs spill layers (W40)
+            faders.addRow ("DCA SPILL", onSetting (uiprefs::dcaSpill, false), 1.3f);
             faders.newBox();
             // App-specific: faders scrolled per press of the shift keys (ui.shiftStep).
             faders.addRow ("SHIFT STEP",

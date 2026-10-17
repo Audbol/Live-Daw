@@ -1658,10 +1658,15 @@ public:
             for (size_t i = 0; i < spec.params.size(); ++i)
                 fx.params (slot).values[i] = spec.params[i].defaultValue;
         };
-        // FX SPILL puts the effect on the left fader section (the spill layers, W40).
-        spill = &key ("FX SPILL", Icon::Faders);
+        // FX SPILL puts the effect's parameters on the left fader section; again ends it.
+        spill = &key ("FX SPILL", Icon::Spill);
         spill->outlined = true;
-        spill->setEnabled (false);
+        spill->isOn = [this] { return ins.fx.load() >= 0 && isSpilling (ctx, { LayerSet::Spill::Kind::Fx, ins.fx.load(), {} }); };
+        spill->onClick = [this]
+        {
+            if (const int slot = ins.fx.load(); slot >= 0)
+                toggleSpill (ctx, std::nullopt, { LayerSet::Spill::Kind::Fx, slot, {} });
+        };
         if (strip.isOutput())
         {
             setCust = &key ("SET CUST", Icon::KeyboardEdit);
@@ -2560,9 +2565,10 @@ public:
         tapEq->setEnabled (false);
         tapEqMore = &key ({}, Icon::ChevronRight);
         tapEqMore->setEnabled (false);
-        // SPILL puts the strip's sends on a fader section (the spill layers, W40).
-        spill = &key ("SPILL", Icon::Faders);
-        spill->setEnabled (false);
+        // SPILL puts the strip's sends on the left fader section (SELECTED CH SENDS); again ends it.
+        spill = &key ("SPILL", Icon::Spill);
+        spill->isOn = [this] { return isSpilling (ctx, { LayerSet::Spill::Kind::Sends, 0, state::StripRef::of (strip) }); };
+        spill->onClick = [this] { toggleSpill (ctx, std::nullopt, { LayerSet::Spill::Kind::Sends, 0, state::StripRef::of (strip) }); };
         if (strip.getKind() != StripKind::Main && strip.getKind() != StripKind::Matrix)
         {
             tapMenu = &key ({}, Icon::ChevronDown);

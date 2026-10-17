@@ -50,19 +50,60 @@ std::vector<ld::StripRefC> toC (const std::vector<StripRef>&);
 
 Strip* findStrip (const MixerEngine&, const StripRef&) noexcept;
 
-/** A fader on the surface: a strip or a DCA. */
+/** A fader on the surface: a strip, a DCA, a send level (from `strip` to the
+    bus, main or matrix `to`) or an FX slot's parameter. */
 struct FaderRef
 {
     bool dca = false;
-    StripRef strip;
+    StripRef strip; // the strip, or a send's source
     int dcaIndex = 0;
+    bool send = false;
+    StripRef to;    // a send's destination
+    bool fxParam = false;
+    int fxSlot = 0, param = 0;
 
-    static FaderRef of (const StripRef& r) noexcept { return { false, r, 0 }; }
-    static FaderRef ofDca (int index) noexcept { return { true, {}, index }; }
+    static FaderRef of (const StripRef& r) noexcept
+    {
+        FaderRef f;
+        f.strip = r;
+        return f;
+    }
+    static FaderRef ofDca (int index) noexcept
+    {
+        FaderRef f;
+        f.dca = true;
+        f.dcaIndex = index;
+        return f;
+    }
+    static FaderRef ofSend (const StripRef& from, const StripRef& dest) noexcept
+    {
+        FaderRef f;
+        f.strip = from;
+        f.send = true;
+        f.to = dest;
+        return f;
+    }
+    static FaderRef ofFxParam (int slot, int parameter) noexcept
+    {
+        FaderRef f;
+        f.fxParam = true;
+        f.fxSlot = slot;
+        f.param = parameter;
+        return f;
+    }
+
+    /** A strip's own fader (not a DCA, send or FX parameter). */
+    bool isStrip() const noexcept { return ! dca && ! send && ! fxParam; }
 
     bool operator== (const FaderRef& o) const noexcept
     {
-        return dca == o.dca && (dca ? dcaIndex == o.dcaIndex : strip == o.strip);
+        if (dca != o.dca || send != o.send || fxParam != o.fxParam)
+            return false;
+        if (dca)
+            return dcaIndex == o.dcaIndex;
+        if (fxParam)
+            return fxSlot == o.fxSlot && param == o.param;
+        return strip == o.strip && (! send || to == o.to);
     }
 
     ld::FaderRefC toC() const noexcept;

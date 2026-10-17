@@ -83,14 +83,25 @@ std::vector<ld::StripRefC> toC (const std::vector<StripRef>& refs)
 
 ld::FaderRefC FaderRef::toC() const noexcept
 {
-    return dca ? ld::FaderRefC { ld::kFaderDca, dcaIndex } : ld::FaderRefC { static_cast<int32_t> (strip.kind), strip.id };
+    if (dca)
+        return { ld::kFaderDca, dcaIndex, -1, 0 };
+    if (fxParam)
+        return { ld::kFaderFxParam, fxSlot, -1, param };
+    if (send)
+        return { static_cast<int32_t> (strip.kind), strip.id, static_cast<int32_t> (to.kind), to.id };
+    return { static_cast<int32_t> (strip.kind), strip.id, -1, 0 };
 }
 
 FaderRef FaderRef::fromC (ld::FaderRefC r) noexcept
 {
     if (r.kind == ld::kFaderDca)
         return ofDca (r.id);
-    return of (StripRef::fromC ({ r.kind, r.id }));
+    if (r.kind == ld::kFaderFxParam)
+        return ofFxParam (r.id, r.toId);
+    const auto from = StripRef::fromC ({ r.kind, r.id });
+    if (r.toKind == ld::kBus || r.toKind == ld::kMain || r.toKind == ld::kMatrix)
+        return ofSend (from, StripRef::fromC ({ r.toKind, r.toId }));
+    return of (from);
 }
 
 Scope Scope::only (juce::uint32 sections, std::vector<StripRef> strips)

@@ -61,8 +61,9 @@ enum StripKindId : int32_t
     kMatrix = 4
 };
 
-/// Fader reference kind for DCAs (strip kinds are 0..4).
+/// Fader reference kinds beyond the strip kinds (0..4): DCAs and FX parameters.
 constexpr int32_t kFaderDca = 5;
+constexpr int32_t kFaderFxParam = 6;
 
 /// Tap points (index into list 1). WING names: INPUT, FILTER, TAP 3-5, PRE FDR,
 /// POST FDR, POST PROC. Only input channels choose theirs; aux, buses, mains and
@@ -304,10 +305,22 @@ struct StripRefC
     int32_t kind, id;
 };
 
-/// A fader on the surface: kind 0..4 = strip kinds, kFaderDca = DCA (id 0..15).
+/// A fader on the surface: kind 0..4 = a strip, or with toKind 2..4 the send
+/// level from it to bus / main / matrix `toId`; kFaderDca = DCA (id 0..15);
+/// kFaderFxParam = FX slot `id`'s parameter `toId`. toKind is -1 when unused.
 struct FaderRefC
 {
     int32_t kind, id;
+    int32_t toKind = -1, toId = 0;
+};
+
+/// A spill: kind 0 = DCA `index`, 1 = the sources sending to bus slot `index`,
+/// 2 = FX slot `index`'s parameters, 3 = automix group `index` (0 X, 1 Y),
+/// 4 = the sends of `strip`.
+struct SpillC
+{
+    int32_t kind, index;
+    StripRefC strip;
 };
 
 struct ApplyResultC
@@ -590,6 +603,13 @@ extern "C"
     int32_t ld_layers_effective_width (LayerSet*, int32_t section);
     LdString* ld_layers_selected (LayerSet*, int32_t section);
     void ld_layers_set_selected (LayerSet*, int32_t section, const char* utf8, size_t len);
+    int32_t ld_layers_offset (LayerSet*, int32_t section);
+    void ld_layers_set_offset (LayerSet*, int32_t section, int32_t offset);
+    /** The section a spill from `origin` goes to (origin -1: none). */
+    int32_t ld_layers_spill_target (int32_t origin);
+    void ld_layers_start_spill (LayerSet*, int32_t section, SpillC spill);
+    bool ld_layers_end_spill (LayerSet*, int32_t section);
+    bool ld_layers_spill (LayerSet*, int32_t section, SpillC* out);
     LdString* ld_layers_find_default_containing (LayerSet*, const Engine*, int32_t section, FaderRefC ref);
     /** which: 0 default, 1 default + user, 2 user only, 3 the layer `id` (or the section's first). */
     LayerList* ld_layers_list (LayerSet*, const Engine*, int32_t section, int32_t which, const char* id, size_t idLen);

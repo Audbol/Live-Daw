@@ -1067,3 +1067,59 @@ fn snippet_items_and_partial_load() {
     let sn = show.snippet(0, 0).unwrap();
     assert_eq!((sn.strips.clone(), sn.sections, sn.dcas), (vec![StripRef::of(&b)], section::GATE, 0));
 }
+
+// ---- spill ----------------------------------------------------------------------------
+
+#[test]
+fn spill_layers_follow_the_console() {
+    use livedaw_dsp::wing::FX_MODELS;
+    use livedaw_session::layers::{spill_faders, SpillKind, RIGHT, SPILL_ID};
+
+    let engine = Engine::new(0);
+    engine.set_num_channels(4);
+    let (a, b, c) = (ch(&engine, 0), ch(&engine, 1), ch(&engine, 2));
+    let strip = |s: &Strip| FaderRef::Strip(StripRef::of(s));
+
+    // DCA spill: the strips assigned to the DCA, in console order.
+    a.params.dca_mask.store(0b100, Relaxed);
+    c.params.dca_mask.store(0b110, Relaxed);
+    let bus = engine.bus_in_slot(3).unwrap();
+    bus.params.dca_mask.store(0b100, Relaxed);
+    assert_eq!(spill_faders(&engine, &SpillKind::Dca(2)), vec![strip(&a), strip(&c), strip(&bus)]);
+    assert!(spill_faders(&engine, &SpillKind::Dca(99)).is_empty());
+
+    // Automix spill: the channels in group Y.
+    b.params.post_insert.mode.store(2, Relaxed);
+    assert_eq!(spill_faders(&engine, &SpillKind::Automix(1)), vec![strip(&b)]);
+
+    // Bus spill: the send levels of the sources sending to the bus.
+    a.sends.get_or_create(3).unwrap().enabled.store(true, Relaxed);
+    let to = StripRef::new(StripKind::Bus, 3);
+    assert_eq!(spill_faders(&engine, &SpillKind::Bus(3)), vec![FaderRef::Send { from: StripRef::of(&a), to }]);
+
+    // A strip's sends: every bus, main and matrix.
+    let sends = spill_faders(&engine, &SpillKind::Sends(StripRef::of(&a)));
+    assert_eq!(sends.len(), 16 + 4 + 8);
+    assert_eq!(sends[0], FaderRef::Send { from: StripRef::of(&a), to: StripRef::new(StripKind::Bus, 0) });
+
+    // FX spill: the device's continuous parameters.
+    assert!(spill_faders(&engine, &SpillKind::Fx(9)).is_empty(), "an empty slot has none");
+    let geq = livedaw_dsp::wing::model_index(FX_MODELS, "GEQ").unwrap();
+    engine.set_fx_model(9, geq, true);
+    let params = spill_faders(&engine, &SpillKind::Fx(9));
+    assert!(params.len() > 10);
+    assert!(params.iter().all(|p| matches!(p, FaderRef::FxParam { slot: 9, .. })));
+
+    // The section shows the spill until it ends; the right section spills to the center.
+    let mut show = Show::new();
+    let target = layers::spill_target(Some(RIGHT));
+    assert_eq!(target, CENTER);
+    show.layers.set_offset(CENTER, 4);
+    show.layers.start_spill(target, SpillKind::Dca(2));
+    let shown = show.layers.selected_layer(&engine, CENTER);
+    assert_eq!((shown.id.as_str(), shown.name.as_str(), shown.faders.len()), (SPILL_ID, "DCA 3 SPILL", 3));
+    assert_eq!(show.layers.find_layer(&engine, CENTER, SPILL_ID).faders.len(), 3);
+    show.layers.end_spill(CENTER);
+    assert_eq!((show.layers.selected_layer(&engine, CENTER).id.as_str(), show.layers.offset(CENTER)), ("dca-1", 4));
+    assert_eq!(show.layers.selected_layer(&engine, LEFT).id, "in-1");
+}

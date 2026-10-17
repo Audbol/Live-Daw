@@ -7,7 +7,7 @@
 use super::guard;
 use livedaw_engine::{Engine, StripKind};
 use livedaw_session::console::{CapturedInsert, InsertMode, PluginBridge, RestoreError};
-use livedaw_session::layers::{FaderRef, Layer, LayerSet};
+use livedaw_session::layers::{FaderRef, Layer, LayerSet, SpillKind};
 use livedaw_session::{ApplyResult, GlobalSafe, Scope, Show, StripRef};
 use std::borrow::Cow;
 use std::ffi::c_void;
@@ -160,31 +160,53 @@ unsafe fn refs_out(refs: &[StripRef], out: *mut LdStripRef, capacity: i32) -> i3
     refs.len() as i32
 }
 
-/// A fader on the surface: kind 0..4 = strip kinds (see `LdStripRef`), 5 = DCA (id 0..15).
+/// A fader on the surface: kind 0..4 = a strip (see `LdStripRef`), or with
+/// `to_kind` 2..4 the send level from that strip to the bus, main or matrix
+/// `to_id`; 5 = DCA (id 0..15); 6 = FX slot `id`'s parameter `to_id`.
+/// `to_kind` is -1 when unused.
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct LdFaderRef {
     pub kind: i32,
     pub id: i32,
+    pub to_kind: i32,
+    pub to_id: i32,
+}
+
+impl Default for LdFaderRef {
+    fn default() -> Self {
+        Self { kind: 0, id: 0, to_kind: -1, to_id: 0 }
+    }
 }
 
 pub const FADER_DCA: i32 = 5;
+pub const FADER_FX_PARAM: i32 = 6;
 
 impl From<FaderRef> for LdFaderRef {
     fn from(f: FaderRef) -> Self {
         match f {
-            FaderRef::Strip(r) => Self { kind: r.kind as i32, id: r.id },
-            FaderRef::Dca(i) => Self { kind: FADER_DCA, id: i },
+            FaderRef::Strip(r) => Self { kind: r.kind as i32, id: r.id, ..Self::default() },
+            FaderRef::Dca(i) => Self { kind: FADER_DCA, id: i, ..Self::default() },
+            FaderRef::Send { from, to } => Self { kind: from.kind as i32, id: from.id, to_kind: to.kind as i32, to_id: to.id },
+            FaderRef::FxParam { slot, param } => Self { kind: FADER_FX_PARAM, id: slot, to_kind: -1, to_id: param },
         }
     }
 }
 
 impl LdFaderRef {
     fn to_ref(self) -> FaderRef {
-        if self.kind == FADER_DCA {
-            FaderRef::Dca(self.id)
-        } else {
-            FaderRef::Strip(LdStripRef { kind: self.kind, id: self.id }.to_ref())
+        match self.kind {
+            FADER_DCA => FaderRef::Dca(self.id),
+            FADER_FX_PARAM => FaderRef::FxParam { slot: self.id, param: self.to_id },
+            _ => {
+                let from = LdStripRef { kind: self.kind, id: self.id }.to_ref();
+                match StripKind::from_i32(self.to_kind) {
+                    Some(k @ (StripKind::Bus | StripKind::Main | StripKind::Matrix)) => {
+                        FaderRef::Send { from, to: StripRef::new(k, self.to_id) }
+                    }
+                    _ => FaderRef::Strip(from),
+                }
+            }
         }
     }
 }
@@ -954,9 +976,89 @@ pub unsafe extern "C" fn ld_layers_effective_width(l: *mut LayerSet, section: i3
     layers(l).map_or(1, |l| l.effective_width(section as usize))
 }
 
+/// The layer a section shows ("spill" while it spills).
 #[no_mangle]
 pub unsafe extern "C" fn ld_layers_selected(l: *mut LayerSet, section: i32) -> *mut LdString {
-    LdString::new(layers(l).map(|l| l.selected(section as usize).to_owned()).unwrap_or_default())
+    LdString::new(layers(l).map(|l| l.shown(section as usize).to_owned()).unwrap_or_default())
+}
+
+/// The first fader a section shows (its scroll position).
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_offset(l: *mut LayerSet, section: i32) -> i32 {
+    layers(l).map_or(0, |l| l.offset(section as usize))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_set_offset(l: *mut LayerSet, section: i32, offset: i32) {
+    if let Some(l) = layers(l) {
+        l.set_offset(section as usize, offset);
+    }
+}
+
+/// A spill: kind 0 = DCA `index`, 1 = the sources sending to bus slot `index`,
+/// 2 = FX slot `index`'s parameters, 3 = automix group `index` (0 X, 1 Y),
+/// 4 = the sends of `strip`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct LdSpill {
+    pub kind: i32,
+    pub index: i32,
+    pub strip: LdStripRef,
+}
+
+impl LdSpill {
+    fn to_kind(self) -> Option<SpillKind> {
+        Some(match self.kind {
+            0 => SpillKind::Dca(self.index),
+            1 => SpillKind::Bus(self.index),
+            2 => SpillKind::Fx(self.index),
+            3 => SpillKind::Automix(self.index),
+            4 => SpillKind::Sends(self.strip.to_ref()),
+            _ => return None,
+        })
+    }
+
+    fn of(kind: SpillKind) -> Self {
+        match kind {
+            SpillKind::Dca(i) => Self { kind: 0, index: i, ..Self::default() },
+            SpillKind::Bus(i) => Self { kind: 1, index: i, ..Self::default() },
+            SpillKind::Fx(i) => Self { kind: 2, index: i, ..Self::default() },
+            SpillKind::Automix(i) => Self { kind: 3, index: i, ..Self::default() },
+            SpillKind::Sends(r) => Self { kind: 4, index: 0, strip: r.into() },
+        }
+    }
+}
+
+/// The section a spill from `origin` goes to (-1: no section).
+#[no_mangle]
+pub extern "C" fn ld_layers_spill_target(origin: i32) -> i32 {
+    livedaw_session::layers::spill_target(usize::try_from(origin).ok()) as i32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_start_spill(l: *mut LayerSet, section: i32, spill: LdSpill) {
+    if let (Some(l), Some(kind), Ok(section)) = (layers(l), spill.to_kind(), usize::try_from(section)) {
+        l.start_spill(section, kind);
+    }
+}
+
+/// Ends a section's spill (its layer and scroll position come back); false if none.
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_end_spill(l: *mut LayerSet, section: i32) -> bool {
+    match (layers(l), usize::try_from(section)) {
+        (Some(l), Ok(section)) => l.end_spill(section),
+        _ => false,
+    }
+}
+
+/// What a section spills; false if it doesn't.
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_spill(l: *mut LayerSet, section: i32, out: *mut LdSpill) -> bool {
+    let Some(kind) = layers(l).and_then(|l| l.spill(usize::try_from(section).ok()?)) else { return false };
+    if let Some(o) = out.as_mut() {
+        *o = LdSpill::of(kind);
+    }
+    true
 }
 
 #[no_mangle]
@@ -1184,7 +1286,12 @@ mod tests {
             ld_scene_set_tag(s, 0, 12);
 
             let refs = [LdStripRef { kind: 0, id: 1 }];
-            let faders = [LdFaderRef { kind: 0, id: 1 }, LdFaderRef { kind: FADER_DCA, id: 3 }];
+            let send = LdFaderRef { kind: 0, id: 1, to_kind: 2, to_id: 4 };
+            let faders = [
+                LdFaderRef { kind: 0, id: 1, ..Default::default() },
+                LdFaderRef { kind: FADER_DCA, id: 3, ..Default::default() },
+                send,
+            ];
             assert_eq!(ld_show_add_snippet(s, e, 0, b"S".as_ptr(), 1, 1 << 8, refs.as_ptr(), 1), 0);
             let mut out = [LdStripRef::default(); 4];
             assert_eq!(ld_snippet_strips(s, 0, 0, out.as_mut_ptr(), 4), 1);
@@ -1208,14 +1315,15 @@ mod tests {
             assert_eq!(take(msg), "Not a Live DAW show file");
 
             let l = ld_show_layers(s);
-            let id = take(ld_layers_add_user(l, b"U".as_ptr(), 1, faders.as_ptr(), 2));
+            let id = take(ld_layers_add_user(l, b"U".as_ptr(), 1, faders.as_ptr(), 3));
             let list = ld_layers_list(l, e, 0, 1, std::ptr::null(), 0);
             let n = ld_layer_list_len(list);
             assert_eq!(take(ld_layer_list_id(list, n - 1)), id);
             assert!(ld_layer_list_is_user(list, n - 1));
             let mut f = [LdFaderRef::default(); 4];
-            assert_eq!(ld_layer_list_faders(list, n - 1, f.as_mut_ptr(), 4), 2);
+            assert_eq!(ld_layer_list_faders(list, n - 1, f.as_mut_ptr(), 4), 3);
             assert_eq!((f[1].kind, f[1].id), (FADER_DCA, 3));
+            assert_eq!((f[0].to_kind, f[2].kind, f[2].id, f[2].to_kind, f[2].to_id), (-1, 0, 1, 2, 4));
             assert_eq!(take(ld_layer_list_name(list, 0)), "CH 1-2 · AUX 1-8");
             ld_layer_list_free(list);
             assert_eq!(take(ld_layers_selected(l, 2)), "out-1");
