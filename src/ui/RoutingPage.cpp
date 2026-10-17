@@ -10,7 +10,8 @@ namespace
 
     // ROUTING's own colours [3.1]: port labels blue for mono and olive for
     // stereo, ALT orange, +1 AUTO yellow, the locked padlock red.
-    const juce::Colour monoLabel (0xff4890e0), stereoLabel (0xffa0b418), altOrange (0xffb86018), autoYellow (0xffe0d400), lockRed (0xfff04040),
+    const juce::Colour monoLabel = Colours::valueBlue, stereoLabel = Colours::lime, altOrange = Colours::alt, autoYellow = KnobColours::yellow,
+        lockRed = Colours::tapRed,
         playbackStrip (0xff2f5a32);
 
     /** A ROUTING tile (D13, D14): a name strip in the signal's colour over a

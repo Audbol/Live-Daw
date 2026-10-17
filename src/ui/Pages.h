@@ -300,16 +300,19 @@ private:
     juce::String shownTitle;
 };
 
-/** System health and the event log: SETUP > LOG (and the UTILITY screen
-    until the UTILITY key becomes a context key). */
+/** System health and the event log (SETUP > LOG). */
 class UtilityPage final : public DisplayPage, private juce::Timer, private juce::ChangeListener, private juce::ListBoxModel
 {
 public:
-    explicit UtilityPage (UiContext&);
+    /** `onSetup`: the SETUP > LOG tab. Otherwise this is the UTILITY screen of
+        the main display, which hands over to SETUP > LOG when it is shown (the
+        WING's UTILITY key has no screen of its own). */
+    explicit UtilityPage (UiContext&, bool onSetup = false);
     ~UtilityPage() override;
 
     void resized() override;
     void paint (juce::Graphics&) override;
+    void visibilityChanged() override;
 
 private:
     void timerCallback() override;
@@ -324,6 +327,7 @@ private:
     };
 
     UiContext& ctx;
+    const bool onSetup;
     std::vector<HealthRow> health;
     WingKey clearFaultsButton { "CLEAR FX FAULTS", Icon::ClearCircle }, clearClipsButton { "RESET COUNTERS", Icon::Reset };
     juce::ListBox logList;

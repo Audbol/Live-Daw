@@ -437,7 +437,7 @@ namespace livedaw::ui
 
 namespace
 {
-    const juce::Colour unsetGrey (0xff707070), keyGrey (0xffc0c0c0);
+    const juce::Colour unsetGrey = Colours::textDim, keyGrey = Colours::caption;
 
     void arrowKey (juce::Graphics& g, juce::Rectangle<int> r, bool right)
     {
@@ -836,7 +836,7 @@ void CustomControlsPage::paintList (juce::Graphics& g, ListColumn& l, bool focus
     g.setColour (Dark::header);
     g.fillRect (l.header);
     g.setColour (Dark::text);
-    g.setFont (juce::FontOptions (juce::jmin (22.0f, (float) l.header.getHeight() * 0.45f)));
+    g.setFont (panelTitleFont (l.header.getHeight()));
     g.drawFittedText (l.title, l.header.reduced (6, 0), juce::Justification::centred, 1);
     g.setColour (Dark::body);
     g.fillRect (l.body);
@@ -912,7 +912,7 @@ void CustomControlsPage::paintLayer (juce::Graphics& g)
     g.setColour (Dark::header);
     g.fillRect (layerHeader);
     g.setColour (Dark::text);
-    g.setFont (juce::FontOptions (juce::jmin (22.0f, (float) layerHeader.getHeight() * 0.45f)));
+    g.setFont (panelTitleFont (layerHeader.getHeight()));
     g.drawText ("LAYER " + juce::String (layer + 1), layerHeader, juce::Justification::centred);
     g.setColour (Dark::body);
     g.fillRect (layerBody);
@@ -980,7 +980,7 @@ void CustomControlsPage::paint (juce::Graphics& g)
     g.setFont (juce::FontOptions (juce::jmin (20.0f, (float) gpioKey.getHeight() * 0.45f)));
     g.drawText ("GPIO", gpioKey, juce::Justification::centred);
     g.setColour (Dark::text);
-    g.setFont (juce::FontOptions (juce::jmin (28.0f, (float) title.getHeight() * 0.45f)));
+    g.setFont (wingFontPx (juce::jmin (TypeScale::statusTitle * getWingScreenHeight() * 0.8f, (float) title.getHeight() * 0.36f), WingWeight::SemiBold));
     g.drawText ("CUSTOM CONTROLS", title, juce::Justification::centred);
 
     paintLayer (g);

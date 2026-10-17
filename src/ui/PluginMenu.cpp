@@ -25,33 +25,9 @@ juce::String describeStrip (const Strip& s)
 
 void drawStripIcon (juce::Graphics& g, const Strip& s, juce::Rectangle<float> area, juce::Colour colour)
 {
-    // The WING icon numbers (/ch/n/icon) this icon set can show; the rest fall
-    // back to the strip type's icon.
-    auto icon = stripIcon (s.getKind());
-    switch (const int n = s.params.icon.load())
-    {
-        case 1:   icon = Icon::Xlr; break;
-        case 2:
-        case 3:   icon = Icon::Jack; break;
-        case 5:   icon = Icon::Faders; break;
-        case 6:   icon = Icon::Insert; break;
-        case 7:   icon = Icon::Matrix; break;
-        case 10:  icon = Icon::SourcesIn; break;
-        case 11:
-        case 12:  icon = Icon::Bus; break;
-        case 109:
-        case 603:
-        case 604: icon = Icon::Speaker; break;
-        case 601:
-        case 602: icon = Icon::Headphones; break;
-        case 608: icon = Icon::UsbStick; break;
-        case 609: icon = Icon::SdCard; break;
-        default:
-            if (n >= 500 && n < 600)
-                icon = Icon::Speakers;
-            break;
-    }
-    drawIcon (g, icon, area, colour);
+    // The strip's WING icon (/ch/n/icon), else its type's icon.
+    if (! drawWingIcon (g, s.params.icon.load(), area, colour))
+        drawIcon (g, stripIcon (s.getKind()), area, colour);
 }
 
 bool loadPluginIntoFx (UiContext& ctx, int slot, const juce::PluginDescription& desc)

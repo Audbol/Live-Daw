@@ -31,7 +31,7 @@ namespace
     }
 
     // ALT inputs and ALT-selected tiles [3.1].
-    const juce::Colour altOrange (0xffb86018);
+    const juce::Colour altOrange = Colours::alt;
 
     /** Independent toggle keys, each a boolean setting (CH AUTOSELECT L C R,
         USER LAYER LINK L/C C/R): lit blue when on. */
@@ -1068,10 +1068,10 @@ namespace
         void paint (juce::Graphics& g) override
         {
             auto r = getLocalBounds().toFloat().reduced (2.0f);
-            g.setColour (juce::Colour (0xff3a3a3a));
+            g.setColour (Colours::screenTile);
             g.fillRoundedRectangle (r, 4.0f);
             auto top = r.removeFromTop (r.getHeight() * 0.42f).reduced (8.0f, 6.0f);
-            g.setColour (juce::Colour (0xff222222));
+            g.setColour (Colours::screenPanel);
             g.fillRect (top.withSizeKeepingCentre (top.getWidth() * 0.34f, top.getHeight()));
             auto faders = r.reduced (8.0f, 6.0f);
             const float unit = faders.getWidth() / 25.0f;
@@ -1082,7 +1082,7 @@ namespace
                 auto block = juce::Rectangle<float> (x, faders.getY(), unit * n, faders.getHeight()).reduced (2.0f, 0.0f);
                 g.setColour (Dark::on.withAlpha (0.35f));
                 g.fillRect (block);
-                g.setColour (juce::Colour (0xff1a1a1a));
+                g.setColour (Colours::screenDark);
                 for (int i = 0; i < (int) n; ++i)
                     g.fillRect (block.getX() + unit * ((float) i + 0.45f), block.getY() + 4.0f, 2.0f, block.getHeight() - 8.0f);
                 g.setColour (juce::Colours::black);
@@ -1276,7 +1276,7 @@ SetupPage::SetupPage (UiContext& c) : ctx (c)
     pages.push_back (ownedPages.add (new PluginsTab (ctx)));
     // LOG: system health and the event log (the UTILITY screen's content; the
     // WING's UTILITY key has no screen of its own).
-    pages.push_back (ownedPages.add (new UtilityPage (ctx)));
+    pages.push_back (ownedPages.add (new UtilityPage (ctx, true)));
     for (auto* p : pages)
         addChildComponent (p);
 

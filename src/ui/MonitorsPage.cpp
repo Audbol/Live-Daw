@@ -8,7 +8,8 @@ namespace livedaw::ui
 namespace
 {
     // The toolbar's colours (fig. 72).
-    const juce::Colour talkYellow (0xffe0d400), pathLime (0xffb4d228), dimGreen (0xff00bc38), muteRed (0xffd00018), monoOrange (0xfff8a008);
+    const juce::Colour talkYellow = KnobColours::yellow, pathLime = Colours::lime, dimGreen = Colours::green, muteRed = Colours::mute,
+                       monoOrange = KnobColours::orange;
 
     /** The console's meter scale: CLIP, -6, -12, -24, -36, -48, -60 evenly spaced. */
     float meterPos (float db)
@@ -27,7 +28,7 @@ namespace
         g.setColour (Dark::header);
         g.fillRect (header);
         g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (juce::jmin (19.0f, (float) header.getHeight() * 0.55f), juce::Font::bold));
+        g.setFont (panelTitleFont (header.getHeight()));
         g.drawFittedText (title, header.reduced (6, 0), juce::Justification::centred, 1);
     }
 
@@ -112,10 +113,10 @@ namespace
             g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (kc.translated (0.0f, (float) i * d * 2.2f)));
         auto t = r.reduced (6, 3);
         g.setColour (Dark::textDim.withAlpha (a));
-        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 12.0f, (float) t.getHeight() * 0.3f), juce::Font::bold));
+        g.setFont (wingFontPx (juce::jmin (TypeScale::caption * getWingScreenHeight(), (float) t.getHeight() * 0.2f)));
         g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 38 / 100), juce::Justification::bottomLeft, 1);
         g.setColour (Dark::text.withAlpha (a));
-        g.setFont (juce::FontOptions (juce::jlimit (11.0f, 22.0f, (float) t.getHeight() * 0.8f), juce::Font::bold));
+        g.setFont (wingFontPx (juce::jmin (TypeScale::value * getWingScreenHeight(), (float) t.getHeight() * 0.5f)));
         g.drawFittedText (value, t, juce::Justification::centredLeft, 1, 0.8f);
     }
 } // namespace
@@ -164,10 +165,10 @@ void KnobField::paint (juce::Graphics& g)
     }
     auto t = r.reduced (4, 3);
     g.setColour (Dark::textDim.withAlpha (a));
-    g.setFont (juce::FontOptions (juce::jlimit (8.0f, 12.0f, (float) t.getHeight() * 0.3f), juce::Font::bold));
+    g.setFont (wingFontPx (juce::jmin (TypeScale::caption * getWingScreenHeight(), (float) t.getHeight() * 0.2f)));
     g.drawFittedText (on ? binding.label.toUpperCase() : placeholder, t.removeFromTop (t.getHeight() * 38 / 100), juce::Justification::bottomLeft, 1);
     g.setColour (Dark::text.withAlpha (a));
-    g.setFont (juce::FontOptions (juce::jlimit (11.0f, 22.0f, (float) t.getHeight() * 0.8f), juce::Font::bold));
+    g.setFont (wingFontPx (juce::jmin (TypeScale::value * getWingScreenHeight(), (float) t.getHeight() * 0.5f)));
     g.drawFittedText (on && binding.text ? binding.text() : placeholderValue, t, juce::Justification::centredLeft, 1, 0.8f);
 }
 

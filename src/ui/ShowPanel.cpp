@@ -86,7 +86,7 @@ private:
 
         const bool normal = filter == 0 || (filter == 1 && ! item.isSnippet()) || (filter == 2 && item.isSnippet());
         auto r = juce::Rectangle<int> (width, height).toFloat();
-        g.setColour (juce::Colour (0xff262626));
+        g.setColour (Colours::screenPanel);
         g.fillRect (r.removeFromBottom (1.0f));
         if (rowSelected)
         {
