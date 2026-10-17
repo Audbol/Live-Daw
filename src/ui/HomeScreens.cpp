@@ -528,11 +528,11 @@ public:
         g.setColour (Colours::text.withAlpha (has ? 1.0f : 0.5f));
         g.setFont (juce::FontOptions (header.getHeight() * 0.8f, juce::Font::bold));
         g.drawText (playback ? "RECORDER" : "ALT", header.toNearestInt(), juce::Justification::centred);
-        g.setColour (has ? juce::Colour (0xff3a3a3a) : juce::Colour (0xff2a2a2a));
+        g.setColour (has ? colours::keyOff : colours::panel);
         g.fillRect (inner);
         auto label = inner.removeFromBottom (juce::jlimit (12.0f, 22.0f, inner.getHeight() * 0.26f));
-        drawIcon (g, playback ? Icon::Waveform : Icon::Xlr, inner.reduced (inner.getHeight() * 0.2f), Colours::textDim.withAlpha (has ? 1.0f : 0.4f));
-        g.setColour (juce::Colour (0xff262626));
+        drawIcon (g, playback ? Icon::Waveform : Icon::Xlr, inner.reduced (inner.getHeight() * 0.2f), colours::caption.withAlpha (has ? 1.0f : 0.4f));
+        g.setColour (colours::well);
         g.fillRect (label);
         const bool st = strip.params.stereo.load();
         g.setColour ((st ? colours::stereo : colours::mono).withAlpha (has ? 1.0f : 0.5f));
@@ -605,11 +605,11 @@ public:
         g.setColour (colour.getPerceivedBrightness() > 0.45f ? juce::Colours::black : juce::Colours::white);
         g.setFont (juce::FontOptions (header.getHeight() * 0.85f, juce::Font::bold));
         g.drawFittedText (stripName (strip).toUpperCase(), header.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
-        g.setColour (juce::Colour (0xff3a3a3a));
+        g.setColour (colours::keyOff);
         g.fillRect (inner);
         auto label = inner.removeFromBottom (juce::jlimit (12.0f, 22.0f, inner.getHeight() * 0.26f));
         drawChannelIcon (g, strip.params.icon.load(), strip.getKind(), inner.reduced (inner.getHeight() * 0.2f), colours::ink);
-        g.setColour (juce::Colour (0xff262626));
+        g.setColour (colours::well);
         g.fillRect (label);
         const bool st = strip.params.stereo.load();
         g.setColour (st ? colours::stereo : colours::mono);
@@ -1516,7 +1516,7 @@ public:
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat().reduced (2.0f);
-        g.setColour (juce::Colour (0xff2a2a2a));
+        g.setColour (colours::panel);
         g.fillRect (r);
         auto top = r.removeFromTop (juce::jlimit (12.0f, 18.0f, r.getHeight() * 0.06f));
         g.setColour (strip.getColour());
@@ -3382,7 +3382,7 @@ public:
             float pan = 0.0f;
             describe (*dst, src, possible, on, mode, link, pan);
             const bool sel = std::find (selection.begin(), selection.end(), ref) != selection.end();
-            g.setColour (possible ? juce::Colour (0xff2e2e2e) : juce::Colour (0xff141414));
+            g.setColour (possible ? colours::keyOff : colours::well);
             g.fillRect (r);
             if (possible)
             {
@@ -3393,7 +3393,7 @@ public:
                 g.setFont (juce::FontOptions (juce::jlimit (8.0f, 13.0f, r.getHeight() * 0.3f), juce::Font::bold));
                 g.drawText (shortLabel (src), r.withHeight (r.getHeight() * 0.4f).toNearestInt(), juce::Justification::centred);
                 auto badge = r.withTrimmedTop (r.getHeight() * 0.42f).withHeight (r.getHeight() * 0.26f).reduced (r.getWidth() * 0.18f, 0.0f);
-                drawChip (g, badge, sendModeName (mode, src.isInput(), true), on ? sendModeColour (mode) : juce::Colour (0xff4a4a4a), juce::Colours::black);
+                drawChip (g, badge, sendModeName (mode, src.isInput(), true), on ? sendModeColour (mode) : colours::chipOff, juce::Colours::black);
                 if (link)
                 {
                     g.setColour (colours::stereo);
