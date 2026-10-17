@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/FxSlots.h"
+#include "engine/Recorder.h"
 #include "engine/Strip.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -89,6 +90,9 @@ public:
     juce::String getMuteGroupName (int index) const { return takeString (ld::ld_engine_group_name (engine, 1, index)); }
     void setMuteGroupName (int index, const juce::String&);
     FxSlots& getFx() noexcept { return fx; }
+
+    /** The multitrack recorder / player (transport, recording, playback channels). */
+    Recorder& getRecorder() noexcept { return *recorder; }
 
 private:
     ld::Engine* engine;
@@ -222,6 +226,7 @@ private:
 
     Garbage garbage;
     FxSlots fx;
+    std::unique_ptr<Recorder> recorder = std::make_unique<Recorder>();
     std::vector<std::unique_ptr<Worker>> workers;
 
     std::array<StripList, kNumStripKinds> lists;

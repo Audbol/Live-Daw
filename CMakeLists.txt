@@ -78,7 +78,8 @@ set(LIVEDAW_ENGINE_SOURCES
     src/engine/PluginScanner.cpp
     src/engine/ConsoleState.cpp
     src/engine/Layers.cpp
-    src/engine/Show.cpp)
+    src/engine/Show.cpp
+    src/engine/Recorder.cpp)
 
 # Linked after JUCE's recommended warnings so these flags come last on the command line.
 add_library(livedaw_warning_overrides INTERFACE)
