@@ -18,7 +18,9 @@ struct ScribbleInfo
     juce::String number, line2, line3, name;
     std::optional<Icon> icon;
     const Strip* strip = nullptr; // draws its WING icon in place of `icon`
+    juce::String value;           // "-3.5" in place of the icon (SHOW FADER VALUE ON SCRIBBLE)
     juce::Colour line2Colour = Colours::textDim;
+    float backlight = 1.0f, contrast = 1.0f; // SETUP > GENERAL: SCRIBBLE and SCR CONT
 };
 
 /** Draws a scribble strip LCD into `lcd`. */
@@ -35,7 +37,7 @@ void drawLightBar (juce::Graphics&, juce::Rectangle<float> bar, juce::Colour, bo
 class FaderStrip final : public juce::Component, private juce::Timer
 {
 public:
-    explicit FaderStrip (UiContext&);
+    FaderStrip (UiContext&, LayerSet::Section);
 
     /** What the strip controls (nullopt = an empty position). */
     void setTarget (std::optional<state::FaderRef>);
@@ -74,10 +76,13 @@ private:
     void timerCallback() override;
     void bindControls();
     void pressSelect();
+    /** Moves the fader towards its parameter at the FADER SPEED. */
+    void glide (double target);
     std::atomic<float>* faderParam() const noexcept;
     ScribbleInfo scribbleInfo() const;
 
     UiContext& ctx;
+    const LayerSet::Section section;
     std::optional<state::FaderRef> target;
     Strip* strip = nullptr;
     int dca = -1;
@@ -91,8 +96,10 @@ private:
     // What's drawn, to repaint only on changes.
     juce::String shownName, shownValue, shownSource;
     std::array<int, 2> shownLit {};
-    bool shownGate = false, shownDyn = false, shownLight = false;
+    bool shownGate = false, shownDyn = false, shownLight = false, shownFlash = false;
     int shownColour = 0;
+    bool retargeted = true;          // the next value change is a new target, not a move
+    juce::uint32 valueFlashUntil = 0; // SHOW FADER VALUE ON SCRIBBLE: the value replaces the icon until then
 };
 
 } // namespace livedaw::ui

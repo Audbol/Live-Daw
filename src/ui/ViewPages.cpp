@@ -1053,6 +1053,9 @@ void FadersViewPage::mouseDown (const juce::MouseEvent& e)
     {
         dragPos = fader::dbToPos (dragging->load());
         lastY = e.getPosition().y;
+        // TOUCH FADER SELECT: the knob right of the display fine-tunes the touched fader.
+        if (ctx.setFineTarget && ctx.settings.getBoolValue (uiprefs::touchFaderSelect, false))
+            ctx.setFineTarget (bindFader ("LEVEL", *dragging), this);
     }
 }
 

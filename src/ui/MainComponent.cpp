@@ -2,6 +2,8 @@
 #include "ui/WingPopups.h"
 #include "ui/daw/DawEditor.h"
 
+#include <set>
+
 namespace livedaw::ui
 {
 
@@ -71,6 +73,83 @@ private:
 };
 
 //==============================================================================
+/** SOLO SYSTEM (SETUP > AUDIO): EXCLUSIVE SOLO and SELECT FOLLOWS SOLO act on
+    every new solo, wherever it was switched on (surface, screens, custom
+    controls), so no control needs to know about them. */
+class MainComponent::SoloWatcher final : private juce::Timer
+{
+public:
+    explicit SoloWatcher (MainComponent& o) : owner (o)
+    {
+        snapshot();
+        startTimerHz (30);
+    }
+
+    /** Takes the solos as they are now as known (after the owner changed them). */
+    void snapshot() { known = current(); }
+
+    /** Clears every solo but `keep` (a strip handle or DCA, nullptr for none). */
+    void clearAllBut (const void* keep)
+    {
+        auto& engine = owner.engine;
+        for (int k = 0; k < kNumStripKinds; ++k)
+            for (auto& s : engine.getStrips (static_cast<StripKind> (k)))
+                if (s->getHandle() != keep)
+                    s->params.solo = false;
+        for (int i = 0; i < kNumDcas; ++i)
+            if (&engine.getDca (i) != keep)
+                engine.getDca (i).solo = false;
+    }
+
+private:
+    std::set<const void*> current() const
+    {
+        std::set<const void*> soloed;
+        auto& engine = owner.engine;
+        for (int k = 0; k < kNumStripKinds; ++k)
+            for (auto& s : engine.getStrips (static_cast<StripKind> (k)))
+                if (s->params.solo.load())
+                    soloed.insert (s->getHandle());
+        for (int i = 0; i < kNumDcas; ++i)
+            if (engine.getDca (i).solo.load())
+                soloed.insert (&engine.getDca (i));
+        return soloed;
+    }
+
+    Strip* stripOf (const void* key) const
+    {
+        for (int k = 0; k < kNumStripKinds; ++k)
+            for (auto& s : owner.engine.getStrips (static_cast<StripKind> (k)))
+                if (s->getHandle() == key)
+                    return s.get();
+        return nullptr;
+    }
+
+    void timerCallback() override
+    {
+        const auto now = current();
+        const void* added = nullptr;
+        for (auto* k : now)
+            if (known.count (k) == 0)
+                added = k;
+        known = now;
+        if (added == nullptr)
+            return;
+        if (owner.settings.getBoolValue (uiprefs::exclusiveSolo, false))
+        {
+            clearAllBut (added);
+            known = { added };
+        }
+        if (owner.settings.getBoolValue (uiprefs::selectFollowsSolo, false))
+            if (auto* s = stripOf (added); s != nullptr && s != owner.getSelectedStrip())
+                owner.selectStrip (s);
+    }
+
+    MainComponent& owner;
+    std::set<const void*> known;
+};
+
+//==============================================================================
 MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, PluginHost& h, Show& s,
                               EventLog& l, juce::PropertiesFile& props)
     : deviceManager (dm),
@@ -94,7 +173,14 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     ctx.showPluginScanner = [this] { showPluginScanner(); };
     ctx.structureChanged = [this] { refreshAll(); };
     ctx.layersChanged = [this] { refreshSections(); };
-    ctx.sofChanged = [this] { for (auto& sec : sections) sec->refreshFaders(); };
+    ctx.sofChanged = [this]
+    {
+        // BUS SoF ACTIVATES SOLO: entering Sends on Fader solos the destination.
+        if (auto* sel = getSelectedStrip(); sel != nullptr && ctx.sendsOnFader && sel->isOutput() && settings.getBoolValue (uiprefs::sofActivatesSolo, false))
+            sel->params.solo = true;
+        for (auto& sec : sections)
+            sec->refreshFaders();
+    };
     ctx.getScreen = [this] { return display != nullptr ? display->getScreen() : Screen::Home; };
     ctx.revealFader = [this] (LayerSet::Section section, const state::FaderRef& f) { sections[section]->reveal (f); };
     ctx.takeScreenshot = [this] { saveScreenshot(); };
@@ -136,6 +222,7 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     for (int i = 0; i < LayerSet::kNumSections; ++i)
         sections[i] = std::make_unique<FaderSection> (ctx, static_cast<LayerSet::Section> (i));
     customControls = std::make_unique<CustomControlSection> (ctx);
+    soloWatcher = std::make_unique<SoloWatcher> (*this);
     for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) display.get(), (juce::Component*) monitor.get(),
                                 (juce::Component*) customControls.get() })
         addAndMakeVisible (c);
@@ -167,6 +254,7 @@ MainComponent::~MainComponent()
 {
     // Unsaved project changes survive the quit in the autosave (offered on the next open).
     recording->autosave();
+    soloWatcher.reset();
     editor.reset();
     show.onChanged = nullptr;
     show.onFxCleared = nullptr;
@@ -196,6 +284,15 @@ void MainComponent::selectStrip (Strip* strip)
     hasSelection = strip != nullptr;
     if (strip != nullptr)
         selected = state::StripRef::of (*strip);
+
+    // SOLO FOLLOWS SELECT: while anything is soloed, the solo moves to the selection.
+    if (strip != nullptr && soloWatcher != nullptr && settings.getBoolValue (uiprefs::soloFollowsSelect, false) && engine.anySoloActive.load()
+        && ! strip->params.solo.load())
+    {
+        soloWatcher->clearAllBut (nullptr);
+        strip->params.solo = true;
+        soloWatcher->snapshot();
+    }
 
     channelStrip->refresh();
     display->refresh();

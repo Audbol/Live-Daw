@@ -42,6 +42,7 @@ public:
 private:
     class PluginWindow;
     class LockOverlay;
+    class SoloWatcher;
 
     void selectStrip (Strip*);
     void saveScreenshot();
@@ -91,6 +92,7 @@ private:
     std::unique_ptr<CustomControlSection> customControls;
     bool ccInBottomRow = true; // else docked under the monitoring panel
     std::unique_ptr<LockOverlay> lockOverlay;
+    std::unique_ptr<SoloWatcher> soloWatcher;
     ResizerBar splitter { false };
     float topFraction = 0.52f;
 

@@ -51,10 +51,21 @@ FaderSection::FaderSection (UiContext& c, LayerSet::Section s) : ctx (c), sectio
         sofKey.ledColour = Colours::solo;
         sofKey.setTooltip ("SOF FLIP (Sends on Fader): select a bus, main or matrix to set every input's send to it "
                            "on the input faders, or select an input to set its sends on the bus, main and matrix faders");
-        sofKey.ledState = [this] { return ctx.sendsOnFader ? SurfaceKey::Lit : SurfaceKey::Off; };
+        // SOF BUTTON (SETUP > SURFACE): AUTO lights during SOF and flashes in
+        // the alternative SOF (a fixed destination); ON lights, FLASH flashes.
+        sofKey.ledState = [this]
+        {
+            if (! ctx.sendsOnFader)
+                return SurfaceKey::Off;
+            const int mode = ctx.settings.getIntValue (uiprefs::sofButton, 0);
+            if (mode == 2 || (mode == 0 && ctx.sofDestination.has_value()))
+                return SurfaceKey::Blink;
+            return SurfaceKey::Lit;
+        };
         sofKey.onPress = [this]
         {
             ctx.sendsOnFader = ! ctx.sendsOnFader;
+            ctx.sofDestination.reset();
             if (ctx.sofChanged)
                 ctx.sofChanged();
         };
@@ -124,11 +135,46 @@ void FaderSection::selectLayer (const juce::String& id)
     offset = 0;
     layer = ctx.show.layers.getSelectedLayer (ctx.engine, section);
     refreshFaders();
+
+    // USER LAYER LINK (SETUP > SURFACE): USER 1 / USER 2 switch the linked
+    // sections (L/C, C/R) too.
+    if (id == "user-1" || id == "user-2")
+    {
+        bool changed = false;
+        auto link = [&] (int pref, LayerSet::Section a, LayerSet::Section b)
+        {
+            if (! ctx.settings.getBoolValue (uiprefs::userLayerLink[pref], false) || (section != a && section != b))
+                return;
+            const auto other = section == a ? b : a;
+            if (ctx.show.layers.getSelectedLayerId (other) != id)
+            {
+                ctx.show.layers.setSelectedLayerId (other, id);
+                changed = true;
+            }
+        };
+        link (0, LayerSet::Left, LayerSet::Center);
+        link (1, LayerSet::Center, LayerSet::Right);
+        // L/C and C/R together chain all three.
+        if (section != LayerSet::Center && ctx.settings.getBoolValue (uiprefs::userLayerLink[0], false)
+            && ctx.settings.getBoolValue (uiprefs::userLayerLink[1], false))
+        {
+            const auto far = section == LayerSet::Left ? LayerSet::Right : LayerSet::Left;
+            if (ctx.show.layers.getSelectedLayerId (far) != id)
+            {
+                ctx.show.layers.setSelectedLayerId (far, id);
+                changed = true;
+            }
+        }
+        if (changed)
+            notifyLayersChangedAsync (ctx);
+    }
 }
 
 void FaderSection::shift (int direction)
 {
-    offset += direction * shiftStep();
+    // FULL FADER PAGING: a whole section width per press.
+    const int step = ctx.settings.getBoolValue (uiprefs::fullFaderPaging, false) ? juce::jmax (1, strips.size()) : shiftStep();
+    offset += direction * step;
     refreshFaders();
 }
 
@@ -169,7 +215,7 @@ void FaderSection::refreshFaders()
     {
         strips.clear();
         for (int i = 0; i < n; ++i)
-            addAndMakeVisible (strips.add (new FaderStrip (ctx)));
+            addAndMakeVisible (strips.add (new FaderStrip (ctx, section)));
         resized();
     }
 

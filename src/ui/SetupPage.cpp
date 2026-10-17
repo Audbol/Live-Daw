@@ -31,6 +31,49 @@ namespace
     // ALT inputs and ALT-selected tiles [3.1].
     const juce::Colour altOrange (0xffb86018);
 
+    /** Independent toggle keys, each a boolean setting (CH AUTOSELECT L C R,
+        USER LAYER LINK L/C C/R): lit blue when on. */
+    class ToggleKeys final : public juce::Component
+    {
+    public:
+        ToggleKeys (UiContext& c, juce::StringArray labels, std::vector<const char*> settingKeys)
+            : ctx (c), names (std::move (labels)), keys (std::move (settingKeys))
+        {
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            auto r = getLocalBounds().toFloat();
+            const float w = r.getWidth() / (float) juce::jmax (1, names.size());
+            for (int i = 0; i < names.size(); ++i)
+            {
+                auto k = juce::Rectangle<float> (r.getX() + w * (float) i, r.getY(), w, r.getHeight()).reduced (1.0f, 0.0f);
+                const bool on = isOn (i);
+                g.setColour (on ? Dark::choice : Dark::key);
+                g.fillRect (k);
+                g.setColour (on ? Dark::choiceInk : Dark::text);
+                g.setFont (juce::FontOptions (juce::jlimit (10.0f, 18.0f, juce::jmin (k.getHeight() * 0.5f, k.getWidth() * 0.4f)), juce::Font::bold));
+                g.drawFittedText (names[i], k.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
+            }
+        }
+
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            if (names.isEmpty() || ! getLocalBounds().contains (e.getPosition()))
+                return;
+            const int i = juce::jlimit (0, names.size() - 1, e.x * names.size() / juce::jmax (1, getWidth()));
+            ctx.settings.setValue (keys[(size_t) i], ! isOn (i));
+            repaint();
+        }
+
+    private:
+        bool isOn (int i) const { return i < (int) keys.size() && ctx.settings.getBoolValue (keys[(size_t) i], false); }
+
+        UiContext& ctx;
+        juce::StringArray names;
+        std::vector<const char*> keys;
+    };
+
     void editText (juce::Component* parent, const juce::String& title, const juce::String& current, std::function<void (const juce::String&)> done)
     {
         popups::TextOptions options;
@@ -106,7 +149,9 @@ namespace
         void set (int v)
         {
             ctx.settings.setValue (key, juce::jlimit (0, 100, v));
-            repaint();
+            // The surface (LCDs, colour bars, meters) and the display follow at once.
+            if (auto* top = getTopLevelComponent())
+                top->repaint();
         }
 
         UiContext& ctx;
@@ -359,16 +404,18 @@ namespace
 
             operation.addRow ("CONFIRM LIBRARY LOAD", OnKey::forSetting (ctx.settings, prefs::confirmLibraryLoad, true), 1.3f);
             operation.addRow ("SHOW METER PAGE WHEN LOCKED", OnKey::fixed (false), 1.3f, false); // no screen lock
-            // Needs the status bar's title tile to show the scene (MainDisplay, G14).
-            operation.addRow ("ALWAYS SHOW ACTIVE SCENE", OnKey::fixed (false), 1.3f, false);
+            // The status bar's title tile shows the active scene on every screen (MainDisplay reads it).
+            operation.addRow ("ALWAYS SHOW ACTIVE SCENE", OnKey::forSetting (ctx.settings, uiprefs::alwaysShowScene, false), 1.3f);
             addAndMakeVisible (operation);
 
-            options.addRow ("TOUCH FADER SELECT", OnKey::fixed (false), 1.3f, false); // no encoder beside the display
+            options.addRow ("TOUCH FADER SELECT", OnKey::forSetting (ctx.settings, uiprefs::touchFaderSelect, false), 1.3f);
             options.addRow ("TOUCH FADER RES",
                             std::make_unique<ChoiceKeys> (juce::StringArray { "NORM", "FINE", "AUTO" },
                                                           [this] { return prefs::faderResolution (ctx); },
                                                           [this] (int i) { ctx.settings.setValue (prefs::touchFaderRes, i); }),
                             5.0f);
+            // The CC section's arrows and wheel move a focus frame over the screen and edit it (firmware 1.13).
+            options.addRow ("USE CRSR/WHEEL", OnKey::forSetting (ctx.settings, uiprefs::useCursorWheel, false), 1.3f);
             options.newBox();
             options.addRow ("MOUSE DISABLES TOUCH", OnKey::fixed (false), 1.3f, false);
             options.addRow ("MOUSE SPEED", std::make_unique<juce::Slider> (juce::Slider::LinearHorizontal, juce::Slider::NoTextBox), 5.0f, false);
@@ -417,7 +464,7 @@ namespace
             b.removeFromLeft (gap);
             auto optionsArea = b;
             console.setBounds (consoleArea);
-            const int rowH = fitRowHeight (optionsArea.getHeight() - kDarkHeaderHeight - 24, 5.0f);
+            const int rowH = fitRowHeight (optionsArea.getHeight() - kDarkHeaderHeight - 24, 6.0f);
             operation.rowHeight = options.rowHeight = rowH;
             operation.setBounds (operationArea.withHeight (juce::jmin (operationArea.getHeight(), operation.preferredHeight())));
             options.setBounds (optionsArea.withHeight (juce::jmin (optionsArea.getHeight(), options.preferredHeight())));
@@ -577,9 +624,14 @@ namespace
                              3.6f);
             }
             solo.newBox();
-            // Solo/select behaviour (G18) lives in the fader strips.
-            for (auto* name : { "EXCLUSIVE SOLO", "SOLO FOLLOWS SELECT", "SELECT FOLLOWS SOLO", "BUS SoF/SPILL ACTIVATES SOLO" })
-                solo.addRow (name, OnKey::fixed (false), 1.3f, false);
+            // Solo / select behaviour, applied by the main component to every
+            // solo and selection (surface, screens, custom controls).
+            const std::pair<const char*, const char*> soloPrefs[] = { { "EXCLUSIVE SOLO", uiprefs::exclusiveSolo },
+                                                                      { "SOLO FOLLOWS SELECT", uiprefs::soloFollowsSelect },
+                                                                      { "SELECT FOLLOWS SOLO", uiprefs::selectFollowsSolo },
+                                                                      { "BUS SoF/SPILL ACTIVATES SOLO", uiprefs::sofActivatesSolo } };
+            for (auto [name, key] : soloPrefs)
+                solo.addRow (name, OnKey::forSetting (ctx.settings, key, false), 1.3f);
             addAndMakeVisible (solo);
 
             device.addRow ({}, std::make_unique<DropdownField> ("DEVICE", [this] { return deviceName(); },
@@ -770,13 +822,18 @@ namespace
                                                               notifyLayersChangedAsync (ctx);
                                                           }),
                             5.0f);
-            // The rest change how the fader strips and the status bar behave (G18, G19).
-            general.addRow ("TAP TEMPO FLASH", fixedChoice ({ "OFF", "8X", "ON" }, 0), 5.0f, false);
-            general.addRow ("SOF BUTTON", fixedChoice ({ "AUTO", "ON", "FLASH" }, 0), 5.0f, false);
-            general.addRow ("SHOW SOF FRAME", OnKey::fixed (false), 1.3f, false);
-            general.addRow ("SHOW SOURCE ON SCRIBBLE", OnKey::fixed (false), 1.3f, false);
-            general.addRow ("SHOW FADER VALUE ON SCRIBBLE", OnKey::fixed (false), 1.3f, false);
-            general.addRow ("SCREEN FOLLOWS CH STRIP", OnKey::fixed (false), 1.3f, false);
+            // The rest change how the fader strips, the channel strip and the status bar behave.
+            general.addRow ("TAP TEMPO FLASH", fixedChoice ({ "OFF", "8X", "ON" }, 0), 5.0f, false); // custom control tap keys
+            general.addRow ("SOF BUTTON", choiceSetting (uiprefs::sofButton, { "AUTO", "ON", "FLASH" }, 0), 5.0f);
+            general.addRow ("SHOW SOF FRAME", OnKey::forSetting (ctx.settings, uiprefs::showSofFrame, false), 1.3f);
+            general.addRow ("SHOW SOURCE ON SCRIBBLE", onSetting (uiprefs::sourceOnScribble, true), 1.3f);
+            general.addRow ("SHOW FADER VALUE ON SCRIBBLE", onSetting (uiprefs::faderValueOnScribble, false), 1.3f);
+            general.addRow ("SCREEN FOLLOWS CH STRIP", OnKey::forSetting (ctx.settings, uiprefs::screenFollowsStrip, false), 1.3f);
+            general.addRow ("CH STRIP TOUCH SELECT", OnKey::forSetting (ctx.settings, uiprefs::stripTouchSelect, false), 1.3f);
+            general.addRow ("CH AUTOSELECT", std::make_unique<ToggleKeys> (ctx, juce::StringArray { "L", "C", "R" },
+                                                                          std::vector<const char*> (std::begin (uiprefs::autoSelect), std::end (uiprefs::autoSelect))),
+                            4.2f);
+            general.addRow ("USE F1-F3 AS CUSTOM CONTROLS", onSetting (uiprefs::f1f3AsCustom, false), 1.3f);
             general.newBox();
             // App-specific: the dB value under every fader (ui.faderValues).
             general.addRow ("FADER VALUES",
@@ -789,13 +846,15 @@ namespace
                             1.3f);
             addAndMakeVisible (general);
 
-            faders.addRow ("FADER SPEED", fixedChoice ({ "SLOW", "MED", "FAST" }, 2), 5.0f, false);
-            faders.addRow ("FULL FADER PAGING", OnKey::fixed (false), 1.3f, false);
+            faders.addRow ("FADER SPEED", choiceSetting (uiprefs::faderSpeed, { "SLOW", "MED", "FAST" }, 1), 5.0f);
+            faders.addRow ("FULL FADER PAGING", onSetting (uiprefs::fullFaderPaging, false), 1.3f);
             faders.addRow ("FADER/SCREEN LAYER LINK", OnKey::forSetting (ctx.settings, prefs::layerLink, true), 1.3f);
-            faders.addRow ("ALTERNATIVE SOF MODE", OnKey::fixed (false), 1.3f, false);
-            faders.addRow ("RIGHT SECTION SENDS ON FADERS", OnKey::fixed (false), 1.3f, false);
-            faders.addRow ("USER LAYER LINK", OnKey::fixed (false), 1.3f, false);
-            faders.addRow ("DCA SPILL", OnKey::fixed (false), 1.3f, false); // engine E13
+            faders.addRow ("ALTERNATIVE SOF MODE", onSetting (uiprefs::alternativeSof, false), 1.3f);
+            faders.addRow ("RIGHT SECTION SENDS ON FADERS", onSetting (uiprefs::rightSectionSof, true), 1.3f);
+            faders.addRow ("USER LAYER LINK", std::make_unique<ToggleKeys> (ctx, juce::StringArray { "L/C", "C/R" },
+                                                                           std::vector<const char*> (std::begin (uiprefs::userLayerLink), std::end (uiprefs::userLayerLink))),
+                           3.6f);
+            faders.addRow ("DCA SPILL", OnKey::fixed (false), 1.3f, false); // needs spill layers (W40)
             faders.newBox();
             // App-specific: faders scrolled per press of the shift keys (ui.shiftStep).
             faders.addRow ("SHIFT STEP",
@@ -855,6 +914,25 @@ namespace
         }
 
     private:
+        /** A choice row stored as an int setting. */
+        std::unique_ptr<ChoiceKeys> choiceSetting (const char* key, juce::StringArray labels, int defaultValue)
+        {
+            auto& settings = ctx.settings;
+            return std::make_unique<ChoiceKeys> (std::move (labels), [&settings, key, defaultValue] { return settings.getIntValue (key, defaultValue); },
+                                                 [&settings, key] (int i) { settings.setValue (key, i); });
+        }
+
+        /** An ON key for a setting the fader strips read when they rebuild. */
+        std::unique_ptr<OnKey> onSetting (const char* key, bool defaultValue)
+        {
+            return std::make_unique<OnKey> ([this, key, defaultValue] { return ctx.settings.getBoolValue (key, defaultValue); },
+                                            [this, key] (bool v)
+                                            {
+                                                ctx.settings.setValue (key, v);
+                                                notifyLayersChangedAsync (ctx);
+                                            });
+        }
+
         UiContext& ctx;
         SettingsPanel metering { "METERING" }, general { "GENERAL" }, faders { "FADERS" };
     };

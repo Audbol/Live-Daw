@@ -11,6 +11,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <functional>
+#include <optional>
 
 namespace livedaw::daw
 {
@@ -19,6 +20,8 @@ class Session;
 
 namespace livedaw::ui
 {
+
+struct KnobBinding;
 
 /** The main display's screens: the seven keys left of the WING's display, then
     the VIEW screens the fader sections' VIEW keys open (manual 5.7-5.11). */
@@ -102,6 +105,9 @@ struct UiContext
         sends to it; with an input selected the bus faders show its sends. */
     bool sendsOnFader = false;
     std::function<void()> sofChanged;
+    /** ALTERNATIVE SOF MODE: the strip whose SELECT was held stays the SOF
+        strip whatever is selected afterwards (nullopt: the selected strip). */
+    std::optional<state::StripRef> sofDestination;
 
     /** The screen the main display shows (the VIEW keys light while theirs is up). */
     std::function<Screen()> getScreen;
@@ -143,6 +149,10 @@ struct UiContext
         Set by the main display (the focus model). */
     std::function<void (int dx, int dy)> moveScreenFocus;
     std::function<void (int steps)> turnScreenFocus;
+
+    /** TOUCH FADER SELECT: an on-screen fader that was touched becomes the
+        target of the knob right of the display (set by the main display). */
+    std::function<void (const KnobBinding&, juce::Component* target)> setFineTarget;
 };
 
 /** SETUP settings that the status bar, the surface and the pages share. */
@@ -170,6 +180,41 @@ namespace uiprefs
     constexpr const char* soloFollowsSelect = "ui.soloFollowsSelect";
     constexpr const char* selectFollowsSolo = "ui.selectFollowsSolo";
     constexpr const char* sofActivatesSolo = "ui.sofActivatesSolo";
+
+    // GENERAL (SETUP > GENERAL).
+    constexpr const char* alwaysShowScene = "ui.alwaysShowScene";    // the status bar's title tile shows the active scene
+    constexpr const char* useCursorWheel = "ui.useCursorWheel";      // the CC section's arrows and wheel edit the screen
+    constexpr const char* touchFaderSelect = "ui.touchFaderSelect";  // a touched on-screen fader goes on the knob right of the display
+
+    // SURFACE (SETUP > SURFACE).
+    constexpr const char* sofButton = "ui.sofButton";                // SOF FLIP LED: 0 AUTO, 1 ON, 2 FLASH
+    constexpr const char* showSofFrame = "ui.showSofFrame";          // a frame and SOF badge on the title tile during SOF
+    constexpr const char* sourceOnScribble = "ui.sourceOnScribble";  // default on: the source ports on the scribble strips
+    constexpr const char* faderValueOnScribble = "ui.faderValueOnScribble";
+    constexpr const char* screenFollowsStrip = "ui.screenFollowsChStrip";
+    constexpr const char* stripTouchSelect = "ui.chStripTouchSelect";
+    constexpr const char* faderSpeed = "ui.faderSpeed";              // 0 SLOW, 1 MED (default), 2 FAST
+    constexpr const char* fullFaderPaging = "ui.fullFaderPaging";
+    constexpr const char* alternativeSof = "ui.alternativeSof";
+    constexpr const char* rightSectionSof = "ui.rightSectionSof";    // default on (ALL); off: the left and center sections only
+    constexpr const char* userLayerLink[2] = { "ui.userLayerLinkLC", "ui.userLayerLinkCR" };
+    constexpr const char* autoSelect[3] = { "ui.autoSelectL", "ui.autoSelectC", "ui.autoSelectR" };
+    constexpr const char* f1f3AsCustom = "ui.f1f3AsCustomControls";
+
+    /** How long the faders take to travel to a new position (FADER SPEED). */
+    inline int faderGlideMs (juce::PropertiesFile& s)
+    {
+        const int v = s.getIntValue (faderSpeed, 1);
+        return v == 0 ? 400 : v == 2 ? 80 : 200;
+    }
+
+    /** A LIGHTS tile of SETUP > GENERAL as a brightness factor: 1 at the
+        tile's default, dimmer below it and up to about 1.3 above. */
+    inline float brightness (juce::PropertiesFile& s, const char* id, int defaultPercent)
+    {
+        auto level = [] (int percent) { return 0.25f + 0.75f * (float) juce::jlimit (0, 100, percent) / 100.0f; };
+        return level (s.getIntValue (juce::String ("setup.brightness.") + id, defaultPercent)) / level (defaultPercent);
+    }
 } // namespace uiprefs
 
 /** Calls ctx.layersChanged asynchronously: safe to use from a callback of a

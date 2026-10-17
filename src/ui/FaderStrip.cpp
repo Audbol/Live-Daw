@@ -20,49 +20,66 @@ void drawLightBar (juce::Graphics& g, juce::Rectangle<float> bar, juce::Colour c
 
 void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const ScribbleInfo& info)
 {
-    // A dark grey LCD (the console's dark rendering) on the black display panel.
-    g.setColour (juce::Colour (0xff232427));
+    // A dark grey LCD (the console's dark rendering) on the black display panel;
+    // SCRIBBLE sets its backlight and SCR CONT the text contrast.
+    g.setColour (juce::Colour (0xff232427).withMultipliedBrightness (juce::jlimit (0.2f, 1.6f, info.backlight)));
     g.fillRect (lcd);
     if (info.number.isEmpty() && info.name.isEmpty())
         return;
+    const float ink = juce::jlimit (0.35f, 1.0f, info.contrast);
+    const auto white = juce::Colours::white.withMultipliedBrightness (ink);
 
     auto t = lcd.reduced (juce::jmax (2.0f, lcd.getWidth() * 0.05f), 2.0f);
     const float h = t.getHeight();
 
     // The name on an inverted bar.
     auto bar = t.removeFromBottom (juce::jmax (11.0f, h * 0.27f));
-    g.setColour (juce::Colours::white);
+    g.setColour (white);
     g.fillRect (bar.expanded (1.0f, 0.0f));
     g.setColour (juce::Colours::black);
     g.setFont (juce::FontOptions (juce::jlimit (9.0f, 15.0f, bar.getHeight() * 0.86f), juce::Font::bold));
     g.drawFittedText (info.name, bar.toNearestInt().reduced (1, 0), juce::Justification::centredLeft, 1, 0.7f);
     t.removeFromBottom (1.0f);
 
-    // Number (large) with the icon top right, then the two source lines.
+    // Number (large) with the icon (or the fader value) top right, then the two source lines.
     auto top = t.removeFromTop (t.getHeight() * 0.48f);
-    if (info.icon.has_value())
+    if (info.value.isNotEmpty())
+    {
+        auto valueArea = top.removeFromRight (top.getWidth() * 0.5f);
+        g.setColour (white);
+        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 18.0f, valueArea.getHeight() * 0.8f), juce::Font::bold));
+        g.drawFittedText (info.value, valueArea.toNearestInt(), juce::Justification::centredRight, 1, 0.6f);
+    }
+    else if (info.icon.has_value())
     {
         const float s = juce::jmin (top.getHeight(), top.getWidth() * 0.34f);
         const auto iconArea = top.removeFromRight (s).withSizeKeepingCentre (s, s).reduced (1.0f);
         if (info.strip != nullptr)
-            drawStripIcon (g, *info.strip, iconArea, juce::Colours::white);
+            drawStripIcon (g, *info.strip, iconArea, white);
         else
-            drawIcon (g, *info.icon, iconArea, juce::Colours::white);
+            drawIcon (g, *info.icon, iconArea, white);
     }
-    g.setColour (Colours::text);
+    g.setColour (Colours::text.withMultipliedBrightness (ink));
     g.setFont (juce::FontOptions (juce::jlimit (10.0f, 22.0f, top.getHeight() * 0.95f)));
     g.drawFittedText (info.number, top.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
 
     const float lineH = t.getHeight() * 0.5f;
     g.setFont (juce::FontOptions (juce::jlimit (8.0f, 13.0f, lineH * 0.95f)));
-    g.setColour (info.line2Colour);
+    g.setColour (info.line2Colour.withMultipliedBrightness (ink));
     g.drawFittedText (info.line2, t.removeFromTop (lineH).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
-    g.setColour (Colours::textDim);
+    g.setColour (Colours::textDim.withMultipliedBrightness (ink));
     g.drawFittedText (info.line3, t.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
 }
 
 //==============================================================================
-FaderStrip::FaderStrip (UiContext& c) : ctx (c)
+namespace
+{
+    /** CH AUTOSELECT's deadtime: when several faders move at once, only the
+        first selects its strip. */
+    juce::uint32 lastAutoSelect = 0;
+} // namespace
+
+FaderStrip::FaderStrip (UiContext& c, LayerSet::Section s) : ctx (c), section (s)
 {
     fader.setSliderStyle (juce::Slider::LinearVertical);
     fader.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
@@ -75,6 +92,15 @@ FaderStrip::FaderStrip (UiContext& c) : ctx (c)
     {
         if (auto* p = faderParam())
             p->store ((float) fader.getValue());
+    };
+    fader.onDragStart = [this]
+    {
+        // CH AUTOSELECT (SETUP > SURFACE): moving a fader selects its strip.
+        const auto now = juce::Time::getMillisecondCounter();
+        if (strip != nullptr && ctx.settings.getBoolValue (uiprefs::autoSelect[juce::jlimit (0, 2, (int) section)], false)
+            && now - lastAutoSelect > 300 && ctx.selectStrip && (! ctx.getSelectedStrip || ctx.getSelectedStrip() != strip))
+            ctx.selectStrip (strip);
+        lastAutoSelect = now;
     };
     addAndMakeVisible (fader);
 
@@ -145,11 +171,14 @@ void FaderStrip::refresh()
             strip = state::findStrip (ctx.engine, target->strip);
     }
 
-    // Sends on Fader between the selected strip and this one: the send from an
-    // input (or bus) to a bus, main or matrix.
-    if (ctx.sendsOnFader && strip != nullptr)
+    // Sends on Fader between the selected strip (or the ALTERNATIVE SOF
+    // strip) and this one: the send from an input (or bus) to a bus, main or
+    // matrix. RIGHT SECTION SENDS ON FADERS off keeps the right section's faders.
+    const bool sofHere = section != LayerSet::Right || ctx.settings.getBoolValue (uiprefs::rightSectionSof, true);
+    if (ctx.sendsOnFader && strip != nullptr && sofHere)
     {
-        auto* sel = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr;
+        auto* sel = ctx.sofDestination.has_value() ? state::findStrip (ctx.engine, *ctx.sofDestination)
+                                                   : (ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr);
         auto sendOf = [] (Strip& from, Strip& to) -> std::optional<SendTarget>
         {
             if (&from == &to)
@@ -200,8 +229,36 @@ void FaderStrip::refresh()
     if (showValue != ctx.settings.getBoolValue ("ui.faderValues", false))
         resized();
 
+    // ALTERNATIVE SOF MODE: holding SELECT makes this strip the fixed SOF strip.
+    if (ctx.settings.getBoolValue (uiprefs::alternativeSof, false))
+        selectKey.onHold = [this]
+        {
+            if (strip == nullptr)
+                return;
+            ctx.sofDestination = state::StripRef::of (*strip);
+            ctx.sendsOnFader = true;
+            if (ctx.sofChanged)
+                ctx.sofChanged();
+        };
+    else
+        selectKey.onHold = nullptr;
+
+    retargeted = true;
     bindControls();
     repaint();
+}
+
+void FaderStrip::glide (double targetDb)
+{
+    // FADER SPEED (SETUP > SURFACE): the whole travel takes 400, 200 or 80 ms.
+    const auto& range = fader.getNormalisableRange();
+    const double to = range.convertTo0to1 (juce::jlimit (range.start, range.end, targetDb));
+    const double from = range.convertTo0to1 (juce::jlimit (range.start, range.end, fader.getValue()));
+    const double step = (1000.0 / 25.0) / (double) uiprefs::faderGlideMs (ctx.settings);
+    if (std::abs (to - from) <= step)
+        fader.setValue (targetDb, juce::dontSendNotification);
+    else
+        fader.setValue (range.convertFrom0to1 (from + (to > from ? step : -step)), juce::dontSendNotification);
 }
 
 std::atomic<float>* FaderStrip::faderParam() const noexcept
@@ -256,18 +313,27 @@ ScribbleInfo FaderStrip::scribbleInfo() const
         info.strip = strip;
         if (strip->isInput())
         {
-            // The source ports: "IN 01" / "IN 02", or "IN 03" / "mono".
-            auto port = [] (int i) { return i < 0 ? juce::String ("OFF") : "IN " + juce::String (i + 1).paddedLeft ('0', 2); };
-            const int left = strip->params.inputLeft.load();
-            info.line2 = port (left);
-            if (strip->params.stereo.load())
+            // The source ports: "IN 01" / "IN 02", or "IN 03" / "mono"; with
+            // SHOW SOURCE ON SCRIBBLE off only "mono" or "stereo".
+            const bool stereo = strip->params.stereo.load();
+            if (ctx.settings.getBoolValue (uiprefs::sourceOnScribble, true))
             {
-                const int right = strip->params.inputRight.load();
-                info.line3 = port (right >= 0 ? right : (left >= 0 ? left + 1 : -1));
+                auto port = [] (int i) { return i < 0 ? juce::String ("OFF") : "IN " + juce::String (i + 1).paddedLeft ('0', 2); };
+                const int left = strip->getActiveInputLeft();
+                info.line2 = port (left);
+                if (stereo)
+                {
+                    const int right = strip->getActiveInputRight();
+                    info.line3 = port (right >= 0 ? right : (left >= 0 ? left + 1 : -1));
+                }
+                else
+                {
+                    info.line3 = "mono";
+                }
             }
             else
             {
-                info.line3 = "mono";
+                info.line2 = stereo ? "stereo" : "mono";
             }
         }
     }
@@ -282,6 +348,12 @@ ScribbleInfo FaderStrip::scribbleInfo() const
         info.line2 = send->tag;
         info.line2Colour = Colours::solo;
     }
+
+    // SHOW FADER VALUE ON SCRIBBLE: the level for a moment after a move.
+    if (shownFlash)
+        info.value = shownValue;
+    info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
+    info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
     return info;
 }
 
@@ -291,7 +363,7 @@ void FaderStrip::timerCallback()
     {
         const double v = p->load();
         if (std::abs (v - fader.getValue()) > 1.0e-4)
-            fader.setValue (v, juce::dontSendNotification);
+            glide (v);
     }
 
     bool gate = false, dyn = false, light = false;
@@ -343,11 +415,23 @@ void FaderStrip::timerCallback()
         shownDyn = dyn;
         repaint (meterArea);
     }
+    const auto now = juce::Time::getMillisecondCounter();
     if (value != shownValue)
     {
+        // A move (not a new target) shows the value on the scribble strip for 1.5 s.
+        if (! retargeted && ctx.settings.getBoolValue (uiprefs::faderValueOnScribble, false))
+            valueFlashUntil = now + 1500;
         shownValue = value;
         if (showValue)
             repaint (valueArea);
+        if (shownFlash)
+            repaint (scribbleArea);
+    }
+    retargeted = false;
+    if (const bool flash = now < valueFlashUntil; flash != shownFlash)
+    {
+        shownFlash = flash;
+        repaint (scribbleArea);
     }
 }
 
@@ -376,9 +460,10 @@ void FaderStrip::paint (juce::Graphics& g)
     band (scribbleArea, 4, juce::Colours::black);
     band (meterArea, 4, juce::Colour (0xff141517));
 
-    // Colour light bar and scribble strip.
+    // Colour light bar (COLOR LED brightness) and scribble strip.
     const juce::Colour colour = strip != nullptr ? stripDisplayColour (*strip) : (dca >= 0 ? wingColour (shownColour) : Colours::ledOff);
-    drawLightBar (g, barArea.toFloat(), colour, target.has_value() && shownLight);
+    drawLightBar (g, barArea.toFloat(), colour.withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
+                  target.has_value() && shownLight);
     drawScribble (g, lcdArea.toFloat(), target ? scribbleInfo() : ScribbleInfo {});
 
     // Meter block: DYN LED, two 6-segment columns (input level), GATE LED.
@@ -389,10 +474,12 @@ void FaderStrip::paint (juce::Graphics& g)
         const float ledW = juce::jlimit (5.0f, 10.0f, m.getWidth() * 0.14f);
         const float pairW = ledW * 2.8f;
         auto row = [&] (int i) { return juce::Rectangle<float> (m.getX(), m.getY() + rowH * (float) i, m.getWidth(), rowH); };
+        // SETUP > GENERAL > METERS sets the LED brightness.
+        const float bright = uiprefs::brightness (ctx.settings, "meters", 40);
         auto barLed = [&] (int i, bool on, juce::Colour c)
         {
             auto r = row (i).withSizeKeepingCentre (pairW, juce::jmax (2.0f, rowH * 0.55f));
-            g.setColour (on ? c : Colours::ledOff);
+            g.setColour (on ? c.withMultipliedBrightness (bright) : Colours::ledOff);
             g.fillRect (r);
         };
         barLed (0, shownDyn, Colours::block);
@@ -400,7 +487,7 @@ void FaderStrip::paint (juce::Graphics& g)
 
         auto columns = juce::Rectangle<float> (m.getCentreX() - pairW * 0.5f, m.getY() + rowH, pairW, rowH * kMeterSegments);
         const bool stereo = strip->getNumChannels() > 1;
-        auto colourFor = [] (int i) { return leds::meterColour (kMeterThresholds[i]); };
+        auto colourFor = [bright] (int i) { return leds::meterColour (kMeterThresholds[i]).withMultipliedBrightness (bright); };
         leds::drawColumn (g, columns.removeFromLeft (ledW), kMeterSegments, shownLit[0], colourFor);
         leds::drawColumn (g, columns.removeFromRight (ledW), kMeterSegments, stereo ? shownLit[1] : shownLit[0], colourFor);
     }
