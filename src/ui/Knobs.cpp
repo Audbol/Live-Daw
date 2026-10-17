@@ -218,15 +218,17 @@ void DisplayKnob::paint (juce::Graphics& g)
 {
     if (hardware)
         return;
+    // The WING's knob box: the caption in grey above, the value in white below.
     auto b = getLocalBounds();
     const float captionSize = compact ? 14.0f : 16.0f;
-    g.setColour (binding.isValid() ? Colours::textDim : Colours::textDim.withAlpha (0.3f));
-    g.setFont (juce::FontOptions (captionSize, juce::Font::bold));
+    const float screenH = getWingScreenHeight();
+    g.setColour (binding.isValid() ? Colours::caption : Colours::textDim.withAlpha (0.3f));
+    g.setFont (wingFontPx (juce::jmin (TypeScale::caption * screenH, captionSize * 0.62f)));
     g.drawFittedText (binding.isValid() ? binding.label.toUpperCase() : juce::String(), b.removeFromTop ((int) captionSize + 2),
-                      juce::Justification::centred, 1);
+                      juce::Justification::centred, 1, 0.8f);
     g.setColour (Colours::text);
-    g.setFont (juce::FontOptions (compact ? 15.0f : 18.0f, juce::Font::bold));
-    g.drawFittedText (valueText, b.removeFromBottom ((int) captionSize + 4), juce::Justification::centred, 1);
+    g.setFont (wingFontPx (juce::jmin (TypeScale::value * screenH, (compact ? 15.0f : 18.0f) * 0.62f)));
+    g.drawFittedText (valueText, b.removeFromBottom ((int) captionSize + 4), juce::Justification::centred, 1, 0.8f);
 }
 
 void DisplayKnob::resized()
@@ -292,22 +294,23 @@ void ParamSlot::paint (juce::Graphics& g)
 
     auto b = getLocalBounds().reduced (6, 2);
     auto bar = b.removeFromBottom (8).toFloat();
-    g.setColour (isMouseOver() ? Colours::yellow : Colours::text);
-    g.setFont (juce::FontOptions (juce::jlimit (14.0f, 22.0f, (float) b.getHeight() * 0.75f), juce::Font::bold));
-    g.drawFittedText (binding.label.toUpperCase(), b, juce::Justification::centredLeft, 1);
+    g.setColour (isMouseOver() ? Colours::gold : Colours::caption);
+    g.setFont (wingFontPx (juce::jmin (TypeScale::paramLabel * getWingScreenHeight(), (float) b.getHeight() * 0.5f)));
+    g.drawFittedText (binding.label.toUpperCase(), b, juce::Justification::centredLeft, 1, 0.8f);
     g.setColour (Colours::text);
-    g.drawFittedText (valueText, b, juce::Justification::centredRight, 1);
+    g.drawFittedText (valueText, b, juce::Justification::centredRight, 1, 0.8f);
 
-    // Position bar: a grey line, the value in lime (from the centre when bipolar), a white thumb.
+    // Position bar: a grey line, the value filled blue (from the centre when
+    // bipolar), a white thumb.
     const float y = bar.getCentreY();
     g.setColour (Colours::screenLine);
     g.fillRect (bar.getX(), y - 1.0f, bar.getWidth(), 2.0f);
     const float x = bar.getX() + position * bar.getWidth();
     const float from = binding.bipolar ? bar.getCentreX() : bar.getX();
-    g.setColour (Colours::lime);
+    g.setColour (Colours::valueBlue);
     g.fillRect (juce::jmin (from, x), y - 2.5f, std::abs (x - from), 5.0f);
     g.setColour (Colours::text);
-    g.fillRect (x - 1.5f, bar.getY(), 3.0f, bar.getHeight());
+    g.fillRoundedRectangle (x - 2.0f, bar.getY(), 4.0f, bar.getHeight(), 1.0f);
 }
 
 void ParamSlot::mouseDown (const juce::MouseEvent&)

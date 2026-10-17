@@ -76,42 +76,65 @@ namespace
     };
 
     /** The style of a parameter-bar slot, completed from the binding where the
-        page left it open. */
+        page left it open, with the WING's colours by parameter type: levels
+        (filled from the left) and frequencies blue, BAL blue, trim, pan and EQ
+        gain white, width and Q green from the centre, tilt cyan from the
+        centre, decay and reverb time red, pre-delay, multipliers and delay
+        times green, distance and AP frequency yellow, preamp gain orange, and
+        selectors gold with one lit segment. */
     KnobStyle resolveStyle (const KnobBinding& b, KnobStyle s)
     {
         const auto label = b.label.toUpperCase();
         const auto text = b.text ? b.text() : juce::String();
-        const bool thumbLabel = label == "PAN" || label.startsWith ("PAN ") || label == "TRIM" || label == "BAL" || label == "BALANCE";
+        const auto word = [&label] (const char* w) { return label == w || label.startsWith (juce::String (w) + " "); };
+        const bool ms = text.endsWithIgnoreCase ("ms");
+        const bool seconds = ! ms && text.endsWithIgnoreCase ("s") && text.containsAnyOf ("0123456789");
+        const bool selector = b.steps > 1.0f && b.steps <= 24.0f;
+
+        struct Choice
+        {
+            KnobStyle::Bar bar;
+            juce::Colour colour;
+        };
+        const auto choose = [&]() -> Choice
+        {
+            if (label.contains ("WIDTH") || word ("Q"))
+                return { KnobStyle::Bar::Centre, KnobColours::green };
+            if (label.contains ("TILT"))
+                return { KnobStyle::Bar::Centre, KnobColours::cyan };
+            if (word ("BAL") || word ("BALANCE"))
+                return { KnobStyle::Bar::Thumb, KnobColours::blue };
+            if (word ("PAN") || word ("TRIM"))
+                return { KnobStyle::Bar::Thumb, KnobColours::white };
+            if (label.contains ("DECAY") || word ("RT") || label.contains ("REV TIME") || (label.contains ("TIME") && seconds))
+                return { KnobStyle::Bar::Fill, KnobColours::red };
+            if (label.contains ("PRE DLY") || label.contains ("PREDLY") || label.contains ("PRE-DLY") || label.contains ("MULT")
+                || ((label.contains ("TIME") || label.contains ("DELAY") || label.contains ("DLY")) && ms))
+                return { KnobStyle::Bar::Thumb, KnobColours::timeGreen };
+            if (word ("DIST") || label.contains ("AP FREQ") || word ("SAMPLES"))
+                return { KnobStyle::Bar::Thumb, KnobColours::yellow };
+            if (label.contains ("LOW CONT") || label.contains ("HIGH PROC"))
+                return { KnobStyle::Bar::Fill, KnobColours::orange };
+            if (label == "GAIN" && ! b.bipolar)
+                return { KnobStyle::Bar::Thumb, KnobColours::orange };
+            if (selector)
+                return { KnobStyle::Bar::Segments, KnobColours::gold };
+            if (b.steps > 1.0f)
+                return { KnobStyle::Bar::Thumb, KnobColours::gold };
+            if (text.endsWith ("Hz") || label.contains ("FREQ") || label.contains ("CUT"))
+                return { KnobStyle::Bar::Thumb, KnobColours::blue };
+            if ((text.endsWith ("dB") && ! b.bipolar) || text.contains ("oo") || text.contains (juce::String::fromUTF8 ("\xe2\x88\x9e")))
+                return { KnobStyle::Bar::Fill, KnobColours::blue };
+            if (b.bipolar)
+                return { KnobStyle::Bar::Thumb, KnobColours::white };
+            return { KnobStyle::Bar::Fill, KnobColours::white };
+        };
+
+        const auto c = choose();
         if (s.bar == KnobStyle::Bar::Auto)
-        {
-            if (label.contains ("WIDTH"))
-                s.bar = KnobStyle::Bar::Centre;
-            else if (thumbLabel)
-                s.bar = KnobStyle::Bar::Thumb;
-            else if (b.steps > 1.0f)
-                s.bar = b.steps <= 24.0f ? KnobStyle::Bar::Segments : KnobStyle::Bar::Thumb;
-            else if (b.bipolar)
-                s.bar = KnobStyle::Bar::Centre;
-            else
-                s.bar = KnobStyle::Bar::Fill;
-        }
+            s.bar = c.bar;
         if (s.colour.isTransparent())
-        {
-            if (label.contains ("WIDTH"))
-                s.colour = KnobColours::green;
-            else if (label.contains ("TILT"))
-                s.colour = KnobColours::cyan;
-            else if (label == "BAL" || label == "BALANCE")
-                s.colour = KnobColours::blue;
-            else if (thumbLabel)
-                s.colour = KnobColours::white;
-            else if (label == "DIST" || label == "TIME" || label == "SAMPLES" || b.steps > 1.0f)
-                s.colour = KnobColours::yellow;
-            else if (text.endsWith ("Hz") || label.contains ("FREQ") || (text.endsWith ("dB") && ! b.bipolar) || text.contains ("oo"))
-                s.colour = KnobColours::blue;
-            else
-                s.colour = KnobColours::white;
-        }
+            s.colour = c.colour;
         return s;
     }
 } // namespace
@@ -150,17 +173,24 @@ public:
     {
         if (! binding.isValid())
             return;
-        auto b = getLocalBounds().reduced (6, 2);
-        auto bar = b.removeFromBottom (juce::jlimit (6, 9, getHeight() / 5)).toFloat();
-        const bool touched = isMouseOverOrDragging();
-        g.setFont (juce::FontOptions (juce::jlimit (12.0f, 20.0f, (float) b.getHeight() * 0.72f), juce::Font::bold));
-        g.setColour (touched ? Colours::yellow : Colours::text);
+        // WING geometry (of 800 px): the label and value on one line, the
+        // track under them: a 2 px grey line with an 8x14 thumb, or an 8 px
+        // fill bar / row of segments.
+        const float screenH = getWingScreenHeight();
+        const float thick = juce::jmax (3.0f, std::round (screenH * 0.01f));
+        const float thumbH = juce::jmax (6.0f, std::round (screenH * 0.0175f));
+        auto b = getLocalBounds();
+        auto bar = b.removeFromBottom (juce::roundToInt (thumbH) + 2).toFloat();
+        const bool touched = isMouseOverOrDragging() || focused;
+        g.setFont (wingFontPx (juce::jmin (TypeScale::paramLabel * screenH, (float) b.getHeight() * 0.5f)));
+        g.setColour (touched ? Colours::gold : Colours::caption);
         g.drawFittedText (binding.label.toUpperCase(), b, juce::Justification::centredLeft, 1, 0.75f);
         g.setColour (style.colour);
         g.drawFittedText (valueText, b, juce::Justification::centredRight, 1, 0.75f);
 
         const float y = bar.getCentreY();
         const float x = bar.getX() + position * bar.getWidth();
+        const auto line = [&] { g.setColour (KnobColours::track); g.fillRect (bar.getX(), y - 1.0f, bar.getWidth(), 2.0f); };
         switch (style.bar)
         {
             case KnobStyle::Bar::Segments:
@@ -170,34 +200,30 @@ public:
                 const float w = bar.getWidth() / (float) n;
                 for (int i = 0; i < n; ++i)
                 {
-                    g.setColour (i == current ? style.colour : juce::Colour (0xff4a4a4a));
-                    g.fillRect (bar.getX() + (float) i * w + 0.5f, y - 2.5f, juce::jmax (1.0f, w - 1.5f), 5.0f);
+                    g.setColour (i == current ? style.colour : KnobColours::segmentOff);
+                    g.fillRoundedRectangle (bar.getX() + (float) i * w + 0.5f, y - thick * 0.5f, juce::jmax (1.0f, w - 2.0f), thick, 1.0f);
                 }
                 return;
             }
             case KnobStyle::Bar::Fill:
             case KnobStyle::Bar::Centre:
             {
-                g.setColour (juce::Colour (0xff4a4a4a));
-                g.fillRect (bar.getX(), y - 1.0f, bar.getWidth(), 2.0f);
+                line();
                 const float from = style.bar == KnobStyle::Bar::Centre ? bar.getCentreX() : bar.getX();
                 g.setColour (style.colour);
-                g.fillRect (juce::jmin (from, x), y - 2.0f, std::abs (x - from), 4.0f);
+                g.fillRoundedRectangle (juce::jmin (from, x), y - thick * 0.5f, std::abs (x - from), thick, thick * 0.3f);
                 if (style.bar == KnobStyle::Bar::Centre)
                 {
                     g.setColour (Colours::text);
-                    g.fillRect (bar.getCentreX() - 1.0f, bar.getY(), 2.0f, bar.getHeight());
+                    g.fillRect (bar.getCentreX() - 1.0f, y - thumbH * 0.5f, 2.0f, thumbH);
                 }
-                g.setColour (Colours::text);
-                g.fillRect (x - 1.0f, y - 3.0f, 2.0f, 6.0f);
                 return;
             }
             case KnobStyle::Bar::Thumb:
             case KnobStyle::Bar::Auto:
-                g.setColour (juce::Colour (0xff4a4a4a));
-                g.fillRect (bar.getX(), y - 1.0f, bar.getWidth(), 2.0f);
-                g.setColour (Colours::text);
-                g.fillRoundedRectangle (x - 3.5f, bar.getY(), 7.0f, bar.getHeight(), 1.5f);
+                line();
+                g.setColour (style.colour);
+                g.fillRoundedRectangle (juce::Rectangle<float> (thick * 0.9f, thumbH).withCentre ({ x, y }), thick * 0.3f);
                 return;
         }
     }
@@ -214,6 +240,24 @@ public:
     }
 
     float getPosition() const noexcept { return position; }
+
+    /** The focus frame of USE CRSR/WHEEL is on this slot. */
+    void setFocused (bool f)
+    {
+        if (focused != f)
+        {
+            focused = f;
+            repaint();
+        }
+    }
+
+    /** Steps the value by `clicks` detents (one step of a stepped parameter,
+        1 % of the range otherwise). */
+    void nudge (int clicks)
+    {
+        const float step = binding.steps > 1.0f ? 1.0f / (binding.steps - 1.0f) : 0.01f;
+        setPosition (position + (float) clicks * step);
+    }
 
     void mouseEnter (const juce::MouseEvent&) override { touch (true, false); }
     void mouseExit (const juce::MouseEvent&) override
@@ -270,6 +314,7 @@ private:
     KnobStyle style;
     float position = 0.0f, dragStart = 0.0f;
     juce::String valueText;
+    bool focused = false;
 };
 
 //==============================================================================
