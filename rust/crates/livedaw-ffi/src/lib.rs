@@ -9,6 +9,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 pub mod models;
+pub mod recorder;
 pub mod session;
 
 use livedaw_engine::params::{
@@ -19,7 +20,7 @@ use std::mem::{offset_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-pub const LD_ABI_VERSION: i32 = 5;
+pub const LD_ABI_VERSION: i32 = 6;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -88,6 +89,15 @@ pub struct LdLayoutInfo {
     pub off_controls_automix_enable: i32,
     pub off_controls_dim_db: i32,
     pub off_controls_main_link: i32,
+    // ABI 6
+    pub off_alt_input_left: i32,
+    pub off_alt_selected: i32,
+    pub off_controls_input_select_global: i32,
+    pub off_controls_global_alt: i32,
+    pub rec_clip: i32,
+    pub rec_playback_track: i32,
+    pub rec_record_track: i32,
+    pub rec_take: i32,
 }
 
 #[no_mangle]
@@ -137,6 +147,14 @@ pub unsafe extern "C" fn ld_layout_info(out: *mut LdLayoutInfo) {
         off_controls_automix_enable: offset_of!(EngineControls, automix_enable) as i32,
         off_controls_dim_db: offset_of!(EngineControls, monitor_dim_db) as i32,
         off_controls_main_link: offset_of!(EngineControls, main_link) as i32,
+        off_alt_input_left: offset_of!(StripParams, alt_input_left) as i32,
+        off_alt_selected: offset_of!(StripParams, alt_selected) as i32,
+        off_controls_input_select_global: offset_of!(EngineControls, input_select_global) as i32,
+        off_controls_global_alt: offset_of!(EngineControls, global_alt) as i32,
+        rec_clip: size_of::<recorder::LdRecClip>() as i32,
+        rec_playback_track: size_of::<recorder::LdRecPlaybackTrack>() as i32,
+        rec_record_track: size_of::<recorder::LdRecRecordTrack>() as i32,
+        rec_take: size_of::<recorder::LdRecTake>() as i32,
     };
 }
 

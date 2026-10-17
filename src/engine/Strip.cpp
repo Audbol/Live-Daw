@@ -48,10 +48,11 @@ juce::String wingColourName (int index)
     return takeString (ld::ld_list_item (11, index - 1));
 }
 
-Strip::Strip (ld::Engine*, ld::Strip* h)
+Strip::Strip (ld::Engine* engine, ld::Strip* h)
     : params (*ld::ld_strip_params (h)),
       sends (h),
       meters (*ld::ld_strip_meters (h)),
+      controls (ld::ld_engine_controls (engine)),
       handle (h),
       kind (static_cast<StripKind> (ld::ld_strip_kind (h))),
       id (ld::ld_strip_id (h))

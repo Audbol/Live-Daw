@@ -21,6 +21,7 @@ use livedaw_dsp::wing::dynamics::{DynStatus, WingDynamics};
 use livedaw_dsp::wing::eq::WingEq;
 use livedaw_dsp::wing::filter::WingFilter;
 use livedaw_dsp::wing::{EQ_MODELS_BUS, EQ_MODELS_CH, MAX_DYN_PARAMS, MAX_EQ_PARAMS, PROCESS_ORDERS};
+use livedaw_recorder::playback_channel;
 use std::cell::UnsafeCell;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Mutex};
@@ -49,9 +50,21 @@ pub(crate) struct ProcessContext<'a> {
     pub main_link_db: f32,
     /// Hardware inputs by hardware channel (null = inactive).
     pub hw_inputs: &'a [*const f32],
+    /// The recorder's playback channels (input `PLAYBACK_SOURCE_BASE + n`).
+    pub playback: &'a [*const f32],
+    /// INPUT SELECT: every input strip follows `global_alt` (else its own switch).
+    pub input_select_global: bool,
+    pub global_alt: bool,
     /// The input channels (for sidechain keys from other channels).
     pub channels: &'a [Arc<Strip>],
     pub block: u64,
+}
+
+impl ProcessContext<'_> {
+    /// The buffer of input source `index` (a hardware input or a playback channel).
+    fn source(&self, index: i32) -> Option<*const f32> {
+        source_ptr(self.hw_inputs, self.playback, index)
+    }
 }
 
 /// Realtime state, touched by exactly one audio task at a time (see the
@@ -216,6 +229,25 @@ impl Strip {
         self.kind == StripKind::Channel
     }
 
+    /// Input and aux channels: the strip takes its ALT input now - it has one,
+    /// and ALT is selected (globally with INPUT SELECT global, else on the strip).
+    pub fn uses_alt_input(&self, input_select_global: bool, global_alt: bool) -> bool {
+        let p = &self.params;
+        self.kind.is_input()
+            && p.alt_input_left.load(Relaxed) >= 0
+            && if input_select_global { global_alt } else { p.alt_selected.load(Relaxed) }
+    }
+
+    /// The input sources (left, right) in use: MAIN or ALT.
+    pub fn active_inputs(&self, input_select_global: bool, global_alt: bool) -> (i32, i32) {
+        let p = &self.params;
+        if self.uses_alt_input(input_select_global, global_alt) {
+            (p.alt_input_left.load(Relaxed), p.alt_input_right.load(Relaxed))
+        } else {
+            (p.input_left.load(Relaxed), p.input_right.load(Relaxed))
+        }
+    }
+
     /// The INS 2 slot runs an FX slot (not automix), with `fx` its slot index.
     fn post_insert_fx(&self) -> Option<i32> {
         let ins = &self.params.post_insert;
@@ -331,14 +363,14 @@ impl Strip {
 
     // ---- audio thread ---------------------------------------------------------
 
-    /// Input channels: pull from the hardware inputs.
+    /// Input channels: pull from their source (MAIN or ALT input: hardware
+    /// inputs or playback channels).
     ///
     /// # Safety
     /// Owning task only. Non-null pointers must be valid for `n` samples.
-    unsafe fn read_hardware_inputs(&self, d: &mut StripDsp, hw: &[*const f32], n: usize) {
+    unsafe fn read_hardware_inputs(&self, d: &mut StripDsp, ctx: &ProcessContext, n: usize) {
         let p = &self.params;
-        let left = p.input_left.load(Relaxed);
-        let mut right = p.input_right.load(Relaxed);
+        let (left, mut right) = self.active_inputs(ctx.input_select_global, ctx.global_alt);
         d.num_channels = if p.stereo.load(Relaxed) { 2 } else { 1 };
         if d.num_channels == 2 && right < 0 && left >= 0 {
             right = left + 1; // stereo without an explicit right input: next channel
@@ -346,7 +378,7 @@ impl Strip {
         self.meters.current_width.store(d.num_channels as i32, Relaxed);
 
         let sources = [left, right];
-        let source = |ch: usize| hw_ptr(hw, sources[ch]);
+        let source = |ch: usize| ctx.source(sources[ch]);
 
         // Already idle and still unpatched: buffers are still zero, nothing to do.
         if d.idle && (0..d.num_channels).all(|ch| source(ch).is_none()) {
@@ -391,7 +423,7 @@ impl Strip {
         debug_assert!(n <= d.max_block);
 
         if self.kind.is_input() {
-            self.read_hardware_inputs(d, ctx.hw_inputs, n);
+            self.read_hardware_inputs(d, ctx, n);
             // Fast path: an unpatched input without inserts can only output
             // silence, so skip its DSP entirely (big consoles with unused channels).
             if !d.input_connected && !self.has_inserts() {
@@ -573,7 +605,7 @@ impl Strip {
             return false;
         }
         let Some(ch) = ctx.channels.get(source as usize) else { return false };
-        let ptr = hw_ptr(ctx.hw_inputs, ch.params.input_left.load(Relaxed));
+        let ptr = ctx.source(ch.active_inputs(ctx.input_select_global, ctx.global_alt).0);
         match ptr {
             Some(src) => d.key[..n].copy_from_slice(std::slice::from_raw_parts(src, n)),
             None => d.key[..n].fill(0.0),
@@ -728,9 +760,14 @@ impl Strip {
     }
 }
 
-fn hw_ptr(hw: &[*const f32], index: i32) -> Option<*const f32> {
-    let i = usize::try_from(index).ok()?;
-    hw.get(i).copied().filter(|p| !p.is_null())
+/// The buffer of input source `index`: hardware input `index`, or playback
+/// channel `index - PLAYBACK_SOURCE_BASE` (None = not connected).
+pub(crate) fn source_ptr(hw: &[*const f32], playback: &[*const f32], index: i32) -> Option<*const f32> {
+    let p = match playback_channel(index) {
+        Some(n) => playback.get(n),
+        None => hw.get(usize::try_from(index).ok()?),
+    };
+    p.copied().filter(|p| !p.is_null())
 }
 
 /// Read access to a processed strip's signal taps (valid after its stage).

@@ -79,7 +79,8 @@ set(LIVEDAW_ENGINE_SOURCES
     src/engine/ConsoleState.cpp
     src/engine/Layers.cpp
     src/engine/Show.cpp
-    src/engine/Recorder.cpp)
+    src/engine/Recorder.cpp
+    src/engine/VirtualAudioDevice.cpp)
 
 # Linked after JUCE's recommended warnings so these flags come last on the command line.
 add_library(livedaw_warning_overrides INTERFACE)
@@ -209,6 +210,7 @@ if(LIVEDAW_BUILD_TESTS)
         tests/PluginHostingTests.cpp
         tests/LayerTests.cpp
         tests/DeviceTests.cpp
+        tests/RecorderTests.cpp
         ${LIVEDAW_ENGINE_SOURCES})
     livedaw_configure_juce_target(LiveDAWTests)
 

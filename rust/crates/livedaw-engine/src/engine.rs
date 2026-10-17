@@ -14,6 +14,12 @@
 //!     Main 1; then the monitor level, DIM, mute, MONO and SWAP
 //!  8. outputs are written, then safety-clipped
 //!
+//! The recorder (`livedaw-recorder`) runs around every chunk: it may shorten
+//! the chunk (loop end, playback ring switch) so each chunk is contiguous on
+//! the timeline, fills the 64 playback channels (input sources
+//! `PLAYBACK_SOURCE_BASE + n`, like hardware inputs) before stage 1, records
+//! hardware inputs at the start of the chunk and strip taps after stage 6.
+//!
 //! Structure changes happen on the message thread by publishing a new
 //! immutable `Topology`; the old one is retired to the garbage collector, which
 //! drops it (and any removed strips) once the audio thread is done with it.
@@ -24,10 +30,11 @@ use crate::garbage::Garbage;
 use crate::params::*;
 use crate::pool::WorkerPool;
 use crate::sends::{send_mode, MAX_BUSES};
-use crate::strip::{ProcessContext, Strip};
+use crate::strip::{source_ptr, ProcessContext, Strip};
 use livedaw_dsp::util::*;
 use livedaw_dsp::wing::fx::{allowed_in_slot, FxContext, FxDevice};
 use livedaw_dsp::wing::FX_MODELS;
+use livedaw_recorder::{playback_channel, RecordStream, RecordTrackSpec, Recorder, SourceKind};
 use std::cell::UnsafeCell;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicPtr, Ordering::*};
@@ -68,6 +75,18 @@ impl Topology {
     }
     fn all(&self) -> impl Iterator<Item = &Arc<Strip>> {
         self.inputs().chain(self.buses()).chain(&self.mains).chain(&self.matrices)
+    }
+
+    /// A strip by kind and number as the console shows it ("CH 3", "BUS 12").
+    fn by_number(&self, kind: StripKind, number: i32) -> Option<&Arc<Strip>> {
+        let i = usize::try_from(number.checked_sub(1)?).ok()?;
+        match kind {
+            StripKind::Channel => self.channels.get(i),
+            StripKind::Aux => self.auxes.get(i),
+            StripKind::Bus => self.buses().find(|b| b.id() as usize == i),
+            StripKind::Main => self.mains.get(i),
+            StripKind::Matrix => self.matrices.get(i),
+        }
     }
 }
 
@@ -170,6 +189,7 @@ pub struct Engine {
     audio: UnsafeCell<AudioState>,
     pub controls: EngineControls,
     fx: Box<[FxRack]>,
+    recorder: Recorder,
 }
 
 // SAFETY: `audio` is only touched by the audio thread (process) or by prepare
@@ -223,6 +243,7 @@ impl Engine {
             }),
             controls: EngineControls::default(),
             fx: (0..NUM_FX).map(|_| FxRack::default()).collect(),
+            recorder: Recorder::new(),
         };
         // SAFETY: not published yet, no audio callback.
         unsafe {
@@ -433,6 +454,44 @@ impl Engine {
         self.lock().channels.iter().find(|s| s.id() == id).cloned()
     }
 
+    /// A strip by kind and number as the console shows it: channels, aux,
+    /// mains and matrices by position ("CH 3" = 3), buses by slot ("BUS 12" = 12).
+    pub fn strip_by_number(&self, kind: StripKind, number: i32) -> Option<Arc<Strip>> {
+        let i = usize::try_from(number.checked_sub(1)?).ok()?;
+        let st = self.lock();
+        match kind {
+            StripKind::Bus => st.buses.iter().find(|b| b.id() as usize == i).cloned(),
+            kind => st.list(kind).get(i).cloned(),
+        }
+    }
+
+    /// The multitrack recorder / player.
+    pub fn recorder(&self) -> &Recorder {
+        &self.recorder
+    }
+
+    /// Message thread: starts recording `tracks` from the current position
+    /// (see [`Recorder::record`]) after checking that their sources exist.
+    pub fn record(&self, tracks: &[RecordTrackSpec]) -> Result<(), String> {
+        let num_hw_inputs = self.lock().device.num_hw_inputs;
+        for t in tracks {
+            let src = &t.source;
+            if src.kind == SourceKind::HardwareInput {
+                for port in src.port..src.port + t.num_channels.clamp(1, 2) as i32 {
+                    if playback_channel(port).is_none() && usize::try_from(port).map_or(true, |p| p >= num_hw_inputs) {
+                        return Err(format!("Input {} doesn't exist", port + 1));
+                    }
+                }
+            } else {
+                let kind = StripKind::from_i32(src.strip_kind).ok_or_else(|| "Unknown strip kind".to_owned())?;
+                if self.strip_by_number(kind, src.strip_number).is_none() {
+                    return Err(format!("{} {} doesn't exist", kind.label(), src.strip_number));
+                }
+            }
+        }
+        self.recorder.record(tracks)
+    }
+
     /// Main 1 (the default monitor source).
     pub fn main(&self, i: usize) -> Option<Arc<Strip>> {
         self.strip_at(StripKind::Main, i)
@@ -589,6 +648,7 @@ impl Engine {
             f.prepare(block_size);
         }
         drop(st);
+        self.recorder.prepare(sample_rate, block_size);
         // Devices are built for a sample rate and block size: rebuild them.
         for (i, (rack, params)) in self.fx.iter().zip(self.controls.fx.iter()).enumerate() {
             self.install_fx_device(i, rack, params.model_index());
@@ -666,15 +726,26 @@ impl Engine {
                 };
             }
 
+            // The recorder may shorten the chunk (loop end, ring switch).
+            let n = self.recorder.begin_chunk(n);
             a.block_counter += 1;
             self.process_chunk(topo, a, n);
+            self.recorder.end_chunk(n);
             start += n;
         }
     }
 
     unsafe fn process_chunk(&self, topo: &Topology, a: &mut AudioState, n: usize) {
+        let rec = &self.recorder;
+        let streams = rec.record_streams();
+        // Record hardware inputs (and playback channels) as they arrive.
+        self.record_inputs(streams, &a.hw_in_ptrs, n);
+
         let hw = SharedPtrs(&a.hw_in_ptrs);
         let hw = &hw;
+        let playback = SharedPtrs(rec.playback_ptrs());
+        let playback = &playback;
+        let alt = (self.controls.input_select_global.load(Relaxed), self.controls.global_alt.load(Relaxed));
         let groups = GroupState {
             mute_groups: self.controls.mute_groups.load(Relaxed),
             dca_mute_groups: self.controls.dca_mute_groups.load(Relaxed),
@@ -682,7 +753,7 @@ impl Engine {
             main_link_db: topo.mains.first().map_or(0.0, |m| m.params.fader_db.load()),
         };
         let block = a.block_counter;
-        let ctx_of = |hw| self.context(topo, hw, &groups, block);
+        let ctx_of = |hw| self.context(topo, hw, playback.get(), alt, &groups, block);
         let ctx_of = &ctx_of;
 
         // 1. Channels and aux channels (parallel)
@@ -732,6 +803,9 @@ impl Engine {
             mtx.process(&ctx_of(hw.get()), n);
         });
 
+        // Record strip taps, now that every strip has run.
+        self.record_strips(topo, streams, n);
+
         // 7. Solo / monitor
         self.build_monitor(topo, a, n);
 
@@ -740,7 +814,15 @@ impl Engine {
         self.protect_outputs(a, n);
     }
 
-    fn context<'a>(&'a self, topo: &'a Topology, hw: &'a [*const f32], g: &GroupState, block: u64) -> ProcessContext<'a> {
+    fn context<'a>(
+        &'a self,
+        topo: &'a Topology,
+        hw: &'a [*const f32],
+        playback: &'a [*const f32],
+        (input_select_global, global_alt): (bool, bool),
+        g: &GroupState,
+        block: u64,
+    ) -> ProcessContext<'a> {
         ProcessContext {
             fx: &self.fx,
             fx_params: &self.controls.fx,
@@ -750,8 +832,38 @@ impl Engine {
             main_link_last: g.main_link_last,
             main_link_db: g.main_link_db,
             hw_inputs: hw,
+            playback,
+            input_select_global,
+            global_alt,
             channels: &topo.channels,
             block,
+        }
+    }
+
+    /// Records the hardware-input streams of this chunk (a port can also be a
+    /// playback channel).
+    unsafe fn record_inputs(&self, streams: &[RecordStream], hw: &[*const f32], n: usize) {
+        for (i, st) in streams.iter().enumerate() {
+            if st.source.kind == SourceKind::HardwareInput {
+                let port = st.source.port + st.channel as i32;
+                let src = source_ptr(hw, self.recorder.playback_ptrs(), port).map(|p| std::slice::from_raw_parts(p, n));
+                self.recorder.write_record_stream(i, src, n);
+            }
+        }
+    }
+
+    /// Records the strip taps of this chunk: the pre-fader (PFL) tap, or the
+    /// output after fader and pan. A strip that doesn't exist records silence.
+    unsafe fn record_strips(&self, topo: &Topology, streams: &[RecordStream], n: usize) {
+        for (i, st) in streams.iter().enumerate() {
+            let pre = match st.source.kind {
+                SourceKind::HardwareInput => continue,
+                SourceKind::StripPreFader => true,
+                SourceKind::StripPostFader => false,
+            };
+            let strip = StripKind::from_i32(st.source.strip_kind).and_then(|k| topo.by_number(k, st.source.strip_number));
+            let src = strip.map(|s| if pre { s.dsp().pfl(st.channel, n) } else { s.dsp().out(st.channel, n) });
+            self.recorder.write_record_stream(i, src, n);
         }
     }
 

@@ -11,6 +11,7 @@ name = "livedaw-engine"
 version = "0.2.0"
 dependencies = [
  "livedaw-dsp",
+ "livedaw-recorder",
 ]
 
 [[package]]
@@ -21,6 +22,10 @@ dependencies = [
  "livedaw-engine",
  "livedaw-session",
 ]
+
+[[package]]
+name = "livedaw-recorder"
+version = "0.2.0"
 
 [[package]]
 name = "livedaw-session"

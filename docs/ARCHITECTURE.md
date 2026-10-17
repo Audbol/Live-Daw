@@ -7,9 +7,9 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
 ## Signal flow
 
 ```
- hardware inputs
-       │
-       ▼
+ hardware inputs   recorder playback channels 1-64 (PLAY n = input 0x10000 + n-1)
+       │                 │
+       ▼                 ▼   (each input / aux channel: MAIN or ALT source, INPUT SELECT)
 ┌──────────── input channels and aux (parallel stage 1) ─────────────────────────────────┐
 │ channel: INPUT trim · balance · Ø ─ IN ─ FILTER ─ FILT                                 │
 │          G / E / D / INS 1 in one of 24 process orders ─ taps 3, 4, 5                  │
@@ -38,6 +38,14 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
    ─ POST ─ width / pan ─► out
 ```
 
+- Input and aux channels take their signal from a source: a hardware input or one of
+  the recorder's 64 playback channels (`PLAYBACK_SOURCE_BASE` + n, valid wherever a
+  hardware input index is: strip inputs, ALT inputs, sidechain keys, record ports).
+  Each has a MAIN (`input_left`/`input_right`) and an ALT source (`alt_input_left`/
+  `alt_input_right`, -1 = none). It uses ALT when it has one and
+  `input_select_global ? global_alt : alt_selected` (WING INPUT SELECT, manual
+  p. 44-45, 68-69; here one console-wide INDIVIDUAL / GLOBAL choice). A switch
+  between MAIN and ALT is instant (no crossfade).
 - The order follows the WING Operation Manual (chapter 6). Input channels choose their
   process order and tap point (`TAP_POINTS`: INPUT, FILTER, TAP 3-5, PRE FDR, POST FDR,
   POST PROC); aux, buses, mains and matrices tap after INS 1 (`tap::PFL`), whatever
@@ -87,11 +95,12 @@ same tables through `ld_model_*` (`livedaw-ffi/src/models.rs`, `src/engine/Model
 |---|---|---|
 | DSP (filters, EQ models, dynamics models, the FX rack's devices, delay) | Rust | `rust/crates/livedaw-dsp` |
 | Realtime engine (WING topology, strips, sends, DCAs, mute groups, FX slots, automix, solo, monitor, output protection, worker pool, deferred frees) | Rust | `rust/crates/livedaw-engine` |
+| Recorder (SPSC rings, WAV / RF64 files, transport, disk reader and writer threads, playlist rendering) | Rust | `rust/crates/livedaw-recorder` |
 | Sessions (console state, Show > Scene > Snippet, fades, fader banks, show files, legacy import) | Rust | `rust/crates/livedaw-session` |
 | C ABI | Rust + C++ header | `rust/crates/livedaw-ffi`, `include/livedaw_engine.h` |
 | Audio devices (ASIO, CoreAudio, ALSA, JACK, WASAPI), plugin hosting (VST3/AU/LV2), UI | C++ / JUCE | `src/` |
 
-`src/engine/MixerEngine`, `Strip`, `FxSlots`, `Models`, `Show` and `LayerSet` are thin
+`src/engine/MixerEngine`, `Strip`, `FxSlots`, `Models`, `Show`, `Recorder` and `LayerSet` are thin
 C++ facades over the Rust code. `Strip` and `FxSlots` are stateless views: names,
 colours and slot state live in the engine, and `MixerEngine::syncStrips()` rebuilds the
 views after a show load changes the console from Rust.
@@ -100,7 +109,7 @@ views after a show load changes the console from Rust.
   engine controls are `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same
   memory as `std::atomic<float/bool/int32_t>` structs, and the UI writes them directly
   with no FFI call. Both sides describe the layout; `ld::verifyLayout()` compares the
-  two at startup and in the tests (ABI version 5), and the app refuses to run if they
+  two at startup and in the tests (ABI version 6), and the app refuses to run if they
   differ.
 - **FX slots.** The 16 slots are the WING's FX rack. Each holds one device from the
   console's FX table (`FX_MODELS`, generated like the processing models): the 26
@@ -142,6 +151,8 @@ views after a show load changes the console from Rust.
 | Message (UI) thread | Adds/removes strips, loads plugins, writes parameters, collects garbage (`ld_engine_collect`, 10 Hz), runs scene fades (`ld_show_tick`, 60 Hz). |
 | Audio thread | `ld_engine_process`. Never allocates, locks or frees. |
 | DSP workers | Realtime-priority JUCE threads lent to the Rust pool (`ld_engine_run_worker`). They process strips in parallel with the audio thread. |
+| Disk reader | Rust thread (started on the recorder's first use). Renders the playlist ahead of the play position into the playback rings. |
+| Disk writer | Rust thread. Writes the record rings to WAV files, computes the recording peaks, finalizes the takes. |
 
 ### Parameters
 The UI writes the shared atomics and the audio thread snapshots them once per block.
@@ -161,6 +172,62 @@ wakes the workers (spin, then park/unpark) and helps with the work itself. Each 
 has five parallel stages: channels and aux, buses 9+, buses 1-8, mains, matrices.
 Automix, the monitor and writing the outputs run on the audio thread.
 
+## Recorder
+
+`rust/crates/livedaw-recorder` (no dependencies), owned by the engine; C++ facade
+`src/engine/Recorder.*` over `ld_rec_*`. The UI owns the project (tracks, clips,
+undo, files); the recorder knows the playlist it was last given and the takes it
+recorded.
+
+- **Transport** (`audio.rs`, audio thread): Stopped / Starting / Playing / Recording,
+  the position (samples at the engine rate) and a loop range. The message thread sends
+  commands through an SPSC queue; getters already show a command the audio thread
+  hasn't taken (play reads Starting at once, a locate its target).
+- **Per chunk** (`engine.rs` `process_inner`): `begin_chunk` takes the commands, starts
+  rolling once the reader has primed, shortens the chunk at the loop end and at a
+  pending ring switch (every chunk is contiguous on the timeline) and fills the 64
+  playback buffers (silence unless rolling, and while Starting); the strips run
+  (playback channels are sources); hardware inputs are recorded at the start of the
+  chunk, strip taps after stage 6 (`StripPreFader` = the PFL tap, `StripPostFader` =
+  after fader and pan; strips by kind and number as shown, CH 3 = 3, BUS 12 = slot 11;
+  a missing strip records silence); `end_chunk` commits the recorded frames and
+  advances the position. Sample accuracy: playback sample i of a chunk at position p
+  is p + i; recorded sample k of a take is its start + k.
+- **Playback rings** (`reader.rs`): two planar rings ("slots") of 2 s, one lane per
+  playback channel the playlist uses. Play or locate puts the transport in Starting
+  with a new epoch: the audio thread uses no ring; the reader primes slot 0 from the
+  position (0.25 s), publishes it, rolling begins with a 256-sample fade-in. A locate
+  or stop while rolling fades the chunk out first (256 samples). A playlist or loop
+  change while rolling: the reader renders the new content into the other slot from a
+  transport frame S a little ahead (50 ms, doubled after a miss), publishes a switch
+  request (seqlock); the audio thread splits its chunk to land on S and crossfades
+  over 512 samples, or reports a miss and keeps playing the old ring. The audio thread
+  never waits. An underrun plays silence, counts a dropout and skips the missing
+  frames later, so playback stays aligned.
+- **Rendering** (`playlist.rs`): clips (file offset, start, length, gain, fade in /
+  out with Linear, EqualPower or SCurve curves; a linear crossfade sums to 1),
+  overlapping clips summed, track gain and mute; mono files feed both sides of a
+  stereo track, stereo files are averaged on a mono one. Recording never loops.
+- **Recording** (`writer.rs`): `record` creates the 32-bit float WAV files (or fails),
+  one record ring (4 s, one lane per mono stream) per recording. The writer drains it,
+  computes min/max peaks per 256 samples (`getRecordingPeaks`), rewrites the headers
+  every 2 s and, once the audio thread has let go (stop, locate, device restart,
+  shutdown), finalizes the files; only then does a take appear in
+  `takeFinishedTakes`. The take ends with the chunk that saw the stop. An overrun
+  becomes silence in the file (a gap record), so the take stays aligned. Record meters
+  (`getRecordLevel`) are peaks the audio thread stores.
+- **WAV** (`wav.rs`): the writer reserves a `JUNK` chunk the size of `ds64`; past
+  4 GB the header is rewritten in place as RF64. A file whose header is behind its
+  data (crash) reads to its end. The reader takes 16/24/32-bit integer and 32-bit
+  float, plain, `WAVE_FORMAT_EXTENSIBLE` or RF64.
+- **Health**: `getDropouts` counts ring under/overruns and write errors;
+  `getDiskLoad` is the fullest record ring / emptiest playback ring. Offline drivers
+  (tests, rendering faster than real time) call `waitForDisk` between blocks.
+- **Virtual device** (`src/engine/VirtualAudioDevice.*`): the device type
+  "Virtual (no hardware)" runs the callback from a clocked thread with 64 silent
+  inputs and 64 outputs. `Main.cpp` registers it after the platform types, so it is
+  only used when chosen (SETUP > AUDIO or the saved device settings).
+
 ## Idle channels
 
 An input with no hardware source patched and no inserts takes a fast path: its
@@ -176,7 +243,8 @@ audio setup doesn't move your patching.
 
 ## Shows, scenes and snippets
 
-`livedaw-session/src/console.rs` serialises strips **per section** (Name, Routing,
+`livedaw-session/src/console.rs` serialises strips **per section** (Name, Routing (CONN:
+input patch, ALT inputs, outputs; with the console's INPUT SELECT switches),
 Input, Gate, EQ, Dynamics, Inserts, Sends, Fader, DCA/Mute). Model parameters are saved
 by id with the model's token, so a show doesn't depend on table order. Every captured
 strip records which sections it holds, and `apply()` only touches the intersection of
@@ -304,9 +372,12 @@ blinking LEDs.
   left output back (built-in devices return the average of both).
 - Solo safe and the monitor A/B bus choice are saved with the show but not used by the
   engine yet; there is one monitor output pair.
-- Not yet: the alternate (ALT) channel input, assignable custom controls (the
-  section's upper part and USER layer are empty), the 4-Channel section, talkback,
-  OSC/MIDI remote control and recording.
+- Not yet: assignable custom controls (the section's upper part and USER layer are
+  empty), the 4-Channel section, talkback and OSC/MIDI remote control.
+- Recorder: no transport without a running audio device (play stays in Starting);
+  a loop change while rolling plays the old content for ~50 ms before the
+  crossfade; take files are flushed every 2 s but only synced to disk when
+  finalized; no latency compensation of takes (the UI shifts them).
 - Shown on the screens but disabled until the engine supports them (the WING manual
   describes them): SOLO MODE LIVE / STUDIO / SIP, TAP WIDTH and TAP EQ on sends,
   KEY / XOVER / BAND SOLO, the RTA, the LR vector scope, the Sources screen's
