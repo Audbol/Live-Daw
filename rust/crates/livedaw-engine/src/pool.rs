@@ -12,10 +12,14 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering::*};
 use std::sync::OnceLock;
 use std::thread::Thread;
+use std::time::{Duration, Instant};
 
 type TaskFn = unsafe fn(*const (), usize);
 
 const MAX_TASKS_PER_JOB: usize = 0xffff;
+
+/// Idle workers spin this long before parking, until a block duration is known.
+const DEFAULT_SPIN_NS: u64 = 100_000;
 
 pub struct WorkerPool {
     workers: Box<[OnceLock<Thread>]>,
@@ -31,7 +35,8 @@ pub struct WorkerPool {
     wake_signal: AtomicU32,
     generation: AtomicU32, // only touched by the audio thread
     should_exit: AtomicBool,
-    spin_iterations: AtomicU32,
+    /// How long an idle worker spins before it parks (nanoseconds).
+    spin_ns: AtomicU64,
     /// Tasks that panicked (their work was skipped).
     pub panicked_tasks: AtomicI32,
 }
@@ -48,7 +53,7 @@ impl WorkerPool {
             wake_signal: AtomicU32::new(0),
             generation: AtomicU32::new(0),
             should_exit: AtomicBool::new(false),
-            spin_iterations: AtomicU32::new(2000),
+            spin_ns: AtomicU64::new(DEFAULT_SPIN_NS),
             panicked_tasks: AtomicI32::new(0),
         }
     }
@@ -62,10 +67,17 @@ impl WorkerPool {
     }
 
     /// Sizes the spin budget to the block duration before workers sleep.
+    ///
+    /// Workers spin for a quarter of a block (20-300 us): long enough to stay
+    /// hot between the phases of one block, short enough to park between
+    /// blocks. Spinning longer than a block would keep these realtime threads
+    /// busy all the time and starve the rest of the app on small machines. A
+    /// worker that wakes late never stalls a block: the audio thread takes part
+    /// in every job.
     pub fn set_block_duration_hint(&self, sample_rate: f64, block_size: usize) {
         if sample_rate > 0.0 && block_size > 0 {
-            let micros = 1.0e6 * block_size as f64 / sample_rate;
-            self.spin_iterations.store((micros * 2.0).clamp(100.0, 20000.0) as u32, Relaxed);
+            let block_ns = 1.0e9 * block_size as f64 / sample_rate;
+            self.spin_ns.store((block_ns / 4.0).clamp(20_000.0, 300_000.0) as u64, Relaxed);
         }
     }
 
@@ -81,12 +93,11 @@ impl WorkerPool {
         let mut seen = self.wake_signal.load(Acquire);
 
         while !self.should_exit.load(Acquire) {
-            let spins = self.spin_iterations.load(Relaxed);
-            let mut i = 0;
-            while self.wake_signal.load(Acquire) == seen && i < spins && !self.should_exit.load(Acquire) {
+            let budget = Duration::from_nanos(self.spin_ns.load(Relaxed));
+            let spin_start = Instant::now();
+            while self.wake_signal.load(Acquire) == seen && !self.should_exit.load(Acquire) && spin_start.elapsed() < budget {
                 std::hint::spin_loop();
                 std::thread::yield_now();
-                i += 1;
             }
             while self.wake_signal.load(Acquire) == seen && !self.should_exit.load(Acquire) {
                 std::thread::park(); // unparked by parallel_for (spurious wakeups just loop)
