@@ -454,6 +454,64 @@ pub struct StripParams {
     pub alt_input_right: AtomicI32,
     /// The strip's own MAIN / ALT switch (used unless INPUT SELECT is global).
     pub alt_selected: AtomicBool,
+
+    // ABI 7: the TAP-mode send signal (WING `/ch/n/tapwid`, `/ch/n/peq`).
+    /// TAP WIDTH (input channels, -150..150 %): the stereo width of the
+    /// signal TAP-mode sends take (stereo channels; negative swaps L and R).
+    pub tap_width: AtomicF32,
+    /// TAP EQ (input channels): a 3-band EQ on the TAP-mode send signal.
+    pub tap_eq: TapEqParams,
+}
+
+/// One band of the TAP EQ.
+#[repr(C)]
+#[derive(Debug)]
+pub struct TapEqBand {
+    /// -15..15 dB.
+    pub gain_db: AtomicF32,
+    /// 20..20000 Hz.
+    pub freq: AtomicF32,
+    /// 0.44..10.
+    pub q: AtomicF32,
+}
+
+/// TAP EQ (the WING's PRE EQ, `/ch/n/peq`): band 1 a low shelf, band 2 a
+/// peak, band 3 a high shelf.
+#[repr(C)]
+#[derive(Debug)]
+pub struct TapEqParams {
+    pub on: AtomicBool,
+    pub bands: [TapEqBand; TAP_EQ_BANDS],
+}
+
+pub const TAP_EQ_BANDS: usize = 3;
+/// Default frequency and Q of the TAP EQ bands.
+pub const TAP_EQ_DEFAULTS: [(f32, f32); TAP_EQ_BANDS] = [(100.0, 0.707), (1000.0, 1.0), (10000.0, 0.707)];
+pub const TAP_EQ_GAIN_RANGE: f32 = 15.0;
+pub const TAP_EQ_Q_RANGE: (f32, f32) = (0.442, 10.0);
+pub const TAP_WIDTH_RANGE: f32 = 150.0;
+
+impl Default for TapEqParams {
+    fn default() -> Self {
+        let band = |i: usize| TapEqBand {
+            gain_db: AtomicF32::new(0.0),
+            freq: AtomicF32::new(TAP_EQ_DEFAULTS[i].0),
+            q: AtomicF32::new(TAP_EQ_DEFAULTS[i].1),
+        };
+        Self { on: AtomicBool::new(false), bands: std::array::from_fn(band) }
+    }
+}
+
+impl TapEqParams {
+    /// Back to the defaults (off, flat).
+    pub fn reset(&self) {
+        self.on.store(false, Relaxed);
+        for (b, (f, q)) in self.bands.iter().zip(TAP_EQ_DEFAULTS) {
+            b.gain_db.store(0.0);
+            b.freq.store(f);
+            b.q.store(q);
+        }
+    }
 }
 
 /// The WING's 18 strip colours (index 1..18 in `colour`): the console's names
@@ -590,6 +648,8 @@ impl StripParams {
             alt_input_left: AtomicI32::new(-1),
             alt_input_right: AtomicI32::new(-1),
             alt_selected: AtomicBool::new(false),
+            tap_width: AtomicF32::new(100.0),
+            tap_eq: TapEqParams::default(),
         };
         p.eq.on.store(true, Relaxed);
         p

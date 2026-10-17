@@ -11,10 +11,16 @@
 //!   INS 1 (pre-fader).
 //!
 //! Signal taps along the way feed TAP-mode sends, solo (PFL/AFL) and direct outs.
+//! Input channels shape their tap signal with TAP EQ and TAP WIDTH. The
+//! analysed strip (`analyser`) also copies its signal to the RTA and scope
+//! rings, and the listened strip computes its LISTEN signal.
 
+use crate::analyser::{listen_mode, rta_tap, Probes, StripProbe};
 use crate::fx::FxRack;
-use crate::params::{DcaParams, FxParams, StripKind, StripMeters, StripParams, NUM_MAINS, NUM_MATRICES};
+use crate::params::{DcaParams, DynSlotParams, FxParams, StripKind, StripMeters, StripParams, NUM_MAINS, NUM_MATRICES};
 use crate::sends::SendBank;
+use crate::tapsend::TapShaper;
+use livedaw_dsp::biquad::{Biquad, BiquadCoeffs};
 use livedaw_dsp::delay::{delay_to_ms, DelayLine};
 use livedaw_dsp::util::*;
 use livedaw_dsp::wing::dynamics::{DynStatus, WingDynamics};
@@ -58,6 +64,8 @@ pub(crate) struct ProcessContext<'a> {
     /// The input channels (for sidechain keys from other channels).
     pub channels: &'a [Arc<Strip>],
     pub block: u64,
+    /// The analysed and the listened strip of this block.
+    pub probes: &'a Probes,
 }
 
 impl ProcessContext<'_> {
@@ -102,6 +110,18 @@ pub(crate) struct StripDsp {
     muted: bool,
     /// Matrices: ramp of the direct input (owned by the matrix task).
     last_direct: f32,
+    /// LISTEN: the signal (1 or 2 channels), its filter, and what it last played.
+    listen: [Vec<f32>; 2],
+    listen_channels: usize,
+    listen_filter: Biquad,
+    listen_coeffs: BiquadCoeffs,
+    listen_state: Option<(i32, i32)>,
+    /// A filter change crossfades from the old filter (kept here) to the new.
+    listen_prev: Biquad,
+    listen_scratch: Vec<f32>,
+    listen_fresh: bool,
+    /// TAP EQ and TAP WIDTH (input channels).
+    tap_shaper: TapShaper,
 }
 
 impl StripDsp {
@@ -135,6 +155,15 @@ impl StripDsp {
             tap_point: tap::PFL,
             muted: false,
             last_direct: 0.0,
+            listen: [Vec::new(), Vec::new()],
+            listen_channels: 1,
+            listen_filter: Biquad::default(),
+            listen_coeffs: BiquadCoeffs::identity(),
+            listen_state: None,
+            listen_prev: Biquad::default(),
+            listen_scratch: Vec::new(),
+            listen_fresh: true,
+            tap_shaper: TapShaper::default(),
         }
     }
 
@@ -144,10 +173,12 @@ impl StripDsp {
         self.eq.reset();
         self.dynamics.reset();
         self.delay.reset();
+        self.listen_filter.reset();
+        self.tap_shaper.reset();
     }
 
-    fn buffers_mut(&mut self) -> [&mut [Vec<f32>; 2]; 5] {
-        [&mut self.work, &mut self.tap, &mut self.pfl, &mut self.post, &mut self.out]
+    fn buffers_mut(&mut self) -> [&mut [Vec<f32>; 2]; 6] {
+        [&mut self.work, &mut self.tap, &mut self.pfl, &mut self.post, &mut self.out, &mut self.listen]
     }
 }
 
@@ -294,12 +325,17 @@ impl Strip {
         }
         d.key.clear();
         d.key.resize(mb, 0.0);
+        d.listen_scratch.clear();
+        d.listen_scratch.resize(mb, 0.0);
         d.idle = false;
         d.filter.prepare(sample_rate);
         d.gate.prepare(sample_rate);
         d.eq.prepare(sample_rate);
         d.dynamics.prepare(sample_rate);
         d.delay.prepare(sample_rate);
+        d.listen_filter.reset();
+        d.listen_state = None;
+        d.tap_shaper.prepare(sample_rate);
     }
 
     // ---- read-only views (valid after the strip's stage has run) ------------
@@ -450,6 +486,15 @@ impl Strip {
                 self.meters.gate_active.store(false, Relaxed);
                 self.meters.dyn_active.store(false, Relaxed);
                 d.idle = true;
+                // An analysed idle strip is silent (its buffers are zero).
+                let probe = ctx.probes.of(self);
+                if probe.rta.is_some() {
+                    ctx.probes.push_rta([&d.work[0][..n], &d.work[1][..n]], 1, n);
+                }
+                if probe.scope {
+                    ctx.probes.push_scope([&d.work[0][..n], &d.work[1][..n]], 1, n);
+                }
+                d.listen_state = None;
                 return;
             }
         } else {
@@ -507,6 +552,13 @@ impl Strip {
         let nc = d.num_channels;
         let kind = self.kind;
         d.tap_point = if self.has_selectable_tap() { p.tap.load(Relaxed).clamp(0, 7) as usize } else { tap::PFL };
+        let probe = ctx.probes.of(self);
+        let mut listened = false;
+        if d.listen_state != probe.listen {
+            d.listen_filter.reset(); // a new LISTEN source (faded in) starts clean
+            d.listen_fresh = true;
+        }
+        Self::probe_rta(d, ctx, &probe, rta_tap::IN, n);
 
         // INPUT: trim, balance, polarity
         let polarity = if p.input.invert.load(Relaxed) { -1.0 } else { 1.0 };
@@ -518,12 +570,17 @@ impl Strip {
             self.meters.trim_peak[ch].fetch_max(peak_level(&d.work[ch][..n]));
         }
         d.last_in = gains;
+        // The LR VECTOR SCOPE: after the INPUT block, before pan.
+        if probe.scope {
+            ctx.probes.push_scope([&d.work[0][..n], &d.work[1][..n]], nc, n);
+        }
 
         // Aux channels delay before the fader; the others after it (below).
         if kind == StripKind::Aux {
             self.apply_delay(d, n);
         }
         Self::copy_tap(d, tap::IN, n);
+        Self::probe_rta(d, ctx, &probe, rta_tap::PRE_FILTER, n);
 
         // FILTER (input channels only)
         if kind == StripKind::Channel {
@@ -535,12 +592,28 @@ impl Strip {
             }
         }
         Self::copy_tap(d, tap::FILT, n);
+        Self::probe_rta(d, ctx, &probe, rta_tap::POST_FILTER, n);
 
         for (pos, block) in self.pre_fader_order().iter().enumerate() {
             match block {
-                b'G' => self.run_gate(d, ctx, n),
-                b'E' => self.run_eq(d, n),
-                b'D' => self.run_dynamics(d, ctx, n),
+                b'G' => {
+                    if let Some((listen_mode::GATE_KEY, _)) = probe.listen {
+                        listened = self.listen_key(d, ctx, &p.gate, n);
+                    }
+                    self.run_gate(d, ctx, n)
+                }
+                b'E' => self.run_eq_probed(d, ctx, &probe, &mut listened, n),
+                b'D' => {
+                    match probe.listen {
+                        Some((listen_mode::DYN_KEY, _)) => listened = self.listen_key(d, ctx, &p.dynamics, n),
+                        Some((listen_mode::XOVER, _)) => {
+                            let c = p.dynamics.xover().coefficients(d.sample_rate);
+                            listened = Self::listen_filtered(d, c, None, n);
+                        }
+                        _ => {}
+                    }
+                    self.run_dynamics(d, ctx, n)
+                }
                 b'I' => self.run_insert(d, ctx, n, false),
                 _ => {}
             }
@@ -571,10 +644,11 @@ impl Strip {
         }
         d.last_gain = gain;
         Self::copy_tap(d, tap::AFL, n);
+        Self::probe_rta(d, ctx, &probe, rta_tap::POST_FADER, n);
 
         // Buses, mains and matrices: the EQ is post-fader.
         if kind.is_output() {
-            self.run_eq(d, n);
+            self.run_eq_probed(d, ctx, &probe, &mut listened, n);
         }
 
         // INS 2 (automix is applied by the engine after all channels ran; it
@@ -596,6 +670,85 @@ impl Strip {
             d.post[ch][..n].copy_from_slice(&d.work[ch][..n]);
         }
         Self::copy_tap(d, tap::POST, n);
+
+        // TAP EQ and TAP WIDTH on what TAP-mode sends take.
+        if kind == StripKind::Channel {
+            let [t0, t1] = &mut d.tap;
+            let mut chans: [&mut [f32]; 2] = [&mut t0[..n], &mut t1[..n]];
+            d.tap_shaper.process(&mut chans[..nc], p);
+        }
+
+        // LISTEN with nothing to play (no such block on this strip): silence.
+        if probe.listen.is_some() && !listened {
+            d.listen.iter_mut().for_each(|b| b[..n].fill(0.0));
+            d.listen_channels = 1;
+        }
+        d.listen_state = probe.listen;
+    }
+
+    /// The RTA signal, if this strip is analysed at `at`.
+    #[inline]
+    fn probe_rta(d: &StripDsp, ctx: &ProcessContext, probe: &StripProbe, at: usize, n: usize) {
+        if probe.rta == Some(at) {
+            ctx.probes.push_rta([&d.work[0][..n], &d.work[1][..n]], d.num_channels, n);
+        }
+    }
+
+    /// The EQ with its RTA taps (PRE / POST) and BAND SOLO.
+    fn run_eq_probed(&self, d: &mut StripDsp, ctx: &ProcessContext, probe: &StripProbe, listened: &mut bool, n: usize) {
+        Self::probe_rta(d, ctx, probe, rta_tap::PRE_EQ, n);
+        if let Some((listen_mode::BAND, band)) = probe.listen {
+            let eq = &self.params.eq;
+            eq.values_snapshot(&mut d.eq_values);
+            let table = if self.kind.is_output() { EQ_MODELS_BUS } else { EQ_MODELS_CH };
+            let model = (eq.model.load(Relaxed).max(0) as usize).min(table.len() - 1);
+            let coeffs = crate::listen::band_solo_coeffs(&table[model], &d.eq_values, band.max(0) as usize, d.sample_rate);
+            if let Some(c) = coeffs {
+                *listened = Self::listen_filtered(d, c, None, n);
+            }
+        }
+        self.run_eq(d, n);
+        Self::probe_rta(d, ctx, probe, rta_tap::POST_EQ, n);
+    }
+
+    /// KEY SOLO: the slot's key (another channel's input, or the signal
+    /// itself) through the key filter.
+    unsafe fn listen_key(&self, d: &mut StripDsp, ctx: &ProcessContext, slot: &DynSlotParams, n: usize) -> bool {
+        let c = slot.sidechain().coefficients(d.sample_rate);
+        let external = self.key_for(d, ctx, slot.sc_source.load(Relaxed), n);
+        Self::listen_filtered(d, c, external.then_some(()), n)
+    }
+
+    /// Fills the LISTEN buffers with the work signal (or, with `key`, the
+    /// mono key buffer) through the filter `c`.
+    fn listen_filtered(d: &mut StripDsp, c: BiquadCoeffs, key: Option<()>, n: usize) -> bool {
+        // A changed filter (a knob moved, another crossover mode) crossfades
+        // over the block from the old filter, so it can't click.
+        let fade = d.listen_coeffs != c && !d.listen_fresh;
+        if d.listen_coeffs != c {
+            if fade {
+                d.listen_prev = d.listen_filter.clone();
+            }
+            d.listen_filter.set_coefficients(c);
+            d.listen_coeffs = c;
+        }
+        d.listen_fresh = false;
+        let channels = if key.is_some() { 1 } else { d.num_channels };
+        for ch in 0..channels {
+            let src = if key.is_some() { &d.key[..n] } else { &d.work[ch][..n] };
+            d.listen[ch][..n].copy_from_slice(src);
+            d.listen_filter.process(&mut d.listen[ch][..n], ch);
+            if fade {
+                d.listen_scratch[..n].copy_from_slice(src);
+                d.listen_prev.process(&mut d.listen_scratch[..n], ch);
+                let step = 1.0 / n.max(1) as f32;
+                for (i, (new, old)) in d.listen[ch][..n].iter_mut().zip(&d.listen_scratch[..n]).enumerate() {
+                    *new = old + (*new - old) * (i + 1) as f32 * step;
+                }
+            }
+        }
+        d.listen_channels = channels;
+        true
     }
 
     fn apply_delay(&self, d: &mut StripDsp, n: usize) {
@@ -833,6 +986,11 @@ impl StripDsp {
     #[inline]
     pub(crate) fn muted(&self) -> bool {
         self.muted
+    }
+    /// The LISTEN signal (a mono one on both sides).
+    #[inline]
+    pub(crate) fn listen(&self, ch: usize, n: usize) -> &[f32] {
+        &self.listen[if self.listen_channels > 1 { ch.min(1) } else { 0 }][..n]
     }
     #[inline]
     pub(crate) fn last_direct(&self) -> f32 {

@@ -104,6 +104,8 @@ public:
     juce::String getLabel() const { return juce::String (livedaw::label (kind)) + " " + juce::String (number); }
 
     ld::Strip* getHandle() const noexcept { return handle; }
+    /** The engine the strip belongs to (its analysis: RTA, scope, LISTEN). */
+    ld::Engine* getEngineHandle() const noexcept { return engineHandle; }
 
     juce::String getName() const { return takeString (ld::ld_strip_name (handle)); }
     void setName (const juce::String& newName) const
@@ -201,6 +203,7 @@ public:
 
 private:
     const ld::EngineControls* controls;
+    ld::Engine* engineHandle;
     ld::Strip* handle;
     StripKind kind;
     int id;

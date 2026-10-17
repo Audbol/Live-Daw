@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 6;
+constexpr int kAbiVersion = 7;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -51,6 +51,10 @@ constexpr int kNumPlaybackChannels = 64;
 constexpr int32_t kPlaybackSourceBase = 0x10000;
 constexpr int kMaxRecordTracks = 64;
 constexpr int kSamplesPerPeak = 256;
+/** TAP EQ bands (low shelf, peak, high shelf). */
+constexpr int kTapEqBands = 3;
+/** RTA bands: one per semitone, E0 (20.6 Hz) .. D#10 (19.9 kHz), see ld_rta_band_hz. */
+constexpr int kRtaBands = 120;
 
 enum StripKindId : int32_t
 {
@@ -146,6 +150,20 @@ struct MatrixSendParams
     std::atomic<float> levelDb, pan;
 };
 
+/// TAP EQ (WING /ch/n/peq): band 0 low shelf, 1 peak, 2 high shelf.
+struct TapEqBand
+{
+    std::atomic<float> gainDb; // -15..15
+    std::atomic<float> freq;   // 20..20000 Hz
+    std::atomic<float> q;      // 0.44..10
+};
+
+struct TapEqParams
+{
+    std::atomic<bool> on;
+    TapEqBand bands[kTapEqBands];
+};
+
 struct StripParams
 {
     InputParams input;
@@ -186,6 +204,10 @@ struct StripParams
     // inputLeft/Right while ALT is selected (-1 = none; right used when stereo).
     std::atomic<int32_t> altInputLeft, altInputRight;
     std::atomic<bool> altSelected; // the strip's MAIN / ALT switch (unless INPUT SELECT is global)
+
+    // ABI 7, input channels: the signal TAP-mode sends take.
+    std::atomic<float> tapWidth; // TAP WIDTH, -150..150 % (stereo channels)
+    TapEqParams tapEq;           // TAP EQ
 };
 
 struct StripMeters
@@ -256,6 +278,54 @@ struct EngineControls
     std::atomic<bool> globalAlt;
 };
 
+/// Where the RTA shows (AnalysisControls::view): its tap and settings follow.
+enum RtaView : int32_t
+{
+    kRtaViewHome = 0,  // HOME > OVERVIEW: RTA SETTINGS (source IN | EQ | POST)
+    kRtaViewEq = 1,    // EQ screen: EQ/RTA SETTINGS (source PRE | POST the EQ)
+    kRtaViewFilter = 2 // FILTER SETUP: source PRE | POST the filter (filterTap), the EQ view's settings
+};
+
+/// LISTEN (AnalysisControls::listenMode): replaces the solo bus, one strip at a time.
+enum ListenMode : int32_t
+{
+    kListenOff = 0,
+    kListenBand = 1,    // BAND SOLO / LISTEN: the selected WING EQ band (listenBand)
+    kListenGateKey = 2, // KEY SOLO of the GATE slot (after the key filter)
+    kListenDynKey = 3,  // KEY SOLO of the DYNAMICS slot
+    kListenXover = 4    // XOVER SOLO: the DYNAMICS slot's crossover band
+};
+
+/// RTA SETTINGS of one view (the WING's cfg/rta nodes).
+struct RtaViewSettings
+{
+    std::atomic<int32_t> display;  // SIZE/MODE. HOME: OFF, 1/3, FULL. EQ: OFF, 1/4, 1/3, 1/2, OVL/3, OVL
+    std::atomic<int32_t> colour;   // COLOR: RD25, RD50, RD75, AM25, AM50, AM75, BL25, BL50, BL75
+    std::atomic<int32_t> tap;      // RTA SOURCE. HOME: IN, EQ, POST. EQ: PRE, POST
+    std::atomic<int32_t> range;    // RTA RANGE: 30 dB, 60 dB
+    std::atomic<int32_t> decay;    // RTA DECAY: SLOW, MED, FAST
+    std::atomic<int32_t> detector; // RTA DETECTOR: PEAK, RMS, AVG
+    std::atomic<bool> autogain;    // RTA AUTOGAIN (applied by the UI)
+    std::atomic<float> gainDb;     // FIXED GAIN, -5..50 dB
+};
+
+/// RTA, LR vector scope and LISTEN (ld_engine_analysis). Strips are named by
+/// kind and id (Strip::getId()); -1 = none.
+struct AnalysisControls
+{
+    std::atomic<int32_t> stripKind, stripId; // the analysed (selected) strip
+    std::atomic<bool> rtaOn;                 // an RTA is shown (ld_rta_read starts the analysis thread)
+    std::atomic<bool> rtaFreeze;             // FREEZE
+    std::atomic<bool> scopeOn;               // the LR VECTOR SCOPE is shown (ld_scope_read)
+    std::atomic<int32_t> view;               // RtaView
+    std::atomic<int32_t> listenMode;         // ListenMode
+    std::atomic<int32_t> listenKind, listenId;
+    std::atomic<int32_t> listenBand;         // index into the WING EQ's bands (l, 1..n, h)
+    std::atomic<float> bandSoloTrimDb;       // BAND SOLO trim, 0..24 dB (default 12)
+    RtaViewSettings home, eq;
+    std::atomic<int32_t> filterTap;          // FILTER SETUP's RTA SOURCE: PRE, POST
+};
+
 struct LayoutInfo
 {
     int32_t abiVersion, stripParams, input, filter, dynSlot, eqBlock, insert, mainSend, matrixSend, meters, send, dca,
@@ -266,7 +336,9 @@ struct LayoutInfo
         offControlsMainLink,
         // ABI 6
         offAltInputLeft, offAltSelected, offControlsInputSelectGlobal, offControlsGlobalAlt, recClip,
-        recPlaybackTrack, recRecordTrack, recTake;
+        recPlaybackTrack, recRecordTrack, recTake,
+        // ABI 7
+        offTapWidth, offTapEq, tapEq, analysis, offAnalysisEq, offAnalysisFilterTap;
 };
 
 struct ParamInfo
@@ -446,7 +518,7 @@ extern "C"
     void ld_strip_set_tags (const Strip*, const char* utf8, size_t len);
     /** block: 0 = gate slot, 1 = EQ, 2 = dynamics slot, 3 = filter tool. Loads the model's defaults. */
     void ld_strip_set_model (const Strip*, int32_t block, int32_t model);
-    /** Response in dB of the EQ (block 1) or FILTER (block 3) at `count` frequencies. */
+    /** Response in dB of the EQ (block 1), FILTER (block 3) or TAP EQ (block 4) at `count` frequencies. */
     void ld_strip_response (const Strip*, int32_t block, const double* freqs, double* outDb, int32_t count, double sampleRate);
 
     // Model tables: 0 = dynamics models, 1 = channel EQ models, 2 = bus EQ models, 3 = filter tools.
@@ -464,6 +536,19 @@ extern "C"
     LdString* ld_model_param_display (int32_t table, int32_t model, int32_t param, float value);
     float ld_model_param_to_normalised (int32_t table, int32_t model, int32_t param, float value);
     float ld_model_param_from_normalised (int32_t table, int32_t model, int32_t param, float position);
+
+    // Analysis: RTA, LR vector scope, LISTEN
+    AnalysisControls* ld_engine_analysis (const Engine*);
+    int32_t ld_rta_num_bands();
+    /** Centre frequency of an RTA band (a piano key), 0 if out of range. */
+    float ld_rta_band_hz (int32_t band);
+    /** Message thread: the RTA bands (dB) and peak holds (either may be null); returns the bands
+        written. Starts the analysis thread while rtaOn. `frame` (may be null) moves on new bands. */
+    int32_t ld_rta_read (const Engine*, float* levels, float* peaks, int32_t count, uint32_t* frame);
+    /** The newest L/R pairs of the LR vector scope (interleaved); returns how many. */
+    int32_t ld_scope_read (const Engine*, float* lr, int32_t maxPairs);
+    /** Scope pairs per second. */
+    float ld_scope_rate (const Engine*);
 
     // Lists: 0 process orders, 1 tap points, 2 sidechain filters, 3 crossover types, 4 send modes,
     // 5 delay units, 6 post insert modes, 7 monitor buses, 8 low-cut slopes, 9 high-cut slopes,
@@ -694,6 +779,12 @@ inline const char* verifyLayout()
         { info.recPlaybackTrack, sizeof (RecPlaybackTrackC), "RecPlaybackTrackC size" },
         { info.recRecordTrack, sizeof (RecRecordTrackC), "RecRecordTrackC size" },
         { info.recTake, sizeof (RecTakeC), "RecTakeC size" },
+        { info.offTapWidth, offsetof (StripParams, tapWidth), "StripParams.tapWidth" },
+        { info.offTapEq, offsetof (StripParams, tapEq), "StripParams.tapEq" },
+        { info.tapEq, sizeof (TapEqParams), "TapEqParams size" },
+        { info.analysis, sizeof (AnalysisControls), "AnalysisControls size" },
+        { info.offAnalysisEq, offsetof (AnalysisControls, eq), "AnalysisControls.eq" },
+        { info.offAnalysisFilterTap, offsetof (AnalysisControls, filterTap), "AnalysisControls.filterTap" },
     };
 
     if (info.abiVersion != kAbiVersion)
