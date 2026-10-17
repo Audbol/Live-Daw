@@ -105,9 +105,52 @@ ChannelStripSection::ChannelStripSection (UiContext& c) : ctx (c)
         key.ledState = [this, i] { return eqElement == i ? SurfaceKey::Lit : SurfaceKey::Off; };
     }
 
+    // LISTEN (EQ-BAND/KEY): the selected EQ band on the solo bus (the band
+    // knob last touched), or the key of the GATE / COMP slot while one is
+    // shown. Press again to stop.
     listenKey.dark = true;
-    listenKey.setEnabled (false);
-    listenKey.setTooltip ("LISTEN (EQ band solo): not available yet");
+    listenKey.setTooltip ("LISTEN: the selected EQ band (with GATE or COMP shown: its key) on the solo bus");
+    auto listenTarget = [this]() -> std::pair<int, int>
+    {
+        if (shownSlot == Gate)
+            return { ld::kListenGateKey, 0 };
+        if (shownSlot == Comp)
+            return { ld::kListenDynKey, 0 };
+        // The band on the knob last touched, as bindEq lays them out.
+        const auto bands = ResponseGraph::stdBands (*strip);
+        juce::StringArray shown;
+        for (auto& b : bands)
+            if (b != "l" && b != "h")
+                shown.add (b);
+        if (eqShift)
+        {
+            shown.removeRange (0, 4);
+            shown.add ("l");
+            shown.add ("h");
+        }
+        return { ld::kListenBand, bands.indexOf (shown[eqBand]) };
+    };
+    listenKey.onPress = [this, listenTarget]
+    {
+        if (strip == nullptr)
+            return;
+        Analysis analysis (*strip);
+        const auto [mode, band] = listenTarget();
+        if (analysis.isListening (*strip, mode) && (mode != ld::kListenBand || analysis.controls.listenBand.load() == band))
+            analysis.stopListening();
+        else if (band >= 0)
+            analysis.listen (*strip, mode, band);
+    };
+    listenKey.ledState = [this]
+    {
+        if (strip == nullptr)
+            return (int) SurfaceKey::Off;
+        Analysis analysis (*strip);
+        for (int mode : { ld::kListenBand, ld::kListenGateKey, ld::kListenDynKey, ld::kListenXover })
+            if (analysis.isListening (*strip, mode))
+                return (int) SurfaceKey::Lit;
+        return (int) SurfaceKey::Off;
+    };
 
     viewKey.setTooltip ("VIEW: the shown slot on the HOME screen");
     viewKey.onPress = [this]

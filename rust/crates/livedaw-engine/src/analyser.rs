@@ -83,6 +83,8 @@ const AVG_SECONDS: f32 = 1.0;
 const HOLD_SECONDS: f32 = 1.5;
 /// The scope keeps about this many L/R pairs per second.
 const SCOPE_RATE: f64 = 24000.0;
+/// The analysis thread idles when the bands weren't read for this long.
+const UNREAD_MS: u64 = 2000;
 
 // ---- the shared controls -------------------------------------------------------------
 
@@ -584,6 +586,10 @@ pub struct AnalysisShared {
     /// Scope decimation phase (producer only).
     scope_phase: AtomicU32,
     stop: AtomicBool,
+    /// When the UI last read the bands (ms since `epoch`): the thread idles
+    /// once nobody reads them, even if the UI left `rta_on` set.
+    epoch: Instant,
+    last_read_ms: AtomicU64,
 }
 
 impl AnalysisShared {
@@ -599,7 +605,18 @@ impl AnalysisShared {
             scope_decimation: AtomicU32::new(2),
             scope_phase: AtomicU32::new(0),
             stop: AtomicBool::new(false),
+            epoch: Instant::now(),
+            last_read_ms: AtomicU64::new(0),
         }
+    }
+
+    fn touch(&self) {
+        self.last_read_ms.store(self.epoch.elapsed().as_millis() as u64, Relaxed);
+    }
+
+    /// Nobody read the bands for a while.
+    fn unread(&self) -> bool {
+        self.epoch.elapsed().as_millis() as u64 > self.last_read_ms.load(Relaxed) + UNREAD_MS
     }
 
     fn publish(&self, core: &RtaCore) {
@@ -764,6 +781,7 @@ impl Analyser {
 
     /// Message thread: starts the analysis thread if it isn't running.
     pub fn ensure_thread(&self) {
+        self.shared.touch();
         let mut t = self.thread.lock().unwrap_or_else(|e| e.into_inner());
         if t.is_some() {
             return;
@@ -786,6 +804,7 @@ impl Analyser {
     /// The latest RTA bands (dB) and peak holds; returns the number of bands
     /// written and the publication counter.
     pub fn read_rta(&self, levels: &mut [f32], peaks: &mut [f32]) -> (usize, u32) {
+        self.shared.touch();
         let n = levels.len().min(RTA_BANDS);
         for (dst, src) in levels.iter_mut().zip(&self.shared.levels) {
             *dst = src.load();
@@ -916,7 +935,7 @@ fn run_analysis(shared: &AnalysisShared) {
     let mut silence_sent = Instant::now();
     let c = &shared.controls;
     while !shared.stop.load(SeqCst) {
-        if !c.rta_on.load(Relaxed) {
+        if !c.rta_on.load(Relaxed) || shared.unread() {
             if core.take().is_some() {
                 shared.publish_floor();
             }

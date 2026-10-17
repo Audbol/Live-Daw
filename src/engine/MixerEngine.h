@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/Analysis.h"
 #include "engine/FxSlots.h"
 #include "engine/Recorder.h"
 #include "engine/Strip.h"
@@ -97,6 +98,9 @@ public:
 
     /** The WING remote protocols and WING snapshot files. */
     WingRemote& getWing() noexcept { return *wing; }
+
+    /** The RTA, LR vector scope and LISTEN (BAND / KEY / XOVER SOLO) of the analysed strip. */
+    Analysis getAnalysis() const noexcept { return Analysis (engine); }
 
 private:
     ld::Engine* engine;

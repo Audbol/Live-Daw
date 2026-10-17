@@ -44,6 +44,13 @@ fn targets(eq: &TapEqParams) -> [Band; TAP_EQ_BANDS] {
     })
 }
 
+/// The TAP EQ's filters as set (no gliding; None = a flat band), for
+/// drawing its curve.
+pub fn tap_eq_design(eq: &TapEqParams, sample_rate: f64) -> [Option<BiquadCoeffs>; TAP_EQ_BANDS] {
+    let t = targets(eq);
+    std::array::from_fn(|i| (t[i].gain != 0.0).then(|| t[i].coefficients(i, sample_rate)))
+}
+
 pub(crate) struct TapShaper {
     sr: f64,
     filters: [Biquad; TAP_EQ_BANDS],

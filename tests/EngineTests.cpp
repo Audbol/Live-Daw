@@ -494,3 +494,135 @@ public:
 };
 
 static EngineTests engineTests;
+
+//==============================================================================
+/** The analysis facade (RTA, LR vector scope, LISTEN) and TAP WIDTH / TAP EQ
+    through the C++ views. */
+class AnalysisTests final : public juce::UnitTest
+{
+public:
+    AnalysisTests() : juce::UnitTest ("Analysis", "LiveDAW") {}
+
+    void runTest() override
+    {
+        beginTest ("The RTA settings, the analysed strip and the bands");
+        {
+            MixerEngine engine (0);
+            engine.setNumChannels (2);
+            auto analysis = engine.getAnalysis();
+            auto& ch = *engine.getChannels()[1];
+            expectEquals ((int) analysis.controls.stripKind.load(), -1);
+            analysis.showRta (&ch, ld::kRtaViewEq);
+            expect (analysis.isAnalysed (ch) && ! analysis.isAnalysed (*engine.getChannels()[0]));
+            expect (analysis.controls.rtaOn.load());
+            expectEquals ((int) analysis.settings (ld::kRtaViewHome).display.load(), 2); // FULL
+            expectEquals ((int) analysis.settings (ld::kRtaViewEq).display.load(), 1);   // 1/4
+            expect (analysis.settings (ld::kRtaViewEq).autogain.load());
+            expectWithinAbsoluteError (Analysis::bandHz (68), 1046.5f, 0.1f); // C6
+            expect (Analysis::bandLowHz (57) < Analysis::bandHz (57) && Analysis::bandHighHz (56) < Analysis::bandHz (57));
+            Analysis::Bands bands;
+            analysis.read (bands);
+            expect (bands.levels[0] <= -100.0f);
+            analysis.setFrozen (true);
+            expect (Analysis (ch).isFrozen());
+            analysis.hideRta();
+            expect (! analysis.controls.rtaOn.load());
+        }
+
+        beginTest ("LISTEN replaces the solo bus: on, follow, off");
+        {
+            MixerEngine engine (0);
+            OfflineRig rig (engine, 2, 4);
+            engine.setNumChannels (2);
+            engine.getChannels()[1]->params.inputLeft = 1;
+            engine.monitorOutputLeft = 2;
+            engine.monitorOutputRight = 3;
+            rig.setInput (0, 0.5f);
+            rig.setInput (1, 0.25f);
+            auto& a = *engine.getChannels()[0];
+            auto& b = *engine.getChannels()[1];
+            b.params.solo = true; // PFL: 0.25 on the monitor
+            rig.run();
+            expectWithinAbsoluteError (rig.out (2), 0.25f, 1.0e-4f);
+
+            // KEY SOLO of channel 1's DYNAMICS slot (no key filter): its own signal.
+            Analysis analysis (a);
+            expect (analysis.toggleListen (a, ld::kListenDynKey));
+            expect (analysis.isListening (a, ld::kListenDynKey) && ! analysis.isListening (b, ld::kListenDynKey));
+            rig.run();
+            expect (engine.anySoloActive.load());
+            expectWithinAbsoluteError (rig.out (2), 0.5f, 1.0e-4f);
+            expectWithinAbsoluteError (rig.out (3), 0.5f, 1.0e-4f);
+
+            // BAND SOLO follows the selected band only while it plays.
+            analysis.followBand (a, 3);
+            expectEquals ((int) analysis.controls.listenBand.load(), 0);
+            analysis.listen (a, ld::kListenBand, 1);
+            analysis.followBand (a, 3);
+            expectEquals ((int) analysis.controls.listenBand.load(), 3);
+
+            expect (! analysis.toggleListen (a, ld::kListenBand));
+            expect (! analysis.isListening());
+            rig.run();
+            expectWithinAbsoluteError (rig.out (2), 0.25f, 1.0e-4f);
+        }
+
+        beginTest ("The scope takes L/R after the INPUT block");
+        {
+            MixerEngine engine (0);
+            OfflineRig rig (engine, 2, 2);
+            engine.setNumChannels (1);
+            auto& ch = *engine.getChannels()[0];
+            ch.params.stereo = true;
+            ch.params.inputRight = 1;
+            ch.params.input.trimDb = -6.0206f;
+            rig.setInput (0, 0.8f);
+            rig.setInput (1, -0.4f);
+            auto analysis = engine.getAnalysis();
+            analysis.showScope (&ch);
+            rig.run (10);
+            std::vector<float> lr (2 * 256);
+            const int n = analysis.readScope (lr.data(), 256);
+            expectEquals (n, 256);
+            expectWithinAbsoluteError (lr[(size_t) (2 * n - 2)], 0.4f, 1.0e-4f);
+            expectWithinAbsoluteError (lr[(size_t) (2 * n - 1)], -0.2f, 1.0e-4f);
+            analysis.hideScope();
+        }
+
+        beginTest ("TAP WIDTH and TAP EQ shape the TAP sends");
+        {
+            MixerEngine engine (0);
+            OfflineRig rig (engine, 2, 6);
+            engine.setNumChannels (1);
+            auto& ch = *engine.getChannels()[0];
+            ch.params.stereo = true;
+            ch.params.inputRight = 1;
+            ch.params.mains[0].on = false;
+            rig.setInput (0, 0.4f);
+            auto& bus = *engine.getBusInSlot (0);
+            bus.params.outputLeft = 4;
+            bus.params.outputRight = 5;
+            ch.sends[0].enabled = true; // TAP (PRE) by default
+            expectEquals (ch.params.tapWidth.load(), 100.0f);
+            rig.run();
+            expectWithinAbsoluteError (rig.out (4), 0.4f, 1.0e-4f);
+            expectWithinAbsoluteError (rig.out (5), 0.0f, 1.0e-4f);
+            ch.params.tapWidth = 0.0f;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (4), 0.2f, 1.0e-4f);
+            expectWithinAbsoluteError (rig.out (5), 0.2f, 1.0e-4f);
+            ch.params.tapWidth = 100.0f;
+
+            ch.params.tapEq.on = true;
+            ch.params.tapEq.bands[0].gainDb = 6.0f;
+            rig.run (60);
+            expectWithinAbsoluteError (rig.out (4), 0.4f * 1.9953f, 1.0e-2f);
+            double freqs[] = { 30.0, 5000.0 }, db[2] = {};
+            ld::ld_strip_response (ch.getHandle(), 4, freqs, db, 2, 48000.0);
+            expectWithinAbsoluteError (db[0], 6.0, 0.5);
+            expectWithinAbsoluteError (db[1], 0.0, 0.2);
+        }
+    }
+};
+
+static AnalysisTests analysisTests;

@@ -197,6 +197,15 @@ pub extern "C" fn ld_list_item(l: i32, i: i32) -> *mut LdString {
 
 /// See `ld_strip_response`.
 pub(crate) fn strip_response(s: &Strip, block: i32, freqs: &[f64], out: &mut [f64], sr: f64) {
+    if block == 4 {
+        // TAP EQ
+        let d = livedaw_engine::tapsend::tap_eq_design(&s.params.tap_eq, sr);
+        for (f, o) in freqs.iter().zip(out.iter_mut()) {
+            let mag: f64 = d.iter().flatten().map(|c| c.magnitude_at(*f, sr)).product();
+            *o = 20.0 * mag.max(1e-9).log10();
+        }
+        return;
+    }
     if block == 3 {
         let settings = s.params.filter.snapshot();
         let (coeffs, n) = settings.design(sr);

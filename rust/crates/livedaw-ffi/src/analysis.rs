@@ -93,7 +93,20 @@ mod tests {
             assert_eq!(ld_scope_read(e, lr.as_mut_ptr(), 32), 0);
             c.rta_on.store(true, Relaxed);
             ld_rta_read(e, levels.as_mut_ptr(), std::ptr::null_mut(), 120, &mut frame); // starts the thread
-            ld_engine_destroy(e); // stops it
+
+            // The TAP EQ's curve (block 4 of ld_strip_response).
+            crate::ld_engine_set_num_channels(e, 1);
+            let ch = crate::ld_engine_strip_at(e, 0, 0);
+            let p = &*crate::ld_strip_params(ch);
+            let freqs = [1000.0, 50.0];
+            let mut db = [1.0; 2];
+            crate::ld_strip_response(ch, 4, freqs.as_ptr(), db.as_mut_ptr(), 2, 48000.0);
+            assert!(db[0].abs() < 1e-6, "flat while off");
+            p.tap_eq.on.store(true, Relaxed);
+            p.tap_eq.bands[1].gain_db.store(-6.0);
+            crate::ld_strip_response(ch, 4, freqs.as_ptr(), db.as_mut_ptr(), 2, 48000.0);
+            assert!((db[0] + 6.0).abs() < 0.01 && db[1].abs() < 0.3, "{db:?}");
+            ld_engine_destroy(e); // stops the thread
         }
     }
 }

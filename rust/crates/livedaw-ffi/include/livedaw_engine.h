@@ -518,7 +518,7 @@ extern "C"
     void ld_strip_set_tags (const Strip*, const char* utf8, size_t len);
     /** block: 0 = gate slot, 1 = EQ, 2 = dynamics slot, 3 = filter tool. Loads the model's defaults. */
     void ld_strip_set_model (const Strip*, int32_t block, int32_t model);
-    /** Response in dB of the EQ (block 1) or FILTER (block 3) at `count` frequencies. */
+    /** Response in dB of the EQ (block 1), FILTER (block 3) or TAP EQ (block 4) at `count` frequencies. */
     void ld_strip_response (const Strip*, int32_t block, const double* freqs, double* outDb, int32_t count, double sampleRate);
 
     // Model tables: 0 = dynamics models, 1 = channel EQ models, 2 = bus EQ models, 3 = filter tools.

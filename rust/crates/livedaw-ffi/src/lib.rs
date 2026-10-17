@@ -546,8 +546,8 @@ pub unsafe extern "C" fn ld_strip_set_model(s: *const Strip, block: i32, model: 
     });
 }
 
-/// Writes the response (dB) of a strip's EQ (block 1) or FILTER (block 3) at
-/// `count` frequencies - the same filters the engine runs.
+/// Writes the response (dB) of a strip's EQ (block 1), FILTER (block 3) or
+/// TAP EQ (block 4) at `count` frequencies - the same filters the engine runs.
 #[no_mangle]
 pub unsafe extern "C" fn ld_strip_response(
     s: *const Strip,
