@@ -208,6 +208,8 @@ public:
     void resized() override;
     void paint (juce::Graphics&) override;
     void visibilityChanged() override;
+    /** SETUP pressed again: CC EDIT from the tabs, back to the tabs from CC EDIT or MONITORS. */
+    bool screenKeyPressedAgain() override;
 
     /** CUSTOM CONTROLS (CC EDIT), at a layer when >= 0. */
     void openCustomControls (int layer);
@@ -215,8 +217,6 @@ public:
     void openMonitors();
 
 private:
-    class SetupKeyWatcher;
-
     void showTab();
     /** Shows a screen of SETUP in place of its tabs (nullptr: back to the tabs). */
     void showSubScreen (std::unique_ptr<DisplayPage>);
@@ -230,7 +230,6 @@ private:
     WingKey initKey { "INITIALIZE\nCONSOLE", Icon::Reset }, shutdownKey { "SHUTDOWN", Icon::Power };
     OverlayHolder overlays;
     std::unique_ptr<DisplayPage> subScreen;
-    std::unique_ptr<SetupKeyWatcher> setupKeyWatcher;
 };
 
 /** LIBRARY (manual 5.6): the open show's scenes and snippets on the left
@@ -304,15 +303,14 @@ private:
 class UtilityPage final : public DisplayPage, private juce::Timer, private juce::ChangeListener, private juce::ListBoxModel
 {
 public:
-    /** `onSetup`: the SETUP > LOG tab. Otherwise this is the UTILITY screen of
-        the main display, which hands over to SETUP > LOG when it is shown (the
-        WING's UTILITY key has no screen of its own). */
+    /** `onSetup`: the SETUP > LOG tab. Otherwise this is the main display's
+        UTILITY page, which the UTILITY key never shows (it opens SETUP > LOG:
+        the WING's UTILITY key has no screen of its own). */
     explicit UtilityPage (UiContext&, bool onSetup = false);
     ~UtilityPage() override;
 
     void resized() override;
     void paint (juce::Graphics&) override;
-    void visibilityChanged() override;
 
 private:
     void timerCallback() override;

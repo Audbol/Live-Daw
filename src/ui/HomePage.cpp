@@ -503,26 +503,15 @@ public:
         r = r.reduced (r.getHeight() * 0.12f);
         auto key = r.removeFromLeft (r.getHeight());
         paintKeyBody (g, key, colours::keyOff);
-        drawIcon (g, Icon::Edit, key.reduced (key.getHeight() * 0.22f), colours::dim);
+        drawIcon (g, Icon::KeyboardEdit, key.reduced (key.getHeight() * 0.18f), colours::dim);
         r.removeFromLeft (r.getHeight() * 0.25f);
         // NONE and ALL: list icons with their captions under them.
         for (int i = 1; i >= 0; --i)
         {
             auto k = r.removeFromRight (r.getHeight() * 1.1f);
             auto caption = k.removeFromBottom (k.getHeight() * 0.34f);
-            auto icon = k.withSizeKeepingCentre (k.getHeight() * 1.1f, k.getHeight() * 0.8f);
-            for (int row = 0; row < 3; ++row)
-            {
-                const float y = icon.getY() + icon.getHeight() * ((float) row + 0.5f) / 3.0f;
-                const float d = icon.getHeight() * 0.22f;
-                auto box = juce::Rectangle<float> (d, d).withCentre ({ icon.getX() + d * 0.6f, y });
-                g.setColour (colours::dim);
-                if (i == 1)
-                    g.fillRoundedRectangle (box, 1.0f);
-                else
-                    g.drawRoundedRectangle (box, 1.0f, 1.0f);
-                g.fillRect (icon.getX() + d * 1.6f, y - 0.75f, icon.getWidth() - d * 1.6f, 1.5f);
-            }
+            drawIcon (g, i == 1 ? Icon::ListAll : Icon::ListNone, k.withSizeKeepingCentre (k.getHeight() * 0.9f, k.getHeight() * 0.9f), colours::dim);
+            g.setColour (colours::dim);
             g.setFont (juce::FontOptions (juce::jlimit (8.0f, 13.0f, caption.getHeight() * 0.95f), juce::Font::plain));
             g.drawText (i == 1 ? "ALL" : "NONE", caption.toNearestInt(), juce::Justification::centred);
             r.removeFromRight (r.getHeight() * 0.2f);
@@ -805,7 +794,7 @@ public:
         lightKey = lr.removeFromLeft (lr.getHeight()).toNearestInt();
         const bool lit = strip.params.led.load();
         paintKeyBody (g, lightKey.toFloat(), lit ? colours::accent : colours::keyOff);
-        paintSun (g, lightKey.toFloat().reduced (lightKey.getHeight() * 0.2f), lit ? juce::Colours::black : colours::dim);
+        drawIcon (g, Icon::Sun, lightKey.toFloat().reduced (lightKey.getHeight() * 0.18f), lit ? juce::Colours::black : colours::dim);
         g.setColour (lit ? colours::caption : colours::dim);
         g.setFont (homeFont (TypeScale::body, lr.getHeight() * 0.46f));
         g.drawText ("LIGHT", lr.withTrimmedLeft (lr.getHeight() * 0.3f).toNearestInt(), juce::Justification::centredLeft);
@@ -861,21 +850,6 @@ public:
     }
 
 private:
-    static void paintSun (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c)
-    {
-        const auto centre = r.getCentre();
-        const float rad = r.getWidth() * 0.22f;
-        g.setColour (c);
-        g.drawEllipse (juce::Rectangle<float> (rad * 2.0f, rad * 2.0f).withCentre (centre), juce::jmax (1.2f, r.getWidth() * 0.07f));
-        for (int i = 0; i < 8; ++i)
-        {
-            const float a = (float) i * juce::MathConstants<float>::pi * 0.25f;
-            const float r0 = rad * 1.5f, r1 = r.getWidth() * 0.48f;
-            g.drawLine (centre.x + std::sin (a) * r0, centre.y - std::cos (a) * r0, centre.x + std::sin (a) * r1, centre.y - std::cos (a) * r1,
-                        juce::jmax (1.2f, r.getWidth() * 0.07f));
-        }
-    }
-
     LinkCustomizationRow* link = nullptr;
     int category = 0;
     juce::Rectangle<int> lightRow, galleryFrame, colourFrame, categoryColumn, grid, lightKey;
@@ -1695,20 +1669,7 @@ private:
                 chip (g, at (6.0f, 5.0f, 54.0f, 20.0f), text, isOn (tab) || (mode > 0 && ins.on.load()), colours::accent);
                 // Slots 1-8 hold the premium effects: a small diamond.
                 if (mode == 0 && slot >= 0 && slot < 8)
-                {
-                    auto d = at (66.0f, 7.0f, 18.0f, 14.0f);
-                    juce::Path gem;
-                    gem.startNewSubPath (d.getX(), d.getY() + d.getHeight() * 0.3f);
-                    gem.lineTo (d.getX() + d.getWidth() * 0.25f, d.getY());
-                    gem.lineTo (d.getRight() - d.getWidth() * 0.25f, d.getY());
-                    gem.lineTo (d.getRight(), d.getY() + d.getHeight() * 0.3f);
-                    gem.lineTo (d.getCentreX(), d.getBottom());
-                    gem.closeSubPath();
-                    gem.startNewSubPath (d.getX(), d.getY() + d.getHeight() * 0.3f);
-                    gem.lineTo (d.getRight(), d.getY() + d.getHeight() * 0.3f);
-                    g.setColour (isOn (tab) ? colours::accent : colours::dim);
-                    g.strokePath (gem, juce::PathStrokeType (1.0f));
-                }
+                    drawIcon (g, Icon::Premium, at (66.0f, 5.0f, 18.0f, 18.0f), isOn (tab) ? colours::accent : colours::dim);
                 juce::String device;
                 if (mode > 0)
                     device = mode == 1 ? "X" : "Y";
@@ -1858,24 +1819,48 @@ private:
     {
         if (strip == nullptr)
             return;
+        // The 24 process orders, then the TAP POINT (a dim title row) and its taps.
         auto* s = strip;
-        juce::PopupMenu menu;
-        menu.addSectionHeader ("PROCESS ORDER");
+        juce::StringArray items;
+        popups::ListOptions options;
+        options.columns = 2;
+        options.caption = "PROCESS ORDER";
         const auto orders = models::list (models::ProcessOrders);
         for (int i = 0; i < orders.size(); ++i)
         {
             juce::StringArray names;
             for (auto letter : orders[i])
                 names.add (letter == 'G' ? "GATE" : letter == 'E' ? "EQ" : letter == 'D' ? "DYN" : "INS 1");
-            menu.addItem (names.joinIntoString ("  >  "), s->hasSelectableTap(), s->params.processOrder.load() == i,
-                          [this, i] { if (strip != nullptr) { strip->params.processOrder = i; setStrip (strip); } });
+            items.add (names.joinIntoString (" > "));
         }
-        juce::PopupMenu taps;
+        const int numOrders = items.size();
+        options.disabled.push_back (items.size());
+        items.add ("TAP POINT:");
         const auto tapNames = tapPointNames();
-        for (int i = 0; i < tapNames.size(); ++i)
-            taps.addItem (tapNames[i], s->hasSelectableTap(), s->params.tap.load() == i, [this, i] { if (strip != nullptr) strip->params.tap = i; });
-        menu.addSubMenu ("TAP POINT", taps);
-        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (wrench)));
+        for (auto& t : tapNames)
+            items.add (t);
+        if (! s->hasSelectableTap())
+            for (int i = 0; i < items.size(); ++i)
+                options.disabled.push_back (i);
+        if (orderAnchor.getParentComponent() == nullptr)
+        {
+            orderAnchor.setInterceptsMouseClicks (false, false);
+            addChildComponent (orderAnchor);
+        }
+        orderAnchor.setBounds (wrench);
+        juce::Component::SafePointer<juce::Component> safe (this);
+        popups::chooseFrom (orderAnchor, items, s->params.processOrder.load(), [this, safe, numOrders] (int i)
+        {
+            if (safe == nullptr || strip == nullptr)
+                return;
+            if (i < numOrders)
+            {
+                strip->params.processOrder = i;
+                setStrip (strip);
+            }
+            else if (i > numOrders)
+                strip->params.tap = i - numOrders - 1;
+        }, options);
     }
 
     HomePage& page;
@@ -1884,6 +1869,7 @@ private:
     std::vector<float> tapY;
     juce::Rectangle<float> faderBar;
     juce::Rectangle<int> wrench, gapArea;
+    juce::Component orderAnchor; // where the process order list opens (not shown)
     int keyLeft = 0;
     std::vector<float> eqCurve;
     int builtOrder = -1, thumbWidth = 0, dragY = 0;

@@ -725,16 +725,20 @@ StatusTitle LibraryPage::getStatusTitle()
     // (ALWAYS SHOW ACTIVE SCENE shows it on the other screens too).
     StatusTitle t;
     t.kind = StatusTitle::Kind::Text;
-    t.icon = Icon::ShowFile;
     t.prefix = ctx.show.getName().toUpperCase();
     if (const auto scene = ctx.show.getScene (ctx.show.getCurrentSceneIndex()))
     {
+        // The show's name is the small caption over the scene ("INT:" on the console).
+        t.prefix << ":";
         t.text = scene->name.toUpperCase();
         t.fill = FileColours::snap;
         t.ink = juce::Colours::black;
     }
     else
+    {
+        t.icon = Icon::ShowFile;
         t.text = "NO SCENE";
+    }
     return t;
 }
 

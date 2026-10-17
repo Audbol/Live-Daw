@@ -96,7 +96,16 @@ enum class Icon
     MarkerPrev,    // I◀
     MarkerNext,    // ▶I
     SdCard,        // the WING-LIVE card (status bar)
-    Waveform       // the editor (EDIT, DAW)
+    Waveform,      // the editor (EDIT, DAW)
+    // HOME, CC EDIT and the insert screens
+    Premium,       // the premium-effect diamond (FX slots 1-8)
+    Sun,           // ICON/COLOR: LIGHT
+    ListNone,      // NONE (a list of empty boxes)
+    ListAll,       // ALL (a list of filled boxes)
+    PaintBucket,   // CC EDIT: COLOR
+    Warning,       // CC EDIT: CLR ALL (a triangle with "!")
+    KeyboardEdit,  // a keyboard with a pencil: LINK CUSTOMIZATION, SET CUST
+    Spill          // SPILL (a fader with arrows)
 };
 
 /** Draws `icon` fitted into `area` (stroked or filled as the icon needs). */

@@ -20,6 +20,7 @@ namespace
 
     // SETUP's tabs (ctx.showSetupTab).
     constexpr int kSetupAudioTab = 1;
+    constexpr int kSetupLogTab = 6;
 
     // SETUP > GENERAL's LIGHTS tiles (percent, defaults as SETUP shows them).
     constexpr const char* kMainLcd = "setup.brightness.mainLcd";
@@ -1066,12 +1067,9 @@ void MainDisplay::screenKeyPressed (Screen s)
         utilityPressed();
         return;
     }
-    // SETUP pressed again: CUSTOM CONTROLS (firmware 3.1).
-    if (s == Screen::Setup && screen == Screen::Setup && ctx.showCustomControls)
-    {
-        ctx.showCustomControls (-1);
+    // A screen key pressed again: the page decides (SETUP: CC EDIT, firmware 3.1).
+    if (s == screen && page (s)->screenKeyPressedAgain())
         return;
-    }
     showScreen (s);
 }
 
@@ -1088,8 +1086,8 @@ void MainDisplay::utilityPressed()
     // "The UTILITY button only lights up where it serves a specific function."
     if (auto* p = page (screen); p->hasUtilityFunction())
         p->utilityPressed();
-    else
-        showScreen (Screen::Utility); // the system health page, until it moves to SETUP
+    else if (ctx.showSetupTab)
+        ctx.showSetupTab (kSetupLogTab); // system health and the event log
 }
 
 void MainDisplay::clearSoloPressed()
@@ -1413,7 +1411,30 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
         g.drawFittedText (text, area.toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
     };
 
-    if (title.kind == StatusTitle::Kind::Channel)
+    if (title.kind == StatusTitle::Kind::Text && ! title.fill.isTransparent())
+    {
+        // A filled title (LIBRARY: the active scene in its file type's colour):
+        // the prefix as a small caption ("INT:", the show) over the name.
+        const auto ink = ! title.ink.isTransparent() ? title.ink : juce::Colours::black;
+        g.setColour (title.fill);
+        g.fillRoundedRectangle (tab, corner);
+        auto f = tab.reduced (12.0f * k, 6.0f * k);
+        g.setColour (ink);
+        if (title.prefix.isNotEmpty())
+        {
+            g.setFont (wingFontPx (TypeScale::statusCaption * (float) screenArea.getHeight()));
+            g.drawFittedText (title.prefix, f.removeFromTop (f.getHeight() * 0.3f).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+        }
+        if (title.icon.has_value())
+        {
+            const float ih = f.getHeight() * 0.8f;
+            drawIcon (g, *title.icon, f.removeFromLeft (ih).withSizeKeepingCentre (ih, ih).reduced (ih * 0.1f), ink);
+            f.removeFromLeft (8.0f * k);
+        }
+        g.setFont (bigFont);
+        g.drawFittedText (title.text, f.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+    }
+    else if (title.kind == StatusTitle::Kind::Channel)
     {
         // The selected strip's tile, in its colour (dimmed without a source).
         const auto colour = strip != nullptr ? stripDisplayColour (*strip) : Colours::screenTile;
