@@ -379,7 +379,7 @@ pub struct MatrixSendParams {
     pub pan: AtomicF32,
 }
 
-/// Monitor bus a solo goes to.
+/// Monitor bus a solo goes to (SOLO MODE LIVE): A = PHONES, B = SPEAKERS, both.
 pub const MONITOR_BUSES: [&str; 3] = ["A", "B", "A+B"];
 
 /// Everything the UI can change on a strip. Bus sends live in its `SendBank`.
@@ -771,8 +771,8 @@ impl MonitorSourceParams {
     }
 }
 
-/// Monitor path B (PHONES): its source, level, DIM amount, outputs and meter.
-/// Path A (SPEAKERS) is the console's monitor (`monitor_level_db`, ...).
+/// The PHONES monitor path: its source, level, DIM amount, outputs and meter.
+/// The SPEAKERS path is the console's monitor (`monitor_level_db`, ...).
 #[repr(C)]
 #[derive(Debug)]
 pub struct MonitorPathParams {
@@ -863,7 +863,7 @@ pub struct EngineControls {
     /// SOLO MODE: `solo::solo_mode` (LIVE, STUDIO, SIP).
     pub solo_mode: AtomicI32,
     /// The solo bus / selected monitoring path (MONITORS: PHONES, SPEAKERS,
-    /// PH+SPK) as a `MONITOR_BUSES` choice (A = SPEAKERS, B = PHONES, A+B).
+    /// PH+SPK) as a `MONITOR_BUSES` choice (A = PHONES, B = SPEAKERS, A+B).
     /// STUDIO and SIP solo to it; DIM, MUTE, MONO, SWAP and the talk MON DIM
     /// act on it.
     pub solo_bus: AtomicI32,
@@ -876,10 +876,10 @@ pub struct EngineControls {
     pub sip_active: AtomicBool,
     /// Talkback (`talk.rs`).
     pub talk: TalkParams,
-    /// Monitor path A (SPEAKERS): SOURCE, SRC LEVEL, SRC MIX, PFL DIM (its
+    /// The SPEAKERS path: SOURCE, SRC LEVEL, SRC MIX, PFL DIM (its
     /// level, DIM amount, outputs and meter are the `monitor_*` fields).
     pub speakers: MonitorSourceParams,
-    /// Monitor path B (PHONES).
+    /// The PHONES path.
     pub phones: MonitorPathParams,
 }
 

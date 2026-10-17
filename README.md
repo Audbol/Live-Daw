@@ -62,7 +62,9 @@ Barlow Condensed.
 - **Fader strips** follow the WING's: a colour light bar, the scribble strip (number,
   source ports or mono, icon, the name on an inverted bar), SELECT, SOLO, the meter
   block (DYN LED, a stereo six-segment input meter, GATE LED), MUTE and the fader with
-  its printed scale. SELECT on the selected strip again opens its HOME screen.
+  its printed scale. SELECT on the selected strip again opens its HOME screen. MUTE
+  flashes while a mute group, a DCA mute or SIP mutes the strip; with MUTEGROUP/SIP
+  OVERRIDE, pressing it unmutes the strip until that mute changes.
 - **SOF FLIP (Sends on Fader):** select a bus, main or matrix and the input faders set
   their send to it; select an input and the bus, main and matrix faders set its sends.
 - Surface keys act on a press; keys with a second function act on **hold** (half a
@@ -72,15 +74,18 @@ Barlow Condensed.
   or MAIN 1-4), the knob for fine adjustments of the last touched control and the
   blank key:
   - The **status bar**: the selected channel's tab in its colour (number box, icon,
-    name; the number opens **CHANNEL SELECT**, the rest Channel Home), the status
-    tiles, the screen's own keys (INIT / COPY / SETTINGS on HOME) and the clock.
+    name; the number opens **CHANNEL SELECT**, the rest Channel Home; a red TALKBACK
+    frame on the talkback channel and while talking), the status tiles (the SIP badge
+    lights with SOLO MODE SIP, filled while it mutes), the screen's own keys (INIT /
+    COPY / SETTINGS on HOME) and the clock.
   - The **parameter bar** under the screen: six controls that follow what the screen
     shows (drag, mouse wheel, double-click to reset), values coloured by type as on
     the console; touching one outlines the control it changes.
   - **HOME** for the selected strip: the toolbar (thumbnails at the WING's fixed rows,
     the fader bar with the TAP point, MAIN, SENDS; on Channel Home also the on keys
     and the wrench to drag the slots and the TAP point), the **OVERVIEW** (INPUT,
-    FILTER, LEVEL, EQ and MAIN panels), **ICON/COLOR**, **NAME**, **TAGS** and the
+    FILTER, LEVEL, EQ and MAIN panels), **ICON/COLOR**, **NAME**, **TAGS** (DCAs, mute
+    groups, the talk tags TALK ON / TALK SOLO for both talk keys, A or B) and the
     **SAFE** key. The slot screens follow chapter 6 of the manual: INPUT (CHANNEL
     INPUT, TRIM & BALANCE pad, FILTER, DELAY), FILTER SETUP, GATE / COMP with the
     model's faceplate, EQ, INS 1 / INS 2 (with automix), MAIN SENDS and BUS / MATRIX
@@ -99,20 +104,25 @@ Barlow Condensed.
     source. **MAIN / ALT** choose which of the channel's two inputs you patch (the ALT
     input, WING INPUT SELECT, can be a recorder playback channel: source groups
     PLAY 1-48 / 49-64). **+1 AUTO** moves on to the next channel; the lock (red when
-    locked, green when open) protects the patch. SOURCES shows which channels use each
-    input. OUTPUTS
+    locked, green when open) protects the patch. SOURCES sets each input's source:
+    name (RENAME), colour and icon, GAIN, +48V (stored), POL, MUTE and MONO / STEREO /
+    MID-SIDE pairs (a channel patched to a pair becomes stereo), with its meter and
+    the channels using it; channels get the source's processing first. OUTPUTS
     works output-first: pick an output, then the signal feeding it (a strip's L / R, or
     the MONITOR).
   - **SETUP:** GENERAL (lighting, clock, console info and size, OPERATION, OPTIONS),
     AUDIO (clock rate, INPUT SELECT: the global MAIN / ALT switch and each channel's,
-    preferences such as MAIN LINK, DCA MUTEGROUPS and GLOBAL INPUT SELECT OVERRIDE, SOLO SYSTEM
-    with PFL/AFL per strip type and the solo / select preferences, audio device,
+    preferences such as MAIN LINK, DCA MUTEGROUPS, MUTEGROUP/SIP OVERRIDE, GLOBAL INPUT
+    SELECT OVERRIDE and the TALKBACK channel, SOLO SYSTEM with SOLO MODE LIVE / STUDIO /
+    SIP, PFL/AFL per strip type and the solo / select preferences, audio device,
     AUTOMIX), SURFACE (meter taps, SEL DBL CLICK, SOF and scribble options, CH
     AUTOSELECT, FADER SPEED, paging, user layer link, alternative SOF, section widths),
     REMOTE and DAW (drawn as on the console), PLUGINS and LOG (system health and the
     event log), with INITIALIZE CONSOLE and SHUTDOWN. The status bar has MONITORS (the
-    monitoring paths' toolbar, DIM amount, outputs, PFL/AFL, level; talkback and the
-    second path drawn disabled) and CC EDIT (also SETUP pressed twice): the custom
+    toolbar with the talk keys, PHONES / SPEAKERS / PH+SPK, DIM, MUTE, MONO, LR SWAP;
+    TALK A / B: switch mode, talkback channel, AUTO DIM, USE SEND LEVELS and the bus,
+    matrix and main destinations; PHONES and SPEAKERS: source, SRC LEVEL, SRC MIX, DIM,
+    PFL DIM, outputs, meter and level) and CC EDIT (also SETUP pressed twice): the custom
     control layers, a function list and the target lists, COLOR, CLR ALL and NAME,
     saved with the show.
   - **LIBRARY:** the show's scenes and snippets in one list (tags, SKIP, LINK, REMOVE,
@@ -132,9 +142,12 @@ Barlow Condensed.
   (press: show it on the screen, again: next parameter; hold: on/off); CHANNEL
   EQUALIZER with SHIFT, four band encoders, BLEND/MIX, EQ and GAIN / WIDTH / FREQ;
   VIEW opens the shown slot on HOME.
-- **USB / monitoring panel** (top right): VIEW (the MONITORS screen), MONITOR LEVEL,
-  **DIM** (hold: mute the monitor) and **MONO** (hold: swap left and right); held
-  functions blink, a press ends them. Talkback and the phones level come later.
+- **USB / monitoring panel** (top right): VIEW (the MONITORS screen), TALK LEVEL,
+  PHONES LEVEL, MONITOR LEVEL, **TALK A / TALK B** (AUTO: held talks while held, a
+  short press latches; PUSH; LATCH), **DIM** (hold: mute the monitor) and **MONO**
+  (hold: swap left and right) on the selected monitoring path; held functions blink,
+  a press ends them. DCAs named MON A, MON B or MON LVL set the phones, speakers or
+  both levels.
 - **4-Channel section** (under the monitoring panel): GAIN, GATE, COMP, FILTER, F1-F3
   and PAN keys give the four strips of the right fader section an encoder and a key
   each (trim; gate / comp threshold and on; low / high cut; bus sends; pan / width and

@@ -126,15 +126,15 @@ fn studio_solos_to_the_selected_path_and_live_to_each_strips_path() {
     rig.run(4);
     assert!(close(rig.out(2), 0.75, 1e-5) && close(rig.out(4), 0.75, 1e-5), "both follow Main 1");
 
-    // STUDIO, solo bus SPEAKERS: only the speakers hear the solo.
-    c.solo_bus.store(0, Relaxed);
+    // STUDIO, solo bus SPEAKERS (B): only the speakers hear the solo.
+    c.solo_bus.store(1, Relaxed);
     rig.ch(1).params.solo.store(true, Relaxed);
     rig.run(4);
     assert!(close(rig.out(2), 0.25, 1e-5), "{}", rig.out(2));
     assert!(close(rig.out(4), 0.75, 1e-5), "{}", rig.out(4));
 
-    // PHONES: the other way round; SRC MIX keeps some of the source.
-    c.solo_bus.store(1, Relaxed);
+    // PHONES (A): the other way round; SRC MIX keeps some of the source.
+    c.solo_bus.store(0, Relaxed);
     c.phones.source.source_mix_db.store(-6.0206);
     rig.run(4);
     assert!(close(rig.out(2), 0.75, 1e-5));
@@ -151,17 +151,17 @@ fn studio_solos_to_the_selected_path_and_live_to_each_strips_path() {
     c.solo_afl.store(false, Relaxed);
     c.phones.source.pfl_dim_db.store(0.0);
 
-    // LIVE: each strip's SOLO BUS choice (A = speakers, B = phones).
+    // LIVE: each strip's SOLO BUS choice (A = phones, B = speakers).
     c.solo_mode.store(solo_mode::LIVE, Relaxed);
     rig.ch(0).params.solo.store(true, Relaxed);
-    rig.ch(0).params.monitor_bus.store(1, Relaxed);
-    rig.ch(1).params.monitor_bus.store(0, Relaxed);
+    rig.ch(0).params.monitor_bus.store(0, Relaxed);
+    rig.ch(1).params.monitor_bus.store(1, Relaxed);
     rig.run(4);
     assert!(close(rig.out(2), 0.25, 1e-5), "{}", rig.out(2));
     assert!(close(rig.out(4), 0.5, 1e-5), "{}", rig.out(4));
 
     // A path picked on MONITORS while soloing overrides them, until the solos clear.
-    c.solo_bus.store(0, Relaxed);
+    c.solo_bus.store(1, Relaxed);
     c.solo_bus_override.store(true, Relaxed);
     rig.run(4);
     assert!(close(rig.out(2), 0.75, 1e-5) && close(rig.out(4), 0.75, 1e-5));
@@ -195,8 +195,8 @@ fn monitor_paths_have_their_own_source_level_dim_and_keys() {
     assert!(close(rig.out(2), 0.5, 1e-5));
     assert!(close(rig.out(4), 0.5 * 0.25, 1e-4), "{}", rig.out(4));
 
-    // DIM, MONO and mute act on the selected path only.
-    c.solo_bus.store(1, Relaxed);
+    // DIM, MONO and mute act on the selected path only (PHONES).
+    c.solo_bus.store(0, Relaxed);
     c.monitor_dim.store(true, Relaxed);
     c.phones.dim_db.store(6.0206);
     rig.run(4);
@@ -229,7 +229,7 @@ fn dcas_named_mon_control_the_monitor_level() {
     assert!(close(rig.out(2), 0.25, 1e-4) && close(rig.out(4), 0.25, 1e-4));
     assert!(close(rig.out(0), 0.5, 1e-5), "the DCA has no members");
 
-    engine.set_dca_name(3, "MON B");
+    engine.set_dca_name(3, "MON A"); // the phones
     rig.run(4);
     assert!(close(rig.out(2), 0.5, 1e-5) && close(rig.out(4), 0.25, 1e-4));
     c.dcas[3].mute.store(true, Relaxed);
@@ -238,7 +238,7 @@ fn dcas_named_mon_control_the_monitor_level() {
     engine.set_dca_name(3, "Drums");
     rig.run(4);
     assert!(close(rig.out(4), 0.5, 1e-5));
-    engine.set_dca_name(5, "MON A");
+    engine.set_dca_name(5, "MON B");
     engine.reset();
     assert_eq!(engine.dca_monitor_paths(5), 0);
 }

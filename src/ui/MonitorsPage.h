@@ -86,7 +86,7 @@ private:
     void showTalkTab (int tab);
     void showPathTab (int tab);
 
-    // The path shown: tab 0 = PHONES (path B), 1 = SPEAKERS (path A).
+    // The path shown: tab 0 = PHONES, 1 = SPEAKERS (as the solo bus choices A, B).
     bool showsPhones() const noexcept { return pathTab == 0; }
     ld::MonitorSourceParams& pathSource() const noexcept;
     std::atomic<float>& pathLevel() const noexcept;

@@ -1,7 +1,7 @@
 //! Console-level solo and mute (SETUP > AUDIO, manual pp. 45-46):
 //!
 //! * SOLO MODE. LIVE: each soloed strip goes to the monitor path its SOLO BUS
-//!   chooses (`StripParams::monitor_bus`: A = SPEAKERS, B = PHONES, A+B), until
+//!   chooses (`StripParams::monitor_bus`: A = PHONES, B = SPEAKERS, A+B), until
 //!   a path is picked on the MONITORS screen while soloing. STUDIO: solos go
 //!   to the solo bus selected on the MONITORS screen (`solo_bus`). SIP (solo in
 //!   place): as STUDIO, and every input and aux channel that is neither soloed
@@ -33,12 +33,13 @@ pub mod solo_mode {
     pub const SIP: i32 = 2;
 }
 
-/// The monitor paths a monitor bus choice (`MONITOR_BUSES`: A, B, A+B) feeds,
-/// as a mask: bit 0 = path A (SPEAKERS), bit 1 = path B (PHONES).
+/// The monitor paths a monitor bus choice (`MONITOR_BUSES`: A = PHONES, B =
+/// SPEAKERS, A+B; the WING's PH, SPK, PH+SPK) feeds, as a mask of the engine's
+/// paths: bit 0 = SPEAKERS, bit 1 = PHONES.
 pub fn path_mask(choice: i32) -> u32 {
     match choice {
-        0 => 1,
-        1 => 2,
+        0 => 2,
+        1 => 1,
         _ => 3,
     }
 }
@@ -80,7 +81,7 @@ pub struct StripConsole {
     force: AtomicI32,
     /// The group / DCA / SIP mute cause of the last block (audio thread).
     cause: AtomicU32,
-    /// The monitor stage's solo ramp to path B (path A uses the strip's own).
+    /// The monitor stage's solo ramp to the PHONES (the SPEAKERS use the strip's own).
     pub(crate) solo_ramp_b: AtomicF32,
 }
 
@@ -215,8 +216,8 @@ mod tests {
 
     #[test]
     fn path_masks() {
-        assert_eq!(path_mask(0), 1);
-        assert_eq!(path_mask(1), 2);
+        assert_eq!(path_mask(0), 2, "A = PHONES");
+        assert_eq!(path_mask(1), 1, "B = SPEAKERS");
         assert_eq!(path_mask(2), 3);
     }
 

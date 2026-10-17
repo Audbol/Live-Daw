@@ -11,7 +11,7 @@
 //!  5. mains sum channel/aux/bus main sends                            (parallel)
 //!  6. matrices sum matrix sends from all strips + their direct input  (parallel)
 //!  7. solo (PFL/AFL per strip type, routed by the SOLO MODE) builds the solo
-//!     buses of the two monitor paths (A = SPEAKERS, B = PHONES), each with
+//!     buses of the two monitor paths (SPEAKERS and PHONES), each with
 //!     its SOURCE (Main 1 by default); then each path's level, DIM, mute,
 //!     MONO and SWAP
 //!  8. outputs are written, then safety-clipped
@@ -156,7 +156,7 @@ struct AudioState {
     hw_out_to_active: Vec<i32>,
     hw_in_ptrs: Vec<*const f32>,
     hw_out_ptrs: Vec<*mut f32>,
-    /// The monitor paths A (SPEAKERS) and B (PHONES), left and right.
+    /// The monitor paths SPEAKERS (0) and PHONES (1), left and right.
     monitor: [[Vec<f32>; 2]; 2],
     monitor_ramps: [MonitorRamps; 2],
     /// The sources' processing and the input pointers the channels read.
@@ -221,8 +221,8 @@ pub struct Engine {
     sources: SourceTable,
     /// Talkback's ramps per destination (owned by the destination tasks).
     talk_ramps: TalkRamps,
-    /// DCAs named MON A / MON B / MON LVL: bit n = DCA n+1 controls path A
-    /// (SPEAKERS), bit 16 + n path B (PHONES).
+    /// DCAs named MON A / MON B / MON LVL: bit n = DCA n+1 controls the
+    /// SPEAKERS path, bit 16 + n the PHONES path.
     dca_monitor: AtomicU32,
 }
 
@@ -245,13 +245,14 @@ fn default_name(kind: StripKind, index: usize) -> String {
     }
 }
 
-/// The monitor paths a DCA name controls (bit 0 = A, bit 1 = B): "MON A",
-/// "MON B", "MON LVL" (both), ignoring case, spaces and dots.
+/// The monitor paths a DCA name controls (bit 0 = SPEAKERS, bit 1 = PHONES):
+/// "MON A" (PHONES, path 1 on the WING), "MON B" (SPEAKERS), "MON LVL" (both),
+/// ignoring case, spaces and dots.
 pub fn monitor_dca_paths(name: &str) -> u32 {
     let key: String = name.chars().filter(|c| !matches!(c, ' ' | '.' | '_' | '-')).collect::<String>().to_ascii_uppercase();
     match key.as_str() {
-        "MONA" => 1,
-        "MONB" => 2,
+        "MONA" => 2,
+        "MONB" => 1,
         "MONLVL" => 3,
         _ => 0,
     }
@@ -574,8 +575,8 @@ impl Engine {
         self.update_monitor_dcas(&names);
     }
 
-    /// DCAs named MON A, MON B or MON LVL control the monitor level of path A
-    /// (SPEAKERS), B (PHONES) or both, as on the WING (firmware 1.09).
+    /// DCAs named MON A, MON B or MON LVL control the monitor level of the
+    /// PHONES, the SPEAKERS or both, as on the WING (firmware 1.09).
     fn update_monitor_dcas(&self, names: &GroupNames) {
         let roles = names.dcas.iter().enumerate().fold(0u32, |roles, (i, name)| {
             let paths = monitor_dca_paths(name);
@@ -584,7 +585,7 @@ impl Engine {
         self.dca_monitor.store(roles, Relaxed);
     }
 
-    /// The monitor paths (bit 0 = A, bit 1 = B) whose level DCA `i` controls.
+    /// The monitor paths (bit 0 = SPEAKERS, bit 1 = PHONES) whose level DCA `i` controls.
     pub fn dca_monitor_paths(&self, i: usize) -> u32 {
         let roles = self.dca_monitor.load(Relaxed);
         if i >= NUM_DCAS {
@@ -1016,7 +1017,7 @@ impl Engine {
         }
     }
 
-    /// Stage 7: the two monitor paths, A (SPEAKERS) and B (PHONES). Soloed
+    /// Stage 7: the two monitor paths, SPEAKERS and PHONES. Soloed
     /// strips go to the solo bus of the paths the SOLO MODE routes them to
     /// (PFL attenuated by the path's PFL DIM); each path adds its SOURCE (at
     /// SRC MIX while a solo reaches it), then its level (with the MON DCAs),

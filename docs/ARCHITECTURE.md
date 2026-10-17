@@ -9,6 +9,8 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
 ```
  hardware inputs   recorder playback channels 1-64 (PLAY n = input 0x10000 + n-1)
        │                 │
+       ▼                 ▼   sources: gain · mute · Ø · MONO / STEREO / MID-SIDE pairs
+       │                 │
        ▼                 ▼   (each input / aux channel: MAIN or ALT source, INPUT SELECT)
 ┌──────────── input channels and aux (parallel stage 1) ─────────────────────────────────┐
 │ channel: INPUT trim · balance · Ø ─ IN ─ FILTER ─ FILT                                 │
@@ -27,9 +29,10 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
  mains 1-4 (parallel stage 4: inputs + buses)                            │
     ▼                                                                    ▼
  matrices 1-8 (parallel stage 5: inputs, buses, mains + a direct input from any channel)
-    │
- solo (PFL/AFL per strip type) ─► monitor (follows Main 1 when nothing is soloed)
-    ─► level · DIM · mute · MONO / SWAP ─► monitor outputs
+    │       (talkback: the talk channel's PFL into the buses / matrices / mains of TALK A, B)
+ solo (PFL/AFL per strip type, routed by SOLO MODE) ─► monitor paths SPEAKERS and PHONES:
+    solo bus + SOURCE (Main 1 by default; SRC MIX while soloing) ─► level (+ MON DCAs)
+    · DIM · mute · talk MON DIM · MONO / SWAP (on the selected path) ─► its outputs
  every strip ─► its hardware outputs ─► output protection (safety clip)
 
  bus / main / matrix strip:
@@ -70,6 +73,39 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
   ENABLE switch in `EngineControls::automix_enable`). The audio thread computes the
   gain sharing between stages 1 and 2 (`engine.rs`, `automix`) from the post-fader level,
   so the channel fader shapes it; channels leaving automix glide back to unity.
+- **Sources** (`sources.rs`): every hardware input port (the first 576) and playback
+  channel has a source with gain, mute, polarity, +48 V (stored only), colour, icon,
+  name and a pairing with its neighbour (ports 1-2, 3-4, ...: STEREO, or MID/SIDE
+  decoded to M + S / M - S; a pair runs on its first source's settings). Before stage
+  1 the audio thread processes the sources that change their signal into buffers of
+  their own and hands those to the channels and the recorder's input streams; sources
+  at their defaults pass their port through. Changes are ramped (gains per source,
+  the mid-side matrix per pair).
+- **Solo and mute** (`solo.rs`): before stage 1 the engine works out every strip's
+  effective solo (own, a DCA's or a TALK SOLO tag) and the console's mute decision,
+  which the strip's fader stage applies over its own mute (own, mute groups, DCA
+  mutes) through `StripConsole::apply_mute`: SIP (SOLO MODE) mutes the input and aux
+  channels that are neither soloed nor SOLO SAFE while an input or aux is soloed;
+  MUTEGROUP/SIP OVERRIDE lets MUTE unmute a strip muted by a group, DCA or SIP until
+  that cause changes; TALK ON tags unmute while their talk key is on. Strips report
+  their MUTE state (`ld_strip_mute_state`; group mutes flash on the surface).
+- **Monitor paths**: SPEAKERS (the `monitor_*` fields plus `speakers`) and PHONES
+  (`phones`). Each has a SOURCE (MAIN.1-4, MTX.1-8, BUS.1-16, AUX.1-8, cross-
+  faded when changed), SRC LEVEL, SRC MIX (the source's level while a solo reaches
+  the path), PFL DIM, level, DIM amount and outputs. LIVE solos each strip to its
+  `monitor_bus` (A = PHONES, B = SPEAKERS, A+B, as the WING's PH / SPK / PH+SPK) unless a
+  path is picked while soloing
+  (`solo_bus_override`); STUDIO and SIP solo to `solo_bus`, the selected path, which
+  DIM, MUTE, MONO, SWAP and the talk MON DIM act on. DCAs named MON A / MON B / MON
+  LVL add their level (and mute) to the PHONES, the SPEAKERS or both. The solo bus feed goes through
+  `solo_tap` in `engine.rs`, the hook for solo-tap overrides (band, key, xover solo).
+- **Talkback** (`talk.rs`, `EngineControls::talk`): the talkback channel (any input or
+  aux channel; CH40 / AUX8 on SETUP) feeds its PFL copy to the buses (1-16), matrices
+  and mains each talk path selects while its key is on, at TALK LEVEL or (USE SEND
+  LEVELS) at the channel's own send levels, added to the destination's sum before its
+  processing; the buses talked to are dimmed by BUS DIM and the selected monitor path
+  by MON DIM. The application applies the keys' AUTO / PUSH / LATCH
+  (`MixerEngine::talkKey`). Talk ramps belong to the destination tasks.
 - Console-wide switches in `EngineControls`: PFL/AFL per strip type (`solo_afl` for
   input and aux channels, `bus_solo_afl`, `main_solo_afl`, `matrix_solo_afl`), the
   monitor keys (`monitor_dim` with `monitor_dim_db`, `monitor_mute`, `monitor_mono`,
@@ -110,7 +146,7 @@ views after a show load changes the console from Rust.
   engine controls are `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same
   memory as `std::atomic<float/bool/int32_t>` structs, and the UI writes them directly
   with no FFI call. Both sides describe the layout; `ld::verifyLayout()` compares the
-  two at startup and in the tests (ABI version 6), and the app refuses to run if they
+  two at startup and in the tests (ABI version 7), and the app refuses to run if they
   differ.
 - **FX slots.** The 16 slots are the WING's FX rack. Each holds one device from the
   console's FX table (`FX_MODELS`, generated like the processing models): the 26
@@ -264,6 +300,10 @@ Show
      └─ Snippet[]   State (chosen strips × chosen sections) + "fire with scene"
 ```
 
+- The console also keeps the console-level state of `livedaw-session/src/globals.rs`:
+  SOLO MODE, the solo bus and MUTEGROUP/SIP OVERRIDE, talkback, the strips' talk
+  tags and the sources (only those that differ from the defaults). The monitor paths
+  (sources, PHONES) are part of the monitor setup, which scenes recall with ROUTING.
 - Scene recall applies the state within the scene's scope and skips recall-safe strips.
   It then applies the scene's auto-fire snippets.
 - Snippets ignore recall safes, which makes them the tool for deliberately changing a
@@ -471,16 +511,14 @@ on a console.
 - No plugin delay compensation.
 - Plugins always run in stereo. A mono strip feeds both plugin inputs and takes the
   left output back (built-in devices return the average of both).
-- Solo safe and the monitor A/B bus choice are saved with the show but not used by the
-  engine yet; there is one monitor output pair.
 - Custom controls (`CustomControlsPage.*`; stored with the show by
   `livedaw-session/custom.rs`) cover the phase-1 functions: faders, pan, DCAs, bus
   sends, FX parameters, monitoring, mutes / solos, mute groups, sends on fader, pages,
   show control, scene recall and single actions; DAW, MIDI, spill, USB / SD and GPIO
   functions are listed disabled.
-- Not yet: talkback, a second monitoring path (the MONITORS screen draws them
-  disabled), source settings and MIDI remote control (WING network remote
-  control: see above).
+- Not yet: the monitor paths' DIRECT IN, EQ, INVERT, DELAY and limiter, BAND SOLO
+  boost, SOURCE SOLO, source tags and remote preamp control (drawn disabled), and MIDI
+  remote control (WING network remote control: see above).
 - Recorder: no transport without a running audio device (play stays in Starting);
   a loop change while rolling plays the old content for ~50 ms before the
   crossfade; take files are flushed every 2 s but only synced to disk when
@@ -489,8 +527,8 @@ on a console.
   Save As keeps referring to the old folder's audio instead of copying it; playback
   assumes the project's sample rate is the console's (a mismatch is flagged).
 - Shown on the screens but disabled until the engine supports them (the WING manual
-  describes them): SOLO MODE LIVE / STUDIO / SIP, TAP WIDTH and TAP EQ on sends,
-  KEY / XOVER / BAND SOLO, the RTA, the LR vector scope, the Sources screen's
-  per-source settings, partial scene load/update and restore, per-strip scene
+  describes them): TAP WIDTH and TAP EQ on sends,
+  KEY / XOVER / BAND SOLO, the RTA, the LR vector scope, partial scene load/update
+  and restore, per-strip scene
   scopes, DCA / mute group / FX safes, snippet recording, and send / FX / MIDI CC
   faders in custom layers.

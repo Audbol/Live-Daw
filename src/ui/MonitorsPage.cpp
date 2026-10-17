@@ -235,13 +235,13 @@ MonitorsPage::MonitorsPage (UiContext& c) : ctx (c)
     {
         ctx.engine.setSoloBus (choice);
         if (choice != 2)
-            showPathTab (choice == 1 ? 0 : 1);
+            showPathTab (choice);
     };
     tools = {
         { "TALK A", Icon::ChevronUp, talkYellow, [&e] { return e.isTalkOn (0); }, nullptr, {}, 0 },
         { "TALK B", Icon::ChevronUp, talkYellow, [&e] { return e.isTalkOn (1); }, nullptr, {}, 1 },
-        { "PHONES", Icon::Headphones, pathLime, [&e] { return e.soloBus.load() == 1; }, [pickPath] { pickPath (1); }, {} },
-        { "SPEAKERS", Icon::Speaker, pathLime, [&e] { return e.soloBus.load() == 0; }, [pickPath] { pickPath (0); }, {} },
+        { "PHONES", Icon::Headphones, pathLime, [&e] { return e.soloBus.load() == 0; }, [pickPath] { pickPath (0); }, {} },
+        { "SPEAKERS", Icon::Speaker, pathLime, [&e] { return e.soloBus.load() == 1; }, [pickPath] { pickPath (1); }, {} },
         { "PH+SPK", Icon::Speakers, pathLime, [&e] { return e.soloBus.load() == 2; }, [pickPath] { pickPath (2); }, {} },
         { "DIM", Icon::ChevronDown, dimGreen, [&e] { return e.monitorDim.load(); }, [&e, flip] { flip (e.monitorDim); }, {} },
         { "MUTE", Icon::Cancel, muteRed, [&e] { return e.monitorMute.load(); }, [&e, flip] { flip (e.monitorMute); }, {} },

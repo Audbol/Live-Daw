@@ -109,7 +109,7 @@ fn console_level_state_survives_a_show_round_trip() {
     assert_eq!(tags(StripKind::Channel, ch4), talk_tag::A_ON | talk_tag::SOLO);
     assert_eq!(tags(StripKind::Aux, 7), talk_tag::B_SOLO);
     assert_eq!(tags(StripKind::Channel, 1), 0);
-    assert_eq!(other.dca_monitor_paths(4), 1, "MON DCAs follow their names");
+    assert_eq!(other.dca_monitor_paths(4), 2, "MON DCAs follow their names (MON A: phones)");
 
     // Older shows (no console-level elements) load the defaults.
     let bare = xml::parse(r#"<Console version="3"><Channels/></Console>"#).unwrap();

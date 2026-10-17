@@ -169,12 +169,12 @@ public:
     //==============================================================================
     // Console level (WING SETUP > AUDIO, MONITORS, ROUTING > SOURCES), saved with
     // the show: SOLO MODE, MUTEGROUP/SIP OVERRIDE, talkback, the two monitor
-    // paths (A = SPEAKERS: monitorLevelDb ..., B = PHONES: phones) and sources.
+    // paths (SPEAKERS: monitorLevelDb ..., PHONES: phones) and sources.
 
     /** SOLO MODE (ld::SoloMode): LIVE, STUDIO (default) or SIP. */
     std::atomic<int32_t>& soloMode;
-    /** The solo bus / selected monitoring path (list 7: 0 = A SPEAKERS, 1 = B
-        PHONES, 2 = A+B): use setSoloBus() from the MONITORS keys. */
+    /** The solo bus / selected monitoring path (list 7: 0 = A PHONES, 1 = B
+        SPEAKERS, 2 = A+B): use setSoloBus() from the MONITORS keys. */
     std::atomic<int32_t>& soloBus;
     /** MUTEGROUP/SIP OVERRIDE: MUTE unmutes a strip muted by a group, DCA or SIP. */
     std::atomic<bool>& muteOverride;
@@ -203,8 +203,8 @@ public:
 
     /** Monitor SOURCE names ("MAIN.1", "MTX.3", "BUS.12", "AUX.8"). */
     static juce::String monitorSourceName (int index);
-    /** The monitor paths (bit 0 = A, bit 1 = B) whose level DCA `dca` controls
-        (named MON A, MON B or MON LVL, as on firmware 1.09). */
+    /** The monitor paths (bit 0 = SPEAKERS, bit 1 = PHONES) whose level DCA `dca`
+        controls (named MON A: PHONES, MON B: SPEAKERS, MON LVL: both; firmware 1.09). */
     uint32_t getDcaMonitorPaths (int dca) const noexcept { return ld::ld_engine_dca_monitor_paths (engine, dca); }
 
     /** Sources (ROUTING > SOURCES) by table index: hardware ports, then the

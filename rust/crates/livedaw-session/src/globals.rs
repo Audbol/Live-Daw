@@ -64,8 +64,8 @@ fn get_source(e: &Element, s: &MonitorSourceParams) {
     get_f(e, "pflDim", &s.pfl_dim_db);
 }
 
-/// The monitor paths, added to the `<Monitor>` element: path A's (SPEAKERS)
-/// SOURCE, SRC LEVEL, SRC MIX and PFL DIM as attributes, path B as `<Phones>`.
+/// The monitor paths, added to the `<Monitor>` element: the SPEAKERS path's
+/// SOURCE, SRC LEVEL, SRC MIX and PFL DIM as attributes, the PHONES as `<Phones>`.
 pub fn capture_monitor_paths(engine: &Engine, monitor: &mut Element) {
     let c = &engine.controls;
     put_source(monitor, &c.speakers);

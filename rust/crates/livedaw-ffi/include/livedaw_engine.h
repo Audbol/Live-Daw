@@ -308,7 +308,7 @@ struct MonitorSourceParams
     std::atomic<float> sourceLevelDb, sourceMixDb, pflDimDb;
 };
 
-/** Monitor path B (PHONES). Path A (SPEAKERS) is monitorLevelDb, monitorDimDb,
+/** The PHONES monitor path. The SPEAKERS path is monitorLevelDb, monitorDimDb,
     monitorOutputLeft/Right, monitorPeak plus EngineControls::speakers. */
 struct MonitorPathParams
 {
@@ -360,16 +360,16 @@ struct EngineControls
 
     // ABI 7: console level
     std::atomic<int32_t> soloMode; // SoloMode
-    /** The solo bus / selected monitoring path, as list 7 (0 = A SPEAKERS,
-        1 = B PHONES, 2 = A+B): STUDIO and SIP solo there; DIM, MUTE, MONO,
+    /** The solo bus / selected monitoring path, as list 7 (0 = A PHONES,
+        1 = B SPEAKERS, 2 = A+B): STUDIO and SIP solo there; DIM, MUTE, MONO,
         SWAP and the talk MON DIM act on it. */
     std::atomic<int32_t> soloBus;
     std::atomic<bool> soloBusOverride; // LIVE: soloBus overrides the strips until no solo is left
     std::atomic<bool> muteOverride;    // MUTEGROUP/SIP OVERRIDE
     std::atomic<bool> sipActive;       // status: SIP is muting (the SIP badge)
     TalkParams talk;
-    MonitorSourceParams speakers; // path A's SOURCE etc.
-    MonitorPathParams phones;     // path B
+    MonitorSourceParams speakers; // the SPEAKERS path's SOURCE etc.
+    MonitorPathParams phones;     // the PHONES path
 };
 
 struct LayoutInfo
@@ -769,7 +769,7 @@ extern "C"
     bool ld_strip_is_soloed (const Strip*);
     /** The MUTE key, MUTEGROUP/SIP OVERRIDE aware. */
     void ld_engine_press_mute (const Engine*, const Strip*);
-    /** Monitor paths (bit 0 = A SPEAKERS, bit 1 = B PHONES) DCA `dca` controls (named MON A / MON B / MON LVL). */
+    /** Monitor paths (bit 0 = SPEAKERS, bit 1 = PHONES) DCA `dca` controls (named MON A: PHONES, MON B: SPEAKERS, MON LVL). */
     uint32_t ld_engine_dca_monitor_paths (const Engine*, int32_t dca);
 }
 

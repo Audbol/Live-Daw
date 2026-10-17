@@ -105,8 +105,8 @@ pub unsafe extern "C" fn ld_engine_press_mute(e: *const Engine, s: *const Strip)
     }
 }
 
-/// The monitor paths (bit 0 = A SPEAKERS, bit 1 = B PHONES) whose level DCA
-/// `dca` controls (it is named MON A, MON B or MON LVL).
+/// The monitor paths (bit 0 = SPEAKERS, bit 1 = PHONES) whose level DCA `dca`
+/// controls (named MON A: PHONES, MON B: SPEAKERS, MON LVL: both).
 #[no_mangle]
 pub unsafe extern "C" fn ld_engine_dca_monitor_paths(e: *const Engine, dca: i32) -> u32 {
     engine(e).map_or(0, |e| e.dca_monitor_paths(dca.max(0) as usize))
@@ -147,7 +147,7 @@ mod tests {
 
             let mon = "MON A";
             ld_engine_set_group_name(e, 0, 2, mon.as_ptr(), mon.len());
-            assert_eq!(ld_engine_dca_monitor_paths(e, 2), 1);
+            assert_eq!(ld_engine_dca_monitor_paths(e, 2), 2);
             ld_engine_destroy(e);
         }
     }

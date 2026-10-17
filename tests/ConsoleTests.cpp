@@ -118,7 +118,7 @@ public:
             rig.run (4);
             expectWithinAbsoluteError (rig.out (4), 0.5f, 1.0e-5f);
 
-            engine.setSoloBus (0); // SPEAKERS
+            engine.setSoloBus (1); // B: SPEAKERS
             ch.params.solo = true;
             ch.params.faderDb = -100.0f;
             rig.run (4);
@@ -128,7 +128,7 @@ public:
             ch.params.faderDb = 0.0f;
 
             engine.getDca (0).faderDb = -6.0206f;
-            engine.setDcaName (0, "MON B");
+            engine.setDcaName (0, "MON A"); // the phones
             expectEquals ((int) engine.getDcaMonitorPaths (0), 2);
             rig.run (4);
             expectWithinAbsoluteError (rig.out (2), 0.5f, 1.0e-5f);
