@@ -84,7 +84,17 @@ enum class Icon
     SourcesIn,     // ROUTING: SOURCES (arrow into a ring)
     OutputsOut,    // ROUTING: OUTPUTS (arrow out of a ring)
     ChevronUp,
-    ChevronDown
+    ChevronDown,
+    // Recorder and multitrack editor
+    ReturnToStart, // |◀
+    Rewind,        // ◀◀
+    FastForward,   // ▶▶
+    Loop,          // two arrows in a loop
+    MarkerAdd,     // +I (WING-LIVE add marker)
+    MarkerPrev,    // I◀
+    MarkerNext,    // ▶I
+    SdCard,        // the WING-LIVE card (status bar)
+    Waveform       // the editor (EDIT, DAW)
 };
 
 /** Draws `icon` fitted into `area` (stroked or filled as the icon needs). */

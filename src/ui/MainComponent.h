@@ -1,5 +1,6 @@
 #pragma once
 
+#include "daw/Session.h"
 #include "ui/Controls.h"
 #include "ui/FaderSection.h"
 #include "ui/LookAndFeel.h"
@@ -13,10 +14,14 @@
 namespace livedaw::ui
 {
 
+class DawEditor;
+
 /** The window: a WING surface. Top: the channel strip section, the main
     display and the monitoring panel. Bottom: the left (12) and center (8)
     fader sections, the custom controls section and the right (4) fader
-    section, each fader section with its layer keys. */
+    section, each fader section with its layer keys. The multitrack editor
+    can take the whole window instead (Ctrl+E, EDIT on the recorder screen,
+    the surface's DAW key). */
 class MainComponent final : public juce::Component
 {
 public:
@@ -57,6 +62,11 @@ private:
     void saveShow (bool saveAs);
     void updateTitle();
 
+    /** The multitrack editor in place of the console view, or back. */
+    void showEditor (bool);
+    /** Reopens the last recording project (offering its autosave). */
+    void openLastProject();
+
     juce::AudioDeviceManager& deviceManager;
     MixerEngine& engine;
     Show& show;
@@ -64,6 +74,9 @@ private:
     juce::PropertiesFile& settings;
     MeterBank meterBank;
     UiContext ctx;
+    std::unique_ptr<daw::Session> recording;
+    std::unique_ptr<DawEditor> editor;
+    bool editorShown = false;
 
     ConsoleLookAndFeel lookAndFeel;
     juce::TooltipWindow tooltips { this };

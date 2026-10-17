@@ -12,6 +12,11 @@
 
 #include <functional>
 
+namespace livedaw::daw
+{
+class Session;
+}
+
 namespace livedaw::ui
 {
 
@@ -30,7 +35,8 @@ enum class Screen
     Faders,
     Sends,
     Config,
-    MuteGroups
+    MuteGroups,
+    Recorder     // the WING-LIVE style recorder (the status bar's LIVE card icon)
 };
 
 /** The HOME screen's tabs for the selected strip: the overview group
@@ -114,6 +120,13 @@ struct UiContext
         display ignores input. */
     std::function<void (bool locked)> setSurfaceLocked;
     std::function<bool()> isSurfaceLocked;
+
+    // Multitrack recording: the session the recorder screen, the editor and
+    // the surface's MULTI TRANSP keys share (owned by the main component).
+    daw::Session* recording = nullptr;
+    /** Shows the multitrack editor in place of the console (false: back). */
+    std::function<void (bool)> showEditor;
+    std::function<bool()> isEditorShown;
 };
 
 /** Calls ctx.layersChanged asynchronously: safe to use from a callback of a

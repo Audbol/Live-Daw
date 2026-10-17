@@ -1,4 +1,5 @@
 #include "ui/MainComponent.h"
+#include "ui/daw/DawEditor.h"
 
 namespace livedaw::ui
 {
@@ -102,6 +103,19 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     ctx.openShow = [this] { openShow(); };
     ctx.saveShow = [this] (bool saveAs) { saveShow (saveAs); };
 
+    // The recording session (the recorder screen, the editor and MULTI TRANSP share it).
+    recording = std::make_unique<daw::Session> (engine.getRecorder(), &settings);
+    recording->onMessage = [this] (const juce::String& text, bool error)
+    {
+        if (error)
+            log.warning (text);
+        else
+            log.info (text);
+    };
+    ctx.recording = recording.get();
+    ctx.showEditor = [this] (bool shown) { showEditor (shown); };
+    ctx.isEditorShown = [this] { return editorShown; };
+
     show.onChanged = [this]
     {
         if (customControls != nullptr)
@@ -145,10 +159,14 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     setSize (1680, 1000);
     refreshAll();
     updateTitle();
+    openLastProject();
 }
 
 MainComponent::~MainComponent()
 {
+    // Unsaved project changes survive the quit in the autosave (offered on the next open).
+    recording->autosave();
+    editor.reset();
     show.onChanged = nullptr;
     show.onFxCleared = nullptr;
     lockOverlay.reset();
@@ -160,6 +178,8 @@ MainComponent::~MainComponent()
     monitor.reset();
     display.reset();
     channelStrip.reset();
+    ctx.recording = nullptr;
+    recording.reset();
     setLookAndFeel (nullptr);
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
 }
@@ -306,6 +326,8 @@ void MainComponent::layoutTopRow()
 
 void MainComponent::resized()
 {
+    if (editor != nullptr)
+        editor->setBounds (getLocalBounds());
     layoutTopRow();
 
     // Auto-width sections may now hold a different number of faders.
@@ -325,28 +347,35 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
 {
     if (key.getModifiers().isCommandDown())
     {
+        // With Ctrl held, X11 gives a control code as the text and the lowercase key as the code.
         const auto c = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
-        if (c == 's' || key.getKeyCode() == 'S')
+        const auto k = juce::CharacterFunctions::toLowerCase ((juce::juce_wchar) key.getKeyCode());
+        if (c == 'e' || k == 'e')
+        {
+            showEditor (! editorShown);
+            return true;
+        }
+        if (c == 's' || k == 's')
         {
             saveShow (key.getModifiers().isShiftDown());
             return true;
         }
-        if (c == 'o' || key.getKeyCode() == 'O')
+        if (c == 'o' || k == 'o')
         {
             openShow();
             return true;
         }
-        if (c == 'g' || key.getKeyCode() == 'G')
+        if (c == 'g' || k == 'g')
         {
             logRecall (ctx, "next scene", show.recallNext());
             return true;
         }
-        if (c == 'p' || key.getKeyCode() == 'P')
+        if (c == 'p' || k == 'p')
         {
             saveScreenshot();
             return true;
         }
-        if (c == 'l' || key.getKeyCode() == 'L')
+        if (c == 'l' || k == 'l')
         {
             setSurfaceLocked (lockOverlay == nullptr);
             return true;
@@ -462,6 +491,60 @@ void MainComponent::closePluginWindowsFor (juce::AudioProcessor* p)
 void MainComponent::closeAllPluginWindows()
 {
     pluginWindows.clear();
+}
+
+//==============================================================================
+void MainComponent::showEditor (bool shown)
+{
+    if (shown && editor == nullptr)
+    {
+        editor = std::make_unique<DawEditor> (ctx, *recording);
+        editor->onClose = [this] { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MainComponent> (this)] { if (safe != nullptr) safe->showEditor (false); }); };
+        addChildComponent (*editor);
+        editor->setBounds (getLocalBounds());
+    }
+    editorShown = shown;
+    // The console's parts stay alive (and keep their state) under the editor.
+    for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) display.get(), (juce::Component*) monitor.get(),
+                                (juce::Component*) customControls.get(), (juce::Component*) &splitter })
+        c->setVisible (! shown);
+    for (auto& sec : sections)
+        sec->setVisible (! shown);
+    if (lockOverlay != nullptr)
+        lockOverlay->setVisible (! shown);
+    if (editor != nullptr)
+    {
+        editor->setVisible (shown);
+        if (shown)
+        {
+            editor->toFront (true);
+            editor->grabKeyboardFocus();
+        }
+    }
+    if (! shown)
+        grabKeyboardFocus();
+}
+
+void MainComponent::openLastProject()
+{
+    const auto recent = recording->getRecentProjects();
+    const juce::File last = recent.isEmpty() ? juce::File() : juce::File (recent[0]);
+    if (! last.existsAsFile())
+        return;
+    if (! daw::Session::hasNewerAutosave (last))
+    {
+        if (auto r = recording->openProject (last); r.failed())
+            log.warning ("Recording project: " + r.getErrorMessage());
+        return;
+    }
+    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Recording project",
+                                        "\"" + last.getFileNameWithoutExtension() + "\" has unsaved changes from the last session. Restore them?",
+                                        "RESTORE", "OPEN SAVED", this,
+                                        juce::ModalCallbackFunction::create ([this, last] (int r)
+    {
+        if (auto result = recording->openProject (last, r != 0); result.failed())
+            log.warning ("Recording project: " + result.getErrorMessage());
+    }));
 }
 
 //==============================================================================

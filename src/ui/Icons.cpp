@@ -634,6 +634,83 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
             p.addRectangle (P (0.38f, 0.1f).x, P (0.38f, 0.1f).y, s * 0.24f, s * 0.26f);
             g.strokePath (p, stroke);
             return;
+        case Icon::ReturnToStart:
+            g.fillRect (P (0.2f, 0.22f).x, P (0.2f, 0.22f).y, s * 0.1f, s * 0.56f);
+            p.addTriangle (P (0.34f, 0.5f), P (0.8f, 0.22f), P (0.8f, 0.78f));
+            g.fillPath (p);
+            return;
+        case Icon::Rewind:
+            p.addTriangle (P (0.08f, 0.5f), P (0.48f, 0.24f), P (0.48f, 0.76f));
+            p.addTriangle (P (0.48f, 0.5f), P (0.88f, 0.24f), P (0.88f, 0.76f));
+            g.fillPath (p);
+            return;
+        case Icon::FastForward:
+            p.addTriangle (P (0.12f, 0.24f), P (0.12f, 0.76f), P (0.52f, 0.5f));
+            p.addTriangle (P (0.52f, 0.24f), P (0.52f, 0.76f), P (0.92f, 0.5f));
+            g.fillPath (p);
+            return;
+        case Icon::Loop:
+        {
+            p.addRoundedRectangle (P (0.14f, 0.3f).x, P (0.14f, 0.3f).y, s * 0.72f, s * 0.4f, s * 0.2f);
+            g.strokePath (p, stroke);
+            juce::Path heads;
+            heads.addTriangle (P (0.5f, 0.2f), P (0.64f, 0.3f), P (0.5f, 0.4f));
+            heads.addTriangle (P (0.5f, 0.6f), P (0.36f, 0.7f), P (0.5f, 0.8f));
+            g.fillPath (heads);
+            return;
+        }
+        case Icon::MarkerAdd:
+        case Icon::MarkerPrev:
+        case Icon::MarkerNext:
+        {
+            // The WING-LIVE marker keys: an I-beam with a plus, or with a triangle.
+            const float cx = icon == Icon::MarkerAdd ? 0.6f : (icon == Icon::MarkerPrev ? 0.24f : 0.76f);
+            p.startNewSubPath (P (cx, 0.18f));
+            p.lineTo (P (cx, 0.82f));
+            p.startNewSubPath (P (cx - 0.12f, 0.18f));
+            p.lineTo (P (cx + 0.12f, 0.18f));
+            p.startNewSubPath (P (cx - 0.12f, 0.82f));
+            p.lineTo (P (cx + 0.12f, 0.82f));
+            if (icon == Icon::MarkerAdd)
+            {
+                p.startNewSubPath (P (0.12f, 0.38f));
+                p.lineTo (P (0.36f, 0.38f));
+                p.startNewSubPath (P (0.24f, 0.26f));
+                p.lineTo (P (0.24f, 0.5f));
+            }
+            g.strokePath (p, stroke);
+            if (icon != Icon::MarkerAdd)
+            {
+                juce::Path tri;
+                if (icon == Icon::MarkerPrev)
+                    tri.addTriangle (P (0.42f, 0.5f), P (0.8f, 0.26f), P (0.8f, 0.74f));
+                else
+                    tri.addTriangle (P (0.58f, 0.5f), P (0.2f, 0.26f), P (0.2f, 0.74f));
+                g.fillPath (tri);
+            }
+            return;
+        }
+        case Icon::SdCard:
+            p.startNewSubPath (P (0.3f, 0.1f));
+            p.lineTo (P (0.72f, 0.1f));
+            p.lineTo (P (0.72f, 0.9f));
+            p.lineTo (P (0.24f, 0.9f));
+            p.lineTo (P (0.24f, 0.2f));
+            p.closeSubPath();
+            g.strokePath (p, stroke);
+            return;
+        case Icon::Waveform:
+        {
+            const float heights[] = { 0.16f, 0.34f, 0.24f, 0.44f, 0.3f, 0.18f, 0.38f, 0.22f, 0.12f };
+            for (int i = 0; i < 9; ++i)
+            {
+                const float u = 0.1f + (float) i * 0.1f;
+                p.startNewSubPath (P (u, 0.5f - heights[i]));
+                p.lineTo (P (u, 0.5f + heights[i]));
+            }
+            g.strokePath (p, stroke);
+            return;
+        }
     }
 }
 

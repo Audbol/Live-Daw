@@ -583,8 +583,6 @@ void Session::importFiles (const juce::Array<juce::File>& files, int64 trackId, 
                 c.start = position;
                 c.name = r.name;
                 project.addClip (track.id, c);
-                if (autoCrossfade)
-                    project.crossfadeOverlaps (track.id);
                 if (placed == 0)
                     selectedTrack = track.id;
                 ++placed;
