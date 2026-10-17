@@ -47,6 +47,8 @@ private:
 
     void rebuild();
     void showSends (bool matrixPage);
+    /** PREV CH / NEXT CH: selects the strip before or after the selected one. */
+    void stepStrip (int delta);
     void openOverlay (OverlayKind);
     void closeOverlay();
     bool isAvailable (HomeTab, const Strip*) const;

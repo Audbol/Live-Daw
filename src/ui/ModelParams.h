@@ -97,6 +97,21 @@ public:
     static std::vector<Group> gateSlotGroups();
     static std::vector<Group> dynamicsSlotGroups();
 
+    /** One row of a model list: a model (its index) or a heading (-1). */
+    struct Row
+    {
+        juce::String text;
+        int model = -1;
+    };
+
+    /** The rows of the list bind() fills, for the on-screen list (W10). */
+    static std::vector<Row> rows (models::Table, const juce::StringArray& allowed = {}, const std::vector<Group>& groups = {});
+
+    /** Shows the model list as the WING's on-screen list under `anchor`
+        (headings dimmed); `onSelect` gets the chosen model. */
+    static void choose (juce::Component& anchor, models::Table, int current, std::function<void (int)> onSelect,
+                        const juce::StringArray& allowed = {}, const std::vector<Group>& groups = {});
+
 private:
     void timerCallback() override;
     std::atomic<int32_t>* model = nullptr;

@@ -52,10 +52,21 @@ protected:
     BoolButton& toggle (const juce::String& text, std::atomic<bool>& p, juce::Colour on = Colours::yellow);
     IntCombo& combo (const juce::StringArray& items, std::atomic<int32_t>* p, const juce::String& noneText = {});
     home::IconKey& key (const juce::String& text, std::optional<Icon> icon = std::nullopt, juce::Colour on = Colours::yellow);
+    /** A drop-down field for an atomic choice (0..n-1; -1 shown as `noneText`)
+        that opens the WING's on-screen list (W10). */
+    home::ChoiceField& field (const juce::String& caption, const juce::StringArray& items, std::atomic<int32_t>& value,
+                              const juce::String& noneText = {});
 
     /** Adds a panel (drawn in paint) and returns its content area. */
     juce::Rectangle<int> box (juce::Rectangle<int> area, const juce::String& title, bool chevron = false);
     void clearBoxes() { boxes.clear(); }
+
+    /** The LEVEL panel that stays at the right on OVERVIEW, ICON/COLOR, NAME
+        and TAGS: add it in the constructor, lay it out first in resized()
+        (it takes 22 % of the width; the rest is returned). */
+    home::LevelPanel& addLevelPanel();
+    juce::Rectangle<int> layoutLevelPanel (juce::Rectangle<int> area);
+    home::LevelPanel* levelPanel = nullptr;
 
     void notifyKnobs()
     {

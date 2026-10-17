@@ -505,6 +505,19 @@ pub unsafe extern "C" fn ld_strip_set_name(s: *const Strip, utf8: *const u8, len
     }
 }
 
+/// Message thread: the strip's free tags, comma-separated (free with `ld_string_free`).
+#[no_mangle]
+pub unsafe extern "C" fn ld_strip_tags(s: *const Strip) -> *mut session::LdString {
+    session::LdString::new(strip(s).map(|s| s.tags()).unwrap_or_default())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_strip_set_tags(s: *const Strip, utf8: *const u8, len: usize) {
+    if let Some(s) = strip(s) {
+        guard((), || s.set_tags(&session::str_arg(utf8, len)));
+    }
+}
+
 /// Blocks with a model: 0 = gate slot, 1 = EQ, 2 = dynamics slot, 3 = filter tool.
 #[no_mangle]
 pub unsafe extern "C" fn ld_strip_set_model(s: *const Strip, block: i32, model: i32) {

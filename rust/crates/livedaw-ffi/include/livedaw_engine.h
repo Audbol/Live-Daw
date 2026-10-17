@@ -441,6 +441,9 @@ extern "C"
     SendParams* ld_strip_find_send (const Strip*, int32_t slot);
     LdString* ld_strip_name (const Strip*);
     void ld_strip_set_name (const Strip*, const char* utf8, size_t len);
+    /** HOME > TAGS: the strip's free tags, comma-separated. */
+    LdString* ld_strip_tags (const Strip*);
+    void ld_strip_set_tags (const Strip*, const char* utf8, size_t len);
     /** block: 0 = gate slot, 1 = EQ, 2 = dynamics slot, 3 = filter tool. Loads the model's defaults. */
     void ld_strip_set_model (const Strip*, int32_t block, int32_t model);
     /** Response in dB of the EQ (block 1) or FILTER (block 3) at `count` frequencies. */

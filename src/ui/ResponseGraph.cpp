@@ -7,16 +7,70 @@ namespace livedaw::ui
 
 namespace
 {
-    const juce::Colour eqCurveColour { 0xffe8a33a };
-    const juce::Colour filterCurveColour { 0xff4aa3e0 };
-    const juce::Colour selectedBandColour { 0xff4aa3e0 };
+    // The 3.1 colours (sampled from the console's EQ and FILTER screens).
+    const juce::Colour eqCurveColour { 0xfff0a830 };
+    const juce::Colour eqFillColour { 0xff38280f };
+    const juce::Colour filterCurveColour { 0xff4890e0 };
+    const juce::Colour selectedBandColour { 0xff4890e0 };
+    const juce::Colour gridColour { 0xff383838 };
+    const juce::Colour bandLineColour { 0xff585858 };
+    const juce::Colour labelColour { 0xffc0c0c0 };
+    const juce::Colour dimLabelColour { 0xff707070 };
+    const juce::Colour allPassColour { 0xffe0d400 };
 
-    /** "50", "100", "1k", "10k" */
+    /** "20", "100", "1K", "10K" (the console writes an upper-case K). */
     juce::String rulerText (float f)
     {
-        return f >= 1000.0f ? juce::String (juce::roundToInt (f / 1000.0f)) + "k" : juce::String (juce::roundToInt (f));
+        return f >= 1000.0f ? juce::String (juce::roundToInt (f / 1000.0f)) + "K" : juce::String (juce::roundToInt (f));
+    }
+
+    /** An open ring handle (filled black when selected). */
+    void paintRing (juce::Graphics& g, juce::Point<float> c, float radius, juce::Colour colour, bool filled)
+    {
+        auto r = juce::Rectangle<float> (radius * 2.0f, radius * 2.0f).withCentre (c);
+        if (filled)
+        {
+            g.setColour (juce::Colours::black);
+            g.fillEllipse (r);
+        }
+        g.setColour (colour);
+        g.drawEllipse (r, juce::jmax (1.5f, radius * 0.28f));
     }
 } // namespace
+
+void ResponseGraph::paintPianoRuler (juce::Graphics& g, juce::Rectangle<float> area, std::function<float (float)> xForHz)
+{
+    // White keys: grey blocks parted by black lines (full height between E-F
+    // and B-C, the lower half elsewhere); black keys: dark notches on top.
+    auto noteHz = [] (float note) { return 440.0f * std::pow (2.0f, (note - 69.0f) / 12.0f); };
+    g.setColour (juce::Colour (0xff606060));
+    g.fillRect (area);
+    const float notchH = area.getHeight() * 0.55f;
+    for (int note = 15; note <= 136; ++note)
+    {
+        const int pc = note % 12;
+        const bool black = pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10;
+        const float x0 = xForHz (noteHz ((float) note - 0.5f)), x1 = xForHz (noteHz ((float) note + 0.5f));
+        if (x1 < area.getX() || x0 > area.getRight())
+            continue;
+        if (black)
+        {
+            auto k = juce::Rectangle<float> (x0, area.getY(), x1 - x0, notchH).getIntersection (area);
+            g.setColour (juce::Colours::black);
+            g.fillRect (k);
+            g.setColour (juce::Colour (0xff383838));
+            g.fillRect (k.reduced (0.75f, 0.0f).withTrimmedBottom (0.75f));
+            // The white keys' line under the black key.
+            g.setColour (juce::Colours::black);
+            g.fillRect ((x0 + x1) * 0.5f - 0.5f, area.getY() + notchH, 1.0f, area.getHeight() - notchH);
+        }
+        else if (pc == 4 || pc == 11)
+        {
+            g.setColour (juce::Colours::black);
+            g.fillRect (x1 - 0.5f, area.getY(), 1.0f, area.getHeight());
+        }
+    }
+}
 
 ResponseGraph::ResponseGraph()
 {
@@ -95,12 +149,19 @@ void ResponseGraph::timerCallback()
 juce::Rectangle<float> ResponseGraph::plot() const
 {
     // Labels only when there is room for them (the full screens); the overview
-    // panel shows the bare grid like the console. The ruler runs along the bottom.
-    auto r = getLocalBounds().toFloat().reduced (1.0f).withTrimmedBottom (juce::jlimit (5.0f, 9.0f, getHeight() * 0.035f));
+    // panel shows the bare grid like the console.
+    auto r = getLocalBounds().toFloat().reduced (1.0f);
+    const float rulerH = juce::jlimit (5.0f, 14.0f, getHeight() * 0.03f);
+    if (ruler == Ruler::Top)
+        r.removeFromTop (rulerH + juce::jmax (4.0f, getHeight() * 0.02f));
+    else if (ruler == Ruler::Bottom)
+        r.removeFromBottom (rulerH);
     if (showLabels())
-        r = r.withTrimmedLeft (24.0f).withTrimmedBottom (14.0f);
-    if (block == Filter)
-        r = r.withTrimmedTop (16.0f);
+    {
+        r.removeFromBottom (15.0f);
+        if (block == Filter || ! bands.empty())
+            r.removeFromTop (18.0f);
+    }
     return r;
 }
 
@@ -150,131 +211,117 @@ juce::Path ResponseGraph::curveOf (const std::vector<double>& db) const
 void ResponseGraph::paint (juce::Graphics& g)
 {
     const auto p = plot();
+    const auto bounds = getLocalBounds().toFloat().reduced (1.0f);
     g.fillAll (juce::Colours::black);
 
-    // Grid: a line for every 10, 20 ... 90 Hz, 100, 200 ... (brighter at the
-    // decades) and eight level divisions.
+    // Grid: a line for every 10, 20 ... 90 Hz, 100, 200 ... and four level
+    // divisions, all in the same dark grey.
+    g.setColour (gridColour);
     for (float decade : { 10.0f, 100.0f, 1000.0f, 10000.0f })
         for (int m = 1; m <= 9; ++m)
         {
             const float f = decade * (float) m;
             if (f < 20.0f || f > 20000.0f)
                 continue;
-            g.setColour (m == 1 || m == 2 || m == 5 ? juce::Colour (0xff4a4a4a) : juce::Colour (0xff2c2c2c));
             g.drawVerticalLine (juce::roundToInt (xForFreq (f)), p.getY(), p.getBottom());
         }
-    for (int i = 1; i < 8; ++i)
-    {
-        g.setColour (i == 4 ? juce::Colour (0xff5a5a5a) : juce::Colour (0xff2c2c2c));
-        g.drawHorizontalLine (juce::roundToInt (p.getY() + p.getHeight() * (float) i / 8.0f), p.getX(), p.getRight());
-    }
+    for (int i = 0; i <= 4; ++i)
+        g.drawHorizontalLine (juce::roundToInt (p.getY() + (p.getHeight() - 1.0f) * (float) i / 4.0f), p.getX(), p.getRight());
+
+    // The piano-key ruler.
+    const float rulerH = juce::jlimit (5.0f, 14.0f, getHeight() * 0.03f);
+    auto xHz = [this] (float hz) { return xForFreq (hz); };
+    if (ruler == Ruler::Top)
+        paintPianoRuler (g, juce::Rectangle<float> (p.getX(), bounds.getY(), p.getWidth(), rulerH), xHz);
+    else if (ruler == Ruler::Bottom)
+        paintPianoRuler (g, juce::Rectangle<float> (p.getX(), p.getBottom() + 1.0f, p.getWidth(), rulerH - 1.0f), xHz);
 
     if (showLabels())
     {
-        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-        g.setColour (Colours::textDim);
-        for (float f : { 20.0f, 50.0f, 100.0f, 200.0f, 300.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f, 20000.0f })
+        g.setFont (wingFont (TypeScale::meterScale * 1.25f));
+        g.setColour (labelColour);
+        for (float f : { 20.0f, 40.0f, 60.0f, 100.0f, 200.0f, 300.0f, 400.0f, 600.0f, 1000.0f, 2000.0f, 3000.0f, 4000.0f, 6000.0f, 10000.0f, 20000.0f })
         {
-            auto r = juce::Rectangle<float> (xForFreq (f) - 18.0f, (float) getHeight() - 14.0f, 36.0f, 13.0f);
+            auto r = juce::Rectangle<float> (xForFreq (f) - 18.0f, bounds.getBottom() - 14.0f, 36.0f, 13.0f);
             r = r.withX (juce::jlimit (0.0f, (float) getWidth() - r.getWidth(), r.getX()));
             const auto just = f <= 20.0f ? juce::Justification::centredLeft : (f >= 20000.0f ? juce::Justification::centredRight : juce::Justification::centred);
             g.drawText (rulerText (f), r, just);
-        }
-        if (block == Eq)
-            for (int i = -2; i <= 2; ++i)
-            {
-                const float db = kRangeDb * (float) i / 2.0f;
-                g.drawText (juce::String (juce::roundToInt (db)), juce::Rectangle<float> (0.0f, yForDb (db) - 7.0f, 20.0f, 14.0f),
-                            juce::Justification::centredRight);
-            }
-    }
-
-    // The frequency ruler along the bottom: a tick per semitone, taller at C.
-    {
-        const float top = p.getBottom() + 1.0f;
-        const float h = getLocalBounds().toFloat().reduced (1.0f).getBottom() - top - (showLabels() ? 14.0f : 0.0f);
-        for (int note = 16; note <= 135; ++note)
-        {
-            const float x = xForFreq (440.0f * std::pow (2.0f, ((float) note - 69.0f) / 12.0f));
-            if (x < p.getX() || x > p.getRight())
-                continue;
-            const bool c = note % 12 == 0;
-            g.setColour (c ? juce::Colour (0xff8a8a8a) : juce::Colour (0xff505050));
-            g.fillRect (x, top, 1.0f, c ? h : h * 0.55f);
         }
     }
 
     if (strip == nullptr)
         return;
 
-    g.saveState();
-    g.reduceClipRegion (p.toNearestInt());
     auto& f = strip->params.filter;
 
     if (block == Filter)
     {
         // The channel EQ behind, the filter in blue.
+        g.saveState();
+        g.reduceClipRegion (p.toNearestInt());
         const auto eqCurve = curveOf (eqResponse);
         g.setColour (eqCurveColour.withAlpha (strip->params.eq.on.load() ? 0.55f : 0.25f));
         g.strokePath (eqCurve, juce::PathStrokeType (1.5f));
         g.setColour (filterCurveColour);
         g.strokePath (curveOf (response), juce::PathStrokeType (juce::jlimit (2.0f, 3.0f, getHeight() / 90.0f)));
-    }
-    else
-    {
-        const auto curve = curveOf (response);
-        const bool on = strip->params.eq.on.load();
-        const auto colour = on ? eqCurveColour : Colours::textDim;
-        juce::Path fill (curve);
-        fill.lineTo (p.getRight(), yForDb (0.0f));
-        fill.lineTo (p.getX(), yForDb (0.0f));
-        fill.closeSubPath();
-        g.setColour (colour.withAlpha (on ? 0.35f : 0.15f));
-        g.fillPath (fill);
-        g.setColour (colour);
-        g.strokePath (curve, juce::PathStrokeType (juce::jlimit (1.5f, 3.0f, getHeight() / 80.0f)));
-    }
-    g.restoreState();
+        g.restoreState();
 
-    if (block == Filter)
-    {
-        // LC and HC: vertical lines labelled at the top, a round handle at the bottom.
-        const float handle = juce::jlimit (7.0f, 11.0f, getHeight() / 30.0f);
-        auto line = [&] (float freq, bool on, const char* name)
+        // LC, HC (and the all-pass AP): vertical lines labelled at the top,
+        // an open ring handle near the bottom.
+        const float radius = juce::jlimit (5.0f, 10.0f, getHeight() / 34.0f);
+        auto line = [&] (float freq, juce::Colour colour, const juce::String& name)
         {
             const float x = xForFreq (freq);
-            const auto c = on ? juce::Colours::white : juce::Colour (0xff6a6a6a);
-            g.setColour (c);
+            g.setColour (colour);
             g.fillRect (x - 1.0f, p.getY(), 2.0f, p.getHeight());
-            g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-            g.drawText (name, juce::Rectangle<float> (x - 16.0f, p.getY() - 16.0f, 32.0f, 15.0f), juce::Justification::centred);
-            g.fillEllipse (x - handle, p.getBottom() - handle * 2.0f - 2.0f, handle * 2.0f, handle * 2.0f);
-            g.setColour (juce::Colours::black);
-            g.drawEllipse (x - handle * 0.5f, p.getBottom() - handle * 1.5f - 2.0f, handle, handle, 1.5f);
+            g.setFont (wingFont (TypeScale::body));
+            g.drawText (name, juce::Rectangle<float> (x - 18.0f, p.getY() - 17.0f, 36.0f, 15.0f), juce::Justification::centred);
+            paintRing (g, { x, p.getBottom() - radius * 2.5f }, radius, colour, true);
         };
-        line (f.lowCutFreq.load(), f.lowCut.load(), "LC");
-        line (f.highCutFreq.load(), f.highCut.load(), "HC");
+        line (f.lowCutFreq.load(), f.lowCut.load() ? juce::Colours::white : dimLabelColour, "LC");
+        line (f.highCutFreq.load(), f.highCut.load() ? juce::Colours::white : dimLabelColour, "HC");
+        const auto& tool = models::model (models::FilterTools, f.toolModel.load());
+        if (tool.token.startsWith ("AP"))
+            if (const int i = tool.find ("f"); i >= 0)
+                line (f.toolParams[i].load(), f.tool.load() ? allPassColour : allPassColour.withMultipliedBrightness (0.45f), "AP");
         return;
     }
 
-    // Band handles: white "+" crosses, the selected band in blue.
+    // The EQ curve over its dark amber fill.
+    {
+        g.saveState();
+        g.reduceClipRegion (p.toNearestInt());
+        const auto curve = curveOf (response);
+        const bool on = strip->params.eq.on.load();
+        juce::Path fill (curve);
+        fill.lineTo (p.getRight(), p.getBottom() + 2.0f);
+        fill.lineTo (p.getX(), p.getBottom() + 2.0f);
+        fill.closeSubPath();
+        g.setColour (on ? eqFillColour : juce::Colour (0xff1c1c1c));
+        g.fillPath (fill);
+        g.setColour (on ? eqCurveColour : dimLabelColour);
+        g.strokePath (curve, juce::PathStrokeType (juce::jlimit (1.5f, 3.0f, getHeight() / 120.0f)));
+        g.restoreState();
+    }
+
+    // The bands: a line from the label at the top, an open ring at the gain.
     auto& values = strip->params.eq.values;
-    const float arm = juce::jlimit (4.0f, 10.0f, getHeight() / 24.0f);
+    const bool labels = showLabels();
+    const float radius = juce::jlimit (3.5f, 10.0f, getHeight() / 34.0f);
     for (size_t i = 0; i < bands.size(); ++i)
     {
         const auto& band = bands[i];
         const auto c = juce::Point<float> (xForFreq (values[band.f].load()), yForDb (values[band.g].load()));
         const bool sel = (int) i == selectedBand;
-        g.setColour (sel ? selectedBandColour : juce::Colours::white);
-        const float t = sel ? 3.0f : 2.0f;
-        g.fillRect (juce::Rectangle<float> (arm * 2.0f, t).withCentre (c));
-        g.fillRect (juce::Rectangle<float> (t, arm * 2.0f).withCentre (c));
-        if (showLabels())
+        if (labels)
         {
-            g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-            g.drawText (band.id.toUpperCase(), juce::Rectangle<float> (24.0f, 14.0f).withCentre (c.translated (arm + 8.0f, -arm - 2.0f)),
-                        juce::Justification::centred);
+            g.setColour (sel ? selectedBandColour : bandLineColour);
+            g.fillRect (juce::Rectangle<float> (sel ? 2.0f : 1.5f, p.getBottom() - p.getY() - 2.0f).withPosition (c.x - 0.75f, p.getY() + 2.0f));
+            g.setColour (sel ? juce::Colours::white : dimLabelColour);
+            g.setFont (wingFont (TypeScale::body));
+            g.drawText (band.id.toUpperCase(), juce::Rectangle<float> (24.0f, 16.0f).withCentre ({ c.x, p.getY() - 9.0f }), juce::Justification::centred);
         }
+        paintRing (g, c, radius, juce::Colours::white, sel);
     }
 }
 
@@ -305,9 +352,13 @@ int ResponseGraph::cutLineAt (juce::Point<float> pos) const
     auto& f = strip->params.filter;
     const float lc = std::abs (xForFreq (f.lowCutFreq.load()) - pos.x);
     const float hc = std::abs (xForFreq (f.highCutFreq.load()) - pos.x);
-    if (juce::jmin (lc, hc) > 16.0f)
+    float ap = 1.0e9f;
+    const auto& tool = models::model (models::FilterTools, f.toolModel.load());
+    if (const int i = tool.token.startsWith ("AP") ? tool.find ("f") : -1; i >= 0)
+        ap = std::abs (xForFreq (f.toolParams[i].load()) - pos.x);
+    if (juce::jmin (lc, hc, ap) > 16.0f)
         return -1;
-    return lc <= hc ? 0 : 1;
+    return ap < juce::jmin (lc, hc) ? 2 : (lc <= hc ? 0 : 1);
 }
 
 void ResponseGraph::mouseDown (const juce::MouseEvent& e)
@@ -335,8 +386,14 @@ void ResponseGraph::mouseDrag (const juce::MouseEvent& e)
         auto& f = strip->params.filter;
         if (dragLine == 0)
             f.lowCutFreq = juce::jlimit (20.0f, 2000.0f, freqForX (e.position.x));
-        else
+        else if (dragLine == 1)
             f.highCutFreq = juce::jlimit (200.0f, 20000.0f, freqForX (e.position.x));
+        else
+        {
+            const auto& tool = models::model (models::FilterTools, f.toolModel.load());
+            if (const int i = tool.find ("f"); i >= 0)
+                f.toolParams[i] = juce::jlimit (tool.params[(size_t) i].min, tool.params[(size_t) i].max, freqForX (e.position.x));
+        }
         repaint();
         return;
     }

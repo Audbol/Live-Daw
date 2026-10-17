@@ -105,6 +105,7 @@ fn console_survives_a_show_round_trip() {
     p.matrix[3].level_db.store(-7.0);
     p.dca_mask.store(0b100, Relaxed);
     p.mute_group_mask.store(0b10, Relaxed);
+    kick.set_tags("#Drums,Band \"A\"");
     let send = kick.sends.get_or_create(79).unwrap();
     send.enabled.store(true, Relaxed);
     send.level_db.store(-3.0);
@@ -162,6 +163,7 @@ fn console_survives_a_show_round_trip() {
     assert!(p.mains[0].on.load(Relaxed) && p.mains[1].on.load(Relaxed));
     assert_eq!(p.matrix[3].level_db.load(), -7.0);
     assert_eq!((p.dca_mask.load(Relaxed), p.mute_group_mask.load(Relaxed)), (0b100, 0b10));
+    assert_eq!(k.tags(), "#Drums,Band \"A\"");
     let send = k.sends.find(79).unwrap();
     assert!(send.enabled.load(Relaxed));
     assert_eq!((send.level_db.load(), send.mode.load(Relaxed)), (-3.0, 2));
