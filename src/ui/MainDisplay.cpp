@@ -2,6 +2,7 @@
 #include "dsp/DspUtils.h"
 #include "ui/HomeWidgets.h"
 #include "ui/Icons.h"
+#include "ui/WingPopups.h"
 
 namespace livedaw::ui
 {
@@ -16,6 +17,13 @@ namespace
                                       Screen::Setup,   Screen::Library,  Screen::Utility, Screen::Overview,
                                       Screen::Faders,  Screen::Sends,    Screen::Config,  Screen::MuteGroups,
                                       Screen::Recorder };
+
+    // SETUP's tabs (ctx.showSetupTab).
+    constexpr int kSetupAudioTab = 1;
+
+    // SETUP > GENERAL's LIGHTS tiles (percent, defaults as SETUP shows them).
+    constexpr const char* kMainLcd = "setup.brightness.mainLcd";
+    constexpr int kMainLcdDefault = 80;
 
     const char* screenName (Screen s)
     {
@@ -39,41 +47,30 @@ namespace
         return "";
     }
 
-    /** A rounded hardware key of the console's top panel; lit while toggled. */
-    class HardwareKey final : public juce::TextButton
+    /** "8:39" and "AM", or "20:39" and "" in 24-hour mode. */
+    std::pair<juce::String, juce::String> clockText (juce::PropertiesFile& settings, juce::Time t)
     {
-    public:
-        using juce::TextButton::TextButton;
+        if (uiprefs::use24h (settings))
+            return { t.formatted ("%H:%M"), {} };
+        const int h = t.getHours() % 12;
+        return { juce::String (h == 0 ? 12 : h) + t.formatted (":%M"), t.getHours() < 12 ? "AM" : "PM" };
+    }
 
-        juce::Colour litColour = juce::Colour (0xfff2f2f2);
-        bool led = false; // the blank key: an LED instead of a lit key
-
-        void paintButton (juce::Graphics& g, bool over, bool down) override
-        {
-            auto r = getLocalBounds().toFloat().reduced (1.0f);
-            const bool lit = getToggleState();
-            auto fill = lit && ! led ? litColour : juce::Colour (0xff2c2e32);
-            if (down)
-                fill = fill.brighter (0.15f);
-            else if (over)
-                fill = fill.brighter (0.06f);
-            g.setColour (fill);
-            g.fillRoundedRectangle (r, 5.0f);
-            g.setColour (juce::Colour (0xff4a4d53));
-            g.drawRoundedRectangle (r, 5.0f, 1.2f);
-            if (led)
-            {
-                g.setColour (lit ? Colours::yellow : juce::Colour (0xff3a3a3a));
-                g.fillRoundedRectangle (r.reduced (r.getWidth() * 0.32f, r.getHeight() * 0.42f), 2.0f);
-                return;
-            }
-            g.setColour (lit ? juce::Colours::black : Colours::text);
-            const auto keyText = getButtonText();
-            const bool twoLines = keyText.containsChar ('\n');
-            g.setFont (juce::FontOptions (juce::jlimit (10.0f, 15.0f, r.getHeight() * (twoLines ? 0.3f : 0.36f)), juce::Font::bold));
-            g.drawFittedText (keyText, r.toNearestInt().reduced (2, 0), juce::Justification::centred, twoLines ? 2 : 1, 0.7f);
-        }
-    };
+    /** A small badge on a corner of the title tile ("SOF" at the top right,
+        "TALKBACK" at the bottom right). */
+    void paintTabBadge (juce::Graphics& g, juce::Rectangle<float> tab, const juce::String& text, juce::Colour colour, bool top)
+    {
+        g.setColour (colour);
+        g.drawRect (tab, 2.0f);
+        const float h = juce::jmax (8.0f, tab.getHeight() * 0.3f);
+        const auto font = wingFontPx (h * 0.56f, WingWeight::SemiBold);
+        const float w = juce::GlyphArrangement::getStringWidth (font, text) + h * 0.8f;
+        const auto badge = juce::Rectangle<float> (tab.getRight() - w, top ? tab.getY() : tab.getBottom() - h, w, h);
+        g.fillRect (badge);
+        g.setColour (juce::Colours::black);
+        g.setFont (font);
+        g.drawText (text, badge, juce::Justification::centred, false);
+    }
 
     /** The style of a parameter-bar slot, completed from the binding where the
         page left it open, with the WING's colours by parameter type: levels
@@ -181,7 +178,7 @@ public:
         const float thumbH = juce::jmax (6.0f, std::round (screenH * 0.0175f));
         auto b = getLocalBounds();
         auto bar = b.removeFromBottom (juce::roundToInt (thumbH) + 2).toFloat();
-        const bool touched = isMouseOverOrDragging() || focused;
+        const bool touched = isMouseOverOrDragging() || focused || encoderTouched;
         g.setFont (wingFontPx (juce::jmin (TypeScale::paramLabel * screenH, (float) b.getHeight() * 0.5f)));
         g.setColour (touched ? Colours::gold : Colours::caption);
         g.drawFittedText (binding.label.toUpperCase(), b, juce::Justification::centredLeft, 1, 0.75f);
@@ -251,6 +248,16 @@ public:
         }
     }
 
+    /** Its encoder under the screen is touched: the label lights. */
+    void setEncoderTouched (bool t)
+    {
+        if (encoderTouched != t)
+        {
+            encoderTouched = t;
+            repaint();
+        }
+    }
+
     /** Steps the value by `clicks` detents (one step of a stepped parameter,
         1 % of the range otherwise). */
     void nudge (int clicks)
@@ -314,7 +321,112 @@ private:
     KnobStyle style;
     float position = 0.0f, dragStart = 0.0f;
     juce::String valueText;
-    bool focused = false;
+    bool focused = false, encoderTouched = false;
+};
+
+//==============================================================================
+/** A rounded hardware key of the console beside the display (the screen keys,
+    CLR SOLO, the blank ALT key); lit while toggled, the blank key with an LED.
+    A short press runs `onPress`; holding it (half a second, or a right-click)
+    runs `onHold` and keeps the key "held" for the console's two-key shortcuts:
+    a right-click holds it for a few seconds, so that the mouse can press the
+    second key. */
+class MainDisplay::ConsoleKey final : public juce::Button, private juce::Timer
+{
+public:
+    explicit ConsoleKey (const juce::String& keyText) : juce::Button (keyText) { startTimerHz (10); }
+
+    juce::Colour litColour = juce::Colour (0xfff2f2f2);
+    bool led = false; // the blank key: an LED instead of a lit key
+    std::function<void()> onPress, onHold;
+
+    /** Held down, or held with a right-click in the last few seconds. */
+    bool isHeld() const { return isDown() || juce::Time::getMillisecondCounter() < latchedUntil; }
+    void releaseHold()
+    {
+        latchedUntil = 0;
+        repaint();
+    }
+
+    void paintButton (juce::Graphics& g, bool over, bool down) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (1.0f);
+        const bool lit = getToggleState();
+        const auto unlitBody = SurfaceLighting::unlit (juce::Colour (0xff2c2e32));
+        auto fill = lit && ! led ? SurfaceLighting::lit (litColour, unlitBody) : unlitBody;
+        if (down)
+            fill = fill.brighter (0.15f);
+        else if (over)
+            fill = fill.brighter (0.06f);
+        g.setColour (fill);
+        g.fillRoundedRectangle (r, 5.0f);
+        const bool latched = juce::Time::getMillisecondCounter() < latchedUntil;
+        g.setColour (latched ? Colours::gold : juce::Colour (0xff4a4d53));
+        g.drawRoundedRectangle (r, 5.0f, latched ? 2.0f : 1.2f);
+        if (led)
+        {
+            g.setColour (lit ? SurfaceLighting::lit (Colours::ledYellow, juce::Colour (0xff3a3a3a)) : juce::Colour (0xff3a3a3a));
+            g.fillRoundedRectangle (r.reduced (r.getWidth() * 0.32f, r.getHeight() * 0.42f), 2.0f);
+            return;
+        }
+        g.setColour (lit ? juce::Colours::black : Colours::silk);
+        const auto keyText = getButtonText();
+        const bool twoLines = keyText.containsChar ('\n');
+        g.setFont (silkFont (juce::jlimit (10.0f, 15.0f, r.getHeight() * (twoLines ? 0.3f : 0.36f))));
+        g.drawFittedText (keyText, r.toNearestInt().reduced (2, 0), juce::Justification::centred, twoLines ? 2 : 1, 0.7f);
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        // A key of the surface: the screen's pop-ups close.
+        TransientPopups::closeAll();
+        holdDone = false;
+        if (e.mods.isPopupMenu() || e.mods.isCommandDown())
+        {
+            holdDone = true;
+            latchedUntil = juce::Time::getMillisecondCounter() + 4000;
+            repaint();
+            if (onHold != nullptr)
+                onHold();
+            return;
+        }
+        downAt = juce::Time::getMillisecondCounter();
+        juce::Button::mouseDown (e);
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (holdDone && ! isDown())
+            return;
+        juce::Button::mouseUp (e);
+    }
+
+private:
+    using juce::Button::clicked;
+    void clicked() override
+    {
+        if (! holdDone && onPress != nullptr)
+            onPress();
+    }
+
+    void timerCallback() override
+    {
+        if (isDown() && ! holdDone && juce::Time::getMillisecondCounter() - downAt >= 500u)
+        {
+            holdDone = true;
+            if (onHold != nullptr)
+                onHold();
+        }
+        const bool latched = juce::Time::getMillisecondCounter() < latchedUntil;
+        if (latched != shownLatched)
+        {
+            shownLatched = latched;
+            repaint();
+        }
+    }
+
+    juce::uint32 downAt = 0, latchedUntil = 0;
+    bool holdDone = false, shownLatched = false;
 };
 
 //==============================================================================
@@ -326,6 +438,8 @@ class MainDisplay::ContextKnob final : public juce::Component
 public:
     std::function<KnobBinding()> getTarget;
     std::function<void()> changed;
+    /** Gets the turns first (the brightness shortcut); true: used up. */
+    std::function<bool (int clicks)> intercept;
 
     void paint (juce::Graphics& g) override
     {
@@ -348,12 +462,16 @@ public:
         g.setColour (juce::Colour (0xff4a4d53));
         g.drawEllipse (k.reduced (d * 0.1f), 1.0f);
         const auto target = getTarget ? getTarget() : KnobBinding {};
-        g.setColour (target.isValid() ? Colours::textDim : Colours::textDim.withAlpha (0.4f));
-        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+        g.setColour (target.isValid() ? Colours::silkDim : Colours::silkDim.withAlpha (0.4f));
+        g.setFont (silkFont (11.0f));
         g.drawFittedText (target.isValid() ? target.label.toUpperCase() : juce::String(), r.toNearestInt(), juce::Justification::centred, 1, 0.6f);
     }
 
-    void mouseDown (const juce::MouseEvent&) override { lastY = 0; }
+    void mouseDown (const juce::MouseEvent&) override
+    {
+        TransientPopups::closeAll();
+        lastY = 0;
+    }
 
     void mouseDrag (const juce::MouseEvent& e) override
     {
@@ -377,24 +495,74 @@ private:
     /** `clicks` detents: one step of a stepped parameter, or 0.2 % of the range. */
     void nudge (float clicks)
     {
-        auto b = getTarget ? getTarget() : KnobBinding {};
-        if (! b.isValid() || ! b.set)
-            return;
         accumulated += clicks;
         const float whole = std::trunc (accumulated);
         if (whole == 0.0f)
             return;
         accumulated -= whole;
-        const float step = b.steps > 1.0f ? 1.0f / (b.steps - 1.0f) : 0.002f;
-        b.set (juce::jlimit (0.0f, 1.0f, b.get() + whole * step));
         angle += whole * 0.08f;
         repaint();
+        if (intercept && intercept ((int) whole))
+            return;
+        auto b = getTarget ? getTarget() : KnobBinding {};
+        if (! b.isValid() || ! b.set)
+            return;
+        const float step = b.steps > 1.0f ? 1.0f / (b.steps - 1.0f) : 0.002f;
+        b.set (juce::jlimit (0.0f, 1.0f, b.get() + whole * step));
         if (changed)
             changed();
     }
 
     int lastY = 0;
     float accumulated = 0.0f, angle = 0.0f;
+};
+
+//==============================================================================
+/** One of the six touch encoders under the screen, centred under its slot of
+    the parameter bar and bound to the same parameter. Touching it outlines the
+    control it changes and lights the slot's label. */
+class MainDisplay::Encoder final : public juce::Component
+{
+public:
+    Encoder()
+    {
+        knob.setHardware (true);
+        knob.addMouseListener (this, true);
+        addAndMakeVisible (knob);
+    }
+
+    std::function<void (bool touched)> onTouch;
+
+    void setBinding (const KnobBinding& b)
+    {
+        knob.setBinding (b);
+        knob.setEnabled (b.isValid());
+    }
+
+    void resized() override { knob.setBounds (getLocalBounds()); }
+    void mouseEnter (const juce::MouseEvent&) override { touch(); }
+    void mouseExit (const juce::MouseEvent&) override { touch(); }
+    void mouseDown (const juce::MouseEvent&) override
+    {
+        TransientPopups::closeAll();
+        touch();
+    }
+    void mouseUp (const juce::MouseEvent&) override { touch(); }
+
+private:
+    void touch()
+    {
+        const bool t = isMouseOverOrDragging (true) || knob.isMouseButtonDown (true);
+        if (t != touched)
+        {
+            touched = t;
+            if (onTouch)
+                onTouch (t);
+        }
+    }
+
+    DisplayKnob knob;
+    bool touched = false;
 };
 
 //==============================================================================
@@ -407,7 +575,6 @@ public:
     explicit MainMeter (UiContext& c) : ctx (c)
     {
         source = juce::jlimit (0, kNumMains, ctx.settings.getIntValue ("ui.mainMeter", 0));
-        setTooltip();
         startTimerHz (30);
     }
 
@@ -421,20 +588,20 @@ public:
         auto labels = r.removeFromLeft (r.getWidth() * 0.42f);
         const float barW = juce::jmin (12.0f, (r.getWidth() - 6.0f) / 2.0f);
         const float x0 = r.getX() + 2.0f;
-        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 11.0f, r.getHeight() / 22.0f), juce::Font::bold));
-        g.setColour (Colours::textDim);
+        g.setFont (silkFont (juce::jlimit (8.0f, 11.0f, r.getHeight() / 22.0f)));
+        g.setColour (Colours::silkDim);
         g.drawText ("L", juce::Rectangle<float> (x0, header.getY(), barW, header.getHeight()).toNearestInt(), juce::Justification::centred);
         g.drawText ("R", juce::Rectangle<float> (x0 + barW + 4.0f, header.getY(), barW, header.getHeight()).toNearestInt(), juce::Justification::centred);
         const float segH = r.getHeight() / 18.0f;
         for (int s = 0; s < 18; ++s)
         {
             const float y = r.getY() + (float) s * segH;
-            g.setColour (Colours::textDim);
+            g.setColour (Colours::silkDim);
             g.drawText (s == 0 ? juce::String ("CLIP") : juce::String ((int) thresholds[s]), labels.withY (y).withHeight (segH).toNearestInt(), juce::Justification::centredRight);
             for (int ch = 0; ch < 2; ++ch)
             {
                 const bool lit = level[(size_t) ch] >= thresholds[s];
-                const auto on = s == 0 ? Colours::mute : (s < 5 ? Colours::meterYellow : Colours::meterGreen);
+                const auto on = s == 0 ? Colours::meterRed : (s < 5 ? Colours::meterYellow : Colours::meterGreen);
                 g.setColour (lit ? on : juce::Colour (0xff1d1f22));
                 g.fillRect (x0 + (float) ch * (barW + 4.0f), y + 1.0f, barW, segH - 2.0f);
             }
@@ -445,17 +612,13 @@ public:
     {
         if (! e.mods.isPopupMenu() && e.getNumberOfClicks() < 2)
             return;
-        juce::PopupMenu m;
-        m.addSectionHeader ("MAIN METER");
-        m.addItem ("MONITOR", true, source == 0, [this] { choose (0); });
+        juce::StringArray items { "MONITOR" };
         for (int i = 1; i <= kNumMains; ++i)
-            m.addItem ("MAIN " + juce::String (i), true, source == i, [this, i] { choose (i); });
-        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this));
+            items.add ("MAIN " + juce::String (i));
+        popups::chooseFrom (*this, items, source, [this] (int i) { choose (i); }, { 1, {}, "MAIN METER" });
     }
 
 private:
-    void setTooltip() {}
-
     void choose (int s)
     {
         source = s;
@@ -491,8 +654,9 @@ private:
 };
 
 //==============================================================================
-/** Draws a yellow outline round the control the touched knob changes, and a
-    thinner one round the control the fine-adjust knob is on. */
+/** Draws a gold outline round the control the touched knob changes, and a
+    thinner one round the control the fine-adjust knob (or the USE CRSR/WHEEL
+    focus) is on. */
 class MainDisplay::Highlight final : public juce::Component, private juce::Timer
 {
 public:
@@ -514,10 +678,10 @@ public:
             if (c == nullptr || ! c->isShowing() || ! getParentComponent()->isParentOf (c))
                 return;
             const auto area = getLocalArea (c, c->getLocalBounds()).toFloat().expanded (2.0f);
-            g.setColour (Colours::yellow.withAlpha (alpha));
+            g.setColour (Colours::gold.withAlpha (alpha));
             g.drawRect (area, thickness);
         };
-        outline (focus.getComponent(), 1.0f, 0.6f);
+        outline (focus.getComponent(), 1.5f, 0.75f);
         outline (touched.getComponent(), 2.0f, 1.0f);
     }
 
@@ -537,54 +701,61 @@ private:
 };
 
 //==============================================================================
-/** CHANNEL SELECT (p. 30): every input channel, aux, bus, main and matrix;
-    choose one to open its Channel Home. */
-class MainDisplay::ChannelSelect final : public home::OverlayScreen
+/** CHANNEL SELECT (p. 30, firmware 1.09 quick select): every channel, aux, bus,
+    main and matrix as 112x64 tiles with input meters; the channels eight to a
+    row, aux and buses below them, the mains and matrices in two columns at the
+    right. Choose one to open its HOME. No title bar: Esc or the number box
+    closes it. */
+class MainDisplay::ChannelSelect final : public juce::Component, private juce::Timer
 {
 public:
-    explicit ChannelSelect (UiContext& c) : home::OverlayScreen ("CHANNEL SELECT"), ctx (c) {}
+    explicit ChannelSelect (UiContext& c) : ctx (c)
+    {
+        setWantsKeyboardFocus (true);
+    }
 
-    std::function<void()> chosen;
+    std::function<void()> chosen, onClose;
+
+    void visibilityChanged() override
+    {
+        if (isVisible())
+            startTimerHz (15);
+        else
+            stopTimer();
+    }
 
     void paint (juce::Graphics& g) override
     {
-        OverlayScreen::paint (g);
+        g.fillAll (juce::Colours::black);
         tiles.clear();
         auto* selected = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr;
-        auto group = [&] (juce::Rectangle<int> area, const char* caption, StripKind kind, int columns, int rows)
+
+        // WING pixels: the page is 1280 x 720 (y 80..800 of the screen).
+        const int chRows = juce::jmax (1, ((int) ctx.engine.getChannels().size() + 7) / 8);
+        const int auxRows = juce::jmax (1, ((int) ctx.engine.getAux().size() + 7) / 8);
+        const int busRows = juce::jmax (1, ((int) ctx.engine.getBuses().size() + 7) / 8);
+        const float needed = 32.0f + 72.0f * (float) (chRows + auxRows + busRows) + 40.0f + 32.0f;
+        const float kx = (float) getWidth() / 1280.0f;
+        const float ky = (float) getHeight() / 720.0f * juce::jmin (1.0f, 712.0f / needed);
+        auto tileAt = [&] (float x, float y) { return juce::Rectangle<float> (x * kx, y * ky, 112.0f * kx, 64.0f * ky); };
+
+        auto group = [&] (StripKind kind, float x0, float y0, int columns)
         {
-            g.setColour (Colours::textDim);
-            g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-            g.drawText (caption, area.removeFromTop (16), juce::Justification::centredLeft);
             const auto& list = ctx.engine.getStrips (kind);
-            const float w = (float) area.getWidth() / (float) columns, h = (float) area.getHeight() / (float) juce::jmax (1, rows);
-            for (int i = 0; i < (int) list.size() && i < columns * rows; ++i)
+            for (int i = 0; i < (int) list.size(); ++i)
             {
-                auto r = juce::Rectangle<float> ((float) area.getX() + (float) (i % columns) * w, (float) area.getY() + (float) (i / columns) * h, w, h).reduced (2.0f);
-                home::paintStripTile (g, r, *list[(size_t) i], list[(size_t) i].get() == selected);
+                const auto& s = *list[(size_t) i];
+                const auto r = tileAt (x0 + 120.0f * (float) (i % columns), y0 + 72.0f * (float) (i / columns));
+                paintWingTile (g, r, tileInfo (s, &s == selected));
                 tiles.push_back ({ r.toNearestInt(), list[(size_t) i].get() });
             }
         };
-        const int chRows = juce::jmax (1, ((int) ctx.engine.getChannels().size() + 7) / 8);
-        const int busRows = juce::jmax (1, ((int) ctx.engine.getBuses().size() + 7) / 8);
-        auto left = gridLeft, right = gridRight;
-        group (left, "CHANNEL", StripKind::Channel, 8, chRows);
-        // AUX, BUS, then MAIN and MATRIX: rows as tall as the channels' where they fit.
-        const int unit = juce::jmin ((right.getHeight() - 3 * 16) / (2 + busRows), (left.getHeight() - 16) / chRows);
-        group (right.removeFromTop (unit * 1 + 16), "AUX", StripKind::Aux, 8, 1);
-        group (right.removeFromTop (unit * busRows + 16), "BUS", StripKind::Bus, 8, busRows);
-        auto last = right.removeFromTop (unit + 16);
-        group (last.removeFromLeft (last.getWidth() * 4 / 12), "MAIN", StripKind::Main, 4, 1);
-        last.removeFromLeft (8);
-        group (last, "MATRIX", StripKind::Matrix, 8, 1);
-    }
-
-    void layoutContent (juce::Rectangle<int> b) override
-    {
-        b = b.reduced (6, 0);
-        gridLeft = b.removeFromLeft (b.getWidth() / 2 - 6);
-        b.removeFromLeft (12);
-        gridRight = b;
+        group (StripKind::Channel, 20.0f, 32.0f, 8);
+        const float auxY = 32.0f + 72.0f * (float) chRows + 40.0f;
+        group (StripKind::Aux, 20.0f, auxY, 8);
+        group (StripKind::Bus, 20.0f, auxY + 72.0f * (float) auxRows + 32.0f, 8);
+        group (StripKind::Main, 1004.0f, 32.0f, 1);
+        group (StripKind::Matrix, 1148.0f, 32.0f, 1);
     }
 
     void mouseUp (const juce::MouseEvent& e) override
@@ -600,9 +771,39 @@ public:
             }
     }
 
+    bool keyPressed (const juce::KeyPress& k) override
+    {
+        if (k == juce::KeyPress::escapeKey && onClose)
+        {
+            onClose();
+            return true;
+        }
+        return false;
+    }
+
 private:
+    WingTileInfo tileInfo (const Strip& s, bool selected) const
+    {
+        WingTileInfo t;
+        t.colour = stripDisplayColour (s);
+        t.name = home::hasDefaultName (s) ? juce::String() : stripName (s);
+        t.label = home::shortLabel (s);
+        t.boxed = s.isInput();
+        t.wingIcon = s.params.icon.load();
+        if ((s.isInput() && stripHasSource (s)) || s.getKind() == StripKind::Main)
+            t.kindIcon = stripIcon (s.getKind());
+        // Firmware 3.0: "Channel select overlay metering set to input".
+        float peak = 0.0f;
+        for (int ch = 0; ch < 2; ++ch)
+            peak = juce::jmax (peak, ctx.meters.get (&s, true, ch));
+        t.meter = juce::jlimit (0.0f, 1.0f, (dsp::gainToDb (peak) + 60.0f) / 60.0f);
+        t.selected = selected;
+        return t;
+    }
+
+    void timerCallback() override { repaint(); }
+
     UiContext& ctx;
-    juce::Rectangle<int> gridLeft, gridRight;
     std::vector<std::pair<juce::Rectangle<int>, Strip*>> tiles;
 };
 
@@ -639,6 +840,41 @@ private:
 };
 
 //==============================================================================
+/** A layer over the screen: the pop-up layer (clicks pass through where there's
+    no pop-up), the touch blocker (swallows every click while touch is off) or
+    the MAIN LCD brightness scrim (translucent black, never takes clicks). */
+class MainDisplay::Overlay final : public juce::Component
+{
+public:
+    enum class Kind
+    {
+        Popups,
+        Blocker,
+        Scrim
+    };
+
+    explicit Overlay (Kind k) : kind (k) { setInterceptsMouseClicks (kind == Kind::Blocker, kind == Kind::Popups); }
+
+    ~Overlay() override
+    {
+        // Pop-ups still open live in this layer: they go with it.
+        while (getNumChildComponents() > 0)
+            delete getChildComponent (0);
+    }
+
+    float alpha = 0.0f;
+
+    void paint (juce::Graphics& g) override
+    {
+        if (kind == Kind::Scrim && alpha > 0.002f)
+            g.fillAll (juce::Colours::black.withAlpha (alpha));
+    }
+
+private:
+    Kind kind;
+};
+
+//==============================================================================
 MainDisplay::MainDisplay (UiContext& c) : ctx (c)
 {
     home = std::make_unique<HomePage> (ctx);
@@ -666,10 +902,16 @@ MainDisplay::MainDisplay (UiContext& c) : ctx (c)
 
     for (auto s : screens)
     {
-        auto* b = screenButtons.add (new HardwareKey (screenName (s)));
-        b->onClick = [this, s] { showScreen (s); };
+        auto* b = screenButtons.add (new ConsoleKey (screenName (s)));
+        b->onPress = [this, s] { screenKeyPressed (s); };
         addAndMakeVisible (b);
     }
+    // Hold HOME: surface lock.
+    screenButtons[0]->onHold = [this]
+    {
+        if (ctx.setSurfaceLocked && ctx.isSurfaceLocked)
+            ctx.setSurfaceLocked (! ctx.isSurfaceLocked());
+    };
 
     for (int i = 0; i < 6; ++i)
     {
@@ -691,21 +933,49 @@ MainDisplay::MainDisplay (UiContext& c) : ctx (c)
             highlight->repaint();
         };
         addAndMakeVisible (slot);
+
+        auto* encoder = encoders.add (new Encoder());
+        encoder->onTouch = [this, i, slot] (bool touched)
+        {
+            slot->setEncoderTouched (touched);
+            if (touched)
+            {
+                touchedSlot = i;
+                highlight->touched = slot->getStyle().target;
+            }
+            else if (touchedSlot == i)
+            {
+                touchedSlot = -1;
+                highlight->touched = nullptr;
+            }
+            highlight->repaint();
+        };
+        addAndMakeVisible (encoder);
     }
 
     // Right of the display: CLR SOLO, the main meter, the knob, the blank key.
-    clearSoloKey = std::make_unique<HardwareKey> ("CLR\nSOLO");
-    static_cast<HardwareKey*> (clearSoloKey.get())->litColour = Colours::yellow;
-    clearSoloKey->onClick = [this] { clearSolo(); };
+    clearSoloKey = std::make_unique<ConsoleKey> ("CLR\nSOLO");
+    clearSoloKey->litColour = Colours::ledYellow;
+    clearSoloKey->onPress = [this] { clearSoloPressed(); };
     clearSoloKey->setTooltip ("Release every channel and bus on the solo bus");
     addAndMakeVisible (*clearSoloKey);
     mainMeter = std::make_unique<MainMeter> (ctx);
     addAndMakeVisible (*mainMeter);
     contextKnob = std::make_unique<ContextKnob>();
+    contextKnob->intercept = [this] (int clicks)
+    {
+        // Hold ALT and turn the knob: the display's brightness (MAIN LCD).
+        if (! blankKey->isHeld())
+            return false;
+        const int now = ctx.settings.getIntValue (kMainLcd, kMainLcdDefault);
+        ctx.settings.setValue (kMainLcd, juce::jlimit (5, 100, now + clicks));
+        applyLighting();
+        return true;
+    };
     addAndMakeVisible (*contextKnob);
-    blankKey = std::make_unique<HardwareKey> ("");
-    static_cast<HardwareKey*> (blankKey.get())->led = true;
-    blankKey->onClick = [this] { page (screen)->blankKeyPressed(); };
+    blankKey = std::make_unique<ConsoleKey> ("");
+    blankKey->led = true;
+    blankKey->onPress = [this] { page (screen)->blankKeyPressed(); };
     addAndMakeVisible (*blankKey);
 
     channelSelect = std::make_unique<ChannelSelect> (ctx);
@@ -718,12 +988,33 @@ MainDisplay::MainDisplay (UiContext& c) : ctx (c)
     addAndMakeVisible (*highlight);
     focusTracker = std::make_unique<FocusTracker> (*this);
 
+    popupLayer = std::make_unique<Overlay> (Overlay::Kind::Popups);
+    addAndMakeVisible (*popupLayer);
+    touchBlocker = std::make_unique<Overlay> (Overlay::Kind::Blocker);
+    addChildComponent (*touchBlocker);
+    lcdScrim = std::make_unique<Overlay> (Overlay::Kind::Scrim);
+    lcdScrim->setInterceptsMouseClicks (false, false);
+    addAndMakeVisible (*lcdScrim);
+
+    popups::setPopupLayerProvider ([this] (juce::Component& host) -> juce::Component*
+    {
+        return &host == this || isParentOf (&host) ? popupLayer.get() : nullptr;
+    });
+    ctx.setFineTarget = [this] (const KnobBinding& b, juce::Component* target) { setFineTarget (b, target); };
+    ctx.moveScreenFocus = [this] (int dx, int dy) { moveFocus (dx, dy); };
+    ctx.turnScreenFocus = [this] (int steps) { turnFocus (steps); };
+
+    applyLighting();
     showScreen (Screen::Home);
     startTimerHz (4);
 }
 
 MainDisplay::~MainDisplay()
 {
+    ctx.setFineTarget = nullptr;
+    ctx.moveScreenFocus = nullptr;
+    ctx.turnScreenFocus = nullptr;
+    popups::setPopupLayerProvider (nullptr);
     focusTracker.reset();
 }
 
@@ -752,10 +1043,14 @@ void MainDisplay::showScreen (Screen s)
 {
     screen = s;
     showChannelSelect (false);
+    focusIndex = -1;
     for (auto sc : allScreens)
         page (sc)->setVisible (sc == s);
+    // The screen keys light for their screen; UTILITY only where it does
+    // something (the timer keeps it up to date).
     for (size_t i = 0; i < std::size (screens); ++i)
-        screenButtons[(int) i]->setToggleState (screens[i] == s, juce::dontSendNotification);
+        if (screens[i] != Screen::Utility)
+            screenButtons[(int) i]->setToggleState (screens[i] == s, juce::dontSendNotification);
     page (s)->refresh();
     updateFrame();
     updateKnobs();
@@ -770,6 +1065,64 @@ void MainDisplay::showHomeTab (HomeTab t)
     home->showTab (t);
     updateKnobs();
     repaint();
+}
+
+void MainDisplay::screenKeyPressed (Screen s)
+{
+    if (s == Screen::Utility)
+    {
+        utilityPressed();
+        return;
+    }
+    // SETUP pressed again: CUSTOM CONTROLS (firmware 3.1).
+    if (s == Screen::Setup && screen == Screen::Setup && ctx.showCustomControls)
+    {
+        ctx.showCustomControls (-1);
+        return;
+    }
+    showScreen (s);
+}
+
+void MainDisplay::utilityPressed()
+{
+    // Hold CLR SOLO and press UTILITY: a screenshot of the display.
+    if (clearSoloKey->isHeld())
+    {
+        clearSoloKey->releaseHold();
+        if (ctx.takeScreenshot)
+            ctx.takeScreenshot();
+        return;
+    }
+    // "The UTILITY button only lights up where it serves a specific function."
+    if (auto* p = page (screen); p->hasUtilityFunction())
+        p->utilityPressed();
+    else
+        showScreen (Screen::Utility); // the system health page, until it moves to SETUP
+}
+
+void MainDisplay::clearSoloPressed()
+{
+    // SETUP + ALT + CLR SOLO: touch off; ALT + CLR SOLO: touch on again.
+    if (blankKey->isHeld())
+    {
+        const bool setupHeld = screenButtons[4]->isHeld();
+        if (touchDisabled || setupHeld)
+            setTouchDisabled (! touchDisabled);
+        blankKey->releaseHold();
+        screenButtons[4]->releaseHold();
+        return;
+    }
+    clearSolo();
+}
+
+void MainDisplay::setTouchDisabled (bool off)
+{
+    touchDisabled = off;
+    touchBlocker->setVisible (off);
+    if (off)
+        touchBlocker->toFront (false);
+    lcdScrim->toFront (false);
+    repaint (statusArea);
 }
 
 void MainDisplay::refresh()
@@ -803,7 +1156,11 @@ void MainDisplay::updateKnobs()
     const auto bindings = p->getKnobs();
     const auto styles = p->getKnobStyles();
     for (size_t i = 0; i < 6; ++i)
-        slots[(int) i]->setBinding (i < bindings.size() ? bindings[i] : KnobBinding {}, i < styles.size() ? styles[i] : KnobStyle {});
+    {
+        const auto b = i < bindings.size() && p->usesKnobs() ? bindings[i] : KnobBinding {};
+        slots[(int) i]->setBinding (b, i < styles.size() ? styles[i] : KnobStyle {});
+        encoders[(int) i]->setBinding (b);
+    }
     if (touchedSlot >= 0)
         highlight->touched = slots[touchedSlot]->getStyle().target;
     highlight->repaint();
@@ -817,6 +1174,104 @@ void MainDisplay::setFocus (const KnobBinding& b, juce::Component* target)
     highlight->repaint();
 }
 
+void MainDisplay::setFineTarget (const KnobBinding& b, juce::Component* target)
+{
+    setFocus (b, target);
+}
+
+//==============================================================================
+// USE CRSR/WHEEL: the focus frame.
+
+std::vector<juce::Component*> MainDisplay::focusTargets() const
+{
+    std::vector<juce::Component*> targets;
+    for (auto* slot : slots)
+        if (slot->isVisible() && slot->getBinding().isValid())
+            targets.push_back (slot);
+
+    // The knobs on the page, top to bottom, then left to right.
+    std::vector<juce::Component*> knobs;
+    std::function<void (juce::Component&)> collect = [&] (juce::Component& c)
+    {
+        for (auto* child : c.getChildren())
+        {
+            if (! child->isVisible())
+                continue;
+            if (dynamic_cast<DisplayKnob*> (child) != nullptr || dynamic_cast<home::KnobBox*> (child) != nullptr)
+                knobs.push_back (child);
+            else
+                collect (*child);
+        }
+    };
+    collect (*page (screen));
+    std::sort (knobs.begin(), knobs.end(), [this] (juce::Component* a, juce::Component* b)
+    {
+        const auto ra = getLocalArea (a, a->getLocalBounds()), rb = getLocalArea (b, b->getLocalBounds());
+        if (std::abs (ra.getY() - rb.getY()) > juce::jmin (ra.getHeight(), rb.getHeight()) / 2)
+            return ra.getY() < rb.getY();
+        return ra.getX() < rb.getX();
+    });
+    targets.insert (targets.end(), knobs.begin(), knobs.end());
+    return targets;
+}
+
+void MainDisplay::moveFocus (int dx, int dy)
+{
+    const auto targets = focusTargets();
+    if (targets.empty())
+        return;
+    int index = juce::jlimit (-1, (int) targets.size() - 1, focusIndex);
+    if (index < 0)
+        index = 0;
+    else if (dx != 0)
+        index = (index + dx + (int) targets.size()) % (int) targets.size();
+    else if (dy != 0)
+    {
+        // The nearest target above or below the current one.
+        const auto from = getLocalArea (targets[(size_t) index], targets[(size_t) index]->getLocalBounds()).getCentre();
+        int best = index;
+        float bestDistance = std::numeric_limits<float>::max();
+        for (int i = 0; i < (int) targets.size(); ++i)
+        {
+            const auto c = getLocalArea (targets[(size_t) i], targets[(size_t) i]->getLocalBounds()).getCentre();
+            const int ddy = c.y - from.y;
+            if (ddy == 0 || (ddy > 0) != (dy > 0))
+                continue;
+            const float distance = (float) std::abs (ddy) + 2.0f * (float) std::abs (c.x - from.x);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = i;
+            }
+        }
+        index = best;
+    }
+    focusIndex = index;
+
+    auto* target = targets[(size_t) index];
+    for (auto* slot : slots)
+        slot->setFocused (slot == target);
+    if (auto* slot = dynamic_cast<ParamBarSlot*> (target))
+        setFocus (slot->getBinding(), slot->getStyle().target.getComponent() != nullptr ? slot->getStyle().target.getComponent() : slot);
+    else if (auto* k = dynamic_cast<DisplayKnob*> (target))
+        setFocus (k->getBinding(), k);
+    else if (auto* box = dynamic_cast<home::KnobBox*> (target))
+        setFocus (box->getBinding(), box);
+}
+
+void MainDisplay::turnFocus (int steps)
+{
+    if (focusIndex < 0)
+        moveFocus (0, 0);
+    auto b = contextKnob->getTarget ? contextKnob->getTarget() : KnobBinding {};
+    if (! b.isValid() || ! b.set)
+        return;
+    // Like a knob: one step of a stepped parameter, 1 % of the range otherwise.
+    const float step = b.steps > 1.0f ? 1.0f / (b.steps - 1.0f) : 0.01f;
+    b.set (juce::jlimit (0.0f, 1.0f, b.get() + (float) steps * step));
+}
+
+//==============================================================================
 void MainDisplay::clearSolo()
 {
     for (int k = 0; k < kNumStripKinds; ++k)
@@ -833,28 +1288,74 @@ void MainDisplay::showChannelSelect (bool show)
     channelSelect->setVisible (show);
     if (show)
     {
-        channelSelect->toFront (false);
+        channelSelect->toFront (true);
         highlight->toFront (false);
+        popupLayer->toFront (false);
+        if (touchDisabled)
+            touchBlocker->toFront (false);
+        lcdScrim->toFront (false);
     }
     repaint (statusArea);
 }
 
+void MainDisplay::applyLighting()
+{
+    // SETUP > GENERAL's LIGHTS: MAIN LCD dims the screen; BTNS/LEDS and
+    // BACKLIGHT the lit and unlit keys of the surface.
+    const float lcd = (float) juce::jlimit (0, 100, ctx.settings.getIntValue (kMainLcd, kMainLcdDefault)) / 100.0f;
+    const float alpha = (1.0f - lcd) * 0.8f;
+    if (std::abs (alpha - lcdScrim->alpha) > 0.002f)
+    {
+        lcdScrim->alpha = alpha;
+        lcdScrim->repaint();
+    }
+    const float leds = (float) juce::jlimit (0, 100, ctx.settings.getIntValue ("setup.brightness.btnsLeds", 90)) / 100.0f;
+    const float backlight = (float) juce::jlimit (0, 100, ctx.settings.getIntValue ("setup.brightness.backlight", 25)) / 100.0f;
+    if (std::abs (leds - SurfaceLighting::leds()) > 0.001f || std::abs (backlight - SurfaceLighting::backlight()) > 0.001f)
+    {
+        SurfaceLighting::leds() = leds;
+        SurfaceLighting::backlight() = backlight;
+        if (auto* top = getTopLevelComponent())
+            top->repaint();
+    }
+}
+
 void MainDisplay::timerCallback()
 {
-    const auto time = juce::Time::getCurrentTime().formatted ("%H:%M:%S");
+    ++ticks;
+    const auto now = juce::Time::getCurrentTime();
+    const auto time = now.formatted ("%H:%M:%S") + (uiprefs::use24h (ctx.settings) ? "" : "h") + (uiprefs::dayFirst (ctx.settings) ? "d" : "");
     // Repaint the status bar when anything it shows changes.
     // Unsigned, so the mixing may wrap around.
     juce::uint32 hash = 0;
     if (auto* s = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr)
-        hash = (juce::uint32) juce::DefaultHashFunctions::generateHash (describeStrip (*s) + juce::String (s->getColourIndex()), 1 << 30);
+        hash = (juce::uint32) juce::DefaultHashFunctions::generateHash (describeStrip (*s) + juce::String (s->getColourIndex())
+                                                                            + juce::String (s->params.icon.load()) + (stripHasSource (*s) ? "s" : ""),
+                                                                        1 << 30);
     hash = hash * 31u + (juce::uint32) juce::roundToInt (ctx.engine.getDspLoad() * 100.0f);
     hash = hash * 31u + (juce::uint32) ctx.engine.getNumFaultedFx();
     hash = hash * 31u + (ctx.deviceManager.getCurrentAudioDevice() != nullptr ? 1u : 0u);
+    hash = hash * 31u + (ctx.sendsOnFader ? 1u : 0u) + (ctx.settings.getBoolValue (uiprefs::showSofFrame, false) ? 2u : 0u);
+    hash = hash * 31u + (juce::uint32) ctx.show.getCurrentSceneIndex() + (ctx.settings.getBoolValue (uiprefs::alwaysShowScene, false) ? 1000u : 0u);
     if (ctx.recording != nullptr)
     {
         const auto recState = ctx.recording->getState();
         hash = hash * 31u + (juce::uint32) recState + (recState == Recorder::State::Recording && blink ? 7u : 0u);
+        if (ticks % 8 == 0)
+            liveWritable = ctx.recording->getProjectsFolder().hasWriteAccess();
+        hash = hash * 31u + (liveWritable ? 1u : 0u);
     }
+
+    // The chips tile flashes (1 Hz) while there are FX faults nobody has looked at.
+    const int faults = ctx.engine.getNumFaultedFx();
+    acknowledgedFaults = juce::jmin (acknowledgedFaults, faults);
+    flash = faults > acknowledgedFaults && (ticks / 2) % 2 == 0;
+    hash = hash * 31u + (flash ? 1u : 0u);
+
+    // The title tile follows the page.
+    const auto title = page (screen)->getStatusTitle();
+    hash = hash * 31u + (juce::uint32) juce::DefaultHashFunctions::generateHash (title.prefix + "|" + title.text + juce::String ((int) title.kind)
+                                                                                     + juce::String ((int) title.fill.getARGB()), 1 << 30);
     if (time != shownTime || hash != shownHash)
     {
         shownTime = time;
@@ -863,141 +1364,273 @@ void MainDisplay::timerCallback()
     }
 
     // CLR SOLO blinks while anything is soloed; the blank key's LED shows
-    // whether the screen gives it a function.
+    // whether the screen gives it a function, UTILITY's likewise.
     blink = ! blink;
     clearSoloKey->setToggleState (ctx.engine.anySoloActive.load() && blink, juce::dontSendNotification);
     blankKey->setToggleState (page (screen)->hasBlankKeyFunction(), juce::dontSendNotification);
+    screenButtons[(int) std::size (screens) - 1]->setToggleState (page (screen)->hasUtilityFunction(), juce::dontSendNotification);
+    applyLighting();
+}
+
+juce::Rectangle<int> MainDisplay::wingRect (float x, float y, float w, float h) const
+{
+    // WING screen pixels (1280 x 800) to the screen area.
+    const float kx = (float) screenArea.getWidth() / 1280.0f, ky = (float) screenArea.getHeight() / 800.0f;
+    return juce::Rectangle<float> ((float) screenArea.getX() + x * kx, (float) screenArea.getY() + y * ky, w * kx, h * ky).toNearestInt();
+}
+
+//==============================================================================
+// The status bar (firmware 3.1): the title tile, the audio status, USB, the
+// WING-LIVE cards, the screen's keys and the clock, all #202020 tiles.
+
+void MainDisplay::paintTitleTile (juce::Graphics& g)
+{
+    const float k = (float) screenArea.getHeight() / 800.0f;
+    auto tab = channelTab.toFloat();
+    const float corner = 4.0f * k;
+    const float bigCap = TypeScale::statusTitle * (float) screenArea.getHeight();
+    const auto bigFont = wingFontPx (bigCap, WingWeight::SemiBold);
+
+    // ALWAYS SHOW ACTIVE SCENE: the scene's name on the SNAP colour.
+    const int sceneIndex = ctx.show.getCurrentSceneIndex();
+    if (ctx.settings.getBoolValue (uiprefs::alwaysShowScene, false) && sceneIndex >= 0)
+    {
+        if (const auto scene = ctx.show.getScene (sceneIndex))
+        {
+            g.setColour (FileColours::snap);
+            g.fillRoundedRectangle (tab, corner);
+            auto t = tab.reduced (12.0f * k, 6.0f * k);
+            g.setColour (juce::Colours::black);
+            g.setFont (wingFontPx (TypeScale::statusCaption * (float) screenArea.getHeight()));
+            g.drawText ("INT:", t.removeFromTop (t.getHeight() * 0.3f), juce::Justification::centredLeft, false);
+            g.setFont (bigFont);
+            g.drawFittedText (scene->name, t.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+            return;
+        }
+    }
+
+    const auto title = page (screen)->getStatusTitle();
+    auto* strip = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr;
+    auto t = tab.reduced (10.0f * k, 10.0f * k);
+    const float h = t.getHeight();
+
+    auto drawText = [&] (const juce::String& text, juce::Colour ink, juce::Rectangle<float>& area)
+    {
+        g.setColour (ink);
+        g.setFont (bigFont);
+        g.drawFittedText (text, area.toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
+    };
+
+    if (title.kind == StatusTitle::Kind::Channel)
+    {
+        // The selected strip's tile, in its colour (dimmed without a source).
+        const auto colour = strip != nullptr ? stripDisplayColour (*strip) : Colours::screenTile;
+        const auto ink = colour.getPerceivedBrightness() > 0.3f ? juce::Colours::black : Colours::text;
+        g.setColour (colour);
+        g.fillRoundedRectangle (tab, corner);
+        if (strip != nullptr)
+        {
+            const auto label = home::shortLabel (*strip);
+            if (strip->isOutput())
+            {
+                // Buses, mains and matrices: the short label without a box, then the name.
+                auto labelArea = t.removeFromLeft (juce::jmax (h * 2.0f, juce::GlyphArrangement::getStringWidth (bigFont, label) + 16.0f * k));
+                drawText (label, ink, labelArea);
+                if (! home::hasDefaultName (*strip))
+                    drawText (stripName (*strip), ink, t);
+            }
+            else
+            {
+                // The number in a black box, in the strip's colour, filling the box.
+                const auto numberFont = wingFontPx (juce::jmin (bigCap, h * 0.66f), WingWeight::SemiBold);
+                const float boxW = juce::jmax (60.0f * k, juce::GlyphArrangement::getStringWidth (numberFont, label) + 18.0f * k);
+                auto box = t.removeFromLeft (boxW);
+                g.setColour (juce::Colours::black);
+                g.fillRect (box);
+                g.setColour (strip->getColour().getPerceivedBrightness() < 0.25f ? strip->getColour().brighter (0.6f) : strip->getColour());
+                g.setFont (numberFont);
+                g.drawText (label, box, juce::Justification::centred, false);
+                t.removeFromLeft (16.0f * k);
+                auto iconArea = t.removeFromLeft (h * 1.15f).withSizeKeepingCentre (h * 1.15f, h * 1.15f);
+                if (! drawWingIcon (g, strip->params.icon.load(), iconArea, ink))
+                    drawIcon (g, stripIcon (strip->getKind()), iconArea.reduced (h * 0.08f), ink);
+                t.removeFromLeft (12.0f * k);
+                if (! home::hasDefaultName (*strip))
+                    drawText (stripName (*strip), ink, t);
+            }
+        }
+    }
+    else
+    {
+        // ROUTING's sources and outputs (grey), the VIEW screens' layer (dark,
+        // grey text), or a plain title (CUSTOM CONTROLS, MUTE GROUPS).
+        const bool source = title.kind == StatusTitle::Kind::Source;
+        const bool layer = title.kind == StatusTitle::Kind::Layer;
+        const auto fill = ! title.fill.isTransparent() ? title.fill : (source ? juce::Colour (0xff8a8a8a) : Colours::screenTile);
+        const auto ink = ! title.ink.isTransparent() ? title.ink : (source ? juce::Colours::black : (layer ? Colours::textDim : Colours::caption));
+        g.setColour (fill);
+        g.fillRoundedRectangle (tab, corner);
+        t.removeFromLeft (6.0f * k);
+        if (title.prefix.isNotEmpty())
+        {
+            auto prefixArea = t.removeFromLeft (juce::GlyphArrangement::getStringWidth (bigFont, title.prefix) + 14.0f * k);
+            drawText (title.prefix, ink, prefixArea);
+        }
+        const auto icon = title.icon.has_value() ? title.icon : (source ? std::optional<Icon> (Icon::Xlr) : (layer ? std::optional<Icon> (Icon::Layers) : std::nullopt));
+        if (icon.has_value())
+        {
+            drawIcon (g, *icon, t.removeFromLeft (h).reduced (h * 0.08f), ink);
+            t.removeFromLeft (12.0f * k);
+        }
+        drawText (title.text, ink, t);
+    }
+
+    // SHOW SOF FRAME: a frame and a SOF badge while Sends on Fader is on.
+    if (ctx.sendsOnFader && ctx.settings.getBoolValue (uiprefs::showSofFrame, false))
+        paintTabBadge (g, tab, "SOF", Colours::gold, true);
+    // The talkback frame ("frame on selected channel and during talk") comes
+    // with talkback: paintTabBadge (g, tab, "TALKBACK", Colours::mute, false).
+}
+
+void MainDisplay::paintClock (juce::Graphics& g)
+{
+    // "8:39" large, AM/PM small and yellow above the seconds ":50", the date
+    // in grey below it (3.1); 24-hour mode without AM/PM.
+    const float sh = (float) screenArea.getHeight();
+    auto c = clockTile.toFloat().reduced (6.0f * sh / 800.0f, 4.0f * sh / 800.0f);
+    const auto now = juce::Time::getCurrentTime();
+    const auto [hm, ampm] = clockText (ctx.settings, now);
+    const auto big = wingFontPx (0.034f * sh, WingWeight::SemiBold);
+    const auto small = wingFontPx (0.015f * sh, WingWeight::SemiBold);
+    const auto timeRow = c.removeFromTop (c.getHeight() * 0.64f);
+    const float hmW = juce::GlyphArrangement::getStringWidth (big, hm);
+    const float smallW = juce::GlyphArrangement::getStringWidth (small, ":00") + 2.0f;
+    const float x0 = timeRow.getCentreX() - (hmW + smallW) * 0.5f;
+    g.setColour (Colours::caption);
+    g.setFont (big);
+    g.drawText (hm, juce::Rectangle<float> (x0, timeRow.getY(), hmW + 2.0f, timeRow.getHeight()), juce::Justification::centredLeft, false);
+    auto side = juce::Rectangle<float> (x0 + hmW + 1.0f, timeRow.getY(), smallW + 4.0f, timeRow.getHeight()).reduced (0.0f, timeRow.getHeight() * 0.1f);
+    g.setFont (small);
+    if (ampm.isNotEmpty())
+    {
+        g.setColour (Colours::warning);
+        g.drawText (ampm, side.removeFromTop (side.getHeight() * 0.5f), juce::Justification::centredLeft, false);
+    }
+    else
+    {
+        side.removeFromTop (side.getHeight() * 0.5f);
+    }
+    g.setColour (Colours::caption);
+    g.drawText (now.formatted (":%S"), side, juce::Justification::centredLeft, false);
+    g.setColour (Colours::textDim);
+    g.setFont (wingFontPx (0.017f * sh, WingWeight::SemiBold));
+    g.drawText (uiprefs::formatDate (ctx.settings, now), c, juce::Justification::centredTop, false);
 }
 
 void MainDisplay::paintStatusBar (juce::Graphics& g)
 {
     g.setColour (Colours::screen);
     g.fillRect (statusArea);
-
-    // The selected channel's tab, in the strip's colour. The number sits in a
-    // black box drawn in the strip's colour; unnamed buses, mains and matrices
-    // show only their short name ("B7").
-    auto* strip = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr;
-    auto tab = channelTab.toFloat();
-    const auto colour = strip != nullptr ? strip->getColour() : Colours::screenHeader;
-    const auto ink = colour.getPerceivedBrightness() > 0.42f ? juce::Colours::black : juce::Colours::white;
-    g.setColour (colour);
-    g.fillRoundedRectangle (tab, 3.0f);
-    if (strip != nullptr)
+    const float sh = (float) screenArea.getHeight(), k = sh / 800.0f;
+    const float corner = 4.0f * k;
+    auto tile = [&g, corner] (juce::Rectangle<int> r, juce::Colour fill = Colours::screenHeader)
     {
-        auto t = tab.reduced (5.0f, 5.0f);
-        const float h = t.getHeight();
-        const auto label = home::shortLabel (*strip);
-        const bool plain = strip->isOutput() && home::hasDefaultName (*strip);
-        g.setFont (juce::FontOptions (h * 0.92f, juce::Font::bold));
-        if (plain)
+        g.setColour (fill);
+        g.fillRoundedRectangle (r.toFloat(), corner);
+    };
+
+    paintTitleTile (g);
+
+    // The audio status: the SIP badge, the sample rate and clock source (green
+    // chips), then protection, FX faults and the DSP load. It flashes while
+    // there are new FX faults; a click opens SETUP > AUDIO.
+    tile (chipsTile, flash ? juce::Colour (0xff680008) : Colours::screenHeader);
+    {
+        auto* device = ctx.deviceManager.getCurrentAudioDevice();
+        auto r = chipsTile.toFloat();
+        const auto sip = juce::Rectangle<float> (r.getX() + 5.0f * k, r.getY() + 5.0f * k, 24.0f * k, 24.0f * k);
+        g.setColour (Colours::chipOff);
+        g.drawEllipse (sip.reduced (1.0f), juce::jmax (1.0f, 1.5f * k));
+        g.setFont (wingFontPx (6.0f * k));
+        g.drawText ("SIP", sip, juce::Justification::centred, false);
+
+        const float x0 = r.getX() + 38.0f * k, chipH = 14.0f * k;
+        auto chip = [&] (float x, float y, float w, const juce::String& text, juce::Colour fill, juce::Colour ink)
         {
-            g.setColour (ink);
-            g.drawFittedText (label, t.reduced (4.0f, 0.0f).toNearestInt(), juce::Justification::centredLeft, 1);
-        }
-        else
-        {
-            auto box = t.removeFromLeft (juce::jmax (h * 1.1f, h * 0.48f * (float) label.length() + h * 0.3f));
-            g.setColour (juce::Colours::black);
-            g.fillRect (box);
-            g.setColour (colour);
-            g.setFont (juce::FontOptions (h * (label.length() >= 3 ? 0.74f : 0.86f), juce::Font::bold));
-            g.drawFittedText (label, box.toNearestInt(), juce::Justification::centred, 1, 0.7f);
-            t.removeFromLeft (h * 0.25f);
-            drawIcon (g, stripIcon (strip->getKind()), t.removeFromLeft (h).reduced (h * 0.08f), ink);
-            t.removeFromLeft (h * 0.2f);
-            g.setColour (ink);
-            g.setFont (juce::FontOptions (h * 0.92f, juce::Font::bold));
-            g.drawFittedText (stripName (*strip).toUpperCase(), t.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
-        }
+            drawChip (g, { x0 + x * k, r.getY() + y * k, w * k, chipH }, text, fill, ink);
+        };
+        const auto offInk = juce::Colour (0xff1e1e1e);
+        const auto rate = device != nullptr ? juce::String (juce::roundToInt (device->getCurrentSampleRate() / 1000.0)) + "K" : juce::String ("--");
+        chip (0.0f, 5.0f, 28.0f, rate, device != nullptr ? Colours::green : Colours::mute, juce::Colours::black);
+        chip (32.0f, 5.0f, 29.0f, device != nullptr ? "INT" : "NO DEV", device != nullptr ? Colours::green : Colours::mute, juce::Colours::black);
+        const int faults = ctx.engine.getNumFaultedFx();
+        chip (0.0f, 25.0f, 28.0f, "P", ctx.engine.outputProtection.load() ? Colours::green : Colours::screenLine, ctx.engine.outputProtection.load() ? juce::Colours::black : offInk);
+        chip (32.0f, 25.0f, 29.0f, "FX", faults > 0 ? Colours::mute : Colours::screenLine, faults > 0 ? Colours::text : offInk);
+        chip (0.0f, 45.0f, 61.0f, juce::String (juce::roundToInt (ctx.engine.getDspLoad() * 100.0f)) + " %", Colours::screenLine, offInk);
     }
 
-    // The status cluster: a round sync icon, two green chips (sample rate and
-    // clock source), and small chips for DSP load and protection.
-    auto tile = [&g] (juce::Rectangle<int> r)
-    {
-        g.setColour (juce::Colour (0xff2a2a2a));
-        g.fillRoundedRectangle (r.toFloat(), 3.0f);
-    };
-    tile (chipsTile);
-    auto chips = chipsTile.reduced (5, 6).toFloat();
-    auto dot = chips.removeFromLeft (chips.getHeight() * 0.55f).withSizeKeepingCentre (chips.getHeight() * 0.5f, chips.getHeight() * 0.5f);
-    auto* device = ctx.deviceManager.getCurrentAudioDevice();
-    g.setColour (device != nullptr ? Colours::textDim : Colours::mute);
-    g.drawEllipse (dot.reduced (1.0f), 1.5f);
-    chips.removeFromLeft (4.0f);
-    const float chipH = (chips.getHeight() - 3.0f) / 2.0f;
-    auto row1 = chips.removeFromTop (chipH);
-    chips.removeFromTop (3.0f);
-    auto row2 = chips;
-    const auto rate = device != nullptr ? juce::String (juce::roundToInt (device->getCurrentSampleRate() / 1000.0)) + "K" : juce::String ("--");
-    const float cw = row1.getWidth() / 2.0f - 1.5f;
-    drawChip (g, row1.removeFromLeft (cw), rate, device != nullptr ? Colours::green : Colours::mute, juce::Colours::black);
-    row1.removeFromLeft (3.0f);
-    drawChip (g, row1, device != nullptr ? "INT" : "NO DEV", device != nullptr ? Colours::green : Colours::mute, juce::Colours::black);
-    const int faults = ctx.engine.getNumFaultedFx();
-    const float sw = row2.getWidth() / 3.0f - 2.0f;
-    drawChip (g, row2.removeFromLeft (sw * 1.4f), juce::String (juce::roundToInt (ctx.engine.getDspLoad() * 100.0f)) + "%", juce::Colour (0xff6a6a6a), juce::Colours::black);
-    row2.removeFromLeft (3.0f);
-    drawChip (g, row2.removeFromLeft (sw * 0.8f), "P", ctx.engine.outputProtection.load() ? Colours::green : juce::Colour (0xff4a4a4a), juce::Colours::black);
-    row2.removeFromLeft (3.0f);
-    drawChip (g, row2, "FX", faults > 0 ? Colours::mute : juce::Colour (0xff4a4a4a), juce::Colours::black);
-
-    // The show files (the console's USB stick icon): opens LIBRARY.
+    // The show files (the console's USB stick): opens LIBRARY.
     tile (usbTile);
-    drawIcon (g, Icon::UsbStick, usbTile.toFloat().reduced (usbTile.getHeight() * 0.22f), Colours::green);
+    drawIcon (g, Icon::UsbStick, usbTile.toFloat().reduced ((float) usbTile.getHeight() * 0.24f), Colours::green);
 
-    // The recorder (the WING-LIVE card icon "1 | 2", caption LIVE): red while
-    // recording, green while playing.
+    // The recorder (the WING-LIVE cards "1 2", "• LIVE •"): red while recording,
+    // green while playing, amber when its folder can't be written.
     tile (liveTile);
     {
-        auto r = liveTile.toFloat().reduced (3.0f, 3.0f);
+        auto r = liveTile.toFloat().reduced (6.0f * k, 5.0f * k);
         const auto state = ctx.recording != nullptr ? ctx.recording->getState() : Recorder::State::Stopped;
         const auto liveInk = state == Recorder::State::Recording ? (blink ? Colours::mute : Colours::mute.darker (0.6f))
-                         : state == Recorder::State::Playing ? Colours::green
-                                                             : Colours::textDim;
+                           : state == Recorder::State::Playing   ? Colours::green
+                           : ! liveWritable                       ? Colours::warning
+                                                                  : Colours::textDim;
         auto caption = r.removeFromBottom (r.getHeight() * 0.3f);
-        auto cards = r.withSizeKeepingCentre (juce::jmin (r.getWidth(), r.getHeight() * 1.4f), r.getHeight());
-        drawIcon (g, Icon::SdCard, cards.removeFromLeft (cards.getWidth() * 0.5f), liveInk);
-        drawIcon (g, Icon::SdCard, cards, liveInk);
+        auto cards = r.withSizeKeepingCentre (juce::jmin (r.getWidth(), r.getHeight() * 1.5f), r.getHeight());
+        for (int i = 0; i < 2; ++i)
+        {
+            auto card = cards.removeFromLeft (cards.getWidth() * (i == 0 ? 0.5f : 1.0f)).reduced (cards.getHeight() * 0.03f, 0.0f);
+            drawIcon (g, Icon::SdCard, card, liveInk);
+            g.setColour (liveInk);
+            g.setFont (wingFontPx (card.getHeight() * 0.3f));
+            g.drawText (juce::String (i + 1), card.translated (0.0f, card.getHeight() * 0.06f), juce::Justification::centred, false);
+        }
         g.setColour (liveInk);
-        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 11.0f, caption.getHeight()), juce::Font::bold));
-        g.drawText ("LIVE", caption.toNearestInt(), juce::Justification::centred);
+        g.setFont (wingFontPx (TypeScale::statusCaption * sh));
+        g.drawText (juce::String::fromUTF8 ("\xe2\x80\xa2  LIVE  \xe2\x80\xa2"), caption.translated (0.0f, 2.0f * k), juce::Justification::centred, false);
     }
 
-    // The screen's keys: an icon above a small label.
+    // The screen's keys: an icon above a small grey caption.
     for (size_t i = 0; i < statusKeys.size() && i < statusKeyAreas.size(); ++i)
     {
         const auto& key = statusKeys[i];
         const auto area = statusKeyAreas[i];
-        g.setColour (key.lit ? juce::Colour (0xffd0d0d0) : juce::Colour (0xff2a2a2a));
-        g.fillRoundedRectangle (area.toFloat(), 3.0f);
+        tile (area, key.lit ? Colours::caption : Colours::screenHeader);
         const auto keyInk = key.lit ? juce::Colours::black : Colours::textDim;
-        auto k = area.toFloat().reduced (3.0f);
+        auto r = area.toFloat().reduced (3.0f * k);
         g.setColour (keyInk);
-        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 12.0f, k.getHeight() * 0.26f), juce::Font::bold));
+        g.setFont (wingFontPx (juce::jmin (TypeScale::statusCaption * sh, r.getHeight() * 0.2f)));
         if (key.icon)
         {
-            auto label = k.removeFromBottom (juce::jlimit (10.0f, 14.0f, k.getHeight() * 0.3f));
-            drawIcon (g, *key.icon, k.reduced (k.getHeight() * 0.08f), keyInk);
+            auto label = r.removeFromBottom (r.getHeight() * 0.34f);
+            drawIcon (g, *key.icon, r.withSizeKeepingCentre (r.getHeight() * 0.86f, r.getHeight() * 0.86f).translated (0.0f, 2.0f * k), keyInk);
             g.drawFittedText (key.text, label.toNearestInt(), juce::Justification::centred, 1, 0.7f);
         }
         else
         {
-            g.drawFittedText (key.text, k.toNearestInt(), juce::Justification::centred, 2, 0.7f);
+            g.drawFittedText (key.text, r.toNearestInt(), juce::Justification::centred, 2, 0.7f);
         }
     }
 
-    // Clock.
     tile (clockTile);
-    auto c = clockTile.reduced (6, 4);
-    const auto now = juce::Time::getCurrentTime();
-    g.setColour (Colours::text);
-    g.setFont (juce::FontOptions ((float) c.getHeight() * 0.56f, juce::Font::bold));
-    g.drawFittedText (now.formatted ("%H:%M:%S"), c.removeFromTop (c.getHeight() * 6 / 10), juce::Justification::centred, 1);
-    g.setColour (Colours::textDim);
-    g.setFont (juce::FontOptions ((float) c.getHeight() * 0.9f, juce::Font::bold));
-    g.drawFittedText (now.formatted ("%Y-%m-%d"), c, juce::Justification::centred, 1);
+    paintClock (g);
+
+    // Touch off: a small X.
+    if (touchDisabled)
+    {
+        const auto x = clockTile.toFloat().removeFromLeft (14.0f * k).withTrimmedTop (4.0f * k).withHeight (14.0f * k).translated (4.0f * k, 0.0f);
+        g.setColour (Colours::mute);
+        g.drawLine ({ x.getTopLeft(), x.getBottomRight() }, 2.0f);
+        g.drawLine ({ x.getTopRight(), x.getBottomLeft() }, 2.0f);
+    }
 }
 
 void MainDisplay::paint (juce::Graphics& g)
@@ -1023,6 +1656,8 @@ void MainDisplay::editFx (int slot)
 
 void MainDisplay::mouseUp (const juce::MouseEvent& e)
 {
+    if (e.eventComponent != this)
+        return;
     const auto p = e.getPosition();
     for (size_t i = 0; i < statusKeys.size() && i < statusKeyAreas.size(); ++i)
         if (statusKeyAreas[i].contains (p))
@@ -1031,7 +1666,15 @@ void MainDisplay::mouseUp (const juce::MouseEvent& e)
                 f(); // a copy: the click may change the keys
             return;
         }
-    if (usbTile.contains (p))
+    if (chipsTile.contains (p))
+    {
+        // Touching the audio status opens SETUP > AUDIO (firmware 1.08).
+        acknowledgedFaults = ctx.engine.getNumFaultedFx();
+        showScreen (Screen::Setup);
+        if (ctx.showSetupTab)
+            ctx.showSetupTab (kSetupAudioTab);
+    }
+    else if (usbTile.contains (p))
         showScreen (Screen::Library);
     else if (liveTile.contains (p))
         showScreen (Screen::Recorder);
@@ -1047,17 +1690,22 @@ void MainDisplay::resized()
     const int navW = juce::jlimit (60, 92, b.getWidth() * 8 / 100);
     const int rightMin = juce::jlimit (56, 84, b.getWidth() * 7 / 100);
     auto nav = b.removeFromLeft (navW);
-    auto avail = b.withTrimmedRight (rightMin).reduced (10, 10);
+    auto avail = b.withTrimmedRight (rightMin).reduced (10, 8);
+
+    // The six touch encoders sit under the screen's bezel.
+    const int encoderH = juce::jlimit (28, 52, avail.getHeight() * 9 / 100);
+    auto screenAvail = avail.withTrimmedBottom (encoderH + 8);
 
     // The screen is 16:10; width it doesn't need goes to the right column.
-    int w = avail.getWidth(), h = avail.getHeight();
+    int w = screenAvail.getWidth(), h = screenAvail.getHeight();
     if (w * 10 > h * 16)
         w = h * 16 / 10;
     else
         h = w * 10 / 16;
-    screenArea = juce::Rectangle<int> (avail.getX(), avail.getCentreY() - h / 2, w, h);
+    screenArea = juce::Rectangle<int> (screenAvail.getX(), screenAvail.getY() + (screenAvail.getHeight() - h) / 2, w, h);
     // The screen's type scale follows its height.
     setWingScreenHeight ((float) screenArea.getHeight());
+    encoderArea = juce::Rectangle<int> (screenArea.getX(), screenArea.getBottom() + 10, screenArea.getWidth(), encoderH);
     auto right = getLocalBounds().withLeft (screenArea.getRight() + 10).reduced (6, 0);
 
     // The seven keys over the full height of the screen: HOME level with its
@@ -1079,54 +1727,56 @@ void MainDisplay::resized()
     contextKnob->setBounds (juce::Rectangle<int> (knobSize, knobSize).withCentre ({ right.getCentreX(), keyRow (5) + keyH / 2 + 4 }));
     blankKey->setBounds (juce::Rectangle<int> (right.getCentreX() - rightKeyW / 2, keyRow (6), rightKeyW, keyH));
 
+    // WING geometry: the status bar 80 of 800 px, the parameter bar 50.
     auto s = screenArea;
-    const int statusH = juce::jlimit (34, 60, s.getHeight() * 83 / 1000);
+    const int statusH = juce::roundToInt ((float) s.getHeight() * 0.1f);
     statusArea = s.removeFromTop (statusH);
     const bool knobs = page (screen)->usesKnobs();
-    slotArea = knobs ? s.removeFromBottom (juce::jlimit (28, 44, s.getHeight() / 13)) : juce::Rectangle<int>();
-    s.removeFromTop (4);
+    slotArea = knobs ? s.removeFromBottom (juce::roundToInt ((float) screenArea.getHeight() * 50.0f / 800.0f)) : juce::Rectangle<int>();
     if (! knobs)
         s.removeFromBottom (4);
     pageArea = s;
 
     for (auto sc : allScreens)
         page (sc)->setBounds (s);
-    channelSelect->setBounds (screenArea.withTrimmedTop (statusH + 4));
+    const auto belowStatus = screenArea.withTrimmedTop (statusH);
+    channelSelect->setBounds (belowStatus);
     highlight->setBounds (getLocalBounds());
+    popupLayer->setBounds (belowStatus);
+    for (auto* child : popupLayer->getChildren())
+        child->setBounds (popupLayer->getLocalBounds());
+    touchBlocker->setBounds (screenArea);
+    lcdScrim->setBounds (screenArea.expanded (5));
 
     layoutStatusBar();
 
-    for (auto* slot : slots)
-        slot->setVisible (knobs);
-    auto k = slotArea.reduced (4, 0);
-    const int sw = k.getWidth() / 6;
-    for (auto* slot : slots)
-        slot->setBounds (k.removeFromLeft (sw).reduced (6, 0));
+    // The parameter bar: slot i at x 28 + 212 i, 160 px wide; the encoders
+    // centred under the slots.
+    for (int i = 0; i < slots.size(); ++i)
+    {
+        slots[i]->setVisible (knobs);
+        slots[i]->setBounds (wingRect (28.0f + 212.0f * (float) i, 752.0f, 160.0f, 46.0f));
+        const int cx = wingRect (28.0f + 212.0f * (float) i + 80.0f, 0.0f, 0.0f, 0.0f).getX();
+        encoders[i]->setBounds (juce::Rectangle<int> (encoderH, encoderH).withCentre ({ cx, encoderArea.getCentreY() }));
+    }
 }
 
 void MainDisplay::layoutStatusBar()
 {
-    auto st = statusArea.reduced (3, 4);
-    const int h = st.getHeight();
-    clockTile = st.removeFromRight (juce::jmin (h * 3, st.getWidth() / 7));
-    st.removeFromRight (4);
+    // WING pixels (firmware 3.1): tiles at y 8..72; the title 8..472, audio
+    // status 480..584, USB 592..656, WING-LIVE 664..728, the screen's keys from
+    // 736 (72 wide, 8 apart), the clock 1136..1272.
+    channelTab = wingRect (8.0f, 8.0f, 464.0f, 64.0f);
+    numberBox = wingRect (8.0f, 8.0f, 160.0f, 64.0f);
+    chipsTile = wingRect (480.0f, 8.0f, 104.0f, 64.0f);
+    usbTile = wingRect (592.0f, 8.0f, 64.0f, 64.0f);
+    liveTile = wingRect (664.0f, 8.0f, 64.0f, 64.0f);
+    clockTile = wingRect (1136.0f, 8.0f, 136.0f, 64.0f);
     statusKeyAreas.clear();
-    const int keyW = juce::jmin (h * 6 / 5, st.getWidth() / 10);
-    for (size_t i = 0; i < statusKeys.size(); ++i)
-    {
-        statusKeyAreas.insert (statusKeyAreas.begin(), st.removeFromRight (keyW));
-        st.removeFromRight (4);
-    }
-    // Fig. 21: the channel tab about 37 % of the bar, then the status cluster
-    // and the USB icon.
-    channelTab = st.removeFromLeft (statusArea.getWidth() * 38 / 100);
-    numberBox = channelTab.withWidth (juce::jmin (channelTab.getWidth() / 3, h * 2));
-    st.removeFromLeft (4);
-    chipsTile = st.removeFromLeft (juce::jmin (h * 5 / 2, st.getWidth() / 2));
-    st.removeFromLeft (4);
-    usbTile = st.removeFromLeft (juce::jmin (h, st.getWidth()));
-    st.removeFromLeft (4);
-    liveTile = st.removeFromLeft (juce::jmin (h * 6 / 5, st.getWidth()));
+    const int n = (int) statusKeys.size();
+    const float keyW = n <= 5 ? 72.0f : (392.0f - 8.0f * (float) (n - 1)) / (float) n;
+    for (int i = 0; i < n; ++i)
+        statusKeyAreas.push_back (wingRect (736.0f + (keyW + 8.0f) * (float) i, 8.0f, keyW, 64.0f));
 }
 
 } // namespace livedaw::ui

@@ -16,9 +16,12 @@ namespace
     {
         if (face == nullptr)
             return capRatio;
+        // The ink of a capital H (glyph boxes span the whole line height).
         juce::GlyphArrangement glyphs;
-        glyphs.addLineOfText (juce::Font (juce::FontOptions (100.0f).withTypeface (face)), "H", 0.0f, 0.0f);
-        const auto box = glyphs.getBoundingBox (0, 1, true);
+        glyphs.addLineOfText (juce::Font (juce::FontOptions (kScreenTypefaceName, 100.0f, juce::Font::plain).withTypeface (face)), "H", 0.0f, 0.0f);
+        juce::Path outline;
+        glyphs.createPath (outline);
+        const auto box = outline.getBounds();
         return box.getHeight() > 10.0f ? box.getHeight() / 100.0f : capRatio;
     }
 } // namespace
@@ -416,8 +419,8 @@ void drawSectionBox (juce::Graphics& g, juce::Rectangle<int> area, const juce::S
         auto header = r.removeFromTop ((float) kPanelHeaderHeight);
         g.setColour (Colours::screenHeader);
         g.fillRect (header);
-        g.setColour (Colours::text);
-        g.setFont (wingFont (TypeScale::header));
+        g.setColour (Colours::caption);
+        g.setFont (wingFontPx (juce::jmin (TypeScale::header * getWingScreenHeight(), header.getHeight() * 0.42f)));
         g.drawFittedText (title, header.reduced (28.0f, 0.0f).toNearestInt(), juce::Justification::centred, 1);
         if (chevron)
         {

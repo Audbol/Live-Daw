@@ -162,6 +162,90 @@ private:
 };
 
 //==============================================================================
+/** What a WING channel tile shows (CHANNEL SELECT, and the tiles of other
+    screens that list strips). */
+struct WingTileInfo
+{
+    juce::Colour colour;          // the strip's colour (already dimmed when it has no source)
+    juce::String name;            // on the colour strip (empty for a default name)
+    juce::String label;           // "1", "A1", "B1", "M1", "MX1"
+    bool boxed = true;            // channels and aux: the number in a grey box
+    int wingIcon = 0;             // /ch/n/icon, 0 = none
+    std::optional<Icon> kindIcon; // drawn when wingIcon is 0 or unknown
+    float meter = -1.0f;          // 0..1 level for the meter at the right edge (< 0: none)
+    bool selected = false;        // the accent frame
+};
+
+/** Paints a WING channel tile (CHANNEL SELECT, 112x64 of 1280x800 px): the colour
+    strip with the name, a #303030 body with the number (white in a grey box for
+    channels and aux, grey text for buses, mains and matrices), the icon at the
+    right, a level meter along the right edge, and a gold frame when selected. */
+inline void paintWingTile (juce::Graphics& g, juce::Rectangle<float> r, const WingTileInfo& t)
+{
+    const auto tile = r;
+    auto stripArea = r.removeFromTop (juce::jmax (4.0f, std::round (r.getHeight() * 22.0f / 64.0f)));
+    g.setColour (t.colour);
+    g.fillRect (stripArea);
+    if (t.name.isNotEmpty())
+    {
+        g.setColour (t.colour.getPerceivedBrightness() > 0.62f ? juce::Colours::black : Colours::text);
+        g.setFont (wingFontPx (juce::jmin (stripArea.getHeight() * 0.55f, 0.016f * getWingScreenHeight())));
+        g.drawFittedText (t.name, stripArea.reduced (3.0f, 0.0f).toNearestInt(), juce::Justification::centred, 1, 0.7f);
+    }
+    r.removeFromTop (1.0f);
+    g.setColour (Colours::screenTile);
+    g.fillRect (r);
+
+    if (t.meter >= 0.0f)
+    {
+        // Two columns of segments along the right edge.
+        auto meter = r.removeFromRight (juce::jmax (4.0f, r.getHeight() * 0.22f)).reduced (1.0f, 2.0f);
+        const int segments = 8;
+        const float segH = meter.getHeight() / (float) segments;
+        const int lit = juce::roundToInt (juce::jlimit (0.0f, 1.0f, t.meter) * (float) segments);
+        for (int i = 0; i < segments; ++i)
+            for (int col = 0; col < 2; ++col)
+            {
+                const auto seg = juce::Rectangle<float> (meter.getX() + (float) col * meter.getWidth() * 0.5f, meter.getBottom() - (float) (i + 1) * segH,
+                                                         meter.getWidth() * 0.5f - 1.0f, segH - 1.0f);
+                g.setColour (i < lit ? (i >= segments - 1 ? Colours::meterRed : (i >= segments - 2 ? Colours::meterYellow : Colours::meterGreen))
+                                     : juce::Colours::black);
+                g.fillRect (seg);
+            }
+    }
+
+    auto body = r.reduced (r.getHeight() * 0.1f, r.getHeight() * 0.14f);
+    const float cap = juce::jmin (body.getHeight() * 0.62f, 0.026f * getWingScreenHeight());
+    const auto font = wingFontPx (cap, WingWeight::SemiBold);
+    g.setFont (font);
+    if (t.boxed)
+    {
+        const float w = juce::GlyphArrangement::getStringWidth (font, t.label) + cap * 0.5f;
+        auto box = body.removeFromLeft (juce::jmax (w, body.getHeight() * 0.8f)).withSizeKeepingCentre (juce::jmax (w, body.getHeight() * 0.8f), body.getHeight());
+        g.setColour (Colours::chipOff);
+        g.fillRoundedRectangle (box, 2.0f);
+        g.setColour (Colours::text);
+        g.drawText (t.label, box, juce::Justification::centred, false);
+    }
+    else
+    {
+        g.setColour (Colours::textDim.brighter (0.25f));
+        g.drawText (t.label, body, juce::Justification::centredLeft, false);
+    }
+    auto iconArea = body.removeFromRight (body.getHeight()).reduced (body.getHeight() * 0.04f);
+    const auto iconColour = Colours::textDim.brighter (0.3f);
+    if (! (t.wingIcon > 0 && drawWingIcon (g, t.wingIcon, iconArea, iconColour)) && t.kindIcon.has_value())
+        drawIcon (g, *t.kindIcon, iconArea.reduced (iconArea.getHeight() * 0.06f), iconColour);
+
+    if (t.selected)
+    {
+        // The gold frame, just outside the tile.
+        g.setColour (Colours::gold);
+        g.drawRect (tile.expanded (3.0f), 2.0f);
+    }
+}
+
+//==============================================================================
 /** The pop-ups open on the screen that close as soon as a key of the surface is
     pressed ("most pop-ups automatically dismiss as soon as one of the buttons is
     pressed"). Pop-ups register a closer while open; SurfaceKey (and the screen
