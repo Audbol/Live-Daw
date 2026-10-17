@@ -212,6 +212,50 @@ a WING with a WING-LIVE card, and edits them in a DAW-style editor.
   4-band EQ and compressor become the GATE, WING EQ and COMP models, and each strip's
   plugins move to FX slots on its inserts.
 
+## WING remote apps and WING files
+
+Live DAW can answer the Behringer WING's network protocols, so WING remote software
+can find it and drive the console. This is clean-room work from public documentation
+and open-source projects (see below), and it is **experimental**.
+
+- **Turn it on:** SETUP > REMOTE > WING REMOTE > ENABLE. The console name (also
+  SETUP > GENERAL > CONSOLE NAME), the ports and which servers run are saved in the
+  app settings, and the servers start with the app when enabled. The panel below
+  shows what is listening and which clients are connected.
+- **Discovery** (UDP 2222) answers `WING?` with the console name, model `live-daw`,
+  serial and firmware `3.1-...` (Live DAW speaks the WING 3.1 parameter tree).
+- **OSC** (UDP 2223): get and set any parameter by path or by `#id`, toggles, node
+  lists, node dumps and descriptions, node strings (`/ch.1.fdr=-3,mute=1`), and the
+  `/*s`, `/*S` and `/*b` subscriptions (renew every 10 s). Changes from the UI, scene
+  recalls and other clients are pushed to the subscriber.
+- **Native protocol** (TCP 2222): node definitions and data, set/get by id, navigation,
+  change notifications to every connected client, and meters over UDP.
+- **What is tested:** libwing's own clients (`wingprop`, `wingmon`, `wingdrive`'s
+  test battery and model capture, its OSC client), and every OSC path the Bitfocus
+  Companion WING module builds that exists in the 3.1 tree. **WING Edit and WING
+  Copilot have not been tried**, so they may not work.
+- **What maps:** 79 % of the WING 3.1 tree's parameters (54,427 of 68,556, counting
+  every model's parameters) drive the engine: channels, aux, buses, mains and
+  matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
+  dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,
+  main sends, solo), DCAs, mute groups, the FX rack, output routing and some console
+  settings. The rest (surface layers, user controls, talkback, cards, ...) is
+  remembered so clients can read back what they wrote, but does nothing.
+  `cargo run -p livedaw-wing --example wing_coverage` prints the full report.
+- **Files:** LIBRARY > SHOW > **IMPORT WING** applies a WING snapshot (`.snap`) to
+  the console, or adds a WING show's (`.show`) snapshots as scenes. The log lists
+  what could not be applied. **EXPORT WING** writes the console as a
+  WING snapshot (experimental: its format follows snapshots saved by WING consoles on
+  firmware 2.1 and 3.1, and it reads back into Live DAW, but it has not been loaded
+  into a WING or WING Edit).
+- Sources: Patrick-Gilles Maillot's *WING Remote Protocols* document, libwing (its
+  parameter map is compiled into the app), the Companion WING module, and snapshot and
+  show files that WING users have published.
+
+Testing against libwing: `tools/wing/libwing_tools.sh DIR` builds its clients, then
+`LIBWING_TOOLS=DIR/tools/target/release cargo test -p livedaw-wing --test libwing`.
+`cargo run -p livedaw-wing --example wing_emulator` runs the protocols without the app.
+
 ## Drivers and performance
 
 - **Audio drivers:** ASIO and WASAPI on Windows, CoreAudio on macOS, ALSA and JACK on Linux.
@@ -338,13 +382,14 @@ copy, pass `-DLIVEDAW_VST2_SDK_DIR=/path/to/vstsdk` to enable VST2 hosting.
 rust/crates/livedaw-dsp/     Rust DSP: the WING models (filter, EQ models, 32 dynamics models), FX rack devices, delay, biquads
 rust/crates/livedaw-engine/  Rust realtime engine: WING topology, strips, sends, DCAs, mute groups, FX slots, solo, worker pool
 rust/crates/livedaw-session/ Rust sessions: console state, Show > Scene > Snippet, fades, fader banks, show files, legacy import
+rust/crates/livedaw-wing/    WING parameter tree, its mapping onto the engine, the WING remote protocols, .snap/.show files
 rust/crates/livedaw-ffi/     C ABI over the engine and model tables + C++ header (include/livedaw_engine.h)
 src/engine/   C++ side: facades over the Rust code, FX slot plugin hosting
 src/daw/      Multitrack projects: tracks, clips, markers, undo, import / export, the recording session
 src/ui/       JUCE UI: the WING surface (fader sections, main display screens, channel strip, monitor)
 src/ui/daw/   The multitrack editor and the recorder screen
 resources/    Barlow Condensed fonts (SIL Open Font License)
-tools/wing/   Generator for the model tables (from libwing's parameter map)
+tools/wing/   Generators for the model tables and the WING tree (from libwing's parameter map), libwing test tools
 tests/        Unit tests (run with ctest)
 docs/         Architecture notes
 ```

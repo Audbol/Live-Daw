@@ -80,7 +80,8 @@ set(LIVEDAW_ENGINE_SOURCES
     src/engine/Layers.cpp
     src/engine/Show.cpp
     src/engine/Recorder.cpp
-    src/engine/VirtualAudioDevice.cpp)
+    src/engine/VirtualAudioDevice.cpp
+    src/engine/WingRemote.cpp)
 
 # The multitrack project model (no UI), shared by the app and the tests.
 set(LIVEDAW_DAW_SOURCES
@@ -234,6 +235,7 @@ if(LIVEDAW_BUILD_TESTS)
         tests/DeviceTests.cpp
         tests/RecorderTests.cpp
         tests/DawTests.cpp
+        tests/WingTests.cpp
         ${LIVEDAW_ENGINE_SOURCES}
         ${LIVEDAW_DAW_SOURCES})
     livedaw_configure_juce_target(LiveDAWTests)

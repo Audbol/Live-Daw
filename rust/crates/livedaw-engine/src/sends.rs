@@ -88,17 +88,21 @@ impl SendBank {
         unsafe { page.as_ref() }.map(|p| &p.sends[slot % PAGE_SIZE])
     }
 
-    /// Message thread only: the send for `slot`, allocating its page if needed.
+    /// Any thread but the audio thread (it allocates): the send for `slot`,
+    /// allocating its page if needed. Two threads creating the same page race
+    /// through a compare-exchange; the loser frees its copy.
     pub fn get_or_create(&self, slot: usize) -> Option<&SendParams> {
         if slot >= MAX_BUSES {
             return None;
         }
         let ptr = &self.pages[slot / PAGE_SIZE];
         if ptr.load(Ordering::Acquire).is_null() {
-            let page = Box::new(Page { sends: std::array::from_fn(|_| SendParams::default()) });
-            // Single writer (message thread), so a plain store is enough; Release
-            // publishes the initialised page to the audio thread.
-            ptr.store(Box::into_raw(page), Ordering::Release);
+            let page = Box::into_raw(Box::new(Page { sends: std::array::from_fn(|_| SendParams::default()) }));
+            // Release publishes the initialised page to the audio thread.
+            if ptr.compare_exchange(std::ptr::null_mut(), page, Ordering::AcqRel, Ordering::Acquire).is_err() {
+                // SAFETY: never published; allocated just above.
+                drop(unsafe { Box::from_raw(page) });
+            }
         }
         self.find(slot)
     }

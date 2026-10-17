@@ -297,6 +297,7 @@ struct LdSink;    // opaque string the host appends to (ld_sink_append) from cal
 struct Show;      // opaque
 struct LayerSet;  // opaque
 struct LayerList; // opaque
+struct LdWing;    // opaque WING remote (servers + snapshot files), see ld_wing_*
 
 struct StripRefC
 {
@@ -601,6 +602,29 @@ extern "C"
     float ld_rec_disk_load (const Engine*);
     /** Waits until the disk threads caught up (offline use, faster than real time). */
     bool ld_rec_wait_for_disk (const Engine*, int32_t timeoutMs);
+
+    // WING remote (message thread). Destroy it before the engine.
+    LdWing* ld_wing_create (const Engine*);
+    void ld_wing_destroy (LdWing*);
+    /** Ports: 0 = any free port. enable: 1 discovery, 2 OSC, 4 Native. Restarts if running;
+        false if an enabled server could not start (the others run; see ld_wing_status). */
+    bool ld_wing_start (LdWing*, const char* name, size_t len, int32_t discoveryPort, int32_t oscPort,
+                        int32_t nativePort, uint32_t enable);
+    void ld_wing_stop (LdWing*);
+    bool ld_wing_running (LdWing*);
+    void ld_wing_set_name (LdWing*, const char* name, size_t len);
+    /** Bound port of server 0 discovery, 1 OSC, 2 Native; -1 if not running. */
+    int32_t ld_wing_port (LdWing*, int32_t which);
+    /** Tab-separated lines: "error\tmsg", "client\tnative|osc\taddr\tsubscribed\tseconds",
+        "traffic\toscMessages\tnativeBytes". */
+    LdString* ld_wing_status (LdWing*);
+    /** Applies a WING .snap; *report gets the summary and what was not applied (or the error). */
+    bool ld_wing_import_snap (LdWing*, const char* path, size_t len, LdString** report);
+    /** Writes a WING .snap (experimental); false sets *message. */
+    bool ld_wing_export_snap (LdWing*, const char* path, size_t len, LdString** message);
+    /** Adds a WING .show's snapshot scenes to the show (the console only grows to 40 channels). */
+    bool ld_wing_import_show (LdWing*, Show*, const char* path, size_t len, LdString** report);
+    LdString* ld_wing_coverage();
 }
 
 /// Returns nullptr if the C++ and Rust layouts agree, else a description of the mismatch.

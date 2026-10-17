@@ -97,6 +97,7 @@ same tables through `ld_model_*` (`livedaw-ffi/src/models.rs`, `src/engine/Model
 | Realtime engine (WING topology, strips, sends, DCAs, mute groups, FX slots, automix, solo, monitor, output protection, worker pool, deferred frees) | Rust | `rust/crates/livedaw-engine` |
 | Recorder (SPSC rings, WAV / RF64 files, transport, disk reader and writer threads, playlist rendering) | Rust | `rust/crates/livedaw-recorder` |
 | Sessions (console state, Show > Scene > Snippet, fades, fader banks, show files, legacy import) | Rust | `rust/crates/livedaw-session` |
+| WING interoperability (parameter tree, mapping, discovery / OSC / native servers, .snap / .show files) | Rust | `rust/crates/livedaw-wing` |
 | C ABI | Rust + C++ header | `rust/crates/livedaw-ffi`, `include/livedaw_engine.h` |
 | Audio devices (ASIO, CoreAudio, ALSA, JACK, WASAPI), plugin hosting (VST3/AU/LV2), UI | C++ / JUCE | `src/` |
 
@@ -407,6 +408,60 @@ blinking LEDs.
   without plugins (safe mode) and autosaves to a separate file until the user reloads
   the plugins.
 
+## WING remote and WING files
+
+`rust/crates/livedaw-wing` makes Live DAW look like a WING to remote software. It is
+clean-room: built from Patrick-Gilles Maillot's *WING Remote Protocols* document,
+libwing (Apache-2.0; its `propmap.jsonl` is the source of the tree) and the Bitfocus
+Companion module. No Behringer firmware or WING Edit code is used. It has no
+dependencies beyond the other Live DAW crates.
+
+- **Tree** (`schema.rs`). `tools/wing/gen_tree.py` compiles libwing's parameter map
+  (WING firmware 3.1) into `data/wing_tree.bin`, embedded in the binary: rows (node
+  id, name, parent, definition), shared definitions and enums, and the processing
+  model families. A model's parameters are addressed by position in their slot
+  (`Node::Param { slot, index }`), as on the console, where the ids depend on the slot
+  and position and the active model decides names and types. Paths, ids, children
+  and definitions are resolved against the live models.
+- **Mapping** (`map.rs`). `bind()` gives every row a `Binding` (a strip field, a DCA
+  or mute group field, an FX slot, a console control, an output patch...) and
+  `Console` gets and sets values in WING units (dB, Hz, enums by name, fader law with
+  -144 for -oo), converting to the engine's parameters, model tables and port
+  numbers. Ports: AES50 A/B/C 1-48 are hardware ports 1-144 and the WING-LIVE card
+  (CRD) is the recorder's playback channels. Nodes without an engine equivalent live
+  in a **shadow store** (`WingState`) so clients and snapshots read back what they
+  wrote; they do nothing. `map::coverage()` counts what maps (79 % of the leaves).
+- **Servers** (`server.rs`, `osc.rs`, `native.rs`, `meters.rs`). Plain `std::net`
+  threads, started and stopped from the app: discovery (UDP), OSC (UDP), the native
+  protocol (TCP, one thread per client, up to 16; meters as UDP datagrams) and a
+  poller. They read and write the engine's shared atomics like the UI does, never
+  touching the audio thread, and every thread runs under `catch_unwind`. A client's
+  change is applied and pushed to the other clients at once; the poller diffs the
+  mapped leaves every 100 ms to push changes made elsewhere (UI, scene recalls) and
+  sends meters every 50 ms. It takes its snapshot without blocking client sets and
+  drops a snapshot that raced one (generation counter).
+- **Files** (`snap.rs`, `json.rs`). Snapshot import sets each value through the same
+  mapping (models first, input group before number), keeps unmapped values in the
+  shadow store and reports what was not applied. Export walks the tree and writes the
+  console's `snapshot.11` layout. A `.show` becomes scenes: each snapshot is applied
+  to a scratch engine copied from the live console and captured there.
+- **C ABI / C++.** `livedaw-ffi/src/wing.rs` (`ld_wing_*`) owns the server and state;
+  `src/engine/WingRemote` wraps it, owned by `MixerEngine`, which destroys it before
+  the engine. SETUP > REMOTE starts it from the app settings (`wing.*` keys and the
+  console name); LIBRARY > SHOW imports and exports files.
+- **Tests.** `tests/remote.rs` drives the servers over sockets, `tests/snapshot.rs`
+  imports an authored fixture and round-trips exports, `tests/libwing.rs` runs
+  libwing's own clients when `LIBWING_TOOLS` is set (`tools/wing/libwing_tools.sh`),
+  and `tools/wing/check_companion.py` checks the Companion module's paths.
+
+Limits: WING Edit and WING Copilot are untested. One output patch per strip (the WING
+can send a source to many outputs; extra ones are kept in the shadow store). Input
+groups other than AES50 A/B/C and CRD collapse onto the port with the same number.
+Meters are approximate (RTA, source and output meters stay silent). Getting a model
+parameter position the active model doesn't have gets no answer (libwing's
+`wingdrive --probe-echo` relies on the console answering it). Export is unvalidated
+on a console.
+
 ## Known limitations / roadmap
 - Plugins run inside the mixer process. Bad output and exceptions are contained, but
   a plugin that segfaults takes the app down (safe mode then recovers the show).
@@ -424,7 +479,8 @@ blinking LEDs.
   show control, scene recall and single actions; DAW, MIDI, spill, USB / SD and GPIO
   functions are listed disabled.
 - Not yet: talkback, a second monitoring path (the MONITORS screen draws them
-  disabled), source settings and OSC/MIDI remote control.
+  disabled), source settings and MIDI remote control (WING network remote
+  control: see above).
 - Recorder: no transport without a running audio device (play stays in Starting);
   a loop change while rolling plays the old content for ~50 ms before the
   crossfade; take files are flushed every 2 s but only synced to disk when

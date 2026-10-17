@@ -21,6 +21,7 @@ dependencies = [
  "livedaw-dsp",
  "livedaw-engine",
  "livedaw-session",
+ "livedaw-wing",
 ]
 
 [[package]]
@@ -33,4 +34,13 @@ version = "0.2.0"
 dependencies = [
  "livedaw-dsp",
  "livedaw-engine",
+]
+
+[[package]]
+name = "livedaw-wing"
+version = "0.2.0"
+dependencies = [
+ "livedaw-dsp",
+ "livedaw-engine",
+ "livedaw-session",
 ]

@@ -234,7 +234,7 @@ unsafe fn write_string(out: *mut *mut LdString, s: String) {
 // ---- show -----------------------------------------------------------------------------
 
 pub struct LdShow {
-    show: Show,
+    pub(crate) show: Show,
     bridge: LdPluginBridge,
 }
 
