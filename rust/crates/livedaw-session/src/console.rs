@@ -24,7 +24,7 @@ pub const CONSOLE_VERSION: i32 = 3;
 /// Parameter groups of a strip. Scenes and snippets recall a chosen set (their scope).
 pub mod section {
     pub const NAME: u32 = 1 << 0; // name, colour, icon, scribble light
-    pub const ROUTING: u32 = 1 << 1; // input patch, mono/stereo, outputs, monitor bus (+ monitor setup, solo PFL/AFL)
+    pub const ROUTING: u32 = 1 << 1; // CONN: input patch, ALT input, mono/stereo, outputs, monitor bus (+ monitor setup, solo PFL/AFL, INPUT SELECT)
     pub const PREAMP: u32 = 1 << 2; // INPUT block (trim, balance, polarity, delay) and FILTER
     pub const GATE: u32 = 1 << 3;
     pub const EQ: u32 = 1 << 4;
@@ -357,6 +357,11 @@ fn capture_strip(s: &Strip, sections: u32, slots: &[usize]) -> Element {
         put_i(r, "mon", &p.monitor_bus);
         put_b(r, "solosafe", &p.solo_safe);
         put_b(r, "mono", &p.mono);
+        if kind.is_input() {
+            put_i(r, "altL", &p.alt_input_left);
+            put_i(r, "altR", &p.alt_input_right);
+            put_b(r, "altSel", &p.alt_selected);
+        }
     }
     if sections & PREAMP != 0 {
         let i = e.add_new("In");
@@ -517,6 +522,21 @@ fn apply_monitor(engine: &Engine, parent: &Element) {
         get_b(m, "mute", &c.monitor_mute);
         get_b(m, "mono", &c.monitor_mono);
         get_b(m, "swap", &c.monitor_swap);
+    }
+}
+
+/// INPUT SELECT: global or per strip, and the global MAIN / ALT switch
+/// (scenes recall them with ROUTING).
+fn capture_input_select(engine: &Engine, parent: &mut Element) {
+    let i = parent.add_new("InputSelect");
+    put_b(i, "global", &engine.controls.input_select_global);
+    put_b(i, "alt", &engine.controls.global_alt);
+}
+
+fn apply_input_select(engine: &Engine, parent: &Element) {
+    if let Some(i) = parent.child("InputSelect") {
+        get_b(i, "global", &engine.controls.input_select_global);
+        get_b(i, "alt", &engine.controls.global_alt);
     }
 }
 
@@ -701,6 +721,7 @@ pub fn capture(engine: &Engine, sections: u32, only: Option<&[StripRef]>, bridge
     if only.is_none() {
         if sections & section::ROUTING != 0 {
             capture_monitor(engine, &mut state, false);
+            capture_input_select(engine, &mut state);
         }
         if sections & section::FADER != 0 {
             capture_dcas(engine, &mut state, sections & section::NAME != 0);
@@ -744,6 +765,10 @@ fn apply_strip(s: &Arc<Strip>, e: &Element, requested: u32, fades: &mut Option<&
         get_i(r, "mon", &p.monitor_bus);
         get_b(r, "solosafe", &p.solo_safe);
         get_b(r, "mono", &p.mono);
+        // Shows from before ALT inputs keep the current ones.
+        get_i(r, "altL", &p.alt_input_left);
+        get_i(r, "altR", &p.alt_input_right);
+        get_b(r, "altSel", &p.alt_selected);
     }
     if sections & PREAMP != 0 {
         if let Some(i) = e.child("In") {
@@ -885,6 +910,9 @@ pub fn apply(
         if effective & section::ROUTING != 0 && !main_safe {
             apply_monitor(engine, state);
         }
+        if effective & section::ROUTING != 0 {
+            apply_input_select(engine, state);
+        }
         if effective & section::FADER != 0 {
             apply_dcas(engine, state);
         }
@@ -918,6 +946,7 @@ pub fn save_console(engine: &Engine, bridge: &mut dyn PluginBridge) -> Element {
     put_b(&mut console, "outputProtection", &engine.controls.output_protection);
     put_f(&mut console, "outputCeilingDb", &engine.controls.output_ceiling_db);
     capture_monitor(engine, &mut console, true);
+    capture_input_select(engine, &mut console);
     capture_prefs(engine, &mut console);
     capture_automix(engine, &mut console);
     capture_dcas(engine, &mut console, true);
@@ -945,6 +974,7 @@ pub fn load_console(engine: &Engine, console: &Element, bridge: &mut dyn PluginB
     get_b(console, "outputProtection", &engine.controls.output_protection);
     get_f(console, "outputCeilingDb", &engine.controls.output_ceiling_db);
     apply_monitor(engine, console);
+    apply_input_select(engine, console);
     apply_prefs(engine, console);
     apply_automix(engine, console);
     apply_dcas(engine, console);

@@ -756,3 +756,63 @@ fn scene_tags_skip_and_link() {
     assert_eq!((s0.tag, s0.skip, s0.link_next), (128, false, true));
     assert_eq!((s1.tag, s1.skip, s1.link_next), (0, true, false));
 }
+
+#[test]
+fn alt_inputs_and_input_select_are_saved_and_recalled_with_routing() {
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    engine.set_num_channels(2);
+    let c = &engine.controls;
+    let a = ch(&engine, 0);
+    let aux = engine.strip_at(StripKind::Aux, 3).unwrap();
+    a.params.alt_input_left.store(0x10000 + 5, Relaxed); // playback channel 6
+    a.params.alt_input_right.store(0x10000 + 6, Relaxed);
+    a.params.alt_selected.store(true, Relaxed);
+    aux.params.alt_input_left.store(12, Relaxed);
+    c.input_select_global.store(true, Relaxed);
+    c.global_alt.store(true, Relaxed);
+
+    // Show files keep them.
+    let (e2, _) = round_trip(&engine, &Show::new());
+    let b = ch(&e2, 0);
+    assert_eq!((b.params.alt_input_left.load(Relaxed), b.params.alt_input_right.load(Relaxed)), (0x10005, 0x10006));
+    assert!(b.params.alt_selected.load(Relaxed));
+    assert_eq!(e2.strip_at(StripKind::Aux, 3).unwrap().params.alt_input_left.load(Relaxed), 12);
+    assert_eq!(ch(&e2, 1).params.alt_input_left.load(Relaxed), -1);
+    assert!(e2.controls.input_select_global.load(Relaxed) && e2.controls.global_alt.load(Relaxed));
+
+    // Scenes recall them with ROUTING (CONN), not with other sections.
+    let mut show = Show::new();
+    show.add_scene(&engine, &mut np, "A", -1);
+    show.scene_mut(0).unwrap().scope = section::ROUTING;
+    a.params.alt_input_left.store(3, Relaxed);
+    a.params.alt_selected.store(false, Relaxed);
+    c.input_select_global.store(false, Relaxed);
+    c.global_alt.store(false, Relaxed);
+    show.recall_scene(&engine, &mut np, 0);
+    assert_eq!(a.params.alt_input_left.load(Relaxed), 0x10005);
+    assert!(a.params.alt_selected.load(Relaxed));
+    assert!(c.input_select_global.load(Relaxed) && c.global_alt.load(Relaxed));
+    a.params.alt_selected.store(false, Relaxed);
+    c.global_alt.store(false, Relaxed);
+    show.scene_mut(0).unwrap().scope = section::FADER | section::PREAMP;
+    show.recall_scene(&engine, &mut np, 0);
+    assert!(!a.params.alt_selected.load(Relaxed) && !c.global_alt.load(Relaxed));
+
+    // Shows from before ALT inputs load as before.
+    let mut text = Show::new().to_xml(&engine, &mut np).to_document();
+    let attr = |name: &str, v: &str| format!(" {name}=\"{v}\"");
+    for (name, v) in [("altL", "65541"), ("altR", "65542"), ("altSel", "0"), ("altL", "-1"), ("altR", "-1"), ("altL", "12")] {
+        text = text.replace(&attr(name, v), "");
+    }
+    let start = text.find("<InputSelect").unwrap();
+    let end = start + text[start..].find("/>").unwrap() + 2;
+    text.replace_range(start..end, "");
+    assert!(!text.contains(" alt"), "every ALT attribute removed");
+    let e3 = Engine::new(0);
+    let mut loaded = Show::new();
+    loaded.load_from_text(&e3, &mut np, &text, true).unwrap();
+    assert_eq!(ch(&e3, 0).params.alt_input_left.load(Relaxed), -1);
+    assert!(!ch(&e3, 0).params.alt_selected.load(Relaxed));
+    assert!(!e3.controls.input_select_global.load(Relaxed) && !e3.controls.global_alt.load(Relaxed));
+}
