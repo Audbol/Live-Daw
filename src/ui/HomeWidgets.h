@@ -229,20 +229,13 @@ inline KnobStyle toolStyle (juce::Component* t = nullptr, juce::Colour c = colou
 
 /** The 3.1 key: a flat fill inside a black frame (the frame shows on the grey
     panels, not on the black page). */
-inline void paintKeyBody (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour fill)
+inline void paintKeyBody (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour fill, juce::Colour frame = juce::Colours::black)
 {
-    g.setColour (juce::Colours::black);
+    g.setColour (frame);
     g.fillRoundedRectangle (r, 2.5f);
-    if (! fill.isTransparent())
-    {
-        g.setColour (fill);
-        g.fillRoundedRectangle (r.reduced (juce::jlimit (1.0f, 2.0f, r.getHeight() * 0.04f)), 1.5f);
-    }
-    else
-    {
-        g.setColour (colours::panel);
-        g.fillRoundedRectangle (r.reduced (juce::jlimit (1.0f, 2.0f, r.getHeight() * 0.04f)), 1.5f);
-    }
+    const float inset = frame == juce::Colours::black ? juce::jlimit (1.0f, 2.0f, r.getHeight() * 0.04f) : 1.0f;
+    g.setColour (fill.isTransparent() ? colours::panel : fill);
+    g.fillRoundedRectangle (r.reduced (inset), 1.5f);
 }
 
 //==============================================================================
@@ -262,6 +255,7 @@ public:
     bool iconAbove = false, outlined = false, twoLines = false;
     juce::Colour offColour = colours::keyOff;
     juce::Colour offInk = colours::dim;  // the text of an unlit key
+    juce::Colour frame = juce::Colours::black;  // keyboard-style keys: #484848
 
     void setIcon (std::optional<Icon> i)
     {
@@ -289,7 +283,7 @@ public:
             fill = (fill.isTransparent() ? colours::panel : fill).brighter (0.07f);
         if (! isEnabled() && on)
             fill = fill.darker (0.45f);
-        paintKeyBody (g, r, fill);
+        paintKeyBody (g, r, fill, frame);
         const auto ink = on ? juce::Colours::black : (isEnabled() ? offInk : colours::dim.withAlpha (0.55f));
         g.setColour (ink);
         const auto keyText = getButtonText();

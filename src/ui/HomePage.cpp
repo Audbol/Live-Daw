@@ -1,4 +1,6 @@
 #include "ui/HomePage.h"
+#include "ui/HomeIcons.h"
+#include "ui/WingPopups.h"
 #include "dsp/DspUtils.h"
 #include "ui/Faceplate.h"
 #include "ui/Icons.h"
@@ -573,46 +575,213 @@ private:
     IconKey *light = nullptr, *linkCust = nullptr;
 };
 
-/** NAME: the strip's name. */
+/** The strip before or after `from` in CHANNEL SELECT order (channels, aux,
+    buses, mains, matrices), wrapping round. */
+Strip* adjacentStrip (MixerEngine& engine, const Strip* from, int delta)
+{
+    std::vector<Strip*> order;
+    for (int k = 0; k < kNumStripKinds; ++k)
+        for (auto& s : engine.getStrips (static_cast<StripKind> (k)))
+            order.push_back (s.get());
+    if (order.empty())
+        return nullptr;
+    const auto it = std::find (order.begin(), order.end(), from);
+    const int at = it != order.end() ? (int) std::distance (order.begin(), it) : (delta > 0 ? -1 : 0);
+    const int n = (int) order.size();
+    return order[(size_t) (((at + delta) % n + n) % n)];
+}
+
+/** The LINK CUSTOMIZATION TO SOURCE row of ICON/COLOR and NAME: the link key
+    (a keyboard-and-pencil icon, gold while linked), the caption and the NONE
+    and ALL keys. The console's sources (manual 5.4) are not modelled, so the
+    row is shown off. */
+class LinkCustomizationRow final : public juce::Component
+{
+public:
+    LinkCustomizationRow() { setTooltip ("The customization link needs the console's sources (not modelled)"); }
+
+    void setTooltip (const juce::String& t) { tip = t; }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        g.setColour (colours::panel);
+        g.fillRect (r);
+        r = r.reduced (r.getHeight() * 0.12f);
+        auto key = r.removeFromLeft (r.getHeight());
+        paintKeyBody (g, key, colours::keyOff);
+        drawIcon (g, Icon::Edit, key.reduced (key.getHeight() * 0.22f), colours::dim);
+        r.removeFromLeft (r.getHeight() * 0.25f);
+        // NONE and ALL: list icons with their captions under them.
+        for (int i = 1; i >= 0; --i)
+        {
+            auto k = r.removeFromRight (r.getHeight() * 1.1f);
+            auto caption = k.removeFromBottom (k.getHeight() * 0.34f);
+            auto icon = k.withSizeKeepingCentre (k.getHeight() * 1.1f, k.getHeight() * 0.8f);
+            for (int row = 0; row < 3; ++row)
+            {
+                const float y = icon.getY() + icon.getHeight() * ((float) row + 0.5f) / 3.0f;
+                const float d = icon.getHeight() * 0.22f;
+                auto box = juce::Rectangle<float> (d, d).withCentre ({ icon.getX() + d * 0.6f, y });
+                g.setColour (colours::dim);
+                if (i == 1)
+                    g.fillRoundedRectangle (box, 1.0f);
+                else
+                    g.drawRoundedRectangle (box, 1.0f, 1.0f);
+                g.fillRect (icon.getX() + d * 1.6f, y - 0.75f, icon.getWidth() - d * 1.6f, 1.5f);
+            }
+            g.setFont (juce::FontOptions (juce::jlimit (8.0f, 13.0f, caption.getHeight() * 0.95f), juce::Font::plain));
+            g.drawText (i == 1 ? "ALL" : "NONE", caption.toNearestInt(), juce::Justification::centred);
+            r.removeFromRight (r.getHeight() * 0.2f);
+        }
+        g.setColour (colours::dim);
+        g.setFont (juce::FontOptions (juce::jlimit (11.0f, 20.0f, r.getHeight() * 0.42f), juce::Font::plain));
+        g.drawFittedText ("LINK CUSTOMIZATION TO SOURCE", r.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+    }
+
+private:
+    juce::String tip;
+};
+
+/** NAME (firmware 3.1): the link row; the name in a black field with the
+    channel's icon, a gold caret and the circled clear key; five name
+    suggestions for the channel's icon; the on-screen keyboard, whose NEXT key
+    keeps the name and moves on to the next channel. */
 class NameScreen final : public HomeScreen, private juce::Timer
 {
 public:
     NameScreen (UiContext& c, Strip& s) : HomeScreen (c, s)
     {
-        editor = &make<juce::TextEditor>();
-        editor->setText (strip.getName(), false);
-        editor->setFont (juce::FontOptions (40.0f, juce::Font::bold));
-        editor->setJustification (juce::Justification::centredLeft);
-        editor->onTextChange = [this] { strip.setName (editor->getText()); };
-        editor->onReturnKey = [this] { unfocusAllComponents(); };
-        hint = &label ("The name shows on the scribble strip, the channel tab and in every list.", 15.0f);
-        clearKey = &key ("CLEAR");
-        clearKey->onClick = [this] { editor->setText ({}, true); };
+        link = &make<LinkCustomizationRow>();
+        keyboard = &make<popups::WingKeyboard>();
+        keyboard->setText (strip.getName());
+        keyboard->setActionText ("NEXT");
+        keyboard->onChange = [this] (const juce::String& t)
+        {
+            strip.setName (t.substring (0, kMaxNameLength));
+            repaint (field);
+        };
+        keyboard->onAction = [this] (const juce::String& t)
+        {
+            strip.setName (t.substring (0, kMaxNameLength));
+            if (auto* next = adjacentStrip (ctx.engine, &strip, 1); next != nullptr && ctx.selectStrip)
+                juce::MessageManager::callAsync ([&c = ctx, next] { if (c.selectStrip) c.selectStrip (next); });
+        };
+        for (auto& text : nameSuggestions (strip.params.icon.load()))
+            suggestionNames.add (text);
+        while (suggestionNames.size() < 5)
+            suggestionNames.add ({});
+        for (int i = 0; i < 5; ++i)
+        {
+            auto& k = key (suggestionNames[i]);
+            k.offColour = colours::well;
+            k.offInk = colours::caption;
+            k.frame = colours::outline;
+            k.setEnabled (suggestionNames[i].isNotEmpty());
+            k.onClick = [this, i]
+            {
+                strip.setName (suggestionNames[i]);
+                keyboard->setText (suggestionNames[i]);
+                repaint (field);
+            };
+            suggestions.push_back (&k);
+        }
         addLevelPanel();
         startTimerHz (4);
     }
 
+    static constexpr int kMaxNameLength = 16;
+
     void timerCallback() override
     {
-        if (! editor->hasKeyboardFocus (true) && editor->getText() != strip.getName())
-            editor->setText (strip.getName(), false);
+        if (keyboard->getText() != strip.getName())
+        {
+            keyboard->setText (strip.getName());
+            repaint (field);
+        }
+        // The caret blinks.
+        caretOn = ! caretOn;
+        repaint (field);
     }
 
     void resized() override
     {
         clearBoxes();
-        auto n = box (layoutLevelPanel (getLocalBounds()).removeFromTop (juce::jmin (200, getHeight())), "NAME");
-        auto row = n.removeFromTop (juce::jmin (56, n.getHeight() / 2));
-        clearKey->setBounds (row.removeFromRight (100).reduced (4, 8));
-        editor->setBounds (row.reduced (4, 4));
-        n.removeFromTop (8);
-        hint->setBounds (n.removeFromTop (24));
+        auto b = layoutLevelPanel (getLocalBounds());
+        // WING pixels (from the top of the content, 564 high): the link row
+        // 64, the field panel 80, the suggestions 72, the keyboard.
+        const float v = (float) b.getHeight() / 564.0f;
+        link->setBounds (b.removeFromTop (juce::roundToInt (64.0f * v)));
+        b.removeFromTop (juce::roundToInt (8.0f * v));
+        fieldPanel = b.removeFromTop (juce::roundToInt (80.0f * v));
+        field = fieldPanel.withSizeKeepingCentre (fieldPanel.getWidth() * 58 / 100, fieldPanel.getHeight() * 76 / 100);
+        clearArea = field.withLeft (field.getRight() - field.getHeight());
+        b.removeFromTop (juce::roundToInt (8.0f * v));
+        suggestionPanel = b.removeFromTop (juce::roundToInt (72.0f * v));
+        auto row = suggestionPanel.reduced (juce::roundToInt (8.0f * v));
+        const int w = row.getWidth() / 5;
+        for (auto* k : suggestions)
+            k->setBounds (row.removeFromLeft (w).reduced (juce::roundToInt (4.0f * v), 0));
+        b.removeFromTop (juce::roundToInt (4.0f * v));
+        keyboardPanel = b;
+        keyboard->setBounds (b.reduced (juce::roundToInt (8.0f * v)));
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        HomeScreen::paint (g);
+        g.setColour (colours::panel);
+        for (auto r : { fieldPanel, suggestionPanel, keyboardPanel })
+            g.fillRect (r);
+
+        // The field: black, a grey outline, the icon, the name with the gold
+        // caret, the circled clear key.
+        auto f = field.toFloat();
+        g.setColour (juce::Colours::black);
+        g.fillRect (f);
+        g.setColour (juce::Colour (0xff474747));
+        g.drawRect (f, 1.5f);
+        auto inner = f.reduced (f.getHeight() * 0.18f);
+        drawChannelIcon (g, strip.params.icon.load(), strip.getKind(), inner.removeFromLeft (inner.getHeight() * 1.3f), colours::ink);
+        inner.removeFromLeft (inner.getHeight() * 0.5f);
+        auto clear = clearArea.toFloat().reduced (clearArea.getHeight() * 0.24f);
+        inner.removeFromRight (clearArea.getWidth());
+        const auto name = strip.getName();
+        g.setColour (colours::ink);
+        const juce::Font font (juce::FontOptions (inner.getHeight() * 0.92f, juce::Font::plain));
+        g.setFont (font);
+        g.drawText (name, inner.toNearestInt(), juce::Justification::centredLeft, true);
+        if (caretOn)
+        {
+            const float x = inner.getX() + juce::jmin (inner.getWidth(), juce::GlyphArrangement::getStringWidth (font, name)) + 2.0f;
+            g.setColour (colours::accent);
+            g.fillRect (x, inner.getY(), 2.0f, inner.getHeight());
+        }
+        g.setColour (colours::caption);
+        g.drawEllipse (clear, 1.5f);
+        const auto cc = clear.getCentre();
+        const float s = clear.getWidth() * 0.2f;
+        g.drawLine (cc.x - s, cc.y - s, cc.x + s, cc.y + s, 2.0f);
+        g.drawLine (cc.x - s, cc.y + s, cc.x + s, cc.y - s, 2.0f);
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (clearArea.contains (e.getPosition()))
+        {
+            strip.setName ({});
+            keyboard->setText ({});
+            repaint (field);
+        }
     }
 
 private:
-    juce::TextEditor* editor = nullptr;
-    juce::Label* hint = nullptr;
-    IconKey* clearKey = nullptr;
+    LinkCustomizationRow* link = nullptr;
+    popups::WingKeyboard* keyboard = nullptr;
+    std::vector<IconKey*> suggestions;
+    juce::StringArray suggestionNames;
+    juce::Rectangle<int> fieldPanel, field, clearArea, suggestionPanel, keyboardPanel;
+    bool caretOn = true;
 };
 
 /** TAGS: DCA groups D1-D16 and the 8 mute groups. */
@@ -1640,13 +1809,22 @@ std::vector<StatusKey> HomePage::getStatusKeys()
 {
     if (strip == nullptr)
         return {};
-    // INIT and COPY on every slot screen; SETTINGS on OVERVIEW, FILTER and EQ.
+    // 3.1: PREV CH and NEXT CH, then INIT and COPY on every slot screen;
+    // SETTINGS on OVERVIEW, FILTER and EQ.
     std::vector<StatusKey> keys;
+    keys.push_back ({ "PREV CH", Icon::ChevronLeft, false, [this] { stepStrip (-1); } });
+    keys.push_back ({ "NEXT CH", Icon::ChevronRight, false, [this] { stepStrip (1); } });
     keys.push_back ({ "INIT", Icon::Reset, overlayKind == OverlayKind::Init, [this] { openOverlay (OverlayKind::Init); } });
     keys.push_back ({ "COPY", Icon::Copy, overlayKind == OverlayKind::Copy, [this] { openOverlay (OverlayKind::Copy); } });
     if (content != nullptr && content->hasSettings())
         keys.push_back ({ "SETTINGS", Icon::Gear, overlayKind == OverlayKind::Settings, [this] { openOverlay (OverlayKind::Settings); } });
     return keys;
+}
+
+void HomePage::stepStrip (int delta)
+{
+    if (auto* next = adjacentStrip (ctx.engine, strip, delta); next != nullptr && ctx.selectStrip)
+        ctx.selectStrip (next);
 }
 
 void HomePage::paint (juce::Graphics& g)
