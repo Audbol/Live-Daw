@@ -399,6 +399,17 @@ juce::Result Show::loadFromFile (const juce::File& file, bool loadPlugins)
     return afterLoad (ok, message);
 }
 
+juce::Result Show::importWingShow (ld::LdWing* wing, const juce::File& file, juce::String& report)
+{
+    const Utf8 u (file.getFullPathName());
+    ld::LdString* message = nullptr;
+    const bool ok = ld::ld_wing_import_show (wing, handle, u.data, u.size, &message);
+    report = takeString (message);
+    engine.syncStrips();
+    changed();
+    return ok ? juce::Result::ok() : juce::Result::fail (report);
+}
+
 void Show::clear (int numChannels)
 {
     stopTimer();

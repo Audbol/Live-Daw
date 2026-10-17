@@ -3,6 +3,7 @@
 #include "engine/FxSlots.h"
 #include "engine/Recorder.h"
 #include "engine/Strip.h"
+#include "engine/WingRemote.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
@@ -93,6 +94,9 @@ public:
 
     /** The multitrack recorder / player (transport, recording, playback channels). */
     Recorder& getRecorder() noexcept { return *recorder; }
+
+    /** The WING remote protocols and WING snapshot files. */
+    WingRemote& getWing() noexcept { return *wing; }
 
 private:
     ld::Engine* engine;
@@ -244,6 +248,7 @@ private:
     Garbage garbage;
     FxSlots fx;
     std::unique_ptr<Recorder> recorder = std::make_unique<Recorder> (engine);
+    std::unique_ptr<WingRemote> wing = std::make_unique<WingRemote> (*this);
     std::vector<std::unique_ptr<Worker>> workers;
 
     std::array<StripList, kNumStripKinds> lists;

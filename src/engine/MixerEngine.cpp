@@ -84,6 +84,7 @@ MixerEngine::MixerEngine (int numWorkerThreads)
 
 MixerEngine::~MixerEngine()
 {
+    wing.reset(); // stops the remote servers while the engine is intact
     stopTimer();
     // The device manager must have removed this callback before destruction.
     ld::ld_engine_shutdown_workers (engine);
