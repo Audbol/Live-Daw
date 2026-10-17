@@ -5,26 +5,38 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <algorithm>
 #include <atomic>
 #include <functional>
 #include <optional>
+#include <utility>
+#include <vector>
 
 namespace livedaw::ui
 {
 
-/** A flat screen key like the console's: grey, optional icon left of the text,
-    lit in `onColour` (with black ink) while `isOn` returns true. */
+/** The cap height of key text on the screen: about 2 % of the screen height,
+    and at most `fraction` of the key's height. */
+inline float wingKeyCap (float keyHeight, float fraction = 0.34f)
+{
+    return juce::jmin (0.02f * getWingScreenHeight(), keyHeight * fraction);
+}
+
+/** A flat screen key like the console's: #303030 framed in black, optional icon
+    left of the text, lit in `onColour` (with black ink) while `isOn` returns
+    true. An unlit toggle (one with `isOn`) has grey text, an action key white;
+    an outlined key (SAFE, FILTER LO/HI) has a grey frame. */
 class WingKey : public juce::Button, private juce::Timer
 {
 public:
-    WingKey (const juce::String& keyText, std::optional<Icon> keyIcon = std::nullopt, juce::Colour on = Colours::yellow)
+    WingKey (const juce::String& keyText, std::optional<Icon> keyIcon = std::nullopt, juce::Colour on = Colours::gold)
         : juce::Button (keyText), icon (keyIcon), onColour (on)
     {
         startTimerHz (6);
     }
 
     std::function<bool()> isOn;
-    juce::Colour offColour = juce::Colour (0xff5a5a5a);
+    juce::Colour offColour = Colours::screenKey;
     /** The icon's colour while the key is off (the recorder's red record dot). */
     std::optional<juce::Colour> iconColour;
     bool outlined = false;
@@ -44,19 +56,17 @@ public:
             fill = fill.darker (0.4f);
         g.setColour (fill);
         g.fillRect (r);
-        if (outlined)
-        {
-            g.setColour (juce::Colour (0xffbdbdbd));
-            g.drawRect (r, 1.0f);
-        }
-        const auto ink = on ? juce::Colours::black : (isEnabled() ? Colours::text : Colours::textDim);
+        g.setColour (outlined && ! on ? Colours::textDim : juce::Colours::black);
+        g.drawRect (r, outlined ? 1.5f : 1.0f);
+        const auto ink = on ? juce::Colours::black
+                            : (! isEnabled() ? Colours::textDim.darker (0.3f) : (isOn != nullptr && ! outlined ? Colours::textDim : Colours::caption));
         if (iconAbove && icon.has_value())
         {
             auto label = r.removeFromBottom (r.getHeight() * 0.36f);
             drawIcon (g, *icon, r.reduced (r.getHeight() * 0.12f), ink);
             g.setColour (ink);
-            g.setFont (juce::FontOptions (juce::jlimit (10.0f, 15.0f, label.getHeight() * 0.8f), juce::Font::bold));
-            g.drawFittedText (getButtonText(), label.toNearestInt().reduced (2, 0), juce::Justification::centredTop, 1);
+            g.setFont (wingFontPx (juce::jmin (TypeScale::statusCaption * getWingScreenHeight(), label.getHeight() * 0.6f)));
+            g.drawFittedText (getButtonText(), label.toNearestInt().reduced (2, 0), juce::Justification::centredTop, 1, 0.75f);
             return;
         }
         auto content = r.reduced (juce::jmin (10.0f, r.getHeight() * 0.18f), 0.0f);
@@ -69,9 +79,10 @@ public:
         }
         if (getButtonText().isNotEmpty())
         {
+            const int lines = juce::StringArray::fromLines (getButtonText()).size();
             g.setColour (ink);
-            g.setFont (juce::FontOptions (juce::jlimit (12.0f, 22.0f, r.getHeight() * 0.46f), juce::Font::bold));
-            g.drawFittedText (getButtonText(), content.toNearestInt(), juce::Justification::centred, 2);
+            g.setFont (wingFontPx (wingKeyCap (r.getHeight(), lines > 1 ? 0.26f : 0.34f)));
+            g.drawFittedText (getButtonText(), content.toNearestInt(), juce::Justification::centred, 2, 0.75f);
         }
     }
 
@@ -90,15 +101,14 @@ private:
     bool lastOn = false;
 };
 
-/** The console's "ON" chip: yellow while the bound flag is set, click toggles it. */
+/** The console's "ON" chip: gold while the bound flag is set, click toggles it. */
 class OnChip final : public WingKey
 {
 public:
     explicit OnChip (std::atomic<bool>& flag) : WingKey ("ON"), value (flag)
     {
         isOn = [this] { return value.load(); };
-        offColour = juce::Colour (0xff4b4b4b);
-        outlined = true;
+        offColour = Colours::screenKey;
         onClick = [this] { value = ! value.load(); };
     }
 
@@ -106,11 +116,12 @@ private:
     std::atomic<bool>& value;
 };
 
-/** A row of keys of which one is lit (NORM | FINE | AUTO on the console). */
+/** A row of keys of which one is lit (NORM | FINE | AUTO on the console): the
+    keys sit in a black frame, unlit #303030 with grey text. */
 class SegmentedKeys final : public juce::Component
 {
 public:
-    SegmentedKeys (juce::StringArray labels, std::function<int()> get, std::function<void (int)> set, juce::Colour on = Colours::yellow)
+    SegmentedKeys (juce::StringArray labels, std::function<int()> get, std::function<void (int)> set, juce::Colour on = Colours::gold)
         : names (std::move (labels)), getter (std::move (get)), setter (std::move (set)), onColour (on)
     {
     }
@@ -119,18 +130,19 @@ public:
     {
         const int current = getter != nullptr ? getter() : -1;
         auto r = getLocalBounds().toFloat();
-        g.setColour (juce::Colour (0xff1e1e1e));
+        g.setColour (juce::Colours::black);
         g.fillRect (r);
+        r = r.reduced (1.0f);
         const float w = r.getWidth() / (float) juce::jmax (1, names.size());
         for (int i = 0; i < names.size(); ++i)
         {
-            auto k = juce::Rectangle<float> (r.getX() + w * (float) i, r.getY(), w, r.getHeight()).reduced (1.0f);
+            auto k = juce::Rectangle<float> (r.getX() + w * (float) i, r.getY(), w, r.getHeight()).reduced (1.0f, 0.0f);
             const bool on = i == current;
-            g.setColour (on ? onColour : juce::Colour (0xff4b4b4b));
+            g.setColour (on ? onColour : Colours::screenKey);
             g.fillRect (k);
-            g.setColour (on ? juce::Colours::black : Colours::text);
-            g.setFont (juce::FontOptions (juce::jlimit (12.0f, 22.0f, k.getHeight() * 0.48f), juce::Font::bold));
-            g.drawFittedText (names[i], k.toNearestInt().reduced (2, 0), juce::Justification::centred, 1);
+            g.setColour (on ? juce::Colours::black : Colours::caption);
+            g.setFont (wingFontPx (wingKeyCap (k.getHeight())));
+            g.drawFittedText (names[i], k.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.75f);
         }
     }
 
@@ -147,6 +159,149 @@ private:
     std::function<int()> getter;
     std::function<void (int)> setter;
     juce::Colour onColour;
+};
+
+//==============================================================================
+/** What a WING channel tile shows (CHANNEL SELECT, and the tiles of other
+    screens that list strips). */
+struct WingTileInfo
+{
+    juce::Colour colour;          // the strip's colour (already dimmed when it has no source)
+    juce::String name;            // on the colour strip (empty for a default name)
+    juce::String label;           // "1", "A1", "B1", "M1", "MX1"
+    bool boxed = true;            // channels and aux: the number in a grey box
+    int wingIcon = 0;             // /ch/n/icon, 0 = none
+    std::optional<Icon> kindIcon; // drawn when wingIcon is 0 or unknown
+    float meter = -1.0f;          // 0..1 level for the meter at the right edge (< 0: none)
+    bool selected = false;        // the accent frame
+};
+
+/** Paints a WING channel tile (CHANNEL SELECT, 112x64 of 1280x800 px): the colour
+    strip with the name, a #303030 body with the number (white in a grey box for
+    channels and aux, grey text for buses, mains and matrices), the icon at the
+    right, a level meter along the right edge, and a gold frame when selected. */
+inline void paintWingTile (juce::Graphics& g, juce::Rectangle<float> r, const WingTileInfo& t)
+{
+    const auto tile = r;
+    auto stripArea = r.removeFromTop (juce::jmax (4.0f, std::round (r.getHeight() * 22.0f / 64.0f)));
+    g.setColour (t.colour);
+    g.fillRect (stripArea);
+    if (t.name.isNotEmpty())
+    {
+        g.setColour (t.colour.getPerceivedBrightness() > 0.62f ? juce::Colours::black : Colours::text);
+        g.setFont (wingFontPx (juce::jmin (stripArea.getHeight() * 0.55f, 0.016f * getWingScreenHeight())));
+        g.drawFittedText (t.name, stripArea.reduced (3.0f, 0.0f).toNearestInt(), juce::Justification::centred, 1, 0.7f);
+    }
+    r.removeFromTop (1.0f);
+    g.setColour (Colours::screenTile);
+    g.fillRect (r);
+
+    if (t.meter >= 0.0f)
+    {
+        // Two columns of segments along the right edge.
+        auto meter = r.removeFromRight (juce::jmax (4.0f, r.getHeight() * 0.22f)).reduced (1.0f, 2.0f);
+        const int segments = 8;
+        const float segH = meter.getHeight() / (float) segments;
+        const int lit = juce::roundToInt (juce::jlimit (0.0f, 1.0f, t.meter) * (float) segments);
+        for (int i = 0; i < segments; ++i)
+            for (int col = 0; col < 2; ++col)
+            {
+                const auto seg = juce::Rectangle<float> (meter.getX() + (float) col * meter.getWidth() * 0.5f, meter.getBottom() - (float) (i + 1) * segH,
+                                                         meter.getWidth() * 0.5f - 1.0f, segH - 1.0f);
+                g.setColour (i < lit ? (i >= segments - 1 ? Colours::meterRed : (i >= segments - 2 ? Colours::meterYellow : Colours::meterGreen))
+                                     : juce::Colours::black);
+                g.fillRect (seg);
+            }
+    }
+
+    auto body = r.reduced (r.getHeight() * 0.1f, r.getHeight() * 0.14f);
+    const float cap = juce::jmin (body.getHeight() * 0.62f, 0.026f * getWingScreenHeight());
+    const auto font = wingFontPx (cap, WingWeight::SemiBold);
+    g.setFont (font);
+    if (t.boxed)
+    {
+        const float w = juce::GlyphArrangement::getStringWidth (font, t.label) + cap * 0.5f;
+        auto box = body.removeFromLeft (juce::jmax (w, body.getHeight() * 0.8f)).withSizeKeepingCentre (juce::jmax (w, body.getHeight() * 0.8f), body.getHeight());
+        g.setColour (Colours::chipOff);
+        g.fillRoundedRectangle (box, 2.0f);
+        g.setColour (Colours::text);
+        g.drawText (t.label, box, juce::Justification::centred, false);
+    }
+    else
+    {
+        g.setColour (Colours::textDim.brighter (0.25f));
+        g.drawText (t.label, body, juce::Justification::centredLeft, false);
+    }
+    auto iconArea = body.removeFromRight (body.getHeight()).reduced (body.getHeight() * 0.04f);
+    const auto iconColour = Colours::textDim.brighter (0.3f);
+    if (! (t.wingIcon > 0 && drawWingIcon (g, t.wingIcon, iconArea, iconColour)) && t.kindIcon.has_value())
+        drawIcon (g, *t.kindIcon, iconArea.reduced (iconArea.getHeight() * 0.06f), iconColour);
+
+    if (t.selected)
+    {
+        // The gold frame, just outside the tile.
+        g.setColour (Colours::gold);
+        g.drawRect (tile.expanded (3.0f), 2.0f);
+    }
+}
+
+//==============================================================================
+/** The pop-ups open on the screen that close as soon as a key of the surface is
+    pressed ("most pop-ups automatically dismiss as soon as one of the buttons is
+    pressed"). Pop-ups register a closer while open; SurfaceKey (and the screen
+    keys beside the display) call closeAll() when pressed. Message thread only. */
+class TransientPopups
+{
+public:
+    using Closer = std::function<void()>;
+
+    static void add (const void* owner, Closer closer)
+    {
+        remove (owner);
+        list().push_back ({ owner, std::move (closer) });
+    }
+
+    static void remove (const void* owner)
+    {
+        auto& l = list();
+        l.erase (std::remove_if (l.begin(), l.end(), [owner] (const auto& e) { return e.first == owner; }), l.end());
+    }
+
+    static bool anyOpen() { return ! list().empty(); }
+
+    /** Closes every registered pop-up (each as if cancelled). */
+    static void closeAll()
+    {
+        auto open = std::move (list());
+        list().clear();
+        for (auto& e : open)
+            if (e.second != nullptr)
+                e.second();
+    }
+
+private:
+    static std::vector<std::pair<const void*, Closer>>& list()
+    {
+        static std::vector<std::pair<const void*, Closer>> open;
+        return open;
+    }
+};
+
+/** Brightness of the surface's key lighting (SETUP > GENERAL: BTNS/LEDS for lit
+    keys, BACKLIGHT for unlit ones), 0..1. The main display applies the settings. */
+struct SurfaceLighting
+{
+    static float& leds() { static float v = 0.9f; return v; }
+    static float& backlight() { static float v = 0.25f; return v; }
+
+    /** A lit key's colour at the LED brightness: dimmer toward the unlit body. */
+    static juce::Colour lit (juce::Colour led, juce::Colour body)
+    {
+        return body.interpolatedWith (led, juce::jlimit (0.0f, 1.0f, 0.35f + 0.65f * leds() / 0.9f));
+    }
+
+    /** An unlit key's body with the backlight: a faint lift of the print. */
+    static juce::Colour unlit (juce::Colour body) { return body.brighter (juce::jlimit (0.0f, 1.0f, backlight() - 0.25f) * 0.3f); }
 };
 
 /** A key of the control surface (as opposed to the touch screen): a rounded
@@ -185,7 +340,7 @@ public:
 
     std::function<void()> onPress, onHold;
     std::function<int()> ledState;
-    juce::Colour ledColour = Colours::yellow;
+    juce::Colour ledColour = Colours::ledYellow;
     Shape shape = Shape::Rect;
     /** A key printed dark (LISTEN, DAW). */
     bool dark = false;
@@ -216,7 +371,8 @@ public:
         const bool lit = shownLit && isEnabled();
         const bool down = isMouseButtonDown() && isEnabled();
 
-        auto body = lit ? ledColour : (dark ? juce::Colour (0xff141517) : Colours::keyBody);
+        const auto unlitBody = SurfaceLighting::unlit (dark ? juce::Colour (0xff141517) : Colours::keyBody);
+        auto body = lit ? SurfaceLighting::lit (ledColour, unlitBody) : unlitBody;
         if (down)
             body = body.darker (0.25f);
         else if (isMouseOver() && isEnabled())
@@ -268,7 +424,7 @@ public:
             const int lines = juce::StringArray::fromLines (label).size();
             const float size = juce::jlimit (7.0f, 16.0f, content.getHeight() * (lines > 1 ? 0.36f : 0.46f));
             g.setColour (ink);
-            g.setFont (juce::FontOptions (size, juce::Font::bold));
+            g.setFont (silkFont (size));
             if (arrow != 0)
             {
                 // Triangle and label centred together.
@@ -293,6 +449,8 @@ public:
     {
         if (! isEnabled())
             return;
+        // Pressing any key of the surface closes the screen's pop-ups.
+        TransientPopups::closeAll();
         pressed = false;
         holdDone = false;
         if (e.mods.isPopupMenu() || e.mods.isCommandDown())

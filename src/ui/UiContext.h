@@ -11,6 +11,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <functional>
+#include <optional>
 
 namespace livedaw::daw
 {
@@ -19,6 +20,8 @@ class Session;
 
 namespace livedaw::ui
 {
+
+struct KnobBinding;
 
 /** The main display's screens: the seven keys left of the WING's display, then
     the VIEW screens the fader sections' VIEW keys open (manual 5.7-5.11). */
@@ -102,6 +105,9 @@ struct UiContext
         sends to it; with an input selected the bus faders show its sends. */
     bool sendsOnFader = false;
     std::function<void()> sofChanged;
+    /** ALTERNATIVE SOF MODE: the strip whose SELECT was held stays the SOF
+        strip whatever is selected afterwards (nullopt: the selected strip). */
+    std::optional<state::StripRef> sofDestination;
 
     /** The screen the main display shows (the VIEW keys light while theirs is up). */
     std::function<Screen()> getScreen;
@@ -127,7 +133,89 @@ struct UiContext
     /** Shows the multitrack editor in place of the console (false: back). */
     std::function<void (bool)> showEditor;
     std::function<bool()> isEditorShown;
+
+    // Set by the SETUP page while it exists.
+    /** Opens SETUP on a tab (0 GENERAL, 1 AUDIO, 2 SURFACE, 3 REMOTE, 4 DAW,
+        5 PLUGINS, 6 LOG): the status bar's chips tile opens AUDIO. */
+    std::function<void (int tab)> showSetupTab;
+    /** Opens CUSTOM CONTROLS (CC EDIT) on SETUP, at a layer when >= 0 (SETUP
+        pressed twice, the CC section's VIEW key). */
+    std::function<void (int layer)> showCustomControls;
+    /** Opens the MONITORS screen on SETUP (its MONITORS key, the monitoring VIEW key). */
+    std::function<void()> showMonitors;
+
+    /** The CC section's cursor keys and wheel with USE CRSR/WHEEL on: the main
+        display moves its focus frame (dx, dy) or turns the focused control.
+        Set by the main display (the focus model). */
+    std::function<void (int dx, int dy)> moveScreenFocus;
+    std::function<void (int steps)> turnScreenFocus;
+
+    /** TOUCH FADER SELECT: an on-screen fader that was touched becomes the
+        target of the knob right of the display (set by the main display). */
+    std::function<void (const KnobBinding&, juce::Component* target)> setFineTarget;
 };
+
+/** SETUP settings that the status bar, the surface and the pages share. */
+namespace uiprefs
+{
+    constexpr const char* clock24 = "ui.clock24";       // bool, default true (SETUP > GENERAL > TIME)
+    constexpr const char* dateFormat = "ui.dateFormat"; // "YYYY-MM-DD" (default) or "DD-MM-YYYY" (DATE)
+
+    inline bool use24h (juce::PropertiesFile& s) { return s.getBoolValue (clock24, true); }
+    inline bool dayFirst (juce::PropertiesFile& s) { return s.getValue (dateFormat, "YYYY-MM-DD") == "DD-MM-YYYY"; }
+
+    /** "16:51:19", or "4:51:19 PM" in 12-hour mode. */
+    inline juce::String formatTime (juce::PropertiesFile& s, juce::Time t)
+    {
+        if (use24h (s))
+            return t.formatted ("%H:%M:%S");
+        const int h = t.getHours() % 12;
+        return juce::String (h == 0 ? 12 : h) + t.formatted (":%M:%S ") + (t.getHours() < 12 ? "AM" : "PM");
+    }
+
+    inline juce::String formatDate (juce::PropertiesFile& s, juce::Time t) { return t.formatted (dayFirst (s) ? "%d-%m-%Y" : "%Y-%m-%d"); }
+
+    // SOLO SYSTEM (SETUP > AUDIO).
+    constexpr const char* exclusiveSolo = "ui.soloExclusive";
+    constexpr const char* soloFollowsSelect = "ui.soloFollowsSelect";
+    constexpr const char* selectFollowsSolo = "ui.selectFollowsSolo";
+    constexpr const char* sofActivatesSolo = "ui.sofActivatesSolo";
+
+    // GENERAL (SETUP > GENERAL).
+    constexpr const char* alwaysShowScene = "ui.alwaysShowScene";    // the status bar's title tile shows the active scene
+    constexpr const char* useCursorWheel = "ui.useCursorWheel";      // the CC section's arrows and wheel edit the screen
+    constexpr const char* touchFaderSelect = "ui.touchFaderSelect";  // a touched on-screen fader goes on the knob right of the display
+
+    // SURFACE (SETUP > SURFACE).
+    constexpr const char* sofButton = "ui.sofButton";                // SOF FLIP LED: 0 AUTO, 1 ON, 2 FLASH
+    constexpr const char* showSofFrame = "ui.showSofFrame";          // a frame and SOF badge on the title tile during SOF
+    constexpr const char* sourceOnScribble = "ui.sourceOnScribble";  // default on: the source ports on the scribble strips
+    constexpr const char* faderValueOnScribble = "ui.faderValueOnScribble";
+    constexpr const char* screenFollowsStrip = "ui.screenFollowsChStrip";
+    constexpr const char* stripTouchSelect = "ui.chStripTouchSelect";
+    constexpr const char* faderSpeed = "ui.faderSpeed";              // 0 SLOW, 1 MED (default), 2 FAST
+    constexpr const char* fullFaderPaging = "ui.fullFaderPaging";
+    constexpr const char* alternativeSof = "ui.alternativeSof";
+    constexpr const char* rightSectionSof = "ui.rightSectionSof";    // default on (ALL); off: the left and center sections only
+    constexpr const char* userLayerLink[2] = { "ui.userLayerLinkLC", "ui.userLayerLinkCR" };
+    constexpr const char* autoSelect[3] = { "ui.autoSelectL", "ui.autoSelectC", "ui.autoSelectR" };
+    constexpr const char* f1f3AsCustom = "ui.f1f3AsCustomControls";
+
+    /** How long the faders take to travel to a new position (FADER SPEED). */
+    inline int faderGlideMs (juce::PropertiesFile& s)
+    {
+        const int v = s.getIntValue (faderSpeed, 1);
+        return v == 0 ? 400 : v == 2 ? 80 : 200;
+    }
+
+    /** A LIGHTS tile of SETUP > GENERAL as a brightness factor: 1 at the
+        tile's default, dimmer below it and up to about 1.3 above. */
+    inline float brightness (juce::PropertiesFile& s, const char* id, int defaultPercent)
+    {
+        auto level = [] (int percent) { return 0.25f + 0.75f * (float) juce::jlimit (0, 100, percent) / 100.0f; };
+        return level (s.getIntValue (juce::String ("setup.brightness.") + id, defaultPercent)) / level (defaultPercent);
+    }
+} // namespace uiprefs
 
 /** Calls ctx.layersChanged asynchronously: safe to use from a callback of a
     component that the rebuild will delete. */
@@ -160,6 +248,24 @@ juce::String describeStrip (const Strip&);
 
 /** The strip's name, or its label ("CH 3") when it has a default name. */
 juce::String stripName (const Strip&);
+
+/** False for an input or aux channel with neither a MAIN nor an ALT source:
+    the WING then draws its colour at half brightness ("Channel color LED
+    switched off when no source is selected", firmware 1.10). Buses, mains,
+    matrices (and DCAs) always have one. */
+inline bool stripHasSource (const Strip& s)
+{
+    return s.isOutput() || s.getInputLeft() >= 0 || s.getAltInputLeft() >= 0;
+}
+
+/** The strip's colour as colour bars, tiles and name strips draw it. */
+inline juce::Colour stripDisplayColour (const Strip& s)
+{
+    return stripHasSource (s) ? s.getColour() : s.getColour().withMultipliedBrightness (0.5f);
+}
+
+/** Draws the strip's icon: its WING icon (params.icon) when set, else its kind's. */
+void drawStripIcon (juce::Graphics&, const Strip&, juce::Rectangle<float> area, juce::Colour);
 
 /** The icon of a kind of strip (XLR for channels, jack for aux, ...). */
 inline Icon stripIcon (StripKind k)
