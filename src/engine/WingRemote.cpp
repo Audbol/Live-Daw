@@ -140,6 +140,9 @@ juce::Result WingRemote::importSnapshot (const juce::File& file, juce::String& r
 
 juce::Result WingRemote::exportSnapshot (const juce::File& file)
 {
+    // The default folder (Documents) may not exist yet on a fresh system.
+    if (auto dir = file.getParentDirectory().createDirectory(); dir.failed())
+        return dir;
     const Utf8 path (file.getFullPathName());
     ld::LdString* message = nullptr;
     if (ld::ld_wing_export_snap (handle, path.data, path.size, &message))

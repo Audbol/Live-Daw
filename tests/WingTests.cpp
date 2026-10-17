@@ -138,6 +138,7 @@ public:
 
             auto snap = dir.getChildFile ("Test.snap");
             expect (engine.getWing().exportSnapshot (snap).wasOk());
+            expect (engine.getWing().exportSnapshot (dir.getChildFile ("new folder/x.snap")).wasOk(), "creates the folder");
             expect (snap.loadFileAsString().contains ("\"snapshot.11\""));
 
             ch->setName ("Changed");

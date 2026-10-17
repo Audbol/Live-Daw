@@ -71,8 +71,9 @@ public:
         makeKey (keys, *this, "EDIT\nTAG", Icon::Tag)->onClick = [this] { editTag(); };
         makeKey (keys, *this, "SEND\nMIDI", Icon::Edit, false);        // needs MIDI (G-N1)
         // WING files (Live DAW): snapshots apply to the console, shows add scenes.
-        makeKey (keys, *this, "IMPORT WING\nSNAP/SHOW...", Icon::LoadTray)->onClick = [this] { importWing(); };
-        makeKey (keys, *this, "EXPORT WING\nSNAP...", Icon::SaveTray)->onClick = [this] { exportWing(); };
+        // IMPORT WING SNAP/SHOW... and EXPORT WING SNAP... (the file dialogs say which).
+        makeKey (keys, *this, "IMPORT\nWING", Icon::LoadTray)->onClick = [this] { importWing(); };
+        makeKey (keys, *this, "EXPORT\nWING", Icon::SaveTray)->onClick = [this] { exportWing(); };
         rows = { { {}, { keys[0], keys[1] }, { keys[2] } }, { {}, { keys[3] }, { keys[4] } }, { {}, { keys[5] }, { keys[7], keys[6] } },
                  { {}, { keys[8] }, { keys[9] } } };
     }
