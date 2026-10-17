@@ -24,6 +24,7 @@
 //! immutable `Topology`; the old one is retired to the garbage collector, which
 //! drops it (and any removed strips) once the audio thread is done with it.
 
+use crate::analyser::{Analyser, Probes};
 use crate::denormals::ScopedNoDenormals;
 use crate::fx::{FxRack, InsertCallbacks};
 use crate::garbage::Garbage;
@@ -190,6 +191,8 @@ pub struct Engine {
     pub controls: EngineControls,
     fx: Box<[FxRack]>,
     recorder: Recorder,
+    /// RTA, LR scope and LISTEN on one strip at a time (`analyser.rs`).
+    analysis: Analyser,
 }
 
 // SAFETY: `audio` is only touched by the audio thread (process) or by prepare
@@ -244,6 +247,7 @@ impl Engine {
             controls: EngineControls::default(),
             fx: (0..NUM_FX).map(|_| FxRack::default()).collect(),
             recorder: Recorder::new(),
+            analysis: Analyser::new(),
         };
         // SAFETY: not published yet, no audio callback.
         unsafe {
@@ -415,6 +419,7 @@ impl Engine {
         self.build_fixed(&mut st);
         self.publish(&st);
         self.controls.reset();
+        self.analysis.reset();
         *self.names.lock().unwrap_or_else(|e| e.into_inner()) = GroupNames::default();
     }
 
@@ -468,6 +473,11 @@ impl Engine {
     /// The multitrack recorder / player.
     pub fn recorder(&self) -> &Recorder {
         &self.recorder
+    }
+
+    /// The RTA, the LR vector scope and LISTEN (their controls are shared with the UI).
+    pub fn analysis(&self) -> &Analyser {
+        &self.analysis
     }
 
     /// Message thread: starts recording `tracks` from the current position
@@ -649,6 +659,7 @@ impl Engine {
         }
         drop(st);
         self.recorder.prepare(sample_rate, block_size);
+        self.analysis.prepare(sample_rate);
         // Devices are built for a sample rate and block size: rebuild them.
         for (i, (rack, params)) in self.fx.iter().zip(self.controls.fx.iter()).enumerate() {
             self.install_fx_device(i, rack, params.model_index());
@@ -753,7 +764,10 @@ impl Engine {
             main_link_db: topo.mains.first().map_or(0.0, |m| m.params.fader_db.load()),
         };
         let block = a.block_counter;
-        let ctx_of = |hw| self.context(topo, hw, playback.get(), alt, &groups, block);
+        // The analysed and listened strips of this chunk (analyser.rs).
+        let probes = self.analysis.begin_block(topo.all());
+        let probes = &probes;
+        let ctx_of = |hw| self.context(topo, hw, playback.get(), alt, &groups, block, probes);
         let ctx_of = &ctx_of;
 
         // 1. Channels and aux channels (parallel)
@@ -814,6 +828,7 @@ impl Engine {
         self.protect_outputs(a, n);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn context<'a>(
         &'a self,
         topo: &'a Topology,
@@ -822,6 +837,7 @@ impl Engine {
         (input_select_global, global_alt): (bool, bool),
         g: &GroupState,
         block: u64,
+        probes: &'a Probes,
     ) -> ProcessContext<'a> {
         ProcessContext {
             fx: &self.fx,
@@ -837,6 +853,7 @@ impl Engine {
             global_alt,
             channels: &topo.channels,
             block,
+            probes,
         }
     }
 
@@ -907,7 +924,9 @@ impl Engine {
     unsafe fn build_monitor(&self, topo: &Topology, a: &mut AudioState, n: usize) {
         let c = &self.controls;
         let dcas = &c.dcas;
-        let solo = topo.all().any(|s| s.is_soloed(dcas));
+        // LISTEN (band / key / xover solo) replaces the soloed strips (analyser.rs).
+        let listen = self.analysis.listen_overrides_solo();
+        let solo = listen || topo.all().any(|s| s.is_soloed(dcas));
         c.any_solo_active.store(solo, Relaxed);
         let afl = StripKind::ALL.map(|k| c.solo_is_afl(k)); // indexed by kind
 
@@ -917,7 +936,7 @@ impl Engine {
         m1.fill(0.0);
 
         for s in topo.all() {
-            let target = if solo && s.is_soloed(dcas) { 1.0 } else { 0.0 };
+            let target = if solo && !listen && s.is_soloed(dcas) { 1.0 } else { 0.0 };
             let last = s.last_solo();
             if target != 0.0 || *last != 0.0 {
                 let d = s.dsp();
@@ -931,6 +950,7 @@ impl Engine {
             }
             *last = target;
         }
+        self.analysis.add_listen(m0, m1, n);
 
         // With nothing soloed the monitor follows Main 1.
         let main_target = if solo { 0.0 } else { 1.0 };
