@@ -599,7 +599,7 @@ public:
         g.fillRect (r);
         auto inner = r.reduced (2.0f);
         auto header = inner.removeFromTop (juce::jlimit (12.0f, 22.0f, inner.getHeight() * 0.2f));
-        const auto colour = strip.getColour();
+        const auto colour = stripDisplayColour (strip);
         g.setColour (colour);
         g.fillRect (header);
         g.setColour (colour.getPerceivedBrightness() > 0.45f ? juce::Colours::black : juce::Colours::white);
@@ -997,7 +997,7 @@ public:
         g.setColour (colours::panel);
         g.fillRect (h);
         g.setColour (colours::caption);
-        g.setFont (juce::FontOptions (juce::jlimit (14.0f, 26.0f, h.getHeight() * 0.42f), juce::Font::plain));
+        g.setFont (panelTitleFont (header.getHeight()));
         g.drawFittedText ("FILTER SETUP", h.withTrimmedLeft (h.getWidth() * 0.03f).withWidth (h.getWidth() * 0.36f).toNearestInt(), juce::Justification::centredLeft, 1);
     }
 
@@ -1043,6 +1043,7 @@ public:
                                                                [this] (int m) { strip.setModel (isGate ? ModelBlock::Gate : ModelBlock::Dynamics, m); },
                                                                allowed, isGate ? ModelSelector::gateSlotGroups() : ModelSelector::dynamicsSlotGroups());
                                     });
+        model->arrowKey = true;
         mix = &make<KnobBox> (bindLinear ("MIX", slot.mix, 0.0f, 100.0f, " %", 0, 100.0f));
         gain = &make<KnobBox> (bindLinear ("GAIN", slot.gain, -6.0f, 12.0f, " dB", 1, 0.0f));
         gr = &make<GainReductionMeter> ([this] { return isGate ? strip.meters.gateReductionDb.load() : strip.meters.dynReductionDb.load(); },
@@ -1205,6 +1206,7 @@ public:
                                         ModelSelector::choose (field, table, strip.params.eq.model.load(),
                                                                [this] (int m) { strip.setModel (ModelBlock::Eq, m); }, allowed);
                                     });
+        model->arrowKey = true;
         mix = &make<KnobBox> (bindLinear ("MIX", eq.mix, 0.0f, 125.0f, " %", 0, 100.0f));
         if (strip.getKind() == StripKind::Channel)
         {
@@ -1375,7 +1377,7 @@ public:
                 g.drawText (id.toUpperCase(), lead.toNearestInt(), juce::Justification::centred);
             }
             g.setColour (ink);
-            g.setFont (juce::FontOptions (juce::jlimit (11.0f, 20.0f, k.getHeight() * 0.42f), juce::Font::plain));
+            g.setFont (homeFont (TypeScale::body, k.getHeight() * 0.46f));
             g.drawFittedText (type, k.toNearestInt().reduced (4, 0), juce::Justification::centred, 1, 0.7f);
         }
     }
@@ -1519,7 +1521,7 @@ public:
         g.setColour (colours::panel);
         g.fillRect (r);
         auto top = r.removeFromTop (juce::jlimit (12.0f, 18.0f, r.getHeight() * 0.06f));
-        g.setColour (strip.getColour());
+        g.setColour (stripDisplayColour (strip));
         g.fillRect (top);
         g.setColour (juce::Colours::black);
         g.setFont (juce::FontOptions (top.getHeight() * 0.85f, juce::Font::bold));
@@ -1629,7 +1631,6 @@ public:
                                             options.caption = "FX PROCESSOR";
                                             popups::chooseFrom (field, items, ins.fx.load() + 1, [this] (int i) { ins.fx = i - 1; }, options);
                                         });
-        processor->dotsKey = true;
         openSlot = &key ({}, Icon::ChevronRight);
         openSlot->setTooltip ("Edit the slot on EFFECTS");
         openSlot->onClick = [this]
@@ -1642,6 +1643,7 @@ public:
                                        if (const int slot = ins.fx.load(); slot >= 0)
                                            showFxDeviceMenu (ctx, slot, &field, [this] { shownSlot = -2; });
                                    });
+        type->arrowKey = true;
         reset = &key ("RESET", Icon::Reset);
         reset->iconAbove = true;
         reset->outlined = true;
@@ -2036,7 +2038,7 @@ public:
             g.setColour (colours::panel);
             g.fillRect (area);
             g.setColour (colours::caption);
-            g.setFont (juce::FontOptions (juce::jlimit (14.0f, 26.0f, (float) area.getHeight() * 0.42f), juce::Font::plain));
+            g.setFont (panelTitleFont (area.getHeight()));
             g.drawText (text, area, juce::Justification::centred);
         }
 
@@ -2757,7 +2759,7 @@ public:
         g.setColour (colours::panel);
         g.fillRect (h);
         g.setColour (colours::caption);
-        g.setFont (juce::FontOptions (juce::jlimit (14.0f, 24.0f, h.getHeight() * 0.42f), juce::Font::plain));
+        g.setFont (panelTitleFont (header.getHeight()));
         g.drawFittedText (matrix ? "MATRIX SENDS" : (busToBus() ? "BUS -> BUS SENDS" : "BUS SENDS"), titleArea, juce::Justification::centred, 1, 0.7f);
         if (! tapField.isEmpty())
             paintTapDiagram (g, tapField.toFloat().withTrimmedRight ((float) tapMenu->getWidth()));
@@ -3387,7 +3389,7 @@ public:
             if (possible)
             {
                 auto strip = r.removeFromTop (juce::jmax (6.0f, r.getHeight() * 0.2f));
-                g.setColour (src.getColour().withMultipliedBrightness (on ? 1.0f : 0.45f));
+                g.setColour (stripDisplayColour (src).withMultipliedBrightness (on ? 1.0f : 0.45f));
                 g.fillRect (strip);
                 g.setColour (on ? Colours::text : Colours::textDim);
                 g.setFont (juce::FontOptions (juce::jlimit (8.0f, 13.0f, r.getHeight() * 0.3f), juce::Font::bold));
@@ -3637,7 +3639,6 @@ public:
                                                           {
                                                               popups::chooseFrom (f, names, juce::roundToInt (value.load()), [&value] (int v) { value = (float) v; });
                                                           }));
-                field->dotsKey = true;
                 addAndMakeVisible (field);
             }
         }
@@ -3655,7 +3656,6 @@ public:
         for (auto& row : rows)
         {
             auto* field = rta.add (new ChoiceField ({}, [text = row.choices[row.shown]] { return text; }, {}));
-            field->dotsKey = true;
             field->setEnabled (false);
             rtaLabels.add (row.label);
             addAndMakeVisible (field);
@@ -3674,7 +3674,6 @@ public:
             c->setEnabled (false);
             addAndMakeVisible (c);
         }
-        sizeMode->dotsKey = colour->dotsKey = true;
     }
 
     void paint (juce::Graphics& g) override
@@ -3767,7 +3766,7 @@ std::unique_ptr<OverlayScreen> makeSettingsScreen (UiContext&, Strip& s, bool eq
 {
     // Docked at the right over the dimmed page, as EQ/RTA SETTINGS on the 3.1 screens.
     auto screen = std::make_unique<SettingsScreen> (s, eqSettings);
-    screen->setPlacement (OverlayScreen::Placement::DockRight, 0.46f);
+    screen->setPlacement (OverlayPlacement::dockRight (0.46f));
     return screen;
 }
 

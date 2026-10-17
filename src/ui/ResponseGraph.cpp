@@ -238,7 +238,7 @@ void ResponseGraph::paint (juce::Graphics& g)
 
     if (showLabels())
     {
-        g.setFont (juce::FontOptions (12.0f, juce::Font::plain));
+        g.setFont (wingFont (TypeScale::meterScale * 1.25f));
         g.setColour (labelColour);
         for (float f : { 20.0f, 40.0f, 60.0f, 100.0f, 200.0f, 300.0f, 400.0f, 600.0f, 1000.0f, 2000.0f, 3000.0f, 4000.0f, 6000.0f, 10000.0f, 20000.0f })
         {
@@ -274,7 +274,7 @@ void ResponseGraph::paint (juce::Graphics& g)
             const float x = xForFreq (freq);
             g.setColour (colour);
             g.fillRect (x - 1.0f, p.getY(), 2.0f, p.getHeight());
-            g.setFont (juce::FontOptions (14.0f, juce::Font::plain));
+            g.setFont (wingFont (TypeScale::body));
             g.drawText (name, juce::Rectangle<float> (x - 18.0f, p.getY() - 17.0f, 36.0f, 15.0f), juce::Justification::centred);
             paintRing (g, { x, p.getBottom() - radius * 2.5f }, radius, colour, true);
         };
@@ -318,7 +318,7 @@ void ResponseGraph::paint (juce::Graphics& g)
             g.setColour (sel ? selectedBandColour : bandLineColour);
             g.fillRect (juce::Rectangle<float> (sel ? 2.0f : 1.5f, p.getBottom() - p.getY() - 2.0f).withPosition (c.x - 0.75f, p.getY() + 2.0f));
             g.setColour (sel ? juce::Colours::white : dimLabelColour);
-            g.setFont (juce::FontOptions (15.0f, juce::Font::plain));
+            g.setFont (wingFont (TypeScale::body));
             g.drawText (band.id.toUpperCase(), juce::Rectangle<float> (24.0f, 16.0f).withCentre ({ c.x, p.getY() - 9.0f }), juce::Justification::centred);
         }
         paintRing (g, c, radius, juce::Colours::white, sel);

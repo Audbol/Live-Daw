@@ -48,7 +48,7 @@ namespace
             g.fillRect (r);
             auto inner = r.reduced (2.0f);
             auto header = inner.removeFromTop (juce::jlimit (12.0f, 22.0f, inner.getHeight() * 0.2f));
-            const auto colour = strip.getColour();
+            const auto colour = stripDisplayColour (strip);
             g.setColour (colour);
             g.fillRect (header);
             g.setColour (colour.getPerceivedBrightness() > 0.45f ? juce::Colours::black : juce::Colours::white);
@@ -528,7 +528,7 @@ public:
             r.removeFromRight (r.getHeight() * 0.2f);
         }
         g.setColour (colours::dim);
-        g.setFont (juce::FontOptions (juce::jlimit (11.0f, 20.0f, r.getHeight() * 0.42f), juce::Font::plain));
+        g.setFont (homeFont (TypeScale::body, r.getHeight() * 0.46f));
         g.drawFittedText ("LINK CUSTOMIZATION TO SOURCE", r.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
     }
 };
@@ -543,7 +543,11 @@ public:
     NameScreen (UiContext& c, Strip& s) : HomeScreen (c, s)
     {
         link = &make<LinkCustomizationRow>();
+        // The keyboard's own field is hidden: this screen's field shows the
+        // channel's WING icon. Its suggestion row and keys follow.
         keyboard = &make<popups::WingKeyboard>();
+        keyboard->setFieldVisible (false);
+        keyboard->setMaxLength (kMaxNameLength);
         keyboard->setText (strip.getName());
         keyboard->setActionText ("NEXT");
         keyboard->onChange = [this] (const juce::String& t)
@@ -557,25 +561,7 @@ public:
             if (auto* next = adjacentStrip (ctx.engine, &strip, 1); next != nullptr && ctx.selectStrip)
                 juce::MessageManager::callAsync ([&c = ctx, next] { if (c.selectStrip) c.selectStrip (next); });
         };
-        for (auto& text : nameSuggestions (strip.params.icon.load()))
-            suggestionNames.add (text);
-        while (suggestionNames.size() < 5)
-            suggestionNames.add ({});
-        for (int i = 0; i < 5; ++i)
-        {
-            auto& k = key (suggestionNames[i]);
-            k.offColour = colours::well;
-            k.offInk = colours::caption;
-            k.frame = colours::outline;
-            k.setEnabled (suggestionNames[i].isNotEmpty());
-            k.onClick = [this, i]
-            {
-                strip.setName (suggestionNames[i]);
-                keyboard->setText (suggestionNames[i]);
-                repaint (field);
-            };
-            suggestions.push_back (&k);
-        }
+        keyboard->setSuggestions (nameSuggestions (strip.params.icon.load()));
         addLevelPanel();
         startTimerHz (4);
     }
@@ -599,7 +585,7 @@ public:
         clearBoxes();
         auto b = layoutLevelPanel (getLocalBounds());
         // WING pixels (from the top of the content, 564 high): the link row
-        // 64, the field panel 80, the suggestions 72, the keyboard.
+        // 64, the field panel 80, then the suggestions and the keyboard.
         const float v = (float) b.getHeight() / 564.0f;
         link->setBounds (b.removeFromTop (juce::roundToInt (64.0f * v)));
         b.removeFromTop (juce::roundToInt (8.0f * v));
@@ -607,12 +593,6 @@ public:
         field = fieldPanel.withSizeKeepingCentre (fieldPanel.getWidth() * 58 / 100, fieldPanel.getHeight() * 76 / 100);
         clearArea = field.withLeft (field.getRight() - field.getHeight());
         b.removeFromTop (juce::roundToInt (8.0f * v));
-        suggestionPanel = b.removeFromTop (juce::roundToInt (72.0f * v));
-        auto row = suggestionPanel.reduced (juce::roundToInt (8.0f * v));
-        const int w = row.getWidth() / 5;
-        for (auto* k : suggestions)
-            k->setBounds (row.removeFromLeft (w).reduced (juce::roundToInt (4.0f * v), 0));
-        b.removeFromTop (juce::roundToInt (4.0f * v));
         keyboardPanel = b;
         keyboard->setBounds (b.reduced (juce::roundToInt (8.0f * v)));
     }
@@ -621,7 +601,7 @@ public:
     {
         HomeScreen::paint (g);
         g.setColour (colours::panel);
-        for (auto r : { fieldPanel, suggestionPanel, keyboardPanel })
+        for (auto r : { fieldPanel, keyboardPanel })
             g.fillRect (r);
 
         // The field: black, a grey outline, the icon, the name with the gold
@@ -629,7 +609,7 @@ public:
         auto f = field.toFloat();
         g.setColour (juce::Colours::black);
         g.fillRect (f);
-        g.setColour (juce::Colour (0xff474747));
+        g.setColour (colours::outline);
         g.drawRect (f, 1.5f);
         auto inner = f.reduced (f.getHeight() * 0.18f);
         drawChannelIcon (g, strip.params.icon.load(), strip.getKind(), inner.removeFromLeft (inner.getHeight() * 1.3f), colours::ink);
@@ -638,7 +618,7 @@ public:
         inner.removeFromRight (clearArea.getWidth());
         const auto name = strip.getName();
         g.setColour (colours::ink);
-        const juce::Font font (juce::FontOptions (inner.getHeight() * 0.92f, juce::Font::plain));
+        const juce::Font font (homeFont (TypeScale::value * 1.2f, inner.getHeight() * 0.92f));
         g.setFont (font);
         g.drawText (name, inner.toNearestInt(), juce::Justification::centredLeft, true);
         if (caretOn)
@@ -668,9 +648,7 @@ public:
 private:
     LinkCustomizationRow* link = nullptr;
     popups::WingKeyboard* keyboard = nullptr;
-    std::vector<IconKey*> suggestions;
-    juce::StringArray suggestionNames;
-    juce::Rectangle<int> fieldPanel, field, clearArea, suggestionPanel, keyboardPanel;
+    juce::Rectangle<int> fieldPanel, field, clearArea, keyboardPanel;
     bool caretOn = true;
 };
 
@@ -810,13 +788,8 @@ public:
         {
             auto cell = juce::Rectangle<float> ((float) grid.getX() + cw * (float) (i % 5), (float) grid.getY() + ch * (float) (i / 5), cw, ch);
             cells.push_back ({ cell.toNearestInt(), icons[(size_t) i].number });
-            auto glyph = cell.reduced (cell.getWidth() * 0.24f, cell.getHeight() * 0.18f).withTrimmedBottom (cell.getHeight() * 0.1f);
             if (icons[(size_t) i].number != 0)
-                drawChannelIcon (g, icons[(size_t) i].number, strip.getKind(), glyph, colours::ink);
-            g.setColour (colours::dim);
-            g.setFont (juce::FontOptions (juce::jlimit (7.0f, 11.0f, ch * 0.13f), juce::Font::plain));
-            g.drawFittedText (juce::String (icons[(size_t) i].name).toUpperCase(), cell.removeFromBottom (ch * 0.2f).toNearestInt().reduced (2, 0),
-                              juce::Justification::centred, 1, 0.6f);
+                drawWingIcon (g, icons[(size_t) i].number, cell.reduced (cell.getWidth() * 0.22f), colours::ink);
             if (icons[(size_t) i].number == current)
             {
                 g.setColour (colours::accent);
@@ -834,7 +807,7 @@ public:
         paintKeyBody (g, lightKey.toFloat(), lit ? colours::accent : colours::keyOff);
         paintSun (g, lightKey.toFloat().reduced (lightKey.getHeight() * 0.2f), lit ? juce::Colours::black : colours::dim);
         g.setColour (lit ? colours::caption : colours::dim);
-        g.setFont (juce::FontOptions (juce::jlimit (11.0f, 20.0f, lr.getHeight() * 0.42f), juce::Font::plain));
+        g.setFont (homeFont (TypeScale::body, lr.getHeight() * 0.46f));
         g.drawText ("LIGHT", lr.withTrimmedLeft (lr.getHeight() * 0.3f).toNearestInt(), juce::Justification::centredLeft);
 
         // The colours: three columns of six, 1-6 down the first.
