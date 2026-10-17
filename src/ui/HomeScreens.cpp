@@ -1881,7 +1881,8 @@ private:
 };
 
 //==============================================================================
-/** One main send: name strip, MAIN / PRE, the send fader and ON. */
+/** One main send (D7): the main's label on its colour and its name, a box with
+    MAIN and the PRE key, the send fader (blue, grey while off) and ON. */
 class MainSendColumn final : public juce::Component
 {
 public:
@@ -1890,6 +1891,8 @@ public:
         bindKey (pre, send.pre);
         bindKey (on, send.on);
         fader.isOn = [this] { return send.on.load(); };
+        fader.fillColour = [this] { return send.on.load() ? colours::fader : colours::dim; };
+        fader.wellColour = colours::panel;
         for (juce::Component* c : { (juce::Component*) &pre, (juce::Component*) &on, (juce::Component*) &fader })
             addAndMakeVisible (c);
     }
@@ -1898,27 +1901,36 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        auto r = getLocalBounds().toFloat();
-        auto strip = r.removeFromTop (stripH);
+        auto r = getLocalBounds().toFloat().reduced (juce::jmax (2.0f, getWidth() * 0.06f), 0.0f);
+        auto label = r.removeFromTop (stripH);
         g.setColour (main.getColour());
-        g.fillRect (strip.reduced (2.0f, 0.0f));
+        g.fillRect (label);
         g.setColour (juce::Colours::black);
-        g.setFont (juce::FontOptions (stripH * 0.8f, juce::Font::bold));
-        g.drawFittedText (hasDefaultName (main) ? shortLabel (main) : stripName (main).toUpperCase(), strip.toNearestInt(), juce::Justification::centred, 1, 0.7f);
-        g.setColour (Colours::textDim);
-        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-        g.drawText ("MAIN", r.removeFromTop (14.0f).toNearestInt(), juce::Justification::centred);
+        g.setFont (juce::FontOptions (stripH * 0.82f, juce::Font::plain));
+        g.drawText (shortLabel (main), label.toNearestInt(), juce::Justification::centred);
+        auto name = r.removeFromTop (nameH);
+        g.setColour (colours::caption);
+        g.setFont (juce::FontOptions (juce::jmin (13.0f, nameH * 0.7f), juce::Font::plain));
+        g.drawFittedText (hasDefaultName (main) ? juce::String() : stripName (main), name.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+        g.setColour (colours::panel);
+        g.fillRect (boxArea);
+        g.setColour (colours::caption);
+        g.setFont (juce::FontOptions (juce::jmin (14.0f, boxArea.getHeight() * 0.22f), juce::Font::plain));
+        g.drawText ("MAIN", boxArea.withHeight (boxArea.getHeight() * 0.3f).toNearestInt(), juce::Justification::centred);
     }
 
     void resized() override
     {
-        auto r = getLocalBounds();
-        stripH = (float) juce::jlimit (12, 18, getHeight() / 20);
-        r.removeFromTop ((int) stripH + 16);
-        pre.setBounds (r.removeFromTop (juce::jlimit (20, 30, getHeight() / 12)).reduced (3, 0));
-        on.setBounds (r.removeFromBottom (juce::jlimit (20, 30, getHeight() / 12)).reduced (3, 0));
-        r.removeFromBottom (4);
-        r.removeFromTop (4);
+        stripH = (float) juce::jlimit (11, 18, getHeight() / 33);
+        nameH = (float) juce::jlimit (12, 22, getHeight() / 26);
+        auto r = getLocalBounds().reduced (juce::jmax (2, getWidth() * 6 / 100), 0);
+        r.removeFromTop ((int) (stripH + nameH) + 2);
+        boxArea = r.removeFromTop (juce::jlimit (40, 96, getHeight() * 17 / 100)).toFloat();
+        pre.setBounds (boxArea.toNearestInt().withTrimmedTop ((int) (boxArea.getHeight() * 0.3f)).reduced (4, 4));
+        r.removeFromTop (6);
+        r.removeFromBottom (6);
+        on.setBounds (r.removeFromBottom (juce::jlimit (18, 34, getHeight() / 11)));
+        r.removeFromBottom (6);
         fader.setBounds (r);
     }
 
@@ -1927,7 +1939,8 @@ private:
     MainSendParams& send;
     IconKey pre { "PRE", std::nullopt, colours::accent }, on { "ON", std::nullopt, colours::accent };
     ScreenFader fader;
-    float stripH = 14.0f;
+    juce::Rectangle<float> boxArea;
+    float stripH = 14.0f, nameH = 14.0f;
 };
 
 /** MAIN: MAIN SENDS, the pan/width graphic with the LR VECTOR SCOPE, and the
@@ -1974,49 +1987,76 @@ public:
     {
         clearBoxes();
         auto b = getLocalBounds();
-        // Fig. 65: MAIN SENDS about 30 % of the width, the pan graphic in the
-        // middle, the channel's LEVEL 20 % on the right.
-        auto right = b.removeFromRight (b.getWidth() * 21 / 100);
-        auto left = b.removeFromLeft (b.getWidth() * 38 / 100);
-        channelHeader = right.removeFromTop (juce::jlimit (26, 40, right.getHeight() / 10));
-        right.removeFromTop (4);
+        // D7 (WING pixels of the 1160 content): MAIN SENDS 0-296, the pan
+        // graphic in the middle, the strip's header and LEVEL 944-1160.
+        const float u = (float) b.getWidth() / 1160.0f;
+        auto right = b.removeFromRight (juce::roundToInt (216.0f * u));
+        auto left = b.removeFromLeft (juce::roundToInt (296.0f * u));
+        b.removeFromRight (juce::roundToInt (8.0f * u));
+        const int headerH = juce::jlimit (32, 60, getHeight() / 9);
+        channelHeader = right.removeFromTop (headerH);
+        right.removeFromTop (juce::jmax (4, getHeight() / 100));
         level->setBounds (box (right, "LEVEL"));
 
+        sendsHeader = {};
         if (hasMainSends)
         {
-            auto m = box (left, "MAIN SENDS");
-            const int w = m.getWidth() / juce::jmax (1, (int) sends.size());
+            // The header bar, then the columns on the black page.
+            sendsHeader = left.removeFromTop (headerH);
+            left.removeFromTop (juce::jmax (4, getHeight() / 100));
+            const int w = left.getWidth() / juce::jmax (1, (int) sends.size());
             for (auto* col : sends)
-                col->setBounds (m.removeFromLeft (w));
+                col->setBounds (left.removeFromLeft (w));
         }
         else
             delay->setBounds (box (left, strip.getKind() == StripKind::Main || strip.getKind() == StripKind::Matrix ? "DELAY (POST)" : "DELAY"));
 
-        // The vector scope box at the top right of the pan graphic.
-        scopeArea = b.removeFromTop (b.getHeight() * 30 / 100).removeFromRight (juce::jmin (b.getWidth() / 3, 120)).reduced (4);
-        pan->setBounds (getLocalBounds().withLeft (left.getRight()).withRight (right.getX() - 4).withTrimmedTop (scopeArea.getBottom() / 3));
+        // The pan graphic on a dotted field, the vector scope at its top right.
+        field = b;
+        scopeArea = b.withTrimmedTop (juce::roundToInt (16.0f * u)).removeFromTop (b.getHeight() * 24 / 100)
+                        .removeFromRight (juce::roundToInt (148.0f * u)).withTrimmedRight (juce::roundToInt (12.0f * u));
+        pan->setBounds (b.withTrimmedTop (b.getHeight() / 10));
     }
 
     void paint (juce::Graphics& g) override
     {
         HomeScreen::paint (g);
-        auto h = channelHeader.toFloat().reduced (3.0f, 0.0f);
-        g.setColour (colours::panel);
-        g.fillRect (h);
-        g.setColour (Colours::text);
-        g.setFont (juce::FontOptions (juce::jlimit (14.0f, 20.0f, h.getHeight() * 0.55f), juce::Font::bold));
-        g.drawText (strip.getLabel().replace ("CH ", "CHANNEL ").replace ("MTX ", "MATRIX "), h.toNearestInt(), juce::Justification::centred);
+        // A grid of small grey dots behind the pan graphic.
+        g.setColour (juce::Colour (0xff303030));
+        const float step = juce::jmax (6.0f, (float) getHeight() / 48.0f);
+        for (float y = (float) field.getY() + step * 0.5f; y < (float) field.getBottom(); y += step)
+            for (float x = (float) field.getX() + step * 0.5f; x < (float) field.getRight(); x += step)
+                g.fillRect (x, y, 1.0f, 1.0f);
 
-        // LR VECTOR SCOPE: needs the engine's L/R sample ring (report E12): an empty box.
+        for (auto [area, text] : { std::make_pair (channelHeader, strip.getLabel().replace ("CH ", "CHANNEL ").replace ("MTX ", "MATRIX ")),
+                                   std::make_pair (sendsHeader, juce::String ("MAIN SENDS")) })
+        {
+            if (area.isEmpty())
+                continue;
+            g.setColour (colours::panel);
+            g.fillRect (area);
+            g.setColour (colours::caption);
+            g.setFont (juce::FontOptions (juce::jlimit (14.0f, 26.0f, (float) area.getHeight() * 0.42f), juce::Font::plain));
+            g.drawText (text, area, juce::Justification::centred);
+        }
+
+        // LR VECTOR SCOPE: needs the engine's L/R sample ring (W38): the empty
+        // scope, a dark green dotted square over its caption.
         auto s = scopeArea.toFloat();
-        auto caption = s.removeFromBottom (12.0f);
-        g.setColour (juce::Colour (0xff1a1a1a));
+        auto caption = s.removeFromBottom (juce::jlimit (11.0f, 18.0f, s.getHeight() * 0.12f));
+        g.setColour (colours::outline);
+        g.fillRect (s.expanded (1.5f).withBottom (caption.getBottom()));
+        g.setColour (juce::Colour (0xff101810));
         g.fillRect (s);
-        g.setColour (juce::Colour (0xff3a3a3a));
-        g.drawRect (s, 1.0f);
-        g.drawVerticalLine (juce::roundToInt (s.getCentreX()), s.getY(), s.getBottom());
-        g.setColour (Colours::textDim);
-        g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+        g.setColour (juce::Colour (0xff1c3020));
+        const float d = s.getWidth() / 16.0f;
+        for (int i = 1; i < 16; ++i)
+            for (int j = 1; j < 16; ++j)
+                g.fillRect (s.getX() + d * (float) i, s.getY() + s.getHeight() / 16.0f * (float) j, 1.0f, 1.0f);
+        g.setColour (juce::Colour (0xff202020));
+        g.fillRect (caption);
+        g.setColour (colours::caption);
+        g.setFont (juce::FontOptions (caption.getHeight() * 0.8f, juce::Font::plain));
         g.drawText ("LR VECTOR SCOPE", caption.toNearestInt(), juce::Justification::centred);
     }
 
@@ -2026,7 +2066,7 @@ private:
     DelayPanel* delay = nullptr;
     PanWidthDisplay* pan = nullptr;
     LevelPanel* level = nullptr;
-    juce::Rectangle<int> channelHeader, scopeArea;
+    juce::Rectangle<int> channelHeader, sendsHeader, field, scopeArea;
 };
 
 //==============================================================================

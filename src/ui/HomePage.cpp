@@ -1,11 +1,11 @@
 #include "ui/HomePage.h"
-#include "ui/HomeIcons.h"
-#include "ui/WingPopups.h"
 #include "dsp/DspUtils.h"
 #include "ui/Faceplate.h"
+#include "ui/HomeIcons.h"
 #include "ui/Icons.h"
 #include "ui/MeterComponent.h"
 #include "ui/ResponseGraph.h"
+#include "ui/WingPopups.h"
 
 namespace livedaw::ui
 {
@@ -364,10 +364,14 @@ public:
         }
         else
         {
-            auto tileCol = in.removeFromLeft (juce::jmin (in.getWidth() / 4, juce::jmax (60, in.getHeight() * 7 / 10)));
-            source->setBounds (tileCol.removeFromTop (tileCol.getHeight() * 64 / 100));
-            tileCol.removeFromTop (juce::jmax (4, tileCol.getHeight() / 5));
-            sourceMute->setBounds (tileCol.removeFromTop (juce::jmin (32, tileCol.getHeight())).withSizeKeepingCentre (juce::jmin (64, tileCol.getWidth()), juce::jmin (30, tileCol.getHeight())));
+            // I1: a square source tile (112 of the panel's 224) and the MUTE
+            // key (84 x 56) under it.
+            const int tile = juce::jmin (in.getWidth() / 4, in.getHeight() * 52 / 100);
+            auto tileCol = in.removeFromLeft (tile);
+            source->setBounds (tileCol.removeFromTop (tile));
+            tileCol.removeFromTop (tile / 6);
+            const auto muteRow = tileCol.removeFromTop (tile / 2);
+            sourceMute->setBounds (muteRow.withSizeKeepingCentre (tile * 3 / 4, muteRow.getHeight()));
             in.removeFromLeft (10);
         }
         auto trimRow = in.removeFromTop (juce::jlimit (28, 52, in.getHeight() * 30 / 100));
@@ -491,10 +495,6 @@ Strip* adjacentStrip (MixerEngine& engine, const Strip* from, int delta)
 class LinkCustomizationRow final : public juce::Component
 {
 public:
-    LinkCustomizationRow() { setTooltip ("The customization link needs the console's sources (not modelled)"); }
-
-    void setTooltip (const juce::String& t) { tip = t; }
-
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat();
@@ -531,9 +531,6 @@ public:
         g.setFont (juce::FontOptions (juce::jlimit (11.0f, 20.0f, r.getHeight() * 0.42f), juce::Font::plain));
         g.drawFittedText ("LINK CUSTOMIZATION TO SOURCE", r.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
     }
-
-private:
-    juce::String tip;
 };
 
 /** NAME (firmware 3.1): the link row; the name in a black field with the
