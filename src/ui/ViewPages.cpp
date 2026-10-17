@@ -250,32 +250,28 @@ namespace
         }
     }
 
-    void editDca (UiContext& ctx, int dca, juce::Component* target)
+    /** A DCA's name and colour: a list (NAME, then the 18 colours) under `anchor`. */
+    void editDca (UiContext& ctx, int dca, juce::Component& page, juce::Component& anchor)
     {
-        juce::PopupMenu m;
-        m.addSectionHeader ("DCA " + juce::String (dca + 1));
-        m.addItem (1000, "Rename...");
-        juce::PopupMenu colours;
+        juce::StringArray items { "NAME" };
         for (int k = 1; k <= 18; ++k)
-            colours.addColouredItem (k, wingColourName (k), wingColour (k), true, ctx.engine.getDca (dca).colour.load() == k);
-        m.addSubMenu ("Colour", colours);
-        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target).withMousePosition(), [&ctx, dca, target] (int r)
+            items.add (wingColourName (k).toUpperCase());
+        popups::ListOptions options;
+        options.caption = "DCA " + juce::String (dca + 1);
+        juce::Component::SafePointer<juce::Component> safePage (&page);
+        popups::chooseFrom (anchor, items, ctx.engine.getDca (dca).colour.load(), [&ctx, dca, safePage] (int r)
         {
             if (r >= 1 && r <= 18)
                 ctx.engine.getDca (dca).colour = r;
-            else if (r == 1000)
+            else if (r == 0 && safePage != nullptr)
             {
-                auto* w = new juce::AlertWindow ("DCA " + juce::String (dca + 1), {}, juce::MessageBoxIconType::NoIcon, target);
-                w->addTextEditor ("name", ctx.engine.getDcaName (dca));
-                w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-                w->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-                w->enterModalState (true, juce::ModalCallbackFunction::create ([&ctx, dca, w] (int result)
-                {
-                    if (result != 0)
-                        ctx.engine.setDcaName (dca, w->getTextEditorContents ("name").trim());
-                }), true);
+                // DCAs named MON A, MON B or MON LVL control the monitor level (firmware 1.09).
+                popups::TextOptions text;
+                text.suggestions = { "MON A", "MON B", "MON LVL" };
+                popups::editText (*safePage, "DCA " + juce::String (dca + 1) + " NAME", ctx.engine.getDcaName (dca),
+                                  [&ctx, dca] (const juce::String& name) { ctx.engine.setDcaName (dca, name.trim()); }, text);
             }
-        });
+        }, options);
     }
 } // namespace
 
@@ -454,10 +450,18 @@ ViewPage::ViewPage (UiContext& c, Screen s) : ctx (c), screen (s)
 {
     column = std::make_unique<LayerColumn> (*this);
     addChildComponent (*column);
+    anchor.setInterceptsMouseClicks (false, false);
+    addAndMakeVisible (anchor);
     startTimerHz (15);
 }
 
 ViewPage::~ViewPage() = default;
+
+juce::Component& ViewPage::anchorAt (juce::Rectangle<int> area)
+{
+    anchor.setBounds (area);
+    return anchor;
+}
 
 std::vector<StatusKey> ViewPage::getStatusKeys()
 {
@@ -870,7 +874,7 @@ void OverviewViewPage::mouseUp (const juce::MouseEvent& e)
         if (t.dca >= 0)
         {
             if (rows.name.contains (pos) || rows.number.contains (pos))
-                editDca (ctx, t.dca, this);
+                editDca (ctx, t.dca, *this, anchorAt (cols[i]));
             return;
         }
         if (t.strip == nullptr)
@@ -1086,7 +1090,7 @@ void FadersViewPage::mouseUp (const juce::MouseEvent& e)
         else if (rows.name.contains (pos) || rows.number.contains (pos))
         {
             if (t.dca >= 0)
-                editDca (ctx, t.dca, this);
+                editDca (ctx, t.dca, *this, anchorAt (cols[i]));
             else if (t.strip != nullptr)
             {
                 if (ctx.selectStrip)
@@ -1427,17 +1431,14 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
         const auto id = userLayerId (layer, false);
         if (id.isEmpty())
             return;
-        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "CLEAR", "Remove every fader from \"" + layer.name + "\"?", "CLEAR",
-                                            "CANCEL", this, juce::ModalCallbackFunction::create ([this, layer, id] (int r)
+        popups::confirm (*this, "CLEAR", "Remove every fader from \"" + layer.name + "\"?", "CLEAR", [this, layer, id]
         {
-            if (r == 0)
-                return;
             for (auto& f : layer.faders)
                 ctx.show.layers.removeFromUserLayer (id, f);
             notifyLayersChangedAsync (ctx);
             resized();
             repaint();
-        }));
+        }, true);
     };
     renameKey.onClick = [this]
     {
@@ -1445,19 +1446,18 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
         const auto id = userLayerId (layer, true);
         if (id.isEmpty())
             return;
-        auto* w = new juce::AlertWindow ("RENAME LAYER", {}, juce::MessageBoxIconType::NoIcon, this);
-        w->addTextEditor ("name", layer.name);
-        w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-        w->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-        w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, id] (int r)
+        popups::TextOptions options;
+        options.icon = Icon::Layers;
+        juce::Component::SafePointer<ConfigViewPage> safe (this);
+        popups::editText (*this, "LAYER NAME", layer.name, [safe, id] (const juce::String& text)
         {
-            if (r != 0 && w->getTextEditorContents ("name").trim().isNotEmpty())
-            {
-                ctx.show.layers.renameUserLayer (id, w->getTextEditorContents ("name").trim());
-                notifyLayersChangedAsync (ctx);
-                resized();
-            }
-        }), true);
+            if (safe == nullptr || text.trim().isEmpty())
+                return;
+            safe->ctx.show.layers.renameUserLayer (id, text.trim());
+            notifyLayersChangedAsync (safe->ctx);
+            safe->resized();
+            safe->notifyStatusKeysChanged();
+        }, options);
     };
     newKey.onClick = [this]
     {
@@ -1474,18 +1474,15 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
         const auto id = userLayerId (layer, false);
         if (id.isEmpty())
             return;
-        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::WarningIcon, "DELETE LAYER", "Delete the user layer \"" + layer.name + "\"?", "DELETE",
-                                            "CANCEL", this, juce::ModalCallbackFunction::create ([this, id] (int r)
+        popups::confirm (*this, "DELETE LAYER", "Delete the user layer \"" + layer.name + "\"?", "DELETE", [this, id]
         {
-            if (r == 0)
-                return;
             ctx.show.layers.removeUserLayer (id);
             const auto defaults = ctx.show.layers.getDefaultLayers (ctx.engine, section());
             if (! defaults.empty())
                 selectLayer (defaults.front().id);
             notifyLayersChangedAsync (ctx);
             resized();
-        }));
+        }, true);
     };
 }
 
@@ -1993,16 +1990,19 @@ void MuteGroupsViewPage::mouseUp (const juce::MouseEvent& e)
         {
             // Rename the group.
             selectedGroup = gi;
-            auto* w = new juce::AlertWindow ("MUTE GROUP " + juce::String (gi + 1), {}, juce::MessageBoxIconType::NoIcon, this);
-            w->addTextEditor ("name", ctx.engine.getMuteGroupName (gi));
-            w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-            w->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-            w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w, gi] (int r)
-            {
-                if (r != 0)
-                    ctx.engine.setMuteGroupName (gi, w->getTextEditorContents ("name").trim());
-                repaint();
-            }), true);
+            popups::TextOptions options;
+            options.icon = Icon::MuteGroup;
+            juce::Component::SafePointer<MuteGroupsViewPage> safe (this);
+            popups::editText (*this, "MUTE GROUP " + juce::String (gi + 1) + " NAME", ctx.engine.getMuteGroupName (gi),
+                              [safe, gi] (const juce::String& text)
+                              {
+                                  if (safe == nullptr)
+                                      return;
+                                  safe->ctx.engine.setMuteGroupName (gi, text.trim());
+                                  safe->repaint();
+                              },
+                              options);
+            repaint();
             return;
         }
     }

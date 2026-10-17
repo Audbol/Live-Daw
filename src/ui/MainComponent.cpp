@@ -1,4 +1,5 @@
 #include "ui/MainComponent.h"
+#include "ui/WingPopups.h"
 #include "ui/daw/DawEditor.h"
 
 namespace livedaw::ui
@@ -537,14 +538,16 @@ void MainComponent::openLastProject()
             log.warning ("Recording project: " + r.getErrorMessage());
         return;
     }
-    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Recording project",
-                                        "\"" + last.getFileNameWithoutExtension() + "\" has unsaved changes from the last session. Restore them?",
-                                        "RESTORE", "OPEN SAVED", this,
-                                        juce::ModalCallbackFunction::create ([this, last] (int r)
-    {
-        if (auto result = recording->openProject (last, r != 0); result.failed())
-            log.warning ("Recording project: " + result.getErrorMessage());
-    }));
+    // The saved version opens now; RESTORE reopens it with the autosave.
+    if (auto r = recording->openProject (last); r.failed())
+        log.warning ("Recording project: " + r.getErrorMessage());
+    popups::confirm (*display, "RECORDING PROJECT",
+                     "\"" + last.getFileNameWithoutExtension() + "\" has unsaved changes from the last session. Restore them?", "RESTORE",
+                     [this, last]
+                     {
+                         if (auto result = recording->openProject (last, true); result.failed())
+                             log.warning ("Recording project: " + result.getErrorMessage());
+                     });
 }
 
 //==============================================================================
@@ -561,14 +564,8 @@ void MainComponent::updateTitle()
 
 void MainComponent::newShow()
 {
-    juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "New show",
-                                        "Clear the console and all scenes and start a new show (a 40 channel WING)?",
-                                        "New", "Cancel", this,
-                                        juce::ModalCallbackFunction::create ([this] (int result)
+    popups::confirm (*display, "NEW SHOW", "Clear the console and all scenes and start a new show (a 40 channel WING)?", "NEW", [this]
     {
-        if (result == 0)
-            return;
-
         closeAllPluginWindows();
         for (int i = 0; i < kNumFx; ++i)
             engine.getFx().setPlugin (i, nullptr);
@@ -578,7 +575,7 @@ void MainComponent::newShow()
         refreshAll();
         updateTitle();
         log.info ("New show");
-    }));
+    }, true);
 }
 
 juce::Result MainComponent::reloadShow (const juce::File& file, bool loadPlugins)
@@ -608,8 +605,7 @@ void MainComponent::openShow()
         if (result.failed())
         {
             log.warning (result.getErrorMessage());
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Open show",
-                                                    result.getErrorMessage());
+            popups::warn (*display, "OPEN SHOW", result.getErrorMessage());
         }
     });
 }
@@ -627,8 +623,7 @@ void MainComponent::saveShow (bool saveAs)
         if (result.failed())
         {
             log.error ("Save failed: " + result.getErrorMessage());
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Save show",
-                                                    result.getErrorMessage());
+            popups::warn (*display, "SAVE SHOW", result.getErrorMessage());
             return;
         }
 

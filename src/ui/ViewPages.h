@@ -2,6 +2,7 @@
 
 #include "ui/DisplayPage.h"
 #include "ui/ScreenWidgets.h"
+#include "ui/WingPopups.h"
 
 namespace livedaw::ui
 {
@@ -52,6 +53,8 @@ protected:
     void selectLayer (const juce::String& id);
     void selectSection (LayerSet::Section);
     void stepPage (int delta);
+    /** The invisible component the drop-down lists open under, moved over `area`. */
+    juce::Component& anchorAt (juce::Rectangle<int> area);
 
     UiContext& ctx;
     const Screen screen;
@@ -62,6 +65,7 @@ private:
     std::unique_ptr<LayerColumn> column;
     juce::String browsed[LayerSet::kNumSections];
     juce::String shownTitle;
+    juce::Component anchor;
 };
 
 /** OVERVIEW (fig. 53-54): each strip of the layer as a column of mini blocks
