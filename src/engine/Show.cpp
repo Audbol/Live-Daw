@@ -515,6 +515,73 @@ bool Show::setCustomControlsXml (const juce::String& xml)
 }
 
 //==============================================================================
+Show::PresetInfo Show::readPreset (const juce::File& file)
+{
+    const Utf8 u (file.getFullPathName());
+    ld::PresetInfoC c {};
+    PresetInfo info;
+    if (! ld::ld_preset_info (u.data, u.size, &c))
+        return info;
+    info.kind = c.kind == 1 ? PresetInfo::Kind::Fx : PresetInfo::Kind::Channel;
+    info.name = takeString (c.name);
+    info.detail = takeString (c.detail);
+    info.scope = c.scope;
+    if (juce::isPositiveAndBelow (c.stripKind, kNumStripKinds))
+        info.stripKind = static_cast<StripKind> (c.stripKind);
+    return info;
+}
+
+namespace
+{
+    juce::Result presetResult (bool ok, ld::LdString* message, const juce::String& what)
+    {
+        const auto text = takeString (message);
+        if (! ok)
+            return juce::Result::fail (text.isNotEmpty() ? text : what + " failed");
+        return text.isEmpty() ? juce::Result::ok() : juce::Result::fail (text);
+    }
+} // namespace
+
+juce::Result Show::saveFxPreset (int slot, const juce::File& file, const juce::String& presetName)
+{
+    const Utf8 p (file.getFullPathName()), n (presetName);
+    ld::LdString* message = nullptr;
+    const bool ok = ld::ld_show_save_fx_preset (handle, engine.getHandle(), slot, p.data, p.size, n.data, n.size, &message);
+    return presetResult (ok, message, "Saving the FX preset");
+}
+
+juce::Result Show::loadFxPreset (int slot, const juce::File& file)
+{
+    const Utf8 p (file.getFullPathName());
+    ld::LdString* message = nullptr;
+    const bool ok = ld::ld_show_load_fx_preset (handle, engine.getHandle(), slot, p.data, p.size, &message);
+    return presetResult (ok, message, "Loading the FX preset");
+}
+
+juce::Result Show::saveChannelPreset (const state::StripRef& strip, juce::uint32 scope, const juce::File& file, const juce::String& presetName)
+{
+    const Utf8 p (file.getFullPathName()), n (presetName);
+    ld::LdString* message = nullptr;
+    const bool ok = ld::ld_show_save_channel_preset (handle, engine.getHandle(), strip.toC(), scope, p.data, p.size, n.data, n.size, &message);
+    return presetResult (ok, message, "Saving the channel preset");
+}
+
+juce::Result Show::loadChannelPreset (const state::StripRef& strip, const juce::File& file, std::optional<juce::uint32> scope)
+{
+    const Utf8 p (file.getFullPathName());
+    ld::LdString* message = nullptr;
+    const bool ok = ld::ld_show_load_channel_preset (handle, engine.getHandle(), strip.toC(), p.data, p.size, scope.has_value(), scope.value_or (0),
+                                                     &message);
+    return presetResult (ok, message, "Loading the channel preset");
+}
+
+bool Show::setPresetScope (const juce::File& file, juce::uint32 scope)
+{
+    const Utf8 p (file.getFullPathName());
+    return ld::ld_preset_set_scope (p.data, p.size, scope);
+}
+
+//==============================================================================
 juce::String Show::toXmlString() const
 {
     return takeString (ld::ld_show_to_xml (handle, engine.getHandle()));

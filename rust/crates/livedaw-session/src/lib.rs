@@ -10,6 +10,7 @@ pub mod console;
 pub mod custom;
 pub mod layers;
 pub mod legacy;
+pub mod presets;
 pub mod refs;
 pub mod scope;
 pub mod show;

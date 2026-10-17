@@ -323,6 +323,17 @@ struct SpillC
     StripRefC strip;
 };
 
+/// A LIBRARY preset file's header: kind 0 = not a preset, 1 = FX, 2 = channel;
+/// `name` and `detail` (the FX device or the strip kind) are the caller's to free.
+struct PresetInfoC
+{
+    int32_t kind;
+    uint32_t scope;
+    int32_t stripKind;
+    LdString* name;
+    LdString* detail;
+};
+
 struct ApplyResultC
 {
     int32_t stripsApplied, stripsSkippedSafe, stripsMissing;
@@ -577,6 +588,20 @@ extern "C"
     int32_t ld_show_snippet_rec (Show*, const Engine*, int32_t op);
     /** SAVE after STOP: a snippet of the recorded parameters within `focus` (null: all); -1 if none. */
     int32_t ld_show_add_recorded_snippet (Show*, const Engine*, int32_t scene, const char* name, size_t len, const ScopeC* focus);
+
+    // LIBRARY presets: FX (.lfx) and channel (.lchn) files
+    bool ld_preset_info (const char* path, size_t len, PresetInfoC* out);
+    bool ld_show_save_fx_preset (Show*, const Engine*, int32_t slot, const char* path, size_t len, const char* name, size_t nameLen,
+                                 LdString** message);
+    /** Warnings (a plugin that isn't loaded there, a premium device in 9-16) in `message`. */
+    bool ld_show_load_fx_preset (Show*, const Engine*, int32_t slot, const char* path, size_t len, LdString** message);
+    bool ld_show_save_channel_preset (Show*, const Engine*, StripRefC strip, uint32_t scope, const char* path, size_t len,
+                                      const char* name, size_t nameLen, LdString** message);
+    /** useScope false: the preset's own scope. */
+    bool ld_show_load_channel_preset (Show*, const Engine*, StripRefC strip, const char* path, size_t len, bool useScope,
+                                      uint32_t scope, LdString** message);
+    /** UPDATE SCOPE of a channel preset file. */
+    bool ld_preset_set_scope (const char* path, size_t len, uint32_t scope);
 
     bool ld_show_is_fading (Show*);
     void ld_show_cancel_fade (Show*);

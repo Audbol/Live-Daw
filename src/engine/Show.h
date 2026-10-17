@@ -173,6 +173,35 @@ public:
     bool setCustomControlsXml (const juce::String&);
 
     //==============================================================================
+    // LIBRARY presets: an FX slot's device (FX tab) or a strip's settings (CHAN tab) as files.
+    struct PresetInfo
+    {
+        enum class Kind
+        {
+            None,
+            Fx,
+            Channel
+        };
+        Kind kind = Kind::None;
+        juce::String name, detail; // detail: the FX device, or the strip kind
+        juce::uint32 scope = 0;    // a channel preset's sections
+        std::optional<StripKind> stripKind;
+    };
+
+    static constexpr const char* fxPresetExtension = ".lfx";
+    static constexpr const char* channelPresetExtension = ".lchn";
+
+    static PresetInfo readPreset (const juce::File&);
+    juce::Result saveFxPreset (int slot, const juce::File&, const juce::String& presetName);
+    /** Fails with the warnings when part of it didn't load (a plugin, a premium device in 9-16). */
+    juce::Result loadFxPreset (int slot, const juce::File&);
+    juce::Result saveChannelPreset (const state::StripRef&, juce::uint32 scope, const juce::File&, const juce::String& presetName);
+    /** With its own scope, or `scope`. */
+    juce::Result loadChannelPreset (const state::StripRef&, const juce::File&, std::optional<juce::uint32> scope = std::nullopt);
+    /** UPDATE SCOPE. */
+    static bool setPresetScope (const juce::File&, juce::uint32 scope);
+
+    //==============================================================================
     bool isFading() const noexcept { return ld::ld_show_is_fading (handle); }
     void cancelFade();
 

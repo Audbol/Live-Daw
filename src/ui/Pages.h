@@ -256,6 +256,8 @@ public:
     class SnapTab;
     class SnipTab;
     class PlaceholderTab;
+    class FxTab;
+    class ChanTab;
 
 private:
     enum Tab

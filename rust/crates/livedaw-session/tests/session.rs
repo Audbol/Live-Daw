@@ -1123,3 +1123,94 @@ fn spill_layers_follow_the_console() {
     assert_eq!((show.layers.selected_layer(&engine, CENTER).id.as_str(), show.layers.offset(CENTER)), ("dca-1", 4));
     assert_eq!(show.layers.selected_layer(&engine, LEFT).id, "in-1");
 }
+
+// ---- LIBRARY presets (FX, CHAN) ----------------------------------------------------------
+
+#[test]
+fn fx_presets_round_trip_into_any_slot() {
+    use livedaw_dsp::wing::FX_MODELS;
+    use livedaw_session::presets::{self, PresetType};
+    let fx = |t: &str| model_index(FX_MODELS, t).unwrap();
+    let engine = Engine::new(0);
+    let mut host = FakeHost::default();
+    assert!(engine.set_fx_model(2, fx("HALL"), true));
+    engine.controls.fx[2].param("dcy").unwrap().store(4.25);
+    engine.controls.fx[2].mix.store(35.0);
+
+    let preset = presets::capture_fx(&engine, &mut Bridge { host: &mut host, engine: &engine }, 2, "Long hall").unwrap();
+    let info = presets::info(&preset).unwrap();
+    assert_eq!((info.kind, info.name.as_str()), (PresetType::Fx, "Long hall"));
+
+    // Through a file, into slot 5.
+    let dir = std::env::temp_dir().join(format!("livedaw-presets-{}", std::process::id()));
+    let path = dir.join("hall.lfx");
+    presets::save(&path, &preset).unwrap();
+    let loaded = presets::load(&path).unwrap();
+    let warnings = presets::apply_fx(&engine, &mut Bridge { host: &mut host, engine: &engine }, &loaded, 5).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(engine.controls.fx[5].model_index(), fx("HALL"));
+    assert_eq!(engine.controls.fx[5].param("dcy").unwrap().load(), 4.25);
+    assert_eq!(engine.controls.fx[5].mix.load(), 35.0);
+
+    // A premium device doesn't go into slots 9-16.
+    let w = presets::apply_fx(&engine, &mut Bridge { host: &mut host, engine: &engine }, &loaded, 12).unwrap();
+    assert_eq!(w.len(), 1);
+    assert_ne!(engine.controls.fx[12].model_index(), fx("HALL"));
+
+    // A plugin's state only goes into the same plugin.
+    host.load(&engine, 0, "Comp", "state-a");
+    let plugin = presets::capture_fx(&engine, &mut Bridge { host: &mut host, engine: &engine }, 0, "Comp A").unwrap();
+    assert_eq!(presets::info(&plugin).unwrap().detail, "Comp");
+    host.load(&engine, 1, "Comp", "state-b");
+    host.load(&engine, 3, "Other", "o");
+    let ok = presets::apply_fx(&engine, &mut Bridge { host: &mut host, engine: &engine }, &plugin, 1).unwrap();
+    assert!(ok.is_empty());
+    assert_eq!(host.plugins[&1].1, "state-a");
+    let mismatch = presets::apply_fx(&engine, &mut Bridge { host: &mut host, engine: &engine }, &plugin, 3).unwrap();
+    assert_eq!(mismatch.len(), 1);
+    assert_eq!(host.plugins[&3].1, "o");
+    assert!(presets::apply_fx(&engine, &mut NoPlugins, &plugin, 99).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn channel_presets_load_onto_other_strips_within_their_scope() {
+    use livedaw_session::presets;
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    engine.set_num_channels(4);
+    let (a, b) = (ch(&engine, 0), ch(&engine, 1));
+    a.set_name("Kick");
+    a.params.gate.on.store(true, Relaxed);
+    a.params.input.trim_db.store(6.0);
+    a.params.fader_db.store(-7.0);
+    a.params.input_left.store(9, Relaxed);
+
+    let preset = presets::capture_channel(&engine, &mut np, &StripRef::of(&a), section::GATE | section::PREAMP, "Kick").unwrap();
+    assert_eq!(presets::info(&preset).unwrap().scope, section::GATE | section::PREAMP);
+    let r = presets::apply_channel(&engine, &mut np, &preset, &StripRef::of(&b), None).unwrap();
+    assert_eq!(r.strips_applied, 1);
+    assert!(b.params.gate.on.load(Relaxed));
+    assert_eq!(b.params.input.trim_db.load(), 6.0);
+    assert_eq!(b.params.fader_db.load(), 0.0, "the fader is outside the preset's scope");
+    assert_eq!(b.params.input_left.load(Relaxed), 1, "nor the input patch");
+    assert_ne!(b.name(), "Kick");
+
+    // UPDATE SCOPE: the fader and name too; through a file, onto an aux.
+    let mut updated = preset.clone();
+    presets::set_channel_scope(&mut updated, section::FADER | section::NAME);
+    let dir = std::env::temp_dir().join(format!("livedaw-chan-{}", std::process::id()));
+    let path = dir.join("kick.lchn");
+    presets::save(&path, &updated).unwrap();
+    let loaded = presets::load(&path).unwrap();
+    let aux = engine.strip_at(StripKind::Aux, 2).unwrap();
+    presets::apply_channel(&engine, &mut np, &loaded, &StripRef::of(&aux), None).unwrap();
+    assert_eq!((aux.params.fader_db.load(), aux.name()), (-7.0, "Kick".to_owned()));
+
+    // Inputs don't load onto buses, mains or matrices; missing strips and files fail.
+    let bus = StripRef::new(StripKind::Bus, 0);
+    assert!(presets::apply_channel(&engine, &mut np, &loaded, &bus, None).is_err());
+    assert!(presets::apply_channel(&engine, &mut np, &loaded, &StripRef::new(StripKind::Channel, 77), None).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(presets::load(&dir.join("missing.lchn")).is_err());
+}

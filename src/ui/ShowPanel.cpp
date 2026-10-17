@@ -190,18 +190,233 @@ private:
 };
 
 //==============================================================================
+/** The INT / USB file list: folders first (".." to go up), then the shows and
+    presets, each with its type chip and date. */
+class ShowPanel::FileList final : public juce::ListBox, private juce::ListBoxModel
+{
+public:
+    explicit FileList (ShowPanel& p) : panel (p)
+    {
+        setModel (this);
+        setColour (backgroundColourId, juce::Colours::black);
+        setColour (outlineColourId, juce::Colours::transparentBlack);
+        getVerticalScrollBar().setColour (juce::ScrollBar::thumbColourId, Dark::key);
+        getVerticalScrollBar().setColour (juce::ScrollBar::backgroundColourId, Dark::body);
+    }
+
+    ~FileList() override { setModel (nullptr); }
+
+    struct Entry
+    {
+        juce::File file;
+        bool parent = false, folder = false;
+    };
+
+    juce::File root, folder;
+    juce::String filter;
+    bool byDate = false;
+    std::vector<Entry> entries;
+
+    /** The file types the library lists, with their chip text and colour. */
+    static bool typeOf (const juce::File& f, juce::String& chip, juce::Colour& colour)
+    {
+        const auto ext = f.getFileExtension().toLowerCase();
+        if (ext == Show::fileExtension)
+            chip = "SHOW", colour = FileColours::show;
+        else if (ext == Show::fxPresetExtension)
+            chip = "FX", colour = FileColours::fx;
+        else if (ext == Show::channelPresetExtension)
+            chip = "CHN", colour = FileColours::chan;
+        else if (ext == ".snap")
+            chip = "SNAP", colour = FileColours::snap;
+        else
+            return false;
+        return true;
+    }
+
+    void rebuild()
+    {
+        const auto previous = selectedFile();
+        entries.clear();
+        if (folder.isDirectory())
+        {
+            if (folder != root && folder.isAChildOf (root))
+                entries.push_back ({ folder.getParentDirectory(), true, true });
+            std::vector<Entry> dirs, items;
+            for (const auto& f : folder.findChildFiles (juce::File::findFilesAndDirectories | juce::File::ignoreHiddenFiles, false))
+            {
+                juce::String chip;
+                juce::Colour colour;
+                if (f.isDirectory())
+                    dirs.push_back ({ f, false, true });
+                else if (typeOf (f, chip, colour))
+                    items.push_back ({ f, false, false });
+            }
+            auto byName = [] (const Entry& a, const Entry& b) { return a.file.getFileName().compareNatural (b.file.getFileName()) < 0; };
+            std::sort (dirs.begin(), dirs.end(), byName);
+            std::sort (items.begin(), items.end(), [this, byName] (const Entry& a, const Entry& b)
+            {
+                if (byDate)
+                    return a.file.getLastModificationTime() > b.file.getLastModificationTime();
+                const auto ta = a.file.getFileExtension().toLowerCase(), tb = b.file.getFileExtension().toLowerCase();
+                return ta != tb ? ta < tb : byName (a, b);
+            });
+            entries.insert (entries.end(), dirs.begin(), dirs.end());
+            entries.insert (entries.end(), items.begin(), items.end());
+        }
+        updateContent();
+        selectFile (previous);
+        repaint();
+    }
+
+    juce::File selectedFile() const
+    {
+        const int row = getSelectedRow();
+        if (! juce::isPositiveAndBelow (row, (int) entries.size()) || entries[(size_t) row].folder)
+            return {};
+        return entries[(size_t) row].file;
+    }
+
+    void selectFile (const juce::File& f)
+    {
+        for (size_t i = 0; i < entries.size(); ++i)
+            if (! entries[i].parent && entries[i].file == f)
+            {
+                selectRow ((int) i);
+                return;
+            }
+        deselectAllRows();
+    }
+
+    void open (const juce::File& dir)
+    {
+        folder = dir;
+        rebuild();
+        deselectAllRows();
+    }
+
+private:
+    int getNumRows() override { return (int) entries.size(); }
+
+    void paintListBoxItem (int row, juce::Graphics& g, int width, int height, bool rowSelected) override
+    {
+        if (! juce::isPositiveAndBelow (row, (int) entries.size()))
+            return;
+        const auto& e = entries[(size_t) row];
+        auto r = juce::Rectangle<int> (width, height).toFloat();
+        g.setColour (Colours::screenPanel);
+        g.fillRect (r.removeFromBottom (1.0f));
+        if (rowSelected)
+        {
+            g.setColour (Dark::selectedRow);
+            g.fillRect (r.reduced (1.0f));
+            g.setColour (Dark::selectedOutline);
+            g.drawRect (r.reduced (1.0f), 2.0f);
+        }
+        auto t = r.reduced (8.0f, 2.0f);
+
+        if (e.folder)
+        {
+            drawIcon (g, Icon::Folder, t.removeFromLeft (t.getHeight() * 0.8f).reduced (2.0f), Dark::textDim);
+            t.removeFromLeft (6.0f);
+            g.setColour (Dark::text);
+            g.setFont (juce::FontOptions (juce::jlimit (12.0f, 24.0f, t.getHeight() * 0.62f), juce::Font::bold));
+            g.drawFittedText (e.parent ? juce::String ("..") : e.file.getFileName().toUpperCase(), t.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+            return;
+        }
+
+        juce::String chipText;
+        juce::Colour colour;
+        typeOf (e.file, chipText, colour);
+        const bool normal = filter.isNotEmpty() && e.file.hasFileExtension (filter);
+        // The type chip with the date and time under it.
+        const float chipW = juce::jmin (46.0f, t.getWidth() * 0.16f), chipH = juce::jlimit (12.0f, 18.0f, t.getHeight() * 0.4f);
+        auto dateColumn = t.removeFromRight (juce::jmax (chipW, 74.0f));
+        auto chip = dateColumn.withWidth (chipW).withHeight (chipH).withY (t.getY() + 2.0f).withX (dateColumn.getRight() - chipW);
+        drawChip (g, chip, chipText, colour.withMultipliedAlpha (normal ? 1.0f : 0.45f), juce::Colours::black);
+        const auto time = e.file.getLastModificationTime();
+        g.setColour (Dark::textDim);
+        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 11.0f, t.getHeight() * 0.25f), juce::Font::bold));
+        g.drawText (time.formatted ("%Y-%m-%d  %H:%M:%S"), dateColumn.withTop (chip.getBottom()).toNearestInt(), juce::Justification::centredRight);
+
+        g.setColour (normal ? Dark::text : Dark::textDim.withAlpha (0.6f));
+        g.setFont (juce::FontOptions (juce::jlimit (12.0f, 24.0f, t.getHeight() * 0.62f), juce::Font::bold));
+        g.drawFittedText (e.file.getFileNameWithoutExtension().toUpperCase(), t.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+    }
+
+    void selectedRowsChanged (int) override
+    {
+        panel.updateKeys();
+        if (panel.onFileSelected)
+            panel.onFileSelected (selectedFile());
+    }
+
+    void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override
+    {
+        if (! juce::isPositiveAndBelow (row, (int) entries.size()))
+            return;
+        const auto e = entries[(size_t) row];
+        if (e.folder)
+        {
+            open (e.file);
+            panel.updateKeys();
+            if (panel.onFileSelected)
+                panel.onFileSelected ({});
+        }
+        else if (panel.onFileActivated)
+            panel.onFileActivated (e.file);
+    }
+
+    ShowPanel& panel;
+};
+
+//==============================================================================
+namespace
+{
+    constexpr const char* kUsbFolder = "library.usbFolder";
+} // namespace
+
+juce::File ShowPanel::libraryFolder()
+{
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Live DAW").getChildFile ("Library");
+}
+
 ShowPanel::ShowPanel (UiContext& c) : ctx (c)
 {
     list = std::make_unique<List> (*this);
     addAndMakeVisible (*list);
+    files = std::make_unique<FileList> (*this);
+    addChildComponent (*files);
 
-    // The file browser (internal storage, USB stick) doesn't exist yet: the
-    // list always shows the open show.
-    intKey.setEnabled (false);
-    usbKey.setEnabled (false);
+    // The locations: INT (the library folder), USB (a folder of your choice) and the open SHOW.
+    intKey.litColour = Dark::on;
+    intKey.isLit = [this] { return location == Location::Internal; };
+    intKey.onClick = [this] { setLocation (Location::Internal); };
+    usbKey.litColour = Dark::on;
+    usbKey.isLit = [this] { return location == Location::Usb; };
+    usbKey.onClick = [this]
+    {
+        const juce::File folder (ctx.settings.getValue (kUsbFolder));
+        if (location == Location::Usb || ! folder.isDirectory())
+            chooseUsbFolder();
+        else
+            setLocation (Location::Usb);
+    };
     showKey.litColour = FileColours::show;
-    showKey.isLit = [] { return true; };
+    showKey.isLit = [this] { return location == Location::Show; };
+    showKey.onClick = [this] { setLocation (Location::Show); };
     showKey.caption = [this] { return juce::String (ctx.show.getNumScenes()) + " SCNS"; };
+    folderKey.onClick = [this] { newFolder(); };
+    fileRenameKey.onClick = [this] { renameFile(); };
+    deleteKey.onClick = [this] { deleteFile(); };
+    sortTypeKey.litColour = Dark::choice;
+    sortTypeKey.isLit = [this] { return ! files->byDate; };
+    sortTypeKey.onClick = [this] { files->byDate = false; files->rebuild(); };
+    sortDateKey.litColour = Dark::choice;
+    sortDateKey.isLit = [this] { return files->byDate; };
+    sortDateKey.onClick = [this] { files->byDate = true; files->rebuild(); };
+    for (auto* k : { &folderKey, &fileRenameKey, &deleteKey, &sortTypeKey, &sortDateKey })
+        addChildComponent (k);
     skipKey.litColour = Dark::on;
     skipKey.isLit = [this]
     {
@@ -247,6 +462,136 @@ void ShowPanel::setTypeFilter (int filter)
     list->repaint();
 }
 
+void ShowPanel::setFileFilter (const juce::String& extension)
+{
+    files->filter = extension.trimCharactersAtStart (".");
+    files->repaint();
+}
+
+void ShowPanel::setLocation (Location l)
+{
+    if (l == Location::Usb && ! juce::File (ctx.settings.getValue (kUsbFolder)).isDirectory())
+    {
+        chooseUsbFolder();
+        return;
+    }
+    const bool changed = l != location;
+    location = l;
+    if (location != Location::Show)
+    {
+        const auto root = location == Location::Internal ? libraryFolder() : juce::File (ctx.settings.getValue (kUsbFolder));
+        if (location == Location::Internal)
+            root.createDirectory();
+        if (files->root != root)
+        {
+            files->root = root;
+            files->open (root);
+        }
+        else
+            files->rebuild();
+    }
+    list->setVisible (location == Location::Show);
+    files->setVisible (location != Location::Show);
+    for (auto* k : { &removeKey, &renameKey, &skipKey, &linkKey, &upKey, &downKey })
+        k->setVisible (location == Location::Show);
+    for (auto* k : { &folderKey, &fileRenameKey, &deleteKey, &sortTypeKey, &sortDateKey })
+        k->setVisible (location != Location::Show);
+    updateKeys();
+    repaint();
+    if (changed && onLocationChanged)
+        onLocationChanged();
+}
+
+juce::File ShowPanel::getFolder() const
+{
+    return location == Location::Show ? libraryFolder() : files->folder;
+}
+
+juce::File ShowPanel::getSelectedFile() const
+{
+    return location == Location::Show ? juce::File() : files->selectedFile();
+}
+
+void ShowPanel::selectFile (const juce::File& f)
+{
+    files->rebuild();
+    files->selectFile (f);
+}
+
+void ShowPanel::chooseUsbFolder()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Choose the USB folder", juce::File (ctx.settings.getValue (kUsbFolder)));
+    juce::Component::SafePointer<ShowPanel> safe (this);
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [safe] (const juce::FileChooser& fc)
+    {
+        const auto dir = fc.getResult();
+        if (safe == nullptr || ! dir.isDirectory())
+            return;
+        safe->ctx.settings.setValue (kUsbFolder, dir.getFullPathName());
+        safe->files->root = juce::File();
+        safe->setLocation (Location::Usb);
+    });
+}
+
+void ShowPanel::newFolder()
+{
+    juce::Component::SafePointer<ShowPanel> safe (this);
+    popups::TextOptions options;
+    options.icon = Icon::Folder;
+    options.maxLength = 32;
+    popups::editText (popupHost(), "NEW FOLDER", "NEW FOLDER", [safe] (const juce::String& text)
+    {
+        const auto name = juce::File::createLegalFileName (text.trim());
+        if (safe == nullptr || name.isEmpty())
+            return;
+        const auto dir = safe->files->folder.getChildFile (name);
+        if (! dir.createDirectory())
+            safe->ctx.log.warning ("Could not create the folder " + dir.getFullPathName());
+        safe->files->rebuild();
+    }, options);
+}
+
+void ShowPanel::renameFile()
+{
+    const auto file = files->selectedFile();
+    if (! file.existsAsFile())
+        return;
+    juce::Component::SafePointer<ShowPanel> safe (this);
+    popups::TextOptions options;
+    options.maxLength = 32;
+    popups::editText (popupHost(), "RENAME", file.getFileNameWithoutExtension(), [safe, file] (const juce::String& text)
+    {
+        const auto name = juce::File::createLegalFileName (text.trim());
+        if (safe == nullptr || name.isEmpty())
+            return;
+        const auto target = file.getSiblingFile (name + file.getFileExtension());
+        if (target.exists() || ! file.moveFileTo (target))
+        {
+            popups::warn (safe->popupHost(), "RENAME", "Could not rename " + file.getFileName() + " to " + target.getFileName());
+            return;
+        }
+        safe->files->rebuild();
+        safe->files->selectFile (target);
+    }, options);
+}
+
+void ShowPanel::deleteFile()
+{
+    const auto file = files->selectedFile();
+    if (! file.existsAsFile())
+        return;
+    juce::Component::SafePointer<ShowPanel> safe (this);
+    popups::confirm (popupHost(), "DELETE", "Move \"" + file.getFileName() + "\" to the trash?", "DELETE", [safe, file]
+    {
+        if (safe == nullptr)
+            return;
+        if (! file.moveToTrash())
+            file.deleteFile();
+        safe->files->rebuild();
+        safe->updateKeys();
+    }, true);
+}
+
 void ShowPanel::refresh()
 {
     const auto selected = getSelected();
@@ -260,12 +605,18 @@ void ShowPanel::refresh()
         row = list->rowOf ({ ctx.show.getCurrentSceneIndex(), -1 });
     if (row >= 0 && row != list->getSelectedRow())
         list->selectRow (row);
+    if (location != Location::Show)
+        files->rebuild();
     updateKeys();
     repaint();
 }
 
 void ShowPanel::updateKeys()
 {
+    const bool file = files->selectedFile().existsAsFile();
+    fileRenameKey.setEnabled (file);
+    deleteKey.setEnabled (file);
+    folderKey.setEnabled (files->folder.isDirectory());
     const auto item = getSelected();
     removeKey.setEnabled (item.isValid());
     renameKey.setEnabled (item.isValid());
@@ -400,11 +751,22 @@ void ShowPanel::resized()
     listArea = b;
     list->setRowHeight (juce::jlimit (28, 44, getHeight() / 12));
     list->setBounds (listArea);
+    files->setRowHeight (juce::jlimit (28, 44, getHeight() / 12));
+    files->setBounds (listArea);
 
     auto t = toolbar.reduced (2, 2);
     const int w = juce::jmin (t.getHeight() + 14, t.getWidth() / 10);
     for (auto* k : { &intKey, &usbKey, &showKey })
         k->setBounds (t.removeFromLeft (w));
+    // At INT / USB: FOLDER, RENAME, (gap) DELETE, and the sort keys at the right.
+    auto f = t;
+    f.removeFromLeft (w / 2);
+    sortDateKey.setBounds (f.removeFromRight (w));
+    sortTypeKey.setBounds (f.removeFromRight (w));
+    folderKey.setBounds (f.removeFromLeft (w));
+    fileRenameKey.setBounds (f.removeFromLeft (w));
+    f.removeFromLeft (w / 2);
+    deleteKey.setBounds (f.removeFromLeft (w));
     t.removeFromLeft (juce::jmax (4, (t.getWidth() - 6 * w) / 2));
     for (auto* k : { &removeKey, &renameKey, &skipKey, &linkKey, &upKey, &downKey })
         k->setBounds (t.removeFromLeft (w));

@@ -8,6 +8,7 @@ use super::guard;
 use livedaw_engine::{Engine, StripKind};
 use livedaw_session::console::{CapturedInsert, InsertMode, PluginBridge, RestoreError};
 use livedaw_session::layers::{FaderRef, Layer, LayerSet, SpillKind};
+use livedaw_session::presets::{self, PresetType};
 use livedaw_session::{ApplyResult, GlobalSafe, Scope, Show, StripRef};
 use std::borrow::Cow;
 use std::ffi::c_void;
@@ -904,6 +905,144 @@ pub unsafe extern "C" fn ld_show_clear(s: *mut LdShow, e: *const Engine, num_cha
     if let (Some(s), Some(e)) = (show(s), eng(e)) {
         guard((), || s.show.clear(e, num_channels.max(0) as usize));
     }
+}
+
+// ---- LIBRARY presets (FX, CHAN) -------------------------------------------------------------
+
+/// A preset file's header. `kind`: 0 = not a preset, 1 = FX, 2 = channel.
+/// `name` and `detail` (the FX device, or the strip kind) are owned by the caller.
+#[repr(C)]
+pub struct LdPresetInfo {
+    pub kind: i32,
+    pub scope: u32,
+    pub strip_kind: i32,
+    pub name: *mut LdString,
+    pub detail: *mut LdString,
+}
+
+/// Reads a preset file's header; false (kind 0, null strings) if it isn't one.
+#[no_mangle]
+pub unsafe extern "C" fn ld_preset_info(path: *const u8, len: usize, out: *mut LdPresetInfo) -> bool {
+    let path = PathBuf::from(str_arg(path, len).into_owned());
+    let info = guard(None, || presets::load(&path).ok().and_then(|p| presets::info(&p)));
+    if let Some(o) = out.as_mut() {
+        *o = match &info {
+            Some(i) => LdPresetInfo {
+                kind: if i.kind == PresetType::Fx { 1 } else { 2 },
+                scope: i.scope,
+                strip_kind: i.strip_kind.map_or(-1, |k| k as i32),
+                name: LdString::new(i.name.clone()),
+                detail: LdString::new(i.detail.clone()),
+            },
+            None => LdPresetInfo { kind: 0, scope: 0, strip_kind: -1, name: std::ptr::null_mut(), detail: std::ptr::null_mut() },
+        };
+    }
+    info.is_some()
+}
+
+unsafe fn finish(r: Result<Vec<String>, String>, message: *mut *mut LdString) -> bool {
+    finish_load(r, message)
+}
+
+/// SAVE on the FX tab: FX slot `slot` to `path`. False with `message` on failure.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_save_fx_preset(
+    s: *mut LdShow,
+    e: *const Engine,
+    slot: i32,
+    path: *const u8,
+    path_len: usize,
+    name: *const u8,
+    name_len: usize,
+    message: *mut *mut LdString,
+) -> bool {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return false };
+    let path = PathBuf::from(str_arg(path, path_len).into_owned());
+    let name = str_arg(name, name_len).into_owned();
+    let r = guard(Err("internal error".into()), || {
+        let preset =
+            presets::capture_fx(e, &mut s.bridge, usize::try_from(slot).unwrap_or(usize::MAX), &name).ok_or("No such FX slot")?;
+        presets::save(&path, &preset).map(|()| Vec::new())
+    });
+    finish(r, message)
+}
+
+/// LOAD on the FX tab: the preset at `path` into FX slot `slot` (warnings in `message`).
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_load_fx_preset(
+    s: *mut LdShow,
+    e: *const Engine,
+    slot: i32,
+    path: *const u8,
+    path_len: usize,
+    message: *mut *mut LdString,
+) -> bool {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return false };
+    let path = PathBuf::from(str_arg(path, path_len).into_owned());
+    let r = guard(Err("internal error".into()), || {
+        let preset = presets::load(&path)?;
+        presets::apply_fx(e, &mut s.bridge, &preset, usize::try_from(slot).unwrap_or(usize::MAX))
+    });
+    finish(r, message)
+}
+
+/// SAVE on the CHAN tab: `strip` to `path`, loading `scope` (sections).
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_save_channel_preset(
+    s: *mut LdShow,
+    e: *const Engine,
+    strip: LdStripRef,
+    scope: u32,
+    path: *const u8,
+    path_len: usize,
+    name: *const u8,
+    name_len: usize,
+    message: *mut *mut LdString,
+) -> bool {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return false };
+    let path = PathBuf::from(str_arg(path, path_len).into_owned());
+    let name = str_arg(name, name_len).into_owned();
+    let r = guard(Err("internal error".into()), || {
+        let preset = presets::capture_channel(e, &mut s.bridge, &strip.to_ref(), scope, &name).ok_or("No such strip")?;
+        presets::save(&path, &preset).map(|()| Vec::new())
+    });
+    finish(r, message)
+}
+
+/// LOAD on the CHAN tab: the preset at `path` onto `strip` with its own scope
+/// (`use_scope` false) or `scope`.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_load_channel_preset(
+    s: *mut LdShow,
+    e: *const Engine,
+    strip: LdStripRef,
+    path: *const u8,
+    path_len: usize,
+    use_scope: bool,
+    scope: u32,
+    message: *mut *mut LdString,
+) -> bool {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return false };
+    let path = PathBuf::from(str_arg(path, path_len).into_owned());
+    let r = guard(Err("internal error".into()), || {
+        let preset = presets::load(&path)?;
+        presets::apply_channel(e, &mut s.bridge, &preset, &strip.to_ref(), use_scope.then_some(scope)).map(|r| r.warnings)
+    });
+    finish(r, message)
+}
+
+/// UPDATE SCOPE: rewrites a channel preset's scope.
+#[no_mangle]
+pub unsafe extern "C" fn ld_preset_set_scope(path: *const u8, len: usize, scope: u32) -> bool {
+    let path = PathBuf::from(str_arg(path, len).into_owned());
+    guard(false, || {
+        let Ok(mut preset) = presets::load(&path) else { return false };
+        if presets::info(&preset).is_none_or(|i| i.kind != PresetType::Channel) {
+            return false;
+        }
+        presets::set_channel_scope(&mut preset, scope);
+        presets::save(&path, &preset).is_ok()
+    })
 }
 
 // ---- layers ------------------------------------------------------------------------------

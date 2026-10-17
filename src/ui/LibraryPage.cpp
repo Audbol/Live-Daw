@@ -1,5 +1,6 @@
 #include "ui/Pages.h"
 #include "ui/ScopeWindow.h"
+#include "engine/Models.h"
 
 namespace livedaw::ui
 {
@@ -52,6 +53,44 @@ namespace
         parent.addAndMakeVisible (k);
         return k;
     }
+
+    /** Asks for a preset name, then calls `save` with the file in `folder` (after
+        an overwrite question when it exists). */
+    void savePresetAs (juce::Component& host, const juce::String& title, const juce::String& initial, const juce::File& folder,
+                       const juce::String& extension, std::function<void (const juce::File&, const juce::String&)> save)
+    {
+        popups::TextOptions options;
+        options.maxLength = 32;
+        options.actionText = "SAVE";
+        juce::Component::SafePointer<juce::Component> safe (&host);
+        popups::editText (host, title, initial, [safe, folder, extension, save] (const juce::String& text)
+        {
+            const auto name = text.trim();
+            const auto fileName = juce::File::createLegalFileName (name);
+            if (safe == nullptr || fileName.isEmpty())
+                return;
+            folder.createDirectory();
+            const auto file = folder.getChildFile (fileName + extension);
+            if (file.exists())
+                popups::confirm (*safe, "SAVE", "Overwrite \"" + file.getFileName() + "\"?", "SAVE", [save, file, name] { save (file, name); });
+            else
+                save (file, name);
+        }, options);
+    }
+
+    /** "CH 3 INSERT PRE": the strip using FX slot `slot`, if any. */
+    juce::String fxUser (UiContext& ctx, int slot)
+    {
+        for (int k = 0; k < kNumStripKinds; ++k)
+            for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
+            {
+                if (s->params.preInsert.fx.load() == slot)
+                    return s->getLabel().toUpperCase() + "  INSERT PRE";
+                if (s->params.postInsert.fx.load() == slot && s->params.postInsert.mode.load() == 0)
+                    return s->getLabel().toUpperCase() + "  INSERT POST";
+            }
+        return "NOT INSERTED";
+    }
 } // namespace
 
 //==============================================================================
@@ -63,11 +102,36 @@ public:
     explicit ShowTab (LibraryPage& p) : page (p)
     {
         auto& ctx = page.ctx;
-        makeKey (keys, *this, "OPEN", Icon::Folder)->onClick = [&ctx] { if (ctx.openShow) ctx.openShow(); };
+        // OPEN: the show selected at INT / USB, else a file dialog.
+        makeKey (keys, *this, "OPEN", Icon::Folder)->onClick = [this]
+        {
+            auto& c = page.ctx;
+            const auto file = page.list->getSelectedFile();
+            if (file.hasFileExtension (Show::fileExtension) && c.openShowFile)
+                page.confirmLoad ("the show \"" + file.getFileNameWithoutExtension() + "\"", [&c, file] { c.openShowFile (file); });
+            else if (c.openShow)
+                c.openShow();
+        };
         makeKey (keys, *this, "CREATE", Icon::Edit)->onClick = [&ctx] { if (ctx.newShow) ctx.newShow(); };
         makeKey (keys, *this, "SAVE", Icon::SaveTray)->onClick = [&ctx] { if (ctx.saveShow) ctx.saveShow (false); };
         makeKey (keys, *this, "CLOSE", Icon::ClearCircle)->onClick = [&ctx] { if (ctx.newShow) ctx.newShow(); };
-        makeKey (keys, *this, "SAVE AS", Icon::SaveTray)->onClick = [&ctx] { if (ctx.saveShow) ctx.saveShow (true); };
+        // SAVE AS: into the folder shown at INT / USB, else a file dialog.
+        makeKey (keys, *this, "SAVE AS", Icon::SaveTray)->onClick = [this]
+        {
+            auto& c = page.ctx;
+            if (page.list->getLocation() == ShowPanel::Location::Show || ! c.saveShowTo)
+            {
+                if (c.saveShow)
+                    c.saveShow (true);
+                return;
+            }
+            savePresetAs (page, "SAVE SHOW AS", c.show.getName(), page.list->getFolder(), Show::fileExtension,
+                          [this] (const juce::File& file, const juce::String&)
+                          {
+                              page.ctx.saveShowTo (file);
+                              page.list->selectFile (file);
+                          });
+        };
         makeKey (keys, *this, "ADD ITEM\nTO SHOW", Icon::Plus, false); // needs the file browser (G-N3)
         makeKey (keys, *this, "EDIT\nTAG", Icon::Tag)->onClick = [this] { editTag(); };
         makeKey (keys, *this, "SEND\nMIDI", Icon::Edit, false);        // needs MIDI (G-N1)
@@ -587,33 +651,384 @@ private:
 };
 
 //==============================================================================
-/** CLIP, FX and CHAN: the clip player (chapter 8), FX presets (G-N4) and
-    channel presets (G-N5) aren't built yet; their tabs show the console's
+/** FX (fig. 51): SAVE stores the chosen FX slot as a preset file in the folder
+    shown on the left; LOAD loads the selected preset into it. The graphic shows
+    the selected preset, then the slot (its device and the strip using it) with
+    the slot chooser. */
+class LibraryPage::FxTab final : public juce::Component, private juce::Timer
+{
+public:
+    explicit FxTab (LibraryPage& p) : page (p)
+    {
+        save = makeKey (keys, *this, "SAVE", Icon::SaveTray);
+        loadKey = makeKey (keys, *this, "LOAD", Icon::LoadTray);
+        rows = { { {}, { save }, {} }, { {}, { loadKey }, {} } };
+        styleIconKey (slotKey);
+        addAndMakeVisible (slotKey);
+        slotKey.onClick = [this] { chooseSlot(); };
+
+        save->onClick = [this]
+        {
+            auto& fx = page.ctx.engine.getFx();
+            auto* plugin = fx.getPlugin (slot);
+            const auto device = plugin != nullptr ? plugin->getName() : models::model (models::Fx, fx.getModel (slot)).name;
+            savePresetAs (page, "SAVE FX " + juce::String (slot + 1) + " AS PRESET", device, page.list->getFolder(), Show::fxPresetExtension,
+                          [this] (const juce::File& file, const juce::String& name)
+                          {
+                              const auto r = page.ctx.show.saveFxPreset (slot, file, name);
+                              if (r.failed())
+                                  page.ctx.log.error (r.getErrorMessage());
+                              else
+                                  page.ctx.log.info ("Saved FX " + juce::String (slot + 1) + " as " + file.getFileName());
+                              page.list->selectFile (file);
+                              repaint();
+                          });
+        };
+        loadKey->onClick = [this]
+        {
+            const auto file = page.list->getSelectedFile();
+            if (! file.hasFileExtension (Show::fxPresetExtension))
+                return;
+            const auto r = page.ctx.show.loadFxPreset (slot, file);
+            page.ctx.log.info ("Loaded " + file.getFileName() + " into FX " + juce::String (slot + 1));
+            if (r.failed())
+                for (auto& line : juce::StringArray::fromLines (r.getErrorMessage()))
+                    page.ctx.log.warning (line);
+            repaint();
+        };
+        startTimerHz (4);
+    }
+
+    void refresh()
+    {
+        const auto file = page.list->getSelectedFile();
+        enableKey (*loadKey, file.hasFileExtension (Show::fxPresetExtension));
+        enableKey (*save, page.ctx.engine.getFx().isLoaded (slot));
+        repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        paintKeyRows (g, rows);
+        auto& ctx = page.ctx;
+        auto& fx = ctx.engine.getFx();
+
+        // The selected preset.
+        const auto file = page.list->getSelectedFile();
+        const auto info = file.hasFileExtension (Show::fxPresetExtension) ? Show::readPreset (file) : Show::PresetInfo {};
+        g.setColour (Dark::body);
+        g.fillRect (presetBox);
+        auto pb = presetBox.reduced (6);
+        const auto presetHeader = pb.removeFromTop (18);
+        g.setColour (Dark::header);
+        g.fillRect (presetHeader);
+        g.setColour (Dark::textDim);
+        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+        g.drawText ("PRESET", presetHeader, juce::Justification::centred);
+        g.setColour (info.kind == Show::PresetInfo::Kind::Fx ? Dark::text : Dark::textDim);
+        g.setFont (juce::FontOptions (juce::jmin (18.0f, (float) pb.getHeight() * 0.3f), juce::Font::bold));
+        g.drawFittedText (info.kind == Show::PresetInfo::Kind::Fx ? info.name.toUpperCase() : juce::String ("NO PRESET SELECTED"),
+                          pb.removeFromTop (pb.getHeight() / 2), juce::Justification::centred, 2);
+        g.setColour (FileColours::fx);
+        g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        g.drawFittedText (info.detail.toUpperCase(), pb, juce::Justification::centredTop, 1);
+
+        g.setColour (Dark::text);
+        g.setFont (juce::FontOptions (22.0f, juce::Font::bold));
+        g.drawText (">>", arrow, juce::Justification::centred);
+
+        // The slot: purple header, device, the strip using it.
+        g.setColour (Dark::body);
+        g.fillRect (slotBox);
+        auto sb = slotBox.reduced (6);
+        auto header = sb.removeFromTop (20);
+        g.setColour (FileColours::fx.darker (0.3f));
+        g.fillRect (header);
+        g.setColour (juce::Colours::black);
+        g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+        g.drawText ("FX " + juce::String (slot + 1) + (slot < 8 ? "  PREMIUM" : ""), header.reduced (4, 0), juce::Justification::centredLeft);
+        auto* plugin = fx.getPlugin (slot);
+        const auto device = plugin != nullptr ? plugin->getName() : models::model (models::Fx, fx.getModel (slot)).name;
+        g.setColour (fx.isLoaded (slot) ? Dark::text : Dark::textDim);
+        g.setFont (juce::FontOptions (juce::jmin (18.0f, (float) sb.getHeight() * 0.3f), juce::Font::bold));
+        g.drawFittedText (fx.isLoaded (slot) ? device.toUpperCase() : juce::String ("EMPTY"), sb.removeFromTop (sb.getHeight() / 2),
+                          juce::Justification::centred, 2);
+        g.setColour (Dark::textDim);
+        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+        g.drawFittedText (fxUser (ctx, slot), sb, juce::Justification::centredTop, 1);
+    }
+
+    void resized() override
+    {
+        auto b = getLocalBounds();
+        const int rowH = juce::jlimit (36, 56, getHeight() / 6);
+        layoutKeyRows (b, rows, rowH, 4);
+        auto g = b.withTop (rows.back().band.getBottom() + 12).withHeight (juce::jmin (140, b.getHeight() / 3)).reduced (4, 0);
+        slotKey.setBounds (g.removeFromRight (juce::jmin (44, g.getWidth() / 10)).withSizeKeepingCentre (juce::jmin (44, g.getWidth() / 10), 40));
+        presetBox = g.removeFromLeft (g.getWidth() * 44 / 100);
+        arrow = g.removeFromLeft (36);
+        slotBox = g;
+    }
+
+private:
+    void timerCallback() override { refresh(); }
+
+    void chooseSlot()
+    {
+        auto& fx = page.ctx.engine.getFx();
+        juce::StringArray items;
+        for (int i = 0; i < kNumFx; ++i)
+        {
+            auto* plugin = fx.getPlugin (i);
+            const auto device = plugin != nullptr ? plugin->getName() : (fx.isLoaded (i) ? models::model (models::Fx, fx.getModel (i)).name : juce::String ("-"));
+            items.add ("FX " + juce::String (i + 1) + "  " + device.toUpperCase());
+        }
+        popups::ListOptions options;
+        options.columns = 2;
+        options.caption = "FX SLOT";
+        juce::Component::SafePointer<FxTab> safe (this);
+        popups::chooseFrom (slotKey, items, slot, [safe] (int i)
+        {
+            if (safe != nullptr)
+            {
+                safe->slot = i;
+                safe->refresh();
+            }
+        }, options);
+    }
+
+    LibraryPage& page;
+    juce::OwnedArray<WingKey> keys;
+    WingKey *save, *loadKey;
+    WingKey slotKey { {}, Icon::ChevronDown };
+    std::vector<KeyRow> rows;
+    juce::Rectangle<int> presetBox, arrow, slotBox;
+    int slot = 0;
+};
+
+//==============================================================================
+/** CHAN (fig. 52): SAVE stores the selected strip with the scope below as a
+    preset file in the folder on the left; UPDATE SCOPE changes the selected
+    preset's scope; LOAD applies the selected preset (within the scope) to the
+    selected strip. The box at the top right is the selected strip (▼ chooses
+    another). The scope grid is laid out like a channel strip, yellow when
+    included; keys that share one of our sections light together, CONN (the
+    input patch) is never part of a channel preset. */
+class LibraryPage::ChanTab final : public juce::Component, private juce::Timer
+{
+public:
+    explicit ChanTab (LibraryPage& p) : page (p)
+    {
+        save = makeKey (keys, *this, "SAVE", Icon::SaveTray);
+        updateScope = makeKey (keys, *this, "UPDATE\nSCOPE", Icon::Overview);
+        loadKey = makeKey (keys, *this, "LOAD", Icon::LoadTray);
+        rows = { { {}, { save, updateScope }, {} }, { {}, { loadKey }, {} } };
+        styleIconKey (stripKey);
+        addAndMakeVisible (stripKey);
+        stripKey.onClick = [this] { chooseStrip(); };
+
+        save->onClick = [this]
+        {
+            auto* s = selectedStrip();
+            if (s == nullptr)
+                return;
+            savePresetAs (page, "SAVE " + s->getLabel().toUpperCase() + " AS PRESET", stripName (*s), page.list->getFolder(), Show::channelPresetExtension,
+                          [this, ref = state::StripRef::of (*s)] (const juce::File& file, const juce::String& name)
+                          {
+                              const auto r = page.ctx.show.saveChannelPreset (ref, scope, file, name);
+                              if (r.failed())
+                                  page.ctx.log.error (r.getErrorMessage());
+                              else
+                                  page.ctx.log.info ("Saved channel preset " + file.getFileName());
+                              page.list->selectFile (file);
+                              shownFile = file;
+                              repaint();
+                          });
+        };
+        updateScope->onClick = [this]
+        {
+            const auto file = page.list->getSelectedFile();
+            if (file.hasFileExtension (Show::channelPresetExtension) && Show::setPresetScope (file, scope))
+                page.ctx.log.info ("Updated the scope of " + file.getFileName());
+        };
+        loadKey->onClick = [this]
+        {
+            const auto file = page.list->getSelectedFile();
+            auto* s = selectedStrip();
+            if (s == nullptr || ! file.hasFileExtension (Show::channelPresetExtension))
+                return;
+            const auto r = page.ctx.show.loadChannelPreset (state::StripRef::of (*s), file, scope);
+            if (r.failed())
+                page.ctx.log.warning (file.getFileName() + ": " + r.getErrorMessage());
+            else
+                page.ctx.log.info ("Loaded " + file.getFileName() + " onto " + s->getLabel());
+        };
+        startTimerHz (4);
+    }
+
+    void refresh()
+    {
+        // A newly selected preset shows its own scope.
+        const auto file = page.list->getSelectedFile();
+        if (file != shownFile)
+        {
+            shownFile = file;
+            if (file.hasFileExtension (Show::channelPresetExtension))
+            {
+                const auto info = Show::readPreset (file);
+                if (info.kind == Show::PresetInfo::Kind::Channel)
+                    scope = info.scope & ~(juce::uint32) state::Routing;
+            }
+        }
+        const bool preset = file.hasFileExtension (Show::channelPresetExtension);
+        enableKey (*loadKey, preset && selectedStrip() != nullptr);
+        enableKey (*updateScope, preset);
+        enableKey (*save, selectedStrip() != nullptr);
+        repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        paintKeyRows (g, rows);
+
+        // The selected strip: a header in its colour, its number and name.
+        g.setColour (Dark::body);
+        g.fillRect (stripBox);
+        if (auto* s = selectedStrip())
+        {
+            auto b = stripBox.reduced (4);
+            auto header = b.removeFromTop (16);
+            g.setColour (s->getColour());
+            g.fillRect (header);
+            g.setColour (juce::Colours::black);
+            g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+            g.drawFittedText (stripName (*s).toUpperCase(), header.reduced (3, 0), juce::Justification::centred, 1);
+            g.setColour (Dark::text);
+            g.setFont (juce::FontOptions (juce::jmin (22.0f, (float) b.getHeight() * 0.7f), juce::Font::bold));
+            g.drawFittedText (s->getLabel().removeCharacters (" "), b, juce::Justification::centred, 1);
+        }
+
+        // The scope grid.
+        for (auto& c : cells)
+        {
+            const bool active = c.bits != 0 && c.bits != kConn;
+            const bool on = c.bits == kNone || c.bits == kAll ? false : (scope & c.bits) != 0 && active;
+            auto r = c.area.toFloat().reduced (1.5f);
+            g.setColour (on ? Dark::on : (active ? Dark::key : Dark::key.darker (0.5f)));
+            g.fillRect (r);
+            g.setColour (on ? juce::Colours::black : (active ? Dark::text : Dark::textDim.withAlpha (0.5f)));
+            g.setFont (juce::FontOptions (juce::jlimit (8.0f, 12.0f, r.getHeight() * 0.36f), juce::Font::bold));
+            g.drawFittedText (c.name, r.toNearestInt().reduced (1), juce::Justification::centred, 1, 0.6f);
+        }
+    }
+
+    void resized() override
+    {
+        auto b = getLocalBounds();
+        const int rowH = juce::jlimit (36, 56, getHeight() / 6);
+        layoutKeyRows (b, rows, rowH, 4);
+        // The strip box at the top right of the first row, with its chooser.
+        const auto band = rows.front().band.reduced (4);
+        stripKey.setBounds (band.withLeft (band.getRight() - 36));
+        stripBox = band.withRight (band.getRight() - 40).withLeft (band.getRight() - 40 - juce::jmin (110, band.getWidth() / 4));
+
+        cells.clear();
+        auto grid = b.withTop (rows.back().band.getBottom() + 10).reduced (4, 0);
+        const float w = (float) grid.getWidth() / 10.0f;
+        const int h = juce::jmin (40, grid.getHeight() / 4);
+        auto cell = [&] (int col, int row, const char* name, juce::uint32 bits)
+        {
+            cells.push_back ({ juce::Rectangle<int> (grid.getX() + juce::roundToInt (w * (float) col), grid.getY() + row * h, juce::roundToInt (w), h), name, bits });
+        };
+        const juce::uint32 top[] = { kConn, state::Inserts, state::Name, state::Groups, 0, state::Sends, state::Sends, kNone, kAll };
+        const char* topNames[] = { "CONN", "CONFIG", "CUST", "TAGS", "", "SEND", "MAIN", "NONE", "ALL" };
+        for (int i = 0; i < 9; ++i)
+            if (*topNames[i] != 0)
+                cell (i + (i >= 4 ? 1 : 0), 0, topNames[i], top[i]);
+        const juce::uint32 second[] = { state::Preamp, state::Preamp, state::Preamp, state::Gate, state::Dynamics, state::Eq, state::Fader, state::Fader, state::Fader };
+        const char* secondNames[] = { "IN", "FILTER", "DELAY", "GATE", "DYN", "EQ", "PAN", "FDR", "MUTE" };
+        for (int i = 0; i < 9; ++i)
+            cell (i + (i >= 6 ? 1 : 0), 1, secondNames[i], second[i]);
+        cell (0, 2, "PRE", state::Inserts);
+        cell (0, 3, "POST", state::Inserts);
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        for (auto& c : cells)
+            if (c.area.contains (e.getPosition()) && c.bits != 0 && c.bits != kConn)
+            {
+                if (c.bits == kNone)
+                    scope = 0;
+                else if (c.bits == kAll)
+                    scope = state::AllSections & ~(juce::uint32) state::Routing;
+                else
+                    scope ^= c.bits;
+                repaint();
+                return;
+            }
+    }
+
+private:
+    static constexpr juce::uint32 kConn = 0x80000000u, kNone = 0x40000000u, kAll = 0x20000000u;
+
+    struct Cell
+    {
+        juce::Rectangle<int> area;
+        juce::String name;
+        juce::uint32 bits;
+    };
+
+    void timerCallback() override { refresh(); }
+
+    Strip* selectedStrip() const { return page.ctx.getSelectedStrip ? page.ctx.getSelectedStrip() : nullptr; }
+
+    void chooseStrip()
+    {
+        juce::StringArray items;
+        std::vector<Strip*> strips;
+        int selected = -1;
+        for (int k = 0; k < kNumStripKinds; ++k)
+            for (auto& s : page.ctx.engine.getStrips (static_cast<StripKind> (k)))
+            {
+                if (s.get() == selectedStrip())
+                    selected = items.size();
+                items.add (describeStrip (*s).toUpperCase());
+                strips.push_back (s.get());
+            }
+        popups::ListOptions options;
+        options.columns = 4;
+        options.caption = "CHANNEL";
+        juce::Component::SafePointer<ChanTab> safe (this);
+        popups::chooseFrom (stripKey, items, selected, [safe, strips] (int i)
+        {
+            if (safe != nullptr && juce::isPositiveAndBelow (i, (int) strips.size()) && safe->page.ctx.selectStrip)
+                safe->page.ctx.selectStrip (strips[(size_t) i]);
+        }, options);
+    }
+
+    LibraryPage& page;
+    juce::OwnedArray<WingKey> keys;
+    WingKey *save, *updateScope, *loadKey;
+    WingKey stripKey { {}, Icon::ChevronDown };
+    std::vector<KeyRow> rows;
+    std::vector<Cell> cells;
+    juce::Rectangle<int> stripBox;
+    juce::uint32 scope = state::AllSections & ~(juce::uint32) state::Routing;
+    juce::File shownFile;
+};
+
+//==============================================================================
+/** CLIP: the clip player (chapter 8) isn't built; the tab shows the console's
     layout dimmed. */
 class LibraryPage::PlaceholderTab final : public juce::Component
 {
 public:
-    PlaceholderTab (LibraryPage& p, int which) : page (p), tab (which)
+    explicit PlaceholderTab (LibraryPage&)
     {
-        if (tab == TabClip)
-        {
-            for (auto [text, icon] : { std::pair { "PLAY", Icon::Play }, std::pair { "PAUSE", Icon::Pause }, std::pair { "STOP", Icon::Stop } })
-                makeKey (keys, *this, text, icon, false);
-            rows = { { {}, { keys[0], keys[1] }, { keys[2] } } };
-        }
-        else if (tab == TabFx)
-        {
-            makeKey (keys, *this, "SAVE", Icon::SaveTray, false);
-            makeKey (keys, *this, "LOAD", Icon::LoadTray, false);
-            rows = { { {}, { keys[0] }, {} }, { {}, { keys[1] }, {} } };
-        }
-        else
-        {
-            makeKey (keys, *this, "SAVE", Icon::SaveTray, false);
-            makeKey (keys, *this, "UPDATE\nSCOPE", Icon::Overview, false);
-            makeKey (keys, *this, "LOAD", Icon::LoadTray, false);
-            rows = { { {}, { keys[0], keys[1] }, {} }, { {}, { keys[2] }, {} } };
-        }
+        for (auto [text, icon] : { std::pair { "PLAY", Icon::Play }, std::pair { "PAUSE", Icon::Pause }, std::pair { "STOP", Icon::Stop } })
+            makeKey (keys, *this, text, icon, false);
+        rows = { { {}, { keys[0], keys[1] }, { keys[2] } } };
     }
 
     void paint (juce::Graphics& g) override
@@ -621,103 +1036,50 @@ public:
         paintKeyRows (g, rows);
         auto r = graphic;
         const float dim = 0.4f;
-        if (tab == TabClip)
+        // The 4-track player: meter, status, time, reels and format chips.
+        g.setColour (Dark::body);
+        g.fillRect (r);
+        auto meter = r.removeFromLeft (r.getHeight() * 2 / 3).reduced (6);
+        g.setColour (juce::Colours::black);
+        g.fillRect (meter);
+        auto body = r.reduced (8, 6);
+        auto status = body.removeFromLeft (14).withHeight (14).toFloat();
+        g.setColour (Dark::on.withAlpha (dim));
+        g.fillRect (status);
+        body.removeFromLeft (8);
+        g.setColour (Dark::pre.withAlpha (dim));
+        g.setFont (juce::FontOptions (juce::jmin (30.0f, (float) body.getHeight() * 0.36f), juce::Font::bold));
+        g.drawText ("0:00:00", body.removeFromTop (body.getHeight() * 45 / 100), juce::Justification::centredLeft);
+        for (int i = 0; i < 2; ++i)
         {
-            // The 4-track player: meter, status, time, reels and format chips.
-            g.setColour (Dark::body);
-            g.fillRect (r);
-            auto meter = r.removeFromLeft (r.getHeight() * 2 / 3).reduced (6);
-            g.setColour (juce::Colours::black);
-            g.fillRect (meter);
-            auto body = r.reduced (8, 6);
-            auto status = body.removeFromLeft (14).withHeight (14).toFloat();
-            g.setColour (Dark::on.withAlpha (dim));
-            g.fillRect (status);
-            body.removeFromLeft (8);
-            g.setColour (Dark::pre.withAlpha (dim));
-            g.setFont (juce::FontOptions (juce::jmin (30.0f, (float) body.getHeight() * 0.36f), juce::Font::bold));
-            g.drawText ("0:00:00", body.removeFromTop (body.getHeight() * 45 / 100), juce::Justification::centredLeft);
-            for (int i = 0; i < 2; ++i)
-            {
-                const float d = (float) juce::jmin (body.getHeight() - 16, 44);
-                auto reel = juce::Rectangle<float> ((float) body.getX() + (float) i * (d + 8.0f), (float) body.getY() + 4.0f, d, d);
-                g.setColour (Dark::text.withAlpha (dim));
-                g.drawEllipse (reel, 2.0f);
-                g.fillEllipse (reel.withSizeKeepingCentre (d * 0.2f, d * 0.2f));
-            }
-            g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
-            g.drawText ("4-TRACK PLAYER", body, juce::Justification::bottomRight);
-            auto chips = juce::Rectangle<float> ((float) body.getRight() - 90.0f, (float) body.getY(), 90.0f, 34.0f);
-            for (auto [i, text] : { std::pair { 0, "WAV" }, std::pair { 1, "4-CH" }, std::pair { 2, "48K" }, std::pair { 3, "24 bit" } })
-                drawChip (g, juce::Rectangle<float> (chips.getX() + (float) (i % 2) * 46.0f, chips.getY() + (float) (i / 2) * 18.0f, 43.0f, 15.0f), text,
-                          Dark::key.withAlpha (dim), Dark::text.withAlpha (dim));
-        }
-        else if (tab == TabFx)
-        {
-            // The preset and the slot it loads into.
-            auto preset = r.removeFromLeft (r.getWidth() * 42 / 100).reduced (4, r.getHeight() / 5);
-            auto arrow = r.removeFromLeft (30);
-            auto slot = r.reduced (4, r.getHeight() / 6);
-            g.setColour (Dark::key.withAlpha (dim));
-            g.fillRect (preset);
-            g.fillRect (slot);
-            g.setColour (FileColours::fx.withAlpha (dim));
-            g.fillRect (slot.removeFromTop (14));
+            const float d = (float) juce::jmin (body.getHeight() - 16, 44);
+            auto reel = juce::Rectangle<float> ((float) body.getX() + (float) i * (d + 8.0f), (float) body.getY() + 4.0f, d, d);
             g.setColour (Dark::text.withAlpha (dim));
-            g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-            g.drawText ("PRESET", preset, juce::Justification::centred);
-            g.drawText (">>", arrow, juce::Justification::centred);
-            g.drawText ("FX SLOT", slot, juce::Justification::centred);
+            g.drawEllipse (reel, 2.0f);
+            g.fillEllipse (reel.withSizeKeepingCentre (d * 0.2f, d * 0.2f));
         }
-        else
-        {
-            // The channel preset's scope, laid out like a channel strip.
-            const char* top[] = { "CONN", "CONFIG", "CUST", "TAGS", "", "SEND", "MAIN", "NONE", "ALL" };
-            const char* second[] = { "IN", "FILTER", "DELAY", "GATE", "DYN", "EQ", "", "PAN", "FDR", "MUTE" };
-            const float w = (float) r.getWidth() / 10.0f, h = juce::jmin (34.0f, (float) r.getHeight() / 4.0f);
-            auto cell = [&] (int col, int row, const char* text)
-            {
-                if (*text == 0)
-                    return;
-                auto c = juce::Rectangle<float> ((float) r.getX() + w * (float) col, (float) r.getY() + h * (float) row, w, h).reduced (1.5f);
-                g.setColour (Dark::on.withAlpha (0.25f));
-                g.fillRect (c);
-                g.setColour (Dark::text.withAlpha (dim));
-                g.setFont (juce::FontOptions (juce::jmin (11.0f, h * 0.4f), juce::Font::bold));
-                g.drawFittedText (text, c.toNearestInt(), juce::Justification::centredBottom, 1, 0.6f);
-            };
-            for (int i = 0; i < 9; ++i)
-                cell (i, 0, top[i]);
-            for (int i = 0; i < 10; ++i)
-                cell (i, 1, second[i]);
-            cell (0, 2, "PRE");
-            cell (0, 3, "POST");
-        }
+        g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+        g.drawText ("4-TRACK PLAYER", body, juce::Justification::bottomRight);
+        auto chips = juce::Rectangle<float> ((float) body.getRight() - 90.0f, (float) body.getY(), 90.0f, 34.0f);
+        for (auto [i, text] : { std::pair { 0, "WAV" }, std::pair { 1, "4-CH" }, std::pair { 2, "48K" }, std::pair { 3, "24 bit" } })
+            drawChip (g, juce::Rectangle<float> (chips.getX() + (float) (i % 2) * 46.0f, chips.getY() + (float) (i / 2) * 18.0f, 43.0f, 15.0f), text,
+                      Dark::key.withAlpha (dim), Dark::text.withAlpha (dim));
         g.setColour (Dark::textDim);
         g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-        const char* what = tab == TabClip ? "THE CLIP PLAYER IS NOT AVAILABLE YET." : tab == TabFx ? "FX PRESETS ARE NOT AVAILABLE YET." : "CHANNEL PRESETS ARE NOT AVAILABLE YET.";
-        g.drawFittedText (what, note, juce::Justification::topLeft, 2);
+        g.drawFittedText ("THE CLIP PLAYER IS NOT AVAILABLE YET.", note, juce::Justification::topLeft, 2);
     }
 
     void resized() override
     {
         auto b = getLocalBounds();
         const int rowH = juce::jlimit (36, 56, getHeight() / 6);
-        if (tab == TabClip)
-        {
-            graphic = b.removeFromTop (juce::jmin (120, b.getHeight() / 3));
-            b.removeFromTop (4);
-        }
+        graphic = b.removeFromTop (juce::jmin (120, b.getHeight() / 3));
+        b.removeFromTop (4);
         layoutKeyRows (b, rows, rowH, 4);
-        b = b.withTop (rows.back().band.getBottom() + 8);
-        if (tab != TabClip)
-            graphic = b.removeFromTop (juce::jmin (150, b.getHeight() * 2 / 3)).reduced (4, 0);
-        note = b.reduced (8, 6);
+        note = b.withTop (rows.back().band.getBottom() + 8).reduced (8, 6);
     }
 
 private:
-    LibraryPage& page;
-    int tab;
     juce::OwnedArray<WingKey> keys;
     std::vector<KeyRow> rows;
     juce::Rectangle<int> graphic, note;
@@ -740,6 +1102,23 @@ LibraryPage::LibraryPage (UiContext& c) : ctx (c)
             snip->refresh();
     };
     list->onActivated = [this] (ShowPanel::Item item) { load (item); };
+    // The file list: a selected preset shows on its tab; a double-click opens a show.
+    list->onFileSelected = [this] (const juce::File&)
+    {
+        if (auto* fx = dynamic_cast<FxTab*> (tabPages[TabFx]))
+            fx->refresh();
+        if (auto* chan = dynamic_cast<ChanTab*> (tabPages[TabChan]))
+            chan->refresh();
+    };
+    list->onFileActivated = [this] (const juce::File& file)
+    {
+        if (file.hasFileExtension (Show::fileExtension))
+            confirmLoad ("the show \"" + file.getFileNameWithoutExtension() + "\"", [this, file]
+            {
+                if (ctx.openShowFile)
+                    ctx.openShowFile (file);
+            });
+    };
     addAndMakeVisible (*list);
 
     tabs.tabFraction = 0.0f;
@@ -751,9 +1130,9 @@ LibraryPage::LibraryPage (UiContext& c) : ctx (c)
     tabPages.add (new ShowTab (*this));
     tabPages.add (new SnapTab (*this));
     tabPages.add (new SnipTab (*this));
-    tabPages.add (new PlaceholderTab (*this, TabClip));
-    tabPages.add (new PlaceholderTab (*this, TabFx));
-    tabPages.add (new PlaceholderTab (*this, TabChan));
+    tabPages.add (new PlaceholderTab (*this));
+    tabPages.add (new FxTab (*this));
+    tabPages.add (new ChanTab (*this));
     for (auto* p : tabPages)
         addChildComponent (p);
 
@@ -860,6 +1239,12 @@ void LibraryPage::showTab (int t)
     for (int i = 0; i < tabPages.size(); ++i)
         tabPages[i]->setVisible (i == t);
     list->setTypeFilter (t == TabShow ? 0 : t == TabSnap ? 1 : t == TabSnip ? 2 : -1);
+    list->setFileFilter (t == TabShow ? Show::fileExtension : t == TabFx ? Show::fxPresetExtension : t == TabChan ? Show::channelPresetExtension : "");
+    // Presets are files, scenes and snippets live in the show.
+    if ((t == TabFx || t == TabChan) && list->getLocation() == ShowPanel::Location::Show)
+        list->setLocation (ShowPanel::Location::Internal);
+    else if ((t == TabSnap || t == TabSnip) && list->getLocation() != ShowPanel::Location::Show)
+        list->setLocation (ShowPanel::Location::Show);
 }
 
 int LibraryPage::selectedScene() const
@@ -966,6 +1351,10 @@ void LibraryPage::refresh()
         snap->refresh();
     if (auto* snip = dynamic_cast<SnipTab*> (tabPages[TabSnip]))
         snip->refresh();
+    if (auto* fx = dynamic_cast<FxTab*> (tabPages[TabFx]))
+        fx->refresh();
+    if (auto* chan = dynamic_cast<ChanTab*> (tabPages[TabChan]))
+        chan->refresh();
     tabPages[TabShow]->repaint();
     updateTransport();
 }

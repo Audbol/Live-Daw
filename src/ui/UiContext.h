@@ -105,6 +105,8 @@ struct UiContext
     // Show files
     std::function<void()> newShow, openShow;
     std::function<void (bool saveAs)> saveShow;
+    /** The LIBRARY's file list: open a show file, save the show as a file. */
+    std::function<void (const juce::File&)> openShowFile, saveShowTo;
 
     /** Sends on Fader (SOF FLIP): with a bus selected the input faders show their
         sends to it; with an input selected the bus faders show its sends. */
