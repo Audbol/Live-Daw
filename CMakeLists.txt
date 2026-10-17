@@ -82,6 +82,13 @@ set(LIVEDAW_ENGINE_SOURCES
     src/engine/Recorder.cpp
     src/engine/VirtualAudioDevice.cpp)
 
+# The multitrack project model (no UI), shared by the app and the tests.
+set(LIVEDAW_DAW_SOURCES
+    src/daw/Project.cpp
+    src/daw/TimeGrid.cpp
+    src/daw/AudioFiles.cpp
+    src/daw/Session.cpp)
+
 # Linked after JUCE's recommended warnings so these flags come last on the command line.
 add_library(livedaw_warning_overrides INTERFACE)
 if(NOT MSVC)
@@ -98,7 +105,8 @@ function(livedaw_configure_juce_target target)
         JUCE_STRICT_REFCOUNTEDPOINTER=1
         JUCE_PLUGINHOST_VST3=1
         JUCE_PLUGINHOST_LV2=1
-        JUCE_USE_FLAC=0
+        JUCE_USE_FLAC=1                 # imported into recording projects
+        JUCE_USE_MP3AUDIOFORMAT=1
         JUCE_USE_OGGVORBIS=0
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:${target},JUCE_PRODUCT_NAME>"
         JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:${target},JUCE_VERSION>")
@@ -161,6 +169,7 @@ juce_add_gui_app(LiveDAW
 target_sources(LiveDAW PRIVATE
     src/Main.cpp
     ${LIVEDAW_ENGINE_SOURCES}
+    ${LIVEDAW_DAW_SOURCES}
     src/ui/LookAndFeel.cpp
     src/ui/Icons.cpp
     src/ui/Knobs.cpp
@@ -184,6 +193,11 @@ target_sources(LiveDAW PRIVATE
     src/ui/ViewPages.cpp
     src/ui/MainDisplay.cpp
     src/ui/SurfaceSections.cpp
+    src/ui/daw/DawCommon.cpp
+    src/ui/daw/DawTimeline.cpp
+    src/ui/daw/DawTracks.cpp
+    src/ui/daw/DawEditor.cpp
+    src/ui/daw/RecorderPage.cpp
     src/ui/MainComponent.cpp)
 
 livedaw_configure_juce_target(LiveDAW)
@@ -211,7 +225,9 @@ if(LIVEDAW_BUILD_TESTS)
         tests/LayerTests.cpp
         tests/DeviceTests.cpp
         tests/RecorderTests.cpp
-        ${LIVEDAW_ENGINE_SOURCES})
+        tests/DawTests.cpp
+        ${LIVEDAW_ENGINE_SOURCES}
+        ${LIVEDAW_DAW_SOURCES})
     livedaw_configure_juce_target(LiveDAWTests)
 
     add_test(NAME LiveDAWTests COMMAND LiveDAWTests)

@@ -3,6 +3,7 @@
 #include "ui/HomePage.h"
 #include "ui/Pages.h"
 #include "ui/ViewPages.h"
+#include "ui/daw/RecorderPage.h"
 
 namespace livedaw::ui
 {
@@ -65,6 +66,7 @@ private:
     std::unique_ptr<LibraryPage> library;
     std::unique_ptr<UtilityPage> utility;
     std::unique_ptr<ViewPage> overview, faders, sends, config, muteGroups;
+    std::unique_ptr<RecorderPage> recorder;
 
     juce::OwnedArray<juce::TextButton> screenButtons;
     juce::OwnedArray<ParamBarSlot> slots;
@@ -76,7 +78,7 @@ private:
     std::unique_ptr<FocusTracker> focusTracker;
 
     juce::Rectangle<int> screenArea, statusArea, slotArea, pageArea;
-    juce::Rectangle<int> channelTab, numberBox, chipsTile, usbTile, clockTile;
+    juce::Rectangle<int> channelTab, numberBox, chipsTile, usbTile, liveTile, clockTile;
     std::vector<StatusKey> statusKeys;
     std::vector<juce::Rectangle<int>> statusKeyAreas;
     juce::String shownTime;

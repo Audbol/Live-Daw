@@ -96,12 +96,16 @@ Barlow Condensed.
     DCA, MAIN and MATRIX, with number keys in the strips' colours (select) and mute
     squares. A group's header opens its section's FADERS screen. Bigger consoles page.
   - **ROUTING** (status-bar keys CHANNELS / SOURCES / OUTPUTS): pick a channel, then its
-    source. **+1 AUTO** moves on to the next channel; the lock (red when locked, green
-    when open) protects the patch. SOURCES shows which channels use each input. OUTPUTS
+    source. **MAIN / ALT** choose which of the channel's two inputs you patch (the ALT
+    input, WING INPUT SELECT, can be a recorder playback channel: source groups
+    PLAY 1-48 / 49-64). **+1 AUTO** moves on to the next channel; the lock (red when
+    locked, green when open) protects the patch. SOURCES shows which channels use each
+    input. OUTPUTS
     works output-first: pick an output, then the signal feeding it (a strip's L / R, or
     the MONITOR).
   - **SETUP:** GENERAL (lighting, clock, console info and size, OPERATION, OPTIONS),
-    AUDIO (clock rate, preferences such as MAIN LINK and DCA MUTEGROUPS, SOLO SYSTEM
+    AUDIO (clock rate, INPUT SELECT: the global MAIN / ALT switch and each channel's,
+    preferences such as MAIN LINK, DCA MUTEGROUPS and GLOBAL INPUT SELECT OVERRIDE, SOLO SYSTEM
     with PFL/AFL per strip type, audio device, AUTOMIX), SURFACE (meter taps, SEL DBL
     CLICK, layer link, section widths), REMOTE and DAW (not available yet, drawn as on
     the console) and PLUGINS, with INITIALIZE CONSOLE and SHUTDOWN. The status bar has
@@ -114,6 +118,8 @@ Barlow Condensed.
     FADERS, SENDS (sends on faders to one bus, main or matrix), CONFIG (edit the USER
     layers by dragging) and MUTE GROUPS (members, names, group keys).
   - **UTILITY:** system health and the event log.
+  - **RECORDER** (the status bar's **LIVE** card icon, red while recording): laid out
+    like the WING-LIVE screens. See *Multitrack recording* below.
 - **Channel strip section** (top left): the CHANNEL STRIP DETAILS LED panel (sources,
   filters, LEVEL and GR meters, bus sends, groups) around a small screen; CHANNEL
   PROCESSING with an encoder over each of INPUT, FILTER, GATE, COMP, INSERT and MAIN
@@ -124,8 +130,57 @@ Barlow Condensed.
   monitor) and **MONO** (hold: swap left and right); held functions blink, a press
   ends them. Talkback and the phones level come later.
 - **Custom controls** (between the center and right sections): the lower layers
-  **MUTE GROUPS** (the eight mute groups) and **SHOW CNTRL** (scene back, GO, SCENES);
-  the assignable upper part is empty for now.
+  **MULTI TRANSP** (the recorder's transport: previous / next marker, MARK, LOOP over
+  START, STOP, PLAY, REC; VIEW opens the recorder screen), **MUTE GROUPS** (the eight
+  mute groups) and **SHOW CNTRL** (scene back, GO, SCENES); the **DAW** key opens the
+  multitrack editor. The assignable upper part is empty for now.
+
+## Multitrack recording
+
+Live DAW records up to 64 tracks and plays up to 64 tracks back into the console, like
+a WING with a WING-LIVE card, and edits them in a DAW-style editor.
+
+- **Projects (sessions).** A project is a folder, `Documents/Live DAW/Recordings/<name>/`,
+  holding `<name>.ldproj` and the `Audio` folder. Recording into an unsaved project
+  creates a dated one. Projects autosave every 30 s; unsaved changes are offered
+  back when the project is opened next. The last project reopens at start-up.
+- **Recorder screen** (status-bar **LIVE** icon, or MULTI TRANSP > VIEW): the PLAYER
+  (armed channels, rate, meters of the armed tracks, the red time, transport with the
+  marker keys, free disk and record time left, timeline), the SESSIONS (click to open;
+  NAME renames, DELETE moves a session to the trash), the MARKERS (click to jump;
+  UPDATE moves the selected one to the position), the tracks (click to arm), and:
+  - **RECORD ALL CHANNELS**: a track per input channel, named and coloured like it,
+    recording its input port, armed, each on its own playback channels;
+  - **VIRTUAL SOUNDCHECK**: each channel's ALT input becomes its track's playback
+    channel and INPUT SELECT switches to GLOBAL ALT, so the band's recording plays
+    through the console; press again to go back to the live inputs;
+  - **EDIT** (status bar, header) opens the editor. The knobs move the position and
+    the loop.
+- **Editor** (Ctrl+E, EDIT, the DAW key; Esc or CONSOLE goes back): the top bar
+  (FILE menu, transport, position in min:sec or bars|beats, tempo and time signature
+  of the grid, snap OFF / GRID / BARS / BEATS / SECONDS, zoom, follow, undo / redo,
+  disk load, dropouts and record time left), the track headers (colour, name, R / M /
+  S, record source: hardware input, channel / aux pre or post fader, bus / main /
+  matrix post; playback channel, gain, record meter, height; drag the name to reorder,
+  right-click for more), the ruler (click to locate, drag to set the loop range,
+  markers below it) and the clips.
+  - **Clips:** click / shift / ctrl-click / rubber band to select; drag to move (also
+    to another track; ctrl-drag copies); drag the edges to trim; drag the handles at
+    the top corners for fades (right-click: linear, equal power, S-curve); drag the
+    gain line or alt + wheel for clip gain. Moves snap to the grid, clip edges,
+    markers and the playhead (hold shift to place freely). Overlapping clips are
+    summed, and overlaps get crossfades automatically (FILE menu option).
+  - **Import:** FILE > Import or drop files from the desktop (WAV, AIFF, FLAC, MP3...):
+    converted to WAV at the project's rate in its Audio folder, placed at the playhead
+    (or where dropped), on the selected track and the ones below.
+  - **Export:** FILE > Export tracks renders every track (clip gains, fades, track
+    gain) from the start of the timeline to a WAV in the project's Export folder.
+  - **Keys:** space play / stop, R record (again: stop), Home / End, L loop, M marker,
+    S split at the playhead (shift+S at the mouse), Delete, Ctrl+Z / Ctrl+Shift+Z,
+    Ctrl+D duplicate, Ctrl+X / C / V (paste at the playhead), Ctrl+A, Ctrl+M mute clips,
+    arrows nudge (alt: fine; without a selection they move the playhead), Ctrl+arrows
+    previous / next marker, up / down select the track, F zoom to fit, + / - zoom,
+    Ctrl+wheel zoom, shift+wheel scroll, Ctrl+S / Ctrl+Shift+S / Ctrl+O / Ctrl+I.
 
 ## Shows, scenes and snippets
 
@@ -272,7 +327,9 @@ rust/crates/livedaw-engine/  Rust realtime engine: WING topology, strips, sends,
 rust/crates/livedaw-session/ Rust sessions: console state, Show > Scene > Snippet, fades, fader banks, show files, legacy import
 rust/crates/livedaw-ffi/     C ABI over the engine and model tables + C++ header (include/livedaw_engine.h)
 src/engine/   C++ side: facades over the Rust code, FX slot plugin hosting
+src/daw/      Multitrack projects: tracks, clips, markers, undo, import / export, the recording session
 src/ui/       JUCE UI: the WING surface (fader sections, main display screens, channel strip, monitor)
+src/ui/daw/   The multitrack editor and the recorder screen
 resources/    Barlow Condensed fonts (SIL Open Font License)
 tools/wing/   Generator for the model tables (from libwing's parameter map)
 tests/        Unit tests (run with ctest)

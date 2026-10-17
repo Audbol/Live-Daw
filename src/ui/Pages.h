@@ -150,6 +150,14 @@ private:
     Signal feederOf (int port) const;
     juce::String signalLabel (const Signal&) const;
     juce::String inputUsers (int port) const;
+    /** Source groups: the hardware inputs in groups of 48, then the recorder's
+        playback channels (PLAY 1-48, PLAY 49-64). */
+    int numSourceGroups() const;
+    juce::String sourceGroupName (int group) const;
+    /** The input index of tile `index` of a source group (-1 past its end). */
+    int sourceAt (int group, int index) const;
+    /** "IN 3" (or the port's name), "PLAY 5", "NONE". */
+    juce::String sourceName (int source) const;
     void showGroupMenu (bool rightSide);
 
     void paintChannelTile (juce::Graphics&, juce::Rectangle<int>, Strip&, bool selected) const;
@@ -165,6 +173,7 @@ private:
     StripKind selectedKind = StripKind::Channel;
     int selectedIndex = 0;
     bool autoAdvance = true, locked = false;
+    bool editAlt = false; // CHANNEL INPUT MAIN / ALT: which input the source grid patches
 
     juce::Rectangle<int> leftPanel, rightPanel, leftHeader, rightHeader;
     juce::Rectangle<int> inputCaption, mainKey, altKey, stereoKey, autoKey, lockKey, unlockKey, prevPage, nextPage, leftSelector, rightSelector,

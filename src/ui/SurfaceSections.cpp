@@ -1,4 +1,6 @@
 #include "ui/SurfaceSections.h"
+#include "daw/Session.h"
+#include "daw/TimeGrid.h"
 #include "dsp/DspUtils.h"
 #include "ui/FaderStrip.h"
 #include "ui/ResponseGraph.h"
@@ -386,7 +388,7 @@ juce::String ChannelStripSection::panelState() const
             s << bit (dsp::gainToDb (ctx.meters.get (strip, true, ch)) >= thr);
     s << juce::roundToInt (strip->meters.dynReductionDb.load()) << bit (slotOn (Input)) << bit (p.filter.lowCut.load())
       << bit (p.filter.highCut.load()) << bit (p.filter.tool.load()) << p.filter.toolModel.load() << bit (p.input.delayOn.load())
-      << bit (p.stereo.load()) << (int) p.dcaMask.load() << ':' << (int) p.muteGroupMask.load() << ':' << p.postInsert.mode.load();
+      << bit (p.stereo.load()) << bit (strip->isUsingAltInput()) << (int) p.dcaMask.load() << ':' << (int) p.muteGroupMask.load() << ':' << p.postInsert.mode.load();
     for (auto& m : p.mains)
         s << bit (m.on.load());
     for (int i = 0; i < 16; ++i)
@@ -507,8 +509,8 @@ void ChannelStripSection::paintPanel (juce::Graphics& g)
         if (any && p->filter.tool.load())
             toolToken = models::model (models::FilterTools, p->filter.toolModel.load()).token;
         const std::tuple<float, int, const char*, bool> items[] = {
-            { c1, 0, "MAIN SOURCE", input },
-            { c1, 1, "ALT SOURCE", false },
+            { c1, 0, "MAIN SOURCE", input && ! strip->isUsingAltInput() },
+            { c1, 1, "ALT SOURCE", input && strip->isUsingAltInput() },
             { c1, 3, "48 V", false },
             { c1, 4, "INVERT", any && p->input.invert.load() },
             { c1, 6, "STEREO", any && (strip->isOutput() || p->stereo.load()) },
@@ -903,8 +905,7 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
     }
     layerKeys[TwoTrack]->setEnabled (false);
     layerKeys[TwoTrack]->setTooltip ("2-TRACK TRANSP: there's no USB recorder yet");
-    layerKeys[MultiTrack]->setEnabled (false);
-    layerKeys[MultiTrack]->setTooltip ("MULTI TRANSP: there's no multitrack recorder yet");
+    layerKeys[MultiTrack]->setTooltip ("MULTI TRANSP: the multitrack recorder's transport (VIEW: the recorder screen)");
     layerKeys[User]->setTooltip ("USER: custom controls (not assignable yet)");
 
     for (int i = 0; i < 8; ++i)
@@ -916,26 +917,30 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
         addAndMakeVisible (k);
     }
 
-    lowerView.setTooltip ("VIEW: the MUTE GROUPS screen, or the scenes for SHOW CNTRL");
+    lowerView.setTooltip ("VIEW: the MUTE GROUPS screen, the scenes for SHOW CNTRL, the recorder for MULTI TRANSP");
     lowerView.onPress = [this]
     {
         if (ctx.showScreen && lowerLayer == MuteGroups)
             ctx.showScreen (Screen::MuteGroups);
         else if (ctx.showScreen && lowerLayer == ShowControl)
             ctx.showScreen (Screen::Library);
+        else if (ctx.showScreen && lowerLayer == MultiTrack)
+            ctx.showScreen (Screen::Recorder);
         viewOpened = true;
     };
     lowerView.isActive = [this]
     {
         const auto screen = ctx.getScreen ? ctx.getScreen() : Screen::Home;
         viewOpened = viewOpened && ((lowerLayer == MuteGroups && screen == Screen::MuteGroups)
-                                    || (lowerLayer == ShowControl && screen == Screen::Library));
+                                    || (lowerLayer == ShowControl && screen == Screen::Library)
+                                    || (lowerLayer == MultiTrack && screen == Screen::Recorder));
         return viewOpened || screen == Screen::MuteGroups;
     };
 
+    // REMOTE CONTROL / DAW: here it opens the multitrack editor.
     dawKey.dark = true;
-    dawKey.setEnabled (false);
-    dawKey.setTooltip ("DAW remote control is not available yet");
+    dawKey.onPress = [this] { if (ctx.showEditor) ctx.showEditor (true); };
+    dawKey.setTooltip ("DAW: the multitrack editor (Ctrl+E; Esc returns to the console)");
 
     // Navigation arrows and the wheel.
     const int arrows[] = { -2, 2, -1, 1 };
@@ -963,13 +968,25 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
 void CustomControlSection::setLowerLayer (int layer)
 {
     lowerLayer = layer;
+    // MULTI TRANSP: PREV / NEXT marker, MARK, LOOP over START, STOP, PLAY, REC.
+    static const Icon transportIcons[8] = { Icon::MarkerPrev, Icon::MarkerNext, Icon::MarkerAdd, Icon::Loop,
+                                            Icon::ReturnToStart, Icon::Stop, Icon::Play, Icon::Record };
+    static const char* transportTips[8] = { "Previous marker", "Next marker", "Add a marker at the position", "Loop on/off",
+                                            "Return to the start", "Stop", "Play", "Record the armed tracks (again: stop)" };
     for (int i = 0; i < lowerKeys.size(); ++i)
     {
         const auto name = lowerKeyName (i);
-        lowerKeys[i]->setLabel (name);
-        lowerKeys[i]->setEnabled (name.isNotEmpty());
-        lowerKeys[i]->ledColour = layer == MuteGroups ? Colours::mute : Colours::silk;
-        lowerKeys[i]->setTooltip (layer == MuteGroups ? "Mute group " + juce::String (i + 1) + ": " + ctx.engine.getMuteGroupName (i) : juce::String());
+        const bool transport = layer == MultiTrack;
+        lowerKeys[i]->setLabel (transport ? juce::String() : name);
+        lowerKeys[i]->setIcon (transport ? std::optional<Icon> (transportIcons[i]) : std::nullopt);
+        lowerKeys[i]->setEnabled (transport || name.isNotEmpty());
+        lowerKeys[i]->ledColour = layer == MuteGroups ? Colours::mute
+                                  : transport && i == 7 ? Colours::mute
+                                  : transport && i == 6 ? Colours::meterGreen
+                                                        : Colours::silk;
+        lowerKeys[i]->setTooltip (layer == MuteGroups ? "Mute group " + juce::String (i + 1) + ": " + ctx.engine.getMuteGroupName (i)
+                                  : transport         ? juce::String (transportTips[i])
+                                                      : juce::String());
     }
     shownState = {};
     repaint();
@@ -984,6 +1001,11 @@ juce::String CustomControlSection::lowerKeyName (int key) const
         {
             static const char* names[] = { "PREV", "GO", "SCENES" };
             return key < 3 ? names[key] : "";
+        }
+        case MultiTrack:
+        {
+            static const char* names[] = { "PREV", "NEXT", "MARK", "LOOP", "START", "STOP", "PLAY", "REC" };
+            return names[juce::jlimit (0, 7, key)];
         }
         default: return {};
     }
@@ -1004,12 +1026,45 @@ void CustomControlSection::pressLowerKey (int key)
         else if (key == 2 && ctx.showScreen)
             ctx.showScreen (Screen::Library);
     }
+    else if (lowerLayer == MultiTrack && ctx.recording != nullptr)
+    {
+        auto& rec = *ctx.recording;
+        switch (key)
+        {
+            case 0: rec.jumpToMarker (false); break;
+            case 1: rec.jumpToMarker (true); break;
+            case 2: rec.addMarkerAtPosition(); break;
+            case 3: rec.setLoopEnabled (! rec.isLoopEnabled()); break;
+            case 4: rec.locate (0); break;
+            case 5: rec.stop(); break;
+            case 6: if (! rec.isRolling()) rec.play(); break;
+            case 7:
+                if (rec.isRecording())
+                    rec.stop();
+                else if (auto r = rec.record(); r.failed())
+                    ctx.log.warning ("Record: " + r.getErrorMessage());
+                break;
+            default: break;
+        }
+    }
 }
 
 bool CustomControlSection::lowerKeyLit (int key) const
 {
     if (lowerLayer == MuteGroups)
         return (ctx.engine.muteGroups.load() >> key) & 1u;
+    if (lowerLayer == MultiTrack && ctx.recording != nullptr)
+    {
+        const auto state = ctx.recording->getState();
+        switch (key)
+        {
+            case 3: return ctx.recording->isLoopEnabled();
+            case 5: return state == Recorder::State::Stopped;
+            case 6: return state == Recorder::State::Playing || state == Recorder::State::Recording;
+            case 7: return state == Recorder::State::Recording;
+            default: return false;
+        }
+    }
     return false;
 }
 
@@ -1044,6 +1099,9 @@ void CustomControlSection::timerCallback()
             state << ctx.engine.getMuteGroupName (i) << '|';
     else if (lowerLayer == ShowControl)
         state << ctx.show.getCurrentSceneIndex() << ctx.show.getNumScenes();
+    else if (lowerLayer == MultiTrack && ctx.recording != nullptr)
+        state << (int) ctx.recording->getState() << '|' << (int) (ctx.recording->getPosition() / 4800) << '|' << ctx.recording->getNumArmed() << '|'
+              << ctx.recording->getProject().getName();
     if (state != shownState)
     {
         shownState = state;
@@ -1098,6 +1156,24 @@ void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> are
             else if (i == 2)
                 info.name = ctx.show.getNumScenes() > 0 ? scene (current) : juce::String ("no scene");
             info.line2 = i == 1 ? "next" : (i == 2 ? "current" : "");
+        }
+        else if (lowerLayer == MultiTrack && ctx.recording != nullptr)
+        {
+            // POSITION, the transport state, the session and the armed tracks.
+            auto& rec = *ctx.recording;
+            const daw::TimeGrid grid { rec.getProject().getSampleRate() };
+            static const char* titles[] = { "POSITION", "STATE", "SESSION", "ARMED" };
+            info.number = titles[i];
+            switch (i)
+            {
+                case 0: info.name = grid.formatTime (rec.getPosition()).upToLastOccurrenceOf (".", false, false); break;
+                case 1:
+                    info.name = rec.isRecording() ? "REC" : rec.isRolling() ? "PLAY" : "STOP";
+                    info.line2 = rec.isLoopEnabled() ? "loop" : "";
+                    break;
+                case 2: info.name = rec.getProject().getName(); break;
+                default: info.name = juce::String (rec.getNumArmed()) + " TR"; break;
+            }
         }
         else
         {

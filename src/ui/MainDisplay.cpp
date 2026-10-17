@@ -14,7 +14,8 @@ namespace
     // Every page, including the VIEW screens.
     constexpr Screen allScreens[] = { Screen::Home,    Screen::Effects,  Screen::Meters, Screen::Routing,
                                       Screen::Setup,   Screen::Library,  Screen::Utility, Screen::Overview,
-                                      Screen::Faders,  Screen::Sends,    Screen::Config,  Screen::MuteGroups };
+                                      Screen::Faders,  Screen::Sends,    Screen::Config,  Screen::MuteGroups,
+                                      Screen::Recorder };
 
     const char* screenName (Screen s)
     {
@@ -33,6 +34,7 @@ namespace
             case Screen::Config:
             case Screen::MuteGroups:
                 return viewScreenName (s);
+            case Screen::Recorder: return "RECORDER";
         }
         return "";
     }
@@ -606,6 +608,8 @@ MainDisplay::MainDisplay (UiContext& c) : ctx (c)
     sends = std::make_unique<SendsViewPage> (ctx);
     config = std::make_unique<ConfigViewPage> (ctx);
     muteGroups = std::make_unique<MuteGroupsViewPage> (ctx);
+    jassert (ctx.recording != nullptr);
+    recorder = std::make_unique<RecorderPage> (ctx, *ctx.recording);
 
     for (auto s : allScreens)
     {
@@ -694,6 +698,7 @@ DisplayPage* MainDisplay::page (Screen s) const
         case Screen::Sends: return sends.get();
         case Screen::Config: return config.get();
         case Screen::MuteGroups: return muteGroups.get();
+        case Screen::Recorder: return recorder.get();
     }
     return home.get();
 }
@@ -800,6 +805,11 @@ void MainDisplay::timerCallback()
     hash = hash * 31u + (juce::uint32) juce::roundToInt (ctx.engine.getDspLoad() * 100.0f);
     hash = hash * 31u + (juce::uint32) ctx.engine.getNumFaultedFx();
     hash = hash * 31u + (ctx.deviceManager.getCurrentAudioDevice() != nullptr ? 1u : 0u);
+    if (ctx.recording != nullptr)
+    {
+        const auto recState = ctx.recording->getState();
+        hash = hash * 31u + (juce::uint32) recState + (recState == Recorder::State::Recording && blink ? 7u : 0u);
+    }
     if (time != shownTime || hash != shownHash)
     {
         shownTime = time;
@@ -892,6 +902,24 @@ void MainDisplay::paintStatusBar (juce::Graphics& g)
     tile (usbTile);
     drawIcon (g, Icon::UsbStick, usbTile.toFloat().reduced (usbTile.getHeight() * 0.22f), Colours::green);
 
+    // The recorder (the WING-LIVE card icon "1 | 2", caption LIVE): red while
+    // recording, green while playing.
+    tile (liveTile);
+    {
+        auto r = liveTile.toFloat().reduced (3.0f, 3.0f);
+        const auto state = ctx.recording != nullptr ? ctx.recording->getState() : Recorder::State::Stopped;
+        const auto liveInk = state == Recorder::State::Recording ? (blink ? Colours::mute : Colours::mute.darker (0.6f))
+                         : state == Recorder::State::Playing ? Colours::green
+                                                             : Colours::textDim;
+        auto caption = r.removeFromBottom (r.getHeight() * 0.3f);
+        auto cards = r.withSizeKeepingCentre (juce::jmin (r.getWidth(), r.getHeight() * 1.4f), r.getHeight());
+        drawIcon (g, Icon::SdCard, cards.removeFromLeft (cards.getWidth() * 0.5f), liveInk);
+        drawIcon (g, Icon::SdCard, cards, liveInk);
+        g.setColour (liveInk);
+        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 11.0f, caption.getHeight()), juce::Font::bold));
+        g.drawText ("LIVE", caption.toNearestInt(), juce::Justification::centred);
+    }
+
     // The screen's keys: an icon above a small label.
     for (size_t i = 0; i < statusKeys.size() && i < statusKeyAreas.size(); ++i)
     {
@@ -960,6 +988,8 @@ void MainDisplay::mouseUp (const juce::MouseEvent& e)
         }
     if (usbTile.contains (p))
         showScreen (Screen::Library);
+    else if (liveTile.contains (p))
+        showScreen (Screen::Recorder);
     else if (numberBox.contains (p))
         showChannelSelect (! channelSelect->isVisible());
     else if (channelTab.contains (p))
@@ -1048,6 +1078,8 @@ void MainDisplay::layoutStatusBar()
     chipsTile = st.removeFromLeft (juce::jmin (h * 5 / 2, st.getWidth() / 2));
     st.removeFromLeft (4);
     usbTile = st.removeFromLeft (juce::jmin (h, st.getWidth()));
+    st.removeFromLeft (4);
+    liveTile = st.removeFromLeft (juce::jmin (h * 6 / 5, st.getWidth()));
 }
 
 } // namespace livedaw::ui

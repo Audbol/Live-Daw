@@ -331,7 +331,7 @@ void RoutingPage::layoutTiles()
 {
     layoutVersion = ctx.engine.getStructureVersion();
     targetPage = juce::jlimit (0, numTargetPages() - 1, targetPage);
-    inputGroup = juce::jlimit (0, numPortGroups (false) - 1, inputGroup);
+    inputGroup = juce::jlimit (0, numSourceGroups() - 1, inputGroup);
     outputGroup = juce::jlimit (0, numPortGroups (true) - 1, outputGroup);
     channelTiles.clear();
     leftPorts.clear();
@@ -405,12 +405,48 @@ juce::String RoutingPage::inputUsers (int port) const
     juce::StringArray users;
     for (auto* s : channelTargets())
     {
-        const int l = s->params.inputLeft.load(), r = s->params.inputRight.load();
+        const auto name = hasCustomName (*s) ? s->getLabel() + " " + stripName (*s).toUpperCase() : s->getLabel();
         const bool stereo = s->params.stereo.load();
+        const int l = s->getInputLeft(), r = s->getInputRight();
         if (l == port || (stereo && (r == port || (r < 0 && l >= 0 && l + 1 == port))))
-            users.add (hasCustomName (*s) ? s->getLabel() + " " + stripName (*s).toUpperCase() : s->getLabel());
+            users.add (name);
+        const int al = s->getAltInputLeft(), ar = s->getAltInputRight();
+        if (al == port || (stereo && (ar == port || (ar < 0 && al >= 0 && al + 1 == port))))
+            users.add (name + " (ALT)");
     }
     return users.joinIntoString (", ");
+}
+
+int RoutingPage::numSourceGroups() const
+{
+    return numPortGroups (false) + (Recorder::kNumPlaybackChannels + kPortsPerGroup - 1) / kPortsPerGroup;
+}
+
+juce::String RoutingPage::sourceGroupName (int group) const
+{
+    const int hw = numPortGroups (false);
+    if (group < hw)
+        return "AUDIO IN " + juce::String (group * kPortsPerGroup + 1) + "-" + juce::String (group * kPortsPerGroup + kPortsPerGroup);
+    const int first = (group - hw) * kPortsPerGroup;
+    return "PLAY " + juce::String (first + 1) + "-" + juce::String (juce::jmin (Recorder::kNumPlaybackChannels, first + kPortsPerGroup));
+}
+
+int RoutingPage::sourceAt (int group, int index) const
+{
+    const int hw = numPortGroups (false);
+    if (group < hw)
+        return group * kPortsPerGroup + index;
+    const int channel = (group - hw) * kPortsPerGroup + index;
+    return channel < Recorder::kNumPlaybackChannels ? Recorder::playbackSource (channel) : -1;
+}
+
+juce::String RoutingPage::sourceName (int source) const
+{
+    if (source < 0)
+        return "NONE";
+    if (Recorder::isPlaybackSource (source))
+        return Recorder::playbackSourceName (Recorder::playbackChannelOf (source));
+    return portName (source, false);
 }
 
 RoutingPage::Signal RoutingPage::feederOf (int port) const
@@ -444,8 +480,12 @@ void RoutingPage::paintChannelTile (juce::Graphics& g, juce::Rectangle<int> area
 {
     auto r = area.toFloat();
     auto& p = s.params;
-    const int port = p.inputLeft.load();
+    // The input being patched (MAIN or ALT); a channel listening to its ALT
+    // input is marked "ALT".
+    const int port = editAlt ? s.getAltInputLeft() : s.getInputLeft();
+    const int portRight = editAlt ? s.getAltInputRight() : s.getInputRight();
     const bool patched = port >= 0;
+    const bool usingAlt = s.isUsingAltInput();
 
     auto bar = r.removeFromTop (juce::jmax (12.0f, r.getHeight() * 0.22f));
     g.setColour (patched || hasCustomName (s) ? s.getColour() : unpatched);
@@ -467,10 +507,19 @@ void RoutingPage::paintChannelTile (juce::Graphics& g, juce::Rectangle<int> area
         const bool stereo = p.stereo.load();
         g.setColour (stereo ? stereoLabel : monoLabel);
         g.setFont (juce::FontOptions (juce::jmin (15.0f, label.getHeight() * 0.9f), juce::Font::bold));
-        juce::String text = portName (port, false);
-        if (stereo)
-            text = juce::String (port + 1) + "/" + juce::String ((p.inputRight.load() >= 0 ? p.inputRight.load() : port + 1) + 1);
+        juce::String text = sourceName (port);
+        if (stereo && ! Recorder::isPlaybackSource (port))
+            text = juce::String (port + 1) + "/" + juce::String ((portRight >= 0 ? portRight : port + 1) + 1);
+        else if (stereo)
+            text = "PLAY " + juce::String (Recorder::playbackChannelOf (port) + 1) + "/"
+                   + juce::String (Recorder::playbackChannelOf (portRight >= 0 ? portRight : port + 1) + 1);
         g.drawFittedText (text, label.toNearestInt().reduced (2, 0), juce::Justification::centred, 1);
+    }
+    if (usingAlt)
+    {
+        // Under the colour bar, in the body's top-right corner.
+        auto tag = r.withHeight (12.0f).withTrimmedLeft (r.getWidth() - 24.0f).translated (-2.0f, 2.0f);
+        drawChip (g, tag, "ALT", Dark::choice, juce::Colours::black);
     }
     else
     {
@@ -488,16 +537,19 @@ void RoutingPage::paintChannelTile (juce::Graphics& g, juce::Rectangle<int> area
 
 void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, int port, bool marked) const
 {
+    if (port < 0)
+        return;
     auto r = area.toFloat();
-    g.setColour (navy);
+    const bool playback = Recorder::isPlaybackSource (port);
+    g.setColour (playback ? juce::Colour (0xff2f5a32) : navy);
     g.fillRect (r.removeFromTop (juce::jmax (10.0f, r.getHeight() * 0.18f)));
     g.setColour (tileOff);
     g.fillRect (r);
     auto label = r.removeFromBottom (juce::jmin (20.0f, r.getHeight() * 0.38f));
-    drawIcon (g, Icon::Xlr, r.reduced (r.getWidth() * 0.3f, 2.0f), Dark::textDim);
-    g.setColour (monoLabel);
+    drawIcon (g, playback ? Icon::Waveform : Icon::Xlr, r.reduced (r.getWidth() * 0.3f, 2.0f), Dark::textDim);
+    g.setColour (playback ? FileColours::wav : monoLabel);
     g.setFont (juce::FontOptions (juce::jmin (15.0f, label.getHeight() * 0.9f), juce::Font::bold));
-    g.drawFittedText (portName (port, false), label.toNearestInt().reduced (2, 0), juce::Justification::centred, 1);
+    g.drawFittedText (sourceName (port), label.toNearestInt().reduced (2, 0), juce::Justification::centred, 1);
     if (marked)
     {
         g.setColour (Colours::yellow);
@@ -615,7 +667,7 @@ void RoutingPage::paintSourcePanel (juce::Graphics& g) const
     left.removeFromTop (10);
     g.setColour (Dark::text.withAlpha (dim));
     g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-    g.drawText (portName (selectedSource, false), left.removeFromTop (20), juce::Justification::centredLeft);
+    g.drawText (sourceName (selectedSource), left.removeFromTop (20), juce::Justification::centredLeft);
     for (auto [text, lit] : { std::pair { "MONO", true }, std::pair { "STEREO", false }, std::pair { "MID/SIDE", false } })
     {
         key (left.removeFromTop (kh).withWidth (juce::jmin (left.getWidth(), 160)), text, lit);
@@ -663,10 +715,11 @@ void RoutingPage::paint (juce::Graphics& g)
     // Left header.
     if (mode == Mode::Channels)
     {
-        // The channel's MAIN / ALT input: no ALT inputs yet (engine E-ALT). ST pairs the input with the next one.
+        // The channel's MAIN / ALT input: which one the source grid patches.
+        // ST pairs the input with the next one.
         caption (inputCaption, "CHANNEL INPUT");
-        drawKey (g, mainKey, "MAIN", true, Dark::choice);
-        drawKey (g, altKey, "ALT", false, Dark::choice, false);
+        drawKey (g, mainKey, "MAIN", ! editAlt, Dark::choice);
+        drawKey (g, altKey, "ALT", editAlt, Dark::choice);
         drawKey (g, stereoKey, "ST", sel != nullptr && sel->params.stereo.load(), Dark::choice);
         drawKey (g, prevPage, "<", false, Dark::choice);
         drawKey (g, nextPage, ">", false, Dark::choice);
@@ -674,7 +727,7 @@ void RoutingPage::paint (juce::Graphics& g)
     if (mode == Mode::Sources)
     {
         drawSelector (g, leftSelector, Icon::Xlr, "SOURCE GROUP",
-                      "AUDIO IN " + juce::String (inputGroup * kPortsPerGroup + 1) + "-" + juce::String (inputGroup * kPortsPerGroup + kPortsPerGroup));
+                      sourceGroupName (inputGroup));
         drawIconKey (g, renameKey, Icon::Edit, "RENAME", false);
     }
     else
@@ -696,7 +749,7 @@ void RoutingPage::paint (juce::Graphics& g)
     if (mode == Mode::Channels)
     {
         drawSelector (g, rightSelector, Icon::Xlr, "SOURCE GROUP",
-                      "AUDIO IN " + juce::String (inputGroup * kPortsPerGroup + 1) + "-" + juce::String (inputGroup * kPortsPerGroup + kPortsPerGroup));
+                      sourceGroupName (inputGroup));
         // Source customization doesn't exist yet.
         caption (copyCaption, "COPY CUSTOMIZATION");
         drawKey (g, srcToChKey, "SRC->CH", false, Dark::choice, false);
@@ -726,12 +779,12 @@ void RoutingPage::paint (juce::Graphics& g)
             paintChannelTile (g, area, *strip, strip == sel);
         for (size_t i = 0; i < rightPorts.size(); ++i)
         {
-            const int port = inputGroup * kPortsPerGroup + (int) i;
+            const int port = sourceAt (inputGroup, (int) i);
             bool mine = false;
             if (sel != nullptr)
             {
-                const int l = sel->params.inputLeft.load(), r = sel->params.inputRight.load();
-                mine = l == port || (sel->params.stereo.load() && (r == port || (r < 0 && l >= 0 && l + 1 == port)));
+                const int l = editAlt ? sel->getAltInputLeft() : sel->getInputLeft(), r = editAlt ? sel->getAltInputRight() : sel->getInputRight();
+                mine = port >= 0 && (l == port || (sel->params.stereo.load() && (r == port || (r < 0 && l >= 0 && l + 1 == port))));
             }
             paintInputPort (g, rightPorts[i], port, mine);
         }
@@ -739,7 +792,7 @@ void RoutingPage::paint (juce::Graphics& g)
     else if (mode == Mode::Sources)
     {
         for (size_t i = 0; i < leftPorts.size(); ++i)
-            paintInputPort (g, leftPorts[i], inputGroup * kPortsPerGroup + (int) i, inputGroup * kPortsPerGroup + (int) i == selectedSource);
+            paintInputPort (g, leftPorts[i], sourceAt (inputGroup, (int) i), sourceAt (inputGroup, (int) i) == selectedSource);
         paintSourcePanel (g);
     }
     else
@@ -764,7 +817,15 @@ void RoutingPage::assignInput (int port, bool right)
     if (s == nullptr || locked)
         return;
     auto& p = s->params;
-    if (right)
+    if (editAlt)
+    {
+        // The ALT input (WING INPUT SELECT), e.g. a recorder playback channel.
+        if (right)
+            s->setAltInput (s->getAltInputLeft(), port);
+        else
+            s->setAltInput (port);
+    }
+    else if (right)
         p.inputRight = port;
     else
     {
@@ -835,12 +896,15 @@ void RoutingPage::showGroupMenu (bool rightSide)
     else
     {
         const bool outputs = mode == Mode::Outputs;
-        for (int i = 0; i < numPortGroups (outputs); ++i)
-        {
-            const int a = i * kPortsPerGroup + 1;
-            menu.addItem (i + 1, (outputs ? "AUDIO OUT " : "AUDIO IN ") + juce::String (a) + "-" + juce::String (a + kPortsPerGroup - 1), true,
-                          i == (outputs ? outputGroup : inputGroup));
-        }
+        if (outputs)
+            for (int i = 0; i < numPortGroups (true); ++i)
+            {
+                const int a = i * kPortsPerGroup + 1;
+                menu.addItem (i + 1, "AUDIO OUT " + juce::String (a) + "-" + juce::String (a + kPortsPerGroup - 1), true, i == outputGroup);
+            }
+        else
+            for (int i = 0; i < numSourceGroups(); ++i)
+                menu.addItem (i + 1, sourceGroupName (i), true, i == inputGroup);
         current = outputs ? 2 : 0;
     }
     juce::Component::SafePointer<RoutingPage> safe (this);
@@ -877,6 +941,8 @@ void RoutingPage::mouseUp (const juce::MouseEvent& e)
         targetPage = (targetPage + (nextPage.contains (pos) ? 1 : numTargetPages() - 1)) % numTargetPages();
         layoutTiles();
     }
+    else if (mainKey.contains (pos) || altKey.contains (pos))
+        editAlt = altKey.contains (pos);
     else if (leftSelector.contains (pos))
         showGroupMenu (false);
     else if (rightSelector.contains (pos))
@@ -894,8 +960,15 @@ void RoutingPage::mouseUp (const juce::MouseEvent& e)
             clearOutput (selectedPort);
         else if (auto* s = selectedStrip())
         {
-            s->params.inputLeft = -1;
-            s->params.inputRight = -1;
+            if (editAlt)
+            {
+                s->setAltInput (-1);
+            }
+            else
+            {
+                s->params.inputLeft = -1;
+                s->params.inputRight = -1;
+            }
         }
     }
     else
@@ -912,14 +985,15 @@ void RoutingPage::mouseUp (const juce::MouseEvent& e)
             if (rightPorts[i].contains (pos))
             {
                 // Right click or shift: the right input of a stereo channel.
-                assignInput (inputGroup * kPortsPerGroup + (int) i, e.mods.isPopupMenu() || e.mods.isShiftDown());
+                if (const int source = sourceAt (inputGroup, (int) i); source >= 0)
+                    assignInput (source, e.mods.isPopupMenu() || e.mods.isShiftDown());
                 return;
             }
         for (size_t i = 0; i < leftPorts.size(); ++i)
             if (leftPorts[i].contains (pos))
             {
                 if (mode == Mode::Sources)
-                    selectedSource = inputGroup * kPortsPerGroup + (int) i;
+                    selectedSource = juce::jmax (0, sourceAt (inputGroup, (int) i));
                 else
                     selectedPort = outputGroup * kPortsPerGroup + (int) i;
                 repaint();

@@ -25,6 +25,8 @@ public:
 
     std::function<bool()> isOn;
     juce::Colour offColour = juce::Colour (0xff5a5a5a);
+    /** The icon's colour while the key is off (the recorder's red record dot). */
+    std::optional<juce::Colour> iconColour;
     bool outlined = false;
     /** Icon above a small label (the library's FOLDER / RENAME / DELETE keys). */
     bool iconAbove = false;
@@ -62,7 +64,7 @@ public:
         {
             const float s = juce::jmin (r.getHeight() * 0.62f, content.getWidth() * 0.4f);
             auto iconBox = getButtonText().isEmpty() ? content.withSizeKeepingCentre (s, s) : content.removeFromLeft (s).withSizeKeepingCentre (s, s);
-            drawIcon (g, *icon, iconBox, ink);
+            drawIcon (g, *icon, iconBox, ! on && iconColour.has_value() && isEnabled() ? *iconColour : ink);
             content.removeFromLeft (6.0f);
         }
         if (getButtonText().isNotEmpty())
