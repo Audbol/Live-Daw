@@ -53,7 +53,7 @@ namespace
             g.setFont (juce::FontOptions (header.getHeight() * 0.85f, juce::Font::bold));
             g.drawFittedText (stripName (strip).toUpperCase(), header.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
 
-            g.setColour (juce::Colour (0xff3a3a3a));
+            g.setColour (colours::keyOff);
             g.fillRect (inner);
             auto label = inner.removeFromBottom (juce::jlimit (12.0f, 22.0f, inner.getHeight() * 0.26f));
             auto body = inner.reduced (4.0f, 3.0f);
@@ -69,7 +69,7 @@ namespace
             g.setColour (Colours::textDim);
             g.drawRect (body.withSizeKeepingCentre (juce::jmin (body.getWidth() * 0.6f, 18.0f), juce::jmin (body.getHeight() * 0.6f, 12.0f)), 1.0f);
 
-            g.setColour (juce::Colour (0xff262626));
+            g.setColour (colours::well);
             g.fillRect (label);
             g.setColour (st ? colours::stereo : colours::mono);
             g.setFont (juce::FontOptions (label.getHeight() * 0.8f, juce::Font::bold));
@@ -248,7 +248,7 @@ namespace
             {
                 auto r = juce::Rectangle<float> (0.0f, (float) i * h, (float) getWidth(), h).withSizeKeepingCentre (s, s);
                 const bool on = params.mains[i].on.load();
-                g.setColour (on ? colours::fader : juce::Colour (0xff262626));
+                g.setColour (on ? colours::fader : colours::well);
                 g.fillRect (r);
                 g.setColour (on ? juce::Colours::black : Colours::textDim);
                 g.setFont (juce::FontOptions (s * 0.8f, juce::Font::bold));
@@ -276,9 +276,7 @@ namespace
 class OverviewScreen final : public HomeScreen, private juce::Timer
 {
 public:
-    OverviewScreen (UiContext& c, Strip& s)
-        : HomeScreen (c, s),
-          meter ([this] (int ch) { return ctx.meters.get (&strip, false, ch); }, [this] { return strip.getNumChannels(); })
+    OverviewScreen (UiContext& c, Strip& s) : HomeScreen (c, s)
     {
         auto& p = strip.params;
         auto open = [this] (HomeTab t) { return [this, t] { if (ctx.showHomeTab) ctx.showHomeTab (t); }; };
@@ -308,13 +306,7 @@ public:
             bindKey (*tool, p.filter.tool);
         }
 
-        mute = &key ("MUTE", std::nullopt, Colours::mute);
-        bindKey (*mute, p.mute);
-        solo = &key ("SOLO", std::nullopt, Colours::solo);
-        bindKey (*solo, p.solo);
-        meter.showScale = true;
-        addAndMakeVisible (meter);
-        fader = &make<ScreenFader> (p.faderDb);
+        level = &make<LevelPanel> (ctx, strip);
 
         graph = &make<ResponseGraph>();
         graph->setStrip (&strip, ResponseGraph::Eq);
@@ -394,13 +386,7 @@ public:
         }
 
         // LEVEL: MUTE top left, the meter, SOLO bottom left, the fader.
-        auto l = box (levelArea, "LEVEL");
-        auto meterCol = l.removeFromLeft (l.getWidth() * 45 / 100);
-        const int kh = juce::jlimit (22, 34, l.getHeight() / 9);
-        mute->setBounds (meterCol.removeFromTop (kh).reduced (1, 0));
-        solo->setBounds (meterCol.removeFromBottom (kh).reduced (1, 0));
-        meter.setBounds (meterCol.reduced (0, 6));
-        fader->setBounds (l.reduced (0, 2));
+        level->setBounds (box (levelArea, "LEVEL"));
 
         // EQ graph.
         graph->setBounds (box (eqArea, "EQ", true));
@@ -466,11 +452,10 @@ private:
     SourceTile* source = nullptr;
     FeedGrid* feed = nullptr;
     IconKey *sourceMute = nullptr, *loCut = nullptr, *hiCut = nullptr, *tool = nullptr;
-    IconKey *solo = nullptr, *mute = nullptr, *soloA = nullptr, *soloB = nullptr;
+    IconKey *soloA = nullptr, *soloB = nullptr;
     KnobBox* trim = nullptr;
     ProcessorThumbs* processors = nullptr;
-    LedMeter meter;
-    ScreenFader* fader = nullptr;
+    LevelPanel* level = nullptr;
     ResponseGraph* graph = nullptr;
     PanWidthDisplay* pan = nullptr;
     MainSquares* mains = nullptr;
@@ -498,7 +483,7 @@ public:
             addAndMakeVisible (sw);
         }
         icon = &knob (iconBinding());
-        light = &key ("LIGHT", std::nullopt, Colours::yellow);
+        light = &key ("LIGHT", std::nullopt, colours::accent);
         bindKey (*light, strip.params.led);
         light->setTooltip ("The light bar above the scribble strip");
         if (strip.isInput())
@@ -508,6 +493,7 @@ public:
             linkCust->twoLines = true;
             linkCust->setEnabled (false);
         }
+        addLevelPanel();
         startTimerHz (6);
         timerCallback();
     }
@@ -539,7 +525,7 @@ public:
 
     std::vector<HomeKnob> knobs() override
     {
-        return { { colourBinding(), styleOf (KnobStyle::Bar::Segments, KnobColours::yellow, nullptr, 18) },
+        return { { colourBinding(), styleOf (KnobStyle::Bar::Segments, colours::accent, nullptr, 18) },
                  { iconBinding(), styleOf (KnobStyle::Bar::Fill, KnobColours::white, icon) } };
     }
 
@@ -553,7 +539,7 @@ public:
     void resized() override
     {
         clearBoxes();
-        auto b = getLocalBounds();
+        auto b = layoutLevelPanel (getLocalBounds());
         auto colours = box (b.removeFromTop (b.getHeight() * 55 / 100), "COLOR");
         const int columns = 6;
         const int w = colours.getWidth() / columns, h = colours.getHeight() / 3;
@@ -601,6 +587,7 @@ public:
         hint = &label ("The name shows on the scribble strip, the channel tab and in every list.", 15.0f);
         clearKey = &key ("CLEAR");
         clearKey->onClick = [this] { editor->setText ({}, true); };
+        addLevelPanel();
         startTimerHz (4);
     }
 
@@ -613,7 +600,7 @@ public:
     void resized() override
     {
         clearBoxes();
-        auto n = box (getLocalBounds().removeFromTop (juce::jmin (200, getHeight())), "NAME");
+        auto n = box (layoutLevelPanel (getLocalBounds()).removeFromTop (juce::jmin (200, getHeight())), "NAME");
         auto row = n.removeFromTop (juce::jmin (56, n.getHeight() / 2));
         clearKey->setBounds (row.removeFromRight (100).reduced (4, 8));
         editor->setBounds (row.reduced (4, 4));
@@ -642,12 +629,13 @@ public:
             k.setEnabled (false);
             talk.push_back (&k);
         }
+        addLevelPanel();
     }
 
     void resized() override
     {
         clearBoxes();
-        auto b = getLocalBounds();
+        auto b = layoutLevelPanel (getLocalBounds());
         dcas->setBounds (box (b.removeFromTop (b.getHeight() * 42 / 100), "DCA GROUPS"));
         auto m = box (b.removeFromTop (b.getHeight() / 2), "MUTE GROUPS");
         mutes->setBounds (m.withHeight (juce::jmin (48, m.getHeight())));
@@ -701,11 +689,16 @@ public:
             return;
 
         auto b = getLocalBounds();
-        // Fig. 21: thumbnails about 52 % of the toolbar, a gap with the key's
-        // pointer, square keys about 36 %.
-        const int thumbW = keys ? b.getWidth() * 52 / 100 : b.getWidth();
-        const int keyW = keys ? b.getWidth() * 36 / 100 : 0;
-        const int keyX = b.getRight() - keyW;
+        // On Channel Home (WING pixels): thumbnails 8-104, the key's pointer at
+        // 116-124, keys 124-192, then the black gap up to the content at 284
+        // (the tag chips and, in wrench mode, the TAP flag). The slot screens
+        // show only the thumbnails.
+        const int unitW = keys ? 276 : 96;
+        const int thumbW = b.getWidth() * 96 / unitW;
+        const int keyW = keys ? b.getWidth() * 68 / unitW : 0;
+        const int keyX = b.getX() + b.getWidth() * 116 / unitW;
+        gapArea = keys ? b.withLeft (keyX + keyW) : juce::Rectangle<int>();
+        keyLeft = keyX;
         // Nine rows and the thin fader bar.
         const float rowH = (float) b.getHeight() / 9.45f;
         const int gap = juce::jmax (2, juce::roundToInt (rowH * 0.12f));
@@ -803,7 +796,7 @@ public:
         }
 
         // The fader bar: the fader level (red when muted), and the TAP point.
-        g.setColour (juce::Colour (0xff2a2a2a));
+        g.setColour (colours::keyOff);
         g.fillRect (faderBar);
         const float pos = fader::dbToPos (p.faderDb.load());
         g.setColour (p.mute.load() ? Colours::mute : colours::fader);
@@ -812,13 +805,29 @@ public:
         {
             const float d = juce::jlimit (6.0f, 11.0f, faderBar.getHeight() * 2.5f);
             const float ty = draggingTap ? (float) dragY : tapY[(size_t) tap];
-            g.setColour (Colours::mute);
-            g.fillEllipse ((float) thumbWidth * 0.55f - d * 0.5f, ty - d * 0.5f, d, d);
+            const float dotX = (float) thumbWidth * 0.5f;
+            // "A red dot with a gray line connected to the bus send slot": along
+            // the right edge of the thumbnails down to SENDS.
+            if (auto sends = rowOf (HomeTab::Sends); ! sends.isEmpty())
+            {
+                const float edge = (float) thumbWidth + juce::jmax (1.5f, (float) thumbWidth * 0.02f);
+                juce::Path line;
+                line.startNewSubPath (dotX, ty);
+                line.lineTo (edge, ty);
+                line.lineTo (edge, (float) sends.getY() + 1.0f);
+                line.lineTo ((float) sends.getRight() - 1.0f, (float) sends.getY() + 1.0f);
+                g.setColour (colours::chipOff);
+                g.strokePath (line, juce::PathStrokeType (1.0f));
+            }
+            if (editing && ! gapArea.isEmpty())
+                paintTapFlag (g, dotX, ty);
+            g.setColour (colours::tap);
+            g.fillEllipse (dotX - d * 0.5f, ty - d * 0.5f, d, d);
         }
 
         if (! wrench.isEmpty())
         {
-            paintKeyFrame (g, wrench.toFloat(), editing ? Colours::yellow : colours::keyOff, Icon::Wrench, editing);
+            paintKeyFrame (g, wrench.toFloat(), editing ? colours::accent : colours::keyOff, Icon::Wrench, editing);
         }
 
         // A slot being dragged into another position.
@@ -840,14 +849,15 @@ public:
             return;
         const auto pos = e.getPosition();
         if (const int tap = tapIndex(); tap >= 0 && tap < (int) tapY.size()
-                                         && juce::Point<float> ((float) thumbWidth * 0.55f, tapY[(size_t) tap]).getDistanceFrom (pos.toFloat()) < 10.0f)
+                                         && (juce::Point<float> ((float) thumbWidth * 0.5f, tapY[(size_t) tap]).getDistanceFrom (pos.toFloat()) < 10.0f
+                                             || tapFlagArea (tapY[(size_t) tap]).expanded (2.0f).contains (pos.toFloat())))
         {
             draggingTap = true;
             dragY = pos.y;
             return;
         }
         for (auto& r : rows)
-            if (r.thumb.contains (pos) && preIndex (r.tab) >= 0)
+            if ((r.thumb.contains (pos) || r.key.contains (pos)) && preIndex (r.tab) >= 0)
             {
                 dragTab = r.tab;
                 dragY = pos.y;
@@ -1018,7 +1028,7 @@ private:
 
     static juce::Colour keyColour (HomeTab t)
     {
-        if (t == HomeTab::Gate)     return Colours::yellow;
+        if (t == HomeTab::Gate)     return colours::accent;
         if (t == HomeTab::Dynamics) return colours::dynOn;
         if (t == HomeTab::Eq)       return colours::eqOn;
         return colours::insOn;
@@ -1056,11 +1066,66 @@ private:
         drawIcon (g, icon, inner.reduced (inner.getHeight() * 0.18f), on ? juce::Colours::black : Colours::textDim);
     }
 
+    juce::Rectangle<int> rowOf (HomeTab t) const
+    {
+        for (auto& r : rows)
+            if (r.tab == t)
+                return r.thumb;
+        return {};
+    }
+
+    /** Wrench mode: the TAP point as a red flag in the gap left of the
+        content, joined to the dot by a red line. Drag it to move the tap. */
+    juce::Rectangle<float> tapFlagArea (float ty) const
+    {
+        auto gap = gapArea.toFloat();
+        const float h = juce::jlimit (12.0f, 22.0f, gap.getWidth() * 0.3f);
+        return { gap.getX() + gap.getWidth() * 0.18f, ty - h * 0.5f, gap.getWidth() * 0.7f, h };
+    }
+
+    void paintTapFlag (juce::Graphics& g, float dotX, float ty) const
+    {
+        const auto flag = tapFlagArea (ty);
+        g.setColour (colours::tap);
+        g.fillRect (juce::Rectangle<float> (dotX, ty - 0.75f, flag.getX() - dotX, 1.5f));
+        juce::Path shape;
+        const float tip = flag.getHeight() * 0.5f;
+        shape.startNewSubPath (flag.getX(), flag.getCentreY());
+        shape.lineTo (flag.getX() + tip, flag.getY());
+        shape.lineTo (flag.getRight(), flag.getY());
+        shape.lineTo (flag.getRight(), flag.getBottom());
+        shape.lineTo (flag.getX() + tip, flag.getBottom());
+        shape.closeSubPath();
+        g.fillPath (shape);
+        const float dot = flag.getHeight() * 0.22f;
+        g.setColour (juce::Colours::black);
+        g.fillEllipse (juce::Rectangle<float> (dot, dot).withCentre ({ flag.getX() + tip + dot * 0.5f, flag.getCentreY() }));
+        g.setColour (juce::Colours::white);
+        g.setFont (juce::FontOptions (flag.getHeight() * 0.72f, juce::Font::bold));
+        g.drawText ("TAP", flag.withTrimmedLeft (tip + dot * 1.5f).toNearestInt(), juce::Justification::centred);
+    }
+
     void paintKey (juce::Graphics& g, const Row& r) const
     {
         const bool on = isOn (r.tab);
         auto k = r.key.toFloat();
-        paintKeyFrame (g, k, on ? keyColour (r.tab) : colours::keyOff, keyIcon (r.tab), on);
+        if (editing && r.tab == HomeTab::PostInsert)
+        {
+            // INS 2 can't move: its key shows a dash while editing.
+            g.setColour (colours::keyFrame);
+            g.fillRoundedRectangle (k, 3.0f);
+            g.setColour (colours::keyOff);
+            g.fillRoundedRectangle (k.reduced (juce::jmax (2.0f, k.getWidth() * 0.1f)), 2.0f);
+            g.setColour (colours::dim);
+            g.fillRect (juce::Rectangle<float> (k.getWidth() * 0.34f, 2.0f).withCentre (k.getCentre()));
+        }
+        else
+            paintKeyFrame (g, k, on ? keyColour (r.tab) : colours::keyOff, keyIcon (r.tab), on);
+        if (editing && preIndex (r.tab) >= 0)
+        {
+            g.setColour (colours::accent);
+            g.drawRoundedRectangle (k.reduced (0.5f), 3.0f, juce::jmax (1.5f, k.getWidth() * 0.04f));
+        }
         // The pointer joining the key to its thumbnail.
         juce::Path tri;
         const float s = juce::jlimit (3.0f, 6.0f, k.getHeight() * 0.12f);
@@ -1074,9 +1139,9 @@ private:
         auto t = r.thumb.toFloat();
         if (r.tab == HomeTab::Home)
         {
-            g.setColour (juce::Colour (0xff2c2c2c));
+            g.setColour (colours::thumb);
             g.fillRoundedRectangle (t, 2.0f);
-            g.setColour (Colours::textDim);
+            g.setColour (colours::dim);
             g.setFont (juce::FontOptions (juce::jlimit (11.0f, 24.0f, t.getHeight() * 0.5f), juce::Font::plain));
             g.drawFittedText ("HOME", t.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
         }
@@ -1088,85 +1153,88 @@ private:
         }
         if (selected)
         {
-            g.setColour (Colours::yellow);
+            g.setColour (colours::accent);
             g.drawRoundedRectangle (t.reduced (1.0f), 2.0f, 2.0f);
         }
-        if (editing && preIndex (r.tab) >= 0)
-        {
-            juce::Path outline;
-            outline.addRectangle (t.reduced (1.0f));
-            juce::Path dashed;
-            const float dashes[] = { 4.0f, 3.0f };
-            juce::PathStrokeType (1.0f).createDashedStroke (dashed, outline, dashes, 2);
-            g.setColour (Colours::yellow.withAlpha (0.7f));
-            g.fillPath (dashed);
-        }
     }
 
-    void chip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, bool on, juce::Colour onColour = Colours::text) const
+    /** A thumbnail chip: grey with dark text, lit in `onColour` with black text. */
+    static void chip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, bool on, juce::Colour onColour = colours::caption)
     {
         g.setColour (on ? onColour : colours::chipOff);
-        g.fillRoundedRectangle (r, 1.5f);
-        g.setColour (on ? juce::Colours::black : juce::Colour (0xff1e1e1e));
-        g.setFont (juce::FontOptions (juce::jlimit (6.0f, 15.0f, r.getHeight() * 0.86f), juce::Font::bold));
-        g.drawFittedText (text, r.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+        g.fillRoundedRectangle (r, juce::jmin (2.0f, r.getHeight() * 0.15f));
+        g.setColour (on ? juce::Colours::black : colours::panel);
+        g.setFont (juce::FontOptions (juce::jlimit (6.0f, 22.0f, r.getHeight() * 0.86f), juce::Font::bold));
+        g.drawFittedText (text, r.toNearestInt(), juce::Justification::centred, 1, 0.55f);
     }
 
-    void miniMeter (juce::Graphics& g, juce::Rectangle<float> r, float level, juce::Colour c) const
+    static void miniMeter (juce::Graphics& g, juce::Rectangle<float> r, float level, juce::Colour c)
     {
-        const int segments = juce::jlimit (4, 10, (int) (r.getHeight() / 3.0f));
+        const int segments = juce::jlimit (4, 14, (int) (r.getHeight() / 3.0f));
         const float h = r.getHeight() / (float) segments;
         for (int i = 0; i < segments; ++i)
         {
             const bool lit = level > (float) i / (float) segments;
-            g.setColour (lit ? c : juce::Colour (0xff232323));
+            g.setColour (lit ? c : colours::panel);
             g.fillRect (r.getX(), r.getBottom() - (float) (i + 1) * h + 0.5f, r.getWidth(), h - 1.0f);
         }
     }
 
-    void paintThumb (juce::Graphics& g, HomeTab tab, juce::Rectangle<float> r) const
+    /** The thumbnails as on the 3.1 screens (WING pixels in a 96 x 64 box): INPUT
+        chips in two columns of three with the meter at the right; GATE / COMP
+        with the model chip, the state LED, S/C and X/O and the GR meter; INS
+        with the slot chip and the effect; the EQ curve; MAIN; SENDS. */
+    void paintThumb (juce::Graphics& g, HomeTab tab, juce::Rectangle<float> t) const
     {
         auto& p = strip->params;
         auto& fx = page.ctx.engine.getFx();
-        const float chipH = juce::jlimit (7.0f, 18.0f, r.getHeight() * 0.38f);
+        const float u = t.getWidth() / 96.0f, v = t.getHeight() / 64.0f;
+        auto at = [&t, u, v] (float x, float y, float w, float h) { return juce::Rectangle<float> (t.getX() + x * u, t.getY() + y * v, w * u, h * v); };
+        auto meterArea = at (80.0f, 5.0f, 10.0f, 54.0f);
+        auto r = t.reduced (juce::jmax (2.0f, t.getHeight() * 0.07f));
         const float meterW = juce::jlimit (3.0f, 7.0f, r.getWidth() * 0.08f);
+        const float chipH = 15.0f * v;
 
         switch (tab)
         {
             case HomeTab::Input:
             {
                 const int n = strip->getNumChannels();
-                auto meters = r.removeFromRight (meterW * (float) n + (n > 1 ? 1.0f : 0.0f));
+                const float mw = meterArea.getWidth() / (float) n;
                 for (int ch = 0; ch < n; ++ch)
                 {
                     const float level = MeterComponent::dbToProportion (dsp::gainToDb (page.ctx.meters.get (strip, true, ch)));
-                    miniMeter (g, meters.removeFromLeft (meterW), level, Colours::meterGreen);
-                    meters.removeFromLeft (1.0f);
+                    miniMeter (g, meterArea.removeFromLeft (mw).withTrimmedRight (n > 1 ? 1.0f : 0.0f), level, Colours::meterGreen);
                 }
-                r.removeFromRight (2.0f);
-                const bool ch = strip->getKind() == StripKind::Channel;
-                const float w = (r.getWidth() - 2.0f) / 3.0f;
-                auto row1 = r.removeFromTop (r.getHeight() / 2.0f).withSizeKeepingCentre (r.getWidth(), chipH);
-                auto row2 = r.withSizeKeepingCentre (r.getWidth(), chipH);
-                if (ch)
+                auto cell = [&at] (int col, int row) { return at (6.0f + 30.0f * (float) col, 5.0f + 20.0f * (float) row, 24.0f, 15.0f); };
+                const bool trimmed = std::abs (p.input.trimDb.load()) > 0.05f;
+                switch (strip->getKind())
                 {
-                    chip (g, row1.removeFromLeft (w), juce::String::fromUTF8 ("\xc3\x98"), p.input.invert.load());
-                    row1.removeFromLeft (1.0f);
-                    chip (g, row1.removeFromLeft (w), "LC", p.filter.lowCut.load(), colours::eqOn);
-                    row1.removeFromLeft (1.0f);
-                    chip (g, row1, "HC", p.filter.highCut.load(), colours::eqOn);
-                    chip (g, row2.removeFromLeft (w), "TOOL", p.filter.tool.load(), colours::eqOn);
-                    row2.removeFromLeft (1.0f);
-                    chip (g, row2.removeFromLeft (w), "DLY", p.input.delayOn.load());
-                    row2.removeFromLeft (1.0f);
-                    chip (g, row2, p.stereo.load() ? "ST" : "M", true);
-                }
-                else
-                {
-                    chip (g, row1.removeFromLeft (w * 1.5f), juce::String::fromUTF8 ("\xc3\x98"), p.input.invert.load());
-                    row1.removeFromLeft (1.0f);
-                    chip (g, row1, "DLY", p.input.delayOn.load());
-                    chip (g, row2.removeFromLeft (w * 1.5f), strip->isInput() && ! p.stereo.load() ? "M" : "ST", true);
+                    case StripKind::Channel:
+                    {
+                        const int tool = p.filter.toolModel.load();
+                        chip (g, cell (0, 0), "48V", false);
+                        chip (g, cell (1, 0), "INV", p.input.invert.load());
+                        chip (g, cell (0, 1), "LC", p.filter.lowCut.load(), colours::eqOn);
+                        chip (g, cell (1, 1), "HC", p.filter.highCut.load(), colours::eqOn);
+                        chip (g, cell (0, 2), toolFilterToken (tool), p.filter.tool.load(), toolFilterColour (tool));
+                        chip (g, cell (1, 2), "DLY", p.input.delayOn.load());
+                        break;
+                    }
+                    case StripKind::Aux:
+                        chip (g, cell (1, 0), "INV", p.input.invert.load());
+                        chip (g, cell (1, 1), "TRIM", trimmed);
+                        chip (g, cell (1, 2), "DLY", p.input.delayOn.load());
+                        break;
+                    case StripKind::Bus:
+                    case StripKind::Main:
+                    case StripKind::Matrix:
+                        chip (g, cell (0, 0), "M", p.mono.load());
+                        chip (g, cell (1, 0), "INV", p.input.invert.load());
+                        chip (g, cell (1, 1), "TRIM", trimmed);
+                        if (strip->getKind() == StripKind::Bus)
+                            chip (g, cell (1, 2), "DLY", p.input.delayOn.load());
+                        break;
                 }
                 return;
             }
@@ -1174,20 +1242,20 @@ private:
             case HomeTab::Gate:
             case HomeTab::Dynamics:
             {
-                auto& slot = tab == HomeTab::Gate ? p.gate : p.dynamics;
-                auto meter = r.removeFromRight (meterW);
-                const float gr = (tab == HomeTab::Gate ? strip->meters.gateReductionDb.load() : strip->meters.dynReductionDb.load()) / 24.0f;
-                miniMeter (g, meter, juce::jlimit (0.0f, 1.0f, gr), Colours::amber);
-                r.removeFromRight (2.0f);
+                const bool gate = tab == HomeTab::Gate;
+                auto& slot = gate ? p.gate : p.dynamics;
+                const float grDb = gate ? strip->meters.gateReductionDb.load() : strip->meters.dynReductionDb.load();
+                miniMeter (g, meterArea, juce::jlimit (0.0f, 1.0f, grDb / (gate ? 40.0f : 24.0f)), Colours::meterRed);
                 const auto& model = models::model (models::Dynamics, slot.model.load());
-                chip (g, r.removeFromTop (chipH).withWidth (juce::jmin (r.getWidth(), chipH * 2.8f)), model.token, slot.on.load(), Colours::yellow);
-                // The model's name as a caption when there is room.
-                if (r.getHeight() >= 11.0f && r.getWidth() >= 40.0f)
-                {
-                    g.setColour (Colours::textDim);
-                    g.setFont (juce::FontOptions (juce::jmin (12.0f, r.getHeight() * 0.7f), juce::Font::bold));
-                    g.drawFittedText (model.name.toUpperCase(), r.toNearestInt(), juce::Justification::bottomRight, 1, 0.6f);
-                }
+                const bool on = slot.on.load();
+                chip (g, at (6.0f, 5.0f, 54.0f, 20.0f), model.token, on, colours::accent);
+                // The state LED: the gate open, the compressor over its threshold.
+                const bool lit = on && (gate ? grDb < 3.0f && page.ctx.meters.get (strip, true, 0) > 0.001f : grDb > 0.5f);
+                g.setColour (lit ? juce::Colour (0xffe0e800) : juce::Colours::black);
+                g.fillRect (at (66.0f, 5.0f, 7.0f, 7.0f));
+                chip (g, at (6.0f, 44.0f, 24.0f, 15.0f), "S/C", slot.scSource.load() >= 0);
+                if (! gate)
+                    chip (g, at (36.0f, 44.0f, 24.0f, 15.0f), "X/O", slot.xoKind.load() > 0);
                 return;
             }
 
@@ -1199,7 +1267,23 @@ private:
                 const int mode = tab == HomeTab::PostInsert ? ins.mode.load() : 0;
                 // Automix on INS 2: chip AUTO with the group below right (Fig. 64).
                 const juce::String text = mode > 0 ? juce::String ("AUTO") : (slot >= 0 ? "FX " + juce::String (slot + 1) : juce::String ("INS"));
-                chip (g, r.removeFromTop (chipH).withWidth (juce::jmin (r.getWidth(), chipH * 2.8f)), text, isOn (tab) || (mode > 0 && ins.on.load()), Colours::yellow);
+                chip (g, at (6.0f, 5.0f, 54.0f, 20.0f), text, isOn (tab) || (mode > 0 && ins.on.load()), colours::accent);
+                // Slots 1-8 hold the premium effects: a small diamond.
+                if (mode == 0 && slot >= 0 && slot < 8)
+                {
+                    auto d = at (66.0f, 7.0f, 18.0f, 14.0f);
+                    juce::Path gem;
+                    gem.startNewSubPath (d.getX(), d.getY() + d.getHeight() * 0.3f);
+                    gem.lineTo (d.getX() + d.getWidth() * 0.25f, d.getY());
+                    gem.lineTo (d.getRight() - d.getWidth() * 0.25f, d.getY());
+                    gem.lineTo (d.getRight(), d.getY() + d.getHeight() * 0.3f);
+                    gem.lineTo (d.getCentreX(), d.getBottom());
+                    gem.closeSubPath();
+                    gem.startNewSubPath (d.getX(), d.getY() + d.getHeight() * 0.3f);
+                    gem.lineTo (d.getRight(), d.getY() + d.getHeight() * 0.3f);
+                    g.setColour (isOn (tab) ? colours::accent : colours::dim);
+                    g.strokePath (gem, juce::PathStrokeType (1.0f));
+                }
                 juce::String device;
                 if (mode > 0)
                     device = mode == 1 ? "X" : "Y";
@@ -1207,9 +1291,9 @@ private:
                     device = plugin->getName().toUpperCase();
                 else if (slot >= 0 && fx.getModel (slot) > ld::kFxExt)
                     device = models::model (models::Fx, fx.getModel (slot)).token;
-                g.setColour (Colours::text);
-                g.setFont (juce::FontOptions (juce::jlimit (8.0f, 14.0f, r.getHeight() * 0.75f), juce::Font::bold));
-                g.drawFittedText (device, r.toNearestInt(), juce::Justification::bottomRight, 1, 0.6f);
+                g.setColour (colours::ink);
+                g.setFont (juce::FontOptions (juce::jlimit (8.0f, 20.0f, 18.0f * v), juce::Font::bold));
+                g.drawFittedText (device, at (6.0f, 38.0f, 84.0f, 22.0f).toNearestInt(), juce::Justification::centredRight, 1, 0.6f);
                 return;
             }
 
@@ -1229,7 +1313,14 @@ private:
                         else
                             curve.lineTo (x, y);
                     }
-                    g.setColour (p.eq.on.load() ? juce::Colour (0xffe8a33a) : Colours::textDim);
+                    const bool on = p.eq.on.load();
+                    juce::Path fill (curve);
+                    fill.lineTo (r.getRight(), r.getCentreY());
+                    fill.lineTo (r.getX(), r.getCentreY());
+                    fill.closeSubPath();
+                    g.setColour (on ? colours::eqFill : colours::panel);
+                    g.fillPath (fill);
+                    g.setColour (on ? colours::eqCurve : colours::dim);
                     g.strokePath (curve, juce::PathStrokeType (1.5f));
                 }
                 return;
@@ -1248,7 +1339,7 @@ private:
                     for (int i = 0; i < kNumMains; ++i)
                     {
                         auto sq = juce::Rectangle<float> (col.getX(), col.getY() + (float) i * h, col.getWidth(), h).reduced (0.5f);
-                        g.setColour (p.mains[i].on.load() ? colours::fader : juce::Colour (0xff232323));
+                        g.setColour (p.mains[i].on.load() ? colours::fader : colours::panel);
                         g.fillRect (sq.withSizeKeepingCentre (juce::jmin (sq.getWidth(), sq.getHeight()), juce::jmin (sq.getWidth(), sq.getHeight())));
                     }
                 }
@@ -1272,31 +1363,42 @@ private:
                 // Top half: matrix sends; bottom half: bus sends (1-16).
                 auto top = r.removeFromTop (r.getHeight() / 2.0f).reduced (0.0f, 1.0f);
                 auto bottom = r.reduced (0.0f, 1.0f);
-                auto bars = [&g] (juce::Rectangle<float> area, int n, std::function<float (int)> level)
+                // A bar per send, filled with its level in the send mode's colour
+                // (TAP red, POST green); the 8 matrices right-aligned on top.
+                auto bars = [&g] (juce::Rectangle<float> area, int n, int slots, std::function<std::pair<float, juce::Colour> (int)> level)
                 {
-                    const float w = area.getWidth() / (float) juce::jmax (1, n);
+                    const float w = area.getWidth() / (float) juce::jmax (1, slots);
+                    area.removeFromLeft (w * (float) (slots - n));
                     for (int i = 0; i < n; ++i)
                     {
                         auto bar = juce::Rectangle<float> (area.getX() + (float) i * w, area.getY(), juce::jmax (1.0f, w - 1.0f), area.getHeight());
-                        g.setColour (juce::Colour (0xff232323));
+                        g.setColour (colours::outline);
                         g.fillRect (bar);
-                        const float l = level (i);
+                        const auto [l, c] = level (i);
                         if (l > 0.0f)
                         {
-                            g.setColour (juce::Colour (0xff4fd6dc));
-                            g.fillRect (bar.withTop (bar.getBottom() - bar.getHeight() * l));
+                            g.setColour (c);
+                            g.fillRect (bar.withTop (bar.getBottom() - bar.getHeight() * l).reduced (bar.getWidth() * 0.2f, 0.0f));
                         }
                     }
                 };
+                g.setColour (juce::Colours::black);
+                g.fillRect (top.withTrimmedRight (top.getWidth() * 0.5f + 1.0f));
                 if (strip->getKind() != StripKind::Matrix)
-                    bars (top, kNumMatrices, [&p] (int i) { return p.matrix[i].on.load() ? fader::dbToPos (p.matrix[i].levelDb.load()) : 0.0f; });
+                    bars (top, kNumMatrices, 16, [&p] (int i)
+                    {
+                        const auto c = p.matrix[i].pre.load() ? colours::tap : colours::post;
+                        return std::make_pair (p.matrix[i].on.load() ? fader::dbToPos (p.matrix[i].levelDb.load()) : 0.0f, c);
+                    });
                 if (strip->getKind() != StripKind::Main)
                 {
                     const int n = juce::jmin (16, (int) page.ctx.engine.getBuses().size());
-                    bars (bottom, n, [this] (int i)
+                    bars (bottom, n, 16, [this] (int i)
                     {
                         auto* send = strip->sends.find (i);
-                        return send != nullptr && send->enabled.load() ? fader::dbToPos (send->levelDb.load()) : 0.0f;
+                        if (send == nullptr || ! send->enabled.load() || send->mode.load() == 2)
+                            return std::make_pair (0.0f, colours::post);
+                        return std::make_pair (fader::dbToPos (send->levelDb.load()), sendModeColour (send->mode.load()));
                     });
                 }
                 return;
@@ -1356,7 +1458,8 @@ private:
     std::vector<Row> rows;
     std::vector<float> tapY;
     juce::Rectangle<float> faderBar;
-    juce::Rectangle<int> wrench;
+    juce::Rectangle<int> wrench, gapArea;
+    int keyLeft = 0;
     std::vector<float> eqCurve;
     int builtOrder = -1, thumbWidth = 0, dragY = 0;
     bool keys = true, editing = false, draggingTap = false;
@@ -1562,24 +1665,25 @@ void HomePage::resized()
     if (overlay != nullptr)
         overlay->setBounds (b);
 
-    // The toolbar: thumbnails and keys on Channel Home (about 15 % of the
-    // screen in Fig. 21), only the thumbnails on the slot screens (about 8 %).
+    // The toolbar: thumbnails, keys and the black gap on Channel Home (the
+    // content starts at 284 of 1280 WING pixels), only the thumbnails on the
+    // slot screens (content from 112).
     const bool overviewGroup = isOverviewGroup (current);
     const int screenW = getWidth();
     const int thumbW = juce::jlimit (40, 120, screenW * 75 / 1000);
-    const int colW = overviewGroup ? thumbW * 100 / 52 : thumbW;
+    const int colW = overviewGroup ? thumbW * 276 / 96 : thumbW;
     column->setBounds (b.removeFromLeft (colW));
-    b.removeFromLeft (juce::jmax (4, screenW / 120));
+    b.removeFromLeft (juce::jmax (4, screenW / 160));
 
     if (overviewGroup)
     {
         // The tab row sits level with the HOME key.
+        // Tabs about 160 of the 988 WING pixels each, SAFE 120 at the right.
         auto top = b.removeFromTop (juce::roundToInt ((float) getHeight() / 9.45f) - juce::jmax (2, getHeight() / 80));
-        safeKey->setBounds (top.removeFromRight (juce::jmin (110, top.getWidth() / 7)));
-        top.removeFromRight (8);
-        const int w = juce::jmin (150, top.getWidth() / 5);
+        safeKey->setBounds (top.removeFromRight (top.getWidth() * 120 / 988));
+        const int w = top.getWidth() * 160 / 868;
         for (auto* t : topTabs)
-            t->setBounds (top.removeFromLeft (w).reduced (1, 0));
+            t->setBounds (top.removeFromLeft (w).withTrimmedRight (2));
         b.removeFromTop (juce::jmax (2, getHeight() / 80));
     }
 

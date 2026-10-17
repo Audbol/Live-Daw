@@ -18,26 +18,46 @@ namespace livedaw::ui::home
 {
 
 //==============================================================================
-// Colours of the HOME screens.
+// Colours of the HOME screens: the firmware 3.1 palette (flat, RGB565 values).
 namespace colours
 {
-    const juce::Colour eqOn { 0xff4aa3e0 };      // block keys: EQ on
+    const juce::Colour eqOn { 0xff4890e0 };      // block keys: EQ on; LC / HC chips
     const juce::Colour dynOn { 0xffe07a22 };     // dynamics on
     const juce::Colour insOn { 0xff9a2cf0 };     // inserts on
-    const juce::Colour fader { 0xff3d8de0 };     // screen faders
-    const juce::Colour tap { 0xffe0393e };       // TAP / PRE sends
-    const juce::Colour post { 0xff3cc04a };      // POST sends
-    const juce::Colour group { 0xff3d8de0 };     // GROUP sends
-    const juce::Colour stereo { 0xffc8b43a };    // stereo source label (olive)
-    const juce::Colour mono { 0xff5aa0e8 };      // mono source label
-    const juce::Colour soloBus { 0xffb5c51a };   // SOLO BUS keys
-    const juce::Colour panArc { 0xff52c43c };    // pan / width arc
-    const juce::Colour keyOff { 0xff4b4b4b };
-    const juce::Colour keyFrame { 0xff2a2a2a };
-    const juce::Colour thumb { 0xff333333 };     // block thumbnails
-    const juce::Colour well { 0xff141414 };      // dark wells (fader slots, meters)
-    const juce::Colour chipOff { 0xff5a5a5a };
-    const juce::Colour feedOn { 0xff3cc04a };    // feed grid cell: sends to this bus
+    const juce::Colour fader { 0xff4890e0 };     // screen faders, levels
+    const juce::Colour tap { 0xfff84040 };       // TAP / PRE sends, the TAP POINT node
+    const juce::Colour post { 0xff00bc38 };      // POST sends
+    const juce::Colour group { 0xff4890e0 };     // GROUP sends
+    const juce::Colour stereo { 0xff809800 };    // stereo source label (olive)
+    const juce::Colour mono { 0xff4890e0 };      // mono source label
+    const juce::Colour soloBus { 0xff00bc38 };   // SOLO BUS keys
+    const juce::Colour panArc { 0xff40a618 };    // pan / width arc
+    const juce::Colour link { 0xff00bc38 };      // PAN LINK while linked
+    const juce::Colour keyOff { 0xff303030 };    // unlit keys, the front tab
+    const juce::Colour keyFrame { 0xff202020 };  // the frame of the block keys
+    const juce::Colour thumb { 0xff303030 };     // block thumbnails
+    const juce::Colour well { 0xff101010 };      // dark wells (fader slots, meters, list rows)
+    const juce::Colour chipOff { 0xff585858 };
+    const juce::Colour feedOn { 0xff00bc38 };    // feed grid cell: sends to this bus
+
+    const juce::Colour panel { 0xff202020 };     // panel header and body
+    const juce::Colour tab { 0xff202020 };       // unselected tabs
+    const juce::Colour outline { 0xff484848 };   // key and field outlines
+    const juce::Colour dim { 0xff707070 };       // unlit or dim text
+    const juce::Colour caption { 0xffc0c0c0 };   // titles, captions
+    const juce::Colour ink { 0xfff8f8f8 };       // white text
+    const juce::Colour accent { 0xfff0c858 };    // ON keys, selections, the front tab's text
+    const juce::Colour choice { 0xff4074c8 };    // selected choice key, selected EQ band
+    const juce::Colour alt { 0xffb86018 };       // ALT input
+    const juce::Colour mute { 0xffd00018 };      // MUTE lit
+    const juce::Colour tilt { 0xff48f0f8 };      // tool filters: TILT
+    const juce::Colour maxer { 0xfff8a008 };     //               MAXER
+    const juce::Colour allPass { 0xffe0d400 };   //               AP 90 / AP 180
+    const juce::Colour eqCurve { 0xfff0a830 };   // EQ curve
+    const juce::Colour eqFill { 0xff38280f };    // and the area under it
+    const juce::Colour dcaTag { 0xff203860 };    // TAGS: DCA strips (unassigned)
+    const juce::Colour muteTag { 0xff680008 };   //       mute group strips
+    const juce::Colour talkOff { 0xff005c18 };   //       TALK tags
 } // namespace colours
 
 //==============================================================================
@@ -111,6 +131,22 @@ inline Icon toolFilterIcon (int model)
     if (token == "AP1")  return Icon::AllPass90;
     if (token == "AP2")  return Icon::AllPass180;
     return Icon::Tilt;
+}
+
+/** The tool filter's colour (FILTER SETUP, the INPUT thumbnail's chip, the
+    parameter bar): TILT cyan, MAXER orange, the all-pass filters yellow. */
+inline juce::Colour toolFilterColour (int model)
+{
+    const auto token = models::model (models::FilterTools, model).token;
+    if (token == "MAX")  return colours::maxer;
+    if (token == "AP1" || token == "AP2") return colours::allPass;
+    return colours::tilt;
+}
+
+/** The tool filter's short token on the INPUT thumbnail: TILT, MAX, AP1, AP2. */
+inline juce::String toolFilterToken (int model)
+{
+    return models::model (models::FilterTools, model).token;
 }
 
 /** Send mode names: input sources send from the TAP point, buses and mains pre fader. */
@@ -189,15 +225,35 @@ inline KnobStyle widthStyle (juce::Component* t = nullptr) { return styleOf (Kno
 inline KnobStyle thumbStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Thumb, KnobColours::white, t); }
 inline KnobStyle balStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Thumb, KnobColours::blue, t); }
 inline KnobStyle distStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Fill, KnobColours::yellow, t); }
-inline KnobStyle toolStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Centre, KnobColours::cyan, t); }
+inline KnobStyle toolStyle (juce::Component* t = nullptr, juce::Colour c = colours::tilt) { return styleOf (KnobStyle::Bar::Centre, c, t); }
+
+/** The 3.1 key: a flat fill inside a black frame (the frame shows on the grey
+    panels, not on the black page). */
+inline void paintKeyBody (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour fill)
+{
+    g.setColour (juce::Colours::black);
+    g.fillRoundedRectangle (r, 2.5f);
+    if (! fill.isTransparent())
+    {
+        g.setColour (fill);
+        g.fillRoundedRectangle (r.reduced (juce::jlimit (1.0f, 2.0f, r.getHeight() * 0.04f)), 1.5f);
+    }
+    else
+    {
+        g.setColour (colours::panel);
+        g.fillRoundedRectangle (r.reduced (juce::jlimit (1.0f, 2.0f, r.getHeight() * 0.04f)), 1.5f);
+    }
+}
 
 //==============================================================================
-/** A screen key: grey, lit in `onColour` while `isOn` returns true. Text, an
-    icon, an icon left of the text, or an icon above a small label. */
+/** A screen key: grey with dim text, lit in `onColour` (black text) while
+    `isOn` returns true. Text, an icon, an icon left of the text, or an icon
+    above a small label. `outlined` keys (FREEZE, SPILL) show the panel through
+    their frame while off. */
 class IconKey final : public juce::TextButton, private juce::Timer
 {
 public:
-    IconKey (const juce::String& keyText, std::optional<Icon> i, juce::Colour on = Colours::yellow) : juce::TextButton (keyText), icon (i), onColour (on)
+    IconKey (const juce::String& keyText, std::optional<Icon> i, juce::Colour on = colours::accent) : juce::TextButton (keyText), icon (i), onColour (on)
     {
         startTimerHz (8);
     }
@@ -205,6 +261,7 @@ public:
     std::function<bool()> isOn;
     bool iconAbove = false, outlined = false, twoLines = false;
     juce::Colour offColour = colours::keyOff;
+    juce::Colour offInk = colours::dim;  // the text of an unlit key
 
     void setIcon (std::optional<Icon> i)
     {
@@ -212,25 +269,28 @@ public:
         repaint();
     }
 
+    void setOnColour (juce::Colour c)
+    {
+        if (c != onColour)
+        {
+            onColour = c;
+            repaint();
+        }
+    }
+
     void paintButton (juce::Graphics& g, bool over, bool down) override
     {
         const bool on = getToggleState();
         auto r = getLocalBounds().toFloat();
-        auto fill = on ? onColour : offColour;
+        auto fill = on ? onColour : (outlined ? juce::Colours::transparentBlack : offColour);
         if (down)
-            fill = fill.brighter (0.15f);
+            fill = (fill.isTransparent() ? colours::panel : fill).brighter (0.15f);
         else if (over && isEnabled())
-            fill = fill.brighter (0.07f);
-        if (! isEnabled())
+            fill = (fill.isTransparent() ? colours::panel : fill).brighter (0.07f);
+        if (! isEnabled() && on)
             fill = fill.darker (0.45f);
-        g.setColour (fill);
-        g.fillRoundedRectangle (r, 2.0f);
-        if (outlined)
-        {
-            g.setColour (juce::Colour (0xffbdbdbd));
-            g.drawRoundedRectangle (r.reduced (0.5f), 2.0f, 1.0f);
-        }
-        const auto ink = on ? juce::Colours::black : (isEnabled() ? Colours::text : Colours::textDim.withAlpha (0.6f));
+        paintKeyBody (g, r, fill);
+        const auto ink = on ? juce::Colours::black : (isEnabled() ? offInk : colours::dim.withAlpha (0.55f));
         g.setColour (ink);
         const auto keyText = getButtonText();
 
@@ -279,7 +339,8 @@ inline void bindKey (IconKey& k, std::atomic<bool>& flag)
     k.onClick = [&flag] { flag = ! flag.load(); };
 }
 
-/** A WING tab key: grey, the current one with yellow text and a yellow top line. */
+/** A WING tab key: dark grey with dim text; the current one lighter, with gold
+    text and a gold line along its top. */
 class WingTab final : public juce::TextButton
 {
 public:
@@ -289,15 +350,15 @@ public:
     {
         auto r = getLocalBounds().toFloat();
         const bool front = getToggleState();
-        g.setColour (front ? Colours::screenPanel : (over ? Colours::screenHeader.brighter (0.08f) : Colours::screenHeader));
+        g.setColour (front ? colours::keyOff : (over ? colours::tab.brighter (0.06f) : colours::tab));
         g.fillRect (r);
         if (front)
         {
-            g.setColour (Colours::yellow);
-            g.fillRect (r.withHeight (3.0f));
+            g.setColour (colours::accent);
+            g.fillRect (r.withHeight (juce::jlimit (2.0f, 4.0f, r.getHeight() * 0.07f)));
         }
-        g.setColour (! isEnabled() ? Colours::textDim : (front ? Colours::yellow : Colours::textDim.brighter (0.2f)));
-        g.setFont (juce::FontOptions (juce::jlimit (12.0f, 21.0f, r.getHeight() * 0.5f), juce::Font::bold));
+        g.setColour (! isEnabled() ? colours::dim.withAlpha (0.5f) : (front ? colours::accent : colours::dim));
+        g.setFont (juce::FontOptions (juce::jlimit (12.0f, 22.0f, r.getHeight() * (front ? 0.5f : 0.43f)), juce::Font::bold));
         g.drawFittedText (getButtonText(), getLocalBounds().reduced (4, 0), juce::Justification::centred, 1, 0.8f);
     }
 };
@@ -306,14 +367,18 @@ public:
 class Segmented final : public juce::Component, private juce::Timer
 {
 public:
-    Segmented (juce::StringArray labels, std::function<int()> get, std::function<void (int)> set, juce::Colour on = colours::fader)
+    Segmented (juce::StringArray labels, std::function<int()> get, std::function<void (int)> set, juce::Colour on = colours::choice)
         : names (std::move (labels)), getter (std::move (get)), setter (std::move (set)), onColour (on)
     {
         startTimerHz (6);
     }
 
     std::function<bool (int)> isEnabledAt;
+    /** A colour per key (MAIN blue | ALT orange); default: the one colour. */
+    std::function<juce::Colour (int)> colourAt;
     bool twoLines = false;
+
+    juce::Colour onColourAt (int i) const { return colourAt != nullptr ? colourAt (i) : onColour; }
 
     void setNames (juce::StringArray n)
     {
@@ -329,15 +394,14 @@ public:
         const float w = r.getWidth() / (float) juce::jmax (1, names.size());
         for (int i = 0; i < names.size(); ++i)
         {
-            auto k = juce::Rectangle<float> (r.getX() + w * (float) i, r.getY(), w, r.getHeight()).reduced (1.5f, 0.0f);
+            auto k = juce::Rectangle<float> (r.getX() + w * (float) i, r.getY(), w, r.getHeight()).reduced (1.0f, 0.0f);
             const bool on = i == current;
             const bool enabled = isEnabled() && (isEnabledAt == nullptr || isEnabledAt (i));
-            auto fill = on ? onColour : colours::keyOff;
-            if (! enabled)
+            auto fill = on ? onColourAt (i) : colours::keyOff;
+            if (! enabled && on)
                 fill = fill.darker (0.45f);
-            g.setColour (fill);
-            g.fillRoundedRectangle (k, 2.0f);
-            g.setColour (on ? juce::Colours::black : (enabled ? Colours::text : Colours::textDim.withAlpha (0.6f)));
+            paintKeyBody (g, k, fill);
+            g.setColour (on ? juce::Colours::black : (enabled ? colours::dim.brighter (0.5f) : colours::dim.withAlpha (0.55f)));
             g.setFont (juce::FontOptions (juce::jlimit (10.0f, 19.0f, k.getHeight() * (twoLines ? 0.34f : 0.46f)), juce::Font::bold));
             g.drawFittedText (names[i], k.toNearestInt().reduced (2, 0), juce::Justification::centred, twoLines ? 2 : 1, 0.75f);
         }
@@ -399,7 +463,7 @@ public:
         if (segmented)
         {
             // The rest of the ring in grey segments.
-            g.setColour (juce::Colour (0xff4a4a4a));
+            g.setColour (colours::chipOff);
             for (int i = 0; i < 6; ++i)
             {
                 juce::Path seg;
@@ -543,15 +607,17 @@ public:
         auto r = getLocalBounds().toFloat();
         const float tagH = juce::jlimit (16.0f, 24.0f, r.getHeight() * 0.07f);
         auto scaleArea = scale ? r.removeFromLeft (r.getWidth() * 0.4f) : juce::Rectangle<float>();
-        auto slot = r.withSizeKeepingCentre (juce::jlimit (6.0f, 26.0f, r.getWidth() * 0.32f), r.getHeight() - tagH);
+        // A dark well the fader's width, the black slot in its middle.
+        auto well = r.withTrimmedLeft (scale ? 4.0f : 0.0f);
+        auto slot = r.withSizeKeepingCentre (juce::jlimit (6.0f, 18.0f, r.getWidth() * 0.2f), r.getHeight() - tagH);
 
         if (scale)
         {
-            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 13.0f, r.getHeight() * 0.045f), juce::Font::bold));
+            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 13.0f, r.getHeight() * 0.045f), juce::Font::plain));
             for (float db : { 10.0f, 5.0f, 0.0f, -5.0f, -10.0f, -20.0f, -30.0f, -40.0f, -50.0f })
             {
                 const float y = slot.getBottom() - slot.getHeight() * fader::dbToPos (db);
-                g.setColour (Colours::textDim);
+                g.setColour (colours::caption);
                 g.drawText ((db > 0 ? "+" : "") + juce::String ((int) db), scaleArea.withY (y - 7.0f).withHeight (14.0f).toNearestInt(),
                             juce::Justification::centredRight);
             }
@@ -559,16 +625,19 @@ public:
         }
 
         g.setColour (colours::well);
-        g.fillRect (slot.expanded (2.0f, 0.0f));
+        g.fillRect (well);
+        g.setColour (juce::Colours::black);
+        g.fillRect (slot);
         const float pos = fader::dbToPos (faderDb.load());
         const float y = slot.getBottom() - slot.getHeight() * pos;
         g.setColour (fillColour ? fillColour() : colours::fader);
-        g.fillRect (slot.withTop (y).reduced (slot.getWidth() * 0.18f, 0.0f));
+        g.fillRect (slot.withTop (y).reduced (slot.getWidth() * 0.12f, 0.0f));
 
-        const bool on = ! isOn || isOn();
+        // The value tag: white, grey while the send is off or at -oo.
+        const bool on = (! isOn || isOn()) && faderDb.load() > -89.9f;
         auto tag = juce::Rectangle<float> (juce::jmin (r.getWidth() - 2.0f, juce::jmax (44.0f, tagH * 3.2f)), tagH).withCentre ({ slot.getCentreX(), y });
         tag.setX (juce::jlimit (0.0f, (float) getWidth() - tag.getWidth(), tag.getX()));
-        g.setColour (on ? Colours::text : juce::Colour (0xff8a8a8a));
+        g.setColour (on ? colours::ink : colours::dim);
         g.fillRect (tag);
         g.setColour (juce::Colours::black);
         g.setFont (juce::FontOptions (tagH * 0.72f, juce::Font::bold));
@@ -636,7 +705,7 @@ public:
         r = r.reduced (0.0f, 4.0f);
         if (showScale)
         {
-            g.setColour (Colours::textDim);
+            g.setColour (colours::caption);
             g.setFont (juce::FontOptions (juce::jlimit (8.0f, 12.0f, r.getHeight() * 0.05f), juce::Font::bold));
             for (float db : { 0.0f, -6.0f, -12.0f, -24.0f, -36.0f, -48.0f, -60.0f })
             {
@@ -661,7 +730,7 @@ public:
                 auto seg = juce::Rectangle<float> (bar.getX(), bar.getBottom() - top * bar.getHeight() + 1.0f, bar.getWidth(), segH - 1.5f);
                 const bool on = lit >= top - 0.5f / (float) segments;
                 const bool clipSeg = s == segments - 1;
-                g.setColour (on ? (clipSeg ? Colours::mute : Colours::meterGreen) : juce::Colour (0xff1f2a1f));
+                g.setColour (on ? (clipSeg ? Colours::mute : Colours::meterGreen) : colours::panel);
                 g.fillRect (seg);
             }
             const float holdP = proportion (hold[(size_t) ch]);
@@ -672,7 +741,7 @@ public:
             }
             if (n == 2)
             {
-                g.setColour (Colours::textDim);
+                g.setColour (colours::caption);
                 g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
                 g.drawText (ch == 0 ? "L" : "R", juce::Rectangle<float> (bar.getX() - 4.0f, labels.getY(), bar.getWidth() + 8.0f, labels.getHeight()).toNearestInt(),
                             juce::Justification::centred);
@@ -716,6 +785,40 @@ private:
 };
 
 //==============================================================================
+/** The LEVEL panel's content: MUTE at the top left, the meter, SOLO at the
+    bottom left and the fader. On OVERVIEW, ICON/COLOR, NAME, TAGS and MAIN. */
+class LevelPanel final : public juce::Component
+{
+public:
+    LevelPanel (UiContext& ctx, Strip& s)
+        : meter ([&ctx, &s] (int ch) { return ctx.meters.get (&s, false, ch); }, [&s] { return s.getNumChannels(); }), fader (s.params.faderDb)
+    {
+        bindKey (mute, s.params.mute);
+        bindKey (solo, s.params.solo);
+        for (juce::Component* c : { (juce::Component*) &mute, (juce::Component*) &solo, (juce::Component*) &meter, (juce::Component*) &fader })
+            addAndMakeVisible (c);
+    }
+
+    juce::Component* getFader() noexcept { return &fader; }
+
+    void resized() override
+    {
+        auto l = getLocalBounds();
+        auto meterCol = l.removeFromLeft (l.getWidth() * 45 / 100);
+        const int kh = juce::jlimit (22, 36, l.getHeight() / 9);
+        mute.setBounds (meterCol.removeFromTop (kh).reduced (1, 0));
+        solo.setBounds (meterCol.removeFromBottom (kh).reduced (1, 0));
+        meter.setBounds (meterCol.reduced (0, 6));
+        fader.setBounds (l.reduced (0, 2));
+    }
+
+private:
+    IconKey mute { "MUTE", std::nullopt, colours::mute }, solo { "SOLO", std::nullopt, colours::accent };
+    LedMeter meter;
+    ScreenFader fader;
+};
+
+//==============================================================================
 /** A knob box (TRIM, FIXED GAIN, TAP WIDTH): a black box with a ring on the
     left, the caption small at the top and the value large. Drag to change. */
 class KnobBox final : public juce::Component, private juce::Timer
@@ -724,15 +827,13 @@ public:
     explicit KnobBox (KnobBinding b) : binding (std::move (b)) { startTimerHz (12); }
 
     const KnobBinding& getBinding() const noexcept { return binding; }
+    juce::Colour ringColour = colours::ink;  // TAP WIDTH: green
 
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat();
         const bool enabled = isEnabled() && binding.isValid();
-        g.setColour (juce::Colours::black);
-        g.fillRoundedRectangle (r, 2.0f);
-        g.setColour (juce::Colour (0xff3a3a3a));
-        g.drawRoundedRectangle (r.reduced (0.5f), 2.0f, 1.0f);
+        paintKeyBody (g, r, colours::well);
         auto ring = r.removeFromLeft (r.getHeight()).reduced (r.getHeight() * 0.16f);
         const float a0 = juce::MathConstants<float>::pi * 1.25f, a1 = juce::MathConstants<float>::pi * 2.75f;
         const float pos = enabled ? binding.get() : 0.0f;
@@ -741,18 +842,19 @@ public:
         const float from = binding.bipolar ? (a0 + a1) * 0.5f : a0;
         track.addCentredArc (ring.getCentreX(), ring.getCentreY(), rad, rad, 0.0f, a0, a1, true);
         value.addCentredArc (ring.getCentreX(), ring.getCentreY(), rad, rad, 0.0f, from, a0 + pos * (a1 - a0), true);
-        g.setColour (juce::Colour (0xff5a5a5a));
-        g.strokePath (track, juce::PathStrokeType (ring.getWidth() * 0.15f));
+        g.setColour (colours::chipOff);
+        g.strokePath (track, juce::PathStrokeType (ring.getWidth() * 0.18f));
         if (enabled)
         {
-            g.setColour (Colours::text);
-            g.strokePath (value, juce::PathStrokeType (ring.getWidth() * 0.15f));
+            g.setColour (ringColour);
+            g.strokePath (value, juce::PathStrokeType (ring.getWidth() * 0.18f));
         }
         r.removeFromLeft (4.0f);
-        g.setColour (enabled ? Colours::text : Colours::textDim);
-        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 14.0f, r.getHeight() * 0.28f), juce::Font::bold));
+        g.setColour (enabled ? colours::caption : colours::dim);
+        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 14.0f, r.getHeight() * 0.28f), juce::Font::plain));
         g.drawText (binding.label, r.removeFromTop (r.getHeight() * 0.4f).toNearestInt(), juce::Justification::bottomLeft);
-        g.setFont (juce::FontOptions (juce::jlimit (12.0f, 26.0f, r.getHeight() * 0.8f), juce::Font::bold));
+        g.setColour (enabled ? colours::ink : colours::dim);
+        g.setFont (juce::FontOptions (juce::jlimit (12.0f, 26.0f, r.getHeight() * 0.8f), juce::Font::plain));
         g.drawFittedText (binding.text ? binding.text() : juce::String ("--"), r.toNearestInt(), juce::Justification::topLeft, 1, 0.8f);
     }
 
@@ -868,7 +970,7 @@ public:
 
         auto drawGroup = [&] (juce::Rectangle<float>& area, const Group& grp, int maxRows)
         {
-            g.setColour (Colours::textDim);
+            g.setColour (colours::caption);
             g.setFont (juce::FontOptions (captionH, juce::Font::bold));
             g.drawText (grp.caption, area.removeFromTop (captionH).toNearestInt(), juce::Justification::centred);
             const int n = juce::jmin ((int) grp.list->size(), maxRows * grp.columns);
@@ -880,9 +982,9 @@ public:
                 bool possible = true;
                 const bool on = feeds (strip, src, possible);
                 auto cell = juce::Rectangle<float> (area.getX() + (float) (i % grp.columns) * w, area.getY() + (float) (i / grp.columns) * cellH, w, cellH).reduced (1.0f);
-                g.setColour (on ? colours::feedOn : (possible ? juce::Colour (0xff262626) : juce::Colour (0xff1a1a1a)));
+                g.setColour (on ? colours::feedOn : (possible ? colours::keyOff : colours::well));
                 g.fillRect (cell);
-                g.setColour (on ? juce::Colours::black : (possible ? Colours::textDim : Colours::textDim.withAlpha (0.3f)));
+                g.setColour (on ? juce::Colours::black : (possible ? colours::dim : colours::dim.withAlpha (0.3f)));
                 g.setFont (juce::FontOptions (juce::jlimit (7.0f, 12.0f, cellH * 0.62f), juce::Font::bold));
                 g.drawFittedText (juce::String (src.getNumber()), cell.toNearestInt(), juce::Justification::centred, 1, 0.6f);
             }
@@ -914,7 +1016,7 @@ private:
     a name strip in the strip's colour, its icon and its number. */
 inline void paintStripTile (juce::Graphics& g, juce::Rectangle<float> r, const Strip& s, bool selected, bool dim = false)
 {
-    g.setColour (juce::Colour (0xff2e2e2e));
+    g.setColour (colours::keyOff);
     g.fillRect (r);
     auto inner = r.reduced (2.0f);
     auto strip = inner.removeFromTop (juce::jmax (10.0f, inner.getHeight() * 0.28f));
@@ -925,13 +1027,13 @@ inline void paintStripTile (juce::Graphics& g, juce::Rectangle<float> r, const S
     g.setFont (juce::FontOptions (juce::jlimit (8.0f, 14.0f, strip.getHeight() * 0.85f), juce::Font::bold));
     g.drawFittedText (hasDefaultName (s) ? juce::String() : stripName (s).toUpperCase(), strip.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
     auto number = inner.removeFromBottom (juce::jmax (10.0f, inner.getHeight() * 0.36f));
-    drawIcon (g, stripIcon (s.getKind()), inner.reduced (inner.getHeight() * 0.12f), dim ? Colours::textDim.withAlpha (0.5f) : Colours::textDim);
-    g.setColour (dim ? Colours::textDim : Colours::text);
+    drawIcon (g, stripIcon (s.getKind()), inner.reduced (inner.getHeight() * 0.12f), dim ? colours::dim.withAlpha (0.5f) : colours::caption);
+    g.setColour (dim ? colours::dim : colours::ink);
     g.setFont (juce::FontOptions (juce::jlimit (8.0f, 15.0f, number.getHeight() * 0.9f), juce::Font::bold));
     g.drawFittedText (shortLabel (s), number.toNearestInt(), juce::Justification::centred, 1);
     if (selected)
     {
-        g.setColour (juce::Colours::white);
+        g.setColour (colours::accent);
         g.drawRect (r, 2.0f);
     }
 }
@@ -961,9 +1063,9 @@ public:
     {
         g.fillAll (Colours::screen);
         auto bar = titleBar().toFloat();
-        g.setColour (Colours::screenHeader);
+        g.setColour (colours::panel);
         g.fillRect (bar);
-        g.setColour (Colours::text);
+        g.setColour (colours::caption);
         g.setFont (juce::FontOptions (juce::jlimit (14.0f, 22.0f, bar.getHeight() * 0.56f), juce::Font::bold));
         g.drawFittedText (title, bar.toNearestInt(), juce::Justification::centred, 1);
     }
@@ -1046,15 +1148,15 @@ inline void paintTransferCurve (juce::Graphics& g, juce::Rectangle<float> r, con
             p.lineTo (map (in, out));
     }
     const bool on = slot.on.load();
-    g.setColour (on ? Colours::text : Colours::textDim);
+    g.setColour (on ? colours::ink : colours::dim);
     g.strokePath (p, juce::PathStrokeType (juce::jmax (1.2f, r.getHeight() * 0.025f)));
     const auto knee = map (thr, thr);
     const float d = juce::jmax (3.0f, r.getHeight() * 0.07f);
-    g.setColour (Colours::yellow);
+    g.setColour (colours::accent);
     g.fillEllipse (knee.x - d * 0.5f, knee.y - d * 0.5f, d, d);
     if (withToken)
     {
-        g.setColour (on ? Colours::yellow : Colours::textDim);
+        g.setColour (on ? colours::accent : colours::dim);
         g.setFont (juce::FontOptions (juce::jlimit (9.0f, 13.0f, r.getHeight() * 0.18f), juce::Font::bold));
         g.drawText (models::model (models::Dynamics, slot.model.load()).token, r.reduced (4.0f, 2.0f).toNearestInt(), juce::Justification::topLeft);
     }

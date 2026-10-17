@@ -62,6 +62,22 @@ juce::Rectangle<int> HomeScreen::box (juce::Rectangle<int> area, const juce::Str
     return sectionContent (area, title.isNotEmpty());
 }
 
+LevelPanel& HomeScreen::addLevelPanel()
+{
+    levelPanel = &make<LevelPanel> (ctx, strip);
+    return *levelPanel;
+}
+
+juce::Rectangle<int> HomeScreen::layoutLevelPanel (juce::Rectangle<int> area)
+{
+    if (levelPanel != nullptr)
+    {
+        levelPanel->setBounds (box (area.removeFromRight (area.getWidth() * 22 / 100), "LEVEL"));
+        area.removeFromRight (juce::jmax (4, getParentWidth() / 160));
+    }
+    return area;
+}
+
 void layoutRow (juce::Rectangle<int> r, std::initializer_list<juce::Component*> comps, int gap)
 {
     const int n = (int) comps.size();
@@ -315,7 +331,7 @@ private:
     InputParams& in;
     DelaySlider slider;
     juce::OwnedArray<IconKey> units;
-    IconKey delayKey { "DELAY", Icon::DeltaT, Colours::yellow };
+    IconKey delayKey { "DELAY", Icon::DeltaT, colours::accent };
 };
 
 /** TRIM & BALANCE: an XY pad, trim (+-18 dB) up and down, balance (+-9 dB)
@@ -647,7 +663,7 @@ public:
         pad = &make<TrimBalancePad> (p.input.trimDb, p.input.balanceDb, strip.getNumChannels() == 2 || strip.isOutput() || p.stereo.load());
         trimMeter.showScale = true;
         addAndMakeVisible (trimMeter);
-        invert = &key ("INVERT", Icon::Invert, Colours::yellow);
+        invert = &key ("INVERT", Icon::Invert, colours::accent);
         invert->iconAbove = true;
         bindKey (*invert, p.input.invert);
 
@@ -682,7 +698,7 @@ public:
             feed = &key ("FEED CONFIGURATION", std::nullopt);
             feed->onClick = [this] { if (openFeedConfig) openFeedConfig(); };
             feedGrid = &make<FeedGrid> (ctx, strip, [this] { if (openFeedConfig) openFeedConfig(); });
-            mono = &key ("MONO", std::nullopt, Colours::yellow);
+            mono = &key ("MONO", std::nullopt, colours::accent);
             mono->setTooltip ("Sum to mono");
             bindKey (*mono, p.mono);
         }
@@ -710,12 +726,12 @@ public:
         if (strip.getKind() == StripKind::Matrix)
         {
             // engine E11 would add AES/EBU, phones, speakers and solo bus sources.
-            directOn = &key ("ON", std::nullopt, Colours::yellow);
+            directOn = &key ("ON", std::nullopt, colours::accent);
             bindKey (*directOn, p.directOn);
             directSource = &combo (channelNames (ctx.engine), &p.directSource, "NONE");
-            directInvert = &key (juce::String::fromUTF8 ("\xc3\x98 INVERT"), std::nullopt, Colours::yellow);
+            directInvert = &key (juce::String::fromUTF8 ("\xc3\x98 INVERT"), std::nullopt, colours::accent);
             bindKey (*directInvert, p.directInvert);
-            directPre = &key ("PRE", std::nullopt, Colours::yellow);
+            directPre = &key ("PRE", std::nullopt, colours::accent);
             bindKey (*directPre, p.directPre);
             directLevel = &make<KnobBox> (wingFader ("LEVEL", p.directLevelDb));
         }
@@ -937,7 +953,7 @@ public:
     {
         HomeScreen::paint (g);
         auto h = header.toFloat();
-        g.setColour (Colours::screenHeader);
+        g.setColour (colours::panel);
         g.fillRect (h);
         g.setColour (Colours::text);
         g.setFont (juce::FontOptions (juce::jlimit (14.0f, 22.0f, h.getHeight() * 0.55f), juce::Font::bold));
@@ -974,7 +990,7 @@ class DynTab final : public HomeScreen, private juce::Timer
 public:
     DynTab (UiContext& c, Strip& s, bool gateSlot) : HomeScreen (c, s), isGate (gateSlot), slot (gateSlot ? s.params.gate : s.params.dynamics)
     {
-        on = &key ("ON", std::nullopt, Colours::yellow);
+        on = &key ("ON", std::nullopt, colours::accent);
         on->outlined = true;
         bindKey (*on, slot.on);
         model = &make<ModelSelector>();
@@ -1086,7 +1102,7 @@ public:
     {
         HomeScreen::paint (g);
         auto h = header.toFloat();
-        g.setColour (Colours::screenHeader);
+        g.setColour (colours::panel);
         g.fillRect (h);
         g.setColour (Colours::text);
         g.setFont (juce::FontOptions (juce::jlimit (14.0f, 22.0f, h.getHeight() * 0.55f), juce::Font::bold));
@@ -1138,7 +1154,7 @@ public:
     {
         auto& eq = strip.params.eq;
         const auto table = static_cast<models::Table> (strip.getEqTable());
-        on = &key ("ON", std::nullopt, Colours::yellow);
+        on = &key ("ON", std::nullopt, colours::accent);
         on->outlined = true;
         bindKey (*on, eq.on);
         model = &make<ModelSelector>();
@@ -1262,7 +1278,7 @@ public:
     {
         HomeScreen::paint (g);
         auto h = header.toFloat();
-        g.setColour (Colours::screenHeader);
+        g.setColour (colours::panel);
         g.fillRect (h);
         g.setColour (Colours::text);
         g.setFont (juce::FontOptions (juce::jlimit (14.0f, 22.0f, h.getHeight() * 0.55f), juce::Font::bold));
@@ -1418,7 +1434,7 @@ public:
             const float t = (float) i / (float) segs;
             if (t >= att)
                 break;
-            g.setColour (Colours::yellow);
+            g.setColour (colours::accent);
             g.fillRect (meter.getX(), meter.getY() + meter.getHeight() * t + 0.5f, meter.getWidth(), meter.getHeight() / (float) segs - 1.0f);
         }
         slider = r.reduced (r.getWidth() * 0.2f, 2.0f);
@@ -1435,7 +1451,7 @@ public:
 
         if (selected)
         {
-            g.setColour (Colours::yellow);
+            g.setColour (colours::accent);
             g.drawRect (getLocalBounds().toFloat().reduced (1.0f), 2.0f);
         }
     }
@@ -1477,7 +1493,7 @@ class InsertTab final : public HomeScreen, private juce::Timer
 public:
     InsertTab (UiContext& c, Strip& s, bool postInsert) : HomeScreen (c, s), post (postInsert), ins (post ? s.params.postInsert : s.params.preInsert)
     {
-        on = &key ("ON", std::nullopt, Colours::yellow);
+        on = &key ("ON", std::nullopt, colours::accent);
         on->outlined = true;
         bindKey (*on, ins.on);
         processorCaption = &label ("FX PROCESSOR", 12.0f);
@@ -1700,7 +1716,7 @@ public:
     {
         HomeScreen::paint (g);
         auto h = header.toFloat();
-        g.setColour (Colours::screenHeader);
+        g.setColour (colours::panel);
         g.fillRect (h);
         g.setColour (Colours::text);
         g.setFont (juce::FontOptions (juce::jlimit (14.0f, 22.0f, h.getHeight() * 0.55f), juce::Font::bold));
@@ -1723,39 +1739,6 @@ private:
 };
 
 //==============================================================================
-/** The LEVEL panel: MUTE, the meter, the fader and SOLO. */
-class LevelPanel final : public juce::Component
-{
-public:
-    LevelPanel (UiContext& ctx, Strip& s)
-        : strip (s), meter ([&ctx, &s] (int ch) { return ctx.meters.get (&s, false, ch); }, [&s] { return s.getNumChannels(); }), fader (s.params.faderDb)
-    {
-        bindKey (mute, s.params.mute);
-        bindKey (solo, s.params.solo);
-        for (juce::Component* c : { (juce::Component*) &mute, (juce::Component*) &solo, (juce::Component*) &meter, (juce::Component*) &fader })
-            addAndMakeVisible (c);
-    }
-
-    juce::Component* getFader() noexcept { return &fader; }
-
-    void resized() override
-    {
-        auto l = getLocalBounds();
-        auto meterCol = l.removeFromLeft (l.getWidth() * 45 / 100);
-        const int kh = juce::jlimit (22, 34, l.getHeight() / 9);
-        mute.setBounds (meterCol.removeFromTop (kh).reduced (1, 0));
-        solo.setBounds (meterCol.removeFromBottom (kh).reduced (1, 0));
-        meter.setBounds (meterCol.reduced (0, 6));
-        fader.setBounds (l.reduced (0, 2));
-    }
-
-private:
-    Strip& strip;
-    IconKey mute { "MUTE", std::nullopt, Colours::mute }, solo { "SOLO", std::nullopt, Colours::solo };
-    LedMeter meter;
-    ScreenFader fader;
-};
-
 /** One main send: name strip, MAIN / PRE, the send fader and ON. */
 class MainSendColumn final : public juce::Component
 {
@@ -1800,7 +1783,7 @@ public:
 private:
     Strip& main;
     MainSendParams& send;
-    IconKey pre { "PRE", std::nullopt, Colours::yellow }, on { "ON", std::nullopt, Colours::yellow };
+    IconKey pre { "PRE", std::nullopt, colours::accent }, on { "ON", std::nullopt, colours::accent };
     ScreenFader fader;
     float stripH = 14.0f;
 };
@@ -1876,7 +1859,7 @@ public:
     {
         HomeScreen::paint (g);
         auto h = channelHeader.toFloat().reduced (3.0f, 0.0f);
-        g.setColour (Colours::screenHeader);
+        g.setColour (colours::panel);
         g.fillRect (h);
         g.setColour (Colours::text);
         g.setFont (juce::FontOptions (juce::jlimit (14.0f, 20.0f, h.getHeight() * 0.55f), juce::Font::bold));
@@ -1974,7 +1957,7 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (Colours::screenPanel);
+        g.fillAll (colours::panel);
         g.setColour (Colours::textDim);
         g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
         g.drawText ("MODE", getLocalBounds().reduced (10, 6).removeFromTop (14), juce::Justification::centredLeft);
@@ -1995,7 +1978,7 @@ public:
 
 private:
     Segmented mode;
-    IconKey ignoreMute { "IGNORE CHANNEL MUTE", std::nullopt, Colours::yellow }, link { "LINK SEND PAN TO CHANNEL PAN", std::nullopt, Colours::yellow };
+    IconKey ignoreMute { "IGNORE CHANNEL MUTE", std::nullopt, colours::accent }, link { "LINK SEND PAN TO CHANNEL PAN", std::nullopt, colours::accent };
     KnobBox panBox;
     bool canIgnore;
     std::function<bool()> isTap, isLinked;
@@ -2082,7 +2065,7 @@ public:
         }
         if (selected)
         {
-            g.setColour (Colours::yellow);
+            g.setColour (colours::accent);
             g.fillRect (on.getBounds().toFloat().withY ((float) on.getBottom() + 2.0f).withHeight (3.0f));
         }
     }
@@ -2138,7 +2121,7 @@ private:
     bool enabled;
     std::function<void()> onSelect;
     ScreenFader fader;
-    IconKey on { "ON", std::nullopt, Colours::yellow };
+    IconKey on { "ON", std::nullopt, colours::accent };
     juce::Rectangle<float> modeArea, panArea;
     float stripH = 14.0f;
     int shownMode = -1;
@@ -2229,7 +2212,7 @@ public:
         which.set = [this, n] (float p) { juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<SendsTab> (this), i = juce::roundToInt (p * (float) (n - 1))] { if (safe) safe->select (i); }); };
         which.text = [this] { return juce::String (selected + 1); };
         which.steps = (float) n;
-        k.push_back ({ which, styleOf (KnobStyle::Bar::Segments, KnobColours::yellow, columns[(size_t) selected], n) });
+        k.push_back ({ which, styleOf (KnobStyle::Bar::Segments, colours::accent, columns[(size_t) selected], n) });
 
         KnobBinding page;
         page.label = "PAGE";
@@ -2302,7 +2285,7 @@ public:
     {
         HomeScreen::paint (g);
         auto h = header.toFloat();
-        g.setColour (matrix ? juce::Colour (0xff2a3a50) : Colours::screenHeader);
+        g.setColour (matrix ? juce::Colour (0xff2a3a50) : colours::panel);
         g.fillRect (h);
         // The title in the middle.
         auto title = h.withTrimmedLeft ((float) (tapDiagram.getRight() - header.getX()) + 8.0f).withWidth (h.getWidth() * 0.16f + 40.0f);
@@ -2351,7 +2334,7 @@ private:
         g.drawLine (b1.getX() - 4.0f, b1.getCentreY(), b2.getRight() + 4.0f, b1.getCentreY(), 1.5f);
         for (auto [box, text] : { std::make_pair (b1, before), std::make_pair (b2, after) })
         {
-            g.setColour (Colours::screenHeader);
+            g.setColour (colours::panel);
             g.fillRect (box);
             g.setColour (Colours::text);
             g.drawRect (box, 1.0f);
@@ -2650,7 +2633,7 @@ public:
         for (int i = 0; i < kNumScopeBits; ++i)
         {
             auto* k = scopeKeys.add (new IconKey (scopeName (i) + juce::String (i == Send || i == MainBit ? juce::String::fromUTF8 (" \xe2\x96\xbe") : juce::String()),
-                                                  std::nullopt, Colours::yellow));
+                                                  std::nullopt, colours::accent));
             k->isOn = [this, i] { return (scope >> i) & 1u; };
             k->onClick = [this, i] { scope ^= 1u << i; };
             addAndMakeVisible (k);
@@ -2685,7 +2668,7 @@ public:
             if (auto* src = state::findStrip (ctx.engine, source))
             {
                 paintStripTile (g, sourceTile.toFloat(), *src, false);
-                g.setColour (Colours::yellow);
+                g.setColour (colours::accent);
                 g.drawRect (sourceTile.toFloat(), 2.0f);
             }
 
@@ -2822,7 +2805,7 @@ private:
     state::StripRef source;
     StripKind destKind = StripKind::Channel;
     std::vector<state::StripRef> destinations;
-    IconKey none { "NONE", std::nullopt }, all { "ALL", std::nullopt }, action { "INIT", Icon::Reset, Colours::yellow };
+    IconKey none { "NONE", std::nullopt }, all { "ALL", std::nullopt }, action { "INIT", Icon::Reset, colours::accent };
     juce::OwnedArray<IconKey> scopeKeys;
     juce::OwnedArray<juce::TextButton> tabs;
     juce::Rectangle<int> scopePanel, destPanel, sourceTile, gridArea;
@@ -2850,19 +2833,19 @@ public:
         const bool busTarget = s.isBus();
         const bool mainTarget = s.getKind() == StripKind::Main;
         modeKeys = std::make_unique<Segmented> (mainTarget || ! busTarget ? juce::StringArray { "KEEP", "TAP/PRE", "POST" } : juce::StringArray { "KEEP", "TAP/PRE", "POST", "GROUP" },
-                                                [this] { return modeChoice; }, [this] (int i) { modeChoice = i; }, Colours::yellow);
+                                                [this] { return modeChoice; }, [this] (int i) { modeChoice = i; }, colours::accent);
         ignoreKeys = std::make_unique<Segmented> (juce::StringArray { "KEEP", "SET OFF", "SET ON" }, [this] { return ignoreChoice; },
-                                                  [this] (int i) { ignoreChoice = i; }, Colours::yellow);
+                                                  [this] (int i) { ignoreChoice = i; }, colours::accent);
         ignoreKeys->setEnabled (! mainTarget); // main sends have no IGNORE CHANNEL MUTE
         panKeys = std::make_unique<Segmented> (juce::StringArray { "KEEP", "SET TO\nCENTER", "SET TO\nCH PAN", "LINK\nTO CH PAN", "LINK\nREVERSED" },
-                                               [this] { return panChoice; }, [this] (int i) { panChoice = i; }, Colours::yellow);
+                                               [this] { return panChoice; }, [this] (int i) { panChoice = i; }, colours::accent);
         panKeys->twoLines = true;
         // Mains have no send pan, matrix sends no pan link.
         panKeys->isEnabledAt = [mainTarget, busTarget] (int i) { return i == 0 || (! mainTarget && (busTarget || i < 3)); };
         levelKeys = std::make_unique<Segmented> (juce::StringArray { "KEEP", "SET TO\n-oo dB", "SET TO\n-10 dB", "SET TO\n0 dB" },
-                                                 [this] { return levelChoice; }, [this] (int i) { levelChoice = i; }, Colours::yellow);
+                                                 [this] { return levelChoice; }, [this] (int i) { levelChoice = i; }, colours::accent);
         levelKeys->twoLines = true;
-        enableKeys = std::make_unique<Segmented> (juce::StringArray { "KEEP", "SET OFF", "SET ON" }, [this] { return enableChoice; }, [this] (int i) { enableChoice = i; }, Colours::yellow);
+        enableKeys = std::make_unique<Segmented> (juce::StringArray { "KEEP", "SET OFF", "SET ON" }, [this] { return enableChoice; }, [this] (int i) { enableChoice = i; }, colours::accent);
         applyKey.onClick = [this] { apply(); };
         for (juce::Component* comp : { (juce::Component*) &noneKey, (juce::Component*) &allChannels, (juce::Component*) modeKeys.get(),
                                        (juce::Component*) ignoreKeys.get(), (juce::Component*) panKeys.get(), (juce::Component*) levelKeys.get(),
@@ -3148,7 +3131,7 @@ private:
     state::StripRef target;
     std::vector<state::StripRef> selection;
     std::vector<std::pair<juce::Rectangle<int>, state::StripRef>> cells;
-    IconKey noneKey { "NONE", Icon::Cancel }, allChannels { "ALL CH", std::nullopt }, applyKey { "APPLY", Icon::Check, Colours::yellow };
+    IconKey noneKey { "NONE", Icon::Cancel }, allChannels { "ALL CH", std::nullopt }, applyKey { "APPLY", Icon::Check, colours::accent };
     std::unique_ptr<Segmented> modeKeys, ignoreKeys, panKeys, levelKeys, enableKeys;
     juce::Rectangle<int> gridArea, captions[5];
     int modeChoice = 0, ignoreChoice = 0, panChoice = 0, levelChoice = 0, enableChoice = 0;
