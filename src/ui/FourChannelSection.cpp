@@ -289,10 +289,10 @@ void FourChannelSection::paint (juce::Graphics& g)
     const int w = r.getWidth() / 4;
     for (int i = 0; i < 4; ++i)
     {
-        auto cell = juce::Rectangle<int> (r.getX() + i * w, r.getY(), w, r.getHeight()).reduced (2, 0);
+        auto cell = juce::Rectangle<int> (r.getX() + i * w, r.getY(), w, r.getHeight());
         auto* s = strips[(size_t) i];
         if (s != nullptr)
-            drawLightBar (g, cell.removeFromTop (juce::jmax (4, cell.getHeight() / 9)).toFloat(), stripDisplayColour (*s), s->params.led.load());
+            drawLightBar (g, cell.removeFromTop (juce::jmax (4, cell.getHeight() / 9)).toFloat().reduced ((float) w * 0.15f, 0.5f), stripDisplayColour (*s), s->params.led.load());
         else
             cell.removeFromTop (juce::jmax (4, cell.getHeight() / 9));
         cell.removeFromTop (3);
@@ -319,6 +319,12 @@ void FourChannelSection::paint (juce::Graphics& g)
         info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
         info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
         drawScribble (g, cell.toFloat(), info);
+        if (i < 3)
+        {
+            // One LCD, a fine rule between the strips.
+            g.setColour (Colours::scribbleRule.withAlpha (0.55f));
+            g.fillRect ((float) cell.getRight() - 1.0f, (float) cell.getY() + 2.0f, 1.0f, (float) cell.getHeight() - 4.0f);
+        }
     }
 
     // Rules between the encoder columns.

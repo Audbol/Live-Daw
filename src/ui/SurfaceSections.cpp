@@ -475,8 +475,8 @@ void ChannelStripSection::paint (juce::Graphics& g)
 
     paintPanel (g);
 
-    drawSilk (g, processingHeading.toFloat(), "CHANNEL PROCESSING", 12.0f);
-    drawSilk (g, eqHeading.toFloat(), "CHANNEL EQUALIZER", 12.0f);
+    drawSilk (g, processingHeading.toFloat(), "CHANNEL PROCESSING", 13.0f);
+    drawSilk (g, eqHeading.toFloat(), "CHANNEL EQUALIZER", 13.0f);
 
     // Printed lines joining the slot keys, and SHIFT to the band encoders.
     for (int i = 0; i + 1 < kNumSlots; ++i)
@@ -487,7 +487,7 @@ void ChannelStripSection::paint (juce::Graphics& g)
         drawConnector (g, (float) eqKnobs[i].getRight(), (float) eqKnobs[i + 1].getX(), eqY);
 
     // Captions.
-    const float small = 9.0f;
+    const float small = 9.5f;
     auto below = [] (juce::Component& c, int h) { return c.getBounds().withY (c.getBottom() + 1).withHeight (h).expanded (16, 0).toFloat(); };
     drawSilk (g, below (*slotKeys[Input], 12), "(HOLD FOR ON/OFF)", small);
     drawSilk (g, below (eqKey, 12), "(HOLD FOR ON/OFF)", small);
@@ -532,7 +532,7 @@ void ChannelStripSection::paintPanel (juce::Graphics& g)
     auto r = panel.reduced (8.0f, 5.0f);
     const float titleH = juce::jlimit (11.0f, 16.0f, r.getHeight() * 0.13f);
     const float rowH = (r.getHeight() - titleH - 2.0f) / 8.0f;
-    const float font = juce::jlimit (6.5f, 11.0f, juce::jmin (rowH * 0.78f, r.getWidth() * 0.0185f));
+    const float font = juce::jlimit (6.5f, 12.0f, juce::jmin (rowH * 0.8f, r.getWidth() * 0.021f));
     const float titleFont = juce::jlimit (8.0f, 13.0f, titleH * 0.95f);
     const float led = juce::jlimit (3.0f, 7.0f, rowH * 0.42f);
     const float top = r.getY() + titleH + 2.0f;
@@ -912,7 +912,7 @@ void MonitorSection::paint (juce::Graphics& g)
         drawIcon (g, Icon::Headphones, juce::Rectangle<float> (14.0f, 14.0f).withPosition (mark.getX() + 15.0f, mark.getY()), Colours::silkDim);
         drawSilk (g, mark.withTrimmedLeft (32.0f), "PHONES", 9.0f, juce::Justification::centredLeft, Colours::silkDim);
 
-        auto logo = logoArea.toFloat().withSizeKeepingCentre ((float) logoArea.getWidth() * 0.62f, (float) logoArea.getHeight() * 0.3f);
+        auto logo = logoArea.toFloat().withSizeKeepingCentre ((float) logoArea.getWidth() * 0.5f, (float) logoArea.getHeight() * 0.22f);
         const auto font = juce::Font (juce::FontOptions (logo.getHeight() * 1.1f, juce::Font::bold)).withExtraKerningFactor (0.06f);
         g.setFont (fontFittingWidth (font, "WING", logo.getWidth(), 1.0f));
         g.setColour (juce::Colour (0xffb2b5ba));
@@ -1565,13 +1565,13 @@ void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> are
 
     for (int i = 0; i < 4; ++i)
     {
-        auto cell = juce::Rectangle<int> (r.getX() + i * w, r.getY(), w, r.getHeight()).reduced (2, 0);
+        auto cell = juce::Rectangle<int> (r.getX() + i * w, r.getY(), w, r.getHeight());
         const int ccLayer = upper ? currentLayer() : juce::jmax (0, lowerCcLayer());
         const auto control = ctx.customControls != nullptr ? ctx.customControls->get (ccLayer, i) : cc::Control {};
         if (colourBars)
         {
             // The control's colour (CC EDIT > COLOR).
-            drawLightBar (g, cell.removeFromTop (juce::jmax (4, cell.getHeight() / 9)).toFloat(),
+            drawLightBar (g, cell.removeFromTop (juce::jmax (4, cell.getHeight() / 9)).toFloat().reduced ((float) w * 0.15f, 0.5f),
                           wingColour (juce::jmax (1, control.colour)).withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
                           control.colour > 0);
             cell.removeFromTop (juce::jmax (3, cell.getHeight() / 8));
@@ -1668,6 +1668,12 @@ void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> are
             info.name = "N/A";
         }
         drawScribble (g, cell.toFloat(), info);
+        if (i < 3)
+        {
+            // One LCD, a fine rule between the strips.
+            g.setColour (Colours::scribbleRule.withAlpha (0.55f));
+            g.fillRect ((float) cell.getRight() - 1.0f, (float) cell.getY() + 2.0f, 1.0f, (float) cell.getHeight() - 4.0f);
+        }
     }
 }
 

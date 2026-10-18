@@ -66,7 +66,7 @@ namespace Colours
     // as the silver one)
     const juce::Colour keyBody { 0xff36383d };      // an unlit key
     const juce::Colour keyEdge { 0xff0d0e10 };
-    const juce::Colour keyCap { 0xffb9bcc2 };       // an unlit key's frosted cap
+    const juce::Colour keyCap { 0xffc8cbd1 };       // an unlit key's frosted cap
     const juce::Colour keyCapDark { 0xff16171a };   // the black keys (LISTEN, DAW)
     const juce::Colour keyBezel { 0xff08090a };     // the black ring round a key
     const juce::Colour keyPrint { 0xff1b1c1f };     // print on a key cap
