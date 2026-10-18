@@ -22,6 +22,7 @@
 //! stick), built on the same rings, WAV files and disk-thread design.
 
 pub mod audio;
+pub mod codec;
 pub mod playlist;
 mod reader;
 pub mod ring;
