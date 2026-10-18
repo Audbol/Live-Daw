@@ -96,6 +96,41 @@ namespace
         g.drawFittedText (text, r.reduced (2, 0), juce::Justification::centred, 2, 0.7f);
     }
 
+    /** An outlined key [I8]: a grey frame on the panel, an optional icon at the
+        left (INITIALIZE) or above the caption (48V, POL); filled when lit. */
+    void drawOutlinedKey (juce::Graphics& g, juce::Rectangle<int> r, std::optional<Icon> icon, const juce::String& text, bool on, juce::Colour onColour,
+                          bool iconAbove = false)
+    {
+        if (r.isEmpty())
+            return;
+        auto f = r.toFloat();
+        if (on)
+        {
+            g.setColour (onColour);
+            g.fillRect (f);
+        }
+        g.setColour (on ? onColour : Dark::keyOutline);
+        g.drawRect (f, 1.5f);
+        const auto ink = on ? juce::Colours::black : Dark::caption;
+        if (iconAbove && icon.has_value())
+        {
+            auto label = f.removeFromBottom (f.getHeight() * 0.3f);
+            drawIcon (g, *icon, f.reduced (f.getHeight() * 0.18f), ink);
+            g.setColour (ink);
+            g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), label.getHeight() * 0.6f)));
+            g.drawFittedText (text, label.toNearestInt(), juce::Justification::centredTop, 1, 0.8f);
+            return;
+        }
+        if (icon.has_value())
+        {
+            auto ib = f.removeFromLeft (f.getHeight()).reduced (f.getHeight() * 0.22f);
+            drawIcon (g, *icon, ib, ink);
+        }
+        g.setColour (ink);
+        g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), f.getHeight() * 0.36f)));
+        g.drawFittedText (text, f.toNearestInt().reduced (4, 0), juce::Justification::centred, 1, 0.8f);
+    }
+
     /** An icon over a small caption (NONE, RENAME). */
     void drawIconKey (juce::Graphics& g, juce::Rectangle<int> r, Icon icon, const juce::String& text, bool enabled = true)
     {
@@ -663,7 +698,9 @@ void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, 
     t.selected = marked;
     // [3.1, D14] the right edge of the body holds the 48 / M chips (grey when
     // off) beside a vertical mini meter, so the number moves left of them.
-    t.rightColumn = src != nullptr ? 0.36f : 0.0f;
+    // Small tiles (small windows) keep only the meter.
+    const bool roomy = area.getHeight() >= 34;
+    t.rightColumn = src != nullptr ? (roomy ? 0.36f : 0.1f) : 0.0f;
     paintTile (g, area, t);
     if (src == nullptr)
         return;
@@ -702,6 +739,8 @@ void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, 
         g.fillRect (meter.getX(), meter.getBottom() - (float) (i + 1) * segH + 0.5f, meter.getWidth(), juce::jmax (1.0f, segH - 1.0f));
     }
 
+    if (! roomy)
+        return;
     // 48 (phantom) over M (mute): grey with dark text, lit red when on.
     auto chips = body.removeFromRight (body.getWidth() * 0.26f).reduced (1.0f, 0.0f).translated (-3.0f, 0.0f);
     const float chipH = juce::jmin (11.0f, chips.getHeight() * 0.42f);
@@ -804,11 +843,12 @@ void RoutingPage::layoutSourcePanel()
     sourceBody = r.reduced (6, 0);
 
     auto body = sourceBody;
-    const int kh = juce::jlimit (26, 40, body.getHeight() / 9);
+    const int kh = juce::jlimit (16, 40, body.getHeight() / 9);
     auto left = body.removeFromLeft (body.getWidth() * 46 / 100);
     sourceInitKey = left.removeFromTop (kh).withWidth (juce::jmin (left.getWidth(), 170));
     left.removeFromTop (10);
-    sourceBox = left.removeFromTop (juce::jmin (left.getHeight() / 2, kh * 3)).withWidth (juce::jmin (left.getWidth(), 170));
+    // The box takes what INITIALIZE and the three mode keys leave (small screens).
+    sourceBox = left.removeFromTop (juce::jmax (kh, juce::jmin (left.getHeight() - 3 * (kh + 4) - 6, kh * 3))).withWidth (juce::jmin (left.getWidth(), 170));
     left.removeFromTop (6);
     for (auto& k : sourceModeKeys)
     {
@@ -816,14 +856,17 @@ void RoutingPage::layoutSourcePanel()
         left.removeFromTop (4);
     }
     body.removeFromLeft (6);
-    sourceMeter = body.removeFromLeft (juce::jlimit (24, 44, body.getWidth() / 5)).withTrimmedBottom (kh / 2);
+    sourceMeter = body.removeFromLeft (juce::jlimit (36, 60, body.getWidth() / 4)).withTrimmedBottom (kh / 2);
     body.removeFromLeft (10);
     auto keys = body.removeFromLeft (juce::jmin (body.getWidth() / 2, 96));
-    for (auto* k : { &sourcePhantomKey, &sourcePolKey, &sourceMuteKey })
+    // [I8] 48V and POL square icon keys at the top, MUTE at the bottom.
+    for (auto* k : { &sourcePhantomKey, &sourcePolKey })
     {
-        *k = keys.removeFromTop (kh + 6);
-        keys.removeFromTop (6);
+        *k = keys.removeFromTop (juce::jmin (keys.getWidth() * 4 / 5, kh * 2)).withSizeKeepingCentre (juce::jmin (keys.getWidth(), kh * 2) * 4 / 5, juce::jmin (keys.getWidth() * 4 / 5, kh * 2));
+        keys.removeFromTop (8);
     }
+    keys.removeFromBottom (kh / 2);
+    sourceMuteKey = keys.removeFromBottom (kh + 6);
     body.removeFromLeft (8);
     sourceGainFader = body.withTrimmedBottom (kh / 2);
 
@@ -901,7 +944,7 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g, juce::Rectangle<int>) 
         return;
     }
 
-    drawKey (g, sourceInitKey, "INITIALIZE", false, Dark::choice);
+    drawOutlinedKey (g, sourceInitKey, Icon::Warning, "INITIALIZE", false, Dark::choice);
 
     // The source box: the colour strip with the name, the connector and number.
     {
@@ -930,9 +973,23 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g, juce::Rectangle<int>) 
     }
 
     // MONO / STEREO / MID-SIDE (a pair: ports 1-2, 3-4, ...).
+    // [I8] in a black box, the chosen one lit blue.
     const char* modes[] = { "MONO", "STEREO", "MID/SIDE" };
+    g.setColour (juce::Colours::black);
+    g.fillRect (sourceModeKeys[0].getUnion (sourceModeKeys[2]).expanded (0, 2));
     for (int i = 0; i < 3; ++i)
-        drawKey (g, sourceModeKeys[(size_t) i], modes[i], src->mode.load() == i, Colours::valueBlue);
+    {
+        const bool on = src->mode.load() == i;
+        auto k = sourceModeKeys[(size_t) i];
+        if (on)
+        {
+            g.setColour (Colours::valueBlue);
+            g.fillRect (k);
+        }
+        g.setColour (on ? juce::Colours::black : Dark::text);
+        g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), (float) k.getHeight() * 0.36f)));
+        g.drawText (modes[i], k, juce::Justification::centred);
+    }
 
     // The meter (after gain, mute and polarity).
     {
@@ -941,19 +998,25 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g, juce::Rectangle<int>) 
         g.fillRect (m);
         const float db = juce::Decibels::gainToDecibels (selectedSourcePeak, -60.0f);
         const float pos = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
-        auto bar = m.reduced (4.0f, 4.0f);
+        // [I8] a narrow bar at the right with the scale (CLIP .. -60) beside it.
+        auto inner = m.reduced (3.0f, 8.0f);
+        auto bar = inner.removeFromRight (juce::jmax (5.0f, inner.getWidth() * 0.32f));
         g.setColour (Dark::key);
         g.fillRect (bar);
         g.setColour (db > -0.5f ? Colours::meterRed : db > -12.0f ? Colours::meterYellow : Colours::meterGreen);
         g.fillRect (bar.withTop (bar.getBottom() - bar.getHeight() * pos));
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
-        g.drawText ("CLIP", m.withHeight (12.0f).translated (0.0f, -13.0f), juce::Justification::centred);
+        g.setFont (wingFontPx (juce::jmin (TypeScale::meterScale * getWingScreenHeight(), inner.getWidth() * 0.3f)));
+        for (const auto& [label, at] : { std::pair { "CLIP", 0.0f }, { "-6", 6.0f }, { "-12", 12.0f }, { "-24", 24.0f }, { "-36", 36.0f }, { "-48", 48.0f }, { "-60", 60.0f } })
+        {
+            const float y = bar.getY() + bar.getHeight() * at / 60.0f;
+            g.drawText (label, juce::Rectangle<float> (inner.getX(), y - 6.0f, inner.getWidth() - 2.0f, 12.0f), juce::Justification::centredRight, false);
+        }
     }
 
-    drawKey (g, sourcePhantomKey, "+48V", src->phantom.load(), Colours::mute);
-    drawKey (g, sourcePolKey, "POL", src->invert.load(), Colours::yellow);
-    drawKey (g, sourceMuteKey, "MUTE", src->mute.load(), Colours::mute);
+    drawOutlinedKey (g, sourcePhantomKey, Icon::Power, "48V", src->phantom.load(), Colours::mute, true);
+    drawOutlinedKey (g, sourcePolKey, Icon::Invert, "POL", src->invert.load(), Colours::yellow, true);
+    drawOutlinedKey (g, sourceMuteKey, std::nullopt, "MUTE", src->mute.load(), Colours::mute);
 
     // GAIN: a fader with the value flag (-12 .. +60 dB).
     {

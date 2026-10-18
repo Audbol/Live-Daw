@@ -712,7 +712,11 @@ namespace
         void paint (juce::Graphics& g) override
         {
             g.fillAll (juce::Colours::black);
-            auto body = drawDarkPanel (g, errorsArea, "ERRORS");
+            // The title stays centred, clear of the CLEAR key at the right.
+            auto body = drawDarkPanel (g, errorsArea, " ");
+            g.setColour (Dark::caption);
+            g.setFont (panelTitleFont (kDarkHeaderHeight));
+            g.drawFittedText ("ERRORS", errorsArea.withHeight (kDarkHeaderHeight).reduced (clearKey.getWidth() + 2, 0), juce::Justification::centred, 1, 0.8f);
             auto* d = ctx.deviceManager.getCurrentAudioDevice();
             const std::pair<const char*, juce::String> rows[] = { { "XRUNS", d != nullptr ? juce::String (d->getXRunCount()) : juce::String ("-") },
                                                                   { "SAFETY CLIPS", juce::String (ctx.engine.outputClipEvents.load()) } };

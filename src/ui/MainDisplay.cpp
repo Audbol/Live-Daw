@@ -122,6 +122,8 @@ namespace
                 return { KnobStyle::Bar::Thumb, KnobColours::gold };
             if (text.endsWith ("Hz") || label.contains ("FREQ") || label.contains ("CUT"))
                 return { KnobStyle::Bar::Thumb, KnobColours::blue };
+            if (label.startsWith ("FX") && label.endsWith (" MIX")) // FX MIX, FX1 MIX: a level [D8]
+                return { KnobStyle::Bar::Fill, KnobColours::blue };
             if ((text.endsWith ("dB") && ! b.bipolar) || text.contains ("oo") || text.contains (juce::String::fromUTF8 ("\xe2\x88\x9e")))
                 return { KnobStyle::Bar::Fill, KnobColours::blue };
             if (b.bipolar)
@@ -1654,7 +1656,7 @@ void MainDisplay::paintStatusBar (juce::Graphics& g)
         const auto& key = statusKeys[i];
         const auto area = statusKeyAreas[i];
         tile (area, key.lit ? Colours::caption : Colours::screenHeader);
-        const auto keyInk = key.lit ? juce::Colours::black : Colours::textDim;
+        const auto keyInk = key.lit ? juce::Colours::black : key.ink.value_or (Colours::textDim);
         auto r = area.toFloat().reduced (3.0f * k);
         g.setColour (keyInk);
         g.setFont (wingFontPx (juce::jmin (TypeScale::statusCaption * sh, r.getHeight() * 0.2f)));

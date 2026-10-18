@@ -1178,7 +1178,8 @@ std::vector<StatusKey> LibraryPage::getStatusKeys()
 {
     // GLOBAL: an open padlock without global safes, closed (lit) with some.
     const bool safe = anyGlobalSafe();
-    return { { "GLOBAL", safe ? Icon::LockClosed : Icon::LockOpen, safe, [this] { openGlobal(); } } };
+    // [Fig. 48] a green open padlock, or a red closed one while items are global-safe.
+    return { { "GLOBAL", safe ? Icon::LockClosed : Icon::LockOpen, false, [this] { openGlobal(); }, safe ? Colours::tapRed : Colours::green } };
 }
 
 StatusTitle LibraryPage::getStatusTitle()
