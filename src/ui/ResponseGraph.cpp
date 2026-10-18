@@ -141,7 +141,7 @@ void ResponseGraph::updateRta()
             analysis.showRta (strip, layout.view);
             rtaOwner = this;
         }
-        const auto frame = rta.frame;
+        const auto before = rta;
         analysis.read (rta);
         // AUTOGAIN: the power average of the bands sits mid-scale (smoothed).
         double sum = 0.0;
@@ -150,7 +150,9 @@ void ResponseGraph::updateRta()
         const float average = (float) (10.0 * std::log10 (sum / ld::kRtaBands + 1.0e-15));
         if (average > -110.0f)
             autoGainDb += (average - autoGainDb) * 0.12f;
-        if (! rtaShown || rta.frame != frame)
+        // A new frame that changes nothing (silence) needs no repaint: the
+        // graph can be big (a maximized screen).
+        if (! rtaShown || (rta.frame != before.frame && (rta.levels != before.levels || rta.peaks != before.peaks)))
             repaint();
         rtaShown = true;
         if (getTimerInterval() > 40)
