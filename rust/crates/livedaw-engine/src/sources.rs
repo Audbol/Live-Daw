@@ -12,12 +12,15 @@
 //! Sources at their defaults cost nothing: their port is passed through.
 //!
 //! A MID/SIDE pair decodes to left = M + S, right = M - S (M on the first port).
+//!
+//! Source tags (SOURCES > TAGS): a source can belong to mute groups; it is
+//! muted while one of them is engaged (the WING's `/io/in/../tags` `#M1`...).
 
 use crate::atomic::AtomicF32;
 use livedaw_dsp::util::{apply_gain_ramp, db_to_gain, peak_level};
 use livedaw_recorder::{playback_channel, usb_player_channel, NUM_PLAYBACK_CHANNELS, PLAYBACK_SOURCE_BASE};
 use livedaw_recorder::{USB_CHANNELS, USB_PLAYER_SOURCE_BASE};
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering::Relaxed};
 use std::sync::Mutex;
 
 /// Hardware input ports with a source (12 groups of 48); ports beyond pass through.
@@ -59,6 +62,8 @@ pub struct SourceParams {
     pub icon: AtomicI32,
     /// Peak since the last read (after the source's processing).
     pub peak: AtomicF32,
+    /// ABI 8, SOURCES > TAGS: bit n = mute group n+1 mutes the source.
+    pub mute_groups: AtomicU32,
 }
 
 impl Default for SourceParams {
@@ -72,6 +77,7 @@ impl Default for SourceParams {
             colour: AtomicI32::new(DEFAULT_SOURCE_COLOUR),
             icon: AtomicI32::new(0),
             peak: AtomicF32::new(0.0),
+            mute_groups: AtomicU32::new(0),
         }
     }
 }
@@ -85,6 +91,7 @@ impl SourceParams {
         self.phantom.store(false, Relaxed);
         self.colour.store(DEFAULT_SOURCE_COLOUR, Relaxed);
         self.icon.store(0, Relaxed);
+        self.mute_groups.store(0, Relaxed);
     }
 
     /// True if the settings differ from the defaults (what a show stores).
@@ -96,11 +103,17 @@ impl SourceParams {
             && self.mode.load(Relaxed) == source_mode::MONO
             && self.colour.load(Relaxed) == DEFAULT_SOURCE_COLOUR
             && self.icon.load(Relaxed) == 0
+            && self.mute_groups.load(Relaxed) == 0
     }
 
-    /// The gain the source applies (mute, gain, polarity).
-    fn gain(&self) -> f32 {
-        if self.mute.load(Relaxed) {
+    /// Muted: its own MUTE, or one of its mute groups is engaged.
+    pub fn is_muted(&self, mute_groups: u32) -> bool {
+        self.mute.load(Relaxed) || self.mute_groups.load(Relaxed) & mute_groups != 0
+    }
+
+    /// The gain the source applies (mute, mute groups, gain, polarity).
+    fn gain(&self, mute_groups: u32) -> f32 {
+        if self.is_muted(mute_groups) {
             return 0.0;
         }
         let g = db_to_gain(self.gain_db.load().clamp(SOURCE_GAIN_MIN_DB, SOURCE_GAIN_MAX_DB));
@@ -189,6 +202,7 @@ impl SourceTable {
             b.mute.store(a.mute.load(Relaxed), Relaxed);
             b.invert.store(a.invert.load(Relaxed), Relaxed);
             b.phantom.store(a.phantom.load(Relaxed), Relaxed);
+            b.mute_groups.store(a.mute_groups.load(Relaxed), Relaxed);
         }
         a.mode.store(mode, Relaxed);
         b.mode.store(mode, Relaxed);
@@ -258,7 +272,7 @@ impl SourceDsp {
     }
 
     /// Processes this block's sources from the raw port buffers (`usb`: the
-    /// USB deck's player channels).
+    /// USB deck's player channels; `mute_groups`: the engaged mute groups).
     ///
     /// # Safety
     /// Audio thread. Non-null pointers must be valid for `n` samples.
@@ -269,6 +283,7 @@ impl SourceDsp {
         playback: &[*const f32],
         usb: &[*const f32; USB_CHANNELS],
         n: usize,
+        mute_groups: u32,
     ) {
         if self.hw_out.len() != hw.len() || n > self.buffers.first().map_or(0, Vec::len) {
             // Not prepared for this layout: pass everything through.
@@ -290,7 +305,7 @@ impl SourceDsp {
             let first = pair * 2;
             let raw =
                 [hw.get(first).copied().unwrap_or(std::ptr::null()), hw.get(first + 1).copied().unwrap_or(std::ptr::null())];
-            let [l, r] = self.process_pair(table, first, first, raw, n);
+            let [l, r] = self.process_pair(table, first, first, raw, n, mute_groups);
             self.hw_out[first] = l;
             if first + 1 < self.num_hw {
                 self.hw_out[first + 1] = r;
@@ -303,7 +318,7 @@ impl SourceDsp {
                 playback.get(ch).copied().unwrap_or(std::ptr::null()),
                 playback.get(ch + 1).copied().unwrap_or(std::ptr::null()),
             ];
-            let [l, r] = self.process_pair(table, NUM_HW_SOURCES + ch, base + ch, raw, n);
+            let [l, r] = self.process_pair(table, NUM_HW_SOURCES + ch, base + ch, raw, n, mute_groups);
             self.playback_out[ch] = l;
             self.playback_out[ch + 1] = r;
         }
@@ -311,7 +326,8 @@ impl SourceDsp {
         let base = base + NUM_PLAYBACK_CHANNELS;
         for pair in 0..USB_CHANNELS / 2 {
             let ch = pair * 2;
-            let [l, r] = self.process_pair(table, USB_PLAYER_SOURCE_INDEX + ch, base + ch, [usb[ch], usb[ch + 1]], n);
+            let [l, r] =
+                self.process_pair(table, USB_PLAYER_SOURCE_INDEX + ch, base + ch, [usb[ch], usb[ch + 1]], n, mute_groups);
             self.playback_out[NUM_PLAYBACK_CHANNELS + ch] = l;
             self.playback_out[NUM_PLAYBACK_CHANNELS + ch + 1] = r;
         }
@@ -326,11 +342,16 @@ impl SourceDsp {
         slot: usize,
         raw: [*const f32; 2],
         n: usize,
+        mute_groups: u32,
     ) -> [*const f32; 2] {
         let p = &table.params[index..index + 2];
         let mode = p[0].mode.load(Relaxed);
         // A pair shares the first source's settings.
-        let gains = if mode == source_mode::MONO { [p[0].gain(), p[1].gain()] } else { [p[0].gain(); 2] };
+        let gains = if mode == source_mode::MONO {
+            [p[0].gain(mute_groups), p[1].gain(mute_groups)]
+        } else {
+            [p[0].gain(mute_groups); 2]
+        };
         let matrix = if mode == source_mode::MID_SIDE { MID_SIDE } else { IDENTITY };
         let last = [self.last_gain[slot], self.last_gain[slot + 1]];
         let last_matrix = self.last_matrix[slot / 2];

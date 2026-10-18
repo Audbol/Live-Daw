@@ -78,6 +78,7 @@ MixerEngine::MixerEngine (int numWorkerThreads)
       talk (controls.talk),
       speakers (controls.speakers),
       phones (controls.phones),
+      monitor (controls.monitor),
       outputProtection (controls.outputProtection),
       outputCeilingDb (controls.outputCeilingDb),
       outputClipEvents (controls.outputClipEvents),
@@ -334,6 +335,60 @@ juce::String MixerEngine::monitorSourceName (int index)
         index -= g.count;
     }
     return "OFF";
+}
+
+juce::String MixerEngine::directSourceName (int index)
+{
+    return takeString (ld::ld_monitor_direct_name (index));
+}
+
+Strip* MixerEngine::getSourceSoloHost() const noexcept
+{
+    const auto* host = ld::ld_engine_source_solo_host (engine);
+    for (auto kind : { StripKind::Channel, StripKind::Aux })
+        for (auto& s : getStrips (kind))
+            if (s->getHandle() == host)
+                return s.get();
+    return nullptr;
+}
+
+void MixerEngine::setSourceSolo (int port, bool on) noexcept
+{
+    auto* host = getSourceSoloHost();
+    if (on && sourceIndex (port) >= 0)
+    {
+        monitor.sourceSoloPort = port;
+        if (host != nullptr)
+            host->params.solo = true;
+        else
+            monitor.sourceSoloOn = true;
+    }
+    else if (! on && monitor.sourceSoloPort.load() == port)
+        clearSourceSolo();
+}
+
+void MixerEngine::setSourceSoloPort (int port) noexcept
+{
+    if (sourceIndex (port) >= 0)
+        monitor.sourceSoloPort = port;
+}
+
+bool MixerEngine::isSourceSoloActive() const noexcept
+{
+    const auto* host = getSourceSoloHost();
+    return host != nullptr && (monitor.sourceSoloOn.load() || host->params.solo.load());
+}
+
+void MixerEngine::clearSourceSolo() noexcept
+{
+    monitor.sourceSoloOn = false;
+    if (auto* host = getSourceSoloHost())
+        host->params.solo = false;
+}
+
+bool MixerEngine::isSourceSoloed (int port) const noexcept
+{
+    return isSourceSoloActive() && monitor.sourceSoloPort.load() == port;
 }
 
 void MixerEngine::setSourceName (int index, const juce::String& name)

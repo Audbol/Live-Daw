@@ -113,14 +113,16 @@ Barlow Condensed.
     PLAY 1-48 / 49-64). **+1 AUTO** moves on to the next channel; the lock (red when
     locked, green when open) protects the patch. SOURCES sets each input's source:
     name (RENAME), colour and icon, GAIN, +48V (stored), POL, MUTE and MONO / STEREO /
-    MID-SIDE pairs (a channel patched to a pair becomes stereo), with its meter and
-    the channels using it; channels get the source's processing first. OUTPUTS
+    MID-SIDE pairs (a channel patched to a pair becomes stereo), its mute groups
+    (TAGS), with its meter and the channels using it; channels get the source's
+    processing first. With SOURCE SOLO on, **SRC SOLO** solos the selected source
+    through CH39 or AUX7 (the solo follows the selection; CLR SOLO ends it). OUTPUTS
     works output-first: pick an output, then the signal feeding it (a strip's L / R, or
-    the MONITOR).
+    the MONITOR group's PHONES 1L / 1R and SPEAKERS 2L / 2R).
   - **SETUP:** GENERAL (lighting, clock, console info and size, OPERATION, OPTIONS),
     AUDIO (clock rate, INPUT SELECT: the global MAIN / ALT switch and each channel's,
     preferences such as MAIN LINK, DCA MUTEGROUPS, MUTEGROUP/SIP OVERRIDE, GLOBAL INPUT
-    SELECT OVERRIDE and the TALKBACK channel, SOLO SYSTEM with SOLO MODE LIVE / STUDIO /
+    SELECT OVERRIDE, SOURCE SOLO (CH39 / AUX7) and the TALKBACK channel, SOLO SYSTEM with SOLO MODE LIVE / STUDIO /
     SIP, PFL/AFL per strip type and the solo / select preferences, audio device,
     AUTOMIX), SURFACE (meter taps, SEL DBL CLICK, SOF and scribble options, CH
     AUTOSELECT, FADER SPEED, paging, user layer link, alternative SOF, section widths),
@@ -129,8 +131,11 @@ Barlow Condensed.
     event log), with INITIALIZE CONSOLE and SHUTDOWN. The status bar has MONITORS (the
     toolbar with the talk keys, PHONES / SPEAKERS / PH+SPK, DIM, MUTE, MONO, LR SWAP;
     TALK A / B: switch mode, talkback channel, AUTO DIM, USE SEND LEVELS and the bus,
-    matrix and main destinations; PHONES and SPEAKERS: source, SRC LEVEL, SRC MIX, DIM,
-    PFL DIM, outputs, meter and level) and CC EDIT (also SETUP pressed twice): the custom
+    matrix and main destinations; PHONES and SPEAKERS, each its own: SOURCE, SRC LEVEL,
+    SRC MIX, DIM, PFL DIM, BAND SOLO, DIRECT IN (any channel, bus, main or matrix, at
+    its own level), the EQ (MONITORS EQ: 8 bands, PAN, WIDTH), the DIST slider with
+    INVERT and DELAY, LIMITER with its gain reduction on the meter, and the level) and
+    CC EDIT (also SETUP pressed twice): the custom
     control layers, a function list and the target lists, COLOR, CLR ALL and NAME,
     saved with the show.
   - **LIBRARY:** a file browser with the locations INT (`Documents/Live DAW/Library`),
@@ -350,13 +355,18 @@ and open-source projects (see below), and it is **experimental**.
   test battery and model capture, its OSC client), and every OSC path the Bitfocus
   Companion WING module builds that exists in the 3.1 tree. **WING Edit and WING
   Copilot have not been tried**, so they may not work.
-- **What maps:** 79 % of the WING 3.1 tree's parameters (54,427 of 68,556, counting
-  every model's parameters) drive the engine: channels, aux, buses, mains and
-  matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
+- **What maps:** 82.8 % of the WING 3.1 tree's parameters (56,770 of 68,556,
+  counting every model's parameters) drive the engine: channels, aux, buses, mains
+  and matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
   dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,
-  main sends, solo), DCAs, mute groups, the FX rack, output routing and some console
-  settings. The rest (surface layers, user controls, talkback, cards, ...) is
-  remembered so clients can read back what they wrote, but does nothing.
+  main sends, solo, TAP WIDTH and TAP EQ), DCAs, mute groups, the FX rack, output
+  routing, the sources of the AES50 A/B/C and WING-LIVE card groups (name, colour,
+  icon, gain, mute, polarity, +48V, mode, mute-group tags), SOLO MODE, the solo bus,
+  MUTEGROUP/SIP OVERRIDE and SOURCE SOLO, talkback, both monitor paths (`/cfg/mon`:
+  source, levels, DIM, PFL DIM, BAND SOLO, DIRECT IN, EQ, PAN, WIDTH, INVERT, DELAY,
+  LIMITER), the RTA settings and other console settings. The rest (surface layers,
+  user controls, cards, ...) is remembered so clients can read back what they wrote,
+  but does nothing.
   `cargo run -p livedaw-wing --example wing_coverage` prints the full report.
 - **Files:** LIBRARY > SHOW > **IMPORT WING** applies a WING snapshot (`.snap`) to
   the console, or adds a WING show's (`.show`) snapshots as scenes. The log lists

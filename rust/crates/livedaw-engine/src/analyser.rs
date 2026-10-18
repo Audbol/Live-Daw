@@ -19,7 +19,7 @@ use crate::atomic::AtomicF32;
 use crate::fft::Fft;
 use crate::strip::Strip;
 use livedaw_dsp::biquad::{Biquad, BiquadCoeffs};
-use livedaw_dsp::util::{add_with_gain_ramp, db_to_gain};
+use livedaw_dsp::util::add_with_gain_ramp;
 use std::cell::UnsafeCell;
 use std::sync::atomic::{fence, AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering::*};
 use std::sync::{Arc, Mutex};
@@ -159,7 +159,9 @@ pub struct AnalysisControls {
     pub listen_kind: AtomicI32,
     pub listen_id: AtomicI32,
     pub listen_band: AtomicI32,
-    /// BAND SOLO trim (0..24 dB, the WING's `/cfg/mon/n/eqbdtrim`).
+    /// Unused since ABI 8: each monitor path has its BAND SOLO boost
+    /// (`MonitorDspParams::band_solo_db`, the WING's `/cfg/mon/n/eqbdtrim`).
+    /// Kept for the layout; shows from before ABI 8 load it into both paths.
     pub band_solo_trim_db: AtomicF32,
     /// RTA SETTINGS (HOME) and EQ/RTA SETTINGS (EQ and FILTER).
     pub home: RtaViewSettings,
@@ -880,12 +882,9 @@ impl Analyser {
         if desired != a.effective && a.gain == 0.0 {
             a.effective = desired; // switch while silent
         }
+        // The BAND SOLO boost is the listening monitor path's (add_listen).
         a.target_gain = if a.effective == desired && !desired.is_none() {
-            if mode == listen_mode::BAND {
-                db_to_gain(c.band_solo_trim_db.load().clamp(0.0, 24.0))
-            } else {
-                1.0
-            }
+            1.0
         } else {
             0.0 // fade the old source out first
         };
@@ -903,17 +902,19 @@ impl Analyser {
     }
 
     /// Audio thread, monitor stage (after every strip ran): adds the LISTEN
-    /// signal to the monitor pair.
+    /// signal to the monitor pair. A BAND SOLO plays `band_boost` (the gain of
+    /// the path's BAND SOLO, from `last_boost` in the last block) louder.
     ///
     /// # Safety
     /// Audio thread only, after `begin_block` in the same chunk.
-    pub(crate) unsafe fn add_listen(&self, l: &mut [f32], r: &mut [f32], n: usize) {
+    pub(crate) unsafe fn add_listen(&self, l: &mut [f32], r: &mut [f32], n: usize, last_boost: f32, band_boost: f32) {
         let a = &mut *self.audio.get();
         if !a.effective.is_none() && (a.gain != 0.0 || a.target_gain != 0.0) {
             // The strip is in this block's topology (checked in begin_block).
             let d = (*a.effective.strip).dsp();
-            add_with_gain_ramp(&mut l[..n], d.listen(0, n), a.gain, a.target_gain);
-            add_with_gain_ramp(&mut r[..n], d.listen(1, n), a.gain, a.target_gain);
+            let (from, to) = if a.effective.mode == listen_mode::BAND { (last_boost, band_boost) } else { (1.0, 1.0) };
+            add_with_gain_ramp(&mut l[..n], d.listen(0, n), a.gain * from, a.target_gain * to);
+            add_with_gain_ramp(&mut r[..n], d.listen(1, n), a.gain * from, a.target_gain * to);
         }
         a.gain = a.target_gain;
     }

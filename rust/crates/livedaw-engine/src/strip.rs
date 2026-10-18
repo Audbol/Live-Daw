@@ -17,6 +17,7 @@
 
 use crate::analyser::{listen_mode, rta_tap, Probes, StripProbe};
 use crate::fx::FxRack;
+use crate::monitor::SoloPatch;
 use crate::params::{DcaParams, DynSlotParams, FxParams, StripKind, StripMeters, StripParams, NUM_MAINS, NUM_MATRICES};
 use crate::sends::SendBank;
 use crate::solo::StripConsole;
@@ -68,6 +69,9 @@ pub(crate) struct ProcessContext<'a> {
     pub block: u64,
     /// The analysed and the listened strip of this block.
     pub probes: &'a Probes,
+    /// SOURCE SOLO (`monitor.rs`): the host strip and the soloed source's
+    /// ports, which it plays instead of its own input this block.
+    pub source_solo: Option<(&'a Strip, SoloPatch)>,
 }
 
 impl ProcessContext<'_> {
@@ -424,8 +428,14 @@ impl Strip {
     /// Owning task only. Non-null pointers must be valid for `n` samples.
     unsafe fn read_hardware_inputs(&self, d: &mut StripDsp, ctx: &ProcessContext, n: usize) {
         let p = &self.params;
-        let (left, mut right) = self.active_inputs(ctx.input_select_global, ctx.global_alt);
-        d.num_channels = if p.stereo.load(Relaxed) { 2 } else { 1 };
+        let (left, mut right, stereo) = match ctx.source_solo {
+            Some((host, patch)) if std::ptr::eq(host, self) => (patch.left, patch.right, patch.stereo),
+            _ => {
+                let (l, r) = self.active_inputs(ctx.input_select_global, ctx.global_alt);
+                (l, r, p.stereo.load(Relaxed))
+            }
+        };
+        d.num_channels = if stereo { 2 } else { 1 };
         if d.num_channels == 2 && right < 0 && left >= 0 {
             right = left + 1; // stereo without an explicit right input: next channel
         }

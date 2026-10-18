@@ -1,5 +1,7 @@
 #include "ui/MonitorsPage.h"
 #include "dsp/DspUtils.h"
+#include "ui/HomeWidgets.h"
+#include "ui/ResponseGraph.h"
 #include "ui/WingPopups.h"
 
 namespace livedaw::ui
@@ -99,20 +101,6 @@ namespace
             g.setFont (juce::FontOptions (juce::jmin (15.0f, (float) t.getHeight() * 0.7f), juce::Font::bold));
             g.drawText (juce::String (i + 1), t, juce::Justification::centred);
         }
-    }
-
-    /** An icon key with its caption under it (INVERT, DELAY, EQ), dim when disabled. */
-    void iconKey (juce::Graphics& g, juce::Rectangle<int> r, Icon icon, const juce::String& text, bool enabled)
-    {
-        const auto ink = enabled ? Dark::text : Dark::textDim.withAlpha (0.45f);
-        auto f = r.toFloat();
-        auto label = f.removeFromBottom (f.getHeight() * 0.32f);
-        g.setColour (Dark::key.withAlpha (enabled ? 1.0f : 0.5f));
-        g.fillRect (f);
-        drawIcon (g, icon, f.reduced (f.getHeight() * 0.2f), ink);
-        g.setColour (ink);
-        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 12.0f, label.getHeight() * 0.8f), juce::Font::bold));
-        g.drawFittedText (text, label.toNearestInt(), juce::Justification::centred, 1);
     }
 
     /** A drop-down field (caption over value, dots key), dim when disabled. */
@@ -225,6 +213,271 @@ void KnobField::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelD
 }
 
 //==============================================================================
+/** MONITORS EQ (fig. 73): the 8-band EQ of a monitor path - L (low shelf),
+    1-6 (PEQ), H (high shelf) - with PAN and WIDTH. The top row: ON, the path,
+    PAN, WIDTH, CLOSE; the graph with a line and ring per band (drag: frequency
+    and gain, wheel: Q of a PEQ band); the band keys at the right. The knobs
+    under the display edit the selected band's GAIN, FREQ and Q. */
+class MonitorEqView final : public juce::Component, private juce::Timer
+{
+public:
+    explicit MonitorEqView (MixerEngine& e) : engine (e)
+    {
+        on.isOn = [this] { return dsp().eqOn.load(); };
+        on.onClick = [this] { dsp().eqOn = ! dsp().eqOn.load(); };
+        addAndMakeVisible (on);
+        close.offInk = home::colours::caption;
+        close.onClick = [this] { if (onClose) onClose(); };
+        addAndMakeVisible (close);
+        addAndMakeVisible (pan);
+        addAndMakeVisible (width);
+        for (int i = 0; i < ld::kMonitorEqBands; ++i)
+        {
+            const bool shelf = i == 0 || i == ld::kMonitorEqBands - 1;
+            auto& k = *bandKeys.add (new home::IconKey (shelf ? juce::String ("SHV") : juce::String (i) + "  PEQ",
+                                                        shelf ? std::optional<Icon> (i == 0 ? Icon::LowShelf : Icon::HighShelf) : std::nullopt,
+                                                        Colours::choice));
+            k.isOn = [this, i] { return selected == i; };
+            k.onClick = [this, i] { select (i); };
+            addAndMakeVisible (k);
+        }
+        for (int i = 0; i < 200; ++i)
+            freqs.push_back (20.0f * std::pow (1000.0f, (float) i / 199.0f));
+        setPath (true);
+        startTimerHz (15);
+    }
+
+    std::function<void()> onClose;
+    /** The selected band changed (the parameter bar follows). */
+    std::function<void()> onSelect;
+
+    void setPath (bool phonesPath)
+    {
+        phones = phonesPath;
+        pan.setBinding (home::wingPan ("PAN", dsp().pan));
+        width.setBinding (home::wingWidth ("WIDTH", dsp().width));
+        repaint();
+    }
+
+    void select (int band)
+    {
+        selected = juce::jlimit (0, ld::kMonitorEqBands - 1, band);
+        repaint();
+        if (onSelect)
+            onSelect();
+    }
+
+    /** The parameter bar (fig. 73): the selected band's GAIN and FREQ (and Q). */
+    std::vector<KnobBinding> knobs()
+    {
+        auto& b = dsp().eq[selected];
+        const auto tag = bandTag (selected);
+        const auto [lo, hi] = freqRange (selected);
+        auto freq = home::wingFreq ("FREQ " + tag, b.freq, lo, hi, kDefaultFreqs[selected]);
+        std::vector<KnobBinding> k { {}, bindLinear ("GAIN " + tag, b.gainDb, -15.0f, 15.0f, " dB", 1, 0.0f), {}, freq };
+        if (! isShelf (selected))
+            k.push_back (bindLog ("Q " + tag, b.q, 0.442f, 10.0f, {}, 1.0f));
+        return k;
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds();
+        bar = r.removeFromTop (juce::jlimit (30, 50, getHeight() / 9));
+        auto b = bar.reduced (4, 4);
+        on.setBounds (b.removeFromLeft (juce::jmin (90, b.getWidth() / 9)));
+        close.setBounds (b.removeFromRight (juce::jmin (110, b.getWidth() / 8)));
+        b.removeFromRight (16);
+        width.setBounds (b.removeFromRight (juce::jmin (150, b.getWidth() / 6)));
+        b.removeFromRight (8);
+        pan.setBounds (b.removeFromRight (juce::jmin (150, b.getWidth() / 5)));
+        title = b;
+        r.removeFromTop (6);
+        auto side = r.removeFromRight (juce::jlimit (70, 130, getWidth() * 12 / 100)).reduced (4, 0);
+        r.removeFromRight (4);
+        graph = r.reduced (2, 0).toFloat();
+        const int kh = juce::jmin (40, side.getHeight() / ld::kMonitorEqBands);
+        for (auto* k : bandKeys)
+        {
+            k->setBounds (side.removeFromTop (kh).reduced (0, 2));
+        }
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (juce::Colours::black);
+        g.setColour (Dark::header);
+        g.fillRect (bar);
+        // The path: headphones / speaker icon and its name.
+        auto t = title.reduced (8, 0);
+        auto icon = t.removeFromLeft (t.getHeight()).toFloat().reduced ((float) t.getHeight() * 0.18f);
+        t.removeFromLeft (4);
+        drawIcon (g, phones ? Icon::Headphones : Icon::Speaker, icon, Dark::text);
+        g.setColour (Dark::text);
+        g.setFont (panelTitleFont (bar.getHeight()));
+        g.drawText (phones ? "PHONES" : "SPEAKERS", t, juce::Justification::centredLeft);
+
+        g.setColour (Colours::screenPanel);
+        g.fillRect (graph);
+        auto area = graph.reduced (6.0f, 4.0f);
+        const float rulerH = juce::jlimit (5.0f, 12.0f, area.getHeight() * 0.04f);
+        auto ruler = area.removeFromTop (rulerH);
+        area.removeFromTop (22.0f);
+        auto labels = area.removeFromBottom (16.0f);
+        plot = area;
+        auto xOf = [this] (float hz) { return xForFreq (hz); };
+        g.setColour (juce::Colours::black);
+        g.fillRect (plot);
+        ResponseGraph::paintPianoRuler (g, ruler, xOf);
+        g.setColour (juce::Colour (0xff383838));
+        for (float decade : { 10.0f, 100.0f, 1000.0f, 10000.0f })
+            for (int m = 1; m <= 9; ++m)
+                if (const float f = decade * (float) m; f >= 20.0f && f <= 20000.0f)
+                    g.drawVerticalLine (juce::roundToInt (xForFreq (f)), plot.getY(), plot.getBottom());
+        for (int i = 0; i <= 6; ++i)
+            g.drawHorizontalLine (juce::roundToInt (plot.getY() + (plot.getHeight() - 1.0f) * (float) i / 6.0f), plot.getX(), plot.getRight());
+        g.setColour (Dark::caption);
+        g.setFont (juce::FontOptions (11.0f));
+        for (float f : { 20.0f, 40.0f, 60.0f, 100.0f, 200.0f, 400.0f, 600.0f, 1000.0f, 2000.0f, 4000.0f, 6000.0f, 10000.0f, 20000.0f })
+            g.drawText (f >= 1000.0f ? juce::String (juce::roundToInt (f / 1000.0f)) + "k" : juce::String (juce::roundToInt (f)),
+                        juce::Rectangle<float> (xForFreq (f) - 16.0f, labels.getY() + 2.0f, 32.0f, labels.getHeight() - 2.0f).toNearestInt(),
+                        juce::Justification::centred);
+
+        // The curve over its fill (flat and grey while the EQ is off).
+        const bool active = dsp().eqOn.load();
+        std::vector<float> db (freqs.size(), 0.0f);
+        engine.getMonitorEqResponse (phones, -1, freqs.data(), db.data(), (int) freqs.size());
+        juce::Path curve;
+        for (size_t i = 0; i < db.size(); ++i)
+        {
+            const juce::Point<float> pt (xForFreq (freqs[i]), yForDb (db[i]));
+            if (i == 0)
+                curve.startNewSubPath (pt);
+            else
+                curve.lineTo (pt);
+        }
+        g.saveState();
+        g.reduceClipRegion (plot.toNearestInt());
+        juce::Path fill (curve);
+        fill.lineTo (plot.getRight(), plot.getCentreY());
+        fill.lineTo (plot.getX(), plot.getCentreY());
+        fill.closeSubPath();
+        g.setColour (active ? home::colours::eqFill : juce::Colour (0xff1c1c1c));
+        g.fillPath (fill);
+        g.setColour (active ? home::colours::eqCurve : Dark::caption);
+        g.strokePath (curve, juce::PathStrokeType (2.0f));
+        g.restoreState();
+
+        // A line from its label down and a ring at its gain, per band.
+        for (int i = 0; i < ld::kMonitorEqBands; ++i)
+        {
+            const auto c = handle (i);
+            const bool sel = i == selected;
+            g.setColour (sel ? Colours::choice : juce::Colour (0xff6c6c6c));
+            g.fillRect (c.x - 0.75f, plot.getY() + 2.0f, sel ? 2.5f : 1.5f, plot.getHeight() - 4.0f);
+            g.setColour (sel ? Dark::text : Dark::caption);
+            g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+            g.drawText (bandTag (i), juce::Rectangle<float> (24.0f, 16.0f).withCentre ({ c.x, plot.getY() - 10.0f }).toNearestInt(),
+                        juce::Justification::centred);
+            auto ring = juce::Rectangle<float> (16.0f, 16.0f).withCentre (c);
+            g.setColour (juce::Colours::black);
+            g.fillEllipse (ring);
+            g.setColour (sel ? Colours::choice.brighter (0.4f) : Dark::text);
+            g.drawEllipse (ring, 2.0f);
+        }
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        dragging = -1;
+        float best = 18.0f;
+        for (int i = 0; i < ld::kMonitorEqBands; ++i)
+            if (const float d = handle (i).getDistanceFrom (e.position); d < best)
+            {
+                best = d;
+                dragging = i;
+            }
+        if (dragging < 0 && plot.contains (e.position))
+        {
+            // Touching near a band's line picks it.
+            for (int i = 0; i < ld::kMonitorEqBands; ++i)
+                if (std::abs (handle (i).x - e.position.x) < 8.0f)
+                    dragging = i;
+        }
+        if (dragging >= 0)
+            select (dragging);
+    }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (dragging < 0)
+            return;
+        auto& b = dsp().eq[dragging];
+        const auto [lo, hi] = freqRange (dragging);
+        b.freq = juce::jlimit (lo, hi, freqForX (e.position.x));
+        b.gainDb = juce::jlimit (-15.0f, 15.0f, std::round ((plot.getCentreY() - e.position.y) / (plot.getHeight() * 0.5f) * kRangeDb * 10.0f) / 10.0f);
+        repaint();
+    }
+
+    void mouseUp (const juce::MouseEvent&) override { dragging = -1; }
+
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w) override
+    {
+        if (isShelf (selected))
+            return;
+        auto& q = dsp().eq[selected].q;
+        q = juce::jlimit (0.442f, 10.0f, q.load() * std::pow (1.15f, w.deltaY > 0 ? 1.0f : -1.0f));
+        repaint();
+    }
+
+private:
+    static constexpr float kRangeDb = 18.0f;
+    static constexpr float kDefaultFreqs[ld::kMonitorEqBands] = { 80.0f, 160.0f, 315.0f, 630.0f, 1250.0f, 2500.0f, 5000.0f, 12000.0f };
+
+    static bool isShelf (int band) { return band == 0 || band == ld::kMonitorEqBands - 1; }
+    static juce::String bandTag (int band) { return band == 0 ? "L" : band == ld::kMonitorEqBands - 1 ? "H" : juce::String (band); }
+    static std::pair<float, float> freqRange (int band)
+    {
+        return band == 0 ? std::pair { 20.0f, 2000.0f } : band == ld::kMonitorEqBands - 1 ? std::pair { 200.0f, 20000.0f } : std::pair { 20.0f, 20000.0f };
+    }
+
+    ld::MonitorDspParams& dsp() const noexcept { return engine.monitorPath (phones); }
+    float xForFreq (float f) const { return plot.getX() + plot.getWidth() * std::log (juce::jmax (20.0f, f) / 20.0f) / std::log (1000.0f); }
+    float freqForX (float x) const { return 20.0f * std::pow (1000.0f, juce::jlimit (0.0f, 1.0f, (x - plot.getX()) / plot.getWidth())); }
+    float yForDb (float db) const { return plot.getCentreY() - juce::jlimit (-kRangeDb, kRangeDb, db) / kRangeDb * plot.getHeight() * 0.5f; }
+    juce::Point<float> handle (int band) const
+    {
+        auto& b = dsp().eq[band];
+        return { xForFreq (b.freq.load()), yForDb (b.gainDb.load()) };
+    }
+
+    void timerCallback() override
+    {
+        auto& d = dsp();
+        juce::String state;
+        state << (int) d.eqOn.load() << selected << (int) phones;
+        for (auto& b : d.eq)
+            state << ':' << b.gainDb.load() << ',' << b.freq.load() << ',' << b.q.load();
+        if (state != shown)
+        {
+            shown = state;
+            repaint();
+        }
+    }
+
+    MixerEngine& engine;
+    bool phones = true;
+    int selected = 0, dragging = -1;
+    home::IconKey on { "ON", std::nullopt, Colours::gold }, close { "CLOSE", Icon::Check };
+    KnobField pan, width { {}, Colours::width };
+    juce::OwnedArray<home::IconKey> bandKeys;
+    std::vector<float> freqs;
+    juce::Rectangle<int> bar, title;
+    juce::Rectangle<float> graph, plot;
+    juce::String shown;
+};
+
+//==============================================================================
 MonitorsPage::MonitorsPage (UiContext& c) : ctx (c)
 {
     auto& e = ctx.engine;
@@ -249,23 +502,17 @@ MonitorsPage::MonitorsPage (UiContext& c) : ctx (c)
         { "LR SWAP", Icon::WidthArrows, monoOrange, [&e] { return e.monitorSwap.load(); }, [&e, flip] { flip (e.monitorSwap); }, {} },
     };
 
-    // Not in the engine: drawn as the console's controls, disabled.
-    for (auto [k, label, value] : { std::tuple { &bandSolo, "BAND SOLO", "12 dB" }, std::tuple { &limiter, "LIMITER", "0 dB" } })
-    {
-        k->placeholder = label;
-        k->placeholderValue = value;
-    }
     for (auto* k : { &srcLevel, &srcMix, &dim, &pflDim, &bandSolo, &busDim, &monDim, &limiter })
         addAndMakeVisible (k);
 
-    soloKeys = std::make_unique<ChoiceKeys> (juce::StringArray { "PFL", "AFL" }, [&e] { return e.soloAfl.load() ? 1 : 0; },
-                                             [&e] (int i) { e.soloAfl = i == 1; }, ChoiceKeys::prePost());
-    addAndMakeVisible (*soloKeys);
     switchMode = std::make_unique<ChoiceKeys> (juce::StringArray { "AUTO", "PUSH", "LATCH" }, [this] { return (int) talkPath().mode.load(); },
                                                [this] (int i) { talkPath().mode = i; });
     addAndMakeVisible (*switchMode);
     sendLevels = std::make_unique<OnKey> ([this] { return talkPath().individual.load(); }, [this] (bool on) { talkPath().individual = on; });
     addAndMakeVisible (*sendLevels);
+
+    for (int i = 0; i < 32; ++i)
+        eqKeyFreqs.push_back (20.0 * std::pow (1000.0, (double) i / 31.0));
 
     showTalkTab (0);
     showPathTab (0);
@@ -282,6 +529,11 @@ ld::MonitorSourceParams& MonitorsPage::pathSource() const noexcept
     return showsPhones() ? ctx.engine.phones.source : ctx.engine.speakers;
 }
 
+ld::MonitorDspParams& MonitorsPage::pathDsp() const noexcept
+{
+    return ctx.engine.monitorPath (showsPhones());
+}
+
 std::atomic<float>& MonitorsPage::pathLevel() const noexcept
 {
     return showsPhones() ? ctx.engine.phones.levelDb : ctx.engine.monitorLevelDb;
@@ -290,13 +542,6 @@ std::atomic<float>& MonitorsPage::pathLevel() const noexcept
 std::atomic<float>& MonitorsPage::pathDim() const noexcept
 {
     return showsPhones() ? ctx.engine.phones.dimDb : ctx.engine.monitorDimDb;
-}
-
-std::atomic<int32_t>& MonitorsPage::pathOutput (bool right) const noexcept
-{
-    if (showsPhones())
-        return right ? ctx.engine.phones.outputRight : ctx.engine.phones.outputLeft;
-    return right ? ctx.engine.monitorOutputRight : ctx.engine.monitorOutputLeft;
 }
 
 ld::TalkPathParams& MonitorsPage::talkPath() const noexcept
@@ -317,37 +562,76 @@ void MonitorsPage::showPathTab (int t)
 {
     pathTab = juce::jlimit (0, 1, t);
     auto& src = pathSource();
+    auto& d = pathDsp();
     srcLevel.setBinding (bindFader ("SRC LEVEL", src.sourceLevelDb));
     srcMix.setBinding (bindFader ("SRC MIX", src.sourceMixDb));
     dim.setBinding (bindLinear ("DIM", pathDim(), 0.0f, 40.0f, " dB", 0, 20.0f));
     pflDim.setBinding (bindLinear ("PFL DIM", src.pflDimDb, 0.0f, 40.0f, " dB", 0, 0.0f));
+    bandSolo.setBinding (bindLinear ("BAND SOLO", d.bandSoloDb, 0.0f, 24.0f, " dB", 0, 12.0f));
+    limiter.setBinding (bindLinear ("LIMITER", d.limiterDb, -40.0f, 0.0f, " dB", 0, 0.0f));
+    if (eqView != nullptr)
+        eqView->setPath (showsPhones());
     repaint();
     notifyKnobsChanged(); // the parameter bar follows the path
 }
 
+void MonitorsPage::showEq (bool show)
+{
+    if (show && eqView == nullptr)
+    {
+        eqView = std::make_unique<MonitorEqView> (ctx.engine);
+        eqView->onClose = [this] { showEq (false); };
+        eqView->onSelect = [this] { notifyKnobsChanged(); };
+        addChildComponent (*eqView);
+    }
+    if (eqView == nullptr)
+        return;
+    eqView->setPath (showsPhones());
+    eqView->setBounds (getLocalBounds());
+    eqView->setVisible (show);
+    if (show)
+        eqView->toFront (false);
+    notifyKnobsChanged();
+}
+
+bool MonitorsPage::isEqShown() const noexcept
+{
+    return eqView != nullptr && eqView->isVisible();
+}
+
 std::vector<KnobBinding> MonitorsPage::getKnobs()
 {
-    // The parameter bar (fig. 72): TALK LVL, SRC LEVEL, SRC MIX, PFL DIM, then
-    // the shown path's level and DIM (DIST: no delay here).
-    return { bindFader ("TALK LVL", ctx.engine.talk.levelDb), srcLevel.getBinding(), srcMix.getBinding(), pflDim.getBinding(),
-             bindLinear (showsPhones() ? "PHONES" : "SPEAKERS", pathLevel(), -60.0f, 10.0f, " dB", 1, 0.0f), dim.getBinding() };
+    if (isEqShown())
+        return eqView->knobs();
+    // The parameter bar (fig. 72): TALK LVL, SRC LEVEL, SRC MIX, PFL DIM, DIST,
+    // then the DIRECT IN level (the console has no control for it).
+    auto& d = pathDsp();
+    auto dist = bindLog ("DIST", d.delayM, 0.1f, 100.0f, " m", 0.1f);
+    dist.text = [&m = d.delayM] { return juce::String (m.load(), m.load() < 10.0f ? 1 : 0) + " m"; };
+    return { bindFader ("TALK LVL", ctx.engine.talk.levelDb), srcLevel.getBinding(), srcMix.getBinding(), pflDim.getBinding(), dist,
+             bindFader ("DIR LVL", d.directLevelDb) };
+}
+
+std::vector<KnobStyle> MonitorsPage::getKnobStyles()
+{
+    auto style = [] (KnobStyle::Bar bar, juce::Colour colour)
+    {
+        KnobStyle s;
+        s.bar = bar;
+        s.colour = colour;
+        return s;
+    };
+    if (isEqShown())
+        return { {}, style (KnobStyle::Bar::Centre, KnobColours::white), {}, style (KnobStyle::Bar::Fill, KnobColours::blue),
+                 style (KnobStyle::Bar::Fill, KnobColours::green) };
+    return { style (KnobStyle::Bar::Fill, KnobColours::yellow), style (KnobStyle::Bar::Fill, KnobColours::white),
+             style (KnobStyle::Bar::Fill, KnobColours::white), style (KnobStyle::Bar::Fill, KnobColours::blue),
+             style (KnobStyle::Bar::Fill, Colours::lime), style (KnobStyle::Bar::Fill, KnobColours::blue) };
 }
 
 StatusTitle MonitorsPage::getStatusTitle()
 {
-    StatusTitle t;
-    t.kind = StatusTitle::Kind::Text;
-    t.text = "MONITORS";
-    t.icon = Icon::Monitors;
-    return t;
-}
-
-juce::String MonitorsPage::outputName (int port) const
-{
-    if (port < 0)
-        return "OFF";
-    const auto& names = ctx.engine.getHardwareOutputNames();
-    return port < names.size() && names[port].isNotEmpty() ? names[port].toUpperCase() : "OUT " + juce::String (port + 1);
+    return {}; // the selected channel, as on the console (figs. 72-73)
 }
 
 juce::String MonitorsPage::talkChannelName() const
@@ -359,26 +643,6 @@ juce::String MonitorsPage::talkChannelName() const
     const auto label = juce::String (livedaw::label (s->getKind())) + juce::String (s->getNumber());
     const auto name = stripName (*s);
     return name == s->getLabel() ? label : label + " " + name.toUpperCase();
-}
-
-void MonitorsPage::chooseOutput (bool right)
-{
-    auto& target = pathOutput (right);
-    juce::StringArray items { "OFF" };
-    const int n = juce::jmax (64, ctx.engine.getHardwareOutputNames().size());
-    for (int i = 0; i < n; ++i)
-        items.add (outputName (i));
-    popups::ListOptions options;
-    options.columns = 2;
-    options.caption = (showsPhones() ? "PHONES " : "SPEAKERS ") + juce::String (right ? "R" : "L");
-    anchor.setBounds (right ? rightField : leftField);
-    juce::Component::SafePointer<MonitorsPage> safe (this);
-    popups::chooseFrom (anchor, items, target.load() + 1, [safe, &target] (int i)
-    {
-        target = i - 1;
-        if (safe != nullptr)
-            safe->repaint();
-    }, options);
 }
 
 void MonitorsPage::chooseSource()
@@ -396,6 +660,26 @@ void MonitorsPage::chooseSource()
     popups::chooseFrom (anchor, items, target.load(), [safe, &target] (int i)
     {
         target = i;
+        if (safe != nullptr)
+            safe->repaint();
+    }, options);
+}
+
+void MonitorsPage::chooseDirectIn()
+{
+    // An extra signal mixed into the path: OFF, CH.1-40, AUX.1-8, BUS.1-16, MAIN.1-4, MTX.1-8.
+    auto& target = pathDsp().directSource;
+    juce::StringArray items { "OFF" };
+    for (int i = 0; i < ld::kNumDirectSources; ++i)
+        items.add (MixerEngine::directSourceName (i));
+    popups::ListOptions options;
+    options.columns = 8;
+    options.caption = "DIRECT IN";
+    anchor.setBounds (directField);
+    juce::Component::SafePointer<MonitorsPage> safe (this);
+    popups::chooseFrom (anchor, items, target.load() + 1, [safe, &target] (int i)
+    {
+        target = i - 1;
         if (safe != nullptr)
             safe->repaint();
     }, options);
@@ -431,6 +715,17 @@ void MonitorsPage::chooseTalkChannel()
     }, options);
 }
 
+juce::String MonitorsPage::eqStateKey() const
+{
+    auto& d = pathDsp();
+    juce::String state;
+    state << (int) d.eqOn.load() << (int) d.invert.load() << (int) d.delayOn.load() << ':' << d.delayM.load() << ':' << d.directSource.load()
+          << ':' << pathSource().source.load();
+    for (auto& b : d.eq)
+        state << ':' << b.gainDb.load() << ',' << b.freq.load() << ',' << b.q.load();
+    return state;
+}
+
 void MonitorsPage::timerCallback()
 {
     std::array<float, 2> peak {};
@@ -440,10 +735,23 @@ void MonitorsPage::timerCallback()
         phonesPeak[(size_t) ch] = juce::jmax (ctx.engine.phones.peak[ch].exchange (0.0f), phonesPeak[(size_t) ch] * 0.6f);
         peak[(size_t) ch] = meterPos (dsp::gainToDb (showsPhones() ? phonesPeak[(size_t) ch] : ctx.meters.getMonitor (ch)));
     }
-    if (std::abs (peak[0] - shownPeak[0]) > 0.005f || std::abs (peak[1] - shownPeak[1]) > 0.005f)
+    // The limiter's gain reduction (this page is its only reader), held and released.
+    for (int path = 0; path < 2; ++path)
+    {
+        const float gr = ctx.engine.monitor.paths[path].limiterGrDb.exchange (0.0f);
+        if ((path == 1) == showsPhones())
+            limiterGr = juce::jmax (gr, limiterGr * 0.8f);
+    }
+    if (std::abs (peak[0] - shownPeak[0]) > 0.005f || std::abs (peak[1] - shownPeak[1]) > 0.005f || std::abs (limiterGr - shownGr) > 0.1f)
     {
         shownPeak = peak;
+        shownGr = limiterGr;
         repaint (meterArea.getUnion (faderArea));
+    }
+    if (const auto state = eqStateKey(); state != shownEq)
+    {
+        shownEq = state;
+        repaint (pathArea);
     }
     repaint (toolbar);
     repaint (talkArea);
@@ -509,27 +817,113 @@ void MonitorsPage::paintPath (juce::Graphics& g)
     g.setColour (Dark::body);
     g.fillRect (pathArea);
 
+    auto& d = pathDsp();
     field (g, sourceField, "SOURCE", MixerEngine::monitorSourceName (pathSource().source.load()), true);
-    // DIRECT IN, EQ, INVERT and DELAY: not in the engine.
-    field (g, directField, "DIRECT IN", "OFF", false);
-    iconKey (g, eqKey, Icon::Eq, "EQ", false);
-    iconKey (g, invertKey, Icon::Invert, "INVERT", false);
-    iconKey (g, delayKey, Icon::DeltaT, "DELAY", false);
+    field (g, directField, "DIRECT IN", MixerEngine::directSourceName (d.directSource.load()), true);
+    paintEqKey (g);
 
-    // The distance slider (DIST), disabled.
+    // The boxes: DIM / PFL DIM / BAND SOLO, and the DIST slider with INVERT and DELAY.
+    for (auto box : { dimBox, distBox })
+    {
+        g.setColour (Dark::header);
+        g.fillRect (box);
+        g.setColour (juce::Colours::black);
+        g.drawRect (box, 1);
+    }
+    paintDistSlider (g);
+    auto key = [&g] (juce::Rectangle<int> r, Icon icon, const juce::String& text, bool on, juce::Colour onColour)
+    {
+        auto f = r.toFloat();
+        auto label = f.removeFromBottom (juce::jmin (16.0f, f.getHeight() * 0.32f));
+        g.setColour (on ? onColour : Dark::key);
+        g.fillRoundedRectangle (f.reduced (1.0f), 2.0f);
+        const auto ink = on ? juce::Colours::black : Dark::text;
+        drawIcon (g, icon, f.withSizeKeepingCentre (juce::jmin (f.getWidth(), f.getHeight()), juce::jmin (f.getWidth(), f.getHeight())).reduced (f.getHeight() * 0.2f), ink);
+        g.setColour (on ? onColour : Dark::textDim);
+        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 12.0f, label.getHeight() * 0.85f), juce::Font::bold));
+        g.drawFittedText (text, label.toNearestInt(), juce::Justification::centred, 1, 0.7f);
+    };
+    key (invertKey, Icon::Invert, "INVERT", d.invert.load(), KnobColours::yellow);
+    key (delayKey, Icon::DeltaT, "DELAY", d.delayOn.load(), Colours::lime);
+}
+
+void MonitorsPage::paintEqKey (juce::Graphics& g)
+{
+    // "EQ" and the path's curve (a flat line while the EQ does nothing); gold while on.
+    auto& d = pathDsp();
+    const bool on = d.eqOn.load();
+    auto r = eqKey.toFloat();
+    g.setColour (on ? Colours::gold : Dark::well);
+    g.fillRect (r);
+    g.setColour (on ? juce::Colours::black : Dark::text);
+    auto text = r.removeFromLeft (juce::jmin (r.getWidth() * 0.3f, 40.0f));
+    g.setFont (wingFontPx (juce::jmin (TypeScale::value * getWingScreenHeight(), r.getHeight() * 0.36f)));
+    g.drawText ("EQ", text.reduced (6.0f, 0.0f), juce::Justification::centredLeft);
+    auto c = r.reduced (6.0f, r.getHeight() * 0.25f);
+    std::vector<float> freqs (eqKeyFreqs.begin(), eqKeyFreqs.end()), db (eqKeyFreqs.size(), 0.0f);
+    ctx.engine.getMonitorEqResponse (showsPhones(), -1, freqs.data(), db.data(), (int) freqs.size());
+    juce::Path p;
+    for (size_t i = 0; i < db.size(); ++i)
+    {
+        const juce::Point<float> pt (c.getX() + c.getWidth() * (float) i / (float) (db.size() - 1),
+                                     c.getCentreY() - juce::jlimit (-1.0f, 1.0f, db[i] / 15.0f) * c.getHeight() * 0.5f);
+        if (i == 0)
+            p.startNewSubPath (pt);
+        else
+            p.lineTo (pt);
+    }
+    g.strokePath (p, juce::PathStrokeType (1.5f));
+}
+
+namespace
+{
+    // The DIST slider's scale: 0.1 .. 100 m, logarithmic.
+    float distToPos (float m) { return juce::jlimit (0.0f, 1.0f, std::log (juce::jmax (0.1f, m) / 0.1f) / std::log (1000.0f)); }
+    float posToDist (float p) { return 0.1f * std::pow (1000.0f, juce::jlimit (0.0f, 1.0f, p)); }
+
+    /** The slider's track inside its area (above the value box). */
+    juce::Rectangle<float> distTrack (juce::Rectangle<int> slider)
+    {
+        auto r = slider.toFloat().reduced (2.0f, 8.0f);
+        r.removeFromBottom (juce::jmin (36.0f, r.getHeight() * 0.28f));
+        return r.withTrimmedLeft (r.getWidth() * 0.45f).withWidth (juce::jmin (10.0f, r.getWidth() * 0.25f));
+    }
+} // namespace
+
+void MonitorsPage::paintDistSlider (juce::Graphics& g)
+{
+    auto& d = pathDsp();
+    const bool on = d.delayOn.load();
+    const float m = d.delayM.load();
+    auto track = distTrack (distSlider);
     g.setColour (Dark::well);
-    g.fillRect (distSlider);
-    g.setColour (Dark::textDim.withAlpha (0.5f));
-    g.fillRect (distSlider.withSizeKeepingCentre (3, distSlider.getHeight() - 16));
-    g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-    g.drawText ("0.1 m", distSlider.removeFromBottom (14), juce::Justification::centred);
-
-    // The path's outputs and PFL / AFL.
-    auto o = outputBox;
-    panel (g, o.removeFromTop (juce::jmin (22, o.getHeight() / 3)), "OUTPUT / SOLO");
-    const juce::String side = showsPhones() ? "PHONES " : "SPEAKERS ";
-    field (g, leftField, side + "L", outputName (pathOutput (false).load()), true);
-    field (g, rightField, side + "R", outputName (pathOutput (true).load()), true);
+    g.fillRect (track);
+    const float y = track.getBottom() - track.getHeight() * distToPos (m);
+    g.setColour (on ? Colours::lime : Dark::textDim);
+    g.fillRect (track.withTop (y));
+    // The thumb and the scale.
+    g.setColour (Dark::text);
+    g.fillRect (juce::Rectangle<float> (track.getWidth() + 8.0f, 4.0f).withCentre ({ track.getCentreX(), y }));
+    g.setColour (Dark::textDim);
+    g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+    for (float mark : { 0.1f, 1.0f, 10.0f, 100.0f })
+    {
+        const float my = track.getBottom() - track.getHeight() * distToPos (mark);
+        g.drawText (mark < 1.0f ? juce::String (mark, 1) : juce::String (juce::roundToInt (mark)),
+                    juce::Rectangle<float> (distSlider.getX() + 2.0f, my - 6.0f, track.getX() - distSlider.getX() - 5.0f, 12.0f),
+                    juce::Justification::centredRight);
+    }
+    // The value: the distance, and the delay it makes.
+    auto value = distSlider.toFloat().withTop (track.getBottom() + 6.0f).reduced (2.0f, 0.0f);
+    auto box = value.removeFromTop (juce::jmin (18.0f, value.getHeight() * 0.5f));
+    g.setColour (Dark::key);
+    g.fillRect (box);
+    g.setColour (Dark::text);
+    g.setFont (juce::FontOptions (juce::jmin (13.0f, box.getHeight() * 0.8f), juce::Font::bold));
+    g.drawFittedText (juce::String (m, m < 10.0f ? 1 : 0) + " m", box.toNearestInt(), juce::Justification::centred, 1, 0.7f);
+    g.setColour (on ? Colours::lime : Dark::textDim);
+    g.setFont (juce::FontOptions (juce::jmin (11.0f, value.getHeight() * 0.8f), juce::Font::bold));
+    g.drawFittedText (juce::String (MixerEngine::monitorDelayMs (m), 1) + " ms", value.toNearestInt(), juce::Justification::centred, 1, 0.7f);
 }
 
 void MonitorsPage::paintLevel (juce::Graphics& g)
@@ -538,11 +932,12 @@ void MonitorsPage::paintLevel (juce::Graphics& g)
     g.setColour (Dark::body);
     g.fillRect (levelArea);
 
-    // The meter (L R) with the CLIP .. -60 scale.
+    // The meter (L R) with the CLIP .. -60 scale, and the limiter's gain reduction.
     auto m = meterArea.toFloat();
     g.setColour (Dark::well);
     g.fillRect (m);
-    auto scale = m.removeFromLeft (m.getWidth() * 0.45f);
+    auto scale = m.removeFromLeft (m.getWidth() * 0.38f);
+    auto grBar = m.removeFromRight (juce::jmax (5.0f, m.getWidth() * 0.22f));
     g.setColour (Dark::textDim);
     g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
     for (auto [text, db] : { std::pair { "CLIP", 0.0f }, std::pair { "-6", -6.0f }, std::pair { "-12", -12.0f }, std::pair { "-24", -24.0f },
@@ -562,7 +957,18 @@ void MonitorsPage::paintLevel (juce::Graphics& g)
         auto lit = bar.withTop (bar.getBottom() - bar.getHeight() * level);
         g.setColour (level > meterPos (-0.5f) ? Colours::meterRed : level > meterPos (-12.0f) ? Colours::meterYellow : Colours::meterGreen);
         g.fillRect (lit);
+        g.setColour (Dark::textDim);
+        g.drawText (ch == 0 ? "L" : "R", juce::Rectangle<float> (bar.getX(), bars.getBottom() + 1.0f, bar.getWidth(), 10.0f), juce::Justification::centred);
     }
+    // GR (firmware 1.11): down from the top, 0 .. 20 dB.
+    auto gr = grBar.reduced (1.0f, 6.0f).withTrimmedBottom (8.0f);
+    g.setColour (Dark::key);
+    g.fillRect (gr);
+    g.setColour (Colours::amber);
+    g.fillRect (gr.withHeight (gr.getHeight() * juce::jlimit (0.0f, 1.0f, shownGr / 20.0f)));
+    g.setColour (Dark::textDim);
+    g.setFont (juce::FontOptions (8.0f, juce::Font::bold));
+    g.drawText ("GR", juce::Rectangle<float> (gr.getX() - 4.0f, gr.getBottom() + 1.0f, gr.getWidth() + 8.0f, 10.0f), juce::Justification::centred);
 
     // The level fader (set by PHONES LEVEL / MONITOR LEVEL): a lime fill and a value flag.
     const float levelDb = pathLevel().load();
@@ -587,6 +993,8 @@ void MonitorsPage::paintLevel (juce::Graphics& g)
 void MonitorsPage::resized()
 {
     auto b = getLocalBounds();
+    if (eqView != nullptr)
+        eqView->setBounds (b);
     toolbar = b.removeFromLeft (juce::jlimit (48, 90, getWidth() * 8 / 100));
     b.removeFromLeft (4);
     const int tabH = juce::jlimit (26, 44, getHeight() / 12);
@@ -644,37 +1052,40 @@ void MonitorsPage::resized()
     right.removeFromTop (2);
     pathArea = right;
     {
+        // Two columns (fig. 72). Left: SOURCE, SRC LEVEL, SRC MIX, then a box
+        // with DIM, PFL DIM and BAND SOLO. Right: DIRECT IN, the EQ key, then a
+        // box with the DIST slider, INVERT and DELAY.
         auto p = pathArea.reduced (4);
-        const int rowH = juce::jlimit (30, 52, p.getHeight() / 7);
-        auto top = p.removeFromTop (rowH);
-        sourceField = top.removeFromLeft (top.getWidth() / 2 - 3);
-        top.removeFromLeft (6);
-        directField = top;
-        p.removeFromTop (6);
-        auto knobs = p.removeFromLeft (p.getWidth() / 2 - 3);
+        const int rowH = juce::jlimit (30, 52, (p.getHeight() - 20) / 6);
+        auto leftCol = p.removeFromLeft (p.getWidth() / 2 - 3);
         p.removeFromLeft (6);
-        for (auto* k : { &srcLevel, &srcMix, &dim, &pflDim, &bandSolo })
+        auto rightCol = p;
+
+        sourceField = leftCol.removeFromTop (rowH).reduced (0, 2);
+        leftCol.removeFromTop (4);
+        for (auto* k : { &srcLevel, &srcMix })
         {
-            k->setBounds (knobs.removeFromTop (rowH).reduced (0, 2));
-            knobs.removeFromTop (2);
+            k->setBounds (leftCol.removeFromTop (rowH).reduced (0, 2));
+            leftCol.removeFromTop (2);
         }
-        // Right column: EQ, the distance slider with INVERT and DELAY, then the outputs.
-        eqKey = p.removeFromTop (rowH).reduced (0, 2);
-        p.removeFromTop (4);
-        outputBox = p.removeFromBottom (juce::jmin (p.getHeight() / 2, rowH * 3 + 26));
-        p.removeFromBottom (4);
-        distSlider = p.removeFromLeft (p.getWidth() / 2 - 3);
-        p.removeFromLeft (6);
-        invertKey = p.removeFromTop (p.getHeight() / 2).reduced (0, 2);
-        delayKey = p.reduced (0, 2);
-        auto o = outputBox.withTrimmedTop (juce::jmin (22, outputBox.getHeight() / 3) + 4);
-        const int fh = juce::jmax (18, (o.getHeight() - 8) / 3);
-        leftField = o.removeFromTop (fh);
-        o.removeFromTop (4);
-        rightField = o.removeFromTop (fh);
-        o.removeFromTop (4);
-        soloBox = o;
-        soloKeys->setBounds (soloBox.reduced (0, 1));
+        leftCol.removeFromTop (6);
+        dimBox = leftCol;
+        auto box = dimBox.reduced (3);
+        const int kh = juce::jmin (rowH, box.getHeight() / 3);
+        for (auto* k : { &dim, &pflDim, &bandSolo })
+            k->setBounds (box.removeFromTop (kh).reduced (0, 2));
+
+        directField = rightCol.removeFromTop (rowH).reduced (0, 2);
+        rightCol.removeFromTop (4);
+        eqKey = rightCol.removeFromTop (rowH).reduced (0, 2);
+        rightCol.removeFromTop (8);
+        distBox = rightCol;
+        auto db = distBox.reduced (3);
+        distSlider = db.removeFromLeft (db.getWidth() * 52 / 100);
+        db.removeFromLeft (4);
+        const int keyH = juce::jmin (db.getWidth() + 14, db.getHeight() / 2 - 6);
+        invertKey = db.withHeight (keyH).withY (db.getY() + db.getHeight() / 4 - keyH / 2).reduced (2, 0);
+        delayKey = db.withHeight (keyH).withY (db.getY() + db.getHeight() * 3 / 4 - keyH / 2).reduced (2, 0);
     }
 
     levelHeader = level.removeFromTop (tabH + gap + kDarkHeaderHeight);
@@ -683,11 +1094,20 @@ void MonitorsPage::resized()
     levelArea = level;
     {
         auto l = levelArea.reduced (4);
-        limiter.setBounds (l.removeFromTop (juce::jlimit (30, 52, l.getHeight() / 7)).reduced (0, 2));
+        limiter.setBounds (l.removeFromTop (juce::jlimit (30, 52, (pathArea.getHeight() - 28) / 6)).reduced (0, 2));
         l.removeFromTop (6);
-        meterArea = l.removeFromLeft (l.getWidth() / 2);
+        meterArea = l.removeFromLeft (l.getWidth() * 55 / 100);
         faderArea = l.withTrimmedLeft (4);
     }
+}
+
+void MonitorsPage::setDistanceFromY (int y)
+{
+    auto track = distTrack (distSlider);
+    const float pos = (track.getBottom() - (float) y) / juce::jmax (1.0f, track.getHeight());
+    const float m = posToDist (pos);
+    pathDsp().delayM = m < 10.0f ? std::round (m * 10.0f) / 10.0f : std::round (m);
+    repaint (pathArea);
 }
 
 void MonitorsPage::mouseDown (const juce::MouseEvent& e)
@@ -701,6 +1121,26 @@ void MonitorsPage::mouseDown (const juce::MouseEvent& e)
             repaint (toolbar);
             return;
         }
+    draggingDist = distSlider.contains (e.getPosition());
+    if (draggingDist)
+        setDistanceFromY (e.y);
+}
+
+void MonitorsPage::mouseDrag (const juce::MouseEvent& e)
+{
+    if (draggingDist)
+        setDistanceFromY (e.y);
+}
+
+void MonitorsPage::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
+{
+    if (distSlider.contains (e.getPosition()))
+    {
+        auto& m = pathDsp().delayM;
+        const float pos = distToPos (m.load()) + (w.deltaY > 0.0f ? 0.01f : -0.01f);
+        m = juce::jlimit (0.1f, 100.0f, posToDist (pos));
+        repaint (pathArea);
+    }
 }
 
 void MonitorsPage::mouseUp (const juce::MouseEvent& e)
@@ -710,6 +1150,11 @@ void MonitorsPage::mouseUp (const juce::MouseEvent& e)
         ctx.engine.talkKey (pressedTalk, false);
         pressedTalk = -1;
         repaint (toolbar);
+        return;
+    }
+    if (draggingDist)
+    {
+        draggingDist = false;
         return;
     }
     const auto pos = e.getPosition();
@@ -734,6 +1179,7 @@ void MonitorsPage::mouseUp (const juce::MouseEvent& e)
     auto& talkPathParams = talkPath();
     if (toggle (busTiles, talkPathParams.buses, pos) || toggle (mtxTiles, talkPathParams.matrices, pos) || toggle (mainTiles, talkPathParams.mains, pos))
         return;
+    auto& d = pathDsp();
     if (talkTabs.contains (pos))
         showTalkTab (pos.x < talkTabs.getCentreX() ? 0 : 1);
     else if (pathTabs.contains (pos))
@@ -742,10 +1188,15 @@ void MonitorsPage::mouseUp (const juce::MouseEvent& e)
         chooseTalkChannel();
     else if (sourceField.contains (pos))
         chooseSource();
-    else if (leftField.contains (pos))
-        chooseOutput (false);
-    else if (rightField.contains (pos))
-        chooseOutput (true);
+    else if (directField.contains (pos))
+        chooseDirectIn();
+    else if (eqKey.contains (pos))
+        showEq (true);
+    else if (invertKey.contains (pos))
+        d.invert = ! d.invert.load();
+    else if (delayKey.contains (pos))
+        d.delayOn = ! d.delayOn.load();
+    repaint (pathArea);
 }
 
 } // namespace livedaw::ui

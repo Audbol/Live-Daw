@@ -11,11 +11,13 @@
 pub mod analysis;
 pub mod console;
 pub mod models;
+pub mod monitor;
 pub mod recorder;
 pub mod session;
 pub mod usb;
 pub mod wing;
 
+use livedaw_engine::monitor::{MonitorControls, MonitorDspParams};
 use livedaw_engine::params::{
     DcaParams, DynSlotParams, EqBlockParams, FilterParams, FxParams, InputParams, InsertParams, MainSendParams, MatrixSendParams,
     TapEqParams,
@@ -28,7 +30,7 @@ use std::mem::{offset_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-pub const LD_ABI_VERSION: i32 = 7;
+pub const LD_ABI_VERSION: i32 = 8;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -126,6 +128,14 @@ pub struct LdLayoutInfo {
     pub off_talk_paths: i32,
     pub off_monitor_path_peak: i32,
     pub off_source_peak: i32,
+    // ABI 8: monitor path processing, SOURCE SOLO, source tags
+    pub monitor_dsp: i32,
+    pub monitor_controls: i32,
+    pub off_controls_monitor: i32,
+    pub off_monitor_dsp_eq: i32,
+    pub off_monitor_dsp_pan: i32,
+    pub off_monitor_controls_source_solo: i32,
+    pub off_source_mute_groups: i32,
 }
 
 #[no_mangle]
@@ -201,6 +211,13 @@ pub unsafe extern "C" fn ld_layout_info(out: *mut LdLayoutInfo) {
         off_talk_paths: offset_of!(TalkParams, paths) as i32,
         off_monitor_path_peak: offset_of!(MonitorPathParams, peak) as i32,
         off_source_peak: offset_of!(SourceParams, peak) as i32,
+        monitor_dsp: size_of::<MonitorDspParams>() as i32,
+        monitor_controls: size_of::<MonitorControls>() as i32,
+        off_controls_monitor: offset_of!(EngineControls, monitor) as i32,
+        off_monitor_dsp_eq: offset_of!(MonitorDspParams, eq) as i32,
+        off_monitor_dsp_pan: offset_of!(MonitorDspParams, pan) as i32,
+        off_monitor_controls_source_solo: offset_of!(MonitorControls, source_solo) as i32,
+        off_source_mute_groups: offset_of!(SourceParams, mute_groups) as i32,
     };
 }
 

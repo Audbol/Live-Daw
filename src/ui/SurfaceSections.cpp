@@ -840,7 +840,8 @@ MonitorSection::MonitorSection (UiContext& c) : ctx (c)
         k->setHardware (true);
         addAndMakeVisible (k);
     }
-    // MONITOR LEVEL: the speakers (path A); PHONES LEVEL: the phones (path B).
+    // MONITOR LEVEL: the SPEAKERS path; PHONES LEVEL: the PHONES path (the
+    // LEVEL faders on MONITORS follow them).
     monitorLevel.setBinding (bindLinear ("MONITOR LEVEL", ctx.engine.monitorLevelDb, -60.0f, 10.0f, " dB", 1, 0.0f));
     phonesLevel.setBinding (bindLinear ("PHONES LEVEL", ctx.engine.phones.levelDb, -60.0f, 10.0f, " dB", 1, 0.0f));
     talkLevel.setBinding (bindLinear ("TALK LEVEL", ctx.engine.talk.levelDb, -60.0f, 10.0f, " dB", 1, 0.0f));

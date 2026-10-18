@@ -232,6 +232,38 @@ public:
     void initializeSource (int index) const noexcept { ld::ld_source_initialize (engine, index); }
 
     //==============================================================================
+    // Monitor path processing and SOURCE SOLO (ABI 8, saved with the show;
+    // scenes recall the paths with ROUTING). monitor.paths[0] = SPEAKERS,
+    // [1] = PHONES: DIRECT IN, BAND SOLO, EQ, PAN / WIDTH, INVERT, DELAY, LIMITER.
+
+    ld::MonitorControls& monitor;
+    /** The processing of the PHONES (true) or SPEAKERS path. */
+    ld::MonitorDspParams& monitorPath (bool phonesPath) const noexcept { return monitor.paths[phonesPath ? 1 : 0]; }
+    /** DIRECT IN names ("CH.12", "AUX.6", "MTX.3"; "OFF"). */
+    static juce::String directSourceName (int index);
+    /** Delay in ms for a distance in meters (the DIST slider). */
+    static float monitorDelayMs (float meters) noexcept { return ld::ld_monitor_delay_ms (meters); }
+    /** dB response of a path's EQ at `freqs`: the whole EQ (band < 0) or one band. */
+    void getMonitorEqResponse (bool phonesPath, int band, const float* freqs, float* outDb, int n) const noexcept
+    {
+        ld::ld_monitor_eq_response (engine, phonesPath ? 1 : 0, band, freqs, outDb, n);
+    }
+
+    /** SOURCE SOLO: the strip a soloed source plays on (CH39 / AUX7), nullptr when OFF. */
+    Strip* getSourceSoloHost() const noexcept;
+    /** SRC SOLO on ROUTING > SOURCES: solos the source on input `port` through
+        the host's SOLO (one source at a time: soloing another moves the solo;
+        CLR SOLO ends it), or releases it. */
+    void setSourceSolo (int port, bool on) noexcept;
+    /** The source a source solo plays (selecting a source while soloing moves it there). */
+    void setSourceSoloPort (int port) noexcept;
+    /** The source on `port` is soloed (and SOURCE SOLO is on). */
+    bool isSourceSoloed (int port) const noexcept;
+    /** A source is soloed: SOURCE SOLO is on and its host solos ($srcsolo or its SOLO). */
+    bool isSourceSoloActive() const noexcept;
+    void clearSourceSolo() noexcept;
+
+    //==============================================================================
     // Stability / protection
     std::atomic<bool>& outputProtection;      // brick-wall safety clip on every hardware output
     std::atomic<float>& outputCeilingDb;

@@ -135,3 +135,68 @@ fn scenes_recall_the_monitor_paths_with_routing() {
     assert_eq!(c.phones.level_db.load(), -9.0);
     assert_eq!(c.speakers.source.load(Relaxed), 12);
 }
+
+#[test]
+fn monitor_processing_source_solo_and_source_tags_survive_a_show() {
+    let engine = Engine::new(0);
+    engine.set_num_channels(40);
+    let m = &engine.controls.monitor;
+    for (i, p) in m.paths.iter().enumerate() {
+        let k = i as f32;
+        p.direct_source.store(45 + i as i32, Relaxed);
+        p.direct_level_db.store(-6.0 - k);
+        p.band_solo_db.store(9.0 + k);
+        p.eq_on.store(true, Relaxed);
+        p.eq[0].gain_db.store(3.0 + k);
+        p.eq[4].freq.store(1800.0 + k);
+        p.eq[6].q.store(2.5 + k);
+        p.pan.store(-20.0 + k);
+        p.width.store(80.0 - k);
+        p.invert.store(i == 1, Relaxed);
+        p.delay_on.store(true, Relaxed);
+        p.delay_m.store(12.5 + k);
+        p.limiter_db.store(-6.0 - k);
+    }
+    m.source_solo.store(2, Relaxed);
+    m.source_solo_on.store(true, Relaxed); // a key state: not saved
+    engine.sources().params()[5].mute_groups.store(0b1001, Relaxed);
+
+    let other = round_trip(&engine);
+    let o = &other.controls.monitor;
+    for (i, p) in o.paths.iter().enumerate() {
+        let k = i as f32;
+        assert_eq!(p.direct_source.load(Relaxed), 45 + i as i32);
+        assert_eq!(p.direct_level_db.load(), -6.0 - k);
+        assert_eq!(p.band_solo_db.load(), 9.0 + k);
+        assert!(p.eq_on.load(Relaxed));
+        assert_eq!(p.eq[0].gain_db.load(), 3.0 + k);
+        assert_eq!(p.eq[4].freq.load(), 1800.0 + k);
+        assert_eq!(p.eq[6].q.load(), 2.5 + k);
+        assert_eq!((p.pan.load(), p.width.load()), (-20.0 + k, 80.0 - k));
+        assert_eq!(p.invert.load(Relaxed), i == 1);
+        assert!(p.delay_on.load(Relaxed));
+        assert_eq!(p.delay_m.load(), 12.5 + k);
+        assert_eq!(p.limiter_db.load(), -6.0 - k);
+    }
+    assert_eq!(o.source_solo.load(Relaxed), 2);
+    assert!(!o.source_solo_on.load(Relaxed), "a source solo isn't saved");
+    assert_eq!(other.sources().params()[5].mute_groups.load(Relaxed), 0b1001);
+
+    // Scenes recall the paths' processing with ROUTING.
+    let state = console::capture(&other, section::ALL, None, &mut NoPlugins);
+    o.paths[1].limiter_db.store(0.0);
+    o.paths[0].eq_on.store(false, Relaxed);
+    console::apply(&other, &state, section::FADER, None, false, None, &mut NoPlugins);
+    assert_eq!(o.paths[1].limiter_db.load(), 0.0, "not in the scope");
+    console::apply(&other, &state, section::ROUTING, None, false, None, &mut NoPlugins);
+    assert_eq!(o.paths[1].limiter_db.load(), -7.0);
+    assert!(o.paths[0].eq_on.load(Relaxed));
+
+    // A show from before (one BAND SOLO trim with the RTA settings, no <Dsp>).
+    let old = xml::parse(r#"<Console version="3"><Channels/><Rta bandSoloTrim="5"/></Console>"#).unwrap();
+    console::load_console(&other, &old, &mut NoPlugins, false);
+    assert_eq!(o.paths[0].band_solo_db.load(), 5.0);
+    assert_eq!(o.paths[1].band_solo_db.load(), 5.0);
+    assert!(!o.paths[1].eq_on.load(Relaxed), "the defaults");
+    assert_eq!(o.source_solo.load(Relaxed), 0);
+}
