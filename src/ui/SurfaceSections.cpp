@@ -1753,7 +1753,9 @@ void CustomControlSection::resized()
     // Navigation arrows (a diamond) and the scroll wheel.
     b.removeFromTop (6);
     const int nav = juce::jlimit (14, 24, b.getHeight() / 5);
-    const int wheelSize = juce::jmin (b.getHeight() - 4, b.getWidth() / 2);
+    // The wheel: at most about 0.3 of the section's height, so wide strips
+    // don't blow it up.
+    const int wheelSize = juce::jmin (b.getHeight() - 4, b.getWidth() / 2, h * 3 / 10);
     auto wheelArea = b.removeFromRight (wheelSize + 8);
     wheel.setBounds (wheelArea.withSizeKeepingCentre (wheelSize, wheelSize));
     const auto c = b.getCentre();

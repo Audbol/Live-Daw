@@ -380,37 +380,91 @@ void MainComponent::paint (juce::Graphics& g)
     g.fillAll (screenMaximized ? juce::Colours::black : Colours::background);
 }
 
+int MainComponent::topRowHeight() const
+{
+    const int h = getHeight();
+    // Wide windows are short for their width: past 2:1 the top row (and with
+    // it the screen, the most important part) takes up to 8 % more.
+    const float aspect = (float) getWidth() / (float) juce::jmax (1, h);
+    const float wideBoost = juce::jlimit (0.0f, 0.08f, (aspect - 2.0f) * 0.06f);
+    return juce::jlimit (300, juce::jmax (300, h - 260), juce::roundToInt ((float) h * (topFraction + wideBoost)));
+}
+
+MainComponent::BottomRowPlan MainComponent::planBottomRow (int total, int height) const
+{
+    int fixedStrips = 0, autoCount = 0;
+    for (int s = 0; s < LayerSet::kNumSections; ++s)
+    {
+        const int w = show.layers.getWidth (static_cast<LayerSet::Section> (s));
+        if (w == LayerSet::kAutoWidth)
+            ++autoCount;
+        else
+            fixedStrips += w;
+    }
+
+    // The custom controls section (between center and right) is about four
+    // strips wide plus a key column. When the window is too narrow for usable
+    // strips, its lower part moves under the monitoring panel instead. Strips
+    // are at most about 0.15 of the row's height wide.
+    const int banks = LayerSet::kNumSections * FaderSection::kBankColumnWidth;
+    const int strips = juce::jmax (1, fixedStrips + autoCount * 12);
+    constexpr int ccStrips = 4, minStripWithCc = 50;
+    BottomRowPlan plan;
+    plan.stripW = (total - banks - FaderSection::kBankColumnWidth) / (strips + ccStrips);
+    plan.withCc = plan.stripW >= minStripWithCc;
+    if (! plan.withCc)
+        plan.stripW = (total - banks) / strips;
+    plan.stripW = juce::jlimit (40, juce::jlimit (70, 120, height * 15 / 100), plan.stripW);
+    return plan;
+}
+
+juce::Rectangle<int> MainComponent::consoleArea() const
+{
+    const auto all = getLocalBounds();
+    const int width = all.getWidth();
+    const int topH = topRowHeight();
+
+    // The bottom row at its widest strips (Auto width sections fill any width).
+    int bottomW = 0;
+    const auto plan = planBottomRow (width, all.getHeight() - topH - 6);
+    for (int s = 0; s < LayerSet::kNumSections; ++s)
+    {
+        const int n = show.layers.getWidth (static_cast<LayerSet::Section> (s));
+        if (n == LayerSet::kAutoWidth)
+            return all;
+        bottomW += FaderSection::widthFor (n, plan.stripW);
+    }
+    if (plan.withCc)
+        bottomW += FaderSection::kBankColumnWidth + 4 * plan.stripW;
+
+    // The top row: the channel strip and the monitoring column at their usual
+    // size, the display unit as wide as its height wants.
+    const int topW = juce::jlimit (330, 620, width * 29 / 100) + juce::jlimit (260, 460, width * 22 / 100)
+                     + MainDisplay::preferredWidth (topH);
+
+    return all.withSizeKeepingCentre (juce::jmin (width, juce::jmax (bottomW, topW)), all.getHeight());
+}
+
 void MainComponent::layoutSections()
 {
-    auto b = getLocalBounds();
-    const int topH = juce::jlimit (300, juce::jmax (300, b.getHeight() - 260), juce::roundToInt ((float) b.getHeight() * topFraction));
-    b.removeFromTop (topH + 6);
+    auto b = consoleArea();
+    b.removeFromTop (topRowHeight() + 6);
 
     auto& layers = show.layers;
     int widths[LayerSet::kNumSections];
-    int fixedStrips = 0, autoCount = 0;
+    int autoCount = 0;
     for (int s = 0; s < LayerSet::kNumSections; ++s)
     {
         widths[s] = layers.getWidth (static_cast<LayerSet::Section> (s));
         if (widths[s] == LayerSet::kAutoWidth)
             ++autoCount;
-        else
-            fixedStrips += widths[s];
     }
 
-    // The custom controls section (between center and right) is about four
-    // strips wide plus a key column. When the window is too narrow for usable
-    // strips, its lower part moves under the monitoring panel instead.
     const int total = b.getWidth();
-    const int banks = LayerSet::kNumSections * FaderSection::kBankColumnWidth;
-    const int strips = juce::jmax (1, fixedStrips + autoCount * 12);
-    constexpr int ccStrips = 4, minStripWithCc = 50;
-    int stripW = (total - banks - FaderSection::kBankColumnWidth) / (strips + ccStrips);
-    const bool withCc = stripW >= minStripWithCc;
-    if (! withCc)
-        stripW = (total - banks) / strips;
-    stripW = juce::jlimit (40, 120, stripW);
-    const int ccW = withCc ? FaderSection::kBankColumnWidth + ccStrips * stripW : 0;
+    const auto plan = planBottomRow (total, b.getHeight());
+    const int stripW = plan.stripW;
+    const bool withCc = plan.withCc;
+    const int ccW = withCc ? FaderSection::kBankColumnWidth + 4 * stripW : 0;
     if (withCc != ccInBottomRow)
     {
         ccInBottomRow = withCc;
@@ -418,11 +472,17 @@ void MainComponent::layoutSections()
         layoutTopRow();
     }
 
-    int x = 0;
     int remaining = total - ccW;
     for (int s = 0; s < LayerSet::kNumSections; ++s)
         if (widths[s] != LayerSet::kAutoWidth)
             remaining -= FaderSection::widthFor (widths[s], stripW);
+
+    // What the strips leave: a few pixels go to the last section; more (the
+    // strips at their widest) is shared either side, the row centred.
+    int x = b.getX();
+    const bool centred = autoCount == 0 && remaining >= stripW;
+    if (centred)
+        x += remaining / 2;
 
     for (int s = 0; s < LayerSet::kNumSections; ++s)
     {
@@ -442,8 +502,8 @@ void MainComponent::layoutSections()
         {
             w = FaderSection::widthFor (widths[s], stripW);
         }
-        if (s == LayerSet::kNumSections - 1)
-            w = juce::jmax (w, total - x);
+        if (s == LayerSet::kNumSections - 1 && ! centred)
+            w = juce::jmax (w, b.getRight() - x);
         sections[s]->setBounds (x, b.getY(), w, b.getHeight());
         x += w;
     }
@@ -457,20 +517,21 @@ void MainComponent::layoutSections()
 
 void MainComponent::layoutTopRow()
 {
-    auto b = getLocalBounds();
-    const int topH = juce::jlimit (300, juce::jmax (300, b.getHeight() - 260), juce::roundToInt ((float) b.getHeight() * topFraction));
-    auto top = b.removeFromTop (topH);
+    auto b = consoleArea();
+    auto top = b.removeFromTop (topRowHeight());
     splitter.setBounds (b.removeFromTop (6));
 
     // Channel strip section about 29%, the right column about 22%, the main
     // display (keys, screen and its right-hand column) in between. The right
     // column holds the monitoring panel over the 4-Channel section (which works
     // on the right fader section below it); narrow windows put the lower part
-    // of the custom controls there instead of the 4-Channel section.
+    // of the custom controls there instead of the 4-Channel section. Width
+    // the display unit can't use is shared either side of it.
     const int stripW = juce::jlimit (330, 620, top.getWidth() * 29 / 100);
     const int monitorW = juce::jlimit (260, 460, top.getWidth() * 22 / 100);
     channelStrip->setBounds (top.removeFromLeft (stripW));
     auto right = top.removeFromRight (monitorW);
+    top = top.withSizeKeepingCentre (juce::jmin (top.getWidth(), MainDisplay::preferredWidth (top.getHeight())), top.getHeight());
     fourChannel->setVisible (ccInBottomRow && ! editorShown && ! screenMaximized);
     if (! ccInBottomRow)
         customControls->setBounds (right.removeFromBottom (right.getHeight() * 45 / 100));

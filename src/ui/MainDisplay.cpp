@@ -1796,13 +1796,35 @@ void MainDisplay::mouseDoubleClick (const juce::MouseEvent& e)
         ctx.setScreenMaximized (! ctx.isScreenMaximized());
 }
 
+namespace
+{
+    // The frame around the screen: the key column, the right-hand column (at
+    // least `rightMin`, at most `rightMax` for a screen `screenH` tall) and the
+    // encoder row under the screen.
+    int displayNavWidth (int width) { return juce::jlimit (60, 92, width * 8 / 100); }
+    int displayRightMin (int width) { return juce::jlimit (56, 84, width * 7 / 100); }
+    int displayRightMax (int width, int screenH) { return juce::jlimit (displayRightMin (width), 2 * displayRightMin (width), screenH * 22 / 100); }
+    int displayEncoderHeight (int height) { return juce::jlimit (28, 52, (height - 16) * 9 / 100); }
+    int displayScreenHeight (int height) { return height - 16 - displayEncoderHeight (height) - 8; }
+} // namespace
+
+int MainDisplay::preferredWidth (int height)
+{
+    const int screenW = displayScreenHeight (height) * 16 / 10;
+    // The side columns depend on the width; a few rounds settle it.
+    int w = 92 + 20 + screenW + 168;
+    for (int i = 0; i < 3; ++i)
+        w = displayNavWidth (w) + 20 + screenW + displayRightMax (w, displayScreenHeight (height));
+    return w;
+}
+
 void MainDisplay::resized()
 {
     auto b = getLocalBounds();
-    const int navW = juce::jlimit (60, 92, b.getWidth() * 8 / 100);
-    const int rightMin = juce::jlimit (56, 84, b.getWidth() * 7 / 100);
+    const int navW = displayNavWidth (b.getWidth());
+    const int rightMin = displayRightMin (b.getWidth());
     // The six touch encoders sit under the screen's bezel.
-    const int encoderH = juce::jlimit (28, 52, (b.getHeight() - 16) * 9 / 100);
+    const int encoderH = displayEncoderHeight (b.getHeight());
     if (maximized)
     {
         // Screen only: the frame shrinks around the largest 16:10 screen that
@@ -1814,12 +1836,20 @@ void MainDisplay::resized()
             h = w * 10 / 16;
         b = b.withSizeKeepingCentre (navW + w + 20 + rightMin, h + 16 + encoderH + 8);
     }
+    else
+    {
+        // The screen is 16:10; width it doesn't need goes to the right column,
+        // up to a point: past that the unit stays together, centred.
+        const int screenH = b.getHeight() - 16 - encoderH - 8;
+        const int unitW = navW + 20 + screenH * 16 / 10 + displayRightMax (b.getWidth(), screenH);
+        if (b.getWidth() > unitW)
+            b = b.withSizeKeepingCentre (unitW, b.getHeight());
+    }
     frameArea = b;
     auto nav = b.removeFromLeft (navW);
     auto avail = b.withTrimmedRight (rightMin).reduced (10, 8);
     auto screenAvail = avail.withTrimmedBottom (encoderH + 8);
 
-    // The screen is 16:10; width it doesn't need goes to the right column.
     int w = screenAvail.getWidth(), h = screenAvail.getHeight();
     if (w * 10 > h * 16)
         w = h * 16 / 10;

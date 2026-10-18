@@ -62,6 +62,11 @@ public:
     void setMaximized (bool);
     bool isMaximized() const noexcept { return maximized; }
 
+    /** The width the display unit (keys, the 16:10 screen as tall as `height`
+        allows, its right-hand column) wants at that height: more than this
+        only leaves empty panel beside it. */
+    static int preferredWidth (int height);
+
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseUp (const juce::MouseEvent&) override;
