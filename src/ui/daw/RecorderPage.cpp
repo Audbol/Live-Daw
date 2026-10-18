@@ -468,7 +468,7 @@ void RecorderPage::resized()
     markersPanel = b;
 
     // Panel headers with their tool keys (NAME / DELETE, UPDATE / DELETE).
-    const int headerH = kDarkHeaderHeight;
+    const int headerH = darkHeaderHeight();
     auto sh = sessionsPanel.withHeight (headerH);
     renameKey.setBounds (sh.removeFromLeft (46));
     deleteKey.setBounds (sh.removeFromRight (46));
@@ -560,14 +560,14 @@ void RecorderPage::paint (juce::Graphics& g)
     g.drawFittedText ("SESSION: " + project.getName().toUpperCase() + (project.isDirty() ? " *" : ""),
                       h.withTrimmedRight (editKey.getRight() - newKey.getX() + 10), juce::Justification::centredLeft, 1, 0.7f);
 
-    paintPanelHeader (g, player.withHeight (kDarkHeaderHeight), "PLAYER");
+    paintPanelHeader (g, player.withHeight (darkHeaderHeight()), "PLAYER");
     g.setColour (Dark::body);
-    g.fillRect (player.withTrimmedTop (kDarkHeaderHeight + 2));
-    paintPanelHeader (g, sessionsPanel.withHeight (kDarkHeaderHeight), "SESSIONS");
-    paintPanelHeader (g, markersPanel.withHeight (kDarkHeaderHeight), "MARKERS");
-    paintPanelHeader (g, tracksPanel.withHeight (kDarkHeaderHeight), "TRACKS");
+    g.fillRect (player.withTrimmedTop (darkHeaderHeight() + 2));
+    paintPanelHeader (g, sessionsPanel.withHeight (darkHeaderHeight()), "SESSIONS");
+    paintPanelHeader (g, markersPanel.withHeight (darkHeaderHeight()), "MARKERS");
+    paintPanelHeader (g, tracksPanel.withHeight (darkHeaderHeight()), "TRACKS");
     g.setColour (Dark::body);
-    g.fillRect (tracksPanel.withTrimmedTop (kDarkHeaderHeight + 2));
+    g.fillRect (tracksPanel.withTrimmedTop (darkHeaderHeight() + 2));
     paintPlayer (g);
     paintTracks (g);
 }

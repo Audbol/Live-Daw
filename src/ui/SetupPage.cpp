@@ -291,7 +291,7 @@ namespace
             auto body = drawDarkPanel (g, getLocalBounds(), "CONSOLE");
             g.setColour (Dark::box);
             g.fillRect (infoBox);
-            drawDarkPanel (g, dataBox, "DATA", juce::jmin (kDarkHeaderHeight, dataBox.getHeight() / 2));
+            drawDarkPanel (g, dataBox, dataTitled ? "DATA" : "", darkHeaderHeight());
             (void) body;
 
             auto* device = ctx.deviceManager.getCurrentAudioDevice();
@@ -314,15 +314,15 @@ namespace
             }
 
             g.setColour (Dark::textDim);
-            g.setFont (juce::FontOptions (juce::jlimit (6.0f, 12.0f, (float) chRow.getHeight() * 0.36f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::statusCaption, (float) configCaption.getHeight() * 0.9f));
             g.drawText ("CONFIGURATION", configCaption, juce::Justification::bottomLeft);
             for (auto [row, label, value, valueArea] : { std::tuple { chRow, "CHANNELS", (int) ctx.engine.getChannels().size(), chValue },
                                                          std::tuple { busRow, "BUSES", (int) ctx.engine.getBuses().size(), busValue } })
             {
                 g.setColour (Dark::text);
-                g.setFont (juce::FontOptions (juce::jlimit (8.0f, 16.0f, (float) row.getHeight() * 0.55f), juce::Font::bold));
+                g.setFont (wingFontFit (TypeScale::body, (float) row.getHeight() * 0.55f));
                 g.drawText (label, row, juce::Justification::centredLeft);
-                g.setFont (juce::FontOptions (juce::jlimit (8.0f, 20.0f, (float) row.getHeight() * 0.7f), juce::Font::bold));
+                g.setFont (wingFontFit (TypeScale::value, (float) row.getHeight() * 0.7f, WingWeight::SemiBold));
                 g.drawText (juce::String (value), valueArea, juce::Justification::centred);
             }
         }
@@ -330,7 +330,12 @@ namespace
         void resized() override
         {
             auto b = darkPanelBody (getLocalBounds(), true);
-            dataBox = b.removeFromBottom (juce::jmin (kDarkHeaderHeight + 48, b.getHeight() / 3));
+            // [fig. 33] the DATA box: its header over two 48 px keys (of the
+            // WING's 800 px screen). In a small window the header goes, so the
+            // keys keep a usable height.
+            const int dataKeyH = juce::roundToInt (getWingScreenHeight() * 0.096f);
+            dataTitled = darkHeaderHeight() + dataKeyH <= b.getHeight() / 3;
+            dataBox = b.removeFromBottom (dataTitled ? darkHeaderHeight() + dataKeyH : juce::jlimit (16, dataKeyH, b.getHeight() / 4));
             b.removeFromBottom (4);
             infoBox = b;
             auto r = b.reduced (8, 4);
@@ -356,7 +361,7 @@ namespace
                 *value = keys;
             }
 
-            auto d = darkPanelBody (dataBox, true, juce::jmin (kDarkHeaderHeight, dataBox.getHeight() / 2)).reduced (6, 5);
+            auto d = darkPanelBody (dataBox, dataTitled, darkHeaderHeight()).reduced (6, 5);
             dataKey.setBounds (d.removeFromLeft (d.getWidth() / 2).reduced (3, 0));
             showKey.setBounds (d.reduced (3, 0));
         }
@@ -377,6 +382,7 @@ namespace
         WingKey editKey { "EDIT", Icon::Edit }, chMinus { "-" }, chPlus { "+" }, chWing { "WING" }, busMinus { "-" }, busPlus { "+" },
             dataKey { "DATA FOLDER", Icon::Folder }, showKey { "SHOW FOLDER", Icon::Folder };
         juce::Rectangle<int> infoBox, dataBox, infoRows[4], configCaption, chRow, busRow, chValue, busValue;
+        bool dataTitled = true;
     };
 
     //==============================================================================
@@ -478,7 +484,7 @@ namespace
             b.removeFromLeft (gap);
             auto optionsArea = b;
             console.setBounds (consoleArea);
-            const int rowH = fitRowHeight (optionsArea.getHeight() - kDarkHeaderHeight - 24, 6.0f);
+            const int rowH = fitRowHeight (optionsArea.getHeight() - darkHeaderHeight() - 24, 6.0f);
             operation.rowHeight = options.rowHeight = rowH;
             operation.setBounds (operationArea.withHeight (juce::jmin (operationArea.getHeight(), operation.preferredHeight())));
             options.setBounds (optionsArea.withHeight (juce::jmin (optionsArea.getHeight(), options.preferredHeight())));
@@ -715,8 +721,8 @@ namespace
             // The title stays centred, clear of the CLEAR key at the right.
             auto body = drawDarkPanel (g, errorsArea, " ");
             g.setColour (Dark::caption);
-            g.setFont (panelTitleFont (kDarkHeaderHeight));
-            g.drawFittedText ("ERRORS", errorsArea.withHeight (kDarkHeaderHeight).reduced (clearKey.getWidth() + 2, 0), juce::Justification::centred, 1, 0.8f);
+            g.setFont (panelTitleFont (darkHeaderHeight()));
+            g.drawFittedText ("ERRORS", errorsArea.withHeight (darkHeaderHeight()).reduced (clearKey.getWidth() + 2, 0), juce::Justification::centred, 1, 0.8f);
             auto* d = ctx.deviceManager.getCurrentAudioDevice();
             const std::pair<const char*, juce::String> rows[] = { { "XRUNS", d != nullptr ? juce::String (d->getXRunCount()) : juce::String ("-") },
                                                                   { "SAFETY CLIPS", juce::String (ctx.engine.outputClipEvents.load()) } };
@@ -745,7 +751,7 @@ namespace
             b.removeFromLeft (gap);
             auto c4 = b;
 
-            const int rowH = fitRowHeight (getHeight() - kDarkHeaderHeight - 30, 11.0f);
+            const int rowH = fitRowHeight (getHeight() - darkHeaderHeight() - 30, 11.0f);
             for (auto* p : { &clock, &inputSelect, &prefsPanel, &solo, &device, &automix })
                 p->rowHeight = rowH;
 
@@ -758,8 +764,8 @@ namespace
             c4.removeFromTop (gap);
             automix.setBounds (c4.removeFromTop (automix.preferredHeight()));
             c4.removeFromTop (gap);
-            errorsArea = c4.withHeight (juce::jmin (c4.getHeight(), kDarkHeaderHeight + 2 + rowH * 2 + 12));
-            clearKey.setBounds (errorsArea.withHeight (kDarkHeaderHeight).removeFromRight (kDarkHeaderHeight + 16).reduced (2, 1));
+            errorsArea = c4.withHeight (juce::jmin (c4.getHeight(), darkHeaderHeight() + 2 + rowH * 2 + 12));
+            clearKey.setBounds (errorsArea.withHeight (darkHeaderHeight()).removeFromRight (darkHeaderHeight() + 16).reduced (2, 1));
         }
 
     private:
@@ -956,7 +962,7 @@ namespace
         {
             auto b = getLocalBounds();
             const int gap = 4, w = (b.getWidth() - 2 * gap) / 3;
-            const int rowH = fitRowHeight (getHeight() - kDarkHeaderHeight - 24, 13.0f);
+            const int rowH = fitRowHeight (getHeight() - darkHeaderHeight() - 24, 13.0f);
             for (auto* p : { &metering, &general, &faders })
                 p->rowHeight = rowH;
             for (auto* p : { &metering, &general, &faders })
@@ -1384,11 +1390,11 @@ namespace
         void resized() override
         {
             auto b = getLocalBounds();
-            const int rowH = fitRowHeight (getHeight() - kDarkHeaderHeight - 30, 10.0f);
+            const int rowH = fitRowHeight (getHeight() - darkHeaderHeight() - 30, 10.0f);
             for (auto* p : { &midi, &ha, &network, &lock })
                 p->rowHeight = rowH;
             // MIDI REMOTE CONTROL and MIDI PORTS share the left column with the port status.
-            midi.rowHeight = ports.rowHeight = juce::jmin (rowH, fitRowHeight (getHeight() - 2 * kDarkHeaderHeight - 110, 11.0f));
+            midi.rowHeight = ports.rowHeight = juce::jmin (rowH, fitRowHeight (getHeight() - 2 * darkHeaderHeight() - 110, 11.0f));
             wing.rowHeight = juce::jmax (18, rowH * 4 / 5); // leaves room for the client list
             const int gap = 4;
             auto c1 = b.removeFromLeft (b.getWidth() * 40 / 100);
@@ -1734,8 +1740,8 @@ namespace
             auto b = getLocalBounds();
             disclaimer = b.removeFromBottom (44).reduced (6, 2);
             auto area = b.withWidth (b.getWidth() * 60 / 100);
-            daw.rowHeight = fitRowHeight (area.getHeight() - kDarkHeaderHeight - 20, 9.0f);
-            panel = area.withHeight (juce::jmin (area.getHeight(), daw.preferredHeight() + kDarkHeaderHeight + 2));
+            daw.rowHeight = fitRowHeight (area.getHeight() - darkHeaderHeight() - 20, 9.0f);
+            panel = area.withHeight (juce::jmin (area.getHeight(), daw.preferredHeight() + darkHeaderHeight() + 2));
             auto body = darkPanelBody (panel, true);
             auto right = body.removeFromRight (body.getWidth() / 2);
             daw.setBounds (body);
