@@ -9,7 +9,9 @@ namespace livedaw::ui
     layer keys, the shift keys ◄4 / 4► and any further user layers; SOF FLIP on
     the center section) and the fader strips. A layer longer than the section
     is scrolled with the shift keys, 4 faders at a time (8 or 12 per
-    SETUP > SURFACE); holding them jumps to the first / last layer. */
+    SETUP > SURFACE); holding them jumps to the first / last layer. While the
+    section spills (a DCA, bus, FX slot, automix group or a strip's sends) it
+    shows the spill and no layer key is lit; a layer key ends the spill. */
 class FaderSection final : public juce::Component
 {
 public:

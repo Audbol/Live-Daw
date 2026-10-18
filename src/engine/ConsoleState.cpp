@@ -83,14 +83,66 @@ std::vector<ld::StripRefC> toC (const std::vector<StripRef>& refs)
 
 ld::FaderRefC FaderRef::toC() const noexcept
 {
-    return dca ? ld::FaderRefC { ld::kFaderDca, dcaIndex } : ld::FaderRefC { static_cast<int32_t> (strip.kind), strip.id };
+    if (dca)
+        return { ld::kFaderDca, dcaIndex, -1, 0 };
+    if (fxParam)
+        return { ld::kFaderFxParam, fxSlot, -1, param };
+    if (send)
+        return { static_cast<int32_t> (strip.kind), strip.id, static_cast<int32_t> (to.kind), to.id };
+    return { static_cast<int32_t> (strip.kind), strip.id, -1, 0 };
 }
 
 FaderRef FaderRef::fromC (ld::FaderRefC r) noexcept
 {
     if (r.kind == ld::kFaderDca)
         return ofDca (r.id);
-    return of (StripRef::fromC ({ r.kind, r.id }));
+    if (r.kind == ld::kFaderFxParam)
+        return ofFxParam (r.id, r.toId);
+    const auto from = StripRef::fromC ({ r.kind, r.id });
+    if (r.toKind == ld::kBus || r.toKind == ld::kMain || r.toKind == ld::kMatrix)
+        return ofSend (from, StripRef::fromC ({ r.toKind, r.toId }));
+    return of (from);
+}
+
+Scope Scope::only (juce::uint32 sections, std::vector<StripRef> strips)
+{
+    Scope s;
+    s.sections = sections;
+    s.allStrips = false;
+    s.strips = std::move (strips);
+    s.dcas = s.muteGroups = s.fx = 0;
+    s.console = false;
+    return s;
+}
+
+bool Scope::includes (const StripRef& r) const
+{
+    return allStrips || std::find (strips.begin(), strips.end(), r) != strips.end();
+}
+
+bool Scope::operator== (const Scope& o) const
+{
+    return sections == o.sections && allStrips == o.allStrips && (allStrips || strips == o.strips) && dcas == o.dcas
+           && muteGroups == o.muteGroups && fx == o.fx && console == o.console;
+}
+
+ld::ScopeC Scope::toC (const std::vector<ld::StripRefC>& cStrips) const noexcept
+{
+    return { sections, dcas, muteGroups, fx, console, allStrips, cStrips.data(), (int32_t) cStrips.size() };
+}
+
+Scope Scope::fromC (const ld::ScopeC& c, const std::vector<ld::StripRefC>& cStrips)
+{
+    Scope s;
+    s.sections = c.sections;
+    s.dcas = c.dcas;
+    s.muteGroups = c.muteGroups;
+    s.fx = c.fx;
+    s.console = c.console;
+    s.allStrips = c.allStrips;
+    for (auto r : cStrips)
+        s.strips.push_back (StripRef::fromC (r));
+    return s;
 }
 
 ApplyResult ApplyResult::fromC (ld::ApplyResultC& r)

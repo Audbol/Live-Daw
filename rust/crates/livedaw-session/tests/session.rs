@@ -818,3 +818,399 @@ fn alt_inputs_and_input_select_are_saved_and_recalled_with_routing() {
     assert!(!ch(&e3, 0).params.alt_selected.load(Relaxed));
     assert!(!e3.controls.input_select_global.load(Relaxed) && !e3.controls.global_alt.load(Relaxed));
 }
+
+// ---- scopes, global safes, partial load / update, restore, snippet REC -----------------
+
+fn mute_groups(engine: &Engine) -> u32 {
+    engine.controls.mute_groups.load(Relaxed)
+}
+
+#[test]
+fn per_strip_scene_scope_and_item_masks() {
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    engine.set_num_channels(3);
+    let mut show = Show::new();
+    show.add_scene(&engine, &mut np, "A", -1);
+    let (a, b) = (ch(&engine, 0), ch(&engine, 1));
+    {
+        let scene = show.scene_mut(0).unwrap();
+        let mut scope = scene.recall_scope();
+        scope.strips = Some(vec![StripRef::of(&a)]);
+        scope.dcas = 0b10; // DCA 2 only
+        scope.fx = 0;
+        scene.set_recall_scope(&scope);
+    }
+    a.params.fader_db.store(-20.0);
+    b.params.fader_db.store(-20.0);
+    engine.controls.dcas[0].fader_db.store(-7.0);
+    engine.controls.dcas[1].fader_db.store(-7.0);
+    engine.controls.fx[2].mix.store(30.0);
+
+    let r = show.recall_scene(&engine, &mut np, 0);
+    assert_eq!(r.strips_applied, 1);
+    assert_eq!(a.params.fader_db.load(), 0.0);
+    assert_eq!(b.params.fader_db.load(), -20.0, "outside the scene's strips");
+    assert_eq!(engine.controls.dcas[0].fader_db.load(), -7.0, "DCA 1 is outside the scope");
+    assert_eq!(engine.controls.dcas[1].fader_db.load(), 0.0);
+    assert_eq!(engine.controls.fx[2].mix.load(), 30.0, "no FX slot in the scope");
+
+    // The scope survives a save and load; older scenes recall everything.
+    let (_, loaded) = round_trip(&engine, &show);
+    assert_eq!(loaded.scene(0).unwrap().recall_scope(), show.scene(0).unwrap().recall_scope());
+    let old = show.to_xml(&engine, &mut np).to_document().replace("scopeStrips=", "x=").replace("scopeDca=", "y=");
+    let mut older = Show::new();
+    older.load_from_text(&Engine::new(0), &mut np, &old, true).unwrap();
+    let scope = older.scene(0).unwrap().recall_scope();
+    assert_eq!((scope.strips, scope.dcas), (None, scope::ALL_DCAS));
+}
+
+#[test]
+fn global_safes_beyond_strips() {
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    engine.set_num_channels(2);
+    let mut show = Show::new();
+    show.add_scene(&engine, &mut np, "A", -1);
+    show.scene_mut(0).unwrap().scope = section::ALL;
+    let a = ch(&engine, 0);
+
+    show.global_safe = GlobalSafe { sections: section::GATE, dcas: 1, mute_groups: 0b100, fx: 1 << 3, console: true };
+    a.params.gate.on.store(true, Relaxed);
+    a.params.fader_db.store(-12.0);
+    engine.controls.dcas[0].fader_db.store(-5.0);
+    engine.controls.dcas[1].fader_db.store(-5.0);
+    engine.controls.mute_groups.store(0b101, Relaxed);
+    engine.controls.fx[3].mix.store(40.0);
+    engine.controls.fx[4].mix.store(40.0);
+    engine.controls.monitor_dim_db.store(-30.0);
+
+    show.recall_scene(&engine, &mut np, 0);
+    assert!(a.params.gate.on.load(Relaxed), "the gate is a safe section");
+    assert_eq!(a.params.fader_db.load(), 0.0);
+    assert_eq!(engine.controls.dcas[0].fader_db.load(), -5.0, "DCA 1 is safe");
+    assert_eq!(engine.controls.dcas[1].fader_db.load(), 0.0);
+    assert_eq!(mute_groups(&engine), 0b100, "group 3 is safe, group 1 recalled off");
+    assert_eq!(engine.controls.fx[3].mix.load(), 40.0, "FX 4 is safe");
+    assert_eq!(engine.controls.fx[4].mix.load(), 100.0);
+    assert_eq!(engine.controls.monitor_dim_db.load(), -30.0, "the console settings are safe");
+
+    // RESTORE ignores every safe and the scope.
+    show.scene_mut(0).unwrap().scope = section::FADER;
+    a.params.recall_safe.store(true, Relaxed);
+    let r = show.recall_scene_with(&engine, &mut np, 0, None, false);
+    assert_eq!(r.strips_skipped_safe, 0);
+    assert!(!a.params.gate.on.load(Relaxed));
+    assert_eq!(engine.controls.dcas[0].fader_db.load(), 0.0);
+    assert_eq!(mute_groups(&engine), 0);
+    assert_eq!(engine.controls.fx[3].mix.load(), 100.0);
+
+    // The safes are saved with the show; a new show has none.
+    let (_, loaded) = round_trip(&engine, &show);
+    assert_eq!(loaded.global_safe, show.global_safe);
+    let mut cleared = Show::new();
+    cleared.global_safe.dcas = 3;
+    cleared.clear(&engine, 2);
+    assert!(cleared.global_safe.is_empty());
+}
+
+#[test]
+fn partial_load_and_update_keep_their_scope() {
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    engine.set_num_channels(2);
+    let mut show = Show::new();
+    show.add_scene(&engine, &mut np, "A", -1);
+    let (a, b) = (ch(&engine, 0), ch(&engine, 1));
+
+    // PARTIAL UPDATE: only channel 1's fader goes into the scene.
+    a.params.fader_db.store(-4.0);
+    a.params.gate.on.store(true, Relaxed);
+    b.params.fader_db.store(-8.0);
+    let only_a = Scope::strips(section::FADER, vec![StripRef::of(&a)]);
+    show.store_scene_partial(&engine, &mut np, 0, &only_a);
+    assert_eq!(show.partial_scope, only_a, "PARTIAL UPDATE keeps its scope");
+
+    a.params.fader_db.store(-30.0);
+    a.params.gate.on.store(false, Relaxed);
+    b.params.fader_db.store(-30.0);
+    show.scene_mut(0).unwrap().scope = section::ALL;
+    show.recall_scene(&engine, &mut np, 0);
+    assert_eq!(a.params.fader_db.load(), -4.0);
+    assert!(!a.params.gate.on.load(Relaxed), "the gate was not updated");
+    assert_eq!(b.params.fader_db.load(), 0.0, "channel 2 kept the stored level");
+
+    // PARTIAL LOAD: channel 2 only, respecting safes unless NO GLOB.
+    a.params.fader_db.store(-30.0);
+    b.params.fader_db.store(-30.0);
+    b.params.recall_safe.store(true, Relaxed);
+    let only_b = Scope::strips(section::FADER, vec![StripRef::of(&b)]);
+    let r = show.recall_scene_with(&engine, &mut np, 0, Some(&only_b), false);
+    assert_eq!((r.strips_applied, r.strips_skipped_safe), (0, 1));
+    assert_eq!(b.params.fader_db.load(), -30.0);
+    show.recall_scene_with(&engine, &mut np, 0, Some(&only_b), true);
+    assert_eq!(b.params.fader_db.load(), 0.0, "NO GLOB ignores the safes");
+    assert_eq!(a.params.fader_db.load(), -30.0, "outside the partial scope");
+    assert_eq!(show.partial_scope, only_b);
+
+    let (_, loaded) = round_trip(&engine, &show);
+    assert_eq!(loaded.partial_scope, only_b);
+}
+
+#[test]
+fn snippet_rec_records_the_changed_parameters() {
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    engine.set_num_channels(4);
+    let mut show = Show::new();
+    show.add_scene(&engine, &mut np, "A", -1);
+    let (a, b, c) = (ch(&engine, 0), ch(&engine, 1), ch(&engine, 2));
+    assert_eq!(show.recorded_count(&engine), 0);
+
+    show.start_recording(&engine);
+    assert!(show.is_recording());
+    a.params.fader_db.store(-6.0);
+    b.params.gate.on.store(true, Relaxed);
+    b.params.fader_db.store(-3.0);
+    engine.controls.dcas[4].mute.store(true, Relaxed);
+    assert_eq!(show.recorded_count(&engine), 4);
+    assert_eq!(show.stop_recording(&engine), 4);
+    assert!(!show.is_recording());
+    c.params.fader_db.store(-40.0); // after STOP: not recorded
+
+    let changes = show.recorded_changes(None).unwrap();
+    assert_eq!(changes.strips, vec![(StripRef::of(&b), section::GATE | section::FADER), (StripRef::of(&a), section::FADER)]);
+    assert_eq!(changes.dcas, 1 << 4);
+
+    // REC FOCUS limits what SAVE keeps: faders of channel 2 only.
+    let focus = Scope::strips(section::FADER, vec![StripRef::of(&b)]);
+    let limited = show.recorded_changes(Some(&focus)).unwrap();
+    assert_eq!(limited.strips, vec![(StripRef::of(&b), section::FADER)]);
+    assert_eq!(limited.count, 1);
+
+    let index = show.add_recorded_snippet(&engine, &mut np, 0, "Rec", None);
+    assert_eq!(index, 0);
+    assert!(show.recorded_changes(None).is_none(), "SAVE uses up the recording");
+    let sn = show.snippet(0, 0).unwrap().clone();
+    assert_eq!(sn.parameter_count(), 4);
+    assert_eq!(sn.dcas, 1 << 4);
+
+    // Recall: exactly the changed pairs, not their cross product.
+    a.params.fader_db.store(-50.0);
+    a.params.gate.on.store(true, Relaxed);
+    b.params.gate.on.store(false, Relaxed);
+    b.params.fader_db.store(-50.0);
+    c.params.fader_db.store(-50.0);
+    engine.controls.dcas[4].mute.store(false, Relaxed);
+    show.recall_snippet(&engine, &mut np, 0, 0);
+    assert_eq!(a.params.fader_db.load(), -6.0);
+    assert!(a.params.gate.on.load(Relaxed), "channel 1's gate was not recorded");
+    assert!(b.params.gate.on.load(Relaxed));
+    assert_eq!(b.params.fader_db.load(), -3.0);
+    assert_eq!(c.params.fader_db.load(), -50.0);
+    assert!(engine.controls.dcas[4].mute.load(Relaxed));
+
+    // UPDATE keeps each strip's own sections; the snippet survives a round trip.
+    b.params.fader_db.store(-9.0);
+    show.store_snippet(&engine, &mut np, 0, 0);
+    a.params.gate.on.store(false, Relaxed);
+    show.recall_snippet(&engine, &mut np, 0, 0);
+    assert!(!a.params.gate.on.load(Relaxed));
+    assert_eq!(b.params.fader_db.load(), -9.0);
+    let (_, loaded) = round_trip(&engine, &show);
+    let l = loaded.snippet(0, 0).unwrap();
+    assert_eq!((l.parameter_count(), l.dcas, l.scope()), (4, 1 << 4, show.snippet(0, 0).unwrap().scope()));
+
+    // CLEAR ALL drops a recording; SAVE then has nothing to store.
+    show.start_recording(&engine);
+    a.params.fader_db.store(1.0);
+    show.clear_recording();
+    assert_eq!(show.add_recorded_snippet(&engine, &mut np, 0, "None", None), -1);
+}
+
+#[test]
+fn snippet_items_and_partial_load() {
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    engine.set_num_channels(3);
+    let mut show = Show::new();
+    show.add_scene(&engine, &mut np, "A", -1);
+    let (a, b) = (ch(&engine, 0), ch(&engine, 1));
+    a.params.fader_db.store(-6.0);
+    show.add_snippet(&engine, &mut np, 0, "S", section::FADER, vec![StripRef::of(&a)]);
+
+    // ADD ITEMS: channel 2's gate and DCA 1.
+    b.params.gate.on.store(true, Relaxed);
+    engine.controls.dcas[0].fader_db.store(-2.0);
+    let items = Scope { dcas: 1, ..Scope::strips(section::GATE, vec![StripRef::of(&b)]) };
+    show.add_snippet_items(&engine, &mut np, 0, 0, &items);
+    let sn = show.snippet(0, 0).unwrap();
+    assert_eq!(sn.strips, vec![StripRef::of(&a), StripRef::of(&b)]);
+    assert_eq!((sn.sections, sn.dcas), (section::FADER | section::GATE, 1));
+
+    b.params.gate.on.store(false, Relaxed);
+    b.params.fader_db.store(-20.0);
+    a.params.fader_db.store(-20.0);
+    engine.controls.dcas[0].fader_db.store(-20.0);
+    // PARTIAL LOAD: only the gate part.
+    show.recall_snippet_with(&engine, &mut np, 0, 0, Some(&Scope::console(section::GATE)));
+    assert!(b.params.gate.on.load(Relaxed));
+    assert_eq!(a.params.fader_db.load(), -20.0);
+    assert_eq!(engine.controls.dcas[0].fader_db.load(), -20.0, "DCA levels recall with FADER");
+    show.recall_snippet(&engine, &mut np, 0, 0);
+    assert_eq!(a.params.fader_db.load(), -6.0);
+    assert_eq!(b.params.fader_db.load(), -20.0, "only channel 2's gate was added");
+    assert_eq!(engine.controls.dcas[0].fader_db.load(), -2.0);
+
+    // REMOVE ITEMS: the faders (of every strip) and DCA 1.
+    show.remove_snippet_items(0, 0, &Scope { dcas: 1, ..Scope::strips(section::FADER, vec![]) });
+    let sn = show.snippet(0, 0).unwrap();
+    assert_eq!((sn.strips.clone(), sn.sections, sn.dcas), (vec![StripRef::of(&b)], section::GATE, 0));
+}
+
+// ---- spill ----------------------------------------------------------------------------
+
+#[test]
+fn spill_layers_follow_the_console() {
+    use livedaw_dsp::wing::FX_MODELS;
+    use livedaw_session::layers::{spill_faders, SpillKind, RIGHT, SPILL_ID};
+
+    let engine = Engine::new(0);
+    engine.set_num_channels(4);
+    let (a, b, c) = (ch(&engine, 0), ch(&engine, 1), ch(&engine, 2));
+    let strip = |s: &Strip| FaderRef::Strip(StripRef::of(s));
+
+    // DCA spill: the strips assigned to the DCA, in console order.
+    a.params.dca_mask.store(0b100, Relaxed);
+    c.params.dca_mask.store(0b110, Relaxed);
+    let bus = engine.bus_in_slot(3).unwrap();
+    bus.params.dca_mask.store(0b100, Relaxed);
+    assert_eq!(spill_faders(&engine, &SpillKind::Dca(2)), vec![strip(&a), strip(&c), strip(&bus)]);
+    assert!(spill_faders(&engine, &SpillKind::Dca(99)).is_empty());
+
+    // Automix spill: the channels in group Y.
+    b.params.post_insert.mode.store(2, Relaxed);
+    assert_eq!(spill_faders(&engine, &SpillKind::Automix(1)), vec![strip(&b)]);
+
+    // Bus spill: the send levels of the sources sending to the bus.
+    a.sends.get_or_create(3).unwrap().enabled.store(true, Relaxed);
+    let to = StripRef::new(StripKind::Bus, 3);
+    assert_eq!(spill_faders(&engine, &SpillKind::Bus(3)), vec![FaderRef::Send { from: StripRef::of(&a), to }]);
+
+    // A strip's sends: every bus, main and matrix.
+    let sends = spill_faders(&engine, &SpillKind::Sends(StripRef::of(&a)));
+    assert_eq!(sends.len(), 16 + 4 + 8);
+    assert_eq!(sends[0], FaderRef::Send { from: StripRef::of(&a), to: StripRef::new(StripKind::Bus, 0) });
+
+    // FX spill: the device's continuous parameters.
+    assert!(spill_faders(&engine, &SpillKind::Fx(9)).is_empty(), "an empty slot has none");
+    let geq = livedaw_dsp::wing::model_index(FX_MODELS, "GEQ").unwrap();
+    engine.set_fx_model(9, geq, true);
+    let params = spill_faders(&engine, &SpillKind::Fx(9));
+    assert!(params.len() > 10);
+    assert!(params.iter().all(|p| matches!(p, FaderRef::FxParam { slot: 9, .. })));
+
+    // The section shows the spill until it ends; the right section spills to the center.
+    let mut show = Show::new();
+    let target = layers::spill_target(Some(RIGHT));
+    assert_eq!(target, CENTER);
+    show.layers.set_offset(CENTER, 4);
+    show.layers.start_spill(target, SpillKind::Dca(2));
+    let shown = show.layers.selected_layer(&engine, CENTER);
+    assert_eq!((shown.id.as_str(), shown.name.as_str(), shown.faders.len()), (SPILL_ID, "DCA 3 SPILL", 3));
+    assert_eq!(show.layers.find_layer(&engine, CENTER, SPILL_ID).faders.len(), 3);
+    show.layers.end_spill(CENTER);
+    assert_eq!((show.layers.selected_layer(&engine, CENTER).id.as_str(), show.layers.offset(CENTER)), ("dca-1", 4));
+    assert_eq!(show.layers.selected_layer(&engine, LEFT).id, "in-1");
+}
+
+// ---- LIBRARY presets (FX, CHAN) ----------------------------------------------------------
+
+#[test]
+fn fx_presets_round_trip_into_any_slot() {
+    use livedaw_dsp::wing::FX_MODELS;
+    use livedaw_session::presets::{self, PresetType};
+    let fx = |t: &str| model_index(FX_MODELS, t).unwrap();
+    let engine = Engine::new(0);
+    let mut host = FakeHost::default();
+    assert!(engine.set_fx_model(2, fx("HALL"), true));
+    engine.controls.fx[2].param("dcy").unwrap().store(4.25);
+    engine.controls.fx[2].mix.store(35.0);
+
+    let preset = presets::capture_fx(&engine, &mut Bridge { host: &mut host, engine: &engine }, 2, "Long hall").unwrap();
+    let info = presets::info(&preset).unwrap();
+    assert_eq!((info.kind, info.name.as_str()), (PresetType::Fx, "Long hall"));
+
+    // Through a file, into slot 5.
+    let dir = std::env::temp_dir().join(format!("livedaw-presets-{}", std::process::id()));
+    let path = dir.join("hall.lfx");
+    presets::save(&path, &preset).unwrap();
+    let loaded = presets::load(&path).unwrap();
+    let warnings = presets::apply_fx(&engine, &mut Bridge { host: &mut host, engine: &engine }, &loaded, 5).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(engine.controls.fx[5].model_index(), fx("HALL"));
+    assert_eq!(engine.controls.fx[5].param("dcy").unwrap().load(), 4.25);
+    assert_eq!(engine.controls.fx[5].mix.load(), 35.0);
+
+    // A premium device doesn't go into slots 9-16.
+    let w = presets::apply_fx(&engine, &mut Bridge { host: &mut host, engine: &engine }, &loaded, 12).unwrap();
+    assert_eq!(w.len(), 1);
+    assert_ne!(engine.controls.fx[12].model_index(), fx("HALL"));
+
+    // A plugin's state only goes into the same plugin.
+    host.load(&engine, 0, "Comp", "state-a");
+    let plugin = presets::capture_fx(&engine, &mut Bridge { host: &mut host, engine: &engine }, 0, "Comp A").unwrap();
+    assert_eq!(presets::info(&plugin).unwrap().detail, "Comp");
+    host.load(&engine, 1, "Comp", "state-b");
+    host.load(&engine, 3, "Other", "o");
+    let ok = presets::apply_fx(&engine, &mut Bridge { host: &mut host, engine: &engine }, &plugin, 1).unwrap();
+    assert!(ok.is_empty());
+    assert_eq!(host.plugins[&1].1, "state-a");
+    let mismatch = presets::apply_fx(&engine, &mut Bridge { host: &mut host, engine: &engine }, &plugin, 3).unwrap();
+    assert_eq!(mismatch.len(), 1);
+    assert_eq!(host.plugins[&3].1, "o");
+    assert!(presets::apply_fx(&engine, &mut NoPlugins, &plugin, 99).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn channel_presets_load_onto_other_strips_within_their_scope() {
+    use livedaw_session::presets;
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    engine.set_num_channels(4);
+    let (a, b) = (ch(&engine, 0), ch(&engine, 1));
+    a.set_name("Kick");
+    a.params.gate.on.store(true, Relaxed);
+    a.params.input.trim_db.store(6.0);
+    a.params.fader_db.store(-7.0);
+    a.params.input_left.store(9, Relaxed);
+
+    let preset = presets::capture_channel(&engine, &mut np, &StripRef::of(&a), section::GATE | section::PREAMP, "Kick").unwrap();
+    assert_eq!(presets::info(&preset).unwrap().scope, section::GATE | section::PREAMP);
+    let r = presets::apply_channel(&engine, &mut np, &preset, &StripRef::of(&b), None).unwrap();
+    assert_eq!(r.strips_applied, 1);
+    assert!(b.params.gate.on.load(Relaxed));
+    assert_eq!(b.params.input.trim_db.load(), 6.0);
+    assert_eq!(b.params.fader_db.load(), 0.0, "the fader is outside the preset's scope");
+    assert_eq!(b.params.input_left.load(Relaxed), 1, "nor the input patch");
+    assert_ne!(b.name(), "Kick");
+
+    // UPDATE SCOPE: the fader and name too; through a file, onto an aux.
+    let mut updated = preset.clone();
+    presets::set_channel_scope(&mut updated, section::FADER | section::NAME);
+    let dir = std::env::temp_dir().join(format!("livedaw-chan-{}", std::process::id()));
+    let path = dir.join("kick.lchn");
+    presets::save(&path, &updated).unwrap();
+    let loaded = presets::load(&path).unwrap();
+    let aux = engine.strip_at(StripKind::Aux, 2).unwrap();
+    presets::apply_channel(&engine, &mut np, &loaded, &StripRef::of(&aux), None).unwrap();
+    assert_eq!((aux.params.fader_db.load(), aux.name()), (-7.0, "Kick".to_owned()));
+
+    // Inputs don't load onto buses, mains or matrices; missing strips and files fail.
+    let bus = StripRef::new(StripKind::Bus, 0);
+    assert!(presets::apply_channel(&engine, &mut np, &loaded, &bus, None).is_err());
+    assert!(presets::apply_channel(&engine, &mut np, &loaded, &StripRef::new(StripKind::Channel, 77), None).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(presets::load(&dir.join("missing.lchn")).is_err());
+}

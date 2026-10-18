@@ -62,7 +62,9 @@ namespace
     {
         if (f.dca)
             return { nullptr, juce::jlimit (0, kNumDcas - 1, f.dcaIndex) };
-        return { state::findStrip (ctx.engine, f.strip), -1 };
+        if (f.fxParam)
+            return {}; // FX parameters have no strip view here
+        return { state::findStrip (ctx.engine, f.strip), -1 }; // a send: its source
     }
 
     juce::Colour colourOf (UiContext& ctx, const Target& t)
@@ -1415,12 +1417,15 @@ void SendsViewPage::mouseDoubleClick (const juce::MouseEvent& e)
 //==============================================================================
 ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
 {
-    // Send levels, bus-to-bus sends, FX parameters and MIDI CCs on faders: engine item E18.
-    for (auto [caption, value] : { std::pair { "SENDS", "BUS 1" }, std::pair { "BUS -> BUS", "BUS 1" }, std::pair { "FX", "1" }, std::pair { "MIDI CC", "CH 1" } })
+    // SENDS (the input channels' sends to a bus, main or matrix), BUS -> BUS
+    // (the buses' sends to one) and FX (a slot's parameters) as faders; each
+    // field picks its destination or slot and shows those items. MIDI CC needs
+    // MIDI remote control.
+    for (int i = 0; i < 4; ++i)
     {
-        const juce::String v (value);
-        auto* f = fields.add (new DropdownField (caption, [v] { return v; }));
-        f->setEnabled (false);
+        static const char* captions[] = { "SENDS", "BUS -> BUS", "FX", "MIDI CC" };
+        auto* f = fields.add (new DropdownField (captions[i], [this, i] { return fieldText (i); }, [this, i] (DropdownField& field) { chooseField (i, field); }));
+        f->setEnabled (i < 3);
         addAndMakeVisible (f);
     }
     for (auto* k : { &clearKey, &renameKey, &newKey, &deleteKey })
@@ -1542,6 +1547,72 @@ void ConfigViewPage::updateKeys()
     deleteKey.setButtonText (! layer.user && ctx.show.layers.hasDefaultOverride (section(), layer.id) ? "RESTORE" : "DELETE");
 }
 
+std::vector<state::StripRef> ConfigViewPage::destinations (bool busToBus) const
+{
+    // Inputs send to every bus, main and matrix; buses 9+ to buses 1-8, every bus to the mains and matrices.
+    std::vector<state::StripRef> out;
+    for (auto& b : ctx.engine.getStrips (StripKind::Bus))
+        if (! busToBus || b->getId() < kBusToBusTargets)
+            out.push_back (state::StripRef::of (*b));
+    for (auto k : { StripKind::Main, StripKind::Matrix })
+        for (auto& s : ctx.engine.getStrips (k))
+            out.push_back (state::StripRef::of (*s));
+    return out;
+}
+
+juce::String ConfigViewPage::fieldText (int field) const
+{
+    if (field == 2)
+        return juce::String (fxSlot + 1);
+    if (field == 3)
+        return "CH 1";
+    const auto dests = destinations (field == 1);
+    const int i = field == 0 ? sendDest : busDest;
+    if (! juce::isPositiveAndBelow (i, (int) dests.size()))
+        return "-";
+    auto* s = state::findStrip (ctx.engine, dests[(size_t) i]);
+    return s != nullptr ? s->getLabel().toUpperCase() : juce::String ("-");
+}
+
+void ConfigViewPage::chooseField (int field, DropdownField& fieldKey)
+{
+    juce::StringArray items;
+    int selected = 0;
+    if (field == 2)
+    {
+        auto& fx = ctx.engine.getFx();
+        for (int i = 0; i < kNumFx; ++i)
+            items.add ("FX " + juce::String (i + 1) + "  " + (fx.getModel (i) > ld::kFxExt ? models::model (models::Fx, fx.getModel (i)).name.toUpperCase() : juce::String ("-")));
+        selected = fxSlot;
+    }
+    else
+    {
+        for (auto& r : destinations (field == 1))
+            if (auto* s = state::findStrip (ctx.engine, r))
+                items.add (describeStrip (*s).toUpperCase());
+        selected = field == 0 ? sendDest : busDest;
+    }
+    popups::ListOptions options;
+    options.columns = field == 2 ? 2 : 4;
+    options.caption = field == 0 ? "SENDS TO" : field == 1 ? "BUS -> BUS TO" : "FX PARAMETERS OF";
+    juce::Component::SafePointer<ConfigViewPage> safe (this);
+    popups::chooseFrom (fieldKey, items, selected, [safe, field] (int i)
+    {
+        if (safe == nullptr)
+            return;
+        if (field == 0)
+            safe->sendDest = i;
+        else if (field == 1)
+            safe->busDest = i;
+        else
+            safe->fxSlot = i;
+        safe->category = 3 + field;
+        safe->selectedItems.clear();
+        safe->layoutContent();
+        safe->repaint();
+    }, options);
+}
+
 std::vector<state::FaderRef> ConfigViewPage::sourceItems() const
 {
     std::vector<state::FaderRef> items;
@@ -1550,6 +1621,37 @@ std::vector<state::FaderRef> ConfigViewPage::sourceItems() const
         for (auto& s : ctx.engine.getStrips (k))
             items.push_back (state::FaderRef::of (state::StripRef::of (*s)));
     };
+    if (category == 3 || category == 4)
+    {
+        const auto dests = destinations (category == 4);
+        const int i = category == 3 ? sendDest : busDest;
+        if (! juce::isPositiveAndBelow (i, (int) dests.size()))
+            return items;
+        const auto to = dests[(size_t) i];
+        if (category == 3)
+        {
+            for (auto k : { StripKind::Channel, StripKind::Aux })
+                for (auto& s : ctx.engine.getStrips (k))
+                    items.push_back (state::FaderRef::ofSend (state::StripRef::of (*s), to));
+        }
+        else
+            for (auto& b : ctx.engine.getStrips (StripKind::Bus))
+                if (! (to.kind == StripKind::Bus && (b->getId() < kBusToBusTargets || b->getId() == to.id)))
+                    items.push_back (state::FaderRef::ofSend (state::StripRef::of (*b), to));
+        return items;
+    }
+    if (category == 5)
+    {
+        auto& fx = ctx.engine.getFx();
+        if (const int model = fx.getModel (fxSlot); model > ld::kFxExt)
+        {
+            const auto& m = models::model (models::Fx, model);
+            for (size_t i = 0; i < m.params.size(); ++i)
+                if (m.params[i].isContinuous())
+                    items.push_back (state::FaderRef::ofFxParam (fxSlot, (int) i));
+        }
+        return items;
+    }
     if (category == 0)
     {
         add (StripKind::Channel);
@@ -1648,8 +1750,35 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
         g.drawFittedText (names[i], categoryKeys[(size_t) i].reduced (2, 0), juce::Justification::centred, 1, 0.6f);
     }
 
+    // The active SENDS / BUS -> BUS / FX field is framed.
+    if (category >= 3 && category - 3 < fields.size())
+    {
+        g.setColour (Colours::yellow);
+        g.drawRect (fields[category - 3]->getBounds().expanded (2), 2);
+    }
+
     auto tile = [this, &g] (juce::Rectangle<float> r, const state::FaderRef& f, bool highlighted)
     {
+        if (f.fxParam)
+        {
+            // An FX parameter: the slot on an FX-coloured bar, the parameter's name.
+            const int model = ctx.engine.getFx().getModel (f.fxSlot);
+            const auto& m = models::model (models::Fx, juce::jmax (0, model));
+            const auto label = juce::isPositiveAndBelow (f.param, (int) m.params.size()) && model > ld::kFxExt ? m.params[(size_t) f.param].label : juce::String ("?");
+            auto bar = r.removeFromTop (r.getHeight() * 0.36f);
+            paintNameBar (g, bar, FileColours::fx, "FX " + juce::String (f.fxSlot + 1));
+            g.setColour (blockFill);
+            g.fillRect (r);
+            g.setColour (Dark::text);
+            g.setFont (juce::FontOptions (juce::jlimit (8.0f, 14.0f, r.getHeight() * 0.6f), juce::Font::bold));
+            g.drawFittedText (label.toUpperCase(), r.reduced (3.0f, 1.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.6f);
+            if (highlighted)
+            {
+                g.setColour (Colours::yellow);
+                g.drawRect (bar.getUnion (r).expanded (1.0f), 2.0f);
+            }
+            return;
+        }
         const auto t = resolve (ctx, f);
         if (! t.isValid())
             return;
@@ -1658,10 +1787,19 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
         g.setColour (blockFill);
         g.fillRect (r);
         auto inner = r.reduced (3.0f, 1.0f);
+        if (f.send)
+        {
+            // A send level: the source with an "S > B4" mark (fig. 59).
+            auto* to = state::findStrip (ctx.engine, f.to);
+            const auto mark = "S>" + (to != nullptr ? shortStripLabel (*to) : juce::String ("?"));
+            g.setColour (Colours::solo);
+            g.setFont (juce::FontOptions (juce::jlimit (7.0f, 13.0f, inner.getHeight() * 0.6f), juce::Font::bold));
+            g.drawFittedText (mark, inner.removeFromRight (inner.getWidth() * 0.5f).toNearestInt(), juce::Justification::centredRight, 1, 0.6f);
+        }
         g.setColour (Dark::text);
         g.setFont (juce::FontOptions (juce::jlimit (8.0f, 18.0f, inner.getHeight() * 0.85f), juce::Font::bold));
         g.drawFittedText (numberOf (t), inner.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
-        if (t.strip != nullptr && inner.getWidth() > inner.getHeight() * 2.5f)
+        if (! f.send && t.strip != nullptr && inner.getWidth() > inner.getHeight() * 2.5f)
             drawStripIcon (g, *t.strip, inner.removeFromRight (inner.getHeight()), Dark::textDim);
         if (highlighted)
         {

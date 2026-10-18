@@ -234,6 +234,8 @@ public:
     void resized() override;
     void paint (juce::Graphics&) override;
     void visibilityChanged() override;
+    /** SETUP pressed again: CC EDIT from the tabs, back to the tabs from CC EDIT or MONITORS. */
+    bool screenKeyPressedAgain() override;
 
     /** CUSTOM CONTROLS (CC EDIT), at a layer when >= 0. */
     void openCustomControls (int layer);
@@ -241,8 +243,6 @@ public:
     void openMonitors();
 
 private:
-    class SetupKeyWatcher;
-
     void showTab();
     /** Shows a screen of SETUP in place of its tabs (nullptr: back to the tabs). */
     void showSubScreen (std::unique_ptr<DisplayPage>);
@@ -256,7 +256,6 @@ private:
     WingKey initKey { "INITIALIZE\nCONSOLE", Icon::Reset }, shutdownKey { "SHUTDOWN", Icon::Power };
     OverlayHolder overlays;
     std::unique_ptr<DisplayPage> subScreen;
-    std::unique_ptr<SetupKeyWatcher> setupKeyWatcher;
 };
 
 /** LIBRARY (manual 5.6): the open show's scenes and snippets on the left
@@ -283,6 +282,8 @@ public:
     class SnapTab;
     class SnipTab;
     class PlaceholderTab;
+    class FxTab;
+    class ChanTab;
 
 private:
     enum Tab
@@ -303,8 +304,7 @@ private:
     /** Runs `action` after the CONFIRM LIBRARY LOAD question, if that's on. */
     void confirmLoad (const juce::String& what, std::function<void()> action);
     void load (ShowPanel::Item);
-    void openScope (int mode, const juce::String& title, juce::uint32 sections, std::vector<state::StripRef> strips,
-                    std::function<void (juce::uint32, const std::vector<state::StripRef>&)> save);
+    void openScope (int mode, const juce::String& title, state::Scope initial, std::function<void (const state::Scope&, bool noGlobal)> save);
     void closeScope();
     void openGlobal();
     bool anyGlobalSafe() const;
@@ -318,9 +318,8 @@ private:
     std::unique_ptr<juce::Component> scope;
     juce::Rectangle<int> rightPanel, transportArea;
 
-    // The snippet REC FOCUS: what SAVE on the SNIP tab captures.
-    juce::uint32 focusSections = 0;
-    std::vector<state::StripRef> focusStrips;
+    // The snippet REC FOCUS: what SAVE on the SNIP tab captures (or keeps of a recording).
+    state::Scope focus = state::Scope::none();
     bool focusEdited = false;
     bool shownGlobal = false;
     juce::String shownTitle;
@@ -330,15 +329,14 @@ private:
 class UtilityPage final : public DisplayPage, private juce::Timer, private juce::ChangeListener, private juce::ListBoxModel
 {
 public:
-    /** `onSetup`: the SETUP > LOG tab. Otherwise this is the UTILITY screen of
-        the main display, which hands over to SETUP > LOG when it is shown (the
-        WING's UTILITY key has no screen of its own). */
+    /** `onSetup`: the SETUP > LOG tab. Otherwise this is the main display's
+        UTILITY page, which the UTILITY key never shows (it opens SETUP > LOG:
+        the WING's UTILITY key has no screen of its own). */
     explicit UtilityPage (UiContext&, bool onSetup = false);
     ~UtilityPage() override;
 
     void resized() override;
     void paint (juce::Graphics&) override;
-    void visibilityChanged() override;
 
 private:
     void timerCallback() override;

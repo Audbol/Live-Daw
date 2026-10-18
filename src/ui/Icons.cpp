@@ -713,6 +713,115 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
             g.strokePath (p, stroke);
             return;
         }
+        case Icon::Premium:
+        {
+            // A cut gem: the crown's outline and its girdle line.
+            p.startNewSubPath (P (0.08f, 0.36f));
+            p.lineTo (P (0.28f, 0.14f));
+            p.lineTo (P (0.72f, 0.14f));
+            p.lineTo (P (0.92f, 0.36f));
+            p.lineTo (P (0.5f, 0.88f));
+            p.closeSubPath();
+            p.startNewSubPath (P (0.08f, 0.36f));
+            p.lineTo (P (0.92f, 0.36f));
+            g.strokePath (p, juce::PathStrokeType (juce::jmax (1.0f, s * 0.06f), juce::PathStrokeType::mitered));
+            return;
+        }
+        case Icon::Sun:
+        {
+            const auto c = P (0.5f, 0.5f);
+            const float rad = s * 0.2f;
+            p.addEllipse (c.x - rad, c.y - rad, rad * 2.0f, rad * 2.0f);
+            for (int i = 0; i < 8; ++i)
+            {
+                const float a = (float) i * juce::MathConstants<float>::pi * 0.25f;
+                const float r0 = rad * 1.5f, r1 = s * 0.47f;
+                p.startNewSubPath (c.x + std::sin (a) * r0, c.y - std::cos (a) * r0);
+                p.lineTo (c.x + std::sin (a) * r1, c.y - std::cos (a) * r1);
+            }
+            g.strokePath (p, stroke);
+            return;
+        }
+        case Icon::ListNone:
+        case Icon::ListAll:
+        {
+            // Three rows: a box (empty or filled) and a line.
+            const float d = s * 0.2f;
+            for (int row = 0; row < 3; ++row)
+            {
+                const float v = 0.2f + 0.3f * (float) row;
+                const auto box = juce::Rectangle<float> (d, d).withCentre (P (0.16f, v));
+                if (icon == Icon::ListAll)
+                    g.fillRoundedRectangle (box, s * 0.03f);
+                else
+                    g.drawRoundedRectangle (box, s * 0.03f, juce::jmax (1.0f, s * 0.05f));
+                g.fillRect (juce::Rectangle<float> (P (0.36f, v - 0.03f), P (0.95f, v + 0.03f)));
+            }
+            return;
+        }
+        case Icon::PaintBucket:
+        {
+            // A tipped bucket (a rotated square with its handle) pouring a drop.
+            juce::Path bucket;
+            bucket.addRectangle (-s * 0.2f, -s * 0.2f, s * 0.4f, s * 0.4f);
+            p.addPath (bucket, juce::AffineTransform::rotation (juce::MathConstants<float>::pi * 0.25f).translated (P (0.42f, 0.52f)));
+            p.startNewSubPath (P (0.24f, 0.34f));
+            p.cubicTo (P (0.2f, 0.06f), P (0.5f, 0.06f), P (0.48f, 0.3f));
+            g.strokePath (p, stroke);
+            juce::Path drop;
+            drop.startNewSubPath (P (0.82f, 0.5f));
+            drop.cubicTo (P (0.94f, 0.7f), P (0.9f, 0.8f), P (0.82f, 0.8f));
+            drop.cubicTo (P (0.74f, 0.8f), P (0.7f, 0.7f), P (0.82f, 0.5f));
+            g.fillPath (drop);
+            return;
+        }
+        case Icon::Warning:
+        {
+            p.startNewSubPath (P (0.5f, 0.1f));
+            p.lineTo (P (0.94f, 0.88f));
+            p.lineTo (P (0.06f, 0.88f));
+            p.closeSubPath();
+            g.strokePath (p, juce::PathStrokeType (w, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            g.fillRect (juce::Rectangle<float> (P (0.46f, 0.36f), P (0.54f, 0.64f)));
+            g.fillEllipse (juce::Rectangle<float> (s * 0.09f, s * 0.09f).withCentre (P (0.5f, 0.75f)));
+            return;
+        }
+        case Icon::KeyboardEdit:
+        {
+            // A keyboard (two rows of keys and a space bar) with a pencil over its corner.
+            const auto body = juce::Rectangle<float> (P (0.06f, 0.42f), P (0.78f, 0.9f));
+            g.drawRoundedRectangle (body, s * 0.05f, juce::jmax (1.0f, s * 0.06f));
+            const float k = s * 0.08f;
+            for (int row = 0; row < 2; ++row)
+                for (int col = 0; col < 4; ++col)
+                    g.fillRect (juce::Rectangle<float> (k, k).withCentre (P (0.17f + 0.165f * (float) col, 0.54f + 0.14f * (float) row)));
+            g.fillRect (juce::Rectangle<float> (P (0.26f, 0.79f), P (0.58f, 0.83f)));
+            p.startNewSubPath (P (0.56f, 0.5f));
+            p.lineTo (P (0.58f, 0.38f));
+            p.lineTo (P (0.86f, 0.1f));
+            p.lineTo (P (0.96f, 0.2f));
+            p.lineTo (P (0.68f, 0.48f));
+            p.closeSubPath();
+            g.strokePath (p, juce::PathStrokeType (juce::jmax (1.0f, s * 0.06f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            return;
+        }
+        case Icon::Spill:
+        {
+            // A fader (slot and cap) with arrows spreading out to both sides.
+            g.fillRect (juce::Rectangle<float> (P (0.47f, 0.1f), P (0.53f, 0.9f)));
+            g.fillRoundedRectangle (juce::Rectangle<float> (P (0.36f, 0.42f), P (0.64f, 0.58f)), s * 0.03f);
+            for (int side = -1; side <= 1; side += 2)
+            {
+                const float u0 = 0.5f + 0.2f * (float) side, u1 = 0.5f + 0.44f * (float) side;
+                p.startNewSubPath (P (u0, 0.5f));
+                p.lineTo (P (u1, 0.5f));
+                p.startNewSubPath (P (u1 - 0.1f * (float) side, 0.38f));
+                p.lineTo (P (u1, 0.5f));
+                p.lineTo (P (u1 - 0.1f * (float) side, 0.62f));
+            }
+            g.strokePath (p, stroke);
+            return;
+        }
     }
 }
 
