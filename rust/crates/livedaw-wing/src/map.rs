@@ -1796,13 +1796,14 @@ impl<'a> Console<'a> {
                 CtlF::MuteOverride => set_b(&c.mute_override, v),
                 CtlF::SourceSolo => set_item(&c.monitor.source_solo, def, v),
                 CtlF::SourceSoloOn => {
+                    // Through the host's SOLO, as on the surface (so CLR SOLO ends it).
                     let m = &c.monitor;
-                    m.source_solo_on.store(v.as_bool(), Relaxed);
-                    if !v.as_bool() {
-                        // The host's SOLO is the other way in: release it too.
-                        if let Some(s) = m.host().and_then(|(kind, i)| self.strip(kind, i as u16 + 1)) {
-                            s.params.solo.store(false, Relaxed);
+                    match m.host().and_then(|(kind, i)| self.strip(kind, i as u16 + 1)) {
+                        Some(host) => {
+                            host.params.solo.store(v.as_bool(), Relaxed);
+                            m.source_solo_on.store(false, Relaxed);
                         }
+                        None => m.source_solo_on.store(v.as_bool(), Relaxed),
                     }
                 }
                 CtlF::SourceSoloGroup | CtlF::SourceSoloIn => {
@@ -2743,16 +2744,16 @@ mod tests {
         let m = &e.controls.monitor;
         assert_eq!(m.source_solo.load(Relaxed), 2);
         assert_eq!(m.source_solo_port.load(Relaxed), 4);
-        assert!(m.source_solo_on.load(Relaxed));
+        let aux7 = c.strip(StripKind::Aux, 7).unwrap();
+        assert!(aux7.params.solo.load(Relaxed), "through the host's SOLO");
         assert_eq!(c.get(node(&c, "/cfg/solo/$srcsgrp")), Some(Value::Int(3)));
         assert_eq!(c.get(node(&c, "/cfg/solo/$srcsin")), Some(Value::Int(5)));
-        // The host's SOLO counts as a source solo; releasing $srcsolo releases it.
-        c.set(node(&c, "/cfg/solo/$srcsolo"), &Value::Int(0)).unwrap();
-        let aux7 = c.strip(StripKind::Aux, 7).unwrap();
-        aux7.params.solo.store(true, Relaxed);
-        assert_eq!(c.get(node(&c, "/cfg/solo/$srcsolo")), Some(Value::Int(1)));
+        // Released through the host; the flag alone (no host chosen yet) reads too.
         c.set(node(&c, "/cfg/solo/$srcsolo"), &Value::Int(0)).unwrap();
         assert!(!aux7.params.solo.load(Relaxed));
+        assert_eq!(c.get(node(&c, "/cfg/solo/$srcsolo")), Some(Value::Int(0)));
+        m.source_solo_on.store(true, Relaxed);
+        assert_eq!(c.get(node(&c, "/cfg/solo/$srcsolo")), Some(Value::Int(1)));
     }
 
     #[test]
