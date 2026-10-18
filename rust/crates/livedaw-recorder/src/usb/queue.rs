@@ -531,7 +531,9 @@ mod tests {
         let dir = temp_dir("m3u");
         let mut q = playlist(&[]);
         q.add(&dir.join("songs").join("one.wav"));
-        q.add(Path::new("/elsewhere/two.wav"));
+        // An absolute path outside the playlist's folder ("/x" isn't absolute on Windows).
+        let elsewhere = PathBuf::from(if cfg!(windows) { r"C:\elsewhere\two.wav" } else { "/elsewhere/two.wav" });
+        q.add(&elsewhere);
         q.add(&dir.join("three.wav"));
         q.set_skip(1, true);
         q.set_stop(2, true);
@@ -552,7 +554,7 @@ mod tests {
             got,
             vec![
                 (dir.join("songs").join("one.wav"), false, false),
-                (PathBuf::from("/elsewhere/two.wav"), true, false),
+                (elsewhere, true, false),
                 (dir.join("three.wav"), false, true)
             ]
         );
