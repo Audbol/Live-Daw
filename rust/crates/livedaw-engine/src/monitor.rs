@@ -556,6 +556,9 @@ impl Default for MonitorPathDsp {
 impl MonitorPathDsp {
     /// Allocates for a device (message thread, device stopped).
     pub fn prepare(&mut self, sample_rate: f64, block: usize) {
+        // The EQ's parameter positions are looked up once, here (they allocate),
+        // never on the audio thread.
+        std_ids();
         self.sr = sample_rate;
         self.eq.prepare(sample_rate);
         self.eq_off_samples = EQ_SETTLE_SAMPLES;
