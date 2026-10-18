@@ -588,6 +588,9 @@ public:
         const int w = juce::jmin (rec->getWidth(), (recFocus->getX() - band.getX() - 90) / 2 - 4);
         rec->setBounds (rec->getBounds().withWidth (w));
         stop->setBounds (stop->getBounds().withX (rec->getRight() + 4).withWidth (w));
+        // Narrow keys: the icon over the caption.
+        for (auto* k : { rec, stop })
+            k->iconAbove = w < 96;
         counter = juce::Rectangle<int> (stop->getRight() + 8, band.getY(), juce::jmin (100, recFocus->getX() - stop->getRight() - 16), band.getHeight());
     }
 
