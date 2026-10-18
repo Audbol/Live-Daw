@@ -96,6 +96,20 @@ struct ListOptions
 void chooseFrom (juce::Component& anchor, const juce::StringArray& items, int selected,
                  std::function<void (int)> onChosen, ListOptions = {});
 
+/** A tile of chooseTile: `id` < 0 leaves a gap. */
+struct Tile
+{
+    int id = -1;
+    juce::String caption;
+};
+
+/** A grid of picture tiles over the page (the dynamics model list, 3.1):
+    rows of tiles, extra space above the rows listed in `spacedRows`, the
+    tile `selected` framed gold. `paintPicture` draws a tile's picture;
+    `onChosen` gets the id touched (not called when closed). */
+void chooseTile (juce::Component& anchor, std::vector<std::vector<Tile>> rows, std::vector<int> spacedRows, int selected,
+                 std::function<void (juce::Graphics&, juce::Rectangle<float>, int id)> paintPicture, std::function<void (int id)> onChosen);
+
 /** An on-screen confirmation over `host`; red when `danger`. */
 void confirm (juce::Component& host, const juce::String& title, const juce::String& text,
               const juce::String& okText, std::function<void()> onOk, bool danger = false);

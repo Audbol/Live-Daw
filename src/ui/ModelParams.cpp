@@ -1,4 +1,6 @@
 #include "ui/ModelParams.h"
+#include "ui/DynamicsGraph.h"
+#include "ui/Faceplate.h"
 #include "ui/WingPopups.h"
 
 namespace livedaw::ui
@@ -35,6 +37,16 @@ juce::String consoleText (const models::Param& p, float v)
         return "AUTO";
     if (dyn && token == "E88" && p.id == "hyst" && atEnd (p, v, false))
         return "EXP";
+    // The WING compressor's RATIO reads "3:1", the expander's "1:3" (Fig. 92, 93).
+    if (dyn && (token == "COMP" || token == "EXP") && p.id == "ratio" && p.kind == models::ParamKind::Values)
+    {
+        auto text = p.display (v);
+        if (text.endsWith (".00"))
+            text = text.dropLastCharacters (3);
+        else if (text.endsWith ("0") && text.contains ("."))
+            text = text.dropLastCharacters (1);
+        return token == "COMP" ? text + ":1" : "1:" + text;
+    }
     if (dyn && token == "2250" && p.id == "thr" && p.unit.isEmpty())
     {
         // The knob's 0..10 run from +10 dB down to -20 dB.
@@ -322,6 +334,65 @@ void ModelSelector::choose (juce::Component& anchor, models::Table t, int curren
         if (i >= 0 && i < (int) list.size() && list[(size_t) i].model >= 0 && onSelect)
             onSelect (list[(size_t) i].model);
     }, options);
+}
+
+void ModelSelector::chooseDynamics (juce::Component& anchor, const DynSlotParams& slot, std::function<void (int)> onSelect,
+                                    const juce::StringArray& allowed)
+{
+    // The 3.1 model list, row by row (gates, special processors | compressors).
+    static const std::vector<juce::StringArray> layout {
+        { "GATE", "DUCK", "E88", "D241G", "9000G" },
+        { "DEQ", "DEQ2", "DS902", "WAVE", "RIDE", "WARM" },
+        { "COMP", "EXP", "E88C", "ONEC", "9000C" },
+        { "B160", "B560", "RED3", "LMT", "SBUS", "2250" },
+        { "76LA", "LA", "F670", "L100", "BLISS", "NSTR" },
+        { "PSE", "CMB", "ECL33", "D241C" },
+    };
+    std::vector<std::vector<popups::Tile>> rows;
+    juce::StringArray placed;
+    for (auto& tokens : layout)
+    {
+        auto& row = rows.emplace_back();
+        for (auto& token : tokens)
+        {
+            const int m = models::findModel (models::Dynamics, token);
+            placed.add (token);
+            if (m < 0 || (allowed.size() > 0 && ! allowed.contains (token)))
+                row.push_back ({});
+            else
+                row.push_back ({ m, models::model (models::Dynamics, m).name.toUpperCase() });
+        }
+    }
+    // Anything the layout doesn't know yet goes in a last row.
+    std::vector<popups::Tile> extra;
+    for (auto& spec : models::table (models::Dynamics))
+        if (! placed.contains (spec.token) && (allowed.isEmpty() || allowed.contains (spec.token)))
+            extra.push_back ({ spec.index, spec.name.toUpperCase() });
+    if (! extra.empty())
+        rows.push_back (extra);
+    // The current values draw the loaded model's tile; the others their defaults.
+    const int current = slot.model.load();
+    auto values = slotValues (slot);
+    popups::chooseTile (anchor, rows, { 2 }, current,
+                        [current, values, on = slot.on.load()] (juce::Graphics& g, juce::Rectangle<float> r, int m)
+                        {
+                            if (hasTransferGraph (m))
+                            {
+                                std::vector<float> v (values.size(), 0.0f);
+                                if (m == current)
+                                    v = values;
+                                else
+                                {
+                                    const auto& spec = models::model (models::Dynamics, m);
+                                    for (size_t i = 0; i < spec.params.size() && i < v.size(); ++i)
+                                        v[i] = spec.params[i].defaultValue;
+                                }
+                                paintDynamicsTile (g, r, m, v.data(), m != current || on);
+                            }
+                            else
+                                Faceplate::paintThumbnail (g, r, models::Dynamics, m, {});
+                        },
+                        std::move (onSelect));
 }
 
 void ModelSelector::bind (models::Table t, std::atomic<int32_t>* m, std::function<void (int)> onSelect,

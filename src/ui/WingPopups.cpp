@@ -1040,9 +1040,133 @@ namespace
         juce::Rectangle<int> okKey, cancelKey;
         int pressed = 0;
     };
+    //==========================================================================
+    /** The model list of a dynamics slot (firmware 3.1): a grid of tiles over
+        the whole page, each the model's picture over its name; the loaded
+        model framed gold. Touch a tile to load it. */
+    class TilePopup final : public Popup
+    {
+    public:
+        TilePopup (juce::Component& anchorComponent, std::vector<std::vector<Tile>> tileRows, std::vector<int> spacedRows, int selectedId,
+                   std::function<void (juce::Graphics&, juce::Rectangle<float>, int)> paintPicture, std::function<void (int)> chosen)
+            : anchor (&anchorComponent), rows (std::move (tileRows)), spaced (std::move (spacedRows)), selected (selectedId),
+              picture (std::move (paintPicture)), onChosen (std::move (chosen))
+        {
+            anchor->getProperties().set ("wingListOpen", true);
+            anchor->repaint();
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            g.setColour (Colours::scrim);
+            g.fillRect (getLocalBounds());
+            g.setColour (juce::Colour (0xff2a2a2a));
+            g.fillRect (frame());
+            for (auto& [area, tile] : layout())
+            {
+                if (tile.id < 0)
+                    continue;
+                const bool sel = tile.id == selected;
+                const bool down = tile.id == pressed;
+                g.setColour (juce::Colours::black);
+                g.fillRect (area);
+                auto inner = area.reduced (juce::jmax (2.0f, area.getHeight() * 0.035f));
+                auto name = inner.removeFromBottom (inner.getHeight() * 0.3f);
+                if (picture)
+                    picture (g, inner, tile.id);
+                g.setColour (down ? juce::Colour (0xff303030) : juce::Colour (0xff151515));
+                g.fillRect (name);
+                g.setColour (Colours::text);
+                g.setFont (wingFontPx (juce::jmin (TypeScale::body * screenHeight(), name.getHeight() * 0.36f)));
+                g.drawFittedText (tile.caption, name.toNearestInt().reduced (3, 0), juce::Justification::centred, 1, 0.7f);
+                if (sel)
+                {
+                    g.setColour (Colours::gold);
+                    g.drawRect (area, juce::jmax (2.0f, area.getHeight() * 0.03f));
+                }
+            }
+        }
+
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            pressed = tileAt (e.position);
+            repaint();
+            if (! frame().contains (e.position))
+                cancel();
+        }
+
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            const int was = pressed;
+            pressed = -1;
+            repaint();
+            if (was >= 0 && tileAt (e.position) == was)
+                closeThen ([chosen = onChosen, was] { if (chosen != nullptr) chosen (was); });
+        }
+
+    private:
+        void onClosing() override
+        {
+            if (anchor != nullptr)
+            {
+                anchor->getProperties().set ("wingListOpen", false);
+                anchor->repaint();
+            }
+        }
+
+        juce::Rectangle<float> frame() const { return getLocalBounds().toFloat().reduced (juce::jmax (4.0f, (float) getWidth() * 0.008f)); }
+
+        std::vector<std::pair<juce::Rectangle<float>, Tile>> layout() const
+        {
+            std::vector<std::pair<juce::Rectangle<float>, Tile>> out;
+            auto r = frame().reduced (juce::jmax (4.0f, (float) getWidth() * 0.006f));
+            size_t columns = 1;
+            for (auto& row : rows)
+                columns = juce::jmax (columns, row.size());
+            const float gapX = r.getWidth() * 0.008f;
+            const float w = (r.getWidth() - gapX * (float) (columns - 1)) / (float) columns;
+            const float spacer = w * 0.12f;
+            const float rowsH = r.getHeight() - spacer * (float) spaced.size();
+            const float h = juce::jmin (w * 0.52f, rowsH / (float) juce::jmax ((size_t) 1, rows.size()));
+            float y = r.getY();
+            for (size_t i = 0; i < rows.size(); ++i)
+            {
+                if (std::find (spaced.begin(), spaced.end(), (int) i) != spaced.end())
+                    y += spacer;
+                for (size_t c = 0; c < rows[i].size(); ++c)
+                    out.push_back ({ juce::Rectangle<float> (r.getX() + (float) c * (w + gapX), y, w, h * 0.94f), rows[i][c] });
+                y += h;
+            }
+            return out;
+        }
+
+        int tileAt (juce::Point<float> p) const
+        {
+            for (auto& [area, tile] : layout())
+                if (tile.id >= 0 && area.contains (p))
+                    return tile.id;
+            return -1;
+        }
+
+        juce::Component::SafePointer<juce::Component> anchor;
+        std::vector<std::vector<Tile>> rows;
+        std::vector<int> spaced;
+        int selected, pressed = -1;
+        std::function<void (juce::Graphics&, juce::Rectangle<float>, int)> picture;
+        std::function<void (int)> onChosen;
+    };
 } // namespace
 
 //==============================================================================
+void chooseTile (juce::Component& anchor, std::vector<std::vector<Tile>> rows, std::vector<int> spacedRows, int selected,
+                 std::function<void (juce::Graphics&, juce::Rectangle<float>, int)> paintPicture, std::function<void (int)> onChosen)
+{
+    auto* layer = layerFor (anchor);
+    if (layer == nullptr || rows.empty())
+        return;
+    (new TilePopup (anchor, std::move (rows), std::move (spacedRows), selected, std::move (paintPicture), std::move (onChosen)))->open (*layer);
+}
+
 void editText (juce::Component& host, const juce::String& title, const juce::String& initial,
                std::function<void (const juce::String&)> onDone, TextOptions options)
 {

@@ -786,12 +786,14 @@ void Faceplate::paint (juce::Graphics& g)
         auto m = meterArea;
         g.setColour (juce::Colour (0xff141414));
         g.fillRoundedRectangle (m, 4.0f);
+        // A landscape meter face, backlit amber as on the units' panels.
         auto face = m.reduced (5.0f);
-        juce::ColourGradient fg (juce::Colour (0xfff7ecc8), face.getCentreX(), face.getY(), juce::Colour (0xffd8c58e), face.getCentreX(), face.getBottom(), false);
+        face = face.withSizeKeepingCentre (face.getWidth(), juce::jmin (face.getHeight(), face.getWidth() * 0.7f));
+        juce::ColourGradient fg (juce::Colour (0xfff8dc8c), face.getCentreX(), face.getY(), juce::Colour (0xffd9a144), face.getCentreX(), face.getBottom(), false);
         g.setGradientFill (fg);
         g.fillRoundedRectangle (face, 3.0f);
-        const auto pivot = juce::Point<float> (face.getCentreX(), face.getBottom() + face.getHeight() * 0.25f);
-        const float len = juce::jmin (face.getHeight() * 0.95f, face.getWidth() * 0.62f);
+        const auto pivot = juce::Point<float> (face.getCentreX(), face.getBottom() + face.getHeight() * 0.18f);
+        const float len = juce::jmin (face.getHeight() * 1.05f, face.getWidth() * 0.62f);
         g.saveState();
         g.reduceClipRegion (face.toNearestInt());
         g.setColour (juce::Colour (0xff2a2a2a));
