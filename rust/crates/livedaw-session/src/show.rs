@@ -815,10 +815,10 @@ impl Show {
         }
 
         if !xml.has_tag("LiveDAWShow") {
-            return Err("Not a Live DAW show file".into());
+            return Err("Not a Sidecar show file".into());
         }
         if xml.int_or("version", 0) > SHOW_VERSION {
-            return Err("This show was saved by a newer version of Live DAW".into());
+            return Err("This show was saved by a newer version of Sidecar".into());
         }
         let Some(console_xml) = xml.child("Console") else {
             return Err("The show file has no console section".into());

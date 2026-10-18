@@ -34,7 +34,7 @@ public:
     //==============================================================================
     // Projects
 
-    /** Where new projects go: <documents>/Live DAW/Recordings. */
+    /** Where new projects go: <documents>/Sidecar/Recordings. */
     static juce::File getDefaultFolder();
     /** Overrides the default folder (tests). */
     void setDefaultFolder (const juce::File& f) { defaultFolder = f; }

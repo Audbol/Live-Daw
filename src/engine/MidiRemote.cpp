@@ -20,7 +20,7 @@ namespace
 
     const char* const routeKeys[MidiRemote::kNumFunctions] = { "enchctl", "enfxctl", "encustctl", "ensysex", "enmidicc", "enscenes", "enshowctl", "enscenetx" };
     const char* const portKeys[MidiRemote::kNumPorts] = { "din", "usb", "daw1", "daw2", "daw3" };
-    constexpr const char* virtualPrefix = "Live DAW MIDI";
+    constexpr const char* virtualPrefix = "Sidecar MIDI";
 
     int panToMidi (float pan)
     {

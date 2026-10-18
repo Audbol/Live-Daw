@@ -168,11 +168,11 @@ endfunction()
 # Application
 #-------------------------------------------------------------------------------
 juce_add_gui_app(LiveDAW
-    PRODUCT_NAME "Live DAW"
-    COMPANY_NAME "LiveDAW"
-    BUNDLE_ID "org.livedaw.app"
+    PRODUCT_NAME "Sidecar"
+    COMPANY_NAME "Sidecar"
+    BUNDLE_ID "org.sidecar.app"
     MICROPHONE_PERMISSION_ENABLED TRUE
-    MICROPHONE_PERMISSION_TEXT "Live DAW needs access to your audio inputs to mix them.")
+    MICROPHONE_PERMISSION_TEXT "Sidecar needs access to your audio inputs to mix them.")
 
 target_sources(LiveDAW PRIVATE
     src/Main.cpp

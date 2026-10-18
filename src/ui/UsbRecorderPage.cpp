@@ -634,7 +634,7 @@ void UsbRecorderPage::setRecPath()
 
 void UsbRecorderPage::chooseStorageFolder()
 {
-    // Live DAW's "USB stick" is a folder: hold USB (or right-click) to move it.
+    // Sidecar's "USB stick" is a folder: hold USB (or right-click) to move it.
     auto chooser = std::make_shared<juce::FileChooser> ("The USB folder (the recorder's stick)", usb().getStorageFolder());
     juce::Component::SafePointer<UsbRecorderPage> safe (this);
     chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories, [safe, chooser] (const juce::FileChooser& fc)

@@ -101,7 +101,7 @@ pub fn capture_fx(engine: &Engine, bridge: &mut dyn PluginBridge, slot: usize, n
 /// LOAD on the FX tab: the preset into FX slot `slot`. Ok carries warnings
 /// (a plugin that isn't loaded there, a premium device in slots 9-16).
 pub fn apply_fx(engine: &Engine, bridge: &mut dyn PluginBridge, preset: &Element, slot: usize) -> Result<Vec<String>, String> {
-    let info = info(preset).ok_or("Not a Live DAW preset")?;
+    let info = info(preset).ok_or("Not a Sidecar preset")?;
     if info.kind != PresetType::Fx {
         return Err("Not an FX preset".into());
     }
@@ -155,7 +155,7 @@ pub fn apply_channel(
     target: &StripRef,
     scope: Option<u32>,
 ) -> Result<ApplyResult, String> {
-    let info = info(preset).ok_or("Not a Live DAW preset")?;
+    let info = info(preset).ok_or("Not a Sidecar preset")?;
     if info.kind != PresetType::Channel {
         return Err("Not a channel preset".into());
     }
@@ -189,7 +189,7 @@ pub fn save(path: &Path, preset: &Element) -> Result<(), String> {
 pub fn load(path: &Path) -> Result<Element, String> {
     let text = fs::read_to_string(path).map_err(|e| format!("Could not read {}: {e}", path.display()))?;
     let xml = xml::parse(&text).map_err(|e| format!("Not a valid preset ({e})"))?;
-    info(&xml).ok_or_else(|| "Not a Live DAW preset".to_owned())?;
+    info(&xml).ok_or_else(|| "Not a Sidecar preset".to_owned())?;
     Ok(xml)
 }
 

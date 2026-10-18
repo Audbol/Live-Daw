@@ -12,7 +12,7 @@ namespace livedaw
 class MixerEngine;
 class Show;
 
-/** The WING remote: Live DAW answers the Behringer WING's network protocols
+/** The WING remote: Sidecar answers the Behringer WING's network protocols
     (discovery on UDP 2222, OSC on UDP 2223, the native protocol on TCP 2222
     with meters over UDP) so WING remote clients can control the console, and
     reads and writes WING snapshot files. The protocols run on background
@@ -76,7 +76,7 @@ public:
     /** Adds the snapshot scenes of a WING .show file to `show`. */
     juce::Result importShow (Show&, const juce::File&, juce::String& report);
 
-    /** How much of the WING parameter tree maps onto Live DAW. */
+    /** How much of the WING parameter tree maps onto Sidecar. */
     static juce::String coverageReport();
 
     ld::LdWing* getHandle() const noexcept { return handle; }

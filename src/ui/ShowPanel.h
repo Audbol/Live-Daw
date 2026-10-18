@@ -13,7 +13,7 @@ namespace livedaw::ui
       green bar links the ones that fire with their scene, and a scene to the
       one below it that it LINKs), with REMOVE, RENAME, SKIP, LINK, UP, DOWN.
       Scene tags show as "#n", skipped scenes dimmed with the SKIP mark.
-    - INT: the library folder (Documents/Live DAW/Library) and USB: a folder of
+    - INT: the library folder (Documents/Sidecar/Library) and USB: a folder of
       your choice (USB again chooses another). Shows, FX presets and channel
       presets with their type chip and date, folders first; FOLDER, RENAME,
       DELETE and sorting by name and type or by date.

@@ -1,4 +1,5 @@
 #include "ui/Pages.h"
+#include "engine/AppPaths.h"
 #include "ui/ScopeWindow.h"
 #include "engine/Models.h"
 
@@ -135,7 +136,7 @@ public:
         makeKey (keys, *this, "ADD ITEM\nTO SHOW", Icon::Plus, false); // needs the file browser (G-N3)
         makeKey (keys, *this, "EDIT\nTAG", Icon::Tag)->onClick = [this] { editTag(); };
         makeKey (keys, *this, "SEND\nMIDI", Icon::Edit, false);        // needs MIDI (G-N1)
-        // WING files (Live DAW): snapshots apply to the console, shows add scenes.
+        // WING files (Sidecar): snapshots apply to the console, shows add scenes.
         // IMPORT WING SNAP/SHOW... and EXPORT WING SNAP... (the file dialogs say which).
         makeKey (keys, *this, "IMPORT\nWING", Icon::LoadTray)->onClick = [this] { importWing(); };
         makeKey (keys, *this, "EXPORT\nWING", Icon::SaveTray)->onClick = [this] { exportWing(); };
@@ -222,7 +223,7 @@ private:
     void exportWing()
     {
         auto& ctx = page.ctx;
-        const auto name = juce::File::createLegalFileName (ctx.show.getName().isNotEmpty() ? ctx.show.getName() : juce::String ("Live DAW"));
+        const auto name = juce::File::createLegalFileName (ctx.show.getName().isNotEmpty() ? ctx.show.getName() : juce::String (kAppName));
         chooser = std::make_unique<juce::FileChooser> ("Export a WING snapshot (experimental)",
                                                        juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile (name + ".snap"),
                                                        "*.snap");

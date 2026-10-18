@@ -132,7 +132,7 @@ struct UiContext
     std::function<void (LayerSet::Section, const state::FaderRef&)> revealFader;
 
     // Shortcuts (manual chapter 10)
-    /** Saves the main display as a PNG in Documents/Live DAW/screens (on the
+    /** Saves the main display as a PNG in Documents/Sidecar/screens (on the
         console: hold CLR SOLO, press UTILITY). */
     std::function<void()> takeScreenshot;
     /** Surface lock (on the console: hold HOME): every control but the main

@@ -15,7 +15,7 @@ namespace livedaw
 /** The WING's USB recorder / player (manual 8.2 "4-Track USB Recorder"; WING
     tree /rec and /play), over the engine's ld_usb_* functions.
 
-    - "USB" storage is a folder on disk (default <documents>/Live DAW/USB,
+    - "USB" storage is a folder on disk (default <documents>/Sidecar/USB,
       changeable): the browser lists its folders, audio files (WAV, FLAC,
       AIFF, MP3) and playlists, creates folders, renames and deletes.
     - Recorder: records the RECORDER output group (four ports, each a strip's
@@ -53,7 +53,7 @@ public:
     //==============================================================================
     // Storage
 
-    /** The default "USB stick": <documents>/Live DAW/USB. */
+    /** The default "USB stick": <documents>/Sidecar/USB. */
     static juce::File defaultStorageFolder();
     juce::File getStorageFolder() const { return storage; }
     /** Changes the storage folder (created if missing); the browser and REC PATH

@@ -1,4 +1,5 @@
 #include "daw/Session.h"
+#include "engine/AppPaths.h"
 
 namespace livedaw::daw
 {
@@ -16,7 +17,7 @@ namespace
     class JobThread final : public juce::Thread
     {
     public:
-        explicit JobThread (std::function<void()> f) : juce::Thread ("Live DAW project job"), fn (std::move (f)) {}
+        explicit JobThread (std::function<void()> f) : juce::Thread ("Sidecar project job"), fn (std::move (f)) {}
         void run() override { fn(); }
 
     private:
@@ -68,7 +69,7 @@ void Session::message (const juce::String& text, bool error)
 //==============================================================================
 juce::File Session::getDefaultFolder()
 {
-    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Live DAW").getChildFile ("Recordings");
+    return paths::documents().getChildFile ("Recordings");
 }
 
 juce::File Session::getProjectsFolder() const

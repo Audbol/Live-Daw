@@ -1,4 +1,5 @@
 #include "ui/ShowPanel.h"
+#include "engine/AppPaths.h"
 
 namespace livedaw::ui
 {
@@ -378,7 +379,7 @@ namespace
 
 juce::File ShowPanel::libraryFolder()
 {
-    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Live DAW").getChildFile ("Library");
+    return paths::documents().getChildFile ("Library");
 }
 
 ShowPanel::ShowPanel (UiContext& c) : ctx (c)
