@@ -3,6 +3,7 @@
 //! between chunks. A counting allocator checks that the audio-thread calls
 //! never allocate.
 
+use livedaw_recorder::codec::{open_reader, FileFormat};
 use livedaw_recorder::usb::{PlayerState, RecFormat, RecState, RecTap, UsbDeck, USB_CHANNELS};
 use livedaw_recorder::wav::{SampleFormat, WavReader, WavWriter};
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -124,7 +125,7 @@ fn records_2_and_4_channels_at_16_and_24_bit_bit_exact() {
     for (channels, bits) in [(2usize, 16u16), (4, 24), (2, 24), (4, 16)] {
         let d = deck();
         let path = dir.join(format!("R_{channels}_{bits}.wav"));
-        d.record(&path, RecFormat { channels, bits }).unwrap();
+        d.record(&path, RecFormat { channels, bits, ..Default::default() }).unwrap();
         assert_eq!(d.rec_state(), RecState::Recording, "shows at once");
         record_chunks(&d, bits, 0, 40);
         assert_eq!(d.rec_time(), 40 * BLOCK as i64);
@@ -151,7 +152,7 @@ fn pause_resume_and_new_file_lose_nothing() {
     let d = deck();
     let a = dir.join("a.wav");
     let b = dir.join("b.wav");
-    d.record(&a, RecFormat { channels: 2, bits: 24 }).unwrap();
+    d.record(&a, RecFormat { channels: 2, bits: 24, ..Default::default() }).unwrap();
     record_chunks(&d, 24, 0, 10);
     d.pause_recording();
     assert_eq!(d.rec_state(), RecState::Paused);
@@ -429,5 +430,182 @@ fn the_clip_cued_keeps_its_info_when_the_queue_changes() {
     assert_eq!(d.current_entry(), id);
     assert!(d.file_info(id).is_some(), "still known");
     assert_eq!(d.length(), 40000);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+// ---- file formats ---------------------------------------------------------------------------
+
+fn read_any(path: &Path) -> (livedaw_recorder::codec::AudioInfo, Vec<Vec<f32>>) {
+    let mut r = open_reader(path).unwrap();
+    let info = *r.info();
+    let mut chans = vec![vec![0.0; info.frames as usize]; info.channels];
+    let mut refs: Vec<&mut [f32]> = chans.iter_mut().map(|c| &mut c[..]).collect();
+    r.read(0, &mut refs).unwrap();
+    (info, chans)
+}
+
+fn tone(channel: usize, start: usize, n: usize) -> Vec<f32> {
+    let f = [440.0, 660.0, 880.0, 1100.0][channel];
+    (start..start + n).map(|i| (0.4 * (std::f64::consts::TAU * f * i as f64 / RATE).sin()) as f32).collect()
+}
+
+fn record_tones(d: &UsbDeck, start: usize, chunks: usize) {
+    for k in 0..chunks {
+        let sig: Vec<Vec<f32>> = (0..USB_CHANNELS).map(|c| tone(c, start + k * BLOCK, BLOCK)).collect();
+        chunk(d, BLOCK, &[Some(&sig[0]), Some(&sig[1]), Some(&sig[2]), Some(&sig[3])]);
+        if k % 16 == 15 {
+            settle(d);
+        }
+    }
+}
+
+fn snr_db(x: &[f32], y: &[f32]) -> f64 {
+    let sig: f64 = x.iter().map(|&v| f64::from(v).powi(2)).sum();
+    let err: f64 = x.iter().zip(y).map(|(&a, &b)| f64::from(a - b).powi(2)).sum();
+    10.0 * (sig / err.max(1e-30)).log10()
+}
+
+#[test]
+fn records_flac_and_aiff_bit_exact_and_plays_them_back() {
+    let dir = temp_dir("formats");
+    for format in [FileFormat::Flac, FileFormat::Aiff, FileFormat::Wav] {
+        for (channels, bits) in [(2usize, 16u16), (4, 24)] {
+            let d = deck();
+            let path = dir.join(format!("R_{channels}_{bits}.{}", format.extension()));
+            d.record(&path, RecFormat { channels, bits, format, kbps: 0 }).unwrap();
+            record_chunks(&d, bits, 0, 60);
+            d.stop_recording();
+            chunk(&d, BLOCK, &SILENT);
+            settle(&d);
+            let (info, chans) = read_any(&path);
+            assert_eq!((info.format, info.channels, info.sample_rate, info.bits), (format, channels, 48000, bits));
+            assert_eq!(info.frames, 60 * BLOCK as u64);
+            for (c, got) in chans.iter().enumerate() {
+                assert_eq!(*got, grid_signal(bits, c, 0, 60 * BLOCK), "{format:?} {channels} ch {bits} bit: channel {c}");
+            }
+            // The player plays it back sample for sample.
+            let id = {
+                let mut q = d.queue();
+                q.new_playlist();
+                q.add(&path)
+            };
+            d.play();
+            let out = play_chunks(&d, 80, channels - 1);
+            let want = grid_signal(bits, channels - 1, 0, 60 * BLOCK);
+            let start = find(&out, &want[1000..1200]).expect("plays") - 1000;
+            assert_eq!(&out[start + 256..start + 60 * BLOCK], &want[256..], "{format:?} plays back bit-exact");
+            let pi = d.file_info(id).unwrap();
+            assert_eq!((pi.format, pi.channels, pi.bits, pi.length), (format, channels, bits, 60 * BLOCK as i64));
+            assert_eq!(d.dropouts(), 0);
+        }
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn records_mp3_and_plays_it_back() {
+    let dir = temp_dir("mp3");
+    for kbps in [128u32, 320] {
+        let d = deck();
+        let path = dir.join(format!("R_{kbps}.mp3"));
+        // 4-CH asks for too much: MP3 records two channels.
+        d.record(&path, RecFormat { channels: 4, bits: 24, format: FileFormat::Mp3, kbps }).unwrap();
+        assert_eq!(d.rec_format().channels, 2);
+        record_tones(&d, 0, 300);
+        d.stop_recording();
+        chunk(&d, BLOCK, &SILENT);
+        settle(&d);
+        let (info, chans) = read_any(&path);
+        assert_eq!((info.format, info.channels, info.sample_rate, info.kbps), (FileFormat::Mp3, 2, 48000, kbps));
+        assert_eq!(info.frames, 300 * BLOCK as u64, "gapless: exactly what was recorded");
+        let n = 300 * BLOCK;
+        for (c, got) in chans.iter().enumerate() {
+            let s = snr_db(&tone(c, 2000, n - 4000), &got[2000..n - 2000]);
+            assert!(s > 25.0, "{kbps} kbit/s channel {c}: SNR {s:.1} dB");
+        }
+        // Playback.
+        let id = {
+            let mut q = d.queue();
+            q.new_playlist();
+            q.add(&path)
+        };
+        d.play();
+        let out = play_chunks(&d, 320, 0);
+        let first = out.iter().position(|&v| v.abs() > 0.05).expect("plays");
+        let seg = &out[first + 2000..first + 2000 + 48000 / 4];
+        let crossings = seg.windows(2).filter(|w| w[0] < 0.0 && w[1] >= 0.0).count();
+        assert!((109..=111).contains(&crossings), "440 Hz: {crossings} periods in 0.25 s");
+        let pi = d.file_info(id).unwrap();
+        assert_eq!((pi.format, pi.kbps, pi.length), (FileFormat::Mp3, kbps, n as i64));
+        assert_eq!(d.dropouts(), 0);
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn new_file_boundaries_hold_in_every_format() {
+    let dir = temp_dir("newfile-fmt");
+    for format in [FileFormat::Flac, FileFormat::Aiff, FileFormat::Mp3] {
+        let d = deck();
+        let a = dir.join(format!("a.{}", format.extension()));
+        let b = dir.join(format!("b.{}", format.extension()));
+        let rf = RecFormat { channels: 2, bits: 24, format, kbps: 192 };
+        d.record(&a, rf).unwrap();
+        if format == FileFormat::Mp3 {
+            record_tones(&d, 0, 100);
+        } else {
+            record_chunks(&d, 24, 0, 100);
+        }
+        d.new_file(&b).unwrap();
+        if format == FileFormat::Mp3 {
+            record_tones(&d, 100 * BLOCK, 70);
+        } else {
+            record_chunks(&d, 24, 100 * BLOCK, 70);
+        }
+        d.stop_recording();
+        chunk(&d, BLOCK, &SILENT);
+        settle(&d);
+        let (ia, fa) = read_any(&a);
+        let (ib, fb) = read_any(&b);
+        assert_eq!((ia.frames, ib.frames), (100 * BLOCK as u64, 70 * BLOCK as u64), "{format:?}: the files split at the sample");
+        if format == FileFormat::Mp3 {
+            assert!(snr_db(&tone(1, 1500, 100 * BLOCK - 3000), &fa[1][1500..100 * BLOCK - 1500]) > 25.0);
+            assert!(snr_db(&tone(1, 100 * BLOCK + 1500, 70 * BLOCK - 3000), &fb[1][1500..70 * BLOCK - 1500]) > 25.0);
+        } else {
+            assert_eq!(fa[1], grid_signal(24, 1, 0, 100 * BLOCK));
+            assert_eq!(fb[1], grid_signal(24, 1, 100 * BLOCK, 70 * BLOCK), "{format:?}: NEW FILE starts on the next sample");
+        }
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn dropping_the_deck_mid_recording_finalizes_every_format() {
+    let dir = temp_dir("abrupt");
+    for format in FileFormat::ALL {
+        let path = dir.join(format!("cut.{}", format.extension()));
+        {
+            let d = deck();
+            d.record(&path, RecFormat { channels: 2, bits: 16, format, kbps: 128 }).unwrap();
+            record_chunks(&d, 16, 0, 50);
+            // No STOP: the engine (and the audio thread) go away.
+        }
+        let (info, chans) = read_any(&path);
+        assert_eq!(info.frames, 50 * BLOCK as u64, "{format:?} is complete");
+        if format != FileFormat::Mp3 {
+            assert_eq!(chans[0], grid_signal(16, 0, 0, 50 * BLOCK));
+        }
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn mp3_needs_a_rate_it_can_encode() {
+    let dir = temp_dir("mp3rate");
+    let d = UsbDeck::new();
+    unsafe { d.prepare(96000.0, BLOCK) };
+    let err = d.record(&dir.join("x.mp3"), RecFormat { channels: 2, bits: 16, format: FileFormat::Mp3, kbps: 320 }).unwrap_err();
+    assert!(err.contains("MP3"), "{err}");
+    assert!(!dir.join("x.mp3").exists());
     let _ = std::fs::remove_dir_all(dir);
 }

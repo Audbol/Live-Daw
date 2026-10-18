@@ -1,9 +1,9 @@
 //! The disk writer thread: drains the record rings into the take files,
-//! computes the peaks for drawing while recording, rewrites the WAV headers
+//! computes the peaks for drawing while recording, rewrites the headers
 //! every few seconds and finalizes the takes once the audio thread has let
 //! go of a recording.
 
-use crate::wav::WavWriter;
+use crate::codec::AudioWriter;
 use crate::*;
 
 const WRITE_BLOCK: usize = 8192;
@@ -47,7 +47,7 @@ impl PeakAcc {
 /// One recording on the writer thread.
 pub(crate) struct WriterJob {
     session: Arc<RecordSession>,
-    files: Vec<WavWriter>,
+    files: Vec<Box<dyn AudioWriter>>,
     failed: Vec<bool>,
     /// Ring frames consumed.
     consumed: usize,
@@ -60,7 +60,7 @@ pub(crate) struct WriterJob {
 }
 
 impl WriterJob {
-    pub(crate) fn new(session: Arc<RecordSession>, files: Vec<WavWriter>) -> Self {
+    pub(crate) fn new(session: Arc<RecordSession>, files: Vec<Box<dyn AudioWriter>>) -> Self {
         let tracks = session.tracks.len();
         let streams = session.streams.len();
         Self {

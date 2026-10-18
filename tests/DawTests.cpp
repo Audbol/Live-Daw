@@ -64,6 +64,7 @@ public:
         testSaveLoad();
         testTakes();
         testImportAndRender();
+        testFormats();
         testSessionSetups();
     }
 
@@ -631,6 +632,124 @@ private:
             expectWithinAbsoluteError (o.getMagnitude (0, 24000, 12000), 0.25f, 0.01f);
             expect (o.getMagnitude (0, 12000, 2000) < 0.05f); // the fade starts at zero
             expectEquals (o.getMagnitude (0, 36000, 12000), 0.0f);
+        }
+    }
+
+    void testFormats()
+    {
+        beginTest ("Audio file formats: names, settings text, what MP3 can record");
+        {
+            expectEquals (AudioFileFormat::wav (32).describe(), juce::String ("WAV 32-BIT FLOAT"));
+            expectEquals (AudioFileFormat::flac (20).normalized().bits, 24);
+            expectEquals (AudioFileFormat::mp3 (300).normalized().kbps, 320);
+            expectEquals (AudioFileFormat::aiff (24).extension(), juce::String (".aif"));
+            expectEquals (AudioFileFormat::mp3 (192).shortName(), juce::String ("MP3 192"));
+            for (const auto& f : AudioFileFormat::exportChoices())
+                expect (AudioFileFormat::fromString (f.toString()) == f, f.toString());
+            expect (AudioFileFormat::fromString ("nonsense", AudioFileFormat::flac (16)) == AudioFileFormat::flac (16));
+            expect (AudioFileFormat::mp3().check (2, 96000.0).isNotEmpty());
+            expect (AudioFileFormat::mp3().check (2, 44100.0).isEmpty());
+            expect (AudioFileFormat::flac().check (2, 96000.0).isEmpty());
+            expect (AudioFileFormat::isAudioFile (juce::File ("/a/b.AIFF")) && ! AudioFileFormat::isAudioFile (juce::File ("/a/b.ogg")));
+            expect (AudioFileFormat::typeOfFile (juce::File ("/a/b.flac")) == AudioFileFormat::Type::Flac);
+        }
+
+        beginTest ("Takes record as FLAC, AIFF or MP3; export renders every format");
+        {
+            TempFolder temp;
+            MixerEngine engine (0);
+            engine.setNumChannels (2);
+            constexpr int kBlock = 128;
+            engine.prepareOffline (48000.0, kBlock, 2, 2);
+            auto& recorder = engine.getRecorder();
+            Session session (recorder, nullptr);
+            session.setDefaultFolder (temp.folder);
+            auto& p = session.getProject();
+            int64 clock = 0;
+            std::vector<float> in0 (kBlock), in1 (kBlock), out0 (kBlock), out1 (kBlock);
+            auto tone = [] (int64 t) { return 0.5f * (float) std::sin ((double) t * juce::MathConstants<double>::twoPi * 441.0 / 48000.0); };
+            auto run = [&] (int blocks, bool signal)
+            {
+                for (int b = 0; b < blocks; ++b)
+                {
+                    recorder.waitForDisk();
+                    for (int i = 0; i < kBlock; ++i)
+                        in0[(size_t) i] = signal ? tone (clock + i) : 0.0f;
+                    std::fill (in1.begin(), in1.end(), 0.0f);
+                    const float* ins[] = { in0.data(), in1.data() };
+                    float* outs[] = { out0.data(), out1.data() };
+                    engine.processBlock (ins, 2, outs, 2, kBlock);
+                    clock += kBlock;
+                }
+            };
+            TrackData td;
+            td.name = "Gtr";
+            td.source.kind = Recorder::Source::Kind::HardwareInput;
+            td.source.port = 0;
+            const auto t = p.addTrack (td);
+            p.setTrackProperty (t, ids::arm, true, false);
+            for (auto format : { AudioFileFormat::flac (24), AudioFileFormat::aiff (24), AudioFileFormat::mp3 (256) })
+            {
+                session.setRecordFormat (format);
+                expect (recorder.getRecordFormat() == format);
+                session.locate (p.getLength() + 48000);
+                const auto before = p.getClips (t).size();
+                const auto result = session.record();
+                expect (result.wasOk(), result.getErrorMessage());
+                run (375, true);
+                session.stop();
+                run (8, false);
+                for (int i = 0; i < 500 && p.getClips (t).size() == before; ++i)
+                {
+                    recorder.waitForDisk();
+                    session.collectTakes();
+                    juce::Thread::sleep (2);
+                }
+                const auto clips = p.getClips (t);
+                expectEquals ((int) clips.size(), (int) before + 1);
+                if (clips.size() != before + 1)
+                    continue;
+                const auto& clip = clips.back();
+                const auto file = p.resolve (clip.file);
+                expectEquals (file.getFileExtension(), format.extension(), "takes carry the format's extension");
+                // The project's readers (waveforms, export) read it at the right level, sample-aligned.
+                std::unique_ptr<juce::AudioFormatReader> reader (session.getFormats().createReaderFor (file));
+                expect (reader != nullptr);
+                if (reader == nullptr)
+                    continue;
+                expectEquals ((int64) reader->lengthInSamples, clip.length);
+                juce::AudioBuffer<float> b (1, 24000);
+                reader->read (&b, 0, 24000, 12000, true, false);
+                const bool lossy = format.type == AudioFileFormat::Type::Mp3;
+                expectWithinAbsoluteError (b.getMagnitude (0, 0, 24000), 0.5f, lossy ? 0.03f : 0.001f);
+            }
+            expect (session.getRecordFormat() == AudioFileFormat::mp3 (256));
+
+            // Export the track in each format; every file reads back with JUCE.
+            juce::AudioFormatManager juceFormats;
+            juceFormats.registerBasicFormats();
+            const auto length = p.getLength();
+            std::vector<RenderClip> clips;
+            for (auto& c : p.getClips (t))
+                clips.push_back ({ p.resolve (c.file), c });
+            std::atomic<bool> cancel { false };
+            for (const auto& format : AudioFileFormat::exportChoices())
+            {
+                const auto dest = temp.folder.getChildFile ("Export/01 Gtr" + format.extension());
+                const auto r = renderTrack (session.getFormats(), clips, 0.0f, 1, 48000.0, length, dest, cancel, {}, format);
+                expect (r.wasOk(), format.describe() + ": " + r.getErrorMessage());
+                std::unique_ptr<juce::AudioFormatReader> out (juceFormats.createReaderFor (dest));
+                expect (out != nullptr, format.describe());
+                if (out == nullptr)
+                    continue;
+                const bool lossy = format.type == AudioFileFormat::Type::Mp3;
+                if (! lossy)
+                    expectEquals ((int64) out->lengthInSamples, length);
+                juce::AudioBuffer<float> o (1, (int) out->lengthInSamples);
+                out->read (&o, 0, o.getNumSamples(), 0, true, false);
+                expectWithinAbsoluteError (o.getMagnitude (0, 0, o.getNumSamples()), 0.5f, lossy ? 0.05f : 0.002f, format.describe());
+                dest.deleteFile();
+            }
         }
     }
 

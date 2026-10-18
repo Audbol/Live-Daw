@@ -331,6 +331,66 @@ void UsbRecorderPage::saveSettings()
     usb().saveSettings (ctx.settings);
 }
 
+void UsbRecorderPage::openList (juce::Rectangle<int> anchorArea, const juce::StringArray& items, int current, std::function<void (int)> chosen,
+                                popups::ListOptions options)
+{
+    if (listAnchor.getParentComponent() == nullptr)
+    {
+        listAnchor.setInterceptsMouseClicks (false, false);
+        addChildComponent (listAnchor);
+    }
+    listAnchor.setBounds (anchorArea);
+    popups::chooseFrom (listAnchor, items, current, std::move (chosen), std::move (options));
+}
+
+void UsbRecorderPage::chooseRecFormat()
+{
+    auto& u = usb();
+    const auto types = { AudioFileFormat::Type::Wav, AudioFileFormat::Type::Flac, AudioFileFormat::Type::Aiff, AudioFileFormat::Type::Mp3 };
+    juce::StringArray items;
+    popups::ListOptions options;
+    options.caption = "FORMAT";
+    for (auto t : types)
+        items.add (AudioFileFormat::typeName (t));
+    // MP3 needs 32, 44.1 or 48 kHz.
+    if (AudioFileFormat::mp3().check (2, u.getSampleRate()).isNotEmpty())
+        options.disabled.push_back (3);
+    juce::Component::SafePointer<UsbRecorderPage> safe (this);
+    openList (formatKey, items, (int) u.getRecFileType(), [safe] (int i)
+    {
+        if (safe == nullptr || i < 0 || i > 3)
+            return;
+        safe->usb().setRecFileType (static_cast<AudioFileFormat::Type> (i));
+        safe->saveSettings();
+        safe->layout(); // the bit keys or the bit rate list
+        safe->repaint();
+    }, options);
+}
+
+void UsbRecorderPage::chooseKbps()
+{
+    auto& u = usb();
+    juce::StringArray items;
+    int current = 0;
+    for (int b : AudioFileFormat::kMp3Bitrates)
+    {
+        if (b == u.getRecKbps())
+            current = items.size();
+        items.add (juce::String (b) + " kbps");
+    }
+    popups::ListOptions options;
+    options.caption = "BIT RATE";
+    juce::Component::SafePointer<UsbRecorderPage> safe (this);
+    openList (kbpsKey, items, current, [safe] (int i)
+    {
+        if (safe == nullptr || ! juce::isPositiveAndBelow (i, (int) std::size (AudioFileFormat::kMp3Bitrates)))
+            return;
+        safe->usb().setRecKbps (AudioFileFormat::kMp3Bitrates[i]);
+        safe->saveSettings();
+        safe->repaint();
+    }, options);
+}
+
 void UsbRecorderPage::warn (const juce::String& title, const juce::Result& r)
 {
     if (r.failed())
@@ -740,6 +800,8 @@ void UsbRecorderPage::layout()
     recReels = f (962, 180, 1170, 303);
     channelKeys = { f (1383, 115, 1456, 170), f (1462, 115, 1535, 170) };
     bitKeys = { f (1383, 184, 1456, 240), f (1462, 184, 1535, 240) };
+    formatKey = f (1180, 184, 1376, 240);
+    kbpsKey = bitKeys[0].getUnion (bitKeys[1]);
     recPathText = f (1180, 244, 1538, 266);
     recCaption = f (1180, 266, 1540, 306);
     recKeys = f (810, 318, 1545, 413);
@@ -840,10 +902,18 @@ void UsbRecorderPage::layout()
 
     // The recorder.
     const auto stopped = [&u] { return ! u.isRecording(); };
+    const bool mp3 = u.getRecFileType() == AudioFileFormat::Type::Mp3;
+    addKey (formatKey, [self] { self->chooseRecFormat(); }, stopped);
     addKey (channelKeys[0], [self, &u] { u.setRecChannels (2); self->saveSettings(); }, stopped);
-    addKey (channelKeys[1], [self, &u] { u.setRecChannels (4); self->saveSettings(); }, [&u] { return ! u.isRecording() && ! u.isFullSpeedOnly(); });
-    addKey (bitKeys[0], [self, &u] { u.setRecBits (16); self->saveSettings(); }, stopped);
-    addKey (bitKeys[1], [self, &u] { u.setRecBits (24); self->saveSettings(); }, [&u] { return ! u.isRecording() && ! u.isFullSpeedOnly(); });
+    addKey (channelKeys[1], [self, &u] { u.setRecChannels (4); self->saveSettings(); },
+            [&u] { return ! u.isRecording() && ! u.isFullSpeedOnly() && u.getRecFileType() != AudioFileFormat::Type::Mp3; });
+    if (mp3)
+        addKey (kbpsKey, [self] { self->chooseKbps(); }, stopped);
+    else
+    {
+        addKey (bitKeys[0], [self, &u] { u.setRecBits (16); self->saveSettings(); }, stopped);
+        addKey (bitKeys[1], [self, &u] { u.setRecBits (24); self->saveSettings(); }, [&u] { return ! u.isRecording() && ! u.isFullSpeedOnly(); });
+    }
     addKey (recKeyAreas[0], [self, &u]
     {
         self->warn ("REC", u.record());
@@ -1112,7 +1182,7 @@ void UsbRecorderPage::paintList (juce::Graphics& g)
         {
             auto c = right.removeFromRight ((int) (sh * 0.081f)).withTrimmedRight ((int) (sh * 0.006f)).toFloat();
             c = c.withHeight ((float) inner.getHeight() * 0.36f).withY ((float) inner.getY() + (float) inner.getHeight() * 0.08f);
-            chip (g, c, row.kind == (int) UsbRecorder::ItemKind::Playlist ? "M3U" : "WAV",
+            chip (g, c, row.kind == (int) UsbRecorder::ItemKind::Playlist ? juce::String ("M3U") : AudioFileFormat::typeName (AudioFileFormat::typeOfFile (row.file)),
                   row.kind == (int) UsbRecorder::ItemKind::Playlist ? listChip : wavChip, juce::Colours::black);
         }
         // SKIP / STOP flags (playlist), left of the chip.
@@ -1131,7 +1201,7 @@ void UsbRecorderPage::paintList (juce::Graphics& g)
         g.setFont (font (sh * 0.02f, false));
         const auto hint = playlistView ? (u.isPlaylistOpen() ? "The playlist is empty: ADD clips from the USB browser"
                                                              : "No playlist: CREATE PLAYLIST, or ADD a clip from the USB browser")
-                                       : "No WAV files or folders here";
+                                       : "No audio files or folders here";
         g.drawFittedText (hint, rowArea (0).reduced ((int) (sh * 0.02f), 0), juce::Justification::centredLeft, 2);
     }
 
@@ -1192,11 +1262,34 @@ void UsbRecorderPage::paintRecorder (juce::Graphics& g)
         g.setFont (font ((float) r.getHeight() * 0.36f));
         g.drawFittedText (text, r.reduced (2, 0), juce::Justification::centred, 1, 0.7f);
     };
-    const int fmtChannels = fs ? 2 : u.getRecChannels(), fmtBits = fs ? 16 : u.getRecBits();
+    const bool mp3 = u.getRecFileType() == AudioFileFormat::Type::Mp3;
+    const int fmtChannels = u.getEffectiveRecChannels(), fmtBits = fs ? 16 : u.getRecBits();
     choice (channelKeys[0], "2-CH", fmtChannels == 2, ! u.isRecording());
-    choice (channelKeys[1], "4-CH", fmtChannels == 4, ! u.isRecording() && ! fs);
-    choice (bitKeys[0], "16 bit", fmtBits == 16, ! u.isRecording());
-    choice (bitKeys[1], "24 bit", fmtBits == 24, ! u.isRecording() && ! fs);
+    choice (channelKeys[1], "4-CH", fmtChannels == 4, ! u.isRecording() && ! fs && ! mp3);
+    // FORMAT and (for MP3) the bit rate: lists, drawn like the console's dropdown fields.
+    auto list = [&] (juce::Rectangle<int> r, const juce::String& caption, const juce::String& value, bool enabled)
+    {
+        g.setColour (formatOff);
+        g.fillRect (r);
+        auto inner = r.reduced (juce::jmax (2, r.getHeight() / 12));
+        auto top = inner.removeFromTop (inner.getHeight() * 36 / 100);
+        g.setColour (enabled ? juce::Colour (0xffd0d0d0) : juce::Colour (0xff8a8a8a));
+        g.setFont (font ((float) top.getHeight() * 0.9f, false));
+        g.drawFittedText (caption, top, juce::Justification::centredLeft, 1, 0.7f);
+        auto chevron = inner.removeFromRight (inner.getHeight()).toFloat().reduced ((float) inner.getHeight() * 0.18f);
+        drawIcon (g, Icon::ChevronDown, chevron, enabled ? juce::Colours::white : juce::Colour (0xff8a8a8a));
+        g.setColour (enabled ? juce::Colours::white : juce::Colour (0xff8a8a8a));
+        g.setFont (font ((float) inner.getHeight() * 0.72f));
+        g.drawFittedText (value, inner, juce::Justification::centredLeft, 1, 0.7f);
+    };
+    list (formatKey, "FORMAT", AudioFileFormat::typeName (u.getRecFileType()), ! u.isRecording());
+    if (mp3)
+        list (kbpsKey, "BIT RATE", juce::String (u.getRecKbps()) + " kbps", ! u.isRecording());
+    else
+    {
+        choice (bitKeys[0], "16 bit", fmtBits == 16, ! u.isRecording());
+        choice (bitKeys[1], "24 bit", fmtBits == 24, ! u.isRecording() && ! fs);
+    }
 
     // The REC PATH above the caption, the caption itself.
     const auto storage = u.getStorageFolder();
@@ -1275,7 +1368,7 @@ void UsbRecorderPage::paintPlayer (juce::Graphics& g)
                     file = e.file;
                     break;
                 }
-        if (file != juce::File() && UsbRecorder::readWavInfo (file, info))
+        if (file != juce::File() && UsbRecorder::readFileInfo (file, info))
         {
             known = true;
             mismatch = juce::roundToInt (u.getSampleRate()) != info.sampleRate;
@@ -1319,11 +1412,15 @@ void UsbRecorderPage::paintPlayer (juce::Graphics& g)
     auto chips = playChips.toFloat();
     const float cw = chips.getWidth() * 0.48f, ch = chips.getHeight() * 0.44f;
     const auto ink = known ? juce::Colour (0xffb8b8b8) : juce::Colour (0xff6a6a6a);
-    chip (g, { chips.getX(), chips.getY(), cw, ch }, "WAV", chipGrey, ink);
+    const auto typeName = known ? AudioFileFormat::typeName (info.type) : juce::String ("WAV");
+    chip (g, { chips.getX(), chips.getY(), cw, ch }, typeName, chipGrey, ink);
     chip (g, { chips.getRight() - cw, chips.getY(), cw, ch }, known ? juce::String (info.channels) + "-CH" : juce::String ("-CH"), chipGrey, ink);
     const auto rate = known ? (info.sampleRate == 44100 ? juce::String ("44.1K") : juce::String (juce::roundToInt (info.sampleRate / 1000.0)) + "K") : juce::String ("--K");
     chip (g, { chips.getX(), chips.getBottom() - ch, cw, ch }, rate, known && mismatch ? Dark::orange : chipGrey, known && mismatch ? juce::Colours::black : ink);
-    chip (g, { chips.getRight() - cw, chips.getBottom() - ch, cw, ch }, known ? juce::String (info.bits) + " bit" : juce::String ("-- bit"), chipGrey, ink);
+    const auto depth = ! known ? juce::String ("-- bit")
+                       : info.type == AudioFileFormat::Type::Mp3 ? juce::String (info.kbps) + "k"
+                                                                  : juce::String (info.bits) + " bit";
+    chip (g, { chips.getRight() - cw, chips.getBottom() - ch, cw, ch }, depth, chipGrey, ink);
 
     g.setColour (captionGrey);
     g.setFont (font (sh * 0.034f));

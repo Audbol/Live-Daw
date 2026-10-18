@@ -6,7 +6,8 @@
 
 use crate::session::{str_arg, LdString};
 use crate::{engine, guard};
-use livedaw_engine::recorder::usb::{wav_file_info, RecFormat, RecTap, UsbDeck};
+use livedaw_engine::recorder::codec::FileFormat;
+use livedaw_engine::recorder::usb::{audio_file_info, RecFormat, RecTap, UsbDeck};
 use livedaw_engine::Engine;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -42,7 +43,8 @@ fn path_string(p: Option<&Path>) -> *mut LdString {
 // ---- recorder ------------------------------------------------------------------------
 
 /// REC: starts recording to `path` (created now; channels 2 or 4, bits 16 or
-/// 24), or resumes a paused recording. False sets `*error` (may be null).
+/// 24, format 0 WAV / 1 FLAC / 2 AIFF / 3 MP3 with `kbps`), or resumes a
+/// paused recording. False sets `*error` (may be null).
 #[no_mangle]
 pub unsafe extern "C" fn ld_usb_rec_start(
     e: *const Engine,
@@ -50,11 +52,18 @@ pub unsafe extern "C" fn ld_usb_rec_start(
     len: usize,
     channels: i32,
     bits: i32,
+    format: i32,
+    kbps: i32,
     error: *mut *mut LdString,
 ) -> bool {
     let Some(d) = deck(e) else { return false };
     let file = path_arg(path, len);
-    let format = RecFormat { channels: channels.max(0) as usize, bits: bits.clamp(0, 32) as u16 };
+    let format = RecFormat {
+        channels: channels.max(0) as usize,
+        bits: bits.clamp(0, 32) as u16,
+        format: FileFormat::from_i32(format),
+        kbps: kbps.max(0) as u32,
+    };
     result(guard(Err("internal error".into()), || d.record(&file, format)), error)
 }
 
@@ -237,7 +246,8 @@ pub unsafe extern "C" fn ld_usb_play_info(
     true
 }
 
-/// A WAV file's header (any pointer may be null); false if it can't be read.
+/// An audio file's header (WAV, FLAC, AIFF, MP3; any pointer may be null);
+/// false if it can't be read.
 #[no_mangle]
 pub unsafe extern "C" fn ld_usb_wav_info(
     path: *const u8,
@@ -247,19 +257,39 @@ pub unsafe extern "C" fn ld_usb_wav_info(
     bits: *mut i32,
     frames: *mut i64,
 ) -> bool {
+    ld_usb_file_info(path, len, std::ptr::null_mut(), channels, rate, bits, frames, std::ptr::null_mut())
+}
+
+/// An audio file's format (0 WAV, 1 FLAC, 2 AIFF, 3 MP3), channels, rate,
+/// bits, frames and MP3 bit rate (any pointer may be null); false if it
+/// can't be read.
+#[no_mangle]
+pub unsafe extern "C" fn ld_usb_file_info(
+    path: *const u8,
+    len: usize,
+    format: *mut i32,
+    channels: *mut i32,
+    rate: *mut i32,
+    bits: *mut i32,
+    frames: *mut i64,
+    kbps: *mut i32,
+) -> bool {
     let file = path_arg(path, len);
-    let Some(info) = guard(None, || wav_file_info(&file)) else { return false };
-    if let Some(x) = channels.as_mut() {
-        *x = info.channels as i32;
+    let Some(info) = guard(None, || audio_file_info(&file)) else { return false };
+    crate::codec::write_info(&info, format, channels, rate, bits, frames, kbps);
+    true
+}
+
+/// The format (0 WAV, 1 FLAC, 2 AIFF, 3 MP3) and MP3 bit rate of entry
+/// `entry` once the player opened it; false if it doesn't know it (yet).
+#[no_mangle]
+pub unsafe extern "C" fn ld_usb_play_format(e: *const Engine, entry: u64, format: *mut i32, kbps: *mut i32) -> bool {
+    let Some(info) = deck(e).and_then(|d| guard(None, || d.file_info(entry))) else { return false };
+    if let Some(x) = format.as_mut() {
+        *x = info.format as i32;
     }
-    if let Some(x) = rate.as_mut() {
-        *x = info.sample_rate as i32;
-    }
-    if let Some(x) = bits.as_mut() {
-        *x = i32::from(info.format.bits());
-    }
-    if let Some(x) = frames.as_mut() {
-        *x = info.frames as i64;
+    if let Some(x) = kbps.as_mut() {
+        *x = info.kbps as i32;
     }
     true
 }
@@ -489,7 +519,7 @@ mod tests {
             assert_eq!(ld_usb_rec_state(e), 0);
             let bad = "/nonexistent-dir/\0/x.wav";
             let mut error: *mut LdString = std::ptr::null_mut();
-            assert!(!ld_usb_rec_start(e, bad.as_ptr(), bad.len(), 2, 16, &mut error));
+            assert!(!ld_usb_rec_start(e, bad.as_ptr(), bad.len(), 2, 16, 0, 0, &mut error));
             assert!(!error.is_null());
             crate::session::ld_string_free(error);
             let _ = std::fs::remove_dir_all(dir);

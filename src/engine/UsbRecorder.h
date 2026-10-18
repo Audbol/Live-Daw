@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/AudioFileFormat.h"
 #include "engine/Strip.h"
 
 #include <juce_core/juce_core.h>
@@ -15,13 +16,14 @@ namespace livedaw
     tree /rec and /play), over the engine's ld_usb_* functions.
 
     - "USB" storage is a folder on disk (default <documents>/Live DAW/USB,
-      changeable): the browser lists its folders, WAV files and playlists,
-      creates folders, renames and deletes.
+      changeable): the browser lists its folders, audio files (WAV, FLAC,
+      AIFF, MP3) and playlists, creates folders, renames and deletes.
     - Recorder: records the RECORDER output group (four ports, each a strip's
       output or a source, routed on ROUTING > OUTPUTS) to a 2- or 4-channel,
-      16- or 24-bit WAV file "R_YYYYMMDD-HHMMSS.wav" in the REC PATH folder,
-      at the engine's rate. REC, PAUSE, STOP, NEW FILE.
-    - Player: plays WAV clips (any rate: resampled and flagged) into the USB
+      16- or 24-bit WAV, FLAC or AIFF file, or a 2-channel MP3 (128 - 320
+      kbit/s), "R_YYYYMMDD-HHMMSS.<ext>" in the REC PATH folder, at the
+      engine's rate. REC, PAUSE, STOP, NEW FILE.
+    - Player: plays WAV, FLAC, AIFF and MP3 clips (any rate: resampled and flagged) into the USB
       PLAYER source group (kNumChannels sources at kPlayerSourceBase), which
       channels patch like any input. What it plays is the queue: the files of
       the browser's folder (one at a time) or a playlist (SKIP, STOP after,
@@ -61,7 +63,7 @@ public:
     enum class ItemKind
     {
         Folder,
-        Wav,
+        Wav, // an audio file: WAV, FLAC, AIFF or MP3
         Playlist
     };
 
@@ -72,7 +74,7 @@ public:
         juce::Time modified;
     };
 
-    /** The folders, WAV files and playlists in `folder`: folders first, then by name. */
+    /** The folders, audio files and playlists in `folder`: folders first, then by name. */
     static std::vector<Item> listFolder (const juce::File& folder);
     /** FOLDER: a new folder in `parent`. */
     juce::Result createFolder (const juce::File& parent, const juce::String& name);
@@ -102,6 +104,15 @@ public:
     int getRecBits() const noexcept { return recBits; }
     void setRecChannels (int channels) noexcept { recChannels = channels <= 2 ? 2 : 4; }
     void setRecBits (int bits) noexcept { recBits = bits <= 16 ? 16 : 24; }
+    /** FORMAT: WAV, FLAC, AIFF or MP3 (MP3: two channels, recKbps). */
+    AudioFileFormat::Type getRecFileType() const noexcept { return recType; }
+    void setRecFileType (AudioFileFormat::Type t) noexcept { recType = t; }
+    int getRecKbps() const noexcept { return recKbps; }
+    void setRecKbps (int kbps) noexcept { recKbps = AudioFileFormat::mp3 (kbps).normalized().kbps; }
+    /** What the next recording is written as (USB HOST SPEED FS and MP3 applied). */
+    AudioFileFormat getRecFileFormat() const;
+    /** The channels the next recording has (2 for MP3 and USB HOST SPEED FS). */
+    int getEffectiveRecChannels() const noexcept { return fullSpeed || recType == AudioFileFormat::Type::Mp3 ? 2 : recChannels; }
     /** USB HOST SPEED FS: 2-channel 16-bit recording only (HS: 4-track 24-bit). */
     void setFullSpeedOnly (bool fs) noexcept { fullSpeed = fs; }
     bool isFullSpeedOnly() const noexcept { return fullSpeed; }
@@ -110,7 +121,7 @@ public:
     juce::File getRecPath() const { return recPath; }
     void setRecPath (const juce::File& folder) { recPath = folder; }
 
-    /** A new file name in the REC PATH: R_YYYYMMDD-HHMMSS.wav (-2, -3 ... if taken). */
+    /** A new file name in the REC PATH: R_YYYYMMDD-HHMMSS.<ext> (-2, -3 ... if taken). */
     juce::File nextRecordingFile (juce::Time when = juce::Time::getCurrentTime()) const;
 
     /** REC: starts a new recording, or resumes a paused one. */
@@ -193,10 +204,12 @@ public:
     {
         int channels = 0, sampleRate = 0, bits = 0;
         int64_t frames = 0; // in the file's own rate
+        AudioFileFormat::Type type = AudioFileFormat::Type::Wav;
+        int kbps = 0;       // MP3
     };
 
-    /** A WAV file's header (false if it can't be read). */
-    static bool readWavInfo (const juce::File&, FileInfo&);
+    /** An audio file's header (WAV, FLAC, AIFF, MP3; false if it can't be read). */
+    static bool readFileInfo (const juce::File&, FileInfo&);
 
     /** The current clip as the player opened it: length in engine samples and
         whether its rate differs from the engine's (it is resampled). */
@@ -234,7 +247,7 @@ public:
     void closePlaylist();
     /** ADD: a clip (a playlist is created if none is open). Returns its id. */
     uint64_t add (const juce::File&);
-    /** ADD ALL: the WAV files of a folder. */
+    /** ADD ALL: the audio files of a folder. */
     int addAll (const juce::File& folder);
     void remove (int index);
     /** UP (-1) / DOWN (+1): the entry's new index or -1. */
@@ -259,7 +272,8 @@ public:
 private:
     ld::Engine* engine;
     juce::File storage, recPath, browserFolder;
-    int recChannels = 2, recBits = 24;
+    int recChannels = 2, recBits = 24, recKbps = 320;
+    AudioFileFormat::Type recType = AudioFileFormat::Type::Wav;
     bool fullSpeed = false;
 
     JUCE_DECLARE_NON_COPYABLE (UsbRecorder)

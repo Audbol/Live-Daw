@@ -1,5 +1,6 @@
 #include "ui/daw/RecorderPage.h"
 #include "ui/HomeWidgets.h"
+#include "ui/WingPopups.h"
 #include "ui/daw/DawEditor.h"
 
 namespace livedaw::ui
@@ -252,7 +253,7 @@ RecorderPage::RecorderPage (UiContext& c, daw::Session& s) : ctx (c), session (s
     modeKey.isOn = [this] { return session.isLoopEnabled(); };
     modeKey.setTooltip ("MODE: PLAY or LOOP (the loop range is set in the editor's ruler or with the knobs)");
 
-    for (auto* k : { &newKey, &saveKey, &editKey, &allChannelsKey, &soundcheckKey, &armAllKey, &disarmKey, &pagePrev, &pageNext })
+    for (auto* k : { &newKey, &saveKey, &editKey, &formatKey, &allChannelsKey, &soundcheckKey, &armAllKey, &disarmKey, &pagePrev, &pageNext })
     {
         styleIconKey (*k);
         addAndMakeVisible (k);
@@ -261,6 +262,9 @@ RecorderPage::RecorderPage (UiContext& c, daw::Session& s) : ctx (c), session (s
     newKey.setTooltip ("A new session in " + session.getProjectsFolder().getFullPathName());
     saveKey.onClick = [this] { dawfiles::save (getTopLevelComponent(), session); };
     editKey.onClick = [this] { if (ctx.showEditor) ctx.showEditor (true); };
+    formatKey.onClick = [this] { chooseRecordFormat(); };
+    formatKey.setButtonText (session.getRecordFormat().shortName());
+    formatKey.setTooltip ("Record format of the takes (32-bit float WAV, 24-bit WAV / AIFF / FLAC, MP3)");
     editKey.setTooltip ("Open the multitrack editor (Ctrl+E)");
     allChannelsKey.onClick = [this] { recordAllChannels(); };
     allChannelsKey.iconColour = Dark::pre;
@@ -389,6 +393,32 @@ int64 RecorderPage::timelineLength() const
     return juce::jmax<int64> ((int64) (p.getSampleRate() * 60.0), (int64) ((double) len * 1.05));
 }
 
+void RecorderPage::chooseRecordFormat()
+{
+    const auto choices = AudioFileFormat::recordChoices();
+    juce::StringArray items;
+    popups::ListOptions options;
+    options.caption = "RECORD FORMAT";
+    int selected = 0;
+    for (size_t i = 0; i < choices.size(); ++i)
+    {
+        items.add (choices[i].describe());
+        if (choices[i] == session.getRecordFormat())
+            selected = (int) i;
+        // MP3 needs 32, 44.1 or 48 kHz; nothing changes while recording.
+        if (session.isRecording() || choices[i].check (2, session.getProject().getSampleRate()).isNotEmpty())
+            options.disabled.push_back ((int) i);
+    }
+    juce::Component::SafePointer<RecorderPage> safe (this);
+    popups::chooseFrom (formatKey, items, selected, [safe, choices] (int i)
+    {
+        if (safe == nullptr || ! juce::isPositiveAndBelow (i, (int) choices.size()))
+            return;
+        safe->session.setRecordFormat (choices[(size_t) i]);
+        safe->formatKey.setButtonText (choices[(size_t) i].shortName());
+    }, options);
+}
+
 void RecorderPage::refresh()
 {
     sessions->reload();
@@ -424,6 +454,8 @@ void RecorderPage::resized()
         saveKey.setBounds (h.removeFromRight (w));
         h.removeFromRight (4);
         newKey.setBounds (h.removeFromRight (w));
+        h.removeFromRight (4);
+        formatKey.setBounds (h.removeFromRight (w * 13 / 10));
     }
     b.removeFromTop (4);
     tracksPanel = b.removeFromBottom (juce::jlimit (104, 170, getHeight() * 30 / 100));
@@ -805,6 +837,8 @@ void RecorderPage::timerCallback()
 {
     auto& project = session.getProject();
     modeKey.setButtonText (session.isLoopEnabled() ? "LOOP" : "PLAY");
+    if (const auto format = session.getRecordFormat().shortName(); formatKey.getButtonText() != format)
+        formatKey.setButtonText (format); // changed in the editor's menu
     if (soundcheckKey.isEnabled() != canVirtualSoundcheck())
         enableKey (soundcheckKey, canVirtualSoundcheck());
     // Lists follow project changes (a new project file: the session list too).

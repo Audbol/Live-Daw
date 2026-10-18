@@ -45,6 +45,19 @@ int64_t Recorder::getLoopEnd() const
     return end;
 }
 
+void Recorder::setRecordFormat (AudioFileFormat format)
+{
+    const auto f = format.normalized();
+    ld::ld_rec_set_record_format (engine, (int32_t) f.type, f.bits, f.kbps);
+}
+
+AudioFileFormat Recorder::getRecordFormat() const
+{
+    int32_t type = 0, bits = 32, kbps = 320;
+    ld::ld_rec_record_format (engine, &type, &bits, &kbps);
+    return AudioFileFormat { static_cast<AudioFileFormat::Type> (juce::jlimit (0, 3, (int) type)), bits, kbps }.normalized();
+}
+
 void Recorder::setPlaylist (const Playlist& playlist)
 {
     // The paths must outlive the call: keep their UTF-8 here.

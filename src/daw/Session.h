@@ -150,8 +150,15 @@ public:
     /** Imports files as clips at `position`, the first on `trackId` (0: a new
         track) and each further one on the next track (added as needed). */
     void importFiles (const juce::Array<juce::File>&, int64 trackId, int64 position);
-    /** Renders every track to <folder>/<nn> <name>.wav. */
-    void exportTracks (const juce::File& folder);
+    /** Renders every track to <folder>/<nn> <name><ext> in `format`. */
+    void exportTracks (const juce::File& folder, AudioFileFormat format = AudioFileFormat::wav (32));
+
+    /** The format takes are recorded in (32-bit float WAV by default; kept in
+        the app settings as daw.recordFormat). */
+    AudioFileFormat getRecordFormat() const noexcept { return recordFormat; }
+    void setRecordFormat (AudioFileFormat);
+    /** The format EXPORT last used (daw.exportFormat). */
+    AudioFileFormat getExportFormat() const noexcept { return exportFormat; }
     bool isBusy() const noexcept { return busy; }
     juce::String getJobName() const { return jobName; }
     float getJobProgress() const noexcept { return jobProgress.load(); }
@@ -200,6 +207,7 @@ private:
     Recorder& recorder;
     juce::PropertiesFile* settings;
     juce::AudioFormatManager formats;
+    AudioFileFormat recordFormat, exportFormat;
     Project project;
     juce::File defaultFolder;
 

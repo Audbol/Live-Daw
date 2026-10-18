@@ -1,5 +1,6 @@
-//! What the USB player plays: a queue of clips, either the WAV files of a
-//! folder (the browser) or a playlist (manual 8.2, fig. 79).
+//! What the USB player plays: a queue of clips, either the audio files (WAV,
+//! FLAC, AIFF, MP3) of a folder (the browser) or a playlist (manual 8.2,
+//! fig. 79).
 //!
 //! A playlist entry can be skipped (SKIP: ignored until SKIP is switched off
 //! again) or stop the playlist after it (STOP); REPEAT plays the first clip
@@ -56,7 +57,7 @@ pub struct Queue {
 
 /// True for the file types the player plays.
 pub fn is_audio_file(path: &Path) -> bool {
-    path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("wav"))
+    crate::codec::FileFormat::is_audio_file(path)
 }
 
 /// True for playlist files.
@@ -493,6 +494,18 @@ mod tests {
         let v = q.version();
         q.set_repeat(true);
         assert!(q.version() > v);
+    }
+
+    #[test]
+    fn folders_list_every_audio_format() {
+        let dir = temp_dir("formats");
+        for n in ["b.wav", "e.FLAC", "f.mp3", "g.aif", "h.aiff", "i.ogg", "j.m3u", "k.aifc"] {
+            std::fs::write(dir.join(n), b"x").unwrap();
+        }
+        let names: Vec<String> =
+            audio_files_in(&dir).iter().map(|p| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, ["b.wav", "e.FLAC", "f.mp3", "g.aif", "h.aiff", "k.aifc"]);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
