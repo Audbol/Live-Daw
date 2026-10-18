@@ -1661,6 +1661,7 @@ public:
                                             options.caption = "FX PROCESSOR";
                                             popups::chooseFrom (field, items, ins.fx.load() + 1, [this] (int i) { ins.fx = i - 1; }, options);
                                         });
+        processor->keyHidden = true; // the > key beside it is the field's key [D8]
         openSlot = &key ({}, Icon::ChevronRight);
         openSlot->setTooltip ("Edit the slot on EFFECTS");
         openSlot->onClick = [this]

@@ -1364,13 +1364,16 @@ namespace
         void paint (juce::Graphics& g) override
         {
             g.fillAll (juce::Colours::black);
+            // The app's note on its MIDI ports, small and grey (it must fit the
+            // space under MIDI PORTS on every window size).
             g.setColour (Dark::textDim);
-            g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
             auto n = note;
-            g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+            const float cap = TypeScale::statusCaption * getWingScreenHeight();
+            g.setFont (wingFontPx (cap * 1.3f));
             for (int p : { (int) MidiRemote::Din, (int) MidiRemote::Usb })
-                g.drawFittedText (portStatusText (ctx, p), n.removeFromTop (20), juce::Justification::centredLeft, 1, 0.8f);
-            n.removeFromTop (8);
+                g.drawFittedText (portStatusText (ctx, p), n.removeFromTop (juce::roundToInt (cap * 3.0f)), juce::Justification::centredLeft, 1, 0.8f);
+            n.removeFromTop (juce::roundToInt (cap));
+            g.setFont (wingFontPx (cap));
             g.drawFittedText ("DIN AND USB ARE MIDI PORTS OF THIS COMPUTER (MIDI PORTS); USB IS THE VIRTUAL PORT \"LIVE DAW MIDI CONTROL\" WHERE "
                               "THE SYSTEM ALLOWS IT. TOUCH A FUNCTION'S NAME FOR ITS MIDI MAP.\n\n"
                               "WING REMOTE: WING REMOTE APPS (OSC AND THE NATIVE PROTOCOL) CAN CONNECT TO LIVE DAW. "

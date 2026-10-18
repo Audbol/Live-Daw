@@ -311,6 +311,9 @@ public:
     static std::vector<juce::Colour> prePost() { return { Dark::pre, Dark::post }; }
     static std::vector<juce::Colour> autoPrePost() { return { Dark::choice, Dark::pre, Dark::post }; }
 
+    /** Keys stacked top to bottom (MONITORS' SWITCH MODE, fig. 80). */
+    bool vertical = false;
+
     void paint (juce::Graphics& g) override
     {
         shown = getter != nullptr ? getter() : -1;
@@ -321,9 +324,11 @@ public:
         g.fillRect (r);
         r = r.reduced (1.0f);
         const float w = r.getWidth() / (float) juce::jmax (1, names.size());
+        const float h = r.getHeight() / (float) juce::jmax (1, names.size());
         for (int i = 0; i < names.size(); ++i)
         {
-            auto k = juce::Rectangle<float> (r.getX() + w * (float) i, r.getY(), w, r.getHeight()).reduced (1.0f, 0.0f);
+            auto k = vertical ? juce::Rectangle<float> (r.getX(), r.getY() + h * (float) i, r.getWidth(), h).reduced (0.0f, 1.0f)
+                              : juce::Rectangle<float> (r.getX() + w * (float) i, r.getY(), w, r.getHeight()).reduced (1.0f, 0.0f);
             const bool on = i == shown;
             auto fill = on ? (i < (int) litColours.size() ? litColours[(size_t) i] : Dark::choice) : Dark::key;
             auto ink = on ? Dark::choiceInk : Dark::caption;
@@ -344,7 +349,7 @@ public:
     {
         if (names.isEmpty() || setter == nullptr || ! getLocalBounds().contains (e.getPosition()))
             return;
-        setter (juce::jlimit (0, names.size() - 1, e.x * names.size() / juce::jmax (1, getWidth())));
+        setter (juce::jlimit (0, names.size() - 1, vertical ? e.y * names.size() / juce::jmax (1, getHeight()) : e.x * names.size() / juce::jmax (1, getWidth())));
         repaint();
     }
 
@@ -440,6 +445,7 @@ public:
     }
 
     bool arrowKey = false;          // a down arrow instead of the dots
+    bool keyHidden = false;         // no key (INS: the FX PROCESSOR field has its own > key, D8)
     std::optional<Icon> icon;       // drawn left of the caption (ROUTING group selectors)
 
     /** While its list is open (popups::chooseFrom sets the anchor's
@@ -450,8 +456,9 @@ public:
     {
         shownValue = getValue ? getValue() : juce::String();
         auto r = getLocalBounds();
-        auto key = r.removeFromRight (juce::jmin (r.getHeight() * 2 / 3, r.getWidth() / 4));
-        r.removeFromRight (3);
+        auto key = keyHidden ? juce::Rectangle<int>() : r.removeFromRight (juce::jmin (r.getHeight() * 2 / 3, r.getWidth() / 4));
+        if (! keyHidden)
+            r.removeFromRight (3);
         const float alpha = isEnabled() ? 1.0f : 0.45f;
         const bool open = isListOpen();
         g.setColour (open ? Dark::textDim : Dark::well);
@@ -460,13 +467,13 @@ public:
         g.fillRect (key);
         g.setColour (Dark::text.withAlpha (alpha));
         const auto kc = key.getCentre().toFloat();
-        if (arrowKey)
+        if (arrowKey && ! keyHidden)
         {
             juce::Path tri;
             tri.addTriangle (kc.x - 7.0f, kc.y - 4.0f, kc.x + 7.0f, kc.y - 4.0f, kc.x, kc.y + 5.0f);
             g.fillPath (tri);
         }
-        else
+        else if (! keyHidden)
         {
             const float d = juce::jlimit (3.0f, 5.0f, (float) key.getHeight() * 0.1f);
             for (int i = -1; i <= 1; ++i)

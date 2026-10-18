@@ -193,6 +193,15 @@ public:
             drawChip (g, prePostArea, "POST", user.post ? Dark::post : Colours::screenTile, user.post ? juce::Colours::black : Dark::textDim);
             prePostArea = pre.getUnion (prePostArea);
         }
+        else
+        {
+            // Not inserted anywhere: the grey column with the FX logo (fig. 28).
+            g.setColour (Colours::screenTile);
+            g.fillRect (left);
+            g.setColour (Colours::caption.withAlpha (0.55f));
+            g.setFont (wingFontPx (juce::jmin (left.getWidth() * 0.32f, left.getHeight() * 0.3f), WingWeight::SemiBold).italicised());
+            g.drawText ("FX", left, juce::Justification::centred, false);
+        }
         const bool on = ! params.bypass.load();
         drawChip (g, onArea, "ON", on ? Colours::yellow : Colours::screenTile, on ? juce::Colours::black : Dark::textDim);
 
