@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/AudioFileFormat.h"
 #include "engine/Strip.h"
 
 #include <juce_core/juce_core.h>
@@ -15,8 +16,9 @@ namespace livedaw
     - A transport with a position on the timeline (in samples at the engine's
       sample rate), play / record / stop / locate and a loop range.
     - Recording: up to kMaxRecordTracks sources (hardware inputs or strip taps)
-      are written to WAV files on a disk thread. The audio thread only copies
-      into lock-free buffers.
+      are written to files on a disk thread (32-bit float WAV by default, or
+      WAV / AIFF / FLAC 16-24 bit or MP3: setRecordFormat). The audio thread
+      only copies into lock-free buffers.
     - Playback: the UI hands over a flattened Playlist (tracks of clips with
       gain and fades). A disk thread renders it ahead of the play position into
       kNumPlaybackChannels playback channels, which are sources like hardware
@@ -101,7 +103,7 @@ public:
         track are summed (fades make crossfades). */
     struct Clip
     {
-        juce::File file;            // a WAV file (16/24/32-bit int or 32-bit float)
+        juce::File file;            // a WAV, FLAC, AIFF or MP3 file
         int64_t fileOffset = 0;     // first sample of the file that plays
         int64_t start = 0;          // timeline position of that sample
         int64_t length = 0;         // samples
@@ -148,8 +150,12 @@ public:
         int track = 0;          // the UI's track index (reported back in its Take)
         Source source;
         int numChannels = 1;    // 1 or 2 (HardwareInput stereo: port and port + 1)
-        juce::File file;        // the WAV file to create (32-bit float)
+        juce::File file;        // the file to create (with the record format's extension)
     };
+
+    /** The format of the next recordings (32-bit float WAV by default). */
+    void setRecordFormat (AudioFileFormat);
+    AudioFileFormat getRecordFormat() const;
 
     /** Starts recording the tracks from the current position. Playback of the
         playlist runs at the same time. Fails if the files can't be created, a

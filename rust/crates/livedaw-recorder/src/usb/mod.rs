@@ -5,11 +5,13 @@
 //!
 //! * **Recorder** (`/rec`): records the RECORDER output group - four ports,
 //!   each tapping a strip's output or a source (see [`RecTap`]) - to a 2- or
-//!   4-channel, 16- or 24-bit WAV file at the engine's rate. REC, PAUSE (the
-//!   file stays open), STOP (REC then starts a new file) and NEW FILE (the
-//!   next file starts on the next sample: nothing is lost).
-//! * **Player** (`/play`): plays 2- or 4-track WAV files (any rate: a file at
-//!   another rate is resampled and flagged) into the USB PLAYER source group,
+//!   4-channel file at the engine's rate: WAV, FLAC or AIFF (16 or 24 bit),
+//!   or MP3 (2 channels, 128-320 kbit/s). REC, PAUSE (the file stays open),
+//!   STOP (REC then starts a new file) and NEW FILE (the next file starts on
+//!   the next sample: nothing is lost).
+//! * **Player** (`/play`): plays 1- to 4-channel WAV, FLAC, AIFF and MP3
+//!   files (any rate: a file at another rate is resampled and flagged) into
+//!   the USB PLAYER source group,
 //!   input indices [`USB_PLAYER_SOURCE_BASE`] + 0..3, which channels patch
 //!   like any input. PLAY, PAUSE, STOP, previous / next, seek. What plays is
 //!   a [`Queue`]: a folder's files or a playlist (SKIP, STOP after, REPEAT);
@@ -32,8 +34,9 @@ mod resample;
 
 pub use queue::{After, Queue, QueueEntry, QueueKind};
 
+use crate::codec::{create_writer, AudioInfo, AudioWriter, EncodeFormat, FileFormat};
 use crate::ring::{Ring, SpscQueue};
-use crate::wav::{SampleFormat, WavWriter};
+use crate::wav::SampleFormat;
 use crate::AtomicF32;
 use std::cell::UnsafeCell;
 use std::collections::VecDeque;
@@ -168,32 +171,36 @@ impl RecState {
     }
 }
 
-/// The recording format (`/rec/channels`, `/rec/resolution`).
+/// The recording format (`/rec/channels`, `/rec/resolution`, and the file
+/// format of this recorder).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RecFormat {
-    /// 2 or 4.
+    /// 2 or 4 (MP3: 2).
     pub channels: usize,
-    /// 16 or 24.
+    /// 16 or 24 (WAV, FLAC, AIFF).
     pub bits: u16,
+    pub format: FileFormat,
+    /// MP3 bit rate (kbit/s).
+    pub kbps: u32,
 }
 
 impl Default for RecFormat {
     fn default() -> Self {
-        Self { channels: 2, bits: 24 }
+        Self { channels: 2, bits: 24, format: FileFormat::Wav, kbps: 320 }
     }
 }
 
 impl RecFormat {
-    fn sample_format(self) -> SampleFormat {
-        if self.bits <= 16 {
-            SampleFormat::Int16
-        } else {
-            SampleFormat::Int24
-        }
+    /// What the file writer gets.
+    pub fn encode_format(self) -> EncodeFormat {
+        let sample = if self.bits <= 16 { SampleFormat::Int16 } else { SampleFormat::Int24 };
+        EncodeFormat::new(self.format, sample, self.kbps)
     }
 
-    fn normalized(self) -> Self {
-        Self { channels: if self.channels <= 2 { 2 } else { 4 }, bits: if self.bits <= 16 { 16 } else { 24 } }
+    /// The nearest format the recorder writes (MP3 has 2 channels).
+    pub fn normalized(self) -> Self {
+        let channels = if self.channels <= 2 || self.format == FileFormat::Mp3 { 2 } else { 4 };
+        Self { channels, bits: if self.bits <= 16 { 16 } else { 24 }, format: self.format, kbps: self.encode_format().kbps }
     }
 }
 
@@ -201,6 +208,9 @@ impl RecFormat {
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlayFileInfo {
     pub path: PathBuf,
+    pub format: FileFormat,
+    /// MP3 bit rate (kbit/s; 0 for the other formats).
+    pub kbps: u32,
     pub channels: usize,
     pub sample_rate: u32,
     pub bits: u16,
@@ -211,10 +221,10 @@ pub struct PlayFileInfo {
     pub rate_mismatch: bool,
 }
 
-/// The header of a WAV file, for the browser (channels, rate, bits, frames).
-pub fn wav_file_info(path: &Path) -> Option<crate::wav::WavInfo> {
-    let mut f = std::fs::File::open(path).ok()?;
-    crate::wav::read_info(&mut f).ok()
+/// What an audio file of any of the formats holds, for the browser
+/// (format, channels, rate, bits, frames).
+pub fn audio_file_info(path: &Path) -> Option<AudioInfo> {
+    crate::codec::file_info(path).ok()
 }
 
 // ---- shared state ------------------------------------------------------------------------
@@ -284,7 +294,7 @@ pub(crate) struct RecSession {
     pub ring: Ring,
     pub events: SpscQueue<RecEvent>,
     /// The first file, then one per NEW FILE (pushed before the command).
-    pub files: Mutex<VecDeque<WavWriter>>,
+    pub files: Mutex<VecDeque<Box<dyn AudioWriter>>>,
     pub ended: AtomicBool,
     /// Ring frames committed when the audio thread let go.
     pub end_at: AtomicUsize,
@@ -659,7 +669,8 @@ impl UsbDeck {
         }
         let format = format.normalized();
         let rate = self.sample_rate().round() as u32;
-        let writer = WavWriter::create_with_format(file, format.channels, rate, format.sample_format())
+        format.encode_format().check(format.channels, rate)?;
+        let writer = create_writer(file, format.channels, rate, format.encode_format())
             .map_err(|e| format!("Can't create {}: {e}", file.display()))?;
         let max_block = self.shared.max_block.load(Relaxed);
         let capacity = ((REC_BUFFER_SECONDS * self.sample_rate()) as usize).max(16 * max_block);
@@ -721,7 +732,7 @@ impl UsbDeck {
         let Some(session) = c.session.clone() else { return Err("Not recording".into()) };
         let rate = self.sample_rate().round() as u32;
         let format = c.rec_format;
-        let writer = WavWriter::create_with_format(file, format.channels, rate, format.sample_format())
+        let writer = create_writer(file, format.channels, rate, format.encode_format())
             .map_err(|e| format!("Can't create {}: {e}", file.display()))?;
         lock(&session.files).push_back(writer);
         if !self.push_rec(&mut c, RecCmd::NewFile) {

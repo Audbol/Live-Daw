@@ -9,6 +9,7 @@
 #![allow(clippy::missing_safety_doc)]
 
 pub mod analysis;
+pub mod codec;
 pub mod console;
 pub mod models;
 pub mod monitor;

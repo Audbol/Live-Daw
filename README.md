@@ -211,6 +211,10 @@ a WING with a WING-LIVE card, and edits them in a DAW-style editor.
     through the console; press again to go back to the live inputs;
   - **EDIT** (status bar, header) opens the editor. The knobs move the position and
     the loop.
+  - **Record format** (the header's format key, or FILE > Record format in the
+    editor): WAV 32-bit float (the default), WAV / AIFF / FLAC 24-bit, or MP3 320 /
+    256 / 192 / 128 kbit/s (MP3 needs 32, 44.1 or 48 kHz). Takes get the format's
+    extension (`Audio/CH_1.flac`) and play back like any clip.
 - **Editor** (Ctrl+E, EDIT, holding the DAW key; Esc or CONSOLE goes back): the top bar
   (FILE menu, transport, position in min:sec or bars|beats, tempo and time signature
   of the grid, snap OFF / GRID / BARS / BEATS / SECONDS, zoom, follow, undo / redo,
@@ -229,7 +233,8 @@ a WING with a WING-LIVE card, and edits them in a DAW-style editor.
     converted to WAV at the project's rate in its Audio folder, placed at the playhead
     (or where dropped), on the selected track and the ones below.
   - **Export:** FILE > Export tracks renders every track (clip gains, fades, track
-    gain) from the start of the timeline to a WAV in the project's Export folder.
+    gain) from the start of the timeline into the project's Export folder, as WAV
+    (32-bit float, 24, 16), AIFF (24, 16), FLAC (24, 16) or MP3 (320 - 128 kbit/s).
   - **Keys:** space play / stop, R record (again: stop), Home / End, L loop, M marker,
     S split at the playhead (shift+S at the mouse), Delete, Ctrl+Z / Ctrl+Shift+Z,
     Ctrl+D duplicate, Ctrl+X / C / V (paste at the playhead), Ctrl+A, Ctrl+M mute clips,
@@ -245,18 +250,20 @@ the USB key on the screen to choose another folder).
 
 - **Screen** (the status bar's **USB** icon, red while recording, or hold VIEW on the
   monitoring panel), laid out as the console's: the browser on the left (USB | N SONGS
-  | ADD | FOLDER | RENAME | DELETE | REC PATH; folders, WAV files and playlists; the
+  | ADD | FOLDER | RENAME | DELETE | REC PATH; folders, WAV / FLAC / AIFF / MP3 files and playlists; the
   folder row goes up a level, `>` opens the selected folder, a double click plays),
   the **4-TRACK RECORDER**, the playlist keys and the **4-TRACK PLAYER** with its
   timeline on the right.
 - **Recorder:** records the RECORDER output group (four ports; MAIN 1 L/R on 1-2 by
   default; ROUTING > OUTPUTS > group RECORDER taps any strip's output without moving
-  its own outputs) to a 2-CH or 4-CH, 16 or 24 bit WAV file `R_YYYYMMDD-HHMMSS.wav` in
-  the REC PATH folder, at the console's rate. REC, PAUSE (the file stays open), STOP
-  (REC then starts a new file) and NEW FILE (the next file starts on the next sample).
-  SETUP > GENERAL > USB HOST SPEED FS limits it to 2 channels at 16 bit, as on the
-  console.
-- **Player:** plays 2- or 4-track WAV files (16/24/32 bit; a file at another sample
+  its own outputs) to a 2-CH or 4-CH, 16 or 24 bit file `R_YYYYMMDD-HHMMSS.<ext>` in
+  the REC PATH folder, at the console's rate. **FORMAT** (a list next to 2-CH | 4-CH)
+  picks WAV, FLAC, AIFF or MP3; for MP3 a **BIT RATE** list (128 - 320 kbit/s)
+  replaces 16 | 24 bit and the recording has two channels. REC, PAUSE (the file stays
+  open), STOP (REC then starts a new file) and NEW FILE (the next file starts on the
+  next sample). SETUP > GENERAL > USB HOST SPEED FS limits it to 2 channels at 16 bit,
+  as on the console. The format is kept in the app settings.
+- **Player:** plays 1- to 4-channel WAV (16/24/32 bit), FLAC, AIFF and MP3 files (a file at another sample
   rate is resampled and its rate chip turns orange) into the **USB PLAYER** source
   group, which channels patch on ROUTING like any input (PLAYER 1-4, with source
   settings). PLAY, PAUSE, STOP, `<` `>`, and the timeline (drag the cursor while
@@ -517,7 +524,7 @@ rust/crates/livedaw-dsp/     Rust DSP: the WING models (filter, EQ models, 32 dy
 rust/crates/livedaw-engine/  Rust realtime engine: WING topology, strips, sends, DCAs, mute groups, FX slots, solo, worker pool
 rust/crates/livedaw-session/ Rust sessions: console state, Show > Scene > Snippet, fades, fader banks, show files, legacy import
 rust/crates/livedaw-wing/    WING parameter tree, its mapping onto the engine, the WING remote protocols, .snap/.show files
-rust/crates/livedaw-recorder/ Rust multitrack recorder and the 2/4-track USB recorder / player (rings, WAV files, disk threads)
+rust/crates/livedaw-recorder/ Rust multitrack recorder and the 2/4-track USB recorder / player (rings, WAV / FLAC / AIFF / MP3 codecs, disk threads)
 rust/crates/livedaw-ffi/     C ABI over the engine and model tables + C++ header (include/livedaw_engine.h)
 src/engine/   C++ side: facades over the Rust code, FX slot plugin hosting
 src/daw/      Multitrack projects: tracks, clips, markers, undo, import / export, the recording session

@@ -1,5 +1,5 @@
 //! The USB deck's disk thread: plays the queue into the playback ring and
-//! writes the record ring to the WAV files.
+//! writes the record ring to the files.
 //!
 //! Who may touch the playback ring: when the audio thread starts a new epoch
 //! (play from stop, a clip loaded, a seek, a stop) it stops reading the ring
@@ -10,7 +10,7 @@
 
 use super::resample::FileStream;
 use super::*;
-use crate::wav::WavReader;
+use crate::codec::open_reader;
 use std::time::Instant;
 
 const RENDER_BLOCK: usize = 4096;
@@ -35,10 +35,12 @@ fn info_of(path: &Path, file: &FileStream, rate: u32) -> PlayFileInfo {
     let i = file.info();
     PlayFileInfo {
         path: path.to_owned(),
+        format: i.format,
+        kbps: i.kbps,
         channels: i.channels,
         sample_rate: i.sample_rate,
-        bits: i.format.bits(),
-        float: i.format == crate::wav::SampleFormat::Float32,
+        bits: i.bits,
+        float: i.float,
         length: file.length() as i64,
         rate_mismatch: i.sample_rate != rate,
     }
@@ -57,7 +59,7 @@ fn remember(s: &DeckShared, id: u64, info: PlayFileInfo) {
 fn open(s: &DeckShared, id: u64) -> Result<Stream, ()> {
     let path = s.queue().entry(id).map(|e| e.path.clone()).ok_or(())?;
     let rate = s.sample_rate().round() as u32;
-    let file = FileStream::new(WavReader::open(&path).map_err(|_| ())?, rate);
+    let file = FileStream::new(open_reader(&path).map_err(|_| ())?, rate);
     remember(s, id, info_of(&path, &file, rate));
     Ok(Stream { entry: id, file, next: 0 })
 }
@@ -191,7 +193,7 @@ impl Player {
 
 struct Job {
     session: Arc<RecSession>,
-    file: Option<WavWriter>,
+    file: Option<Box<dyn AudioWriter>>,
     consumed: usize,
     last_header: Instant,
     scratch: Vec<Vec<f32>>,

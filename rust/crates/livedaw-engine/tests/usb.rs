@@ -80,7 +80,7 @@ fn records_the_recorder_group_and_plays_it_back_as_usb_player_sources() {
     rig.engine.main(0).unwrap().params.fader_db.store(0.0);
 
     let take = dir.join("R_take.wav");
-    rig.engine.usb().record(&take, RecFormat { channels: 2, bits: 24 }).unwrap();
+    rig.engine.usb().record(&take, RecFormat { channels: 2, bits: 24, ..Default::default() }).unwrap();
     let start = rig.clock; // the next block starts the recording
     while rig.clock < start + 48_000 {
         rig.block();
@@ -111,7 +111,7 @@ fn records_the_recorder_group_and_plays_it_back_as_usb_player_sources() {
     };
     let again = dir.join("R_again.wav");
     rig.engine.usb().set_tap(2, RecTap::Source(USB_PLAYER_SOURCE_BASE));
-    rig.engine.usb().record(&again, RecFormat { channels: 4, bits: 24 }).unwrap();
+    rig.engine.usb().record(&again, RecFormat { channels: 4, bits: 24, ..Default::default() }).unwrap();
     rig.engine.usb().play();
     for _ in 0..(60_000 / BLOCK) {
         rig.block();

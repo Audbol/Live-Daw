@@ -361,3 +361,133 @@ fn dropping_the_recorder_finalizes_the_take() {
     assert_eq!(r.info().frames as i64, length);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// The recorded signal: a tone on the 16-bit grid (exact in every format but MP3).
+fn tone_value(k: usize) -> f32 {
+    let v = (0.4 * (std::f64::consts::TAU * 441.0 * k as f64 / 48000.0).sin() * 32768.0).round();
+    (v / 32768.0) as f32
+}
+
+#[test]
+fn takes_record_and_play_in_every_format() {
+    use livedaw_recorder::codec::open_reader;
+    use livedaw_recorder::wav::SampleFormat;
+    let dir = temp_dir("formats");
+    let formats = [
+        EncodeFormat::default(),
+        EncodeFormat::new(FileFormat::Wav, SampleFormat::Int24, 0),
+        EncodeFormat::new(FileFormat::Aiff, SampleFormat::Int24, 0),
+        EncodeFormat::new(FileFormat::Aiff, SampleFormat::Float32, 0),
+        EncodeFormat::new(FileFormat::Flac, SampleFormat::Int16, 0),
+        EncodeFormat::new(FileFormat::Flac, SampleFormat::Int24, 0),
+        EncodeFormat::new(FileFormat::Mp3, SampleFormat::Int16, 320),
+    ];
+    for (fi, format) in formats.iter().enumerate() {
+        let mut d = Driver::new();
+        d.rec.set_record_format(*format);
+        assert_eq!(d.rec.record_format(), *format);
+        let mono = dir.join(format!("m{fi}.{}", format.extension()));
+        let stereo = dir.join(format!("s{fi}.{}", format.extension()));
+        let source = RecordSource::default();
+        d.rec.locate(1_000);
+        d.rec
+            .record(&[
+                RecordTrackSpec { track: 0, source, num_channels: 1, file: mono.clone() },
+                RecordTrackSpec { track: 1, source, num_channels: 2, file: stereo.clone() },
+            ])
+            .unwrap();
+        let mut counter = 0usize;
+        let mut first = None;
+        for _ in 0..400 {
+            assert!(d.rec.wait_for_disk(WAIT));
+            let base = counter;
+            let before = d.chunks.len();
+            d.callback(BLOCK, 0, &|i| tone_value(base + i));
+            for (k, c) in d.chunks[before..].iter().enumerate() {
+                if c.state == TransportState::Recording && first.is_none() {
+                    let offset: usize = d.chunks[before..before + k].iter().map(|c| c.samples.len()).sum();
+                    first = Some(base + offset);
+                }
+            }
+            counter += BLOCK;
+            if d.rec.recorded_length() > 60_000 {
+                break;
+            }
+        }
+        let first = first.expect("recording started");
+        d.rec.stop();
+        d.callback(BLOCK, 0, &|i| tone_value(counter + i)); // the take ends with this chunk
+        let takes = wait_for_takes(&d.rec, 2);
+        assert_eq!(takes.len(), 2, "{format:?}");
+        let length = takes[0].length as usize;
+        let lossy = format.format == FileFormat::Mp3;
+        for t in &takes {
+            assert_eq!(t.length as usize, length);
+            let mut r = open_reader(&t.file).unwrap();
+            assert_eq!((r.info().format, r.info().channels, r.info().frames as usize), (format.format, t.num_channels, length));
+            let mut l = vec![0.0f32; length];
+            let mut rr = vec![0.0f32; length];
+            r.read(0, &mut [&mut l[..], &mut rr[..]]).unwrap();
+            let want: Vec<f32> = (0..length).map(|k| tone_value(first + k)).collect();
+            if lossy {
+                let sig: f64 = want[2000..length - 2000].iter().map(|&v| f64::from(v).powi(2)).sum();
+                let err: f64 = want[2000..length - 2000].iter().zip(&l[2000..]).map(|(&a, &b)| f64::from(a - b).powi(2)).sum();
+                assert!(10.0 * (sig / err).log10() > 30.0, "MP3 take matches the input sample for sample");
+            } else {
+                let bad = (0..length).find(|&k| l[k] != want[k]);
+                assert!(
+                    bad.is_none(),
+                    "{format:?}: take {} bit-exact, first difference at {bad:?}: {:?} vs {:?}",
+                    t.track,
+                    &l[bad.unwrap_or(0)..bad.unwrap_or(0) + 3],
+                    &want[bad.unwrap_or(0)..bad.unwrap_or(0) + 3]
+                );
+            }
+            assert_eq!(rr, l);
+        }
+
+        // Play the stereo take back from its start.
+        let clip = Clip::new(&takes[1].file, 1_000, length as i64);
+        d.rec.set_playlist(&Playlist { tracks: vec![PlaybackTrack::new(2, 2, vec![clip])] });
+        d.rec.locate(1_000);
+        d.rec.play();
+        d.chunks.clear();
+        d.roll(2);
+        d.run(100, 2);
+        let played: Vec<(i64, f32)> =
+            rolling(&d.chunks).flat_map(|c| c.samples.iter().enumerate().map(move |(i, &x)| (c.pos + i as i64, x))).collect();
+        let mut checked = 0;
+        for &(t, x) in played.iter().skip(DECLICK_SAMPLES) {
+            let k = (t - 1_000) as usize;
+            if k + 2000 < length && k > 2000 {
+                let want = tone_value(first + k);
+                if lossy {
+                    assert!((x - want).abs() < 0.05, "MP3 playback at {k}: {x} vs {want}");
+                } else {
+                    assert_eq!(x, want, "{format:?} playback at {k}");
+                }
+                checked += 1;
+            }
+        }
+        assert!(checked > 30_000, "{checked} samples played");
+        assert_eq!(d.rec.dropouts(), 0);
+        d.rec.stop();
+        d.run(2, 0);
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn mp3_takes_need_a_rate_the_encoder_has() {
+    let dir = temp_dir("mp3rate");
+    let rec = Recorder::new();
+    unsafe { rec.prepare(96000.0, BLOCK) };
+    rec.set_record_format(EncodeFormat::new(FileFormat::Mp3, livedaw_recorder::wav::SampleFormat::Int16, 320));
+    let file = dir.join("x.mp3");
+    let err = rec
+        .record(&[RecordTrackSpec { track: 0, source: RecordSource::default(), num_channels: 1, file: file.clone() }])
+        .unwrap_err();
+    assert!(err.contains("MP3"), "{err}");
+    assert!(!file.exists());
+    let _ = std::fs::remove_dir_all(dir);
+}

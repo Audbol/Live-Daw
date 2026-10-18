@@ -23,6 +23,8 @@ namespace
     constexpr const char* kBrowserKey = "usb.browser";
     constexpr const char* kChannelsKey = "usb.recChannels";
     constexpr const char* kBitsKey = "usb.recBits";
+    constexpr const char* kFormatKey = "usb.recFormat"; // "wav", "flac", "aiff", "mp3"
+    constexpr const char* kKbpsKey = "usb.recKbps";
     constexpr const char* kTapKey = "usb.tap";
     constexpr const char* kFullSpeedKey = "usb.hostSpeedFs";
     constexpr const char* kLibraryUsbKey = "library.usbFolder"; // LIBRARY's INT / USB browser
@@ -39,7 +41,7 @@ namespace
         return path.isNotEmpty() ? juce::File (path) : juce::File();
     }
 
-    bool isWav (const juce::File& f) { return f.hasFileExtension ("wav"); }
+    bool isAudio (const juce::File& f) { return AudioFileFormat::isAudioFile (f); }
     bool isPlaylist (const juce::File& f) { return f.hasFileExtension ("m3u"); }
 } // namespace
 
@@ -120,7 +122,7 @@ std::vector<UsbRecorder::Item> UsbRecorder::listFolder (const juce::File& folder
             continue;
         if (entry.isDirectory())
             items.push_back ({ f, ItemKind::Folder, entry.getModificationTime() });
-        else if (isWav (f))
+        else if (isAudio (f))
             items.push_back ({ f, ItemKind::Wav, entry.getModificationTime() });
         else if (isPlaylist (f))
             items.push_back ({ f, ItemKind::Playlist, entry.getModificationTime() });
@@ -191,17 +193,30 @@ juce::File UsbRecorder::nextRecordingFile (juce::Time when) const
 {
     const auto base = "R_" + when.formatted ("%Y%m%d-%H%M%S");
     auto folder = recPath.isDirectory() ? recPath : storage;
-    auto f = folder.getChildFile (base + ".wav");
+    const auto ext = getRecFileFormat().extension();
+    auto f = folder.getChildFile (base + ext);
     for (int n = 2; f.exists(); ++n)
-        f = folder.getChildFile (base + "-" + juce::String (n) + ".wav");
+        f = folder.getChildFile (base + "-" + juce::String (n) + ext);
     return f;
+}
+
+AudioFileFormat UsbRecorder::getRecFileFormat() const
+{
+    switch (recType)
+    {
+        case AudioFileFormat::Type::Mp3: return AudioFileFormat::mp3 (recKbps);
+        case AudioFileFormat::Type::Flac: return AudioFileFormat::flac (fullSpeed ? 16 : recBits);
+        case AudioFileFormat::Type::Aiff: return AudioFileFormat::aiff (fullSpeed ? 16 : recBits);
+        case AudioFileFormat::Type::Wav: break;
+    }
+    return AudioFileFormat::wav (fullSpeed ? 16 : recBits);
 }
 
 juce::Result UsbRecorder::record()
 {
     if (getRecState() == RecState::Paused)
     {
-        ld::ld_usb_rec_start (engine, "", 0, recChannels, recBits, nullptr);
+        ld::ld_usb_rec_start (engine, "", 0, recChannels, recBits, (int32_t) recType, recKbps, nullptr);
         return juce::Result::ok();
     }
     if (isRecording())
@@ -210,10 +225,10 @@ juce::Result UsbRecorder::record()
         recPath.createDirectory();
     const auto file = nextRecordingFile();
     const Utf8 path (file.getFullPathName());
-    const int channels = fullSpeed ? 2 : recChannels;
-    const int bits = fullSpeed ? 16 : recBits;
+    const int channels = getEffectiveRecChannels();
+    const auto format = getRecFileFormat();
     ld::LdString* error = nullptr;
-    if (! ld::ld_usb_rec_start (engine, path.data, path.size, channels, bits, &error))
+    if (! ld::ld_usb_rec_start (engine, path.data, path.size, channels, format.bits, (int32_t) format.type, format.kbps, &error))
         return failed (error, "Recording failed");
     refreshQueue();
     return juce::Result::ok();
@@ -330,14 +345,14 @@ float UsbRecorder::getPlayLevel (int ch)
     return juce::Decibels::gainToDecibels (ld::ld_usb_play_level (engine, ch), -100.0f);
 }
 
-bool UsbRecorder::readWavInfo (const juce::File& file, FileInfo& info)
+bool UsbRecorder::readFileInfo (const juce::File& file, FileInfo& info)
 {
     const Utf8 path (file.getFullPathName());
-    int32_t channels = 0, rate = 0, bits = 0;
+    int32_t format = 0, channels = 0, rate = 0, bits = 0, kbps = 0;
     int64_t frames = 0;
-    if (! ld::ld_usb_wav_info (path.data, path.size, &channels, &rate, &bits, &frames))
+    if (! ld::ld_usb_file_info (path.data, path.size, &format, &channels, &rate, &bits, &frames, &kbps))
         return false;
-    info = { channels, rate, bits, frames };
+    info = { channels, rate, bits, frames, static_cast<AudioFileFormat::Type> (juce::jlimit (0, 3, (int) format)), kbps };
     return true;
 }
 
@@ -348,7 +363,9 @@ bool UsbRecorder::getCurrentInfo (FileInfo& info, int64_t& length, bool& rateMis
     int64_t len = 0;
     if (! ld::ld_usb_play_info (engine, getCurrentEntry(), &channels, &rate, &bits, &len, &mismatch))
         return false;
-    info = { channels, rate, bits, 0 };
+    int32_t format = 0, kbps = 0;
+    ld::ld_usb_play_format (engine, getCurrentEntry(), &format, &kbps);
+    info = { channels, rate, bits, 0, static_cast<AudioFileFormat::Type> (juce::jlimit (0, 3, (int) format)), kbps };
     length = len;
     rateMismatch = mismatch;
     return true;
@@ -452,6 +469,8 @@ void UsbRecorder::loadSettings (juce::PropertiesFile& settings)
     setBrowserFolder (browse.isNotEmpty() && juce::File::isAbsolutePath (browse) && juce::File (browse).isDirectory() ? juce::File (browse) : storage);
     setRecChannels (settings.getIntValue (kChannelsKey, 2));
     setRecBits (settings.getIntValue (kBitsKey, 24));
+    recType = AudioFileFormat::fromString (settings.getValue (kFormatKey, "wav")).type;
+    setRecKbps (settings.getIntValue (kKbpsKey, 320));
     fullSpeed = settings.getBoolValue (kFullSpeedKey, false);
     for (int port = 0; port < kNumChannels; ++port)
     {
@@ -468,6 +487,8 @@ void UsbRecorder::saveSettings (juce::PropertiesFile& settings) const
     settings.setValue (kBrowserKey, browserFolder.getFullPathName());
     settings.setValue (kChannelsKey, recChannels);
     settings.setValue (kBitsKey, recBits);
+    settings.setValue (kFormatKey, AudioFileFormat::typeName (recType).toLowerCase());
+    settings.setValue (kKbpsKey, recKbps);
     settings.setValue (kFullSpeedKey, fullSpeed);
     for (int port = 0; port < kNumChannels; ++port)
         settings.setValue (kTapKey + juce::String (port + 1), ld::ld_usb_rec_tap (engine, port));

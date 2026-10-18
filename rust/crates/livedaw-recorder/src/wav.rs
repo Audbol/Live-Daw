@@ -9,6 +9,7 @@
 //! `ds64`, the 32-bit sizes become 0xFFFFFFFF). The header is rewritten every
 //! few seconds while recording, so a crash loses at most that much audio.
 
+use crate::codec::{AudioInfo, AudioReader, AudioWriter, FileFormat};
 use std::fs::File;
 use std::io::{self, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -165,14 +166,27 @@ pub fn read_info(file: &mut File) -> io::Result<WavInfo> {
 pub struct WavReader {
     file: File,
     info: WavInfo,
+    audio_info: AudioInfo,
     bytes: Vec<u8>,
 }
 
 impl WavReader {
     pub fn open(path: &Path) -> io::Result<Self> {
-        let mut file = File::open(path)?;
+        Self::from_file(File::open(path)?)
+    }
+
+    pub fn from_file(mut file: File) -> io::Result<Self> {
         let info = read_info(&mut file)?;
-        Ok(Self { file, info, bytes: Vec::new() })
+        let audio_info = AudioInfo {
+            format: FileFormat::Wav,
+            channels: info.channels,
+            sample_rate: info.sample_rate,
+            frames: info.frames,
+            bits: info.format.bits(),
+            float: info.format == SampleFormat::Float32,
+            kbps: 0,
+        };
+        Ok(Self { file, info, audio_info, bytes: Vec::new() })
     }
 
     pub fn info(&self) -> &WavInfo {
@@ -402,6 +416,50 @@ impl WavWriter {
         self.update_header()?;
         self.out.get_mut().sync_data()?;
         Ok(self.frames)
+    }
+}
+
+impl AudioReader for WavReader {
+    fn info(&self) -> &AudioInfo {
+        &self.audio_info
+    }
+
+    fn read(&mut self, frame: i64, out: &mut [&mut [f32]]) -> io::Result<()> {
+        WavReader::read(self, frame, out)
+    }
+}
+
+impl AudioWriter for WavWriter {
+    fn path(&self) -> &Path {
+        WavWriter::path(self)
+    }
+
+    fn channels(&self) -> usize {
+        self.channels
+    }
+
+    fn frames(&self) -> u64 {
+        self.frames
+    }
+
+    fn write_planar(&mut self, channels: &[&[f32]], n: usize) -> io::Result<()> {
+        WavWriter::write_planar(self, channels, n)
+    }
+
+    fn write_silence(&mut self, n: usize) -> io::Result<()> {
+        WavWriter::write_silence(self, n)
+    }
+
+    fn update_header(&mut self) -> io::Result<()> {
+        WavWriter::update_header(self)
+    }
+
+    fn finalize(self: Box<Self>) -> io::Result<u64> {
+        WavWriter::finalize(*self)
+    }
+
+    fn set_rf64_threshold(&mut self, riff_bytes: u64) {
+        WavWriter::set_rf64_threshold(self, riff_bytes)
     }
 }
 

@@ -128,7 +128,7 @@ namespace dawfiles
         });
     }
 
-    void exportTracks (juce::Component* parent, daw::Session& session)
+    void exportTracks (juce::Component* parent, daw::Session& session, AudioFileFormat format)
     {
         auto result = session.ensureFolder();
         if (result.failed())
@@ -138,13 +138,13 @@ namespace dawfiles
         }
         const auto folder = session.getProject().getFolder().getChildFile ("Export");
         juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Export tracks",
-                                            "Render every track (clip gains, fades and track gain, from the start of the timeline) to a WAV in\n"
-                                                + folder.getFullPathName() + "?",
+                                            "Render every track (clip gains, fades and track gain, from the start of the timeline) to "
+                                                + format.describe() + " files in\n" + folder.getFullPathName() + "?",
                                             "EXPORT", "CANCEL", parent,
-                                            juce::ModalCallbackFunction::create ([&session, folder] (int r)
+                                            juce::ModalCallbackFunction::create ([&session, folder, format] (int r)
         {
             if (r != 0)
-                session.exportTracks (folder);
+                session.exportTracks (folder, format);
         }));
     }
 
@@ -168,7 +168,18 @@ namespace dawfiles
         m.addItem ("Show the project folder", session.getProject().hasFolder(), false, [&session] { session.getProject().getFolder().revealToUser(); });
         m.addSeparator();
         m.addItem ("Import audio...   (Ctrl+I)", [parent, &session, &chooser] { importWithChooser (parent, session, chooser); });
-        m.addItem ("Export tracks to WAV...", session.getProject().getLength() > 0, false, [parent, &session] { exportTracks (parent, session); });
+        juce::PopupMenu exports;
+        for (const auto& f : AudioFileFormat::exportChoices())
+            exports.addItem (f.describe() + "...", true, f == session.getExportFormat(), [parent, &session, f] { exportTracks (parent, session, f); });
+        m.addSubMenu ("Export tracks", exports, session.getProject().getLength() > 0);
+        juce::PopupMenu formats;
+        for (const auto& f : AudioFileFormat::recordChoices())
+        {
+            const auto why = f.check (2, session.getProject().getSampleRate());
+            formats.addItem (f.describe() + (why.isNotEmpty() ? "   (needs 32 / 44.1 / 48 kHz)" : juce::String()), why.isEmpty() && ! session.isRecording(),
+                             f == session.getRecordFormat(), [&session, f] { session.setRecordFormat (f); });
+        }
+        m.addSubMenu ("Record format: " + session.getRecordFormat().describe(), formats);
         m.addSeparator();
         m.addItem ("Crossfade overlaps automatically", true, session.autoCrossfade, [&session] { session.autoCrossfade = ! session.autoCrossfade; });
         m.addItem ("Recording replaces what it covers", true, session.replaceOnRecord, [&session] { session.replaceOnRecord = ! session.replaceOnRecord; });

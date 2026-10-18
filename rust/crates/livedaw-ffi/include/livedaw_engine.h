@@ -551,6 +551,17 @@ struct LdSink;    // opaque string the host appends to (ld_sink_append) from cal
 struct Show;      // opaque
 struct LayerSet;  // opaque
 struct LayerList; // opaque
+struct LdAudioWriter; // opaque: an audio file being written (ld_afw_*)
+struct LdAudioReader; // opaque: an audio file being read (ld_afr_*)
+
+/** Audio file formats (recorders, export): FileFormat codes. */
+enum AudioFileFormat : int32_t
+{
+    kFormatWav = 0,
+    kFormatFlac = 1,
+    kFormatAiff = 2,
+    kFormatMp3 = 3
+};
 struct LdWing;    // opaque WING remote (servers + snapshot files), see ld_wing_*
 
 struct StripRefC
@@ -938,6 +949,10 @@ extern "C"
     /** Copies the playlist (the arrays may be freed afterwards). */
     void ld_rec_set_playlist (const Engine*, const RecPlaybackTrackC* tracks, int32_t numTracks,
                               const RecClipC* clips, int32_t numClips);
+    /** The format of the next recordings (AudioFileFormat; bits 16, 24 or 32 = float for
+        WAV / AIFF; kbps for MP3). Take files should carry the format's extension. */
+    void ld_rec_set_record_format (const Engine*, int32_t format, int32_t bits, int32_t kbps);
+    void ld_rec_record_format (const Engine*, int32_t* format, int32_t* bits, int32_t* kbps);
     /** Creates the files and starts recording; false sets *error (may be null; free it). */
     bool ld_rec_record (const Engine*, const RecRecordTrackC* tracks, int32_t numTracks, LdString** error);
     /** The next finalized take; false if none. */
@@ -955,9 +970,11 @@ extern "C"
 
     // ---- USB recorder / player (ld_usb_*): message thread; the audio side runs in
     // ld_engine_process. Scalars and strings only (no shared layout).
-    /** REC: records to `path` (created now; channels 2 or 4, bits 16 or 24) or resumes a
-        paused recording; false sets *error (may be null; free it). */
-    bool ld_usb_rec_start (const Engine*, const char* path, size_t len, int32_t channels, int32_t bits, LdString** error);
+    /** REC: records to `path` (created now; channels 2 or 4, bits 16 or 24, format an
+        AudioFileFormat, kbps the MP3 bit rate) or resumes a paused recording; false sets
+        *error (may be null; free it). */
+    bool ld_usb_rec_start (const Engine*, const char* path, size_t len, int32_t channels, int32_t bits, int32_t format,
+                           int32_t kbps, LdString** error);
     void ld_usb_rec_pause (const Engine*);
     void ld_usb_rec_stop (const Engine*);
     /** NEW FILE: the recording continues in `path` from the next sample. */
@@ -996,6 +1013,11 @@ extern "C"
                            int64_t* length, bool* rateMismatch);
     /** A WAV file's header; false if it can't be read. */
     bool ld_usb_wav_info (const char* path, size_t len, int32_t* channels, int32_t* rate, int32_t* bits, int64_t* frames);
+    /** Any audio file's header (WAV, FLAC, AIFF, MP3; pointers may be null). */
+    bool ld_usb_file_info (const char* path, size_t len, int32_t* format, int32_t* channels, int32_t* rate, int32_t* bits,
+                           int64_t* frames, int32_t* kbps);
+    /** The format and MP3 bit rate of a queue entry once the player opened it. */
+    bool ld_usb_play_format (const Engine*, uint64_t entry, int32_t* format, int32_t* kbps);
     int32_t ld_usb_dropouts (const Engine*);
     bool ld_usb_wait_for_disk (const Engine*, int32_t timeoutMs);
     /** The queue: a folder's audio files (kind 0) or a playlist (kind 1). */
@@ -1025,6 +1047,27 @@ extern "C"
     void ld_usb_queue_set_stop_all (const Engine*, bool stop);
     void ld_usb_queue_set_repeat (const Engine*, bool repeat);
     bool ld_usb_queue_repeat (const Engine*);
+
+    // ---- Audio files (any thread): the recorders' encoders and decoders, for export and
+    // for reading takes as the recorder plays them. format: AudioFileFormat; bits 16, 24
+    // or 32 (float, WAV / AIFF); kbps: MP3 bit rate.
+    /** Creates (or truncates) the file; null on failure (*error set; may be null; free it). */
+    LdAudioWriter* ld_afw_create (const char* path, size_t len, int32_t channels, int32_t rate, int32_t format, int32_t bits,
+                                  int32_t kbps, LdString** error);
+    bool ld_afw_write (LdAudioWriter*, const float* const* channels, int32_t numChannels, int32_t frames);
+    /** Finalizes, closes and frees the writer; the frames written or -1. */
+    int64_t ld_afw_finalize (LdAudioWriter*);
+    /** Closes, deletes the file and frees the writer. */
+    void ld_afw_abort (LdAudioWriter*);
+    /** Opens a WAV, FLAC, AIFF or MP3 file (MP3: gapless, as the recorder plays it); null if unreadable. */
+    LdAudioReader* ld_afr_open (const char* path, size_t len);
+    bool ld_afr_info (const LdAudioReader*, int32_t* format, int32_t* channels, int32_t* rate, int32_t* bits, int64_t* frames,
+                      int32_t* kbps);
+    /** Reads frames into planar buffers (extra buffers repeat the last channel; zeros outside the file). */
+    bool ld_afr_read (LdAudioReader*, int64_t start, float* const* channels, int32_t numChannels, int32_t frames);
+    void ld_afr_close (LdAudioReader*);
+    /** Why `channels` at `rate` can't be written in the format (an empty string if they can). */
+    LdString* ld_audio_format_check (int32_t format, int32_t bits, int32_t kbps, int32_t channels, int32_t rate);
 
     // WING remote (message thread). Destroy it before the engine.
     LdWing* ld_wing_create (const Engine*);
