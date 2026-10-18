@@ -13,13 +13,16 @@
 //!   rolling begins. A playlist or loop change while rolling is rendered into
 //!   the other ring from a point a little ahead; the audio thread crossfades
 //!   to it there, so playback never stops.
-//! * **Writer thread** ([`writer`]): drains the record ring into 32-bit float
-//!   WAV files, computes the peaks for drawing and finalizes the takes.
+//! * **Writer thread** ([`writer`]): drains the record ring into the take
+//!   files (32-bit float WAV by default, or any [`codec::EncodeFormat`]:
+//!   WAV / AIFF / FLAC 16-24 bit, MP3), computes the peaks for drawing and
+//!   finalizes the takes.
 //!
 //! The message thread drives everything through the methods of [`Recorder`].
 //!
 //! [`usb`] is the separate 2/4-track USB recorder / player (the WING's USB
-//! stick), built on the same rings, WAV files and disk-thread design.
+//! stick), built on the same rings, file formats ([`codec`]) and disk-thread
+//! design.
 
 pub mod audio;
 pub mod codec;
@@ -30,6 +33,7 @@ pub mod usb;
 pub mod wav;
 mod writer;
 
+pub use codec::{EncodeFormat, FileFormat};
 pub use playlist::{Clip, FadeShape, LoopRange, PlaybackTrack, Playlist, PreparedPlaylist};
 pub use usb::{usb_player_channel, UsbDeck, USB_CHANNELS, USB_PLAYER_SOURCE_BASE};
 
@@ -396,6 +400,8 @@ struct Control {
     last_command: Command,
     /// The last locate and the command count that queued it.
     pending_locate: Option<(u64, i64)>,
+    /// The format new recordings are written in.
+    record_format: EncodeFormat,
 }
 
 /// The multitrack recorder / player. The engine owns one; the audio thread
@@ -428,6 +434,7 @@ impl Recorder {
                 pushed: 0,
                 last_command: Command::None,
                 pending_locate: None,
+                record_format: EncodeFormat::default(),
             }),
             audio: UnsafeCell::new(audio::AudioSide::new(DEFAULT_SAMPLE_RATE, DEFAULT_BLOCK)),
         }
@@ -578,9 +585,12 @@ impl Recorder {
 
         let sample_rate = self.sample_rate();
         let threshold = self.shared.rf64_threshold.load(Relaxed);
+        let format = self.record_format();
+        let rate = sample_rate.round() as u32;
+        format.check(2, rate)?;
         let mut files = Vec::with_capacity(tracks.len());
         for t in tracks {
-            match wav::WavWriter::create(&t.file, t.num_channels, sample_rate.round() as u32) {
+            match codec::create_writer(&t.file, t.num_channels, rate, format) {
                 Ok(mut w) => {
                     w.set_rf64_threshold(threshold);
                     files.push(w);
@@ -640,6 +650,16 @@ impl Recorder {
         }
         c.current = Some(session);
         Ok(())
+    }
+
+    /// The format of the next recordings (32-bit float WAV by default). Take
+    /// files should carry its extension ([`EncodeFormat::extension`]).
+    pub fn set_record_format(&self, format: EncodeFormat) {
+        self.control().record_format = format.normalized();
+    }
+
+    pub fn record_format(&self) -> EncodeFormat {
+        self.control().record_format
     }
 
     /// The next finalized take, if any.

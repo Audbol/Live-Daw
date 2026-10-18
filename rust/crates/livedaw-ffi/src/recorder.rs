@@ -168,6 +168,32 @@ pub unsafe extern "C" fn ld_rec_set_playlist(
     });
 }
 
+/// The format of the next recordings: 0 WAV, 1 FLAC, 2 AIFF, 3 MP3; `bits`
+/// 16, 24 or 32 (32-bit float, WAV / AIFF); `kbps` the MP3 bit rate. Take
+/// files get the format's extension (the caller names them).
+#[no_mangle]
+pub unsafe extern "C" fn ld_rec_set_record_format(e: *const Engine, format: i32, bits: i32, kbps: i32) {
+    if let Some(e) = engine(e) {
+        guard((), || e.recorder().set_record_format(crate::codec::encode_format(format, bits, kbps)));
+    }
+}
+
+/// The format of the next recordings (pointers may be null).
+#[no_mangle]
+pub unsafe extern "C" fn ld_rec_record_format(e: *const Engine, format: *mut i32, bits: *mut i32, kbps: *mut i32) {
+    let Some(e) = engine(e) else { return };
+    let f = e.recorder().record_format();
+    if let Some(x) = format.as_mut() {
+        *x = f.format as i32;
+    }
+    if let Some(x) = bits.as_mut() {
+        *x = i32::from(f.sample.bits());
+    }
+    if let Some(x) = kbps.as_mut() {
+        *x = f.kbps as i32;
+    }
+}
+
 /// Starts recording. On failure returns false and sets `*error` (free it
 /// with `ld_string_free`; `error` may be null).
 #[no_mangle]

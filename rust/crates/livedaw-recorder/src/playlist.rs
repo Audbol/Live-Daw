@@ -1,7 +1,7 @@
 //! What plays: tracks of clips on the timeline, the loop, and the renderer the
 //! reader thread uses to turn them into playback channels.
 
-use crate::wav::WavReader;
+use crate::codec::{open_reader, AudioReader};
 use crate::NUM_PLAYBACK_CHANNELS;
 use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, PI};
@@ -229,7 +229,7 @@ impl PreparedPlaylist {
 /// first use and kept open; a file that can't be read plays silence.
 #[derive(Default)]
 pub struct Renderer {
-    files: HashMap<PathBuf, Option<WavReader>>,
+    files: HashMap<PathBuf, Option<Box<dyn AudioReader>>>,
     left: Vec<f32>,
     right: Vec<f32>,
 }
@@ -272,7 +272,7 @@ impl Renderer {
             return;
         }
         let m = (b - a) as usize;
-        let reader = self.files.entry(clip.file.clone()).or_insert_with(|| WavReader::open(&clip.file).ok());
+        let reader = self.files.entry(clip.file.clone()).or_insert_with(|| open_reader(&clip.file).ok());
         let Some(reader) = reader.as_mut() else { return };
         let stereo_file = reader.info().channels > 1;
         self.left.resize(m, 0.0);

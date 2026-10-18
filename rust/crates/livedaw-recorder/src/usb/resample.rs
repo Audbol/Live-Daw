@@ -1,4 +1,4 @@
-//! Reads a WAV file at the engine's sample rate: a windowed-sinc resampler
+//! Reads an audio file at the engine's sample rate: a windowed-sinc resampler
 //! (64 taps, 256 interpolated phases, Blackman window) for files whose rate
 //! differs, a plain copy otherwise.
 //!
@@ -6,7 +6,7 @@
 //! out_rate`, computed exactly in integers, so seeking anywhere and reading
 //! block by block give the same samples and the position never drifts.
 
-use crate::wav::{WavInfo, WavReader};
+use crate::codec::{AudioInfo, AudioReader};
 use std::io;
 
 const HALF_TAPS: usize = 32;
@@ -29,8 +29,8 @@ pub(crate) fn scale_ceil(a: u64, b: u64, c: u64) -> u64 {
 }
 
 pub(crate) struct FileStream {
-    reader: WavReader,
-    info: WavInfo,
+    reader: Box<dyn AudioReader>,
+    info: AudioInfo,
     /// Reduced rates: output frame k is source position k * num / den.
     num: u64,
     den: u64,
@@ -46,7 +46,7 @@ pub(crate) struct FileStream {
 }
 
 impl FileStream {
-    pub fn new(reader: WavReader, out_rate: u32) -> Self {
+    pub fn new(reader: Box<dyn AudioReader>, out_rate: u32) -> Self {
         let info = *reader.info();
         let in_rate = u64::from(info.sample_rate.max(1));
         let out_rate = u64::from(out_rate.max(1));
@@ -73,7 +73,7 @@ impl FileStream {
     }
 
     /// The file's header.
-    pub fn info(&self) -> &WavInfo {
+    pub fn info(&self) -> &AudioInfo {
         &self.info
     }
 
@@ -221,7 +221,7 @@ mod tests {
         let dir = temp_dir("rs");
         let path = dir.join("a.wav");
         sine_file(&path, 48000, 1000.0, 48000);
-        let mut s = FileStream::new(WavReader::open(&path).unwrap(), 48000);
+        let mut s = FileStream::new(crate::codec::open_reader(&path).unwrap(), 48000);
         assert!(!s.resampling());
         assert_eq!(s.length(), 48000);
         let mut out = vec![vec![0.0; 100]];
@@ -232,7 +232,7 @@ mod tests {
         // 44.1 kHz file, 48 kHz engine: same tone at the output rate.
         let path = dir.join("b.wav");
         sine_file(&path, 44100, 1000.0, 44100);
-        let mut s = FileStream::new(WavReader::open(&path).unwrap(), 48000);
+        let mut s = FileStream::new(crate::codec::open_reader(&path).unwrap(), 48000);
         assert!(s.resampling());
         assert_eq!(s.length(), 48000);
         // Read in odd blocks, then all at once: identical.
@@ -257,7 +257,7 @@ mod tests {
         // 48 kHz file, 44.1 kHz engine: a tone above the new Nyquist is removed.
         let path = dir.join("c.wav");
         sine_file(&path, 48000, 23500.0, 48000);
-        let mut s = FileStream::new(WavReader::open(&path).unwrap(), 44100);
+        let mut s = FileStream::new(crate::codec::open_reader(&path).unwrap(), 44100);
         assert_eq!(s.length(), 44100);
         let mut out = vec![vec![0.0; 44100]];
         s.render(0, 44100, &mut out).unwrap();
