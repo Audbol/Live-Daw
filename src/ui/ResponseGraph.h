@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/Analysis.h"
 #include "ui/UiContext.h"
 
 #include <vector>
@@ -16,7 +17,13 @@ namespace livedaw::ui
     (the selected band's line blue, its ring filled black): drag to set
     frequency and gain, mouse wheel for Q. The FILTER view draws the filter in
     blue over the EQ curve, LC / HC (and the all-pass AP, yellow) as vertical
-    lines labelled at the top with a ring handle near the bottom. */
+    lines labelled at the top with a ring handle near the bottom.
+
+    The RTA of the strip (the engine's analyser) shows behind the curves as
+    one bar per semitone with a peak-hold mark, as RTA SETTINGS / EQ/RTA
+    SETTINGS set it up: SIZE/MODE (over part of the graph, or in a strip of
+    its own under the EQ on the EQ screen), RANGE, FIXED GAIN, AUTOGAIN and
+    COLOR. The graph that is showing drives the analyser. */
 class ResponseGraph final : public juce::Component, private juce::Timer
 {
 public:
@@ -27,6 +34,28 @@ public:
     };
 
     ResponseGraph();
+    ~ResponseGraph() override;
+
+    /** Which RTA view the graph shows. Auto: FILTER for the filter, the EQ
+        screen's with the ruler at the top, HOME's (the overview) otherwise. */
+    enum class RtaView
+    {
+        Auto,
+        None,
+        Home,
+        Eq,
+        Filter
+    };
+    void setRtaView (RtaView v)
+    {
+        rtaView = v;
+        repaint();
+    }
+
+    /** The RTA's colour for COLOR `index` (RD25 ... BL75). */
+    static juce::Colour rtaColour (int index);
+    /** The RTA view (ld::RtaView) of the graph shown last (whatever its SIZE/MODE). */
+    static int shownRtaView() noexcept { return lastShownView; }
 
     void setStrip (Strip*, Block);
 
@@ -73,6 +102,22 @@ private:
         int f = -1, g = -1, q = -1;
     };
 
+    /** How the RTA shows: its view (ld::RtaView, -1 none), over the curve or
+        in a strip of its own, and how much of the graph's height it takes. */
+    struct RtaLayout
+    {
+        int view = -1;
+        bool split = false;
+        float fraction = 0.0f;
+    };
+    RtaLayout rtaLayout() const;
+    /** This graph's RTA view (ld::RtaView), or -1. */
+    int rtaViewId() const;
+    void updateRta();
+    void paintRta (juce::Graphics&, juce::Rectangle<float> area, const RtaLayout&);
+    /** The EQ curve's area: the plot, less the RTA's own strip. */
+    juce::Rectangle<float> curvePlot() const;
+
     void timerCallback() override;
     void updateBands();
     float xForFreq (float f) const;
@@ -91,6 +136,14 @@ private:
     std::vector<double> freqs, response, eqResponse;
     std::vector<Band> bands;
     int builtModel = -1, selectedBand = -1, dragBand = -1, dragLine = -1;
+
+    RtaView rtaView = RtaView::Auto;
+    Analysis::Bands rta;
+    bool rtaShown = false;
+    float autoGainDb = 0.0f;
+    /** The graph that drives the analyser now (one at a time). */
+    static ResponseGraph* rtaOwner;
+    static int lastShownView;
 };
 
 } // namespace livedaw::ui

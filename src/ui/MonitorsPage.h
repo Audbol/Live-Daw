@@ -37,12 +37,17 @@ private:
 };
 
 /** MONITORS (manual chapter 7, fig. 72), opened by SETUP's MONITORS key and the
-    MONITORING/TALKBACK VIEW key: the toolbar (TALK A/B, PHONES, SPEAKERS,
-    PH+SPK, DIM, MUTE, MONO, LR SWAP), the TALK A / TALK B settings, the
-    PHONES / SPEAKERS settings and the LEVEL panel. The engine has one monitor
-    path (PH+SPK) with level, DIM (and its amount), MUTE, MONO, LR SWAP,
-    PFL / AFL and its outputs; talkback, the second path, source select, SRC MIX,
-    PFL DIM, BAND SOLO, DIRECT IN, EQ, delay and limiter are drawn disabled. */
+    MONITORING/TALKBACK VIEW key:
+      - the toolbar: TALK A / TALK B (the talk keys, with their SWITCH MODE),
+        PHONES / SPEAKERS / PH+SPK (the solo bus and the path DIM, MUTE, MONO
+        and LR SWAP act on), DIM, MUTE, MONO, LR SWAP;
+      - TALK A / TALK B: SWITCH MODE, the talkback channel, AUTO DIM (BUS DIM,
+        MON DIM), USE SEND LEVELS and the TALK TO BUS / MATRIX / MAIN grids;
+      - PHONES / SPEAKERS (monitor paths B and A): SOURCE, SRC LEVEL, SRC MIX,
+        DIM, PFL DIM, the outputs and PFL / AFL;
+      - LEVEL: the shown path's meter and level (set by PHONES / MONITOR LEVEL).
+    DIRECT IN, BAND SOLO, the EQ, INVERT, DELAY and the limiter aren't in the
+    engine and are drawn disabled. */
 class MonitorsPage final : public DisplayPage, private juce::Timer
 {
 public:
@@ -53,6 +58,7 @@ public:
     StatusTitle getStatusTitle() override;
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
 
 private:
@@ -64,6 +70,7 @@ private:
         std::function<bool()> lit;
         std::function<void()> press;
         juce::Rectangle<int> area;
+        int talkPath = -1; // TALK A / TALK B: press and release go to the engine
     };
 
     void timerCallback() override;
@@ -72,17 +79,33 @@ private:
     void paintPath (juce::Graphics&);
     void paintLevel (juce::Graphics&);
     juce::String outputName (int port) const;
+    juce::String talkChannelName() const;
     void chooseOutput (bool right);
+    void chooseSource();
+    void chooseTalkChannel();
+    void showTalkTab (int tab);
+    void showPathTab (int tab);
+
+    // The path shown: tab 0 = PHONES, 1 = SPEAKERS (as the solo bus choices A, B).
+    bool showsPhones() const noexcept { return pathTab == 0; }
+    ld::MonitorSourceParams& pathSource() const noexcept;
+    std::atomic<float>& pathLevel() const noexcept;
+    std::atomic<float>& pathDim() const noexcept;
+    std::atomic<int32_t>& pathOutput (bool right) const noexcept;
+    ld::TalkPathParams& talkPath() const noexcept;
 
     UiContext& ctx;
+    int talkTab = 0, pathTab = 0, pressedTalk = -1;
     std::vector<ToolKey> tools;
     juce::Rectangle<int> toolbar, talkTabs, talkArea, pathTabs, pathHeader, pathArea, levelHeader, levelArea;
-    juce::Rectangle<int> switchBox, autoDimBox, busGrid, mtxGrid, mainGrid, sourceField, directField, eqKey, distSlider, invertKey, delayKey,
-        outputBox, leftField, rightField, soloBox, meterArea, faderArea;
+    juce::Rectangle<int> switchBox, autoDimBox, sendLevelsRow, busGrid, mtxGrid, mainGrid, talkChannelField, sourceField, directField, eqKey,
+        distSlider, invertKey, delayKey, outputBox, leftField, rightField, soloBox, meterArea, faderArea;
+    std::vector<juce::Rectangle<int>> busTiles, mtxTiles, mainTiles;
     KnobField srcLevel, srcMix, dim, pflDim, bandSolo, busDim, monDim, limiter;
     std::unique_ptr<ChoiceKeys> soloKeys, switchMode;
+    std::unique_ptr<OnKey> sendLevels;
     juce::Component anchor;
-    std::array<float, 2> shownPeak {};
+    std::array<float, 2> shownPeak {}, phonesPeak {};
 };
 
 } // namespace livedaw::ui

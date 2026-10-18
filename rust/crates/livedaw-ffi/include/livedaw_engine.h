@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 6;
+constexpr int kAbiVersion = 7;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -51,6 +51,10 @@ constexpr int kNumPlaybackChannels = 64;
 constexpr int32_t kPlaybackSourceBase = 0x10000;
 constexpr int kMaxRecordTracks = 64;
 constexpr int kSamplesPerPeak = 256;
+/** TAP EQ bands (low shelf, peak, high shelf). */
+constexpr int kTapEqBands = 3;
+/** RTA bands: one per semitone, E0 (20.6 Hz) .. D#10 (19.9 kHz), see ld_rta_band_hz. */
+constexpr int kRtaBands = 120;
 
 enum StripKindId : int32_t
 {
@@ -147,6 +151,20 @@ struct MatrixSendParams
     std::atomic<float> levelDb, pan;
 };
 
+/// TAP EQ (WING /ch/n/peq): band 0 low shelf, 1 peak, 2 high shelf.
+struct TapEqBand
+{
+    std::atomic<float> gainDb; // -15..15
+    std::atomic<float> freq;   // 20..20000 Hz
+    std::atomic<float> q;      // 0.44..10
+};
+
+struct TapEqParams
+{
+    std::atomic<bool> on;
+    TapEqBand bands[kTapEqBands];
+};
+
 struct StripParams
 {
     InputParams input;
@@ -187,6 +205,10 @@ struct StripParams
     // inputLeft/Right while ALT is selected (-1 = none; right used when stereo).
     std::atomic<int32_t> altInputLeft, altInputRight;
     std::atomic<bool> altSelected; // the strip's MAIN / ALT switch (unless INPUT SELECT is global)
+
+    // ABI 7, input channels: the signal TAP-mode sends take.
+    std::atomic<float> tapWidth; // TAP WIDTH, -150..150 % (stereo channels)
+    TapEqParams tapEq;           // TAP EQ
 };
 
 struct StripMeters
@@ -228,6 +250,109 @@ struct FxParams
     std::atomic<float> values[kMaxFxParams];
 };
 
+// ---- console level (ABI 7) ---------------------------------------------------
+
+/** SOLO MODE (EngineControls::soloMode). */
+enum SoloMode : int32_t
+{
+    kSoloLive = 0,   // each strip's SOLO BUS (monitorBus) chooses the path
+    kSoloStudio = 1, // solos go to the selected path (EngineControls::soloBus)
+    kSoloSip = 2     // as STUDIO, and inputs neither soloed nor solo safe are muted
+};
+
+/** A strip's MUTE as the surface shows it (ld_strip_mute_state). */
+enum MuteState : int32_t
+{
+    kMuteOff = 0,
+    kMuteOn = 1,         // its own MUTE
+    kMuteGroup = 2,      // muted by a mute group, a DCA mute or SIP (the key flashes)
+    kMuteOverridden = 3  // such a mute, unmuted by MUTEGROUP/SIP OVERRIDE
+};
+
+/** Talk key SWITCH MODE (TalkPathParams::mode). */
+enum TalkMode : int32_t
+{
+    kTalkAuto = 0, // held = push, a short press latches
+    kTalkPush = 1,
+    kTalkLatch = 2
+};
+
+/** HOME > TAGS talk tags (ld_strip_talk_tags bits). */
+enum TalkTag : uint32_t
+{
+    kTalkSolo = 1u << 0,
+    kTalkOn = 1u << 1,
+    kTalkASolo = 1u << 2,
+    kTalkAOn = 1u << 3,
+    kTalkBSolo = 1u << 4,
+    kTalkBOn = 1u << 5
+};
+
+/** Source pairing (SourceParams::mode). */
+enum SourceMode : int32_t
+{
+    kSourceMono = 0,
+    kSourceStereo = 1,
+    kSourceMidSide = 2
+};
+
+/** Sources: hardware ports 0..kNumHwSources-1, then the playback channels. */
+constexpr int kNumHwSources = 576;
+constexpr int kNumSources = kNumHwSources + kNumPlaybackChannels;
+/** Monitor SOURCE choices: MAIN.1-4, MTX.1-8, BUS.1-16, AUX.1-8. */
+constexpr int kNumMonitorSources = kNumMains + kNumMatrices + kWingBuses + kNumAux;
+/** TalkParams::assignKind without a talkback channel. */
+constexpr int32_t kTalkOff = -1;
+
+/** One talk path (TALK A or TALK B). */
+struct TalkPathParams
+{
+    std::atomic<bool> on;         // the key is on (the host applies AUTO / PUSH / LATCH)
+    std::atomic<bool> individual; // USE SEND LEVELS: the talkback channel's send levels
+    std::atomic<int32_t> mode;    // TalkMode
+    std::atomic<float> monDimDb, busDimDb; // AUTO DIM (attenuations, dB)
+    std::atomic<uint32_t> buses, matrices, mains; // TALK TO BUS 1-16 / MATRIX 1-8 / MAIN 1-4 (bit n = n+1)
+};
+
+/** Talkback: the talkback channel (kTalkOff, or kChannel / kAux and its 0-based
+    number: CH40 = (kChannel, 39), AUX8 = (kAux, 7)), TALK LEVEL and the paths. */
+struct TalkParams
+{
+    std::atomic<int32_t> assignKind, assignIndex;
+    std::atomic<float> levelDb;
+    TalkPathParams paths[2];
+};
+
+/** A monitor path's SOURCE (0..kNumMonitorSources-1), SRC LEVEL, SRC MIX
+    (the source's level while a solo reaches the path; -144 = off) and PFL DIM. */
+struct MonitorSourceParams
+{
+    std::atomic<int32_t> source;
+    std::atomic<float> sourceLevelDb, sourceMixDb, pflDimDb;
+};
+
+/** The PHONES monitor path. The SPEAKERS path is monitorLevelDb, monitorDimDb,
+    monitorOutputLeft/Right, monitorPeak plus EngineControls::speakers. */
+struct MonitorPathParams
+{
+    MonitorSourceParams source;
+    std::atomic<float> levelDb, dimDb;
+    std::atomic<int32_t> outputLeft, outputRight;
+    std::atomic<float> peak[2];
+};
+
+/** A source (ROUTING > SOURCES): gain, mute, polarity, +48 V (stored only),
+    pairing with its neighbour (a pair shares the first source's settings),
+    colour and icon, and its peak since the last read. ld_engine_sources. */
+struct SourceParams
+{
+    std::atomic<float> gainDb;
+    std::atomic<bool> mute, invert, phantom;
+    std::atomic<int32_t> mode; // SourceMode
+    std::atomic<int32_t> colour, icon;
+    std::atomic<float> peak;
+};
+
 struct EngineControls
 {
     std::atomic<bool> soloAfl; // CHANNEL SOLO (input and aux channels): AFL
@@ -255,6 +380,67 @@ struct EngineControls
     // strip's altSelected. A strip uses ALT only if it has an ALT source.
     std::atomic<bool> inputSelectGlobal;
     std::atomic<bool> globalAlt;
+
+    // ABI 7: console level
+    std::atomic<int32_t> soloMode; // SoloMode
+    /** The solo bus / selected monitoring path, as list 7 (0 = A PHONES,
+        1 = B SPEAKERS, 2 = A+B): STUDIO and SIP solo there; DIM, MUTE, MONO,
+        SWAP and the talk MON DIM act on it. */
+    std::atomic<int32_t> soloBus;
+    std::atomic<bool> soloBusOverride; // LIVE: soloBus overrides the strips until no solo is left
+    std::atomic<bool> muteOverride;    // MUTEGROUP/SIP OVERRIDE
+    std::atomic<bool> sipActive;       // status: SIP is muting (the SIP badge)
+    TalkParams talk;
+    MonitorSourceParams speakers; // the SPEAKERS path's SOURCE etc.
+    MonitorPathParams phones;     // the PHONES path
+};
+
+/// Where the RTA shows (AnalysisControls::view): its tap and settings follow.
+enum RtaView : int32_t
+{
+    kRtaViewHome = 0,  // HOME > OVERVIEW: RTA SETTINGS (source IN | EQ | POST)
+    kRtaViewEq = 1,    // EQ screen: EQ/RTA SETTINGS (source PRE | POST the EQ)
+    kRtaViewFilter = 2 // FILTER SETUP: source PRE | POST the filter (filterTap), the EQ view's settings
+};
+
+/// LISTEN (AnalysisControls::listenMode): replaces the solo bus, one strip at a time.
+enum ListenMode : int32_t
+{
+    kListenOff = 0,
+    kListenBand = 1,    // BAND SOLO / LISTEN: the selected WING EQ band (listenBand)
+    kListenGateKey = 2, // KEY SOLO of the GATE slot (after the key filter)
+    kListenDynKey = 3,  // KEY SOLO of the DYNAMICS slot
+    kListenXover = 4    // XOVER SOLO: the DYNAMICS slot's crossover band
+};
+
+/// RTA SETTINGS of one view (the WING's cfg/rta nodes).
+struct RtaViewSettings
+{
+    std::atomic<int32_t> display;  // SIZE/MODE. HOME: OFF, 1/3, FULL. EQ: OFF, 1/4, 1/3, 1/2, OVL/3, OVL
+    std::atomic<int32_t> colour;   // COLOR: RD25, RD50, RD75, AM25, AM50, AM75, BL25, BL50, BL75
+    std::atomic<int32_t> tap;      // RTA SOURCE. HOME: IN, EQ, POST. EQ: PRE, POST
+    std::atomic<int32_t> range;    // RTA RANGE: 30 dB, 60 dB
+    std::atomic<int32_t> decay;    // RTA DECAY: SLOW, MED, FAST
+    std::atomic<int32_t> detector; // RTA DETECTOR: PEAK, RMS, AVG
+    std::atomic<bool> autogain;    // RTA AUTOGAIN (applied by the UI)
+    std::atomic<float> gainDb;     // FIXED GAIN, -5..50 dB
+};
+
+/// RTA, LR vector scope and LISTEN (ld_engine_analysis). Strips are named by
+/// kind and id (Strip::getId()); -1 = none.
+struct AnalysisControls
+{
+    std::atomic<int32_t> stripKind, stripId; // the analysed (selected) strip
+    std::atomic<bool> rtaOn;                 // an RTA is shown (ld_rta_read starts the analysis thread)
+    std::atomic<bool> rtaFreeze;             // FREEZE
+    std::atomic<bool> scopeOn;               // the LR VECTOR SCOPE is shown (ld_scope_read)
+    std::atomic<int32_t> view;               // RtaView
+    std::atomic<int32_t> listenMode;         // ListenMode
+    std::atomic<int32_t> listenKind, listenId;
+    std::atomic<int32_t> listenBand;         // index into the WING EQ's bands (l, 1..n, h)
+    std::atomic<float> bandSoloTrimDb;       // BAND SOLO trim, 0..24 dB (default 12)
+    RtaViewSettings home, eq;
+    std::atomic<int32_t> filterTap;          // FILTER SETUP's RTA SOURCE: PRE, POST
 };
 
 struct LayoutInfo
@@ -267,7 +453,11 @@ struct LayoutInfo
         offControlsMainLink,
         // ABI 6
         offAltInputLeft, offAltSelected, offControlsInputSelectGlobal, offControlsGlobalAlt, recClip,
-        recPlaybackTrack, recRecordTrack, recTake;
+        recPlaybackTrack, recRecordTrack, recTake,
+        // ABI 7
+        offTapWidth, offTapEq, tapEq, analysis, offAnalysisEq, offAnalysisFilterTap,
+        talk, talkPath, monitorSource, monitorPath, source, offControlsSoloMode, offControlsTalk, offControlsSpeakers,
+        offControlsPhones, offTalkPaths, offMonitorPathPeak, offSourcePeak;
 };
 
 struct ParamInfo
@@ -482,7 +672,7 @@ extern "C"
     void ld_strip_set_tags (const Strip*, const char* utf8, size_t len);
     /** block: 0 = gate slot, 1 = EQ, 2 = dynamics slot, 3 = filter tool. Loads the model's defaults. */
     void ld_strip_set_model (const Strip*, int32_t block, int32_t model);
-    /** Response in dB of the EQ (block 1) or FILTER (block 3) at `count` frequencies. */
+    /** Response in dB of the EQ (block 1), FILTER (block 3) or TAP EQ (block 4) at `count` frequencies. */
     void ld_strip_response (const Strip*, int32_t block, const double* freqs, double* outDb, int32_t count, double sampleRate);
 
     // Model tables: 0 = dynamics models, 1 = channel EQ models, 2 = bus EQ models, 3 = filter tools.
@@ -500,6 +690,19 @@ extern "C"
     LdString* ld_model_param_display (int32_t table, int32_t model, int32_t param, float value);
     float ld_model_param_to_normalised (int32_t table, int32_t model, int32_t param, float value);
     float ld_model_param_from_normalised (int32_t table, int32_t model, int32_t param, float position);
+
+    // Analysis: RTA, LR vector scope, LISTEN
+    AnalysisControls* ld_engine_analysis (const Engine*);
+    int32_t ld_rta_num_bands();
+    /** Centre frequency of an RTA band (a piano key), 0 if out of range. */
+    float ld_rta_band_hz (int32_t band);
+    /** Message thread: the RTA bands (dB) and peak holds (either may be null); returns the bands
+        written. Starts the analysis thread while rtaOn. `frame` (may be null) moves on new bands. */
+    int32_t ld_rta_read (const Engine*, float* levels, float* peaks, int32_t count, uint32_t* frame);
+    /** The newest L/R pairs of the LR vector scope (interleaved); returns how many. */
+    int32_t ld_scope_read (const Engine*, float* lr, int32_t maxPairs);
+    /** Scope pairs per second. */
+    float ld_scope_rate (const Engine*);
 
     // Lists: 0 process orders, 1 tap points, 2 sidechain filters, 3 crossover types, 4 send modes,
     // 5 delay units, 6 post insert modes, 7 monitor buses, 8 low-cut slopes, 9 high-cut slopes,
@@ -709,6 +912,30 @@ extern "C"
     /** Adds a WING .show's snapshot scenes to the show (the console only grows to 40 channels). */
     bool ld_wing_import_show (LdWing*, Show*, const char* path, size_t len, LdString** report);
     LdString* ld_wing_coverage();
+
+    // Console level: sources, talk tags, MUTE state (message thread unless noted)
+    /** The source table (*count entries: hardware ports, then playback channels). */
+    SourceParams* ld_engine_sources (const Engine*, int32_t* count);
+    /** Source table index of an input port (hardware input or playback source), -1 if none. */
+    int32_t ld_source_index (int32_t port);
+    int32_t ld_source_port (int32_t index);
+    LdString* ld_source_name (const Engine*, int32_t index);
+    void ld_source_set_name (const Engine*, int32_t index, const char* utf8, size_t len);
+    /** SourceMode for the source and its pair partner (a new pair takes the first one's settings). */
+    void ld_source_set_mode (const Engine*, int32_t index, int32_t mode);
+    /** INITIALIZE (the pair's settings and names; the pairing stays). */
+    void ld_source_initialize (const Engine*, int32_t index);
+    /** Any thread: TalkTag bits. */
+    uint32_t ld_strip_talk_tags (const Strip*);
+    void ld_strip_set_talk_tags (const Strip*, uint32_t tags);
+    /** Any thread: MuteState of the last block. */
+    int32_t ld_strip_mute_state (const Strip*);
+    /** Any thread: soloed in the last block (own solo, a soloed DCA or TALK SOLO). */
+    bool ld_strip_is_soloed (const Strip*);
+    /** The MUTE key, MUTEGROUP/SIP OVERRIDE aware. */
+    void ld_engine_press_mute (const Engine*, const Strip*);
+    /** Monitor paths (bit 0 = SPEAKERS, bit 1 = PHONES) DCA `dca` controls (named MON A: PHONES, MON B: SPEAKERS, MON LVL). */
+    uint32_t ld_engine_dca_monitor_paths (const Engine*, int32_t dca);
 }
 
 /// Returns nullptr if the C++ and Rust layouts agree, else a description of the mismatch.
@@ -775,6 +1002,24 @@ inline const char* verifyLayout()
         { info.recPlaybackTrack, sizeof (RecPlaybackTrackC), "RecPlaybackTrackC size" },
         { info.recRecordTrack, sizeof (RecRecordTrackC), "RecRecordTrackC size" },
         { info.recTake, sizeof (RecTakeC), "RecTakeC size" },
+        { info.offTapWidth, offsetof (StripParams, tapWidth), "StripParams.tapWidth" },
+        { info.offTapEq, offsetof (StripParams, tapEq), "StripParams.tapEq" },
+        { info.tapEq, sizeof (TapEqParams), "TapEqParams size" },
+        { info.analysis, sizeof (AnalysisControls), "AnalysisControls size" },
+        { info.offAnalysisEq, offsetof (AnalysisControls, eq), "AnalysisControls.eq" },
+        { info.offAnalysisFilterTap, offsetof (AnalysisControls, filterTap), "AnalysisControls.filterTap" },
+        { info.talk, sizeof (TalkParams), "TalkParams size" },
+        { info.talkPath, sizeof (TalkPathParams), "TalkPathParams size" },
+        { info.monitorSource, sizeof (MonitorSourceParams), "MonitorSourceParams size" },
+        { info.monitorPath, sizeof (MonitorPathParams), "MonitorPathParams size" },
+        { info.source, sizeof (SourceParams), "SourceParams size" },
+        { info.offControlsSoloMode, offsetof (EngineControls, soloMode), "EngineControls.soloMode" },
+        { info.offControlsTalk, offsetof (EngineControls, talk), "EngineControls.talk" },
+        { info.offControlsSpeakers, offsetof (EngineControls, speakers), "EngineControls.speakers" },
+        { info.offControlsPhones, offsetof (EngineControls, phones), "EngineControls.phones" },
+        { info.offTalkPaths, offsetof (TalkParams, paths), "TalkParams.paths" },
+        { info.offMonitorPathPeak, offsetof (MonitorPathParams, peak), "MonitorPathParams.peak" },
+        { info.offSourcePeak, offsetof (SourceParams, peak), "SourceParams.peak" },
     };
 
     if (info.abiVersion != kAbiVersion)

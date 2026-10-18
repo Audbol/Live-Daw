@@ -105,9 +105,52 @@ ChannelStripSection::ChannelStripSection (UiContext& c) : ctx (c)
         key.ledState = [this, i] { return eqElement == i ? SurfaceKey::Lit : SurfaceKey::Off; };
     }
 
+    // LISTEN (EQ-BAND/KEY): the selected EQ band on the solo bus (the band
+    // knob last touched), or the key of the GATE / COMP slot while one is
+    // shown. Press again to stop.
     listenKey.dark = true;
-    listenKey.setEnabled (false);
-    listenKey.setTooltip ("LISTEN (EQ band solo): not available yet");
+    listenKey.setTooltip ("LISTEN: the selected EQ band (with GATE or COMP shown: its key) on the solo bus");
+    auto listenTarget = [this]() -> std::pair<int, int>
+    {
+        if (shownSlot == Gate)
+            return { ld::kListenGateKey, 0 };
+        if (shownSlot == Comp)
+            return { ld::kListenDynKey, 0 };
+        // The band on the knob last touched, as bindEq lays them out.
+        const auto bands = ResponseGraph::stdBands (*strip);
+        juce::StringArray shown;
+        for (auto& b : bands)
+            if (b != "l" && b != "h")
+                shown.add (b);
+        if (eqShift)
+        {
+            shown.removeRange (0, 4);
+            shown.add ("l");
+            shown.add ("h");
+        }
+        return { ld::kListenBand, bands.indexOf (shown[eqBand]) };
+    };
+    listenKey.onPress = [this, listenTarget]
+    {
+        if (strip == nullptr)
+            return;
+        Analysis analysis (*strip);
+        const auto [mode, band] = listenTarget();
+        if (analysis.isListening (*strip, mode) && (mode != ld::kListenBand || analysis.controls.listenBand.load() == band))
+            analysis.stopListening();
+        else if (band >= 0)
+            analysis.listen (*strip, mode, band);
+    };
+    listenKey.ledState = [this]
+    {
+        if (strip == nullptr)
+            return (int) SurfaceKey::Off;
+        Analysis analysis (*strip);
+        for (int mode : { ld::kListenBand, ld::kListenGateKey, ld::kListenDynKey, ld::kListenXover })
+            if (analysis.isListening (*strip, mode))
+                return (int) SurfaceKey::Lit;
+        return (int) SurfaceKey::Off;
+    };
 
     viewKey.setTooltip ("VIEW: the shown slot on the HOME screen");
     viewKey.onPress = [this]
@@ -788,15 +831,29 @@ MonitorSection::MonitorSection (UiContext& c) : ctx (c)
         k->setHardware (true);
         addAndMakeVisible (k);
     }
+    // MONITOR LEVEL: the speakers (path A); PHONES LEVEL: the phones (path B).
     monitorLevel.setBinding (bindLinear ("MONITOR LEVEL", ctx.engine.monitorLevelDb, -60.0f, 10.0f, " dB", 1, 0.0f));
-    talkLevel.setTooltip ("TALK LEVEL: talkback is not available yet");
-    phonesLevel.setTooltip ("PHONES LEVEL: there's no separate phones output yet; MONITOR LEVEL sets the monitor output");
+    phonesLevel.setBinding (bindLinear ("PHONES LEVEL", ctx.engine.phones.levelDb, -60.0f, 10.0f, " dB", 1, 0.0f));
+    talkLevel.setBinding (bindLinear ("TALK LEVEL", ctx.engine.talk.levelDb, -60.0f, 10.0f, " dB", 1, 0.0f));
+    talkLevel.setTooltip ("TALK LEVEL: the talkback level (unless the path uses the talkback channel's send levels)");
+    phonesLevel.setTooltip ("PHONES LEVEL: the level of the PHONES monitor path");
 
-    for (auto* k : { &talkA, &talkB })
+    // TALK A / TALK B: talk while held (PUSH), toggle (LATCH) or either (AUTO),
+    // as the path's SWITCH MODE on the MONITORS screen says.
+    for (int path = 0; path < 2; ++path)
     {
-        k->shape = SurfaceKey::Shape::Square;
-        k->setEnabled (false);
-        k->setTooltip ("Talkback is not available yet");
+        auto& k = path == 0 ? talkA : talkB;
+        k.shape = SurfaceKey::Shape::Square;
+        k.ledColour = Colours::yellow;
+        k.onTalk = [this, path] (bool down) { ctx.engine.talkKey (path, down); };
+        // Lit while talking; blinking while the key is on without a talkback channel.
+        k.ledState = [this, path]
+        {
+            if (! ctx.engine.isTalkOn (path))
+                return SurfaceKey::Off;
+            return ctx.engine.getTalkStrip() != nullptr ? SurfaceKey::Lit : SurfaceKey::Blink;
+        };
+        k.setTooltip (juce::String ("TALK ") + (path == 0 ? "A" : "B") + ": talkback to the path's buses, matrices and mains (SETUP > TALKBACK picks the channel)");
         addAndMakeVisible (k);
     }
 

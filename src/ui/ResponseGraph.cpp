@@ -72,6 +72,153 @@ void ResponseGraph::paintPianoRuler (juce::Graphics& g, juce::Rectangle<float> a
     }
 }
 
+ResponseGraph* ResponseGraph::rtaOwner = nullptr;
+int ResponseGraph::lastShownView = ld::kRtaViewHome;
+
+ResponseGraph::~ResponseGraph()
+{
+    // The analyser idles by itself once nobody reads it.
+    if (rtaOwner == this)
+        rtaOwner = nullptr;
+}
+
+juce::Colour ResponseGraph::rtaColour (int index)
+{
+    // RD, AM, BL at 25, 50, 75 % (the console's red, amber and blue).
+    static const juce::Colour hues[] = { juce::Colour (0xffe8343c), juce::Colour (0xfff0a830), juce::Colour (0xff3c8cf0) };
+    const int i = juce::jlimit (0, 8, index);
+    return hues[i / 3].withAlpha (0.25f * (float) (i % 3 + 1));
+}
+
+int ResponseGraph::rtaViewId() const
+{
+    switch (rtaView)
+    {
+        case RtaView::None:   return -1;
+        case RtaView::Home:   return ld::kRtaViewHome;
+        case RtaView::Eq:     return ld::kRtaViewEq;
+        case RtaView::Filter: return ld::kRtaViewFilter;
+        case RtaView::Auto:   break;
+    }
+    return block == Filter ? ld::kRtaViewFilter : (ruler == Ruler::Top ? ld::kRtaViewEq : ld::kRtaViewHome);
+}
+
+ResponseGraph::RtaLayout ResponseGraph::rtaLayout() const
+{
+    RtaLayout l;
+    if (strip == nullptr || (l.view = rtaViewId()) < 0)
+        return l;
+    const int display = Analysis (*strip).settings (l.view).display.load();
+    if (l.view == ld::kRtaViewHome)
+    {
+        // OFF, 1/3, FULL: over the overview's curve.
+        static const float fractions[] = { 0.0f, 1.0f / 3.0f, 1.0f };
+        l.fraction = fractions[juce::jlimit (0, 2, display)];
+    }
+    else
+    {
+        // OFF, 1/4, 1/3, 1/2 (a strip under the curve), OVL/3, OVL (over it).
+        static const float fractions[] = { 0.0f, 0.25f, 1.0f / 3.0f, 0.5f, 1.0f / 3.0f, 1.0f };
+        const int d = juce::jlimit (0, 5, display);
+        l.fraction = fractions[d];
+        l.split = d >= 1 && d <= 3 && block == Eq;
+    }
+    if (l.fraction <= 0.0f)
+        l.view = -1;
+    return l;
+}
+
+void ResponseGraph::updateRta()
+{
+    if (isShowing() && rtaViewId() >= 0)
+        lastShownView = rtaViewId();
+    const auto layout = rtaLayout();
+    if (layout.view >= 0 && isShowing())
+    {
+        Analysis analysis (*strip);
+        if (rtaOwner != this || ! analysis.controls.rtaOn.load() || ! analysis.isAnalysed (*strip) || analysis.controls.view.load() != layout.view)
+        {
+            analysis.showRta (strip, layout.view);
+            rtaOwner = this;
+        }
+        const auto frame = rta.frame;
+        analysis.read (rta);
+        // AUTOGAIN: the power average of the bands sits mid-scale (smoothed).
+        double sum = 0.0;
+        for (float level : rta.levels)
+            sum += std::pow (10.0, (double) level / 10.0);
+        const float average = (float) (10.0 * std::log10 (sum / ld::kRtaBands + 1.0e-15));
+        if (average > -110.0f)
+            autoGainDb += (average - autoGainDb) * 0.12f;
+        if (! rtaShown || rta.frame != frame)
+            repaint();
+        rtaShown = true;
+        if (getTimerInterval() > 40)
+            startTimerHz (30);
+    }
+    else
+    {
+        if (rtaOwner == this)
+        {
+            if (strip != nullptr)
+                Analysis (*strip).hideRta();
+            rtaOwner = nullptr;
+        }
+        if (rtaShown)
+        {
+            rtaShown = false;
+            repaint();
+        }
+        if (getTimerInterval() < 50)
+            startTimerHz (15);
+    }
+}
+
+void ResponseGraph::paintRta (juce::Graphics& g, juce::Rectangle<float> area, const RtaLayout& layout)
+{
+    const auto& s = Analysis (*strip).settings (layout.view);
+    const float range = s.range.load() == 0 ? 30.0f : 60.0f;
+    const float gain = juce::jlimit (-5.0f, 50.0f, s.gainDb.load());
+    // The top of the scale: 0 dBFS (less FIXED GAIN), or with AUTOGAIN the
+    // signal's average at mid-scale.
+    const float top = (s.autogain.load() ? autoGainDb + range * 0.5f : 0.0f) - gain;
+    const auto colour = rtaColour (s.colour.load());
+    const auto hold = colour.withAlpha (juce::jmin (1.0f, colour.getFloatAlpha() + 0.35f));
+    auto heightOf = [&] (float db) { return juce::jlimit (0.0f, 1.0f, (db - (top - range)) / range) * area.getHeight(); };
+
+    g.saveState();
+    g.reduceClipRegion (area.toNearestInt());
+    for (int b = 0; b < Analysis::numBands; ++b)
+    {
+        const float x0 = xForFreq (Analysis::bandLowHz (b)), x1 = xForFreq (Analysis::bandHighHz (b));
+        if (x1 < area.getX() || x0 > area.getRight())
+            continue;
+        const float w = juce::jmax (1.0f, x1 - x0 - (x1 - x0 > 3.0f ? 1.0f : 0.0f));
+        const float h = heightOf (rta.levels[(size_t) b]);
+        if (h > 0.5f)
+        {
+            g.setColour (colour);
+            g.fillRect (x0, area.getBottom() - h, w, h);
+        }
+        const float p = heightOf (rta.peaks[(size_t) b]);
+        if (p > 1.0f)
+        {
+            g.setColour (hold);
+            g.fillRect (x0, area.getBottom() - p, w, juce::jmin (2.0f, p));
+        }
+    }
+    g.restoreState();
+}
+
+juce::Rectangle<float> ResponseGraph::curvePlot() const
+{
+    auto p = plot();
+    if (rtaShown)
+        if (const auto l = rtaLayout(); l.view >= 0 && l.split)
+            p.removeFromBottom (p.getHeight() * l.fraction);
+    return p;
+}
+
 ResponseGraph::ResponseGraph()
 {
     const int n = 240;
@@ -122,6 +269,7 @@ void ResponseGraph::timerCallback()
 {
     if (strip == nullptr)
         return;
+    updateRta();
 
     if (block == Eq && strip->params.eq.model.load() != builtModel)
         updateBands();
@@ -184,13 +332,13 @@ float ResponseGraph::freqForX (float x) const
 
 float ResponseGraph::yForDb (float db) const
 {
-    const auto p = plot();
+    const auto p = curvePlot();
     return p.getCentreY() - juce::jlimit (-kRangeDb, kRangeDb, db) / kRangeDb * p.getHeight() * 0.5f;
 }
 
 float ResponseGraph::dbForY (float y) const
 {
-    const auto p = plot();
+    const auto p = curvePlot();
     return (p.getCentreY() - y) / (p.getHeight() * 0.5f) * kRangeDb;
 }
 
@@ -225,8 +373,9 @@ void ResponseGraph::paint (juce::Graphics& g)
                 continue;
             g.drawVerticalLine (juce::roundToInt (xForFreq (f)), p.getY(), p.getBottom());
         }
+    const auto cp = curvePlot();
     for (int i = 0; i <= 4; ++i)
-        g.drawHorizontalLine (juce::roundToInt (p.getY() + (p.getHeight() - 1.0f) * (float) i / 4.0f), p.getX(), p.getRight());
+        g.drawHorizontalLine (juce::roundToInt (cp.getY() + (cp.getHeight() - 1.0f) * (float) i / 4.0f), cp.getX(), cp.getRight());
 
     // The piano-key ruler.
     const float rulerH = juce::jlimit (5.0f, 14.0f, getHeight() * 0.03f);
@@ -254,8 +403,23 @@ void ResponseGraph::paint (juce::Graphics& g)
 
     auto& f = strip->params.filter;
 
+    // The RTA: over the curve's lower part (or all of it), or in its own strip.
+    const auto layout = rtaLayout();
+    juce::Rectangle<float> rtaArea;
+    if (rtaShown && layout.view >= 0)
+    {
+        rtaArea = layout.split ? p.withTop (cp.getBottom() + 1.0f) : p.withTrimmedTop (p.getHeight() * (1.0f - layout.fraction));
+        if (layout.split)
+        {
+            g.setColour (gridColour);
+            g.drawHorizontalLine (juce::roundToInt (cp.getBottom()), p.getX(), p.getRight());
+        }
+    }
+
     if (block == Filter)
     {
+        if (! rtaArea.isEmpty())
+            paintRta (g, rtaArea, layout);
         // The channel EQ behind, the filter in blue.
         g.saveState();
         g.reduceClipRegion (p.toNearestInt());
@@ -294,11 +458,13 @@ void ResponseGraph::paint (juce::Graphics& g)
         const auto curve = curveOf (response);
         const bool on = strip->params.eq.on.load();
         juce::Path fill (curve);
-        fill.lineTo (p.getRight(), p.getBottom() + 2.0f);
-        fill.lineTo (p.getX(), p.getBottom() + 2.0f);
+        fill.lineTo (cp.getRight(), cp.getBottom() + 2.0f);
+        fill.lineTo (cp.getX(), cp.getBottom() + 2.0f);
         fill.closeSubPath();
         g.setColour (on ? eqFillColour : juce::Colour (0xff1c1c1c));
         g.fillPath (fill);
+        if (! rtaArea.isEmpty())
+            paintRta (g, rtaArea, layout);
         g.setColour (on ? eqCurveColour : dimLabelColour);
         g.strokePath (curve, juce::PathStrokeType (juce::jlimit (1.5f, 3.0f, getHeight() / 120.0f)));
         g.restoreState();

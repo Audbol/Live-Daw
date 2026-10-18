@@ -8,9 +8,10 @@
 use crate::refs::StripRef;
 use crate::xml::{fmt_f32, parse, Element};
 use livedaw_dsp::wing::{model_index, ModelSpec, DYN_MODELS, EQ_MODELS_BUS, EQ_MODELS_CH, FILTER_TOOLS, FX_MODELS};
+use livedaw_engine::analyser::RtaViewSettings;
 use livedaw_engine::atomic::AtomicF32;
 use livedaw_engine::params::{
-    DynSlotParams, EqBlockParams, InsertParams, FX_EXT, FX_NONE, NUM_DCAS, NUM_FX, NUM_MUTE_GROUPS, WING_BUSES,
+    DynSlotParams, EqBlockParams, InsertParams, StripParams, FX_EXT, FX_NONE, NUM_DCAS, NUM_FX, NUM_MUTE_GROUPS, WING_BUSES,
 };
 use livedaw_engine::{Engine, Strip, StripKind, MAX_BUSES};
 use std::collections::HashMap;
@@ -454,6 +455,9 @@ fn capture_strip(s: &Strip, sections: u32, slots: &[usize]) -> Element {
                 }
             }
         }
+        if kind == StripKind::Channel {
+            capture_tap(&mut e, p);
+        }
         if kind == StripKind::Matrix {
             let d = e.add_new("Dir");
             put_b(d, "on", &p.direct_on);
@@ -482,6 +486,76 @@ fn capture_strip(s: &Strip, sections: u32, slots: &[usize]) -> Element {
     e
 }
 
+/// TAP WIDTH and TAP EQ (input channels; recalled with SENDS):
+/// `<Tap wid="100" eq="0"><B i="0" g="0" f="100" q="0.7"/>...</Tap>`.
+fn capture_tap(e: &mut Element, p: &StripParams) {
+    let t = e.add_new("Tap");
+    put_f(t, "wid", &p.tap_width);
+    put_b(t, "eq", &p.tap_eq.on);
+    for (i, b) in p.tap_eq.bands.iter().enumerate() {
+        let x = t.add_new("B");
+        x.set("i", i);
+        put_f(x, "g", &b.gain_db);
+        put_f(x, "f", &b.freq);
+        put_f(x, "q", &b.q);
+    }
+}
+
+/// Shows from before TAP WIDTH / TAP EQ have no `<Tap>`: the strip keeps its values.
+fn apply_tap(t: &Element, p: &StripParams) {
+    get_f(t, "wid", &p.tap_width);
+    get_b(t, "eq", &p.tap_eq.on);
+    for x in t.children_named("B") {
+        let Some(b) = usize::try_from(x.int_or("i", -1)).ok().and_then(|i| p.tap_eq.bands.get(i)) else { continue };
+        get_f(x, "g", &b.gain_db);
+        get_f(x, "f", &b.freq);
+        get_f(x, "q", &b.q);
+    }
+}
+
+/// RTA SETTINGS and EQ/RTA SETTINGS, FILTER's RTA SOURCE and the BAND SOLO
+/// trim (console settings, kept with the show; scenes don't recall them).
+fn capture_rta(engine: &Engine, parent: &mut Element) {
+    let c = engine.analysis().controls();
+    let r = parent.add_new("Rta");
+    put_i(r, "filterTap", &c.filter_tap);
+    put_f(r, "bandSoloTrim", &c.band_solo_trim_db);
+    for (tag, v) in [("Home", &c.home), ("Eq", &c.eq)] {
+        let x = r.add_new(tag);
+        put_rta_view(x, v);
+    }
+}
+
+fn put_rta_view(x: &mut Element, v: &RtaViewSettings) {
+    put_i(x, "display", &v.display);
+    put_i(x, "colour", &v.colour);
+    put_i(x, "tap", &v.tap);
+    put_i(x, "range", &v.range);
+    put_i(x, "decay", &v.decay);
+    put_i(x, "detector", &v.detector);
+    put_b(x, "autogain", &v.autogain);
+    put_f(x, "gain", &v.gain_db);
+}
+
+fn apply_rta(engine: &Engine, parent: &Element) {
+    let Some(r) = parent.child("Rta") else { return };
+    let c = engine.analysis().controls();
+    get_i(r, "filterTap", &c.filter_tap);
+    get_f(r, "bandSoloTrim", &c.band_solo_trim_db);
+    for (tag, v) in [("Home", &c.home), ("Eq", &c.eq)] {
+        if let Some(x) = r.child(tag) {
+            get_i(x, "display", &v.display);
+            get_i(x, "colour", &v.colour);
+            get_i(x, "tap", &v.tap);
+            get_i(x, "range", &v.range);
+            get_i(x, "decay", &v.decay);
+            get_i(x, "detector", &v.detector);
+            get_b(x, "autogain", &v.autogain);
+            get_f(x, "gain", &v.gain_db);
+        }
+    }
+}
+
 /// IGNORE CHANNEL MUTE. Shows from before the flag had pre-fader sends that
 /// never followed the channel mute: such a send (`pre`) loads with the flag on.
 fn get_ignore_mute(e: &Element, v: &AtomicBool, pre: bool) {
@@ -507,6 +581,7 @@ fn capture_monitor(engine: &Engine, parent: &mut Element, keys: bool) {
         put_b(m, "mono", &c.monitor_mono);
         put_b(m, "swap", &c.monitor_swap);
     }
+    crate::globals::capture_monitor_paths(engine, m);
 }
 
 /// Missing attributes (older shows) leave today's values: shows load into a
@@ -526,6 +601,7 @@ fn apply_monitor(engine: &Engine, parent: &Element) {
         get_b(m, "mute", &c.monitor_mute);
         get_b(m, "mono", &c.monitor_mono);
         get_b(m, "swap", &c.monitor_swap);
+        crate::globals::apply_monitor_paths(engine, m);
     }
 }
 
@@ -871,6 +947,9 @@ fn apply_strip(s: &Arc<Strip>, e: &Element, requested: u32, fades: &mut Option<&
                 get_ignore_mute(x, &send.ignore_mute, send.mode.load(Relaxed) == livedaw_engine::sends::send_mode::PRE);
             }
         }
+        if let Some(t) = e.child("Tap") {
+            apply_tap(t, p);
+        }
         if let Some(d) = e.child("Dir") {
             get_b(d, "on", &p.direct_on);
             get_b(d, "inv", &p.direct_invert);
@@ -972,6 +1051,7 @@ pub fn save_console(engine: &Engine, bridge: &mut dyn PluginBridge) -> Element {
     capture_monitor(engine, &mut console, true);
     capture_input_select(engine, &mut console);
     capture_prefs(engine, &mut console);
+    capture_rta(engine, &mut console);
     capture_automix(engine, &mut console);
     capture_dcas(engine, &mut console, true);
     capture_mute_groups(engine, &mut console, true);
@@ -985,6 +1065,7 @@ pub fn save_console(engine: &Engine, bridge: &mut dyn PluginBridge) -> Element {
             list.add(e);
         }
     }
+    crate::globals::capture(engine, &mut console);
     console
 }
 
@@ -1000,6 +1081,7 @@ pub fn load_console(engine: &Engine, console: &Element, bridge: &mut dyn PluginB
     apply_monitor(engine, console);
     apply_input_select(engine, console);
     apply_prefs(engine, console);
+    apply_rta(engine, console);
     apply_automix(engine, console);
     apply_dcas(engine, console);
     apply_mute_groups(engine, console);
@@ -1037,5 +1119,6 @@ pub fn load_console(engine: &Engine, console: &Element, bridge: &mut dyn PluginB
         apply_strip(&s, e, section::ALL, &mut None, &mut result);
         s.params.recall_safe.store(e.bool_or("recallSafe", false), Relaxed);
     }
+    crate::globals::apply(engine, console);
     result.warnings
 }

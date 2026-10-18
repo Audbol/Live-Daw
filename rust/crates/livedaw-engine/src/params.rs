@@ -7,6 +7,8 @@
 //! by `livedaw_engine.h`.
 
 use crate::atomic::AtomicF32;
+use crate::solo::solo_mode;
+use crate::talk::TalkParams;
 use livedaw_dsp::wing::{
     dynamics::{SidechainSettings, XoverSettings},
     filter::FilterSettings,
@@ -377,7 +379,7 @@ pub struct MatrixSendParams {
     pub pan: AtomicF32,
 }
 
-/// Monitor bus a solo goes to.
+/// Monitor bus a solo goes to (SOLO MODE LIVE): A = PHONES, B = SPEAKERS, both.
 pub const MONITOR_BUSES: [&str; 3] = ["A", "B", "A+B"];
 
 /// Everything the UI can change on a strip. Bus sends live in its `SendBank`.
@@ -454,6 +456,64 @@ pub struct StripParams {
     pub alt_input_right: AtomicI32,
     /// The strip's own MAIN / ALT switch (used unless INPUT SELECT is global).
     pub alt_selected: AtomicBool,
+
+    // ABI 7: the TAP-mode send signal (WING `/ch/n/tapwid`, `/ch/n/peq`).
+    /// TAP WIDTH (input channels, -150..150 %): the stereo width of the
+    /// signal TAP-mode sends take (stereo channels; negative swaps L and R).
+    pub tap_width: AtomicF32,
+    /// TAP EQ (input channels): a 3-band EQ on the TAP-mode send signal.
+    pub tap_eq: TapEqParams,
+}
+
+/// One band of the TAP EQ.
+#[repr(C)]
+#[derive(Debug)]
+pub struct TapEqBand {
+    /// -15..15 dB.
+    pub gain_db: AtomicF32,
+    /// 20..20000 Hz.
+    pub freq: AtomicF32,
+    /// 0.44..10.
+    pub q: AtomicF32,
+}
+
+/// TAP EQ (the WING's PRE EQ, `/ch/n/peq`): band 1 a low shelf, band 2 a
+/// peak, band 3 a high shelf.
+#[repr(C)]
+#[derive(Debug)]
+pub struct TapEqParams {
+    pub on: AtomicBool,
+    pub bands: [TapEqBand; TAP_EQ_BANDS],
+}
+
+pub const TAP_EQ_BANDS: usize = 3;
+/// Default frequency and Q of the TAP EQ bands.
+pub const TAP_EQ_DEFAULTS: [(f32, f32); TAP_EQ_BANDS] = [(100.0, 0.707), (1000.0, 1.0), (10000.0, 0.707)];
+pub const TAP_EQ_GAIN_RANGE: f32 = 15.0;
+pub const TAP_EQ_Q_RANGE: (f32, f32) = (0.442, 10.0);
+pub const TAP_WIDTH_RANGE: f32 = 150.0;
+
+impl Default for TapEqParams {
+    fn default() -> Self {
+        let band = |i: usize| TapEqBand {
+            gain_db: AtomicF32::new(0.0),
+            freq: AtomicF32::new(TAP_EQ_DEFAULTS[i].0),
+            q: AtomicF32::new(TAP_EQ_DEFAULTS[i].1),
+        };
+        Self { on: AtomicBool::new(false), bands: std::array::from_fn(band) }
+    }
+}
+
+impl TapEqParams {
+    /// Back to the defaults (off, flat).
+    pub fn reset(&self) {
+        self.on.store(false, Relaxed);
+        for (b, (f, q)) in self.bands.iter().zip(TAP_EQ_DEFAULTS) {
+            b.gain_db.store(0.0);
+            b.freq.store(f);
+            b.q.store(q);
+        }
+    }
 }
 
 /// The WING's 18 strip colours (index 1..18 in `colour`): the console's names
@@ -590,6 +650,8 @@ impl StripParams {
             alt_input_left: AtomicI32::new(-1),
             alt_input_right: AtomicI32::new(-1),
             alt_selected: AtomicBool::new(false),
+            tap_width: AtomicF32::new(100.0),
+            tap_eq: TapEqParams::default(),
         };
         p.eq.on.store(true, Relaxed);
         p
@@ -703,6 +765,110 @@ pub const MAIN_LINK_MODES: [&str; 4] = ["OFF", "1>2", "1>2-3", "1>2-4"];
 /// Default monitor DIM amount in dB.
 pub const DEFAULT_DIM_DB: f32 = 20.0;
 
+/// A monitor path's SOURCE choices (`MonitorSourceParams::source`): what the
+/// path plays without a solo: MAIN.1-4, MTX.1-8, BUS.1-16, AUX.1-8.
+pub const NUM_MONITOR_SOURCES: usize = NUM_MAINS + NUM_MATRICES + WING_BUSES + NUM_AUX;
+
+/// The strip a monitor SOURCE index plays: (kind, 0-based number; buses by slot).
+pub fn monitor_source(index: i32) -> Option<(StripKind, usize)> {
+    let mut i = usize::try_from(index).ok()?;
+    for (kind, count) in
+        [(StripKind::Main, NUM_MAINS), (StripKind::Matrix, NUM_MATRICES), (StripKind::Bus, WING_BUSES), (StripKind::Aux, NUM_AUX)]
+    {
+        if i < count {
+            return Some((kind, i));
+        }
+        i -= count;
+    }
+    None
+}
+
+/// The display name of a monitor SOURCE index ("MAIN.1", "BUS.12").
+pub fn monitor_source_name(index: i32) -> String {
+    match monitor_source(index) {
+        Some((StripKind::Matrix, i)) => format!("MTX.{}", i + 1),
+        Some((kind, i)) => format!("{}.{}", kind.label(), i + 1),
+        None => "OFF".into(),
+    }
+}
+
+/// SRC MIX default: the source is silent while soloing (-oo).
+pub const SOURCE_MIX_OFF_DB: f32 = -144.0;
+
+/// What a monitor path plays besides the solo bus (MONITORS: SOURCE, SRC
+/// LEVEL, SRC MIX, PFL DIM).
+#[repr(C)]
+#[derive(Debug)]
+pub struct MonitorSourceParams {
+    /// Index of the SOURCE (see [`monitor_source`]); default MAIN.1.
+    pub source: AtomicI32,
+    /// SRC LEVEL: the source's level in dB.
+    pub source_level_db: AtomicF32,
+    /// SRC MIX: the source's level while a solo reaches the path (-144 = off).
+    pub source_mix_db: AtomicF32,
+    /// PFL DIM: attenuation of pre-fader solos in dB (>= 0).
+    pub pfl_dim_db: AtomicF32,
+}
+
+impl Default for MonitorSourceParams {
+    fn default() -> Self {
+        Self {
+            source: AtomicI32::new(0),
+            source_level_db: AtomicF32::new(0.0),
+            source_mix_db: AtomicF32::new(SOURCE_MIX_OFF_DB),
+            pfl_dim_db: AtomicF32::new(0.0),
+        }
+    }
+}
+
+impl MonitorSourceParams {
+    fn reset(&self) {
+        let d = Self::default();
+        self.source.store(d.source.load(Relaxed), Relaxed);
+        self.source_level_db.store(d.source_level_db.load());
+        self.source_mix_db.store(d.source_mix_db.load());
+        self.pfl_dim_db.store(d.pfl_dim_db.load());
+    }
+}
+
+/// The PHONES monitor path: its source, level, DIM amount, outputs and meter.
+/// The SPEAKERS path is the console's monitor (`monitor_level_db`, ...).
+#[repr(C)]
+#[derive(Debug)]
+pub struct MonitorPathParams {
+    pub source: MonitorSourceParams,
+    pub level_db: AtomicF32,
+    /// DIM amount in dB (an attenuation, >= 0).
+    pub dim_db: AtomicF32,
+    /// Hardware outputs (-1 = none).
+    pub output_left: AtomicI32,
+    pub output_right: AtomicI32,
+    pub peak: [AtomicF32; 2],
+}
+
+impl Default for MonitorPathParams {
+    fn default() -> Self {
+        Self {
+            source: MonitorSourceParams::default(),
+            level_db: AtomicF32::new(0.0),
+            dim_db: AtomicF32::new(DEFAULT_DIM_DB),
+            output_left: AtomicI32::new(-1),
+            output_right: AtomicI32::new(-1),
+            peak: Default::default(),
+        }
+    }
+}
+
+impl MonitorPathParams {
+    fn reset(&self) {
+        self.source.reset();
+        self.level_db.store(0.0);
+        self.dim_db.store(DEFAULT_DIM_DB);
+        self.output_left.store(-1, Relaxed);
+        self.output_right.store(-1, Relaxed);
+    }
+}
+
 /// Engine-wide controls and status, shared with the UI.
 #[repr(C)]
 #[derive(Debug)]
@@ -752,6 +918,29 @@ pub struct EngineControls {
     pub input_select_global: AtomicBool,
     /// The global MAIN / ALT switch (true = ALT).
     pub global_alt: AtomicBool,
+
+    // ---- console level, ABI 7: solo modes, talkback, monitor paths -----------
+    /// SOLO MODE: `solo::solo_mode` (LIVE, STUDIO, SIP).
+    pub solo_mode: AtomicI32,
+    /// The solo bus / selected monitoring path (MONITORS: PHONES, SPEAKERS,
+    /// PH+SPK) as a `MONITOR_BUSES` choice (A = PHONES, B = SPEAKERS, A+B).
+    /// STUDIO and SIP solo to it; DIM, MUTE, MONO, SWAP and the talk MON DIM
+    /// act on it.
+    pub solo_bus: AtomicI32,
+    /// LIVE: a path picked on MONITORS while soloing overrides the strips'
+    /// own choice until no solo is left (the engine then clears it).
+    pub solo_bus_override: AtomicBool,
+    /// MUTEGROUP/SIP OVERRIDE (SETUP > PREFERENCES).
+    pub mute_override: AtomicBool,
+    /// Status: SIP is muting the channels that aren't soloed (the SIP badge).
+    pub sip_active: AtomicBool,
+    /// Talkback (`talk.rs`).
+    pub talk: TalkParams,
+    /// The SPEAKERS path: SOURCE, SRC LEVEL, SRC MIX, PFL DIM (its
+    /// level, DIM amount, outputs and meter are the `monitor_*` fields).
+    pub speakers: MonitorSourceParams,
+    /// The PHONES path.
+    pub phones: MonitorPathParams,
 }
 
 impl Default for EngineControls {
@@ -785,6 +974,14 @@ impl Default for EngineControls {
             main_link: AtomicI32::new(0),
             input_select_global: AtomicBool::new(false),
             global_alt: AtomicBool::new(false),
+            solo_mode: AtomicI32::new(solo_mode::STUDIO),
+            solo_bus: AtomicI32::new(2),
+            solo_bus_override: AtomicBool::new(false),
+            mute_override: AtomicBool::new(false),
+            sip_active: AtomicBool::new(false),
+            talk: TalkParams::default(),
+            speakers: MonitorSourceParams::default(),
+            phones: MonitorPathParams::default(),
         }
     }
 }
@@ -824,6 +1021,13 @@ impl EngineControls {
         self.main_link.store(0, Relaxed);
         self.input_select_global.store(false, Relaxed);
         self.global_alt.store(false, Relaxed);
+        self.solo_mode.store(solo_mode::STUDIO, Relaxed);
+        self.solo_bus.store(2, Relaxed);
+        self.solo_bus_override.store(false, Relaxed);
+        self.mute_override.store(false, Relaxed);
+        self.talk.reset();
+        self.speakers.reset();
+        self.phones.reset();
         self.monitor_level_db.store(0.0);
         self.mute_groups.store(0, Relaxed);
         for d in &self.dcas {

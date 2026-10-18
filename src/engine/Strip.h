@@ -104,6 +104,8 @@ public:
     juce::String getLabel() const { return juce::String (livedaw::label (kind)) + " " + juce::String (number); }
 
     ld::Strip* getHandle() const noexcept { return handle; }
+    /** The engine the strip belongs to (its analysis: RTA, scope, LISTEN). */
+    ld::Engine* getEngineHandle() const noexcept { return engineHandle; }
 
     juce::String getName() const { return takeString (ld::ld_strip_name (handle)); }
     void setName (const juce::String& newName) const
@@ -192,6 +194,18 @@ public:
     int getActiveInputLeft() const noexcept { return isUsingAltInput() ? getAltInputLeft() : getInputLeft(); }
     int getActiveInputRight() const noexcept { return isUsingAltInput() ? getAltInputRight() : getInputRight(); }
 
+    //==============================================================================
+    // Console level (SOLO MODE, MUTEGROUP/SIP OVERRIDE, talkback)
+
+    /** MUTE as the surface shows it (ld::MuteState): kMuteGroup = muted by a
+        mute group, DCA or SIP (the key flashes). Updated every audio block. */
+    int getMuteState() const noexcept { return ld::ld_strip_mute_state (handle); }
+    /** Soloed in the last block: own solo, a soloed DCA or a TALK SOLO tag. */
+    bool isSoloedNow() const noexcept { return ld::ld_strip_is_soloed (handle); }
+    /** HOME > TAGS talk tags (ld::TalkTag bits). */
+    uint32_t getTalkTags() const noexcept { return ld::ld_strip_talk_tags (handle); }
+    void setTalkTags (uint32_t tags) const noexcept { ld::ld_strip_set_talk_tags (handle, tags); }
+
     StripParams& params;
     SendBank sends;
     ld::StripMeters& meters;
@@ -201,6 +215,7 @@ public:
 
 private:
     const ld::EngineControls* controls;
+    ld::Engine* engineHandle;
     ld::Strip* handle;
     StripKind kind;
     int id;

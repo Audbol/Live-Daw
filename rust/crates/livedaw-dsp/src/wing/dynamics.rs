@@ -35,6 +35,20 @@ impl Default for SidechainSettings {
     }
 }
 
+impl SidechainSettings {
+    /// The key filter (also what KEY SOLO listens to).
+    pub fn coefficients(&self, sr: f64) -> BiquadCoeffs {
+        let (f, q) = (self.freq.clamp(20.0, 20000.0) as f64, self.q.clamp(0.3, 10.0) as f64);
+        match self.filter {
+            1 => BiquadCoeffs::low_pass(sr, f, std::f64::consts::FRAC_1_SQRT_2),
+            2 => BiquadCoeffs::high_pass(sr, f, std::f64::consts::FRAC_1_SQRT_2),
+            3 => BiquadCoeffs::band_pass(sr, f, q),
+            4 => BiquadCoeffs::notch(sr, f, q),
+            _ => BiquadCoeffs::identity(),
+        }
+    }
+}
+
 /// Restricts the dynamics to a frequency band (DYN XOVER).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct XoverSettings {
@@ -49,6 +63,21 @@ pub struct XoverSettings {
 impl Default for XoverSettings {
     fn default() -> Self {
         Self { kind: 0, freq: 1000.0, q: 1.0, depth: 0.0 }
+    }
+}
+
+impl XoverSettings {
+    /// The crossover band filter (also what XOVER SOLO listens to; OFF passes everything).
+    pub fn coefficients(&self, sr: f64) -> BiquadCoeffs {
+        let (f, q) = (self.freq.clamp(20.0, 20000.0) as f64, self.q.clamp(0.3, 10.0) as f64);
+        match self.kind {
+            1 => BiquadCoeffs::low_pass(sr, f, std::f64::consts::FRAC_1_SQRT_2),
+            2 => BiquadCoeffs::high_pass(sr, f, std::f64::consts::FRAC_1_SQRT_2),
+            3 => BiquadCoeffs::high_pass_1(sr, f),
+            4 => BiquadCoeffs::high_pass(sr, f, 0.5),
+            5 => BiquadCoeffs::band_pass(sr, f, q),
+            _ => BiquadCoeffs::identity(),
+        }
     }
 }
 
@@ -963,28 +992,11 @@ impl WingDynamics {
             self.cfg = Some(cfg);
         }
         if self.sc_settings != Some(*sc) {
-            let sr = self.sr as f64;
-            let (f, q) = (sc.freq.clamp(20.0, 20000.0) as f64, sc.q.clamp(0.3, 10.0) as f64);
-            self.sc.set_coefficients(match sc.filter {
-                1 => BiquadCoeffs::low_pass(sr, f, std::f64::consts::FRAC_1_SQRT_2),
-                2 => BiquadCoeffs::high_pass(sr, f, std::f64::consts::FRAC_1_SQRT_2),
-                3 => BiquadCoeffs::band_pass(sr, f, q),
-                4 => BiquadCoeffs::notch(sr, f, q),
-                _ => BiquadCoeffs::identity(),
-            });
+            self.sc.set_coefficients(sc.coefficients(self.sr as f64));
             self.sc_settings = Some(*sc);
         }
         if self.xo_settings != Some(*xo) {
-            let sr = self.sr as f64;
-            let (f, q) = (xo.freq.clamp(20.0, 20000.0) as f64, xo.q.clamp(0.3, 10.0) as f64);
-            self.xo.set_coefficients(match xo.kind {
-                1 => BiquadCoeffs::low_pass(sr, f, std::f64::consts::FRAC_1_SQRT_2),
-                2 => BiquadCoeffs::high_pass(sr, f, std::f64::consts::FRAC_1_SQRT_2),
-                3 => BiquadCoeffs::high_pass_1(sr, f),
-                4 => BiquadCoeffs::high_pass(sr, f, 0.5),
-                5 => BiquadCoeffs::band_pass(sr, f, q),
-                _ => BiquadCoeffs::identity(),
-            });
+            self.xo.set_coefficients(xo.coefficients(self.sr as f64));
             self.xo_settings = Some(*xo);
         }
     }

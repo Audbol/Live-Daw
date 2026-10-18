@@ -12,6 +12,25 @@ namespace livedaw::ui
 
 using namespace home;
 
+namespace
+{
+    /** FREEZE: holds the RTA (the EQ and FILTER screens share it). */
+    void bindFreeze (IconKey& k, const Strip& s)
+    {
+        k.isOn = [a = Analysis (s)] { return a.isFrozen(); };
+        k.onClick = [a = Analysis (s)]() mutable { a.setFrozen (! a.isFrozen()); };
+    }
+
+    /** A LISTEN key of `s` (BAND SOLO, KEY SOLO, XOVER SOLO, ld::ListenMode):
+        it plays on the solo bus instead of the soloed strips, lit while it
+        does; press again to stop. */
+    void bindListen (IconKey& k, const Strip& s, int mode, std::function<int()> band = {})
+    {
+        k.isOn = [a = Analysis (s), &s, mode] { return a.isListening (s, mode); };
+        k.onClick = [a = Analysis (s), &s, mode, band]() mutable { a.toggleListen (s, mode, band ? band() : 0); };
+    }
+} // namespace
+
 //==============================================================================
 void HomeScreen::paint (juce::Graphics& g)
 {
@@ -889,7 +908,7 @@ public:
         auto& f = strip.params.filter;
         freeze = &key ("FREEZE");
         freeze->outlined = true;
-        freeze->setEnabled (false); // needs the RTA (not modelled)
+        bindFreeze (*freeze, strip);
         // The header keys: icons with a small caption under them (Fig. 63).
         loCut = &key ("LO CUT", Icon::LowCut, colours::eqOn);
         loCut->iconAbove = true;
@@ -1067,9 +1086,9 @@ public:
         keyTap = &field ("KEY TAP", tapPointNames(), slot.scTap);
         keyFreq = &make<KnobBox> (wingFreq ("FREQ", slot.scFreq, 20.0f, 20000.0f, 1000.0f));
         keyQ = &make<KnobBox> (bindLog ("Q", slot.scQ, 0.5f, 10.0f, {}, 1.0f));
-        // Needs the engine's solo tap for the key signal (report E9).
+        // The key signal after the key filter on the solo bus.
         keySolo = &key ("KEY SOLO");
-        keySolo->setEnabled (false);
+        bindListen (*keySolo, strip, isGate ? ld::kListenGateKey : ld::kListenDynKey);
 
         if (! isGate)
         {
@@ -1078,7 +1097,7 @@ public:
             xoDepth = &make<KnobBox> (bindLinear ("DEPTH", slot.xoDepth, -40.0f, 0.0f, " dB", 1, -40.0f));
             xoQ = &make<KnobBox> (bindLog ("Q", slot.xoQ, 0.5f, 10.0f, {}, 1.0f));
             xoSolo = &key ("XOVER SOLO");
-            xoSolo->setEnabled (false); // report E9
+            bindListen (*xoSolo, strip, ld::kListenXover); // the crossover band on the solo bus
         }
     }
 
@@ -1229,12 +1248,14 @@ public:
                 shownTool = f.toolModel.load();
             }
         }
+        // BAND SOLO: the selected band's range on the solo bus (it follows
+        // the band selection while it plays).
         bandSolo = &key ("BAND SOLO");
         bandSolo->outlined = true;
-        bandSolo->setEnabled (false); // needs the engine's band solo (report E9)
+        bindListen (*bandSolo, strip, ld::kListenBand, [this] { return juce::jmax (0, graph->getSelectedBand()); });
         freeze = &key ("FREEZE");
         freeze->outlined = true;
-        freeze->setEnabled (false); // needs the RTA (not modelled)
+        bindFreeze (*freeze, strip);
 
         graph = &make<ResponseGraph>();
         graph->setStrip (&strip, ResponseGraph::Eq);
@@ -1422,6 +1443,8 @@ private:
         bands = ResponseGraph::stdBands (strip);
         if (graph->getSelectedBand() < 0 && ! bands.isEmpty())
             graph->setSelectedBand (juce::jmin (bands.size() - 1, 1));
+        // Analog models have no bands to solo.
+        bandSolo->setEnabled (! bands.isEmpty());
         bindBand();
     }
 
@@ -1467,6 +1490,8 @@ private:
 
     void bindBand()
     {
+        if (! bands.isEmpty())
+            Analysis (strip).followBand (strip, juce::jmax (0, graph->getSelectedBand()));
         repaint();
         notifyKnobs();
     }
@@ -1951,6 +1976,101 @@ private:
     float stripH = 14.0f, nameH = 14.0f;
 };
 
+/** LR VECTOR SCOPE (D7, Fig. 65): the strip's left and right after its INPUT
+    block, before pan, as a goniometer - a mono signal is a vertical line, L
+    or R alone leans 45 degrees, a signal out of phase lies flat. A green
+    trace on a dark green dotted square, scaled to the signal, over its
+    caption. While it shows, the engine keeps a decimated L/R ring of the
+    strip (ld_scope_read). */
+class VectorScope final : public juce::Component, private juce::Timer
+{
+public:
+    explicit VectorScope (Strip& s) : strip (s) { startTimerHz (30); }
+
+    /** The square, without the caption under it. */
+    juce::Rectangle<float> scopeArea() const
+    {
+        auto r = getLocalBounds().toFloat().reduced (1.5f);
+        r.removeFromBottom (juce::jlimit (11.0f, 18.0f, r.getHeight() * 0.12f));
+        return r;
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto all = getLocalBounds().toFloat();
+        g.setColour (colours::outline);
+        g.fillRect (all);
+        auto inner = all.reduced (1.5f);
+        const auto sq = scopeArea();
+        const auto caption = inner.withTop (sq.getBottom());
+        g.setColour (juce::Colour (0xff101810));
+        g.fillRect (sq);
+        g.setColour (juce::Colour (0xff1c3020));
+        const float d = sq.getWidth() / 16.0f, e = sq.getHeight() / 16.0f;
+        for (int i = 1; i < 16; ++i)
+            for (int j = 1; j < 16; ++j)
+                g.fillRect (sq.getX() + d * (float) i, sq.getY() + e * (float) j, 1.0f, 1.0f);
+        g.setColour (juce::Colour (0xff202020));
+        g.fillRect (caption);
+        g.setColour (colours::caption);
+        g.setFont (juce::FontOptions (caption.getHeight() * 0.8f, juce::Font::plain));
+        g.drawText ("LR VECTOR SCOPE", caption.toNearestInt(), juce::Justification::centred);
+
+        if (count <= 0)
+            return;
+        // M up, S across, scaled so the loudest recent excursion fills ~90 %.
+        const auto c = sq.getCentre();
+        const float half = juce::jmin (sq.getWidth(), sq.getHeight()) * 0.46f;
+        const float k = half / juce::jmax (0.02f, scale) * 0.70710678f;
+        juce::Path trace;
+        for (int i = 0; i < count; ++i)
+        {
+            const float l = pairs[(size_t) (2 * i)], r = pairs[(size_t) (2 * i + 1)];
+            const juce::Point<float> pt (c.x + juce::jlimit (-half, half, (r - l) * k), c.y - juce::jlimit (-half, half, (l + r) * k));
+            if (i == 0)
+                trace.startNewSubPath (pt);
+            else
+                trace.lineTo (pt);
+        }
+        g.saveState();
+        g.reduceClipRegion (sq.toNearestInt());
+        g.setColour (juce::Colour (0xff40e050).withAlpha (0.8f));
+        g.strokePath (trace, juce::PathStrokeType (1.0f));
+        g.restoreState();
+    }
+
+private:
+    void timerCallback() override
+    {
+        Analysis analysis (strip);
+        if (! isShowing())
+        {
+            if (std::exchange (shown, false) && analysis.isAnalysed (strip))
+                analysis.hideScope();
+            return;
+        }
+        if (! shown || ! analysis.controls.scopeOn.load() || ! analysis.isAnalysed (strip))
+            analysis.showScope (&strip);
+        shown = true;
+        count = analysis.readScope (pairs.data(), kPairs);
+        float peak = 0.0f;
+        for (int i = 0; i < count; ++i)
+        {
+            const float l = pairs[(size_t) (2 * i)], r = pairs[(size_t) (2 * i + 1)];
+            peak = juce::jmax (peak, std::abs (l + r), std::abs (r - l));
+        }
+        scale = juce::jmax (peak * 0.70710678f, scale * 0.92f);
+        repaint();
+    }
+
+    static constexpr int kPairs = 1024;
+    Strip& strip;
+    std::array<float, 2 * kPairs> pairs {};
+    int count = 0;
+    float scale = 0.02f;
+    bool shown = false;
+};
+
 /** MAIN: MAIN SENDS, the pan/width graphic with the LR VECTOR SCOPE, and the
     channel's LEVEL (Fig. 65). Mains and matrices: the output slot with the
     post-fader delay. */
@@ -1970,6 +2090,7 @@ public:
             delay->onUnitChanged = [this] { notifyKnobs(); };
         }
         pan = &make<PanWidthDisplay> (p.pan, p.width, true);
+        scope = &make<VectorScope> (strip);
         level = &make<LevelPanel> (ctx, strip);
     }
 
@@ -2024,6 +2145,8 @@ public:
         scopeArea = b.withTrimmedTop (juce::roundToInt (16.0f * u)).removeFromTop (b.getHeight() * 24 / 100)
                         .removeFromRight (juce::roundToInt (148.0f * u)).withTrimmedRight (juce::roundToInt (12.0f * u));
         pan->setBounds (b.withTrimmedTop (b.getHeight() / 10));
+        scope->setBounds (scopeArea.expanded (2));
+        scope->toFront (false);
     }
 
     void paint (juce::Graphics& g) override
@@ -2048,24 +2171,6 @@ public:
             g.drawText (text, area, juce::Justification::centred);
         }
 
-        // LR VECTOR SCOPE: needs the engine's L/R sample ring (W38): the empty
-        // scope, a dark green dotted square over its caption.
-        auto s = scopeArea.toFloat();
-        auto caption = s.removeFromBottom (juce::jlimit (11.0f, 18.0f, s.getHeight() * 0.12f));
-        g.setColour (colours::outline);
-        g.fillRect (s.expanded (1.5f).withBottom (caption.getBottom()));
-        g.setColour (juce::Colour (0xff101810));
-        g.fillRect (s);
-        g.setColour (juce::Colour (0xff1c3020));
-        const float d = s.getWidth() / 16.0f;
-        for (int i = 1; i < 16; ++i)
-            for (int j = 1; j < 16; ++j)
-                g.fillRect (s.getX() + d * (float) i, s.getY() + s.getHeight() / 16.0f * (float) j, 1.0f, 1.0f);
-        g.setColour (juce::Colour (0xff202020));
-        g.fillRect (caption);
-        g.setColour (colours::caption);
-        g.setFont (juce::FontOptions (caption.getHeight() * 0.8f, juce::Font::plain));
-        g.drawText ("LR VECTOR SCOPE", caption.toNearestInt(), juce::Justification::centred);
     }
 
 private:
@@ -2073,6 +2178,7 @@ private:
     std::vector<MainSendColumn*> sends;
     DelayPanel* delay = nullptr;
     PanWidthDisplay* pan = nullptr;
+    VectorScope* scope = nullptr;
     LevelPanel* level = nullptr;
     juce::Rectangle<int> channelHeader, sendsHeader, field, scopeArea;
 };
@@ -2546,6 +2652,304 @@ private:
     std::pair<int, int> shown { -1, -1 };
 };
 
+/** The TAP EQ's response (ld_strip_response block 4) at `freqs`. */
+std::vector<double> tapEqResponse (const Strip& s, const std::vector<double>& freqs)
+{
+    std::vector<double> db (freqs.size(), 0.0);
+    ld::ld_strip_response (s.getHandle(), 4, freqs.data(), db.data(), (int32_t) freqs.size(), 48000.0);
+    return db;
+}
+
+/** The header's TAP EQ key (D5): the caption and the TAP EQ's curve (a flat
+    line while it does nothing), lit while the TAP EQ is on. Click: on / off. */
+class TapEqKey final : public juce::Component, private juce::Timer
+{
+public:
+    explicit TapEqKey (Strip& s) : strip (s)
+    {
+        for (int i = 0; i < 48; ++i)
+            freqs.push_back (20.0 * std::pow (1000.0, (double) i / 47.0));
+        startTimerHz (8);
+    }
+
+    std::function<void()> onClick;
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat();
+        const bool enabled = isEnabled();
+        const bool on = enabled && strip.params.tapEq.on.load();
+        paintKeyBody (g, r, on ? colours::accent : colours::keyOff);
+        auto text = r.removeFromLeft (r.getWidth() * 0.42f);
+        g.setColour (on ? juce::Colours::black : (enabled ? colours::caption : colours::dim));
+        g.setFont (homeFont (TypeScale::body, r.getHeight() * 0.46f));
+        g.drawFittedText ("TAP EQ", text.toNearestInt().reduced (4, 0), juce::Justification::centredLeft, 1, 0.8f);
+        // The curve, +-15 dB over the key's height.
+        auto c = r.reduced (r.getHeight() * 0.18f, r.getHeight() * 0.22f);
+        const auto db = tapEqResponse (strip, freqs);
+        juce::Path p;
+        for (size_t i = 0; i < db.size(); ++i)
+        {
+            const juce::Point<float> pt (c.getX() + c.getWidth() * (float) i / (float) (db.size() - 1),
+                                         c.getCentreY() - juce::jlimit (-1.0f, 1.0f, (float) db[i] / 15.0f) * c.getHeight() * 0.5f);
+            if (i == 0)
+                p.startNewSubPath (pt);
+            else
+                p.lineTo (pt);
+        }
+        g.setColour (on ? juce::Colours::black : (enabled ? colours::caption : colours::dim));
+        g.strokePath (p, juce::PathStrokeType (1.5f));
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        if (isEnabled() && getLocalBounds().contains (e.getPosition()) && onClick)
+            onClick();
+    }
+
+private:
+    void timerCallback() override
+    {
+        auto& eq = strip.params.tapEq;
+        juce::String state;
+        state << (int) eq.on.load();
+        for (auto& b : eq.bands)
+            state << ':' << b.gainDb.load() << ',' << b.freq.load() << ',' << b.q.load();
+        if (state != shown)
+        {
+            shown = state;
+            repaint();
+        }
+    }
+
+    Strip& strip;
+    std::vector<double> freqs;
+    juce::String shown;
+};
+
+/** TAP EQ (the `>` key of the BUS SENDS header): the 3-band EQ on the signal
+    the channel's TAP-mode sends take - a low shelf, a peak and a high shelf.
+    The curve with a ring per band (drag: frequency and gain, wheel: Q), and
+    a column per band with GAIN, FREQ and Q. Opens over the send columns. */
+class TapEqPanel final : public juce::Component, private juce::Timer
+{
+public:
+    explicit TapEqPanel (Strip& s) : strip (s)
+    {
+        auto& eq = strip.params.tapEq;
+        bindKey (on, eq.on);
+        addAndMakeVisible (on);
+        close.offInk = colours::caption;
+        close.onClick = [this] { if (onClose) onClose(); };
+        addAndMakeVisible (close);
+        static const char* names[] = { "LOW SHELF", "PEAK", "HIGH SHELF" };
+        for (int i = 0; i < ld::kTapEqBands; ++i)
+        {
+            auto& b = eq.bands[i];
+            auto& k = *bandKeys.add (new IconKey (names[i], std::nullopt, colours::choice));
+            k.isOn = [this, i] { return selected == i; };
+            k.onClick = [this, i] { select (i); };
+            addAndMakeVisible (k);
+            // FREQ without its unit, so the boxes stay narrow.
+            auto freq = wingFreq ("FREQ", b.freq, 20.0f, 20000.0f, kDefaultFreqs[i]);
+            freq.text = [&f = b.freq] { return wingHz (f.load(), false); };
+            for (auto binding : { bindLinear ("GAIN", b.gainDb, -15.0f, 15.0f, " dB", 1, 0.0f), freq,
+                                  bindLog ("Q", b.q, 0.442f, 10.0f, {}, i == 1 ? 1.0f : 0.707f) })
+                addAndMakeVisible (boxes.add (new KnobBox (binding)));
+        }
+        for (int i = 0; i < 200; ++i)
+            freqs.push_back (20.0 * std::pow (1000.0, (double) i / 199.0));
+        startTimerHz (15);
+    }
+
+    std::function<void()> onClose;
+    /** The band the knobs under the display edit changed. */
+    std::function<void()> onSelect;
+    int selected = 1;
+
+    void select (int band)
+    {
+        selected = juce::jlimit (0, ld::kTapEqBands - 1, band);
+        repaint();
+        if (onSelect)
+            onSelect();
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (4);
+        bar = r.removeFromTop (juce::jlimit (26, 44, getHeight() / 9));
+        auto b = bar;
+        close.setBounds (b.removeFromRight (b.getHeight() * 3).reduced (0, b.getHeight() / 10));
+        b.removeFromRight (8);
+        on.setBounds (b.removeFromRight (b.getHeight() * 2).reduced (0, b.getHeight() / 10));
+        r.removeFromTop (6);
+        auto side = r.removeFromRight (r.getWidth() * 46 / 100);
+        r.removeFromRight (8);
+        graph = r.toFloat();
+        const int rowH = side.getHeight() / ld::kTapEqBands;
+        for (int i = 0; i < ld::kTapEqBands; ++i)
+        {
+            auto row = side.removeFromTop (rowH).reduced (0, 3);
+            bandKeys[i]->setBounds (row.removeFromTop (juce::jmin (32, row.getHeight() / 3)));
+            row.removeFromTop (4);
+            const int w = (row.getWidth() - 8) / 3;
+            for (int j = 0; j < 3; ++j)
+            {
+                boxes[i * 3 + j]->setBounds (row.removeFromLeft (w).withHeight (juce::jmin (row.getHeight(), 38)));
+                row.removeFromLeft (4);
+            }
+        }
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (juce::Colours::black);
+        g.setColour (colours::panel);
+        g.fillRect (bar);
+        g.setColour (colours::caption);
+        g.setFont (panelTitleFont (bar.getHeight()));
+        g.drawText ("TAP EQ", bar.withTrimmedLeft (12), juce::Justification::centredLeft);
+
+        // The graph as on the EQ screen: the piano ruler, a log grid, the
+        // curve over its dark amber fill, a ring per band.
+        auto area = graph;
+        const float rulerH = juce::jlimit (5.0f, 12.0f, area.getHeight() * 0.04f);
+        auto ruler = area.removeFromTop (rulerH);
+        area.removeFromTop (16.0f);
+        auto labels = area.removeFromBottom (14.0f);
+        plot = area;
+        auto xOf = [this] (float hz) { return xForFreq (hz); };
+        ResponseGraph::paintPianoRuler (g, ruler, xOf);
+        g.setColour (juce::Colour (0xff383838));
+        for (float decade : { 10.0f, 100.0f, 1000.0f, 10000.0f })
+            for (int m = 1; m <= 9; ++m)
+                if (const float f = decade * (float) m; f >= 20.0f && f <= 20000.0f)
+                    g.drawVerticalLine (juce::roundToInt (xForFreq (f)), plot.getY(), plot.getBottom());
+        for (int i = 0; i <= 4; ++i)
+            g.drawHorizontalLine (juce::roundToInt (plot.getY() + (plot.getHeight() - 1.0f) * (float) i / 4.0f), plot.getX(), plot.getRight());
+        g.setColour (colours::caption);
+        g.setFont (juce::FontOptions (12.0f));
+        for (float f : { 20.0f, 100.0f, 1000.0f, 10000.0f, 20000.0f })
+            g.drawText (f >= 1000.0f ? juce::String (juce::roundToInt (f / 1000.0f)) + "K" : juce::String (juce::roundToInt (f)),
+                        juce::Rectangle<float> (xForFreq (f) - 18.0f, labels.getY(), 36.0f, labels.getHeight()).toNearestInt(),
+                        juce::Justification::centred);
+
+        const bool active = strip.params.tapEq.on.load();
+        const auto db = tapEqResponse (strip, freqs);
+        juce::Path curve;
+        for (size_t i = 0; i < db.size(); ++i)
+        {
+            const juce::Point<float> pt (xForFreq ((float) freqs[i]), yForDb ((float) db[i]));
+            if (i == 0)
+                curve.startNewSubPath (pt);
+            else
+                curve.lineTo (pt);
+        }
+        g.saveState();
+        g.reduceClipRegion (plot.toNearestInt());
+        juce::Path fill (curve);
+        fill.lineTo (plot.getRight(), plot.getBottom() + 2.0f);
+        fill.lineTo (plot.getX(), plot.getBottom() + 2.0f);
+        fill.closeSubPath();
+        g.setColour (active ? colours::eqFill : juce::Colour (0xff1c1c1c));
+        g.fillPath (fill);
+        g.setColour (active ? colours::eqCurve : colours::dim);
+        g.strokePath (curve, juce::PathStrokeType (2.0f));
+        g.restoreState();
+
+        static const char* tags[] = { "L", "P", "H" };
+        for (int i = 0; i < ld::kTapEqBands; ++i)
+        {
+            const auto c = handle (i);
+            const bool sel = i == selected;
+            g.setColour (sel ? Colours::choice : juce::Colour (0xff585858));
+            g.fillRect (c.x - 0.75f, plot.getY() + 2.0f, sel ? 2.0f : 1.5f, plot.getHeight() - 2.0f);
+            g.setColour (sel ? colours::ink : colours::dim);
+            g.setFont (juce::FontOptions (14.0f));
+            g.drawText (tags[i], juce::Rectangle<float> (24.0f, 14.0f).withCentre ({ c.x, plot.getY() - 8.0f }).toNearestInt(), juce::Justification::centred);
+            auto ring = juce::Rectangle<float> (16.0f, 16.0f).withCentre (c);
+            if (sel)
+            {
+                g.setColour (juce::Colours::black);
+                g.fillEllipse (ring);
+            }
+            g.setColour (colours::ink);
+            g.drawEllipse (ring, 2.0f);
+        }
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        dragging = -1;
+        float best = 16.0f;
+        for (int i = 0; i < ld::kTapEqBands; ++i)
+            if (const float d = handle (i).getDistanceFrom (e.position); d < best)
+            {
+                best = d;
+                dragging = i;
+            }
+        if (dragging >= 0)
+            select (dragging);
+    }
+
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (dragging < 0)
+            return;
+        auto& b = strip.params.tapEq.bands[dragging];
+        b.freq = juce::jlimit (20.0f, 20000.0f, freqForX (e.position.x));
+        b.gainDb = juce::jlimit (-15.0f, 15.0f, std::round ((plot.getCentreY() - e.position.y) / (plot.getHeight() * 0.5f) * kRangeDb * 10.0f) / 10.0f);
+        repaint();
+    }
+
+    void mouseUp (const juce::MouseEvent&) override { dragging = -1; }
+
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails& w) override
+    {
+        auto& q = strip.params.tapEq.bands[selected].q;
+        q = juce::jlimit (0.442f, 10.0f, q.load() * std::pow (1.15f, w.deltaY > 0 ? 1.0f : -1.0f));
+        repaint();
+    }
+
+private:
+    static constexpr float kRangeDb = 18.0f;
+    static constexpr float kDefaultFreqs[ld::kTapEqBands] = { 100.0f, 1000.0f, 10000.0f };
+
+    float xForFreq (float f) const { return plot.getX() + plot.getWidth() * std::log (juce::jmax (20.0f, f) / 20.0f) / std::log (1000.0f); }
+    float freqForX (float x) const { return 20.0f * std::pow (1000.0f, juce::jlimit (0.0f, 1.0f, (x - plot.getX()) / plot.getWidth())); }
+    float yForDb (float db) const { return plot.getCentreY() - juce::jlimit (-kRangeDb, kRangeDb, db) / kRangeDb * plot.getHeight() * 0.5f; }
+    juce::Point<float> handle (int band) const
+    {
+        auto& b = strip.params.tapEq.bands[band];
+        return { xForFreq (b.freq.load()), yForDb (b.gainDb.load()) };
+    }
+
+    void timerCallback() override
+    {
+        auto& eq = strip.params.tapEq;
+        juce::String state;
+        state << (int) eq.on.load() << selected;
+        for (auto& b : eq.bands)
+            state << ':' << b.gainDb.load() << ',' << b.freq.load() << ',' << b.q.load();
+        if (state != shown)
+        {
+            shown = state;
+            repaint();
+        }
+    }
+
+    Strip& strip;
+    IconKey on { "ON", std::nullopt, colours::accent }, close { "CLOSE", Icon::Check };
+    juce::OwnedArray<IconKey> bandKeys;
+    juce::OwnedArray<KnobBox> boxes;
+    std::vector<double> freqs;
+    juce::Rectangle<int> bar;
+    juce::Rectangle<float> graph, plot;
+    juce::String shown;
+    int dragging = -1;
+};
+
 /** BUS SENDS / MATRIX SENDS (Figs. 66-67): the TAP POINT diagram, TAP WIDTH and
     TAP EQ in the header; a column per bus (16) or matrix (8). */
 class SendsTab final : public HomeScreen
@@ -2553,18 +2957,19 @@ class SendsTab final : public HomeScreen
 public:
     SendsTab (UiContext& c, Strip& s, bool matrixPage) : HomeScreen (c, s), matrix (matrixPage || s.getKind() == StripKind::Main)
     {
-        // engine (report E7): TAP WIDTH and TAP EQ of the TAP-mode sends.
-        KnobBinding width;
-        width.label = "TAP WIDTH";
-        width.get = [] { return 0.75f; };
-        width.text = [] { return juce::String ("100 %"); };
-        tapWidth = &make<KnobBox> (width);
+        // TAP WIDTH and TAP EQ shape what the channel's TAP-mode sends take
+        // (input channels: /ch/n/tapwid, /ch/n/peq).
+        const bool tapShaping = strip.getKind() == StripKind::Channel;
+        tapWidth = &make<KnobBox> (wingWidth ("TAP WIDTH", strip.params.tapWidth));
         tapWidth->ringColour = colours::panArc;
-        tapWidth->setEnabled (false);
-        tapEq = &key ("TAP EQ", std::nullopt);
-        tapEq->setEnabled (false);
+        tapWidth->setEnabled (tapShaping);
+        tapEq = &make<TapEqKey> (strip);
+        tapEq->setEnabled (tapShaping);
+        tapEq->onClick = [this] { strip.params.tapEq.on = ! strip.params.tapEq.on.load(); };
         tapEqMore = &key ({}, Icon::ChevronRight);
-        tapEqMore->setEnabled (false);
+        tapEqMore->setEnabled (tapShaping);
+        tapEqMore->isOn = [this] { return tapEqPanel != nullptr && tapEqPanel->isVisible(); };
+        tapEqMore->onClick = [this] { showTapEq (tapEqPanel == nullptr || ! tapEqPanel->isVisible()); };
         // SPILL puts the strip's sends on the left fader section (SELECTED CH SENDS); again ends it.
         spill = &key ("SPILL", Icon::Spill);
         spill->isOn = [this] { return isSpilling (ctx, { LayerSet::Spill::Kind::Sends, 0, state::StripRef::of (strip) }); };
@@ -2644,6 +3049,8 @@ public:
             columns[(size_t) i]->selected = i == selected;
         if (chain != nullptr)
             chain->toFront (false);
+        if (tapEqPanel != nullptr && tapEqPanel->isVisible())
+            tapEqPanel->toFront (false);
         resized();
         repaint();
     }
@@ -2659,9 +3066,50 @@ public:
         notifyKnobs();
     }
 
+    void showTapEq (bool show)
+    {
+        if (show && tapEqPanel == nullptr)
+        {
+            tapEqPanel = &make<TapEqPanel> (strip);
+            tapEqPanel->onClose = [this] { showTapEq (false); };
+            tapEqPanel->onSelect = [this] { notifyKnobs(); };
+        }
+        if (tapEqPanel != nullptr)
+        {
+            tapEqPanel->setVisible (show);
+            if (show)
+                tapEqPanel->toFront (false);
+        }
+        resized();
+        notifyKnobs();
+    }
+
     std::vector<HomeKnob> knobs() override
     {
         std::vector<HomeKnob> k;
+        if (tapEqPanel != nullptr && tapEqPanel->isVisible())
+        {
+            // TAP EQ: the band, then GAIN (white), Q (green), FREQ (blue) as on
+            // the EQ screen, and TAP WIDTH.
+            auto& b = strip.params.tapEq.bands[tapEqPanel->selected];
+            KnobBinding band;
+            band.label = "BAND";
+            band.get = [this] { return (float) tapEqPanel->selected / (float) (ld::kTapEqBands - 1); };
+            band.set = [this] (float p)
+            {
+                juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<SendsTab> (this), i = juce::roundToInt (p * (float) (ld::kTapEqBands - 1))]
+                                                 { if (safe != nullptr && safe->tapEqPanel != nullptr && safe->tapEqPanel->selected != i) safe->tapEqPanel->select (i); });
+            };
+            band.text = [this] { static const char* n[] = { "LO SHV", "PEAK", "HI SHV" }; return juce::String (n[tapEqPanel->selected]); };
+            band.steps = (float) ld::kTapEqBands;
+            k.push_back ({ band, styleOf (KnobStyle::Bar::Segments, colours::accent, tapEqPanel, ld::kTapEqBands) });
+            k.push_back ({});
+            k.push_back ({ bindLinear ("GAIN", b.gainDb, -15.0f, 15.0f, " dB", 1, 0.0f), thumbStyle (tapEqPanel) });
+            k.push_back ({ bindLog ("Q", b.q, 0.442f, 10.0f, {}, 1.0f), widthStyle (tapEqPanel) });
+            k.push_back ({ wingFreq ("FREQ", b.freq, 20.0f, 20000.0f, 1000.0f), styleOf (KnobStyle::Bar::Thumb, KnobColours::blue, tapEqPanel) });
+            k.push_back ({ wingWidth ("TAP WIDTH", strip.params.tapWidth), widthStyle (tapWidth) });
+            return k;
+        }
         const int n = (int) columns.size();
         if (n == 0)
             return k;
@@ -2751,6 +3199,9 @@ public:
         if (chain != nullptr)
             chain->setBounds (b.removeFromTop (0).withHeight (juce::jlimit (70, 150, getHeight() / 5)));
 
+        if (tapEqPanel != nullptr)
+            tapEqPanel->setBounds (b);
+
         // 16 columns; the matrix page right-aligns its 8.
         const int slots = matrix ? 16 : juce::jmax (16, (int) columns.size());
         const int w = b.getWidth() / slots;
@@ -2828,7 +3279,9 @@ private:
     bool matrix;
     std::vector<SendColumn*> columns;
     KnobBox* tapWidth = nullptr;
-    IconKey *tapEq = nullptr, *tapEqMore = nullptr, *tapMenu = nullptr, *spill = nullptr;
+    TapEqKey* tapEq = nullptr;
+    TapEqPanel* tapEqPanel = nullptr;
+    IconKey *tapEqMore = nullptr, *tapMenu = nullptr, *spill = nullptr;
     TapChain* chain = nullptr;
     juce::Rectangle<int> header, tapField, titleArea;
     int selected = 0;
@@ -3635,12 +4088,20 @@ private:
 //==============================================================================
 /** RTA SETTINGS / EQ/RTA SETTINGS (Figs. 24-25, D10), docked at the right:
     LO BAND / HI BAND fields (the WING EQ's low and high band types), then the
-    RTA rows with the console's choices (`/cfg/rta`, `/$ctl/cfg/rta`). The RTA
-    itself is not modelled (W35): its rows show the defaults, disabled. */
+    RTA rows with the console's choices (`/cfg/rta`, `/$ctl/cfg/rta`): RTA
+    SOURCE (IN | EQ | POST on HOME, PRE | POST the EQ or the filter), RANGE,
+    DECAY, DETECTOR, AUTOGAIN, SIZE/MODE, FIXED GAIN and COLOR. HOME has its
+    own settings; the EQ and FILTER screens share theirs (but not the source). */
 class SettingsScreen final : public OverlayScreen
 {
 public:
-    SettingsScreen (Strip& s, bool eqSettings) : OverlayScreen (eqSettings ? "EQ/RTA SETTINGS" : "RTA SETTINGS"), strip (s), eq (eqSettings)
+    SettingsScreen (Strip& s, bool eqSettings)
+        : OverlayScreen (eqSettings ? "EQ/RTA SETTINGS" : "RTA SETTINGS"),
+          strip (s),
+          eq (eqSettings),
+          analysis (s),
+          view (eqSettings ? ld::kRtaViewEq : (ResponseGraph::shownRtaView() == ld::kRtaViewFilter ? ld::kRtaViewFilter : ld::kRtaViewHome)),
+          settings (analysis.settings (view))
     {
         if (eq)
         {
@@ -3665,38 +4126,35 @@ public:
                 addAndMakeVisible (field);
             }
         }
-        // Label, the console's choices, the default shown.
-        struct Row
+        // The rows as keys (Figs. 24-25): the source lit green, the others blue.
+        auto& v = settings;
+        auto& c = analysis.controls;
+        std::atomic<int32_t>& source = view == ld::kRtaViewFilter ? c.filterTap : v.tap;
+        auto row = [this] (const char* label, juce::StringArray names, std::atomic<int32_t>& value, juce::Colour on)
         {
-            const char* label;
-            juce::StringArray choices;
-            int shown;
+            auto* keys = rta.add (new Segmented (std::move (names), [&value] { return value.load(); }, [&value] (int i) { value = i; }, on));
+            rtaLabels.add (label);
+            addAndMakeVisible (keys);
         };
-        const Row rows[] = { { "RTA SOURCE", eq ? juce::StringArray { "PRE", "POST" } : juce::StringArray { "IN", "EQ", "POST" }, eq ? 1 : 2 },
-                             { "RTA RANGE", { "30 dB", "60 dB" }, 1 },
-                             { "RTA DECAY", { "SLOW", "MED", "FAST" }, 1 },
-                             { "RTA DETECTOR", { "PEAK", "RMS", "AVG" }, 1 } };
-        for (auto& row : rows)
-        {
-            auto* field = rta.add (new ChoiceField ({}, [text = row.choices[row.shown]] { return text; }, {}));
-            field->setEnabled (false);
-            rtaLabels.add (row.label);
-            addAndMakeVisible (field);
-        }
-        autoGain.setEnabled (false);
+        row ("RTA SOURCE", view == ld::kRtaViewHome ? juce::StringArray { "IN", "EQ", "POST" } : juce::StringArray { "PRE", "POST" }, source,
+             colours::post);
+        row ("RTA RANGE", { "30 dB", "60 dB" }, v.range, colours::choice);
+        row ("RTA DECAY", { "SLOW", "MED", "FAST" }, v.decay, colours::choice);
+        row ("RTA DETECTOR", { "PEAK", "RMS", "AVG" }, v.detector, colours::choice);
+        bindKey (autoGain, v.autogain);
         addAndMakeVisible (autoGain);
-        sizeMode = std::make_unique<ChoiceField> ("SIZE/MODE", [this] { return juce::String (eq ? "1/4" : "1/3"); }, nullptr);
-        colour = std::make_unique<ChoiceField> ("COLOR", [] { return juce::String ("BL75"); }, nullptr);
-        KnobBinding gain;
-        gain.label = "FIXED GAIN";
-        gain.get = [] { return 0.1f; };
-        gain.text = [] { return juce::String ("0 dB"); };
-        fixedGain = std::make_unique<KnobBox> (gain);
-        for (juce::Component* c : { (juce::Component*) sizeMode.get(), (juce::Component*) colour.get(), (juce::Component*) fixedGain.get() })
-        {
-            c->setEnabled (false);
-            addAndMakeVisible (c);
-        }
+
+        const auto sizes = view == ld::kRtaViewHome ? juce::StringArray { "OFF", "1/3", "FULL" } : juce::StringArray { "OFF", "1/4", "1/3", "1/2", "OVL/3", "OVL" };
+        sizeMode = std::make_unique<ChoiceField> ("SIZE/MODE", [sizes, &v] { return sizes[juce::jlimit (0, sizes.size() - 1, (int) v.display.load())]; },
+                                                  [sizes, &v] (ChoiceField& f)
+                                                  { popups::chooseFrom (f, sizes, (int) v.display.load(), [&v] (int i) { v.display = i; }); });
+        static const juce::StringArray colourNames { "RD25", "RD50", "RD75", "AM25", "AM50", "AM75", "BL25", "BL50", "BL75" };
+        colour = std::make_unique<ChoiceField> ("COLOR", [&v] { return colourNames[juce::jlimit (0, 8, (int) v.colour.load())]; },
+                                                [&v] (ChoiceField& f)
+                                                { popups::chooseFrom (f, colourNames, (int) v.colour.load(), [&v] (int i) { v.colour = i; }); });
+        fixedGain = std::make_unique<KnobBox> (bindLinear ("FIXED GAIN", v.gainDb, -5.0f, 50.0f, " dB", 0, 0.0f));
+        for (juce::Component* comp : { (juce::Component*) sizeMode.get(), (juce::Component*) colour.get(), (juce::Component*) fixedGain.get() })
+            addAndMakeVisible (comp);
     }
 
     void paint (juce::Graphics& g) override
@@ -3711,8 +4169,14 @@ public:
             g.drawText (rtaLabels[i], rta[i]->getBounds().withX (labelX).withWidth (rta[i]->getX() - labelX - 8), juce::Justification::centredLeft);
         }
         g.drawText ("RTA AUTOGAIN", autoGain.getBounds().withX (labelX).withWidth (autoGain.getX() - labelX - 8), juce::Justification::centredLeft);
-        g.setFont (juce::FontOptions (12.0f, juce::Font::plain));
-        g.drawText ("The RTA (analyser) is not available.", note, juce::Justification::centredLeft);
+        // The colour COLOR picks, as a swatch beside its field.
+        if (! swatch.isEmpty())
+        {
+            g.setColour (juce::Colours::black);
+            g.fillRect (swatch);
+            g.setColour (ResponseGraph::rtaColour (settings.colour.load()));
+            g.fillRect (swatch.reduced (2));
+        }
     }
 
     void layoutContent (juce::Rectangle<int> b) override
@@ -3739,27 +4203,33 @@ public:
             c.setBounds (row.removeFromRight (width).reduced (0, rowH / 10));
         };
         const int fieldW = b.getWidth() * 44 / 100;
-        for (auto* f : rta)
-            control (*f, fieldW);
+        // A third of the field per key, right-aligned (Figs. 24-25).
+        const int keyCounts[] = { view == ld::kRtaViewHome ? 3 : 2, 2, 3, 3 };
+        for (int i = 0; i < rta.size(); ++i)
+            control (*rta[i], fieldW * keyCounts[juce::jmin (i, 3)] / 3);
         control (autoGain, rowH * 3 / 2);
         auto row = b.removeFromTop (rowH);
         b.removeFromTop (rowH / 6);
         sizeMode->setBounds (row.removeFromLeft (fieldW));
         fixedGain->setBounds (row.removeFromRight (fieldW));
-        colour->setBounds (b.removeFromTop (rowH).withWidth (fieldW));
-        b.removeFromTop (rowH / 6);
-        note = b.removeFromTop (20);
+        auto colourRow = b.removeFromTop (rowH);
+        colour->setBounds (colourRow.removeFromLeft (fieldW));
+        swatch = colourRow.removeFromLeft (rowH).translated (8, 0).reduced (rowH / 6);
     }
 
 private:
     Strip& strip;
     bool eq;
-    juce::OwnedArray<ChoiceField> bands, rta;
+    Analysis analysis;
+    int view;
+    ld::RtaViewSettings& settings;
+    juce::OwnedArray<ChoiceField> bands;
+    juce::OwnedArray<Segmented> rta;
     juce::StringArray rtaLabels;
     IconKey autoGain { "ON", std::nullopt, colours::accent };
     std::unique_ptr<ChoiceField> sizeMode, colour;
     std::unique_ptr<KnobBox> fixedGain;
-    juce::Rectangle<int> body, note;
+    juce::Rectangle<int> body, swatch;
     int labelX = 0, rowH = 30;
 };
 

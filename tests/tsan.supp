@@ -8,3 +8,9 @@ race:livedaw_ffi
 race:livedaw_session
 race:livedaw_recorder
 race:livedaw_wing
+# Rust's precompiled standard library has no frame pointers, so TSan's stacks can
+# stop inside it (e.g. at String::clone) before reaching our crates' frames. Match
+# those frames by their source paths, which only Rust code has.
+race:library/alloc/src/
+race:library/core/src/
+race:library/std/src/

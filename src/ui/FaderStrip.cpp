@@ -132,7 +132,9 @@ FaderStrip::FaderStrip (UiContext& c, LayerSet::Section s) : ctx (c), section (s
         return on ? SurfaceKey::Lit : SurfaceKey::Off;
     };
 
-    // Under Sends on Fader, MUTE switches the send (lit while it's off).
+    // Under Sends on Fader, MUTE switches the send (lit while it's off). A
+    // strip muted by a mute group, a DCA or SIP flashes; with MUTEGROUP/SIP
+    // OVERRIDE, MUTE unmutes it (MixerEngine::pressMute).
     muteKey.onPress = [this]
     {
         if (fxp)
@@ -143,22 +145,23 @@ FaderStrip::FaderStrip (UiContext& c, LayerSet::Section s) : ctx (c), section (s
         else if (send)
             send->on->store (! send->on->load());
         else if (strip != nullptr)
-            strip->params.mute = ! strip->params.mute.load();
+            ctx.engine.pressMute (*strip);
         else if (dca >= 0)
             ctx.engine.getDca (dca).mute = ! ctx.engine.getDca (dca).mute.load();
     };
     muteKey.ledState = [this]
     {
-        bool on = false;
         if (fxp)
-            on = atDefault();
-        else if (send)
-            on = ! send->on->load();
-        else if (strip != nullptr)
-            on = strip->params.mute.load();
-        else if (dca >= 0)
-            on = ctx.engine.getDca (dca).mute.load();
-        return on ? SurfaceKey::Lit : SurfaceKey::Off;
+            return atDefault() ? SurfaceKey::Lit : SurfaceKey::Off;
+        if (send)
+            return ! send->on->load() ? SurfaceKey::Lit : SurfaceKey::Off;
+        if (strip != nullptr)
+        {
+            if (strip->params.mute.load())
+                return SurfaceKey::Lit;
+            return strip->getMuteState() == ld::kMuteGroup ? SurfaceKey::Blink : SurfaceKey::Off;
+        }
+        return dca >= 0 && ctx.engine.getDca (dca).mute.load() ? SurfaceKey::Lit : SurfaceKey::Off;
     };
 
     startTimerHz (25);

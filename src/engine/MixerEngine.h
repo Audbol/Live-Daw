@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/Analysis.h"
 #include "engine/FxSlots.h"
 #include "engine/Recorder.h"
 #include "engine/Strip.h"
@@ -98,6 +99,9 @@ public:
     /** The WING remote protocols and WING snapshot files. */
     WingRemote& getWing() noexcept { return *wing; }
 
+    /** The RTA, LR vector scope and LISTEN (BAND / KEY / XOVER SOLO) of the analysed strip. */
+    Analysis getAnalysis() const noexcept { return Analysis (engine); }
+
 private:
     ld::Engine* engine;
     ld::EngineControls& controls;
@@ -165,6 +169,63 @@ public:
     /** Mutes every main if STARTUP MAIN MUTE is on (call after loading the
         start-up show). Returns whether it did. */
     bool applyStartupMainMute();
+
+    //==============================================================================
+    // Console level (WING SETUP > AUDIO, MONITORS, ROUTING > SOURCES), saved with
+    // the show: SOLO MODE, MUTEGROUP/SIP OVERRIDE, talkback, the two monitor
+    // paths (SPEAKERS: monitorLevelDb ..., PHONES: phones) and sources.
+
+    /** SOLO MODE (ld::SoloMode): LIVE, STUDIO (default) or SIP. */
+    std::atomic<int32_t>& soloMode;
+    /** The solo bus / selected monitoring path (list 7: 0 = A PHONES, 1 = B
+        SPEAKERS, 2 = A+B): use setSoloBus() from the MONITORS keys. */
+    std::atomic<int32_t>& soloBus;
+    /** MUTEGROUP/SIP OVERRIDE: MUTE unmutes a strip muted by a group, DCA or SIP. */
+    std::atomic<bool>& muteOverride;
+    /** Status: SIP is muting the channels that aren't soloed. */
+    std::atomic<bool>& sipActive;
+    ld::TalkParams& talk;
+    ld::MonitorSourceParams& speakers;
+    ld::MonitorPathParams& phones;
+
+    /** Picks the solo bus; in LIVE while soloing it overrides the strips' own
+        SOLO BUS until the solos are cleared (manual p. 46). */
+    void setSoloBus (int choice) noexcept;
+    /** The MUTE key of a strip (MUTEGROUP/SIP OVERRIDE aware). */
+    void pressMute (const Strip& strip) const noexcept { ld::ld_engine_press_mute (engine, strip.getHandle()); }
+
+    /** Talkback: the talkback channel (input or aux; nullptr = OFF). */
+    Strip* getTalkStrip() const noexcept;
+    void setTalkStrip (const Strip* strip) noexcept;
+    /** TALK A (0) / TALK B (1) key pressed or released: applies the path's
+        SWITCH MODE (AUTO: held = push, a short press latches; PUSH; LATCH). */
+    void talkKey (int path, bool down) noexcept;
+    bool isTalkOn (int path) const noexcept { return juce::isPositiveAndBelow (path, 2) && talk.paths[path].on.load(); }
+    /** A talk key is on and a talkback channel is assigned. */
+    bool isTalking() const noexcept { return getTalkStrip() != nullptr && (isTalkOn (0) || isTalkOn (1)); }
+    static constexpr juce::uint32 kTalkHoldMs = 500;
+
+    /** Monitor SOURCE names ("MAIN.1", "MTX.3", "BUS.12", "AUX.8"). */
+    static juce::String monitorSourceName (int index);
+    /** The monitor paths (bit 0 = SPEAKERS, bit 1 = PHONES) whose level DCA `dca`
+        controls (named MON A: PHONES, MON B: SPEAKERS, MON LVL: both; firmware 1.09). */
+    uint32_t getDcaMonitorPaths (int dca) const noexcept { return ld::ld_engine_dca_monitor_paths (engine, dca); }
+
+    /** Sources (ROUTING > SOURCES) by table index: hardware ports, then the
+        playback channels (sourceIndex (port) maps an input port). */
+    static int sourceIndex (int port) noexcept { return ld::ld_source_index (port); }
+    static int sourcePort (int index) noexcept { return ld::ld_source_port (index); }
+    int getNumSources() const noexcept { return numSources; }
+    ld::SourceParams* getSource (int index) const noexcept
+    {
+        return juce::isPositiveAndBelow (index, numSources) ? sourceTable + index : nullptr;
+    }
+    juce::String getSourceName (int index) const { return takeString (ld::ld_source_name (engine, index)); }
+    void setSourceName (int index, const juce::String& name);
+    /** MONO / STEREO / MID-SIDE (ld::SourceMode) for the source and its pair partner. */
+    void setSourceMode (int index, int mode) const noexcept { ld::ld_source_set_mode (engine, index, mode); }
+    /** INITIALIZE: the source's (pair's) settings and name back to the defaults. */
+    void initializeSource (int index) const noexcept { ld::ld_source_initialize (engine, index); }
 
     //==============================================================================
     // Stability / protection
@@ -258,6 +319,12 @@ private:
     std::atomic<juce::uint32> lastCallbackMs { 0 };
     std::atomic<bool> deviceRunning { false };
     std::shared_ptr<bool> aliveFlag = std::make_shared<bool> (true);
+
+    // Console level: the source table, the talk keys' press times.
+    ld::SourceParams* sourceTable = nullptr;
+    int numSources = 0;
+    std::array<juce::uint32, 2> talkPressMs {};
+    std::array<bool, 2> talkEndsOnRelease {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MixerEngine)
 };

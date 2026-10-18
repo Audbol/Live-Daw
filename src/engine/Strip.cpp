@@ -53,6 +53,7 @@ Strip::Strip (ld::Engine* engine, ld::Strip* h)
       sends (h),
       meters (*ld::ld_strip_meters (h)),
       controls (ld::ld_engine_controls (engine)),
+      engineHandle (engine),
       handle (h),
       kind (static_cast<StripKind> (ld::ld_strip_kind (h))),
       id (ld::ld_strip_id (h))

@@ -8,6 +8,8 @@
 
 #![allow(clippy::missing_safety_doc)]
 
+pub mod analysis;
+pub mod console;
 pub mod models;
 pub mod recorder;
 pub mod session;
@@ -15,13 +17,17 @@ pub mod wing;
 
 use livedaw_engine::params::{
     DcaParams, DynSlotParams, EqBlockParams, FilterParams, FxParams, InputParams, InsertParams, MainSendParams, MatrixSendParams,
+    TapEqParams,
 };
+use livedaw_engine::params::{MonitorPathParams, MonitorSourceParams};
+use livedaw_engine::sources::SourceParams;
+use livedaw_engine::talk::{TalkParams, TalkPathParams};
 use livedaw_engine::{Engine, EngineControls, InsertCallbacks, SendParams, Strip, StripKind, StripMeters, StripParams};
 use std::mem::{offset_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-pub const LD_ABI_VERSION: i32 = 6;
+pub const LD_ABI_VERSION: i32 = 7;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -99,6 +105,26 @@ pub struct LdLayoutInfo {
     pub rec_playback_track: i32,
     pub rec_record_track: i32,
     pub rec_take: i32,
+    // ABI 7: TAP WIDTH / TAP EQ, the analysis controls (RTA, scope, LISTEN)
+    pub off_tap_width: i32,
+    pub off_tap_eq: i32,
+    pub tap_eq: i32,
+    pub analysis: i32,
+    pub off_analysis_eq: i32,
+    pub off_analysis_filter_tap: i32,
+    // ABI 7: console level (solo modes, talkback, monitor paths, sources)
+    pub talk: i32,
+    pub talk_path: i32,
+    pub monitor_source: i32,
+    pub monitor_path: i32,
+    pub source: i32,
+    pub off_controls_solo_mode: i32,
+    pub off_controls_talk: i32,
+    pub off_controls_speakers: i32,
+    pub off_controls_phones: i32,
+    pub off_talk_paths: i32,
+    pub off_monitor_path_peak: i32,
+    pub off_source_peak: i32,
 }
 
 #[no_mangle]
@@ -156,6 +182,24 @@ pub unsafe extern "C" fn ld_layout_info(out: *mut LdLayoutInfo) {
         rec_playback_track: size_of::<recorder::LdRecPlaybackTrack>() as i32,
         rec_record_track: size_of::<recorder::LdRecRecordTrack>() as i32,
         rec_take: size_of::<recorder::LdRecTake>() as i32,
+        off_tap_width: offset_of!(StripParams, tap_width) as i32,
+        off_tap_eq: offset_of!(StripParams, tap_eq) as i32,
+        tap_eq: size_of::<TapEqParams>() as i32,
+        analysis: size_of::<livedaw_engine::AnalysisControls>() as i32,
+        off_analysis_eq: offset_of!(livedaw_engine::AnalysisControls, eq) as i32,
+        off_analysis_filter_tap: offset_of!(livedaw_engine::AnalysisControls, filter_tap) as i32,
+        talk: size_of::<TalkParams>() as i32,
+        talk_path: size_of::<TalkPathParams>() as i32,
+        monitor_source: size_of::<MonitorSourceParams>() as i32,
+        monitor_path: size_of::<MonitorPathParams>() as i32,
+        source: size_of::<SourceParams>() as i32,
+        off_controls_solo_mode: offset_of!(EngineControls, solo_mode) as i32,
+        off_controls_talk: offset_of!(EngineControls, talk) as i32,
+        off_controls_speakers: offset_of!(EngineControls, speakers) as i32,
+        off_controls_phones: offset_of!(EngineControls, phones) as i32,
+        off_talk_paths: offset_of!(TalkParams, paths) as i32,
+        off_monitor_path_peak: offset_of!(MonitorPathParams, peak) as i32,
+        off_source_peak: offset_of!(SourceParams, peak) as i32,
     };
 }
 
@@ -531,8 +575,8 @@ pub unsafe extern "C" fn ld_strip_set_model(s: *const Strip, block: i32, model: 
     });
 }
 
-/// Writes the response (dB) of a strip's EQ (block 1) or FILTER (block 3) at
-/// `count` frequencies - the same filters the engine runs.
+/// Writes the response (dB) of a strip's EQ (block 1), FILTER (block 3) or
+/// TAP EQ (block 4) at `count` frequencies - the same filters the engine runs.
 #[no_mangle]
 pub unsafe extern "C" fn ld_strip_response(
     s: *const Strip,

@@ -1327,6 +1327,9 @@ void MainDisplay::timerCallback()
     hash = hash * 31u + (ctx.deviceManager.getCurrentAudioDevice() != nullptr ? 1u : 0u);
     hash = hash * 31u + (ctx.sendsOnFader ? 1u : 0u) + (ctx.settings.getBoolValue (uiprefs::showSofFrame, false) ? 2u : 0u);
     hash = hash * 31u + (juce::uint32) ctx.show.getCurrentSceneIndex() + (ctx.settings.getBoolValue (uiprefs::alwaysShowScene, false) ? 1000u : 0u);
+    // The SIP badge and the talkback frame.
+    hash = hash * 31u + (juce::uint32) ctx.engine.soloMode.load() * 4u + (ctx.engine.sipActive.load() ? 2u : 0u) + (ctx.engine.isTalking() ? 1u : 0u);
+    hash = hash * 31u + (juce::uint32) (ctx.engine.talk.assignKind.load() + 1) * 4096u + (juce::uint32) ctx.engine.talk.assignIndex.load();
     if (ctx.recording != nullptr)
     {
         const auto recState = ctx.recording->getState();
@@ -1501,8 +1504,11 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
     // SHOW SOF FRAME: a frame and a SOF badge while Sends on Fader is on.
     if (ctx.sendsOnFader && ctx.settings.getBoolValue (uiprefs::showSofFrame, false))
         paintTabBadge (g, tab, "SOF", Colours::gold, true);
-    // The talkback frame ("frame on selected channel and during talk") comes
-    // with talkback: paintTabBadge (g, tab, "TALKBACK", Colours::mute, false).
+    // The talkback frame (firmware 1.11, "frame on selected channel and during
+    // talk"): on the talkback channel's tab, and on any tab while talking.
+    if (auto* talkStrip = ctx.engine.getTalkStrip();
+        talkStrip != nullptr && (ctx.engine.isTalking() || (ctx.getSelectedStrip && ctx.getSelectedStrip() == talkStrip)))
+        paintTabBadge (g, tab, "TALKBACK", Colours::mute, false);
 }
 
 void MainDisplay::paintClock (juce::Graphics& g)
@@ -1563,8 +1569,15 @@ void MainDisplay::paintStatusBar (juce::Graphics& g)
     {
         auto* device = ctx.deviceManager.getCurrentAudioDevice();
         auto r = chipsTile.toFloat();
+        // SIP: lit while SOLO MODE is SIP, filled while it mutes (a solo is on).
         const auto sip = juce::Rectangle<float> (r.getX() + 5.0f * k, r.getY() + 5.0f * k, 24.0f * k, 24.0f * k);
-        g.setColour (Colours::chipOff);
+        const bool sipMode = ctx.engine.soloMode.load() == ld::kSoloSip, sipMuting = sipMode && ctx.engine.sipActive.load();
+        if (sipMuting)
+        {
+            g.setColour (Colours::warning);
+            g.fillEllipse (sip.reduced (1.0f));
+        }
+        g.setColour (sipMuting ? juce::Colours::black : (sipMode ? Colours::warning : Colours::chipOff));
         g.drawEllipse (sip.reduced (1.0f), juce::jmax (1.0f, 1.5f * k));
         g.setFont (wingFontPx (6.0f * k));
         g.drawText ("SIP", sip, juce::Justification::centred, false);
