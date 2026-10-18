@@ -1957,12 +1957,16 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
     // its number large and dim over EMPTY.
     const auto layer = currentLayer();
     const auto faders = pageFaders();
-    // [I10] each group of four sits on a filled #284c78 plate.
+    // [I10] each group of four sits on a filled #284c78 plate (kept apart
+    // from the next group in small windows).
+    int platePad = 4;
+    if (slotAreas.size() > 4)
+        platePad = juce::jlimit (1, 4, (slotAreas[4].getX() - slotAreas[3].getRight()) / 2 - 2);
     for (size_t i = 0; i < slotAreas.size(); i += 4)
     {
         const auto last = slotAreas[juce::jmin (slotAreas.size() - 1, i + 3)];
         g.setColour (juce::Colour (0xff284c78));
-        g.fillRect (slotAreas[i].getUnion (last).expanded (4, 4).toFloat());
+        g.fillRect (slotAreas[i].getUnion (last).expanded (platePad, 4).toFloat());
     }
     for (size_t i = 0; i < slotAreas.size(); ++i)
     {
