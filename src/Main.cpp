@@ -258,6 +258,9 @@ public:
         main->setShowFile (juce::File (settings.getValue ("lastShowFile")).existsAsFile()
                                ? juce::File (settings.getValue ("lastShowFile")) : juce::File());
 
+        if (settings.getBoolValue (ui::uiprefs::fullScreen, false))
+            main->setFullScreen (true);
+
         if (safeMode)
             offerSafeModeRecovery (crashedPlugin);
 
@@ -314,6 +317,14 @@ private:
                 centreWithSize (getWidth(), getHeight());
 
             setVisible (true);
+        }
+
+        // The window passes the keyboard focus on to the console, so its
+        // shortcuts (F10, F11, Ctrl+S...) work from the start.
+        void focusGained (FocusChangeType) override
+        {
+            if (auto* content = getContentComponent(); content != nullptr && content->isShowing())
+                content->grabKeyboardFocus();
         }
 
         void closeButtonPressed() override
@@ -409,7 +420,12 @@ private:
         if (mainComponent != nullptr)
             settings.setValue ("lastShowFile", mainComponent->getShowFile().getFullPathName());
         if (mainWindow != nullptr)
-            settings.setValue ("ui.windowState", mainWindow->getWindowStateAsString());
+        {
+            // In full screen, the window as it was before (full screen itself is its own setting).
+            const bool fullScreen = mainComponent != nullptr && mainComponent->isFullScreen();
+            settings.setValue ("ui.windowState", fullScreen ? mainComponent->getWindowStateBeforeFullScreen()
+                                                            : mainWindow->getWindowStateAsString());
+        }
         settings.saveIfNeeded();
 
         const auto result = show->saveToFile (getAutosaveTarget());

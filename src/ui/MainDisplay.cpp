@@ -345,6 +345,7 @@ public:
 
     juce::Colour litColour = juce::Colour (0xfff2f2f2);
     bool led = false; // the blank key: an LED instead of a lit key
+    std::optional<Icon> icon; // printed instead of the text (the maximize key)
     std::function<void()> onPress, onHold;
 
     /** Held down, or held with a right-click in the last few seconds. */
@@ -377,6 +378,12 @@ public:
             return;
         }
         g.setColour (lit ? juce::Colours::black : Colours::silk);
+        if (icon)
+        {
+            const float side = juce::jmin (r.getWidth(), r.getHeight()) * 0.62f;
+            drawIcon (g, *icon, r.withSizeKeepingCentre (side, side), lit ? juce::Colours::black : Colours::silk);
+            return;
+        }
         const auto keyText = getButtonText();
         const bool twoLines = keyText.containsChar ('\n');
         g.setFont (silkFont (juce::jlimit (10.0f, 15.0f, r.getHeight() * (twoLines ? 0.3f : 0.36f))));
@@ -977,6 +984,18 @@ MainDisplay::MainDisplay (UiContext& c) : ctx (c)
     blankKey->led = true;
     blankKey->onPress = [this] { page (screen)->blankKeyPressed(); };
     addAndMakeVisible (*blankKey);
+    // Under the right-hand column, level with the touch encoders: only the
+    // screen (and its keys and knobs) in the window, or back (also F10, a
+    // double-click on an empty part of the status bar).
+    maximizeKey = std::make_unique<ConsoleKey> ("");
+    maximizeKey->icon = Icon::Maximize;
+    maximizeKey->onPress = [this]
+    {
+        if (ctx.setScreenMaximized && ctx.isScreenMaximized)
+            ctx.setScreenMaximized (! ctx.isScreenMaximized());
+    };
+    maximizeKey->setTooltip ("Show only the screen, as large as the window allows (F10; Esc returns)");
+    addAndMakeVisible (*maximizeKey);
 
     channelSelect = std::make_unique<ChannelSelect> (ctx);
     channelSelect->onClose = [this] { showChannelSelect (false); };
@@ -1690,7 +1709,17 @@ void MainDisplay::paintStatusBar (juce::Graphics& g)
 
 void MainDisplay::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::panel);
+    if (maximized)
+    {
+        // Screen only: the display's frame centred on black.
+        g.fillAll (juce::Colours::black);
+        g.setColour (Colours::panel);
+        g.fillRoundedRectangle (frameArea.toFloat(), 6.0f);
+    }
+    else
+    {
+        g.fillAll (Colours::panel);
+    }
 
     // The screen, framed by a bezel.
     g.setColour (juce::Colours::black);
@@ -1739,16 +1768,55 @@ void MainDisplay::mouseUp (const juce::MouseEvent& e)
         showHomeTab (HomeTab::Home);
 }
 
+void MainDisplay::setMaximized (bool shouldBe)
+{
+    if (maximized == shouldBe)
+        return;
+    maximized = shouldBe;
+    maximizeKey->icon = maximized ? Icon::Restore : Icon::Maximize;
+    maximizeKey->setTooltip (maximized ? "Back to the whole surface (F10 or Esc)"
+                                       : "Show only the screen, as large as the window allows (F10; Esc returns)");
+    maximizeKey->repaint();
+    resized();
+    repaint();
+}
+
+void MainDisplay::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (e.eventComponent != this || ! statusArea.contains (e.getPosition()))
+        return;
+    const auto p = e.getPosition();
+    for (auto& tile : { channelTab, chipsTile, usbTile, liveTile, clockTile })
+        if (tile.contains (p))
+            return;
+    for (auto& key : statusKeyAreas)
+        if (key.contains (p))
+            return;
+    if (ctx.setScreenMaximized && ctx.isScreenMaximized)
+        ctx.setScreenMaximized (! ctx.isScreenMaximized());
+}
+
 void MainDisplay::resized()
 {
     auto b = getLocalBounds();
     const int navW = juce::jlimit (60, 92, b.getWidth() * 8 / 100);
     const int rightMin = juce::jlimit (56, 84, b.getWidth() * 7 / 100);
+    // The six touch encoders sit under the screen's bezel.
+    const int encoderH = juce::jlimit (28, 52, (b.getHeight() - 16) * 9 / 100);
+    if (maximized)
+    {
+        // Screen only: the frame shrinks around the largest 16:10 screen that
+        // fits, centred (the rest is black).
+        int w = b.getWidth() - navW - rightMin - 20, h = b.getHeight() - 16 - encoderH - 8;
+        if (w * 10 > h * 16)
+            w = h * 16 / 10;
+        else
+            h = w * 10 / 16;
+        b = b.withSizeKeepingCentre (navW + w + 20 + rightMin, h + 16 + encoderH + 8);
+    }
+    frameArea = b;
     auto nav = b.removeFromLeft (navW);
     auto avail = b.withTrimmedRight (rightMin).reduced (10, 8);
-
-    // The six touch encoders sit under the screen's bezel.
-    const int encoderH = juce::jlimit (28, 52, avail.getHeight() * 9 / 100);
     auto screenAvail = avail.withTrimmedBottom (encoderH + 8);
 
     // The screen is 16:10; width it doesn't need goes to the right column.
@@ -1761,7 +1829,7 @@ void MainDisplay::resized()
     // The screen's type scale follows its height.
     setWingScreenHeight ((float) screenArea.getHeight());
     encoderArea = juce::Rectangle<int> (screenArea.getX(), screenArea.getBottom() + 10, screenArea.getWidth(), encoderH);
-    auto right = getLocalBounds().withLeft (screenArea.getRight() + 10).reduced (6, 0);
+    auto right = frameArea.withLeft (screenArea.getRight() + 10).reduced (6, 0);
 
     // The seven keys over the full height of the screen: HOME level with its
     // top, UTILITY level with its bottom.
@@ -1781,6 +1849,8 @@ void MainDisplay::resized()
     const int knobSize = juce::jmin (right.getWidth(), juce::roundToInt (pitch * 1.1f) + 14);
     contextKnob->setBounds (juce::Rectangle<int> (knobSize, knobSize).withCentre ({ right.getCentreX(), keyRow (5) + keyH / 2 + 4 }));
     blankKey->setBounds (juce::Rectangle<int> (right.getCentreX() - rightKeyW / 2, keyRow (6), rightKeyW, keyH));
+    const int maxKeySize = juce::jmin (rightKeyW, encoderH, keyH);
+    maximizeKey->setBounds (juce::Rectangle<int> (maxKeySize, maxKeySize).withCentre ({ right.getCentreX(), encoderArea.getCentreY() }));
 
     // WING geometry: the status bar 80 of 800 px, the parameter bar 50.
     auto s = screenArea;

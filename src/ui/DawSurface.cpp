@@ -318,7 +318,7 @@ void DawFaderSection::timerCallback()
 {
     auto* d = midiui::daw (ctx);
     const bool show = d != nullptr && d->isOn() && d->getSettings().configuration != DawRemote::CustomControlsOnly
-                      && ! (ctx.isEditorShown && ctx.isEditorShown());
+                      && ! (ctx.isEditorShown && ctx.isEditorShown()) && ! (ctx.isScreenMaximized && ctx.isScreenMaximized());
     // Added after the fader sections, it lies over them (and under the
     // surface lock and the editor, which come later).
     if (show != isVisible())
