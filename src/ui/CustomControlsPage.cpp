@@ -520,6 +520,7 @@ CustomControlsPage::CustomControlsPage (UiContext& c, cc::Assignments& a, int st
     anchor.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (anchor);
     rebuildLists();
+    revealSelection();
     startTimerHz (5);
 }
 
@@ -818,6 +819,25 @@ void CustomControlsPage::rebuildLists()
         l.scroll = juce::jlimit (0, juce::jmax (0, l.rows.size() - 1), l.scroll);
     resized();
     repaint();
+}
+
+void CustomControlsPage::revealSelection()
+{
+    bool moved = false;
+    for (auto& l : lists)
+    {
+        const int visible = juce::jmax (1, (int) l.rowAreas.size());
+        if (l.selected >= 0 && (l.selected < l.scroll || l.selected >= l.scroll + visible))
+        {
+            l.scroll = juce::jmax (0, l.selected - visible / 2);
+            moved = true;
+        }
+    }
+    if (moved)
+    {
+        resized();
+        repaint();
+    }
 }
 
 void CustomControlsPage::choose (int list, int row)
@@ -1149,8 +1169,10 @@ void CustomControlsPage::mouseUp (const juce::MouseEvent& e)
         {
             index = el.index;
             slot = el.slot;
-            lists[0].scroll = 0;
+            for (auto& l : lists)
+                l.scroll = 0;
             rebuildLists();
+            revealSelection();
             return;
         }
     for (int i = 0; i < 3; ++i)

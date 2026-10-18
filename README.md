@@ -117,7 +117,8 @@ Barlow Condensed.
     SIP, PFL/AFL per strip type and the solo / select preferences, audio device,
     AUTOMIX), SURFACE (meter taps, SEL DBL CLICK, SOF and scribble options, CH
     AUTOSELECT, FADER SPEED, paging, user layer link, alternative SOF, section widths),
-    REMOTE and DAW (drawn as on the console), PLUGINS and LOG (system health and the
+    REMOTE (MIDI REMOTE CONTROL and MIDI PORTS, WING REMOTE) and DAW (DAW CONTROL, DAW
+    PORTS; see *MIDI and DAW remote control*), PLUGINS and LOG (system health and the
     event log), with INITIALIZE CONSOLE and SHUTDOWN. The status bar has MONITORS (the
     toolbar with the talk keys, PHONES / SPEAKERS / PH+SPK, DIM, MUTE, MONO, LR SWAP;
     TALK A / B: switch mode, talkback channel, AUTO DIM, USE SEND LEVELS and the bus,
@@ -158,8 +159,9 @@ Barlow Condensed.
   TRANSP** (the recorder's transport: previous / next marker, MARK, LOOP over START,
   STOP, PLAY, REC; VIEW opens the recorder screen), **MUTE GROUPS** (the eight mute
   groups) and **SHOW CNTRL** (scene back, GO, SCENES; the wheel picks the scene GO
-  recalls); the **DAW** key opens the multitrack editor. With USE CRSR/WHEEL the
-  arrows and the wheel edit the display.
+  recalls); the **DAW** key switches DAW remote control on and off (held, or with DAW
+  control off: the multitrack editor). With USE CRSR/WHEEL the arrows and the wheel
+  edit the display.
 
 ## Multitrack recording
 
@@ -182,7 +184,7 @@ a WING with a WING-LIVE card, and edits them in a DAW-style editor.
     through the console; press again to go back to the live inputs;
   - **EDIT** (status bar, header) opens the editor. The knobs move the position and
     the loop.
-- **Editor** (Ctrl+E, EDIT, the DAW key; Esc or CONSOLE goes back): the top bar
+- **Editor** (Ctrl+E, EDIT, holding the DAW key; Esc or CONSOLE goes back): the top bar
   (FILE menu, transport, position in min:sec or bars|beats, tempo and time signature
   of the grid, snap OFF / GRID / BARS / BEATS / SECONDS, zoom, follow, undo / redo,
   disk load, dropouts and record time left), the track headers (colour, name, R / M /
@@ -224,6 +226,50 @@ a WING with a WING-LIVE card, and edits them in a DAW-style editor.
   channels, aux and group buses become buses, the master becomes Main 1, the gate,
   4-band EQ and compressor become the GATE, WING EQ and COMP models, and each strip's
   plugins move to FX slots on its inserts.
+
+## MIDI and DAW remote control
+
+The WING's MIDI remote control and DAW remote control (WING MIDI and DAW
+documentation, firmware 1.07+), on the computer's MIDI devices.
+
+- **Ports.** The WING's DIN socket and its USB MIDI ports become MIDI devices of the
+  computer: SETUP > REMOTE > MIDI PORTS picks an input and an output for DIN and for
+  USB (the WING's "MIDI Control" port), SETUP > DAW > DAW PORTS for MIDI DAW 1-3. Where
+  the system allows it (Linux, macOS) a port can be the app's own **virtual port**
+  ("Live DAW MIDI Control", "Live DAW MIDI DAW 1"...), which other apps then see like a
+  connected WING; on Windows use a loopback driver (e.g. loopMIDI). Devices that are
+  unplugged come back on their own.
+- **MIDI REMOTE CONTROL** (SETUP > REMOTE; each row OFF / DIN / USB, touch its name for
+  its MIDI map): **CH CONTROL** faders on MIDI channel 1, mutes on 2, pans on 3 (CC
+  12-31 CH 1-20, 44-63 CH 21-40, 70-77 AUX, 78-93 BUS, 94/95 and 102/103 MAIN, 104-111
+  MTX), DCA faders on 4, DCA mutes and mute groups on 5, CC 9 requests all values;
+  **FX PARAMETER CONTROL** on channels 9-16 (insert on, mix, model, parameters);
+  **CUSTOM CONTROLS (RX ONLY)** on channel 6 (encoders of layers 1-16 by CC, keys by
+  note); **SYSEX CONTROL** (`F0 00 20 32 57 <cmd> <data> F7`: identity, execute node
+  strings like `/ch.1.fdr=-3,mute=1`, dump and describe nodes of the WING tree);
+  **EXTERNAL MIDI CONTROL** (where the custom controls' MIDI CC encoders and MIDI CC /
+  NOTE / PGM keys send); **SCENE CHANGE** (channel 7: program change, bank for scenes
+  past 128); **SHOW CONTROL** (channel 8: scene tags; channel 9: GO, PREV, NEXT, GO
+  PREV, GO NEXT); **SCENE MIDI TX** (recalls go out as channel 7 program changes).
+  Console changes made anywhere go back out for CH CONTROL and FX PARAMETER CONTROL.
+- **DAW remote control** (SETUP > DAW): DAW ENABLE, CONNECTION (USB: up to three units
+  on MIDI DAW 1-3; DIN: one), EMULATION **MCU** (Mackie Control, with extenders) or
+  **HUI**, CONFIGURATION (CUSTOM CONTROLS ONLY, SINGLE MCU, MCU + EXTENDER, MCU + 2x
+  EXTENDER), USE UPPER CC FOR DAW, DISABLE WHEEL DURING PLAY, and PRESET + LOAD (Cubase,
+  Live, Logic X, Nuendo, Pro Tools, Reaper, Studio One) for the four DAW layers. Set up
+  the DAW as for a WING: a Mackie Control (or HUI) on MIDI DAW 1 and extenders on MIDI
+  DAW 2 and 3.
+- **DAW mode** (the **DAW** key): the fader sections become the DAW's 24 channels
+  (left 1-12, center 13-20, right 21-24) with the DAW's track names, SELECT / SOLO /
+  MUTE, meters and motor faders; their layer keys become NAME/VALUE, TRACK, PAN, SEND,
+  EQ, PLUG-IN (HUI: SEND A-E), the banks of eight (USER 1 / 2) and single channels
+  (◄4 / 4►). The lower custom controls' layer keys become **DAW 1-4** (DAW BUTTONS:
+  transport, automation, markers, ... assigned on CC EDIT, its VIEW key opens it); with
+  USE UPPER CC FOR DAW the upper part is four channels' V-pots (push on the upper keys,
+  REC on the lower ones, UP / DOWN by four, the DAW's two-digit display on the layer
+  display). The wheel is the jog wheel, the arrows the DAW's cursor keys.
+- **Custom controls:** DAW BUTTONS (the WING's MCU / HUI command list), DAW V-POTS,
+  MIDI CC encoders and MIDI CC / NOTE (toggle or push) / PGM CHANGE keys.
 
 ## WING remote apps and WING files
 

@@ -411,7 +411,7 @@ blinking LEDs.
   project is opened next) and remembers recent projects. `MainComponent` owns it and
   reopens the last project at start-up; `UiContext::recording` hands it to the views.
 - **Editor** (`src/ui/daw/`): `DawEditor` replaces the console view (Ctrl+E, EDIT,
-  the surface's DAW key; Esc / CONSOLE return). `DawEditorState` holds the view
+  holding the surface's DAW key; Esc / CONSOLE return). `DawEditorState` holds the view
   (zoom, scroll, snap), the selection and a copy of the tracks and clips refreshed
   once per message-loop turn after project changes, plus the edit operations.
   `DawTrackList` / `DawTrackHeader` draw the headers (hit areas, no child buttons),
@@ -502,6 +502,59 @@ parameter position the active model doesn't have gets no answer (libwing's
 `wingdrive --probe-echo` relies on the console answering it). Export is unvalidated
 on a console.
 
+## MIDI remote control and DAW remote control
+
+`src/engine/MidiRemote.*` (MIDI, owned by `MainComponent`, `UiContext::midi`) and
+`src/engine/DawRemote.*` (the MCU / HUI protocols); `src/ui/MidiRemoteUi.*` connects
+them to the views, `src/ui/DawSurface.*` is the fader sections' DAW mode. Sources: the
+WING MIDI and DAW documentation (firmware 1.07), the DAW translation table, Patrick-
+Gilles Maillot's *WING Remote Protocols* (MIDI chapter, the MCU command lists), the
+public Mackie Control and reverse-engineered HUI protocol descriptions.
+
+- **Ports.** Five logical ports, as on the WING: DIN, USB (MIDI Control), MIDI DAW
+  1-3. Each has an input and an output device (JUCE `MidiInput` / `MidiOutput`,
+  chosen by name) or the app's virtual port. A port opens only while a function or
+  the DAW uses it; `MidiDeviceListConnection` and a 2 s retry reopen devices that come
+  back. Settings: `midi.*` and `daw.*` in the app settings (`MidiRemote::Settings`).
+- **Threads.** Device callbacks only queue the message (a locked vector) and trigger
+  an `AsyncUpdater`; `handleMessage()` runs on the message thread, where it writes the
+  engine's shared atomics (as the UI and the WING remote do), recalls scenes and calls
+  the UI's hooks (custom controls received over MIDI). Tests call `handleMessage()`
+  and read `onSend`; `useDevices = false` keeps them off the MIDI system.
+- **MIDI REMOTE CONTROL.** Each function (`/$ctl/midi`) is OFF / DIN / USB and handles
+  only its port's messages. The CC maps are static (`stripForCc`, `fxControl`,
+  `customEncoder`); fader values use the WING fader law (0..127 = position), pans
+  64 = centre, mutes >= 64 = on. Feedback: a 25 Hz timer diffs the mapped values
+  against what was last sent or received (no echo of received values; the first pass
+  after a route change only learns) and sends the changes; CC 9 sends everything.
+  SYSEX CONTROL execute / dump / describe go through `ld_wing_sysex`
+  (`livedaw-wing/src/sysex.rs`, the snapshot node-string grammar on the WING tree).
+  SCENE MIDI TX sends a program change when the current scene changes on the console
+  (not for recalls MIDI asked for).
+- **DAW remote.** `DawRemote` emulates up to three units (MCU + 2 extenders, or 3
+  HUI) of eight strips; `output (unit, message)` goes to MIDI DAW 1-3 (DIN: unit 0).
+  Surface -> DAW: faders (MCU pitch bend 14-bit / HUI zone faders) with touch, V-pots
+  (relative), strip keys, the DAW BUTTONS commands (code, MCU note, HUI zone / port;
+  greyed in the other protocol), jog, and the special keys (FADER TOUCH [MUTE], V-POT
+  CTRL, RECRDY / AUTO / V-SEL / INSERT [SEL]). DAW -> surface: motor faders, LEDs
+  (on / blink), V-pot rings, meters (decaying 300 ms per segment), the LCD (2 x 56
+  per unit, 7 characters per strip; HUI 4-character names and the 2 x 40 display),
+  timecode and the assignment display; the MCU handshake (device query -> serial and
+  challenge, connection reply -> confirmation, version) and the HUI ping are answered.
+  DAW mode (`setOn`, the DAW key) only decides whether the surface drives the DAW; the
+  state stays current either way. The views poll `getRevision()`.
+- **Surface.** DAW mode: `DawFaderSection` lies over each fader section (shown while
+  DAW mode is on and the CONFIGURATION gives faders); the custom controls section
+  switches its lower layer keys to the DAW layers (custom control layers 20-23,
+  `livedaw-session/custom.rs`) and, with USE UPPER CC FOR DAW, its upper part to four
+  V-pots (blocks of four). Custom control functions DAW BUTTONS, DAW V-POTS, MIDI CC and
+  MIDI CC/NOTE/PGM call `midiui` (keys get press and release).
+
+Limits: virtual ports need ALSA (Linux) or CoreMIDI (macOS); the WING's per-scene SEND
+MIDI strings, the HUI's extra encoder section (upper VIEW), the 4-Channel section in
+DAW mode and DAW meters on the right section's 4-Channel strips are not done; the DAW
+presets are Live DAW's own (built from the translation table), not the WING's files.
+
 ## Known limitations / roadmap
 - Plugins run inside the mixer process. Bad output and exceptions are contained, but
   a plugin that segfaults takes the app down (safe mode then recovers the show).
@@ -514,11 +567,10 @@ on a console.
 - Custom controls (`CustomControlsPage.*`; stored with the show by
   `livedaw-session/custom.rs`) cover the phase-1 functions: faders, pan, DCAs, bus
   sends, FX parameters, monitoring, mutes / solos, mute groups, sends on fader, pages,
-  show control, scene recall and single actions; DAW, MIDI, spill, USB / SD and GPIO
-  functions are listed disabled.
+  show control, scene recall, single actions, DAW buttons / V-pots and MIDI CC / note /
+  program change; spill, USB / SD and GPIO functions are listed disabled.
 - Not yet: the monitor paths' DIRECT IN, EQ, INVERT, DELAY and limiter, BAND SOLO
-  boost, SOURCE SOLO, source tags and remote preamp control (drawn disabled), and MIDI
-  remote control (WING network remote control: see above).
+  boost, SOURCE SOLO, source tags and remote preamp control (drawn disabled).
 - Recorder: no transport without a running audio device (play stays in Starting);
   a loop change while rolling plays the old content for ~50 ms before the
   crossfade; take files are flushed every 2 s but only synced to disk when

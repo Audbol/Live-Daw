@@ -178,6 +178,8 @@ private:
 
     void timerCallback() override;
     void rebuildLists();
+    /** Scrolls each list to its selected row (touching a control). */
+    void revealSelection();
     void layoutList (ListColumn&, juce::Rectangle<int> area);
     void paintList (juce::Graphics&, ListColumn&, bool focused);
     void paintLayer (juce::Graphics&);
