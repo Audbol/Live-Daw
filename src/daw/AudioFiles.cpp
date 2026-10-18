@@ -17,14 +17,14 @@ bool canImport (juce::AudioFormatManager& formats, const juce::File& f)
     return formats.findFormatForFileExtension (f.getFileExtension()) != nullptr;
 }
 
-juce::File uniqueAudioFile (const juce::File& folder, const juce::String& base)
+juce::File uniqueAudioFile (const juce::File& folder, const juce::String& base, const juce::String& extension)
 {
     auto clean = juce::File::createLegalFileName (base.trim()).replaceCharacters (" ", "_");
     if (clean.isEmpty())
         clean = "audio";
-    auto f = folder.getChildFile (clean + ".wav");
+    auto f = folder.getChildFile (clean + extension);
     for (int i = 2; f.exists(); ++i)
-        f = folder.getChildFile (clean + "-" + juce::String (i) + ".wav");
+        f = folder.getChildFile (clean + "-" + juce::String (i) + extension);
     return f;
 }
 
@@ -172,12 +172,14 @@ ImportResult importAudioFile (juce::AudioFormatManager& formats, const juce::Fil
 //==============================================================================
 juce::Result renderTrack (juce::AudioFormatManager& formats, const std::vector<RenderClip>& clips, float trackGainDb, int numChannels,
                           double sampleRate, int64 length, const juce::File& dest, const std::atomic<bool>& cancel,
-                          std::function<void (float)> progress)
+                          std::function<void (float)> progress, AudioFileFormat format)
 {
     numChannels = juce::jlimit (1, 2, numChannels);
-    auto writer = createWavWriter (dest, sampleRate, numChannels);
+    dest.getParentDirectory().createDirectory();
+    juce::String error;
+    auto writer = AudioFileWriter::create (dest, numChannels, sampleRate, format, &error);
     if (writer == nullptr)
-        return juce::Result::fail ("Can't write " + dest.getFullPathName());
+        return juce::Result::fail (error.isNotEmpty() ? error : "Can't write " + dest.getFullPathName());
 
     std::vector<std::unique_ptr<juce::AudioFormatReader>> readers;
     for (auto& c : clips)
@@ -190,8 +192,7 @@ juce::Result renderTrack (juce::AudioFormatManager& formats, const std::vector<R
     {
         if (cancel.load())
         {
-            writer.reset();
-            dest.deleteFile();
+            writer->abort();
             return juce::Result::fail ("Cancelled");
         }
         const int n = (int) juce::jmin<int64> (kBlock, length - pos);
@@ -224,16 +225,16 @@ juce::Result renderTrack (juce::AudioFormatManager& formats, const std::vector<R
                     mix.addSample (ch, offset + s, part.getSample (numChannels == 1 ? 0 : ch, s) * g);
             }
         }
-        if (! writer->writeFromAudioSampleBuffer (mix, 0, n))
+        if (! writer->write (mix.getArrayOfReadPointers(), numChannels, n))
         {
-            writer.reset();
-            dest.deleteFile();
+            writer->abort();
             return juce::Result::fail ("Write error (disk full?)");
         }
         if (progress)
             progress ((float) ((double) pos / (double) juce::jmax<int64> (1, length)));
     }
-    writer->flush();
+    if (writer->finalize() < 0)
+        return juce::Result::fail ("Write error (disk full?)");
     return juce::Result::ok();
 }
 

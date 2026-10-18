@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ui/DisplayPage.h"
+#include "ui/WingPopups.h"
 
 #include <array>
 
@@ -12,10 +13,11 @@ namespace livedaw::ui
 
     Left: the browser of the "USB stick" (the storage folder): toolbar USB |
     N SONGS | ADD | FOLDER | RENAME | DELETE | REC PATH, the folder's
-    folders, WAV files and playlists. N SONGS turns it into the playlist
-    (USB | N SONGS | REPEAT | REMOVE | SKIP | STOP | UP | DOWN). Right: the
-    4-TRACK RECORDER (meters, the red time, the reels, 2-CH|4-CH, 16|24 bit,
-    REC / PAUSE / STOP / NEW FILE), the playlist keys (CREATE / OPEN / SAVE /
+    folders, audio files (WAV, FLAC, AIFF, MP3) and playlists. N SONGS turns
+    it into the playlist (USB | N SONGS | REPEAT | REMOVE | SKIP | STOP | UP |
+    DOWN). Right: the 4-TRACK RECORDER (meters, the red time, the reels, the
+    FORMAT list WAV / FLAC / AIFF / MP3, 2-CH|4-CH, 16|24 bit or, for MP3,
+    the bit rate list, REC / PAUSE / STOP / NEW FILE), the playlist keys (CREATE / OPEN / SAVE /
     CLOSE PLAYLIST) and the 4-TRACK PLAYER (meters, the time and the time
     left, the reels, the file's format, PLAY / PAUSE / STOP / < >, the
     timeline). Everything is drawn here, keys included; the page uses the
@@ -89,6 +91,11 @@ private:
     void chooseStorageFolder();
     void savePlaylist();
     void closePlaylist();
+    /** The recorder's FORMAT and MP3 bit rate lists. */
+    void chooseRecFormat();
+    void chooseKbps();
+    void openList (juce::Rectangle<int> anchorArea, const juce::StringArray& items, int current, std::function<void (int)> chosen,
+                   popups::ListOptions options);
 
     void paintToolbar (juce::Graphics&);
     void paintList (juce::Graphics&);
@@ -116,6 +123,8 @@ private:
     std::array<juce::Rectangle<int>, 4> recKeyAreas, playlistKeyAreas;
     std::array<juce::Rectangle<int>, 5> playKeyAreas;
     std::array<juce::Rectangle<int>, 2> channelKeys, bitKeys;
+    juce::Rectangle<int> formatKey, kbpsKey;
+    juce::Component listAnchor; // where the FORMAT / bit rate lists open
     std::vector<Key> keys;
     int rowHeight = 30;
 

@@ -65,6 +65,31 @@ struct UsbDriver
 
 /** Input 1: a ramp on the 16-bit grid. */
 float ramp16 (int64_t t) { return (float) ((t % 20000) - 10000) / 32768.0f; }
+
+/** Amplitude and SNR (dB) of the best fit of a sine at `hz` to `x`. */
+std::pair<double, double> fitSine (const float* x, int n, double hz, double rate)
+{
+    double ss = 0, sc = 0, cc = 0, ys = 0, yc = 0;
+    const double w = juce::MathConstants<double>::twoPi * hz / rate;
+    for (int i = 0; i < n; ++i)
+    {
+        const double s = std::sin (w * i), c = std::cos (w * i);
+        ss += s * s;
+        sc += s * c;
+        cc += c * c;
+        ys += x[i] * s;
+        yc += x[i] * c;
+    }
+    const double det = ss * cc - sc * sc, a = (ys * cc - yc * sc) / det, b = (yc * ss - ys * sc) / det;
+    double err = 0, sig = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        const double m = a * std::sin (w * i) + b * std::cos (w * i);
+        err += (x[i] - m) * (x[i] - m);
+        sig += m * m;
+    }
+    return { std::sqrt (a * a + b * b), 10.0 * std::log10 (sig / juce::jmax (1.0e-30, err)) };
+}
 } // namespace
 
 class UsbRecorderTests final : public juce::UnitTest
@@ -202,6 +227,114 @@ public:
             }
         }
 
+        beginTest ("FORMAT: FLAC and AIFF recordings read back bit-exact with JUCE (libFLAC), MP3 with JUCE's MP3 decoder");
+        {
+            UsbTempDir tmp ("formats");
+            MixerEngine engine (0);
+            UsbDriver driver (engine, 2, 2);
+            auto& usb = engine.getUsbRecorder();
+            usb.setStorageFolder (tmp.dir);
+            UsbRecorder::Tap in1;
+            in1.kind = UsbRecorder::Tap::Kind::Source;
+            in1.source = 0;
+            usb.setTap (0, in1);
+            usb.setTap (1, in1);
+            juce::AudioFormatManager formats;
+            formats.registerBasicFormats();
+            const juce::Time when (2024, 0, 2, 3, 4, 5);
+            for (auto type : { AudioFileFormat::Type::Flac, AudioFileFormat::Type::Aiff, AudioFileFormat::Type::Mp3 })
+            {
+                const bool mp3 = type == AudioFileFormat::Type::Mp3;
+                usb.setRecFileType (type);
+                usb.setRecChannels (4);
+                usb.setRecBits (16);
+                usb.setRecKbps (192);
+                expectEquals (usb.getEffectiveRecChannels(), mp3 ? 2 : 4, "MP3 records two channels");
+                expectEquals (usb.nextRecordingFile (when).getFileExtension(), AudioFileFormat { type, 16, 192 }.extension());
+                expect (usb.record().wasOk());
+                const auto file = usb.getRecFile();
+                const auto start = driver.clock;
+                auto input = [mp3] (int ch, int64_t t)
+                {
+                    if (ch != 0)
+                        return 0.0f;
+                    return mp3 ? 0.5f * (float) std::sin ((double) t * juce::MathConstants<double>::twoPi * 1000.0 / 48000.0) : ramp16 (t);
+                };
+                for (int b = 0; b < 750; ++b) // two seconds
+                    driver.block (input);
+                usb.stopRecording();
+                driver.run (2);
+                expect (usb.waitForDisk());
+                expectEquals (file.getFileExtension(), AudioFileFormat { type, 16, 192 }.extension());
+
+                UsbRecorder::FileInfo header;
+                expect (UsbRecorder::readFileInfo (file, header));
+                expect (header.type == type);
+                expectEquals (header.frames, (int64_t) 750 * UsbDriver::kBlock, "every sample, nothing more");
+                expectEquals (header.kbps, mp3 ? 192 : 0);
+
+                std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+                expect (reader != nullptr, file.getFileName());
+                if (reader == nullptr)
+                    continue;
+                expectEquals ((int) reader->numChannels, mp3 ? 2 : 4);
+                juce::AudioBuffer<float> buf ((int) reader->numChannels, (int) reader->lengthInSamples);
+                reader->read (&buf, 0, buf.getNumSamples(), 0, true, true);
+                if (! mp3)
+                {
+                    bool exact = buf.getNumSamples() == 750 * UsbDriver::kBlock;
+                    for (int i = 0; exact && i < buf.getNumSamples(); ++i)
+                        exact = buf.getSample (0, i) == ramp16 (start + i) && buf.getSample (1, i) == ramp16 (start + i) && buf.getSample (3, i) == 0.0f;
+                    expect (exact, AudioFileFormat::typeName (type) + " reads back bit-exact");
+                }
+                else
+                {
+                    // JUCE's own decoder: 1 kHz at -6 dB (whatever its delay).
+                    const int n = buf.getNumSamples() - 8000;
+                    const auto [amp, snr] = fitSine (buf.getReadPointer (0, 4000), n, 1000.0, 48000.0);
+                    expectWithinAbsoluteError (20.0 * std::log10 (amp / 0.5), 0.0, 1.0);
+                    expect (snr > 30.0, "SNR " + juce::String (snr));
+                    // The engine's reader: sample-aligned with the input.
+                    auto own = AudioFileReader::open (file);
+                    expect (own != nullptr && own->getLength() == 750 * UsbDriver::kBlock);
+                    if (own != nullptr)
+                    {
+                        std::vector<float> l (48000), r (48000);
+                        float* chans[] = { l.data(), r.data() };
+                        expect (own->read (24000, chans, 2, 48000));
+                        double err = 0, sig = 0;
+                        for (int i = 0; i < 48000; ++i)
+                        {
+                            const float want = input (0, start + 24000 + i);
+                            err += (l[(size_t) i] - want) * (l[(size_t) i] - want);
+                            sig += want * want;
+                        }
+                        expect (10.0 * std::log10 (sig / err) > 30.0, "aligned with what was recorded");
+                    }
+                }
+            }
+            // The format is kept in the settings.
+            juce::PropertiesFile::Options options;
+            options.applicationName = "usbformat";
+            options.folderName = tmp.dir.getFullPathName();
+            juce::PropertiesFile settings (tmp.dir.getChildFile ("settings.xml"), options);
+            usb.setRecFileType (AudioFileFormat::Type::Mp3);
+            usb.setRecKbps (256);
+            usb.saveSettings (settings);
+            usb.setRecFileType (AudioFileFormat::Type::Wav);
+            usb.setRecKbps (128);
+            usb.loadSettings (settings);
+            expect (usb.getRecFileType() == AudioFileFormat::Type::Mp3 && usb.getRecKbps() == 256);
+            // The browser lists every format.
+            for (auto fileName : { "x.flac", "y.mp3", "z.aif", "w.ogg" })
+                tmp.dir.getChildFile (fileName).replaceWithText ("x");
+            int audio = 0;
+            for (auto& item : UsbRecorder::listFolder (tmp.dir))
+                if (item.kind == UsbRecorder::ItemKind::Wav)
+                    ++audio;
+            expectEquals (audio, 6, "the three recordings and x.flac, y.mp3, z.aif");
+        }
+
         beginTest ("Playlists: save, open, play through, REPEAT, SKIP");
         {
             UsbTempDir tmp ("playlist");
@@ -262,8 +395,8 @@ public:
             driver.run (600);
             expect (usb.getPlayState() == UsbRecorder::PlayState::Stopped, "without REPEAT it ends");
             UsbRecorder::FileInfo header;
-            expect (UsbRecorder::readWavInfo (tmp.dir.getChildFile ("a.wav"), header) && header.frames == 22050);
-            expect (! UsbRecorder::readWavInfo (tmp.dir.getChildFile ("SET.m3u"), header));
+            expect (UsbRecorder::readFileInfo (tmp.dir.getChildFile ("a.wav"), header) && header.frames == 22050);
+            expect (! UsbRecorder::readFileInfo (tmp.dir.getChildFile ("SET.m3u"), header));
         }
     }
 };

@@ -14,7 +14,8 @@ namespace livedaw::ui
     rename, delete) and the MARKERS of the open session (jump, update,
     delete). Below: the tracks to arm and the one-click setups RECORD ALL
     CHANNELS and VIRTUAL SOUNDCHECK. EDIT (status bar) opens the multitrack
-    editor. The knobs under the display move the position and the loop. */
+    editor; the format key in the header picks the record format. The knobs
+    under the display move the position and the loop. */
 class RecorderPage final : public DisplayPage, private juce::Timer
 {
 public:
@@ -57,6 +58,9 @@ private:
     WingKey stopKey { {}, Icon::Stop }, playKey { {}, Icon::Play }, prevKey { {}, Icon::MarkerPrev }, nextKey { {}, Icon::MarkerNext },
         addMarkerKey { {}, Icon::MarkerAdd }, recordKey { {}, Icon::Record, Dark::pre }, modeKey { "PLAY", std::nullopt, Dark::choice };
     WingKey newKey { "NEW", Icon::Plus }, saveKey { "SAVE", Icon::SaveTray }, editKey { "EDIT", Icon::Waveform };
+    /** The record format (a list: WAV 32-bit float, WAV / AIFF / FLAC 24-bit, MP3). */
+    WingKey formatKey { "WAV 32F", Icon::ChevronDown };
+    void chooseRecordFormat();
     WingKey allChannelsKey { "RECORD ALL\nCHANNELS", Icon::Record }, soundcheckKey { "VIRTUAL\nSOUNDCHECK", Icon::Loop },
         armAllKey { "ARM ALL" }, disarmKey { "DISARM" }, pagePrev { {}, Icon::ChevronLeft }, pageNext { {}, Icon::ChevronRight };
     ToolKey renameKey { "NAME", Icon::Edit }, deleteKey { "DELETE", Icon::Trash }, updateKey { "UPDATE", Icon::Edit }, deleteMarkerKey { "DELETE", Icon::Trash };

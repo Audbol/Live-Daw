@@ -1,6 +1,7 @@
 #pragma once
 
 #include "daw/Project.h"
+#include "engine/AudioFileFormat.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -16,9 +17,10 @@ namespace livedaw::daw
 juce::String importWildcard (juce::AudioFormatManager& formats);
 bool canImport (juce::AudioFormatManager& formats, const juce::File&);
 
-/** A file name inside `folder` that doesn't exist yet: "<base>.wav",
-    "<base>-2.wav", ... (characters that aren't allowed in file names removed). */
-juce::File uniqueAudioFile (const juce::File& folder, const juce::String& base);
+/** A file name inside `folder` that doesn't exist yet: "<base><ext>",
+    "<base>-2<ext>", ... (characters that aren't allowed in file names removed;
+    `extension` with its dot). */
+juce::File uniqueAudioFile (const juce::File& folder, const juce::String& base, const juce::String& extension = ".wav");
 
 /** A 32-bit float WAV writer for `file` (replacing it), or nullptr. */
 std::unique_ptr<juce::AudioFormatWriter> createWavWriter (const juce::File& file, double sampleRate, int numChannels);
@@ -47,9 +49,11 @@ struct RenderClip
 };
 
 /** Renders a track's clips (clip gain, fades and the track gain; overlaps
-    summed as in playback) from the timeline's start to `length` into a 32-bit
-    float WAV, so exported tracks line up. Runs on any thread. */
+    summed as in playback) from the timeline's start to `length` into a file
+    in `format` (32-bit float WAV by default; WAV / AIFF / FLAC / MP3), so
+    exported tracks line up. Runs on any thread. */
 juce::Result renderTrack (juce::AudioFormatManager& formats, const std::vector<RenderClip>& clips, float trackGainDb, int numChannels, double sampleRate, int64 length,
-                          const juce::File& dest, const std::atomic<bool>& cancel, std::function<void (float)> progress = {});
+                          const juce::File& dest, const std::atomic<bool>& cancel, std::function<void (float)> progress = {},
+                          AudioFileFormat format = AudioFileFormat::wav (32));
 
 } // namespace livedaw::daw

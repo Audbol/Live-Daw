@@ -9,6 +9,8 @@ namespace
     constexpr juce::uint32 kAutosaveMs = 30000;
     constexpr juce::uint32 kGesturePushMs = 250;
     constexpr const char* recentKey = "daw.recentProjects";
+    constexpr const char* recordFormatKey = "daw.recordFormat";
+    constexpr const char* exportFormatKey = "daw.exportFormat";
     constexpr int kMaxRecent = 10;
 
     class JobThread final : public juce::Thread
@@ -24,7 +26,15 @@ namespace
 
 Session::Session (Recorder& r, juce::PropertiesFile* s) : recorder (r), settings (s)
 {
+    // MP3 through the engine's decoder first: takes line up with what the recorder plays.
+    formats.registerFormat (new EngineMp3AudioFormat(), false);
     formats.registerBasicFormats();
+    if (settings != nullptr)
+    {
+        recordFormat = AudioFileFormat::fromString (settings->getValue (recordFormatKey), AudioFileFormat::wav (32));
+        exportFormat = AudioFileFormat::fromString (settings->getValue (exportFormatKey), AudioFileFormat::wav (32));
+    }
+    recorder.setRecordFormat (recordFormat);
     project.clear (recorder.getSampleRate());
     project.addListener (this);
     startTimerHz (kTimerHz);
@@ -38,6 +48,15 @@ Session::~Session()
     if (worker != nullptr)
         worker->stopThread (20000);
     alive.reset();
+}
+
+void Session::setRecordFormat (AudioFileFormat f)
+{
+    recordFormat = f.normalized();
+    if (! isRecording())
+        recorder.setRecordFormat (recordFormat);
+    if (settings != nullptr)
+        settings->setValue (recordFormatKey, recordFormat.toString());
 }
 
 void Session::message (const juce::String& text, bool error)
@@ -292,8 +311,11 @@ juce::Result Session::record()
     if (! any)
         return juce::Result::fail ("No track is armed: press R on the tracks to record");
 
+    if (const auto why = recordFormat.check (2, recorder.getSampleRate()); why.isNotEmpty())
+        return juce::Result::fail (why + " (choose another record format)");
     if (auto r = ensureFolder(); r.failed())
         return r;
+    recorder.setRecordFormat (recordFormat);
     const auto audio = project.getAudioFolder();
     audio.createDirectory();
 
@@ -308,7 +330,7 @@ juce::Result Session::record()
         rt.track = i;
         rt.source = t.source;
         rt.numChannels = t.stereo ? 2 : 1;
-        rt.file = uniqueAudioFile (audio, t.name);
+        rt.file = uniqueAudioFile (audio, t.name, recordFormat.extension());
         rt.file.create(); // reserve the name for this take
         list.push_back (rt);
         map[i] = t.id;
@@ -638,8 +660,12 @@ void Session::importFiles (const juce::Array<juce::File>& files, int64 trackId, 
     });
 }
 
-void Session::exportTracks (const juce::File& folder)
+void Session::exportTracks (const juce::File& folder, AudioFileFormat format)
 {
+    format = format.normalized();
+    exportFormat = format;
+    if (settings != nullptr)
+        settings->setValue (exportFormatKey, format.toString());
     if (busy)
     {
         message ("Wait for the " + jobName.toLowerCase() + " to finish", true);
@@ -658,7 +684,7 @@ void Session::exportTracks (const juce::File& folder)
     {
         TrackJob j;
         const auto name = juce::String ((int) i + 1).paddedLeft ('0', 2) + " " + juce::File::createLegalFileName (tracks[i].name);
-        j.dest = folder.getChildFile (name + ".wav");
+        j.dest = folder.getChildFile (name + format.extension());
         for (auto& c : project.getClips (tracks[i].id))
             j.clips.push_back ({ project.resolve (c.file), c });
         j.gainDb = tracks[i].gainDb;
@@ -674,7 +700,12 @@ void Session::exportTracks (const juce::File& folder)
     const auto length = project.getLength();
     const double rate = project.getSampleRate();
     std::weak_ptr<bool> token = alive;
-    runJob ("EXPORT", [this, jobs, length, rate, folder, token] (const std::atomic<bool>& stop, std::atomic<float>& progress)
+    if (const auto why = format.check (2, rate); why.isNotEmpty())
+    {
+        message ("Export: " + why, true);
+        return;
+    }
+    runJob ("EXPORT", [this, jobs, length, rate, folder, token, format] (const std::atomic<bool>& stop, std::atomic<float>& progress)
     {
         juce::StringArray errors;
         int done = 0;
@@ -684,7 +715,7 @@ void Session::exportTracks (const juce::File& folder)
             auto r = renderTrack (formats, j.clips, j.gainDb, j.numChannels, rate, length, j.dest, stop, [&progress, i, n = jobs.size()] (float p)
             {
                 progress = ((float) i + p) / (float) n;
-            });
+            }, format);
             if (r.failed())
                 errors.add (j.dest.getFileName() + ": " + r.getErrorMessage());
             else

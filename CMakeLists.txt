@@ -79,6 +79,7 @@ set(LIVEDAW_ENGINE_SOURCES
     src/engine/ConsoleState.cpp
     src/engine/Layers.cpp
     src/engine/Show.cpp
+    src/engine/AudioFileFormat.cpp
     src/engine/Recorder.cpp
     src/engine/UsbRecorder.cpp
     src/engine/VirtualAudioDevice.cpp
