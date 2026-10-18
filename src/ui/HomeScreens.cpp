@@ -831,7 +831,7 @@ public:
         else
         {
             auto feedArea = directOn != nullptr ? left.removeFromTop (left.getHeight() * 55 / 100) : left;
-            auto f = box (feedArea, "FEED");
+            auto f = box (feedArea, strip.isBus() ? "BUS FEED" : "FEED"); // 3.0.5: opens the FEED CONFIGURATION
             feed->setBounds (f.removeFromBottom (juce::jlimit (24, 36, f.getHeight() / 6)));
             f.removeFromBottom (6);
             feedGrid->setBounds (f);
@@ -2853,9 +2853,9 @@ public:
         }
         g.saveState();
         g.reduceClipRegion (plot.toNearestInt());
-        juce::Path fill (curve);
-        fill.lineTo (plot.getRight(), plot.getBottom() + 2.0f);
-        fill.lineTo (plot.getX(), plot.getBottom() + 2.0f);
+        juce::Path fill (curve); // shaded against the 0 dB line
+        fill.lineTo (plot.getRight() + 2.0f, yForDb (0.0f));
+        fill.lineTo (plot.getX() - 2.0f, yForDb (0.0f));
         fill.closeSubPath();
         g.setColour (active ? colours::eqFill : juce::Colour (0xff1c1c1c));
         g.fillPath (fill);
@@ -3824,14 +3824,12 @@ public:
     FeedConfigScreen (UiContext& c, Strip& s)
         : OverlayScreen (feedTitle (s)), ctx (c), target (state::StripRef::of (s))
     {
+        // Select none, all eligible sources or one group of them.
         noneKey.onClick = [this] { selection.clear(); repaint(); };
-        allChannels.onClick = [this]
-        {
-            selection.clear();
-            for (auto& ch : ctx.engine.getChannels())
-                selection.push_back (state::StripRef::of (*ch));
-            repaint();
-        };
+        allKey.onClick = [this] { selectGroup (-1); };
+        chKey.onClick = [this] { selectGroup (0); };
+        auxKey.onClick = [this] { selectGroup (1); };
+        busKey.onClick = [this] { selectGroup (2); };
         const bool busTarget = s.isBus();
         const bool mainTarget = s.getKind() == StripKind::Main;
         modeKeys = std::make_unique<Segmented> (mainTarget || ! busTarget ? juce::StringArray { "KEEP", "TAP/PRE", "POST" } : juce::StringArray { "KEEP", "TAP/PRE", "POST", "GROUP" },
@@ -3849,7 +3847,8 @@ public:
         levelKeys->twoLines = true;
         enableKeys = std::make_unique<Segmented> (juce::StringArray { "KEEP", "SET OFF", "SET ON" }, [this] { return enableChoice; }, [this] (int i) { enableChoice = i; }, colours::accent);
         applyKey.onClick = [this] { apply(); };
-        for (juce::Component* comp : { (juce::Component*) &noneKey, (juce::Component*) &allChannels, (juce::Component*) modeKeys.get(),
+        for (juce::Component* comp : { (juce::Component*) &noneKey, (juce::Component*) &allKey, (juce::Component*) &chKey, (juce::Component*) &auxKey,
+                                       (juce::Component*) &busKey, (juce::Component*) modeKeys.get(),
                                        (juce::Component*) ignoreKeys.get(), (juce::Component*) panKeys.get(), (juce::Component*) levelKeys.get(),
                                        (juce::Component*) enableKeys.get(), (juce::Component*) &applyKey })
             addAndMakeVisible (comp);
@@ -3887,49 +3886,57 @@ public:
         caption (captions[3], "SEND LEVEL", juce::Colour (0xff1e2e44));
         caption (captions[4], "SEND ENABLE", juce::Colour (0xff33331c));
 
-        // The source cells: colour strip, number, mode badge, PAN LINK, pan line.
+        // The source groups (CHANNEL, AUX, BUS; MAIN for a matrix), each cell:
+        // colour strip, number, mode badge, PAN LINK or pan line. A disabled
+        // send is greyed out; a send that can't exist is an empty well.
         cells.clear();
-        struct Group
-        {
-            const MixerEngine::StripList* list;
-        };
-        std::vector<const Strip*> sources;
-        for (auto* list : { &ctx.engine.getChannels(), &ctx.engine.getAux(), &ctx.engine.getBuses() })
-            for (auto& st : *list)
-                sources.push_back (st.get());
-        if (dst->getKind() == StripKind::Matrix)
-            for (auto& st : ctx.engine.getMains())
-                sources.push_back (st.get());
+        const auto groups = sourceGroups (*dst);
         const int columns = 8;
-        const int rows = ((int) sources.size() + columns - 1) / columns;
+        int totalRows = 0;
+        for (auto& grp : groups)
+            totalRows += ((int) grp.second.size() + columns - 1) / columns;
+        const float captionH = juce::jlimit (12.0f, 16.0f, (float) gridArea.getHeight() * 0.035f);
         const float w = (float) gridArea.getWidth() / (float) columns;
-        const float h = juce::jmin ((float) gridArea.getHeight() / (float) juce::jmax (1, rows), w * 0.75f);
-        for (int i = 0; i < (int) sources.size(); ++i)
+        const float h = juce::jmin (((float) gridArea.getHeight() - captionH * (float) groups.size() - 4.0f * (float) groups.size()) / (float) juce::jmax (1, totalRows),
+                                    w * 0.62f);
+        float y = (float) gridArea.getY();
+        for (auto& [groupCaption, sources] : groups)
         {
-            const auto& src = *sources[(size_t) i];
-            auto r = juce::Rectangle<float> ((float) gridArea.getX() + (float) (i % columns) * w, (float) gridArea.getY() + (float) (i / columns) * h, w, h).reduced (1.5f);
-            const auto ref = state::StripRef::of (src);
-            bool possible = true;
-            int mode = 1;
-            bool on = false, link = false;
-            float pan = 0.0f;
-            describe (*dst, src, possible, on, mode, link, pan);
-            const bool sel = std::find (selection.begin(), selection.end(), ref) != selection.end();
-            g.setColour (possible ? colours::keyOff : colours::well);
-            g.fillRect (r);
-            if (possible)
+            g.setColour (colours::caption);
+            g.setFont (homeFont (TypeScale::caption, captionH));
+            g.drawText (groupCaption, juce::Rectangle<float> ((float) gridArea.getX(), y, (float) gridArea.getWidth(), captionH).toNearestInt(), juce::Justification::centredLeft);
+            y += captionH;
+            for (int i = 0; i < (int) sources.size(); ++i)
             {
-                auto strip = r.removeFromTop (juce::jmax (6.0f, r.getHeight() * 0.2f));
-                g.setColour (stripDisplayColour (src).withMultipliedBrightness (on ? 1.0f : 0.45f));
-                g.fillRect (strip);
-                g.setColour (on ? Colours::text : Colours::textDim);
+                const auto& src = *sources[(size_t) i];
+                const auto cellArea = juce::Rectangle<float> ((float) gridArea.getX() + (float) (i % columns) * w, y + (float) (i / columns) * h, w, h);
+                auto r = cellArea.reduced (1.5f);
+                const auto ref = state::StripRef::of (src);
+                bool possible = true;
+                int mode = 1;
+                bool on = false, link = false;
+                float pan = 0.0f;
+                describe (*dst, src, possible, on, mode, link, pan);
+                const bool sel = std::find (selection.begin(), selection.end(), ref) != selection.end();
+                if (! possible)
+                {
+                    g.setColour (colours::well);
+                    g.fillRect (r);
+                    continue;
+                }
+                g.setColour (on ? colours::keyOff : colours::keyOff.withMultipliedBrightness (0.55f));
+                g.fillRect (r);
+                auto band = r.removeFromTop (juce::jmax (5.0f, r.getHeight() * 0.18f));
+                g.setColour (on ? stripDisplayColour (src) : stripDisplayColour (src).withSaturation (0.0f).withMultipliedBrightness (0.5f));
+                g.fillRect (band);
+                g.setColour (on ? Colours::text : Colours::textDim.withAlpha (0.6f));
                 g.setFont (juce::FontOptions (juce::jlimit (8.0f, 13.0f, r.getHeight() * 0.3f), juce::Font::bold));
                 g.drawText (shortLabel (src), r.withHeight (r.getHeight() * 0.4f).toNearestInt(), juce::Justification::centred);
                 auto badge = r.withTrimmedTop (r.getHeight() * 0.42f).withHeight (r.getHeight() * 0.26f).reduced (r.getWidth() * 0.18f, 0.0f);
-                drawChip (g, badge, sendModeName (mode, src.isInput(), true), on ? sendModeColour (mode) : colours::chipOff, juce::Colours::black);
+                drawChip (g, badge, sendModeName (mode, src.isInput(), true), on ? sendModeColour (mode) : colours::chipOff, on ? juce::Colours::black : Colours::textDim);
                 if (link)
                 {
-                    g.setColour (colours::stereo);
+                    g.setColour (on ? colours::stereo : Colours::textDim.withAlpha (0.6f));
                     g.setFont (juce::FontOptions (juce::jlimit (7.0f, 10.0f, r.getHeight() * 0.18f), juce::Font::bold));
                     g.drawFittedText ("PAN LINK", r.withTrimmedTop (r.getHeight() * 0.7f).toNearestInt(), juce::Justification::centred, 1, 0.6f);
                 }
@@ -3939,17 +3946,17 @@ public:
                     g.setColour (Colours::textDim);
                     g.fillRect (line.getX(), line.getCentreY(), line.getWidth(), 1.0f);
                     const float x = line.getCentreX() + pan / 100.0f * line.getWidth() * 0.5f;
-                    g.setColour (Colours::text);
+                    g.setColour (on ? Colours::text : Colours::textDim);
                     g.fillRect (x - 1.0f, line.getY(), 2.0f, line.getHeight());
                 }
+                if (sel)
+                {
+                    g.setColour (juce::Colours::white);
+                    g.drawRect (cellArea.reduced (1.0f), 2.0f);
+                }
+                cells.push_back ({ cellArea.toNearestInt(), ref });
             }
-            if (sel)
-            {
-                g.setColour (juce::Colours::white);
-                g.drawRect (juce::Rectangle<float> ((float) gridArea.getX() + (float) (i % columns) * w, (float) gridArea.getY() + (float) (i / columns) * h, w, h).reduced (1.0f), 2.0f);
-            }
-            if (possible)
-                cells.push_back ({ juce::Rectangle<float> ((float) gridArea.getX() + (float) (i % columns) * w, (float) gridArea.getY() + (float) (i / columns) * h, w, h).toNearestInt(), ref });
+            y += (float) (((int) sources.size() + columns - 1) / columns) * h + 4.0f;
         }
     }
 
@@ -3957,8 +3964,9 @@ public:
     {
         auto left = b.removeFromLeft (b.getWidth() * 58 / 100);
         auto top = left.removeFromTop (juce::jlimit (26, 40, left.getHeight() / 10));
-        noneKey.setBounds (top.removeFromLeft (juce::jmin (90, top.getWidth() / 4)).reduced (2));
-        allChannels.setBounds (top.removeFromLeft (juce::jmin (90, top.getWidth() / 3)).reduced (2));
+        const int keyW = juce::jmin (100, top.getWidth() / 5);
+        for (auto* k : { &noneKey, &allKey, &chKey, &auxKey, &busKey })
+            k->setBounds (top.removeFromLeft (keyW).reduced (2));
         left.removeFromTop (4);
         gridArea = left;
         b.removeFromLeft (10);
@@ -3996,6 +4004,46 @@ public:
     }
 
 private:
+    /** The sources shown, by group: CHANNEL, AUX, BUS (and MAIN for a matrix). */
+    std::vector<std::pair<juce::String, std::vector<const Strip*>>> sourceGroups (const Strip& dst) const
+    {
+        std::vector<std::pair<juce::String, std::vector<const Strip*>>> groups;
+        auto add = [&groups] (const char* caption, const MixerEngine::StripList& list)
+        {
+            groups.push_back ({ caption, {} });
+            for (auto& st : list)
+                groups.back().second.push_back (st.get());
+        };
+        add ("CHANNEL", ctx.engine.getChannels());
+        add ("AUX", ctx.engine.getAux());
+        add ("BUS", ctx.engine.getBuses());
+        if (dst.getKind() == StripKind::Matrix)
+            add ("MAIN", ctx.engine.getMains());
+        return groups;
+    }
+
+    /** Selects every eligible source of a group (-1: of all groups). */
+    void selectGroup (int group)
+    {
+        selection.clear();
+        if (auto* dst = state::findStrip (ctx.engine, target))
+        {
+            const auto groups = sourceGroups (*dst);
+            for (int i = 0; i < (int) groups.size(); ++i)
+                if (group < 0 || group == i)
+                    for (auto* src : groups[(size_t) i].second)
+                    {
+                        bool possible = true, on = false, link = false;
+                        int mode = 1;
+                        float pan = 0.0f;
+                        describe (*dst, *src, possible, on, mode, link, pan);
+                        if (possible)
+                            selection.push_back (state::StripRef::of (*src));
+                    }
+        }
+        repaint();
+    }
+
     void touch (const state::StripRef& ref)
     {
         auto it = std::find (selection.begin(), selection.end(), ref);
@@ -4133,7 +4181,8 @@ private:
     state::StripRef target;
     std::vector<state::StripRef> selection;
     std::vector<std::pair<juce::Rectangle<int>, state::StripRef>> cells;
-    IconKey noneKey { "NONE", Icon::Cancel }, allChannels { "ALL CH", std::nullopt }, applyKey { "APPLY", Icon::Check, colours::accent };
+    IconKey noneKey { "NONE", Icon::Cancel }, allKey { "ALL", std::nullopt }, chKey { "ALL CH", std::nullopt }, auxKey { "ALL AUX", std::nullopt },
+        busKey { "ALL BUS", std::nullopt }, applyKey { "APPLY", Icon::Check, colours::accent };
     std::unique_ptr<Segmented> modeKeys, ignoreKeys, panKeys, levelKeys, enableKeys;
     juce::Rectangle<int> gridArea, captions[5];
     int modeChoice = 0, ignoreChoice = 0, panChoice = 0, levelChoice = 0, enableChoice = 0;

@@ -630,8 +630,8 @@ juce::String RoutingPage::signalLabel (const Signal& sig) const
 {
     if (sig.channel < 0)
         return {};
-    if (sig.strip == nullptr)
-        return "MON";
+    if (sig.strip == nullptr) // PHONES L / R, SPKR L / R: separate outputs
+        return juce::String (sig.channel < 2 ? "PHONES" : "SPKR") + (sig.channel % 2 == 0 ? " L" : " R");
     const bool stereo = sig.strip->isOutput() || sig.strip->params.stereo.load();
     return shortStripLabel (*sig.strip) + (stereo ? (sig.channel == 0 ? " L" : " R") : juce::String());
 }

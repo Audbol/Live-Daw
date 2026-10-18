@@ -186,7 +186,10 @@ public:
         g.setFont (wingFontPx (juce::jmin (TypeScale::paramLabel * screenH, (float) b.getHeight() * 0.5f)));
         g.setColour (touched ? Colours::gold : Colours::caption);
         g.drawFittedText (binding.label.toUpperCase(), b, juce::Justification::centredLeft, 1, 0.75f);
-        g.setColour (style.colour);
+        // A negative (inverted) WIDTH turns red, as on the console.
+        const auto colour = binding.label.containsIgnoreCase ("WIDTH") && valueText.trimStart().startsWithChar ('-')
+                                ? KnobColours::red : style.colour;
+        g.setColour (colour);
         g.drawFittedText (valueText, b, juce::Justification::centredRight, 1, 0.75f);
 
         const float y = bar.getCentreY();
@@ -201,7 +204,7 @@ public:
                 const float w = bar.getWidth() / (float) n;
                 for (int i = 0; i < n; ++i)
                 {
-                    g.setColour (i == current ? style.colour : KnobColours::segmentOff);
+                    g.setColour (i == current ? colour : KnobColours::segmentOff);
                     g.fillRoundedRectangle (bar.getX() + (float) i * w + 0.5f, y - thick * 0.5f, juce::jmax (1.0f, w - 2.0f), thick, 1.0f);
                 }
                 return;
@@ -211,7 +214,7 @@ public:
             {
                 line();
                 const float from = style.bar == KnobStyle::Bar::Centre ? bar.getCentreX() : bar.getX();
-                g.setColour (style.colour);
+                g.setColour (colour);
                 g.fillRoundedRectangle (juce::jmin (from, x), y - thick * 0.5f, std::abs (x - from), thick, thick * 0.3f);
                 if (style.bar == KnobStyle::Bar::Centre)
                 {
@@ -223,7 +226,7 @@ public:
             case KnobStyle::Bar::Thumb:
             case KnobStyle::Bar::Auto:
                 line();
-                g.setColour (style.colour);
+                g.setColour (colour);
                 g.fillRoundedRectangle (juce::Rectangle<float> (thick * 0.9f, thumbH).withCentre ({ x, y }), thick * 0.3f);
                 return;
         }

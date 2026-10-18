@@ -75,6 +75,9 @@ class OverviewViewPage final : public ViewPage
 public:
     explicit OverviewViewPage (UiContext& c) : ViewPage (c, Screen::Overview) {}
     void mouseUp (const juce::MouseEvent&) override;
+    /** The VIEW keys, then EXCLUSIVE SOLO (WING 3.0.5: on the CHANNEL OVERVIEW
+        page; the SETUP > AUDIO preference). */
+    std::vector<StatusKey> getStatusKeys() override;
 
 protected:
     bool hasLayerColumn() const override { return section() != LayerSet::Left; }
