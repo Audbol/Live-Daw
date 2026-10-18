@@ -451,15 +451,17 @@ void ResponseGraph::paint (juce::Graphics& g)
         return;
     }
 
-    // The EQ curve over its dark amber fill.
+    // The EQ curve, its boosts and cuts shaded against the 0 dB line (a flat
+    // EQ shows no fill, as on the console).
     {
         g.saveState();
         g.reduceClipRegion (p.toNearestInt());
         const auto curve = curveOf (response);
         const bool on = strip->params.eq.on.load();
+        const float zero = yForDb (0.0f);
         juce::Path fill (curve);
-        fill.lineTo (cp.getRight(), cp.getBottom() + 2.0f);
-        fill.lineTo (cp.getX(), cp.getBottom() + 2.0f);
+        fill.lineTo (cp.getRight() + 2.0f, zero);
+        fill.lineTo (cp.getX() - 2.0f, zero);
         fill.closeSubPath();
         g.setColour (on ? eqFillColour : juce::Colour (0xff1c1c1c));
         g.fillPath (fill);
