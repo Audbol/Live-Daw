@@ -103,6 +103,7 @@ MixerEngine::~MixerEngine()
     for (auto& list : lists)
         list.clear();
     recorder.reset();
+    usbRecorder.reset();
     ld::ld_engine_destroy (engine); // releases the plugins still loaded; a recording is finalized
 }
 

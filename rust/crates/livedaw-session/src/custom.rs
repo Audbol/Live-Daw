@@ -125,6 +125,12 @@ impl CustomControls {
     }
 }
 
+/// Button category 15, USB PLAY/REC (the USB recorder / player): the option
+/// is the key, in this order.
+pub const USB_PLAY_REC_CATEGORY: i32 = 15;
+pub const USB_PLAY_REC_FUNCTIONS: [&str; 10] =
+    ["PLAY", "PAUSE", "STOP", "PREV", "NEXT", "REC", "REC PAUSE", "REC STOP", "NEW FILE", "REPEAT"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +170,15 @@ mod tests {
         let c = cc.control(1, 1).unwrap();
         assert_eq!(c.encoder, CcFunction { category: 4, target: 0, option: 0 });
         assert_eq!(c.colour, 18);
+    }
+
+    #[test]
+    fn usb_play_rec_keys_round_trip() {
+        let mut cc = CustomControls::default();
+        let rec = USB_PLAY_REC_FUNCTIONS.iter().position(|&f| f == "REC").unwrap() as i32;
+        cc.control_mut(16, 3).unwrap().lower = CcFunction { category: USB_PLAY_REC_CATEGORY, target: 0, option: rec };
+        let mut loaded = CustomControls::default();
+        loaded.from_xml(&cc.to_xml());
+        assert_eq!(loaded.control(16, 3).unwrap().lower, CcFunction { category: 15, target: 0, option: 5 });
     }
 }

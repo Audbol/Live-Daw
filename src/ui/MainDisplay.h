@@ -4,6 +4,7 @@
 #include "ui/Pages.h"
 #include "ui/ViewPages.h"
 #include "ui/daw/RecorderPage.h"
+#include "ui/UsbRecorderPage.h"
 
 namespace livedaw::ui
 {
@@ -103,6 +104,7 @@ private:
     std::unique_ptr<UtilityPage> utility;
     std::unique_ptr<ViewPage> overview, faders, sends, config, muteGroups;
     std::unique_ptr<RecorderPage> recorder;
+    std::unique_ptr<UsbRecorderPage> usbRecorder;
 
     juce::OwnedArray<ConsoleKey> screenButtons;
     juce::OwnedArray<ParamBarSlot> slots;

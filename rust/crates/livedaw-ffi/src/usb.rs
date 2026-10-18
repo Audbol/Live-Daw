@@ -194,6 +194,13 @@ pub unsafe extern "C" fn ld_usb_play_length(e: *const Engine) -> i64 {
     deck(e).map_or(0, |d| d.length())
 }
 
+/// The file of the clip playing or cued, once the player opened it (empty if not).
+#[no_mangle]
+pub unsafe extern "C" fn ld_usb_play_path(e: *const Engine) -> *mut LdString {
+    let info = deck(e).and_then(|d| guard(None, || d.file_info(d.current_entry())));
+    path_string(info.as_ref().map(|i| i.path.as_path()))
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ld_usb_play_level(e: *const Engine, ch: i32) -> f32 {
     deck(e).map_or(0.0, |d| d.play_level(ch.max(0) as usize))

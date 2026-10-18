@@ -32,6 +32,7 @@ namespace
             case Screen::Library:
             case Screen::Utility:
             case Screen::Recorder:
+            case Screen::UsbRecorder:
                 break;
         }
         return Icon::Overview;
@@ -293,6 +294,7 @@ const char* viewScreenName (Screen s)
         case Screen::Library:
         case Screen::Utility:
         case Screen::Recorder:
+        case Screen::UsbRecorder:
             break;
     }
     return "";

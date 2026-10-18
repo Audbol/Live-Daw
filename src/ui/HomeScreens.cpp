@@ -486,8 +486,12 @@ juce::String inputSourceText (int left, int right, bool stereo)
     if (left < 0)
         return "NONE";
     const bool playback = Recorder::isPlaybackSource (left);
-    auto number = [playback] (int source) { return juce::String ((playback ? Recorder::playbackChannelOf (source) : source) + 1); };
-    const auto prefix = juce::String (playback ? "PLAY " : "IN ");
+    const bool usbPlayer = UsbRecorder::isPlayerSource (left);
+    auto number = [playback, usbPlayer] (int source)
+    {
+        return juce::String ((usbPlayer ? UsbRecorder::playerChannelOf (source) : playback ? Recorder::playbackChannelOf (source) : source) + 1);
+    };
+    const auto prefix = juce::String (usbPlayer ? "PLAYER " : playback ? "PLAY " : "IN ");
     if (stereo)
         return prefix + number (left) + "/" + number (right >= 0 ? right : left + 1);
     return prefix + number (left);

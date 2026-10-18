@@ -143,8 +143,13 @@ impl Queue {
 
     // ---- folder and playlist --------------------------------------------------
 
-    /// The queue becomes the audio files of `folder` (the browser plays them).
+    /// The queue becomes the audio files of `folder` (the browser plays
+    /// them). The same folder again keeps the ids of its files.
     pub fn set_folder(&mut self, folder: &Path) {
+        if !self.is_playlist() && self.folder.as_deref() == Some(folder) {
+            self.refresh_folder();
+            return;
+        }
         let files = audio_files_in(folder);
         self.entries = files.into_iter().map(|p| self.make_entry(p)).collect();
         self.kind = QueueKind::Folder;

@@ -1,5 +1,6 @@
 #include "ui/CustomControlsPage.h"
 #include "engine/Models.h"
+#include "ui/UsbRecorderPage.h"
 #include "ui/WingPopups.h"
 
 namespace livedaw::ui::cc
@@ -33,6 +34,9 @@ namespace
                                        "AUTOMIX X", "AUTOMIX Y", "CHANNEL PREV", "CHANNEL NEXT", "CC BANK UP", "CC BANK DOWN", "SOF OFF" };
     constexpr int kNumOthers = 14;
     const char* const monitorNames[] = { "MONITOR LEVEL", "DIM AMOUNT" };
+    // USB PLAY/REC: the USB recorder / player's keys (the option).
+    const char* const usbNames[] = { "PLAY", "PAUSE", "STOP", "PREV", "NEXT", "REC", "REC PAUSE", "REC STOP", "NEW FILE", "REPEAT" };
+    constexpr int kNumUsbFunctions = 10;
 
     Strip* stripOf (UiContext& ctx, int target) { return state::findStrip (ctx.engine, decodeStrip (target)); }
 
@@ -150,7 +154,7 @@ bool categoryAvailable (Slot s, int category)
 {
     if (s == Slot::Encoder)
         return category < EncDawVpot;
-    return category < BtnFaderSpill;
+    return category < BtnFaderSpill || category == BtnUsbPlayer;
 }
 
 juce::Colour categoryColour (Slot s, int category)
@@ -347,6 +351,28 @@ void press (UiContext& ctx, const Function& f)
             }
             break;
         }
+        case BtnUsbPlayer:
+        {
+            auto& usb = ctx.engine.getUsbRecorder();
+            switch (f.option)
+            {
+                case 0: UsbRecorderPage::pressPlay (ctx); break;
+                case 1: usb.togglePlayPause(); break;
+                case 2: usb.stop(); break;
+                case 3: usb.previous(); break;
+                case 4: usb.next(); break;
+                case 5: UsbRecorderPage::pressRec (ctx); break;
+                case 6: usb.toggleRecPause(); break;
+                case 7: usb.stopRecording(); break;
+                case 8:
+                    if (auto r = usb.newFile(); r.failed())
+                        ctx.log.warning ("USB recorder: " + r.getErrorMessage());
+                    break;
+                case 9: usb.setRepeat (! usb.getRepeat()); break;
+                default: break;
+            }
+            break;
+        }
         default:
             break;
     }
@@ -383,6 +409,20 @@ bool isLit (UiContext& ctx, const Function& f)
                 case 8: return ctx.engine.automixEnable[1].load();
                 default: return false;
             }
+        case BtnUsbPlayer:
+        {
+            auto& usb = ctx.engine.getUsbRecorder();
+            switch (f.option)
+            {
+                case 0: return usb.getPlayState() == UsbRecorder::PlayState::Playing;
+                case 1: return usb.getPlayState() == UsbRecorder::PlayState::Paused;
+                case 2: return usb.getPlayState() == UsbRecorder::PlayState::Stopped;
+                case 5: return usb.getRecState() == UsbRecorder::RecState::Recording;
+                case 6: return usb.getRecState() == UsbRecorder::RecState::Paused;
+                case 9: return usb.getRepeat();
+                default: return false;
+            }
+        }
         default:
             break;
     }
@@ -425,6 +465,7 @@ juce::String describe (UiContext& ctx, Slot s, const Function& f)
         case BtnShowControl:  return juce::String ("SCN ") + showControls[juce::jlimit (0, 4, f.option)];
         case BtnSceneRecall:  return "SCENE #" + juce::String (f.target);
         case BtnOther:        return otherNames[juce::jlimit (0, kNumOthers - 1, f.option)];
+        case BtnUsbPlayer:    return juce::String ("USB ") + usbNames[juce::jlimit (0, kNumUsbFunctions - 1, f.option)];
         default:              return categoryName (s, f.category);
     }
 }
@@ -677,6 +718,7 @@ void CustomControlsPage::rebuildLists()
                 }
                 break;
             case BtnOther: addNames (options, optionCodes, "OTHER", otherNames, kNumOthers); break;
+            case BtnUsbPlayer: addNames (options, optionCodes, "USB PLAY/REC", usbNames, kNumUsbFunctions); break;
             default: break;
         }
     }

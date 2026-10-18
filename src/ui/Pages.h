@@ -160,6 +160,15 @@ private:
     int sourceAt (int group, int index) const;
     /** "IN 3" (or the port's name), "PLAY 5", "NONE". */
     juce::String sourceName (int source) const;
+    /** Output groups: the hardware outputs in groups of 48, then the USB
+        RECORDER's four ports (kRecorderPortBase + n), which tap a strip's
+        output (UsbRecorder::Tap) instead of patching it. */
+    static constexpr int kRecorderPortBase = 0x20000;
+    static bool isRecorderPort (int port) noexcept { return port >= kRecorderPortBase && port < kRecorderPortBase + UsbRecorder::kNumChannels; }
+    int numOutputGroups() const;
+    juce::String outputGroupName (int group) const;
+    /** The output of tile `index` of an output group (-1 past its end). */
+    int outputPortAt (int group, int index) const;
     void showGroupMenu (bool rightSide);
     /** The invisible component the drop-down lists open under, moved over `area`. */
     juce::Component& anchorAt (juce::Rectangle<int> area);

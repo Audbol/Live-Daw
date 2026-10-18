@@ -16,7 +16,7 @@ namespace
     constexpr Screen allScreens[] = { Screen::Home,    Screen::Effects,  Screen::Meters, Screen::Routing,
                                       Screen::Setup,   Screen::Library,  Screen::Utility, Screen::Overview,
                                       Screen::Faders,  Screen::Sends,    Screen::Config,  Screen::MuteGroups,
-                                      Screen::Recorder };
+                                      Screen::Recorder, Screen::UsbRecorder };
 
     // SETUP's tabs (ctx.showSetupTab).
     constexpr int kSetupAudioTab = 1;
@@ -43,6 +43,7 @@ namespace
             case Screen::MuteGroups:
                 return viewScreenName (s);
             case Screen::Recorder: return "RECORDER";
+            case Screen::UsbRecorder: return "USB RECORDER";
         }
         return "";
     }
@@ -883,6 +884,7 @@ MainDisplay::MainDisplay (UiContext& c) : ctx (c)
     muteGroups = std::make_unique<MuteGroupsViewPage> (ctx);
     jassert (ctx.recording != nullptr);
     recorder = std::make_unique<RecorderPage> (ctx, *ctx.recording);
+    usbRecorder = std::make_unique<UsbRecorderPage> (ctx);
 
     for (auto s : allScreens)
     {
@@ -1027,6 +1029,7 @@ DisplayPage* MainDisplay::page (Screen s) const
         case Screen::Config: return config.get();
         case Screen::MuteGroups: return muteGroups.get();
         case Screen::Recorder: return recorder.get();
+        case Screen::UsbRecorder: return usbRecorder.get();
     }
     return home.get();
 }
@@ -1332,6 +1335,10 @@ void MainDisplay::timerCallback()
     // The SIP badge and the talkback frame.
     hash = hash * 31u + (juce::uint32) ctx.engine.soloMode.load() * 4u + (ctx.engine.sipActive.load() ? 2u : 0u) + (ctx.engine.isTalking() ? 1u : 0u);
     hash = hash * 31u + (juce::uint32) (ctx.engine.talk.assignKind.load() + 1) * 4096u + (juce::uint32) ctx.engine.talk.assignIndex.load();
+    {
+        const auto usbState = ctx.engine.getUsbRecorder().getRecState(); // the USB icon
+        hash = hash * 31u + (juce::uint32) usbState * 2u + (usbState == UsbRecorder::RecState::Paused && blink ? 1u : 0u);
+    }
     if (ctx.recording != nullptr)
     {
         const auto recState = ctx.recording->getState();
@@ -1576,9 +1583,13 @@ void MainDisplay::paintStatusBar (juce::Graphics& g)
         chip (0.0f, 45.0f, 61.0f, juce::String (juce::roundToInt (ctx.engine.getDspLoad() * 100.0f)) + " %", Colours::screenLine, offInk);
     }
 
-    // The show files (the console's USB stick): opens LIBRARY.
+    // The USB stick (the USB recorder's folder): opens the USB recorder; red while it records.
     tile (usbTile);
-    drawIcon (g, Icon::UsbStick, usbTile.toFloat().reduced ((float) usbTile.getHeight() * 0.24f), Colours::green);
+    const auto usbState = ctx.engine.getUsbRecorder().getRecState();
+    const auto usbInk = usbState == UsbRecorder::RecState::Recording ? Colours::mute
+                        : usbState == UsbRecorder::RecState::Paused  ? (blink ? Colours::mute : Colours::green)
+                                                                     : Colours::green;
+    drawIcon (g, Icon::UsbStick, usbTile.toFloat().reduced ((float) usbTile.getHeight() * 0.24f), usbInk);
 
     // The recorder (the WING-LIVE cards "1 2", "• LIVE •"): red while recording,
     // green while playing, amber when its folder can't be written.
@@ -1682,7 +1693,7 @@ void MainDisplay::mouseUp (const juce::MouseEvent& e)
             ctx.showSetupTab (kSetupAudioTab);
     }
     else if (usbTile.contains (p))
-        showScreen (Screen::Library);
+        showScreen (Screen::UsbRecorder); // "clicking on the USB icon on the top of every screen" (manual p. 20)
     else if (liveTile.contains (p))
         showScreen (Screen::Recorder);
     else if (numberBox.contains (p))

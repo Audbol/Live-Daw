@@ -851,6 +851,8 @@ extern "C"
     /** Position and length in frames of the engine's rate. */
     int64_t ld_usb_play_position (const Engine*);
     int64_t ld_usb_play_length (const Engine*);
+    /** The file of the clip playing or cued, once opened (empty if not). */
+    LdString* ld_usb_play_path (const Engine*);
     float ld_usb_play_level (const Engine*, int32_t channel);
     /** A clip the player opened (pointers may be null); false if unknown. */
     bool ld_usb_play_info (const Engine*, uint64_t entry, int32_t* channels, int32_t* rate, int32_t* bits,
