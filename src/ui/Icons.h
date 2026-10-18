@@ -105,7 +105,10 @@ enum class Icon
     PaintBucket,   // CC EDIT: COLOR
     Warning,       // CC EDIT: CLR ALL (a triangle with "!")
     KeyboardEdit,  // a keyboard with a pencil: LINK CUSTOMIZATION, SET CUST
-    Spill          // SPILL (a fader with arrows)
+    Spill,         // SPILL (a fader with arrows)
+    // The main display's frame
+    Maximize,      // four corners pointing out: the screen fills the window
+    Restore        // four corners pointing in: back to the surface
 };
 
 /** Draws `icon` fitted into `area` (stroked or filled as the icon needs). */

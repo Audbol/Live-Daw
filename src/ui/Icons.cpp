@@ -822,6 +822,26 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
             g.strokePath (p, stroke);
             return;
         }
+        case Icon::Maximize:
+        case Icon::Restore:
+        {
+            // Four corner brackets: at the edges pointing out, or near the
+            // centre pointing in.
+            const bool out = icon == Icon::Maximize;
+            for (int cx = 0; cx < 2; ++cx)
+                for (int cy = 0; cy < 2; ++cy)
+                {
+                    const float sx = cx == 0 ? -1.0f : 1.0f, sy = cy == 0 ? -1.0f : 1.0f;
+                    const float corner = out ? 0.36f : 0.1f, arm = 0.2f;
+                    const float u = 0.5f + sx * corner, v = 0.5f + sy * corner;
+                    const float d = out ? -arm : arm; // arms run back towards the centre (out) or away from it (in)
+                    p.startNewSubPath (P (u + sx * d, v));
+                    p.lineTo (P (u, v));
+                    p.lineTo (P (u, v + sy * d));
+                }
+            g.strokePath (p, stroke);
+            return;
+        }
     }
 }
 

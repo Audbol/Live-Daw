@@ -146,6 +146,11 @@ struct UiContext
     /** Shows the multitrack editor in place of the console (false: back). */
     std::function<void (bool)> showEditor;
     std::function<bool()> isEditorShown;
+    /** Only the main display (its screen keys, screen, knobs and right-hand
+        column), as large as the window allows (F10, the maximize key under the
+        display's right column); false: the whole surface again. */
+    std::function<void (bool)> setScreenMaximized;
+    std::function<bool()> isScreenMaximized;
 
     // Set by the SETUP page while it exists.
     /** Opens SETUP on a tab (0 GENERAL, 1 AUDIO, 2 SURFACE, 3 REMOTE, 4 DAW,
@@ -196,6 +201,11 @@ namespace uiprefs
     }
 
     inline juce::String formatDate (juce::PropertiesFile& s, juce::Time t) { return t.formatted (dayFirst (s) ? "%d-%m-%Y" : "%Y-%m-%d"); }
+
+    // The window (MainComponent).
+    constexpr const char* screenMaximized = "ui.screenMaximized";   // bool: only the main display (F10)
+    constexpr const char* fullScreen = "ui.fullScreen";             // bool: the window covers the screen (F11)
+    constexpr const char* noticeDismissed = "ui.noticeDismissedFor"; // the app version the start-up notice was turned off for
 
     // SOLO SYSTEM (SETUP > AUDIO).
     constexpr const char* exclusiveSolo = "ui.soloExclusive";

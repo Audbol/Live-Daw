@@ -117,6 +117,27 @@ void confirm (juce::Component& host, const juce::String& title, const juce::Stri
 /** An on-screen notice over `host` with an OK key. */
 void warn (juce::Component& host, const juce::String& title, const juce::String& text);
 
+struct NoticeOptions
+{
+    juce::String okText = "OK";
+    /** A tick key left of OK (empty: none) and its state when the window opens. */
+    juce::String checkText;
+    bool checked = false;
+    /** Called when the window closes (OK, Esc or a key of the surface), with
+        the tick key's state. */
+    std::function<void (bool checked)> onClose;
+    /** Cover `host` itself rather than the main display's pop-up layer or the
+        window (the start-up notice covers the whole surface). */
+    bool coverHost = false;
+};
+
+/** A long, scrollable notice over `host`: a title bar, the text, and OK at the
+    bottom right. In `text`, a line starting with "## " is a heading, one
+    starting with "- " a bullet (indented lines continue it), an empty line
+    separates paragraphs. Its type follows the window's size, so it stays
+    readable over a small screen and over a whole window. */
+void notice (juce::Component& host, const juce::String& title, const juce::String& text, NoticeOptions = {});
+
 /** Where pop-ups for `host` open: the main display registers its pop-up layer
     here (return nullptr for hosts it doesn't contain). */
 void setPopupLayerProvider (std::function<juce::Component* (juce::Component& host)>);

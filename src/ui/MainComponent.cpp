@@ -1,6 +1,7 @@
 #include "ui/MainComponent.h"
 #include "engine/AppPaths.h"
 #include "ui/MidiRemoteUi.h"
+#include "ui/StartupNotice.h"
 #include "ui/WingPopups.h"
 #include "ui/daw/DawEditor.h"
 
@@ -206,6 +207,8 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     ctx.recording = recording.get();
     ctx.showEditor = [this] (bool shown) { showEditor (shown); };
     ctx.isEditorShown = [this] { return editorShown; };
+    ctx.setScreenMaximized = [this] (bool maximized) { setScreenMaximized (maximized); };
+    ctx.isScreenMaximized = [this] { return screenMaximized; };
 
     // The custom control assignments live in the show (CC EDIT edits them).
     customControlAssignments = std::make_unique<cc::Assignments> (show);
@@ -274,6 +277,9 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     refreshAll();
     updateTitle();
     openLastProject();
+    // Screen only, as the last session left it.
+    if (settings.getBoolValue (uiprefs::screenMaximized, false))
+        setScreenMaximized (true);
 }
 
 MainComponent::~MainComponent()
@@ -371,7 +377,7 @@ void MainComponent::refreshSections()
 //==============================================================================
 void MainComponent::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::background);
+    g.fillAll (screenMaximized ? juce::Colours::black : Colours::background);
 }
 
 void MainComponent::layoutSections()
@@ -465,13 +471,29 @@ void MainComponent::layoutTopRow()
     const int monitorW = juce::jlimit (260, 460, top.getWidth() * 22 / 100);
     channelStrip->setBounds (top.removeFromLeft (stripW));
     auto right = top.removeFromRight (monitorW);
-    fourChannel->setVisible (ccInBottomRow && ! editorShown);
+    fourChannel->setVisible (ccInBottomRow && ! editorShown && ! screenMaximized);
     if (! ccInBottomRow)
         customControls->setBounds (right.removeFromBottom (right.getHeight() * 45 / 100));
     else
         fourChannel->setBounds (right.removeFromBottom (right.getHeight() * 54 / 100));
     monitor->setBounds (right);
-    display->setBounds (top);
+    // Screen only: the display takes the window (the rest keeps its layout,
+    // hidden, so restoring brings it back unchanged). Past about 1100 px of
+    // height it is laid out at that size and scaled up as a whole, so the
+    // screens keep the proportions they were drawn for (all vector drawing,
+    // so it stays sharp at 4K).
+    if (screenMaximized)
+    {
+        const auto all = getLocalBounds();
+        const float scale = juce::jmax (1.0f, (float) all.getHeight() / kMaxScreenOnlyLayoutHeight);
+        display->setTransform (juce::AffineTransform::scale (scale));
+        display->setBounds (0, 0, (int) std::ceil ((float) all.getWidth() / scale), (int) std::ceil ((float) all.getHeight() / scale));
+    }
+    else
+    {
+        display->setTransform ({});
+        display->setBounds (top);
+    }
 }
 
 void MainComponent::resized()
@@ -493,13 +515,56 @@ void MainComponent::resized()
         lockOverlay->setBounds (getLocalBounds());
 }
 
+void MainComponent::focusGained (FocusChangeType)
+{
+    // Something over the whole console that takes the keyboard (a pop-up such
+    // as the start-up notice, the editor) keeps it when the window gets the focus.
+    for (int i = getNumChildComponents(); --i >= 0;)
+        if (auto* c = getChildComponent (i); c->isVisible() && c->getWantsKeyboardFocus() && c->getBounds() == getLocalBounds())
+        {
+            c->grabKeyboardFocus();
+            return;
+        }
+}
+
 bool MainComponent::keyPressed (const juce::KeyPress& key)
 {
+    const auto mods = key.getModifiers();
+    // F10 (or Ctrl+Shift+F): only the screen, or back; Esc leaves it (then full screen).
+    if (key.getKeyCode() == juce::KeyPress::F10Key && ! mods.isAnyModifierKeyDown())
+    {
+        setScreenMaximized (! screenMaximized);
+        return true;
+    }
+    if (key.getKeyCode() == juce::KeyPress::F11Key && ! mods.isAnyModifierKeyDown())
+    {
+        // Switching recreates the window on Linux; a press that reaches the new
+        // window as well mustn't switch back.
+        if (const auto now = juce::Time::getMillisecondCounter(); now - lastFullScreenSwitch > 500)
+        {
+            lastFullScreenSwitch = now;
+            setFullScreen (! fullScreen);
+        }
+        return true;
+    }
+    if (key == juce::KeyPress::escapeKey && ! editorShown && (screenMaximized || fullScreen))
+    {
+        if (screenMaximized)
+            setScreenMaximized (false);
+        else
+            setFullScreen (false);
+        return true;
+    }
     if (key.getModifiers().isCommandDown())
     {
         // With Ctrl held, X11 gives a control code as the text and the lowercase key as the code.
         const auto c = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
         const auto k = juce::CharacterFunctions::toLowerCase ((juce::juce_wchar) key.getKeyCode());
+        if ((c == 'f' || k == 'f') && key.getModifiers().isShiftDown())
+        {
+            setScreenMaximized (! screenMaximized);
+            return true;
+        }
         if (c == 'e' || k == 'e')
         {
             showEditor (! editorShown);
@@ -538,7 +603,8 @@ void MainComponent::saveScreenshot()
 {
     const auto dir = paths::documents().getChildFile ("screens");
     const auto file = dir.getChildFile ("screen-" + juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S") + ".png");
-    const auto image = display->createComponentSnapshot (display->getLocalBounds());
+    // At the size it's shown (scaled up when only the screen shows).
+    const auto image = display->createComponentSnapshot (display->getLocalBounds(), true, juce::jmax (1.0f, display->getTransform().mat00));
 
     juce::PNGImageFormat png;
     bool ok = dir.createDirectory().wasOk();
@@ -654,15 +720,7 @@ void MainComponent::showEditor (bool shown)
         editor->setBounds (getLocalBounds());
     }
     editorShown = shown;
-    // The console's parts stay alive (and keep their state) under the editor.
-    for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) display.get(), (juce::Component*) monitor.get(),
-                                (juce::Component*) customControls.get(), (juce::Component*) &splitter })
-        c->setVisible (! shown);
-    fourChannel->setVisible (! shown && ccInBottomRow);
-    for (auto& sec : sections)
-        sec->setVisible (! shown);
-    if (lockOverlay != nullptr)
-        lockOverlay->setVisible (! shown);
+    updateVisibility();
     if (editor != nullptr)
     {
         editor->setVisible (shown);
@@ -674,6 +732,83 @@ void MainComponent::showEditor (bool shown)
     }
     if (! shown)
         grabKeyboardFocus();
+}
+
+void MainComponent::updateVisibility()
+{
+    // The console's parts stay alive (and keep their state) under the editor
+    // and while the screen is maximized.
+    const bool surface = ! editorShown && ! screenMaximized;
+    for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) monitor.get(),
+                                (juce::Component*) customControls.get(), (juce::Component*) &splitter })
+        c->setVisible (surface);
+    display->setVisible (! editorShown);
+    fourChannel->setVisible (surface && ccInBottomRow);
+    for (auto& sec : sections)
+        sec->setVisible (surface);
+    // DAW mode's strips show themselves while the surface does (their timer).
+    for (auto& sec : dawSections)
+        if (sec != nullptr && ! surface)
+            sec->setVisible (false);
+    if (lockOverlay != nullptr)
+        lockOverlay->setVisible (surface);
+}
+
+void MainComponent::setScreenMaximized (bool maximized)
+{
+    if (maximized == screenMaximized)
+        return;
+    screenMaximized = maximized;
+    settings.setValue (uiprefs::screenMaximized, maximized);
+    display->setMaximized (maximized);
+    updateVisibility();
+    layoutTopRow();
+    repaint();
+    if (! editorShown && isShowing())
+        grabKeyboardFocus();
+}
+
+void MainComponent::setFullScreen (bool shouldBe)
+{
+    auto* window = dynamic_cast<juce::DocumentWindow*> (getTopLevelComponent());
+    if (window == nullptr || window == static_cast<juce::Component*> (this) || shouldBe == fullScreen)
+        return;
+    fullScreen = shouldBe;
+    settings.setValue (uiprefs::fullScreen, shouldBe);
+    if (shouldBe)
+    {
+        windowStateBeforeFullScreen = window->getWindowStateAsString();
+#if JUCE_LINUX || JUCE_BSD
+        // X11: JUCE's kiosk mode only resizes the window, so drop the native
+        // frame first (an undecorated window over the whole screen).
+        window->setUsingNativeTitleBar (false);
+        window->setTitleBarHeight (0);
+        window->setResizable (false, false);
+#endif
+        juce::Desktop::getInstance().setKioskModeComponent (window, false);
+    }
+    else
+    {
+        juce::Desktop::getInstance().setKioskModeComponent (nullptr);
+#if JUCE_LINUX || JUCE_BSD
+        window->setUsingNativeTitleBar (true);
+        window->setResizable (true, true);
+#endif
+        if (windowStateBeforeFullScreen.isNotEmpty())
+            window->restoreWindowStateFromString (windowStateBeforeFullScreen);
+        windowStateBeforeFullScreen.clear();
+    }
+    log.info (shouldBe ? "Full screen (F11 or Esc to leave)" : "Left full screen");
+    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<MainComponent> (this)]
+    {
+        if (safe != nullptr && safe->isShowing() && ! safe->editorShown)
+            safe->grabKeyboardFocus();
+    });
+}
+
+void MainComponent::showStartupNotice()
+{
+    startupNotice::show (settings, *this, true);
 }
 
 void MainComponent::openLastProject()

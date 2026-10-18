@@ -1,4 +1,5 @@
 #include "ui/Pages.h"
+#include "ui/StartupNotice.h"
 
 namespace livedaw::ui
 {
@@ -12,10 +13,14 @@ UtilityPage::UtilityPage (UiContext& c, bool setup) : ctx (c), onSetup (setup)
             ctx.engine.getFx().clearFlags (i);
     };
     clearClipsButton.onClick = [this] { ctx.engine.outputClipEvents = 0; };
-    styleIconKey (clearFaultsButton);
-    styleIconKey (clearClipsButton);
-    addAndMakeVisible (clearFaultsButton);
-    addAndMakeVisible (clearClipsButton);
+    // ABOUT: the start-up notice (the project, how it differs from a WING).
+    aboutButton.setTooltip ("About Sidecar: an independent hobby project; what differs from a real WING");
+    aboutButton.onClick = [this] { startupNotice::show (ctx.settings, *this, false); };
+    for (auto* k : { &clearFaultsButton, &clearClipsButton, &aboutButton })
+    {
+        styleIconKey (*k);
+        addAndMakeVisible (k);
+    }
 
     logList.setModel (this);
     logList.setRowHeight (26);
@@ -140,8 +145,10 @@ void UtilityPage::resized()
 
     auto l = darkPanelBody (leftArea, true).reduced (8, 4);
     auto row = l.removeFromBottom (40);
-    clearFaultsButton.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (2, 0));
-    clearClipsButton.setBounds (row.reduced (2, 0));
+    const int keyW = row.getWidth() * 3 / 8;
+    clearFaultsButton.setBounds (row.removeFromLeft (keyW).reduced (2, 0));
+    clearClipsButton.setBounds (row.removeFromLeft (keyW).reduced (2, 0));
+    aboutButton.setBounds (row.reduced (2, 0));
     l.removeFromBottom (6);
     statsArea = l;
     logList.setBounds (darkPanelBody (rightArea, true));

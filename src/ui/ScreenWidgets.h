@@ -359,8 +359,12 @@ public:
 private:
     void timerCallback() override
     {
+        // (Noted here too, so a key that isn't painted doesn't repaint on every tick.)
         if (getter != nullptr && getter() != shown)
+        {
+            shown = getter();
             repaint();
+        }
     }
 
     juce::StringArray names;
@@ -426,8 +430,12 @@ public:
 private:
     void timerCallback() override
     {
+        // (Noted here too, so a key that isn't painted doesn't repaint on every tick.)
         if (getter != nullptr && getter() != shown)
+        {
+            shown = getter();
             repaint();
+        }
     }
 
     std::function<bool()> getter;
@@ -536,9 +544,12 @@ public:
 private:
     void timerCallback() override
     {
+        // What is shown is noted here too: a field that isn't painted (on a
+        // hidden page) would otherwise ask for a repaint on every tick.
         const bool lit = keyLit != nullptr && keyLit();
-        if ((getValue && getValue() != shownValue) || isListOpen() != shownOpen || lit != shownLit)
+        if (auto now = getValue ? getValue() : juce::String(); now != shownValue || isListOpen() != shownOpen || lit != shownLit)
         {
+            shownValue = now;
             shownOpen = isListOpen();
             shownLit = lit;
             repaint();

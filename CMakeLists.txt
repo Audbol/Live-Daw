@@ -209,6 +209,7 @@ target_sources(LiveDAW PRIVATE
     src/ui/daw/RecorderPage.cpp
     src/ui/UsbRecorderPage.cpp
     src/ui/WingPopups.cpp
+    src/ui/StartupNotice.cpp
     src/ui/CustomControlsPage.cpp
     src/ui/MonitorsPage.cpp
     src/ui/FourChannelSection.cpp

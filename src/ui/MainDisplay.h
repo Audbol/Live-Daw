@@ -56,9 +56,17 @@ public:
     void setTouchDisabled (bool);
     bool isTouchDisabled() const noexcept { return touchDisabled; }
 
+    /** Screen only (the main component shows nothing else): the display, its
+        keys and knobs as one compact unit centred on black, the screen as
+        large as fits; the key under the right-hand column reads RESTORE. */
+    void setMaximized (bool);
+    bool isMaximized() const noexcept { return maximized; }
+
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseUp (const juce::MouseEvent&) override;
+    /** On an empty part of the status bar: screen only, or back. */
+    void mouseDoubleClick (const juce::MouseEvent&) override;
 
     class ParamBarSlot;
     class ContextKnob;
@@ -109,7 +117,7 @@ private:
     juce::OwnedArray<ConsoleKey> screenButtons;
     juce::OwnedArray<ParamBarSlot> slots;
     juce::OwnedArray<Encoder> encoders;
-    std::unique_ptr<ConsoleKey> clearSoloKey, blankKey;
+    std::unique_ptr<ConsoleKey> clearSoloKey, blankKey, maximizeKey;
     std::unique_ptr<MainMeter> mainMeter;
     std::unique_ptr<ContextKnob> contextKnob;
     std::unique_ptr<Highlight> highlight;
@@ -117,7 +125,7 @@ private:
     std::unique_ptr<FocusTracker> focusTracker;
     std::unique_ptr<Overlay> popupLayer, touchBlocker, lcdScrim;
 
-    juce::Rectangle<int> screenArea, statusArea, slotArea, pageArea, encoderArea;
+    juce::Rectangle<int> frameArea, screenArea, statusArea, slotArea, pageArea, encoderArea;
     juce::Rectangle<int> channelTab, numberBox, chipsTile, usbTile, liveTile, clockTile;
     std::vector<StatusKey> statusKeys;
     std::vector<juce::Rectangle<int>> statusKeyAreas;
@@ -127,7 +135,7 @@ private:
     int touchedSlot = -1;
     int focusIndex = -1;
     int acknowledgedFaults = 0;
-    bool blink = false, flash = false, touchDisabled = false, liveWritable = true;
+    bool blink = false, flash = false, touchDisabled = false, liveWritable = true, maximized = false;
     int ticks = 0;
 };
 

@@ -306,11 +306,46 @@ public:
     }
 
 private:
-    void timerCallback() override { repaint(); }
+    void timerCallback() override
+    {
+        // Repaint only when what the tile shows changes: sixteen tiles redrawn
+        // ten times a second cost a lot on a big (maximized) screen.
+        if (auto now = signature(); now != shown)
+        {
+            shown = now;
+            repaint();
+        }
+    }
+
+    /** What paint() draws, in short. */
+    juce::String signature() const
+    {
+        auto& fx = ctx.engine.getFx();
+        auto& params = fx.params (slot);
+        const int model = fx.getModel (slot);
+        juce::String sig;
+        sig << model << '|' << (juce::pointer_sized_int) fx.getPlugin (slot) << '|' << (int) params.bypass.load() << '|' << params.mix.load() << '|'
+            << (int) fx.isFaulted (slot) << (int) fx.isDoubleAssigned (slot) << (int) (page.selected == slot);
+        if (model > ld::kFxExt)
+        {
+            const auto& spec = models::model (models::Fx, model);
+            if (const int key = keyParam (spec); key >= 0 && key < (int) spec.params.size())
+                sig << '|' << params.values[key].load();
+        }
+        const auto user = findUser (ctx.engine, slot);
+        if (user.strip != nullptr)
+        {
+            const float level = params.bypass.load() ? 0.0f : dsp::gainToDb (ctx.meters.get (user.strip, false, 0));
+            sig << '|' << (juce::pointer_sized_int) user.strip << (int) user.post << stripName (*user.strip) << '|'
+                << (juce::int64) stripDisplayColour (*user.strip).getARGB() << '|' << juce::roundToInt (juce::jlimit (-61.0f, 0.0f, level));
+        }
+        return sig;
+    }
 
     UiContext& ctx;
     int slot;
     EffectsPage& page;
+    juce::String shown;
     juce::Rectangle<float> deviceArea, meterArea, sourceArea, prePostArea, onArea, knobArea;
     float dragStart = 0.0f;
     int ringParam = -1;

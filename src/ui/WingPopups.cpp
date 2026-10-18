@@ -53,6 +53,7 @@ namespace
 
         void open (juce::Component& layer)
         {
+            focusBefore = juce::Component::getCurrentlyFocusedComponent();
             layer.addAndMakeVisible (this);
             setBounds (layer.getLocalBounds());
             toFront (false);
@@ -61,6 +62,9 @@ namespace
                 if (safe != nullptr && safe->isShowing())
                     safe->takeFocus();
             });
+            // The window may not have the system's focus yet (a pop-up opened
+            // at start-up): keep asking for a moment, until the pop-up has it.
+            focusRetry.startTimer (150);
         }
 
         /** Closes the pop-up without its action. */
@@ -77,6 +81,7 @@ namespace
             TransientPopups::remove (this);
             onClosing();
             setVisible (false);
+            giveFocusBack();
             juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<Popup> (this), after = std::move (after)]
             {
                 delete safe.getComponent();
@@ -87,6 +92,13 @@ namespace
 
         virtual void onClosing() {}
         virtual void takeFocus() { grabKeyboardFocus(); }
+
+        // Pop-ups cover their layer, also when it changes size.
+        void parentSizeChanged() override
+        {
+            if (auto* parent = getParentComponent())
+                setBounds (parent->getLocalBounds());
+        }
 
         bool keyPressed (const juce::KeyPress& k) override
         {
@@ -99,6 +111,41 @@ namespace
         }
 
         bool closing = false;
+
+    private:
+        /** The keyboard focus goes back where it was (or to the nearest
+            component around the pop-up that takes it), so the app's
+            shortcuts keep working after the pop-up closes. */
+        void giveFocusBack()
+        {
+            // (Not the window or another component around the pop-up: the
+            // nearest one that takes the focus is closer to what was in use.)
+            if (auto* before = focusBefore.getComponent(); before != nullptr && before != this && ! before->isParentOf (this) && before->isShowing())
+            {
+                before->grabKeyboardFocus();
+                return;
+            }
+            for (auto* c = getParentComponent(); c != nullptr; c = c->getParentComponent())
+                if (c->getWantsKeyboardFocus() && c->isShowing())
+                {
+                    c->grabKeyboardFocus();
+                    return;
+                }
+        }
+
+        juce::Component::SafePointer<juce::Component> focusBefore;
+        int focusTries = 0;
+        juce::TimedCallback focusRetry { [this]
+        {
+            if (closing || hasKeyboardFocus (true))
+                focusRetry.stopTimer();
+            else if (auto* peer = getPeer(); peer == nullptr || ! peer->isFocused())
+                return; // until the window has the system's focus
+            else if (++focusTries > 10)
+                focusRetry.stopTimer();
+            else if (isShowing())
+                takeFocus();
+        } };
     };
 } // namespace
 
@@ -1155,6 +1202,273 @@ namespace
         std::function<void (juce::Graphics&, juce::Rectangle<float>, int)> picture;
         std::function<void (int)> onChosen;
     };
+
+    //==========================================================================
+    /** The text of a notice: headings (gold), paragraphs and bullets, laid out
+        for a width; it sits in a viewport that scrolls it. */
+    class NoticeText final : public juce::Component
+    {
+    public:
+        explicit NoticeText (const juce::String& text)
+        {
+            juce::String paragraph;
+            auto flush = [this, &paragraph]
+            {
+                if (paragraph.isNotEmpty())
+                    blocks.push_back ({ paragraph, Kind::Paragraph });
+                paragraph.clear();
+            };
+            for (auto line : juce::StringArray::fromLines (text))
+            {
+                line = line.trimEnd();
+                if (line.startsWith ("## "))
+                {
+                    flush();
+                    blocks.push_back ({ line.substring (3), Kind::Heading });
+                }
+                else if (line.startsWith ("- "))
+                {
+                    flush();
+                    blocks.push_back ({ line.substring (2), Kind::Bullet });
+                }
+                else if (line.isEmpty())
+                {
+                    flush();
+                }
+                else if (! blocks.empty() && blocks.back().kind == Kind::Bullet && paragraph.isEmpty() && line.startsWith ("  "))
+                {
+                    blocks.back().text << " " << line.trim(); // a bullet's continuation line
+                }
+                else
+                {
+                    paragraph << (paragraph.isEmpty() ? "" : " ") << line.trim();
+                }
+            }
+            flush();
+            setInterceptsMouseClicks (false, false);
+        }
+
+        /** Lays the text out `width` px wide with capitals `capPx` tall; returns the height. */
+        int layout (int width, float capPx)
+        {
+            cap = capPx;
+            const auto body = wingFontPx (capPx), heading = wingFontPx (capPx * 1.12f, WingWeight::SemiBold);
+            const float indent = capPx * 2.2f, gap = capPx * 0.9f;
+            float y = capPx * 0.4f;
+            laid.clear();
+            for (size_t i = 0; i < blocks.size(); ++i)
+            {
+                const auto& block = blocks[i];
+                const bool isHeading = block.kind == Kind::Heading, isBullet = block.kind == Kind::Bullet;
+                if (isHeading && i > 0)
+                    y += gap * 0.8f;
+                juce::AttributedString as;
+                as.setWordWrap (juce::AttributedString::byWord);
+                as.setLineSpacing (capPx * 0.42f);
+                as.append (block.text, isHeading ? heading : body, isHeading ? Colours::gold : Colours::text);
+                const float x = isBullet ? indent : 0.0f;
+                juce::TextLayout tl;
+                tl.createLayout (as, juce::jmax (40.0f, (float) width - x));
+                const float h = tl.getHeight();
+                laid.push_back ({ std::move (tl), { x, y }, isBullet });
+                y += h + (isBullet ? gap * 0.45f : gap);
+            }
+            return juce::roundToInt (y + capPx * 0.4f);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            for (auto& l : laid)
+            {
+                if (l.bullet)
+                {
+                    // A small gold square level with the first line's capitals.
+                    const float s = cap * 0.42f;
+                    const float baseline = l.text.getNumLines() > 0 ? l.text.getLine (0).lineOrigin.y : cap;
+                    g.setColour (Colours::gold);
+                    g.fillRect (juce::Rectangle<float> (s, s).withCentre ({ cap * 0.9f, l.at.y + baseline - cap * 0.5f }));
+                }
+                l.text.draw (g, juce::Rectangle<float> (l.at.x, l.at.y, (float) getWidth() - l.at.x, l.text.getHeight()));
+            }
+        }
+
+    private:
+        enum class Kind
+        {
+            Paragraph,
+            Heading,
+            Bullet
+        };
+        struct Block
+        {
+            juce::String text;
+            Kind kind;
+        };
+        struct Laid
+        {
+            juce::TextLayout text;
+            juce::Point<float> at;
+            bool bullet;
+        };
+        std::vector<Block> blocks;
+        std::vector<Laid> laid;
+        float cap = 12.0f;
+    };
+
+    /** A notice: a big centred window with a title bar, the scrolling text, an
+        optional tick key and OK. Clicks on the dimmed page don't close it. */
+    class NoticeWindow final : public Popup
+    {
+    public:
+        NoticeWindow (juce::String titleText, const juce::String& text, NoticeOptions o)
+            : title (std::move (titleText)), options (std::move (o)), body (text), checked (options.checked)
+        {
+            // The text is drawn once into an image: the live surface under
+            // the scrim repaints all the time, and with it what lies over it.
+            body.setBufferedToImage (true);
+            viewport.setViewedComponent (&body, false);
+            viewport.setScrollBarsShown (true, false);
+            viewport.setWantsKeyboardFocus (false);
+            addAndMakeVisible (viewport);
+        }
+
+        void resized() override
+        {
+            const auto b = getLocalBounds();
+            // The type follows the layer: capitals 1.8 % of its height, readable on
+            // a small main display and not huge over a 4K window.
+            cap = juce::jlimit (9.0f, 30.0f, juce::jmin ((float) b.getHeight() * 0.018f, (float) b.getWidth() * 0.013f));
+            window = b.withSizeKeepingCentre (juce::jmin (b.getWidth() - 16, juce::roundToInt (cap * 62.0f)),
+                                              juce::roundToInt ((float) b.getHeight() * 0.9f));
+            auto r = window;
+            titleBar = r.removeFromTop (juce::roundToInt (cap * 3.2f));
+            r.removeFromTop (4);
+            panel = r;
+            auto keys = r.removeFromBottom (juce::roundToInt (cap * 4.4f)).reduced (juce::roundToInt (cap), juce::roundToInt (cap * 0.7f));
+            const int keyW = juce::roundToInt (cap * 9.0f);
+            okKey = keys.removeFromRight (keyW);
+            keys.removeFromRight (juce::roundToInt (cap));
+            checkKey = options.checkText.isEmpty() ? juce::Rectangle<int>()
+                                                   : keys.removeFromRight (juce::jmin (keys.getWidth(), juce::roundToInt (cap * 30.0f)));
+            const int side = juce::roundToInt (cap * 1.6f);
+            viewport.setScrollBarThickness (juce::jmax (8, juce::roundToInt (cap * 0.8f)));
+            viewport.setBounds (r.reduced (side, juce::roundToInt (cap * 0.6f)));
+            const int textW = viewport.getWidth() - viewport.getScrollBarThickness() - juce::roundToInt (cap);
+            body.setSize (textW, body.layout (textW, cap));
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            g.setColour (Colours::scrim);
+            g.fillRect (getLocalBounds());
+            g.setColour (juce::Colours::black);
+            g.fillRect (window.expanded (2));
+            g.setColour (Colours::screenHeader);
+            g.fillRect (titleBar);
+            g.setColour (Colours::caption);
+            g.setFont (wingFontPx (cap * 1.15f, WingWeight::SemiBold));
+            g.drawFittedText (title, titleBar.reduced (juce::roundToInt (cap)), juce::Justification::centred, 1, 0.8f);
+            g.setColour (Colours::screenPanel);
+            g.fillRect (panel);
+            g.setColour (juce::Colours::black);
+            g.fillRect (panel.getX(), okKey.getY() - juce::roundToInt (cap * 0.7f) - 2, panel.getWidth(), 2);
+
+            if (! checkKey.isEmpty())
+            {
+                paintKey (g, checkKey.toFloat(), pressed == 1 ? Colours::screenKey.brighter (0.15f) : Colours::screenKey, juce::Colours::black);
+                auto k = checkKey.reduced (juce::roundToInt (cap * 0.6f), 0);
+                const int boxSide = juce::roundToInt (cap * 1.6f);
+                auto box = k.removeFromLeft (juce::roundToInt (cap * 1.9f)).withSizeKeepingCentre (boxSide, boxSide).toFloat();
+                g.setColour (checked ? Colours::gold : Colours::caption);
+                g.drawRect (box, juce::jmax (1.0f, cap * 0.12f));
+                if (checked)
+                {
+                    juce::Path tick;
+                    tick.startNewSubPath (box.getRelativePoint (0.22f, 0.52f));
+                    tick.lineTo (box.getRelativePoint (0.43f, 0.74f));
+                    tick.lineTo (box.getRelativePoint (0.8f, 0.28f));
+                    g.strokePath (tick, juce::PathStrokeType (juce::jmax (1.5f, cap * 0.2f)));
+                }
+                k.removeFromLeft (juce::roundToInt (cap * 0.6f));
+                g.setColour (checked ? Colours::text : Colours::caption);
+                g.setFont (wingFontPx (cap * 0.95f));
+                g.drawFittedText (options.checkText, k, juce::Justification::centredLeft, 2, 0.8f);
+            }
+            paintKey (g, okKey.toFloat(), pressed == 2 ? Colours::gold.brighter (0.15f) : Colours::gold, juce::Colours::black);
+            g.setColour (juce::Colours::black);
+            g.setFont (wingFontPx (cap * 1.05f, WingWeight::SemiBold));
+            g.drawFittedText (options.okText, okKey, juce::Justification::centred, 1, 0.8f);
+        }
+
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            const auto p = e.getPosition();
+            pressed = okKey.contains (p) ? 2 : (checkKey.contains (p) ? 1 : 0);
+            repaint();
+        }
+
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            const auto p = e.getPosition();
+            const int was = pressed;
+            pressed = 0;
+            if (was == 1 && checkKey.contains (p))
+                checked = ! checked;
+            repaint();
+            if (was == 2 && okKey.contains (p))
+                closeThen ({});
+        }
+
+        void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override
+        {
+            // The wheel scrolls the text wherever the mouse is over the window.
+            if (e.eventComponent == this)
+                viewport.mouseWheelMove (e.getEventRelativeTo (&viewport), wheel);
+        }
+
+        bool keyPressed (const juce::KeyPress& k) override
+        {
+            if (k == juce::KeyPress::returnKey)
+            {
+                closeThen ({});
+                return true;
+            }
+            const int line = juce::roundToInt (cap * 2.0f), page = juce::jmax (line, viewport.getHeight() - line);
+            const int code = k.getKeyCode();
+            const int delta = code == juce::KeyPress::downKey                                             ? line
+                            : code == juce::KeyPress::upKey                                               ? -line
+                            : code == juce::KeyPress::pageDownKey || code == juce::KeyPress::spaceKey ? page
+                            : code == juce::KeyPress::pageUpKey                                           ? -page
+                                                                                                          : 0;
+            if (delta != 0)
+            {
+                viewport.setViewPosition (0, viewport.getViewPositionY() + delta);
+                return true;
+            }
+            if (code == juce::KeyPress::homeKey || code == juce::KeyPress::endKey)
+            {
+                viewport.setViewPosition (0, code == juce::KeyPress::homeKey ? 0 : body.getHeight());
+                return true;
+            }
+            return Popup::keyPressed (k);
+        }
+
+    private:
+        void onClosing() override
+        {
+            if (options.onClose != nullptr)
+                options.onClose (checked);
+        }
+
+        juce::String title;
+        NoticeOptions options;
+        NoticeText body;
+        juce::Viewport viewport;
+        bool checked;
+        float cap = 12.0f;
+        juce::Rectangle<int> window, titleBar, panel, okKey, checkKey;
+        int pressed = 0;
+    };
 } // namespace
 
 //==============================================================================
@@ -1192,6 +1506,14 @@ void confirm (juce::Component& host, const juce::String& title, const juce::Stri
     if (layer == nullptr)
         return;
     (new MessageWindow (title, text, okText, std::move (onOk), danger, true))->open (*layer);
+}
+
+void notice (juce::Component& host, const juce::String& title, const juce::String& text, NoticeOptions options)
+{
+    auto* layer = options.coverHost ? &host : layerFor (host);
+    if (layer == nullptr)
+        return;
+    (new NoticeWindow (title, text, std::move (options)))->open (*layer);
 }
 
 void warn (juce::Component& host, const juce::String& title, const juce::String& text)
