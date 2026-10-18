@@ -9,21 +9,32 @@ namespace livedaw::ui
 
 void drawLightBar (juce::Graphics& g, juce::Rectangle<float> bar, juce::Colour colour, bool on)
 {
+    // A thin light bar under a frosted window: off it's a dark line; lit it
+    // glows in the strip's colour with a bright core.
     const float radius = bar.getHeight() * 0.5f;
-    g.setColour (on ? colour : Colours::ledOff);
-    g.fillRoundedRectangle (bar, radius);
-    if (on)
+    if (! on)
     {
-        g.setColour (juce::Colours::white.withAlpha (0.25f));
-        g.fillRoundedRectangle (bar.withHeight (bar.getHeight() * 0.4f).reduced (radius, 0.0f), radius * 0.4f);
+        g.setColour (Colours::ledOff);
+        g.fillRoundedRectangle (bar, radius);
+        return;
     }
+    for (int i = 3; i >= 1; --i)
+    {
+        const float spread = bar.getHeight() * 0.45f * (float) i;
+        g.setColour (colour.withAlpha (0.11f));
+        g.fillRoundedRectangle (bar.expanded (spread, spread * 0.8f), radius + spread);
+    }
+    g.setColour (colour);
+    g.fillRoundedRectangle (bar, radius);
+    g.setColour (colour.interpolatedWith (juce::Colours::white, 0.55f));
+    g.fillRoundedRectangle (bar.reduced (bar.getWidth() * 0.1f, bar.getHeight() * 0.32f), radius * 0.5f);
 }
 
 void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const ScribbleInfo& info)
 {
-    // A dark grey LCD (the console's dark rendering) on the black display panel;
-    // SCRIBBLE sets its backlight and SCR CONT the text contrast.
-    g.setColour (juce::Colour (0xff232427).withMultipliedBrightness (juce::jlimit (0.2f, 1.6f, info.backlight)));
+    // The backlit LCD (a deep indigo, as the console's) on the black display
+    // panel; SCRIBBLE sets its backlight and SCR CONT the text contrast.
+    g.setColour (Colours::scribbleLcd.withMultipliedBrightness (juce::jlimit (0.2f, 1.6f, info.backlight)));
     g.fillRect (lcd);
     if (info.number.isEmpty() && info.name.isEmpty())
         return;
@@ -86,6 +97,7 @@ namespace
 FaderStrip::FaderStrip (UiContext& c, LayerSet::Section s) : ctx (c), section (s)
 {
     fader.setSliderStyle (juce::Slider::LinearVertical);
+    fader.getProperties().set ("surfaceFader", true);
     fader.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
     fader.setNormalisableRange (fader::range());
     fader.setDoubleClickReturnValue (true, 0.0);
@@ -104,7 +116,7 @@ FaderStrip::FaderStrip (UiContext& c, LayerSet::Section s) : ctx (c), section (s
     };
     addAndMakeVisible (fader);
 
-    selectKey.ledColour = Colours::select;
+    selectKey.ledColour = Colours::keySelect;
     soloKey.ledColour = Colours::solo;
     muteKey.ledColour = Colours::mute;
     for (auto* k : { &selectKey, &soloKey, &muteKey })
@@ -531,8 +543,11 @@ void FaderStrip::timerCallback()
 
 void FaderStrip::setModuleEdges (bool first, bool last)
 {
+    if (moduleFirst == first && moduleLast == last)
+        return;
     moduleFirst = first;
     moduleLast = last;
+    resized();
     repaint();
 }
 
@@ -540,40 +555,50 @@ void FaderStrip::paint (juce::Graphics& g)
 {
     g.fillAll (Colours::panel);
 
-    // The black display panel and the darker meter panel run across the strips
-    // of a module of four, rounded at its outer edges.
+    // The black display window and the meter panel run across the strips of
+    // a module of four, rounded at its outer edges.
     auto band = [this, &g] (juce::Rectangle<int> rows, int margin, juce::Colour colour)
     {
-        const float left = moduleFirst ? 3.0f : 0.0f, right = (float) getWidth() - (moduleLast ? 3.0f : 0.0f);
+        const float left = moduleFirst ? 4.0f : 0.0f, right = (float) getWidth() - (moduleLast ? 4.0f : 0.0f);
         juce::Path p;
         p.addRoundedRectangle (left, (float) (rows.getY() - margin), right - left, (float) (rows.getHeight() + 2 * margin), 4.0f, 4.0f,
                                moduleFirst, moduleLast, moduleFirst, moduleLast);
         g.setColour (colour);
         g.fillPath (p);
+        // A faint bevel along the window's top edge.
+        const float inset = moduleFirst ? 3.0f : 0.0f;
+        g.setColour (juce::Colours::white.withAlpha (0.07f));
+        g.fillRect (left + inset, (float) (rows.getY() - margin), right - left - inset - (moduleLast ? 3.0f : 0.0f), 1.0f);
     };
-    band (scribbleArea, 4, juce::Colours::black);
-    band (meterArea, 4, juce::Colour (0xff141517));
+    band (scribbleArea, 0, juce::Colours::black);
+    band (meterArea, 4, juce::Colour (0xff0c0d0e));
 
-    // Colour light bar (COLOR LED brightness) and scribble strip.
+    // Colour light bar (COLOR LED brightness) and scribble strip; one LCD
+    // runs across the module, with a fine rule between the strips.
     const juce::Colour colour = strip != nullptr ? stripDisplayColour (*strip)
                                 : (dca >= 0 ? wingColour (shownColour) : (fxp ? kFxColour : Colours::ledOff));
     drawLightBar (g, barArea.toFloat(), colour.withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
                   target.has_value() && shownLight);
     drawScribble (g, lcdArea.toFloat(), target ? scribbleInfo() : ScribbleInfo {});
+    if (! moduleLast)
+    {
+        g.setColour (Colours::scribbleRule.withAlpha (0.55f));
+        g.fillRect ((float) lcdArea.getRight() - 1.0f, (float) lcdArea.getY() + 2.0f, 1.0f, (float) lcdArea.getHeight() - 4.0f);
+    }
 
     // Meter block: DYN LED, two 6-segment columns (input level), GATE LED.
     if (strip != nullptr)
     {
         auto m = meterArea.toFloat();
         const float rowH = m.getHeight() / (float) kMeterRows;
-        const float ledW = juce::jlimit (5.0f, 10.0f, m.getWidth() * 0.14f);
-        const float pairW = ledW * 2.8f;
+        const float ledW = juce::jlimit (5.0f, 10.0f, m.getWidth() * 0.13f);
+        const float pairW = ledW * 2.7f;
         auto row = [&] (int i) { return juce::Rectangle<float> (m.getX(), m.getY() + rowH * (float) i, m.getWidth(), rowH); };
         // SETUP > GENERAL > METERS sets the LED brightness.
         const float bright = uiprefs::brightness (ctx.settings, "meters", 40);
         auto barLed = [&] (int i, bool on, juce::Colour c)
         {
-            auto r = row (i).withSizeKeepingCentre (pairW, juce::jmax (2.0f, rowH * 0.55f));
+            auto r = row (i).withSizeKeepingCentre (pairW, juce::jmax (2.0f, rowH * 0.5f));
             g.setColour (on ? c.withMultipliedBrightness (bright) : Colours::ledOff);
             g.fillRect (r);
         };
@@ -597,32 +622,36 @@ void FaderStrip::paint (juce::Graphics& g)
 
 void FaderStrip::resized()
 {
-    auto b = getLocalBounds().reduced (2, 3);
+    auto b = getLocalBounds().reduced (0, 3);
     const int w = b.getWidth();
-    const int innerW = juce::roundToInt ((float) w * 0.88f);
 
-    // Colour bar above the LCD (about a fifth of its height, half of that apart).
+    // The display window: the thin colour light bar over the LCD, which runs
+    // edge to edge across the module (inset at the module's ends).
     const int lcdH = juce::jlimit (42, 78, juce::roundToInt ((float) w * 0.9f));
-    const int barH = juce::jlimit (4, 8, lcdH / 7);
-    scribbleArea = b.removeFromTop (barH + 4 + lcdH).withSizeKeepingCentre (innerW, barH + 4 + lcdH);
-    barArea = scribbleArea.withHeight (barH);
-    lcdArea = scribbleArea.withTrimmedTop (barH + 4);
-    b.removeFromTop (8);
+    const int barH = juce::jlimit (3, 5, lcdH / 14);
+    const int barRow = barH + 12;
+    scribbleArea = b.removeFromTop (barRow + lcdH + 5);
+    barArea = juce::Rectangle<int> (juce::roundToInt ((float) w * 0.7f), barH).withCentre ({ w / 2, scribbleArea.getY() + barRow / 2 });
+    lcdArea = scribbleArea.withTrimmedTop (barRow).withTrimmedBottom (5)
+                  .withTrimmedLeft (moduleFirst ? 9 : 0).withTrimmedRight (moduleLast ? 9 : 0);
+    b.removeFromTop (juce::jlimit (8, 18, w / 6));
 
-    const int keyH = juce::jlimit (18, 30, juce::roundToInt ((float) w * 0.46f));
-    const int keyW = juce::roundToInt ((float) w * 0.76f);
+    // SELECT, SOLO and MUTE are small keys, about two thirds of the strip wide.
+    b = b.reduced (2, 0);
+    const int keyH = juce::jlimit (18, 28, juce::roundToInt ((float) w * 0.42f));
+    const int keyW = juce::jmin (juce::roundToInt ((float) w * 0.68f), keyH * 3);
     auto key = [&] (SurfaceKey& k)
     {
         k.setBounds (b.removeFromTop (keyH).withSizeKeepingCentre (keyW, keyH));
     };
     key (selectKey);
-    b.removeFromTop (5);
-    key (soloKey);
-    b.removeFromTop (8);
-    meterArea = b.removeFromTop (juce::jlimit (56, 100, juce::roundToInt ((float) keyH * 3.3f)));
-    b.removeFromTop (8);
-    key (muteKey);
     b.removeFromTop (6);
+    key (soloKey);
+    b.removeFromTop (9);
+    meterArea = b.removeFromTop (juce::jlimit (56, 100, juce::roundToInt ((float) keyH * 3.3f)));
+    b.removeFromTop (9);
+    key (muteKey);
+    b.removeFromTop (juce::jlimit (6, 16, w / 8));
 
     showValue = ctx.settings.getBoolValue ("ui.faderValues", false);
     valueArea = showValue ? b.removeFromBottom (14) : juce::Rectangle<int>();
