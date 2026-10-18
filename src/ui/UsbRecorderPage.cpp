@@ -800,7 +800,7 @@ void UsbRecorderPage::layout()
     recReels = f (962, 180, 1170, 303);
     channelKeys = { f (1383, 115, 1456, 170), f (1462, 115, 1535, 170) };
     bitKeys = { f (1383, 184, 1456, 240), f (1462, 184, 1535, 240) };
-    formatKey = f (1180, 115, 1376, 170);
+    formatKey = f (1180, 184, 1376, 240);
     kbpsKey = bitKeys[0].getUnion (bitKeys[1]);
     recPathText = f (1180, 244, 1538, 266);
     recCaption = f (1180, 266, 1540, 306);

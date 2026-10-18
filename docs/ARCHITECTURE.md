@@ -152,7 +152,7 @@ same tables through `ld_model_*` (`livedaw-ffi/src/models.rs`, `src/engine/Model
 |---|---|---|
 | DSP (filters, EQ models, dynamics models, the FX rack's devices, delay) | Rust | `rust/crates/livedaw-dsp` |
 | Realtime engine (WING topology, strips, sends, DCAs, mute groups, FX slots, automix, solo, monitor, output protection, worker pool, deferred frees) | Rust | `rust/crates/livedaw-engine` |
-| Recorder (SPSC rings, WAV / RF64 files, transport, disk reader and writer threads, playlist rendering) and the USB recorder / player (`usb`) | Rust | `rust/crates/livedaw-recorder` |
+| Recorder (SPSC rings, WAV / RF64, AIFF, FLAC and MP3 codecs, transport, disk reader and writer threads, playlist rendering) and the USB recorder / player (`usb`) | Rust | `rust/crates/livedaw-recorder` |
 | Sessions (console state, Show > Scene > Snippet, fades, fader banks, show files, legacy import) | Rust | `rust/crates/livedaw-session` |
 | WING interoperability (parameter tree, mapping, discovery / OSC / native servers, .snap / .show files) | Rust | `rust/crates/livedaw-wing` |
 | C ABI | Rust + C++ header | `rust/crates/livedaw-ffi`, `include/livedaw_engine.h` |
@@ -267,7 +267,8 @@ recorded.
   out with Linear, EqualPower or SCurve curves; a linear crossfade sums to 1),
   overlapping clips summed, track gain and mute; mono files feed both sides of a
   stereo track, stereo files are averaged on a mono one. Recording never loops.
-- **Recording** (`writer.rs`): `record` creates the 32-bit float WAV files (or fails),
+- **Recording** (`writer.rs`): `record` creates the files in the record format
+  (`set_record_format`: 32-bit float WAV by default, `codec::create_writer`; or fails),
   one record ring (4 s, one lane per mono stream) per recording. The writer drains it,
   computes min/max peaks per 256 samples (`getRecordingPeaks`), rewrites the headers
   every 2 s and, once the audio thread has let go (stop, locate, device restart,
@@ -279,6 +280,28 @@ recorded.
   4 GB the header is rewritten in place as RF64. A file whose header is behind its
   data (crash) reads to its end. The reader takes 16/24/32-bit integer and 32-bit
   float, plain, `WAVE_FORMAT_EXTENSIBLE` or RF64.
+- **Codecs** (`codec/`, no dependencies, written from the format specifications):
+  `AudioWriter` / `AudioReader` traits, `create_writer` (by `EncodeFormat`) and
+  `open_reader` (recognizes the format by its contents), used by both recorders'
+  writer threads and by the playlist renderer and the USB player's reader. AIFF
+  (`aiff.rs`: big-endian 16/24-bit, AIFF-C `fl32`; headers rewritten every 2 s like
+  WAV), FLAC (`flac.rs`: 4096-sample blocks, constant / fixed 0-4 / LPC up to order 12
+  with Rice or Rice2 residuals in partitions, stereo decorrelation, verbatim fallback;
+  STREAMINFO says "unknown length" until `finalize` patches the total and the MD5; the
+  decoder checks CRC-16, seeks by SEEKTABLE or by bisecting on frame headers, and
+  measures a stream cut short from its last frames), MP3 (`mp3/`: MPEG-1 Layer III,
+  CBR 128-320 kbit/s at 32 / 44.1 / 48 kHz; polyphase analysis, MDCT, alias
+  butterflies, a spreading masking model, the two nested loops, Huffman coding with
+  the standard tables, mid/side; no bit reservoir; an `Info` frame in the LAME layout
+  carries frames, encoder delay and padding, patched on finalize; the decoder handles
+  any MPEG-1 Layer III stream (reservoir, short / mixed blocks, M/S and intensity),
+  skips the delays (gapless, sample-aligned with what was recorded), indexes frames
+  lazily and restarts 10 frames before a seek target). Tests cross-check with ffmpeg
+  when it is installed (FLAC bit-exact, every Huffman code, LAME / shine files).
+  C ABI `ld_afw_*` / `ld_afr_*` for the C++ side (`src/engine/AudioFileFormat.*`:
+  `AudioFileWriter`, `AudioFileReader`, and `EngineMp3AudioFormat` registered first in
+  the project's `AudioFormatManager`). MP3 encoding costs about 1/50 of a core per
+  mono track.
 - **Health**: `getDropouts` counts ring under/overruns and write errors;
   `getDiskLoad` is the fullest record ring / emptiest playback ring. Offline drivers
   (tests, rendering faster than real time) call `waitForDisk` between blocks.
@@ -292,7 +315,7 @@ recorded.
 `rust/crates/livedaw-recorder/src/usb` (`UsbDeck`, owned by the engine next to the
 multitrack recorder; C ABI `ld_usb_*`, scalars and strings only; C++ facade
 `src/engine/UsbRecorder.*`; screen `src/ui/UsbRecorderPage.*`). The WING's USB
-recorder (`/rec`) and player (`/play`), on the multitrack recorder's rings, WAV files
+recorder (`/rec`) and player (`/play`), on the multitrack recorder's rings, codecs
 and disk-thread design.
 
 - **Engine hooks** (`engine.rs`, "USB deck hooks"): `begin_chunk` / `end_chunk` run
@@ -313,8 +336,8 @@ and disk-thread design.
   queues a `NewFile` event at the ring frame it reached, where the disk thread switches
   files: no sample is lost or doubled. Overruns become gap events (silence). STOP ends
   the session at the frames committed; the disk thread drains it and finalizes the
-  file (16/24-bit PCM, `WavWriter::create_with_format`; a file that got no sample is
-  deleted).
+  file (`RecFormat`: WAV / FLAC / AIFF 16/24-bit or 2-channel MP3 through
+  `codec::create_writer`; a file that got no sample is deleted).
 - **Player:** one ring of `PLAY_RING_FRAMES` (4 lanes). As in the multitrack reader,
   each start, cue, seek or stop is a new epoch: the audio thread stops reading, the
   disk thread resets the ring, opens the clip (the queue resolves its id; a missing or
@@ -329,18 +352,20 @@ and disk-thread design.
   Play, pause, stop and seeks fade in or out over 256 samples; an underrun plays
   silence and waits for the disk.
 - **Queue** (`usb/queue.rs`, behind a mutex shared with the disk thread): a folder's
-  WAV files or a playlist of entries with stable ids, SKIP and STOP flags and REPEAT;
+  audio files (WAV, FLAC, AIFF, MP3) or a playlist of entries with stable ids, SKIP and STOP flags and REPEAT;
   playlists are extended M3U files (`#LIVEDAW:` lines for the flags).
 - **Facade and screen:** `UsbRecorder` adds the storage folder (default
   `Documents/Live DAW/USB`), the browser listing, FOLDER / RENAME / DELETE, file names
-  `R_YYYYMMDD-HHMMSS.wav` in the REC PATH and the settings (app settings `usb.*`,
-  including the RECORDER taps and USB HOST SPEED). The page draws figs. 78 / 79 itself
-  (keys, seven-segment times, reels, meters) and is opened from the status bar's USB
+  `R_YYYYMMDD-HHMMSS.<ext>` in the REC PATH and the settings (app settings `usb.*`,
+  including the RECORDER taps, USB HOST SPEED and the FORMAT `usb.recFormat` /
+  `usb.recKbps`). The page draws figs. 78 / 79 itself (keys, seven-segment times,
+  reels, meters; FORMAT and BIT RATE open WING lists) and is opened from the status bar's USB
   icon or by holding the monitoring VIEW key; the CC section's 2-TRACK TRANSP layer and
   the USB PLAY/REC custom-control functions drive the same facade.
 - **Tests:** `livedaw-recorder/tests/usb.rs` (bit-exact 2/4-channel 16/24-bit
-  recordings, pause and NEW FILE, playlists with SKIP / STOP / REPEAT, seeks, rate
-  conversion, missing files; a counting allocator checks that the audio-thread calls
+  recordings in WAV, FLAC and AIFF and MP3 recordings, each played back; pause and NEW
+  FILE in every format, dropping the deck mid-recording, playlists with SKIP / STOP /
+  REPEAT, seeks, rate conversion, missing files; a counting allocator checks that the audio-thread calls
   never allocate), `livedaw-engine/tests/usb.rs` (RECORDER taps and USB PLAYER sources
   end to end), `tests/UsbRecorderTests.cpp` (the facade; JUCE reads the files back).
 
@@ -503,7 +528,10 @@ blinking LEDs.
   `clipmath` does the edit arithmetic (split, trims, moves, range clearing,
   crossfades, fade curves), `TimeGrid` the snapping and time formats,
   `AudioFiles` the import (any JUCE format incl. FLAC and MP3, resampled with a
-  windowed sinc to the project's rate, 32-bit float WAV) and the track export.
+  windowed sinc to the project's rate, 32-bit float WAV) and the track export (any
+  `AudioFileFormat`: WAV, AIFF, FLAC, MP3, through `AudioFileWriter`). The session's
+  record format (`daw.recordFormat`, 32-bit float WAV by default; the RECORDER
+  header's format key and the editor's FILE menu) names the takes' extension.
 - **`daw::Session`** ties the project to the engine's `Recorder`: it rebuilds the
   playlist whenever the project changes (throttled during drags; muted, solo-excluded
   tracks muted, muted clips and missing files left out), follows the loop, records the

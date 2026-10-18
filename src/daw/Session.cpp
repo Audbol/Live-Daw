@@ -468,8 +468,13 @@ juce::int64 Session::getFreeDiskBytes() const
 double Session::getRecordSecondsLeft() const
 {
     const int channels = juce::jmax (1, getNumArmedChannels());
-    const double bytesPerSecond = (double) channels * recorder.getSampleRate() * 4.0; // 32-bit float
-    return (double) getFreeDiskBytes() / bytesPerSecond;
+    // Bytes per second and channel in the record format (FLAC: a typical 60 % of PCM).
+    double perChannel = recorder.getSampleRate() * recordFormat.bits / 8.0;
+    if (recordFormat.type == AudioFileFormat::Type::Flac)
+        perChannel *= 0.6;
+    else if (recordFormat.type == AudioFileFormat::Type::Mp3)
+        perChannel = recordFormat.kbps * 125.0 / 2.0; // a stereo stream's bit rate
+    return (double) getFreeDiskBytes() / juce::jmax (1.0, (double) channels * perChannel);
 }
 
 //==============================================================================
