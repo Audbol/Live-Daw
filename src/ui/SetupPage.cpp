@@ -422,7 +422,17 @@ namespace
             options.addRow ("MOUSE DISABLES TOUCH", OnKey::fixed (false), 1.3f, false);
             options.addRow ("MOUSE SPEED", std::make_unique<juce::Slider> (juce::Slider::LinearHorizontal, juce::Slider::NoTextBox), 5.0f, false);
             options.newBox();
-            options.addRow ("USB HOST SPEED", fixedChoice ({ "FS", "HS" }, 0, { Dark::orange, Dark::choice }), 3.2f, false, true);
+            // USB HOST SPEED: FS records 2 channels at 16 bit, HS 4 tracks at 24 bit (the USB recorder).
+            options.addRow ("USB HOST SPEED",
+                            std::make_unique<ChoiceKeys> (juce::StringArray { "FS", "HS" },
+                                                          [this] { return ctx.engine.getUsbRecorder().isFullSpeedOnly() ? 0 : 1; },
+                                                          [this] (int i)
+                                                          {
+                                                              ctx.engine.getUsbRecorder().setFullSpeedOnly (i == 0);
+                                                              ctx.engine.getUsbRecorder().saveSettings (ctx.settings);
+                                                          },
+                                                          std::vector<juce::Colour> { Dark::orange, Dark::choice }),
+                            3.2f, true, true);
             addAndMakeVisible (options);
 
             startTimerHz (1);

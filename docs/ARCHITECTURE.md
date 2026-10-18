@@ -7,7 +7,8 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
 ## Signal flow
 
 ```
- hardware inputs   recorder playback channels 1-64 (PLAY n = input 0x10000 + n-1)
+ hardware inputs   recorder playback channels 1-64 (PLAY n = input 0x10000 + n-1),
+       │           USB PLAYER 1-4 (input 0x20000 + n-1)
        │                 │
        ▼                 ▼   sources: gain · mute · Ø · MONO / STEREO / MID-SIDE pairs
        │                 │
@@ -34,6 +35,7 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
     solo bus + SOURCE (Main 1 by default; SRC MIX while soloing) ─► level (+ MON DCAs)
     · DIM · mute · talk MON DIM · MONO / SWAP (on the selected path) ─► its outputs
  every strip ─► its hardware outputs ─► output protection (safety clip)
+ RECORDER 1-4 (the USB recorder) tap strip outputs or sources after stage 6
 
  bus / main / matrix strip:
    summed sends ─ INPUT trim · balance ─ DYN ─ INS 1 ─ PFL (= tap) ─ fader (+ DCAs,
@@ -131,13 +133,13 @@ same tables through `ld_model_*` (`livedaw-ffi/src/models.rs`, `src/engine/Model
 |---|---|---|
 | DSP (filters, EQ models, dynamics models, the FX rack's devices, delay) | Rust | `rust/crates/livedaw-dsp` |
 | Realtime engine (WING topology, strips, sends, DCAs, mute groups, FX slots, automix, solo, monitor, output protection, worker pool, deferred frees) | Rust | `rust/crates/livedaw-engine` |
-| Recorder (SPSC rings, WAV / RF64 files, transport, disk reader and writer threads, playlist rendering) | Rust | `rust/crates/livedaw-recorder` |
+| Recorder (SPSC rings, WAV / RF64 files, transport, disk reader and writer threads, playlist rendering) and the USB recorder / player (`usb`) | Rust | `rust/crates/livedaw-recorder` |
 | Sessions (console state, Show > Scene > Snippet, fades, fader banks, show files, legacy import) | Rust | `rust/crates/livedaw-session` |
 | WING interoperability (parameter tree, mapping, discovery / OSC / native servers, .snap / .show files) | Rust | `rust/crates/livedaw-wing` |
 | C ABI | Rust + C++ header | `rust/crates/livedaw-ffi`, `include/livedaw_engine.h` |
 | Audio devices (ASIO, CoreAudio, ALSA, JACK, WASAPI), plugin hosting (VST3/AU/LV2), UI | C++ / JUCE | `src/` |
 
-`src/engine/MixerEngine`, `Strip`, `FxSlots`, `Models`, `Show`, `Recorder` and `LayerSet` are thin
+`src/engine/MixerEngine`, `Strip`, `FxSlots`, `Models`, `Show`, `Recorder`, `UsbRecorder` and `LayerSet` are thin
 C++ facades over the Rust code. `Strip` and `FxSlots` are stateless views: names,
 colours and slot state live in the engine, and `MixerEngine::syncStrips()` rebuilds the
 views after a show load changes the console from Rust.
@@ -190,6 +192,7 @@ views after a show load changes the console from Rust.
 | DSP workers | Realtime-priority JUCE threads lent to the Rust pool (`ld_engine_run_worker`). They process strips in parallel with the audio thread. |
 | Disk reader | Rust thread (started on the recorder's first use). Renders the playlist ahead of the play position into the playback rings. |
 | Disk writer | Rust thread. Writes the record rings to WAV files, computes the recording peaks, finalizes the takes. |
+| USB disk | Rust thread (the USB recorder / player, started on its first use). Primes and tops up the player's ring, writes the USB recordings. |
 
 ### Parameters
 The UI writes the shared atomics and the audio thread snapshots them once per block.
@@ -264,6 +267,63 @@ recorded.
   "Virtual (no hardware)" runs the callback from a clocked thread with 64 silent
   inputs and 64 outputs. `Main.cpp` registers it after the platform types, so it is
   only used when chosen (SETUP > AUDIO or the saved device settings).
+
+## USB recorder / player
+
+`rust/crates/livedaw-recorder/src/usb` (`UsbDeck`, owned by the engine next to the
+multitrack recorder; C ABI `ld_usb_*`, scalars and strings only; C++ facade
+`src/engine/UsbRecorder.*`; screen `src/ui/UsbRecorderPage.*`). The WING's USB
+recorder (`/rec`) and player (`/play`), on the multitrack recorder's rings, WAV files
+and disk-thread design.
+
+- **Engine hooks** (`engine.rs`, "USB deck hooks"): `begin_chunk` / `end_chunk` run
+  next to the multitrack recorder's in each chunk. The four player buffers are sources
+  after the playback channels (`SourceDsp`, table indices `USB_PLAYER_SOURCE_INDEX`..,
+  input `USB_PLAYER_SOURCE_BASE + n`, resolved by `source_ptr`), so channels patch and
+  process them like any input. After stage 6, `record_usb` writes the four RECORDER
+  ports: each holds a `RecTap` (an `AtomicI32` code: off, a source's input index, or a
+  strip by kind and number and its channel), read as the strip's hardware output
+  carries it (input / aux channels their PFL direct out, the others after fader and
+  pan). The ports are metered while not recording. ROUTING shows them as the output
+  group RECORDER; a tap leaves the strip's own outputs alone.
+- **Recorder** (audio thread `usb/audio.rs`, disk thread `usb/disk.rs`): REC creates
+  the first file on the message thread (an error is reported at once) and hands a
+  `RecSession` (a 2- or 4-lane ring of 4 s, an event queue, the files to come) to the
+  disk thread and, through an `AtomicPtr`, to the audio thread. PAUSE stops writing
+  (the file stays open); NEW FILE creates the next file first, then the audio thread
+  queues a `NewFile` event at the ring frame it reached, where the disk thread switches
+  files: no sample is lost or doubled. Overruns become gap events (silence). STOP ends
+  the session at the frames committed; the disk thread drains it and finalizes the
+  file (16/24-bit PCM, `WavWriter::create_with_format`; a file that got no sample is
+  deleted).
+- **Player:** one ring of `PLAY_RING_FRAMES` (4 lanes). As in the multitrack reader,
+  each start, cue, seek or stop is a new epoch: the audio thread stops reading, the
+  disk thread resets the ring, opens the clip (the queue resolves its id; a missing or
+  unreadable file reports an error), primes 0.2 s and publishes `ready(epoch)`. The disk
+  thread keeps the ring full; at the end of a clip it waits until 0.5 s is left, asks
+  the queue what follows (`Queue::after`: the next clip not skipped, REPEAT wrapping,
+  STOP after a clip, one file at a time for a folder) and pushes a `Boundary` with the
+  ring frame where it starts (or where playback stops, with the clip to cue), so clips
+  follow without a gap and late playlist edits count. Positions and lengths are in
+  engine frames; a file at another rate is resampled (`usb/resample.rs`: 64-tap
+  windowed sinc with interpolated phases, positions exact in integers) and flagged.
+  Play, pause, stop and seeks fade in or out over 256 samples; an underrun plays
+  silence and waits for the disk.
+- **Queue** (`usb/queue.rs`, behind a mutex shared with the disk thread): a folder's
+  WAV files or a playlist of entries with stable ids, SKIP and STOP flags and REPEAT;
+  playlists are extended M3U files (`#LIVEDAW:` lines for the flags).
+- **Facade and screen:** `UsbRecorder` adds the storage folder (default
+  `Documents/Live DAW/USB`), the browser listing, FOLDER / RENAME / DELETE, file names
+  `R_YYYYMMDD-HHMMSS.wav` in the REC PATH and the settings (app settings `usb.*`,
+  including the RECORDER taps and USB HOST SPEED). The page draws figs. 78 / 79 itself
+  (keys, seven-segment times, reels, meters) and is opened from the status bar's USB
+  icon or by holding the monitoring VIEW key; the CC section's 2-TRACK TRANSP layer and
+  the USB PLAY/REC custom-control functions drive the same facade.
+- **Tests:** `livedaw-recorder/tests/usb.rs` (bit-exact 2/4-channel 16/24-bit
+  recordings, pause and NEW FILE, playlists with SKIP / STOP / REPEAT, seeks, rate
+  conversion, missing files; a counting allocator checks that the audio-thread calls
+  never allocate), `livedaw-engine/tests/usb.rs` (RECORDER taps and USB PLAYER sources
+  end to end), `tests/UsbRecorderTests.cpp` (the facade; JUCE reads the files back).
 
 ## Idle channels
 
@@ -514,8 +574,8 @@ on a console.
 - Custom controls (`CustomControlsPage.*`; stored with the show by
   `livedaw-session/custom.rs`) cover the phase-1 functions: faders, pan, DCAs, bus
   sends, FX parameters, monitoring, mutes / solos, mute groups, sends on fader, pages,
-  show control, scene recall and single actions; DAW, MIDI, spill, USB / SD and GPIO
-  functions are listed disabled.
+  show control, scene recall and single actions, and the USB PLAY/REC functions; DAW,
+  MIDI, spill, SD and GPIO functions are listed disabled.
 - Not yet: the monitor paths' DIRECT IN, EQ, INVERT, DELAY and limiter, BAND SOLO
   boost, SOURCE SOLO, source tags and remote preamp control (drawn disabled), and MIDI
   remote control (WING network remote control: see above).

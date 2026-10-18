@@ -74,6 +74,29 @@ namespace
         g.fillPath (beam);
     }
 
+    void repeatArrows (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c)
+    {
+        const float d = juce::jmin (r.getWidth(), r.getHeight()) * 0.78f;
+        const auto centre = r.getCentre();
+        const float rad = d * 0.5f, t = juce::jmax (1.2f, d * 0.085f);
+        g.setColour (c);
+        for (int k = 0; k < 2; ++k)
+        {
+            const float a0 = juce::MathConstants<float>::pi * ((float) k + 0.12f), a1 = a0 + juce::MathConstants<float>::pi * 0.72f;
+            juce::Path arc;
+            arc.addCentredArc (centre.x, centre.y, rad, rad, 0.0f, a0, a1, true);
+            g.strokePath (arc, juce::PathStrokeType (t));
+            // The arrow head at the end of the arc, pointing along it.
+            const juce::Point<float> tip (centre.x + rad * std::sin (a1), centre.y - rad * std::cos (a1));
+            const juce::Point<float> along (std::cos (a1), std::sin (a1));
+            const juce::Point<float> out (std::sin (a1), -std::cos (a1));
+            const float a = d * 0.22f;
+            juce::Path head;
+            head.addTriangle (tip + along * a * 0.9f, tip + out * a * 0.6f, tip - out * a * 0.6f);
+            g.fillPath (head);
+        }
+    }
+
     void circlePlus (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c)
     {
         const float d = juce::jmin (r.getWidth(), r.getHeight()) * 0.8f;
@@ -137,10 +160,10 @@ namespace
     }
 
     /** A seven-segment readout (the WING's red time). */
-    void sevenSegment (juce::Graphics& g, juce::Rectangle<float> area, const juce::String& text, juce::Colour on, juce::Justification just)
+    float sevenSegment (juce::Graphics& g, juce::Rectangle<float> area, const juce::String& text, juce::Colour on, juce::Justification just)
     {
         static const int masks[] = { 0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f };
-        const float h = area.getHeight(), w = h * 0.5f, gap = h * 0.16f, colonW = h * 0.2f, t = juce::jmax (1.5f, h * 0.11f);
+        const float h = area.getHeight(), w = h * 0.5f, gap = h * 0.16f, colonW = h * 0.2f, t = juce::jmax (1.5f, h * 0.095f);
         float total = 0.0f;
         for (auto ch : text)
             total += (ch == ':' ? colonW : w) + gap;
@@ -183,6 +206,7 @@ namespace
             g.fillPath (p, slant);
             x += w + gap;
         }
+        return x - gap;
     }
 
     /** Two tape reels with the tape between them; `angle` turns the spokes. */
@@ -218,43 +242,62 @@ namespace
         g.fillEllipse (juce::Rectangle<float> (roller * 0.8f, roller * 0.8f).withCentre ({ cx2 - d * 0.2f, by }));
     }
 
+    /** The console's meter scale: -60, -48, -36, -24, -12, -6, 0 dB evenly spaced (0..1). */
+    float meterPos (float db)
+    {
+        static constexpr float marks[] = { -60.0f, -48.0f, -36.0f, -24.0f, -12.0f, -6.0f, 0.0f };
+        if (db <= marks[0])
+            return 0.0f;
+        for (int i = 1; i < 7; ++i)
+            if (db <= marks[i])
+                return ((float) (i - 1) + (db - marks[i - 1]) / (marks[i] - marks[i - 1])) / 6.0f;
+        return 1.0f;
+    }
+
     /** The meter bank: CLIP on top, a scale, one LED bar per channel. */
     void meterBank (juce::Graphics& g, juce::Rectangle<float> area, const std::array<float, 4>& levels, int channels)
     {
         g.setColour (juce::Colours::black);
         g.fillRect (area);
-        auto r = area.reduced (area.getWidth() * 0.04f, area.getHeight() * 0.03f);
-        const float capPx = juce::jmax (6.0f, r.getHeight() * 0.06f);
+        auto r = area.reduced (area.getWidth() * 0.05f, area.getHeight() * 0.04f);
+        const float capPx = juce::jmax (6.0f, r.getHeight() * 0.055f);
         g.setColour (Colours::textDim);
         g.setFont (font (capPx));
-        auto top = r.removeFromTop (capPx * 1.7f);
+        auto top = r.removeFromTop (capPx * 1.6f);
         g.drawText ("CLIP", top.withWidth (r.getWidth() * 0.4f), juce::Justification::centredLeft, false);
-        auto scale = r.removeFromLeft (r.getWidth() * 0.26f);
-        constexpr int kSegments = 16;
+        auto scale = r.removeFromLeft (r.getWidth() * 0.22f);
+        // The CLIP row, then 18 segments (3 per scale step).
+        constexpr int kSegments = 18;
+        const float clipH = r.getHeight() / (float) (kSegments + 2);
+        auto clipRow = r.removeFromTop (clipH * 1.4f);
         const float segH = r.getHeight() / (float) kSegments;
         const float marks[] = { 0.0f, -6.0f, -12.0f, -24.0f, -36.0f, -48.0f };
-        g.setFont (font (juce::jmax (5.0f, segH * 0.75f)));
+        g.setFont (font (juce::jmax (5.0f, segH * 1.1f)));
         for (float db : marks)
         {
-            const float y = r.getY() + (-db / 60.0f) * r.getHeight();
-            g.drawText (juce::String ((int) db), scale.withY (y - segH * 0.5f).withHeight (segH).reduced (1.0f, 0.0f), juce::Justification::centredRight,
+            const float y = r.getBottom() - meterPos (db) * r.getHeight();
+            g.drawText (juce::String ((int) db), scale.withY (y - segH).withHeight (segH * 2.0f).reduced (1.0f, 0.0f), juce::Justification::centredRight,
                         false);
         }
         const int n = juce::jlimit (1, 4, channels);
         const float barW = r.getWidth() / 4.0f;
         auto bars = r.withSizeKeepingCentre (barW * (float) n, r.getHeight());
+        auto clips = clipRow.withSizeKeepingCentre (barW * (float) n, clipRow.getHeight());
         for (int ch = 0; ch < n; ++ch)
         {
-            auto bar = bars.removeFromLeft (barW).reduced (barW * 0.14f, 0.0f);
-            for (int s = 0; s < kSegments; ++s)
+            auto bar = bars.removeFromLeft (barW).reduced (barW * 0.1f, 0.0f);
+            auto clipLed = clips.removeFromLeft (barW).reduced (barW * 0.1f, clipRow.getHeight() * 0.22f);
+            const float pos = meterPos (levels[(size_t) ch]);
+            const bool clipped = levels[(size_t) ch] >= -0.1f;
+            g.setColour (clipped ? Colours::meterRed : Colours::meterRed.withAlpha (0.15f));
+            g.fillRect (clipLed);
+            for (int seg = 0; seg < kSegments; ++seg)
             {
-                // Segment s from the bottom covers -60 + s * 60/16 dB.
-                const float lo = -60.0f + (float) s * 60.0f / kSegments;
-                auto seg = juce::Rectangle<float> (bar.getX(), bar.getBottom() - (float) (s + 1) * segH, bar.getWidth(), segH).reduced (0.0f, segH * 0.14f);
-                const bool lit = levels[(size_t) ch] > lo + 0.01f && levels[(size_t) ch] > -59.0f;
-                const auto colour = s == kSegments - 1 ? Colours::meterRed : (s >= kSegments - 3 ? Colours::meterYellow : Colours::meterGreen);
-                g.setColour (lit ? colour : colour.withAlpha (0.13f));
-                g.fillRect (seg);
+                auto box = juce::Rectangle<float> (bar.getX(), bar.getBottom() - (float) (seg + 1) * segH, bar.getWidth(), segH).reduced (0.0f, segH * 0.16f);
+                const bool lit = levels[(size_t) ch] > -59.5f && pos > ((float) seg + 0.5f) / (float) kSegments;
+                const auto colour = seg >= kSegments - 3 ? Colours::meterYellow : Colours::meterGreen;
+                g.setColour (lit ? colour : colour.withAlpha (0.12f));
+                g.fillRect (box);
             }
         }
     }
@@ -275,7 +318,6 @@ namespace
 UsbRecorderPage::UsbRecorderPage (UiContext& c) : ctx (c)
 {
     usb().loadSettings (ctx.settings);
-    usb().setFullSpeedOnly (false);
     reload();
     startTimerHz (20);
 }
@@ -970,7 +1012,7 @@ void UsbRecorderPage::paintToolbar (juce::Graphics& g)
     tool (1, songs, musicNotes, true, playlistView || u.isPlaylistOpen(), playlistView ? Dark::choice : Dark::choice.withAlpha (0.55f));
     if (playlistView)
     {
-        tool (2, "REPEAT", shared (Icon::Loop), enabledKey (2), u.getRepeat(), Colours::gold);
+        tool (2, "REPEAT", repeatArrows, enabledKey (2), u.getRepeat(), Colours::gold);
         tool (3, "REMOVE", shared (Icon::ClearCircle), enabledKey (3));
         const auto* row = selectedRow();
         tool (4, "SKIP", shared (Icon::Skip), enabledKey (4), row != nullptr && row->skip, flagYellow, flagYellow);
@@ -1065,16 +1107,17 @@ void UsbRecorderPage::paintList (juce::Graphics& g)
         g.drawText (row.modified.formatted ("%H:%M:%S"), date.withTrimmedBottom (date.getHeight() / 5), juce::Justification::topRight, false);
         if (row.kind != (int) UsbRecorder::ItemKind::Folder)
         {
-            auto c = right.withTrimmedRight ((int) (sh * 0.008f)).removeFromRight ((int) (sh * 0.07f)).toFloat();
-            c = c.withHeight ((float) inner.getHeight() * 0.32f).withY ((float) inner.getY() + (float) inner.getHeight() * 0.1f);
+            auto c = right.removeFromRight ((int) (sh * 0.081f)).withTrimmedRight ((int) (sh * 0.006f)).toFloat();
+            c = c.withHeight ((float) inner.getHeight() * 0.36f).withY ((float) inner.getY() + (float) inner.getHeight() * 0.08f);
             chip (g, c, row.kind == (int) UsbRecorder::ItemKind::Playlist ? "M3U" : "WAV",
                   row.kind == (int) UsbRecorder::ItemKind::Playlist ? listChip : wavChip, juce::Colours::black);
         }
-        // SKIP / STOP flags (playlist).
+        // SKIP / STOP flags (playlist), left of the chip.
+        const int flag = juce::jmin (right.getHeight() * 6 / 10, right.getWidth() / 2);
         if (row.stop)
-            stopCircle (g, right.removeFromLeft (right.getHeight()).toFloat().reduced ((float) right.getHeight() * 0.2f), flagYellow);
+            stopCircle (g, right.removeFromRight (flag).toFloat().withSizeKeepingCentre ((float) flag, (float) flag).reduced ((float) flag * 0.08f), flagYellow);
         if (row.skip)
-            drawIcon (g, Icon::Skip, right.removeFromLeft (right.getHeight()).toFloat().reduced ((float) right.getHeight() * 0.22f), flagYellow);
+            drawIcon (g, Icon::Skip, right.removeFromRight (flag).toFloat().withSizeKeepingCentre ((float) flag, (float) flag).reduced ((float) flag * 0.14f), flagYellow);
         g.setColour (row.skip ? Colours::textDim : Colours::text);
         g.setFont (font (sh * 0.028f));
         g.drawFittedText (displayName (row.file), t, juce::Justification::centredLeft, 1, 0.75f);
@@ -1222,6 +1265,13 @@ void UsbRecorderPage::paintPlayer (juce::Graphics& g)
         if (file == juce::File())
             if (const auto* row = selectedRow(); row != nullptr && row->kind == (int) UsbRecorder::ItemKind::Wav)
                 file = row->file;
+        if (file == juce::File())
+            for (const auto& e : u.getQueue())
+                if (! e.skip)
+                {
+                    file = e.file;
+                    break;
+                }
         if (file != juce::File() && UsbRecorder::readWavInfo (file, info))
         {
             known = true;
@@ -1253,11 +1303,13 @@ void UsbRecorderPage::paintPlayer (juce::Graphics& g)
     top.removeFromLeft (top.getHeight() * 0.2f);
     const auto pos = u.getPosition();
     const bool active = state == UsbRecorder::PlayState::Playing || state == UsbRecorder::PlayState::Paused;
-    sevenSegment (g, top.reduced (0.0f, top.getHeight() * 0.06f), timeText (pos, u.getSampleRate()), active ? timeRed : timeRed.withAlpha (0.45f),
-                  juce::Justification::left);
-    auto rest = t.withTrimmedLeft (light.getRight() - t.getX() + top.getHeight() * 0.2f).reduced (0.0f, t.getHeight() * 0.04f);
-    sevenSegment (g, rest.withWidth (rest.getWidth() * 0.62f), "-" + timeText (juce::jmax<int64_t> (0, length - pos), u.getSampleRate()),
-                  active ? timeRed : timeRed.withAlpha (0.45f), juce::Justification::left);
+    // The time, then the time left under its right end, smaller (fig. 78).
+    const auto digits = top.withHeight (top.getHeight() * 0.74f).withY (top.getY() + top.getHeight() * 0.13f);
+    const float end = sevenSegment (g, digits, timeText (pos, u.getSampleRate()), active ? timeRed : timeRed.withAlpha (0.45f), juce::Justification::left);
+    const float restH = digits.getHeight() * 0.52f;
+    auto rest = juce::Rectangle<float> (digits.getX(), digits.getBottom() + restH * 0.25f, end - digits.getX(), restH);
+    sevenSegment (g, rest, "-" + timeText (juce::jmax<int64_t> (0, length - pos), u.getSampleRate()), active ? timeRed : timeRed.withAlpha (0.45f),
+                  juce::Justification::right);
     reels (g, playReels.toFloat(), reelAngle[1], state == UsbRecorder::PlayState::Playing);
 
     // The format chips: WAV | 4-CH over 48K | 24 bit (the rate in orange when resampled).
@@ -1277,8 +1329,7 @@ void UsbRecorderPage::paintPlayer (juce::Graphics& g)
     // PLAY, PAUSE, STOP, < >.
     g.setColour (panelGrey);
     g.fillRect (playKeys);
-    paintKey (g, playKeyAreas[0], "PLAY", [] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c) { drawIcon (gr, Icon::Play, r, c); }, true,
-              state == UsbRecorder::PlayState::Playing, playGreen);
+    paintKey (g, playKeyAreas[0], "PLAY", [] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c) { drawIcon (gr, Icon::Play, r, c); }, true);
     paintKey (g, playKeyAreas[1], "PAUSE", [] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c) { drawIcon (gr, Icon::Pause, r, c); },
               active, state == UsbRecorder::PlayState::Paused, Colours::gold);
     paintKey (g, playKeyAreas[2], "STOP", [] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c) { drawIcon (gr, Icon::Stop, r, c); }, true);

@@ -24,6 +24,7 @@ namespace
     constexpr const char* kChannelsKey = "usb.recChannels";
     constexpr const char* kBitsKey = "usb.recBits";
     constexpr const char* kTapKey = "usb.tap";
+    constexpr const char* kFullSpeedKey = "usb.hostSpeedFs";
 
     juce::Result failed (ld::LdString* error, const char* fallback)
     {
@@ -447,6 +448,7 @@ void UsbRecorder::loadSettings (juce::PropertiesFile& settings)
     setBrowserFolder (browse.isNotEmpty() && juce::File::isAbsolutePath (browse) && juce::File (browse).isDirectory() ? juce::File (browse) : storage);
     setRecChannels (settings.getIntValue (kChannelsKey, 2));
     setRecBits (settings.getIntValue (kBitsKey, 24));
+    fullSpeed = settings.getBoolValue (kFullSpeedKey, false);
     for (int port = 0; port < kNumChannels; ++port)
     {
         const auto key = kTapKey + juce::String (port + 1);
@@ -462,6 +464,7 @@ void UsbRecorder::saveSettings (juce::PropertiesFile& settings) const
     settings.setValue (kBrowserKey, browserFolder.getFullPathName());
     settings.setValue (kChannelsKey, recChannels);
     settings.setValue (kBitsKey, recBits);
+    settings.setValue (kFullSpeedKey, fullSpeed);
     for (int port = 0; port < kNumChannels; ++port)
         settings.setValue (kTapKey + juce::String (port + 1), ld::ld_usb_rec_tap (engine, port));
 }

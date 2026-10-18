@@ -412,3 +412,22 @@ fn missing_files_and_empty_queues() {
     assert_eq!(d.current_entry(), id);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn the_clip_cued_keeps_its_info_when_the_queue_changes() {
+    let dir = temp_dir("info");
+    let a = clip(&dir, "a.wav", 1, 2, 40000, 48000);
+    let d = deck();
+    d.queue().set_folder(&dir);
+    let id = d.queue().entries()[0].id;
+    d.load(id, 0, true);
+    play_chunks(&d, 4, 0);
+    d.stop();
+    play_chunks(&d, 2, 0);
+    d.queue().new_playlist();
+    d.queue().add(&a);
+    assert_eq!(d.current_entry(), id);
+    assert!(d.file_info(id).is_some(), "still known");
+    assert_eq!(d.length(), 40000);
+    let _ = std::fs::remove_dir_all(dir);
+}
