@@ -117,7 +117,7 @@ ResponseGraph::RtaLayout ResponseGraph::rtaLayout() const
     }
     else
     {
-        // OFF, 1/4, 1/3, 1/2 (a strip under the curve), OVL/3, OVL (over it).
+        // OFF, 1/4, 1/3, 1/2 (a strip over the curve, under the ruler), OVL/3, OVL (over it).
         static const float fractions[] = { 0.0f, 0.25f, 1.0f / 3.0f, 0.5f, 1.0f / 3.0f, 1.0f };
         const int d = juce::jlimit (0, 5, display);
         l.fraction = fractions[d];
@@ -217,7 +217,7 @@ juce::Rectangle<float> ResponseGraph::curvePlot() const
     auto p = plot();
     if (rtaShown)
         if (const auto l = rtaLayout(); l.view >= 0 && l.split)
-            p.removeFromBottom (p.getHeight() * l.fraction);
+            p.removeFromTop (p.getHeight() * l.fraction); // the RTA's strip under the ruler [D10]
     return p;
 }
 
@@ -310,7 +310,9 @@ juce::Rectangle<float> ResponseGraph::plot() const
     {
         // The frequencies under the plot, the band / LC / HC names over it [D10, I14].
         r.removeFromBottom (juce::jmax (15.0f, wingPx (22.0f)));
-        if (block == Filter || ! bands.empty())
+        // (Under an RTA strip the band names go inside the curve's area.)
+        const auto l = rtaLayout();
+        if ((block == Filter || ! bands.empty()) && ! (rtaShown && l.view >= 0 && l.split))
             r.removeFromTop (juce::jmax (18.0f, wingPx (30.0f)));
     }
     return r;
@@ -367,6 +369,7 @@ void ResponseGraph::paint (juce::Graphics& g)
 
     // Grid: a line for every 10, 20 ... 90 Hz, 100, 200 ... and four level
     // divisions, all in the same dark grey.
+    const auto cp = curvePlot();
     g.setColour (gridColour);
     for (float decade : { 10.0f, 100.0f, 1000.0f, 10000.0f })
         for (int m = 1; m <= 9; ++m)
@@ -374,9 +377,8 @@ void ResponseGraph::paint (juce::Graphics& g)
             const float f = decade * (float) m;
             if (f < 20.0f || f > 20000.0f)
                 continue;
-            g.drawVerticalLine (juce::roundToInt (xForFreq (f)), p.getY(), p.getBottom());
+            g.drawVerticalLine (juce::roundToInt (xForFreq (f)), cp.getY(), p.getBottom());
         }
-    const auto cp = curvePlot();
     for (int i = 0; i <= 4; ++i)
         g.drawHorizontalLine (juce::roundToInt (cp.getY() + (cp.getHeight() - 1.0f) * (float) i / 4.0f), cp.getX(), cp.getRight());
 
@@ -390,7 +392,7 @@ void ResponseGraph::paint (juce::Graphics& g)
 
     if (showLabels())
     {
-        g.setFont (wingFont (TypeScale::meterScale * 1.25f));
+        g.setFont (wingFont (TypeScale::meterScale));
         g.setColour (labelColour);
         for (float f : { 20.0f, 40.0f, 60.0f, 100.0f, 200.0f, 300.0f, 400.0f, 600.0f, 1000.0f, 2000.0f, 3000.0f, 4000.0f, 6000.0f, 10000.0f, 20000.0f })
         {
@@ -412,11 +414,11 @@ void ResponseGraph::paint (juce::Graphics& g)
     juce::Rectangle<float> rtaArea;
     if (rtaShown && layout.view >= 0)
     {
-        rtaArea = layout.split ? p.withTop (cp.getBottom() + 1.0f) : p.withTrimmedTop (p.getHeight() * (1.0f - layout.fraction));
+        rtaArea = layout.split ? p.withBottom (cp.getY() - 1.0f) : p.withTrimmedTop (p.getHeight() * (1.0f - layout.fraction));
         if (layout.split)
         {
             g.setColour (gridColour);
-            g.drawHorizontalLine (juce::roundToInt (cp.getBottom()), p.getX(), p.getRight());
+            g.drawHorizontalLine (juce::roundToInt (cp.getY()), p.getX(), p.getRight());
         }
     }
 
@@ -463,7 +465,9 @@ void ResponseGraph::paint (juce::Graphics& g)
         g.reduceClipRegion (p.toNearestInt());
         const auto curve = curveOf (response);
         const bool on = strip->params.eq.on.load();
-        const float zero = yForDb (0.0f);
+        // The EQ screen fills everything under the curve [D10]; the overview
+        // shades only the boosts and cuts against 0 dB (a flat EQ shows none).
+        const float zero = overview ? yForDb (0.0f) : cp.getBottom() + 2.0f;
         juce::Path fill (curve);
         fill.lineTo (cp.getRight() + 2.0f, zero);
         fill.lineTo (cp.getX() - 2.0f, zero);
@@ -488,12 +492,17 @@ void ResponseGraph::paint (juce::Graphics& g)
         const bool sel = (int) i == selectedBand;
         if (labels)
         {
-            g.setColour (sel ? selectedBandColour : bandLineColour);
-            g.fillRect (juce::Rectangle<float> (sel ? 2.0f : 1.5f, p.getBottom() - p.getY() - 2.0f).withPosition (c.x - 0.75f, p.getY() + 2.0f));
-            g.setColour (sel ? juce::Colours::white : dimLabelColour);
-            g.setFont (wingFont (TypeScale::body));
+            // Under an RTA strip the labels sit at the top of the curve's area [D10].
             const float lh = juce::jmax (16.0f, wingPx (26.0f));
-            g.drawText (band.id.toUpperCase(), juce::Rectangle<float> (lh * 1.5f, lh).withCentre ({ c.x, p.getY() - lh * 0.5f - 2.0f }), juce::Justification::centred);
+            const bool under = cp.getY() > p.getY() + 1.0f;
+            const float labelY = under ? cp.getY() + lh * 0.5f + 2.0f : p.getY() - lh * 0.5f - 2.0f;
+            const float lineTop = under ? cp.getY() + lh + 4.0f : p.getY() + 2.0f;
+            const float lw = juce::jmax (sel ? 2.0f : 1.5f, wingPx (sel ? 2.0f : 1.5f));
+            g.setColour (sel ? selectedBandColour : bandLineColour);
+            g.fillRect (juce::Rectangle<float> (lw, p.getBottom() - lineTop).withPosition (c.x - lw * 0.5f, lineTop));
+            g.setColour (sel ? juce::Colours::white : labelColour);
+            g.setFont (wingFont (TypeScale::body, sel ? WingWeight::SemiBold : WingWeight::Medium));
+            g.drawText (band.id.toUpperCase(), juce::Rectangle<float> (lh * 1.5f, lh).withCentre ({ c.x, labelY }), juce::Justification::centred);
         }
         if (overview)
         {

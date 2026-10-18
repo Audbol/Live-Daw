@@ -899,8 +899,9 @@ public:
         const bool enabled = isEnabled() && binding.isValid();
         paintKeyBody (g, r, colours::well);
         // A narrow box keeps at least half its width for the caption and value.
+        // [D10] a thick ring about 70 % of the box height.
         const float ringW = juce::jmin (r.getHeight(), r.getWidth() * 0.5f);
-        auto ring = r.removeFromLeft (ringW).withSizeKeepingCentre (ringW, ringW).reduced (ringW * 0.16f);
+        auto ring = r.removeFromLeft (ringW).withSizeKeepingCentre (ringW, ringW).reduced (ringW * 0.1f);
         const float a0 = juce::MathConstants<float>::pi * 1.25f, a1 = juce::MathConstants<float>::pi * 2.75f;
         const float pos = enabled ? binding.get() : 0.0f;
         juce::Path track, value;
@@ -909,11 +910,11 @@ public:
         track.addCentredArc (ring.getCentreX(), ring.getCentreY(), rad, rad, 0.0f, a0, a1, true);
         value.addCentredArc (ring.getCentreX(), ring.getCentreY(), rad, rad, 0.0f, from, a0 + pos * (a1 - a0), true);
         g.setColour (colours::chipOff);
-        g.strokePath (track, juce::PathStrokeType (ring.getWidth() * 0.18f));
+        g.strokePath (track, juce::PathStrokeType (ring.getWidth() * 0.2f));
         if (enabled)
         {
             g.setColour (ringColour);
-            g.strokePath (value, juce::PathStrokeType (ring.getWidth() * 0.18f));
+            g.strokePath (value, juce::PathStrokeType (ring.getWidth() * 0.2f));
         }
         r.removeFromLeft (4.0f);
         g.setColour (enabled ? colours::caption : colours::dim);
