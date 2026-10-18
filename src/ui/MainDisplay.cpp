@@ -1269,6 +1269,8 @@ void MainDisplay::clearSolo()
             s->params.solo = false;
     for (int i = 0; i < kNumDcas; ++i)
         ctx.engine.getDca (i).solo = false;
+    // CLR SOLO also ends LISTEN (the HOME screens' band / key listening).
+    ctx.engine.getAnalysis().stopListening();
 }
 
 void MainDisplay::showChannelSelect (bool show)
