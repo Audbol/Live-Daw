@@ -283,6 +283,17 @@ juce::String stripName (const Strip&);
     the WING then draws its colour at half brightness ("Channel color LED
     switched off when no source is selected", firmware 1.10). Buses, mains,
     matrices (and DCAs) always have one. */
+/** A channel input index as shown: "IN 3" ("IN 03" with pad = 2), "PLAY 5"
+    for a multitrack playback channel, "PLAYER 1" for the USB player. */
+inline juce::String inputPortName (int input, int pad = 0)
+{
+    if (const int ch = UsbRecorder::playerChannelOf (input); ch >= 0)
+        return UsbRecorder::playerSourceName (ch);
+    if (const int ch = Recorder::playbackChannelOf (input); ch >= 0)
+        return Recorder::playbackSourceName (ch);
+    return "IN " + juce::String (input + 1).paddedLeft ('0', pad);
+}
+
 inline bool stripHasSource (const Strip& s)
 {
     return s.isOutput() || s.getInputLeft() >= 0 || s.getAltInputLeft() >= 0;

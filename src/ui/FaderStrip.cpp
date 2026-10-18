@@ -399,7 +399,7 @@ ScribbleInfo FaderStrip::scribbleInfo() const
             const bool stereo = strip->params.stereo.load();
             if (ctx.settings.getBoolValue (uiprefs::sourceOnScribble, true))
             {
-                auto port = [] (int i) { return i < 0 ? juce::String ("OFF") : "IN " + juce::String (i + 1).paddedLeft ('0', 2); };
+                auto port = [] (int i) { return i < 0 ? juce::String ("OFF") : inputPortName (i, 2); };
                 const int left = strip->getActiveInputLeft();
                 info.line2 = port (left);
                 if (stereo)

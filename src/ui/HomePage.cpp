@@ -36,9 +36,9 @@ namespace
             if (strip.params.stereo.load())
             {
                 const int right = strip.params.inputRight.load() >= 0 ? strip.params.inputRight.load() : in + 1;
-                return "IN " + juce::String (in + 1) + "/" + juce::String (right + 1);
+                return inputPortName (in) + "/" + inputPortName (right).fromLastOccurrenceOf (" ", false, false);
             }
-            return "IN " + juce::String (in + 1);
+            return inputPortName (in);
         }
 
         void paint (juce::Graphics& g) override
