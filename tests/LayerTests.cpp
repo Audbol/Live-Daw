@@ -170,6 +170,56 @@ public:
             expect (loaded.layers.getUserLayers().empty());
             expectEquals ((int) e2.getChannels().size(), 4);
         }
+
+        beginTest ("Spill layers, send and FX parameter faders");
+        {
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            engine.setNumChannels (4);
+            engine.getChannels()[1]->params.dcaMask = 1u << 3;
+            engine.getChannels()[3]->params.dcaMask = 1u << 3;
+
+            expect (LayerSet::spillTarget (S::Right) == S::Center);
+            expect (LayerSet::spillTarget (std::nullopt) == S::Left);
+
+            auto& layers = show.layers;
+            layers.setSelectedLayerId (S::Center, "inputs");
+            layers.setOffset (S::Center, 8);
+            const LayerSet::Spill dca { LayerSet::Spill::Kind::Dca, 3, {} };
+            layers.startSpill (LayerSet::spillTarget (S::Right), dca);
+            expect (layers.getSpill (S::Center).has_value() && *layers.getSpill (S::Center) == dca);
+            expect (layers.findSpill (dca) == std::optional<S> (S::Center));
+            expectEquals (layers.getSelectedLayerId (S::Center), juce::String (LayerSet::kSpillId));
+            const auto spilled = layers.getSelectedLayer (engine, S::Center);
+            expectEquals ((int) spilled.faders.size(), 2);
+            expect (spilled.faders[0] == state::FaderRef::of (state::StripRef::of (*engine.getChannels()[1])));
+            expectEquals (layers.getOffset (S::Center), 0);
+            expect (layers.endSpill (S::Center));
+            expectEquals (layers.getSelectedLayerId (S::Center), juce::String ("inputs"));
+            expectEquals (layers.getOffset (S::Center), 8);
+
+            // The selected strip's sends, and an FX slot's parameters.
+            const auto ch1 = state::StripRef::of (*engine.getChannels()[0]);
+            layers.startSpill (S::Left, { LayerSet::Spill::Kind::Sends, 0, ch1 });
+            const auto sends = layers.getSelectedLayer (engine, S::Left);
+            expectEquals ((int) sends.faders.size(), 16 + 4 + 8);
+            expect (sends.faders[0].send && sends.faders[0].strip == ch1 && sends.faders[0].to.kind == StripKind::Bus);
+            layers.setSelectedLayerId (S::Left, "in-2"); // a layer key ends the spill
+            expect (! layers.getSpill (S::Left).has_value());
+
+            // Send and FX parameter faders in a user layer survive the C ABI and a show round trip.
+            const auto send = state::FaderRef::ofSend (ch1, { StripKind::Matrix, 2 });
+            const auto fxp = state::FaderRef::ofFxParam (4, 7);
+            const auto id = layers.addUserLayer ("Mix", { send, fxp });
+            auto xml = show.toXml();
+            MixerEngine e2 (0);
+            Show loaded (e2, host);
+            expect (loaded.loadFromXml (*xml).wasOk());
+            const auto* user = loaded.layers.getUserLayer (id);
+            expect (user != nullptr && user->faders.size() == 2 && user->faders[0] == send && user->faders[1] == fxp);
+            expect (! user->faders[0].isStrip() && ! (user->faders[0] == state::FaderRef::of (ch1)));
+        }
     }
 };
 

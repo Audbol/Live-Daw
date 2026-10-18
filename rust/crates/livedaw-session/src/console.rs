@@ -707,26 +707,33 @@ fn apply_mute_groups(engine: &Engine, parent: &Element) {
 fn capture_fx(engine: &Engine, parent: &mut Element, bridge: &mut dyn PluginBridge) {
     let fx = parent.add_new("Fx");
     for i in 0..NUM_FX {
-        let x = fx.add_new("Slot");
-        x.set("i", i);
-        let p = &engine.controls.fx[i];
-        put_b(x, "bypass", &p.bypass);
-        put_f(x, "mix", &p.mix);
-        let model = p.model_index();
-        x.set("mdl", FX_MODELS[model].token);
-        if model != FX_EXT {
-            put_model_params(x, &FX_MODELS[model], &p.values);
-            continue;
-        }
-        if !engine.fx(i).is_some_and(|r| r.is_loaded()) {
-            continue;
-        }
-        let Some(captured) = bridge.capture_fx(i) else { continue };
-        if let Ok(desc) = parse(&captured.description) {
-            x.add(desc);
-        }
-        x.add_new("State").add_text(captured.state);
+        fx.add(capture_fx_slot(engine, i, bridge));
     }
+}
+
+/// One FX slot as a `<Slot i=..>`: its device and parameters, or its plugin
+/// (description and state through the bridge).
+pub(crate) fn capture_fx_slot(engine: &Engine, i: usize, bridge: &mut dyn PluginBridge) -> Element {
+    let mut x = Element::new("Slot");
+    x.set("i", i);
+    let Some(p) = engine.controls.fx.get(i) else { return x };
+    put_b(&mut x, "bypass", &p.bypass);
+    put_f(&mut x, "mix", &p.mix);
+    let model = p.model_index();
+    x.set("mdl", FX_MODELS[model].token);
+    if model != FX_EXT {
+        put_model_params(&mut x, &FX_MODELS[model], &p.values);
+        return x;
+    }
+    if !engine.fx(i).is_some_and(|r| r.is_loaded()) {
+        return x;
+    }
+    let Some(captured) = bridge.capture_fx(i) else { return x };
+    if let Ok(desc) = parse(&captured.description) {
+        x.add(desc);
+    }
+    x.add_new("State").add_text(captured.state);
+    x
 }
 
 /// Restores the FX slots. Built-in devices are selected and set (creating a
@@ -743,48 +750,60 @@ fn apply_fx(
     let Some(fx) = parent.child("Fx") else { return };
     for x in fx.children_named("Slot") {
         let Ok(i) = usize::try_from(x.int_or("i", -1)) else { continue };
-        let (Some(p), Some(rack)) = (engine.controls.fx.get(i), engine.fx(i)) else { continue };
-        get_b(x, "bypass", &p.bypass);
-        get_f(x, "mix", &p.mix);
+        apply_fx_slot(engine, x, i, mode, bridge, warnings);
+    }
+}
 
-        // Shows from before the FX rack hold plugins only.
-        let saved = match x.attr("mdl") {
-            Some(t) => model_index(FX_MODELS, t).unwrap_or(FX_NONE),
-            None if x.child("PLUGIN").is_some() => FX_EXT,
-            None => FX_NONE,
-        };
-        let current = p.model_index();
-        let recall = mode == Some(InsertMode::StateOnly);
+/// Restores a `<Slot>` element into FX slot `i` (see [`apply_fx`]).
+pub(crate) fn apply_fx_slot(
+    engine: &Engine,
+    x: &Element,
+    i: usize,
+    mode: Option<InsertMode>,
+    bridge: &mut dyn PluginBridge,
+    warnings: &mut Vec<String>,
+) {
+    let (Some(p), Some(rack)) = (engine.controls.fx.get(i), engine.fx(i)) else { return };
+    get_b(x, "bypass", &p.bypass);
+    get_f(x, "mix", &p.mix);
 
-        if saved != FX_EXT {
-            if current == FX_EXT && rack.is_loaded() {
-                if recall {
-                    warnings.push(format!("FX {}: a plugin is loaded, {} not recalled", i + 1, FX_MODELS[saved].name));
-                    continue;
-                }
-                bridge.clear_fx(i);
+    // Shows from before the FX rack hold plugins only.
+    let saved = match x.attr("mdl") {
+        Some(t) => model_index(FX_MODELS, t).unwrap_or(FX_NONE),
+        None if x.child("PLUGIN").is_some() => FX_EXT,
+        None => FX_NONE,
+    };
+    let current = p.model_index();
+    let recall = mode == Some(InsertMode::StateOnly);
+
+    if saved != FX_EXT {
+        if current == FX_EXT && rack.is_loaded() {
+            if recall {
+                warnings.push(format!("FX {}: a plugin is loaded, {} not recalled", i + 1, FX_MODELS[saved].name));
+                return;
             }
-            get_model_params(x, FX_MODELS, current, &p.values, |m| p.set_model(m, true));
-            if !engine.set_fx_model(i, saved, false) {
-                warnings.push(format!("FX {}: {} needs a premium slot (FX 1-8)", i + 1, FX_MODELS[saved].name));
-                engine.set_fx_model(i, FX_NONE, true);
-            }
-            continue;
+            bridge.clear_fx(i);
         }
+        get_model_params(x, FX_MODELS, current, &p.values, |m| p.set_model(m, true));
+        if !engine.set_fx_model(i, saved, false) {
+            warnings.push(format!("FX {}: {} needs a premium slot (FX 1-8)", i + 1, FX_MODELS[saved].name));
+            engine.set_fx_model(i, FX_NONE, true);
+        }
+        return;
+    }
 
-        let Some(mode) = mode else { continue };
-        let Some(desc) = x.child("PLUGIN") else { continue };
-        let name = desc.str_or("name", "plugin");
-        if recall && current != FX_EXT {
-            warnings.push(format!("FX {}: {name} isn't loaded, not recalled", i + 1));
-            continue;
-        }
-        let state = x.child("State").map(Element::text).unwrap_or_default();
-        match bridge.restore_fx(i, mode, &desc.to_compact(), &state) {
-            Ok(()) => {}
-            Err(RestoreError::Mismatch) => warnings.push(format!("FX {}: expected {name}, not recalled", i + 1)),
-            Err(RestoreError::Failed(msg)) => warnings.push(format!("FX {}: {name} ({msg})", i + 1)),
-        }
+    let Some(mode) = mode else { return };
+    let Some(desc) = x.child("PLUGIN") else { return };
+    let name = desc.str_or("name", "plugin");
+    if recall && current != FX_EXT {
+        warnings.push(format!("FX {}: {name} isn't loaded, not recalled", i + 1));
+        return;
+    }
+    let state = x.child("State").map(Element::text).unwrap_or_default();
+    match bridge.restore_fx(i, mode, &desc.to_compact(), &state) {
+        Ok(()) => {}
+        Err(RestoreError::Mismatch) => warnings.push(format!("FX {}: expected {name}, not recalled", i + 1)),
+        Err(RestoreError::Failed(msg)) => warnings.push(format!("FX {}: {name} ({msg})", i + 1)),
     }
 }
 

@@ -116,6 +116,11 @@ public:
     virtual bool hasUtilityFunction() const { return false; }
     virtual void utilityPressed() {}
 
+    /** The screen's own key pressed while the screen is up (SETUP pressed twice
+        opens CC EDIT, firmware 3.1). Return true when the page handled it;
+        false shows the screen again as usual. */
+    virtual bool screenKeyPressedAgain() { return false; }
+
     /** The selected strip or the console structure changed. */
     virtual void refresh() {}
 

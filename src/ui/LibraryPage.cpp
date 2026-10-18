@@ -1,5 +1,6 @@
 #include "ui/Pages.h"
 #include "ui/ScopeWindow.h"
+#include "engine/Models.h"
 
 namespace livedaw::ui
 {
@@ -43,13 +44,52 @@ namespace
         }
     }
 
-    WingKey* makeKey (juce::OwnedArray<WingKey>& keys, juce::Component& parent, const juce::String& text, Icon icon, bool enabled = true)
+    WingKey* makeKey (juce::OwnedArray<WingKey>& keys, juce::Component& parent, const juce::String& text, Icon icon, bool enabled = true,
+                      juce::Colour on = Colours::gold)
     {
-        auto* k = keys.add (new WingKey (text, icon));
+        auto* k = keys.add (new WingKey (text, icon, on));
         styleIconKey (*k);
         enableKey (*k, enabled);
         parent.addAndMakeVisible (k);
         return k;
+    }
+
+    /** Asks for a preset name, then calls `save` with the file in `folder` (after
+        an overwrite question when it exists). */
+    void savePresetAs (juce::Component& host, const juce::String& title, const juce::String& initial, const juce::File& folder,
+                       const juce::String& extension, std::function<void (const juce::File&, const juce::String&)> save)
+    {
+        popups::TextOptions options;
+        options.maxLength = 32;
+        options.actionText = "SAVE";
+        juce::Component::SafePointer<juce::Component> safe (&host);
+        popups::editText (host, title, initial, [safe, folder, extension, save] (const juce::String& text)
+        {
+            const auto name = text.trim();
+            const auto fileName = juce::File::createLegalFileName (name);
+            if (safe == nullptr || fileName.isEmpty())
+                return;
+            folder.createDirectory();
+            const auto file = folder.getChildFile (fileName + extension);
+            if (file.exists())
+                popups::confirm (*safe, "SAVE", "Overwrite \"" + file.getFileName() + "\"?", "SAVE", [save, file, name] { save (file, name); });
+            else
+                save (file, name);
+        }, options);
+    }
+
+    /** "CH 3 INSERT PRE": the strip using FX slot `slot`, if any. */
+    juce::String fxUser (UiContext& ctx, int slot)
+    {
+        for (int k = 0; k < kNumStripKinds; ++k)
+            for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
+            {
+                if (s->params.preInsert.fx.load() == slot)
+                    return s->getLabel().toUpperCase() + "  INSERT PRE";
+                if (s->params.postInsert.fx.load() == slot && s->params.postInsert.mode.load() == 0)
+                    return s->getLabel().toUpperCase() + "  INSERT POST";
+            }
+        return "NOT INSERTED";
     }
 } // namespace
 
@@ -62,11 +102,36 @@ public:
     explicit ShowTab (LibraryPage& p) : page (p)
     {
         auto& ctx = page.ctx;
-        makeKey (keys, *this, "OPEN", Icon::Folder)->onClick = [&ctx] { if (ctx.openShow) ctx.openShow(); };
+        // OPEN: the show selected at INT / USB, else a file dialog.
+        makeKey (keys, *this, "OPEN", Icon::Folder)->onClick = [this]
+        {
+            auto& c = page.ctx;
+            const auto file = page.list->getSelectedFile();
+            if (file.hasFileExtension (Show::fileExtension) && c.openShowFile)
+                page.confirmLoad ("the show \"" + file.getFileNameWithoutExtension() + "\"", [&c, file] { c.openShowFile (file); });
+            else if (c.openShow)
+                c.openShow();
+        };
         makeKey (keys, *this, "CREATE", Icon::Edit)->onClick = [&ctx] { if (ctx.newShow) ctx.newShow(); };
         makeKey (keys, *this, "SAVE", Icon::SaveTray)->onClick = [&ctx] { if (ctx.saveShow) ctx.saveShow (false); };
         makeKey (keys, *this, "CLOSE", Icon::ClearCircle)->onClick = [&ctx] { if (ctx.newShow) ctx.newShow(); };
-        makeKey (keys, *this, "SAVE AS", Icon::SaveTray)->onClick = [&ctx] { if (ctx.saveShow) ctx.saveShow (true); };
+        // SAVE AS: into the folder shown at INT / USB, else a file dialog.
+        makeKey (keys, *this, "SAVE AS", Icon::SaveTray)->onClick = [this]
+        {
+            auto& c = page.ctx;
+            if (page.list->getLocation() == ShowPanel::Location::Show || ! c.saveShowTo)
+            {
+                if (c.saveShow)
+                    c.saveShow (true);
+                return;
+            }
+            savePresetAs (page, "SAVE SHOW AS", c.show.getName(), page.list->getFolder(), Show::fileExtension,
+                          [this] (const juce::File& file, const juce::String&)
+                          {
+                              page.ctx.saveShowTo (file);
+                              page.list->selectFile (file);
+                          });
+        };
         makeKey (keys, *this, "ADD ITEM\nTO SHOW", Icon::Plus, false); // needs the file browser (G-N3)
         makeKey (keys, *this, "EDIT\nTAG", Icon::Tag)->onClick = [this] { editTag(); };
         makeKey (keys, *this, "SEND\nMIDI", Icon::Edit, false);        // needs MIDI (G-N1)
@@ -196,11 +261,11 @@ public:
         save = makeKey (keys, *this, "SAVE", Icon::SaveTray);
         saveScope = makeKey (keys, *this, "SAVE\n+SCOPE", Icon::SaveTray);
         update = makeKey (keys, *this, "UPDATE", Icon::Edit);
-        partialUpdate = makeKey (keys, *this, "PARTIAL\nUPDATE", Icon::Edit, false); // engine E12
+        partialUpdate = makeKey (keys, *this, "PARTIAL\nUPDATE", Icon::Edit);
         editScope = makeKey (keys, *this, "EDIT\nSCOPE", Icon::Overview);
         loadKey = makeKey (keys, *this, "LOAD", Icon::LoadTray);
-        partialLoad = makeKey (keys, *this, "PARTIAL\nLOAD", Icon::LoadTray, false); // engine E12
-        restore = makeKey (keys, *this, "RESTORE", Icon::Reset, false);              // engine E12
+        partialLoad = makeKey (keys, *this, "PARTIAL\nLOAD", Icon::LoadTray);
+        restore = makeKey (keys, *this, "RESTORE", Icon::Reset);
         rows = { { {}, { save, saveScope }, {} }, { {}, { update, partialUpdate }, { editScope } }, { {}, { loadKey, partialLoad }, { restore } } };
 
         save->onClick = [this] { addScene (false); };
@@ -215,11 +280,53 @@ public:
                     page.ctx.log.info ("Updated scene " + juce::String (index + 1));
                 });
         };
+        // PARTIAL UPDATE: a scope window; only its selection is stored (the scope is kept for next time).
+        partialUpdate->onClick = [this]
+        {
+            const int index = page.selectedScene();
+            const auto scene = page.ctx.show.getScene (index);
+            if (! scene)
+                return;
+            page.openScope ((int) ScopeWindow::Mode::PartialUpdate, "PARTIAL UPDATE: " + scene->name.toUpperCase(), page.ctx.show.getPartialScope(),
+                            [this, index] (const state::Scope& scope, bool)
+                            {
+                                page.ctx.show.storeScenePartial (index, scope);
+                                page.ctx.log.info ("Updated part of scene " + juce::String (index + 1));
+                            });
+        };
         editScope->onClick = [this] { openScope (page.selectedScene()); };
         loadKey->onClick = [this]
         {
             if (page.selectedScene() >= 0)
                 page.load ({ page.selectedScene(), -1 });
+        };
+        // PARTIAL LOAD: a scope window; NO GLOB ignores the GLOBAL safes for this load.
+        partialLoad->onClick = [this]
+        {
+            const int index = page.selectedScene();
+            const auto scene = page.ctx.show.getScene (index);
+            if (! scene)
+                return;
+            page.openScope ((int) ScopeWindow::Mode::PartialLoad, "PARTIAL LOAD: " + scene->name.toUpperCase(), page.ctx.show.getPartialScope(),
+                            [this, index] (const state::Scope& scope, bool noGlobal)
+                            {
+                                logRecall (page.ctx, "part of scene " + juce::String (index + 1) + (noGlobal ? " (NO GLOB)" : ""),
+                                           page.ctx.show.recallScenePartial (index, scope, noGlobal));
+                                page.list->refresh();
+                            });
+        };
+        // RESTORE: the whole scene regardless of its scope, GLOBAL safes included (a red question).
+        restore->onClick = [this]
+        {
+            const int index = page.selectedScene();
+            if (const auto scene = page.ctx.show.getScene (index))
+                popups::confirm (page, "RESTORE", "Restore all of \"" + scene->name + "\", ignoring its scope and the GLOBAL safes?", "RESTORE",
+                                 [this, index]
+                                 {
+                                     logRecall (page.ctx, "all of scene " + juce::String (index + 1), page.ctx.show.restoreScene (index));
+                                     page.list->refresh();
+                                 },
+                                 true);
         };
 
         // App extras: the fade time and notes of the selected scene.
@@ -253,7 +360,7 @@ public:
     void refresh()
     {
         const auto scene = page.ctx.show.getScene (page.selectedScene());
-        for (auto* k : { update, editScope, loadKey })
+        for (auto* k : { update, partialUpdate, editScope, loadKey, partialLoad, restore })
             enableKey (*k, scene.has_value());
         fade.setEnabled (scene.has_value());
         notes.setEnabled (scene.has_value());
@@ -302,16 +409,14 @@ private:
             openScope (index);
     }
 
+    /** EDIT SCOPE: what the scene recalls (strips, DCAs, mute groups, FX, console settings, contents). */
     void openScope (int index)
     {
         const auto scene = page.ctx.show.getScene (index);
         if (! scene)
             return;
-        page.openScope ((int) ScopeWindow::Mode::SceneScope, "EDIT SCOPE: " + scene->name.toUpperCase(), scene->scope, {},
-                        [this, index] (juce::uint32 sections, const std::vector<state::StripRef>&)
-                        {
-                            page.ctx.show.setSceneScope (index, sections);
-                        });
+        page.openScope ((int) ScopeWindow::Mode::SceneScope, "EDIT SCOPE: " + scene->name.toUpperCase(), page.ctx.show.getSceneRecallScope (index),
+                        [this, index] (const state::Scope& scope, bool) { page.ctx.show.setSceneRecallScope (index, scope); });
     }
 
     LibraryPage& page;
@@ -324,8 +429,9 @@ private:
 };
 
 //==============================================================================
-/** SNIP (fig. 49): snippets of the selected scene. SAVE captures the REC FOCUS
-    (strips x sections); REC / STOP wait for parameter recording (engine E14). */
+/** SNIP (fig. 49): snippets of the selected scene. REC, change parameters,
+    STOP and SAVE stores the changed parameters (within REC FOCUS when it was
+    edited); without a recording SAVE captures the REC FOCUS. */
 class LibraryPage::SnipTab final : public juce::Component, private juce::Timer
 {
 public:
@@ -335,14 +441,17 @@ public:
         update = makeKey (keys, *this, "UPDATE", Icon::Edit);
         loadFocus = makeKey (keys, *this, "LOAD\nFOCUS", Icon::LoadTray);
         loadKey = makeKey (keys, *this, "LOAD", Icon::LoadTray);
-        partialLoad = makeKey (keys, *this, "PARTIAL\nLOAD", Icon::LoadTray, false); // engine E12
-        rec = makeKey (keys, *this, "REC", Icon::Record, false);                      // engine E14
-        stop = makeKey (keys, *this, "STOP", Icon::Stop, false);                      // engine E14
-        recFocus = makeKey (keys, *this, "REC\nFOCUS", Icon::Overview);
+        partialLoad = makeKey (keys, *this, "PARTIAL\nLOAD", Icon::LoadTray);
+        rec = makeKey (keys, *this, "REC", Icon::Record, true, Colours::mute);
+        stop = makeKey (keys, *this, "STOP", Icon::Stop);
+        recFocus = makeKey (keys, *this, "REC\nFOCUS", Icon::Overview, true, Dark::choice);
         addItems = makeKey (keys, *this, "ADD\nITEMS", Icon::Plus);
         removeItems = makeKey (keys, *this, "REMOVE\nITEMS", Icon::MinusCircle);
         clearAll = makeKey (keys, *this, "CLEAR\nALL", Icon::Trash);
+        // REC FOCUS turns light blue once edited; REC lights red while recording.
         recFocus->isOn = [this] { return page.focusEdited; };
+        rec->isOn = [this] { return page.ctx.show.isRecordingSnippet(); };
+        rec->iconColour = Colours::text;
         rows = { { {}, { save }, {} }, { {}, { update }, { loadFocus } }, { {}, { loadKey, partialLoad }, {} }, { {}, { rec, stop }, { recFocus } },
                  { {}, { addItems, removeItems }, { clearAll } } };
 
@@ -361,8 +470,7 @@ public:
             const auto item = page.list->getSelected();
             if (const auto sn = page.ctx.show.getSnippet (item.scene, item.snippet))
             {
-                page.focusSections = sn->sections;
-                page.focusStrips = sn->strips;
+                page.focus = sn->scope;
                 page.focusEdited = true;
                 recFocus->repaint();
             }
@@ -373,61 +481,101 @@ public:
             if (item.isSnippet())
                 page.load (item);
         };
+        partialLoad->onClick = [this]
+        {
+            const auto item = page.list->getSelected();
+            const auto sn = page.ctx.show.getSnippet (item.scene, item.snippet);
+            if (! sn)
+                return;
+            page.openScope ((int) ScopeWindow::Mode::PartialLoad, "PARTIAL LOAD: " + sn->name.toUpperCase(), page.ctx.show.getPartialScope(),
+                            [this, item] (const state::Scope& scope, bool)
+                            {
+                                logRecall (page.ctx, "part of snippet " + juce::String (item.scene + 1) + "." + juce::String (item.snippet + 1),
+                                           page.ctx.show.recallSnippetPartial (item.scene, item.snippet, scope));
+                            });
+        };
+        rec->onClick = [this]
+        {
+            if (page.ctx.show.isRecordingSnippet())
+                return;
+            page.ctx.show.startSnippetRecording();
+            page.ctx.log.info ("Snippet recording started");
+            refresh();
+        };
+        stop->onClick = [this]
+        {
+            const int n = page.ctx.show.stopSnippetRecording();
+            page.ctx.log.info ("Snippet recording stopped: " + juce::String (n) + " parameters changed (SAVE stores them)");
+            refresh();
+        };
         recFocus->onClick = [this]
         {
-            auto [sections, strips] = defaultFocus();
-            page.openScope ((int) ScopeWindow::Mode::SnippetFocus, "REC FOCUS", sections, strips,
-                            [this] (juce::uint32 s, const std::vector<state::StripRef>& st)
-                            {
-                                page.focusSections = s;
-                                page.focusStrips = st;
-                                page.focusEdited = true;
-                            });
+            page.openScope ((int) ScopeWindow::Mode::SnippetFocus, "REC FOCUS", currentFocus(), [this] (const state::Scope& s, bool)
+            {
+                page.focus = s;
+                page.focusEdited = true;
+            });
         };
         addItems->onClick = [this] { editItems (true); };
         removeItems->onClick = [this] { editItems (false); };
+        // CLEAR ALL: the parameters being recorded, else every item of the snippet.
         clearAll->onClick = [this]
         {
+            auto& show = page.ctx.show;
+            if (show.isRecordingSnippet() || show.hasRecordedSnippet())
+            {
+                show.clearSnippetRecording();
+                refresh();
+                return;
+            }
             const auto item = page.list->getSelected();
-            if (const auto sn = page.ctx.show.getSnippet (item.scene, item.snippet))
+            if (const auto sn = show.getSnippet (item.scene, item.snippet))
                 popups::confirm (page, "CLEAR ALL", "Remove every item from \"" + sn->name + "\"?", "CLEAR", [this, item]
                 {
-                    page.ctx.show.setSnippetStrips (item.scene, item.snippet, {});
+                    auto everything = state::Scope::everything();
+                    everything.allStrips = false;
+                    page.ctx.show.removeSnippetItems (item.scene, item.snippet, everything);
                     page.list->refresh();
                 }, true);
         };
-        startTimerHz (2);
+        startTimerHz (4);
     }
 
     void refresh()
     {
+        auto& show = page.ctx.show;
         const auto item = page.list->getSelected();
         const bool snippet = item.isSnippet();
-        enableKey (*save, page.ctx.show.getScene (item.scene).has_value());
-        for (auto* k : { update, loadFocus, loadKey, addItems, removeItems, clearAll })
-            enableKey (*k, snippet);
+        const bool recording = show.isRecordingSnippet(), recorded = show.hasRecordedSnippet();
+        enableKey (*save, show.getScene (item.scene).has_value() && ! recording);
+        for (auto* k : { update, loadFocus, loadKey, partialLoad, addItems, removeItems })
+            enableKey (*k, snippet && ! recording);
+        enableKey (*stop, recording); // REC stays lit (red) while recording
+        enableKey (*clearAll, snippet || recording || recorded);
+        rec->repaint();
         repaint (counter);
     }
 
     void paint (juce::Graphics& g) override
     {
         paintKeyRows (g, rows);
-        // The parameter counter (the selected snippet's strips x sections).
-        const auto item = page.list->getSelected();
-        const auto sn = page.ctx.show.getSnippet (item.scene, item.snippet);
+        // The parameter counter: changed since REC (or by the last STOP), else the selected snippet's.
+        auto& show = page.ctx.show;
         int count = 0;
-        if (sn)
-            for (int i = 0; i < state::kNumSections; ++i)
-                count += (sn->sections & state::sectionAt (i)) != 0 ? (int) sn->strips.size() : 0;
+        if (show.isRecordingSnippet() || show.hasRecordedSnippet())
+            count = show.getRecordedParameterCount();
+        else if (const auto item = page.list->getSelected(); item.isSnippet())
+            if (const auto sn = show.getSnippet (item.scene, item.snippet))
+                count = sn->parameterCount;
         g.setColour (juce::Colours::black);
         g.fillRect (counter);
         auto c = counter.reduced (2);
-        g.setColour (Dark::text);
+        g.setColour (show.isRecordingSnippet() ? Colours::mute : Dark::text);
         g.setFont (juce::FontOptions (juce::jmin (22.0f, (float) c.getHeight() * 0.6f), juce::Font::bold));
         g.drawText (juce::String (count), c.removeFromTop (c.getHeight() * 62 / 100), juce::Justification::centred);
         g.setColour (Dark::orange.brighter (0.4f));
         g.setFont (juce::FontOptions (juce::jmin (11.0f, (float) c.getHeight() * 0.9f), juce::Font::bold));
-        g.drawText ("PARAMETER", c, juce::Justification::centredTop);
+        g.drawText (count == 1 ? "PARAMETER" : "PARAMETERS", c, juce::Justification::centredTop);
     }
 
     void resized() override
@@ -440,21 +588,24 @@ public:
         const int w = juce::jmin (rec->getWidth(), (recFocus->getX() - band.getX() - 90) / 2 - 4);
         rec->setBounds (rec->getBounds().withWidth (w));
         stop->setBounds (stop->getBounds().withX (rec->getRight() + 4).withWidth (w));
+        // Narrow keys: the icon over the caption.
+        for (auto* k : { rec, stop })
+            k->iconAbove = w < 96;
         counter = juce::Rectangle<int> (stop->getRight() + 8, band.getY(), juce::jmin (100, recFocus->getX() - stop->getRight() - 16), band.getHeight());
     }
 
 private:
     void timerCallback() override { refresh(); }
 
-    std::pair<juce::uint32, std::vector<state::StripRef>> defaultFocus() const
+    /** The REC FOCUS: as edited, else the selected channel's fader and sends. */
+    state::Scope currentFocus() const
     {
         if (page.focusEdited)
-            return { page.focusSections, page.focusStrips };
-        // Until the focus is edited: the selected channel's fader and sends.
+            return page.focus;
         std::vector<state::StripRef> strips;
         if (auto* s = page.ctx.getSelectedStrip ? page.ctx.getSelectedStrip() : nullptr)
             strips.push_back (state::StripRef::of (*s));
-        return { state::Fader | state::Sends, strips };
+        return state::Scope::only (state::Fader | state::Sends, strips);
     }
 
     void addSnippet()
@@ -464,8 +615,15 @@ private:
         const auto scene = show.getScene (item.scene);
         if (! scene)
             return;
-        auto [sections, strips] = defaultFocus();
-        const int index = show.addSnippet (item.scene, "Snippet " + juce::String (scene->numSnippets + 1), sections, strips);
+        const auto name = "Snippet " + juce::String (scene->numSnippets + 1);
+        int index = -1;
+        if (show.hasRecordedSnippet())
+        {
+            const auto focus = currentFocus();
+            index = show.addRecordedSnippet (item.scene, name, page.focusEdited ? &focus : nullptr);
+        }
+        else
+            index = show.addSnippet (item.scene, name, currentFocus());
         page.list->refresh();
         page.list->select ({ item.scene, index });
     }
@@ -477,24 +635,13 @@ private:
         if (! sn)
             return;
         page.openScope ((int) (add ? ScopeWindow::Mode::SnippetAdd : ScopeWindow::Mode::SnippetRemove), (add ? "ADD ITEMS: " : "REMOVE ITEMS: ") + sn->name.toUpperCase(),
-                        0, {}, [this, item, add] (juce::uint32 sections, const std::vector<state::StripRef>& chosen)
+                        state::Scope::none(), [this, item, add] (const state::Scope& items, bool)
                         {
-                            auto& show = page.ctx.show;
-                            const auto current = show.getSnippet (item.scene, item.snippet);
-                            if (! current)
-                                return;
-                            auto strips = current->strips;
-                            for (auto& r : chosen)
-                            {
-                                strips.erase (std::remove (strips.begin(), strips.end(), r), strips.end());
-                                if (add)
-                                    strips.push_back (r);
-                            }
-                            show.setSnippetStrips (item.scene, item.snippet, strips);
-                            show.setSnippetSections (item.scene, item.snippet, add ? (current->sections | sections) : (current->sections & ~sections));
                             // Added items take the console's current settings.
                             if (add)
-                                show.storeSnippet (item.scene, item.snippet);
+                                page.ctx.show.addSnippetItems (item.scene, item.snippet, items);
+                            else
+                                page.ctx.show.removeSnippetItems (item.scene, item.snippet, items);
                             page.list->refresh();
                         });
     }
@@ -507,33 +654,384 @@ private:
 };
 
 //==============================================================================
-/** CLIP, FX and CHAN: the clip player (chapter 8), FX presets (G-N4) and
-    channel presets (G-N5) aren't built yet; their tabs show the console's
+/** FX (fig. 51): SAVE stores the chosen FX slot as a preset file in the folder
+    shown on the left; LOAD loads the selected preset into it. The graphic shows
+    the selected preset, then the slot (its device and the strip using it) with
+    the slot chooser. */
+class LibraryPage::FxTab final : public juce::Component, private juce::Timer
+{
+public:
+    explicit FxTab (LibraryPage& p) : page (p)
+    {
+        save = makeKey (keys, *this, "SAVE", Icon::SaveTray);
+        loadKey = makeKey (keys, *this, "LOAD", Icon::LoadTray);
+        rows = { { {}, { save }, {} }, { {}, { loadKey }, {} } };
+        styleIconKey (slotKey);
+        addAndMakeVisible (slotKey);
+        slotKey.onClick = [this] { chooseSlot(); };
+
+        save->onClick = [this]
+        {
+            auto& fx = page.ctx.engine.getFx();
+            auto* plugin = fx.getPlugin (slot);
+            const auto device = plugin != nullptr ? plugin->getName() : models::model (models::Fx, fx.getModel (slot)).name;
+            savePresetAs (page, "SAVE FX " + juce::String (slot + 1) + " AS PRESET", device, page.list->getFolder(), Show::fxPresetExtension,
+                          [this] (const juce::File& file, const juce::String& name)
+                          {
+                              const auto r = page.ctx.show.saveFxPreset (slot, file, name);
+                              if (r.failed())
+                                  page.ctx.log.error (r.getErrorMessage());
+                              else
+                                  page.ctx.log.info ("Saved FX " + juce::String (slot + 1) + " as " + file.getFileName());
+                              page.list->selectFile (file);
+                              repaint();
+                          });
+        };
+        loadKey->onClick = [this]
+        {
+            const auto file = page.list->getSelectedFile();
+            if (! file.hasFileExtension (Show::fxPresetExtension))
+                return;
+            const auto r = page.ctx.show.loadFxPreset (slot, file);
+            page.ctx.log.info ("Loaded " + file.getFileName() + " into FX " + juce::String (slot + 1));
+            if (r.failed())
+                for (auto& line : juce::StringArray::fromLines (r.getErrorMessage()))
+                    page.ctx.log.warning (line);
+            repaint();
+        };
+        startTimerHz (4);
+    }
+
+    void refresh()
+    {
+        const auto file = page.list->getSelectedFile();
+        enableKey (*loadKey, file.hasFileExtension (Show::fxPresetExtension));
+        enableKey (*save, page.ctx.engine.getFx().isLoaded (slot));
+        repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        paintKeyRows (g, rows);
+        auto& ctx = page.ctx;
+        auto& fx = ctx.engine.getFx();
+
+        // The selected preset.
+        const auto file = page.list->getSelectedFile();
+        const auto info = file.hasFileExtension (Show::fxPresetExtension) ? Show::readPreset (file) : Show::PresetInfo {};
+        g.setColour (Dark::body);
+        g.fillRect (presetBox);
+        auto pb = presetBox.reduced (6);
+        const auto presetHeader = pb.removeFromTop (18);
+        g.setColour (Dark::header);
+        g.fillRect (presetHeader);
+        g.setColour (Dark::textDim);
+        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+        g.drawText ("PRESET", presetHeader, juce::Justification::centred);
+        g.setColour (info.kind == Show::PresetInfo::Kind::Fx ? Dark::text : Dark::textDim);
+        g.setFont (juce::FontOptions (juce::jmin (18.0f, (float) pb.getHeight() * 0.3f), juce::Font::bold));
+        g.drawFittedText (info.kind == Show::PresetInfo::Kind::Fx ? info.name.toUpperCase() : juce::String ("NO PRESET SELECTED"),
+                          pb.removeFromTop (pb.getHeight() / 2), juce::Justification::centred, 2);
+        g.setColour (FileColours::fx);
+        g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        g.drawFittedText (info.detail.toUpperCase(), pb, juce::Justification::centredTop, 1);
+
+        g.setColour (Dark::text);
+        g.setFont (juce::FontOptions (22.0f, juce::Font::bold));
+        g.drawText (">>", arrow, juce::Justification::centred);
+
+        // The slot: purple header, device, the strip using it.
+        g.setColour (Dark::body);
+        g.fillRect (slotBox);
+        auto sb = slotBox.reduced (6);
+        auto header = sb.removeFromTop (20);
+        g.setColour (FileColours::fx.darker (0.3f));
+        g.fillRect (header);
+        g.setColour (juce::Colours::black);
+        g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+        g.drawText ("FX " + juce::String (slot + 1) + (slot < 8 ? "  PREMIUM" : ""), header.reduced (4, 0), juce::Justification::centredLeft);
+        auto* plugin = fx.getPlugin (slot);
+        const auto device = plugin != nullptr ? plugin->getName() : models::model (models::Fx, fx.getModel (slot)).name;
+        g.setColour (fx.isLoaded (slot) ? Dark::text : Dark::textDim);
+        g.setFont (juce::FontOptions (juce::jmin (18.0f, (float) sb.getHeight() * 0.3f), juce::Font::bold));
+        g.drawFittedText (fx.isLoaded (slot) ? device.toUpperCase() : juce::String ("EMPTY"), sb.removeFromTop (sb.getHeight() / 2),
+                          juce::Justification::centred, 2);
+        g.setColour (Dark::textDim);
+        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+        g.drawFittedText (fxUser (ctx, slot), sb, juce::Justification::centredTop, 1);
+    }
+
+    void resized() override
+    {
+        auto b = getLocalBounds();
+        const int rowH = juce::jlimit (36, 56, getHeight() / 6);
+        layoutKeyRows (b, rows, rowH, 4);
+        auto g = b.withTop (rows.back().band.getBottom() + 12).withHeight (juce::jmin (140, b.getHeight() / 3)).reduced (4, 0);
+        slotKey.setBounds (g.removeFromRight (juce::jmin (44, g.getWidth() / 10)).withSizeKeepingCentre (juce::jmin (44, g.getWidth() / 10), 40));
+        presetBox = g.removeFromLeft (g.getWidth() * 44 / 100);
+        arrow = g.removeFromLeft (36);
+        slotBox = g;
+    }
+
+private:
+    void timerCallback() override { refresh(); }
+
+    void chooseSlot()
+    {
+        auto& fx = page.ctx.engine.getFx();
+        juce::StringArray items;
+        for (int i = 0; i < kNumFx; ++i)
+        {
+            auto* plugin = fx.getPlugin (i);
+            const auto device = plugin != nullptr ? plugin->getName() : (fx.isLoaded (i) ? models::model (models::Fx, fx.getModel (i)).name : juce::String ("-"));
+            items.add ("FX " + juce::String (i + 1) + "  " + device.toUpperCase());
+        }
+        popups::ListOptions options;
+        options.columns = 2;
+        options.caption = "FX SLOT";
+        juce::Component::SafePointer<FxTab> safe (this);
+        popups::chooseFrom (slotKey, items, slot, [safe] (int i)
+        {
+            if (safe != nullptr)
+            {
+                safe->slot = i;
+                safe->refresh();
+            }
+        }, options);
+    }
+
+    LibraryPage& page;
+    juce::OwnedArray<WingKey> keys;
+    WingKey *save, *loadKey;
+    WingKey slotKey { {}, Icon::ChevronDown };
+    std::vector<KeyRow> rows;
+    juce::Rectangle<int> presetBox, arrow, slotBox;
+    int slot = 0;
+};
+
+//==============================================================================
+/** CHAN (fig. 52): SAVE stores the selected strip with the scope below as a
+    preset file in the folder on the left; UPDATE SCOPE changes the selected
+    preset's scope; LOAD applies the selected preset (within the scope) to the
+    selected strip. The box at the top right is the selected strip (▼ chooses
+    another). The scope grid is laid out like a channel strip, yellow when
+    included; keys that share one of our sections light together, CONN (the
+    input patch) is never part of a channel preset. */
+class LibraryPage::ChanTab final : public juce::Component, private juce::Timer
+{
+public:
+    explicit ChanTab (LibraryPage& p) : page (p)
+    {
+        save = makeKey (keys, *this, "SAVE", Icon::SaveTray);
+        updateScope = makeKey (keys, *this, "UPDATE\nSCOPE", Icon::Overview);
+        loadKey = makeKey (keys, *this, "LOAD", Icon::LoadTray);
+        rows = { { {}, { save, updateScope }, {} }, { {}, { loadKey }, {} } };
+        styleIconKey (stripKey);
+        addAndMakeVisible (stripKey);
+        stripKey.onClick = [this] { chooseStrip(); };
+
+        save->onClick = [this]
+        {
+            auto* s = selectedStrip();
+            if (s == nullptr)
+                return;
+            savePresetAs (page, "SAVE " + s->getLabel().toUpperCase() + " AS PRESET", stripName (*s), page.list->getFolder(), Show::channelPresetExtension,
+                          [this, ref = state::StripRef::of (*s)] (const juce::File& file, const juce::String& name)
+                          {
+                              const auto r = page.ctx.show.saveChannelPreset (ref, scope, file, name);
+                              if (r.failed())
+                                  page.ctx.log.error (r.getErrorMessage());
+                              else
+                                  page.ctx.log.info ("Saved channel preset " + file.getFileName());
+                              page.list->selectFile (file);
+                              shownFile = file;
+                              repaint();
+                          });
+        };
+        updateScope->onClick = [this]
+        {
+            const auto file = page.list->getSelectedFile();
+            if (file.hasFileExtension (Show::channelPresetExtension) && Show::setPresetScope (file, scope))
+                page.ctx.log.info ("Updated the scope of " + file.getFileName());
+        };
+        loadKey->onClick = [this]
+        {
+            const auto file = page.list->getSelectedFile();
+            auto* s = selectedStrip();
+            if (s == nullptr || ! file.hasFileExtension (Show::channelPresetExtension))
+                return;
+            const auto r = page.ctx.show.loadChannelPreset (state::StripRef::of (*s), file, scope);
+            if (r.failed())
+                page.ctx.log.warning (file.getFileName() + ": " + r.getErrorMessage());
+            else
+                page.ctx.log.info ("Loaded " + file.getFileName() + " onto " + s->getLabel());
+        };
+        startTimerHz (4);
+    }
+
+    void refresh()
+    {
+        // A newly selected preset shows its own scope.
+        const auto file = page.list->getSelectedFile();
+        if (file != shownFile)
+        {
+            shownFile = file;
+            if (file.hasFileExtension (Show::channelPresetExtension))
+            {
+                const auto info = Show::readPreset (file);
+                if (info.kind == Show::PresetInfo::Kind::Channel)
+                    scope = info.scope & ~(juce::uint32) state::Routing;
+            }
+        }
+        const bool preset = file.hasFileExtension (Show::channelPresetExtension);
+        enableKey (*loadKey, preset && selectedStrip() != nullptr);
+        enableKey (*updateScope, preset);
+        enableKey (*save, selectedStrip() != nullptr);
+        repaint();
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        paintKeyRows (g, rows);
+
+        // The selected strip: a header in its colour, its number and name.
+        g.setColour (Dark::body);
+        g.fillRect (stripBox);
+        if (auto* s = selectedStrip())
+        {
+            auto b = stripBox.reduced (4);
+            auto header = b.removeFromTop (16);
+            g.setColour (s->getColour());
+            g.fillRect (header);
+            g.setColour (juce::Colours::black);
+            g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+            g.drawFittedText (stripName (*s).toUpperCase(), header.reduced (3, 0), juce::Justification::centred, 1);
+            g.setColour (Dark::text);
+            g.setFont (juce::FontOptions (juce::jmin (22.0f, (float) b.getHeight() * 0.7f), juce::Font::bold));
+            g.drawFittedText (s->getLabel().removeCharacters (" "), b, juce::Justification::centred, 1);
+        }
+
+        // The scope grid.
+        for (auto& c : cells)
+        {
+            const bool active = c.bits != 0 && c.bits != kConn;
+            const bool on = c.bits == kNone || c.bits == kAll ? false : (scope & c.bits) != 0 && active;
+            auto r = c.area.toFloat().reduced (1.5f);
+            g.setColour (on ? Dark::on : (active ? Dark::key : Dark::key.darker (0.5f)));
+            g.fillRect (r);
+            g.setColour (on ? juce::Colours::black : (active ? Dark::text : Dark::textDim.withAlpha (0.5f)));
+            g.setFont (juce::FontOptions (juce::jlimit (8.0f, 12.0f, r.getHeight() * 0.36f), juce::Font::bold));
+            g.drawFittedText (c.name, r.toNearestInt().reduced (1), juce::Justification::centred, 1, 0.6f);
+        }
+    }
+
+    void resized() override
+    {
+        auto b = getLocalBounds();
+        const int rowH = juce::jlimit (36, 56, getHeight() / 6);
+        layoutKeyRows (b, rows, rowH, 4);
+        // The strip box at the top right of the first row, with its chooser.
+        const auto band = rows.front().band.reduced (4);
+        stripKey.setBounds (band.withLeft (band.getRight() - 36));
+        stripBox = band.withRight (band.getRight() - 40).withLeft (band.getRight() - 40 - juce::jmin (110, band.getWidth() / 4));
+
+        cells.clear();
+        auto grid = b.withTop (rows.back().band.getBottom() + 10).reduced (4, 0);
+        const float w = (float) grid.getWidth() / 10.0f;
+        const int h = juce::jmin (40, grid.getHeight() / 4);
+        auto cell = [&] (int col, int row, const char* name, juce::uint32 bits)
+        {
+            cells.push_back ({ juce::Rectangle<int> (grid.getX() + juce::roundToInt (w * (float) col), grid.getY() + row * h, juce::roundToInt (w), h), name, bits });
+        };
+        const juce::uint32 top[] = { kConn, state::Inserts, state::Name, state::Groups, 0, state::Sends, state::Sends, kNone, kAll };
+        const char* topNames[] = { "CONN", "CONFIG", "CUST", "TAGS", "", "SEND", "MAIN", "NONE", "ALL" };
+        for (int i = 0; i < 9; ++i)
+            if (*topNames[i] != 0)
+                cell (i + (i >= 4 ? 1 : 0), 0, topNames[i], top[i]);
+        const juce::uint32 second[] = { state::Preamp, state::Preamp, state::Preamp, state::Gate, state::Dynamics, state::Eq, state::Fader, state::Fader, state::Fader };
+        const char* secondNames[] = { "IN", "FILTER", "DELAY", "GATE", "DYN", "EQ", "PAN", "FDR", "MUTE" };
+        for (int i = 0; i < 9; ++i)
+            cell (i + (i >= 6 ? 1 : 0), 1, secondNames[i], second[i]);
+        cell (0, 2, "PRE", state::Inserts);
+        cell (0, 3, "POST", state::Inserts);
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        for (auto& c : cells)
+            if (c.area.contains (e.getPosition()) && c.bits != 0 && c.bits != kConn)
+            {
+                if (c.bits == kNone)
+                    scope = 0;
+                else if (c.bits == kAll)
+                    scope = state::AllSections & ~(juce::uint32) state::Routing;
+                else
+                    scope ^= c.bits;
+                repaint();
+                return;
+            }
+    }
+
+private:
+    static constexpr juce::uint32 kConn = 0x80000000u, kNone = 0x40000000u, kAll = 0x20000000u;
+
+    struct Cell
+    {
+        juce::Rectangle<int> area;
+        juce::String name;
+        juce::uint32 bits;
+    };
+
+    void timerCallback() override { refresh(); }
+
+    Strip* selectedStrip() const { return page.ctx.getSelectedStrip ? page.ctx.getSelectedStrip() : nullptr; }
+
+    void chooseStrip()
+    {
+        juce::StringArray items;
+        std::vector<Strip*> strips;
+        int selected = -1;
+        for (int k = 0; k < kNumStripKinds; ++k)
+            for (auto& s : page.ctx.engine.getStrips (static_cast<StripKind> (k)))
+            {
+                if (s.get() == selectedStrip())
+                    selected = items.size();
+                items.add (describeStrip (*s).toUpperCase());
+                strips.push_back (s.get());
+            }
+        popups::ListOptions options;
+        options.columns = 4;
+        options.caption = "CHANNEL";
+        juce::Component::SafePointer<ChanTab> safe (this);
+        popups::chooseFrom (stripKey, items, selected, [safe, strips] (int i)
+        {
+            if (safe != nullptr && juce::isPositiveAndBelow (i, (int) strips.size()) && safe->page.ctx.selectStrip)
+                safe->page.ctx.selectStrip (strips[(size_t) i]);
+        }, options);
+    }
+
+    LibraryPage& page;
+    juce::OwnedArray<WingKey> keys;
+    WingKey *save, *updateScope, *loadKey;
+    WingKey stripKey { {}, Icon::ChevronDown };
+    std::vector<KeyRow> rows;
+    std::vector<Cell> cells;
+    juce::Rectangle<int> stripBox;
+    juce::uint32 scope = state::AllSections & ~(juce::uint32) state::Routing;
+    juce::File shownFile;
+};
+
+//==============================================================================
+/** CLIP: the clip player (chapter 8) isn't built; the tab shows the console's
     layout dimmed. */
 class LibraryPage::PlaceholderTab final : public juce::Component
 {
 public:
-    PlaceholderTab (LibraryPage& p, int which) : page (p), tab (which)
+    explicit PlaceholderTab (LibraryPage&)
     {
-        if (tab == TabClip)
-        {
-            for (auto [text, icon] : { std::pair { "PLAY", Icon::Play }, std::pair { "PAUSE", Icon::Pause }, std::pair { "STOP", Icon::Stop } })
-                makeKey (keys, *this, text, icon, false);
-            rows = { { {}, { keys[0], keys[1] }, { keys[2] } } };
-        }
-        else if (tab == TabFx)
-        {
-            makeKey (keys, *this, "SAVE", Icon::SaveTray, false);
-            makeKey (keys, *this, "LOAD", Icon::LoadTray, false);
-            rows = { { {}, { keys[0] }, {} }, { {}, { keys[1] }, {} } };
-        }
-        else
-        {
-            makeKey (keys, *this, "SAVE", Icon::SaveTray, false);
-            makeKey (keys, *this, "UPDATE\nSCOPE", Icon::Overview, false);
-            makeKey (keys, *this, "LOAD", Icon::LoadTray, false);
-            rows = { { {}, { keys[0], keys[1] }, {} }, { {}, { keys[2] }, {} } };
-        }
+        for (auto [text, icon] : { std::pair { "PLAY", Icon::Play }, std::pair { "PAUSE", Icon::Pause }, std::pair { "STOP", Icon::Stop } })
+            makeKey (keys, *this, text, icon, false);
+        rows = { { {}, { keys[0], keys[1] }, { keys[2] } } };
     }
 
     void paint (juce::Graphics& g) override
@@ -541,103 +1039,50 @@ public:
         paintKeyRows (g, rows);
         auto r = graphic;
         const float dim = 0.4f;
-        if (tab == TabClip)
+        // The 4-track player: meter, status, time, reels and format chips.
+        g.setColour (Dark::body);
+        g.fillRect (r);
+        auto meter = r.removeFromLeft (r.getHeight() * 2 / 3).reduced (6);
+        g.setColour (juce::Colours::black);
+        g.fillRect (meter);
+        auto body = r.reduced (8, 6);
+        auto status = body.removeFromLeft (14).withHeight (14).toFloat();
+        g.setColour (Dark::on.withAlpha (dim));
+        g.fillRect (status);
+        body.removeFromLeft (8);
+        g.setColour (Dark::pre.withAlpha (dim));
+        g.setFont (juce::FontOptions (juce::jmin (30.0f, (float) body.getHeight() * 0.36f), juce::Font::bold));
+        g.drawText ("0:00:00", body.removeFromTop (body.getHeight() * 45 / 100), juce::Justification::centredLeft);
+        for (int i = 0; i < 2; ++i)
         {
-            // The 4-track player: meter, status, time, reels and format chips.
-            g.setColour (Dark::body);
-            g.fillRect (r);
-            auto meter = r.removeFromLeft (r.getHeight() * 2 / 3).reduced (6);
-            g.setColour (juce::Colours::black);
-            g.fillRect (meter);
-            auto body = r.reduced (8, 6);
-            auto status = body.removeFromLeft (14).withHeight (14).toFloat();
-            g.setColour (Dark::on.withAlpha (dim));
-            g.fillRect (status);
-            body.removeFromLeft (8);
-            g.setColour (Dark::pre.withAlpha (dim));
-            g.setFont (juce::FontOptions (juce::jmin (30.0f, (float) body.getHeight() * 0.36f), juce::Font::bold));
-            g.drawText ("0:00:00", body.removeFromTop (body.getHeight() * 45 / 100), juce::Justification::centredLeft);
-            for (int i = 0; i < 2; ++i)
-            {
-                const float d = (float) juce::jmin (body.getHeight() - 16, 44);
-                auto reel = juce::Rectangle<float> ((float) body.getX() + (float) i * (d + 8.0f), (float) body.getY() + 4.0f, d, d);
-                g.setColour (Dark::text.withAlpha (dim));
-                g.drawEllipse (reel, 2.0f);
-                g.fillEllipse (reel.withSizeKeepingCentre (d * 0.2f, d * 0.2f));
-            }
-            g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
-            g.drawText ("4-TRACK PLAYER", body, juce::Justification::bottomRight);
-            auto chips = juce::Rectangle<float> ((float) body.getRight() - 90.0f, (float) body.getY(), 90.0f, 34.0f);
-            for (auto [i, text] : { std::pair { 0, "WAV" }, std::pair { 1, "4-CH" }, std::pair { 2, "48K" }, std::pair { 3, "24 bit" } })
-                drawChip (g, juce::Rectangle<float> (chips.getX() + (float) (i % 2) * 46.0f, chips.getY() + (float) (i / 2) * 18.0f, 43.0f, 15.0f), text,
-                          Dark::key.withAlpha (dim), Dark::text.withAlpha (dim));
-        }
-        else if (tab == TabFx)
-        {
-            // The preset and the slot it loads into.
-            auto preset = r.removeFromLeft (r.getWidth() * 42 / 100).reduced (4, r.getHeight() / 5);
-            auto arrow = r.removeFromLeft (30);
-            auto slot = r.reduced (4, r.getHeight() / 6);
-            g.setColour (Dark::key.withAlpha (dim));
-            g.fillRect (preset);
-            g.fillRect (slot);
-            g.setColour (FileColours::fx.withAlpha (dim));
-            g.fillRect (slot.removeFromTop (14));
+            const float d = (float) juce::jmin (body.getHeight() - 16, 44);
+            auto reel = juce::Rectangle<float> ((float) body.getX() + (float) i * (d + 8.0f), (float) body.getY() + 4.0f, d, d);
             g.setColour (Dark::text.withAlpha (dim));
-            g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-            g.drawText ("PRESET", preset, juce::Justification::centred);
-            g.drawText (">>", arrow, juce::Justification::centred);
-            g.drawText ("FX SLOT", slot, juce::Justification::centred);
+            g.drawEllipse (reel, 2.0f);
+            g.fillEllipse (reel.withSizeKeepingCentre (d * 0.2f, d * 0.2f));
         }
-        else
-        {
-            // The channel preset's scope, laid out like a channel strip.
-            const char* top[] = { "CONN", "CONFIG", "CUST", "TAGS", "", "SEND", "MAIN", "NONE", "ALL" };
-            const char* second[] = { "IN", "FILTER", "DELAY", "GATE", "DYN", "EQ", "", "PAN", "FDR", "MUTE" };
-            const float w = (float) r.getWidth() / 10.0f, h = juce::jmin (34.0f, (float) r.getHeight() / 4.0f);
-            auto cell = [&] (int col, int row, const char* text)
-            {
-                if (*text == 0)
-                    return;
-                auto c = juce::Rectangle<float> ((float) r.getX() + w * (float) col, (float) r.getY() + h * (float) row, w, h).reduced (1.5f);
-                g.setColour (Dark::on.withAlpha (0.25f));
-                g.fillRect (c);
-                g.setColour (Dark::text.withAlpha (dim));
-                g.setFont (juce::FontOptions (juce::jmin (11.0f, h * 0.4f), juce::Font::bold));
-                g.drawFittedText (text, c.toNearestInt(), juce::Justification::centredBottom, 1, 0.6f);
-            };
-            for (int i = 0; i < 9; ++i)
-                cell (i, 0, top[i]);
-            for (int i = 0; i < 10; ++i)
-                cell (i, 1, second[i]);
-            cell (0, 2, "PRE");
-            cell (0, 3, "POST");
-        }
+        g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+        g.drawText ("4-TRACK PLAYER", body, juce::Justification::bottomRight);
+        auto chips = juce::Rectangle<float> ((float) body.getRight() - 90.0f, (float) body.getY(), 90.0f, 34.0f);
+        for (auto [i, text] : { std::pair { 0, "WAV" }, std::pair { 1, "4-CH" }, std::pair { 2, "48K" }, std::pair { 3, "24 bit" } })
+            drawChip (g, juce::Rectangle<float> (chips.getX() + (float) (i % 2) * 46.0f, chips.getY() + (float) (i / 2) * 18.0f, 43.0f, 15.0f), text,
+                      Dark::key.withAlpha (dim), Dark::text.withAlpha (dim));
         g.setColour (Dark::textDim);
         g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-        const char* what = tab == TabClip ? "THE CLIP PLAYER IS NOT AVAILABLE YET." : tab == TabFx ? "FX PRESETS ARE NOT AVAILABLE YET." : "CHANNEL PRESETS ARE NOT AVAILABLE YET.";
-        g.drawFittedText (what, note, juce::Justification::topLeft, 2);
+        g.drawFittedText ("THE CLIP PLAYER IS NOT AVAILABLE YET.", note, juce::Justification::topLeft, 2);
     }
 
     void resized() override
     {
         auto b = getLocalBounds();
         const int rowH = juce::jlimit (36, 56, getHeight() / 6);
-        if (tab == TabClip)
-        {
-            graphic = b.removeFromTop (juce::jmin (120, b.getHeight() / 3));
-            b.removeFromTop (4);
-        }
+        graphic = b.removeFromTop (juce::jmin (120, b.getHeight() / 3));
+        b.removeFromTop (4);
         layoutKeyRows (b, rows, rowH, 4);
-        b = b.withTop (rows.back().band.getBottom() + 8);
-        if (tab != TabClip)
-            graphic = b.removeFromTop (juce::jmin (150, b.getHeight() * 2 / 3)).reduced (4, 0);
-        note = b.reduced (8, 6);
+        note = b.withTop (rows.back().band.getBottom() + 8).reduced (8, 6);
     }
 
 private:
-    LibraryPage& page;
-    int tab;
     juce::OwnedArray<WingKey> keys;
     std::vector<KeyRow> rows;
     juce::Rectangle<int> graphic, note;
@@ -660,6 +1105,23 @@ LibraryPage::LibraryPage (UiContext& c) : ctx (c)
             snip->refresh();
     };
     list->onActivated = [this] (ShowPanel::Item item) { load (item); };
+    // The file list: a selected preset shows on its tab; a double-click opens a show.
+    list->onFileSelected = [this] (const juce::File&)
+    {
+        if (auto* fx = dynamic_cast<FxTab*> (tabPages[TabFx]))
+            fx->refresh();
+        if (auto* chan = dynamic_cast<ChanTab*> (tabPages[TabChan]))
+            chan->refresh();
+    };
+    list->onFileActivated = [this] (const juce::File& file)
+    {
+        if (file.hasFileExtension (Show::fileExtension))
+            confirmLoad ("the show \"" + file.getFileNameWithoutExtension() + "\"", [this, file]
+            {
+                if (ctx.openShowFile)
+                    ctx.openShowFile (file);
+            });
+    };
     addAndMakeVisible (*list);
 
     tabs.tabFraction = 0.0f;
@@ -671,9 +1133,9 @@ LibraryPage::LibraryPage (UiContext& c) : ctx (c)
     tabPages.add (new ShowTab (*this));
     tabPages.add (new SnapTab (*this));
     tabPages.add (new SnipTab (*this));
-    tabPages.add (new PlaceholderTab (*this, TabClip));
-    tabPages.add (new PlaceholderTab (*this, TabFx));
-    tabPages.add (new PlaceholderTab (*this, TabChan));
+    tabPages.add (new PlaceholderTab (*this));
+    tabPages.add (new FxTab (*this));
+    tabPages.add (new ChanTab (*this));
     for (auto* p : tabPages)
         addChildComponent (p);
 
@@ -725,21 +1187,27 @@ StatusTitle LibraryPage::getStatusTitle()
     // (ALWAYS SHOW ACTIVE SCENE shows it on the other screens too).
     StatusTitle t;
     t.kind = StatusTitle::Kind::Text;
-    t.icon = Icon::ShowFile;
     t.prefix = ctx.show.getName().toUpperCase();
     if (const auto scene = ctx.show.getScene (ctx.show.getCurrentSceneIndex()))
     {
+        // The show's name is the small caption over the scene ("INT:" on the console).
+        t.prefix << ":";
         t.text = scene->name.toUpperCase();
         t.fill = FileColours::snap;
         t.ink = juce::Colours::black;
     }
     else
+    {
+        t.icon = Icon::ShowFile;
         t.text = "NO SCENE";
+    }
     return t;
 }
 
 bool LibraryPage::anyGlobalSafe() const
 {
+    if (ctx.show.hasGlobalSafes())
+        return true;
     for (int k = 0; k < kNumStripKinds; ++k)
         for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
             if (s->params.recallSafe.load())
@@ -774,6 +1242,12 @@ void LibraryPage::showTab (int t)
     for (int i = 0; i < tabPages.size(); ++i)
         tabPages[i]->setVisible (i == t);
     list->setTypeFilter (t == TabShow ? 0 : t == TabSnap ? 1 : t == TabSnip ? 2 : -1);
+    list->setFileFilter (t == TabShow ? Show::fileExtension : t == TabFx ? Show::fxPresetExtension : t == TabChan ? Show::channelPresetExtension : "");
+    // Presets are files, scenes and snippets live in the show.
+    if ((t == TabFx || t == TabChan) && list->getLocation() == ShowPanel::Location::Show)
+        list->setLocation (ShowPanel::Location::Internal);
+    else if ((t == TabSnap || t == TabSnip) && list->getLocation() != ShowPanel::Location::Show)
+        list->setLocation (ShowPanel::Location::Show);
 }
 
 int LibraryPage::selectedScene() const
@@ -820,15 +1294,15 @@ void LibraryPage::load (ShowPanel::Item item)
         });
 }
 
-void LibraryPage::openScope (int scopeMode, const juce::String& scopeTitle, juce::uint32 sections, std::vector<state::StripRef> strips,
-                             std::function<void (juce::uint32, const std::vector<state::StripRef>&)> save)
+void LibraryPage::openScope (int scopeMode, const juce::String& scopeTitle, state::Scope initial,
+                             std::function<void (const state::Scope&, bool noGlobal)> save)
 {
-    auto window = std::make_unique<ScopeWindow> (ctx, static_cast<ScopeWindow::Mode> (scopeMode), scopeTitle, ScopeWindow::Selection { sections, std::move (strips) });
+    auto window = std::make_unique<ScopeWindow> (ctx, static_cast<ScopeWindow::Mode> (scopeMode), scopeTitle, std::move (initial));
     window->onCancel = [this] { closeScope(); };
-    window->onSave = [this, save] (const ScopeWindow::Selection& s)
+    window->onSave = [this, save] (const state::Scope& s, bool noGlobal)
     {
         if (save)
-            save (s.sections, s.strips);
+            save (s, noGlobal);
         closeScope();
     };
     scope = std::move (window);
@@ -853,18 +1327,22 @@ void LibraryPage::closeScope()
 
 void LibraryPage::openGlobal()
 {
-    // GLOBAL safes: strips that scene recalls leave alone (DCA, mute group, FX
-    // and content safes are engine item E17).
-    std::vector<state::StripRef> safes;
+    // GLOBAL safes: what scene recalls leave alone. Strips keep their own
+    // recall safe; DCAs, mute groups, FX slots, contents and the console
+    // settings are the show's global safes.
+    auto safe = ctx.show.getGlobalSafe();
+    safe.allStrips = false;
+    safe.strips.clear();
     for (int k = 0; k < kNumStripKinds; ++k)
         for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
             if (s->params.recallSafe.load())
-                safes.push_back (state::StripRef::of (*s));
-    openScope ((int) ScopeWindow::Mode::Global, "GLOBAL SAFE", 0, safes, [this] (juce::uint32, const std::vector<state::StripRef>& chosen)
+                safe.strips.push_back (state::StripRef::of (*s));
+    openScope ((int) ScopeWindow::Mode::Global, "GLOBAL SAFE", safe, [this] (const state::Scope& chosen, bool)
     {
         for (int k = 0; k < kNumStripKinds; ++k)
             for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
-                s->params.recallSafe = std::find (chosen.begin(), chosen.end(), state::StripRef::of (*s)) != chosen.end();
+                s->params.recallSafe = chosen.includes (state::StripRef::of (*s));
+        ctx.show.setGlobalSafe (chosen);
         shownGlobal = anyGlobalSafe();
     });
 }
@@ -876,6 +1354,10 @@ void LibraryPage::refresh()
         snap->refresh();
     if (auto* snip = dynamic_cast<SnipTab*> (tabPages[TabSnip]))
         snip->refresh();
+    if (auto* fx = dynamic_cast<FxTab*> (tabPages[TabFx]))
+        fx->refresh();
+    if (auto* chan = dynamic_cast<ChanTab*> (tabPages[TabChan]))
+        chan->refresh();
     tabPages[TabShow]->repaint();
     updateTransport();
 }

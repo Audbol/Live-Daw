@@ -14,6 +14,13 @@
 //! linked to the scene below it (recalling it recalls that one too; the link
 //! follows the scene, so after a move it links to its new neighbour).
 //!
+//! A scene's recall scope can name strips, DCAs, mute groups and FX slots as
+//! well as sections (`scope::Scope`). GLOBAL safes keep DCAs, mute groups, FX
+//! slots, sections and the console-wide settings out of scene recalls, beside
+//! the per-strip recall safe. PARTIAL LOAD recalls a chosen scope (NO GLOB:
+//! ignoring the safes), RESTORE the whole scene, PARTIAL UPDATE stores a
+//! chosen scope into it. Snippet REC / STOP records which parameters changed.
+//!
 //! Scene and snippet recall never create or destroy channels or plugins, so
 //! recalling during a show can't cause dropouts. Message thread only.
 
@@ -22,8 +29,10 @@ use crate::custom::CustomControls;
 use crate::layers::LayerSet;
 use crate::legacy::{self, Converter};
 use crate::refs::{refs_from_string, refs_to_string, StripRef};
+use crate::scope::{self, ChangeCounts, GlobalSafe, RecordedChanges, Recording, Scope};
 use crate::xml::{self, Element};
 use livedaw_engine::Engine;
+use std::collections::HashMap;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -39,7 +48,17 @@ pub struct Snippet {
     pub name: String,
     pub sections: u32,
     pub strips: Vec<StripRef>,
+    /// DCAs, mute groups and FX slots it recalls (bit n = item n+1), and the
+    /// console-wide settings (see `scope::Scope`).
+    pub dcas: u32,
+    pub mute_groups: u32,
+    pub fx: u32,
+    pub console: bool,
     pub fire_with_scene: bool,
+    /// The number of parameters REC recorded (0: not recorded).
+    pub recorded_parameters: usize,
+    /// Each `<Strip>` holds the sections it recalls (a recorded snippet's
+    /// strips can differ).
     pub state: Option<Element>,
 }
 
@@ -49,9 +68,48 @@ impl Default for Snippet {
             name: String::new(),
             sections: section::FADER | section::SENDS,
             strips: Vec::new(),
+            dcas: 0,
+            mute_groups: 0,
+            fx: 0,
+            console: false,
             fire_with_scene: false,
+            recorded_parameters: 0,
             state: None,
         }
+    }
+}
+
+impl Snippet {
+    /// What the snippet recalls.
+    pub fn scope(&self) -> Scope {
+        Scope {
+            sections: self.sections,
+            strips: Some(self.strips.clone()),
+            dcas: self.dcas,
+            mute_groups: self.mute_groups,
+            fx: self.fx,
+            console: self.console,
+        }
+    }
+
+    fn set_scope(&mut self, scope: &Scope) {
+        // Its DCAs, mute groups and FX slots recall with their sections.
+        self.sections = (scope.sections | (scope::global_sections(scope) & !section::NAME)) & section::ALL;
+        self.strips = scope.strips.clone().unwrap_or_default();
+        self.dcas = scope.dcas & scope::ALL_DCAS;
+        self.mute_groups = scope.mute_groups & scope::ALL_MUTE_GROUPS;
+        self.fx = scope.fx & scope::ALL_FX;
+        self.console = scope.console;
+    }
+
+    /// The parameter count shown for it: what REC recorded, else the values it holds.
+    pub fn parameter_count(&self) -> usize {
+        if self.recorded_parameters > 0 {
+            return self.recorded_parameters;
+        }
+        let Some(state) = &self.state else { return 0 };
+        let empty = Element::new("");
+        state.elements().map(|e| scope::count_differences(&empty, e)).sum()
     }
 }
 
@@ -59,7 +117,15 @@ impl Default for Snippet {
 pub struct Scene {
     pub name: String,
     pub notes: String,
+    /// The sections the scene recalls (its scope's CONTENTS).
     pub scope: u32,
+    /// The rest of the recall scope: strips (`None` = all), DCAs, mute groups,
+    /// FX slots and the console-wide settings (see [`Scene::recall_scope`]).
+    pub scope_strips: Option<Vec<StripRef>>,
+    pub scope_dcas: u32,
+    pub scope_mute_groups: u32,
+    pub scope_fx: u32,
+    pub scope_console: bool,
     pub fade_seconds: f64,
     /// EDIT TAG: #1..#128, 0 = none.
     pub tag: i32,
@@ -77,6 +143,11 @@ impl Default for Scene {
             name: String::new(),
             notes: String::new(),
             scope: section::ALL & !section::ROUTING,
+            scope_strips: None,
+            scope_dcas: scope::ALL_DCAS,
+            scope_mute_groups: scope::ALL_MUTE_GROUPS,
+            scope_fx: scope::ALL_FX,
+            scope_console: true,
             fade_seconds: 0.0,
             tag: 0,
             skip: false,
@@ -84,6 +155,30 @@ impl Default for Scene {
             state: None,
             snippets: Vec::new(),
         }
+    }
+}
+
+impl Scene {
+    /// What recalling the scene applies.
+    pub fn recall_scope(&self) -> Scope {
+        Scope {
+            sections: self.scope,
+            strips: self.scope_strips.clone(),
+            dcas: self.scope_dcas,
+            mute_groups: self.scope_mute_groups,
+            fx: self.scope_fx,
+            console: self.scope_console,
+        }
+    }
+
+    pub fn set_recall_scope(&mut self, scope: &Scope) {
+        let scope = scope.clone().sanitised();
+        self.scope = scope.sections;
+        self.scope_strips = scope.strips;
+        self.scope_dcas = scope.dcas;
+        self.scope_mute_groups = scope.mute_groups;
+        self.scope_fx = scope.fx;
+        self.scope_console = scope.console;
     }
 }
 
@@ -107,7 +202,13 @@ pub struct Show {
     pub layers: LayerSet,
     /// The CUSTOM CONTROLS assignments (CC EDIT).
     pub custom: CustomControls,
+    /// GLOBAL safes beyond the strips' recall safe.
+    pub global_safe: GlobalSafe,
+    /// The scope PARTIAL LOAD and PARTIAL UPDATE last used (they keep it, 3.0).
+    pub partial_scope: Scope,
     scenes: Vec<Scene>,
+    recording: Option<Recording>,
+    recorded: Option<(RecordedChanges, ChangeCounts)>,
     current_scene: i32,
     fades: Vec<Fade>,
     fade_start: Instant,
@@ -120,7 +221,11 @@ impl Default for Show {
             name: "Untitled show".into(),
             layers: LayerSet::default(),
             custom: CustomControls::default(),
+            global_safe: GlobalSafe::default(),
+            partial_scope: Scope::default(),
             scenes: Vec::new(),
+            recording: None,
+            recorded: None,
             current_scene: -1,
             fades: Vec::new(),
             fade_start: Instant::now(),
@@ -185,6 +290,23 @@ impl Show {
             }
             self.current_scene = index;
         }
+    }
+
+    /// PARTIAL UPDATE: stores only what `scope` covers into the scene; the
+    /// rest of it stays as it was.
+    pub fn store_scene_partial(&mut self, engine: &Engine, bridge: &mut dyn PluginBridge, index: i32, scope: &Scope) {
+        if self.scene(index).is_none() {
+            return;
+        }
+        let partial = scope::capture_scoped(engine, scope, bridge);
+        if let Some(scene) = self.scene_mut(index) {
+            match &mut scene.state {
+                Some(state) => scope::merge_state(state, &partial),
+                None => scene.state = Some(partial),
+            }
+        }
+        self.partial_scope = scope.clone();
+        self.current_scene = index;
     }
 
     pub fn remove_scene(&mut self, index: i32) {
@@ -255,33 +377,52 @@ impl Show {
         let mut result = ApplyResult::default();
         let Some(scene) = self.scene(index) else { return result };
         let Some(state) = scene.state.clone() else { return result };
-        let (scope, fade_seconds) = (scene.scope, scene.fade_seconds);
+        let (scope, fade_seconds) = (scene.recall_scope(), scene.fade_seconds);
         let snippets: Vec<Snippet> = scene.snippets.iter().filter(|s| s.fire_with_scene && s.state.is_some()).cloned().collect();
 
         self.cancel_fade();
 
         let fade = fade_seconds > 0.0;
         let mut targets = Vec::new();
-        result = console::apply(engine, &state, scope, None, true, fade.then_some(&mut targets), bridge);
+        let safe = self.global_safe.clone();
+        result = scope::apply_scoped(engine, &state, &scope, Some(&safe), true, fade.then_some(&mut targets), bridge);
 
         // Auto-fire snippets apply on top of the scene (they ignore recall safes, like
         // a manual snippet). Their continuous values override the scene's fade targets.
         for snippet in &snippets {
             let Some(st) = &snippet.state else { continue };
-            result.merge(console::apply(
-                engine,
-                st,
-                snippet.sections,
-                Some(&snippet.strips),
-                false,
-                fade.then_some(&mut targets),
-                bridge,
-            ));
+            result.merge(scope::apply_scoped(engine, st, &snippet.scope(), None, false, fade.then_some(&mut targets), bridge));
         }
 
         if fade {
             self.start_fade(targets, fade_seconds);
         }
+        self.current_scene = index;
+        result
+    }
+
+    /// PARTIAL LOAD (`scope`; `ignore_safes` = NO GLOB) or RESTORE (`None`:
+    /// the whole scene, safes included). Only this scene: no links, no
+    /// auto-fire snippets, no fade.
+    pub fn recall_scene_with(
+        &mut self,
+        engine: &Engine,
+        bridge: &mut dyn PluginBridge,
+        index: i32,
+        scope: Option<&Scope>,
+        ignore_safes: bool,
+    ) -> ApplyResult {
+        let Some(state) = self.scene(index).and_then(|s| s.state.clone()) else { return ApplyResult::default() };
+        self.cancel_fade();
+        let safe = self.global_safe.clone();
+        let result = match scope {
+            Some(scope) => {
+                self.partial_scope = scope.clone();
+                let safe = (!ignore_safes).then_some(&safe);
+                scope::apply_scoped(engine, &state, scope, safe, !ignore_safes, None, bridge)
+            }
+            None => scope::apply_scoped(engine, &state, &Scope::console(section::ALL), None, false, None, bridge),
+        };
         self.current_scene = index;
         result
     }
@@ -316,18 +457,125 @@ impl Show {
         if self.scene(scene).is_none() {
             return -1;
         }
-        let state = console::capture(engine, sections, Some(&strips), bridge);
+        self.add_snippet_scoped(engine, bridge, scene, name, &Scope::strips(sections, strips))
+    }
+
+    /// A new snippet of what `scope` covers (strips, sections, DCAs, mute
+    /// groups, FX slots, console-wide settings).
+    pub fn add_snippet_scoped(
+        &mut self,
+        engine: &Engine,
+        bridge: &mut dyn PluginBridge,
+        scene: i32,
+        name: &str,
+        scope: &Scope,
+    ) -> i32 {
+        if self.scene(scene).is_none() {
+            return -1;
+        }
+        let scope = Scope { strips: Some(scope.strips.clone().unwrap_or_default()), ..scope.clone() }.sanitised();
+        let state = scope::capture_scoped(engine, &scope, bridge);
         let Some(sc) = self.scene_mut(scene) else { return -1 };
-        sc.snippets.push(Snippet { name: name.into(), sections, strips, fire_with_scene: false, state: Some(state) });
+        let mut sn = Snippet { name: name.into(), state: Some(state), ..Snippet::default() };
+        sn.set_scope(&scope);
+        sc.snippets.push(sn);
         sc.snippets.len() as i32 - 1
     }
 
+    /// UPDATE: captures the snippet's parameters again (each strip only the
+    /// sections it holds).
     pub fn store_snippet(&mut self, engine: &Engine, bridge: &mut dyn PluginBridge, scene: i32, snippet: i32) {
         let Some(sn) = self.snippet(scene, snippet) else { return };
-        let state = console::capture(engine, sn.sections, Some(&sn.strips), bridge);
+        let held: HashMap<StripRef, u32> = sn
+            .state
+            .iter()
+            .flat_map(|st| st.children_named("Strip"))
+            .map(|e| (StripRef::parse(e.str_or("ref", "")), e.int_or("sections", 0) as u32))
+            .collect();
+        let changes = RecordedChanges {
+            strips: sn
+                .strips
+                .iter()
+                .map(|r| (*r, held.get(r).map_or(sn.sections, |m| m & sn.sections)))
+                .filter(|(_, m)| *m != 0)
+                .collect(),
+            dcas: sn.dcas,
+            mute_groups: sn.mute_groups,
+            fx: sn.fx,
+            console: sn.console,
+            sections: sn.sections,
+            count: 0,
+        };
+        let state = changes.capture(engine, bridge);
         if let Some(sn) = self.snippet_mut(scene, snippet) {
             sn.state = Some(state);
         }
+    }
+
+    /// ADD ITEMS: captures what `items` covers into the snippet (contents
+    /// without strips add to every strip it has).
+    pub fn add_snippet_items(&mut self, engine: &Engine, bridge: &mut dyn PluginBridge, scene: i32, snippet: i32, items: &Scope) {
+        let Some(sn) = self.snippet(scene, snippet) else { return };
+        let mut items = items.clone().sanitised();
+        if items.strips.as_ref().is_none_or(Vec::is_empty) {
+            items.strips = Some(sn.strips.clone());
+        }
+        let partial = scope::capture_scoped(engine, &items, bridge);
+        let Some(sn) = self.snippet_mut(scene, snippet) else { return };
+        match &mut sn.state {
+            Some(state) => scope::merge_state(state, &partial),
+            None => sn.state = Some(partial),
+        }
+        sn.sections |= items.sections | (scope::global_sections(&items) & !section::NAME);
+        for r in items.strips.unwrap_or_default() {
+            if !sn.strips.contains(&r) {
+                sn.strips.push(r);
+            }
+        }
+        sn.dcas |= items.dcas;
+        sn.mute_groups |= items.mute_groups;
+        sn.fx |= items.fx;
+        sn.console |= items.console;
+        sn.recorded_parameters = 0;
+    }
+
+    /// REMOVE ITEMS: drops what `items` covers from the snippet (contents
+    /// without strips from every strip). A strip left with nothing goes.
+    pub fn remove_snippet_items(&mut self, scene: i32, snippet: i32, items: &Scope) {
+        let Some(sn) = self.snippet_mut(scene, snippet) else { return };
+        let all = items.strips.as_ref().is_none_or(Vec::is_empty);
+        let chosen = |r: &StripRef| all || items.strips.as_ref().is_some_and(|s| s.contains(r));
+        let mut remaining = 0u32;
+        let mut kept = Vec::new();
+        if let Some(state) = &mut sn.state {
+            state.children.retain_mut(|c| {
+                let crate::xml::Node::Element(e) = c else { return true };
+                if e.name != "Strip" {
+                    return true;
+                }
+                let r = StripRef::parse(e.str_or("ref", ""));
+                let mut mask = e.int_or("sections", 0) as u32;
+                if chosen(&r) {
+                    mask &= !items.sections;
+                    e.set("sections", mask);
+                }
+                if mask & section::ALL == 0 {
+                    return false;
+                }
+                remaining |= mask;
+                kept.push(r);
+                true
+            });
+            sn.strips.retain(|r| kept.contains(r));
+            sn.sections &= remaining;
+        } else if items.sections & sn.sections == sn.sections {
+            sn.strips.retain(|r| !chosen(r));
+        }
+        sn.dcas &= !items.dcas;
+        sn.mute_groups &= !items.mute_groups;
+        sn.fx &= !items.fx;
+        sn.console &= !items.console;
+        sn.recorded_parameters = 0;
     }
 
     pub fn remove_snippet(&mut self, scene: i32, snippet: i32) {
@@ -339,12 +587,102 @@ impl Show {
     }
 
     pub fn recall_snippet(&mut self, engine: &Engine, bridge: &mut dyn PluginBridge, scene: i32, snippet: i32) -> ApplyResult {
-        match self.snippet(scene, snippet) {
-            Some(Snippet { state: Some(state), sections, strips, .. }) => {
-                console::apply(engine, state, *sections, Some(strips), false, None, bridge)
+        self.recall_snippet_with(engine, bridge, scene, snippet, None)
+    }
+
+    /// PARTIAL LOAD of a snippet: only what is in both its scope and `limit`.
+    pub fn recall_snippet_with(
+        &mut self,
+        engine: &Engine,
+        bridge: &mut dyn PluginBridge,
+        scene: i32,
+        snippet: i32,
+        limit: Option<&Scope>,
+    ) -> ApplyResult {
+        let Some(sn) = self.snippet(scene, snippet) else { return ApplyResult::default() };
+        let Some(state) = sn.state.clone() else { return ApplyResult::default() };
+        let mut scope = sn.scope();
+        if let Some(l) = limit {
+            scope.sections &= l.sections;
+            if let (Some(own), Some(only)) = (&mut scope.strips, &l.strips) {
+                own.retain(|r| only.contains(r));
             }
-            _ => ApplyResult::default(),
+            scope.dcas &= l.dcas;
+            scope.mute_groups &= l.mute_groups;
+            scope.fx &= l.fx;
+            scope.console &= l.console;
+            self.partial_scope = l.clone();
         }
+        scope::apply_scoped(engine, &state, &scope, None, false, None, bridge)
+    }
+
+    // ---- snippet recording (REC / STOP) ------------------------------------------------
+
+    /// REC: remembers the console to record the parameters changed from now on.
+    pub fn start_recording(&mut self, engine: &Engine) {
+        self.recording = Some(Recording::start(engine));
+        self.recorded = None;
+    }
+
+    pub fn is_recording(&self) -> bool {
+        self.recording.is_some()
+    }
+
+    /// STOP: keeps what changed for SAVE. Returns the number of changed parameters.
+    pub fn stop_recording(&mut self, engine: &Engine) -> usize {
+        let Some(rec) = self.recording.take() else { return self.recorded_count(engine) };
+        let changes = rec.changes(engine);
+        let n = changes.0.count;
+        self.recorded = Some(changes);
+        n
+    }
+
+    /// The parameters changed since REC (while recording), or recorded by the last STOP.
+    pub fn recorded_count(&self, engine: &Engine) -> usize {
+        match (&self.recording, &self.recorded) {
+            (Some(rec), _) => rec.changes(engine).0.count,
+            (None, Some((c, _))) => c.count,
+            _ => 0,
+        }
+    }
+
+    /// What the last STOP recorded, limited to `focus` (REC FOCUS) when given.
+    pub fn recorded_changes(&self, focus: Option<&Scope>) -> Option<RecordedChanges> {
+        let (changes, counts) = self.recorded.as_ref()?;
+        Some(match focus {
+            Some(f) => changes.limited_to(f, counts),
+            None => changes.clone(),
+        })
+    }
+
+    /// CLEAR ALL during or after a recording: drops it.
+    pub fn clear_recording(&mut self) {
+        self.recording = None;
+        self.recorded = None;
+    }
+
+    /// SAVE after STOP: a snippet of the recorded parameters (within `focus`).
+    /// -1 if nothing was recorded.
+    pub fn add_recorded_snippet(
+        &mut self,
+        engine: &Engine,
+        bridge: &mut dyn PluginBridge,
+        scene: i32,
+        name: &str,
+        focus: Option<&Scope>,
+    ) -> i32 {
+        let Some(changes) = self.recorded_changes(focus).filter(|c| !c.is_empty()) else { return -1 };
+        if self.scene(scene).is_none() {
+            return -1;
+        }
+        let state = changes.capture(engine, bridge);
+        let Some(sc) = self.scene_mut(scene) else { return -1 };
+        let mut sn = Snippet { name: name.into(), state: Some(state), recorded_parameters: changes.count, ..Snippet::default() };
+        sn.set_scope(&changes.scope());
+        sc.snippets.push(sn);
+        let index = sc.snippets.len() as i32 - 1;
+        self.recorded = None;
+        index
     }
 
     // ---- fades -----------------------------------------------------------------------
@@ -406,14 +744,19 @@ impl Show {
         root.add(console::save_console(engine, bridge));
         root.add(self.layers.to_xml());
         root.add(self.custom.to_xml());
+        if !self.global_safe.is_empty() {
+            root.add(self.global_safe.to_xml());
+        }
+        let mut partial = Element::new("PartialScope");
+        self.partial_scope.write_attrs(&mut partial, "sections");
+        root.add(partial);
 
         let scenes = root.add_new("Scenes");
         for scene in &self.scenes {
             let sx = scenes.add_new("Scene");
-            sx.set("name", &scene.name)
-                .set("notes", &scene.notes)
-                .set("scope", scene.scope as i32)
-                .set("fade", scene.fade_seconds)
+            sx.set("name", &scene.name).set("notes", &scene.notes);
+            scene.recall_scope().write_attrs(sx, "scope");
+            sx.set("fade", scene.fade_seconds)
                 .set("tag", scene.tag)
                 .set_bool("skip", scene.skip)
                 .set_bool("link", scene.link_next);
@@ -427,6 +770,15 @@ impl Show {
                     .set("sections", sn.sections as i32)
                     .set("strips", refs_to_string(&sn.strips))
                     .set_bool("fireWithScene", sn.fire_with_scene);
+                if sn.dcas != 0 || sn.mute_groups != 0 || sn.fx != 0 || sn.console {
+                    nx.set("scopeDca", sn.dcas)
+                        .set("scopeMgrp", sn.mute_groups)
+                        .set("scopeFx", sn.fx)
+                        .set_bool("scopeConsole", sn.console);
+                }
+                if sn.recorded_parameters > 0 {
+                    nx.set("pars", sn.recorded_parameters);
+                }
                 if let Some(st) = &sn.state {
                     nx.add(st.clone());
                 }
@@ -487,6 +839,10 @@ impl Show {
             Some(c) => self.custom.from_xml(c),
             None => self.custom.reset(),
         }
+        self.global_safe = xml.child("GlobalSafe").map(GlobalSafe::from_xml).unwrap_or_default();
+        self.partial_scope =
+            xml.child("PartialScope").map_or_else(Scope::default, |p| Scope::read_attrs(p, "sections", &Scope::default()));
+        self.clear_recording();
 
         let mut warnings = console::load_console(engine, console_xml, bridge, load_plugins);
 
@@ -504,10 +860,16 @@ impl Show {
         if let Some(scenes) = xml.child("Scenes") {
             for sx in scenes.children_named("Scene") {
                 let defaults = Scene::default();
+                let recall = Scope::read_attrs(sx, "scope", &defaults.recall_scope());
                 let mut scene = Scene {
                     name: sx.str_or("name", "").to_owned(),
                     notes: sx.str_or("notes", "").to_owned(),
-                    scope: sx.int_or("scope", defaults.scope as i32) as u32,
+                    scope: recall.sections,
+                    scope_strips: recall.strips.map(|s| refs_of(&refs_to_string(&s), is_legacy)),
+                    scope_dcas: recall.dcas,
+                    scope_mute_groups: recall.mute_groups,
+                    scope_fx: recall.fx,
+                    scope_console: recall.console,
                     fade_seconds: sx.double_or("fade", 0.0).clamp(0.0, MAX_FADE_SECONDS),
                     tag: clamp_scene_tag(sx.int_or("tag", 0)),
                     skip: sx.bool_or("skip", false),
@@ -517,11 +879,17 @@ impl Show {
                 };
                 if let Some(snippets) = sx.child("Snippets") {
                     for nx in snippets.children_named("Snippet") {
+                        let globals = Scope::read_attrs(nx, "sections", &Scope::strips(0, Vec::new()));
                         scene.snippets.push(Snippet {
                             name: nx.str_or("name", "").to_owned(),
                             sections: nx.int_or("sections", 0) as u32,
                             strips: refs_of(nx.str_or("strips", ""), is_legacy),
+                            dcas: globals.dcas,
+                            mute_groups: globals.mute_groups,
+                            fx: globals.fx,
+                            console: globals.console,
                             fire_with_scene: nx.bool_or("fireWithScene", false),
+                            recorded_parameters: usize::try_from(nx.int_or("pars", 0)).unwrap_or(0),
                             state: state_of(nx),
                         });
                     }
@@ -580,6 +948,9 @@ impl Show {
         self.name = "Untitled show".into();
         self.layers.reset();
         self.custom.reset();
+        self.global_safe = GlobalSafe::default();
+        self.partial_scope = Scope::default();
+        self.clear_recording();
         engine.reset();
         engine.set_num_channels(num_channels);
     }

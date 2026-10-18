@@ -27,17 +27,6 @@ UtilityPage::UtilityPage (UiContext& c, bool setup) : ctx (c), onSetup (setup)
     timerCallback();
 }
 
-void UtilityPage::visibilityChanged()
-{
-    // The UTILITY screen hands over to SETUP > LOG.
-    if (! onSetup && isVisible())
-        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<UtilityPage> (this)]
-        {
-            if (safe != nullptr && safe->isVisible() && safe->ctx.showSetupTab)
-                safe->ctx.showSetupTab (6);
-        });
-}
-
 UtilityPage::~UtilityPage()
 {
     ctx.log.removeChangeListener (this);
