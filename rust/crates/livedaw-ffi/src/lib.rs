@@ -31,7 +31,7 @@ use std::mem::{offset_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-pub const LD_ABI_VERSION: i32 = 8;
+pub const LD_ABI_VERSION: i32 = 9;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
