@@ -50,22 +50,97 @@ namespace
         return 1.0f;
     }
 
-    /** What a fader of a layer is: a strip or a DCA, with its name, colour and label. */
+    /** What a fader of a layer is: a strip or a DCA, with its name, colour and
+        label; a send fader (WING 3.0.5: a layer's send, or Sends on Fader) also
+        has the send's level and ON switch. */
     struct Target
     {
         Strip* strip = nullptr;
         int dca = -1;
+        std::atomic<float>* sendLevel = nullptr;
+        std::atomic<bool>* sendOn = nullptr;
+        juce::String sendTag; // "> BUS 3", "< CH 5"
 
         bool isValid() const noexcept { return strip != nullptr || dca >= 0; }
+        bool isSend() const noexcept { return sendLevel != nullptr; }
     };
+
+    /** The send from `from` to `to` (an input or bus to a bus, main or
+        matrix), created when missing; false when it can't exist. */
+    bool sendBetween (Strip& from, Strip& to, Target& t)
+    {
+        if (&from == &to)
+            return false;
+        switch (to.getKind())
+        {
+            case StripKind::Bus:
+                if (from.isInput() || (from.isBus() && from.getId() >= kBusToBusTargets && to.getId() < kBusToBusTargets))
+                {
+                    auto& send = from.sends[(size_t) to.getId()];
+                    t.sendLevel = &send.levelDb;
+                    t.sendOn = &send.enabled;
+                    return true;
+                }
+                return false;
+            case StripKind::Main:
+                if (! from.isInput() && ! from.isBus())
+                    return false;
+                t.sendLevel = &from.params.mains[juce::jlimit (0, kNumMains - 1, to.getId())].levelDb;
+                t.sendOn = &from.params.mains[juce::jlimit (0, kNumMains - 1, to.getId())].on;
+                return true;
+            case StripKind::Matrix:
+                if (from.getKind() == StripKind::Matrix)
+                    return false;
+                t.sendLevel = &from.params.matrix[juce::jlimit (0, kNumMatrices - 1, to.getId())].levelDb;
+                t.sendOn = &from.params.matrix[juce::jlimit (0, kNumMatrices - 1, to.getId())].on;
+                return true;
+            case StripKind::Channel:
+            case StripKind::Aux:
+                break;
+        }
+        return false;
+    }
+
+    juce::String sendTagOf (const Strip& s)
+    {
+        return juce::String (label (s.getKind())) + " " + juce::String (s.getNumber());
+    }
 
     Target resolve (UiContext& ctx, const state::FaderRef& f)
     {
         if (f.dca)
-            return { nullptr, juce::jlimit (0, kNumDcas - 1, f.dcaIndex) };
+        {
+            Target t;
+            t.dca = juce::jlimit (0, kNumDcas - 1, f.dcaIndex);
+            return t;
+        }
         if (f.fxParam)
             return {}; // FX parameters have no strip view here
-        return { state::findStrip (ctx.engine, f.strip), -1 }; // a send: its source
+        Target t;
+        t.strip = state::findStrip (ctx.engine, f.strip); // a send: its source
+        if (f.send && t.strip != nullptr)
+            if (auto* to = state::findStrip (ctx.engine, f.to); to != nullptr && sendBetween (*t.strip, *to, t))
+                t.sendTag = "> " + sendTagOf (*to);
+        return t;
+    }
+
+    /** Sends on Fader on the FADERS screen, as on the surface: with a bus,
+        main or matrix selected (or the fixed SOF strip) each source's fader
+        sets its send to it; with a source selected each destination's fader
+        sets the source's send to it. */
+    Target withSendsOnFader (UiContext& ctx, Target t)
+    {
+        if (! ctx.sendsOnFader || t.strip == nullptr || t.isSend())
+            return t;
+        auto* sel = ctx.sofDestination.has_value() ? state::findStrip (ctx.engine, *ctx.sofDestination)
+                                                   : (ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr);
+        if (sel == nullptr || sel == t.strip)
+            return t;
+        if (sendBetween (*t.strip, *sel, t))
+            t.sendTag = "> " + sendTagOf (*sel);
+        else if (sendBetween (*sel, *t.strip, t))
+            t.sendTag = "< " + sel->getLabel().removeCharacters (" ");
+        return t;
     }
 
     juce::Colour colourOf (UiContext& ctx, const Target& t)
@@ -89,6 +164,8 @@ namespace
 
     std::atomic<float>& faderOf (UiContext& ctx, const Target& t)
     {
+        if (t.sendLevel != nullptr)
+            return *t.sendLevel;
         return t.strip != nullptr ? t.strip->params.faderDb : ctx.engine.getDca (t.dca).faderDb;
     }
 
@@ -864,6 +941,18 @@ void OverviewViewPage::paintContent (juce::Graphics& g)
     }
 }
 
+std::vector<StatusKey> OverviewViewPage::getStatusKeys()
+{
+    auto keys = ViewPage::getStatusKeys();
+    const bool exclusive = ctx.settings.getBoolValue (uiprefs::exclusiveSolo, false);
+    keys.push_back ({ "EXCL SOLO", std::nullopt, exclusive, [this, exclusive]
+                      {
+                          ctx.settings.setValue (uiprefs::exclusiveSolo, ! exclusive);
+                          notifyStatusKeysChanged();
+                      } });
+    return keys;
+}
+
 void OverviewViewPage::mouseUp (const juce::MouseEvent& e)
 {
     const auto faders = pageFaders();
@@ -974,7 +1063,7 @@ void FadersViewPage::paintContent (juce::Graphics& g)
     auto* selected = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr;
     for (size_t i = 0; i < faders.size() && i < cols.size(); ++i)
     {
-        const auto t = resolve (ctx, faders[i]);
+        const auto t = withSendsOnFader (ctx, resolve (ctx, faders[i]));
         if (! t.isValid())
             continue;
         const auto rows = faderRows (cols[i].withTrimmedBottom (6));
@@ -982,7 +1071,8 @@ void FadersViewPage::paintContent (juce::Graphics& g)
         g.fillRect (rows.mute.getUnion (rows.label));
         paintNameBar (g, rows.name, colourOf (ctx, t), barName (ctx, t));
         paintNumberTile (g, rows.number, t);
-        paintMuteKey (g, rows.mute, muteOf (ctx, t).load());
+        // A send fader's MUTE switches the send (lit while it's off), as on the surface.
+        paintMuteKey (g, rows.mute, t.isSend() ? ! t.sendOn->load() : muteOf (ctx, t).load());
 
         auto faderArea = rows.fader.reduced (2.0f, 0.0f);
         if (t.strip != nullptr)
@@ -1022,10 +1112,11 @@ void FadersViewPage::paintContent (juce::Graphics& g)
                                meterPos (dsp::gainToDb (ctx.meters.get (&s, prefs::meterPoint (ctx, s.getKind()), ch))), Colours::meterGreen);
             paintAssignments (g, rows.assign.reduced (3.0f, 0.0f), s);
         }
-        paintFader (g, faderArea, faderOf (ctx, t).load(), Dark::faderFill, true);
-        g.setColour (Dark::textDim);
+        // Send faders are drawn in the send colour, with the destination under them.
+        paintFader (g, faderArea, faderOf (ctx, t).load(), t.isSend() ? sendRed : Dark::faderFill, ! t.isSend() || t.sendOn->load());
+        g.setColour (t.isSend() ? sendRed.brighter (0.4f) : Dark::textDim);
         g.setFont (juce::FontOptions (juce::jlimit (9.0f, 18.0f, rows.label.getHeight() * 0.7f), juce::Font::bold));
-        g.drawFittedText (bottomLabel (t), rows.label.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+        g.drawFittedText (t.isSend() ? t.sendTag : bottomLabel (t), rows.label.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         if (t.strip != nullptr && t.strip == selected)
         {
             g.setColour (Dark::on);
@@ -1041,7 +1132,7 @@ std::atomic<float>* FadersViewPage::faderAt (juce::Point<int> pos, juce::Rectang
     for (size_t i = 0; i < faders.size() && i < cols.size(); ++i)
         if (cols[i].contains (pos))
         {
-            const auto t = resolve (ctx, faders[i]);
+            const auto t = withSendsOnFader (ctx, resolve (ctx, faders[i]));
             if (! t.isValid() || ! faderRows (cols[i].withTrimmedBottom (6)).fader.contains (pos.toFloat()))
                 return nullptr;
             if (columnOut != nullptr)
@@ -1088,11 +1179,11 @@ void FadersViewPage::mouseUp (const juce::MouseEvent& e)
     {
         if (! cols[i].toFloat().contains (pos))
             continue;
-        const auto t = resolve (ctx, faders[i]);
+        const auto t = withSendsOnFader (ctx, resolve (ctx, faders[i]));
         const auto rows = faderRows (cols[i].withTrimmedBottom (6));
         if (rows.mute.contains (pos))
         {
-            auto& m = muteOf (ctx, t);
+            auto& m = t.isSend() ? *t.sendOn : muteOf (ctx, t);
             m = ! m.load();
         }
         else if (rows.name.contains (pos) || rows.number.contains (pos))
