@@ -142,7 +142,10 @@ void paintDynamicsTile (juce::Graphics& g, juce::Rectangle<float> r, int model, 
     auto norm = [&] (const char* id)
     {
         const int i = spec.find (id);
-        return i >= 0 ? spec.params[(size_t) i].toNormalised (values[i]) : 0.2f;
+        if (i < 0)
+            return 0.2f;
+        const auto& p = spec.params[(size_t) i];
+        return juce::String (id) == "hld" ? (values[i] - p.min) / juce::jmax (1.0e-6f, p.max - p.min) : p.toNormalised (values[i]);
     };
     auto title = r.removeFromTop (r.getHeight() * 0.2f);
     g.setColour (axisText);
@@ -354,7 +357,16 @@ std::array<float, 3> DynEnvelopeGraph::positions() const
     for (int i = 0; i < 3; ++i)
     {
         const int idx = paramIndex (i);
-        p[(size_t) i] = idx >= 0 ? spec.params[(size_t) idx].toNormalised (valueOf (slot, idx)) : -1.0f;
+        if (idx < 0)
+        {
+            p[(size_t) i] = -1.0f;
+            continue;
+        }
+        const auto& param = spec.params[(size_t) idx];
+        // HOLD is drawn in proportion to its time (the gate's 10 ms of 1 s is a
+        // sliver in Fig. 94); ATTACK and RELEASE as their knobs are turned.
+        p[(size_t) i] = i == 1 ? juce::jlimit (0.0f, 1.0f, (valueOf (slot, idx) - param.min) / juce::jmax (1.0e-6f, param.max - param.min))
+                               : param.toNormalised (valueOf (slot, idx));
     }
     return p;
 }
@@ -486,7 +498,8 @@ void DynEnvelopeGraph::mouseDrag (const juce::MouseEvent& e)
     // The attack handle sits at the left end: dragging it left lengthens the attack.
     const float sign = dragHandle == 0 ? -1.0f : 1.0f;
     const float pos = juce::jlimit (0.0f, 1.0f, dragStart + sign * (float) e.getDistanceFromDragStartX() / w);
-    slot.values[idx] = spec.params[(size_t) idx].fromNormalised (pos);
+    const auto& param = spec.params[(size_t) idx];
+    slot.values[idx] = dragHandle == 1 ? param.min + pos * (param.max - param.min) : param.fromNormalised (pos);
     timerCallback();
 }
 
