@@ -125,6 +125,7 @@ private:
     juce::AffineTransform toScreen; // design frame -> component
     juce::uint32 touchedAt = 0;     // when a control was last touched (value bubble)
     bool bubbleShown = false;
+    int page = 0;                   // the page of a tabbed panel
 
     std::vector<Control> controls;
     juce::Rectangle<float> panelArea, displayArea, meterArea, titleArea;

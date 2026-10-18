@@ -596,6 +596,472 @@ namespace
         return d;
     }
 
+    Design eternalBliss()
+    {
+        Design d;
+        d.panel = juce::Colour (0xff8a8c90);
+        d.texture = Texture::Brushed;
+        d.screws = false;
+        d.path ("M 178 100 L 1058 100 Q 1074 100 1074 116 L 1074 360 Q 1074 376 1058 376 L 162 376 Q 146 376 147 360 L 162 116 Q 164 100 178 100 Z", 0xff050a18, 0.0f);
+        d.path ("M 180 104 L 1056 104 Q 1070 104 1070 118 L 1070 358 Q 1070 372 1056 372 L 164 372 Q 151 372 152 358 L 166 118 Q 168 104 180 104 Z", 0xff14244e, 0.0f);
+        for (auto [x, y] : { std::pair { 50.0f, 183.0f }, { 50.0f, 313.0f }, { 1098.0f, 165.0f }, { 1098.0f, 313.0f } })
+            d.add (Type::Screw, x, y, 16, 16);
+        auto& m = d.leds (121, 108, 14, 242, "1.5|3.0|4.5|6.0|7.5|9.0|10.5|12.0|13.5|15.0|16.5|18.0|19.5",
+                          { 1.5f, 3, 4.5f, 6, 7.5f, 9, 10.5f, 12, 13.5f, 15, 16.5f, 18, 19.5f }, true, 0xffff2020);
+        m.labelSize = 13;
+        d.lamp (108, 368, 12, 0xff60c040);
+        d.text ("GRL", 62, 360, 34, 16, 13, kWhite, Look::Sans, J::centredRight);
+        auto knob = [&] (int param, float cx, float cy, const char* labels, float sweep, float fixed = 0.5f)
+        {
+            d.knob (param, cx, cy, 72, Look::Chrome).scaleOf (0, labels, sweep).radii (1.2f, 1.5f).lsize (13).at (fixed);
+        };
+        auto bottom = [&] (float cx, float cy, const char* lo, const char* unit, const char* hi)
+        {
+            d.text (lo, cx - 56, cy + 38, 40, 16, 13, kWhite);
+            d.text (unit, cx - 20, cy + 42, 40, 16, 13, kWhite);
+            d.text (hi, cx + 16, cy + 38, 40, 16, 13, kWhite);
+        };
+        auto title = [&] (const char* s, float x, float y) { d.text (s, x - 60, y - 10, 120, 22, 18, kWhite); };
+        d.knob (0, 240, 178, 72, Look::Chrome).scaleOf (11, "", 270).radii (1.25f, 1.5f);
+        bottom (240, 178, "-35", "dB", "0");
+        title ("Threshold", 313, 131);
+        knob (2, 487, 178, "0.6|1.1|1.9|3.4|6.0|10|30|50|100", 270);
+        bottom (487, 178, "0.4", "ms", "150");
+        title ("Attack", 541, 131);
+        d.lamp (590, 190, 18, 0xffff3020, 4);
+        d.caption ("Auto Fast", 590, 214, 14, kWhite);
+        knob (3, 727, 178, "8|13|21|36|60|100|280|450|780", 270);
+        bottom (727, 178, "5", "ms", "1k2");
+        title ("Release", 785, 131);
+        d.lamp (830, 190, 18, 0xffff3020, 5);
+        d.caption ("Anti Log", 830, 214, 14, kWhite);
+        knob (1, 967, 178, "1.3|1.6|2.0|5.0|10|-0.3|-1.0|-2.0|-3.0", 270);
+        bottom (967, 178, "1.2", "1:X", "-4.0");
+        title ("Ratio", 915, 131);
+        knob (7, 727, 310, "19|17|15|13|11|9|5|3|1.5", 270);
+        bottom (727, 310, "21", "dB", "-0");
+        title ("Gr Limit", 785, 258);
+        d.lamp (830, 320, 18, 0xffff3020, 6);
+        d.caption ("On", 830, 344, 14, kWhite);
+        d.knob (-1, 967, 310, 72, Look::Chrome).scaleOf (11, "", 270).radii (1.25f, 1.5f).at (0.33f);
+        bottom (967, 310, "-6", "dB", "+12");
+        title ("Gain", 1013, 260);
+        d.lamp (260, 296, 18, 0xffff3020).at (1.0f);
+        d.caption ("Active", 260, 319, 14, kWhite);
+        d.knob (-1, 365, 290, 124, Look::SilverDial).sweep = 0.0f;
+        d.path ("M 365 242 A 48 48 0 1 1 364.9 242 Z", 0xffe4e6ea, 0.0f);
+        d.text ("eternal", 315, 266, 100, 30, 27, 0xff2a3040);
+        d.text ("bliss", 315, 292, 100, 24, 21, 0xff3a4050);
+        return d;
+    }
+
+    Design drawMoreComp()
+    {
+        Design d;
+        d.panel = juce::Colour (0xff2b2927);
+        d.texture = Texture::Rough;
+        d.wear = 0.5f;
+        const juce::uint32 line = 0xffc8c8c8, txt = 0xffd8d8d8;
+        d.box (58, 103, 768, 273, Look::Line, line, 0, 1.8f);
+        d.box (828, 103, 282, 273, Look::Line, line, 0, 1.8f);
+        auto gapLabel = [&] (const char* s, float cx, float y, float w)
+        {
+            d.box (cx - w * 0.5f, y - 9, w, 18, Look::Fill, 0xff2b2927);
+            d.caption (s, cx, y - 9, 15, txt);
+        };
+        gapLabel ("COMPRESSOR", 413, 103, 116);
+        gapLabel ("PEAK", 965, 103, 52);
+        for (auto [s, cx, w] : { std::tuple { "THRESHOLD", 126.0f, 96.0f }, { "RATIO", 269.0f, 60.0f }, { "ATTACK", 413.0f, 70.0f }, { "RELEASE", 557.0f, 80.0f },
+                                 { "GAIN", 701.0f, 50.0f }, { "THRESHOLD", 913.0f, 96.0f }, { "RELEASE", 1037.0f, 80.0f } })
+            gapLabel (s, cx, 376, w);
+        d.caption ("GAIN REDUCTION", 198, 107, 14, txt);
+        const char* gr[] = { "30", "20", "15", "10", "6", "4", "2", "1" };
+        for (int i = 0; i < 8; ++i)
+        {
+            d.text (gr[i], 71.0f + 32.0f * (float) i, 127, 30, 16, 12, txt);
+            d.text (gr[i], 838.0f + 32.2f * (float) i, 127, 30, 16, 12, txt);
+        }
+        d.leds (86, 144, 224, 14, "", { 30, 20, 15, 10, 6, 4, 2, 1 }, false, 0xffff2020);
+        d.leds (853, 144, 225, 14, "", { 30, 20, 15, 10, 6, 4, 2, 1 }, false, 0xffff2020);
+        d.text ("DRAW MORE", 520, 104, 220, 32, 27, 0xffcfcfcf, Look::Script);
+        d.text ("D241", 590, 134, 80, 18, 15, 0xffcfcfcf);
+        auto knob = [&] (int param, float cx, const char* labels, const char* unit, float fixed = 0.5f)
+        {
+            d.knob (param, cx, 239, 70, Look::BlackFluted, 0xff6a6a6a).scaleOf (0, labels, 290).radii (1.2f, 1.5f).lsize (13).scol (txt).at (fixed);
+            d.text (unit, cx - 20, 283, 40, 16, 12, txt);
+        };
+        knob (0, 126, "0|-10|-20|-30|-40|-50|-60", "dB");
+        knob (1, 269, "1.1|1.5|2|3|5|8|20|100", "dB");
+        knob (2, 413, ".5|2|7|20|100", "mS");
+        knob (3, 557, ".05|.2|.5|1|5", "Sec");
+        knob (-1, 701, "-6|-3|0|3|6|9|12", "dB", 0.33f);
+        knob (4, 897, "-20|-15|-10|-4|0", "dB");
+        knob (5, 1037, ".05|.2|.5|1|5", "Sec");
+        d.lamp (487, 301, 14, 0xff40e040, 6);
+        d.path ("M 415 344 L 415 323 L 558 323 L 558 344", line, 1.5f);
+        d.box (465, 315, 44, 16, Look::Fill, 0xff2b2927);
+        d.caption ("AUTO", 487, 315, 13, txt);
+        d.key (6, 475, 339, 24, 22, Look::StackKey).inv();
+        d.lamp (773, 301, 14, 0xffff2020);
+        d.caption ("BYPASS", 773, 315, 13, txt);
+        d.key (-1, 762, 339, 24, 22, Look::StackKey);
+        return d;
+    }
+
+    Design drawMoreGate()
+    {
+        Design d;
+        d.panel = juce::Colour (0xff2b2927);
+        d.texture = Texture::Rough;
+        d.wear = 0.5f;
+        d.screws = false;
+        const juce::uint32 line = 0xffc8c8c8, txt = 0xffd8d8d8;
+        for (float x : { 75.0f, 1080.0f })
+            d.key (-1, x - 21, 212, 42, 42, Look::RoundKey);
+        d.box (240, 102, 685, 273, Look::Line, line, 0, 1.8f);
+        for (auto [s, w, y] : { std::tuple { "EXP/GATE", 90.0f, 102.0f }, { "THRESHOLD", 100.0f, 375.0f } })
+        {
+            d.box (582 - w * 0.5f, y - 9, w, 18, Look::Fill, 0xff2b2927);
+            d.caption (s, 582, y - 9, 15, txt);
+        }
+        d.text ("DRAW MORE", 256, 222, 220, 32, 27, 0xffcfcfcf, Look::Script);
+        d.text ("EXPANDER/GATE 241", 266, 252, 200, 20, 15, 0xffcfcfcf);
+        d.lamp (437, 183, 12, 0xff40e040);
+        d.path ("M 437 175 L 437 158 L 582 158 L 582 170", line, 1.5f);
+        d.knob (0, 582, 236, 62, Look::ColourDome, 0xffe8e870).scaleOf (0, "-80|-72|-64|-56|-48|-40|-32|-24|-16|-8|0", 300).radii (1.2f, 1.6f).lsize (12).scol (txt);
+        d.text ("dB", 567, 286, 30, 14, 11, txt);
+        d.caption ("SLOW", 726, 206, 13, txt);
+        d.lamp (726, 240, 12, 0xffff2020, 1);
+        d.caption ("RELEASE", 726, 258, 13, txt);
+        d.key (1, 715, 281, 24, 23, Look::StackKey).inv();
+        d.lamp (870, 240, 12, 0xffff2020).at (1.0f);
+        d.caption ("BYPASS", 870, 258, 13, txt);
+        d.key (-1, 858, 281, 24, 23, Look::StackKey);
+        return d;
+    }
+
+    Design deEsser902()
+    {
+        Design d;
+        d.panel = juce::Colour (0xff1c1c1e);
+        d.texture = Texture::Brushed;
+        const char* gr[] = { "20", "15", "10", "8", "6", "5", "4", "3", "2", "1" };
+        for (int i = 0; i < 10; ++i)
+            d.text (gr[i], 351.0f + 32.0f * (float) i, 125, 30, 16, 12, kWhite);
+        d.leds (366, 160, 288, 14, "", { 20, 15, 10, 8, 6, 5, 4, 3, 2, 1 }, false, 0xffff2020);
+        d.box (670, 166, 40, 0, Look::Line, 0xffd8d8d8, 0, 1.5f);
+        d.text ("GAIN REDUCTION", 716, 158, 130, 16, 13, kWhite, Look::Sans, J::centredLeft);
+        d.text ("bdx", 960, 106, 72, 40, 38, 0xffd02a20).j (J::centredRight);
+        d.text ("902", 1034, 106, 80, 40, 38, kWhite).j (J::centredLeft);
+        d.text ("De - Esser", 1000, 146, 120, 22, 18, kWhite);
+        for (auto [cx, s, param] : { std::tuple { 166.0f, "IN", -1 }, { 301.0f, "SOLO", -1 }, { 437.0f, "HF ONLY", 2 } })
+        {
+            d.lamp (cx, 255, 12, 0xffff2020, param).at (param < 0 && cx < 200 ? 1.0f : 0.0f);
+            d.key (param, cx - 16, 287, 32, 32, Look::RoundKey);
+            d.caption (s, cx, 325, 14, kWhite);
+        }
+        d.knob (0, 653, 301, 76, Look::ColourDome, 0xffe8e870).scaleOf (0, "800|1.4k|2.6k|4.4k|8k", 270).radii (1.2f, 1.55f).lsize (12).banded (0xff9a9a9a);
+        d.text ("Hz", 638, 341, 30, 14, 11, kWhite);
+        d.caption ("FREQUENCY", 653, 357, 15, kWhite);
+        d.knob (1, 948, 301, 76, Look::ColourDome, 0xff2a2a2a).scaleOf (0, "0|6|12", 270).radii (1.2f, 1.55f).lsize (12).banded (0xff9a9a9a);
+        d.text ("NORM", 868, 249, 40, 14, 11, kWhite);
+        d.text ("dB", 933, 341, 30, 14, 11, kWhite);
+        d.caption ("RANGE", 948, 357, 15, kWhite);
+        return d;
+    }
+
+    void sourceExtractorPanel (Design& d)
+    {
+        d.panel = juce::Colour (0xffb4ccd8);
+        d.wear = 1.0f;
+        const juce::uint32 ink = 0xff1a1e22;
+        for (auto [cx, s] : { std::pair { 124.0f, "POWER" }, { 183.0f, "ACTIVE" } })
+        {
+            d.lamp (cx, 148, 12, 0xffff3020);
+            d.caption (s, cx, 163, 11, ink);
+        }
+        d.text ("PSE-545", 95, 210, 220, 52, 46, ink, Look::SansLight, J::centredLeft);
+        d.box (308, 240, 70, 0, Look::Line, 0xff8a9aa4, 0, 3.0f);
+        d.text ("Source Extractor", 95, 264, 320, 42, 35, 0xff1e2e5a, Look::SansLight, J::centredLeft);
+        d.caption ("TRESHOLD", 547, 154, 16, ink);
+        d.knob (0, 547, 268, 92, Look::BlackSkirt).scaleOf (7, "", 270, false).radii (1.0f, 1.0f).banded (0xff2e3e4c).scol (0xffb4ccd8);
+        d.text ("-36", 488, 330, 36, 16, 14, ink);
+        d.text ("-12", 529, 182, 36, 16, 14, ink);
+        d.text ("+12", 572, 330, 36, 16, 14, ink);
+        d.caption ("DEPTH", 752, 154, 16, ink);
+        d.knob (1, 752, 268, 92, Look::WhiteDome).scaleOf (7, "", 270, false).radii (1.0f, 1.0f).banded (0xff2e3e4c).scol (0xffb4ccd8);
+        d.text ("0", 694, 330, 36, 16, 14, ink);
+        d.text ("10", 736, 182, 36, 16, 14, ink);
+        d.text ("20", 779, 330, 36, 16, 14, ink);
+    }
+
+    Design sourceExtractor()
+    {
+        Design d;
+        sourceExtractorPanel (d);
+        const juce::uint32 ink = 0xff1a1e22;
+        d.text ("FAST", 910, 202, 80, 20, 16, ink);
+        d.key (2, 991, 190, 42, 42, Look::RoundKey, "", 0xff40c0ff);
+        d.text ("PEAK", 910, 278, 80, 20, 16, ink);
+        d.key (3, 991, 266, 42, 42, Look::RoundKey, "", 0xff40c0ff);
+        return d;
+    }
+
+    Design autoRider()
+    {
+        Design d;
+        d.panel = juce::Colour (0xffc6c6c4);
+        d.wear = 0.9f;
+        const juce::uint32 ink = 0xff1a1a1a;
+        d.box (70, 83, 518, 308, Look::Line, 0xff3a3a3a, 0, 2.0f);
+        d.box (600, 83, 165, 308, Look::Line, 0xff3a3a3a, 0, 2.0f);
+        d.box (777, 83, 309, 308, Look::Line, 0xff3a3a3a, 0, 2.0f);
+        const struct
+        {
+            int param;
+            float cx, cy;
+            const char* caption;
+        } knobs[] = { { 0, 198, 149, "THRESHOLD" }, { 1, 334, 149, "TARGET" }, { 2, 470, 149, "SPEED" },
+                      { 3, 198, 278, "RATIO" },     { 4, 334, 278, "HOLD" },   { 5, 470, 278, "RANGE" } };
+        for (auto& k : knobs)
+        {
+            d.caption (k.caption, k.cx, k.cy - 58, 21, ink);
+            d.knob (k.param, k.cx, k.cy, 70, Look::BlackSkirt);
+            auto& v = d.add (Type::Value, k.cx - 60, k.cy + 39, 120, 22);
+            v.param = k.param;
+            v.look = Look::Sans;
+            v.size = 17;
+            v.colour = juce::Colour (ink);
+            v.colour2 = juce::Colour (0x00000000);
+        }
+        d.key (-1, 89, 353, 26, 26, Look::LitSquare, "", 0xffeeeeee).at (1.0f);
+        d.text ("ON", 122, 356, 40, 20, 17, ink, Look::Sans, J::centredLeft);
+        d.text ("AUTO RIDER", 235, 348, 200, 36, 30, ink, Look::SansLight);
+        const char* sc[] = { "+15", "+10", "+5", "0", "-5", "-10", "-15" };
+        for (int i = 0; i < 7; ++i)
+        {
+            const float y = 119.0f + 34.5f * (float) i;
+            d.text (sc[i], 616, y - 8, 40, 16, 13, ink);
+            d.text (sc[i], 717, y - 8, 40, 16, 13, ink);
+            d.box (656, y, 14, 0, Look::Line, ink, 0, 1.2f);
+            d.box (700, y, 14, 0, Look::Line, ink, 0, 1.2f);
+        }
+        d.fader (-1, 660, 108, 50, 226, 0xffd8d8d8).at (0.5f);
+        d.box (668, 358, 36, 18, Look::Fill, 0xff2a3a2a, 0xff111111, 2.0f);
+        for (auto [x, s, cap] : { std::tuple { 838.0f, "IN", "THRESHOLD" }, { 990.0f, "OUT", "TARGET" } })
+        {
+            d.caption (s, x + 16, 112, 21, ink);
+            d.box (x, 141, 34, 195, Look::Fill, 0xff0c2410, 0xff8a8a8a, 3.0f);
+            d.caption (cap, x + 16, 358, 15, ink);
+        }
+        const char* db[] = { "-0", "-6", "-12", "-18", "-24", "-30", "-36", "-42", "-48", "-54" };
+        for (int i = 0; i < 10; ++i)
+        {
+            const float y = 151.0f + 19.4f * (float) i;
+            d.text (db[i], 908, y - 8, 40, 16, 13, ink);
+            d.box (884, y, 10, 0, Look::Line, ink, 0, 1.5f);
+            d.box (962, y, 10, 0, Look::Line, ink, 0, 1.5f);
+        }
+        d.text (">", 808, 270, 20, 20, 20, ink);
+        d.text ("<", 1038, 198, 20, 20, 20, ink);
+        return d;
+    }
+
+    Design soulWarmth()
+    {
+        Design d;
+        d.panel = juce::Colour (0xff1d1d1d);
+        d.texture = Texture::Rough;
+        d.wear = 0.5f;
+        d.screws = false;
+        for (float x : { 75.0f, 1080.0f })
+            d.key (-1, x - 21, 212, 42, 42, Look::RoundKey);
+        d.text ("SOUL Warmth", 430, 88, 300, 32, 25, 0xffdedede, Look::SerifBold);
+        d.key (-1, 195, 152, 55, 30, Look::SoulKey, "IN").size = 16;
+        auto knob = [&] (int param, float cx, float cy, Look look, juce::uint32 cap, const char* lo, const char* hi, const char* caption)
+        {
+            d.knob (param, cx, cy, 72, look, cap).scaleOf (11).radii (1.3f, 1.6f).scol (0xffd8d8d8);
+            d.text (lo, cx - 56, cy + 40, 44, 16, 13, 0xffdedede);
+            d.text (hi, cx + 12, cy + 40, 44, 16, 13, 0xffdedede);
+            d.caption (caption, cx, cy + 56, 15, 0xffcfcfcf);
+        };
+        knob (0, 402, 190, Look::ColourCap, 0xffe01818, "10%", "125%", "DRIVE");
+        knob (1, 222, 287, Look::BlackDome, 0, "2nd", "3rd", "HARMONICS");
+        knob (3, 582, 287, Look::ColourCap, 0xfff6f6f6, "-18", "+6", "TRIM");
+        d.text ("dB", 567, 330, 30, 14, 11, 0xffdedede);
+        d.text ("Preamp", 532, 370, 100, 22, 16, 0xffdedede);
+        knob (2, 757, 190, Look::BlackDome, 0, "-", "+", "COLOR");
+        knob (4, 937, 287, Look::ColourCap, 0xff7a7a7a, "0%", "100%", "MIX");
+        return d;
+    }
+
+    Design waveDesigner()
+    {
+        Design d;
+        d.panel = juce::Colour (0xffa4a4a6);
+        d.texture = Texture::Brushed;
+        d.screws = false;
+        for (float x : { 78.0f, 1072.0f })
+            d.add (Type::Screw, x, 230, 26, 26);
+        d.path ("M 230 120 L 922 120 A 112 112 0 0 1 922 358 L 230 358 A 112 112 0 0 1 230 120 Z", 0xff6a6a6c, 0.0f);
+        d.path ("M 232 126 L 920 126 A 106 106 0 0 1 920 352 L 232 352 A 106 106 0 0 1 232 126 Z", 0xff0c0c0c, 0.0f);
+        auto knob = [&] (int param, float cx, float dia, const char* labels, float sweep)
+        {
+            d.knob (param, cx, 239, dia, Look::ColourCap, 0xfff2f2f2).scaleOf (31, labels, sweep).radii (1.12f, 1.32f).lsize (12).turned();
+            d.text ("dB", cx - 15, 296 + (dia - 92) * 0.3f, 30, 14, 12, kWhite);
+        };
+        knob (0, 245, 92, "-15|-13|-10|-6|-3|0|+3|+6|+10|+13|+15", 280);
+        d.caption ("ATTACK", 245, 150, 17, kWhite);
+        knob (1, 462, 92, "-24|-18|-12|-6|0|+6|+12|+18|+24", 280);
+        d.caption ("SUSTAIN", 462, 150, 17, kWhite);
+        d.text ("WAVE DESIGNER", 598, 182, 160, 20, 17, kWhite, Look::SansLight);
+        d.caption ("ON", 678, 228, 15, kWhite);
+        d.key (-1, 658, 256, 40, 40, Look::LitSquare, "", 0xff2a7ae0).at (1.0f);
+        knob (2, 900, 140, "-18|-15|-12|-9|-6|-3|+0|+3|+6|+9", 290);
+        d.text ("OUTPUT GAIN", 950, 220, 120, 20, 16, kWhite).centre = 78.0f;
+        d.lamp (170, 183, 9, 0xffff3020);
+        d.text ("OVL", 180, 175, 40, 16, 12, kWhite);
+        d.lamp (175, 296, 9, 0xffd8c020);
+        d.text ("SIG", 185, 288, 40, 16, 12, kWhite);
+        return d;
+    }
+
+    /** One band of the dynamic EQ's controls (params from `o`: thr, ratio, att, rel, filter, gain, freq, q, mode). */
+    void dynEqBand (Design& d, int o, int page)
+    {
+        const juce::uint32 txt = 0xffeaeaea;
+        auto on = [page] (Element& e) -> Element& { e.page = page; return e; };
+        auto value = [&] (int param, float cx, float y)
+        {
+            auto& v = on (d.add (Type::Value, cx - 50, y, 100, 20));
+            v.param = param;
+            v.look = Look::Sans;
+            v.size = 15;
+            v.colour = juce::Colour (txt);
+            v.colour2 = juce::Colour (0x00000000);
+        };
+        const struct
+        {
+            int param;
+            float cx;
+            const char* caption;
+        } small[] = { { o + 2, 126, "Attack" }, { o + 3, 213, "Release" }, { o + 5, 390, "Gain" }, { o + 6, 476, "Freq" }, { o + 7, 563, "Q" } };
+        for (auto& k : small)
+        {
+            on (d.caption (k.caption, k.cx, 134, 15, txt));
+            on (d.knob (k.param, k.cx, 183, 44, Look::Chrome).scaleOf (25, "", 300, false).radii (1.05f, 1.0f).scol (0xffbdbdbd));
+            value (k.param, k.cx, 211);
+        }
+        on (d.caption ("Above", 302, 134, 15, txt));
+        on (d.toggle (o + 8, 302, 183, 24));
+        on (d.caption ("Below", 302, 211, 15, txt));
+        on (d.caption ("Threshold", 170, 241, 15, txt));
+        on (d.knob (o, 170, 302, 62, Look::Chrome).scaleOf (31, "", 300, false).radii (1.05f, 1.0f).scol (0xffbdbdbd));
+        value (o, 170, 337);
+        on (d.caption ("Filter Types", 345, 241, 15, txt));
+        const struct
+        {
+            const char* s;
+            float cx, cy;
+            int choice;
+        } filters[] = { { "LP 6dB", 283, 281, 2 }, { "Flat", 345, 281, 0 }, { "HP 6dB", 410, 281, 4 },
+                        { "LP 12dB", 283, 327, 3 }, { "BP", 345, 327, 1 }, { "HP 12dB", 410, 327, 5 } };
+        for (auto& f : filters)
+            on (d.key (o + 4, f.cx - 24, f.cy - 17, 48, 34, Look::FlatKey, f.s, 0xffe8a020)).sel (f.choice).size = 12;
+        on (d.caption ("Ratio", 522, 241, 15, txt));
+        on (d.knob (o + 1, 522, 303, 54, Look::Chrome).scaleOf (0, "1.2|1.3|1.5|2.0|3.0|5.0|10", 280).radii (1.2f, 1.45f).lsize (11).scol (txt));
+    }
+
+    Design dynamicEq()
+    {
+        Design d;
+        d.backdrop = true;
+        d.panel = juce::Colour (0xff4e4c42);
+        d.texture = Texture::Brushed;
+        d.screws = false;
+        for (auto [x, y] : { std::pair { 46.0f, 87.0f }, { 1110.0f, 87.0f }, { 46.0f, 390.0f }, { 1110.0f, 390.0f } })
+            d.add (Type::Screw, x, y, 22, 22);
+        d.text ("Dynamic Equalizer", 80, 86, 220, 24, 20, 0xffeaeaea, Look::SansLight, J::centredLeft);
+        d.box (68, 122, 557, 235, Look::Fill, 0xff382c26, 0xff6a3a2a, 2.0f);
+        dynEqBand (d, 0, -1);
+        auto& gr = d.add (Type::Graph, 674, 126, 408, 227);
+        gr.params = { 6, 5, 7, 4 };
+        return d;
+    }
+
+    Design dualDynamicEq()
+    {
+        Design d;
+        d.panel = juce::Colour (0xff4a5468);
+        d.texture = Texture::Brushed;
+        d.screws = false;
+        for (auto [x, y] : { std::pair { 46.0f, 87.0f }, { 1110.0f, 87.0f }, { 46.0f, 390.0f }, { 1110.0f, 390.0f } })
+            d.add (Type::Screw, x, y, 22, 22);
+        d.text ("Dual Dynamic EQ", 80, 86, 260, 26, 22, 0xffeaeaea, Look::SansLight, J::centredLeft);
+        d.key (-1, 458, 88, 72, 24, Look::TabKey, "DEQ 1").sel (0).size = 14;
+        d.key (-1, 537, 88, 72, 24, Look::TabKey, "DEQ 2").sel (1).size = 14;
+        d.box (68, 121, 559, 242, Look::Fill, 0xff16223a, 0xff2a3a5a, 2.0f);
+        dynEqBand (d, 0, 0);
+        dynEqBand (d, 9, 1);
+        auto& gr = d.add (Type::Graph, 674, 130, 410, 228);
+        gr.params = { 6, 5, 7, 4, 15, 14, 16, 13 };
+        return d;
+    }
+
+    Design transientLimiter()
+    {
+        Design d;
+        d.panel = juce::Colour (0xff2a2828);
+        d.texture = Texture::Rough;
+        d.wear = 0.4f;
+        d.screws = false;
+        d.text ("Listen\nMic\nToolkit", 128, 94, 90, 72, 20, 0xffe8e8e8, Look::Serif, J::centredLeft);
+        for (float x : { 73.0f, 1076.0f })
+            d.key (-1, x - 21, 210, 42, 42, Look::RoundKey);
+        auto knob = [&] (int param, float cx, float cy, Look look, juce::uint32 cap, const char* lo, const char* hi, const char* caption)
+        {
+            d.knob (param, cx, cy, 74, look, cap).scaleOf (11).radii (1.3f, 1.6f).scol (0xffd8d8d8);
+            d.text (lo, cx - 56, cy + 40, 44, 16, 13, 0xffdedede);
+            d.text (hi, cx + 12, cy + 40, 44, 16, 13, 0xffdedede);
+            d.caption (caption, cx, cy + 56, 15, 0xffd8d8d8);
+        };
+        knob (0, 177, 288, Look::BlackDome, 0, "0", "1", "SPEED");
+        knob (1, 376, 288, Look::ColourCap, 0xff1e6a2a, "-10", "10", "TRANSIENTS");
+        knob (2, 575, 186, Look::BlackDome, 0, "-12", "12", "GAIN");
+        d.text ("dB", 560, 226, 30, 14, 11, 0xffdedede);
+        d.caption ("SHAPER", 575, 256, 15, 0xffd8d8d8);
+        d.key (3, 548, 296, 56, 30, Look::SoulKey, "IN", 0xfff0d020).size = 16;
+        knob (4, 776, 288, Look::ColourCap, 0xff8a8a8a, "0", "100", "COMPRESSION");
+        knob (5, 975, 186, Look::BlackDome, 0, "-12", "12", "GAIN");
+        d.text ("dB", 960, 226, 30, 14, 11, 0xffdedede);
+        d.caption ("COMP", 975, 256, 15, 0xffd8d8d8);
+        d.key (6, 948, 296, 56, 30, Look::SoulKey, "IN", 0xfff0d020).size = 16;
+        return d;
+    }
+
+    Design oneKnobComp()
+    {
+        Design d;
+        d.panel = juce::Colour (0xff353537);
+        d.texture = Texture::Rough;
+        d.wear = 0.4f;
+        d.screws = false;
+        d.box (36, 70, 22, 336, Look::Bevel, 0xff4a4a4c);
+        d.box (1098, 70, 28, 336, Look::Bevel, 0xff4a4a4c);
+        d.box (58, 88, 1040, 300, Look::Inset, 0xff222224);
+        for (float x : { 108.0f, 203.0f, 301.0f, 398.0f, 495.0f, 689.0f, 786.0f, 883.0f, 980.0f })
+            d.box (x - 7, 133, 14, 200, Look::Fill, 0xff151515, 0xff3a3a3a, 1.0f);
+        d.box (566, 72, 99, 332, Look::Bevel, 0xff17191c);
+        d.text ("One Knob\nCompressor", 566, 92, 99, 34, 14, 0xffd8d8d8, Look::SansLight);
+        d.knob (0, 616, 181, 66, Look::Chrome).scaleOf (21, "", 280, false).radii (1.08f, 1.0f).scol (0xffd8d8d8);
+        d.text ("0", 584, 216, 20, 14, 11, 0xffd8d8d8);
+        d.text ("10", 628, 216, 20, 14, 11, 0xffd8d8d8);
+        d.text ("GAIN\nREDUCTION", 566, 234, 99, 30, 13, 0xffd8d8d8);
+        d.key (1, 597, 300, 36, 36, Look::RoundKey, "", 0xff60e060);
+        d.text ("AUTO\nGAIN", 566, 346, 99, 30, 13, 0xffd8d8d8);
+        return d;
+    }
+
     //==========================================================================
     std::map<juce::String, Design> buildDesigns()
     {
@@ -620,6 +1086,18 @@ namespace
         put ("D:NSTR", noStressor());
         put ("D:2250", pia2250());
         put ("D:L100", lta100());
+        put ("D:BLISS", eternalBliss());
+        put ("D:D241C", drawMoreComp());
+        put ("D:D241G", drawMoreGate());
+        put ("D:DS902", deEsser902());
+        put ("D:PSE", sourceExtractor());
+        put ("D:RIDE", autoRider());
+        put ("D:WARM", soulWarmth());
+        put ("D:WAVE", waveDesigner());
+        put ("D:DEQ", dynamicEq());
+        put ("D:DEQ2", dualDynamicEq());
+        put ("D:LMT", transientLimiter());
+        put ("D:ONEC", oneKnobComp());
         return m;
     }
 } // namespace

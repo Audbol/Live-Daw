@@ -289,6 +289,7 @@ void Faceplate::bind (models::Table t, int model, std::atomic<float>* v, std::fu
     meterFn = std::move (meter);
     spec = &models::model (t, model);
     design = fp::findDesign (t, spec->token);
+    page = 0;
     style = faceplateStyle (t, spec->token);
     if (style.title.isEmpty())
         style.title = fit (spec->name);
@@ -383,6 +384,13 @@ void Faceplate::layoutControls()
         for (size_t i = 0; i < design->elements.size(); ++i)
         {
             const auto& e = design->elements[i];
+            if (e.page >= 0 && e.page != page)
+                continue;
+            if (e.type == fp::Type::Key && e.look == fp::Look::TabKey)
+            {
+                controls.push_back ({ -1, Kind::Switch, fp::hitArea (e).transformedBy (toScreen), (int) i });
+                continue;
+            }
             if (e.param < 0 || e.param >= (int) spec->params.size())
                 continue;
             Kind kind = Kind::Knob;
@@ -400,7 +408,8 @@ void Faceplate::layoutControls()
                 case fp::Type::Path:
                 case fp::Type::Box:
                 case fp::Type::Screw:
-                case fp::Type::Display: continue;
+                case fp::Type::Display:
+                case fp::Type::Graph: continue;
             }
             controls.push_back ({ e.param, kind, fp::hitArea (e).transformedBy (toScreen), (int) i });
         }
@@ -831,6 +840,7 @@ void Faceplate::paint (juce::Graphics& g)
         ctx.reduction = juce::jlimit (0.0f, 40.0f, -shownMeter);
         ctx.touched = lastTouched;
         ctx.showValue = bubbleShown;
+        ctx.page = page;
         fp::paintDesign (g, *design, ctx);
         g.restoreState();
         return;
@@ -920,6 +930,15 @@ void Faceplate::mouseDown (const juce::MouseEvent& e)
     if (i < 0 || spec == nullptr)
         return;
     const auto& ctl = controls[(size_t) i];
+    if (ctl.param < 0)
+    {
+        // A tab of a paged panel.
+        if (design != nullptr && ctl.element >= 0)
+            page = design->elements[(size_t) ctl.element].choice;
+        layoutControls();
+        repaint();
+        return;
+    }
     const auto& p = spec->params[(size_t) ctl.param];
     touch (ctl.param);
 
@@ -972,7 +991,7 @@ void Faceplate::mouseDoubleClick (const juce::MouseEvent& e)
     if (i < 0 || spec == nullptr)
         return;
     const auto& ctl = controls[(size_t) i];
-    if (ctl.kind == Kind::Knob || ctl.kind == Kind::Fader)
+    if (ctl.param >= 0 && (ctl.kind == Kind::Knob || ctl.kind == Kind::Fader))
         setValue (ctl.param, spec->params[(size_t) ctl.param].defaultValue);
     repaint();
 }
@@ -983,6 +1002,8 @@ void Faceplate::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWhee
     if (i < 0 || spec == nullptr)
         return;
     const auto& ctl = controls[(size_t) i];
+    if (ctl.param < 0) // a tab
+        return;
     const auto& p = spec->params[(size_t) ctl.param];
     touch (ctl.param);
     const float dir = (w.deltaY != 0.0f ? w.deltaY : -w.deltaX) > 0.0f ? 1.0f : -1.0f;

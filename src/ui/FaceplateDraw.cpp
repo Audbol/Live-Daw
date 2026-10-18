@@ -30,6 +30,7 @@ namespace
 
     juce::Font face (Look look, float size)
     {
+        size *= 1.08f; // the panel print reads a little larger than the screen face
         switch (lookIndex (look))
         {
             case lookIndex (Look::SansLight): return silkFont (size, false);
@@ -388,7 +389,10 @@ namespace
                 flute.closeSubPath();
                 g.setColour (juce::Colours::black.withAlpha (0.6f));
                 g.fillPath (flute, juce::AffineTransform::translation (r * 0.04f, r * 0.08f));
-                juce::ColourGradient fg (Colour (0xff3c3c3c), c.x - rr * 0.4f, c.y - rr * 0.8f, Colour (0xff030303), c.x + rr * 0.3f, c.y + rr, false);
+                // Black, or the cap colour when the design gives a grey one.
+                const bool grey = e.colour.getSaturation() < 0.15f;
+                juce::ColourGradient fg (grey ? e.colour.brighter (0.3f) : Colour (0xff3c3c3c), c.x - rr * 0.4f, c.y - rr * 0.8f,
+                                         grey ? e.colour.darker (0.7f) : Colour (0xff030303), c.x + rr * 0.3f, c.y + rr, false);
                 g.setGradientFill (fg);
                 g.fillPath (flute);
                 juce::ColourGradient hl (juce::Colours::white.withAlpha (0.28f), c.x, c.y - rr, juce::Colours::white.withAlpha (0.0f), c.x, c.y, false);
@@ -787,6 +791,19 @@ namespace
             }
             case lookIndex (Look::Hidden):
                 break;
+            case lookIndex (Look::TabKey):
+            {
+                juce::ColourGradient kg (on ? Colour (0xffd8e4f4) : Colour (0xffcfcfcf), r.getX(), r.getY(), on ? Colour (0xff8aa0c0) : Colour (0xff8a8a8a),
+                                         r.getX(), r.getBottom(), false);
+                g.setGradientFill (kg);
+                g.fillRoundedRectangle (r, 3.0f);
+                g.setColour (on ? Colour (0xff2a6ad8) : Colour (0xff3a3a3a));
+                g.drawRoundedRectangle (r, 3.0f, on ? 2.0f : 1.0f);
+                g.setColour (Colour (0xff111111));
+                g.setFont (face (Look::Sans, e.size));
+                g.drawText (e.text, r, juce::Justification::centred);
+                break;
+            }
             case lookIndex (Look::FlatKey):
             default:
             {
@@ -1075,9 +1092,13 @@ namespace
 
     void drawText (juce::Graphics& g, const Element& e)
     {
+        const Rectangle<float> r (e.x, e.y, e.w, e.h);
+        juce::Graphics::ScopedSaveState keep (g);
+        if (e.centre != 0.0f) // turned print, around the box's centre
+            g.addTransform (juce::AffineTransform::rotation (rad (e.centre), r.getCentreX(), r.getCentreY()));
         g.setColour (e.colour);
         g.setFont (e.kern != 0.0f ? face (e.look, e.size).withExtraKerningFactor (e.kern) : face (e.look, e.size));
-        g.drawFittedText (e.text, Rectangle<float> (e.x, e.y, e.w, e.h).toNearestInt(), e.just, 2, 0.8f);
+        g.drawFittedText (e.text, r.toNearestInt(), e.just, 2, 0.8f);
     }
 
     void drawValueBox (juce::Graphics& g, const Element& e, const models::Param& p, float v)
@@ -1131,6 +1152,62 @@ namespace
         }
     }
 
+
+    /** The magnitude (dB) of one dynamic-EQ band at `hz`: a bell, shelves or
+        flat (filter types OFF, BP, LP6, LP12, HP6, HP12). */
+    float bandDb (float hz, float f, float gain, float q, int type)
+    {
+        const float x = std::log2 (hz / juce::jmax (1.0f, f));
+        switch (type)
+        {
+            case 1: return gain / (1.0f + std::pow (x * q * 1.6f, 2.0f));                        // bell
+            case 2: case 3: return gain / (1.0f + std::exp (x * (type == 2 ? 3.0f : 6.0f)));    // low shelf
+            case 4: case 5: return gain / (1.0f + std::exp (-x * (type == 4 ? 3.0f : 6.0f)));   // high shelf
+            default: return 0.0f;
+        }
+    }
+
+    void drawGraph (juce::Graphics& g, const Element& e, const PaintContext& ctx)
+    {
+        const Rectangle<float> r (e.x, e.y, e.w, e.h);
+        g.setColour (Colour (0xff3a3a3a));
+        g.fillRoundedRectangle (r.expanded (4.0f), 10.0f);
+        g.setColour (Colour (0xff030303));
+        g.fillRoundedRectangle (r, 8.0f);
+        juce::Graphics::ScopedSaveState keep (g);
+        g.reduceClipRegion (r.reduced (2.0f).toNearestInt());
+        auto xOf = [&] (float hz) { return r.getX() + r.getWidth() * std::log10 (hz / 20.0f) / 3.0f; };
+        g.setColour (Colour (0xff4a4a4a));
+        for (float dec : { 20.0f, 200.0f, 2000.0f })
+            for (int k = 1; k <= 9; ++k)
+                g.drawVerticalLine (juce::roundToInt (xOf (dec * (float) k)), r.getY(), r.getBottom());
+        g.setColour (Colour (0xff8a8a8a));
+        for (float hz : { 100.0f, 1000.0f, 10000.0f })
+            g.drawVerticalLine (juce::roundToInt (xOf (hz)), r.getY(), r.getBottom());
+        g.setColour (Colour (0xff4a4a4a));
+        for (int i = 1; i < 6; ++i)
+            g.drawHorizontalLine (juce::roundToInt (r.getY() + r.getHeight() * (float) i / 6.0f), r.getX(), r.getRight());
+        const Colour colours[] = { Colour (0xffe8a020), Colour (0xff4a8af0) };
+        const int bands = (int) e.params.size() / 4;
+        for (int b = bands - 1; b >= 0; --b)
+        {
+            auto val = [&] (int k) { return ctx.value (e.params[(size_t) (b * 4 + k)]); };
+            juce::Path curve;
+            for (int i = 0; i <= 200; ++i)
+            {
+                const float hz = 20.0f * std::pow (1000.0f, (float) i / 200.0f);
+                const float db = bandDb (hz, val (0), val (1), val (2), juce::roundToInt (val (3)));
+                const float y = r.getCentreY() - db / 18.0f * r.getHeight() * 0.5f;
+                if (i == 0)
+                    curve.startNewSubPath (xOf (hz), y);
+                else
+                    curve.lineTo (xOf (hz), y);
+            }
+            g.setColour (colours[b % 2]);
+            g.strokePath (curve, juce::PathStrokeType (3.0f));
+        }
+    }
+
     void drawBubble (juce::Graphics& g, Rectangle<float> near, const juce::String& text)
     {
         g.setFont (face (Look::Sans, 22.0f));
@@ -1167,6 +1244,7 @@ juce::Rectangle<float> hitArea (const Element& e)
         case Type::Key: return Rectangle<float> (e.x, e.y, e.w, e.h).expanded (4.0f);
         case Type::Value: return { e.x, e.y, e.w, e.h };
         case Type::Fader: return Rectangle<float> (e.x, e.y, e.w, e.h);
+        case Type::Graph:
         case Type::Vu:
         case Type::Leds:
         case Type::Text:
@@ -1217,13 +1295,17 @@ void paintDesign (juce::Graphics& g, const Design& d, const PaintContext& ctx)
     const Element* bubbleAt = nullptr;
     for (const auto& e : d.elements)
     {
+        if (e.page >= 0 && e.page != ctx.page)
+            continue;
         const auto* p = paramOf (e);
         const float v = p != nullptr ? ctx.value (e.param) : 0.0f;
         switch (e.type)
         {
             case Type::Knob: drawKnob (g, e, p != nullptr ? controlPosition (*p, v) : e.fixed); break;
             case Type::Toggle: drawToggle (g, e, p != nullptr ? elementOn (e, *p, v) : e.fixed > 0.5f); break;
-            case Type::Key: drawKey (g, e, p != nullptr ? elementOn (e, *p, v) : e.fixed > 0.5f); break;
+            case Type::Key:
+                drawKey (g, e, e.look == Look::TabKey ? e.choice == ctx.page : (p != nullptr ? elementOn (e, *p, v) : e.fixed > 0.5f));
+                break;
             case Type::Lamp: drawLed (g, { e.x, e.y }, e.w * 0.5f, e.colour, p != nullptr ? elementOn (e, *p, v) : e.fixed > 0.5f); break;
             case Type::Fader: drawFader (g, e, p != nullptr ? controlPosition (*p, v) : e.fixed); break;
             case Type::Vu: drawVu (g, e, ctx.reduction); break;
@@ -1232,6 +1314,7 @@ void paintDesign (juce::Graphics& g, const Design& d, const PaintContext& ctx)
             case Type::Box: drawBox (g, e); break;
             case Type::Screw: drawScrew (g, { e.x, e.y }, e.w * 0.5f, d.panel); break;
             case Type::Display: drawDisplay (g, e, ctx); break;
+            case Type::Graph: drawGraph (g, e, ctx); break;
             case Type::Value:
                 if (p != nullptr)
                     drawValueBox (g, e, *p, v);

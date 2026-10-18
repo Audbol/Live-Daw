@@ -31,7 +31,8 @@ enum class Type
     Box,     // decorative rectangle (sections, windows, cheeks)
     Screw,   // panel screw; x, y = centre, w = diameter
     Display, // alphanumeric display showing parameter values
-    Value    // a parameter's value printed (7-segment / LCD); x, y, w, h = box
+    Value,   // a parameter's value printed (7-segment / LCD); x, y, w, h = box
+    Graph    // EQ response: bands of `params` (freq, gain, q, filter type) in grid; x, y, w, h
 };
 
 enum class Look
@@ -62,6 +63,7 @@ enum class Look
     LedKey,     // small square key with an LED in it
     FlatKey,    // flat screen key, filled with colour when on
     Hidden,     // invisible key over printed text (a click area)
+    TabKey,     // a tab that shows page `choice` of the panel
     // Vu faces
     VuAmber,    // backlit amber face, chrome bezel
     VuAmberDark,// backlit amber face, black housing
@@ -136,8 +138,9 @@ struct Element
     float housing = 0.0f;    // Vu: extra housing below the face (px)
     float dbMin = 0.0f, dbMax = 0.0f; // Vu: a linear dB scale (level = -reduction) instead of the VU law
 
-    // Display: the parameters it shows
+    // Display: the parameters it shows; Graph: four per band (freq, gain, q, filter type)
     std::vector<int> params;
+    int page = -1;            // shown only on this page of the panel (-1: always)
 
     // Chained setters
     Element& p (int i) { param = i; return *this; }
@@ -291,6 +294,7 @@ struct PaintContext
     std::function<float (int)> value;  // a parameter's value
     float reduction = 0.0f;            // gain reduction, dB (>= 0)
     int touched = -1;                  // the parameter last touched (value bubble)
+    int page = 0;                      // the panel page shown (tabbed panels)
     bool showValue = false;
     bool thumbnail = false;            // small: skip fine detail
 };
