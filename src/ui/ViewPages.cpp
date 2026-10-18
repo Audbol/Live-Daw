@@ -357,7 +357,12 @@ namespace
         g.fillRoundedRectangle (box, 2.0f);
         g.setColour (juce::Colours::black);
         g.setFont (viewFont (TypeScale::caption, boxH * 0.8f));
-        g.drawFittedText (fader::text (db) + " dB", box.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+        // Narrow strips (12 strips in a small window) leave out the unit
+        // rather than cutting the value.
+        auto text = fader::text (db) + " dB";
+        if (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text) * 0.6f > box.getWidth() - 2.0f)
+            text = fader::text (db);
+        g.drawFittedText (text, box.toNearestInt(), juce::Justification::centred, 1, 0.6f);
     }
 
     /** Vertical fader drag with the TOUCH FADER RES of SETUP > GENERAL: NORM,

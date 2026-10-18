@@ -2091,7 +2091,7 @@ public:
         auto r = getLocalBounds().reduced (juce::jmax (2, getWidth() * 6 / 100), 0);
         r.removeFromTop ((int) (stripH + nameH) + 2);
         boxArea = r.removeFromTop (juce::jlimit (40, 96, getHeight() * 17 / 100)).toFloat();
-        pre.setBounds (boxArea.toNearestInt().withTrimmedTop ((int) (boxArea.getHeight() * 0.3f)).reduced (4, 4));
+        pre.setBounds (boxArea.toNearestInt().withTrimmedTop ((int) (boxArea.getHeight() * 0.3f)).reduced (juce::jlimit (1, 4, getWidth() / 10), 4));
         r.removeFromTop (6);
         r.removeFromBottom (6);
         on.setBounds (r.removeFromBottom (juce::jlimit (18, 34, getHeight() / 11)));
@@ -2146,7 +2146,7 @@ public:
         g.fillRect (caption);
         g.setColour (colours::caption);
         g.setFont (homeFont (TypeScale::caption, caption.getHeight() * 0.8f));
-        g.drawText ("LR VECTOR SCOPE", caption.toNearestInt(), juce::Justification::centred);
+        g.drawFittedText ("LR VECTOR SCOPE", caption.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.6f);
 
         if (count <= 0)
             return;

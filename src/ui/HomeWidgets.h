@@ -303,7 +303,9 @@ public:
         if (! icon.has_value())
         {
             g.setFont (homeFont (TypeScale::body, r.getHeight() * (twoLines ? 0.34f : 0.5f)));
-            g.drawFittedText (keyText, r.toNearestInt().reduced (3, 0), juce::Justification::centred, twoLines ? 2 : 1, 0.8f);
+            // Narrow keys (MAIN SENDS PRE at 1280x800) give the text the full width.
+            g.drawFittedText (keyText, r.toNearestInt().reduced (juce::jlimit (1, 3, getWidth() / 12), 0), juce::Justification::centred, twoLines ? 2 : 1,
+                              0.7f);
             return;
         }
         if (keyText.isEmpty())

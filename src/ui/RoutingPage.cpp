@@ -38,7 +38,7 @@ namespace
         if (t.name.isNotEmpty())
         {
             g.setColour (juce::Colours::black);
-            g.setFont (juce::FontOptions (juce::jmin (15.0f, bar.getHeight() * 0.95f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::body, bar.getHeight() * 0.95f));
             g.drawFittedText (t.name, bar.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
         }
         g.setColour (Colours::screenTile);
@@ -46,7 +46,7 @@ namespace
 
         auto label = r.removeFromBottom (juce::jmin (20.0f, r.getHeight() * 0.36f));
         g.setColour (t.labelColour);
-        g.setFont (juce::FontOptions (juce::jmin (15.0f, label.getHeight() * 0.9f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::body, label.getHeight() * 0.9f));
         g.drawFittedText (t.label, label.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
 
         auto body = r.reduced (3.0f, 2.0f);
@@ -55,7 +55,7 @@ namespace
         if (t.icon)
             t.icon (g, body.withSizeKeepingCentre (juce::jmin (body.getWidth(), body.getHeight()), body.getHeight()).reduced (1.0f));
         g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 18.0f, juce::jmin (numberArea.getHeight() * 0.7f, numberArea.getWidth() * 0.6f)), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::value * 0.85f, juce::jmin (numberArea.getHeight() * 0.7f, numberArea.getWidth() * 0.6f), WingWeight::SemiBold));
         g.drawFittedText (t.number, numberArea.toNearestInt(), juce::Justification::centredRight, 1, 0.6f);
         if (t.chip.isNotEmpty())
             drawChip (g, r.withHeight (12.0f).withTrimmedLeft (r.getWidth() - 24.0f).translated (-2.0f, 2.0f), t.chip, t.chipColour, juce::Colours::black);
@@ -92,8 +92,9 @@ namespace
         g.setColour (on && enabled ? onColour : Dark::key);
         g.fillRect (r);
         g.setColour (on && enabled ? Dark::choiceInk : (enabled ? Dark::text : Dark::textDim));
-        g.setFont (juce::FontOptions (juce::jmin (18.0f, (float) r.getHeight() * 0.5f), juce::Font::bold));
-        g.drawFittedText (text, r.reduced (2, 0), juce::Justification::centred, 2, 0.7f);
+        const bool twoLines = text.containsChar ('\n');
+        g.setFont (wingFontFit (TypeScale::value * 0.85f, (float) r.getHeight() * (twoLines ? 0.42f : 0.5f), WingWeight::SemiBold));
+        g.drawFittedText (text, r.reduced (juce::jlimit (1, 2, r.getWidth() / 20), 0), juce::Justification::centred, 2, 0.7f);
     }
 
     /** An outlined key [I8]: a grey frame on the panel, an optional icon at the
@@ -141,7 +142,7 @@ namespace
         auto label = f.removeFromBottom (f.getHeight() * 0.36f);
         drawIcon (g, icon, f.reduced (f.getHeight() * 0.12f), ink);
         g.setColour (ink);
-        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 13.0f, label.getHeight() * 0.85f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::statusCaption * 1.2f, label.getHeight() * 0.85f));
         g.drawFittedText (text, label.toNearestInt(), juce::Justification::centredTop, 1);
     }
 
@@ -157,12 +158,12 @@ namespace
         const float d = juce::jlimit (3.0f, 6.0f, dots.getHeight() * 0.12f);
         for (int i = -1; i <= 1; ++i)
             g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (dots.getCentre().translated (0.0f, (float) i * d * 2.0f)));
-        auto t = r.reduced (6, 2);
+        auto t = r.reduced (juce::jlimit (3, 6, r.getWidth() / 24), 2);
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (juce::jmin (13.0f, (float) t.getHeight() * 0.32f), juce::Font::bold));
-        g.drawText (caption, t.removeFromTop (t.getHeight() * 40 / 100), juce::Justification::bottomLeft);
+        g.setFont (wingFontFit (TypeScale::statusCaption * 1.2f, (float) t.getHeight() * 0.32f));
+        g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 40 / 100), juce::Justification::bottomLeft, 1, 0.7f);
         g.setColour (valueColour);
-        g.setFont (juce::FontOptions (juce::jmin (22.0f, (float) t.getHeight() * 0.85f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::value, (float) t.getHeight() * 0.85f, WingWeight::SemiBold));
         g.drawFittedText (value, t, juce::Justification::centredLeft, 1);
     }
 
@@ -183,10 +184,10 @@ namespace
         drawIcon (g, icon, ib.toFloat(), Dark::text);
         r.removeFromLeft (4);
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (juce::jmin (13.0f, (float) r.getHeight() * 0.3f), juce::Font::bold));
-        g.drawText (caption, r.removeFromTop (r.getHeight() * 42 / 100), juce::Justification::bottomLeft);
+        g.setFont (wingFontFit (TypeScale::statusCaption * 1.2f, (float) r.getHeight() * 0.3f));
+        g.drawFittedText (caption, r.removeFromTop (r.getHeight() * 42 / 100), juce::Justification::bottomLeft, 1, 0.7f);
         g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (juce::jmin (22.0f, (float) r.getHeight() * 0.8f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::value, (float) r.getHeight() * 0.8f, WingWeight::SemiBold));
         g.drawFittedText (value, r, juce::Justification::centredLeft, 1);
     }
 } // namespace
@@ -405,8 +406,8 @@ void RoutingPage::resized()
         lh.removeFromRight (2);
         lockKey = lh.removeFromRight (lh.getHeight());
         lh.removeFromRight (8);
-        autoKey = lh.removeFromRight (juce::jmin (64, lh.getWidth() / 5));
-        lh.removeFromRight (8);
+        autoKey = lh.removeFromRight (juce::jmin (64, juce::jmax (lh.getWidth() / 5, lh.getHeight() * 5 / 4)));
+        lh.removeFromRight (juce::jlimit (4, 8, lh.getWidth() / 40));
         if (mode == Mode::Channels)
         {
             const bool paged = numTargetPages() > 1;
@@ -763,7 +764,7 @@ void RoutingPage::paintOutputPort (juce::Graphics& g, juce::Rectangle<int> area,
         auto ring = juce::Rectangle<float> (d, d).withCentre (r.getCentre());
         g.setColour (Dark::textDim);
         g.drawEllipse (ring, 2.0f);
-        g.setFont (juce::FontOptions (juce::jmin (18.0f, d * 0.48f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::value * 0.85f, d * 0.48f, WingWeight::SemiBold));
         g.drawFittedText (juce::String ((isRecorderPort (port) ? port - kRecorderPortBase : port) + 1), ring.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         if (selected)
         {
@@ -910,7 +911,7 @@ void RoutingPage::paintSourcePanel (juce::Graphics& g) const
             g.fillRect (t.withHeight (3));
         }
         g.setColour (on ? Colours::yellow : (enabled ? Dark::textDim : Dark::textDim.withAlpha (0.4f)));
-        g.setFont (juce::FontOptions (juce::jmin (17.0f, (float) t.getHeight() * 0.5f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::value * 0.85f, (float) t.getHeight() * 0.5f, WingWeight::SemiBold));
         g.drawText (names[i], t, juce::Justification::centred);
     }
 
@@ -922,7 +923,7 @@ void RoutingPage::paintSourcePanel (juce::Graphics& g) const
     if (auto* host = ctx.engine.getSourceSoloHost(); host != nullptr && ctx.engine.isSourceSoloed (selectedSource))
         users = (users.isEmpty() ? juce::String() : users + ", ") + host->getLabel() + " SRC SOLO";
     g.setColour (users.isEmpty() ? Dark::textDim : Dark::text);
-    g.setFont (juce::FontOptions (juce::jmin (18.0f, (float) sourceBanner.getHeight() * 0.5f), juce::Font::bold));
+    g.setFont (wingFontFit (TypeScale::value * 0.85f, (float) sourceBanner.getHeight() * 0.5f, WingWeight::SemiBold));
     g.drawFittedText (users.isEmpty() ? juce::String ("NO CONNECTIONS") : "-> " + users, sourceBanner.reduced (8, 0), juce::Justification::centred, 2);
 
     if (sourceTab == 1)
@@ -939,7 +940,7 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g, juce::Rectangle<int>) 
     if (src == nullptr)
     {
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+        g.setFont (wingFont (TypeScale::body));
         g.drawFittedText ("THIS PORT HAS NO SOURCE SETTINGS", sourceBody, juce::Justification::centredTop, 2);
         return;
     }
@@ -955,7 +956,7 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g, juce::Rectangle<int>) 
         g.setColour (wingColour (src->colour.load()));
         g.fillRect (strip);
         g.setColour (juce::Colours::black);
-        g.setFont (juce::FontOptions (juce::jmin (16.0f, (float) strip.getHeight() * 0.8f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::body, (float) strip.getHeight() * 0.8f));
         g.drawFittedText (sourceName (selectedSource).toUpperCase(), strip.reduced (4, 0), juce::Justification::centred, 1, 0.7f);
         const bool playback = Recorder::isPlaybackSource (selectedSource) || UsbRecorder::isPlayerSource (selectedSource);
         const auto ring = box.reduced (6).toFloat().withSizeKeepingCentre ((float) juce::jmin (box.getHeight() - 12, 64), (float) juce::jmin (box.getHeight() - 12, 64));
@@ -964,7 +965,7 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g, juce::Rectangle<int>) 
         if (src->icon.load() <= 0 || ! drawWingIcon (g, src->icon.load(), ring.reduced (ring.getWidth() * 0.22f), Dark::text))
             drawIcon (g, playback ? Icon::Waveform : Icon::Xlr, ring.reduced (ring.getWidth() * 0.22f), Dark::text);
         g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+        g.setFont (wingFont (TypeScale::body));
         const int shownNumber = UsbRecorder::isPlayerSource (selectedSource) ? UsbRecorder::playerChannelOf (selectedSource)
                                 : playback                                   ? Recorder::playbackChannelOf (selectedSource)
                                                                              : selectedSource;
@@ -1035,7 +1036,7 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g, juce::Rectangle<int>) 
         g.setColour (juce::Colours::white);
         g.fillRect (flag);
         g.setColour (juce::Colours::black);
-        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+        g.setFont (wingFont (TypeScale::statusCaption));
         g.drawFittedText (juce::String (gain, 1) + " dB", flag.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         g.setColour (Dark::textDim);
         g.drawText ("GAIN", f.withY (f.getBottom() + 2.0f).withHeight (14.0f), juce::Justification::centred);
@@ -1066,7 +1067,7 @@ void RoutingPage::paintSourceLook (juce::Graphics& g) const
         if (icon == 0)
         {
             g.setColour (ink);
-            g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+            g.setFont (wingFont (TypeScale::statusCaption));
             g.drawText ("NONE", cell, juce::Justification::centred);
         }
         else
@@ -1100,15 +1101,15 @@ void RoutingPage::paintSourceTags (juce::Graphics& g) const
         }
         auto r = cell.reduced (4);
         g.setColour (on ? juce::Colours::black : Dark::caption);
-        g.setFont (juce::FontOptions (juce::jmin (11.0f, (float) r.getHeight() * 0.3f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::statusCaption, (float) r.getHeight() * 0.3f));
         g.drawText ("MGRP " + juce::String (i + 1), r.removeFromTop (r.getHeight() / 3), juce::Justification::centred);
         g.setColour (on ? juce::Colours::black : Dark::text);
-        g.setFont (juce::FontOptions (juce::jmin (16.0f, (float) r.getHeight() * 0.45f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::body, (float) r.getHeight() * 0.45f));
         g.drawFittedText (ctx.engine.getMuteGroupName (i).toUpperCase(), r, juce::Justification::centred, 1, 0.7f);
     }
     // The source's state.
     g.setColour (Dark::textDim);
-    g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+    g.setFont (wingFont (TypeScale::statusCaption * 1.2f));
     const auto state = src->mute.load() ? "MUTED" : ((mask & engaged) != 0 ? "MUTED BY A MUTE GROUP" : "");
     g.drawText (state, sourceBody.withTrimmedTop (sourceTagCells.empty() ? 0 : sourceTagCells.back().first.getBottom() - sourceBody.getY() + 10).withHeight (20),
                 juce::Justification::centred);
@@ -1203,7 +1204,7 @@ void RoutingPage::paint (juce::Graphics& g)
         if (r.isEmpty())
             return;
         g.setColour (Dark::caption);
-        g.setFont (juce::FontOptions (juce::jmin (12.0f, (float) r.getHeight() * 0.8f)));
+        g.setFont (wingFontFit (TypeScale::statusCaption, (float) r.getHeight() * 0.8f));
         g.drawText (text, r, juce::Justification::centred);
     };
 

@@ -148,7 +148,7 @@ public:
         paintKeyRows (g, rows);
         auto& ctx = page.ctx;
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (juce::jmin (16.0f, (float) info.getHeight() * 0.4f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::body, (float) info.getHeight() * 0.4f));
         g.drawFittedText ("SHOW: " + ctx.show.getName().toUpperCase() + "\n" + juce::String (ctx.show.getNumScenes()) + " SCENES", info,
                           juce::Justification::bottomLeft, 2);
     }
@@ -376,7 +376,7 @@ public:
         auto body = drawDarkPanel (g, extras, "SCENE");
         juce::ignoreUnused (body);
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        g.setFont (wingFont (TypeScale::statusCaption * 1.2f));
         g.drawText ("FADE (FADERS, PANS, SENDS)", fadeLabel, juce::Justification::centredLeft);
         g.drawText ("NOTES", notesLabel, juce::Justification::bottomLeft);
     }
@@ -571,10 +571,10 @@ public:
         g.fillRect (counter);
         auto c = counter.reduced (2);
         g.setColour (show.isRecordingSnippet() ? Colours::mute : Dark::text);
-        g.setFont (juce::FontOptions (juce::jmin (22.0f, (float) c.getHeight() * 0.6f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::value, (float) c.getHeight() * 0.6f, WingWeight::SemiBold));
         g.drawText (juce::String (count), c.removeFromTop (c.getHeight() * 62 / 100), juce::Justification::centred);
         g.setColour (Dark::orange.brighter (0.4f));
-        g.setFont (juce::FontOptions (juce::jmin (11.0f, (float) c.getHeight() * 0.9f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::statusCaption, (float) c.getHeight() * 0.9f));
         g.drawText (count == 1 ? "PARAMETER" : "PARAMETERS", c, juce::Justification::centredTop);
     }
 
@@ -726,18 +726,18 @@ public:
         g.setColour (Dark::header);
         g.fillRect (presetHeader);
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+        g.setFont (wingFont (TypeScale::statusCaption));
         g.drawText ("PRESET", presetHeader, juce::Justification::centred);
         g.setColour (info.kind == Show::PresetInfo::Kind::Fx ? Dark::text : Dark::textDim);
-        g.setFont (juce::FontOptions (juce::jmin (18.0f, (float) pb.getHeight() * 0.3f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::value * 0.85f, (float) pb.getHeight() * 0.3f, WingWeight::SemiBold));
         g.drawFittedText (info.kind == Show::PresetInfo::Kind::Fx ? info.name.toUpperCase() : juce::String ("NO PRESET SELECTED"),
                           pb.removeFromTop (pb.getHeight() / 2), juce::Justification::centred, 2);
         g.setColour (FileColours::fx);
-        g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        g.setFont (wingFont (TypeScale::statusCaption * 1.2f));
         g.drawFittedText (info.detail.toUpperCase(), pb, juce::Justification::centredTop, 1);
 
         g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (22.0f, juce::Font::bold));
+        g.setFont (wingFont (TypeScale::value, WingWeight::SemiBold));
         g.drawText (">>", arrow, juce::Justification::centred);
 
         // The slot: purple header, device, the strip using it.
@@ -748,16 +748,16 @@ public:
         g.setColour (FileColours::fx.darker (0.3f));
         g.fillRect (header);
         g.setColour (juce::Colours::black);
-        g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+        g.setFont (wingFont (TypeScale::body));
         g.drawText ("FX " + juce::String (slot + 1) + (slot < 8 ? "  PREMIUM" : ""), header.reduced (4, 0), juce::Justification::centredLeft);
         auto* plugin = fx.getPlugin (slot);
         const auto device = plugin != nullptr ? plugin->getName() : models::model (models::Fx, fx.getModel (slot)).name;
         g.setColour (fx.isLoaded (slot) ? Dark::text : Dark::textDim);
-        g.setFont (juce::FontOptions (juce::jmin (18.0f, (float) sb.getHeight() * 0.3f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::value * 0.85f, (float) sb.getHeight() * 0.3f, WingWeight::SemiBold));
         g.drawFittedText (fx.isLoaded (slot) ? device.toUpperCase() : juce::String ("EMPTY"), sb.removeFromTop (sb.getHeight() / 2),
                           juce::Justification::centred, 2);
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+        g.setFont (wingFont (TypeScale::statusCaption));
         g.drawFittedText (fxUser (ctx, slot), sb, juce::Justification::centredTop, 1);
     }
 
@@ -904,10 +904,10 @@ public:
             g.setColour (s->getColour());
             g.fillRect (header);
             g.setColour (juce::Colours::black);
-            g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+            g.setFont (wingFont (TypeScale::statusCaption));
             g.drawFittedText (stripName (*s).toUpperCase(), header.reduced (3, 0), juce::Justification::centred, 1);
             g.setColour (Dark::text);
-            g.setFont (juce::FontOptions (juce::jmin (22.0f, (float) b.getHeight() * 0.7f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::value, (float) b.getHeight() * 0.7f, WingWeight::SemiBold));
             g.drawFittedText (s->getLabel().removeCharacters (" "), b, juce::Justification::centred, 1);
         }
 
@@ -920,7 +920,7 @@ public:
             g.setColour (on ? Dark::on : (active ? Dark::key : Dark::key.darker (0.5f)));
             g.fillRect (r);
             g.setColour (on ? juce::Colours::black : (active ? Dark::text : Dark::textDim.withAlpha (0.5f)));
-            g.setFont (juce::FontOptions (juce::jlimit (8.0f, 12.0f, r.getHeight() * 0.36f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::statusCaption, r.getHeight() * 0.36f));
             g.drawFittedText (c.name, r.toNearestInt().reduced (1), juce::Justification::centred, 1, 0.6f);
         }
     }
@@ -1051,7 +1051,7 @@ public:
         g.fillRect (status);
         body.removeFromLeft (8);
         g.setColour (Dark::pre.withAlpha (dim));
-        g.setFont (juce::FontOptions (juce::jmin (30.0f, (float) body.getHeight() * 0.36f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::statusTitle, (float) body.getHeight() * 0.36f, WingWeight::SemiBold));
         g.drawText ("0:00:00", body.removeFromTop (body.getHeight() * 45 / 100), juce::Justification::centredLeft);
         for (int i = 0; i < 2; ++i)
         {
@@ -1061,14 +1061,14 @@ public:
             g.drawEllipse (reel, 2.0f);
             g.fillEllipse (reel.withSizeKeepingCentre (d * 0.2f, d * 0.2f));
         }
-        g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+        g.setFont (wingFont (TypeScale::body));
         g.drawText ("4-TRACK PLAYER", body, juce::Justification::bottomRight);
         auto chips = juce::Rectangle<float> ((float) body.getRight() - 90.0f, (float) body.getY(), 90.0f, 34.0f);
         for (auto [i, text] : { std::pair { 0, "WAV" }, std::pair { 1, "4-CH" }, std::pair { 2, "48K" }, std::pair { 3, "24 bit" } })
             drawChip (g, juce::Rectangle<float> (chips.getX() + (float) (i % 2) * 46.0f, chips.getY() + (float) (i / 2) * 18.0f, 43.0f, 15.0f), text,
                       Dark::key.withAlpha (dim), Dark::text.withAlpha (dim));
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+        g.setFont (wingFont (TypeScale::body));
         g.drawFittedText ("THE CLIP PLAYER IS NOT AVAILABLE YET.", note, juce::Justification::topLeft, 2);
     }
 
