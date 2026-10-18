@@ -12,6 +12,7 @@ pub mod fft;
 pub mod fx;
 pub mod garbage;
 pub mod listen;
+pub mod monitor;
 pub mod params;
 pub mod pool;
 pub mod sends;

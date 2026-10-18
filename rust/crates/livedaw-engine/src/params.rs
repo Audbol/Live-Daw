@@ -7,6 +7,7 @@
 //! by `livedaw_engine.h`.
 
 use crate::atomic::AtomicF32;
+use crate::monitor::MonitorControls;
 use crate::solo::solo_mode;
 use crate::talk::TalkParams;
 use livedaw_dsp::wing::{
@@ -941,6 +942,11 @@ pub struct EngineControls {
     pub speakers: MonitorSourceParams,
     /// The PHONES path.
     pub phones: MonitorPathParams,
+
+    // ---- ABI 8: monitor path processing and SOURCE SOLO (`monitor.rs`) --------
+    /// Both paths' DIRECT IN, BAND SOLO, EQ, PAN / WIDTH, INVERT, DELAY and
+    /// LIMITER, and SOURCE SOLO.
+    pub monitor: MonitorControls,
 }
 
 impl Default for EngineControls {
@@ -982,6 +988,7 @@ impl Default for EngineControls {
             talk: TalkParams::default(),
             speakers: MonitorSourceParams::default(),
             phones: MonitorPathParams::default(),
+            monitor: MonitorControls::default(),
         }
     }
 }
@@ -1028,6 +1035,7 @@ impl EngineControls {
         self.talk.reset();
         self.speakers.reset();
         self.phones.reset();
+        self.monitor.reset();
         self.monitor_level_db.store(0.0);
         self.mute_groups.store(0, Relaxed);
         for d in &self.dcas {

@@ -28,7 +28,7 @@ fn tap_width_tap_eq_and_rta_settings_survive_a_show() {
     c.eq.autogain.store(false, Relaxed);
     c.eq.gain_db.store(24.0);
     c.filter_tap.store(0, Relaxed);
-    c.band_solo_trim_db.store(6.0);
+    engine.controls.monitor.paths[1].band_solo_db.store(6.0); // BAND SOLO (PHONES)
 
     let show = Show::new();
     let text = show.to_xml(&engine, &mut NoPlugins).to_document();
@@ -49,7 +49,7 @@ fn tap_width_tap_eq_and_rta_settings_survive_a_show() {
     assert!(!c2.eq.autogain.load(Relaxed));
     assert_eq!(c2.eq.gain_db.load(), 24.0);
     assert_eq!(c2.filter_tap.load(Relaxed), 0);
-    assert_eq!(c2.band_solo_trim_db.load(), 6.0);
+    assert_eq!(e2.controls.monitor.paths[1].band_solo_db.load(), 6.0);
 }
 
 #[test]

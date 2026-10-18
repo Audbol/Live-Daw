@@ -11,6 +11,8 @@
 //!   changes (a group engaged or released, SIP on or off).
 //! * Talk tags: TALK SOLO strips solo and TALK ON strips unmute while their
 //!   talk key is on (see `talk.rs`).
+//! * SOURCE SOLO: the host strip (CH39 or AUX7) solos while it plays a
+//!   soloed source (see `monitor.rs`).
 //!
 //! Before the channels run, the audio thread computes every strip's effective
 //! solo and the console's mute decision for the block ([`console_pass`]); the
@@ -130,7 +132,8 @@ fn group_cause(s: &Strip, c: &EngineControls, mute_groups: u32, dca_mute_groups:
 
 /// Audio thread, before the channels run: every strip's effective solo, then
 /// SIP and the mute decisions (talk tags, SIP, MUTEGROUP/SIP OVERRIDE).
-pub(crate) fn console_pass<'a, I>(c: &EngineControls, strips: I, talk_active: u32) -> SoloBlock
+/// `source_solo`: the SOURCE SOLO host playing a soloed source.
+pub(crate) fn console_pass<'a, I>(c: &EngineControls, strips: I, talk_active: u32, source_solo: Option<&Strip>) -> SoloBlock
 where
     I: Iterator<Item = &'a Arc<Strip>> + Clone,
 {
@@ -138,7 +141,9 @@ where
     let mut any_input_solo = false;
     for s in strips.clone() {
         let tags = s.console.talk_tags.load(Relaxed);
-        let soloed = s.is_soloed(&c.dcas) || talk::tag_solos(tags, talk_active);
+        let soloed = s.is_soloed(&c.dcas)
+            || talk::tag_solos(tags, talk_active)
+            || source_solo.is_some_and(|host| std::ptr::eq(host, s.as_ref()));
         s.console.soloed.store(soloed, Relaxed);
         any_solo |= soloed;
         any_input_solo |= soloed && s.kind().is_input();

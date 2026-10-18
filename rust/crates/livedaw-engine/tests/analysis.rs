@@ -216,7 +216,7 @@ fn band_solo_plays_the_selected_band_on_the_monitor() {
     // Band "2" (index 2: l, 1, 2, ...) at 2 kHz, Q 4.
     ch.params.eq.values[spec.param_index("2f").unwrap()].store(2000.0);
     ch.params.eq.values[spec.param_index("2q").unwrap()].store(4.0);
-    rig.engine.analysis().controls().band_solo_trim_db.store(0.0);
+    rig.engine.controls.monitor.paths[0].band_solo_db.store(0.0);
 
     // Without LISTEN the monitor follows Main 1.
     rig.sine(0, 2000.0, 0.5);
@@ -233,14 +233,21 @@ fn band_solo_plays_the_selected_band_on_the_monitor() {
     let off_band = rms(&rig.run(40, 2)[BLOCK * 20..]);
     assert!(db(off_band) < db(at_band) - 20.0, "{} vs {}", db(off_band), db(at_band));
 
-    // The trim lifts it (default 12 dB).
-    rig.sine(0, 2000.0, 0.5);
-    rig.engine.analysis().controls().band_solo_trim_db.store(12.0);
+    // The listening path's BAND SOLO lifts it (default 12 dB; from a quieter
+    // tone, so the path's LIMITER at 0 dB stays out of the way).
+    rig.sine(0, 2000.0, 0.125);
+    rig.engine.controls.monitor.paths[0].band_solo_db.store(12.0);
     let trimmed = rms(&rig.run(40, 2)[BLOCK * 20..]);
-    assert!((db(trimmed) - db(at_band) - 12.0).abs() < 0.5);
+    assert!((db(trimmed) - (db(at_band) - 12.04) - 12.0).abs() < 0.5, "{} vs {}", db(trimmed), db(at_band));
+    // The PHONES' BAND SOLO doesn't apply: the band plays on the SPEAKERS.
+    rig.engine.controls.monitor.paths[1].band_solo_db.store(0.0);
+    let same = rms(&rig.run(20, 2)[BLOCK * 10..]);
+    assert!((db(same) - db(trimmed)).abs() < 0.1);
 
     // Off again: back to Main 1, without a click.
     rig.engine.analysis().controls().listen_mode.store(listen_mode::OFF, Relaxed);
+    rig.run(4, 2);
+    rig.sine(0, 2000.0, 0.5);
     let back = rig.run(20, 2);
     assert!(!rig.engine.controls.any_solo_active.load(Relaxed));
     assert!((rms(&back[BLOCK * 10..]) - main).abs() < 0.01);
@@ -256,8 +263,8 @@ fn listen_replaces_the_solo_bus_and_switches_without_clicks() {
     rig.sine(1, 300.0, 0.5);
     let engine = rig.engine.clone();
     let ctl = engine.analysis().controls();
-    ctl.band_solo_trim_db.store(0.0);
-    // Channel 2 soloed (PFL): the monitor plays it.
+    engine.controls.monitor.paths[0].band_solo_db.store(0.0); // BAND SOLO of the SPEAKERS (the listening path)
+                                                              // Channel 2 soloed (PFL): the monitor plays it.
     b.params.solo.store(true, Relaxed);
     rig.run(10, 2);
     // XOVER SOLO on channel 1 with a low pass far below its tone: silence,

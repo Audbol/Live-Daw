@@ -78,6 +78,7 @@ MixerEngine::MixerEngine (int numWorkerThreads)
       talk (controls.talk),
       speakers (controls.speakers),
       phones (controls.phones),
+      monitor (controls.monitor),
       outputProtection (controls.outputProtection),
       outputCeilingDb (controls.outputCeilingDb),
       outputClipEvents (controls.outputClipEvents),
@@ -333,6 +334,37 @@ juce::String MixerEngine::monitorSourceName (int index)
         index -= g.count;
     }
     return "OFF";
+}
+
+juce::String MixerEngine::directSourceName (int index)
+{
+    return takeString (ld::ld_monitor_direct_name (index));
+}
+
+Strip* MixerEngine::getSourceSoloHost() const noexcept
+{
+    const auto* host = ld::ld_engine_source_solo_host (engine);
+    for (auto kind : { StripKind::Channel, StripKind::Aux })
+        for (auto& s : getStrips (kind))
+            if (s->getHandle() == host)
+                return s.get();
+    return nullptr;
+}
+
+void MixerEngine::setSourceSolo (int port, bool on) noexcept
+{
+    if (on && sourceIndex (port) >= 0)
+    {
+        monitor.sourceSoloPort = port;
+        monitor.sourceSoloOn = true;
+    }
+    else if (! on && monitor.sourceSoloPort.load() == port)
+        monitor.sourceSoloOn = false;
+}
+
+bool MixerEngine::isSourceSoloed (int port) const noexcept
+{
+    return isSourceSoloActive() && monitor.sourceSoloPort.load() == port;
 }
 
 void MixerEngine::setSourceName (int index, const juce::String& name)

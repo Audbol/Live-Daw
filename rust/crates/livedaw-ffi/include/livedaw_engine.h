@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 7;
+constexpr int kAbiVersion = 8;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -350,6 +350,56 @@ struct SourceParams
     std::atomic<int32_t> mode; // SourceMode
     std::atomic<int32_t> colour, icon;
     std::atomic<float> peak;
+    std::atomic<uint32_t> muteGroups; // ABI 8, SOURCES > TAGS: bit n = mute group n+1 mutes the source
+};
+
+// ---- monitor path processing, SOURCE SOLO (ABI 8; livedaw-engine monitor.rs) ----
+
+/** Monitor EQ bands: L (low shelf), 1-6 (PEQ), H (high shelf). */
+constexpr int kMonitorEqBands = 8;
+/** DIRECT IN choices: CH.1-40, AUX.1-8, BUS.1-16, MAIN.1-4, MTX.1-8 (-1 = OFF). */
+constexpr int kNumDirectSources = kWingChannels + kNumAux + kWingBuses + kNumMains + kNumMatrices;
+
+/** One monitor EQ band (the shelves have no Q). */
+struct MonitorEqBand
+{
+    std::atomic<float> gainDb; // -15..15
+    std::atomic<float> freq;   // L 20..2000, 1-6 20..20000, H 200..20000 Hz
+    std::atomic<float> q;      // 0.44..10
+};
+
+/** A monitor path's processing (MONITORS > PHONES / SPEAKERS SETTINGS, the
+    MONITORS EQ and LEVEL): solo bus + SOURCE + DIRECT IN -> EQ -> PAN / WIDTH
+    -> INVERT -> DELAY -> level, DIM, MUTE, MONO / SWAP -> LIMITER. */
+struct MonitorDspParams
+{
+    std::atomic<int32_t> directSource; // DIRECT IN (0..kNumDirectSources-1, -1 = OFF), ld_monitor_direct_name
+    std::atomic<float> directLevelDb;  // its level
+    std::atomic<float> bandSoloDb;     // BAND SOLO boost of an EQ band LISTEN on this path, 0..24 (default 12)
+    std::atomic<bool> eqOn, invert, delayOn;
+    MonitorEqBand eq[kMonitorEqBands];
+    std::atomic<float> pan;         // -100..100
+    std::atomic<float> width;       // -150..150 %
+    std::atomic<float> delayM;      // DIST 0.1..100 m (ld_monitor_delay_ms)
+    std::atomic<float> limiterDb;   // LIMITER threshold -40..0 dB
+    std::atomic<float> limiterGrDb; // meter: largest gain reduction since the last read (exchange with 0)
+};
+
+/** SOURCE SOLO (MonitorControls::sourceSolo): the channel hosting a soloed source. */
+enum SourceSoloHost : int32_t
+{
+    kSourceSoloOff = 0,
+    kSourceSoloCh39 = 1,
+    kSourceSoloAux7 = 2
+};
+
+/** EngineControls::monitor: both paths' processing and SOURCE SOLO. */
+struct MonitorControls
+{
+    MonitorDspParams paths[2];             // 0 = SPEAKERS, 1 = PHONES
+    std::atomic<int32_t> sourceSolo;       // SourceSoloHost (SETUP > AUDIO)
+    std::atomic<bool> sourceSoloOn;        // SRC SOLO on ROUTING > SOURCES (not saved)
+    std::atomic<int32_t> sourceSoloPort;   // the soloed source's input port
 };
 
 struct EngineControls
@@ -392,6 +442,9 @@ struct EngineControls
     TalkParams talk;
     MonitorSourceParams speakers; // the SPEAKERS path's SOURCE etc.
     MonitorPathParams phones;     // the PHONES path
+
+    // ABI 8: monitor path processing and SOURCE SOLO
+    MonitorControls monitor;
 };
 
 /// Where the RTA shows (AnalysisControls::view): its tap and settings follow.
@@ -437,7 +490,7 @@ struct AnalysisControls
     std::atomic<int32_t> listenMode;         // ListenMode
     std::atomic<int32_t> listenKind, listenId;
     std::atomic<int32_t> listenBand;         // index into the WING EQ's bands (l, 1..n, h)
-    std::atomic<float> bandSoloTrimDb;       // BAND SOLO trim, 0..24 dB (default 12)
+    std::atomic<float> bandSoloTrimDb;       // unused since ABI 8: MonitorDspParams::bandSoloDb per path
     RtaViewSettings home, eq;
     std::atomic<int32_t> filterTap;          // FILTER SETUP's RTA SOURCE: PRE, POST
 };
@@ -456,7 +509,10 @@ struct LayoutInfo
         // ABI 7
         offTapWidth, offTapEq, tapEq, analysis, offAnalysisEq, offAnalysisFilterTap,
         talk, talkPath, monitorSource, monitorPath, source, offControlsSoloMode, offControlsTalk, offControlsSpeakers,
-        offControlsPhones, offTalkPaths, offMonitorPathPeak, offSourcePeak;
+        offControlsPhones, offTalkPaths, offMonitorPathPeak, offSourcePeak,
+        // ABI 8 (monitors)
+        monitorDsp, monitorControls, offControlsMonitor, offMonitorDspEq, offMonitorDspPan, offMonitorControlsSourceSolo,
+        offSourceMuteGroups;
 };
 
 struct ParamInfo
@@ -855,6 +911,16 @@ extern "C"
     void ld_engine_press_mute (const Engine*, const Strip*);
     /** Monitor paths (bit 0 = SPEAKERS, bit 1 = PHONES) DCA `dca` controls (named MON A: PHONES, MON B: SPEAKERS, MON LVL). */
     uint32_t ld_engine_dca_monitor_paths (const Engine*, int32_t dca);
+
+    // Monitor path processing and SOURCE SOLO (ABI 8; settings in EngineControls::monitor)
+    /** DIRECT IN name ("CH.12", "AUX.6", "MTX.3"; "OFF"). */
+    LdString* ld_monitor_direct_name (int32_t index);
+    /** Delay in ms for a distance in meters. */
+    float ld_monitor_delay_ms (float meters);
+    /** dB response of path `path`'s EQ (0 SPEAKERS, 1 PHONES): the whole EQ (band < 0, flat while off) or one band. */
+    void ld_monitor_eq_response (const Engine*, int32_t path, int32_t band, const float* freqs, float* outDb, int32_t n);
+    /** The SOURCE SOLO host (CH39 / AUX7), nullptr when OFF. */
+    const Strip* ld_engine_source_solo_host (const Engine*);
 }
 
 /// Returns nullptr if the C++ and Rust layouts agree, else a description of the mismatch.
@@ -939,6 +1005,13 @@ inline const char* verifyLayout()
         { info.offTalkPaths, offsetof (TalkParams, paths), "TalkParams.paths" },
         { info.offMonitorPathPeak, offsetof (MonitorPathParams, peak), "MonitorPathParams.peak" },
         { info.offSourcePeak, offsetof (SourceParams, peak), "SourceParams.peak" },
+        { info.monitorDsp, sizeof (MonitorDspParams), "MonitorDspParams size" },
+        { info.monitorControls, sizeof (MonitorControls), "MonitorControls size" },
+        { info.offControlsMonitor, offsetof (EngineControls, monitor), "EngineControls.monitor" },
+        { info.offMonitorDspEq, offsetof (MonitorDspParams, eq), "MonitorDspParams.eq" },
+        { info.offMonitorDspPan, offsetof (MonitorDspParams, pan), "MonitorDspParams.pan" },
+        { info.offMonitorControlsSourceSolo, offsetof (MonitorControls, sourceSolo), "MonitorControls.sourceSolo" },
+        { info.offSourceMuteGroups, offsetof (SourceParams, muteGroups), "SourceParams.muteGroups" },
     };
 
     if (info.abiVersion != kAbiVersion)

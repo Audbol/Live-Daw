@@ -513,13 +513,13 @@ fn apply_tap(t: &Element, p: &StripParams) {
     }
 }
 
-/// RTA SETTINGS and EQ/RTA SETTINGS, FILTER's RTA SOURCE and the BAND SOLO
-/// trim (console settings, kept with the show; scenes don't recall them).
+/// RTA SETTINGS and EQ/RTA SETTINGS and FILTER's RTA SOURCE (console
+/// settings, kept with the show; scenes don't recall them). The BAND SOLO
+/// boost belongs to the monitor paths (`globals.rs`).
 fn capture_rta(engine: &Engine, parent: &mut Element) {
     let c = engine.analysis().controls();
     let r = parent.add_new("Rta");
     put_i(r, "filterTap", &c.filter_tap);
-    put_f(r, "bandSoloTrim", &c.band_solo_trim_db);
     for (tag, v) in [("Home", &c.home), ("Eq", &c.eq)] {
         let x = r.add_new(tag);
         put_rta_view(x, v);
@@ -541,7 +541,11 @@ fn apply_rta(engine: &Engine, parent: &Element) {
     let Some(r) = parent.child("Rta") else { return };
     let c = engine.analysis().controls();
     get_i(r, "filterTap", &c.filter_tap);
-    get_f(r, "bandSoloTrim", &c.band_solo_trim_db);
+    // Shows from before the monitor paths' BAND SOLO kept one trim: both
+    // paths take it (a newer show's paths override it).
+    for p in &engine.controls.monitor.paths {
+        get_f(r, "bandSoloTrim", &p.band_solo_db);
+    }
     for (tag, v) in [("Home", &c.home), ("Eq", &c.eq)] {
         if let Some(x) = r.child(tag) {
             get_i(x, "display", &v.display);

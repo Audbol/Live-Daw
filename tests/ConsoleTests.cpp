@@ -180,6 +180,101 @@ public:
             expectEquals ((int) restoredEngine.getChannels()[0]->getTalkTags(), (int) (ld::kTalkAOn | ld::kTalkBSolo));
             expectEquals (MixerEngine::sourcePort (MixerEngine::sourceIndex (ld::kPlaybackSourceBase + 3)), ld::kPlaybackSourceBase + 3);
         }
+
+        beginTest ("Monitor paths: DIRECT IN, EQ curve, INVERT, LIMITER; SOURCE SOLO");
+        {
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            OfflineRig rig (engine, 4, 6);
+            engine.setNumChannels (40);
+            engine.phones.outputLeft = 4;
+            for (auto& ch : engine.getChannels())
+            {
+                ch->params.pan = -100.0f;
+                ch->params.inputLeft = -1;
+            }
+            auto& ch1 = *engine.getChannels()[0];
+            auto& ch2 = *engine.getChannels()[1];
+            ch1.params.inputLeft = 0;
+            ch2.params.inputLeft = 1;
+            ch2.params.mains[0].on = false;
+            rig.setInput (0, 0.25f);
+            rig.setInput (1, 0.125f);
+            rig.setInput (2, 0.5f);
+            rig.run (4);
+            expectWithinAbsoluteError (rig.out (4), 0.25f, 1.0e-5f);
+
+            // DIRECT IN CH.2 on the PHONES, then INVERT.
+            auto& phones = engine.monitorPath (true);
+            expect (&phones == &engine.monitor.paths[1]);
+            phones.directSource = 1;
+            expectEquals (MixerEngine::directSourceName (1), juce::String ("CH.2"));
+            expectEquals (MixerEngine::directSourceName (-1), juce::String ("OFF"));
+            rig.run (4);
+            expectWithinAbsoluteError (rig.out (4), 0.375f, 1.0e-5f);
+            phones.invert = true;
+            rig.run (4);
+            expectWithinAbsoluteError (rig.out (4), -0.375f, 1.0e-5f);
+            phones.invert = false;
+            phones.limiterDb = -12.0f;
+            rig.run (8);
+            expect (rig.out (4) <= juce::Decibels::decibelsToGain (-12.0f) + 1.0e-5f);
+            expect (phones.limiterGrDb.exchange (0.0f) > 1.0f);
+            phones.limiterDb = 0.0f;
+            rig.run (400); // its release
+
+            // The EQ curve for the graph.
+            phones.eqOn = true;
+            phones.eq[3].freq = 1000.0f;
+            phones.eq[3].gainDb = 6.0f;
+            const float freqs[] = { 1000.0f };
+            float db = 0.0f;
+            engine.getMonitorEqResponse (true, -1, freqs, &db, 1);
+            expectWithinAbsoluteError (db, 6.0f, 0.1f);
+            expectWithinAbsoluteError (MixerEngine::monitorDelayMs (3.43f), 10.0f, 1.0e-3f);
+
+            // SOURCE SOLO: nothing while OFF; CH39 hosts it, the solo follows the source.
+            engine.setSoloBus (0); // PHONES
+            engine.setSourceSolo (2, true);
+            expect (! engine.isSourceSoloed (2));
+            expect (engine.getSourceSoloHost() == nullptr);
+            engine.monitor.sourceSolo = ld::kSourceSoloCh39;
+            expect (engine.getSourceSoloHost() == engine.getChannels()[38].get());
+            expect (engine.isSourceSoloed (2) && engine.isSourceSoloActive());
+            phones.eqOn = false;
+            phones.directSource = -1;
+            rig.run (8);
+            expectWithinAbsoluteError (rig.out (4), 0.5f, 1.0e-4f);
+            engine.setSourceSolo (1, true);
+            expect (engine.isSourceSoloed (1) && ! engine.isSourceSoloed (2));
+            rig.run (8);
+            expectWithinAbsoluteError (rig.out (4), 0.125f, 1.0e-4f);
+            engine.setSourceSolo (2, false); // not the soloed one: nothing changes
+            expect (engine.isSourceSoloed (1));
+            engine.clearSourceSolo();
+            rig.run (8);
+            expectWithinAbsoluteError (rig.out (4), 0.25f, 1.0e-4f);
+
+            // Source tags: a mute group mutes the source.
+            engine.getSource (0)->muteGroups = 1u << 1;
+            engine.muteGroups = 1u << 1;
+            rig.run (4);
+            expectWithinAbsoluteError (rig.out (4), 0.0f, 1.0e-6f);
+            engine.muteGroups = 0;
+
+            // All of it survives a show.
+            phones.delayOn = true;
+            phones.delayM = 20.0f;
+            auto xml = show.toXml();
+            MixerEngine restoredEngine (0);
+            Show restored (restoredEngine, host);
+            expect (restored.loadFromXml (*xml).wasOk());
+            expect (restoredEngine.monitorPath (true).delayOn.load());
+            expectEquals (restoredEngine.monitorPath (true).delayM.load(), 20.0f);
+            expectEquals ((int) restoredEngine.monitor.sourceSolo.load(), (int) ld::kSourceSoloCh39);
+            expectEquals ((int) restoredEngine.getSource (0)->muteGroups.load(), 2);
+        }
     }
 };
 

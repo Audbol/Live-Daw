@@ -12,8 +12,9 @@
 //!  6. matrices sum matrix sends from all strips + their direct input  (parallel)
 //!  7. solo (PFL/AFL per strip type, routed by the SOLO MODE) builds the solo
 //!     buses of the two monitor paths (SPEAKERS and PHONES), each with
-//!     its SOURCE (Main 1 by default); then each path's level, DIM, mute,
-//!     MONO and SWAP
+//!     its SOURCE (Main 1 by default) and DIRECT IN; then each path's EQ,
+//!     PAN / WIDTH, INVERT, DELAY, level, DIM, mute, MONO, SWAP and LIMITER
+//!     (`monitor.rs`)
 //!  8. outputs are written, then safety-clipped
 //!
 //! Before stage 1, the sources (`sources.rs`) process the input ports the
@@ -35,6 +36,7 @@ use crate::analyser::{Analyser, Probes};
 use crate::denormals::ScopedNoDenormals;
 use crate::fx::{FxRack, InsertCallbacks};
 use crate::garbage::Garbage;
+use crate::monitor::{direct_source, MonitorPathDsp, SoloPatch, BAND_SOLO_MAX_DB};
 use crate::params::*;
 use crate::pool::WorkerPool;
 use crate::sends::{send_mode, MAX_BUSES};
@@ -160,6 +162,8 @@ struct AudioState {
     /// The monitor paths SPEAKERS (0) and PHONES (1), left and right.
     monitor: [[Vec<f32>; 2]; 2],
     monitor_ramps: [MonitorRamps; 2],
+    /// Each path's EQ, image, delay and limiter, DIRECT IN and BAND SOLO ramps.
+    monitor_dsp: [MonitorPathDsp; 2],
     /// The sources' processing and the input pointers the channels read.
     sources: SourceDsp,
     block_counter: u64,
@@ -188,11 +192,13 @@ const MONITOR_MONO: [f32; 4] = [0.5, 0.5, 0.5, 0.5];
 const MONITOR_SWAP: [f32; 4] = [0.0, 1.0, 1.0, 0.0];
 
 /// Console-wide group settings read once per block.
-struct GroupState {
+struct GroupState<'a> {
     mute_groups: u32,
     dca_mute_groups: bool,
     main_link_last: usize,
     main_link_db: f32,
+    /// SOURCE SOLO: the host strip and the soloed source's ports.
+    source_solo: Option<(&'a Strip, SoloPatch)>,
 }
 
 /// Shares raw pointers with the parallel tasks (they are only read).
@@ -287,6 +293,7 @@ impl Engine {
                 hw_out_ptrs: Vec::new(),
                 monitor: std::array::from_fn(|_| [vec![0.0; DEFAULT_BLOCK], vec![0.0; DEFAULT_BLOCK]]),
                 monitor_ramps: Default::default(),
+                monitor_dsp: Default::default(),
                 sources: SourceDsp::default(),
                 block_counter: 0,
             }),
@@ -749,6 +756,9 @@ impl Engine {
         a.hw_in_ptrs = vec![std::ptr::null(); in_map.len()];
         a.hw_out_ptrs = vec![std::ptr::null_mut(); out_map.len()];
         a.monitor = std::array::from_fn(|_| [vec![0.0; block_size], vec![0.0; block_size]]);
+        for d in &mut a.monitor_dsp {
+            d.prepare(sample_rate, block_size);
+        }
         a.sources.prepare(in_map.len(), block_size);
 
         for s in st.all() {
@@ -850,14 +860,20 @@ impl Engine {
         let rec = &self.recorder;
         // Sources first: the channels and the recorder's input streams read
         // the processed ports (gain, mute, polarity, stereo / mid-side pairs).
-        a.sources.process(&self.sources, &a.hw_in_ptrs, rec.playback_ptrs(), n);
+        a.sources.process(&self.sources, &a.hw_in_ptrs, rec.playback_ptrs(), n, self.controls.mute_groups.load(Relaxed));
         let streams = rec.record_streams();
         // Record hardware inputs (and playback channels) as they arrive.
         self.record_inputs(streams, a.sources.hw_ptrs(), a.sources.playback_ptrs(), n);
 
         // Talkback and the console's solos and mutes for this block.
         let talk = TalkBlock::new(&self.controls.talk, |kind, i| topo.by_number(kind, i as i32 + 1).map(|s| s.as_ref()));
-        let solo = solo::console_pass(&self.controls, topo.all(), talk.active);
+        // SOURCE SOLO: the host plays the soloed source, and solos (monitor.rs).
+        let source_solo = self
+            .controls
+            .monitor
+            .source_solo_patch(&self.sources)
+            .and_then(|((kind, i), patch)| topo.by_number(kind, i as i32 + 1).map(|s| (s.as_ref(), patch)));
+        let solo = solo::console_pass(&self.controls, topo.all(), talk.active, source_solo.map(|(s, _)| s));
         let talk = &talk;
 
         let hw = SharedPtrs(a.sources.hw_ptrs());
@@ -870,6 +886,7 @@ impl Engine {
             dca_mute_groups: self.controls.dca_mute_groups.load(Relaxed),
             main_link_last: self.controls.main_link_last(),
             main_link_db: topo.mains.first().map_or(0.0, |m| m.params.fader_db.load()),
+            source_solo,
         };
         let block = a.block_counter;
         // The analysed and listened strips of this chunk (analyser.rs).
@@ -948,7 +965,7 @@ impl Engine {
         hw: &'a [*const f32],
         playback: &'a [*const f32],
         (input_select_global, global_alt): (bool, bool),
-        g: &GroupState,
+        g: &GroupState<'a>,
         block: u64,
         probes: &'a Probes,
     ) -> ProcessContext<'a> {
@@ -967,6 +984,7 @@ impl Engine {
             channels: &topo.channels,
             block,
             probes,
+            source_solo: g.source_solo,
         }
     }
 
@@ -1036,9 +1054,11 @@ impl Engine {
 
     /// Stage 7: the two monitor paths, SPEAKERS and PHONES. Soloed
     /// strips go to the solo bus of the paths the SOLO MODE routes them to
-    /// (PFL attenuated by the path's PFL DIM); each path adds its SOURCE (at
-    /// SRC MIX while a solo reaches it), then its level (with the MON DCAs),
-    /// and on the selected path(s) DIM, mute, the talk MON DIM, MONO and SWAP.
+    /// (PFL attenuated by the path's PFL DIM; a BAND SOLO boosted by its BAND
+    /// SOLO); each path adds its SOURCE (at SRC MIX while a solo reaches it)
+    /// and DIRECT IN, runs its EQ, PAN / WIDTH, INVERT and DELAY, then its
+    /// level (with the MON DCAs), on the selected path(s) DIM, mute, the talk
+    /// MON DIM, MONO and SWAP, and last its LIMITER (`monitor.rs`).
     unsafe fn build_monitor(&self, topo: &Topology, a: &mut AudioState, n: usize, solo: SoloBlock, talk: &TalkBlock) {
         let c = &self.controls;
         // LISTEN (band / key / xover solo) replaces the soloed strips (analyser.rs).
@@ -1097,8 +1117,12 @@ impl Engine {
         // Called every block: it runs its own fades in and out.
         let listen_path = if selected & 1 != 0 { 0 } else { 1 };
         {
+            let boost_db = c.monitor.paths[listen_path].band_solo_db.load();
+            let boost = db_to_gain(if boost_db.is_finite() { boost_db.clamp(0.0, BAND_SOLO_MAX_DB) } else { 0.0 });
+            let d = &mut a.monitor_dsp[listen_path];
             let [l, r] = &mut a.monitor[listen_path];
-            self.analysis.add_listen(&mut l[..n], &mut r[..n], n);
+            self.analysis.add_listen(&mut l[..n], &mut r[..n], n, d.band_gain, boost);
+            d.band_gain = boost;
         }
         if listen {
             solo_paths |= 1 << listen_path;
@@ -1120,6 +1144,22 @@ impl Engine {
             }
             add_monitor_source(topo, bus, index, r.source, target, n);
             r.source = target;
+        }
+
+        // DIRECT IN: any input, aux, bus, main or matrix output at its level,
+        // crossfaded when it changes.
+        for (path, (p, d)) in c.monitor.paths.iter().zip(a.monitor_dsp.iter_mut()).enumerate() {
+            let index = p.direct_source.load(Relaxed);
+            let level = p.direct_level_db.load();
+            let target = if direct_source(index).is_some() && level.is_finite() { db_to_gain(level) } else { 0.0 };
+            let bus = &mut a.monitor[path];
+            if index != d.direct_source {
+                add_direct_in(topo, bus, d.direct_source, d.direct_gain, 0.0, n);
+                d.direct_gain = 0.0;
+                d.direct_source = index;
+            }
+            add_direct_in(topo, bus, index, d.direct_gain, target, n);
+            d.direct_gain = target;
         }
 
         // Level (+ MON DCAs); DIM, mute, talk MON DIM, MONO and SWAP on the selected path(s).
@@ -1147,6 +1187,10 @@ impl Engine {
             let r = &mut a.monitor_ramps[path];
             let [l, rr] = &mut a.monitor[path];
             let (l, rr) = (&mut l[..n], &mut rr[..n]);
+            // EQ, PAN / WIDTH, INVERT, DELAY.
+            let dsp = &mut a.monitor_dsp[path];
+            let mon = &c.monitor.paths[path];
+            dsp.process_pre(mon, l, rr);
             apply_gain_ramp(l, r.level, level);
             apply_gain_ramp(rr, r.level, level);
             r.level = level;
@@ -1160,6 +1204,13 @@ impl Engine {
             apply_monitor_matrix(l, rr, r.matrix, matrix);
             r.matrix = matrix;
 
+            mon.limiter_gr_db.fetch_max(dsp.process_limiter(mon, l, rr));
+            if !all_finite(l) || !all_finite(rr) {
+                // A blown-up EQ or delay must not stay stuck: start the path over.
+                dsp.reset();
+                l.fill(0.0);
+                rr.fill(0.0);
+            }
             peak[0].fetch_max(peak_level(l));
             peak[1].fetch_max(peak_level(rr));
         }
@@ -1258,6 +1309,22 @@ unsafe fn add_monitor_source(topo: &Topology, bus: &mut [Vec<f32>; 2], index: i3
         _ => None,
     };
     let Some(s) = strip else { return };
+    let d = s.dsp();
+    if d.idle() {
+        return;
+    }
+    let [l, r] = bus;
+    add_with_gain_ramp(&mut l[..n], d.out(0, n), last, target);
+    add_with_gain_ramp(&mut r[..n], d.out(1, n), last, target);
+}
+
+/// Adds monitor DIRECT IN `index` (an input, aux, bus, main or matrix
+/// output) to a monitor path with a ramped gain.
+unsafe fn add_direct_in(topo: &Topology, bus: &mut [Vec<f32>; 2], index: i32, last: f32, target: f32, n: usize) {
+    if last == 0.0 && target == 0.0 {
+        return;
+    }
+    let Some(s) = direct_source(index).and_then(|(kind, i)| topo.by_number(kind, i as i32 + 1)) else { return };
     let d = s.dsp();
     if d.idle() {
         return;
