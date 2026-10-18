@@ -868,11 +868,10 @@ impl Engine {
         // Talkback and the console's solos and mutes for this block.
         let talk = TalkBlock::new(&self.controls.talk, |kind, i| topo.by_number(kind, i as i32 + 1).map(|s| s.as_ref()));
         // SOURCE SOLO: the host plays the soloed source, and solos (monitor.rs).
-        let source_solo = self
-            .controls
-            .monitor
-            .source_solo_patch(&self.sources)
-            .and_then(|((kind, i), patch)| topo.by_number(kind, i as i32 + 1).map(|s| (s.as_ref(), patch)));
+        let m = &self.controls.monitor;
+        let source_solo = m.host().and_then(|(kind, i)| topo.by_number(kind, i as i32 + 1)).and_then(|host| {
+            m.source_solo_patch(&self.sources, host.params.solo.load(Relaxed)).map(|patch| (host.as_ref(), patch))
+        });
         let solo = solo::console_pass(&self.controls, topo.all(), talk.active, source_solo.map(|(s, _)| s));
         let talk = &talk;
 

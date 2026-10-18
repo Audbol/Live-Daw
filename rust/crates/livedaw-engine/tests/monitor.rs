@@ -346,6 +346,16 @@ fn source_solo_patches_and_solos_its_host() {
     rig.run(4, SPK);
     assert!(!c.any_solo_active.load(Relaxed));
     assert!(close(rig.last(SPK), 0.1, 1e-5));
+
+    // The host's own SOLO starts it too (and CLR SOLO, clearing it, ends it).
+    aux7.params.solo.store(true, Relaxed);
+    rig.run(4, SPK);
+    assert!(close(rig.last(SPK), 0.3, 1e-5) && close(rig.last(SPK + 1), 0.2, 1e-5));
+    aux7.params.solo.store(false, Relaxed);
+    m.source_solo.store(0, Relaxed);
+    aux7.params.solo.store(true, Relaxed);
+    rig.run(4, SPK);
+    assert!(close(rig.last(SPK), 0.0, 1e-6), "OFF: the aux solos its own (unpatched) input");
 }
 
 #[test]

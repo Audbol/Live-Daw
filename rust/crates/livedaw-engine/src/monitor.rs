@@ -22,6 +22,7 @@
 //! ROUTING > SOURCES patches it to that channel for as long as the solo lasts
 //! (the channel's own patch is untouched) and solos the channel, so the
 //! source is heard on the monitor paths like any solo (SOLO MODE applies).
+//! The host's own SOLO key also starts it (firmware 1.12), so CLR SOLO ends it.
 
 use crate::atomic::AtomicF32;
 use crate::params::{StripKind, NUM_AUX, NUM_MAINS, NUM_MATRICES, WING_BUSES, WING_CHANNELS};
@@ -299,7 +300,8 @@ pub struct MonitorControls {
     pub paths: [MonitorDspParams; 2],
     /// SOURCE SOLO (SETUP > AUDIO): [`SOURCE_SOLO_HOSTS`] index.
     pub source_solo: AtomicI32,
-    /// A source is soloed (ROUTING > SOURCES' SRC SOLO; not saved).
+    /// A source is soloed (the WING's `$srcsolo`; not saved). The host's own
+    /// SOLO does the same.
     pub source_solo_on: AtomicBool,
     /// The soloed source's input port (a hardware input or a playback channel).
     pub source_solo_port: AtomicI32,
@@ -326,14 +328,18 @@ impl MonitorControls {
         self.source_solo_port.store(-1, Relaxed);
     }
 
-    /// The patch SOURCE SOLO puts on its host strip this block: the host
-    /// (kind, number) and its ports, if a source is soloed and SOURCE SOLO is on.
-    pub fn source_solo_patch(&self, table: &SourceTable) -> Option<((StripKind, usize), SoloPatch)> {
-        if !self.source_solo_on.load(Relaxed) {
+    /// The SOURCE SOLO host (kind, 0-based number), None while OFF.
+    pub fn host(&self) -> Option<(StripKind, usize)> {
+        source_solo_host(self.source_solo.load(Relaxed))
+    }
+
+    /// The patch SOURCE SOLO puts on its host this block, if a source is
+    /// soloed (`source_solo_on`, or `host_solo`: the host's own SOLO).
+    pub fn source_solo_patch(&self, table: &SourceTable, host_solo: bool) -> Option<SoloPatch> {
+        if !(self.source_solo_on.load(Relaxed) || host_solo) {
             return None;
         }
-        let host = source_solo_host(self.source_solo.load(Relaxed))?;
-        Some((host, solo_patch(table, self.source_solo_port.load(Relaxed))?))
+        solo_patch(table, self.source_solo_port.load(Relaxed))
     }
 }
 

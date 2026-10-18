@@ -15,8 +15,14 @@ use livedaw_dsp::util::MINUS_INF_DB;
 use livedaw_dsp::wing::fx::allowed_in_slot;
 use livedaw_dsp::wing::{model_index, ModelSpec, ParamKind, DYN_MODELS, EQ_MODELS_BUS, EQ_MODELS_CH, FILTER_TOOLS, FX_MODELS};
 use livedaw_engine::atomic::AtomicF32;
-use livedaw_engine::params::{DynSlotParams, InsertParams, StripParams, FX_EXT, NUM_DCAS, NUM_FX, NUM_MUTE_GROUPS};
+use livedaw_engine::monitor::{MonitorDspParams, MONITOR_EQ_BANDS};
+use livedaw_engine::params::{
+    DynSlotParams, EngineControls, InsertParams, MonitorSourceParams, StripParams, FX_EXT, NUM_DCAS, NUM_FX, NUM_MUTE_GROUPS,
+};
 use livedaw_engine::sends::send_mode;
+use livedaw_engine::solo::solo_mode;
+use livedaw_engine::sources::{self, source_mode, SourceParams};
+use livedaw_engine::talk::TALK_OFF;
 use livedaw_engine::{Engine, Strip, StripKind, PLAYBACK_SOURCE_BASE};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering::Relaxed};
@@ -128,6 +134,14 @@ pub mod port {
     pub fn output_port(block: usize, n: i32) -> i32 {
         block as i32 * BLOCK + n - 1
     }
+
+    /// The input groups in the WING's order (`/cfg/solo/$srcsgrp` 1-13).
+    pub const IN_GROUPS: [&str; 13] = ["LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "MOD", "PLAY", "AES", "USR", "OSC"];
+
+    /// Input groups whose sources are Live DAW's sources (ROUTING > SOURCES):
+    /// the AES50 ports and the WING-LIVE card. The other groups share port
+    /// numbers with them here, so their source settings stay in the shadow store.
+    pub const SOURCE_GROUPS: [&str; 4] = ["A", "B", "C", "CRD"];
 }
 
 // ---- bindings ----------------------------------------------------------------------
@@ -236,6 +250,17 @@ pub enum SF {
     DirOn,
     DirLvl,
     DirInv,
+    /// TAP WIDTH and TAP EQ (the WING's PRE EQ, `/ch/N/peq`): band 0-2.
+    TapWidth,
+    TapEqOn,
+    TapEq(u8, TapF),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TapF {
+    Gain,
+    Freq,
+    Q,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -271,6 +296,85 @@ pub enum CtlF {
     InputSelectGlobal,
     StartupMainMute,
     AnySolo,
+    /// `/cfg/solo/mode`, `mon` (the solo bus), `mute`; `/$ctl/cfg/muteovr`; `/$stat/sip`.
+    SoloMode,
+    SoloBus,
+    MonitorMute,
+    MuteOverride,
+    SipActive,
+    /// SOURCE SOLO: `/cfg/solo/srcsolo`, `$srcsolo`, `$srcsgrp`, `$srcsin`.
+    SourceSolo,
+    SourceSoloOn,
+    SourceSoloGroup,
+    SourceSoloIn,
+}
+
+/// `/cfg/talk/assign`, `lvl`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TalkF {
+    Assign,
+    Level,
+}
+
+/// `/cfg/talk/A|B/...`: the key, SWITCH MODE, AUTO DIM, USE SEND LEVELS and
+/// the TALK TO grids (0-based bus, matrix, main).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TalkPathF {
+    On,
+    Mode,
+    MonDim,
+    BusDim,
+    Individual,
+    Bus(u8),
+    Mtx(u8),
+    Main(u8),
+}
+
+/// `/cfg/mon/1|2/...` (PHONES, SPEAKERS). EQ bands 0 (low shelf) .. 7 (high shelf).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MonF {
+    Level,
+    Inv,
+    Pan,
+    Width,
+    EqOn,
+    EqGain(u8),
+    EqFreq(u8),
+    EqQ(u8),
+    Limiter,
+    DelayOn,
+    DelayM,
+    Dim,
+    PflDim,
+    BandSolo,
+    SrcLevel,
+    SrcMix,
+    Src,
+    DirectIn,
+}
+
+/// `/cfg/rta/rta*` (HOME's RTA SETTINGS) and `eq*` (EQ/RTA SETTINGS).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RtaF {
+    Decay,
+    Detector,
+    Range,
+    Gain,
+    AutoGain,
+}
+
+/// `/io/in/<group>/<n>/...`: a source's settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SrcF {
+    Gain,
+    Phantom,
+    Mute,
+    Pol,
+    Colour,
+    Name,
+    Icon,
+    Tags,
+    MuteState,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -300,6 +404,15 @@ pub enum Binding {
     Out(u8, u16, bool),
     /// /io/in/<group>/<n>/mode: the source's MONO / STEREO.
     SourceMode(&'static str, u16),
+    Talk(TalkF),
+    /// Talk path 0 = A, 1 = B.
+    TalkPath(u8, TalkPathF),
+    /// Monitor path as the engine numbers them: 0 = SPEAKERS (`/cfg/mon/2`), 1 = PHONES (`/cfg/mon/1`).
+    Mon(u8, MonF),
+    /// A source of `port::SOURCE_GROUPS`.
+    Source(&'static str, u16, SrcF),
+    /// RTA settings: false = HOME (`rta*`), true = EQ (`eq*`).
+    Rta(bool, RtaF),
 }
 
 fn strip_kind(name: &str) -> Option<StripKind> {
@@ -467,6 +580,21 @@ fn strip_field(kind: StripKind, n: u16, rest: &[&str]) -> Option<SF> {
                 }
             }
         }
+        ["tapwid"] if ch => SF::TapWidth,
+        ["peq", "on"] if ch => SF::TapEqOn,
+        ["peq", f] if ch => {
+            let (band, which) = f.split_at(f.len().min(1));
+            let band: u8 = band.parse().ok().filter(|b| (1..=3).contains(b))?;
+            SF::TapEq(
+                band - 1,
+                match which {
+                    "g" => TapF::Gain,
+                    "f" => TapF::Freq,
+                    "q" => TapF::Q,
+                    _ => return None,
+                },
+            )
+        }
         ["dir", "on"] if kind == Matrix => SF::DirOn,
         ["dir", "lvl"] if kind == Matrix => SF::DirLvl,
         ["dir", "inv"] if kind == Matrix => SF::DirInv,
@@ -534,6 +662,42 @@ pub fn bind(parts: &[&str]) -> Binding {
         ["cfg", "solo", "$flip"] => Binding::Ctl(CtlF::MonitorSwap),
         ["cfg", "mon", "2", "lvl"] => Binding::Ctl(CtlF::MonitorLevel),
         ["cfg", "mon", "2", "dim"] => Binding::Ctl(CtlF::MonitorDimDb),
+        ["cfg", "mon", n, rest @ ..] => match (*n, mon_field(rest)) {
+            ("1", Some(f)) => Binding::Mon(1, f),
+            ("2", Some(f)) => Binding::Mon(0, f),
+            _ => Binding::None,
+        },
+        ["cfg", "solo", "mode"] => Binding::Ctl(CtlF::SoloMode),
+        ["cfg", "solo", "mon"] => Binding::Ctl(CtlF::SoloBus),
+        ["cfg", "solo", "mute"] => Binding::Ctl(CtlF::MonitorMute),
+        ["cfg", "solo", "srcsolo"] => Binding::Ctl(CtlF::SourceSolo),
+        ["cfg", "solo", "$srcsolo"] => Binding::Ctl(CtlF::SourceSoloOn),
+        ["cfg", "solo", "$srcsgrp"] => Binding::Ctl(CtlF::SourceSoloGroup),
+        ["cfg", "solo", "$srcsin"] => Binding::Ctl(CtlF::SourceSoloIn),
+        ["$ctl", "cfg", "muteovr"] => Binding::Ctl(CtlF::MuteOverride),
+        ["$stat", "sip"] => Binding::Ctl(CtlF::SipActive),
+        ["cfg", "rta", f] => {
+            let (eq, rest) = match (f.strip_prefix("rta"), f.strip_prefix("eq")) {
+                (Some(r), _) => (false, r),
+                (_, Some(r)) => (true, r),
+                _ => (false, ""),
+            };
+            match rest {
+                "decay" => Binding::Rta(eq, RtaF::Decay),
+                "det" => Binding::Rta(eq, RtaF::Detector),
+                "range" => Binding::Rta(eq, RtaF::Range),
+                "gain" => Binding::Rta(eq, RtaF::Gain),
+                "auto" => Binding::Rta(eq, RtaF::AutoGain),
+                _ => Binding::None,
+            }
+        }
+        ["cfg", "talk", "assign"] => Binding::Talk(TalkF::Assign),
+        ["cfg", "talk", "lvl"] => Binding::Talk(TalkF::Level),
+        ["cfg", "talk", p, f] => match (*p, talk_path_field(f)) {
+            ("A", Some(f)) => Binding::TalkPath(0, f),
+            ("B", Some(f)) => Binding::TalkPath(1, f),
+            _ => Binding::None,
+        },
         ["cfg", "amix", "x"] => Binding::Ctl(CtlF::AutomixX),
         ["cfg", "amix", "y"] => Binding::Ctl(CtlF::AutomixY),
         ["io", "altsw"] => Binding::Ctl(CtlF::GlobalAlt),
@@ -546,6 +710,12 @@ pub fn bind(parts: &[&str]) -> Binding {
             (Some(g), Some(n)) => Binding::SourceMode(g, n),
             _ => Binding::None,
         },
+        ["io", "in", g, n, f] => match (port::SOURCE_GROUPS.iter().find(|x| *x == g), number(n, 64), source_field(f)) {
+            (Some(g), Some(n), Some(f)) if port::wing_to_source(g, n as i32).and_then(sources::source_index).is_some() => {
+                Binding::Source(g, n, f)
+            }
+            _ => Binding::None,
+        },
         ["$globals", "startmute"] => Binding::Ctl(CtlF::StartupMainMute),
         ["$stat", "solo"] => Binding::Ctl(CtlF::AnySolo),
         ["$syscfg", "consolename"] => Binding::Info(InfoF::Name),
@@ -553,6 +723,109 @@ pub fn bind(parts: &[&str]) -> Binding {
         ["$syscfg", "$serial"] => Binding::Info(InfoF::Serial),
         ["$syscfg", "$cnsmdl"] => Binding::Info(InfoF::Model),
         _ => Binding::None,
+    }
+}
+
+fn mon_field(rest: &[&str]) -> Option<MonF> {
+    let last = MONITOR_EQ_BANDS as u8 - 1;
+    Some(match rest {
+        ["$lvl"] | ["lvl"] => MonF::Level,
+        ["inv"] => MonF::Inv,
+        ["pan"] => MonF::Pan,
+        ["wid"] => MonF::Width,
+        ["eq", "on"] => MonF::EqOn,
+        ["eq", "lsg"] => MonF::EqGain(0),
+        ["eq", "lsf"] => MonF::EqFreq(0),
+        ["eq", "hsg"] => MonF::EqGain(last),
+        ["eq", "hsf"] => MonF::EqFreq(last),
+        ["eq", f] => {
+            let (band, which) = f.split_at(f.len().min(1));
+            let band: u8 = band.parse().ok().filter(|b| (1..=6).contains(b))?;
+            match which {
+                "g" => MonF::EqGain(band),
+                "f" => MonF::EqFreq(band),
+                "q" => MonF::EqQ(band),
+                _ => return None,
+            }
+        }
+        ["lim"] => MonF::Limiter,
+        ["dly", "on"] => MonF::DelayOn,
+        ["dly", "m"] => MonF::DelayM,
+        ["dim"] => MonF::Dim,
+        ["pfldim"] => MonF::PflDim,
+        ["eqbdtrim"] => MonF::BandSolo,
+        ["srclvl"] => MonF::SrcLevel,
+        ["srcmix"] => MonF::SrcMix,
+        ["src"] => MonF::Src,
+        ["dirin"] => MonF::DirectIn,
+        _ => return None,
+    })
+}
+
+fn talk_path_field(f: &str) -> Option<TalkPathF> {
+    let n = |prefix: &str, max: u8| f.strip_prefix(prefix).and_then(|k| k.parse::<u8>().ok()).filter(|k| (1..=max).contains(k));
+    Some(match f {
+        "$on" => TalkPathF::On,
+        "mode" => TalkPathF::Mode,
+        "mondim" => TalkPathF::MonDim,
+        "busdim" => TalkPathF::BusDim,
+        "indiv" => TalkPathF::Individual,
+        _ => {
+            if let Some(k) = n("MX", 8) {
+                TalkPathF::Mtx(k - 1)
+            } else if let Some(k) = n("M", 4) {
+                TalkPathF::Main(k - 1)
+            } else {
+                TalkPathF::Bus(n("B", 16)? - 1)
+            }
+        }
+    })
+}
+
+fn source_field(f: &str) -> Option<SrcF> {
+    Some(match f {
+        "g" => SrcF::Gain,
+        "vph" => SrcF::Phantom,
+        "mute" => SrcF::Mute,
+        "pol" => SrcF::Pol,
+        "col" => SrcF::Colour,
+        "name" => SrcF::Name,
+        "icon" => SrcF::Icon,
+        "tags" => SrcF::Tags,
+        "$mute" => SrcF::MuteState,
+        _ => return None,
+    })
+}
+
+/// The source table index of a WING source (`port::SOURCE_GROUPS` only).
+fn source_of(group: &str, n: u16) -> Option<usize> {
+    if !port::SOURCE_GROUPS.contains(&group) {
+        return None;
+    }
+    port::wing_to_source(group, n as i32).and_then(sources::source_index)
+}
+
+/// A monitor path's SOURCE settings (0 = SPEAKERS, 1 = PHONES).
+fn mon_source(c: &EngineControls, path: u8) -> &MonitorSourceParams {
+    if path == 0 {
+        &c.speakers
+    } else {
+        &c.phones.source
+    }
+}
+
+fn mon_dsp(c: &EngineControls, path: u8) -> &MonitorDspParams {
+    &c.monitor.paths[(path as usize).min(1)]
+}
+
+/// A source's `$mute`: 0 off, 1 muted, 2 muted by a mute group.
+fn source_mute_state(p: &SourceParams, mute_groups: u32) -> i32 {
+    if p.mute.load(Relaxed) {
+        1
+    } else if p.is_muted(mute_groups) {
+        2
+    } else {
+        0
     }
 }
 
@@ -980,7 +1253,111 @@ impl<'a> Console<'a> {
                 CtlF::InputSelectGlobal => b(&c.input_select_global),
                 CtlF::StartupMainMute => b(&c.startup_main_mute),
                 CtlF::AnySolo => b(&c.any_solo_active),
+                CtlF::SoloMode => item(def, c.solo_mode.load(Relaxed)),
+                CtlF::SoloBus => item(def, c.solo_bus.load(Relaxed)),
+                CtlF::MonitorMute => b(&c.monitor_mute),
+                CtlF::MuteOverride => b(&c.mute_override),
+                CtlF::SipActive => b(&c.sip_active),
+                CtlF::SourceSolo => item(def, c.monitor.source_solo.load(Relaxed)),
+                CtlF::SourceSoloOn => Value::bool(self.source_solo_on()),
+                CtlF::SourceSoloGroup | CtlF::SourceSoloIn => {
+                    let (g, n) = port::source_to_wing(c.monitor.source_solo_port.load(Relaxed)).filter(|(g, _)| *g != "OFF")?;
+                    if ctl == CtlF::SourceSoloIn {
+                        Value::Int(n)
+                    } else {
+                        Value::Int(port::IN_GROUPS.iter().position(|x| *x == g).map_or(1, |i| i as i32 + 1))
+                    }
+                }
             },
+            Binding::Talk(f) => {
+                let t = &c.talk;
+                match f {
+                    TalkF::Assign => item(
+                        def,
+                        match t.assignment() {
+                            Some((StripKind::Channel, 39)) => 1,
+                            Some((StripKind::Aux, 7)) => 2,
+                            _ => 0, // OFF, or a channel the WING can't host talkback on
+                        },
+                    ),
+                    TalkF::Level => lvl(&t.level_db),
+                }
+            }
+            Binding::TalkPath(i, tf) => {
+                let p = c.talk.paths.get(i as usize)?;
+                let bit = |mask: &std::sync::atomic::AtomicU32, k: u8| Value::bool(mask.load(Relaxed) & (1 << k) != 0);
+                match tf {
+                    TalkPathF::On => b(&p.on),
+                    TalkPathF::Mode => item(def, p.mode.load(Relaxed)),
+                    TalkPathF::MonDim => f(&p.mon_dim_db),
+                    TalkPathF::BusDim => f(&p.bus_dim_db),
+                    TalkPathF::Individual => b(&p.individual),
+                    TalkPathF::Bus(k) => bit(&p.buses, k),
+                    TalkPathF::Mtx(k) => bit(&p.matrices, k),
+                    TalkPathF::Main(k) => bit(&p.mains, k),
+                }
+            }
+            Binding::Mon(path, mf) => {
+                let d = mon_dsp(c, path);
+                let src = mon_source(c, path);
+                match mf {
+                    MonF::Level => lvl(if path == 0 { &c.monitor_level_db } else { &c.phones.level_db }),
+                    MonF::Dim => f(if path == 0 { &c.monitor_dim_db } else { &c.phones.dim_db }),
+                    MonF::Inv => b(&d.invert),
+                    MonF::Pan => f(&d.pan),
+                    MonF::Width => f(&d.width),
+                    MonF::EqOn => b(&d.eq_on),
+                    MonF::EqGain(k) => f(&d.eq.get(k as usize)?.gain_db),
+                    MonF::EqFreq(k) => f(&d.eq.get(k as usize)?.freq),
+                    MonF::EqQ(k) => f(&d.eq.get(k as usize)?.q),
+                    MonF::Limiter => f(&d.limiter_db),
+                    MonF::DelayOn => b(&d.delay_on),
+                    MonF::DelayM => f(&d.delay_m),
+                    MonF::PflDim => f(&src.pfl_dim_db),
+                    MonF::BandSolo => f(&d.band_solo_db),
+                    MonF::SrcLevel => lvl(&src.source_level_db),
+                    MonF::SrcMix => lvl(&src.source_mix_db),
+                    // OFF is item 0; MAIN.1 (our source 0) item 1.
+                    MonF::Src => item(def, src.source.load(Relaxed).max(-1) + 1),
+                    MonF::DirectIn => item(def, d.direct_source.load(Relaxed).max(-1) + 1),
+                }
+            }
+            Binding::Rta(eq, rf) => {
+                let a = e.analysis().controls();
+                let v = if eq { &a.eq } else { &a.home };
+                match rf {
+                    RtaF::Decay => item(def, v.decay.load(Relaxed)),
+                    RtaF::Detector => item(def, v.detector.load(Relaxed)),
+                    RtaF::Range => item(def, v.range.load(Relaxed)),
+                    RtaF::Gain => f(&v.gain_db),
+                    RtaF::AutoGain => b(&v.autogain),
+                }
+            }
+            Binding::Source(group, n, sf) => {
+                let index = source_of(group, n)?;
+                let table = e.sources();
+                let p = table.get(index)?;
+                match sf {
+                    SrcF::Gain => f(&p.gain_db),
+                    SrcF::Phantom => b(&p.phantom),
+                    SrcF::Mute => b(&p.mute),
+                    SrcF::Pol => b(&p.invert),
+                    SrcF::Colour => int(&p.colour),
+                    SrcF::Name => Value::Str(table.name(index)),
+                    SrcF::Icon => int(&p.icon),
+                    SrcF::Tags => {
+                        let (dca, extra) = match self.state.shadow_get(ShadowKey::Row(row)) {
+                            Some(Value::Str(t)) => {
+                                let (dca, _, extra) = parse_tags(&t);
+                                (dca, extra)
+                            }
+                            _ => (0, String::new()),
+                        };
+                        Value::Str(compose_tags(dca, p.mute_groups.load(Relaxed), &extra))
+                    }
+                    SrcF::MuteState => Value::Int(source_mute_state(p, c.mute_groups.load(Relaxed))),
+                }
+            }
             Binding::Info(info) => {
                 let id = self.state.identity();
                 Value::Str(match info {
@@ -1005,6 +1382,11 @@ impl<'a> Console<'a> {
                 } else {
                     Value::str(g)
                 }
+            }
+            Binding::SourceMode(group, n) if source_of(group, n).is_some() => {
+                // Live DAW's sources pair like the WING's (ROUTING > SOURCES).
+                let p = e.sources().get(source_of(group, n)?)?;
+                item(def, p.mode.load(Relaxed))
             }
             Binding::SourceMode(group, n) => {
                 let src = port::wing_to_source(group, n as i32)?;
@@ -1248,6 +1630,24 @@ impl<'a> Console<'a> {
             SF::DirOn => b(&p.direct_on),
             SF::DirLvl => lvl(&p.direct_level_db),
             SF::DirInv => b(&p.direct_invert),
+            SF::TapWidth => f(&p.tap_width),
+            SF::TapEqOn => b(&p.tap_eq.on),
+            SF::TapEq(band, tf) => {
+                let b = p.tap_eq.bands.get(band as usize)?;
+                match tf {
+                    TapF::Gain => f(&b.gain_db),
+                    TapF::Freq => f(&b.freq),
+                    TapF::Q => f(&b.q),
+                }
+            }
+        })
+    }
+
+    /// SOURCE SOLO is on: `$srcsolo`, or the host's own SOLO (as the engine sees it).
+    fn source_solo_on(&self) -> bool {
+        let m = &self.engine.controls.monitor;
+        m.host().is_some_and(|(kind, i)| {
+            m.source_solo_on.load(Relaxed) || self.strip(kind, i as u16 + 1).is_some_and(|s| s.params.solo.load(Relaxed))
         })
     }
 
@@ -1378,8 +1778,145 @@ impl<'a> Console<'a> {
                 CtlF::GlobalAlt => set_b(&c.global_alt, v),
                 CtlF::InputSelectGlobal => set_b(&c.input_select_global, v),
                 CtlF::StartupMainMute => set_b(&c.startup_main_mute, v),
-                CtlF::AnySolo => return Err(SetError::ReadOnly),
+                CtlF::AnySolo | CtlF::SipActive => return Err(SetError::ReadOnly),
+                CtlF::SoloMode => set_item(&c.solo_mode, def, v),
+                CtlF::SoloBus => {
+                    set_item(&c.solo_bus, def, v);
+                    // As the MONITORS keys: in LIVE while soloing, the pick overrides the strips'.
+                    if c.solo_mode.load(Relaxed) == solo_mode::LIVE && c.any_solo_active.load(Relaxed) {
+                        c.solo_bus_override.store(true, Relaxed);
+                    }
+                }
+                CtlF::MonitorMute => set_b(&c.monitor_mute, v),
+                CtlF::MuteOverride => set_b(&c.mute_override, v),
+                CtlF::SourceSolo => set_item(&c.monitor.source_solo, def, v),
+                CtlF::SourceSoloOn => {
+                    let m = &c.monitor;
+                    m.source_solo_on.store(v.as_bool(), Relaxed);
+                    if !v.as_bool() {
+                        // The host's SOLO is the other way in: release it too.
+                        if let Some(s) = m.host().and_then(|(kind, i)| self.strip(kind, i as u16 + 1)) {
+                            s.params.solo.store(false, Relaxed);
+                        }
+                    }
+                }
+                CtlF::SourceSoloGroup | CtlF::SourceSoloIn => {
+                    let m = &c.monitor;
+                    let (cur_g, cur_n) =
+                        port::source_to_wing(m.source_solo_port.load(Relaxed)).filter(|(g, _)| *g != "OFF").unwrap_or(("A", 1));
+                    let k = v.as_i32().unwrap_or(1);
+                    let (g, n) = if ctl == CtlF::SourceSoloIn {
+                        (cur_g, k)
+                    } else {
+                        (port::IN_GROUPS.get((k - 1).max(0) as usize).copied().unwrap_or("A"), cur_n)
+                    };
+                    match port::wing_to_source(g, n).filter(|p| *p >= 0) {
+                        Some(p) => m.source_solo_port.store(p, Relaxed),
+                        None => return Ok(false), // PLAY, OSC: no Live DAW source
+                    }
+                }
             },
+            Binding::Talk(f) => {
+                let t = &c.talk;
+                match f {
+                    TalkF::Assign => match value::enum_index(def, v) {
+                        Some(1) => {
+                            t.assign_index.store(39, Relaxed);
+                            t.assign_kind.store(StripKind::Channel as i32, Relaxed);
+                        }
+                        Some(2) => {
+                            t.assign_index.store(7, Relaxed);
+                            t.assign_kind.store(StripKind::Aux as i32, Relaxed);
+                        }
+                        _ => t.assign_kind.store(TALK_OFF, Relaxed),
+                    },
+                    TalkF::Level => set_lvl(&t.level_db, v),
+                }
+            }
+            Binding::TalkPath(i, f) => {
+                let p = c.talk.paths.get(i as usize).ok_or(SetError::NotFound)?;
+                let set_bit = |mask: &std::sync::atomic::AtomicU32, k: u8| {
+                    if v.as_bool() {
+                        mask.fetch_or(1 << k, Relaxed);
+                    } else {
+                        mask.fetch_and(!(1 << k), Relaxed);
+                    }
+                };
+                match f {
+                    TalkPathF::On => set_b(&p.on, v),
+                    TalkPathF::Mode => set_item(&p.mode, def, v),
+                    TalkPathF::MonDim => set_f(&p.mon_dim_db, v),
+                    TalkPathF::BusDim => set_f(&p.bus_dim_db, v),
+                    TalkPathF::Individual => set_b(&p.individual, v),
+                    TalkPathF::Bus(k) => set_bit(&p.buses, k),
+                    TalkPathF::Mtx(k) => set_bit(&p.matrices, k),
+                    TalkPathF::Main(k) => set_bit(&p.mains, k),
+                }
+            }
+            Binding::Mon(path, mf) => {
+                let d = mon_dsp(c, path);
+                let src = mon_source(c, path);
+                let band = |k: u8| d.eq.get(k as usize).ok_or(SetError::NotFound);
+                match mf {
+                    MonF::Level => set_lvl(if path == 0 { &c.monitor_level_db } else { &c.phones.level_db }, v),
+                    MonF::Dim => set_f(if path == 0 { &c.monitor_dim_db } else { &c.phones.dim_db }, v),
+                    MonF::Inv => set_b(&d.invert, v),
+                    MonF::Pan => set_f(&d.pan, v),
+                    MonF::Width => set_f(&d.width, v),
+                    MonF::EqOn => set_b(&d.eq_on, v),
+                    MonF::EqGain(k) => set_f(&band(k)?.gain_db, v),
+                    MonF::EqFreq(k) => set_f(&band(k)?.freq, v),
+                    MonF::EqQ(k) => set_f(&band(k)?.q, v),
+                    MonF::Limiter => set_f(&d.limiter_db, v),
+                    MonF::DelayOn => set_b(&d.delay_on, v),
+                    MonF::DelayM => set_f(&d.delay_m, v),
+                    MonF::PflDim => set_f(&src.pfl_dim_db, v),
+                    MonF::BandSolo => set_f(&d.band_solo_db, v),
+                    MonF::SrcLevel => set_lvl(&src.source_level_db, v),
+                    MonF::SrcMix => set_lvl(&src.source_mix_db, v),
+                    MonF::Src => {
+                        let i = value::enum_index(def, v).ok_or(SetError::BadValue)? as i32;
+                        src.source.store(i - 1, Relaxed);
+                    }
+                    MonF::DirectIn => {
+                        let i = value::enum_index(def, v).ok_or(SetError::BadValue)? as i32;
+                        d.direct_source.store(i - 1, Relaxed);
+                    }
+                }
+            }
+            Binding::Rta(eq, rf) => {
+                let a = e.analysis().controls();
+                let rv = if eq { &a.eq } else { &a.home };
+                match rf {
+                    RtaF::Decay => set_item(&rv.decay, def, v),
+                    RtaF::Detector => set_item(&rv.detector, def, v),
+                    RtaF::Range => set_item(&rv.range, def, v),
+                    RtaF::Gain => set_f(&rv.gain_db, v),
+                    RtaF::AutoGain => set_b(&rv.autogain, v),
+                }
+            }
+            Binding::Source(group, n, sf) => {
+                let index = source_of(group, n).ok_or(SetError::NotFound)?;
+                let table = e.sources();
+                let p = table.get(index).ok_or(SetError::NotFound)?;
+                match sf {
+                    SrcF::Gain => set_f(&p.gain_db, v),
+                    SrcF::Phantom => set_b(&p.phantom, v),
+                    SrcF::Mute => set_b(&p.mute, v),
+                    SrcF::Pol => set_b(&p.invert, v),
+                    SrcF::Colour => p.colour.store(v.as_i32().unwrap_or(1).clamp(1, 18), Relaxed),
+                    SrcF::Name => table.set_name(index, &str_of(v)),
+                    SrcF::Icon => p.icon.store(v.as_i32().unwrap_or(0), Relaxed),
+                    SrcF::Tags => {
+                        // #M1..#M8 are the source's mute groups; the rest is kept as set.
+                        let (dca, mgrp, extra) = parse_tags(&str_of(v));
+                        p.mute_groups.store(mgrp, Relaxed);
+                        // Sources have no DCAs here: their #D tags are kept with the rest.
+                        self.state.shadow_set(ShadowKey::Row(row), Value::Str(compose_tags(dca, 0, &extra)));
+                    }
+                    SrcF::MuteState => return Err(SetError::ReadOnly),
+                }
+            }
             Binding::Info(InfoF::Name) => {
                 self.state.identity.lock().unwrap_or_else(|e| e.into_inner()).name = str_of(v);
             }
@@ -1403,6 +1940,14 @@ impl<'a> Console<'a> {
             }
             Binding::SourceMode(group, n) => {
                 self.state.shadow_set(ShadowKey::Row(row), v.clone());
+                if let Some(index) = source_of(group, n) {
+                    let mode = match value::enum_index(def, v) {
+                        Some(1) => source_mode::STEREO,
+                        Some(2) => source_mode::MID_SIDE,
+                        _ => source_mode::MONO,
+                    };
+                    e.sources().set_mode(index, mode);
+                }
                 if let Some(src) = port::wing_to_source(group, n as i32).filter(|s| *s >= 0) {
                     let stereo = !matches!(v, Value::Str(m) if m == "M");
                     let rows = conn_rows();
@@ -1666,6 +2211,16 @@ impl<'a> Console<'a> {
             SF::DirOn => set_b(&p.direct_on, v),
             SF::DirLvl => set_lvl(&p.direct_level_db, v),
             SF::DirInv => set_b(&p.direct_invert, v),
+            SF::TapWidth => set_f(&p.tap_width, v),
+            SF::TapEqOn => set_b(&p.tap_eq.on, v),
+            SF::TapEq(band, tf) => {
+                let b = p.tap_eq.bands.get(band as usize).ok_or(SetError::NotFound)?;
+                match tf {
+                    TapF::Gain => set_f(&b.gain_db, v),
+                    TapF::Freq => set_f(&b.freq, v),
+                    TapF::Q => set_f(&b.q, v),
+                }
+            }
             SF::ActName | SF::ActColour | SF::ActIcon | SF::SoloLed | SF::EffFader | SF::EffMute | SF::Mode | SF::Slot(_) => {
                 return Err(SetError::ReadOnly)
             }
@@ -1982,7 +2537,7 @@ mod tests {
         let e = engine();
         let st = WingState::default();
         let c = Console::new(&e, &st);
-        let peq = node(&c, "/ch/1/peq/1g");
+        let peq = node(&c, "/io/in/LCL/1/g"); // a LCL source shares its port with A 1 here
         assert!(!c.is_mapped(peq));
         assert_eq!(c.get(peq), Some(Value::Float(0.0)));
         c.set(peq, &Value::Float(3.0)).unwrap();
@@ -1990,6 +2545,199 @@ mod tests {
         assert_eq!(c.set(node(&c, "/ch/1/$sololed"), &Value::Int(1)), Err(SetError::ReadOnly));
         assert_eq!(c.set(node(&c, "/ch/1"), &Value::Int(1)), Err(SetError::IsNode));
         assert_eq!(c.set(node(&c, "/ch/1/mon"), &Value::str("nope")), Err(SetError::BadValue));
+    }
+
+    #[test]
+    fn rta_settings() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let a = e.analysis().controls();
+        c.set(node(&c, "/cfg/rta/rtadecay"), &Value::str("SLOW")).unwrap();
+        c.set(node(&c, "/cfg/rta/rtadet"), &Value::str("RMS")).unwrap();
+        c.set(node(&c, "/cfg/rta/rtarange"), &Value::Float(30.0)).unwrap();
+        c.set(node(&c, "/cfg/rta/eqgain"), &Value::Float(20.0)).unwrap();
+        c.set(node(&c, "/cfg/rta/eqauto"), &Value::Int(0)).unwrap();
+        assert_eq!((a.home.decay.load(Relaxed), a.home.detector.load(Relaxed), a.home.range.load(Relaxed)), (0, 1, 0));
+        assert_eq!(a.eq.gain_db.load(), 20.0);
+        assert!(!a.eq.autogain.load(Relaxed));
+        a.eq.range.store(1, Relaxed);
+        assert_eq!(c.get(node(&c, "/cfg/rta/eqrange")), Some(Value::Float(60.0)));
+        assert!(!c.is_mapped(node(&c, "/cfg/rta/rtatap")), "the WING's taps aren't Live DAW's");
+    }
+
+    #[test]
+    fn tap_width_and_tap_eq() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let p = &c.strip(StripKind::Channel, 3).unwrap().params;
+        c.set(node(&c, "/ch/3/tapwid"), &Value::Float(-50.0)).unwrap();
+        c.set(node(&c, "/ch/3/peq/on"), &Value::Int(1)).unwrap();
+        c.set(node(&c, "/ch/3/peq/2g"), &Value::Float(4.5)).unwrap();
+        c.set(node(&c, "/ch/3/peq/3f"), &Value::Float(8000.0)).unwrap();
+        c.set(node(&c, "/ch/3/peq/1q"), &Value::Float(2.0)).unwrap();
+        assert_eq!(p.tap_width.load(), -50.0);
+        assert!(p.tap_eq.on.load(Relaxed));
+        assert_eq!(p.tap_eq.bands[1].gain_db.load(), 4.5);
+        assert_eq!(p.tap_eq.bands[2].freq.load(), 8000.0);
+        assert_eq!(p.tap_eq.bands[0].q.load(), 2.0);
+        p.tap_eq.bands[0].gain_db.store(-3.0);
+        assert_eq!(c.get(node(&c, "/ch/3/peq/1g")), Some(Value::Float(-3.0)));
+        assert!(c.is_mapped(node(&c, "/ch/3/tapwid")));
+    }
+
+    #[test]
+    fn solo_modes_override_and_talkback() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let ctl = &e.controls;
+        c.set(node(&c, "/cfg/solo/mode"), &Value::str("SIP")).unwrap();
+        assert_eq!(ctl.solo_mode.load(Relaxed), solo_mode::SIP);
+        c.set(node(&c, "/cfg/solo/mon"), &Value::str("SPK")).unwrap();
+        assert_eq!(ctl.solo_bus.load(Relaxed), 1, "SPK = B, the SPEAKERS");
+        assert_eq!(c.get(node(&c, "/cfg/solo/mon")), Some(Value::str("SPK")));
+        c.set(node(&c, "/cfg/solo/mute"), &Value::Int(1)).unwrap();
+        assert!(ctl.monitor_mute.load(Relaxed));
+        c.set(node(&c, "/$ctl/cfg/muteovr"), &Value::Int(1)).unwrap();
+        assert!(ctl.mute_override.load(Relaxed));
+        assert_eq!(c.set(node(&c, "/$stat/sip"), &Value::Int(1)), Err(SetError::ReadOnly));
+
+        c.set(node(&c, "/cfg/talk/assign"), &Value::str("AUX8")).unwrap();
+        assert_eq!(ctl.talk.assignment(), Some((StripKind::Aux, 7)));
+        c.set(node(&c, "/cfg/talk/lvl"), &Value::Float(-6.0)).unwrap();
+        assert_eq!(ctl.talk.level_db.load(), -6.0);
+        c.set(node(&c, "/cfg/talk/B/mode"), &Value::str("LATCH")).unwrap();
+        c.set(node(&c, "/cfg/talk/B/mondim"), &Value::Float(15.0)).unwrap();
+        c.set(node(&c, "/cfg/talk/B/indiv"), &Value::Int(1)).unwrap();
+        c.set(node(&c, "/cfg/talk/B/B12"), &Value::Int(1)).unwrap();
+        c.set(node(&c, "/cfg/talk/B/MX3"), &Value::Int(1)).unwrap();
+        c.set(node(&c, "/cfg/talk/B/M4"), &Value::Int(1)).unwrap();
+        c.set(node(&c, "/cfg/talk/A/$on"), &Value::Int(1)).unwrap();
+        let b = &ctl.talk.paths[1];
+        assert_eq!(b.mode.load(Relaxed), 2);
+        assert_eq!(b.mon_dim_db.load(), 15.0);
+        assert!(b.individual.load(Relaxed));
+        assert_eq!((b.buses.load(Relaxed), b.matrices.load(Relaxed), b.mains.load(Relaxed)), (1 << 11, 1 << 2, 1 << 3));
+        assert!(ctl.talk.paths[0].on.load(Relaxed));
+        c.set(node(&c, "/cfg/talk/B/B12"), &Value::Int(0)).unwrap();
+        assert_eq!(b.buses.load(Relaxed), 0);
+        assert_eq!(c.get(node(&c, "/cfg/talk/B/MX3")), Some(Value::Int(1)));
+        c.set(node(&c, "/cfg/talk/assign"), &Value::str("OFF")).unwrap();
+        assert_eq!(ctl.talk.assignment(), None);
+    }
+
+    #[test]
+    fn monitor_paths() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let ctl = &e.controls;
+        let (phones, speakers) = (&ctl.monitor.paths[1], &ctl.monitor.paths[0]);
+        // /cfg/mon/1 is the PHONES.
+        c.set(node(&c, "/cfg/mon/1/eq/on"), &Value::Int(1)).unwrap();
+        c.set(node(&c, "/cfg/mon/1/eq/3g"), &Value::Float(5.0)).unwrap();
+        c.set(node(&c, "/cfg/mon/1/eq/3q"), &Value::Float(3.0)).unwrap();
+        c.set(node(&c, "/cfg/mon/1/eq/lsf"), &Value::Float(120.0)).unwrap();
+        c.set(node(&c, "/cfg/mon/1/eq/hsg"), &Value::Float(-4.0)).unwrap();
+        c.set(node(&c, "/cfg/mon/1/inv"), &Value::Int(1)).unwrap();
+        c.set(node(&c, "/cfg/mon/1/wid"), &Value::Float(50.0)).unwrap();
+        c.set(node(&c, "/cfg/mon/1/lim"), &Value::Float(-10.0)).unwrap();
+        c.set(node(&c, "/cfg/mon/1/eqbdtrim"), &Value::Float(6.0)).unwrap();
+        c.set(node(&c, "/cfg/mon/1/dim"), &Value::Float(30.0)).unwrap();
+        c.set(node(&c, "/cfg/mon/1/srcmix"), &Value::Float(-20.0)).unwrap();
+        c.set(node(&c, "/cfg/mon/1/src"), &Value::str("BUS.3")).unwrap();
+        c.set(node(&c, "/cfg/mon/1/dirin"), &Value::str("AUX.6")).unwrap();
+        assert!(phones.eq_on.load(Relaxed));
+        assert_eq!((phones.eq[3].gain_db.load(), phones.eq[3].q.load()), (5.0, 3.0));
+        assert_eq!(phones.eq[0].freq.load(), 120.0);
+        assert_eq!(phones.eq[7].gain_db.load(), -4.0);
+        assert!(phones.invert.load(Relaxed) && !speakers.invert.load(Relaxed));
+        assert_eq!((phones.width.load(), phones.limiter_db.load(), phones.band_solo_db.load()), (50.0, -10.0, 6.0));
+        assert_eq!(ctl.phones.dim_db.load(), 30.0);
+        assert_eq!(ctl.phones.source.source_mix_db.load(), -20.0);
+        assert_eq!(ctl.phones.source.source.load(Relaxed), 4 + 8 + 2, "BUS.3");
+        assert_eq!(phones.direct_source.load(Relaxed), 40 + 5, "AUX.6");
+        assert_eq!(c.get(node(&c, "/cfg/mon/1/dirin")), Some(Value::str("AUX.6")));
+        assert_eq!(c.get(node(&c, "/cfg/mon/1/src")), Some(Value::str("BUS.3")));
+        ctl.phones.level_db.store(-12.0);
+        assert_eq!(c.get(node(&c, "/cfg/mon/1/$lvl")), Some(Value::Float(-12.0)));
+
+        // /cfg/mon/2 is the SPEAKERS.
+        c.set(node(&c, "/cfg/mon/2/dly/on"), &Value::Int(1)).unwrap();
+        c.set(node(&c, "/cfg/mon/2/dly/m"), &Value::Float(17.0)).unwrap();
+        c.set(node(&c, "/cfg/mon/2/pan"), &Value::Float(-30.0)).unwrap();
+        c.set(node(&c, "/cfg/mon/2/pfldim"), &Value::Float(12.0)).unwrap();
+        c.set(node(&c, "/cfg/mon/2/srclvl"), &Value::Float(-3.0)).unwrap();
+        c.set(node(&c, "/cfg/mon/2/src"), &Value::str("OFF")).unwrap();
+        c.set(node(&c, "/cfg/mon/2/dirin"), &Value::str("MTX.8")).unwrap();
+        assert!(speakers.delay_on.load(Relaxed));
+        assert_eq!((speakers.delay_m.load(), speakers.pan.load()), (17.0, -30.0));
+        assert_eq!(ctl.speakers.pfl_dim_db.load(), 12.0);
+        assert_eq!(ctl.speakers.source_level_db.load(), -3.0);
+        assert_eq!(ctl.speakers.source.load(Relaxed), -1, "OFF");
+        assert_eq!(speakers.direct_source.load(Relaxed), 75);
+        c.set(node(&c, "/cfg/mon/2/dirin"), &Value::str("OFF")).unwrap();
+        assert_eq!(speakers.direct_source.load(Relaxed), -1);
+        assert!(c.is_mapped(node(&c, "/cfg/mon/2/eq/6f")));
+    }
+
+    #[test]
+    fn sources_and_source_solo() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let table = e.sources();
+        // A 5 = port 4; B 1 = port 48; CRD 3 = playback channel 3.
+        c.set(node(&c, "/io/in/A/5/name"), &Value::str("Snare")).unwrap();
+        c.set(node(&c, "/io/in/A/5/col"), &Value::Int(9)).unwrap();
+        c.set(node(&c, "/io/in/A/5/g"), &Value::Float(30.0)).unwrap();
+        c.set(node(&c, "/io/in/A/5/vph"), &Value::Int(1)).unwrap();
+        c.set(node(&c, "/io/in/A/5/pol"), &Value::Int(1)).unwrap();
+        c.set(node(&c, "/io/in/A/5/icon"), &Value::Int(14)).unwrap();
+        c.set(node(&c, "/io/in/A/5/tags"), &Value::str("#M2,#D3,drums")).unwrap();
+        c.set(node(&c, "/io/in/B/1/mute"), &Value::Int(1)).unwrap();
+        c.set(node(&c, "/io/in/CRD/3/name"), &Value::str("Play 3")).unwrap();
+        let p = table.get(4).unwrap();
+        assert_eq!(table.name(4), "Snare");
+        assert_eq!((p.colour.load(Relaxed), p.icon.load(Relaxed)), (9, 14));
+        assert_eq!(p.gain_db.load(), 30.0);
+        assert!(p.phantom.load(Relaxed) && p.invert.load(Relaxed));
+        assert_eq!(p.mute_groups.load(Relaxed), 0b10);
+        assert_eq!(c.get(node(&c, "/io/in/A/5/tags")), Some(Value::str("#D3,#M2,drums")));
+        assert!(table.get(48).unwrap().mute.load(Relaxed));
+        assert_eq!(table.name(sources::source_index(PLAYBACK_SOURCE_BASE + 2).unwrap()), "Play 3");
+        // $mute: 1 own mute, 2 a mute group.
+        assert_eq!(c.get(node(&c, "/io/in/B/1/$mute")), Some(Value::Int(1)));
+        assert_eq!(c.get(node(&c, "/io/in/A/5/$mute")), Some(Value::Int(0)));
+        e.controls.mute_groups.store(0b10, Relaxed);
+        assert_eq!(c.get(node(&c, "/io/in/A/5/$mute")), Some(Value::Int(2)));
+        // Other groups share ports here: they stay in the shadow store.
+        assert!(!c.is_mapped(node(&c, "/io/in/LCL/5/name")));
+        // MODE pairs Live DAW's sources.
+        c.set(node(&c, "/io/in/A/7/mode"), &Value::str("M/S")).unwrap();
+        assert_eq!(table.get(7).unwrap().mode.load(Relaxed), source_mode::MID_SIDE);
+        assert_eq!(c.get(node(&c, "/io/in/A/8/mode")), Some(Value::str("M/S")));
+
+        // SOURCE SOLO: AUX7 hosts A 5.
+        c.set(node(&c, "/cfg/solo/srcsolo"), &Value::str("AUX7")).unwrap();
+        c.set(node(&c, "/cfg/solo/$srcsgrp"), &Value::Int(3)).unwrap(); // A
+        c.set(node(&c, "/cfg/solo/$srcsin"), &Value::Int(5)).unwrap();
+        c.set(node(&c, "/cfg/solo/$srcsolo"), &Value::Int(1)).unwrap();
+        let m = &e.controls.monitor;
+        assert_eq!(m.source_solo.load(Relaxed), 2);
+        assert_eq!(m.source_solo_port.load(Relaxed), 4);
+        assert!(m.source_solo_on.load(Relaxed));
+        assert_eq!(c.get(node(&c, "/cfg/solo/$srcsgrp")), Some(Value::Int(3)));
+        assert_eq!(c.get(node(&c, "/cfg/solo/$srcsin")), Some(Value::Int(5)));
+        // The host's SOLO counts as a source solo; releasing $srcsolo releases it.
+        c.set(node(&c, "/cfg/solo/$srcsolo"), &Value::Int(0)).unwrap();
+        let aux7 = c.strip(StripKind::Aux, 7).unwrap();
+        aux7.params.solo.store(true, Relaxed);
+        assert_eq!(c.get(node(&c, "/cfg/solo/$srcsolo")), Some(Value::Int(1)));
+        c.set(node(&c, "/cfg/solo/$srcsolo"), &Value::Int(0)).unwrap();
+        assert!(!aux7.params.solo.load(Relaxed));
     }
 
     #[test]
