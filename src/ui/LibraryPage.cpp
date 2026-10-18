@@ -934,6 +934,9 @@ public:
         const auto band = rows.front().band.reduced (4);
         stripKey.setBounds (band.withLeft (band.getRight() - 36));
         stripBox = band.withRight (band.getRight() - 40).withLeft (band.getRight() - 40 - juce::jmin (110, band.getWidth() / 4));
+        // In a narrow window it starts after SAVE / UPDATE SCOPE rather than over them.
+        if (! rows.front().left.empty())
+            stripBox.setLeft (juce::jmin (stripBox.getRight(), juce::jmax (stripBox.getX(), rows.front().left.back()->getRight() + 4)));
 
         cells.clear();
         auto grid = b.withTop (rows.back().band.getBottom() + 10).reduced (4, 0);
@@ -1061,12 +1064,18 @@ public:
             g.drawEllipse (reel, 2.0f);
             g.fillEllipse (reel.withSizeKeepingCentre (d * 0.2f, d * 0.2f));
         }
-        g.setFont (wingFont (TypeScale::body));
-        g.drawText ("4-TRACK PLAYER", body, juce::Justification::bottomRight);
-        auto chips = juce::Rectangle<float> ((float) body.getRight() - 90.0f, (float) body.getY(), 90.0f, 34.0f);
+        // Format chips at the top right (30 x 86 of the 800 px screen each),
+        // the caption under them so a small window doesn't print one over the other.
+        const float chipH = juce::jmin (15.0f, getWingScreenHeight() * 0.03f, (float) body.getHeight() * 0.22f);
+        const float chipW = chipH * 2.87f, chipGap = chipH * 0.2f;
+        auto chips = juce::Rectangle<float> ((float) body.getRight() - 2.0f * chipW - chipGap, (float) body.getY(), 2.0f * chipW + chipGap, 2.0f * chipH + chipGap);
         for (auto [i, text] : { std::pair { 0, "WAV" }, std::pair { 1, "4-CH" }, std::pair { 2, "48K" }, std::pair { 3, "24 bit" } })
-            drawChip (g, juce::Rectangle<float> (chips.getX() + (float) (i % 2) * 46.0f, chips.getY() + (float) (i / 2) * 18.0f, 43.0f, 15.0f), text,
+            drawChip (g, juce::Rectangle<float> (chips.getX() + (float) (i % 2) * (chipW + chipGap), chips.getY() + (float) (i / 2) * (chipH + chipGap), chipW, chipH), text,
                       Dark::key.withAlpha (dim), Dark::text.withAlpha (dim));
+        auto caption = body.withTop (juce::roundToInt (chips.getBottom()) + 2);
+        g.setColour (Dark::text.withAlpha (dim));
+        g.setFont (wingFontFit (TypeScale::body, (float) caption.getHeight() * 0.9f));
+        g.drawFittedText ("4-TRACK PLAYER", caption, juce::Justification::bottomRight, 1, 0.7f);
         g.setColour (Dark::textDim);
         g.setFont (wingFont (TypeScale::body));
         g.drawFittedText ("THE CLIP PLAYER IS NOT AVAILABLE YET.", note, juce::Justification::topLeft, 2);

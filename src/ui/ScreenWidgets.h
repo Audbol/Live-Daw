@@ -594,15 +594,18 @@ public:
             g.setColour (r.enabled ? Dark::caption : Dark::textDim.darker (0.2f));
             const bool caption = r.control == nullptr;
             g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), (float) rowHeight * (caption ? 0.26f : 0.34f))));
-            const int textW = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), r.label);
-            g.drawFittedText (r.label, l, caption && r.rightAligned ? juce::Justification::centredRight : juce::Justification::centredLeft, 1, 0.75f);
+            const float d = (float) juce::jmin (l.getHeight() - 6, 16);
+            // The info icon keeps its own room, so a long label in a narrow
+            // panel (SETUP > REMOTE at 1280x800) is squashed rather than covered.
+            const auto textArea = r.info ? l.withTrimmedRight ((int) d + 8) : l;
             if (r.info)
-            {
-                const float d = (float) juce::jmin (l.getHeight() - 6, 16);
+                g.setFont (fontFittingWidth (g.getCurrentFont(), r.label, (float) textArea.getWidth()));
+            const int textW = juce::jmin (textArea.getWidth(), juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), r.label));
+            g.drawFittedText (r.label, textArea, caption && r.rightAligned ? juce::Justification::centredRight : juce::Justification::centredLeft, 1, 0.75f);
+            if (r.info)
                 drawIcon (g, Icon::Info, juce::Rectangle<float> (d, d).withCentre ({ (float) juce::jmin (l.getRight() - (int) d, l.getX() + textW + 10) + d * 0.5f,
                                                                                     (float) l.getCentreY() }),
                           r.enabled ? Dark::text : Dark::textDim);
-            }
         }
     }
 

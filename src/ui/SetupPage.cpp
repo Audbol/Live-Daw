@@ -19,9 +19,15 @@ namespace livedaw::ui
 namespace
 {
     /** Row height that fits `rows` rows in `height` px. */
-    int fitRowHeight (int height, float rows, int minH = 18, int maxH = 30)
+    /** A settings row height that fits `rows` rows into `height`, at least
+        36 of the WING's 800 px screen (18 px at 1920x1080, 12 px at 1280x800). */
+    int minRowHeight() { return juce::jlimit (12, 18, juce::roundToInt (getWingScreenHeight() * 0.036f)); }
+
+    int fitRowHeight (int height, float rows, int minH = -1, int maxH = 30)
     {
-        return juce::jlimit (minH, maxH, (int) ((float) height / juce::jmax (1.0f, rows)));
+        if (minH < 0)
+            minH = minRowHeight();
+        return juce::jlimit (minH, juce::jmax (minH, maxH), (int) ((float) height / juce::jmax (1.0f, rows)));
     }
 
     std::unique_ptr<ChoiceKeys> fixedChoice (juce::StringArray labels, int lit, std::vector<juce::Colour> colours = {})
@@ -963,9 +969,17 @@ namespace
         {
             auto b = getLocalBounds();
             const int gap = 4, w = (b.getWidth() - 2 * gap) / 3;
-            const int rowH = fitRowHeight (getHeight() - darkHeaderHeight() - 24, 13.0f);
+            int rowH = fitRowHeight (getHeight() - darkHeaderHeight() - 24, 13.0f);
+            // The tallest column (FADERS) sets the row height so none runs off the screen.
+            auto tallest = [this] { return juce::jmax (metering.preferredHeight(), general.preferredHeight(), faders.preferredHeight()); };
             for (auto* p : { &metering, &general, &faders })
                 p->rowHeight = rowH;
+            while (rowH > 10 && tallest() > getHeight())
+            {
+                --rowH;
+                for (auto* p : { &metering, &general, &faders })
+                    p->rowHeight = rowH;
+            }
             for (auto* p : { &metering, &general, &faders })
             {
                 auto col = b.removeFromLeft (w);
@@ -1396,7 +1410,7 @@ namespace
                 p->rowHeight = rowH;
             // MIDI REMOTE CONTROL and MIDI PORTS share the left column with the port status.
             midi.rowHeight = ports.rowHeight = juce::jmin (rowH, fitRowHeight (getHeight() - 2 * darkHeaderHeight() - 110, 11.0f));
-            wing.rowHeight = juce::jmax (18, rowH * 4 / 5); // leaves room for the client list
+            wing.rowHeight = juce::jmax (minRowHeight(), rowH * 4 / 5); // leaves room for the client list
             const int gap = 4;
             auto c1 = b.removeFromLeft (b.getWidth() * 40 / 100);
             b.removeFromLeft (gap);
