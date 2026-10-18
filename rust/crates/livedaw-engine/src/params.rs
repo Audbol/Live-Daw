@@ -681,6 +681,14 @@ pub struct StripMeters {
     pub trim_peak: [AtomicF32; 2],
     /// Pre-fader, at the PFL point (the METERS screen).
     pub pfl_peak: [AtomicF32; 2],
+    /// ABI 9: the GATE / DYNAMICS slot's detector level in the latest block,
+    /// dB on its static curve's input scale (the transfer graph's dot; -120
+    /// when off).
+    pub gate_key_db: AtomicF32,
+    pub dyn_key_db: AtomicF32,
+    /// ABI 9: the slots' output peaks (max since the last read; linear).
+    pub gate_out_peak: AtomicF32,
+    pub dyn_out_peak: AtomicF32,
 }
 
 /// A DCA group.

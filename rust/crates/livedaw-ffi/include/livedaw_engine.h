@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 8;
+constexpr int kAbiVersion = 9;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -229,6 +229,11 @@ struct StripMeters
     std::atomic<float> automixDb;
     std::atomic<float> trimPeak[2]; // after trim/balance/polarity ("post TRIM")
     std::atomic<float> pflPeak[2];  // pre-fader, at the PFL point (METERS screen)
+    // ABI 9: the GATE / DYNAMICS slot's detector level in the latest block, dB on
+    // its static curve's input scale (the transfer graph's dot; -120 when off),
+    // and the slots' output peaks (max since the last read, linear).
+    std::atomic<float> gateKeyDb, dynKeyDb;
+    std::atomic<float> gateOutPeak, dynOutPeak;
 };
 
 struct SendParams
@@ -764,6 +769,9 @@ extern "C"
     LdString* ld_model_param_display (int32_t table, int32_t model, int32_t param, float value);
     float ld_model_param_to_normalised (int32_t table, int32_t model, int32_t param, float value);
     float ld_model_param_from_normalised (int32_t table, int32_t model, int32_t param, float position);
+    /** Static curve of a dynamics model (its transfer graph): the output level for each input
+        level in `inDb` (dB; peak or RMS as the model detects). False for models without one. */
+    bool ld_dyn_static_curve (int32_t model, const float* values, int32_t numValues, const float* inDb, float* outDb, int32_t count);
 
     // Analysis: RTA, LR vector scope, LISTEN
     AnalysisControls* ld_engine_analysis (const Engine*);
