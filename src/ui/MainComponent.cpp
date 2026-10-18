@@ -418,6 +418,12 @@ MainComponent::BottomRowPlan MainComponent::planBottomRow (int total, int height
     return plan;
 }
 
+MainComponent::TopRowSides MainComponent::topRowSideWidths (int width)
+{
+    // About 18 %, 26 % and 12 % of the row (the console: 19, 28 and 13).
+    return { juce::jlimit (220, 400, width * 18 / 100), juce::jlimit (320, 580, width * 26 / 100), juce::jlimit (190, 320, width * 12 / 100) };
+}
+
 juce::Rectangle<int> MainComponent::consoleArea() const
 {
     const auto all = getLocalBounds();
@@ -437,10 +443,9 @@ juce::Rectangle<int> MainComponent::consoleArea() const
     if (plan.withCc)
         bottomW += FaderSection::kBankColumnWidth + 4 * plan.stripW;
 
-    // The top row: the channel strip and the monitoring column at their usual
-    // size, the display unit as wide as its height wants.
-    const int topW = juce::jlimit (330, 620, width * 29 / 100) + juce::jlimit (260, 460, width * 22 / 100)
-                     + MainDisplay::preferredWidth (topH);
+    // The top row: the monitoring panel, the channel strip and the 4-Channel
+    // column at their usual size, the display unit as wide as its height wants.
+    const int topW = topRowSideWidths (width).total() + MainDisplay::preferredWidth (topH);
 
     return all.withSizeKeepingCentre (juce::jmin (width, juce::jmax (bottomW, topW)), all.getHeight());
 }
@@ -521,23 +526,34 @@ void MainComponent::layoutTopRow()
     auto top = b.removeFromTop (topRowHeight());
     splitter.setBounds (b.removeFromTop (6));
 
-    // Channel strip section about 29%, the right column about 22%, the main
-    // display (keys, screen and its right-hand column) in between. The right
-    // column holds the monitoring panel over the 4-Channel section (which works
-    // on the right fader section below it); narrow windows put the lower part
-    // of the custom controls there instead of the 4-Channel section. Width
-    // the display unit can't use is shared either side of it.
-    const int stripW = juce::jlimit (330, 620, top.getWidth() * 29 / 100);
-    const int monitorW = juce::jlimit (260, 460, top.getWidth() * 22 / 100);
-    channelStrip->setBounds (top.removeFromLeft (stripW));
-    auto right = top.removeFromRight (monitorW);
+    // As on the WING: the WING panel with USB AUDIO/DATA and MONITORING/
+    // TALKBACK at the left, the main display unit (keys, screen and its right
+    // hand column), the channel strip section, and the 4-Channel section at
+    // the right (it works on the right fader section below it). Narrow windows
+    // put the lower part of the custom controls there instead. Width the
+    // display unit can't use is shared either side of it.
+    // Windows too narrow for that keep the display wide: the channel strip at
+    // the left, the monitoring panel over the 4-Channel section at the right.
+    const auto sides = topRowSideWidths (top.getWidth());
+    juce::Rectangle<int> right;
+    if (top.getWidth() - sides.total() >= juce::jmin (MainDisplay::preferredWidth (top.getHeight()), top.getWidth() * 43 / 100))
+    {
+        monitor->setBounds (top.removeFromLeft (sides.monitor));
+        right = top.removeFromRight (sides.fourChannel);
+        channelStrip->setBounds (top.removeFromRight (sides.strip));
+    }
+    else
+    {
+        channelStrip->setBounds (top.removeFromLeft (juce::jlimit (330, 620, top.getWidth() * 29 / 100)));
+        right = top.removeFromRight (juce::jlimit (260, 460, top.getWidth() * 22 / 100));
+        monitor->setBounds (right.removeFromTop (right.getHeight() * (ccInBottomRow ? 46 : 55) / 100));
+    }
     top = top.withSizeKeepingCentre (juce::jmin (top.getWidth(), MainDisplay::preferredWidth (top.getHeight())), top.getHeight());
     fourChannel->setVisible (ccInBottomRow && ! editorShown && ! screenMaximized);
     if (! ccInBottomRow)
-        customControls->setBounds (right.removeFromBottom (right.getHeight() * 45 / 100));
+        customControls->setBounds (right);
     else
-        fourChannel->setBounds (right.removeFromBottom (right.getHeight() * 54 / 100));
-    monitor->setBounds (right);
+        fourChannel->setBounds (right);
     // Screen only: the display takes the window (the rest keeps its layout,
     // hidden, so restoring brings it back unchanged). Past about 1100 px of
     // height it is laid out at that size and scaled up as a whole, so the

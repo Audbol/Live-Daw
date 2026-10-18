@@ -33,7 +33,7 @@ FourChannelSection::FourChannelSection (UiContext& c, std::function<Strip* (int)
     for (int i = 0; i < kNumModes; ++i)
     {
         auto* k = modeKeys.add (new SurfaceKey (modeLabels[i]));
-        k->ledColour = Colours::silk;
+        k->ledColour = Colours::keyLayer;
         k->onPress = [this, i] { setMode (i); };
         k->ledState = [this, i] { return mode == i ? SurfaceKey::Lit : SurfaceKey::Off; };
         if (i >= F1 && i <= F3)
@@ -262,18 +262,29 @@ void FourChannelSection::timerCallback()
 void FourChannelSection::paint (juce::Graphics& g)
 {
     g.fillAll (Colours::panel);
-    g.setColour (Colours::outline);
-    g.drawRoundedRectangle (panel.toFloat(), 6.0f, 1.0f);
-    drawSilk (g, heading.toFloat(), "4-CHANNEL", 11.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.6f));
+    g.fillRect (getWidth() - 1, 0, 1, getHeight());
 
-    // The key panel and the knob panel are rounded plates.
-    g.setColour (Colours::layerColumn);
-    g.fillRoundedRectangle (keyPanel.toFloat(), 5.0f);
-    g.fillRoundedRectangle (knobPanel.toFloat(), 5.0f);
+    // The key panel and the knob panel are printed frames, joined at the left
+    // by a bracket; the LCD sits in a black window between them.
+    g.setColour (Colours::sectionLine.withAlpha (0.8f));
+    g.drawRoundedRectangle (keyPanel.toFloat().reduced (0.5f), 4.0f, 1.2f);
+    g.drawRoundedRectangle (knobPanel.toFloat().reduced (0.5f), 4.0f, 1.2f);
+    {
+        const float x = (float) panel.getX() + 1.0f, y0 = (float) keyPanel.getCentreY(), y1 = (float) knobPanel.getCentreY();
+        juce::Path bracket;
+        bracket.startNewSubPath ((float) keyPanel.getX() - 3.0f, y0);
+        bracket.lineTo (x + 4.0f, y0);
+        bracket.quadraticTo (x, y0, x, y0 + 4.0f);
+        bracket.lineTo (x, y1 - 4.0f);
+        bracket.quadraticTo (x, y1, x + 4.0f, y1);
+        bracket.lineTo ((float) knobPanel.getX() - 3.0f, y1);
+        g.strokePath (bracket, juce::PathStrokeType (1.2f));
+    }
 
     // The LCD: the four strips with the mode's value under the name.
     g.setColour (juce::Colours::black);
-    g.fillRoundedRectangle (lcd.toFloat(), 4.0f);
+    g.fillRoundedRectangle (lcd.toFloat().expanded (3.0f), 4.0f);
     auto r = lcd.reduced (3, 4);
     const int w = r.getWidth() / 4;
     for (int i = 0; i < 4; ++i)
@@ -315,43 +326,43 @@ void FourChannelSection::paint (juce::Graphics& g)
     for (int i = 1; i < 4; ++i)
     {
         const int x = knobPanel.getX() + knobPanel.getWidth() * i / 4;
-        g.fillRect (x, knobPanel.getY() + 6, 1, knobPanel.getHeight() - 12);
+        g.fillRect (x, knobPanel.getY() + 12, 1, knobPanel.getHeight() - 24);
     }
 }
 
 void FourChannelSection::resized()
 {
-    panel = getLocalBounds().reduced (8, 6);
-    auto b = panel.reduced (8, 6);
-    heading = b.removeFromTop (14);
-    b.removeFromTop (4);
+    panel = getLocalBounds().reduced (6, 6);
+    auto b = panel.withTrimmedLeft (12).reduced (4, 4);
+    heading = {};
 
     const int h = b.getHeight();
-    const int keyRowH = juce::jlimit (18, 30, h / 9);
-    keyPanel = b.removeFromTop (keyRowH * 2 + 14);
+    const int keyRowH = juce::jlimit (18, 32, h / 8);
+    keyPanel = b.removeFromTop (keyRowH * 2 + 26);
     b.removeFromTop (6);
-    lcd = b.removeFromTop (juce::jlimit (40, 80, h / 4));
     b.removeFromTop (6);
+    lcd = b.removeFromTop (juce::jlimit (40, 96, h / 5)).reduced (4, 0);
+    b.removeFromTop (10);
     knobPanel = b;
 
-    auto keys = keyPanel.reduced (6, 5);
+    auto keys = keyPanel.reduced (6, 9);
     const int kw = keys.getWidth() / 4;
     for (int i = 0; i < kNumModes; ++i)
     {
         const int row = i / 4, col = i % 4;
-        modeKeys[i]->setBounds (juce::Rectangle<int> (keys.getX() + col * kw, keys.getY() + row * (keyRowH + 4), kw, keyRowH).reduced (3, 0));
+        modeKeys[i]->setBounds (juce::Rectangle<int> (keys.getX() + col * kw, keys.getY() + row * (keyRowH + 8), kw, keyRowH).reduced (3, 0));
     }
 
-    auto k = knobPanel.reduced (4, 6);
+    // Each column: the encoder in the upper part, its square key below.
+    auto k = knobPanel.reduced (4, 8);
     const int cw = k.getWidth() / 4;
-    const int keyH = juce::jlimit (16, 26, k.getHeight() / 5);
-    const int knob = juce::jlimit (24, 60, juce::jmin (cw - 8, k.getHeight() - keyH - 14));
+    const int keyH = juce::jlimit (16, 30, juce::jmin (k.getHeight() / 5, cw * 45 / 100));
+    const int knob = juce::jlimit (24, 60, juce::jmin (cw * 70 / 100, k.getHeight() - keyH - 14));
     for (int i = 0; i < 4; ++i)
     {
         auto col = juce::Rectangle<int> (k.getX() + i * cw, k.getY(), cw, k.getHeight());
-        knobs[i].setBounds (col.removeFromTop (knob + 4).withSizeKeepingCentre (knob, knob));
-        col.removeFromTop (juce::jmax (4, (col.getHeight() - keyH) / 2));
-        channelKeys[i]->setBounds (col.removeFromTop (keyH).withSizeKeepingCentre (keyH + 6, keyH));
+        knobs[i].setBounds (juce::Rectangle<int> (knob, knob).withCentre ({ col.getCentreX(), col.getY() + juce::jmax (knob / 2 + 2, col.getHeight() * 36 / 100) }));
+        channelKeys[i]->setBounds (juce::Rectangle<int> (keyH + 4, keyH + 4).withCentre ({ col.getCentreX(), col.getY() + juce::jmin (col.getHeight() - keyH / 2 - 4, col.getHeight() * 78 / 100) }));
     }
 }
 

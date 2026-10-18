@@ -81,6 +81,13 @@ private:
     BottomRowPlan planBottomRow (int total, int height) const;
     /** The console's columns: the whole window, or on very wide windows the
         width the sections use at their natural size, centred. */
+    /** The widths of the top row's sections beside the display unit. */
+    struct TopRowSides
+    {
+        int monitor, strip, fourChannel;
+        int total() const noexcept { return monitor + strip + fourChannel; }
+    };
+    static TopRowSides topRowSideWidths (int width);
     juce::Rectangle<int> consoleArea() const;
 
     void showPluginScanner();

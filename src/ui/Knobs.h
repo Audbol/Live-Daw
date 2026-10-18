@@ -66,6 +66,17 @@ public:
         (those are printed on the panel or shown on a screen). */
     void setHardware (bool);
 
+    /** How a hardware knob is drawn: the WING's endless encoders are plain
+        black caps; its pots (MONITORING/TALKBACK) have a white pointer line;
+        the scroll wheel is a large dished knob with a finger dimple. */
+    enum class Cap
+    {
+        Encoder,
+        Pot,
+        Wheel
+    };
+    void setCap (Cap);
+
     /** Called when the knob is touched: hovered or grabbed. */
     std::function<void()> onTouch;
 
