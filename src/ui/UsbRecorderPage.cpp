@@ -585,6 +585,9 @@ void UsbRecorderPage::chooseStorageFolder()
         safe->usb().setBrowserFolder (fc.getResult());
         safe->usb().setRecPath (fc.getResult());
         safe->saveSettings();
+        // One stick: LIBRARY's USB location follows if it has none of its own.
+        if (safe->ctx.settings.getValue ("library.usbFolder").isEmpty())
+            safe->ctx.settings.setValue ("library.usbFolder", fc.getResult().getFullPathName());
         safe->playlistView = false;
         safe->reload();
     });

@@ -3,6 +3,21 @@
 namespace livedaw::ui
 {
 
+void toggleSpill (UiContext& ctx, std::optional<LayerSet::Section> origin, const LayerSet::Spill& spill)
+{
+    auto& layers = ctx.show.layers;
+    if (const auto section = layers.findSpill (spill))
+        layers.endSpill (*section); // the section's layer and position come back
+    else
+        layers.startSpill (LayerSet::spillTarget (origin), spill);
+    notifyLayersChangedAsync (ctx);
+}
+
+bool isSpilling (UiContext& ctx, const LayerSet::Spill& spill)
+{
+    return ctx.show.layers.findSpill (spill).has_value();
+}
+
 FaderSection::FaderSection (UiContext& c, LayerSet::Section s) : ctx (c), section (s)
 {
     // VIEW: the section's OVERVIEW; hold for CONFIG (manual table 4.2).
@@ -109,10 +124,9 @@ void FaderSection::refresh()
     shiftLeft.setLabel (juce::String (shiftStep()));
     shiftRight.setLabel (juce::String (shiftStep()));
 
-    const auto previous = layer.id;
+    // The scroll position lives in the layer set, so the end of a spill brings it back.
     layer = ctx.show.layers.getSelectedLayer (ctx.engine, section);
-    if (layer.id != previous)
-        offset = 0;
+    offset = ctx.show.layers.getOffset (section);
 
     resized();
     refreshFaders();
@@ -131,10 +145,14 @@ bool FaderSection::isKeyLit (const Layer& key) const
 
 void FaderSection::selectLayer (const juce::String& id)
 {
+    // A layer key ends a spill on the section (without going back).
+    const bool wasSpilling = ctx.show.layers.getSpill (section).has_value();
     ctx.show.layers.setSelectedLayerId (section, id);
     offset = 0;
     layer = ctx.show.layers.getSelectedLayer (ctx.engine, section);
     refreshFaders();
+    if (wasSpilling)
+        notifyLayersChangedAsync (ctx); // the SPILL keys on the screens
 
     // USER LAYER LINK (SETUP > SURFACE): USER 1 / USER 2 switch the linked
     // sections (L/C, C/R) too.
@@ -221,6 +239,7 @@ void FaderSection::refreshFaders()
 
     const int total = (int) layer.faders.size();
     offset = juce::jlimit (0, juce::jmax (0, total - n), offset);
+    ctx.show.layers.setOffset (section, offset);
 
     for (int i = 0; i < n; ++i)
     {

@@ -4,6 +4,7 @@
 
 #include <juce_core/juce_core.h>
 
+#include <optional>
 #include <vector>
 
 namespace livedaw
@@ -82,8 +83,53 @@ public:
     static juce::String keyLabel (const Layer&);
     Layer getSelectedLayer (const MixerEngine& e, Section s) const { return findLayer (e, s, getSelectedLayerId (s)); }
 
+    /** The layer the section shows ("spill" while it spills). */
     juce::String getSelectedLayerId (Section s) const { return takeString (ld::ld_layers_selected (handle, s)); }
+    /** Selects a layer key (ends a spill on the section without going back). */
     void setSelectedLayerId (Section, const juce::String& id);
+
+    /** The first fader the section shows (its scroll position, kept here so a
+        spill can bring it back). */
+    int getOffset (Section s) const noexcept { return ld::ld_layers_offset (handle, s); }
+    void setOffset (Section s, int offset) noexcept { ld::ld_layers_set_offset (handle, s, offset); }
+
+    //==============================================================================
+    // Spill: a computed layer on a section for a while (a DCA's members, the
+    // sources sending to a bus, an FX slot's parameters, an automix group, a
+    // strip's sends). Ending it brings back the layer and scroll position.
+    struct Spill
+    {
+        enum class Kind
+        {
+            Dca = 0,
+            Bus = 1,     // index: the bus slot
+            Fx = 2,      // index: the FX slot
+            Automix = 3, // index: 0 X, 1 Y
+            Sends = 4    // strip: whose sends
+        };
+        Kind kind = Kind::Dca;
+        int index = 0;
+        state::StripRef strip;
+
+        bool operator== (const Spill& o) const noexcept
+        {
+            return kind == o.kind && (kind == Kind::Sends ? strip == o.strip : index == o.index);
+        }
+    };
+
+    static constexpr const char* kSpillId = "spill";
+
+    /** Spill from the right section goes to the center, everything else to the left. */
+    static Section spillTarget (std::optional<Section> origin) noexcept
+    {
+        return static_cast<Section> (ld::ld_layers_spill_target (origin.has_value() ? (int32_t) *origin : -1));
+    }
+    void startSpill (Section, const Spill&);
+    /** False if the section wasn't spilling. */
+    bool endSpill (Section s) noexcept { return ld::ld_layers_end_spill (handle, s); }
+    std::optional<Spill> getSpill (Section) const;
+    /** The section spilling `spill`, if any. */
+    std::optional<Section> findSpill (const Spill&) const;
 
     //==============================================================================
     // User layers (shared by all sections)

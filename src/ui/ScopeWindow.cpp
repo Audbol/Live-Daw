@@ -6,11 +6,10 @@ namespace livedaw::ui
 namespace
 {
     const juce::Colour tileBlue = Colours::valueBlue, tileYellow = Colours::gold, configLit = Colours::valueBlue, configUnlit (0xff1f4973),
-                       tileOff = Colours::screenTile,
-        groupHeader = Colours::screenLine;
+                       tileOff = Colours::screenTile, groupHeader = Colours::screenLine;
 
-    /** The CONTENTS keys and the console sections they map to (until E15
-        splits our ten sections into the console's seventeen categories). */
+    /** The CONTENTS keys and the console sections they map to (our ten
+        sections; the console has seventeen categories). */
     struct ContentKey
     {
         const char* name;
@@ -27,36 +26,71 @@ namespace
         { "EQ", state::Eq, false },           { "PAN", state::Fader, false },    { "MAIN", state::Sends, true },       { "SEND", state::Sends, true },
         { "FDR", state::Fader, false },       { "MUTE", state::Fader, false },   { "", kBlank, false },                { "CONFIG", state::Inserts, false },
     };
+
+    constexpr juce::uint32 kConsoleTile = 1;
 } // namespace
 
-ScopeWindow::ScopeWindow (UiContext& c, Mode m, juce::String t, Selection initial)
+ScopeWindow::ScopeWindow (UiContext& c, Mode m, juce::String t, state::Scope initial)
     : ctx (c), mode (m), title (std::move (t)), selection (std::move (initial))
 {
-    for (auto* k : { &noneKey, &allKey, &cancelKey, &saveKey })
+    // NONE / ALL / CANCEL: icons over their captions, as on the console.
+    for (auto* k : { &noneKey, &allKey, &cancelKey, &saveKey, &noGlobKey })
     {
-        styleIconKey (*k);
+        styleIconKey (*k, k == &noneKey || k == &allKey || k == &cancelKey);
         addAndMakeVisible (k);
     }
+    noGlobKey.setVisible (mode == Mode::PartialLoad);
+    noGlobKey.isOn = [this] { return noGlobal; };
+    noGlobKey.onClick = [this] { noGlobal = ! noGlobal; noGlobKey.repaint(); };
+    if (mode == Mode::PartialLoad)
+        saveKey.setButtonText ("LOAD");
+    else if (mode == Mode::PartialUpdate)
+        saveKey.setButtonText ("UPDATE");
+
     noneKey.onClick = [this]
     {
-        if (stripsActive())
-            selection.strips.clear();
-        if (contentsActive())
-            selection.sections = 0;
+        for (auto& tile : tiles)
+            if (isActive (tile) && tile.kind != Kind::Content)
+                toggle (tile, false);
+        selection.sections = 0;
         repaint();
     };
     allKey.onClick = [this]
     {
-        if (stripsActive())
-            for (auto& tile : tiles)
-                if (tile.kind == Kind::Strip)
-                    toggleStrip (tile.strip, true);
-        if (contentsActive())
+        for (auto& tile : tiles)
+            if (isActive (tile) && tile.kind != Kind::Content)
+                toggle (tile, true);
+        if (mode != Mode::Global)
             selection.sections = state::AllSections;
         repaint();
     };
     cancelKey.onClick = [this] { if (onCancel) onCancel(); };
-    saveKey.onClick = [this] { if (onSave) onSave (selection); };
+    saveKey.onClick = [this]
+    {
+        // Every strip ticked means "all strips" (strips added later included).
+        if (! selection.allStrips && mode != Mode::Global && mode != Mode::SnippetFocus && mode != Mode::SnippetAdd && mode != Mode::SnippetRemove)
+        {
+            size_t total = 0;
+            for (int k = 0; k < kNumStripKinds; ++k)
+                total += ctx.engine.getStrips (static_cast<StripKind> (k)).size();
+            if (selection.strips.size() == total)
+            {
+                selection.allStrips = true;
+                selection.strips.clear();
+            }
+        }
+        if (onSave)
+            onSave (selection, noGlobal);
+    };
+    if (selection.allStrips)
+    {
+        // Show "every strip" as every strip ticked.
+        selection.allStrips = false;
+        selection.strips.clear();
+        for (int k = 0; k < kNumStripKinds; ++k)
+            for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
+                selection.strips.push_back (state::StripRef::of (*s));
+    }
 }
 
 bool ScopeWindow::hasStrip (const state::StripRef& r) const
@@ -72,21 +106,59 @@ void ScopeWindow::toggleStrip (const state::StripRef& r, bool on)
         s.push_back (r);
 }
 
+juce::uint32* ScopeWindow::maskOf (Kind k)
+{
+    switch (k)
+    {
+        case Kind::Dca:       return &selection.dcas;
+        case Kind::MuteGroup: return &selection.muteGroups;
+        case Kind::Fx:        return &selection.fx;
+        case Kind::Strip:
+        case Kind::Config:
+        case Kind::Content:   break;
+    }
+    return nullptr;
+}
+
+bool ScopeWindow::isActive (const Tile& t) const
+{
+    switch (t.kind)
+    {
+        case Kind::Strip:
+        case Kind::Dca:
+        case Kind::MuteGroup:
+        case Kind::Fx:      return true;
+        case Kind::Config:  return t.bits == kConsoleTile;
+        case Kind::Content: return t.bits != kBlank;
+    }
+    return false;
+}
+
 bool ScopeWindow::isSelected (const Tile& t) const
 {
     switch (t.kind)
     {
         case Kind::Strip:     return hasStrip (t.strip);
-        case Kind::Dca:
-        case Kind::MuteGroup: return mode != Mode::Global && (selection.sections & state::Groups) != 0;
-        case Kind::Fx:        return mode != Mode::Global && (selection.sections & state::Inserts) != 0;
-        case Kind::Config:    return false;
+        case Kind::Dca:       return (selection.dcas & t.bits) != 0;
+        case Kind::MuteGroup: return (selection.muteGroups & t.bits) != 0;
+        case Kind::Fx:        return (selection.fx & t.bits) != 0;
+        case Kind::Config:    return t.bits == kConsoleTile && selection.console;
         case Kind::Content:
             if (t.bits == kNoneKey || t.bits == kAllKey || t.bits == kBlank)
                 return false;
             return (selection.sections & t.bits) != 0;
     }
     return false;
+}
+
+void ScopeWindow::toggle (const Tile& t, bool on)
+{
+    if (t.kind == Kind::Strip)
+        toggleStrip (t.strip, on);
+    else if (t.kind == Kind::Config && t.bits == kConsoleTile)
+        selection.console = on;
+    else if (auto* mask = maskOf (t.kind))
+        *mask = on ? (*mask | t.bits) : (*mask & ~t.bits);
 }
 
 void ScopeWindow::paint (juce::Graphics& g)
@@ -117,12 +189,12 @@ void ScopeWindow::paint (juce::Graphics& g)
     {
         if (t.kind == Kind::Content && t.bits == kBlank)
             continue;
-        const bool active = (t.kind == Kind::Strip && stripsActive()) || (t.kind == Kind::Content && contentsActive());
+        const bool active = isActive (t);
         const bool on = isSelected (t);
         auto r = t.area.toFloat().reduced (1.5f);
         juce::Colour fill = tileOff;
         if (t.kind == Kind::Config)
-            fill = configUnlit;
+            fill = on ? configLit : configUnlit;
         else if (on)
             fill = t.kind == Kind::Content ? tileYellow : tileBlue;
         if (! active)
@@ -203,7 +275,7 @@ void ScopeWindow::resized()
         groups.push_back (gr);
     }
 
-    // Middle column: DCA, MUTEGROUP and FX (whole-console items: E17 for safes, E15 for scopes).
+    // Middle column: DCA, MUTEGROUP and FX.
     auto m = middle;
     const int mw = m.getWidth() / 8;
     const int mh = juce::jmin (tileH, mw * 3 / 4);
@@ -211,7 +283,11 @@ void ScopeWindow::resized()
     {
         Group gr { groupTitle, m.removeFromTop (headerH), tiles.size(), (size_t) count };
         for (int i = 0; i < count; ++i)
-            tiles.push_back ({ kind, juce::Rectangle<int> (m.getX() + (i % 8) * mw, m.getY() + (i / 8) * mh, mw, mh), caption, juce::String (i + 1) });
+        {
+            Tile t { kind, juce::Rectangle<int> (m.getX() + (i % 8) * mw, m.getY() + (i / 8) * mh, mw, mh), caption, juce::String (i + 1) };
+            t.bits = 1u << i;
+            tiles.push_back (t);
+        }
         m.removeFromTop ((count + 7) / 8 * mh + 6);
         groups.push_back (gr);
     };
@@ -219,7 +295,7 @@ void ScopeWindow::resized()
     addRowGroup ("MUTEGROUP", "MUTE", Kind::MuteGroup, kNumMuteGroups);
     addRowGroup ("FX", "FX", Kind::Fx, kNumFx);
 
-    // Right column: NONE / ALL / CANCEL, CONFIGURATION, CONTENTS and SAVE.
+    // Right column: NONE / ALL / CANCEL (NO GLOB), CONFIGURATION, CONTENTS and SAVE.
     auto r = right;
     const int keyH = juce::jlimit (26, 40, getHeight() / 12);
     auto top = r.removeFromTop (keyH);
@@ -227,7 +303,9 @@ void ScopeWindow::resized()
     noneKey.setBounds (top.removeFromLeft (kw).reduced (2, 0));
     allKey.setBounds (top.removeFromLeft (kw).reduced (2, 0));
     cancelKey.setBounds (top.reduced (2, 0));
-    saveKey.setBounds (r.removeFromBottom (keyH).withTrimmedLeft (r.getWidth() / 2).reduced (2, 0));
+    auto bottom = r.removeFromBottom (keyH);
+    saveKey.setBounds (bottom.removeFromRight (bottom.getWidth() / 2).reduced (2, 0));
+    noGlobKey.setBounds (bottom.reduced (2, 0));
     r.removeFromBottom (4);
     r.removeFromTop (6);
 
@@ -236,8 +314,12 @@ void ScopeWindow::resized()
     configHeader = r.removeFromTop (headerH);
     const char* configKeys[] = { "CONFIG", "SFC", "PREFS", "L", "C", "R" };
     for (int i = 0; i < 6; ++i)
-        tiles.push_back ({ Kind::Config, juce::Rectangle<int> (r.getX() + (i % 3) * (r.getWidth() / 3), r.getY() + (i / 3) * ch, r.getWidth() / 3, ch), {},
-                           configKeys[i] });
+    {
+        Tile t { Kind::Config, juce::Rectangle<int> (r.getX() + (i % 3) * (r.getWidth() / 3), r.getY() + (i / 3) * ch, r.getWidth() / 3, ch), {},
+                 configKeys[i] };
+        t.bits = i == 0 ? kConsoleTile : 0;
+        tiles.push_back (t);
+    }
     r.removeFromTop (2 * ch + 6);
     contentsHeader = r.removeFromTop (headerH);
     for (int i = 0; i < (int) std::size (contentKeys); ++i)
@@ -252,34 +334,34 @@ void ScopeWindow::resized()
 void ScopeWindow::mouseUp (const juce::MouseEvent& e)
 {
     const auto pos = e.getPosition();
-    if (stripsActive())
-        for (auto& gr : groups)
-            if (gr.header.contains (pos) && gr.count > 0 && tiles[gr.first].kind == Kind::Strip)
-            {
-                bool all = true;
-                for (size_t i = gr.first; i < gr.first + gr.count; ++i)
-                    all = all && hasStrip (tiles[i].strip);
-                for (size_t i = gr.first; i < gr.first + gr.count; ++i)
-                    toggleStrip (tiles[i].strip, ! all);
-                repaint();
-                return;
-            }
+    // A group header ticks (or unticks) the whole group.
+    for (auto& gr : groups)
+        if (gr.header.contains (pos) && gr.count > 0)
+        {
+            bool all = true;
+            for (size_t i = gr.first; i < gr.first + gr.count; ++i)
+                all = all && isSelected (tiles[i]);
+            for (size_t i = gr.first; i < gr.first + gr.count; ++i)
+                toggle (tiles[i], ! all);
+            repaint();
+            return;
+        }
 
     for (auto& t : tiles)
     {
-        if (! t.area.contains (pos))
+        if (! t.area.contains (pos) || ! isActive (t))
             continue;
-        if (t.kind == Kind::Strip && stripsActive())
-            toggleStrip (t.strip, ! hasStrip (t.strip));
-        else if (t.kind == Kind::Content && contentsActive())
+        if (t.kind == Kind::Content)
         {
             if (t.bits == kNoneKey)
                 selection.sections = 0;
             else if (t.bits == kAllKey)
                 selection.sections = state::AllSections;
-            else if (t.bits != kBlank)
+            else
                 selection.sections ^= t.bits;
         }
+        else
+            toggle (t, ! isSelected (t));
         repaint();
         return;
     }

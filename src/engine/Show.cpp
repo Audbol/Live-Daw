@@ -262,6 +262,81 @@ state::ApplyResult Show::recallSceneByTag (int tag)
 }
 
 //==============================================================================
+namespace
+{
+    /** Reads a scope through `get (out, strips, capacity) -> count`. */
+    template <typename Getter>
+    state::Scope readScope (Getter&& get)
+    {
+        ld::ScopeC c {};
+        std::vector<ld::StripRefC> refs ((size_t) juce::jmax (0, get (&c, nullptr, 0)));
+        get (&c, refs.data(), (int32_t) refs.size());
+        return state::Scope::fromC (c, refs);
+    }
+} // namespace
+
+state::Scope Show::getSceneRecallScope (int index) const
+{
+    return readScope ([&] (ld::ScopeC* out, ld::StripRefC* strips, int32_t cap) { return ld::ld_scene_get_scope (handle, index, out, strips, cap); });
+}
+
+void Show::setSceneRecallScope (int index, const state::Scope& scope)
+{
+    const auto refs = state::toC (scope.strips);
+    const auto c = scope.toC (refs);
+    ld::ld_scene_set_recall_scope (handle, index, &c);
+}
+
+void Show::storeScenePartial (int index, const state::Scope& scope)
+{
+    const auto refs = state::toC (scope.strips);
+    const auto c = scope.toC (refs);
+    ld::ld_show_store_scene_partial (handle, engine.getHandle(), index, &c);
+    changed();
+}
+
+state::ApplyResult Show::recallScenePartial (int index, const state::Scope& scope, bool noGlobal)
+{
+    const auto refs = state::toC (scope.strips);
+    const auto c = scope.toC (refs);
+    ld::ApplyResultC r {};
+    ld::ld_show_recall_scene_with (handle, engine.getHandle(), index, &c, noGlobal, &r);
+    return afterRecall (r);
+}
+
+state::ApplyResult Show::restoreScene (int index)
+{
+    ld::ApplyResultC r {};
+    ld::ld_show_recall_scene_with (handle, engine.getHandle(), index, nullptr, true, &r);
+    return afterRecall (r);
+}
+
+state::Scope Show::getPartialScope() const
+{
+    return readScope ([&] (ld::ScopeC* out, ld::StripRefC* strips, int32_t cap) { return ld::ld_show_partial_scope (handle, out, strips, cap); });
+}
+
+state::Scope Show::getGlobalSafe() const
+{
+    ld::ScopeC c {};
+    ld::ld_show_global_safe (handle, &c);
+    return state::Scope::fromC (c, {});
+}
+
+void Show::setGlobalSafe (const state::Scope& safe)
+{
+    const std::vector<ld::StripRefC> none;
+    const auto c = safe.toC (none);
+    ld::ld_show_set_global_safe (handle, &c);
+}
+
+bool Show::hasGlobalSafes() const
+{
+    const auto g = getGlobalSafe();
+    return g.sections != 0 || g.dcas != 0 || g.muteGroups != 0 || g.fx != 0 || g.console;
+}
+
+//==============================================================================
 const std::optional<Show::Snippet> Show::getSnippet (int sceneIndex, int snippetIndex) const
 {
     if (! ld::ld_snippet_exists (handle, sceneIndex, snippetIndex))
@@ -276,7 +351,90 @@ const std::optional<Show::Snippet> Show::getSnippet (int sceneIndex, int snippet
     ld::ld_snippet_strips (handle, sceneIndex, snippetIndex, refs.data(), (int32_t) refs.size());
     for (auto r : refs)
         s.strips.push_back (state::StripRef::fromC (r));
+    s.scope = readScope ([&] (ld::ScopeC* out, ld::StripRefC* strips, int32_t cap)
+                         { return ld::ld_snippet_get_scope (handle, sceneIndex, snippetIndex, out, strips, cap); });
+    s.parameterCount = ld::ld_snippet_parameter_count (handle, sceneIndex, snippetIndex);
     return s;
+}
+
+int Show::addSnippet (int sceneIndex, const juce::String& snippetName, const state::Scope& scope)
+{
+    const Utf8 u (snippetName);
+    const auto refs = state::toC (scope.strips);
+    const auto c = scope.toC (refs);
+    const int result = ld::ld_show_add_snippet_scoped (handle, engine.getHandle(), sceneIndex, u.data, u.size, &c);
+    changed();
+    return result;
+}
+
+void Show::addSnippetItems (int sceneIndex, int snippetIndex, const state::Scope& items)
+{
+    const auto refs = state::toC (items.strips);
+    const auto c = items.toC (refs);
+    ld::ld_show_snippet_items (handle, engine.getHandle(), sceneIndex, snippetIndex, true, &c);
+    changed();
+}
+
+void Show::removeSnippetItems (int sceneIndex, int snippetIndex, const state::Scope& items)
+{
+    const auto refs = state::toC (items.strips);
+    const auto c = items.toC (refs);
+    ld::ld_show_snippet_items (handle, engine.getHandle(), sceneIndex, snippetIndex, false, &c);
+    changed();
+}
+
+state::ApplyResult Show::recallSnippetPartial (int sceneIndex, int snippetIndex, const state::Scope& limit)
+{
+    const auto refs = state::toC (limit.strips);
+    const auto c = limit.toC (refs);
+    ld::ApplyResultC r {};
+    ld::ld_show_recall_snippet_with (handle, engine.getHandle(), sceneIndex, snippetIndex, &c, &r);
+    return state::ApplyResult::fromC (r);
+}
+
+void Show::startSnippetRecording()
+{
+    ld::ld_show_snippet_rec (handle, engine.getHandle(), 0);
+}
+
+int Show::stopSnippetRecording()
+{
+    return ld::ld_show_snippet_rec (handle, engine.getHandle(), 1);
+}
+
+void Show::clearSnippetRecording()
+{
+    ld::ld_show_snippet_rec (handle, engine.getHandle(), 2);
+}
+
+int Show::getRecordedParameterCount() const
+{
+    return ld::ld_show_snippet_rec (handle, engine.getHandle(), 3);
+}
+
+bool Show::isRecordingSnippet() const
+{
+    return ld::ld_show_snippet_rec (handle, engine.getHandle(), 4) != 0;
+}
+
+bool Show::hasRecordedSnippet() const
+{
+    return ld::ld_show_snippet_rec (handle, engine.getHandle(), 5) != 0;
+}
+
+int Show::addRecordedSnippet (int sceneIndex, const juce::String& snippetName, const state::Scope* focus)
+{
+    const Utf8 u (snippetName);
+    std::vector<ld::StripRefC> refs;
+    ld::ScopeC c {};
+    if (focus != nullptr)
+    {
+        refs = state::toC (focus->strips);
+        c = focus->toC (refs);
+    }
+    const int result = ld::ld_show_add_recorded_snippet (handle, engine.getHandle(), sceneIndex, u.data, u.size, focus != nullptr ? &c : nullptr);
+    changed();
+    return result;
 }
 
 int Show::addSnippet (int sceneIndex, const juce::String& snippetName, juce::uint32 sections,
@@ -354,6 +512,73 @@ bool Show::setCustomControlsXml (const juce::String& xml)
 {
     const Utf8 u (xml);
     return ld::ld_show_set_custom_controls (handle, u.data, u.size);
+}
+
+//==============================================================================
+Show::PresetInfo Show::readPreset (const juce::File& file)
+{
+    const Utf8 u (file.getFullPathName());
+    ld::PresetInfoC c {};
+    PresetInfo info;
+    if (! ld::ld_preset_info (u.data, u.size, &c))
+        return info;
+    info.kind = c.kind == 1 ? PresetInfo::Kind::Fx : PresetInfo::Kind::Channel;
+    info.name = takeString (c.name);
+    info.detail = takeString (c.detail);
+    info.scope = c.scope;
+    if (juce::isPositiveAndBelow (c.stripKind, kNumStripKinds))
+        info.stripKind = static_cast<StripKind> (c.stripKind);
+    return info;
+}
+
+namespace
+{
+    juce::Result presetResult (bool ok, ld::LdString* message, const juce::String& what)
+    {
+        const auto text = takeString (message);
+        if (! ok)
+            return juce::Result::fail (text.isNotEmpty() ? text : what + " failed");
+        return text.isEmpty() ? juce::Result::ok() : juce::Result::fail (text);
+    }
+} // namespace
+
+juce::Result Show::saveFxPreset (int slot, const juce::File& file, const juce::String& presetName)
+{
+    const Utf8 p (file.getFullPathName()), n (presetName);
+    ld::LdString* message = nullptr;
+    const bool ok = ld::ld_show_save_fx_preset (handle, engine.getHandle(), slot, p.data, p.size, n.data, n.size, &message);
+    return presetResult (ok, message, "Saving the FX preset");
+}
+
+juce::Result Show::loadFxPreset (int slot, const juce::File& file)
+{
+    const Utf8 p (file.getFullPathName());
+    ld::LdString* message = nullptr;
+    const bool ok = ld::ld_show_load_fx_preset (handle, engine.getHandle(), slot, p.data, p.size, &message);
+    return presetResult (ok, message, "Loading the FX preset");
+}
+
+juce::Result Show::saveChannelPreset (const state::StripRef& strip, juce::uint32 scope, const juce::File& file, const juce::String& presetName)
+{
+    const Utf8 p (file.getFullPathName()), n (presetName);
+    ld::LdString* message = nullptr;
+    const bool ok = ld::ld_show_save_channel_preset (handle, engine.getHandle(), strip.toC(), scope, p.data, p.size, n.data, n.size, &message);
+    return presetResult (ok, message, "Saving the channel preset");
+}
+
+juce::Result Show::loadChannelPreset (const state::StripRef& strip, const juce::File& file, std::optional<juce::uint32> scope)
+{
+    const Utf8 p (file.getFullPathName());
+    ld::LdString* message = nullptr;
+    const bool ok = ld::ld_show_load_channel_preset (handle, engine.getHandle(), strip.toC(), p.data, p.size, scope.has_value(), scope.value_or (0),
+                                                     &message);
+    return presetResult (ok, message, "Loading the channel preset");
+}
+
+bool Show::setPresetScope (const juce::File& file, juce::uint32 scope)
+{
+    const Utf8 p (file.getFullPathName());
+    return ld::ld_preset_set_scope (p.data, p.size, scope);
 }
 
 //==============================================================================

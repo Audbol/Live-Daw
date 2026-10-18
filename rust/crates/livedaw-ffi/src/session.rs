@@ -7,8 +7,9 @@
 use super::guard;
 use livedaw_engine::{Engine, StripKind};
 use livedaw_session::console::{CapturedInsert, InsertMode, PluginBridge, RestoreError};
-use livedaw_session::layers::{FaderRef, Layer, LayerSet};
-use livedaw_session::{ApplyResult, Show, StripRef};
+use livedaw_session::layers::{FaderRef, Layer, LayerSet, SpillKind};
+use livedaw_session::presets::{self, PresetType};
+use livedaw_session::{ApplyResult, GlobalSafe, Scope, Show, StripRef};
 use std::borrow::Cow;
 use std::ffi::c_void;
 use std::path::PathBuf;
@@ -160,31 +161,53 @@ unsafe fn refs_out(refs: &[StripRef], out: *mut LdStripRef, capacity: i32) -> i3
     refs.len() as i32
 }
 
-/// A fader on the surface: kind 0..4 = strip kinds (see `LdStripRef`), 5 = DCA (id 0..15).
+/// A fader on the surface: kind 0..4 = a strip (see `LdStripRef`), or with
+/// `to_kind` 2..4 the send level from that strip to the bus, main or matrix
+/// `to_id`; 5 = DCA (id 0..15); 6 = FX slot `id`'s parameter `to_id`.
+/// `to_kind` is -1 when unused.
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct LdFaderRef {
     pub kind: i32,
     pub id: i32,
+    pub to_kind: i32,
+    pub to_id: i32,
+}
+
+impl Default for LdFaderRef {
+    fn default() -> Self {
+        Self { kind: 0, id: 0, to_kind: -1, to_id: 0 }
+    }
 }
 
 pub const FADER_DCA: i32 = 5;
+pub const FADER_FX_PARAM: i32 = 6;
 
 impl From<FaderRef> for LdFaderRef {
     fn from(f: FaderRef) -> Self {
         match f {
-            FaderRef::Strip(r) => Self { kind: r.kind as i32, id: r.id },
-            FaderRef::Dca(i) => Self { kind: FADER_DCA, id: i },
+            FaderRef::Strip(r) => Self { kind: r.kind as i32, id: r.id, ..Self::default() },
+            FaderRef::Dca(i) => Self { kind: FADER_DCA, id: i, ..Self::default() },
+            FaderRef::Send { from, to } => Self { kind: from.kind as i32, id: from.id, to_kind: to.kind as i32, to_id: to.id },
+            FaderRef::FxParam { slot, param } => Self { kind: FADER_FX_PARAM, id: slot, to_kind: -1, to_id: param },
         }
     }
 }
 
 impl LdFaderRef {
     fn to_ref(self) -> FaderRef {
-        if self.kind == FADER_DCA {
-            FaderRef::Dca(self.id)
-        } else {
-            FaderRef::Strip(LdStripRef { kind: self.kind, id: self.id }.to_ref())
+        match self.kind {
+            FADER_DCA => FaderRef::Dca(self.id),
+            FADER_FX_PARAM => FaderRef::FxParam { slot: self.id, param: self.to_id },
+            _ => {
+                let from = LdStripRef { kind: self.kind, id: self.id }.to_ref();
+                match StripKind::from_i32(self.to_kind) {
+                    Some(k @ (StripKind::Bus | StripKind::Main | StripKind::Matrix)) => {
+                        FaderRef::Send { from, to: StripRef::new(k, self.to_id) }
+                    }
+                    _ => FaderRef::Strip(from),
+                }
+            }
         }
     }
 }
@@ -536,6 +559,248 @@ pub unsafe extern "C" fn ld_snippet_set_strips(s: *mut LdShow, scene: i32, snipp
     }
 }
 
+// ---- scopes, global safes, partial load / update, snippet REC ------------------------------
+
+/// A recall scope (see `livedaw_session::scope::Scope`). Going in, `strips`
+/// points at `num_strips` refs (ignored with `all_strips`); coming out, the
+/// strips go to a separate buffer and `strips` is null.
+#[repr(C)]
+pub struct LdScope {
+    pub sections: u32,
+    pub dcas: u32,
+    pub mute_groups: u32,
+    pub fx: u32,
+    pub console: bool,
+    pub all_strips: bool,
+    pub strips: *const LdStripRef,
+    pub num_strips: i32,
+}
+
+unsafe fn scope_arg(p: *const LdScope) -> Option<Scope> {
+    let p = p.as_ref()?;
+    Some(
+        Scope {
+            sections: p.sections,
+            strips: if p.all_strips { None } else { Some(refs_arg(p.strips, p.num_strips)) },
+            dcas: p.dcas,
+            mute_groups: p.mute_groups,
+            fx: p.fx,
+            console: p.console,
+        }
+        .sanitised(),
+    )
+}
+
+/// Writes `scope` to `out` and up to `capacity` strips to `strips`; returns the strip count.
+unsafe fn scope_out(scope: &Scope, out: *mut LdScope, strips: *mut LdStripRef, capacity: i32) -> i32 {
+    if let Some(o) = out.as_mut() {
+        *o = LdScope {
+            sections: scope.sections,
+            dcas: scope.dcas,
+            mute_groups: scope.mute_groups,
+            fx: scope.fx,
+            console: scope.console,
+            all_strips: scope.strips.is_none(),
+            strips: std::ptr::null(),
+            num_strips: scope.strips.as_ref().map_or(0, |s| s.len() as i32),
+        };
+    }
+    scope.strips.as_ref().map_or(0, |s| refs_out(s, strips, capacity))
+}
+
+/// A scene's recall scope; returns the number of strips (0 with all_strips).
+#[no_mangle]
+pub unsafe extern "C" fn ld_scene_get_scope(
+    s: *mut LdShow,
+    scene: i32,
+    out: *mut LdScope,
+    strips: *mut LdStripRef,
+    capacity: i32,
+) -> i32 {
+    match show(s).and_then(|s| s.show.scene(scene)) {
+        Some(sc) => scope_out(&sc.recall_scope(), out, strips, capacity),
+        None => scope_out(&Scope::default(), out, strips, capacity),
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_scene_set_recall_scope(s: *mut LdShow, scene: i32, scope: *const LdScope) {
+    if let (Some(sc), Some(scope)) = (show(s).and_then(|s| s.show.scene_mut(scene)), scope_arg(scope)) {
+        sc.set_recall_scope(&scope);
+    }
+}
+
+/// PARTIAL UPDATE: stores only `scope` into the scene.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_store_scene_partial(s: *mut LdShow, e: *const Engine, index: i32, scope: *const LdScope) {
+    if let (Some(s), Some(e), Some(scope)) = (show(s), eng(e), scope_arg(scope)) {
+        guard((), || s.show.store_scene_partial(e, &mut s.bridge, index, &scope));
+    }
+}
+
+/// PARTIAL LOAD (`scope`; `ignore_safes` = NO GLOB) or RESTORE (`scope` null:
+/// the whole scene, safes included).
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_recall_scene_with(
+    s: *mut LdShow,
+    e: *const Engine,
+    index: i32,
+    scope: *const LdScope,
+    ignore_safes: bool,
+    out: *mut LdApplyResult,
+) {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return write_result(out, ApplyResult::default()) };
+    let scope = scope_arg(scope);
+    let r = guard(ApplyResult::default(), || s.show.recall_scene_with(e, &mut s.bridge, index, scope.as_ref(), ignore_safes));
+    write_result(out, r);
+}
+
+/// The scope PARTIAL LOAD / UPDATE last used.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_partial_scope(s: *mut LdShow, out: *mut LdScope, strips: *mut LdStripRef, capacity: i32) -> i32 {
+    match show(s) {
+        Some(s) => scope_out(&s.show.partial_scope, out, strips, capacity),
+        None => scope_out(&Scope::default(), out, strips, capacity),
+    }
+}
+
+/// The GLOBAL safes beyond strips (sections, DCAs, mute groups, FX, console; no strips).
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_global_safe(s: *mut LdShow, out: *mut LdScope) {
+    let g = show(s).map(|s| s.show.global_safe.clone()).unwrap_or_default();
+    let scope = Scope {
+        sections: g.sections,
+        strips: Some(Vec::new()),
+        dcas: g.dcas,
+        mute_groups: g.mute_groups,
+        fx: g.fx,
+        console: g.console,
+    };
+    scope_out(&scope, out, std::ptr::null_mut(), 0);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_set_global_safe(s: *mut LdShow, safe: *const LdScope) {
+    if let (Some(s), Some(g)) = (show(s), scope_arg(safe)) {
+        s.show.global_safe =
+            GlobalSafe { sections: g.sections, dcas: g.dcas, mute_groups: g.mute_groups, fx: g.fx, console: g.console }
+                .sanitised();
+    }
+}
+
+/// A snippet's scope (strips, sections, DCAs, mute groups, FX, console);
+/// returns the number of strips.
+#[no_mangle]
+pub unsafe extern "C" fn ld_snippet_get_scope(
+    s: *mut LdShow,
+    scene: i32,
+    snippet: i32,
+    out: *mut LdScope,
+    strips: *mut LdStripRef,
+    capacity: i32,
+) -> i32 {
+    match show(s).and_then(|s| s.show.snippet(scene, snippet)) {
+        Some(sn) => scope_out(&sn.scope(), out, strips, capacity),
+        None => scope_out(&Scope::strips(0, Vec::new()), out, strips, capacity),
+    }
+}
+
+/// The parameter count shown for a snippet (what REC recorded, else the values it holds).
+#[no_mangle]
+pub unsafe extern "C" fn ld_snippet_parameter_count(s: *mut LdShow, scene: i32, snippet: i32) -> i32 {
+    show(s).and_then(|s| s.show.snippet(scene, snippet)).map_or(0, |sn| sn.parameter_count() as i32)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_add_snippet_scoped(
+    s: *mut LdShow,
+    e: *const Engine,
+    scene: i32,
+    name: *const u8,
+    name_len: usize,
+    scope: *const LdScope,
+) -> i32 {
+    let (Some(s), Some(e), Some(scope)) = (show(s), eng(e), scope_arg(scope)) else { return -1 };
+    let name = str_arg(name, name_len);
+    guard(-1, || s.show.add_snippet_scoped(e, &mut s.bridge, scene, &name, &scope))
+}
+
+/// ADD ITEMS (`add`) or REMOVE ITEMS: no strips in `items` means every strip of the snippet.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_snippet_items(
+    s: *mut LdShow,
+    e: *const Engine,
+    scene: i32,
+    snippet: i32,
+    add: bool,
+    items: *const LdScope,
+) {
+    let (Some(s), Some(e), Some(items)) = (show(s), eng(e), scope_arg(items)) else { return };
+    guard((), || {
+        if add {
+            s.show.add_snippet_items(e, &mut s.bridge, scene, snippet, &items);
+        } else {
+            s.show.remove_snippet_items(scene, snippet, &items);
+        }
+    });
+}
+
+/// PARTIAL LOAD of a snippet (`limit` null: all of it).
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_recall_snippet_with(
+    s: *mut LdShow,
+    e: *const Engine,
+    scene: i32,
+    snippet: i32,
+    limit: *const LdScope,
+    out: *mut LdApplyResult,
+) {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return write_result(out, ApplyResult::default()) };
+    let limit = scope_arg(limit);
+    let r = guard(ApplyResult::default(), || s.show.recall_snippet_with(e, &mut s.bridge, scene, snippet, limit.as_ref()));
+    write_result(out, r);
+}
+
+/// Snippet REC. op: 0 REC, 1 STOP (returns the number of changed parameters),
+/// 2 CLEAR (drop the recording), 3 the count so far (while recording) or of
+/// the last STOP, 4 recording? (1/0), 5 a stopped recording waiting for SAVE? (1/0).
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_snippet_rec(s: *mut LdShow, e: *const Engine, op: i32) -> i32 {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return 0 };
+    guard(0, || match op {
+        0 => {
+            s.show.start_recording(e);
+            0
+        }
+        1 => s.show.stop_recording(e) as i32,
+        2 => {
+            s.show.clear_recording();
+            0
+        }
+        3 => s.show.recorded_count(e) as i32,
+        4 => i32::from(s.show.is_recording()),
+        5 => i32::from(s.show.recorded_changes(None).is_some_and(|c| !c.is_empty())),
+        _ => 0,
+    })
+}
+
+/// SAVE after STOP: a snippet of the recorded parameters within `focus` (null:
+/// all of them). -1 if nothing was recorded.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_add_recorded_snippet(
+    s: *mut LdShow,
+    e: *const Engine,
+    scene: i32,
+    name: *const u8,
+    name_len: usize,
+    focus: *const LdScope,
+) -> i32 {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return -1 };
+    let name = str_arg(name, name_len);
+    let focus = scope_arg(focus);
+    guard(-1, || s.show.add_recorded_snippet(e, &mut s.bridge, scene, &name, focus.as_ref()))
+}
+
 // Fades ---------------------------------------------------------------------------------
 
 #[no_mangle]
@@ -642,6 +907,144 @@ pub unsafe extern "C" fn ld_show_clear(s: *mut LdShow, e: *const Engine, num_cha
     }
 }
 
+// ---- LIBRARY presets (FX, CHAN) -------------------------------------------------------------
+
+/// A preset file's header. `kind`: 0 = not a preset, 1 = FX, 2 = channel.
+/// `name` and `detail` (the FX device, or the strip kind) are owned by the caller.
+#[repr(C)]
+pub struct LdPresetInfo {
+    pub kind: i32,
+    pub scope: u32,
+    pub strip_kind: i32,
+    pub name: *mut LdString,
+    pub detail: *mut LdString,
+}
+
+/// Reads a preset file's header; false (kind 0, null strings) if it isn't one.
+#[no_mangle]
+pub unsafe extern "C" fn ld_preset_info(path: *const u8, len: usize, out: *mut LdPresetInfo) -> bool {
+    let path = PathBuf::from(str_arg(path, len).into_owned());
+    let info = guard(None, || presets::load(&path).ok().and_then(|p| presets::info(&p)));
+    if let Some(o) = out.as_mut() {
+        *o = match &info {
+            Some(i) => LdPresetInfo {
+                kind: if i.kind == PresetType::Fx { 1 } else { 2 },
+                scope: i.scope,
+                strip_kind: i.strip_kind.map_or(-1, |k| k as i32),
+                name: LdString::new(i.name.clone()),
+                detail: LdString::new(i.detail.clone()),
+            },
+            None => LdPresetInfo { kind: 0, scope: 0, strip_kind: -1, name: std::ptr::null_mut(), detail: std::ptr::null_mut() },
+        };
+    }
+    info.is_some()
+}
+
+unsafe fn finish(r: Result<Vec<String>, String>, message: *mut *mut LdString) -> bool {
+    finish_load(r, message)
+}
+
+/// SAVE on the FX tab: FX slot `slot` to `path`. False with `message` on failure.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_save_fx_preset(
+    s: *mut LdShow,
+    e: *const Engine,
+    slot: i32,
+    path: *const u8,
+    path_len: usize,
+    name: *const u8,
+    name_len: usize,
+    message: *mut *mut LdString,
+) -> bool {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return false };
+    let path = PathBuf::from(str_arg(path, path_len).into_owned());
+    let name = str_arg(name, name_len).into_owned();
+    let r = guard(Err("internal error".into()), || {
+        let preset =
+            presets::capture_fx(e, &mut s.bridge, usize::try_from(slot).unwrap_or(usize::MAX), &name).ok_or("No such FX slot")?;
+        presets::save(&path, &preset).map(|()| Vec::new())
+    });
+    finish(r, message)
+}
+
+/// LOAD on the FX tab: the preset at `path` into FX slot `slot` (warnings in `message`).
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_load_fx_preset(
+    s: *mut LdShow,
+    e: *const Engine,
+    slot: i32,
+    path: *const u8,
+    path_len: usize,
+    message: *mut *mut LdString,
+) -> bool {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return false };
+    let path = PathBuf::from(str_arg(path, path_len).into_owned());
+    let r = guard(Err("internal error".into()), || {
+        let preset = presets::load(&path)?;
+        presets::apply_fx(e, &mut s.bridge, &preset, usize::try_from(slot).unwrap_or(usize::MAX))
+    });
+    finish(r, message)
+}
+
+/// SAVE on the CHAN tab: `strip` to `path`, loading `scope` (sections).
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_save_channel_preset(
+    s: *mut LdShow,
+    e: *const Engine,
+    strip: LdStripRef,
+    scope: u32,
+    path: *const u8,
+    path_len: usize,
+    name: *const u8,
+    name_len: usize,
+    message: *mut *mut LdString,
+) -> bool {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return false };
+    let path = PathBuf::from(str_arg(path, path_len).into_owned());
+    let name = str_arg(name, name_len).into_owned();
+    let r = guard(Err("internal error".into()), || {
+        let preset = presets::capture_channel(e, &mut s.bridge, &strip.to_ref(), scope, &name).ok_or("No such strip")?;
+        presets::save(&path, &preset).map(|()| Vec::new())
+    });
+    finish(r, message)
+}
+
+/// LOAD on the CHAN tab: the preset at `path` onto `strip` with its own scope
+/// (`use_scope` false) or `scope`.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_load_channel_preset(
+    s: *mut LdShow,
+    e: *const Engine,
+    strip: LdStripRef,
+    path: *const u8,
+    path_len: usize,
+    use_scope: bool,
+    scope: u32,
+    message: *mut *mut LdString,
+) -> bool {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return false };
+    let path = PathBuf::from(str_arg(path, path_len).into_owned());
+    let r = guard(Err("internal error".into()), || {
+        let preset = presets::load(&path)?;
+        presets::apply_channel(e, &mut s.bridge, &preset, &strip.to_ref(), use_scope.then_some(scope)).map(|r| r.warnings)
+    });
+    finish(r, message)
+}
+
+/// UPDATE SCOPE: rewrites a channel preset's scope.
+#[no_mangle]
+pub unsafe extern "C" fn ld_preset_set_scope(path: *const u8, len: usize, scope: u32) -> bool {
+    let path = PathBuf::from(str_arg(path, len).into_owned());
+    guard(false, || {
+        let Ok(mut preset) = presets::load(&path) else { return false };
+        if presets::info(&preset).is_none_or(|i| i.kind != PresetType::Channel) {
+            return false;
+        }
+        presets::set_channel_scope(&mut preset, scope);
+        presets::save(&path, &preset).is_ok()
+    })
+}
+
 // ---- layers ------------------------------------------------------------------------------
 
 /// The show's custom control assignments as a `<CustomControls>` element.
@@ -712,9 +1115,89 @@ pub unsafe extern "C" fn ld_layers_effective_width(l: *mut LayerSet, section: i3
     layers(l).map_or(1, |l| l.effective_width(section as usize))
 }
 
+/// The layer a section shows ("spill" while it spills).
 #[no_mangle]
 pub unsafe extern "C" fn ld_layers_selected(l: *mut LayerSet, section: i32) -> *mut LdString {
-    LdString::new(layers(l).map(|l| l.selected(section as usize).to_owned()).unwrap_or_default())
+    LdString::new(layers(l).map(|l| l.shown(section as usize).to_owned()).unwrap_or_default())
+}
+
+/// The first fader a section shows (its scroll position).
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_offset(l: *mut LayerSet, section: i32) -> i32 {
+    layers(l).map_or(0, |l| l.offset(section as usize))
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_set_offset(l: *mut LayerSet, section: i32, offset: i32) {
+    if let Some(l) = layers(l) {
+        l.set_offset(section as usize, offset);
+    }
+}
+
+/// A spill: kind 0 = DCA `index`, 1 = the sources sending to bus slot `index`,
+/// 2 = FX slot `index`'s parameters, 3 = automix group `index` (0 X, 1 Y),
+/// 4 = the sends of `strip`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct LdSpill {
+    pub kind: i32,
+    pub index: i32,
+    pub strip: LdStripRef,
+}
+
+impl LdSpill {
+    fn to_kind(self) -> Option<SpillKind> {
+        Some(match self.kind {
+            0 => SpillKind::Dca(self.index),
+            1 => SpillKind::Bus(self.index),
+            2 => SpillKind::Fx(self.index),
+            3 => SpillKind::Automix(self.index),
+            4 => SpillKind::Sends(self.strip.to_ref()),
+            _ => return None,
+        })
+    }
+
+    fn of(kind: SpillKind) -> Self {
+        match kind {
+            SpillKind::Dca(i) => Self { kind: 0, index: i, ..Self::default() },
+            SpillKind::Bus(i) => Self { kind: 1, index: i, ..Self::default() },
+            SpillKind::Fx(i) => Self { kind: 2, index: i, ..Self::default() },
+            SpillKind::Automix(i) => Self { kind: 3, index: i, ..Self::default() },
+            SpillKind::Sends(r) => Self { kind: 4, index: 0, strip: r.into() },
+        }
+    }
+}
+
+/// The section a spill from `origin` goes to (-1: no section).
+#[no_mangle]
+pub extern "C" fn ld_layers_spill_target(origin: i32) -> i32 {
+    livedaw_session::layers::spill_target(usize::try_from(origin).ok()) as i32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_start_spill(l: *mut LayerSet, section: i32, spill: LdSpill) {
+    if let (Some(l), Some(kind), Ok(section)) = (layers(l), spill.to_kind(), usize::try_from(section)) {
+        l.start_spill(section, kind);
+    }
+}
+
+/// Ends a section's spill (its layer and scroll position come back); false if none.
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_end_spill(l: *mut LayerSet, section: i32) -> bool {
+    match (layers(l), usize::try_from(section)) {
+        (Some(l), Ok(section)) => l.end_spill(section),
+        _ => false,
+    }
+}
+
+/// What a section spills; false if it doesn't.
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_spill(l: *mut LayerSet, section: i32, out: *mut LdSpill) -> bool {
+    let Some(kind) = layers(l).and_then(|l| l.spill(usize::try_from(section).ok()?)) else { return false };
+    if let Some(o) = out.as_mut() {
+        *o = LdSpill::of(kind);
+    }
+    true
 }
 
 #[no_mangle]
@@ -942,7 +1425,12 @@ mod tests {
             ld_scene_set_tag(s, 0, 12);
 
             let refs = [LdStripRef { kind: 0, id: 1 }];
-            let faders = [LdFaderRef { kind: 0, id: 1 }, LdFaderRef { kind: FADER_DCA, id: 3 }];
+            let send = LdFaderRef { kind: 0, id: 1, to_kind: 2, to_id: 4 };
+            let faders = [
+                LdFaderRef { kind: 0, id: 1, ..Default::default() },
+                LdFaderRef { kind: FADER_DCA, id: 3, ..Default::default() },
+                send,
+            ];
             assert_eq!(ld_show_add_snippet(s, e, 0, b"S".as_ptr(), 1, 1 << 8, refs.as_ptr(), 1), 0);
             let mut out = [LdStripRef::default(); 4];
             assert_eq!(ld_snippet_strips(s, 0, 0, out.as_mut_ptr(), 4), 1);
@@ -966,14 +1454,15 @@ mod tests {
             assert_eq!(take(msg), "Not a Live DAW show file");
 
             let l = ld_show_layers(s);
-            let id = take(ld_layers_add_user(l, b"U".as_ptr(), 1, faders.as_ptr(), 2));
+            let id = take(ld_layers_add_user(l, b"U".as_ptr(), 1, faders.as_ptr(), 3));
             let list = ld_layers_list(l, e, 0, 1, std::ptr::null(), 0);
             let n = ld_layer_list_len(list);
             assert_eq!(take(ld_layer_list_id(list, n - 1)), id);
             assert!(ld_layer_list_is_user(list, n - 1));
             let mut f = [LdFaderRef::default(); 4];
-            assert_eq!(ld_layer_list_faders(list, n - 1, f.as_mut_ptr(), 4), 2);
+            assert_eq!(ld_layer_list_faders(list, n - 1, f.as_mut_ptr(), 4), 3);
             assert_eq!((f[1].kind, f[1].id), (FADER_DCA, 3));
+            assert_eq!((f[0].to_kind, f[2].kind, f[2].id, f[2].to_kind, f[2].to_id), (-1, 0, 1, 2, 4));
             assert_eq!(take(ld_layer_list_name(list, 0)), "CH 1-2 · AUX 1-8");
             ld_layer_list_free(list);
             assert_eq!(take(ld_layers_selected(l, 2)), "out-1");

@@ -497,33 +497,34 @@ juce::String inputSourceText (int left, int right, bool stereo)
     return prefix + number (left);
 }
 
-/** The ALT input menu: NONE, the hardware inputs and the recorder's playback channels. */
+/** The ALT input list: NONE, the hardware inputs and the recorder's playback channels. */
 void showAltSourceMenu (UiContext& ctx, int current, juce::Component* target, std::function<void (int)> chosen)
 {
-    juce::PopupMenu menu;
-    menu.addSectionHeader ("ALT SOURCE");
-    menu.addItem ("NONE", true, current < 0, [chosen] { chosen (-1); });
+    if (target == nullptr)
+        return;
+    juce::StringArray items { "NONE" };
+    std::vector<int> sources { -1 };
     const auto& names = ctx.engine.getHardwareInputNames();
     const int numInputs = names.isEmpty() ? 64 : names.size();
-    for (int g = 0; g < numInputs; g += 16)
+    for (int i = 0; i < numInputs; ++i)
     {
-        juce::PopupMenu sub;
-        for (int i = g; i < juce::jmin (numInputs, g + 16); ++i)
-            sub.addItem ("IN " + juce::String (i + 1) + (i < names.size() && names[i].isNotEmpty() ? "  (" + names[i] + ")" : juce::String()), true,
-                         current == i, [chosen, i] { chosen (i); });
-        menu.addSubMenu ("AUDIO IN " + juce::String (g + 1) + "-" + juce::String (juce::jmin (numInputs, g + 16)), sub, true, nullptr,
-                         current >= g && current < g + 16);
+        items.add ("IN " + juce::String (i + 1) + (i < names.size() && names[i].isNotEmpty() ? "  " + names[i].toUpperCase() : juce::String()));
+        sources.push_back (i);
     }
-    for (int g = 0; g < Recorder::kNumPlaybackChannels; g += 16)
+    for (int ch = 0; ch < Recorder::kNumPlaybackChannels; ++ch)
     {
-        juce::PopupMenu sub;
-        for (int ch = g; ch < g + 16; ++ch)
-            sub.addItem (Recorder::playbackSourceName (ch), true, current == Recorder::playbackSource (ch),
-                         [chosen, ch] { chosen (Recorder::playbackSource (ch)); });
-        menu.addSubMenu ("RECORDER PLAY " + juce::String (g + 1) + "-" + juce::String (g + 16), sub, true, nullptr,
-                         Recorder::playbackChannelOf (current) >= g && Recorder::playbackChannelOf (current) < g + 16);
+        items.add (Recorder::playbackSourceName (ch).toUpperCase());
+        sources.push_back (Recorder::playbackSource (ch));
     }
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target));
+    const auto it = std::find (sources.begin(), sources.end(), current);
+    popups::ListOptions options;
+    options.columns = 4;
+    options.caption = "ALT SOURCE";
+    popups::chooseFrom (*target, items, it != sources.end() ? (int) (it - sources.begin()) : 0, [chosen, sources] (int i)
+    {
+        if (juce::isPositiveAndBelow (i, (int) sources.size()))
+            chosen (sources[(size_t) i]);
+    }, options);
 }
 
 /** The ALT source tile (WING INPUT SELECT): the channel's ALT input, e.g. a
@@ -1686,13 +1687,18 @@ public:
             for (size_t i = 0; i < spec.params.size(); ++i)
                 fx.params (slot).values[i] = spec.params[i].defaultValue;
         };
-        // FX SPILL puts the effect on the left fader section (the spill layers, W40).
-        spill = &key ("FX SPILL", Icon::Faders);
+        // FX SPILL puts the effect's parameters on the left fader section; again ends it.
+        spill = &key ("FX SPILL", Icon::Spill);
         spill->outlined = true;
-        spill->setEnabled (false);
+        spill->isOn = [this] { return ins.fx.load() >= 0 && isSpilling (ctx, { LayerSet::Spill::Kind::Fx, ins.fx.load(), {} }); };
+        spill->onClick = [this]
+        {
+            if (const int slot = ins.fx.load(); slot >= 0)
+                toggleSpill (ctx, std::nullopt, { LayerSet::Spill::Kind::Fx, slot, {} });
+        };
         if (strip.isOutput())
         {
-            setCust = &key ("SET CUST", Icon::Edit);
+            setCust = &key ("SET CUST", Icon::KeyboardEdit);
             setCust->iconAbove = true;
             setCust->outlined = true;
             setCust->setTooltip ("Name the channel after the effect");
@@ -2968,9 +2974,10 @@ public:
         tapEqMore->setEnabled (tapShaping);
         tapEqMore->isOn = [this] { return tapEqPanel != nullptr && tapEqPanel->isVisible(); };
         tapEqMore->onClick = [this] { showTapEq (tapEqPanel == nullptr || ! tapEqPanel->isVisible()); };
-        // SPILL puts the strip's sends on a fader section (the spill layers, W40).
-        spill = &key ("SPILL", Icon::Faders);
-        spill->setEnabled (false);
+        // SPILL puts the strip's sends on the left fader section (SELECTED CH SENDS); again ends it.
+        spill = &key ("SPILL", Icon::Spill);
+        spill->isOn = [this] { return isSpilling (ctx, { LayerSet::Spill::Kind::Sends, 0, state::StripRef::of (strip) }); };
+        spill->onClick = [this] { toggleSpill (ctx, std::nullopt, { LayerSet::Spill::Kind::Sends, 0, state::StripRef::of (strip) }); };
         if (strip.getKind() != StripKind::Main && strip.getKind() != StripKind::Matrix)
         {
             tapMenu = &key ({}, Icon::ChevronDown);
@@ -3662,19 +3669,33 @@ public:
         if (copy && sourceTile.contains (pos))
         {
             // Choose another source.
-            juce::PopupMenu m;
+            juce::StringArray items;
+            std::vector<state::StripRef> refs;
             for (int k = 0; k < kNumStripKinds; ++k)
-            {
-                juce::PopupMenu sub;
                 for (auto& strip : ctx.engine.getStrips (static_cast<StripKind> (k)))
                 {
-                    const auto ref = state::StripRef::of (*strip);
-                    sub.addItem (describeStrip (*strip), true, ref == source, [this, ref] { source = ref; repaint(); });
+                    refs.push_back (state::StripRef::of (*strip));
+                    items.add (describeStrip (*strip).toUpperCase());
                 }
-                static const char* names[] = { "CHANNEL", "AUX", "BUS", "MAIN", "MATRIX" };
-                m.addSubMenu (names[k], sub);
+            const auto it = std::find (refs.begin(), refs.end(), source);
+            popups::ListOptions options;
+            options.columns = 4;
+            options.caption = "COPY SOURCE";
+            if (sourceAnchor.getParentComponent() == nullptr)
+            {
+                sourceAnchor.setInterceptsMouseClicks (false, false);
+                addChildComponent (sourceAnchor);
             }
-            m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (sourceTile)));
+            sourceAnchor.setBounds (sourceTile);
+            juce::Component::SafePointer<InitCopyScreen> safe (this);
+            popups::chooseFrom (sourceAnchor, items, it != refs.end() ? (int) (it - refs.begin()) : -1, [safe, refs] (int i)
+            {
+                if (safe != nullptr && juce::isPositiveAndBelow (i, (int) refs.size()))
+                {
+                    safe->source = refs[(size_t) i];
+                    safe->repaint();
+                }
+            }, options);
             return;
         }
         for (auto& [area, ref] : tiles)
@@ -3739,6 +3760,7 @@ private:
     juce::OwnedArray<juce::TextButton> tabs;
     juce::Rectangle<int> scopePanel, destPanel, sourceTile, gridArea;
     std::vector<std::pair<juce::Rectangle<int>, state::StripRef>> tiles;
+    juce::Component sourceAnchor; // where the source list opens (not shown)
 };
 
 //==============================================================================

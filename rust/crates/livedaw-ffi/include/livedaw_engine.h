@@ -72,8 +72,9 @@ enum StripKindId : int32_t
     kMatrix = 4
 };
 
-/// Fader reference kind for DCAs (strip kinds are 0..4).
+/// Fader reference kinds beyond the strip kinds (0..4): DCAs and FX parameters.
 constexpr int32_t kFaderDca = 5;
+constexpr int32_t kFaderFxParam = 6;
 
 /// Tap points (index into list 1). WING names: INPUT, FILTER, TAP 3-5, PRE FDR,
 /// POST FDR, POST PROC. Only input channels choose theirs; aux, buses, mains and
@@ -501,16 +502,51 @@ struct StripRefC
     int32_t kind, id;
 };
 
-/// A fader on the surface: kind 0..4 = strip kinds, kFaderDca = DCA (id 0..15).
+/// A fader on the surface: kind 0..4 = a strip, or with toKind 2..4 the send
+/// level from it to bus / main / matrix `toId`; kFaderDca = DCA (id 0..15);
+/// kFaderFxParam = FX slot `id`'s parameter `toId`. toKind is -1 when unused.
 struct FaderRefC
 {
     int32_t kind, id;
+    int32_t toKind = -1, toId = 0;
+};
+
+/// A spill: kind 0 = DCA `index`, 1 = the sources sending to bus slot `index`,
+/// 2 = FX slot `index`'s parameters, 3 = automix group `index` (0 X, 1 Y),
+/// 4 = the sends of `strip`.
+struct SpillC
+{
+    int32_t kind, index;
+    StripRefC strip;
+};
+
+/// A LIBRARY preset file's header: kind 0 = not a preset, 1 = FX, 2 = channel;
+/// `name` and `detail` (the FX device or the strip kind) are the caller's to free.
+struct PresetInfoC
+{
+    int32_t kind;
+    uint32_t scope;
+    int32_t stripKind;
+    LdString* name;
+    LdString* detail;
 };
 
 struct ApplyResultC
 {
     int32_t stripsApplied, stripsSkippedSafe, stripsMissing;
     LdString* warnings; // '\n'-separated, or null; caller frees
+};
+
+/// A recall scope: strip sections, strips (allStrips: every strip), DCAs, mute
+/// groups and FX slots (bit n = item n+1) and the console-wide settings. Going
+/// in, `strips` points at `numStrips` refs; coming out it is null and the
+/// strips go to a separate buffer.
+struct ScopeC
+{
+    uint32_t sections, dcas, muteGroups, fx;
+    bool console, allStrips;
+    const StripRefC* strips;
+    int32_t numStrips;
 };
 
 /** Writes the <PLUGIN> description XML and base64 state of FX slot `slot`; false if empty. */
@@ -739,6 +775,44 @@ extern "C"
     void ld_snippet_set_fire_with_scene (Show*, int32_t scene, int32_t snippet, bool fire);
     void ld_snippet_set_strips (Show*, int32_t scene, int32_t snippet, const StripRefC* strips, int32_t n);
 
+    // Scopes, GLOBAL safes, PARTIAL LOAD / UPDATE, RESTORE, snippet REC
+    /** A scene's recall scope; returns the strip count (strips copied up to `capacity`). */
+    int32_t ld_scene_get_scope (Show*, int32_t scene, ScopeC* out, StripRefC* strips, int32_t capacity);
+    void ld_scene_set_recall_scope (Show*, int32_t scene, const ScopeC*);
+    /** PARTIAL UPDATE: stores only `scope` into the scene. */
+    void ld_show_store_scene_partial (Show*, const Engine*, int32_t index, const ScopeC* scope);
+    /** PARTIAL LOAD (`scope`; ignoreSafes = NO GLOB) or RESTORE (scope null: all of it, safes included). */
+    void ld_show_recall_scene_with (Show*, const Engine*, int32_t index, const ScopeC* scope, bool ignoreSafes, ApplyResultC* out);
+    int32_t ld_show_partial_scope (Show*, ScopeC* out, StripRefC* strips, int32_t capacity);
+    /** GLOBAL safes beyond strips (no strips; the strips' own recall safe stays on them). */
+    void ld_show_global_safe (Show*, ScopeC* out);
+    void ld_show_set_global_safe (Show*, const ScopeC*);
+    int32_t ld_snippet_get_scope (Show*, int32_t scene, int32_t snippet, ScopeC* out, StripRefC* strips, int32_t capacity);
+    int32_t ld_snippet_parameter_count (Show*, int32_t scene, int32_t snippet);
+    int32_t ld_show_add_snippet_scoped (Show*, const Engine*, int32_t scene, const char* name, size_t len, const ScopeC* scope);
+    /** ADD ITEMS (add) or REMOVE ITEMS; no strips = every strip of the snippet. */
+    void ld_show_snippet_items (Show*, const Engine*, int32_t scene, int32_t snippet, bool add, const ScopeC* items);
+    /** PARTIAL LOAD of a snippet (limit null: all of it). */
+    void ld_show_recall_snippet_with (Show*, const Engine*, int32_t scene, int32_t snippet, const ScopeC* limit, ApplyResultC* out);
+    /** op: 0 REC, 1 STOP (returns the changed parameters), 2 CLEAR, 3 count, 4 recording?, 5 recorded and not saved? */
+    int32_t ld_show_snippet_rec (Show*, const Engine*, int32_t op);
+    /** SAVE after STOP: a snippet of the recorded parameters within `focus` (null: all); -1 if none. */
+    int32_t ld_show_add_recorded_snippet (Show*, const Engine*, int32_t scene, const char* name, size_t len, const ScopeC* focus);
+
+    // LIBRARY presets: FX (.lfx) and channel (.lchn) files
+    bool ld_preset_info (const char* path, size_t len, PresetInfoC* out);
+    bool ld_show_save_fx_preset (Show*, const Engine*, int32_t slot, const char* path, size_t len, const char* name, size_t nameLen,
+                                 LdString** message);
+    /** Warnings (a plugin that isn't loaded there, a premium device in 9-16) in `message`. */
+    bool ld_show_load_fx_preset (Show*, const Engine*, int32_t slot, const char* path, size_t len, LdString** message);
+    bool ld_show_save_channel_preset (Show*, const Engine*, StripRefC strip, uint32_t scope, const char* path, size_t len,
+                                      const char* name, size_t nameLen, LdString** message);
+    /** useScope false: the preset's own scope. */
+    bool ld_show_load_channel_preset (Show*, const Engine*, StripRefC strip, const char* path, size_t len, bool useScope,
+                                      uint32_t scope, LdString** message);
+    /** UPDATE SCOPE of a channel preset file. */
+    bool ld_preset_set_scope (const char* path, size_t len, uint32_t scope);
+
     bool ld_show_is_fading (Show*);
     void ld_show_cancel_fade (Show*);
     bool ld_show_tick (Show*);
@@ -764,6 +838,13 @@ extern "C"
     int32_t ld_layers_effective_width (LayerSet*, int32_t section);
     LdString* ld_layers_selected (LayerSet*, int32_t section);
     void ld_layers_set_selected (LayerSet*, int32_t section, const char* utf8, size_t len);
+    int32_t ld_layers_offset (LayerSet*, int32_t section);
+    void ld_layers_set_offset (LayerSet*, int32_t section, int32_t offset);
+    /** The section a spill from `origin` goes to (origin -1: none). */
+    int32_t ld_layers_spill_target (int32_t origin);
+    void ld_layers_start_spill (LayerSet*, int32_t section, SpillC spill);
+    bool ld_layers_end_spill (LayerSet*, int32_t section);
+    bool ld_layers_spill (LayerSet*, int32_t section, SpillC* out);
     LdString* ld_layers_find_default_containing (LayerSet*, const Engine*, int32_t section, FaderRefC ref);
     /** which: 0 default, 1 default + user, 2 user only, 3 the layer `id` (or the section's first). */
     LayerList* ld_layers_list (LayerSet*, const Engine*, int32_t section, int32_t which, const char* id, size_t idLen);

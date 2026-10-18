@@ -32,8 +32,9 @@ void drawLightBar (juce::Graphics&, juce::Rectangle<float> bar, juce::Colour, bo
 /** One fader strip of a WING fader section, top to bottom: the colour light
     bar and scribble strip, SELECT, SOLO, the meter block (DYN LED, a stereo
     6-segment input meter, GATE LED), MUTE and the fader with its printed scale.
-    It controls a strip, a DCA, or (Sends on Fader) a send level between the
-    selected strip and this one: a bus, main or matrix send. */
+    It controls a strip, a DCA, a send level (Sends on Fader between the
+    selected strip and this one; a send fader of a layer or spill) or an FX
+    slot's parameter (FX SPILL). */
 class FaderStrip final : public juce::Component, private juce::Timer
 {
 public:
@@ -75,7 +76,19 @@ private:
         juce::String tag; // "> BUS 3", "> MAIN 1", "< CH 5"
     };
 
+    /** An FX slot's parameter on this fader: the fader travel is the
+        parameter's knob travel, MUTE sets its default (0 dB for EQ gains). */
+    struct ParamTarget
+    {
+        std::atomic<float>* value = nullptr;
+        int slot = 0, model = 0, index = 0;
+    };
+
     void timerCallback() override;
+    /** The fader position (dB travel) for the current target's value, and back. */
+    double faderPosition() const;
+    void writeFader (double position);
+    bool atDefault() const;
     void bindControls();
     void pressSelect();
     /** Moves the fader towards its parameter at the FADER SPEED. */
@@ -89,6 +102,7 @@ private:
     Strip* strip = nullptr;
     int dca = -1;
     std::optional<SendTarget> send;
+    std::optional<ParamTarget> fxp;
 
     juce::Slider fader;
     SurfaceKey selectKey { "SELECT" }, soloKey { "SOLO" }, muteKey { "MUTE" };

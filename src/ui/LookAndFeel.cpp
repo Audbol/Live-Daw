@@ -421,7 +421,8 @@ void drawSectionBox (juce::Graphics& g, juce::Rectangle<int> area, const juce::S
         g.fillRect (header);
         g.setColour (Colours::caption);
         g.setFont (wingFontPx (juce::jmin (TypeScale::header * getWingScreenHeight(), header.getHeight() * 0.42f)));
-        g.drawFittedText (title, header.reduced (28.0f, 0.0f).toNearestInt(), juce::Justification::centred, 1);
+        // Keep the title centred, clear of the chevron only when there is one.
+        g.drawFittedText (title, header.reduced (chevron ? 28.0f : 4.0f, 0.0f).toNearestInt(), juce::Justification::centred, 1);
         if (chevron)
         {
             const auto c = juce::Point<float> (header.getRight() - 14.0f, header.getCentreY());

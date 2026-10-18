@@ -25,6 +25,7 @@ namespace
     constexpr const char* kBitsKey = "usb.recBits";
     constexpr const char* kTapKey = "usb.tap";
     constexpr const char* kFullSpeedKey = "usb.hostSpeedFs";
+    constexpr const char* kLibraryUsbKey = "library.usbFolder"; // LIBRARY's INT / USB browser
 
     juce::Result failed (ld::LdString* error, const char* fallback)
     {
@@ -439,7 +440,10 @@ void UsbRecorder::setRepeat (bool repeat) { ld::ld_usb_queue_set_repeat (engine,
 //==============================================================================
 void UsbRecorder::loadSettings (juce::PropertiesFile& settings)
 {
-    const auto stored = settings.getValue (kStorageKey);
+    // One USB stick: without a folder of its own, the LIBRARY's USB folder (if chosen).
+    auto stored = settings.getValue (kStorageKey);
+    if (stored.isEmpty() && juce::File::isAbsolutePath (settings.getValue (kLibraryUsbKey)) && juce::File (settings.getValue (kLibraryUsbKey)).isDirectory())
+        stored = settings.getValue (kLibraryUsbKey);
     storage = stored.isNotEmpty() && juce::File::isAbsolutePath (stored) ? juce::File (stored) : defaultStorageFolder();
     storage.createDirectory();
     const auto rec = settings.getValue (kRecPathKey);

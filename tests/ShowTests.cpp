@@ -522,6 +522,87 @@ public:
             expect (e2.applyStartupMainMute());
             expect (e2.getMain (3).params.mute.load());
         }
+
+        beginTest ("Scopes, global safes, partial load / update, restore and snippet REC");
+        {
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            engine.setNumChannels (2);
+            auto& a = *engine.getChannels()[0];
+            auto& b = *engine.getChannels()[1];
+            const auto refA = state::StripRef::of (a), refB = state::StripRef::of (b);
+            show.addScene ("A");
+
+            // A per-strip scene scope with DCA 2 only.
+            auto scope = show.getSceneRecallScope (0);
+            expect (scope.allStrips && scope.dcas == state::Scope::kAllDcas);
+            scope.allStrips = false;
+            scope.strips = { refA };
+            scope.dcas = 0b10;
+            show.setSceneRecallScope (0, scope);
+            expect (show.getSceneRecallScope (0) == scope);
+            a.params.faderDb = -10.0f;
+            b.params.faderDb = -10.0f;
+            engine.getDca (0).faderDb = -4.0f;
+            engine.getDca (1).faderDb = -4.0f;
+            show.recallScene (0);
+            expectEquals (a.params.faderDb.load(), 0.0f);
+            expectEquals (b.params.faderDb.load(), -10.0f);
+            expectEquals (engine.getDca (0).faderDb.load(), -4.0f);
+            expectEquals (engine.getDca (1).faderDb.load(), 0.0f);
+
+            // GLOBAL safes: DCA 2; RESTORE ignores them and the scope.
+            auto safe = show.getGlobalSafe();
+            expect (! show.hasGlobalSafes());
+            safe.dcas = 0b10;
+            show.setGlobalSafe (safe);
+            expect (show.hasGlobalSafes());
+            engine.getDca (1).faderDb = -4.0f;
+            show.recallScene (0);
+            expectEquals (engine.getDca (1).faderDb.load(), -4.0f);
+            show.restoreScene (0);
+            expectEquals (engine.getDca (1).faderDb.load(), 0.0f);
+            expectEquals (b.params.faderDb.load(), 0.0f);
+
+            // PARTIAL UPDATE / LOAD keep their scope.
+            b.params.faderDb = -6.0f;
+            const auto onlyB = state::Scope::only (state::Fader, { refB });
+            show.storeScenePartial (0, onlyB);
+            expect (show.getPartialScope() == onlyB);
+            b.params.faderDb = -30.0f;
+            b.params.recallSafe = true;
+            show.recallScenePartial (0, onlyB, false);
+            expectEquals (b.params.faderDb.load(), -30.0f);
+            show.recallScenePartial (0, onlyB, true);
+            expectEquals (b.params.faderDb.load(), -6.0f);
+
+            // Snippet REC / STOP / SAVE.
+            show.startSnippetRecording();
+            expect (show.isRecordingSnippet());
+            a.params.faderDb = -3.0f;
+            expectEquals (show.getRecordedParameterCount(), 1);
+            expectEquals (show.stopSnippetRecording(), 1);
+            expect (show.hasRecordedSnippet());
+            const int sn = show.addRecordedSnippet (0, "Rec", nullptr);
+            expectEquals (sn, 0);
+            const auto snippet = show.getSnippet (0, sn);
+            expect (snippet.has_value() && snippet->parameterCount == 1);
+            expect (snippet->strips.size() == 1 && snippet->strips[0] == refA);
+            a.params.faderDb = 0.0f;
+            show.recallSnippet (0, sn);
+            expectEquals (a.params.faderDb.load(), -3.0f);
+
+            // ADD ITEMS: DCA 1 with the faders.
+            engine.getDca (0).faderDb = -8.0f;
+            auto items = state::Scope::only (state::Fader, {});
+            items.dcas = 1;
+            show.addSnippetItems (0, sn, items);
+            expect (show.getSnippet (0, sn)->scope.dcas == 1u);
+            engine.getDca (0).faderDb = 0.0f;
+            show.recallSnippet (0, sn);
+            expectEquals (engine.getDca (0).faderDb.load(), -8.0f);
+        }
     }
 };
 

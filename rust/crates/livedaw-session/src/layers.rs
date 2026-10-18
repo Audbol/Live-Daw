@@ -11,34 +11,54 @@
 //!
 //! A layer longer than its section stays one layer: the surface scrolls it with
 //! the shift keys. Bigger consoles get more input keys on the left. `USER 1` and
-//! `USER 2` show the first two user layers, which hold any faders (strips and
-//! DCAs) in any order and are saved with the show. A section can also fit as
-//! many faders as its space allows (width "Auto"), for big channel counts on
-//! wide screens.
+//! `USER 2` show the first two user layers, which hold any faders (strips,
+//! DCAs, send levels and FX parameters) in any order and are saved with the
+//! show. A section can also fit as many faders as its space allows (width
+//! "Auto"), for big channel counts on wide screens.
+//!
+//! **Spill** puts a computed layer on a section for a while: a DCA's members,
+//! the sources sending to a bus, an FX slot's parameters, an automix group's
+//! channels or a strip's sends. Spill from the right section goes to the
+//! center section, everything else to the left (firmware 3.0). Ending the
+//! spill brings back the layer and the scroll position the section had.
 
 use crate::refs::StripRef;
 use crate::xml::{parse_int_prefix, Element};
-use livedaw_engine::params::NUM_DCAS;
+use livedaw_dsp::wing::{ParamKind, FX_MODELS};
+use livedaw_engine::params::{FX_EXT, NUM_DCAS};
 use livedaw_engine::{Engine, StripKind};
 use std::collections::hash_map::RandomState;
 use std::fmt;
 use std::hash::{BuildHasher, Hasher};
+use std::sync::atomic::Ordering;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// A fader on the surface: a strip or a DCA ("dca:0".."dca:15").
+/// A fader on the surface: a strip ("ch:3"), a DCA ("dca:0".."dca:15"), a
+/// send level from a strip to a bus, main or matrix ("send:ch:3>bus:0") or a
+/// parameter of an FX slot's device ("fxp:2.5": slot 3, parameter 6).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FaderRef {
     Strip(StripRef),
     Dca(i32),
+    Send { from: StripRef, to: StripRef },
+    FxParam { slot: i32, param: i32 },
 }
 
 impl FaderRef {
     pub fn parse(s: &str) -> Self {
-        match s.strip_prefix("dca:") {
-            Some(i) => FaderRef::Dca(parse_int_prefix(i)),
-            None => FaderRef::Strip(StripRef::parse(s)),
+        if let Some(i) = s.strip_prefix("dca:") {
+            return FaderRef::Dca(parse_int_prefix(i));
         }
+        if let Some(rest) = s.strip_prefix("send:") {
+            let (from, to) = rest.split_once('>').unwrap_or((rest, ""));
+            return FaderRef::Send { from: StripRef::parse(from), to: StripRef::parse(to) };
+        }
+        if let Some(rest) = s.strip_prefix("fxp:") {
+            let (slot, param) = rest.split_once('.').unwrap_or((rest, "0"));
+            return FaderRef::FxParam { slot: parse_int_prefix(slot), param: parse_int_prefix(param) };
+        }
+        FaderRef::Strip(StripRef::parse(s))
     }
 }
 
@@ -47,6 +67,8 @@ impl fmt::Display for FaderRef {
         match self {
             FaderRef::Strip(r) => r.fmt(f),
             FaderRef::Dca(i) => write!(f, "dca:{i}"),
+            FaderRef::Send { from, to } => write!(f, "send:{from}>{to}"),
+            FaderRef::FxParam { slot, param } => write!(f, "fxp:{slot}.{param}"),
         }
     }
 }
@@ -91,6 +113,135 @@ pub const INPUT_KEY_CHANNELS: usize = 12;
 /// The ids of the USER 1 and USER 2 keys.
 pub const USER_KEYS: [&str; 2] = ["user-1", "user-2"];
 
+/// What a section spills (see the module docs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpillKind {
+    /// The strips assigned to a DCA (0-based).
+    Dca(i32),
+    /// The send levels of the strips sending to a bus (its slot), as faders.
+    Bus(i32),
+    /// The parameters of an FX slot's device (0-based slot).
+    Fx(i32),
+    /// The channels of automix group X (0) or Y (1).
+    Automix(i32),
+    /// A strip's sends to the buses, mains and matrices (SELECTED CH SENDS).
+    Sends(StripRef),
+}
+
+/// The layer id of a spill.
+pub const SPILL_ID: &str = "spill";
+
+#[derive(Debug, Clone, PartialEq)]
+struct Spill {
+    kind: SpillKind,
+    /// What the section showed before (brought back when the spill ends).
+    layer: String,
+    offset: i32,
+}
+
+/// The section a spill from `origin` goes to: the center for the right
+/// section (firmware 3.0), the left for everything else (DCA SPILL, the
+/// screens' SPILL keys, custom controls).
+pub fn spill_target(origin: Option<usize>) -> usize {
+    if origin == Some(RIGHT) {
+        CENTER
+    } else {
+        LEFT
+    }
+}
+
+fn bus_can_send(from: &StripRef, to_slot: i32) -> bool {
+    match from.kind {
+        StripKind::Channel | StripKind::Aux => true,
+        // Buses 9 and up feed buses 1-8.
+        StripKind::Bus => from.id >= 8 && (0..8).contains(&to_slot),
+        _ => false,
+    }
+}
+
+/// The faders a spill shows, from the console as it is now.
+pub fn spill_faders(engine: &Engine, kind: &SpillKind) -> Vec<FaderRef> {
+    let strips = || StripKind::ALL.into_iter().flat_map(|k| engine.strips(k));
+    match *kind {
+        SpillKind::Dca(i) if (0..NUM_DCAS as i32).contains(&i) => strips()
+            .filter(|s| s.params.dca_mask.load(Ordering::Relaxed) & (1 << i) != 0)
+            .map(|s| FaderRef::Strip(StripRef::of(&s)))
+            .collect(),
+        SpillKind::Automix(group) => engine
+            .strips(StripKind::Channel)
+            .iter()
+            .filter(|s| s.params.post_insert.mode.load(Ordering::Relaxed) == group + 1)
+            .map(|s| FaderRef::Strip(StripRef::of(s)))
+            .collect(),
+        SpillKind::Bus(slot) => {
+            let to = StripRef::new(StripKind::Bus, slot);
+            if engine.bus_in_slot(slot).is_none() {
+                return Vec::new();
+            }
+            strips()
+                .filter(|s| {
+                    let from = StripRef::of(s);
+                    bus_can_send(&from, slot)
+                        && usize::try_from(slot)
+                            .ok()
+                            .and_then(|i| s.sends.find(i))
+                            .is_some_and(|p| p.enabled.load(Ordering::Relaxed))
+                })
+                .map(|s| FaderRef::Send { from: StripRef::of(&s), to })
+                .collect()
+        }
+        SpillKind::Sends(from) => {
+            let mut out = Vec::new();
+            if from.kind.is_input() || from.kind == StripKind::Bus {
+                for b in engine.strips(StripKind::Bus) {
+                    if bus_can_send(&from, b.id()) && !(from.kind == StripKind::Bus && from.id == b.id()) {
+                        out.push(FaderRef::Send { from, to: StripRef::of(&b) });
+                    }
+                }
+                for m in engine.strips(StripKind::Main) {
+                    out.push(FaderRef::Send { from, to: StripRef::of(&m) });
+                }
+            }
+            if from.kind != StripKind::Matrix {
+                for m in engine.strips(StripKind::Matrix) {
+                    out.push(FaderRef::Send { from, to: StripRef::of(&m) });
+                }
+            }
+            out
+        }
+        SpillKind::Fx(slot) => {
+            let Some(p) = usize::try_from(slot).ok().and_then(|i| engine.controls.fx.get(i)) else { return Vec::new() };
+            let model = p.model_index();
+            if model == FX_EXT {
+                return Vec::new();
+            }
+            FX_MODELS
+                .get(model)
+                .map(|m| {
+                    m.params
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, ps)| matches!(ps.kind, ParamKind::Linear | ParamKind::Log))
+                        .map(|(i, _)| FaderRef::FxParam { slot, param: i as i32 })
+                        .collect()
+                })
+                .unwrap_or_default()
+        }
+        SpillKind::Dca(_) => Vec::new(),
+    }
+}
+
+/// The spill layer's name ("DCA 3 SPILL", "FX 2 SPILL", ...).
+fn spill_name(kind: &SpillKind) -> String {
+    match kind {
+        SpillKind::Dca(i) => format!("DCA {} SPILL", i + 1),
+        SpillKind::Bus(i) => format!("BUS {} SPILL", i + 1),
+        SpillKind::Fx(i) => format!("FX {} SPILL", i + 1),
+        SpillKind::Automix(g) => format!("AUTO-{} SPILL", if *g == 0 { 'X' } else { 'Y' }),
+        SpillKind::Sends(r) => format!("{} SENDS", r.to_string().to_uppercase().replace(':', " ")),
+    }
+}
+
 /// A default layer key edited on VIEW > CONFIG: its faders replace the generated ones.
 #[derive(Debug, Clone, PartialEq)]
 struct Override {
@@ -106,6 +257,10 @@ pub struct LayerSet {
     user_layers: Vec<Layer>,
     selected: [String; NUM_SECTIONS],
     overrides: Vec<Override>,
+    /// The first fader each section shows (scroll position; not saved).
+    offsets: [i32; NUM_SECTIONS],
+    /// A section's spill (not saved).
+    spills: [Option<Spill>; NUM_SECTIONS],
 }
 
 impl Default for LayerSet {
@@ -116,6 +271,8 @@ impl Default for LayerSet {
             user_layers: Vec::new(),
             selected: DEFAULT_SELECTION.map(String::from),
             overrides: Vec::new(),
+            offsets: [0; NUM_SECTIONS],
+            spills: [None, None, None],
         }
     }
 }
@@ -321,10 +478,21 @@ impl LayerSet {
     /// Finds a layer by id. Ids from older shows map to the key that holds those
     /// faders now; anything else falls back to the section's first layer.
     pub fn find_layer(&self, engine: &Engine, section: usize, id: &str) -> Layer {
+        if id == SPILL_ID {
+            if let Some(layer) = self.spill_layer(engine, section) {
+                return layer;
+            }
+        }
         self.find_layer_for(section, &ConsoleRefs::of(engine), id)
     }
 
     pub fn find_layer_for(&self, section: usize, console: &ConsoleRefs, id: &str) -> Layer {
+        if id == SPILL_ID {
+            // Without an engine the spill has no faders; find_layer fills them in.
+            if let Some(kind) = self.spill(section) {
+                return Layer { id: SPILL_ID.into(), name: spill_name(&kind), faders: Vec::new(), user: false };
+            }
+        }
         let mut layers = self.default_layers_for(section, console);
         layers.extend(self.user_layers.iter().cloned());
         let index = layers
@@ -335,8 +503,11 @@ impl LayerSet {
         layers.swap_remove(index)
     }
 
-    /// The layer a section shows now.
+    /// The layer a section shows now (its spill while it spills).
     pub fn selected_layer(&self, engine: &Engine, section: usize) -> Layer {
+        if let Some(layer) = self.spill_layer(engine, section) {
+            return layer;
+        }
         self.find_layer(engine, section, self.selected(section))
     }
 
@@ -352,10 +523,79 @@ impl LayerSet {
         self.selected.get(section).map_or(DEFAULT_SELECTION[0], String::as_str)
     }
 
-    pub fn select(&mut self, section: usize, id: &str) {
-        if let Some(s) = self.selected.get_mut(section) {
-            *s = id.to_owned();
+    /// The layer id a section shows: [`SPILL_ID`] while it spills, else its selected key.
+    pub fn shown(&self, section: usize) -> &str {
+        if self.spill(section).is_some() {
+            SPILL_ID
+        } else {
+            self.selected(section)
         }
+    }
+
+    /// Selects a layer key; a spill on the section ends (without going back).
+    pub fn select(&mut self, section: usize, id: &str) {
+        if id == SPILL_ID {
+            return;
+        }
+        let Some(s) = self.selected.get_mut(section) else { return };
+        let spilling = self.spills[section].take().is_some();
+        if *s != id || spilling {
+            // Another layer starts at its first fader.
+            self.offsets[section] = 0;
+        }
+        *s = id.to_owned();
+    }
+
+    // ---- scroll positions and spill ------------------------------------------------
+
+    /// The first fader a section shows.
+    pub fn offset(&self, section: usize) -> i32 {
+        self.offsets.get(section).copied().unwrap_or(0)
+    }
+
+    pub fn set_offset(&mut self, section: usize, offset: i32) {
+        if let Some(o) = self.offsets.get_mut(section) {
+            *o = offset.max(0);
+        }
+    }
+
+    /// Spills `kind` onto `section` (see [`spill_target`]). The layer and
+    /// scroll position before the first spill come back when it ends.
+    pub fn start_spill(&mut self, section: usize, kind: SpillKind) {
+        if section >= NUM_SECTIONS {
+            return;
+        }
+        let (layer, offset) = match &self.spills[section] {
+            Some(previous) => (previous.layer.clone(), previous.offset),
+            None => (self.selected(section).to_owned(), self.offset(section)),
+        };
+        self.spills[section] = Some(Spill { kind, layer, offset });
+        self.offsets[section] = 0;
+    }
+
+    /// Ends a section's spill: its layer and scroll position come back.
+    /// False if it wasn't spilling.
+    pub fn end_spill(&mut self, section: usize) -> bool {
+        let Some(spill) = self.spills.get_mut(section).and_then(Option::take) else { return false };
+        self.selected[section] = spill.layer;
+        self.offsets[section] = spill.offset;
+        true
+    }
+
+    /// What a section spills, if it does.
+    pub fn spill(&self, section: usize) -> Option<SpillKind> {
+        self.spills.get(section).and_then(|s| s.as_ref()).map(|s| s.kind)
+    }
+
+    /// The section spilling `kind`, if any.
+    pub fn section_spilling(&self, kind: &SpillKind) -> Option<usize> {
+        (0..NUM_SECTIONS).find(|&s| self.spill(s).as_ref() == Some(kind))
+    }
+
+    /// The spill layer a section shows, if it spills.
+    pub fn spill_layer(&self, engine: &Engine, section: usize) -> Option<Layer> {
+        let kind = self.spill(section)?;
+        Some(Layer { id: SPILL_ID.into(), name: spill_name(&kind), faders: spill_faders(engine, &kind), user: false })
     }
 
     // ---- user layers ---------------------------------------------------------------
@@ -698,5 +938,48 @@ mod tests {
         assert_eq!(loaded.user_layers().len(), 1);
         assert_eq!(FaderRef::parse("dca:15"), FaderRef::Dca(15));
         assert_eq!(faders_from_string("ch:3, dca:1"), vec![ch(3), FaderRef::Dca(1)]);
+    }
+
+    #[test]
+    fn send_and_fx_parameter_faders_round_trip() {
+        let send = FaderRef::Send { from: StripRef::new(StripKind::Channel, 3), to: StripRef::new(StripKind::Bus, 1) };
+        let fx = FaderRef::FxParam { slot: 2, param: 5 };
+        assert_eq!(send.to_string(), "send:ch:3>bus:1");
+        assert_eq!(fx.to_string(), "fxp:2.5");
+        let faders = vec![ch(1), send, fx, FaderRef::Dca(4)];
+        assert_eq!(faders_from_string(&faders_to_string(&faders)), faders);
+
+        let mut set = LayerSet::default();
+        let id = set.add_user_layer("Mix", faders.clone());
+        let mut loaded = LayerSet::default();
+        loaded.from_xml(&set.to_xml());
+        assert_eq!(loaded.user_layer(&id).map(|l| l.faders.clone()), Some(faders));
+    }
+
+    #[test]
+    fn spill_targets_and_restore() {
+        assert_eq!(spill_target(Some(RIGHT)), CENTER);
+        assert_eq!(spill_target(Some(CENTER)), LEFT);
+        assert_eq!(spill_target(None), LEFT);
+
+        let mut set = LayerSet::default();
+        set.select(LEFT, "in-3");
+        set.set_offset(LEFT, 8);
+        set.start_spill(LEFT, SpillKind::Dca(2));
+        assert_eq!((set.spill(LEFT), set.offset(LEFT)), (Some(SpillKind::Dca(2)), 0));
+        assert_eq!(set.section_spilling(&SpillKind::Dca(2)), Some(LEFT));
+        // A second spill keeps the layer to go back to.
+        set.set_offset(LEFT, 4);
+        set.start_spill(LEFT, SpillKind::Fx(0));
+        assert!(set.end_spill(LEFT));
+        assert_eq!((set.selected(LEFT), set.offset(LEFT), set.spill(LEFT)), ("in-3", 8, None));
+        assert!(!set.end_spill(LEFT));
+
+        // A layer key ends the spill without going back.
+        set.start_spill(CENTER, SpillKind::Automix(1));
+        set.select(CENTER, "out-1");
+        assert_eq!((set.spill(CENTER), set.selected(CENTER)), (None, "out-1"));
+        set.select(CENTER, SPILL_ID);
+        assert_eq!(set.selected(CENTER), "out-1");
     }
 }
