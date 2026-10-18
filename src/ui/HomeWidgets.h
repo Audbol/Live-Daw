@@ -387,6 +387,8 @@ public:
     /** A colour per key (MAIN blue | ALT orange); default: the one colour. */
     std::function<juce::Colour (int)> colourAt;
     bool twoLines = false;
+    /** Keys stacked top to bottom (INPUT SELECT's INDIVIDUAL | GLOBAL, D16). */
+    bool vertical = false;
 
     juce::Colour onColourAt (int i) const { return colourAt != nullptr ? colourAt (i) : onColour; }
 
@@ -402,9 +404,11 @@ public:
         shown = current;
         auto r = getLocalBounds().toFloat();
         const float w = r.getWidth() / (float) juce::jmax (1, names.size());
+        const float h = r.getHeight() / (float) juce::jmax (1, names.size());
         for (int i = 0; i < names.size(); ++i)
         {
-            auto k = juce::Rectangle<float> (r.getX() + w * (float) i, r.getY(), w, r.getHeight()).reduced (1.0f, 0.0f);
+            auto k = vertical ? juce::Rectangle<float> (r.getX(), r.getY() + h * (float) i, r.getWidth(), h).reduced (0.0f, 1.0f)
+                              : juce::Rectangle<float> (r.getX() + w * (float) i, r.getY(), w, r.getHeight()).reduced (1.0f, 0.0f);
             const bool on = i == current;
             const bool enabled = isEnabled() && (isEnabledAt == nullptr || isEnabledAt (i));
             auto fill = on ? onColourAt (i) : colours::keyOff;
@@ -421,7 +425,8 @@ public:
     {
         if (names.isEmpty() || ! isEnabled() || ! getLocalBounds().contains (e.getPosition()) || setter == nullptr)
             return;
-        const int i = juce::jlimit (0, names.size() - 1, e.x * names.size() / juce::jmax (1, getWidth()));
+        const int i = juce::jlimit (0, names.size() - 1, vertical ? e.y * names.size() / juce::jmax (1, getHeight())
+                                                                  : e.x * names.size() / juce::jmax (1, getWidth()));
         if (isEnabledAt == nullptr || isEnabledAt (i))
             setter (i);
         repaint();
@@ -846,6 +851,11 @@ public:
     explicit KnobBox (KnobBinding b) : binding (std::move (b)) { startTimerHz (12); }
 
     const KnobBinding& getBinding() const noexcept { return binding; }
+    void setBinding (KnobBinding b)
+    {
+        binding = std::move (b);
+        repaint();
+    }
     juce::Colour ringColour = colours::ink;  // TAP WIDTH: green
 
     void paint (juce::Graphics& g) override

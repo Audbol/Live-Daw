@@ -55,7 +55,7 @@ namespace
                 g.setColour (on ? Dark::choice : Dark::key);
                 g.fillRect (k);
                 g.setColour (on ? Dark::choiceInk : Dark::text);
-                g.setFont (juce::FontOptions (juce::jlimit (10.0f, 18.0f, juce::jmin (k.getHeight() * 0.5f, k.getWidth() * 0.4f)), juce::Font::bold));
+                g.setFont (wingFontFit (TypeScale::body, juce::jmin (k.getHeight() * 0.5f, k.getWidth() * 0.4f)));
                 g.drawFittedText (names[i], k.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
             }
         }
@@ -121,10 +121,10 @@ namespace
 
             auto t = r.reduced (2.0f, 3.0f);
             g.setColour (Dark::text.withAlpha (0.85f * alpha));
-            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 13.0f, t.getHeight() * 0.3f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::caption, t.getHeight() * 0.3f));
             g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 0.4f).toNearestInt(), juce::Justification::bottomLeft, 1);
             g.setColour (Dark::text.withAlpha (alpha));
-            g.setFont (juce::FontOptions (juce::jlimit (12.0f, 24.0f, t.getHeight() * 0.8f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::value, t.getHeight() * 0.8f));
             g.drawFittedText (juce::String (value()) + " %", t.toNearestInt(), juce::Justification::centredLeft, 1);
         }
 
@@ -189,9 +189,9 @@ namespace
             for (int i = -1; i <= 1; ++i)
                 g.fillEllipse (juce::Rectangle<float> (4.0f, 4.0f).withCentre (kc.translated (0.0f, (float) i * 8.0f)));
             auto t = r.reduced (6, 3);
-            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 13.0f, (float) t.getHeight() * 0.3f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::caption, (float) t.getHeight() * 0.3f));
             g.drawFittedText (date ? "DATE" : "TIME", t.removeFromTop (t.getHeight() * 4 / 10), juce::Justification::bottomLeft, 1);
-            g.setFont (juce::FontOptions (juce::jlimit (12.0f, 24.0f, (float) t.getHeight() * 0.85f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::value, (float) t.getHeight() * 0.85f));
             g.drawFittedText (text(), t, juce::Justification::centredLeft, 1, 0.8f);
         }
 
@@ -726,7 +726,7 @@ namespace
             {
                 auto row = r.removeFromTop (h);
                 g.setColour (Dark::text);
-                g.setFont (juce::FontOptions (juce::jmin (14.0f, (float) h * 0.6f), juce::Font::bold));
+                g.setFont (wingFontFit (TypeScale::body, (float) h * 0.6f));
                 g.drawText (label, row, juce::Justification::centredLeft);
                 g.setColour (Dark::textDim);
                 g.drawText (value, row, juce::Justification::centredRight);
@@ -1008,7 +1008,7 @@ namespace
                 g.setColour (juce::Colour (0xff5a5a5a).withAlpha (isEnabled() ? 1.0f : 0.5f));
                 g.fillRect (k);
                 g.setColour (juce::Colours::black.withAlpha (isEnabled() ? 1.0f : 0.6f));
-                g.setFont (juce::FontOptions (juce::jmin (15.0f, k.getHeight() * 0.62f), juce::Font::bold));
+                g.setFont (wingFontFit (TypeScale::body, k.getHeight() * 0.62f));
                 g.drawFittedText (values[i], k.toNearestInt(), juce::Justification::centred, 1);
             }
         }
@@ -1044,7 +1044,7 @@ namespace
             g.setColour (failed() ? Dark::muted : juce::Colour (0xff5a5a5a));
             g.fillRect (r);
             g.setColour (juce::Colours::black);
-            g.setFont (juce::FontOptions (juce::jmin (15.0f, r.getHeight() * 0.62f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::body, r.getHeight() * 0.62f));
             g.drawFittedText (juce::String (WingRemote::Settings::load (ctx.settings).*port), portArea, juce::Justification::centred, 1);
         }
 
@@ -1649,6 +1649,7 @@ namespace
                 surface.repaint();
             };
             daw.addRow ("DAW ENABLE", std::make_unique<OnKey> ([get] { return get().enabled; }, [set] (bool v) { set ([v] (DawRemote::Settings& s) { s.enabled = v; }); }), 1.3f);
+            daw.newBox(); // fig. 43: DAW ENABLE in its own box
             daw.addRow ("CONNECTION", std::make_unique<ChoiceKeys> (juce::StringArray { "DIN", "USB" }, [get] { return get().usb ? 1 : 0; },
                                                                     [set] (int i) { set ([i] (DawRemote::Settings& s) { s.usb = i == 1; }); },
                                                                     std::vector<juce::Colour> { Dark::post, Dark::post }),
@@ -1687,7 +1688,7 @@ namespace
             g.fillAll (juce::Colours::black);
             drawDarkPanel (g, panel, "DAW CONTROL");
             g.setColour (Dark::textDim);
-            g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+            g.setFont (wingFont (TypeScale::meterScale * 1.3f));
             g.drawFittedText ("All third-party DAW trademarks are the property of their respective owners. Their use neither constitutes a claim of the "
                               "trademark nor affiliation of the trademark owners with the makers of this software. Product names are mentioned solely as "
                               "a reference for compatibility.",
@@ -1782,10 +1783,10 @@ namespace
             auto r = body.reduced (12, 10);
             const auto types = ctx.host.getSortedTypes();
             g.setColour (Dark::text);
-            g.setFont (juce::FontOptions (24.0f, juce::Font::bold));
+            g.setFont (wingFont (TypeScale::statusTitle, WingWeight::SemiBold));
             g.drawText (juce::String (types.size()) + " PLUGINS KNOWN", r.removeFromTop (34), juce::Justification::centredLeft);
             g.setColour (Dark::textDim);
-            g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+            g.setFont (wingFont (TypeScale::body));
             juce::String text;
             text << "VST3, AU, LV2" << (ctx.host.getFormatManager().getNumFormats() > 3 ? ", VST2" : "")
                  << ". Load them into FX slots on the EFFECTS screen (device EXT), then assign the slots to channel inserts. "

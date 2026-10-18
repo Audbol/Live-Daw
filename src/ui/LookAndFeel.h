@@ -109,6 +109,14 @@ juce::Font wingFont (float capFraction, WingWeight = WingWeight::Medium);
 /** A screen font whose capital letters are `capHeightPx` pixels tall. */
 juce::Font wingFontPx (float capHeightPx, WingWeight = WingWeight::Medium);
 
+/** wingFont (`capFraction`), no taller than `maxHeightPx` (JUCE font height)
+    so it fits small keys and tiles. */
+inline juce::Font wingFontFit (float capFraction, float maxHeightPx, WingWeight weight = WingWeight::Medium)
+{
+    auto f = wingFont (capFraction, weight);
+    return f.getHeight() > maxHeightPx ? f.withHeight (juce::jmax (6.0f, maxHeightPx)) : f;
+}
+
 /** The surface print's narrower face (Barlow Condensed), `height` px tall in
     JUCE terms: for silk print, hardware keys and scales around the screen. */
 juce::Font silkFont (float height, bool bold = true);
@@ -165,8 +173,9 @@ private:
     juce::Typeface::Ptr screenMedium, screenSemiBold, silkMedium, silkSemiBold;
 };
 
-/** Height of a panel's header bar. */
-constexpr int kPanelHeaderHeight = 30;
+/** Height of a HOME panel's header bar: about 58 of the WING's 800 px
+    screen [D16], so it follows the screen size. */
+inline int panelHeaderHeight() { return juce::jlimit (20, 40, juce::roundToInt (getWingScreenHeight() * 0.072f)); }
 
 /** Draws a WING panel: a grey header bar with the title (and a chevron when the
     panel opens a screen) above the panel body. */

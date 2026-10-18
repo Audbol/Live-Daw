@@ -86,7 +86,7 @@ void MetersPage::layoutRow (juce::Rectangle<int> row, float unit, std::vector<Gr
     {
         const float w = unit * (float) (juce::jmax (4, g.count) + 1);
         auto area = juce::Rectangle<int> (juce::roundToInt (x), row.getY(), juce::roundToInt (w) - 4, row.getHeight());
-        g.header = area.removeFromTop (kPanelHeaderHeight);
+        g.header = area.removeFromTop (panelHeaderHeight());
         area.removeFromTop (4);
         g.body = area;
         return w;
@@ -233,16 +233,22 @@ float MetersPage::levelOf (const Group& group, int index, int channel) const
 void MetersPage::paintScale (juce::Graphics& g, juce::Rectangle<int> column, const Group& reference) const
 {
     g.setColour (Colours::screenHeader);
-    g.fillRect (column.withTrimmedRight (4).withTrimmedTop (kPanelHeaderHeight + 4));
+    g.fillRect (column.withTrimmedRight (4).withTrimmedTop (panelHeaderHeight() + 4));
     const auto numbers = numberRow (reference), mutes = muteRow (reference);
     const float top = (float) numbers.getBottom() + 10.0f, bottom = (float) mutes.getY() - 8.0f;
     g.setColour (Colours::text);
-    g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+    g.setFont (wingFontFit (TypeScale::meterScale * 1.5f, (bottom - top) / 4.0f, WingWeight::SemiBold));
     const std::pair<const char*, float> marks[] = { { "CLIP", 0.0f }, { "-6", -6.0f }, { "-12", -12.0f }, { "-24", -24.0f },
                                                     { "-36", -36.0f }, { "-48", -48.0f }, { "-60", -60.0f } };
+    // Labels that would overlap the previous one are left out (small windows).
+    float lastY = -1.0e6f;
+    const float minGap = g.getCurrentFont().getHeight() * 0.9f;
     for (auto& [text, db] : marks)
     {
         const float y = bottom - (bottom - top) * meterPos (db);
+        if (y - lastY < minGap)
+            continue;
+        lastY = y;
         g.drawText (text, juce::Rectangle<float> ((float) column.getX(), y - 7.0f, (float) column.getWidth() - 6.0f, 14.0f),
                     juce::Justification::centredRight);
     }
@@ -256,7 +262,7 @@ void MetersPage::paint (juce::Graphics& g)
     g.setColour (Colours::screenPanel);
     g.fillRect (titleArea);
     g.setColour (Colours::text);
-    g.setFont (juce::FontOptions (juce::jmin (26.0f, titleArea.getHeight() * 0.55f), juce::Font::bold));
+    g.setFont (wingFontFit (TypeScale::statusTitle, titleArea.getHeight() * 0.55f, WingWeight::SemiBold));
     juce::String title = "METERS";
     if (numPages() > 1)
         title << "  -  PAGE " << (page + 1) << " / " << numPages();
@@ -289,7 +295,7 @@ void MetersPage::paint (juce::Graphics& g)
         g.setColour (Colours::screenHeader);
         g.fillRect (group.header);
         g.setColour (Colours::text);
-        g.setFont (juce::FontOptions (juce::jmin (20.0f, group.header.getHeight() * 0.68f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::header, group.header.getHeight() * 0.68f));
         g.drawFittedText (group.title, group.header.reduced (4, 0), juce::Justification::centred, 1);
 
         g.setColour (Dark::body);

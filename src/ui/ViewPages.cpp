@@ -15,6 +15,14 @@ namespace
                        eqCurve = Colours::amber,
         panGreen = Colours::width, sendRed = Colours::tapRed;
 
+    /** A screen font on the console's type scale (TypeScale), no taller than
+        `maxHeightPx` so it fits small tiles. */
+    juce::Font viewFont (float capFraction, float maxHeightPx, WingWeight weight = WingWeight::SemiBold)
+    {
+        auto f = wingFont (capFraction, weight);
+        return f.getHeight() > maxHeightPx ? f.withHeight (juce::jmax (6.0f, maxHeightPx)) : f;
+    }
+
     Icon viewIcon (Screen s)
     {
         switch (s)
@@ -179,7 +187,7 @@ namespace
         g.setColour (colour);
         g.fillRect (r);
         g.setColour (juce::Colours::black);
-        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 15.0f, r.getHeight() * 0.86f), juce::Font::bold));
+        g.setFont (viewFont (TypeScale::body, r.getHeight() * 0.86f));
         g.drawFittedText (name, r.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.6f);
     }
 
@@ -189,7 +197,7 @@ namespace
         g.fillRect (r);
         auto inner = r.reduced (3.0f, 2.0f);
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 22.0f, inner.getHeight() * 0.9f), juce::Font::bold));
+        g.setFont (viewFont (TypeScale::value * 1.2f, inner.getHeight() * 0.9f));
         const auto number = numberOf (t);
         g.drawFittedText (number, inner.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
         if (t.strip != nullptr && inner.getWidth() > inner.getHeight() * 2.2f)
@@ -209,18 +217,18 @@ namespace
         g.setColour (on ? onColour : chipOff);
         g.fillRect (r);
         g.setColour (on ? juce::Colours::black : Dark::textDim);
-        g.setFont (juce::FontOptions (juce::jlimit (6.0f, 13.0f, juce::jmin (r.getHeight() * 0.8f, r.getWidth() * 0.36f)), juce::Font::bold));
+        g.setFont (viewFont (TypeScale::caption, juce::jmin (r.getHeight() * 0.8f, r.getWidth() * 0.36f)));
         g.drawFittedText (text, r.toNearestInt(), juce::Justification::centred, 1, 0.6f);
     }
 
-    void verticalMeter (juce::Graphics& g, juce::Rectangle<float> r, float level, juce::Colour c)
+    void verticalMeter (juce::Graphics& g, juce::Rectangle<float> r, float level, juce::Colour c, juce::Colour off = Colours::screenDark)
     {
         const int segments = juce::jlimit (4, 20, (int) (r.getHeight() / 3.0f));
         const float h = r.getHeight() / (float) segments;
         for (int i = 0; i < segments; ++i)
         {
             const bool lit = level > ((float) i + 0.5f) / (float) segments;
-            g.setColour (lit ? c : Colours::screenDark);
+            g.setColour (lit ? c : off);
             g.fillRect (r.getX(), r.getBottom() - (float) (i + 1) * h + 0.5f, r.getWidth(), juce::jmax (1.0f, h - 1.0f));
         }
     }
@@ -258,36 +266,69 @@ namespace
     }
 
     /** Mini send levels: one cell per destination, filled to the level when the send is on. */
-    void sendCells (juce::Graphics& g, juce::Rectangle<float> r, UiContext& ctx, Strip& s)
+    /** The OVERVIEW sends block [fig. 54]: a 2 x 2 grid of grey quadrants,
+        the matrix sends top right and the bus sends 1-8 / 9-16 below, each
+        send a thin bar filled with its level in its mode's colour (TAP red,
+        POST green, GROUP blue) and a blue marker left of the first send. */
+    void sendQuadrants (juce::Graphics& g, juce::Rectangle<float> r, UiContext& ctx, Strip& s)
     {
-        std::vector<std::pair<bool, float>> sends;
-        const auto kind = s.getKind();
-        if (s.isInput() || (s.isBus() && s.getId() >= kBusToBusTargets))
+        const float gap = 2.0f;
+        const float qw = (r.getWidth() - gap) / 2.0f, qh = (r.getHeight() - gap) / 2.0f;
+        auto quad = [&] (int col, int row) { return juce::Rectangle<float> (r.getX() + (float) col * (qw + gap), r.getY() + (float) row * (qh + gap), qw, qh); };
+        auto bars = [&g] (juce::Rectangle<float> q, int n, const std::function<std::pair<float, juce::Colour> (int)>& level)
         {
-            const int n = s.isInput() ? juce::jmin (16, (int) ctx.engine.getBuses().size()) : kBusToBusTargets;
-            for (int i = 0; i < n; ++i)
+            g.setColour (Colours::screenLine);
+            g.fillRect (q);
+            auto inner = q.reduced (2.0f, 1.0f);
+            const float w = inner.getWidth() / 8.0f;
+            for (int i = 0; i < n && i < 8; ++i)
             {
-                auto* send = s.sends.find (i);
-                sends.push_back ({ send != nullptr && send->enabled.load(), send != nullptr ? send->levelDb.load() : -100.0f });
+                const auto [l, c] = level (i);
+                if (l <= 0.0f)
+                    continue;
+                auto bar = juce::Rectangle<float> (inner.getX() + (float) i * w, inner.getY(), juce::jmax (1.0f, w - 1.0f), inner.getHeight());
+                g.setColour (c);
+                g.fillRect (bar.withTop (bar.getBottom() - bar.getHeight() * l));
             }
+        };
+        auto colourOf = [] (int mode) { return mode == 0 ? Colours::tapRed : (mode == 1 ? Colours::green : Colours::valueBlue); };
+        g.setColour (Colours::screenWell);
+        g.fillRect (quad (0, 0));
+        if (s.getKind() != StripKind::Matrix)
+            bars (quad (1, 0), kNumMatrices, [&s, &colourOf] (int i)
+            {
+                const auto& m = s.params.matrix[(size_t) i];
+                return std::make_pair (m.on.load() ? fader::dbToPos (m.levelDb.load()) : 0.0f, colourOf (m.pre.load() ? 0 : 1));
+            });
+        else
+        {
+            g.setColour (Colours::screenWell);
+            g.fillRect (quad (1, 0));
         }
-        else if (kind == StripKind::Bus || kind == StripKind::Main)
-            for (auto& m : s.params.matrix)
-                sends.push_back ({ m.on.load(), m.levelDb.load() });
-        if (sends.empty())
-            return;
-        const int cols = 4, rows = ((int) sends.size() + cols - 1) / cols;
-        const float w = r.getWidth() / (float) cols, h = r.getHeight() / (float) rows;
-        for (size_t i = 0; i < sends.size(); ++i)
+        const bool busSends = s.getKind() != StripKind::Main && s.getKind() != StripKind::Matrix;
+        const int n = busSends ? juce::jmin (16, (int) ctx.engine.getBuses().size()) : 0;
+        for (int half = 0; half < 2; ++half)
         {
-            auto c = juce::Rectangle<float> (r.getX() + w * (float) ((int) i % cols), r.getY() + h * (float) ((int) i / cols), w, h).reduced (1.0f);
-            g.setColour (Colours::screenTile);
-            g.fillRect (c);
-            if (sends[i].first)
+            auto q = quad (half, 1);
+            if (! busSends)
             {
-                g.setColour (Colours::meterGreen.withAlpha (0.85f));
-                g.fillRect (c.withTrimmedTop (c.getHeight() * (1.0f - fader::dbToPos (sends[i].second))));
+                g.setColour (Colours::screenWell);
+                g.fillRect (q);
+                continue;
             }
+            bars (q, juce::jmax (0, n - half * 8), [&s, half, &colourOf] (int i)
+            {
+                auto* send = s.sends.find (half * 8 + i);
+                if (send == nullptr || ! send->enabled.load() || send->mode.load() == 2)
+                    return std::make_pair (0.0f, Colours::green);
+                return std::make_pair (fader::dbToPos (send->levelDb.load()), colourOf (send->mode.load()));
+            });
+        }
+        if (busSends)
+        {
+            auto q = quad (0, 1);
+            g.setColour (Colours::valueBlue);
+            g.fillRect (juce::Rectangle<float> (2.0f, juce::jmin (5.0f, q.getHeight() * 0.4f)).withPosition (q.getX() + 1.0f, q.getY() + 1.0f));
         }
     }
 
@@ -315,7 +356,7 @@ namespace
         g.setColour (active ? juce::Colours::white : Colours::textDim);
         g.fillRoundedRectangle (box, 2.0f);
         g.setColour (juce::Colours::black);
-        g.setFont (juce::FontOptions (juce::jmin (12.0f, boxH * 0.8f), juce::Font::bold));
+        g.setFont (viewFont (TypeScale::caption, boxH * 0.8f));
         g.drawFittedText (fader::text (db) + " dB", box.toNearestInt(), juce::Justification::centred, 1, 0.6f);
     }
 
@@ -458,7 +499,7 @@ public:
             g.fillRect (r);
             g.setColour (ink);
             const int lines = text.containsChar ('\n') ? 2 : 1;
-            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 15.0f, (float) r.getHeight() * (lines == 2 ? 0.4f : 0.55f)), juce::Font::bold));
+            g.setFont (viewFont (TypeScale::body, (float) r.getHeight() * (lines == 2 ? 0.4f : 0.55f)));
             g.drawFittedText (text, r.reduced (2, 0), juce::Justification::centred, lines, 0.6f);
         };
         for (auto& k : keys)
@@ -798,7 +839,7 @@ namespace
                 device = models::model (models::Fx, fx.getModel (slot)).name.toUpperCase();
         }
         g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (juce::jlimit (7.0f, 13.0f, inner.getHeight() * 0.7f), juce::Font::bold));
+        g.setFont (viewFont (TypeScale::caption, inner.getHeight() * 0.7f));
         g.drawFittedText (device, inner.toNearestInt(), juce::Justification::bottomRight, 1, 0.6f);
     }
 
@@ -932,7 +973,7 @@ void OverviewViewPage::paintContent (juce::Graphics& g)
         }
         paintPanBlock (g, rows.pan, ctx, s);
         block (g, rows.sends);
-        sendCells (g, rows.sends.reduced (3.0f), ctx, s);
+        sendQuadrants (g, rows.sends.reduced (3.0f), ctx, s);
         if (&s == selected)
         {
             g.setColour (Dark::on);
@@ -1027,7 +1068,7 @@ namespace
         g.setColour (muted ? Dark::muted : chipOff);
         g.fillRect (k);
         g.setColour (muted ? juce::Colours::black : Dark::textDim);
-        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 14.0f, k.getHeight() * 0.55f), juce::Font::bold));
+        g.setFont (viewFont (TypeScale::body, k.getHeight() * 0.55f, WingWeight::Medium));
         g.drawFittedText ("MUTE", k.toNearestInt(), juce::Justification::centred, 1, 0.6f);
     }
 
@@ -1080,8 +1121,8 @@ void FadersViewPage::paintContent (juce::Graphics& g)
             auto& s = *t.strip;
             block (g, rows.pan);
             auto pan = rows.pan.reduced (3.0f);
-            panArc (g, pan.removeFromLeft (pan.getHeight()), s.params.pan.load(), s.params.width.load());
-            sendCells (g, pan.reduced (2.0f, 1.0f), ctx, s);
+            panArc (g, pan.removeFromLeft (juce::jmin (pan.getHeight(), pan.getWidth() * 0.5f)), s.params.pan.load(), s.params.width.load());
+            sendQuadrants (g, pan.reduced (2.0f, 1.0f), ctx, s);
             if (s.getKind() == StripKind::Channel)
             {
                 // GATE and COMP gain reduction: the gate's square lights green while it's open.
@@ -1105,17 +1146,20 @@ void FadersViewPage::paintContent (juce::Graphics& g)
                     g.fillRect (bar.withWidth (bar.getWidth() * juce::jlimit (0.0f, 1.0f, reduction)));
                 }
             }
-            // The level meter right of the fader.
-            auto meter = faderArea.removeFromRight (juce::jmax (5.0f, faderArea.getWidth() * 0.12f));
-            for (int ch = 0; ch < 2; ++ch)
-                verticalMeter (g, meter.withWidth (meter.getWidth() / 2.0f - 0.5f).translated ((float) ch * meter.getWidth() / 2.0f, 0.0f),
-                               meterPos (dsp::gainToDb (ctx.meters.get (&s, prefs::meterPoint (ctx, s.getKind()), ch))), Colours::meterGreen);
+            // [fig. 56] the level meter right of the fader: a column of
+            // segments (unlit #303030) along the whole fader.
+            auto meter = faderArea.removeFromRight (juce::jmax (8.0f, faderArea.getWidth() * 0.16f)).reduced (0.0f, 2.0f);
+            faderArea.removeFromRight (2.0f);
+            const int numCh = juce::jlimit (1, 2, s.getNumChannels());
+            for (int ch = 0; ch < numCh; ++ch)
+                verticalMeter (g, meter.withWidth (meter.getWidth() / (float) numCh - (numCh > 1 ? 0.5f : 0.0f)).translated ((float) ch * meter.getWidth() / (float) numCh, 0.0f),
+                               meterPos (dsp::gainToDb (ctx.meters.get (&s, prefs::meterPoint (ctx, s.getKind()), ch))), Colours::meterGreen, Colours::screenTile);
             paintAssignments (g, rows.assign.reduced (3.0f, 0.0f), s);
         }
         // Send faders are drawn in the send colour, with the destination under them.
         paintFader (g, faderArea, faderOf (ctx, t).load(), t.isSend() ? sendRed : Dark::faderFill, ! t.isSend() || t.sendOn->load());
         g.setColour (t.isSend() ? sendRed.brighter (0.4f) : Dark::textDim);
-        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 18.0f, rows.label.getHeight() * 0.7f), juce::Font::bold));
+        g.setFont (viewFont (TypeScale::value, rows.label.getHeight() * 0.7f));
         g.drawFittedText (t.isSend() ? t.sendTag : bottomLabel (t), rows.label.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         if (t.strip != nullptr && t.strip == selected)
         {
@@ -1339,7 +1383,7 @@ void SendsViewPage::paintContent (juce::Graphics& g)
         g.setColour (on ? Dark::layer : Colours::screenTile);
         g.fillRect (groupKeys[i]);
         g.setColour (on ? juce::Colours::white : Dark::text);
-        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 15.0f, (float) groupKeys[i].getHeight() * 0.4f), juce::Font::bold));
+        g.setFont (viewFont (TypeScale::body, (float) groupKeys[i].getHeight() * 0.4f));
         g.drawFittedText (name, groupKeys[i].reduced (2, 0), juce::Justification::centred, 2, 0.6f);
     }
 
@@ -1358,14 +1402,14 @@ void SendsViewPage::paintContent (juce::Graphics& g)
         g.setColour (stripDisplayColour (s));
         g.fillRect (header);
         g.setColour (juce::Colours::black);
-        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 13.0f, header.getHeight() * 0.85f), juce::Font::bold));
+        g.setFont (viewFont (TypeScale::body, header.getHeight() * 0.85f));
         g.drawFittedText (shortStripLabel (s), header.toNearestInt(), juce::Justification::centred, 1);
         g.setColour (blockFill);
         g.fillRect (r);
         auto name = r.removeFromBottom (r.getHeight() * 0.36f);
         drawStripIcon (g, s, r.reduced (r.getHeight() * 0.15f), Dark::textDim);
         g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 12.0f, name.getHeight() * 0.9f), juce::Font::bold));
+        g.setFont (viewFont (TypeScale::caption, name.getHeight() * 0.9f));
         g.drawFittedText (stripName (s).toUpperCase(), name.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         if ((int) i == chosen)
         {
@@ -1404,11 +1448,11 @@ void SendsViewPage::paintContent (juce::Graphics& g)
         if (t.strip != nullptr)
             for (int ch = 0; ch < 2; ++ch)
                 verticalMeter (g, meter.withWidth (meter.getWidth() / 2.0f - 0.5f).translated ((float) ch * meter.getWidth() / 2.0f, 0.0f),
-                               meterPos (dsp::gainToDb (ctx.meters.get (t.strip, prefs::meterPoint (ctx, t.strip->getKind()), ch))), Colours::meterGreen);
+                               meterPos (dsp::gainToDb (ctx.meters.get (t.strip, prefs::meterPoint (ctx, t.strip->getKind()), ch))), Colours::meterGreen, Colours::screenTile);
         if (sends)
             paintFader (g, c.reduced (2.0f, 2.0f), level != nullptr ? level->load() : -100.0f, sendRed, isOn);
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 18.0f, label.getHeight() * 0.7f), juce::Font::bold));
+        g.setFont (viewFont (TypeScale::value, label.getHeight() * 0.7f));
         g.drawFittedText (sends ? "SEND" : "-", label.toNearestInt(), juce::Justification::centred, 1);
     }
 }
@@ -1839,7 +1883,7 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
         g.setColour (on ? Colours::caption : Dark::key);
         g.fillRect (categoryKeys[(size_t) i]);
         g.setColour (on ? juce::Colours::black : Dark::text);
-        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 15.0f, (float) categoryKeys[(size_t) i].getHeight() * 0.4f), juce::Font::bold));
+        g.setFont (viewFont (TypeScale::body, (float) categoryKeys[(size_t) i].getHeight() * 0.4f));
         g.drawFittedText (names[i], categoryKeys[(size_t) i].reduced (2, 0), juce::Justification::centred, 1, 0.6f);
     }
 
@@ -1863,7 +1907,7 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
             g.setColour (blockFill);
             g.fillRect (r);
             g.setColour (Dark::text);
-            g.setFont (juce::FontOptions (juce::jlimit (8.0f, 14.0f, r.getHeight() * 0.6f), juce::Font::bold));
+            g.setFont (viewFont (TypeScale::body, r.getHeight() * 0.6f));
             g.drawFittedText (label.toUpperCase(), r.reduced (3.0f, 1.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.6f);
             if (highlighted)
             {
@@ -1886,11 +1930,11 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
             auto* to = state::findStrip (ctx.engine, f.to);
             const auto mark = "S>" + (to != nullptr ? shortStripLabel (*to) : juce::String ("?"));
             g.setColour (Colours::solo);
-            g.setFont (juce::FontOptions (juce::jlimit (7.0f, 13.0f, inner.getHeight() * 0.6f), juce::Font::bold));
+            g.setFont (viewFont (TypeScale::caption, inner.getHeight() * 0.6f));
             g.drawFittedText (mark, inner.removeFromRight (inner.getWidth() * 0.5f).toNearestInt(), juce::Justification::centredRight, 1, 0.6f);
         }
         g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 18.0f, inner.getHeight() * 0.85f), juce::Font::bold));
+        g.setFont (viewFont (TypeScale::value * 1.2f, inner.getHeight() * 0.85f));
         g.drawFittedText (numberOf (t), inner.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
         if (! f.send && t.strip != nullptr && inner.getWidth() > inner.getHeight() * 2.5f)
             drawStripIcon (g, *t.strip, inner.removeFromRight (inner.getHeight()), Dark::textDim);
@@ -1913,6 +1957,17 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
     // its number large and dim over EMPTY.
     const auto layer = currentLayer();
     const auto faders = pageFaders();
+    // [I10] each group of four sits on a filled #284c78 plate (kept apart
+    // from the next group in small windows).
+    int platePad = 4;
+    if (slotAreas.size() > 4)
+        platePad = juce::jlimit (1, 4, (slotAreas[4].getX() - slotAreas[3].getRight()) / 2 - 2);
+    for (size_t i = 0; i < slotAreas.size(); i += 4)
+    {
+        const auto last = slotAreas[juce::jmin (slotAreas.size() - 1, i + 3)];
+        g.setColour (juce::Colour (0xff284c78));
+        g.fillRect (slotAreas[i].getUnion (last).expanded (platePad, 4).toFloat());
+    }
     for (size_t i = 0; i < slotAreas.size(); ++i)
     {
         auto r = slotAreas[i].toFloat();
@@ -1925,21 +1980,15 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
         {
             auto text = r.reduced (2.0f);
             g.setColour (Dark::textDim.withAlpha (0.55f));
-            g.setFont (juce::FontOptions (juce::jlimit (10.0f, 30.0f, text.getHeight() * 0.5f), juce::Font::bold));
+            g.setFont (viewFont (TypeScale::value * 1.6f, text.getHeight() * 0.5f));
             g.drawFittedText (juce::String (number), text.removeFromTop (text.getHeight() * 0.62f).toNearestInt(), juce::Justification::centredBottom, 1);
-            g.setFont (juce::FontOptions (juce::jlimit (8.0f, 13.0f, text.getHeight() * 0.8f), juce::Font::bold));
+            g.setFont (viewFont (TypeScale::caption, text.getHeight() * 0.8f));
             g.drawFittedText ("EMPTY", text.toNearestInt(), juce::Justification::centredTop, 1);
         }
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-        g.drawText (juce::String (number), juce::Rectangle<int> (slotAreas[i].getX(), slotAreas[i].getBottom() + 3, slotAreas[i].getWidth(), 12),
+        g.setFont (wingFont (TypeScale::meterScale));
+        g.drawText (juce::String (number), juce::Rectangle<int> (slotAreas[i].getX(), slotAreas[i].getBottom() + 5, slotAreas[i].getWidth(), 12),
                     juce::Justification::centred);
-        if (i % 4 == 0)
-        {
-            const auto last = slotAreas[juce::jmin (slotAreas.size() - 1, i + 3)];
-            g.setColour (Dark::layer);
-            g.drawRect (slotAreas[i].getUnion (last).expanded (2, 3).toFloat(), 1.5f);
-        }
     }
 
     // While dragging: a blue line where the items would be inserted, or a
@@ -1967,7 +2016,7 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
         if (mapCells[i].getWidth() >= 12)
         {
             g.setColour ((int) i < total ? juce::Colours::black : Dark::textDim);
-            g.setFont (juce::FontOptions (juce::jmin (10.0f, (float) mapCells[i].getHeight() * 0.7f), juce::Font::bold));
+            g.setFont (viewFont (TypeScale::caption, (float) mapCells[i].getHeight() * 0.7f));
             g.drawFittedText (juce::String ((int) i + 1), mapCells[i], juce::Justification::centred, 1, 0.5f);
         }
     }
@@ -1981,7 +2030,7 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
     if (! layer.user && ctx.show.layers.hasDefaultOverride (section(), layer.id) && faders.empty() && page == 0)
     {
         g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+        g.setFont (wingFont (TypeScale::body));
         g.drawFittedText ("EDITED LAYER KEY: RESTORE GIVES IT ITS OWN FADERS BACK", hintArea.withTrimmedBottom (14).reduced (8, 0),
                           juce::Justification::centred, 1);
     }
@@ -1994,7 +2043,7 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
         g.setColour (Dark::layer.withAlpha (0.8f));
         g.fillRect (ghost);
         g.setColour (juce::Colours::white);
-        g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+        g.setFont (wingFont (TypeScale::body, WingWeight::SemiBold));
         g.drawText (count > 1 ? juce::String (count) + " ITEMS" : juce::String ("1 ITEM"), ghost, juce::Justification::centred);
     }
 }
@@ -2238,13 +2287,13 @@ void MuteGroupsViewPage::paintContent (juce::Graphics& g)
         g.setColour (Dark::muteGroup);
         g.fillRect (headers[gi]);
         g.setColour (juce::Colours::black);
-        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 15.0f, (float) headers[gi].getHeight() * 0.75f), juce::Font::bold));
+        g.setFont (viewFont (TypeScale::body, (float) headers[gi].getHeight() * 0.75f));
         g.drawFittedText (ctx.engine.getMuteGroupName (gi).toUpperCase(), headers[gi].reduced (2, 0), juce::Justification::centred, 1, 0.6f);
         auto number = col.withTrimmedTop (headers[gi].getHeight() + 2).withHeight (juce::jlimit (16, 34, columns[gi].getHeight() / 15));
         g.setColour (Colours::screenPanel);
         g.fillRect (number);
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions ((float) number.getHeight() * 0.8f, juce::Font::bold));
+        g.setFont (viewFont (TypeScale::value, (float) number.getHeight() * 0.8f));
         g.drawText (juce::String (gi + 1), number, juce::Justification::centred);
         if (sel)
         {
@@ -2258,7 +2307,7 @@ void MuteGroupsViewPage::paintContent (juce::Graphics& g)
         g.setColour (sel ? Dark::muteGroup.withAlpha (0.55f) : Colours::screenPanel);
         g.fillRect (area);
         g.setColour (sel ? juce::Colours::white : Dark::textDim);
-        g.setFont (juce::FontOptions ((float) area.getHeight() * 0.85f, juce::Font::bold));
+        g.setFont (viewFont (TypeScale::value, (float) area.getHeight() * 0.85f));
         g.drawText (text, area, juce::Justification::centred);
         if (text == "SOURCES")
         {
@@ -2278,7 +2327,7 @@ void MuteGroupsViewPage::paintContent (juce::Graphics& g)
         if (r.getHeight() >= 9.0f)
         {
             g.setColour (on ? juce::Colours::black : Colours::chipOff);
-            g.setFont (juce::FontOptions (juce::jmin (11.0f, r.getHeight() * 0.7f), juce::Font::bold));
+            g.setFont (viewFont (TypeScale::caption, r.getHeight() * 0.7f));
             g.drawFittedText (juce::String (c.strip->getNumber()), r.toNearestInt(), juce::Justification::centred, 1, 0.5f);
         }
     }
@@ -2293,14 +2342,14 @@ void MuteGroupsViewPage::paintContent (juce::Graphics& g)
         g.fillRect (r);
         auto num = r.removeFromTop (r.getHeight() * 40 / 100);
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (juce::jmin (32.0f, (float) num.getHeight() * 0.9f), juce::Font::bold));
+        g.setFont (viewFont (TypeScale::statusTitle, (float) num.getHeight() * 0.9f));
         g.drawText (juce::String (gi + 1), num, juce::Justification::centred);
         auto key = r.reduced (r.getWidth() / 5, r.getHeight() / 6);
         const bool on = (engaged >> (uint32_t) gi) & 1u;
         g.setColour (on ? Colours::mute : Colours::screenTile);
         g.fillRect (key);
         g.setColour (on ? juce::Colours::white : Dark::textDim);
-        g.setFont (juce::FontOptions (juce::jlimit (10.0f, 16.0f, (float) key.getHeight() * 0.45f), juce::Font::bold));
+        g.setFont (viewFont (TypeScale::body, (float) key.getHeight() * 0.45f));
         g.drawFittedText (ctx.engine.getMuteGroupName (gi).toUpperCase(), key.reduced (2, 0), juce::Justification::centred, 1, 0.6f);
     }
 }

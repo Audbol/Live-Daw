@@ -1,6 +1,7 @@
 #include "dsp/DspUtils.h"
 #include "engine/Models.h"
 #include "ui/Faceplate.h"
+#include "ui/HomeWidgets.h"
 #include "ui/Pages.h"
 #include "ui/WingWidgets.h"
 
@@ -85,7 +86,7 @@ public:
         g.setColour (Dark::textDim);
         g.fillRect (number);
         g.setColour (juce::Colours::black);
-        g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        g.setFont (wingFont (TypeScale::body, WingWeight::SemiBold));
         g.drawText (juce::String (slot + 1), number, juce::Justification::centred);
 
         auto inner = b.reduced (6.0f);
@@ -133,11 +134,11 @@ public:
                 }
             auto label = deviceArea.reduced (12.0f, 6.0f);
             g.setColour (juce::Colours::white);
-            g.setFont (juce::FontOptions (juce::jlimit (12.0f, 20.0f, label.getHeight() * 0.42f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::value, label.getHeight() * 0.42f, WingWeight::SemiBold));
             g.drawFittedText (plugin != nullptr ? plugin->getName().toUpperCase() : juce::String ("FX " + juce::String (slot + 1)),
                               label.removeFromTop (label.getHeight() * 0.62f).toNearestInt(), juce::Justification::centredBottom, 1);
             g.setColour (juce::Colour (0xffc8c8c8));
-            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 13.0f, label.getHeight() * 0.7f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::caption, label.getHeight() * 0.7f));
             g.drawFittedText (plugin != nullptr ? plugin->getPluginDescription().manufacturerName.toUpperCase() : juce::String ("EXT"),
                               label.toNearestInt(), juce::Justification::centredTop, 1);
         }
@@ -154,7 +155,7 @@ public:
             g.setColour (Colours::mute);
             g.fillRect (warn);
             g.setColour (juce::Colours::black);
-            g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+            g.setFont (wingFont (TypeScale::body, WingWeight::SemiBold));
             g.drawFittedText (fx.isFaulted (slot) ? "FAULT - BYPASSED" : "DOUBLE ASSIGNED", warn.toNearestInt(), juce::Justification::centred, 1);
         }
 
@@ -176,7 +177,7 @@ public:
             if (stripName (*user.strip) != user.strip->getLabel())
             {
                 g.setColour (juce::Colours::black);
-                g.setFont (juce::FontOptions (juce::jmin (13.0f, bar.getHeight() * 0.9f), juce::Font::bold));
+                g.setFont (wingFontFit (TypeScale::body, bar.getHeight() * 0.9f, WingWeight::SemiBold));
                 g.drawFittedText (stripName (*user.strip).toUpperCase(), bar.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.6f);
             }
             g.setColour (Colours::screenTile);
@@ -184,7 +185,7 @@ public:
             auto name = src.removeFromBottom (juce::jmin (18.0f, src.getHeight() * 0.32f));
             drawStripIcon (g, *user.strip, src.reduced (src.getWidth() * 0.22f, 3.0f), juce::Colours::white);
             g.setColour (juce::Colours::white);
-            g.setFont (juce::FontOptions (juce::jmin (14.0f, name.getHeight()), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::body, name.getHeight(), WingWeight::SemiBold));
             g.drawFittedText (user.strip->getLabel(), name.toNearestInt(), juce::Justification::centred, 1, 0.7f);
 
             // PRE lit red, POST green, as on the console.
@@ -325,7 +326,7 @@ public:
     Editor (UiContext& c, EffectsPage& p) : ctx (c), page (p)
     {
         backKey.onClick = [this] { page.editSlot (-1); };
-        modelKey.onClick = [this] { showFxDeviceMenu (ctx, slot, &modelKey, [this] { rebind(); }); };
+        deviceField.arrowKey = true;
         onKey.isOn = [this] { return ! ctx.engine.getFx().params (slot).bypass.load(); };
         onKey.onClick = [this]
         {
@@ -335,7 +336,6 @@ public:
         };
         openKey.onClick = [this] { if (ctx.openPluginEditor) ctx.openPluginEditor (slot); };
         pluginKey.onClick = [this] { showFxSlotMenu (ctx, slot, &pluginKey); };
-        mix.setCompact (true);
         face.onTouched = [this] (int param)
         {
             if (param / 6 != page6)
@@ -344,7 +344,7 @@ public:
                 page.notifyKnobsChanged();
             }
         };
-        for (juce::Component* comp : { (juce::Component*) &backKey, (juce::Component*) &modelKey, (juce::Component*) &onKey,
+        for (juce::Component* comp : { (juce::Component*) &backKey, (juce::Component*) &deviceField, (juce::Component*) &onKey,
                                        (juce::Component*) &mix, (juce::Component*) &face, (juce::Component*) &openKey, (juce::Component*) &pluginKey })
             addAndMakeVisible (comp);
         startTimerHz (6);
@@ -353,7 +353,8 @@ public:
     void setSlot (int s)
     {
         slot = juce::jlimit (0, kNumFx - 1, s);
-        mix.setBinding (bindLinear ("MIX", ctx.engine.getFx().params (slot).mix, 0.0f, 100.0f, "%", 0, 100.0f));
+        mix.setBinding (bindLinear ("FX MIX", ctx.engine.getFx().params (slot).mix, 0.0f, 100.0f, " %", 0, 100.0f));
+        deviceField.setCaption ("FX " + juce::String (slot + 1) + (slot < 8 ? "  PREMIUM" : "  STANDARD"));
         rebind();
     }
 
@@ -381,13 +382,9 @@ public:
         auto& fx = ctx.engine.getFx();
         const int model = fx.getModel (slot);
 
-        // Header bar.
+        // The header row as on the channel's INS screen [D8].
         g.setColour (Colours::screenPanel);
         g.fillRect (header);
-        auto t = titleArea;
-        g.setColour (Colours::textDim);
-        g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
-        g.drawText ("FX " + juce::String (slot + 1) + (slot < 8 ? "  PREMIUM" : "  STANDARD"), t.removeFromTop (16), juce::Justification::bottomLeft);
 
         // Who uses the slot.
         juce::String users;
@@ -399,9 +396,16 @@ public:
                 if ((pre || post) && users.isEmpty())
                     users = stripName (*s).toUpperCase() + (pre ? "  PRE" : "  POST");
             }
-        g.setColour (users.isEmpty() ? Colours::textDim : Colours::text);
-        g.setFont (juce::FontOptions (juce::jmin (18.0f, (float) sourceArea.getHeight() * 0.5f), juce::Font::bold));
-        g.drawFittedText (users.isEmpty() ? juce::String ("NOT ASSIGNED") : users, sourceArea, juce::Justification::centred, 2);
+        // INSERTED ON: a caption over the value, like a field without a key.
+        {
+            auto u = sourceArea;
+            g.setColour (Colours::caption);
+            g.setFont (wingFont (TypeScale::body));
+            g.drawText ("INSERTED ON", u.removeFromTop (u.getHeight() * 2 / 5), juce::Justification::centredLeft, false);
+            g.setColour (users.isEmpty() ? Colours::textDim : Colours::text);
+            g.setFont (wingFont (TypeScale::value));
+            g.drawFittedText (users.isEmpty() ? juce::String ("NOT ASSIGNED") : users, u, juce::Justification::centredLeft, 1, 0.7f);
+        }
 
         if (model == ld::kFxNone)
         {
@@ -413,7 +417,7 @@ public:
             g.drawEllipse (circle, 3.0f);
             g.fillRect (juce::Rectangle<float> (d * 0.5f, 3.0f).withCentre (circle.getCentre()));
             g.fillRect (juce::Rectangle<float> (3.0f, d * 0.5f).withCentre (circle.getCentre()));
-            g.setFont (juce::FontOptions (20.0f, juce::Font::bold));
+            g.setFont (wingFont (TypeScale::value * 1.2f, WingWeight::SemiBold));
             g.drawText ("SELECT A DEVICE", body.withTop ((int) circle.getBottom() + 10).withHeight (30), juce::Justification::centredTop);
         }
         else if (model == ld::kFxExt)
@@ -423,11 +427,11 @@ public:
             auto* plugin = fx.getPlugin (slot);
             auto r = body.reduced (24).withHeight (juce::jmin (body.getHeight() - 48, 120));
             g.setColour (Colours::text);
-            g.setFont (juce::FontOptions (28.0f, juce::Font::bold));
+            g.setFont (wingFont (TypeScale::statusTitle, WingWeight::SemiBold));
             g.drawFittedText (plugin != nullptr ? plugin->getName().toUpperCase() : juce::String ("NO PLUGIN LOADED"), r.removeFromTop (40),
                               juce::Justification::centredLeft, 1);
             g.setColour (Colours::textDim);
-            g.setFont (juce::FontOptions (17.0f, juce::Font::bold));
+            g.setFont (wingFont (TypeScale::value));
             juce::String info ("EXT DEVICE: A VST3 / AU / LV2 PLUGIN");
             if (plugin != nullptr)
                 info = plugin->getPluginDescription().manufacturerName.toUpperCase() + "   " + plugin->getPluginDescription().pluginFormatName
@@ -439,18 +443,18 @@ public:
     void resized() override
     {
         auto b = getLocalBounds();
-        header = b.removeFromTop (juce::jmin (56, b.getHeight() / 8));
-        auto h = header.reduced (6, 6);
-        backKey.setBounds (h.removeFromLeft (96));
-        h.removeFromLeft (8);
-        auto right = h.removeFromRight (juce::jmin (220, h.getWidth() / 3));
-        mix.setBounds (right.removeFromRight (90).withTrimmedTop (-6).withTrimmedBottom (-6));
-        right.removeFromRight (8);
-        onKey.setBounds (right.removeFromRight (64));
-        titleArea = h.removeFromLeft (juce::jmin (360, h.getWidth() / 2));
-        modelKey.setBounds (titleArea.withTrimmedTop (16));
-        h.removeFromLeft (8);
-        sourceArea = h;
+        // [D8] the INS screen's 80 px row (of the 670 px page): 64 px fields
+        // and the 48 px ON key, laid out on the WING's 1160 px page width.
+        header = b.removeFromTop (juce::jlimit (32, 72, b.getHeight() * 12 / 100));
+        const float u = (float) header.getWidth() / 1160.0f;
+        auto h = header.withSizeKeepingCentre (header.getWidth(), header.getHeight() * 4 / 5);
+        auto span = [&h, u, this] (float x0, float x1)
+        { return juce::Rectangle<int> (header.getX() + juce::roundToInt (x0 * u), h.getY(), juce::roundToInt ((x1 - x0) * u), h.getHeight()); };
+        backKey.setBounds (span (16.0f, 160.0f));
+        onKey.setBounds (span (176.0f, 272.0f).withSizeKeepingCentre (juce::roundToInt (96.0f * u), header.getHeight() * 3 / 5));
+        deviceField.setBounds (span (288.0f, 640.0f));
+        sourceArea = span (672.0f, 900.0f);
+        mix.setBounds (span (944.0f, 1144.0f));
         b.removeFromTop (6);
         body = b;
         face.setBounds (body);
@@ -480,7 +484,7 @@ private:
         openKey.setVisible (shownModel == ld::kFxExt);
         pluginKey.setVisible (shownModel == ld::kFxExt);
         openKey.setEnabled (fx.hasPlugin (slot));
-        modelKey.setButtonText (shownModel == ld::kFxNone ? juce::String ("SELECT DEVICE") : models::model (models::Fx, shownModel).name.toUpperCase());
+        deviceField.repaint();
         page6 = 0;
         page.notifyKnobsChanged();
         repaint();
@@ -498,10 +502,17 @@ private:
     EffectsPage& page;
     int slot = 0, shownModel = -1, page6 = 0;
     Faceplate face;
-    WingKey backKey { "RACK", Icon::ChevronLeft }, modelKey { "SELECT DEVICE" }, onKey { "ON" }, openKey { "OPEN EDITOR", Icon::Edit },
+    WingKey backKey { "RACK", Icon::ChevronLeft }, onKey { "ON" }, openKey { "OPEN EDITOR", Icon::Edit },
         pluginKey { "LOAD / REPLACE", Icon::Folder };
-    DisplayKnob mix;
-    juce::Rectangle<int> header, titleArea, sourceArea, body;
+    DropdownField deviceField { "FX 1",
+                                [this]
+                                {
+                                    const int m = ctx.engine.getFx().getModel (slot);
+                                    return m == ld::kFxNone ? juce::String ("SELECT DEVICE") : models::model (models::Fx, m).name.toUpperCase();
+                                },
+                                [this] (DropdownField& f) { showFxDeviceMenu (ctx, slot, &f, [this] { rebind(); }); } };
+    home::KnobBox mix { KnobBinding {} };
+    juce::Rectangle<int> header, sourceArea, body;
 };
 
 EffectsPage::EffectsPage (UiContext& c) : ctx (c)

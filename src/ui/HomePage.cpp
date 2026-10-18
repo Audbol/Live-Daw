@@ -52,7 +52,7 @@ namespace
             g.setColour (colour);
             g.fillRect (header);
             g.setColour (colour.getPerceivedBrightness() > 0.45f ? juce::Colours::black : juce::Colours::white);
-            g.setFont (juce::FontOptions (header.getHeight() * 0.85f, juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::body, header.getHeight() * 0.85f, WingWeight::SemiBold));
             g.drawFittedText (stripName (strip).toUpperCase(), header.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
 
             g.setColour (colours::keyOff);
@@ -74,7 +74,7 @@ namespace
             g.setColour (colours::well);
             g.fillRect (label);
             g.setColour (st ? colours::stereo : colours::mono);
-            g.setFont (juce::FontOptions (label.getHeight() * 0.8f, juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::body, label.getHeight() * 0.8f, WingWeight::SemiBold));
             g.drawFittedText (shownPort, label.toNearestInt(), juce::Justification::centred, 1, 0.7f);
         }
 
@@ -253,7 +253,7 @@ namespace
                 g.setColour (on ? colours::fader : colours::well);
                 g.fillRect (r);
                 g.setColour (on ? juce::Colours::black : Colours::textDim);
-                g.setFont (juce::FontOptions (s * 0.8f, juce::Font::bold));
+                g.setFont (wingFontFit (TypeScale::body, s * 0.8f, WingWeight::SemiBold));
                 g.drawText (juce::String (i + 1), r.toNearestInt(), juce::Justification::centred);
             }
         }
@@ -415,7 +415,7 @@ public:
         const auto& eqModel = models::model (static_cast<models::Table> (strip.getEqTable()), strip.params.eq.model.load());
         if (eqModel.token != "STD")
         {
-            auto header = eqArea.reduced (3).removeFromTop (kPanelHeaderHeight).toFloat();
+            auto header = eqArea.reduced (3).removeFromTop (panelHeaderHeight()).toFloat();
             auto plate = header.removeFromRight (header.getWidth() * 0.32f).withTrimmedRight (26.0f).reduced (0.0f, 3.0f);
             Faceplate::paintThumbnail (g, plate, static_cast<models::Table> (strip.getEqTable()), strip.params.eq.model.load(), {});
         }
@@ -425,7 +425,7 @@ public:
     {
         // Panel headers with a chevron open their screen.
         const auto pos = e.getPosition();
-        auto header = [] (juce::Rectangle<int> r) { return r.reduced (3).removeFromTop (kPanelHeaderHeight); };
+        auto header = [] (juce::Rectangle<int> r) { return r.reduced (3).removeFromTop (panelHeaderHeight()); };
         HomeTab target = HomeTab::Home;
         if (header (inputArea).contains (pos))
             target = HomeTab::Input;
@@ -512,7 +512,7 @@ public:
             auto caption = k.removeFromBottom (k.getHeight() * 0.34f);
             drawIcon (g, i == 1 ? Icon::ListAll : Icon::ListNone, k.withSizeKeepingCentre (k.getHeight() * 0.9f, k.getHeight() * 0.9f), colours::dim);
             g.setColour (colours::dim);
-            g.setFont (juce::FontOptions (juce::jlimit (8.0f, 13.0f, caption.getHeight() * 0.95f), juce::Font::plain));
+            g.setFont (wingFontFit (TypeScale::caption, caption.getHeight() * 0.95f));
             g.drawText (i == 1 ? "ALL" : "NONE", caption.toNearestInt(), juce::Justification::centred);
             r.removeFromRight (r.getHeight() * 0.2f);
         }
@@ -1516,7 +1516,7 @@ private:
         g.setColour (juce::Colours::black);
         g.fillEllipse (juce::Rectangle<float> (dot, dot).withCentre ({ flag.getX() + tip + dot * 0.5f, flag.getCentreY() }));
         g.setColour (juce::Colours::white);
-        g.setFont (juce::FontOptions (flag.getHeight() * 0.72f, juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::caption, flag.getHeight() * 0.72f, WingWeight::SemiBold));
         g.drawText ("TAP", flag.withTrimmedLeft (tip + dot * 1.5f).toNearestInt(), juce::Justification::centred);
     }
 
@@ -1557,7 +1557,7 @@ private:
             g.setColour (colours::thumb);
             g.fillRoundedRectangle (t, 2.0f);
             g.setColour (colours::dim);
-            g.setFont (juce::FontOptions (juce::jlimit (11.0f, 24.0f, t.getHeight() * 0.5f), juce::Font::plain));
+            g.setFont (wingFontFit (TypeScale::tab, t.getHeight() * 0.5f));
             g.drawFittedText ("HOME", t.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
         }
         else
@@ -2090,7 +2090,7 @@ void HomePage::paint (juce::Graphics& g)
     if (strip == nullptr)
     {
         g.setColour (Colours::textDim);
-        g.setFont (juce::FontOptions (24.0f, juce::Font::bold));
+        g.setFont (wingFont (TypeScale::value));
         g.drawText ("PRESS SEL ON A STRIP", getLocalBounds(), juce::Justification::centred);
     }
 }

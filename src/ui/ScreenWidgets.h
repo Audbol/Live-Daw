@@ -444,6 +444,12 @@ public:
         startTimerHz (3);
     }
 
+    void setCaption (juce::String text)
+    {
+        caption = std::move (text);
+        repaint();
+    }
+
     bool arrowKey = false;          // a down arrow instead of the dots
     bool keyHidden = false;         // no key (INS: the FX PROCESSOR field has its own > key, D8)
     std::optional<Icon> icon;       // drawn left of the caption (ROUTING group selectors)

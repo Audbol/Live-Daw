@@ -416,7 +416,7 @@ void drawSectionBox (juce::Graphics& g, juce::Rectangle<int> area, const juce::S
     auto r = area.reduced (3).toFloat();
     if (title.isNotEmpty())
     {
-        auto header = r.removeFromTop ((float) kPanelHeaderHeight);
+        auto header = r.removeFromTop ((float) panelHeaderHeight());
         g.setColour (Colours::screenHeader);
         g.fillRect (header);
         g.setColour (Colours::caption);
@@ -442,7 +442,7 @@ juce::Rectangle<int> sectionContent (juce::Rectangle<int> area, bool hasTitle)
 {
     auto r = area.reduced (3);
     if (hasTitle)
-        r.removeFromTop (kPanelHeaderHeight + 4);
+        r.removeFromTop (panelHeaderHeight() + 4);
     return r.reduced (8, 6);
 }
 

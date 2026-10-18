@@ -164,16 +164,20 @@ void ScopeWindow::toggle (const Tile& t, bool on)
 void ScopeWindow::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colours::black);
-    g.setColour (Dark::text);
-    g.setFont (juce::FontOptions (juce::jmin (20.0f, (float) titleArea.getHeight() * 0.7f), juce::Font::bold));
-    g.drawFittedText (title, titleArea, juce::Justification::centredLeft, 1);
+    // What the window edits (EDIT SCOPE: <scene>, GLOBAL SAFE, ...) on the
+    // #202020 window title bar of the other WING windows.
+    g.setColour (Colours::screenHeader);
+    g.fillRect (titleArea);
+    g.setColour (Colours::caption);
+    g.setFont (panelTitleFont (titleArea.getHeight()));
+    g.drawFittedText (title, titleArea.reduced (12, 0), juce::Justification::centredLeft, 1, 0.8f);
 
     for (auto& gr : groups)
     {
         g.setColour (groupHeader);
         g.fillRect (gr.header);
         g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (juce::jmin (14.0f, (float) gr.header.getHeight() * 0.8f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::body, (float) gr.header.getHeight() * 0.8f, WingWeight::SemiBold));
         g.drawText (gr.title, gr.header, juce::Justification::centred);
     }
     for (auto [area, text] : { std::pair { configHeader, "CONFIGURATION" }, std::pair { contentsHeader, "CONTENTS" } })
@@ -181,7 +185,7 @@ void ScopeWindow::paint (juce::Graphics& g)
         g.setColour (groupHeader);
         g.fillRect (area);
         g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (juce::jmin (14.0f, (float) area.getHeight() * 0.8f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::body, (float) area.getHeight() * 0.8f, WingWeight::SemiBold));
         g.drawText (text, area, juce::Justification::centred);
     }
 
@@ -208,10 +212,10 @@ void ScopeWindow::paint (juce::Graphics& g)
         if (t.caption.isNotEmpty())
         {
             auto cap = r.removeFromTop (r.getHeight() * 0.36f);
-            g.setFont (juce::FontOptions (juce::jlimit (7.0f, 11.0f, cap.getHeight() * 0.9f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::statusCaption, cap.getHeight() * 0.9f));
             g.drawText (t.caption, cap.toNearestInt(), juce::Justification::centred);
         }
-        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 18.0f, juce::jmin (r.getHeight() * 0.8f, r.getWidth() * 0.4f)), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::value, juce::jmin (r.getHeight() * 0.8f, r.getWidth() * 0.4f), WingWeight::SemiBold));
         g.drawFittedText (t.number, r.toNearestInt(), juce::Justification::centred, 1, 0.7f);
         if (t.dropdown)
         {
@@ -229,7 +233,7 @@ void ScopeWindow::resized()
     groups.clear();
 
     auto b = getLocalBounds();
-    titleArea = b.removeFromTop (juce::jlimit (20, 30, getHeight() / 16)).reduced (6, 0);
+    titleArea = b.removeFromTop (juce::jlimit (20, 30, getHeight() / 16));
     b.removeFromTop (4);
     const int gap = 10;
     auto left = b.removeFromLeft (b.getWidth() * 38 / 100);

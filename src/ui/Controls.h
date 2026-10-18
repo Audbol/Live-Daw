@@ -182,7 +182,11 @@ private:
     int lastDistance = 0;
 };
 
-/** Small horizontal meter showing gain reduction in dB (0 .. maxDb). */
+/** The gain reduction of a dynamics slot as the WING draws it on its GR
+    meters (FADERS page, block thumbnails): a `GR` caption with the value over
+    a segmented amber bar on a dark well that fills from the left, with the
+    scale under it, and for a gate the square that lights green while it is
+    open (0 .. maxDb). */
 class GainReductionMeter : public juce::Component, private juce::Timer
 {
 public:
@@ -193,17 +197,48 @@ public:
         startTimerHz (30);
     }
 
+    /** Set for a gate: true while the gate is open (the square lights green). */
+    std::function<bool()> isOpen;
+
     void paint (juce::Graphics& g) override
     {
         auto b = getLocalBounds().toFloat();
-        g.setColour (juce::Colours::black.withAlpha (0.5f));
-        g.fillRoundedRectangle (b, 2.0f);
-        const float w = b.getWidth() * juce::jlimit (0.0f, 1.0f, value / range);
-        g.setColour (Colours::solo);
-        g.fillRoundedRectangle (b.removeFromRight (w), 2.0f);
+        const float screenH = getWingScreenHeight();
+        auto top = b.removeFromTop (b.getHeight() * 0.42f);
+        g.setFont (wingFontPx (juce::jmin (TypeScale::caption * screenH, top.getHeight() * 0.7f)));
+        g.setColour (Colours::caption);
+        g.drawText ("GR", top, juce::Justification::centredLeft, false);
+        g.setColour (Colours::text);
+        g.drawText ((value >= 0.05f ? "-" : "") + juce::String (value, 1) + " dB", top, juce::Justification::centredRight, false);
+        auto scale = b.removeFromBottom (b.getHeight() * 0.38f);
+        auto bar = b.reduced (0.0f, 1.0f);
+        if (isOpen != nullptr)
+        {
+            auto square = bar.removeFromLeft (bar.getHeight());
+            g.setColour (open ? Colours::meterGreen : Colours::screenTile);
+            g.fillRect (square);
+            bar.removeFromLeft (3.0f);
+            scale.removeFromLeft (square.getWidth() + 3.0f);
+        }
+        g.setColour (Colours::screenWell);
+        g.fillRect (bar);
+        const int segments = juce::jmax (8, (int) (bar.getWidth() / 4.0f));
+        const float w = bar.getWidth() / (float) segments;
+        const float lit = juce::jlimit (0.0f, 1.0f, value / range) * (float) segments;
+        for (int i = 0; i < segments; ++i)
+        {
+            g.setColour ((float) i + 0.5f < lit ? Colours::amber : Colours::screenTile);
+            g.fillRect (bar.getX() + (float) i * w, bar.getY() + 1.0f, juce::jmax (1.0f, w - 1.0f), bar.getHeight() - 2.0f);
+        }
         g.setColour (Colours::textDim);
-        g.setFont (juce::FontOptions (10.0f));
-        g.drawText ("GR " + juce::String (value, 1), getLocalBounds().reduced (3, 0), juce::Justification::centredLeft);
+        g.setFont (wingFontPx (juce::jmin (TypeScale::meterScale * screenH, scale.getHeight() * 0.8f)));
+        for (float db : { 0.0f, range * 0.25f, range * 0.5f, range * 0.75f, range })
+        {
+            const float x = scale.getX() + scale.getWidth() * db / range;
+            auto just = db <= 0.0f ? juce::Justification::centredLeft : db >= range ? juce::Justification::centredRight : juce::Justification::centred;
+            auto cell = juce::Rectangle<float> (24.0f, scale.getHeight()).withX (db <= 0.0f ? x : db >= range ? x - 24.0f : x - 12.0f);
+            g.drawText (juce::String (juce::roundToInt (db)), cell.withY (scale.getY()), just, false);
+        }
     }
 
 private:
@@ -211,11 +246,13 @@ private:
     {
         const float v = reader();
         value = v > value ? v : value * 0.85f + v * 0.15f;
+        const bool nowOpen = isOpen != nullptr && isOpen();
 
         const int shown = juce::roundToInt (value * 10.0f);
-        if (shown != lastShown)
+        if (shown != lastShown || nowOpen != open)
         {
             lastShown = shown;
+            open = nowOpen;
             repaint();
         }
     }
@@ -223,6 +260,7 @@ private:
     std::function<float()> reader;
     float range, value = 0.0f;
     int lastShown = -1;
+    bool open = false;
 };
 
 } // namespace livedaw::ui

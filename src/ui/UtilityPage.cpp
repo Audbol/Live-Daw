@@ -58,9 +58,11 @@ void UtilityPage::paintListBoxItem (int row, juce::Graphics& g, int width, int h
     auto r = juce::Rectangle<int> (width, height).reduced (8, 0);
     g.setColour (juce::Colours::black);
     g.fillRect (0, height - 1, width, 1);
-    g.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+    const auto font = wingFontFit (TypeScale::body, (float) height * 0.62f);
+    g.setFont (font);
     g.setColour (Dark::textDim);
-    g.drawText (e.time.formatted ("%H:%M:%S"), r.removeFromLeft (76), juce::Justification::centredLeft);
+    const auto time = e.time.formatted ("%H:%M:%S");
+    g.drawText (time, r.removeFromLeft (juce::roundToInt (juce::GlyphArrangement::getStringWidth (font, time + "  "))), juce::Justification::centredLeft);
     g.setColour (e.level == EventLog::Level::Error     ? Colours::mute
                  : e.level == EventLog::Level::Warning ? Colours::solo
                                                        : Colours::text);
@@ -113,7 +115,7 @@ void UtilityPage::paint (juce::Graphics& g)
         g.setColour (juce::Colours::black);
         g.fillRect (line.withHeight (1));
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (juce::jmin (16.0f, h * 0.5f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::caption, (float) h * 0.5f));
         g.drawText (row.label, line.removeFromLeft (line.getWidth() * 34 / 100), juce::Justification::centredLeft);
         if (row.state != 0)
         {
@@ -123,7 +125,7 @@ void UtilityPage::paint (juce::Graphics& g)
             line.removeFromRight (6);
         }
         g.setColour (row.state == 2 ? Colours::mute : Colours::text);
-        g.setFont (juce::FontOptions (juce::jmin (18.0f, h * 0.56f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::body, (float) h * 0.56f));
         g.drawFittedText (row.value, line, juce::Justification::centredLeft, 1);
     }
 }
@@ -131,6 +133,7 @@ void UtilityPage::paint (juce::Graphics& g)
 void UtilityPage::resized()
 {
     auto b = getLocalBounds();
+    logList.setRowHeight (juce::jlimit (14, 26, juce::roundToInt (getWingScreenHeight() * 0.052f)));
     leftArea = b.removeFromLeft (juce::jmax (300, b.getWidth() * 42 / 100));
     b.removeFromLeft (4);
     rightArea = b;
