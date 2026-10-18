@@ -667,7 +667,11 @@ public:
         g.fillRect (tag);
         g.setColour (juce::Colours::black);
         g.setFont (homeFont (TypeScale::body, tagH * 0.8f));
-        g.drawFittedText (wingDb (faderDb.load()) + " dB", tag.toNearestInt().reduced (1, 0), juce::Justification::centred, 1, 0.7f);
+        // A narrow fader (LEVEL at the minimum window size) leaves out the unit, not the value.
+        auto text = wingDb (faderDb.load()) + " dB";
+        if (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text) * 0.7f > tag.getWidth() - 2.0f)
+            text = wingDb (faderDb.load());
+        g.drawFittedText (text, tag.toNearestInt().reduced (1, 0), juce::Justification::centred, 1, 0.7f);
     }
 
     void mouseDown (const juce::MouseEvent&) override { start = fader::dbToPos (faderDb.load()); }
