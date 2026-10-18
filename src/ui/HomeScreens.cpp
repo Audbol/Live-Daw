@@ -1257,22 +1257,28 @@ public:
         auto out = box (side.removeFromBottom (boxH + panelHeaderHeight() + 22), "OUTPUT"); // the box frame takes header + 22 px
         layoutRow (out.withSizeKeepingCentre (out.getWidth(), boxH), { mix, gain }, 6);
         auto keyArea = box (side.removeFromTop (isGate ? side.getHeight() : side.getHeight() * 52 / 100), "KEY");
-        const int kh = juce::jlimit (20, 44, keyArea.getHeight() * 2 / 5);
+        juce::Rectangle<int> xo;
+        if (! isGate)
+            xo = box (side, "XOVER");
+        // A field row and a knob row in each box; in a small window both
+        // shrink together so the knob row (XOVER FREQ / DEPTH) stays whole.
+        const int avail = (isGate ? keyArea.getHeight() : juce::jmin (keyArea.getHeight(), xo.getHeight())) - gap;
+        const int kh = juce::jmin (juce::jlimit (16, 44, juce::jmin (avail * 2 / 5, boxH * 3 / 2)), avail * 55 / 100);
+        const int knobH = juce::jmax (0, juce::jmin (boxH, avail - kh));
         layoutRow (keyArea.removeFromTop (kh), { keySource, keyFilter, keyTap });
         keyArea.removeFromTop (gap);
-        auto knobRow = keyArea.removeFromTop (juce::jmin (boxH, keyArea.getHeight()));
+        auto knobRow = keyArea.removeFromTop (knobH);
         keySolo->setBounds (knobRow.removeFromRight (knobRow.getWidth() / 3).reduced (3, 0));
         layoutRow (knobRow, { keyFreq, keyQ }, 6);
         if (! isGate)
         {
-            auto xo = box (side, "XOVER");
             auto row = xo.removeFromTop (kh);
             xoSolo->setBounds (row.removeFromRight (row.getWidth() / 3).reduced (3, 0));
             xoMode->setBounds (row.withTrimmedRight (3));
             xo.removeFromTop (gap);
             const bool peak = models::list (models::XoverTypes)[slot.xoKind.load()].containsIgnoreCase ("PEAK");
             xoQ->setVisible (peak);
-            auto boxRow = xo.removeFromTop (juce::jmin (boxH, xo.getHeight()));
+            auto boxRow = xo.removeFromTop (knobH);
             if (peak)
                 layoutRow (boxRow, { xoFreq, xoDepth, xoQ }, 6);
             else
@@ -2091,7 +2097,7 @@ public:
         auto r = getLocalBounds().reduced (juce::jmax (2, getWidth() * 6 / 100), 0);
         r.removeFromTop ((int) (stripH + nameH) + 2);
         boxArea = r.removeFromTop (juce::jlimit (40, 96, getHeight() * 17 / 100)).toFloat();
-        pre.setBounds (boxArea.toNearestInt().withTrimmedTop ((int) (boxArea.getHeight() * 0.3f)).reduced (4, 4));
+        pre.setBounds (boxArea.toNearestInt().withTrimmedTop ((int) (boxArea.getHeight() * 0.3f)).reduced (juce::jlimit (1, 4, getWidth() / 10), 4));
         r.removeFromTop (6);
         r.removeFromBottom (6);
         on.setBounds (r.removeFromBottom (juce::jlimit (18, 34, getHeight() / 11)));
@@ -2146,7 +2152,7 @@ public:
         g.fillRect (caption);
         g.setColour (colours::caption);
         g.setFont (homeFont (TypeScale::caption, caption.getHeight() * 0.8f));
-        g.drawText ("LR VECTOR SCOPE", caption.toNearestInt(), juce::Justification::centred);
+        g.drawFittedText ("LR VECTOR SCOPE", caption.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.6f);
 
         if (count <= 0)
             return;
@@ -4053,10 +4059,27 @@ public:
                 }
                 g.setColour (on ? colours::keyOff : colours::keyOff.withMultipliedBrightness (0.55f));
                 g.fillRect (r);
-                auto band = r.removeFromTop (juce::jmax (5.0f, r.getHeight() * 0.18f));
+                auto band = r.removeFromTop (juce::jmax (r.getHeight() < 24.0f ? 3.0f : 5.0f, r.getHeight() * 0.18f));
                 g.setColour (on ? stripDisplayColour (src) : stripDisplayColour (src).withSaturation (0.0f).withMultipliedBrightness (0.5f));
                 g.fillRect (band);
                 g.setColour (on ? Colours::text : Colours::textDim.withAlpha (0.6f));
+                if (r.getHeight() < 20.0f)
+                {
+                    // Short cells (1280x800): the number and the mode badge side
+                    // by side; no room for the pan line.
+                    auto left = r.removeFromLeft (r.getWidth() * 0.45f);
+                    g.setFont (homeFont (TypeScale::body, r.getHeight() * 0.75f, WingWeight::SemiBold));
+                    g.drawFittedText (shortLabel (src), left.toNearestInt(), juce::Justification::centred, 1, 0.7f);
+                    drawChip (g, r.reduced (1.0f, juce::jmax (1.0f, r.getHeight() * 0.15f)), sendModeName (mode, src.isInput(), true),
+                              on ? sendModeColour (mode) : colours::chipOff, on ? juce::Colours::black : Colours::textDim);
+                    if (sel)
+                    {
+                        g.setColour (juce::Colours::white);
+                        g.drawRect (cellArea.reduced (1.0f), 2.0f);
+                    }
+                    cells.push_back ({ cellArea.toNearestInt(), ref });
+                    continue;
+                }
                 g.setFont (homeFont (TypeScale::body, r.getHeight() * 0.3f, WingWeight::SemiBold));
                 g.drawText (shortLabel (src), r.withHeight (r.getHeight() * 0.4f).toNearestInt(), juce::Justification::centred);
                 auto badge = r.withTrimmedTop (r.getHeight() * 0.42f).withHeight (r.getHeight() * 0.26f).reduced (r.getWidth() * 0.18f, 0.0f);

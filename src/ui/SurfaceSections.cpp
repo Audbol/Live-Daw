@@ -707,7 +707,9 @@ void ChannelStripSection::paintScreen (juce::Graphics& g, juce::Rectangle<float>
     g.setColour (juce::Colours::black);
     g.fillRect (box);
     g.setColour (colour);
-    g.drawText (number, box, juce::Justification::centred);
+    // BUS1, MAIN1, MTX1 in a small window: smaller, never cut.
+    g.setFont (fontFittingWidth (g.getCurrentFont(), number, box.getWidth() - 2.0f, 0.7f));
+    g.drawFittedText (number, box.toNearestInt(), juce::Justification::centred, 1, 0.7f);
     g.setColour (colour.getPerceivedBrightness() > 0.45f ? juce::Colours::black : juce::Colours::white);
     g.drawFittedText (stripName (*strip), tile.reduced (3.0f, 0.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
 

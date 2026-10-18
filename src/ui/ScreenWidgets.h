@@ -95,7 +95,10 @@ namespace prefs
     inline bool screenFollowsLayer (UiContext& ctx) { return ctx.settings.getBoolValue (layerLink, true); }
 } // namespace prefs
 
-constexpr int kDarkHeaderHeight = 30;
+/** Height of a dark panel's header bar (SETUP, LIBRARY, MONITORS, the recorder):
+    48 of the WING's 800 px screen, so it follows the screen size like the HOME
+    panel headers (30 px at 1920x1080, 20 px at 1280x800). */
+inline int darkHeaderHeight() { return juce::jlimit (20, 36, juce::roundToInt (getWingScreenHeight() * 0.06f)); }
 /** The black gap between a panel's header and its body. */
 constexpr int kDarkHeaderGap = 4;
 
@@ -107,7 +110,7 @@ inline juce::Font panelTitleFont (int headerHeight)
 
 /** Draws a dark WING panel: a header bar with the title centred, a thin black
     gap, then the body. Returns the body. An empty title draws only the body. */
-inline juce::Rectangle<int> drawDarkPanel (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& title, int headerHeight = kDarkHeaderHeight)
+inline juce::Rectangle<int> drawDarkPanel (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& title, int headerHeight = darkHeaderHeight())
 {
     if (title.isNotEmpty())
     {
@@ -125,7 +128,7 @@ inline juce::Rectangle<int> drawDarkPanel (juce::Graphics& g, juce::Rectangle<in
 }
 
 /** The body of a panel drawn by drawDarkPanel. */
-inline juce::Rectangle<int> darkPanelBody (juce::Rectangle<int> area, bool hasTitle, int headerHeight = kDarkHeaderHeight)
+inline juce::Rectangle<int> darkPanelBody (juce::Rectangle<int> area, bool hasTitle, int headerHeight = darkHeaderHeight())
 {
     return hasTitle ? area.withTrimmedTop (headerHeight + kDarkHeaderGap) : area;
 }
@@ -566,7 +569,7 @@ public:
         for (auto& r : rows)
             units += r.heightRows;
         const int groups = rows.empty() ? 0 : rows.back().group + 1;
-        return (hasHeader() ? kDarkHeaderHeight + kDarkHeaderGap : 0) + juce::roundToInt (units * (float) rowHeight) + groups * 8 + juce::jmax (0, groups - 1) * kDarkHeaderGap;
+        return (hasHeader() ? darkHeaderHeight() + kDarkHeaderGap : 0) + juce::roundToInt (units * (float) rowHeight) + groups * 8 + juce::jmax (0, groups - 1) * kDarkHeaderGap;
     }
 
     void paint (juce::Graphics& g) override
@@ -591,15 +594,18 @@ public:
             g.setColour (r.enabled ? Dark::caption : Dark::textDim.darker (0.2f));
             const bool caption = r.control == nullptr;
             g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), (float) rowHeight * (caption ? 0.26f : 0.34f))));
-            const int textW = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), r.label);
-            g.drawFittedText (r.label, l, caption && r.rightAligned ? juce::Justification::centredRight : juce::Justification::centredLeft, 1, 0.75f);
+            const float d = (float) juce::jmin (l.getHeight() - 6, 16);
+            // The info icon keeps its own room, so a long label in a narrow
+            // panel (SETUP > REMOTE at 1280x800) is squashed rather than covered.
+            const auto textArea = r.info ? l.withTrimmedRight ((int) d + 8) : l;
             if (r.info)
-            {
-                const float d = (float) juce::jmin (l.getHeight() - 6, 16);
+                g.setFont (fontFittingWidth (g.getCurrentFont(), r.label, (float) textArea.getWidth()));
+            const int textW = juce::jmin (textArea.getWidth(), juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), r.label));
+            g.drawFittedText (r.label, textArea, caption && r.rightAligned ? juce::Justification::centredRight : juce::Justification::centredLeft, 1, 0.75f);
+            if (r.info)
                 drawIcon (g, Icon::Info, juce::Rectangle<float> (d, d).withCentre ({ (float) juce::jmin (l.getRight() - (int) d, l.getX() + textW + 10) + d * 0.5f,
                                                                                     (float) l.getCentreY() }),
                           r.enabled ? Dark::text : Dark::textDim);
-            }
         }
     }
 

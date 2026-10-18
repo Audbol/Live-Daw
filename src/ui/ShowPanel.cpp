@@ -96,7 +96,7 @@ private:
         auto chip = chipColumn.withHeight (chipH).withY (t.getY() + 2.0f);
         drawChip (g, chip, item.isSnippet() ? "SNIP" : "SNAP", chipColour.withMultipliedAlpha (normal ? 1.0f : 0.45f), juce::Colours::black);
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 13.0f, t.getHeight() * 0.3f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::statusCaption * 1.2f, t.getHeight() * 0.3f));
         const juce::String number = juce::String (item.scene + 1) + (item.isSnippet() ? "." + juce::String (item.snippet + 1) : juce::String());
         g.drawText (number, chipColumn.withTop (chip.getBottom()).toNearestInt(), juce::Justification::centredRight);
 
@@ -129,7 +129,7 @@ private:
         if (item.isSnippet())
         {
             g.setColour (Dark::textDim.withMultipliedAlpha (normal ? 1.0f : 0.5f));
-            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 12.0f, t.getHeight() * 0.28f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::statusCaption, t.getHeight() * 0.28f));
             // "N PARS": what REC recorded, else the values the snippet holds.
             g.drawText (juce::String (snippet->parameterCount) + " PARS", t.removeFromRight (60.0f).withHeight (chipH + 4.0f).toNearestInt(),
                         juce::Justification::centredRight);
@@ -137,7 +137,7 @@ private:
         else if (scene->fadeSeconds > 0.0)
         {
             g.setColour (Dark::textDim.withMultipliedAlpha (normal ? 1.0f : 0.5f));
-            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 12.0f, t.getHeight() * 0.28f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::statusCaption, t.getHeight() * 0.28f));
             g.drawText ("FADE " + juce::String (scene->fadeSeconds, 1) + " s", t.removeFromRight (70.0f).withHeight (chipH + 4.0f).toNearestInt(),
                         juce::Justification::centredRight);
         }
@@ -169,7 +169,7 @@ private:
 
         const bool dim = ! normal || (! item.isSnippet() && scene->skip);
         g.setColour (dim ? Dark::textDim.withAlpha (0.6f) : Dark::text);
-        g.setFont (juce::FontOptions (juce::jlimit (12.0f, 24.0f, t.getHeight() * 0.62f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::value * 1.15f, t.getHeight() * 0.62f, WingWeight::SemiBold));
         g.drawFittedText ((item.isSnippet() ? snippet->name : scene->name).toUpperCase(), t.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
     }
 
@@ -320,7 +320,7 @@ private:
             drawIcon (g, Icon::Folder, t.removeFromLeft (t.getHeight() * 0.8f).reduced (2.0f), Dark::textDim);
             t.removeFromLeft (6.0f);
             g.setColour (Dark::text);
-            g.setFont (juce::FontOptions (juce::jlimit (12.0f, 24.0f, t.getHeight() * 0.62f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::value * 1.15f, t.getHeight() * 0.62f, WingWeight::SemiBold));
             g.drawFittedText (e.parent ? juce::String ("..") : e.file.getFileName().toUpperCase(), t.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
             return;
         }
@@ -336,11 +336,11 @@ private:
         drawChip (g, chip, chipText, colour.withMultipliedAlpha (normal ? 1.0f : 0.45f), juce::Colours::black);
         const auto time = e.file.getLastModificationTime();
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 11.0f, t.getHeight() * 0.25f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::statusCaption, t.getHeight() * 0.25f));
         g.drawText (time.formatted ("%Y-%m-%d  %H:%M:%S"), dateColumn.withTop (chip.getBottom()).toNearestInt(), juce::Justification::centredRight);
 
         g.setColour (normal ? Dark::text : Dark::textDim.withAlpha (0.6f));
-        g.setFont (juce::FontOptions (juce::jlimit (12.0f, 24.0f, t.getHeight() * 0.62f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::value * 1.15f, t.getHeight() * 0.62f, WingWeight::SemiBold));
         g.drawFittedText (e.file.getFileNameWithoutExtension().toUpperCase(), t.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
     }
 

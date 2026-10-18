@@ -79,9 +79,14 @@ public:
         }
         if (getButtonText().isNotEmpty())
         {
-            const int lines = juce::StringArray::fromLines (getButtonText()).size();
+            const auto lineList = juce::StringArray::fromLines (getButtonText());
+            const int lines = lineList.size();
             g.setColour (ink);
-            g.setFont (wingFontPx (wingKeyCap (r.getHeight(), lines > 1 ? 0.26f : 0.34f)));
+            // The longest line shrinks to fit rather than being cut (VIRTUAL SOUNDCHECK).
+            auto font = wingFontPx (wingKeyCap (r.getHeight(), lines > 1 ? 0.26f : 0.34f));
+            for (auto& line : lineList)
+                font = fontFittingWidth (font, line, content.getWidth() - 2.0f);
+            g.setFont (font);
             g.drawFittedText (getButtonText(), content.toNearestInt(), juce::Justification::centred, 2, 0.75f);
         }
     }

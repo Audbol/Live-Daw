@@ -433,21 +433,30 @@ public:
     {
         auto b = getLocalBounds().reduced (8, 7);
         const int h = b.getHeight();
+        const int t = juce::jmin (h, 44);
+        const int nameW = juce::jlimit (110, 240, getWidth() / 9), positionW = juce::jlimit (150, 230, getWidth() / 9);
+        // Everything left of the status needs about this much; a narrower
+        // window (down to the 1152 px minimum) scales the keys down to fit.
+        const int needed = 118 + 68 + nameW + 8 + 8 * (t + 3) + 8 + positionW + 8 + 76 + 60 + 100 + 32 + 32 + 44 + 72 + 54 + 62;
+        const float scale = juce::jmin (1.0f, (float) b.getWidth() / (float) needed);
+        auto sc = [scale] (int w) { return juce::roundToInt ((float) w * scale); };
         auto key = [&] (juce::Component& c, int w, int gap = 4)
         {
-            c.setBounds (b.removeFromLeft (w));
-            b.removeFromLeft (gap);
+            c.setBounds (b.removeFromLeft (sc (w)));
+            b.removeFromLeft (sc (gap));
         };
         key (consoleKey, 112, 6);
         key (fileKey, 58, 10);
-        nameArea = b.removeFromLeft (juce::jlimit (110, 240, getWidth() / 9));
-        b.removeFromLeft (8);
-        const int t = juce::jmin (h, 44);
+        nameArea = b.removeFromLeft (sc (nameW));
+        b.removeFromLeft (sc (8));
         for (auto* k : { &startKey, &rewKey, &playKey, &stopKey, &recKey, &ffKey, &loopKey, &markerKey })
-            key (*k, t, 3);
-        b.removeFromLeft (8);
-        positionArea = b.removeFromLeft (juce::jlimit (150, 230, getWidth() / 9));
-        b.removeFromLeft (8);
+        {
+            k->setBounds (b.removeFromLeft (sc (t)).withSizeKeepingCentre (sc (t), juce::jmin (h, sc (t) + 8)));
+            b.removeFromLeft (sc (3));
+        }
+        b.removeFromLeft (sc (8));
+        positionArea = b.removeFromLeft (sc (positionW));
+        b.removeFromLeft (sc (8));
         key (tempo, 72);
         key (sig, 52, 8);
         key (snapKey, 92, 8);

@@ -61,7 +61,7 @@ namespace
         else
             draw (ink);
         g.setColour (ink);
-        g.setFont (juce::FontOptions (juce::jmin (18.0f, (float) r.getHeight() * 0.5f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::value * 0.85f, (float) r.getHeight() * 0.5f, WingWeight::SemiBold));
         g.drawFittedText (text, r.reduced (6, 0), juce::Justification::centredLeft, 1);
     }
 
@@ -86,7 +86,7 @@ namespace
         g.setColour (Dark::key);
         g.fillRect (head);
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (juce::jmin (12.0f, (float) head.getHeight() * 0.8f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::statusCaption, (float) head.getHeight() * 0.8f));
         g.drawText (title, head, juce::Justification::centred);
         for (size_t i = 0; i < tiles.size(); ++i)
         {
@@ -95,10 +95,10 @@ namespace
             g.setColour (on ? talkYellow : Dark::key);
             g.fillRect (t);
             g.setColour (on ? juce::Colours::black : Dark::textDim);
-            g.setFont (juce::FontOptions (juce::jmin (9.0f, (float) t.getHeight() * 0.35f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::meterScale, (float) t.getHeight() * 0.35f));
             g.drawText (caption, t.removeFromTop (t.getHeight() * 2 / 5), juce::Justification::centred);
             g.setColour (on ? juce::Colours::black : Dark::text);
-            g.setFont (juce::FontOptions (juce::jmin (15.0f, (float) t.getHeight() * 0.7f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::body, (float) t.getHeight() * 0.7f));
             g.drawText (juce::String (i + 1), t, juce::Justification::centred);
         }
     }
@@ -157,7 +157,9 @@ void KnobField::paint (juce::Graphics& g)
     auto r = getLocalBounds();
     g.setColour (Dark::well);
     g.fillRect (r);
-    auto knob = r.removeFromLeft (r.getHeight()).toFloat().reduced ((float) r.getHeight() * 0.16f);
+    // A narrow field (AUTO DIM at 1280x800) keeps half its width for the text.
+    const int knobW = juce::jmin (r.getHeight(), r.getWidth() / 2);
+    auto knob = r.removeFromLeft (knobW).toFloat().withSizeKeepingCentre ((float) knobW, (float) knobW).reduced ((float) knobW * 0.16f);
     const float a0 = juce::MathConstants<float>::pi * 1.25f, a1 = juce::MathConstants<float>::pi * 2.75f;
     const float rad = knob.getWidth() * 0.42f, thick = juce::jmax (2.5f, knob.getWidth() * 0.16f);
     juce::Path track, arc;
@@ -170,13 +172,13 @@ void KnobField::paint (juce::Graphics& g)
         g.setColour (ring);
         g.strokePath (arc, juce::PathStrokeType (thick));
     }
-    auto t = r.reduced (4, 3);
+    auto t = r.reduced (juce::jlimit (1, 4, r.getWidth() / 12), 3);
     g.setColour (Dark::textDim.withAlpha (a));
     g.setFont (wingFontPx (juce::jmin (TypeScale::caption * getWingScreenHeight(), (float) t.getHeight() * 0.2f)));
-    g.drawFittedText (on ? binding.label.toUpperCase() : placeholder, t.removeFromTop (t.getHeight() * 38 / 100), juce::Justification::bottomLeft, 1);
+    g.drawFittedText (on ? binding.label.toUpperCase() : placeholder, t.removeFromTop (t.getHeight() * 38 / 100), juce::Justification::bottomLeft, 1, 0.7f);
     g.setColour (Dark::text.withAlpha (a));
     g.setFont (wingFontPx (juce::jmin (TypeScale::value * getWingScreenHeight(), (float) t.getHeight() * 0.5f)));
-    g.drawFittedText (on && binding.text ? binding.text() : placeholderValue, t, juce::Justification::centredLeft, 1, 0.8f);
+    g.drawFittedText (on && binding.text ? binding.text() : placeholderValue, t, juce::Justification::centredLeft, 1, 0.7f);
 }
 
 void KnobField::mouseDown (const juce::MouseEvent&)
@@ -337,7 +339,7 @@ public:
         for (int i = 0; i <= 6; ++i)
             g.drawHorizontalLine (juce::roundToInt (plot.getY() + (plot.getHeight() - 1.0f) * (float) i / 6.0f), plot.getX(), plot.getRight());
         g.setColour (Dark::caption);
-        g.setFont (juce::FontOptions (11.0f));
+        g.setFont (wingFont (TypeScale::statusCaption));
         for (float f : { 20.0f, 40.0f, 60.0f, 100.0f, 200.0f, 400.0f, 600.0f, 1000.0f, 2000.0f, 4000.0f, 6000.0f, 10000.0f, 20000.0f })
             g.drawText (f >= 1000.0f ? juce::String (juce::roundToInt (f / 1000.0f)) + "k" : juce::String (juce::roundToInt (f)),
                         juce::Rectangle<float> (xForFreq (f) - 16.0f, labels.getY() + 2.0f, 32.0f, labels.getHeight() - 2.0f).toNearestInt(),
@@ -376,7 +378,7 @@ public:
             g.setColour (sel ? Colours::choice : juce::Colour (0xff6c6c6c));
             g.fillRect (c.x - 0.75f, plot.getY() + 2.0f, sel ? 2.5f : 1.5f, plot.getHeight() - 4.0f);
             g.setColour (sel ? Dark::text : Dark::caption);
-            g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+            g.setFont (wingFont (TypeScale::statusCaption * 1.2f));
             g.drawText (bandTag (i), juce::Rectangle<float> (24.0f, 16.0f).withCentre ({ c.x, plot.getY() - 10.0f }).toNearestInt(),
                         juce::Justification::centred);
             auto ring = juce::Rectangle<float> (16.0f, 16.0f).withCentre (c);
@@ -782,7 +784,7 @@ void MonitorsPage::paintToolbar (juce::Graphics& g)
         auto label = r.removeFromBottom (r.getHeight() * 0.3f);
         drawIcon (g, t.icon, r.reduced (r.getHeight() * 0.18f), ink);
         g.setColour (ink);
-        g.setFont (juce::FontOptions (juce::jlimit (7.0f, 11.0f, label.getHeight() * 0.85f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::statusCaption, label.getHeight() * 0.85f));
         g.drawFittedText (t.text, label.toNearestInt(), juce::Justification::centredTop, 1, 0.6f);
     }
 }
@@ -796,13 +798,13 @@ void MonitorsPage::paintTalk (juce::Graphics& g)
     g.setColour (Dark::body);
     g.fillRect (talkArea);
     auto left = switchBox;
-    panel (g, left.removeFromTop (juce::jmin (kDarkHeaderHeight, left.getHeight() / 5)), "SWITCH MODE");
+    panel (g, left.removeFromTop (juce::jmin (darkHeaderHeight(), left.getHeight() / 5)), "SWITCH MODE");
     field (g, talkChannelField, "TALKBACK", talkChannelName(), true);
     auto dimArea = autoDimBox;
-    panel (g, dimArea.removeFromTop (juce::jmin (kDarkHeaderHeight, dimArea.getHeight() / 4)), "AUTO DIM");
+    panel (g, dimArea.removeFromTop (juce::jmin (darkHeaderHeight(), dimArea.getHeight() / 4)), "AUTO DIM");
 
     g.setColour (Dark::textDim);
-    g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+    g.setFont (wingFont (TypeScale::statusCaption));
     g.drawText ("USE SEND LEVELS", sendLevelsRow, juce::Justification::centredLeft);
     const auto& p = talkPath();
     tileGrid (g, busGrid, busTiles, "TALK TO BUS", "BUS", p.buses.load());
@@ -841,7 +843,7 @@ void MonitorsPage::paintPath (juce::Graphics& g)
         const auto ink = on ? juce::Colours::black : Dark::text;
         drawIcon (g, icon, f.withSizeKeepingCentre (juce::jmin (f.getWidth(), f.getHeight()), juce::jmin (f.getWidth(), f.getHeight())).reduced (f.getHeight() * 0.2f), ink);
         g.setColour (on ? onColour : Dark::textDim);
-        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 12.0f, label.getHeight() * 0.85f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::statusCaption, label.getHeight() * 0.85f));
         g.drawFittedText (text, label.toNearestInt(), juce::Justification::centred, 1, 0.7f);
     };
     key (invertKey, Icon::Invert, "INVERT", d.invert.load(), KnobColours::yellow);
@@ -906,7 +908,7 @@ void MonitorsPage::paintDistSlider (juce::Graphics& g)
     g.setColour (Dark::text);
     g.fillRect (juce::Rectangle<float> (track.getWidth() + 8.0f, 4.0f).withCentre ({ track.getCentreX(), y }));
     g.setColour (Dark::textDim);
-    g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+    g.setFont (wingFont (TypeScale::statusCaption));
     for (float mark : { 0.1f, 1.0f, 10.0f, 100.0f })
     {
         const float my = track.getBottom() - track.getHeight() * distToPos (mark);
@@ -920,10 +922,10 @@ void MonitorsPage::paintDistSlider (juce::Graphics& g)
     g.setColour (Dark::key);
     g.fillRect (box);
     g.setColour (Dark::text);
-    g.setFont (juce::FontOptions (juce::jmin (13.0f, box.getHeight() * 0.8f), juce::Font::bold));
+    g.setFont (wingFontFit (TypeScale::statusCaption * 1.2f, box.getHeight() * 0.8f));
     g.drawFittedText (juce::String (m, m < 10.0f ? 1 : 0) + " m", box.toNearestInt(), juce::Justification::centred, 1, 0.7f);
     g.setColour (on ? Colours::lime : Dark::textDim);
-    g.setFont (juce::FontOptions (juce::jmin (11.0f, value.getHeight() * 0.8f), juce::Font::bold));
+    g.setFont (wingFontFit (TypeScale::statusCaption, value.getHeight() * 0.8f));
     g.drawFittedText (juce::String (MixerEngine::monitorDelayMs (m), 1) + " ms", value.toNearestInt(), juce::Justification::centred, 1, 0.7f);
 }
 
@@ -940,7 +942,7 @@ void MonitorsPage::paintLevel (juce::Graphics& g)
     auto scale = m.removeFromLeft (m.getWidth() * 0.38f);
     auto grBar = m.removeFromRight (juce::jmax (5.0f, m.getWidth() * 0.22f));
     g.setColour (Dark::textDim);
-    g.setFont (juce::FontOptions (10.0f, juce::Font::bold));
+    g.setFont (wingFont (TypeScale::statusCaption));
     for (auto [text, db] : { std::pair { "CLIP", 0.0f }, std::pair { "-6", -6.0f }, std::pair { "-12", -12.0f }, std::pair { "-24", -24.0f },
                              std::pair { "-36", -36.0f }, std::pair { "-48", -48.0f }, std::pair { "-60", -60.0f } })
     {
@@ -968,7 +970,7 @@ void MonitorsPage::paintLevel (juce::Graphics& g)
     g.setColour (Colours::amber);
     g.fillRect (gr.withHeight (gr.getHeight() * juce::jlimit (0.0f, 1.0f, shownGr / 20.0f)));
     g.setColour (Dark::textDim);
-    g.setFont (juce::FontOptions (8.0f, juce::Font::bold));
+    g.setFont (wingFont (TypeScale::meterScale));
     g.drawText ("GR", juce::Rectangle<float> (gr.getX() - 4.0f, gr.getBottom() + 1.0f, gr.getWidth() + 8.0f, 10.0f), juce::Justification::centred);
 
     // The level fader (set by PHONES LEVEL / MONITOR LEVEL): a lime fill and a value flag.
@@ -987,7 +989,7 @@ void MonitorsPage::paintLevel (juce::Graphics& g)
     g.setColour (juce::Colours::white);
     g.fillRect (flag);
     g.setColour (juce::Colours::black);
-    g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+    g.setFont (wingFont (TypeScale::statusCaption));
     g.drawFittedText (fader::text (levelDb) + " dB", flag.toNearestInt(), juce::Justification::centred, 1, 0.6f);
 }
 
@@ -1023,12 +1025,12 @@ void MonitorsPage::resized()
         switchBox = col.removeFromTop (col.getHeight() * 46 / 100);
         col.removeFromTop (gap);
         autoDimBox = col;
-        auto sw = switchBox.withTrimmedTop (juce::jmin (kDarkHeaderHeight, switchBox.getHeight() / 5) + 6).reduced (8, 0);
+        auto sw = switchBox.withTrimmedTop (juce::jmin (darkHeaderHeight(), switchBox.getHeight() / 5) + 6).reduced (8, 0);
         // [Fig. 80] AUTO / PUSH / LATCH stacked, the TALKBACK channel field under them.
         talkChannelField = sw.removeFromBottom (juce::jmin (sw.getHeight() / 3, 48));
         sw.removeFromBottom (8);
         switchMode->setBounds (sw.withSizeKeepingCentre (juce::jmin (sw.getWidth(), 140), juce::jmin (sw.getHeight(), 3 * 34)));
-        auto ad = autoDimBox.withTrimmedTop (juce::jmin (kDarkHeaderHeight, autoDimBox.getHeight() / 4) + 6).reduced (6, 0);
+        auto ad = autoDimBox.withTrimmedTop (juce::jmin (darkHeaderHeight(), autoDimBox.getHeight() / 4) + 6).reduced (6, 0);
         const int kh = juce::jmin (48, ad.getHeight() / 2 - 4);
         busDim.setBounds (ad.removeFromTop (kh));
         ad.removeFromTop (6);
@@ -1050,7 +1052,7 @@ void MonitorsPage::resized()
     right.removeFromRight (gap);
     pathTabs = right.removeFromTop (tabH);
     right.removeFromTop (gap);
-    pathHeader = right.removeFromTop (kDarkHeaderHeight);
+    pathHeader = right.removeFromTop (darkHeaderHeight());
     right.removeFromTop (2);
     pathArea = right;
     {
@@ -1090,7 +1092,7 @@ void MonitorsPage::resized()
         delayKey = db.withHeight (keyH).withY (db.getY() + db.getHeight() * 3 / 4 - keyH / 2).reduced (2, 0);
     }
 
-    levelHeader = level.removeFromTop (tabH + gap + kDarkHeaderHeight);
+    levelHeader = level.removeFromTop (tabH + gap + darkHeaderHeight());
     levelHeader = levelHeader.withTrimmedTop (tabH + gap);
     level.removeFromTop (2);
     levelArea = level;

@@ -296,7 +296,9 @@ private:
             setUsingNativeTitleBar (true);
             setContentOwned (content, true);
             setResizable (true, true);
-            setResizeLimits (720, 480, 32768, 32768);
+            // Below about 1152x680 the main display and the fader sections
+            // no longer fit side by side and on top of each other.
+            setResizeLimits (1152, 680, 32768, 32768);
 
             // Reopen where it was (size, position, maximised); fall back to centred.
             if (savedState.isEmpty() || ! restoreWindowStateFromString (savedState))

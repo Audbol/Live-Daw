@@ -303,7 +303,9 @@ public:
         if (! icon.has_value())
         {
             g.setFont (homeFont (TypeScale::body, r.getHeight() * (twoLines ? 0.34f : 0.5f)));
-            g.drawFittedText (keyText, r.toNearestInt().reduced (3, 0), juce::Justification::centred, twoLines ? 2 : 1, 0.8f);
+            // Narrow keys (MAIN SENDS PRE at 1280x800) give the text the full width.
+            g.drawFittedText (keyText, r.toNearestInt().reduced (juce::jlimit (1, 3, getWidth() / 12), 0), juce::Justification::centred, twoLines ? 2 : 1,
+                              0.7f);
             return;
         }
         if (keyText.isEmpty())
@@ -665,7 +667,11 @@ public:
         g.fillRect (tag);
         g.setColour (juce::Colours::black);
         g.setFont (homeFont (TypeScale::body, tagH * 0.8f));
-        g.drawFittedText (wingDb (faderDb.load()) + " dB", tag.toNearestInt().reduced (1, 0), juce::Justification::centred, 1, 0.7f);
+        // A narrow fader (LEVEL at the minimum window size) leaves out the unit, not the value.
+        auto text = wingDb (faderDb.load()) + " dB";
+        if (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text) * 0.7f > tag.getWidth() - 2.0f)
+            text = wingDb (faderDb.load());
+        g.drawFittedText (text, tag.toNearestInt().reduced (1, 0), juce::Justification::centred, 1, 0.7f);
     }
 
     void mouseDown (const juce::MouseEvent&) override { start = fader::dbToPos (faderDb.load()); }
@@ -863,7 +869,9 @@ public:
         auto r = getLocalBounds().toFloat();
         const bool enabled = isEnabled() && binding.isValid();
         paintKeyBody (g, r, colours::well);
-        auto ring = r.removeFromLeft (r.getHeight()).reduced (r.getHeight() * 0.16f);
+        // A narrow box keeps at least half its width for the caption and value.
+        const float ringW = juce::jmin (r.getHeight(), r.getWidth() * 0.5f);
+        auto ring = r.removeFromLeft (ringW).withSizeKeepingCentre (ringW, ringW).reduced (ringW * 0.16f);
         const float a0 = juce::MathConstants<float>::pi * 1.25f, a1 = juce::MathConstants<float>::pi * 2.75f;
         const float pos = enabled ? binding.get() : 0.0f;
         juce::Path track, value;
@@ -881,10 +889,10 @@ public:
         r.removeFromLeft (4.0f);
         g.setColour (enabled ? colours::caption : colours::dim);
         g.setFont (homeFont (TypeScale::caption, r.getHeight() * 0.32f));
-        g.drawText (binding.label, r.removeFromTop (r.getHeight() * 0.4f).toNearestInt(), juce::Justification::bottomLeft);
+        g.drawFittedText (binding.label, r.removeFromTop (r.getHeight() * 0.4f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.7f);
         g.setColour (enabled ? colours::ink : colours::dim);
         g.setFont (homeFont (TypeScale::value, r.getHeight() * 0.9f));
-        g.drawFittedText (binding.text ? binding.text() : juce::String ("--"), r.toNearestInt(), juce::Justification::topLeft, 1, 0.8f);
+        g.drawFittedText (binding.text ? binding.text() : juce::String ("--"), r.toNearestInt(), juce::Justification::topLeft, 1, 0.7f);
     }
 
     void mouseDown (const juce::MouseEvent&) override { start = binding.isValid() ? binding.get() : 0.0f; }
