@@ -68,6 +68,20 @@ private:
     void refreshSections();
     void layoutTopRow();
     void layoutSections();
+    /** The top row's height: the splitter's share, a little more on wide
+        windows (the screen gains most from it). */
+    int topRowHeight() const;
+    /** The fader strips' width and whether the custom controls fit beside
+        them, for a bottom row `total` wide and `height` tall. */
+    struct BottomRowPlan
+    {
+        int stripW = 40;
+        bool withCc = true;
+    };
+    BottomRowPlan planBottomRow (int total, int height) const;
+    /** The console's columns: the whole window, or on very wide windows the
+        width the sections use at their natural size, centred. */
+    juce::Rectangle<int> consoleArea() const;
 
     void showPluginScanner();
     void openPluginEditor (int slot);
