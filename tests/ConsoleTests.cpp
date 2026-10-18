@@ -234,7 +234,7 @@ public:
             expectWithinAbsoluteError (db, 6.0f, 0.1f);
             expectWithinAbsoluteError (MixerEngine::monitorDelayMs (3.43f), 10.0f, 1.0e-3f);
 
-            // SOURCE SOLO: nothing while OFF; CH39 hosts it, the solo follows the source.
+            // SOURCE SOLO: nothing while OFF; CH39 hosts it (its SOLO), the solo follows the source.
             engine.setSoloBus (0); // PHONES
             engine.setSourceSolo (2, true);
             expect (! engine.isSourceSoloed (2));
@@ -242,6 +242,10 @@ public:
             engine.monitor.sourceSolo = ld::kSourceSoloCh39;
             expect (engine.getSourceSoloHost() == engine.getChannels()[38].get());
             expect (engine.isSourceSoloed (2) && engine.isSourceSoloActive());
+            engine.monitor.sourceSoloOn = false;
+            engine.setSourceSolo (2, true);
+            expect (engine.getChannels()[38]->params.solo.load(), "through the host's SOLO");
+            expect (engine.isSourceSoloed (2));
             phones.eqOn = false;
             phones.directSource = -1;
             rig.run (8);
@@ -252,7 +256,11 @@ public:
             expectWithinAbsoluteError (rig.out (4), 0.125f, 1.0e-4f);
             engine.setSourceSolo (2, false); // not the soloed one: nothing changes
             expect (engine.isSourceSoloed (1));
+            engine.setSourceSoloPort (2);
+            expect (engine.isSourceSoloed (2));
+            engine.setSourceSoloPort (1);
             engine.clearSourceSolo();
+            expect (! engine.getChannels()[38]->params.solo.load());
             rig.run (8);
             expectWithinAbsoluteError (rig.out (4), 0.25f, 1.0e-4f);
 

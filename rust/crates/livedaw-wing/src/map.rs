@@ -805,6 +805,17 @@ fn source_of(group: &str, n: u16) -> Option<usize> {
     port::wing_to_source(group, n as i32).and_then(sources::source_index)
 }
 
+/// The MONITOR output group: 1 / 2 = PHONES L / R, 3 / 4 = SPEAKERS L / R
+/// (monitor 1 is the PHONES, as `/cfg/mon/1`; ROUTING > OUTPUTS, fig. 32).
+fn monitor_output(c: &EngineControls, k: i32) -> &AtomicI32 {
+    match k {
+        1 => &c.phones.output_left,
+        2 => &c.phones.output_right,
+        3 => &c.monitor_output_left,
+        _ => &c.monitor_output_right,
+    }
+}
+
 /// A monitor path's SOURCE settings (0 = SPEAKERS, 1 = PHONES).
 fn mon_source(c: &EngineControls, path: u8) -> &MonitorSourceParams {
     if path == 0 {
@@ -1433,13 +1444,7 @@ impl<'a> Console<'a> {
             }
         }
         let c = &self.engine.controls;
-        if c.monitor_output_left.load(Relaxed) == port {
-            return Some(("MON", 1));
-        }
-        if c.monitor_output_right.load(Relaxed) == port {
-            return Some(("MON", 2));
-        }
-        None
+        (1..=4).find(|&k| monitor_output(c, k).load(Relaxed) == port).map(|k| ("MON", k))
     }
 
     /// The input patch of a strip as the WING shows it. Live DAW stores one
@@ -1992,7 +1997,7 @@ impl<'a> Console<'a> {
             "MTX" => self.matrices.get(((n - 1) / 2) as usize).map(|s| (s, n % 2 == 0)),
             _ => None,
         };
-        let known = target.is_some() || group == "OFF" || (group == "MON" && (1..=2).contains(&n));
+        let known = target.is_some() || group == "OFF" || (group == "MON" && (1..=4).contains(&n));
         if !known {
             return false;
         }
@@ -2004,7 +2009,8 @@ impl<'a> Console<'a> {
                 }
             }
         }
-        for o in [&c.monitor_output_left, &c.monitor_output_right] {
+        for k in 1..=4 {
+            let o = monitor_output(c, k);
             if o.load(Relaxed) == port {
                 o.store(-1, Relaxed);
             }
@@ -2013,7 +2019,7 @@ impl<'a> Console<'a> {
             (_, Some((s, right))) => {
                 if right { &s.params.output_right } else { &s.params.output_left }.store(port, Relaxed);
             }
-            ("MON", None) => if n == 2 { &c.monitor_output_right } else { &c.monitor_output_left }.store(port, Relaxed),
+            ("MON", None) => monitor_output(c, n).store(port, Relaxed),
             _ => {}
         }
         true
@@ -2681,6 +2687,15 @@ mod tests {
         c.set(node(&c, "/cfg/mon/2/dirin"), &Value::str("OFF")).unwrap();
         assert_eq!(speakers.direct_source.load(Relaxed), -1);
         assert!(c.is_mapped(node(&c, "/cfg/mon/2/eq/6f")));
+
+        // The MONITOR outputs: MON 1/2 the PHONES, 3/4 the SPEAKERS.
+        c.set(node(&c, "/io/out/A/9/in"), &Value::Int(2)).unwrap();
+        c.set(node(&c, "/io/out/A/9/grp"), &Value::str("MON")).unwrap();
+        c.set(node(&c, "/io/out/A/10/in"), &Value::Int(3)).unwrap();
+        c.set(node(&c, "/io/out/A/10/grp"), &Value::str("MON")).unwrap();
+        assert_eq!(ctl.phones.output_right.load(Relaxed), 8);
+        assert_eq!(ctl.monitor_output_left.load(Relaxed), 9);
+        assert_eq!(c.get(node(&c, "/io/out/A/9/in")), Some(Value::Int(2)));
     }
 
     #[test]

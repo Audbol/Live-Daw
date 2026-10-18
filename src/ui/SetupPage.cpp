@@ -599,7 +599,15 @@ namespace
             prefsPanel.addRow ("STARTUP MAIN MUTE", OnKey::forAtomic (ctx.engine.startupMainMute), 1.3f);
             prefsPanel.addRow ("GLOBAL INPUT SELECT OVERRIDE", OnKey::forAtomic (ctx.engine.inputSelectGlobal), 1.3f);
             prefsPanel.newBox();
-            prefsPanel.addRow ("SOURCE SOLO", fixedChoice ({ "OFF", "CH39", "AUX7" }, 0), 4.8f, false);
+            // The channel a soloed source plays on (ROUTING > SOURCES' SRC SOLO).
+            prefsPanel.addRow ("SOURCE SOLO",
+                               std::make_unique<ChoiceKeys> (juce::StringArray { "OFF", "CH39", "AUX7" }, [this] { return (int) ctx.engine.monitor.sourceSolo.load(); },
+                                                             [this] (int i)
+                                                             {
+                                                                 ctx.engine.clearSourceSolo();
+                                                                 ctx.engine.monitor.sourceSolo = i;
+                                                             }),
+                               4.8f);
             // The channel hosting talkback (MONITORS > TALK can pick any input
             // or aux channel; then neither key is lit).
             prefsPanel.addRow ("TALKBACK",

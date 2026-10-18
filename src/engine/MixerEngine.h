@@ -247,14 +247,17 @@ public:
 
     /** SOURCE SOLO: the strip a soloed source plays on (CH39 / AUX7), nullptr when OFF. */
     Strip* getSourceSoloHost() const noexcept;
-    /** SRC SOLO on ROUTING > SOURCES: solos the source on input `port` (one at a
-        time; soloing another moves the solo), or releases it. */
+    /** SRC SOLO on ROUTING > SOURCES: solos the source on input `port` through
+        the host's SOLO (one source at a time: soloing another moves the solo;
+        CLR SOLO ends it), or releases it. */
     void setSourceSolo (int port, bool on) noexcept;
+    /** The source a source solo plays (selecting a source while soloing moves it there). */
+    void setSourceSoloPort (int port) noexcept;
     /** The source on `port` is soloed (and SOURCE SOLO is on). */
     bool isSourceSoloed (int port) const noexcept;
-    /** A source is soloed (SOURCE SOLO on). */
-    bool isSourceSoloActive() const noexcept { return monitor.sourceSoloOn.load() && monitor.sourceSolo.load() != ld::kSourceSoloOff; }
-    void clearSourceSolo() noexcept { monitor.sourceSoloOn = false; }
+    /** A source is soloed: SOURCE SOLO is on and its host solos ($srcsolo or its SOLO). */
+    bool isSourceSoloActive() const noexcept;
+    void clearSourceSolo() noexcept;
 
     //==============================================================================
     // Stability / protection

@@ -353,13 +353,36 @@ Strip* MixerEngine::getSourceSoloHost() const noexcept
 
 void MixerEngine::setSourceSolo (int port, bool on) noexcept
 {
+    auto* host = getSourceSoloHost();
     if (on && sourceIndex (port) >= 0)
     {
         monitor.sourceSoloPort = port;
-        monitor.sourceSoloOn = true;
+        if (host != nullptr)
+            host->params.solo = true;
+        else
+            monitor.sourceSoloOn = true;
     }
     else if (! on && monitor.sourceSoloPort.load() == port)
-        monitor.sourceSoloOn = false;
+        clearSourceSolo();
+}
+
+void MixerEngine::setSourceSoloPort (int port) noexcept
+{
+    if (sourceIndex (port) >= 0)
+        monitor.sourceSoloPort = port;
+}
+
+bool MixerEngine::isSourceSoloActive() const noexcept
+{
+    const auto* host = getSourceSoloHost();
+    return host != nullptr && (monitor.sourceSoloOn.load() || host->params.solo.load());
+}
+
+void MixerEngine::clearSourceSolo() noexcept
+{
+    monitor.sourceSoloOn = false;
+    if (auto* host = getSourceSoloHost())
+        host->params.solo = false;
 }
 
 bool MixerEngine::isSourceSoloed (int port) const noexcept

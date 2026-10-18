@@ -201,6 +201,8 @@ private:
     void layoutSourcePanel();
     void paintSourceSettings (juce::Graphics&, juce::Rectangle<int>) const;
     void paintSourceLook (juce::Graphics&) const;
+    void paintSourceTags (juce::Graphics&) const;
+    void selectSource (int port);
     void renameSource();
     void setSourceGainFromY (int y);
 
@@ -209,6 +211,9 @@ private:
     juce::Rectangle<int> sourceBanner, sourceBody, sourceInitKey, sourceBox, sourceMeter, sourcePhantomKey, sourcePolKey, sourceMuteKey,
         sourceGainFader;
     std::vector<std::pair<juce::Rectangle<int>, int>> sourceColourCells, sourceIconCells;
+    // SOURCE SOLO's SRC SOLO key (fig. 36) and SOURCES > TAGS (the mute groups).
+    juce::Rectangle<int> srcSoloKey;
+    std::vector<std::pair<juce::Rectangle<int>, int>> sourceTagCells;
     std::vector<float> sourcePeaks; // per tile of the source grid, decaying
     float selectedSourcePeak = 0.0f;
     bool draggingGain = false;
