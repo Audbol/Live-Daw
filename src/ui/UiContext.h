@@ -49,7 +49,8 @@ enum class Screen
     Sends,
     Config,
     MuteGroups,
-    Recorder     // the WING-LIVE style recorder (the status bar's LIVE card icon)
+    Recorder,    // the WING-LIVE style recorder (the status bar's LIVE card icon)
+    UsbRecorder  // the USB recorder / player (the status bar's USB icon, monitoring VIEW held)
 };
 
 /** The HOME screen's tabs for the selected strip: the overview group

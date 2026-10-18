@@ -5,6 +5,7 @@
 #include "dsp/DspUtils.h"
 #include "ui/FaderStrip.h"
 #include "ui/ResponseGraph.h"
+#include "ui/UsbRecorderPage.h"
 
 namespace livedaw::ui
 {
@@ -812,17 +813,24 @@ void ChannelStripSection::resized()
 //==============================================================================
 MonitorSection::MonitorSection (UiContext& c) : ctx (c)
 {
-    viewKey.setTooltip ("VIEW: the MONITORS screen");
+    viewKey.setTooltip ("VIEW: the MONITORS screen (hold: the USB recorder / player)");
     viewKey.onPress = [this]
     {
         if (ctx.showMonitors)
             ctx.showMonitors();
         viewOpened = true;
     };
+    // Held: the USB Recorder / Player (manual p. 20, table 4.2).
+    viewKey.onHold = [this]
+    {
+        if (ctx.showScreen)
+            ctx.showScreen (Screen::UsbRecorder);
+        viewOpened = true;
+    };
     viewKey.isActive = [this]
     {
-        // Lit from the press until the display leaves SETUP.
-        viewOpened = viewOpened && ctx.getScreen && ctx.getScreen() == Screen::Setup;
+        // Lit from the press until the display leaves SETUP (or the USB recorder).
+        viewOpened = viewOpened && ctx.getScreen && (ctx.getScreen() == Screen::Setup || ctx.getScreen() == Screen::UsbRecorder);
         return viewOpened;
     };
     addAndMakeVisible (viewKey);
@@ -1009,8 +1017,7 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
         k->ledState = [this, i] { return lowerLayer == i ? SurfaceKey::Lit : SurfaceKey::Off; };
         addAndMakeVisible (k);
     }
-    layerKeys[TwoTrack]->setEnabled (false);
-    layerKeys[TwoTrack]->setTooltip ("2-TRACK TRANSP: there's no USB recorder yet");
+    layerKeys[TwoTrack]->setTooltip ("2-TRACK TRANSP: the USB recorder / player's transport (VIEW: the USB recorder screen)");
     layerKeys[MultiTrack]->setTooltip ("MULTI TRANSP: the multitrack recorder's transport (VIEW: the recorder screen)");
     layerKeys[User]->setTooltip ("USER: eight custom control keys (CC EDIT, layer USER)");
 
@@ -1034,7 +1041,7 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
         addAndMakeVisible (k);
     }
 
-    lowerView.setTooltip ("VIEW: the MUTE GROUPS screen, the scenes for SHOW CNTRL, the recorder for MULTI TRANSP");
+    lowerView.setTooltip ("VIEW: the MUTE GROUPS screen, the scenes for SHOW CNTRL, the recorder for MULTI TRANSP, the USB recorder for 2-TRACK TRANSP");
     lowerView.onPress = [this]
     {
         // USER and the DAW layers: their CC EDIT page.
@@ -1046,6 +1053,8 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
             ctx.showScreen (Screen::Library);
         else if (ctx.showScreen && lowerLayer == MultiTrack)
             ctx.showScreen (Screen::Recorder);
+        else if (ctx.showScreen && lowerLayer == TwoTrack)
+            ctx.showScreen (Screen::UsbRecorder);
         viewOpened = true;
     };
     lowerView.isActive = [this]
@@ -1053,7 +1062,8 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
         const auto screen = ctx.getScreen ? ctx.getScreen() : Screen::Home;
         viewOpened = viewOpened && ((lowerLayer == MuteGroups && screen == Screen::MuteGroups)
                                     || (lowerLayer == ShowControl && screen == Screen::Library)
-                                    || (lowerLayer == MultiTrack && screen == Screen::Recorder));
+                                    || (lowerLayer == MultiTrack && screen == Screen::Recorder)
+                                    || (lowerLayer == TwoTrack && screen == Screen::UsbRecorder));
         return viewOpened || screen == Screen::MuteGroups;
     };
 
@@ -1130,18 +1140,25 @@ void CustomControlSection::setLowerLayer (int layer)
                                             Icon::ReturnToStart, Icon::Stop, Icon::Play, Icon::Record };
     static const char* transportTips[8] = { "Previous marker", "Next marker", "Add a marker at the position", "Loop on/off",
                                             "Return to the start", "Stop", "Play", "Record the armed tracks (again: stop)" };
+    // 2-TRACK TRANSP (the USB recorder / player): < > clips, NEW FILE, REPEAT
+    // over PAUSE, STOP, PLAY, REC.
+    static const Icon usbIcons[8] = { Icon::ChevronLeft, Icon::ChevronRight, Icon::Plus, Icon::Loop,
+                                      Icon::Pause, Icon::Stop, Icon::Play, Icon::Record };
+    static const char* usbTips[8] = { "Previous clip", "Next clip", "NEW FILE: the recording goes on in a new file", "REPEAT the playlist",
+                                      "Pause / go on (the player)", "Stop the player", "Play", "Record the RECORDER outputs (again: stop)" };
     for (int i = 0; i < lowerKeys.size(); ++i)
     {
         const auto name = lowerKeyName (i);
-        const bool transport = layer == MultiTrack;
+        const bool transport = layer == MultiTrack || layer == TwoTrack;
         lowerKeys[i]->setLabel (transport ? juce::String() : name);
-        lowerKeys[i]->setIcon (transport ? std::optional<Icon> (transportIcons[i]) : std::nullopt);
+        lowerKeys[i]->setIcon (transport ? std::optional<Icon> (layer == TwoTrack ? usbIcons[i] : transportIcons[i]) : std::nullopt);
         lowerKeys[i]->setEnabled (transport || name.isNotEmpty());
         lowerKeys[i]->ledColour = layer == MuteGroups ? Colours::mute
                                   : transport && i == 7 ? Colours::mute
                                   : transport && i == 6 ? Colours::meterGreen
                                                         : Colours::silk;
         lowerKeys[i]->setTooltip (layer == MuteGroups ? "Mute group " + juce::String (i + 1) + ": " + ctx.engine.getMuteGroupName (i)
+                                  : layer == TwoTrack ? juce::String (usbTips[i])
                                   : transport         ? juce::String (transportTips[i])
                                                       : juce::String());
     }
@@ -1165,6 +1182,11 @@ juce::String CustomControlSection::lowerKeyName (int key) const
         case MultiTrack:
         {
             static const char* names[] = { "PREV", "NEXT", "MARK", "LOOP", "START", "STOP", "PLAY", "REC" };
+            return names[juce::jlimit (0, 7, key)];
+        }
+        case TwoTrack:
+        {
+            static const char* names[] = { "PREV", "NEXT", "NEW FILE", "REPEAT", "PAUSE", "STOP", "PLAY", "REC" };
             return names[juce::jlimit (0, 7, key)];
         }
         default: return {};
@@ -1197,6 +1219,25 @@ void CustomControlSection::pressLowerKey (int key)
         }
         else if (key == 2 && ctx.showScreen)
             ctx.showScreen (Screen::Library);
+    }
+    else if (lowerLayer == TwoTrack)
+    {
+        auto& usb = ctx.engine.getUsbRecorder();
+        switch (key)
+        {
+            case 0: usb.previous(); break;
+            case 1: usb.next(); break;
+            case 2:
+                if (auto r = usb.newFile(); r.failed())
+                    ctx.log.warning ("USB recorder: " + r.getErrorMessage());
+                break;
+            case 3: usb.setRepeat (! usb.getRepeat()); break;
+            case 4: usb.togglePlayPause(); break;
+            case 5: usb.stop(); break;
+            case 6: UsbRecorderPage::pressPlay (ctx); break;
+            case 7: UsbRecorderPage::pressRec (ctx); break;
+            default: break;
+        }
     }
     else if (lowerLayer == MultiTrack && ctx.recording != nullptr)
     {
@@ -1358,6 +1399,19 @@ bool CustomControlSection::lowerKeyLit (int key) const
         return cc::isLit (ctx, ccFunction (l, key));
     if (lowerLayer == MuteGroups)
         return (ctx.engine.muteGroups.load() >> key) & 1u;
+    if (lowerLayer == TwoTrack)
+    {
+        auto& usb = ctx.engine.getUsbRecorder();
+        switch (key)
+        {
+            case 3: return usb.getRepeat();
+            case 4: return usb.getPlayState() == UsbRecorder::PlayState::Paused;
+            case 5: return usb.getPlayState() == UsbRecorder::PlayState::Stopped;
+            case 6: return usb.getPlayState() == UsbRecorder::PlayState::Playing;
+            case 7: return usb.getRecState() == UsbRecorder::RecState::Recording || usb.getRecState() == UsbRecorder::RecState::Paused;
+            default: return false;
+        }
+    }
     if (lowerLayer == MultiTrack && ctx.recording != nullptr)
     {
         const auto state = ctx.recording->getState();
@@ -1428,6 +1482,12 @@ void CustomControlSection::timerCallback()
             state << ctx.engine.getMuteGroupName (i) << '|';
     else if (lowerLayer == ShowControl)
         state << ctx.show.getCurrentSceneIndex() << ctx.show.getNumScenes() << '|' << sceneCursor;
+    else if (lowerLayer == TwoTrack)
+    {
+        auto& usb = ctx.engine.getUsbRecorder();
+        state << (int) usb.getPlayState() << '|' << (int) (usb.getPosition() / 48000) << '|' << (int) usb.getRecState() << '|'
+              << (int) (usb.getRecTime() / 48000) << '|' << usb.getCurrentFile().getFileName();
+    }
     else if (lowerLayer == MultiTrack && ctx.recording != nullptr)
         state << (int) ctx.recording->getState() << '|' << (int) (ctx.recording->getPosition() / 4800) << '|' << ctx.recording->getNumArmed() << '|'
               << ctx.recording->getProject().getName();
@@ -1515,6 +1575,34 @@ void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> are
             else if (i == 2)
                 info.name = ctx.show.getNumScenes() > 0 ? scene (current) : juce::String ("no scene");
             info.line2 = i == 1 ? "next" : (i == 2 ? "current" : "");
+        }
+        else if (lowerLayer == TwoTrack)
+        {
+            // The player (state and time, the clip) and the recorder (state and time, the format).
+            auto& usb = ctx.engine.getUsbRecorder();
+            const double rate = usb.getSampleRate();
+            auto hms = [rate] (int64_t samples)
+            {
+                const auto sec = (int64_t) ((double) juce::jmax<int64_t> (0, samples) / juce::jmax (1.0, rate));
+                return juce::String (sec / 3600) + ":" + juce::String ((sec / 60) % 60).paddedLeft ('0', 2) + ":" + juce::String (sec % 60).paddedLeft ('0', 2);
+            };
+            static const char* titles[] = { "PLAYER", "CLIP", "RECORDER", "FORMAT" };
+            static const char* playStates[] = { "STOP", "PLAY", "PAUSE", "ERROR" };
+            static const char* recStates[] = { "STOP", "REC", "PAUSE", "ERROR" };
+            info.number = titles[i];
+            switch (i)
+            {
+                case 0:
+                    info.name = hms (usb.getPosition());
+                    info.line2 = playStates[juce::jlimit (0, 3, (int) usb.getPlayState())];
+                    break;
+                case 1: info.name = usb.getCurrentFile().getFileNameWithoutExtension(); break;
+                case 2:
+                    info.name = hms (usb.getRecTime());
+                    info.line2 = recStates[juce::jlimit (0, 3, (int) usb.getRecState())];
+                    break;
+                default: info.name = juce::String (usb.getRecChannels()) + "-CH " + juce::String (usb.getRecBits()) + " bit"; break;
+            }
         }
         else if (lowerLayer == MultiTrack && ctx.recording != nullptr)
         {

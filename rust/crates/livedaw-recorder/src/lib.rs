@@ -17,15 +17,20 @@
 //!   WAV files, computes the peaks for drawing and finalizes the takes.
 //!
 //! The message thread drives everything through the methods of [`Recorder`].
+//!
+//! [`usb`] is the separate 2/4-track USB recorder / player (the WING's USB
+//! stick), built on the same rings, WAV files and disk-thread design.
 
 pub mod audio;
 pub mod playlist;
 mod reader;
 pub mod ring;
+pub mod usb;
 pub mod wav;
 mod writer;
 
 pub use playlist::{Clip, FadeShape, LoopRange, PlaybackTrack, Playlist, PreparedPlaylist};
+pub use usb::{usb_player_channel, UsbDeck, USB_CHANNELS, USB_PLAYER_SOURCE_BASE};
 
 use playlist::PreparedPlaylist as Prepared;
 use ring::{Ring, SpscQueue};

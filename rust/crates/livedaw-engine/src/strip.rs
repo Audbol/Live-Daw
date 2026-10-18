@@ -28,7 +28,7 @@ use livedaw_dsp::wing::dynamics::{DynStatus, WingDynamics};
 use livedaw_dsp::wing::eq::WingEq;
 use livedaw_dsp::wing::filter::WingFilter;
 use livedaw_dsp::wing::{EQ_MODELS_BUS, EQ_MODELS_CH, MAX_DYN_PARAMS, MAX_EQ_PARAMS, PROCESS_ORDERS};
-use livedaw_recorder::playback_channel;
+use livedaw_recorder::{playback_channel, usb_player_channel, NUM_PLAYBACK_CHANNELS};
 use std::cell::UnsafeCell;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Mutex};
@@ -57,7 +57,8 @@ pub(crate) struct ProcessContext<'a> {
     pub main_link_db: f32,
     /// Hardware inputs by hardware channel (null = inactive).
     pub hw_inputs: &'a [*const f32],
-    /// The recorder's playback channels (input `PLAYBACK_SOURCE_BASE + n`).
+    /// The recorder's playback channels (input `PLAYBACK_SOURCE_BASE + n`),
+    /// then the USB PLAYER's (input `USB_PLAYER_SOURCE_BASE + n`).
     pub playback: &'a [*const f32],
     /// INPUT SELECT: every input strip follows `global_alt` (else its own switch).
     pub input_select_global: bool,
@@ -931,12 +932,15 @@ impl Strip {
     }
 }
 
-/// The buffer of input source `index`: hardware input `index`, or playback
-/// channel `index - PLAYBACK_SOURCE_BASE` (None = not connected).
+/// The buffer of input source `index`: hardware input `index`, playback
+/// channel `index - PLAYBACK_SOURCE_BASE` or USB PLAYER channel `index -
+/// USB_PLAYER_SOURCE_BASE` (after the playback channels in `playback`).
+/// None = not connected.
 pub(crate) fn source_ptr(hw: &[*const f32], playback: &[*const f32], index: i32) -> Option<*const f32> {
-    let p = match playback_channel(index) {
-        Some(n) => playback.get(n),
-        None => hw.get(usize::try_from(index).ok()?),
+    let p = match (playback_channel(index), usb_player_channel(index)) {
+        (Some(n), _) => playback.get(n),
+        (None, Some(n)) => playback.get(NUM_PLAYBACK_CHANNELS + n),
+        (None, None) => hw.get(usize::try_from(index).ok()?),
     };
     p.copied().filter(|p| !p.is_null())
 }

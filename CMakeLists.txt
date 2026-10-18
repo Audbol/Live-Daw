@@ -80,6 +80,7 @@ set(LIVEDAW_ENGINE_SOURCES
     src/engine/Layers.cpp
     src/engine/Show.cpp
     src/engine/Recorder.cpp
+    src/engine/UsbRecorder.cpp
     src/engine/VirtualAudioDevice.cpp
     src/engine/WingRemote.cpp)
 
@@ -204,6 +205,7 @@ target_sources(LiveDAW PRIVATE
     src/ui/daw/DawTracks.cpp
     src/ui/daw/DawEditor.cpp
     src/ui/daw/RecorderPage.cpp
+    src/ui/UsbRecorderPage.cpp
     src/ui/WingPopups.cpp
     src/ui/CustomControlsPage.cpp
     src/ui/MonitorsPage.cpp
@@ -243,6 +245,7 @@ if(LIVEDAW_BUILD_TESTS)
         tests/LayerTests.cpp
         tests/DeviceTests.cpp
         tests/RecorderTests.cpp
+        tests/UsbRecorderTests.cpp
         tests/DawTests.cpp
         tests/WingTests.cpp
         ${LIVEDAW_ENGINE_SOURCES}

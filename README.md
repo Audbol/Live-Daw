@@ -156,7 +156,8 @@ Barlow Condensed.
   (press: show it on the screen, again: next parameter; hold: on/off); CHANNEL
   EQUALIZER with SHIFT, four band encoders, BLEND/MIX, EQ and GAIN / WIDTH / FREQ;
   VIEW opens the shown slot on HOME.
-- **USB / monitoring panel** (top right): VIEW (the MONITORS screen), TALK LEVEL,
+- **USB / monitoring panel** (top right): VIEW (the MONITORS screen; held: the USB
+  recorder / player), TALK LEVEL,
   PHONES LEVEL, MONITOR LEVEL, **TALK A / TALK B** (AUTO: held talks while held, a
   short press latches; PUSH; LATCH), **DIM** (hold: mute the monitor) and **MONO**
   (hold: swap left and right) on the selected monitoring path; held functions blink,
@@ -168,7 +169,9 @@ Barlow Condensed.
   MAIN 1), with their scribble strips on a four-way LCD.
 - **Custom controls** (between the center and right sections): the upper part's 16
   layers of four encoders and eight keys (assigned on CC EDIT; UP / DOWN; names and
-  colours on the LCD), the lower layers **USER** (eight assignable keys), **MULTI
+  colours on the LCD), the lower layers **USER** (eight assignable keys), **2-TRACK
+  TRANSP** (the USB recorder / player: previous / next clip, NEW FILE, REPEAT, PAUSE,
+  STOP, PLAY, REC; VIEW opens its screen), **MULTI
   TRANSP** (the recorder's transport: previous / next marker, MARK, LOOP over START,
   STOP, PLAY, REC; VIEW opens the recorder screen), **MUTE GROUPS** (the eight mute
   groups) and **SHOW CNTRL** (scene back, GO, SCENES; the wheel picks the scene GO
@@ -222,6 +225,37 @@ a WING with a WING-LIVE card, and edits them in a DAW-style editor.
     arrows nudge (alt: fine; without a selection they move the playhead), Ctrl+arrows
     previous / next marker, up / down select the track, F zoom to fit, + / - zoom,
     Ctrl+wheel zoom, shift+wheel scroll, Ctrl+S / Ctrl+Shift+S / Ctrl+O / Ctrl+I.
+
+## USB recorder / player
+
+The WING's 2/4-track USB recorder and player (manual 8.2), with a folder on the
+computer as the "USB stick": `Documents/Live DAW/USB` by default (hold or right-click
+the USB key on the screen to choose another folder).
+
+- **Screen** (the status bar's **USB** icon, red while recording, or hold VIEW on the
+  monitoring panel), laid out as the console's: the browser on the left (USB | N SONGS
+  | ADD | FOLDER | RENAME | DELETE | REC PATH; folders, WAV files and playlists; the
+  folder row goes up a level, `>` opens the selected folder, a double click plays),
+  the **4-TRACK RECORDER**, the playlist keys and the **4-TRACK PLAYER** with its
+  timeline on the right.
+- **Recorder:** records the RECORDER output group (four ports; MAIN 1 L/R on 1-2 by
+  default; ROUTING > OUTPUTS > group RECORDER taps any strip's output without moving
+  its own outputs) to a 2-CH or 4-CH, 16 or 24 bit WAV file `R_YYYYMMDD-HHMMSS.wav` in
+  the REC PATH folder, at the console's rate. REC, PAUSE (the file stays open), STOP
+  (REC then starts a new file) and NEW FILE (the next file starts on the next sample).
+  SETUP > GENERAL > USB HOST SPEED FS limits it to 2 channels at 16 bit, as on the
+  console.
+- **Player:** plays 2- or 4-track WAV files (16/24/32 bit; a file at another sample
+  rate is resampled and its rate chip turns orange) into the **USB PLAYER** source
+  group, which channels patch on ROUTING like any input (PLAYER 1-4, with source
+  settings). PLAY, PAUSE, STOP, `<` `>`, and the timeline (drag the cursor while
+  paused). The files of the browsed folder play one at a time.
+- **Playlists:** CREATE PLAYLIST (or ADD a clip, ADD ALL for a folder), then on the
+  N SONGS page REPEAT, REMOVE, SKIP (passed over), STOP (stop after the clip; held: all
+  clips), UP / DOWN; clips follow each other without a gap. SAVE / OPEN / CLOSE
+  PLAYLIST store M3U files in the USB folder.
+- **Custom controls:** the USB PLAY/REC functions (PLAY, PAUSE, STOP, PREV, NEXT,
+  REC, REC PAUSE, REC STOP, NEW FILE, REPEAT) on any CC key.
 
 ## Shows, scenes and snippets
 
@@ -466,11 +500,12 @@ rust/crates/livedaw-dsp/     Rust DSP: the WING models (filter, EQ models, 32 dy
 rust/crates/livedaw-engine/  Rust realtime engine: WING topology, strips, sends, DCAs, mute groups, FX slots, solo, worker pool
 rust/crates/livedaw-session/ Rust sessions: console state, Show > Scene > Snippet, fades, fader banks, show files, legacy import
 rust/crates/livedaw-wing/    WING parameter tree, its mapping onto the engine, the WING remote protocols, .snap/.show files
+rust/crates/livedaw-recorder/ Rust multitrack recorder and the 2/4-track USB recorder / player (rings, WAV files, disk threads)
 rust/crates/livedaw-ffi/     C ABI over the engine and model tables + C++ header (include/livedaw_engine.h)
 src/engine/   C++ side: facades over the Rust code, FX slot plugin hosting
 src/daw/      Multitrack projects: tracks, clips, markers, undo, import / export, the recording session
 src/ui/       JUCE UI: the WING surface (fader sections, main display screens, channel strip, monitor)
-src/ui/daw/   The multitrack editor and the recorder screen
+src/ui/daw/   The multitrack editor and the recorder screen (UsbRecorderPage in src/ui: the USB recorder / player)
 resources/    Barlow Condensed fonts (SIL Open Font License)
 tools/wing/   Generators for the model tables and the WING tree (from libwing's parameter map), libwing test tools
 tests/        Unit tests (run with ctest)

@@ -13,6 +13,7 @@ pub mod console;
 pub mod models;
 pub mod recorder;
 pub mod session;
+pub mod usb;
 pub mod wing;
 
 use livedaw_engine::params::{

@@ -1,6 +1,6 @@
 [package]
 name = "livedaw-recorder"
-description = "Live DAW multitrack recorder: lock-free rings, WAV/RF64 files, disk threads, playlist rendering, transport"
+description = "Live DAW multitrack recorder (lock-free rings, WAV/RF64 files, disk threads, playlist rendering, transport) and the 2/4-track USB recorder / player"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -26,6 +26,10 @@
 //! the timeline, fills the 64 playback channels (input sources
 //! `PLAYBACK_SOURCE_BASE + n`, like hardware inputs) before stage 1, records
 //! hardware inputs at the start of the chunk and strip taps after stage 6.
+//! The USB recorder / player (`livedaw_recorder::usb`) runs inside the same
+//! chunks: its four player channels are sources (USB PLAYER) like the
+//! playback channels, and its four RECORDER ports tap strips or sources
+//! after stage 6 (the "USB deck hooks" below).
 //!
 //! Structure changes happen on the message thread by publishing a new
 //! immutable `Topology`; the old one is retired to the garbage collector, which
@@ -45,6 +49,7 @@ use crate::talk::{TalkBlock, TalkGains, TalkRamps};
 use livedaw_dsp::util::*;
 use livedaw_dsp::wing::fx::{allowed_in_slot, FxContext, FxDevice};
 use livedaw_dsp::wing::FX_MODELS;
+use livedaw_recorder::usb::{RecTap, UsbDeck, USB_CHANNELS};
 use livedaw_recorder::{playback_channel, RecordStream, RecordTrackSpec, Recorder, SourceKind};
 use std::cell::UnsafeCell;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -218,6 +223,8 @@ pub struct Engine {
     pub controls: EngineControls,
     fx: Box<[FxRack]>,
     recorder: Recorder,
+    /// The USB recorder / player (USB PLAYER sources, RECORDER outputs).
+    usb: UsbDeck,
     /// RTA, LR scope and LISTEN on one strip at a time (`analyser.rs`).
     analysis: Analyser,
     /// ROUTING > SOURCES.
@@ -293,6 +300,7 @@ impl Engine {
             controls: EngineControls::default(),
             fx: (0..NUM_FX).map(|_| FxRack::default()).collect(),
             recorder: Recorder::new(),
+            usb: UsbDeck::new(),
             analysis: Analyser::new(),
             sources: SourceTable::default(),
             talk_ramps: TalkRamps::default(),
@@ -528,6 +536,11 @@ impl Engine {
         &self.recorder
     }
 
+    /// The USB recorder / player.
+    pub fn usb(&self) -> &UsbDeck {
+        &self.usb
+    }
+
     /// The RTA, the LR vector scope and LISTEN (their controls are shared with the UI).
     pub fn analysis(&self) -> &Analyser {
         &self.analysis
@@ -759,6 +772,7 @@ impl Engine {
         }
         drop(st);
         self.recorder.prepare(sample_rate, block_size);
+        self.usb.prepare(sample_rate, block_size);
         self.analysis.prepare(sample_rate);
         // Devices are built for a sample rate and block size: rebuild them.
         for (i, (rack, params)) in self.fx.iter().zip(self.controls.fx.iter()).enumerate() {
@@ -839,9 +853,11 @@ impl Engine {
 
             // The recorder may shorten the chunk (loop end, ring switch).
             let n = self.recorder.begin_chunk(n);
+            self.usb.begin_chunk(n); // USB deck hook: the player buffers, the recorder's commands
             a.block_counter += 1;
             self.process_chunk(topo, a, n);
             self.recorder.end_chunk(n);
+            self.usb.end_chunk(n); // USB deck hook
             start += n;
         }
     }
@@ -850,7 +866,7 @@ impl Engine {
         let rec = &self.recorder;
         // Sources first: the channels and the recorder's input streams read
         // the processed ports (gain, mute, polarity, stereo / mid-side pairs).
-        a.sources.process(&self.sources, &a.hw_in_ptrs, rec.playback_ptrs(), n);
+        a.sources.process(&self.sources, &a.hw_in_ptrs, rec.playback_ptrs(), self.usb.player_ptrs(), n);
         let streams = rec.record_streams();
         // Record hardware inputs (and playback channels) as they arrive.
         self.record_inputs(streams, a.sources.hw_ptrs(), a.sources.playback_ptrs(), n);
@@ -932,6 +948,7 @@ impl Engine {
 
         // Record strip taps, now that every strip has run.
         self.record_strips(topo, streams, n);
+        self.record_usb(topo, a, n);
 
         // 7. Solo / monitor
         self.build_monitor(topo, a, n, solo, talk);
@@ -994,6 +1011,26 @@ impl Engine {
             let strip = StripKind::from_i32(st.source.strip_kind).and_then(|k| topo.by_number(k, st.source.strip_number));
             let src = strip.map(|s| if pre { s.dsp().pfl(st.channel, n) } else { s.dsp().out(st.channel, n) });
             self.recorder.write_record_stream(i, src, n);
+        }
+    }
+
+    // ---- USB deck hooks -------------------------------------------------------------
+
+    /// The RECORDER output group (`/io/out/REC`): each of the USB recorder's
+    /// four ports records a source or a strip's output as its hardware output
+    /// carries it (input and aux channels their direct out, the PFL copy;
+    /// the others after fader and pan). Metered while not recording.
+    unsafe fn record_usb(&self, topo: &Topology, a: &AudioState, n: usize) {
+        let (hw, playback) = (a.sources.hw_ptrs(), a.sources.playback_ptrs());
+        for port in 0..USB_CHANNELS {
+            let src = match self.usb.rec_tap(port) {
+                RecTap::Off => None,
+                RecTap::Source(p) => source_ptr(hw, playback, p).map(|p| std::slice::from_raw_parts(p, n)),
+                RecTap::Strip { kind, number, channel } => StripKind::from_i32(kind)
+                    .and_then(|k| topo.by_number(k, number))
+                    .map(|s| if s.kind().is_input() { s.dsp().pfl(channel, n) } else { s.dsp().out(channel, n) }),
+            };
+            self.usb.write_rec(port, src, n);
         }
     }
 

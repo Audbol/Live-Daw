@@ -172,17 +172,21 @@ StatusTitle RoutingPage::getStatusTitle()
     if (mode == Mode::Sources)
     {
         t.kind = StatusTitle::Kind::Source;
-        const bool playback = Recorder::isPlaybackSource (selectedSource);
-        t.prefix = juce::String ((playback ? Recorder::playbackChannelOf (selectedSource) : selectedSource) + 1);
+        const bool usbPlayer = UsbRecorder::isPlayerSource (selectedSource);
+        const bool playback = Recorder::isPlaybackSource (selectedSource) || usbPlayer;
+        t.prefix = juce::String ((usbPlayer ? UsbRecorder::playerChannelOf (selectedSource)
+                                  : playback ? Recorder::playbackChannelOf (selectedSource)
+                                             : selectedSource) + 1);
         const auto custom = ctx.engine.getSourceName (MixerEngine::sourceIndex (selectedSource));
-        t.text = custom.isNotEmpty() ? custom.toUpperCase() : juce::String (playback ? "PLAYBACK" : "AUDIO IN");
+        t.text = custom.isNotEmpty() ? custom.toUpperCase() : juce::String (usbPlayer ? "USB PLAYER" : playback ? "PLAYBACK" : "AUDIO IN");
         t.icon = playback ? Icon::Waveform : Icon::Xlr;
     }
     else if (mode == Mode::Outputs)
     {
         t.kind = StatusTitle::Kind::Source;
-        t.prefix = juce::String (selectedPort + 1);
-        t.text = "AUDIO OUT";
+        const bool rec = isRecorderPort (selectedPort);
+        t.prefix = juce::String ((rec ? selectedPort - kRecorderPortBase : selectedPort) + 1);
+        t.text = rec ? "RECORDER" : "AUDIO OUT";
         t.icon = Icon::Speaker;
     }
     return t;
@@ -386,7 +390,7 @@ void RoutingPage::layoutTiles()
     layoutVersion = ctx.engine.getStructureVersion();
     targetPage = juce::jlimit (0, numTargetPages() - 1, targetPage);
     inputGroup = juce::jlimit (0, numSourceGroups() - 1, inputGroup);
-    outputGroup = juce::jlimit (0, numPortGroups (true) - 1, outputGroup);
+    outputGroup = juce::jlimit (0, numOutputGroups() - 1, outputGroup);
     channelTiles.clear();
     leftPorts.clear();
     rightPorts.clear();
@@ -473,7 +477,8 @@ juce::String RoutingPage::inputUsers (int port) const
 
 int RoutingPage::numSourceGroups() const
 {
-    return numPortGroups (false) + (Recorder::kNumPlaybackChannels + kPortsPerGroup - 1) / kPortsPerGroup;
+    // The hardware inputs, the playback channels, then the USB PLAYER.
+    return numPortGroups (false) + (Recorder::kNumPlaybackChannels + kPortsPerGroup - 1) / kPortsPerGroup + 1;
 }
 
 juce::String RoutingPage::sourceGroupName (int group) const
@@ -481,6 +486,8 @@ juce::String RoutingPage::sourceGroupName (int group) const
     const int hw = numPortGroups (false);
     if (group < hw)
         return "AUDIO IN " + juce::String (group * kPortsPerGroup + 1) + "-" + juce::String (group * kPortsPerGroup + kPortsPerGroup);
+    if (group == numSourceGroups() - 1)
+        return "USB PLAYER";
     const int first = (group - hw) * kPortsPerGroup;
     return "PLAY " + juce::String (first + 1) + "-" + juce::String (juce::jmin (Recorder::kNumPlaybackChannels, first + kPortsPerGroup));
 }
@@ -490,6 +497,8 @@ int RoutingPage::sourceAt (int group, int index) const
     const int hw = numPortGroups (false);
     if (group < hw)
         return group * kPortsPerGroup + index;
+    if (group == numSourceGroups() - 1)
+        return index < UsbRecorder::kNumChannels ? UsbRecorder::playerSource (index) : -1;
     const int channel = (group - hw) * kPortsPerGroup + index;
     return channel < Recorder::kNumPlaybackChannels ? Recorder::playbackSource (channel) : -1;
 }
@@ -504,11 +513,48 @@ juce::String RoutingPage::sourceName (int source) const
             return name;
     if (Recorder::isPlaybackSource (source))
         return Recorder::playbackSourceName (Recorder::playbackChannelOf (source));
+    if (UsbRecorder::isPlayerSource (source))
+        return UsbRecorder::playerSourceName (UsbRecorder::playerChannelOf (source));
     return portName (source, false);
+}
+
+int RoutingPage::numOutputGroups() const
+{
+    return numPortGroups (true) + 1; // the hardware outputs, then the USB RECORDER
+}
+
+juce::String RoutingPage::outputGroupName (int group) const
+{
+    if (group >= numPortGroups (true))
+        return "RECORDER";
+    const int a = group * kPortsPerGroup + 1;
+    return "AUDIO OUT " + juce::String (a) + "-" + juce::String (a + kPortsPerGroup - 1);
+}
+
+int RoutingPage::outputPortAt (int group, int index) const
+{
+    if (group >= numPortGroups (true))
+        return index < UsbRecorder::kNumChannels ? kRecorderPortBase + index : -1;
+    return group * kPortsPerGroup + index;
 }
 
 RoutingPage::Signal RoutingPage::feederOf (int port) const
 {
+    if (isRecorderPort (port))
+    {
+        // A RECORDER port taps a strip's output (the USB recorder's own patch).
+        const auto tap = ctx.engine.getUsbRecorder().getTap (port - kRecorderPortBase);
+        if (tap.kind != UsbRecorder::Tap::Kind::Strip)
+            return { nullptr, -1 };
+        auto& strips = ctx.engine.getStrips (tap.stripKind);
+        for (size_t i = 0; i < strips.size(); ++i)
+        {
+            const int number = strips[i]->isBus() ? strips[i]->getId() + 1 : (int) i + 1;
+            if (number == tap.stripNumber)
+                return { strips[i].get(), tap.channel };
+        }
+        return { nullptr, -1 };
+    }
     for (int k = 0; k < kNumStripKinds; ++k)
         for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
         {
@@ -554,7 +600,10 @@ void RoutingPage::paintChannelTile (juce::Graphics& g, juce::Rectangle<int> area
         // Mono sources in blue, stereo in olive.
         t.labelColour = stereo ? stereoLabel : monoLabel;
         t.label = sourceName (port);
-        if (stereo && ! Recorder::isPlaybackSource (port))
+        if (stereo && UsbRecorder::isPlayerSource (port))
+            t.label = "PLAYER " + juce::String (UsbRecorder::playerChannelOf (port) + 1) + "/"
+                      + juce::String (UsbRecorder::playerChannelOf (portRight >= 0 ? portRight : port + 1) + 1);
+        else if (stereo && ! Recorder::isPlaybackSource (port))
             t.label = juce::String (port + 1) + "/" + juce::String ((portRight >= 0 ? portRight : port + 1) + 1);
         else if (stereo)
             t.label = "PLAY " + juce::String (Recorder::playbackChannelOf (port) + 1) + "/"
@@ -570,7 +619,8 @@ void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, 
     // The source's colour and icon (SOURCES > ICON/COLOR), its name, the 48
     // (phantom) and M (mute) chips, a mini meter, and a stereo / mid-side
     // pair's label in olive with the link glyph.
-    const bool playback = Recorder::isPlaybackSource (port);
+    const bool usbPlayer = UsbRecorder::isPlayerSource (port);
+    const bool playback = Recorder::isPlaybackSource (port) || usbPlayer;
     const auto* src = sourceParams (port);
     const int colour = src != nullptr ? src->colour.load() : 1;
     const int icon = src != nullptr ? src->icon.load() : 0;
@@ -579,8 +629,10 @@ void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, 
     t.strip = playback && colour == 1 ? playbackStrip : wingColour (colour);
     const int index = MixerEngine::sourceIndex (port);
     t.name = index >= 0 ? ctx.engine.getSourceName (index).toUpperCase() : juce::String();
-    t.number = juce::String ((playback ? Recorder::playbackChannelOf (port) : port) + 1);
-    t.label = playback ? Recorder::playbackSourceName (Recorder::playbackChannelOf (port)) : portName (port, false);
+    t.number = juce::String ((usbPlayer ? UsbRecorder::playerChannelOf (port) : playback ? Recorder::playbackChannelOf (port) : port) + 1);
+    t.label = usbPlayer ? UsbRecorder::playerSourceName (UsbRecorder::playerChannelOf (port))
+              : playback ? Recorder::playbackSourceName (Recorder::playbackChannelOf (port))
+                         : portName (port, false);
     t.labelColour = pairing != ld::kSourceMono ? stereoLabel : (playback ? FileColours::wav : monoLabel);
     // With 48 / M chips (top left of the body) the icon sits below them.
     const bool chipsShown = src != nullptr && (src->phantom.load() || src->mute.load());
@@ -647,7 +699,7 @@ void RoutingPage::paintOutputPort (juce::Graphics& g, juce::Rectangle<int> area,
         g.setColour (Dark::textDim);
         g.drawEllipse (ring, 2.0f);
         g.setFont (juce::FontOptions (juce::jmin (18.0f, d * 0.48f), juce::Font::bold));
-        g.drawFittedText (juce::String (port + 1), ring.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+        g.drawFittedText (juce::String ((isRecorderPort (port) ? port - kRecorderPortBase : port) + 1), ring.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         if (selected)
         {
             g.setColour (Colours::yellow);
@@ -660,7 +712,7 @@ void RoutingPage::paintOutputPort (juce::Graphics& g, juce::Rectangle<int> area,
     t.strip = feeder.strip != nullptr ? stripDisplayColour (*feeder.strip) : Colours::lime;
     t.name = feeder.strip != nullptr ? (hasCustomName (*feeder.strip) ? stripName (*feeder.strip).toUpperCase() : juce::String())
                                      : (feeder.channel == 0 ? juce::String ("PHONES") : juce::String ("SPEAKERS"));
-    t.number = juce::String (port + 1);
+    t.number = juce::String ((isRecorderPort (port) ? port - kRecorderPortBase : port) + 1);
     t.label = signalLabel (feeder);
     t.labelColour = feeder.strip == nullptr || feeder.strip->isOutput() || feeder.strip->params.stereo.load() ? stereoLabel : monoLabel;
     t.icon = feeder.strip != nullptr ? iconOf (*feeder.strip) : iconOf (feeder.channel == 0 ? Icon::Headphones : Icon::Speakers);
@@ -821,7 +873,7 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g, juce::Rectangle<int>) 
         g.setColour (juce::Colours::black);
         g.setFont (juce::FontOptions (juce::jmin (16.0f, (float) strip.getHeight() * 0.8f), juce::Font::bold));
         g.drawFittedText (sourceName (selectedSource).toUpperCase(), strip.reduced (4, 0), juce::Justification::centred, 1, 0.7f);
-        const bool playback = Recorder::isPlaybackSource (selectedSource);
+        const bool playback = Recorder::isPlaybackSource (selectedSource) || UsbRecorder::isPlayerSource (selectedSource);
         const auto ring = box.reduced (6).toFloat().withSizeKeepingCentre ((float) juce::jmin (box.getHeight() - 12, 64), (float) juce::jmin (box.getHeight() - 12, 64));
         g.setColour (Colours::yellow);
         g.drawEllipse (ring, 2.0f);
@@ -829,7 +881,10 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g, juce::Rectangle<int>) 
             drawIcon (g, playback ? Icon::Waveform : Icon::Xlr, ring.reduced (ring.getWidth() * 0.22f), Dark::text);
         g.setColour (Dark::text);
         g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
-        g.drawText (juce::String ((playback ? Recorder::playbackChannelOf (selectedSource) : selectedSource) + 1),
+        const int shownNumber = UsbRecorder::isPlayerSource (selectedSource) ? UsbRecorder::playerChannelOf (selectedSource)
+                                : playback                                   ? Recorder::playbackChannelOf (selectedSource)
+                                                                             : selectedSource;
+        g.drawText (juce::String (shownNumber + 1),
                     box.withTrimmedLeft (box.getWidth() * 3 / 4).reduced (2), juce::Justification::bottomRight);
     }
 
@@ -1021,8 +1076,7 @@ void RoutingPage::paint (juce::Graphics& g)
     else
     {
         if (mode == Mode::Outputs)
-            drawSelector (g, leftSelector, Icon::Speaker, "OUTPUT GROUP",
-                          "AUDIO OUT " + juce::String (outputGroup * kPortsPerGroup + 1) + "-" + juce::String (outputGroup * kPortsPerGroup + kPortsPerGroup));
+            drawSelector (g, leftSelector, Icon::Speaker, "OUTPUT GROUP", outputGroupName (outputGroup));
         drawKey (g, autoKey, "+1\nAUTO", autoAdvance, autoYellow);
         // Locked: the closed lock lit red; unlocked: the open lock lit green
         // (as on the console); the other one black.
@@ -1081,7 +1135,8 @@ void RoutingPage::paint (juce::Graphics& g)
     else
     {
         for (size_t i = 0; i < leftPorts.size(); ++i)
-            paintOutputPort (g, leftPorts[i], outputGroup * kPortsPerGroup + (int) i, outputGroup * kPortsPerGroup + (int) i == selectedPort);
+            if (const int port = outputPortAt (outputGroup, (int) i); port >= 0)
+                paintOutputPort (g, leftPorts[i], port, port == selectedPort);
         const auto feeder = feederOf (selectedPort);
         for (auto& [area, sig] : signalTiles)
             paintSignal (g, area, sig, feeder.channel >= 0 && feeder.strip == sig.strip && feeder.channel == sig.channel);
@@ -1139,6 +1194,12 @@ void RoutingPage::assignInput (int port, bool right)
 
 void RoutingPage::clearOutput (int port)
 {
+    if (isRecorderPort (port))
+    {
+        ctx.engine.getUsbRecorder().setTap (port - kRecorderPortBase, {});
+        ctx.engine.getUsbRecorder().saveSettings (ctx.settings);
+        return;
+    }
     for (int k = 0; k < kNumStripKinds; ++k)
         for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
         {
@@ -1159,16 +1220,37 @@ void RoutingPage::assignOutput (int port, const Signal& sig)
         return;
     // One signal per output. A strip has one output pair, so patching it to a
     // new output moves it there (engine item E4: many outputs per signal).
-    clearOutput (port);
-    if (sig.strip == nullptr)
-        (sig.channel == 0 ? ctx.engine.monitorOutputLeft : ctx.engine.monitorOutputRight) = port;
-    else
-        (sig.channel == 0 ? sig.strip->params.outputLeft : sig.strip->params.outputRight) = port;
-    if (autoAdvance)
-        selectedPort = juce::jmin (numPorts (true) - 1, selectedPort + 1);
-    if (selectedPort / kPortsPerGroup != outputGroup)
+    // The RECORDER ports tap the signal instead, leaving its outputs alone.
+    if (isRecorderPort (port))
     {
-        outputGroup = selectedPort / kPortsPerGroup;
+        UsbRecorder::Tap tap;
+        if (sig.strip != nullptr)
+        {
+            tap.kind = UsbRecorder::Tap::Kind::Strip;
+            tap.stripKind = sig.strip->getKind();
+            auto& strips = ctx.engine.getStrips (tap.stripKind);
+            for (size_t i = 0; i < strips.size(); ++i)
+                if (strips[i].get() == sig.strip)
+                    tap.stripNumber = sig.strip->isBus() ? sig.strip->getId() + 1 : (int) i + 1;
+            tap.channel = sig.channel;
+        }
+        ctx.engine.getUsbRecorder().setTap (port - kRecorderPortBase, tap);
+        ctx.engine.getUsbRecorder().saveSettings (ctx.settings);
+    }
+    else
+    {
+        clearOutput (port);
+        if (sig.strip == nullptr)
+            (sig.channel == 0 ? ctx.engine.monitorOutputLeft : ctx.engine.monitorOutputRight) = port;
+        else
+            (sig.channel == 0 ? sig.strip->params.outputLeft : sig.strip->params.outputRight) = port;
+    }
+    if (autoAdvance)
+        selectedPort = isRecorderPort (selectedPort) ? juce::jmin (kRecorderPortBase + UsbRecorder::kNumChannels - 1, selectedPort + 1)
+                                                     : juce::jmin (numPorts (true) - 1, selectedPort + 1);
+    if (const int group = isRecorderPort (selectedPort) ? numOutputGroups() - 1 : selectedPort / kPortsPerGroup; group != outputGroup)
+    {
+        outputGroup = group;
         layoutTiles();
     }
     repaint();
@@ -1195,11 +1277,8 @@ void RoutingPage::showGroupMenu (bool rightSide)
     {
         const bool outputs = mode == Mode::Outputs;
         if (outputs)
-            for (int i = 0; i < numPortGroups (true); ++i)
-            {
-                const int a = i * kPortsPerGroup + 1;
-                items.add ("AUDIO OUT " + juce::String (a) + "-" + juce::String (a + kPortsPerGroup - 1));
-            }
+            for (int i = 0; i < numOutputGroups(); ++i)
+                items.add (outputGroupName (i));
         else
             for (int i = 0; i < numSourceGroups(); ++i)
                 items.add (sourceGroupName (i));
@@ -1358,8 +1437,8 @@ void RoutingPage::mouseUp (const juce::MouseEvent& e)
             {
                 if (mode == Mode::Sources)
                     selectedSource = juce::jmax (0, sourceAt (inputGroup, (int) i));
-                else
-                    selectedPort = outputGroup * kPortsPerGroup + (int) i;
+                else if (const int port = outputPortAt (outputGroup, (int) i); port >= 0)
+                    selectedPort = port;
                 repaint();
                 notifyStatusKeysChanged(); // the title tile shows the selection
                 notifyKnobsChanged();      // SOURCES: its GAIN
