@@ -994,3 +994,37 @@ fn dca_mutegroups_main_link_and_startup_main_mute() {
     assert!(engine.apply_startup_main_mute());
     assert!((0..NUM_MAINS).all(|i| rig.strip(StripKind::Main, i).params.mute.load(Relaxed)));
 }
+
+/// WING 3.0.6: a POST (AFL) solo of an input, aux or DCA follows the pan.
+#[test]
+fn post_solo_follows_the_pan() {
+    let mut rig = Rig::new(0, 1, 4);
+    rig.engine.set_num_channels(1);
+    let engine = rig.engine.clone();
+    let c = &engine.controls;
+    c.monitor_output_left.store(2, Relaxed);
+    c.monitor_output_right.store(3, Relaxed);
+    c.solo_afl.store(true, Relaxed);
+    rig.set_input(0, 0.5);
+    let ch = rig.ch(0);
+    let aux = rig.strip(StripKind::Aux, 0);
+    aux.params.input_left.store(0, Relaxed);
+    for (strip, pan) in [(&ch, -100.0), (&aux, 100.0)] {
+        strip.params.pan.store(pan);
+        strip.params.solo.store(true, Relaxed);
+        rig.run(20);
+        let (near, far) = if pan < 0.0 { (rig.out(2), rig.out(3)) } else { (rig.out(3), rig.out(2)) };
+        assert!(close(near, 0.5, 1e-4) && far.abs() < 1e-5, "{near} {far}");
+        strip.params.solo.store(false, Relaxed);
+    }
+
+    // A DCA solo solos its members after their pan too.
+    ch.params.dca_mask.store(1, Relaxed);
+    c.dcas[0].solo.store(true, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.5, 1e-4) && rig.out(3).abs() < 1e-5, "{} {}", rig.out(2), rig.out(3));
+    // PFL ignores it.
+    c.solo_afl.store(false, Relaxed);
+    rig.run(20);
+    assert!(close(rig.out(2), rig.out(3), 1e-5));
+}

@@ -91,7 +91,9 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
   block (`ProcessContext::source_solo`, read in `read_hardware_inputs`; a pair plays
   in stereo) and the channel solos (`solo::console_pass`), so SOLO MODE routes it.
   The channel's own patch is untouched.
-- **Solo and mute** (`solo.rs`): before stage 1 the engine works out every strip's
+- **Solo and mute** (`solo.rs`): AFL (POST) solo reads the strip's output, after
+  width and pan, so it follows the pan for inputs, aux and DCA members (WING 3.0.6;
+  `post_solo_follows_the_pan`). Also before stage 1 the engine works out every strip's
   effective solo (own, a DCA's or a TALK SOLO tag) and the console's mute decision,
   which the strip's fader stage applies over its own mute (own, mute groups, DCA
   mutes) through `StripConsole::apply_mute`: SIP (SOLO MODE) mutes the input and aux
