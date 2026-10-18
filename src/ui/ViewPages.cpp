@@ -213,14 +213,14 @@ namespace
         g.drawFittedText (text, r.toNearestInt(), juce::Justification::centred, 1, 0.6f);
     }
 
-    void verticalMeter (juce::Graphics& g, juce::Rectangle<float> r, float level, juce::Colour c)
+    void verticalMeter (juce::Graphics& g, juce::Rectangle<float> r, float level, juce::Colour c, juce::Colour off = Colours::screenDark)
     {
         const int segments = juce::jlimit (4, 20, (int) (r.getHeight() / 3.0f));
         const float h = r.getHeight() / (float) segments;
         for (int i = 0; i < segments; ++i)
         {
             const bool lit = level > ((float) i + 0.5f) / (float) segments;
-            g.setColour (lit ? c : Colours::screenDark);
+            g.setColour (lit ? c : off);
             g.fillRect (r.getX(), r.getBottom() - (float) (i + 1) * h + 0.5f, r.getWidth(), juce::jmax (1.0f, h - 1.0f));
         }
     }
@@ -258,36 +258,69 @@ namespace
     }
 
     /** Mini send levels: one cell per destination, filled to the level when the send is on. */
-    void sendCells (juce::Graphics& g, juce::Rectangle<float> r, UiContext& ctx, Strip& s)
+    /** The OVERVIEW sends block [fig. 54]: a 2 x 2 grid of grey quadrants,
+        the matrix sends top right and the bus sends 1-8 / 9-16 below, each
+        send a thin bar filled with its level in its mode's colour (TAP red,
+        POST green, GROUP blue) and a blue marker left of the first send. */
+    void sendQuadrants (juce::Graphics& g, juce::Rectangle<float> r, UiContext& ctx, Strip& s)
     {
-        std::vector<std::pair<bool, float>> sends;
-        const auto kind = s.getKind();
-        if (s.isInput() || (s.isBus() && s.getId() >= kBusToBusTargets))
+        const float gap = 2.0f;
+        const float qw = (r.getWidth() - gap) / 2.0f, qh = (r.getHeight() - gap) / 2.0f;
+        auto quad = [&] (int col, int row) { return juce::Rectangle<float> (r.getX() + (float) col * (qw + gap), r.getY() + (float) row * (qh + gap), qw, qh); };
+        auto bars = [&g] (juce::Rectangle<float> q, int n, const std::function<std::pair<float, juce::Colour> (int)>& level)
         {
-            const int n = s.isInput() ? juce::jmin (16, (int) ctx.engine.getBuses().size()) : kBusToBusTargets;
-            for (int i = 0; i < n; ++i)
+            g.setColour (Colours::screenLine);
+            g.fillRect (q);
+            auto inner = q.reduced (2.0f, 1.0f);
+            const float w = inner.getWidth() / 8.0f;
+            for (int i = 0; i < n && i < 8; ++i)
             {
-                auto* send = s.sends.find (i);
-                sends.push_back ({ send != nullptr && send->enabled.load(), send != nullptr ? send->levelDb.load() : -100.0f });
+                const auto [l, c] = level (i);
+                if (l <= 0.0f)
+                    continue;
+                auto bar = juce::Rectangle<float> (inner.getX() + (float) i * w, inner.getY(), juce::jmax (1.0f, w - 1.0f), inner.getHeight());
+                g.setColour (c);
+                g.fillRect (bar.withTop (bar.getBottom() - bar.getHeight() * l));
             }
+        };
+        auto colourOf = [] (int mode) { return mode == 0 ? Colours::tapRed : (mode == 1 ? Colours::green : Colours::valueBlue); };
+        g.setColour (Colours::screenWell);
+        g.fillRect (quad (0, 0));
+        if (s.getKind() != StripKind::Matrix)
+            bars (quad (1, 0), kNumMatrices, [&s, &colourOf] (int i)
+            {
+                const auto& m = s.params.matrix[(size_t) i];
+                return std::make_pair (m.on.load() ? fader::dbToPos (m.levelDb.load()) : 0.0f, colourOf (m.pre.load() ? 0 : 1));
+            });
+        else
+        {
+            g.setColour (Colours::screenWell);
+            g.fillRect (quad (1, 0));
         }
-        else if (kind == StripKind::Bus || kind == StripKind::Main)
-            for (auto& m : s.params.matrix)
-                sends.push_back ({ m.on.load(), m.levelDb.load() });
-        if (sends.empty())
-            return;
-        const int cols = 4, rows = ((int) sends.size() + cols - 1) / cols;
-        const float w = r.getWidth() / (float) cols, h = r.getHeight() / (float) rows;
-        for (size_t i = 0; i < sends.size(); ++i)
+        const bool busSends = s.getKind() != StripKind::Main && s.getKind() != StripKind::Matrix;
+        const int n = busSends ? juce::jmin (16, (int) ctx.engine.getBuses().size()) : 0;
+        for (int half = 0; half < 2; ++half)
         {
-            auto c = juce::Rectangle<float> (r.getX() + w * (float) ((int) i % cols), r.getY() + h * (float) ((int) i / cols), w, h).reduced (1.0f);
-            g.setColour (Colours::screenTile);
-            g.fillRect (c);
-            if (sends[i].first)
+            auto q = quad (half, 1);
+            if (! busSends)
             {
-                g.setColour (Colours::meterGreen.withAlpha (0.85f));
-                g.fillRect (c.withTrimmedTop (c.getHeight() * (1.0f - fader::dbToPos (sends[i].second))));
+                g.setColour (Colours::screenWell);
+                g.fillRect (q);
+                continue;
             }
+            bars (q, juce::jmax (0, n - half * 8), [&s, half, &colourOf] (int i)
+            {
+                auto* send = s.sends.find (half * 8 + i);
+                if (send == nullptr || ! send->enabled.load() || send->mode.load() == 2)
+                    return std::make_pair (0.0f, Colours::green);
+                return std::make_pair (fader::dbToPos (send->levelDb.load()), colourOf (send->mode.load()));
+            });
+        }
+        if (busSends)
+        {
+            auto q = quad (0, 1);
+            g.setColour (Colours::valueBlue);
+            g.fillRect (juce::Rectangle<float> (2.0f, juce::jmin (5.0f, q.getHeight() * 0.4f)).withPosition (q.getX() + 1.0f, q.getY() + 1.0f));
         }
     }
 
@@ -932,7 +965,7 @@ void OverviewViewPage::paintContent (juce::Graphics& g)
         }
         paintPanBlock (g, rows.pan, ctx, s);
         block (g, rows.sends);
-        sendCells (g, rows.sends.reduced (3.0f), ctx, s);
+        sendQuadrants (g, rows.sends.reduced (3.0f), ctx, s);
         if (&s == selected)
         {
             g.setColour (Dark::on);
@@ -1080,8 +1113,8 @@ void FadersViewPage::paintContent (juce::Graphics& g)
             auto& s = *t.strip;
             block (g, rows.pan);
             auto pan = rows.pan.reduced (3.0f);
-            panArc (g, pan.removeFromLeft (pan.getHeight()), s.params.pan.load(), s.params.width.load());
-            sendCells (g, pan.reduced (2.0f, 1.0f), ctx, s);
+            panArc (g, pan.removeFromLeft (juce::jmin (pan.getHeight(), pan.getWidth() * 0.5f)), s.params.pan.load(), s.params.width.load());
+            sendQuadrants (g, pan.reduced (2.0f, 1.0f), ctx, s);
             if (s.getKind() == StripKind::Channel)
             {
                 // GATE and COMP gain reduction: the gate's square lights green while it's open.
@@ -1105,11 +1138,14 @@ void FadersViewPage::paintContent (juce::Graphics& g)
                     g.fillRect (bar.withWidth (bar.getWidth() * juce::jlimit (0.0f, 1.0f, reduction)));
                 }
             }
-            // The level meter right of the fader.
-            auto meter = faderArea.removeFromRight (juce::jmax (5.0f, faderArea.getWidth() * 0.12f));
-            for (int ch = 0; ch < 2; ++ch)
-                verticalMeter (g, meter.withWidth (meter.getWidth() / 2.0f - 0.5f).translated ((float) ch * meter.getWidth() / 2.0f, 0.0f),
-                               meterPos (dsp::gainToDb (ctx.meters.get (&s, prefs::meterPoint (ctx, s.getKind()), ch))), Colours::meterGreen);
+            // [fig. 56] the level meter right of the fader: a column of
+            // segments (unlit #303030) along the whole fader.
+            auto meter = faderArea.removeFromRight (juce::jmax (8.0f, faderArea.getWidth() * 0.16f)).reduced (0.0f, 2.0f);
+            faderArea.removeFromRight (2.0f);
+            const int numCh = juce::jlimit (1, 2, s.getNumChannels());
+            for (int ch = 0; ch < numCh; ++ch)
+                verticalMeter (g, meter.withWidth (meter.getWidth() / (float) numCh - (numCh > 1 ? 0.5f : 0.0f)).translated ((float) ch * meter.getWidth() / (float) numCh, 0.0f),
+                               meterPos (dsp::gainToDb (ctx.meters.get (&s, prefs::meterPoint (ctx, s.getKind()), ch))), Colours::meterGreen, Colours::screenTile);
             paintAssignments (g, rows.assign.reduced (3.0f, 0.0f), s);
         }
         // Send faders are drawn in the send colour, with the destination under them.
@@ -1404,7 +1440,7 @@ void SendsViewPage::paintContent (juce::Graphics& g)
         if (t.strip != nullptr)
             for (int ch = 0; ch < 2; ++ch)
                 verticalMeter (g, meter.withWidth (meter.getWidth() / 2.0f - 0.5f).translated ((float) ch * meter.getWidth() / 2.0f, 0.0f),
-                               meterPos (dsp::gainToDb (ctx.meters.get (t.strip, prefs::meterPoint (ctx, t.strip->getKind()), ch))), Colours::meterGreen);
+                               meterPos (dsp::gainToDb (ctx.meters.get (t.strip, prefs::meterPoint (ctx, t.strip->getKind()), ch))), Colours::meterGreen, Colours::screenTile);
         if (sends)
             paintFader (g, c.reduced (2.0f, 2.0f), level != nullptr ? level->load() : -100.0f, sendRed, isOn);
         g.setColour (Dark::textDim);
@@ -1913,6 +1949,13 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
     // its number large and dim over EMPTY.
     const auto layer = currentLayer();
     const auto faders = pageFaders();
+    // [I10] each group of four sits on a filled #284c78 plate.
+    for (size_t i = 0; i < slotAreas.size(); i += 4)
+    {
+        const auto last = slotAreas[juce::jmin (slotAreas.size() - 1, i + 3)];
+        g.setColour (juce::Colour (0xff284c78));
+        g.fillRect (slotAreas[i].getUnion (last).expanded (4, 4).toFloat());
+    }
     for (size_t i = 0; i < slotAreas.size(); ++i)
     {
         auto r = slotAreas[i].toFloat();
@@ -1931,15 +1974,9 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
             g.drawFittedText ("EMPTY", text.toNearestInt(), juce::Justification::centredTop, 1);
         }
         g.setColour (Dark::textDim);
-        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-        g.drawText (juce::String (number), juce::Rectangle<int> (slotAreas[i].getX(), slotAreas[i].getBottom() + 3, slotAreas[i].getWidth(), 12),
+        g.setFont (wingFont (TypeScale::meterScale));
+        g.drawText (juce::String (number), juce::Rectangle<int> (slotAreas[i].getX(), slotAreas[i].getBottom() + 5, slotAreas[i].getWidth(), 12),
                     juce::Justification::centred);
-        if (i % 4 == 0)
-        {
-            const auto last = slotAreas[juce::jmin (slotAreas.size() - 1, i + 3)];
-            g.setColour (Dark::layer);
-            g.drawRect (slotAreas[i].getUnion (last).expanded (2, 3).toFloat(), 1.5f);
-        }
     }
 
     // While dragging: a blue line where the items would be inserted, or a

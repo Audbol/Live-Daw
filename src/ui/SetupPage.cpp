@@ -1649,6 +1649,7 @@ namespace
                 surface.repaint();
             };
             daw.addRow ("DAW ENABLE", std::make_unique<OnKey> ([get] { return get().enabled; }, [set] (bool v) { set ([v] (DawRemote::Settings& s) { s.enabled = v; }); }), 1.3f);
+            daw.newBox(); // fig. 43: DAW ENABLE in its own box
             daw.addRow ("CONNECTION", std::make_unique<ChoiceKeys> (juce::StringArray { "DIN", "USB" }, [get] { return get().usb ? 1 : 0; },
                                                                     [set] (int i) { set ([i] (DawRemote::Settings& s) { s.usb = i == 1; }); },
                                                                     std::vector<juce::Colour> { Dark::post, Dark::post }),

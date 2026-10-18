@@ -215,7 +215,7 @@ inline void paintWingTile (juce::Graphics& g, juce::Rectangle<float> r, const Wi
     }
 
     auto body = r.reduced (r.getHeight() * 0.1f, r.getHeight() * 0.14f);
-    const float cap = juce::jmin (body.getHeight() * 0.62f, 0.026f * getWingScreenHeight());
+    const float cap = juce::jmin (body.getHeight() * 0.7f, 0.030f * getWingScreenHeight()); // I3: 15 % over the body text
     const auto font = wingFontPx (cap, WingWeight::SemiBold);
     g.setFont (font);
     if (t.boxed)

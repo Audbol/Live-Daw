@@ -164,9 +164,13 @@ void ScopeWindow::toggle (const Tile& t, bool on)
 void ScopeWindow::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colours::black);
-    g.setColour (Dark::text);
-    g.setFont (juce::FontOptions (juce::jmin (20.0f, (float) titleArea.getHeight() * 0.7f), juce::Font::bold));
-    g.drawFittedText (title, titleArea, juce::Justification::centredLeft, 1);
+    // What the window edits (EDIT SCOPE: <scene>, GLOBAL SAFE, ...) on the
+    // #202020 window title bar of the other WING windows.
+    g.setColour (Colours::screenHeader);
+    g.fillRect (titleArea);
+    g.setColour (Colours::caption);
+    g.setFont (panelTitleFont (titleArea.getHeight()));
+    g.drawFittedText (title, titleArea.reduced (12, 0), juce::Justification::centredLeft, 1, 0.8f);
 
     for (auto& gr : groups)
     {
@@ -229,7 +233,7 @@ void ScopeWindow::resized()
     groups.clear();
 
     auto b = getLocalBounds();
-    titleArea = b.removeFromTop (juce::jlimit (20, 30, getHeight() / 16)).reduced (6, 0);
+    titleArea = b.removeFromTop (juce::jlimit (20, 30, getHeight() / 16));
     b.removeFromTop (4);
     const int gap = 10;
     auto left = b.removeFromLeft (b.getWidth() * 38 / 100);
