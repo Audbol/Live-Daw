@@ -2852,9 +2852,9 @@ public:
         }
         g.saveState();
         g.reduceClipRegion (plot.toNearestInt());
-        juce::Path fill (curve);
-        fill.lineTo (plot.getRight(), plot.getBottom() + 2.0f);
-        fill.lineTo (plot.getX(), plot.getBottom() + 2.0f);
+        juce::Path fill (curve); // shaded against the 0 dB line
+        fill.lineTo (plot.getRight() + 2.0f, yForDb (0.0f));
+        fill.lineTo (plot.getX() - 2.0f, yForDb (0.0f));
         fill.closeSubPath();
         g.setColour (active ? colours::eqFill : juce::Colour (0xff1c1c1c));
         g.fillPath (fill);
