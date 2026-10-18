@@ -32,7 +32,7 @@ inline KnobBinding endlessBinding (const juce::String& label, std::shared_ptr<fl
     return b;
 }
 
-/** The WING's channel strip section (top left, manual 4.5) for the selected
+/** The WING's channel strip section (right of the display, manual 4.5) for the selected
     strip: the CHANNEL STRIP DETAILS LED panel with LEVEL / GR meters, bus sends
     and groups around a small screen; CHANNEL PROCESSING (six encoders over
     INPUT - FILTER - GATE - COMP - INSERT - MAIN); CHANNEL EQUALIZER (SHIFT,
