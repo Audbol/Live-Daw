@@ -354,9 +354,9 @@ juce::Result Project::load (const juce::File& file, const juce::File& asFile)
     }
     auto loaded = juce::ValueTree::fromXml (*xml);
     if (! loaded.hasType (ids::LDPROJECT))
-        return juce::Result::fail (file.getFileName() + " is not a Live DAW project");
+        return juce::Result::fail (file.getFileName() + " is not a Sidecar project");
     if ((int) loaded[ids::version] > kFormatVersion)
-        return juce::Result::fail (file.getFileName() + " was made by a newer version of Live DAW");
+        return juce::Result::fail (file.getFileName() + " was made by a newer version of Sidecar");
 
     // Fill in what an older or hand-edited file may lack.
     auto fresh = makeEmpty ((double) loaded.getProperty (ids::sampleRate, 48000.0));

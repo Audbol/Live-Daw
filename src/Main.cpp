@@ -1,4 +1,5 @@
 #include "engine/EventLog.h"
+#include "engine/AppPaths.h"
 #include "engine/MixerEngine.h"
 #include "engine/PluginHost.h"
 #include "engine/PluginScanner.h"
@@ -171,10 +172,18 @@ public:
         }
 
         juce::PropertiesFile::Options options;
-        options.applicationName = "LiveDAW";
+        options.applicationName = livedaw::kAppName;
         options.filenameSuffix = "settings";
-        options.folderName = "LiveDAW";
+        options.folderName = livedaw::kAppName;
         options.osxLibrarySubFolder = "Application Support";
+        {
+            // The app was called "Live DAW": carry its settings over once.
+            auto legacy = options;
+            legacy.applicationName = legacy.folderName = "LiveDAW";
+            const auto from = legacy.getDefaultFile(), to = options.getDefaultFile();
+            if (! to.existsAsFile() && from.existsAsFile() && to.getParentDirectory().createDirectory())
+                from.copyFileTo (to);
+        }
         properties.setStorageParameters (options);
         auto& settings = *properties.getUserSettings();
 
@@ -182,9 +191,9 @@ public:
         {
             // A mismatched engine library would corrupt the shared parameter blocks.
             const auto message = juce::String ("The audio engine library does not match this build (")
-                                 + mismatch + "). Please reinstall Live DAW.";
+                                 + mismatch + "). Please reinstall Sidecar.";
             juce::NativeMessageBox::showAsync (juce::MessageBoxOptions::makeOptionsOk (juce::MessageBoxIconType::WarningIcon,
-                                                                                       "Live DAW", message),
+                                                                                       "Sidecar", message),
                                                [] (int) { quit(); });
             return;
         }
@@ -199,7 +208,7 @@ public:
         engine = std::make_unique<MixerEngine>();
         show = std::make_unique<Show> (*engine, *pluginHost);
 
-        log.info ("Live DAW " + getApplicationVersion() + " starting, "
+        log.info ("Sidecar " + getApplicationVersion() + " starting, "
                   + juce::String (engine->getNumWorkerThreads() + 1) + " DSP threads");
 
         const auto crashedPlugin = pluginHost->checkForCrashDuringPluginLoad();
@@ -309,7 +318,7 @@ private:
 
         void closeButtonPressed() override
         {
-            juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Quit Live DAW",
+            juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Quit Sidecar",
                                                 "Quit and stop all audio?", "Quit", "Cancel", this,
                                                 juce::ModalCallbackFunction::create ([] (int result)
             {
@@ -321,7 +330,7 @@ private:
 
     static juce::File getDataDirectory()
     {
-        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("LiveDAW");
+        return livedaw::paths::appData();
     }
 
     static juce::File getRunningMarker() { return getDataDirectory().getChildFile ("running.lock"); }
@@ -367,7 +376,7 @@ private:
 
     void offerSafeModeRecovery (const juce::String& crashedPlugin)
     {
-        juce::String message = "Live DAW did not shut down cleanly last time.\n\n"
+        juce::String message = "Sidecar did not shut down cleanly last time.\n\n"
                                "The console has been restored in SAFE MODE, without any plugins.";
         if (crashedPlugin.isNotEmpty())
             message << "\n\n\"" << crashedPlugin << "\" crashed while loading and has been blacklisted.";

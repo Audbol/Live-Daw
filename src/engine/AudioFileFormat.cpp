@@ -245,7 +245,7 @@ namespace
     };
 } // namespace
 
-EngineMp3AudioFormat::EngineMp3AudioFormat() : juce::AudioFormat ("MP3 file (Live DAW)", ".mp3") {}
+EngineMp3AudioFormat::EngineMp3AudioFormat() : juce::AudioFormat ("MP3 file (Sidecar)", ".mp3") {}
 
 juce::Array<int> EngineMp3AudioFormat::getPossibleSampleRates()
 {

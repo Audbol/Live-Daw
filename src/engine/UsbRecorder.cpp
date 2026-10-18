@@ -1,4 +1,5 @@
 #include "engine/UsbRecorder.h"
+#include "engine/AppPaths.h"
 #include "engine/RustStrings.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
@@ -92,7 +93,7 @@ UsbRecorder::~UsbRecorder() = default;
 
 juce::File UsbRecorder::defaultStorageFolder()
 {
-    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Live DAW").getChildFile ("USB");
+    return paths::documents().getChildFile ("USB");
 }
 
 bool UsbRecorder::isInsideStorage (const juce::File& f) const

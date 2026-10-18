@@ -63,7 +63,7 @@ impl ImportReport {
     /// A human summary for the log.
     pub fn summary(&self) -> String {
         let mut s = format!(
-            "WING {} ({}): {} values applied, {} kept without a Live DAW equivalent",
+            "WING {} ({}): {} values applied, {} kept without a Sidecar equivalent",
             if self.file_type.is_empty() { "snapshot" } else { &self.file_type },
             if self.creator.is_empty() { "unknown creator" } else { &self.creator },
             self.applied,
@@ -85,7 +85,7 @@ impl ImportReport {
     pub fn details(&self) -> String {
         let mut s = self.summary();
         if !self.kept_by_group.is_empty() {
-            s.push_str("\nNot applied (no Live DAW equivalent, kept for export):");
+            s.push_str("\nNot applied (no Sidecar equivalent, kept for export):");
             for (g, n) in &self.kept_by_group {
                 s.push_str(&format!("\n  {g}: {n}"));
             }
@@ -333,7 +333,7 @@ pub fn export_json(engine: &Engine, state: &WingState) -> Json {
         ("creator_fw".into(), Json::Str(id.firmware.clone())),
         ("creator_sn".into(), Json::Str(id.serial.clone())),
         ("creator_model".into(), Json::Str(id.model.clone())),
-        ("creator_version".into(), Json::Str(format!("Live DAW {}", env!("CARGO_PKG_VERSION")))),
+        ("creator_version".into(), Json::Str(format!("Sidecar {}", env!("CARGO_PKG_VERSION")))),
         ("creator_name".into(), Json::Str(id.name.clone())),
         ("created".into(), Json::Str(timestamp(now))),
         ("active_show".into(), Json::Str(String::new())),

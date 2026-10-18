@@ -67,15 +67,15 @@ jobs:
         include:
           - name: Windows (ASIO + WASAPI)
             os: windows-2022
-            artifact: LiveDAW-Windows
+            artifact: Sidecar-Windows
             parallel: 4
           - name: macOS (CoreAudio)
             os: macos-14
-            artifact: LiveDAW-macOS
+            artifact: Sidecar-macOS
             parallel: 4
           - name: Linux (ALSA + JACK)
             os: ubuntu-24.04
-            artifact: LiveDAW-Linux
+            artifact: Sidecar-Linux
             parallel: 2   # two JUCE targets with LTO exhaust the runner's memory at higher counts
 
     steps:
@@ -104,7 +104,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item "build/LiveDAW_artefacts/Release/Live DAW.exe" dist/
+          Copy-Item "build/LiveDAW_artefacts/Release/Sidecar.exe" dist/
           Copy-Item README.md dist/
           Copy-Item resources/fonts/OFL.txt dist/FONT-LICENSE.txt
 
@@ -112,7 +112,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           mkdir -p dist
-          ditto -c -k --keepParent "build/LiveDAW_artefacts/Release/Live DAW.app" "dist/Live DAW.app.zip"
+          ditto -c -k --keepParent "build/LiveDAW_artefacts/Release/Sidecar.app" "dist/Sidecar.app.zip"
           cp README.md dist/
           cp resources/fonts/OFL.txt dist/FONT-LICENSE.txt
 
@@ -120,7 +120,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           mkdir -p dist
-          cp "build/LiveDAW_artefacts/Release/Live DAW" dist/
+          cp "build/LiveDAW_artefacts/Release/Sidecar" dist/
           cp README.md dist/
           cp resources/fonts/OFL.txt dist/FONT-LICENSE.txt
 
@@ -175,29 +175,29 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: LiveDAW-Windows
-          path: LiveDAW-Windows
+          name: Sidecar-Windows
+          path: Sidecar-Windows
 
       - name: Zip
-        run: cd LiveDAW-Windows && zip -r "../LiveDAW-Windows-${TAG}.zip" .
+        run: cd Sidecar-Windows && zip -r "../Sidecar-Windows-${TAG}.zip" .
 
       - name: Create prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<EOF
-          Test build of Live DAW for Windows 10/11 (64-bit), built and tested by CI from ${GITHUB_SHA::7}.
+          Test build of Sidecar for Windows 10/11 (64-bit), built and tested by CI from ${GITHUB_SHA::7}.
 
-          **Install:** unzip and run \`Live DAW.exe\`. No installer and no runtime to install.
+          **Install:** unzip and run \`Sidecar.exe\`. No installer and no runtime to install.
           The exe isn't code-signed, so Windows SmartScreen may warn; choose *More info > Run anyway*.
 
           **Audio:** ASIO (your interface's driver, ASIO4ALL or FlexASIO) and WASAPI.
           Choose the driver and device in SETUP > AUDIO.
 
           This is a test release of the Behringer WING emulation; see README.md in the zip.
-          Live DAW is not affiliated with or endorsed by Behringer or Music Tribe.
+          Sidecar is not affiliated with or endorsed by Behringer or Music Tribe.
           EOF
           # Creates the tag at the tested commit if it doesn't exist yet.
-          gh release create "$TAG" "LiveDAW-Windows-${TAG}.zip" --target "$GITHUB_SHA" \
+          gh release create "$TAG" "Sidecar-Windows-${TAG}.zip" --target "$GITHUB_SHA" \
             --repo "$GITHUB_REPOSITORY" --prerelease \
-            --title "Live DAW ${TAG} (Windows test build)" --notes-file notes.md
+            --title "Sidecar ${TAG} (Windows test build)" --notes-file notes.md

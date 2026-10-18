@@ -24,7 +24,7 @@ class Strip;
     - Ports. The WING's DIN socket and its USB MIDI ports (MIDI Control, MIDI
       DAW 1-3) become MIDI devices of this computer: each port has an input
       and an output, a device chosen on SETUP or a virtual port the app
-      creates ("Live DAW MIDI Control", "Live DAW MIDI DAW 1"...) where the
+      creates ("Sidecar MIDI Control", "Sidecar MIDI DAW 1"...) where the
       platform allows it. Devices that disappear are reopened when they come
       back.
     - MIDI REMOTE CONTROL. Each function is OFF, DIN or USB, as on the WING:
@@ -118,7 +118,7 @@ public:
     static juce::StringArray getOutputDevices();
     /** Whether this platform lets the app create virtual MIDI ports. */
     static bool canCreateVirtualPorts();
-    /** The name of the app's virtual port for `port` ("Live DAW MIDI DAW 1"). */
+    /** The name of the app's virtual port for `port` ("Sidecar MIDI DAW 1"). */
     static juce::String virtualPortName (int port);
 
     struct PortStatus

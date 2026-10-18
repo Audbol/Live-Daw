@@ -1,6 +1,6 @@
 # Architecture
 
-Live DAW emulates a Behringer WING: the console topology, the processing models and
+Sidecar emulates a Behringer WING: the console topology, the processing models and
 the control surface with its main display. The audio engine, DSP and sessions are
 Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
 
@@ -357,7 +357,7 @@ and disk-thread design.
   audio files (WAV, FLAC, AIFF, MP3) or a playlist of entries with stable ids, SKIP and STOP flags and REPEAT;
   playlists are extended M3U files (`#LIVEDAW:` lines for the flags).
 - **Facade and screen:** `UsbRecorder` adds the storage folder (default
-  `Documents/Live DAW/USB`), the browser listing, FOLDER / RENAME / DELETE, file names
+  `Documents/Sidecar/USB`), the browser listing, FOLDER / RENAME / DELETE, file names
   `R_YYYYMMDD-HHMMSS.<ext>` in the REC PATH and the settings (app settings `usb.*`,
   including the RECORDER taps, USB HOST SPEED and the FORMAT `usb.recFormat` /
   `usb.recKbps`). The page draws figs. 78 / 79 itself (keys, seven-segment times,
@@ -583,11 +583,11 @@ blinking LEDs.
 
 ## WING remote and WING files
 
-`rust/crates/livedaw-wing` makes Live DAW look like a WING to remote software. It is
+`rust/crates/livedaw-wing` makes Sidecar look like a WING to remote software. It is
 clean-room: built from Patrick-Gilles Maillot's *WING Remote Protocols* document,
 libwing (Apache-2.0; its `propmap.jsonl` is the source of the tree) and the Bitfocus
 Companion module. No Behringer firmware or WING Edit code is used. It has no
-dependencies beyond the other Live DAW crates.
+dependencies beyond the other Sidecar crates.
 
 - **Tree** (`schema.rs`). `tools/wing/gen_tree.py` compiles libwing's parameter map
   (WING firmware 3.1) into `data/wing_tree.bin`, embedded in the binary: rows (node
@@ -694,7 +694,7 @@ public Mackie Control and reverse-engineered HUI protocol descriptions.
 Limits: virtual ports need ALSA (Linux) or CoreMIDI (macOS); the WING's per-scene SEND
 MIDI strings, the HUI's extra encoder section (upper VIEW), the 4-Channel section in
 DAW mode and DAW meters on the right section's 4-Channel strips are not done; the DAW
-presets are Live DAW's own (built from the translation table), not the WING's files.
+presets are Sidecar's own (built from the translation table), not the WING's files.
 
 ## Known limitations / roadmap
 - Plugins run inside the mixer process. Bad output and exceptions are contained, but

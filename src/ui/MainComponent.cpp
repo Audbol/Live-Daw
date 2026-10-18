@@ -1,4 +1,5 @@
 #include "ui/MainComponent.h"
+#include "engine/AppPaths.h"
 #include "ui/MidiRemoteUi.h"
 #include "ui/WingPopups.h"
 #include "ui/daw/DawEditor.h"
@@ -535,7 +536,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
 
 void MainComponent::saveScreenshot()
 {
-    const auto dir = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("Live DAW").getChildFile ("screens");
+    const auto dir = paths::documents().getChildFile ("screens");
     const auto file = dir.getChildFile ("screen-" + juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S") + ".png");
     const auto image = display->createComponentSnapshot (display->getLocalBounds());
 
@@ -702,7 +703,7 @@ void MainComponent::openLastProject()
 //==============================================================================
 void MainComponent::updateTitle()
 {
-    juce::String title = "Live DAW - " + show.getName();
+    juce::String title = juce::String (kAppName) + " - " + show.getName();
     if (showFile != juce::File())
         title << "  [" << showFile.getFileName() << "]";
     if (auto* top = getTopLevelComponent(); top != nullptr && top != this)

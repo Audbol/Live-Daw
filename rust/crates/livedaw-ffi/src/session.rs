@@ -1451,7 +1451,7 @@ mod tests {
             assert!(ld_show_load_xml(s, e, xml.as_ptr(), xml.len(), true, &mut msg));
             assert!(msg.is_null());
             assert!(!ld_show_load_xml(s, e, b"<x/>".as_ptr(), 4, true, &mut msg));
-            assert_eq!(take(msg), "Not a Live DAW show file");
+            assert_eq!(take(msg), "Not a Sidecar show file");
 
             let l = ld_show_layers(s);
             let id = take(ld_layers_add_user(l, b"U".as_ptr(), 1, faders.as_ptr(), 3));

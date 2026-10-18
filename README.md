@@ -1,6 +1,6 @@
-# Live DAW
+# Sidecar
 
-Live DAW turns an ordinary computer into a digital mixing console for live sound,
+Sidecar turns an ordinary computer into a digital mixing console for live sound,
 laid out and working like a **Behringer WING**. Inputs from your audio interface
 are channels on the console; they feed buses, mains and matrices, and anything can
 be sent to any hardware output.
@@ -143,7 +143,7 @@ Barlow Condensed.
     CC EDIT (also SETUP pressed twice): the custom
     control layers, a function list and the target lists, COLOR, CLR ALL and NAME,
     saved with the show.
-  - **LIBRARY:** a file browser with the locations INT (`Documents/Live DAW/Library`),
+  - **LIBRARY:** a file browser with the locations INT (`Documents/Sidecar/Library`),
     USB (a folder of your choice) and SHOW (the show's scenes and snippets: tags, SKIP,
     LINK, REMOVE, RENAME, UP / DOWN), with FOLDER, RENAME, DELETE and sorting. Tabs:
     SHOW (open and save shows, also from the list), SNAP (SAVE, UPDATE, PARTIAL UPDATE,
@@ -192,10 +192,10 @@ Barlow Condensed.
 
 ## Multitrack recording
 
-Live DAW records up to 64 tracks and plays up to 64 tracks back into the console, like
+Sidecar records up to 64 tracks and plays up to 64 tracks back into the console, like
 a WING with a WING-LIVE card, and edits them in a DAW-style editor.
 
-- **Projects (sessions).** A project is a folder, `Documents/Live DAW/Recordings/<name>/`,
+- **Projects (sessions).** A project is a folder, `Documents/Sidecar/Recordings/<name>/`,
   holding `<name>.ldproj` and the `Audio` folder. Recording into an unsaved project
   creates a dated one. Projects autosave every 30 s; unsaved changes are offered
   back when the project is opened next. The last project reopens at start-up.
@@ -245,7 +245,7 @@ a WING with a WING-LIVE card, and edits them in a DAW-style editor.
 ## USB recorder / player
 
 The WING's 2/4-track USB recorder and player (manual 8.2), with a folder on the
-computer as the "USB stick": `Documents/Live DAW/USB` by default (hold or right-click
+computer as the "USB stick": `Documents/Sidecar/USB` by default (hold or right-click
 the USB key on the screen to choose another folder).
 
 - **Screen** (the status bar's **USB** icon, red while recording, or hold VIEW on the
@@ -298,7 +298,7 @@ the USB key on the screen to choose another folder).
   family; UPDATE SCOPE changes what it loads).
 - Recalling a scene or snippet never creates or destroys channels or plugins, so it
   can't cause a dropout. Built-in FX devices and their settings are recalled.
-- Shows from earlier Live DAW versions are converted when they load: channels stay
+- Shows from earlier Sidecar versions are converted when they load: channels stay
   channels, aux and group buses become buses, the master becomes Main 1, the gate,
   4-band EQ and compressor become the GATE, WING EQ and COMP models, and each strip's
   plugins move to FX slots on its inserts.
@@ -312,7 +312,7 @@ documentation, firmware 1.07+), on the computer's MIDI devices.
   computer: SETUP > REMOTE > MIDI PORTS picks an input and an output for DIN and for
   USB (the WING's "MIDI Control" port), SETUP > DAW > DAW PORTS for MIDI DAW 1-3. Where
   the system allows it (Linux, macOS) a port can be the app's own **virtual port**
-  ("Live DAW MIDI Control", "Live DAW MIDI DAW 1"...), which other apps then see like a
+  ("Sidecar MIDI Control", "Sidecar MIDI DAW 1"...), which other apps then see like a
   connected WING; on Windows use a loopback driver (e.g. loopMIDI). Devices that are
   unplugged come back on their own.
 - **MIDI REMOTE CONTROL** (SETUP > REMOTE; each row OFF / DIN / USB, touch its name for
@@ -349,7 +349,7 @@ documentation, firmware 1.07+), on the computer's MIDI devices.
 
 ## WING remote apps and WING files
 
-Live DAW can answer the Behringer WING's network protocols, so WING remote software
+Sidecar can answer the Behringer WING's network protocols, so WING remote software
 can find it and drive the console. This is clean-room work from public documentation
 and open-source projects (see below), and it is **experimental**.
 
@@ -358,7 +358,7 @@ and open-source projects (see below), and it is **experimental**.
   app settings, and the servers start with the app when enabled. The panel below
   shows what is listening and which clients are connected.
 - **Discovery** (UDP 2222) answers `WING?` with the console name, model `live-daw`,
-  serial and firmware `3.1-...` (Live DAW speaks the WING 3.1 parameter tree).
+  serial and firmware `3.1-...` (Sidecar speaks the WING 3.1 parameter tree).
 - **OSC** (UDP 2223): get and set any parameter by path or by `#id`, toggles, node
   lists, node dumps and descriptions, node strings (`/ch.1.fdr=-3,mute=1`), and the
   `/*s`, `/*S` and `/*b` subscriptions (renew every 10 s). Changes from the UI, scene
@@ -386,7 +386,7 @@ and open-source projects (see below), and it is **experimental**.
   the console, or adds a WING show's (`.show`) snapshots as scenes. The log lists
   what could not be applied. **EXPORT WING** writes the console as a
   WING snapshot (experimental: its format follows snapshots saved by WING consoles on
-  firmware 2.1 and 3.1, and it reads back into Live DAW, but it has not been loaded
+  firmware 2.1 and 3.1, and it reads back into Sidecar, but it has not been loaded
   into a WING or WING Edit).
 - Sources: Patrick-Gilles Maillot's *WING Remote Protocols* document, libwing (its
   parameter map is compiled into the app), the Companion WING module, and snapshot and
@@ -463,7 +463,7 @@ cmake -S . -B build
 cmake --build build --config Release
 ```
 
-On first launch, Live DAW selects ASIO automatically if an ASIO driver is installed.
+On first launch, Sidecar selects ASIO automatically if an ASIO driver is installed.
 Use your interface's own ASIO driver for the lowest latency (ASIO4ALL or FlexASIO
 also work). The driver's control panel (buffer size and so on) is in **Audio Setup**.
 
@@ -474,7 +474,7 @@ Options: `-DLIVEDAW_ASIO=OFF` builds without ASIO.
 
 Every push builds Windows, macOS and Linux versions on GitHub Actions. Open the
 repository's **Actions** tab, select the latest **CI** run and download
-**LiveDAW-Windows** (or macOS/Linux) from *Artifacts*.
+**Sidecar-Windows** (or macOS/Linux) from *Artifacts*.
 
 ### macOS
 
@@ -540,12 +540,12 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the signal flow and the rea
 
 ## Licensing note
 
-Live DAW is built on [JUCE](https://juce.com). JUCE 8 is dual-licensed under AGPLv3
+Sidecar is built on [JUCE](https://juce.com). JUCE 8 is dual-licensed under AGPLv3
 or a commercial JUCE licence. Distributing builds of this app requires one of the two. Windows builds also
 include the ASIO SDK, which is GPLv3 (compatible with the AGPLv3).
 
 The UI font, Barlow Condensed (© The Barlow Project Authors), is licensed under the SIL Open Font
 License 1.1 (`resources/fonts/OFL.txt`).
 
-Behringer and WING are trademarks of their owners. Live DAW is an independent project,
+Behringer and WING are trademarks of their owners. Sidecar is an independent project,
 not affiliated with or endorsed by Behringer or Music Tribe.

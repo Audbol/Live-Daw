@@ -1,4 +1,5 @@
 #include "engine/Models.h"
+#include "engine/AppPaths.h"
 #include "ui/CustomControlsPage.h"
 #include "ui/MidiRemoteUi.h"
 #include "ui/MonitorsPage.h"
@@ -92,7 +93,7 @@ namespace
 
     juce::File dataDirectory()
     {
-        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("LiveDAW");
+        return paths::appData();
     }
 
     //==============================================================================
@@ -1270,8 +1271,8 @@ namespace
 
     /** REMOTE (fig. 42): MIDI REMOTE CONTROL | HA REMOTE + WING REMOTE | NETWORK + REMOTE LOCK.
         MIDI REMOTE CONTROL sets each function OFF, DIN or USB (ⓘ: its MIDI map); MIDI PORTS
-        (Live DAW) picks the computer's devices for the WING's DIN and USB ports. HA remote is
-        drawn disabled. WING REMOTE runs Live DAW's WING protocol servers (discovery, OSC,
+        (Sidecar) picks the computer's devices for the WING's DIN and USB ports. HA remote is
+        drawn disabled. WING REMOTE runs Sidecar's WING protocol servers (discovery, OSC,
         native) for WING remote apps; it starts with the app when enabled. */
     class RemoteTab final : public juce::Component, private juce::Timer
     {
@@ -1326,7 +1327,7 @@ namespace
             lock.addRow ("TCP", OnKey::fixed (false), 1.3f, false, true);
             addAndMakeVisible (lock);
 
-            // WING REMOTE (Live DAW): the settings live in the app settings.
+            // WING REMOTE (Sidecar): the settings live in the app settings.
             auto change = [this] (const WingRemote::Settings& s)
             {
                 s.save (ctx.settings);
@@ -1656,7 +1657,7 @@ namespace
         WingKey load { "LOAD", Icon::LoadTray };
     };
 
-    /** DAW (fig. 43): DAW CONTROL, then (Live DAW) the DAW's MIDI ports and
+    /** DAW (fig. 43): DAW CONTROL, then (Sidecar) the DAW's MIDI ports and
         the state of the emulated units. */
     class DawTab final : public juce::Component, private juce::Timer
     {
