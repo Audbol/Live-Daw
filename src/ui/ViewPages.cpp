@@ -1826,9 +1826,14 @@ void ConfigViewPage::layoutContent()
     renameKey.setBounds (top.removeFromRight (kw * 3 / 4).reduced (2, 2));
     clearKey.setBounds (top.removeFromRight (kw * 3 / 4).reduced (2, 2));
     top.removeFromRight (6);
-    const int fw = top.getWidth() / juce::jmax (1, fields.size());
+    // In a narrow window the MIDI CC field (unavailable without MIDI remote
+    // control) gives its room to the other three.
+    const bool showMidi = top.getWidth() / juce::jmax (1, fields.size()) >= top.getHeight() * 3 / 2;
+    fields.getLast()->setVisible (showMidi);
+    const int fw = top.getWidth() / juce::jmax (1, fields.size() - (showMidi ? 0 : 1));
     for (auto* f : fields)
-        f->setBounds (top.removeFromLeft (fw).reduced (2, 2));
+        if (f->isVisible())
+            f->setBounds (top.removeFromLeft (fw).reduced (2, 2));
 
     // The page map at the very bottom, the layer's slots above it, the source grid on top.
     mapArea = b.removeFromBottom (juce::jlimit (14, 22, getHeight() / 26));
@@ -2312,8 +2317,9 @@ void MuteGroupsViewPage::paintContent (juce::Graphics& g)
         g.setColour (sel ? Dark::muteGroup.withAlpha (0.55f) : Colours::screenPanel);
         g.fillRect (area);
         g.setColour (sel ? juce::Colours::white : Dark::textDim);
-        g.setFont (viewFont (TypeScale::value, (float) area.getHeight() * 0.85f));
-        g.drawText (text, area, juce::Justification::centred);
+        // Narrow columns (1280x800) shrink the caption until it fits.
+        g.setFont (fontFittingWidth (viewFont (TypeScale::value, (float) area.getHeight() * 0.85f), text, (float) area.getWidth() - 2.0f));
+        g.drawFittedText (text, area, juce::Justification::centred, 1, 0.75f);
         if (text == "SOURCES")
         {
             auto box = area.translated (0, area.getHeight() + 1).withHeight (juce::jmax (10, area.getHeight() + 2)).reduced (4, 0);

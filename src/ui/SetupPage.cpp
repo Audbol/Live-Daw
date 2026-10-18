@@ -121,8 +121,9 @@ namespace
 
             auto t = r.reduced (2.0f, 3.0f);
             g.setColour (Dark::text.withAlpha (0.85f * alpha));
-            g.setFont (wingFontFit (TypeScale::caption, t.getHeight() * 0.3f));
-            g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 0.4f).toNearestInt(), juce::Justification::bottomLeft, 1);
+            auto captionArea = t.removeFromTop (t.getHeight() * 0.4f);
+            g.setFont (fontFittingWidth (wingFontFit (TypeScale::caption, t.getHeight() * 0.5f), caption, captionArea.getWidth(), 0.7f));
+            g.drawFittedText (caption, captionArea.toNearestInt(), juce::Justification::bottomLeft, 1, 0.7f);
             g.setColour (Dark::text.withAlpha (alpha));
             g.setFont (wingFontFit (TypeScale::value, t.getHeight() * 0.8f));
             g.drawFittedText (juce::String (value()) + " %", t.toNearestInt(), juce::Justification::centredLeft, 1);

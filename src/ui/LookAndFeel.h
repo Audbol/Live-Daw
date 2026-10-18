@@ -117,6 +117,14 @@ inline juce::Font wingFontFit (float capFraction, float maxHeightPx, WingWeight 
     return f.getHeight() > maxHeightPx ? f.withHeight (juce::jmax (6.0f, maxHeightPx)) : f;
 }
 
+/** `f`, made smaller when `text` would not fit `width` px even squashed to
+    `minScale` (narrow columns in small windows). */
+inline juce::Font fontFittingWidth (juce::Font f, const juce::String& text, float width, float minScale = 0.75f)
+{
+    const float w = juce::GlyphArrangement::getStringWidth (f, text) * minScale;
+    return w > width && w > 0.0f ? f.withHeight (juce::jmax (6.0f, f.getHeight() * width / w)) : f;
+}
+
 /** The surface print's narrower face (Barlow Condensed), `height` px tall in
     JUCE terms: for silk print, hardware keys and scales around the screen. */
 juce::Font silkFont (float height, bool bold = true);

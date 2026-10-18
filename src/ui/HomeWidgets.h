@@ -865,7 +865,9 @@ public:
         auto r = getLocalBounds().toFloat();
         const bool enabled = isEnabled() && binding.isValid();
         paintKeyBody (g, r, colours::well);
-        auto ring = r.removeFromLeft (r.getHeight()).reduced (r.getHeight() * 0.16f);
+        // A narrow box keeps at least half its width for the caption and value.
+        const float ringW = juce::jmin (r.getHeight(), r.getWidth() * 0.5f);
+        auto ring = r.removeFromLeft (ringW).withSizeKeepingCentre (ringW, ringW).reduced (ringW * 0.16f);
         const float a0 = juce::MathConstants<float>::pi * 1.25f, a1 = juce::MathConstants<float>::pi * 2.75f;
         const float pos = enabled ? binding.get() : 0.0f;
         juce::Path track, value;
@@ -883,10 +885,10 @@ public:
         r.removeFromLeft (4.0f);
         g.setColour (enabled ? colours::caption : colours::dim);
         g.setFont (homeFont (TypeScale::caption, r.getHeight() * 0.32f));
-        g.drawText (binding.label, r.removeFromTop (r.getHeight() * 0.4f).toNearestInt(), juce::Justification::bottomLeft);
+        g.drawFittedText (binding.label, r.removeFromTop (r.getHeight() * 0.4f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.7f);
         g.setColour (enabled ? colours::ink : colours::dim);
         g.setFont (homeFont (TypeScale::value, r.getHeight() * 0.9f));
-        g.drawFittedText (binding.text ? binding.text() : juce::String ("--"), r.toNearestInt(), juce::Justification::topLeft, 1, 0.8f);
+        g.drawFittedText (binding.text ? binding.text() : juce::String ("--"), r.toNearestInt(), juce::Justification::topLeft, 1, 0.7f);
     }
 
     void mouseDown (const juce::MouseEvent&) override { start = binding.isValid() ? binding.get() : 0.0f; }

@@ -157,7 +157,9 @@ void KnobField::paint (juce::Graphics& g)
     auto r = getLocalBounds();
     g.setColour (Dark::well);
     g.fillRect (r);
-    auto knob = r.removeFromLeft (r.getHeight()).toFloat().reduced ((float) r.getHeight() * 0.16f);
+    // A narrow field (AUTO DIM at 1280x800) keeps half its width for the text.
+    const int knobW = juce::jmin (r.getHeight(), r.getWidth() / 2);
+    auto knob = r.removeFromLeft (knobW).toFloat().withSizeKeepingCentre ((float) knobW, (float) knobW).reduced ((float) knobW * 0.16f);
     const float a0 = juce::MathConstants<float>::pi * 1.25f, a1 = juce::MathConstants<float>::pi * 2.75f;
     const float rad = knob.getWidth() * 0.42f, thick = juce::jmax (2.5f, knob.getWidth() * 0.16f);
     juce::Path track, arc;
@@ -170,13 +172,13 @@ void KnobField::paint (juce::Graphics& g)
         g.setColour (ring);
         g.strokePath (arc, juce::PathStrokeType (thick));
     }
-    auto t = r.reduced (4, 3);
+    auto t = r.reduced (juce::jlimit (1, 4, r.getWidth() / 12), 3);
     g.setColour (Dark::textDim.withAlpha (a));
     g.setFont (wingFontPx (juce::jmin (TypeScale::caption * getWingScreenHeight(), (float) t.getHeight() * 0.2f)));
-    g.drawFittedText (on ? binding.label.toUpperCase() : placeholder, t.removeFromTop (t.getHeight() * 38 / 100), juce::Justification::bottomLeft, 1);
+    g.drawFittedText (on ? binding.label.toUpperCase() : placeholder, t.removeFromTop (t.getHeight() * 38 / 100), juce::Justification::bottomLeft, 1, 0.7f);
     g.setColour (Dark::text.withAlpha (a));
     g.setFont (wingFontPx (juce::jmin (TypeScale::value * getWingScreenHeight(), (float) t.getHeight() * 0.5f)));
-    g.drawFittedText (on && binding.text ? binding.text() : placeholderValue, t, juce::Justification::centredLeft, 1, 0.8f);
+    g.drawFittedText (on && binding.text ? binding.text() : placeholderValue, t, juce::Justification::centredLeft, 1, 0.7f);
 }
 
 void KnobField::mouseDown (const juce::MouseEvent&)
