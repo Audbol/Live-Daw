@@ -177,7 +177,7 @@ void ScopeWindow::paint (juce::Graphics& g)
         g.setColour (groupHeader);
         g.fillRect (gr.header);
         g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (juce::jmin (14.0f, (float) gr.header.getHeight() * 0.8f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::body, (float) gr.header.getHeight() * 0.8f, WingWeight::SemiBold));
         g.drawText (gr.title, gr.header, juce::Justification::centred);
     }
     for (auto [area, text] : { std::pair { configHeader, "CONFIGURATION" }, std::pair { contentsHeader, "CONTENTS" } })
@@ -185,7 +185,7 @@ void ScopeWindow::paint (juce::Graphics& g)
         g.setColour (groupHeader);
         g.fillRect (area);
         g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (juce::jmin (14.0f, (float) area.getHeight() * 0.8f), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::body, (float) area.getHeight() * 0.8f, WingWeight::SemiBold));
         g.drawText (text, area, juce::Justification::centred);
     }
 
@@ -212,10 +212,10 @@ void ScopeWindow::paint (juce::Graphics& g)
         if (t.caption.isNotEmpty())
         {
             auto cap = r.removeFromTop (r.getHeight() * 0.36f);
-            g.setFont (juce::FontOptions (juce::jlimit (7.0f, 11.0f, cap.getHeight() * 0.9f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::statusCaption, cap.getHeight() * 0.9f));
             g.drawText (t.caption, cap.toNearestInt(), juce::Justification::centred);
         }
-        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 18.0f, juce::jmin (r.getHeight() * 0.8f, r.getWidth() * 0.4f)), juce::Font::bold));
+        g.setFont (wingFontFit (TypeScale::value, juce::jmin (r.getHeight() * 0.8f, r.getWidth() * 0.4f), WingWeight::SemiBold));
         g.drawFittedText (t.number, r.toNearestInt(), juce::Justification::centred, 1, 0.7f);
         if (t.dropdown)
         {

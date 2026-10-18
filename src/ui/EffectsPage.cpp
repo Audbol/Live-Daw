@@ -86,7 +86,7 @@ public:
         g.setColour (Dark::textDim);
         g.fillRect (number);
         g.setColour (juce::Colours::black);
-        g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+        g.setFont (wingFont (TypeScale::body, WingWeight::SemiBold));
         g.drawText (juce::String (slot + 1), number, juce::Justification::centred);
 
         auto inner = b.reduced (6.0f);
@@ -134,11 +134,11 @@ public:
                 }
             auto label = deviceArea.reduced (12.0f, 6.0f);
             g.setColour (juce::Colours::white);
-            g.setFont (juce::FontOptions (juce::jlimit (12.0f, 20.0f, label.getHeight() * 0.42f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::value, label.getHeight() * 0.42f, WingWeight::SemiBold));
             g.drawFittedText (plugin != nullptr ? plugin->getName().toUpperCase() : juce::String ("FX " + juce::String (slot + 1)),
                               label.removeFromTop (label.getHeight() * 0.62f).toNearestInt(), juce::Justification::centredBottom, 1);
             g.setColour (juce::Colour (0xffc8c8c8));
-            g.setFont (juce::FontOptions (juce::jlimit (9.0f, 13.0f, label.getHeight() * 0.7f), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::caption, label.getHeight() * 0.7f));
             g.drawFittedText (plugin != nullptr ? plugin->getPluginDescription().manufacturerName.toUpperCase() : juce::String ("EXT"),
                               label.toNearestInt(), juce::Justification::centredTop, 1);
         }
@@ -155,7 +155,7 @@ public:
             g.setColour (Colours::mute);
             g.fillRect (warn);
             g.setColour (juce::Colours::black);
-            g.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+            g.setFont (wingFont (TypeScale::body, WingWeight::SemiBold));
             g.drawFittedText (fx.isFaulted (slot) ? "FAULT - BYPASSED" : "DOUBLE ASSIGNED", warn.toNearestInt(), juce::Justification::centred, 1);
         }
 
@@ -177,7 +177,7 @@ public:
             if (stripName (*user.strip) != user.strip->getLabel())
             {
                 g.setColour (juce::Colours::black);
-                g.setFont (juce::FontOptions (juce::jmin (13.0f, bar.getHeight() * 0.9f), juce::Font::bold));
+                g.setFont (wingFontFit (TypeScale::body, bar.getHeight() * 0.9f, WingWeight::SemiBold));
                 g.drawFittedText (stripName (*user.strip).toUpperCase(), bar.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.6f);
             }
             g.setColour (Colours::screenTile);
@@ -185,7 +185,7 @@ public:
             auto name = src.removeFromBottom (juce::jmin (18.0f, src.getHeight() * 0.32f));
             drawStripIcon (g, *user.strip, src.reduced (src.getWidth() * 0.22f, 3.0f), juce::Colours::white);
             g.setColour (juce::Colours::white);
-            g.setFont (juce::FontOptions (juce::jmin (14.0f, name.getHeight()), juce::Font::bold));
+            g.setFont (wingFontFit (TypeScale::body, name.getHeight(), WingWeight::SemiBold));
             g.drawFittedText (user.strip->getLabel(), name.toNearestInt(), juce::Justification::centred, 1, 0.7f);
 
             // PRE lit red, POST green, as on the console.
@@ -417,7 +417,7 @@ public:
             g.drawEllipse (circle, 3.0f);
             g.fillRect (juce::Rectangle<float> (d * 0.5f, 3.0f).withCentre (circle.getCentre()));
             g.fillRect (juce::Rectangle<float> (3.0f, d * 0.5f).withCentre (circle.getCentre()));
-            g.setFont (juce::FontOptions (20.0f, juce::Font::bold));
+            g.setFont (wingFont (TypeScale::value * 1.2f, WingWeight::SemiBold));
             g.drawText ("SELECT A DEVICE", body.withTop ((int) circle.getBottom() + 10).withHeight (30), juce::Justification::centredTop);
         }
         else if (model == ld::kFxExt)
@@ -427,11 +427,11 @@ public:
             auto* plugin = fx.getPlugin (slot);
             auto r = body.reduced (24).withHeight (juce::jmin (body.getHeight() - 48, 120));
             g.setColour (Colours::text);
-            g.setFont (juce::FontOptions (28.0f, juce::Font::bold));
+            g.setFont (wingFont (TypeScale::statusTitle, WingWeight::SemiBold));
             g.drawFittedText (plugin != nullptr ? plugin->getName().toUpperCase() : juce::String ("NO PLUGIN LOADED"), r.removeFromTop (40),
                               juce::Justification::centredLeft, 1);
             g.setColour (Colours::textDim);
-            g.setFont (juce::FontOptions (17.0f, juce::Font::bold));
+            g.setFont (wingFont (TypeScale::value));
             juce::String info ("EXT DEVICE: A VST3 / AU / LV2 PLUGIN");
             if (plugin != nullptr)
                 info = plugin->getPluginDescription().manufacturerName.toUpperCase() + "   " + plugin->getPluginDescription().pluginFormatName
