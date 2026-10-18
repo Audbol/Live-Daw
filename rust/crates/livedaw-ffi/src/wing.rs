@@ -234,6 +234,35 @@ pub extern "C" fn ld_wing_coverage() -> *mut LdString {
     LdString::new(guard(String::new(), || livedaw_wing::map::coverage().report()))
 }
 
+/// MIDI SYSEX CONTROL on the WING tree: `cmd` 2 executes a node string, 3
+/// dumps a node, 5 describes one (livedaw_wing::sysex). True with `out` the
+/// data (empty for 2), false with `out` the console's error text.
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_sysex(w: *mut LdWing, cmd: i32, text: *const u8, len: usize, out: *mut *mut LdString) -> bool {
+    let Some(w) = wing(w) else { return false };
+    let text = str_arg(text, len).into_owned();
+    let result = guard(Err(livedaw_wing::sysex::NODE_NOT_FOUND.to_owned()), || {
+        let c = livedaw_wing::Console::new(w.engine(), &w.state);
+        let r = match cmd {
+            2 => livedaw_wing::sysex::execute(&c, &text).map(|_| String::new()),
+            3 => livedaw_wing::sysex::dump(&c, &text),
+            5 => livedaw_wing::sysex::describe(&c, &text),
+            _ => Err(livedaw_wing::sysex::NODE_NOT_FOUND),
+        };
+        r.map_err(str::to_owned)
+    });
+    match result {
+        Ok(data) => {
+            write(out, data);
+            true
+        }
+        Err(e) => {
+            write(out, e);
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
