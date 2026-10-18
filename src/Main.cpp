@@ -261,8 +261,12 @@ public:
         if (settings.getBoolValue (ui::uiprefs::fullScreen, false))
             main->setFullScreen (true);
 
+        // The start-up notice (unless turned off for this version); in safe
+        // mode after the recovery question, which comes first.
         if (safeMode)
             offerSafeModeRecovery (crashedPlugin);
+        else
+            showStartupNotice();
 
         startAutosave();
         signalQuitter = std::make_unique<SignalQuitter>();
@@ -398,6 +402,7 @@ private:
                                             "Reload with plugins", "Stay in safe mode", nullptr,
                                             juce::ModalCallbackFunction::create ([this] (int result)
         {
+            showStartupNotice();
             if (result == 0 || mainComponent == nullptr)
                 return;
 
@@ -407,6 +412,15 @@ private:
             if (loadResult.failed())
                 log.warning (loadResult.getErrorMessage());
         }));
+    }
+
+    void showStartupNotice()
+    {
+        juce::MessageManager::callAsync ([main = mainComponent]
+        {
+            if (main != nullptr)
+                main->showStartupNotice();
+        });
     }
 
     void saveState()

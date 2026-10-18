@@ -44,6 +44,10 @@ public:
     /** Reloads `file` (used by safe-mode recovery). */
     juce::Result reloadShow (const juce::File& file, bool loadPlugins);
 
+    /** The start-up notice (about the project and how it differs from a
+        WING), unless it was turned off for this version. */
+    void showStartupNotice();
+
     /** Full screen (F11): the window covers the screen without its title bar
         (kiosk mode). Works together with the screen-only mode (F10). */
     void setFullScreen (bool);

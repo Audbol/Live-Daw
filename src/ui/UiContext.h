@@ -205,6 +205,7 @@ namespace uiprefs
     // The window (MainComponent).
     constexpr const char* screenMaximized = "ui.screenMaximized";   // bool: only the main display (F10)
     constexpr const char* fullScreen = "ui.fullScreen";             // bool: the window covers the screen (F11)
+    constexpr const char* noticeDismissed = "ui.noticeDismissedFor"; // the app version the start-up notice was turned off for
 
     // SOLO SYSTEM (SETUP > AUDIO).
     constexpr const char* exclusiveSolo = "ui.soloExclusive";

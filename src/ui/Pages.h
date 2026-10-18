@@ -367,7 +367,8 @@ private:
     UiContext& ctx;
     const bool onSetup;
     std::vector<HealthRow> health;
-    WingKey clearFaultsButton { "CLEAR FX FAULTS", Icon::ClearCircle }, clearClipsButton { "RESET COUNTERS", Icon::Reset };
+    WingKey clearFaultsButton { "CLEAR FX FAULTS", Icon::ClearCircle }, clearClipsButton { "RESET COUNTERS", Icon::Reset },
+        aboutButton { "ABOUT", Icon::Info };
     juce::ListBox logList;
     juce::Rectangle<int> leftArea, rightArea, statsArea;
 };

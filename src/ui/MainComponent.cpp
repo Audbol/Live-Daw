@@ -1,6 +1,7 @@
 #include "ui/MainComponent.h"
 #include "engine/AppPaths.h"
 #include "ui/MidiRemoteUi.h"
+#include "ui/StartupNotice.h"
 #include "ui/WingPopups.h"
 #include "ui/daw/DawEditor.h"
 
@@ -803,6 +804,11 @@ void MainComponent::setFullScreen (bool shouldBe)
         if (safe != nullptr && safe->isShowing() && ! safe->editorShown)
             safe->grabKeyboardFocus();
     });
+}
+
+void MainComponent::showStartupNotice()
+{
+    startupNotice::show (settings, *this, true);
 }
 
 void MainComponent::openLastProject()

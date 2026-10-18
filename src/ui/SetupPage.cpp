@@ -5,6 +5,7 @@
 #include "ui/MonitorsPage.h"
 #include "ui/Pages.h"
 #include "ui/ScreenWidgets.h"
+#include "ui/StartupNotice.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>
 
@@ -277,12 +278,16 @@ namespace
                 if (f.existsAsFile())
                     f.revealToUser();
             };
+            // ABOUT: the start-up notice (the project, how it differs from a WING).
+            aboutKey.onClick = [this] { startupNotice::show (ctx.settings, *this, false); };
+            aboutKey.setTooltip ("About Sidecar: an independent hobby project; what differs from a real WING");
             styleIconKey (editKey, true);
+            styleIconKey (aboutKey, true);
             for (auto* k : { &dataKey, &showKey })
                 styleIconKey (*k);
             for (auto* k : { &chMinus, &chPlus, &chWing, &busMinus, &busPlus })
                 k->offColour = Dark::key;
-            for (auto* k : { &editKey, &chMinus, &chPlus, &chWing, &busMinus, &busPlus, &dataKey, &showKey })
+            for (auto* k : { &editKey, &aboutKey, &chMinus, &chPlus, &chWing, &busMinus, &busPlus, &dataKey, &showKey })
                 addAndMakeVisible (k);
         }
 
@@ -306,7 +311,7 @@ namespace
             const std::pair<juce::String, juce::String> info[] = {
                 { "CONSOLE NAME (network)", ctx.settings.getValue (prefs::consoleName, "LIVE-DAW") },
                 { "ENGINE", "RUST, " + juce::String (ctx.engine.getNumWorkerThreads()) + " DSP THREADS" },
-                { "SOFTWARE", "LIVE DAW " + juce::String (JUCE_APPLICATION_VERSION_STRING) },
+                { "SOFTWARE", juce::String (kAppName).toUpperCase() + " " + juce::String (JUCE_APPLICATION_VERSION_STRING) },
                 { "AUDIO DEVICE", device != nullptr ? device->getName().toUpperCase() : juce::String ("NONE") },
             };
             for (size_t i = 0; i < std::size (info); ++i)
@@ -318,7 +323,8 @@ namespace
                 g.drawText (info[i].first, row.removeFromTop (row.getHeight() * 36 / 100), juce::Justification::bottomLeft);
                 g.setColour (Dark::text);
                 g.setFont (wingFontPx (juce::jmin ((i == 0 ? TypeScale::value : TypeScale::body) * getWingScreenHeight(), (float) row.getHeight() * 0.42f)));
-                g.drawFittedText (info[i].second, row.withTrimmedRight (i == 0 ? editKey.getWidth() + 4 : 0), juce::Justification::centredLeft, 1, 0.8f);
+                g.drawFittedText (info[i].second, row.withTrimmedRight (i == 0 ? editKey.getWidth() + 4 : (i == 2 ? aboutKey.getWidth() + 4 : 0)),
+                                  juce::Justification::centredLeft, 1, 0.8f);
             }
 
             g.setColour (Dark::textDim);
@@ -353,6 +359,7 @@ namespace
             for (auto& row : infoRows)
                 row = r.removeFromTop (rowH);
             editKey.setBounds (infoRows[0].withTrimmedLeft (infoRows[0].getWidth() - juce::jmin (52, rowH + 12)).reduced (0, 2));
+            aboutKey.setBounds (infoRows[2].withTrimmedLeft (infoRows[2].getWidth() - juce::jmin (52, rowH + 12)).reduced (0, 2));
 
             configCaption = config.removeFromTop (config.getHeight() / 4);
             const int h = config.getHeight() / 2;
@@ -387,7 +394,7 @@ namespace
         }
 
         UiContext& ctx;
-        WingKey editKey { "EDIT", Icon::Edit }, chMinus { "-" }, chPlus { "+" }, chWing { "WING" }, busMinus { "-" }, busPlus { "+" },
+        WingKey editKey { "EDIT", Icon::Edit }, aboutKey { "ABOUT", Icon::Info }, chMinus { "-" }, chPlus { "+" }, chWing { "WING" }, busMinus { "-" }, busPlus { "+" },
             dataKey { "DATA FOLDER", Icon::Folder }, showKey { "SHOW FOLDER", Icon::Folder };
         juce::Rectangle<int> infoBox, dataBox, infoRows[4], configCaption, chRow, busRow, chValue, busValue;
         bool dataTitled = true;

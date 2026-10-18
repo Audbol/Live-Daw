@@ -497,6 +497,17 @@ blinking LEDs.
   (channel tab in the strip's colour, status tiles, the page's `getStatusKeys()`,
   clock), the page, and the parameter bar with six controls that follow the page
   (`DisplayPage::getKnobs`, styled by `getKnobStyles`), plus CHANNEL SELECT.
+- **Screen only** (`MainComponent::setScreenMaximized`, `UiContext::setScreenMaximized`;
+  F10, the display's maximize key, a double-click on the status bar): the other
+  sections are hidden but stay alive and laid out; the display takes the window
+  (`MainDisplay::setMaximized` shrinks its frame around the largest 16:10 screen and
+  centres it on black). Windows taller than 1100 px lay it out at 1100 px and scale it
+  up with a component transform, so the screens keep their proportions. F11 is full
+  screen (kiosk mode). Settings `ui.screenMaximized`, `ui.fullScreen`.
+- **Start-up notice** (`StartupNotice.*`, `popups::notice`): what the project is and
+  how it differs from a WING, shown at start (after safe-mode recovery) unless turned
+  off for the running version (`ui.noticeDismissedFor`); SETUP > GENERAL > ABOUT and
+  the LOG tab's ABOUT show it again. Keep its list in step with *Known limitations*.
 - **Screens:** HOME (`HomePage.*`: the toolbar, OVERVIEW, ICON/COLOR, NAME, TAGS and
   the INIT / COPY / SETTINGS / FEED overlays; `HomeScreens.*`: INPUT, FILTER SETUP,
   GATE / COMP, EQ, INS 1 / INS 2, MAIN SENDS, BUS / MATRIX SENDS and the overlays;

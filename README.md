@@ -5,6 +5,15 @@ laid out and working like a **Behringer WING**. Inputs from your audio interface
 are channels on the console; they feed buses, mains and matrices, and anything can
 be sent to any hardware output.
 
+> **Sidecar is an independent hobby project, made for fun and practice.** It is not
+> affiliated with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
+> Sidecar tries its hardest to emulate the WING's interface and behaviour faithfully,
+> but it is incomplete and can differ from the real console: the processing recreates
+> the character of the WING's models, not Behringer's algorithms, and there is no
+> remote preamp control, StageConnect, AES50 or Dante (the notice shown at start-up,
+> also under SETUP > GENERAL > ABOUT, lists the differences). Don't rely on it for a
+> critical live show without testing it thoroughly first.
+
 ## A WING on your computer
 
 - **Console topology:** 40 input channels, 8 aux channels, 16 stereo buses, 4 stereo
@@ -79,7 +88,10 @@ Barlow Condensed.
 - **Main display**, a 16:10 screen with the seven screen keys on its left (over its
   full height) and, on its right, **CLR SOLO**, the main L/R meter (right-click: MONITOR
   or MAIN 1-4), the knob for fine adjustments of the last touched control and the
-  blank key:
+  blank key. **Screen only** (F10, Ctrl+Shift+F, the maximize key under the right-hand
+  column or a double-click on an empty part of the status bar; Esc returns) shows just
+  the display with its keys and knobs, as large as the window allows; **F11** makes the
+  window full screen. Both work together and are remembered.
   - The **status bar**: the selected channel's tab in its colour (number box, icon,
     name; the number opens **CHANNEL SELECT**, the rest Channel Home; a red TALKBACK
     frame on the talkback channel and while talking), the status tiles (the SIP badge

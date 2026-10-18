@@ -195,7 +195,11 @@ jobs:
           Choose the driver and device in SETUP > AUDIO.
 
           This is a test release of the Behringer WING emulation; see README.md in the zip.
-          Sidecar is not affiliated with or endorsed by Behringer or Music Tribe.
+          Sidecar is an independent hobby project, made for fun and practice. It is not
+          affiliated with or endorsed by Behringer or Music Tribe; WING is their trademark.
+          It tries hard to emulate the WING faithfully, but it is incomplete and can differ
+          from the real console (the start-up notice lists how). Don't rely on it for a
+          critical live show without testing it first.
           EOF
           # Creates the tag at the tested commit if it doesn't exist yet.
           gh release create "$TAG" "Sidecar-Windows-${TAG}.zip" --target "$GITHUB_SHA" \
