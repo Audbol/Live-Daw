@@ -197,6 +197,14 @@ private:
     void bindCustomControls();
     /** The scene GO recalls next (the wheel on SHOW CNTRL moves it). */
     int nextScene() const;
+    /** The custom control layer the lower part shows: USER, or DAW 1-4 on
+        the layer keys in DAW mode (-1: none). */
+    int lowerCcLayer() const;
+    /** DAW mode with USE UPPER CC FOR DAW and a DAW layer: the upper part is
+        four V-pots of the DAW (midiui). */
+    bool upperIsDaw() const;
+    /** The layer keys read DAW 1-4 in DAW mode. */
+    void applyDawMode();
 
     UiContext& ctx;
     int lowerLayer = MuteGroups;
@@ -206,6 +214,10 @@ private:
     int shownCcRevision = -1, shownCcLayer = -1;
     Strip* shownSelection = nullptr;
     juce::String shownValues;
+    bool shownDaw = false;
+    int shownDawRevision = -1;
+    juce::StringArray layerLabels;       // the layer keys' own labels (DAW mode relabels them)
+    std::array<bool, 5> layerKeysEnabled {};
 
     ViewKey upperView, lowerView;
     SurfaceKey upKey { "UP" }, downKey { "DOWN" }, dawKey { "DAW" };

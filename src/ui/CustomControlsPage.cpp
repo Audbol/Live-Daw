@@ -1,5 +1,6 @@
 #include "ui/CustomControlsPage.h"
 #include "engine/Models.h"
+#include "ui/MidiRemoteUi.h"
 #include "ui/WingPopups.h"
 
 namespace livedaw::ui::cc
@@ -140,7 +141,7 @@ juce::String categoryName (Slot s, int category)
                                             "FX PARAMETER", "MONITORING", "DAW V-POTS", "MIDI CC" };
     static const char* const buttons[] = { "NOT ASSIGNED", "MUTE", "SOLO", "DCA MUTE", "MGRP", "SENDS ON FDR", "CH PAGE", "GLOBAL PAGE",
                                            "FADER PAGE", "SHOW CONTROL", "SCENE RECALL", "OTHER", "FADER SPILL", "DAW BUTTONS",
-                                           "MIDI CC/NOTE", "USB PLAY/REC", "SD RECORDER", "GPIO" };
+                                           "MIDI CC/NOTE/PGM", "USB PLAY/REC", "SD RECORDER", "GPIO" };
     if (s == Slot::Encoder)
         return juce::isPositiveAndBelow (category, (int) std::size (encoders)) ? encoders[category] : "";
     return juce::isPositiveAndBelow (category, (int) std::size (buttons)) ? buttons[category] : "";
@@ -149,8 +150,8 @@ juce::String categoryName (Slot s, int category)
 bool categoryAvailable (Slot s, int category)
 {
     if (s == Slot::Encoder)
-        return category < EncDawVpot;
-    return category < BtnFaderSpill;
+        return juce::isPositiveAndBelow (category, (int) kNumEncoderCategories);
+    return category < BtnFaderSpill || category == BtnDawButtons || category == BtnMidi;
 }
 
 juce::Colour categoryColour (Slot s, int category)
@@ -232,6 +233,12 @@ KnobBinding bindEncoder (UiContext& ctx, const Function& f)
         case EncMonitoring:
             return f.option == 1 ? bindLinear ("DIM", ctx.engine.monitorDimDb, 0.0f, 40.0f, " dB", 0, 20.0f)
                                  : bindLinear ("MONITOR", ctx.engine.monitorLevelDb, -60.0f, 10.0f, " dB", 1, 0.0f);
+        case EncDawVpot:
+            if (juce::isPositiveAndBelow (f.target, DawRemote::kNumVpotFunctions))
+                return midiui::bindDawVpot (ctx, f.target);
+            break;
+        case EncMidiCc:
+            return midiui::bindMidiCc (ctx, juce::jlimit (0, 15, f.target), juce::jlimit (0, 127, f.option));
         default:
             break;
     }
@@ -311,6 +318,12 @@ void press (UiContext& ctx, const Function& f)
         case BtnSceneRecall:
             logRecall (ctx, "scene #" + juce::String (f.target), ctx.show.recallSceneByTag (f.target));
             break;
+        case BtnDawButtons:
+            midiui::pressDawCommand (ctx, f.option, true);
+            break;
+        case BtnMidi:
+            midiui::pressMidiKey (ctx, f.target, f.option, true);
+            break;
         case BtnOther:
         {
             auto* sel = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr;
@@ -352,6 +365,32 @@ void press (UiContext& ctx, const Function& f)
     }
 }
 
+void release (UiContext& ctx, const Function& f)
+{
+    if (f.category == BtnDawButtons)
+        midiui::pressDawCommand (ctx, f.option, false);
+    else if (f.category == BtnMidi)
+        midiui::pressMidiKey (ctx, f.target, f.option, false);
+}
+
+int ledState (UiContext& ctx, const Function& f)
+{
+    if (f.category == BtnDawButtons)
+        return midiui::dawCommandLed (ctx, f.option);
+    return isLit (ctx, f) ? 1 : 0;
+}
+
+juce::String layerName (int layer)
+{
+    if (layer == kUserLayer)
+        return "USER";
+    if (layer >= kFirstDawLayer)
+        return "DAW " + juce::String (layer - kFirstDawLayer + 1);
+    if (layer >= kFirstFourChannelLayer)
+        return "U" + juce::String (layer - kFirstFourChannelLayer + 1);
+    return "LAYER " + juce::String (layer + 1);
+}
+
 bool isLit (UiContext& ctx, const Function& f)
 {
     switch (f.category)
@@ -372,6 +411,8 @@ bool isLit (UiContext& ctx, const Function& f)
             break;
         case BtnGlobalPage:
             return juce::isPositiveAndBelow (f.option, (int) std::size (globalScreens)) && ctx.getScreen && ctx.getScreen() == globalScreens[f.option];
+        case BtnDawButtons: return midiui::dawCommandLed (ctx, f.option) != 0;
+        case BtnMidi: return midiui::midiKeyLit (ctx, f.target, f.option);
         case BtnOther:
             switch (f.option)
             {
@@ -409,6 +450,8 @@ juce::String describe (UiContext& ctx, Slot s, const Function& f)
             case EncFixedBusSend: return strip() + ">B" + juce::String (f.option + 1);
             case EncFxParameter:  return "FX" + juce::String (f.target + 1) + (f.option < 0 ? " MIX" : " P" + juce::String (f.option + 1));
             case EncMonitoring:   return monitorNames[juce::jlimit (0, 1, f.option)];
+            case EncDawVpot:      return DawRemote::vpotFunctionName (f.target).replace ("V-POT ", "VPOT ").replace ("JOG WHEEL", "JOG");
+            case EncMidiCc:       return midiui::describeMidiCc (f.target, f.option);
             default:              return categoryName (s, f.category);
         }
     }
@@ -425,6 +468,8 @@ juce::String describe (UiContext& ctx, Slot s, const Function& f)
         case BtnShowControl:  return juce::String ("SCN ") + showControls[juce::jlimit (0, 4, f.option)];
         case BtnSceneRecall:  return "SCENE #" + juce::String (f.target);
         case BtnOther:        return otherNames[juce::jlimit (0, kNumOthers - 1, f.option)];
+        case BtnDawButtons:   return midiui::describeDawCommand (ctx, f.option);
+        case BtnMidi:         return midiui::describeMidiKey (f.target, f.option);
         default:              return categoryName (s, f.category);
     }
 }
@@ -468,7 +513,9 @@ namespace
 
 CustomControlsPage::CustomControlsPage (UiContext& c, cc::Assignments& a, int startLayer) : ctx (c), assignments (a)
 {
-    layer = startLayer >= 0 ? juce::jlimit (0, cc::kNumLayers - 1, startLayer) : assignments.currentLayer;
+    layer = startLayer >= 0 ? juce::jlimit (0, cc::kNumStoredLayers - 1, startLayer) : assignments.currentLayer;
+    if (cc::isLowerLayer (layer))
+        slot = cc::Slot::Upper; // the lower part has keys only
     lists[0].title = "FUNCTION";
     anchor.setInterceptsMouseClicks (false, false);
     addAndMakeVisible (anchor);
@@ -482,7 +529,7 @@ StatusTitle CustomControlsPage::getStatusTitle()
     StatusTitle t;
     t.kind = StatusTitle::Kind::Layer;
     t.icon = Icon::CcEdit;
-    t.text = juce::String (layer + 1);
+    t.text = cc::isLowerLayer (layer) ? cc::layerName (layer) : juce::String (layer + 1);
     return t;
 }
 
@@ -507,6 +554,16 @@ void CustomControlsPage::store (const cc::Function& f)
 
 void CustomControlsPage::setLayer (int l)
 {
+    if (cc::isLowerLayer (layer))
+    {
+        // ‹ › step through DAW 1-4; USER stays.
+        if (layer >= cc::kFirstDawLayer)
+            layer = cc::kFirstDawLayer + (l - cc::kFirstDawLayer + cc::kNumDawLayers) % cc::kNumDawLayers;
+        rebuildLists();
+        notifyStatusKeysChanged();
+        repaint();
+        return;
+    }
     layer = (l + cc::kNumLayers) % cc::kNumLayers;
     assignments.currentLayer = layer;
     if (ctx.customControlsChanged)
@@ -619,6 +676,23 @@ void CustomControlsPage::rebuildLists()
                 break;
             }
             case EncMonitoring: addNames (options, optionCodes, "OTHER", monitorNames, 2); break;
+            case EncDawVpot:
+                targets.title = "V-POT";
+                for (int i = 0; i < DawRemote::kNumVpotFunctions; ++i)
+                {
+                    targets.rows.add (DawRemote::vpotFunctionName (i));
+                    targetCodes.push_back (i);
+                }
+                break;
+            case EncMidiCc:
+                addNumbered (targets, targetCodes, "MIDI CHANNEL", "CH ", 16);
+                options.title = "CC";
+                for (int i = 0; i < 128; ++i)
+                {
+                    options.rows.add ("CC " + juce::String (i));
+                    optionCodes.push_back (i);
+                }
+                break;
             default: break;
         }
     }
@@ -677,6 +751,49 @@ void CustomControlsPage::rebuildLists()
                 }
                 break;
             case BtnOther: addNames (options, optionCodes, "OTHER", otherNames, kNumOthers); break;
+            case BtnDawButtons:
+            {
+                // GROUP, then the group's MCU / HUI commands (the other
+                // protocol's greyed out, as on the console).
+                const auto groups = DawRemote::commandGroups();
+                targets.title = "GROUP";
+                for (int i = 0; i < groups.size(); ++i)
+                {
+                    targets.rows.add (groups[i]);
+                    targetCodes.push_back (i);
+                }
+                auto* d = midiui::daw (ctx);
+                options.title = d != nullptr && d->isHui() ? "HUI COMMAND" : "MCU COMMAND";
+                const auto& table = DawRemote::commands();
+                const auto group = groups[juce::jlimit (0, groups.size() - 1, f.target)];
+                for (size_t i = 0; i < table.size(); ++i)
+                    if (group == table[i].group)
+                    {
+                        options.rows.add (juce::String (table[i].code) + "   " + table[i].name);
+                        optionCodes.push_back ((int) i);
+                        options.enabled.push_back (d == nullptr || d->isAvailable ((int) i));
+                    }
+                break;
+            }
+            case BtnMidi:
+            {
+                // MESSAGE (type and MIDI channel), then the CC, note or program.
+                targets.title = "MESSAGE";
+                for (int type = 0; type < midiui::kNumMidiKeyTypes; ++type)
+                    for (int ch = 0; ch < 16; ++ch)
+                    {
+                        targets.rows.add (midiui::midiKeyTypeName (type) + "  CH " + juce::String (ch + 1));
+                        targetCodes.push_back (type * 16 + ch);
+                    }
+                const int type = f.target / 16;
+                options.title = type == midiui::ProgramChange ? "PROGRAM" : type >= midiui::NoteToggle ? "NOTE" : "CC";
+                for (int i = 0; i < 128; ++i)
+                {
+                    options.rows.add (options.title + " " + juce::String (type == midiui::ProgramChange ? i + 1 : i));
+                    optionCodes.push_back (i);
+                }
+                break;
+            }
             default: break;
         }
     }
@@ -732,7 +849,21 @@ void CustomControlsPage::choose (int list, int row)
     const auto& codes = list == 1 ? targetCodes : optionCodes;
     if (! juce::isPositiveAndBelow (row, (int) codes.size()))
         return;
+    if (const auto& enabled = lists[list].enabled; juce::isPositiveAndBelow (row, (int) enabled.size()) && ! enabled[(size_t) row])
+        return;
     (isTarget ? f.target : f.option) = codes[(size_t) row];
+    if (slot != Slot::Encoder && f.category == BtnDawButtons && isTarget)
+    {
+        // A new group: its first command.
+        const auto group = DawRemote::commandGroups()[f.target];
+        const auto& table = DawRemote::commands();
+        for (size_t i = 0; i < table.size(); ++i)
+            if (group == table[i].group)
+            {
+                f.option = (int) i;
+                break;
+            }
+    }
     store (f);
     rebuildLists();
 }
@@ -742,7 +873,7 @@ void CustomControlsPage::timerCallback()
     if (assignments.getRevision() != shownRevision)
     {
         shownRevision = assignments.getRevision();
-        if (assignments.currentLayer != layer)
+        if (assignments.currentLayer != layer && ! cc::isLowerLayer (layer))
             setLayer (assignments.currentLayer);
         else
             rebuildLists();
@@ -814,14 +945,16 @@ void CustomControlsPage::resized()
     colourBars.clear();
     auto m = layerBody.reduced (10, 10);
     const int cw = m.getWidth() / cc::kNumControls;
-    const int rowH = m.getHeight() / 3;
+    const bool keysOnly = cc::isLowerLayer (layer);
+    const int rowH = m.getHeight() / (keysOnly ? 2 : 3);
     for (int i = 0; i < cc::kNumControls; ++i)
     {
         auto col = juce::Rectangle<int> (m.getX() + i * cw, m.getY(), cw, m.getHeight()).reduced (4, 0);
         colourBars.push_back (col.removeFromTop (juce::jmax (4, rowH / 10)));
         auto rows = col;
         for (auto s : { cc::Slot::Encoder, cc::Slot::Upper, cc::Slot::Lower })
-            elements.push_back ({ rows.removeFromTop (rowH - (s == cc::Slot::Encoder ? juce::jmax (4, rowH / 10) : 0)), i, s });
+            if (! (keysOnly && s == cc::Slot::Encoder))
+                elements.push_back ({ rows.removeFromTop (rowH - (s == cc::Slot::Encoder || (keysOnly && s == cc::Slot::Upper) ? juce::jmax (4, rowH / 10) : 0)), i, s });
     }
 }
 
@@ -913,7 +1046,7 @@ void CustomControlsPage::paintLayer (juce::Graphics& g)
     g.fillRect (layerHeader);
     g.setColour (Dark::text);
     g.setFont (panelTitleFont (layerHeader.getHeight()));
-    g.drawText ("LAYER " + juce::String (layer + 1), layerHeader, juce::Justification::centred);
+    g.drawText (cc::layerName (layer), layerHeader, juce::Justification::centred);
     g.setColour (Dark::body);
     g.fillRect (layerBody);
 

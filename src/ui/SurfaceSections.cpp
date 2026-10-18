@@ -1,6 +1,7 @@
 #include "ui/SurfaceSections.h"
 #include "daw/Session.h"
 #include "daw/TimeGrid.h"
+#include "ui/MidiRemoteUi.h"
 #include "dsp/DspUtils.h"
 #include "ui/FaderStrip.h"
 #include "ui/ResponseGraph.h"
@@ -975,10 +976,26 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
     for (int i = 0; i < 8; ++i)
     {
         // Keys 0-3: the upper key of each control, 4-7: the lower one.
-        auto* k = upperKeys.add (new SurfaceKey());
+        auto* k = new TalkKey();
+        upperKeys.add (k);
         k->shape = SurfaceKey::Shape::Square;
-        k->onPress = [this, i] { cc::press (ctx, ccFunction (currentLayer(), i)); };
-        k->ledState = [this, i] { return cc::isLit (ctx, ccFunction (currentLayer(), i)) ? SurfaceKey::Lit : SurfaceKey::Off; };
+        k->onPress = [this, i]
+        {
+            if (upperIsDaw())
+                midiui::pressUpperKey (ctx, i, true);
+            else
+                cc::press (ctx, ccFunction (currentLayer(), i));
+        };
+        k->onTalk = [this, i] (bool down)
+        {
+            if (down)
+                return;
+            if (upperIsDaw())
+                midiui::pressUpperKey (ctx, i, false);
+            else
+                cc::release (ctx, ccFunction (currentLayer(), i));
+        };
+        k->ledState = [this, i] { return upperIsDaw() ? midiui::upperKeyLed (ctx, i) : cc::ledState (ctx, ccFunction (currentLayer(), i)); };
         addAndMakeVisible (k);
     }
 
@@ -999,17 +1016,31 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
 
     for (int i = 0; i < 8; ++i)
     {
-        auto* k = lowerKeys.add (new SurfaceKey());
+        auto* k = new TalkKey();
+        lowerKeys.add (k);
         k->shape = SurfaceKey::Shape::Square;
         k->onPress = [this, i] { pressLowerKey (i); };
-        k->ledState = [this, i] { return lowerKeyLit (i) ? SurfaceKey::Lit : SurfaceKey::Off; };
+        k->onTalk = [this, i] (bool down)
+        {
+            if (const int l = lowerCcLayer(); l >= 0 && ! down)
+                cc::release (ctx, ccFunction (l, i));
+        };
+        k->ledState = [this, i]
+        {
+            if (const int l = lowerCcLayer(); l >= 0)
+                return cc::ledState (ctx, ccFunction (l, i));
+            return lowerKeyLit (i) ? (int) SurfaceKey::Lit : (int) SurfaceKey::Off;
+        };
         addAndMakeVisible (k);
     }
 
     lowerView.setTooltip ("VIEW: the MUTE GROUPS screen, the scenes for SHOW CNTRL, the recorder for MULTI TRANSP");
     lowerView.onPress = [this]
     {
-        if (ctx.showScreen && lowerLayer == MuteGroups)
+        // USER and the DAW layers: their CC EDIT page.
+        if (const int l = lowerCcLayer(); l >= 0 && ctx.showCustomControls)
+            ctx.showCustomControls (l);
+        else if (ctx.showScreen && lowerLayer == MuteGroups)
             ctx.showScreen (Screen::MuteGroups);
         else if (ctx.showScreen && lowerLayer == ShowControl)
             ctx.showScreen (Screen::Library);
@@ -1026,10 +1057,19 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
         return viewOpened || screen == Screen::MuteGroups;
     };
 
-    // REMOTE CONTROL / DAW: here it opens the multitrack editor.
+    // REMOTE CONTROL / DAW: DAW remote control (SETUP > DAW > DAW ENABLE): the
+    // fader sections and the custom controls control the DAW. Without DAW
+    // ENABLE, and held, it opens the multitrack editor.
     dawKey.dark = true;
-    dawKey.onPress = [this] { if (ctx.showEditor) ctx.showEditor (true); };
-    dawKey.setTooltip ("DAW: the multitrack editor (Ctrl+E; Esc returns to the console)");
+    dawKey.onPress = [this]
+    {
+        if (! midiui::pressDawKey (ctx) && ctx.showEditor)
+            ctx.showEditor (true);
+    };
+    dawKey.onHold = [this] { if (ctx.showEditor) ctx.showEditor (true); };
+    dawKey.ledState = [this] { return midiui::dawModeOn (ctx) ? SurfaceKey::Lit : SurfaceKey::Off; };
+    dawKey.ledColour = Colours::silk;
+    dawKey.setTooltip ("DAW: DAW remote control on / off (SETUP > DAW > DAW ENABLE; otherwise the multitrack editor). Hold: the multitrack editor");
 
     // Navigation arrows and the wheel. With USE CRSR/WHEEL (SETUP > GENERAL)
     // they move the display's focus frame and edit the focused control;
@@ -1045,7 +1085,9 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
         const int dx = arrows[i] == -1 ? -1 : arrows[i] == 1 ? 1 : 0, dy = arrows[i] == -2 ? -1 : arrows[i] == 2 ? 1 : 0;
         nav[i]->onPress = [this, dx, dy]
         {
-            if (useCursorWheel() && ctx.moveScreenFocus)
+            if (midiui::dawModeOn (ctx))
+                midiui::pressArrow (ctx, dx, dy);
+            else if (useCursorWheel() && ctx.moveScreenFocus)
                 ctx.moveScreenFocus (dx, dy);
         };
         addAndMakeVisible (nav[i]);
@@ -1066,6 +1108,23 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
 void CustomControlSection::setLowerLayer (int layer)
 {
     lowerLayer = layer;
+    if (const int l = lowerCcLayer(); l >= 0)
+    {
+        // USER or a DAW layer: the layer's eight keys.
+        for (int i = 0; i < lowerKeys.size(); ++i)
+        {
+            const auto name = lowerKeyName (i);
+            const auto control = ctx.customControls != nullptr ? ctx.customControls->get (l, i % cc::kNumControls) : cc::Control {};
+            lowerKeys[i]->setLabel (name);
+            lowerKeys[i]->setIcon (std::nullopt);
+            lowerKeys[i]->setEnabled (name.isNotEmpty());
+            lowerKeys[i]->ledColour = control.colour > 0 ? wingColour (control.colour) : Colours::silk;
+            lowerKeys[i]->setTooltip (cc::layerName (l) + ": " + name);
+        }
+        shownState = {};
+        repaint();
+        return;
+    }
     // MULTI TRANSP: PREV / NEXT marker, MARK, LOOP over START, STOP, PLAY, REC.
     static const Icon transportIcons[8] = { Icon::MarkerPrev, Icon::MarkerNext, Icon::MarkerAdd, Icon::Loop,
                                             Icon::ReturnToStart, Icon::Stop, Icon::Play, Icon::Record };
@@ -1092,6 +1151,8 @@ void CustomControlSection::setLowerLayer (int layer)
 
 juce::String CustomControlSection::lowerKeyName (int key) const
 {
+    if (const int l = lowerCcLayer(); l >= 0)
+        return cc::describe (ctx, key < 4 ? cc::Slot::Upper : cc::Slot::Lower, ccFunction (l, key));
     switch (lowerLayer)
     {
         case User: return cc::describe (ctx, key < 4 ? cc::Slot::Upper : cc::Slot::Lower, ccFunction (cc::kUserLayer, key));
@@ -1112,9 +1173,9 @@ juce::String CustomControlSection::lowerKeyName (int key) const
 
 void CustomControlSection::pressLowerKey (int key)
 {
-    if (lowerLayer == User)
+    if (const int l = lowerCcLayer(); l >= 0)
     {
-        cc::press (ctx, ccFunction (cc::kUserLayer, key));
+        cc::press (ctx, ccFunction (l, key));
         return;
     }
     if (lowerLayer == MuteGroups)
@@ -1172,6 +1233,12 @@ int CustomControlSection::currentLayer() const
 
 void CustomControlSection::stepLayer (int delta)
 {
+    if (upperIsDaw())
+    {
+        midiui::stepUpperBlock (ctx, delta);
+        repaint (upperLcd);
+        return;
+    }
     if (ctx.customControls == nullptr)
         return;
     ctx.customControls->currentLayer = (currentLayer() + delta + cc::kNumLayers) % cc::kNumLayers;
@@ -1199,18 +1266,64 @@ void CustomControlSection::bindCustomControls()
     for (int i = 0; i < cc::kNumControls; ++i)
     {
         const auto control = ctx.customControls != nullptr ? ctx.customControls->get (shownCcLayer, i) : cc::Control {};
-        encoders[i].setBinding (cc::bindEncoder (ctx, control.encoder));
+        const bool daw = upperIsDaw();
+        encoders[i].setBinding (daw ? midiui::bindUpperVpot (ctx, i) : cc::bindEncoder (ctx, control.encoder));
         for (int row = 0; row < 2; ++row)
         {
             auto* k = upperKeys[row * cc::kNumControls + i];
-            k->setEnabled ((row == 0 ? control.upper : control.lower).isAssigned());
-            k->ledColour = control.colour > 0 ? wingColour (control.colour) : Colours::silk;
+            k->setEnabled (daw || (row == 0 ? control.upper : control.lower).isAssigned());
+            k->ledColour = daw ? (row == 0 ? Colours::silk : Colours::mute) : control.colour > 0 ? wingColour (control.colour) : Colours::silk;
         }
     }
-    if (lowerLayer == User)
-        setLowerLayer (User);
+    applyDawMode();
+    if (lowerCcLayer() >= 0)
+        setLowerLayer (lowerLayer);
     shownState = {};
     repaint();
+}
+
+int CustomControlSection::lowerCcLayer() const
+{
+    if (lowerLayer == User)
+        return cc::kUserLayer;
+    if (midiui::dawModeOn (ctx) && lowerLayer >= TwoTrack && lowerLayer <= ShowControl)
+        return cc::kFirstDawLayer + lowerLayer - TwoTrack;
+    return -1;
+}
+
+bool CustomControlSection::upperIsDaw() const
+{
+    return midiui::upperIsDaw (ctx, lowerCcLayer() >= cc::kFirstDawLayer);
+}
+
+void CustomControlSection::applyDawMode()
+{
+    const bool daw = midiui::dawModeOn (ctx);
+    shownDaw = daw;
+    if (daw && layerLabels.isEmpty())
+    {
+        // DAW 1-4 on the layer keys, all of them usable.
+        for (int i = 0; i < kNumLowerLayers; ++i)
+        {
+            layerLabels.add (layerKeys[i]->getLabel());
+            layerKeysEnabled[(size_t) i] = layerKeys[i]->isEnabled();
+        }
+        for (int i = TwoTrack; i <= ShowControl; ++i)
+        {
+            layerKeys[i]->setLabel ("DAW " + juce::String (i - TwoTrack + 1));
+            layerKeys[i]->setEnabled (true);
+        }
+    }
+    else if (! daw && ! layerLabels.isEmpty())
+    {
+        for (int i = 0; i < kNumLowerLayers; ++i)
+        {
+            layerKeys[i]->setLabel (layerLabels[i]);
+            layerKeys[i]->setEnabled (layerKeysEnabled[(size_t) i]);
+        }
+        layerLabels.clear();
+        setLowerLayer (lowerLayer);
+    }
 }
 
 int CustomControlSection::nextScene() const
@@ -1220,7 +1333,9 @@ int CustomControlSection::nextScene() const
 
 void CustomControlSection::turnWheel (int steps)
 {
-    if (useCursorWheel() && ctx.turnScreenFocus)
+    if (midiui::dawModeOn (ctx))
+        midiui::turnWheel (ctx, steps); // the jog wheel
+    else if (useCursorWheel() && ctx.turnScreenFocus)
         ctx.turnScreenFocus (steps);
     else if (lowerLayer == ShowControl && ctx.show.getNumScenes() > 0)
     {
@@ -1239,8 +1354,8 @@ void CustomControlSection::turnWheel (int steps)
 
 bool CustomControlSection::lowerKeyLit (int key) const
 {
-    if (lowerLayer == User)
-        return cc::isLit (ctx, ccFunction (cc::kUserLayer, key));
+    if (const int l = lowerCcLayer(); l >= 0)
+        return cc::isLit (ctx, ccFunction (l, key));
     if (lowerLayer == MuteGroups)
         return (ctx.engine.muteGroups.load() >> key) & 1u;
     if (lowerLayer == MultiTrack && ctx.recording != nullptr)
@@ -1291,7 +1406,17 @@ void CustomControlSection::timerCallback()
     // The wheel turns endlessly: centred again between turns.
     if (! wheel.isMouseButtonDown (true))
         *wheelPos = 0.5f;
-    const bool arrows = useCursorWheel() && ctx.moveScreenFocus != nullptr;
+    const bool arrows = (useCursorWheel() && ctx.moveScreenFocus != nullptr) || midiui::dawModeOn (ctx);
+    // DAW mode: the keys follow it, the upper LCD the DAW.
+    if (midiui::dawModeOn (ctx) != shownDaw)
+        bindCustomControls();
+    if (auto* d = midiui::daw (ctx); d != nullptr && d->isOn() && d->getRevision() != shownDawRevision)
+    {
+        shownDawRevision = d->getRevision();
+        if (upperIsDaw())
+            repaint (upperLcd);
+        repaint (layerDisplay);
+    }
     for (auto* k : { &navUp, &navDown, &navLeft, &navRight })
         if (k->isEnabled() != arrows)
             k->setEnabled (arrows);
@@ -1341,7 +1466,7 @@ void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> are
     for (int i = 0; i < 4; ++i)
     {
         auto cell = juce::Rectangle<int> (r.getX() + i * w, r.getY(), w, r.getHeight()).reduced (2, 0);
-        const int ccLayer = upper ? currentLayer() : cc::kUserLayer;
+        const int ccLayer = upper ? currentLayer() : juce::jmax (0, lowerCcLayer());
         const auto control = ctx.customControls != nullptr ? ctx.customControls->get (ccLayer, i) : cc::Control {};
         if (colourBars)
         {
@@ -1354,7 +1479,7 @@ void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> are
         ScribbleInfo info;
         info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
         info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
-        if (upper || lowerLayer == User)
+        if (upper || lowerCcLayer() >= 0)
         {
             // The control's name (a name starting with '*' shows the encoder's
             // value, "|word" is shown inverted), then its two keys.
@@ -1368,9 +1493,9 @@ void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> are
             info.line2 = cc::describe (ctx, cc::Slot::Upper, control.upper);
             info.line3 = cc::describe (ctx, cc::Slot::Lower, control.lower);
             if (info.number.isEmpty() && info.line2.isEmpty() && info.line3.isEmpty())
-                info.number = upper ? "CC" + juce::String (i + 1) : "USER";
+                info.number = upper ? "CC" + juce::String (i + 1) : cc::layerName (ccLayer);
             if (info.name.isEmpty())
-                info.name = upper ? "LAYER " + juce::String (ccLayer + 1) : juce::String ("USER");
+                info.name = cc::layerName (ccLayer);
         }
         else if (lowerLayer == MuteGroups)
         {
@@ -1431,14 +1556,18 @@ void CustomControlSection::paint (juce::Graphics& g)
         drawSilk (g, heading.toFloat(), "CUSTOM CONTROLS", 11.0f);
         return;
     }
-    paintLcd (g, upperLcd, true, true);
+    if (upperIsDaw())
+        midiui::paintUpperLcd (g, upperLcd, ctx);
+    else
+        paintLcd (g, upperLcd, true, true);
 
-    // The two-digit layer display.
+    // The two-digit layer display (in DAW mode the DAW's assignment display).
     g.setColour (juce::Colours::black);
     g.fillRoundedRectangle (layerDisplay.toFloat(), 2.0f);
     g.setColour (Colours::mute.brighter (0.2f));
     g.setFont (juce::FontOptions ((float) layerDisplay.getHeight() * 0.85f, juce::Font::bold));
-    g.drawText (juce::String (currentLayer() + 1), layerDisplay, juce::Justification::centred);
+    const auto assignment = midiui::assignmentDisplay (ctx);
+    g.drawText (assignment.isNotEmpty() ? assignment : juce::String (currentLayer() + 1), layerDisplay, juce::Justification::centred);
 
     drawSilk (g, heading.toFloat(), "CUSTOM CONTROLS", 11.0f);
     g.setColour (Colours::silk.withAlpha (0.6f));

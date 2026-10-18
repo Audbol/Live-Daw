@@ -11,10 +11,16 @@
 namespace livedaw::ui::cc
 {
 
-/** The upper part's 16 layers (UP / DOWN), then the lower part's USER layer
-    and the 4-Channel section's U1-U3 (stored with the show, see
-    livedaw-session/custom.rs). */
-constexpr int kNumLayers = 16, kUserLayer = 16, kFirstFourChannelLayer = 17, kNumStoredLayers = 20, kNumControls = 4;
+/** The upper part's 16 layers (UP / DOWN), then the lower part's USER layer,
+    the 4-Channel section's U1-U3 and the lower part's DAW 1-4 layers of DAW
+    mode (stored with the show, see livedaw-session/custom.rs). */
+constexpr int kNumLayers = 16, kUserLayer = 16, kFirstFourChannelLayer = 17, kNumStoredLayers = 24, kNumControls = 4;
+constexpr int kFirstDawLayer = 20, kNumDawLayers = 4;
+
+/** The lower part's layers (USER, DAW 1-4) have keys only. */
+inline bool isLowerLayer (int layer) noexcept { return layer == kUserLayer || layer >= kFirstDawLayer; }
+/** "LAYER 3", "USER", "DAW 2". */
+juce::String layerName (int layer);
 
 /** The encoder of a control, or one of the two keys under it. */
 enum class Slot
@@ -123,6 +129,10 @@ state::StripRef decodeStrip (int target) noexcept;
 KnobBinding bindEncoder (UiContext&, const Function&);
 /** A key press. */
 void press (UiContext&, const Function&);
+/** A key released (the push functions: DAW BUTTONS, MIDI CC / NOTE PUSH). */
+void release (UiContext&, const Function&);
+/** A key's LED as SurfaceKey::Led (0 off, 1 lit, 2 blinking: DAW LEDs blink). */
+int ledState (UiContext&, const Function&);
 /** Whether a key's LED is lit. */
 bool isLit (UiContext&, const Function&);
 /** "CH1 FADER", "SCN GO", "TALK A"... */
