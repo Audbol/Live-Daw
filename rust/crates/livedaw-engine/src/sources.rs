@@ -1,5 +1,6 @@
-//! Sources (ROUTING > SOURCES, manual pp. 39-40): every hardware input port
-//! and every recorder playback channel is a source with a name, colour and
+//! Sources (ROUTING > SOURCES, manual pp. 39-40): every hardware input port,
+//! every recorder playback channel and the four USB PLAYER channels (the
+//! USB deck's player, input `USB_PLAYER_SOURCE_BASE + n`) are sources with a name, colour and
 //! icon, a gain, mute, polarity, +48 V (stored only: there is no preamp to
 //! switch) and a pairing: MONO, or STEREO / MID-SIDE with its neighbour
 //! (ports 1-2, 3-4, ...; the pair shares the first port's settings).
@@ -14,14 +15,17 @@
 
 use crate::atomic::AtomicF32;
 use livedaw_dsp::util::{apply_gain_ramp, db_to_gain, peak_level};
-use livedaw_recorder::{playback_channel, NUM_PLAYBACK_CHANNELS, PLAYBACK_SOURCE_BASE};
+use livedaw_recorder::{playback_channel, usb_player_channel, NUM_PLAYBACK_CHANNELS, PLAYBACK_SOURCE_BASE};
+use livedaw_recorder::{USB_CHANNELS, USB_PLAYER_SOURCE_BASE};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering::Relaxed};
 use std::sync::Mutex;
 
 /// Hardware input ports with a source (12 groups of 48); ports beyond pass through.
 pub const NUM_HW_SOURCES: usize = 576;
-/// Sources: the hardware ports, then the playback channels.
-pub const NUM_SOURCES: usize = NUM_HW_SOURCES + NUM_PLAYBACK_CHANNELS;
+/// Sources: the hardware ports, the playback channels, then the USB PLAYER.
+pub const NUM_SOURCES: usize = NUM_HW_SOURCES + NUM_PLAYBACK_CHANNELS + USB_CHANNELS;
+/// Table index of USB PLAYER 1.
+pub const USB_PLAYER_SOURCE_INDEX: usize = NUM_HW_SOURCES + NUM_PLAYBACK_CHANNELS;
 
 /// Source pairing.
 pub const SOURCE_MODES: [&str; 3] = ["MONO", "STEREO", "MID/SIDE"];
@@ -111,6 +115,9 @@ impl SourceParams {
 /// The table index of input port `port` (a hardware input or a playback
 /// channel), None for ports without a source.
 pub fn source_index(port: i32) -> Option<usize> {
+    if let Some(n) = usb_player_channel(port) {
+        return Some(USB_PLAYER_SOURCE_INDEX + n);
+    }
     match playback_channel(port) {
         Some(n) => Some(NUM_HW_SOURCES + n),
         None => usize::try_from(port).ok().filter(|&p| p < NUM_HW_SOURCES),
@@ -121,8 +128,10 @@ pub fn source_index(port: i32) -> Option<usize> {
 pub fn source_port(index: usize) -> Option<i32> {
     if index < NUM_HW_SOURCES {
         Some(index as i32)
-    } else if index < NUM_SOURCES {
+    } else if index < USB_PLAYER_SOURCE_INDEX {
         Some(PLAYBACK_SOURCE_BASE + (index - NUM_HW_SOURCES) as i32)
+    } else if index < NUM_SOURCES {
+        Some(USB_PLAYER_SOURCE_BASE + (index - USB_PLAYER_SOURCE_INDEX) as i32)
     } else {
         None
     }
@@ -221,7 +230,8 @@ pub(crate) struct SourceDsp {
     /// Per pair (indexed by the pair's first source / 2).
     last_matrix: Vec<[f32; 4]>,
     num_hw: usize,
-    /// What the channels read: hardware inputs by port, playback channels.
+    /// What the channels read: hardware inputs by port, playback channels
+    /// (then the USB PLAYER's four, see `source_ptr`).
     hw_out: Vec<*const f32>,
     playback_out: Vec<*const f32>,
 }
@@ -230,13 +240,13 @@ impl SourceDsp {
     /// Allocates for a device (message thread, device stopped).
     pub fn prepare(&mut self, num_hw_inputs: usize, block_size: usize) {
         let num_hw = num_hw_inputs.min(NUM_HW_SOURCES);
-        let count = num_hw.next_multiple_of(2) + NUM_PLAYBACK_CHANNELS;
+        let count = num_hw.next_multiple_of(2) + NUM_PLAYBACK_CHANNELS + USB_CHANNELS;
         self.num_hw = num_hw;
         self.buffers = vec![vec![0.0; block_size]; count];
         self.last_gain = vec![1.0; count];
         self.last_matrix = vec![IDENTITY; count / 2];
         self.hw_out = vec![std::ptr::null(); num_hw_inputs];
-        self.playback_out = vec![std::ptr::null(); NUM_PLAYBACK_CHANNELS];
+        self.playback_out = vec![std::ptr::null(); NUM_PLAYBACK_CHANNELS + USB_CHANNELS];
     }
 
     pub fn hw_ptrs(&self) -> &[*const f32] {
@@ -247,17 +257,28 @@ impl SourceDsp {
         &self.playback_out
     }
 
-    /// Processes this block's sources from the raw port buffers.
+    /// Processes this block's sources from the raw port buffers (`usb`: the
+    /// USB deck's player channels).
     ///
     /// # Safety
     /// Audio thread. Non-null pointers must be valid for `n` samples.
-    pub unsafe fn process(&mut self, table: &SourceTable, hw: &[*const f32], playback: &[*const f32], n: usize) {
+    pub unsafe fn process(
+        &mut self,
+        table: &SourceTable,
+        hw: &[*const f32],
+        playback: &[*const f32],
+        usb: &[*const f32; USB_CHANNELS],
+        n: usize,
+    ) {
         if self.hw_out.len() != hw.len() || n > self.buffers.first().map_or(0, Vec::len) {
             // Not prepared for this layout: pass everything through.
             self.hw_out.clear();
             self.playback_out.clear();
             self.hw_out.extend_from_slice(&hw[..hw.len().min(self.hw_out.capacity())]);
-            self.playback_out.extend_from_slice(&playback[..playback.len().min(self.playback_out.capacity())]);
+            let room = self.playback_out.capacity();
+            self.playback_out.extend_from_slice(&playback[..playback.len().min(room)]);
+            let room = self.playback_out.capacity() - self.playback_out.len();
+            self.playback_out.extend_from_slice(&usb[..USB_CHANNELS.min(room)]);
             return;
         }
         // Ports beyond the source table pass through.
@@ -285,6 +306,14 @@ impl SourceDsp {
             let [l, r] = self.process_pair(table, NUM_HW_SOURCES + ch, base + ch, raw, n);
             self.playback_out[ch] = l;
             self.playback_out[ch + 1] = r;
+        }
+        // The USB PLAYER, after the playback channels.
+        let base = base + NUM_PLAYBACK_CHANNELS;
+        for pair in 0..USB_CHANNELS / 2 {
+            let ch = pair * 2;
+            let [l, r] = self.process_pair(table, USB_PLAYER_SOURCE_INDEX + ch, base + ch, [usb[ch], usb[ch + 1]], n);
+            self.playback_out[NUM_PLAYBACK_CHANNELS + ch] = l;
+            self.playback_out[NUM_PLAYBACK_CHANNELS + ch + 1] = r;
         }
     }
 
@@ -364,7 +393,10 @@ mod tests {
         assert_eq!(source_index(NUM_HW_SOURCES as i32), None);
         assert_eq!(source_index(PLAYBACK_SOURCE_BASE + 3), Some(NUM_HW_SOURCES + 3));
         assert_eq!(source_index(-1), None);
-        for i in [0, 5, NUM_HW_SOURCES - 1, NUM_HW_SOURCES, NUM_SOURCES - 1] {
+        assert_eq!(source_index(USB_PLAYER_SOURCE_BASE + 1), Some(USB_PLAYER_SOURCE_INDEX + 1));
+        assert_eq!(source_index(USB_PLAYER_SOURCE_BASE + USB_CHANNELS as i32), None);
+        for i in [0, 5, NUM_HW_SOURCES - 1, NUM_HW_SOURCES, USB_PLAYER_SOURCE_INDEX - 1, USB_PLAYER_SOURCE_INDEX, NUM_SOURCES - 1]
+        {
             assert_eq!(source_index(source_port(i).unwrap()), Some(i));
         }
         assert_eq!(source_port(NUM_SOURCES), None);

@@ -50,6 +50,13 @@ constexpr int kFxExt = 1;
 constexpr int kNumPlaybackChannels = 64;
 constexpr int32_t kPlaybackSourceBase = 0x10000;
 constexpr int kMaxRecordTracks = 64;
+/** The USB recorder / player: USB PLAYER n is input kUsbPlayerSourceBase + n
+    (n < kUsbChannels); the RECORDER output group has kUsbChannels ports. */
+constexpr int kUsbChannels = 4;
+constexpr int32_t kUsbPlayerSourceBase = 0x20000;
+/** RECORDER tap codes (ld_usb_rec_tap): -1 off, 0.. an input index (a source),
+    kUsbTapStripBase + kind * 0x100000 + (number - 1) * 2 + channel a strip. */
+constexpr int32_t kUsbTapStripBase = 0x01000000;
 constexpr int kSamplesPerPeak = 256;
 /** TAP EQ bands (low shelf, peak, high shelf). */
 constexpr int kTapEqBands = 3;
@@ -295,9 +302,9 @@ enum SourceMode : int32_t
     kSourceMidSide = 2
 };
 
-/** Sources: hardware ports 0..kNumHwSources-1, then the playback channels. */
+/** Sources: hardware ports 0..kNumHwSources-1, the playback channels, then the USB PLAYER. */
 constexpr int kNumHwSources = 576;
-constexpr int kNumSources = kNumHwSources + kNumPlaybackChannels;
+constexpr int kNumSources = kNumHwSources + kNumPlaybackChannels + kUsbChannels;
 /** Monitor SOURCE choices: MAIN.1-4, MTX.1-8, BUS.1-16, AUX.1-8. */
 constexpr int kNumMonitorSources = kNumMains + kNumMatrices + kWingBuses + kNumAux;
 /** TalkParams::assignKind without a talkback channel. */
@@ -808,6 +815,77 @@ extern "C"
     float ld_rec_disk_load (const Engine*);
     /** Waits until the disk threads caught up (offline use, faster than real time). */
     bool ld_rec_wait_for_disk (const Engine*, int32_t timeoutMs);
+
+    // ---- USB recorder / player (ld_usb_*): message thread; the audio side runs in
+    // ld_engine_process. Scalars and strings only (no shared layout).
+    /** REC: records to `path` (created now; channels 2 or 4, bits 16 or 24) or resumes a
+        paused recording; false sets *error (may be null; free it). */
+    bool ld_usb_rec_start (const Engine*, const char* path, size_t len, int32_t channels, int32_t bits, LdString** error);
+    void ld_usb_rec_pause (const Engine*);
+    void ld_usb_rec_stop (const Engine*);
+    /** NEW FILE: the recording continues in `path` from the next sample. */
+    bool ld_usb_rec_new_file (const Engine*, const char* path, size_t len, LdString** error);
+    /** 0 STOP, 1 REC, 2 PAUSE, 3 ERROR (commands not yet taken already show). */
+    int32_t ld_usb_rec_state (const Engine*);
+    /** Frames in the current file / since REC. */
+    int64_t ld_usb_rec_time (const Engine*);
+    int64_t ld_usb_rec_total (const Engine*);
+    LdString* ld_usb_rec_file (const Engine*);
+    /** Linear peak of RECORDER port `port` since the last call (also while not recording). */
+    float ld_usb_rec_level (const Engine*, int32_t port);
+    /** What RECORDER port 0-3 records (kUsbTapStripBase codes). */
+    int32_t ld_usb_rec_tap (const Engine*, int32_t port);
+    void ld_usb_set_rec_tap (const Engine*, int32_t port, int32_t code);
+    void ld_usb_play (const Engine*);
+    void ld_usb_pause (const Engine*);
+    void ld_usb_stop (const Engine*);
+    /** Cues (play false) or plays queue entry `entry` (0: the first) from frame `pos`. */
+    void ld_usb_load (const Engine*, uint64_t entry, int64_t pos, bool play);
+    void ld_usb_seek (const Engine*, int64_t pos);
+    /** The > and < keys (false: nothing to go to). */
+    bool ld_usb_next (const Engine*);
+    bool ld_usb_prev (const Engine*);
+    /** 0 STOP, 1 PLAY, 2 PAUSE, 3 ERROR. */
+    int32_t ld_usb_play_state (const Engine*);
+    uint64_t ld_usb_play_entry (const Engine*);
+    /** Position and length in frames of the engine's rate. */
+    int64_t ld_usb_play_position (const Engine*);
+    int64_t ld_usb_play_length (const Engine*);
+    float ld_usb_play_level (const Engine*, int32_t channel);
+    /** A clip the player opened (pointers may be null); false if unknown. */
+    bool ld_usb_play_info (const Engine*, uint64_t entry, int32_t* channels, int32_t* rate, int32_t* bits,
+                           int64_t* length, bool* rateMismatch);
+    /** A WAV file's header; false if it can't be read. */
+    bool ld_usb_wav_info (const char* path, size_t len, int32_t* channels, int32_t* rate, int32_t* bits, int64_t* frames);
+    int32_t ld_usb_dropouts (const Engine*);
+    bool ld_usb_wait_for_disk (const Engine*, int32_t timeoutMs);
+    /** The queue: a folder's audio files (kind 0) or a playlist (kind 1). */
+    int32_t ld_usb_queue_len (const Engine*);
+    uint64_t ld_usb_queue_version (const Engine*);
+    bool ld_usb_queue_entry (const Engine*, int32_t index, uint64_t* id, bool* skip, bool* stop);
+    LdString* ld_usb_queue_path (const Engine*, int32_t index);
+    int32_t ld_usb_queue_index_of (const Engine*, uint64_t id);
+    /** The browser's folder: the queue's files (or, with a playlist open, the folder CLOSE returns to). */
+    void ld_usb_queue_set_folder (const Engine*, const char* folder, size_t len);
+    void ld_usb_queue_refresh (const Engine*);
+    int32_t ld_usb_queue_kind (const Engine*);
+    LdString* ld_usb_queue_playlist_file (const Engine*);
+    bool ld_usb_queue_dirty (const Engine*);
+    void ld_usb_playlist_new (const Engine*);
+    void ld_usb_playlist_close (const Engine*);
+    bool ld_usb_playlist_open (const Engine*, const char* path, size_t len, LdString** error);
+    bool ld_usb_playlist_save (const Engine*, const char* path, size_t len, LdString** error);
+    /** ADD (a folder queue becomes a new playlist): the new entry's id. */
+    uint64_t ld_usb_queue_add (const Engine*, const char* path, size_t len);
+    int32_t ld_usb_queue_add_all (const Engine*, const char* folder, size_t len);
+    bool ld_usb_queue_remove (const Engine*, int32_t index);
+    /** UP (-1) / DOWN (+1): the new index or -1. */
+    int32_t ld_usb_queue_move (const Engine*, int32_t index, int32_t delta);
+    void ld_usb_queue_set_skip (const Engine*, int32_t index, bool skip);
+    void ld_usb_queue_set_stop (const Engine*, int32_t index, bool stop);
+    void ld_usb_queue_set_stop_all (const Engine*, bool stop);
+    void ld_usb_queue_set_repeat (const Engine*, bool repeat);
+    bool ld_usb_queue_repeat (const Engine*);
 
     // WING remote (message thread). Destroy it before the engine.
     LdWing* ld_wing_create (const Engine*);

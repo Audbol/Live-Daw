@@ -1,6 +1,7 @@
-//! WAV files: a 32-bit float writer that survives crashes and grows past 4 GB
-//! (RIFF upgraded to RF64, EBU Tech 3306), and a reader for 16/24/32-bit
-//! integer and 32-bit float files (plain, WAVE_FORMAT_EXTENSIBLE or RF64).
+//! WAV files: a writer (32-bit float, or 16/24-bit integer PCM for the USB
+//! recorder) that survives crashes and grows past 4 GB (RIFF upgraded to
+//! RF64, EBU Tech 3306), and a reader for 16/24/32-bit integer and 32-bit
+//! float files (plain, WAVE_FORMAT_EXTENSIBLE or RF64).
 //!
 //! The writer reserves a `JUNK` chunk the size of a `ds64` chunk right after
 //! the RIFF header. While the file is below the threshold it is a plain RIFF
@@ -38,6 +39,28 @@ impl SampleFormat {
             Self::Int16 => 2,
             Self::Int24 => 3,
             Self::Int32 | Self::Float32 => 4,
+        }
+    }
+
+    pub fn bits(self) -> u16 {
+        self.bytes() as u16 * 8
+    }
+
+    /// Appends `x` as one little-endian sample (integers rounded to the
+    /// nearest step and clipped; the inverse of the reader's scaling, so a
+    /// sample on the integer grid reads back exactly).
+    fn push(self, x: f32, out: &mut Vec<u8>) {
+        match self {
+            Self::Int16 => out.extend_from_slice(&((x * 32768.0).round().clamp(-32768.0, 32767.0) as i16).to_le_bytes()),
+            Self::Int24 => {
+                let v = (x as f64 * 8_388_608.0).round().clamp(-8_388_608.0, 8_388_607.0) as i32;
+                out.extend_from_slice(&v.to_le_bytes()[..3]);
+            }
+            Self::Int32 => {
+                let v = (x as f64 * 2_147_483_648.0).round().clamp(-2_147_483_648.0, 2_147_483_647.0) as i32;
+                out.extend_from_slice(&v.to_le_bytes());
+            }
+            Self::Float32 => out.extend_from_slice(&x.to_le_bytes()),
         }
     }
 }
@@ -199,21 +222,30 @@ impl WavReader {
     }
 }
 
-/// Writes 32-bit float WAV files (mono or stereo, any channel count).
+/// Writes WAV files of any channel count: 32-bit float by default, or
+/// integer PCM ([`WavWriter::create_with_format`]).
 pub struct WavWriter {
     out: BufWriter<File>,
     path: PathBuf,
+    format: SampleFormat,
     channels: usize,
     sample_rate: u32,
     frames: u64,
     rf64_threshold: u64,
     rf64: bool,
+    /// A pad byte follows odd-sized data (RIFF chunks are word aligned).
+    padded: bool,
     bytes: Vec<u8>,
 }
 
 impl WavWriter {
-    /// Creates (or truncates) `path` and writes an empty header.
+    /// Creates (or truncates) `path` as a 32-bit float file and writes an empty header.
     pub fn create(path: &Path, channels: usize, sample_rate: u32) -> io::Result<Self> {
+        Self::create_with_format(path, channels, sample_rate, SampleFormat::Float32)
+    }
+
+    /// Creates (or truncates) `path` with samples in `format` and writes an empty header.
+    pub fn create_with_format(path: &Path, channels: usize, sample_rate: u32, format: SampleFormat) -> io::Result<Self> {
         if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir)?;
         }
@@ -221,11 +253,13 @@ impl WavWriter {
         let mut w = Self {
             out: BufWriter::with_capacity(1 << 18, file),
             path: path.to_owned(),
+            format,
             channels: channels.max(1),
             sample_rate,
             frames: 0,
             rf64_threshold: RIFF_LIMIT,
             rf64: false,
+            padded: false,
             bytes: Vec::new(),
         };
         let header = w.header();
@@ -247,6 +281,14 @@ impl WavWriter {
         self.channels
     }
 
+    pub fn format(&self) -> SampleFormat {
+        self.format
+    }
+
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
     pub fn frames(&self) -> u64 {
         self.frames
     }
@@ -255,16 +297,21 @@ impl WavWriter {
         self.rf64
     }
 
+    fn frame_bytes(&self) -> usize {
+        self.channels * self.format.bytes()
+    }
+
     fn data_bytes(&self) -> u64 {
-        self.frames * self.channels as u64 * 4
+        self.frames * self.frame_bytes() as u64
     }
 
     fn header(&self) -> Vec<u8> {
         let data = self.data_bytes();
-        let riff = HEADER_BYTES - 8 + data;
+        let riff = HEADER_BYTES - 8 + data + u64::from(self.padded);
         let rf64 = self.rf64;
         let u32_or_max = |v: u64| if rf64 { u32::MAX } else { v.min(RIFF_LIMIT) as u32 };
-        let block_align = (self.channels * 4) as u16;
+        let block_align = self.frame_bytes() as u16;
+        let tag = if self.format == SampleFormat::Float32 { WAVE_FORMAT_IEEE_FLOAT } else { WAVE_FORMAT_PCM };
         let mut h = Vec::with_capacity(HEADER_BYTES as usize);
         h.extend_from_slice(if rf64 { b"RF64" } else { b"RIFF" });
         h.extend_from_slice(&u32_or_max(riff).to_le_bytes());
@@ -282,12 +329,12 @@ impl WavWriter {
         }
         h.extend_from_slice(b"fmt ");
         h.extend_from_slice(&18u32.to_le_bytes());
-        h.extend_from_slice(&WAVE_FORMAT_IEEE_FLOAT.to_le_bytes());
+        h.extend_from_slice(&tag.to_le_bytes());
         h.extend_from_slice(&(self.channels as u16).to_le_bytes());
         h.extend_from_slice(&self.sample_rate.to_le_bytes());
         h.extend_from_slice(&(self.sample_rate * block_align as u32).to_le_bytes());
         h.extend_from_slice(&block_align.to_le_bytes());
-        h.extend_from_slice(&32u16.to_le_bytes());
+        h.extend_from_slice(&self.format.bits().to_le_bytes());
         h.extend_from_slice(&0u16.to_le_bytes()); // cbSize
         h.extend_from_slice(b"fact");
         h.extend_from_slice(&4u32.to_le_bytes());
@@ -303,12 +350,13 @@ impl WavWriter {
     /// Appends `n` frames from planar channels (missing channels write silence).
     pub fn write_planar(&mut self, channels: &[&[f32]], n: usize) -> io::Result<()> {
         let nc = self.channels;
+        let format = self.format;
         self.bytes.clear();
-        self.bytes.reserve(n * nc * 4);
+        self.bytes.reserve(n * self.frame_bytes());
         for i in 0..n {
             for c in 0..nc {
                 let x = channels.get(c).and_then(|ch| ch.get(i)).copied().unwrap_or(0.0);
-                self.bytes.extend_from_slice(&x.to_le_bytes());
+                format.push(x, &mut self.bytes);
             }
         }
         self.out.write_all(&self.bytes)?;
@@ -319,7 +367,7 @@ impl WavWriter {
     /// Appends `n` silent frames.
     pub fn write_silence(&mut self, n: usize) -> io::Result<()> {
         let zeros = [0u8; 4096];
-        let mut left = n * self.channels * 4;
+        let mut left = n * self.frame_bytes();
         while left > 0 {
             let k = left.min(zeros.len());
             self.out.write_all(&zeros[..k])?;
@@ -347,6 +395,10 @@ impl WavWriter {
 
     /// Writes the final header and closes the file. Returns the frames written.
     pub fn finalize(mut self) -> io::Result<u64> {
+        if self.data_bytes() % 2 == 1 {
+            self.out.write_all(&[0])?;
+            self.padded = true;
+        }
         self.update_header()?;
         self.out.get_mut().sync_data()?;
         Ok(self.frames)
@@ -526,6 +578,52 @@ pub(crate) mod tests {
         write_pcm(&path, 1, 24, false, &[vec![1.0, -1.0, 0.0]]);
         let (_, chans) = read_all(&path);
         assert!((chans[0][0] - 1.0).abs() < 1e-6 && (chans[0][1] + 1.0).abs() < 1e-6 && chans[0][2] == 0.0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn pcm_writer_round_trips_bit_exact() {
+        let dir = temp_dir("wav-pcm");
+        for (format, scale) in [(SampleFormat::Int16, 32768.0f64), (SampleFormat::Int24, 8_388_608.0)] {
+            for channels in [1usize, 2, 4] {
+                // Samples on the integer grid, full scale included; odd frame count.
+                let frames = 1001;
+                let chans: Vec<Vec<f32>> = (0..channels)
+                    .map(|c| {
+                        (0..frames)
+                            .map(|i| {
+                                let v = ((i as f64 * 0.013 + c as f64).sin() * scale * 0.99).round();
+                                (v / scale) as f32
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let mut ends = chans.clone();
+                ends[0][0] = -1.0;
+                ends[0][1] = (scale - 1.0) as f32 / scale as f32;
+                let path = dir.join(format!("{}-{channels}.wav", format.bits()));
+                let mut w = WavWriter::create_with_format(&path, channels, 48000, format).unwrap();
+                let refs: Vec<&[f32]> = ends.iter().map(|c| &c[..]).collect();
+                w.write_planar(&refs, 600).unwrap();
+                w.update_header().unwrap();
+                let rest: Vec<&[f32]> = ends.iter().map(|c| &c[600..]).collect();
+                w.write_planar(&rest, frames - 600).unwrap();
+                assert_eq!(w.finalize().unwrap(), frames as u64);
+
+                let bytes = std::fs::read(&path).unwrap();
+                assert_eq!(u32_at(&bytes, 4) as usize, bytes.len() - 8, "RIFF size counts the pad byte");
+                let (info, read) = read_all(&path);
+                assert_eq!((info.channels, info.sample_rate, info.format, info.frames), (channels, 48000, format, frames as u64));
+                assert_eq!(read, ends, "{format:?} x{channels} reads back bit-exact");
+            }
+        }
+        // Out of range clips; values between steps round to the nearest.
+        let path = dir.join("clip.wav");
+        let mut w = WavWriter::create_with_format(&path, 1, 44100, SampleFormat::Int16).unwrap();
+        w.write_planar(&[&[1.5, -2.0, 0.6 / 32768.0, f32::NAN]], 4).unwrap();
+        w.finalize().unwrap();
+        let (_, read) = read_all(&path);
+        assert_eq!(read[0], vec![32767.0 / 32768.0, -1.0, 1.0 / 32768.0, 0.0]);
         let _ = std::fs::remove_dir_all(dir);
     }
 

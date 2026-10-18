@@ -26,6 +26,7 @@ pub use engine::Engine;
 pub use fx::{FxRack, InsertCallbacks};
 pub use livedaw_recorder as recorder;
 pub use livedaw_recorder::{Recorder, NUM_PLAYBACK_CHANNELS, PLAYBACK_SOURCE_BASE};
+pub use livedaw_recorder::{UsbDeck, USB_CHANNELS, USB_PLAYER_SOURCE_BASE};
 pub use params::{EngineControls, StripKind, StripMeters, StripParams};
 pub use sends::{SendParams, MAX_BUSES, SEND_MODES};
 pub use strip::Strip;
