@@ -1,6 +1,8 @@
 #include "ui/Faceplate.h"
+#include "ui/FaceplateDesign.h"
 #include "ui/ModelParams.h"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 
@@ -286,6 +288,7 @@ void Faceplate::bind (models::Table t, int model, std::atomic<float>* v, std::fu
     values = v;
     meterFn = std::move (meter);
     spec = &models::model (t, model);
+    design = fp::findDesign (t, spec->token);
     style = faceplateStyle (t, spec->token);
     if (style.title.isEmpty())
         style.title = fit (spec->name);
@@ -298,6 +301,7 @@ void Faceplate::bind (models::Table t, int model, std::atomic<float>* v, std::fu
 void Faceplate::unbind()
 {
     spec = nullptr;
+    design = nullptr;
     values = nullptr;
     meterFn = {};
     controls.clear();
@@ -320,6 +324,7 @@ void Faceplate::setValue (int param, float v)
 void Faceplate::touch (int param)
 {
     lastTouched = param;
+    touchedAt = juce::Time::getMillisecondCounter();
     if (onTouched)
         onTouched (param);
 }
@@ -344,6 +349,14 @@ void Faceplate::timerCallback()
         shownMeter = m;
         changed = true;
     }
+    // The value bubble of a drawn panel goes away a moment after the last touch.
+    const bool bubble = design != nullptr && lastTouched >= 0
+                        && (dragging >= 0 || juce::Time::getMillisecondCounter() - touchedAt < 1500);
+    if (bubble != bubbleShown)
+    {
+        bubbleShown = bubble;
+        changed = true;
+    }
     if (changed)
         repaint();
 }
@@ -360,6 +373,41 @@ void Faceplate::layoutControls()
     panelArea = b;
     if (spec == nullptr)
         return;
+
+    if (design != nullptr)
+    {
+        // The screen's faceplate frame, scaled to fit and centred.
+        const float scale = juce::jmin (b.getWidth() / fp::kFrameW, b.getHeight() / fp::kFrameH);
+        toScreen = juce::AffineTransform::scale (scale).translated (b.getCentreX() - fp::kFrameW * scale * 0.5f,
+                                                                    b.getCentreY() - fp::kFrameH * scale * 0.5f);
+        for (size_t i = 0; i < design->elements.size(); ++i)
+        {
+            const auto& e = design->elements[i];
+            if (e.param < 0 || e.param >= (int) spec->params.size())
+                continue;
+            Kind kind = Kind::Knob;
+            switch (e.type)
+            {
+                case fp::Type::Knob:
+                case fp::Type::Value: kind = Kind::Knob; break;
+                case fp::Type::Fader: kind = Kind::Fader; break;
+                case fp::Type::Toggle:
+                case fp::Type::Key:
+                case fp::Type::Lamp: kind = Kind::Switch; break;
+                case fp::Type::Vu:
+                case fp::Type::Leds:
+                case fp::Type::Text:
+                case fp::Type::Path:
+                case fp::Type::Box:
+                case fp::Type::Screw:
+                case fp::Type::Display: continue;
+            }
+            controls.push_back ({ e.param, kind, fp::hitArea (e).transformedBy (toScreen), (int) i });
+        }
+        // Later elements are drawn on top: let them take the click.
+        std::reverse (controls.begin(), controls.end());
+        return;
+    }
 
     auto r = b;
     if (style.wood)
@@ -520,6 +568,24 @@ static void paintPanel (juce::Graphics& g, juce::Rectangle<float> b, const Facep
 void Faceplate::paintThumbnail (juce::Graphics& g, juce::Rectangle<float> r, models::Table t, int model, const juce::String& caption)
 {
     const auto& m = models::model (t, model);
+    if (const auto* d = fp::findDesign (t, m.token))
+    {
+        // The unit's plate, fitted into the tile.
+        const auto plate = d->plate;
+        const float scale = juce::jmin (r.getWidth() / plate.getWidth(), r.getHeight() / plate.getHeight());
+        g.saveState();
+        g.reduceClipRegion (r.toNearestInt());
+        g.addTransform (juce::AffineTransform::translation (-plate.getCentreX(), -plate.getCentreY())
+                            .scaled (scale)
+                            .translated (r.getCentreX(), r.getCentreY()));
+        fp::PaintContext ctx;
+        ctx.spec = &m;
+        ctx.value = [&m] (int i) { return m.params[(size_t) i].defaultValue; };
+        ctx.thumbnail = true;
+        fp::paintDesign (g, *d, ctx);
+        g.restoreState();
+        return;
+    }
     auto style = faceplateStyle (t, m.token);
     paintPanel (g, r, style, juce::jlimit (8.0f, 16.0f, r.getHeight() * 0.22f), caption.isNotEmpty() ? caption : style.title);
 
@@ -755,6 +821,20 @@ void Faceplate::paint (juce::Graphics& g)
 {
     if (spec == nullptr)
         return;
+    if (design != nullptr)
+    {
+        g.saveState();
+        g.addTransform (toScreen);
+        fp::PaintContext ctx;
+        ctx.spec = spec;
+        ctx.value = [this] (int i) { return value (i); };
+        ctx.reduction = juce::jlimit (0.0f, 40.0f, -shownMeter);
+        ctx.touched = lastTouched;
+        ctx.showValue = bubbleShown;
+        fp::paintDesign (g, *design, ctx);
+        g.restoreState();
+        return;
+    }
     paintPanel (g, panelArea, style, titleArea.getHeight(), style.title);
 
     // Display strip: the first controls' values, as the unit's own display shows them.
@@ -843,7 +923,11 @@ void Faceplate::mouseDown (const juce::MouseEvent& e)
     const auto& p = spec->params[(size_t) ctl.param];
     touch (ctl.param);
 
-    if (ctl.kind == Kind::Switch)
+    if (ctl.kind == Kind::Switch && design != nullptr && ctl.element >= 0)
+    {
+        setValue (ctl.param, fp::clickValue (design->elements[(size_t) ctl.element], p, value (ctl.param)));
+    }
+    else if (ctl.kind == Kind::Switch)
     {
         setValue (ctl.param, value (ctl.param) >= 0.5f ? 0.0f : 1.0f);
     }
@@ -869,6 +953,7 @@ void Faceplate::mouseDrag (const juce::MouseEvent& e)
     const auto& ctl = controls[(size_t) dragging];
     const auto& p = spec->params[(size_t) ctl.param];
     const float range = ctl.kind == Kind::Fader ? juce::jmax (40.0f, ctl.area.getHeight() * 0.8f) : 180.0f;
+    touchedAt = juce::Time::getMillisecondCounter();
     const float fine = e.mods.isShiftDown() ? 0.2f : 1.0f;
     const float pos = juce::jlimit (0.0f, 1.0f, dragStartPos - (float) e.getDistanceFromDragStartY() / range * fine);
     values[ctl.param].store (p.fromNormalised (pos));
@@ -878,6 +963,7 @@ void Faceplate::mouseDrag (const juce::MouseEvent& e)
 void Faceplate::mouseUp (const juce::MouseEvent&)
 {
     dragging = -1;
+    touchedAt = juce::Time::getMillisecondCounter();
 }
 
 void Faceplate::mouseDoubleClick (const juce::MouseEvent& e)
