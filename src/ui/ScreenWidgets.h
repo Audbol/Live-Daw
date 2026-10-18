@@ -462,6 +462,11 @@ public:
     }
 
     bool arrowKey = false;          // a down arrow instead of the dots
+    /** A ">" key instead of the dots (XOVER MODE, KEY FILTER): touching it
+        calls `onKey` (lit while `keyLit` says so); the field opens the list. */
+    bool chevronKey = false;
+    std::function<void()> onKey;
+    std::function<bool()> keyLit;
     bool keyHidden = false;         // no key (INS: the FX PROCESSOR field has its own > key, D8)
     std::optional<Icon> icon;       // drawn left of the caption (ROUTING group selectors)
 
@@ -480,11 +485,21 @@ public:
         const bool open = isListOpen();
         g.setColour (open ? Dark::textDim : Dark::well);
         g.fillRect (r);
-        g.setColour (Dark::key.withAlpha (alpha));
+        const bool lit = chevronKey && keyLit != nullptr && keyLit();
+        g.setColour ((lit ? Dark::textDim : Dark::key).withAlpha (alpha));
         g.fillRect (key);
         g.setColour (Dark::text.withAlpha (alpha));
         const auto kc = key.getCentre().toFloat();
-        if (arrowKey && ! keyHidden)
+        if (chevronKey && ! keyHidden)
+        {
+            const float s = juce::jlimit (4.0f, 9.0f, (float) key.getHeight() * 0.16f);
+            juce::Path chevron;
+            chevron.startNewSubPath (kc.x - s * 0.5f, kc.y - s);
+            chevron.lineTo (kc.x + s * 0.5f, kc.y);
+            chevron.lineTo (kc.x - s * 0.5f, kc.y + s);
+            g.strokePath (chevron, juce::PathStrokeType (juce::jmax (1.5f, s * 0.3f)));
+        }
+        else if (arrowKey && ! keyHidden)
         {
             juce::Path tri;
             tri.addTriangle (kc.x - 7.0f, kc.y - 4.0f, kc.x + 7.0f, kc.y - 4.0f, kc.x, kc.y + 5.0f);
@@ -514,7 +529,15 @@ public:
 
     void mouseUp (const juce::MouseEvent& e) override
     {
-        if (isEnabled() && showMenu && getLocalBounds().contains (e.getPosition()))
+        if (! isEnabled() || ! getLocalBounds().contains (e.getPosition()))
+            return;
+        if (chevronKey && onKey && e.x >= getWidth() - juce::jmin (getHeight() * 2 / 3, getWidth() / 4))
+        {
+            onKey();
+            repaint();
+            return;
+        }
+        if (showMenu)
             showMenu (*this);
     }
 
@@ -523,15 +546,17 @@ private:
     {
         // What is shown is noted here too: a field that isn't painted (on a
         // hidden page) would otherwise ask for a repaint on every tick.
-        if (auto now = getValue ? getValue() : juce::String(); now != shownValue || isListOpen() != shownOpen)
+        const bool lit = keyLit != nullptr && keyLit();
+        if (auto now = getValue ? getValue() : juce::String(); now != shownValue || isListOpen() != shownOpen || lit != shownLit)
         {
             shownValue = now;
             shownOpen = isListOpen();
+            shownLit = lit;
             repaint();
         }
     }
 
-    bool shownOpen = false;
+    bool shownOpen = false, shownLit = false;
     juce::String caption, shownValue;
     std::function<juce::String()> getValue;
     std::function<void (DropdownField&)> showMenu;

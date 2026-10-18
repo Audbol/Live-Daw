@@ -101,4 +101,9 @@ int findModel (Table, const juce::String& token);
 
 juce::StringArray list (List);
 
+/** The static curve of a dynamics model (its transfer graph), from the DSP's
+    own configuration: the output level for each input level in `inDb` (dB;
+    peak or RMS as the model detects). False for models without a level curve. */
+bool dynStaticCurve (int model, const float* values, int numValues, const float* inDb, float* outDb, int count);
+
 } // namespace livedaw::models

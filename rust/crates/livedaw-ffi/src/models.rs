@@ -185,6 +185,34 @@ pub extern "C" fn ld_model_param_from_normalised(t: i32, m: i32, p: i32, pos: f3
     param(t, m, p).map_or(0.0, |p| p.from_normalised(pos))
 }
 
+/// Static curve of a dynamics model (the transfer graph): for each input level
+/// in `in_db`, the output level, computed from the same configuration the
+/// audio thread runs. Returns false (outputs untouched) for models without a
+/// level curve.
+///
+/// # Safety
+/// `values` must hold `num_values` floats, `in_db` and `out_db` `count` each.
+#[no_mangle]
+pub unsafe extern "C" fn ld_dyn_static_curve(
+    model: i32,
+    values: *const f32,
+    num_values: i32,
+    in_db: *const f32,
+    out_db: *mut f32,
+    count: i32,
+) -> bool {
+    let (Ok(model), Ok(nv), Ok(n)) = (usize::try_from(model), usize::try_from(num_values), usize::try_from(count)) else {
+        return false;
+    };
+    if values.is_null() || in_db.is_null() || out_db.is_null() {
+        return false;
+    }
+    let values = std::slice::from_raw_parts(values, nv);
+    let ins = std::slice::from_raw_parts(in_db, n);
+    let outs = std::slice::from_raw_parts_mut(out_db, n);
+    livedaw_dsp::wing::dynamics::static_curve(model, values, ins, outs)
+}
+
 #[no_mangle]
 pub extern "C" fn ld_list_count(l: i32) -> i32 {
     list(l).len() as i32

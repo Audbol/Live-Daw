@@ -188,6 +188,7 @@ target_sources(LiveDAW PRIVATE
     src/ui/FaderStrip.cpp
     src/ui/FaderSection.cpp
     src/ui/ResponseGraph.cpp
+    src/ui/DynamicsGraph.cpp
     src/ui/HomeScreens.cpp
     src/ui/HomePage.cpp
     src/ui/EffectsPage.cpp

@@ -2,6 +2,7 @@
 
 #include "dsp/DspUtils.h"
 #include "ui/DisplayPage.h"
+#include "ui/DynamicsGraph.h"
 #include "ui/Faceplate.h"
 #include "ui/HomeIcons.h"
 #include "ui/Icons.h"
@@ -180,8 +181,7 @@ inline juce::Colour sendModeColour (int mode)
     curve) rather than an emulated analog unit (drawn as its faceplate). */
 inline bool isNativeDynamics (int model)
 {
-    const auto token = models::model (models::Dynamics, model).token;
-    return token == "GATE" || token == "DUCK" || token == "COMP" || token == "EXP" || token == "LMT" || token == "ONEC";
+    return hasTransferGraph (model);
 }
 
 //==============================================================================
@@ -1184,72 +1184,14 @@ private:
 };
 
 //==============================================================================
-/** The transfer curve of a dynamics slot (input -60..0 dB against output),
-    the WING's thumbnail of its own dynamics models. */
-inline void paintTransferCurve (juce::Graphics& g, juce::Rectangle<float> r, const DynSlotParams& slot, bool gate, bool withToken)
+/** The transfer curve of a dynamics slot (the engine's static curve of its
+    model), the WING's thumbnail of its own dynamics models, with the model's
+    token at the top left. */
+inline void paintTransferCurve (juce::Graphics& g, juce::Rectangle<float> r, const DynSlotParams& slot, bool, bool withToken)
 {
-    auto ratioOf = [&]
-    {
-        const auto& spec = models::model (models::Dynamics, slot.model.load());
-        const int i = spec.find ("ratio");
-        if (i < 0)
-            return gate ? 100.0f : 4.0f;
-        const auto& p = spec.params[(size_t) i];
-        const int index = juce::roundToInt (slot.values[i].load());
-        const auto text = p.choices.isEmpty() ? juce::String (slot.values[i].load())
-                                              : p.choices[juce::jlimit (0, p.choices.size() - 1, index)];
-        if (text.containsIgnoreCase ("gate"))
-            return 100.0f;
-        const float v = text.contains (":") ? text.fromFirstOccurrenceOf (":", false, false).getFloatValue() : text.getFloatValue();
-        return v > 0.0f ? v : (gate ? 100.0f : 4.0f);
-    };
-    auto thresholdOf = [&]
-    {
-        const auto& spec = models::model (models::Dynamics, slot.model.load());
-        const int i = spec.find ("thr");
-        if (i < 0)
-            return -20.0f;
-        const auto& p = spec.params[(size_t) i];
-        const float v = slot.values[i].load();
-        return p.unit == "dB" ? v : -60.0f + 60.0f * p.toNormalised (v);
-    };
-
-    g.setColour (juce::Colours::black);
-    g.fillRect (r);
-    auto plot = r.reduced (juce::jmax (2.0f, r.getHeight() * 0.06f));
-    g.setColour (juce::Colour (0xff2e2e2e));
-    for (int i = 1; i < 4; ++i)
-    {
-        g.drawHorizontalLine (juce::roundToInt (plot.getY() + plot.getHeight() * (float) i / 4.0f), plot.getX(), plot.getRight());
-        g.drawVerticalLine (juce::roundToInt (plot.getX() + plot.getWidth() * (float) i / 4.0f), plot.getY(), plot.getBottom());
-    }
-    const float thr = thresholdOf(), ratio = ratioOf();
-    auto map = [&plot] (float inDb, float outDb)
-    {
-        return juce::Point<float> (plot.getX() + plot.getWidth() * (inDb + 60.0f) / 60.0f,
-                                   plot.getBottom() - plot.getHeight() * juce::jlimit (0.0f, 1.0f, (outDb + 60.0f) / 60.0f));
-    };
-    juce::Path p;
-    for (int i = 0; i <= 60; ++i)
-    {
-        const float in = -60.0f + (float) i;
-        float out = in;
-        if (gate && in < thr)
-            out = thr + (in - thr) * juce::jmin (ratio, 8.0f);
-        else if (! gate && in > thr)
-            out = thr + (in - thr) / ratio;
-        if (i == 0)
-            p.startNewSubPath (map (in, out));
-        else
-            p.lineTo (map (in, out));
-    }
+    const auto values = slotValues (slot);
     const bool on = slot.on.load();
-    g.setColour (on ? colours::ink : colours::dim);
-    g.strokePath (p, juce::PathStrokeType (juce::jmax (1.2f, r.getHeight() * 0.025f)));
-    const auto knee = map (thr, thr);
-    const float d = juce::jmax (3.0f, r.getHeight() * 0.07f);
-    g.setColour (colours::accent);
-    g.fillEllipse (knee.x - d * 0.5f, knee.y - d * 0.5f, d, d);
+    paintTransferThumb (g, r, slot.model.load(), values.data(), on);
     if (withToken)
     {
         g.setColour (on ? colours::accent : colours::dim);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/Parameters.h"
 #include "ui/Knobs.h"
 
 #include <memory>
@@ -111,6 +112,13 @@ public:
         (headings dimmed); `onSelect` gets the chosen model. */
     static void choose (juce::Component& anchor, models::Table, int current, std::function<void (int)> onSelect,
                         const juce::StringArray& allowed = {}, const std::vector<Group>& groups = {});
+
+    /** The dynamics model list of a GATE or COMP slot as the 3.1 console shows
+        it: tiles in rows (the gates, the special processors, then the
+        compressors), each with the model's transfer graph or front panel;
+        models outside `allowed` (aux channels) leave a gap. */
+    static void chooseDynamics (juce::Component& anchor, const DynSlotParams& slot, std::function<void (int)> onSelect,
+                                const juce::StringArray& allowed = {});
 
 private:
     void timerCallback() override;

@@ -75,6 +75,38 @@ public:
             expectWithinAbsoluteError (db[1], 0.0, 0.01);
         }
 
+        beginTest ("The compressor's curve, meters and gain agree");
+        {
+            const int comp = models::findModel (models::Dynamics, "COMP");
+            const auto& m = models::model (models::Dynamics, comp);
+            std::vector<float> values (ld::kMaxDynParams, 0.0f);
+            for (size_t i = 0; i < m.params.size(); ++i)
+                values[i] = m.params[i].defaultValue;
+            values[(size_t) m.find ("knee")] = 0.0f;
+            const float in[] = { -40.0f, -6.0f };
+            float out[] = { 0.0f, 0.0f };
+            expect (models::dynStaticCurve (comp, values.data(), (int) values.size(), in, out, 2));
+            expectWithinAbsoluteError (out[0], -40.0f, 1.0e-4f);
+            expectWithinAbsoluteError (out[1], -20.0f + 14.0f / 3.0f, 1.0e-3f); // THR -20, 3:1
+            // A level-free model has no curve.
+            expect (! models::dynStaticCurve (models::findModel (models::Dynamics, "WAVE"), values.data(), (int) values.size(), in, out, 2));
+
+            MixerEngine engine (0);
+            OfflineRig rig (engine, 2, 2);
+            engine.setNumChannels (1);
+            auto& ch = *engine.getChannels()[0];
+            ch.setModel (ModelBlock::Dynamics, comp);
+            ch.params.dynamics.values[m.find ("knee")] = 0.0f;
+            ch.params.dynamics.on = true;
+            ch.params.pan = -100.0f;
+            rig.setInput (0, 0.5f); // -6 dB: 14 dB over, 9.3 dB of reduction
+            rig.run (200);
+            const float gr = ch.meters.dynReductionDb.load();
+            expectWithinAbsoluteError (gr, 14.0f * 2.0f / 3.0f, 0.2f);
+            expectWithinAbsoluteError (ch.meters.dynKeyDb.load(), -6.02f, 0.2f);
+            expectWithinAbsoluteError (20.0f * std::log10 (rig.out (0) / 0.5f), -gr, 0.2f);
+        }
+
         beginTest ("A channel reaches Main 1 through the pan law");
         {
             MixerEngine engine (2);

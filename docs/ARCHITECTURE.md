@@ -525,6 +525,12 @@ blinking LEDs.
   slot's faceplate in its editor; the GATE, EQ and DYNAMICS screens show the model's.
   The device menu groups the table like the console (PREMIUM, STANDARD, CHANNEL
   STRIPS, PLUGIN).
+- **Dynamics graphs** (`DynamicsGraph.*`): the WING's own gate, ducker, compressor and
+  expander show the transfer graph and the ENVELOPE panel instead of a faceplate. The
+  curve is the DSP's static curve (`ld_dyn_static_curve`, the same configuration the
+  audio thread runs); the level dot, GR meter and output ticks read the slot's meters
+  (`StripMeters` gate/dyn key level, reduction and output peak). The model list is the
+  3.1 tile grid (`ModelSelector::chooseDynamics`).
 - Views poll the shared atomics on timers (4-25 Hz); meters read `MeterBank`, the one
   reader of the engine's "peak since last read" meters (input, post-trim, pre-fader
   and output).

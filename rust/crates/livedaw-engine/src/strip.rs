@@ -796,57 +796,57 @@ impl Strip {
     }
 
     unsafe fn run_gate(&self, d: &mut StripDsp, ctx: &ProcessContext, n: usize) {
-        let slot = &self.params.gate;
-        if !slot.on.load(Relaxed) {
-            self.meters.gate_reduction_db.store(0.0);
-            self.meters.gate_active.store(false, Relaxed);
-            return;
-        }
-        slot.values_snapshot(&mut d.gate_values);
-        let external = self.key_for(d, ctx, slot.sc_source.load(Relaxed), n);
-        let nc = d.num_channels;
-        let [w0, w1] = &mut d.work;
-        let mut chans: [&mut [f32]; 2] = [&mut w0[..n], &mut w1[..n]];
-        let key = if external { Some(&d.key[..n]) } else { None };
-        let status: DynStatus = d.gate.process(
-            &mut chans[..nc],
-            key,
-            slot.model_index(),
-            &d.gate_values,
-            &slot.sidechain(),
-            &slot.xover(),
-            slot.mix.load() / 100.0,
-            slot.gain.load(),
-        );
-        self.meters.gate_reduction_db.store(status.gain_reduction_db);
-        self.meters.gate_active.store(status.active, Relaxed);
+        self.run_dyn_slot(d, ctx, n, true);
     }
 
     unsafe fn run_dynamics(&self, d: &mut StripDsp, ctx: &ProcessContext, n: usize) {
-        let slot = &self.params.dynamics;
-        if !slot.on.load(Relaxed) {
-            self.meters.dyn_reduction_db.store(0.0);
-            self.meters.dyn_active.store(false, Relaxed);
+        self.run_dyn_slot(d, ctx, n, false);
+    }
+
+    /// The GATE or DYNAMICS slot. Switching it ON or OFF crossfades (the slot
+    /// keeps running for the 5 ms fade after OFF).
+    unsafe fn run_dyn_slot(&self, d: &mut StripDsp, ctx: &ProcessContext, n: usize, gate: bool) {
+        let slot = if gate { &self.params.gate } else { &self.params.dynamics };
+        let m = &self.meters;
+        let (reduction, active, key_db, out_peak) = if gate {
+            (&m.gate_reduction_db, &m.gate_active, &m.gate_key_db, &m.gate_out_peak)
+        } else {
+            (&m.dyn_reduction_db, &m.dyn_active, &m.dyn_key_db, &m.dyn_out_peak)
+        };
+        let on = slot.on.load(Relaxed);
+        let running = if gate { d.gate.is_running(on) } else { d.dynamics.is_running(on) };
+        if !running {
+            reduction.store(0.0);
+            active.store(false, Relaxed);
+            key_db.store(-120.0);
             return;
         }
-        slot.values_snapshot(&mut d.dyn_values);
+        if gate {
+            slot.values_snapshot(&mut d.gate_values);
+        } else {
+            slot.values_snapshot(&mut d.dyn_values);
+        }
         let external = self.key_for(d, ctx, slot.sc_source.load(Relaxed), n);
         let nc = d.num_channels;
         let [w0, w1] = &mut d.work;
         let mut chans: [&mut [f32]; 2] = [&mut w0[..n], &mut w1[..n]];
         let key = if external { Some(&d.key[..n]) } else { None };
-        let status = d.dynamics.process(
+        let (proc, values) = if gate { (&mut d.gate, &d.gate_values) } else { (&mut d.dynamics, &d.dyn_values) };
+        let status: DynStatus = proc.process_slot(
             &mut chans[..nc],
             key,
             slot.model_index(),
-            &d.dyn_values,
+            values,
             &slot.sidechain(),
             &slot.xover(),
             slot.mix.load() / 100.0,
             slot.gain.load(),
+            on,
         );
-        self.meters.dyn_reduction_db.store(status.gain_reduction_db);
-        self.meters.dyn_active.store(status.active, Relaxed);
+        reduction.store(if on { status.gain_reduction_db } else { 0.0 });
+        active.store(on && status.active, Relaxed);
+        key_db.store(status.key_db);
+        out_peak.fetch_max(status.out_peak);
     }
 
     fn run_eq(&self, d: &mut StripDsp, n: usize) {

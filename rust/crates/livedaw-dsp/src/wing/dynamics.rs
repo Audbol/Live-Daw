@@ -82,15 +82,44 @@ impl XoverSettings {
 }
 
 /// What the slot did in the last block (meters and LEDs).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DynStatus {
-    /// Largest gain reduction in the block, in dB (>= 0).
+    /// Largest gain reduction in the block, in dB (>= 0): the whole reduction
+    /// the processor applied (both stages of a two-stage model).
     pub gain_reduction_db: f32,
     /// Gate closed / compressor working (the console's GATE and DYN LEDs).
     pub active: bool,
+    /// Highest detector level in the block, dB, on the input scale of the
+    /// static curve ([`static_output_db`]): peak or RMS as the model detects,
+    /// after the key filter. The transfer graph's level dot sits here.
+    pub key_db: f32,
+    /// Peak of the slot's output in the block (linear).
+    pub out_peak: f32,
 }
 
+impl DynStatus {
+    /// Adds a sample's reduction (dB, <= 0) and detector level.
+    #[inline]
+    fn report(&mut self, gr: f32, lvl: f32) {
+        self.gain_reduction_db = self.gain_reduction_db.max(-gr.min(0.0));
+        self.active |= gr < -0.5;
+        self.key_db = self.key_db.max(lvl);
+    }
+}
+
+impl Default for DynStatus {
+    fn default() -> Self {
+        Self { gain_reduction_db: 0.0, active: false, key_db: MINUS_INF, out_peak: 0.0 }
+    }
+}
+
+/// Level reported for silence.
+const MINUS_INF: f32 = -120.0;
+
 // ---- configuration --------------------------------------------------------------------
+
+/// dB of soft knee per step of the WING compressor's / expander's KNEE (0..5).
+pub const KNEE_STEP_DB: f32 = 6.0;
 
 fn coef(ms: f32, sr: f32) -> f32 {
     (-1.0 / (ms.max(0.005) * 0.001 * sr)).exp()
@@ -486,7 +515,9 @@ fn configure(spec: &ModelSpec, v: &[f32], sr: f32) -> Config {
         // ---- compressors ---------------------------------------------------------------
         "COMP" | "EXP" => {
             let ratio = p.f("ratio");
-            let (thr, knee) = (p.f("thr"), p.f("knee") * 3.0);
+            // KNEE 0..5: each step widens the transition by 6 dB (3 = about
+            // 18 dB, as the curve of the manual's figure 92 bends).
+            let (thr, knee) = (p.f("thr"), p.f("knee") * KNEE_STEP_DB);
             let mut c = comp(thr, ratio, knee, p.f("att"), p.f("rel"));
             c.hold = (p.f("hld") * 0.001 * sr) as u32;
             c.rms = p.text("det") == "RMS";
@@ -756,6 +787,98 @@ fn configure(spec: &ModelSpec, v: &[f32], sr: f32) -> Config {
     }
 }
 
+// ---- static curve (the transfer graph) ------------------------------------------------
+
+/// The static (steady-state) characteristic of a model: for each detector
+/// level in `input_db` (peak or RMS, as the model detects), the level after
+/// the processor, from the same configuration the audio thread runs. False
+/// (and `out` untouched) for models without a level curve (de-esser, dynamic
+/// EQ, transient designer, rider, saturation). MIX, GAIN and the crossover
+/// are not part of it.
+pub fn static_curve(model: usize, values: &[f32], input_db: &[f32], out: &mut [f32]) -> bool {
+    let Some(spec) = DYN_MODELS.get(model) else { return false };
+    let n = spec.params.len().min(values.len());
+    let cfg = configure(spec, &values[..n], 48000.0);
+    if static_gain(&cfg, 0.0).is_none() {
+        return false;
+    }
+    for (x, o) in input_db.iter().zip(out.iter_mut()) {
+        *o = x + static_gain(&cfg, *x).unwrap_or(0.0);
+    }
+    true
+}
+
+/// One point of [`static_curve`] (None for models without a level curve).
+pub fn static_output_db(model: usize, values: &[f32], input_db: f32) -> Option<f32> {
+    let mut out = [0.0];
+    static_curve(model, values, &[input_db], &mut out).then_some(out[0])
+}
+
+fn static_gain(cfg: &Config, x: f32) -> Option<f32> {
+    Some(match *cfg {
+        Config::Gate(g) => gate_static(&g, x),
+        Config::Duck(g) => {
+            if x >= g.thr {
+                -g.range
+            } else {
+                0.0
+            }
+        }
+        Config::Comp(c) => comp_static(&c, x),
+        Config::Dual(a, b) => {
+            let ga = comp_static(&a, x);
+            ga + comp_static(&b, x + ga)
+        }
+        Config::Combo(g, c) => {
+            let gg = gate_static(&g, x);
+            gg + comp_static(&c, x + gg)
+        }
+        Config::Lmt { trans_gain, trans_on, comp, .. } => {
+            let tg = if trans_on { trans_gain } else { 0.0 };
+            tg + comp_static(&comp, x + tg)
+        }
+        _ => return None,
+    })
+}
+
+/// Gate / expander gain (dB) for a steady level: open from the threshold up.
+fn gate_static(g: &GateCfg, x: f32) -> f32 {
+    if x >= g.thr {
+        0.0
+    } else if g.ratio > 0.0 {
+        let under = (g.close - x).max(0.0);
+        (-(g.ratio - 1.0) * under - g.growth * under * under).max(-g.range)
+    } else {
+        -g.range
+    }
+}
+
+/// Compressor stage gain (dB) for a steady level, its output gain included.
+fn comp_static(c: &CompCfg, x: f32) -> f32 {
+    if !c.enabled {
+        return 0.0;
+    }
+    let reduction = |level: f32| c.curve.gain(level + c.pre_db).max(-c.max_gr);
+    let mut g = if c.feedback {
+        // The detector sees the output: the gain where g = curve(x + g).
+        let mut g = 0.0;
+        for _ in 0..60 {
+            g = 0.5 * g + 0.5 * reduction(x + g);
+        }
+        g
+    } else {
+        reduction(x)
+    };
+    if c.auto_gain {
+        // AUTO GAIN follows the reduction back up.
+        g = 0.0;
+    }
+    if let Some((lthr, _)) = c.limiter {
+        g -= (x + g + c.post_db - lthr).max(0.0);
+    }
+    g + c.post_db
+}
+
 /// "1-" + "thr" without allocating.
 fn join<'a>(buf: &'a mut [u8; 16], a: &str, b: &str) -> &'a str {
     let n = (a.len() + b.len()).min(16);
@@ -788,6 +911,11 @@ struct CompState {
     rel_from: f32,
     /// Auto gain (dB).
     makeup: f32,
+    /// Smoothed input and output gains of the stage (dB), so knobs that
+    /// change the level (INPUT, OUTPUT, GAIN on a unit's panel) glide.
+    pre_s: f32,
+    post_s: f32,
+    primed: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -814,6 +942,10 @@ struct Coefs {
     deess_att: f32,
     deess_rel: f32,
     ride: f32,
+    /// Level knobs (stage input/output gain, MIX, GAIN) glide with this.
+    param: f32,
+    /// Per-sample step of the ON / OFF crossfade (5 ms).
+    fade_step: f32,
 }
 
 impl Coefs {
@@ -832,6 +964,8 @@ impl Coefs {
             deess_att: coef(1.0, sr),
             deess_rel: coef(60.0, sr),
             ride: coef(300.0, sr),
+            param: coef(10.0, sr),
+            fade_step: 1.0 / (0.005 * sr),
         }
     }
 }
@@ -862,6 +996,12 @@ pub struct WingDynamics {
     // Saturation tone filter state per channel
     warm_lp: [f32; 2],
     k: Coefs,
+    /// ON / OFF crossfade: 1 = processing, 0 = bypassed.
+    wet: f32,
+    /// Smoothed MIX (0..1) and GAIN (linear), and whether they hold a value yet.
+    mix_s: f32,
+    makeup_s: f32,
+    primed: bool,
 }
 
 impl Default for WingDynamics {
@@ -886,6 +1026,10 @@ impl Default for WingDynamics {
             ride_hold: 0,
             warm_lp: [0.0; 2],
             k: Coefs::default(),
+            wet: 0.0,
+            mix_s: 1.0,
+            makeup_s: 1.0,
+            primed: false,
         };
         d.prepare(48000.0);
         d
@@ -965,6 +1109,13 @@ impl WingDynamics {
         self.ride_ms = 0.0;
         self.ride_hold = 0;
         self.warm_lp = [0.0; 2];
+        self.wet = 0.0;
+        self.primed = false;
+    }
+
+    /// True while the slot must still run: ON, or fading out after OFF.
+    pub fn is_running(&self, on: bool) -> bool {
+        on || self.wet > 0.0
     }
 
     fn update(&mut self, model: usize, values: &[f32], sc: &SidechainSettings, xo: &XoverSettings) {
@@ -973,17 +1124,7 @@ impl WingDynamics {
         let changed = self.model != Some(model) || self.values[..n] != values[..n.min(values.len())];
         if changed {
             if self.model != Some(model) {
-                self.comp = [CompState::default(); 2];
-                self.gate = GateState { gain: 1.0, ..Default::default() };
-                for f in &mut self.aux_filters {
-                    f.reset();
-                }
-                self.aux_env = [0.0; 4];
-                self.aux_gain = [0.0; 2];
-                self.wave = [0.0; 4];
-                self.ride_gain = 0.0;
-                self.ride_ms = 0.0;
-                self.ride_hold = 0;
+                self.clear_state();
             }
             self.values[..n].copy_from_slice(&values[..n.min(values.len())]);
             self.model = Some(model);
@@ -999,6 +1140,22 @@ impl WingDynamics {
             self.xo.set_coefficients(xo.coefficients(self.sr as f64));
             self.xo_settings = Some(*xo);
         }
+    }
+
+    /// Forgets what the processor was doing (a new model, or ON after OFF).
+    fn clear_state(&mut self) {
+        self.comp = [CompState::default(); 2];
+        self.gate = GateState { gain: 1.0, ..Default::default() };
+        for f in &mut self.aux_filters {
+            f.reset();
+        }
+        self.aux_env = [0.0; 4];
+        self.aux_gain = [0.0; 2];
+        self.wave = [0.0; 4];
+        self.ride_gain = 0.0;
+        self.ride_ms = 0.0;
+        self.ride_hold = 0;
+        self.warm_lp = [0.0; 2];
     }
 
     /// Filters used by the de-esser and dynamic EQ.
@@ -1029,8 +1186,7 @@ impl WingDynamics {
         }
     }
 
-    /// Processes `chans` (1 or 2 channels) in place.
-    #[allow(clippy::needless_range_loop)] // both channels are indexed per sample
+    /// Processes `chans` (1 or 2 channels) in place, the slot ON.
     ///
     /// * `key` - external key signal (another channel), or None for the input itself;
     /// * `mix` - 0..1 wet/dry, `makeup_db` - gain after the processor.
@@ -1046,32 +1202,54 @@ impl WingDynamics {
         mix: f32,
         makeup_db: f32,
     ) -> DynStatus {
+        self.process_slot(chans, key, model, values, sc, xo, mix, makeup_db, true)
+    }
+
+    /// As [`process`](Self::process), with the slot's ON key: switching it
+    /// crossfades between the processed and the dry signal over 5 ms (call
+    /// while [`is_running`](Self::is_running)). MIX and GAIN glide (10 ms).
+    #[allow(clippy::too_many_arguments, clippy::needless_range_loop)]
+    pub fn process_slot(
+        &mut self,
+        chans: &mut [&mut [f32]],
+        key: Option<&[f32]>,
+        model: usize,
+        values: &[f32],
+        sc: &SidechainSettings,
+        xo: &XoverSettings,
+        mix: f32,
+        makeup_db: f32,
+        on: bool,
+    ) -> DynStatus {
+        if on && self.wet <= 0.0 {
+            // Starting from bypass: no stale reduction from long ago.
+            self.clear_state();
+        }
         self.update(model, values, sc, xo);
         let Some(cfg) = self.cfg else { return DynStatus::default() };
         let n = chans.iter().map(|c| c.len()).min().unwrap_or(0);
         let stereo = chans.len() > 1;
-        let mix = mix.clamp(0.0, 1.0);
-        let makeup = db_to_gain(makeup_db);
+        let mix = if mix.is_finite() { mix.clamp(0.0, 1.0) } else { 1.0 };
+        let makeup = db_to_gain(if makeup_db.is_finite() { makeup_db.clamp(-60.0, 24.0) } else { 0.0 });
+        if !self.primed {
+            self.mix_s = mix;
+            self.makeup_s = makeup;
+            self.primed = true;
+        }
         let use_xo = xo.kind != 0;
         let depth = if xo.depth.abs() > 0.0 { xo.depth.abs() } else { f32::INFINITY };
+        let (kp, fade) = (self.k.param, self.k.fade_step);
+        let target_wet = if on { 1.0 } else { 0.0 };
         let mut status = DynStatus::default();
 
         for i in 0..n {
             let l = chans[0][i];
             let r = if stereo { chans[1][i] } else { l };
+            // Linked stereo: the louder side keys both.
             let key_raw = match key {
                 Some(k) => k.get(i).copied().unwrap_or(0.0),
-                None => {
-                    if stereo {
-                        if l.abs() > r.abs() {
-                            l
-                        } else {
-                            r
-                        }
-                    } else {
-                        l
-                    }
-                }
+                None if stereo && r.abs() > l.abs() => r,
+                None => l,
             };
             let key_sample = self.sc.tick(key_raw, 0);
 
@@ -1092,10 +1270,25 @@ impl WingDynamics {
                     yr *= gl;
                 }
             }
-            chans[0][i] = (l + mix * (yl - l)) * makeup;
+            self.mix_s = kp * self.mix_s + (1.0 - kp) * mix;
+            self.makeup_s = kp * self.makeup_s + (1.0 - kp) * makeup;
+            self.wet = step_toward(self.wet, target_wet, fade);
+            let wet = self.wet * self.mix_s;
+            let gain = 1.0 + self.wet * (self.makeup_s - 1.0);
+            let ol = (l + wet * (yl - l)) * gain;
+            chans[0][i] = ol;
+            status.out_peak = status.out_peak.max(ol.abs());
             if stereo {
-                chans[1][i] = (r + mix * (yr - r)) * makeup;
+                let or = (r + wet * (yr - r)) * gain;
+                chans[1][i] = or;
+                status.out_peak = status.out_peak.max(or.abs());
             }
+        }
+        if !on && self.wet <= 0.0 {
+            self.clear_state();
+        }
+        if !status.key_db.is_finite() {
+            status.key_db = MINUS_INF;
         }
         status
     }
@@ -1104,37 +1297,38 @@ impl WingDynamics {
     #[inline]
     fn tick(&mut self, cfg: &Config, key: f32, x: [f32; 2], stereo: bool, st: &mut DynStatus) -> (Option<f32>, [f32; 2]) {
         match *cfg {
-            Config::Gate(g) => {
-                let gain = self.gate_tick(&g, key, false);
+            Config::Gate(g) | Config::Duck(g) => {
+                let duck = matches!(cfg, Config::Duck(_));
+                let (gain, lvl) = self.gate_tick(&g, key, duck);
+                st.key_db = st.key_db.max(lvl);
                 st.active |= gain < -1.0;
                 st.gain_reduction_db = st.gain_reduction_db.max(-gain.min(0.0));
                 (Some(gain), x)
             }
-            Config::Duck(g) => {
-                let gain = self.gate_tick(&g, key, true);
-                st.active |= gain < -1.0;
-                st.gain_reduction_db = st.gain_reduction_db.max(-gain);
-                (Some(gain), x)
-            }
             Config::Comp(c) => {
-                let y = self.comp_tick(&c, 0, key, x, 1.0, st);
+                let (y, gr, lvl) = self.comp_tick(&c, 0, key, x, 1.0);
+                st.report(gr, lvl);
                 (None, y)
             }
             Config::Dual(a, b) => {
-                let y = self.comp_tick(&a, 0, key, x, 1.0, st);
+                // The second stage (the limiter) keys from the first one's output;
+                // the meter shows both reductions together.
+                let (y, gr_a, lvl) = self.comp_tick(&a, 0, key, x, 1.0);
                 let k2 = if stereo { y[0].abs().max(y[1].abs()) } else { y[0] };
-                let y = self.comp_tick(&b, 1, k2, y, 1.0, st);
+                let (y, gr_b, _) = self.comp_tick(&b, 1, k2, y, 1.0);
+                st.report(gr_a + gr_b, lvl);
                 (None, y)
             }
             Config::Combo(g, c) => {
-                let gain = self.gate_tick(&g, key, false);
+                let (gain, lvl) = self.gate_tick(&g, key, false);
                 let gl = db_to_gain(gain);
                 let y = [x[0] * gl, x[1] * gl];
-                let k2 = key * gl;
-                st.gain_reduction_db = st.gain_reduction_db.max(-gain);
-                (None, self.comp_tick(&c, 0, k2, y, 1.0, st))
+                let (y, gr, _) = self.comp_tick(&c, 0, key * gl, y, 1.0);
+                st.report(gain.min(0.0) + gr, lvl);
+                (None, y)
             }
             Config::DeEss { range, full_band, .. } => {
+                st.key_db = st.key_db.max(gain_to_db(key.abs()));
                 let hf = self.aux_filters[0].tick(key, 0);
                 let (a, r) = (self.k.deess_att, self.k.deess_rel);
                 let follow = |env: &mut f32, v: f32| {
@@ -1158,6 +1352,7 @@ impl WingDynamics {
                 }
             }
             Config::DynEq(bands, count) => {
+                st.key_db = st.key_db.max(gain_to_db(key.abs()));
                 let rel_env = self.k.deq_env;
                 let mut y = x;
                 for (i, b) in bands.iter().take(count).enumerate() {
@@ -1189,6 +1384,7 @@ impl WingDynamics {
                 (None, y)
             }
             Config::Wave { attack, sustain, gain } => {
+                st.key_db = st.key_db.max(gain_to_db(key.abs()));
                 let (t, s) = self.wave_env(key, 1.0);
                 let g = attack * t + sustain * s + gain;
                 st.active |= g.abs() > 0.5;
@@ -1200,6 +1396,7 @@ impl WingDynamics {
                 let c = self.k.ride;
                 self.ride_ms = c * self.ride_ms + (1.0 - c) * k;
                 let lvl = 10.0 * (self.ride_ms + 1e-12).log10();
+                st.key_db = st.key_db.max(lvl);
                 if lvl > thr {
                     self.ride_hold = hold;
                     // Logarithmic curve: larger steps at first, flattening out
@@ -1249,14 +1446,16 @@ impl WingDynamics {
                 } else {
                     1.0
                 };
-                (None, self.comp_tick(&comp, 0, key * tg, [x[0] * tg, x[1] * tg], scale, st))
+                let (y, gr, lvl) = self.comp_tick(&comp, 0, key * tg, [x[0] * tg, x[1] * tg], scale);
+                st.report(gr, lvl);
+                (None, y)
             }
         }
     }
 
     /// Gate / expander / ducker gain in dB.
     #[inline]
-    fn gate_tick(&mut self, g: &GateCfg, key: f32, duck: bool) -> f32 {
+    fn gate_tick(&mut self, g: &GateCfg, key: f32, duck: bool) -> (f32, f32) {
         let k = self.k;
         let s = &mut self.gate;
         let v = key.abs();
@@ -1313,20 +1512,29 @@ impl WingDynamics {
         s.gain = db_to_gain(next);
         let accent = s.accent;
         s.accent *= k.accent;
-        next + accent
+        (next + accent, lvl)
     }
 
     /// Compressor/limiter/expander stage on samples `x`, keyed by `key`.
     /// `gr_scale` scales the stage's reduction (the LMT transient shaper).
     #[inline]
-    fn comp_tick(&mut self, c: &CompCfg, idx: usize, key: f32, x: [f32; 2], gr_scale: f32, st: &mut DynStatus) -> [f32; 2] {
+    /// Returns the samples, the stage's whole reduction in dB (<= 0) and the
+    /// detector level on the input scale (dB).
+    fn comp_tick(&mut self, c: &CompCfg, idx: usize, key: f32, x: [f32; 2], gr_scale: f32) -> ([f32; 2], f32, f32) {
         if !c.enabled {
-            return x;
+            return (x, 0.0, MINUS_INF);
         }
         let sr = self.sr;
         let k = self.k;
         let s = &mut self.comp[idx];
-        let pre = db_to_gain(c.pre_db);
+        if !s.primed {
+            s.pre_s = c.pre_db;
+            s.post_s = c.post_db;
+            s.primed = true;
+        }
+        s.pre_s = k.param * s.pre_s + (1.0 - k.param) * c.pre_db;
+        s.post_s = k.param * s.post_s + (1.0 - k.param) * c.post_db;
+        let pre = db_to_gain(s.pre_s);
         let mut det = if c.feedback { s.last_out } else { key * pre };
         if c.det_tilt > 0.0 {
             s.tilt_lp += k.tilt * (det - s.tilt_lp);
@@ -1338,6 +1546,9 @@ impl WingDynamics {
         } else {
             gain_to_db(det.abs() + 1e-9)
         };
+        // The level dot: what the detector sees, on the input scale (a feedback
+        // detector sees the output, so its dot uses the input's peak).
+        let shown = if c.feedback { gain_to_db(key.abs() + 1e-9) } else { lvl - s.pre_s };
         // Crest factor (peak over RMS) as a time scale: 1 for a sine, smaller
         // the more transient the signal.
         let crest_scale = if c.uses_crest() {
@@ -1411,7 +1622,7 @@ impl WingDynamics {
             }
         }
         let gr = (gr * gr_scale).min(0.0);
-        let mut post = c.post_db;
+        let mut post = s.post_s;
         if c.auto_gain {
             s.makeup = k.makeup * s.makeup + (1.0 - k.makeup) * -gr;
             post += s.makeup;
@@ -1436,9 +1647,7 @@ impl WingDynamics {
         }
 
         s.last_out = y[0].abs().max(y[1].abs());
-        st.gain_reduction_db = st.gain_reduction_db.max(-total.min(0.0));
-        st.active |= total < -0.5;
-        y
+        (y, total.min(0.0), shown)
     }
 
     /// Transient designer envelopes: (transient, sustain) amounts, 0..1 each.
@@ -2057,21 +2266,312 @@ mod tests {
         let c = comp_cfg("ONEC", &[]);
         let mut d = WingDynamics::default();
         d.prepare(48000.0);
-        let mut st = DynStatus::default();
         // Steady sine: the crest-driven scale stays near 1.
         for i in 0..48000 {
             let x = (i as f32 * 0.05).sin() * 0.3;
-            d.comp_tick(&c, 0, x, [x, x], 1.0, &mut st);
+            d.comp_tick(&c, 0, x, [x, x], 1.0);
         }
         let s = d.comp[0];
         let crest = 10.0 * ((s.peak * s.peak) / s.power).log10();
         assert!((crest - 3.0).abs() < 0.5, "sine crest {crest}");
         // A click after silence reads as a large crest factor.
         for _ in 0..48000 {
-            d.comp_tick(&c, 0, 0.0, [0.0; 2], 1.0, &mut st);
+            d.comp_tick(&c, 0, 0.0, [0.0; 2], 1.0);
         }
-        d.comp_tick(&c, 0, 0.9, [0.9; 2], 1.0, &mut st);
+        d.comp_tick(&c, 0, 0.9, [0.9; 2], 1.0);
         let s = d.comp[0];
         assert!(10.0 * ((s.peak * s.peak) / s.power).log10() > 20.0);
+    }
+    // ---- static curve, timing, metering (measurements) -----------------------------------
+
+    fn peak_tail(x: &[f32]) -> f32 {
+        x[x.len() * 3 / 4..].iter().fold(0.0f32, |a, v| a.max(v.abs()))
+    }
+
+    /// Runs `input` through a model and returns (output, last block's status).
+    fn run_full(m: usize, v: &[f32], input: &[f32], mix: f32, makeup: f32) -> (Vec<f32>, DynStatus) {
+        let mut d = WingDynamics::default();
+        d.prepare(48000.0);
+        let mut buf = input.to_vec();
+        let mut status = DynStatus::default();
+        for chunk in buf.chunks_mut(256) {
+            status = d.process(&mut [chunk], None, m, v, &SidechainSettings::default(), &XoverSettings::default(), mix, makeup);
+        }
+        (buf, status)
+    }
+
+    #[test]
+    fn wing_compressor_static_curve_20_db_over_at_4_to_1_is_5_db_over() {
+        // Peak detector, hard knee, instant attack and a long hold: the
+        // output peak sits 5 dB over the threshold for a peak 20 dB over it.
+        let (m, v) = model(
+            "COMP",
+            &[("thr", "-20"), ("ratio", "4"), ("knee", "0"), ("det", "PEAK"), ("att", "0"), ("hld", "200"), ("rel", "1000")],
+        );
+        let (out, st) = run_full(m, &v, &sine(1.0, 1000.0, 48000), 1.0, 0.0);
+        let peak = gain_to_db(peak_tail(&out));
+        assert!((peak + 15.0).abs() < 0.3, "output peak {peak} dB");
+        assert!((st.gain_reduction_db - 15.0).abs() < 0.3, "GR meter {}", st.gain_reduction_db);
+        assert!(st.key_db.abs() < 0.1, "detector {}", st.key_db);
+        assert_eq!(static_output_db(m, &v, 0.0), Some(-15.0));
+        // RMS: a 0 dBFS sine reads -3 dB, 17 dB over -> 4.25 dB over.
+        let (m, v) =
+            model("COMP", &[("thr", "-20"), ("ratio", "4"), ("knee", "0"), ("det", "RMS"), ("att", "5"), ("rel", "200")]);
+        let input = sine(1.0, 1000.0, 48000);
+        let (out, st) = run_full(m, &v, &input, 1.0, 0.0);
+        let rms_out = gain_to_db(rms_tail(&out));
+        assert!((rms_out + 15.75).abs() < 0.3, "output RMS {rms_out} dB");
+        assert!((st.key_db + 3.01).abs() < 0.3, "RMS detector {}", st.key_db);
+        // Below the threshold nothing happens.
+        let (out, st) = run_full(m, &v, &sine(0.05, 1000.0, 24000), 1.0, 0.0);
+        assert!((rms_tail(&out) / (0.05 / 2f32.sqrt()) - 1.0).abs() < 1e-3);
+        assert!(st.gain_reduction_db < 0.01 && !st.active);
+    }
+
+    #[test]
+    fn wing_compressor_knee_and_ratio_on_the_curve() {
+        let curve = |knee: &str, ratio: &str, x: f32| {
+            let (m, v) = model("COMP", &[("thr", "-20"), ("ratio", ratio), ("knee", knee)]);
+            static_output_db(m, &v, x).unwrap()
+        };
+        // Hard knee: unity below, 1/ratio above.
+        assert_eq!(curve("0", "4", -30.0), -30.0);
+        assert!((curve("0", "2", -10.0) + 15.0).abs() < 1e-4);
+        assert!((curve("0", "100", 0.0) + 19.8).abs() < 1e-3);
+        // KNEE 3 = 18 dB: at the threshold 3/4 * 18/8 dB down; the full ratio
+        // from 9 dB over, unity from 9 dB under.
+        assert!((curve("3", "4", -20.0) - (-20.0 - 0.75 * 18.0 / 8.0)).abs() < 1e-3);
+        assert!((curve("3", "4", -11.0) + 17.75).abs() < 1e-3);
+        assert_eq!(curve("3", "4", -29.0), -29.0);
+        // The curve never falls as the level rises.
+        for knee in ["0", "1", "3", "5"] {
+            let mut last = f32::NEG_INFINITY;
+            for i in 0..=600 {
+                let y = curve(knee, "4", -60.0 + i as f32 * 0.1);
+                assert!(y >= last - 1e-4, "knee {knee}: falls at {}", -60.0 + i as f32 * 0.1);
+                last = y;
+            }
+        }
+        // The expander mirrors it below the threshold.
+        let (m, v) = model("EXP", &[("thr", "-30"), ("ratio", "2"), ("knee", "0")]);
+        assert!((static_output_db(m, &v, -40.0).unwrap() + 50.0).abs() < 1e-4);
+        assert_eq!(static_output_db(m, &v, -20.0), Some(-20.0));
+    }
+
+    #[test]
+    fn attack_hold_and_release_are_the_labelled_time_constants() {
+        // A constant level 20 dB over an infinite-ratio threshold: the gain
+        // reaches 63 % of its target in ATTACK, stays put for HOLD after the
+        // level drops, then recovers 63 % in RELEASE (manual p.102).
+        let (m, v) = model(
+            "COMP",
+            &[("thr", "-26"), ("ratio", "100"), ("knee", "0"), ("det", "PEAK"), ("att", "20"), ("hld", "50"), ("rel", "100")],
+        );
+        let mut d = WingDynamics::default();
+        d.prepare(48000.0);
+        let lvl = db_to_gain(-6.0);
+        let target = comp_curve(gain_to_db(lvl), -26.0, slope_of(100.0), 0.0);
+        run_on(&mut d, m, &v, &vec![lvl; 960]); // 20 ms
+        let frac = d.comp[0].gr / target;
+        assert!((frac - 0.632).abs() < 0.02, "after ATTACK: {frac} of the target");
+        run_on(&mut d, m, &v, &vec![lvl; 48000]);
+        let full = d.comp[0].gr;
+        run_on(&mut d, m, &v, &vec![0.0; 2400 - 48]); // just inside HOLD
+        assert!((d.comp[0].gr - full).abs() < 1e-3, "moved during HOLD");
+        run_on(&mut d, m, &v, &vec![0.0; 48 + 4800]); // HOLD + RELEASE
+        let left = d.comp[0].gr / full;
+        assert!((left - 0.368).abs() < 0.02, "after RELEASE: {left} left");
+    }
+
+    #[test]
+    fn gate_range_ratio_and_timing() {
+        // Expander 1:2, 10 dB under the threshold -> 10 dB down; gate -> RANGE.
+        let (m, v) = model("GATE", &[("thr", "-30"), ("ratio", "1:2"), ("range", "40")]);
+        assert!((sine_gain(m, &v, db_to_gain(-40.0), 1000.0, 48000) + 10.0).abs() < 0.5);
+        assert_eq!(static_output_db(m, &v, -40.0), Some(-50.0));
+        let (m, v) = model("GATE", &[("thr", "-30"), ("ratio", "gate"), ("range", "40")]);
+        let g = sine_gain(m, &v, db_to_gain(-40.0), 1000.0, 48000 * 4);
+        assert!((g + 40.0).abs() < 0.5, "gate: {g}");
+        assert_eq!(static_output_db(m, &v, -60.0), Some(-100.0));
+        assert_eq!(static_output_db(m, &v, -20.0), Some(-20.0));
+        // Opening at ATTACK (63 % of the way in dB), closing after HOLD at RELEASE.
+        let (m, v) =
+            model("GATE", &[("thr", "-30"), ("ratio", "gate"), ("range", "60"), ("att", "10"), ("hld", "100"), ("rel", "200")]);
+        let mut d = WingDynamics::default();
+        d.prepare(48000.0);
+        run_on(&mut d, m, &v, &vec![0.0; 48000 * 3]);
+        assert!((gain_to_db(d.gate.gain) + 60.0).abs() < 0.1);
+        run_on(&mut d, m, &v, &vec![0.5; 480]);
+        let opened = gain_to_db(d.gate.gain);
+        assert!((opened - (-60.0 * 0.368)).abs() < 1.0, "after ATTACK: {opened} dB");
+        run_on(&mut d, m, &v, &vec![0.5; 4800]);
+        run_on(&mut d, m, &v, &vec![0.0; 4800 - 480]); // within HOLD (+ the detector's decay)
+        assert!(gain_to_db(d.gate.gain) > -0.1, "closed during HOLD");
+        run_on(&mut d, m, &v, &vec![0.0; 480 + 9600]);
+        let closed = gain_to_db(d.gate.gain);
+        assert!(closed < -60.0 * 0.5 && closed > -60.0 * 0.8, "after RELEASE: {closed} dB");
+    }
+
+    #[test]
+    fn ducker_static_curve_and_recovery() {
+        let (m, v) = model("DUCK", &[("thr", "-30"), ("range", "12"), ("att", "1"), ("hld", "20"), ("rel", "50")]);
+        assert_eq!(static_output_db(m, &v, -20.0), Some(-32.0));
+        assert_eq!(static_output_db(m, &v, -40.0), Some(-40.0));
+        let mut d = WingDynamics::default();
+        d.prepare(48000.0);
+        let (sc, xo) = (SidechainSettings::default(), XoverSettings::default());
+        let key = vec![0.3f32; 4800];
+        let mut sig = vec![0.1f32; 4800];
+        d.process(&mut [&mut sig[..]], Some(&key), m, &v, &sc, &xo, 1.0, 0.0);
+        assert!((gain_to_db(sig[4799] / 0.1) + 12.0).abs() < 0.2, "{}", gain_to_db(sig[4799] / 0.1));
+        let quiet = vec![0.0f32; 48000];
+        let mut sig = vec![0.1f32; 48000];
+        d.process(&mut [&mut sig[..]], Some(&quiet), m, &v, &sc, &xo, 1.0, 0.0);
+        assert!((sig[47999] / 0.1 - 1.0).abs() < 0.01, "recovered to {}", sig[47999] / 0.1);
+    }
+
+    #[test]
+    fn static_curve_matches_what_every_level_model_does() {
+        // The transfer graph is computed, not drawn by hand: for each model
+        // with a level curve, the steady gain on a sine equals the curve's at
+        // the level the detector reports.
+        let mut checked = 0;
+        for (m, spec) in DYN_MODELS.iter().enumerate() {
+            let mut v = [0.0; MAX_DYN_PARAMS];
+            spec.defaults_into(&mut v);
+            if static_output_db(m, &v, -20.0).is_none() {
+                continue;
+            }
+            for amp_db in [-50.0f32, -30.0, -12.0, -3.0] {
+                let input = sine(db_to_gain(amp_db), 1000.0, 48000 * 3);
+                let (out, st) = run_full(m, &v, &input, 1.0, 0.0);
+                let measured = gain_to_db(rms_tail(&out) / rms_tail(&input));
+                let want = static_output_db(m, &v, st.key_db).unwrap() - st.key_db;
+                assert!(
+                    (measured - want).abs() < 1.5,
+                    "{} at {amp_db} dB: measured {measured}, curve {want} (detector {})",
+                    spec.token,
+                    st.key_db
+                );
+            }
+            checked += 1;
+        }
+        assert!(checked >= 24, "{checked} models checked");
+    }
+
+    #[test]
+    fn gain_reduction_meter_matches_the_gain_change() {
+        for token in ["COMP", "B160", "B560", "9000C", "SBUS", "RED3", "F670", "2250", "E88C", "LA"] {
+            let (m, v) = defaults(token);
+            let input = sine(0.8, 1000.0, 48000 * 3);
+            let (out, st) = run_full(m, &v, &input, 1.0, 0.0);
+            let c = match config(token, &[]) {
+                Config::Comp(c) => c,
+                _ => unreachable!(),
+            };
+            let measured = gain_to_db(rms_tail(&out) / rms_tail(&input)) - c.post_db;
+            assert!(
+                (measured + st.gain_reduction_db).abs() < 1.0,
+                "{token}: gain {measured} dB, meter {} dB",
+                st.gain_reduction_db
+            );
+        }
+        // Two stages: the meter shows both reductions.
+        let (m, v) = model("ECL33", &[("lon", "1"), ("con", "1"), ("lthr", "-6"), ("cthr", "-30"), ("cgain", "0")]);
+        let input = sine(0.9, 1000.0, 48000 * 3);
+        let (out, st) = run_full(m, &v, &input, 1.0, 0.0);
+        let measured = gain_to_db(rms_tail(&out) / rms_tail(&input));
+        assert!((measured + st.gain_reduction_db).abs() < 1.0, "gain {measured}, meter {}", st.gain_reduction_db);
+    }
+
+    #[test]
+    fn mix_is_parallel_compression() {
+        let (m, v) =
+            model("COMP", &[("thr", "-40"), ("ratio", "100"), ("knee", "0"), ("det", "PEAK"), ("att", "0"), ("hld", "200")]);
+        let input = vec![0.5f32; 48000];
+        let (wet, _) = run_full(m, &v, &input, 1.0, 0.0);
+        let (half, _) = run_full(m, &v, &input, 0.5, 0.0);
+        let g = wet[47999] / 0.5;
+        assert!(g < 0.05);
+        assert!((half[47999] / 0.5 - 0.5 * (1.0 + g)).abs() < 1e-3, "{}", half[47999] / 0.5);
+    }
+
+    #[test]
+    fn stereo_is_linked_and_the_key_can_be_filtered_or_external() {
+        let (m, v) =
+            model("COMP", &[("thr", "-30"), ("ratio", "10"), ("knee", "0"), ("det", "PEAK"), ("att", "0"), ("hld", "200")]);
+        let (sc, xo) = (SidechainSettings::default(), XoverSettings::default());
+        let mut d = WingDynamics::default();
+        d.prepare(48000.0);
+        let mut l = sine(0.8, 1000.0, 24000);
+        let mut r = sine(0.01, 1000.0, 24000);
+        d.process(&mut [&mut l[..], &mut r[..]], None, m, &v, &sc, &xo, 1.0, 0.0);
+        let gl = peak_tail(&l) / 0.8;
+        let gr = peak_tail(&r) / 0.01;
+        assert!((gl - gr).abs() < 0.01 && gl < 0.2, "left {gl}, right {gr}");
+        // A high-pass key ignores a loud low tone.
+        let hp = SidechainSettings { filter: 2, freq: 2000.0, q: 1.0 };
+        let mut d = WingDynamics::default();
+        d.prepare(48000.0);
+        let mut low = sine(0.5, 60.0, 48000);
+        let st = d.process(&mut [&mut low[..]], None, m, &v, &hp, &xo, 1.0, 0.0);
+        assert!(st.gain_reduction_db < 3.0, "{}", st.gain_reduction_db);
+        // An external key compresses a quiet signal.
+        let mut d = WingDynamics::default();
+        d.prepare(48000.0);
+        let key = vec![0.5f32; 4800];
+        let mut sig = vec![0.01f32; 4800];
+        let st = d.process(&mut [&mut sig[..]], Some(&key), m, &v, &sc, &xo, 1.0, 0.0);
+        assert!(st.gain_reduction_db > 20.0 && sig[4799] < 0.001);
+    }
+
+    #[test]
+    fn level_changes_and_on_off_do_not_click() {
+        // A steady DC under the threshold: GAIN, MIX and ON jumps glide.
+        let (m, v) = defaults("COMP");
+        let (sc, xo) = (SidechainSettings::default(), XoverSettings::default());
+        let mut d = WingDynamics::default();
+        d.prepare(48000.0);
+        let mut worst = 0.0f32;
+        let mut last = 0.01f32;
+        for (makeup, mix, on) in
+            [(0.0, 1.0, true), (12.0, 1.0, true), (12.0, 0.0, true), (-6.0, 1.0, true), (0.0, 1.0, false), (6.0, 1.0, true)]
+        {
+            for _ in 0..8 {
+                let mut buf = vec![0.01f32; 64];
+                d.process_slot(&mut [&mut buf[..]], None, m, &v, &sc, &xo, mix, makeup, on);
+                for x in &buf {
+                    worst = worst.max((x - last).abs());
+                    last = *x;
+                }
+            }
+        }
+        // 12 dB in one step would be a 0.03 jump; gliding it is far smaller.
+        assert!(worst < 0.0005, "largest step {worst}");
+        // Switching OFF while compressing fades to the dry signal, then idles.
+        let (m, v) = model("COMP", &[("thr", "-40"), ("ratio", "100"), ("det", "PEAK"), ("att", "0")]);
+        let mut d = WingDynamics::default();
+        d.prepare(48000.0);
+        let mut buf = vec![0.5f32; 4800];
+        d.process_slot(&mut [&mut buf[..]], None, m, &v, &sc, &xo, 1.0, 0.0, true);
+        let squashed = buf[4799];
+        let mut buf = vec![0.5f32; 480];
+        d.process_slot(&mut [&mut buf[..]], None, m, &v, &sc, &xo, 1.0, 0.0, false);
+        assert!((buf[0] - squashed).abs() < 0.01 && buf[120] > squashed && buf[120] < 0.5, "{} {}", buf[0], buf[120]);
+        assert_eq!(buf[479], 0.5);
+        assert!(!d.is_running(false));
+    }
+
+    #[test]
+    fn tiny_and_huge_inputs_stay_finite() {
+        for (m, spec) in DYN_MODELS.iter().enumerate() {
+            let mut v = [0.0; MAX_DYN_PARAMS];
+            spec.defaults_into(&mut v);
+            for amp in [1e-30f32, 1e-20, 50.0] {
+                let (out, st) = run_full(m, &v, &sine(amp, 100.0, 9600), 1.0, 0.0);
+                assert!(out.iter().all(|x| x.is_finite()), "{}: {amp}", spec.token);
+                assert!(st.key_db.is_finite() && st.gain_reduction_db.is_finite(), "{}", spec.token);
+            }
+        }
     }
 }
