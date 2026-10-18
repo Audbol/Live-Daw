@@ -1,4 +1,5 @@
 #include "ui/MainComponent.h"
+#include "ui/MidiRemoteUi.h"
 #include "ui/WingPopups.h"
 #include "ui/daw/DawEditor.h"
 
@@ -227,6 +228,11 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
             closePluginWindowsFor (p);
     };
 
+    // MIDI remote control and DAW remote control (SETUP > REMOTE and DAW).
+    midiRemote = std::make_unique<MidiRemote> (engine, show);
+    ctx.midi = midiRemote.get();
+    midiui::connect (ctx);
+
     channelStrip = std::make_unique<ChannelStripSection> (ctx);
     display = std::make_unique<MainDisplay> (ctx);
     monitor = std::make_unique<MonitorSection> (ctx);
@@ -241,6 +247,12 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
         addAndMakeVisible (c);
     for (auto& sec : sections)
         addAndMakeVisible (*sec);
+    // DAW mode: the DAW's strips over the fader sections (they show themselves).
+    for (int i = 0; i < LayerSet::kNumSections; ++i)
+    {
+        dawSections[i] = std::make_unique<DawFaderSection> (ctx, static_cast<LayerSet::Section> (i));
+        addChildComponent (*dawSections[i]);
+    }
 
     splitter.setTooltip ("Drag to resize the screen and the fader sections");
     splitter.onDrag = [this] (int delta)
@@ -265,6 +277,10 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
 
 MainComponent::~MainComponent()
 {
+    // MIDI goes first: its callbacks reach the views.
+    ctx.midi = nullptr;
+    midiRemote.reset();
+
     // Unsaved project changes survive the quit in the autosave (offered on the next open).
     recording->autosave();
     soloWatcher.reset();
@@ -275,6 +291,8 @@ MainComponent::~MainComponent()
     closeAllPluginWindows();
     scannerWindow.reset();
     fourChannel.reset();
+    for (auto& sec : dawSections)
+        sec.reset();
     for (auto& sec : sections)
         sec.reset();
     customControls.reset();
@@ -343,6 +361,9 @@ void MainComponent::refreshSections()
     layoutSections();
     for (auto& sec : sections)
         sec->refresh();
+    for (int s = 0; s < LayerSet::kNumSections; ++s)
+        if (dawSections[s] != nullptr)
+            dawSections[s]->setNumStrips (sections[s]->getNumStrips());
     fourChannel->refresh();
 }
 
@@ -419,6 +440,12 @@ void MainComponent::layoutSections()
         sections[s]->setBounds (x, b.getY(), w, b.getHeight());
         x += w;
     }
+    for (int s = 0; s < LayerSet::kNumSections; ++s)
+        if (dawSections[s] != nullptr)
+        {
+            dawSections[s]->setBounds (sections[s]->getBounds());
+            dawSections[s]->setNumStrips (sections[s]->getNumStrips());
+        }
 }
 
 void MainComponent::layoutTopRow()

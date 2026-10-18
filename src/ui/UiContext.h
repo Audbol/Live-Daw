@@ -18,6 +18,11 @@ namespace livedaw::daw
 class Session;
 }
 
+namespace livedaw
+{
+class MidiRemote;
+}
+
 namespace livedaw::ui
 {
 
@@ -165,6 +170,10 @@ struct UiContext
     cc::Assignments* customControls = nullptr;
     /** After the assignments or the custom control layer changed: the CC section redraws. */
     std::function<void()> customControlsChanged;
+
+    /** MIDI remote control and DAW remote control (owned by the main component;
+        SETUP > REMOTE and DAW, the surface's DAW key). */
+    MidiRemote* midi = nullptr;
 };
 
 /** SETUP settings that the status bar, the surface and the pages share. */

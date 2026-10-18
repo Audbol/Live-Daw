@@ -20,6 +20,7 @@ pub mod osc;
 pub mod schema;
 pub mod server;
 pub mod snap;
+pub mod sysex;
 pub mod value;
 
 pub use map::{Console, Identity, SetError, WingState};

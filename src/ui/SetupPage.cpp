@@ -1,5 +1,6 @@
 #include "engine/Models.h"
 #include "ui/CustomControlsPage.h"
+#include "ui/MidiRemoteUi.h"
 #include "ui/MonitorsPage.h"
 #include "ui/Pages.h"
 #include "ui/ScreenWidgets.h"
@@ -1102,20 +1103,155 @@ namespace
         }
     };
 
+    //==============================================================================
+    // MIDI (SETUP > REMOTE and DAW): the settings live in the app settings and
+    // go to the MIDI service at once.
+
+    MidiRemote::Settings midiSettings (UiContext& ctx)
+    {
+        return ctx.midi != nullptr ? ctx.midi->getSettings() : MidiRemote::Settings::load (ctx.settings);
+    }
+
+    void changeMidi (UiContext& ctx, const std::function<void (MidiRemote::Settings&)>& change)
+    {
+        auto s = midiSettings (ctx);
+        change (s);
+        midiui::applySettings (ctx, s);
+    }
+
+    /** A MIDI port's devices: its IN and OUT fields (NONE, the app's virtual
+        port or a MIDI device of the computer). A device that is set but not
+        there reads NOT FOUND until it comes back. */
+    class MidiPortRow final : public juce::Component
+    {
+    public:
+        MidiPortRow (UiContext& c, int portIndex, juce::String shortName) : ctx (c), port (portIndex), name (std::move (shortName))
+        {
+            for (int i = 0; i < 2; ++i)
+            {
+                const bool input = i == 0;
+                fields[i] = std::make_unique<DropdownField> (name + (input ? " IN" : " OUT"), [this, input] { return valueText (input); },
+                                                             [this, input] (DropdownField& f) { choose (f, input); });
+                addAndMakeVisible (*fields[i]);
+            }
+        }
+
+        void resized() override
+        {
+            auto r = getLocalBounds();
+            fields[0]->setBounds (r.removeFromLeft (r.getWidth() / 2).withTrimmedRight (3));
+            fields[1]->setBounds (r.withTrimmedLeft (3));
+        }
+
+    private:
+        juce::String valueText (bool input) const
+        {
+            const auto s = midiSettings (ctx);
+            const auto& device = input ? s.inputs[(size_t) port] : s.outputs[(size_t) port];
+            if (device.isEmpty())
+                return "NONE";
+            const auto st = ctx.midi != nullptr ? ctx.midi->getPortStatus (port) : MidiRemote::PortStatus {};
+            const bool missing = input ? st.inputMissing : st.outputMissing;
+            const bool isVirtual = device == MidiRemote::virtualDevice;
+            const auto shown = isVirtual ? MidiRemote::virtualPortName (port) : device;
+            return (missing ? (isVirtual ? "UNAVAILABLE: " : "NOT FOUND: ") : "") + shown.toUpperCase();
+        }
+
+        void choose (DropdownField& f, bool input)
+        {
+            juce::StringArray items { "NONE" }, values { juce::String() };
+            if (port != MidiRemote::Din && MidiRemote::canCreateVirtualPorts())
+            {
+                items.add ("VIRTUAL: " + MidiRemote::virtualPortName (port).toUpperCase());
+                values.add (MidiRemote::virtualDevice);
+            }
+            for (auto& d : input ? MidiRemote::getInputDevices() : MidiRemote::getOutputDevices())
+            {
+                items.add (d.toUpperCase());
+                values.add (d);
+            }
+            const auto s = midiSettings (ctx);
+            const auto current = input ? s.inputs[(size_t) port] : s.outputs[(size_t) port];
+            int selected = values.indexOf (current);
+            if (selected < 0 && current.isNotEmpty())
+            {
+                items.add ("NOT FOUND: " + current.toUpperCase());
+                values.add (current);
+                selected = items.size() - 1;
+            }
+            auto* c = &ctx;
+            const int p = port;
+            popups::chooseFrom (f, items, selected, [c, p, input, values] (int i)
+            {
+                changeMidi (*c, [p, input, &values, i] (MidiRemote::Settings& st) { (input ? st.inputs : st.outputs)[(size_t) p] = values[i]; });
+            });
+        }
+
+        UiContext& ctx;
+        const int port;
+        juce::String name;
+        std::unique_ptr<DropdownField> fields[2];
+    };
+
+    /** The ⓘ of a MIDI REMOTE CONTROL row: the MIDI map of the function. */
+    class MidiInfoBody final : public juce::Component
+    {
+    public:
+        explicit MidiInfoBody (juce::String infoText) : text (std::move (infoText)) {}
+
+        void paint (juce::Graphics& g) override
+        {
+            auto r = getLocalBounds().reduced (24, 16);
+            const auto lines = juce::StringArray::fromLines (text);
+            const float fh = juce::jlimit (11.0f, 19.0f, (float) r.getHeight() / ((float) juce::jmax (8, lines.size()) * 1.6f));
+            g.setFont (wingFontPx (fh));
+            for (auto& line : lines)
+            {
+                g.setColour (line.endsWithChar (':') ? Dark::text : Dark::caption);
+                g.drawFittedText (line, r.removeFromTop (juce::roundToInt (fh * 1.6f)), juce::Justification::centredLeft, 1, 0.7f);
+            }
+        }
+
+    private:
+        juce::String text;
+    };
+
+    /** One line per port: open or not, messages in and out. */
+    juce::String portStatusText (UiContext& ctx, int port)
+    {
+        if (ctx.midi == nullptr)
+            return {};
+        const auto st = ctx.midi->getPortStatus (port);
+        juce::String s = MidiRemote::portName (port) + ":  ";
+        if (! st.inputOpen && ! st.outputOpen && ! st.inputMissing && ! st.outputMissing)
+            return s + "NOT IN USE";
+        s << "IN " << (st.inputOpen ? "OPEN" : st.inputMissing ? "NOT FOUND" : "-") << "   OUT "
+          << (st.outputOpen ? "OPEN" : st.outputMissing ? "NOT FOUND" : "-") << "   " << st.received << " RECEIVED   " << st.sent << " SENT";
+        return s;
+    }
+
     /** REMOTE (fig. 42): MIDI REMOTE CONTROL | HA REMOTE + WING REMOTE | NETWORK + REMOTE LOCK.
-        MIDI and HA remote are drawn disabled (no MIDI remote yet, G-N1). WING REMOTE runs Live
-        DAW's WING protocol servers (discovery, OSC, native) for WING remote apps; it starts
-        with the app when enabled. */
+        MIDI REMOTE CONTROL sets each function OFF, DIN or USB (ⓘ: its MIDI map); MIDI PORTS
+        (Live DAW) picks the computer's devices for the WING's DIN and USB ports. HA remote is
+        drawn disabled. WING REMOTE runs Live DAW's WING protocol servers (discovery, OSC,
+        native) for WING remote apps; it starts with the app when enabled. */
     class RemoteTab final : public juce::Component, private juce::Timer
     {
     public:
         explicit RemoteTab (UiContext& c) : ctx (c)
         {
             const std::vector<juce::Colour> offLit { juce::Colour (0xffc6c6c6), Dark::choice, Dark::choice };
-            for (auto* name : { "CH CONTROL (FDR/MUTE/PAN)", "FX PARAMETER CONTROL", "CUSTOM CONTROLS (RX ONLY)", "SYSEX CONTROL",
-                                "EXTERNAL MIDI CONTROL", "SCENE CHANGE", "SHOW CONTROL", "SCENE MIDI TX" })
-                midi.addRow (name, fixedChoice ({ "OFF", "DIN", "USB" }, 0, offLit), 4.8f, false, true);
+            for (int f = 0; f < MidiRemote::kNumFunctions; ++f)
+                midi.addRow (MidiRemote::functionName (f),
+                             std::make_unique<ChoiceKeys> (juce::StringArray { "OFF", "DIN", "USB" }, [this, f] { return midiSettings (ctx).routes[(size_t) f]; },
+                                                           [this, f] (int route) { changeMidi (ctx, [f, route] (MidiRemote::Settings& st) { st.routes[(size_t) f] = route; }); },
+                                                           offLit),
+                             4.8f, true, true);
+            midi.addMouseListener (this, false); // a row's ⓘ shows its MIDI map
             addAndMakeVisible (midi);
+            ports.addRow ({}, std::make_unique<MidiPortRow> (ctx, MidiRemote::Din, "DIN"), 0.0f, true, false, 1.5f);
+            ports.addRow ({}, std::make_unique<MidiPortRow> (ctx, MidiRemote::Usb, "USB"), 0.0f, true, false, 1.5f);
+            addAndMakeVisible (ports);
 
             // AES50 preamp remote control: hardware only.
             ha.addCaption ("ENABLE HA REMOTE     ENABLE CUST SYNC");
@@ -1213,10 +1349,16 @@ namespace
             g.fillAll (juce::Colours::black);
             g.setColour (Dark::textDim);
             g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-            g.drawFittedText ("MIDI REMOTE CONTROL IS NOT AVAILABLE IN LIVE DAW YET.\n\n"
+            auto n = note;
+            g.setFont (juce::FontOptions (13.0f, juce::Font::bold));
+            for (int p : { (int) MidiRemote::Din, (int) MidiRemote::Usb })
+                g.drawFittedText (portStatusText (ctx, p), n.removeFromTop (20), juce::Justification::centredLeft, 1, 0.8f);
+            n.removeFromTop (8);
+            g.drawFittedText ("DIN AND USB ARE MIDI PORTS OF THIS COMPUTER (MIDI PORTS); USB IS THE VIRTUAL PORT \"LIVE DAW MIDI CONTROL\" WHERE "
+                              "THE SYSTEM ALLOWS IT. TOUCH A FUNCTION'S NAME FOR ITS MIDI MAP.\n\n"
                               "WING REMOTE: WING REMOTE APPS (OSC AND THE NATIVE PROTOCOL) CAN CONNECT TO LIVE DAW. "
                               "EXPERIMENTAL: TESTED WITH LIBWING AND THE COMPANION MODULE'S PATHS, NOT WITH WING EDIT OR WING COPILOT.",
-                              note, juce::Justification::topLeft, 8);
+                              n, juce::Justification::topLeft, 8);
         }
 
         void resized() override
@@ -1225,6 +1367,8 @@ namespace
             const int rowH = fitRowHeight (getHeight() - kDarkHeaderHeight - 30, 10.0f);
             for (auto* p : { &midi, &ha, &network, &lock })
                 p->rowHeight = rowH;
+            // MIDI REMOTE CONTROL and MIDI PORTS share the left column with the port status.
+            midi.rowHeight = ports.rowHeight = juce::jmin (rowH, fitRowHeight (getHeight() - 2 * kDarkHeaderHeight - 110, 11.0f));
             wing.rowHeight = juce::jmax (18, rowH * 4 / 5); // leaves room for the client list
             const int gap = 4;
             auto c1 = b.removeFromLeft (b.getWidth() * 40 / 100);
@@ -1232,7 +1376,10 @@ namespace
             auto c2 = b.removeFromLeft (b.getWidth() * 43 / 100);
             auto c4 = b.removeFromRight (b.getWidth() * 60 / 100);
             midi.setBounds (c1.removeFromTop (juce::jmin (c1.getHeight(), midi.preferredHeight())));
+            c1.removeFromTop (gap);
+            ports.setBounds (c1.removeFromTop (juce::jmin (c1.getHeight(), ports.preferredHeight())));
             note = c1.reduced (8, 10);
+            info.layout (getLocalBounds());
             ha.setBounds (c2.removeFromTop (juce::jmin (c2.getHeight(), ha.preferredHeight())));
             c2.removeFromTop (gap);
             // WING REMOTE also takes the free column left of NETWORK.
@@ -1276,12 +1423,26 @@ namespace
             wing.repaint();
         }
 
+        /** A touch on a MIDI REMOTE CONTROL row's name (ⓘ): its MIDI map. */
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            if (e.eventComponent != &midi || midi.getNumChildComponents() == 0)
+                return;
+            const auto pos = e.getEventRelativeTo (&midi).getPosition();
+            const int top = darkPanelBody (midi.getLocalBounds(), true).getY() + 4;
+            const int row = (pos.y - top) / juce::jmax (1, midi.rowHeight);
+            if (pos.y < top || ! juce::isPositiveAndBelow (row, (int) MidiRemote::kNumFunctions) || pos.x >= midi.getChildComponent (0)->getX())
+                return;
+            info.show (*this, MidiRemote::functionName (row), std::make_unique<MidiInfoBody> (MidiRemote::functionInfo (row)));
+        }
+
         void timerCallback() override
         {
             if (WingRemote::Settings::load (ctx.settings) != applied)
                 applySettings();
             if (isShowing())
             {
+                repaint (note); // the MIDI ports' status
                 wingStatus.status = ctx.engine.getWing().getStatus();
                 wingStatus.repaint();
                 wing.repaint(); // the ports' listening state
@@ -1290,6 +1451,8 @@ namespace
 
         UiContext& ctx;
         SettingsPanel midi { "MIDI REMOTE CONTROL" }, ha { "HA REMOTE" }, network { "NETWORK" }, lock { "REMOTE LOCK" }, wing { "WING REMOTE" };
+        SettingsPanel ports { "MIDI PORTS" };
+        OverlayHolder info;
         WingStatusView wingStatus;
         WingRemote::Settings applied;
         juce::OwnedArray<juce::Component> pairs;
@@ -1297,45 +1460,104 @@ namespace
         juce::Rectangle<int> note;
     };
 
-    /** The surface drawing of DAW CONTROL: the fader groups each emulated controller drives. */
+    /** The surface drawing of DAW CONTROL (fig. 43): the parts of the surface
+        each emulated controller drives. The master unit ("1") takes the left
+        section's faders 1-8 and, with USE UPPER CC FOR DAW, the upper custom
+        controls; extender "2" the next eight faders (left 9-12, center 1-4),
+        extender "3" the last eight (center 5-8, right 1-4). */
     class DawSurface final : public juce::Component
     {
     public:
+        explicit DawSurface (UiContext& c) : ctx (c) {}
+
         void paint (juce::Graphics& g) override
         {
+            const auto s = midiSettings (ctx).daw;
+            const int units = s.usb ? (s.configuration == DawRemote::McuTwoExtenders ? 3 : s.configuration == DawRemote::McuExtender ? 2 : 1) : 1;
+            const bool faders = s.configuration != DawRemote::CustomControlsOnly;
+            const float alpha = s.enabled ? 1.0f : 0.45f;
+
             auto r = getLocalBounds().toFloat().reduced (2.0f);
             g.setColour (Colours::screenTile);
             g.fillRoundedRectangle (r, 4.0f);
-            auto top = r.removeFromTop (r.getHeight() * 0.42f).reduced (8.0f, 6.0f);
-            g.setColour (Colours::screenPanel);
-            g.fillRect (top.withSizeKeepingCentre (top.getWidth() * 0.34f, top.getHeight()));
-            auto faders = r.reduced (8.0f, 6.0f);
-            const float unit = faders.getWidth() / 25.0f;
-            const std::pair<float, const char*> groups[] = { { 12.0f, "1" }, { 8.0f, "2" }, { 4.0f, "3" } };
-            float x = faders.getX();
-            for (auto& [n, label] : groups)
+            r = r.reduced (6.0f);
+            g.setColour (Colours::screenDark);
+            g.drawRect (r, 1.0f);
+
+            // The top: channel strip panel, the display, the monitoring panel.
+            auto top = r.removeFromTop (r.getHeight() * 0.40f).reduced (4.0f, 4.0f);
+            const float u = r.getWidth() / 27.4f; // one fader strip
+            g.setColour (Colours::screenDark);
+            g.drawRect (top.withWidth (u * 4.5f), 1.0f);
+            g.fillRect (top.withX (top.getX() + u * 5.0f).withWidth (u * 8.0f).reduced (u * 0.6f, 2.0f));
+            g.drawRect (top.withX (top.getX() + u * 5.0f).withWidth (u * 8.0f), 1.0f);
+            g.drawRect (top.withX (top.getX() + u * 13.4f).withWidth (u * 8.6f), 1.0f);
+            g.drawRect (top.withX (top.getRight() - u * 4.6f).withWidth (u * 4.6f), 1.0f);
+
+            // The fader sections and the custom controls column.
+            auto bottom = r.reduced (0.0f, 4.0f);
+            auto fader = [&] (int index)
             {
-                auto block = juce::Rectangle<float> (x, faders.getY(), unit * n, faders.getHeight()).reduced (2.0f, 0.0f);
-                g.setColour (Dark::on.withAlpha (0.35f));
-                g.fillRect (block);
+                // index 0-23 across left (12), center (8) and right (4).
+                float x = bottom.getX() + u * (float) index;
+                if (index >= 12)
+                    x += u * 0.3f;
+                if (index >= 20)
+                    x += u * 0.3f + u * 2.6f + u * 0.3f;
+                return juce::Rectangle<float> (x, bottom.getY(), u, bottom.getHeight());
+            };
+            auto ccColumn = juce::Rectangle<float> (bottom.getX() + u * 20.6f, bottom.getY(), u * 2.6f, bottom.getHeight());
+            auto upperCc = ccColumn.withHeight (ccColumn.getHeight() * 0.42f);
+            for (int i = 0; i < 24; ++i)
+            {
+                auto f = fader (i).reduced (u * 0.12f, 2.0f);
                 g.setColour (Colours::screenDark);
-                for (int i = 0; i < (int) n; ++i)
-                    g.fillRect (block.getX() + unit * ((float) i + 0.45f), block.getY() + 4.0f, 2.0f, block.getHeight() - 8.0f);
-                g.setColour (juce::Colours::black);
-                g.setFont (juce::FontOptions (juce::jmin (28.0f, block.getHeight() * 0.5f), juce::Font::bold));
-                g.drawText (label, block, juce::Justification::centred);
-                x += unit * (n + 0.33f);
+                g.drawRect (f, 1.0f);
+                g.fillRect (f.getCentreX() - 1.0f, f.getY() + f.getHeight() * 0.45f, 2.0f, f.getHeight() * 0.5f);
             }
+            g.setColour (Colours::screenDark);
+            g.drawRect (ccColumn.reduced (u * 0.1f, 2.0f), 1.0f);
+
+            // The emulated units: yellow blocks with their number.
+            auto block = [&] (juce::Rectangle<float> area, const juce::String& label)
+            {
+                g.setColour (Dark::on.withAlpha (0.45f * alpha));
+                g.fillRect (area);
+                g.setColour (Dark::on.withAlpha (alpha));
+                g.drawRect (area, 1.5f);
+                g.setColour (juce::Colours::black.withAlpha (alpha));
+                g.setFont (wingFontPx (juce::jmin (30.0f, area.getHeight() * 0.42f), WingWeight::SemiBold));
+                g.drawText (label, area, juce::Justification::centred);
+            };
+            if (faders)
+                for (int unit = 0; unit < units; ++unit)
+                {
+                    // A unit's eight faders: one block over the left and center
+                    // sections, a second one past the custom controls.
+                    const int first = unit * 8, last = first + 7;
+                    if (first <= 19)
+                        block (fader (first).getUnion (fader (juce::jmin (last, 19))).reduced (1.0f, 0.0f), juce::String (unit + 1));
+                    if (last >= 20)
+                        block (fader (juce::jmax (first, 20)).getUnion (fader (last)).reduced (1.0f, 0.0f), juce::String (unit + 1));
+                }
+            // The custom controls belong to the master unit: the lower part
+            // always (the DAW layers), the upper part with USE UPPER CC FOR DAW.
+            block ((s.upperCc ? ccColumn : ccColumn.withTrimmedTop (upperCc.getHeight())).reduced (1.0f, 0.0f), "1");
         }
+
+    private:
+        UiContext& ctx;
     };
 
-    /** The PRESET field with its LOAD key. */
+    /** The PRESET field with its LOAD key: loads a DAW's preset into the four
+        DAW layers of the lower custom controls. */
     class PresetRow final : public juce::Component
     {
     public:
-        PresetRow()
+        explicit PresetRow (UiContext& c) : ctx (c), selected (midiSettings (c).daw.preset)
         {
             styleIconKey (load);
+            load.onClick = [this] { confirmLoad(); };
             addAndMakeVisible (field);
             addAndMakeVisible (load);
         }
@@ -1349,27 +1571,95 @@ namespace
         }
 
     private:
-        DropdownField field { "PRESET", [] { return juce::String ("CUBASE"); } };
+        void confirmLoad()
+        {
+            if (selected <= 0)
+                return;
+            const auto name = DawRemote::presetNames()[selected];
+            popups::confirm (*this, "LOAD DAW PRESET", "Load the " + name + " preset into the DAW layers DAW 1-4 of the custom controls?", "LOAD",
+                             [this] { loadPreset (selected); });
+        }
+
+        void loadPreset (int preset)
+        {
+            if (ctx.customControls == nullptr)
+                return;
+            const auto groups = DawRemote::commandGroups();
+            const auto& table = DawRemote::commands();
+            for (int layer = 0; layer < cc::kNumDawLayers; ++layer)
+                ctx.customControls->clearLayer (cc::kFirstDawLayer + layer);
+            for (auto& k : DawRemote::presetKeys (preset))
+            {
+                const int layer = cc::kFirstDawLayer + k.layer, control = k.key % cc::kNumControls;
+                auto c = ctx.customControls->get (layer, control);
+                const cc::Function f { cc::BtnDawButtons, groups.indexOf (table[(size_t) k.command].group), k.command };
+                (k.key < cc::kNumControls ? c.upper : c.lower) = f;
+                c.name = DawRemote::presetColumnName (preset, k.layer, control);
+                ctx.customControls->set (layer, control, c);
+            }
+            changeMidi (ctx, [preset] (MidiRemote::Settings& s) { s.daw.preset = preset; });
+            ctx.log.info ("DAW preset " + DawRemote::presetNames()[preset] + " loaded into DAW 1-4");
+        }
+
+        UiContext& ctx;
+        int selected = 0;
+        DropdownField field { "PRESET", [this] { return DawRemote::presetNames()[juce::jlimit (0, DawRemote::presetNames().size() - 1, selected)]; },
+                              [this] (DropdownField& f)
+                              {
+                                  popups::chooseFrom (f, DawRemote::presetNames(), selected, [this] (int i)
+                                  {
+                                      selected = i;
+                                      field.repaint();
+                                  });
+                              } };
         WingKey load { "LOAD", Icon::LoadTray };
     };
 
-    /** DAW (fig. 43): DAW CONTROL, disabled until MCU/HUI emulation exists (G-N2). */
-    class DawTab final : public juce::Component
+    /** DAW (fig. 43): DAW CONTROL, then (Live DAW) the DAW's MIDI ports and
+        the state of the emulated units. */
+    class DawTab final : public juce::Component, private juce::Timer
     {
     public:
-        DawTab()
+        explicit DawTab (UiContext& c) : ctx (c), surface (c)
         {
-            daw.addRow ("DAW ENABLE", OnKey::fixed (false), 1.3f, false);
-            daw.addRow ("CONNECTION", fixedChoice ({ "DIN", "USB" }, 1, { Dark::post, Dark::post }), 3.2f, false);
-            daw.addRow ("EMULATION", fixedChoice ({ "MCU", "HUI" }, 0), 3.2f, false);
-            daw.addRow ("USE UPPER CC FOR DAW", OnKey::fixed (false), 1.3f, false);
-            daw.addRow ("DISABLE WHEEL DURING PLAY", OnKey::fixed (true), 1.3f, false);
+            auto get = [this] { return midiSettings (ctx).daw; };
+            auto set = [this] (std::function<void (DawRemote::Settings&)> f)
+            {
+                changeMidi (ctx, [&f] (MidiRemote::Settings& s) { f (s.daw); });
+                surface.repaint();
+            };
+            daw.addRow ("DAW ENABLE", std::make_unique<OnKey> ([get] { return get().enabled; }, [set] (bool v) { set ([v] (DawRemote::Settings& s) { s.enabled = v; }); }), 1.3f);
+            daw.addRow ("CONNECTION", std::make_unique<ChoiceKeys> (juce::StringArray { "DIN", "USB" }, [get] { return get().usb ? 1 : 0; },
+                                                                    [set] (int i) { set ([i] (DawRemote::Settings& s) { s.usb = i == 1; }); },
+                                                                    std::vector<juce::Colour> { Dark::post, Dark::post }),
+                        3.2f);
+            daw.addRow ("EMULATION", std::make_unique<ChoiceKeys> (juce::StringArray { "MCU", "HUI" }, [get] { return get().emulation == DawRemote::Emulation::Hui ? 1 : 0; },
+                                                                   [set] (int i) { set ([i] (DawRemote::Settings& s) { s.emulation = i == 1 ? DawRemote::Emulation::Hui : DawRemote::Emulation::Mcu; }); }),
+                        3.2f);
+            daw.addRow ("USE UPPER CC FOR DAW", std::make_unique<OnKey> ([get] { return get().upperCc; }, [set] (bool v) { set ([v] (DawRemote::Settings& s) { s.upperCc = v; }); }), 1.3f);
+            daw.addRow ("DISABLE WHEEL DURING PLAY",
+                        std::make_unique<OnKey> ([get] { return get().disableWheel; }, [set] (bool v) { set ([v] (DawRemote::Settings& s) { s.disableWheel = v; }); }), 1.3f);
             daw.newBox();
-            daw.addRow ({}, std::make_unique<DropdownField> ("CONFIGURATION", [] { return juce::String ("MCU + 2x EXTENDER"); }), 0.0f, false, false, 1.6f);
-            daw.addRow ({}, std::make_unique<PresetRow>(), 0.0f, false, false, 1.6f);
+            daw.addRow ({}, std::make_unique<DropdownField> ("CONFIGURATION", [get] { return DawRemote::configurationName (get().configuration); },
+                                                             [get, set] (DropdownField& f)
+                                                             {
+                                                                 juce::StringArray items;
+                                                                 for (int i = 0; i < DawRemote::kNumConfigurations; ++i)
+                                                                     items.add (DawRemote::configurationName (i));
+                                                                 popups::chooseFrom (f, items, get().configuration, [set] (int i)
+                                                                 {
+                                                                     set ([i] (DawRemote::Settings& s) { s.configuration = i; });
+                                                                 });
+                                                             }),
+                        0.0f, true, false, 1.6f);
+            daw.addRow ({}, std::make_unique<PresetRow> (ctx), 0.0f, true, false, 1.6f);
             addAndMakeVisible (daw);
             addAndMakeVisible (surface);
-            surface.setEnabled (false);
+
+            for (int unit = 0; unit < DawRemote::kMaxUnits; ++unit)
+                ports.addRow ({}, std::make_unique<MidiPortRow> (ctx, MidiRemote::Daw1 + unit, "MIDI DAW " + juce::String (unit + 1)), 0.0f, true, false, 1.5f);
+            addAndMakeVisible (ports);
+            startTimerHz (2);
         }
 
         void paint (juce::Graphics& g) override
@@ -1382,8 +1672,40 @@ namespace
                               "trademark nor affiliation of the trademark owners with the makers of this software. Product names are mentioned solely as "
                               "a reference for compatibility.",
                               disclaimer, juce::Justification::bottomLeft, 3);
-            g.setFont (juce::FontOptions (15.0f, juce::Font::bold));
-            g.drawFittedText ("DAW CONTROL (MCU / HUI OVER MIDI) IS NOT AVAILABLE IN LIVE DAW YET.", note, juce::Justification::topLeft, 3);
+
+            // The emulated units and DAW mode.
+            auto r = status;
+            const float fh = juce::jlimit (11.0f, 15.0f, (float) getHeight() / 34.0f);
+            const int lineH = juce::roundToInt (fh * 1.45f);
+            auto line = [&] (const juce::String& text, juce::Colour colour)
+            {
+                if (r.getHeight() < lineH)
+                    return;
+                g.setColour (colour);
+                g.setFont (juce::FontOptions (fh, juce::Font::bold));
+                g.drawFittedText (text, r.removeFromTop (lineH), juce::Justification::centredLeft, 1, 0.8f);
+            };
+            const auto s = midiSettings (ctx);
+            auto* d = midiui::daw (ctx);
+            if (! s.daw.enabled || d == nullptr)
+                line ("DAW CONTROL IS OFF", Dark::textDim);
+            else
+            {
+                line (juce::String ("DAW MODE ") + (d->isOn() ? "ON" : "OFF: PRESS DAW IN THE CUSTOM CONTROLS SECTION"), d->isOn() ? Dark::on : Dark::text);
+                const juce::String kind = d->isHui() ? "HUI" : "MCU";
+                for (int unit = 0; unit < d->getNumUnits(); ++unit)
+                {
+                    const auto name = unit == 0 ? kind : kind + " EXTENDER " + juce::String (unit);
+                    const int port = s.daw.usb ? MidiRemote::Daw1 + unit : MidiRemote::Din;
+                    line (name + " (" + MidiRemote::portName (port) + "):  " + (d->isConnected (unit) ? "ONLINE" : "WAITING FOR THE DAW"),
+                          d->isConnected (unit) ? Dark::post : Dark::textDim);
+                }
+                if (! s.daw.usb)
+                    line ("DIN: CHOOSE ITS DEVICES ON SETUP > REMOTE (MIDI PORTS)", Dark::textDim);
+            }
+            r.removeFromTop (lineH / 2);
+            for (int p = MidiRemote::Daw1; p <= MidiRemote::Daw3; ++p)
+                line (portStatusText (ctx, p), Dark::textDim);
         }
 
         void resized() override
@@ -1397,13 +1719,23 @@ namespace
             auto right = body.removeFromRight (body.getWidth() / 2);
             daw.setBounds (body);
             surface.setBounds (right.withHeight (juce::jmin (right.getHeight(), right.getWidth() * 50 / 100)).reduced (6));
-            note = b.withTrimmedLeft (panel.getRight() + 12 - b.getX()).reduced (0, 8);
+            auto side = b.withTrimmedLeft (panel.getRight() + 6 - b.getX());
+            ports.rowHeight = daw.rowHeight;
+            ports.setBounds (side.removeFromTop (juce::jmin (side.getHeight(), ports.preferredHeight())));
+            status = side.reduced (8, 10);
         }
 
     private:
-        SettingsPanel daw;
+        void timerCallback() override
+        {
+            if (isShowing())
+                repaint (status);
+        }
+
+        UiContext& ctx;
+        SettingsPanel daw, ports { "DAW PORTS" };
         DawSurface surface;
-        juce::Rectangle<int> panel, disclaimer, note;
+        juce::Rectangle<int> panel, disclaimer, status;
     };
 
     //==============================================================================
@@ -1467,7 +1799,7 @@ SetupPage::SetupPage (UiContext& c) : ctx (c)
     pages.push_back (ownedPages.add (new AudioTab (ctx, overlay)));
     pages.push_back (ownedPages.add (new SurfaceTab (ctx)));
     pages.push_back (ownedPages.add (new RemoteTab (ctx)));
-    pages.push_back (ownedPages.add (new DawTab()));
+    pages.push_back (ownedPages.add (new DawTab (ctx)));
     pages.push_back (ownedPages.add (new PluginsTab (ctx)));
     // LOG: system health and the event log (the UTILITY screen's content; the
     // WING's UTILITY key has no screen of its own).

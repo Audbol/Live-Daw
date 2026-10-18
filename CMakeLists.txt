@@ -83,6 +83,11 @@ set(LIVEDAW_ENGINE_SOURCES
     src/engine/VirtualAudioDevice.cpp
     src/engine/WingRemote.cpp)
 
+# MIDI remote control and DAW remote control (MCU / HUI).
+list(APPEND LIVEDAW_ENGINE_SOURCES
+    src/engine/DawRemote.cpp
+    src/engine/MidiRemote.cpp)
+
 # The multitrack project model (no UI), shared by the app and the tests.
 set(LIVEDAW_DAW_SOURCES
     src/daw/Project.cpp
@@ -205,6 +210,9 @@ target_sources(LiveDAW PRIVATE
     src/ui/FourChannelSection.cpp
     src/ui/MainComponent.cpp)
 
+# MIDI remote control and DAW remote control: the UI side.
+target_sources(LiveDAW PRIVATE src/ui/MidiRemoteUi.cpp src/ui/DawSurface.cpp)
+
 livedaw_configure_juce_target(LiveDAW)
 
 # Barlow Condensed and Barlow Semi Condensed (SIL Open Font License,
@@ -242,4 +250,7 @@ if(LIVEDAW_BUILD_TESTS)
     livedaw_configure_juce_target(LiveDAWTests)
 
     add_test(NAME LiveDAWTests COMMAND LiveDAWTests)
+
+    # MIDI remote control and DAW remote control.
+    target_sources(LiveDAWTests PRIVATE tests/MidiTests.cpp)
 endif()

@@ -1,7 +1,9 @@
 #pragma once
 
 #include "daw/Session.h"
+#include "engine/MidiRemote.h"
 #include "ui/Controls.h"
+#include "ui/DawSurface.h"
 #include "ui/FaderSection.h"
 #include "ui/FourChannelSection.h"
 #include "ui/LookAndFeel.h"
@@ -80,6 +82,7 @@ private:
     UiContext ctx;
     std::unique_ptr<daw::Session> recording;
     std::unique_ptr<cc::Assignments> customControlAssignments;
+    std::unique_ptr<MidiRemote> midiRemote; // MIDI remote control and DAW remote control
     std::unique_ptr<DawEditor> editor;
     bool editorShown = false;
 
@@ -95,6 +98,7 @@ private:
     std::unique_ptr<FourChannelSection> fourChannel;
     std::unique_ptr<FaderSection> sections[LayerSet::kNumSections];
     std::unique_ptr<CustomControlSection> customControls;
+    std::unique_ptr<DawFaderSection> dawSections[LayerSet::kNumSections]; // the fader sections in DAW mode
     bool ccInBottomRow = true; // else docked under the monitoring panel
     std::unique_ptr<LockOverlay> lockOverlay;
     std::unique_ptr<SoloWatcher> soloWatcher;

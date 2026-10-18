@@ -4,14 +4,17 @@
 //! Each layer has four controls; a control is an encoder with two keys under
 //! it (`enc`, `bu`, `bd` in the console's parameter tree), a name and a colour.
 //! Layers 0-15 are the upper part's 16 layers; the console's other layers
-//! (the lower part's USER layer, the 4-Channel section's U1-U3) follow. What a
-//! function does is the application's business: here it is a category, a
-//! target and an option, stored as `category,target,option`.
+//! (the lower part's USER layer, the 4-Channel section's U1-U3, then the lower
+//! part's DAW 1-4 layers of DAW mode) follow. What a function does is the
+//! application's business: here it is a category, a target and an option,
+//! stored as `category,target,option`.
 
 use crate::xml::{parse_int_prefix, Element};
 
-/// The upper part's layers (UP / DOWN), then USER and U1-U3.
-pub const NUM_LAYERS: usize = 20;
+/// The upper part's layers (UP / DOWN), then USER, U1-U3 and DAW 1-4.
+pub const NUM_LAYERS: usize = 24;
+/// The first of the four DAW layers (the lower part in DAW mode: `daw1`-`daw4`).
+pub const FIRST_DAW_LAYER: usize = 20;
 pub const NUM_CONTROLS: usize = 4;
 
 /// What a knob or key does (category 0 = not assigned).
@@ -152,6 +155,30 @@ mod tests {
         loaded.clear_layer(3);
         assert!(loaded.control(3, 2).unwrap().is_default());
         assert_eq!(cc.to_xml().children_named("Control").count(), 2);
+    }
+
+    #[test]
+    fn daw_layers_round_trip() {
+        // A DAW BUTTONS key (category 13, command 1) and a MIDI key on DAW 4.
+        let mut cc = CustomControls::default();
+        cc.control_mut(FIRST_DAW_LAYER, 0).unwrap().upper = CcFunction { category: 13, target: 0, option: 1 };
+        {
+            let c = cc.control_mut(FIRST_DAW_LAYER + 3, 3).unwrap();
+            c.lower = CcFunction { category: 14, target: 2 * 16 + 9, option: 60 * 128 + 127 };
+            c.name = "PLAY".into();
+        }
+        assert!(cc.control(NUM_LAYERS - 1, 3).is_some());
+        let mut loaded = CustomControls::default();
+        loaded.from_xml(&cc.to_xml());
+        assert_eq!(loaded, cc);
+        assert_eq!(loaded.control(FIRST_DAW_LAYER + 3, 3).unwrap().lower.option, 60 * 128 + 127);
+
+        // A show from before the DAW layers loads, and keeps its own layers.
+        let mut old = Element::new("CustomControls");
+        old.add_new("Control").set("layer", 19).set("index", 1).set("bu", "2,100001,0");
+        loaded.from_xml(&old);
+        assert_eq!(loaded.control(19, 1).unwrap().upper.category, 2);
+        assert!(loaded.control(FIRST_DAW_LAYER, 0).unwrap().is_default());
     }
 
     #[test]
