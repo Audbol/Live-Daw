@@ -19,6 +19,9 @@ struct StatusKey
     std::optional<Icon> icon;
     bool lit = false;
     std::function<void()> onClick;
+    /** The icon and caption colour of an unlit key (LIBRARY's GLOBAL: a green
+        open padlock, red while something is global-safe); grey when unset. */
+    std::optional<juce::Colour> ink {};
 };
 
 /** How the parameter bar shows one of the six knobs. The WING colours each value

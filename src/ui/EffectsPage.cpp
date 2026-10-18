@@ -193,6 +193,15 @@ public:
             drawChip (g, prePostArea, "POST", user.post ? Dark::post : Colours::screenTile, user.post ? juce::Colours::black : Dark::textDim);
             prePostArea = pre.getUnion (prePostArea);
         }
+        else
+        {
+            // Not inserted anywhere: the grey column with the FX logo (fig. 28).
+            g.setColour (Colours::screenTile);
+            g.fillRect (left);
+            g.setColour (Colours::caption.withAlpha (0.55f));
+            g.setFont (wingFontPx (juce::jmin (left.getWidth() * 0.32f, left.getHeight() * 0.3f), WingWeight::SemiBold).italicised());
+            g.drawText ("FX", left, juce::Justification::centred, false);
+        }
         const bool on = ! params.bypass.load();
         drawChip (g, onArea, "ON", on ? Colours::yellow : Colours::screenTile, on ? juce::Colours::black : Dark::textDim);
 
@@ -222,10 +231,11 @@ public:
         g.strokePath (value, juce::PathStrokeType (thick));
         bottom.removeFromLeft (6.0f);
         g.setColour (Colours::text);
-        g.setFont (juce::FontOptions (juce::jlimit (12.0f, 20.0f, bottom.getHeight() * 0.3f), juce::Font::bold));
-        g.drawFittedText (ringLabel, bottom.removeFromTop (bottom.getHeight() / 2.0f).toNearestInt(), juce::Justification::bottomLeft, 1);
-        g.setFont (juce::FontOptions (juce::jlimit (14.0f, 26.0f, bottom.getHeight() * 0.62f), juce::Font::bold));
-        g.drawFittedText (ringValue, bottom.toNearestInt(), juce::Justification::topLeft, 1);
+        // [Fig. 28] the caption about a tenth of the tile tall, the value larger.
+        g.setFont (wingFontPx (juce::jmin ((float) getHeight() * 0.1f, bottom.getHeight() * 0.3f)));
+        g.drawFittedText (ringLabel, bottom.removeFromTop (bottom.getHeight() / 2.0f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.8f);
+        g.setFont (wingFontPx (juce::jmin ((float) getHeight() * 0.155f, bottom.getHeight() * 0.62f), WingWeight::SemiBold));
+        g.drawFittedText (ringValue, bottom.toNearestInt(), juce::Justification::topLeft, 1, 0.8f);
     }
 
     void mouseDown (const juce::MouseEvent& e) override
@@ -592,8 +602,9 @@ void EffectsPage::paint (juce::Graphics& g)
     g.setFont (juce::FontOptions (juce::jmin (30.0f, rack.getHeight() * 0.06f), juce::Font::bold | juce::Font::italic));
     g.drawText ("FX", rack.getX() + 36, rack.getY() + 4, 80, juce::jmin (32, rack.getHeight() / 14), juce::Justification::centredLeft);
 
-    g.setColour (Colours::text);
-    g.setFont (juce::FontOptions (juce::jmin (20.0f, premiumLabel.getHeight() * 0.8f), juce::Font::bold));
+    // [Fig. 28] the group captions are small and grey, printed on the rack.
+    g.setColour (Colours::caption.withAlpha (0.7f));
+    g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), premiumLabel.getHeight() * 0.5f)));
     auto premium = premiumLabel;
     const int textW = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), "PREMIUM FX");
     auto diamond = premium.withSizeKeepingCentre (textW + 30, premium.getHeight()).removeFromLeft (22).toFloat().reduced (2.0f, 4.0f);

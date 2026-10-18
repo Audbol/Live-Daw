@@ -1077,7 +1077,7 @@ void CustomControlsPage::paintList (juce::Graphics& g, ListColumn& l, bool focus
                 }
         }
         g.setColour (enabled ? Dark::text : Dark::textDim.withAlpha (0.45f));
-        g.setFont (juce::FontOptions (juce::jlimit (11.0f, 21.0f, (float) r.getHeight() * 0.38f)));
+        g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), (float) r.getHeight() * 0.3f))); // [D1]
         if (l.rows[row].containsChar ('\t'))
         {
             // A channel row: the label, the icon (drawn above), then the name.

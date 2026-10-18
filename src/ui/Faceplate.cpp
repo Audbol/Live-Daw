@@ -510,7 +510,7 @@ static void paintPanel (juce::Graphics& g, juce::Rectangle<float> b, const Facep
     {
         auto t = b.reduced (12.0f, 6.0f).withHeight (titleH);
         g.setColour (style.text.withAlpha (0.9f));
-        g.setFont (juce::FontOptions (juce::jlimit (11.0f, 22.0f, titleH * 0.8f), juce::Font::bold | juce::Font::italic));
+        g.setFont (juce::FontOptions (juce::jlimit (6.0f, 22.0f, titleH * 0.8f), juce::Font::bold | juce::Font::italic)); // fits the title band on thumbnails
         g.drawFittedText (title, t.toNearestInt(), juce::Justification::centredLeft, 1);
         g.setColour (style.accent.withAlpha (0.8f));
         g.fillRect (t.withTop (t.getBottom() - 1.5f).withWidth (juce::jmin (t.getWidth(), 60.0f)));

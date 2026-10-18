@@ -55,6 +55,9 @@ public:
     void setIcon (std::optional<Icon>);
     /** Name suggestions: a row of up to five keys under the field (empty: no row). */
     void setSuggestions (const juce::StringArray&);
+    /** Keeps the row of five suggestion keys even when there are no
+        suggestions (HOME > NAME draws it with blank keys, as on the console). */
+    void setSuggestionRowAlwaysShown (bool);
     void setMaxLength (int);
     /** Whether the keyboard draws its own name field (default true). */
     void setFieldVisible (bool);
