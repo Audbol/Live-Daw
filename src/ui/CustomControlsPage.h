@@ -111,6 +111,7 @@ enum ButtonCategory
     BtnUsbPlayer,
     BtnSdRecorder,
     BtnGpio,
+    BtnCcBank, // 3.0.6: the option is the upper part's layer (CC bank) to show
     kNumButtonCategories
 };
 
