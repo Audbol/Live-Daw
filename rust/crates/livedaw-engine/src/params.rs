@@ -761,7 +761,7 @@ impl FxParams {
 
 /// MAIN LINK choices (SETUP > PREFERENCES): Main 1's fader also moves Main 2
 /// (1>2), Mains 2-3 (1>2-3) or Mains 2-4 (1>2-4), like a DCA.
-pub const MAIN_LINK_MODES: [&str; 4] = ["OFF", "1>2", "1>2-3", "1>2-4"];
+pub const MAIN_LINK_MODES: [&str; 4] = ["OFF", "1 > 2", "1 > 2-3", "1 > 2-4"];
 
 /// Default monitor DIM amount in dB.
 pub const DEFAULT_DIM_DB: f32 = 20.0;

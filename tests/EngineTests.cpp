@@ -381,7 +381,7 @@ public:
             engine.mainLink = (int32_t) MainLink::To2;
             rig.run();
             expectWithinAbsoluteError (rig.out (2), 0.25f * kCentre, 1.0e-4f);
-            expectEquals (models::list (models::MainLinkModes)[3], juce::String ("1>2-4"));
+            expectEquals (models::list (models::MainLinkModes)[3], juce::String ("1 > 2-4"));
 
             expect (! engine.applyStartupMainMute());
             engine.startupMainMute = true;

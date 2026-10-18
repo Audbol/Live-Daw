@@ -134,6 +134,12 @@ pub const USB_PLAY_REC_CATEGORY: i32 = 15;
 pub const USB_PLAY_REC_FUNCTIONS: [&str; 10] =
     ["PLAY", "PAUSE", "STOP", "PREV", "NEXT", "REC", "REC PAUSE", "REC STOP", "NEW FILE", "REPEAT"];
 
+/// Button category 18, CC BANK (WING 3.0.6: a CC key switches the custom
+/// controls bank): the option is the upper part's layer to show, 0-15 (lit
+/// while it is shown). Categories are append-only: 16 SD RECORDER and 17
+/// GPIO come before it.
+pub const CC_BANK_CATEGORY: i32 = 18;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,5 +213,14 @@ mod tests {
         let mut loaded = CustomControls::default();
         loaded.from_xml(&cc.to_xml());
         assert_eq!(loaded.control(16, 3).unwrap().lower, CcFunction { category: 15, target: 0, option: 5 });
+    }
+
+    #[test]
+    fn cc_bank_keys_round_trip() {
+        let mut cc = CustomControls::default();
+        cc.control_mut(2, 1).unwrap().upper = CcFunction { category: CC_BANK_CATEGORY, target: 0, option: 7 };
+        let mut loaded = CustomControls::default();
+        loaded.from_xml(&cc.to_xml());
+        assert_eq!(loaded.control(2, 1).unwrap().upper, CcFunction { category: 18, target: 0, option: 7 });
     }
 }

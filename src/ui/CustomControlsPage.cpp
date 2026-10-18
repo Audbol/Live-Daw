@@ -145,7 +145,7 @@ juce::String categoryName (Slot s, int category)
                                             "FX PARAMETER", "MONITORING", "DAW V-POTS", "MIDI CC" };
     static const char* const buttons[] = { "NOT ASSIGNED", "MUTE", "SOLO", "DCA MUTE", "MGRP", "SENDS ON FDR", "CH PAGE", "GLOBAL PAGE",
                                            "FADER PAGE", "SHOW CONTROL", "SCENE RECALL", "OTHER", "FADER SPILL", "DAW BUTTONS",
-                                           "MIDI CC/NOTE/PGM", "USB PLAY/REC", "SD RECORDER", "GPIO" };
+                                           "MIDI CC/NOTE/PGM", "USB PLAY/REC", "SD RECORDER", "GPIO", "CC BANK" };
     if (s == Slot::Encoder)
         return juce::isPositiveAndBelow (category, (int) std::size (encoders)) ? encoders[category] : "";
     return juce::isPositiveAndBelow (category, (int) std::size (buttons)) ? buttons[category] : "";
@@ -155,7 +155,7 @@ bool categoryAvailable (Slot s, int category)
 {
     if (s == Slot::Encoder)
         return juce::isPositiveAndBelow (category, (int) kNumEncoderCategories);
-    return category < BtnFaderSpill || category == BtnDawButtons || category == BtnMidi || category == BtnUsbPlayer;
+    return category < BtnFaderSpill || category == BtnDawButtons || category == BtnMidi || category == BtnUsbPlayer || category == BtnCcBank;
 }
 
 juce::Colour categoryColour (Slot s, int category)
@@ -386,6 +386,15 @@ void press (UiContext& ctx, const Function& f)
             }
             break;
         }
+        case BtnCcBank:
+            // CC BANK n (3.0.6): the custom controls show bank n.
+            if (ctx.customControls != nullptr && juce::isPositiveAndBelow (f.option, kNumLayers))
+            {
+                ctx.customControls->currentLayer = f.option;
+                if (ctx.customControlsChanged)
+                    ctx.customControlsChanged();
+            }
+            break;
         default:
             break;
     }
@@ -464,6 +473,7 @@ bool isLit (UiContext& ctx, const Function& f)
                 default: return false;
             }
         }
+        case BtnCcBank: return ctx.customControls != nullptr && ctx.customControls->currentLayer == f.option;
         default:
             break;
     }
@@ -511,6 +521,7 @@ juce::String describe (UiContext& ctx, Slot s, const Function& f)
         case BtnDawButtons:   return midiui::describeDawCommand (ctx, f.option);
         case BtnMidi:         return midiui::describeMidiKey (f.target, f.option);
         case BtnUsbPlayer:    return juce::String ("USB ") + usbNames[juce::jlimit (0, kNumUsbFunctions - 1, f.option)];
+        case BtnCcBank:       return "CC BANK " + juce::String (f.option + 1);
         default:              return categoryName (s, f.category);
     }
 }
@@ -837,6 +848,14 @@ void CustomControlsPage::rebuildLists()
                 break;
             }
             case BtnUsbPlayer: addNames (options, optionCodes, "USB PLAY/REC", usbNames, kNumUsbFunctions); break;
+            case BtnCcBank:
+                options.title = "CC BANK";
+                for (int i = 0; i < kNumLayers; ++i)
+                {
+                    options.rows.add ("BANK " + juce::String (i + 1));
+                    optionCodes.push_back (i);
+                }
+                break;
             default: break;
         }
     }
@@ -1058,7 +1077,7 @@ void CustomControlsPage::paintList (juce::Graphics& g, ListColumn& l, bool focus
                 }
         }
         g.setColour (enabled ? Dark::text : Dark::textDim.withAlpha (0.45f));
-        g.setFont (juce::FontOptions (juce::jlimit (11.0f, 21.0f, (float) r.getHeight() * 0.38f)));
+        g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), (float) r.getHeight() * 0.3f))); // [D1]
         if (l.rows[row].containsChar ('\t'))
         {
             // A channel row: the label, the icon (drawn above), then the name.

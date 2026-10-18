@@ -122,6 +122,8 @@ namespace
                 return { KnobStyle::Bar::Thumb, KnobColours::gold };
             if (text.endsWith ("Hz") || label.contains ("FREQ") || label.contains ("CUT"))
                 return { KnobStyle::Bar::Thumb, KnobColours::blue };
+            if (label.startsWith ("FX") && label.endsWith (" MIX")) // FX MIX, FX1 MIX: a level [D8]
+                return { KnobStyle::Bar::Fill, KnobColours::blue };
             if ((text.endsWith ("dB") && ! b.bipolar) || text.contains ("oo") || text.contains (juce::String::fromUTF8 ("\xe2\x88\x9e")))
                 return { KnobStyle::Bar::Fill, KnobColours::blue };
             if (b.bipolar)
@@ -1499,7 +1501,16 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
         g.setColour (fill);
         g.fillRoundedRectangle (tab, corner);
         t.removeFromLeft (6.0f * k);
-        if (title.prefix.isNotEmpty())
+        if (title.prefix.isNotEmpty() && title.kind == StatusTitle::Kind::Text)
+        {
+            // A plain title's prefix (LIBRARY: the show) is a small caption over it.
+            auto f = tab.reduced (12.0f * k, 6.0f * k);
+            g.setColour (ink);
+            g.setFont (wingFontPx (TypeScale::statusCaption * (float) screenArea.getHeight()));
+            g.drawFittedText (title.prefix, f.removeFromTop (f.getHeight() * 0.3f).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+            t = f;
+        }
+        else if (title.prefix.isNotEmpty())
         {
             auto prefixArea = t.removeFromLeft (juce::GlyphArrangement::getStringWidth (bigFont, title.prefix) + 14.0f * k);
             drawText (title.prefix, ink, prefixArea);
@@ -1648,7 +1659,7 @@ void MainDisplay::paintStatusBar (juce::Graphics& g)
         const auto& key = statusKeys[i];
         const auto area = statusKeyAreas[i];
         tile (area, key.lit ? Colours::caption : Colours::screenHeader);
-        const auto keyInk = key.lit ? juce::Colours::black : Colours::textDim;
+        const auto keyInk = key.lit ? juce::Colours::black : key.ink.value_or (Colours::textDim);
         auto r = area.toFloat().reduced (3.0f * k);
         g.setColour (keyInk);
         g.setFont (wingFontPx (juce::jmin (TypeScale::statusCaption * sh, r.getHeight() * 0.2f)));

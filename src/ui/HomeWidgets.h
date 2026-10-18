@@ -464,7 +464,9 @@ public:
         const float size = juce::jmin (r.getWidth(), r.getHeight());
         const auto c = r.getCentre();
         const float rad = size * 0.5f * (segmented ? 0.62f : 0.92f);
-        const float t = rad * (segmented ? 0.3f : 0.3f);
+        // [D7] the MAIN SENDS ring is thin (a fifth of its radius) with dark
+        // grey segments; the thumbnail rings are thicker.
+        const float t = rad * (segmented ? 0.2f : 0.3f);
         const float mid = rad - t * 0.5f;
         juce::Path ring;
         ring.addCentredArc (c.x, c.y, mid, mid, 0.0f, 0.0f, juce::MathConstants<float>::twoPi, true);
@@ -473,7 +475,7 @@ public:
         if (segmented)
         {
             // The rest of the ring in grey segments.
-            g.setColour (colours::chipOff);
+            g.setColour (colours::thumb);
             for (int i = 0; i < 6; ++i)
             {
                 juce::Path seg;
@@ -514,8 +516,14 @@ public:
         g.setColour (juce::Colour (0xffbdbdbd));
         const auto ph = at (a, reach);
         g.drawLine ({ c, ph }, 3.0f);
-        const auto l = at (a - hs, reach * 0.8f), rr = at (a + hs, reach * 0.8f);
-        g.drawLine ({ l, rr }, 2.0f);
+        // The L/R image line runs across the whole area, its handles outside the ring.
+        const auto l = at (a - hs, reach * 0.9f), rr = at (a + hs, reach * 0.9f);
+        if (l.getDistanceFrom (rr) > 1.0f)
+        {
+            const auto dir = (rr - l) / l.getDistanceFrom (rr);
+            const float ext = juce::jmax (r.getWidth(), r.getHeight());
+            g.drawLine ({ l - dir * ext, rr + dir * ext }, 2.0f);
+        }
         for (auto pt : { ph, l, rr })
         {
             g.setColour (juce::Colours::black);

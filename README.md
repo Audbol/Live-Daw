@@ -97,7 +97,12 @@ Barlow Condensed.
     INPUT, TRIM & BALANCE pad, FILTER, DELAY), FILTER SETUP, GATE / COMP with the
     model's faceplate, EQ, INS 1 / INS 2 (with automix), MAIN SENDS and BUS / MATRIX
     SENDS. **INIT** and **COPY** open CHANNEL INIT / COPY (scope and destinations);
-    a bus, main or matrix's feed grid opens its **FEED CONFIGURATION**.
+    a bus, main or matrix's feed grid (on HOME, or the INPUT screen's BUS FEED / FEED
+    box) opens its **FEED CONFIGURATION** (WING 3.0.5): the CHANNEL, AUX and BUS
+    sources (disabled sends greyed out), selected by touch and drag or with NONE /
+    ALL / ALL CH / ALL AUX / ALL BUS, then SEND MODE, IGNORE CHANNEL MUTE, SEND
+    PANNING, SEND LEVEL and SEND ENABLE, each with KEEP, changed on APPLY. Holding an
+    EQ band key resets that band.
   - **EFFECTS:** the FX rack, slots 1-8 premium and 9-16 standard. Each slot shows its
     device, the strip using it (PRE/POST), ON and its mix. Tapping a slot opens the
     device on its **faceplate**, drawn like the hardware it recreates (a LARC remote
@@ -147,8 +152,9 @@ Barlow Condensed.
     ITEMS, CLEAR ALL), FX and CHAN presets (CLIP is drawn disabled), GO PREV / GO NEXT /
     PREV / NEXT / GO, the SCOPE window (strips, DCAs, mute groups, FX slots, the console
     settings and contents) and the GLOBAL safes in the status bar.
-  - **VIEW screens** (a fader section's VIEW key): OVERVIEW (every strip's blocks),
-    FADERS, SENDS (sends on faders to one bus, main or matrix), CONFIG (edit any layer
+  - **VIEW screens** (a fader section's VIEW key): OVERVIEW (every strip's blocks;
+    EXCL SOLO in the status bar), FADERS (send faders of a layer, and Sends on
+    Fader, show and set the send level, MUTE switching the send), SENDS (sends on faders to one bus, main or matrix), CONFIG (edit any layer
     key by dragging channels, buses, DCAs, send levels, bus-to-bus sends or FX
     parameters onto or between slots, with a page map) and MUTE GROUPS (members, names,
     group keys).
@@ -267,7 +273,8 @@ the USB key on the screen to choose another folder).
   clips), UP / DOWN; clips follow each other without a gap. SAVE / OPEN / CLOSE
   PLAYLIST store M3U files in the USB folder.
 - **Custom controls:** the USB PLAY/REC functions (PLAY, PAUSE, STOP, PREV, NEXT,
-  REC, REC PAUSE, REC STOP, NEW FILE, REPEAT) on any CC key.
+  REC, REC PAUSE, REC STOP, NEW FILE, REPEAT) on any CC key, and **CC BANK 1-16**
+  (WING 3.0.6): a CC key that switches the custom controls to a bank.
 
 ## Shows, scenes and snippets
 

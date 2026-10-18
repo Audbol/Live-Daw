@@ -550,6 +550,7 @@ public:
             if (auto* next = adjacentStrip (ctx.engine, &strip, 1); next != nullptr && ctx.selectStrip)
                 juce::MessageManager::callAsync ([&c = ctx, next] { if (c.selectStrip) c.selectStrip (next); });
         };
+        keyboard->setSuggestionRowAlwaysShown (true);
         keyboard->setSuggestions (nameSuggestions (strip.params.icon.load()));
         addLevelPanel();
         startTimerHz (4);
@@ -923,8 +924,10 @@ public:
             return r.reduced (juce::jmax (3, r.getWidth() / 80));
         };
         // A tile: the name strip, the big label, lit (or framed) when on.
+        // [I12] the strip text about 60 % of the strip, the big label left-aligned
+        // on DCA tiles and centred on the others.
         auto tile = [&g] (juce::Rectangle<float> r, const juce::String& name, const juce::String& big, juce::Colour stripOff, juce::Colour stripOn,
-                          bool on, bool twoLines = false)
+                          bool on, bool twoLines = false, bool centred = false)
         {
             g.setColour (juce::Colours::black);
             g.fillRect (r);
@@ -933,11 +936,11 @@ public:
             g.setColour (on ? stripOn : stripOff);
             g.fillRect (top);
             g.setColour (on ? juce::Colours::black : colours::caption);
-            g.setFont (juce::FontOptions (top.getHeight() * (twoLines ? 0.72f : 0.8f), juce::Font::plain));
+            g.setFont (wingFontPx (top.getHeight() * 0.6f));
             g.drawFittedText (name, top.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.6f);
             g.setColour (on ? colours::ink : colours::caption);
-            g.setFont (juce::FontOptions (inner.getHeight() * (twoLines ? 0.8f : 0.66f), juce::Font::plain));
-            g.drawFittedText (big, inner.toNearestInt().reduced (4, 0), twoLines ? juce::Justification::centred : juce::Justification::centredLeft, 1, 0.6f);
+            g.setFont (wingFontPx (inner.getHeight() * (twoLines ? 0.62f : 0.46f)));
+            g.drawFittedText (big, inner.toNearestInt().reduced (4, 0), twoLines || centred ? juce::Justification::centred : juce::Justification::centredLeft, 1, 0.6f);
         };
 
         auto dcas = frame (dcaFrame).toFloat();
@@ -955,7 +958,7 @@ public:
         {
             auto r = juce::Rectangle<float> (mutes.getX() + mw * (float) (i % 4), mutes.getY() + mh * (float) (i / 4), mw, mh).reduced (3.0f);
             const bool on = (p.muteGroupMask.load() >> i) & 1u;
-            tile (r, engine.getMuteGroupName (i).toUpperCase(), "MG" + juce::String (i + 1), colours::muteTag, colours::mute, on);
+            tile (r, engine.getMuteGroupName (i).toUpperCase(), "MG" + juce::String (i + 1), colours::muteTag, colours::mute, on, false, true);
             tiles.push_back ({ r.toNearestInt(), 100 + i });
         }
         // TALK tags (manual p. 31): TALK ON unmutes and TALK SOLO solos the

@@ -507,6 +507,7 @@ MonitorsPage::MonitorsPage (UiContext& c) : ctx (c)
 
     switchMode = std::make_unique<ChoiceKeys> (juce::StringArray { "AUTO", "PUSH", "LATCH" }, [this] { return (int) talkPath().mode.load(); },
                                                [this] (int i) { talkPath().mode = i; });
+    switchMode->vertical = true;
     addAndMakeVisible (*switchMode);
     sendLevels = std::make_unique<OnKey> ([this] { return talkPath().individual.load(); }, [this] (bool on) { talkPath().individual = on; });
     addAndMakeVisible (*sendLevels);
@@ -1023,9 +1024,10 @@ void MonitorsPage::resized()
         col.removeFromTop (gap);
         autoDimBox = col;
         auto sw = switchBox.withTrimmedTop (juce::jmin (kDarkHeaderHeight, switchBox.getHeight() / 5) + 6).reduced (8, 0);
-        switchMode->setBounds (sw.removeFromTop (juce::jmin (sw.getHeight() / 3, 34)));
-        sw.removeFromTop (8);
-        talkChannelField = sw.removeFromTop (juce::jmin (sw.getHeight() - 4, 48));
+        // [Fig. 80] AUTO / PUSH / LATCH stacked, the TALKBACK channel field under them.
+        talkChannelField = sw.removeFromBottom (juce::jmin (sw.getHeight() / 3, 48));
+        sw.removeFromBottom (8);
+        switchMode->setBounds (sw.withSizeKeepingCentre (juce::jmin (sw.getWidth(), 140), juce::jmin (sw.getHeight(), 3 * 34)));
         auto ad = autoDimBox.withTrimmedTop (juce::jmin (kDarkHeaderHeight, autoDimBox.getHeight() / 4) + 6).reduced (6, 0);
         const int kh = juce::jmin (48, ad.getHeight() / 2 - 4);
         busDim.setBounds (ad.removeFromTop (kh));

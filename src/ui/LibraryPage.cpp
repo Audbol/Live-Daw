@@ -1178,7 +1178,8 @@ std::vector<StatusKey> LibraryPage::getStatusKeys()
 {
     // GLOBAL: an open padlock without global safes, closed (lit) with some.
     const bool safe = anyGlobalSafe();
-    return { { "GLOBAL", safe ? Icon::LockClosed : Icon::LockOpen, safe, [this] { openGlobal(); } } };
+    // [Fig. 48] a green open padlock, or a red closed one while items are global-safe.
+    return { { "GLOBAL", safe ? Icon::LockClosed : Icon::LockOpen, false, [this] { openGlobal(); }, safe ? Colours::tapRed : Colours::green } };
 }
 
 StatusTitle LibraryPage::getStatusTitle()
@@ -1187,11 +1188,10 @@ StatusTitle LibraryPage::getStatusTitle()
     // (ALWAYS SHOW ACTIVE SCENE shows it on the other screens too).
     StatusTitle t;
     t.kind = StatusTitle::Kind::Text;
-    t.prefix = ctx.show.getName().toUpperCase();
+    // The show's name is the small caption over the scene ("INT:" on the console).
+    t.prefix = ctx.show.getName().toUpperCase() + ":";
     if (const auto scene = ctx.show.getScene (ctx.show.getCurrentSceneIndex()))
     {
-        // The show's name is the small caption over the scene ("INT:" on the console).
-        t.prefix << ":";
         t.text = scene->name.toUpperCase();
         t.fill = FileColours::snap;
         t.ink = juce::Colours::black;

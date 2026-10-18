@@ -316,6 +316,9 @@ impl SampleRing {
 /// periodic Hann window.
 struct Tier {
     decimation: usize,
+    /// Input samples until the window holds only audio after a jump in the
+    /// stream (see [`RtaCore::discontinuity`]); its bands hold until then.
+    settle: usize,
     fft: Fft,
     window: Vec<f32>,
     history: Vec<f32>,
@@ -350,6 +353,7 @@ impl Tier {
         }
         Self {
             decimation,
+            settle: 0,
             fft: Fft::new(n),
             window,
             history: vec![0.0; n],
@@ -368,6 +372,7 @@ impl Tier {
 
     #[inline]
     fn push(&mut self, x: f32) {
+        self.settle = self.settle.saturating_sub(1);
         let x = if self.decimation > 1 {
             let mut y = x;
             for f in &mut self.lowpass {
@@ -485,6 +490,15 @@ impl RtaCore {
         self.frames
     }
 
+    /// The next samples don't follow on from the last ones (the reader skipped
+    /// ahead): each tier's bands hold until its window is past the splice,
+    /// which would otherwise smear energy into every band.
+    pub fn discontinuity(&mut self) {
+        for t in &mut self.tiers {
+            t.settle = Self::N * t.decimation;
+        }
+    }
+
     pub fn push(&mut self, samples: &[f32]) {
         for &x in samples {
             let x = if x.is_finite() { x } else { 0.0 };
@@ -543,6 +557,9 @@ impl RtaCore {
         let rms = (-dt / RMS_SECONDS).exp();
         let avg = (-dt / AVG_SECONDS).exp();
         for b in 0..RTA_BANDS {
+            if self.tiers[self.bins[b].tier].settle > 0 {
+                continue;
+            }
             let p = self.band_power(b).max(0.0);
             let s = &mut self.detector_state[b];
             let power = match self.current_detector {
@@ -961,7 +978,11 @@ fn run_analysis(shared: &AnalysisShared) {
         // Far behind (a stall, or audio arriving faster than real time):
         // analyse only the newest audio, so every pass ends in a publication.
         let max_backlog = 4 * buf.len() as u64;
-        read_pos = read_pos.max(shared.rta_ring.written().saturating_sub(max_backlog));
+        let newest = shared.rta_ring.written().saturating_sub(max_backlog);
+        if newest > read_pos {
+            read_pos = newest;
+            rta.discontinuity();
+        }
         let pass_end = read_pos + max_backlog;
         let mut got = false;
         while read_pos < pass_end {
