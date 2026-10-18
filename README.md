@@ -58,7 +58,14 @@ Barlow Condensed.
   `BUS MASTER`; all with `USER 1` / `USER 2` for your own banks) and the shift keys
   **◄4 / 4►**, which scroll longer layers four faders at a time (hold: to the start /
   end). Set a section to **Auto** (SETUP > SURFACE) and it shows as many faders as fit,
-  which suits big channel counts.
+  which suits big channel counts. Layers hold strips, DCAs, **send levels** and **FX
+  parameters**.
+- **Spill** puts a computed layer on a section: a DCA's members (DCA SPILL in SETUP >
+  SURFACE, then SELECT on the DCA), a strip's sends (SPILL on BUS / MATRIX SENDS) or an
+  FX device's parameters (FX SPILL on the insert screens; MUTE sets a parameter to its
+  default, an EQ gain to 0 dB). Spill from the right section goes to the center
+  section, everything else to the left; the same key again brings back the layer and
+  its scroll position.
 - **Fader strips** follow the WING's: a colour light bar, the scribble strip (number,
   source ports or mono, icon, the name on an inverted bar), SELECT, SOLO, the meter
   block (DYN LED, a stereo six-segment input meter, GATE LED), MUTE and the fader with
@@ -126,14 +133,20 @@ Barlow Condensed.
     PFL DIM, outputs, meter and level) and CC EDIT (also SETUP pressed twice): the custom
     control layers, a function list and the target lists, COLOR, CLR ALL and NAME,
     saved with the show.
-  - **LIBRARY:** the show's scenes and snippets in one list (tags, SKIP, LINK, REMOVE,
-    RENAME, UP / DOWN), the SHOW, SNAP and SNIP tabs, GO PREV / GO NEXT / PREV / NEXT /
-    GO, the SCOPE window (EDIT SCOPE, REC FOCUS, ADD / REMOVE ITEMS) and the GLOBAL
-    safes in the status bar.
+  - **LIBRARY:** a file browser with the locations INT (`Documents/Live DAW/Library`),
+    USB (a folder of your choice) and SHOW (the show's scenes and snippets: tags, SKIP,
+    LINK, REMOVE, RENAME, UP / DOWN), with FOLDER, RENAME, DELETE and sorting. Tabs:
+    SHOW (open and save shows, also from the list), SNAP (SAVE, UPDATE, PARTIAL UPDATE,
+    LOAD, PARTIAL LOAD with NO GLOB, RESTORE, EDIT SCOPE), SNIP (REC / STOP with the
+    counter of changed parameters, SAVE, UPDATE, PARTIAL LOAD, REC FOCUS, ADD / REMOVE
+    ITEMS, CLEAR ALL), FX and CHAN presets (CLIP is drawn disabled), GO PREV / GO NEXT /
+    PREV / NEXT / GO, the SCOPE window (strips, DCAs, mute groups, FX slots, the console
+    settings and contents) and the GLOBAL safes in the status bar.
   - **VIEW screens** (a fader section's VIEW key): OVERVIEW (every strip's blocks),
     FADERS, SENDS (sends on faders to one bus, main or matrix), CONFIG (edit any layer
-    key by dragging onto or between slots, with a page map) and MUTE GROUPS (members,
-    names, group keys).
+    key by dragging channels, buses, DCAs, send levels, bus-to-bus sends or FX
+    parameters onto or between slots, with a page map) and MUTE GROUPS (members, names,
+    group keys).
   - **UTILITY:** system health and the event log (also on SETUP > LOG).
   - **RECORDER** (the status bar's **LIVE** card icon, red while recording): laid out
     like the WING-LIVE screens. See *Multitrack recording* below.
@@ -214,12 +227,22 @@ a WING with a WING-LIVE card, and edits them in a DAW-style editor.
 
 - A **show** is the file. It holds the console (channels, buses, FX devices and plugins,
   patching, DCAs, mute groups, fader banks) and all of its scenes.
-- A **scene** is a console snapshot with a **recall scope** (Name, Routing, Input,
-  Gate, EQ, Dynamics, Inserts, Sends, Fader, DCA/Mute), an optional **fade time** for
-  faders, pans and send levels, and notes. **Recall-safe** strips are skipped. Use
+- A **scene** is a console snapshot with a **recall scope**: the sections (Name,
+  Routing, Input, Gate, EQ, Dynamics, Inserts, Sends, Fader, DCA/Mute), which strips,
+  DCAs, mute groups and FX slots, and the console settings (monitor setup, INPUT
+  SELECT, automix enables); an optional **fade time** for faders, pans and send levels,
+  and notes. **Recall-safe** strips and the **GLOBAL safes** (DCAs, mute groups, FX
+  slots, sections, console settings) are skipped. **PARTIAL LOAD** recalls a chosen
+  scope (**NO GLOB** ignores the safes), **RESTORE** all of the scene, **PARTIAL
+  UPDATE** stores a chosen scope into it; both partial keys keep their last scope. Use
   **GO >** and **<** (or `Ctrl+G`) to step through scenes during a show.
-- A **snippet** belongs to a scene and recalls only the strips and sections you choose.
-  Fire it by hand, or mark it to **fire with its scene**.
+- A **snippet** belongs to a scene and recalls only the strips and sections you choose
+  (and DCAs, mute groups, FX slots). **REC**, change parameters, **STOP** and **SAVE**:
+  the snippet holds exactly the parameters you changed (within REC FOCUS). Fire it by
+  hand, or mark it to **fire with its scene**.
+- **Presets** are files: an FX slot's device and settings (`.lfx`, loads into any slot)
+  and a strip's settings with a scope (`.lchn`, loads onto another strip of the same
+  family; UPDATE SCOPE changes what it loads).
 - Recalling a scene or snippet never creates or destroys channels or plugins, so it
   can't cause a dropout. Built-in FX devices and their settings are recalled.
 - Shows from earlier Live DAW versions are converted when they load: channels stay
@@ -430,8 +453,9 @@ copy, pass `-DLIVEDAW_VST2_SDK_DIR=/path/to/vstsdk` to enable VST2 hosting.
    slots to inserts on **PRE INS** / **POST INS**.
 5. **LIBRARY > SNAP:** **SAVE** captures the console as a scene; **EDIT SCOPE** sets
    what it recalls, with its fade and notes below. **LIBRARY > SNIP** saves snippets of
-   the selected scene (**REC FOCUS** chooses their strips and sections). **GO**
-   recalls, **GO NEXT** steps through the show.
+   the selected scene: **REC**, change what the snippet should hold, **STOP**, **SAVE**
+   (or set **REC FOCUS** and SAVE). **GO** recalls, **GO NEXT** steps through the show.
+   **FX** and **CHAN** save and load presets in the folder shown on the left.
 6. **LIBRARY > SHOW** saves and opens `.lshow` files (`Ctrl+S`, `Ctrl+O`). The VIEW
    screens' **CONFIG** builds your own fader layers (USER 1 / USER 2).
 

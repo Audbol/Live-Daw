@@ -10,11 +10,13 @@ namespace livedaw::ui
     MUTEGROUP and FX, the CONFIGURATION grid and the yellow CONTENTS keys, with
     NONE / ALL / CANCEL and SAVE.
 
-    The same window edits a scene's recall scope (EDIT SCOPE), a snippet's
-    REC FOCUS and its ADD / REMOVE ITEMS, and the GLOBAL safes. A scene's scope
-    is a set of console sections for every strip, so its strip tiles are
-    disabled (per-strip scene scope is engine item E15); CONTENTS keys that
-    share one of our sections light together. */
+    The same window edits a scene's recall scope (EDIT SCOPE), the scope of a
+    PARTIAL LOAD (with NO GLOB) or PARTIAL UPDATE, a snippet's REC FOCUS and
+    its ADD / REMOVE ITEMS, and the GLOBAL safes (strips: their recall safe;
+    the rest: the show's global safes). CONFIG in CONFIGURATION is the
+    console-wide settings (monitor setup, INPUT SELECT, automix enables); the
+    other configuration tiles (surface, preferences, sections) are drawn
+    disabled. CONTENTS keys that share one of our sections light together. */
 class ScopeWindow final : public juce::Component
 {
 public:
@@ -24,18 +26,15 @@ public:
         SnippetFocus,
         SnippetAdd,
         SnippetRemove,
-        Global
+        Global,
+        PartialLoad,
+        PartialUpdate
     };
 
-    struct Selection
-    {
-        juce::uint32 sections = 0;
-        std::vector<state::StripRef> strips;
-    };
+    ScopeWindow (UiContext&, Mode, juce::String title, state::Scope);
 
-    ScopeWindow (UiContext&, Mode, juce::String title, Selection);
-
-    std::function<void (const Selection&)> onSave;
+    /** SAVE (LOAD for a partial load); `noGlobal` is the NO GLOB key. */
+    std::function<void (const state::Scope&, bool noGlobal)> onSave;
     std::function<void()> onCancel;
 
     void paint (juce::Graphics&) override;
@@ -59,7 +58,7 @@ private:
         juce::Rectangle<int> area;
         juce::String caption, number;
         state::StripRef strip {};
-        juce::uint32 bits = 0;
+        juce::uint32 bits = 0; // Content: sections; Dca, MuteGroup, Fx: the item's bit; Config: 1 = CONFIG
         bool dropdown = false;
     };
 
@@ -70,20 +69,23 @@ private:
         size_t first = 0, count = 0;
     };
 
-    bool stripsActive() const noexcept { return mode != Mode::SceneScope; }
-    bool contentsActive() const noexcept { return mode != Mode::Global; }
+    bool isActive (const Tile&) const;
     bool isSelected (const Tile&) const;
+    void toggle (const Tile&, bool on);
     bool hasStrip (const state::StripRef&) const;
     void toggleStrip (const state::StripRef&, bool on);
+    juce::uint32* maskOf (Kind);
 
     UiContext& ctx;
     Mode mode;
     juce::String title;
-    Selection selection;
+    state::Scope selection;
+    bool noGlobal = false;
     std::vector<Tile> tiles;
     std::vector<Group> groups;
     juce::Rectangle<int> titleArea, configHeader, contentsHeader;
-    WingKey noneKey { "NONE" }, allKey { "ALL" }, cancelKey { "CANCEL" }, saveKey { "SAVE", Icon::SaveTray };
+    WingKey noneKey { "NONE", Icon::ListNone }, allKey { "ALL", Icon::ListAll }, cancelKey { "CANCEL", Icon::ClearCircle },
+        noGlobKey { "NO GLOB", Icon::LockOpen }, saveKey { "SAVE", Icon::SaveTray };
 };
 
 } // namespace livedaw::ui

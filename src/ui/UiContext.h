@@ -110,6 +110,8 @@ struct UiContext
     // Show files
     std::function<void()> newShow, openShow;
     std::function<void (bool saveAs)> saveShow;
+    /** The LIBRARY's file list: open a show file, save the show as a file. */
+    std::function<void (const juce::File&)> openShowFile, saveShowTo;
 
     /** Sends on Fader (SOF FLIP): with a bus selected the input faders show their
         sends to it; with an input selected the bus faders show its sends. */
@@ -217,6 +219,7 @@ namespace uiprefs
     constexpr const char* alternativeSof = "ui.alternativeSof";
     constexpr const char* rightSectionSof = "ui.rightSectionSof";    // default on (ALL); off: the left and center sections only
     constexpr const char* userLayerLink[2] = { "ui.userLayerLinkLC", "ui.userLayerLinkCR" };
+    constexpr const char* dcaSpill = "ui.dcaSpill"; // bool: SELECT on a DCA spills it (SETUP > SURFACE)
     constexpr const char* autoSelect[3] = { "ui.autoSelectL", "ui.autoSelectC", "ui.autoSelectR" };
     constexpr const char* f1f3AsCustom = "ui.f1f3AsCustomControls";
 
@@ -235,6 +238,13 @@ namespace uiprefs
         return level (s.getIntValue (juce::String ("setup.brightness.") + id, defaultPercent)) / level (defaultPercent);
     }
 } // namespace uiprefs
+
+/** SPILL: ends `spill` where it shows, else puts it on the section a spill
+    from `origin` goes to (the center for the right section, else the left;
+    no origin: the left), and refreshes the fader sections. */
+void toggleSpill (UiContext&, std::optional<LayerSet::Section> origin, const LayerSet::Spill&);
+/** Whether a section spills `spill`. */
+bool isSpilling (UiContext&, const LayerSet::Spill&);
 
 /** Calls ctx.layersChanged asynchronously: safe to use from a callback of a
     component that the rebuild will delete. */

@@ -172,6 +172,11 @@ private:
     };
 
     std::vector<state::FaderRef> sourceItems() const;
+    /** The destinations of SENDS (every bus, main and matrix) or BUS -> BUS
+        (buses 1-8, mains, matrices). */
+    std::vector<state::StripRef> destinations (bool busToBus) const;
+    juce::String fieldText (int field) const;
+    void chooseField (int field, DropdownField&);
     /** The user layer behind `layer` (USER 1 / 2: the first two user layers,
         created when `create`); empty for the default layers. */
     juce::String userLayerId (const Layer&, bool create);
@@ -182,7 +187,8 @@ private:
     DropTarget dropTargetAt (juce::Point<int>) const;
     void updateKeys();
 
-    int category = 0;
+    int category = 0; // CHANNELS, BUS/MAIN, DCA, then SENDS, BUS -> BUS, FX (the fields)
+    int sendDest = 0, busDest = 0, fxSlot = 0;
     std::vector<state::FaderRef> selectedItems;
     std::vector<juce::Rectangle<int>> categoryKeys, sourceTiles, slotAreas, mapCells;
     juce::Rectangle<int> sourceArea, slotsArea, hintArea, mapArea;

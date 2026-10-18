@@ -81,6 +81,27 @@ juce::String LayerSet::keyLabel (const Layer& layer)
     return layer.name.toUpperCase();
 }
 
+void LayerSet::startSpill (Section s, const Spill& spill)
+{
+    ld::ld_layers_start_spill (handle, s, ld::SpillC { (int32_t) spill.kind, spill.index, spill.strip.toC() });
+}
+
+std::optional<LayerSet::Spill> LayerSet::getSpill (Section s) const
+{
+    ld::SpillC c {};
+    if (! ld::ld_layers_spill (handle, s, &c))
+        return std::nullopt;
+    return Spill { static_cast<Spill::Kind> (c.kind), c.index, state::StripRef::fromC (c.strip) };
+}
+
+std::optional<LayerSet::Section> LayerSet::findSpill (const Spill& spill) const
+{
+    for (int i = 0; i < kNumSections; ++i)
+        if (const auto s = getSpill (static_cast<Section> (i)); s && *s == spill)
+            return static_cast<Section> (i);
+    return std::nullopt;
+}
+
 void LayerSet::setSelectedLayerId (Section s, const juce::String& id)
 {
     const Utf8 u (id);

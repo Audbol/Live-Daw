@@ -883,7 +883,7 @@ namespace
             faders.addRow ("USER LAYER LINK", std::make_unique<ToggleKeys> (ctx, juce::StringArray { "L/C", "C/R" },
                                                                            std::vector<const char*> (std::begin (uiprefs::userLayerLink), std::end (uiprefs::userLayerLink))),
                            3.6f);
-            faders.addRow ("DCA SPILL", OnKey::fixed (false), 1.3f, false); // needs spill layers (W40)
+            faders.addRow ("DCA SPILL", onSetting (uiprefs::dcaSpill, false), 1.3f);
             faders.newBox();
             // App-specific: faders scrolled per press of the shift keys (ui.shiftStep).
             faders.addRow ("SHIFT STEP",
@@ -1779,47 +1779,6 @@ namespace
 } // namespace
 
 //==============================================================================
-/** "Press SETUP twice for CC EDIT" (firmware 3.1): watches the screen keys for
-    a press of SETUP while SETUP is already up. A third press goes back to the
-    tabs. */
-class SetupPage::SetupKeyWatcher final : public juce::MouseListener
-{
-public:
-    explicit SetupKeyWatcher (SetupPage& p) : page (p) { juce::Desktop::getInstance().addGlobalMouseListener (this); }
-    ~SetupKeyWatcher() override { juce::Desktop::getInstance().removeGlobalMouseListener (this); }
-
-    void mouseDown (const juce::MouseEvent& e) override
-    {
-        auto* button = dynamic_cast<juce::Button*> (e.eventComponent);
-        armed = button != nullptr && button->getButtonText() == "SETUP" && page.isShowing() && ! page.isParentOf (button);
-    }
-
-    void mouseUp (const juce::MouseEvent& e) override
-    {
-        if (! armed)
-            return;
-        armed = false;
-        if (auto* button = dynamic_cast<juce::Button*> (e.eventComponent); button == nullptr || ! button->isMouseOver())
-            return;
-        // After the key's own click (which shows SETUP again).
-        juce::Component::SafePointer<SetupPage> safe (&page);
-        juce::MessageManager::callAsync ([safe]
-        {
-            if (safe == nullptr)
-                return;
-            if (safe->subScreen != nullptr)
-                safe->closeSubScreen();
-            else
-                safe->openCustomControls (-1);
-        });
-    }
-
-private:
-    SetupPage& page;
-    bool armed = false;
-};
-
-//==============================================================================
 SetupPage::SetupPage (UiContext& c) : ctx (c)
 {
     tabRow.setTabs ({ { "GENERAL" }, { "AUDIO" }, { "SURFACE" }, { "REMOTE" }, { "DAW" }, { "PLUGINS", Dark::gold, true, 10 }, { "LOG" } });
@@ -1892,7 +1851,16 @@ SetupPage::SetupPage (UiContext& c) : ctx (c)
             ctx.showScreen (Screen::Setup);
         openMonitors();
     };
-    setupKeyWatcher = std::make_unique<SetupKeyWatcher> (*this);
+}
+
+bool SetupPage::screenKeyPressedAgain()
+{
+    // "Press SETUP twice for CC EDIT" (firmware 3.1); again goes back to the tabs.
+    if (subScreen != nullptr)
+        closeSubScreen();
+    else
+        openCustomControls (-1);
+    return true;
 }
 
 SetupPage::~SetupPage()

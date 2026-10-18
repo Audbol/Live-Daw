@@ -1,5 +1,6 @@
 #include "ui/FaderStrip.h"
 #include "dsp/DspUtils.h"
+#include "engine/Models.h"
 
 #include <optional>
 
@@ -77,6 +78,9 @@ namespace
     /** CH AUTOSELECT's deadtime: when several faders move at once, only the
         first selects its strip. */
     juce::uint32 lastAutoSelect = 0;
+
+    /** FX parameter faders (FX SPILL): the FX file colour. */
+    const juce::Colour kFxColour { 0xffc47ac4 };
 } // namespace
 
 FaderStrip::FaderStrip (UiContext& c, LayerSet::Section s) : ctx (c), section (s)
@@ -88,11 +92,7 @@ FaderStrip::FaderStrip (UiContext& c, LayerSet::Section s) : ctx (c), section (s
     fader.setMouseDragSensitivity (400);
     fader.textFromValueFunction = [] (double db) { return fader::text ((float) db); };
     fader.setPopupDisplayEnabled (true, false, this);
-    fader.onValueChange = [this]
-    {
-        if (auto* p = faderParam())
-            p->store ((float) fader.getValue());
-    };
+    fader.onValueChange = [this] { writeFader (fader.getValue()); };
     fader.onDragStart = [this]
     {
         // CH AUTOSELECT (SETUP > SURFACE): moving a fader selects its strip.
@@ -111,7 +111,13 @@ FaderStrip::FaderStrip (UiContext& c, LayerSet::Section s) : ctx (c), section (s
         addAndMakeVisible (k);
 
     selectKey.onPress = [this] { pressSelect(); };
-    selectKey.ledState = [this] { return strip != nullptr && ctx.getSelectedStrip && ctx.getSelectedStrip() == strip ? SurfaceKey::Lit : SurfaceKey::Off; };
+    selectKey.ledState = [this]
+    {
+        // A DCA's SELECT lights while it spills (DCA SPILL).
+        if (dca >= 0)
+            return isSpilling (ctx, { LayerSet::Spill::Kind::Dca, dca, {} }) ? SurfaceKey::Lit : SurfaceKey::Off;
+        return strip != nullptr && ctx.getSelectedStrip && ctx.getSelectedStrip() == strip ? SurfaceKey::Lit : SurfaceKey::Off;
+    };
 
     soloKey.onPress = [this]
     {
@@ -131,7 +137,12 @@ FaderStrip::FaderStrip (UiContext& c, LayerSet::Section s) : ctx (c), section (s
     // OVERRIDE, MUTE unmutes it (MixerEngine::pressMute).
     muteKey.onPress = [this]
     {
-        if (send)
+        if (fxp)
+        {
+            // FX SPILL (firmware 2.1): MUTE sets the parameter to its default (an EQ gain to 0 dB).
+            fxp->value->store (models::model (models::Fx, fxp->model).params[(size_t) fxp->index].defaultValue);
+        }
+        else if (send)
             send->on->store (! send->on->load());
         else if (strip != nullptr)
             ctx.engine.pressMute (*strip);
@@ -140,6 +151,8 @@ FaderStrip::FaderStrip (UiContext& c, LayerSet::Section s) : ctx (c), section (s
     };
     muteKey.ledState = [this]
     {
+        if (fxp)
+            return atDefault() ? SurfaceKey::Lit : SurfaceKey::Off;
         if (send)
             return ! send->on->load() ? SurfaceKey::Lit : SurfaceKey::Off;
         if (strip != nullptr)
@@ -165,20 +178,29 @@ void FaderStrip::refresh()
     strip = nullptr;
     dca = -1;
     send.reset();
+    fxp.reset();
 
     if (target)
     {
         if (target->dca)
             dca = juce::jlimit (0, kNumDcas - 1, target->dcaIndex);
+        else if (target->fxParam)
+        {
+            const int slot = juce::jlimit (0, kNumFx - 1, target->fxSlot);
+            const int model = ctx.engine.getFx().getModel (slot);
+            if (model > ld::kFxExt && juce::isPositiveAndBelow (target->param, (int) models::model (models::Fx, model).params.size()))
+                fxp = ParamTarget { &ctx.engine.getFx().params (slot).values[target->param], slot, model, target->param };
+        }
         else
-            strip = state::findStrip (ctx.engine, target->strip);
+            strip = state::findStrip (ctx.engine, target->strip); // a send fader: its source
     }
 
     // Sends on Fader between the selected strip (or the ALTERNATIVE SOF
     // strip) and this one: the send from an input (or bus) to a bus, main or
     // matrix. RIGHT SECTION SENDS ON FADERS off keeps the right section's faders.
     const bool sofHere = section != LayerSet::Right || ctx.settings.getBoolValue (uiprefs::rightSectionSof, true);
-    if (ctx.sendsOnFader && strip != nullptr && sofHere)
+    const bool sendFader = target.has_value() && target->send;
+    if ((sendFader || (ctx.sendsOnFader && sofHere)) && strip != nullptr)
     {
         auto* sel = ctx.sofDestination.has_value() ? state::findStrip (ctx.engine, *ctx.sofDestination)
                                                    : (ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr);
@@ -217,7 +239,14 @@ void FaderStrip::refresh()
             return std::nullopt;
         };
 
-        if (sel != nullptr && sel != strip)
+        auto* dest = sendFader ? state::findStrip (ctx.engine, target->to) : nullptr;
+        if (sendFader)
+        {
+            // A send fader of a layer or spill: the source's send to its destination.
+            if (dest != nullptr && (send = sendOf (*strip, *dest)))
+                send->tag = "> " + send->tag;
+        }
+        else if (sel != nullptr && sel != strip)
         {
             // A destination selected: this fader sets its send to it. A source
             // selected: this destination's fader sets the source's send to it.
@@ -264,8 +293,40 @@ void FaderStrip::glide (double targetDb)
         fader.setValue (range.convertFrom0to1 (from + (to > from ? step : -step)), juce::dontSendNotification);
 }
 
+double FaderStrip::faderPosition() const
+{
+    if (fxp)
+    {
+        const auto& spec = models::model (models::Fx, fxp->model).params[(size_t) fxp->index];
+        return fader.getNormalisableRange().convertFrom0to1 (juce::jlimit (0.0, 1.0, (double) spec.toNormalised (fxp->value->load())));
+    }
+    auto* p = faderParam();
+    return p != nullptr ? (double) p->load() : 0.0;
+}
+
+void FaderStrip::writeFader (double position)
+{
+    if (fxp)
+    {
+        const auto& spec = models::model (models::Fx, fxp->model).params[(size_t) fxp->index];
+        fxp->value->store (spec.fromNormalised ((float) fader.getNormalisableRange().convertTo0to1 (position)));
+    }
+    else if (auto* p = faderParam())
+        p->store ((float) position);
+}
+
+bool FaderStrip::atDefault() const
+{
+    if (! fxp)
+        return false;
+    const auto& spec = models::model (models::Fx, fxp->model).params[(size_t) fxp->index];
+    return std::abs (fxp->value->load() - spec.defaultValue) < 1.0e-4f;
+}
+
 std::atomic<float>* FaderStrip::faderParam() const noexcept
 {
+    if (fxp)
+        return fxp->value;
     if (send)
         return send->level;
     if (strip != nullptr)
@@ -277,18 +338,35 @@ std::atomic<float>* FaderStrip::faderParam() const noexcept
 
 void FaderStrip::bindControls()
 {
-    const bool any = strip != nullptr || dca >= 0;
+    const bool any = strip != nullptr || dca >= 0 || fxp.has_value();
     fader.setEnabled (any);
-    selectKey.setEnabled (strip != nullptr);
-    soloKey.setEnabled (any && ! send);
+    // A DCA's SELECT spills it when DCA SPILL is on (SETUP > SURFACE).
+    selectKey.setEnabled (strip != nullptr || dca >= 0);
+    soloKey.setEnabled ((strip != nullptr || dca >= 0) && ! send);
     muteKey.setEnabled (any);
-    fader.setColour (juce::Slider::thumbColourId, send ? Colours::solo : Colours::text);
+    fader.setColour (juce::Slider::thumbColourId, send ? Colours::solo : (fxp ? kFxColour : Colours::text));
+    fader.textFromValueFunction = [this] (double v)
+    {
+        if (fxp)
+        {
+            const auto& spec = models::model (models::Fx, fxp->model).params[(size_t) fxp->index];
+            return spec.display (spec.fromNormalised ((float) fader.getNormalisableRange().convertTo0to1 (v)));
+        }
+        return fader::text ((float) v);
+    };
     shownName = {};
     timerCallback();
 }
 
 void FaderStrip::pressSelect()
 {
+    // DCA SPILL: selecting a DCA shows its strips on the left section (the
+    // center for a DCA on the right section); again ends the spill.
+    if (dca >= 0 && ctx.settings.getBoolValue (uiprefs::dcaSpill, false))
+    {
+        toggleSpill (ctx, section, { LayerSet::Spill::Kind::Dca, dca, {} });
+        return;
+    }
     if (strip == nullptr)
         return;
 
@@ -345,6 +423,17 @@ ScribbleInfo FaderStrip::scribbleInfo() const
         info.number = "DCA" + juce::String (dca + 1);
         info.name = shownName;
     }
+    else if (fxp)
+    {
+        // FX SPILL: the slot, the device, the parameter and its value.
+        const auto& m = models::model (models::Fx, fxp->model);
+        info.number = "FX" + juce::String (fxp->slot + 1);
+        info.line2 = m.name.toUpperCase();
+        info.line2Colour = kFxColour;
+        info.line3 = shownValue;
+        info.name = m.params[(size_t) fxp->index].label.toUpperCase();
+        info.icon = Icon::Insert;
+    }
 
     if (send)
     {
@@ -362,9 +451,9 @@ ScribbleInfo FaderStrip::scribbleInfo() const
 
 void FaderStrip::timerCallback()
 {
-    if (auto* p = faderParam(); p != nullptr && ! fader.isMouseButtonDown())
+    if (faderParam() != nullptr && ! fader.isMouseButtonDown())
     {
-        const double v = p->load();
+        const double v = faderPosition();
         if (std::abs (v - fader.getValue()) > 1.0e-4)
             glide (v);
     }
@@ -374,7 +463,9 @@ void FaderStrip::timerCallback()
     juce::String name, value, source;
     std::array<int, 2> lit {};
 
-    if (auto* p = faderParam())
+    if (fxp)
+        value = models::model (models::Fx, fxp->model).params[(size_t) fxp->index].display (fxp->value->load());
+    else if (auto* p = faderParam())
         value = fader::text (p->load());
 
     if (strip != nullptr)
@@ -464,7 +555,8 @@ void FaderStrip::paint (juce::Graphics& g)
     band (meterArea, 4, juce::Colour (0xff141517));
 
     // Colour light bar (COLOR LED brightness) and scribble strip.
-    const juce::Colour colour = strip != nullptr ? stripDisplayColour (*strip) : (dca >= 0 ? wingColour (shownColour) : Colours::ledOff);
+    const juce::Colour colour = strip != nullptr ? stripDisplayColour (*strip)
+                                : (dca >= 0 ? wingColour (shownColour) : (fxp ? kFxColour : Colours::ledOff));
     drawLightBar (g, barArea.toFloat(), colour.withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
                   target.has_value() && shownLight);
     drawScribble (g, lcdArea.toFloat(), target ? scribbleInfo() : ScribbleInfo {});

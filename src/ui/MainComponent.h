@@ -63,6 +63,8 @@ private:
 
     void newShow();
     void openShow();
+    void openShowFile (const juce::File&);
+    void saveShowTo (juce::File);
     void saveShow (bool saveAs);
     void updateTitle();
 

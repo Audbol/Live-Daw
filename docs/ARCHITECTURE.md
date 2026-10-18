@@ -296,9 +296,25 @@ the same load are kept.
 Show
  ├─ Console     full structure, DCAs, mute groups, FX slots (via the bridge)
  ├─ Layers      section widths, user banks, selected banks
+ ├─ GlobalSafe  DCAs, mute groups, FX slots, sections, console settings
+ ├─ PartialScope  the scope PARTIAL LOAD / UPDATE last used
  └─ Scene[]     State (all sections) + recall scope + fade time + notes
-     └─ Snippet[]   State (chosen strips × chosen sections) + "fire with scene"
+     └─ Snippet[]   State (each strip with its own sections) + scope + "fire with scene"
 ```
+
+- `livedaw-session/src/scope.rs`: a `Scope` is sections + strips (or all) + DCA,
+  mute group and FX slot masks + the console-wide settings. Scoped recall filters the
+  captured `<State>` (strips outside the scope, items outside the masks or GLOBAL
+  safe, console parts) and hands the rest to `console::apply`, so DCAs, mute groups and
+  FX slots still apply with their section (FADER, GROUPS, INSERTS). PARTIAL UPDATE
+  merges a scoped capture into the stored state (a strip's captured children replace
+  the stored ones). Snippet REC captures the console once per section at REC and
+  compares at STOP: the changed (strip, section) pairs, DCAs, mute groups and FX slots
+  become the snippet (each strip element keeps its own `sections`), and the number of
+  changed values is its parameter count. Plugins are left out of the comparison.
+- `livedaw-session/src/presets.rs`: FX presets (`.lfx`, one `<Slot>` through the same
+  per-slot capture / apply as shows) and channel presets (`.lchn`, one `<Strip>` with a
+  scope, applied to another strip of the same family by rewriting its `ref`).
 
 - The console also keeps the console-level state of `livedaw-session/src/globals.rs`:
   SOLO MODE, the solo bus and MUTEGROUP/SIP OVERRIDE, talkback, the strips' talk
@@ -337,9 +353,16 @@ Show
   `BUS MASTER` `USER 1` `USER 2`. A layer longer than its section stays one key; the
   surface scrolls it with the shift keys. Ids are stable, and ids of older shows
   (`bus-2`, `dca-2`, `all`, ...) resolve to the key that holds those faders now.
-- A bank holds `FaderRef`s: a strip or a DCA. User banks are saved with the show; the
-  first two are on the USER 1 / USER 2 keys, further ones get keys of their own under
-  the shift keys. A reference to a removed strip is skipped.
+- A bank holds `FaderRef`s: a strip, a DCA, a send level (`send:ch:3>bus:0`) or an
+  FX parameter (`fxp:2.5`). User banks are saved with the show; the first two are on
+  the USER 1 / USER 2 keys, further ones get keys of their own under the shift keys. A
+  reference to a removed strip is skipped.
+- **Spill** (`SpillKind`): a computed layer (id `spill`) shown by a section until it
+  ends: a DCA's members, the sources sending to a bus, an FX device's continuous
+  parameters, an automix group, a strip's sends. `spill_target` sends a spill from the
+  right section to the center, the rest to the left. The layer set keeps each
+  section's scroll offset, so ending a spill restores the layer and the offset; a
+  layer key ends it without going back.
 
 ## The UI
 
@@ -371,7 +394,7 @@ blinking LEDs.
   the INIT / COPY / SETTINGS / FEED overlays; `HomeScreens.*`: INPUT, FILTER SETUP,
   GATE / COMP, EQ, INS 1 / INS 2, MAIN SENDS, BUS / MATRIX SENDS and the overlays;
   `HomeWidgets.h`: their shared widgets),
-  EFFECTS, METERS, ROUTING, SETUP, LIBRARY (`ShowPanel.*`: the scene / snippet list;
+  EFFECTS, METERS, ROUTING, SETUP, LIBRARY (`ShowPanel.*`: the scene / snippet list and the INT / USB file list;
   `ScopeWindow.*`: the SCOPE and GLOBAL window) and UTILITY, and the VIEW screens
   (`ViewPages.*`: OVERVIEW, FADERS, SENDS, CONFIG, MUTE GROUPS, for the section in
   `UiContext::viewSection`). `ScreenWidgets.h` holds the darker widgets of the SETUP,
@@ -568,7 +591,13 @@ presets are Live DAW's own (built from the translation table), not the WING's fi
   `livedaw-session/custom.rs`) cover the phase-1 functions: faders, pan, DCAs, bus
   sends, FX parameters, monitoring, mutes / solos, mute groups, sends on fader, pages,
   show control, scene recall, single actions, DAW buttons / V-pots and MIDI CC / note /
-  program change; spill, USB / SD and GPIO functions are listed disabled.
+  program change; spill, USB / SD and GPIO functions are listed disabled (the spill
+  layers themselves exist: DCA SPILL, the SENDS screens' SPILL and FX SPILL use them).
+- LIBRARY: scenes and snippets live in the show (no stand-alone `.snap` / `.snip`
+  files, so ADD ITEM TO SHOW is disabled); 10 content sections instead of the
+  console's 17 (CONTENTS keys sharing a section light together); the SCOPE window's
+  SFC, PREFS and L / C / R tiles (surface and preferences in scenes) are disabled; no
+  CLIP player or SEND MIDI.
 - Not yet: the monitor paths' DIRECT IN, EQ, INVERT, DELAY and limiter, BAND SOLO
   boost, SOURCE SOLO, source tags and remote preamp control (drawn disabled).
 - Recorder: no transport without a running audio device (play stays in Starting);
@@ -580,7 +609,5 @@ presets are Live DAW's own (built from the translation table), not the WING's fi
   assumes the project's sample rate is the console's (a mismatch is flagged).
 - Shown on the screens but disabled until the engine supports them (the WING manual
   describes them): TAP WIDTH and TAP EQ on sends,
-  KEY / XOVER / BAND SOLO, the RTA, the LR vector scope, partial scene load/update
-  and restore, per-strip scene
-  scopes, DCA / mute group / FX safes, snippet recording, and send / FX / MIDI CC
-  faders in custom layers.
+  KEY / XOVER / BAND SOLO, the RTA, the LR vector scope and MIDI CC faders in custom
+  layers.

@@ -1,4 +1,5 @@
 #include "ui/UiContext.h"
+#include "ui/WingPopups.h"
 #include "engine/Models.h"
 
 namespace livedaw::ui
@@ -136,46 +137,69 @@ void showFxSlotMenu (UiContext& ctx, int slot, juce::Component* target)
 
 void showFxDeviceMenu (UiContext& ctx, int slot, juce::Component* target, std::function<void()> chosen)
 {
+    if (target == nullptr)
+        return;
+
+    // FX TYPE: the device list grouped as on the console (PREMIUM, STANDARD,
+    // CHANNEL STRIPS; the group names are dim rows), then PLUGIN (EXT) and NONE.
     auto& fx = ctx.engine.getFx();
     const auto& devices = models::table (models::Fx);
     const int current = fx.getModel (slot);
-    juce::PopupMenu premium, standard, channel;
-    for (const auto& m : devices)
-    {
-        auto* sub = m.category == models::Category::FxPremium    ? &premium
-                    : m.category == models::Category::FxStandard ? &standard
-                    : m.category == models::Category::FxChannel  ? &channel
-                                                                  : nullptr;
-        if (sub != nullptr)
-            sub->addItem (m.index + 1, m.name.toUpperCase(), FxSlots::isAllowed (m.index, slot), m.index == current);
-    }
+    constexpr int kPlugin = -2, kNone = -1, kHeader = -3;
+    juce::StringArray items;
+    std::vector<int> values; // a device index, kPlugin, kNone or kHeader
+    popups::ListOptions options;
+    options.columns = 4;
+    options.caption = "FX " + juce::String (slot + 1) + ": FX TYPE";
+    int selected = -1;
 
-    juce::PopupMenu menu;
-    menu.addSectionHeader ("FX " + juce::String (slot + 1));
-    menu.addSubMenu (slot < 8 ? "PREMIUM FX" : "PREMIUM FX (slots 1-8 only)", premium, slot < 8);
-    menu.addSubMenu ("STANDARD FX", standard);
-    menu.addSubMenu ("CHANNEL STRIPS", channel);
-    menu.addSeparator();
-    menu.addItem (-2, "PLUGIN (EXT)...", true, current == ld::kFxExt);
-    menu.addItem (-1, "NONE", true, current == ld::kFxNone);
+    auto addGroup = [&] (models::Category category, const juce::String& title)
+    {
+        options.disabled.push_back (items.size());
+        items.add (title);
+        values.push_back (kHeader);
+        for (const auto& m : devices)
+        {
+            if (m.category != category)
+                continue;
+            if (! FxSlots::isAllowed (m.index, slot))
+                options.disabled.push_back (items.size());
+            if (m.index == current)
+                selected = items.size();
+            items.add (m.name.toUpperCase());
+            values.push_back (m.index);
+        }
+    };
+    addGroup (models::Category::FxPremium, slot < 8 ? "PREMIUM FX" : "PREMIUM (FX 1-8 ONLY)");
+    addGroup (models::Category::FxStandard, "STANDARD FX");
+    addGroup (models::Category::FxChannel, "CHANNEL STRIPS");
+    if (current == ld::kFxExt)
+        selected = items.size();
+    items.add ("PLUGIN (EXT)...");
+    values.push_back (kPlugin);
+    if (current == ld::kFxNone)
+        selected = items.size();
+    items.add ("NONE");
+    values.push_back (kNone);
 
     juce::Component::SafePointer<juce::Component> safeTarget (target);
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target), [&ctx, slot, safeTarget, chosen] (int r)
+    popups::chooseFrom (*target, items, selected, [&ctx, slot, safeTarget, chosen, values] (int i)
     {
+        if (! juce::isPositiveAndBelow (i, (int) values.size()) || values[(size_t) i] == kHeader)
+            return;
+        const int r = values[(size_t) i];
         auto& slots = ctx.engine.getFx();
-        if (r == -2)
+        if (r == kPlugin)
         {
             showFxSlotMenu (ctx, slot, safeTarget.getComponent());
             return;
         }
-        if (r == 0)
-            return;
         if (slots.hasPlugin (slot))
             clearFx (ctx, slot); // closes the plugin's editor first
-        slots.setModel (slot, r == -1 ? ld::kFxNone : r - 1);
+        slots.setModel (slot, r == kNone ? ld::kFxNone : r);
         if (chosen)
             chosen();
-    });
+    }, options);
 }
 
 void clickFxSlot (UiContext& ctx, int slot, juce::Component* target)

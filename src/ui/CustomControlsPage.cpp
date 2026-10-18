@@ -1151,8 +1151,8 @@ void CustomControlsPage::paint (juce::Graphics& g)
     g.setColour (Dark::body);
     g.fillRect (colourKey.getUnion (clearKey).expanded (10, 8));
     g.fillRect (nameKey.expanded (10, 8).withBottom (clearKey.getBottom() + 8));
-    outlinedKey (g, colourKey, Icon::Edit, "COLOR");
-    outlinedKey (g, clearKey, Icon::Info, "CLR ALL");
+    outlinedKey (g, colourKey, Icon::PaintBucket, "COLOR");
+    outlinedKey (g, clearKey, Icon::Warning, "CLR ALL");
     outlinedKey (g, nameKey, Icon::Edit, "NAME");
 }
 

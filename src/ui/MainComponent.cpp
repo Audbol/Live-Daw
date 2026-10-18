@@ -190,6 +190,8 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     ctx.newShow = [this] { newShow(); };
     ctx.openShow = [this] { openShow(); };
     ctx.saveShow = [this] (bool saveAs) { saveShow (saveAs); };
+    ctx.openShowFile = [this] (const juce::File& file) { openShowFile (file); };
+    ctx.saveShowTo = [this] (const juce::File& file) { saveShowTo (file); };
 
     // The recording session (the recorder screen, the editor and MULTI TRANSP share it).
     recording = std::make_unique<daw::Session> (engine.getRecorder(), &settings);
@@ -740,45 +742,49 @@ void MainComponent::openShow()
     fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                               [this] (const juce::FileChooser& fc)
     {
-        const auto file = fc.getResult();
-        if (file == juce::File())
-            return;
-
-        const auto result = reloadShow (file, true);
-        showFile = file.hasFileExtension (Show::fileExtension) ? file : juce::File();
-        updateTitle();
-        log.info ("Opened show " + file.getFileName());
-
-        if (result.failed())
-        {
-            log.warning (result.getErrorMessage());
-            popups::warn (*display, "OPEN SHOW", result.getErrorMessage());
-        }
+        if (const auto file = fc.getResult(); file != juce::File())
+            openShowFile (file);
     });
+}
+
+void MainComponent::openShowFile (const juce::File& file)
+{
+    const auto result = reloadShow (file, true);
+    showFile = file.hasFileExtension (Show::fileExtension) ? file : juce::File();
+    updateTitle();
+    log.info ("Opened show " + file.getFileName());
+
+    if (result.failed())
+    {
+        log.warning (result.getErrorMessage());
+        popups::warn (*display, "OPEN SHOW", result.getErrorMessage());
+    }
+}
+
+void MainComponent::saveShowTo (juce::File file)
+{
+    file = file.withFileExtension (Show::fileExtension);
+    if (show.getName() == "Untitled show" || show.getName() == "Imported session")
+        show.setName (file.getFileNameWithoutExtension());
+
+    const auto result = show.saveToFile (file);
+
+    if (result.failed())
+    {
+        log.error ("Save failed: " + result.getErrorMessage());
+        popups::warn (*display, "SAVE SHOW", result.getErrorMessage());
+        return;
+    }
+
+    showFile = file;
+    log.info ("Saved show " + file.getFileName());
+    updateTitle();
+    display->refreshLibrary();
 }
 
 void MainComponent::saveShow (bool saveAs)
 {
-    auto writeTo = [this] (juce::File file)
-    {
-        file = file.withFileExtension (Show::fileExtension);
-        if (show.getName() == "Untitled show" || show.getName() == "Imported session")
-            show.setName (file.getFileNameWithoutExtension());
-
-        const auto result = show.saveToFile (file);
-
-        if (result.failed())
-        {
-            log.error ("Save failed: " + result.getErrorMessage());
-            popups::warn (*display, "SAVE SHOW", result.getErrorMessage());
-            return;
-        }
-
-        showFile = file;
-        log.info ("Saved show " + file.getFileName());
-        updateTitle();
-        display->refreshLibrary();
-    };
+    auto writeTo = [this] (const juce::File& file) { saveShowTo (file); };
 
     if (! saveAs && showFile != juce::File())
     {
