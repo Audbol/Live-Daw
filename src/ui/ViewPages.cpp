@@ -223,7 +223,7 @@ namespace
 
     void verticalMeter (juce::Graphics& g, juce::Rectangle<float> r, float level, juce::Colour c, juce::Colour off = Colours::screenDark)
     {
-        const int segments = juce::jlimit (4, 20, (int) (r.getHeight() / 3.0f));
+        const int segments = juce::jlimit (4, screenCap (20), (int) (r.getHeight() / 3.0f));
         const float h = r.getHeight() / (float) segments;
         for (int i = 0; i < segments; ++i)
         {
@@ -335,7 +335,7 @@ namespace
     /** A screen fader: dark track, blue (or red) fill to the cap, a white value box at the cap. */
     void paintFader (juce::Graphics& g, juce::Rectangle<float> r, float db, juce::Colour fill, bool active)
     {
-        const float boxH = juce::jlimit (12.0f, 18.0f, r.getWidth() * 0.26f);
+        const float boxH = juce::jlimit (12.0f, screenCap (18.0f), r.getWidth() * 0.26f);
         auto lane = r.reduced (0.0f, boxH * 0.5f);
         const float trackW = juce::jmax (4.0f, r.getWidth() * 0.2f);
         auto trk = lane.withSizeKeepingCentre (trackW, lane.getHeight());
@@ -352,7 +352,7 @@ namespace
         g.setColour (Dark::faderFill);
         const float unity = lane.getBottom() - lane.getHeight() * fader::dbToPos (0.0f);
         g.fillEllipse (juce::Rectangle<float> (4.0f, 4.0f).withCentre ({ trk.getRight() + 6.0f, unity }));
-        auto box = juce::Rectangle<float> (juce::jmin (r.getWidth(), 64.0f), boxH).withCentre ({ r.getCentreX(), y });
+        auto box = juce::Rectangle<float> (juce::jmin (r.getWidth(), screenCap (64.0f)), boxH).withCentre ({ r.getCentreX(), y });
         g.setColour (active ? juce::Colours::white : Colours::textDim);
         g.fillRoundedRectangle (box, 2.0f);
         g.setColour (juce::Colours::black);
@@ -440,7 +440,7 @@ public:
         keys.clear();
         pageKeys.clear();
         auto b = getLocalBounds().reduced (3);
-        auto pager = b.removeFromBottom (juce::jlimit (20, 34, getHeight() / 14));
+        auto pager = b.removeFromBottom (juce::jlimit (20, screenCap (34), getHeight() / 14));
         prevKey = pager.removeFromLeft (pager.getWidth() / 2).reduced (2, 0);
         nextKey = pager.reduced (2, 0);
         b.removeFromBottom (6);
@@ -453,7 +453,7 @@ public:
 
         const int numPages = page.numPages();
         const int rowsNeeded = juce::jmax (numPages, (int) right.size() + 4);
-        const int keyH = juce::jlimit (16, 40, b.getHeight() / juce::jmax (1, rowsNeeded));
+        const int keyH = juce::jlimit (16, screenCap (40), b.getHeight() / juce::jmax (1, rowsNeeded));
         const int colW = (b.getWidth() - 4) / 2;
         auto lc = b.removeFromLeft (colW);
         b.removeFromLeft (4);
@@ -725,7 +725,7 @@ void ViewPage::resized()
     column->setVisible (hasLayerColumn());
     if (hasLayerColumn())
     {
-        column->setBounds (b.removeFromRight (juce::jlimit (110, 200, getWidth() * 16 / 100)));
+        column->setBounds (b.removeFromRight (juce::jlimit (110, screenCap (200), getWidth() * 16 / 100)));
         b.removeFromRight (4);
         column->rebuild();
     }
@@ -831,7 +831,7 @@ namespace
         const bool on = ins.on.load() && (slot >= 0 || mode > 0);
         auto inner = r.reduced (3.0f);
         const juce::String text = mode > 0 ? juce::String ("AUTO") : slot >= 0 ? "FX " + juce::String (slot + 1) : juce::String ("INS");
-        miniChip (g, inner.removeFromTop (juce::jmin (inner.getHeight() * 0.5f, 16.0f)).withWidth (inner.getWidth() * 0.62f), text, on, Dark::on);
+        miniChip (g, inner.removeFromTop (juce::jmin (inner.getHeight() * 0.5f, screenCap (16.0f))).withWidth (inner.getWidth() * 0.62f), text, on, Dark::on);
         juce::String device;
         auto& fx = ctx.engine.getFx();
         if (mode > 0)
@@ -856,7 +856,7 @@ namespace
         const float gr = (gate ? s.meters.gateReductionDb.load() : s.meters.dynReductionDb.load()) / 24.0f;
         verticalMeter (g, inner.removeFromRight (juce::jmax (3.0f, inner.getWidth() * 0.1f)), juce::jlimit (0.0f, 1.0f, gr), Colours::meterYellow);
         inner.removeFromRight (2.0f);
-        auto top = inner.removeFromTop (juce::jmin (inner.getHeight() * 0.5f, 16.0f));
+        auto top = inner.removeFromTop (juce::jmin (inner.getHeight() * 0.5f, screenCap (16.0f)));
         if (gate)
         {
             // Green while the gate is open.
@@ -906,7 +906,7 @@ namespace
         const std::pair<const char*, bool> chips[] = { { "INV", p.input.invert.load() }, { "LC", ch && p.filter.lowCut.load() },
                                                        { "HC", ch && p.filter.highCut.load() }, { "FLT", ch && p.filter.tool.load() },
                                                        { "DLY", p.input.delayOn.load() }, { p.stereo.load() || s.isOutput() ? "ST" : "M", false } };
-        const float w = inner.getWidth() / 3.0f, h = juce::jmin (inner.getHeight() / 2.0f, 16.0f);
+        const float w = inner.getWidth() / 3.0f, h = juce::jmin (inner.getHeight() / 2.0f, screenCap (16.0f));
         for (int i = 0; i < 6; ++i)
             miniChip (g, juce::Rectangle<float> (inner.getX() + w * (float) (i % 3), inner.getCentreY() - h + h * (float) (i / 3), w, h).reduced (1.0f),
                       chips[i].first, chips[i].second, Dark::choice);
@@ -1356,7 +1356,7 @@ std::atomic<bool>* SendsViewPage::sendOn (Strip& s, bool create) const
 void SendsViewPage::layoutContent()
 {
     auto b = content;
-    auto top = b.removeFromTop (juce::jlimit (40, 80, getHeight() * 15 / 100));
+    auto top = b.removeFromTop (juce::jlimit (40, screenCap (80), getHeight() * 15 / 100));
     b.removeFromTop (6);
     strips = b;
     groupKeys.clear();
@@ -1364,7 +1364,7 @@ void SendsViewPage::layoutContent()
     const int buses = (int) ctx.engine.getBuses().size();
     const int groups = (buses + 7) / 8 + 2;
     auto keys = top.removeFromLeft (top.getWidth() * 34 / 100);
-    keys = keys.withSizeKeepingCentre (keys.getWidth(), juce::jmin (keys.getHeight(), 40));
+    keys = keys.withSizeKeepingCentre (keys.getWidth(), juce::jmin (keys.getHeight(), screenCap (40)));
     const int kw = keys.getWidth() / juce::jmax (4, juce::jmin (groups, 6));
     for (int i = 0; i < groups && i < 6; ++i)
         groupKeys.push_back (keys.removeFromLeft (kw).reduced (2, 0));
@@ -1814,10 +1814,10 @@ std::vector<state::FaderRef> ConfigViewPage::sourceItems() const
 void ConfigViewPage::layoutContent()
 {
     auto b = content;
-    auto top = b.removeFromTop (juce::jlimit (36, 56, getHeight() / 10));
+    auto top = b.removeFromTop (juce::jlimit (36, screenCap (56), getHeight() / 10));
     b.removeFromTop (6);
     categoryKeys.clear();
-    const int kw = juce::jmin (100, top.getWidth() / 11);
+    const int kw = juce::jmin (screenCap (100), top.getWidth() / 11);
     for (int i = 0; i < 3; ++i)
         categoryKeys.push_back (top.removeFromLeft (kw).reduced (2, 2));
     top.removeFromLeft (6);
@@ -1836,9 +1836,9 @@ void ConfigViewPage::layoutContent()
             f->setBounds (top.removeFromLeft (fw).reduced (2, 2));
 
     // The page map at the very bottom, the layer's slots above it, the source grid on top.
-    mapArea = b.removeFromBottom (juce::jlimit (14, 22, getHeight() / 26));
+    mapArea = b.removeFromBottom (juce::jlimit (14, screenCap (22), getHeight() / 26));
     b.removeFromBottom (4);
-    slotsArea = b.removeFromBottom (juce::jlimit (50, 96, getHeight() * 17 / 100));
+    slotsArea = b.removeFromBottom (juce::jlimit (50, screenCap (96), getHeight() * 17 / 100));
     b.removeFromBottom (8);
     sourceArea = b;
     hintArea = slotsArea;
@@ -1853,7 +1853,7 @@ void ConfigViewPage::layoutContent()
     const int beforeAux = firstAux < 0 ? (int) items.size() : firstAux;
     rowsNeeded = (beforeAux + 7) / 8 + ((int) items.size() - beforeAux + 7) / 8;
     const int tw = sourceArea.getWidth() / 8;
-    const int th = juce::jlimit (12, 44, sourceArea.getHeight() / juce::jmax (1, rowsNeeded));
+    const int th = juce::jlimit (12, screenCap (44), sourceArea.getHeight() / juce::jmax (1, rowsNeeded));
     for (int i = 0; i < (int) items.size(); ++i)
     {
         const int index = i < beforeAux ? i : (beforeAux + 7) / 8 * 8 + (i - beforeAux);
@@ -1971,7 +1971,7 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
     // from the next group in small windows).
     int platePad = 4;
     if (slotAreas.size() > 4)
-        platePad = juce::jlimit (1, 4, (slotAreas[4].getX() - slotAreas[3].getRight()) / 2 - 2);
+        platePad = juce::jlimit (1, screenCap (4), (slotAreas[4].getX() - slotAreas[3].getRight()) / 2 - 2);
     for (size_t i = 0; i < slotAreas.size(); i += 4)
     {
         const auto last = slotAreas[juce::jmin (slotAreas.size() - 1, i + 3)];
@@ -2247,10 +2247,10 @@ void MuteGroupsViewPage::layoutContent()
     int rows = 0;
     for (auto& gs : grids)
         rows += ((int) ctx.engine.getStrips (gs.kind).size() + 3) / 4;
-    const int headerH = juce::jlimit (14, 22, left.getHeight() / 26);
-    const int numberH = juce::jlimit (16, 34, left.getHeight() / 15);
-    const int captionH = juce::jlimit (10, 14, left.getHeight() / 34);
-    const int sourcesH = captionH + juce::jlimit (10, 16, left.getHeight() / 30);
+    const int headerH = juce::jlimit (14, screenCap (22), left.getHeight() / 26);
+    const int numberH = juce::jlimit (16, screenCap (34), left.getHeight() / 15);
+    const int captionH = juce::jlimit (10, screenCap (14), left.getHeight() / 34);
+    const int sourcesH = captionH + juce::jlimit (10, screenCap (16), left.getHeight() / 30);
     const int available = left.getHeight() - headerH - numberH - 8 - 5 * captionH - sourcesH;
     const int cell = juce::jlimit (4, (colW - 8) / 4, available / juce::jmax (1, rows));
 
@@ -2277,7 +2277,7 @@ void MuteGroupsViewPage::layoutContent()
 
     // The group keys: 1-4 in the first column, 5-8 in the second.
     auto keysArea = right;
-    unassignKey.setBounds (keysArea.removeFromBottom (juce::jlimit (28, 44, getHeight() / 11)).withTrimmedLeft (keysArea.getWidth() / 2).reduced (4, 2));
+    unassignKey.setBounds (keysArea.removeFromBottom (juce::jlimit (28, screenCap (44), getHeight() / 11)).withTrimmedLeft (keysArea.getWidth() / 2).reduced (4, 2));
     keysArea.removeFromBottom (6);
     const int kw = keysArea.getWidth() / 2, kh = keysArea.getHeight() / 4;
     for (int gi = 0; gi < kNumMuteGroups; ++gi)
@@ -2299,7 +2299,7 @@ void MuteGroupsViewPage::paintContent (juce::Graphics& g)
         g.setColour (juce::Colours::black);
         g.setFont (viewFont (TypeScale::body, (float) headers[gi].getHeight() * 0.75f));
         g.drawFittedText (ctx.engine.getMuteGroupName (gi).toUpperCase(), headers[gi].reduced (2, 0), juce::Justification::centred, 1, 0.6f);
-        auto number = col.withTrimmedTop (headers[gi].getHeight() + 2).withHeight (juce::jlimit (16, 34, columns[gi].getHeight() / 15));
+        auto number = col.withTrimmedTop (headers[gi].getHeight() + 2).withHeight (juce::jlimit (16, screenCap (34), columns[gi].getHeight() / 15));
         g.setColour (Colours::screenPanel);
         g.fillRect (number);
         g.setColour (Dark::textDim);

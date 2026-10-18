@@ -264,7 +264,7 @@ public:
     }
 
     std::function<bool()> isOn;
-    bool iconAbove = false, outlined = false, twoLines = false;
+    bool iconAbove = false, outlined = false, twoLines = false, labelBeside = false;
     juce::Colour offColour = colours::keyOff;
     juce::Colour offInk = colours::dim;  // the text of an unlit key
     juce::Colour frame = juce::Colours::black;  // keyboard-style keys: #484848
@@ -288,6 +288,22 @@ public:
     {
         const bool on = getToggleState();
         auto r = getLocalBounds().toFloat();
+        if (labelBeside && icon.has_value())
+        {
+            // A square icon key with its label beside it on the panel
+            // (the overview's LO CUT / HI CUT / TILT EQ, Fig. 21).
+            auto keyArea = r.removeFromLeft (juce::jmin (r.getHeight(), r.getWidth() * 0.45f)).withSizeKeepingCentre (r.getHeight(), r.getHeight());
+            auto fill = on ? onColour : offColour;
+            if (down || (over && isEnabled()))
+                fill = fill.brighter (down ? 0.15f : 0.07f);
+            paintKeyBody (g, keyArea, fill, frame);
+            drawIcon (g, *icon, keyArea.reduced (keyArea.getHeight() * 0.22f), on ? juce::Colours::black : offInk);
+            r.removeFromLeft (r.getHeight() * 0.18f);
+            g.setColour (isEnabled() ? offInk : colours::dim.withAlpha (0.55f));
+            g.setFont (homeFont (TypeScale::body, r.getHeight() * 0.42f));
+            g.drawFittedText (getButtonText(), r.toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
+            return;
+        }
         auto fill = on ? onColour : (outlined ? juce::Colours::transparentBlack : offColour);
         if (down)
             fill = (fill.isTransparent() ? colours::panel : fill).brighter (0.15f);
@@ -363,7 +379,7 @@ public:
         if (front)
         {
             g.setColour (colours::accent);
-            g.fillRect (r.withHeight (juce::jlimit (2.0f, 4.0f, r.getHeight() * 0.07f)));
+            g.fillRect (r.withHeight (juce::jlimit (2.0f, screenCap (4.0f), r.getHeight() * 0.07f)));
         }
         g.setColour (! isEnabled() ? colours::dim.withAlpha (0.5f) : (front ? colours::accent : colours::dim));
         g.setFont (homeFont (front ? TypeScale::tab : TypeScale::tab * 0.85f, r.getHeight() * 0.6f));
@@ -627,27 +643,31 @@ public:
     std::function<juce::Colour()> fillColour;
     std::function<bool()> isOn;
     juce::Colour wellColour = colours::well;  // the box behind the slot
+    float scaleFraction = 0.4f;               // the share of the width the dB scale takes
 
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat();
-        const float tagH = juce::jlimit (16.0f, 24.0f, r.getHeight() * 0.07f);
-        auto scaleArea = scale ? r.removeFromLeft (r.getWidth() * 0.4f) : juce::Rectangle<float>();
+        // [D9] a 24 px value tag, a 12 px slot in an 80 px well (WING pixels).
+        const float tagH = juce::jlimit (14.0f, juce::jmax (14.0f, r.getHeight() * 0.07f), wingPx (24.0f));
+        auto scaleArea = scale ? r.removeFromLeft (r.getWidth() * scaleFraction) : juce::Rectangle<float>();
         // A dark well the fader's width, the black slot in its middle.
-        auto well = r.withTrimmedLeft (scale ? 4.0f : 0.0f);
-        auto slot = r.withSizeKeepingCentre (juce::jlimit (6.0f, 18.0f, r.getWidth() * 0.2f), r.getHeight() - tagH);
+        auto well = r.withTrimmedLeft (scale ? juce::jmax (2.0f, wingPx (4.0f)) : 0.0f);
+        auto slot = r.withSizeKeepingCentre (juce::jlimit (5.0f, juce::jmax (5.0f, r.getWidth() * 0.2f), wingPx (12.0f)), r.getHeight() - tagH);
 
         if (scale)
         {
-            g.setFont (homeFont (TypeScale::meterScale, 14.0f));
+            const auto font = homeFont (TypeScale::meterScale, screenCap (14.0f));
+            const float lh = font.getHeight();
+            g.setFont (font);
+            g.setColour (colours::caption);
             for (float db : { 10.0f, 5.0f, 0.0f, -5.0f, -10.0f, -20.0f, -30.0f, -40.0f, -50.0f })
             {
                 const float y = slot.getBottom() - slot.getHeight() * fader::dbToPos (db);
-                g.setColour (colours::caption);
-                g.drawText ((db > 0 ? "+" : "") + juce::String ((int) db), scaleArea.withY (y - 7.0f).withHeight (14.0f).toNearestInt(),
+                g.drawText ((db > 0 ? "+" : "") + juce::String ((int) db), scaleArea.withY (y - lh * 0.5f).withHeight (lh).toNearestInt(),
                             juce::Justification::centredRight);
             }
-            g.drawText ("-oo", scaleArea.withY (slot.getBottom() - 7.0f).withHeight (14.0f).toNearestInt(), juce::Justification::centredRight);
+            g.drawText ("-oo", scaleArea.withY (slot.getBottom() - lh * 0.5f).withHeight (lh).toNearestInt(), juce::Justification::centredRight);
         }
 
         g.setColour (wellColour);
@@ -661,7 +681,7 @@ public:
 
         // The value tag: white, grey while the send is off or at -oo.
         const bool on = (! isOn || isOn()) && faderDb.load() > -89.9f;
-        auto tag = juce::Rectangle<float> (juce::jmin (r.getWidth() - 2.0f, juce::jmax (44.0f, tagH * 3.2f)), tagH).withCentre ({ slot.getCentreX(), y });
+        auto tag = juce::Rectangle<float> (juce::jmin (r.getWidth() - 2.0f, juce::jmax (44.0f, tagH * 2.7f)), tagH).withCentre ({ slot.getCentreX(), y });
         tag.setX (juce::jlimit (0.0f, (float) getWidth() - tag.getWidth(), tag.getX()));
         g.setColour (on ? colours::ink : colours::dim);
         g.fillRect (tag);
@@ -728,39 +748,43 @@ public:
 
     void paint (juce::Graphics& g) override
     {
+        // [D9] two 12 px bars 6 px apart, 6 px segments with 3 px gaps, the
+        // unlit segments darker than the panel; the scale right-aligned at
+        // their left, L and R under them (WING pixels).
         auto r = getLocalBounds().toFloat();
         const int n = juce::jlimit (1, 2, numChannels ? numChannels() : 2);
-        auto labels = n == 2 ? r.removeFromBottom (14.0f) : juce::Rectangle<float>();
-        auto scaleArea = showScale ? r.removeFromLeft (juce::jmin (30.0f, r.getWidth() * 0.45f)) : juce::Rectangle<float>();
-        r = r.reduced (0.0f, 4.0f);
+        const auto font = homeFont (TypeScale::meterScale, screenCap (13.0f));
+        auto labels = n == 2 ? r.removeFromBottom (juce::jmax (12.0f, font.getHeight() * 1.3f)) : juce::Rectangle<float>();
+        auto scaleArea = showScale ? r.removeFromLeft (juce::jmin (juce::jmax (24.0f, wingPx (32.0f)), r.getWidth() * 0.45f)) : juce::Rectangle<float>();
+        r = r.reduced (0.0f, juce::jmax (4.0f, font.getHeight() * 0.5f));
         if (showScale)
         {
             g.setColour (colours::caption);
-            g.setFont (homeFont (TypeScale::meterScale, 13.0f));
+            g.setFont (font);
             for (float db : { 0.0f, -6.0f, -12.0f, -24.0f, -36.0f, -48.0f, -60.0f })
             {
                 const float y = r.getBottom() - r.getHeight() * proportion (db);
-                g.drawText (db == 0.0f ? juce::String ("CLIP") : juce::String ((int) db), scaleArea.withY (y - 6.0f).withHeight (12.0f).toNearestInt(),
-                            juce::Justification::centredRight);
+                g.drawText (db == 0.0f ? juce::String ("CLIP") : juce::String ((int) db),
+                            scaleArea.withY (y - font.getHeight() * 0.5f).withHeight (font.getHeight()).toNearestInt(), juce::Justification::centredRight);
             }
         }
-        const int segments = juce::jlimit (8, 40, (int) (r.getHeight() / 5.0f));
+        const float pitch = juce::jmax (4.0f, wingPx (9.0f));
+        const int segments = juce::jlimit (8, 60, (int) (r.getHeight() / pitch));
         const float segH = r.getHeight() / (float) segments;
-        const float barW = juce::jmin (12.0f, (r.getWidth() - 6.0f) / (float) n - 3.0f);
-        float x = r.getX() + 4.0f;
+        const float gapX = juce::jmax (3.0f, wingPx (6.0f));
+        const float barW = juce::jmin (juce::jmax (4.0f, wingPx (12.0f)), (r.getWidth() - gapX) / (float) n - gapX);
+        float x = r.getX() + gapX;
         for (int ch = 0; ch < n; ++ch)
         {
             auto bar = juce::Rectangle<float> (x, r.getY(), barW, r.getHeight());
-            g.setColour (colours::well);
-            g.fillRect (bar.expanded (1.0f));
             const float lit = proportion (level[(size_t) ch]);
             for (int s = 0; s < segments; ++s)
             {
                 const float top = (float) (s + 1) / (float) segments;
-                auto seg = juce::Rectangle<float> (bar.getX(), bar.getBottom() - top * bar.getHeight() + 1.0f, bar.getWidth(), segH - 1.5f);
+                auto seg = juce::Rectangle<float> (bar.getX(), bar.getBottom() - top * bar.getHeight(), bar.getWidth(), segH * 0.67f);
                 const bool on = lit >= top - 0.5f / (float) segments;
                 const bool clipSeg = s == segments - 1;
-                g.setColour (on ? (clipSeg ? Colours::mute : Colours::meterGreen) : colours::panel);
+                g.setColour (on ? (clipSeg ? Colours::mute : Colours::meterGreen) : colours::well);
                 g.fillRect (seg);
             }
             const float holdP = proportion (hold[(size_t) ch]);
@@ -772,11 +796,11 @@ public:
             if (n == 2)
             {
                 g.setColour (colours::caption);
-                g.setFont (homeFont (TypeScale::meterScale, 13.0f));
+                g.setFont (font);
                 g.drawText (ch == 0 ? "L" : "R", juce::Rectangle<float> (bar.getX() - 4.0f, labels.getY(), bar.getWidth() + 8.0f, labels.getHeight()).toNearestInt(),
                             juce::Justification::centred);
             }
-            x += barW + 4.0f;
+            x += barW + gapX;
         }
     }
 
@@ -833,13 +857,18 @@ public:
 
     void resized() override
     {
+        // [D9] (WING pixels in a 192 x 504 body): MUTE 84 x 56 at the top
+        // left, SOLO at the bottom left, the meter between them; the fader's
+        // scale from x 96, its 80 px well at the right.
         auto l = getLocalBounds();
-        auto meterCol = l.removeFromLeft (l.getWidth() * 45 / 100);
-        const int kh = juce::jlimit (22, 36, l.getHeight() / 9);
-        mute.setBounds (meterCol.removeFromTop (kh).reduced (1, 0));
-        solo.setBounds (meterCol.removeFromBottom (kh).reduced (1, 0));
-        meter.setBounds (meterCol.reduced (0, 6));
-        fader.setBounds (l.reduced (0, 2));
+        auto meterCol = l.removeFromLeft (l.getWidth() * 50 / 100);
+        const int kh = juce::jlimit (20, juce::jmax (20, l.getHeight() / 8), juce::roundToInt (wingPx (56.0f)));
+        const int kw = juce::jmin (meterCol.getWidth(), juce::roundToInt (wingPx (84.0f)));
+        mute.setBounds (meterCol.removeFromTop (kh).withWidth (kw));
+        solo.setBounds (meterCol.removeFromBottom (kh).withWidth (kw));
+        meter.setBounds (meterCol.reduced (0, juce::roundToInt (juce::jmax (4.0f, wingPx (16.0f)))));
+        fader.scaleFraction = 0.26f;
+        fader.setBounds (l);
     }
 
 private:
@@ -1002,7 +1031,7 @@ public:
         auto right = r;
         const int chRows = juce::jmax (1, ((int) e.getChannels().size() + 7) / 8);
         const int busRows = juce::jmax (1, juce::jmin (2, ((int) e.getBuses().size() + 7) / 8));
-        const float captionH = juce::jlimit (9.0f, 13.0f, getHeight() * 0.08f);
+        const float captionH = juce::jlimit (9.0f, screenCap (13.0f), getHeight() * 0.08f);
         const float cellH = juce::jmin ((left.getHeight() - 2.0f * captionH - 6.0f) / (float) (chRows + 1), left.getWidth() / 8.0f * 0.75f);
 
         auto drawGroup = [&] (juce::Rectangle<float>& area, const Group& grp, int maxRows)
@@ -1195,7 +1224,7 @@ inline void paintTransferCurve (juce::Graphics& g, juce::Rectangle<float> r, con
     if (withToken)
     {
         g.setColour (on ? colours::accent : colours::dim);
-        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 13.0f, r.getHeight() * 0.18f), juce::Font::bold));
+        g.setFont (juce::FontOptions (juce::jlimit (9.0f, screenCap (13.0f), r.getHeight() * 0.18f), juce::Font::bold));
         g.drawText (models::model (models::Dynamics, slot.model.load()).token, r.reduced (4.0f, 2.0f).toNearestInt(), juce::Justification::topLeft);
     }
 }

@@ -91,7 +91,7 @@ private:
             t.removeFromLeft (24.0f);
 
         // The type chip with the scene number under it.
-        const float chipW = juce::jmin (46.0f, t.getWidth() * 0.16f), chipH = juce::jlimit (12.0f, 18.0f, t.getHeight() * 0.4f);
+        const float chipW = juce::jmin (screenCap (46.0f), t.getWidth() * 0.16f), chipH = juce::jlimit (12.0f, screenCap (18.0f), t.getHeight() * 0.4f);
         auto chipColumn = t.removeFromRight (chipW + 2.0f);
         const auto chipColour = item.isSnippet() ? FileColours::snip : FileColours::snap;
         auto chip = chipColumn.withHeight (chipH).withY (t.getY() + 2.0f);
@@ -156,9 +156,9 @@ private:
             // The scene tag (#1..#128) in a small blue chip at the top left.
             if (scene->tag > 0)
             {
-                drawChip (g, juce::Rectangle<float> (t.getX(), t.getY() + 1.0f, 30.0f, juce::jlimit (10.0f, 14.0f, t.getHeight() * 0.32f)),
+                drawChip (g, juce::Rectangle<float> (t.getX(), t.getY() + 1.0f, 30.0f, juce::jlimit (10.0f, screenCap (14.0f), t.getHeight() * 0.32f)),
                           "#" + juce::String (scene->tag), Dark::choice.withMultipliedAlpha (normal ? 1.0f : 0.5f), juce::Colours::black);
-                t.removeFromTop (juce::jlimit (6.0f, 10.0f, t.getHeight() * 0.22f));
+                t.removeFromTop (juce::jlimit (6.0f, screenCap (10.0f), t.getHeight() * 0.22f));
             }
             // A skipped scene: the SKIP mark, and the name dimmed.
             if (scene->skip)
@@ -331,7 +331,7 @@ private:
         typeOf (e.file, chipText, colour);
         const bool normal = filter.isNotEmpty() && e.file.hasFileExtension (filter);
         // The type chip with the date and time under it.
-        const float chipW = juce::jmin (46.0f, t.getWidth() * 0.16f), chipH = juce::jlimit (12.0f, 18.0f, t.getHeight() * 0.4f);
+        const float chipW = juce::jmin (screenCap (46.0f), t.getWidth() * 0.16f), chipH = juce::jlimit (12.0f, screenCap (18.0f), t.getHeight() * 0.4f);
         auto dateColumn = t.removeFromRight (juce::jmax (chipW, 74.0f));
         auto chip = dateColumn.withWidth (chipW).withHeight (chipH).withY (t.getY() + 2.0f).withX (dateColumn.getRight() - chipW);
         drawChip (g, chip, chipText, colour.withMultipliedAlpha (normal ? 1.0f : 0.45f), juce::Colours::black);
@@ -747,12 +747,12 @@ void ShowPanel::paint (juce::Graphics& g)
 void ShowPanel::resized()
 {
     auto b = getLocalBounds();
-    toolbar = b.removeFromTop (juce::jlimit (36, 52, getHeight() * 11 / 100));
+    toolbar = b.removeFromTop (juce::jlimit (36, screenCap (52), getHeight() * 11 / 100));
     b.removeFromTop (2);
     listArea = b;
-    list->setRowHeight (juce::jlimit (28, 44, getHeight() / 12));
+    list->setRowHeight (juce::jlimit (28, screenCap (44), getHeight() / 12));
     list->setBounds (listArea);
-    files->setRowHeight (juce::jlimit (28, 44, getHeight() / 12));
+    files->setRowHeight (juce::jlimit (28, screenCap (44), getHeight() / 12));
     files->setBounds (listArea);
 
     auto t = toolbar.reduced (2, 2);

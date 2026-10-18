@@ -301,23 +301,24 @@ juce::Rectangle<float> ResponseGraph::plot() const
     // Labels only when there is room for them (the full screens); the overview
     // panel shows the bare grid like the console.
     auto r = getLocalBounds().toFloat().reduced (1.0f);
-    const float rulerH = juce::jlimit (5.0f, 14.0f, getHeight() * 0.03f);
+    const float rulerH = juce::jlimit (5.0f, screenCap (14.0f), getHeight() * 0.03f);
     if (ruler == Ruler::Top)
         r.removeFromTop (rulerH + juce::jmax (4.0f, getHeight() * 0.02f));
     else if (ruler == Ruler::Bottom)
         r.removeFromBottom (rulerH);
     if (showLabels())
     {
-        r.removeFromBottom (15.0f);
+        // The frequencies under the plot, the band / LC / HC names over it [D10, I14].
+        r.removeFromBottom (juce::jmax (15.0f, wingPx (22.0f)));
         if (block == Filter || ! bands.empty())
-            r.removeFromTop (18.0f);
+            r.removeFromTop (juce::jmax (18.0f, wingPx (30.0f)));
     }
     return r;
 }
 
 bool ResponseGraph::showLabels() const
 {
-    return getHeight() > 200 && getWidth() > 300;
+    return ! overview && getHeight() > 200 && getWidth() > 300;
 }
 
 float ResponseGraph::xForFreq (float f) const
@@ -380,7 +381,7 @@ void ResponseGraph::paint (juce::Graphics& g)
         g.drawHorizontalLine (juce::roundToInt (cp.getY() + (cp.getHeight() - 1.0f) * (float) i / 4.0f), cp.getX(), cp.getRight());
 
     // The piano-key ruler.
-    const float rulerH = juce::jlimit (5.0f, 14.0f, getHeight() * 0.03f);
+    const float rulerH = juce::jlimit (5.0f, screenCap (14.0f), getHeight() * 0.03f);
     auto xHz = [this] (float hz) { return xForFreq (hz); };
     if (ruler == Ruler::Top)
         paintPianoRuler (g, juce::Rectangle<float> (p.getX(), bounds.getY(), p.getWidth(), rulerH), xHz);
@@ -393,7 +394,8 @@ void ResponseGraph::paint (juce::Graphics& g)
         g.setColour (labelColour);
         for (float f : { 20.0f, 40.0f, 60.0f, 100.0f, 200.0f, 300.0f, 400.0f, 600.0f, 1000.0f, 2000.0f, 3000.0f, 4000.0f, 6000.0f, 10000.0f, 20000.0f })
         {
-            auto r = juce::Rectangle<float> (xForFreq (f) - 18.0f, bounds.getBottom() - 14.0f, 36.0f, 13.0f);
+            const float lh = juce::jmax (13.0f, wingPx (20.0f));
+            auto r = juce::Rectangle<float> (xForFreq (f) - lh * 1.4f, bounds.getBottom() - lh - 1.0f, lh * 2.8f, lh);
             r = r.withX (juce::jlimit (0.0f, (float) getWidth() - r.getWidth(), r.getX()));
             const auto just = f <= 20.0f ? juce::Justification::centredLeft : (f >= 20000.0f ? juce::Justification::centredRight : juce::Justification::centred);
             g.drawText (rulerText (f), r, just);
@@ -434,14 +436,15 @@ void ResponseGraph::paint (juce::Graphics& g)
 
         // LC, HC (and the all-pass AP): vertical lines labelled at the top,
         // an open ring handle near the bottom.
-        const float radius = juce::jlimit (5.0f, 10.0f, getHeight() / 34.0f);
+        const float radius = juce::jlimit (5.0f, screenCap (10.0f), getHeight() / 34.0f);
         auto line = [&] (float freq, juce::Colour colour, const juce::String& name)
         {
             const float x = xForFreq (freq);
             g.setColour (colour);
             g.fillRect (x - 1.0f, p.getY(), 2.0f, p.getHeight());
             g.setFont (wingFont (TypeScale::body));
-            g.drawText (name, juce::Rectangle<float> (x - 18.0f, p.getY() - 17.0f, 36.0f, 15.0f), juce::Justification::centred);
+            const float lh = juce::jmax (15.0f, wingPx (26.0f));
+            g.drawText (name, juce::Rectangle<float> (x - lh * 1.2f, p.getY() - lh - 2.0f, lh * 2.4f, lh), juce::Justification::centred);
             paintRing (g, { x, p.getBottom() - radius * 2.5f }, radius, colour, true);
         };
         line (f.lowCutFreq.load(), f.lowCut.load() ? juce::Colours::white : dimLabelColour, "LC");
@@ -477,7 +480,7 @@ void ResponseGraph::paint (juce::Graphics& g)
     // The bands: a line from the label at the top, an open ring at the gain.
     auto& values = strip->params.eq.values;
     const bool labels = showLabels();
-    const float radius = juce::jlimit (3.5f, 10.0f, getHeight() / 34.0f);
+    const float radius = juce::jlimit (3.5f, screenCap (10.0f), getHeight() / 34.0f);
     for (size_t i = 0; i < bands.size(); ++i)
     {
         const auto& band = bands[i];
@@ -489,7 +492,18 @@ void ResponseGraph::paint (juce::Graphics& g)
             g.fillRect (juce::Rectangle<float> (sel ? 2.0f : 1.5f, p.getBottom() - p.getY() - 2.0f).withPosition (c.x - 0.75f, p.getY() + 2.0f));
             g.setColour (sel ? juce::Colours::white : dimLabelColour);
             g.setFont (wingFont (TypeScale::body));
-            g.drawText (band.id.toUpperCase(), juce::Rectangle<float> (24.0f, 16.0f).withCentre ({ c.x, p.getY() - 9.0f }), juce::Justification::centred);
+            const float lh = juce::jmax (16.0f, wingPx (26.0f));
+            g.drawText (band.id.toUpperCase(), juce::Rectangle<float> (lh * 1.5f, lh).withCentre ({ c.x, p.getY() - lh * 0.5f - 2.0f }), juce::Justification::centred);
+        }
+        if (overview)
+        {
+            // A small cross per band, the selected band's blue [I1].
+            const float a = juce::jmax (3.0f, wingPx (8.0f));
+            const float t = juce::jmax (1.5f, wingPx (2.0f));
+            g.setColour (sel ? Colours::valueBlue : juce::Colours::white);
+            g.fillRect (juce::Rectangle<float> (a * 2.0f, t).withCentre (c));
+            g.fillRect (juce::Rectangle<float> (t, a * 2.0f).withCentre (c));
+            continue;
         }
         paintRing (g, c, radius, juce::Colours::white, sel);
     }

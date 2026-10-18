@@ -26,7 +26,7 @@ namespace
         g.setColour (fill);
         g.fillRoundedRectangle (r, 2.0f);
         g.setColour (juce::Colours::black);
-        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 18.0f, juce::jmin (r.getHeight() * 0.86f, r.getWidth() * (number >= 10 ? 0.62f : 0.9f))),
+        g.setFont (juce::FontOptions (juce::jlimit (9.0f, screenCap (18.0f), juce::jmin (r.getHeight() * 0.86f, r.getWidth() * (number >= 10 ? 0.62f : 0.9f))),
                                       juce::Font::bold));
         g.drawFittedText (juce::String (number), r.toNearestInt(), juce::Justification::centred, 1, 0.6f);
     }
@@ -133,7 +133,7 @@ void MetersPage::resized()
     groups.push_back ({ "MATRIX", StripKind::Matrix, false, 0, laidOutCounts[(size_t) StripKind::Matrix], LayerSet::Right, {}, {} });
 
     auto b = getLocalBounds();
-    titleArea = b.removeFromTop (juce::jmin (52, b.getHeight() / 9));
+    titleArea = b.removeFromTop (juce::jmin (screenCap (52), b.getHeight() / 9));
     auto keys = titleArea.reduced (6);
     nextKey = numPages() > 1 ? keys.removeFromRight (keys.getHeight() * 2) : juce::Rectangle<int>();
     keys.removeFromRight (6);
@@ -173,13 +173,13 @@ void MetersPage::resized()
 
 juce::Rectangle<int> MetersPage::numberRow (const Group& group) const
 {
-    return group.body.reduced (6, 0).withTrimmedTop (8).withHeight (juce::jlimit (16, 24, group.body.getHeight() / 11));
+    return group.body.reduced (6, 0).withTrimmedTop (8).withHeight (juce::jlimit (16, screenCap (24), group.body.getHeight() / 11));
 }
 
 juce::Rectangle<int> MetersPage::muteRow (const Group& group) const
 {
     auto r = group.body.reduced (6, 0).withTrimmedBottom (8);
-    return r.removeFromBottom (juce::jlimit (14, 20, group.body.getHeight() / 13));
+    return r.removeFromBottom (juce::jlimit (14, screenCap (20), group.body.getHeight() / 13));
 }
 
 juce::Rectangle<float> MetersPage::slot (const Group& group, int index) const

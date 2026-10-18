@@ -72,6 +72,14 @@ public:
         repaint();
     }
 
+    /** The overview panel's graph: the bare grid with the ruler, no labels, the
+        bands as small crosses (the selected one blue) [I1, Fig. 21]. */
+    void setOverview (bool shouldBe)
+    {
+        overview = shouldBe;
+        repaint();
+    }
+
     /** The piano-key ruler: grey white keys, the black keys as dark notches. */
     static void paintPianoRuler (juce::Graphics&, juce::Rectangle<float> area, std::function<float (float hz)> xForHz);
 
@@ -138,6 +146,7 @@ private:
     int builtModel = -1, selectedBand = -1, dragBand = -1, dragLine = -1;
 
     RtaView rtaView = RtaView::Auto;
+    bool overview = false;
     Analysis::Bands rta;
     bool rtaShown = false;
     float autoGainDb = 0.0f;

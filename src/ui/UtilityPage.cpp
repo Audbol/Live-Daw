@@ -138,7 +138,7 @@ void UtilityPage::paint (juce::Graphics& g)
 void UtilityPage::resized()
 {
     auto b = getLocalBounds();
-    logList.setRowHeight (juce::jlimit (14, 26, juce::roundToInt (getWingScreenHeight() * 0.052f)));
+    logList.setRowHeight (juce::jlimit (14, screenCap (26), juce::roundToInt (getWingScreenHeight() * 0.052f)));
     leftArea = b.removeFromLeft (juce::jmax (300, b.getWidth() * 42 / 100));
     b.removeFromLeft (4);
     rightArea = b;

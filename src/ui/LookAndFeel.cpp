@@ -411,9 +411,17 @@ void ConsoleLookAndFeel::getIdealPopupMenuItemSize (const juce::String& text, bo
     idealWidth = juce::roundToInt (juce::GlyphArrangement::getStringWidth (font, text)) + idealHeight * 2;
 }
 
+namespace
+{
+    // WING panels [I1]: 8 px between panels and between a header and its body,
+    // the content 16 px inside the body (WING pixels).
+    float panelHalfGap() { return juce::jmax (2.0f, wingPx (4.0f)); }
+    float panelHeaderGap() { return juce::jmax (3.0f, wingPx (8.0f)); }
+} // namespace
+
 void drawSectionBox (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& title, bool chevron)
 {
-    auto r = area.reduced (3).toFloat();
+    auto r = area.toFloat().reduced (panelHalfGap());
     if (title.isNotEmpty())
     {
         auto header = r.removeFromTop ((float) panelHeaderHeight());
@@ -423,29 +431,43 @@ void drawSectionBox (juce::Graphics& g, juce::Rectangle<int> area, const juce::S
         g.setFont (wingFontPx (juce::jmin (TypeScale::header * getWingScreenHeight(), header.getHeight() * 0.42f)));
         // Keep the title centred, clear of the chevron only when there is one.
         // Narrow headers (FILTER in a small window) give the title more of the chevron's margin.
-        g.drawFittedText (title, header.reduced (chevron ? juce::jmin (28.0f, header.getWidth() * 0.2f) : 4.0f, 0.0f).toNearestInt(),
+        const float hh = header.getHeight();
+        g.drawFittedText (title, header.reduced (chevron ? juce::jmin (hh * 0.7f, header.getWidth() * 0.2f) : 4.0f, 0.0f).toNearestInt(),
                           juce::Justification::centred, 1);
         if (chevron)
         {
-            const auto c = juce::Point<float> (header.getRight() - 14.0f, header.getCentreY());
+            // The small grey chevron at the right end (Fig. 21).
+            const auto c = juce::Point<float> (header.getRight() - hh * 0.3f, header.getCentreY());
+            const float a = hh * 0.12f;
             juce::Path p;
-            p.startNewSubPath (c.x - 4.0f, c.y - 8.0f);
-            p.lineTo (c.x + 4.0f, c.y);
-            p.lineTo (c.x - 4.0f, c.y + 8.0f);
-            g.strokePath (p, juce::PathStrokeType (2.5f));
+            p.startNewSubPath (c.x - a * 0.55f, c.y - a);
+            p.lineTo (c.x + a * 0.45f, c.y);
+            p.lineTo (c.x - a * 0.55f, c.y + a);
+            g.strokePath (p, juce::PathStrokeType (juce::jmax (1.5f, hh * 0.04f)));
         }
-        r.removeFromTop (4.0f);
+        r.removeFromTop (panelHeaderGap());
     }
     g.setColour (Colours::screenPanel);
     g.fillRect (r);
 }
 
+juce::Rectangle<int> sectionHeader (juce::Rectangle<int> area)
+{
+    return area.toFloat().reduced (panelHalfGap()).withHeight ((float) panelHeaderHeight()).toNearestInt();
+}
+
+juce::Rectangle<int> sectionBody (juce::Rectangle<int> area, bool hasTitle)
+{
+    auto r = area.toFloat().reduced (panelHalfGap());
+    if (hasTitle)
+        r.removeFromTop ((float) panelHeaderHeight() + panelHeaderGap());
+    return r.toNearestInt();
+}
+
 juce::Rectangle<int> sectionContent (juce::Rectangle<int> area, bool hasTitle)
 {
-    auto r = area.reduced (3);
-    if (hasTitle)
-        r.removeFromTop (panelHeaderHeight() + 4);
-    return r.reduced (8, 6);
+    const int inset = juce::roundToInt (juce::jmax (4.0f, wingPx (14.0f)));
+    return sectionBody (area, hasTitle).reduced (inset);
 }
 
 void drawChip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, juce::Colour fill, juce::Colour textColour)

@@ -69,7 +69,7 @@ public:
             g.drawFittedText (getButtonText(), label.toNearestInt().reduced (2, 0), juce::Justification::centredTop, 1, 0.75f);
             return;
         }
-        auto content = r.reduced (juce::jmin (10.0f, r.getHeight() * 0.18f), 0.0f);
+        auto content = r.reduced (juce::jmin (screenCap (10.0f), r.getHeight() * 0.18f), 0.0f);
         if (icon.has_value())
         {
             const float s = juce::jmin (r.getHeight() * 0.62f, content.getWidth() * 0.4f);
@@ -427,7 +427,7 @@ public:
         if (label.isNotEmpty())
         {
             const int lines = juce::StringArray::fromLines (label).size();
-            const float size = juce::jlimit (7.0f, 16.0f, content.getHeight() * (lines > 1 ? 0.36f : 0.46f));
+            const float size = juce::jlimit (7.0f, screenCap (16.0f), content.getHeight() * (lines > 1 ? 0.36f : 0.46f));
             g.setColour (ink);
             g.setFont (silkFont (size));
             if (arrow != 0)
