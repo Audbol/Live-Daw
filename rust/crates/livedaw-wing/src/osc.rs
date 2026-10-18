@@ -173,7 +173,7 @@ fn node_text(def: &Def, v: &Value) -> String {
 
 /// The node data dump (`,s *`): what a snapshot would save (no read-only or
 /// `$` nodes), `a.b=v` paths with leading dots to go up.
-fn dump(c: &Console, node: Node) -> String {
+pub(crate) fn dump(c: &Console, node: Node) -> String {
     let mut out = String::new();
     let mut stack: Vec<String> = Vec::new(); // path of the current position, relative to `node`
     fn walk(c: &Console, node: Node, prefix: &mut Vec<String>, stack: &mut Vec<String>, out: &mut String) {
@@ -260,7 +260,7 @@ fn describe_line(c: &Console, node: Node, with_value: bool) -> String {
     line
 }
 
-fn describe(c: &Console, node: Node, with_values: bool) -> String {
+pub(crate) fn describe(c: &Console, node: Node, with_values: bool) -> String {
     let s = schema();
     let nodes = if s.is_leaf(node, c) { vec![node] } else { s.children(node, c) };
     nodes.into_iter().map(|n| describe_line(c, n, with_values)).collect::<Vec<_>>().join("\n")

@@ -83,6 +83,11 @@ set(LIVEDAW_ENGINE_SOURCES
     src/engine/VirtualAudioDevice.cpp
     src/engine/WingRemote.cpp)
 
+# MIDI remote control and DAW remote control (MCU / HUI).
+list(APPEND LIVEDAW_ENGINE_SOURCES
+    src/engine/DawRemote.cpp
+    src/engine/MidiRemote.cpp)
+
 # The multitrack project model (no UI), shared by the app and the tests.
 set(LIVEDAW_DAW_SOURCES
     src/daw/Project.cpp
@@ -242,4 +247,7 @@ if(LIVEDAW_BUILD_TESTS)
     livedaw_configure_juce_target(LiveDAWTests)
 
     add_test(NAME LiveDAWTests COMMAND LiveDAWTests)
+
+    # MIDI remote control and DAW remote control.
+    target_sources(LiveDAWTests PRIVATE tests/MidiTests.cpp)
 endif()

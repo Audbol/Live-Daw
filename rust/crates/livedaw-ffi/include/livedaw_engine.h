@@ -831,6 +831,10 @@ extern "C"
     /** Adds a WING .show's snapshot scenes to the show (the console only grows to 40 channels). */
     bool ld_wing_import_show (LdWing*, Show*, const char* path, size_t len, LdString** report);
     LdString* ld_wing_coverage();
+    /** MIDI SYSEX CONTROL on the WING tree: cmd 2 executes a node string
+        ("/ch.1.fdr=-1,mute=0"), 3 dumps a node, 5 describes one. True with
+        *out the data (empty for 2), false with *out the error text. */
+    bool ld_wing_sysex (LdWing*, int32_t cmd, const char* text, size_t len, LdString** out);
 
     // Console level: sources, talk tags, MUTE state (message thread unless noted)
     /** The source table (*count entries: hardware ports, then playback channels). */
