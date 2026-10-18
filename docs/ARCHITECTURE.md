@@ -31,8 +31,9 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
  matrices 1-8 (parallel stage 5: inputs, buses, mains + a direct input from any channel)
     │       (talkback: the talk channel's PFL into the buses / matrices / mains of TALK A, B)
  solo (PFL/AFL per strip type, routed by SOLO MODE) ─► monitor paths SPEAKERS and PHONES:
-    solo bus + SOURCE (Main 1 by default; SRC MIX while soloing) ─► level (+ MON DCAs)
-    · DIM · mute · talk MON DIM · MONO / SWAP (on the selected path) ─► its outputs
+    solo bus + SOURCE (Main 1 by default; SRC MIX while soloing) + DIRECT IN ─► EQ
+    ─ PAN / WIDTH ─ INVERT ─ DELAY ─► level (+ MON DCAs) · DIM · mute · talk MON DIM
+    · MONO / SWAP (on the selected path) ─► LIMITER ─► its outputs
  every strip ─► its hardware outputs ─► output protection (safety clip)
 
  bus / main / matrix strip:
@@ -76,11 +77,18 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
 - **Sources** (`sources.rs`): every hardware input port (the first 576) and playback
   channel has a source with gain, mute, polarity, +48 V (stored only), colour, icon,
   name and a pairing with its neighbour (ports 1-2, 3-4, ...: STEREO, or MID/SIDE
-  decoded to M + S / M - S; a pair runs on its first source's settings). Before stage
+  decoded to M + S / M - S; a pair runs on its first source's settings) and mute
+  groups (SOURCES > TAGS: muted while one is engaged). Before stage
   1 the audio thread processes the sources that change their signal into buffers of
   their own and hands those to the channels and the recorder's input streams; sources
   at their defaults pass their port through. Changes are ramped (gains per source,
   the mid-side matrix per pair).
+- **SOURCE SOLO** (`monitor.rs`, `MonitorControls`): with SOURCE SOLO on CH39 or
+  AUX7, a soloed source (`source_solo_port`; ROUTING > SOURCES' SRC SOLO, the
+  WING's `$srcsolo`, or the host's own SOLO) is patched to that channel for the
+  block (`ProcessContext::source_solo`, read in `read_hardware_inputs`; a pair plays
+  in stereo) and the channel solos (`solo::console_pass`), so SOLO MODE routes it.
+  The channel's own patch is untouched.
 - **Solo and mute** (`solo.rs`): before stage 1 the engine works out every strip's
   effective solo (own, a DCA's or a TALK SOLO tag) and the console's mute decision,
   which the strip's fader stage applies over its own mute (own, mute groups, DCA
@@ -98,7 +106,18 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
   (`solo_bus_override`); STUDIO and SIP solo to `solo_bus`, the selected path, which
   DIM, MUTE, MONO, SWAP and the talk MON DIM act on. DCAs named MON A / MON B / MON
   LVL add their level (and mute) to the PHONES, the SPEAKERS or both. The solo bus feed goes through
-  `solo_tap` in `engine.rs`, the hook for solo-tap overrides (band, key, xover solo).
+  `solo_tap` in `engine.rs`, the hook for solo-tap overrides (band, key, xover solo);
+  LISTEN plays on the first selected path, a BAND SOLO boosted by that path's BAND
+  SOLO.
+- **Monitor path processing** (`monitor.rs`, `EngineControls::monitor`, path 0 =
+  SPEAKERS, 1 = PHONES): DIRECT IN adds any input, aux, bus, main or matrix output
+  at its own level (crossfaded when it changes); the EQ is the bus WING EQ (model
+  STD: low shelf, 6 PEQ, high shelf; `WingEq`, so it glides like the strips');
+  PAN, WIDTH and INVERT are one 2x2 matrix crossfaded over a block; DELAY (0.1-100
+  m) crossfades between the old and new tap of a line that is always written; the
+  LIMITER (-40..0 dB) is a stereo-linked peak limiter with instant attack and an 80
+  ms release that meters its gain reduction (`limiter_gr_db`). A path that turns
+  non-finite is reset and silenced for the block.
 - **Talkback** (`talk.rs`, `EngineControls::talk`): the talkback channel (any input or
   aux channel; CH40 / AUX8 on SETUP) feeds its PFL copy to the buses (1-16), matrices
   and mains each talk path selects while its key is on, at TALK LEVEL or (USE SEND
@@ -146,7 +165,7 @@ views after a show load changes the console from Rust.
   engine controls are `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same
   memory as `std::atomic<float/bool/int32_t>` structs, and the UI writes them directly
   with no FFI call. Both sides describe the layout; `ld::verifyLayout()` compares the
-  two at startup and in the tests (ABI version 7), and the app refuses to run if they
+  two at startup and in the tests (ABI version 8), and the app refuses to run if they
   differ.
 - **FX slots.** The 16 slots are the WING's FX rack. Each holds one device from the
   console's FX table (`FX_MODELS`, generated like the processing models): the 26
@@ -301,9 +320,10 @@ Show
 ```
 
 - The console also keeps the console-level state of `livedaw-session/src/globals.rs`:
-  SOLO MODE, the solo bus and MUTEGROUP/SIP OVERRIDE, talkback, the strips' talk
-  tags and the sources (only those that differ from the defaults). The monitor paths
-  (sources, PHONES) are part of the monitor setup, which scenes recall with ROUTING.
+  SOLO MODE, the solo bus, MUTEGROUP/SIP OVERRIDE and SOURCE SOLO, talkback, the
+  strips' talk tags and the sources (only those that differ from the defaults, with
+  their mute groups). The monitor paths (sources, PHONES, each path's processing as
+  `<Dsp>`) are part of the monitor setup, which scenes recall with ROUTING.
 - Scene recall applies the state within the scene's scope and skips recall-safe strips.
   It then applies the scene's auto-fire snippets.
 - Snippets ignore recall safes, which makes them the tool for deliberately changing a
@@ -470,7 +490,13 @@ dependencies beyond the other Live DAW crates.
   numbers. Ports: AES50 A/B/C 1-48 are hardware ports 1-144 and the WING-LIVE card
   (CRD) is the recorder's playback channels. Nodes without an engine equivalent live
   in a **shadow store** (`WingState`) so clients and snapshots read back what they
-  wrote; they do nothing. `map::coverage()` counts what maps (79 % of the leaves).
+  wrote; they do nothing. `map::coverage()` counts what maps (82.8 % of the leaves).
+  The console level maps too: TAP WIDTH / TAP EQ (`/ch/N/tapwid`, `peq`), `/cfg/solo`
+  (mode, the solo bus, mute, SOURCE SOLO), `/$ctl/cfg/muteovr`, `/cfg/talk`, both
+  monitor paths (`/cfg/mon/1` PHONES, `/2` SPEAKERS), the RTA settings and the
+  sources of the A/B/C and CRD groups (`/io/in/G/N`: name, colour, icon, gain, mute,
+  polarity, +48 V, mode, `#M` tags); the MONITOR outputs are MON 1/2 (PHONES L/R)
+  and 3/4 (SPEAKERS L/R).
 - **Servers** (`server.rs`, `osc.rs`, `native.rs`, `meters.rs`). Plain `std::net`
   threads, started and stopped from the app: discovery (UDP), OSC (UDP), the native
   protocol (TCP, one thread per client, up to 16; meters as UDP datagrams) and a
@@ -496,7 +522,9 @@ dependencies beyond the other Live DAW crates.
 
 Limits: WING Edit and WING Copilot are untested. One output patch per strip (the WING
 can send a source to many outputs; extra ones are kept in the shadow store). Input
-groups other than AES50 A/B/C and CRD collapse onto the port with the same number.
+groups other than AES50 A/B/C and CRD collapse onto the port with the same number
+(their source settings stay in the shadow store). A talkback channel other than
+CH40 / AUX8 reads as OFF, and DIRECT IN's level has no node.
 Meters are approximate (RTA, source and output meters stay silent). Getting a model
 parameter position the active model doesn't have gets no answer (libwing's
 `wingdrive --probe-echo` relies on the console answering it). Export is unvalidated
@@ -516,9 +544,9 @@ on a console.
   sends, FX parameters, monitoring, mutes / solos, mute groups, sends on fader, pages,
   show control, scene recall and single actions; DAW, MIDI, spill, USB / SD and GPIO
   functions are listed disabled.
-- Not yet: the monitor paths' DIRECT IN, EQ, INVERT, DELAY and limiter, BAND SOLO
-  boost, SOURCE SOLO, source tags and remote preamp control (drawn disabled), and MIDI
-  remote control (WING network remote control: see above).
+- Not yet: remote preamp control (HA REMOTE, RCV CUST; drawn disabled), the RTA on
+  MONITORS EQ (the analyser follows strips), and MIDI remote control (WING network
+  remote control: see above).
 - Recorder: no transport without a running audio device (play stays in Starting);
   a loop change while rolling plays the old content for ~50 ms before the
   crossfade; take files are flushed every 2 s but only synced to disk when
@@ -527,8 +555,7 @@ on a console.
   Save As keeps referring to the old folder's audio instead of copying it; playback
   assumes the project's sample rate is the console's (a mismatch is flagged).
 - Shown on the screens but disabled until the engine supports them (the WING manual
-  describes them): TAP WIDTH and TAP EQ on sends,
-  KEY / XOVER / BAND SOLO, the RTA, the LR vector scope, partial scene load/update
+  describes them): partial scene load/update
   and restore, per-strip scene
   scopes, DCA / mute group / FX safes, snippet recording, and send / FX / MIDI CC
   faders in custom layers.
