@@ -304,11 +304,12 @@ namespace
             for (size_t i = 0; i < std::size (info); ++i)
             {
                 auto row = infoRows[i];
+                // [fig. 33] a faint small caption over a large value.
                 g.setColour (Dark::textDim);
-                g.setFont (juce::FontOptions (juce::jlimit (6.0f, 12.0f, (float) row.getHeight() * 0.3f), juce::Font::bold));
+                g.setFont (wingFontPx (juce::jmin (TypeScale::statusCaption * getWingScreenHeight(), (float) row.getHeight() * 0.22f)));
                 g.drawText (info[i].first, row.removeFromTop (row.getHeight() * 36 / 100), juce::Justification::bottomLeft);
                 g.setColour (Dark::text);
-                g.setFont (juce::FontOptions (juce::jlimit (8.0f, i == 0 ? 24.0f : 18.0f, (float) row.getHeight() * (i == 0 ? 0.6f : 0.55f)), juce::Font::bold));
+                g.setFont (wingFontPx (juce::jmin ((i == 0 ? TypeScale::value : TypeScale::body) * getWingScreenHeight(), (float) row.getHeight() * 0.42f)));
                 g.drawFittedText (info[i].second, row.withTrimmedRight (i == 0 ? editKey.getWidth() + 4 : 0), juce::Justification::centredLeft, 1, 0.8f);
             }
 
@@ -512,8 +513,8 @@ namespace
             const float cell = juce::jmin ((r.getWidth()) / 8.0f, (r.getHeight() - captionH * 2.0f - 6.0f) / 6.0f);
             auto drawGrid = [&] (const char* caption, StripKind kind, int rows)
             {
-                g.setColour (Dark::textDim);
-                g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+                g.setColour (Dark::caption);
+                g.setFont (wingFontPx (juce::jmin (TypeScale::statusCaption * getWingScreenHeight(), captionH * 0.7f)));
                 g.drawText (caption, r.removeFromTop (captionH), juce::Justification::centred);
                 const auto& strips = ctx.engine.getStrips (kind);
                 for (int i = 0; i < rows * 8; ++i)
@@ -522,12 +523,14 @@ namespace
                     auto* s = i < (int) strips.size() ? strips[(size_t) i].get() : nullptr;
                     const bool has = s != nullptr && s->hasAltInput();
                     const bool alt = s != nullptr && s->isUsingAltInput();
-                    g.setColour (alt ? altOrange : (has ? Dark::choice : Dark::choice.darker (0.7f)));
+                    // [D15] bright blue cells with dark numbers (orange on ALT); a
+                    // channel without an ALT input a little darker.
+                    g.setColour (alt ? altOrange : (has ? Dark::choice : Dark::choice.darker (0.35f)));
                     g.fillRect (c);
                     if (s != nullptr)
                     {
-                        g.setColour (has ? juce::Colours::black : Dark::textDim);
-                        g.setFont (juce::FontOptions (juce::jmin (12.0f, c.getHeight() * 0.5f), juce::Font::bold));
+                        g.setColour (Dark::choiceInk);
+                        g.setFont (wingFontPx (c.getHeight() * 0.46f));
                         g.drawText (juce::String (s->getNumber()), c, juce::Justification::centred);
                         cells.push_back ({ c, s });
                     }
@@ -1988,7 +1991,7 @@ void SetupPage::resized()
     b.removeFromTop (6);
     const int keyW = juce::jmin (180, getWidth() * 13 / 100);
     // Narrow screens: the icon over a one-word caption.
-    const bool narrow = keyW < 110;
+    const bool narrow = keyW < 80;
     initKey.iconAbove = shutdownKey.iconAbove = narrow;
     initKey.setButtonText (narrow ? "INITIALIZE" : "INITIALIZE\nCONSOLE");
     shutdownKey.setBounds (row.removeFromRight (keyW).reduced (2, 2));

@@ -335,7 +335,7 @@ public:
             g.setColour (fill);
             g.fillRect (k);
             g.setColour (on && ! enabled ? Dark::text.withAlpha (0.45f) : ink);
-            g.setFont (wingFontPx (juce::jmin (wingKeyCap (k.getHeight()), k.getWidth() * 0.22f)));
+            g.setFont (wingFontPx (juce::jmin (wingKeyCap (k.getHeight()), k.getWidth() * 0.3f)));
             g.drawFittedText (names[i], k.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
         }
     }
@@ -482,7 +482,7 @@ public:
         const float screenH = getWingScreenHeight();
         g.setColour ((open ? Dark::text : Dark::caption).withAlpha (alpha));
         g.setFont (wingFontPx (juce::jmin (TypeScale::body * screenH, (float) t.getHeight() * 0.22f)));
-        g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 40 / 100), juce::Justification::centredLeft, 1, 0.8f);
+        g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 40 / 100), juce::Justification::centredLeft, 1, 0.6f);
         g.setColour (Dark::text.withAlpha (alpha));
         g.setFont (wingFontPx (juce::jmin (TypeScale::value * screenH, (float) t.getHeight() * 0.5f)));
         g.drawFittedText (shownValue, t, juce::Justification::centredLeft, 1, 0.8f);

@@ -1496,7 +1496,16 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
         g.setColour (fill);
         g.fillRoundedRectangle (tab, corner);
         t.removeFromLeft (6.0f * k);
-        if (title.prefix.isNotEmpty())
+        if (title.prefix.isNotEmpty() && title.kind == StatusTitle::Kind::Text)
+        {
+            // A plain title's prefix (LIBRARY: the show) is a small caption over it.
+            auto f = tab.reduced (12.0f * k, 6.0f * k);
+            g.setColour (ink);
+            g.setFont (wingFontPx (TypeScale::statusCaption * (float) screenArea.getHeight()));
+            g.drawFittedText (title.prefix, f.removeFromTop (f.getHeight() * 0.3f).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+            t = f;
+        }
+        else if (title.prefix.isNotEmpty())
         {
             auto prefixArea = t.removeFromLeft (juce::GlyphArrangement::getStringWidth (bigFont, title.prefix) + 14.0f * k);
             drawText (title.prefix, ink, prefixArea);

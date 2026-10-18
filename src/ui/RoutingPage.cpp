@@ -26,6 +26,7 @@ namespace
         juce::String chip; // "ALT", top right of the body
         juce::Colour chipColour = altOrange;
         bool selected = false;
+        float rightColumn = 0.0f; // share of the body kept free at the right (source chips and meter)
     };
 
     void paintTile (juce::Graphics& g, juce::Rectangle<int> area, const TileSpec& t)
@@ -49,6 +50,7 @@ namespace
         g.drawFittedText (t.label, label.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
 
         auto body = r.reduced (3.0f, 2.0f);
+        body.removeFromRight (body.getWidth() * t.rightColumn);
         auto numberArea = body.removeFromRight (body.getWidth() * 0.42f);
         if (t.icon)
             t.icon (g, body.withSizeKeepingCentre (juce::jmin (body.getWidth(), body.getHeight()), body.getHeight()).reduced (1.0f));
@@ -86,12 +88,10 @@ namespace
     {
         if (r.isEmpty())
             return;
-        auto fill = on ? onColour : Dark::key;
-        if (! enabled)
-            fill = fill.darker (0.55f);
-        g.setColour (fill);
+        // An unavailable key keeps its #303030 body with dim text, as on the console.
+        g.setColour (on && enabled ? onColour : Dark::key);
         g.fillRect (r);
-        g.setColour (on ? Dark::choiceInk : (enabled ? Dark::text : Dark::textDim.darker (0.3f)));
+        g.setColour (on && enabled ? Dark::choiceInk : (enabled ? Dark::text : Dark::textDim));
         g.setFont (juce::FontOptions (juce::jmin (18.0f, (float) r.getHeight() * 0.5f), juce::Font::bold));
         g.drawFittedText (text, r.reduced (2, 0), juce::Justification::centred, 2, 0.7f);
     }
@@ -655,16 +655,15 @@ void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, 
               : playback ? Recorder::playbackSourceName (Recorder::playbackChannelOf (port))
                          : portName (port, false);
     t.labelColour = pairing != ld::kSourceMono ? stereoLabel : (playback ? FileColours::wav : monoLabel);
-    // With 48 / M chips (top left of the body) the icon sits below them.
-    const bool chipsShown = src != nullptr && (src->phantom.load() || src->mute.load());
-    t.icon = [icon, playback, chipsShown] (juce::Graphics& gr, juce::Rectangle<float> r)
+    t.icon = [icon, playback] (juce::Graphics& gr, juce::Rectangle<float> r)
     {
-        if (chipsShown)
-            r = r.withTrimmedTop (r.getHeight() * 0.38f).withSizeKeepingCentre (r.getHeight() * 0.62f, r.getHeight() * 0.62f);
         if (icon <= 0 || ! drawWingIcon (gr, icon, r, Dark::textDim))
             drawIcon (gr, playback ? Icon::Waveform : Icon::Xlr, r, Dark::textDim);
     };
     t.selected = marked;
+    // [3.1, D14] the right edge of the body holds the 48 / M chips (grey when
+    // off) beside a vertical mini meter, so the number moves left of them.
+    t.rightColumn = src != nullptr ? 0.36f : 0.0f;
     paintTile (g, area, t);
     if (src == nullptr)
         return;
@@ -672,11 +671,12 @@ void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, 
     auto body = area.toFloat();
     body.removeFromTop (juce::jmax (12.0f, body.getHeight() * 0.22f));
     body.removeFromBottom (juce::jmin (20.0f, body.getHeight() * 0.36f));
+    body = body.reduced (0.0f, 2.0f);
     if (pairing != ld::kSourceMono)
     {
-        // The pair's link glyph (o-o; o|o for mid/side) at the top right.
+        // The pair's link glyph (o-o; o|o for mid/side) at the top left.
         const float d = juce::jlimit (4.0f, 7.0f, body.getHeight() * 0.22f);
-        auto link = juce::Rectangle<float> (d * 3.2f, d).withPosition (body.getRight() - d * 3.2f - 3.0f, body.getY() + 2.0f);
+        auto link = juce::Rectangle<float> (d * 3.2f, d).withPosition (body.getX() + 3.0f, body.getY());
         g.setColour (stereoLabel);
         g.drawEllipse (link.withWidth (d), 1.2f);
         g.drawEllipse (link.withTrimmedLeft (link.getWidth() - d), 1.2f);
@@ -685,25 +685,30 @@ void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, 
         else
             g.drawLine (link.getCentreX(), link.getY(), link.getCentreX(), link.getBottom(), 1.2f);
     }
-    const float chipW = juce::jmin (16.0f, body.getWidth() * 0.26f), chipH = juce::jmin (10.0f, body.getHeight() * 0.32f);
-    auto chips = body.reduced (3.0f, 2.0f).withHeight (chipH);
-    if (src->phantom.load())
-        drawChip (g, chips.removeFromLeft (chipW), "48", Colours::mute, juce::Colours::black);
-    chips.removeFromLeft (2.0f);
-    if (src->mute.load())
-        drawChip (g, chips.removeFromLeft (chipW), "M", Colours::mute, juce::Colours::black);
 
     // The mini meter (the tiles of the source group shown keep their peaks):
+    // a thin vertical bar of segments at the right edge.
     const auto& grid = mode == Mode::Channels ? rightPorts : leftPorts;
     const int slot = (int) (std::find (grid.begin(), grid.end(), area) - grid.begin());
     const float peak = juce::isPositiveAndBelow (slot, (int) sourcePeaks.size()) ? sourcePeaks[(size_t) slot] : 0.0f;
-    // a thin bar along the bottom of the body, over the port label.
-    auto meter = body.removeFromBottom (3.0f).reduced (3.0f, 0.0f);
-    g.setColour (juce::Colours::black);
-    g.fillRect (meter);
+    auto meter = body.removeFromRight (juce::jmax (3.0f, body.getWidth() * 0.07f)).translated (-2.0f, 0.0f);
     const float pos = juce::jlimit (0.0f, 1.0f, (juce::Decibels::gainToDecibels (peak, -60.0f) + 60.0f) / 60.0f);
-    g.setColour (pos > 0.99f ? Colours::meterRed : Colours::meterGreen);
-    g.fillRect (meter.withWidth (meter.getWidth() * pos));
+    const int segments = juce::jmax (4, (int) (meter.getHeight() / 2.5f));
+    const float segH = meter.getHeight() / (float) segments;
+    for (int i = 0; i < segments; ++i)
+    {
+        const bool lit = pos > (float) i / (float) segments;
+        g.setColour (lit ? (i == segments - 1 ? Colours::meterRed : Colours::meterGreen) : Colours::screenWell);
+        g.fillRect (meter.getX(), meter.getBottom() - (float) (i + 1) * segH + 0.5f, meter.getWidth(), juce::jmax (1.0f, segH - 1.0f));
+    }
+
+    // 48 (phantom) over M (mute): grey with dark text, lit red when on.
+    auto chips = body.removeFromRight (body.getWidth() * 0.26f).reduced (1.0f, 0.0f).translated (-3.0f, 0.0f);
+    const float chipH = juce::jmin (11.0f, chips.getHeight() * 0.42f);
+    chips = chips.withSizeKeepingCentre (chips.getWidth(), chipH * 2.0f + 2.0f);
+    drawChip (g, chips.removeFromTop (chipH), "48", src->phantom.load() ? Colours::mute : Colours::chipOff, juce::Colours::black);
+    chips.removeFromTop (2.0f);
+    drawChip (g, chips.removeFromTop (chipH), "M", src->mute.load() ? Colours::mute : Colours::chipOff, juce::Colours::black);
 }
 
 void RoutingPage::paintOutputPort (juce::Graphics& g, juce::Rectangle<int> area, int port, bool selected) const
@@ -1134,10 +1139,8 @@ void RoutingPage::paint (juce::Graphics& g)
     {
         if (r.isEmpty())
             return;
-        g.setColour (juce::Colours::black);
-        g.fillRect (r);
-        g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (juce::jmin (12.0f, (float) r.getHeight() * 0.8f), juce::Font::bold));
+        g.setColour (Dark::caption);
+        g.setFont (juce::FontOptions (juce::jmin (12.0f, (float) r.getHeight() * 0.8f)));
         g.drawText (text, r, juce::Justification::centred);
     };
 
@@ -1181,8 +1184,8 @@ void RoutingPage::paint (juce::Graphics& g)
                       sourceGroupName (inputGroup));
         // Source customization doesn't exist yet.
         caption (copyCaption, "COPY CUSTOMIZATION");
-        drawKey (g, srcToChKey, "SRC->CH", false, Dark::choice, false);
-        drawKey (g, chToSrcKey, "CH->SRC", false, Dark::choice, false);
+        drawKey (g, srcToChKey, "SRC -> CH", false, Dark::choice, false);
+        drawKey (g, chToSrcKey, "CH -> SRC", false, Dark::choice, false);
     }
     else if (mode == Mode::Outputs)
         drawSelector (g, rightSelector, Icon::Bus, "SOURCE GROUP", signalGroups[juce::jlimit (0, 5, signalGroup)]);

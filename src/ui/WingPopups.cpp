@@ -135,7 +135,7 @@ struct WingKeyboard::Impl
     juce::String text;
     int caret = 0;
     int maxLength = 16;
-    bool shift = false, caps = false, fieldVisible = true;
+    bool shift = false, caps = false, fieldVisible = true, suggestionRow = false;
     std::optional<Icon> icon, actionIcon;
     juce::String actionText { "DONE" };
     juce::StringArray suggestions;
@@ -163,7 +163,8 @@ struct WingKeyboard::Impl
     void layout (juce::Rectangle<float> r)
     {
         keys.clear();
-        const float units = 5.2f + (fieldVisible ? 1.4f : 0.0f) + (suggestions.isEmpty() ? 0.0f : 1.1f);
+        const bool showSuggestions = suggestionRow || ! suggestions.isEmpty();
+        const float units = 5.2f + (fieldVisible ? 1.4f : 0.0f) + (showSuggestions ? 1.1f : 0.0f);
         const float u = r.getHeight() / units;
         const float gapY = juce::jmax (2.0f, u * 0.07f);
 
@@ -173,7 +174,7 @@ struct WingKeyboard::Impl
             fieldBand = r.removeFromTop (u * 1.4f - gapY);
             r.removeFromTop (gapY);
         }
-        if (! suggestions.isEmpty())
+        if (showSuggestions)
         {
             suggestionBand = r.removeFromTop (u * 1.1f - gapY);
             r.removeFromTop (gapY);
@@ -437,6 +438,13 @@ void WingKeyboard::setActionText (const juce::String& t)
 void WingKeyboard::setIcon (std::optional<Icon> i)
 {
     impl->icon = i;
+    resized();
+    repaint();
+}
+
+void WingKeyboard::setSuggestionRowAlwaysShown (bool shown)
+{
+    impl->suggestionRow = shown;
     resized();
     repaint();
 }
