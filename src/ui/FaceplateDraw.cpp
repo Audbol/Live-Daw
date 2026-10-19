@@ -30,7 +30,7 @@ namespace
 
     juce::Font face (Look look, float size)
     {
-        size *= 1.08f; // the panel print reads a little larger than the screen face
+        size *= 1.18f; // the panel print reads larger than the screen face
         switch (lookIndex (look))
         {
             case lookIndex (Look::SansLight): return silkFont (size, false);
@@ -986,7 +986,7 @@ namespace
                 const auto bar = Rectangle<float> (bw, bh).withCentre (c);
                 g.setColour (Colour (0xff050505));
                 g.fillRect (bar.expanded (1.5f));
-                g.setColour (lit ? e.colour : e.colour.darker (0.85f).withSaturation (0.4f));
+                g.setColour (lit ? e.colour : e.colour.withMultipliedBrightness (0.22f).withMultipliedSaturation (0.6f));
                 g.fillRect (bar);
                 if (lit)
                 {

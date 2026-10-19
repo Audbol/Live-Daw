@@ -1114,7 +1114,7 @@ namespace
         auto tallKey = [&] (int param, float x, const char* s)
         {
             auto& k = d.key (param, x, 138, 38, 56, Look::StackKey, s);
-            k.colour2 = juce::Colour (0xff111111);
+            k.colour2 = juce::Colour (0xffeeeeee);
             k.size = 15;
             d.lamp (x + 19, 215, 12, 0xffff2020, param).at (param < 0 ? 1.0f : 0.0f);
         };
