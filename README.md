@@ -66,7 +66,7 @@ The [user guide](docs/USER_GUIDE.md) describes every part in detail.
 - **Linux**, a recent 64-bit distribution with ALSA or JACK and X11.
 - A multi-core CPU (strips are processed in parallel; a 40-channel console with
   processing on every channel uses a fraction of one core on a current machine),
-  4 GB of RAM, and a screen of at least 1366 x 768 (larger is better).
+  and a screen of at least 1366 x 768 (larger is better).
 - An audio interface with as many inputs and outputs as you want to mix. Without one,
   the **Virtual (no hardware)** device lets you try the console.
 
