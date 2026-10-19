@@ -1116,7 +1116,6 @@ namespace
             auto& k = d.key (param, x, 138, 38, 56, Look::StackKey, s);
             k.colour2 = juce::Colour (0xff111111);
             k.size = 15;
-            k.inv();
             d.lamp (x + 19, 215, 12, 0xffff2020, param).at (param < 0 ? 1.0f : 0.0f);
         };
         tallKey (o + 3, 516, "\xc3\xb7\n3");
@@ -1270,7 +1269,7 @@ namespace
         d.text ("PULSAR EQ\nP1a/M5", 52, 114, 160, 52, 21, txt, Look::Sans, J::centredLeft);
         auto chooser = [&] (int param, float cx, float cy, const char* labels, float sweep, const char* caption)
         {
-            d.knob (param, cx, cy, 62, Look::Chicken).scaleOf (0, labels, sweep).radii (1.0f, 1.18f).lsize (12).scol (txt);
+            d.knob (param, cx, cy, 78, Look::Chicken).scaleOf (0, labels, sweep).radii (1.0f, 1.12f).lsize (12).scol (txt);
             d.caption (caption, cx, 213, 15, txt);
         };
         auto boost = [&] (int param, float cx, float cy, const char* caption)
@@ -1300,7 +1299,7 @@ namespace
         section (o + 0, 575, "HI-LO EQ1");
         boost (o + 1, 718, 308, "LO BOOST");
         boost (o + 5, 885, 308, "HI BOOST");
-        d.knob (o + 8, 1052, 312, 62, Look::Chicken).scaleOf (0, "5|10|20", 140).radii (1.0f, 1.18f).lsize (12).scol (txt);
+        d.knob (o + 8, 1052, 312, 78, Look::Chicken).scaleOf (0, "5|10|20", 140).radii (1.0f, 1.12f).lsize (12).scol (txt);
         d.caption ("HI-ATT FREQ", 1052, 357, 15, txt);
         return d;
     }
@@ -1339,6 +1338,319 @@ namespace
         d.lamp (980, 321, 12, 0xff40e040, o + 7);
         d.key (o + 7, 1014, 305, 32, 32, Look::RoundKey, "", 0xff40e040);
         d.caption ("AUTO", 1030, 342, 13, txt);
+        return d;
+    }
+
+    //==========================================================================
+    // FX rack devices
+
+    /** The premium algorithmic reverbs' remote: a dot-matrix display over six
+        faders, a red screen and three keys. Each key shows a layer: six of the
+        model's parameters on the faders (layer 1 as the console's display). */
+    Design reverbRemote (const char* name, std::vector<std::vector<int>> layers)
+    {
+        Design d;
+        d.panel = juce::Colour (0xffece6d6);
+        d.texture = Texture::Smooth;
+        d.wear = 0.6f;
+        d.screws = false;
+        d.box (58, 95, 1040, 80, Look::Fill, 0xff050707, 0xff5a2a22, 3.0f);
+        for (int layer = 0; layer < (int) layers.size(); ++layer)
+        {
+            auto& disp = d.add (Type::Display, 62, 99, 1032, 72);
+            disp.params = layers[(size_t) layer];
+            disp.text = juce::String (name) + "|LAYER " + juce::String (layer + 1);
+            disp.colour = juce::Colour (0xff3ad8e0);
+            disp.colour2 = juce::Colour (0xff050707);
+            disp.size = 19;
+            disp.page = layer;
+            for (size_t i = 0; i < layers[(size_t) layer].size(); ++i)
+                d.fader (layers[(size_t) layer][i], 106.0f + 140.0f * (float) i, 196, 54, 180, 0xff3c4042).page = layer;
+        }
+        for (int i = 0; i < 6; ++i)
+        {
+            const float x = 133.0f + 140.0f * (float) i;
+            d.box (x - 2, 200, 4, 172, Look::Fill, 0xff111111);
+            for (int k = 0; k < (i < 5 ? 13 : 0); ++k)
+                d.box (x + 30, 203.0f + 13.0f * (float) k, 82, 0, Look::Line, 0xff2a2a2a, 0, 1.6f);
+        }
+        d.box (900, 190, 198, 140, Look::Fill, 0xff2a0806, 0xff4a3a36, 3.0f);
+        d.box (914, 202, 168, 4, Look::Fill, 0xffd04030);
+        for (int k = 1; k < 12; ++k)
+            d.box (900.0f + 16.5f * (float) k, 208, 0, 118, Look::Line, 0x55d03020, 0, 1.0f);
+        for (int k = 1; k < 8; ++k)
+            d.box (904, 206.0f + 15.5f * (float) k, 190, 0, Look::Line, 0x55d03020, 0, 1.0f);
+        d.path ("M 900 330 L 1098 190 L 1098 330 Z", 0x30000000, 0.0f);
+        for (int k = 0; k < 3; ++k)
+        {
+            if (k >= (int) layers.size())
+            {
+                d.box (900.0f + 68.0f * (float) k, 340, 60, 38, Look::Bevel, 0xffe8dcc0);
+                continue;
+            }
+            auto& key = d.key (-1, 900.0f + 68.0f * (float) k, 340, 60, 38, Look::TabKey);
+            key.choice = k;
+            key.colour2 = juce::Colour (0xffe8dcc0);
+        }
+        return d;
+    }
+
+    Design hallRemote() { return reverbRemote ("HALL", { { 0, 1, 2, 3, 4, 9 }, { 5, 6, 7, 8, 10 } }); }
+    Design roomRemote() { return reverbRemote ("ROOM", { { 0, 1, 2, 3, 4, 9 }, { 5, 6, 7, 8, 10 }, { 11, 12, 13, 14 } }); }
+    Design chamberRemote() { return reverbRemote ("CHAMBER", { { 0, 1, 2, 3, 4, 9 }, { 5, 6, 7, 8, 10 }, { 11, 12, 13, 14 } }); }
+    Design plateRemote() { return reverbRemote ("PLATE", { { 0, 1, 2, 3, 4, 9 }, { 5, 6, 7, 8, 10 }, { 11, 12, 13, 14 } }); }
+    Design concertRemote() { return reverbRemote ("CONCERT", { { 0, 1, 2, 3, 4, 9 }, { 5, 6, 7, 8, 10, 15 }, { 11, 12, 13, 14, 16 } }); }
+    Design ambienceRemote() { return reverbRemote ("AMBIENCE", { { 0, 1, 2, 3, 4, 5 }, { 6, 7, 8 } }); }
+
+    Design stereoDelay()
+    {
+        Design d;
+        d.panel = juce::Colour (0xff2ea232);
+        d.texture = Texture::Brushed;
+        d.wear = 0.9f;
+        const juce::uint32 ink = 0xff101810;
+        d.text ("Wing\nDelay", 60, 118, 170, 90, 44, ink, Look::Script);
+        auto big = [&] (int param, float cx, const char* lo, const char* unit, const char* hi, const char* caption)
+        {
+            d.knob (-1, cx, 190, 150, Look::WhiteDome).at (0.5f).sweep = 0.0f;
+            d.knob (param, cx, 190, 108, Look::BlackSkirt);
+            d.text (lo, cx - 70, 260, 40, 16, 14, ink);
+            d.text (unit, cx - 20, 268, 40, 16, 13, ink);
+            d.text (hi, cx + 32, 260, 40, 16, 14, ink);
+            d.caption (caption, cx, 89, 18, ink);
+        };
+        big (0, 310, "1", "MS", "3000", "TIME");
+        big (5, 790, "0", "%", "100", "FEEDBACK");
+        const char* modes[] = { "STEREO", "CROSS", "MONO" };
+        for (int i = 0; i < 3; ++i)
+            d.key (1, 448.0f + 69.0f * (float) i, 122, 66, 48, Look::FlatKey, modes[i], 0xffb0f890).sel (i).size = 12;
+        d.box (443, 193, 217, 144, Look::Fill, 0xff050805, 0xff3a5a3a, 3.0f);
+        d.text ("Stereo Feed Mode", 443, 198, 217, 20, 14, kWhite);
+        const juce::uint32 dia = 0xffd8e8d8;
+        d.path ("M 470 252 L 560 252 M 470 318 L 560 318 M 600 230 L 640 230 M 600 318 L 640 318 M 538 230 L 538 318", dia, 1.5f);
+        d.box (488, 242, 26, 20, Look::Line, dia, 0, 1.5f);
+        d.box (522, 242, 26, 20, Look::Line, dia, 0, 1.5f);
+        d.box (488, 286, 26, 20, Look::Line, dia, 0, 1.5f);
+        d.box (522, 286, 26, 20, Look::Line, dia, 0, 1.5f);
+        d.box (562, 220, 28, 20, Look::Line, dia, 0, 1.5f);
+        d.box (562, 308, 28, 20, Look::Line, dia, 0, 1.5f);
+        d.text ("L", 562, 220, 28, 20, 13, dia);
+        d.text ("R", 562, 308, 28, 20, 13, dia);
+        d.text ("L", 452, 244, 16, 16, 13, dia);
+        d.text ("R", 452, 288, 16, 16, 13, dia);
+        d.text ("Feed", 596, 262, 50, 18, 14, dia);
+        d.lamp (945, 120, 16, 0xffff2020).at (1.0f);
+        d.box (925, 145, 46, 225, Look::Fill, 0xffd8c088, 0xff8a7a40, 3.0f);
+        const char* sc[] = { "0", "3", "6", "12", "24", "36", "48" };
+        const float ys[] = { 168, 194, 218, 255, 296, 318, 330 };
+        for (int i = 0; i < 7; ++i)
+            d.text (sc[i], 925, ys[i] - 8, 46, 16, 13, i < 3 ? 0xffb02020 : ink);
+        auto small = [&] (int param, float cx, float cy, const char* lo, const char* unit, const char* hi, const char* caption)
+        {
+            d.knob (param, cx, cy, 72, Look::BlackSkirt).scaleOf (2, "", 280).radii (1.15f, 1.0f).scol (ink);
+            d.text (lo, cx - 58, cy + 38, 50, 16, 13, ink);
+            d.text (unit, cx - 20, cy + 46, 40, 16, 12, ink);
+            d.text (hi, cx + 8, cy + 38, 50, 16, 13, ink);
+            d.caption (caption, cx, cy - 52, 14, ink);
+        };
+        small (2, 126, 333, "1/3", "", "2", "FACTOR");
+        small (3, 254, 333, "1/2:1", "", "1/3:2", "PATTERN");
+        small (4, 382, 333, "-50", "MS", "50", "OFFSET");
+        small (6, 725, 333, "20", "HZ", "400", "FB LOCUT");
+        small (7, 855, 333, "200", "HZ", "20K", "FB HICUT");
+        small (9, 1038, 175, "200", "HZ", "20K", "HIGH CUT");
+        small (8, 1038, 333, "20", "HZ", "400", "LOW CUT");
+        return d;
+    }
+
+    /** A pedalboard: wooden floor, patch cables. */
+    void pedalboard (Design& d)
+    {
+        d.panel = juce::Colour (0xff5a321c);
+        d.texture = Texture::Smooth;
+        d.screws = false;
+        d.box (30, 70, 1096, 336, Look::Wood, 0);
+    }
+
+    void footswitch (Design& d, float cx, float cy)
+    {
+        d.knob (-1, cx, cy, 42, Look::Chrome).at (0.5f).sweep = 0.0f;
+    }
+
+    Design stereoChorus()
+    {
+        Design d;
+        pedalboard (d);
+        const juce::uint32 ink = 0xff141414;
+        d.path ("M 395 300 C 430 300 420 140 456 140", 0xff2a1a10, 7.0f);
+        d.path ("M 812 300 C 860 300 860 200 925 200", 0xff1a1a1a, 5.0f);
+        // Modulator: silver control plate on a blue body.
+        d.box (32, 74, 363, 332, Look::Fill, 0xff2a5ad0, 0xff1a3a90, 3.0f);
+        d.box (38, 81, 354, 145, Look::Bevel, 0xffc8ccd2);
+        for (auto [x, y] : { std::pair { 48.0f, 91.0f }, { 382.0f, 91.0f }, { 48.0f, 216.0f }, { 382.0f, 216.0f } })
+            d.add (Type::Screw, x, y, 12, 12);
+        d.box (38, 252, 122, 149, Look::Fill, 0xff2a4ab8, 0xff1a2a70, 2.0f);
+        d.text ("MODULATOR", 190, 374, 200, 28, 24, 0xff1a48d0);
+        auto silver = [&] (int param, float cx, float dia, const char* lo, const char* hi, const char* caption, float capY)
+        {
+            d.knob (param, cx, 166, dia, Look::ChromeSmall).scaleOf (2, "", 280).radii (1.2f, 1.0f).scol (ink);
+            d.text (lo, cx - 40, 192, 36, 14, 12, ink);
+            d.text (hi, cx + 4, 192, 36, 14, 12, ink);
+            d.caption (caption, cx, capY, 16, ink);
+        };
+        silver (10, 95, 56, "0.05", "5", "SPEED", 97);
+        silver (2, 178, 42, "", "", "WAVE", 111);
+        silver (9, 255, 42, "0", "100", "SPREAD", 111);
+        silver (3, 325, 42, "0", "180", "PHASE", 111);
+        // Chorus pedal.
+        d.box (456, 71, 356, 335, Look::Fill, 0xff30e0e8, 0xff1aa0a8, 3.0f);
+        d.box (500, 106, 100, 182, Look::Line, ink, 0, 1.5f);
+        d.box (678, 106, 100, 182, Look::Line, ink, 0, 1.5f);
+        d.caption ("L", 550, 88, 15, ink);
+        d.caption ("R", 728, 88, 15, ink);
+        d.caption ("DELAY", 639, 108, 15, ink);
+        d.caption ("DEPTH", 639, 266, 15, ink);
+        auto black = [&] (int param, float cx, float cy, const char* lo, const char* unit, const char* hi)
+        {
+            d.knob (param, cx, cy, 54, Look::BlackSkirt);
+            d.text (lo, cx - 38, cy + 26, 34, 14, 11, ink);
+            d.text (unit, cx - 15, cy + 30, 30, 14, 11, ink);
+            d.text (hi, cx + 4, cy + 26, 34, 14, 11, ink);
+        };
+        black (5, 548, 146, "5", "ms", "50");
+        black (6, 726, 146, "5", "ms", "50");
+        black (7, 548, 239, "MIN", "%", "MAX");
+        black (8, 726, 239, "MIN", "%", "MAX");
+        d.box (619, 144, 36, 13, Look::Fill, 0xffe02020);
+        d.text ("MIX", 619, 144, 36, 13, 11, kWhite);
+        black (4, 636, 194, "DRY", "", "WET");
+        d.text ("CHORUS", 520, 308, 238, 30, 26, ink).kerning (0.2f);
+        footswitch (d, 638, 362);
+        // Filter pedal.
+        d.box (925, 74, 200, 332, Look::Fill, 0xffa070e0, 0xff6a40a8, 3.0f);
+        d.box (933, 82, 184, 290, Look::Line, ink, 0, 1.5f);
+        d.caption ("LO CUT", 982, 98, 15, ink);
+        d.caption ("HI CUT", 1067, 98, 15, ink);
+        black (0, 982, 143, "20", "Hz", "400");
+        black (1, 1067, 143, "20", "Hz", "20K");
+        d.text ("filter", 960, 218, 140, 50, 44, ink, Look::Script);
+        footswitch (d, 1027, 318);
+        d.box (933, 372, 184, 28, Look::Line, ink, 0, 2.0f);
+        d.text ("FILTER WING", 933, 374, 184, 24, 17, ink).kerning (0.1f);
+        return d;
+    }
+
+    Element& segmentValue (Design& d, int param, float x, float y, float w, float h, float size, juce::uint32 colour)
+    {
+        auto& v = d.add (Type::Value, x, y, w, h);
+        v.param = param;
+        v.look = Look::Segment;
+        v.size = size;
+        v.colour = juce::Colour (colour);
+        v.colour2 = juce::Colour (0xff060808);
+        v.just = J::centredRight;
+        return v;
+    }
+
+    Design bluePlate()
+    {
+        Design d;
+        d.panel = juce::Colour (0xff1c1c1e);
+        d.texture = Texture::Brushed;
+        d.screws = false;
+        for (auto [x, y] : { std::pair { 50.0f, 95.0f }, { 1104.0f, 95.0f }, { 50.0f, 382.0f }, { 1104.0f, 382.0f } })
+            d.add (Type::Screw, x, y, 14, 14);
+        d.path ("M 30 320 L 900 320 L 900 70 L 1062 70 L 1062 406 L 30 406 Z", 0xff1f50e8, 0.0f);
+        d.text ("Plate", 60, 124, 120, 40, 34, kWhite, Look::SerifItalic, J::centredLeft);
+        d.box (66, 160, 106, 30, Look::Fill, 0xff1f50e8);
+        d.text ("REVERB", 66, 160, 106, 30, 21, kWhite, Look::SerifItalic);
+        const juce::uint32 cyan = 0xff40e0f0;
+        for (auto [x, param, label, unit] : { std::tuple { 195.0f, 2, "DECAY", "S" }, { 572.0f, 4, "DAMPING", "HZ" } })
+        {
+            d.box (x, 108, 310, 100, Look::Fill, 0xff060808, 0xff2a2a2a, 2.0f);
+            segmentValue (d, param, x + 10, 118, 160, 80, 58, cyan);
+            d.text (label, x + 176, 132, 120, 22, 19, cyan, Look::Dot, J::centredLeft);
+            d.text (unit, x + 176, 162, 120, 22, 19, cyan, Look::Dot, J::centredLeft);
+        }
+        auto knob = [&] (int param, float cx, const char* caption, int page = -1)
+        {
+            d.knob (param, cx, 318, 74, Look::BlackSkirt).page = page;
+            d.text (caption, cx - 60, 358, 120, 22, 17, 0xffe8eefc, Look::SerifItalic).page = page;
+        };
+        knob (0, 172, "Predelay");
+        knob (1, 300, "Size");
+        knob (2, 430, "Decay");
+        knob (4, 646, "Damping");
+        knob (3, 815, "BassMult");
+        // The last knob: XOVER, or what the keys pick.
+        const struct
+        {
+            int param;
+            const char* caption;
+            const char* key;
+            float x, y;
+        } pages[] = { { 7, "Xover", nullptr, 0, 0 },     { 5, "LoCut", "LoCut", 915, 108 }, { 6, "HiCut", "HiCut", 995, 108 },
+                      { 8, "Mod", "Mod", 915, 186 },     { 9, "Spd", "Spd", 995, 186 },     { 10, "Diff", "Diff", 402, 227 } };
+        for (int i = 0; i < 6; ++i)
+        {
+            knob (pages[i].param, 980, pages[i].caption, i);
+            if (pages[i].key != nullptr)
+            {
+                auto& k = d.key (-1, pages[i].x, pages[i].y, 55, 26, Look::TabKey, pages[i].key);
+                k.choice = i;
+                k.colour2 = juce::Colour (0xff3a3a3c);
+                k.size = 15;
+            }
+        }
+        return d;
+    }
+
+    Design vintagePlate()
+    {
+        Design d;
+        d.panel = juce::Colour (0xffc4c6c8);
+        d.texture = Texture::Brushed;
+        d.screws = false;
+        for (auto [x, y] : { std::pair { 46.0f, 87.0f }, { 1107.0f, 87.0f }, { 46.0f, 388.0f }, { 1107.0f, 388.0f } })
+            d.add (Type::Screw, x, y, 14, 14);
+        const juce::uint32 ink = 0xff1a1a1a;
+        d.box (72, 106, 73, 275, Look::Line, 0xff7a7a7a, 0, 2.0f);
+        d.box (173, 106, 249, 275, Look::Line, 0xff7a7a7a, 0, 2.0f);
+        d.caption ("FILTER", 107, 114, 15, ink);
+        d.caption ("DECAY", 200, 114, 15, ink);
+        d.caption ("PRE DELAY", 315, 114, 15, ink);
+        auto fader = [&] (int param, float x, const char* hi, const char* unit, const char* lo)
+        {
+            for (int k = 0; k < 13; ++k)
+                d.box (x - 22, 152.0f + 15.5f * (float) k, 12, 0, Look::Line, ink, 0, 1.2f);
+            d.fader (param, x - 12, 140, 24, 216, 0xfff0f0f0);
+            d.text (hi, x + 2, 148, 30, 14, 11, ink);
+            d.text (unit, x + 2, 240, 30, 14, 11, ink);
+            d.text (lo, x + 2, 334, 30, 14, 11, ink);
+        };
+        fader (2, 107, "400", "Hz", "20");
+        fader (1, 205, "6", "s", "1");
+        fader (0, 318, "250", "ms", "0");
+        for (auto [x, face] : { std::pair { 229.0f, 0xfff0e4a8u }, { 343.0f, 0xffdcdcdc } })
+        {
+            d.box (x, 133, 60, 233, Look::Fill, 0xff111111, 0xff3a3a3a, 2.0f);
+            d.box (x + 6, 151, 47, 103, Look::Fill, face, 0xff6a6a6a, 1.0f);
+            d.key (-1, x + 14, 270, 30, 30, Look::RoundKey, "", 0xff3a6ae8).at (1.0f);
+            d.key (-1, x + 14, 316, 30, 30, Look::RoundKey, "", 0xff3a6ae8).at (1.0f);
+        }
+        d.box (470, 166, 86, 107, Look::Fill, 0xffe01818, 0xff7a0a0a, 3.0f);
+        d.text ("PLATE", 470, 202, 86, 26, 20, 0xfff8e0e0);
+        d.path ("M 513 176 L 528 196 L 520 196 L 520 262 L 506 262 L 506 196 L 498 196 Z", 0x40ffffff, 0.0f);
+        d.caption ("POWER", 512, 296, 12, ink);
+        d.text ("OFF", 470, 318, 30, 14, 11, ink);
+        d.toggle (-1, 512, 318, 20).sideways().at (1.0f);
+        d.text ("ON", 530, 318, 30, 14, 11, ink);
+        d.box (602, 122, 214, 244, Look::Bevel, 0xffd0d2d4);
+        d.caption ("COLOUR", 713, 146, 16, ink);
+        d.knob (3, 713, 261, 110, Look::Chicken).scaleOf (31, "", 260, false).radii (0.95f, 1.0f).scol (ink);
+        d.text ("DARK", 612, 308, 50, 16, 13, ink);
+        d.text ("BRIGHT", 760, 308, 56, 16, 13, ink);
+        d.vu (885, 171, 175, 95, Look::VuCream, "-20|-10|-7|-5|-3|-1|0|+1|+2|+3", { 20, 10, 7, 5, 3, 1, 0, -1, -2, -3 }, "").vuZero = 0.75f;
         return d;
     }
 
@@ -1390,6 +1702,16 @@ namespace
         put ("F:PULSAR", pulsarEq (1));
         put ("E:MACH4", machEq4 (0));
         put ("F:MACH4", machEq4 (1));
+        put ("F:HALL", hallRemote());
+        put ("F:ROOM", roomRemote());
+        put ("F:CHAMBER", chamberRemote());
+        put ("F:PLATE", plateRemote());
+        put ("F:CONCERT", concertRemote());
+        put ("F:AMBI", ambienceRemote());
+        put ("F:ST-DL", stereoDelay());
+        put ("F:CHORUS", stereoChorus());
+        put ("F:BPLATE", bluePlate());
+        put ("F:V-PLATE", vintagePlate());
         return m;
     }
 } // namespace

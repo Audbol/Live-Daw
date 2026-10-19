@@ -38,8 +38,8 @@ namespace
             case lookIndex (Look::SerifBold): return juce::Font (juce::FontOptions (juce::Font::getDefaultSerifFontName(), size, juce::Font::bold));
             case lookIndex (Look::SerifItalic): return juce::Font (juce::FontOptions (juce::Font::getDefaultSerifFontName(), size, juce::Font::italic));
             case lookIndex (Look::Script): return juce::Font (juce::FontOptions (juce::Font::getDefaultSerifFontName(), size, juce::Font::bold | juce::Font::italic));
-            case lookIndex (Look::Segment):
-            case lookIndex (Look::Dot): return juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), size, juce::Font::bold));
+            case lookIndex (Look::Segment): return juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), size, juce::Font::bold));
+            case lookIndex (Look::Dot): return juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), size, juce::Font::plain));
             default: return silkFont (size, true);
         }
     }
@@ -793,7 +793,8 @@ namespace
                 break;
             case lookIndex (Look::TabKey):
             {
-                juce::ColourGradient kg (on ? Colour (0xffd8e4f4) : Colour (0xffcfcfcf), r.getX(), r.getY(), on ? Colour (0xff8aa0c0) : Colour (0xff8a8a8a),
+                const auto base = e.colour2.isOpaque() && e.colour2 != Colour (0xff000000) ? e.colour2 : Colour (0xffcfcfcf);
+                juce::ColourGradient kg (on ? base.darker (0.15f) : base.brighter (0.1f), r.getX(), r.getY(), on ? base.darker (0.5f) : base.darker (0.3f),
                                          r.getX(), r.getBottom(), false);
                 g.setGradientFill (kg);
                 g.fillRoundedRectangle (r, 3.0f);
@@ -1112,7 +1113,13 @@ namespace
         g.setColour (e.colour.withAlpha (0.12f));
         g.setFont (face (e.look, e.size));
         if (e.look == Look::Segment)
-            g.drawText (juce::String::repeatedString ("8", juce::jmax (3, text.length())), r.reduced (4.0f, 0.0f), juce::Justification::centredRight);
+        {
+            // Unlit segments behind the digits: every digit position shows an 8.
+            juce::String ghost;
+            for (auto c : text)
+                ghost += juce::CharacterFunctions::isDigit (c) || c == '-' ? juce::juce_wchar ('8') : c;
+            g.drawText (ghost, r.reduced (4.0f, 0.0f), e.just);
+        }
         g.setColour (e.colour);
         g.drawText (text, r.reduced (4.0f, 0.0f), e.just);
     }
