@@ -178,6 +178,12 @@ void DisplayKnob::setHardware (bool h)
     repaint();
 }
 
+void DisplayKnob::setCap (Cap cap)
+{
+    slider.getProperties().set ("cap", (int) cap);
+    repaint();
+}
+
 void DisplayKnob::mouseEnter (const juce::MouseEvent&)
 {
     if (onTouch && slider.isEnabled())

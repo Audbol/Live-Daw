@@ -23,12 +23,14 @@ namespace
     /** Row height that fits `rows` rows in `height` px. */
     /** A settings row height that fits `rows` rows into `height`, at least
         36 of the WING's 800 px screen (18 px at 1920x1080, 12 px at 1280x800). */
-    int minRowHeight() { return juce::jlimit (12, 18, juce::roundToInt (getWingScreenHeight() * 0.036f)); }
+    int minRowHeight() { return juce::jlimit (12, screenCap (18), juce::roundToInt (getWingScreenHeight() * 0.036f)); }
 
-    int fitRowHeight (int height, float rows, int minH = -1, int maxH = 30)
+    int fitRowHeight (int height, float rows, int minH = -1, int maxH = -1)
     {
         if (minH < 0)
             minH = minRowHeight();
+        if (maxH < 0)
+            maxH = screenCap (30);
         return juce::jlimit (minH, juce::jmax (minH, maxH), (int) ((float) height / juce::jmax (1.0f, rows)));
     }
 
@@ -188,7 +190,7 @@ namespace
         void paint (juce::Graphics& g) override
         {
             auto r = getLocalBounds();
-            auto key = r.removeFromRight (juce::jmin (22, r.getWidth() / 6));
+            auto key = r.removeFromRight (juce::jmin (screenCap (22), r.getWidth() / 6));
             g.setColour (Dark::box);
             g.fillRect (r);
             g.setColour (Dark::key);
@@ -353,7 +355,7 @@ namespace
             b.removeFromBottom (4);
             infoBox = b;
             auto r = b.reduced (8, 4);
-            const int configH = juce::jmin (84, r.getHeight() * 32 / 100);
+            const int configH = juce::jmin (screenCap (84), r.getHeight() * 32 / 100);
             auto config = r.removeFromBottom (configH);
             const int rowH = r.getHeight() / 4;
             for (auto& row : infoRows)
@@ -367,7 +369,7 @@ namespace
             {
                 auto rr = config.removeFromTop (h).reduced (0, 2);
                 *row = rr;
-                auto keys = rr.removeFromRight (juce::jmin (rr.getWidth() * 62 / 100, 200));
+                auto keys = rr.removeFromRight (juce::jmin (rr.getWidth() * 62 / 100, screenCap (200)));
                 auto wing = keys.removeFromRight (keys.getWidth() / 3);
                 if (row == &chRow)
                     chWing.setBounds (wing.reduced (2, 0));
@@ -475,7 +477,7 @@ namespace
         void resized() override
         {
             auto b = getLocalBounds();
-            auto top = b.removeFromTop (juce::jlimit (70, 120, b.getHeight() * 22 / 100));
+            auto top = b.removeFromTop (juce::jlimit (70, screenCap (120), b.getHeight() * 22 / 100));
             b.removeFromTop (6);
             const int gap = 4;
             const int timeW = top.getWidth() * 16 / 100;
@@ -742,7 +744,7 @@ namespace
             const std::pair<const char*, juce::String> rows[] = { { "XRUNS", d != nullptr ? juce::String (d->getXRunCount()) : juce::String ("-") },
                                                                   { "SAFETY CLIPS", juce::String (ctx.engine.outputClipEvents.load()) } };
             auto r = body.reduced (8, 4);
-            const int h = juce::jmin (24, r.getHeight() / 2);
+            const int h = juce::jmin (screenCap (24), r.getHeight() / 2);
             for (auto& [label, value] : rows)
             {
                 auto row = r.removeFromTop (h);
@@ -1123,7 +1125,7 @@ namespace
         {
             g.fillAll (Dark::well);
             auto r = getLocalBounds().reduced (8, 4);
-            const float fh = juce::jlimit (11.0f, 14.0f, (float) getHeight() / 6.0f);
+            const float fh = juce::jlimit (11.0f, screenCap (14.0f), (float) getHeight() / 6.0f);
             const int lineH = juce::roundToInt (fh * 1.3f);
             g.setFont (juce::FontOptions (fh, juce::Font::bold));
             auto line = [&] (const juce::String& text, juce::Colour colour)
@@ -1249,7 +1251,7 @@ namespace
         {
             auto r = getLocalBounds().reduced (24, 16);
             const auto lines = juce::StringArray::fromLines (text);
-            const float fh = juce::jlimit (11.0f, 19.0f, (float) r.getHeight() / ((float) juce::jmax (8, lines.size()) * 1.6f));
+            const float fh = juce::jlimit (11.0f, screenCap (19.0f), (float) r.getHeight() / ((float) juce::jmax (8, lines.size()) * 1.6f));
             g.setFont (wingFontPx (fh));
             for (auto& line : lines)
             {
@@ -1575,7 +1577,7 @@ namespace
                 g.setColour (Dark::on.withAlpha (alpha));
                 g.drawRect (area, 1.5f);
                 g.setColour (juce::Colours::black.withAlpha (alpha));
-                g.setFont (wingFontPx (juce::jmin (30.0f, area.getHeight() * 0.42f), WingWeight::SemiBold));
+                g.setFont (wingFontPx (juce::jmin (screenCap (30.0f), area.getHeight() * 0.42f), WingWeight::SemiBold));
                 g.drawText (label, area, juce::Justification::centred);
             };
             if (faders)
@@ -1614,7 +1616,7 @@ namespace
         void resized() override
         {
             auto b = getLocalBounds();
-            load.setBounds (b.removeFromRight (juce::jmin (100, b.getWidth() * 2 / 5)).reduced (0, 2));
+            load.setBounds (b.removeFromRight (juce::jmin (screenCap (100), b.getWidth() * 2 / 5)).reduced (0, 2));
             b.removeFromRight (6);
             field.setBounds (b);
         }
@@ -1725,7 +1727,7 @@ namespace
 
             // The emulated units and DAW mode.
             auto r = status;
-            const float fh = juce::jlimit (11.0f, 15.0f, (float) getHeight() / 34.0f);
+            const float fh = juce::jlimit (11.0f, screenCap (15.0f), (float) getHeight() / 34.0f);
             const int lineH = juce::roundToInt (fh * 1.45f);
             auto line = [&] (const juce::String& text, juce::Colour colour)
             {
@@ -1825,7 +1827,7 @@ namespace
 
         void resized() override
         {
-            box = getLocalBounds().withWidth (juce::jmin (getWidth(), 720)).withHeight (juce::jmin (getHeight(), 240));
+            box = getLocalBounds().withWidth (juce::jmin (getWidth(), screenCap (720))).withHeight (juce::jmin (getHeight(), screenCap (240)));
             scan.setBounds (darkPanelBody (box, true).reduced (12, 10).removeFromBottom (44).removeFromLeft (260));
         }
 
@@ -2024,9 +2026,9 @@ void SetupPage::paint (juce::Graphics& g)
 void SetupPage::resized()
 {
     auto b = getLocalBounds();
-    auto row = b.removeFromTop (juce::jlimit (30, 44, getHeight() / 12));
+    auto row = b.removeFromTop (juce::jlimit (30, screenCap (44), getHeight() / 12));
     b.removeFromTop (6);
-    const int keyW = juce::jmin (180, getWidth() * 13 / 100);
+    const int keyW = juce::jmin (screenCap (180), getWidth() * 13 / 100);
     // Narrow screens: the icon over a one-word caption.
     const bool narrow = keyW < 80;
     initKey.iconAbove = shutdownKey.iconAbove = narrow;

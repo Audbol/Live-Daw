@@ -43,39 +43,14 @@ namespace
 
         void paint (juce::Graphics& g) override
         {
+            // The source as ROUTING draws it, in a black frame [I1, D16].
             auto r = getLocalBounds().toFloat();
             g.setColour (juce::Colours::black);
             g.fillRect (r);
-            auto inner = r.reduced (2.0f);
-            auto header = inner.removeFromTop (juce::jlimit (12.0f, 22.0f, inner.getHeight() * 0.2f));
-            const auto colour = stripDisplayColour (strip);
-            g.setColour (colour);
-            g.fillRect (header);
-            g.setColour (colour.getPerceivedBrightness() > 0.45f ? juce::Colours::black : juce::Colours::white);
-            g.setFont (wingFontFit (TypeScale::body, header.getHeight() * 0.85f, WingWeight::SemiBold));
-            g.drawFittedText (stripName (strip).toUpperCase(), header.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
-
-            g.setColour (colours::keyOff);
-            g.fillRect (inner);
-            auto label = inner.removeFromBottom (juce::jlimit (12.0f, 22.0f, inner.getHeight() * 0.26f));
-            auto body = inner.reduced (4.0f, 3.0f);
-            drawChannelIcon (g, strip.params.icon.load(), strip.getKind(), body.removeFromLeft (body.getWidth() * 0.55f), colours::ink);
-            // The stereo-link glyph: a white pill, the knob right when linked.
-            auto pill = body.removeFromTop (body.getHeight() * 0.45f).withSizeKeepingCentre (juce::jmin (body.getWidth() * 0.8f, 26.0f), juce::jmin (body.getHeight() * 0.3f, 12.0f));
-            g.setColour (Colours::text);
-            g.fillRoundedRectangle (pill, pill.getHeight() * 0.5f);
+            const int left = strip.params.inputLeft.load();
             const bool st = strip.params.stereo.load();
-            g.setColour (juce::Colours::black);
-            const float d = pill.getHeight() * 0.7f;
-            g.fillEllipse ((st ? pill.getRight() - d - 1.5f : pill.getX() + 1.5f), pill.getCentreY() - d * 0.5f, d, d);
-            g.setColour (Colours::textDim);
-            g.drawRect (body.withSizeKeepingCentre (juce::jmin (body.getWidth() * 0.6f, 18.0f), juce::jmin (body.getHeight() * 0.6f, 12.0f)), 1.0f);
-
-            g.setColour (colours::well);
-            g.fillRect (label);
-            g.setColour (st ? colours::stereo : colours::mono);
-            g.setFont (wingFontFit (TypeScale::body, label.getHeight() * 0.8f, WingWeight::SemiBold));
-            g.drawFittedText (shownPort, label.toNearestInt(), juce::Justification::centred, 1, 0.7f);
+            const int right = strip.params.inputRight.load() >= 0 ? strip.params.inputRight.load() : left + 1;
+            paintInputSourceTile (g, r.reduced (juce::jmax (1.5f, wingPx (3.0f))), ctx.engine, left, right, st, hasSignal());
         }
 
         void mouseUp (const juce::MouseEvent& e) override
@@ -87,7 +62,9 @@ namespace
     private:
         void timerCallback() override
         {
-            const auto now = portName (ctx, strip) + stripName (strip) + juce::String (strip.getColourIndex()) + "|" + juce::String (strip.params.icon.load());
+            const int index = strip.params.inputLeft.load() >= 0 ? MixerEngine::sourceIndex (strip.params.inputLeft.load()) : -1;
+            const auto now = portName (ctx, strip) + (strip.params.stereo.load() ? "S" : "") + (hasSignal() ? "s" : "")
+                             + (index >= 0 ? ctx.engine.getSourceName (index) : juce::String());
             if (now != shown)
             {
                 shown = now;
@@ -95,6 +72,8 @@ namespace
                 repaint();
             }
         }
+
+        bool hasSignal() const { return ctx.meters.get (&strip, true, 0) > juce::Decibels::decibelsToGain (-50.0f); }
 
         UiContext& ctx;
         Strip& strip;
@@ -306,12 +285,15 @@ public:
             bindKey (*hiCut, p.filter.highCut);
             tool = &key (toolFilterName (p.filter.toolModel.load()), toolFilterIcon (p.filter.toolModel.load()), toolFilterColour (p.filter.toolModel.load()));
             bindKey (*tool, p.filter.tool);
+            for (auto* k : { loCut, hiCut, tool })
+                k->labelBeside = true;
         }
 
         level = &make<LevelPanel> (ctx, strip);
 
         graph = &make<ResponseGraph>();
         graph->setStrip (&strip, ResponseGraph::Eq);
+        graph->setOverview (true);
         graph->setInterceptsMouseClicks (false, false);
 
         pan = &make<PanWidthDisplay> (p.pan, p.width, false);
@@ -349,7 +331,7 @@ public:
         levelArea = b.removeFromRight (b.getWidth() * 22 / 100);
         auto top = b.removeFromTop (b.getHeight() / 2);
         // FILTER / MAIN keep room for their titles on small screens.
-        const int sideW = juce::jmax (top.getWidth() * 21 / 100, juce::jmin (112, top.getWidth() / 3));
+        const int sideW = juce::jmax (top.getWidth() * 21 / 100, juce::jmin (screenCap (112), top.getWidth() / 3));
         inputArea = top.removeFromLeft (top.getWidth() - sideW);
         filterArea = top;
         eqArea = b.removeFromLeft (b.getWidth() - sideW);
@@ -366,45 +348,54 @@ public:
         {
             // I1: a square source tile (112 of the panel's 224) and the MUTE
             // key (84 x 56) under it.
-            const int tile = juce::jmin (in.getWidth() / 4, in.getHeight() * 52 / 100);
+            const int tile = juce::jmin (in.getWidth() / 4, in.getHeight() * 58 / 100);
             auto tileCol = in.removeFromLeft (tile);
             source->setBounds (tileCol.removeFromTop (tile));
-            tileCol.removeFromTop (tile / 6);
-            const auto muteRow = tileCol.removeFromTop (tile / 2);
-            sourceMute->setBounds (muteRow.withSizeKeepingCentre (tile * 3 / 4, muteRow.getHeight()));
-            in.removeFromLeft (10);
+            tileCol.removeFromTop (juce::jmin (tileCol.getHeight() / 4, juce::roundToInt (wingPx (20.0f))));
+            const auto muteRow = tileCol.removeFromTop (juce::jmin (tileCol.getHeight(), juce::roundToInt (wingPx (56.0f))));
+            sourceMute->setBounds (muteRow.withSizeKeepingCentre (juce::jmin (tile, juce::roundToInt (wingPx (84.0f))), muteRow.getHeight()));
+            in.removeFromLeft (juce::roundToInt (juce::jmax (6.0f, wingPx (16.0f))));
         }
-        auto trimRow = in.removeFromTop (juce::jlimit (28, 52, in.getHeight() * 30 / 100));
-        trim->setBounds (trimRow.removeFromRight (juce::jmin (trimRow.getWidth(), juce::jmax (110, trimRow.getHeight() * 3))));
+        // The TRIM knob box: 176 x 64 at the top right (WING pixels).
+        auto trimRow = in.removeFromTop (juce::jmin (in.getHeight() * 40 / 100, juce::roundToInt (wingPx (64.0f))));
+        trim->setBounds (trimRow.removeFromRight (juce::jmin (trimRow.getWidth(), juce::jmax (110, juce::roundToInt (wingPx (176.0f))))));
         in.removeFromTop (4);
         processors->setBounds (in);
 
         // FILTER: low cut, high cut and the tool filter (input channels only).
         if (loCut != nullptr)
         {
+            // Fig. 21: 52 px square keys 70 px apart, the name beside each.
             auto f = box (filterArea, "FILTER", true);
-            const int kh = juce::jmin (40, (f.getHeight() - 8) / 3);
+            const int gap = juce::roundToInt (juce::jmax (3.0f, wingPx (18.0f)));
+            const int kh = juce::jmin (juce::roundToInt (wingPx (52.0f)), (f.getHeight() - 2 * gap) / 3);
             for (auto* k : { loCut, hiCut, tool })
             {
                 k->setBounds (f.removeFromTop (kh));
-                f.removeFromTop (4);
+                f.removeFromTop (gap);
             }
         }
 
         // LEVEL: MUTE top left, the meter, SOLO bottom left, the fader.
         level->setBounds (box (levelArea, "LEVEL"));
 
-        // EQ graph.
-        graph->setBounds (box (eqArea, "EQ", true));
+        // EQ graph: the whole panel body (I1, Fig. 21).
+        box (eqArea, "EQ", true);
+        graph->setBounds (sectionBody (eqArea, true));
 
-        // MAIN: pan/width display, mains 1-4, solo bus keys.
+        // MAIN [I1]: the pan / width ring, the mains 1-4 as 16 px squares
+        // 20 px apart at its top right, SOLO BUS over two 56 px keys.
         auto m = box (mainArea, "MAIN", true);
-        auto soloRow = m.removeFromBottom (juce::jlimit (20, 34, m.getHeight() / 4));
-        soloBusLabel->setBounds (m.removeFromBottom (juce::jlimit (12, 18, m.getHeight() / 6)));
-        soloA->setBounds (soloRow.removeFromLeft (soloRow.getWidth() / 2).reduced (2, 0));
-        soloB->setBounds (soloRow.reduced (2, 0));
+        auto soloRow = m.removeFromBottom (juce::jlimit (16, juce::jmax (16, m.getHeight() / 4), juce::roundToInt (wingPx (56.0f))));
+        soloRow = soloRow.withSizeKeepingCentre (juce::jmin (soloRow.getWidth(), juce::roundToInt (wingPx (112.0f))), soloRow.getHeight());
+        soloBusLabel->setBounds (m.removeFromBottom (juce::jlimit (12, juce::jmax (12, m.getHeight() / 5), juce::roundToInt (wingPx (32.0f)))));
+        soloA->setBounds (soloRow.removeFromLeft (soloRow.getWidth() / 2));
+        soloB->setBounds (soloRow);
         if (mains != nullptr)
-            mains->setBounds (m.removeFromRight (juce::jmin (16, m.getWidth() / 5)).reduced (0, 2));
+        {
+            auto col = m.removeFromRight (juce::jmin (juce::roundToInt (wingPx (16.0f)), m.getWidth() / 5));
+            mains->setBounds (col.withHeight (juce::jmin (col.getHeight(), juce::roundToInt (wingPx (78.0f)))));
+        }
         pan->setBounds (m.reduced (2));
     }
 
@@ -415,7 +406,7 @@ public:
         const auto& eqModel = models::model (static_cast<models::Table> (strip.getEqTable()), strip.params.eq.model.load());
         if (eqModel.token != "STD")
         {
-            auto header = eqArea.reduced (3).removeFromTop (panelHeaderHeight()).toFloat();
+            auto header = sectionHeader (eqArea).toFloat();
             auto plate = header.removeFromRight (header.getWidth() * 0.32f).withTrimmedRight (26.0f).reduced (0.0f, 3.0f);
             Faceplate::paintThumbnail (g, plate, static_cast<models::Table> (strip.getEqTable()), strip.params.eq.model.load(), {});
         }
@@ -425,7 +416,7 @@ public:
     {
         // Panel headers with a chevron open their screen.
         const auto pos = e.getPosition();
-        auto header = [] (juce::Rectangle<int> r) { return r.reduced (3).removeFromTop (panelHeaderHeight()); };
+        auto header = [] (juce::Rectangle<int> r) { return sectionHeader (r); };
         HomeTab target = HomeTab::Home;
         if (header (inputArea).contains (pos))
             target = HomeTab::Input;
@@ -1199,7 +1190,7 @@ public:
         if (keys && ! rows.empty())
         {
             const auto home = rows.front().thumb;
-            const float h = juce::jlimit (9.0f, 16.0f, (float) home.getHeight() * 0.26f);
+            const float h = juce::jlimit (9.0f, screenCap (16.0f), (float) home.getHeight() * 0.26f);
             auto area = juce::Rectangle<float> ((float) keyLeft, (float) home.getY() + 2.0f, (float) (getWidth() - keyLeft) - 2.0f, h);
             for (auto& tag : stripTags (*strip))
             {
@@ -1218,7 +1209,7 @@ public:
         g.fillRect (faderBar.withWidth (faderBar.getWidth() * pos));
         if (const int tap = tapIndex(); tap >= 0 && tap < (int) tapY.size())
         {
-            const float d = juce::jlimit (6.0f, 11.0f, faderBar.getHeight() * 2.5f);
+            const float d = juce::jlimit (5.0f, juce::jmax (5.0f, faderBar.getHeight() * 2.5f), wingPx (10.0f)); // [D5] a 10 px dot
             const float ty = draggingTap ? (float) dragY : tapY[(size_t) tap];
             const float dotX = (float) thumbWidth * 0.5f;
             // "A red dot with a gray line connected to the bus send slot": along
@@ -1232,7 +1223,7 @@ public:
                 line.lineTo (edge, (float) sends.getY() + 1.0f);
                 line.lineTo ((float) sends.getRight() - 1.0f, (float) sends.getY() + 1.0f);
                 g.setColour (colours::chipOff);
-                g.strokePath (line, juce::PathStrokeType (1.0f));
+                g.strokePath (line, juce::PathStrokeType (juce::jmax (1.0f, wingPx (2.0f))));
             }
             if (editing && ! gapArea.isEmpty())
                 paintTapFlag (g, dotX, ty);
@@ -1494,7 +1485,7 @@ private:
     juce::Rectangle<float> tapFlagArea (float ty) const
     {
         auto gap = gapArea.toFloat();
-        const float h = juce::jlimit (12.0f, 22.0f, gap.getWidth() * 0.3f);
+        const float h = juce::jlimit (12.0f, screenCap (22.0f), gap.getWidth() * 0.3f);
         return { gap.getX() + gap.getWidth() * 0.18f, ty - h * 0.5f, gap.getWidth() * 0.7f, h };
     }
 
@@ -1543,7 +1534,7 @@ private:
         }
         // The pointer joining the key to its thumbnail.
         juce::Path tri;
-        const float s = juce::jlimit (3.0f, 6.0f, k.getHeight() * 0.12f);
+        const float s = juce::jlimit (3.0f, screenCap (6.0f), k.getHeight() * 0.12f);
         tri.addTriangle (k.getX() - s, k.getCentreY(), k.getX(), k.getCentreY() - s, k.getX(), k.getCentreY() + s);
         g.setColour (colours::keyFrame);
         g.fillPath (tri);
@@ -1578,14 +1569,15 @@ private:
     {
         g.setColour (on ? onColour : colours::chipOff);
         g.fillRoundedRectangle (r, juce::jmin (2.0f, r.getHeight() * 0.15f));
-        g.setColour (on ? juce::Colours::black : colours::panel);
-        g.setFont (juce::FontOptions (juce::jlimit (6.0f, 22.0f, r.getHeight() * 0.86f), juce::Font::bold));
-        g.drawFittedText (text, r.toNearestInt(), juce::Justification::centred, 1, 0.55f);
+        // [D5] the text fills the chip: about 60 % of its height in capitals.
+        g.setColour (on ? juce::Colours::black : Colours::screenTile);
+        g.setFont (wingFontPx (juce::jmax (4.0f, r.getHeight() * 0.6f), WingWeight::SemiBold));
+        g.drawFittedText (text, r.toNearestInt(), juce::Justification::centred, 1, 0.6f);
     }
 
     static void miniMeter (juce::Graphics& g, juce::Rectangle<float> r, float level, juce::Colour c)
     {
-        const int segments = juce::jlimit (4, 14, (int) (r.getHeight() / 3.0f));
+        const int segments = juce::jlimit (4, screenCap (14), (int) (r.getHeight() / 3.0f));
         const float h = r.getHeight() / (float) segments;
         for (int i = 0; i < segments; ++i)
         {
@@ -1607,7 +1599,7 @@ private:
         auto at = [&t, u, v] (float x, float y, float w, float h) { return juce::Rectangle<float> (t.getX() + x * u, t.getY() + y * v, w * u, h * v); };
         auto meterArea = at (80.0f, 5.0f, 10.0f, 54.0f);
         auto r = t.reduced (juce::jmax (2.0f, t.getHeight() * 0.07f));
-        const float meterW = juce::jlimit (3.0f, 7.0f, r.getWidth() * 0.08f);
+        const float meterW = juce::jlimit (3.0f, screenCap (7.0f), r.getWidth() * 0.08f);
         const float chipH = 15.0f * v;
 
         switch (tab)

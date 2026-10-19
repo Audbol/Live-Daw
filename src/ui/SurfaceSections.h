@@ -32,7 +32,7 @@ inline KnobBinding endlessBinding (const juce::String& label, std::shared_ptr<fl
     return b;
 }
 
-/** The WING's channel strip section (top left, manual 4.5) for the selected
+/** The WING's channel strip section (right of the display, manual 4.5) for the selected
     strip: the CHANNEL STRIP DETAILS LED panel with LEVEL / GR meters, bus sends
     and groups around a small screen; CHANNEL PROCESSING (six encoders over
     INPUT - FILTER - GATE - COMP - INSERT - MAIN); CHANNEL EQUALIZER (SHIFT,
@@ -126,7 +126,8 @@ public:
     }
 };
 
-/** The USB AUDIO/DATA and MONITORING/TALKBACK panel (top right, manual 4.7):
+/** The USB AUDIO/DATA and MONITORING/TALKBACK panel (top left under the WING
+    logo, manual 4.7; top right in narrow windows):
     VIEW, the USB socket plate, TALK / PHONES / MONITOR LEVEL and the TALK A,
     TALK B, DIM and MONO keys. */
 class MonitorSection final : public juce::Component
@@ -143,7 +144,7 @@ private:
     DisplayKnob talkLevel, phonesLevel, monitorLevel;
     TalkKey talkA { "A" }, talkB { "B" };
     SurfaceKey dimKey { "DIM" }, monoKey { {}, Icon::Circle };
-    juce::Rectangle<int> wingPanel, usbPlate, monitorTitle, usbTitle;
+    juce::Rectangle<int> logoArea, wingPanel, usbPlate, monitorTitle, usbTitle;
     bool viewOpened = false;
 };
 
@@ -224,7 +225,7 @@ private:
     DisplayKnob encoders[4], wheel;
     juce::OwnedArray<SurfaceKey> upperKeys, lowerKeys, layerKeys;
     SurfaceKey navUp, navDown, navLeft, navRight;
-    juce::Rectangle<int> upperLcd, lowerLcd, layerDisplay, heading, divider;
+    juce::Rectangle<int> upperLcd, lowerLcd, layerDisplay, heading, divider, frame;
     juce::String shownState;
 };
 

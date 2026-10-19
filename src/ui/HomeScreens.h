@@ -112,6 +112,11 @@ private:
     int numColumns;
 };
 
+/** A routing-style source tile [3.1, D16] for the input `left` (`right` when
+    stereo): the name strip, the icon, the signal ring, 48V / MUTE and the
+    port. Used by INPUT and the overview's INPUT panel. */
+void paintInputSourceTile (juce::Graphics&, juce::Rectangle<float> r, MixerEngine&, int left, int right, bool stereo, bool signal);
+
 // The block screens.
 std::unique_ptr<HomeScreen> makeInputScreen (UiContext&, Strip&);
 std::unique_ptr<HomeScreen> makeFilterScreen (UiContext&, Strip&);

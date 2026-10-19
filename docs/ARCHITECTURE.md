@@ -476,10 +476,13 @@ Show
 `src/ui/` draws the WING surface: three fader sections (`FaderSection.*`,
 `FaderStrip.*`) with VIEW, the layer and shift keys, colour bars and scribble strips,
 SELECT / SOLO / MUTE, LED meters and scaled faders; the custom controls section
-between the center and right sections (mute groups, show control); the channel strip
-section with its LED panel and screen (top left); the USB / monitoring panel (top
-right, `SurfaceSections.*`) over the 4-Channel section (`FourChannelSection.*`, the
-right fader section's four strips); and the main display with the screen keys. SETUP
+between the center and right sections (mute groups, show control); and the top row
+laid out as on the console: the WING panel with USB AUDIO/DATA and MONITORING/TALKBACK
+(left), the main display with the screen keys, the channel strip section with its LED
+panel and screen (`SurfaceSections.*`), and the 4-Channel section
+(`FourChannelSection.*`, the right fader section's four strips) at the right. Windows
+too narrow for that keep the channel strip at the left and the monitoring panel over
+the 4-Channel section (or the custom controls' lower part) at the right. SETUP
 shows CUSTOM CONTROLS (`CustomControlsPage.*`, also the assignments' model and what
 each function does) and MONITORS (`MonitorsPage.*`) in place of its tabs. The
 preferences the surface, the status bar and the pages share are `uiprefs::` keys in
@@ -489,7 +492,9 @@ blinking LEDs.
 
 - **Look.** `ConsoleLookAndFeel` (`LookAndFeel.*`) holds the WING palette (black
   screen, grey panels with header bars, amber channel tab, yellow ON keys, lime knob
-  rings, cyan selections) and uses Barlow Condensed (SIL OFL, `resources/fonts/`,
+  rings, cyan selections; the surface follows the dark WING's panel: frosted light
+  key caps in black bezels lit in their LED colour, indigo scribble LCDs under thin
+  glowing light bars, silver fader caps, plain encoder caps) and uses Barlow Condensed (SIL OFL, `resources/fonts/`,
   embedded with `juce_add_binary_data`). `Icons.*` draws the screen icons as vectors;
   `WingWidgets.h` has the screen keys, ON chips and segmented keys.
 - **Main display** (`MainDisplay.*`): the screen keys, the 16:10 screen and the column

@@ -45,6 +45,7 @@ public:
     explicit DawStrip (UiContext& c) : ctx (c)
     {
         fader.setSliderStyle (juce::Slider::LinearVertical);
+        fader.getProperties().set ("surfaceFader", true);
         fader.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
         fader.setNormalisableRange (fader::range());
         fader.setMouseDragSensitivity (400);
@@ -65,7 +66,7 @@ public:
         };
         addAndMakeVisible (fader);
 
-        selectKey.ledColour = Colours::select;
+        selectKey.ledColour = Colours::keySelect;
         soloKey.ledColour = Colours::solo;
         muteKey.ledColour = Colours::mute;
         const std::pair<TalkKey*, DawRemote::StripButton> keys[] = { { &selectKey, DawRemote::StripButton::Select },
@@ -291,7 +292,7 @@ void DawFaderSection::rebuildKeys()
         const int key = i == 9 ? 10 : i;
         k->onTalk = [this, key] (bool down) { midiui::pressDawCommand (ctx, commandOf (key), down); };
         k->ledState = [this, key] { return midiui::dawCommandLed (ctx, commandOf (key)); };
-        k->ledColour = Colours::silk;
+        k->ledColour = Colours::keyWhite;
         if (const auto* cmd = juce::isPositiveAndBelow (commandOf (key), (int) DawRemote::commands().size()) ? &DawRemote::commands()[(size_t) commandOf (key)] : nullptr)
             k->setTooltip (juce::String ("DAW mode: ") + cmd->name);
         addAndMakeVisible (k);

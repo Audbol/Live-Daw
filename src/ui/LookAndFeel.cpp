@@ -46,6 +46,97 @@ juce::Font silkFont (float height, bool bold)
     return juce::Font (juce::FontOptions (kSilkTypefaceName, height, bold ? juce::Font::bold : juce::Font::plain));
 }
 
+namespace
+{
+    /** The fader cap's height for a fader `sliderHeight` px tall. */
+    float surfaceFaderCapHeight (float sliderHeight) { return juce::jlimit (22.0f, 56.0f, sliderHeight * 0.14f); }
+
+    /** A fader of the WING's fader sections: a black slot between two printed
+        tick ladders, two frames over the +5 .. -5 zone, the scale (10 .. -60,
+        -oo) to the right, and the tall silver cap with its centre groove. */
+    void drawSurfaceFader (juce::Graphics& g, juce::Rectangle<float> bounds, float sliderPos, juce::Slider& slider)
+    {
+        const float w = bounds.getWidth();
+        const bool numerals = w > 34.0f;
+        const float slotX = bounds.getX() + w * (numerals ? 0.42f : 0.5f);
+        const float capW = juce::jmin (w * (numerals ? 0.5f : 0.62f), 44.0f);
+        const float capH = surfaceFaderCapHeight (bounds.getHeight());
+        const float top = (float) slider.getPositionOfValue (slider.getMaximum());
+        const float bottom = (float) slider.getPositionOfValue (slider.getMinimum());
+        auto yOf = [&slider] (double db) { return (float) slider.getPositionOfValue (db); };
+
+        // Tick ladders either side of the slot.
+        const float inner = juce::jmax (3.0f, w * 0.055f), outer = juce::jmin (capW * 0.5f, w * 0.25f);
+        const float pitch = juce::jmax (3.0f, (bottom - top) / 64.0f);
+        g.setColour (Colours::silkDim.withAlpha (0.55f));
+        for (float y = top; y <= bottom + 0.5f; y += pitch)
+        {
+            g.fillRect (slotX - outer, y, outer - inner, 1.0f);
+            g.fillRect (slotX + inner, y, outer - inner, 1.0f);
+        }
+
+        // The two frames over the +5 .. 0 .. -5 zone.
+        const auto zone = [&] (double from, double to)
+        {
+            return juce::Rectangle<float> (slotX - outer - 1.0f, yOf (from) + 2.0f, (outer + 1.0f) * 2.0f, yOf (to) - yOf (from) - 4.0f);
+        };
+        for (auto frame : { zone (5.0, 0.0), zone (0.0, -5.0) })
+        {
+            if (frame.getHeight() < 6.0f)
+                continue;
+            g.setColour (Colours::panel);
+            g.fillRoundedRectangle (frame, 3.0f);
+            g.setColour (Colours::silkDim.withAlpha (0.8f));
+            g.drawRoundedRectangle (frame.reduced (0.5f), 3.0f, 1.0f);
+        }
+
+        // The slot.
+        const auto slot = juce::Rectangle<float> (slotX - 2.5f, top - capH * 0.25f, 5.0f, bottom - top + capH * 0.5f);
+        g.setColour (juce::Colours::black);
+        g.fillRoundedRectangle (slot, 2.5f);
+
+        if (numerals)
+        {
+            g.setFont (silkFont (juce::jlimit (8.0f, 11.5f, w * 0.17f)));
+            g.setColour (Colours::silk.withAlpha (0.85f));
+            const float textX = slotX + outer + 2.0f;
+            for (double db : { 10.0, 5.0, 0.0, -5.0, -10.0, -20.0, -30.0, -40.0, -50.0, -60.0, -100.0 })
+            {
+                const auto text = db <= -90.0 ? juce::String::fromUTF8 ("-\xe2\x88\x9e") : juce::String ((int) db);
+                g.drawText (text, juce::Rectangle<float> (textX, yOf (db) - 6.0f, bounds.getRight() - textX, 12.0f), juce::Justification::centredRight);
+            }
+        }
+
+        // The cap: a shadow, silver body in two halves, a dark groove with a
+        // highlight; the groove takes the fader's colour when it has one (sends, FX).
+        auto cap = juce::Rectangle<float> (capW, capH).withCentre ({ slotX, sliderPos });
+        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.fillRoundedRectangle (cap.translated (2.0f, 3.0f).expanded (1.0f), 3.0f);
+        const bool enabled = slider.isEnabled();
+        const auto light = juce::Colour (enabled ? 0xffd9dbdf : 0xff9a9ca0), dark = juce::Colour (enabled ? 0xff7d8086 : 0xff5c5e62);
+        auto upper = cap.withHeight (capH * 0.5f), lower = cap.withTrimmedTop (capH * 0.5f);
+        g.setGradientFill (juce::ColourGradient (light, 0.0f, upper.getY(), dark, 0.0f, upper.getBottom(), false));
+        g.fillRoundedRectangle (upper, 2.5f);
+        g.setGradientFill (juce::ColourGradient (light.darker (0.08f), 0.0f, lower.getY(), dark.darker (0.15f), 0.0f, lower.getBottom(), false));
+        g.fillRoundedRectangle (lower, 2.5f);
+        // Darker side edges.
+        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.28f), cap.getX(), 0.0f,
+                                                 juce::Colours::transparentBlack, cap.getX() + capW * 0.22f, 0.0f, false));
+        g.fillRect (cap.withWidth (capW * 0.22f));
+        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.28f), cap.getRight(), 0.0f,
+                                                 juce::Colours::transparentBlack, cap.getRight() - capW * 0.22f, 0.0f, false));
+        g.fillRect (cap.withLeft (cap.getRight() - capW * 0.22f));
+        g.setColour (juce::Colours::black.withAlpha (0.7f));
+        g.drawRoundedRectangle (cap, 2.5f, 1.0f);
+        const auto line = slider.findColour (juce::Slider::thumbColourId);
+        const bool coloured = line != Colours::text;
+        g.setColour (coloured ? line : juce::Colour (0xff2a2c30));
+        g.fillRect (cap.getX() + 1.0f, cap.getCentreY() - (coloured ? 1.25f : 0.75f), capW - 2.0f, coloured ? 2.5f : 1.5f);
+        g.setColour (juce::Colours::white.withAlpha (0.35f));
+        g.fillRect (cap.getX() + 1.0f, cap.getCentreY() + 1.0f, capW - 2.0f, 1.0f);
+    }
+} // namespace
+
 ConsoleLookAndFeel::ConsoleLookAndFeel()
 {
     screenMedium = juce::Typeface::createSystemTypefaceFor (BinaryData::BarlowSemiCondensedMedium_ttf, BinaryData::BarlowSemiCondensedMedium_ttfSize);
@@ -115,6 +206,14 @@ juce::Typeface::Ptr ConsoleLookAndFeel::getTypefaceForFont (const juce::Font& f)
     return LookAndFeel_V4::getTypefaceForFont (f);
 }
 
+int ConsoleLookAndFeel::getSliderThumbRadius (juce::Slider& slider)
+{
+    // The slider indents its travel by this much, so the cap at either end stays inside.
+    if (slider.getProperties().getWithDefault ("surfaceFader", false))
+        return juce::roundToInt (surfaceFaderCapHeight ((float) slider.getHeight()) * 0.5f) + 2;
+    return LookAndFeel_V4::getSliderThumbRadius (slider);
+}
+
 void ConsoleLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height,
                                            float sliderPos, float minSliderPos, float maxSliderPos,
                                            juce::Slider::SliderStyle style, juce::Slider& slider)
@@ -138,6 +237,12 @@ void ConsoleLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int 
     if (style != juce::Slider::LinearVertical)
     {
         LookAndFeel_V4::drawLinearSlider (g, x, y, width, height, sliderPos, minSliderPos, maxSliderPos, style, slider);
+        return;
+    }
+
+    if (slider.getProperties().getWithDefault ("surfaceFader", false))
+    {
+        drawSurfaceFader (g, bounds, sliderPos, slider);
         return;
     }
 
@@ -188,25 +293,50 @@ void ConsoleLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int 
 
     if (slider.getProperties().getWithDefault ("hardware", false))
     {
-        // A surface encoder: a dark knurled body with a white pointer line.
+        // A surface knob: a black cap on a skirt with a soft shadow. Encoders
+        // are plain (endless, their value is on a screen); pots have a white
+        // pointer line; the scroll wheel is a dished knob with a finger dimple.
+        const int cap = slider.getProperties().getWithDefault ("cap", 0);
         const float angle = startAngle + pos * (endAngle - startAngle);
         const auto body = juce::Rectangle<float> (radius * 2.0f, radius * 2.0f).withCentre (centre);
-        g.setColour (juce::Colours::black.withAlpha (0.5f));
-        g.fillEllipse (body.translated (0.0f, 1.5f));
-        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff4a4d53), centre.x, body.getY(), juce::Colour (0xff1d1e21),
-                                                 centre.x, body.getBottom(), false));
+        g.setColour (juce::Colours::black.withAlpha (0.55f));
+        g.fillEllipse (body.translated (radius * 0.06f, radius * 0.12f).expanded (radius * 0.03f));
+        g.setColour (juce::Colour (0xff0e0f10));
         g.fillEllipse (body);
-        g.setColour (juce::Colours::black.withAlpha (0.45f));
-        for (int i = 0; i < 24; ++i)
+
+        if (cap == 2)
         {
-            const float a = (float) i * juce::MathConstants<float>::twoPi / 24.0f;
-            g.drawLine (juce::Line<float> (centre.getPointOnCircumference (radius * 0.86f, a), centre.getPointOnCircumference (radius, a)), 1.0f);
+            // Wheel: a rim, the dished face and the dimple (which turns with it).
+            g.setColour (juce::Colour (0xff2c2e32));
+            g.drawEllipse (body.reduced (1.0f), juce::jmax (1.0f, radius * 0.025f));
+            const auto face = body.reduced (radius * 0.07f);
+            juce::ColourGradient dish (juce::Colour (0xff111214), centre.x - radius * 0.2f, centre.y - radius * 0.25f,
+                                       juce::Colour (0xff232528), centre.x, face.getBottom(), true);
+            g.setGradientFill (dish);
+            g.fillEllipse (face);
+            g.setColour (juce::Colours::black.withAlpha (0.6f));
+            g.drawEllipse (face, 1.2f);
+            const float d = radius * 0.28f;
+            const auto dimple = juce::Rectangle<float> (d, d).withCentre (centre.getPointOnCircumference (radius * 0.6f, angle + juce::MathConstants<float>::pi));
+            g.setGradientFill (juce::ColourGradient (juce::Colour (0xff4a4c50), dimple.getX() + d * 0.3f, dimple.getY() + d * 0.25f,
+                                                     juce::Colour (0xff0b0b0c), dimple.getRight(), dimple.getBottom(), true));
+            g.fillEllipse (dimple);
+            return;
         }
-        g.setColour (juce::Colour (0xff2b2d31));
-        g.fillEllipse (body.reduced (radius * 0.2f));
-        g.setColour (slider.isEnabled() ? Colours::text : Colours::silkDim.withAlpha (0.4f));
-        g.drawLine (juce::Line<float> (centre.getPointOnCircumference (radius * 0.3f, angle), centre.getPointOnCircumference (radius * 0.78f, angle)),
-                    juce::jmax (1.5f, radius * 0.1f));
+
+        const auto top = body.reduced (radius * 0.12f);
+        juce::ColourGradient dome (juce::Colour (0xff3a3d42), top.getX() + top.getWidth() * 0.35f, top.getY() + top.getHeight() * 0.3f,
+                                   juce::Colour (0xff131416), top.getRight(), top.getBottom(), true);
+        g.setGradientFill (dome);
+        g.fillEllipse (top);
+        g.setColour (juce::Colours::white.withAlpha (0.05f));
+        g.drawEllipse (top.reduced (0.5f), 1.0f);
+        if (cap == 1)
+        {
+            g.setColour (slider.isEnabled() ? Colours::text : Colours::silkDim.withAlpha (0.4f));
+            g.drawLine (juce::Line<float> (centre.getPointOnCircumference (radius * 0.45f, angle), centre.getPointOnCircumference (radius * 0.86f, angle)),
+                        juce::jmax (1.5f, radius * 0.09f));
+        }
         return;
     }
 
@@ -411,9 +541,17 @@ void ConsoleLookAndFeel::getIdealPopupMenuItemSize (const juce::String& text, bo
     idealWidth = juce::roundToInt (juce::GlyphArrangement::getStringWidth (font, text)) + idealHeight * 2;
 }
 
+namespace
+{
+    // WING panels [I1]: 8 px between panels and between a header and its body,
+    // the content 16 px inside the body (WING pixels).
+    float panelHalfGap() { return juce::jmax (2.0f, wingPx (4.0f)); }
+    float panelHeaderGap() { return juce::jmax (3.0f, wingPx (8.0f)); }
+} // namespace
+
 void drawSectionBox (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& title, bool chevron)
 {
-    auto r = area.reduced (3).toFloat();
+    auto r = area.toFloat().reduced (panelHalfGap());
     if (title.isNotEmpty())
     {
         auto header = r.removeFromTop ((float) panelHeaderHeight());
@@ -423,29 +561,43 @@ void drawSectionBox (juce::Graphics& g, juce::Rectangle<int> area, const juce::S
         g.setFont (wingFontPx (juce::jmin (TypeScale::header * getWingScreenHeight(), header.getHeight() * 0.42f)));
         // Keep the title centred, clear of the chevron only when there is one.
         // Narrow headers (FILTER in a small window) give the title more of the chevron's margin.
-        g.drawFittedText (title, header.reduced (chevron ? juce::jmin (28.0f, header.getWidth() * 0.2f) : 4.0f, 0.0f).toNearestInt(),
+        const float hh = header.getHeight();
+        g.drawFittedText (title, header.reduced (chevron ? juce::jmin (hh * 0.7f, header.getWidth() * 0.2f) : 4.0f, 0.0f).toNearestInt(),
                           juce::Justification::centred, 1);
         if (chevron)
         {
-            const auto c = juce::Point<float> (header.getRight() - 14.0f, header.getCentreY());
+            // The small grey chevron at the right end (Fig. 21).
+            const auto c = juce::Point<float> (header.getRight() - hh * 0.3f, header.getCentreY());
+            const float a = hh * 0.12f;
             juce::Path p;
-            p.startNewSubPath (c.x - 4.0f, c.y - 8.0f);
-            p.lineTo (c.x + 4.0f, c.y);
-            p.lineTo (c.x - 4.0f, c.y + 8.0f);
-            g.strokePath (p, juce::PathStrokeType (2.5f));
+            p.startNewSubPath (c.x - a * 0.55f, c.y - a);
+            p.lineTo (c.x + a * 0.45f, c.y);
+            p.lineTo (c.x - a * 0.55f, c.y + a);
+            g.strokePath (p, juce::PathStrokeType (juce::jmax (1.5f, hh * 0.04f)));
         }
-        r.removeFromTop (4.0f);
+        r.removeFromTop (panelHeaderGap());
     }
     g.setColour (Colours::screenPanel);
     g.fillRect (r);
 }
 
+juce::Rectangle<int> sectionHeader (juce::Rectangle<int> area)
+{
+    return area.toFloat().reduced (panelHalfGap()).withHeight ((float) panelHeaderHeight()).toNearestInt();
+}
+
+juce::Rectangle<int> sectionBody (juce::Rectangle<int> area, bool hasTitle)
+{
+    auto r = area.toFloat().reduced (panelHalfGap());
+    if (hasTitle)
+        r.removeFromTop ((float) panelHeaderHeight() + panelHeaderGap());
+    return r.toNearestInt();
+}
+
 juce::Rectangle<int> sectionContent (juce::Rectangle<int> area, bool hasTitle)
 {
-    auto r = area.reduced (3);
-    if (hasTitle)
-        r.removeFromTop (panelHeaderHeight() + 4);
-    return r.reduced (8, 6);
+    const int inset = juce::roundToInt (juce::jmax (4.0f, wingPx (14.0f)));
+    return sectionBody (area, hasTitle).reduced (inset);
 }
 
 void drawChip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, juce::Colour fill, juce::Colour textColour)
