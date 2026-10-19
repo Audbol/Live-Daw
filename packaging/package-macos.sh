@@ -41,6 +41,7 @@ for f in README.md LICENSE THIRD_PARTY_NOTICES.md CHANGELOG.md; do
     if [ -f "$root/$f" ]; then cp "$root/$f" "$stage/"; fi
 done
 cp "$root/resources/fonts/OFL.txt" "$stage/FONT-LICENSE.txt"
+if [ -d "$root/licenses" ]; then cp -R "$root/licenses" "$stage/"; fi
 cp "$root/packaging/macos/README-MACOS.txt" "$stage/"
 ln -s /Applications "$stage/Applications"
 

@@ -33,6 +33,8 @@ try {
         if (Test-Path $src) { Copy-Item $src $stage }
     }
     Copy-Item (Join-Path $root 'resources/fonts/OFL.txt') (Join-Path $stage 'FONT-LICENSE.txt')
+    $licenses = Join-Path $root 'licenses'
+    if (Test-Path $licenses) { Copy-Item $licenses $stage -Recurse }
 
     $zip = Join-Path $OutDir "$name.zip"
     if (Test-Path $zip) { Remove-Item $zip }

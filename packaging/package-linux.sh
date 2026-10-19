@@ -34,6 +34,7 @@ copy_docs() {
         if [ -f "$root/$f" ]; then cp "$root/$f" "$dest/"; fi
     done
     cp "$root/resources/fonts/OFL.txt" "$dest/FONT-LICENSE.txt"
+    if [ -d "$root/licenses" ]; then cp -R "$root/licenses" "$dest/"; fi
     cp "$root/packaging/linux/README-LINUX.txt" "$dest/"
 }
 
