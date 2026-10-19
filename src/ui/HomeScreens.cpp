@@ -1152,6 +1152,12 @@ public:
         toolKey = &key (toolFilterName (f.toolModel.load()), toolFilterIcon (f.toolModel.load()), toolFilterColour (f.toolModel.load()));
         toolKey->iconAbove = true;
         bindKey (*toolKey, f.tool);
+        // On the header bar without a key body [Fig. 63].
+        for (auto* k : { loCut, hiCut, toolKey })
+        {
+            k->offColour = colours::panel;
+            k->frame = colours::panel;
+        }
         close = &key ("CLOSE", Icon::Check);
         close->offInk = colours::caption;
         close->onClick = [this] { if (ctx.showHomeTab) ctx.showHomeTab (HomeTab::Home); };
@@ -1180,10 +1186,14 @@ public:
             };
             tools.push_back (&k);
         }
-        lcCaption = &label ("LC  dB/oct", 13.0f, colours::caption);
+        lcCaption = &label ("LC", 13.0f, colours::caption);
+        lcCaption->setJustificationType (juce::Justification::centred);
         lcSlopes = &make<Segmented> (models::list (models::LowCutSlopes), [&f] { return f.lowCutSlope.load(); }, [&f] (int i) { f.lowCutSlope = i; });
-        hcCaption = &label ("HC  dB/oct", 13.0f, colours::caption);
+        lcSlopes->vertical = true;
+        hcCaption = &label ("HC", 13.0f, colours::caption);
+        hcCaption->setJustificationType (juce::Justification::centred);
         hcSlopes = &make<Segmented> (models::list (models::HighCutSlopes), [&f] { return f.highCutSlope.load(); }, [&f] (int i) { f.highCutSlope = i; });
+        hcSlopes->vertical = true;
         shownTool = f.toolModel.load();
         startTimerHz (4);
     }
@@ -1227,20 +1237,28 @@ public:
         b.removeFromRight (6);
         graph->setBounds (b);
 
+        // [Fig. 63] TOOL FILTER over the four tool keys, then LC and HC side
+        // by side, each a column of square slope keys.
         auto s = box (side, {});
-        toolCaption->setBounds (s.removeFromTop (18));
-        const int kh = juce::jlimit (22, screenCap (34), s.getHeight() / 9);
+        const int capH = juce::roundToInt (juce::jmax (14.0f, wingPx (26.0f)));
+        const int gap = juce::roundToInt (juce::jmax (2.0f, wingPx (6.0f)));
+        toolCaption->setBounds (s.removeFromTop (capH));
+        const int kh = juce::jlimit (18, juce::jmax (18, s.getHeight() / 9), juce::roundToInt (wingPx (52.0f)));
         for (auto* k : tools)
         {
             k->setBounds (s.removeFromTop (kh));
-            s.removeFromTop (3);
+            s.removeFromTop (gap);
         }
-        s.removeFromTop (8);
-        lcCaption->setBounds (s.removeFromTop (18));
-        lcSlopes->setBounds (s.removeFromTop (kh));
-        s.removeFromTop (8);
-        hcCaption->setBounds (s.removeFromTop (18));
-        hcSlopes->setBounds (s.removeFromTop (kh).withWidth (s.getWidth() / 2));
+        s.removeFromTop (gap * 2);
+        auto captions = s.removeFromTop (capH);
+        const int colW = juce::jmin ((s.getWidth() - gap) / 2, kh);
+        const int sq = juce::jmin (colW, (s.getHeight() - 3 * gap) / 4);
+        auto lcCol = juce::Rectangle<int> (s.getCentreX() - gap / 2 - colW, s.getY(), colW, s.getHeight());
+        auto hcCol = juce::Rectangle<int> (s.getCentreX() + gap / 2 + (gap % 2), s.getY(), colW, s.getHeight());
+        lcCaption->setBounds (lcCol.withY (captions.getY()).withHeight (capH));
+        hcCaption->setBounds (hcCol.withY (captions.getY()).withHeight (capH));
+        lcSlopes->setBounds (lcCol.withHeight (sq * 4 + gap * 3).withSizeKeepingCentre (sq, sq * 4 + gap * 3));
+        hcSlopes->setBounds (hcCol.withHeight (sq * 2 + gap).withSizeKeepingCentre (sq, sq * 2 + gap));
     }
 
     void paint (juce::Graphics& g) override
