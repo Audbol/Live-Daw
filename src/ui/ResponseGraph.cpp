@@ -465,9 +465,10 @@ void ResponseGraph::paint (juce::Graphics& g)
         g.reduceClipRegion (p.toNearestInt());
         const auto curve = curveOf (response);
         const bool on = strip->params.eq.on.load();
-        // The EQ screen fills everything under the curve [D10]; the overview
-        // shades only the boosts and cuts against 0 dB (a flat EQ shows none).
-        const float zero = overview ? yForDb (0.0f) : cp.getBottom() + 2.0f;
+        // The console's EQ screen fills everything under the curve [D10]; at
+        // the user's request both screens shade only the boosts and cuts
+        // against 0 dB (a flat EQ shows none).
+        const float zero = yForDb (0.0f);
         juce::Path fill (curve);
         fill.lineTo (cp.getRight() + 2.0f, zero);
         fill.lineTo (cp.getX() - 2.0f, zero);
