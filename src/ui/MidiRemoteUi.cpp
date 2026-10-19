@@ -310,10 +310,12 @@ void paintUpperLcd (juce::Graphics& g, juce::Rectangle<int> area, UiContext& ctx
         ScribbleInfo info;
         info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
         info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
-        info.number = exists ? (s.upper.isNotEmpty() ? s.upper : "CH " + juce::String (channel + 1)) : juce::String ("-");
+        info.tag = d->isHui() ? "HUI" : "MCU";
+        info.number = juce::String (channel + 1);
         info.line2 = exists ? s.lower : juce::String();
-        info.name = (d->isHui() ? "HUI " : "MCU ") + juce::String (channel + 1);
+        info.name = exists ? (s.upper.isNotEmpty() ? s.upper : "CH " + juce::String (channel + 1)) : juce::String ("-");
         drawScribble (g, cell.toFloat(), info);
+        drawScribbleFrame (g, cell.toFloat(), true, true, info.backlight);
         const int leds = DawRemote::ringLeds (s.ring);
         const float lw = (float) ringArea.getWidth() / 12.0f;
         for (int l = 0; l < 11; ++l)

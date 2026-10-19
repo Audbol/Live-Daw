@@ -1584,26 +1584,42 @@ void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> are
         info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
         if (upper || lowerCcLayer() >= 0)
         {
-            // The control's name (a name starting with '*' shows the encoder's
-            // value, "|word" is shown inverted), then its two keys.
+            // The layer and control on the top row; the control's name (a name
+            // starting with '*' shows the encoder's value large over it,
+            // "|word" puts the word on an inverted bar), then its two keys.
+            info.tag = cc::layerName (ccLayer);
+            info.tagFirst = true;
+            info.number = juce::String (i + 1);
             auto name = control.name.isNotEmpty() ? control.name : cc::describe (ctx, cc::Slot::Encoder, control.encoder);
-            info.number = name.removeCharacters ("*|");
+            const auto upperKey = cc::describe (ctx, cc::Slot::Upper, control.upper);
+            const auto lowerKey = cc::describe (ctx, cc::Slot::Lower, control.lower);
+            const auto keys = upperKey + (upperKey.isNotEmpty() && lowerKey.isNotEmpty() ? " | " : "") + lowerKey;
             if (name.startsWith ("*"))
                 if (const auto b = cc::bindEncoder (ctx, control.encoder); b.isValid() && b.text)
-                    info.number = b.text();
+                {
+                    info.value = b.text();
+                    info.caption = name.removeCharacters ("*|");
+                }
+            if (info.value.isEmpty())
+                info.line2 = name.removeCharacters ("*|");
             if (name.containsChar ('|'))
+            {
                 info.name = name.fromFirstOccurrenceOf ("|", false, false).upToFirstOccurrenceOf (" ", false, false);
-            info.line2 = cc::describe (ctx, cc::Slot::Upper, control.upper);
-            info.line3 = cc::describe (ctx, cc::Slot::Lower, control.lower);
-            if (info.number.isEmpty() && info.line2.isEmpty() && info.line3.isEmpty())
-                info.number = upper ? "CC" + juce::String (i + 1) : cc::layerName (ccLayer);
-            if (info.name.isEmpty())
-                info.name = cc::layerName (ccLayer);
+                info.nameInverted = true;
+                info.line3 = keys;
+            }
+            else
+            {
+                info.name = keys;
+            }
         }
         else if (lowerLayer == MuteGroups)
         {
             // The names of the groups on the keys below: top row, then bottom row.
-            info.number = ctx.engine.getMuteGroupName (i);
+            info.tag = "MGRP";
+            info.tagFirst = true;
+            info.number = juce::String (i + 1) + "/" + juce::String (i + 5);
+            info.line2 = ctx.engine.getMuteGroupName (i);
             info.name = ctx.engine.getMuteGroupName (i + 4);
         }
         else if (lowerLayer == ShowControl)
@@ -1636,13 +1652,13 @@ void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> are
             switch (i)
             {
                 case 0:
-                    info.name = hms (usb.getPosition());
-                    info.line2 = playStates[juce::jlimit (0, 3, (int) usb.getPlayState())];
+                    info.value = hms (usb.getPosition());
+                    info.caption = playStates[juce::jlimit (0, 3, (int) usb.getPlayState())];
                     break;
                 case 1: info.name = usb.getCurrentFile().getFileNameWithoutExtension(); break;
                 case 2:
-                    info.name = hms (usb.getRecTime());
-                    info.line2 = recStates[juce::jlimit (0, 3, (int) usb.getRecState())];
+                    info.value = hms (usb.getRecTime());
+                    info.caption = recStates[juce::jlimit (0, 3, (int) usb.getRecState())];
                     break;
                 default: info.name = juce::String (usb.getRecChannels()) + "-CH " + juce::String (usb.getRecBits()) + " bit"; break;
             }
@@ -1656,7 +1672,7 @@ void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> are
             info.number = titles[i];
             switch (i)
             {
-                case 0: info.name = grid.formatTime (rec.getPosition()).upToLastOccurrenceOf (".", false, false); break;
+                case 0: info.value = grid.formatTime (rec.getPosition()).upToLastOccurrenceOf (".", false, false); break;
                 case 1:
                     info.name = rec.isRecording() ? "REC" : rec.isRolling() ? "PLAY" : "STOP";
                     info.line2 = rec.isLoopEnabled() ? "loop" : "";
@@ -1670,13 +1686,16 @@ void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> are
             info.number = layerKeys[lowerLayer]->getLabel().replace ("\n", " ");
             info.name = "N/A";
         }
-        drawScribble (g, cell.toFloat(), info);
-        if (i < 3)
+        if (info.tag.isEmpty() && info.number.isNotEmpty())
         {
-            // One LCD, a fine rule between the strips.
-            g.setColour (Colours::scribbleRule.withAlpha (0.55f));
-            g.fillRect ((float) cell.getRight() - 1.0f, (float) cell.getY() + 2.0f, 1.0f, (float) cell.getHeight() - 4.0f);
+            // The other layers: their title on the tag.
+            info.tag = info.number;
+            info.number = {};
+            info.tagFirst = true;
         }
+        drawScribble (g, cell.toFloat(), info);
+        // One LCD, a fine rule between the strips.
+        drawScribbleFrame (g, cell.toFloat(), i == 0, i == 3, info.backlight);
     }
 }
 

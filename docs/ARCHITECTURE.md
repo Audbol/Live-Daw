@@ -495,8 +495,21 @@ blinking LEDs.
   rings, cyan selections; the surface follows the dark WING's panel: frosted light
   key caps in black bezels lit in their LED colour, indigo scribble LCDs under thin
   glowing light bars, silver fader caps, plain encoder caps) and uses Barlow Condensed (SIL OFL, `resources/fonts/`,
-  embedded with `juce_add_binary_data`). `Icons.*` draws the screen icons as vectors;
-  `WingWidgets.h` has the screen keys, ON chips and segmented keys.
+  embedded with `juce_add_binary_data`).
+- **Scribble strips** (`drawScribble`, `ScribbleInfo` in `FaderStrip.*`) follow the
+  3.x firmware: a negative LCD (light ink on indigo) with a top row under a rule (an
+  input's number and its source on an inverted tag, `5 | IN5`, `IN7/8`, the ALT
+  source while active, `MONO` / `ST` with SHOW SOURCE ON SCRIBBLE off; other strips
+  the kind on the tag and the number at the right, `BUS | 1`), the WING icon centred
+  (none when unset), the name centred (empty for a default name). A value in large type
+  with a caption replaces the icon (SHOW FADER VALUE ON SCRIBBLE, FX SPILL, the
+  4-Channel section's knob with the key state as a footer); Sends on Fader puts an
+  outlined send tag (`> BUS 1`, `< BUS1`) at the right. SCRIBBLE dims the backlight,
+  SCR CONT the ink; the colour bar is off without a source (1.10). The fader strips,
+  the custom controls' LCDs, the 4-Channel section and the DAW strips share it, with
+  `drawScribbleFrame` for the rim and the rules between strips. Sizes follow the LCD,
+  so it stays crisp in F11 full screen and readable at the minimum window.
+- `Icons.*` draws the screen icons as vectors; `WingWidgets.h` has the screen keys, ON chips and segmented keys.
 - **Main display** (`MainDisplay.*`): the screen keys, the 16:10 screen and the column
   right of it (CLR SOLO, main meter, fine-adjust knob, blank key); the status bar
   (channel tab in the strip's colour, status tiles, the page's `getStatusKeys()`,
