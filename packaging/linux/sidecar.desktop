@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Sidecar
+GenericName=Live Mixing Console
+Comment=Live mixing console that emulates the Behringer WING
+Exec=Sidecar
+Icon=sidecar
+Terminal=false
+Categories=AudioVideo;Audio;Mixer;
+Keywords=mixer;console;live;audio;WING;
+StartupWMClass=Sidecar

@@ -9,6 +9,8 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 
+#include "BinaryData.h"
+
 #include <csignal>
 
 namespace livedaw
@@ -310,6 +312,10 @@ private:
             : DocumentWindow (name, ui::Colours::background, DocumentWindow::allButtons)
         {
             setUsingNativeTitleBar (true);
+           #if JUCE_LINUX || JUCE_BSD
+            // Windows and macOS take the icon from the executable / app bundle.
+            setIcon (juce::ImageCache::getFromMemory (BinaryData::sidecar256_png, BinaryData::sidecar256_pngSize));
+           #endif
             setContentOwned (content, true);
             setResizable (true, true);
             // Below about 1152x680 the main display and the fader sections
