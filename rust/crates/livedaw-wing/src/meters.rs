@@ -2,7 +2,7 @@
 //! each returns (protocol document "Meter Data"; layouts as libwing decodes
 //! them). Levels are signed 16-bit 1/256 dB.
 //!
-//! Live DAW's meters are "peak since the UI last read" atomics; they are
+//! Sidecar's meters are "peak since the UI last read" atomics; they are
 //! loaded here (never reset), so the values follow the UI's metering rate.
 
 use crate::map::Console;

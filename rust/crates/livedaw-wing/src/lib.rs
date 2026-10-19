@@ -1,4 +1,4 @@
-//! Behringer WING interoperability for Live DAW.
+//! Behringer WING interoperability for Sidecar.
 //!
 //! * [`schema`]: the WING parameter tree (names, ids, types, ranges), generated
 //!   from libwing's parameter sweep (Apache-2.0).

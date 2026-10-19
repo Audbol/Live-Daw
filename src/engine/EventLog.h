@@ -30,7 +30,7 @@ public:
         if (entries.size() > kMaxEntries)
             entries.removeRange (0, entries.size() - kMaxEntries);
 
-        juce::Logger::writeToLog ("[LiveDAW] " + message);
+        juce::Logger::writeToLog ("[Sidecar] " + message);
         sendChangeMessage();
     }
 

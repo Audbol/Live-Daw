@@ -1,4 +1,4 @@
-//! Live DAW realtime mixing engine, laid out like a Behringer WING.
+//! Sidecar realtime mixing engine, laid out like a Behringer WING.
 //!
 //! The engine owns all strips and their parameters. Parameters and meters are
 //! lock-free atomics shared with the UI; the audio path never allocates, locks

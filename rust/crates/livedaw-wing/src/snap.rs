@@ -45,7 +45,7 @@ pub struct ImportReport {
     pub creator: String,
     /// Values applied to the engine.
     pub applied: usize,
-    /// Values kept for nodes Live DAW has no equivalent for (they don't
+    /// Values kept for nodes Sidecar has no equivalent for (they don't
     /// change the sound; they are written back on export).
     pub kept: usize,
     /// ... grouped by subtree.

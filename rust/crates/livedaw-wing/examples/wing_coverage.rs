@@ -1,4 +1,4 @@
-//! Prints which parts of the WING parameter tree map to Live DAW.
+//! Prints which parts of the WING parameter tree map to Sidecar.
 //!
 //! cargo run -p livedaw-wing --example wing_coverage
 

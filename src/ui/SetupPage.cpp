@@ -1405,9 +1405,9 @@ namespace
                 g.drawFittedText (portStatusText (ctx, p), n.removeFromTop (juce::roundToInt (cap * 3.0f)), juce::Justification::centredLeft, 1, 0.8f);
             n.removeFromTop (juce::roundToInt (cap));
             g.setFont (wingFontPx (cap));
-            g.drawFittedText ("DIN AND USB ARE MIDI PORTS OF THIS COMPUTER (MIDI PORTS); USB IS THE VIRTUAL PORT \"LIVE DAW MIDI CONTROL\" WHERE "
+            g.drawFittedText ("DIN AND USB ARE MIDI PORTS OF THIS COMPUTER (MIDI PORTS); USB IS THE VIRTUAL PORT \"SIDECAR MIDI CONTROL\" WHERE "
                               "THE SYSTEM ALLOWS IT. TOUCH A FUNCTION'S NAME FOR ITS MIDI MAP.\n\n"
-                              "WING REMOTE: WING REMOTE APPS (OSC AND THE NATIVE PROTOCOL) CAN CONNECT TO LIVE DAW. "
+                              "WING REMOTE: WING REMOTE APPS (OSC AND THE NATIVE PROTOCOL) CAN CONNECT TO SIDECAR. "
                               "EXPERIMENTAL: TESTED WITH LIBWING AND THE COMPANION MODULE'S PATHS, NOT WITH WING EDIT OR WING COPILOT.",
                               n, juce::Justification::topLeft, 8);
         }

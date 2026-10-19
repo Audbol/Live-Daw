@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Check that every OSC path the Bitfocus Companion WING module builds is
-answered by a WING OSC server (the Live DAW remote or its headless emulator).
+answered by a WING OSC server (the Sidecar remote or its headless emulator).
 
 The module's command helpers (src/commands/*.ts) are tiny functions that
 return template strings such as `${Node(channel)}/fdr`. This script expands
 them with index 1, sends an OSC GET for each path and sorts the answers into
 answered and unanswered paths. The module sources are read only;
-nothing from them is copied into Live DAW.
+nothing from them is copied into Sidecar.
 
   python3 -I tools/wing/check_companion.py <companion-module>/src/commands \
       [host:port] [--list]

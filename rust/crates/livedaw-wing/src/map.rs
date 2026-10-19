@@ -1,11 +1,11 @@
-//! The mapping layer: WING parameter paths and ids resolved to Live DAW's
+//! The mapping layer: WING parameter paths and ids resolved to Sidecar's
 //! engine state, in both directions, with the WING's units and ranges.
 //!
 //! Every static node of the tree gets a [`Binding`] computed once from its
 //! path; model parameters bind through their slot (a strip's GATE, EQ,
 //! DYNAMICS or filter tool, or an FX slot) and the active model's parameter
 //! of the same name (our model tables come from the same sweep, so names and
-//! ranges line up). Nodes without a Live DAW equivalent are kept in a shadow
+//! ranges line up). Nodes without a Sidecar equivalent are kept in a shadow
 //! store ([`WingState`]), so a client reads back what it wrote and snapshot
 //! files keep them, but they don't affect the audio.
 
@@ -58,7 +58,7 @@ pub enum ShadowKey {
     Param(u16, u16, u8),
 }
 
-/// State of the virtual console beyond the engine: values of nodes Live DAW
+/// State of the virtual console beyond the engine: values of nodes Sidecar
 /// has no equivalent for, and the console identity.
 #[derive(Default)]
 pub struct WingState {
@@ -90,7 +90,7 @@ impl WingState {
 
 // ---- ports -------------------------------------------------------------------------
 
-/// How Live DAW's inputs and outputs appear on the WING's patch.
+/// How Sidecar's inputs and outputs appear on the WING's patch.
 ///
 /// Hardware ports are laid out as the AES50 groups: A 1-48 = ports 1-48, B
 /// 1-48 = ports 49-96, C = 97-144. The recorder's 64 playback channels are the
@@ -116,7 +116,7 @@ pub mod port {
         BLOCKS.get(block).map(|g| (*g, src % BLOCK + 1))
     }
 
-    /// (group, number) to a strip input. None: no Live DAW equivalent.
+    /// (group, number) to a strip input. None: no Sidecar equivalent.
     pub fn wing_to_source(group: &str, n: i32) -> Option<i32> {
         let n = n.max(1);
         match group {
@@ -138,7 +138,7 @@ pub mod port {
     /// The input groups in the WING's order (`/cfg/solo/$srcsgrp` 1-13).
     pub const IN_GROUPS: [&str; 13] = ["LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "MOD", "PLAY", "AES", "USR", "OSC"];
 
-    /// Input groups whose sources are Live DAW's sources (ROUTING > SOURCES):
+    /// Input groups whose sources are Sidecar's sources (ROUTING > SOURCES):
     /// the AES50 ports and the WING-LIVE card. The other groups share port
     /// numbers with them here, so their source settings stay in the shadow store.
     pub const SOURCE_GROUPS: [&str; 4] = ["A", "B", "C", "CRD"];
@@ -385,7 +385,7 @@ pub enum InfoF {
     Model,
 }
 
-/// What a node of the tree is in Live DAW.
+/// What a node of the tree is in Sidecar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Binding {
     /// No equivalent: the shadow store.
@@ -897,7 +897,7 @@ pub enum SetError {
     IsNode,
     ReadOnly,
     BadValue,
-    /// The value is valid on the WING but Live DAW can't do it.
+    /// The value is valid on the WING but Sidecar can't do it.
     Unsupported(String),
 }
 
@@ -1383,7 +1383,7 @@ impl<'a> Console<'a> {
                 let (g, k) = match self.output_source(port) {
                     Some(gk) => gk,
                     None => match self.shadow_pair(row, "grp", "in") {
-                        // A source Live DAW can't route, as set; else OFF with the number set.
+                        // A source Sidecar can't route, as set; else OFF with the number set.
                         Some((sg, sk)) => (unroutable_group(row, &sg).unwrap_or("OFF"), sk),
                         None => return None,
                     },
@@ -1395,7 +1395,7 @@ impl<'a> Console<'a> {
                 }
             }
             Binding::SourceMode(group, n) if source_of(group, n).is_some() => {
-                // Live DAW's sources pair like the WING's (ROUTING > SOURCES).
+                // Sidecar's sources pair like the WING's (ROUTING > SOURCES).
                 let p = e.sources().get(source_of(group, n)?)?;
                 item(def, p.mode.load(Relaxed))
             }
@@ -1425,7 +1425,7 @@ impl<'a> Console<'a> {
         })
     }
 
-    /// What feeds hardware output `port`: ("MAIN", 1) etc. None: nothing Live DAW knows of.
+    /// What feeds hardware output `port`: ("MAIN", 1) etc. None: nothing Sidecar knows of.
     fn output_source(&self, port: i32) -> Option<(&'static str, i32)> {
         let lists: [(&'static str, Vec<&Arc<Strip>>); 3] = [
             ("BUS", self.buses.iter().flatten().collect()),
@@ -1447,10 +1447,10 @@ impl<'a> Console<'a> {
         (1..=4).find(|&k| monitor_output(c, k).load(Relaxed) == port).map(|k| ("MON", k))
     }
 
-    /// The input patch of a strip as the WING shows it. Live DAW stores one
+    /// The input patch of a strip as the WING shows it. Sidecar stores one
     /// port per input; the (group, number) a client or snapshot set is kept, and
     /// shown while it still names that port (LCL 5 and A 5 are the same port
-    /// here), or when Live DAW can't patch it at all (a bus as a source).
+    /// here), or when Sidecar can't patch it at all (a bus as a source).
     fn conn_pair(&self, row: u16, p: &StripParams, alt: bool) -> (&'static str, i32) {
         let src = if alt { p.alt_input_left.load(Relaxed) } else { p.input_left.load(Relaxed) };
         let (gname, nname) = if alt { ("altgrp", "altin") } else { ("grp", "in") };
@@ -1818,7 +1818,7 @@ impl<'a> Console<'a> {
                     };
                     match port::wing_to_source(g, n).filter(|p| *p >= 0) {
                         Some(p) => m.source_solo_port.store(p, Relaxed),
-                        None => return Ok(false), // PLAY, OSC: no Live DAW source
+                        None => return Ok(false), // PLAY, OSC: no Sidecar source
                     }
                 }
             },
@@ -1937,7 +1937,7 @@ impl<'a> Console<'a> {
                 let (g, k) = if number { (cur_g, v.as_i32().unwrap_or(1)) } else { (str_of(v), cur_n) };
                 self.route_output(port, &g, k);
                 // Remember the pair as set: the number of an unrouted output, and
-                // sources Live DAW can't route.
+                // sources Sidecar can't route.
                 for (name, val) in [("grp", Value::Str(g)), ("in", Value::Int(k))] {
                     if let Some(r) = self.sibling(row, name) {
                         self.state.shadow_set(ShadowKey::Row(r), val);
@@ -1989,7 +1989,7 @@ impl<'a> Console<'a> {
     }
 
     /// Routes `group`/`n` (BUS, MAIN, MTX: 2k-1 = left of strip k, 2k = right;
-    /// MON 1/2) to hardware output `port`. False if Live DAW can't.
+    /// MON 1/2) to hardware output `port`. False if Sidecar can't.
     fn route_output(&self, port: i32, group: &str, n: i32) -> bool {
         let c = &self.engine.controls;
         let target: Option<(&Arc<Strip>, bool)> = match group {
@@ -2036,7 +2036,7 @@ impl<'a> Console<'a> {
             return Ok(());
         }
         // EXT without a plugin is an empty plugin slot (plugins are loaded on
-        // Live DAW's EFFECTS screen); a loaded plugin isn't replaced remotely.
+        // Sidecar's EFFECTS screen); a loaded plugin isn't replaced remotely.
         if current == FX_EXT && self.engine.fx(i).is_some_and(|r| r.is_loaded()) {
             return Err(SetError::Unsupported(format!("FX {} holds a plugin", i + 1)));
         }
@@ -2256,7 +2256,7 @@ fn str_of(v: &Value) -> String {
     }
 }
 
-/// A shadowed group of `row`'s (grp, in) pair, if Live DAW can't route it
+/// A shadowed group of `row`'s (grp, in) pair, if Sidecar can't route it
 /// (else the engine's state wins: a stale shadow must not show).
 fn unroutable_group(row: u16, group: &str) -> Option<&'static str> {
     if matches!(group, "BUS" | "MAIN" | "MTX" | "MON" | "OFF") {
@@ -2292,7 +2292,7 @@ pub struct Coverage {
 impl Coverage {
     pub fn report(&self) -> String {
         let mut out = format!(
-            "WING tree coverage: {} of {} parameters map to Live DAW ({:.1} %)\n",
+            "WING tree coverage: {} of {} parameters map to Sidecar ({:.1} %)\n",
             self.mapped,
             self.total,
             100.0 * self.mapped as f64 / self.total.max(1) as f64
@@ -2570,7 +2570,7 @@ mod tests {
         assert!(!a.eq.autogain.load(Relaxed));
         a.eq.range.store(1, Relaxed);
         assert_eq!(c.get(node(&c, "/cfg/rta/eqrange")), Some(Value::Float(60.0)));
-        assert!(!c.is_mapped(node(&c, "/cfg/rta/rtatap")), "the WING's taps aren't Live DAW's");
+        assert!(!c.is_mapped(node(&c, "/cfg/rta/rtatap")), "the WING's taps aren't Sidecar's");
     }
 
     #[test]
@@ -2731,7 +2731,7 @@ mod tests {
         assert_eq!(c.get(node(&c, "/io/in/A/5/$mute")), Some(Value::Int(2)));
         // Other groups share ports here: they stay in the shadow store.
         assert!(!c.is_mapped(node(&c, "/io/in/LCL/5/name")));
-        // MODE pairs Live DAW's sources.
+        // MODE pairs Sidecar's sources.
         c.set(node(&c, "/io/in/A/7/mode"), &Value::str("M/S")).unwrap();
         assert_eq!(table.get(7).unwrap().mode.load(Relaxed), source_mode::MID_SIDE);
         assert_eq!(c.get(node(&c, "/io/in/A/8/mode")), Some(Value::str("M/S")));

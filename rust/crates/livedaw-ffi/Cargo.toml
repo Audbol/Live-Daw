@@ -1,6 +1,6 @@
 [package]
 name = "livedaw-ffi"
-description = "C ABI for the Live DAW engine (linked into the JUCE app)"
+description = "C ABI for the Sidecar engine (linked into the JUCE app)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

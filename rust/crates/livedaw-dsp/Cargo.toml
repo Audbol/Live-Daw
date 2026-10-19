@@ -1,6 +1,6 @@
 [package]
 name = "livedaw-dsp"
-description = "Realtime-safe DSP for Live DAW: biquads, 4-band EQ, gate, compressor"
+description = "Realtime-safe DSP for Sidecar: the WING processing models and FX rack devices, biquads, delays"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
