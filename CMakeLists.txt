@@ -1,6 +1,29 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(LiveDAW VERSION 0.1.0 LANGUAGES C CXX)
+# The version. Release builds pass the release tag (e.g. -DLIVEDAW_VERSION=v0.1.1-beta.2):
+# its numeric part becomes the CMake/JUCE version (Windows version info, Info.plist), and
+# the full string is what the app shows (about box, SETUP, log) as JUCE_APPLICATION_VERSION_STRING.
+set(LIVEDAW_DEFAULT_VERSION 0.1.0)
+set(LIVEDAW_VERSION "" CACHE STRING "Version to stamp, e.g. 0.1.1-beta.2 or v0.1.1-beta.2 (default: ${LIVEDAW_DEFAULT_VERSION})")
+if(LIVEDAW_VERSION)
+    string(REGEX REPLACE "^[vV]" "" LIVEDAW_VERSION_STRING "${LIVEDAW_VERSION}")
+    if(NOT LIVEDAW_VERSION_STRING MATCHES "^([0-9]+)\\.([0-9]+)\\.([0-9]+)([-+][0-9A-Za-z.+-]*)?$")
+        message(FATAL_ERROR "LIVEDAW_VERSION '${LIVEDAW_VERSION}' is not MAJOR.MINOR.PATCH[-suffix]")
+    endif()
+    set(LIVEDAW_VERSION_NUMBER "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}")
+else()
+    set(LIVEDAW_VERSION_STRING ${LIVEDAW_DEFAULT_VERSION})
+    set(LIVEDAW_VERSION_NUMBER ${LIVEDAW_DEFAULT_VERSION})
+endif()
+
+# std::atomic::wait (used by the realtime worker pool) needs macOS 11+. Set before
+# project() so the toolchain picks it up.
+if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
+endif()
+
+project(LiveDAW VERSION ${LIVEDAW_VERSION_NUMBER} LANGUAGES C CXX)
+message(STATUS "Sidecar version ${LIVEDAW_VERSION_STRING}")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,11 +33,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(MSVC)
     # Static runtime: the .exe runs on any Windows PC without the VC++ redistributable.
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-endif()
-
-if(APPLE)
-    # std::atomic::wait (used by the realtime worker pool) needs macOS 11+.
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 endif()
 
 #-------------------------------------------------------------------------------
@@ -117,7 +135,7 @@ function(livedaw_configure_juce_target target)
         JUCE_USE_MP3AUDIOFORMAT=1
         JUCE_USE_OGGVORBIS=0
         JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:${target},JUCE_PRODUCT_NAME>"
-        JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:${target},JUCE_VERSION>")
+        JUCE_APPLICATION_VERSION_STRING="${LIVEDAW_VERSION_STRING}")
 
     if(APPLE)
         target_compile_definitions(${target} PRIVATE JUCE_PLUGINHOST_AU=1)
@@ -167,10 +185,22 @@ endfunction()
 #-------------------------------------------------------------------------------
 # Application
 #-------------------------------------------------------------------------------
+set(LIVEDAW_PLIST_EXTRAS "<plist version=\"1.0\"><dict>
+<key>LSMinimumSystemVersion</key><string>${CMAKE_OSX_DEPLOYMENT_TARGET}</string>
+<key>LSApplicationCategoryType</key><string>public.app-category.music</string>
+</dict></plist>")
+
+# The icon (resources/icon, made by packaging/make_icon.py): JUCE turns
+# ICON_BIG/ICON_SMALL into the .icns (macOS) and the .exe icon (Windows).
 juce_add_gui_app(LiveDAW
     PRODUCT_NAME "Sidecar"
     COMPANY_NAME "Sidecar"
+    COMPANY_COPYRIGHT "Copyright (C) Sidecar contributors. Licensed under the GNU AGPLv3."
     BUNDLE_ID "org.sidecar.app"
+    VERSION ${PROJECT_VERSION}
+    ICON_BIG ${CMAKE_SOURCE_DIR}/resources/icon/sidecar-1024.png
+    ICON_SMALL ${CMAKE_SOURCE_DIR}/resources/icon/sidecar-256.png
+    PLIST_TO_MERGE "${LIVEDAW_PLIST_EXTRAS}"
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT "Sidecar needs access to your audio inputs to mix them.")
 
@@ -230,7 +260,8 @@ juce_add_binary_data(LiveDAWResources SOURCES
     resources/fonts/BarlowCondensed-Medium.ttf
     resources/fonts/BarlowCondensed-SemiBold.ttf
     resources/fonts/BarlowSemiCondensed-Medium.ttf
-    resources/fonts/BarlowSemiCondensed-SemiBold.ttf)
+    resources/fonts/BarlowSemiCondensed-SemiBold.ttf
+    resources/icon/sidecar-256.png)   # the window icon on Linux
 target_link_libraries(LiveDAW PRIVATE LiveDAWResources)
 
 #-------------------------------------------------------------------------------
