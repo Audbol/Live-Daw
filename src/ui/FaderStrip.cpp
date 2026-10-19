@@ -126,6 +126,22 @@ void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const Scribble
         g.setFont (lcdFont (foot.getHeight() * 0.56f, WingWeight::Medium));
         lcdText (g, info.footer, foot.withTrimmedTop (1.0f), juce::Justification::centred);
     }
+    // With no icon (and nothing else) in the centre, the name takes the whole
+    // area in larger type, as on the console.
+    const bool hasIcon = (info.strip != nullptr && info.strip->params.icon.load() > 0) || info.icon.has_value();
+    const bool centreFree = info.value.isEmpty() && ! hasIcon && info.line2.isEmpty() && info.line3.isEmpty();
+    if (info.name.isNotEmpty() && centreFree && ! info.nameInverted)
+    {
+        auto area = r.reduced (0.0f, juce::jmax (1.0f, r.getHeight() * 0.06f));
+        float cap = juce::jmin (H * 0.2f, area.getHeight() * 0.42f);
+        if (const float textW = juce::GlyphArrangement::getStringWidth (lcdFont (cap, WingWeight::Medium), info.name);
+            textW > area.getWidth() * 0.94f)
+            cap = juce::jmax (juce::jmin (5.5f, cap), cap * area.getWidth() * 0.94f / textW);
+        g.setColour (ink);
+        g.setFont (lcdFont (cap, cap < 7.0f ? WingWeight::SemiBold : WingWeight::Medium));
+        lcdText (g, info.name, area, juce::Justification::centred);
+        return;
+    }
     if (info.name.isNotEmpty())
     {
         auto bar = r.removeFromBottom (juce::jmax (10.0f, std::round (H * 0.24f)));
