@@ -63,7 +63,8 @@ The [user guide](docs/USER_GUIDE.md) describes every part in detail.
 - **Windows** 10 or 11 (64-bit). ASIO drivers (your interface's own, or ASIO4ALL /
   FlexASIO) give the lowest latency; WASAPI also works.
 - **macOS** 11 (Big Sur) or newer, CoreAudio.
-- **Linux**, a recent 64-bit distribution with ALSA or JACK and X11.
+- **Linux**, x86_64 with glibc 2.38 or newer, ALSA or JACK (or PipeWire's JACK
+  layer) and X11.
 - A multi-core CPU (strips are processed in parallel; a 40-channel console with
   processing on every channel uses a fraction of one core on a current machine),
   and a screen of at least 1366 x 768 (larger is better).
@@ -76,18 +77,23 @@ Builds for all three platforms are attached to each release on the
 [releases page](https://github.com/Audbol/Live-Daw/releases). See the release page
 for the files of each version.
 
-- **Windows:** download the zip, extract it anywhere and run `Sidecar.exe`. No
-  installer and no runtime are needed. Windows SmartScreen may warn about an
-  unknown publisher the first time: choose *More info* > *Run anyway*.
-- **macOS:** download the app, move `Sidecar.app` to *Applications*. The app is not
-  signed by Apple, so the first time **right-click (or Ctrl-click) it and choose
-  Open**, then confirm. macOS asks for microphone access, which Sidecar needs to read
-  your audio inputs.
-- **Linux:** the release page offers the app as described there (an AppImage and/or
-  a tarball). Make the AppImage executable (`chmod +x`) and run it, or extract the
-  tarball and run `Sidecar`. For low latency, add your user to the `audio` group and
-  allow realtime scheduling (`/etc/security/limits.d/audio.conf`:
-  `@audio - rtprio 95` and `@audio - memlock unlimited`), then log in again.
+- **Windows:** download the zip, extract it anywhere and run `Sidecar.exe` (no
+  runtime needed), or use the installer if the release offers one. Windows
+  SmartScreen may warn about an unknown publisher the first time: choose *More info*
+  > *Run anyway*.
+- **macOS** (Apple silicon and Intel): open the disk image and drag `Sidecar.app` to
+  *Applications*. The app is not signed or notarized by Apple, so the first time
+  **right-click (or Ctrl-click) it and choose Open**, then Open again (on macOS 15 and
+  newer: open it once, then *System Settings > Privacy & Security > Open Anyway*).
+  Allow microphone access when asked: that is how macOS lets Sidecar read your audio
+  interface's inputs.
+- **Linux** (x86_64, glibc 2.38 or newer: Ubuntu 24.04+, Debian 13+, Fedora 39+ and
+  similar): run the AppImage (`chmod +x Sidecar-*.AppImage`; it needs FUSE, or start
+  it with `--appimage-extract-and-run`), or extract the tarball and run `Sidecar`;
+  its `README-LINUX.txt` covers the runtime libraries, JACK / PipeWire and a menu
+  entry. For low latency, add your user to the `audio` group and allow realtime
+  scheduling (`/etc/security/limits.d/audio.conf`: `@audio - rtprio 95` and
+  `@audio - memlock unlimited`), then log in again.
 
 ## First steps
 
