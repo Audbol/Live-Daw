@@ -1063,6 +1063,286 @@ namespace
     }
 
     //==========================================================================
+    // EQ models. `o` offsets the parameter indices: the FX rack's versions put
+    // MIX first (o = 1, MIX = 0); the channel EQs have no MIX (drawn at 100 %).
+
+    Design soulEq (int o)
+    {
+        Design d;
+        d.panel = juce::Colour (0xff3b3b3c);
+        d.texture = Texture::Rough;
+        d.wear = 0.6f;
+        const juce::uint32 txt = 0xffeaeaea;
+        d.text ("SOUL Analog", 430, 82, 300, 32, 25, 0xffdedede, Look::SerifBold);
+        d.text ("EQ", 540, 372, 80, 24, 17, 0xffdedede, Look::Serif);
+        for (auto* p : { "M 190 75 L 190 208 L 120 262 L 120 380", "M 350 75 L 350 208 L 278 262 L 278 380", "M 583 112 L 583 380",
+                         "M 815 75 L 815 208 L 886 262 L 886 380", "M 975 75 L 975 208 L 1047 262 L 1047 380" })
+            d.path (p, 0xffd8d8d8, 2.0f);
+        auto knob = [&] (int param, float cx, float cy, juce::uint32 cap, const char* labels, float fixed = 0.5f)
+        {
+            d.knob (param, cx, cy, 70, Look::ColourCap, cap).scaleOf (11, labels, 290).radii (1.28f, 1.62f).lsize (12).scol (txt).skip().at (fixed);
+        };
+        auto under = [&] (float cx, float cy, const char* s) { d.text (s, cx - 40, cy + 40, 80, 16, 12, txt); };
+        const juce::uint32 grey = 0xff7a7a7a, blue = 0xff1414e0, green = 0xff0a7a1c, purple = 0xff7020b0;
+        knob (o > 0 ? 0 : -1, 110, 167, grey, "", 0.8f);
+        d.caption ("MIX", 165, 112, 15, txt);
+        under (110, 167, "%");
+        knob (o + 1, 270, 167, grey, "");
+        d.caption ("LF", 325, 112, 15, txt);
+        under (270, 167, "-      dB      +");
+        knob (o + 0, 197, 311, grey, "30||50||100||200||300||450");
+        under (197, 311, "Hz");
+        knob (o + 5, 430, 167, blue, "");
+        d.caption ("LMF", 486, 112, 15, txt);
+        under (430, 167, "-      dB      +");
+        knob (o + 4, 357, 311, blue, "3.5||1.5|||0.8|||0.3||0.1");
+        under (357, 311, "Q");
+        knob (o + 2, 502, 311, blue, "0.2||0.3|0.8||1||1.5|2||2.5");
+        under (502, 311, "kHz");
+        knob (o + 9, 734, 167, green, "");
+        d.caption ("HMF", 680, 112, 15, txt);
+        under (734, 167, "-      dB      +");
+        knob (o + 8, 662, 311, green, "3.5||1.5|||0.8|||0.3||0.1");
+        under (662, 311, "Q");
+        knob (o + 6, 806, 311, green, "0.6||0.8|1.5||3||4.5|6||7");
+        under (806, 311, "kHz");
+        knob (o + 11, 894, 167, purple, "");
+        d.caption ("HF", 838, 112, 15, txt);
+        under (894, 167, "-      dB      +");
+        knob (o + 10, 966, 311, purple, "1.5||2|5||8||10|14||16");
+        under (966, 311, "kHz");
+        auto tallKey = [&] (int param, float x, const char* s)
+        {
+            auto& k = d.key (param, x, 138, 38, 56, Look::StackKey, s);
+            k.colour2 = juce::Colour (0xff111111);
+            k.size = 15;
+            k.inv();
+            d.lamp (x + 19, 215, 12, 0xffff2020, param).at (param < 0 ? 1.0f : 0.0f);
+        };
+        tallKey (o + 3, 516, "\xc3\xb7\n3");
+        tallKey (o + 7, 612, "x\n3");
+        tallKey (-1, 1005, "EQ\nIN");
+        return d;
+    }
+
+    Design even88Eq (int o)
+    {
+        Design d;
+        evenFrame (d, "88-FORMANT");
+        d.panel = juce::Colour (0xff202826);
+        const juce::uint32 txt = 0xffd8d8d8, cyan = 0xff18c0f0, blue = 0xff1a86f0, green = 0xff156a26, dark = 0xff2a2a2a, grey = 0xff8a8a8a;
+        auto knob = [&] (int param, float cx, float cy, juce::uint32 cap, const char* labels, float fixed = 0.5f)
+        {
+            d.knob (param, cx, cy, 74, Look::Knurled, cap).scaleOf (11, labels, 300, false).radii (1.12f, 1.55f).lsize (12).scol (txt).at (fixed);
+        };
+        auto under = [&] (float cx, float cy, const char* s) { d.text (s, cx - 40, cy + 40, 80, 16, 12, txt); };
+        d.key (-1, 73, 121, 57, 30, Look::LedKey, "", 0xff30c040).at (1.0f);
+        d.text ("EQ", 73, 121, 57, 30, 15, 0xff111111);
+        d.key (o + 3, 73, 198, 57, 30, Look::LedKey, "", 0xfff0e040).inv();
+        d.text ("SHV", 73, 198, 57, 30, 14, 0xff111111);
+        d.key (o + 13, 1035, 198, 57, 30, Look::LedKey, "", 0xfff0e040).inv();
+        d.text ("SHV", 1035, 198, 57, 30, 14, 0xff111111);
+        knob (o + 6, 198, 177, cyan, "");
+        under (198, 177, "Q");
+        knob (o + 4, 384, 177, cyan, "120||330||570||940||1.4k||2k");
+        under (384, 177, "Hz");
+        knob (o + 7, 580, 177, blue, "0.8||1.4||2.4||3.7||6.0||9.0");
+        under (580, 177, "kHz");
+        knob (o + 9, 775, 177, blue, "");
+        under (775, 177, "Q");
+        knob (o > 0 ? 0 : -1, 967, 185, grey, "", 0.8f);
+        d.caption ("MIX", 967, 228, 14, txt);
+        knob (o + 0, 98, 297, dark, "33||73||120||200||300||440");
+        under (98, 297, "Hz");
+        d.key (o + 2, 172, 293, 56, 30, Look::SoulKey, "HI-Q").size = 15;
+        knob (o + 1, 294, 297, dark, "");
+        under (294, 297, "-      dB      +");
+        d.caption ("LOW", 197, 338, 14, txt);
+        knob (o + 5, 487, 297, cyan, "");
+        under (487, 297, "-      dB      +");
+        d.caption ("LOW MID", 483, 358, 14, txt);
+        knob (o + 8, 678, 297, blue, "");
+        under (678, 297, "-      dB      +");
+        d.caption ("HIGH MID", 678, 358, 14, txt);
+        knob (o + 11, 870, 297, green, "");
+        under (870, 297, "-      dB      +");
+        d.key (o + 12, 934, 293, 56, 30, Look::SoulKey, "HI-Q").size = 15;
+        d.caption ("HIGH", 965, 338, 14, txt);
+        knob (o + 10, 1060, 297, green, "1.5||3.2||5.3||8||13||18");
+        under (1060, 297, "kHz");
+        return d;
+    }
+
+    Design even84Eq (int o)
+    {
+        Design d;
+        evenFrame (d, "84");
+        d.panel = juce::Colour (0xff2a3040);
+        d.texture = Texture::Brushed;
+        const juce::uint32 txt = 0xffd8d8d8, cyan = 0xff18c0f0;
+        d.caption ("GAIN", 172, 134, 15, txt);
+        d.knob (o + 0, 172, 232, 74, Look::Knurled, 0xff6a1010).scaleOf (11, "-20|||||0|||||+20", 280, false).radii (1.12f, 1.55f).lsize (12).scol (txt);
+        d.text ("dB", 157, 282, 30, 16, 12, txt);
+        // Concentric knobs: the frequency ring outside, the gain cap inside.
+        auto band = [&] (int freq, int gain, float cx, const char* labels, float sweep, float centre, const char* unit, const char* caption)
+        {
+            d.knob (freq, cx, 232, 100, Look::SilverDial).scaleOf (0, labels, sweep).radii (1.0f, 1.32f).lsize (12).scol (txt).centred (centre);
+            d.knob (gain, cx, 232, 58, Look::ColourCap, cyan);
+            d.text ("-", cx - 54, 278, 20, 16, 13, txt);
+            d.text (unit, cx - 20, 284, 40, 16, 12, txt);
+            d.text ("+", cx + 34, 278, 20, 16, 13, txt);
+            d.caption (caption, cx, 318, 15, txt);
+        };
+        band (o + 1, o + 2, 333, "off|35|60|110|220", 190, -25, "Hz", "LOW");
+        d.key (o + 5, 418, 226, 57, 30, Look::LedKey, "", 0xfff0e040);
+        d.text ("HI-Q", 418, 226, 57, 30, 14, 0xff111111);
+        band (o + 3, o + 4, 590, "off|0.35|0.7|1.6|3.2|4.8|7.2", 240, 0, "kHz", "MID");
+        band (o + 6, o + 7, 750, "10|12|16|off", 170, 35, "kHz", "HIGH");
+        d.caption ("MIX", 910, 134, 15, txt);
+        d.knob (o > 0 ? 0 : -1, 910, 240, 74, Look::Knurled, 0xff8a8a8a).scaleOf (11, "0||||50||||100||125", 280, false).radii (1.12f, 1.55f).lsize (12).scol (txt).at (0.8f);
+        d.text ("%", 895, 294, 30, 16, 12, txt);
+        d.key (-1, 1002, 226, 57, 30, Look::LedKey, "", 0xff30c040).at (1.0f);
+        d.text ("EQ", 1002, 226, 57, 30, 15, 0xff111111);
+        return d;
+    }
+
+    Design fortissimo110 (int o)
+    {
+        Design d;
+        d.panel = juce::Colour (0xff23288a);
+        d.texture = Texture::Rough;
+        d.wear = 0.6f;
+        const juce::uint32 sub = 0xffa9a9a9, ink = 0xff1a1a1a, yellow = 0xfff0f040, white = 0xfff4f4f4;
+        d.box (47, 123, 510, 230, Look::Fill, sub, 0xff8a8a8a, 1.0f);
+        d.box (567, 123, 550, 120, Look::Fill, sub, 0xff8a8a8a, 1.0f);
+        d.box (567, 123, 342, 230, Look::Fill, sub, 0xff8a8a8a, 1.0f);
+        d.box (917, 259, 96, 94, Look::Fill, sub, 0xff8a8a8a, 1.0f);
+        d.box (1022, 259, 95, 94, Look::Fill, sub, 0xff8a8a8a, 1.0f);
+        d.box (306, 123, 86, 58, Look::Fill, 0xff1c2470);
+        d.text ("FORTISSIMO", 306, 128, 86, 18, 13, 0xffe0e0f0, Look::SansLight);
+        d.text ("110", 306, 146, 86, 30, 26, 0xffe0e0f0, Look::SansLight);
+        auto lampKey = [&] (int param, float cx, const char* caption, juce::uint32 colour, bool lit = false)
+        {
+            d.text (caption, cx - 40, 134, 80, 18, 15, ink);
+            d.lamp (cx, 176, 28, colour, param).at (lit ? 1.0f : 0.0f);
+        };
+        lampKey (o + 0, 85, "PEQ In", 0xffff2020);
+        lampKey (o + 4, 166, "x3", 0xffe8e030);
+        lampKey (o + 8, 422, "x3", 0xffe8e030);
+        lampKey (o + 9, 606, "SHEQ In", 0xffff2020);
+        lampKey (-1, 1070, "All Eq", 0xffff2020, true);
+        auto gainKnob = [&] (int param, float cx, float cy)
+        {
+            d.knob (param, cx, cy, 70, Look::ColourCap, white).scaleOf (5, "||0||", 270, false).radii (1.2f, 1.45f).lsize (12).scol (white).banded (0xfff4f4f4).skip();
+            d.text ("-     -o-     +", cx - 50, cy + 42, 100, 16, 13, ink);
+        };
+        auto small = [&] (int param, float cx, float cy, const char* labels, float fixed = 0.5f)
+        {
+            d.knob (param, cx, cy, 52, Look::ColourCap, yellow).scaleOf (0, labels, 280).radii (1.25f, 1.55f).lsize (12).scol (ink).at (fixed);
+        };
+        small (o + 1, 247, 183, "40|110|200|400");
+        gainKnob (o + 2, 126, 284);
+        small (o + 3, 247, 302, "");
+        small (o + 5, 502, 183, ".6|1.5|3|6");
+        gainKnob (o + 6, 381, 284);
+        small (o + 7, 502, 302, "");
+        gainKnob (o + 11, 750, 177);
+        gainKnob (o + 13, 926, 177);
+        small (o + 10, 645, 302, "33|56|95|160|270|460");
+        small (o + 12, 821, 302, "3.3|4.7|6.8|10|15|18");
+        small (o > 0 ? 0 : -1, 965, 296, "", 0.8f);
+        d.caption ("MIX", 965, 332, 15, ink);
+        small (o + 14, 1070, 296, "");
+        d.caption ("GAIN", 1070, 332, 15, ink);
+        return d;
+    }
+
+    Design pulsarEq (int o)
+    {
+        Design d;
+        d.panel = juce::Colour (0xff3d4954);
+        d.texture = Texture::Rough;
+        d.wear = 0.6f;
+        d.screws = false;
+        for (auto [x, y] : { std::pair { 52.0f, 93.0f }, { 1105.0f, 93.0f }, { 52.0f, 385.0f }, { 1105.0f, 385.0f } })
+            d.add (Type::Screw, x, y, 18, 18);
+        const juce::uint32 txt = 0xffeaeaea;
+        d.text ("PULSAR EQ\nP1a/M5", 52, 114, 160, 52, 21, txt, Look::Sans, J::centredLeft);
+        auto chooser = [&] (int param, float cx, float cy, const char* labels, float sweep, const char* caption)
+        {
+            d.knob (param, cx, cy, 62, Look::Chicken).scaleOf (0, labels, sweep).radii (1.0f, 1.18f).lsize (12).scol (txt);
+            d.caption (caption, cx, 213, 15, txt);
+        };
+        auto boost = [&] (int param, float cx, float cy, const char* caption)
+        {
+            d.knob (param, cx, cy, 72, Look::BlackSkirt).scaleOf (11, "0||||||||||10", 280).radii (1.25f, 1.45f).lsize (12).scol (txt).skip();
+            d.caption (caption, cx, cy > 250 ? 357 : 213, 15, txt);
+        };
+        chooser (o + 11, 240, 170, "200|300|500|700|1000", 200, "LO-MID FREQ");
+        chooser (o + 13, 343, 162, "200|300|500|700|1|1.5|2|3|4|5|7", 260, "MID FREQ");
+        chooser (o + 15, 462, 162, "1.5|2|3|4|5", 200, "HI-MID FREQ");
+        boost (o + 2, 606, 165, "LO ATT");
+        chooser (o + 3, 718, 162, "20|30|60|100", 160, "LO FREQ");
+        boost (o + 4, 829, 165, "HI WIDTH");
+        chooser (o + 6, 946, 162, "3|4|5|8|10|12|16", 240, "HI FREQ");
+        boost (o + 7, 1052, 165, "HI ATT");
+        auto section = [&] (int param, float cx, const char* caption)
+        {
+            d.caption (caption, cx, 266, 14, txt);
+            d.lamp (cx + 2, 312, 34, 0xffff8020, param);
+            d.text ("IN", cx + 40, 266, 32, 18, 14, txt);
+            d.toggle (param, cx + 56, 312, 24);
+        };
+        section (o + 9, 94, "MID EQ5");
+        boost (o + 10, 238, 308, "LO-MID BOOST");
+        boost (o + 12, 350, 308, "MID DIP");
+        boost (o + 14, 462, 308, "HI-MID BOOST");
+        section (o + 0, 575, "HI-LO EQ1");
+        boost (o + 1, 718, 308, "LO BOOST");
+        boost (o + 5, 885, 308, "HI BOOST");
+        d.knob (o + 8, 1052, 312, 62, Look::Chicken).scaleOf (0, "5|10|20", 140).radii (1.0f, 1.18f).lsize (12).scol (txt);
+        d.caption ("HI-ATT FREQ", 1052, 357, 15, txt);
+        return d;
+    }
+
+    Design machEq4 (int o)
+    {
+        Design d;
+        d.panel = juce::Colour (0xff3a94e6);
+        d.texture = Texture::Smooth;
+        d.wear = 0.8f;
+        d.screws = false;
+        for (auto [x, y] : { std::pair { 382.0f, 124.0f }, { 638.0f, 124.0f }, { 62.0f, 238.0f }, { 1098.0f, 236.0f }, { 508.0f, 349.0f }, { 765.0f, 349.0f } })
+            d.add (Type::Screw, x, y, 22, 22);
+        const juce::uint32 txt = 0xfff4f8ff;
+        d.text ("E", 60, 112, 24, 34, 30, 0xffc8201a);
+        d.text ("Q4", 80, 118, 40, 30, 24, 0xff1a2a40);
+        d.text ("mach", 990, 88, 130, 44, 36, txt, Look::SansLight);
+        auto band = [&] (int param, float cx, float cy, juce::uint32 cap, const char* caption, float capX, float capY)
+        {
+            d.knob (param, cx, cy, 70, Look::ColourDome, cap).scaleOf (21, "-5|||||-3|||||0|||||+3|||||+5", 270, false).radii (1.12f, 1.48f).lsize (12).scol (txt).skip();
+            d.text (caption, capX - 50, capY - 9, 100, 18, 14, txt);
+        };
+        band (o + 0, 198, 176, 0xff222222, "SUB", 280, 121);
+        band (o + 2, 455, 176, 0xff127a20, "160 Hz", 535, 121);
+        band (o + 4, 710, 176, 0xfff05a20, "2.5 kHz", 790, 121);
+        band (o + 1, 326, 304, 0xff1a7ae8, "40 Hz", 408, 326);
+        band (o + 3, 582, 304, 0xffe01010, "650 Hz", 664, 326);
+        d.knob (o + 6, 965, 176, 70, Look::ColourDome, 0xff1a7ae8).scaleOf (11, "off||2.5||5.0||10||20||40", 220, false).radii (1.12f, 1.48f).lsize (12).scol (txt).centred (-20).skip();
+        d.text ("kHz", 1040, 150, 44, 16, 13, txt);
+        d.text ("AIR\nFREQ", 1022, 196, 50, 34, 13, txt);
+        d.knob (o + 5, 838, 304, 70, Look::ColourDome, 0xfff0f040).scaleOf (21, "0||||2||||4||||6||||8||||10", 270, false).radii (1.12f, 1.48f).lsize (12).scol (txt).skip();
+        d.text ("AIR\nGAIN", 895, 314, 50, 34, 13, txt);
+        d.key (-1, 120, 305, 32, 32, Look::RoundKey);
+        d.lamp (182, 319, 12, 0xff40e040);
+        d.caption ("IN/OUT", 134, 342, 13, txt);
+        d.lamp (980, 321, 12, 0xff40e040, o + 7);
+        d.key (o + 7, 1014, 305, 32, 32, Look::RoundKey, "", 0xff40e040);
+        d.caption ("AUTO", 1030, 342, 13, txt);
+        return d;
+    }
+
+    //==========================================================================
     std::map<juce::String, Design> buildDesigns()
     {
         std::map<juce::String, Design> m;
@@ -1098,6 +1378,18 @@ namespace
         put ("D:DEQ2", dualDynamicEq());
         put ("D:LMT", transientLimiter());
         put ("D:ONEC", oneKnobComp());
+        put ("E:SOUL", soulEq (0));
+        put ("F:SOUL", soulEq (1));
+        put ("E:E88", even88Eq (0));
+        put ("F:E88", even88Eq (1));
+        put ("E:E84", even84Eq (0));
+        put ("F:E84", even84Eq (1));
+        put ("E:F110", fortissimo110 (0));
+        put ("F:F110", fortissimo110 (1));
+        put ("E:PULSAR", pulsarEq (0));
+        put ("F:PULSAR", pulsarEq (1));
+        put ("E:MACH4", machEq4 (0));
+        put ("F:MACH4", machEq4 (1));
         return m;
     }
 } // namespace
