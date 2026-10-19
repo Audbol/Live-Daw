@@ -44,9 +44,10 @@ namespace
         g.setColour (Colours::screenTile);
         g.fillRect (r);
 
-        auto label = r.removeFromBottom (juce::jmin (20.0f, r.getHeight() * 0.36f));
+        // [D14] the port label in small print in the bottom quarter.
+        auto label = r.removeFromBottom (juce::jmin (screenCap (20.0f), r.getHeight() * 0.3f));
         g.setColour (t.labelColour);
-        g.setFont (wingFontFit (TypeScale::body, label.getHeight() * 0.9f));
+        g.setFont (wingFontFit (TypeScale::body * 0.85f, label.getHeight() * 0.9f));
         g.drawFittedText (t.label, label.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
 
         auto body = r.reduced (3.0f, 2.0f);
@@ -55,10 +56,10 @@ namespace
         if (t.icon)
             t.icon (g, body.withSizeKeepingCentre (juce::jmin (body.getWidth(), body.getHeight()), body.getHeight()).reduced (1.0f));
         g.setColour (Dark::text);
-        g.setFont (wingFontFit (TypeScale::value * 0.85f, juce::jmin (numberArea.getHeight() * 0.7f, numberArea.getWidth() * 0.6f), WingWeight::SemiBold));
+        g.setFont (wingFontFit (TypeScale::value * 0.8f, juce::jmin (numberArea.getHeight() * 0.7f, numberArea.getWidth() * 0.9f), WingWeight::SemiBold));
         g.drawFittedText (t.number, numberArea.toNearestInt(), juce::Justification::centredRight, 1, 0.6f);
         if (t.chip.isNotEmpty())
-            drawChip (g, r.withHeight (12.0f).withTrimmedLeft (r.getWidth() - 24.0f).translated (-2.0f, 2.0f), t.chip, t.chipColour, juce::Colours::black);
+            drawChip (g, r.withHeight (screenCap (12.0f)).withTrimmedLeft (r.getWidth() - screenCap (24.0f)).translated (-2.0f, 2.0f), t.chip, t.chipColour, juce::Colours::black);
 
         if (t.selected)
         {
@@ -153,12 +154,12 @@ namespace
             return;
         g.setColour (Dark::key);
         g.fillRect (r);
-        auto dots = r.removeFromRight (juce::jmin (r.getHeight() / 2, 24)).toFloat();
+        auto dots = r.removeFromRight (juce::jmin (r.getHeight() / 2, screenCap (24))).toFloat();
         g.setColour (Dark::text);
-        const float d = juce::jlimit (3.0f, 6.0f, dots.getHeight() * 0.12f);
+        const float d = juce::jlimit (3.0f, screenCap (6.0f), dots.getHeight() * 0.12f);
         for (int i = -1; i <= 1; ++i)
             g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (dots.getCentre().translated (0.0f, (float) i * d * 2.0f)));
-        auto t = r.reduced (juce::jlimit (3, 6, r.getWidth() / 24), 2);
+        auto t = r.reduced (juce::jlimit (3, screenCap (6), r.getWidth() / 24), 2);
         g.setColour (Dark::textDim);
         g.setFont (wingFontFit (TypeScale::statusCaption * 1.2f, (float) t.getHeight() * 0.32f));
         g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 40 / 100), juce::Justification::bottomLeft, 1, 0.7f);
@@ -382,7 +383,7 @@ void RoutingPage::resized()
     b.removeFromLeft (8);
     rightPanel = b;
 
-    const int headerH = juce::jlimit (44, 64, getHeight() / 8);
+    const int headerH = juce::jlimit (44, screenCap (64), getHeight() / 8);
     leftHeader = leftPanel.withHeight (headerH);
     rightHeader = rightPanel.withHeight (headerH);
 
@@ -396,9 +397,9 @@ void RoutingPage::resized()
         renameKey = lh.removeFromRight (lh.getHeight() + 10);
         lh.removeFromRight (8);
         // SRC SOLO (fig. 36), while SOURCE SOLO is on (SETUP > AUDIO).
-        srcSoloKey = lh.removeFromRight (juce::jmin (90, lh.getWidth() / 4)).reduced (0, 3);
+        srcSoloKey = lh.removeFromRight (juce::jmin (screenCap (90), lh.getWidth() / 4)).reduced (0, 3);
         lh.removeFromRight (8);
-        leftSelector = lh.withWidth (juce::jmin (lh.getWidth(), 300));
+        leftSelector = lh.withWidth (juce::jmin (lh.getWidth(), screenCap (300)));
     }
     else
     {
@@ -406,8 +407,8 @@ void RoutingPage::resized()
         lh.removeFromRight (2);
         lockKey = lh.removeFromRight (lh.getHeight());
         lh.removeFromRight (8);
-        autoKey = lh.removeFromRight (juce::jmin (64, juce::jmax (lh.getWidth() / 5, lh.getHeight() * 5 / 4)));
-        lh.removeFromRight (juce::jlimit (4, 8, lh.getWidth() / 40));
+        autoKey = lh.removeFromRight (juce::jmin (screenCap (64), juce::jmax (lh.getWidth() / 5, lh.getHeight() * 5 / 4)));
+        lh.removeFromRight (juce::jlimit (4, screenCap (8), lh.getWidth() / 40));
         if (mode == Mode::Channels)
         {
             const bool paged = numTargetPages() > 1;
@@ -415,19 +416,19 @@ void RoutingPage::resized()
             if (paged)
                 lh.removeFromRight (2);
             prevPage = paged ? lh.removeFromRight (lh.getHeight()) : juce::Rectangle<int>();
-            auto input = lh.withWidth (juce::jmin (lh.getWidth(), 210));
+            auto input = lh.withWidth (juce::jmin (lh.getWidth(), screenCap (210)));
             stereoKey = input.removeFromRight (input.getHeight()).reduced (2, 1);
             input.removeFromRight (4);
             inputField = input;
         }
         else
-            leftSelector = lh.withWidth (juce::jmin (lh.getWidth(), 300));
+            leftSelector = lh.withWidth (juce::jmin (lh.getWidth(), screenCap (300)));
     }
 
     auto rh = rightHeader.reduced (6, 6);
     if (mode == Mode::Channels)
     {
-        auto copy = rh.removeFromRight (juce::jmin (170, rh.getWidth() / 3));
+        auto copy = rh.removeFromRight (juce::jmin (screenCap (170), rh.getWidth() / 3));
         copyCaption = copy.removeFromTop (copy.getHeight() * 38 / 100);
         srcToChKey = copy.removeFromLeft (copy.getWidth() / 2).reduced (1, 1);
         chToSrcKey = copy.reduced (1, 1);
@@ -437,7 +438,7 @@ void RoutingPage::resized()
     {
         noneKey = rh.removeFromRight (rh.getHeight() + 10);
         rh.removeFromRight (8);
-        rightSelector = rh.withWidth (juce::jmin (rh.getWidth(), 300));
+        rightSelector = rh.withWidth (juce::jmin (rh.getWidth(), screenCap (300)));
     }
     layoutSourcePanel();
     layoutTiles();
@@ -708,12 +709,12 @@ void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, 
 
     auto body = area.toFloat();
     body.removeFromTop (juce::jmax (12.0f, body.getHeight() * 0.22f));
-    body.removeFromBottom (juce::jmin (20.0f, body.getHeight() * 0.36f));
+    body.removeFromBottom (juce::jmin (screenCap (20.0f), body.getHeight() * 0.3f));
     body = body.reduced (0.0f, 2.0f);
     if (pairing != ld::kSourceMono)
     {
         // The pair's link glyph (o-o; o|o for mid/side) at the top left.
-        const float d = juce::jlimit (4.0f, 7.0f, body.getHeight() * 0.22f);
+        const float d = juce::jlimit (4.0f, screenCap (7.0f), body.getHeight() * 0.22f);
         auto link = juce::Rectangle<float> (d * 3.2f, d).withPosition (body.getX() + 3.0f, body.getY());
         g.setColour (stereoLabel);
         g.drawEllipse (link.withWidth (d), 1.2f);
@@ -744,7 +745,7 @@ void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, 
         return;
     // 48 (phantom) over M (mute): grey with dark text, lit red when on.
     auto chips = body.removeFromRight (body.getWidth() * 0.26f).reduced (1.0f, 0.0f).translated (-3.0f, 0.0f);
-    const float chipH = juce::jmin (11.0f, chips.getHeight() * 0.42f);
+    const float chipH = juce::jmin (screenCap (11.0f), chips.getHeight() * 0.42f);
     chips = chips.withSizeKeepingCentre (chips.getWidth(), chipH * 2.0f + 2.0f);
     drawChip (g, chips.removeFromTop (chipH), "48", src->phantom.load() ? Colours::mute : Colours::chipOff, juce::Colours::black);
     chips.removeFromTop (2.0f);
@@ -834,32 +835,32 @@ void RoutingPage::layoutSourcePanel()
     sourceColourCells.clear();
     sourceIconCells.clear();
     auto r = rightPanel;
-    auto tabs = r.removeFromTop (juce::jlimit (30, 40, r.getHeight() / 11));
+    auto tabs = r.removeFromTop (juce::jlimit (30, screenCap (40), r.getHeight() / 11));
     const int tw = tabs.getWidth() / 3;
     for (auto& t : sourceTabKeys)
         t = tabs.removeFromLeft (tw).reduced (1, 0);
     r.removeFromTop (6);
-    sourceBanner = r.removeFromTop (juce::jlimit (30, 46, r.getHeight() / 9)).reduced (6, 0);
+    sourceBanner = r.removeFromTop (juce::jlimit (30, screenCap (46), r.getHeight() / 9)).reduced (6, 0);
     r.removeFromTop (8);
     sourceBody = r.reduced (6, 0);
 
     auto body = sourceBody;
-    const int kh = juce::jlimit (16, 40, body.getHeight() / 9);
+    const int kh = juce::jlimit (16, screenCap (40), body.getHeight() / 9);
     auto left = body.removeFromLeft (body.getWidth() * 46 / 100);
-    sourceInitKey = left.removeFromTop (kh).withWidth (juce::jmin (left.getWidth(), 170));
+    sourceInitKey = left.removeFromTop (kh).withWidth (juce::jmin (left.getWidth(), screenCap (170)));
     left.removeFromTop (10);
     // The box takes what INITIALIZE and the three mode keys leave (small screens).
-    sourceBox = left.removeFromTop (juce::jmax (kh, juce::jmin (left.getHeight() - 3 * (kh + 4) - 6, kh * 3))).withWidth (juce::jmin (left.getWidth(), 170));
+    sourceBox = left.removeFromTop (juce::jmax (kh, juce::jmin (left.getHeight() - 3 * (kh + 4) - 6, kh * 3))).withWidth (juce::jmin (left.getWidth(), screenCap (170)));
     left.removeFromTop (6);
     for (auto& k : sourceModeKeys)
     {
-        k = left.removeFromTop (kh).withWidth (juce::jmin (left.getWidth(), 170));
+        k = left.removeFromTop (kh).withWidth (juce::jmin (left.getWidth(), screenCap (170)));
         left.removeFromTop (4);
     }
     body.removeFromLeft (6);
-    sourceMeter = body.removeFromLeft (juce::jlimit (36, 60, body.getWidth() / 4)).withTrimmedBottom (kh / 2);
+    sourceMeter = body.removeFromLeft (juce::jlimit (36, screenCap (60), body.getWidth() / 4)).withTrimmedBottom (kh / 2);
     body.removeFromLeft (10);
-    auto keys = body.removeFromLeft (juce::jmin (body.getWidth() / 2, 96));
+    auto keys = body.removeFromLeft (juce::jmin (body.getWidth() / 2, screenCap (96)));
     // [I8] 48V and POL square icon keys at the top, MUTE at the bottom.
     for (auto* k : { &sourcePhantomKey, &sourcePolKey })
     {
@@ -874,8 +875,8 @@ void RoutingPage::layoutSourcePanel()
     // TAGS: the 8 mute groups the source belongs to (2 x 4).
     sourceTagCells.clear();
     {
-        auto tags = sourceBody.withTrimmedTop (juce::jlimit (24, 34, sourceBody.getHeight() / 9) + 6);
-        tags = tags.withHeight (juce::jmin (tags.getHeight(), 150));
+        auto tags = sourceBody.withTrimmedTop (juce::jlimit (24, screenCap (34), sourceBody.getHeight() / 9) + 6);
+        tags = tags.withHeight (juce::jmin (tags.getHeight(), screenCap (150)));
         const int cw = tags.getWidth() / 4, chh = tags.getHeight() / 2;
         for (int i = 0; i < kNumMuteGroups; ++i)
             sourceTagCells.push_back ({ juce::Rectangle<int> (tags.getX() + (i % 4) * cw, tags.getY() + (i / 4) * chh, cw, chh).reduced (4), i });
@@ -959,7 +960,7 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g, juce::Rectangle<int>) 
         g.setFont (wingFontFit (TypeScale::body, (float) strip.getHeight() * 0.8f));
         g.drawFittedText (sourceName (selectedSource).toUpperCase(), strip.reduced (4, 0), juce::Justification::centred, 1, 0.7f);
         const bool playback = Recorder::isPlaybackSource (selectedSource) || UsbRecorder::isPlayerSource (selectedSource);
-        const auto ring = box.reduced (6).toFloat().withSizeKeepingCentre ((float) juce::jmin (box.getHeight() - 12, 64), (float) juce::jmin (box.getHeight() - 12, 64));
+        const auto ring = box.reduced (6).toFloat().withSizeKeepingCentre ((float) juce::jmin (box.getHeight() - 12, screenCap (64)), (float) juce::jmin (box.getHeight() - 12, screenCap (64)));
         g.setColour (Colours::yellow);
         g.drawEllipse (ring, 2.0f);
         if (src->icon.load() <= 0 || ! drawWingIcon (g, src->icon.load(), ring.reduced (ring.getWidth() * 0.22f), Dark::text))
@@ -1026,13 +1027,13 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g, juce::Rectangle<int>) 
         g.fillRect (f);
         const float gain = src->gainDb.load();
         const float pos = juce::jlimit (0.0f, 1.0f, (gain + 12.0f) / 72.0f);
-        auto slot = f.withSizeKeepingCentre (juce::jmin (10.0f, f.getWidth() * 0.25f), f.getHeight() - 24.0f);
+        auto slot = f.withSizeKeepingCentre (juce::jmin (screenCap (10.0f), f.getWidth() * 0.25f), f.getHeight() - 24.0f);
         g.setColour (Dark::key);
         g.fillRect (slot);
         g.setColour (KnobColours::orange);
         g.fillRect (slot.withTop (slot.getBottom() - slot.getHeight() * pos));
         const float y = slot.getBottom() - slot.getHeight() * pos;
-        auto flag = juce::Rectangle<float> (juce::jmin (f.getWidth() - 4.0f, 64.0f), 18.0f).withCentre ({ f.getCentreX(), juce::jlimit (f.getY() + 9.0f, f.getBottom() - 9.0f, y) });
+        auto flag = juce::Rectangle<float> (juce::jmin (f.getWidth() - 4.0f, screenCap (64.0f)), 18.0f).withCentre ({ f.getCentreX(), juce::jlimit (f.getY() + 9.0f, f.getBottom() - 9.0f, y) });
         g.setColour (juce::Colours::white);
         g.fillRect (flag);
         g.setColour (juce::Colours::black);
@@ -1081,7 +1082,7 @@ void RoutingPage::paintSourceTags (juce::Graphics& g) const
     const auto* src = sourceParams (selectedSource);
     if (src == nullptr)
         return;
-    auto title = sourceBody.withHeight (juce::jlimit (24, 34, sourceBody.getHeight() / 9));
+    auto title = sourceBody.withHeight (juce::jlimit (24, screenCap (34), sourceBody.getHeight() / 9));
     g.setColour (Dark::header);
     g.fillRect (title);
     g.setColour (Dark::caption);

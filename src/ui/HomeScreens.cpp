@@ -58,9 +58,31 @@ void HomeScreen::paint (juce::Graphics& g)
         drawSectionBox (g, p.area, p.title, p.chevron);
 }
 
+namespace
+{
+    /** A caption on a HOME screen: `size` px tall on the 500 px screen of a
+        1920 x 1080 window and in proportion on other screens, no taller than
+        the label. */
+    class ScreenLabel final : public juce::Label
+    {
+    public:
+        explicit ScreenLabel (float sizePx) : size (sizePx) {}
+
+        void resized() override
+        {
+            const float px = size * getWingScreenHeight() / 500.0f;
+            setFont (wingFontPx (juce::jmin (px * 0.7f, (float) getHeight() * 0.62f)));
+            juce::Label::resized();
+        }
+
+    private:
+        float size;
+    };
+} // namespace
+
 juce::Label& HomeScreen::label (const juce::String& text, float size, juce::Colour colour)
 {
-    auto& l = make<juce::Label>();
+    auto& l = make<ScreenLabel> (size);
     l.setText (text, juce::dontSendNotification);
     l.setFont (juce::FontOptions (size, juce::Font::bold));
     l.setColour (juce::Label::textColourId, colour);
@@ -274,12 +296,12 @@ public:
     {
         auto r = getLocalBounds().toFloat();
         const auto b = delayBinding (ctx, in);
-        const float tagH = juce::jlimit (16.0f, 22.0f, r.getHeight() * 0.08f);
+        const float tagH = juce::jlimit (16.0f, screenCap (22.0f), r.getHeight() * 0.08f);
         auto scale = r.removeFromLeft (r.getWidth() * 0.42f);
-        auto track = r.withSizeKeepingCentre (juce::jlimit (8.0f, 22.0f, r.getWidth() * 0.4f), r.getHeight() - tagH);
+        auto track = r.withSizeKeepingCentre (juce::jlimit (8.0f, screenCap (22.0f), r.getWidth() * 0.4f), r.getHeight() - tagH);
         const int mode = juce::jlimit (0, 3, (int) in.delayMode.load());
         const float max = msToDelay (kMaxDelayMs, mode, sampleRateOf (ctx));
-        g.setFont (homeFont (TypeScale::caption, juce::jlimit (9.0f, 12.0f, r.getHeight() * 0.045f)));
+        g.setFont (homeFont (TypeScale::caption, juce::jlimit (9.0f, screenCap (12.0f), r.getHeight() * 0.045f)));
         g.setColour (Colours::textDim);
         for (float frac : { 1.0f, 0.5f, 0.25f, 0.1f, 0.02f, 0.0f })
         {
@@ -368,9 +390,9 @@ public:
         auto b = getLocalBounds();
         auto right = b.removeFromRight (b.getWidth() * 45 / 100);
         slider.setBounds (b.reduced (0, 2));
-        delayKey.setBounds (right.removeFromBottom (juce::jlimit (24, 46, right.getHeight() / 5)).reduced (4, 0));
+        delayKey.setBounds (right.removeFromBottom (juce::jlimit (24, screenCap (46), right.getHeight() / 5)).reduced (4, 0));
         right.removeFromBottom (6);
-        const int h = juce::jmin (46, right.getHeight() / 4);
+        const int h = juce::jmin (screenCap (46), right.getHeight() / 4);
         for (auto* k : units)
             k->setBounds (right.removeFromTop (h).reduced (4, 2));
     }
@@ -403,13 +425,21 @@ class TrimBalancePad final : public juce::Component, private juce::Timer
 public:
     TrimBalancePad (std::atomic<float>& t, std::atomic<float>& b, bool stereo) : trim (t), bal (b), hasBalance (stereo) { startTimerHz (12); }
 
+    /** The trim field (+-18 dB, the balance across it) in the black box
+        [I7]: 276 x 552 WING px, the field 31-246 across and 30-462 down. */
     juce::Rectangle<float> pad() const
     {
-        const float m = labelHeight();
-        return getLocalBounds().toFloat().reduced (2.0f).withTrimmedTop (m * 1.6f).withTrimmedBottom (m * 1.6f).withTrimmedLeft (30.0f).withTrimmedRight (m * 1.2f);
+        const auto r = getLocalBounds().toFloat();
+        return { r.getX() + r.getWidth() * 0.112f, r.getY() + r.getHeight() * 0.054f, r.getWidth() * 0.78f, r.getHeight() * 0.78f };
     }
 
-    static float labelHeight() { return juce::jlimit (9.0f, 14.0f, TypeScale::caption * getWingScreenHeight() * 1.5f); }
+    /** The balance row under the field: ticks, the handle, -9 dB / 0 dB / +9 dB. */
+    juce::Rectangle<float> balanceRow() const
+    {
+        const auto r = getLocalBounds().toFloat();
+        const auto p = pad();
+        return { p.getX(), p.getBottom(), p.getWidth(), r.getBottom() - p.getBottom() };
+    }
 
     void paint (juce::Graphics& g) override
     {
@@ -417,59 +447,80 @@ public:
         g.setColour (juce::Colours::black);
         g.fillRect (r);
         const auto p = pad();
+        const float k = r.getHeight() / 552.0f; // WING px of the box
+        const auto small = wingFont (TypeScale::meterScale * 1.1f);
+        const float lh = small.getHeight();
+
+        // The dotted grid.
+        g.setColour (juce::Colour (0xff404040));
+        const float dot = juce::jmax (1.0f, 2.0f * k);
+        for (float yy = p.getY(); yy <= p.getBottom() + 0.5f; yy += p.getHeight() / 24.0f)
+            for (float xx = p.getX(); xx <= p.getRight() + 0.5f; xx += p.getWidth() / 9.0f)
+                g.fillRect (xx - dot * 0.5f, yy - dot * 0.5f, dot, dot);
+
         g.setColour (Colours::textDim);
-        const float lh = labelHeight();
-        g.setFont (wingFont (TypeScale::caption));
-        g.drawText ("TRIM", r.reduced (4.0f, 2.0f).toNearestInt(), juce::Justification::topLeft);
-        g.drawText ("BAL", r.reduced (4.0f, 2.0f).toNearestInt(), juce::Justification::topRight);
-        g.setFont (wingFont (TypeScale::meterScale * 1.3f));
-        for (int db = 18; db >= -18; db -= 6)
+        g.setFont (small);
+        g.drawText ("TRIM", juce::Rectangle<float> (p.getX(), r.getY(), p.getWidth() * 0.5f, p.getY() - r.getY()).toNearestInt(), juce::Justification::centredLeft);
+        g.drawText ("BAL", juce::Rectangle<float> (p.getCentreX(), r.getY(), p.getWidth() * 0.5f, p.getY() - r.getY()).toNearestInt(), juce::Justification::centredRight);
+        for (int db = 18; db >= -12; db -= 6)
         {
             const float y = p.getCentreY() - (float) db / 18.0f * p.getHeight() * 0.5f;
-            g.setColour (Colours::textDim);
-            g.drawText (db == 0 ? juce::String ("0 dB") : juce::String (std::abs (db)), juce::Rectangle<float> (r.getX(), y - lh * 0.5f, 28.0f, lh).toNearestInt(),
+            g.setColour (Colours::caption);
+            g.drawText (db == 0 ? juce::String ("0 dB") : juce::String (db), juce::Rectangle<float> (r.getX(), y - lh * 0.5f, p.getX() - r.getX() - 3.0f * k, lh).toNearestInt(),
                         juce::Justification::centredRight);
-            g.setColour (juce::Colour (0xff3a3a3a));
-            g.fillRect (p.getX(), y, 6.0f, 1.0f);
-            g.fillRect (p.getRight() - 6.0f, y, 6.0f, 1.0f);
+            g.setColour (juce::Colour (0xff585858));
+            g.fillRect (r.getRight() - 20.0f * k, y - k, 6.0f * k, juce::jmax (1.0f, 2.0f * k));
         }
-        // Ticks and labels along the bottom (balance).
-        for (int i = 0; i <= 18; ++i)
-        {
-            const float x = p.getX() + p.getWidth() * (float) i / 18.0f;
-            g.setColour (juce::Colour (0xff6a6a6a));
-            g.fillRect (x, p.getBottom() - (i % 9 == 0 ? 10.0f : 5.0f), 1.0f, i % 9 == 0 ? 10.0f : 5.0f);
-        }
-        g.setColour (Colours::textDim);
-        const float by = p.getBottom() + lh * 0.55f;
-        g.drawText ("-9 dB", juce::Rectangle<float> (p.getX(), by, 40.0f, lh).toNearestInt(), juce::Justification::centredLeft);
-        g.drawText ("0 dB", juce::Rectangle<float> (p.getCentreX() - 20.0f, by, 40.0f, lh).toNearestInt(), juce::Justification::centred);
-        g.drawText ("+9 dB", juce::Rectangle<float> (r.getRight() - 44.0f, by, 40.0f, lh).toNearestInt(), juce::Justification::centredRight);
 
+        // The balance ticks along the bottom: long at -9, 0 and +9 dB.
+        const auto row = balanceRow();
+        const float tickY = row.getY() + row.getHeight() * 0.42f;
+        for (int i = 0; i <= 12; ++i)
+        {
+            if (i == 6)
+                continue;
+            const bool major = i == 0 || i == 12;
+            const float x = p.getX() + p.getWidth() * (float) i / 12.0f;
+            const float th = (major ? 22.0f : 12.0f) * k;
+            g.setColour (juce::Colour (0xff686868));
+            g.fillRoundedRectangle (juce::Rectangle<float> (juce::jmax (1.5f, 4.0f * k), th).withCentre ({ x, tickY }), 1.5f * k);
+        }
+        g.setColour (Colours::caption);
+        const float by = row.getBottom() - lh * 1.3f;
+        g.drawText ("-9 dB", juce::Rectangle<float> (p.getX() - lh * 2.0f, by, lh * 4.0f, lh).toNearestInt(), juce::Justification::centred);
+        g.drawText ("0 dB", juce::Rectangle<float> (p.getCentreX() - lh * 2.0f, by, lh * 4.0f, lh).toNearestInt(), juce::Justification::centred);
+        g.drawText ("+9 dB", juce::Rectangle<float> (p.getRight() - lh * 2.0f, by, lh * 4.0f, lh).toNearestInt(), juce::Justification::centred);
+
+        // The blue balance line, the white trim line (grey past the field).
         const float x = p.getCentreX() + bal.load() / 9.0f * p.getWidth() * 0.5f;
         const float y = p.getCentreY() - trim.load() / 18.0f * p.getHeight() * 0.5f;
+        const float lw = juce::jmax (1.5f, 2.0f * k);
         g.setColour (colours::fader);
-        g.fillRect (x - 1.0f, p.getY(), 2.0f, p.getHeight());
-        g.setColour (juce::Colour (0xffbdbdbd));
-        g.fillRect (p.getX(), y - 1.0f, p.getWidth(), 2.0f);
-        // The crosshair handle and the balance handle on the bottom axis.
-        const float hw = juce::jlimit (14.0f, 24.0f, p.getWidth() * 0.08f);
+        g.fillRect (x - lw * 0.5f, p.getY() - 10.0f * k, lw, tickY - p.getY());
+        g.setColour (juce::Colour (0xff686868));
+        g.fillRect (p.getRight(), y - lw * 0.5f, r.getRight() - p.getRight(), lw);
         g.setColour (juce::Colours::white);
-        g.fillRoundedRectangle (juce::Rectangle<float> (hw, hw * 0.6f).withCentre ({ x, y }), 3.0f);
+        g.fillRect (p.getX() - 4.0f * k, y - lw * 0.5f, p.getWidth() + 4.0f * k, lw);
+
+        // The handles: a white disc with three lines, a blue one with three bars.
+        const float hd = 38.0f * k;
+        auto handle = juce::Rectangle<float> (hd, hd).withCentre ({ x, y });
+        g.setColour (juce::Colours::white);
+        g.fillEllipse (handle);
         g.setColour (juce::Colours::black);
-        g.fillRect (juce::Rectangle<float> (hw * 0.6f, 1.5f).withCentre ({ x, y }));
-        const float bh = hw * 0.7f;
+        for (int i = -1; i <= 1; ++i)
+            g.fillRect (juce::Rectangle<float> (hd * 0.5f, juce::jmax (1.0f, 2.0f * k)).withCentre ({ x, y + (float) i * hd * 0.16f }));
+        auto balHandle = juce::Rectangle<float> (hd, hd).withCentre ({ x, tickY });
         g.setColour (hasBalance ? colours::fader : juce::Colour (0xff3a4a5a));
-        g.fillEllipse (juce::Rectangle<float> (bh, bh).withCentre ({ x, p.getBottom() - bh * 0.6f }));
+        g.fillEllipse (balHandle);
         g.setColour (juce::Colours::white);
-        g.fillRect (juce::Rectangle<float> (1.5f, bh * 0.5f).withCentre ({ x - 2.0f, p.getBottom() - bh * 0.6f }));
-        g.fillRect (juce::Rectangle<float> (1.5f, bh * 0.5f).withCentre ({ x + 2.0f, p.getBottom() - bh * 0.6f }));
+        for (int i = -1; i <= 1; ++i)
+            g.fillRect (juce::Rectangle<float> (juce::jmax (1.0f, 2.0f * k), hd * 0.44f).withCentre ({ x + (float) i * hd * 0.16f, tickY }));
     }
 
     void mouseDown (const juce::MouseEvent& e) override
     {
-        const auto p = pad();
-        balanceOnly = hasBalance && e.position.y > p.getBottom() - 22.0f;
+        balanceOnly = hasBalance && e.position.y > balanceRow().getY();
         startTrim = trim.load();
         startBal = bal.load();
     }
@@ -579,6 +630,7 @@ ld::SourceParams* inputSourceParams (MixerEngine& engine, int port)
         return engine.getSource (index & ~1);
     return src;
 }
+} // namespace
 
 /** A routing-style source tile [3.1, D16]: the source's name strip in its
     colour over a #303030 body with the icon, the signal ring and the 48V /
@@ -642,6 +694,9 @@ void paintInputSourceTile (juce::Graphics& g, juce::Rectangle<float> r, MixerEng
     drawChip (g, chips.removeFromTop (chipH), "MUTE", mute ? colours::mute : colours::chipOff, mute ? colours::ink : juce::Colours::black);
 }
 
+namespace
+{
+
 /** One source column of CHANNEL INPUT [3.1, D16]: a #202020 panel with the
     source tile, framed in grey while the channel listens to it. The MAIN
     column adds the source's +48V key and its preamp GAIN slider (the WING
@@ -658,18 +713,24 @@ public:
 
     void resized() override
     {
-        auto r = getLocalBounds().reduced (juce::jlimit (3, 12, getWidth() / 12), juce::jlimit (3, 8, getHeight() / 30));
-        const int tileW = juce::jmin (r.getWidth(), juce::roundToInt ((float) r.getHeight() * (alt ? 1.5f : 0.6f)));
-        const int tileH = juce::jmin (alt ? r.getHeight() : r.getHeight() / 2, tileW * (tileW < 90 ? 8 : 7) / 10);
-        tile = r.removeFromTop (tileH).withSizeKeepingCentre (tileW, tileH);
+        // [I7, D16] WING pixels in a 192 px wide box (the MAIN column 512 tall,
+        // the ALT box 192): the 112 px tile 40 px in, the 48 px +48V key at
+        // y 192 with its caption under it, the 64 px GAIN slider from y 276.
+        const float kx = (float) getWidth() / 192.0f;
+        const float ky = (float) getHeight() / (alt ? 192.0f : 512.0f);
+        const float k = juce::jmin (kx, ky * (alt ? 1.0f : 1.6f));
+        auto px = [] (float v) { return juce::roundToInt (v); };
+        const int side = juce::jmin (px (112.0f * k), getHeight() - 8);
+        tile = juce::Rectangle<int> (side, side).withCentre ({ getWidth() / 2, alt ? getHeight() / 2 : px (40.0f * ky) + side / 2 });
         if (alt)
             return;
-        r.removeFromTop (juce::jmax (6, r.getHeight() / 14));
-        const int keySide = juce::jlimit (16, 40, juce::jmin (r.getWidth() / 3, r.getHeight() / 5));
+        auto r = getLocalBounds().withTop (tile.getBottom() + px (40.0f * ky));
+        const int keySide = juce::jmin (px (48.0f * k), r.getHeight() / 5);
         phantomKey = r.removeFromTop (keySide).withSizeKeepingCentre (keySide, keySide);
-        phantomCaption = r.removeFromTop (juce::jmax (12, keySide / 2));
-        r.removeFromTop (4);
-        gainSlider = r.withSizeKeepingCentre (juce::jlimit (24, 48, r.getWidth() / 3), r.getHeight());
+        phantomCaption = r.removeFromTop (juce::jmax (12, px (28.0f * ky)));
+        r.removeFromTop (px (8.0f * ky));
+        r.removeFromBottom (px (28.0f * ky));
+        gainSlider = r.withSizeKeepingCentre (juce::jmax (20, px (64.0f * kx)), r.getHeight());
     }
 
     void paint (juce::Graphics& g) override
@@ -765,7 +826,7 @@ public:
     }
 
 private:
-    static float tagHeight() { return juce::jlimit (12.0f, 20.0f, getWingScreenHeight() * 0.036f); }
+    static float tagHeight() { return juce::jlimit (12.0f, screenCap (20.0f), getWingScreenHeight() * 0.036f); }
 
     void setGainFromY (int y)
     {
@@ -872,6 +933,10 @@ public:
             altTile = &make<InputSourcePanel> (ctx, strip, true);
             inputSelectLabel = &key ("INPUT SELECT");
             inputSelectLabel->setTooltip ("The console's INPUT SELECT (SETUP > AUDIO)");
+            // A title bar, not a key [I7].
+            inputSelectLabel->offColour = colours::panel;
+            inputSelectLabel->offInk = colours::caption;
+            inputSelectLabel->frame = colours::panel;
             inputSelectLabel->onClick = [this] { if (ctx.showScreen) ctx.showScreen (Screen::Setup); };
             selectMode = &make<Segmented> (juce::StringArray { "INDIVIDUAL", "GLOBAL" }, [&engine] { return engine.isInputSelectGlobal() ? 1 : 0; },
                                            [&engine] (int i) { engine.setInputSelectGlobal (i == 1); });
@@ -951,33 +1016,45 @@ public:
             // [3.1, D16] the MAIN / ALT keys under a bracket, then two columns:
             // the framed MAIN column (source tile, +48V, GAIN) and, at the right,
             // the ALT tile's panel, INPUT SELECT and INDIVIDUAL over GLOBAL.
-            auto ci = box (left, "CHANNEL INPUT");
-            auto top = ci.removeFromTop (juce::jlimit (24, 40, ci.getHeight() / 8));
-            bracket->setBounds (top.reduced (0, 2).withTrimmedBottom (top.getHeight() / 2));
-            inputSel->setBounds (top.reduced (ci.getWidth() / 5, 0));
-            ci.removeFromTop (6);
-            auto mainCol = ci.removeFromLeft ((ci.getWidth() - 6) / 2);
-            ci.removeFromLeft (6);
+            // WING pixels [I7]: the key row's box 80 tall, then the 192 px
+            // columns with 8 px black gaps: the MAIN column; the ALT box (192),
+            // the INPUT SELECT bar (64) and the INDIVIDUAL / GLOBAL box.
+            box (left, "CHANNEL INPUT");
+            auto ci = sectionBody (left, true);
+            channelInputBody = ci;
+            const int gap = juce::roundToInt (juce::jmax (3.0f, wingPx (8.0f)));
+            const float v = (float) ci.getHeight() / 600.0f;
+            bracketBox = ci.removeFromTop (juce::roundToInt (80.0f * v));
+            ci.removeFromTop (gap);
+            auto keys = bracketBox.reduced (juce::roundToInt (bracketBox.getWidth() * 0.04f), juce::roundToInt (12.0f * v));
+            bracket->setBounds (keys.withTrimmedBottom (keys.getHeight() / 3));
+            inputSel->setBounds (keys.withSizeKeepingCentre (juce::roundToInt (bracketBox.getWidth() * 0.61f), keys.getHeight()));
+            auto mainCol = ci.removeFromLeft ((ci.getWidth() - gap) / 2);
+            ci.removeFromLeft (gap);
             mainTile->setBounds (mainCol);
-            altTile->setBounds (ci.removeFromTop (ci.getHeight() * 36 / 100));
-            const int kh = juce::jlimit (22, 36, ci.getHeight() / 5);
-            auto modes = ci.removeFromBottom (juce::jmin (ci.getHeight() / 2, kh * 2 + 2));
-            selectMode->setBounds (modes.reduced (juce::jmax (4, modes.getWidth() / 8), 0));
-            ci.removeFromBottom (6);
-            inputSelectLabel->setBounds (ci.removeFromBottom (kh));
-            stereo->setBounds (ci.withSizeKeepingCentre (juce::jmin (50, ci.getWidth() / 3), juce::jmax (0, juce::jmin (kh, ci.getHeight() - 8))));
+            altTile->setBounds (ci.removeFromTop (juce::roundToInt (192.0f * v)));
+            ci.removeFromTop (gap);
+            const int selTop = ci.getBottom() - juce::roundToInt (248.0f * v);
+            stereo->setBounds (juce::Rectangle<int> (ci.getX(), ci.getY(), ci.getWidth(), juce::jmax (0, selTop - ci.getY() - gap))
+                                   .withSizeKeepingCentre (juce::jmin (juce::roundToInt (wingPx (64.0f)), ci.getWidth() / 3), juce::roundToInt (wingPx (48.0f))));
+            ci.setTop (selTop);
+            inputSelectLabel->setBounds (ci.removeFromTop (juce::roundToInt (64.0f * v)));
+            ci.removeFromTop (gap);
+            modesBox = ci;
+            const int kh = juce::roundToInt (56.0f * v);
+            selectMode->setBounds (ci.withSizeKeepingCentre (juce::roundToInt (ci.getWidth() * 0.58f), kh * 2));
         }
         else
         {
             auto feedArea = directOn != nullptr ? left.removeFromTop (left.getHeight() * 55 / 100) : left;
             auto f = box (feedArea, strip.isBus() ? "BUS FEED" : "FEED"); // 3.0.5: opens the FEED CONFIGURATION
-            feed->setBounds (f.removeFromBottom (juce::jlimit (24, 36, f.getHeight() / 6)));
+            feed->setBounds (f.removeFromBottom (juce::jlimit (24, screenCap (36), f.getHeight() / 6)));
             f.removeFromBottom (6);
             feedGrid->setBounds (f);
             if (directOn != nullptr)
             {
                 auto d = box (left, "DIRECT INPUT");
-                const int kh = juce::jlimit (22, 32, d.getHeight() / 5);
+                const int kh = juce::jlimit (22, screenCap (32), d.getHeight() / 5);
                 auto row = d.removeFromTop (kh);
                 directOn->setBounds (row.removeFromLeft (row.getWidth() / 4));
                 row.removeFromLeft (6);
@@ -988,17 +1065,17 @@ public:
                 row.removeFromLeft (6);
                 directPre->setBounds (row);
                 d.removeFromTop (6);
-                directLevel->setBounds (d.removeFromTop (juce::jmin (48, d.getHeight())).withWidth (juce::jmin (d.getWidth(), 150)));
+                directLevel->setBounds (d.removeFromTop (juce::jmin (screenCap (48), d.getHeight())).withWidth (juce::jmin (d.getWidth(), screenCap (150))));
             }
         }
 
         auto tb = box (middle, "TRIM & BALANCE");
         auto meterCol = tb.removeFromRight (juce::jmax (54, tb.getWidth() * 24 / 100));
-        invert->setBounds (meterCol.removeFromBottom (juce::jlimit (30, 52, meterCol.getHeight() / 6)).reduced (2, 0));
+        invert->setBounds (meterCol.removeFromBottom (juce::jlimit (30, screenCap (52), meterCol.getHeight() / 6)).reduced (2, 0));
         if (mono != nullptr)
         {
             meterCol.removeFromBottom (4);
-            mono->setBounds (meterCol.removeFromBottom (juce::jlimit (22, 32, meterCol.getHeight() / 7)).reduced (2, 0));
+            mono->setBounds (meterCol.removeFromBottom (juce::jlimit (22, screenCap (32), meterCol.getHeight() / 7)).reduced (2, 0));
         }
         trimMeter.setBounds (meterCol.reduced (2, 4));
         tb.removeFromRight (4);
@@ -1016,6 +1093,19 @@ public:
         }
     }
 
+    void paint (juce::Graphics& g) override
+    {
+        HomeScreen::paint (g);
+        if (channelInputBody.isEmpty())
+            return;
+        // CHANNEL INPUT is several boxes on black [I7, D16].
+        g.setColour (Colours::screen);
+        g.fillRect (channelInputBody);
+        g.setColour (colours::panel);
+        g.fillRect (bracketBox);
+        g.fillRect (modesBox);
+    }
+
     void mouseUp (const juce::MouseEvent& e) override
     {
         if (filterHeader.contains (e.getPosition()) && ctx.showHomeTab)
@@ -1023,6 +1113,7 @@ public:
     }
 
 private:
+    juce::Rectangle<int> channelInputBody, bracketBox, modesBox;
     TrimBalancePad* pad = nullptr;
     LedMeter trimMeter;
     IconKey *invert = nullptr, *stereo = nullptr, *mono = nullptr, *inputSelectLabel = nullptr, *feed = nullptr;
@@ -1061,6 +1152,12 @@ public:
         toolKey = &key (toolFilterName (f.toolModel.load()), toolFilterIcon (f.toolModel.load()), toolFilterColour (f.toolModel.load()));
         toolKey->iconAbove = true;
         bindKey (*toolKey, f.tool);
+        // On the header bar without a key body [Fig. 63].
+        for (auto* k : { loCut, hiCut, toolKey })
+        {
+            k->offColour = colours::panel;
+            k->frame = colours::panel;
+        }
         close = &key ("CLOSE", Icon::Check);
         close->offInk = colours::caption;
         close->onClick = [this] { if (ctx.showHomeTab) ctx.showHomeTab (HomeTab::Home); };
@@ -1089,10 +1186,14 @@ public:
             };
             tools.push_back (&k);
         }
-        lcCaption = &label ("LC  dB/oct", 13.0f, colours::caption);
+        lcCaption = &label ("LC", 13.0f, colours::caption);
+        lcCaption->setJustificationType (juce::Justification::centred);
         lcSlopes = &make<Segmented> (models::list (models::LowCutSlopes), [&f] { return f.lowCutSlope.load(); }, [&f] (int i) { f.lowCutSlope = i; });
-        hcCaption = &label ("HC  dB/oct", 13.0f, colours::caption);
+        lcSlopes->vertical = true;
+        hcCaption = &label ("HC", 13.0f, colours::caption);
+        hcCaption->setJustificationType (juce::Justification::centred);
         hcSlopes = &make<Segmented> (models::list (models::HighCutSlopes), [&f] { return f.highCutSlope.load(); }, [&f] (int i) { f.highCutSlope = i; });
+        hcSlopes->vertical = true;
         shownTool = f.toolModel.load();
         startTimerHz (4);
     }
@@ -1120,7 +1221,7 @@ public:
         auto b = getLocalBounds();
         // Fig. 63: the title at the left, FREEZE, the LO CUT / HI CUT / tool
         // keys (icons over captions) and CLOSE at the right.
-        header = b.removeFromTop (juce::jlimit (32, 60, b.getHeight() / 9));
+        header = b.removeFromTop (juce::jlimit (32, screenCap (60), b.getHeight() / 9));
         const float u = (float) header.getWidth() / 1160.0f;
         auto h = header.reduced (0, juce::jmax (3, header.getHeight() / 9));
         auto span = [&h, u, this] (float x0, float x1)
@@ -1136,20 +1237,28 @@ public:
         b.removeFromRight (6);
         graph->setBounds (b);
 
+        // [Fig. 63] TOOL FILTER over the four tool keys, then LC and HC side
+        // by side, each a column of square slope keys.
         auto s = box (side, {});
-        toolCaption->setBounds (s.removeFromTop (18));
-        const int kh = juce::jlimit (22, 34, s.getHeight() / 9);
+        const int capH = juce::roundToInt (juce::jmax (14.0f, wingPx (26.0f)));
+        const int gap = juce::roundToInt (juce::jmax (2.0f, wingPx (6.0f)));
+        toolCaption->setBounds (s.removeFromTop (capH));
+        const int kh = juce::jlimit (18, juce::jmax (18, s.getHeight() / 9), juce::roundToInt (wingPx (52.0f)));
         for (auto* k : tools)
         {
             k->setBounds (s.removeFromTop (kh));
-            s.removeFromTop (3);
+            s.removeFromTop (gap);
         }
-        s.removeFromTop (8);
-        lcCaption->setBounds (s.removeFromTop (18));
-        lcSlopes->setBounds (s.removeFromTop (kh));
-        s.removeFromTop (8);
-        hcCaption->setBounds (s.removeFromTop (18));
-        hcSlopes->setBounds (s.removeFromTop (kh).withWidth (s.getWidth() / 2));
+        s.removeFromTop (gap * 2);
+        auto captions = s.removeFromTop (capH);
+        const int colW = juce::jmin ((s.getWidth() - gap) / 2, kh);
+        const int sq = juce::jmin (colW, (s.getHeight() - 3 * gap) / 4);
+        auto lcCol = juce::Rectangle<int> (s.getCentreX() - gap / 2 - colW, s.getY(), colW, s.getHeight());
+        auto hcCol = juce::Rectangle<int> (s.getCentreX() + gap / 2 + (gap % 2), s.getY(), colW, s.getHeight());
+        lcCaption->setBounds (lcCol.withY (captions.getY()).withHeight (capH));
+        hcCaption->setBounds (hcCol.withY (captions.getY()).withHeight (capH));
+        lcSlopes->setBounds (lcCol.withHeight (sq * 4 + gap * 3).withSizeKeepingCentre (sq, sq * 4 + gap * 3));
+        hcSlopes->setBounds (hcCol.withHeight (sq * 2 + gap).withSizeKeepingCentre (sq, sq * 2 + gap));
     }
 
     void paint (juce::Graphics& g) override
@@ -1312,7 +1421,7 @@ public:
         auto b = getLocalBounds();
         const float u = (float) b.getWidth() / 1160.0f;
         auto x = [u, &b] (float px) { return b.getX() + juce::roundToInt (px * u); };
-        const int rowH = juce::jlimit (28, 64, b.getHeight() * 9 / 100);
+        const int rowH = juce::jlimit (28, screenCap (64), b.getHeight() * 9 / 100);
         const int gap = juce::jmax (4, b.getHeight() / 90);
         auto span = [&x] (juce::Rectangle<int> row, float x0, float x1) { return juce::Rectangle<int> (x (x0), row.getY(), x (x1) - x (x0), row.getHeight()); };
 
@@ -1393,7 +1502,7 @@ public:
         if (present.empty())
             return;
         const int cellW = togglePanel.getWidth() / 3;
-        const int keyH = juce::jlimit (20, 52, togglePanel.getHeight() * 36 / 100);
+        const int keyH = juce::jlimit (20, screenCap (52), togglePanel.getHeight() * 36 / 100);
         const int keyW = juce::jmin (cellW * 3 / 4, keyH * 3);
         // DETECTOR left, AUTO ENV right, ENVELOPE in the middle [Fig. 92; 93 without ENVELOPE in the 3.x list].
         for (auto* t : present)
@@ -1635,7 +1744,7 @@ public:
         // The 3.1 header (WING pixels from the content's left edge, 1160 wide):
         // ON 16-112, EQ MODEL 128-432, MIX 448-612, FREEZE 628-736, the tool
         // filter's box 976-1152; LO CUT / HI CUT / FILTER fill the gap.
-        header = b.removeFromTop (juce::jlimit (32, 72, b.getHeight() * 12 / 100));
+        header = b.removeFromTop (juce::jlimit (32, screenCap (72), b.getHeight() * 12 / 100));
         auto h = header.withSizeKeepingCentre (header.getWidth(), header.getHeight() * 4 / 5);
         const float u = (float) header.getWidth() / 1160.0f;
         auto span = [&h, u, this] (float x0, float x1)
@@ -1664,11 +1773,14 @@ public:
         // The band list at the right (980-1152), BAND SOLO under it.
         auto side = b.removeFromRight (juce::roundToInt (172.0f * u));
         b.removeFromRight (juce::roundToInt (20.0f * u));
-        const int kh = juce::jlimit (22, 46, side.getHeight() / 9);
+        const int kh = juce::jlimit (22, screenCap (46), side.getHeight() / 9);
         bandSolo->setBounds (side.removeFromBottom (kh));
         side.removeFromBottom (juce::jmax (6, kh / 2));
         bandKeyArea = side;
-        bandKeyH = juce::jlimit (20, 48, bandKeyArea.getHeight() / juce::jmax (6, bands.size()));
+        // [D10] 52 px keys 60 px apart.
+        bandKeyGap = juce::roundToInt (juce::jmax (2.0f, wingPx (8.0f)));
+        bandKeyH = juce::jlimit (16, juce::roundToInt (juce::jmax (16.0f, wingPx (52.0f))),
+                                 bandKeyArea.getHeight() / juce::jmax (6, bands.size()) - bandKeyGap);
 
         if (! wingEq)
         {
@@ -1697,6 +1809,7 @@ public:
         for (int i = 0; i < bands.size(); ++i)
         {
             auto k = area.removeFromTop (bandKeyH).toFloat();
+            area.removeFromTop (bandKeyGap);
             bandKeys.push_back (k.toNearestInt());
             const bool sel = i == juce::jmax (0, graph->getSelectedBand());
             paintKeyBody (g, k, sel ? colours::choice : colours::keyOff);
@@ -1718,12 +1831,13 @@ public:
             }
             else
             {
+                // The band number large, the type smaller [D10].
                 g.setColour (ink);
-                g.setFont (homeFont (TypeScale::body, k.getHeight() * 0.6f));
+                g.setFont (homeFont (TypeScale::header, k.getHeight() * 0.6f, WingWeight::SemiBold));
                 g.drawText (id.toUpperCase(), lead.toNearestInt(), juce::Justification::centred);
             }
             g.setColour (ink);
-            g.setFont (homeFont (TypeScale::body, k.getHeight() * 0.46f));
+            g.setFont (homeFont (TypeScale::body * 1.1f, k.getHeight() * 0.46f));
             g.drawFittedText (type, k.toNearestInt().reduced (4, 0), juce::Justification::centred, 1, 0.7f);
         }
     }
@@ -1853,7 +1967,7 @@ private:
     juce::StringArray bands, allowed;
     std::vector<juce::Rectangle<int>> bandKeys;
     juce::Rectangle<int> header, bandKeyArea;
-    int bandKeyH = 30, shownModel = -1, shownTool = -1, knobPage = 0, pressCount = 0;
+    int bandKeyH = 30, bandKeyGap = 4, shownModel = -1, shownTool = -1, knobPage = 0, pressCount = 0;
     bool heldReset = false;
 };
 
@@ -1870,7 +1984,7 @@ public:
         auto r = getLocalBounds().toFloat().reduced (2.0f);
         g.setColour (colours::panel);
         g.fillRect (r);
-        auto top = r.removeFromTop (juce::jlimit (12.0f, 18.0f, r.getHeight() * 0.06f));
+        auto top = r.removeFromTop (juce::jlimit (12.0f, screenCap (18.0f), r.getHeight() * 0.06f));
         g.setColour (stripDisplayColour (strip));
         g.fillRect (top);
         g.setColour (juce::Colours::black);
@@ -1882,7 +1996,7 @@ public:
         g.setColour (Colours::text);
         g.setFont (wingFont (TypeScale::caption));
         g.drawFittedText (stripName (strip).toUpperCase(), name.toNearestInt(), juce::Justification::centred, 1, 0.6f);
-        groupKey = r.removeFromTop (juce::jlimit (16.0f, 24.0f, r.getHeight() * 0.1f)).reduced (r.getWidth() * 0.2f, 1.0f);
+        groupKey = r.removeFromTop (juce::jlimit (16.0f, screenCap (24.0f), r.getHeight() * 0.1f)).reduced (r.getWidth() * 0.2f, 1.0f);
         const int mode = strip.params.postInsert.mode.load();
         g.setColour (mode == 1 ? colours::fader : Colours::active);
         g.fillRect (groupKey);
@@ -1910,7 +2024,7 @@ public:
         g.fillRect (slider);
         const float pos = (strip.params.postInsert.weight.load() + 12.0f) / 24.0f;
         const float y = slider.getBottom() - slider.getHeight() * pos;
-        auto tag = juce::Rectangle<float> (juce::jmin (r.getWidth(), 40.0f), 18.0f).withCentre ({ slider.getCentreX(), y });
+        auto tag = juce::Rectangle<float> (juce::jmin (r.getWidth(), screenCap (40.0f)), 18.0f).withCentre ({ slider.getCentreX(), y });
         g.setColour (Colours::text);
         g.fillRect (tag);
         g.setColour (juce::Colours::black);
@@ -2158,7 +2272,7 @@ public:
         // 336-416, FX TYPE 840-1144; row 2 FX MIX 16-172, RESET 904-968,
         // FX SPILL 988-1144.
         // [D8] row 1 is 80 of the 670 px page: 64 px fields, the 48 px ON key.
-        header = b.removeFromTop (juce::jlimit (32, 72, b.getHeight() * 12 / 100));
+        header = b.removeFromTop (juce::jlimit (32, screenCap (72), b.getHeight() * 12 / 100));
         const float u = (float) header.getWidth() / 1160.0f;
         auto span = [u, this] (juce::Rectangle<int> row, float x0, float x1)
         { return juce::Rectangle<int> (header.getX() + juce::roundToInt (x0 * u), row.getY(), juce::roundToInt ((x1 - x0) * u), row.getHeight()); };
@@ -2166,7 +2280,7 @@ public:
         on->setBounds (span (h, 16.0f, 112.0f).withSizeKeepingCentre (juce::roundToInt (96.0f * u), header.getHeight() * 3 / 5));
         const bool am = automix();
         b.removeFromTop (juce::jmax (4, getHeight() / 100));
-        row2 = b.removeFromTop (juce::jlimit (36, 76, b.getHeight() / 6));
+        row2 = b.removeFromTop (juce::jlimit (36, screenCap (76), b.getHeight() / 6));
         auto r2 = row2.reduced (0, juce::jmax (4, row2.getHeight() / 8));
         b.removeFromTop (juce::jmax (4, getHeight() / 100));
 
@@ -2209,7 +2323,7 @@ public:
 
         openEditor->setVisible (shownPlugin);
         if (shownPlugin)
-            openEditor->setBounds (b.withSizeKeepingCentre (juce::jmin (200, b.getWidth()), 40));
+            openEditor->setBounds (b.withSizeKeepingCentre (juce::jmin (screenCap (200), b.getWidth()), 40));
         hint->setBounds (b.withTrimmedTop (b.getHeight() / 2 + 24).withHeight (24));
         face->setBounds (b);
     }
@@ -2280,15 +2394,15 @@ public:
 
     void resized() override
     {
-        stripH = (float) juce::jlimit (11, 18, getHeight() / 33);
-        nameH = (float) juce::jlimit (12, 22, getHeight() / 26);
+        stripH = (float) juce::jlimit (11, screenCap (18), getHeight() / 33);
+        nameH = (float) juce::jlimit (12, screenCap (22), getHeight() / 26);
         auto r = getLocalBounds().reduced (juce::jmax (2, getWidth() * 6 / 100), 0);
         r.removeFromTop ((int) (stripH + nameH) + 2);
-        boxArea = r.removeFromTop (juce::jlimit (40, 96, getHeight() * 17 / 100)).toFloat();
-        pre.setBounds (boxArea.toNearestInt().withTrimmedTop ((int) (boxArea.getHeight() * 0.3f)).reduced (juce::jlimit (1, 4, getWidth() / 10), 4));
+        boxArea = r.removeFromTop (juce::jlimit (40, screenCap (96), getHeight() * 17 / 100)).toFloat();
+        pre.setBounds (boxArea.toNearestInt().withTrimmedTop ((int) (boxArea.getHeight() * 0.3f)).reduced (juce::jlimit (1, screenCap (4), getWidth() / 10), 4));
         r.removeFromTop (6);
         r.removeFromBottom (6);
-        on.setBounds (r.removeFromBottom (juce::jlimit (18, 34, getHeight() / 11)));
+        on.setBounds (r.removeFromBottom (juce::jlimit (18, screenCap (34), getHeight() / 11)));
         r.removeFromBottom (6);
         fader.setBounds (r);
     }
@@ -2317,7 +2431,7 @@ public:
     juce::Rectangle<float> scopeArea() const
     {
         auto r = getLocalBounds().toFloat().reduced (1.5f);
-        r.removeFromBottom (juce::jlimit (11.0f, 18.0f, r.getHeight() * 0.12f));
+        r.removeFromBottom (juce::jlimit (11.0f, screenCap (18.0f), r.getHeight() * 0.12f));
         return r;
     }
 
@@ -2448,7 +2562,7 @@ public:
         auto right = b.removeFromRight (juce::roundToInt (216.0f * u));
         auto left = b.removeFromLeft (juce::roundToInt (296.0f * u));
         b.removeFromRight (juce::roundToInt (8.0f * u));
-        const int headerH = juce::jlimit (32, 60, getHeight() / 9);
+        const int headerH = juce::jlimit (32, screenCap (60), getHeight() / 9);
         channelHeader = right.removeFromTop (headerH);
         right.removeFromTop (juce::jmax (4, getHeight() / 100));
         level->setBounds (box (right, "LEVEL"));
@@ -2479,11 +2593,12 @@ public:
     {
         HomeScreen::paint (g);
         // A grid of small grey dots behind the pan graphic.
-        g.setColour (juce::Colour (0xff303030));
+        g.setColour (juce::Colour (0xff383838));
+        const float dot = juce::jmax (1.0f, wingPx (2.0f));
         const float step = juce::jmax (6.0f, (float) getHeight() / 48.0f);
         for (float y = (float) field.getY() + step * 0.5f; y < (float) field.getBottom(); y += step)
             for (float x = (float) field.getX() + step * 0.5f; x < (float) field.getRight(); x += step)
-                g.fillRect (x, y, 1.0f, 1.0f);
+                g.fillRect (x, y, dot, dot);
 
         for (auto [area, text] : { std::make_pair (channelHeader, strip.getLabel().replace ("CH ", "CHANNEL ").replace ("MTX ", "MATRIX ")),
                                    std::make_pair (sendsHeader, juce::String ("MAIN SENDS")) })
@@ -2684,7 +2799,7 @@ public:
         g.setColour (colours::panel);
         g.fillRect (boxArea);
         auto box = boxArea;
-        auto modeRow = box.removeFromTop (juce::jlimit (12.0f, 20.0f, boxArea.getHeight() * 0.24f));
+        auto modeRow = box.removeFromTop (juce::jlimit (12.0f, screenCap (20.0f), boxArea.getHeight() * 0.24f));
         modeArea = modeRow;
         // TAP | POST side by side: small enough for both words in the column.
         g.setFont (homeFont (TypeScale::body, juce::jmin (modeRow.getHeight() * 0.85f, modeRow.getWidth() * 0.3f)));
@@ -2713,7 +2828,7 @@ public:
         }
 
         // The pan ring, PAN LINK under it.
-        auto linkArea = box.removeFromBottom (juce::jlimit (10.0f, 18.0f, boxArea.getHeight() * 0.22f));
+        auto linkArea = box.removeFromBottom (juce::jlimit (10.0f, screenCap (18.0f), boxArea.getHeight() * 0.22f));
         panArea = box.reduced (2.0f);
         const bool linked = send != nullptr && send->panLink.load();
         const float chPan = send != nullptr && send->panReversed.load() ? -src.params.pan.load() : src.params.pan.load();
@@ -2738,16 +2853,16 @@ public:
 
     void resized() override
     {
-        stripH = (float) juce::jlimit (11, 18, getHeight() / 33);
-        nameH = (float) juce::jlimit (12, 22, getHeight() / 26);
+        stripH = (float) juce::jlimit (11, screenCap (18), getHeight() / 33);
+        nameH = (float) juce::jlimit (12, screenCap (22), getHeight() / 26);
         auto r = getLocalBounds().reduced (juce::jmax (2, getWidth() * 6 / 100), 0);
         r.removeFromTop ((int) (stripH + nameH) + 2);
-        boxArea = r.removeFromTop (juce::jlimit (40, 96, getHeight() * 17 / 100)).toFloat();
+        boxArea = r.removeFromTop (juce::jlimit (40, screenCap (96), getHeight() * 17 / 100)).toFloat();
         r.removeFromTop (6);
         if (busSource())
-            pre.setBounds (boxArea.toNearestInt().withTrimmedTop (juce::jlimit (12, 20, (int) (boxArea.getHeight() * 0.24f))).reduced (3, 4));
+            pre.setBounds (boxArea.toNearestInt().withTrimmedTop (juce::jlimit (12, screenCap (20), (int) (boxArea.getHeight() * 0.24f))).reduced (3, 4));
         r.removeFromBottom (6);
-        on.setBounds (r.removeFromBottom (juce::jlimit (18, 34, getHeight() / 11)));
+        on.setBounds (r.removeFromBottom (juce::jlimit (18, screenCap (34), getHeight() / 11)));
         r.removeFromBottom (6);
         fader.setBounds (r);
         fader.setVisible (enabled && modeOf() != 2); // GROUP sends have no level
@@ -2886,7 +3001,7 @@ public:
         const auto list = items();
         auto chain = r.reduced (r.getWidth() * 0.02f, 0.0f);
         const float lineY = chain.getY() + chain.getHeight() * 0.36f;
-        const float nodeD = juce::jlimit (12.0f, 26.0f, chain.getHeight() * 0.22f);
+        const float nodeD = juce::jlimit (12.0f, screenCap (26.0f), chain.getHeight() * 0.22f);
         const float blockH = nodeD * 1.25f;
         int nodes = 0, blocks = 0;
         for (auto& it : list)
@@ -3104,7 +3219,7 @@ public:
     void resized() override
     {
         auto r = getLocalBounds().reduced (4);
-        bar = r.removeFromTop (juce::jlimit (26, 44, getHeight() / 9));
+        bar = r.removeFromTop (juce::jlimit (26, screenCap (44), getHeight() / 9));
         auto b = bar;
         close.setBounds (b.removeFromRight (b.getHeight() * 3).reduced (0, b.getHeight() / 10));
         b.removeFromRight (8);
@@ -3117,12 +3232,12 @@ public:
         for (int i = 0; i < ld::kTapEqBands; ++i)
         {
             auto row = side.removeFromTop (rowH).reduced (0, 3);
-            bandKeys[i]->setBounds (row.removeFromTop (juce::jmin (32, row.getHeight() / 3)));
+            bandKeys[i]->setBounds (row.removeFromTop (juce::jmin (screenCap (32), row.getHeight() / 3)));
             row.removeFromTop (4);
             const int w = (row.getWidth() - 8) / 3;
             for (int j = 0; j < 3; ++j)
             {
-                boxes[i * 3 + j]->setBounds (row.removeFromLeft (w).withHeight (juce::jmin (row.getHeight(), 38)));
+                boxes[i * 3 + j]->setBounds (row.removeFromLeft (w).withHeight (juce::jmin (row.getHeight(), screenCap (38))));
                 row.removeFromLeft (4);
             }
         }
@@ -3140,7 +3255,7 @@ public:
         // The graph as on the EQ screen: the piano ruler, a log grid, the
         // curve over its dark amber fill, a ring per band.
         auto area = graph;
-        const float rulerH = juce::jlimit (5.0f, 12.0f, area.getHeight() * 0.04f);
+        const float rulerH = juce::jlimit (5.0f, screenCap (12.0f), area.getHeight() * 0.04f);
         auto ruler = area.removeFromTop (rulerH);
         area.removeFromTop (16.0f);
         auto labels = area.removeFromBottom (14.0f);
@@ -3499,7 +3614,7 @@ public:
         // The 3.1 header (WING pixels from the content's left edge, 1160
         // wide): TAP POINT 8-376, the title to 592, TAP WIDTH 592-764, TAP EQ
         // 780-1008, SPILL 1024-1156.
-        header = b.removeFromTop (juce::jlimit (32, 60, b.getHeight() / 9));
+        header = b.removeFromTop (juce::jlimit (32, screenCap (60), b.getHeight() / 9));
         auto h = header.reduced (0, juce::jmax (3, header.getHeight() / 9));
         const float u = (float) header.getWidth() / 1160.0f;
         auto span = [&h, u, this] (float x0, float x1)
@@ -3523,7 +3638,7 @@ public:
         b.removeFromTop (juce::jmax (4, getHeight() / 100));
 
         if (chain != nullptr)
-            chain->setBounds (b.removeFromTop (0).withHeight (juce::jlimit (70, 150, getHeight() / 5)));
+            chain->setBounds (b.removeFromTop (0).withHeight (juce::jlimit (70, screenCap (150), getHeight() / 5)));
 
         if (tapEqPanel != nullptr)
             tapEqPanel->setBounds (b);
@@ -3932,7 +4047,7 @@ public:
         // SCOPE: the title at the left, NONE and ALL in the header.
         drawSectionBox (g, scopePanel, " ");
         {
-            auto header = scopePanel.reduced (3).removeFromTop (panelHeaderHeight()).withTrimmedLeft (12);
+            auto header = sectionHeader (scopePanel).withTrimmedLeft (12);
             g.setColour (colours::caption);
             g.setFont (wingFontPx (juce::jmin (TypeScale::header * getWingScreenHeight(), (float) header.getHeight() * 0.42f)));
             g.drawText ("SCOPE", header, juce::Justification::centredLeft, false);
@@ -3973,18 +4088,18 @@ public:
         b.removeFromLeft (6);
         destPanel = b;
 
-        auto header = scopePanel.reduced (3).removeFromTop (panelHeaderHeight());
+        auto header = sectionHeader (scopePanel);
         const int iconKeyW = juce::jmin (header.getHeight() + 8, header.getWidth() / 5);
         all.setBounds (header.removeFromRight (iconKeyW).reduced (2));
         none.setBounds (header.removeFromRight (iconKeyW).reduced (2));
         auto s = sectionContent (scopePanel, true);
         if (copy)
         {
-            auto top = s.removeFromTop (juce::jlimit (30, 52, s.getHeight() / 7));
+            auto top = s.removeFromTop (juce::jlimit (30, screenCap (52), s.getHeight() / 7));
             sourceTile = top.removeFromLeft (juce::jmin (top.getWidth() / 3, top.getHeight() * 3 / 2));
             s.removeFromTop (8);
         }
-        action.setBounds (s.removeFromBottom (juce::jlimit (28, 44, s.getHeight() / 7)).withSizeKeepingCentre (juce::jmin (160, s.getWidth()), juce::jlimit (28, 44, s.getHeight() / 7)));
+        action.setBounds (s.removeFromBottom (juce::jlimit (28, screenCap (44), s.getHeight() / 7)).withSizeKeepingCentre (juce::jmin (screenCap (160), s.getWidth()), juce::jlimit (28, screenCap (44), s.getHeight() / 7)));
         s.removeFromBottom (8);
         // CONN CONFIG CUST TAGS / IN FILTER GATE DYN / EQ DELAY PRE POST / SEND MAIN / FDR MUTE PAN
         const int layout[5][4] = { { Conn, Config, Cust, Tags }, { In, FilterBit, GateBit, DynBit }, { EqBit, DelayBit, Pre, Post },
@@ -3996,7 +4111,7 @@ public:
                     scopeKeys[layout[r][col]]->setBounds (juce::Rectangle<int> (s.getX() + col * kw, s.getY() + r * kh, kw, kh).reduced (1));
 
         auto d = sectionContent (destPanel, true);
-        auto tabRow = d.removeFromTop (juce::jlimit (24, 36, d.getHeight() / 9));
+        auto tabRow = d.removeFromTop (juce::jlimit (24, screenCap (36), d.getHeight() / 9));
         const int tw = tabRow.getWidth() / kNumStripKinds;
         for (auto* t : tabs)
             t->setBounds (tabRow.removeFromLeft (tw).reduced (3, 0));
@@ -4216,7 +4331,7 @@ public:
         int totalRows = 0;
         for (auto& grp : groups)
             totalRows += ((int) grp.second.size() + columns - 1) / columns;
-        const float captionH = juce::jlimit (12.0f, 16.0f, (float) gridArea.getHeight() * 0.035f);
+        const float captionH = juce::jlimit (12.0f, screenCap (16.0f), (float) gridArea.getHeight() * 0.035f);
         const float w = (float) gridArea.getWidth() / (float) columns;
         const float h = juce::jmin (((float) gridArea.getHeight() - captionH * (float) groups.size() - 4.0f * (float) groups.size()) / (float) juce::jmax (1, totalRows),
                                     w * 0.62f);
@@ -4301,16 +4416,16 @@ public:
     void layoutContent (juce::Rectangle<int> b) override
     {
         auto left = b.removeFromLeft (b.getWidth() * 58 / 100);
-        auto top = left.removeFromTop (juce::jlimit (26, 40, left.getHeight() / 10));
-        const int keyW = juce::jmin (100, top.getWidth() / 5);
+        auto top = left.removeFromTop (juce::jlimit (26, screenCap (40), left.getHeight() / 10));
+        const int keyW = juce::jmin (screenCap (100), top.getWidth() / 5);
         for (auto* k : { &noneKey, &allKey, &chKey, &auxKey, &busKey })
             k->setBounds (top.removeFromLeft (keyW).reduced (2));
         left.removeFromTop (4);
         gridArea = left;
         b.removeFromLeft (10);
 
-        auto applyRow = b.removeFromBottom (juce::jlimit (28, 40, b.getHeight() / 9));
-        applyKey.setBounds (applyRow.removeFromRight (juce::jmin (120, applyRow.getWidth() / 3)));
+        auto applyRow = b.removeFromBottom (juce::jlimit (28, screenCap (40), b.getHeight() / 9));
+        applyKey.setBounds (applyRow.removeFromRight (juce::jmin (screenCap (120), applyRow.getWidth() / 3)));
         b.removeFromBottom (4);
         const int sectionH = b.getHeight() / 5;
         juce::Component* rows[] = { modeKeys.get(), ignoreKeys.get(), panKeys.get(), levelKeys.get(), enableKeys.get() };
@@ -4318,7 +4433,7 @@ public:
         {
             auto sec = b.removeFromTop (sectionH);
             captions[i] = sec.removeFromTop (16);
-            rows[i]->setBounds (sec.removeFromTop (juce::jmin (sec.getHeight() - 4, 40)));
+            rows[i]->setBounds (sec.removeFromTop (juce::jmin (sec.getHeight() - 4, screenCap (40))));
         }
     }
 
@@ -4626,7 +4741,7 @@ public:
         body = b;
         b = b.reduced (juce::jmax (8, b.getWidth() / 40), 6);
         labelX = b.getX();
-        rowH = juce::jlimit (26, 52, b.getHeight() / 9);
+        rowH = juce::jlimit (26, screenCap (52), b.getHeight() / 9);
         if (! bands.isEmpty())
         {
             auto row = b.removeFromTop (rowH);

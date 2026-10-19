@@ -22,7 +22,7 @@ namespace
             row.band = area.removeFromTop (rowH);
             area.removeFromTop (gap);
             auto r = row.band.reduced (4, 4);
-            const int w = juce::jmin (150, r.getWidth() * 30 / 100);
+            const int w = juce::jmin (screenCap (150), r.getWidth() * 30 / 100);
             for (auto* c : row.left)
             {
                 c->setBounds (r.removeFromLeft (w));
@@ -157,7 +157,7 @@ public:
     void resized() override
     {
         auto b = getLocalBounds();
-        const int rowH = juce::jlimit (36, 56, getHeight() / 5);
+        const int rowH = juce::jlimit (36, screenCap (56), getHeight() / 5);
         layoutKeyRows (b, rows, rowH, 4);
         info = b.withTop (rows.back().band.getBottom() + 8).reduced (8, 4);
     }
@@ -385,12 +385,12 @@ public:
     void resized() override
     {
         auto b = getLocalBounds();
-        const int rowH = juce::jlimit (36, 56, getHeight() / 6);
+        const int rowH = juce::jlimit (36, screenCap (56), getHeight() / 6);
         layoutKeyRows (b, rows, rowH, 4);
         extras = b.withTop (rows.back().band.getBottom() + 8);
         auto e = darkPanelBody (extras, true).reduced (8, 4);
         auto f = e.removeFromTop (28);
-        fadeLabel = f.removeFromLeft (juce::jmin (190, f.getWidth() / 2));
+        fadeLabel = f.removeFromLeft (juce::jmin (screenCap (190), f.getWidth() / 2));
         fade.setBounds (f);
         notesLabel = e.removeFromTop (18);
         notes.setBounds (e.withTrimmedTop (2));
@@ -582,7 +582,7 @@ public:
     void resized() override
     {
         auto b = getLocalBounds();
-        const int rowH = juce::jlimit (32, 52, getHeight() / 6);
+        const int rowH = juce::jlimit (32, screenCap (52), getHeight() / 6);
         layoutKeyRows (b, rows, rowH, 4);
         // REC and STOP are narrower, to make room for the parameter counter.
         auto band = rows[3].band.reduced (4, 4);
@@ -592,7 +592,7 @@ public:
         // Narrow keys: the icon over the caption.
         for (auto* k : { rec, stop })
             k->iconAbove = w < 96;
-        counter = juce::Rectangle<int> (stop->getRight() + 8, band.getY(), juce::jmin (100, recFocus->getX() - stop->getRight() - 16), band.getHeight());
+        counter = juce::Rectangle<int> (stop->getRight() + 8, band.getY(), juce::jmin (screenCap (100), recFocus->getX() - stop->getRight() - 16), band.getHeight());
     }
 
 private:
@@ -765,10 +765,10 @@ public:
     void resized() override
     {
         auto b = getLocalBounds();
-        const int rowH = juce::jlimit (36, 56, getHeight() / 6);
+        const int rowH = juce::jlimit (36, screenCap (56), getHeight() / 6);
         layoutKeyRows (b, rows, rowH, 4);
-        auto g = b.withTop (rows.back().band.getBottom() + 12).withHeight (juce::jmin (140, b.getHeight() / 3)).reduced (4, 0);
-        slotKey.setBounds (g.removeFromRight (juce::jmin (44, g.getWidth() / 10)).withSizeKeepingCentre (juce::jmin (44, g.getWidth() / 10), 40));
+        auto g = b.withTop (rows.back().band.getBottom() + 12).withHeight (juce::jmin (screenCap (140), b.getHeight() / 3)).reduced (4, 0);
+        slotKey.setBounds (g.removeFromRight (juce::jmin (screenCap (44), g.getWidth() / 10)).withSizeKeepingCentre (juce::jmin (screenCap (44), g.getWidth() / 10), 40));
         presetBox = g.removeFromLeft (g.getWidth() * 44 / 100);
         arrow = g.removeFromLeft (36);
         slotBox = g;
@@ -929,12 +929,12 @@ public:
     void resized() override
     {
         auto b = getLocalBounds();
-        const int rowH = juce::jlimit (36, 56, getHeight() / 6);
+        const int rowH = juce::jlimit (36, screenCap (56), getHeight() / 6);
         layoutKeyRows (b, rows, rowH, 4);
         // The strip box at the top right of the first row, with its chooser.
         const auto band = rows.front().band.reduced (4);
         stripKey.setBounds (band.withLeft (band.getRight() - 36));
-        stripBox = band.withRight (band.getRight() - 40).withLeft (band.getRight() - 40 - juce::jmin (110, band.getWidth() / 4));
+        stripBox = band.withRight (band.getRight() - 40).withLeft (band.getRight() - 40 - juce::jmin (screenCap (110), band.getWidth() / 4));
         // In a narrow window it starts after SAVE / UPDATE SCOPE rather than over them.
         if (! rows.front().left.empty())
             stripBox.setLeft (juce::jmin (stripBox.getRight(), juce::jmax (stripBox.getX(), rows.front().left.back()->getRight() + 4)));
@@ -942,7 +942,7 @@ public:
         cells.clear();
         auto grid = b.withTop (rows.back().band.getBottom() + 10).reduced (4, 0);
         const float w = (float) grid.getWidth() / 10.0f;
-        const int h = juce::jmin (40, grid.getHeight() / 4);
+        const int h = juce::jmin (screenCap (40), grid.getHeight() / 4);
         auto cell = [&] (int col, int row, const char* name, juce::uint32 bits)
         {
             cells.push_back ({ juce::Rectangle<int> (grid.getX() + juce::roundToInt (w * (float) col), grid.getY() + row * h, juce::roundToInt (w), h), name, bits });
@@ -1059,7 +1059,7 @@ public:
         g.drawText ("0:00:00", body.removeFromTop (body.getHeight() * 45 / 100), juce::Justification::centredLeft);
         for (int i = 0; i < 2; ++i)
         {
-            const float d = (float) juce::jmin (body.getHeight() - 16, 44);
+            const float d = (float) juce::jmin (body.getHeight() - 16, screenCap (44));
             auto reel = juce::Rectangle<float> ((float) body.getX() + (float) i * (d + 8.0f), (float) body.getY() + 4.0f, d, d);
             g.setColour (Dark::text.withAlpha (dim));
             g.drawEllipse (reel, 2.0f);
@@ -1085,8 +1085,8 @@ public:
     void resized() override
     {
         auto b = getLocalBounds();
-        const int rowH = juce::jlimit (36, 56, getHeight() / 6);
-        graphic = b.removeFromTop (juce::jmin (120, b.getHeight() / 3));
+        const int rowH = juce::jlimit (36, screenCap (56), getHeight() / 6);
+        graphic = b.removeFromTop (juce::jmin (screenCap (120), b.getHeight() / 3));
         b.removeFromTop (4);
         layoutKeyRows (b, rows, rowH, 4);
         note = b.withTop (rows.back().band.getBottom() + 8).reduced (8, 6);
@@ -1385,9 +1385,9 @@ void LibraryPage::resized()
     list->setBounds (b.removeFromLeft (b.getWidth() * 51 / 100));
     b.removeFromLeft (6);
     rightPanel = b;
-    tabs.setBounds (b.removeFromTop (juce::jlimit (36, 52, getHeight() * 11 / 100)));
+    tabs.setBounds (b.removeFromTop (juce::jlimit (36, screenCap (52), getHeight() * 11 / 100)));
     b.removeFromTop (4);
-    transportArea = b.removeFromBottom (juce::jlimit (52, 96, getHeight() * 16 / 100));
+    transportArea = b.removeFromBottom (juce::jlimit (52, screenCap (96), getHeight() * 16 / 100));
     b.removeFromBottom (4);
     for (auto* p : tabPages)
         p->setBounds (b);

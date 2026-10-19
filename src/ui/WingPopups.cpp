@@ -1337,7 +1337,7 @@ namespace
             const auto b = getLocalBounds();
             // The type follows the layer: capitals 1.8 % of its height, readable on
             // a small main display and not huge over a 4K window.
-            cap = juce::jlimit (9.0f, 30.0f, juce::jmin ((float) b.getHeight() * 0.018f, (float) b.getWidth() * 0.013f));
+            cap = juce::jlimit (9.0f, screenCap (30.0f), juce::jmin ((float) b.getHeight() * 0.018f, (float) b.getWidth() * 0.013f));
             window = b.withSizeKeepingCentre (juce::jmin (b.getWidth() - 16, juce::roundToInt (cap * 62.0f)),
                                               juce::roundToInt ((float) b.getHeight() * 0.9f));
             auto r = window;

@@ -114,6 +114,22 @@ namespace TypeScale
 void setWingScreenHeight (float px) noexcept;
 float getWingScreenHeight() noexcept;
 
+/** A size cap in px tuned for the screen of a 1920 x 1080 window (500 px
+    tall), grown in proportion on larger screens (screen only mode), so the
+    layouts keep the WING's proportions instead of stopping at the cap. */
+inline int screenCap (int px) noexcept
+{
+    return juce::roundToInt ((float) px * juce::jmax (1.0f, getWingScreenHeight() / 500.0f));
+}
+
+inline float screenCap (float px) noexcept
+{
+    return px * juce::jmax (1.0f, getWingScreenHeight() / 500.0f);
+}
+
+/** `wingPixels` of the WING's 1280 x 800 screen, in px of the screen shown. */
+inline float wingPx (float wingPixels) noexcept { return wingPixels * getWingScreenHeight() / 800.0f; }
+
 /** A screen font whose capital letters are `capFraction` of the screen height
     (see TypeScale), with the console's slight letter spacing. */
 juce::Font wingFont (float capFraction, WingWeight = WingWeight::Medium);
@@ -195,9 +211,9 @@ private:
     juce::Typeface::Ptr screenMedium, screenSemiBold, silkMedium, silkSemiBold;
 };
 
-/** Height of a HOME panel's header bar: about 58 of the WING's 800 px
-    screen [D16], so it follows the screen size. */
-inline int panelHeaderHeight() { return juce::jlimit (20, 40, juce::roundToInt (getWingScreenHeight() * 0.072f)); }
+/** Height of a HOME panel's header bar: 64 of the WING's 800 px screen
+    [I1, D5, D9], so it follows the screen size. */
+inline int panelHeaderHeight() { return juce::jmax (20, juce::roundToInt (wingPx (64.0f))); }
 
 /** Draws a WING panel: a grey header bar with the title (and a chevron when the
     panel opens a screen) above the panel body. */
@@ -205,6 +221,13 @@ void drawSectionBox (juce::Graphics&, juce::Rectangle<int> area, const juce::Str
 
 /** The content area inside a panel drawn by drawSectionBox. */
 juce::Rectangle<int> sectionContent (juce::Rectangle<int> area, bool hasTitle);
+
+/** The whole body of a panel drawn by drawSectionBox (no inset), for content
+    that fills it edge to edge (the overview's EQ graph). */
+juce::Rectangle<int> sectionBody (juce::Rectangle<int> area, bool hasTitle);
+
+/** The header bar of a panel drawn by drawSectionBox. */
+juce::Rectangle<int> sectionHeader (juce::Rectangle<int> area);
 
 /** A small rounded label chip ("48K", "PRE", "SNAP"). */
 void drawChip (juce::Graphics&, juce::Rectangle<float> r, const juce::String& text, juce::Colour fill, juce::Colour textColour);

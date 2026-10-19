@@ -69,7 +69,7 @@ public:
             g.drawFittedText (getButtonText(), label.toNearestInt().reduced (2, 0), juce::Justification::centredTop, 1, 0.75f);
             return;
         }
-        auto content = r.reduced (juce::jmin (10.0f, r.getHeight() * 0.18f), 0.0f);
+        auto content = r.reduced (juce::jmin (screenCap (10.0f), r.getHeight() * 0.18f), 0.0f);
         if (icon.has_value())
         {
             const float s = juce::jmin (r.getHeight() * 0.62f, content.getWidth() * 0.4f);

@@ -98,7 +98,7 @@ namespace prefs
 /** Height of a dark panel's header bar (SETUP, LIBRARY, MONITORS, the recorder):
     48 of the WING's 800 px screen, so it follows the screen size like the HOME
     panel headers (30 px at 1920x1080, 20 px at 1280x800). */
-inline int darkHeaderHeight() { return juce::jlimit (20, 36, juce::roundToInt (getWingScreenHeight() * 0.06f)); }
+inline int darkHeaderHeight() { return juce::jlimit (20, screenCap (36), juce::roundToInt (getWingScreenHeight() * 0.06f)); }
 /** The black gap between a panel's header and its body. */
 constexpr int kDarkHeaderGap = 4;
 
@@ -492,7 +492,7 @@ public:
         const auto kc = key.getCentre().toFloat();
         if (chevronKey && ! keyHidden)
         {
-            const float s = juce::jlimit (4.0f, 9.0f, (float) key.getHeight() * 0.16f);
+            const float s = juce::jlimit (4.0f, screenCap (9.0f), (float) key.getHeight() * 0.16f);
             juce::Path chevron;
             chevron.startNewSubPath (kc.x - s * 0.5f, kc.y - s);
             chevron.lineTo (kc.x + s * 0.5f, kc.y);
@@ -507,7 +507,7 @@ public:
         }
         else if (! keyHidden)
         {
-            const float d = juce::jlimit (3.0f, 5.0f, (float) key.getHeight() * 0.1f);
+            const float d = juce::jlimit (3.0f, screenCap (5.0f), (float) key.getHeight() * 0.1f);
             for (int i = -1; i <= 1; ++i)
                 g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (kc.translated (0.0f, (float) i * d * 2.2f)));
         }
@@ -630,7 +630,7 @@ public:
             g.setColour (r.enabled ? Dark::caption : Dark::textDim.darker (0.2f));
             const bool caption = r.control == nullptr;
             g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), (float) rowHeight * (caption ? 0.26f : 0.34f))));
-            const float d = (float) juce::jmin (l.getHeight() - 6, 16);
+            const float d = (float) juce::jmin (l.getHeight() - 6, screenCap (16));
             // The info icon keeps its own room, so a long label in a narrow
             // panel (SETUP > REMOTE at 1280x800) is squashed rather than covered.
             const auto textArea = r.info ? l.withTrimmedRight ((int) d + 8) : l;
@@ -892,7 +892,7 @@ public:
         auto r = getLocalBounds().reduced (24, 16);
         g.setColour (Dark::text);
         g.setFont (wingFontPx (juce::jmin (TypeScale::value * getWingScreenHeight() * 1.2f, (float) getHeight() * 0.06f)));
-        g.drawFittedText (head, r.removeFromTop (juce::jmin (48, r.getHeight() / 3)), juce::Justification::centredLeft, 2);
+        g.drawFittedText (head, r.removeFromTop (juce::jmin (screenCap (48), r.getHeight() / 3)), juce::Justification::centredLeft, 2);
         g.setColour (Dark::caption);
         g.setFont (wingFont (TypeScale::body));
         g.drawFittedText (body, r, juce::Justification::topLeft, 8);
