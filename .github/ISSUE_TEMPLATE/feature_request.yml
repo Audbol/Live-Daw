@@ -1,0 +1,21 @@
+name: Feature request
+description: Suggest something Sidecar should do (or do more like the WING)
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What would you like?
+      description: Describe the feature and how you would use it at a show or in rehearsal.
+    validations:
+      required: true
+  - type: textarea
+    id: wing
+    attributes:
+      label: How does the WING do it?
+      description: If this is WING behaviour Sidecar lacks or does differently, describe how the console behaves (firmware version, screen, manual section). Please don't attach copies of Behringer's manuals or software.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or workarounds
+      description: Anything you use instead today.
