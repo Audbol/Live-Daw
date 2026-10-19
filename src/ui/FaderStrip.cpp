@@ -128,8 +128,9 @@ void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const Scribble
     }
     if (info.name.isNotEmpty())
     {
-        auto bar = r.removeFromBottom (juce::jmax (10.0f, std::round (H * 0.25f)));
-        g.setFont (lcdFont (bar.getHeight() * 0.58f, WingWeight::SemiBold));
+        auto bar = r.removeFromBottom (juce::jmax (10.0f, std::round (H * 0.24f)));
+        const float nameCap = juce::jmax (5.5f, bar.getHeight() * 0.5f);
+        g.setFont (lcdFont (nameCap, nameCap < 7.0f ? WingWeight::SemiBold : WingWeight::Medium));
         if (info.nameInverted)
         {
             g.setColour (ink);
@@ -155,9 +156,13 @@ void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const Scribble
         // LCD, so every strip's value has the same size.
         const bool hasCaption = info.caption.isNotEmpty();
         const float captionCap = hasCaption ? juce::jmin (H * 0.1f, centre.getHeight() * 0.22f) : 0.0f;
-        const float valueCap = juce::jmin (H * 0.21f, W * 0.2f, (centre.getHeight() - captionCap * 1.7f) / 1.45f);
+        float valueCap = juce::jmin (H * 0.24f, (centre.getHeight() - captionCap * 1.7f) / 1.45f);
+        // As large as fits the strip's width (a value with its unit is long).
+        if (const float textW = juce::GlyphArrangement::getStringWidth (lcdFont (valueCap, WingWeight::Medium), info.value);
+            textW > centre.getWidth() * 0.92f)
+            valueCap *= centre.getWidth() * 0.92f / textW;
         auto block = centre.withSizeKeepingCentre (centre.getWidth(), valueCap * 1.45f + captionCap * 1.7f);
-        g.setFont (lcdFont (valueCap, WingWeight::SemiBold));
+        g.setFont (lcdFont (valueCap, WingWeight::Medium));
         lcdText (g, info.value, block.removeFromTop (valueCap * 1.45f), juce::Justification::centred);
         if (hasCaption)
         {
@@ -166,7 +171,7 @@ void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const Scribble
         }
         return;
     }
-    const float s = juce::jmin (centre.getHeight(), centre.getWidth() * 0.6f);
+    const float s = juce::jmin (centre.getHeight() * 0.82f, centre.getWidth() * 0.5f);
     const auto iconArea = centre.withSizeKeepingCentre (s, s);
     if (info.strip != nullptr && info.strip->params.icon.load() > 0)
     {

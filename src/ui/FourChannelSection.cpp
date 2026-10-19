@@ -314,12 +314,14 @@ void FourChannelSection::paint (juce::Graphics& g)
         }
         else if (s != nullptr)
         {
-            // The strip, the knob's value large with the mode under it, and
-            // the key's state under a rule ("-10.0" / "THR" / "OFF").
-            setScribbleStrip (info, *s, ctx.settings.getBoolValue (uiprefs::sourceOnScribble, true));
+            // As the console's: the knob's value large with what it sets
+            // under it, and the key's state under a rule ("-10.0" / "THR" /
+            // "OFF"); the strip itself shows on the fader's scribble below.
             const auto& b = knobs[i].getBinding();
             info.value = b.isValid() && b.text ? b.text() : juce::String ("-");
-            info.caption = modeCaption();
+            if (info.value.endsWith (" dB"))
+                info.value = info.value.dropLastCharacters (3);
+            info.caption = b.label.endsWith (" THR") ? juce::String ("THR") : modeCaption();
             if (channelKeys[i]->isEnabled() && channelKeys[i]->ledState)
                 info.footer = channelKeys[i]->ledState() == SurfaceKey::Lit ? "ON" : "OFF";
         }
