@@ -1,4 +1,5 @@
 #include "ui/SurfaceSections.h"
+#include "engine/AppPaths.h"
 #include "daw/Session.h"
 #include "daw/TimeGrid.h"
 #include "ui/MidiRemoteUi.h"
@@ -902,7 +903,8 @@ void MonitorSection::paint (juce::Graphics& g)
     g.setColour (juce::Colours::black.withAlpha (0.6f));
     g.fillRect (getWidth() - 1, 0, 1, getHeight());
 
-    // The panel's top: the PHONES socket mark and the WING logo.
+    // The panel's top: the PHONES socket mark and the app's own name (not the
+    // console maker's logo: Sidecar is not affiliated with them).
     if (! logoArea.isEmpty())
     {
         auto mark = logoArea.reduced (14, 8).removeFromTop (16).toFloat();
@@ -912,11 +914,12 @@ void MonitorSection::paint (juce::Graphics& g)
         drawIcon (g, Icon::Headphones, juce::Rectangle<float> (14.0f, 14.0f).withPosition (mark.getX() + 15.0f, mark.getY()), Colours::silkDim);
         drawSilk (g, mark.withTrimmedLeft (32.0f), "PHONES", 9.0f, juce::Justification::centredLeft, Colours::silkDim);
 
-        auto logo = logoArea.toFloat().withSizeKeepingCentre ((float) logoArea.getWidth() * 0.5f, (float) logoArea.getHeight() * 0.22f);
+        const juce::String name = juce::String (kAppName).toUpperCase();
+        auto logo = logoArea.toFloat().withSizeKeepingCentre ((float) logoArea.getWidth() * 0.7f, (float) logoArea.getHeight() * 0.2f);
         const auto font = juce::Font (juce::FontOptions (logo.getHeight() * 1.1f, juce::Font::bold)).withExtraKerningFactor (0.06f);
-        g.setFont (fontFittingWidth (font, "WING", logo.getWidth(), 1.0f));
+        g.setFont (fontFittingWidth (font, name, logo.getWidth(), 1.0f));
         g.setColour (juce::Colour (0xffb2b5ba));
-        g.drawText ("WING", logo, juce::Justification::centred);
+        g.drawText (name, logo, juce::Justification::centred);
     }
 
     // The USB AUDIO/DATA and MONITORING/TALKBACK plate: a printed frame with
