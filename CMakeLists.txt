@@ -183,6 +183,8 @@ target_sources(LiveDAW PRIVATE
     src/ui/Knobs.cpp
     src/ui/ModelParams.cpp
     src/ui/Faceplate.cpp
+    src/ui/FaceplateDraw.cpp
+    src/ui/FaceplateDesigns.cpp
     src/ui/MeterComponent.cpp
     src/ui/PluginMenu.cpp
     src/ui/FaderStrip.cpp

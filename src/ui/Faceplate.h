@@ -12,9 +12,14 @@
 namespace livedaw::ui
 {
 
-/** How a model's front panel looks: the console draws each processing model and
-    FX device as the hardware unit it recreates (a cream LARC remote for the
-    480L reverbs, a grey SSL channel, a black 1176 with its VU meter...). */
+namespace fp
+{
+    struct Design;
+}
+
+/** How a model's front panel looks when it has no drawn design (FaceplateDesign.h):
+    a generic unit in the panel colour, knob style and meter of the hardware the
+    model recreates. */
 struct FaceplateStyle
 {
     enum class Knob
@@ -53,9 +58,11 @@ struct FaceplateStyle
 /** The style of a model of a table ("HALL" in the FX table, "LA" in the dynamics table...). */
 FaceplateStyle faceplateStyle (models::Table, const juce::String& token);
 
-/** A model's controls on its front panel. Knobs drag vertically (shift for fine
-    steps), the mouse wheel steps, double-click resets; switches and selectors
-    click. Bound to the model's parameter atomics; repaints when they change. */
+/** A model's controls on its front panel: the drawn design of the unit as the
+    console's screen shows it (FaceplateDesign.h), or a generic panel. Knobs and
+    faders drag vertically (shift for fine steps), the mouse wheel steps,
+    double-click resets; switches, keys and selectors click. Bound to the model's
+    parameter atomics; repaints when they change. */
 class Faceplate final : public juce::Component, private juce::Timer
 {
 public:
@@ -94,6 +101,7 @@ private:
         int param = 0;
         Kind kind = Kind::Knob;
         juce::Rectangle<float> area;
+        int element = -1; // index in the design's elements
     };
 
     void timerCallback() override;
@@ -112,6 +120,12 @@ private:
     std::atomic<float>* values = nullptr;
     std::function<float()> meterFn;
     FaceplateStyle style;
+
+    const fp::Design* design = nullptr;
+    juce::AffineTransform toScreen; // design frame -> component
+    juce::uint32 touchedAt = 0;     // when a control was last touched (value bubble)
+    bool bubbleShown = false;
+    int page = 0;                   // the page of a tabbed panel
 
     std::vector<Control> controls;
     juce::Rectangle<float> panelArea, displayArea, meterArea, titleArea;
