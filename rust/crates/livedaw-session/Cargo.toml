@@ -1,6 +1,6 @@
 [package]
 name = "livedaw-session"
-description = "Live DAW sessions: console state, Show > Scene > Snippet, layers, show files"
+description = "Sidecar sessions: console state, Show > Scene > Snippet, layers, show files"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

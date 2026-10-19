@@ -1,3 +1,3 @@
 # Leaks inside third-party LV2 plugin libraries (allocated by their own static
-# initialisers when lilv dlopen()s them). They belong to the plugin, not Live DAW.
+# initialisers when lilv dlopen()s them). They belong to the plugin, not Sidecar.
 leak:lilv_lib_open

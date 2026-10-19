@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds libwing's command-line clients (wingdrive, wingprop, wingmon) and our
 # oscprobe (tools/wing/oscprobe.rs, which uses libwing's OSC client) into
-# DIR/tools/target/release, for testing the Live DAW WING remote against them:
+# DIR/tools/target/release, for testing the Sidecar WING remote against them:
 #
 #   tools/wing/libwing_tools.sh DIR [REPO] [REV]
 #   LIBWING_TOOLS=DIR/tools/target/release cargo test -p livedaw-wing --test libwing

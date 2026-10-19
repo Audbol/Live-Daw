@@ -1,0 +1,76 @@
+name: Bug report
+description: Something doesn't work, crashes or sounds wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please check the [known limitations](https://github.com/Audbol/Live-Daw#known-limitations) first.
+        For security problems, don't open an issue: see [SECURITY.md](https://github.com/Audbol/Live-Daw/blob/HEAD/SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. SETUP > AUDIO, choose ...
+        2. ...
+  - type: input
+    id: version
+    attributes:
+      label: Sidecar version
+      description: Shown in the title of SETUP > GENERAL > ABOUT (e.g. 0.1.0).
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS (Apple silicon)
+        - macOS (Intel)
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version / distribution
+      placeholder: e.g. Windows 11 23H2, macOS 14.5, Ubuntu 24.04
+  - type: input
+    id: interface
+    attributes:
+      label: Audio interface
+      placeholder: e.g. Focusrite Scarlett 18i20 (3rd gen), or "Virtual (no hardware)"
+  - type: input
+    id: driver
+    attributes:
+      label: Audio driver, sample rate and buffer size
+      placeholder: e.g. ASIO (vendor driver), 48 kHz, 128 samples / CoreAudio / ALSA / JACK / WASAPI
+  - type: textarea
+    id: extras
+    attributes:
+      label: Plugins, MIDI controllers or remote apps involved
+      description: VST3 / AU / LV2 plugins, MIDI or DAW controllers, WING remote apps (with versions), if any.
+  - type: textarea
+    id: log
+    attributes:
+      label: Event log
+      description: |
+        The event log is on SETUP > LOG (also UTILITY). Paste the relevant lines or attach a screenshot.
+        Starting Sidecar from a terminal prints the same messages there. After a crash, Sidecar restarts in safe mode; say if that happened.
+      render: text
+  - type: textarea
+    id: files
+    attributes:
+      label: Screenshots or files
+      description: Screenshots (Ctrl+P saves one of the display to Documents/Sidecar/screens) or a show file that shows the problem.

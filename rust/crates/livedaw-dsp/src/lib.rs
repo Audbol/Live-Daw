@@ -1,4 +1,4 @@
-//! Realtime-safe DSP building blocks for Live DAW.
+//! Realtime-safe DSP building blocks for Sidecar.
 //!
 //! Nothing in this crate allocates, locks or panics on the audio path. The
 //! WING's processing (filter, EQ models, gate and dynamics models) lives in

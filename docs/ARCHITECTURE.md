@@ -737,6 +737,17 @@ DAW mode and DAW meters on the right section's 4-Channel strips are not done; th
 presets are Sidecar's own (built from the translation table), not the WING's files.
 
 ## Known limitations / roadmap
+
+The user-facing summary is the start-up notice (`src/ui/StartupNotice.cpp`) and the
+README's *Known limitations*; keep the three in step.
+
+- Hardware: the audio interface's ports stand in for the WING's. No StageConnect,
+  AES50 or Dante; source GAIN is digital and +48V is only stored.
+- The MP3 encoder is basic: constant bit rate, no bit reservoir, a simple masking
+  model.
+- MIDI and DAW remote control (MCU / HUI) have not been tried with real hardware;
+  the WING remote has not been tried with WING Edit or WING Copilot, and exported
+  snapshots have not been loaded into a console.
 - Plugins run inside the mixer process. Bad output and exceptions are contained, but
   a plugin that segfaults takes the app down (safe mode then recovers the show).
   Hosting each plugin in a sandbox process is the next step for full isolation.

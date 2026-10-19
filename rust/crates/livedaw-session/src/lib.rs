@@ -1,4 +1,4 @@
-//! Live DAW sessions: per-section console state, Show > Scene > Snippet with
+//! Sidecar sessions: per-section console state, Show > Scene > Snippet with
 //! fades, WING-style fader layers, and crash-safe show files.
 //!
 //! Everything here runs on the message thread and talks to the realtime engine

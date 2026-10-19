@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Generates rust/crates/livedaw-wing/data/wing_tree.bin, the WING parameter tree
-Live DAW's remote servers and snapshot files speak, from a WING parameter sweep
+Sidecar's remote servers and snapshot files speak, from a WING parameter sweep
 (propmap.jsonl from the Apache-2.0 libwing project, firmware 3.1, a WING Rack).
 
 Usage: gen_tree.py path/to/propmap.jsonl path/to/wing_tree.bin

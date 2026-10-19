@@ -1,12 +1,27 @@
+# Build output
 /build*/
 /out/
+/cmake-build-*/
+/rust/target/
+CMakeUserPresets.json
+compile_commands.json
+
+# Agent worktrees and local tool state
+/.claude/
 /.cache/
+
+# Editors and IDEs
 /.vs/
 /.vscode/
 /.idea/
-CMakeUserPresets.json
-compile_commands.json
 *.swp
+*~
 .DS_Store
-/rust/target/
-/build-san-*/
+Thumbs.db
+
+# Scratch output (screenshots, recordings, logs from local runs)
+/scratch/
+/tmp/
+*.log
+*.orig
+*.rej

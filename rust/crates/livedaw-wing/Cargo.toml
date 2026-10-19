@@ -1,6 +1,6 @@
 [package]
 name = "livedaw-wing"
-description = "Behringer WING interoperability for Live DAW: the WING parameter tree mapped onto the engine, Discovery/OSC/Native remote servers and WING snapshot files"
+description = "Behringer WING interoperability for Sidecar: the WING parameter tree mapped onto the engine, Discovery/OSC/Native remote servers and WING snapshot files"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

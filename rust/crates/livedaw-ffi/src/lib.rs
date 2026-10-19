@@ -1,4 +1,4 @@
-//! C ABI for the Live DAW engine. The C++ mirror is `include/livedaw_engine.h`.
+//! C ABI for the Sidecar engine. The C++ mirror is `include/livedaw_engine.h`.
 //!
 //! Conventions:
 //! * every function is panic-safe: a panic is caught and a neutral value returned;

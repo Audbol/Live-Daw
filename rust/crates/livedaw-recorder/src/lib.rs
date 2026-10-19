@@ -1,4 +1,4 @@
-//! The multitrack recorder and player of Live DAW.
+//! The multitrack recorder and player of Sidecar.
 //!
 //! Three threads share a [`Recorder`]:
 //!

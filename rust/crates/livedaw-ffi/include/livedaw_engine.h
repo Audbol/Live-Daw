@@ -1,4 +1,4 @@
-// C++ view of the Live DAW Rust engine (crate livedaw-ffi).
+// C++ view of the Sidecar Rust engine (crate livedaw-ffi).
 //
 // The structs below mirror the #[repr(C)] blocks in livedaw-engine/src/params.rs
 // and sends.rs field for field. The Rust side owns the memory; C++ reads and

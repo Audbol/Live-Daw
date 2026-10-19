@@ -1,4 +1,4 @@
-//! A headless Live DAW console answering the WING protocols, for testing
+//! A headless Sidecar console answering the WING protocols, for testing
 //! remote clients (libwing's wingprop / wingmon / wingdrive, Companion...)
 //! without the app.
 //!
