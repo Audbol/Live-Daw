@@ -376,33 +376,56 @@ public:
         const bool lit = shownLit && isEnabled();
         const bool down = isMouseButtonDown() && isEnabled();
 
-        const auto unlitBody = SurfaceLighting::unlit (dark ? juce::Colour (0xff141517) : Colours::keyBody);
-        auto body = lit ? SurfaceLighting::lit (ledColour, unlitBody) : unlitBody;
+        // The WING's keys: a frosted light grey cap (dark keys: black with a
+        // printed frame) in a black bezel, the print dark. Lit, the cap takes
+        // the LED colour and the bezel glows.
+        const float bezel = juce::jlimit (1.5f, 3.0f, juce::jmin (r.getWidth(), r.getHeight()) * 0.09f);
+        auto shapeOf = [this] (juce::Rectangle<float> area)
+        {
+            juce::Path p;
+            if (shape == Shape::Round)
+                p.addEllipse (area);
+            else
+                p.addRoundedRectangle (area, juce::jmin (4.0f, area.getHeight() * 0.2f));
+            return p;
+        };
+        const auto outer = shapeOf (r);
+        const auto capArea = r.reduced (bezel);
+        const auto cap = shapeOf (capArea);
+
+        g.setColour (Colours::keyBezel);
+        g.fillPath (outer);
+        if (lit)
+        {
+            g.setColour (ledColour.withAlpha (0.55f * juce::jlimit (0.3f, 1.0f, SurfaceLighting::leds() / 0.9f)));
+            g.fillPath (outer);
+        }
+
+        const auto unlitCap = SurfaceLighting::unlit (dark ? Colours::keyCapDark : Colours::keyCap);
+        auto body = lit ? SurfaceLighting::lit (ledColour, unlitCap) : unlitCap;
+        if (! isEnabled() && ! dark)
+            body = body.interpolatedWith (Colours::panel, 0.15f);
         if (down)
             body = body.darker (0.25f);
         else if (isMouseOver() && isEnabled())
-            body = body.brighter (0.08f);
-
-        juce::Path p;
-        if (shape == Shape::Round)
-            p.addEllipse (r);
-        else
-            p.addRoundedRectangle (r, juce::jmin (4.0f, r.getHeight() * 0.18f));
-        g.setColour (body);
-        g.fillPath (p);
-        if (! lit)
+            body = body.brighter (0.07f);
+        g.setGradientFill (juce::ColourGradient (body.brighter (dark ? 0.05f : 0.1f), 0.0f, capArea.getY(),
+                                                 body.darker (dark ? 0.05f : 0.12f), 0.0f, capArea.getBottom(), false));
+        g.fillPath (cap);
+        if (dark && ! lit)
         {
-            // A slight bevel: lighter top edge.
-            g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.07f), 0.0f, r.getY(),
-                                                     juce::Colours::transparentWhite, 0.0f, r.getCentreY(), false));
-            g.fillPath (p);
+            g.setColour (Colours::silk.withAlpha (isEnabled() ? 0.85f : 0.35f));
+            g.strokePath (shapeOf (capArea.reduced (juce::jmax (1.0f, bezel * 0.5f))), juce::PathStrokeType (1.2f));
         }
-        g.setColour (dark ? Colours::silk.withAlpha (0.6f) : Colours::keyEdge);
-        g.strokePath (p, juce::PathStrokeType (1.0f));
 
-        const auto ink = lit ? juce::Colours::black
-                             : (isEnabled() ? Colours::silk : Colours::silk.withAlpha (0.3f));
-        auto content = r.reduced (juce::jmin (4.0f, r.getWidth() * 0.08f), 1.0f);
+        juce::Colour ink;
+        if (lit)
+            ink = body.getPerceivedBrightness() > 0.55f ? body.darker (0.9f).withMultipliedSaturation (1.2f) : juce::Colours::white.withAlpha (0.9f);
+        else if (dark)
+            ink = isEnabled() ? Colours::silk : Colours::silk.withAlpha (0.35f);
+        else
+            ink = isEnabled() ? Colours::keyPrint : Colours::keyPrint.withAlpha (0.4f);
+        auto content = capArea.reduced (juce::jmin (3.0f, capArea.getWidth() * 0.06f), 0.5f);
         if (label.isEmpty() && arrow != 0)
         {
             const auto t = content.withSizeKeepingCentre (content.getHeight() * 0.4f, content.getHeight() * 0.4f);
@@ -427,7 +450,7 @@ public:
         if (label.isNotEmpty())
         {
             const int lines = juce::StringArray::fromLines (label).size();
-            const float size = juce::jlimit (7.0f, screenCap (16.0f), content.getHeight() * (lines > 1 ? 0.36f : 0.46f));
+            const float size = juce::jlimit (7.0f, 16.0f, content.getHeight() * (lines > 1 ? 0.46f : 0.6f));
             g.setColour (ink);
             g.setFont (silkFont (size));
             if (arrow != 0)
@@ -446,7 +469,7 @@ public:
                 g.drawText (label, group, arrow < 0 ? juce::Justification::centredRight : juce::Justification::centredLeft);
                 return;
             }
-            g.drawFittedText (label, content.toNearestInt(), juce::Justification::centred, lines, 0.7f);
+            g.drawFittedText (label, content.toNearestInt(), juce::Justification::centred, lines, 0.6f);
         }
     }
 

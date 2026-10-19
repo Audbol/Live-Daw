@@ -62,12 +62,24 @@ namespace Colours
     const juce::Colour meterYellow { 0xffe8d23a };
     const juce::Colour meterRed { 0xffe8413a };
 
-    // Control surface hardware
+    // Control surface hardware (the WING's dark panel: same layout and print
+    // as the silver one)
     const juce::Colour keyBody { 0xff36383d };      // an unlit key
     const juce::Colour keyEdge { 0xff0d0e10 };
+    const juce::Colour keyCap { 0xffc8cbd1 };       // an unlit key's frosted cap
+    const juce::Colour keyCapDark { 0xff16171a };   // the black keys (LISTEN, DAW)
+    const juce::Colour keyBezel { 0xff08090a };     // the black ring round a key
+    const juce::Colour keyPrint { 0xff1b1c1f };     // print on a key cap
+    const juce::Colour keySelect { 0xff4fdc64 };    // a lit SELECT key
+    const juce::Colour keyLayer { 0xffff9a28 };     // a lit layer or slot key
+    const juce::Colour keyWhite { 0xfff4f6fb };     // a key lit white
     const juce::Colour silk { 0xffc4c7cc };         // panel print
     const juce::Colour silkDim { 0xff8a8d92 };      // fainter print (fader scales)
-    const juce::Colour layerColumn { 0xff1c1d20 };  // the darker layer key columns
+    const juce::Colour layerColumn { 0xff44474c };  // the lighter grey layer key columns
+    const juce::Colour plate { 0xff1d1e21 };        // the darker plates (4-CHANNEL)
+    const juce::Colour sectionLine { 0xff8b8e94 };  // printed section borders
+    const juce::Colour scribbleLcd { 0xff1c1f3c };  // a scribble strip LCD's backlight
+    const juce::Colour scribbleRule { 0xff8890c8 }; // the rules between an LCD's strips
     const juce::Colour ledOff { 0xff2c2d30 };       // an unlit LED
     const juce::Colour ledYellow { 0xfff5e14a };    // a lit surface key
     const juce::Colour viewGreen { 0xff52d36b };    // lit VIEW keys
@@ -162,6 +174,8 @@ public:
     void drawLinearSlider (juce::Graphics&, int x, int y, int width, int height,
                            float sliderPos, float minSliderPos, float maxSliderPos,
                            juce::Slider::SliderStyle, juce::Slider&) override;
+    /** Surface faders keep their tall cap inside the slider. */
+    int getSliderThumbRadius (juce::Slider&) override;
 
     void drawRotarySlider (juce::Graphics&, int x, int y, int width, int height,
                            float sliderPosProportional, float rotaryStartAngle,

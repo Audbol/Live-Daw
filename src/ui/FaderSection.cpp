@@ -49,7 +49,7 @@ FaderSection::FaderSection (UiContext& c, LayerSet::Section s) : ctx (c), sectio
     {
         const int direction = k == &shiftLeft ? -1 : 1;
         k->arrow = direction;
-        k->ledColour = Colours::silk;
+        k->ledColour = Colours::keyWhite;
         k->onPress = [this, direction] { shift (direction); };
         k->onHold = [this, direction] { jumpToEnd (direction); };
         k->ledState = [this, direction]
@@ -115,7 +115,7 @@ void FaderSection::refresh()
     for (size_t i = 0; i < keys.size(); ++i)
     {
         auto* k = layerKeys.add (new SurfaceKey (LayerSet::keyLabel (keys[i])));
-        k->ledColour = Colours::select;
+        k->ledColour = Colours::keyLayer;
         k->setTooltip (keys[i].name + (keys[i].user ? " (user layer)" : ""));
         k->onPress = [this, id = keys[i].id] { selectLayer (id); };
         k->ledState = [this, i] { return i < keys.size() && isKeyLit (keys[i]) ? SurfaceKey::Lit : SurfaceKey::Off; };
@@ -253,11 +253,20 @@ void FaderSection::paint (juce::Graphics& g)
 {
     g.fillAll (Colours::panel);
 
-    // The darker layer column.
-    g.setColour (Colours::layerColumn);
-    g.fillRect (column.reduced (3, 0));
+    // The layer column: a lighter grey plate the height of the section.
+    const auto plate = column.reduced (4, 2).toFloat();
+    g.setGradientFill (juce::ColourGradient (Colours::layerColumn.brighter (0.12f), plate.getX(), 0.0f,
+                                             Colours::layerColumn.darker (0.1f), plate.getRight(), 0.0f, false));
+    g.fillRoundedRectangle (plate, 5.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.5f));
+    g.drawRoundedRectangle (plate.reduced (0.5f), 5.0f, 1.0f);
 
-    g.setColour (Colours::outline);
+    // SENDS ON FADERS over the SOF FLIP key.
+    if (section == LayerSet::Center && sofKey.isVisible())
+        drawSilk (g, sofKey.getBounds().translated (0, -14).withHeight (12).expanded (6, 0).toFloat(), "SENDS ON FADERS",
+                  juce::jlimit (7.0f, 9.0f, (float) column.getWidth() * 0.15f), juce::Justification::centred, Colours::keyPrint);
+
+    g.setColour (juce::Colours::black.withAlpha (0.6f));
     g.fillRect (getWidth() - 1, 0, 1, getHeight());
 }
 
@@ -318,26 +327,30 @@ void FaderSection::resized()
         }
     }
 
-    // VIEW level with the scribble strips; the layer keys from the SELECT row down.
-    auto c = column.reduced (5, 0);
+    // VIEW level with the scribble strips; the layer keys from the SELECT row
+    // down (the center section's SOF FLIP first, under its caption).
+    auto c = column.reduced (4, 0);
     const auto scribble = n > 0 ? strips[0]->getScribbleArea() : juce::Rectangle<int> (0, 4, 10, 56);
-    const int viewSize = juce::jmin (c.getWidth() - 6, 42);
+    const int viewSize = juce::jmin (juce::roundToInt ((float) c.getWidth() * 0.66f), 40);
     viewKey.setBounds (juce::Rectangle<int> (viewSize, viewSize).withCentre ({ c.getCentreX(), scribble.getCentreY() }));
 
-    c.setTop (scribble.getBottom() + 8);
+    const int keyW = c.getWidth() - 6;
+    c.setTop (scribble.getBottom() + 10);
     if (section == LayerSet::Center)
-        sofKey.setBounds (c.removeFromBottom (36).withSizeKeepingCentre (c.getWidth(), 30));
+        c.removeFromTop (14); // the caption
     c.removeFromBottom (6);
 
-    const int numKeys = layerKeys.size() + 2;
-    const int pitch = juce::jlimit (18, 38, c.getHeight() / juce::jmax (1, numKeys));
-    const int keyH = juce::jmin (30, pitch - juce::jmax (3, pitch / 6));
+    const int numKeys = layerKeys.size() + 2 + (section == LayerSet::Center ? 1 : 0);
+    const int pitch = juce::jlimit (18, 44, c.getHeight() / juce::jmax (1, numKeys));
+    const int keyH = juce::jmin (juce::roundToInt ((float) keyW * 0.66f), pitch - juce::jmax (4, pitch / 4));
     auto place = [&] (juce::Component& k)
     {
         const auto cell = c.removeFromTop (pitch);
         k.setVisible (cell.getBottom() <= column.getBottom() && cell.getHeight() == pitch);
-        k.setBounds (cell.withSizeKeepingCentre (c.getWidth(), keyH));
+        k.setBounds (cell.withSizeKeepingCentre (keyW, keyH));
     };
+    if (section == LayerSet::Center)
+        place (sofKey);
     // The seven keys, the shift keys, then further user layers.
     const int fixed = juce::jmin (layerKeys.size(), numFixedKeys);
     for (int i = 0; i < fixed; ++i)
