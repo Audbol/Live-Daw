@@ -132,7 +132,9 @@ fn rta_reads_the_selected_strip_at_its_tap() {
     };
     read(&mut rig, &mut levels, &mut peaks, -6.0);
     assert!((levels[57] + 6.0).abs() < 1.5, "IN: {}", levels[57]);
-    assert!(levels[30] < -60.0, "channel 2's tone isn't on channel 1: {}", levels[30]);
+    // Channel 2's tone would read about -6 dB here; what remains is the
+    // window leakage of channel 1's own tone (about -58 dB on some platforms).
+    assert!(levels[30] < -45.0, "channel 2's tone isn't on channel 1: {}", levels[30]);
     assert!(peaks[57] >= levels[57] - 0.01);
 
     // POST EQ (after the trim): 12 dB down.

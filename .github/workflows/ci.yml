@@ -138,8 +138,10 @@ jobs:
       - name: Build x86_64 slice (macOS)
         if: runner.os == 'macOS'
         run: |
+          rustup target add x86_64-apple-darwin
           cmake -S . -B build-x64 -DCMAKE_BUILD_TYPE=Release -DLIVEDAW_BUILD_TESTS=OFF \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 -DRust_CARGO_TARGET=x86_64-apple-darwin \
+            -DRust_RUSTUP_INSTALL_MISSING_TARGET=ON \
             -DFETCHCONTENT_SOURCE_DIR_JUCE="$PWD/build/_deps/juce-src" \
             -DFETCHCONTENT_SOURCE_DIR_CORROSION="$PWD/build/_deps/corrosion-src" \
             "-DLIVEDAW_VERSION=${{ env.LIVEDAW_VERSION_STAMP }}"
