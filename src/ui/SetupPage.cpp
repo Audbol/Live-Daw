@@ -25,10 +25,12 @@ namespace
         36 of the WING's 800 px screen (18 px at 1920x1080, 12 px at 1280x800). */
     int minRowHeight() { return juce::jlimit (12, screenCap (18), juce::roundToInt (getWingScreenHeight() * 0.036f)); }
 
-    int fitRowHeight (int height, float rows, int minH = -1, int maxH = 30)
+    int fitRowHeight (int height, float rows, int minH = -1, int maxH = -1)
     {
         if (minH < 0)
             minH = minRowHeight();
+        if (maxH < 0)
+            maxH = screenCap (30);
         return juce::jlimit (minH, juce::jmax (minH, maxH), (int) ((float) height / juce::jmax (1.0f, rows)));
     }
 

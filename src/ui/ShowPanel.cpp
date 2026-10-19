@@ -47,6 +47,18 @@ public:
 
     Item itemAt (int row) const { return juce::isPositiveAndBelow (row, (int) rows.size()) ? rows[(size_t) row] : Item {}; }
 
+    void paint (juce::Graphics& g) override
+    {
+        juce::ListBox::paint (g);
+        // The empty slots under the list: dark frames on black (Fig. 45).
+        const int h = getRowHeight();
+        const int w = getWidth() - (getVerticalScrollBar().isVisible() ? getVerticalScrollBar().getWidth() : 0);
+        g.setColour (Colours::screenTile);
+        for (int y = (int) rows.size() * h - getViewport()->getViewPositionY(); y < getHeight(); y += h)
+            if (y + h > 0)
+                g.drawRect (juce::Rectangle<float> (0.0f, (float) y, (float) w, (float) h).reduced (1.0f), juce::jmax (1.0f, wingPx (2.0f)));
+    }
+
 private:
     int getNumRows() override { return (int) rows.size(); }
 

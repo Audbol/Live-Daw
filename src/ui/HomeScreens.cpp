@@ -2593,11 +2593,12 @@ public:
     {
         HomeScreen::paint (g);
         // A grid of small grey dots behind the pan graphic.
-        g.setColour (juce::Colour (0xff303030));
+        g.setColour (juce::Colour (0xff383838));
+        const float dot = juce::jmax (1.0f, wingPx (2.0f));
         const float step = juce::jmax (6.0f, (float) getHeight() / 48.0f);
         for (float y = (float) field.getY() + step * 0.5f; y < (float) field.getBottom(); y += step)
             for (float x = (float) field.getX() + step * 0.5f; x < (float) field.getRight(); x += step)
-                g.fillRect (x, y, 1.0f, 1.0f);
+                g.fillRect (x, y, dot, dot);
 
         for (auto [area, text] : { std::make_pair (channelHeader, strip.getLabel().replace ("CH ", "CHANNEL ").replace ("MTX ", "MATRIX ")),
                                    std::make_pair (sendsHeader, juce::String ("MAIN SENDS")) })

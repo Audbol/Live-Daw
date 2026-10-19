@@ -486,7 +486,7 @@ public:
     {
         const float size = juce::jmin (r.getWidth(), r.getHeight());
         const auto c = r.getCentre();
-        const float rad = size * 0.5f * (segmented ? 0.62f : 0.92f);
+        const float rad = size * 0.5f * (segmented ? 0.5f : 0.92f); // [D7] 150 of 600 px
         // [D7] the MAIN SENDS ring is thin (a fifth of its radius) with dark
         // grey segments; the thumbnail rings are thicker.
         const float t = rad * (segmented ? 0.2f : 0.3f);

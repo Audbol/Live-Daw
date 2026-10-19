@@ -44,9 +44,10 @@ namespace
         g.setColour (Colours::screenTile);
         g.fillRect (r);
 
-        auto label = r.removeFromBottom (juce::jmin (screenCap (20.0f), r.getHeight() * 0.36f));
+        // [D14] the port label in small print in the bottom quarter.
+        auto label = r.removeFromBottom (juce::jmin (screenCap (20.0f), r.getHeight() * 0.3f));
         g.setColour (t.labelColour);
-        g.setFont (wingFontFit (TypeScale::body, label.getHeight() * 0.9f));
+        g.setFont (wingFontFit (TypeScale::body * 0.85f, label.getHeight() * 0.9f));
         g.drawFittedText (t.label, label.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
 
         auto body = r.reduced (3.0f, 2.0f);
@@ -55,10 +56,10 @@ namespace
         if (t.icon)
             t.icon (g, body.withSizeKeepingCentre (juce::jmin (body.getWidth(), body.getHeight()), body.getHeight()).reduced (1.0f));
         g.setColour (Dark::text);
-        g.setFont (wingFontFit (TypeScale::value * 0.85f, juce::jmin (numberArea.getHeight() * 0.7f, numberArea.getWidth() * 0.6f), WingWeight::SemiBold));
+        g.setFont (wingFontFit (TypeScale::value * 0.8f, juce::jmin (numberArea.getHeight() * 0.7f, numberArea.getWidth() * 0.9f), WingWeight::SemiBold));
         g.drawFittedText (t.number, numberArea.toNearestInt(), juce::Justification::centredRight, 1, 0.6f);
         if (t.chip.isNotEmpty())
-            drawChip (g, r.withHeight (12.0f).withTrimmedLeft (r.getWidth() - 24.0f).translated (-2.0f, 2.0f), t.chip, t.chipColour, juce::Colours::black);
+            drawChip (g, r.withHeight (screenCap (12.0f)).withTrimmedLeft (r.getWidth() - screenCap (24.0f)).translated (-2.0f, 2.0f), t.chip, t.chipColour, juce::Colours::black);
 
         if (t.selected)
         {
@@ -708,7 +709,7 @@ void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, 
 
     auto body = area.toFloat();
     body.removeFromTop (juce::jmax (12.0f, body.getHeight() * 0.22f));
-    body.removeFromBottom (juce::jmin (screenCap (20.0f), body.getHeight() * 0.36f));
+    body.removeFromBottom (juce::jmin (screenCap (20.0f), body.getHeight() * 0.3f));
     body = body.reduced (0.0f, 2.0f);
     if (pairing != ld::kSourceMono)
     {

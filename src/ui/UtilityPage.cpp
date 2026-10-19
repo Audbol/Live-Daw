@@ -113,7 +113,7 @@ void UtilityPage::paint (juce::Graphics& g)
     drawDarkPanel (g, rightArea, "EVENT LOG");
 
     auto r = statsArea;
-    const int h = juce::jmin (34, r.getHeight() / juce::jmax (1, (int) health.size()));
+    const int h = juce::jmin (screenCap (34), r.getHeight() / juce::jmax (1, (int) health.size()));
     for (auto& row : health)
     {
         auto line = r.removeFromTop (h);
@@ -124,7 +124,7 @@ void UtilityPage::paint (juce::Graphics& g)
         g.drawText (row.label, line.removeFromLeft (line.getWidth() * 34 / 100), juce::Justification::centredLeft);
         if (row.state != 0)
         {
-            auto chip = line.removeFromRight (16).withSizeKeepingCentre (12, 12).toFloat();
+            auto chip = line.removeFromRight (screenCap (16)).withSizeKeepingCentre (screenCap (12), screenCap (12)).toFloat();
             g.setColour (row.state == 2 ? Colours::mute : Colours::amber);
             g.fillEllipse (chip);
             line.removeFromRight (6);

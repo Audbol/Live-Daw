@@ -7,7 +7,12 @@ namespace livedaw::ui
 
 namespace
 {
-    constexpr int kChannelsPerPage = 40, kBusesPerPage = 16, kScaleWidth = 34;
+    constexpr int kChannelsPerPage = 40, kBusesPerPage = 16;
+
+    /** Fig. 29 (WING pixels): the group headers 40 px tall with small titles,
+        the scale column 40 px wide. */
+    int groupHeaderHeight() { return juce::jmax (16, juce::roundToInt (wingPx (40.0f))); }
+    int scaleWidth() { return juce::jmax (26, juce::roundToInt (wingPx (40.0f))); }
 
     /** The console's meter scale: CLIP, -6, -12, -24, -36, -48, -60 evenly spaced. */
     float meterPos (float db)
@@ -86,7 +91,7 @@ void MetersPage::layoutRow (juce::Rectangle<int> row, float unit, std::vector<Gr
     {
         const float w = unit * (float) (juce::jmax (4, g.count) + 1);
         auto area = juce::Rectangle<int> (juce::roundToInt (x), row.getY(), juce::roundToInt (w) - 4, row.getHeight());
-        g.header = area.removeFromTop (panelHeaderHeight());
+        g.header = area.removeFromTop (groupHeaderHeight());
         area.removeFromTop (4);
         g.body = area;
         return w;
@@ -143,8 +148,8 @@ void MetersPage::resized()
     auto top = b.removeFromTop ((b.getHeight() - 16) / 2);
     b.removeFromTop (16);
     auto bottom = b;
-    scaleTop = top.removeFromLeft (kScaleWidth);
-    scaleBottom = bottom.removeFromLeft (kScaleWidth);
+    scaleTop = top.removeFromLeft (scaleWidth());
+    scaleBottom = bottom.removeFromLeft (scaleWidth());
 
     std::vector<Group*> channelsRow, auxRow, busRow, dcaRow, outRow;
     for (size_t i = 0; i < groups.size(); ++i)
@@ -233,11 +238,11 @@ float MetersPage::levelOf (const Group& group, int index, int channel) const
 void MetersPage::paintScale (juce::Graphics& g, juce::Rectangle<int> column, const Group& reference) const
 {
     g.setColour (Colours::screenHeader);
-    g.fillRect (column.withTrimmedRight (4).withTrimmedTop (panelHeaderHeight() + 4));
+    g.fillRect (column.withTrimmedRight (4).withTrimmedTop (groupHeaderHeight() + 4));
     const auto numbers = numberRow (reference), mutes = muteRow (reference);
     const float top = (float) numbers.getBottom() + 10.0f, bottom = (float) mutes.getY() - 8.0f;
     g.setColour (Colours::text);
-    g.setFont (wingFontFit (TypeScale::meterScale * 1.5f, (bottom - top) / 4.0f, WingWeight::SemiBold));
+    g.setFont (wingFontFit (TypeScale::meterScale, (bottom - top) / 4.0f));
     const std::pair<const char*, float> marks[] = { { "CLIP", 0.0f }, { "-6", -6.0f }, { "-12", -12.0f }, { "-24", -24.0f },
                                                     { "-36", -36.0f }, { "-48", -48.0f }, { "-60", -60.0f } };
     // Labels that would overlap the previous one are left out (small windows).
@@ -249,7 +254,7 @@ void MetersPage::paintScale (juce::Graphics& g, juce::Rectangle<int> column, con
         if (y - lastY < minGap)
             continue;
         lastY = y;
-        g.drawText (text, juce::Rectangle<float> ((float) column.getX(), y - 7.0f, (float) column.getWidth() - 6.0f, 14.0f),
+        g.drawText (text, juce::Rectangle<float> ((float) column.getX(), y - minGap * 0.6f, (float) column.getWidth() - 6.0f, minGap * 1.2f),
                     juce::Justification::centredRight);
     }
 }
@@ -262,7 +267,7 @@ void MetersPage::paint (juce::Graphics& g)
     g.setColour (Colours::screenPanel);
     g.fillRect (titleArea);
     g.setColour (Colours::text);
-    g.setFont (wingFontFit (TypeScale::statusTitle, titleArea.getHeight() * 0.55f, WingWeight::SemiBold));
+    g.setFont (wingFontFit (TypeScale::header, titleArea.getHeight() * 0.55f));
     juce::String title = "METERS";
     if (numPages() > 1)
         title << "  -  PAGE " << (page + 1) << " / " << numPages();
@@ -295,7 +300,7 @@ void MetersPage::paint (juce::Graphics& g)
         g.setColour (Colours::screenHeader);
         g.fillRect (group.header);
         g.setColour (Colours::text);
-        g.setFont (wingFontFit (TypeScale::header, group.header.getHeight() * 0.68f));
+        g.setFont (wingFontFit (TypeScale::body * 1.15f, group.header.getHeight() * 0.68f));
         g.drawFittedText (group.title, group.header.reduced (4, 0), juce::Justification::centred, 1);
 
         g.setColour (Dark::body);
