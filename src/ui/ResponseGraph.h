@@ -141,6 +141,8 @@ private:
     Strip* strip = nullptr;
     Block block = Eq;
     Ruler ruler = Ruler::Bottom;
+    /** eqResponse: the other block drawn alongside (FILTER: the channel EQ
+        behind it; EQ: the low/high cut filters over it). */
     std::vector<double> freqs, response, eqResponse;
     std::vector<Band> bands;
     int builtModel = -1, selectedBand = -1, dragBand = -1, dragLine = -1;

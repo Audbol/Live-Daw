@@ -281,11 +281,12 @@ void ResponseGraph::timerCallback()
     bool changed = next != response;
     if (changed)
         response = std::move (next);
-    if (block == Filter)
+    if (block == Filter || block == Eq)
     {
-        // The channel EQ, drawn behind the filter.
+        // FILTER: the channel EQ drawn behind the filter. EQ: the low and
+        // high cut filters drawn over the EQ.
         std::vector<double> eq (freqs.size(), 0.0);
-        ld::ld_strip_response (strip->getHandle(), Eq, freqs.data(), eq.data(), (int32_t) freqs.size(), 48000.0);
+        ld::ld_strip_response (strip->getHandle(), block == Filter ? Eq : Filter, freqs.data(), eq.data(), (int32_t) freqs.size(), 48000.0);
         if (eq != eqResponse)
         {
             eqResponse = std::move (eq);
@@ -479,6 +480,28 @@ void ResponseGraph::paint (juce::Graphics& g)
             paintRta (g, rtaArea, layout);
         g.setColour (on ? eqCurveColour : dimLabelColour);
         g.strokePath (curve, juce::PathStrokeType (juce::jlimit (1.5f, 3.0f, getHeight() / 120.0f)));
+
+        // The channel's high-pass (LO CUT) and low-pass (HI CUT) filters, in
+        // the FILTER screen's blue, with their corner frequencies marked.
+        if (block == Eq && (f.lowCut.load() || f.highCut.load()))
+        {
+            g.setColour (filterCurveColour.withAlpha (0.9f));
+            g.strokePath (curveOf (eqResponse), juce::PathStrokeType (juce::jlimit (1.5f, 2.5f, getHeight() / 140.0f)));
+            const float lh = juce::jmax (13.0f, wingPx (22.0f));
+            g.setFont (wingFont (TypeScale::caption));
+            auto mark = [&] (bool active, float freq, const char* name)
+            {
+                if (! active)
+                    return;
+                const float x = xForFreq (freq);
+                g.setColour (filterCurveColour.withAlpha (0.55f));
+                g.fillRect (x - 0.5f, cp.getY(), 1.0f, cp.getHeight());
+                g.setColour (filterCurveColour);
+                g.drawText (name, juce::Rectangle<float> (x - lh * 1.5f, cp.getBottom() - lh - 2.0f, lh * 3.0f, lh), juce::Justification::centred);
+            };
+            mark (f.lowCut.load(), f.lowCutFreq.load(), "LC");
+            mark (f.highCut.load(), f.highCutFreq.load(), "HC");
+        }
         g.restoreState();
     }
 
