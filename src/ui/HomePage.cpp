@@ -1,6 +1,7 @@
 #include "ui/HomePage.h"
 #include "dsp/DspUtils.h"
 #include "ui/Faceplate.h"
+#include "ui/FaderStrip.h"
 #include "ui/HomeIcons.h"
 #include "ui/Icons.h"
 #include "ui/MeterComponent.h"
@@ -528,7 +529,7 @@ public:
         keyboard = &make<popups::WingKeyboard>();
         keyboard->setFieldVisible (false);
         keyboard->setMaxLength (kMaxNameLength);
-        keyboard->setText (strip.getName());
+        keyboard->setText (scribbleName (strip));
         keyboard->setActionText ("NEXT");
         keyboard->onChange = [this] (const juce::String& t)
         {
@@ -551,9 +552,10 @@ public:
 
     void timerCallback() override
     {
-        if (keyboard->getText() != strip.getName())
+        // The default name ("Ch 2") reads as an empty field, so typing replaces it.
+        if (keyboard->getText() != scribbleName (strip))
         {
-            keyboard->setText (strip.getName());
+            keyboard->setText (scribbleName (strip));
             repaint (field);
         }
         // The caret blinks.
@@ -597,7 +599,7 @@ public:
         inner.removeFromLeft (inner.getHeight() * 0.5f);
         auto clear = clearArea.toFloat().reduced (clearArea.getHeight() * 0.24f);
         inner.removeFromRight (clearArea.getWidth());
-        const auto name = strip.getName();
+        const auto name = scribbleName (strip);
         g.setColour (colours::ink);
         const juce::Font font (homeFont (TypeScale::value * 1.2f, inner.getHeight() * 0.92f));
         g.setFont (font);
@@ -624,9 +626,24 @@ public:
             keyboard->setText ({});
             repaint (field);
         }
+        focusKeyboard();
     }
 
+    // Typing on the computer keyboard names the channel as soon as the
+    // screen shows, without a click on the keyboard first.
+    void visibilityChanged() override { focusKeyboard(); }
+    void parentHierarchyChanged() override { focusKeyboard(); }
+
 private:
+    void focusKeyboard()
+    {
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<juce::Component> (keyboard)]
+        {
+            if (safe != nullptr && safe->isShowing() && ! safe->hasKeyboardFocus (false))
+                safe->grabKeyboardFocus();
+        });
+    }
+
     LinkCustomizationRow* link = nullptr;
     popups::WingKeyboard* keyboard = nullptr;
     juce::Rectangle<int> fieldPanel, field, clearArea, keyboardPanel;
