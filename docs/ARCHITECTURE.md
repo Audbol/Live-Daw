@@ -520,8 +520,13 @@ blinking LEDs.
   panels, overlays) and the console preferences kept in the app settings
   (`prefs::`, e.g. CONFIRM LIBRARY LOAD, TOUCH FADER RES, the meter taps).
 - **Faceplates** (`Faceplate.*`): every FX device and dynamics/EQ model is drawn as the
-  unit it recreates (panel colour, knob style, VU or LED meter, faders for graphic EQs
-  and remotes, rack ears or wood cheeks), styled per model token. EFFECTS opens a
+  unit it recreates. Drawn designs (`FaceplateDesign.h`, `FaceplateDraw.cpp`,
+  `FaceplateDesigns.cpp`) lay a unit out in the screen's faceplate frame (1156 x 479
+  px: scratched backdrop, inset plate), measured off the console's screen: knob looks,
+  scales, toggles, keys with LEDs, VU / LED meters showing the gain reduction, 7-segment
+  and dot-matrix displays, an EQ response graph, and tabbed pages for units whose keys
+  page their controls; bitmaps are rendered at the shown pixel scale. Models without a
+  design get a generic panel styled per model token (panel colour, knob style, meter). EFFECTS opens a
   slot's faceplate in its editor; the GATE, EQ and DYNAMICS screens show the model's.
   The device menu groups the table like the console (PREMIUM, STANDARD, CHANNEL
   STRIPS, PLUGIN).
