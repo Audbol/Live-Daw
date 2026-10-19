@@ -43,6 +43,53 @@ namespace
     {
         return wingFontPx (juce::jmax (4.0f, cap), weight);
     }
+
+    /** The name's rows, as on the console: a name that fits stays on one row;
+        a longer one breaks onto a new row at a space (up to `maxRows`), the
+        last row taking the rest. */
+    juce::StringArray nameRows (const juce::String& name, const juce::Font& font, float width, int maxRows)
+    {
+        juce::StringArray rows;
+        if (maxRows <= 1 || juce::GlyphArrangement::getStringWidth (font, name) <= width || ! name.containsChar (' '))
+        {
+            rows.add (name);
+            return rows;
+        }
+        auto words = juce::StringArray::fromTokens (name, " ", "");
+        words.removeEmptyStrings();
+        juce::String row;
+        for (int i = 0; i < words.size(); ++i)
+        {
+            const auto candidate = row.isEmpty() ? words[i] : row + " " + words[i];
+            if (row.isNotEmpty() && juce::GlyphArrangement::getStringWidth (font, candidate) > width)
+            {
+                rows.add (row);
+                if (rows.size() == maxRows - 1)
+                {
+                    words.removeRange (0, i);
+                    rows.add (words.joinIntoString (" "));
+                    return rows;
+                }
+                row = words[i];
+            }
+            else
+            {
+                row = candidate;
+            }
+        }
+        rows.add (row);
+        return rows;
+    }
+
+    /** One row of the name: centred when it fits, else from the left and cut
+        off at the right edge (typing goes on to the right, as on the console). */
+    void nameRow (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> area)
+    {
+        const bool fits = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text) <= area.getWidth();
+        juce::Graphics::ScopedSaveState clip (g);
+        g.reduceClipRegion (area.toNearestInt());
+        g.drawText (text, area, fits ? juce::Justification::centred : juce::Justification::centredLeft, false);
+    }
 } // namespace
 
 void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const ScribbleInfo& info)
@@ -132,14 +179,24 @@ void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const Scribble
     const bool centreFree = info.value.isEmpty() && ! hasIcon && info.line2.isEmpty() && info.line3.isEmpty();
     if (info.name.isNotEmpty() && centreFree && ! info.nameInverted)
     {
+        // One row, or two when the name breaks at a space.
         auto area = r.reduced (0.0f, juce::jmax (1.0f, r.getHeight() * 0.06f));
-        float cap = juce::jmin (H * 0.2f, area.getHeight() * 0.42f);
-        if (const float textW = juce::GlyphArrangement::getStringWidth (lcdFont (cap, WingWeight::Medium), info.name);
-            textW > area.getWidth() * 0.94f)
-            cap = juce::jmax (juce::jmin (5.5f, cap), cap * area.getWidth() * 0.94f / textW);
+        const float cap = juce::jmin (H * 0.2f, area.getHeight() * 0.42f);
+        const auto font = lcdFont (cap, cap < 7.0f ? WingWeight::SemiBold : WingWeight::Medium);
+        auto rows = nameRows (info.name, font, area.getWidth(), 2);
         g.setColour (ink);
-        g.setFont (lcdFont (cap, cap < 7.0f ? WingWeight::SemiBold : WingWeight::Medium));
-        lcdText (g, info.name, area, juce::Justification::centred);
+        if (rows.size() == 1)
+        {
+            g.setFont (font);
+            nameRow (g, rows[0], area);
+            return;
+        }
+        const float rowCap = juce::jmin (cap, area.getHeight() / 2.0f / 1.45f);
+        g.setFont (lcdFont (rowCap, rowCap < 7.0f ? WingWeight::SemiBold : WingWeight::Medium));
+        rows = nameRows (info.name, g.getCurrentFont(), area.getWidth(), 2);
+        auto block = area.withSizeKeepingCentre (area.getWidth(), rowCap * 1.45f * (float) rows.size());
+        for (const auto& row : rows)
+            nameRow (g, row, block.removeFromTop (rowCap * 1.45f));
         return;
     }
     if (info.name.isNotEmpty())
@@ -157,7 +214,7 @@ void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const Scribble
         {
             g.setColour (ink);
         }
-        lcdText (g, info.name, bar, juce::Justification::centred);
+        nameRow (g, info.name, bar.reduced (1.0f, 0.0f));
     }
 
     // Centre: a value in large type (SHOW FADER VALUE, a knob's value) with

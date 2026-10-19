@@ -552,8 +552,12 @@ public:
 
     void timerCallback() override
     {
-        // The default name ("Ch 2") reads as an empty field, so typing replaces it.
-        if (keyboard->getText() != scribbleName (strip))
+        // The default name ("Ch 2") reads as an empty field, so typing replaces
+        // it. Only a change made elsewhere resets the field: the text being
+        // typed (a space at its end, say) stays as it is.
+        const auto typed = keyboard->getText().trim();
+        const bool typedDefault = typed.removeCharacters (" ").equalsIgnoreCase (strip.getLabel().removeCharacters (" "));
+        if ((typedDefault ? juce::String() : typed) != scribbleName (strip))
         {
             keyboard->setText (scribbleName (strip));
             repaint (field);
