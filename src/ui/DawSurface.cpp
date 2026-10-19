@@ -136,14 +136,15 @@ public:
         info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
         if (active)
         {
-            // The DAW's two lines: the track name on the bar, the value line under the number.
+            // The DAW's two lines: the value line in the middle, the track name at the bottom.
             const auto& s = d->getStrip (channel);
             info.number = juce::String (channel + 1);
+            info.tag = channel < DawRemote::kStrips ? juce::String (d->isHui() ? "HUI" : "MCU") : "EXT" + juce::String (channel / DawRemote::kStrips);
             info.name = s.upper.isNotEmpty() ? s.upper : (d->isHui() ? "HUI " : "MCU ") + juce::String (channel % DawRemote::kStrips + 1);
             info.line2 = s.lower;
-            info.line3 = channel < DawRemote::kStrips ? (d->isHui() ? "HUI" : "MCU") : "EXT " + juce::String (channel / DawRemote::kStrips);
         }
         drawScribble (g, lcdArea.toFloat(), info);
+        drawScribbleFrame (g, lcdArea.toFloat(), true, true, info.backlight);
 
         if (active)
         {

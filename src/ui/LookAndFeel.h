@@ -78,8 +78,10 @@ namespace Colours
     const juce::Colour layerColumn { 0xff44474c };  // the lighter grey layer key columns
     const juce::Colour plate { 0xff1d1e21 };        // the darker plates (4-CHANNEL)
     const juce::Colour sectionLine { 0xff8b8e94 };  // printed section borders
-    const juce::Colour scribbleLcd { 0xff1c1f3c };  // a scribble strip LCD's backlight
-    const juce::Colour scribbleRule { 0xff8890c8 }; // the rules between an LCD's strips
+    const juce::Colour scribbleLcd { 0xff201d4a };  // a scribble strip LCD's backlight (deep indigo)
+    const juce::Colour scribbleInk { 0xffeeedff };  // its text, icons and inverted tags
+    const juce::Colour scribbleRule { 0xffa6a2dc }; // the rules between an LCD's strips
+    const juce::Colour scribbleRim { 0xff4a4690 };  // the lighter rim round the LCD
     const juce::Colour ledOff { 0xff2c2d30 };       // an unlit LED
     const juce::Colour ledYellow { 0xfff5e14a };    // a lit surface key
     const juce::Colour viewGreen { 0xff52d36b };    // lit VIEW keys

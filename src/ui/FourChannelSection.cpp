@@ -245,7 +245,10 @@ void FourChannelSection::timerCallback()
         if (s != strips[(size_t) i])
             changed = true;
         if (s != nullptr)
-            state << stripName (*s) << s->getColourIndex() << '|';
+            state << stripName (*s) << s->getColourIndex() << scribbleSourceTag (*s, ctx.settings.getBoolValue (uiprefs::sourceOnScribble, true))
+                  << s->params.icon.load() << '|';
+        if (channelKeys[i]->ledState)
+            state << (int) channelKeys[i]->ledState();
     }
     if (changed)
         refresh();
@@ -299,32 +302,32 @@ void FourChannelSection::paint (juce::Graphics& g)
         ScribbleInfo info;
         if (const auto* c = customControl (i))
         {
-            // A custom control layer: the control's name and its encoder's value.
-            info.number = c->name.isNotEmpty() ? c->name.removeCharacters ("*|") : cc::describe (ctx, cc::Slot::Encoder, c->encoder);
-            info.line2 = "U" + juce::String (mode - F1 + 1);
+            // A custom control layer: the layer, the encoder's value large
+            // with the control's name, and its key.
+            info.tag = "U" + juce::String (mode - F1 + 1);
+            info.tagFirst = true;
+            info.number = juce::String (i + 1);
             const auto& b = knobs[i].getBinding();
-            info.line3 = b.isValid() && b.text ? b.text() : juce::String();
+            info.value = b.isValid() && b.text ? b.text() : juce::String ("-");
+            info.caption = c->name.isNotEmpty() ? c->name.removeCharacters ("*|") : cc::describe (ctx, cc::Slot::Encoder, c->encoder);
             info.name = cc::describe (ctx, cc::Slot::Upper, c->upper);
         }
         else if (s != nullptr)
         {
-            info.number = s->getLabel().removeCharacters (" ");
-            info.name = stripName (*s);
-            info.strip = s;
-            info.icon = stripIcon (s->getKind());
-            info.line2 = modeCaption();
+            // The strip, the knob's value large with the mode under it, and
+            // the key's state under a rule ("-10.0" / "THR" / "OFF").
+            setScribbleStrip (info, *s, ctx.settings.getBoolValue (uiprefs::sourceOnScribble, true));
             const auto& b = knobs[i].getBinding();
-            info.line3 = b.isValid() && b.text ? b.text() : juce::String ("-");
+            info.value = b.isValid() && b.text ? b.text() : juce::String ("-");
+            info.caption = modeCaption();
+            if (channelKeys[i]->isEnabled() && channelKeys[i]->ledState)
+                info.footer = channelKeys[i]->ledState() == SurfaceKey::Lit ? "ON" : "OFF";
         }
         info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
         info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
         drawScribble (g, cell.toFloat(), info);
-        if (i < 3)
-        {
-            // One LCD, a fine rule between the strips.
-            g.setColour (Colours::scribbleRule.withAlpha (0.55f));
-            g.fillRect ((float) cell.getRight() - 1.0f, (float) cell.getY() + 2.0f, 1.0f, (float) cell.getHeight() - 4.0f);
-        }
+        // One LCD, a fine rule between the strips.
+        drawScribbleFrame (g, cell.toFloat(), i == 0, i == 3, info.backlight);
     }
 
     // Rules between the encoder columns.

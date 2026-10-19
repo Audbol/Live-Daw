@@ -221,8 +221,8 @@ namespace uiprefs
     // SURFACE (SETUP > SURFACE).
     constexpr const char* sofButton = "ui.sofButton";                // SOF FLIP LED: 0 AUTO, 1 ON, 2 FLASH
     constexpr const char* showSofFrame = "ui.showSofFrame";          // a frame and SOF badge on the title tile during SOF
-    constexpr const char* sourceOnScribble = "ui.sourceOnScribble";  // default on: the source ports on the scribble strips
-    constexpr const char* faderValueOnScribble = "ui.faderValueOnScribble";
+    constexpr const char* sourceOnScribble = "ui.sourceOnScribble";  // default on: the source tag ("IN5") on the scribble strips; off "MONO" / "ST"
+    constexpr const char* faderValueOnScribble = "ui.faderValueOnScribble";  // default off: a moved fader's level replaces the icon for 1.5 s
     constexpr const char* screenFollowsStrip = "ui.screenFollowsChStrip";
     constexpr const char* stripTouchSelect = "ui.chStripTouchSelect";
     constexpr const char* faderSpeed = "ui.faderSpeed";              // 0 SLOW, 1 MED (default), 2 FAST
@@ -289,10 +289,6 @@ juce::String describeStrip (const Strip&);
 /** The strip's name, or its label ("CH 3") when it has a default name. */
 juce::String stripName (const Strip&);
 
-/** False for an input or aux channel with neither a MAIN nor an ALT source:
-    the WING then draws its colour at half brightness ("Channel color LED
-    switched off when no source is selected", firmware 1.10). Buses, mains,
-    matrices (and DCAs) always have one. */
 /** A channel input index as shown: "IN 3" ("IN 03" with pad = 2), "PLAY 5"
     for a multitrack playback channel, "PLAYER 1" for the USB player. */
 inline juce::String inputPortName (int input, int pad = 0)
@@ -304,6 +300,11 @@ inline juce::String inputPortName (int input, int pad = 0)
     return "IN " + juce::String (input + 1).paddedLeft ('0', pad);
 }
 
+/** False for an input or aux channel with neither a MAIN nor an ALT source:
+    the WING then switches its colour LED off ("Channel color LED switched off
+    when no source is selected", firmware 1.10) and the screens draw its
+    colour at half brightness. Buses, mains, matrices (and DCAs) always have
+    one. */
 inline bool stripHasSource (const Strip& s)
 {
     return s.isOutput() || s.getInputLeft() >= 0 || s.getAltInputLeft() >= 0;

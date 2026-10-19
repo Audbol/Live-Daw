@@ -30,57 +30,227 @@ void drawLightBar (juce::Graphics& g, juce::Rectangle<float> bar, juce::Colour c
     g.fillRoundedRectangle (bar.reduced (bar.getWidth() * 0.1f, bar.getHeight() * 0.32f), radius * 0.5f);
 }
 
+namespace
+{
+    /** Text squeezed into `area` on one line (narrowed to 55 %, then cut short). */
+    void lcdText (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> area, juce::Justification j)
+    {
+        g.drawFittedText (text, area.toNearestInt(), j, 1, 0.55f);
+    }
+
+    /** The LCD's type: the screen font with capitals `cap` px tall. */
+    juce::Font lcdFont (float cap, WingWeight weight)
+    {
+        return wingFontPx (juce::jmax (4.0f, cap), weight);
+    }
+} // namespace
+
 void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const ScribbleInfo& info)
 {
-    // The backlit LCD (a deep indigo, as the console's) on the black display
-    // panel; SCRIBBLE sets its backlight and SCR CONT the text contrast.
-    g.setColour (Colours::scribbleLcd.withMultipliedBrightness (juce::jlimit (0.2f, 1.6f, info.backlight)));
+    // A negative LCD: light text on the indigo backlight. SCRIBBLE sets the
+    // backlight (the text, lit by it, follows), SCR CONT how far the text
+    // stands out from the background.
+    const float backlight = juce::jlimit (0.2f, 1.6f, info.backlight);
+    const auto bg = Colours::scribbleLcd.withMultipliedBrightness (backlight);
+    g.setColour (bg);
     g.fillRect (lcd);
-    if (info.number.isEmpty() && info.name.isEmpty())
+    if (info.isEmpty())
         return;
-    const float ink = juce::jlimit (0.35f, 1.0f, info.contrast);
-    const auto white = juce::Colours::white.withMultipliedBrightness (ink);
+    const float contrast = juce::jlimit (0.0f, 1.0f, 0.55f + 0.75f * (info.contrast - 0.4f));
+    const auto ink = bg.interpolatedWith (Colours::scribbleInk, 0.45f + 0.55f * contrast)
+                         .withMultipliedBrightness (juce::jlimit (0.55f, 1.0f, 0.55f + 0.45f * backlight));
 
-    auto t = lcd.reduced (juce::jmax (2.0f, lcd.getWidth() * 0.05f), 2.0f);
-    const float h = t.getHeight();
+    const float H = lcd.getHeight(), W = lcd.getWidth();
+    const float pad = juce::jlimit (2.0f, 6.0f, W * 0.04f);
+    auto r = lcd;
 
-    // The name on an inverted bar.
-    auto bar = t.removeFromBottom (juce::jmax (11.0f, h * 0.27f));
-    g.setColour (white);
-    g.fillRect (bar.expanded (1.0f, 0.0f));
-    g.setColour (juce::Colours::black);
-    g.setFont (juce::FontOptions (juce::jlimit (9.0f, 15.0f, bar.getHeight() * 0.86f), juce::Font::bold));
-    g.drawFittedText (info.name, bar.toNearestInt().reduced (1, 0), juce::Justification::centredLeft, 1, 0.7f);
-    t.removeFromBottom (1.0f);
+    // Top row: the number, and the tag on an inverted box ("5" | "CRD5" for
+    // inputs, "BUS" | "1" otherwise), under a rule across the strip.
+    if (info.number.isNotEmpty() || info.tag.isNotEmpty() || info.sendTag.isNotEmpty())
+    {
+        auto row = r.removeFromTop (juce::jmax (9.0f, std::round (H * 0.2f)));
+        const float cap = juce::jmax (5.0f, row.getHeight() * 0.56f);
+        const auto font = lcdFont (cap, cap < 7.0f ? WingWeight::SemiBold : WingWeight::Medium); // bolder when tiny
+        g.setFont (font);
+        auto inner = row.reduced (0.0f, 1.0f);
 
-    // Number (large) with the icon (or the fader value) top right, then the two source lines.
-    auto top = t.removeFromTop (t.getHeight() * 0.48f);
+        auto box = [&] (const juce::String& text, bool left, bool filled)
+        {
+            const float textW = juce::GlyphArrangement::getStringWidth (font, text);
+            const float w = juce::jmin (textW + pad * 1.4f, inner.getWidth() * (left ? 0.62f : 0.72f));
+            auto b = left ? inner.removeFromLeft (w) : inner.removeFromRight (w);
+            if (filled)
+            {
+                g.setColour (ink);
+                g.fillRect (b);
+                g.setColour (bg);
+            }
+            else
+            {
+                // A send (SOF): an outlined box.
+                g.setColour (ink);
+                g.drawRect (b, 1.0f);
+            }
+            lcdText (g, text, b.reduced (pad * 0.5f, 0.0f), juce::Justification::centred);
+        };
+
+        // An SOF send sits at the right, in place of the source tag (inputs)
+        // or the number.
+        if (info.tag.isNotEmpty() && info.tagFirst)
+            box (info.tag, true, true);
+        if (info.sendTag.isNotEmpty())
+            box (info.sendTag, false, false);
+        else if (info.tag.isNotEmpty() && ! info.tagFirst)
+            box (info.tag, false, true);
+
+        if (info.sendTag.isEmpty() || ! info.tagFirst)
+        {
+            g.setColour (ink);
+            lcdText (g, info.number, inner.reduced (pad, 0.0f),
+                     info.tagFirst ? juce::Justification::centredRight : juce::Justification::centredLeft);
+        }
+        g.setColour (ink.withMultipliedAlpha (0.85f));
+        g.fillRect (juce::Rectangle<float> (row.getX(), std::round (row.getBottom()) - 1.0f, row.getWidth(), 1.0f));
+    }
+
+    r = r.reduced (pad * 0.5f, 0.0f);
+
+    // Bottom: the footer under its rule, then the name, centred (on an
+    // inverted bar for a CC named "|...").
+    if (info.footer.isNotEmpty())
+    {
+        auto foot = r.removeFromBottom (juce::jmax (8.0f, std::round (H * 0.18f)));
+        g.setColour (ink.withMultipliedAlpha (0.85f));
+        g.fillRect (juce::Rectangle<float> (lcd.getX(), std::round (foot.getY()), lcd.getWidth(), 1.0f));
+        g.setColour (ink);
+        g.setFont (lcdFont (foot.getHeight() * 0.56f, WingWeight::Medium));
+        lcdText (g, info.footer, foot.withTrimmedTop (1.0f), juce::Justification::centred);
+    }
+    if (info.name.isNotEmpty())
+    {
+        auto bar = r.removeFromBottom (juce::jmax (10.0f, std::round (H * 0.25f)));
+        g.setFont (lcdFont (bar.getHeight() * 0.58f, WingWeight::SemiBold));
+        if (info.nameInverted)
+        {
+            g.setColour (ink);
+            g.fillRect (bar.reduced (0.0f, 1.0f));
+            g.setColour (bg);
+        }
+        else
+        {
+            g.setColour (ink);
+        }
+        lcdText (g, info.name, bar, juce::Justification::centred);
+    }
+
+    // Centre: a value in large type (SHOW FADER VALUE, a knob's value) with
+    // its caption, else the icon, else up to two small lines.
+    auto centre = r.reduced (0.0f, juce::jmax (1.0f, r.getHeight() * 0.06f));
+    if (centre.getHeight() < 4.0f)
+        return;
+    g.setColour (ink);
     if (info.value.isNotEmpty())
     {
-        auto valueArea = top.removeFromRight (top.getWidth() * 0.5f);
-        g.setColour (white);
-        g.setFont (juce::FontOptions (juce::jlimit (9.0f, 18.0f, valueArea.getHeight() * 0.8f), juce::Font::bold));
-        g.drawFittedText (info.value, valueArea.toNearestInt(), juce::Justification::centredRight, 1, 0.6f);
+        // The value and its caption as one block, centred; sized by the
+        // LCD, so every strip's value has the same size.
+        const bool hasCaption = info.caption.isNotEmpty();
+        const float captionCap = hasCaption ? juce::jmin (H * 0.1f, centre.getHeight() * 0.22f) : 0.0f;
+        const float valueCap = juce::jmin (H * 0.21f, W * 0.2f, (centre.getHeight() - captionCap * 1.7f) / 1.45f);
+        auto block = centre.withSizeKeepingCentre (centre.getWidth(), valueCap * 1.45f + captionCap * 1.7f);
+        g.setFont (lcdFont (valueCap, WingWeight::SemiBold));
+        lcdText (g, info.value, block.removeFromTop (valueCap * 1.45f), juce::Justification::centred);
+        if (hasCaption)
+        {
+            g.setFont (lcdFont (captionCap, WingWeight::Medium));
+            lcdText (g, info.caption, block, juce::Justification::centred);
+        }
+        return;
     }
-    else if (info.icon.has_value())
+    const float s = juce::jmin (centre.getHeight(), centre.getWidth() * 0.6f);
+    const auto iconArea = centre.withSizeKeepingCentre (s, s);
+    if (info.strip != nullptr && info.strip->params.icon.load() > 0)
     {
-        const float s = juce::jmin (top.getHeight(), top.getWidth() * 0.34f);
-        const auto iconArea = top.removeFromRight (s).withSizeKeepingCentre (s, s).reduced (1.0f);
-        if (info.strip != nullptr)
-            drawStripIcon (g, *info.strip, iconArea, white);
-        else
-            drawIcon (g, *info.icon, iconArea, white);
+        drawWingIcon (g, info.strip->params.icon.load(), iconArea, ink);
+        return;
     }
-    g.setColour (Colours::text.withMultipliedBrightness (ink));
-    g.setFont (juce::FontOptions (juce::jlimit (10.0f, 22.0f, top.getHeight() * 0.95f)));
-    g.drawFittedText (info.number, top.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+    if (info.icon.has_value())
+    {
+        drawIcon (g, *info.icon, iconArea.reduced (s * 0.08f), ink);
+        return;
+    }
+    if (info.line2.isNotEmpty() || info.line3.isNotEmpty())
+    {
+        const bool two = info.line2.isNotEmpty() && info.line3.isNotEmpty();
+        const float lineH = juce::jmin (centre.getHeight() / (two ? 2.0f : 1.0f), H * 0.24f);
+        auto lines = centre.withSizeKeepingCentre (centre.getWidth(), lineH * (two ? 2.0f : 1.0f));
+        g.setFont (lcdFont (lineH * 0.56f, WingWeight::Medium));
+        for (const auto* line : { &info.line2, &info.line3 })
+            if (line->isNotEmpty())
+                lcdText (g, *line, lines.removeFromTop (lineH), juce::Justification::centred);
+    }
+}
 
-    const float lineH = t.getHeight() * 0.5f;
-    g.setFont (juce::FontOptions (juce::jlimit (8.0f, 13.0f, lineH * 0.95f)));
-    g.setColour (info.line2Colour.withMultipliedBrightness (ink));
-    g.drawFittedText (info.line2, t.removeFromTop (lineH).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
-    g.setColour (Colours::textDim.withMultipliedBrightness (ink));
-    g.drawFittedText (info.line3, t.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+void drawScribbleFrame (juce::Graphics& g, juce::Rectangle<float> lcd, bool first, bool last, float backlight)
+{
+    // The rim (top, bottom and the display's ends), pixel aligned so it stays
+    // a crisp line at every size, and the rule to the next strip.
+    const auto rim = Colours::scribbleRim.withMultipliedBrightness (juce::jlimit (0.4f, 1.3f, backlight));
+    const auto r = lcd.toNearestInt().toFloat();
+    g.setColour (rim);
+    g.fillRect (r.withHeight (1.0f));
+    g.fillRect (r.withTrimmedTop (r.getHeight() - 1.0f));
+    if (first)
+        g.fillRect (r.withWidth (1.0f));
+    if (last)
+        g.fillRect (r.withTrimmedLeft (r.getWidth() - 1.0f));
+    else
+    {
+        g.setColour (Colours::scribbleRule.withMultipliedBrightness (juce::jlimit (0.5f, 1.0f, 0.5f + 0.5f * backlight)).withAlpha (0.8f));
+        g.fillRect (r.getRight() - 1.0f, r.getY() + 1.0f, 1.0f, r.getHeight() - 2.0f);
+    }
+}
+
+juce::String scribbleName (const Strip& s)
+{
+    const auto name = s.getName().trim();
+    return name.removeCharacters (" ").equalsIgnoreCase (s.getLabel().removeCharacters (" ")) ? juce::String() : name;
+}
+
+juce::String scribbleSourceTag (const Strip& s, bool showSource)
+{
+    const bool stereo = s.params.stereo.load();
+    if (! showSource)
+        return stereo ? "ST" : "MONO";
+    const int left = s.getActiveInputLeft();
+    if (left < 0)
+        return "OFF";
+    const auto l = inputPortName (left).removeCharacters (" ");
+    if (! stereo)
+        return l;
+    const int right = s.getActiveInputRight() >= 0 ? s.getActiveInputRight() : left + 1;
+    const auto r = inputPortName (right).removeCharacters (" ");
+    // "IN7/8" when both ports are in the same group, else both names.
+    const auto groupL = l.trimCharactersAtEnd ("0123456789"), groupR = r.trimCharactersAtEnd ("0123456789");
+    return groupL == groupR ? l + "/" + r.substring (groupR.length()) : l + "/" + r;
+}
+
+void setScribbleStrip (ScribbleInfo& info, const Strip& s, bool showSource)
+{
+    if (s.isInput())
+    {
+        // The number ("A1" for aux channels), the source tag at the right.
+        info.number = (s.getKind() == StripKind::Aux ? "A" : "") + juce::String (s.getNumber());
+        info.tag = scribbleSourceTag (s, showSource);
+        info.tagFirst = false;
+    }
+    else
+    {
+        info.tag = label (s.getKind());
+        info.number = juce::String (s.getNumber());
+        info.tagFirst = true;
+    }
+    info.name = scribbleName (s);
+    info.strip = &s;
 }
 
 //==============================================================================
@@ -400,62 +570,40 @@ ScribbleInfo FaderStrip::scribbleInfo() const
     ScribbleInfo info;
     if (strip != nullptr)
     {
-        info.number = strip->getLabel().removeCharacters (" ");
-        info.name = shownName;
-        info.icon = stripIcon (strip->getKind());
-        info.strip = strip;
-        if (strip->isInput())
-        {
-            // The source ports: "IN 01" / "IN 02", or "IN 03" / "mono"; with
-            // SHOW SOURCE ON SCRIBBLE off only "mono" or "stereo".
-            const bool stereo = strip->params.stereo.load();
-            if (ctx.settings.getBoolValue (uiprefs::sourceOnScribble, true))
-            {
-                auto port = [] (int i) { return i < 0 ? juce::String ("OFF") : inputPortName (i, 2); };
-                const int left = strip->getActiveInputLeft();
-                info.line2 = port (left);
-                if (stereo)
-                {
-                    const int right = strip->getActiveInputRight();
-                    info.line3 = port (right >= 0 ? right : (left >= 0 ? left + 1 : -1));
-                }
-                else
-                {
-                    info.line3 = "mono";
-                }
-            }
-            else
-            {
-                info.line2 = stereo ? "stereo" : "mono";
-            }
-        }
+        setScribbleStrip (info, *strip, ctx.settings.getBoolValue (uiprefs::sourceOnScribble, true));
     }
     else if (dca >= 0)
     {
-        info.number = "DCA" + juce::String (dca + 1);
-        info.name = shownName;
+        info.tag = "DCA";
+        info.tagFirst = true;
+        info.number = juce::String (dca + 1);
+        // The default name ("DCA.3") just repeats the number.
+        const bool defaultName = shownName.retainCharacters ("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+                                     .equalsIgnoreCase ("DCA" + juce::String (dca + 1));
+        info.name = defaultName ? juce::String() : shownName;
     }
     else if (fxp)
     {
-        // FX SPILL: the slot, the device, the parameter and its value.
+        // FX SPILL: the slot and its device, the parameter's value large and its name.
         const auto& m = models::model (models::Fx, fxp->model);
-        info.number = "FX" + juce::String (fxp->slot + 1);
-        info.line2 = m.name.toUpperCase();
-        info.line2Colour = kFxColour;
-        info.line3 = shownValue;
-        info.name = m.params[(size_t) fxp->index].label.toUpperCase();
-        info.icon = Icon::Insert;
-    }
-
-    if (send)
-    {
-        info.line2 = send->tag;
-        info.line2Colour = Colours::solo;
-    }
-
-    // SHOW FADER VALUE ON SCRIBBLE: the level for a moment after a move.
-    if (shownFlash)
+        info.tag = "FX" + juce::String (fxp->slot + 1);
+        info.tagFirst = true;
+        info.number = m.name.toUpperCase();
         info.value = shownValue;
+        info.name = m.params[(size_t) fxp->index].label.toUpperCase();
+    }
+
+    // Sends on Fader: the send this fader sets ("> BUS 3", "< CH5").
+    if (send)
+        info.sendTag = send->tag;
+
+    // SHOW FADER VALUE ON SCRIBBLE: the level in place of the icon for a
+    // moment after a move.
+    if (shownFlash && ! fxp)
+    {
+        info.value = shownValue;
+        info.caption = send ? "SEND" : "";
+    }
     info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
     info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
     return info;
@@ -485,10 +633,12 @@ void FaderStrip::timerCallback()
         gate = strip->meters.gateActive.load();
         dyn = strip->meters.dynActive.load();
         name = stripName (*strip);
-        light = strip->params.led.load();
+        // The light bar goes off on a channel without a source (firmware 1.10).
+        light = strip->params.led.load() && stripHasSource (*strip);
         colour = strip->getColourIndex();
-        source = juce::String (strip->params.inputLeft.load()) + "/" + juce::String (strip->params.inputRight.load())
-                 + (strip->params.stereo.load() ? "s" : "m") + juce::String (strip->getAltInputLeft());
+        // The source tag (ALT source switches, SHOW SOURCE ON SCRIBBLE) and the icon.
+        source = scribbleSourceTag (*strip, ctx.settings.getBoolValue (uiprefs::sourceOnScribble, true)) + "|"
+                 + juce::String (strip->params.icon.load());
 
         // Input level, like the console's strip meters.
         const int channels = juce::jlimit (1, 2, strip->getNumChannels());
@@ -530,7 +680,7 @@ void FaderStrip::timerCallback()
         shownValue = value;
         if (showValue)
             repaint (valueArea);
-        if (shownFlash)
+        if (shownFlash || fxp)
             repaint (scribbleArea);
     }
     retargeted = false;
@@ -579,12 +729,10 @@ void FaderStrip::paint (juce::Graphics& g)
                                 : (dca >= 0 ? wingColour (shownColour) : (fxp ? kFxColour : Colours::ledOff));
     drawLightBar (g, barArea.toFloat(), colour.withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
                   target.has_value() && shownLight);
-    drawScribble (g, lcdArea.toFloat(), target ? scribbleInfo() : ScribbleInfo {});
-    if (! moduleLast)
-    {
-        g.setColour (Colours::scribbleRule.withAlpha (0.55f));
-        g.fillRect ((float) lcdArea.getRight() - 1.0f, (float) lcdArea.getY() + 2.0f, 1.0f, (float) lcdArea.getHeight() - 4.0f);
-    }
+    auto info = target ? scribbleInfo() : ScribbleInfo {};
+    info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
+    drawScribble (g, lcdArea.toFloat(), info);
+    drawScribbleFrame (g, lcdArea.toFloat(), moduleFirst, moduleLast, info.backlight);
 
     // Meter block: DYN LED, two 6-segment columns (input level), GATE LED.
     if (strip != nullptr)
@@ -627,7 +775,8 @@ void FaderStrip::resized()
 
     // The display window: the thin colour light bar over the LCD, which runs
     // edge to edge across the module (inset at the module's ends).
-    const int lcdH = juce::jlimit (42, 78, juce::roundToInt ((float) w * 0.9f));
+    // The LCD is wider than tall, as on the console (about 1.4 : 1).
+    const int lcdH = juce::jlimit (38, 120, juce::roundToInt ((float) w * 0.72f));
     const int barH = juce::jlimit (3, 5, lcdH / 14);
     const int barRow = barH + 12;
     scribbleArea = b.removeFromTop (barRow + lcdH + 5);
