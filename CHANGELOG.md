@@ -109,7 +109,6 @@ All notable changes to Sidecar are listed here. Versions follow
   monitor since unplugged) left part of the surface off screen.
 - Recorder: RECORD ALL CHANNELS (or any track) failed with "Input ... doesn't exist"
   for a channel patched to a USB PLAYER source; those sources always exist.
-
 - HOME > NAME took no typing from the computer keyboard until the on-screen keyboard
   was clicked, and a space typed at the end of a name vanished; the default name
   ("Ch 2") now starts as an empty field, so typing replaces it.
