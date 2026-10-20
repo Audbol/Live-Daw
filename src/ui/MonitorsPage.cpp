@@ -566,8 +566,8 @@ void MonitorsPage::showPathTab (int t)
     pathTab = juce::jlimit (0, 1, t);
     auto& src = pathSource();
     auto& d = pathDsp();
-    srcLevel.setBinding (bindFader ("SRC LEVEL", src.sourceLevelDb));
-    srcMix.setBinding (bindFader ("SRC MIX", src.sourceMixDb));
+    srcLevel.setBinding (home::wingFader ("SRC LEVEL", src.sourceLevelDb));
+    srcMix.setBinding (home::wingFader ("SRC MIX", src.sourceMixDb));
     dim.setBinding (bindLinear ("DIM", pathDim(), 0.0f, 40.0f, " dB", 0, 20.0f));
     pflDim.setBinding (bindLinear ("PFL DIM", src.pflDimDb, 0.0f, 40.0f, " dB", 0, 0.0f));
     bandSolo.setBinding (bindLinear ("BAND SOLO", d.bandSoloDb, 0.0f, 24.0f, " dB", 0, 12.0f));
@@ -611,8 +611,8 @@ std::vector<KnobBinding> MonitorsPage::getKnobs()
     auto& d = pathDsp();
     auto dist = bindLog ("DIST", d.delayM, 0.1f, 100.0f, " m", 0.1f);
     dist.text = [&m = d.delayM] { return juce::String (m.load(), m.load() < 10.0f ? 1 : 0) + " m"; };
-    return { bindFader ("TALK LVL", ctx.engine.talk.levelDb), srcLevel.getBinding(), srcMix.getBinding(), pflDim.getBinding(), dist,
-             bindFader ("DIR LVL", d.directLevelDb) };
+    return { home::wingFader ("TALK LVL", ctx.engine.talk.levelDb), srcLevel.getBinding(), srcMix.getBinding(), pflDim.getBinding(), dist,
+             home::wingFader ("DIR LVL", d.directLevelDb) };
 }
 
 std::vector<KnobStyle> MonitorsPage::getKnobStyles()

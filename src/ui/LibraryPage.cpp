@@ -377,8 +377,8 @@ public:
         auto body = drawDarkPanel (g, extras, "SCENE");
         juce::ignoreUnused (body);
         g.setColour (Dark::textDim);
-        g.setFont (wingFont (TypeScale::statusCaption * 1.2f));
-        g.drawText ("FADE (FADERS, PANS, SENDS)", fadeLabel, juce::Justification::centredLeft);
+        g.setFont (wingFont (TypeScale::caption));
+        g.drawFittedText ("FADE (FADERS, PANS, SENDS)", fadeLabel, juce::Justification::centredLeft, 1, 0.7f);
         g.drawText ("NOTES", notesLabel, juce::Justification::bottomLeft);
     }
 
@@ -394,6 +394,9 @@ public:
         fade.setBounds (f);
         notesLabel = e.removeFromTop (18);
         notes.setBounds (e.withTrimmedTop (2));
+        // The notes in the screen's body type, which follows the screen size.
+        notes.setFont (wingFont (TypeScale::body * 1.15f));
+        notes.applyFontToAllText (wingFont (TypeScale::body * 1.15f));
     }
 
 private:
@@ -453,6 +456,7 @@ public:
         recFocus->isOn = [this] { return page.focusEdited; };
         rec->isOn = [this] { return page.ctx.show.isRecordingSnippet(); };
         rec->iconColour = Colours::text;
+        rec->onInk = Colours::text; // white on the red, as the recorder's REC
         rows = { { {}, { save }, {} }, { {}, { update }, { loadFocus } }, { {}, { loadKey, partialLoad }, {} }, { {}, { rec, stop }, { recFocus } },
                  { {}, { addItems, removeItems }, { clearAll } } };
 

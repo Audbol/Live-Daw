@@ -39,6 +39,8 @@ public:
     juce::Colour offColour = Colours::screenKey;
     /** The icon's colour while the key is off (the recorder's red record dot). */
     std::optional<juce::Colour> iconColour;
+    /** The ink while the key is lit (black by default; white on a dark fill such as red). */
+    juce::Colour onInk = juce::Colours::black;
     bool outlined = false;
     /** Icon above a small label (the library's FOLDER / RENAME / DELETE keys). */
     bool iconAbove = false;
@@ -58,7 +60,7 @@ public:
         g.fillRect (r);
         g.setColour (outlined && ! on ? Colours::textDim : juce::Colours::black);
         g.drawRect (r, outlined ? 1.5f : 1.0f);
-        const auto ink = on ? juce::Colours::black
+        const auto ink = on ? onInk
                             : (! isEnabled() ? Colours::textDim.darker (0.3f) : (isOn != nullptr && ! outlined ? Colours::textDim : Colours::caption));
         if (iconAbove && icon.has_value())
         {
