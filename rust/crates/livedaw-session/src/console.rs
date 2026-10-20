@@ -122,6 +122,12 @@ pub enum FadeParam {
 }
 
 impl FadeParam {
+    /// A level in dB (fader, send, DCA), which fades along the fader's travel
+    /// rather than straight in dB; pans and widths fade straight.
+    pub fn is_level(&self) -> bool {
+        !matches!(self, FadeParam::Pan(_) | FadeParam::Width(_) | FadeParam::SendPan(..) | FadeParam::MatrixPan(..))
+    }
+
     pub fn value<'a>(&'a self, engine: &'a Engine) -> Option<&'a AtomicF32> {
         match self {
             FadeParam::Fader(s) => Some(&s.params.fader_db),

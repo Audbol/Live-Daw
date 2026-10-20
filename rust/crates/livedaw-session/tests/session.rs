@@ -305,6 +305,38 @@ fn fades_glide_and_survive_removed_strips() {
 }
 
 #[test]
+fn levels_fade_along_the_fader_travel() {
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    engine.set_num_channels(1);
+    let a = ch(&engine, 0);
+    let dca = &engine.controls.dcas[0];
+    a.params.fader_db.store(0.0);
+    dca.fader_db.store(0.0);
+    a.params.pan.store(100.0);
+
+    let mut show = Show::new();
+    show.add_scene(&engine, &mut np, "Up", -1);
+    show.scene_mut(0).unwrap().fade_seconds = 2.0;
+    a.params.fader_db.store(-144.0);
+    dca.fader_db.store(-144.0);
+    a.params.pan.store(-100.0);
+
+    let start = Instant::now();
+    show.recall_scene(&engine, &mut np, 0);
+    assert!(show.tick_at(&engine, start + Duration::from_millis(1000)));
+    // Halfway along the travel from -oo (0) to 0 dB (0.75) is 0.375: -20 dB,
+    // where a straight line in dB would still be at -72 dB.
+    assert!((a.params.fader_db.load() + 20.0).abs() < 0.5, "{}", a.params.fader_db.load());
+    assert!((dca.fader_db.load() + 20.0).abs() < 0.5, "{}", dca.fader_db.load());
+    // Pans fade straight.
+    assert!(a.params.pan.load().abs() < 1.0, "{}", a.params.pan.load());
+    assert!(!show.tick_at(&engine, start + Duration::from_secs(3)));
+    assert_eq!(a.params.fader_db.load(), 0.0);
+    assert_eq!(dca.fader_db.load(), 0.0);
+}
+
+#[test]
 fn fades_glide_dcas_widths_and_send_pans_while_switches_jump() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;

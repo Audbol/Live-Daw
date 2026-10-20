@@ -341,7 +341,9 @@ the USB key on the screen to choose another folder).
   DCAs, mute groups and FX slots, and the console settings (monitor setup, INPUT
   SELECT, automix enables); an optional **fade time**, and notes. A fade glides the
   continuous values: channel, aux, bus, main, matrix and DCA faders, pan and width,
-  and the send levels and pans (bus, main and matrix sends). Everything else (mutes,
+  and the send levels and pans (bus, main and matrix sends). Levels move along the
+  fader's travel, as a moving fader would (a fade up from -oo is heard from the start),
+  pans and widths in a straight line. Everything else (mutes,
   ON keys, send modes, links, routing, processing) is set when the fade starts. Moving
   a fader or knob that is fading (on the surface, the screen, from MIDI, a DAW or a
   WING remote) takes it out of the fade: it stays where you put it while the rest

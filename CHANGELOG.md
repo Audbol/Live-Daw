@@ -83,6 +83,9 @@ All notable changes to Sidecar are listed here. Versions follow
 - Scene fades also glide DCA faders, strip widths and the bus and matrix send pans
   (before: faders, pans and send levels only). Switches and settings still apply when
   the fade starts.
+- Scene fades move levels (faders, sends, DCAs) along the fader's travel, as a moving
+  fader does, instead of in a straight line in dB; a fade up from -oo is now heard from
+  the start rather than only in its second half.
 - Channel strip section with an analog EQ model: SHIFT pages through all of the
   model's parameters four at a time (1-4, 5-8, 9-12, 13-16), so models with 12-16
   parameters are reachable from the encoders; the captions show the page and the

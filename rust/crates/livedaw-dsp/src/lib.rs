@@ -6,6 +6,7 @@
 
 pub mod biquad;
 pub mod delay;
+pub mod fader;
 pub mod generator;
 pub mod util;
 pub mod wing;

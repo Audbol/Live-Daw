@@ -45,9 +45,7 @@ impl Value {
     }
 }
 
-/// The fader's silence (-oo).
-pub const FADER_MIN: f32 = -144.0;
-pub const FADER_MAX: f32 = 10.0;
+pub use livedaw_dsp::fader::{fader_to_pos, pos_to_fader, FADER_MAX, FADER_MIN};
 
 /// Parses console number text: "-3.0", "-oo", "1k50", "10k02", "1:3" isn't one.
 pub fn parse_number(s: &str) -> Option<f32> {
@@ -68,38 +66,6 @@ pub fn parse_number(s: &str) -> Option<f32> {
     }
     let frac = b.parse::<u32>().ok()? as f32 / 10f32.powi(b.len() as i32);
     Some((whole + frac) * 1000.0)
-}
-
-/// WING fader law (position 0..1 for a level in dB), as on the X32/WING: four
-/// linear segments meeting at -60, -30 and -10 dB, 0 dB at 0.75 and +10 dB at 1.
-/// The two upper segments match the protocol document's examples (0 dB =
-/// 0.75, -3 dB = 0.675, +4 dB = 0.85); the lower ones follow the X32.
-pub fn fader_to_pos(db: f32) -> f32 {
-    let db = db.clamp(FADER_MIN, FADER_MAX);
-    let pos = if db >= -10.0 {
-        (db + 30.0) / 40.0
-    } else if db >= -30.0 {
-        (db + 50.0) / 80.0
-    } else if db >= -60.0 {
-        (db + 70.0) / 160.0
-    } else {
-        // -60 dB = 0.0625 down to -oo = 0.
-        0.0625 * (db - FADER_MIN) / (-60.0 - FADER_MIN)
-    };
-    pos.clamp(0.0, 1.0)
-}
-
-pub fn pos_to_fader(pos: f32) -> f32 {
-    let p = pos.clamp(0.0, 1.0);
-    if p >= 0.5 {
-        p * 40.0 - 30.0
-    } else if p >= 0.25 {
-        p * 80.0 - 50.0
-    } else if p >= 0.0625 {
-        p * 160.0 - 70.0
-    } else {
-        FADER_MIN + p / 0.0625 * (-60.0 - FADER_MIN)
-    }
 }
 
 fn lo_hi(def: &Def) -> (f32, f32) {

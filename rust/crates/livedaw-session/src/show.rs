@@ -34,6 +34,7 @@ use crate::legacy::{self, Converter};
 use crate::refs::{refs_from_string, refs_to_string, StripRef};
 use crate::scope::{self, ChangeCounts, GlobalSafe, RecordedChanges, Recording, Scope};
 use crate::xml::{self, Element};
+use livedaw_dsp::fader::{fader_to_pos, pos_to_fader};
 use livedaw_engine::Engine;
 use std::collections::HashMap;
 use std::fs;
@@ -789,7 +790,16 @@ impl Show {
             if f.moved(v.load()) {
                 return false;
             }
-            f.written = f.start + t * (f.target - f.start);
+            f.written = if t >= 1.0 {
+                f.target
+            } else if f.param.is_level() {
+                // Along the fader's travel, as a moving fader goes: a fade up
+                // from -oo is heard from the start, not only in its second half.
+                let (from, to) = (fader_to_pos(f.start), fader_to_pos(f.target));
+                pos_to_fader(from + t * (to - from))
+            } else {
+                f.start + t * (f.target - f.start)
+            };
             v.store(f.written);
             true
         });
