@@ -20,6 +20,9 @@ All notable changes to Sidecar are listed here. Versions follow
 - USB recorder / player: renaming a clip (or its folder) that is in the open playlist
   left the playlist pointing at the old file, so the clip showed as missing
   (1970-01-01) and couldn't play.
+- SETUP > GENERAL > CONSOLE NAME only took effect after a restart: the running WING
+  remote kept announcing the old name, and the MIDI identity (SysEx) kept it in both
+  places it can be edited.
 
 ## [0.1.0] - beta
 
