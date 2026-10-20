@@ -59,7 +59,7 @@ use livedaw_dsp::util::*;
 use livedaw_dsp::wing::fx::{allowed_in_slot, FxContext, FxDevice};
 use livedaw_dsp::wing::FX_MODELS;
 use livedaw_recorder::usb::{RecTap, UsbDeck, USB_CHANNELS};
-use livedaw_recorder::{playback_channel, RecordStream, RecordTrackSpec, Recorder, SourceKind};
+use livedaw_recorder::{playback_channel, usb_player_channel, RecordStream, RecordTrackSpec, Recorder, SourceKind};
 use std::cell::UnsafeCell;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering::*};
@@ -331,7 +331,7 @@ impl Engine {
             for f in engine.fx.iter() {
                 f.prepare(DEFAULT_BLOCK);
             }
-            (*engine.audio.get()).sources.prepare(0, DEFAULT_BLOCK);
+            (*engine.audio.get()).sources.prepare(0, DEFAULT_BLOCK, DEFAULT_SAMPLE_RATE);
         }
         let mut st = engine.lock();
         engine.build_fixed(&mut st);
@@ -575,7 +575,11 @@ impl Engine {
             let src = &t.source;
             if src.kind == SourceKind::HardwareInput {
                 for port in src.port..src.port + t.num_channels.clamp(1, 2) as i32 {
-                    if playback_channel(port).is_none() && usize::try_from(port).map_or(true, |p| p >= num_hw_inputs) {
+                    // Playback channels, the USB PLAYER and the oscillators always exist.
+                    let internal = playback_channel(port).is_some()
+                        || usb_player_channel(port).is_some()
+                        || crate::sources::osc_channel(port).is_some();
+                    if !internal && usize::try_from(port).map_or(true, |p| p >= num_hw_inputs) {
                         return Err(format!("Input {} doesn't exist", port + 1));
                     }
                 }
@@ -886,7 +890,7 @@ impl Engine {
         for d in &mut a.monitor_dsp {
             d.prepare(sample_rate, block_size);
         }
-        a.sources.prepare(in_map.len(), block_size);
+        a.sources.prepare(in_map.len(), block_size, sample_rate);
 
         for s in st.all() {
             s.prepare(sample_rate, block_size);

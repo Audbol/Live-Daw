@@ -1,9 +1,16 @@
 //! Sources (ROUTING > SOURCES, manual pp. 39-40): every hardware input port,
-//! every recorder playback channel and the four USB PLAYER channels (the
-//! USB deck's player, input `USB_PLAYER_SOURCE_BASE + n`) are sources with a name, colour and
+//! every recorder playback channel, the four USB PLAYER channels (the
+//! USB deck's player, input `USB_PLAYER_SOURCE_BASE + n`) and the two
+//! oscillators (the OSC group, input `OSC_SOURCE_BASE + n`) are sources with a name, colour and
 //! icon, a gain, mute, polarity, +48 V (stored only: there is no preamp to
 //! switch) and a pairing: MONO, or STEREO / MID-SIDE with its neighbour
 //! (ports 1-2, 3-4, ...; the pair shares the first port's settings).
+//!
+//! The oscillators (`/io/in/OSC/1..2/osc`): each generates a sine, pink or
+//! white noise ([`livedaw_dsp::generator`]) at its LEVEL and FREQ; its source
+//! MUTE switches it off, as on the WING (the OSC sources have no gain,
+//! polarity or +48 V there). A STEREO / MID-SIDE pair runs on OSC 1's
+//! settings: the sine in phase on both sides, the noises uncorrelated.
 //!
 //! Channels patched to a source get its processing first: once per block,
 //! before the channels run, the engine processes each source whose settings
@@ -17,6 +24,8 @@
 //! muted while one of them is engaged (the WING's `/io/in/../tags` `#M1`...).
 
 use crate::atomic::AtomicF32;
+use livedaw_dsp::generator::{generator_mode, SignalGenerator, GENERATOR_MODES};
+use livedaw_dsp::generator::{GENERATOR_FREQ_MAX_HZ, GENERATOR_FREQ_MIN_HZ, GENERATOR_LEVEL_MAX_DB, GENERATOR_LEVEL_MIN_DB};
 use livedaw_dsp::util::{apply_gain_ramp, db_to_gain, peak_level};
 use livedaw_recorder::{playback_channel, usb_player_channel, NUM_PLAYBACK_CHANNELS, PLAYBACK_SOURCE_BASE};
 use livedaw_recorder::{USB_CHANNELS, USB_PLAYER_SOURCE_BASE};
@@ -25,10 +34,70 @@ use std::sync::Mutex;
 
 /// Hardware input ports with a source (12 groups of 48); ports beyond pass through.
 pub const NUM_HW_SOURCES: usize = 576;
-/// Sources: the hardware ports, the playback channels, then the USB PLAYER.
-pub const NUM_SOURCES: usize = NUM_HW_SOURCES + NUM_PLAYBACK_CHANNELS + USB_CHANNELS;
+/// The oscillators (the OSC source group): OSC n is input `OSC_SOURCE_BASE + n - 1`.
+pub const NUM_OSCILLATORS: usize = 2;
+pub const OSC_SOURCE_BASE: i32 = 0x30000;
+/// Sources: the hardware ports, the playback channels, the USB PLAYER, then the oscillators.
+pub const NUM_SOURCES: usize = NUM_HW_SOURCES + NUM_PLAYBACK_CHANNELS + USB_CHANNELS + NUM_OSCILLATORS;
 /// Table index of USB PLAYER 1.
 pub const USB_PLAYER_SOURCE_INDEX: usize = NUM_HW_SOURCES + NUM_PLAYBACK_CHANNELS;
+/// Table index of OSC 1.
+pub const OSC_SOURCE_INDEX: usize = USB_PLAYER_SOURCE_INDEX + USB_CHANNELS;
+
+/// The oscillator an input index refers to, if any.
+pub fn osc_channel(input: i32) -> Option<usize> {
+    let n = input.checked_sub(OSC_SOURCE_BASE)?;
+    usize::try_from(n).ok().filter(|&n| n < NUM_OSCILLATORS)
+}
+
+/// The oscillators' defaults: a 1 kHz sine at -20 dBFS.
+pub const OSC_DEFAULT_LEVEL_DB: f32 = -20.0;
+pub const OSC_DEFAULT_FREQ_HZ: f32 = 1000.0;
+
+/// One oscillator's settings, shared with the UI (`ld_engine_oscillators`).
+/// Its on / off is its source's MUTE.
+#[repr(C)]
+#[derive(Debug)]
+pub struct OscParams {
+    /// Index into [`GENERATOR_MODES`] (SINE, PINK, WHITE).
+    pub mode: AtomicI32,
+    /// LEVEL, dBFS (the sine's peak; the noises have the sine's RMS).
+    pub level_db: AtomicF32,
+    pub freq_hz: AtomicF32,
+}
+
+impl Default for OscParams {
+    fn default() -> Self {
+        Self {
+            mode: AtomicI32::new(generator_mode::SINE),
+            level_db: AtomicF32::new(OSC_DEFAULT_LEVEL_DB),
+            freq_hz: AtomicF32::new(OSC_DEFAULT_FREQ_HZ),
+        }
+    }
+}
+
+impl OscParams {
+    pub fn reset(&self) {
+        self.mode.store(generator_mode::SINE, Relaxed);
+        self.level_db.store(OSC_DEFAULT_LEVEL_DB);
+        self.freq_hz.store(OSC_DEFAULT_FREQ_HZ);
+    }
+
+    pub fn is_default(&self) -> bool {
+        self.mode.load(Relaxed) == generator_mode::SINE
+            && self.level_db.load() == OSC_DEFAULT_LEVEL_DB
+            && self.freq_hz.load() == OSC_DEFAULT_FREQ_HZ
+    }
+
+    /// Mode, level and frequency, in range.
+    fn get(&self) -> (i32, f32, f32) {
+        (
+            self.mode.load(Relaxed).clamp(0, GENERATOR_MODES.len() as i32 - 1),
+            self.level_db.load().clamp(GENERATOR_LEVEL_MIN_DB, GENERATOR_LEVEL_MAX_DB),
+            self.freq_hz.load().clamp(GENERATOR_FREQ_MIN_HZ, GENERATOR_FREQ_MAX_HZ),
+        )
+    }
+}
 
 /// Source pairing.
 pub const SOURCE_MODES: [&str; 3] = ["MONO", "STEREO", "MID/SIDE"];
@@ -128,6 +197,9 @@ impl SourceParams {
 /// The table index of input port `port` (a hardware input or a playback
 /// channel), None for ports without a source.
 pub fn source_index(port: i32) -> Option<usize> {
+    if let Some(n) = osc_channel(port) {
+        return Some(OSC_SOURCE_INDEX + n);
+    }
     if let Some(n) = usb_player_channel(port) {
         return Some(USB_PLAYER_SOURCE_INDEX + n);
     }
@@ -143,8 +215,10 @@ pub fn source_port(index: usize) -> Option<i32> {
         Some(index as i32)
     } else if index < USB_PLAYER_SOURCE_INDEX {
         Some(PLAYBACK_SOURCE_BASE + (index - NUM_HW_SOURCES) as i32)
-    } else if index < NUM_SOURCES {
+    } else if index < OSC_SOURCE_INDEX {
         Some(USB_PLAYER_SOURCE_BASE + (index - USB_PLAYER_SOURCE_INDEX) as i32)
+    } else if index < NUM_SOURCES {
+        Some(OSC_SOURCE_BASE + (index - OSC_SOURCE_INDEX) as i32)
     } else {
         None
     }
@@ -160,6 +234,7 @@ pub struct SourceTable {
     params: Box<[SourceParams]>,
     /// Names (message thread; empty = the port's name).
     names: Mutex<Vec<String>>,
+    osc: [OscParams; NUM_OSCILLATORS],
 }
 
 impl Default for SourceTable {
@@ -167,6 +242,7 @@ impl Default for SourceTable {
         Self {
             params: (0..NUM_SOURCES).map(|_| SourceParams::default()).collect(),
             names: Mutex::new(vec![String::new(); NUM_SOURCES]),
+            osc: Default::default(),
         }
     }
 }
@@ -178,6 +254,15 @@ impl SourceTable {
 
     pub fn get(&self, index: usize) -> Option<&SourceParams> {
         self.params.get(index)
+    }
+
+    /// Oscillator `n` (0-based).
+    pub fn osc(&self, n: usize) -> Option<&OscParams> {
+        self.osc.get(n)
+    }
+
+    pub fn oscillators(&self) -> &[OscParams] {
+        &self.osc
     }
 
     pub fn name(&self, index: usize) -> String {
@@ -218,6 +303,9 @@ impl SourceTable {
         for i in indices {
             self.params[i].reset();
             self.set_name(i, "");
+            if let Some(o) = i.checked_sub(OSC_SOURCE_INDEX).and_then(|n| self.osc.get(n)) {
+                o.reset();
+            }
         }
     }
 
@@ -227,6 +315,7 @@ impl SourceTable {
             p.reset();
             p.mode.store(source_mode::MONO, Relaxed);
         }
+        self.osc.iter().for_each(OscParams::reset);
         self.names.lock().unwrap_or_else(|e| e.into_inner()).iter_mut().for_each(String::clear);
     }
 }
@@ -245,22 +334,27 @@ pub(crate) struct SourceDsp {
     last_matrix: Vec<[f32; 4]>,
     num_hw: usize,
     /// What the channels read: hardware inputs by port, playback channels
-    /// (then the USB PLAYER's four, see `source_ptr`).
+    /// (then the USB PLAYER's four and the oscillators, see `source_ptr`).
     hw_out: Vec<*const f32>,
     playback_out: Vec<*const f32>,
+    /// The oscillators and the signal they generate this block.
+    generators: Vec<SignalGenerator>,
+    generated: Vec<Vec<f32>>,
 }
 
 impl SourceDsp {
     /// Allocates for a device (message thread, device stopped).
-    pub fn prepare(&mut self, num_hw_inputs: usize, block_size: usize) {
+    pub fn prepare(&mut self, num_hw_inputs: usize, block_size: usize, sample_rate: f64) {
         let num_hw = num_hw_inputs.min(NUM_HW_SOURCES);
-        let count = num_hw.next_multiple_of(2) + NUM_PLAYBACK_CHANNELS + USB_CHANNELS;
+        let count = num_hw.next_multiple_of(2) + NUM_PLAYBACK_CHANNELS + USB_CHANNELS + NUM_OSCILLATORS;
         self.num_hw = num_hw;
         self.buffers = vec![vec![0.0; block_size]; count];
         self.last_gain = vec![1.0; count];
         self.last_matrix = vec![IDENTITY; count / 2];
         self.hw_out = vec![std::ptr::null(); num_hw_inputs];
-        self.playback_out = vec![std::ptr::null(); NUM_PLAYBACK_CHANNELS + USB_CHANNELS];
+        self.playback_out = vec![std::ptr::null(); NUM_PLAYBACK_CHANNELS + USB_CHANNELS + NUM_OSCILLATORS];
+        self.generators = (0..NUM_OSCILLATORS as u32).map(|n| SignalGenerator::new(sample_rate, 0x9e37_79b9 ^ (n + 1))).collect();
+        self.generated = vec![vec![0.0; block_size]; NUM_OSCILLATORS];
     }
 
     pub fn hw_ptrs(&self) -> &[*const f32] {
@@ -294,6 +388,8 @@ impl SourceDsp {
             self.playback_out.extend_from_slice(&playback[..playback.len().min(room)]);
             let room = self.playback_out.capacity() - self.playback_out.len();
             self.playback_out.extend_from_slice(&usb[..USB_CHANNELS.min(room)]);
+            let room = self.playback_out.capacity() - self.playback_out.len();
+            self.playback_out.extend(std::iter::repeat_n(std::ptr::null(), NUM_OSCILLATORS.min(room)));
             return;
         }
         // Ports beyond the source table pass through.
@@ -331,6 +427,28 @@ impl SourceDsp {
             self.playback_out[NUM_PLAYBACK_CHANNELS + ch] = l;
             self.playback_out[NUM_PLAYBACK_CHANNELS + ch + 1] = r;
         }
+        // The oscillators, after the USB PLAYER.
+        let raw = self.generate(table, n);
+        let [l, r] = self.process_pair(table, OSC_SOURCE_INDEX, base + USB_CHANNELS, raw, n, mute_groups);
+        self.playback_out[NUM_PLAYBACK_CHANNELS + USB_CHANNELS] = l;
+        self.playback_out[NUM_PLAYBACK_CHANNELS + USB_CHANNELS + 1] = r;
+    }
+
+    /// Runs the oscillators into `generated` (a pair on OSC 1's settings, its
+    /// sine in phase) and returns their buffers.
+    fn generate(&mut self, table: &SourceTable, n: usize) -> [*const f32; 2] {
+        let ([g1, g2, ..], [b1, b2, ..]) = (&mut self.generators[..], &mut self.generated[..]) else {
+            return [std::ptr::null(); 2];
+        };
+        let paired = table.params[OSC_SOURCE_INDEX].mode.load(Relaxed) != source_mode::MONO;
+        let (mode, level, freq) = table.osc[0].get();
+        if paired {
+            g2.set_phase(g1.phase());
+        }
+        g1.process(&mut b1[..n], mode, freq, level);
+        let (mode, level, freq) = if paired { (mode, level, freq) } else { table.osc[1].get() };
+        g2.process(&mut b2[..n], mode, freq, level);
+        [b1.as_ptr(), b2.as_ptr()]
     }
 
     /// One pair: `index` is the table index of its first source, `slot` the

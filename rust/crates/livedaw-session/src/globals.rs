@@ -2,7 +2,8 @@
 //! features: SOLO MODE, MUTEGROUP/SIP OVERRIDE and SOURCE SOLO, talkback, the
 //! strips' talk tags, the monitor paths (sources, the PHONES path, and each
 //! path's DIRECT IN, BAND SOLO, EQ, PAN / WIDTH, INVERT, DELAY and LIMITER)
-//! and the sources of ROUTING > SOURCES (with their mute-group tags).
+//! and the sources of ROUTING > SOURCES (with their mute-group tags and the
+//! oscillators' settings).
 //!
 //! Show files keep all of it ([`capture`] / [`apply`] from `save_console` /
 //! `load_console`); scenes recall the monitor paths with ROUTING, like the
@@ -200,6 +201,17 @@ fn capture_sources(engine: &Engine, parent: &mut Element) {
         put_i(x, "icon", &p.icon);
         put_u(x, "mgrp", &p.mute_groups);
     }
+    // The oscillators (the OSC group's generator settings).
+    for (i, o) in table.oscillators().iter().enumerate() {
+        if o.is_default() {
+            continue;
+        }
+        let x = e.add_new("Osc");
+        x.set("i", i);
+        put_i(x, "mode", &o.mode);
+        put_f(x, "level", &o.level_db);
+        put_f(x, "freq", &o.freq_hz);
+    }
 }
 
 fn apply_source(x: &Element, p: &SourceParams) {
@@ -226,6 +238,12 @@ fn apply_sources(engine: &Engine, parent: &Element) {
         // settings across (each source's own values were saved).
         let mode = x.int_or("mode", source_mode::MONO);
         p.mode.store(mode.clamp(0, 2), Relaxed);
+    }
+    for x in e.children_named("Osc") {
+        let Some(o) = usize::try_from(x.int_or("i", -1)).ok().and_then(|i| table.osc(i)) else { continue };
+        get_i(x, "mode", &o.mode);
+        get_f(x, "level", &o.level_db);
+        get_f(x, "freq", &o.freq_hz);
     }
 }
 

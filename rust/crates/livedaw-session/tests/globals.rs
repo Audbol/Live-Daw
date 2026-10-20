@@ -58,6 +58,10 @@ fn console_level_state_survives_a_show_round_trip() {
     src.set_name(0, "Kick In");
     src.set_mode(2, source_mode::STEREO);
     src.params()[2].invert.store(true, Relaxed);
+    let osc = src.osc(1).unwrap();
+    osc.mode.store(2, Relaxed);
+    osc.level_db.store(-30.0);
+    osc.freq_hz.store(63.0);
     src.params()[3].invert.store(true, Relaxed);
     src.set_mode(600, source_mode::MID_SIDE);
     src.params()[601].mute.store(true, Relaxed);
@@ -103,6 +107,9 @@ fn console_level_state_survives_a_show_round_trip() {
     assert_eq!(p[601].mode.load(Relaxed), source_mode::MID_SIDE);
     assert!(p[601].mute.load(Relaxed));
     assert!(p[1].is_default() && p[599].is_default());
+    let osc = os.osc(1).unwrap();
+    assert_eq!((osc.mode.load(Relaxed), osc.level_db.load(), osc.freq_hz.load()), (2, -30.0, 63.0));
+    assert!(os.osc(0).unwrap().is_default());
 
     let tags = |kind, id| find_strip(&other, &StripRef::new(kind, id)).unwrap().console.talk_tags.load(Relaxed);
     let ch4 = engine.channel_at(3).unwrap().id();
@@ -117,6 +124,7 @@ fn console_level_state_survives_a_show_round_trip() {
     assert_eq!(other.controls.solo_mode.load(Relaxed), 1);
     assert_eq!(other.controls.talk.assignment(), None);
     assert!(other.sources().params()[0].is_default());
+    assert!(other.sources().osc(1).unwrap().is_default());
     assert_eq!(other.controls.phones.output_left.load(Relaxed), -1);
 }
 

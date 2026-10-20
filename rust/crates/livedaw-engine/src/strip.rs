@@ -23,6 +23,7 @@ use crate::params::{DcaParams, DynSlotParams, FxParams, StripKind, StripMeters, 
 use crate::pdc::{pdc_tap, StripPdc};
 use crate::sends::SendBank;
 use crate::solo::StripConsole;
+use crate::sources::osc_channel;
 use crate::tapsend::TapShaper;
 use livedaw_dsp::biquad::{Biquad, BiquadCoeffs};
 use livedaw_dsp::delay::{delay_to_ms, DelayLine};
@@ -31,7 +32,7 @@ use livedaw_dsp::wing::dynamics::{DynStatus, WingDynamics};
 use livedaw_dsp::wing::eq::WingEq;
 use livedaw_dsp::wing::filter::WingFilter;
 use livedaw_dsp::wing::{EQ_MODELS_BUS, EQ_MODELS_CH, MAX_DYN_PARAMS, MAX_EQ_PARAMS, PROCESS_ORDERS};
-use livedaw_recorder::{playback_channel, usb_player_channel, NUM_PLAYBACK_CHANNELS};
+use livedaw_recorder::{playback_channel, usb_player_channel, NUM_PLAYBACK_CHANNELS, USB_CHANNELS};
 use std::cell::UnsafeCell;
 use std::sync::atomic::Ordering::Relaxed;
 use std::sync::{Arc, Mutex};
@@ -1040,14 +1041,18 @@ impl Strip {
 }
 
 /// The buffer of input source `index`: hardware input `index`, playback
-/// channel `index - PLAYBACK_SOURCE_BASE` or USB PLAYER channel `index -
-/// USB_PLAYER_SOURCE_BASE` (after the playback channels in `playback`).
-/// None = not connected.
+/// channel `index - PLAYBACK_SOURCE_BASE`, USB PLAYER channel `index -
+/// USB_PLAYER_SOURCE_BASE` or oscillator `index - OSC_SOURCE_BASE` (after
+/// the playback channels in `playback`, in that order). None = not connected.
 pub(crate) fn source_ptr(hw: &[*const f32], playback: &[*const f32], index: i32) -> Option<*const f32> {
-    let p = match (playback_channel(index), usb_player_channel(index)) {
-        (Some(n), _) => playback.get(n),
-        (None, Some(n)) => playback.get(NUM_PLAYBACK_CHANNELS + n),
-        (None, None) => hw.get(usize::try_from(index).ok()?),
+    let p = if let Some(n) = playback_channel(index) {
+        playback.get(n)
+    } else if let Some(n) = usb_player_channel(index) {
+        playback.get(NUM_PLAYBACK_CHANNELS + n)
+    } else if let Some(n) = osc_channel(index) {
+        playback.get(NUM_PLAYBACK_CHANNELS + USB_CHANNELS + n)
+    } else {
+        hw.get(usize::try_from(index).ok()?)
     };
     p.copied().filter(|p| !p.is_null())
 }

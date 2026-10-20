@@ -7,6 +7,8 @@ namespace livedaw::ui
 namespace
 {
     constexpr int kTilesPerRow = 8, kTargetsPerPage = 48, kPortsPerGroup = 48;
+    // A source's GAIN and an oscillator's LEVEL (dB).
+    constexpr float kGainMin = -12.0f, kGainMax = 60.0f, kOscLevelMin = -40.0f, kOscLevelMax = -6.0f;
 
     // ROUTING's own colours [3.1]: port labels blue for mono and olive for
     // stereo, ALT orange, +1 AUTO yellow, the locked padlock red.
@@ -211,13 +213,16 @@ StatusTitle RoutingPage::getStatusTitle()
     {
         t.kind = StatusTitle::Kind::Source;
         const bool usbPlayer = UsbRecorder::isPlayerSource (selectedSource);
+        const bool osc = MixerEngine::isOscSource (selectedSource);
         const bool playback = Recorder::isPlaybackSource (selectedSource) || usbPlayer;
-        t.prefix = juce::String ((usbPlayer ? UsbRecorder::playerChannelOf (selectedSource)
-                                  : playback ? Recorder::playbackChannelOf (selectedSource)
-                                             : selectedSource) + 1);
+        t.prefix = juce::String ((osc         ? MixerEngine::oscChannelOf (selectedSource)
+                                  : usbPlayer ? UsbRecorder::playerChannelOf (selectedSource)
+                                  : playback  ? Recorder::playbackChannelOf (selectedSource)
+                                              : selectedSource) + 1);
         const auto custom = ctx.engine.getSourceName (MixerEngine::sourceIndex (selectedSource));
-        t.text = custom.isNotEmpty() ? custom.toUpperCase() : juce::String (usbPlayer ? "USB PLAYER" : playback ? "PLAYBACK" : "AUDIO IN");
-        t.icon = playback ? Icon::Waveform : Icon::Xlr;
+        t.text = custom.isNotEmpty() ? custom.toUpperCase()
+                                     : juce::String (osc ? "OSCILLATOR" : usbPlayer ? "USB PLAYER" : playback ? "PLAYBACK" : "AUDIO IN");
+        t.icon = osc ? Icon::Sine : playback ? Icon::Waveform : Icon::Xlr;
     }
     else if (mode == Mode::Outputs)
     {
@@ -360,21 +365,35 @@ void RoutingPage::timerCallback()
     if (ctx.engine.getStructureVersion() != layoutVersion)
         layoutTiles();
 
-    // The source meters (the page is their only reader): the group's tiles and the selection.
+    // The source meters (the page is their only reader): the group's tiles and
+    // the selection. Only the meters that move are repainted: a whole page of
+    // tiles ten times a second can keep a slow machine's message thread busy.
     if (mode != Mode::Outputs)
     {
+        auto moved = [] (float a, float b)
+        { return std::abs (juce::Decibels::gainToDecibels (a, -60.0f) - juce::Decibels::gainToDecibels (b, -60.0f)) > 0.5f; };
+        const auto& grid = mode == Mode::Channels ? rightPorts : leftPorts;
         sourcePeaks.resize ((size_t) kPortsPerGroup, 0.0f);
         for (int i = 0; i < kPortsPerGroup; ++i)
         {
             auto* src = ctx.engine.getSource (MixerEngine::sourceIndex (sourceAt (inputGroup, i)));
             const float peak = src != nullptr ? src->peak.exchange (0.0f) : 0.0f;
             auto& shown = sourcePeaks[(size_t) i];
+            const float before = shown;
             shown = juce::jmax (peak, shown * 0.5f);
+            if (moved (before, shown) && juce::isPositiveAndBelow (i, (int) grid.size()))
+                repaint (grid[(size_t) i]);
             if (sourceAt (inputGroup, i) == selectedSource)
+            {
+                if (moved (selectedSourcePeak, shown) && mode == Mode::Sources)
+                    repaint (sourceMeter);
                 selectedSourcePeak = shown;
+            }
         }
     }
-    repaint();
+    // Everything else twice a second (patches, names and keys changed elsewhere).
+    if (++refreshTicks % 5 == 0)
+        repaint();
 }
 
 void RoutingPage::resized()
@@ -537,8 +556,8 @@ juce::String RoutingPage::inputUsers (int port) const
 
 int RoutingPage::numSourceGroups() const
 {
-    // The hardware inputs, the playback channels, then the USB PLAYER.
-    return numPortGroups (false) + (Recorder::kNumPlaybackChannels + kPortsPerGroup - 1) / kPortsPerGroup + 1;
+    // The hardware inputs, the playback channels, the USB PLAYER, then the OSCILLATOR.
+    return numPortGroups (false) + (Recorder::kNumPlaybackChannels + kPortsPerGroup - 1) / kPortsPerGroup + 2;
 }
 
 juce::String RoutingPage::sourceGroupName (int group) const
@@ -547,6 +566,8 @@ juce::String RoutingPage::sourceGroupName (int group) const
     if (group < hw)
         return "AUDIO IN " + juce::String (group * kPortsPerGroup + 1) + "-" + juce::String (group * kPortsPerGroup + kPortsPerGroup);
     if (group == numSourceGroups() - 1)
+        return "OSCILLATOR";
+    if (group == numSourceGroups() - 2)
         return "USB PLAYER";
     const int first = (group - hw) * kPortsPerGroup;
     return "PLAY " + juce::String (first + 1) + "-" + juce::String (juce::jmin (Recorder::kNumPlaybackChannels, first + kPortsPerGroup));
@@ -558,6 +579,8 @@ int RoutingPage::sourceAt (int group, int index) const
     if (group < hw)
         return group * kPortsPerGroup + index;
     if (group == numSourceGroups() - 1)
+        return index < ld::kNumOscillators ? MixerEngine::oscSource (index) : -1;
+    if (group == numSourceGroups() - 2)
         return index < UsbRecorder::kNumChannels ? UsbRecorder::playerSource (index) : -1;
     const int channel = (group - hw) * kPortsPerGroup + index;
     return channel < Recorder::kNumPlaybackChannels ? Recorder::playbackSource (channel) : -1;
@@ -575,6 +598,8 @@ juce::String RoutingPage::sourceName (int source) const
         return Recorder::playbackSourceName (Recorder::playbackChannelOf (source));
     if (UsbRecorder::isPlayerSource (source))
         return UsbRecorder::playerSourceName (UsbRecorder::playerChannelOf (source));
+    if (MixerEngine::isOscSource (source))
+        return MixerEngine::oscSourceName (MixerEngine::oscChannelOf (source));
     return portName (source, false);
 }
 
@@ -659,7 +684,9 @@ void RoutingPage::paintChannelTile (juce::Graphics& g, juce::Rectangle<int> area
         // Mono sources in blue, stereo in olive.
         t.labelColour = stereo ? stereoLabel : monoLabel;
         t.label = sourceName (port);
-        if (stereo && UsbRecorder::isPlayerSource (port))
+        if (stereo && MixerEngine::isOscSource (port))
+            t.label = "OSC 1/2";
+        else if (stereo && UsbRecorder::isPlayerSource (port))
             t.label = "PLAYER " + juce::String (UsbRecorder::playerChannelOf (port) + 1) + "/"
                       + juce::String (UsbRecorder::playerChannelOf (portRight >= 0 ? portRight : port + 1) + 1);
         else if (stereo && ! Recorder::isPlaybackSource (port))
@@ -679,6 +706,7 @@ void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, 
     // (phantom) and M (mute) chips, a mini meter, and a stereo / mid-side
     // pair's label in olive with the link glyph.
     const bool usbPlayer = UsbRecorder::isPlayerSource (port);
+    const bool osc = MixerEngine::isOscSource (port);
     const bool playback = Recorder::isPlaybackSource (port) || usbPlayer;
     const auto* src = sourceParams (port);
     const int colour = src != nullptr ? src->colour.load() : 1;
@@ -688,15 +716,19 @@ void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, 
     t.strip = playback && colour == 1 ? playbackStrip : wingColour (colour);
     const int index = MixerEngine::sourceIndex (port);
     t.name = index >= 0 ? ctx.engine.getSourceName (index).toUpperCase() : juce::String();
-    t.number = juce::String ((usbPlayer ? UsbRecorder::playerChannelOf (port) : playback ? Recorder::playbackChannelOf (port) : port) + 1);
-    t.label = usbPlayer ? UsbRecorder::playerSourceName (UsbRecorder::playerChannelOf (port))
-              : playback ? Recorder::playbackSourceName (Recorder::playbackChannelOf (port))
-                         : portName (port, false);
+    t.number = juce::String ((osc         ? MixerEngine::oscChannelOf (port)
+                              : usbPlayer ? UsbRecorder::playerChannelOf (port)
+                              : playback  ? Recorder::playbackChannelOf (port)
+                                          : port) + 1);
+    t.label = osc         ? MixerEngine::oscSourceName (MixerEngine::oscChannelOf (port))
+              : usbPlayer ? UsbRecorder::playerSourceName (UsbRecorder::playerChannelOf (port))
+              : playback  ? Recorder::playbackSourceName (Recorder::playbackChannelOf (port))
+                          : portName (port, false);
     t.labelColour = pairing != ld::kSourceMono ? stereoLabel : (playback ? FileColours::wav : monoLabel);
-    t.icon = [icon, playback] (juce::Graphics& gr, juce::Rectangle<float> r)
+    t.icon = [icon, playback, osc] (juce::Graphics& gr, juce::Rectangle<float> r)
     {
         if (icon <= 0 || ! drawWingIcon (gr, icon, r, Dark::textDim))
-            drawIcon (gr, playback ? Icon::Waveform : Icon::Xlr, r, Dark::textDim);
+            drawIcon (gr, osc ? Icon::Sine : playback ? Icon::Waveform : Icon::Xlr, r, Dark::textDim);
     };
     t.selected = marked;
     // [3.1, D14] the right edge of the body holds the 48 / M chips (grey when
@@ -748,7 +780,15 @@ void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, 
     auto chips = body.removeFromRight (body.getWidth() * 0.26f).reduced (1.0f, 0.0f).translated (-3.0f, 0.0f);
     const float chipH = juce::jmin (screenCap (11.0f), chips.getHeight() * 0.42f);
     chips = chips.withSizeKeepingCentre (chips.getWidth(), chipH * 2.0f + 2.0f);
-    drawChip (g, chips.removeFromTop (chipH), "48", src->phantom.load() ? Colours::mute : Colours::chipOff, juce::Colours::black);
+    // An oscillator has no preamp: its chip shows SIN, PNK or WHT (a pair's, OSC 1's).
+    if (osc)
+    {
+        static const char* const types[] = { "SIN", "PNK", "WHT" };
+        const auto* o = ctx.engine.getOscillator (pairing != ld::kSourceMono ? 0 : MixerEngine::oscChannelOf (port));
+        drawChip (g, chips.removeFromTop (chipH), types[juce::jlimit (0, 2, o != nullptr ? (int) o->mode.load() : 0)], Colours::chipOff, juce::Colours::black);
+    }
+    else
+        drawChip (g, chips.removeFromTop (chipH), "48", src->phantom.load() ? Colours::mute : Colours::chipOff, juce::Colours::black);
     chips.removeFromTop (2.0f);
     drawChip (g, chips.removeFromTop (chipH), "M", src->mute.load() ? Colours::mute : Colours::chipOff, juce::Colours::black);
 }
@@ -872,6 +912,19 @@ void RoutingPage::layoutSourcePanel()
     sourceMuteKey = keys.removeFromBottom (kh + 6);
     body.removeFromLeft (8);
     sourceGainFader = body.withTrimmedBottom (kh / 2);
+    // An OSC source: SINE / PINK / WHITE keys in the 48V / POL column, the FREQ
+    // field across that column and the fader's, LEVEL under it.
+    {
+        auto osc = keys.withTop (sourcePhantomKey.getY());
+        for (auto& k : oscModeKeys)
+        {
+            k = osc.removeFromTop (kh);
+            osc.removeFromTop (4);
+        }
+        osc.removeFromTop (4);
+        oscFreqField = osc.removeFromTop (kh * 3 / 2).withRight (sourceGainFader.getRight());
+        oscLevelFader = sourceGainFader.withTop (oscFreqField.getBottom() + 6);
+    }
 
     // TAGS: the 8 mute groups the source belongs to (2 x 4).
     sourceTagCells.clear();
@@ -964,11 +1017,13 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g, juce::Rectangle<int>) 
         const auto ring = box.reduced (6).toFloat().withSizeKeepingCentre ((float) juce::jmin (box.getHeight() - 12, screenCap (64)), (float) juce::jmin (box.getHeight() - 12, screenCap (64)));
         g.setColour (Colours::yellow);
         g.drawEllipse (ring, 2.0f);
+        const bool osc = MixerEngine::isOscSource (selectedSource);
         if (src->icon.load() <= 0 || ! drawWingIcon (g, src->icon.load(), ring.reduced (ring.getWidth() * 0.22f), Dark::text))
-            drawIcon (g, playback ? Icon::Waveform : Icon::Xlr, ring.reduced (ring.getWidth() * 0.22f), Dark::text);
+            drawIcon (g, osc ? Icon::Sine : playback ? Icon::Waveform : Icon::Xlr, ring.reduced (ring.getWidth() * 0.22f), Dark::text);
         g.setColour (Dark::text);
         g.setFont (wingFont (TypeScale::body));
-        const int shownNumber = UsbRecorder::isPlayerSource (selectedSource) ? UsbRecorder::playerChannelOf (selectedSource)
+        const int shownNumber = osc                                          ? MixerEngine::oscChannelOf (selectedSource)
+                                : UsbRecorder::isPlayerSource (selectedSource) ? UsbRecorder::playerChannelOf (selectedSource)
                                 : playback                                   ? Recorder::playbackChannelOf (selectedSource)
                                                                              : selectedSource;
         g.drawText (juce::String (shownNumber + 1),
@@ -1017,17 +1072,51 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g, juce::Rectangle<int>) 
         }
     }
 
+    if (const auto* osc = selectedOscillator())
+    {
+        // The oscillator [WING: ROUTING > SOURCES, OSC group]: its type, FREQ
+        // (a sine's) and LEVEL; MUTE switches it off.
+        const char* types[] = { "SINE", "PINK", "WHITE" };
+        g.setColour (juce::Colours::black);
+        g.fillRect (oscModeKeys[0].getUnion (oscModeKeys[2]).expanded (0, 2));
+        for (int i = 0; i < 3; ++i)
+        {
+            const bool on = osc->mode.load() == i;
+            auto k = oscModeKeys[(size_t) i];
+            if (on)
+            {
+                g.setColour (Colours::valueBlue);
+                g.fillRect (k);
+            }
+            g.setColour (on ? juce::Colours::black : Dark::text);
+            g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), (float) k.getHeight() * 0.36f)));
+            g.drawText (types[i], k, juce::Justification::centred);
+        }
+        // "250 Hz", "1.00 kHz"; dim while a noise plays.
+        const auto hz = formatHz (osc->freqHz.load());
+        drawField (g, oscFreqField, "FREQ", hz.endsWithChar ('k') ? hz.dropLastCharacters (1) + " kHz" : hz + " Hz",
+                   osc->mode.load() == ld::kOscSine ? Dark::text : Dark::textDim);
+        drawOutlinedKey (g, sourceMuteKey, std::nullopt, "MUTE", src->mute.load(), Colours::mute);
+        paintLevelFader (g, oscLevelFader, osc->levelDb.load(), kOscLevelMin, kOscLevelMax, "LEVEL");
+        return;
+    }
+
     drawOutlinedKey (g, sourcePhantomKey, Icon::Power, "48V", src->phantom.load(), Colours::mute, true);
     drawOutlinedKey (g, sourcePolKey, Icon::Invert, "POL", src->invert.load(), Colours::yellow, true);
     drawOutlinedKey (g, sourceMuteKey, std::nullopt, "MUTE", src->mute.load(), Colours::mute);
+    paintLevelFader (g, sourceGainFader, src->gainDb.load(), kGainMin, kGainMax, "GAIN");
+}
 
-    // GAIN: a fader with the value flag (-12 .. +60 dB).
+void RoutingPage::paintLevelFader (juce::Graphics& g, juce::Rectangle<int> area, float value, float min, float max, const juce::String& caption) const
+{
+
+    // GAIN (-12 .. +60 dB) or an oscillator's LEVEL (-40 .. -6 dB): a fader with the value flag.
     {
-        auto f = sourceGainFader.toFloat();
+        auto f = area.toFloat();
         g.setColour (Dark::well);
         g.fillRect (f);
-        const float gain = src->gainDb.load();
-        const float pos = juce::jlimit (0.0f, 1.0f, (gain + 12.0f) / 72.0f);
+        const float gain = value;
+        const float pos = juce::jlimit (0.0f, 1.0f, (gain - min) / (max - min));
         auto slot = f.withSizeKeepingCentre (juce::jmin (screenCap (10.0f), f.getWidth() * 0.25f), f.getHeight() - 24.0f);
         g.setColour (Dark::key);
         g.fillRect (slot);
@@ -1041,7 +1130,7 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g, juce::Rectangle<int>) 
         g.setFont (wingFont (TypeScale::statusCaption));
         g.drawFittedText (juce::String (gain, 1) + " dB", flag.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         g.setColour (Dark::textDim);
-        g.drawText ("GAIN", f.withY (f.getBottom() + 2.0f).withHeight (14.0f), juce::Justification::centred);
+        g.drawText (caption, f.withY (f.getBottom() + 2.0f).withHeight (14.0f), juce::Justification::centred);
     }
 }
 
@@ -1145,11 +1234,63 @@ void RoutingPage::renameSource()
 
 void RoutingPage::setSourceGainFromY (int y)
 {
-    auto slot = sourceGainFader.toFloat().withSizeKeepingCentre (10.0f, (float) sourceGainFader.getHeight() - 24.0f);
+    const auto fader = levelFader();
+    auto slot = fader.toFloat().withSizeKeepingCentre (10.0f, (float) fader.getHeight() - 24.0f);
     const float pos = juce::jlimit (0.0f, 1.0f, (slot.getBottom() - (float) y) / juce::jmax (1.0f, slot.getHeight()));
-    const float gain = std::round ((pos * 72.0f - 12.0f) * 2.0f) / 2.0f; // 0.5 dB steps
-    forSourcePair (ctx.engine, selectedSource, [gain] (ld::SourceParams& s) { s.gainDb = gain; });
+    if (auto* osc = selectedOscillator())
+        osc->levelDb = std::round ((kOscLevelMin + pos * (kOscLevelMax - kOscLevelMin)) * 2.0f) / 2.0f;
+    else
+    {
+        const float gain = std::round ((pos * 72.0f - 12.0f) * 2.0f) / 2.0f; // 0.5 dB steps
+        forSourcePair (ctx.engine, selectedSource, [gain] (ld::SourceParams& s) { s.gainDb = gain; });
+    }
     repaint();
+}
+
+juce::Rectangle<int> RoutingPage::levelFader() const
+{
+    return MixerEngine::isOscSource (selectedSource) ? oscLevelFader : sourceGainFader;
+}
+
+ld::OscParams* RoutingPage::selectedOscillator() const
+{
+    const int n = MixerEngine::oscChannelOf (selectedSource);
+    if (n < 0)
+        return nullptr;
+    // A pair runs on OSC 1's settings.
+    const auto* src = ctx.engine.getSource (MixerEngine::sourceIndex (selectedSource));
+    return ctx.engine.getOscillator (src != nullptr && src->mode.load() != ld::kSourceMono ? 0 : n);
+}
+
+void RoutingPage::showOscFreqMenu()
+{
+    // The usual test frequencies; the knob and the wheel set any other.
+    static constexpr float freqs[] = { 20.0f, 31.5f, 50.0f, 63.0f, 100.0f, 125.0f, 250.0f, 440.0f, 500.0f, 1000.0f,
+                                       2000.0f, 4000.0f, 8000.0f, 10000.0f, 12500.0f, 16000.0f, 20000.0f };
+    auto* osc = selectedOscillator();
+    if (osc == nullptr)
+        return;
+    juce::StringArray items;
+    int current = -1;
+    for (int i = 0; i < (int) std::size (freqs); ++i)
+    {
+        const auto hz = formatHz (freqs[i]);
+        items.add (hz.endsWithChar ('k') ? hz.dropLastCharacters (1) + " kHz" : hz + " Hz");
+        if (std::abs (osc->freqHz.load() - freqs[i]) < 0.01f)
+            current = i;
+    }
+    popups::ListOptions options;
+    options.columns = 4;
+    options.caption = "FREQ";
+    juce::Component::SafePointer<RoutingPage> safe (this);
+    popups::chooseFrom (anchorAt (oscFreqField), items, current, [safe] (int i)
+    {
+        if (safe == nullptr || ! juce::isPositiveAndBelow (i, (int) std::size (freqs)))
+            return;
+        if (auto* o = safe->selectedOscillator())
+            o->freqHz = freqs[i];
+        safe->repaint();
+    }, options);
 }
 
 std::vector<KnobBinding> RoutingPage::getKnobs()
@@ -1159,6 +1300,13 @@ std::vector<KnobBinding> RoutingPage::getKnobs()
     auto* src = sourceParams (selectedSource);
     if (src == nullptr)
         return {};
+    if (auto* osc = selectedOscillator())
+    {
+        // An oscillator: LEVEL, FREQ and the type.
+        auto level = bindLinear ("LEVEL", osc->levelDb, kOscLevelMin, kOscLevelMax, " dB", 1, -20.0f);
+        level.steps = 69.0f; // 0.5 dB steps, as the WING
+        return { level, bindFreq ("FREQ", osc->freqHz, 20.0f, 20000.0f, 1000.0f), bindChoice ("TYPE", osc->mode, { "SINE", "PINK", "WHITE" }) };
+    }
     // A stereo / mid-side pair has one gain (the engine plays the first
     // source's): the knob sets both, as the fader and the wheel do.
     auto gain = bindLinear ("GAIN", src->gainDb, -12.0f, 60.0f, " dB", 1, 0.0f);
@@ -1174,7 +1322,7 @@ std::vector<KnobBinding> RoutingPage::getKnobs()
 
 void RoutingPage::mouseDown (const juce::MouseEvent& e)
 {
-    draggingGain = mode == Mode::Sources && sourceTab == 0 && sourceGainFader.contains (e.getPosition()) && sourceParams (selectedSource) != nullptr;
+    draggingGain = mode == Mode::Sources && sourceTab == 0 && levelFader().contains (e.getPosition()) && sourceParams (selectedSource) != nullptr;
     if (draggingGain)
         setSourceGainFromY (e.y);
 }
@@ -1187,6 +1335,17 @@ void RoutingPage::mouseDrag (const juce::MouseEvent& e)
 
 void RoutingPage::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
 {
+    if (auto* osc = selectedOscillator(); osc != nullptr && mode == Mode::Sources && sourceTab == 0)
+    {
+        // LEVEL in 0.5 dB steps, FREQ in 1/12 octave.
+        const float dir = w.deltaY > 0.0f ? 1.0f : -1.0f;
+        if (oscLevelFader.contains (e.getPosition()))
+            osc->levelDb = juce::jlimit (kOscLevelMin, kOscLevelMax, osc->levelDb.load() + dir * 0.5f);
+        else if (oscFreqField.contains (e.getPosition()))
+            osc->freqHz = juce::jlimit (20.0f, 20000.0f, osc->freqHz.load() * std::pow (2.0f, dir / 12.0f));
+        repaint();
+        return;
+    }
     if (mode == Mode::Sources && sourceTab == 0 && sourceGainFader.contains (e.getPosition()))
         if (auto* src = sourceParams (selectedSource))
         {
@@ -1499,8 +1658,17 @@ void RoutingPage::mouseUp (const juce::MouseEvent& e)
         };
         if (sourceTab == 0)
         {
+            auto* osc = selectedOscillator();
             if (sourceInitKey.contains (pos))
                 ctx.engine.initializeSource (index);
+            else if (osc != nullptr && oscFreqField.contains (pos))
+                showOscFreqMenu();
+            else if (osc != nullptr && ! sourceMuteKey.contains (pos))
+            {
+                for (int m = 0; m < 3; ++m)
+                    if (oscModeKeys[(size_t) m].contains (pos))
+                        osc->mode = m;
+            }
             else if (sourcePhantomKey.contains (pos))
                 flip (&ld::SourceParams::phantom);
             else if (sourcePolKey.contains (pos))

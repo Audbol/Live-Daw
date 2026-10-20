@@ -342,8 +342,25 @@ private:
             // Reopen where it was (size, position, maximised); fall back to centred.
             if (savedState.isEmpty() || ! restoreWindowStateFromString (savedState))
                 centreWithSize (getWidth(), getHeight());
+            else if (! isFullScreen())
+                keepOnScreen();
 
             setVisible (true);
+        }
+
+        /** A size saved on a bigger screen (an external monitor since unplugged,
+            a lower resolution) would leave part of the surface off screen, which
+            JUCE only corrects when almost nothing shows: fit the window into its
+            display's work area. */
+        void keepOnScreen()
+        {
+            const auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (getScreenBounds());
+            if (display == nullptr || display->userBounds.toNearestInt().contains (getScreenBounds()))
+                return;
+            const auto area = display->userBounds.toNearestInt();
+            auto bounds = getBounds();
+            bounds.setSize (juce::jmin (bounds.getWidth(), area.getWidth()), juce::jmin (bounds.getHeight(), area.getHeight()));
+            setBounds (bounds.constrainedWithin (area));
         }
 
         // The window passes the keyboard focus on to the console, so its

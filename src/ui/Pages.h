@@ -158,7 +158,7 @@ private:
     juce::String sourceGroupName (int group) const;
     /** The input index of tile `index` of a source group (-1 past its end). */
     int sourceAt (int group, int index) const;
-    /** "IN 3" (or the port's name), "PLAY 5", "NONE". */
+    /** "IN 3" (or the port's name), "PLAY 5", "OSC 1", "NONE". */
     juce::String sourceName (int source) const;
     /** Output groups: the hardware outputs in groups of 48, then the USB
         RECORDER's four ports (kRecorderPortBase + n), which tap a strip's
@@ -209,22 +209,33 @@ private:
     ld::SourceParams* sourceParams (int port) const;
     void layoutSourcePanel();
     void paintSourceSettings (juce::Graphics&, juce::Rectangle<int>) const;
+    /** The GAIN (or an oscillator's LEVEL) fader with its value flag and caption. */
+    void paintLevelFader (juce::Graphics&, juce::Rectangle<int>, float value, float min, float max, const juce::String& caption) const;
     void paintSourceLook (juce::Graphics&) const;
     void paintSourceTags (juce::Graphics&) const;
     void selectSource (int port);
     void renameSource();
     void setSourceGainFromY (int y);
+    /** The selected source's oscillator (OSC 1 / 2; a pair's is OSC 1's), else nullptr. */
+    ld::OscParams* selectedOscillator() const;
+    void showOscFreqMenu();
 
     int sourceTab = 0; // SETTINGS, ICON/COLOR, TAGS
     std::array<juce::Rectangle<int>, 3> sourceTabKeys, sourceModeKeys;
     juce::Rectangle<int> sourceBanner, sourceBody, sourceInitKey, sourceBox, sourceMeter, sourcePhantomKey, sourcePolKey, sourceMuteKey,
         sourceGainFader;
+    // An OSC source: SINE / PINK / WHITE and FREQ in place of +48V and POL, LEVEL in place of GAIN.
+    std::array<juce::Rectangle<int>, 3> oscModeKeys;
+    juce::Rectangle<int> oscFreqField, oscLevelFader;
+    /** The GAIN fader, or an OSC source's LEVEL fader. */
+    juce::Rectangle<int> levelFader() const;
     std::vector<std::pair<juce::Rectangle<int>, int>> sourceColourCells, sourceIconCells;
     // SOURCE SOLO's SRC SOLO key (fig. 36) and SOURCES > TAGS (the mute groups).
     juce::Rectangle<int> srcSoloKey;
     std::vector<std::pair<juce::Rectangle<int>, int>> sourceTagCells;
     std::vector<float> sourcePeaks; // per tile of the source grid, decaying
     float selectedSourcePeak = 0.0f;
+    int refreshTicks = 0;
     bool draggingGain = false;
 };
 

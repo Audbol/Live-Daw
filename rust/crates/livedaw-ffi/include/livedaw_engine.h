@@ -54,6 +54,10 @@ constexpr int kMaxRecordTracks = 64;
     (n < kUsbChannels); the RECORDER output group has kUsbChannels ports. */
 constexpr int kUsbChannels = 4;
 constexpr int32_t kUsbPlayerSourceBase = 0x20000;
+/** The oscillators (the OSC source group): OSC n is input kOscSourceBase + n
+    (n < kNumOscillators); ld_engine_oscillators holds their settings. */
+constexpr int kNumOscillators = 2;
+constexpr int32_t kOscSourceBase = 0x30000;
 /** RECORDER tap codes (ld_usb_rec_tap): -1 off, 0.. an input index (a source),
     kUsbTapStripBase + kind * 0x100000 + (number - 1) * 2 + channel a strip. */
 constexpr int32_t kUsbTapStripBase = 0x01000000;
@@ -319,9 +323,16 @@ enum SourceMode : int32_t
     kSourceMidSide = 2
 };
 
-/** Sources: hardware ports 0..kNumHwSources-1, the playback channels, then the USB PLAYER. */
+/** Sources: hardware ports 0..kNumHwSources-1, the playback channels, the USB PLAYER, then the oscillators. */
 constexpr int kNumHwSources = 576;
-constexpr int kNumSources = kNumHwSources + kNumPlaybackChannels + kUsbChannels;
+constexpr int kNumSources = kNumHwSources + kNumPlaybackChannels + kUsbChannels + kNumOscillators;
+/** OscParams::mode. */
+enum OscMode : int32_t
+{
+    kOscSine = 0,
+    kOscPink = 1,
+    kOscWhite = 2
+};
 /** Monitor SOURCE choices: MAIN.1-4, MTX.1-8, BUS.1-16, AUX.1-8. */
 constexpr int kNumMonitorSources = kNumMains + kNumMatrices + kWingBuses + kNumAux;
 /** TalkParams::assignKind without a talkback channel. */
@@ -375,6 +386,16 @@ struct SourceParams
     std::atomic<int32_t> colour, icon;
     std::atomic<float> peak;
     std::atomic<uint32_t> muteGroups; // ABI 8, SOURCES > TAGS: bit n = mute group n+1 mutes the source
+};
+
+/** An oscillator (the OSC source group; ld_engine_oscillators): MODE (OscMode),
+    LEVEL in dBFS (-40 .. -6: a sine's peak; the noises have its RMS) and FREQ in
+    Hz (20 .. 20000). On / off is its source's mute; a STEREO / MID-SIDE OSC 1 / 2
+    pair runs on OSC 1's settings. */
+struct OscParams
+{
+    std::atomic<int32_t> mode;
+    std::atomic<float> levelDb, freqHz;
 };
 
 // ---- monitor path processing, SOURCE SOLO (ABI 8; livedaw-engine monitor.rs) ----
@@ -1197,7 +1218,7 @@ extern "C"
     bool ld_wing_sysex (LdWing*, int32_t cmd, const char* text, size_t len, LdString** out);
 
     // Console level: sources, talk tags, MUTE state (message thread unless noted)
-    /** The source table (*count entries: hardware ports, then playback channels). */
+    /** The source table (*count entries: hardware ports, playback channels, USB PLAYER, oscillators). */
     SourceParams* ld_engine_sources (const Engine*, int32_t* count);
     /** Source table index of an input port (hardware input or playback source), -1 if none. */
     int32_t ld_source_index (int32_t port);
@@ -1209,6 +1230,8 @@ extern "C"
     void ld_source_set_mode (const Engine*, int32_t index, int32_t mode);
     /** INITIALIZE (the pair's settings and names; the pairing stays). */
     void ld_source_initialize (const Engine*, int32_t index);
+    /** The oscillators (*count entries: OSC 1, OSC 2). */
+    OscParams* ld_engine_oscillators (const Engine*, int32_t* count);
     /** Any thread: TalkTag bits. */
     uint32_t ld_strip_talk_tags (const Strip*);
     void ld_strip_set_talk_tags (const Strip*, uint32_t tags);

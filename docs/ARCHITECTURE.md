@@ -8,7 +8,7 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
 
 ```
  hardware inputs   recorder playback channels 1-64 (PLAY n = input 0x10000 + n-1),
-       │           USB PLAYER 1-4 (input 0x20000 + n-1)
+       │           USB PLAYER 1-4 (input 0x20000 + n-1), OSC 1-2 (input 0x30000 + n-1)
        │                 │
        ▼                 ▼   sources: gain · mute · Ø · MONO / STEREO / MID-SIDE pairs
        │                 │
@@ -106,6 +106,18 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
   their own and hands those to the channels and the recorder's input streams; sources
   at their defaults pass their port through. Changes are ramped (gains per source,
   the mid-side matrix per pair).
+- **Oscillator** (`sources.rs`, `livedaw-dsp/src/generator.rs`): the WING's OSC
+  source group, two sources after the USB PLAYER (table indices
+  `OSC_SOURCE_INDEX`.., input `OSC_SOURCE_BASE + n`). Each block the audio thread
+  runs the two generators (`SignalGenerator`: a phase-accumulator sine, white noise
+  from a xorshift generator, pink noise through Paul Kellet's filter with its poles
+  moved for the sample rate and its RMS normalised) into buffers of their own, which
+  then go through the source processing like any port, so MUTE (the WING's on / off)
+  and MONO / STEREO / MID-SIDE work as for other sources; a pair runs on OSC 1's
+  settings (the second sine takes the first's phase, the noises stay
+  uncorrelated). LEVEL is the sine's peak; the noises have the same RMS. The
+  settings (`OscParams`: MODE, LEVEL, FREQ; `ld_engine_oscillators`) are atomics,
+  saved with the sources in shows and mapped to `/io/in/OSC/n/osc/*`.
 - **SOURCE SOLO** (`monitor.rs`, `MonitorControls`): with SOURCE SOLO on CH39 or
   AUX7, a soloed source (`source_solo_port`; ROUTING > SOURCES' SRC SOLO, the
   WING's `$srcsolo`, or the host's own SOLO) is patched to that channel for the
@@ -833,7 +845,7 @@ dependencies beyond the other Sidecar crates.
 
 Limits: WING Edit and WING Copilot are untested. One output patch per strip (the WING
 can send a source to many outputs; extra ones are kept in the shadow store). Input
-groups other than AES50 A/B/C and CRD collapse onto the port with the same number
+groups other than AES50 A/B/C, CRD and OSC collapse onto the port with the same number
 (their source settings stay in the shadow store). A talkback channel other than
 CH40 / AUX8 reads as OFF, and DIRECT IN's level has no node.
 Meters are approximate (RTA, source and output meters stay silent). Getting a model

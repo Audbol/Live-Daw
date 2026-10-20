@@ -274,11 +274,12 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 ///
 /// Hardware ports are laid out as the AES50 groups: A 1-48 = ports 1-48, B
 /// 1-48 = ports 49-96, C = 97-144. The recorder's 64 playback channels are the
-/// WING-LIVE card (CRD). On import, other input groups (LCL, AUX, SC, USB,
-/// MOD, AES, USR) land on the port of the same number; PLAY, OSC and the
-/// internal BUS/MAIN/MTX sources have no equivalent.
+/// WING-LIVE card (CRD), the two oscillators the OSC group. On import, other
+/// input groups (LCL, AUX, SC, USB, MOD, AES, USR) land on the port of the
+/// same number; PLAY and the internal BUS/MAIN/MTX sources have no equivalent.
 pub mod port {
     use super::PLAYBACK_SOURCE_BASE;
+    use livedaw_engine::sources::{osc_channel, NUM_OSCILLATORS, OSC_SOURCE_BASE};
 
     pub const BLOCK: i32 = 48;
     pub const BLOCKS: [&str; 3] = ["A", "B", "C"];
@@ -287,6 +288,9 @@ pub mod port {
     pub fn source_to_wing(src: i32) -> Option<(&'static str, i32)> {
         if src < 0 {
             return Some(("OFF", 1));
+        }
+        if let Some(n) = osc_channel(src) {
+            return Some(("OSC", n as i32 + 1));
         }
         if src >= PLAYBACK_SOURCE_BASE {
             let n = src - PLAYBACK_SOURCE_BASE;
@@ -305,6 +309,7 @@ pub mod port {
             "B" => Some(BLOCK + n - 1),
             "C" => Some(2 * BLOCK + n - 1),
             "CRD" => (n <= 64).then_some(PLAYBACK_SOURCE_BASE + n - 1),
+            "OSC" => (n <= NUM_OSCILLATORS as i32).then_some(OSC_SOURCE_BASE + n - 1),
             "LCL" | "AUX" | "SC" | "USB" | "MOD" | "AES" | "USR" => Some(n - 1),
             _ => None,
         }
@@ -319,9 +324,10 @@ pub mod port {
     pub const IN_GROUPS: [&str; 13] = ["LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "MOD", "PLAY", "AES", "USR", "OSC"];
 
     /// Input groups whose sources are Sidecar's sources (ROUTING > SOURCES):
-    /// the AES50 ports and the WING-LIVE card. The other groups share port
-    /// numbers with them here, so their source settings stay in the shadow store.
-    pub const SOURCE_GROUPS: [&str; 4] = ["A", "B", "C", "CRD"];
+    /// the AES50 ports, the WING-LIVE card and the oscillators. The other
+    /// groups share port numbers with them here, so their source settings stay
+    /// in the shadow store.
+    pub const SOURCE_GROUPS: [&str; 5] = ["A", "B", "C", "CRD", "OSC"];
 }
 
 // ---- bindings ----------------------------------------------------------------------
@@ -572,6 +578,14 @@ pub enum SrcF {
     MuteState,
 }
 
+/// `/io/in/OSC/<n>/osc/...`: an oscillator's settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OscF {
+    Level,
+    Mode,
+    Freq,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InfoF {
     Name,
@@ -606,6 +620,8 @@ pub enum Binding {
     Mon(u8, MonF),
     /// A source of `port::SOURCE_GROUPS`.
     Source(&'static str, u16, SrcF),
+    /// Oscillator (0-based) settings.
+    Osc(u8, OscF),
     /// RTA settings: false = HOME (`rta*`), true = EQ (`eq*`).
     Rta(bool, RtaF),
     /// The RTA on screen (`/cfg/rta/$src`, `$dec`, `$det`).
@@ -1009,6 +1025,12 @@ pub fn bind(parts: &[&str]) -> Binding {
             (Some(b), Some(n)) if n as i32 <= port::BLOCK && (*f == "grp" || *f == "in") => Binding::Out(b as u8, n, *f == "in"),
             _ => Binding::None,
         },
+        ["io", "in", "OSC", n, "osc", f] => match (number(n, sources::NUM_OSCILLATORS as u16), *f) {
+            (Some(n), "lvl") => Binding::Osc(n as u8 - 1, OscF::Level),
+            (Some(n), "mode") => Binding::Osc(n as u8 - 1, OscF::Mode),
+            (Some(n), "f") => Binding::Osc(n as u8 - 1, OscF::Freq),
+            _ => Binding::None,
+        },
         ["io", "in", g, n, "mode"] => match (port_group(g), number(n, 64)) {
             (Some(g), Some(n)) => Binding::SourceMode(g, n),
             _ => Binding::None,
@@ -1246,7 +1268,7 @@ fn source_mute_state(p: &SourceParams, mute_groups: u32) -> i32 {
 }
 
 fn port_group(g: &str) -> Option<&'static str> {
-    ["LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "MOD", "AES", "USR"].into_iter().find(|x| *x == g)
+    ["LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "MOD", "AES", "USR", "OSC"].into_iter().find(|x| *x == g)
 }
 
 /// Bindings of every static row (computed once).
@@ -1806,6 +1828,14 @@ impl<'a> Console<'a> {
                     })
                     .unwrap_or((0, false));
                 Value::Int(if pos { post as i32 } else { number })
+            }
+            Binding::Osc(n, of) => {
+                let o = e.sources().osc(n as usize)?;
+                match of {
+                    OscF::Level => f(&o.level_db),
+                    OscF::Mode => item(def, o.mode.load(Relaxed)),
+                    OscF::Freq => f(&o.freq_hz),
+                }
             }
             Binding::Play(pf) => return self.get_play(def, pf),
             Binding::Rec(rf) => return self.get_rec(def, rf),
@@ -2493,7 +2523,7 @@ impl<'a> Console<'a> {
                     };
                     match port::wing_to_source(g, n).filter(|p| *p >= 0) {
                         Some(p) => m.source_solo_port.store(p, Relaxed),
-                        None => return Ok(false), // PLAY, OSC: no Sidecar source
+                        None => return Ok(false), // PLAY: no Sidecar source
                     }
                 }
             },
@@ -2600,6 +2630,14 @@ impl<'a> Console<'a> {
                 }
             }
             Binding::RtaShown(_) | Binding::FxAssign(..) => return Err(SetError::ReadOnly),
+            Binding::Osc(n, of) => {
+                let o = e.sources().osc(n as usize).ok_or(SetError::NotFound)?;
+                match of {
+                    OscF::Level => set_f(&o.level_db, v),
+                    OscF::Mode => set_item(&o.mode, def, v),
+                    OscF::Freq => set_f(&o.freq_hz, v),
+                }
+            }
             Binding::Play(pf) => self.set_play(def, pf, v)?,
             Binding::Rec(rf) => self.set_rec(def, rf, v)?,
             Binding::Safe(sf) => self.set_safes(sf, &str_of(v)),
@@ -3531,6 +3569,36 @@ mod tests {
         assert_eq!(c.get(node(&c, "/cfg/solo/$srcsolo")), Some(Value::Int(0)));
         m.source_solo_on.store(true, Relaxed);
         assert_eq!(c.get(node(&c, "/cfg/solo/$srcsolo")), Some(Value::Int(1)));
+    }
+
+    #[test]
+    fn the_osc_group_is_the_oscillators() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let table = e.sources();
+        c.set(node(&c, "/io/in/OSC/2/osc/mode"), &Value::str("PINK")).unwrap();
+        c.set(node(&c, "/io/in/OSC/2/osc/lvl"), &Value::Float(-30.0)).unwrap();
+        c.set(node(&c, "/io/in/OSC/2/osc/f"), &Value::Float(250.0)).unwrap();
+        c.set(node(&c, "/io/in/OSC/2/mute"), &Value::Int(1)).unwrap();
+        c.set(node(&c, "/io/in/OSC/2/name"), &Value::str("Noise")).unwrap();
+        let osc = table.osc(1).unwrap();
+        assert_eq!((osc.mode.load(Relaxed), osc.level_db.load(), osc.freq_hz.load()), (1, -30.0, 250.0));
+        let index = sources::OSC_SOURCE_INDEX + 1;
+        assert!(table.get(index).unwrap().mute.load(Relaxed));
+        assert_eq!(table.name(index), "Noise");
+        assert_eq!(c.get(node(&c, "/io/in/OSC/2/osc/mode")), Some(Value::str("PINK")));
+        assert_eq!(c.get(node(&c, "/io/in/OSC/1/osc/f")), Some(Value::Float(1000.0)));
+        // MODE pairs OSC 1 and 2.
+        c.set(node(&c, "/io/in/OSC/1/mode"), &Value::str("ST")).unwrap();
+        assert_eq!(table.get(sources::OSC_SOURCE_INDEX).unwrap().mode.load(Relaxed), source_mode::STEREO);
+        // Channels patch to it.
+        c.set(node(&c, "/ch/3/in/conn/grp"), &Value::str("OSC")).unwrap();
+        c.set(node(&c, "/ch/3/in/conn/in"), &Value::Int(2)).unwrap();
+        let ch3 = c.strip(StripKind::Channel, 3).unwrap();
+        assert_eq!(ch3.params.input_left.load(Relaxed), sources::OSC_SOURCE_BASE + 1);
+        assert_eq!(c.get(node(&c, "/ch/3/in/conn/grp")), Some(Value::str("OSC")));
+        assert_eq!(c.get(node(&c, "/ch/3/in/conn/in")), Some(Value::Int(2)));
     }
 
     #[test]

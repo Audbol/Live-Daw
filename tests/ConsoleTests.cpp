@@ -181,6 +181,43 @@ public:
             expectEquals (MixerEngine::sourcePort (MixerEngine::sourceIndex (ld::kPlaybackSourceBase + 3)), ld::kPlaybackSourceBase + 3);
         }
 
+        beginTest ("Oscillator: the OSC sources play on a channel and are saved with the show");
+        {
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            OfflineRig rig (engine, 2, 2);
+            engine.setNumChannels (1);
+            auto& ch = *engine.getChannels()[0];
+            ch.params.pan = -100.0f;
+            ch.params.inputLeft = MixerEngine::oscSource (1);
+            expectEquals (MixerEngine::sourceIndex (MixerEngine::oscSource (1)), ld::kNumSources - 1);
+            auto* osc = engine.getOscillator (1);
+            expect (osc != nullptr && engine.getOscillator (2) == nullptr);
+            if (osc == nullptr)
+                return;
+            osc->levelDb = -12.0f;
+            osc->freqHz = 250.0f;
+            rig.run (40);
+            float peak = 0.0f;
+            for (int b = 0; b < 40; ++b)
+            {
+                rig.run (1);
+                for (float v : rig.outputs[0])
+                    peak = juce::jmax (peak, std::abs (v));
+            }
+            expectWithinAbsoluteError (peak, juce::Decibels::decibelsToGain (-12.0f), 0.005f);
+
+            auto xml = show.toXml();
+            MixerEngine restoredEngine (0);
+            Show restored (restoredEngine, host);
+            const auto result = restored.loadFromXml (*xml);
+            expect (result.wasOk(), result.getErrorMessage());
+            expectEquals (restoredEngine.getOscillator (1)->freqHz.load(), 250.0f);
+            expectEquals (restoredEngine.getOscillator (1)->levelDb.load(), -12.0f);
+            expectEquals (restoredEngine.getChannels()[0]->getInputLeft(), MixerEngine::oscSource (1));
+        }
+
         beginTest ("Monitor paths: DIRECT IN, EQ curve, INVERT, LIMITER; SOURCE SOLO");
         {
             MixerEngine engine (0);

@@ -295,11 +295,13 @@ juce::String describeStrip (const Strip&);
 juce::String stripName (const Strip&);
 
 /** A channel input index as shown: "IN 3" ("IN 03" with pad = 2), "PLAY 5"
-    for a multitrack playback channel, "PLAYER 1" for the USB player. */
+    for a multitrack playback channel, "PLAYER 1" for the USB player, "OSC 1" for an oscillator. */
 inline juce::String inputPortName (int input, int pad = 0)
 {
     if (const int ch = UsbRecorder::playerChannelOf (input); ch >= 0)
         return UsbRecorder::playerSourceName (ch);
+    if (const int n = MixerEngine::oscChannelOf (input); n >= 0)
+        return MixerEngine::oscSourceName (n);
     if (const int ch = Recorder::playbackChannelOf (input); ch >= 0)
         return Recorder::playbackSourceName (ch);
     return "IN " + juce::String (input + 1).paddedLeft ('0', pad);
