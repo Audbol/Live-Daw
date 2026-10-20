@@ -9,6 +9,8 @@ All notable changes to Sidecar are listed here. Versions follow
 
 - LIBRARY > SHOW > SAVE AS: the show takes the new name (it kept the old one, so the
   title bar and the LIBRARY showed the name of the show it was copied from).
+- LIBRARY: renaming the open show's file (RENAME at INT / USB) left the show saving to
+  the old file name, so the next SAVE brought the old file back.
 
 ## [0.1.0] - beta
 

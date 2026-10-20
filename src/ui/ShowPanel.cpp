@@ -583,6 +583,8 @@ void ShowPanel::renameFile()
             popups::warn (safe->popupHost(), "RENAME", "Could not rename " + file.getFileName() + " to " + target.getFileName());
             return;
         }
+        if (safe->ctx.showFileRenamed)
+            safe->ctx.showFileRenamed (file, target);
         safe->files->rebuild();
         safe->files->selectFile (target);
     }, options);

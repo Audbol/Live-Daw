@@ -194,6 +194,16 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     ctx.saveShow = [this] (bool saveAs) { saveShow (saveAs); };
     ctx.openShowFile = [this] (const juce::File& file) { openShowFile (file); };
     ctx.saveShowTo = [this] (const juce::File& file) { saveShowTo (file); };
+    ctx.showFileRenamed = [this] (const juce::File& from, const juce::File& to)
+    {
+        // The open show's file: SAVE writes the new one, and the show takes its name.
+        if (showFile == juce::File() || from != showFile)
+            return;
+        showFile = to;
+        show.setName (to.getFileNameWithoutExtension());
+        updateTitle();
+        display->refreshLibrary();
+    };
 
     // The recording session (the recorder screen, the editor and MULTI TRANSP share it).
     recording = std::make_unique<daw::Session> (engine.getRecorder(), &settings);
