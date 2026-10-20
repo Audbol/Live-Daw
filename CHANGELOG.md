@@ -53,6 +53,10 @@ All notable changes to Sidecar are listed here. Versions follow
   layers are named after their key instead of copying the shown layer's name.
 - The recorder screen's keys, labels and readouts fit their boxes at every window
   size, from 1152 x 680 to 4K and ultrawide.
+- ROUTING > SOURCES: the GAIN knob set only the selected source of a stereo or
+  mid/side pair; on the pair's second source it changed nothing you could hear (the
+  pair plays at the first source's gain). It now sets both, in 0.5 dB steps, like
+  the fader and the wheel.
 
 ## [0.1.0] - beta
 
