@@ -3,7 +3,11 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
-## [Unreleased]
+## [0.1.2] - beta
+
+A fix for a crash in 0.1.1 and earlier: scrolling the start-up notice could close
+Sidecar. Everything else is as in 0.1.1; see its notes below. Known limitations: see
+the [README](https://github.com/Audbol/Live-Daw/blob/main/README.md#known-limitations).
 
 ### Fixed
 
