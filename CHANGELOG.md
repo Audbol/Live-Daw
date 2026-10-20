@@ -3,6 +3,14 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Fixed
+
+- FX: the Vintage Room's early reflections and the Concert reverb's reflection
+  clusters now sit at their ER / REFL times as soon as the device is loaded (they
+  stayed at the start until the time was changed).
+
 ## [0.1.0] - beta
 
 The first public release. Sidecar was developed as "Live DAW" before it was renamed;
