@@ -310,6 +310,10 @@ target_link_libraries(SidecarPluginHost
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
         livedaw_warning_overrides)
+if(APPLE)
+    # AU plugin editors (AUGenericView); the app gets it through juce_audio_utils.
+    target_link_libraries(SidecarPluginHost PRIVATE "-framework CoreAudioKit")
+endif()
 
 add_dependencies(LiveDAW SidecarPluginHost)
 if(APPLE)

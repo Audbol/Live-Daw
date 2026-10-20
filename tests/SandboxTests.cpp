@@ -317,8 +317,12 @@ private:
         }
         expect (sandboxed->getStatus() == SandboxedPlugin::Status::running, "not restarted");
         expect (sandboxed->getHelperProcessId() != firstPid, "same helper");
-        expect (events.joinIntoString ("\n").contains (kind == TestPluginFormat::Kind::crash ? "crashed" : "stopped responding"),
-                events.joinIntoString ("\n"));
+        // A crash can first show as a helper that stopped responding (a crash
+        // handler, such as a sanitizer's report, keeps it alive for a moment).
+        const auto log = events.joinIntoString ("\n");
+        expect (kind == TestPluginFormat::Kind::crash ? (log.contains ("crashed") || log.contains ("stopped responding"))
+                                                      : log.contains ("stopped responding"),
+                log);
 
         // Still bypassed until the fault is cleared; then processed again with the restored state.
         rig.run (5);

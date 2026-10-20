@@ -43,6 +43,10 @@ namespace
     }
 } // namespace
 
+// Named outside SandboxHost: inside it, juce::Thread's members are reached
+// through a private base (PingingConnection), which MSVC refuses.
+constexpr auto kFallbackAudioPriority = juce::Thread::Priority::highest;
+
 //==============================================================================
 class SandboxHost final : private PingingConnection,
                           private juce::Timer
@@ -206,7 +210,7 @@ private:
 
         startTimerHz (15);
         if (! audioThread.startRealtimeThread (juce::Thread::RealtimeOptions().withPriority (9)))
-            audioThread.startThread (juce::Thread::Priority::highest);
+            audioThread.startThread (kFallbackAudioPriority);
     }
 
     void prepare (int id, juce::MemoryInputStream& in)
