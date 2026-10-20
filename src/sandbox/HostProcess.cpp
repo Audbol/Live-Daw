@@ -52,7 +52,7 @@ public:
     {
         juce::addDefaultFormatsToManager (formats);
         if (TestPluginFormat::isEnabledByEnvironment())
-            formats.addFormat (new TestPluginFormat());
+            formats.addFormat (std::make_unique<TestPluginFormat>());
     }
 
     ~SandboxHost() override
