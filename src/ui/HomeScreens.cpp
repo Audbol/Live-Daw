@@ -2086,12 +2086,16 @@ public:
                                         },
                                         [this] (ChoiceField& field)
                                         {
-                                            // NONE and the 16 slots, in two columns.
+                                            // NONE and the 16 slots in two columns, all
+                                            // in view: NONE and FX 1-8 (the premium
+                                            // slots), FX 9-16 beside FX 1-8.
                                             juce::StringArray items { "NONE" };
                                             for (int i = 0; i < kNumFx; ++i)
                                                 items.add (ctx.engine.getFx().describe (i));
                                             popups::ListOptions options;
                                             options.columns = 2;
+                                            options.gapsBefore = { 1 + kNumFx / 2 };
+                                            options.maxRows = 1 + kNumFx / 2;
                                             options.caption = "FX PROCESSOR";
                                             popups::chooseFrom (field, items, ins.fx.load() + 1, [this] (int i) { ins.fx = i - 1; }, options);
                                         });
@@ -2231,6 +2235,7 @@ public:
                 typeText = models::model (models::Fx, model).name.toUpperCase();
             type->setEnabled (slot >= 0);
             openSlot->setEnabled (slot >= 0);
+            spill->setEnabled (slot >= 0);
             reset->setEnabled (slot >= 0 && model > ld::kFxExt);
             if (setCust != nullptr)
                 setCust->setEnabled (slot >= 0 && fx.isLoaded (slot));

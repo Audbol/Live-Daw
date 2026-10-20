@@ -3,6 +3,14 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Fixed
+
+- HOME INS screens: the FX PROCESSOR list shows NONE and all 16 slots without
+  scrolling (FX 9-16 beside FX 1-8), and FX SPILL is unavailable while the insert
+  has no FX processor.
+
 ## [0.1.0] - beta
 
 The first public release. Sidecar was developed as "Live DAW" before it was renamed;

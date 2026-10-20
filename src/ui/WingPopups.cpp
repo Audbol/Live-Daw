@@ -888,8 +888,8 @@ namespace
 
         int indexAt (int column, int row) const
         {
-            const int index = column * numRows + row;
-            return row < numRows && index < items.size() ? index : -1;
+            const int cell = column * numRows + row;
+            return row < numRows && cell < (int) cells.size() ? cells[(size_t) cell] : -1;
         }
 
         juce::Rectangle<int> rowArea (int column, int row) const
@@ -918,9 +918,10 @@ namespace
 
         void reveal (int index)
         {
-            if (index < 0)
+            const auto cell = std::find (cells.begin(), cells.end(), index);
+            if (index < 0 || cell == cells.end())
                 return;
-            const int row = index % juce::jmax (1, numRows);
+            const int row = (int) (cell - cells.begin()) % juce::jmax (1, numRows);
             if (row < scroll)
                 scroll = row;
             else if (row >= scroll + visibleRows)
@@ -935,8 +936,15 @@ namespace
             const float screenH = screenHeight();
             rowHeight = juce::jmax (18, juce::roundToInt (screenH * 0.075f));
             const int captionH = options.caption.isNotEmpty() ? juce::roundToInt ((float) rowHeight * 0.75f) : 0;
-            numRows = (items.size() + options.columns - 1) / options.columns;
-            const int maxRows = juce::jmax (2, juce::jmin (8, (bounds.getHeight() - captionH - 4) / rowHeight));
+            cells.clear();
+            for (int i = 0; i < items.size(); ++i)
+            {
+                if (std::find (options.gapsBefore.begin(), options.gapsBefore.end(), i) != options.gapsBefore.end())
+                    cells.push_back (-1);
+                cells.push_back (i);
+            }
+            numRows = ((int) cells.size() + options.columns - 1) / options.columns;
+            const int maxRows = juce::jmax (2, juce::jmin (options.maxRows, (bounds.getHeight() - captionH - 4) / rowHeight));
             visibleRows = juce::jlimit (1, maxRows, numRows);
             const bool scrolls = numRows > visibleRows;
 
@@ -975,6 +983,7 @@ namespace
         int selected;
         std::function<void (int)> onChosen;
         ListOptions options;
+        std::vector<int> cells; // the item in each cell, column by column (-1: a gap)
         juce::Rectangle<int> list, captionArea, body, scrollBar;
         int rowHeight = 30, columnWidth = 100, numRows = 0, visibleRows = 0, scroll = 0, hover = -1;
     };

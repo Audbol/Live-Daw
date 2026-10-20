@@ -621,7 +621,9 @@ public:
         juce::StringArray items { "MONITOR" };
         for (int i = 1; i <= kNumMains; ++i)
             items.add ("MAIN " + juce::String (i));
-        popups::chooseFrom (*this, items, source, [this] (int i) { choose (i); }, { 1, {}, "MAIN METER" });
+        popups::ListOptions options;
+        options.caption = "MAIN METER";
+        popups::chooseFrom (*this, items, source, [this] (int i) { choose (i); }, options);
     }
 
 private:
