@@ -191,7 +191,9 @@ private:
         const auto grid = juce::String (daw::TimeGrid { page.session.getProject().getSampleRate() }.formatTime (m.position));
         g.setColour (Dark::text);
         g.setFont (wingFont (TypeScale::body));
-        g.drawText (grid, t.removeFromLeft (84), juce::Justification::centredLeft);
+        // The time as wide as it needs (the font grows with the screen).
+        const int timeW = juce::jmin (t.getWidth() * 2 / 3, juce::roundToInt (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), grid)) + 12);
+        g.drawText (grid, t.removeFromLeft (timeW), juce::Justification::centredLeft);
         g.setColour (Dark::textDim);
         g.drawFittedText (m.name, t, juce::Justification::centredLeft, 1, 0.75f);
         if (rowSelected)

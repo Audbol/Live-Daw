@@ -576,7 +576,7 @@ public:
         g.drawText (juce::String (count), c.removeFromTop (c.getHeight() * 62 / 100), juce::Justification::centred);
         g.setColour (Dark::orange.brighter (0.4f));
         g.setFont (wingFontFit (TypeScale::statusCaption, (float) c.getHeight() * 0.9f));
-        g.drawText (count == 1 ? "PARAMETER" : "PARAMETERS", c, juce::Justification::centredTop);
+        g.drawFittedText (count == 1 ? "PARAMETER" : "PARAMETERS", c, juce::Justification::centredTop, 1, 0.6f);
     }
 
     void resized() override

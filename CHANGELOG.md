@@ -15,6 +15,8 @@ All notable changes to Sidecar are listed here. Versions follow
   (recorder screen: POSITION, LOOP OUT).
 - Two-line key captions were cut or wrapped onto a third line when the key was narrow
   (LIBRARY GO PREV / GO NEXT, recorder RECORD ALL CHANNELS); they now shrink to fit.
+- Text cut in fixed-size boxes on large windows: EFFECTS slot numbers 10 and 14 showed
+  "...", the recorder's marker times and the SNIP counter's PARAMETERS were cut.
 
 ## [0.1.0] - beta
 
