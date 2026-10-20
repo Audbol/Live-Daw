@@ -18,6 +18,8 @@ All notable changes to Sidecar are listed here. Versions follow
 - EQ: with an analog EQ model, every 6th parameter (SOUL's LM GAIN and HF GAIN...)
   never came onto the knobs: the knob pages held five parameters but were chosen
   in sixes.
+- GATE / DYNAMICS: KEY TAP is drawn disabled; it looked active but the engine always
+  keys from the source channel's input (listed under the known limitations).
 
 ## [0.1.0] - beta
 

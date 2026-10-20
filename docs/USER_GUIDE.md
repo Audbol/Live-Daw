@@ -19,7 +19,7 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
     (TILT, MAX, AP1, AP2).
   - **GATE slot and DYNAMICS slot:** each holds any of the WING's **32 dynamics models**
     (gate, ducker, Even 88, Soul 9000, 160 VCA, LA leveler, 1176-style, Fair Kid,
-    Bus comp, NSTR, limiters, de-esser...), with sidechain filter, source and tap,
+    Bus comp, NSTR, limiters, de-esser...), with sidechain filter and source,
     and a crossover band on the dynamics slot.
   - **EQ:** the 6-band WING EQ (8 bands on buses) or the analog models (SOUL, E88,
     E84, F110, PULSAR, MACH4, PIA on buses), with blend/mix.

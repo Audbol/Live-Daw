@@ -179,8 +179,9 @@ This list matches the notice Sidecar shows at start-up.
 - **LIBRARY** keeps scenes and snippets in the show (no stand-alone .snap / .snip
   files); the CLIP player and SEND MIDI are not built.
 - **Drawn but disabled for now:** GPIO, SD and spill functions in the custom controls,
-  MIDI CC faders in custom layers, the RTA on MONITORS EQ, and settings that only make
-  sense on the hardware.
+  MIDI CC faders in custom layers, the RTA on MONITORS EQ, the gate and dynamics KEY TAP
+  (a key from another channel is taken at its input), and settings that only make sense
+  on the hardware.
 
 ## Reporting problems
 

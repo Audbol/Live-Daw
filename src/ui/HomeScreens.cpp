@@ -1372,6 +1372,8 @@ public:
         keyFilter->onKey = [this] { toggleDetail (Detail::Key); };
         keyFilter->keyLit = [this] { return detail == Detail::Key; };
         keyTap = &field ("KEY TAP", tapPointNames(), slot.scTap);
+        // Not in the engine yet: another channel keys from its input (the setting is only stored).
+        keyTap->setEnabled (false);
         keyFreq = &make<KnobBox> (wingFreq ("KEY FREQ", slot.scFreq, 20.0f, 20000.0f, 1000.0f));
         keyQ = &make<KnobBox> (bindLog ("KEY Q", slot.scQ, 0.44f, 10.0f, {}, 1.0f));
         // The key signal after the key filter on the solo bus.
