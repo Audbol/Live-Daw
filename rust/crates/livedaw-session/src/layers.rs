@@ -670,6 +670,13 @@ impl LayerSet {
         }
     }
 
+    /// Replaces a user layer's faders (as given: duplicates are kept).
+    pub fn set_user_layer_faders(&mut self, id: &str, faders: Vec<FaderRef>) {
+        if let Some(l) = self.user_layer_mut(id) {
+            l.faders = faders;
+        }
+    }
+
     pub fn remove_from_user_layer(&mut self, id: &str, f: &FaderRef) {
         if let Some(l) = self.user_layer_mut(id) {
             l.faders.retain(|x| x != f);
@@ -957,6 +964,8 @@ mod tests {
         assert_eq!(loaded.selected(LEFT), "in-1");
         assert_eq!(loaded.selected(RIGHT), "out-1");
 
+        loaded.set_user_layer_faders(&b, vec![ch(4), ch(4)]);
+        assert_eq!(loaded.user_layer(&b).unwrap().faders, vec![ch(4), ch(4)]);
         loaded.remove_user_layer(&a);
         assert_eq!(loaded.user_layers().len(), 1);
         assert_eq!(FaderRef::parse("dca:15"), FaderRef::Dca(15));

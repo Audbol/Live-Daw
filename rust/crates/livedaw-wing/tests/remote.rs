@@ -4,10 +4,12 @@
 //! way libwing and the protocol document encode them.
 
 use livedaw_engine::{Engine, StripKind};
+use livedaw_session::custom::CustomControls;
+use livedaw_session::layers::{FaderRef, LayerSet, LEFT};
 use livedaw_wing::map::{LibAction, Library};
 use livedaw_wing::osc::{self, Arg, Message};
 use livedaw_wing::server::{Config, EngineHandle, WingServer};
-use livedaw_wing::{schema, Identity, WingState};
+use livedaw_wing::{schema, surface, Identity, WingState};
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket};
 use std::sync::atomic::Ordering::Relaxed;
@@ -213,6 +215,61 @@ fn osc_scene_control_and_listen() {
     }
     assert_eq!(a.listen_mode.load(Relaxed), livedaw_engine::analyser::listen_mode::DYN_KEY);
     assert_eq!(a.listen_id.load(Relaxed), engine.channel_at(3).unwrap().id());
+}
+
+#[test]
+fn osc_surface_layers_and_custom_controls() {
+    let engine = Arc::new(Engine::new(0));
+    engine.set_num_channels(40);
+    let state = Arc::new(WingState::default());
+    let config =
+        Config { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), discovery_port: 0, osc_port: 0, native_port: 0, ..Config::default() };
+    let handle: Arc<dyn EngineHandle> = Arc::new(engine.clone());
+    let server = WingServer::start(handle, state.clone(), &config);
+    let c = Osc::new(&server);
+    // The host's show, published as its message thread would.
+    let (mut layers, mut custom) = (LayerSet::default(), CustomControls::default());
+    let sync = |layers: &mut LayerSet, custom: &mut CustomControls| surface::sync(&state, &engine, layers, custom, 0);
+    sync(&mut layers, &mut custom);
+    assert_eq!(c.get("/$ctl/layer/L/sel").args.last(), Some(&Arg::Int(1)));
+
+    // A client picks the left section's 25-36 key and assigns USER 1's first fader.
+    c.send(&Message::new("/$ctl/layer/L/sel", vec![Arg::Int(3)]));
+    c.send(&Message::new("/$ctl/layer/L/6/1/type", vec![Arg::Str("DCA".into())]));
+    c.send(&Message::new("/$ctl/layer/L/6/1/i", vec![Arg::Int(4)]));
+    c.send(&Message::new("/$ctl/user/2/3/enc/mode", vec![Arg::Str("PAN".into())]));
+    // The reply to a get shows the change before the host has applied it.
+    assert_eq!(c.get("/$ctl/layer/L/6/1/i").args.last(), Some(&Arg::Int(4)));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline && layers.user_layers().first().map(|l| l.faders.clone()) != Some(vec![FaderRef::Dca(3)]) {
+        sync(&mut layers, &mut custom);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(layers.selected(LEFT), "in-3");
+    assert_eq!(layers.user_layers()[0].faders, vec![FaderRef::Dca(3)]);
+    assert_eq!(custom.control(1, 2).unwrap().encoder.category, 2);
+
+    // Changes made on the console reach subscribers.
+    c.send(&Message::new("/*S", vec![]));
+    std::thread::sleep(Duration::from_millis(300));
+    let id = layers.user_layers()[0].id.clone();
+    layers.rename_user_layer(&id, "Drums");
+    custom.control_mut(0, 0).unwrap().name = "Lead".into();
+    sync(&mut layers, &mut custom);
+    let want = [
+        Message::new("/$ctl/layer/L/6/name", vec![Arg::Str("Drums".into())]),
+        Message::new("/$ctl/user/1/1/enc/name", vec![Arg::Str("Lead".into())]),
+    ];
+    let mut seen = [false; 2];
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline && !seen.iter().all(|s| *s) {
+        if let Some(m) = c.recv() {
+            for (s, w) in seen.iter_mut().zip(&want) {
+                *s |= m == *w;
+            }
+        }
+    }
+    assert_eq!(seen, [true; 2], "console changes not pushed");
 }
 
 // ---- Native ------------------------------------------------------------------------

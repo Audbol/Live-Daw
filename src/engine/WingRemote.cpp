@@ -165,6 +165,7 @@ void WingRemote::attachShow (Show* s, std::function<void (const juce::String&, c
     {
         stopTimer();
         ld::ld_wing_clear_library (handle);
+        ld::ld_wing_clear_surface (handle);
         return;
     }
     publishLibrary();
@@ -208,6 +209,25 @@ void WingRemote::timerCallback()
             onRecalled (what + " (WING remote)", result);
     }
     publishLibrary();
+    syncSurface();
+}
+
+void WingRemote::setSurfaceCallbacks (std::function<int()> ccBank, std::function<void (int, int)> changed)
+{
+    surfaceBank = std::move (ccBank);
+    onSurfaceChanged = std::move (changed);
+}
+
+static_assert (WingRemote::surfaceLayers == (int) ld::kWingSurfaceLayers && WingRemote::surfaceControls == (int) ld::kWingSurfaceControls);
+
+void WingRemote::syncSurface()
+{
+    if (libraryShow == nullptr)
+        return;
+    int bank = -1;
+    const auto changes = libraryShow->syncWingSurface (handle, surfaceBank ? surfaceBank() : 0, bank);
+    if ((changes != 0 || bank >= 0) && onSurfaceChanged)
+        onSurfaceChanged ((int) changes, bank);
 }
 
 void WingRemote::publishLibrary()

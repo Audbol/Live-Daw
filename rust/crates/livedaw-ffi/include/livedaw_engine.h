@@ -64,6 +64,9 @@ constexpr int kMaxPdc = 8192;
 constexpr int kTapEqBands = 3;
 /** RTA bands: one per semitone, E0 (20.6 Hz) .. D#10 (19.9 kHz), see ld_rta_band_hz. */
 constexpr int kRtaBands = 120;
+/** ld_wing_sync_surface flags: a client changed the show's layers / custom controls. */
+constexpr uint32_t kWingSurfaceLayers = 1;
+constexpr uint32_t kWingSurfaceControls = 2;
 
 enum StripKindId : int32_t
 {
@@ -1158,6 +1161,12 @@ extern "C"
     /** The next scene recall a client asked for: action 1 GO (index: the scene, 0-based),
         2 GO NEXT, 3 GO PREV, 4 GO TAG (index: the tag). False if none. */
     bool ld_wing_take_library_action (LdWing*, int32_t* action, int32_t* index);
+    /** Surface control (/$ctl/layer, /$ctl/user): applies the layer and custom control changes
+        clients made to the show, then publishes its layers and custom controls with the upper
+        custom control layer ccBank (0-15). Returns kWingSurface* flags; *requestedBank is the
+        layer a client chose (-1 none). ld_wing_clear_surface: no host any more. */
+    uint32_t ld_wing_sync_surface (LdWing*, Show*, int32_t ccBank, int32_t* requestedBank);
+    void ld_wing_clear_surface (LdWing*);
     /** MIDI SYSEX CONTROL on the WING tree: cmd 2 executes a node string
         ("/ch.1.fdr=-1,mute=0"), 3 dumps a node, 5 describes one. True with
         *out the data (empty for 2), false with *out the error text. */

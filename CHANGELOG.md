@@ -22,13 +22,16 @@ All notable changes to Sidecar are listed here. Versions follow
   folder; IMPORT (or a double-click on the file) adds it to the show.
 - LIBRARY: the CLIP tab plays an audio clip (WAV, FLAC, AIFF, MP3) chosen at INT / USB
   on the USB player, with PLAY, PAUSE, STOP, meter, time and format.
-- WING remote: more of the WING 3.1 parameter tree drives the console: 83.7 % of its parameters
-  (57,353 of 68,556, up from 82.8 %). New: LISTEN from remote apps (BAND SOLO with
+- WING remote: more of the WING 3.1 parameter tree drives the console: 87.4 % of its parameters
+  (59,950 of 68,556, up from 82.8 %). New: LISTEN from remote apps (BAND SOLO with
   its band, KEY SOLO of the GATE and DYNAMICS slots, XOVER SOLO on channels, aux,
   buses, mains and matrices), the inserts' state, which strip uses each FX slot, a
   channel's source GAIN and +48V, the active RTA source and settings, the monitor
-  paths' actual level, and scene control (`/$ctl/lib`: GO, GO NEXT, GO PREV, GO TAG,
-  PREV / NEXT, the current scene and show).
+  paths' actual level, scene control (`/$ctl/lib`: GO, GO NEXT, GO PREV, GO TAG,
+  PREV / NEXT, the current scene and show), and the show's fader layers and custom
+  controls both ways (`/$ctl/layer`, `/$ctl/user`: layer keys, spill, scroll
+  position, user layer names and fader assignments, edited layer keys, each custom
+  control's functions, name and colour, the CC layer).
 - Plugin delay compensation: the latency each hosted plugin reports (and its
   changes) is compensated so that every source summed into a bus, main or matrix
   arrives in time, across bus stages; a plugin's FX MIX delays its dry signal to

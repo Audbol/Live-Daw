@@ -10,7 +10,7 @@ use super::session::{str_arg, LdShow, LdString};
 use livedaw_engine::Engine;
 use livedaw_wing::map::{LibAction, Library};
 use livedaw_wing::server::{ClientKind, Config, EngineHandle, EnginePtr, WingServer};
-use livedaw_wing::{snap, Identity, WingState};
+use livedaw_wing::{snap, surface, Identity, WingState};
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -285,6 +285,39 @@ pub unsafe extern "C" fn ld_wing_take_library_action(w: *mut LdWing, action: *mu
     true
 }
 
+/// `ld_wing_sync_surface`'s result (`kWingSurface*` in the header): the show's layers changed.
+pub const LD_WING_SURFACE_LAYERS: u32 = 1;
+/// The show's custom controls changed.
+pub const LD_WING_SURFACE_CONTROLS: u32 = 2;
+
+/// Surface control (`/$ctl/layer`, `/$ctl/user`), message thread: applies the
+/// layer and custom control changes clients made to `show`, then publishes
+/// its layers and custom controls with the upper custom control layer
+/// `cc_bank` (0-15). Returns `LD_WING_SURFACE_*` flags; `requested_bank` gets
+/// the layer a client chose (-1 none).
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_sync_surface(w: *mut LdWing, show: *mut LdShow, cc_bank: i32, requested_bank: *mut i32) -> u32 {
+    if let Some(out) = requested_bank.as_mut() {
+        *out = -1;
+    }
+    let (Some(w), Some(show)) = (wing(w), show.as_mut()) else { return 0 };
+    let engine = w.engine();
+    let show = &mut show.show;
+    let r = guard(Default::default(), || surface::sync(&w.state, engine, &mut show.layers, &mut show.custom, cc_bank));
+    if let (Some(out), Some(bank)) = (requested_bank.as_mut(), r.cc_bank) {
+        *out = bank;
+    }
+    (if r.layers { LD_WING_SURFACE_LAYERS } else { 0 }) | (if r.controls { LD_WING_SURFACE_CONTROLS } else { 0 })
+}
+
+/// No host for the surface any more (its nodes go back to the shadow store).
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_clear_surface(w: *mut LdWing) {
+    if let Some(w) = wing(w) {
+        guard((), || surface::detach(&w.state));
+    }
+}
+
 /// How much of the WING tree maps onto the engine (a text report).
 #[no_mangle]
 pub extern "C" fn ld_wing_coverage() -> *mut LdString {
@@ -390,6 +423,38 @@ mod tests {
             ld_wing_clear_library(w);
             assert!(c.set(node("/$ctl/lib/$action"), &livedaw_wing::Value::str("GO")).is_err());
             drop(c);
+            ld_wing_destroy(w);
+            drop(Box::from_raw(engine));
+        }
+    }
+
+    #[test]
+    fn surface_edits_reach_the_show() {
+        use crate::session::{ld_show_create, ld_show_destroy};
+        let engine = Box::into_raw(Box::new(Engine::new(0)));
+        unsafe {
+            (*engine).set_num_channels(40);
+            let w = ld_wing_create(engine);
+            let show = ld_show_create(std::ptr::null());
+            let mut bank = 0;
+            assert_eq!(ld_wing_sync_surface(w, show, 3, &mut bank), 0);
+            assert_eq!(bank, -1);
+            let state = (*w).state.clone();
+            let c = livedaw_wing::Console::new(&*engine, &state);
+            let node = |p: &str| livedaw_wing::schema().resolve(p, &c).unwrap();
+            assert_eq!(c.get(node("/$ctl/user/sel")), Some(livedaw_wing::Value::Int(4)));
+            c.set(node("/$ctl/layer/R/sel"), &livedaw_wing::Value::Int(2)).unwrap();
+            c.set(node("/$ctl/user/1/1/bu/mode"), &livedaw_wing::Value::str("SOLO")).unwrap();
+            c.set(node("/$ctl/user/sel"), &livedaw_wing::Value::Int(7)).unwrap();
+            let flags = ld_wing_sync_surface(w, show, 3, &mut bank);
+            assert_eq!(flags, LD_WING_SURFACE_LAYERS | LD_WING_SURFACE_CONTROLS);
+            assert_eq!(bank, 6);
+            assert_eq!((*show).show.layers.selected(livedaw_session::layers::RIGHT), "dca-1");
+            assert_eq!((*show).show.custom.control(0, 0).unwrap().upper.category, 2);
+            ld_wing_clear_surface(w);
+            assert!(!c.is_mapped(node("/$ctl/layer/R/sel")));
+            drop(c);
+            ld_show_destroy(show);
             ld_wing_destroy(w);
             drop(Box::from_raw(engine));
         }

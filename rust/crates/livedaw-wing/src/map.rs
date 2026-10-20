@@ -10,6 +10,7 @@
 //! files keep them, but they don't affect the audio.
 
 use crate::schema::{schema, Def, ModelSource, NoModels, Node, NodeType};
+use crate::surface::{self, LayerF, Surface, SurfaceEdit, UserF};
 use crate::value::{self, Value, FADER_MAX, FADER_MIN};
 use livedaw_dsp::util::MINUS_INF_DB;
 use livedaw_dsp::wing::fx::allowed_in_slot;
@@ -87,7 +88,8 @@ pub enum LibAction {
 }
 
 /// State of the virtual console beyond the engine: values of nodes Sidecar
-/// has no equivalent for, the console identity and the scene library.
+/// has no equivalent for, the console identity, the scene library and the
+/// surface's layers and custom controls.
 #[derive(Default)]
 pub struct WingState {
     pub shadow: Mutex<HashMap<ShadowKey, Value>>,
@@ -96,6 +98,9 @@ pub struct WingState {
     /// `$actionidx`: the scene (or tag) GO and GOTAG use.
     pub lib_index: AtomicI32,
     lib_actions: Mutex<VecDeque<LibAction>>,
+    /// The show's layers and custom controls as the host published them.
+    pub(crate) surface: Mutex<Surface>,
+    pub(crate) surface_edits: Mutex<VecDeque<SurfaceEdit>>,
 }
 
 impl WingState {
@@ -485,6 +490,10 @@ pub enum Binding {
     FxAssign(u8, bool),
     /// `/$ctl/lib`: scene control (the show lives on the host's message thread).
     Lib(LibF),
+    /// `/$ctl/layer/<L|C|R>` (section 0-2) and `/$ctl/user`: the show's fader
+    /// layers and custom controls (see [`surface`]).
+    Layer(u8, LayerF),
+    User(UserF),
 }
 
 /// `/$ctl/lib/...`: `$action`, `$actionidx`, `$actidx`, `$active`, `$activeid`, `$actshow`.
@@ -755,6 +764,8 @@ pub fn bind(parts: &[&str]) -> Binding {
             "$actshow" => Binding::Lib(LibF::Show),
             _ => Binding::None,
         },
+        ["$ctl", "layer", rest @ ..] => surface::bind_layer(rest).map_or(Binding::None, |(s, f)| Binding::Layer(s, f)),
+        ["$ctl", "user", rest @ ..] => surface::bind_user(rest).map_or(Binding::None, Binding::User),
         ["cfg", "rta", "$src"] => Binding::RtaShown(RtaF::Source),
         ["cfg", "rta", "$dec"] => Binding::RtaShown(RtaF::Decay),
         ["cfg", "rta", "$det"] => Binding::RtaShown(RtaF::Detector),
@@ -1291,6 +1302,7 @@ impl<'a> Console<'a> {
             Node::Row(r) => match bindings()[r as usize] {
                 Binding::None => false,
                 Binding::Strip(kind, n, _) => self.strip(kind, n).is_some(),
+                Binding::Layer(..) | Binding::User(_) => self.state.surface().attached,
                 _ => true,
             },
             Node::Param { slot, index } => self.engine_param(slot, index).is_some(),
@@ -1501,6 +1513,15 @@ impl<'a> Console<'a> {
                     LibF::ActiveTag => Value::Int(lib.tag),
                     LibF::Show => Value::Str(lib.show),
                 }
+            }
+            // Shadow until a host publishes the show.
+            Binding::Layer(s, lf) => {
+                let sf = self.state.surface();
+                return if sf.attached { sf.get_layer(s, lf) } else { None };
+            }
+            Binding::User(uf) => {
+                let sf = self.state.surface();
+                return if sf.attached { sf.get_user(uf) } else { None };
             }
             Binding::Source(group, n, sf) => {
                 let index = source_of(group, n)?;
@@ -2150,6 +2171,20 @@ impl<'a> Console<'a> {
                         }
                     }
                     _ => return Err(SetError::ReadOnly),
+                }
+            }
+            Binding::Layer(..) | Binding::User(_) => {
+                let mut sf = self.state.surface();
+                if !sf.attached {
+                    return Ok(false);
+                }
+                let edit = match bindings()[row as usize] {
+                    Binding::Layer(s, lf) => sf.set_layer(s, lf, v)?,
+                    Binding::User(uf) => sf.set_user(uf, v)?,
+                    _ => None,
+                };
+                if let Some(edit) = edit {
+                    self.state.push_surface_edit(edit);
                 }
             }
             Binding::Info(InfoF::Name) => {
@@ -3174,14 +3209,189 @@ mod tests {
     }
 
     #[test]
+    fn surface_layers_both_ways() {
+        use livedaw_session::custom::CustomControls;
+        use livedaw_session::layers::{FaderRef, LayerSet, SpillKind, CENTER, LEFT, RIGHT};
+        use livedaw_session::refs::StripRef;
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let (mut layers, mut custom) = (LayerSet::default(), CustomControls::default());
+        let sel = node(&c, "/$ctl/layer/L/sel");
+        // Without a host the nodes are shadow.
+        assert!(!c.is_mapped(sel));
+        c.set(sel, &Value::Int(3)).unwrap();
+        assert_eq!(layers.selected(LEFT), "in-1");
+        let sync = |layers: &mut LayerSet, custom: &mut CustomControls| surface::sync(&st, &e, layers, custom, 0);
+        sync(&mut layers, &mut custom);
+        assert!(c.is_mapped(sel));
+        assert_eq!(c.get(sel), Some(Value::Int(1)));
+
+        // Layer keys: a client selects, the show follows.
+        c.set(sel, &Value::Int(5)).unwrap();
+        assert_eq!(c.get(sel), Some(Value::Int(5)), "shown before the host applies it");
+        assert!(sync(&mut layers, &mut custom).layers);
+        assert_eq!(layers.selected(LEFT), "bus-1");
+        c.set(node(&c, "/$ctl/layer/R/sel"), &Value::Int(3)).unwrap();
+        c.set(node(&c, "/$ctl/layer/C/sel"), &Value::Int(12)).unwrap(); // a fixed bank: ignored
+        sync(&mut layers, &mut custom);
+        assert_eq!((layers.selected(RIGHT), layers.selected(CENTER)), ("inputs", "dca-1"));
+        // The scroll position of the shown layer.
+        c.set(node(&c, "/$ctl/layer/R/3/ofs"), &Value::Int(8)).unwrap();
+        c.set(node(&c, "/$ctl/layer/R/1/ofs"), &Value::Int(4)).unwrap(); // not shown: ignored
+        sync(&mut layers, &mut custom);
+        assert_eq!(layers.offset(RIGHT), 8);
+        assert_eq!(c.get(node(&c, "/$ctl/layer/R/1/ofs")), Some(Value::Int(0)));
+
+        // Local changes show to clients.
+        layers.select(CENTER, "out-1");
+        let drums = layers.add_user_layer("Drums", vec![FaderRef::Strip(StripRef::new(StripKind::Channel, 3)), FaderRef::Dca(1)]);
+        sync(&mut layers, &mut custom);
+        assert_eq!(c.get(node(&c, "/$ctl/layer/C/sel")), Some(Value::Int(2)));
+        assert_eq!(c.get(node(&c, "/$ctl/layer/L/6/name")), Some(Value::str("Drums")));
+        assert_eq!(c.get(node(&c, "/$ctl/layer/C/5/1/type")), Some(Value::str("CH")));
+        assert_eq!(c.get(node(&c, "/$ctl/layer/C/5/1/i")), Some(Value::Int(3)));
+        assert_eq!(c.get(node(&c, "/$ctl/layer/C/5/2/type")), Some(Value::str("DCA")));
+        assert_eq!(c.get(node(&c, "/$ctl/layer/C/5/2/i")), Some(Value::Int(2)));
+        assert_eq!(c.get(node(&c, "/$ctl/layer/C/5/3/type")), Some(Value::str("OFF")));
+        // The default keys' faders: MAIN 1 is the right section's first.
+        assert_eq!(c.get(node(&c, "/$ctl/layer/R/1/1/type")), Some(Value::str("BUS")));
+        assert_eq!(c.get(node(&c, "/$ctl/layer/R/1/1/i")), Some(Value::Int(17)));
+
+        // A client edits USER 1: a send replaces the DCA, a bus is appended, OFF removes CH 3.
+        let f = |p: &str, v: Value| c.set(node(&c, p), &v).unwrap();
+        f("/$ctl/layer/L/6/2/type", Value::str("SEND"));
+        f("/$ctl/layer/L/6/2/i", Value::Int(41));
+        f("/$ctl/layer/L/6/2/dst", Value::Int(17));
+        f("/$ctl/layer/L/6/9/type", Value::str("BUS"));
+        f("/$ctl/layer/L/6/9/i", Value::Int(4));
+        f("/$ctl/layer/L/6/1/type", Value::str("OFF"));
+        f("/$ctl/layer/L/6/name", Value::str("Band"));
+        f("/$ctl/layer/L/7/1/type", Value::str("MIDI"));
+        f("/$ctl/layer/L/7/1/i", Value::Int(74));
+        f("/$ctl/layer/L/7/1/dst", Value::Int(16));
+        assert!(sync(&mut layers, &mut custom).layers);
+        let aux1 = StripRef::of(&e.strips(StripKind::Aux)[0]);
+        let main1 = StripRef::of(&e.strips(StripKind::Main)[0]);
+        let user = layers.user_layer(&drums).unwrap();
+        assert_eq!(user.name, "Band");
+        assert_eq!(
+            user.faders,
+            vec![FaderRef::Send { from: aux1, to: main1 }, FaderRef::Strip(StripRef::new(StripKind::Bus, 3))]
+        );
+        assert_eq!(layers.user_layers()[1].faders, vec![FaderRef::midi_cc(15, 74)], "USER 2 made");
+        assert_eq!(c.get(node(&c, "/$ctl/layer/L/6/9/type")), Some(Value::str("OFF")), "republished");
+        // A default key becomes an edited key; setting what it holds changes nothing.
+        f("/$ctl/layer/C/1/1/type", Value::str("DCA"));
+        assert!(!sync(&mut layers, &mut custom).layers);
+        f("/$ctl/layer/C/1/1/type", Value::str("FX"));
+        f("/$ctl/layer/C/1/1/i", Value::Int(3));
+        f("/$ctl/layer/C/1/1/dst", Value::Int(2));
+        sync(&mut layers, &mut custom);
+        assert!(layers.has_default_override(CENTER, "dca-1"));
+        assert_eq!(layers.find_layer(&e, CENTER, "dca-1").faders[0], FaderRef::FxParam { slot: 2, param: 1 });
+        // SENDS has no equivalent.
+        f("/$ctl/layer/C/1/2/type", Value::str("SENDS"));
+        assert!(!sync(&mut layers, &mut custom).layers);
+
+        // Spill: DCA 3 on the left; it shows, and ends with 0.
+        e.strips(StripKind::Channel)[4].params.dca_mask.store(1 << 2, Relaxed);
+        f("/$ctl/layer/L/spidx", Value::Int(3));
+        sync(&mut layers, &mut custom);
+        assert_eq!(layers.spill(LEFT), Some(SpillKind::Dca(2)));
+        assert_eq!(c.get(sel), Some(Value::Int(22)));
+        assert_eq!(c.get(node(&c, "/$ctl/layer/L/$spill/name")), Some(Value::str("DCA 3 SPILL")));
+        assert_eq!(c.get(node(&c, "/$ctl/layer/L/$spill/1/i")), Some(Value::Int(5)));
+        f("/$ctl/layer/L/$spill/1/i", Value::Int(9)); // read only: ignored
+        assert_eq!(c.get(node(&c, "/$ctl/layer/L/$spill/1/i")), Some(Value::Int(5)));
+        layers.start_spill(RIGHT, SpillKind::Automix(1));
+        sync(&mut layers, &mut custom);
+        assert_eq!(c.get(node(&c, "/$ctl/layer/R/spidx")), Some(Value::Int(62)));
+        f("/$ctl/layer/L/spidx", Value::Int(0));
+        sync(&mut layers, &mut custom);
+        assert_eq!((layers.spill(LEFT), layers.selected(LEFT)), (None, "bus-1"));
+
+        // No host: shadow again.
+        surface::detach(&st);
+        assert!(!c.is_mapped(sel));
+    }
+
+    #[test]
+    fn surface_custom_controls_both_ways() {
+        use livedaw_session::custom::{CcFunction, CustomControls};
+        use livedaw_session::layers::LayerSet;
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let (mut layers, mut custom) = (LayerSet::default(), CustomControls::default());
+        let mut sync = |custom: &mut CustomControls, bank| surface::sync(&st, &e, &mut layers, custom, bank);
+        sync(&mut custom, 2);
+        assert_eq!(c.get(node(&c, "/$ctl/user/sel")), Some(Value::Int(3)));
+        assert_eq!(c.get(node(&c, "/$ctl/user/1/1/enc/mode")), Some(Value::str("OFF")));
+
+        // Local assignments show to clients.
+        let ctl = custom.control_mut(4, 1).unwrap();
+        ctl.encoder = CcFunction { category: 9, target: 0, option: 7 };
+        ctl.lower = CcFunction { category: 14, target: 3 * 16 + 2, option: 60 };
+        ctl.upper = CcFunction { category: 18, target: 0, option: 2 };
+        ctl.name = "Synth".into();
+        ctl.colour = 6;
+        custom.control_mut(21, 3).unwrap().upper = CcFunction { category: 13, target: 0, option: 1 };
+        sync(&mut custom, 2);
+        let get = |p: &str| c.get(node(&c, p)).unwrap();
+        assert_eq!(get("/$ctl/user/5/2/enc/mode"), Value::str("MIDICC"));
+        assert_eq!(get("/$ctl/user/5/2/enc/$fname"), Value::str("MIDI CC"));
+        assert_eq!(get("/$ctl/user/5/2/bd/mode"), Value::str("MIDINP"));
+        assert_eq!(get("/$ctl/user/5/2/bu/mode"), Value::str("OTHER"), "CC BANK");
+        assert_eq!(get("/$ctl/user/5/2/enc/name"), Value::str("Synth"));
+        assert_eq!(get("/$ctl/user/5/2/col"), Value::Int(6));
+        assert_eq!(get("/$ctl/user/daw2/4/bu/mode"), Value::str("DAWBTN"));
+
+        // A client assigns: a new function starts at its first target.
+        let f = |p: &str, v: Value| c.set(node(&c, p), &v);
+        f("/$ctl/user/1/1/enc/mode", Value::str("FDR")).unwrap();
+        f("/$ctl/user/1/1/enc/name", Value::str("Lead")).unwrap();
+        f("/$ctl/user/1/1/col", Value::Int(11)).unwrap();
+        f("/$ctl/user/user/2/bu/mode", Value::str("MUTE")).unwrap();
+        f("/$ctl/user/user/2/bu/name", Value::str("Band")).unwrap();
+        f("/$ctl/user/5/2/bd/mode", Value::str("MIDICCT")).unwrap();
+        f("/$ctl/user/U2/1/bu/mode", Value::str("SCENES")).unwrap();
+        assert!(matches!(f("/$ctl/user/1/2/bu/mode", Value::str("INS1")), Err(SetError::Unsupported(_))));
+        assert_eq!(f("/$ctl/user/1/1/enc/$fname", Value::str("x")), Err(SetError::ReadOnly));
+        f("/$ctl/user/sel", Value::Int(9)).unwrap();
+        let r = sync(&mut custom, 2);
+        assert!(r.controls);
+        assert_eq!(r.cc_bank, Some(8));
+        let ch1 = e.strips(StripKind::Channel)[0].id();
+        let ctl = custom.control(0, 0).unwrap();
+        assert_eq!(ctl.encoder, CcFunction { category: 1, target: ch1, option: 0 });
+        assert_eq!((ctl.name.as_str(), ctl.colour), ("Lead", 11));
+        let user = custom.control(16, 1).unwrap();
+        assert_eq!((user.upper.category, user.name.as_str()), (1, "Band"));
+        assert_eq!(
+            custom.control(4, 1).unwrap().lower,
+            CcFunction { category: 14, target: 2, option: 60 },
+            "keeps channel and number"
+        );
+        assert_eq!(custom.control(18, 0).unwrap().upper, CcFunction { category: 10, target: 1, option: 0 });
+        assert_eq!(get("/$ctl/user/sel"), Value::Int(9));
+        // The same function again changes nothing.
+        f("/$ctl/user/1/1/enc/mode", Value::str("FDR")).unwrap();
+        assert!(!sync(&mut custom, 8).controls);
+    }
+
+    #[test]
     fn coverage_counts() {
         let cov = coverage();
         assert!(cov.total > 60000, "{}", cov.total);
-        assert!(cov.mapped > 57000, "{}", cov.report());
+        assert!(cov.mapped > 59900, "{}", cov.report());
         // Groups that map completely.
         for g in ["/ch/N/eq", "/ch/N/gatesc", "/ch/N/dynxo", "/bus/N/eq", "/bus/N/preins", "/main/N/postins", "/mtx/N/eq"] {
             let (m, t) = cov.by_group[g];
             assert_eq!(m, t, "{g}");
         }
+        // The three fader sections of the full-size console; the other models' stay shadow.
+        assert_eq!(cov.by_group["/$ctl/layer"].0, 1936);
+        assert_eq!(cov.by_group["/$ctl/user"].0, 661);
     }
 }

@@ -87,6 +87,23 @@ public:
         to `onRecalled`. nullptr detaches (detach before the show goes away). */
     void attachShow (Show*, std::function<void (const juce::String& what, const state::ApplyResult&)> onRecalled = {});
 
+    /** What a client changed on the surface (`onSurfaceChanged`'s flags). */
+    enum SurfaceChange
+    {
+        surfaceLayers = 1,  // the show's fader layers (selection, spill, user layers, edited keys)
+        surfaceControls = 2 // the show's custom control assignments
+    };
+
+    /** Surface control for clients (/$ctl/layer, /$ctl/user): with a show
+        attached, the layer and custom control changes clients make are
+        applied to it and its layers and custom controls are published (with
+        the upper custom control layer `ccBank` returns), 10 times a second.
+        `onSurfaceChanged` gets the SurfaceChange flags of what a client
+        changed and the custom control layer it chose (-1 none). */
+    void setSurfaceCallbacks (std::function<int()> ccBank, std::function<void (int changes, int bank)> onSurfaceChanged);
+    /** Runs the surface exchange now (the timer does it with a show attached). */
+    void syncSurface();
+
     /** How much of the WING parameter tree maps onto Sidecar. */
     static juce::String coverageReport();
 
@@ -101,6 +118,8 @@ private:
     Settings running;
     Show* libraryShow = nullptr;
     std::function<void (const juce::String&, const state::ApplyResult&)> onRecalled;
+    std::function<int()> surfaceBank;
+    std::function<void (int, int)> onSurfaceChanged;
 
     JUCE_DECLARE_NON_COPYABLE (WingRemote)
 };
