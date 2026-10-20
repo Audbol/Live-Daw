@@ -530,12 +530,17 @@ fn native_meters_over_udp() {
     let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
     udp.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     let port = udp.local_addr().unwrap().port();
+    // Data bytes equal to the channel marker 0xdf are escaped (0xdf 0xde), as
+    // libwing does: an ephemeral port such as 0xdf.. would otherwise read as a
+    // channel switch and the subscription would be lost.
+    let esc =
+        |bytes: [u8; 2]| bytes.iter().flat_map(|&b| if b == 0xdf { vec![0xdf, 0xde] } else { vec![b] }).collect::<Vec<u8>>();
     // As libwing sends it: channel 3, port, report id (id 7 + port), collection, back to channel 1.
     let mut req = vec![0xdf, 0xd3, 0xd3];
-    req.extend_from_slice(&port.to_be_bytes());
+    req.extend(esc(port.to_be_bytes()));
     req.push(0xd4);
-    req.extend_from_slice(&7u16.to_be_bytes());
-    req.extend_from_slice(&port.to_be_bytes());
+    req.extend(esc(7u16.to_be_bytes()));
+    req.extend(esc(port.to_be_bytes()));
     req.extend_from_slice(&[0xdc, 0xa0, 0x00, 0xa3, 0x00, 0xaa, 0xde, 0xdf, 0xd1]);
     a.tcp.write_all(&req).unwrap();
     let mut buf = [0u8; 8192];
@@ -548,8 +553,8 @@ fn native_meters_over_udp() {
     assert!((input_l as f32 / 256.0 + 6.02).abs() < 0.1, "{input_l}");
     // Renewal keeps it going.
     let mut renew = vec![0xdf, 0xd3, 0xd4];
-    renew.extend_from_slice(&7u16.to_be_bytes());
-    renew.extend_from_slice(&port.to_be_bytes());
+    renew.extend(esc(7u16.to_be_bytes()));
+    renew.extend(esc(port.to_be_bytes()));
     renew.extend_from_slice(&[0xdf, 0xd1]);
     a.tcp.write_all(&renew).unwrap();
     assert!(udp.recv_from(&mut buf).is_ok());
