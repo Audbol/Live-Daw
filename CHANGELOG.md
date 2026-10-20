@@ -23,6 +23,9 @@ All notable changes to Sidecar are listed here. Versions follow
 - CHANNEL COPY / INIT: CONN now copies the ALT input and the MAIN / ALT switch too,
   SEND copies TAP WIDTH and TAP EQ, and a MACH EQ4 isn't copied onto an aux channel
   (which doesn't offer it).
+- Channel strip section: the INPUT encoder's DELAY now has the INPUT screen's range
+  (up to 500 ms in every unit, at the current sample rate); it stopped at 150 m,
+  500 ft or 24000 samples, so the two controls disagreed.
 
 ## [0.1.0] - beta
 

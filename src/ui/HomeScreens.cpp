@@ -632,6 +632,8 @@ ld::SourceParams* inputSourceParams (MixerEngine& engine, int port)
 }
 } // namespace
 
+KnobBinding inputDelayBinding (UiContext& ctx, InputParams& in) { return delayBinding (ctx, in); }
+
 /** A routing-style source tile [3.1, D16]: the source's name strip in its
     colour over a #303030 body with the icon, the signal ring and the 48V /
     MUTE chips at the right and the port in blue (olive for stereo). */

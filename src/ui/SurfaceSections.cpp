@@ -5,6 +5,7 @@
 #include "ui/MidiRemoteUi.h"
 #include "dsp/DspUtils.h"
 #include "ui/FaderStrip.h"
+#include "ui/HomeScreens.h"
 #include "ui/ResponseGraph.h"
 #include "ui/UsbRecorderPage.h"
 
@@ -17,23 +18,6 @@ namespace
     constexpr float kLevelThresholds[] = { -0.1f, -3.0f, -6.0f, -12.0f, -18.0f, -24.0f, -36.0f, -48.0f };
     constexpr const char* kLevelLabels[] = { "CLIP", "-3", "-6", "-12", "-18", "-24", "-36", "-48" };
     constexpr float kGrThresholds[] = { 2.0f, 4.0f, 6.0f, 8.0f, 12.0f, 15.0f, 18.0f, 21.0f };
-
-    KnobBinding delayBinding (InputParams& in)
-    {
-        KnobBinding b;
-        b.label = "DELAY";
-        auto maxFor = [&in] { static const float max[] = { 150.0f, 500.0f, 500.0f, 24000.0f }; return max[juce::jlimit (0, 3, (int) in.delayMode.load())]; };
-        b.get = [&in, maxFor] { return juce::jlimit (0.0f, 1.0f, std::sqrt (in.delay.load() / maxFor())); };
-        b.set = [&in, maxFor] (float p) { in.delay = p * p * maxFor(); };
-        b.text = [&in]
-        {
-            static const char* units[] = { " m", " ft", " ms", " smp" };
-            const int mode = juce::jlimit (0, 3, (int) in.delayMode.load());
-            return juce::String (in.delay.load(), mode == 3 ? 0 : 1) + units[mode];
-        };
-        b.reset = [&in] { in.delay = 0.0f; };
-        return b;
-    }
 
     /** Draws a printed connector line between two points of the panel. */
     void drawConnector (juce::Graphics& g, float x1, float x2, float y)
@@ -235,7 +219,8 @@ std::vector<KnobBinding> ChannelStripSection::slotParams (int slot) const
         case Input:
             list.push_back (bindLinear ("TRIM", p.input.trimDb, -18.0f, 18.0f, " dB", 1, 0.0f));
             list.push_back (bindLinear ("BALANCE", p.input.balanceDb, -9.0f, 9.0f, " dB", 1, 0.0f));
-            list.push_back (delayBinding (p.input));
+            list.push_back (inputDelayBinding (ctx, p.input));
+            list.back().label = "DELAY";
             break;
         case Filter:
             if (channel)
