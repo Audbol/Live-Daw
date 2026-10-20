@@ -16,7 +16,7 @@ namespace livedaw::ui
 
     | mode   | encoder                          | key            |
     |--------|----------------------------------|----------------|
-    | GAIN   | input trim (no preamps here)     | 48 V (none)    |
+    | GAIN   | input trim (no preamps here)     | source's 48 V  |
     | GATE   | gate threshold                   | gate on        |
     | COMP   | compressor threshold             | compressor on  |
     | FILTER | low cut (press again: high cut)  | low cut on     |

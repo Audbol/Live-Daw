@@ -64,6 +64,9 @@ All notable changes to Sidecar are listed here. Versions follow
   typed at the end, so after the arrow keys moved the caret, typing went somewhere
   else than the caret showed. The field now shows the text as typed with the caret
   where typing goes.
+- 4-Channel section: in GAIN / 48 V mode the keys under the encoders did nothing;
+  they now switch the +48V of the strip's source (stored, as on HOME > INPUT and
+  ROUTING > SOURCES) and light while it is on.
 
 ## [0.1.0] - beta
 
