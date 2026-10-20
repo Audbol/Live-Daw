@@ -1433,8 +1433,10 @@ namespace
         void mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) override
         {
             // The wheel scrolls the text wherever the mouse is over the window.
-            if (e.eventComponent == this)
-                viewport.mouseWheelMove (e.getEventRelativeTo (&viewport), wheel);
+            // Not through Viewport::mouseWheelMove: a wheel it can't use (at the
+            // end of the text, sideways) goes back to its parent, this window,
+            // which sent it on again until the stack ran out.
+            viewport.useMouseWheelMoveIfNeeded (e.getEventRelativeTo (&viewport), wheel);
         }
 
         bool keyPressed (const juce::KeyPress& k) override

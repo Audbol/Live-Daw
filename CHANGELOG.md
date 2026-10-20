@@ -3,6 +3,14 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Fixed
+
+- Scrolling the start-up notice (or the ABOUT text) could crash Sidecar: a scroll the
+  text couldn't use (at its end, or sideways on a trackpad) went back and forth
+  between the window and its scroll view until the stack ran out.
+
 ## [0.1.1] - beta
 
 The second beta: plugin delay compensation, an optional plugin sandbox (experimental),
