@@ -3,6 +3,26 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Added
+
+- LIBRARY > SHOW > **SEND MIDI**: MIDI data (hexadecimal bytes, `U:` / `D:` for the
+  USB / DIN port) that a scene sends each time it is recalled, on the EDIT MIDI TEXT
+  STRING window; it goes out of EXTERNAL MIDI CONTROL's port and is saved with the
+  show.
+- **MIDI CC faders** in the layers (VIEW > CONFIG, the MIDI CC field): a fader sends
+  its CC out of EXTERNAL MIDI CONTROL and follows the CC coming in.
+- **FADER SPILL** custom control keys: spill a DCA, a bus's sources, an FX slot,
+  automix group X / Y or the selected channel's sends onto the left section.
+- An **RTA on MONITORS EQ** (the RTA key): the monitor path's spectrum, PRE or POST
+  its EQ, drawn as EQ/RTA SETTINGS say.
+
+### Changed
+
+- Only the custom controls' GPIO and SD functions (no hardware) are still drawn
+  disabled; the start-up notice and the known limitations say so.
+
 ## [0.1.0] - beta
 
 The first public release. Sidecar was developed as "Live DAW" before it was renamed;

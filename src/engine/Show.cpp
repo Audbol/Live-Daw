@@ -154,6 +154,7 @@ const std::optional<Show::Scene> Show::getScene (int index) const
     s.tag = ld::ld_scene_tag (handle, index);
     s.skip = ld::ld_scene_skip (handle, index);
     s.linkNext = ld::ld_scene_link (handle, index);
+    s.midi = takeString (ld::ld_scene_midi (handle, index));
     return s;
 }
 
@@ -170,6 +171,12 @@ void Show::setSceneSkip (int index, bool skip)
 void Show::setSceneLink (int index, bool linkNext)
 {
     ld::ld_scene_set_link (handle, index, linkNext);
+}
+
+void Show::setSceneMidi (int index, const juce::String& text)
+{
+    const Utf8 u (text);
+    ld::ld_scene_set_midi (handle, index, u.data, u.size);
 }
 
 void Show::setSceneName (int index, const juce::String& text)
@@ -223,6 +230,14 @@ void Show::moveScene (int from, int to)
 state::ApplyResult Show::afterRecall (ld::ApplyResultC& r)
 {
     auto result = state::ApplyResult::fromC (r);
+
+    // SEND MIDI of the scenes recalled.
+    if (const auto midi = takeString (ld::ld_show_take_midi (handle)); midi.isNotEmpty() && onSceneMidi)
+    {
+        juce::StringArray lines;
+        lines.addLines (midi);
+        onSceneMidi (lines);
+    }
 
     if (isFading())
         startTimerHz (60);

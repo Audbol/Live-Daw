@@ -72,9 +72,11 @@ enum StripKindId : int32_t
     kMatrix = 4
 };
 
-/// Fader reference kinds beyond the strip kinds (0..4): DCAs and FX parameters.
+/// Fader reference kinds beyond the strip kinds (0..4): DCAs, FX parameters
+/// and MIDI CCs.
 constexpr int32_t kFaderDca = 5;
 constexpr int32_t kFaderFxParam = 6;
+constexpr int32_t kFaderMidiCc = 7;
 
 /// Tap points (index into list 1). WING names: INPUT, FILTER, TAP 3-5, PRE FDR,
 /// POST FDR, POST PROC. Only input channels choose theirs; aux, buses, mains and
@@ -465,8 +467,13 @@ enum RtaView : int32_t
 {
     kRtaViewHome = 0,  // HOME > OVERVIEW: RTA SETTINGS (source IN | EQ | POST)
     kRtaViewEq = 1,    // EQ screen: EQ/RTA SETTINGS (source PRE | POST the EQ)
-    kRtaViewFilter = 2 // FILTER SETUP: source PRE | POST the filter (filterTap), the EQ view's settings
+    kRtaViewFilter = 2, // FILTER SETUP: source PRE | POST the filter (filterTap), the EQ view's settings
+    kRtaViewMonitor = 3 // MONITORS EQ: a monitor path (kAnalyseMonitor), PRE | POST its EQ, the EQ view's settings
 };
+
+/// AnalysisControls::stripKind for the RTA of a monitor path: stripId is the
+/// path (0 SPEAKERS, 1 PHONES, as MonitorControls::paths).
+constexpr int32_t kAnalyseMonitor = -2;
 
 /// LISTEN (AnalysisControls::listenMode): replaces the solo bus, one strip at a time.
 enum ListenMode : int32_t
@@ -576,7 +583,8 @@ struct StripRefC
 
 /// A fader on the surface: kind 0..4 = a strip, or with toKind 2..4 the send
 /// level from it to bus / main / matrix `toId`; kFaderDca = DCA (id 0..15);
-/// kFaderFxParam = FX slot `id`'s parameter `toId`. toKind is -1 when unused.
+/// kFaderFxParam = FX slot `id`'s parameter `toId`; kFaderMidiCc = CC `toId`
+/// (0-127) on MIDI channel `id` (0-15). toKind is -1 when unused.
 struct FaderRefC
 {
     int32_t kind, id;
@@ -816,6 +824,9 @@ extern "C"
     void ld_show_recall_scene (Show*, const Engine*, int32_t which, int32_t index, ApplyResultC* out);
     /** The first non-skipped scene tagged `tag`, or -1. */
     int32_t ld_show_find_scene_by_tag (Show*, int32_t tag);
+    /** SEND MIDI of the scenes the last ld_show_recall_scene recalled, one per line (empty if
+        none); taking it clears it. */
+    LdString* ld_show_take_midi (Show*);
 
     bool ld_scene_exists (Show*, int32_t scene);
     LdString* ld_scene_name (Show*, int32_t scene);
@@ -834,6 +845,9 @@ extern "C"
     void ld_scene_set_tag (Show*, int32_t scene, int32_t tag);
     void ld_scene_set_skip (Show*, int32_t scene, bool skip);
     void ld_scene_set_link (Show*, int32_t scene, bool link);
+    /** SEND MIDI: the MIDI data (EDIT MIDI TEXT STRING) the scene sends when recalled. */
+    LdString* ld_scene_midi (Show*, int32_t scene);
+    void ld_scene_set_midi (Show*, int32_t scene, const char* utf8, size_t len);
 
     int32_t ld_show_add_snippet (Show*, const Engine*, int32_t scene, const char* name, size_t len,
                                  uint32_t sections, const StripRefC* strips, int32_t numStrips);

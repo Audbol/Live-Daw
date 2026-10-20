@@ -35,17 +35,35 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A fader on the surface: a strip ("ch:3"), a DCA ("dca:0".."dca:15"), a
-/// send level from a strip to a bus, main or matrix ("send:ch:3>bus:0") or a
-/// parameter of an FX slot's device ("fxp:2.5": slot 3, parameter 6).
+/// send level from a strip to a bus, main or matrix ("send:ch:3>bus:0"), a
+/// parameter of an FX slot's device ("fxp:2.5": slot 3, parameter 6) or a MIDI
+/// CC sent out of EXTERNAL MIDI CONTROL ("midi:0.7": MIDI channel 1, CC 7; the
+/// WING's layer node type MIDI).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FaderRef {
     Strip(StripRef),
     Dca(i32),
-    Send { from: StripRef, to: StripRef },
-    FxParam { slot: i32, param: i32 },
+    Send {
+        from: StripRef,
+        to: StripRef,
+    },
+    FxParam {
+        slot: i32,
+        param: i32,
+    },
+    /// `channel` 0-15, `cc` 0-127.
+    MidiCc {
+        channel: i32,
+        cc: i32,
+    },
 }
 
 impl FaderRef {
+    /// A MIDI CC fader, its channel and CC kept in range.
+    pub fn midi_cc(channel: i32, cc: i32) -> Self {
+        FaderRef::MidiCc { channel: channel.clamp(0, 15), cc: cc.clamp(0, 127) }
+    }
+
     pub fn parse(s: &str) -> Self {
         if let Some(i) = s.strip_prefix("dca:") {
             return FaderRef::Dca(parse_int_prefix(i));
@@ -58,6 +76,10 @@ impl FaderRef {
             let (slot, param) = rest.split_once('.').unwrap_or((rest, "0"));
             return FaderRef::FxParam { slot: parse_int_prefix(slot), param: parse_int_prefix(param) };
         }
+        if let Some(rest) = s.strip_prefix("midi:") {
+            let (channel, cc) = rest.split_once('.').unwrap_or((rest, "0"));
+            return FaderRef::midi_cc(parse_int_prefix(channel), parse_int_prefix(cc));
+        }
         FaderRef::Strip(StripRef::parse(s))
     }
 }
@@ -69,6 +91,7 @@ impl fmt::Display for FaderRef {
             FaderRef::Dca(i) => write!(f, "dca:{i}"),
             FaderRef::Send { from, to } => write!(f, "send:{from}>{to}"),
             FaderRef::FxParam { slot, param } => write!(f, "fxp:{slot}.{param}"),
+            FaderRef::MidiCc { channel, cc } => write!(f, "midi:{channel}.{cc}"),
         }
     }
 }
@@ -941,12 +964,15 @@ mod tests {
     }
 
     #[test]
-    fn send_and_fx_parameter_faders_round_trip() {
+    fn send_fx_parameter_and_midi_cc_faders_round_trip() {
         let send = FaderRef::Send { from: StripRef::new(StripKind::Channel, 3), to: StripRef::new(StripKind::Bus, 1) };
         let fx = FaderRef::FxParam { slot: 2, param: 5 };
+        let midi = FaderRef::midi_cc(15, 74);
         assert_eq!(send.to_string(), "send:ch:3>bus:1");
         assert_eq!(fx.to_string(), "fxp:2.5");
-        let faders = vec![ch(1), send, fx, FaderRef::Dca(4)];
+        assert_eq!(midi.to_string(), "midi:15.74");
+        assert_eq!(FaderRef::parse("midi:20.300"), FaderRef::MidiCc { channel: 15, cc: 127 });
+        let faders = vec![ch(1), send, fx, FaderRef::Dca(4), midi];
         assert_eq!(faders_from_string(&faders_to_string(&faders)), faders);
 
         let mut set = LayerSet::default();

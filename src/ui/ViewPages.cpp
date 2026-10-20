@@ -122,8 +122,8 @@ namespace
             t.dca = juce::jlimit (0, kNumDcas - 1, f.dcaIndex);
             return t;
         }
-        if (f.fxParam)
-            return {}; // FX parameters have no strip view here
+        if (f.fxParam || f.midiCc)
+            return {}; // FX parameters and MIDI CCs have no strip view here
         Target t;
         t.strip = state::findStrip (ctx.engine, f.strip); // a send: its source
         if (f.send && t.strip != nullptr)
@@ -1617,13 +1617,13 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
 {
     // SENDS (the input channels' sends to a bus, main or matrix), BUS -> BUS
     // (the buses' sends to one) and FX (a slot's parameters) as faders; each
-    // field picks its destination or slot and shows those items. MIDI CC needs
-    // MIDI remote control.
+    // field picks its destination or slot and shows those items. MIDI CC: a
+    // MIDI channel's CCs (32 at a time) as faders sending out of EXTERNAL MIDI
+    // CONTROL (the WING's layer node type MIDI).
     for (int i = 0; i < 4; ++i)
     {
         static const char* captions[] = { "SENDS", "BUS -> BUS", "FX", "MIDI CC" };
         auto* f = fields.add (new DropdownField (captions[i], [this, i] { return fieldText (i); }, [this, i] (DropdownField& field) { chooseField (i, field); }));
-        f->setEnabled (i < 3);
         addAndMakeVisible (f);
     }
     for (auto* k : { &clearKey, &renameKey, &newKey, &deleteKey })
@@ -1767,7 +1767,7 @@ juce::String ConfigViewPage::fieldText (int field) const
     if (field == 2)
         return juce::String (fxSlot + 1);
     if (field == 3)
-        return "CH 1";
+        return midiBankName (midiBank);
     const auto dests = destinations (field == 1);
     const int i = field == 0 ? sendDest : busDest;
     if (! juce::isPositiveAndBelow (i, (int) dests.size()))
@@ -1787,6 +1787,12 @@ void ConfigViewPage::chooseField (int field, DropdownField& fieldKey)
             items.add ("FX " + juce::String (i + 1) + "  " + (fx.getModel (i) > ld::kFxExt ? models::model (models::Fx, fx.getModel (i)).name.toUpperCase() : juce::String ("-")));
         selected = fxSlot;
     }
+    else if (field == 3)
+    {
+        for (int i = 0; i < kNumMidiBanks; ++i)
+            items.add (midiBankName (i));
+        selected = midiBank;
+    }
     else
     {
         for (auto& r : destinations (field == 1))
@@ -1796,7 +1802,7 @@ void ConfigViewPage::chooseField (int field, DropdownField& fieldKey)
     }
     popups::ListOptions options;
     options.columns = field == 2 ? 2 : 4;
-    options.caption = field == 0 ? "SENDS TO" : field == 1 ? "BUS -> BUS TO" : "FX PARAMETERS OF";
+    options.caption = field == 0 ? "SENDS TO" : field == 1 ? "BUS -> BUS TO" : field == 2 ? "FX PARAMETERS OF" : "MIDI CC FADERS";
     juce::Component::SafePointer<ConfigViewPage> safe (this);
     popups::chooseFrom (fieldKey, items, selected, [safe, field] (int i)
     {
@@ -1806,8 +1812,10 @@ void ConfigViewPage::chooseField (int field, DropdownField& fieldKey)
             safe->sendDest = i;
         else if (field == 1)
             safe->busDest = i;
-        else
+        else if (field == 2)
             safe->fxSlot = i;
+        else
+            safe->midiBank = i;
         safe->category = 3 + field;
         safe->selectedItems.clear();
         safe->layoutContent();
@@ -1840,6 +1848,13 @@ std::vector<state::FaderRef> ConfigViewPage::sourceItems() const
             for (auto& b : ctx.engine.getStrips (StripKind::Bus))
                 if (! (to.kind == StripKind::Bus && (b->getId() < kBusToBusTargets || b->getId() == to.id)))
                     items.push_back (state::FaderRef::ofSend (state::StripRef::of (*b), to));
+        return items;
+    }
+    if (category == 6)
+    {
+        const int channel = midiBank / kMidiBanksPerChannel, first = midiBank % kMidiBanksPerChannel * kMidiCcsPerBank;
+        for (int i = 0; i < kMidiCcsPerBank; ++i)
+            items.push_back (state::FaderRef::ofMidiCc (channel, first + i));
         return items;
     }
     if (category == 5)
@@ -1886,14 +1901,9 @@ void ConfigViewPage::layoutContent()
     renameKey.setBounds (top.removeFromRight (kw * 3 / 4).reduced (2, 2));
     clearKey.setBounds (top.removeFromRight (kw * 3 / 4).reduced (2, 2));
     top.removeFromRight (6);
-    // In a narrow window the MIDI CC field (unavailable without MIDI remote
-    // control) gives its room to the other three.
-    const bool showMidi = top.getWidth() / juce::jmax (1, fields.size()) >= top.getHeight() * 3 / 2;
-    fields.getLast()->setVisible (showMidi);
-    const int fw = top.getWidth() / juce::jmax (1, fields.size() - (showMidi ? 0 : 1));
+    const int fw = top.getWidth() / juce::jmax (1, fields.size());
     for (auto* f : fields)
-        if (f->isVisible())
-            f->setBounds (top.removeFromLeft (fw).reduced (2, 2));
+        f->setBounds (top.removeFromLeft (fw).reduced (2, 2));
 
     // The page map at the very bottom, the layer's slots above it, the source grid on top.
     mapArea = b.removeFromBottom (juce::jlimit (14, screenCap (22), getHeight() / 26));
@@ -1966,6 +1976,23 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
 
     auto tile = [this, &g] (juce::Rectangle<float> r, const state::FaderRef& f, bool highlighted)
     {
+        if (f.midiCc)
+        {
+            // A MIDI CC: its MIDI channel on a bar, the CC number large.
+            auto bar = r.removeFromTop (r.getHeight() * 0.36f);
+            paintNameBar (g, bar, Colours::midiCc, "MIDI CH " + juce::String (f.midiChannel + 1));
+            g.setColour (blockFill);
+            g.fillRect (r);
+            g.setColour (Dark::text);
+            g.setFont (viewFont (TypeScale::value * 1.2f, r.getHeight() * 0.85f));
+            g.drawFittedText ("CC " + juce::String (f.cc), r.reduced (3.0f, 1.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+            if (highlighted)
+            {
+                g.setColour (Colours::yellow);
+                g.drawRect (bar.getUnion (r).expanded (1.0f), 2.0f);
+            }
+            return;
+        }
         if (f.fxParam)
         {
             // An FX parameter: the slot on an FX-coloured bar, the parameter's name.

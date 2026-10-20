@@ -760,6 +760,44 @@ fn scene_tags_skip_and_link() {
 }
 
 #[test]
+fn send_midi_goes_with_every_recall_of_its_scene() {
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    engine.set_num_channels(1);
+    let mut show = Show::new();
+    for i in 0..3 {
+        show.add_scene(&engine, &mut np, &format!("S{i}"), -1);
+    }
+    show.scene_mut(0).unwrap().midi = "B0,07,64".into();
+    show.scene_mut(1).unwrap().midi = "U:C002".into();
+    show.recall_scene(&engine, &mut np, 0);
+    assert_eq!(show.take_pending_midi(), vec!["B0,07,64".to_string()]);
+    assert!(show.take_pending_midi().is_empty(), "taken once");
+
+    // GO NEXT, then a scene without MIDI: nothing left over from before.
+    show.recall_next(&engine, &mut np);
+    assert_eq!(show.take_pending_midi(), vec!["U:C002".to_string()]);
+    show.recall_scene(&engine, &mut np, 0);
+    show.recall_scene(&engine, &mut np, 2);
+    assert!(show.take_pending_midi().is_empty());
+
+    // A linked scene sends its own MIDI after the first; a skipped one sends none.
+    show.scene_mut(0).unwrap().link_next = true;
+    show.recall_scene(&engine, &mut np, 0);
+    assert_eq!(show.take_pending_midi(), vec!["B0,07,64".to_string(), "U:C002".to_string()]);
+    show.scene_mut(0).unwrap().skip = true;
+    show.recall_scene(&engine, &mut np, 0);
+    assert!(show.take_pending_midi().is_empty());
+
+    // Saved with the show (and left out while empty).
+    let xml = show.to_xml(&engine, &mut NoPlugins).to_document();
+    assert_eq!(xml.matches("midi=").count(), 2);
+    let (_, loaded) = round_trip(&engine, &show);
+    assert_eq!(loaded.scene(1).unwrap().midi, "U:C002");
+    assert_eq!(loaded.scene(2).unwrap().midi, "");
+}
+
+#[test]
 fn alt_inputs_and_input_select_are_saved_and_recalled_with_routing() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;

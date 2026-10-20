@@ -190,8 +190,16 @@ private:
     DropTarget dropTargetAt (juce::Point<int>) const;
     void updateKeys();
 
-    int category = 0; // CHANNELS, BUS/MAIN, DCA, then SENDS, BUS -> BUS, FX (the fields)
-    int sendDest = 0, busDest = 0, fxSlot = 0;
+    /** MIDI CC: 32 CCs of one MIDI channel at a time ("CH 1  CC 0-31"). */
+    static constexpr int kMidiCcsPerBank = 32, kMidiBanksPerChannel = 128 / kMidiCcsPerBank, kNumMidiBanks = 16 * kMidiBanksPerChannel;
+    static juce::String midiBankName (int bank)
+    {
+        const int first = bank % kMidiBanksPerChannel * kMidiCcsPerBank;
+        return "CH " + juce::String (bank / kMidiBanksPerChannel + 1) + "  CC " + juce::String (first) + "-" + juce::String (first + kMidiCcsPerBank - 1);
+    }
+
+    int category = 0; // CHANNELS, BUS/MAIN, DCA, then SENDS, BUS -> BUS, FX, MIDI CC (the fields)
+    int sendDest = 0, busDest = 0, fxSlot = 0, midiBank = 0;
     std::vector<state::FaderRef> selectedItems;
     std::vector<juce::Rectangle<int>> categoryKeys, sourceTiles, slotAreas, mapCells;
     juce::Rectangle<int> sourceArea, slotsArea, hintArea, mapArea;

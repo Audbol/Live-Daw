@@ -36,7 +36,7 @@
 //! immutable `Topology`; the old one is retired to the garbage collector, which
 //! drops it (and any removed strips) once the audio thread is done with it.
 
-use crate::analyser::{Analyser, Probes};
+use crate::analyser::{rta_tap, Analyser, Probes};
 use crate::denormals::ScopedNoDenormals;
 use crate::fx::{FxRack, InsertCallbacks};
 use crate::garbage::Garbage;
@@ -974,7 +974,7 @@ impl Engine {
         self.record_usb(topo, a, n);
 
         // 7. Solo / monitor
-        self.build_monitor(topo, a, n, solo, talk);
+        self.build_monitor(topo, a, n, solo, talk, probes);
 
         // 8. Outputs, then the safety clip
         self.write_outputs(topo, a, n);
@@ -1102,7 +1102,15 @@ impl Engine {
     /// and DIRECT IN, runs its EQ, PAN / WIDTH, INVERT and DELAY, then its
     /// level (with the MON DCAs), on the selected path(s) DIM, mute, the talk
     /// MON DIM, MONO and SWAP, and last its LIMITER (`monitor.rs`).
-    unsafe fn build_monitor(&self, topo: &Topology, a: &mut AudioState, n: usize, solo: SoloBlock, talk: &TalkBlock) {
+    unsafe fn build_monitor(
+        &self,
+        topo: &Topology,
+        a: &mut AudioState,
+        n: usize,
+        solo: SoloBlock,
+        talk: &TalkBlock,
+        probes: &Probes,
+    ) {
         let c = &self.controls;
         // LISTEN (band / key / xover solo) replaces the soloed strips (analyser.rs).
         let listen = self.analysis.listen_overrides_solo();
@@ -1230,10 +1238,19 @@ impl Engine {
             let r = &mut a.monitor_ramps[path];
             let [l, rr] = &mut a.monitor[path];
             let (l, rr) = (&mut l[..n], &mut rr[..n]);
-            // EQ, PAN / WIDTH, INVERT, DELAY.
+            // EQ, PAN / WIDTH, INVERT, DELAY; the RTA of MONITORS EQ reads
+            // either side of the EQ.
             let dsp = &mut a.monitor_dsp[path];
             let mon = &c.monitor.paths[path];
-            dsp.process_pre(mon, l, rr);
+            let rta = probes.monitor_rta(path);
+            if rta == Some(rta_tap::MONITOR_PRE_EQ) {
+                probes.push_rta([&*l, &*rr], 2, n);
+            }
+            dsp.process_eq(mon, l, rr);
+            if rta == Some(rta_tap::MONITOR_POST_EQ) {
+                probes.push_rta([&*l, &*rr], 2, n);
+            }
+            dsp.process_image(mon, l, rr);
             apply_gain_ramp(l, r.level, level);
             apply_gain_ramp(rr, r.level, level);
             r.level = level;

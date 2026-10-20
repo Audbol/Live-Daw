@@ -1,5 +1,6 @@
 #include "ui/Pages.h"
 #include "engine/AppPaths.h"
+#include "engine/MidiRemote.h"
 #include "ui/ScopeWindow.h"
 #include "engine/Models.h"
 
@@ -135,7 +136,7 @@ public:
         };
         makeKey (keys, *this, "ADD ITEM\nTO SHOW", Icon::Plus, false); // needs the file browser (G-N3)
         makeKey (keys, *this, "EDIT\nTAG", Icon::Tag)->onClick = [this] { editTag(); };
-        makeKey (keys, *this, "SEND\nMIDI", Icon::Edit, false);        // needs MIDI (G-N1)
+        makeKey (keys, *this, "SEND\nMIDI", Icon::Edit)->onClick = [this] { editMidi(); };
         // WING files (Sidecar): snapshots apply to the console, shows add scenes.
         // IMPORT WING SNAP/SHOW... and EXPORT WING SNAP... (the file dialogs say which).
         makeKey (keys, *this, "IMPORT\nWING", Icon::LoadTray)->onClick = [this] { importWing(); };
@@ -181,6 +182,36 @@ private:
             if (safe == nullptr)
                 return;
             safe->page.ctx.show.setSceneTag (index, text.retainCharacters ("0123456789").getIntValue());
+            safe->page.list->refresh();
+        }, options);
+    }
+
+    /** SEND MIDI: the MIDI data the selected scene sends when recalled, on
+        the EDIT MIDI TEXT STRING keyboard ("B0,07,64", "U:C002"; empty for
+        none). Data that isn't MIDI is refused with the reason. */
+    void editMidi()
+    {
+        const int index = page.selectedScene();
+        const auto scene = page.ctx.show.getScene (index);
+        if (! scene)
+            return;
+        popups::TextOptions options;
+        options.icon = Icon::Edit;
+        options.maxLength = 120;
+        juce::Component::SafePointer<ShowTab> safe (this);
+        popups::editText (page, "EDIT MIDI TEXT STRING: " + scene->name.toUpperCase(), scene->midi, [safe, index] (const juce::String& text)
+        {
+            if (safe == nullptr)
+                return;
+            std::vector<MidiRemote::PortMessage> messages;
+            juce::String error;
+            if (text.trim().isNotEmpty() && ! MidiRemote::parseMidiText (text, messages, error))
+            {
+                popups::warn (safe->page, "SEND MIDI", error + "\n\nEnter hexadecimal MIDI bytes, e.g. B0,07,64 or C002; "
+                                                              "U: or D: before them sends them to the USB or DIN port.");
+                return;
+            }
+            safe->page.ctx.show.setSceneMidi (index, text.trim().toUpperCase());
             safe->page.list->refresh();
         }, options);
     }

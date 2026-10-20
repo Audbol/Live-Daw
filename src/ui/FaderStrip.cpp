@@ -1,5 +1,6 @@
 #include "ui/FaderStrip.h"
 #include "dsp/DspUtils.h"
+#include "engine/MidiRemote.h"
 #include "engine/Models.h"
 
 #include <optional>
@@ -439,6 +440,7 @@ void FaderStrip::refresh()
     dca = -1;
     send.reset();
     fxp.reset();
+    midi.reset();
 
     if (target)
     {
@@ -451,6 +453,8 @@ void FaderStrip::refresh()
             if (model > ld::kFxExt && juce::isPositiveAndBelow (target->param, (int) models::model (models::Fx, model).params.size()))
                 fxp = ParamTarget { &ctx.engine.getFx().params (slot).values[target->param], slot, model, target->param };
         }
+        else if (target->midiCc)
+            midi = MidiTarget { target->midiChannel, target->cc };
         else
             strip = state::findStrip (ctx.engine, target->strip); // a send fader: its source
     }
@@ -553,8 +557,15 @@ void FaderStrip::glide (double targetDb)
         fader.setValue (range.convertFrom0to1 (from + (to > from ? step : -step)), juce::dontSendNotification);
 }
 
+int FaderStrip::midiValue() const noexcept
+{
+    return midi && ctx.midi != nullptr ? ctx.midi->getExternalCc (midi->channel + 1, midi->cc) : 0;
+}
+
 double FaderStrip::faderPosition() const
 {
+    if (midi)
+        return fader.getNormalisableRange().convertFrom0to1 ((double) midiValue() / 127.0);
     if (fxp)
     {
         const auto& spec = models::model (models::Fx, fxp->model).params[(size_t) fxp->index];
@@ -566,7 +577,16 @@ double FaderStrip::faderPosition() const
 
 void FaderStrip::writeFader (double position)
 {
-    if (fxp)
+    if (midi)
+    {
+        const int value = juce::roundToInt (fader.getNormalisableRange().convertTo0to1 (position) * 127.0);
+        if (ctx.midi != nullptr && value != midiValue())
+        {
+            ctx.midi->setExternalCc (midi->channel + 1, midi->cc, value);
+            ctx.midi->sendExternal (juce::MidiMessage::controllerEvent (midi->channel + 1, midi->cc, value));
+        }
+    }
+    else if (fxp)
     {
         const auto& spec = models::model (models::Fx, fxp->model).params[(size_t) fxp->index];
         fxp->value->store (spec.fromNormalised ((float) fader.getNormalisableRange().convertTo0to1 (position)));
@@ -599,14 +619,16 @@ std::atomic<float>* FaderStrip::faderParam() const noexcept
 void FaderStrip::bindControls()
 {
     const bool any = strip != nullptr || dca >= 0 || fxp.has_value();
-    fader.setEnabled (any);
+    fader.setEnabled (any || midi.has_value());
     // A DCA's SELECT spills it when DCA SPILL is on (SETUP > SURFACE).
     selectKey.setEnabled (strip != nullptr || dca >= 0);
     soloKey.setEnabled ((strip != nullptr || dca >= 0) && ! send);
     muteKey.setEnabled (any);
-    fader.setColour (juce::Slider::thumbColourId, send ? Colours::solo : (fxp ? kFxColour : Colours::text));
+    fader.setColour (juce::Slider::thumbColourId, send ? Colours::solo : (fxp ? kFxColour : (midi ? Colours::midiCc : Colours::text)));
     fader.textFromValueFunction = [this] (double v)
     {
+        if (midi)
+            return juce::String (juce::roundToInt (fader.getNormalisableRange().convertTo0to1 (v) * 127.0));
         if (fxp)
         {
             const auto& spec = models::model (models::Fx, fxp->model).params[(size_t) fxp->index];
@@ -670,6 +692,15 @@ ScribbleInfo FaderStrip::scribbleInfo() const
         info.value = shownValue;
         info.name = m.params[(size_t) fxp->index].label.toUpperCase();
     }
+    else if (midi)
+    {
+        // A MIDI CC: the CC and its value large, the MIDI channel.
+        info.tag = "CC";
+        info.tagFirst = true;
+        info.number = juce::String (midi->cc);
+        info.value = shownValue;
+        info.name = "MIDI CH " + juce::String (midi->channel + 1);
+    }
 
     // Sends on Fader: the send this fader sets ("> BUS 3", "< CH5").
     if (send)
@@ -677,7 +708,7 @@ ScribbleInfo FaderStrip::scribbleInfo() const
 
     // SHOW FADER VALUE ON SCRIBBLE: the level in place of the icon for a
     // moment after a move.
-    if (shownFlash && ! fxp)
+    if (shownFlash && ! fxp && ! midi)
     {
         info.value = shownValue;
         info.caption = send ? "SEND" : "";
@@ -689,7 +720,7 @@ ScribbleInfo FaderStrip::scribbleInfo() const
 
 void FaderStrip::timerCallback()
 {
-    if (faderParam() != nullptr && ! fader.isMouseButtonDown())
+    if ((faderParam() != nullptr || midi) && ! fader.isMouseButtonDown())
     {
         const double v = faderPosition();
         if (std::abs (v - fader.getValue()) > 1.0e-4)
@@ -703,6 +734,8 @@ void FaderStrip::timerCallback()
 
     if (fxp)
         value = models::model (models::Fx, fxp->model).params[(size_t) fxp->index].display (fxp->value->load());
+    else if (midi)
+        value = juce::String (midiValue());
     else if (auto* p = faderParam())
         value = fader::text (p->load());
 
@@ -733,6 +766,8 @@ void FaderStrip::timerCallback()
         light = true;
         colour = d.colour.load();
     }
+    else if (midi)
+        light = true;
 
     if (name != shownName || colour != shownColour || light != shownLight || source != shownSource)
     {
@@ -758,7 +793,7 @@ void FaderStrip::timerCallback()
         shownValue = value;
         if (showValue)
             repaint (valueArea);
-        if (shownFlash || fxp)
+        if (shownFlash || fxp || midi)
             repaint (scribbleArea);
     }
     retargeted = false;
@@ -804,7 +839,7 @@ void FaderStrip::paint (juce::Graphics& g)
     // Colour light bar (COLOR LED brightness) and scribble strip; one LCD
     // runs across the module, with a fine rule between the strips.
     const juce::Colour colour = strip != nullptr ? stripDisplayColour (*strip)
-                                : (dca >= 0 ? wingColour (shownColour) : (fxp ? kFxColour : Colours::ledOff));
+                                : (dca >= 0 ? wingColour (shownColour) : (fxp ? kFxColour : (midi ? Colours::midiCc : Colours::ledOff)));
     drawLightBar (g, barArea.toFloat(), colour.withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
                   target.has_value() && shownLight);
     auto info = target ? scribbleInfo() : ScribbleInfo {};

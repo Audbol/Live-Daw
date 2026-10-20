@@ -133,6 +133,10 @@ pub struct Scene {
     pub skip: bool,
     /// LINK: recalling this scene also recalls the one below it.
     pub link_next: bool,
+    /// SEND MIDI: MIDI data sent each time the scene is recalled, as the
+    /// console's EDIT MIDI TEXT STRING has it (hexadecimal bytes, "U:" / "D:"
+    /// for the USB / DIN port; the application parses and sends it).
+    pub midi: String,
     pub state: Option<Element>,
     pub snippets: Vec<Snippet>,
 }
@@ -152,6 +156,7 @@ impl Default for Scene {
             tag: 0,
             skip: false,
             link_next: false,
+            midi: String::new(),
             state: None,
             snippets: Vec::new(),
         }
@@ -210,6 +215,8 @@ pub struct Show {
     recording: Option<Recording>,
     recorded: Option<(RecordedChanges, ChangeCounts)>,
     current_scene: i32,
+    /// SEND MIDI of the scenes the last recall recalled, in order.
+    pending_midi: Vec<String>,
     fades: Vec<Fade>,
     fade_start: Instant,
     fade_duration: Duration,
@@ -227,6 +234,7 @@ impl Default for Show {
             recording: None,
             recorded: None,
             current_scene: -1,
+            pending_midi: Vec::new(),
             fades: Vec::new(),
             fade_start: Instant::now(),
             fade_duration: Duration::ZERO,
@@ -345,6 +353,7 @@ impl Show {
     /// the last one recalled.
     pub fn recall_scene(&mut self, engine: &Engine, bridge: &mut dyn PluginBridge, index: i32) -> ApplyResult {
         let mut result = ApplyResult::default();
+        self.pending_midi.clear();
         // Each scene at most once (indices only grow).
         for i in index.. {
             let Some(scene) = self.scene(i).filter(|s| !s.skip) else { break };
@@ -355,6 +364,12 @@ impl Show {
             }
         }
         result
+    }
+
+    /// SEND MIDI of the scenes the last recall (`recall_scene`, GO NEXT /
+    /// PREV, by tag) recalled, linked ones included; taking them clears them.
+    pub fn take_pending_midi(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_midi)
     }
 
     /// The first scene tagged `tag` that isn't skipped, or -1.
@@ -375,6 +390,9 @@ impl Show {
 
     fn recall_one(&mut self, engine: &Engine, bridge: &mut dyn PluginBridge, index: i32) -> ApplyResult {
         let mut result = ApplyResult::default();
+        if let Some(midi) = self.scene(index).map(|s| s.midi.clone()).filter(|m| !m.trim().is_empty()) {
+            self.pending_midi.push(midi);
+        }
         let Some(scene) = self.scene(index) else { return result };
         let Some(state) = scene.state.clone() else { return result };
         let (scope, fade_seconds) = (scene.recall_scope(), scene.fade_seconds);
@@ -760,6 +778,9 @@ impl Show {
                 .set("tag", scene.tag)
                 .set_bool("skip", scene.skip)
                 .set_bool("link", scene.link_next);
+            if !scene.midi.is_empty() {
+                sx.set("midi", &scene.midi);
+            }
             if let Some(st) = &scene.state {
                 sx.add(st.clone());
             }
@@ -874,6 +895,7 @@ impl Show {
                     tag: clamp_scene_tag(sx.int_or("tag", 0)),
                     skip: sx.bool_or("skip", false),
                     link_next: sx.bool_or("link", false),
+                    midi: sx.str_or("midi", "").to_owned(),
                     state: state_of(sx),
                     snippets: Vec::new(),
                 };
