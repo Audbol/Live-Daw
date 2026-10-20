@@ -4,9 +4,12 @@
 //! way libwing and the protocol document encode them.
 
 use livedaw_engine::{Engine, StripKind};
+use livedaw_session::custom::CustomControls;
+use livedaw_session::layers::{FaderRef, LayerSet, LEFT};
+use livedaw_wing::map::{LibAction, Library};
 use livedaw_wing::osc::{self, Arg, Message};
 use livedaw_wing::server::{Config, EngineHandle, WingServer};
-use livedaw_wing::{schema, Identity, WingState};
+use livedaw_wing::{schema, surface, Identity, WingState};
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, UdpSocket};
 use std::sync::atomic::Ordering::Relaxed;
@@ -64,14 +67,14 @@ impl Osc {
 fn discovery_replies_like_a_wing() {
     let (_e, server) = start();
     let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
-    sock.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    sock.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     sock.send_to(b"WING?", server.status().discovery.unwrap()).unwrap();
     let mut buf = [0u8; 512];
     let (n, _) = sock.recv_from(&mut buf).unwrap();
     let reply = std::str::from_utf8(&buf[..n]).unwrap();
     let f: Vec<&str> = reply.split(',').collect();
     assert_eq!(f.len(), 6, "{reply}");
-    assert_eq!((f[0], f[1], f[2], f[3]), ("WING", "127.0.0.1", "TEST-DESK", "live-daw"));
+    assert_eq!((f[0], f[1], f[2], f[3]), ("WING", "127.0.0.1", "TEST-DESK", "sidecar"));
     assert!(f[5].starts_with("3.1"));
 }
 
@@ -169,6 +172,104 @@ fn osc_subscriptions_push_changes_from_anywhere() {
         got = sub.recv().filter(|m| m.addr == "/ch/5/name");
     }
     assert_eq!(got.unwrap().args, vec![Arg::Str("Vox".into())]);
+}
+
+#[test]
+fn osc_scene_control_and_listen() {
+    let engine = Arc::new(Engine::new(0));
+    engine.set_num_channels(40);
+    let state = Arc::new(WingState::default());
+    let config =
+        Config { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), discovery_port: 0, osc_port: 0, native_port: 0, ..Config::default() };
+    let handle: Arc<dyn EngineHandle> = Arc::new(engine.clone());
+    let server = WingServer::start(handle, state.clone(), &config);
+    let c = Osc::new(&server);
+    // The host publishes its show; GO queues a recall it runs.
+    state.set_library(Library { attached: true, show: "Gig".into(), num_scenes: 4, current: 0, scene: "Intro".into(), tag: 0 });
+    assert_eq!(c.get("/$ctl/lib/$active").args, vec![Arg::Str("Intro".into())]);
+    c.send(&Message::new("/$ctl/lib/$actionidx", vec![Arg::Int(2)]));
+    c.send(&Message::new("/$ctl/lib/$action", vec![Arg::Str("GO".into())]));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut action = None;
+    while Instant::now() < deadline && action.is_none() {
+        action = state.take_lib_action();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(action, Some(LibAction::Go(2)));
+    // The recall shows to subscribers.
+    c.send(&Message::new("/*S", vec![]));
+    std::thread::sleep(Duration::from_millis(300));
+    state.set_library(Library { attached: true, show: "Gig".into(), num_scenes: 4, current: 2, scene: "Chorus".into(), tag: 0 });
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut seen = false;
+    while Instant::now() < deadline && !seen {
+        seen = c.recv().is_some_and(|m| m == Message::new("/$ctl/lib/$active", vec![Arg::Str("Chorus".into())]));
+    }
+    assert!(seen, "scene change not pushed");
+    // LISTEN: KEY SOLO of CH 4's DYNAMICS.
+    c.send(&Message::new("/ch/4/dynsc/$solo", vec![Arg::Int(1)]));
+    let a = engine.analysis().controls();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline && a.listen_mode.load(Relaxed) == 0 {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(a.listen_mode.load(Relaxed), livedaw_engine::analyser::listen_mode::DYN_KEY);
+    assert_eq!(a.listen_id.load(Relaxed), engine.channel_at(3).unwrap().id());
+}
+
+#[test]
+fn osc_surface_layers_and_custom_controls() {
+    let engine = Arc::new(Engine::new(0));
+    engine.set_num_channels(40);
+    let state = Arc::new(WingState::default());
+    let config =
+        Config { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), discovery_port: 0, osc_port: 0, native_port: 0, ..Config::default() };
+    let handle: Arc<dyn EngineHandle> = Arc::new(engine.clone());
+    let server = WingServer::start(handle, state.clone(), &config);
+    let c = Osc::new(&server);
+    // The host's show, published as its message thread would.
+    let (mut layers, mut custom) = (LayerSet::default(), CustomControls::default());
+    let sync = |layers: &mut LayerSet, custom: &mut CustomControls| surface::sync(&state, &engine, layers, custom, 0);
+    sync(&mut layers, &mut custom);
+    assert_eq!(c.get("/$ctl/layer/L/sel").args.last(), Some(&Arg::Int(1)));
+
+    // A client picks the left section's 25-36 key and assigns USER 1's first fader.
+    c.send(&Message::new("/$ctl/layer/L/sel", vec![Arg::Int(3)]));
+    c.send(&Message::new("/$ctl/layer/L/6/1/type", vec![Arg::Str("DCA".into())]));
+    c.send(&Message::new("/$ctl/layer/L/6/1/i", vec![Arg::Int(4)]));
+    c.send(&Message::new("/$ctl/user/2/3/enc/mode", vec![Arg::Str("PAN".into())]));
+    // The reply to a get shows the change before the host has applied it.
+    assert_eq!(c.get("/$ctl/layer/L/6/1/i").args.last(), Some(&Arg::Int(4)));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline && layers.user_layers().first().map(|l| l.faders.clone()) != Some(vec![FaderRef::Dca(3)]) {
+        sync(&mut layers, &mut custom);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(layers.selected(LEFT), "in-3");
+    assert_eq!(layers.user_layers()[0].faders, vec![FaderRef::Dca(3)]);
+    assert_eq!(custom.control(1, 2).unwrap().encoder.category, 2);
+
+    // Changes made on the console reach subscribers.
+    c.send(&Message::new("/*S", vec![]));
+    std::thread::sleep(Duration::from_millis(300));
+    let id = layers.user_layers()[0].id.clone();
+    layers.rename_user_layer(&id, "Drums");
+    custom.control_mut(0, 0).unwrap().name = "Lead".into();
+    sync(&mut layers, &mut custom);
+    let want = [
+        Message::new("/$ctl/layer/L/6/name", vec![Arg::Str("Drums".into())]),
+        Message::new("/$ctl/user/1/1/enc/name", vec![Arg::Str("Lead".into())]),
+    ];
+    let mut seen = [false; 2];
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline && !seen.iter().all(|s| *s) {
+        if let Some(m) = c.recv() {
+            for (s, w) in seen.iter_mut().zip(&want) {
+                *s |= m == *w;
+            }
+        }
+    }
+    assert_eq!(seen, [true; 2], "console changes not pushed");
 }
 
 // ---- Native ------------------------------------------------------------------------
@@ -427,7 +528,7 @@ fn native_meters_over_udp() {
     let mut a = Native::connect(&server);
     engine.channel_at(0).unwrap().meters.input_peak[0].store(0.5);
     let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
-    udp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    udp.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     let port = udp.local_addr().unwrap().port();
     // As libwing sends it: channel 3, port, report id (id 7 + port), collection, back to channel 1.
     let mut req = vec![0xdf, 0xd3, 0xd3];

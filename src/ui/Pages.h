@@ -295,7 +295,7 @@ public:
     class ShowTab;
     class SnapTab;
     class SnipTab;
-    class PlaceholderTab;
+    class ClipTab;
     class FxTab;
     class ChanTab;
 
@@ -322,6 +322,14 @@ private:
     void closeScope();
     void openGlobal();
     bool anyGlobalSafe() const;
+    /** EXPORT on SNAP / SNIP: the selected scene (with its snippets) or snippet
+        as a file in the folder shown at INT / USB (INT's folder at SHOW). */
+    void exportSelected (bool snippet);
+    /** IMPORT on SNAP / SNIP: the selected scene or snippet file (a file dialog
+        when none is selected) into the show. */
+    void importSelected (bool snippet);
+    /** A scene file goes in after the selected scene, a snippet file into it. */
+    void importFile (const juce::File&);
 
     UiContext& ctx;
     std::unique_ptr<ShowPanel> list;
@@ -330,6 +338,7 @@ private:
     WingKey goPrevKey { "GO\nPREV", Icon::GoPrev }, goNextKey { "GO\nNEXT", Icon::GoNext }, prevKey { "PREV", Icon::ChevronLeft },
         nextKey { "NEXT", Icon::ChevronRight }, goKey { "GO", Icon::Play };
     std::unique_ptr<juce::Component> scope;
+    std::unique_ptr<juce::FileChooser> chooser;
     juce::Rectangle<int> rightPanel, transportArea;
 
     // The snippet REC FOCUS: what SAVE on the SNIP tab captures (or keeps of a recording).

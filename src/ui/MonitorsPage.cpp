@@ -216,10 +216,12 @@ void KnobField::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelD
 
 //==============================================================================
 /** MONITORS EQ (fig. 73): the 8-band EQ of a monitor path - L (low shelf),
-    1-6 (PEQ), H (high shelf) - with PAN and WIDTH. The top row: ON, the path,
-    PAN, WIDTH, CLOSE; the graph with a line and ring per band (drag: frequency
-    and gain, wheel: Q of a PEQ band); the band keys at the right. The knobs
-    under the display edit the selected band's GAIN, FREQ and Q. */
+    1-6 (PEQ), H (high shelf) - with PAN and WIDTH. The top row: ON, RTA, the
+    path, PAN, WIDTH, CLOSE; the graph with a line and ring per band (drag:
+    frequency and gain, wheel: Q of a PEQ band) over the path's RTA; the band
+    keys at the right. The knobs under the display edit the selected band's
+    GAIN, FREQ and Q. The RTA reads the path PRE or POST its EQ and draws as
+    EQ/RTA SETTINGS say (RTA SOURCE, COLOR, RANGE, FIXED GAIN, AUTOGAIN). */
 class MonitorEqView final : public juce::Component, private juce::Timer
 {
 public:
@@ -228,6 +230,14 @@ public:
         on.isOn = [this] { return dsp().eqOn.load(); };
         on.onClick = [this] { dsp().eqOn = ! dsp().eqOn.load(); };
         addAndMakeVisible (on);
+        rtaKey.isOn = [] { return rtaWanted; };
+        rtaKey.onClick = [this]
+        {
+            rtaWanted = ! rtaWanted;
+            updateRta();
+            repaint();
+        };
+        addAndMakeVisible (rtaKey);
         close.offInk = home::colours::caption;
         close.onClick = [this] { if (onClose) onClose(); };
         addAndMakeVisible (close);
@@ -246,8 +256,10 @@ public:
         for (int i = 0; i < 200; ++i)
             freqs.push_back (20.0f * std::pow (1000.0f, (float) i / 199.0f));
         setPath (true);
-        startTimerHz (15);
+        startTimerHz (30);
     }
+
+    ~MonitorEqView() override { stopRta(); }
 
     std::function<void()> onClose;
     /** The selected band changed (the parameter bar follows). */
@@ -288,6 +300,8 @@ public:
         bar = r.removeFromTop (juce::jlimit (30, screenCap (50), getHeight() / 9));
         auto b = bar.reduced (4, 4);
         on.setBounds (b.removeFromLeft (juce::jmin (screenCap (90), b.getWidth() / 9)));
+        b.removeFromLeft (4);
+        rtaKey.setBounds (b.removeFromLeft (juce::jmin (screenCap (90), b.getWidth() / 8)));
         close.setBounds (b.removeFromRight (juce::jmin (screenCap (110), b.getWidth() / 8)));
         b.removeFromRight (16);
         width.setBounds (b.removeFromRight (juce::jmin (screenCap (150), b.getWidth() / 6)));
@@ -345,6 +359,9 @@ public:
                         juce::Rectangle<float> (xForFreq (f) - 16.0f, labels.getY() + 2.0f, 32.0f, labels.getHeight() - 2.0f).toNearestInt(),
                         juce::Justification::centred);
 
+        if (rtaShown)
+            paintRta (g);
+
         // The curve over its fill (flat and grey while the EQ is off).
         const bool active = dsp().eqOn.load();
         std::vector<float> db (freqs.size(), 0.0f);
@@ -364,7 +381,7 @@ public:
         fill.lineTo (plot.getRight(), plot.getCentreY());
         fill.lineTo (plot.getX(), plot.getCentreY());
         fill.closeSubPath();
-        g.setColour (active ? home::colours::eqFill : juce::Colour (0xff1c1c1c));
+        g.setColour ((active ? home::colours::eqFill : juce::Colour (0xff1c1c1c)).withMultipliedAlpha (rtaShown ? 0.6f : 1.0f));
         g.fillPath (fill);
         g.setColour (active ? home::colours::eqCurve : Dark::caption);
         g.strokePath (curve, juce::PathStrokeType (2.0f));
@@ -453,8 +470,79 @@ private:
         return { xForFreq (b.freq.load()), yForDb (b.gainDb.load()) };
     }
 
+    /** Drives the analyser while the RTA is wanted and the view shows. */
+    void updateRta()
+    {
+        Analysis analysis (engine.getHandle());
+        const int path = phones ? 1 : 0;
+        if (rtaWanted && isShowing())
+        {
+            if (! analysis.controls.rtaOn.load() || ! analysis.isAnalysingMonitor (path) || analysis.controls.view.load() != ld::kRtaViewMonitor)
+                analysis.showMonitorRta (path);
+            const auto before = rta;
+            analysis.read (rta);
+            // AUTOGAIN: the power average of the bands sits mid-scale (smoothed).
+            double sum = 0.0;
+            for (float level : rta.levels)
+                sum += std::pow (10.0, (double) level / 10.0);
+            const float average = (float) (10.0 * std::log10 (sum / ld::kRtaBands + 1.0e-15));
+            if (average > -110.0f)
+                autoGainDb += (average - autoGainDb) * 0.12f;
+            if (! rtaShown || (rta.frame != before.frame && (rta.levels != before.levels || rta.peaks != before.peaks)))
+                repaint();
+            rtaShown = true;
+        }
+        else
+        {
+            stopRta();
+            if (std::exchange (rtaShown, false))
+                repaint();
+        }
+    }
+
+    void stopRta()
+    {
+        Analysis analysis (engine.getHandle());
+        if (analysis.controls.view.load() == ld::kRtaViewMonitor && analysis.controls.stripKind.load() == ld::kAnalyseMonitor)
+            analysis.hideRta();
+    }
+
+    void paintRta (juce::Graphics& g)
+    {
+        const auto& s = Analysis (engine.getHandle()).settings (ld::kRtaViewMonitor);
+        const float range = s.range.load() == 0 ? 30.0f : 60.0f;
+        const float gain = juce::jlimit (-5.0f, 50.0f, s.gainDb.load());
+        // The top of the scale: 0 dBFS (less FIXED GAIN), or with AUTOGAIN the
+        // signal's average at mid-scale (as on the channel EQ).
+        const float top = (s.autogain.load() ? autoGainDb + range * 0.5f : 0.0f) - gain;
+        const auto colour = ResponseGraph::rtaColour (s.colour.load());
+        const auto hold = colour.withAlpha (juce::jmin (1.0f, colour.getFloatAlpha() + 0.35f));
+        auto heightOf = [&] (float db) { return juce::jlimit (0.0f, 1.0f, (db - (top - range)) / range) * plot.getHeight(); };
+        g.saveState();
+        g.reduceClipRegion (plot.toNearestInt());
+        for (int b = 0; b < Analysis::numBands; ++b)
+        {
+            const float x0 = xForFreq (Analysis::bandLowHz (b)), x1 = xForFreq (Analysis::bandHighHz (b));
+            if (x1 < plot.getX() || x0 > plot.getRight())
+                continue;
+            const float w = juce::jmax (1.0f, x1 - x0 - (x1 - x0 > 3.0f ? 1.0f : 0.0f));
+            if (const float h = heightOf (rta.levels[(size_t) b]); h > 0.5f)
+            {
+                g.setColour (colour);
+                g.fillRect (x0, plot.getBottom() - h, w, h);
+            }
+            if (const float p = heightOf (rta.peaks[(size_t) b]); p > 1.0f)
+            {
+                g.setColour (hold);
+                g.fillRect (x0, plot.getBottom() - p, w, juce::jmin (2.0f, p));
+            }
+        }
+        g.restoreState();
+    }
+
     void timerCallback() override
     {
+        updateRta();
         auto& d = dsp();
         juce::String state;
         state << (int) d.eqOn.load() << selected << (int) phones;
@@ -470,7 +558,12 @@ private:
     MixerEngine& engine;
     bool phones = true;
     int selected = 0, dragging = -1;
-    home::IconKey on { "ON", std::nullopt, Colours::gold }, close { "CLOSE", Icon::Check };
+    /** RTA on (kept while the app runs, for both paths). */
+    static inline bool rtaWanted = true;
+    Analysis::Bands rta;
+    bool rtaShown = false;
+    float autoGainDb = 0.0f;
+    home::IconKey on { "ON", std::nullopt, Colours::gold }, rtaKey { "RTA", std::nullopt, Colours::gold }, close { "CLOSE", Icon::Check };
     KnobField pan, width { {}, Colours::width };
     juce::OwnedArray<home::IconKey> bandKeys;
     std::vector<float> freqs;

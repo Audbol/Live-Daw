@@ -8,6 +8,7 @@ use super::guard;
 use livedaw_engine::{Engine, StripKind};
 use livedaw_session::console::{CapturedInsert, InsertMode, PluginBridge, RestoreError};
 use livedaw_session::layers::{FaderRef, Layer, LayerSet, SpillKind};
+use livedaw_session::library::{self, FileType};
 use livedaw_session::presets::{self, PresetType};
 use livedaw_session::{ApplyResult, GlobalSafe, Scope, Show, StripRef};
 use std::borrow::Cow;
@@ -182,6 +183,7 @@ impl Default for LdFaderRef {
 
 pub const FADER_DCA: i32 = 5;
 pub const FADER_FX_PARAM: i32 = 6;
+pub const FADER_MIDI_CC: i32 = 7;
 
 impl From<FaderRef> for LdFaderRef {
     fn from(f: FaderRef) -> Self {
@@ -190,6 +192,7 @@ impl From<FaderRef> for LdFaderRef {
             FaderRef::Dca(i) => Self { kind: FADER_DCA, id: i, ..Self::default() },
             FaderRef::Send { from, to } => Self { kind: from.kind as i32, id: from.id, to_kind: to.kind as i32, to_id: to.id },
             FaderRef::FxParam { slot, param } => Self { kind: FADER_FX_PARAM, id: slot, to_kind: -1, to_id: param },
+            FaderRef::MidiCc { channel, cc } => Self { kind: FADER_MIDI_CC, id: channel, to_kind: -1, to_id: cc },
         }
     }
 }
@@ -199,6 +202,7 @@ impl LdFaderRef {
         match self.kind {
             FADER_DCA => FaderRef::Dca(self.id),
             FADER_FX_PARAM => FaderRef::FxParam { slot: self.id, param: self.to_id },
+            FADER_MIDI_CC => FaderRef::midi_cc(self.id, self.to_id),
             _ => {
                 let from = LdStripRef { kind: self.kind, id: self.id }.to_ref();
                 match StripKind::from_i32(self.to_kind) {
@@ -351,6 +355,13 @@ pub unsafe extern "C" fn ld_show_recall_scene(s: *mut LdShow, e: *const Engine, 
     write_result(out, r);
 }
 
+/// SEND MIDI of the scenes the last ld_show_recall_scene recalled, one per
+/// line, in order (empty if none); taking it clears it.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_take_midi(s: *mut LdShow) -> *mut LdString {
+    LdString::new(show(s).map(|s| s.show.take_pending_midi().join("\n")).unwrap_or_default())
+}
+
 /// The first (non-skipped) scene tagged `tag`, or -1.
 #[no_mangle]
 pub unsafe extern "C" fn ld_show_find_scene_by_tag(s: *mut LdShow, tag: i32) -> i32 {
@@ -372,6 +383,12 @@ pub unsafe extern "C" fn ld_scene_name(s: *mut LdShow, scene: i32) -> *mut LdStr
 #[no_mangle]
 pub unsafe extern "C" fn ld_scene_notes(s: *mut LdShow, scene: i32) -> *mut LdString {
     LdString::new(show(s).and_then(|s| s.show.scene(scene)).map(|sc| sc.notes.clone()).unwrap_or_default())
+}
+
+/// SEND MIDI: the MIDI data the scene sends when recalled.
+#[no_mangle]
+pub unsafe extern "C" fn ld_scene_midi(s: *mut LdShow, scene: i32) -> *mut LdString {
+    LdString::new(show(s).and_then(|s| s.show.scene(scene)).map(|sc| sc.midi.clone()).unwrap_or_default())
 }
 
 #[no_mangle]
@@ -439,6 +456,13 @@ pub unsafe extern "C" fn ld_scene_set_name(s: *mut LdShow, scene: i32, utf8: *co
 pub unsafe extern "C" fn ld_scene_set_notes(s: *mut LdShow, scene: i32, utf8: *const u8, len: usize) {
     if let Some(sc) = show(s).and_then(|s| s.show.scene_mut(scene)) {
         sc.notes = str_arg(utf8, len).into_owned();
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_scene_set_midi(s: *mut LdShow, scene: i32, utf8: *const u8, len: usize) {
+    if let Some(sc) = show(s).and_then(|s| s.show.scene_mut(scene)) {
+        sc.midi = str_arg(utf8, len).trim().to_owned();
     }
 }
 
@@ -1045,6 +1069,81 @@ pub unsafe extern "C" fn ld_preset_set_scope(path: *const u8, len: usize, scope:
     })
 }
 
+// ---- LIBRARY scene and snippet files (SNAP, SNIP) -------------------------------------------
+
+/// A scene or snippet file's header. `kind`: 0 = not one, 1 = scene, 2 = snippet;
+/// `count`: a scene's snippets, a snippet's parameters. `name` is owned by the caller.
+#[repr(C)]
+pub struct LdLibraryInfo {
+    pub kind: i32,
+    pub count: i32,
+    pub name: *mut LdString,
+}
+
+/// Reads a scene or snippet file's header; false (kind 0, null name) if it isn't one.
+#[no_mangle]
+pub unsafe extern "C" fn ld_library_info(path: *const u8, len: usize, out: *mut LdLibraryInfo) -> bool {
+    let path = PathBuf::from(str_arg(path, len).into_owned());
+    let info = guard(None, || library::load(&path).ok().and_then(|f| library::info(&f)));
+    if let Some(o) = out.as_mut() {
+        *o = match &info {
+            Some(i) => LdLibraryInfo {
+                kind: if i.kind == FileType::Scene { 1 } else { 2 },
+                count: i32::try_from(i.count).unwrap_or(i32::MAX),
+                name: LdString::new(i.name.clone()),
+            },
+            None => LdLibraryInfo { kind: 0, count: 0, name: std::ptr::null_mut() },
+        };
+    }
+    info.is_some()
+}
+
+/// Saves scene `scene` (snippet < 0, with its snippets) or snippet `snippet`
+/// of it to `path`, named after the file. False with `message` on failure.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_export_library(
+    s: *mut LdShow,
+    scene: i32,
+    snippet: i32,
+    path: *const u8,
+    path_len: usize,
+    message: *mut *mut LdString,
+) -> bool {
+    let Some(s) = show(s) else { return false };
+    let path = PathBuf::from(str_arg(path, path_len).into_owned());
+    let r = guard(Err("internal error".into()), || library::export(&s.show, scene, snippet, &path).map(|()| Vec::new()));
+    finish(r, message)
+}
+
+/// Adds the scene file at `path` to the show at `index` (-1: appended), or
+/// the snippet file at `path` to scene `index`. Returns the new scene's or
+/// snippet's index, or -1 with `message`.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_import_library(
+    s: *mut LdShow,
+    path: *const u8,
+    path_len: usize,
+    index: i32,
+    message: *mut *mut LdString,
+) -> i32 {
+    let Some(s) = show(s) else { return -1 };
+    let path = PathBuf::from(str_arg(path, path_len).into_owned());
+    let r = guard(Err("internal error".into()), || {
+        let file = library::load(&path)?;
+        match library::info(&file).map(|i| i.kind) {
+            Some(FileType::Scene) => library::import_scene(&mut s.show, &file, index),
+            _ => library::import_snippet(&mut s.show, &file, index),
+        }
+    });
+    match r {
+        Ok(i) => i,
+        Err(msg) => {
+            write_string(message, msg);
+            -1
+        }
+    }
+}
+
 // ---- layers ------------------------------------------------------------------------------
 
 /// The show's custom control assignments as a `<CustomControls>` element.
@@ -1430,6 +1529,7 @@ mod tests {
                 LdFaderRef { kind: 0, id: 1, ..Default::default() },
                 LdFaderRef { kind: FADER_DCA, id: 3, ..Default::default() },
                 send,
+                LdFaderRef { kind: FADER_MIDI_CC, id: 2, to_kind: -1, to_id: 11 },
             ];
             assert_eq!(ld_show_add_snippet(s, e, 0, b"S".as_ptr(), 1, 1 << 8, refs.as_ptr(), 1), 0);
             let mut out = [LdStripRef::default(); 4];
@@ -1445,6 +1545,12 @@ mod tests {
             assert_eq!(r.strips_applied, 2 + 8 + 16 + 4 + 8);
             ld_show_recall_scene(s, e, 3, 13, &mut r);
             assert_eq!(r.strips_applied, 0);
+            // SEND MIDI
+            ld_scene_set_midi(s, 0, b" B0,07,64 ".as_ptr(), 10);
+            assert_eq!(take(ld_scene_midi(s, 0)), "B0,07,64");
+            ld_show_recall_scene(s, e, 0, 0, &mut r);
+            assert_eq!(take(ld_show_take_midi(s)), "B0,07,64");
+            assert_eq!(take(ld_show_take_midi(s)), "");
 
             let xml = take(ld_show_to_xml(s, e));
             let mut msg = std::ptr::null_mut();
@@ -1454,13 +1560,14 @@ mod tests {
             assert_eq!(take(msg), "Not a Sidecar show file");
 
             let l = ld_show_layers(s);
-            let id = take(ld_layers_add_user(l, b"U".as_ptr(), 1, faders.as_ptr(), 3));
+            let id = take(ld_layers_add_user(l, b"U".as_ptr(), 1, faders.as_ptr(), 4));
             let list = ld_layers_list(l, e, 0, 1, std::ptr::null(), 0);
             let n = ld_layer_list_len(list);
             assert_eq!(take(ld_layer_list_id(list, n - 1)), id);
             assert!(ld_layer_list_is_user(list, n - 1));
             let mut f = [LdFaderRef::default(); 4];
-            assert_eq!(ld_layer_list_faders(list, n - 1, f.as_mut_ptr(), 4), 3);
+            assert_eq!(ld_layer_list_faders(list, n - 1, f.as_mut_ptr(), 4), 4);
+            assert_eq!((f[3].kind, f[3].id, f[3].to_id), (FADER_MIDI_CC, 2, 11));
             assert_eq!((f[1].kind, f[1].id), (FADER_DCA, 3));
             assert_eq!((f[0].to_kind, f[2].kind, f[2].id, f[2].to_kind, f[2].to_id), (-1, 0, 1, 2, 4));
             assert_eq!(take(ld_layer_list_name(list, 0)), "CH 1-2 · AUX 1-8");

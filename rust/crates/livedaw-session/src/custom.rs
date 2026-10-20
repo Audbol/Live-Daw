@@ -128,6 +128,12 @@ impl CustomControls {
     }
 }
 
+/// Button category 12, FADER SPILL: the target is the spill, kind * 100 +
+/// index (kinds as the layer set's spills: 0 DCA, 1 the sources of bus slot
+/// `index`, 2 FX slot, 3 automix group X / Y, 4 the selected strip's sends);
+/// lit while a fader section spills it.
+pub const FADER_SPILL_CATEGORY: i32 = 12;
+
 /// Button category 15, USB PLAY/REC (the USB recorder / player): the option
 /// is the key, in this order.
 pub const USB_PLAY_REC_CATEGORY: i32 = 15;
@@ -222,5 +228,17 @@ mod tests {
         let mut loaded = CustomControls::default();
         loaded.from_xml(&cc.to_xml());
         assert_eq!(loaded.control(2, 1).unwrap().upper, CcFunction { category: 18, target: 0, option: 7 });
+    }
+
+    #[test]
+    fn fader_spill_keys_round_trip() {
+        let mut cc = CustomControls::default();
+        // DCA 3 and FX slot 12.
+        cc.control_mut(0, 0).unwrap().upper = CcFunction { category: FADER_SPILL_CATEGORY, target: 2, option: 0 };
+        cc.control_mut(16, 2).unwrap().lower = CcFunction { category: FADER_SPILL_CATEGORY, target: 211, option: 0 };
+        let mut loaded = CustomControls::default();
+        loaded.from_xml(&cc.to_xml());
+        assert_eq!(loaded.control(0, 0).unwrap().upper, CcFunction { category: 12, target: 2, option: 0 });
+        assert_eq!(loaded.control(16, 2).unwrap().lower, CcFunction { category: 12, target: 211, option: 0 });
     }
 }

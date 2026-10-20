@@ -86,6 +86,21 @@ FaderSection::FaderSection (UiContext& c, LayerSet::Section s) : ctx (c), sectio
         };
         addAndMakeVisible (sofKey);
     }
+    startTimerHz (4);
+}
+
+void FaderSection::timerCallback()
+{
+    // A spill follows the console: a strip assigned to the spilled DCA (or a
+    // send switched on to the spilled bus) joins it at once.
+    if (layer.id != LayerSet::kSpillId)
+        return;
+    auto now = ctx.show.layers.getSelectedLayer (ctx.engine, section);
+    if (now.id == layer.id && now.faders != layer.faders)
+    {
+        layer = std::move (now);
+        refreshFaders();
+    }
 }
 
 int FaderSection::shiftStep() const

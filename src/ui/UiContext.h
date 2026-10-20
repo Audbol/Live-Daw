@@ -113,6 +113,8 @@ struct UiContext
     std::function<void (bool saveAs)> saveShow;
     /** The LIBRARY's file list: open a show file, save the show as a file. */
     std::function<void (const juce::File&)> openShowFile, saveShowTo;
+    /** A show file was renamed in the LIBRARY (the open show follows it). */
+    std::function<void (const juce::File& from, const juce::File& to)> showFileRenamed;
 
     /** Sends on Fader (SOF FLIP): with a bus selected the input faders show their
         sends to it; with an input selected the bus faders show its sends. */
@@ -233,6 +235,9 @@ namespace uiprefs
     constexpr const char* dcaSpill = "ui.dcaSpill"; // bool: SELECT on a DCA spills it (SETUP > SURFACE)
     constexpr const char* autoSelect[3] = { "ui.autoSelectL", "ui.autoSelectC", "ui.autoSelectR" };
     constexpr const char* f1f3AsCustom = "ui.f1f3AsCustomControls";
+
+    // PLUGINS (SETUP > PLUGINS).
+    constexpr const char* latencyCompensation = "engine.latencyCompensation"; // bool, default true: plugin delay compensation
 
     /** How long the faders take to travel to a new position (FADER SPEED). */
     inline int faderGlideMs (juce::PropertiesFile& s)

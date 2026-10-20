@@ -146,6 +146,22 @@ public:
     /** EXTERNAL MIDI CONTROL: the custom controls' MIDI functions. Returns
         false when the function is OFF. */
     bool sendExternal (const juce::MidiMessage&);
+
+    /** SEND MIDI (LIBRARY): the MIDI data of a scene as the console's EDIT
+        MIDI TEXT STRING takes it - hexadecimal bytes with optional separators
+        ("C002", "B0,01,7F", several messages in a row), "U:" or "D:" before
+        data sending it (and what follows) to the USB or DIN port instead of
+        EXTERNAL MIDI CONTROL's. Each message goes with its port (-1: the
+        default). Returns false (and `error`) for anything else. */
+    struct PortMessage
+    {
+        int port = -1; // Din, Usb or -1
+        juce::MidiMessage message;
+    };
+    static bool parseMidiText (const juce::String& text, std::vector<PortMessage>& out, juce::String& error);
+    /** Sends SEND MIDI data (when EXTERNAL MIDI CONTROL is DIN or USB);
+        false if nothing was sent. */
+    bool sendMidiText (const juce::String& text);
     /** The value of an external CC (MIDI CC encoders), as last sent or received. */
     int getExternalCc (int channel, int cc) const noexcept;
     void setExternalCc (int channel, int cc, int value);
@@ -185,7 +201,7 @@ public:
     /** The SYSEX CONTROL identity ("WING,<ip>,<name>,ngc-full,..."). */
     juce::String getIdentity() const;
     /** The console name the identity reports (SETUP > GENERAL). */
-    juce::String consoleName { "LIVE-DAW" };
+    juce::String consoleName { "SIDECAR" };
     /** SYSEX CONTROL execute / dump / describe through the WING parameter
         tree: set by the app (they need the WING remote's tree). Return an
         error text ("NODE NOT FOUND") or the data. */

@@ -7,14 +7,165 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Added
 
+- LIBRARY > SHOW > **SEND MIDI**: MIDI data (hexadecimal bytes, `U:` / `D:` for the
+  USB / DIN port) that a scene sends each time it is recalled, on the EDIT MIDI TEXT
+  STRING window; it goes out of EXTERNAL MIDI CONTROL's port and is saved with the
+  show.
+- **MIDI CC faders** in the layers (VIEW > CONFIG, the MIDI CC field): a fader sends
+  its CC out of EXTERNAL MIDI CONTROL and follows the CC coming in.
+- **FADER SPILL** custom control keys: spill a DCA, a bus's sources, an FX slot,
+  automix group X / Y or the selected channel's sends onto the left section.
+- An **RTA on MONITORS EQ** (the RTA key): the monitor path's spectrum, PRE or POST
+  its EQ, drawn as EQ/RTA SETTINGS say.
+- LIBRARY: scene and snippet files. EXPORT on the SNAP and SNIP tabs saves the selected
+  scene (with its snippets) or snippet as a `.lsnap` / `.lsnip` file in the INT or USB
+  folder; IMPORT (or a double-click on the file) adds it to the show.
+- LIBRARY: the CLIP tab plays an audio clip (WAV, FLAC, AIFF, MP3) chosen at INT / USB
+  on the USB player, with PLAY, PAUSE, STOP, meter, time and format.
+- WING remote: more of the WING 3.1 parameter tree drives the console: 88.2 % of its parameters
+  (60,471 of 68,556, up from 82.8 % in 0.1.0). New: LISTEN from remote apps (BAND SOLO with
+  its band, KEY SOLO of the GATE and DYNAMICS slots, XOVER SOLO on channels, aux,
+  buses, mains and matrices), the inserts' state, which strip uses each FX slot, a
+  channel's source GAIN and +48V, the active RTA source and settings, the monitor
+  paths' actual level, scene control (`/$ctl/lib`: GO, GO NEXT, GO PREV, GO TAG,
+  PREV / NEXT, the current scene and show), and the show's fader layers and custom
+  controls both ways (`/$ctl/layer`, `/$ctl/user`: layer keys, spill, scroll
+  position, user layer names and fader assignments, edited layer keys, each custom
+  control's functions, name and colour, the CC layer).
+- **Matrix send PAN LINK** (HOME > MATRIX SENDS, the pan ring's pop-up; FEED
+  CONFIGURATION's SEND PANNING): a channel's or aux's matrix send pans with the
+  channel (LINK REVERSED mirrors it), or with its own PAN when unlinked. Saved with
+  shows and scenes.
+- A DCA's **icon** and scribble strip **LIGHT** (VIEW > OVERVIEW, the DCA's name),
+  shown on the fader strips and saved with the show.
+- WING remote also drives the matrix sends' PAN LINK, `$muteovr` on every strip,
+  DCA `icon` / `led`, the USB recorder and player (`/rec`, `/play`: transport, PLAYFILE, position,
+  REPEAT, REC PATH, format, state and file) and the recall safes (`/$ctl/safes`:
+  strips, DCAs, mute groups, FX).
+- Plugin delay compensation: the latency each hosted plugin reports (and its
+  changes) is compensated so that every source summed into a bus, main or matrix
+  arrives in time, across bus stages; a plugin's FX MIX delays its dry signal to
+  match. On by default; SETUP > PLUGINS turns it off and shows the total
+  compensation and each loaded plugin's latency. Compensation stops at 8192
+  samples; a plugin reporting more is logged and the limit is shown.
 - Experimental plugin sandbox: SETUP > PLUGINS > RUN PLUGINS IN SANDBOX (off by
   default) runs each plugin in its own helper process (`SidecarPluginHost`, shipped
   next to the app). Audio goes through shared memory with a bounded wait, so a plugin
   that crashes or hangs only bypasses its FX slot (dry signal, event log entry); the
   helper is restarted with the plugin's last known state. State save / restore and
   parameter changes work through the sandbox; the plugin's own editor opens in a
-  window of the helper process. The sandbox adds one block of latency (shown on the
-  EFFECTS screen, not compensated).
+  window of the helper process. The sandbox's one block of latency is reported like a
+  plugin's own, so delay compensation covers it.
+
+### Changed
+
+- The default console name on the network (WING discovery, MIDI identity) is now
+  SIDECAR instead of LIVE-DAW, and the WING remote reports the model "sidecar". A
+  name set on SETUP > GENERAL is kept.
+- Matrix sends of input and aux channels pan instead of balancing the channel's
+  panned output: linked (the default) they follow the channel's pan, unlinked they
+  use their own. Shows from before load a centred send linked (it sounds as before)
+  and a panned one with its pan. The engine's ABI version is 11.
+
+- Only the custom controls' GPIO and SD functions (no hardware) are still drawn
+  disabled; the start-up notice and the known limitations say so.
+
+### Fixed
+
+- HOME > NAME took no typing from the computer keyboard until the on-screen keyboard
+  was clicked, and a space typed at the end of a name vanished; the default name
+  ("Ch 2") now starts as an empty field, so typing replaces it.
+- Scribble strips: a long name keeps its size, runs on to the right and breaks onto a
+  second row at a space, as on the WING, instead of being squeezed onto one row.
+- VIEW > CONFIG: deleting the user layer on USER 1 moved USER 2's layer onto USER 1 and
+  left nothing to delete on USER 2. The USER keys now keep their layers, and new user
+  layers are named after their key instead of copying the shown layer's name.
+- The recorder screen's keys, labels and readouts fit their boxes at every window
+  size, from 1152 x 680 to 4K and ultrawide.
+- ROUTING > SOURCES: the GAIN knob set only the selected source of a stereo or
+  mid/side pair; on the pair's second source it changed nothing you could hear (the
+  pair plays at the first source's gain). It now sets both, in 0.5 dB steps, like
+  the fader and the wheel.
+- Spills (DCA SPILL, a bus's sources) didn't follow the console: a strip assigned to
+  the spilled DCA, or a send switched on to the spilled bus, only showed up after
+  another layer change. The spill now updates at once.
+- HOME > NAME: the name field always drew its caret at the end and dropped a space
+  typed at the end, so after the arrow keys moved the caret, typing went somewhere
+  else than the caret showed. The field now shows the text as typed with the caret
+  where typing goes.
+- 4-Channel section: in GAIN / 48 V mode the keys under the encoders did nothing;
+  they now switch the +48V of the strip's source (stored, as on HOME > INPUT and
+  ROUTING > SOURCES) and light while it is on.
+- ROUTING > SOURCES: switching a source to STEREO or MID/SIDE left the channels
+  already patched to it mono (they only heard the left source), and switching back
+  to MONO left them stereo. Channels and aux on the pair's first source now follow
+  its mode, as on the console and as WING remote apps already did.
+- HOME > OVERVIEW: the INPUT panel's source MUTE key was always disabled (from
+  before sources were modelled). It now mutes the channel's source (both sources of
+  a pair) as ROUTING > SOURCES does, and lights while the source is muted.
+- VIEW > MUTE GROUPS: the SOURCES box always showed "-", even with sources tagged to
+  the group on ROUTING > SOURCES > TAGS, and UNASSIGN left those tags. The box now
+  shows the tagged source (or how many) and UNASSIGN clears them too.
+- LIBRARY > SHOW > SAVE AS: the show takes the new name (it kept the old one, so the
+  title bar and the LIBRARY showed the name of the show it was copied from).
+- LIBRARY: renaming the open show's file (RENAME at INT / USB) left the show saving to
+  the old file name, so the next SAVE brought the old file back.
+- The parameter bar under the screen printed a long name and value over each other
+  (recorder screen: POSITION, LOOP OUT).
+- Two-line key captions were cut or wrapped onto a third line when the key was narrow
+  (LIBRARY GO PREV / GO NEXT, recorder RECORD ALL CHANNELS); they now shrink to fit.
+- Text cut in fixed-size boxes on large windows: EFFECTS slot numbers 10 and 14 showed
+  "...", the recorder's marker times and the SNIP counter's PARAMETERS were cut.
+- USB recorder / player: renaming a clip (or its folder) that is in the open playlist
+  left the playlist pointing at the old file, so the clip showed as missing
+  (1970-01-01) and couldn't play.
+- SETUP > GENERAL > CONSOLE NAME only took effect after a restart: the running WING
+  remote kept announcing the old name, and the MIDI identity (SysEx) kept it in both
+  places it can be edited.
+- FX: the Vintage Room's early reflections and the Concert reverb's reflection
+  clusters now sit at their ER / REFL times as soon as the device is loaded (they
+  stayed at the start until the time was changed).
+- FILTER: HI CUT goes down to 50 Hz as on the WING (and as the engine allows) on the
+  FILTER screen, its graph, the channel strip section and the 4-Channel section; it
+  stopped at 200 Hz.
+- INPUT: with a negative BALANCE the post-trim meter showed the right side boosted
+  instead of turned down.
+- EQ: with an analog EQ model, every 6th parameter (SOUL's LM GAIN and HF GAIN...)
+  never came onto the knobs: the knob pages held five parameters but were chosen
+  in sixes.
+- GATE / DYNAMICS: KEY TAP is drawn disabled; it looked active but the engine always
+  keys from the source channel's input (listed under the known limitations).
+- CHANNEL COPY / INIT: CONN now copies the ALT input and the MAIN / ALT switch too,
+  SEND copies TAP WIDTH and TAP EQ, and a MACH EQ4 isn't copied onto an aux channel
+  (which doesn't offer it).
+- Channel strip section: the INPUT encoder's DELAY now has the INPUT screen's range
+  (up to 500 ms in every unit, at the current sample rate); it stopped at 150 m,
+  500 ft or 24000 samples, so the two controls disagreed.
+- INPUT: the TRIM & BALANCE pad's balance handle follows the ST key while the screen
+  is open (it stayed disabled, or enabled, until the screen was opened again).
+- Multitrack editor: an automatic crossfade stayed on both clips after they were
+  moved apart (or one was deleted), so each faded out or in over nothing. Moves,
+  nudges, trims, deletes and cuts now take back the fades of crossfades whose
+  clips no longer overlap; nudges and trims also crossfade new overlaps, as moves
+  did.
+- Recorder: after the clock rate changed (SETUP > AUDIO), recording went on into the
+  open project at its old rate, so the take was placed and played at the wrong
+  length and speed (an octave off after a 48 / 96 kHz change). A project without
+  audio now moves to the console's rate (markers and loop keep their times), and
+  one with audio refuses to record and says why.
+- Recorder screen: pressing VIRTUAL SOUNDCHECK again went back to MAIN but left
+  SETUP > AUDIO > GLOBAL INPUT SELECT OVERRIDE on, so channels set to ALT on their
+  own were stuck on MAIN. Leaving virtual soundcheck now puts INPUT SELECT back as
+  it was.
+- SETUP > GENERAL counted one DSP thread less (the workers only) than the event log
+  and SETUP > LOG, which count the audio thread too.
+- LIBRARY > SNAP / SNIP > EXPORT: the scene or snippet in the file kept its old name
+  when it was exported under another one, so the list showed the file as "Scene 1x"
+  but IMPORT added "Scene 1". The exported scene or snippet now takes the name it
+  was saved under.
+- LIBRARY (INT / USB) and the USB RECORDER / PLAYER browser didn't show files copied
+  into, deleted from or renamed in their folder outside the app until the screen
+  was opened again; they now follow such changes within a second.
 
 ## [0.1.0] - beta
 

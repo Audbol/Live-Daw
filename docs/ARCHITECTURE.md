@@ -121,7 +121,9 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
   m) crossfades between the old and new tap of a line that is always written; the
   LIMITER (-40..0 dB) is a stereo-linked peak limiter with instant attack and an 80
   ms release that meters its gain reduction (`limiter_gr_db`). A path that turns
-  non-finite is reset and silenced for the block.
+  non-finite is reset and silenced for the block. The RTA of MONITORS EQ reads a
+  path before or after its EQ: `AnalysisControls::strip_kind` = `ANALYSE_MONITOR`
+  (-2), `strip_id` = the path, view `rta_view::MONITOR` (`analyser.rs`).
 - **Talkback** (`talk.rs`, `EngineControls::talk`): the talkback channel (any input or
   aux channel; CH40 / AUX8 on SETUP) feeds its PFL copy to the buses (1-16), matrices
   and mains each talk path selects while its key is on, at TALK LEVEL or (USE SEND
@@ -169,7 +171,7 @@ views after a show load changes the console from Rust.
   engine controls are `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same
   memory as `std::atomic<float/bool/int32_t>` structs, and the UI writes them directly
   with no FFI call. Both sides describe the layout; `ld::verifyLayout()` compares the
-  two at startup and in the tests (ABI version 8), and the app refuses to run if they
+  two at startup and in the tests (ABI version 11), and the app refuses to run if they
   differ.
 - **FX slots.** The 16 slots are the WING's FX rack. Each holds one device from the
   console's FX table (`FX_MODELS`, generated like the processing models): the 26
@@ -196,6 +198,19 @@ views after a show load changes the console from Rust.
     assigned. The engine measures each slot's load.
   - Devices are stereo. A mono strip feeds both inputs and takes the average of the
     two outputs back.
+- **Plugin delay compensation** (`livedaw-engine/src/pdc.rs`). `FxSlots` passes each
+  plugin's `getLatencySamples()` to its slot (`ld_fx_set_latency`, an atomic store,
+  also from the plugin's latency-change notification). On the message thread,
+  `Engine::update_pdc` (run by `ld_engine_collect`) works out a plan stage by stage:
+  each strip's tap latencies (TAP, PFL, POST, OUT) from its inserts, and for every
+  bus, main and matrix the latency of its latest enabled source, which it aligns
+  the others to and carries on into its own taps. The audio thread reads a source
+  delayed by `target - latency` from a history ring of that tap: one ring per
+  (strip, tap) serves every destination, holds 8192 samples plus a block, stores
+  each sample twice so any window is contiguous, and is allocated by the plan only
+  where a delay is needed (retired when none is). Input channels write their rings
+  after automix, the others right after they run. A slot's FX MIX delays its dry
+  copy by the plugin's latency from a ring of its own.
 - **FX in sessions.** A slot saves its device and parameter values. Plugins are
   reached through a *plugin bridge* implemented by `Show`: capture a slot (description
   XML + base64 state), restore one (state only, or by creating the plugin on show load)
@@ -421,6 +436,10 @@ Show
 - `livedaw-session/src/presets.rs`: FX presets (`.lfx`, one `<Slot>` through the same
   per-slot capture / apply as shows) and channel presets (`.lchn`, one `<Strip>` with a
   scope, applied to another strip of the same family by rewriting its `ref`).
+- `livedaw-session/src/library.rs`: scene files (`.lsnap`, a `<LiveDAWScene>` with one
+  `<Scene>` and its snippets) and snippet files (`.lsnip`, a `<LiveDAWSnippet>` with
+  one `<Snippet>`), written and read by the same functions as the show file's scene
+  list. Importing inserts into the show and never touches the console.
 
 - The console also keeps the console-level state of `livedaw-session/src/globals.rs`:
   SOLO MODE, the solo bus, MUTEGROUP/SIP OVERRIDE and SOURCE SOLO, talkback, the
@@ -648,8 +667,9 @@ setting only affects plugins loaded afterwards.
   default). Then it copies the new input in, bumps `requestSeq` (release) and posts the
   semaphore (never blocks). Output plays from a small FIFO one block late, so the
   latency is exactly one prepared block whatever the callback sizes; it is reported
-  with `setLatencySamples` (plus the plugin's own latency) and shown on the EFFECTS
-  screen. After an idle gap (the slot bypassed or unassigned) the FIFO restarts from
+  with `setLatencySamples` (plus the plugin's own latency, which the supervisor
+  follows), so `FxSlots`' latency listener passes it to the plugin delay compensation
+  (`pdc.rs`) and the FX MIX dry delay like any plugin's latency. After an idle gap (the slot bypassed or unassigned) the FIFO restarts from
   silence. No locks or allocations; the helper's processing thread is a realtime
   thread blocked on the semaphore.
 - **Faults:** a missed deadline or a lost helper makes the block fail; `FxSlots`
@@ -707,13 +727,56 @@ dependencies beyond the other Sidecar crates.
   numbers. Ports: AES50 A/B/C 1-48 are hardware ports 1-144 and the WING-LIVE card
   (CRD) is the recorder's playback channels. Nodes without an engine equivalent live
   in a **shadow store** (`WingState`) so clients and snapshots read back what they
-  wrote; they do nothing. `map::coverage()` counts what maps (82.8 % of the leaves).
+  wrote; they do nothing. `map::coverage()` counts what maps (88.2 % of the leaves).
   The console level maps too: TAP WIDTH / TAP EQ (`/ch/N/tapwid`, `peq`), `/cfg/solo`
   (mode, the solo bus, mute, SOURCE SOLO), `/$ctl/cfg/muteovr`, `/cfg/talk`, both
   monitor paths (`/cfg/mon/1` PHONES, `/2` SPEAKERS), the RTA settings and the
   sources of the A/B/C and CRD groups (`/io/in/G/N`: name, colour, icon, gain, mute,
   polarity, +48 V, mode, `#M` tags); the MONITOR outputs are MON 1/2 (PHONES L/R)
-  and 3/4 (SPEAKERS L/R).
+  and 3/4 (SPEAKERS L/R). The strips' `$solo` / `$solobd` nodes drive LISTEN
+  (`AnalysisControls::listen_*`, one strip and block at a time, as the LISTEN key),
+  `in/set/$g` / `$vph` the source the strip is patched to, and the inserts' `$stat`
+  and the FX slots' `$a_chn` / `$a_pos` are computed from the inserts. A strip's
+  `$muteovr` is `StripConsole::mute_override` (the console pass drops it once the
+  cause it overrode changes), matrix sends' `plink` is `MatrixSendParams::pan_link`
+  / `pan_reversed`, a DCA's `icon` / `led` are `DcaParams::icon` / `led`.
+- **Scene control** (`/$ctl/lib`). The show lives on the message thread, so
+  `WingState::library` holds what the host publishes (show name, number of scenes,
+  current scene, its name and tag) and `$action` queues `LibAction`s (GO, GO NEXT,
+  GO PREV, GO TAG; PREV / NEXT only move `$actionidx`). `WingRemote::attachShow`
+  (from `MainComponent`) polls them at 10 Hz through `ld_wing_take_library_action`,
+  recalls through `Show` like MIDI does and republishes with `ld_wing_set_library`.
+  Without an attached show `$action` is refused.
+- **USB recorder and safes** (`/play`, `/rec`, `/$ctl/safes`). The transport runs on
+  the engine's `UsbDeck` directly (PLAY, PAUSE, STOP, NEXT, PREV, seek, REPEAT, a
+  paused recording's REC / PAUSE, STOP; state, position, the clip's format). File
+  names belong to the host's `UsbRecorder` (USB folder, REC PATH, format), so REC
+  from STOP, NEW FILE and PLAYFILE queue `UsbAction`s, and REC PATH, channels and
+  resolution are `WingState::usb_settings`, which the host publishes
+  (`ld_wing_set_usb`) and takes back when a client changed them
+  (`ld_wing_take_usb_settings`, a dirty flag so a publish never undoes a change not
+  yet taken). The strips' recall safes (`ch`, `aux`, `bus`, `main`, `mtx`) are
+  `StripParams::recall_safe`; the show's GLOBAL safes for DCAs, mute groups and FX
+  go the same way as the USB settings (`ld_wing_set_safes`, `ld_wing_take_safes`).
+  `WingRemote::pump` does all of it on the 10 Hz timer. Safes lists are written
+  "1,3,5-8"; lists and 0/1 flag strings are read (the console's own format is not
+  documented).
+- **Surface control** (`surface.rs`: `/$ctl/layer/L|C|R`, `/$ctl/user`). The layers
+  and custom controls are the show's (`LayerSet`, `CustomControls`), so the same
+  pattern: the host's timer calls `ld_wing_sync_surface` (through
+  `Show::syncWingSurface`), which applies the `SurfaceEdit`s clients queued and
+  publishes a `Surface` (the show in WING terms: each section's `sel`, `spidx`,
+  scroll position, layer keys with their faders as TYPE / FDR INDEX / DEST INDEX,
+  the spill; each control's functions as `mode` items, name, colour; the CC layer)
+  under one lock, so no edit lands in between. A client's set updates the published
+  surface at once (reads return it) and queues the edit; the host reports what
+  changed (`WingRemote::setSurfaceCallbacks`: `MainComponent` reloads the custom
+  controls and refreshes the fader sections). Until a show is attached the nodes are
+  shadow. The module docs list the meanings taken from the protocol document and
+  the guesses (fader encoding, `U1`-`U3`). Not mapped: the Compact, Rack, EXT and
+  VRT layers, the button and 4-Channel section modes, LEDs, GPIO keys, the DAW
+  keys' `btn` and the mode-dependent target nodes, which libwing's tree does not
+  list.
 - **Servers** (`server.rs`, `osc.rs`, `native.rs`, `meters.rs`). Plain `std::net`
   threads, started and stopped from the app: discovery (UDP), OSC (UDP), the native
   protocol (TCP, one thread per client, up to 16; meters as UDP datagrams) and a
@@ -821,25 +884,25 @@ README's *Known limitations*; keep the three in step.
   restart that doesn't block the message thread while the plugin reloads.
 - The FX devices recreate each unit's controls and characteristic sound, not the
   console's exact algorithms.
-- No plugin delay compensation. Plugins report their latency (a sandboxed plugin adds
-  one block, shown on the EFFECTS screen); the engine doesn't compensate it, and a
-  slot's FX MIX blends the dry signal with the late wet one.
+- Plugin delay compensation covers the paths into buses, mains and matrices (up to
+  8192 samples); solo, monitoring, direct outs and recorder taps are not compensated.
 - Plugins always run in stereo. A mono strip feeds both plugin inputs and takes the
   left output back (built-in devices return the average of both).
 - Custom controls (`CustomControlsPage.*`; stored with the show by
   `livedaw-session/custom.rs`) cover the phase-1 functions: faders, pan, DCAs, bus
   sends, FX parameters, monitoring, mutes / solos, mute groups, sends on fader, pages,
   show control, scene recall, single actions, the USB PLAY/REC functions, DAW buttons /
-  V-pots and MIDI CC / note / program change; spill, SD and GPIO functions are listed
-  disabled (the spill layers themselves exist: DCA SPILL, the SENDS screens' SPILL and
-  FX SPILL use them).
-- LIBRARY: scenes and snippets live in the show (no stand-alone `.snap` / `.snip`
-  files, so ADD ITEM TO SHOW is disabled); 10 content sections instead of the
+  V-pots, MIDI CC / note / program change and FADER SPILL (the layer set's spills:
+  DCA, bus sources, FX slot, automix group, selected strip's sends); SD and GPIO
+  functions are listed disabled (no hardware).
+- LIBRARY: scene and snippet files are Sidecar's XML (`.lsnap` / `.lsnip`), not the
+  WING's; ADD ITEM TO SHOW is disabled; 10 content sections instead of the
   console's 17 (CONTENTS keys sharing a section light together); the SCOPE window's
-  SFC, PREFS and L / C / R tiles (surface and preferences in scenes) are disabled; no
-  CLIP player or SEND MIDI.
-- Not yet: remote preamp control (HA REMOTE, RCV CUST; drawn disabled) and the RTA on
-  MONITORS EQ (the analyser follows strips).
+  SFC, PREFS and L / C / R tiles (surface and preferences in scenes) are disabled; the
+  CLIP tab drives the USB player rather than a player of its own. SEND MIDI is a
+  scene's text (`livedaw-session/show.rs`), collected by each recall and parsed and
+  sent by `MidiRemote` on EXTERNAL MIDI CONTROL's port.
+- Not yet: remote preamp control (HA REMOTE, RCV CUST; drawn disabled).
 - Recorder: no transport without a running audio device (play stays in Starting);
   a loop change while rolling plays the old content for ~50 ms before the
   crossfade; take files are flushed every 2 s but only synced to disk when
@@ -847,5 +910,3 @@ README's *Known limitations*; keep the three in step.
 - Projects: one tempo and time signature for the whole timeline (for the grid only);
   Save As keeps referring to the old folder's audio instead of copying it; playback
   assumes the project's sample rate is the console's (a mismatch is flagged).
-- Shown on the screens but disabled until the engine supports them (the WING manual
-  describes them): MIDI CC faders in custom layers.

@@ -11,16 +11,21 @@
 //! strips pointing at the same slot (a misconfiguration) never run the plugin
 //! concurrently - the second one passes its signal through and the slot
 //! reports itself as double-assigned.
+//!
+//! A plugin's reported latency (`set_latency`) feeds the plugin delay
+//! compensation (`pdc.rs`); with a wet/dry MIX below 100 % the dry signal is
+//! delayed by the same amount so the two stay in time.
 
 use crate::atomic::AtomicF32;
 use crate::garbage::Garbage;
 use crate::params::{FxParams, FX_EXT};
+use crate::pdc::{CompRing, MAX_PDC};
 use livedaw_dsp::util::all_finite;
 use livedaw_dsp::wing::fx::{FxContext, FxDevice};
 use livedaw_dsp::wing::MAX_FX_PARAMS;
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering::*};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering::*};
 use std::time::Instant;
 
 /// Processes `num_channels` (1 or 2) channels of `num_samples` in place.
@@ -76,6 +81,11 @@ pub struct FxRack {
     double_assigned: AtomicBool,
     /// Dry copy for auto-bypass and wet/dry mix (only the claiming task touches it).
     dry: UnsafeCell<[Vec<f32>; 2]>,
+    /// The plugin's latency in samples, as the host reports it.
+    latency: AtomicU32,
+    /// The dry signal's history, to delay it by the plugin's latency in a
+    /// wet/dry mix (claiming task only; allocated in `prepare`).
+    dry_ring: UnsafeCell<Option<Box<CompRing>>>,
 }
 
 // SAFETY: `dry` is only used by the task that holds `busy`; everything else is atomic.
@@ -94,6 +104,8 @@ impl Default for FxRack {
             claims: AtomicU64::new(0),
             double_assigned: AtomicBool::new(false),
             dry: UnsafeCell::new([Vec::new(), Vec::new()]),
+            latency: AtomicU32::new(0),
+            dry_ring: UnsafeCell::new(None),
         }
     }
 }
@@ -107,6 +119,33 @@ impl FxRack {
             d.clear();
             d.resize(max_block, 0.0);
         }
+        *self.dry_ring.get() = Some(Box::new(CompRing::new(max_block)));
+    }
+
+    /// Message thread (or any): the plugin's latency in samples, as reported
+    /// by the host (`AudioProcessor::getLatencySamples`).
+    pub fn set_latency(&self, samples: u32) {
+        self.latency.store(samples, Relaxed);
+    }
+
+    /// The latency the host reported for the plugin (0 without one).
+    pub fn reported_latency(&self) -> u32 {
+        if self.is_loaded() {
+            self.latency.load(Relaxed)
+        } else {
+            0
+        }
+    }
+
+    /// The latency the slot adds to a strip now: the plugin's while it runs
+    /// (EXT, not bypassed, not auto-bypassed); built-in devices have none.
+    pub fn effective_latency(&self, params: &FxParams) -> u32 {
+        let running = params.model.load(Relaxed) == FX_EXT as i32 && !params.bypass.load(Relaxed) && !self.is_faulted();
+        if running {
+            self.reported_latency()
+        } else {
+            0
+        }
     }
 
     /// Message thread: installs (or clears, with None) the slot's processor.
@@ -115,6 +154,7 @@ impl FxRack {
         let old = self.slot.swap(new, AcqRel);
         self.faulted.store(false, Relaxed);
         self.load.store(0.0);
+        self.latency.store(0, Relaxed); // the host reports the new plugin's
         if !old.is_null() {
             // SAFETY: created by Box::into_raw above; now unreachable for new callbacks.
             garbage.retire(RetiredSlot(unsafe { Box::from_raw(old) }));
@@ -253,6 +293,12 @@ impl FxRack {
         };
 
         let mix = params.mix.load() / 100.0;
+        // The dry history follows every block, so a MIX change finds it in time.
+        let latency = if model == FX_EXT as i32 { self.latency.load(Relaxed) as usize } else { 0 };
+        let dry_ring = (*self.dry_ring.get()).as_deref();
+        if let Some(ring) = dry_ring.filter(|_| latency > 0) {
+            ring.write(&dry[0][..n], &dry[if channels.len() > 1 { 1 } else { 0 }][..n]);
+        }
         if !ok {
             // Keep the dry signal; the slot stays bypassed until the fault is cleared.
             for (c, data) in channels.iter_mut().enumerate().take(2) {
@@ -262,7 +308,11 @@ impl FxRack {
         } else if mix < 0.999 {
             let m = mix.clamp(0.0, 1.0);
             for (c, data) in channels.iter_mut().enumerate().take(2) {
-                for (y, x) in data.iter_mut().zip(&dry[c][..n]) {
+                let dry = match dry_ring.filter(|_| latency > 0) {
+                    Some(ring) => ring.read(c, latency.min(MAX_PDC), n),
+                    None => &dry[c][..n],
+                };
+                for (y, x) in data.iter_mut().zip(dry) {
                     *y = x + m * (*y - x);
                 }
             }

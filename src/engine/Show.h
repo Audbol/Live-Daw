@@ -49,6 +49,7 @@ public:
         int tag = 0;           // EDIT TAG #1..#128 (0 = none)
         bool skip = false;     // SKIP: GO PREV/NEXT and recalls pass over it
         bool linkNext = false; // LINK: recalling it also recalls the scene below
+        juce::String midi;     // SEND MIDI: MIDI data sent when it's recalled (see MidiRemote::parseMidiText)
     };
 
     static constexpr int maxSceneTag = 128;
@@ -93,6 +94,8 @@ public:
     void setSceneSkip (int index, bool skip);
     /** The link follows the scene: after a move it links to its new neighbour below. */
     void setSceneLink (int index, bool linkNext);
+    /** SEND MIDI (the EDIT MIDI TEXT STRING window). */
+    void setSceneMidi (int index, const juce::String&);
     /** The first scene tagged `tag` that isn't skipped, or -1. */
     int findSceneByTag (int tag) const noexcept { return ld::ld_show_find_scene_by_tag (handle, tag); }
 
@@ -202,6 +205,34 @@ public:
     static bool setPresetScope (const juce::File&, juce::uint32 scope);
 
     //==============================================================================
+    // LIBRARY scene and snippet files (SNAP and SNIP tabs): Sidecar's own
+    // format, not the WING's .snap (imported on the SHOW tab).
+    struct LibraryFileInfo
+    {
+        enum class Kind
+        {
+            None,
+            Scene,
+            Snippet
+        };
+        Kind kind = Kind::None;
+        juce::String name;
+        int count = 0; // a scene's snippets, a snippet's parameters
+    };
+
+    static constexpr const char* sceneFileExtension = ".lsnap";
+    static constexpr const char* snippetFileExtension = ".lsnip";
+
+    static LibraryFileInfo readLibraryFile (const juce::File&);
+    /** A scene with its snippets. */
+    juce::Result exportScene (int index, const juce::File&) const;
+    juce::Result exportSnippet (int sceneIndex, int snippetIndex, const juce::File&) const;
+    /** Inserts the file's scene at `index` (-1: appended); its new index, or -1 with `error`. */
+    int importScene (const juce::File&, int index, juce::String& error);
+    /** Adds the file's snippet to scene `sceneIndex`; its index, or -1 with `error`. */
+    int importSnippet (const juce::File&, int sceneIndex, juce::String& error);
+
+    //==============================================================================
     bool isFading() const noexcept { return ld::ld_show_is_fading (handle); }
     void cancelFade();
 
@@ -222,6 +253,11 @@ public:
     /** Adds the snapshot scenes of a WING .show file (see WingRemote::importShow);
         `report` gets what was skipped. The console only grows to 40 channels. */
     juce::Result importWingShow (ld::LdWing*, const juce::File&, juce::String& report);
+    /** WING remote surface control (see WingRemote::setSurfaceCallbacks): applies the layer and
+        custom control changes clients made, then publishes the layers and custom controls with
+        the upper custom control layer `ccBank`. Returns ld::kWingSurface* flags; `requestedBank`
+        gets the layer a client chose (-1 none). */
+    juce::uint32 syncWingSurface (ld::LdWing*, int ccBank, int& requestedBank);
 
     /** Clears scenes and resets the console to `numChannels` channels (the WING has 40). */
     void clear (int numChannels);
@@ -231,6 +267,10 @@ public:
 
     /** Called before a show load empties FX slot `slot` (close its plugin editor here). */
     std::function<void (int slot)> onFxCleared;
+
+    /** SEND MIDI: after a recall, the MIDI data of the scenes it recalled
+        (linked ones too), in order. Set by the MIDI service. */
+    std::function<void (const juce::StringArray&)> onSceneMidi;
 
     static constexpr const char* fileExtension = ".lshow";
 

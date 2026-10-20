@@ -19,7 +19,7 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
     (TILT, MAX, AP1, AP2).
   - **GATE slot and DYNAMICS slot:** each holds any of the WING's **32 dynamics models**
     (gate, ducker, Even 88, Soul 9000, 160 VCA, LA leveler, 1176-style, Fair Kid,
-    Bus comp, NSTR, limiters, de-esser...), with sidechain filter, source and tap,
+    Bus comp, NSTR, limiters, de-esser...), with sidechain filter and source,
     and a crossover band on the dynamics slot.
   - **EQ:** the 6-band WING EQ (8 bands on buses) or the analog models (SOUL, E88,
     E84, F110, PULSAR, MACH4, PIA on buses), with blend/mix.
@@ -44,6 +44,21 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
     five guitar/bass amps, body resonance, stereo imager and speaker manager.
   - **5 channel strips:** EVEN, SOUL, VINTAGE, BUS and MASTER.
   - **EXT:** a **VST3, AU (macOS) or LV2 (Linux) plugin**.
+- **Plugin delay compensation:** plugins that report a latency (lookahead limiters,
+  linear-phase EQs...) delay their signal. Sidecar reads each plugin's latency and
+  delays the other sources summed into the same bus, main or matrix by the
+  difference, so parallel paths stay in time: a channel going to Main 1 directly and
+  through a bus with a plugin arrives once, not twice. The compensation follows the
+  bus stages (buses 9-16 into buses 1-8, buses into mains, mains into matrices) and
+  the tap of each send (an insert counts only once the send's tap point is past it).
+  A plugin's FX MIX delays its dry signal by the plugin's latency too. It is on by
+  default; **SETUP > PLUGINS > DELAY COMPENSATION** turns it off, and the panel
+  below shows the total compensation (the longest path the console is aligned to)
+  and each loaded plugin's latency. Compensation stops at 8192 samples (about 170
+  ms at 48 kHz): a plugin reporting more is written to the event log and the panel
+  shows the limit. Solo, the monitor paths, direct outs and the recorder's taps are
+  not compensated, and a bypassed plugin adds no latency (the others are realigned
+  within a tenth of a second).
 - Processing models are recreated from the WING's parameter set (controls, ranges and
   behaviour), not circuit-modelled. The model tables are generated from the console's
   published parameter map.
@@ -102,7 +117,10 @@ Barlow Condensed.
     **SAFE** key. The slot screens follow chapter 6 of the manual: INPUT (CHANNEL
     INPUT, TRIM & BALANCE pad, FILTER, DELAY), FILTER SETUP, GATE / COMP with the
     model's faceplate, EQ, INS 1 / INS 2 (with automix), MAIN SENDS and BUS / MATRIX
-    SENDS. **INIT** and **COPY** open CHANNEL INIT / COPY (scope and destinations);
+    SENDS. On MATRIX SENDS a channel's or aux's send has **PAN LINK** as on BUS SENDS
+    (touch the pan ring): linked (the default) its pan follows the channel's, LINK
+    REVERSED mirrors it, unlinked it has its own PAN; buses and mains send their
+    panned output. **INIT** and **COPY** open CHANNEL INIT / COPY (scope and destinations);
     a bus, main or matrix's feed grid (on HOME, or the INPUT screen's BUS FEED / FEED
     box) opens its **FEED CONFIGURATION** (WING 3.0.5): the CHANNEL, AUX and BUS
     sources (disabled sends greyed out), selected by touch and drag or with NONE /
@@ -138,13 +156,15 @@ Barlow Condensed.
     AUTOMIX), SURFACE (meter taps, SEL DBL CLICK, SOF and scribble options, CH
     AUTOSELECT, FADER SPEED, paging, user layer link, alternative SOF, section widths),
     REMOTE (MIDI REMOTE CONTROL and MIDI PORTS, WING REMOTE) and DAW (DAW CONTROL, DAW
-    PORTS; see *MIDI and DAW remote control*), PLUGINS (scanning, and RUN PLUGINS IN
-    SANDBOX; see *Stability*) and LOG (system health and the event log), with INITIALIZE CONSOLE and SHUTDOWN. The status bar has MONITORS (the
+    PORTS; see *MIDI and DAW remote control*), PLUGINS (scanning, delay compensation,
+    RUN PLUGINS IN SANDBOX; see *Stability*) and LOG (system health and the
+    event log), with INITIALIZE CONSOLE and SHUTDOWN. The status bar has MONITORS (the
     toolbar with the talk keys, PHONES / SPEAKERS / PH+SPK, DIM, MUTE, MONO, LR SWAP;
     TALK A / B: switch mode, talkback channel, AUTO DIM, USE SEND LEVELS and the bus,
     matrix and main destinations; PHONES and SPEAKERS, each its own: SOURCE, SRC LEVEL,
     SRC MIX, DIM, PFL DIM, BAND SOLO, DIRECT IN (any channel, bus, main or matrix, at
-    its own level), the EQ (MONITORS EQ: 8 bands, PAN, WIDTH), the DIST slider with
+    its own level), the EQ (MONITORS EQ: 8 bands, PAN, WIDTH, and an RTA of the path,
+    PRE or POST its EQ as EQ/RTA SETTINGS' RTA SOURCE says), the DIST slider with
     INVERT and DELAY, LIMITER with its gain reduction on the meter, and the level) and
     CC EDIT (also SETUP pressed twice): the custom
     control layers, a function list and the target lists, COLOR, CLR ALL and NAME,
@@ -152,17 +172,24 @@ Barlow Condensed.
   - **LIBRARY:** a file browser with the locations INT (`Documents/Sidecar/Library`),
     USB (a folder of your choice) and SHOW (the show's scenes and snippets: tags, SKIP,
     LINK, REMOVE, RENAME, UP / DOWN), with FOLDER, RENAME, DELETE and sorting. Tabs:
-    SHOW (open and save shows, also from the list), SNAP (SAVE, UPDATE, PARTIAL UPDATE,
-    LOAD, PARTIAL LOAD with NO GLOB, RESTORE, EDIT SCOPE), SNIP (REC / STOP with the
-    counter of changed parameters, SAVE, UPDATE, PARTIAL LOAD, REC FOCUS, ADD / REMOVE
-    ITEMS, CLEAR ALL), FX and CHAN presets (CLIP is drawn disabled), GO PREV / GO NEXT /
+    SHOW (open and save shows, also from the list; **SEND MIDI**: MIDI data the
+    selected scene sends each time it is recalled, see *MIDI and DAW remote control*),
+    SNAP (SAVE, UPDATE, PARTIAL UPDATE,
+    LOAD, PARTIAL LOAD with NO GLOB, RESTORE, EDIT SCOPE, IMPORT / EXPORT scene files),
+    SNIP (REC / STOP with the counter of changed parameters, SAVE, UPDATE, PARTIAL LOAD,
+    REC FOCUS, ADD / REMOVE ITEMS, CLEAR ALL, IMPORT / EXPORT snippet files), CLIP (the
+    clip player, see [Scene and snippet files, clips](#scene-and-snippet-files-clips)),
+    FX and CHAN presets, GO PREV / GO NEXT /
     PREV / NEXT / GO, the SCOPE window (strips, DCAs, mute groups, FX slots, the console
     settings and contents) and the GLOBAL safes in the status bar.
   - **VIEW screens** (a fader section's VIEW key): OVERVIEW (every strip's blocks;
-    EXCL SOLO in the status bar), FADERS (send faders of a layer, and Sends on
+    EXCL SOLO in the status bar; touching a DCA's name or number lists NAME, ICON, the
+    scribble strip LIGHT and its colours), FADERS (send faders of a layer, and Sends on
     Fader, show and set the send level, MUTE switching the send), SENDS (sends on faders to one bus, main or matrix), CONFIG (edit any layer
-    key by dragging channels, buses, DCAs, send levels, bus-to-bus sends or FX
-    parameters onto or between slots, with a page map) and MUTE GROUPS (members, names,
+    key by dragging channels, buses, DCAs, send levels, bus-to-bus sends, FX
+    parameters or MIDI CCs onto or between slots, with a page map; a **MIDI CC** fader
+    sends its CC, 0-127, out of EXTERNAL MIDI CONTROL and follows the CC coming in) and
+    MUTE GROUPS (members, names,
     group keys).
   - **UTILITY:** system health and the event log (also on SETUP > LOG).
   - **RECORDER** (the status bar's **LIVE** card icon, red while recording): laid out
@@ -182,8 +209,8 @@ Barlow Condensed.
   both levels.
 - **4-Channel section** (under the monitoring panel): GAIN, GATE, COMP, FILTER, F1-F3
   and PAN keys give the four strips of the right fader section an encoder and a key
-  each (trim; gate / comp threshold and on; low / high cut; bus sends; pan / width and
-  MAIN 1), with their scribble strips on a four-way LCD.
+  each (trim and the source's +48V; gate / comp threshold and on; low / high cut; bus
+  sends; pan / width and MAIN 1), with their scribble strips on a four-way LCD.
 - **Custom controls** (between the center and right sections): the upper part's 16
   layers of four encoders and eight keys (assigned on CC EDIT; UP / DOWN; names and
   colours on the LCD), the lower layers **USER** (eight assignable keys), **2-TRACK
@@ -281,6 +308,10 @@ the USB key on the screen to choose another folder).
 - **Custom controls:** the USB PLAY/REC functions (PLAY, PAUSE, STOP, PREV, NEXT,
   REC, REC PAUSE, REC STOP, NEW FILE, REPEAT) on any CC key, and **CC BANK 1-16**
   (WING 3.0.6): a CC key that switches the custom controls to a bank.
+- **FADER SPILL** on any CC key: spills a DCA, the sources sending to a bus, an FX
+  slot's parameters, automix group X or Y, or the selected channel's sends onto the
+  left fader section (lit while it shows; pressed again, the section's layer comes
+  back). SD RECORDER and GPIO need the console's hardware and stay disabled.
 
 ## Shows, scenes and snippets
 
@@ -309,6 +340,32 @@ the USB key on the screen to choose another folder).
   4-band EQ and compressor become the GATE, WING EQ and COMP models, and each strip's
   plugins move to FX slots on its inserts.
 
+### Scene and snippet files, clips
+
+On the WING, LIBRARY saves single scenes and snippets to a USB stick and loads them
+into another show. In Sidecar the "stick" is the INT folder (`Documents/Sidecar/Library`)
+or the USB folder of the file list.
+
+- **EXPORT** on the SNAP tab saves the selected scene, with its snippets, as a scene
+  file (`.lsnap`) in the folder shown at INT / USB (at SHOW: the INT folder); on the
+  SNIP tab it saves the selected snippet as a snippet file (`.lsnip`). You are asked
+  for the file name; the scene or snippet in the file takes that name.
+- **IMPORT** on the SNAP tab adds the scene file selected at INT / USB (or chosen in a
+  file dialog) after the selected scene; on the SNIP tab it adds the snippet file to
+  the selected scene. Double-clicking a file in the list imports it too. Importing
+  never changes the console: load the scene or snippet when you want it.
+- The files are Sidecar's own XML, like show files and presets. They are not the WING's
+  `.snap` / `.snip` files; a WING snapshot is imported with IMPORT WING on the SHOW tab.
+  A scene refers to strips by number, so strips the console doesn't have are skipped
+  when it is recalled.
+- **CLIP** plays an audio clip (WAV, FLAC, AIFF or MP3) selected in the file list at
+  INT / USB: PLAY (or double-click the clip), PAUSE (pause / go on) and STOP, with the
+  player's meter, time, time left and format chips. The clip plays on the USB player,
+  so it comes in on the **USB PLAYER** sources: patch PLAYER 1-4 to channels on
+  ROUTING to hear it. The USB RECORDER / PLAYER screen shows and controls the same
+  playback (its browser moves to the clip's folder). If a playlist with unsaved
+  changes is open, you are asked before the clip replaces it.
+
 ## MIDI and DAW remote control
 
 The WING's MIDI remote control and DAW remote control (WING MIDI and DAW
@@ -330,7 +387,7 @@ documentation, firmware 1.07+), on the computer's MIDI devices.
   note); **SYSEX CONTROL** (`F0 00 20 32 57 <cmd> <data> F7`: identity, execute node
   strings like `/ch.1.fdr=-3,mute=1`, dump and describe nodes of the WING tree);
   **EXTERNAL MIDI CONTROL** (where the custom controls' MIDI CC encoders and MIDI CC /
-  NOTE / PGM keys send); **SCENE CHANGE** (channel 7: program change, bank for scenes
+  NOTE / PGM keys, the MIDI CC faders of the layers and the scenes' SEND MIDI send); **SCENE CHANGE** (channel 7: program change, bank for scenes
   past 128); **SHOW CONTROL** (channel 8: scene tags; channel 9: GO, PREV, NEXT, GO
   PREV, GO NEXT); **SCENE MIDI TX** (recalls go out as channel 7 program changes).
   Console changes made anywhere go back out for CH CONTROL and FX PARAMETER CONTROL.
@@ -352,6 +409,17 @@ documentation, firmware 1.07+), on the computer's MIDI devices.
   display). The wheel is the jog wheel, the arrows the DAW's cursor keys.
 - **Custom controls:** DAW BUTTONS (the WING's MCU / HUI command list), DAW V-POTS,
   MIDI CC encoders and MIDI CC / NOTE (toggle or push) / PGM CHANGE keys.
+- **MIDI CC faders:** VIEW > CONFIG's MIDI CC field picks a MIDI channel and 32 of its
+  CCs; drag them into any layer. The fader sends its CC (0-127) on EXTERNAL MIDI
+  CONTROL's port; the scribble strip shows the CC, its value and the MIDI channel.
+- **SEND MIDI** (LIBRARY > SHOW, for the selected scene): the EDIT MIDI TEXT STRING
+  window takes hexadecimal MIDI bytes, with or without separators (`C002`,
+  `B0,01,7F`, several messages in a row, SysEx as `F0 ... F7`); `U:` or `D:` before
+  the bytes sends them (and what follows) to the USB or DIN port instead of EXTERNAL
+  MIDI CONTROL's (that port has to be in use by a MIDI REMOTE CONTROL row). They go
+  out each time the scene is recalled (GO, GO NEXT / PREV, by tag, by MIDI; a linked
+  scene sends its own after the first), with EXTERNAL MIDI CONTROL on DIN or USB.
+  Data that isn't MIDI is refused with the reason.
 
 ## WING remote apps and WING files
 
@@ -375,7 +443,7 @@ and open-source projects (see below), and it is **experimental**.
   test battery and model capture, its OSC client), and every OSC path the Bitfocus
   Companion WING module builds that exists in the 3.1 tree. **WING Edit and WING
   Copilot have not been tried**, so they may not work.
-- **What maps:** 82.8 % of the WING 3.1 tree's parameters (56,770 of 68,556,
+- **What maps:** 88.2 % of the WING 3.1 tree's parameters (60,471 of 68,556,
   counting every model's parameters) drive the engine: channels, aux, buses, mains
   and matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
   dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,
@@ -384,9 +452,39 @@ and open-source projects (see below), and it is **experimental**.
   icon, gain, mute, polarity, +48V, mode, mute-group tags), SOLO MODE, the solo bus,
   MUTEGROUP/SIP OVERRIDE and SOURCE SOLO, talkback, both monitor paths (`/cfg/mon`:
   source, levels, DIM, PFL DIM, BAND SOLO, DIRECT IN, EQ, PAN, WIDTH, INVERT, DELAY,
-  LIMITER), the RTA settings and other console settings. The rest (surface layers,
-  user controls, cards, ...) is remembered so clients can read back what they wrote,
-  but does nothing.
+  LIMITER), the RTA settings and other console settings. Clients can also use
+  LISTEN (BAND SOLO, KEY SOLO and XOVER SOLO: `eq/$solo`, `$solobd`, `gatesc/$solo`,
+  `dynsc/$solo`, `dynxo/$solo`), see the inserts' state (`$stat`) and which strip
+  uses each FX slot (`/fx/N/$a_chn`, `$a_pos`), set a channel's source GAIN and
+  +48V from the channel (`in/set/$g`, `$vph`), and recall scenes (`/$ctl/lib`:
+  `$actionidx` with GO, GO NEXT, GO PREV, GO TAG; PREV / NEXT move the selection;
+  `$active`, `$activeid` (the scene's tag) and `$actshow` show the current scene and
+  show). They also drive the matrix sends' PAN LINK (`send/MXn/plink`), a strip's
+  MUTEGROUP/SIP OVERRIDE state (`$muteovr`), a DCA's icon and scribble strip light,
+  the USB recorder and player (`/rec`, `/play`: REC, PAUSE, STOP, NEW FILE, PLAY,
+  NEXT, PREV, PLAYFILE with `$playfile` relative to the USB folder, the position,
+  REPEAT, REC PATH and the recording format; state, file, time and the clip's format
+  read back) and the recall safes (`/$ctl/safes`: `ch`, `aux`, `bus`, `main`, `mtx`
+  are the strips' SAFE keys, `dca`, `mute`, `fx` the GLOBAL safes; lists such as
+  `1,3,5-8`). Not mapped, with no meaning in Sidecar: a DCA's monitor bus (DCA solo
+  goes to each member's monitor bus), a channel's TAP SOLO (`$presolo`: solo is
+  PFL or AFL per strip type), the player's song tags (`$artist`, `$album`, `$songs`)
+  and the safes of source and output groups, surface areas, custom controls and
+  setup. The fader sections' layers (`/$ctl/layer/L`, `C`, `R`) and the custom
+  controls (`/$ctl/user`) are the show's, both ways: clients select layer keys
+  (`sel`), spill (`spidx`: DCA, FX, a bus's sources, automix X / Y), scroll the
+  shown layer (`ofs`), name the USER keys' user layers and assign faders (`type`,
+  `i`, `dst`: channels, buses, DCAs, sends, FX parameters, MIDI CCs; a default key
+  becomes an edited key as on VIEW > CONFIG), and set each custom control's
+  functions (`mode`), name and colour and the CC layer (`sel`); the console's
+  changes show to clients within a tenth of a second. Sidecar's layers have no
+  gaps (a fader assigned past the end is appended, OFF removes one), only the shown
+  layer has a scroll position, and a new function starts at its first target
+  (clients can't choose it: the WING's tree only has the function). The encoding of
+  fader assignments and the custom controls of `U1`-`U3` (taken as the 4-Channel
+  section's F1-F3 layers) are educated guesses. The rest (the other WING models'
+  layers, the 4-Channel and button section modes, cards, ...) is remembered so
+  clients can read back what they wrote, but does nothing.
   `cargo run -p livedaw-wing --example wing_coverage` prints the full report.
 - **Files:** LIBRARY > SHOW > **IMPORT WING** applies a WING snapshot (`.snap`) to
   the console, or adds a WING show's (`.show`) snapshots as scenes. The log lists
@@ -447,10 +545,12 @@ either way.
   until you clear the fault (EFFECTS, UTILITY). A plugin that fails three times in a
   minute stays off until you load it again.
 - **Latency:** the sandbox adds one audio block (the buffer size, e.g. 128 samples) on
-  top of the plugin's own latency; the EFFECTS screen shows it. Sidecar has no plugin
-  delay compensation yet, so a sandboxed insert is one block late against the rest of
-  the console, and an FX MIX below 100 % mixes the dry signal with the late wet one
-  (comb filtering). Keep FX MIX at 100 %, or leave latency-critical plugins in-process.
+  top of the plugin's own latency. The plugin reports the sum, so delay compensation
+  lines the other paths up with it and FX MIX delays its dry signal to match, as for
+  any plugin with latency (EFFECTS and SETUP > PLUGINS show it). The insert's own
+  strip still comes that much later through the uncompensated paths (solo, monitoring,
+  direct outs, recorder taps), and while the slot is bypassed after a fault the
+  console is realigned without it.
 - **Editor:** opening the plugin shows a Sidecar window with SHOW PLUGIN WINDOW and
   generic controls for its parameters; the plugin's own editor opens in a separate
   window of the helper. If it can't open (no display, or the plugin refuses), the

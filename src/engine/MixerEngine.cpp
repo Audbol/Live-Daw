@@ -229,7 +229,30 @@ void MixerEngine::setMuteGroupName (int index, const juce::String& name)
 
 void MixerEngine::timerCallback()
 {
-    garbage.collect();
+    fx.updateLatencies();
+    for (int slot = 0; slot < kNumFx; ++slot)
+    {
+        auto* p = fx.getPlugin (slot);
+        if (p != nullptr && fx.getLatency (slot) > kMaxCompensation)
+        {
+            if (warnedLatency[(size_t) slot] != p && onPluginWarning)
+                onPluginWarning (fx.describe (slot) + " reports " + juce::String (fx.getLatency (slot)) + " samples of latency; delay compensation stops at "
+                                 + juce::String (kMaxCompensation));
+            warnedLatency[(size_t) slot] = p;
+        }
+        else
+        {
+            warnedLatency[(size_t) slot] = nullptr;
+        }
+    }
+    garbage.collect(); // also works out the delay compensation
+}
+
+void MixerEngine::updateLatencyCompensation()
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+    fx.updateLatencies();
+    ld::ld_engine_update_pdc (engine);
 }
 
 bool MixerEngine::isSoloAfl (StripKind kind) const noexcept

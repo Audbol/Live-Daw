@@ -151,6 +151,9 @@ public:
             }
         }
 
+        beginTest ("The sandbox's block of latency is delay-compensated, FX MIX included");
+        compensationTest();
+
         beginTest ("A plugin that crashes is faulted; the console keeps running and the plugin comes back");
         faultTest (TestPluginFormat::Kind::crash);
 
@@ -171,6 +174,79 @@ private:
         o.maxRestarts = 3;
         o.onEvent = [this] (const juce::String& message, bool) { events.add (message); };
         return std::make_shared<const SandboxOptions> (o);
+    }
+
+    /** Main 1 left after a unit impulse on input 1 (settled on silence first), as
+        (sample, value) for every non-silent sample. */
+    static std::vector<std::pair<int, float>> impulse (MixerEngine& engine, int blocks)
+    {
+        engine.updateLatencyCompensation();
+        std::vector<float> in ((size_t) kBlock, 0.0f), outL ((size_t) kBlock), outR ((size_t) kBlock);
+        const float* ins[] = { in.data() };
+        float* outs[] = { outL.data(), outR.data() };
+        for (int b = 0; b < 2 * MixerEngine::kMaxCompensation / kBlock + 4; ++b)
+            engine.processBlock (ins, 1, outs, 2, kBlock);
+        std::vector<std::pair<int, float>> peaks;
+        for (int b = 0; b < blocks; ++b)
+        {
+            in[0] = b == 0 ? 1.0f : 0.0f;
+            engine.processBlock (ins, 1, outs, 2, kBlock);
+            for (int i = 0; i < kBlock; ++i)
+                if (std::abs (outL[(size_t) i]) > 1.0e-4f)
+                    peaks.push_back ({ b * kBlock + i, outL[(size_t) i] });
+        }
+        return peaks;
+    }
+
+    void compensationTest()
+    {
+        using livedaw::test::kCentre;
+        MixerEngine engine (0);
+        OfflineRig rig (engine, 1, 2);
+        engine.outputProtection = false; // two channels sum above 0 dBFS
+        engine.setNumChannels (2);
+        for (auto& ch : engine.getChannels())
+            ch->params.inputLeft = 0;
+
+        juce::String error;
+        auto plugin = SandboxedPlugin::create (TestPluginFormat::describe (TestPluginFormat::Kind::gain), 48000.0, kBlock,
+                                               options (2000.0), error);
+        expect (plugin != nullptr, error);
+        if (plugin == nullptr)
+            return;
+        plugin->getParameters()[0]->setValue (0.5f); // gain 1
+        plugin->getParameters()[1]->setValue (0.0f); // no filtering: a pure one-block delay
+
+        auto& fx = engine.getFx();
+        fx.setPlugin (2, std::move (plugin));
+        auto& ch1 = *engine.getChannels()[0];
+        ch1.params.preInsert.on = true;
+        ch1.params.preInsert.fx = 2;
+        expectEquals (fx.getLatency (2), kBlock);
+
+        // Channel 2 is delayed to meet channel 1's sandboxed insert: one impulse at Main 1.
+        auto peaks = impulse (engine, 4);
+        expectEquals ((int) peaks.size(), 1);
+        if (! peaks.empty())
+        {
+            expectEquals (peaks[0].first, kBlock);
+            expectWithinAbsoluteError (peaks[0].second, 2.0f * kCentre, 1.0e-4f);
+        }
+        expectEquals (engine.getTotalCompensation(), kBlock);
+
+        // FX MIX 50 %: the dry half is delayed as much as the wet half.
+        fx.params (2).mix = 50.0f;
+        peaks = impulse (engine, 4);
+        expectEquals ((int) peaks.size(), 1);
+        if (! peaks.empty())
+        {
+            expectEquals (peaks[0].first, kBlock);
+            expectWithinAbsoluteError (peaks[0].second, 2.0f * kCentre, 1.0e-4f);
+        }
+        expect (! fx.isFaulted (2));
+
+        fx.setPlugin (2, nullptr);
+        engine.getGarbage().collectAllNow();
     }
 
     void faultTest (TestPluginFormat::Kind kind)
@@ -205,7 +281,7 @@ private:
         fx.setPlugin (0, std::move (instance));
         fx.clearFlags (0);
         expect (fx.isSandboxed (0));
-        expectEquals (fx.getLatencySamples (0), kBlock);
+        expectEquals (fx.getLatency (0), kBlock); // reported to the delay compensation
         strip.params.preInsert.on = true;
         strip.params.preInsert.fx = 0;
 

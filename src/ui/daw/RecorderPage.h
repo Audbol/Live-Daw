@@ -41,6 +41,9 @@ private:
     bool canVirtualSoundcheck() const;
     /** The channels listen to the recorder (global INPUT SELECT on ALT). */
     bool isVirtualSoundcheckOn() const;
+    /** INPUT SELECT as it was before VIRTUAL SOUNDCHECK switched it to GLOBAL
+        ALT (GLOBAL INPUT SELECT OVERRIDE, global ALT); put back when it ends. */
+    std::optional<std::pair<bool, bool>> inputSelectBeforeSoundcheck;
     void locateFromTimeline (int x);
     daw::int64 timelineLength() const;
     int tracksPerPage() const;

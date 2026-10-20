@@ -26,6 +26,18 @@ namespace
         b.label = label;
         return b;
     }
+
+    /** The settings of the source on a strip's MAIN input (a pair runs on its
+        first source's), or nullptr. */
+    ld::SourceParams* inputSource (MixerEngine& engine, const Strip& s)
+    {
+        const int port = s.isInput() ? s.getInputLeft() : -1;
+        const int index = port >= 0 ? MixerEngine::sourceIndex (port) : -1;
+        auto* src = engine.getSource (index);
+        if (src != nullptr && src->mode.load() != ld::kSourceMono)
+            return engine.getSource (index & ~1);
+        return src;
+    }
 } // namespace
 
 FourChannelSection::FourChannelSection (UiContext& c, std::function<Strip* (int)> at) : ctx (c), stripAt (std::move (at))
@@ -43,7 +55,7 @@ FourChannelSection::FourChannelSection (UiContext& c, std::function<Strip* (int)
         }
         addAndMakeVisible (k);
     }
-    modeKeys[Gain]->setTooltip ("GAIN: input trim; the key below switches phantom power (no preamps here)");
+    modeKeys[Gain]->setTooltip ("GAIN: input trim; the key below switches the source's +48V (stored: no preamps here)");
     modeKeys[Filter]->setTooltip ("FILTER: low cut (press again: high cut); the key below switches the low cut");
     modeKeys[Pan]->setTooltip ("PAN: pan (press again: width); the key below switches the MAIN 1 send");
 
@@ -67,6 +79,18 @@ FourChannelSection::FourChannelSection (UiContext& c, std::function<Strip* (int)
             auto flip = [] (std::atomic<bool>& b) { b = ! b.load(); };
             switch (mode)
             {
+                case Gain:
+                    // +48V of the strip's source (and its partner when paired), as HOME > INPUT.
+                    if (auto* src = inputSource (ctx.engine, *s))
+                    {
+                        const bool on = ! src->phantom.load();
+                        const int index = MixerEngine::sourceIndex (s->getInputLeft());
+                        const bool paired = src->mode.load() != ld::kSourceMono;
+                        for (int n : { paired ? (index & ~1) : index, paired ? (index | 1) : -1 })
+                            if (auto* each = ctx.engine.getSource (n))
+                                each->phantom = on;
+                    }
+                    break;
                 case Gate:   if (s->getKind() == StripKind::Channel) flip (p.gate.on); break;
                 case Comp:   flip (p.dynamics.on); break;
                 case Filter: if (s->getKind() == StripKind::Channel) flip (p.filter.lowCut); break;
@@ -91,6 +115,7 @@ FourChannelSection::FourChannelSection (UiContext& c, std::function<Strip* (int)
             bool on = false;
             switch (mode)
             {
+                case Gain:   if (const auto* src = inputSource (ctx.engine, *s)) on = src->phantom.load(); break;
                 case Gate:   on = p.gate.on.load(); break;
                 case Comp:   on = p.dynamics.on.load(); break;
                 case Filter: on = p.filter.lowCut.load(); break;
@@ -188,7 +213,7 @@ void FourChannelSection::bind()
                 case Comp:   b = thresholdOf (p.dynamics, "COMP THR"); break;
                 case Filter:
                     if (channel)
-                        b = alternate ? bindFreq ("HI CUT", p.filter.highCutFreq, 200.0f, 20000.0f, 10000.0f)
+                        b = alternate ? bindFreq ("HI CUT", p.filter.highCutFreq, 50.0f, 20000.0f, 10000.0f)
                                       : bindFreq ("LO CUT", p.filter.lowCutFreq, 20.0f, 2000.0f, 80.0f);
                     break;
                 case Pan:
@@ -204,7 +229,7 @@ void FourChannelSection::bind()
             }
         }
         knobs[i].setBinding (b);
-        channelKeys[i]->setEnabled (s != nullptr && mode != Gain);
+        channelKeys[i]->setEnabled (s != nullptr && (mode != Gain || inputSource (ctx.engine, *s) != nullptr));
     }
     shownState = {};
 }

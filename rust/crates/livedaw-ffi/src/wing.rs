@@ -8,8 +8,9 @@
 use super::guard;
 use super::session::{str_arg, LdShow, LdString};
 use livedaw_engine::Engine;
+use livedaw_wing::map::{LibAction, Library, Safes, UsbAction, UsbSettings};
 use livedaw_wing::server::{ClientKind, Config, EngineHandle, EnginePtr, WingServer};
-use livedaw_wing::{snap, Identity, WingState};
+use livedaw_wing::{snap, surface, Identity, WingState};
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -228,6 +229,206 @@ pub unsafe extern "C" fn ld_wing_import_show(
     }
 }
 
+/// Publishes the show for `/$ctl/lib`: its name, number of scenes and the
+/// current scene (index, -1 none; name; EDIT TAG, 0 none). From then on the
+/// host runs the scene recalls clients ask for (`ld_wing_take_library_action`).
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn ld_wing_set_library(
+    w: *mut LdWing,
+    show: *const u8,
+    show_len: usize,
+    num_scenes: i32,
+    current: i32,
+    scene: *const u8,
+    scene_len: usize,
+    tag: i32,
+) {
+    let Some(w) = wing(w) else { return };
+    let library = Library {
+        attached: true,
+        show: str_arg(show, show_len).into_owned(),
+        num_scenes,
+        current,
+        scene: str_arg(scene, scene_len).into_owned(),
+        tag,
+    };
+    guard((), || w.state.set_library(library));
+}
+
+/// No host runs scene recalls any more (clients' GO is refused).
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_clear_library(w: *mut LdWing) {
+    if let Some(w) = wing(w) {
+        guard((), || w.state.set_library(Library::default()));
+    }
+}
+
+/// The next scene recall a client asked for: true with `action` 1 GO (`index`
+/// the scene, 0-based), 2 GO NEXT, 3 GO PREV or 4 GO TAG (`index` the tag).
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_take_library_action(w: *mut LdWing, action: *mut i32, index: *mut i32) -> bool {
+    let Some(w) = wing(w) else { return false };
+    let Some(a) = guard(None, || w.state.take_lib_action()) else { return false };
+    let (code, i) = match a {
+        LibAction::Go(i) => (1, i),
+        LibAction::GoNext => (2, 0),
+        LibAction::GoPrev => (3, 0),
+        LibAction::GoTag(t) => (4, t),
+    };
+    if let Some(out) = action.as_mut() {
+        *out = code;
+    }
+    if let Some(out) = index.as_mut() {
+        *out = i;
+    }
+    true
+}
+
+/// Publishes the host's USB recorder settings for `/rec`: the storage folder,
+/// REC PATH (relative to it, "/" separated) and the next recording's channels
+/// (2, 4) and bits (16, 24). From then on clients' REC, NEW FILE and PLAYFILE
+/// reach the host (`ld_wing_take_usb_action`). A client's change still to be
+/// taken (`ld_wing_take_usb_settings`) is kept.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn ld_wing_set_usb(
+    w: *mut LdWing,
+    storage: *const u8,
+    storage_len: usize,
+    rec_path: *const u8,
+    rec_path_len: usize,
+    channels: i32,
+    bits: i32,
+) {
+    let Some(w) = wing(w) else { return };
+    let settings = UsbSettings {
+        attached: true,
+        storage: str_arg(storage, storage_len).into_owned(),
+        rec_path: str_arg(rec_path, rec_path_len).into_owned(),
+        channels,
+        bits,
+    };
+    guard((), || w.state.set_usb_settings(settings));
+}
+
+/// No host takes the USB actions any more.
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_clear_usb(w: *mut LdWing) {
+    if let Some(w) = wing(w) {
+        guard((), || {
+            w.state.take_usb_settings();
+            w.state.set_usb_settings(UsbSettings::default());
+        });
+    }
+}
+
+/// The USB settings a client changed: true with the channels, bits and REC
+/// PATH (relative to the storage folder; `rec_path` may be null).
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_take_usb_settings(
+    w: *mut LdWing,
+    channels: *mut i32,
+    bits: *mut i32,
+    rec_path: *mut *mut LdString,
+) -> bool {
+    let Some(w) = wing(w) else { return false };
+    let Some(u) = guard(None, || w.state.take_usb_settings()) else { return false };
+    if let Some(out) = channels.as_mut() {
+        *out = u.channels;
+    }
+    if let Some(out) = bits.as_mut() {
+        *out = u.bits;
+    }
+    write(rec_path, u.rec_path);
+    true
+}
+
+/// The next USB recorder action a client asked for: true with `action` 1 REC
+/// (a new recording), 2 NEW FILE or 3 PLAYFILE (`file`: the file, relative to
+/// the storage folder; may be null).
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_take_usb_action(w: *mut LdWing, action: *mut i32, file: *mut *mut LdString) -> bool {
+    let Some(w) = wing(w) else { return false };
+    let Some(a) = guard(None, || w.state.take_usb_action()) else { return false };
+    let (code, text) = match a {
+        UsbAction::Record => (1, String::new()),
+        UsbAction::NewFile => (2, String::new()),
+        UsbAction::PlayFile(f) => (3, f),
+    };
+    if let Some(out) = action.as_mut() {
+        *out = code;
+    }
+    write(file, text);
+    true
+}
+
+/// Publishes the show's GLOBAL safes for `/$ctl/safes` (bit n = DCA, mute
+/// group or FX slot n+1), unless a client's change is still to be taken.
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_set_safes(w: *mut LdWing, dcas: u32, mute_groups: u32, fx: u32) {
+    if let Some(w) = wing(w) {
+        guard((), || w.state.set_safes(Safes { attached: true, dcas, mute_groups, fx }));
+    }
+}
+
+/// No show any more.
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_clear_safes(w: *mut LdWing) {
+    if let Some(w) = wing(w) {
+        guard((), || {
+            w.state.take_safes();
+            w.state.set_safes(Safes::default());
+        });
+    }
+}
+
+/// The global safes a client changed: true with the masks (any pointer may be null).
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_take_safes(w: *mut LdWing, dcas: *mut u32, mute_groups: *mut u32, fx: *mut u32) -> bool {
+    let Some(w) = wing(w) else { return false };
+    let Some(s) = guard(None, || w.state.take_safes()) else { return false };
+    for (out, v) in [(dcas, s.dcas), (mute_groups, s.mute_groups), (fx, s.fx)] {
+        if let Some(out) = out.as_mut() {
+            *out = v;
+        }
+    }
+    true
+}
+
+/// `ld_wing_sync_surface`'s result (`kWingSurface*` in the header): the show's layers changed.
+pub const LD_WING_SURFACE_LAYERS: u32 = 1;
+/// The show's custom controls changed.
+pub const LD_WING_SURFACE_CONTROLS: u32 = 2;
+
+/// Surface control (`/$ctl/layer`, `/$ctl/user`), message thread: applies the
+/// layer and custom control changes clients made to `show`, then publishes
+/// its layers and custom controls with the upper custom control layer
+/// `cc_bank` (0-15). Returns `LD_WING_SURFACE_*` flags; `requested_bank` gets
+/// the layer a client chose (-1 none).
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_sync_surface(w: *mut LdWing, show: *mut LdShow, cc_bank: i32, requested_bank: *mut i32) -> u32 {
+    if let Some(out) = requested_bank.as_mut() {
+        *out = -1;
+    }
+    let (Some(w), Some(show)) = (wing(w), show.as_mut()) else { return 0 };
+    let engine = w.engine();
+    let show = &mut show.show;
+    let r = guard(Default::default(), || surface::sync(&w.state, engine, &mut show.layers, &mut show.custom, cc_bank));
+    if let (Some(out), Some(bank)) = (requested_bank.as_mut(), r.cc_bank) {
+        *out = bank;
+    }
+    (if r.layers { LD_WING_SURFACE_LAYERS } else { 0 }) | (if r.controls { LD_WING_SURFACE_CONTROLS } else { 0 })
+}
+
+/// No host for the surface any more (its nodes go back to the shadow store).
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_clear_surface(w: *mut LdWing) {
+    if let Some(w) = wing(w) {
+        guard((), || surface::detach(&w.state));
+    }
+}
+
 /// How much of the WING tree maps onto the engine (a text report).
 #[no_mangle]
 pub extern "C" fn ld_wing_coverage() -> *mut LdString {
@@ -305,6 +506,109 @@ mod tests {
             assert!(take(ld_wing_coverage()).starts_with("WING tree coverage"));
             ld_wing_stop(w);
             assert!(!ld_wing_running(w) && ld_wing_port(w, 1) == -1);
+            ld_wing_destroy(w);
+            drop(Box::from_raw(engine));
+        }
+    }
+
+    #[test]
+    fn library_actions_reach_the_host() {
+        let engine = Box::into_raw(Box::new(Engine::new(0)));
+        unsafe {
+            let w = ld_wing_create(engine);
+            let (mut action, mut index) = (0, 0);
+            assert!(!ld_wing_take_library_action(w, &mut action, &mut index));
+            let (show, scene) = ("Gig", "Intro");
+            ld_wing_set_library(w, show.as_ptr(), show.len(), 3, 0, scene.as_ptr(), scene.len(), 5);
+            let state = (*w).state.clone();
+            let c = livedaw_wing::Console::new(&*engine, &state);
+            let node = |p: &str| livedaw_wing::schema().resolve(p, &c).unwrap();
+            assert_eq!(c.get(node("/$ctl/lib/$activeid")), Some(livedaw_wing::Value::Int(5)));
+            c.set(node("/$ctl/lib/$actionidx"), &livedaw_wing::Value::Int(2)).unwrap();
+            c.set(node("/$ctl/lib/$action"), &livedaw_wing::Value::str("GO")).unwrap();
+            c.set(node("/$ctl/lib/$action"), &livedaw_wing::Value::str("GOTAG")).unwrap();
+            assert!(ld_wing_take_library_action(w, &mut action, &mut index));
+            assert_eq!((action, index), (1, 2));
+            assert!(ld_wing_take_library_action(w, &mut action, &mut index));
+            assert_eq!((action, index), (4, 2));
+            ld_wing_clear_library(w);
+            assert!(c.set(node("/$ctl/lib/$action"), &livedaw_wing::Value::str("GO")).is_err());
+            drop(c);
+            ld_wing_destroy(w);
+            drop(Box::from_raw(engine));
+        }
+    }
+
+    #[test]
+    fn usb_actions_and_safes_reach_the_host() {
+        let engine = Box::into_raw(Box::new(Engine::new(0)));
+        unsafe {
+            (*engine).set_num_channels(4);
+            let w = ld_wing_create(engine);
+            let (storage, rec) = ("/tmp/usb", "REC");
+            ld_wing_set_usb(w, storage.as_ptr(), storage.len(), rec.as_ptr(), rec.len(), 4, 16);
+            ld_wing_set_safes(w, 0b11, 0, 0);
+            let state = (*w).state.clone();
+            let c = livedaw_wing::Console::new(&*engine, &state);
+            let node = |p: &str| livedaw_wing::schema().resolve(p, &c).unwrap();
+            assert_eq!(c.get(node("/rec/$path")), Some(livedaw_wing::Value::str("REC")));
+            assert_eq!(c.get(node("/$ctl/safes/dca")), Some(livedaw_wing::Value::str("1,2")));
+            c.set(node("/rec/resolution"), &livedaw_wing::Value::str("24")).unwrap();
+            c.set(node("/rec/$action"), &livedaw_wing::Value::str("REC")).unwrap();
+            c.set(node("/play/$playfile"), &livedaw_wing::Value::str("a.wav")).unwrap();
+            c.set(node("/play/$action"), &livedaw_wing::Value::str("PLAYFILE")).unwrap();
+            c.set(node("/$ctl/safes/mute"), &livedaw_wing::Value::str("8")).unwrap();
+
+            let (mut channels, mut bits, mut path) = (0, 0, std::ptr::null_mut());
+            assert!(ld_wing_take_usb_settings(w, &mut channels, &mut bits, &mut path));
+            assert_eq!((channels, bits, take(path).as_str()), (4, 24, "REC"));
+            assert!(!ld_wing_take_usb_settings(w, &mut channels, &mut bits, std::ptr::null_mut()));
+            let (mut action, mut file) = (0, std::ptr::null_mut());
+            assert!(ld_wing_take_usb_action(w, &mut action, &mut file));
+            assert_eq!((action, take(file).as_str()), (1, ""));
+            assert!(ld_wing_take_usb_action(w, &mut action, &mut file));
+            assert_eq!((action, take(file).as_str()), (3, "a.wav"));
+            assert!(!ld_wing_take_usb_action(w, &mut action, std::ptr::null_mut()));
+            let (mut dcas, mut groups, mut fx) = (0, 0, 0);
+            assert!(ld_wing_take_safes(w, &mut dcas, &mut groups, &mut fx));
+            assert_eq!((dcas, groups, fx), (0b11, 1 << 7, 0));
+            assert!(!ld_wing_take_safes(w, &mut dcas, std::ptr::null_mut(), std::ptr::null_mut()));
+            ld_wing_clear_usb(w);
+            assert!(c.set(node("/rec/$action"), &livedaw_wing::Value::str("REC")).is_err());
+            ld_wing_clear_safes(w);
+            drop(c);
+            ld_wing_destroy(w);
+            drop(Box::from_raw(engine));
+        }
+    }
+
+    #[test]
+    fn surface_edits_reach_the_show() {
+        use crate::session::{ld_show_create, ld_show_destroy};
+        let engine = Box::into_raw(Box::new(Engine::new(0)));
+        unsafe {
+            (*engine).set_num_channels(40);
+            let w = ld_wing_create(engine);
+            let show = ld_show_create(std::ptr::null());
+            let mut bank = 0;
+            assert_eq!(ld_wing_sync_surface(w, show, 3, &mut bank), 0);
+            assert_eq!(bank, -1);
+            let state = (*w).state.clone();
+            let c = livedaw_wing::Console::new(&*engine, &state);
+            let node = |p: &str| livedaw_wing::schema().resolve(p, &c).unwrap();
+            assert_eq!(c.get(node("/$ctl/user/sel")), Some(livedaw_wing::Value::Int(4)));
+            c.set(node("/$ctl/layer/R/sel"), &livedaw_wing::Value::Int(2)).unwrap();
+            c.set(node("/$ctl/user/1/1/bu/mode"), &livedaw_wing::Value::str("SOLO")).unwrap();
+            c.set(node("/$ctl/user/sel"), &livedaw_wing::Value::Int(7)).unwrap();
+            let flags = ld_wing_sync_surface(w, show, 3, &mut bank);
+            assert_eq!(flags, LD_WING_SURFACE_LAYERS | LD_WING_SURFACE_CONTROLS);
+            assert_eq!(bank, 6);
+            assert_eq!((*show).show.layers.selected(livedaw_session::layers::RIGHT), "dca-1");
+            assert_eq!((*show).show.custom.control(0, 0).unwrap().upper.category, 2);
+            ld_wing_clear_surface(w);
+            assert!(!c.is_mapped(node("/$ctl/layer/R/sel")));
+            drop(c);
+            ld_show_destroy(show);
             ld_wing_destroy(w);
             drop(Box::from_raw(engine));
         }

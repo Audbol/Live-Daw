@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 9;
+constexpr int kAbiVersion = 11;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -58,10 +58,15 @@ constexpr int32_t kUsbPlayerSourceBase = 0x20000;
     kUsbTapStripBase + kind * 0x100000 + (number - 1) * 2 + channel a strip. */
 constexpr int32_t kUsbTapStripBase = 0x01000000;
 constexpr int kSamplesPerPeak = 256;
+/** The longest plugin delay compensation (samples); paths needing more stay late by the rest. */
+constexpr int kMaxPdc = 8192;
 /** TAP EQ bands (low shelf, peak, high shelf). */
 constexpr int kTapEqBands = 3;
 /** RTA bands: one per semitone, E0 (20.6 Hz) .. D#10 (19.9 kHz), see ld_rta_band_hz. */
 constexpr int kRtaBands = 120;
+/** ld_wing_sync_surface flags: a client changed the show's layers / custom controls. */
+constexpr uint32_t kWingSurfaceLayers = 1;
+constexpr uint32_t kWingSurfaceControls = 2;
 
 enum StripKindId : int32_t
 {
@@ -72,9 +77,11 @@ enum StripKindId : int32_t
     kMatrix = 4
 };
 
-/// Fader reference kinds beyond the strip kinds (0..4): DCAs and FX parameters.
+/// Fader reference kinds beyond the strip kinds (0..4): DCAs, FX parameters
+/// and MIDI CCs.
 constexpr int32_t kFaderDca = 5;
 constexpr int32_t kFaderFxParam = 6;
+constexpr int32_t kFaderMidiCc = 7;
 
 /// Tap points (index into list 1). WING names: INPUT, FILTER, TAP 3-5, PRE FDR,
 /// POST FDR, POST PROC. Only input channels choose theirs; aux, buses, mains and
@@ -155,6 +162,8 @@ struct MatrixSendParams
 {
     std::atomic<bool> on, pre;
     std::atomic<bool> ignoreMute; // IGNORE CHANNEL MUTE (input/aux channels, pre/TAP mode only)
+    std::atomic<bool> panLink;    // PAN LINK (input/aux channels): the pan follows the channel's
+    std::atomic<bool> panReversed; // with panLink: mirrored (LINK REVERSED)
     std::atomic<float> levelDb, pan;
 };
 
@@ -250,7 +259,9 @@ struct DcaParams
 {
     std::atomic<float> faderDb;
     std::atomic<bool> mute, solo;
+    std::atomic<bool> led; // scribble strip light
     std::atomic<int32_t> colour;
+    std::atomic<int32_t> icon; // WING icon number (0 none)
 };
 
 struct FxParams
@@ -465,8 +476,13 @@ enum RtaView : int32_t
 {
     kRtaViewHome = 0,  // HOME > OVERVIEW: RTA SETTINGS (source IN | EQ | POST)
     kRtaViewEq = 1,    // EQ screen: EQ/RTA SETTINGS (source PRE | POST the EQ)
-    kRtaViewFilter = 2 // FILTER SETUP: source PRE | POST the filter (filterTap), the EQ view's settings
+    kRtaViewFilter = 2, // FILTER SETUP: source PRE | POST the filter (filterTap), the EQ view's settings
+    kRtaViewMonitor = 3 // MONITORS EQ: a monitor path (kAnalyseMonitor), PRE | POST its EQ, the EQ view's settings
 };
+
+/// AnalysisControls::stripKind for the RTA of a monitor path: stripId is the
+/// path (0 SPEAKERS, 1 PHONES, as MonitorControls::paths).
+constexpr int32_t kAnalyseMonitor = -2;
 
 /// LISTEN (AnalysisControls::listenMode): replaces the solo bus, one strip at a time.
 enum ListenMode : int32_t
@@ -525,7 +541,9 @@ struct LayoutInfo
         offControlsPhones, offTalkPaths, offMonitorPathPeak, offSourcePeak,
         // ABI 8 (monitors)
         monitorDsp, monitorControls, offControlsMonitor, offMonitorDspEq, offMonitorDspPan, offMonitorControlsSourceSolo,
-        offSourceMuteGroups;
+        offSourceMuteGroups,
+        // ABI 11 (matrix send PAN LINK, DCA icon and light)
+        offMatrixSendPanReversed, offDcaIcon;
 };
 
 struct ParamInfo
@@ -576,7 +594,8 @@ struct StripRefC
 
 /// A fader on the surface: kind 0..4 = a strip, or with toKind 2..4 the send
 /// level from it to bus / main / matrix `toId`; kFaderDca = DCA (id 0..15);
-/// kFaderFxParam = FX slot `id`'s parameter `toId`. toKind is -1 when unused.
+/// kFaderFxParam = FX slot `id`'s parameter `toId`; kFaderMidiCc = CC `toId`
+/// (0-127) on MIDI channel `id` (0-15). toKind is -1 when unused.
 struct FaderRefC
 {
     int32_t kind, id;
@@ -601,6 +620,15 @@ struct PresetInfoC
     int32_t stripKind;
     LdString* name;
     LdString* detail;
+};
+
+/// A LIBRARY scene / snippet file's header: kind 0 = not one, 1 = scene (.lsnap),
+/// 2 = snippet (.lsnip); count = a scene's snippets or a snippet's parameters;
+/// `name` is the caller's to free.
+struct LibraryInfoC
+{
+    int32_t kind, count;
+    LdString* name;
 };
 
 struct ApplyResultC
@@ -735,6 +763,24 @@ extern "C"
     float ld_fx_load (const Engine*, int32_t slot);
     int32_t ld_fx_num_users (const Engine*, int32_t slot);
 
+    // Plugin delay compensation (ABI 10): every bus, main and matrix reads its
+    // sources delayed so that paths through plugins of different latencies
+    // arrive together (capped at kMaxPdc samples).
+    /** Any thread: the latency (samples) slot `slot`'s plugin reports; reset by ld_fx_set. */
+    void ld_fx_set_latency (const Engine*, int32_t slot, int32_t samples);
+    int32_t ld_fx_latency (const Engine*, int32_t slot);
+    /** DELAY COMPENSATION on / off (default on). */
+    void ld_engine_set_pdc (const Engine*, bool on);
+    bool ld_engine_pdc (const Engine*);
+    /** Message thread: works out the plan now (ld_engine_collect also does). */
+    void ld_engine_update_pdc (const Engine*);
+    /** The longest path latency (samples) the plan aligns to. */
+    int32_t ld_engine_pdc_total (const Engine*);
+    /** A path needs more than kMaxPdc samples of compensation. */
+    bool ld_engine_pdc_limited (const Engine*);
+    /** The plugin latency of a strip's output (its inserts plus what its sources were aligned to). */
+    int32_t ld_strip_latency (const Strip*);
+
     // Strips
     int32_t ld_strip_kind (const Strip*);
     int32_t ld_strip_id (const Strip*);
@@ -816,6 +862,9 @@ extern "C"
     void ld_show_recall_scene (Show*, const Engine*, int32_t which, int32_t index, ApplyResultC* out);
     /** The first non-skipped scene tagged `tag`, or -1. */
     int32_t ld_show_find_scene_by_tag (Show*, int32_t tag);
+    /** SEND MIDI of the scenes the last ld_show_recall_scene recalled, one per line (empty if
+        none); taking it clears it. */
+    LdString* ld_show_take_midi (Show*);
 
     bool ld_scene_exists (Show*, int32_t scene);
     LdString* ld_scene_name (Show*, int32_t scene);
@@ -834,6 +883,9 @@ extern "C"
     void ld_scene_set_tag (Show*, int32_t scene, int32_t tag);
     void ld_scene_set_skip (Show*, int32_t scene, bool skip);
     void ld_scene_set_link (Show*, int32_t scene, bool link);
+    /** SEND MIDI: the MIDI data (EDIT MIDI TEXT STRING) the scene sends when recalled. */
+    LdString* ld_scene_midi (Show*, int32_t scene);
+    void ld_scene_set_midi (Show*, int32_t scene, const char* utf8, size_t len);
 
     int32_t ld_show_add_snippet (Show*, const Engine*, int32_t scene, const char* name, size_t len,
                                  uint32_t sections, const StripRefC* strips, int32_t numStrips);
@@ -887,6 +939,14 @@ extern "C"
                                       uint32_t scope, LdString** message);
     /** UPDATE SCOPE of a channel preset file. */
     bool ld_preset_set_scope (const char* path, size_t len, uint32_t scope);
+
+    // LIBRARY scene (.lsnap) and snippet (.lsnip) files
+    bool ld_library_info (const char* path, size_t len, LibraryInfoC* out);
+    /** Scene `scene` with its snippets (snippet < 0), or one of its snippets, to `path`. */
+    bool ld_show_export_library (Show*, int32_t scene, int32_t snippet, const char* path, size_t len, LdString** message);
+    /** A scene file inserted at scene `index` (-1: appended), or a snippet file added to scene `index`;
+        the new index, or -1 with `message`. */
+    int32_t ld_show_import_library (Show*, const char* path, size_t len, int32_t index, LdString** message);
 
     bool ld_show_is_fading (Show*);
     void ld_show_cancel_fade (Show*);
@@ -1037,6 +1097,8 @@ extern "C"
     /** The browser's folder: the queue's files (or, with a playlist open, the folder CLOSE returns to). */
     void ld_usb_queue_set_folder (const Engine*, const char* folder, size_t len);
     void ld_usb_queue_refresh (const Engine*);
+    /** RENAME moved `from` (a file or folder) to `to`: the queue's entries under it follow. */
+    void ld_usb_queue_rename (const Engine*, const char* from, size_t fromLen, const char* to, size_t toLen);
     int32_t ld_usb_queue_kind (const Engine*);
     LdString* ld_usb_queue_playlist_file (const Engine*);
     bool ld_usb_queue_dirty (const Engine*);
@@ -1099,6 +1161,36 @@ extern "C"
     /** Adds a WING .show's snapshot scenes to the show (the console only grows to 40 channels). */
     bool ld_wing_import_show (LdWing*, Show*, const char* path, size_t len, LdString** report);
     LdString* ld_wing_coverage();
+    /** Publishes the show for /$ctl/lib (scene index -1 / tag 0: none); the host then runs the
+        scene recalls clients ask for. ld_wing_clear_library: no host any more. */
+    void ld_wing_set_library (LdWing*, const char* show, size_t showLen, int32_t numScenes, int32_t current,
+                              const char* scene, size_t sceneLen, int32_t tag);
+    void ld_wing_clear_library (LdWing*);
+    /** The next scene recall a client asked for: action 1 GO (index: the scene, 0-based),
+        2 GO NEXT, 3 GO PREV, 4 GO TAG (index: the tag). False if none. */
+    bool ld_wing_take_library_action (LdWing*, int32_t* action, int32_t* index);
+    /** Publishes the USB recorder's settings for /rec (the storage folder, REC PATH relative
+        to it with "/", channels 2 / 4, bits 16 / 24); clients' REC, NEW FILE and PLAYFILE then
+        reach the host (ld_wing_take_usb_action). ld_wing_clear_usb: no host any more. */
+    void ld_wing_set_usb (LdWing*, const char* storage, size_t storageLen, const char* recPath, size_t recPathLen,
+                          int32_t channels, int32_t bits);
+    void ld_wing_clear_usb (LdWing*);
+    /** The settings a client changed (recPath may be null). False if none. */
+    bool ld_wing_take_usb_settings (LdWing*, int32_t* channels, int32_t* bits, LdString** recPath);
+    /** The next USB action a client asked for: 1 REC (a new recording), 2 NEW FILE,
+        3 PLAYFILE (*file: relative to the storage folder; may be null). False if none. */
+    bool ld_wing_take_usb_action (LdWing*, int32_t* action, LdString** file);
+    /** Publishes the show's global safes for /$ctl/safes (bit n = DCA / mute group / FX n+1);
+        ld_wing_take_safes: the masks a client changed (false if none). */
+    void ld_wing_set_safes (LdWing*, uint32_t dcas, uint32_t muteGroups, uint32_t fx);
+    void ld_wing_clear_safes (LdWing*);
+    bool ld_wing_take_safes (LdWing*, uint32_t* dcas, uint32_t* muteGroups, uint32_t* fx);
+    /** Surface control (/$ctl/layer, /$ctl/user): applies the layer and custom control changes
+        clients made to the show, then publishes its layers and custom controls with the upper
+        custom control layer ccBank (0-15). Returns kWingSurface* flags; *requestedBank is the
+        layer a client chose (-1 none). ld_wing_clear_surface: no host any more. */
+    uint32_t ld_wing_sync_surface (LdWing*, Show*, int32_t ccBank, int32_t* requestedBank);
+    void ld_wing_clear_surface (LdWing*);
     /** MIDI SYSEX CONTROL on the WING tree: cmd 2 executes a node string
         ("/ch.1.fdr=-1,mute=0"), 3 dumps a node, 5 describes one. True with
         *out the data (empty for 2), false with *out the error text. */
@@ -1112,7 +1204,8 @@ extern "C"
     int32_t ld_source_port (int32_t index);
     LdString* ld_source_name (const Engine*, int32_t index);
     void ld_source_set_name (const Engine*, int32_t index, const char* utf8, size_t len);
-    /** SourceMode for the source and its pair partner (a new pair takes the first one's settings). */
+    /** SourceMode for the source and its pair partner (a new pair takes the first one's settings);
+        channels and aux patched to the pair's first source follow it (stereo or mono). */
     void ld_source_set_mode (const Engine*, int32_t index, int32_t mode);
     /** INITIALIZE (the pair's settings and names; the pairing stays). */
     void ld_source_initialize (const Engine*, int32_t index);
@@ -1228,6 +1321,8 @@ inline const char* verifyLayout()
         { info.offMonitorDspPan, offsetof (MonitorDspParams, pan), "MonitorDspParams.pan" },
         { info.offMonitorControlsSourceSolo, offsetof (MonitorControls, sourceSolo), "MonitorControls.sourceSolo" },
         { info.offSourceMuteGroups, offsetof (SourceParams, muteGroups), "SourceParams.muteGroups" },
+        { info.offMatrixSendPanReversed, offsetof (MatrixSendParams, panReversed), "MatrixSendParams.panReversed" },
+        { info.offDcaIcon, offsetof (DcaParams, icon), "DcaParams.icon" },
     };
 
     if (info.abiVersion != kAbiVersion)

@@ -248,6 +248,24 @@ private:
             expectEquals (p.getClip (x)->fadeOut, (int64) 2000);
             expectEquals (p.getClip (y)->fadeIn, (int64) 2000);
 
+            // Pulled apart, the crossfade's fades go; a fade changed since stays.
+            {
+                const auto crossfades = p.getCrossfades (a);
+                expectEquals ((int) crossfades.size(), 1);
+                expect (crossfades[0].first == x && crossfades[0].second == y && crossfades[0].length == 2000);
+                p.setClip (clipmath::moveTo (*p.getClip (y), 9000)); // still overlapping: kept
+                p.releaseCrossfades (crossfades);
+                expectEquals (p.getClip (y)->fadeIn, (int64) 2000);
+                p.setClip (clipmath::moveTo (*p.getClip (y), 20000));
+                p.setClipProperty (x, ids::fadeOut, (int64) 500);
+                p.releaseCrossfades (crossfades);
+                expectEquals (p.getClip (x)->fadeOut, (int64) 500);
+                expectEquals (p.getClip (y)->fadeIn, (int64) 0);
+                p.setClipProperty (x, ids::fadeOut, (int64) 0);
+                p.setClip (clipmath::moveTo (*p.getClip (y), 8000));
+                p.crossfadeOverlaps (a);
+            }
+
             // Clearing a range trims and splits.
             p.clearRange (a, 4000, 12000);
             const auto clips = p.getClips (a);
@@ -573,6 +591,43 @@ private:
                 expectWithinAbsoluteError (strip.peakMeter (MeterPoint::Input, 0).load(), 0.25f, 0.01f);
                 session.stop();
             }
+        }
+
+        beginTest ("Session: a take never goes into a project at another rate than the console's");
+        {
+            TempFolder temp;
+            MixerEngine engine (0);
+            engine.prepareOffline (48000.0, 128, 2, 2);
+            auto& recorder = engine.getRecorder();
+            Session session (recorder, nullptr);
+            session.setDefaultFolder (temp.folder);
+            auto& p = session.getProject();
+            TrackData td;
+            td.arm = true;
+            const auto t = p.addTrack (td);
+            const auto m = p.addMarker (48000);
+            p.setLoop (24000, 96000);
+
+            // The clock rate changes: a project without audio follows it, markers keep their time.
+            engine.prepareOffline (96000.0, 128, 2, 2);
+            expect (! session.rateMatches());
+            auto result = session.record();
+            expect (result.wasOk(), result.getErrorMessage());
+            session.stop();
+            expectEquals (p.getSampleRate(), 96000.0);
+            expect (session.rateMatches());
+            expectEquals (p.getMarkers()[0].position, (int64) 96000);
+            expect (p.getMarkers()[0].id == m);
+            expectEquals (p.getLoopStart(), (int64) 48000);
+            expectEquals (p.getLoopEnd(), (int64) 192000);
+
+            // With audio it stays, and recording is refused.
+            p.addClip (t, makeClip (0, 1000));
+            engine.prepareOffline (48000.0, 128, 2, 2);
+            result = session.record();
+            expect (result.failed());
+            expect (! session.isRecording());
+            expectEquals (p.getSampleRate(), 96000.0);
         }
     }
 

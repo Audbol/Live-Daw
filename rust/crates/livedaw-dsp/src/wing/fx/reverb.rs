@@ -178,6 +178,22 @@ mod tests {
     }
 
     #[test]
+    fn reflection_times_apply_from_the_start() {
+        // A freshly loaded device places its early reflections (V-ROOM ER LEFT /
+        // RIGHT) and reflection clusters (CONCERT REFL L / R) at their times
+        // right away, not only after the time is changed.
+        for (token, ids, short, long) in [("V-ROOM", ["erl", "err"], 5.0, 150.0), ("CONCERT", ["rfl", "rfr"], 30.0, 600.0)] {
+            let at = |t: f32| {
+                let mut dev = device(token, &[(ids[0], t), (ids[1], t), ("pdel", 0.0)]);
+                render(dev.as_mut(), &impulse(48_000))
+            };
+            let (a, b) = (at(short), at(long));
+            let diff: f32 = a.iter().zip(&b).map(|(x, y)| (x - y) * (x - y)).sum();
+            assert!(diff > 1e-3 * energy(&a), "{token}: the reflection time changes nothing on a new device");
+        }
+    }
+
+    #[test]
     fn reverse_swells_and_gated_cuts() {
         let ms = |t: f32| (t * 48.0) as usize;
         // REVERSE, 600 ms window: quiet start, loud end, silence after.

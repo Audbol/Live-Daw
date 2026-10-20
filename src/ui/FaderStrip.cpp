@@ -1,5 +1,6 @@
 #include "ui/FaderStrip.h"
 #include "dsp/DspUtils.h"
+#include "engine/MidiRemote.h"
 #include "engine/Models.h"
 
 #include <optional>
@@ -42,6 +43,53 @@ namespace
     juce::Font lcdFont (float cap, WingWeight weight)
     {
         return wingFontPx (juce::jmax (4.0f, cap), weight);
+    }
+
+    /** The name's rows, as on the console: a name that fits stays on one row;
+        a longer one breaks onto a new row at a space (up to `maxRows`), the
+        last row taking the rest. */
+    juce::StringArray nameRows (const juce::String& name, const juce::Font& font, float width, int maxRows)
+    {
+        juce::StringArray rows;
+        if (maxRows <= 1 || juce::GlyphArrangement::getStringWidth (font, name) <= width || ! name.containsChar (' '))
+        {
+            rows.add (name);
+            return rows;
+        }
+        auto words = juce::StringArray::fromTokens (name, " ", "");
+        words.removeEmptyStrings();
+        juce::String row;
+        for (int i = 0; i < words.size(); ++i)
+        {
+            const auto candidate = row.isEmpty() ? words[i] : row + " " + words[i];
+            if (row.isNotEmpty() && juce::GlyphArrangement::getStringWidth (font, candidate) > width)
+            {
+                rows.add (row);
+                if (rows.size() == maxRows - 1)
+                {
+                    words.removeRange (0, i);
+                    rows.add (words.joinIntoString (" "));
+                    return rows;
+                }
+                row = words[i];
+            }
+            else
+            {
+                row = candidate;
+            }
+        }
+        rows.add (row);
+        return rows;
+    }
+
+    /** One row of the name: centred when it fits, else from the left and cut
+        off at the right edge (typing goes on to the right, as on the console). */
+    void nameRow (juce::Graphics& g, const juce::String& text, juce::Rectangle<float> area)
+    {
+        const bool fits = juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text) <= area.getWidth();
+        juce::Graphics::ScopedSaveState clip (g);
+        g.reduceClipRegion (area.toNearestInt());
+        g.drawText (text, area, fits ? juce::Justification::centred : juce::Justification::centredLeft, false);
     }
 } // namespace
 
@@ -132,14 +180,24 @@ void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const Scribble
     const bool centreFree = info.value.isEmpty() && ! hasIcon && info.line2.isEmpty() && info.line3.isEmpty();
     if (info.name.isNotEmpty() && centreFree && ! info.nameInverted)
     {
+        // One row, or two when the name breaks at a space.
         auto area = r.reduced (0.0f, juce::jmax (1.0f, r.getHeight() * 0.06f));
-        float cap = juce::jmin (H * 0.2f, area.getHeight() * 0.42f);
-        if (const float textW = juce::GlyphArrangement::getStringWidth (lcdFont (cap, WingWeight::Medium), info.name);
-            textW > area.getWidth() * 0.94f)
-            cap = juce::jmax (juce::jmin (5.5f, cap), cap * area.getWidth() * 0.94f / textW);
+        const float cap = juce::jmin (H * 0.2f, area.getHeight() * 0.42f);
+        const auto font = lcdFont (cap, cap < 7.0f ? WingWeight::SemiBold : WingWeight::Medium);
+        auto rows = nameRows (info.name, font, area.getWidth(), 2);
         g.setColour (ink);
-        g.setFont (lcdFont (cap, cap < 7.0f ? WingWeight::SemiBold : WingWeight::Medium));
-        lcdText (g, info.name, area, juce::Justification::centred);
+        if (rows.size() == 1)
+        {
+            g.setFont (font);
+            nameRow (g, rows[0], area);
+            return;
+        }
+        const float rowCap = juce::jmin (cap, area.getHeight() / 2.0f / 1.45f);
+        g.setFont (lcdFont (rowCap, rowCap < 7.0f ? WingWeight::SemiBold : WingWeight::Medium));
+        rows = nameRows (info.name, g.getCurrentFont(), area.getWidth(), 2);
+        auto block = area.withSizeKeepingCentre (area.getWidth(), rowCap * 1.45f * (float) rows.size());
+        for (const auto& row : rows)
+            nameRow (g, row, block.removeFromTop (rowCap * 1.45f));
         return;
     }
     if (info.name.isNotEmpty())
@@ -157,7 +215,7 @@ void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const Scribble
         {
             g.setColour (ink);
         }
-        lcdText (g, info.name, bar, juce::Justification::centred);
+        nameRow (g, info.name, bar.reduced (1.0f, 0.0f));
     }
 
     // Centre: a value in large type (SHOW FADER VALUE, a knob's value) with
@@ -189,9 +247,9 @@ void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const Scribble
     }
     const float s = juce::jmin (centre.getHeight() * 0.82f, centre.getWidth() * 0.5f);
     const auto iconArea = centre.withSizeKeepingCentre (s, s);
-    if (info.strip != nullptr && info.strip->params.icon.load() > 0)
+    if (const int wingIcon = info.strip != nullptr ? (int) info.strip->params.icon.load() : info.wingIcon; wingIcon > 0)
     {
-        drawWingIcon (g, info.strip->params.icon.load(), iconArea, ink);
+        drawWingIcon (g, wingIcon, iconArea, ink);
         return;
     }
     if (info.icon.has_value())
@@ -382,6 +440,7 @@ void FaderStrip::refresh()
     dca = -1;
     send.reset();
     fxp.reset();
+    midi.reset();
 
     if (target)
     {
@@ -394,6 +453,8 @@ void FaderStrip::refresh()
             if (model > ld::kFxExt && juce::isPositiveAndBelow (target->param, (int) models::model (models::Fx, model).params.size()))
                 fxp = ParamTarget { &ctx.engine.getFx().params (slot).values[target->param], slot, model, target->param };
         }
+        else if (target->midiCc)
+            midi = MidiTarget { target->midiChannel, target->cc };
         else
             strip = state::findStrip (ctx.engine, target->strip); // a send fader: its source
     }
@@ -496,8 +557,15 @@ void FaderStrip::glide (double targetDb)
         fader.setValue (range.convertFrom0to1 (from + (to > from ? step : -step)), juce::dontSendNotification);
 }
 
+int FaderStrip::midiValue() const noexcept
+{
+    return midi && ctx.midi != nullptr ? ctx.midi->getExternalCc (midi->channel + 1, midi->cc) : 0;
+}
+
 double FaderStrip::faderPosition() const
 {
+    if (midi)
+        return fader.getNormalisableRange().convertFrom0to1 ((double) midiValue() / 127.0);
     if (fxp)
     {
         const auto& spec = models::model (models::Fx, fxp->model).params[(size_t) fxp->index];
@@ -509,7 +577,16 @@ double FaderStrip::faderPosition() const
 
 void FaderStrip::writeFader (double position)
 {
-    if (fxp)
+    if (midi)
+    {
+        const int value = juce::roundToInt (fader.getNormalisableRange().convertTo0to1 (position) * 127.0);
+        if (ctx.midi != nullptr && value != midiValue())
+        {
+            ctx.midi->setExternalCc (midi->channel + 1, midi->cc, value);
+            ctx.midi->sendExternal (juce::MidiMessage::controllerEvent (midi->channel + 1, midi->cc, value));
+        }
+    }
+    else if (fxp)
     {
         const auto& spec = models::model (models::Fx, fxp->model).params[(size_t) fxp->index];
         fxp->value->store (spec.fromNormalised ((float) fader.getNormalisableRange().convertTo0to1 (position)));
@@ -542,14 +619,16 @@ std::atomic<float>* FaderStrip::faderParam() const noexcept
 void FaderStrip::bindControls()
 {
     const bool any = strip != nullptr || dca >= 0 || fxp.has_value();
-    fader.setEnabled (any);
+    fader.setEnabled (any || midi.has_value());
     // A DCA's SELECT spills it when DCA SPILL is on (SETUP > SURFACE).
     selectKey.setEnabled (strip != nullptr || dca >= 0);
     soloKey.setEnabled ((strip != nullptr || dca >= 0) && ! send);
     muteKey.setEnabled (any);
-    fader.setColour (juce::Slider::thumbColourId, send ? Colours::solo : (fxp ? kFxColour : Colours::text));
+    fader.setColour (juce::Slider::thumbColourId, send ? Colours::solo : (fxp ? kFxColour : (midi ? Colours::midiCc : Colours::text)));
     fader.textFromValueFunction = [this] (double v)
     {
+        if (midi)
+            return juce::String (juce::roundToInt (fader.getNormalisableRange().convertTo0to1 (v) * 127.0));
         if (fxp)
         {
             const auto& spec = models::model (models::Fx, fxp->model).params[(size_t) fxp->index];
@@ -602,6 +681,7 @@ ScribbleInfo FaderStrip::scribbleInfo() const
         const bool defaultName = shownName.retainCharacters ("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
                                      .equalsIgnoreCase ("DCA" + juce::String (dca + 1));
         info.name = defaultName ? juce::String() : shownName;
+        info.wingIcon = ctx.engine.getDca (dca).icon.load();
     }
     else if (fxp)
     {
@@ -613,6 +693,15 @@ ScribbleInfo FaderStrip::scribbleInfo() const
         info.value = shownValue;
         info.name = m.params[(size_t) fxp->index].label.toUpperCase();
     }
+    else if (midi)
+    {
+        // A MIDI CC: the CC and its value large, the MIDI channel.
+        info.tag = "CC";
+        info.tagFirst = true;
+        info.number = juce::String (midi->cc);
+        info.value = shownValue;
+        info.name = "MIDI CH " + juce::String (midi->channel + 1);
+    }
 
     // Sends on Fader: the send this fader sets ("> BUS 3", "< CH5").
     if (send)
@@ -620,7 +709,7 @@ ScribbleInfo FaderStrip::scribbleInfo() const
 
     // SHOW FADER VALUE ON SCRIBBLE: the level in place of the icon for a
     // moment after a move.
-    if (shownFlash && ! fxp)
+    if (shownFlash && ! fxp && ! midi)
     {
         info.value = shownValue;
         info.caption = send ? "SEND" : "";
@@ -632,7 +721,7 @@ ScribbleInfo FaderStrip::scribbleInfo() const
 
 void FaderStrip::timerCallback()
 {
-    if (faderParam() != nullptr && ! fader.isMouseButtonDown())
+    if ((faderParam() != nullptr || midi) && ! fader.isMouseButtonDown())
     {
         const double v = faderPosition();
         if (std::abs (v - fader.getValue()) > 1.0e-4)
@@ -646,6 +735,8 @@ void FaderStrip::timerCallback()
 
     if (fxp)
         value = models::model (models::Fx, fxp->model).params[(size_t) fxp->index].display (fxp->value->load());
+    else if (midi)
+        value = juce::String (midiValue());
     else if (auto* p = faderParam())
         value = fader::text (p->load());
 
@@ -673,9 +764,12 @@ void FaderStrip::timerCallback()
     {
         auto& d = ctx.engine.getDca (dca);
         name = ctx.engine.getDcaName (dca);
-        light = true;
+        light = d.led.load();
         colour = d.colour.load();
+        source = juce::String (d.icon.load()); // repaints when the icon changes
     }
+    else if (midi)
+        light = true;
 
     if (name != shownName || colour != shownColour || light != shownLight || source != shownSource)
     {
@@ -701,7 +795,7 @@ void FaderStrip::timerCallback()
         shownValue = value;
         if (showValue)
             repaint (valueArea);
-        if (shownFlash || fxp)
+        if (shownFlash || fxp || midi)
             repaint (scribbleArea);
     }
     retargeted = false;
@@ -747,7 +841,7 @@ void FaderStrip::paint (juce::Graphics& g)
     // Colour light bar (COLOR LED brightness) and scribble strip; one LCD
     // runs across the module, with a fine rule between the strips.
     const juce::Colour colour = strip != nullptr ? stripDisplayColour (*strip)
-                                : (dca >= 0 ? wingColour (shownColour) : (fxp ? kFxColour : Colours::ledOff));
+                                : (dca >= 0 ? wingColour (shownColour) : (fxp ? kFxColour : (midi ? Colours::midiCc : Colours::ledOff)));
     drawLightBar (g, barArea.toFloat(), colour.withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
                   target.has_value() && shownLight);
     auto info = target ? scribbleInfo() : ScribbleInfo {};

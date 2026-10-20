@@ -83,11 +83,17 @@ public:
             const int lines = lineList.size();
             g.setColour (ink);
             // The longest line shrinks to fit rather than being cut (VIRTUAL SOUNDCHECK).
+            // Text with line breaks is laid out without squeezing (JUCE wraps a line
+            // that is too wide instead: RECORD ALL / CHANNELS became three lines), so
+            // each line must fit at its full width.
             auto font = wingFontPx (wingKeyCap (r.getHeight(), lines > 1 ? 0.26f : 0.34f));
             for (auto& line : lineList)
-                font = fontFittingWidth (font, line, content.getWidth() - 2.0f);
+                font = fontFittingWidth (font, line, content.getWidth() - 2.0f, lines > 1 ? 1.0f : 0.75f); // wrapped lines are not squashed
+            // All lines inside the key, with a margin (RECORD ALL CHANNELS in a short key).
+            if (font.getHeight() * (float) lines > r.getHeight() * 0.8f)
+                font = font.withHeight (juce::jmax (6.0f, r.getHeight() * 0.8f / (float) lines));
             g.setFont (font);
-            g.drawFittedText (getButtonText(), content.toNearestInt(), juce::Justification::centred, 2, 0.75f);
+            g.drawFittedText (getButtonText(), content.toNearestInt(), juce::Justification::centred, juce::jmax (1, lines), 0.75f);
         }
     }
 

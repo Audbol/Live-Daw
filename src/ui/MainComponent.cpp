@@ -166,6 +166,10 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
     setLookAndFeel (&lookAndFeel);
 
+    // Plugin delay compensation (SETUP > PLUGINS) is an app setting, on by default.
+    engine.setLatencyCompensation (settings.getBoolValue (uiprefs::latencyCompensation, true));
+    engine.onPluginWarning = [this] (const juce::String& text) { log.warning (text); };
+
     ctx.selectStrip = [this] (Strip* strip) { selectStrip (strip); };
     ctx.getSelectedStrip = [this] { return getSelectedStrip(); };
     ctx.showScreen = [this] (Screen screen) { display->showScreen (screen); };
@@ -194,6 +198,16 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     ctx.saveShow = [this] (bool saveAs) { saveShow (saveAs); };
     ctx.openShowFile = [this] (const juce::File& file) { openShowFile (file); };
     ctx.saveShowTo = [this] (const juce::File& file) { saveShowTo (file); };
+    ctx.showFileRenamed = [this] (const juce::File& from, const juce::File& to)
+    {
+        // The open show's file: SAVE writes the new one, and the show takes its name.
+        if (showFile == juce::File() || from != showFile)
+            return;
+        showFile = to;
+        show.setName (to.getFileNameWithoutExtension());
+        updateTitle();
+        display->refreshLibrary();
+    };
 
     // The recording session (the recorder screen, the editor and MULTI TRANSP share it).
     recording = std::make_unique<daw::Session> (engine.getRecorder(), &settings);
@@ -246,6 +260,22 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     // The 4-Channel section works on the right fader section's four strips.
     fourChannel = std::make_unique<FourChannelSection> (ctx, [this] (int i) { return sections[LayerSet::Right] != nullptr ? sections[LayerSet::Right]->getStrip (i) : nullptr; });
     soloWatcher = std::make_unique<SoloWatcher> (*this);
+
+    // WING remote clients recall scenes (/$ctl/lib) like MIDI does, and change
+    // the layers and custom controls (/$ctl/layer, /$ctl/user) like the surface.
+    engine.getWing().setSurfaceCallbacks ([this] { return customControlAssignments->currentLayer; },
+                                          [this] (int changes, int bank)
+                                          {
+                                              if ((changes & WingRemote::surfaceControls) != 0)
+                                                  customControlAssignments->reload();
+                                              if (bank >= 0)
+                                                  customControlAssignments->currentLayer = bank;
+                                              customControls->refresh();
+                                              if ((changes & WingRemote::surfaceLayers) != 0)
+                                                  refreshSections();
+                                          });
+    engine.getWing().attachShow (&show, [this] (const juce::String& what, const state::ApplyResult& r)
+                                 { logRecall (ctx, what, r); });
     for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) display.get(), (juce::Component*) monitor.get(),
                                 (juce::Component*) customControls.get(), (juce::Component*) fourChannel.get() })
         addAndMakeVisible (c);
@@ -284,9 +314,12 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
 
 MainComponent::~MainComponent()
 {
-    // MIDI goes first: its callbacks reach the views.
+    // MIDI and the WING remote's scene and surface control go first: their callbacks reach the views.
+    engine.getWing().attachShow (nullptr);
+    engine.getWing().setSurfaceCallbacks ({}, {});
     ctx.midi = nullptr;
     midiRemote.reset();
+    engine.onPluginWarning = nullptr;
 
     // Unsaved project changes survive the quit in the autosave (offered on the next open).
     recording->autosave();
@@ -977,13 +1010,16 @@ void MainComponent::openShowFile (const juce::File& file)
 void MainComponent::saveShowTo (juce::File file)
 {
     file = file.withFileExtension (Show::fileExtension);
-    if (show.getName() == "Untitled show" || show.getName() == "Imported session")
-        show.setName (file.getFileNameWithoutExtension());
+    // As on the WING, the show is called what its file is called (also after
+    // SAVE AS under a new name).
+    const auto previousName = show.getName();
+    show.setName (file.getFileNameWithoutExtension());
 
     const auto result = show.saveToFile (file);
 
     if (result.failed())
     {
+        show.setName (previousName);
         log.error ("Save failed: " + result.getErrorMessage());
         popups::warn (*display, "SAVE SHOW", result.getErrorMessage());
         return;

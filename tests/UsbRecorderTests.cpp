@@ -153,6 +153,14 @@ public:
             expect (usb.deleteItem (tmp.dir).failed(), "not the USB folder itself");
             // The queue follows the browser folder (its WAV files).
             expectEquals ((int) usb.getQueue().size(), 2);
+
+            // An open playlist keeps a clip that is renamed in the browser.
+            usb.createPlaylist();
+            usb.add (renamed);
+            expect (usb.rename (renamed, "Opener", &renamed).wasOk());
+            expect (usb.getQueue().size() == 1 && usb.getQueue()[0].file == tmp.dir.getChildFile ("Opener.WAV"), "the playlist follows the rename");
+            expect (usb.isPlaylistDirty());
+            usb.closePlaylist();
         }
 
         beginTest ("Recording names its files R_YYYYMMDD-HHMMSS in the REC PATH");

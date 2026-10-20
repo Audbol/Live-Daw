@@ -4,6 +4,7 @@
 
 #include <juce_data_structures/juce_data_structures.h>
 
+#include <functional>
 #include <vector>
 
 namespace livedaw
@@ -12,6 +13,11 @@ namespace livedaw
 class MixerEngine;
 class Show;
 
+namespace state
+{
+struct ApplyResult;
+}
+
 /** The WING remote: Sidecar answers the Behringer WING's network protocols
     (discovery on UDP 2222, OSC on UDP 2223, the native protocol on TCP 2222
     with meters over UDP) so WING remote clients can control the console, and
@@ -19,17 +25,17 @@ class Show;
     threads in the Rust engine (livedaw-wing); this class is message thread only.
 
     Owned by MixerEngine, which destroys it (stopping the servers) first. */
-class WingRemote
+class WingRemote final : private juce::Timer
 {
 public:
     explicit WingRemote (MixerEngine&);
-    ~WingRemote();
+    ~WingRemote() override;
 
     /** The REMOTE settings (SETUP > REMOTE), kept in the app settings. */
     struct Settings
     {
         bool enabled = false;
-        juce::String name { "LIVE-DAW" };
+        juce::String name { "SIDECAR" };
         int discoveryPort = 2222, oscPort = 2223, nativePort = 2222;
         bool discovery = true, osc = true, native = true;
 
@@ -76,15 +82,53 @@ public:
     /** Adds the snapshot scenes of a WING .show file to `show`. */
     juce::Result importShow (Show&, const juce::File&, juce::String& report);
 
+    /** Scene control for clients (/$ctl/lib): publishes `show`'s scenes and runs
+        the recalls clients ask for (GO, GO NEXT / PREV, GO TAG), reporting each
+        to `onRecalled`. Also the show's GLOBAL safes (/$ctl/safes/dca, mute, fx)
+        and the USB recorder's file actions (/rec, /play: REC, NEW FILE,
+        PLAYFILE, REC PATH and format), which need the message thread. nullptr
+        detaches (detach before the show goes away). */
+    void attachShow (Show*, std::function<void (const juce::String& what, const state::ApplyResult&)> onRecalled = {});
+
+    /** Runs what clients asked of the show and the USB recorder, and publishes
+        their state (the timer does this while the servers run; tests call it). */
+    void pump();
+
+    /** What a client changed on the surface (`onSurfaceChanged`'s flags). */
+    enum SurfaceChange
+    {
+        surfaceLayers = 1,  // the show's fader layers (selection, spill, user layers, edited keys)
+        surfaceControls = 2 // the show's custom control assignments
+    };
+
+    /** Surface control for clients (/$ctl/layer, /$ctl/user): with a show
+        attached, the layer and custom control changes clients make are
+        applied to it and its layers and custom controls are published (with
+        the upper custom control layer `ccBank` returns), 10 times a second.
+        `onSurfaceChanged` gets the SurfaceChange flags of what a client
+        changed and the custom control layer it chose (-1 none). */
+    void setSurfaceCallbacks (std::function<int()> ccBank, std::function<void (int changes, int bank)> onSurfaceChanged);
+    /** Runs the surface exchange now (the timer does it with a show attached). */
+    void syncSurface();
+
     /** How much of the WING parameter tree maps onto Sidecar. */
     static juce::String coverageReport();
 
     ld::LdWing* getHandle() const noexcept { return handle; }
 
 private:
+    void timerCallback() override;
+    void publishLibrary();
+    void pumpSafes();
+    void pumpUsb();
+
     MixerEngine& engine;
     ld::LdWing* handle;
     Settings running;
+    Show* libraryShow = nullptr;
+    std::function<void (const juce::String&, const state::ApplyResult&)> onRecalled;
+    std::function<int()> surfaceBank;
+    std::function<void (int, int)> onSurfaceChanged;
 
     JUCE_DECLARE_NON_COPYABLE (WingRemote)
 };

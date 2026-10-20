@@ -4,6 +4,7 @@
 #include "engine/WingRemote.h"
 
 #include <bit>
+#include <cstring>
 
 using namespace livedaw;
 
@@ -34,6 +35,25 @@ juce::MemoryBlock oscFloat (const juce::String& address, float value)
     oscString (m, ",f");
     const auto bits = juce::ByteOrder::swapIfLittleEndian (std::bit_cast<juce::uint32> (value));
     m.append (&bits, 4);
+    return m;
+}
+
+juce::MemoryBlock oscInt (const juce::String& address, int value)
+{
+    juce::MemoryBlock m;
+    oscString (m, address);
+    oscString (m, ",i");
+    const auto bits = juce::ByteOrder::swapIfLittleEndian ((juce::uint32) value);
+    m.append (&bits, 4);
+    return m;
+}
+
+juce::MemoryBlock oscText (const juce::String& address, const juce::String& value)
+{
+    juce::MemoryBlock m;
+    oscString (m, address);
+    oscString (m, ",s");
+    oscString (m, value);
     return m;
 }
 
@@ -162,6 +182,102 @@ public:
             expect (scene.has_value() && scene->name == "Opener" && scene->tag == 2);
             expect (report.contains ("Mutes"), report);
             dir.deleteRecursively();
+        }
+
+        beginTest ("Remote clients reach the GLOBAL safes and the USB recorder through the message thread");
+        {
+            auto dir = tempDir ("usb");
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            engine.setNumChannels (4);
+            engine.prepareOffline (48000.0, 256, 2, 2);
+            auto& usb = engine.getUsbRecorder();
+            usb.setStorageFolder (dir);
+            dir.getChildFile ("LIVE").createDirectory();
+            auto& wing = engine.getWing();
+            wing.attachShow (&show);
+            auto run = [&wing] (const char* nodeString)
+            {
+                ld::LdString* out = nullptr;
+                const bool ok = ld::ld_wing_sysex (wing.getHandle(), 2, nodeString, std::strlen (nodeString), &out);
+                takeString (out);
+                return ok;
+            };
+            expect (run ("/$ctl.safes.dca=5"));
+            expect (run ("/$ctl.safes.ch=2"));
+            expect (run ("/rec.channels=4,resolution=16,$path=LIVE"));
+            wing.pump();
+            expectEquals ((int) show.getGlobalSafe().dcas, 1 << 4);
+            expect (engine.getChannels()[1]->params.recallSafe.load(), "a strip's SAFE key");
+            expect (usb.getRecChannels() == 4 && usb.getRecBits() == 16);
+            expect (usb.getRecPath() == dir.getChildFile ("LIVE"), usb.getRecPath().getFullPathName());
+
+            // REC from STOP: the host names the file in REC PATH.
+            expect (run ("/rec.$action=REC"));
+            wing.pump();
+            expect (usb.isRecording());
+            expect (usb.getRecFile().getParentDirectory() == dir.getChildFile ("LIVE"), usb.getRecFile().getFullPathName());
+            usb.stopRecording();
+            usb.waitForDisk();
+
+            // The show's safes changed on the console reach the clients.
+            auto safe = show.getGlobalSafe();
+            safe.fx = 0b11;
+            show.setGlobalSafe (safe);
+            wing.pump();
+            ld::LdString* dump = nullptr;
+            expect (ld::ld_wing_sysex (wing.getHandle(), 3, "/$ctl.safes.fx", std::strlen ("/$ctl.safes.fx"), &dump));
+            const auto text = takeString (dump);
+            expect (text.contains ("1,2"), text);
+            wing.attachShow (nullptr);
+            dir.deleteRecursively();
+        }
+
+        beginTest ("OSC clients change the attached show's layers and custom controls");
+        {
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            engine.setNumChannels (40);
+            auto& wing = engine.getWing();
+            WingRemote::Settings s;
+            s.enabled = true;
+            s.discoveryPort = s.oscPort = s.nativePort = 0;
+            expect (wing.apply (s).isEmpty());
+            const int port = wing.getStatus().oscPort;
+            int changes = 0, bank = -1;
+            wing.setSurfaceCallbacks ([] { return 2; },
+                                      [&] (int c, int b)
+                                      {
+                                          changes |= c;
+                                          bank = b;
+                                      });
+            wing.attachShow (&show);
+            wing.syncSurface();
+            expectEquals (changes, 0);
+
+            juce::DatagramSocket sock;
+            expect (sock.bindToPort (0, "127.0.0.1"));
+            auto send = [&] (const juce::MemoryBlock& m) { sock.write ("127.0.0.1", port, m.getData(), (int) m.getSize()); };
+            send (oscInt ("/$ctl/layer/C/sel", 4));
+            send (oscText ("/$ctl/user/1/1/enc/mode", "FDR"));
+            send (oscInt ("/$ctl/user/sel", 5));
+            // Answered after the sets: they have reached the queue.
+            expect (ask (sock, port, oscGet ("/$ctl/user/1/1/enc/mode")).contains ("FDR"));
+            wing.syncSurface();
+            expect ((changes & WingRemote::surfaceLayers) != 0 && (changes & WingRemote::surfaceControls) != 0);
+            expectEquals (bank, 4);
+            expectEquals (show.layers.getSelectedLayerId (LayerSet::Center), juce::String ("bus-1"));
+            expect (show.getCustomControlsXml().contains ("enc=\"1,"), show.getCustomControlsXml());
+
+            // Changes on the console reach clients.
+            show.layers.addUserLayer ("Drums");
+            wing.syncSurface();
+            expect (ask (sock, port, oscGet ("/$ctl/layer/R/6/name")).contains ("Drums"));
+            wing.attachShow (nullptr);
+            wing.setSurfaceCallbacks ({}, {});
+            expect (! ask (sock, port, oscGet ("/$ctl/layer/R/6/name")).contains ("Drums"), "shadow without a show");
         }
 
         beginTest ("The coverage report counts the mapped tree");

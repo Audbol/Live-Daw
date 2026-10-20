@@ -476,6 +476,8 @@ void WingKeyboard::setText (const juce::String& t)
 
 juce::String WingKeyboard::getText() const { return impl->text; }
 
+int WingKeyboard::getCaretPosition() const { return impl->caret; }
+
 void WingKeyboard::setActionText (const juce::String& t)
 {
     impl->actionText = t;

@@ -227,6 +227,11 @@ MidiRemote::MidiRemote (MixerEngine& e, Show& s, bool devicesOn) : engine (e), s
     for (auto& b : banks)
         b.fill (0);
     daw.output = [this] (int unit, const juce::MidiMessage& m) { send (dawPort (unit), m); };
+    show.onSceneMidi = [this] (const juce::StringArray& texts)
+    {
+        for (auto& t : texts)
+            sendMidiText (t);
+    };
 
     // SYSEX CONTROL works on the WING parameter tree (livedaw-wing).
     auto wingSysex = [this] (int command, const juce::String& text, juce::String& result)
@@ -257,6 +262,7 @@ MidiRemote::MidiRemote (MixerEngine& e, Show& s, bool devicesOn) : engine (e), s
 
 MidiRemote::~MidiRemote()
 {
+    show.onSceneMidi = nullptr;
     stopTimer();
     deviceListConnection.reset();
     closeDevices();
@@ -888,8 +894,8 @@ void MidiRemote::handleScenes (int port, const juce::MidiMessage& m)
 //==============================================================================
 juce::String MidiRemote::getIdentity() const
 {
-    return "WING," + juce::IPAddress::getLocalAddress().toString() + "," + consoleName + ",ngc-full,LIVE-DAW,"
-           + juce::String (JUCE_APPLICATION_VERSION_STRING) + ":live-daw";
+    return "WING," + juce::IPAddress::getLocalAddress().toString() + "," + consoleName + ",ngc-full,SIDECAR,"
+           + juce::String (JUCE_APPLICATION_VERSION_STRING) + ":sidecar";
 }
 
 void MidiRemote::handleSysex (int port, const juce::MidiMessage& m)
@@ -941,6 +947,88 @@ bool MidiRemote::sendExternal (const juce::MidiMessage& m)
         return false;
     send (port, m);
     return true;
+}
+
+bool MidiRemote::parseMidiText (const juce::String& text, std::vector<PortMessage>& out, juce::String& error)
+{
+    out.clear();
+    std::vector<juce::uint8> bytes;
+    int port = -1;
+    // The bytes since the last port prefix, split into messages at their status bytes.
+    auto flush = [&]
+    {
+        for (size_t i = 0; i < bytes.size();)
+        {
+            const int status = bytes[i];
+            if (status < 0x80)
+            {
+                error = "DATA BYTE WITHOUT A STATUS BYTE";
+                return false;
+            }
+            size_t length = 0;
+            if (status == 0xf0)
+            {
+                const auto end = std::find (bytes.begin() + (std::ptrdiff_t) i, bytes.end(), (juce::uint8) 0xf7);
+                if (end == bytes.end())
+                {
+                    error = "SYSEX WITHOUT F7";
+                    return false;
+                }
+                length = (size_t) (end - bytes.begin()) + 1 - i;
+            }
+            else
+                length = (size_t) juce::MidiMessage::getMessageLengthFromFirstByte ((juce::uint8) status);
+            if (i + length > bytes.size())
+            {
+                error = "INCOMPLETE MESSAGE";
+                return false;
+            }
+            for (size_t k = i + 1; k < i + length - (status == 0xf0 ? 1 : 0); ++k)
+                if (bytes[k] >= 0x80)
+                {
+                    error = "INCOMPLETE MESSAGE";
+                    return false;
+                }
+            out.push_back ({ port, juce::MidiMessage (bytes.data() + i, (int) length) });
+            i += length;
+        }
+        bytes.clear();
+        return true;
+    };
+
+    juce::StringArray tokens;
+    tokens.addTokens (text.toUpperCase(), ", \t\r\n", {});
+    tokens.removeEmptyStrings();
+    for (auto token : tokens)
+    {
+        if (token.startsWith ("U:") || token.startsWith ("D:"))
+        {
+            if (! flush())
+                return false;
+            port = token[0] == 'U' ? Usb : Din;
+            token = token.substring (2);
+        }
+        if (token.length() % 2 != 0 || ! token.containsOnly ("0123456789ABCDEF"))
+        {
+            error = "NOT HEXADECIMAL BYTES: " + token;
+            return false;
+        }
+        for (int i = 0; i < token.length(); i += 2)
+            bytes.push_back ((juce::uint8) token.substring (i, i + 2).getHexValue32());
+    }
+    return flush();
+}
+
+bool MidiRemote::sendMidiText (const juce::String& text)
+{
+    const int port = portOf (ExternalMidi);
+    std::vector<PortMessage> messages;
+    juce::String error;
+    if (port < 0 || ! parseMidiText (text, messages, error))
+        return false;
+    for (auto& m : messages)
+        send (m.port >= 0 ? m.port : port, m.message);
+    return ! messages.empty();
 }
 
 int MidiRemote::getExternalCc (int channel, int controller) const noexcept

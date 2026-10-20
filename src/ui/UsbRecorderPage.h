@@ -111,6 +111,10 @@ private:
     std::vector<Row> rows;
     int selected = -1, scroll = 0;
     juce::File folderShown;
+    /** The shown folder's modification time: files added, removed or renamed
+        outside the app show up (checked about once a second). */
+    juce::Time folderShownTime;
+    int folderCheckTicks = 0;
     uint64_t queueVersion = 0;
     juce::File selectedFile; // kept across reloads
 

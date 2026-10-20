@@ -133,6 +133,10 @@ pub struct Scene {
     pub skip: bool,
     /// LINK: recalling this scene also recalls the one below it.
     pub link_next: bool,
+    /// SEND MIDI: MIDI data sent each time the scene is recalled, as the
+    /// console's EDIT MIDI TEXT STRING has it (hexadecimal bytes, "U:" / "D:"
+    /// for the USB / DIN port; the application parses and sends it).
+    pub midi: String,
     pub state: Option<Element>,
     pub snippets: Vec<Snippet>,
 }
@@ -152,6 +156,7 @@ impl Default for Scene {
             tag: 0,
             skip: false,
             link_next: false,
+            midi: String::new(),
             state: None,
             snippets: Vec::new(),
         }
@@ -210,6 +215,8 @@ pub struct Show {
     recording: Option<Recording>,
     recorded: Option<(RecordedChanges, ChangeCounts)>,
     current_scene: i32,
+    /// SEND MIDI of the scenes the last recall recalled, in order.
+    pending_midi: Vec<String>,
     fades: Vec<Fade>,
     fade_start: Instant,
     fade_duration: Duration,
@@ -227,6 +234,7 @@ impl Default for Show {
             recording: None,
             recorded: None,
             current_scene: -1,
+            pending_midi: Vec::new(),
             fades: Vec::new(),
             fade_start: Instant::now(),
             fade_duration: Duration::ZERO,
@@ -279,6 +287,18 @@ impl Show {
         let index = if (0..=n).contains(&index) { index } else { n };
         self.scenes.insert(index as usize, scene);
         self.current_scene = index;
+        index
+    }
+
+    /// Adds a scene made elsewhere (a scene file): appended, or inserted at
+    /// `index`. The current scene stays the current one.
+    pub fn insert_scene(&mut self, scene: Scene, index: i32) -> i32 {
+        let n = self.scenes.len() as i32;
+        let index = if (0..=n).contains(&index) { index } else { n };
+        self.scenes.insert(index as usize, scene);
+        if self.current_scene >= index {
+            self.current_scene += 1;
+        }
         index
     }
 
@@ -345,6 +365,7 @@ impl Show {
     /// the last one recalled.
     pub fn recall_scene(&mut self, engine: &Engine, bridge: &mut dyn PluginBridge, index: i32) -> ApplyResult {
         let mut result = ApplyResult::default();
+        self.pending_midi.clear();
         // Each scene at most once (indices only grow).
         for i in index.. {
             let Some(scene) = self.scene(i).filter(|s| !s.skip) else { break };
@@ -355,6 +376,12 @@ impl Show {
             }
         }
         result
+    }
+
+    /// SEND MIDI of the scenes the last recall (`recall_scene`, GO NEXT /
+    /// PREV, by tag) recalled, linked ones included; taking them clears them.
+    pub fn take_pending_midi(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_midi)
     }
 
     /// The first scene tagged `tag` that isn't skipped, or -1.
@@ -375,6 +402,9 @@ impl Show {
 
     fn recall_one(&mut self, engine: &Engine, bridge: &mut dyn PluginBridge, index: i32) -> ApplyResult {
         let mut result = ApplyResult::default();
+        if let Some(midi) = self.scene(index).map(|s| s.midi.clone()).filter(|m| !m.trim().is_empty()) {
+            self.pending_midi.push(midi);
+        }
         let Some(scene) = self.scene(index) else { return result };
         let Some(state) = scene.state.clone() else { return result };
         let (scope, fade_seconds) = (scene.recall_scope(), scene.fade_seconds);
@@ -578,6 +608,14 @@ impl Show {
         sn.recorded_parameters = 0;
     }
 
+    /// Adds a snippet made elsewhere (a snippet file) to the end of a scene's
+    /// snippets; -1 if the scene doesn't exist.
+    pub fn insert_snippet(&mut self, scene: i32, snippet: Snippet) -> i32 {
+        let Some(sc) = self.scene_mut(scene) else { return -1 };
+        sc.snippets.push(snippet);
+        sc.snippets.len() as i32 - 1
+    }
+
     pub fn remove_snippet(&mut self, scene: i32, snippet: i32) {
         if self.snippet(scene, snippet).is_some() {
             if let Some(sc) = self.scene_mut(scene) {
@@ -753,36 +791,7 @@ impl Show {
 
         let scenes = root.add_new("Scenes");
         for scene in &self.scenes {
-            let sx = scenes.add_new("Scene");
-            sx.set("name", &scene.name).set("notes", &scene.notes);
-            scene.recall_scope().write_attrs(sx, "scope");
-            sx.set("fade", scene.fade_seconds)
-                .set("tag", scene.tag)
-                .set_bool("skip", scene.skip)
-                .set_bool("link", scene.link_next);
-            if let Some(st) = &scene.state {
-                sx.add(st.clone());
-            }
-            let snippets = sx.add_new("Snippets");
-            for sn in &scene.snippets {
-                let nx = snippets.add_new("Snippet");
-                nx.set("name", &sn.name)
-                    .set("sections", sn.sections as i32)
-                    .set("strips", refs_to_string(&sn.strips))
-                    .set_bool("fireWithScene", sn.fire_with_scene);
-                if sn.dcas != 0 || sn.mute_groups != 0 || sn.fx != 0 || sn.console {
-                    nx.set("scopeDca", sn.dcas)
-                        .set("scopeMgrp", sn.mute_groups)
-                        .set("scopeFx", sn.fx)
-                        .set_bool("scopeConsole", sn.console);
-                }
-                if sn.recorded_parameters > 0 {
-                    nx.set("pars", sn.recorded_parameters);
-                }
-                if let Some(st) = &sn.state {
-                    nx.add(st.clone());
-                }
-            }
+            scenes.add(scene_to_xml(scene));
         }
         root
     }
@@ -854,47 +863,11 @@ impl Show {
                 _ => st.clone(),
             })
         };
-        let refs_of =
-            |s: &str, legacy: bool| if legacy { refs_from_string(&legacy::convert_refs(s)) } else { refs_from_string(s) };
+        let refs_of = |s: &str| if is_legacy { refs_from_string(&legacy::convert_refs(s)) } else { refs_from_string(s) };
 
         if let Some(scenes) = xml.child("Scenes") {
             for sx in scenes.children_named("Scene") {
-                let defaults = Scene::default();
-                let recall = Scope::read_attrs(sx, "scope", &defaults.recall_scope());
-                let mut scene = Scene {
-                    name: sx.str_or("name", "").to_owned(),
-                    notes: sx.str_or("notes", "").to_owned(),
-                    scope: recall.sections,
-                    scope_strips: recall.strips.map(|s| refs_of(&refs_to_string(&s), is_legacy)),
-                    scope_dcas: recall.dcas,
-                    scope_mute_groups: recall.mute_groups,
-                    scope_fx: recall.fx,
-                    scope_console: recall.console,
-                    fade_seconds: sx.double_or("fade", 0.0).clamp(0.0, MAX_FADE_SECONDS),
-                    tag: clamp_scene_tag(sx.int_or("tag", 0)),
-                    skip: sx.bool_or("skip", false),
-                    link_next: sx.bool_or("link", false),
-                    state: state_of(sx),
-                    snippets: Vec::new(),
-                };
-                if let Some(snippets) = sx.child("Snippets") {
-                    for nx in snippets.children_named("Snippet") {
-                        let globals = Scope::read_attrs(nx, "sections", &Scope::strips(0, Vec::new()));
-                        scene.snippets.push(Snippet {
-                            name: nx.str_or("name", "").to_owned(),
-                            sections: nx.int_or("sections", 0) as u32,
-                            strips: refs_of(nx.str_or("strips", ""), is_legacy),
-                            dcas: globals.dcas,
-                            mute_groups: globals.mute_groups,
-                            fx: globals.fx,
-                            console: globals.console,
-                            fire_with_scene: nx.bool_or("fireWithScene", false),
-                            recorded_parameters: usize::try_from(nx.int_or("pars", 0)).unwrap_or(0),
-                            state: state_of(nx),
-                        });
-                    }
-                }
-                self.scenes.push(scene);
+                self.scenes.push(read_scene(sx, &mut state_of, &refs_of));
             }
         }
 
@@ -953,6 +926,99 @@ impl Show {
         self.clear_recording();
         engine.reset();
         engine.set_num_channels(num_channels);
+    }
+}
+
+/// A scene as a `<Scene>` element with its snippets (in show files and scene files).
+pub(crate) fn scene_to_xml(scene: &Scene) -> Element {
+    let mut sx = Element::new("Scene");
+    sx.set("name", &scene.name).set("notes", &scene.notes);
+    scene.recall_scope().write_attrs(&mut sx, "scope");
+    sx.set("fade", scene.fade_seconds).set("tag", scene.tag).set_bool("skip", scene.skip).set_bool("link", scene.link_next);
+    if !scene.midi.is_empty() {
+        sx.set("midi", &scene.midi);
+    }
+    if let Some(st) = &scene.state {
+        sx.add(st.clone());
+    }
+    let snippets = sx.add_new("Snippets");
+    for sn in &scene.snippets {
+        snippets.add(snippet_to_xml(sn));
+    }
+    sx
+}
+
+/// A snippet as a `<Snippet>` element (in show, scene and snippet files).
+pub(crate) fn snippet_to_xml(sn: &Snippet) -> Element {
+    let mut nx = Element::new("Snippet");
+    nx.set("name", &sn.name)
+        .set("sections", sn.sections as i32)
+        .set("strips", refs_to_string(&sn.strips))
+        .set_bool("fireWithScene", sn.fire_with_scene);
+    if sn.dcas != 0 || sn.mute_groups != 0 || sn.fx != 0 || sn.console {
+        nx.set("scopeDca", sn.dcas).set("scopeMgrp", sn.mute_groups).set("scopeFx", sn.fx).set_bool("scopeConsole", sn.console);
+    }
+    if sn.recorded_parameters > 0 {
+        nx.set("pars", sn.recorded_parameters);
+    }
+    if let Some(st) = &sn.state {
+        nx.add(st.clone());
+    }
+    nx
+}
+
+/// Reads a `<Scene>` element; `state_of` gives an element's console state,
+/// `refs_of` reads a strip list (both convert older files).
+pub(crate) fn read_scene(
+    sx: &Element,
+    state_of: &mut dyn FnMut(&Element) -> Option<Element>,
+    refs_of: &dyn Fn(&str) -> Vec<StripRef>,
+) -> Scene {
+    let defaults = Scene::default();
+    let recall = Scope::read_attrs(sx, "scope", &defaults.recall_scope());
+    let mut scene = Scene {
+        name: sx.str_or("name", "").to_owned(),
+        notes: sx.str_or("notes", "").to_owned(),
+        scope: recall.sections,
+        scope_strips: recall.strips.map(|s| refs_of(&refs_to_string(&s))),
+        scope_dcas: recall.dcas,
+        scope_mute_groups: recall.mute_groups,
+        scope_fx: recall.fx,
+        scope_console: recall.console,
+        fade_seconds: sx.double_or("fade", 0.0).clamp(0.0, MAX_FADE_SECONDS),
+        tag: clamp_scene_tag(sx.int_or("tag", 0)),
+        skip: sx.bool_or("skip", false),
+        link_next: sx.bool_or("link", false),
+        midi: sx.str_or("midi", "").to_owned(),
+        state: state_of(sx),
+        snippets: Vec::new(),
+    };
+    if let Some(snippets) = sx.child("Snippets") {
+        for nx in snippets.children_named("Snippet") {
+            scene.snippets.push(read_snippet(nx, state_of, refs_of));
+        }
+    }
+    scene
+}
+
+/// Reads a `<Snippet>` element (see [`read_scene`]).
+pub(crate) fn read_snippet(
+    nx: &Element,
+    state_of: &mut dyn FnMut(&Element) -> Option<Element>,
+    refs_of: &dyn Fn(&str) -> Vec<StripRef>,
+) -> Snippet {
+    let globals = Scope::read_attrs(nx, "sections", &Scope::strips(0, Vec::new()));
+    Snippet {
+        name: nx.str_or("name", "").to_owned(),
+        sections: nx.int_or("sections", 0) as u32,
+        strips: refs_of(nx.str_or("strips", "")),
+        dcas: globals.dcas,
+        mute_groups: globals.mute_groups,
+        fx: globals.fx,
+        console: globals.console,
+        fire_with_scene: nx.bool_or("fireWithScene", false),
+        recorded_parameters: usize::try_from(nx.int_or("pars", 0)).unwrap_or(0),
+        state: state_of(nx),
     }
 }
 

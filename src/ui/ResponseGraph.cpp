@@ -604,7 +604,7 @@ void ResponseGraph::mouseDrag (const juce::MouseEvent& e)
         if (dragLine == 0)
             f.lowCutFreq = juce::jlimit (20.0f, 2000.0f, freqForX (e.position.x));
         else if (dragLine == 1)
-            f.highCutFreq = juce::jlimit (200.0f, 20000.0f, freqForX (e.position.x));
+            f.highCutFreq = juce::jlimit (50.0f, 20000.0f, freqForX (e.position.x));
         else
         {
             const auto& tool = models::model (models::FilterTools, f.toolModel.load());

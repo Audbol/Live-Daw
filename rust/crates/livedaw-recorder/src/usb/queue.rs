@@ -240,6 +240,33 @@ impl Queue {
         Ok(())
     }
 
+    /// RENAME in the browser moved `from` (a file or a folder) to `to`: the
+    /// entries, the folder and the playlist file under it follow, so an open
+    /// playlist keeps its clips (it then needs saving).
+    pub fn rename_path(&mut self, from: &Path, to: &Path) {
+        let moved = |p: &Path| {
+            p.strip_prefix(from).ok().map(|rest| if rest.as_os_str().is_empty() { to.to_owned() } else { to.join(rest) })
+        };
+        let mut edited = false;
+        for e in &mut self.entries {
+            if let Some(p) = moved(&e.path) {
+                e.path = p;
+                edited = true;
+            }
+        }
+        if let Some(p) = self.folder.as_deref().and_then(moved) {
+            self.folder = Some(p);
+        }
+        if let QueueKind::Playlist { file: Some(f) } = &mut self.kind {
+            if let Some(p) = moved(f) {
+                *f = p;
+            }
+        }
+        if edited {
+            self.changed(true);
+        }
+    }
+
     // ---- editing ----------------------------------------------------------------
 
     /// ADD: appends a clip (a folder queue becomes a new playlist first).
@@ -494,6 +521,23 @@ mod tests {
         let v = q.version();
         q.set_repeat(true);
         assert!(q.version() > v);
+    }
+
+    #[test]
+    fn renamed_files_and_folders_stay_in_the_playlist() {
+        let mut q = playlist(&["/usb/a.wav", "/usb/set/b.wav", "/usb/c.wav"]);
+        q.kind = QueueKind::Playlist { file: Some(PathBuf::from("/usb/set/list.m3u")) };
+        let ids: Vec<u64> = q.entries().iter().map(|e| e.id).collect();
+        q.rename_path(Path::new("/usb/a.wav"), Path::new("/usb/intro.wav"));
+        q.rename_path(Path::new("/usb/set"), Path::new("/usb/gig"));
+        let paths: Vec<&Path> = q.entries().iter().map(|e| e.path.as_path()).collect();
+        assert_eq!(paths, [Path::new("/usb/intro.wav"), Path::new("/usb/gig/b.wav"), Path::new("/usb/c.wav")]);
+        assert_eq!(q.entries().iter().map(|e| e.id).collect::<Vec<_>>(), ids, "the clips keep their ids");
+        assert_eq!(q.playlist_file(), Some(Path::new("/usb/gig/list.m3u")));
+        assert!(q.is_dirty(), "the playlist file still names the old paths");
+        // A name that only starts the same is another file.
+        q.rename_path(Path::new("/usb/c"), Path::new("/usb/d"));
+        assert_eq!(q.entries()[2].path, Path::new("/usb/c.wav"));
     }
 
     #[test]

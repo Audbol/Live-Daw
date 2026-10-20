@@ -50,6 +50,7 @@ namespace Colours
     const juce::Colour width { 0xff40a618 };     // WIDTH fill, knob rings
     const juce::Colour eqFill { 0xff38280f };    // the area under the EQ curve
     const juce::Colour warning { 0xffe0c040 };   // AM/PM, write-protected card
+    const juce::Colour midiCc { 0xff3aa8a0 };    // MIDI CC faders (user layers)
 
     const juce::Colour accent = gold;
     const juce::Colour block = amber;            // processing block on

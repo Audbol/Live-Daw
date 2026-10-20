@@ -615,6 +615,43 @@ fn wing_settings_survive_a_show_round_trip() {
 }
 
 #[test]
+fn matrix_pan_link_and_dca_icons_survive_a_show_round_trip() {
+    let engine = Engine::new(0);
+    engine.set_num_channels(1);
+    let a = ch(&engine, 0);
+    a.params.matrix[1].pan_link.store(false, Relaxed);
+    a.params.matrix[1].pan.store(-40.0);
+    a.params.matrix[2].pan_reversed.store(true, Relaxed);
+    let d = &engine.controls.dcas[4];
+    d.icon.store(112, Relaxed);
+    d.led.store(false, Relaxed);
+
+    let (e2, _) = round_trip(&engine, &Show::new());
+    let b = ch(&e2, 0);
+    let m = &b.params.matrix;
+    assert!(!m[1].pan_link.load(Relaxed) && m[1].pan.load() == -40.0);
+    assert!(m[2].pan_link.load(Relaxed) && m[2].pan_reversed.load(Relaxed));
+    assert!(m[0].pan_link.load(Relaxed) && !m[0].pan_reversed.load(Relaxed));
+    let d2 = &e2.controls.dcas[4];
+    assert_eq!(d2.icon.load(Relaxed), 112);
+    assert!(!d2.led.load(Relaxed) && e2.controls.dcas[0].led.load(Relaxed));
+
+    // Shows from before PAN LINK: a centred send stays linked (as it sounded),
+    // one with a pan keeps that pan.
+    let mut text = Show::new().to_xml(&engine, &mut NoPlugins).to_document();
+    for attr in [" plink=\"0\"", " plink=\"1\"", " prev=\"0\"", " prev=\"1\"", " icon=\"112\"", " led=\"0\""] {
+        text = text.replace(attr, "");
+    }
+    let e3 = Engine::new(0);
+    Show::new().load_from_text(&e3, &mut NoPlugins, &text, true).unwrap();
+    let m = &ch(&e3, 0).params.matrix;
+    assert!(!m[1].pan_link.load(Relaxed), "panned: its own pan");
+    assert!(m[2].pan_link.load(Relaxed) && !m[2].pan_reversed.load(Relaxed));
+    assert_eq!(e3.controls.dcas[4].icon.load(Relaxed), 0);
+    assert!(e3.controls.dcas[4].led.load(Relaxed));
+}
+
+#[test]
 fn shows_without_the_new_settings_load_with_the_old_behaviour() {
     let engine = Engine::new(0);
     engine.set_num_channels(1);
@@ -757,6 +794,44 @@ fn scene_tags_skip_and_link() {
     let s1 = loaded.scene(1).unwrap();
     assert_eq!((s0.tag, s0.skip, s0.link_next), (128, false, true));
     assert_eq!((s1.tag, s1.skip, s1.link_next), (0, true, false));
+}
+
+#[test]
+fn send_midi_goes_with_every_recall_of_its_scene() {
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    engine.set_num_channels(1);
+    let mut show = Show::new();
+    for i in 0..3 {
+        show.add_scene(&engine, &mut np, &format!("S{i}"), -1);
+    }
+    show.scene_mut(0).unwrap().midi = "B0,07,64".into();
+    show.scene_mut(1).unwrap().midi = "U:C002".into();
+    show.recall_scene(&engine, &mut np, 0);
+    assert_eq!(show.take_pending_midi(), vec!["B0,07,64".to_string()]);
+    assert!(show.take_pending_midi().is_empty(), "taken once");
+
+    // GO NEXT, then a scene without MIDI: nothing left over from before.
+    show.recall_next(&engine, &mut np);
+    assert_eq!(show.take_pending_midi(), vec!["U:C002".to_string()]);
+    show.recall_scene(&engine, &mut np, 0);
+    show.recall_scene(&engine, &mut np, 2);
+    assert!(show.take_pending_midi().is_empty());
+
+    // A linked scene sends its own MIDI after the first; a skipped one sends none.
+    show.scene_mut(0).unwrap().link_next = true;
+    show.recall_scene(&engine, &mut np, 0);
+    assert_eq!(show.take_pending_midi(), vec!["B0,07,64".to_string(), "U:C002".to_string()]);
+    show.scene_mut(0).unwrap().skip = true;
+    show.recall_scene(&engine, &mut np, 0);
+    assert!(show.take_pending_midi().is_empty());
+
+    // Saved with the show (and left out while empty).
+    let xml = show.to_xml(&engine, &mut NoPlugins).to_document();
+    assert_eq!(xml.matches("midi=").count(), 2);
+    let (_, loaded) = round_trip(&engine, &show);
+    assert_eq!(loaded.scene(1).unwrap().midi, "U:C002");
+    assert_eq!(loaded.scene(2).unwrap().midi, "");
 }
 
 #[test]
@@ -1213,4 +1288,81 @@ fn channel_presets_load_onto_other_strips_within_their_scope() {
     assert!(presets::apply_channel(&engine, &mut np, &loaded, &StripRef::new(StripKind::Channel, 77), None).is_err());
     let _ = std::fs::remove_dir_all(&dir);
     assert!(presets::load(&dir.join("missing.lchn")).is_err());
+}
+
+// ---- LIBRARY scene and snippet files -----------------------------------------------------
+
+#[test]
+fn scene_and_snippet_files_round_trip_into_another_show() {
+    use livedaw_session::library::{self, FileType};
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    engine.set_num_channels(4);
+    let (a, b) = (ch(&engine, 0), ch(&engine, 1));
+    a.params.fader_db.store(-6.0);
+    b.params.fader_db.store(-12.0);
+
+    let mut show = Show::new();
+    let verse = show.add_scene(&engine, &mut np, "Verse", -1);
+    {
+        let scene = show.scene_mut(verse).unwrap();
+        scene.notes = "Capo 2".into();
+        scene.fade_seconds = 2.5;
+        scene.tag = 7;
+        scene.link_next = true;
+        scene.set_recall_scope(&Scope::strips(section::FADER, vec![StripRef::of(&a)]));
+    }
+    let solo = show.add_snippet(&engine, &mut np, verse, "Solo", section::FADER, vec![StripRef::of(&b)]);
+    show.snippet_mut(verse, solo).unwrap().fire_with_scene = true;
+
+    let dir = std::env::temp_dir().join(format!("livedaw-library-{}", std::process::id()));
+    let (scene_path, snippet_path) = (dir.join("Verse.lsnap"), dir.join("Solo.lsnip"));
+    library::save(&scene_path, &library::scene_file(&show, verse).unwrap()).unwrap();
+    library::save(&snippet_path, &library::snippet_file(&show, verse, solo).unwrap()).unwrap();
+
+    // The headers name what the files hold.
+    let scene_file = library::load(&scene_path).unwrap();
+    let info = library::info(&scene_file).unwrap();
+    assert_eq!((info.kind, info.name.as_str(), info.count), (FileType::Scene, "Verse", 1));
+    let snippet_file = library::load(&snippet_path).unwrap();
+    let info = library::info(&snippet_file).unwrap();
+    assert_eq!((info.kind, info.name.as_str()), (FileType::Snippet, "Solo"));
+    assert!(info.count > 0);
+
+    // Into another show, between its scenes: the settings come along.
+    let mut other = Show::new();
+    other.add_scene(&engine, &mut np, "Intro", -1);
+    other.add_scene(&engine, &mut np, "Outro", -1);
+    assert_eq!(other.current_scene(), 1);
+    let at = library::import_scene(&mut other, &scene_file, 1).unwrap();
+    assert_eq!((at, other.num_scenes(), other.current_scene()), (1, 3, 2));
+    let imported = other.scene(at).unwrap();
+    assert_eq!((imported.name.as_str(), imported.notes.as_str(), imported.fade_seconds), ("Verse", "Capo 2", 2.5));
+    assert_eq!((imported.tag, imported.link_next, imported.scope), (7, true, section::FADER));
+    assert_eq!(imported.scope_strips, Some(vec![StripRef::of(&a)]));
+    assert_eq!(imported.snippets.len(), 1);
+    assert!(imported.snippets[0].fire_with_scene);
+    let sn = library::import_snippet(&mut other, &snippet_file, 0).unwrap();
+    assert_eq!(other.snippet(0, sn).unwrap().name, "Solo");
+    assert!(library::import_snippet(&mut other, &snippet_file, 9).is_err());
+
+    // They recall what was saved.
+    other.scene_mut(at).unwrap().fade_seconds = 0.0;
+    other.scene_mut(at).unwrap().link_next = false;
+    a.params.fader_db.store(0.0);
+    b.params.fader_db.store(0.0);
+    other.recall_scene(&engine, &mut np, at);
+    assert_eq!(a.params.fader_db.load(), -6.0);
+    assert_eq!(b.params.fader_db.load(), -12.0, "the scene's own snippet fires with it");
+    b.params.fader_db.store(0.0);
+    other.recall_snippet(&engine, &mut np, 0, sn);
+    assert_eq!(b.params.fader_db.load(), -12.0);
+
+    // Not library files, or the wrong kind.
+    assert!(library::import_scene(&mut other, &snippet_file, 0).is_err());
+    let lfx = dir.join("x.lfx");
+    std::fs::write(&lfx, "<LiveDAWPreset type=\"fx\" version=\"1\"/>").unwrap();
+    assert!(library::load(&lfx).is_err());
+    assert!(library::load(&dir.join("missing.lsnap")).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
 }

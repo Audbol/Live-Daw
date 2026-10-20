@@ -38,7 +38,8 @@ struct SandboxOptions
 
     Audio: processBlock() hands the block to the helper through shared memory and
     takes back the output of the previous block, so the sandbox adds one block of
-    latency (reported through getLatencySamples(), on top of the plugin's own). It
+    latency (reported through setLatencySamples(), on top of the plugin's own, so
+    delay compensation covers it). It
     never locks, allocates or waits without a bound: if the previous block's output
     isn't there within SandboxOptions::waitFraction of a block, or the helper is
     gone, the block fails (didLastBlockFail(); FxSlots then reports a fault, so the

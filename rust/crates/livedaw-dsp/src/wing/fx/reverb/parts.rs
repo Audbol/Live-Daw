@@ -866,6 +866,12 @@ impl<const K: usize> Taps<K> {
         for p in self.pos.iter_mut().chain(self.gain.iter_mut()).flatten() {
             p.snap();
         }
+        // The reads jump too (control() only moves them while a position glides).
+        for (rd, pos) in self.read.iter_mut().zip(&self.pos) {
+            for (r, p) in rd.iter_mut().zip(pos) {
+                r.set(p.cur, false);
+            }
+        }
     }
 
     pub fn control(&mut self, a: f32, force: bool) {

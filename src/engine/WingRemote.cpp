@@ -13,6 +13,7 @@ WingRemote::WingRemote (MixerEngine& e) : engine (e), handle (ld::ld_wing_create
 
 WingRemote::~WingRemote()
 {
+    stopTimer();
     ld::ld_wing_destroy (handle);
 }
 
@@ -23,7 +24,7 @@ WingRemote::Settings WingRemote::Settings::load (juce::PropertiesFile& p)
     s.enabled = p.getBoolValue ("wing.enabled", s.enabled);
     s.name = p.getValue (nameKey, s.name).trim();
     if (s.name.isEmpty())
-        s.name = "LIVE-DAW";
+        s.name = "SIDECAR";
     auto port = [&p] (const char* key, int fallback)
     {
         const int v = p.getIntValue (key, fallback);
@@ -153,6 +154,161 @@ juce::Result WingRemote::exportSnapshot (const juce::File& file)
 juce::Result WingRemote::importShow (Show& show, const juce::File& file, juce::String& report)
 {
     return show.importWingShow (handle, file, report);
+}
+
+//==============================================================================
+void WingRemote::attachShow (Show* s, std::function<void (const juce::String&, const state::ApplyResult&)> recalled)
+{
+    libraryShow = s;
+    onRecalled = std::move (recalled);
+    if (libraryShow == nullptr)
+    {
+        stopTimer();
+        ld::ld_wing_clear_library (handle);
+        ld::ld_wing_clear_safes (handle);
+        ld::ld_wing_clear_usb (handle);
+        ld::ld_wing_clear_surface (handle);
+        return;
+    }
+    publishLibrary();
+    pumpSafes();
+    pumpUsb();
+    startTimerHz (10);
+}
+
+void WingRemote::timerCallback()
+{
+    if (isRunning())
+        pump();
+}
+
+void WingRemote::pump()
+{
+    if (libraryShow == nullptr)
+        return;
+    pumpSafes();
+    pumpUsb();
+    int32_t action = 0, index = 0;
+    while (ld::ld_wing_take_library_action (handle, &action, &index))
+    {
+        juce::String what;
+        state::ApplyResult result;
+        switch (action)
+        {
+            case 1:
+                if (! juce::isPositiveAndBelow (index, libraryShow->getNumScenes()))
+                    continue;
+                what = "scene " + juce::String (index + 1);
+                result = libraryShow->recallScene (index);
+                break;
+            case 2:
+                what = "next scene";
+                result = libraryShow->recallNext();
+                break;
+            case 3:
+                what = "previous scene";
+                result = libraryShow->recallPrevious();
+                break;
+            case 4:
+                if (libraryShow->findSceneByTag (index) < 0)
+                    continue;
+                what = "scene #" + juce::String (index);
+                result = libraryShow->recallSceneByTag (index);
+                break;
+            default: continue;
+        }
+        if (onRecalled)
+            onRecalled (what + " (WING remote)", result);
+    }
+    publishLibrary();
+    syncSurface();
+}
+
+void WingRemote::setSurfaceCallbacks (std::function<int()> ccBank, std::function<void (int, int)> changed)
+{
+    surfaceBank = std::move (ccBank);
+    onSurfaceChanged = std::move (changed);
+}
+
+static_assert (WingRemote::surfaceLayers == (int) ld::kWingSurfaceLayers && WingRemote::surfaceControls == (int) ld::kWingSurfaceControls);
+
+void WingRemote::syncSurface()
+{
+    if (libraryShow == nullptr)
+        return;
+    int bank = -1;
+    const auto changes = libraryShow->syncWingSurface (handle, surfaceBank ? surfaceBank() : 0, bank);
+    if ((changes != 0 || bank >= 0) && onSurfaceChanged)
+        onSurfaceChanged ((int) changes, bank);
+}
+
+void WingRemote::publishLibrary()
+{
+    const int current = libraryShow->getCurrentSceneIndex();
+    const auto scene = libraryShow->getScene (current);
+    const auto showName = libraryShow->getName();
+    const auto sceneName = scene ? scene->name : juce::String();
+    const Utf8 name (showName), sceneUtf8 (sceneName);
+    ld::ld_wing_set_library (handle, name.data, name.size, libraryShow->getNumScenes(), current, sceneUtf8.data, sceneUtf8.size,
+                             scene ? scene->tag : 0);
+}
+
+void WingRemote::pumpSafes()
+{
+    juce::uint32 dcas = 0, muteGroups = 0, fx = 0;
+    auto safe = libraryShow->getGlobalSafe();
+    if (ld::ld_wing_take_safes (handle, &dcas, &muteGroups, &fx))
+    {
+        safe.dcas = dcas;
+        safe.muteGroups = muteGroups;
+        safe.fx = fx;
+        libraryShow->setGlobalSafe (safe);
+    }
+    ld::ld_wing_set_safes (handle, safe.dcas, safe.muteGroups, safe.fx);
+}
+
+void WingRemote::pumpUsb()
+{
+    auto& usb = engine.getUsbRecorder();
+    const auto storage = usb.getStorageFolder();
+    // Clients name files relative to the USB folder ("/" separated); nothing outside it.
+    auto inStorage = [&] (const juce::String& relative)
+    {
+        const auto f = storage.getChildFile (relative.trimCharactersAtStart ("/\\"));
+        return usb.isInsideStorage (f) ? f : juce::File();
+    };
+
+    int32_t channels = 0, bits = 0;
+    ld::LdString* recPath = nullptr;
+    if (ld::ld_wing_take_usb_settings (handle, &channels, &bits, &recPath))
+    {
+        usb.setRecChannels (channels);
+        usb.setRecBits (bits);
+        if (const auto folder = inStorage (takeString (recPath)); folder != juce::File())
+            usb.setRecPath (folder);
+    }
+
+    int32_t action = 0;
+    ld::LdString* file = nullptr;
+    while (ld::ld_wing_take_usb_action (handle, &action, &file))
+    {
+        const auto name = takeString (file);
+        switch (action)
+        {
+            case 1: usb.record(); break;
+            case 2: usb.newFile(); break;
+            case 3:
+                if (const auto f = inStorage (name); f.existsAsFile())
+                    usb.playFile (f);
+                break;
+            default: break;
+        }
+    }
+
+    const auto rec = usb.getRecPath();
+    const auto relative = rec == storage || ! usb.isInsideStorage (rec) ? juce::String() : rec.getRelativePathFrom (storage).replaceCharacter ('\\', '/');
+    const Utf8 storageUtf8 (storage.getFullPathName()), recUtf8 (relative);
+    ld::ld_wing_set_usb (handle, storageUtf8.data, storageUtf8.size, recUtf8.data, recUtf8.size, usb.getRecChannels(), usb.getRecBits());
 }
 
 juce::String WingRemote::coverageReport()

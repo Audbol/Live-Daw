@@ -401,3 +401,59 @@ fn reset_restores_the_analysis_defaults() {
     assert_eq!(c.listen_mode.load(Relaxed), listen_mode::OFF);
     assert_eq!(c.eq.gain_db.load(), 0.0);
 }
+
+#[test]
+fn rta_reads_a_monitor_path_either_side_of_its_eq() {
+    use livedaw_engine::analyser::ANALYSE_MONITOR;
+    let mut rig = Rig::new(1, 2);
+    rig.engine.set_num_channels(1);
+    let f = rta_band_hz(57);
+    rig.sine(0, f, 0.5); // on Main 1, the source of both monitor paths
+    let engine = rig.engine.clone();
+    let a = engine.analysis();
+    let c = a.controls();
+    // PHONES (path 1), with a -9 dB band on the tone.
+    let phones = &engine.controls.monitor.paths[1];
+    phones.eq[3].freq.store(f);
+    phones.eq[3].gain_db.store(-9.0);
+    phones.eq_on.store(true, Relaxed);
+    c.strip_kind.store(ANALYSE_MONITOR, Relaxed);
+    c.strip_id.store(1, Relaxed);
+    c.view.store(rta_view::MONITOR, Relaxed);
+    c.eq.detector.store(0, Relaxed);
+    c.eq.tap.store(0, Relaxed); // PRE
+    c.rta_on.store(true, Relaxed);
+    a.ensure_thread();
+    std::thread::sleep(Duration::from_millis(50));
+
+    let mut levels = [0.0; RTA_BANDS];
+    let mut peaks = [0.0; RTA_BANDS];
+    // Waits until the band holds still (and above the floor) near `expect`:
+    // right after a switch the band can still hold the previous reading
+    // steady, which isn't the new one yet.
+    let settle = |rig: &mut Rig, levels: &mut [f32; RTA_BANDS], peaks: &mut [f32; RTA_BANDS], expect: Option<f32>| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut last = f32::MIN;
+        loop {
+            rig.run(40, 0);
+            std::thread::sleep(Duration::from_millis(20));
+            rig.engine.analysis().read_rta(levels, peaks);
+            let level = levels[57];
+            let near = expect.is_none_or(|e| (level - e).abs() < 1.5);
+            if (level > -60.0 && near && (level - last).abs() < 0.05) || Instant::now() > deadline {
+                return level;
+            }
+            last = level;
+        }
+    };
+    let pre = settle(&mut rig, &mut levels, &mut peaks, None);
+    assert!(pre > -20.0, "the main's tone reaches the path: {pre}");
+    c.eq.tap.store(1, Relaxed); // POST
+    let post = settle(&mut rig, &mut levels, &mut peaks, Some(pre - 9.0));
+    assert!((pre - post - 9.0).abs() < 1.5, "PRE {pre} dB, POST {post} dB");
+    // SPEAKERS (path 0) have no EQ: POST reads the PRE level.
+    c.strip_id.store(0, Relaxed);
+    let speakers = settle(&mut rig, &mut levels, &mut peaks, Some(pre));
+    assert!((speakers - pre).abs() < 1.5, "SPEAKERS {speakers} dB, PHONES PRE {pre} dB");
+    a.shutdown();
+}

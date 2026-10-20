@@ -423,7 +423,10 @@ private:
 class TrimBalancePad final : public juce::Component, private juce::Timer
 {
 public:
-    TrimBalancePad (std::atomic<float>& t, std::atomic<float>& b, bool stereo) : trim (t), bal (b), hasBalance (stereo) { startTimerHz (12); }
+    TrimBalancePad (std::atomic<float>& t, std::atomic<float>& b, std::function<bool()> stereo) : trim (t), bal (b), hasBalance (std::move (stereo))
+    {
+        startTimerHz (12);
+    }
 
     /** The trim field (+-18 dB, the balance across it) in the black box
         [I7]: 276 x 552 WING px, the field 31-246 across and 30-462 down. */
@@ -511,7 +514,7 @@ public:
         for (int i = -1; i <= 1; ++i)
             g.fillRect (juce::Rectangle<float> (hd * 0.5f, juce::jmax (1.0f, 2.0f * k)).withCentre ({ x, y + (float) i * hd * 0.16f }));
         auto balHandle = juce::Rectangle<float> (hd, hd).withCentre ({ x, tickY });
-        g.setColour (hasBalance ? colours::fader : juce::Colour (0xff3a4a5a));
+        g.setColour (hasBalance() ? colours::fader : juce::Colour (0xff3a4a5a));
         g.fillEllipse (balHandle);
         g.setColour (juce::Colours::white);
         for (int i = -1; i <= 1; ++i)
@@ -520,7 +523,7 @@ public:
 
     void mouseDown (const juce::MouseEvent& e) override
     {
-        balanceOnly = hasBalance && e.position.y > balanceRow().getY();
+        balanceOnly = hasBalance() && e.position.y > balanceRow().getY();
         startTrim = trim.load();
         startBal = bal.load();
     }
@@ -529,7 +532,7 @@ public:
     {
         const auto p = pad();
         const float fine = e.mods.isShiftDown() ? 0.2f : 1.0f;
-        if (hasBalance)
+        if (hasBalance())
             bal = juce::jlimit (-9.0f, 9.0f, startBal + fine * (float) e.getDistanceFromDragStartX() / (p.getWidth() * 0.5f) * 9.0f);
         if (! balanceOnly)
             trim = juce::jlimit (-18.0f, 18.0f, startTrim - fine * (float) e.getDistanceFromDragStartY() / (p.getHeight() * 0.5f) * 18.0f);
@@ -545,7 +548,7 @@ public:
 private:
     void timerCallback() override
     {
-        const auto now = std::make_pair (trim.load(), bal.load());
+        const auto now = std::make_tuple (trim.load(), bal.load(), hasBalance());
         if (now != shown)
         {
             shown = now;
@@ -555,9 +558,10 @@ private:
 
     std::atomic<float>& trim;
     std::atomic<float>& bal;
-    bool hasBalance, balanceOnly = false;
+    std::function<bool()> hasBalance; // a stereo strip (the ST key can change it while shown)
+    bool balanceOnly = false;
     float startTrim = 0.0f, startBal = 0.0f;
-    std::pair<float, float> shown { 1.0e9f, 0.0f };
+    std::tuple<float, float, bool> shown { 1.0e9f, 0.0f, false };
 };
 
 /** "IN 3", "PLAY 5" or "NONE" for a channel input index (stereo: "IN 3/4"). */
@@ -631,6 +635,8 @@ ld::SourceParams* inputSourceParams (MixerEngine& engine, int port)
     return src;
 }
 } // namespace
+
+KnobBinding inputDelayBinding (UiContext& ctx, InputParams& in) { return delayBinding (ctx, in); }
 
 /** A routing-style source tile [3.1, D16]: the source's name strip in its
     colour over a #303030 body with the icon, the signal ring and the 48V /
@@ -899,13 +905,14 @@ public:
                   // Post TRIM: the meter bank only reads the input peak (the engine's
                   // trimPeak isn't in it yet), so scale it by the trim and balance.
                   const float bal = strip.getNumChannels() == 2 ? strip.params.input.balanceDb.load() : 0.0f;
-                  const float gainDb = strip.params.input.trimDb.load() + (ch == 0 ? -juce::jmax (0.0f, bal) : juce::jmin (0.0f, bal) * -1.0f);
+                  // As the engine: a positive balance turns the left side down, a negative one the right.
+                  const float gainDb = strip.params.input.trimDb.load() + (ch == 0 ? -juce::jmax (0.0f, bal) : juce::jmin (0.0f, bal));
                   return ctx.meters.get (&strip, true, ch) * juce::Decibels::decibelsToGain (gainDb);
               },
               [this] { return strip.getNumChannels(); })
     {
         auto& p = strip.params;
-        pad = &make<TrimBalancePad> (p.input.trimDb, p.input.balanceDb, strip.getNumChannels() == 2 || strip.isOutput() || p.stereo.load());
+        pad = &make<TrimBalancePad> (p.input.trimDb, p.input.balanceDb, [this] { return strip.getNumChannels() == 2 || strip.isOutput() || strip.params.stereo.load(); });
         trimMeter.showScale = true;
         addAndMakeVisible (trimMeter);
         invert = &key ("INVERT", Icon::Invert, colours::accent);
@@ -1211,7 +1218,7 @@ public:
             k.push_back ({ bindConsoleParam (f.toolParams[i], spec.params[(size_t) i]), toolStyle (graph, colour) });
         while (k.size() < 5)
             k.push_back ({});
-        k.push_back ({ wingFreq ("HC FREQ", f.highCutFreq, 200.0f, 20000.0f, 10000.0f), freqStyle (graph) });
+        k.push_back ({ wingFreq ("HC FREQ", f.highCutFreq, 50.0f, 20000.0f, 10000.0f), freqStyle (graph) });
         return k;
     }
 
@@ -1371,6 +1378,8 @@ public:
         keyFilter->onKey = [this] { toggleDetail (Detail::Key); };
         keyFilter->keyLit = [this] { return detail == Detail::Key; };
         keyTap = &field ("KEY TAP", tapPointNames(), slot.scTap);
+        // Not in the engine yet: another channel keys from its input (the setting is only stored).
+        keyTap->setEnabled (false);
         keyFreq = &make<KnobBox> (wingFreq ("KEY FREQ", slot.scFreq, 20.0f, 20000.0f, 1000.0f));
         keyQ = &make<KnobBox> (bindLog ("KEY Q", slot.scQ, 0.44f, 10.0f, {}, 1.0f));
         // The key signal after the key filter on the solo bus.
@@ -1698,9 +1707,9 @@ public:
         face = &make<Faceplate>();
         face->onTouched = [this] (int param)
         {
-            if (param / 6 != knobPage)
+            if (param / kModelKnobs != knobPage)
             {
-                knobPage = param / 6;
+                knobPage = param / kModelKnobs;
                 notifyKnobs();
             }
         };
@@ -1719,7 +1728,7 @@ public:
         if (bands.isEmpty())
         {
             const auto& spec = models::model (static_cast<models::Table> (strip.getEqTable()), eq.model.load());
-            for (int i = knobPage * 6; i < juce::jmin ((int) spec.params.size(), knobPage * 6 + 5); ++i)
+            for (int i = knobPage * kModelKnobs; i < juce::jmin ((int) spec.params.size(), (knobPage + 1) * kModelKnobs); ++i)
                 k.push_back ({ bindConsoleParam (eq.values[i], spec.params[(size_t) i]), styleOf (KnobStyle::Bar::Auto, {}, face) });
             while (k.size() < 5)
                 k.push_back ({});
@@ -1876,6 +1885,9 @@ public:
     }
 
 private:
+    /** An analog model's parameters on the first five knobs (EQ MIX is the sixth), a page at a time. */
+    static constexpr int kModelKnobs = 5;
+
     void updateBands()
     {
         bands = ResponseGraph::stdBands (strip);
@@ -2665,15 +2677,22 @@ public:
         setUp();
     }
 
-    /** A matrix send: TAP (PRE) / POST, no pan link. */
+    /** A matrix send: TAP (PRE) / POST; PAN LINK for input and aux channels. */
     SendOptions (MatrixSendParams& m, bool inputSource, bool canIgnoreMute)
         : mode (juce::StringArray { sendModeName (0, inputSource), "POST" }, [&m] { return m.pre.load() ? 0 : 1; }, [&m] (int i) { m.pre = i == 0; }),
           panBox (wingPan ("PAN", m.pan)), canIgnore (canIgnoreMute)
     {
         bindKey (ignoreMute, m.ignoreMute);
-        link.setVisible (false);
         isTap = [&m] { return m.pre.load(); };
-        isLinked = [] { return false; };
+        if (inputSource)
+        {
+            bindKey (link, m.panLink);
+            isLinked = [&m] { return m.panLink.load(); };
+        }
+        else
+        {
+            isLinked = [] { return false; };
+        }
         setUp();
     }
 
@@ -2830,15 +2849,18 @@ public:
         // The pan ring, PAN LINK under it.
         auto linkArea = box.removeFromBottom (juce::jlimit (10.0f, screenCap (18.0f), boxArea.getHeight() * 0.22f));
         panArea = box.reduced (2.0f);
-        const bool linked = send != nullptr && send->panLink.load();
-        const float chPan = send != nullptr && send->panReversed.load() ? -src.params.pan.load() : src.params.pan.load();
+        // Matrix sends of input and aux channels have PAN LINK too.
+        const bool hasLink = send != nullptr || src.isInput();
+        const bool reversed = send != nullptr ? send->panReversed.load() : mtx->panReversed.load();
+        const bool linked = hasLink && (send != nullptr ? send->panLink.load() : mtx->panLink.load());
+        const float chPan = reversed ? -src.params.pan.load() : src.params.pan.load();
         const float panValue = linked ? chPan : (send != nullptr ? send->pan.load() : mtx->pan.load());
         paintSendPan (g, panArea, panValue, linked ? src.params.width.load() : 100.0f, isOnNow());
-        if (send != nullptr)
+        if (hasLink)
         {
             g.setColour (linked ? colours::link : colours::dim);
             g.setFont (homeFont (TypeScale::body, linkArea.getHeight() * 0.85f));
-            g.drawFittedText (linked && send->panReversed.load() ? "LINK REV" : "PAN LINK", linkArea.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+            g.drawFittedText (linked && reversed ? "LINK REV" : "PAN LINK", linkArea.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         }
     }
 
@@ -3584,7 +3606,8 @@ public:
         {
             auto& m = strip.params.matrix[selected];
             k.push_back ({ wingFader ("SEND LVL", m.levelDb), levelStyle (col->getFader()) });
-            k.push_back ({ wingPan ("PAN", m.pan), thumbStyle (col) });
+            if (! (strip.isInput() && m.panLink.load()))
+                k.push_back ({ wingPan ("PAN", m.pan), thumbStyle (col) });
         }
         else
         {
@@ -3830,8 +3853,12 @@ void copyStripParams (MixerEngine& engine, const Strip& src, const Strip& dst, j
 
     if (has (Conn) && src.isInput() && dst.isInput())
     {
+        // Both inputs and the MAIN / ALT switch (as a scene's input connection).
         d.inputLeft = s.inputLeft.load();
         d.inputRight = s.inputRight.load();
+        d.altInputLeft = s.altInputLeft.load();
+        d.altInputRight = s.altInputRight.load();
+        d.altSelected = s.altSelected.load();
     }
     if (has (Config))
     {
@@ -3883,7 +3910,9 @@ void copyStripParams (MixerEngine& engine, const Strip& src, const Strip& dst, j
         copyDyn (src, dst, ModelBlock::Gate);
     if (has (DynBit))
         copyDyn (src, dst, ModelBlock::Dynamics);
-    if (has (EqBit) && src.getEqTable() == dst.getEqTable())
+    // (Aux channels don't offer the MACH EQ4.)
+    if (has (EqBit) && src.getEqTable() == dst.getEqTable()
+        && ! (dst.getKind() == StripKind::Aux && models::model (models::ChannelEq, s.eq.model.load()).token == "MACH4"))
     {
         dst.setModel (ModelBlock::Eq, s.eq.model.load());
         for (int i = 0; i < ld::kMaxEqParams; ++i)
@@ -3922,6 +3951,18 @@ void copyStripParams (MixerEngine& engine, const Strip& src, const Strip& dst, j
             to.levelDb = from != nullptr ? from->levelDb.load() : -100.0f;
             to.pan = from != nullptr ? from->pan.load() : 0.0f;
         }
+        // TAP WIDTH and TAP EQ shape what the channel's TAP-mode sends take.
+        if (bothChannels)
+        {
+            d.tapWidth = s.tapWidth.load();
+            d.tapEq.on = s.tapEq.on.load();
+            for (int i = 0; i < ld::kTapEqBands; ++i)
+            {
+                d.tapEq.bands[i].gainDb = s.tapEq.bands[i].gainDb.load();
+                d.tapEq.bands[i].freq = s.tapEq.bands[i].freq.load();
+                d.tapEq.bands[i].q = s.tapEq.bands[i].q.load();
+            }
+        }
         if (dst.getKind() != StripKind::Matrix && src.getKind() != StripKind::Matrix)
             for (int i = 0; i < kNumMatrices; ++i)
             {
@@ -3930,6 +3971,8 @@ void copyStripParams (MixerEngine& engine, const Strip& src, const Strip& dst, j
                 d.matrix[i].ignoreMute = s.matrix[i].ignoreMute.load();
                 d.matrix[i].levelDb = s.matrix[i].levelDb.load();
                 d.matrix[i].pan = s.matrix[i].pan.load();
+                d.matrix[i].panLink = s.matrix[i].panLink.load();
+                d.matrix[i].panReversed = s.matrix[i].panReversed.load();
             }
     }
     if (has (MainBit) && dst.getKind() != StripKind::Main && dst.getKind() != StripKind::Matrix
@@ -4276,8 +4319,8 @@ public:
         panKeys = std::make_unique<Segmented> (juce::StringArray { "KEEP", "SET TO\nCENTER", "SET TO\nCH PAN", "LINK\nTO CH PAN", "LINK\nREVERSED" },
                                                [this] { return panChoice; }, [this] (int i) { panChoice = i; }, colours::accent);
         panKeys->twoLines = true;
-        // Mains have no send pan, matrix sends no pan link.
-        panKeys->isEnabledAt = [mainTarget, busTarget] (int i) { return i == 0 || (! mainTarget && (busTarget || i < 3)); };
+        // Mains have no send pan; matrix sends link to the pan of input and aux channels only.
+        panKeys->isEnabledAt = [mainTarget] (int i) { return i == 0 || ! mainTarget; };
         levelKeys = std::make_unique<Segmented> (juce::StringArray { "KEEP", "SET TO\n-oo dB", "SET TO\n-10 dB", "SET TO\n0 dB" },
                                                  [this] { return levelChoice; }, [this] (int i) { levelChoice = i; }, colours::accent);
         levelKeys->twoLines = true;
@@ -4552,7 +4595,8 @@ private:
         auto& m = src.params.matrix[juce::jlimit (0, kNumMatrices - 1, dst.getId())];
         on = m.on.load();
         mode = m.pre.load() ? 0 : 1;
-        pan = m.pan.load();
+        link = src.isInput() && m.panLink.load();
+        pan = link ? (m.panReversed.load() ? -src.params.pan.load() : src.params.pan.load()) : m.pan.load();
     }
 
     void timerCallback() override
@@ -4617,10 +4661,17 @@ private:
                     m.pre = modeChoice == 1;
                 if (ignoreChoice > 0 && src->canIgnoreMuteOnSends())
                     m.ignoreMute = ignoreChoice == 2;
-                if (panChoice == 1)
-                    m.pan = 0.0f;
-                else if (panChoice == 2)
-                    m.pan = src->params.pan.load();
+                if (panChoice == 1 || panChoice == 2)
+                {
+                    m.panLink = false;
+                    m.panReversed = false;
+                    m.pan = panChoice == 1 ? 0.0f : src->params.pan.load();
+                }
+                else if ((panChoice == 3 || panChoice == 4) && src->isInput())
+                {
+                    m.panLink = true;
+                    m.panReversed = panChoice == 4;
+                }
                 if (levelChoice > 0)
                     m.levelDb = levels[levelChoice];
                 if (enableChoice > 0)

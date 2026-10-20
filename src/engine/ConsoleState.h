@@ -61,6 +61,8 @@ struct FaderRef
     StripRef to;    // a send's destination
     bool fxParam = false;
     int fxSlot = 0, param = 0;
+    bool midiCc = false;
+    int midiChannel = 0, cc = 0; // 0-15, 0-127
 
     static FaderRef of (const StripRef& r) noexcept
     {
@@ -91,18 +93,30 @@ struct FaderRef
         f.param = parameter;
         return f;
     }
+    /** A MIDI CC fader (user layers): CC `controller` on MIDI channel `channel`
+        (0-15), sent out of EXTERNAL MIDI CONTROL. */
+    static FaderRef ofMidiCc (int channel, int controller) noexcept
+    {
+        FaderRef f;
+        f.midiCc = true;
+        f.midiChannel = juce::jlimit (0, 15, channel);
+        f.cc = juce::jlimit (0, 127, controller);
+        return f;
+    }
 
-    /** A strip's own fader (not a DCA, send or FX parameter). */
-    bool isStrip() const noexcept { return ! dca && ! send && ! fxParam; }
+    /** A strip's own fader (not a DCA, send, FX parameter or MIDI CC). */
+    bool isStrip() const noexcept { return ! dca && ! send && ! fxParam && ! midiCc; }
 
     bool operator== (const FaderRef& o) const noexcept
     {
-        if (dca != o.dca || send != o.send || fxParam != o.fxParam)
+        if (dca != o.dca || send != o.send || fxParam != o.fxParam || midiCc != o.midiCc)
             return false;
         if (dca)
             return dcaIndex == o.dcaIndex;
         if (fxParam)
             return fxSlot == o.fxSlot && param == o.param;
+        if (midiCc)
+            return midiChannel == o.midiChannel && cc == o.cc;
         return strip == o.strip && (! send || to == o.to);
     }
 

@@ -376,6 +376,12 @@ pub struct MatrixSendParams {
     /// IGNORE CHANNEL MUTE (input and aux channels, TAP mode only): the send
     /// stays on while the channel is muted.
     pub ignore_mute: AtomicBool,
+    /// PAN LINK (input and aux channels): the send's pan follows the
+    /// channel's pan (else `pan` is used). Buses and mains always send their
+    /// panned output, balanced by `pan`.
+    pub pan_link: AtomicBool,
+    /// With `pan_link`: follow the channel's pan mirrored (LINK REVERSED).
+    pub pan_reversed: AtomicBool,
     pub level_db: AtomicF32,
     pub pan: AtomicF32,
 }
@@ -609,6 +615,8 @@ impl StripParams {
             on: AtomicBool::new(false),
             pre: AtomicBool::new(false),
             ignore_mute: AtomicBool::new(false),
+            pan_link: AtomicBool::new(true),
+            pan_reversed: AtomicBool::new(false),
             level_db: AtomicF32::new(0.0),
             pan: AtomicF32::new(0.0),
         };
@@ -698,7 +706,11 @@ pub struct DcaParams {
     pub fader_db: AtomicF32,
     pub mute: AtomicBool,
     pub solo: AtomicBool,
+    /// Scribble strip light.
+    pub led: AtomicBool,
     pub colour: AtomicI32,
+    /// WING icon number on the scribble strip (0 = none).
+    pub icon: AtomicI32,
 }
 
 impl Default for DcaParams {
@@ -707,7 +719,9 @@ impl Default for DcaParams {
             fader_db: AtomicF32::new(0.0),
             mute: AtomicBool::new(false),
             solo: AtomicBool::new(false),
+            led: AtomicBool::new(true),
             colour: AtomicI32::new(7),
+            icon: AtomicI32::new(0),
         }
     }
 }
@@ -1050,7 +1064,9 @@ impl EngineControls {
             d.fader_db.store(0.0);
             d.mute.store(false, Relaxed);
             d.solo.store(false, Relaxed);
+            d.led.store(true, Relaxed);
             d.colour.store(7, Relaxed);
+            d.icon.store(0, Relaxed);
         }
         for f in &self.fx {
             f.bypass.store(false, Relaxed);

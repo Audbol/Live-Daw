@@ -17,6 +17,10 @@
 //!     (`monitor.rs`)
 //!  8. outputs are written, then safety-clipped
 //!
+//! Plugin delay compensation (`pdc.rs`): each summing stage reads its sources
+//! delayed so that every path arrives in time; input channels write their
+//! compensation rings after stage 2, the others right after they ran.
+//!
 //! Before stage 1, the sources (`sources.rs`) process the input ports the
 //! channels read, and the console works out the block's solos and mutes
 //! (`solo.rs`: SIP, MUTEGROUP/SIP OVERRIDE, talk tags) and its talkback
@@ -36,12 +40,13 @@
 //! immutable `Topology`; the old one is retired to the garbage collector, which
 //! drops it (and any removed strips) once the audio thread is done with it.
 
-use crate::analyser::{Analyser, Probes};
+use crate::analyser::{rta_tap, Analyser, Probes};
 use crate::denormals::ScopedNoDenormals;
 use crate::fx::{FxRack, InsertCallbacks};
 use crate::garbage::Garbage;
 use crate::monitor::{direct_source, MonitorPathDsp, SoloPatch, BAND_SOLO_MAX_DB};
 use crate::params::*;
+use crate::pdc::{pdc_tap, PdcState, MAX_PDC};
 use crate::pool::WorkerPool;
 use crate::sends::{send_mode, MAX_BUSES};
 use crate::solo::{self, solo_mode, SoloBlock};
@@ -240,6 +245,8 @@ pub struct Engine {
     /// DCAs named MON A / MON B / MON LVL: bit n = DCA n+1 controls the
     /// SPEAKERS path, bit 16 + n the PHONES path.
     dca_monitor: AtomicU32,
+    /// Plugin delay compensation: the setting and the plan's status.
+    pdc: PdcState,
 }
 
 // SAFETY: `audio` is only touched by the audio thread (process) or by prepare
@@ -312,6 +319,7 @@ impl Engine {
             sources: SourceTable::default(),
             talk_ramps: TalkRamps::default(),
             dca_monitor: AtomicU32::new(0),
+            pdc: PdcState::default(),
         };
         // SAFETY: not published yet, no audio callback.
         unsafe {
@@ -643,6 +651,27 @@ impl Engine {
         &self.sources
     }
 
+    /// Message thread: MONO / STEREO / MID-SIDE on ROUTING > SOURCES. The
+    /// channels and aux patched to the pair's first source follow it, as on the
+    /// console: stereo on the pair for STEREO and MID/SIDE, mono on the first
+    /// source for MONO (MAIN and ALT inputs alike).
+    pub fn set_source_mode(&self, index: usize, mode: i32) {
+        self.sources.set_mode(index, mode);
+        let first = crate::sources::pair_first(index);
+        let Some(port) = crate::sources::source_port(first) else { return };
+        let stereo = self.sources.params().get(first).is_some_and(|p| p.mode.load(Relaxed) != crate::sources::source_mode::MONO);
+        for s in self.strips(StripKind::Channel).iter().chain(&self.strips(StripKind::Aux)) {
+            let p = &s.params;
+            if p.input_left.load(Relaxed) == port {
+                p.stereo.store(stereo, Relaxed);
+                p.input_right.store(if stereo { port + 1 } else { -1 }, Relaxed);
+            }
+            if p.alt_input_left.load(Relaxed) == port {
+                p.alt_input_right.store(if stereo { port + 1 } else { -1 }, Relaxed);
+            }
+        }
+    }
+
     /// Message thread: the MUTE key of a strip, with MUTEGROUP/SIP OVERRIDE
     /// (see [`solo::press_mute`]).
     pub fn press_mute(&self, s: &Strip) {
@@ -686,7 +715,64 @@ impl Engine {
     /// the shared parameters (e.g. by a recall).
     pub fn collect(&self) {
         self.sync_fx_devices();
+        self.update_pdc();
         self.garbage.collect();
+    }
+
+    // =========================================================================
+    // Plugin delay compensation (message thread)
+
+    /// The compensation setting (DELAY COMPENSATION) and the plan's status.
+    pub fn pdc(&self) -> &PdcState {
+        &self.pdc
+    }
+
+    /// Message thread: works out the compensation plan from the plugins'
+    /// latencies, the inserts and the sends (`pdc.rs`), publishes it and
+    /// allocates the history rings it reads. Stage by stage as the audio
+    /// thread sums: every summing strip aligns its sources to the latest one,
+    /// and its own taps carry that latency on. Called by `collect`.
+    pub fn update_pdc(&self) {
+        let st = self.lock();
+        let enabled = self.pdc.enabled.load(Relaxed);
+        let fx: [u32; NUM_FX] =
+            std::array::from_fn(|i| if enabled { self.fx[i].effective_latency(&self.controls.fx[i]) } else { 0 });
+        let add = |own: [u32; pdc_tap::COUNT], base: u32| own.map(|l| l.saturating_add(base));
+
+        for s in st.channels.iter().chain(&st.auxes) {
+            s.pdc.set(s.own_latency(&fx), 0);
+        }
+        // Buses 9+ feed buses 1-8, so they come first; then mains, matrices.
+        let (lower, upper): (Vec<&Arc<Strip>>, Vec<&Arc<Strip>>) =
+            st.buses.iter().partition(|b| (b.id() as usize) < BUS_TO_BUS_TARGETS);
+        let summing: Vec<&Arc<Strip>> = upper.into_iter().chain(lower).chain(&st.mains).chain(&st.matrices).collect();
+        for dst in &summing {
+            let target = pdc_feeds(&st, dst).iter().map(|(s, tap)| s.pdc.latency(*tap)).max().unwrap_or(0);
+            dst.pdc.set(add(dst.own_latency(&fx), target), target);
+        }
+
+        // The rings the plan reads from, and what it can't make up.
+        let mut needs_delay = false;
+        let mut limited = false;
+        for dst in &summing {
+            let target = dst.pdc.target();
+            for (s, tap) in pdc_feeds(&st, dst) {
+                let delay = target.saturating_sub(s.pdc.latency(tap)) as usize;
+                if delay > 0 {
+                    needs_delay = true;
+                    limited |= delay > MAX_PDC;
+                    s.pdc.ensure_ring(tap, st.device.block_size);
+                }
+            }
+        }
+        if !needs_delay {
+            for s in st.all() {
+                s.pdc.release_rings(&self.garbage);
+            }
+        }
+        let total = st.all().map(|s| s.pdc.latency(pdc_tap::OUT)).max().unwrap_or(0);
+        self.pdc.total.store(total, Relaxed);
+        self.pdc.limited.store(limited, Relaxed);
     }
 
     /// Message thread: selects the device of FX slot `i` (an index into
@@ -937,6 +1023,10 @@ impl Engine {
 
         // 2. Automix
         self.automix(topo, n);
+        // The inputs' compensation rings, now that automix has scaled them.
+        for s in topo.inputs() {
+            s.write_pdc(n);
+        }
 
         // 3./4. Buses: 9+ first (they may feed buses 1-8), then 1-8.
         let ramps = &self.talk_ramps;
@@ -945,12 +1035,14 @@ impl Engine {
             sum_bus(bus, topo.active().iter(), n);
             add_talk(bus, talk.bus(bus.id() as usize), ramps.get(StripKind::Bus, bus.id() as usize), talk, n);
             bus.process(&ctx_of(hw.get()), n);
+            bus.write_pdc(n);
         });
         self.pool.parallel_for(topo.lower_buses.len(), &|i| {
             let bus = &topo.lower_buses[i];
             sum_bus(bus, topo.active().iter().chain(&topo.upper_buses), n);
             add_talk(bus, talk.bus(bus.id() as usize), ramps.get(StripKind::Bus, bus.id() as usize), talk, n);
             bus.process(&ctx_of(hw.get()), n);
+            bus.write_pdc(n);
         });
 
         // 5. Mains
@@ -959,6 +1051,7 @@ impl Engine {
             sum_main(main, i, topo.active().iter().chain(topo.buses()), n);
             add_talk(main, talk.main(i), ramps.get(StripKind::Main, i), talk, n);
             main.process(&ctx_of(hw.get()), n);
+            main.write_pdc(n);
         });
 
         // 6. Matrices
@@ -967,6 +1060,7 @@ impl Engine {
             sum_matrix(mtx, i, topo, n);
             add_talk(mtx, talk.matrix(i), ramps.get(StripKind::Matrix, i), talk, n);
             mtx.process(&ctx_of(hw.get()), n);
+            mtx.write_pdc(n);
         });
 
         // Record strip taps, now that every strip has run.
@@ -974,7 +1068,7 @@ impl Engine {
         self.record_usb(topo, a, n);
 
         // 7. Solo / monitor
-        self.build_monitor(topo, a, n, solo, talk);
+        self.build_monitor(topo, a, n, solo, talk, probes);
 
         // 8. Outputs, then the safety clip
         self.write_outputs(topo, a, n);
@@ -1102,7 +1196,15 @@ impl Engine {
     /// and DIRECT IN, runs its EQ, PAN / WIDTH, INVERT and DELAY, then its
     /// level (with the MON DCAs), on the selected path(s) DIM, mute, the talk
     /// MON DIM, MONO and SWAP, and last its LIMITER (`monitor.rs`).
-    unsafe fn build_monitor(&self, topo: &Topology, a: &mut AudioState, n: usize, solo: SoloBlock, talk: &TalkBlock) {
+    unsafe fn build_monitor(
+        &self,
+        topo: &Topology,
+        a: &mut AudioState,
+        n: usize,
+        solo: SoloBlock,
+        talk: &TalkBlock,
+        probes: &Probes,
+    ) {
         let c = &self.controls;
         // LISTEN (band / key / xover solo) replaces the soloed strips (analyser.rs).
         let listen = self.analysis.listen_overrides_solo();
@@ -1230,10 +1332,19 @@ impl Engine {
             let r = &mut a.monitor_ramps[path];
             let [l, rr] = &mut a.monitor[path];
             let (l, rr) = (&mut l[..n], &mut rr[..n]);
-            // EQ, PAN / WIDTH, INVERT, DELAY.
+            // EQ, PAN / WIDTH, INVERT, DELAY; the RTA of MONITORS EQ reads
+            // either side of the EQ.
             let dsp = &mut a.monitor_dsp[path];
             let mon = &c.monitor.paths[path];
-            dsp.process_pre(mon, l, rr);
+            let rta = probes.monitor_rta(path);
+            if rta == Some(rta_tap::MONITOR_PRE_EQ) {
+                probes.push_rta([&*l, &*rr], 2, n);
+            }
+            dsp.process_eq(mon, l, rr);
+            if rta == Some(rta_tap::MONITOR_POST_EQ) {
+                probes.push_rta([&*l, &*rr], 2, n);
+            }
+            dsp.process_image(mon, l, rr);
             apply_gain_ramp(l, r.level, level);
             apply_gain_ramp(rr, r.level, level);
             r.level = level;
@@ -1449,11 +1560,97 @@ unsafe fn tap_send_muted(src: &Strip, ignore_mute: bool) -> bool {
     src.dsp().muted() && !(ignore_mute && src.kind().is_input())
 }
 
+/// A source's signal at `tap` (`pdc_tap`) as a destination aligned to
+/// `target` sums it: delayed by the difference when the plan says so.
+#[inline]
+unsafe fn tap_at(src: &Strip, tap: usize, target: u32, ch: usize, n: usize) -> &[f32] {
+    if let Some(delayed) = src.pdc.delayed(tap, target, ch, n) {
+        return delayed;
+    }
+    let d = src.dsp();
+    match tap {
+        pdc_tap::TAP => d.tap_signal(ch, n),
+        pdc_tap::PFL => d.pfl(ch, n),
+        pdc_tap::POST => d.post(ch, n),
+        _ => d.out(ch, n),
+    }
+}
+
+/// Where a matrix send reads its source (`pdc_tap`) and the pan it applies
+/// there (`None`: the strip's own). Input and aux channels: PAN LINK follows
+/// the channel's pan (POST: its panned output, with the width), LINK
+/// REVERSED mirrors it, else the send pans itself. Buses and mains send
+/// their output (or tap) as panned, balanced by the send's pan.
+fn matrix_send_route(s: &Strip, send: &MatrixSendParams) -> (usize, Option<f32>) {
+    let pre = send.pre.load(Relaxed);
+    if !s.kind().is_input() {
+        return (if pre { pdc_tap::TAP } else { pdc_tap::OUT }, None);
+    }
+    let pan = match (send.pan_link.load(Relaxed), send.pan_reversed.load(Relaxed)) {
+        (true, false) => None,
+        (true, true) => Some(-s.params.pan.load() / 100.0),
+        (false, _) => Some(send.pan.load() / 100.0),
+    };
+    let tap = match (pre, pan) {
+        (true, _) => pdc_tap::TAP,
+        (false, None) => pdc_tap::OUT,
+        (false, Some(_)) => pdc_tap::POST,
+    };
+    (tap, pan)
+}
+
+/// The (source, tap) pairs summing strip `dst` adds up, as its stage reads
+/// them: the enabled sends (and a matrix's direct input).
+fn pdc_feeds<'a>(st: &'a Structure, dst: &Strip) -> Vec<(&'a Arc<Strip>, usize)> {
+    let inputs = st.channels.iter().chain(&st.auxes);
+    let index = dst.id().max(0) as usize;
+    let tap_or_out = |pre: bool| if pre { pdc_tap::TAP } else { pdc_tap::OUT };
+    let mut feeds = Vec::new();
+    match dst.kind() {
+        StripKind::Bus => {
+            let upper = st.buses.iter().filter(|b| index < BUS_TO_BUS_TARGETS && b.id() as usize >= BUS_TO_BUS_TARGETS);
+            for s in inputs.chain(upper) {
+                let Some(send) = s.sends.find(index).filter(|send| send.enabled.load(Relaxed)) else { continue };
+                let tap = match send.mode.load(Relaxed) {
+                    send_mode::PRE => pdc_tap::TAP,
+                    send_mode::GROUP => pdc_tap::OUT,
+                    _ => pdc_tap::POST,
+                };
+                feeds.push((s, tap));
+            }
+        }
+        StripKind::Main => {
+            for s in inputs.chain(&st.buses) {
+                let send = &s.params.mains[index.min(NUM_MAINS - 1)];
+                if send.on.load(Relaxed) {
+                    feeds.push((s, tap_or_out(send.pre.load(Relaxed))));
+                }
+            }
+        }
+        StripKind::Matrix => {
+            for s in inputs.chain(&st.buses).chain(&st.mains) {
+                let send = &s.params.matrix[index.min(NUM_MATRICES - 1)];
+                if send.on.load(Relaxed) {
+                    feeds.push((s, matrix_send_route(s, send).0));
+                }
+            }
+            let p = &dst.params;
+            let source = usize::try_from(p.direct_source.load(Relaxed)).ok();
+            if let Some(ch) = source.and_then(|i| st.channels.get(i)).filter(|_| p.direct_on.load(Relaxed)) {
+                feeds.push((ch, if p.direct_pre.load(Relaxed) { pdc_tap::PFL } else { pdc_tap::OUT }));
+            }
+        }
+        StripKind::Channel | StripKind::Aux => {}
+    }
+    feeds
+}
+
 /// # Safety
 /// Bus task only, after the stages feeding it.
 unsafe fn sum_bus<'a>(bus: &Strip, sources: impl Iterator<Item = &'a Arc<Strip>>, n: usize) {
     bus.begin_summed_block(n);
     let slot = bus.id() as usize;
+    let target = bus.pdc.target();
 
     for s in sources {
         let Some(send) = s.sends.find(slot) else { continue };
@@ -1474,7 +1671,10 @@ unsafe fn sum_bus<'a>(bus: &Strip, sources: impl Iterator<Item = &'a Arc<Strip>>
             continue;
         }
         match mode {
-            send_mode::GROUP => add_pair(bus, n, src.out(0, n), src.out(1, n), last, [level, level]),
+            send_mode::GROUP => {
+                let (l, r) = (tap_at(s, pdc_tap::OUT, target, 0, n), tap_at(s, pdc_tap::OUT, target, 1, n));
+                add_pair(bus, n, l, r, last, [level, level])
+            }
             mode => {
                 let pan = match (send.pan_link.load(Relaxed), send.pan_reversed.load(Relaxed)) {
                     (true, false) => None,
@@ -1482,11 +1682,8 @@ unsafe fn sum_bus<'a>(bus: &Strip, sources: impl Iterator<Item = &'a Arc<Strip>>
                     (false, _) => Some(send.pan.load() / 100.0),
                 };
                 let g = pre_gains(s, pan);
-                let (l, r) = if mode == send_mode::PRE {
-                    (src.tap_signal(0, n), src.tap_signal(1, n))
-                } else {
-                    (src.post(0, n), src.post(1, n))
-                };
+                let tap = if mode == send_mode::PRE { pdc_tap::TAP } else { pdc_tap::POST };
+                let (l, r) = (tap_at(s, tap, target, 0, n), tap_at(s, tap, target, 1, n));
                 add_pair(bus, n, l, r, last, [level * g[0], level * g[1]]);
             }
         }
@@ -1497,6 +1694,7 @@ unsafe fn sum_bus<'a>(bus: &Strip, sources: impl Iterator<Item = &'a Arc<Strip>>
 /// Main task `index` only, after the bus stages.
 unsafe fn sum_main<'a>(main: &Strip, index: usize, sources: impl Iterator<Item = &'a Arc<Strip>>, n: usize) {
     main.begin_summed_block(n);
+    let target = main.pdc.target();
     for s in sources {
         let send = &s.params.mains[index];
         let pre = send.pre.load(Relaxed);
@@ -1511,9 +1709,11 @@ unsafe fn sum_main<'a>(main: &Strip, index: usize, sources: impl Iterator<Item =
         }
         if pre {
             let g = pre_gains(s, None);
-            add_pair(main, n, src.tap_signal(0, n), src.tap_signal(1, n), last, [level * g[0], level * g[1]]);
+            let (l, r) = (tap_at(s, pdc_tap::TAP, target, 0, n), tap_at(s, pdc_tap::TAP, target, 1, n));
+            add_pair(main, n, l, r, last, [level * g[0], level * g[1]]);
         } else {
-            add_pair(main, n, src.out(0, n), src.out(1, n), last, [level, level]);
+            let (l, r) = (tap_at(s, pdc_tap::OUT, target, 0, n), tap_at(s, pdc_tap::OUT, target, 1, n));
+            add_pair(main, n, l, r, last, [level, level]);
         }
     }
 }
@@ -1522,6 +1722,7 @@ unsafe fn sum_main<'a>(main: &Strip, index: usize, sources: impl Iterator<Item =
 /// Matrix task `index` only, after the main stage.
 unsafe fn sum_matrix(mtx: &Strip, index: usize, topo: &Topology, n: usize) {
     mtx.begin_summed_block(n);
+    let target = mtx.pdc.target();
     for s in topo.active().iter().chain(topo.buses()).chain(&topo.mains) {
         let send = &s.params.matrix[index];
         let on = send.on.load(Relaxed) && !(send.pre.load(Relaxed) && tap_send_muted(s, send.ignore_mute.load(Relaxed)));
@@ -1532,12 +1733,22 @@ unsafe fn sum_matrix(mtx: &Strip, index: usize, topo: &Topology, n: usize) {
             *last = [0.0, 0.0];
             continue;
         }
+        let (tap, pan) = matrix_send_route(s, send);
+        if s.kind().is_input() {
+            // The pan gains, unless the channel's panned output is taken as it is.
+            let g = if tap == pdc_tap::OUT { [1.0, 1.0] } else { pre_gains(s, pan) };
+            let (l, r) = (tap_at(s, tap, target, 0, n), tap_at(s, tap, target, 1, n));
+            add_pair(mtx, n, l, r, last, [level * g[0], level * g[1]]);
+            continue;
+        }
         let (bl, br) = stereo_balance(send.pan.load() / 100.0);
-        if send.pre.load(Relaxed) {
+        if tap == pdc_tap::TAP {
             let g = pre_gains(s, None);
-            add_pair(mtx, n, src.tap_signal(0, n), src.tap_signal(1, n), last, [level * g[0] * bl, level * g[1] * br]);
+            let (l, r) = (tap_at(s, pdc_tap::TAP, target, 0, n), tap_at(s, pdc_tap::TAP, target, 1, n));
+            add_pair(mtx, n, l, r, last, [level * g[0] * bl, level * g[1] * br]);
         } else {
-            add_pair(mtx, n, src.out(0, n), src.out(1, n), last, [level * bl, level * br]);
+            let (l, r) = (tap_at(s, pdc_tap::OUT, target, 0, n), tap_at(s, pdc_tap::OUT, target, 1, n));
+            add_pair(mtx, n, l, r, last, [level * bl, level * br]);
         }
     }
 
@@ -1551,7 +1762,8 @@ unsafe fn sum_matrix(mtx: &Strip, index: usize, topo: &Topology, n: usize) {
     if let Some(ch) = topo.channels.get(source.max(0) as usize).filter(|_| source >= 0) {
         let src = ch.dsp();
         if !src.idle() && (gain != 0.0 || prev != 0.0) {
-            let (l, r) = if p.direct_pre.load(Relaxed) { (src.pfl(0, n), src.pfl(1, n)) } else { (src.out(0, n), src.out(1, n)) };
+            let tap = if p.direct_pre.load(Relaxed) { pdc_tap::PFL } else { pdc_tap::OUT };
+            let (l, r) = (tap_at(ch, tap, target, 0, n), tap_at(ch, tap, target, 1, n));
             let mut ramp = [prev, prev];
             add_pair(mtx, n, l, r, &mut ramp, [gain, gain]);
         }

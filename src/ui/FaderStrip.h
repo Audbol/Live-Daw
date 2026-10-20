@@ -26,6 +26,7 @@ struct ScribbleInfo
     bool tagFirst = false;        // the tag at the left, the number at the right
     std::optional<Icon> icon;     // drawn when `strip` has no WING icon
     const Strip* strip = nullptr; // draws its WING icon (none when unset)
+    int wingIcon = 0;             // a WING icon without a strip (a DCA's)
     juce::String value, caption;  // "-3.5" in large type in place of the icon
     juce::String line2, line3;    // small centre lines (no icon or value)
     juce::String name, footer;
@@ -35,7 +36,7 @@ struct ScribbleInfo
     bool isEmpty() const noexcept
     {
         return number.isEmpty() && tag.isEmpty() && sendTag.isEmpty() && name.isEmpty() && value.isEmpty() && line2.isEmpty()
-               && line3.isEmpty() && footer.isEmpty() && strip == nullptr && ! icon.has_value();
+               && line3.isEmpty() && footer.isEmpty() && strip == nullptr && wingIcon == 0 && ! icon.has_value();
     }
 };
 
@@ -63,8 +64,9 @@ void drawLightBar (juce::Graphics&, juce::Rectangle<float> bar, juce::Colour, bo
     bar and scribble strip, SELECT, SOLO, the meter block (DYN LED, a stereo
     6-segment input meter, GATE LED), MUTE and the fader with its printed scale.
     It controls a strip, a DCA, a send level (Sends on Fader between the
-    selected strip and this one; a send fader of a layer or spill) or an FX
-    slot's parameter (FX SPILL). */
+    selected strip and this one; a send fader of a layer or spill), an FX
+    slot's parameter (FX SPILL) or a MIDI CC sent out of EXTERNAL MIDI CONTROL
+    (a user layer's MIDI CC fader). */
 class FaderStrip final : public juce::Component, private juce::Timer
 {
 public:
@@ -114,6 +116,14 @@ private:
         int slot = 0, model = 0, index = 0;
     };
 
+    /** A MIDI CC on this fader: the travel is 0-127, sent on every change. */
+    struct MidiTarget
+    {
+        int channel = 0, cc = 0; // 0-15, 0-127
+    };
+    /** The CC's value, as last sent or received. */
+    int midiValue() const noexcept;
+
     void timerCallback() override;
     /** The fader position (dB travel) for the current target's value, and back. */
     double faderPosition() const;
@@ -133,6 +143,7 @@ private:
     int dca = -1;
     std::optional<SendTarget> send;
     std::optional<ParamTarget> fxp;
+    std::optional<MidiTarget> midi;
 
     juce::Slider fader;
     SurfaceKey selectKey { "SELECT" }, soloKey { "SOLO" }, muteKey { "MUTE" };

@@ -22,7 +22,12 @@ namespace livedaw
     longer call them (the engine invokes the release callback from
     ld_engine_collect). Plugins run in stereo: a mono strip feeds both inputs and
     takes the left output back. A sandboxed plugin (SandboxedPlugin) that misses a
-    block or loses its helper process is reported like one that throws.
+    block or loses its helper process is reported like one that throws; its latency
+    includes the sandbox's block, so delay compensation covers it.
+
+    Each plugin's latency (getLatencySamples) goes to the engine's plugin
+    delay compensation: when the plugin is installed, whenever it reports a
+    change (from any thread: only an atomic store) and on updateLatencies().
 
     Stateless view: any number of FxSlots may view one engine. */
 class FxSlots
@@ -40,9 +45,6 @@ public:
     juce::AudioPluginInstance* getPlugin (int slot) const noexcept;
     /** Message thread: the slot's plugin runs in the plugin sandbox (a helper process). */
     bool isSandboxed (int slot) const noexcept;
-    /** Message thread: the plugin's reported latency in samples (with the sandbox's
-        block). The engine doesn't compensate it yet. */
-    int getLatencySamples (int slot) const noexcept;
 
     /** The slot's model (index into model table 4: kFxNone, kFxExt or a device). */
     int getModel (int slot) const noexcept { return params (slot).model.load(); }
@@ -64,6 +66,13 @@ public:
     float getLoad (int slot) const noexcept { return ld::ld_fx_load (engine, slot); }
     /** Number of strip inserts using the slot. */
     int getNumUsers (int slot) const noexcept { return ld::ld_fx_num_users (engine, slot); }
+    /** The latency the slot's plugin reports, in samples (0 without one). */
+    int getLatency (int slot) const noexcept { return ld::ld_fx_latency (engine, slot); }
+
+    /** Message thread: passes every plugin's current latency to the engine (a
+        safety net for plugins that change it without telling their host).
+        Returns true if one changed. */
+    bool updateLatencies();
 
     FxParams& params (int slot) const noexcept { return ld::ld_engine_controls (engine)->fx[juce::jlimit (0, kNumFx - 1, slot)]; }
 

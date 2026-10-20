@@ -154,6 +154,7 @@ const std::optional<Show::Scene> Show::getScene (int index) const
     s.tag = ld::ld_scene_tag (handle, index);
     s.skip = ld::ld_scene_skip (handle, index);
     s.linkNext = ld::ld_scene_link (handle, index);
+    s.midi = takeString (ld::ld_scene_midi (handle, index));
     return s;
 }
 
@@ -170,6 +171,12 @@ void Show::setSceneSkip (int index, bool skip)
 void Show::setSceneLink (int index, bool linkNext)
 {
     ld::ld_scene_set_link (handle, index, linkNext);
+}
+
+void Show::setSceneMidi (int index, const juce::String& text)
+{
+    const Utf8 u (text);
+    ld::ld_scene_set_midi (handle, index, u.data, u.size);
 }
 
 void Show::setSceneName (int index, const juce::String& text)
@@ -223,6 +230,14 @@ void Show::moveScene (int from, int to)
 state::ApplyResult Show::afterRecall (ld::ApplyResultC& r)
 {
     auto result = state::ApplyResult::fromC (r);
+
+    // SEND MIDI of the scenes recalled.
+    if (const auto midi = takeString (ld::ld_show_take_midi (handle)); midi.isNotEmpty() && onSceneMidi)
+    {
+        juce::StringArray lines;
+        lines.addLines (midi);
+        onSceneMidi (lines);
+    }
 
     if (isFading())
         startTimerHz (60);
@@ -582,6 +597,68 @@ bool Show::setPresetScope (const juce::File& file, juce::uint32 scope)
 }
 
 //==============================================================================
+Show::LibraryFileInfo Show::readLibraryFile (const juce::File& file)
+{
+    const Utf8 u (file.getFullPathName());
+    ld::LibraryInfoC c {};
+    LibraryFileInfo info;
+    if (! ld::ld_library_info (u.data, u.size, &c))
+        return info;
+    info.kind = c.kind == 1 ? LibraryFileInfo::Kind::Scene : LibraryFileInfo::Kind::Snippet;
+    info.name = takeString (c.name);
+    info.count = c.count;
+    return info;
+}
+
+juce::Result Show::exportScene (int index, const juce::File& file) const
+{
+    const Utf8 p (file.getFullPathName());
+    ld::LdString* message = nullptr;
+    const bool ok = ld::ld_show_export_library (handle, index, -1, p.data, p.size, &message);
+    return presetResult (ok, message, "Saving the scene");
+}
+
+juce::Result Show::exportSnippet (int sceneIndex, int snippetIndex, const juce::File& file) const
+{
+    if (snippetIndex < 0)
+        return juce::Result::fail ("No such snippet");
+    const Utf8 p (file.getFullPathName());
+    ld::LdString* message = nullptr;
+    const bool ok = ld::ld_show_export_library (handle, sceneIndex, snippetIndex, p.data, p.size, &message);
+    return presetResult (ok, message, "Saving the snippet");
+}
+
+int Show::importScene (const juce::File& file, int index, juce::String& error)
+{
+    if (readLibraryFile (file).kind != LibraryFileInfo::Kind::Scene)
+    {
+        error = "Not a Sidecar scene file";
+        return -1;
+    }
+    const Utf8 p (file.getFullPathName());
+    ld::LdString* message = nullptr;
+    const int result = ld::ld_show_import_library (handle, p.data, p.size, index, &message);
+    error = takeString (message);
+    changed();
+    return result;
+}
+
+int Show::importSnippet (const juce::File& file, int sceneIndex, juce::String& error)
+{
+    if (readLibraryFile (file).kind != LibraryFileInfo::Kind::Snippet)
+    {
+        error = "Not a Sidecar snippet file";
+        return -1;
+    }
+    const Utf8 p (file.getFullPathName());
+    ld::LdString* message = nullptr;
+    const int result = ld::ld_show_import_library (handle, p.data, p.size, sceneIndex, &message);
+    error = takeString (message);
+    changed();
+    return result;
+}
+
+//==============================================================================
 juce::String Show::toXmlString() const
 {
     return takeString (ld::ld_show_to_xml (handle, engine.getHandle()));
@@ -645,6 +722,14 @@ juce::Result Show::importWingShow (ld::LdWing* wing, const juce::File& file, juc
     engine.syncStrips();
     changed();
     return ok ? juce::Result::ok() : juce::Result::fail (report);
+}
+
+juce::uint32 Show::syncWingSurface (ld::LdWing* wing, int ccBank, int& requestedBank)
+{
+    int32_t bank = -1;
+    const auto changes = ld::ld_wing_sync_surface (wing, handle, ccBank, &bank);
+    requestedBank = bank;
+    return changes;
 }
 
 void Show::clear (int numChannels)
