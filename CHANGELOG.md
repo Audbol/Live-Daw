@@ -77,6 +77,9 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Fixed
 
+- ROUTING repainted its whole page ten times a second for the source meters; on a slow
+  machine (or a debug build) with a large display the screen then stopped reacting to
+  clicks. Only the meters that move are repainted now, the rest twice a second.
 - The window reopens fitted to its screen: a size saved on a bigger screen (an external
   monitor since unplugged) left part of the surface off screen.
 - Recorder: RECORD ALL CHANNELS (or any track) failed with "Input ... doesn't exist"

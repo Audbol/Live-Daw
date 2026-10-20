@@ -365,21 +365,35 @@ void RoutingPage::timerCallback()
     if (ctx.engine.getStructureVersion() != layoutVersion)
         layoutTiles();
 
-    // The source meters (the page is their only reader): the group's tiles and the selection.
+    // The source meters (the page is their only reader): the group's tiles and
+    // the selection. Only the meters that move are repainted: a whole page of
+    // tiles ten times a second can keep a slow machine's message thread busy.
     if (mode != Mode::Outputs)
     {
+        auto moved = [] (float a, float b)
+        { return std::abs (juce::Decibels::gainToDecibels (a, -60.0f) - juce::Decibels::gainToDecibels (b, -60.0f)) > 0.5f; };
+        const auto& grid = mode == Mode::Channels ? rightPorts : leftPorts;
         sourcePeaks.resize ((size_t) kPortsPerGroup, 0.0f);
         for (int i = 0; i < kPortsPerGroup; ++i)
         {
             auto* src = ctx.engine.getSource (MixerEngine::sourceIndex (sourceAt (inputGroup, i)));
             const float peak = src != nullptr ? src->peak.exchange (0.0f) : 0.0f;
             auto& shown = sourcePeaks[(size_t) i];
+            const float before = shown;
             shown = juce::jmax (peak, shown * 0.5f);
+            if (moved (before, shown) && juce::isPositiveAndBelow (i, (int) grid.size()))
+                repaint (grid[(size_t) i]);
             if (sourceAt (inputGroup, i) == selectedSource)
+            {
+                if (moved (selectedSourcePeak, shown) && mode == Mode::Sources)
+                    repaint (sourceMeter);
                 selectedSourcePeak = shown;
+            }
         }
     }
-    repaint();
+    // Everything else twice a second (patches, names and keys changed elsewhere).
+    if (++refreshTicks % 5 == 0)
+        repaint();
 }
 
 void RoutingPage::resized()

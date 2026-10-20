@@ -235,6 +235,7 @@ private:
     std::vector<std::pair<juce::Rectangle<int>, int>> sourceTagCells;
     std::vector<float> sourcePeaks; // per tile of the source grid, decaying
     float selectedSourcePeak = 0.0f;
+    int refreshTicks = 0;
     bool draggingGain = false;
 };
 
