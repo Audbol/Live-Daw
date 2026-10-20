@@ -4,7 +4,8 @@
 //! strips' insert points.
 //!
 //! Per audio block:
-//!  1. channels + aux channels read their inputs and run their chains (parallel)
+//!  1. channels + aux channels read their inputs and run their chains (parallel;
+//!     in waves when keys come from other channels: `keytap.rs`)
 //!  2. automix (gain sharing between channels in automix groups X/Y)
 //!  3. buses 9+ sum the input sends feeding them                       (parallel)
 //!  4. buses 1-8 sum input sends and sends from buses 9+               (parallel)
@@ -44,6 +45,7 @@ use crate::analyser::{rta_tap, Analyser, Probes};
 use crate::denormals::ScopedNoDenormals;
 use crate::fx::{FxRack, InsertCallbacks};
 use crate::garbage::Garbage;
+use crate::keytap::{key_sources, key_tap, KeySchedule};
 use crate::monitor::{direct_source, MonitorPathDsp, SoloPatch, BAND_SOLO_MAX_DB};
 use crate::params::*;
 use crate::pdc::{pdc_tap, PdcState, MAX_PDC};
@@ -71,6 +73,8 @@ struct Topology {
     /// Audio thread scratch: the non-idle inputs of the current block (capacity
     /// reserved at publish, so pushing never allocates).
     active_inputs: UnsafeCell<Vec<Arc<Strip>>>,
+    /// Audio thread scratch: stage 1's waves by key dependency (`keytap.rs`).
+    key_schedule: UnsafeCell<KeySchedule>,
     /// Buses that can feed buses 1-8 (slot >= 8).
     upper_buses: Vec<Arc<Strip>>,
     /// Buses 1-8 (slot < 8).
@@ -79,8 +83,9 @@ struct Topology {
     matrices: Vec<Arc<Strip>>,
 }
 
-// SAFETY: `active_inputs` is only touched by the audio thread (between stages,
-// never while tasks run); everything else is immutable after publishing.
+// SAFETY: `active_inputs` and `key_schedule` are only touched by the audio
+// thread (between stages, never while tasks run); everything else is immutable
+// after publishing.
 unsafe impl Sync for Topology {}
 unsafe impl Send for Topology {}
 
@@ -383,6 +388,7 @@ impl Engine {
             channels: st.channels.clone(),
             auxes: st.auxes.clone(),
             active_inputs: UnsafeCell::new(Vec::with_capacity(st.channels.len() + st.auxes.len())),
+            key_schedule: UnsafeCell::new(KeySchedule::new(st.channels.len() + st.auxes.len())),
             upper_buses: upper,
             lower_buses: buses,
             mains: st.mains.clone(),
@@ -716,6 +722,7 @@ impl Engine {
     pub fn collect(&self) {
         self.sync_fx_devices();
         self.update_pdc();
+        self.update_keys();
         self.garbage.collect();
     }
 
@@ -773,6 +780,27 @@ impl Engine {
         let total = st.all().map(|s| s.pdc.latency(pdc_tap::OUT)).max().unwrap_or(0);
         self.pdc.total.store(total, Relaxed);
         self.pdc.limited.store(limited, Relaxed);
+    }
+
+    /// Message thread: gives every input channel a buffer for each tap point
+    /// some GATE or DYNAMICS key takes from it (KEY SOURCE + KEY TAP, whether
+    /// the slot is on or not), and retires the others (`keytap.rs`). Called
+    /// by `collect`.
+    pub fn update_keys(&self) {
+        let st = self.lock();
+        let mut masks = vec![0u32; st.channels.len()];
+        for s in st.all() {
+            let p = &s.params;
+            let sources = key_sources(p, s.kind() == StripKind::Channel);
+            for (slot, src) in [&p.gate, &p.dynamics].into_iter().zip(sources) {
+                if let Some(m) = usize::try_from(src).ok().and_then(|i| masks.get_mut(i)) {
+                    *m |= 1 << key_tap(slot);
+                }
+            }
+        }
+        for (ch, mask) in st.channels.iter().zip(masks) {
+            ch.keys.plan(mask, st.device.block_size, &self.garbage);
+        }
     }
 
     /// Message thread: selects the device of FX slot `i` (an index into
@@ -867,6 +895,7 @@ impl Engine {
             f.prepare(block_size);
         }
         drop(st);
+        self.update_keys();
         self.recorder.prepare(sample_rate, block_size);
         self.usb.prepare(sample_rate, block_size);
         self.analysis.prepare(sample_rate);
@@ -1000,15 +1029,25 @@ impl Engine {
         // The analysed and listened strips of this chunk (analyser.rs).
         let probes = self.analysis.begin_block(topo.all());
         let probes = &probes;
-        let ctx_of = |hw| self.context(topo, hw, playback.get(), alt, &groups, block, probes);
-        let ctx_of = &ctx_of;
 
-        // 1. Channels and aux channels (parallel)
+        // 1. Channels and aux channels (parallel), in waves: a strip keyed
+        // from another channel runs after it (keytap.rs).
         let num_ch = topo.channels.len();
-        self.pool.parallel_for(num_ch + topo.auxes.len(), &|i| {
-            let s = if i < num_ch { &topo.channels[i] } else { &topo.auxes[i - num_ch] };
-            s.process(&ctx_of(hw.get()), n);
+        let stage1 = |i: usize| if i < num_ch { &topo.channels[i] } else { &topo.auxes[i - num_ch] };
+        (*topo.key_schedule.get()).compute(num_ch, |i| {
+            let s = stage1(i);
+            key_sources(&s.params, s.kind() == StripKind::Channel)
         });
+        let schedule = &*topo.key_schedule.get();
+        let ctx_of = |hw, wave| self.context(topo, hw, playback.get(), alt, &groups, block, probes, schedule.waves(), wave);
+        let ctx_of = &ctx_of;
+        for w in 0..schedule.num_waves() {
+            let strips = schedule.wave(w);
+            let strips = &strips;
+            self.pool.parallel_for(strips.len(), &|j| {
+                stage1(strips.get(j)).process(&ctx_of(hw.get(), Some(w as u8)), n);
+            });
+        }
 
         // Only inputs with signal feed the buses (unused channels cost nothing below).
         {
@@ -1034,14 +1073,14 @@ impl Engine {
             let bus = &topo.upper_buses[i];
             sum_bus(bus, topo.active().iter(), n);
             add_talk(bus, talk.bus(bus.id() as usize), ramps.get(StripKind::Bus, bus.id() as usize), talk, n);
-            bus.process(&ctx_of(hw.get()), n);
+            bus.process(&ctx_of(hw.get(), None), n);
             bus.write_pdc(n);
         });
         self.pool.parallel_for(topo.lower_buses.len(), &|i| {
             let bus = &topo.lower_buses[i];
             sum_bus(bus, topo.active().iter().chain(&topo.upper_buses), n);
             add_talk(bus, talk.bus(bus.id() as usize), ramps.get(StripKind::Bus, bus.id() as usize), talk, n);
-            bus.process(&ctx_of(hw.get()), n);
+            bus.process(&ctx_of(hw.get(), None), n);
             bus.write_pdc(n);
         });
 
@@ -1050,7 +1089,7 @@ impl Engine {
             let main = &topo.mains[i];
             sum_main(main, i, topo.active().iter().chain(topo.buses()), n);
             add_talk(main, talk.main(i), ramps.get(StripKind::Main, i), talk, n);
-            main.process(&ctx_of(hw.get()), n);
+            main.process(&ctx_of(hw.get(), None), n);
             main.write_pdc(n);
         });
 
@@ -1059,7 +1098,7 @@ impl Engine {
             let mtx = &topo.matrices[i];
             sum_matrix(mtx, i, topo, n);
             add_talk(mtx, talk.matrix(i), ramps.get(StripKind::Matrix, i), talk, n);
-            mtx.process(&ctx_of(hw.get()), n);
+            mtx.process(&ctx_of(hw.get(), None), n);
             mtx.write_pdc(n);
         });
 
@@ -1085,6 +1124,8 @@ impl Engine {
         g: &GroupState<'a>,
         block: u64,
         probes: &'a Probes,
+        key_waves: &'a [u8],
+        wave: Option<u8>,
     ) -> ProcessContext<'a> {
         ProcessContext {
             fx: &self.fx,
@@ -1099,6 +1140,8 @@ impl Engine {
             input_select_global,
             global_alt,
             channels: &topo.channels,
+            key_waves,
+            wave,
             block,
             probes,
             source_solo: g.source_solo,
@@ -1157,18 +1200,7 @@ impl Engine {
     /// automix (or in a disabled group) glide back to unity.
     unsafe fn automix(&self, topo: &Topology, n: usize) {
         let enabled = [self.controls.automix_enable[0].load(Relaxed), self.controls.automix_enable[1].load(Relaxed)];
-        let group_of = |s: &Strip| -> Option<usize> {
-            if !s.has_automix() {
-                return None;
-            }
-            let ins = &s.params.post_insert;
-            let group = match ins.mode.load(Relaxed) {
-                1 if ins.on.load(Relaxed) => 0,
-                2 if ins.on.load(Relaxed) => 1,
-                _ => return None,
-            };
-            enabled[group].then_some(group)
-        };
+        let group_of = |s: &Strip| s.automix_group().filter(|&g| enabled[g]);
         let mut totals = [0.0f32; 2];
         for s in topo.active() {
             if let Some(g) = group_of(s) {

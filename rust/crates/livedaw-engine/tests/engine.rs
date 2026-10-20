@@ -342,6 +342,25 @@ fn automix_shares_gain() {
     rig.run(50);
     // Two equal talkers: each gets half the power (-3 dB), the sum stays at one talker's level.
     assert!(close(rig.out(0), 0.5 * CENTRE * 2.0 * CENTRE, 1e-3), "{}", rig.out(0));
+    assert_eq!(rig.ch(0).automix_group(), Some(0));
+
+    // AUTO_X with INS 2 off is not a member: it isn't shared and takes no
+    // share from the others (channel 1 alone in the group keeps unity).
+    rig.ch(1).params.post_insert.on.store(false, Relaxed);
+    assert_eq!(rig.ch(1).automix_group(), None);
+    rig.run(200);
+    assert!(close(rig.ch(0).meters.automix_db.load(), 0.0, 0.05), "{}", rig.ch(0).meters.automix_db.load());
+    assert!(close(rig.ch(1).meters.automix_db.load(), 0.0, 0.05), "{}", rig.ch(1).meters.automix_db.load());
+    assert!(close(rig.out(0), 2.0 * 0.5 * CENTRE, 1e-3), "{}", rig.out(0));
+    // ON again: it joins.
+    rig.ch(1).params.post_insert.on.store(true, Relaxed);
+    rig.ch(1).params.post_insert.mode.store(2, Relaxed); // AUTO_Y: its own group
+    assert_eq!(rig.ch(1).automix_group(), Some(1));
+    rig.run(50);
+    assert!(close(rig.out(0), 2.0 * 0.5 * CENTRE, 1e-3), "{}", rig.out(0));
+    rig.ch(1).params.post_insert.mode.store(1, Relaxed);
+    rig.run(50);
+    assert!(close(rig.out(0), 0.5 * CENTRE * 2.0 * CENTRE, 1e-3), "{}", rig.out(0));
 }
 
 // ---- FX slots through the C ABI --------------------------------------------
@@ -526,6 +545,11 @@ fn stress_structural_changes_while_audio_runs() {
                     p.gate.on.store(rand(2) == 0, Relaxed);
                     p.dynamics.set_model(rand(DYN_MODELS.len() as u32) as usize);
                     p.dynamics.on.store(true, Relaxed);
+                    // Keys from other channels (cycles and itself included) at any tap.
+                    for slot in [&p.gate, &p.dynamics] {
+                        slot.sc_source.store(rand(66) as i32 - 1, Relaxed);
+                        slot.sc_tap.store(rand(8) as i32, Relaxed);
+                    }
                     p.eq.set_model(rand(7) as usize, false);
                     p.process_order.store(rand(24) as i32, Relaxed);
                     if let Some(send) = s.sends.get_or_create(rand(24) as usize) {

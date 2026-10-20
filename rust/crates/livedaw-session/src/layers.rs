@@ -193,7 +193,7 @@ pub fn spill_faders(engine: &Engine, kind: &SpillKind) -> Vec<FaderRef> {
         SpillKind::Automix(group) => engine
             .strips(StripKind::Channel)
             .iter()
-            .filter(|s| s.params.post_insert.mode.load(Ordering::Relaxed) == group + 1)
+            .filter(|s| s.automix_group() == usize::try_from(group).ok())
             .map(|s| FaderRef::Strip(StripRef::of(s)))
             .collect(),
         SpillKind::Bus(slot) => {

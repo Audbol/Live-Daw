@@ -19,12 +19,14 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
     (TILT, MAX, AP1, AP2).
   - **GATE slot and DYNAMICS slot:** each holds any of the WING's **32 dynamics models**
     (gate, ducker, Even 88, Soul 9000, 160 VCA, LA leveler, 1176-style, Fair Kid,
-    Bus comp, NSTR, limiters, de-esser...), with sidechain filter and source,
-    and a crossover band on the dynamics slot.
+    Bus comp, NSTR, limiters, de-esser...), with sidechain filter and source
+    (KEY SOURCE: the strip itself or any input channel, taken at the KEY TAP: IN,
+    FILT, 3, 4, 5, PFL, AFL or POST), and a crossover band on the dynamics slot.
   - **EQ:** the 6-band WING EQ (8 bands on buses) or the analog models (SOUL, E88,
     E84, F110, PULSAR, MACH4, PIA on buses), with blend/mix.
   - **PRE INSERT and POST INSERT** use the 16 FX slots; the post insert can also join
-    automix group X or Y (gain sharing).
+    automix group X or Y (gain sharing; a channel is a member while its INS 2 is set
+    to AUTO X / AUTO Y and ON, and its group's X / Y ENABLE is on).
   - Gate, EQ, dynamics and the pre insert run in any of the **24 process orders**, and
     bus sends tap at IN, FILT, 3, 4, 5, PFL, AFL or POST.
   - Fader, DCAs, mute groups, width and pan; sends to the 16 buses (PRE, POST or GRP

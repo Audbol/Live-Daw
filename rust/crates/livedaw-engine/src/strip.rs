@@ -17,6 +17,7 @@
 
 use crate::analyser::{listen_mode, rta_tap, Probes, StripProbe};
 use crate::fx::FxRack;
+use crate::keytap::{key_tap, StripKeyTaps};
 use crate::monitor::SoloPatch;
 use crate::params::{DcaParams, DynSlotParams, FxParams, StripKind, StripMeters, StripParams, NUM_MAINS, NUM_MATRICES};
 use crate::pdc::{pdc_tap, StripPdc};
@@ -67,6 +68,11 @@ pub(crate) struct ProcessContext<'a> {
     pub global_alt: bool,
     /// The input channels (for sidechain keys from other channels).
     pub channels: &'a [Arc<Strip>],
+    /// KEY TAP (`keytap.rs`): the stage-1 wave of each input channel this
+    /// block, and the wave this task runs in (None: a later stage, after
+    /// every channel ran).
+    pub key_waves: &'a [u8],
+    pub wave: Option<u8>,
     pub block: u64,
     /// The analysed and the listened strip of this block.
     pub probes: &'a Probes,
@@ -79,6 +85,15 @@ impl ProcessContext<'_> {
     /// The buffer of input source `index` (a hardware input or a playback channel).
     fn source(&self, index: i32) -> Option<*const f32> {
         source_ptr(self.hw_inputs, self.playback, index)
+    }
+
+    /// A key from input channel `ch` can take its tap of this block: the
+    /// channel ran in an earlier wave or stage (else: the previous block's).
+    fn key_is_current(&self, ch: usize) -> bool {
+        match self.wave {
+            None => true,
+            Some(w) => self.key_waves.get(ch).is_some_and(|&c| c < w),
+        }
     }
 }
 
@@ -216,6 +231,8 @@ pub struct Strip {
     pub console: StripConsole,
     /// Plugin delay compensation: tap latencies and history rings (`pdc.rs`).
     pub pdc: StripPdc,
+    /// Input channels: the taps other strips' keys read (`keytap.rs`).
+    pub keys: StripKeyTaps,
     dsp: UnsafeCell<StripDsp>,
     last_main: [UnsafeCell<[f32; 2]>; NUM_MAINS],
     last_mtx: [UnsafeCell<[f32; 2]>; NUM_MATRICES],
@@ -238,6 +255,7 @@ impl Strip {
             tags: Mutex::new(String::new()),
             console: StripConsole::default(),
             pdc: StripPdc::default(),
+            keys: StripKeyTaps::default(),
             dsp: UnsafeCell::new(StripDsp::new()),
             last_main: Default::default(),
             last_mtx: Default::default(),
@@ -279,6 +297,24 @@ impl Strip {
     /// The strip can join automix X/Y (the INS 2 of input channels only).
     pub fn has_automix(&self) -> bool {
         self.kind == StripKind::Channel
+    }
+
+    /// The automix group the strip is a member of (0 = X, 1 = Y): an input
+    /// channel whose INS 2 is AUTO X / AUTO Y *and* ON. As on the console,
+    /// INS 2's ON key switches automix in and out like an FX insert, so a
+    /// channel set to AUTO with INS 2 off is not a member (not gain-shared,
+    /// not listed on the automix screen, not spilled). The group's ENABLE is
+    /// separate (`EngineControls::automix_enable`).
+    pub fn automix_group(&self) -> Option<usize> {
+        let ins = &self.params.post_insert;
+        if !self.has_automix() || !ins.on.load(Relaxed) {
+            return None;
+        }
+        match ins.mode.load(Relaxed) {
+            1 => Some(0),
+            2 => Some(1),
+            _ => None,
+        }
     }
 
     /// The TAP point can be chosen (input channels; the others are fixed after INS 1).
@@ -369,6 +405,7 @@ impl Strip {
     /// strip not yet published).
     pub(crate) unsafe fn prepare(&self, sample_rate: f64, max_block: usize) {
         self.pdc.drop_rings(); // sized for the old block size; the next plan rebuilds them
+        self.keys.drop_all();
         let d = &mut *self.dsp.get();
         d.sample_rate = sample_rate;
         d.max_block = max_block.max(1);
@@ -548,6 +585,7 @@ impl Strip {
                 self.meters.gate_active.store(false, Relaxed);
                 self.meters.dyn_active.store(false, Relaxed);
                 d.idle = true;
+                self.keys.clear(ctx.block, n);
                 // An analysed idle strip is silent (its buffers are zero).
                 let probe = ctx.probes.of(self);
                 if probe.rta.is_some() {
@@ -579,10 +617,20 @@ impl Strip {
                 buffers.iter_mut().for_each(|b| b[..n].fill(0.0));
             }
             d.reset_dsp();
+            self.keys.clear(ctx.block, n);
             self.meters.dsp_faults.fetch_add(1, Relaxed);
         }
 
         self.run_output_stage(d, n);
+    }
+
+    /// Tap point `point`: the TAP-mode copy (if it is the strip's TAP point)
+    /// and the key tap other strips' keys read (if any).
+    unsafe fn tap_at(&self, d: &mut StripDsp, ctx: &ProcessContext, point: usize, n: usize) {
+        // POST, after INS 2: with the automix gain of the last block (automix runs after stage 1).
+        let gain = if point == tap::POST { d.automix_gain } else { 1.0 };
+        self.keys.write(point, ctx.block, [&d.work[0][..n], &d.work[1][..n]], d.num_channels, gain);
+        Self::copy_tap(d, point, n);
     }
 
     fn copy_tap(d: &mut StripDsp, point: usize, n: usize) {
@@ -641,7 +689,7 @@ impl Strip {
         if kind == StripKind::Aux {
             self.apply_delay(d, n);
         }
-        Self::copy_tap(d, tap::IN, n);
+        self.tap_at(d, ctx, tap::IN, n);
         Self::probe_rta(d, ctx, &probe, rta_tap::PRE_FILTER, n);
 
         // FILTER (input channels only)
@@ -653,7 +701,7 @@ impl Strip {
                 d.filter.process(&mut chans[..nc], &settings);
             }
         }
-        Self::copy_tap(d, tap::FILT, n);
+        self.tap_at(d, ctx, tap::FILT, n);
         Self::probe_rta(d, ctx, &probe, rta_tap::POST_FILTER, n);
 
         for (pos, block) in self.pre_fader_order().iter().enumerate() {
@@ -681,7 +729,7 @@ impl Strip {
             }
             // Tap points "3", "4", "5" sit after the 1st, 2nd and 3rd block.
             if pos < 3 {
-                Self::copy_tap(d, 2 + pos, n);
+                self.tap_at(d, ctx, 2 + pos, n);
             }
         }
 
@@ -691,7 +739,7 @@ impl Strip {
             d.pfl[ch][..n].copy_from_slice(&d.work[ch][..n]);
             self.meters.pfl_peak[ch].fetch_max(peak_level(&d.pfl[ch][..n]));
         }
-        Self::copy_tap(d, tap::PFL, n);
+        self.tap_at(d, ctx, tap::PFL, n);
 
         // Fader with DCAs, mute and mute groups (and Main 1's level on linked mains);
         // the console decides over that mute (SIP, OVERRIDE, TALK ON: solo.rs).
@@ -706,7 +754,7 @@ impl Strip {
             apply_gain_ramp(&mut d.work[ch][..n], d.last_gain, gain);
         }
         d.last_gain = gain;
-        Self::copy_tap(d, tap::AFL, n);
+        self.tap_at(d, ctx, tap::AFL, n);
         Self::probe_rta(d, ctx, &probe, rta_tap::POST_FADER, n);
 
         // Buses, mains and matrices: the EQ is post-fader.
@@ -719,7 +767,7 @@ impl Strip {
         if self.post_insert_fx().is_some() {
             self.run_insert(d, ctx, n, true);
         }
-        if self.has_automix() && p.post_insert.on.load(Relaxed) && p.post_insert.mode.load(Relaxed) != 0 {
+        if self.automix_group().is_some() {
             let power: f32 = (0..nc).map(|ch| d.work[ch][..n].iter().map(|x| x * x).sum::<f32>()).sum::<f32>() / (n * nc) as f32;
             let c = 0.7;
             d.automix_power = c * d.automix_power + (1.0 - c) * power * db_to_gain(p.post_insert.weight.load() * 2.0);
@@ -732,7 +780,7 @@ impl Strip {
         for ch in 0..nc {
             d.post[ch][..n].copy_from_slice(&d.work[ch][..n]);
         }
-        Self::copy_tap(d, tap::POST, n);
+        self.tap_at(d, ctx, tap::POST, n);
 
         // TAP EQ and TAP WIDTH on what TAP-mode sends take.
         if kind == StripKind::Channel {
@@ -778,7 +826,7 @@ impl Strip {
     /// itself) through the key filter.
     unsafe fn listen_key(&self, d: &mut StripDsp, ctx: &ProcessContext, slot: &DynSlotParams, n: usize) -> bool {
         let c = slot.sidechain().coefficients(d.sample_rate);
-        let external = self.key_for(d, ctx, slot.sc_source.load(Relaxed), n);
+        let external = self.key_for(d, ctx, slot, n);
         Self::listen_filtered(d, c, external.then_some(()), n)
     }
 
@@ -827,12 +875,15 @@ impl Strip {
         d.delay.process(&mut chans[..nc], samples);
     }
 
-    /// Key signal for a dynamics slot: another channel's input, or None (self).
-    unsafe fn key_for(&self, d: &mut StripDsp, ctx: &ProcessContext, source: i32, n: usize) -> bool {
-        if source < 0 {
-            return false;
+    /// Key signal for a dynamics slot into `d.key`: another channel's signal
+    /// at the slot's KEY TAP (`keytap.rs`), or false (the strip keys itself).
+    unsafe fn key_for(&self, d: &mut StripDsp, ctx: &ProcessContext, slot: &DynSlotParams, n: usize) -> bool {
+        let Ok(source) = usize::try_from(slot.sc_source.load(Relaxed)) else { return false };
+        let Some(ch) = ctx.channels.get(source) else { return false };
+        if ch.keys.read(key_tap(slot), ctx.block, ctx.key_is_current(source), &mut d.key[..n]) {
+            return true;
         }
-        let Some(ch) = ctx.channels.get(source as usize) else { return false };
+        // The tap's buffer isn't planned yet (`Engine::update_keys`): the channel's input.
         let ptr = ctx.source(ch.active_inputs(ctx.input_select_global, ctx.global_alt).0);
         match ptr {
             Some(src) => d.key[..n].copy_from_slice(std::slice::from_raw_parts(src, n)),
@@ -872,7 +923,7 @@ impl Strip {
         } else {
             slot.values_snapshot(&mut d.dyn_values);
         }
-        let external = self.key_for(d, ctx, slot.sc_source.load(Relaxed), n);
+        let external = self.key_for(d, ctx, slot, n);
         let nc = d.num_channels;
         let [w0, w1] = &mut d.work;
         let mut chans: [&mut [f32]; 2] = [&mut w0[..n], &mut w1[..n]];

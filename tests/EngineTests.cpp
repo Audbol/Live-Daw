@@ -349,6 +349,23 @@ public:
             expect (! bus.hasSelectableTap() && bus.hasPostInsert() && bus.hasPostFaderEq() && ! ch.hasPostFaderEq());
             expect (aux.canIgnoreMuteOnSends() && ! bus.canIgnoreMuteOnSends());
 
+            // Automix membership: AUTO X / AUTO Y with INS 2 ON, input channels only.
+            expectEquals (ch.automixGroup(), -1);
+            ch.params.postInsert.mode = (int) PostInsertMode::AutomixY;
+            expectEquals (ch.automixGroup(), -1, "INS 2 off: not a member");
+            ch.params.postInsert.on = true;
+            expectEquals (ch.automixGroup(), 1);
+            ch.params.postInsert.mode = (int) PostInsertMode::AutomixX;
+            expectEquals (ch.automixGroup(), 0);
+            bus.params.postInsert.mode = (int) PostInsertMode::AutomixX;
+            bus.params.postInsert.on = true;
+            expectEquals (bus.automixGroup(), -1);
+            for (auto* s : { &ch, &bus })
+            {
+                s->params.postInsert.on = false;
+                s->params.postInsert.mode = 0;
+            }
+
             rig.setInput (0, 0.25f);
             ch.params.input.trimDb = 6.0206f;
             ch.params.faderDb = -100.0f;

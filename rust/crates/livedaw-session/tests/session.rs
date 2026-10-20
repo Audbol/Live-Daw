@@ -615,6 +615,28 @@ fn wing_settings_survive_a_show_round_trip() {
 }
 
 #[test]
+fn key_source_and_tap_survive_a_show_round_trip() {
+    let engine = Engine::new(0);
+    engine.set_num_channels(3);
+    let a = ch(&engine, 0);
+    a.params.gate.sc_source.store(2, Relaxed);
+    a.params.gate.sc_tap.store(7, Relaxed); // POST
+    a.params.dynamics.sc_source.store(1, Relaxed);
+    a.params.dynamics.sc_tap.store(5, Relaxed); // PFL
+    let bus = engine.bus_in_slot(0).unwrap();
+    bus.params.dynamics.sc_source.store(0, Relaxed);
+    bus.params.dynamics.sc_tap.store(6, Relaxed); // AFL
+
+    let (e2, _) = round_trip(&engine, &Show::new());
+    let b = ch(&e2, 0);
+    assert_eq!((b.params.gate.sc_source.load(Relaxed), b.params.gate.sc_tap.load(Relaxed)), (2, 7));
+    assert_eq!((b.params.dynamics.sc_source.load(Relaxed), b.params.dynamics.sc_tap.load(Relaxed)), (1, 5));
+    let d = &e2.bus_in_slot(0).unwrap().params.dynamics;
+    assert_eq!((d.sc_source.load(Relaxed), d.sc_tap.load(Relaxed)), (0, 6));
+    assert_eq!(ch(&e2, 1).params.gate.sc_tap.load(Relaxed), 0, "untouched: IN");
+}
+
+#[test]
 fn matrix_pan_link_and_dca_icons_survive_a_show_round_trip() {
     let engine = Engine::new(0);
     engine.set_num_channels(1);
@@ -1163,8 +1185,10 @@ fn spill_layers_follow_the_console() {
     assert_eq!(spill_faders(&engine, &SpillKind::Dca(2)), vec![strip(&a), strip(&c), strip(&bus)]);
     assert!(spill_faders(&engine, &SpillKind::Dca(99)).is_empty());
 
-    // Automix spill: the channels in group Y.
+    // Automix spill: the channels in group Y (members only: INS 2 ON).
     b.params.post_insert.mode.store(2, Relaxed);
+    c.params.post_insert.mode.store(2, Relaxed);
+    b.params.post_insert.on.store(true, Relaxed);
     assert_eq!(spill_faders(&engine, &SpillKind::Automix(1)), vec![strip(&b)]);
 
     // Bus spill: the send levels of the sources sending to the bus.
