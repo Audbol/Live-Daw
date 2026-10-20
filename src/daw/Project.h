@@ -279,6 +279,19 @@ public:
         fades out and the later one fades in across the overlap. */
     void crossfadeOverlaps (int64 trackId);
 
+    /** A crossfade: `first` fades out and `second` fades in over `length`
+        samples where they overlap. */
+    struct Crossfade
+    {
+        int64 first = 0, second = 0, length = 0;
+    };
+    /** The crossfades on a track (overlaps the fades exactly span). */
+    std::vector<Crossfade> getCrossfades (int64 trackId) const;
+    /** Takes back the fades of crossfades whose clips no longer overlap (one
+        moved away, to another track or was removed): a fade still as long as
+        the crossfade goes back to none. */
+    void releaseCrossfades (const std::vector<Crossfade>&);
+
     //==============================================================================
     // Markers
 

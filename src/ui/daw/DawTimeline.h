@@ -126,6 +126,8 @@ private:
     juce::Point<int> downPos;
     bool dragging = false, copying = false, toggleOff = false;
     std::vector<Moving> moving;
+    /** The crossfades on the tracks a move or trim started on. */
+    std::vector<daw::Project::Crossfade> crossfadesBefore;
     daw::ClipData downClip;
     float downGainDb = 0.0f;
     daw::int64 lastDelta = 0;

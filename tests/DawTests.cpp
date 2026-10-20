@@ -248,6 +248,24 @@ private:
             expectEquals (p.getClip (x)->fadeOut, (int64) 2000);
             expectEquals (p.getClip (y)->fadeIn, (int64) 2000);
 
+            // Pulled apart, the crossfade's fades go; a fade changed since stays.
+            {
+                const auto crossfades = p.getCrossfades (a);
+                expectEquals ((int) crossfades.size(), 1);
+                expect (crossfades[0].first == x && crossfades[0].second == y && crossfades[0].length == 2000);
+                p.setClip (clipmath::moveTo (*p.getClip (y), 9000)); // still overlapping: kept
+                p.releaseCrossfades (crossfades);
+                expectEquals (p.getClip (y)->fadeIn, (int64) 2000);
+                p.setClip (clipmath::moveTo (*p.getClip (y), 20000));
+                p.setClipProperty (x, ids::fadeOut, (int64) 500);
+                p.releaseCrossfades (crossfades);
+                expectEquals (p.getClip (x)->fadeOut, (int64) 500);
+                expectEquals (p.getClip (y)->fadeIn, (int64) 0);
+                p.setClipProperty (x, ids::fadeOut, (int64) 0);
+                p.setClip (clipmath::moveTo (*p.getClip (y), 8000));
+                p.crossfadeOverlaps (a);
+            }
+
             // Clearing a range trims and splits.
             p.clearRange (a, 4000, 12000);
             const auto clips = p.getClips (a);

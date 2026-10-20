@@ -740,6 +740,34 @@ void Project::crossfadeOverlaps (int64 trackId)
         }
 }
 
+std::vector<Project::Crossfade> Project::getCrossfades (int64 trackId) const
+{
+    std::vector<Crossfade> list;
+    const auto clips = getClips (trackId);
+    for (auto& a : clips)
+        for (auto& b : clips)
+        {
+            const int64 overlap = a.end() - b.start;
+            if (a.id != b.id && a.start < b.start && overlap > 0 && b.end() > a.end() && a.fadeOut == overlap && b.fadeIn == overlap)
+                list.push_back ({ a.id, b.id, overlap });
+        }
+    return list;
+}
+
+void Project::releaseCrossfades (const std::vector<Crossfade>& crossfades)
+{
+    for (auto& x : crossfades)
+    {
+        const auto a = getClip (x.first), b = getClip (x.second);
+        if (a && b && trackOfClip (a->id) == trackOfClip (b->id) && b->start < a->end() && a->start < b->end())
+            continue; // still overlapping: crossfadeOverlaps() fits the fades
+        if (a && a->fadeOut == x.length)
+            setClipProperty (a->id, ids::fadeOut, (int64) 0);
+        if (b && b->fadeIn == x.length)
+            setClipProperty (b->id, ids::fadeIn, (int64) 0);
+    }
+}
+
 //==============================================================================
 std::vector<MarkerData> Project::getMarkers() const
 {

@@ -114,6 +114,11 @@ All notable changes to Sidecar are listed here. Versions follow
 - SETUP > GENERAL > CONSOLE NAME only took effect after a restart: the running WING
   remote kept announcing the old name, and the MIDI identity (SysEx) kept it in both
   places it can be edited.
+- Multitrack editor: an automatic crossfade stayed on both clips after they were
+  moved apart (or one was deleted), so each faded out or in over nothing. Moves,
+  nudges, trims, deletes and cuts now take back the fades of crossfades whose
+  clips no longer overlap; nudges and trims also crossfade new overlaps, as moves
+  did.
 
 ## [0.1.0] - beta
 
