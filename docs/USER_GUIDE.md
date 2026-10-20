@@ -153,9 +153,11 @@ Barlow Condensed.
     USB (a folder of your choice) and SHOW (the show's scenes and snippets: tags, SKIP,
     LINK, REMOVE, RENAME, UP / DOWN), with FOLDER, RENAME, DELETE and sorting. Tabs:
     SHOW (open and save shows, also from the list), SNAP (SAVE, UPDATE, PARTIAL UPDATE,
-    LOAD, PARTIAL LOAD with NO GLOB, RESTORE, EDIT SCOPE), SNIP (REC / STOP with the
-    counter of changed parameters, SAVE, UPDATE, PARTIAL LOAD, REC FOCUS, ADD / REMOVE
-    ITEMS, CLEAR ALL), FX and CHAN presets (CLIP is drawn disabled), GO PREV / GO NEXT /
+    LOAD, PARTIAL LOAD with NO GLOB, RESTORE, EDIT SCOPE, IMPORT / EXPORT scene files),
+    SNIP (REC / STOP with the counter of changed parameters, SAVE, UPDATE, PARTIAL LOAD,
+    REC FOCUS, ADD / REMOVE ITEMS, CLEAR ALL, IMPORT / EXPORT snippet files), CLIP (the
+    clip player, see [Scene and snippet files, clips](#scene-and-snippet-files-clips)),
+    FX and CHAN presets, GO PREV / GO NEXT /
     PREV / NEXT / GO, the SCOPE window (strips, DCAs, mute groups, FX slots, the console
     settings and contents) and the GLOBAL safes in the status bar.
   - **VIEW screens** (a fader section's VIEW key): OVERVIEW (every strip's blocks;
@@ -308,6 +310,32 @@ the USB key on the screen to choose another folder).
   channels, aux and group buses become buses, the master becomes Main 1, the gate,
   4-band EQ and compressor become the GATE, WING EQ and COMP models, and each strip's
   plugins move to FX slots on its inserts.
+
+### Scene and snippet files, clips
+
+On the WING, LIBRARY saves single scenes and snippets to a USB stick and loads them
+into another show. In Sidecar the "stick" is the INT folder (`Documents/Sidecar/Library`)
+or the USB folder of the file list.
+
+- **EXPORT** on the SNAP tab saves the selected scene, with its snippets, as a scene
+  file (`.lsnap`) in the folder shown at INT / USB (at SHOW: the INT folder); on the
+  SNIP tab it saves the selected snippet as a snippet file (`.lsnip`). You are asked
+  for the file name.
+- **IMPORT** on the SNAP tab adds the scene file selected at INT / USB (or chosen in a
+  file dialog) after the selected scene; on the SNIP tab it adds the snippet file to
+  the selected scene. Double-clicking a file in the list imports it too. Importing
+  never changes the console: load the scene or snippet when you want it.
+- The files are Sidecar's own XML, like show files and presets. They are not the WING's
+  `.snap` / `.snip` files; a WING snapshot is imported with IMPORT WING on the SHOW tab.
+  A scene refers to strips by number, so strips the console doesn't have are skipped
+  when it is recalled.
+- **CLIP** plays an audio clip (WAV, FLAC, AIFF or MP3) selected in the file list at
+  INT / USB: PLAY (or double-click the clip), PAUSE (pause / go on) and STOP, with the
+  player's meter, time, time left and format chips. The clip plays on the USB player,
+  so it comes in on the **USB PLAYER** sources: patch PLAYER 1-4 to channels on
+  ROUTING to hear it. The USB RECORDER / PLAYER screen shows and controls the same
+  playback (its browser moves to the clip's folder). If a playlist with unsaved
+  changes is open, you are asked before the clip replaces it.
 
 ## MIDI and DAW remote control
 

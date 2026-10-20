@@ -1,7 +1,13 @@
 #include "ui/Pages.h"
 #include "engine/AppPaths.h"
+#include "engine/AudioFileFormat.h"
+#include "engine/UsbRecorder.h"
 #include "ui/ScopeWindow.h"
 #include "engine/Models.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
 
 namespace livedaw::ui
 {
@@ -267,7 +273,13 @@ public:
         loadKey = makeKey (keys, *this, "LOAD", Icon::LoadTray);
         partialLoad = makeKey (keys, *this, "PARTIAL\nLOAD", Icon::LoadTray);
         restore = makeKey (keys, *this, "RESTORE", Icon::Reset);
-        rows = { { {}, { save, saveScope }, {} }, { {}, { update, partialUpdate }, { editScope } }, { {}, { loadKey, partialLoad }, { restore } } };
+        importKey = makeKey (keys, *this, "IMPORT", Icon::LoadTray);
+        exportKey = makeKey (keys, *this, "EXPORT", Icon::SaveTray);
+        rows = { { {}, { save, saveScope }, {} }, { {}, { update, partialUpdate }, { editScope } }, { {}, { loadKey, partialLoad }, { restore } },
+                 { {}, { importKey, exportKey }, {} } };
+        // IMPORT / EXPORT: scene files in the folder at INT / USB (the console's USB stick).
+        importKey->onClick = [this] { page.importSelected (false); };
+        exportKey->onClick = [this] { page.exportSelected (false); };
 
         save->onClick = [this] { addScene (false); };
         saveScope->onClick = [this] { addScene (true); };
@@ -361,7 +373,7 @@ public:
     void refresh()
     {
         const auto scene = page.ctx.show.getScene (page.selectedScene());
-        for (auto* k : { update, partialUpdate, editScope, loadKey, partialLoad, restore })
+        for (auto* k : { update, partialUpdate, editScope, loadKey, partialLoad, restore, exportKey })
             enableKey (*k, scene.has_value());
         fade.setEnabled (scene.has_value());
         notes.setEnabled (scene.has_value());
@@ -385,7 +397,7 @@ public:
     void resized() override
     {
         auto b = getLocalBounds();
-        const int rowH = juce::jlimit (36, screenCap (56), getHeight() / 6);
+        const int rowH = juce::jlimit (32, screenCap (56), getHeight() / 7);
         layoutKeyRows (b, rows, rowH, 4);
         extras = b.withTop (rows.back().band.getBottom() + 8);
         auto e = darkPanelBody (extras, true).reduced (8, 4);
@@ -422,7 +434,7 @@ private:
 
     LibraryPage& page;
     juce::OwnedArray<WingKey> keys;
-    WingKey *save, *saveScope, *update, *partialUpdate, *editScope, *loadKey, *partialLoad, *restore;
+    WingKey *save, *saveScope, *update, *partialUpdate, *editScope, *loadKey, *partialLoad, *restore, *importKey, *exportKey;
     std::vector<KeyRow> rows;
     juce::Slider fade;
     juce::TextEditor notes;
@@ -449,12 +461,17 @@ public:
         addItems = makeKey (keys, *this, "ADD\nITEMS", Icon::Plus);
         removeItems = makeKey (keys, *this, "REMOVE\nITEMS", Icon::MinusCircle);
         clearAll = makeKey (keys, *this, "CLEAR\nALL", Icon::Trash);
+        exportKey = makeKey (keys, *this, "EXPORT", Icon::SaveTray);
+        importKey = makeKey (keys, *this, "IMPORT", Icon::LoadTray);
         // REC FOCUS turns light blue once edited; REC lights red while recording.
         recFocus->isOn = [this] { return page.focusEdited; };
         rec->isOn = [this] { return page.ctx.show.isRecordingSnippet(); };
         rec->iconColour = Colours::text;
-        rows = { { {}, { save }, {} }, { {}, { update }, { loadFocus } }, { {}, { loadKey, partialLoad }, {} }, { {}, { rec, stop }, { recFocus } },
-                 { {}, { addItems, removeItems }, { clearAll } } };
+        rows = { { {}, { save }, { exportKey } }, { {}, { update }, { loadFocus } }, { {}, { loadKey, partialLoad }, { importKey } },
+                 { {}, { rec, stop }, { recFocus } }, { {}, { addItems, removeItems }, { clearAll } } };
+        // EXPORT / IMPORT: snippet files in the folder at INT / USB; an imported one goes into the selected scene.
+        exportKey->onClick = [this] { page.exportSelected (true); };
+        importKey->onClick = [this] { page.importSelected (true); };
 
         save->onClick = [this] { addSnippet(); };
         update->onClick = [this]
@@ -549,8 +566,9 @@ public:
         const bool snippet = item.isSnippet();
         const bool recording = show.isRecordingSnippet(), recorded = show.hasRecordedSnippet();
         enableKey (*save, show.getScene (item.scene).has_value() && ! recording);
-        for (auto* k : { update, loadFocus, loadKey, partialLoad, addItems, removeItems })
+        for (auto* k : { update, loadFocus, loadKey, partialLoad, addItems, removeItems, exportKey })
             enableKey (*k, snippet && ! recording);
+        enableKey (*importKey, show.getScene (item.scene).has_value() && ! recording);
         enableKey (*stop, recording); // REC stays lit (red) while recording
         enableKey (*clearAll, snippet || recording || recorded);
         rec->repaint();
@@ -649,7 +667,7 @@ private:
 
     LibraryPage& page;
     juce::OwnedArray<WingKey> keys;
-    WingKey *save, *update, *loadFocus, *loadKey, *partialLoad, *rec, *stop, *recFocus, *addItems, *removeItems, *clearAll;
+    WingKey *save, *update, *loadFocus, *loadKey, *partialLoad, *rec, *stop, *recFocus, *addItems, *removeItems, *clearAll, *exportKey, *importKey;
     std::vector<KeyRow> rows;
     juce::Rectangle<int> counter;
 };
@@ -1026,60 +1044,176 @@ private:
 };
 
 //==============================================================================
-/** CLIP: the clip player (chapter 8) isn't built; the tab shows the console's
-    layout dimmed. */
-class LibraryPage::PlaceholderTab final : public juce::Component
+/** CLIP: plays an audio clip (WAV, FLAC, AIFF, MP3) chosen in the file list
+    on the left. It uses the USB player, so the clip comes into the console on
+    the USB PLAYER sources (patched to channels like any input) and the USB
+    RECORDER / PLAYER screen shows the same transport. PLAY plays the selected
+    clip (or goes on with the one paused), PAUSE pauses or goes on, STOP stops.
+    The graphic is the console's player: meter, state, time, reels and format. */
+class LibraryPage::ClipTab final : public juce::Component, private juce::Timer
 {
 public:
-    explicit PlaceholderTab (LibraryPage&)
+    explicit ClipTab (LibraryPage& p) : page (p)
     {
-        for (auto [text, icon] : { std::pair { "PLAY", Icon::Play }, std::pair { "PAUSE", Icon::Pause }, std::pair { "STOP", Icon::Stop } })
-            makeKey (keys, *this, text, icon, false);
-        rows = { { {}, { keys[0], keys[1] }, { keys[2] } } };
+        playKey = makeKey (keys, *this, "PLAY", Icon::Play);
+        pauseKey = makeKey (keys, *this, "PAUSE", Icon::Pause);
+        stopKey = makeKey (keys, *this, "STOP", Icon::Stop);
+        rows = { { {}, { playKey, pauseKey }, { stopKey } } };
+        pauseKey->isOn = [this] { return usb().getPlayState() == UsbRecorder::PlayState::Paused; };
+
+        playKey->onClick = [this] { play (page.list->getSelectedFile()); };
+        pauseKey->onClick = [this] { usb().togglePlayPause(); };
+        stopKey->onClick = [this] { usb().stop(); };
+        startTimerHz (10);
+    }
+
+    /** PLAY on `file` (or a double-click on it): plays it, or goes on with the clip paused. */
+    void play (const juce::File& file)
+    {
+        auto& u = usb();
+        if (! AudioFileFormat::isAudioFile (file))
+        {
+            if (u.getCurrentFile().existsAsFile())
+                u.play();
+            refresh();
+            return;
+        }
+        // A clip outside the open playlist replaces it in the player's queue: ask before unsaved changes go.
+        const auto queue = u.getQueue();
+        const bool queued = std::any_of (queue.begin(), queue.end(), [&file] (const UsbRecorder::Entry& e) { return e.file == file; });
+        if (! queued && u.isPlaylistOpen() && u.isPlaylistDirty())
+        {
+            juce::Component::SafePointer<ClipTab> safe (this);
+            popups::confirm (page, "PLAY CLIP", "The open playlist has unsaved changes. Close it and play \"" + file.getFileName() + "\"?", "PLAY",
+                             [safe, file]
+                             {
+                                 if (safe != nullptr)
+                                     safe->start (file);
+                             }, true);
+            return;
+        }
+        start (file);
+    }
+
+    void refresh()
+    {
+        auto& u = usb();
+        const auto state = u.getPlayState();
+        const bool active = state == UsbRecorder::PlayState::Playing || state == UsbRecorder::PlayState::Paused;
+        enableKey (*playKey, AudioFileFormat::isAudioFile (page.list->getSelectedFile()) || (state == UsbRecorder::PlayState::Paused));
+        enableKey (*pauseKey, active);
+        enableKey (*stopKey, active);
+        pauseKey->repaint();
+        repaint();
     }
 
     void paint (juce::Graphics& g) override
     {
         paintKeyRows (g, rows);
+        auto& u = usb();
+        const auto state = u.getPlayState();
+        const bool active = state == UsbRecorder::PlayState::Playing || state == UsbRecorder::PlayState::Paused;
+
+        // What is shown: the clip playing or paused, else the selected one.
+        auto file = active ? u.getCurrentFile() : page.list->getSelectedFile();
+        if (! AudioFileFormat::isAudioFile (file))
+            file = u.getCurrentFile();
+        if (file != infoFile)
+        {
+            infoFile = file;
+            infoKnown = file.existsAsFile() && UsbRecorder::readFileInfo (file, info);
+        }
+        const double rate = juce::jmax (1.0, u.getSampleRate());
+        int64_t length = infoKnown ? (int64_t) std::ceil ((double) info.frames * rate / juce::jmax (1, info.sampleRate)) : 0;
+        if (active && u.getLength() > 0)
+            length = u.getLength();
+        const int64_t pos = active ? u.getPosition() : 0;
+
         auto r = graphic;
-        const float dim = 0.4f;
-        // The 4-track player: meter, status, time, reels and format chips.
         g.setColour (Dark::body);
         g.fillRect (r);
+
+        // The meter: one bar per channel of the clip.
         auto meter = r.removeFromLeft (r.getHeight() * 2 / 3).reduced (6);
         g.setColour (juce::Colours::black);
         g.fillRect (meter);
+        const int channels = infoKnown ? juce::jlimit (1, UsbRecorder::kNumChannels, info.channels) : 2;
+        auto bars = meter.reduced (4).toFloat();
+        const float barW = bars.getWidth() / (float) channels;
+        for (int ch = 0; ch < channels; ++ch)
+        {
+            const float level = juce::jlimit (0.0f, 1.0f, (levels[(size_t) ch] + 60.0f) / 60.0f);
+            auto bar = juce::Rectangle<float> (bars.getX() + (float) ch * barW, bars.getY(), barW, bars.getHeight()).reduced (barW * 0.15f, 0.0f);
+            g.setColour (Dark::key.darker (0.4f));
+            g.fillRect (bar);
+            g.setColour (levels[(size_t) ch] > -0.5f ? Colours::tapRed : FileColours::wav);
+            g.fillRect (bar.removeFromBottom (bar.getHeight() * level));
+        }
+
+        // The state, the time and the time left.
         auto body = r.reduced (8, 6);
         auto status = body.removeFromLeft (14).withHeight (14).toFloat();
-        g.setColour (Dark::on.withAlpha (dim));
-        g.fillRect (status);
+        if (state == UsbRecorder::PlayState::Paused)
+            drawIcon (g, Icon::Pause, status, Colours::gold);
+        else if (state == UsbRecorder::PlayState::Error)
+            drawIcon (g, Icon::Cancel, status, Colours::warning);
+        else
+            drawIcon (g, Icon::Play, status, state == UsbRecorder::PlayState::Playing ? FileColours::wav : Dark::on.withAlpha (0.4f));
         body.removeFromLeft (8);
-        g.setColour (Dark::pre.withAlpha (dim));
-        g.setFont (wingFontFit (TypeScale::statusTitle, (float) body.getHeight() * 0.36f, WingWeight::SemiBold));
-        g.drawText ("0:00:00", body.removeFromTop (body.getHeight() * 45 / 100), juce::Justification::centredLeft);
+        auto timeRow = body.removeFromTop (body.getHeight() * 45 / 100);
+        g.setColour (active ? Dark::pre : Dark::pre.withAlpha (0.4f));
+        g.setFont (wingFontFit (TypeScale::statusTitle, (float) timeRow.getHeight() * 0.8f, WingWeight::SemiBold));
+        g.drawText (timeText (pos, rate), timeRow, juce::Justification::centredLeft);
+        g.setFont (wingFontFit (TypeScale::body, (float) timeRow.getHeight() * 0.5f));
+        g.drawText ("-" + timeText (juce::jmax<int64_t> (0, length - pos), rate), timeRow.withTrimmedLeft (timeRow.getWidth() / 2).withTrimmedRight (4),
+                    juce::Justification::centredLeft);
+
+        // The reels turn while it plays.
         for (int i = 0; i < 2; ++i)
         {
             const float d = (float) juce::jmin (body.getHeight() - 16, screenCap (44));
             auto reel = juce::Rectangle<float> ((float) body.getX() + (float) i * (d + 8.0f), (float) body.getY() + 4.0f, d, d);
-            g.setColour (Dark::text.withAlpha (dim));
+            g.setColour (Dark::text.withAlpha (active ? 1.0f : 0.4f));
             g.drawEllipse (reel, 2.0f);
             g.fillEllipse (reel.withSizeKeepingCentre (d * 0.2f, d * 0.2f));
+            for (int spoke = 0; spoke < 3; ++spoke)
+            {
+                const float a = (float) reelAngle + (float) spoke * juce::MathConstants<float>::twoPi / 3.0f;
+                const auto c = reel.getCentre();
+                g.drawLine (c.x + std::cos (a) * d * 0.14f, c.y + std::sin (a) * d * 0.14f, c.x + std::cos (a) * d * 0.4f, c.y + std::sin (a) * d * 0.4f, 1.5f);
+            }
         }
-        // Format chips at the top right (30 x 86 of the 800 px screen each),
-        // the caption under them so a small window doesn't print one over the other.
+
+        // Format chips at the top right, the clip's name under them (the rate orange when resampled).
         const float chipH = juce::jmin (15.0f, getWingScreenHeight() * 0.03f, (float) body.getHeight() * 0.22f);
         const float chipW = chipH * 2.87f, chipGap = chipH * 0.2f;
         auto chips = juce::Rectangle<float> ((float) body.getRight() - 2.0f * chipW - chipGap, (float) body.getY(), 2.0f * chipW + chipGap, 2.0f * chipH + chipGap);
-        for (auto [i, text] : { std::pair { 0, "WAV" }, std::pair { 1, "4-CH" }, std::pair { 2, "48K" }, std::pair { 3, "24 bit" } })
-            drawChip (g, juce::Rectangle<float> (chips.getX() + (float) (i % 2) * (chipW + chipGap), chips.getY() + (float) (i / 2) * (chipH + chipGap), chipW, chipH), text,
-                      Dark::key.withAlpha (dim), Dark::text.withAlpha (dim));
+        const bool resampled = infoKnown && juce::roundToInt (rate) != info.sampleRate;
+        const juce::String texts[] = {
+            infoKnown ? AudioFileFormat::typeName (info.type) : juce::String ("--"),
+            infoKnown ? juce::String (info.channels) + "-CH" : juce::String ("-CH"),
+            infoKnown ? (info.sampleRate == 44100 ? juce::String ("44.1K") : juce::String (juce::roundToInt (info.sampleRate / 1000.0)) + "K") : juce::String ("--K"),
+            ! infoKnown ? juce::String ("-- bit") : info.type == AudioFileFormat::Type::Mp3 ? juce::String (info.kbps) + "k" : juce::String (info.bits) + " bit"
+        };
+        for (int i = 0; i < 4; ++i)
+        {
+            const bool orange = i == 2 && resampled;
+            drawChip (g, juce::Rectangle<float> (chips.getX() + (float) (i % 2) * (chipW + chipGap), chips.getY() + (float) (i / 2) * (chipH + chipGap), chipW, chipH),
+                      texts[i], orange ? Dark::orange : Dark::key.withAlpha (infoKnown ? 1.0f : 0.4f), orange ? juce::Colours::black : Dark::text);
+        }
         auto caption = body.withTop (juce::roundToInt (chips.getBottom()) + 2);
-        g.setColour (Dark::text.withAlpha (dim));
+        g.setColour (infoKnown ? Dark::text : Dark::textDim);
         g.setFont (wingFontFit (TypeScale::body, (float) caption.getHeight() * 0.9f));
-        g.drawFittedText ("4-TRACK PLAYER", caption, juce::Justification::bottomRight, 1, 0.7f);
-        g.setColour (Dark::textDim);
+        g.drawFittedText (infoKnown ? file.getFileNameWithoutExtension().toUpperCase() : juce::String ("CLIP PLAYER"), caption,
+                          juce::Justification::bottomRight, 1, 0.7f);
+
+        g.setColour (state == UsbRecorder::PlayState::Error ? Colours::warning : Dark::textDim);
         g.setFont (wingFont (TypeScale::body));
-        g.drawFittedText ("THE CLIP PLAYER IS NOT AVAILABLE YET.", note, juce::Justification::topLeft, 2);
+        g.drawFittedText (state == UsbRecorder::PlayState::Error
+                              ? juce::String ("THE CLIP COULD NOT BE PLAYED.")
+                              : juce::String ("SELECT A CLIP (WAV, FLAC, AIFF, MP3) AT INT OR USB.\n"
+                                              "IT PLAYS ON THE USB PLAYER: PATCH THE USB PLAYER SOURCES TO CHANNELS ON ROUTING."),
+                          note, juce::Justification::topLeft, 4);
     }
 
     void resized() override
@@ -1093,9 +1227,45 @@ public:
     }
 
 private:
+    UsbRecorder& usb() const { return page.ctx.engine.getUsbRecorder(); }
+
+    void start (const juce::File& file)
+    {
+        usb().playFile (file);
+        page.ctx.log.info ("CLIP: playing " + file.getFileName());
+        refresh();
+    }
+
+    static juce::String timeText (int64_t samples, double rate)
+    {
+        const auto seconds = (int64_t) ((double) juce::jmax<int64_t> (0, samples) / rate);
+        return juce::String (seconds / 3600) + ":" + juce::String ((seconds / 60) % 60).paddedLeft ('0', 2) + ":"
+               + juce::String (seconds % 60).paddedLeft ('0', 2);
+    }
+
+    void timerCallback() override
+    {
+        // The player's peaks are read only while the tab shows (the USB screen reads them too).
+        if (! isShowing())
+            return;
+        auto& u = usb();
+        for (int ch = 0; ch < UsbRecorder::kNumChannels; ++ch)
+            levels[(size_t) ch] = u.getPlayLevel (ch);
+        if (u.getPlayState() == UsbRecorder::PlayState::Playing)
+            reelAngle = std::fmod (reelAngle + 0.25, juce::MathConstants<double>::twoPi);
+        refresh();
+    }
+
+    LibraryPage& page;
     juce::OwnedArray<WingKey> keys;
+    WingKey *playKey, *pauseKey, *stopKey;
     std::vector<KeyRow> rows;
     juce::Rectangle<int> graphic, note;
+    std::array<float, UsbRecorder::kNumChannels> levels { -100.0f, -100.0f, -100.0f, -100.0f };
+    double reelAngle = 0.0;
+    juce::File infoFile;
+    UsbRecorder::FileInfo info;
+    bool infoKnown = false;
 };
 
 //==============================================================================
@@ -1115,13 +1285,16 @@ LibraryPage::LibraryPage (UiContext& c) : ctx (c)
             snip->refresh();
     };
     list->onActivated = [this] (ShowPanel::Item item) { load (item); };
-    // The file list: a selected preset shows on its tab; a double-click opens a show.
+    // The file list: a selected preset or clip shows on its tab; a double-click
+    // opens a show, imports a scene or snippet file or plays a clip.
     list->onFileSelected = [this] (const juce::File&)
     {
         if (auto* fx = dynamic_cast<FxTab*> (tabPages[TabFx]))
             fx->refresh();
         if (auto* chan = dynamic_cast<ChanTab*> (tabPages[TabChan]))
             chan->refresh();
+        if (auto* clip = dynamic_cast<ClipTab*> (tabPages[TabClip]))
+            clip->refresh();
     };
     list->onFileActivated = [this] (const juce::File& file)
     {
@@ -1131,6 +1304,13 @@ LibraryPage::LibraryPage (UiContext& c) : ctx (c)
                 if (ctx.openShowFile)
                     ctx.openShowFile (file);
             });
+        else if (file.hasFileExtension (Show::sceneFileExtension) || file.hasFileExtension (Show::snippetFileExtension))
+            importFile (file);
+        else if (auto* clip = dynamic_cast<ClipTab*> (tabPages[TabClip]); clip != nullptr && AudioFileFormat::isAudioFile (file))
+        {
+            tabs.setCurrent (TabClip);
+            clip->play (file);
+        }
     };
     addAndMakeVisible (*list);
 
@@ -1143,7 +1323,7 @@ LibraryPage::LibraryPage (UiContext& c) : ctx (c)
     tabPages.add (new ShowTab (*this));
     tabPages.add (new SnapTab (*this));
     tabPages.add (new SnipTab (*this));
-    tabPages.add (new PlaceholderTab (*this));
+    tabPages.add (new ClipTab (*this));
     tabPages.add (new FxTab (*this));
     tabPages.add (new ChanTab (*this));
     for (auto* p : tabPages)
@@ -1252,9 +1432,11 @@ void LibraryPage::showTab (int t)
     for (int i = 0; i < tabPages.size(); ++i)
         tabPages[i]->setVisible (i == t);
     list->setTypeFilter (t == TabShow ? 0 : t == TabSnap ? 1 : t == TabSnip ? 2 : -1);
-    list->setFileFilter (t == TabShow ? Show::fileExtension : t == TabFx ? Show::fxPresetExtension : t == TabChan ? Show::channelPresetExtension : "");
-    // Presets are files, scenes and snippets live in the show.
-    if ((t == TabFx || t == TabChan) && list->getLocation() == ShowPanel::Location::Show)
+    const char* filters[] = { Show::fileExtension, Show::sceneFileExtension, Show::snippetFileExtension, "wav;wave;flac;aif;aiff;aifc;mp3",
+                              Show::fxPresetExtension, Show::channelPresetExtension };
+    list->setFileFilter (juce::isPositiveAndBelow (t, (int) std::size (filters)) ? filters[t] : "");
+    // Presets and clips are files; scenes and snippets live in the show (INT / USB hold their files).
+    if ((t == TabFx || t == TabChan || t == TabClip) && list->getLocation() == ShowPanel::Location::Show)
         list->setLocation (ShowPanel::Location::Internal);
     else if ((t == TabSnap || t == TabSnip) && list->getLocation() != ShowPanel::Location::Show)
         list->setLocation (ShowPanel::Location::Show);
@@ -1357,6 +1539,91 @@ void LibraryPage::openGlobal()
     });
 }
 
+void LibraryPage::exportSelected (bool snippet)
+{
+    const auto item = list->getSelected();
+    const int sceneIndex = snippet ? item.scene : selectedScene();
+    juce::String name;
+    if (snippet)
+    {
+        const auto sn = ctx.show.getSnippet (item.scene, item.snippet);
+        if (! sn)
+            return;
+        name = sn->name;
+    }
+    else if (const auto scene = ctx.show.getScene (sceneIndex))
+        name = scene->name;
+    else
+        return;
+
+    savePresetAs (*this, snippet ? "EXPORT SNIPPET" : "EXPORT SCENE", name, list->getFolder(),
+                  snippet ? Show::snippetFileExtension : Show::sceneFileExtension,
+                  [this, snippet, sceneIndex, snippetIndex = item.snippet] (const juce::File& file, const juce::String&)
+                  {
+                      const auto r = snippet ? ctx.show.exportSnippet (sceneIndex, snippetIndex, file) : ctx.show.exportScene (sceneIndex, file);
+                      if (r.failed())
+                          ctx.log.error (r.getErrorMessage());
+                      else
+                          ctx.log.info ("Exported " + juce::String (snippet ? "snippet" : "scene") + " to " + file.getFullPathName());
+                      if (list->getLocation() != ShowPanel::Location::Show)
+                          list->selectFile (file);
+                  });
+}
+
+void LibraryPage::importSelected (bool snippet)
+{
+    const auto extension = snippet ? Show::snippetFileExtension : Show::sceneFileExtension;
+    const auto file = list->getSelectedFile();
+    if (file.hasFileExtension (extension))
+    {
+        importFile (file);
+        return;
+    }
+    chooser = std::make_unique<juce::FileChooser> (snippet ? "Import a snippet file" : "Import a scene file", list->getFolder(),
+                                                   juce::String ("*") + extension);
+    juce::Component::SafePointer<LibraryPage> safe (this);
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [safe] (const juce::FileChooser& fc)
+    {
+        if (safe != nullptr && fc.getResult() != juce::File())
+            safe->importFile (fc.getResult());
+    });
+}
+
+void LibraryPage::importFile (const juce::File& file)
+{
+    const auto info = Show::readLibraryFile (file);
+    juce::String error;
+    if (info.kind == Show::LibraryFileInfo::Kind::Scene)
+    {
+        const int at = selectedScene() >= 0 ? selectedScene() + 1 : -1;
+        const int index = ctx.show.importScene (file, at, error);
+        if (index < 0)
+        {
+            ctx.log.error (file.getFileName() + ": " + error);
+            return;
+        }
+        ctx.log.info ("Imported scene \"" + info.name + "\" as scene " + juce::String (index + 1));
+        list->refresh();
+        list->select ({ index, -1 });
+    }
+    else if (info.kind == Show::LibraryFileInfo::Kind::Snippet)
+    {
+        const int scene = selectedScene();
+        const int index = ctx.show.importSnippet (file, scene, error);
+        if (index < 0)
+        {
+            ctx.log.error (file.getFileName() + ": " + error);
+            return;
+        }
+        ctx.log.info ("Imported snippet \"" + info.name + "\" as snippet " + juce::String (scene + 1) + "." + juce::String (index + 1));
+        list->refresh();
+        list->select ({ scene, index });
+    }
+    else
+        ctx.log.error (file.getFileName() + ": not a Sidecar scene or snippet file");
+    refresh();
+}
+
 void LibraryPage::refresh()
 {
     list->refresh();
@@ -1368,6 +1635,8 @@ void LibraryPage::refresh()
         fx->refresh();
     if (auto* chan = dynamic_cast<ChanTab*> (tabPages[TabChan]))
         chan->refresh();
+    if (auto* clip = dynamic_cast<ClipTab*> (tabPages[TabClip]))
+        clip->refresh();
     tabPages[TabShow]->repaint();
     updateTransport();
 }

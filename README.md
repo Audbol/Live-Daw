@@ -42,7 +42,8 @@ anything can be sent to any hardware output. It runs on Windows, macOS and Linux
   spill, the main display with the WING's screens (HOME, EFFECTS, METERS, ROUTING,
   SETUP, LIBRARY, VIEW, UTILITY), the channel strip, monitoring, 4-Channel and custom
   control sections. It resizes to any screen; the display can be shown on its own.
-- **Shows, scenes and snippets** with recall scope, recall safes, fades and presets.
+- **Shows, scenes and snippets** with recall scope, recall safes, fades and presets;
+  scenes and snippets can be exported to files and imported into another show.
 - **Multitrack recording** of up to 64 tracks, playback into the console (virtual
   soundcheck) and a built-in multitrack editor; the WING's **2/4-track USB recorder
   and player** using a folder on disk.
@@ -176,8 +177,9 @@ This list matches the notice Sidecar shows at start-up.
   have not been tried, and exported WING snapshots have not been loaded into a
   console.
 - **MIDI and DAW remote control** (MCU / HUI) have not been tested with real hardware.
-- **LIBRARY** keeps scenes and snippets in the show (no stand-alone .snap / .snip
-  files); the CLIP player and SEND MIDI are not built.
+- **LIBRARY:** scene and snippet files are Sidecar's own (.lsnap / .lsnip), not the
+  WING's .snap / .snip, and the CLIP tab plays its clip on the USB player. SEND MIDI
+  is not built.
 - **Drawn but disabled for now:** GPIO, SD and spill functions in the custom controls,
   MIDI CC faders in custom layers, the RTA on MONITORS EQ, and settings that only make
   sense on the hardware.

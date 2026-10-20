@@ -8,6 +8,7 @@ use super::guard;
 use livedaw_engine::{Engine, StripKind};
 use livedaw_session::console::{CapturedInsert, InsertMode, PluginBridge, RestoreError};
 use livedaw_session::layers::{FaderRef, Layer, LayerSet, SpillKind};
+use livedaw_session::library::{self, FileType};
 use livedaw_session::presets::{self, PresetType};
 use livedaw_session::{ApplyResult, GlobalSafe, Scope, Show, StripRef};
 use std::borrow::Cow;
@@ -1043,6 +1044,88 @@ pub unsafe extern "C" fn ld_preset_set_scope(path: *const u8, len: usize, scope:
         presets::set_channel_scope(&mut preset, scope);
         presets::save(&path, &preset).is_ok()
     })
+}
+
+// ---- LIBRARY scene and snippet files (SNAP, SNIP) -------------------------------------------
+
+/// A scene or snippet file's header. `kind`: 0 = not one, 1 = scene, 2 = snippet;
+/// `count`: a scene's snippets, a snippet's parameters. `name` is owned by the caller.
+#[repr(C)]
+pub struct LdLibraryInfo {
+    pub kind: i32,
+    pub count: i32,
+    pub name: *mut LdString,
+}
+
+/// Reads a scene or snippet file's header; false (kind 0, null name) if it isn't one.
+#[no_mangle]
+pub unsafe extern "C" fn ld_library_info(path: *const u8, len: usize, out: *mut LdLibraryInfo) -> bool {
+    let path = PathBuf::from(str_arg(path, len).into_owned());
+    let info = guard(None, || library::load(&path).ok().and_then(|f| library::info(&f)));
+    if let Some(o) = out.as_mut() {
+        *o = match &info {
+            Some(i) => LdLibraryInfo {
+                kind: if i.kind == FileType::Scene { 1 } else { 2 },
+                count: i32::try_from(i.count).unwrap_or(i32::MAX),
+                name: LdString::new(i.name.clone()),
+            },
+            None => LdLibraryInfo { kind: 0, count: 0, name: std::ptr::null_mut() },
+        };
+    }
+    info.is_some()
+}
+
+/// Saves scene `scene` (snippet < 0, with its snippets) or snippet `snippet`
+/// of it to `path`. False with `message` on failure.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_export_library(
+    s: *mut LdShow,
+    scene: i32,
+    snippet: i32,
+    path: *const u8,
+    path_len: usize,
+    message: *mut *mut LdString,
+) -> bool {
+    let Some(s) = show(s) else { return false };
+    let path = PathBuf::from(str_arg(path, path_len).into_owned());
+    let r = guard(Err("internal error".into()), || {
+        let file = if snippet < 0 {
+            library::scene_file(&s.show, scene).ok_or("No such scene")?
+        } else {
+            library::snippet_file(&s.show, scene, snippet).ok_or("No such snippet")?
+        };
+        library::save(&path, &file).map(|()| Vec::new())
+    });
+    finish(r, message)
+}
+
+/// Adds the scene file at `path` to the show at `index` (-1: appended), or
+/// the snippet file at `path` to scene `index`. Returns the new scene's or
+/// snippet's index, or -1 with `message`.
+#[no_mangle]
+pub unsafe extern "C" fn ld_show_import_library(
+    s: *mut LdShow,
+    path: *const u8,
+    path_len: usize,
+    index: i32,
+    message: *mut *mut LdString,
+) -> i32 {
+    let Some(s) = show(s) else { return -1 };
+    let path = PathBuf::from(str_arg(path, path_len).into_owned());
+    let r = guard(Err("internal error".into()), || {
+        let file = library::load(&path)?;
+        match library::info(&file).map(|i| i.kind) {
+            Some(FileType::Scene) => library::import_scene(&mut s.show, &file, index),
+            _ => library::import_snippet(&mut s.show, &file, index),
+        }
+    });
+    match r {
+        Ok(i) => i,
+        Err(msg) => {
+            write_string(message, msg);
+            -1
+        }
+    }
 }
 
 // ---- layers ------------------------------------------------------------------------------

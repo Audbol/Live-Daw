@@ -3,6 +3,16 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Added
+
+- LIBRARY: scene and snippet files. EXPORT on the SNAP and SNIP tabs saves the selected
+  scene (with its snippets) or snippet as a `.lsnap` / `.lsnip` file in the INT or USB
+  folder; IMPORT (or a double-click on the file) adds it to the show.
+- LIBRARY: the CLIP tab plays an audio clip (WAV, FLAC, AIFF, MP3) chosen at INT / USB
+  on the USB player, with PLAY, PAUSE, STOP, meter, time and format.
+
 ## [0.1.0] - beta
 
 The first public release. Sidecar was developed as "Live DAW" before it was renamed;

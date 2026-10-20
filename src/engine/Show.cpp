@@ -582,6 +582,68 @@ bool Show::setPresetScope (const juce::File& file, juce::uint32 scope)
 }
 
 //==============================================================================
+Show::LibraryFileInfo Show::readLibraryFile (const juce::File& file)
+{
+    const Utf8 u (file.getFullPathName());
+    ld::LibraryInfoC c {};
+    LibraryFileInfo info;
+    if (! ld::ld_library_info (u.data, u.size, &c))
+        return info;
+    info.kind = c.kind == 1 ? LibraryFileInfo::Kind::Scene : LibraryFileInfo::Kind::Snippet;
+    info.name = takeString (c.name);
+    info.count = c.count;
+    return info;
+}
+
+juce::Result Show::exportScene (int index, const juce::File& file) const
+{
+    const Utf8 p (file.getFullPathName());
+    ld::LdString* message = nullptr;
+    const bool ok = ld::ld_show_export_library (handle, index, -1, p.data, p.size, &message);
+    return presetResult (ok, message, "Saving the scene");
+}
+
+juce::Result Show::exportSnippet (int sceneIndex, int snippetIndex, const juce::File& file) const
+{
+    if (snippetIndex < 0)
+        return juce::Result::fail ("No such snippet");
+    const Utf8 p (file.getFullPathName());
+    ld::LdString* message = nullptr;
+    const bool ok = ld::ld_show_export_library (handle, sceneIndex, snippetIndex, p.data, p.size, &message);
+    return presetResult (ok, message, "Saving the snippet");
+}
+
+int Show::importScene (const juce::File& file, int index, juce::String& error)
+{
+    if (readLibraryFile (file).kind != LibraryFileInfo::Kind::Scene)
+    {
+        error = "Not a Sidecar scene file";
+        return -1;
+    }
+    const Utf8 p (file.getFullPathName());
+    ld::LdString* message = nullptr;
+    const int result = ld::ld_show_import_library (handle, p.data, p.size, index, &message);
+    error = takeString (message);
+    changed();
+    return result;
+}
+
+int Show::importSnippet (const juce::File& file, int sceneIndex, juce::String& error)
+{
+    if (readLibraryFile (file).kind != LibraryFileInfo::Kind::Snippet)
+    {
+        error = "Not a Sidecar snippet file";
+        return -1;
+    }
+    const Utf8 p (file.getFullPathName());
+    ld::LdString* message = nullptr;
+    const int result = ld::ld_show_import_library (handle, p.data, p.size, sceneIndex, &message);
+    error = takeString (message);
+    changed();
+    return result;
+}
+
+//==============================================================================
 juce::String Show::toXmlString() const
 {
     return takeString (ld::ld_show_to_xml (handle, engine.getHandle()));
