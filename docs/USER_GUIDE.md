@@ -122,7 +122,8 @@ Barlow Condensed.
     **SAFE** key. The slot screens follow chapter 6 of the manual: INPUT (CHANNEL
     INPUT, TRIM & BALANCE pad, FILTER, DELAY), FILTER SETUP, GATE / COMP with the
     model's faceplate, EQ, INS 1 / INS 2 (with automix), MAIN SENDS and BUS / MATRIX
-    SENDS. On MATRIX SENDS a channel's or aux's send has **PAN LINK** as on BUS SENDS
+    SENDS. On INS 1 / INS 2, FX PROCESSOR opens **SELECT FX PROCESSOR** (NONE and the 16
+    slots, who uses each and its device) and FX TYPE the device list (see EFFECTS). On MATRIX SENDS a channel's or aux's send has **PAN LINK** as on BUS SENDS
     (touch the pan ring: OFF, LINK or LINK REVERSED): linked (the default) its pan
     follows the channel's, LINK REVERSED mirrors it, OFF gives it its own PAN; buses and mains send their
     panned output. **INIT** and **COPY** open CHANNEL INIT / COPY (scope and destinations);
@@ -135,8 +136,10 @@ Barlow Condensed.
   - **EFFECTS:** the FX rack, slots 1-8 premium and 9-16 standard. Each slot shows its
     device, the strip using it (PRE/POST), ON and its mix. Tapping a slot opens the
     device on its **faceplate**, drawn like the hardware it recreates (a LARC remote
-    for the vintage reverbs, a black 1176-style limiter with its VU meter...), with the
-    device menu grouped PREMIUM / STANDARD / CHANNEL STRIPS / PLUGIN. The GATE, EQ and
+    for the vintage reverbs, a black 1176-style limiter with its VU meter...). The
+    device list shows a tile per device: NONE and EXTERNAL (a plugin) first, then the
+    tabs **FX1-8** (the premium devices, slots 1-8 only), **STD** and **CH** (the EQs and
+    channel strips), in the console's order. The GATE, EQ and
     DYNAMICS screens show their model's faceplate too.
   - **METERS:** pre-fader meters of the channels in groups of eight, AUX, BUS 1-8 / 9-16,
     DCA, MAIN and MATRIX, with number keys in the strips' colours (select) and mute

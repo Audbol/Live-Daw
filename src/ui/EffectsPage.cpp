@@ -76,40 +76,52 @@ public:
         const bool loaded = fx.hasPlugin (slot) || device;
         const bool sel = page.selected == slot;
 
+        // [3.1] an empty slot's outline, number box and blank unit are #383838
+        // on black; a slot in use has the brighter outline and number box.
+        const juce::Colour emptyGrey (0xff383838);
         g.setColour (juce::Colours::black);
         g.fillRect (b);
-        g.setColour (sel ? Colours::yellow : Colours::screenLine);
-        g.drawRect (b, sel ? 2.5f : 1.5f);
+        g.setColour (sel ? Colours::yellow : (loaded ? Colours::screenLine : emptyGrey));
+        g.drawRect (b, sel ? 2.5f : 2.0f);
 
-        // Slot number, bottom right (the box grows with the font, so 10 and 14 fit).
-        const auto numberFont = wingFont (TypeScale::body, WingWeight::SemiBold);
-        const float numberW = juce::jmax (20.0f, juce::GlyphArrangement::getStringWidth (numberFont, "88") + 6.0f);
-        const float numberH = juce::jmax (16.0f, numberFont.getHeight());
+        // Slot number, bottom right: 16 of the tile's 140 px (wider for 10-16).
+        const float numberH = juce::jmax (12.0f, b.getHeight() * 16.0f / 140.0f);
+        const auto numberFont = wingFontPx (numberH * 0.6f, WingWeight::SemiBold);
+        const float numberW = juce::jmax (numberH, juce::GlyphArrangement::getStringWidth (numberFont, juce::String (slot + 1)) + numberH * 0.35f);
         auto number = juce::Rectangle<float> (b.getRight() - numberW - 2.0f, b.getBottom() - numberH - 2.0f, numberW, numberH);
-        g.setColour (Dark::textDim);
+        g.setColour (loaded ? Dark::textDim : emptyGrey);
         g.fillRect (number);
         g.setColour (juce::Colours::black);
         g.setFont (numberFont);
         g.drawText (juce::String (slot + 1), number, juce::Justification::centred);
 
-        auto inner = b.reduced (6.0f);
-        auto left = inner.removeFromLeft (inner.getWidth() * 0.28f);
-        inner.removeFromLeft (6.0f);
-        deviceArea = inner.removeFromTop (inner.getHeight() * 0.48f);
-        meterArea = deviceArea.removeFromRight (juce::jmin (16.0f, deviceArea.getWidth() * 0.1f));
+        // [3.1] the unit 196 x 60 px, 78 px from the tile's left and 8 from its top.
+        auto inner = b.reduced (b.getWidth() * 8.0f / 282.0f, b.getHeight() * 8.0f / 140.0f);
+        auto left = inner.removeFromLeft (b.getWidth() * 64.0f / 282.0f);
+        inner.removeFromLeft (b.getWidth() * 6.0f / 282.0f);
+        deviceArea = inner.removeFromTop (b.getHeight() * 60.0f / 140.0f);
+        meterArea = deviceArea.removeFromRight (juce::jmin (24.0f, deviceArea.getWidth() * 0.12f));
         deviceArea.removeFromRight (3.0f);
 
         if (! loaded)
         {
-            // An empty slot: a blank rack unit with a "+".
-            g.setColour (Colours::screenTile);
-            g.fillRect (deviceArea);
-            const float d = juce::jmin (deviceArea.getHeight() * 0.6f, 34.0f);
+            // An empty slot: a blank unit with its unlit meter and a circled "+".
+            const auto unit = deviceArea.getUnion (meterArea);
+            g.setColour (Colours::screenDark);
+            g.fillRect (unit);
+            const auto meter = meterArea.reduced (2.0f, 4.0f);
+            const int segments = juce::jmax (6, (int) (meter.getHeight() / 4.0f));
+            const float segH = meter.getHeight() / (float) segments, segW = (meter.getWidth() - 2.0f) / 2.0f;
+            g.setColour (juce::Colour (0xff080808));
+            for (int col = 0; col < 2; ++col)
+                for (int i = 0; i < segments; ++i)
+                    g.fillRect (meter.getX() + (float) col * (segW + 2.0f), meter.getY() + (float) i * segH, segW, juce::jmax (1.0f, segH - 1.5f));
+            const float d = deviceArea.getHeight() * 0.65f, stroke = juce::jmax (1.5f, d * 0.07f);
             auto circle = juce::Rectangle<float> (d, d).withCentre (deviceArea.getCentre());
-            g.setColour (Dark::textDim);
-            g.drawEllipse (circle, 2.0f);
-            g.fillRect (juce::Rectangle<float> (d * 0.5f, 2.0f).withCentre (circle.getCentre()));
-            g.fillRect (juce::Rectangle<float> (2.0f, d * 0.5f).withCentre (circle.getCentre()));
+            g.setColour (emptyGrey);
+            g.drawEllipse (circle.reduced (stroke * 0.5f), stroke);
+            g.fillRect (juce::Rectangle<float> (d * 0.4f, stroke * 1.4f).withCentre (circle.getCentre()));
+            g.fillRect (juce::Rectangle<float> (stroke * 1.4f, d * 0.4f).withCentre (circle.getCentre()));
             sourceArea = onArea = prePostArea = knobArea = {};
             return;
         }
@@ -291,7 +303,7 @@ public:
             if (fx.isLoaded (slot))
                 page.editSlot (slot);
             else
-                showFxDeviceMenu (ctx, slot, this, [this] { page.editSlot (slot); });
+                showFxDeviceMenu (ctx, slot, this, [this] { page.editSlot (slot); }, &page);
         }
         draggingMix = false;
     }
@@ -509,7 +521,7 @@ public:
     void mouseUp (const juce::MouseEvent& e) override
     {
         if (ctx.engine.getFx().getModel (slot) == ld::kFxNone && body.contains (e.getPosition()))
-            showFxDeviceMenu (ctx, slot, this, [this] { rebind(); });
+            showFxDeviceMenu (ctx, slot, this, [this] { rebind(); }, this);
     }
 
 private:
@@ -552,7 +564,7 @@ private:
                                     const int m = ctx.engine.getFx().getModel (slot);
                                     return m == ld::kFxNone ? juce::String ("SELECT DEVICE") : models::model (models::Fx, m).name.toUpperCase();
                                 },
-                                [this] (DropdownField& f) { showFxDeviceMenu (ctx, slot, &f, [this] { rebind(); }); } };
+                                [this] (DropdownField& f) { showFxDeviceMenu (ctx, slot, &f, [this] { rebind(); }, this); } };
     home::KnobBox mix { KnobBinding {} };
     juce::Rectangle<int> header, sourceArea, body;
 };
@@ -617,6 +629,8 @@ std::vector<KnobBinding> EffectsPage::getKnobs()
     if (editor != nullptr && editor->isVisible())
         return editor->knobs();
     std::vector<KnobBinding> k;
+    if (selected < 0)
+        return k; // [3.1] the rack opens with no slot touched and no knobs
     const int row = selected / 4 * 4;
     for (int i = 0; i < 4; ++i)
         k.push_back (bindLinear ("FX" + juce::String (row + i + 1) + " MIX", ctx.engine.getFx().params (row + i).mix, 0.0f, 100.0f, "%", 0, 100.0f));
@@ -630,9 +644,9 @@ void EffectsPage::paint (juce::Graphics& g)
         return;
 
     // The rack: dark brushed metal with screws.
-    juce::ColourGradient metal (juce::Colour (0xff2b2c2d), (float) rack.getX(), (float) rack.getY(), juce::Colour (0xff161718), (float) rack.getRight(),
+    juce::ColourGradient metal (juce::Colour (0xff0e100e), (float) rack.getX(), (float) rack.getY(), juce::Colour (0xff0a0c0a), (float) rack.getRight(),
                                 (float) rack.getBottom(), false);
-    metal.addColour (0.45, juce::Colour (0xff222324));
+    metal.addColour (0.45, juce::Colour (0xff1a1c1a));
     g.setGradientFill (metal);
     g.fillRect (rack);
     juce::Random random (7);
@@ -643,54 +657,56 @@ void EffectsPage::paint (juce::Graphics& g)
         g.setColour (juce::Colours::white.withAlpha (0.03f + random.nextFloat() * 0.04f));
         g.drawLine (x, y, x + random.nextFloat() * 40.0f - 20.0f, y + random.nextFloat() * 6.0f - 3.0f, 1.0f);
     }
-    for (auto p : { rack.getTopLeft().toFloat() + juce::Point<float> (14.0f, 14.0f), rack.getTopRight().toFloat() + juce::Point<float> (-14.0f, 14.0f),
-                    rack.getBottomLeft().toFloat() + juce::Point<float> (14.0f, -14.0f), rack.getBottomRight().toFloat() + juce::Point<float> (-14.0f, -14.0f) })
+    // [3.1] the screws 28 px in from the rack's corners, the embossed FX mark at its top left.
+    const float ux = (float) getWidth() / 1280.0f, uy = (float) getHeight() / 720.0f;
+    for (auto p : { juce::Point<float> (38.0f, 43.0f), juce::Point<float> (1238.0f, 43.0f), juce::Point<float> (38.0f, 682.0f), juce::Point<float> (1238.0f, 682.0f) })
     {
-        g.setColour (juce::Colour (0xff4a4a4a));
-        g.fillEllipse (juce::Rectangle<float> (12.0f, 12.0f).withCentre (p));
-        g.setColour (juce::Colour (0xff1a1a1a));
-        g.drawLine (p.x - 4.0f, p.y - 4.0f, p.x + 4.0f, p.y + 4.0f, 1.5f);
+        const auto c = juce::Point<float> (p.x * ux, p.y * uy);
+        const float d = 20.0f * juce::jmin (ux, uy);
+        g.setColour (juce::Colour (0xff2c2e2c));
+        g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (c));
+        g.setColour (juce::Colour (0xff0c0c0c));
+        g.drawEllipse (juce::Rectangle<float> (d, d).withCentre (c), 1.0f);
+        g.drawLine (c.x - d * 0.3f, c.y - d * 0.3f, c.x + d * 0.3f, c.y + d * 0.3f, 1.5f);
     }
-    g.setColour (juce::Colour (0xff8a8a8a));
-    g.setFont (juce::FontOptions (juce::jmin (30.0f, rack.getHeight() * 0.06f), juce::Font::bold | juce::Font::italic));
-    g.drawText ("FX", rack.getX() + 36, rack.getY() + 4, 80, juce::jmin (32, rack.getHeight() / 14), juce::Justification::centredLeft);
+    const auto mark = juce::Rectangle<float> (140.0f * ux, 22.0f * uy, 60.0f * ux, 40.0f * uy);
+    g.setFont (wingFontPx (mark.getHeight() * 0.72f, WingWeight::SemiBold).italicised());
+    g.setColour (juce::Colour (0xff606260));
+    g.drawText ("FX", mark.translated (-1.0f, -1.0f), juce::Justification::centredLeft, false);
+    g.setColour (juce::Colour (0xff1c1e1c));
+    g.drawText ("FX", mark, juce::Justification::centredLeft, false);
 
-    // [Fig. 28] the group captions are small and grey, printed on the rack.
-    g.setColour (Colours::caption.withAlpha (0.7f));
-    g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), premiumLabel.getHeight() * 0.5f)));
-    auto premium = premiumLabel;
-    const int textW = juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), "PREMIUM FX");
-    auto diamond = premium.withSizeKeepingCentre (textW + 30, premium.getHeight()).removeFromLeft (22).toFloat().reduced (2.0f, 4.0f);
-    juce::Path gem;
-    gem.startNewSubPath (diamond.getX(), diamond.getY() + diamond.getHeight() * 0.35f);
-    gem.lineTo (diamond.getX() + diamond.getWidth() * 0.25f, diamond.getY());
-    gem.lineTo (diamond.getRight() - diamond.getWidth() * 0.25f, diamond.getY());
-    gem.lineTo (diamond.getRight(), diamond.getY() + diamond.getHeight() * 0.35f);
-    gem.lineTo (diamond.getCentreX(), diamond.getBottom());
-    gem.closeSubPath();
-    g.strokePath (gem, juce::PathStrokeType (1.5f));
-    g.drawText ("PREMIUM FX", premium.withTrimmedLeft (26), juce::Justification::centred);
+    // The group captions, #707070 and centred under their two columns.
+    const auto font = wingFontPx (15.0f * uy);
+    g.setFont (font);
+    g.setColour (Colours::textDim);
+    const float textW = juce::GlyphArrangement::getStringWidth (font, "PREMIUM FX");
+    const float gemW = 26.0f * ux, gap = 8.0f * ux;
+    const auto premium = premiumLabel.toFloat();
+    const float x0 = premium.getCentreX() - (gemW + gap + textW) * 0.5f;
+    drawIcon (g, Icon::Premium, juce::Rectangle<float> (x0, premium.getY(), gemW, premium.getHeight()).withSizeKeepingCentre (gemW, 18.0f * uy), Colours::textDim);
+    g.drawText ("PREMIUM FX", juce::Rectangle<float> (x0 + gemW + gap, premium.getY(), textW + 4.0f, premium.getHeight()), juce::Justification::centredLeft, false);
     g.drawText ("STANDARD FX", standardLabel, juce::Justification::centred);
 }
 
 void EffectsPage::resized()
 {
     editor->setBounds (getLocalBounds());
-    rack = getLocalBounds().reduced (2);
-    auto b = rack.reduced (juce::jmin (40, rack.getWidth() / 24), 0);
-    b.removeFromTop (juce::jmin (40, rack.getHeight() / 12));
-    auto labels = b.removeFromBottom (juce::jmin (34, rack.getHeight() / 14));
-    b.removeFromBottom (4);
-
-    const int gap = 12;
-    const int w = (b.getWidth() - gap) / 4, h = b.getHeight() / 4;
-    premiumLabel = labels.withWidth (w * 2);
-    standardLabel = labels.withX (b.getX() + w * 2 + gap).withWidth (w * 2);
+    // The 3.1 rack, in WING pixels of the 1280 x 720 page: the rack 10 px in;
+    // the slots 282 x 140 px, 287 px across and 145 px down, the standard
+    // pair 12 px further right; the captions under them.
+    const float ux = (float) getWidth() / 1280.0f, uy = (float) getHeight() / 720.0f;
+    auto at = [ux, uy] (float x, float y, float w, float h)
+    { return juce::Rectangle<float> (x * ux, y * uy, w * ux, h * uy).toNearestInt(); };
+    rack = at (10.0f, 10.0f, 1260.0f, 696.0f);
+    premiumLabel = at (53.0f, 656.0f, 569.0f, 30.0f);
+    standardLabel = at (639.0f, 656.0f, 569.0f, 30.0f);
+    static constexpr float columns[] = { 53.0f, 340.0f, 639.0f, 926.0f };
     for (int i = 0; i < tiles.size(); ++i)
     {
         // Slots run down the columns: 1-4 in the first, 5-8 in the second ...
         const int col = i / 4, row = i % 4;
-        tiles[i]->setBounds (b.getX() + col * w + (col >= 2 ? gap : 0), b.getY() + row * h, w, h);
+        tiles[i]->setBounds (at (columns[col], 75.0f + 145.0f * (float) row, 282.0f, 140.0f));
     }
 }
 

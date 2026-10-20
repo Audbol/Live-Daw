@@ -284,9 +284,14 @@ void clearFx (UiContext&, int slot);
 /** Default click on a slot: open the editor if loaded, otherwise show the menu. */
 void clickFxSlot (UiContext&, int slot, juce::Component* target);
 
-/** The device menu of a slot: premium (slots 1-8), standard and channel-strip
-    devices, a plugin (EXT) or none. `chosen` runs after a device was selected. */
-void showFxDeviceMenu (UiContext&, int slot, juce::Component* target, std::function<void()> chosen = {});
+/** The FX TYPE list of a slot over `over` (default: `target`'s parent): NONE
+    and EXTERNAL (a plugin), then the devices on the tabs FX1-8 (premium,
+    slots 1-8 only), STD and CH. `chosen` runs after a device was selected. */
+void showFxDeviceMenu (UiContext&, int slot, juce::Component* target, std::function<void()> chosen = {}, juce::Component* over = nullptr);
+
+/** SELECT FX PROCESSOR over `over`: the 16 slots of the rack, who uses each
+    and its device; `chosen` gets the slot touched, or -1 for NONE. */
+void showFxProcessorWindow (UiContext&, juce::Component& over, int current, std::function<void (int slot)> chosen);
 
 /** "CH 3 Kick" */
 juce::String describeStrip (const Strip&);

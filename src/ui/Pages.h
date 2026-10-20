@@ -43,7 +43,7 @@ private:
     std::unique_ptr<Editor> editor;
     double lastTap = 0.0;
     juce::Rectangle<int> rack, premiumLabel, standardLabel;
-    int selected = 0;
+    int selected = -1; // the slot touched last (none at start: no gold frame)
 };
 
 /** METERS (manual 5.3): channels and buses in groups of eight with number keys

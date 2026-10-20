@@ -97,6 +97,48 @@ int findModel (Table t, const juce::String& token)
     return -1;
 }
 
+const std::vector<FxMenuTab>& fxMenuTabs()
+{
+    static const std::vector<FxMenuTab> tabs = []
+    {
+        using Rows = std::vector<std::vector<const char*>>;
+        auto tab = [] (const char* title, const char* subtitle, bool premium, const Rows& rows)
+        {
+            FxMenuTab t { title, subtitle, premium, {} };
+            for (const auto& row : rows)
+            {
+                auto& r = t.rows.emplace_back();
+                for (const auto* token : row)
+                    if (const int i = findModel (Fx, token); i >= 0)
+                        r.push_back (i);
+            }
+            return t;
+        };
+        // The console's order: reverbs, the vintage units, special reverbs,
+        // modulation, delays and pitch; then the standard units by family.
+        return std::vector<FxMenuTab> {
+            tab ("FX1-8", "", true,
+                 { { "HALL", "ROOM", "CHAMBER", "PLATE", "CONCERT", "AMBI" },
+                   { "VSS3", "V-ROOM", "V-REV", "V-PLATE", "BPLATE" },
+                   { "GATED", "REVERSE", "DEL/REV", "SHIMMER", "SPRING" },
+                   { "DIMCRS", "CHORUS", "FLANGER" },
+                   { "ST-DL", "TAP-DL", "TAPE-DL", "OILCAN", "BBD-DL" },
+                   { "PITCH", "D-PITCH" } }),
+            tab ("STD", "ALL FX", false,
+                 { { "GEQ", "PIA", "SPKMAN" },
+                   { "DEQ3", "C5-CMB", "LIMITER" },
+                   { "DE-S2", "ENHANCE", "EXCITER", "P-BASS", "SUB", "SUB-M" },
+                   { "V-IMG", "DOUBLE", "PCORR" },
+                   { "ROTARY", "PHASER", "PANNER", "TAPE", "MOOD" },
+                   { "BODY", "RACKAMP", "UKROCK", "ANGEL", "JAZZC", "DELUXE" } }),
+            tab ("CH", "ALL FX", false,
+                 { { "SOUL", "E88", "E84", "F110", "PULSAR", "MACH4" },
+                   { "*EVEN*", "*SOUL*", "*VINTAGE*", "*BUS*", "*MASTER*" } }),
+        };
+    }();
+    return tabs;
+}
+
 juce::StringArray list (List l)
 {
     juce::StringArray items;

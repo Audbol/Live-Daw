@@ -329,7 +329,8 @@ public:
         }
         if (keyText.isEmpty())
         {
-            drawIcon (g, *icon, r.reduced (r.getHeight() * 0.2f), ink);
+            // (A narrow key, INS's > beside FX PROCESSOR, keeps a usable icon.)
+            drawIcon (g, *icon, r.reduced (juce::jmin (r.getWidth(), r.getHeight()) * 0.2f), ink);
             return;
         }
         if (iconAbove)

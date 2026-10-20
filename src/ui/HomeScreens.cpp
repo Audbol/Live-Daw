@@ -2103,38 +2103,28 @@ public:
                                             const int slot = ins.fx.load();
                                             return slot < 0 ? juce::String ("NONE") : "FX" + juce::String (slot + 1);
                                         },
-                                        [this] (ChoiceField& field)
-                                        {
-                                            // NONE and the 16 slots in two columns, all
-                                            // in view: NONE and FX 1-8 (the premium
-                                            // slots), FX 9-16 beside FX 1-8.
-                                            juce::StringArray items { "NONE" };
-                                            for (int i = 0; i < kNumFx; ++i)
-                                                items.add (ctx.engine.getFx().describe (i));
-                                            popups::ListOptions options;
-                                            options.columns = 2;
-                                            options.gapsBefore = { 1 + kNumFx / 2 };
-                                            options.maxRows = 1 + kNumFx / 2;
-                                            options.caption = "FX PROCESSOR";
-                                            popups::chooseFrom (field, items, ins.fx.load() + 1, [this] (int i) { ins.fx = i - 1; }, options);
-                                        });
+                                        [this] (ChoiceField&) { chooseProcessor(); });
         processor->keyHidden = true; // the > key beside it is the field's key [D8]
         openSlot = &key ({}, Icon::ChevronRight);
+        openSlot->offInk = colours::ink; // [3.1] a white chevron
         openSlot->setTooltip ("Edit the slot on EFFECTS");
         openSlot->onClick = [this]
         {
-            if (const int slot = ins.fx.load(); slot >= 0 && ctx.editFx)
+            if (const int slot = ins.fx.load(); slot < 0)
+                chooseProcessor(); // no slot yet: choose one
+            else if (ctx.editFx)
                 ctx.editFx (slot);
         };
         type = &make<ChoiceField> ("FX TYPE", [this] { return typeText; }, [this] (ChoiceField& field)
                                    {
                                        if (const int slot = ins.fx.load(); slot >= 0)
-                                           showFxDeviceMenu (ctx, slot, &field, [this] { shownSlot = -2; });
+                                           showFxDeviceMenu (ctx, slot, &field, [this] { shownSlot = -2; }, this);
                                    });
         type->arrowKey = true;
         reset = &key ("RESET", Icon::Reset);
         reset->iconAbove = true;
         reset->outlined = true;
+        reset->frame = juce::Colours::transparentBlack; // [3.1] an icon over its label, no frame
         reset->onClick = [this]
         {
             const int slot = ins.fx.load();
@@ -2146,7 +2136,7 @@ public:
                 fx.params (slot).values[i] = spec.params[i].defaultValue;
         };
         // FX SPILL puts the effect's parameters on the left fader section; again ends it.
-        spill = &key ("FX SPILL", Icon::Spill);
+        spill = &key ("FX SPILL", Icon::Faders); // [3.1] a row of faders
         spill->outlined = true;
         spill->isOn = [this] { return ins.fx.load() >= 0 && isSpilling (ctx, { LayerSet::Spill::Kind::Fx, ins.fx.load(), {} }); };
         spill->onClick = [this]
@@ -2154,21 +2144,20 @@ public:
             if (const int slot = ins.fx.load(); slot >= 0)
                 toggleSpill (ctx, std::nullopt, { LayerSet::Spill::Kind::Fx, slot, {} });
         };
-        if (strip.isOutput())
+        // SET CUST (every strip's INS, 3.1).
+        setCust = &key ("SET CUST", Icon::KeyboardEdit);
+        setCust->iconAbove = true;
+        setCust->outlined = true;
+        setCust->frame = juce::Colours::transparentBlack;
+        setCust->setTooltip ("Name the channel after the effect");
+        setCust->onClick = [this]
         {
-            setCust = &key ("SET CUST", Icon::KeyboardEdit);
-            setCust->iconAbove = true;
-            setCust->outlined = true;
-            setCust->setTooltip ("Name the channel after the effect");
-            setCust->onClick = [this]
-            {
-                const int slot = ins.fx.load();
-                if (slot < 0 || ! ctx.engine.getFx().isLoaded (slot))
-                    return;
-                auto* plugin = ctx.engine.getFx().getPlugin (slot);
-                strip.setName (plugin != nullptr ? plugin->getName() : models::model (models::Fx, ctx.engine.getFx().getModel (slot)).name.toUpperCase());
-            };
-        }
+            const int slot = ins.fx.load();
+            if (slot < 0 || ! ctx.engine.getFx().isLoaded (slot))
+                return;
+            auto* plugin = ctx.engine.getFx().getPlugin (slot);
+            strip.setName (plugin != nullptr ? plugin->getName() : models::model (models::Fx, ctx.engine.getFx().getModel (slot)).name.toUpperCase());
+        };
         openEditor = &key ("OPEN EDITOR", Icon::Edit);
         openEditor->onClick = [this]
         {
@@ -2201,6 +2190,12 @@ public:
     }
 
     bool automix() const { return post && strip.hasAutomix() && ins.mode.load() > 0; }
+
+    /** SELECT FX PROCESSOR: NONE and the 16 slots of the rack. */
+    void chooseProcessor()
+    {
+        showFxProcessorWindow (ctx, *this, ins.fx.load(), [this] (int slot) { ins.fx = slot; });
+    }
 
     /** The channels the automix screen lists: the members of groups X and Y
         (INS 2 AUTO X / AUTO Y and ON, as the engine shares gain), and the
@@ -2270,12 +2265,9 @@ public:
                 typeText = fx.getPlugin (slot)->getName().toUpperCase();
             else if (model > ld::kFxExt)
                 typeText = models::model (models::Fx, model).name.toUpperCase();
+            // [3.1] the keys stay lit as long as they show (RESET of an empty slot does nothing).
             type->setEnabled (slot >= 0);
-            openSlot->setEnabled (slot >= 0);
             spill->setEnabled (slot >= 0);
-            reset->setEnabled (slot >= 0 && model > ld::kFxExt);
-            if (setCust != nullptr)
-                setCust->setEnabled (slot >= 0 && fx.isLoaded (slot));
             // FX MIX follows the slot.
             if (mixBox != nullptr)
                 owned.removeObject (mixBox);
@@ -2296,9 +2288,8 @@ public:
             }
             else
                 face->unbind();
-            hint->setText (slot < 0 ? "Choose an FX PROCESSOR (one of the 16 slots of the FX rack)."
-                                    : (plugin ? "Plugin: open its editor." : (model <= ld::kFxExt ? "The slot is empty: choose its FX TYPE." : juce::String())),
-                           juce::dontSendNotification);
+            // [3.1] without a slot or a device the page below the rows is empty.
+            hint->setText (plugin ? "Plugin: open its editor." : juce::String(), juce::dontSendNotification);
             resized();
             repaint();
             notifyKnobs();
@@ -2311,8 +2302,9 @@ public:
         auto b = getLocalBounds();
         // The 3.1 layout (WING pixels from the content's left edge, 1160 wide):
         // row 1 ON 16-112, FX PROCESSOR 128-288 + its key to 320, SET CUST
-        // 336-416, FX TYPE 840-1144; row 2 FX MIX 16-172, RESET 904-968,
-        // FX SPILL 988-1144.
+        // 336-416, FX | AUTO - X | AUTO - Y 512-798, FX TYPE 840-1144; row 2
+        // FX MIX 16-172, RESET 904-968, FX SPILL 988-1144. Without a slot
+        // only ON, FX PROCESSOR, SET CUST and the mode keys show.
         // [D8] row 1 is 80 of the 670 px page: 64 px fields, the 48 px ON key.
         header = b.removeFromTop (juce::jlimit (32, screenCap (72), b.getHeight() * 12 / 100));
         const float u = (float) header.getWidth() / 1160.0f;
@@ -2326,18 +2318,19 @@ public:
         auto r2 = row2.reduced (0, juce::jmax (4, row2.getHeight() / 8));
         b.removeFromTop (juce::jmax (4, getHeight() / 100));
 
-        for (auto* c : { (juce::Component*) processor, (juce::Component*) openSlot, (juce::Component*) type, (juce::Component*) reset,
-                         (juce::Component*) spill, (juce::Component*) face, (juce::Component*) hint, (juce::Component*) openEditor })
+        for (auto* c : { (juce::Component*) processor, (juce::Component*) openSlot, (juce::Component*) setCust, (juce::Component*) face,
+                         (juce::Component*) hint, (juce::Component*) openEditor })
             c->setVisible (! am);
-        if (setCust != nullptr)
-            setCust->setVisible (! am);
+        for (auto* c : { (juce::Component*) type, (juce::Component*) reset, (juce::Component*) spill })
+            c->setVisible (! am && shownSlot >= 0);
         if (mixBox != nullptr)
             mixBox->setVisible (! am);
 
         if (modeKeys != nullptr)
         {
             // Automix: the mode keys in the header, the group enables in row 2.
-            modeKeys->setBounds (span (h, am ? 128.0f : 432.0f, am ? 560.0f : 824.0f));
+            modeKeys->setBounds (span (h, am ? 128.0f : 512.0f, am ? 560.0f : 798.0f).withSizeKeepingCentre (juce::roundToInt ((am ? 432.0f : 286.0f) * u),
+                                                                                                          header.getHeight() * 7 / 10));
             xEnable->setBounds (span (r2, 600.0f, 760.0f));
             yEnable->setBounds (span (r2, 776.0f, 936.0f));
             xEnable->setVisible (am);
@@ -2353,10 +2346,9 @@ public:
         }
 
         auto proc = span (h, 128.0f, 320.0f);
-        openSlot->setBounds (proc.removeFromRight (proc.getHeight() * 2 / 3));
-        processor->setBounds (proc.withTrimmedRight (2));
-        if (setCust != nullptr)
-            setCust->setBounds (span (h, 336.0f, 416.0f));
+        openSlot->setBounds (proc.removeFromRight (proc.getHeight() / 2));
+        processor->setBounds (proc);
+        setCust->setBounds (span (h, 336.0f, 416.0f));
         type->setBounds (span (h, 840.0f, 1144.0f));
         if (mixBox != nullptr)
             mixBox->setBounds (span (r2, 16.0f, 172.0f));

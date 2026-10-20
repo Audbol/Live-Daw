@@ -99,6 +99,20 @@ const Model& model (Table, int index);
 /** Index of the model with this token ("COMP"), or -1. */
 int findModel (Table, const juce::String& token);
 
+/** A tab of the FX TYPE list (firmware 3.1): its devices in the console's
+    order, a row per family. */
+struct FxMenuTab
+{
+    juce::String title, subtitle; // "STD" over "ALL FX"
+    bool premium = false;         // FX1-8: the premium devices (FX slots 1-8 only)
+    std::vector<std::vector<int>> rows; // indices into table (Fx)
+};
+
+/** The FX TYPE list's tabs: FX1-8 (the premium devices), STD ALL FX and
+    CH ALL FX (the EQs and the channel strips). Every device but NONE and
+    EXT is on one of them, once. */
+const std::vector<FxMenuTab>& fxMenuTabs();
+
 juce::StringArray list (List);
 
 /** The static curve of a dynamics model (its transfer graph), from the DSP's

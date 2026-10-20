@@ -3,6 +3,17 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Changed
+
+- INS 1 / INS 2, the FX TYPE list and the EFFECTS rack look like the WING's 3.1
+  screens: FX PROCESSOR opens the SELECT FX PROCESSOR window (the 16 slots in four
+  columns, who uses each), FX TYPE a list of device tiles with the FX1-8 / STD / CH
+  tabs in the console's order, and FX TYPE, RESET and FX SPILL only show once a slot
+  is chosen. SET CUST is on every strip's INS. A few device names follow the console's
+  screen (DELAY/REVERB, DIMENSION CRS, 2-BAND DEESSER, TREMOLO/PANNER).
+
 ## [0.1.2] - beta
 
 A fix for a crash in 0.1.1 and earlier: scrolling the start-up notice could close
