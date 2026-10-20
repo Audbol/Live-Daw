@@ -106,33 +106,46 @@ impl ApplyResult {
 }
 
 /// A continuous value that glides on recall. Holds the strip alive, so a strip
-/// removed during a fade is never written through a dangling pointer.
+/// removed during a fade is never written through a dangling pointer. DCAs are
+/// part of the engine's controls and are found through the engine.
 #[derive(Clone)]
 pub enum FadeParam {
     Fader(Arc<Strip>),
     Pan(Arc<Strip>),
+    Width(Arc<Strip>),
     SendLevel(Arc<Strip>, usize),
+    SendPan(Arc<Strip>, usize),
     MainLevel(Arc<Strip>, usize),
     MatrixLevel(Arc<Strip>, usize),
+    MatrixPan(Arc<Strip>, usize),
+    Dca(usize),
 }
 
 impl FadeParam {
-    pub fn value(&self) -> Option<&AtomicF32> {
+    pub fn value<'a>(&'a self, engine: &'a Engine) -> Option<&'a AtomicF32> {
         match self {
             FadeParam::Fader(s) => Some(&s.params.fader_db),
             FadeParam::Pan(s) => Some(&s.params.pan),
+            FadeParam::Width(s) => Some(&s.params.width),
             FadeParam::SendLevel(s, slot) => s.sends.find(*slot).map(|p| &p.level_db),
+            FadeParam::SendPan(s, slot) => s.sends.find(*slot).map(|p| &p.pan),
             FadeParam::MainLevel(s, i) => s.params.mains.get(*i).map(|m| &m.level_db),
             FadeParam::MatrixLevel(s, i) => s.params.matrix.get(*i).map(|m| &m.level_db),
+            FadeParam::MatrixPan(s, i) => s.params.matrix.get(*i).map(|m| &m.pan),
+            FadeParam::Dca(i) => engine.controls.dcas.get(*i).map(|d| &d.fader_db),
         }
     }
 
     pub fn same(&self, other: &FadeParam) -> bool {
+        use FadeParam::*;
         match (self, other) {
-            (FadeParam::Fader(a), FadeParam::Fader(b)) | (FadeParam::Pan(a), FadeParam::Pan(b)) => Arc::ptr_eq(a, b),
-            (FadeParam::SendLevel(a, x), FadeParam::SendLevel(b, y))
-            | (FadeParam::MainLevel(a, x), FadeParam::MainLevel(b, y))
-            | (FadeParam::MatrixLevel(a, x), FadeParam::MatrixLevel(b, y)) => Arc::ptr_eq(a, b) && x == y,
+            (Fader(a), Fader(b)) | (Pan(a), Pan(b)) | (Width(a), Width(b)) => Arc::ptr_eq(a, b),
+            (SendLevel(a, x), SendLevel(b, y))
+            | (SendPan(a, x), SendPan(b, y))
+            | (MainLevel(a, x), MainLevel(b, y))
+            | (MatrixLevel(a, x), MatrixLevel(b, y))
+            | (MatrixPan(a, x), MatrixPan(b, y)) => Arc::ptr_eq(a, b) && x == y,
+            (Dca(x), Dca(y)) => x == y,
             _ => false,
         }
     }
@@ -183,7 +196,7 @@ fn get_f(e: &Element, name: &str, v: &AtomicF32) {
 }
 
 /// Sets a continuous value, or queues it for a fade.
-fn get_fadable(e: &Element, name: &str, param: FadeParam, fades: &mut Option<&mut Vec<FadeTarget>>) {
+fn get_fadable(e: &Element, name: &str, param: FadeParam, engine: &Engine, fades: &mut Option<&mut Vec<FadeTarget>>) {
     if !e.has_attr(name) {
         return;
     }
@@ -194,7 +207,7 @@ fn get_fadable(e: &Element, name: &str, param: FadeParam, fades: &mut Option<&mu
     match fades {
         Some(f) => f.push(FadeTarget { param, target }),
         None => {
-            if let Some(v) = param.value() {
+            if let Some(v) = param.value(engine) {
                 v.store(target);
             }
         }
@@ -567,7 +580,8 @@ fn apply_rta(engine: &Engine, parent: &Element) {
 /// panned output with the send's pan: a send left centred loads linked (as
 /// it sounded), one with a pan loads with its own pan.
 fn get_matrix_pan_link(e: &Element, ms: &MatrixSendParams) {
-    let linked = e.bool_or("plink", ms.pan.load() == 0.0);
+    // The saved pan, not the current one: a fade may not have set it yet.
+    let linked = e.bool_or("plink", e.double_or("pan", f64::from(ms.pan.load())) == 0.0);
     ms.pan_link.store(linked, Relaxed);
     ms.pan_reversed.store(e.bool_or("prev", false), Relaxed);
 }
@@ -684,7 +698,7 @@ fn capture_dcas(engine: &Engine, parent: &mut Element, names: bool) {
     }
 }
 
-fn apply_dcas(engine: &Engine, parent: &Element) {
+fn apply_dcas(engine: &Engine, parent: &Element, fades: &mut Option<&mut Vec<FadeTarget>>) {
     let Some(d) = parent.child("Dcas") else { return };
     for x in d.children_named("Dca") {
         let i = x.int_or("i", -1);
@@ -695,7 +709,7 @@ fn apply_dcas(engine: &Engine, parent: &Element) {
         get_i(x, "colour", &dca.colour);
         get_i(x, "icon", &dca.icon);
         get_b(x, "led", &dca.led);
-        get_f(x, "lvl", &dca.fader_db);
+        get_fadable(x, "lvl", FadeParam::Dca(i as usize), engine, fades);
         get_b(x, "mute", &dca.mute);
     }
 }
@@ -858,7 +872,14 @@ pub fn capture(engine: &Engine, sections: u32, only: Option<&[StripRef]>, bridge
 
 // ---- apply ----------------------------------------------------------------------------
 
-fn apply_strip(s: &Arc<Strip>, e: &Element, requested: u32, fades: &mut Option<&mut Vec<FadeTarget>>, result: &mut ApplyResult) {
+fn apply_strip(
+    engine: &Engine,
+    s: &Arc<Strip>,
+    e: &Element,
+    requested: u32,
+    fades: &mut Option<&mut Vec<FadeTarget>>,
+    result: &mut ApplyResult,
+) {
     use section::*;
     // Only touch what was both captured and requested.
     let sections = requested & (e.int_or("sections", ALL as i32) as u32);
@@ -938,8 +959,8 @@ fn apply_strip(s: &Arc<Strip>, e: &Element, requested: u32, fades: &mut Option<&
                 get_b(x, "on", &ms.on);
                 get_b(x, "pre", &ms.pre);
                 get_ignore_mute(x, &ms.ignore_mute, ms.pre.load(Relaxed));
-                get_fadable(x, "lvl", FadeParam::MatrixLevel(s.clone(), i), fades);
-                get_f(x, "pan", &ms.pan);
+                get_fadable(x, "lvl", FadeParam::MatrixLevel(s.clone(), i), engine, fades);
+                get_fadable(x, "pan", FadeParam::MatrixPan(s.clone(), i), engine, fades);
                 get_matrix_pan_link(x, ms);
             }
         }
@@ -949,7 +970,7 @@ fn apply_strip(s: &Arc<Strip>, e: &Element, requested: u32, fades: &mut Option<&
                 let Some(ms) = p.mains.get(i) else { continue };
                 get_b(x, "on", &ms.on);
                 get_b(x, "pre", &ms.pre);
-                get_fadable(x, "lvl", FadeParam::MainLevel(s.clone(), i), fades);
+                get_fadable(x, "lvl", FadeParam::MainLevel(s.clone(), i), engine, fades);
             }
         }
         if let Some(sends) = e.child("Sends") {
@@ -960,9 +981,9 @@ fn apply_strip(s: &Arc<Strip>, e: &Element, requested: u32, fades: &mut Option<&
                 }
                 let Some(send) = s.sends.get_or_create(slot) else { continue };
                 get_b(x, "on", &send.enabled);
-                get_fadable(x, "lvl", FadeParam::SendLevel(s.clone(), slot), fades);
+                get_fadable(x, "lvl", FadeParam::SendLevel(s.clone(), slot), engine, fades);
                 get_i(x, "mode", &send.mode);
-                get_f(x, "pan", &send.pan);
+                get_fadable(x, "pan", FadeParam::SendPan(s.clone(), slot), engine, fades);
                 get_b(x, "plink", &send.pan_link);
                 send.pan_reversed.store(x.bool_or("prev", false), Relaxed);
                 get_ignore_mute(x, &send.ignore_mute, send.mode.load(Relaxed) == livedaw_engine::sends::send_mode::PRE);
@@ -980,9 +1001,9 @@ fn apply_strip(s: &Arc<Strip>, e: &Element, requested: u32, fades: &mut Option<&
         }
     }
     if let Some(o) = e.child("Fdr").filter(|_| sections & FADER != 0) {
-        get_fadable(o, "lvl", FadeParam::Fader(s.clone()), fades);
-        get_fadable(o, "pan", FadeParam::Pan(s.clone()), fades);
-        get_f(o, "wid", &p.width);
+        get_fadable(o, "lvl", FadeParam::Fader(s.clone()), engine, fades);
+        get_fadable(o, "pan", FadeParam::Pan(s.clone()), engine, fades);
+        get_fadable(o, "wid", FadeParam::Width(s.clone()), engine, fades);
         get_b(o, "mute", &p.mute);
     }
     if let Some(g) = e.child("Grp").filter(|_| sections & GROUPS != 0) {
@@ -1025,7 +1046,7 @@ pub fn apply(
             result.strips_skipped_safe += 1;
             continue;
         }
-        apply_strip(strip, e, sections, &mut fades, &mut result);
+        apply_strip(engine, strip, e, sections, &mut fades, &mut result);
     }
 
     if only.is_none() {
@@ -1038,7 +1059,7 @@ pub fn apply(
             apply_input_select(engine, state);
         }
         if effective & section::FADER != 0 {
-            apply_dcas(engine, state);
+            apply_dcas(engine, state, &mut fades);
         }
         if effective & section::GROUPS != 0 {
             apply_mute_groups(engine, state);
@@ -1104,7 +1125,7 @@ pub fn load_console(engine: &Engine, console: &Element, bridge: &mut dyn PluginB
     apply_prefs(engine, console);
     apply_rta(engine, console);
     apply_automix(engine, console);
-    apply_dcas(engine, console);
+    apply_dcas(engine, console, &mut None);
     apply_mute_groups(engine, console);
     for i in 0..NUM_FX {
         bridge.clear_fx(i);
@@ -1137,7 +1158,7 @@ pub fn load_console(engine: &Engine, console: &Element, bridge: &mut dyn PluginB
         }
     }
     for (s, e) in loaded {
-        apply_strip(&s, e, section::ALL, &mut None, &mut result);
+        apply_strip(engine, &s, e, section::ALL, &mut None, &mut result);
         s.params.recall_safe.store(e.bool_or("recallSafe", false), Relaxed);
     }
     crate::globals::apply(engine, console);

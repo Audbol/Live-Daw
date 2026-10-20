@@ -280,7 +280,7 @@ fn fades_glide_and_survive_removed_strips() {
     show.recall_scene(&engine, &mut np, 0);
     assert!(show.is_fading());
     assert_eq!(a.params.fader_db.load(), -40.0, "nothing jumps");
-    assert!(show.tick_at(start + Duration::from_millis(1000)));
+    assert!(show.tick_at(&engine, start + Duration::from_millis(1000)));
     let mid = a.params.fader_db.load();
     assert!(mid > -30.0 && mid < -10.0, "{mid}");
     let send_mid = a.sends.find(bus.id() as usize).unwrap().level_db.load();
@@ -292,16 +292,111 @@ fn fades_glide_and_survive_removed_strips() {
     engine.remove_strip(Arc::as_ptr(&b));
     drop(b);
     engine.collect();
-    assert!(!show.tick_at(start + Duration::from_secs(5)));
+    assert!(!show.tick_at(&engine, start + Duration::from_secs(5)));
     assert_eq!(a.params.fader_db.load(), 0.0);
     assert_eq!(a.sends.find(bus.id() as usize).unwrap().level_db.load(), -10.0);
 
     // Cancel jumps to the targets.
     a.params.fader_db.store(-40.0);
     show.recall_scene(&engine, &mut np, 0);
-    show.cancel_fade();
+    show.cancel_fade(&engine);
     assert!(!show.is_fading());
     assert_eq!(a.params.fader_db.load(), 0.0);
+}
+
+#[test]
+fn fades_glide_dcas_widths_and_send_pans_while_switches_jump() {
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    engine.set_num_channels(1);
+    let bus = engine.bus_in_slot(0).unwrap();
+    let a = ch(&engine, 0);
+    let slot = bus.id() as usize;
+    let dca = &engine.controls.dcas[0];
+    let send = a.sends.get_or_create(slot).unwrap();
+    dca.fader_db.store(-10.0);
+    a.params.width.store(50.0);
+    send.pan.store(-50.0);
+    a.params.matrix[0].pan.store(-50.0);
+    a.params.matrix[0].pan_link.store(false, Relaxed);
+    a.params.mute.store(true, Relaxed);
+    dca.mute.store(true, Relaxed);
+
+    let mut show = Show::new();
+    show.add_scene(&engine, &mut np, "A", -1);
+    show.scene_mut(0).unwrap().fade_seconds = 2.0;
+    dca.fader_db.store(-30.0);
+    a.params.width.store(100.0);
+    send.pan.store(50.0);
+    a.params.matrix[0].pan.store(50.0);
+    a.params.mute.store(false, Relaxed);
+    dca.mute.store(false, Relaxed);
+
+    let start = Instant::now();
+    show.recall_scene(&engine, &mut np, 0);
+    assert!(a.params.mute.load(Relaxed) && dca.mute.load(Relaxed), "switches jump at the start");
+    assert!(!a.params.matrix[0].pan_link.load(Relaxed), "the saved pan decides an old show's link");
+    assert_eq!(dca.fader_db.load(), -30.0, "nothing glides before the first tick");
+    assert!(show.tick_at(&engine, start + Duration::from_millis(1000)));
+    let between = |v: f32, x: f32, y: f32| v > x.min(y) && v < x.max(y);
+    assert!(between(dca.fader_db.load(), -30.0, -10.0), "{}", dca.fader_db.load());
+    assert!(between(a.params.width.load(), 100.0, 50.0), "{}", a.params.width.load());
+    assert!(between(send.pan.load(), 50.0, -50.0), "{}", send.pan.load());
+    assert!(between(a.params.matrix[0].pan.load(), 50.0, -50.0), "{}", a.params.matrix[0].pan.load());
+
+    assert!(!show.tick_at(&engine, start + Duration::from_secs(3)));
+    assert_eq!(dca.fader_db.load(), -10.0);
+    assert_eq!(a.params.width.load(), 50.0);
+    assert_eq!(send.pan.load(), -50.0);
+    assert_eq!(a.params.matrix[0].pan.load(), -50.0);
+}
+
+#[test]
+fn a_value_moved_during_a_fade_leaves_the_fade() {
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    engine.set_num_channels(2);
+    let bus = engine.bus_in_slot(0).unwrap();
+    let slot = bus.id() as usize;
+    let (a, b) = (ch(&engine, 0), ch(&engine, 1));
+    let dca = &engine.controls.dcas[0];
+    a.sends.get_or_create(slot).unwrap().level_db.store(0.0);
+
+    let mut show = Show::new();
+    show.add_scene(&engine, &mut np, "A", -1);
+    show.scene_mut(0).unwrap().fade_seconds = 2.0;
+    for s in [&a, &b] {
+        s.params.fader_db.store(-40.0);
+    }
+    dca.fader_db.store(-40.0);
+    a.sends.find(slot).unwrap().level_db.store(-40.0);
+
+    let start = Instant::now();
+    show.recall_scene(&engine, &mut np, 0);
+    assert!(show.tick_at(&engine, start + Duration::from_millis(500)));
+    // Moved by hand (surface, MIDI, a remote: they all write the parameter).
+    a.params.fader_db.store(-25.0);
+    dca.fader_db.store(-5.0);
+    a.sends.find(slot).unwrap().level_db.store(-12.0);
+    assert!(show.tick_at(&engine, start + Duration::from_millis(1000)));
+    assert_eq!(a.params.fader_db.load(), -25.0);
+    assert_eq!(dca.fader_db.load(), -5.0);
+    assert_eq!(a.sends.find(slot).unwrap().level_db.load(), -12.0);
+    let mid = b.params.fader_db.load();
+    assert!(mid > -40.0 && mid < 0.0, "the others keep fading: {mid}");
+    assert!(!show.tick_at(&engine, start + Duration::from_secs(3)));
+    assert_eq!(a.params.fader_db.load(), -25.0);
+    assert_eq!(b.params.fader_db.load(), 0.0);
+
+    // A value moved just before the fade is cancelled (by the next recall) stays too.
+    for s in [&a, &b] {
+        s.params.fader_db.store(-40.0);
+    }
+    show.recall_scene(&engine, &mut np, 0);
+    a.params.fader_db.store(-20.0);
+    show.cancel_fade(&engine);
+    assert_eq!(a.params.fader_db.load(), -20.0);
+    assert_eq!(b.params.fader_db.load(), 0.0);
 }
 
 #[test]

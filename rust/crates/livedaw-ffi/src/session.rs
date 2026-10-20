@@ -833,16 +833,17 @@ pub unsafe extern "C" fn ld_show_is_fading(s: *mut LdShow) -> bool {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ld_show_cancel_fade(s: *mut LdShow) {
-    if let Some(s) = show(s) {
-        guard((), || s.show.cancel_fade());
+pub unsafe extern "C" fn ld_show_cancel_fade(s: *mut LdShow, e: *const Engine) {
+    if let (Some(s), Some(e)) = (show(s), eng(e)) {
+        guard((), || s.show.cancel_fade(e));
     }
 }
 
 /// Advances running fades (call at ~60 Hz). Returns true while still fading.
 #[no_mangle]
-pub unsafe extern "C" fn ld_show_tick(s: *mut LdShow) -> bool {
-    show(s).is_some_and(|s| guard(false, || s.show.tick()))
+pub unsafe extern "C" fn ld_show_tick(s: *mut LdShow, e: *const Engine) -> bool {
+    let (Some(s), Some(e)) = (show(s), eng(e)) else { return false };
+    guard(false, || s.show.tick(e))
 }
 
 // Files -----------------------------------------------------------------------------------
