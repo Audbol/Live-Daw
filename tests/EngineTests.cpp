@@ -63,6 +63,27 @@ public:
             expectEquals (models::list (models::TapPoints)[5], juce::String ("PFL"));
             expectEquals (models::list (models::ProcessOrders).size(), 24);
 
+            // The FX TYPE list: every device on one tab, once; FX1-8 holds exactly the premium ones.
+            const auto& tabs = models::fxMenuTabs();
+            expectEquals ((int) tabs.size(), 3);
+            std::vector<int> seen (models::table (models::Fx).size(), 0);
+            for (const auto& tab : tabs)
+                for (const auto& row : tab.rows)
+                {
+                    expect (! row.empty() && row.size() <= 6, "a row of one to six tiles");
+                    for (const int device : row)
+                    {
+                        ++seen[(size_t) device];
+                        expect ((models::model (models::Fx, device).category == models::Category::FxPremium) == tab.premium,
+                                models::model (models::Fx, device).token);
+                    }
+                }
+            for (size_t i = 0; i < seen.size(); ++i)
+                expectEquals (seen[i], i <= (size_t) ld::kFxExt ? 0 : 1, models::model (models::Fx, (int) i).token);
+            expectEquals (models::model (models::Fx, tabs[0].rows[0][0]).name, juce::String ("Hall Reverb"));
+            expectEquals (models::model (models::Fx, tabs[1].rows[0][0]).name, juce::String ("Graphic EQ"));
+            expectEquals (models::model (models::Fx, tabs[2].rows[1].back()).name, juce::String ("Mastering"));
+
             MixerEngine engine (0);
             engine.setNumChannels (1);
             auto& ch = *engine.getChannels()[0];

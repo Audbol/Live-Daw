@@ -1214,6 +1214,344 @@ namespace
         std::function<void (int)> onChosen;
     };
 
+    /** Where a window drawn on the WING's 1160 x 708 px page (a channel's page,
+        right of the module column) sits over `over`: on all of it, or, when
+        `over` spans the screen (EFFECTS, 1280 px), from x 96 to 1256. */
+    struct PageUnits
+    {
+        juce::Rectangle<float> page;
+        float ux = 1.0f, uy = 1.0f, u = 1.0f; // u: for type and strokes
+
+        PageUnits (juce::Rectangle<float> over, float screenWidth) : page (over)
+        {
+            if (over.getWidth() > screenWidth * 0.95f)
+                page = over.withTrimmedLeft (over.getWidth() * 96.0f / 1280.0f).withWidth (over.getWidth() * 1160.0f / 1280.0f);
+            ux = page.getWidth() / 1160.0f;
+            uy = page.getHeight() / 708.0f;
+            u = juce::jmin (ux, uy);
+        }
+
+        /** A rectangle given in WING pixels from the page's top left. */
+        juce::Rectangle<float> at (float x, float y, float w, float h) const { return { page.getX() + x * ux, page.getY() + y * uy, w * ux, h * uy }; }
+    };
+
+    //==========================================================================
+    /** The FX TYPE list (firmware 3.1): over the page, picture tiles 172 x 92
+        px on a #202020 ground, the first row common to every tab, the tabs
+        down the right edge (the one shown #707070). Touch a tile to load it. */
+    class TabbedTilePopup final : public Popup
+    {
+    public:
+        TabbedTilePopup (juce::Component& anchorComponent, juce::Component& overComponent, std::vector<Tile> commonRow, std::vector<TileTab> tileTabs,
+                         int shownTab, int selectedId, std::function<void (juce::Graphics&, juce::Rectangle<float>, int)> paintPicture,
+                         std::function<void (int)> chosen)
+            : anchor (&anchorComponent), over (&overComponent), common (std::move (commonRow)), tabs (std::move (tileTabs)),
+              shown (juce::jlimit (0, juce::jmax (0, (int) tabs.size() - 1), shownTab)), selected (selectedId), picture (std::move (paintPicture)),
+              onChosen (std::move (chosen))
+        {
+            anchor->getProperties().set ("wingListOpen", true);
+            anchor->repaint();
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto units = pageUnits();
+            const float u = units.u;
+            g.setColour (juce::Colours::black);
+            g.fillRect (units.page);
+            g.setColour (Colours::screenPanel);
+            g.fillRect (units.at (0.0f, 0.0f, 1088.0f, 708.0f));
+
+            for (auto& [area, tile] : tileLayout())
+            {
+                const bool down = tile.id == pressed;
+                g.setColour (down ? Colours::screenTile : juce::Colours::black);
+                g.fillRect (area);
+                // [3.1] the picture 158 x 48 px, 7 px in and 8 down; the name under it.
+                const float sx = area.getWidth() / 172.0f, sy = area.getHeight() / 92.0f;
+                if (picture)
+                    picture (g, juce::Rectangle<float> (area.getX() + 7.0f * sx, area.getY() + 8.0f * sy, 158.0f * sx, 48.0f * sy), tile.id);
+                g.setColour (Colours::text);
+                g.setFont (wingFontPx (12.5f * u));
+                g.drawFittedText (tile.caption, juce::Rectangle<float> (area.getX(), area.getY() + 60.0f * sy, area.getWidth(), 26.0f * sy).toNearestInt().reduced (3, 0),
+                                  juce::Justification::centred, 1, 0.7f);
+                if (tile.id == selected)
+                {
+                    g.setColour (Colours::gold);
+                    g.drawRect (area, 3.0f * u);
+                }
+            }
+
+            for (size_t i = 0; i < tabs.size(); ++i)
+            {
+                const auto& tab = tabs[i];
+                const auto r = tabArea ((int) i);
+                const bool lit = (int) i == shown;
+                g.setColour (lit ? Colours::textDim : Colours::screenHeader);
+                g.fillRect (r);
+                const auto ink = lit ? juce::Colours::black : (tab.enabled ? Colours::textDim : Colours::screenLine);
+                g.setColour (ink);
+                if (tab.icon.has_value())
+                {
+                    drawIcon (g, *tab.icon, juce::Rectangle<float> (r.getX(), r.getY() + 10.0f * u, r.getWidth(), 24.0f * u).withSizeKeepingCentre (32.0f * u, 24.0f * u), ink);
+                    g.setFont (wingFontPx (10.0f * u, WingWeight::SemiBold));
+                    g.drawFittedText (tab.title, r.withTrimmedTop (42.0f * u).withHeight (20.0f * u).toNearestInt(), juce::Justification::centred, 1, 0.8f);
+                    continue;
+                }
+                g.setFont (wingFontPx (13.5f * u, WingWeight::SemiBold));
+                g.drawFittedText (tab.title, r.withTrimmedTop (10.0f * u).withHeight (26.0f * u).toNearestInt(), juce::Justification::centred, 1, 0.8f);
+                g.setFont (wingFontPx (10.0f * u));
+                g.drawFittedText (tab.subtitle, r.withTrimmedTop (42.0f * u).withHeight (22.0f * u).toNearestInt(), juce::Justification::centred, 1, 0.8f);
+            }
+        }
+
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            if (! pageUnits().page.contains (e.position))
+            {
+                cancel();
+                return;
+            }
+            for (int i = 0; i < (int) tabs.size(); ++i)
+                if (tabArea (i).contains (e.position) && tabs[(size_t) i].enabled)
+                {
+                    shown = i;
+                    repaint();
+                    return;
+                }
+            pressed = tileAt (e.position);
+            repaint();
+        }
+
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            const int was = pressed;
+            pressed = -1;
+            repaint();
+            if (was >= 0 && tileAt (e.position) == was)
+                closeThen ([chosen = onChosen, was] { if (chosen != nullptr) chosen (was); });
+        }
+
+    private:
+        void onClosing() override
+        {
+            if (anchor != nullptr)
+            {
+                anchor->getProperties().set ("wingListOpen", false);
+                anchor->repaint();
+            }
+        }
+
+        PageUnits pageUnits() const
+        {
+            return PageUnits (over != nullptr ? getLocalArea (over, over->getLocalBounds()).toFloat() : getLocalBounds().toFloat(), (float) getWidth());
+        }
+
+        // [3.1] tabs 64 px square, 72 px apart, 8 px right of the list.
+        juce::Rectangle<float> tabArea (int i) const { return pageUnits().at (1096.0f, 72.0f * (float) i, 64.0f, 64.0f); }
+
+        // [3.1] tiles 172 x 92 px, 180 px across and 100 px down.
+        std::vector<std::pair<juce::Rectangle<float>, Tile>> tileLayout() const
+        {
+            std::vector<std::pair<juce::Rectangle<float>, Tile>> out;
+            const auto units = pageUnits();
+            auto addRow = [&] (const std::vector<Tile>& row, int r)
+            {
+                for (size_t c = 0; c < row.size(); ++c)
+                    if (row[c].id >= 0)
+                        out.push_back ({ units.at (8.0f + 180.0f * (float) c, 8.0f + 100.0f * (float) r, 172.0f, 92.0f), row[c] });
+            };
+            addRow (common, 0);
+            if (juce::isPositiveAndBelow (shown, (int) tabs.size()))
+                for (size_t r = 0; r < tabs[(size_t) shown].rows.size(); ++r)
+                    addRow (tabs[(size_t) shown].rows[r], (int) r + 1);
+            return out;
+        }
+
+        int tileAt (juce::Point<float> p) const
+        {
+            for (auto& [area, tile] : tileLayout())
+                if (area.contains (p))
+                    return tile.id;
+            return -1;
+        }
+
+        juce::Component::SafePointer<juce::Component> anchor, over;
+        std::vector<Tile> common;
+        std::vector<TileTab> tabs;
+        int shown, selected, pressed = -1;
+        std::function<void (juce::Graphics&, juce::Rectangle<float>, int)> picture;
+        std::function<void (int)> onChosen;
+    };
+
+    //==========================================================================
+    /** SELECT FX PROCESSOR (firmware 3.1): a black window over the dimmed
+        page with a #202020 title bar (NONE, the title, CLOSE), the 16 slots
+        256 x 92 px in four columns with a #707070 outline, and the group
+        captions under them. Touch a slot to use it. */
+    class RackSlotPopup final : public Popup
+    {
+    public:
+        RackSlotPopup (juce::Component& overComponent, std::vector<RackSlot> rackSlots, int selectedSlot,
+                       std::function<bool (juce::Graphics&, juce::Rectangle<float>, int)> device,
+                       std::function<void (juce::Graphics&, juce::Rectangle<float>, int)> sourceIcon, std::function<void (int)> chosen)
+            : over (&overComponent), slots (std::move (rackSlots)), selected (selectedSlot), paintDevice (std::move (device)),
+              paintSourceIcon (std::move (sourceIcon)), onChosen (std::move (chosen))
+        {
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto units = pageUnits();
+            const float u = units.u;
+            g.setColour (Colours::scrim);
+            g.fillRect (getLocalBounds());
+            g.setColour (juce::Colours::black);
+            g.fillRect (units.at (48.0f, 72.0f, 1062.0f, 504.0f));
+
+            // The title bar: NONE (a circled cross over its name), the title, CLOSE and its ticked box.
+            g.setColour (Colours::screenHeader);
+            g.fillRect (units.at (56.0f, 80.0f, 1047.0f, 64.0f));
+            const auto noneKey = noneArea(), closeKey = closeArea();
+            for (auto [key, id] : { std::pair (noneKey, kNone), std::pair (closeKey, kClose) })
+                if (pressed == id)
+                {
+                    g.setColour (Colours::screenTile);
+                    g.fillRect (key);
+                }
+            drawIcon (g, Icon::Cancel, units.at (80.0f, 88.0f, 32.0f, 32.0f), Colours::caption);
+            g.setColour (Colours::caption);
+            g.setFont (wingFontPx (10.0f * u));
+            g.drawText ("NONE", units.at (56.0f, 124.0f, 80.0f, 20.0f), juce::Justification::centred, false);
+            g.setFont (wingFontPx (19.0f * u));
+            g.drawText ("SELECT FX PROCESSOR", units.at (300.0f, 80.0f, 560.0f, 64.0f), juce::Justification::centred, false);
+            g.setFont (wingFontPx (13.5f * u));
+            g.drawText ("CLOSE", units.at (900.0f, 80.0f, 140.0f, 64.0f), juce::Justification::centredRight, false);
+            drawIcon (g, Icon::Check, units.at (1055.0f, 96.0f, 32.0f, 32.0f), Colours::caption);
+
+            for (int i = 0; i < (int) slots.size(); ++i)
+                paintSlot (g, i, slotArea (i), u);
+
+            // The groups' captions, centred under their two columns.
+            g.setColour (Colours::textDim);
+            const auto font = wingFontPx (13.0f * u);
+            g.setFont (font);
+            const float premiumW = juce::GlyphArrangement::getStringWidth (font, "PREMIUM FX");
+            const auto premium = units.at (56.0f, 536.0f, 517.0f, 26.0f);
+            const float x0 = premium.getCentreX() - (premiumW + 33.0f * u) * 0.5f;
+            drawIcon (g, Icon::Premium, juce::Rectangle<float> (x0, premium.getY() + 4.0f * u, 26.0f * u, 18.0f * u), Colours::textDim);
+            g.drawText ("PREMIUM FX", juce::Rectangle<float> (x0 + 33.0f * u, premium.getY(), premiumW + 4.0f, premium.getHeight()),
+                        juce::Justification::centredLeft, false);
+            g.drawText ("STANDARD FX", units.at (586.0f, 536.0f, 517.0f, 26.0f), juce::Justification::centred, false);
+        }
+
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            if (! pageUnits().at (48.0f, 72.0f, 1062.0f, 504.0f).contains (e.position))
+            {
+                cancel();
+                return;
+            }
+            pressed = hit (e.position);
+            repaint();
+        }
+
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            const int was = pressed;
+            pressed = kNothing;
+            repaint();
+            if (was == kNothing || hit (e.position) != was)
+                return;
+            if (was == kClose)
+                cancel();
+            else
+                closeThen ([chosen = onChosen, was] { if (chosen != nullptr) chosen (was == kNone ? -1 : was); });
+        }
+
+    private:
+        static constexpr int kNothing = -3, kClose = -2, kNone = -1;
+
+        PageUnits pageUnits() const
+        {
+            return PageUnits (over != nullptr ? getLocalArea (over, over->getLocalBounds()).toFloat() : getLocalBounds().toFloat(), (float) getWidth());
+        }
+
+        juce::Rectangle<float> noneArea() const { return pageUnits().at (56.0f, 80.0f, 80.0f, 64.0f); }
+        juce::Rectangle<float> closeArea() const { return pageUnits().at (968.0f, 80.0f, 135.0f, 64.0f); }
+
+        // [3.1] slots run down the columns (1-4 in the first); a 13 px gap
+        // between the premium and the standard pairs.
+        juce::Rectangle<float> slotArea (int i) const
+        {
+            static constexpr float columns[] = { 56.0f, 317.0f, 586.0f, 847.0f };
+            return pageUnits().at (columns[(i / 4) % 4], 149.0f + 97.0f * (float) (i % 4), 256.0f, 92.0f);
+        }
+
+        int hit (juce::Point<float> p) const
+        {
+            if (noneArea().contains (p))
+                return kNone;
+            if (closeArea().contains (p))
+                return kClose;
+            for (int i = 0; i < (int) slots.size(); ++i)
+                if (slotArea (i).contains (p))
+                    return i;
+            return kNothing;
+        }
+
+        void paintSlot (juce::Graphics& g, int i, juce::Rectangle<float> r, float u) const
+        {
+            const auto& slot = slots[(size_t) i];
+            const float sx = r.getWidth() / 256.0f, sy = r.getHeight() / 92.0f;
+            auto at = [&r, sx, sy] (float x, float y, float w, float h) { return juce::Rectangle<float> (r.getX() + x * sx, r.getY() + y * sy, w * sx, h * sy); };
+            g.setColour (pressed == i ? Colours::screenDark : juce::Colours::black);
+            g.fillRect (r);
+            g.setColour (i == selected ? Colours::gold : Colours::textDim);
+            g.drawRect (r, (i == selected ? 3.0f : 1.5f) * u);
+
+            // Who uses the slot: its colour over a grey box with its icon and name.
+            if (slot.source.isNotEmpty())
+            {
+                g.setColour (slot.sourceColour);
+                g.fillRect (at (8.0f, 8.0f, 64.0f, 16.0f));
+                g.setColour (Colours::screenTile);
+                g.fillRect (at (8.0f, 24.0f, 64.0f, 60.0f));
+                if (paintSourceIcon)
+                    paintSourceIcon (g, at (20.0f, 28.0f, 40.0f, 34.0f), i);
+                g.setColour (Colours::caption);
+                g.setFont (wingFontPx (10.0f * u));
+                g.drawFittedText (slot.source, at (8.0f, 66.0f, 64.0f, 18.0f).toNearestInt(), juce::Justification::centred, 1, 0.7f);
+            }
+
+            const auto device = at (78.0f, 8.0f, 170.0f, 60.0f);
+            if (! (paintDevice && paintDevice (g, device, i)))
+            {
+                g.setColour (Colours::screenPanel);
+                g.fillRect (device);
+            }
+            g.setColour (Colours::caption);
+            g.setFont (wingFontPx (10.0f * u));
+            g.drawFittedText (slot.caption, juce::Rectangle<float> (device.getX(), r.getY() + 70.0f * sy, device.getWidth(), 18.0f * sy).toNearestInt(),
+                              juce::Justification::centred, 1, 0.7f);
+
+            // The slot's number, bottom right.
+            const auto number = i < 9 ? at (238.0f, 73.0f, 16.0f, 18.0f) : at (234.0f, 73.0f, 20.0f, 18.0f);
+            g.setColour (Colours::textDim);
+            g.fillRect (number);
+            g.setColour (juce::Colours::black);
+            g.setFont (wingFontPx (9.0f * u, WingWeight::SemiBold));
+            g.drawFittedText (juce::String (i + 1), number.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+        }
+
+        juce::Component::SafePointer<juce::Component> over;
+        std::vector<RackSlot> slots;
+        int selected, pressed = kNothing;
+        std::function<bool (juce::Graphics&, juce::Rectangle<float>, int)> paintDevice;
+        std::function<void (juce::Graphics&, juce::Rectangle<float>, int)> paintSourceIcon;
+        std::function<void (int)> onChosen;
+    };
+
     //==========================================================================
     /** The text of a notice: headings (gold), paragraphs and bullets, laid out
         for a width; it sits in a viewport that scrolls it. */
@@ -1492,6 +1830,26 @@ void chooseTile (juce::Component& anchor, std::vector<std::vector<Tile>> rows, s
     if (layer == nullptr || rows.empty())
         return;
     (new TilePopup (anchor, std::move (rows), std::move (spacedRows), selected, std::move (paintPicture), std::move (onChosen)))->open (*layer);
+}
+
+void chooseTabbedTile (juce::Component& anchor, juce::Component& over, std::vector<Tile> common, std::vector<TileTab> tabs, int shownTab,
+                       int selected, std::function<void (juce::Graphics&, juce::Rectangle<float>, int)> paintPicture, std::function<void (int)> onChosen)
+{
+    auto* layer = layerFor (anchor);
+    if (layer == nullptr || tabs.empty())
+        return;
+    (new TabbedTilePopup (anchor, over, std::move (common), std::move (tabs), shownTab, selected, std::move (paintPicture), std::move (onChosen)))
+        ->open (*layer);
+}
+
+void chooseRackSlot (juce::Component& over, std::vector<RackSlot> slots, int selected,
+                     std::function<bool (juce::Graphics&, juce::Rectangle<float>, int)> paintDevice,
+                     std::function<void (juce::Graphics&, juce::Rectangle<float>, int)> paintSourceIcon, std::function<void (int)> onChosen)
+{
+    auto* layer = layerFor (over);
+    if (layer == nullptr || slots.empty())
+        return;
+    (new RackSlotPopup (over, std::move (slots), selected, std::move (paintDevice), std::move (paintSourceIcon), std::move (onChosen)))->open (*layer);
 }
 
 void editText (juce::Component& host, const juce::String& title, const juce::String& initial,

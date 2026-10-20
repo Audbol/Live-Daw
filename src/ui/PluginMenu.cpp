@@ -1,6 +1,8 @@
 #include "ui/UiContext.h"
 #include "ui/WingPopups.h"
 #include "engine/Models.h"
+#include "ui/Faceplate.h"
+#include "ui/LookAndFeel.h"
 
 namespace livedaw::ui
 {
@@ -135,71 +137,119 @@ void showFxSlotMenu (UiContext& ctx, int slot, juce::Component* target)
     menu.showMenuAsync (options);
 }
 
-void showFxDeviceMenu (UiContext& ctx, int slot, juce::Component* target, std::function<void()> chosen)
+void showFxDeviceMenu (UiContext& ctx, int slot, juce::Component* target, std::function<void()> chosen, juce::Component* over)
 {
     if (target == nullptr)
         return;
+    if (over == nullptr)
+        over = target->getParentComponent() != nullptr ? target->getParentComponent() : target;
 
-    // FX TYPE: the device list grouped as on the console (PREMIUM, STANDARD,
-    // CHANNEL STRIPS; the group names are dim rows), then PLUGIN (EXT) and NONE.
+    // FX TYPE (3.1): NONE and EXTERNAL (here: a plugin) on every tab, then the
+    // devices of the tab shown. The standard slots (9-16) can't load the
+    // premium devices: their FX1-8 tab is dim and the list opens on STD.
     auto& fx = ctx.engine.getFx();
-    const auto& devices = models::table (models::Fx);
-    const int current = fx.getModel (slot);
-    constexpr int kPlugin = -2, kNone = -1, kHeader = -3;
-    juce::StringArray items;
-    std::vector<int> values; // a device index, kPlugin, kNone or kHeader
-    popups::ListOptions options;
-    options.columns = 4;
-    options.caption = "FX " + juce::String (slot + 1) + ": FX TYPE";
-    int selected = -1;
-
-    auto addGroup = [&] (models::Category category, const juce::String& title)
+    const int current = fx.hasPlugin (slot) ? ld::kFxExt : fx.getModel (slot);
+    const auto caption = [] (int model)
     {
-        options.disabled.push_back (items.size());
-        items.add (title);
-        values.push_back (kHeader);
-        for (const auto& m : devices)
-        {
-            if (m.category != category)
-                continue;
-            if (! FxSlots::isAllowed (m.index, slot))
-                options.disabled.push_back (items.size());
-            if (m.index == current)
-                selected = items.size();
-            items.add (m.name.toUpperCase());
-            values.push_back (m.index);
-        }
+        return model == ld::kFxExt ? juce::String ("EXTERNAL") : models::model (models::Fx, model).name.toUpperCase();
     };
-    addGroup (models::Category::FxPremium, slot < 8 ? "PREMIUM FX" : "PREMIUM (FX 1-8 ONLY)");
-    addGroup (models::Category::FxStandard, "STANDARD FX");
-    addGroup (models::Category::FxChannel, "CHANNEL STRIPS");
-    if (current == ld::kFxExt)
-        selected = items.size();
-    items.add ("PLUGIN (EXT)...");
-    values.push_back (kPlugin);
-    if (current == ld::kFxNone)
-        selected = items.size();
-    items.add ("NONE");
-    values.push_back (kNone);
-
-    juce::Component::SafePointer<juce::Component> safeTarget (target);
-    popups::chooseFrom (*target, items, selected, [&ctx, slot, safeTarget, chosen, values] (int i)
+    std::vector<popups::Tile> common { { ld::kFxNone, "NONE" }, { ld::kFxExt, caption (ld::kFxExt) } };
+    std::vector<popups::TileTab> tabs;
+    int shown = -1;
+    for (const auto& tab : models::fxMenuTabs())
     {
-        if (! juce::isPositiveAndBelow (i, (int) values.size()) || values[(size_t) i] == kHeader)
-            return;
-        const int r = values[(size_t) i];
-        auto& slots = ctx.engine.getFx();
-        if (r == kPlugin)
+        popups::TileTab t { tab.title, tab.subtitle, tab.premium ? std::optional<Icon> (Icon::Premium) : std::nullopt, {}, ! tab.premium || slot < 8 };
+        for (const auto& row : tab.rows)
         {
-            showFxSlotMenu (ctx, slot, safeTarget.getComponent());
-            return;
+            auto& r = t.rows.emplace_back();
+            for (const int model : row)
+            {
+                r.push_back ({ model, caption (model) });
+                if (model == current && t.enabled)
+                    shown = (int) tabs.size();
+            }
         }
-        if (slots.hasPlugin (slot))
-            clearFx (ctx, slot); // closes the plugin's editor first
-        slots.setModel (slot, r == kNone ? ld::kFxNone : r);
-        if (chosen)
-            chosen();
-    }, options);
+        tabs.push_back (std::move (t));
+    }
+    if (shown < 0)
+        shown = slot < 8 ? 0 : 1;
+
+    auto picture = [] (juce::Graphics& g, juce::Rectangle<float> r, int model)
+    {
+        if (model == ld::kFxNone)
+            drawIcon (g, Icon::Cancel, r.withSizeKeepingCentre (r.getHeight() * 0.67f, r.getHeight() * 0.67f), Colours::caption);
+        else
+            Faceplate::paintThumbnail (g, r, models::Fx, model, model == ld::kFxExt ? juce::String ("PLUGIN") : juce::String());
+    };
+    juce::Component::SafePointer<juce::Component> safeTarget (target);
+    popups::chooseTabbedTile (*target, *over, std::move (common), std::move (tabs), shown, current, picture,
+                              [&ctx, slot, safeTarget, chosen] (int model)
+                              {
+                                  auto& slots = ctx.engine.getFx();
+                                  if (model == ld::kFxExt)
+                                  {
+                                      showFxSlotMenu (ctx, slot, safeTarget.getComponent());
+                                      return;
+                                  }
+                                  if (! FxSlots::isAllowed (model, slot))
+                                      return;
+                                  if (slots.hasPlugin (slot))
+                                      clearFx (ctx, slot); // closes the plugin's editor first
+                                  slots.setModel (slot, model);
+                                  if (chosen)
+                                      chosen();
+                              });
+}
+
+void showFxProcessorWindow (UiContext& ctx, juce::Component& over, int current, std::function<void (int)> chosen)
+{
+    // Each slot: who uses it (the first strip with it on an insert), its
+    // device, or "- FREE -".
+    auto& fx = ctx.engine.getFx();
+    std::vector<popups::RackSlot> slots;
+    std::vector<int> icons; // the users' WING icons (0: none)
+    for (int i = 0; i < kNumFx; ++i)
+    {
+        popups::RackSlot slot { "- FREE -", {}, {} };
+        const Strip* user = nullptr;
+        bool post = false;
+        for (auto kind : { StripKind::Channel, StripKind::Aux, StripKind::Bus, StripKind::Main, StripKind::Matrix })
+            for (auto& s : ctx.engine.getStrips (kind))
+                if (user == nullptr && (s->params.preInsert.fx.load() == i || (s->params.postInsert.fx.load() == i && s->params.postInsert.mode.load() == 0)))
+                {
+                    user = s.get();
+                    post = s->params.preInsert.fx.load() != i;
+                }
+        if (user != nullptr)
+        {
+            slot.source = user->getLabel();
+            slot.sourceColour = stripDisplayColour (*user);
+            slot.caption = post ? "INSERT POST" : "INSERT PRE";
+        }
+        if (auto* plugin = fx.getPlugin (i))
+            slot.caption = plugin->getName().toUpperCase();
+        else if (fx.getModel (i) > ld::kFxExt)
+            slot.caption = models::model (models::Fx, fx.getModel (i)).name.toUpperCase();
+        slots.push_back (slot);
+        icons.push_back (user != nullptr ? user->params.icon.load() : 0);
+    }
+
+    popups::chooseRackSlot (
+        over, std::move (slots), current,
+        [&ctx] (juce::Graphics& g, juce::Rectangle<float> r, int i)
+        {
+            auto& rack = ctx.engine.getFx();
+            const int model = rack.getModel (i);
+            if (rack.hasPlugin (i))
+                Faceplate::paintThumbnail (g, r, models::Fx, ld::kFxExt, "PLUGIN");
+            else if (model > ld::kFxExt)
+                Faceplate::paintThumbnail (g, r, models::Fx, model, {});
+            else
+                return false;
+            return true;
+        },
+        [icons] (juce::Graphics& g, juce::Rectangle<float> r, int i) { drawWingIcon (g, icons[(size_t) i], r, juce::Colours::white); },
+        std::move (chosen));
 }
 
 void clickFxSlot (UiContext& ctx, int slot, juce::Component* target)

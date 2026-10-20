@@ -5365,7 +5365,7 @@ pub static FX_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "DEL/REV",
-        name: "Delay Reverb",
+        name: "Delay/Reverb",
         category: ModelCategory::FxPremium,
         params: &[
             ParamSpec {
@@ -5607,7 +5607,7 @@ pub static FX_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "DIMCRS",
-        name: "Dimension Chorus",
+        name: "Dimension CRS",
         category: ModelCategory::FxPremium,
         params: &[
             ParamSpec { id: "sw1", label: "SW 1", unit: "", kind: ParamKind::Toggle, min: 0.0, max: 1.0, steps: 2, default: 0.0 },
@@ -7716,7 +7716,7 @@ pub static FX_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "DE-S2",
-        name: "2 Band De-Esser",
+        name: "2-Band DeEsser",
         category: ModelCategory::FxStandard,
         params: &[
             ParamSpec {
@@ -8258,7 +8258,7 @@ pub static FX_MODELS: &[ModelSpec] = &[
     },
     ModelSpec {
         token: "PANNER",
-        name: "Tremolo Panner",
+        name: "Tremolo/Panner",
         category: ModelCategory::FxStandard,
         params: &[
             ParamSpec {

@@ -1731,9 +1731,7 @@ private:
                 // Automix on INS 2: chip AUTO with the group below right (Fig. 64).
                 const juce::String text = mode > 0 ? juce::String ("AUTO") : (slot >= 0 ? "FX " + juce::String (slot + 1) : juce::String ("INS"));
                 chip (g, at (6.0f, 5.0f, 54.0f, 20.0f), text, isOn (tab) || (mode > 0 && ins.on.load()), colours::accent);
-                // Slots 1-8 hold the premium effects: a small diamond.
-                if (mode == 0 && slot >= 0 && slot < 8)
-                    drawIcon (g, Icon::Premium, at (66.0f, 5.0f, 18.0f, 18.0f), isOn (tab) ? colours::accent : colours::dim);
+                // The slot's device, or NONE in grey (3.1).
                 juce::String device;
                 if (mode > 0)
                     device = mode == 1 ? "X" : "Y";
@@ -1741,8 +1739,15 @@ private:
                     device = plugin->getName().toUpperCase();
                 else if (slot >= 0 && fx.getModel (slot) > ld::kFxExt)
                     device = models::model (models::Fx, fx.getModel (slot)).token;
+                if (mode == 0 && slot >= 0 && device.isEmpty())
+                {
+                    g.setColour (colours::dim);
+                    g.setFont (wingFontPx (13.0f * v)); // [3.1] capitals 13 of the 64 px
+                    g.drawFittedText ("NONE", at (6.0f, 38.0f, 84.0f, 22.0f).toNearestInt(), juce::Justification::centredRight, 1, 0.6f);
+                    return;
+                }
                 g.setColour (colours::ink);
-                g.setFont (juce::FontOptions (juce::jlimit (8.0f, 20.0f, 18.0f * v), juce::Font::bold));
+                g.setFont (wingFontPx (13.0f * v));
                 g.drawFittedText (device, at (6.0f, 38.0f, 84.0f, 22.0f).toNearestInt(), juce::Justification::centredRight, 1, 0.6f);
                 return;
             }

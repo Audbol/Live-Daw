@@ -114,6 +114,42 @@ struct Tile
 void chooseTile (juce::Component& anchor, std::vector<std::vector<Tile>> rows, std::vector<int> spacedRows, int selected,
                  std::function<void (juce::Graphics&, juce::Rectangle<float>, int id)> paintPicture, std::function<void (int id)> onChosen);
 
+/** A tab of chooseTabbedTile: a key down the right edge that shows its rows. */
+struct TileTab
+{
+    juce::String title, subtitle;   // "STD" over "ALL FX"
+    std::optional<Icon> icon;       // drawn above the title (FX1-8: the premium diamond)
+    std::vector<std::vector<Tile>> rows;
+    bool enabled = true;            // a disabled tab is drawn dim and can't be shown
+};
+
+/** A list of picture tiles over `over` (the FX TYPE list, 3.1): the `common`
+    row (NONE, EXTERNAL) on every tab, then the rows of the tab shown; the
+    tabs down the right edge, the one shown lit grey. The tile `selected` is
+    framed gold. `onChosen` gets the id touched (not called when the list is
+    closed by a touch beside it, Esc or a key of the surface). */
+void chooseTabbedTile (juce::Component& anchor, juce::Component& over, std::vector<Tile> common, std::vector<TileTab> tabs, int shownTab,
+                       int selected, std::function<void (juce::Graphics&, juce::Rectangle<float>, int id)> paintPicture,
+                       std::function<void (int id)> onChosen);
+
+/** A slot of the SELECT FX PROCESSOR window. */
+struct RackSlot
+{
+    juce::String caption;          // "- FREE -", "INSERT PRE", the device
+    juce::String source;           // who uses the slot ("CH 1"); empty: nobody
+    juce::Colour sourceColour;     // the user's colour, a bar over its name
+};
+
+/** The SELECT FX PROCESSOR window over `over` (INS, 3.1): NONE, the title
+    and CLOSE, then the 16 slots in four columns (FX 1-8, the premium slots,
+    on the left), PREMIUM FX and STANDARD FX under them. `paintDevice` draws
+    a slot's device (false: the slot shows an empty rack unit) and
+    `paintSourceIcon` the user's icon; `onChosen` gets the slot, or -1 for NONE. */
+void chooseRackSlot (juce::Component& over, std::vector<RackSlot> slots, int selected,
+                     std::function<bool (juce::Graphics&, juce::Rectangle<float>, int slot)> paintDevice,
+                     std::function<void (juce::Graphics&, juce::Rectangle<float>, int slot)> paintSourceIcon,
+                     std::function<void (int slot)> onChosen);
+
 /** An on-screen confirmation over `host`; red when `danger`. */
 void confirm (juce::Component& host, const juce::String& title, const juce::String& text,
               const juce::String& okText, std::function<void()> onOk, bool danger = false);
