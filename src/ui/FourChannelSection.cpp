@@ -271,7 +271,7 @@ void FourChannelSection::timerCallback()
             changed = true;
         if (s != nullptr)
             state << stripName (*s) << s->getColourIndex() << scribbleSourceTag (*s, ctx.settings.getBoolValue (uiprefs::sourceOnScribble, true))
-                  << s->params.icon.load() << '|';
+                  << s->getIcon() << '|';
         if (channelKeys[i]->ledState)
             state << (int) channelKeys[i]->ledState();
     }

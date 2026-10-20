@@ -1,6 +1,8 @@
 //! The recorder inside the engine: playback channels as input sources, ALT
 //! inputs, record taps, sample accuracy end to end.
 
+mod common;
+use common::{set_channels, unity_console};
 use livedaw_engine::params::StripKind;
 use livedaw_engine::recorder::wav::{WavReader, WavWriter};
 use livedaw_engine::recorder::{
@@ -51,6 +53,7 @@ struct Rig {
 impl Rig {
     fn new(num_ins: usize, num_outs: usize) -> Self {
         let engine = Arc::new(Engine::new(0));
+        unity_console(&engine);
         let in_map: Vec<i32> = (0..num_ins as i32).collect();
         let out_map: Vec<i32> = (0..num_outs as i32).collect();
         unsafe { engine.prepare(48000.0, BLOCK, &in_map, &out_map) };
@@ -176,7 +179,7 @@ fn tracks_record_usb_player_and_oscillator_sources() {
 fn a_playback_impulse_through_an_alt_input_records_at_its_timeline_position() {
     let dir = temp_dir("impulse");
     let mut rig = Rig::new(2, 4);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     const T: usize = 20_000 + 37;
     const N: usize = 7; // playback channel
     let mut impulse = vec![0.0f32; 40_000];
@@ -245,7 +248,7 @@ fn a_playback_impulse_through_an_alt_input_records_at_its_timeline_position() {
 #[test]
 fn alt_select_individual_or_global() {
     let mut rig = Rig::new(3, 6);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     let levels = [0.1f32, 0.2, 0.4];
     let (a, b) = (rig.engine.channel_at(0).unwrap(), rig.engine.channel_at(1).unwrap());
     let aux = rig.engine.strip_at(StripKind::Aux, 0).unwrap();
@@ -294,7 +297,7 @@ fn alt_select_individual_or_global() {
 fn playback_follows_the_loop_through_the_engine() {
     let dir = temp_dir("loop");
     let mut rig = Rig::new(1, 4);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let ramp: Vec<f32> = (0..20_000).map(|k| k as f32 / 20_000.0).collect();
     let file = dir.join("ramp.wav");
     write_wav(&file, &ramp);

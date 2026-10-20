@@ -3,6 +3,32 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Changed
+
+- A new console starts as a factory-initialized WING (checked against a parameter
+  dump of one): every fader at -oo except buses 9-16 (0 dB, into Main 1), every EQ
+  off, strips and DCAs unnamed (mute groups MGRP.1 ...), DCA lights off, channels and
+  aux with LINK CUSTOMIZATION TO SOURCE on (the strip shows its source's name, colour
+  and icon; ICON/COLOR and NAME then edit the source), and the input delay in METERS
+  at 0.1 m (the WING's range, 0.1 to 150 m, in every unit). Shows saved before keep
+  their strips' own customization. Engine ABI version 12.
+- The 18 strip colours are the full-size WING's (measured on its ICON/COLOR screen and
+  laid out as there); colour 1, the factory colour of channels, aux, mains, matrices,
+  sources and DCAs, is Purple; buses start Pink (1-8), Olive (9-10) and Violet (11-16).
+- HOME matches the console's screens more closely: the source's GAIN and +48V on the
+  OVERVIEW and GAIN in the parameter bar of all four HOME tabs (which all have
+  SETTINGS), the redrawn general icons, the WING's TAGS tiles (MGRP1 ...), the status
+  tile's A B C / SC chips (the DSP load stays on UTILITY), the LEVEL scale without
+  -40, the olive SOLO BUS keys, NAME's keyboard starting in capitals with source-based
+  suggestions, an empty ALT tile with a plus, and SELECT MAIN INPUT (touch the MAIN
+  tile on INPUT: source groups, NONE, M / ST / M/S, COPY CUSTOMIZATION) in place of the
+  ST key.
+- Scribble strips are lit in the strip's colour with large two-row names; an unlit
+  colour light bar is light grey. The MAIN LCD brightness default no longer dims the
+  screen.
+
 ## [0.1.3] - beta
 
 The first round of matching Sidecar to a real WING, side by side with the console:

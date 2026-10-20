@@ -17,7 +17,7 @@ public:
         {
             MixerEngine engine (0);
             OfflineRig rig (engine, 2, 2);
-            engine.setNumChannels (2);
+            test::setChannels (engine, 2);
             auto& a = *engine.getChannels()[0];
             auto& b = *engine.getChannels()[1];
             b.params.inputLeft = 1;
@@ -55,7 +55,7 @@ public:
         {
             MixerEngine engine (0);
             OfflineRig rig (engine, 2, 4);
-            engine.setNumChannels (40);
+            test::setChannels (engine, 40);
             auto* talkCh = engine.getChannels()[39].get();
             talkCh->params.inputLeft = 1;
             talkCh->params.mute = true;
@@ -109,7 +109,7 @@ public:
         {
             MixerEngine engine (0);
             OfflineRig rig (engine, 1, 6);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& ch = *engine.getChannels()[0];
             ch.params.pan = -100.0f;
             rig.setInput (0, 0.5f);
@@ -145,7 +145,7 @@ public:
             PluginHost host (nullptr);
             Show show (engine, host);
             OfflineRig rig (engine, 2, 2);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& ch = *engine.getChannels()[0];
             ch.params.pan = -100.0f;
             rig.setInput (0, 0.25f);
@@ -187,7 +187,7 @@ public:
             PluginHost host (nullptr);
             Show show (engine, host);
             OfflineRig rig (engine, 2, 2);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& ch = *engine.getChannels()[0];
             ch.params.pan = -100.0f;
             ch.params.inputLeft = MixerEngine::oscSource (1);
@@ -224,7 +224,7 @@ public:
             PluginHost host (nullptr);
             Show show (engine, host);
             OfflineRig rig (engine, 4, 6);
-            engine.setNumChannels (40);
+            test::setChannels (engine, 40);
             engine.phones.outputLeft = 4;
             for (auto& ch : engine.getChannels())
             {

@@ -61,6 +61,8 @@ public:
         suggestions (HOME > NAME draws it with blank keys, as on the console). */
     void setSuggestionRowAlwaysShown (bool);
     void setMaxLength (int);
+    /** Caps lock (lit blue): letters type as capitals. */
+    void setCapsLock (bool);
     /** Whether the keyboard draws its own name field (default true). */
     void setFieldVisible (bool);
     /** The action key's icon: a ticked box for DONE, a chevron for NEXT (default:

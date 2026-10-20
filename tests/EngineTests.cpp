@@ -21,10 +21,43 @@ public:
             expect (mismatch == nullptr, mismatch != nullptr ? juce::String (mismatch) : juce::String());
         }
 
+        beginTest ("A new channel shows its source's customization while linked");
+        {
+            MixerEngine engine (0);
+            engine.prepareOffline (48000.0, 128, 4, 2);
+            engine.setNumChannels (1);
+            auto& ch = *engine.getChannels()[0];
+            expect (ch.params.custLink.load(), "linked, as on the WING");
+            expect (ch.params.faderDb.load() < -100.0f && ! ch.params.eq.on.load(), "fader down, EQ off");
+            expectEquals (ch.getOwnName(), juce::String(), "unnamed");
+            ch.setName ("Own");
+            ch.setColourIndex (9);
+            ch.params.icon = 13;
+            const int index = MixerEngine::sourceIndex (ch.getInputLeft());
+            auto* src = engine.getSource (index);
+            expect (src != nullptr);
+            if (src == nullptr)
+                return;
+            src->colour = 14;
+            src->icon = 200;
+            engine.setSourceName (index, "Kick");
+            expectEquals (ch.getName(), juce::String ("Kick"));
+            expectEquals (ch.getColourIndex(), 14);
+            expectEquals (ch.getIcon(), 200);
+            ch.params.custLink = false;
+            expectEquals (ch.getName(), juce::String ("Own"));
+            expectEquals (ch.getColourIndex(), 9);
+            expectEquals (ch.getIcon(), 13);
+            // Without a source the strip shows its own, linked or not.
+            ch.params.custLink = true;
+            ch.params.inputLeft = -1;
+            expectEquals (ch.getName(), juce::String ("Own"));
+        }
+
         beginTest ("The console has the WING layout");
         {
             MixerEngine engine (0);
-            engine.setNumChannels (kWingChannels);
+            test::setChannels (engine, kWingChannels);
             expectEquals ((int) engine.getChannels().size(), 40);
             expectEquals ((int) engine.getAux().size(), 8);
             expectEquals ((int) engine.getBuses().size(), 16);
@@ -36,6 +69,7 @@ public:
             expect (engine.getChannels()[0]->params.mains[0].on.load(), "channels feed Main 1");
             expect (! engine.getBuses()[0]->params.mains[0].on.load(), "buses start as aux mixes");
             expect (engine.getChannels()[0]->getColour() == wingColour (1));
+            expect (wingColour (1) == juce::Colour (0xff380088), "the factory Purple");
             expectEquals (engine.getChannels()[0]->params.filter.lowCutFreq.load(), kLowCutDefaultHz, "the LO CUT reset matches");
             expectEquals (engine.getChannels()[0]->params.filter.highCutFreq.load(), kHighCutDefaultHz, "the HI CUT reset matches");
             expectEquals (wingColourName (9), juce::String ("Red"));
@@ -92,7 +126,7 @@ public:
             expectEquals (models::model (models::Fx, tabs[2].rows[1].back()).name, juce::String ("Mastering"));
 
             MixerEngine engine (0);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& ch = *engine.getChannels()[0];
             const int la = models::findModel (models::Dynamics, "LA");
             ch.setModel (ModelBlock::Dynamics, la);
@@ -124,7 +158,7 @@ public:
 
             MixerEngine engine (0);
             OfflineRig rig (engine, 2, 2);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& ch = *engine.getChannels()[0];
             ch.setModel (ModelBlock::Dynamics, comp);
             ch.params.dynamics.values[m.find ("knee")] = 0.0f;
@@ -143,7 +177,7 @@ public:
         {
             MixerEngine engine (2);
             OfflineRig rig (engine, 4, 8);
-            engine.setNumChannels (2);
+            test::setChannels (engine, 2);
             rig.setInput (0, 0.5f);
             rig.run();
 
@@ -160,7 +194,7 @@ public:
         {
             MixerEngine engine (2);
             OfflineRig rig (engine, 2, 2);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& p = engine.getChannels()[0]->params;
             rig.setInput (0, 0.5f);
 
@@ -197,7 +231,7 @@ public:
         {
             MixerEngine engine (1);
             OfflineRig rig (engine, 2, 2);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& p = engine.getChannels()[0]->params;
             p.stereo = true;
             p.inputLeft = 0;
@@ -217,7 +251,7 @@ public:
         {
             MixerEngine engine (2);
             OfflineRig rig (engine, 2, 6);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& ch = *engine.getChannels()[0];
             auto& bus = *engine.getBusInSlot (2);
             bus.params.outputLeft = 2;
@@ -246,7 +280,7 @@ public:
         {
             MixerEngine engine (2);
             OfflineRig rig (engine, 2, 6);
-            engine.setNumChannels (2);
+            test::setChannels (engine, 2);
             engine.getChannels()[1]->params.inputLeft = 1;
             rig.setInput (0, 0.5f);
             rig.setInput (1, 0.25f);
@@ -267,7 +301,7 @@ public:
         {
             MixerEngine engine (2);
             OfflineRig rig (engine, 1, 4);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
 
             Strip* last = nullptr;
             for (int i = 0; i < 100; ++i)
@@ -277,6 +311,7 @@ public:
             expectEquals ((int) engine.getBuses().size(), 116);
 
             last->params.outputLeft = 3;
+            last->params.faderDb = 0.0f; // a new bus's fader is down
             auto& send = engine.getChannels()[0]->sends[(size_t) last->getId()];
             send.enabled = true;
 
@@ -301,7 +336,7 @@ public:
         {
             MixerEngine engine (2);
             OfflineRig rig (engine, 2, 4);
-            engine.setNumChannels (2);
+            test::setChannels (engine, 2);
             engine.getChannels()[1]->params.inputLeft = 1;
             engine.monitorOutputLeft = 2;
             engine.monitorOutputRight = 3;
@@ -323,7 +358,7 @@ public:
         {
             MixerEngine engine (0);
             OfflineRig rig (engine, 1, 4);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             engine.monitorOutputLeft = 2;
             engine.monitorOutputRight = 3;
             expect (! engine.isSoloAfl (StripKind::Channel) && engine.isSoloAfl (StripKind::Bus));
@@ -372,7 +407,7 @@ public:
         {
             MixerEngine engine (0);
             OfflineRig rig (engine, 1, 4);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& ch = *engine.getChannels()[0];
             auto& aux = *engine.getAux()[0];
             auto& bus = *engine.getBuses()[0];
@@ -416,7 +451,7 @@ public:
         {
             MixerEngine engine (0);
             OfflineRig rig (engine, 1, 4);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& ch = *engine.getChannels()[0];
             auto& send = ch.sends[2];
             send.enabled = true;
@@ -444,7 +479,7 @@ public:
         {
             MixerEngine engine (0);
             OfflineRig rig (engine, 1, 4);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& ch = *engine.getChannels()[0];
             rig.setInput (0, 0.5f);
             expect (engine.dcaMuteGroups.load() && engine.automixEnable[0].load() && engine.automixEnable[1].load());
@@ -480,7 +515,7 @@ public:
             MixerEngine engine (-1);
             constexpr int numCh = 4096;
             OfflineRig rig (engine, 8, 2); // a typical interface: far fewer inputs than channels
-            engine.setNumChannels (numCh);
+            test::setChannels (engine, numCh);
             for (auto& ch : engine.getChannels())
             {
                 ch->params.gate.on = true;
@@ -512,13 +547,13 @@ public:
             MixerEngine engine (3);
             constexpr int numCh = 256;
             OfflineRig rig (engine, numCh, 2);
-            engine.setNumChannels (numCh);
+            test::setChannels (engine, numCh);
             for (int i = 0; i < numCh; ++i)
                 rig.setInput (i, 0.001f);
             rig.run();
             expectWithinAbsoluteError (rig.out (0), numCh * 0.001f * kCentre, 1.0e-4f);
 
-            engine.setNumChannels (16);
+            test::setChannels (engine, 16);
             rig.run();
             expectWithinAbsoluteError (rig.out (0), 16 * 0.001f * kCentre, 1.0e-5f);
             expectEquals ((int) engine.getChannels().size(), 16);
@@ -528,7 +563,7 @@ public:
         {
             MixerEngine engine (0);
             OfflineRig rig (engine, 2, 2);
-            engine.setNumChannels (3); // channel 3 has no hardware input
+            test::setChannels (engine, 3); // channel 3 has no hardware input
             expectEquals (engine.getChannels()[2]->params.inputLeft.load(), -1);
             rig.setInput (0, 0.1f);
             rig.setInput (1, 0.1f);
@@ -542,7 +577,7 @@ public:
             MixerEngine engine (-1);
             constexpr int numCh = kWingChannels;
             OfflineRig rig (engine, numCh, 16);
-            engine.setNumChannels (numCh);
+            test::setChannels (engine, numCh);
 
             juce::Random rng (1);
             for (int i = 0; i < numCh; ++i)
@@ -589,7 +624,7 @@ public:
         beginTest ("The RTA settings, the analysed strip and the bands");
         {
             MixerEngine engine (0);
-            engine.setNumChannels (2);
+            test::setChannels (engine, 2);
             auto analysis = engine.getAnalysis();
             auto& ch = *engine.getChannels()[1];
             expectEquals ((int) analysis.controls.stripKind.load(), -1);
@@ -614,7 +649,7 @@ public:
         {
             MixerEngine engine (0);
             OfflineRig rig (engine, 2, 4);
-            engine.setNumChannels (2);
+            test::setChannels (engine, 2);
             engine.getChannels()[1]->params.inputLeft = 1;
             engine.monitorOutputLeft = 2;
             engine.monitorOutputRight = 3;
@@ -652,7 +687,7 @@ public:
         {
             MixerEngine engine (0);
             OfflineRig rig (engine, 2, 2);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& ch = *engine.getChannels()[0];
             ch.params.stereo = true;
             ch.params.inputRight = 1;
@@ -674,7 +709,7 @@ public:
         {
             MixerEngine engine (0);
             OfflineRig rig (engine, 2, 6);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& ch = *engine.getChannels()[0];
             ch.params.stereo = true;
             ch.params.inputRight = 1;

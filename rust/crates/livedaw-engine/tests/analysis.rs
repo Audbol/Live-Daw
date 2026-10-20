@@ -2,6 +2,8 @@
 //! TAP EQ through the whole engine.
 
 use livedaw_dsp::wing::{model_index, EQ_MODELS_CH};
+mod common;
+use common::{set_channels, unity_console};
 use livedaw_engine::analyser::{listen_mode, rta_band_hz, rta_view, RTA_BANDS};
 use livedaw_engine::params::StripKind;
 use livedaw_engine::sends::send_mode;
@@ -25,6 +27,7 @@ struct Rig {
 impl Rig {
     fn new(num_ins: usize, num_outs: usize) -> Self {
         let engine = Arc::new(Engine::new(0));
+        unity_console(&engine);
         let in_map: Vec<i32> = (0..num_ins as i32).collect();
         let out_map: Vec<i32> = (0..num_outs as i32).collect();
         unsafe { engine.prepare(SR as f64, BLOCK, &in_map, &out_map) };
@@ -99,7 +102,7 @@ fn largest_step(x: &[f32]) -> f32 {
 #[test]
 fn rta_reads_the_selected_strip_at_its_tap() {
     let mut rig = Rig::new(2, 2);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     let f = rta_band_hz(57); // a band centre near 1 kHz
     rig.sine(0, f, 0.5);
     rig.sine(1, rta_band_hz(30), 0.5);
@@ -146,6 +149,7 @@ fn rta_reads_the_selected_strip_at_its_tap() {
     // the tone at -18 dB, POST at -27 dB.
     let spec = &EQ_MODELS_CH[model_index(EQ_MODELS_CH, "STD").unwrap()];
     let eq = &ch.params.eq;
+    eq.on.store(true, Relaxed); // a new channel's EQ is off, as on the WING
     eq.set_model(model_index(EQ_MODELS_CH, "STD").unwrap(), false);
     eq.values[spec.param_index("2f").unwrap()].store(f);
     eq.values[spec.param_index("2g").unwrap()].store(-9.0);
@@ -175,7 +179,7 @@ fn rta_reads_the_selected_strip_at_its_tap() {
 #[test]
 fn scope_takes_left_and_right_after_the_input_block() {
     let mut rig = Rig::new(2, 2);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let ch = rig.ch(0);
     ch.params.stereo.store(true, Relaxed);
     ch.params.input_right.store(1, Relaxed);
@@ -208,7 +212,7 @@ fn scope_takes_left_and_right_after_the_input_block() {
 #[test]
 fn band_solo_plays_the_selected_band_on_the_monitor() {
     let mut rig = Rig::new(1, 4);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     rig.monitor_on_2_3();
     let ch = rig.ch(0);
     let table = &EQ_MODELS_CH;
@@ -258,7 +262,7 @@ fn band_solo_plays_the_selected_band_on_the_monitor() {
 #[test]
 fn listen_replaces_the_solo_bus_and_switches_without_clicks() {
     let mut rig = Rig::new(2, 4);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     rig.monitor_on_2_3();
     let (a, b) = (rig.ch(0), rig.ch(1));
     rig.sine(0, 1000.0, 0.5);
@@ -299,7 +303,7 @@ fn listen_replaces_the_solo_bus_and_switches_without_clicks() {
 #[test]
 fn key_solo_plays_the_filtered_key_even_from_another_channel() {
     let mut rig = Rig::new(2, 4);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     rig.monitor_on_2_3();
     let ch = rig.ch(0);
     rig.sine(0, 100.0, 0.5);
@@ -330,7 +334,7 @@ fn key_solo_plays_the_filtered_key_even_from_another_channel() {
 #[test]
 fn listening_to_a_removed_strip_stops_safely() {
     let mut rig = Rig::new(2, 4);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     rig.monitor_on_2_3();
     let ch = rig.ch(1);
     rig.sine(1, 1000.0, 0.5);
@@ -347,7 +351,7 @@ fn listening_to_a_removed_strip_stops_safely() {
 #[test]
 fn tap_width_and_tap_eq_shape_tap_sends_only() {
     let mut rig = Rig::new(2, 8);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let ch = rig.ch(0);
     let p = &ch.params;
     p.stereo.store(true, Relaxed);
@@ -406,7 +410,7 @@ fn reset_restores_the_analysis_defaults() {
 fn rta_reads_a_monitor_path_either_side_of_its_eq() {
     use livedaw_engine::analyser::ANALYSE_MONITOR;
     let mut rig = Rig::new(1, 2);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let f = rta_band_hz(57);
     rig.sine(0, f, 0.5); // on Main 1, the source of both monitor paths
     let engine = rig.engine.clone();

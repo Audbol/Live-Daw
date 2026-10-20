@@ -62,6 +62,7 @@ inline juce::StringArray nameSuggestions (int icon)
 {
     switch (icon)
     {
+        case 1:   return { "XLR", "LINE" };
         case 6:   return { "EFFECTS", "FX", "REVERB", "DELAY", "VERB" };
         case 8:   return { "BASS", "BASS DI", "BASS AMP", "BASS SYN", "SUB" };
         case 9:   return { "LEAD", "MELODY", "SOLO", "KEYS", "STRINGS" };
@@ -130,7 +131,7 @@ inline void drawChannelIcon (juce::Graphics& g, int icon, StripKind kind, juce::
 /** The category keys' glyphs (I13: XLR, mic, drum, guitar, keys, speaker, gear). */
 inline void drawIconCategory (juce::Graphics& g, int category, juce::Rectangle<float> area, juce::Colour c)
 {
-    static const int sample[] = { 1, 100, 210, 300, 400, 503 };
+    static const int sample[] = { 1, 102, 210, 300, 402, 503 };
     if (category >= 6)
         drawIcon (g, Icon::Gear, area, c);
     else

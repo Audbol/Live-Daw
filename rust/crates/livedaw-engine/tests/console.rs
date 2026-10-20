@@ -1,6 +1,8 @@
 //! Console-level features: SOLO MODE (LIVE / STUDIO / SIP), MUTEGROUP/SIP
 //! OVERRIDE, talkback, the two monitor paths, MON DCAs and sources.
 
+mod common;
+use common::{set_channels, unity_console};
 use livedaw_engine::params::StripKind;
 use livedaw_engine::solo::{mute_state, solo_mode};
 use livedaw_engine::sources::{source_index, source_mode};
@@ -21,6 +23,7 @@ struct Rig {
 impl Rig {
     fn new(num_ins: usize, num_outs: usize) -> Self {
         let engine = Arc::new(Engine::new(0));
+        unity_console(&engine);
         let in_map: Vec<i32> = (0..num_ins as i32).collect();
         let out_map: Vec<i32> = (0..num_outs as i32).collect();
         unsafe { engine.prepare(48000.0, BLOCK, &in_map, &out_map) };
@@ -58,7 +61,7 @@ fn close(a: f32, b: f32, tol: f32) -> bool {
 
 /// Channels hard left, each on its own input with its own level.
 fn channels(rig: &mut Rig, levels: &[f32]) {
-    rig.engine.set_num_channels(levels.len());
+    set_channels(&rig.engine, levels.len());
     for (i, &v) in levels.iter().enumerate() {
         rig.ch(i).params.pan.store(-100.0);
         rig.set_input(i, v);
@@ -442,7 +445,7 @@ fn sources_process_the_ports_before_the_channels() {
     p[0].gain_db.store(0.0);
 
     // MID/SIDE: a stereo channel on IN 3-4 hears M + S and M - S.
-    rig.engine.set_num_channels(3);
+    set_channels(&rig.engine, 3);
     let ms = rig.ch(2);
     ms.params.stereo.store(true, Relaxed);
     ms.params.input_left.store(2, Relaxed);
@@ -469,7 +472,7 @@ fn sources_process_the_ports_before_the_channels() {
 #[test]
 fn channels_follow_their_sources_mode() {
     let engine = Engine::new(0);
-    engine.set_num_channels(3);
+    set_channels(&engine, 3);
     let ch = |i| engine.channel_at(i).unwrap();
     // CH 1 on IN 3, CH 2 on IN 4 (the pair's second source), CH 3's ALT on IN 3.
     ch(0).params.input_left.store(2, Relaxed);
@@ -497,7 +500,7 @@ fn channels_follow_their_sources_mode() {
 #[test]
 fn unpatched_channels_stay_idle_with_processed_sources() {
     let mut rig = Rig::new(2, 2);
-    rig.engine.set_num_channels(4);
+    set_channels(&rig.engine, 4);
     let engine = rig.engine.clone();
     for p in engine.sources().params() {
         p.gain_db.store(6.0);

@@ -367,6 +367,9 @@ fn capture_strip(s: &Strip, sections: u32, slots: &[usize]) -> Element {
         put_i(&mut e, "colour", &p.colour);
         put_i(&mut e, "icon", &p.icon);
         put_b(&mut e, "led", &p.led);
+        if kind.is_input() {
+            put_b(&mut e, "clink", &p.cust_link);
+        }
     }
     if sections & ROUTING != 0 {
         let r = e.add_new("Route");
@@ -899,6 +902,10 @@ fn apply_strip(
         get_i(e, "colour", &p.colour);
         get_i(e, "icon", &p.icon);
         get_b(e, "led", &p.led);
+        if kind.is_input() {
+            // Shows from before LINK CUSTOMIZATION TO SOURCE keep the strip's own look.
+            p.cust_link.store(e.bool_or("clink", false), Relaxed);
+        }
     }
     if let Some(r) = e.child("Route").filter(|_| sections & ROUTING != 0) {
         if kind.is_input() {

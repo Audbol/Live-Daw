@@ -2,6 +2,8 @@
 //! LIMITER on PHONES and SPEAKERS), SOURCE SOLO with the solo modes, and
 //! source tags (mute groups).
 
+mod common;
+use common::{set_channels, unity_console};
 use livedaw_engine::monitor::{delay_ms, direct_index, MonitorDspParams};
 use livedaw_engine::params::StripKind;
 use livedaw_engine::solo::{mute_state, solo_mode};
@@ -28,6 +30,7 @@ struct Rig {
 impl Rig {
     fn new(num_ins: usize) -> Self {
         let engine = Arc::new(Engine::new(0));
+        unity_console(&engine);
         let in_map: Vec<i32> = (0..num_ins as i32).collect();
         let out_map: Vec<i32> = (0..6).collect();
         unsafe { engine.prepare(SR, BLOCK, &in_map, &out_map) };
@@ -113,7 +116,7 @@ fn max_step(x: &[f32]) -> f32 {
 
 /// Channel 1 (hard left) on Main 1 at `main`, channel 2 off the mains.
 fn two_channels(rig: &mut Rig, main: f32, other: f32) {
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     for i in 0..2 {
         rig.ch(i).params.pan.store(-100.0);
     }
@@ -160,7 +163,7 @@ fn direct_in_mixes_any_strip_into_one_path() {
 #[test]
 fn eq_shapes_only_its_path() {
     let mut rig = Rig::new(1);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     rig.sine(0, 1000.0, 0.25);
     let flat = rms(&rig.run(40, PH)[BLOCK * 20..]);
 
@@ -195,7 +198,7 @@ fn eq_shapes_only_its_path() {
 #[test]
 fn invert_pan_and_width_on_each_path() {
     let mut rig = Rig::new(2);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     // Channel 1 hard left, channel 2 hard right.
     rig.ch(0).params.pan.store(-100.0);
     rig.ch(1).params.pan.store(100.0);
@@ -227,7 +230,7 @@ fn invert_pan_and_width_on_each_path() {
 #[test]
 fn delay_by_distance() {
     let mut rig = Rig::new(1);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     rig.run(2, SPK);
     // 3.43 m = 10 ms = 480 samples at 48 kHz.
     assert!((delay_ms(3.43) - 10.0).abs() < 1e-3);
@@ -254,7 +257,7 @@ fn delay_by_distance() {
 #[test]
 fn limiter_holds_its_threshold_and_meters_gain_reduction() {
     let mut rig = Rig::new(1);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     rig.ch(0).params.pan.store(-100.0);
     rig.sine(0, 200.0, 0.9);
     rig.run(10, SPK);
@@ -281,7 +284,7 @@ fn limiter_holds_its_threshold_and_meters_gain_reduction() {
 #[test]
 fn source_solo_patches_and_solos_its_host() {
     let mut rig = Rig::new(4);
-    rig.engine.set_num_channels(40);
+    set_channels(&rig.engine, 40);
     let engine = rig.engine.clone();
     let c = &engine.controls;
     let m = &c.monitor;
@@ -361,7 +364,7 @@ fn source_solo_patches_and_solos_its_host() {
 #[test]
 fn sources_follow_their_mute_groups() {
     let mut rig = Rig::new(2);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     rig.ch(0).params.pan.store(-100.0);
     rig.dc(0, 0.5);
     let engine = rig.engine.clone();

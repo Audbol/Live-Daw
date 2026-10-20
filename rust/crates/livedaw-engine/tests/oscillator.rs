@@ -1,6 +1,8 @@
 //! The oscillator (the OSC source group) patched to channels.
 
 use livedaw_dsp::generator::generator_mode;
+mod common;
+use common::{set_channels, unity_console};
 use livedaw_engine::sources::{source_index, source_mode, OSC_SOURCE_BASE, OSC_SOURCE_INDEX};
 use livedaw_engine::Engine;
 use std::sync::atomic::Ordering::Relaxed;
@@ -19,8 +21,9 @@ struct Rig {
 impl Rig {
     fn new() -> Self {
         let engine = Arc::new(Engine::new(0));
+        unity_console(&engine);
         unsafe { engine.prepare(SR, BLOCK, &[0, 1], &[0, 1]) };
-        engine.set_num_channels(2);
+        set_channels(&engine, 2);
         Self { engine, inputs: vec![vec![0.0; BLOCK]; 2], outputs: vec![vec![0.0; BLOCK]; 2] }
     }
 

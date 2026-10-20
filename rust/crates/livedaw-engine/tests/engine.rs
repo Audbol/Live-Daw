@@ -1,6 +1,8 @@
 //! Engine behaviour tests: the WING signal flow end to end.
 
 use livedaw_dsp::wing::{model_index, DYN_MODELS, PROCESS_ORDERS};
+mod common;
+use common::{set_channels, unity_console};
 use livedaw_engine::params::{StripKind, NUM_AUX, NUM_MAINS, NUM_MATRICES, WING_BUSES};
 use livedaw_engine::{Engine, InsertCallbacks, Strip};
 use std::ffi::c_void;
@@ -21,6 +23,7 @@ struct Rig {
 impl Rig {
     fn new(num_workers: usize, num_ins: usize, num_outs: usize) -> Self {
         let engine = Arc::new(Engine::new(num_workers));
+        unity_console(&engine);
         let workers = (0..num_workers)
             .map(|i| {
                 let e = engine.clone();
@@ -83,9 +86,10 @@ fn console_has_the_wing_layout() {
     assert_eq!(e.num_strips(StripKind::Main), NUM_MAINS);
     assert_eq!(e.num_strips(StripKind::Matrix), NUM_MATRICES);
     assert_eq!(e.num_fx(), 16);
-    e.set_num_channels(40);
-    assert_eq!(e.channel_at(39).unwrap().name(), "Ch 40");
-    assert_eq!(e.strip_at(StripKind::Bus, 15).unwrap().name(), "Bus 16");
+    set_channels(&e, 40);
+    // Unnamed, as on the WING.
+    assert_eq!(e.channel_at(39).unwrap().name(), "");
+    assert_eq!(e.strip_at(StripKind::Bus, 15).unwrap().name(), "");
     // Wing buses can't be removed; extra ones can.
     let bus = e.strip_at(StripKind::Bus, 0).unwrap();
     assert!(!e.remove_strip(Arc::as_ptr(&bus)));
@@ -97,7 +101,7 @@ fn console_has_the_wing_layout() {
 #[test]
 fn channel_reaches_main_1_through_pan_law() {
     let mut rig = Rig::new(2, 4, 8);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     rig.set_input(0, 0.5);
     rig.run(20);
     assert!(close(rig.out(0), 0.5 * CENTRE, 1e-5));
@@ -111,7 +115,7 @@ fn channel_reaches_main_1_through_pan_law() {
 #[test]
 fn mute_fader_dcas_and_mute_groups() {
     let mut rig = Rig::new(2, 2, 2);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let ch = rig.ch(0);
     rig.set_input(0, 0.5);
     ch.params.fader_db.store(-6.0206);
@@ -147,7 +151,7 @@ fn mute_fader_dcas_and_mute_groups() {
 #[test]
 fn stereo_channel_width_and_inputs() {
     let mut rig = Rig::new(1, 2, 2);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let ch = rig.ch(0);
     rig.set_input(0, 0.25);
     rig.set_input(1, -0.5);
@@ -167,7 +171,7 @@ fn stereo_channel_width_and_inputs() {
 #[test]
 fn bus_sends_pre_post_and_subgroup() {
     let mut rig = Rig::new(2, 2, 6);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let ch = rig.ch(0);
     rig.set_input(0, 0.5);
     let bus = rig.strip(StripKind::Bus, 2);
@@ -207,7 +211,7 @@ fn bus_sends_pre_post_and_subgroup() {
 #[test]
 fn upper_buses_feed_buses_1_to_8() {
     let mut rig = Rig::new(2, 1, 4);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let ch = rig.ch(0);
     ch.params.mains[0].on.store(false, Relaxed);
     rig.set_input(0, 0.5);
@@ -225,7 +229,7 @@ fn upper_buses_feed_buses_1_to_8() {
 #[test]
 fn matrix_takes_mains_and_mix_minus_direct_input() {
     let mut rig = Rig::new(2, 2, 6);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     rig.ch(1).params.input_left.store(1, Relaxed);
     rig.set_input(0, 0.5);
     rig.set_input(1, 0.25);
@@ -247,7 +251,7 @@ fn matrix_takes_mains_and_mix_minus_direct_input() {
 #[test]
 fn solo_pfl_goes_to_the_monitor() {
     let mut rig = Rig::new(1, 2, 4);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     rig.ch(1).params.input_left.store(1, Relaxed);
     rig.set_input(0, 0.5);
     rig.set_input(1, 0.25);
@@ -267,7 +271,7 @@ fn solo_pfl_goes_to_the_monitor() {
 #[test]
 fn gate_model_and_process_order() {
     let mut rig = Rig::new(1, 1, 2);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let ch = rig.ch(0);
     rig.set_input(0, 0.001); // -60 dB, below the -40 dB default threshold
     ch.params.gate.on.store(true, Relaxed);
@@ -291,7 +295,7 @@ fn gate_model_and_process_order() {
 #[test]
 fn input_delay_shifts_the_signal() {
     let mut rig = Rig::new(0, 1, 2);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let ch = rig.ch(0);
     ch.params.input.delay_on.store(true, Relaxed);
     ch.params.input.delay_mode.store(3, Relaxed); // samples
@@ -306,7 +310,7 @@ fn input_delay_shifts_the_signal() {
 #[test]
 fn unpatched_channels_idle_and_resume_cleanly() {
     let mut rig = Rig::new(Engine::default_num_workers(), 8, 2);
-    rig.engine.set_num_channels(4096);
+    set_channels(&rig.engine, 4096);
     for i in 0..8 {
         rig.set_input(i, 0.01);
     }
@@ -330,7 +334,7 @@ fn unpatched_channels_idle_and_resume_cleanly() {
 #[test]
 fn automix_shares_gain() {
     let mut rig = Rig::new(1, 2, 2);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     rig.ch(1).params.input_left.store(1, Relaxed);
     rig.set_input(0, 0.5);
     rig.set_input(1, 0.5);
@@ -402,7 +406,7 @@ fn fake(gain: f32, mode: u8) -> (InsertCallbacks, Arc<AtomicBool>) {
 #[test]
 fn fx_slots_as_inserts_and_faulty_ones_are_auto_bypassed() {
     let mut rig = Rig::new(1, 2, 2);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     let (a, b) = (rig.ch(0), rig.ch(1));
     b.params.input_left.store(1, Relaxed);
     let engine = rig.engine.clone();
@@ -449,7 +453,7 @@ fn fx_slots_as_inserts_and_faulty_ones_are_auto_bypassed() {
 #[test]
 fn nan_input_never_reaches_buses_or_outputs() {
     let mut rig = Rig::new(1, 2, 2);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     rig.ch(1).params.input_left.store(1, Relaxed);
     rig.set_input(0, f32::NAN);
     rig.set_input(1, 0.25);
@@ -465,7 +469,7 @@ fn nan_input_never_reaches_buses_or_outputs() {
 #[test]
 fn output_protection_clips_at_the_ceiling() {
     let mut rig = Rig::new(0, 1, 2);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     rig.ch(0).params.fader_db.store(10.0);
     rig.set_input(0, 0.9);
     rig.run(20);
@@ -485,7 +489,7 @@ fn stress_structural_changes_while_audio_runs() {
     for i in 0..8 {
         rig.set_input(i, 0.01 * (i + 1) as f32);
     }
-    rig.engine.set_num_channels(8);
+    set_channels(&rig.engine, 8);
     rig.engine.set_device_running(true); // garbage must now wait for callbacks
 
     let engine = rig.engine.clone();
@@ -520,7 +524,7 @@ fn stress_structural_changes_while_audio_runs() {
     while std::time::Instant::now() < end {
         let e = &rig.engine;
         match rand(6) {
-            0 => e.set_num_channels(rand(64) as usize),
+            0 => set_channels(e, rand(64) as usize),
             1 => {
                 e.add_bus(-1);
             }
@@ -581,7 +585,7 @@ fn builtin_fx_devices_run_in_slots() {
     use livedaw_dsp::wing::fx::model_index as fx;
     use livedaw_engine::params::FX_NONE;
     let mut rig = Rig::new(1, 1, 2);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let a = rig.ch(0);
     let engine = rig.engine.clone();
 
@@ -652,7 +656,7 @@ fn eq_dc_gain(s: &Strip) -> f32 {
 #[test]
 fn bus_runs_dyn_ins1_fader_eq_ins2_with_the_tap_after_ins1() {
     let mut rig = Rig::new(1, 1, 6);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let engine = rig.engine.clone();
     let ch = rig.ch(0);
     ch.params.mains[0].on.store(false, Relaxed);
@@ -722,7 +726,7 @@ fn aux_has_no_post_insert_and_taps_after_ins1() {
 #[test]
 fn channel_delay_is_post_fader() {
     let mut rig = Rig::new(0, 1, 4);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let ch = rig.ch(0);
     ch.params.input.delay_on.store(true, Relaxed);
     ch.params.input.delay_mode.store(3, Relaxed); // samples
@@ -740,7 +744,7 @@ fn channel_delay_is_post_fader() {
 #[test]
 fn tap_sends_follow_the_channel_mute_unless_ignored() {
     let mut rig = Rig::new(1, 1, 8);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let ch = rig.ch(0);
     rig.set_input(0, 0.5);
     let send = ch.sends.get_or_create(2).unwrap();
@@ -795,7 +799,7 @@ fn tap_sends_follow_the_channel_mute_unless_ignored() {
 #[test]
 fn bus_pre_sends_follow_the_bus_mute() {
     let mut rig = Rig::new(1, 1, 4);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let ch = rig.ch(0);
     ch.params.mains[0].on.store(false, Relaxed);
     rig.set_input(0, 0.5);
@@ -815,7 +819,7 @@ fn bus_pre_sends_follow_the_bus_mute() {
 #[test]
 fn group_sends_ignore_the_send_level_and_reversed_pan_link() {
     let mut rig = Rig::new(1, 1, 4);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let ch = rig.ch(0);
     ch.params.mains[0].on.store(false, Relaxed);
     rig.set_input(0, 0.5);
@@ -845,7 +849,7 @@ fn group_sends_ignore_the_send_level_and_reversed_pan_link() {
 #[test]
 fn matrix_send_pan_link() {
     let mut rig = Rig::new(1, 1, 6);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let ch = rig.ch(0);
     ch.params.mains[0].on.store(false, Relaxed);
     rig.set_input(0, 0.5);
@@ -900,7 +904,7 @@ fn matrix_send_pan_link() {
 #[test]
 fn automix_enables_input_channels_only_and_follows_the_fader() {
     let mut rig = Rig::new(1, 2, 4);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     rig.ch(1).params.input_left.store(1, Relaxed);
     rig.set_input(0, 0.5);
     rig.set_input(1, 0.5);
@@ -943,7 +947,7 @@ fn automix_enables_input_channels_only_and_follows_the_fader() {
 #[test]
 fn trim_and_pre_fader_meters() {
     let mut rig = Rig::new(0, 1, 2);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let ch = rig.ch(0);
     rig.set_input(0, 0.25);
     ch.params.input.trim_db.store(6.0206);
@@ -963,7 +967,7 @@ fn trim_and_pre_fader_meters() {
 #[test]
 fn monitor_dim_mute_mono_and_swap() {
     let mut rig = Rig::new(0, 1, 4);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let engine = rig.engine.clone();
     let c = &engine.controls;
     c.monitor_output_left.store(2, Relaxed);
@@ -1000,7 +1004,7 @@ fn monitor_dim_mute_mono_and_swap() {
 #[test]
 fn solo_pfl_or_afl_per_strip_type() {
     let mut rig = Rig::new(0, 1, 4);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let engine = rig.engine.clone();
     let c = &engine.controls;
     c.monitor_output_left.store(2, Relaxed);
@@ -1034,7 +1038,7 @@ fn solo_pfl_or_afl_per_strip_type() {
 #[test]
 fn dca_mutegroups_main_link_and_startup_main_mute() {
     let mut rig = Rig::new(1, 1, 6);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let engine = rig.engine.clone();
     let c = &engine.controls;
     let ch = rig.ch(0);
@@ -1078,7 +1082,7 @@ fn dca_mutegroups_main_link_and_startup_main_mute() {
 #[test]
 fn post_solo_follows_the_pan() {
     let mut rig = Rig::new(0, 1, 4);
-    rig.engine.set_num_channels(1);
+    set_channels(&rig.engine, 1);
     let engine = rig.engine.clone();
     let c = &engine.controls;
     c.monitor_output_left.store(2, Relaxed);

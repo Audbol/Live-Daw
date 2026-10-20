@@ -18,7 +18,7 @@ use livedaw_dsp::wing::{
     ModelCategory, ModelSpec, ParamKind, ParamSpec, AUX_DYN_MODELS, DYN_MODELS, EQ_MODELS_BUS, EQ_MODELS_CH, FILTER_TOOLS,
     FX_MODELS, MAX_EQ_PARAMS, PROCESS_ORDERS, TAP_POINTS,
 };
-use livedaw_engine::params::{colour_rgb, MAIN_LINK_MODES, MONITOR_BUSES, POST_INSERT_MODES, WING_COLOURS};
+use livedaw_engine::params::{colour_rgb, MAIN_LINK_MODES, MONITOR_BUSES, POST_INSERT_MODES, WING_COLOURS, WING_COLOUR_GRID};
 use livedaw_engine::{Strip, SEND_MODES};
 
 fn table(t: i32) -> &'static [ModelSpec] {
@@ -72,6 +72,13 @@ static COLOUR_NAMES: [&str; WING_COLOURS.len()] = {
 #[no_mangle]
 pub extern "C" fn ld_colour_rgb(index: i32) -> u32 {
     colour_rgb(index)
+}
+
+/// The colour index (1..18) at place `position` (0..17, row by row, three to
+/// a row) of ICON/COLOR's colour grid; 0 outside it.
+#[no_mangle]
+pub extern "C" fn ld_colour_at_grid(position: i32) -> i32 {
+    usize::try_from(position).ok().and_then(|i| WING_COLOUR_GRID.get(i)).copied().unwrap_or(0)
 }
 
 #[no_mangle]

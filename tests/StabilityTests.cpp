@@ -19,7 +19,7 @@ public:
         {
             MixerEngine engine (1);
             OfflineRig rig (engine, 1, 2);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& strip = *engine.getChannels()[0];
             engine.getFx().setPlugin (0, std::make_unique<FakePlugin> (1.0f, FakePlugin::Mode::EmitNaN));
             strip.params.preInsert.on = true;
@@ -37,7 +37,7 @@ public:
         {
             MixerEngine engine (1);
             OfflineRig rig (engine, 1, 2);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& strip = *engine.getChannels()[0];
             auto& fx = engine.getFx();
             fx.setPlugin (0, std::make_unique<FakePlugin> (1.0f, FakePlugin::Mode::Throw));
@@ -65,7 +65,7 @@ public:
         {
             MixerEngine engine (2);
             OfflineRig rig (engine, 2, 2);
-            engine.setNumChannels (2);
+            test::setChannels (engine, 2);
             engine.getChannels()[1]->params.inputLeft = 1;
             engine.getFx().setPlugin (3, std::make_unique<FakePlugin> (0.5f));
             for (auto& ch : engine.getChannels())
@@ -86,7 +86,7 @@ public:
         {
             MixerEngine engine (1);
             OfflineRig rig (engine, 2, 2);
-            engine.setNumChannels (2);
+            test::setChannels (engine, 2);
             engine.getChannels()[1]->params.inputLeft = 1;
             engine.getChannels()[0]->params.eq.values[4] = 6.0f; // filter state that NaN would poison
             rig.setInput (0, std::numeric_limits<float>::quiet_NaN());
@@ -107,7 +107,7 @@ public:
         {
             MixerEngine engine (0);
             OfflineRig rig (engine, 1, 2);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             engine.getChannels()[0]->params.faderDb = 10.0f;
             rig.setInput (0, 0.9f);
             rig.run();
@@ -127,7 +127,7 @@ public:
         {
             MixerEngine engine (0);
             OfflineRig rig (engine, 2, 2);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& p = engine.getChannels()[0]->params;
             p.inputLeft = 0;
             rig.setInput (0, 0.5f);
@@ -153,7 +153,7 @@ public:
             for (int i = 0; i < 8; ++i)
                 rig.setInput (i, 0.01f * static_cast<float> (i + 1));
 
-            engine.setNumChannels (8);
+            test::setChannels (engine, 8);
             show.addScene ("A");
             engine.getGarbage().setDeviceRunning (true); // garbage must now wait for callbacks
 
@@ -187,7 +187,7 @@ public:
             {
                 switch (rng.nextInt (7))
                 {
-                    case 0: engine.setNumChannels (rng.nextInt (64)); break;
+                    case 0: test::setChannels (engine, rng.nextInt (64)); break;
                     case 1: engine.addBus(); break;
                     case 2:
                         if (! engine.getBuses().empty())

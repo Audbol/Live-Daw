@@ -109,7 +109,7 @@ public:
         beginTest ("OSC clients move faders; the console answers with its name");
         {
             MixerEngine engine (0);
-            engine.setNumChannels (8);
+            test::setChannels (engine, 8);
             auto& wing = engine.getWing();
             WingRemote::Settings s;
             s.enabled = true;
@@ -151,7 +151,7 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumChannels (4);
+            test::setChannels (engine, 4);
             auto* ch = engine.getChannels()[0].get();
             ch->setName ("Vox");
             ch->params.faderDb = -7.5f;
@@ -166,7 +166,7 @@ public:
             juce::String report;
             expect (engine.getWing().importSnapshot (snap, report).wasOk(), report);
             expect (report.startsWith ("WING snapshot"), report);
-            expectEquals (engine.getChannels()[0]->getName(), juce::String ("Vox"));
+            expectEquals (engine.getChannels()[0]->getOwnName(), juce::String ("Vox"));
             expectWithinAbsoluteError (engine.getChannels()[0]->params.faderDb.load(), -7.5f, 0.01f);
             expect (! engine.getWing().importSnapshot (dir.getChildFile ("missing.snap"), report).wasOk());
 
@@ -190,7 +190,7 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumChannels (4);
+            test::setChannels (engine, 4);
             engine.prepareOffline (48000.0, 256, 2, 2);
             auto& usb = engine.getUsbRecorder();
             usb.setStorageFolder (dir);
@@ -239,7 +239,7 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumChannels (40);
+            test::setChannels (engine, 40);
             auto& wing = engine.getWing();
             WingRemote::Settings s;
             s.enabled = true;

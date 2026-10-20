@@ -17,7 +17,7 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumChannels (3);
+            test::setChannels (engine, 3);
             auto* extraBus = engine.addBus();
             auto* bus = engine.getBusInSlot (0);
             bus->setName ("Wedge 1");
@@ -27,6 +27,7 @@ public:
             auto& p = kick->params;
             kick->setName ("Kick");
             kick->setColourIndex (9);
+            p.custLink = false; // its own name and colour, not its source's
             p.stereo = true;
             p.input.trimDb = 12.0f;
             p.filter.lowCut = true;
@@ -67,6 +68,7 @@ public:
 
             expectEquals (r->getName(), juce::String ("Kick"));
             expectEquals (r->getColourIndex(), 9);
+            expect (! r->params.custLink.load());
             expect (r->params.stereo.load());
             expectEquals (r->params.input.trimDb.load(), 12.0f);
             expect (r->params.filter.lowCut.load());
@@ -98,7 +100,7 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumChannels (2);
+            test::setChannels (engine, 2);
             auto& ch1 = engine.getChannels()[0]->params;
 
             ch1.faderDb = -10.0f;
@@ -130,7 +132,7 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumChannels (2);
+            test::setChannels (engine, 2);
             for (int i = 0; i < 80 - kWingBuses; ++i)
                 engine.addBus();
 
@@ -160,7 +162,7 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& p = engine.getChannels()[0]->params;
 
             p.faderDb = -20.0f;
@@ -184,7 +186,7 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumChannels (2);
+            test::setChannels (engine, 2);
             auto& safe = engine.getChannels()[0]->params;
             auto& other = engine.getChannels()[1]->params;
 
@@ -211,7 +213,7 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumChannels (2);
+            test::setChannels (engine, 2);
             auto& a = engine.getChannels()[0]->params;
             auto& b = engine.getChannels()[1]->params;
 
@@ -236,7 +238,7 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& p = engine.getChannels()[0]->params;
 
             p.faderDb = -12.0f;
@@ -255,7 +257,7 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& p = engine.getChannels()[0]->params;
 
             p.faderDb = -40.0f;
@@ -305,7 +307,7 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumChannels (4);
+            test::setChannels (engine, 4);
             show.addScene ("One");
             show.addSnippet (0, "Snip", state::Fader | state::Sends,
                              { state::StripRef::of (*engine.getChannels()[2]) });
@@ -318,7 +320,7 @@ public:
             const auto file = dir.getChildFile ("test.lshow");
 
             expect (show.saveToFile (file).wasOk());
-            engine.setNumChannels (6);
+            test::setChannels (engine, 6);
             expect (show.saveToFile (file).wasOk()); // second save makes a .bak
             const auto backup = file.withFileExtension (".lshow.bak");
             expect (backup.existsAsFile());
@@ -424,7 +426,7 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             engine.getFx().setPlugin (0, std::make_unique<FakePlugin>());
             auto xml = show.toXml();
 
@@ -446,7 +448,7 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& fader = engine.getChannels()[0]->params.faderDb;
             for (int i = 0; i < 4; ++i)
             {
@@ -495,7 +497,7 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumChannels (1);
+            test::setChannels (engine, 1);
             auto& ch = *engine.getChannels()[0];
             ch.sends[2].ignoreMute = true;
             ch.sends[2].panReversed = true;
@@ -503,7 +505,7 @@ public:
             ch.params.matrix[3].panLink = false;
             ch.params.matrix[4].panReversed = true;
             engine.getDca (2).icon = 112;
-            engine.getDca (2).led = false;
+            engine.getDca (2).led = true; // off by default, as on the WING
             engine.setSoloAfl (StripKind::Main, false);
             engine.monitorDimDb = 15.0f;
             engine.dcaMuteGroups = false;
@@ -521,7 +523,7 @@ public:
             expect (! c2.params.matrix[3].panLink.load() && c2.params.matrix[0].panLink.load());
             expect (c2.params.matrix[4].panLink.load() && c2.params.matrix[4].panReversed.load());
             expectEquals ((int) e2.getDca (2).icon.load(), 112);
-            expect (! e2.getDca (2).led.load() && e2.getDca (0).led.load());
+            expect (e2.getDca (2).led.load() && ! e2.getDca (0).led.load());
             expect (! e2.isSoloAfl (StripKind::Main) && e2.isSoloAfl (StripKind::Bus));
             expectEquals (e2.monitorDimDb.load(), 15.0f);
             expect (! e2.dcaMuteGroups.load() && e2.startupMainMute.load());
@@ -536,7 +538,8 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumChannels (2);
+            test::setChannels (engine, 2);
+            test::unityConsole (engine);
             auto& a = *engine.getChannels()[0];
             auto& b = *engine.getChannels()[1];
             const auto refA = state::StripRef::of (a), refB = state::StripRef::of (b);
@@ -617,7 +620,7 @@ public:
             MixerEngine engine (0);
             PluginHost host (nullptr);
             Show show (engine, host);
-            engine.setNumChannels (2);
+            test::setChannels (engine, 2);
             auto& a = *engine.getChannels()[0];
             a.params.faderDb = -9.0f;
             expectEquals (show.addScene ("Verse"), 0);

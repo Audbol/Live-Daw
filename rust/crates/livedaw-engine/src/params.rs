@@ -117,9 +117,14 @@ pub struct InputParams {
     pub delay_on: AtomicBool,
     /// Index into `livedaw_dsp::delay::DELAY_MODES` (M, FT, MS, SMP).
     pub delay_mode: AtomicI32,
-    /// In `delay_mode` units.
+    /// In `delay_mode` units (0.1 m .. 150 m as the WING's DIST, in any unit).
     pub delay: AtomicF32,
 }
+
+/// The WING's delay range (`/ch/n/in/set/dly`, 0.1 .. 150 m) and its
+/// factory setting: METERS, 0.1 m (off).
+pub const DELAY_MIN_M: f32 = 0.1;
+pub const DELAY_MAX_M: f32 = 150.0;
 
 impl Default for InputParams {
     fn default() -> Self {
@@ -128,8 +133,8 @@ impl Default for InputParams {
             balance_db: AtomicF32::new(0.0),
             invert: AtomicBool::new(false),
             delay_on: AtomicBool::new(false),
-            delay_mode: AtomicI32::new(2),
-            delay: AtomicF32::new(0.0),
+            delay_mode: AtomicI32::new(0),
+            delay: AtomicF32::new(DELAY_MIN_M),
         }
     }
 }
@@ -475,6 +480,12 @@ pub struct StripParams {
     pub tap_width: AtomicF32,
     /// TAP EQ (input channels): a 3-band EQ on the TAP-mode send signal.
     pub tap_eq: TapEqParams,
+
+    // ABI 12: LINK CUSTOMIZATION TO SOURCE (WING `/ch/n/clink`).
+    /// Input and aux channels: show the name, colour and icon of the source
+    /// in use instead of their own (`colour`, `icon` and the name stay the
+    /// channel's own, used again when the link is off or there is no source).
+    pub cust_link: AtomicBool,
 }
 
 /// One band of the TAP EQ.
@@ -529,32 +540,41 @@ impl TapEqParams {
     }
 }
 
-/// The WING's 18 strip colours (index 1..18 in `colour`): the console's names
-/// and the RGB it draws. 1-12 are measured on the console's screen (firmware
-/// 1.10 and 3.1 screenshots), as are 15 and 16; 13, 14, 17 and 18 are
-/// estimates in the same style.
+/// The WING's 18 strip colours (index 1..18 in `colour`): a name for each and
+/// the RGB the console draws, measured on a full-size WING's ICON/COLOR screen.
+/// Colour 1 (Purple) is the factory colour of channels, sources and DCAs (read
+/// from a factory-initialized console); the other indices follow the earlier
+/// manual measurements (5 Green, 11 Magenta, 15 Salmon, 16 Teal ...) matched
+/// to the nearest colour of the screen. `WING_COLOUR_GRID` is the screen's layout.
 pub const WING_COLOURS: [(&str, u32); 18] = [
-    ("Gray Blue", 0x4074c8),
-    ("Medium Blue", 0x00a4f8),
-    ("Dark Blue", 0x4000f8),
-    ("Turquoise", 0x00d0d0),
+    ("Purple", 0x380088),
+    ("Blue", 0x0084f0),
+    ("Dark Blue", 0x3000d0),
+    ("Turquoise", 0x10a880),
     ("Green", 0x00bc00),
-    ("Olive Green", 0x809800),
-    ("Yellow", 0xe0d400),
-    ("Brown", 0xb86018),
-    ("Red", 0xe00040),
-    ("Coral", 0xf85c58),
+    ("Olive", 0xc89800),
+    ("Yellow", 0xd0d400),
+    ("Brown", 0x904400),
+    ("Red", 0xe00000),
+    ("Pink", 0xf80090),
     ("Magenta", 0xd800f8),
-    ("Purple", 0x9800f8),
-    ("Orange", 0xf8a008),
-    ("Light Blue", 0x68c8f8),
+    ("Violet", 0x8800d8),
+    ("Orange", 0xd05400),
+    ("Lime", 0x70f400),
     ("Salmon", 0xf05c78),
     ("Teal", 0x0088a0),
-    ("Dark Gray", 0x585858),
-    ("Light Gray", 0xb0b0b0),
+    ("Gray", 0x605460),
+    ("Lavender", 0xc8b8e0),
 ];
 
-/// The RGB values earlier versions used for the same 18 colours. Shows saved
+/// ICON/COLOR's colour grid, row by row (three to a row): the colour index
+/// at each place, as the console lays them out.
+pub const WING_COLOUR_GRID: [i32; 18] = [6, 11, 14, 7, 10, 5, 2, 9, 4, 3, 13, 16, 1, 15, 17, 12, 8, 18];
+
+/// The colour the WING gives a new channel, aux, main, matrix, source and DCA (Purple).
+pub const DEFAULT_COLOUR: i32 = 1;
+
+/// The RGB values the first versions used for the 18 colours. Shows saved
 /// with ARGB colours (legacy files) used these, so they map back exactly.
 const PREVIOUS_RGB: [u32; 18] = [
     0x3a6fe8, 0x4fa6f7, 0x5a4fe0, 0x2ec6c6, 0x2fb84a, 0x9acd32, 0xf2d230, 0xb07a3a, 0xe83a3a, 0xf07c6c, 0xe84aa8, 0x9b4fe0,
@@ -594,6 +614,46 @@ mod colour_tests {
         }
         assert_eq!(colour_rgb(0), 0x9a9a9a);
         assert_eq!(nearest_colour(0xff0000), 9); // pure red is the WING's Red
+        assert_eq!(colour_rgb(DEFAULT_COLOUR), 0x380088); // the factory Purple
+        let mut grid = WING_COLOUR_GRID;
+        grid.sort_unstable();
+        assert_eq!(grid, std::array::from_fn(|i| i as i32 + 1), "every colour once");
+    }
+
+    #[test]
+    fn new_strips_start_as_the_wings_factory_init() {
+        // A channel: fader down, EQ off, customization linked to its source,
+        // Purple, the delay in METERS at its 0.1 m minimum.
+        let ch = StripParams::new(StripKind::Channel);
+        assert_eq!(ch.fader_db.load(), livedaw_dsp::fader::FADER_MIN);
+        assert!(!ch.eq.on.load(Relaxed));
+        assert!(ch.cust_link.load(Relaxed));
+        assert_eq!(ch.colour.load(Relaxed), DEFAULT_COLOUR);
+        assert_eq!(ch.icon.load(Relaxed), 0);
+        assert_eq!(ch.input.delay_mode.load(Relaxed), 0);
+        assert_eq!(ch.input.delay.load(), DELAY_MIN_M);
+        assert!(!ch.input.delay_on.load(Relaxed));
+        // The other types too (aux linked to its source like a channel).
+        for kind in [StripKind::Aux, StripKind::Bus, StripKind::Main, StripKind::Matrix] {
+            let p = StripParams::new(kind);
+            assert_eq!(p.fader_db.load(), livedaw_dsp::fader::FADER_MIN, "{kind:?}");
+            assert!(!p.eq.on.load(Relaxed), "{kind:?}");
+            assert_eq!(p.cust_link.load(Relaxed), kind == StripKind::Aux, "{kind:?}");
+        }
+        // Buses 9-16 at 0 dB into Main 1, coloured by pairs of four.
+        let (b1, b9, b11) = (
+            StripParams::new_in_slot(StripKind::Bus, 0),
+            StripParams::new_in_slot(StripKind::Bus, 8),
+            StripParams::new_in_slot(StripKind::Bus, 10),
+        );
+        assert_eq!((b1.colour.load(Relaxed), b9.colour.load(Relaxed), b11.colour.load(Relaxed)), (10, 6, 12));
+        assert!(!b1.mains[0].on.load(Relaxed) && b9.mains[0].on.load(Relaxed));
+        assert_eq!(b9.fader_db.load(), 0.0);
+        let d = DcaParams::default();
+        assert_eq!(
+            (d.colour.load(Relaxed), d.led.load(Relaxed), d.fader_db.load()),
+            (DEFAULT_COLOUR, false, livedaw_dsp::fader::FADER_MIN)
+        );
     }
 }
 
@@ -618,14 +678,11 @@ mod factory_tests {
     }
 }
 
-/// Default WING colour per kind.
+/// Default WING colour per kind (buses: see `StripParams::new_in_slot`).
 pub fn default_colour(kind: StripKind) -> i32 {
     match kind {
-        StripKind::Channel => 1,
-        StripKind::Aux => 4,
-        StripKind::Bus => 5,
-        StripKind::Main => 9,
-        StripKind::Matrix => 13,
+        StripKind::Bus => 10,
+        _ => DEFAULT_COLOUR,
     }
 }
 
@@ -688,12 +745,28 @@ impl StripParams {
             alt_selected: AtomicBool::new(false),
             tap_width: AtomicF32::new(100.0),
             tap_eq: TapEqParams::default(),
+            cust_link: AtomicBool::new(kind.is_input()),
         };
-        p.eq.on.store(true, Relaxed);
+        // The WING's factory strips: the fader down, the EQ off.
+        p.fader_db.store(livedaw_dsp::fader::FADER_MIN);
+        p.eq.on.store(false, Relaxed);
         if kind == StripKind::Aux {
             if let Some(thr) = p.dynamics.param("thr") {
                 thr.store(AUX_GATE_THRESHOLD_DB);
             }
+        }
+        p
+    }
+
+    /// A new strip in slot `index` of its kind, as on a factory-initialized
+    /// WING: buses 1-8 (aux mixes) Pink with the fader down; buses 9-10 Olive
+    /// and 11-16 Violet, at 0 dB into Main 1.
+    pub fn new_in_slot(kind: StripKind, index: usize) -> Self {
+        let p = Self::new(kind);
+        if kind == StripKind::Bus && (8..WING_BUSES).contains(&index) {
+            p.colour.store(if index < 10 { 6 } else { 12 }, Relaxed);
+            p.fader_db.store(0.0);
+            p.mains[0].on.store(true, Relaxed);
         }
         p
     }
@@ -747,12 +820,13 @@ pub struct DcaParams {
 
 impl Default for DcaParams {
     fn default() -> Self {
+        // The WING's factory DCA: fader down, scribble strip light off.
         Self {
-            fader_db: AtomicF32::new(0.0),
+            fader_db: AtomicF32::new(livedaw_dsp::fader::FADER_MIN),
             mute: AtomicBool::new(false),
             solo: AtomicBool::new(false),
-            led: AtomicBool::new(true),
-            colour: AtomicI32::new(7),
+            led: AtomicBool::new(false),
+            colour: AtomicI32::new(DEFAULT_COLOUR),
             icon: AtomicI32::new(0),
         }
     }
@@ -1093,11 +1167,11 @@ impl EngineControls {
         self.monitor_level_db.store(0.0);
         self.mute_groups.store(0, Relaxed);
         for d in &self.dcas {
-            d.fader_db.store(0.0);
+            d.fader_db.store(livedaw_dsp::fader::FADER_MIN);
             d.mute.store(false, Relaxed);
             d.solo.store(false, Relaxed);
-            d.led.store(true, Relaxed);
-            d.colour.store(7, Relaxed);
+            d.led.store(false, Relaxed);
+            d.colour.store(DEFAULT_COLOUR, Relaxed);
             d.icon.store(0, Relaxed);
         }
         for f in &self.fx {

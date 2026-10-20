@@ -2,6 +2,8 @@
 //! in the right order within a block (`keytap.rs`).
 
 use livedaw_dsp::wing::{model_index, DYN_MODELS};
+mod common;
+use common::{set_channels, unity_console};
 use livedaw_engine::params::StripKind;
 use livedaw_engine::{Engine, Strip};
 use std::sync::atomic::Ordering::Relaxed;
@@ -27,6 +29,7 @@ struct Rig {
 impl Rig {
     fn new(num_workers: usize, num_ins: usize, num_outs: usize) -> Self {
         let engine = Arc::new(Engine::new(num_workers));
+        unity_console(&engine);
         let workers = (0..num_workers)
             .map(|i| {
                 let e = engine.clone();
@@ -80,7 +83,7 @@ impl Drop for Rig {
 #[test]
 fn the_key_follows_the_tap_of_the_source() {
     let mut rig = Rig::new(2, 2, 2);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     // Channel 1 is the key source (fader down, off Main 1); channel 2 is gated by it.
     let src = rig.ch(0);
     src.params.mains[0].on.store(false, Relaxed);
@@ -123,7 +126,7 @@ fn the_key_follows_the_tap_of_the_source() {
 #[test]
 fn the_in_tap_is_after_the_input_trim() {
     let mut rig = Rig::new(0, 2, 2);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     let src = rig.ch(0);
     src.params.mains[0].on.store(false, Relaxed);
     rig.inputs[0].fill(0.5);
@@ -140,7 +143,7 @@ fn the_in_tap_is_after_the_input_trim() {
 #[test]
 fn a_key_from_a_later_channel_reads_this_block() {
     let mut rig = Rig::new(2, 4, 2);
-    rig.engine.set_num_channels(4);
+    set_channels(&rig.engine, 4);
     for i in 0..3 {
         rig.inputs[i].fill(0.5);
     }
@@ -168,7 +171,7 @@ fn a_key_from_a_later_channel_reads_this_block() {
 #[test]
 fn key_cycles_read_the_previous_block() {
     let mut rig = Rig::new(2, 4, 2);
-    rig.engine.set_num_channels(4);
+    set_channels(&rig.engine, 4);
     // Channels 1 and 2 key each other; channel 3 keys itself (IN).
     rig.key_gate(0, 1, POST);
     rig.key_gate(1, 0, POST);
@@ -191,7 +194,7 @@ fn key_cycles_read_the_previous_block() {
 #[test]
 fn buses_and_aux_key_from_channels() {
     let mut rig = Rig::new(2, 2, 2);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     let bus = rig.engine.strip_at(StripKind::Bus, 0).unwrap();
     let aux = rig.engine.strip_at(StripKind::Aux, 0).unwrap();
     for s in [&bus, &aux] {
@@ -217,7 +220,7 @@ fn buses_and_aux_key_from_channels() {
 #[test]
 fn an_idle_source_keys_silence() {
     let mut rig = Rig::new(1, 2, 2);
-    rig.engine.set_num_channels(2);
+    set_channels(&rig.engine, 2);
     rig.inputs[0].fill(0.5);
     rig.inputs[1].fill(0.5);
     rig.key_gate(1, 0, PFL);

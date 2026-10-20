@@ -107,10 +107,10 @@ public:
     {
         beginTest ("The C ABI is version 10 and both sides agree on the layout");
         {
-            expectEquals (ld::kAbiVersion, 11);
+            expectEquals (ld::kAbiVersion, 12);
             ld::LayoutInfo info {};
             ld::ld_layout_info (&info);
-            expectEquals ((int) info.abiVersion, 11);
+            expectEquals ((int) info.abiVersion, 12);
             const char* mismatch = ld::verifyLayout();
             expect (mismatch == nullptr, mismatch != nullptr ? juce::String (mismatch) : juce::String());
         }
@@ -218,7 +218,7 @@ public:
             }
 
             MixerEngine engine (0);
-            engine.setNumChannels (2);
+            test::setChannels (engine, 2);
             Driver d (engine, 2, 2);
             auto& rec = engine.getRecorder();
             auto& ch2 = *engine.getChannels()[1];
@@ -339,7 +339,7 @@ public:
                 expectEquals (device->getActiveInputChannels().countNumberOfSetBits(), 8);
 
                 MixerEngine engine (0);
-                engine.setNumChannels (2);
+                test::setChannels (engine, 2);
                 manager.addAudioCallback (&engine);
                 auto& rec = engine.getRecorder();
                 expect (rec.record ({ inputTrack (0, 0, 2, tmp.dir.getChildFile ("virtual.wav")) }).wasOk());

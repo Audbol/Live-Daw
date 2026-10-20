@@ -13,6 +13,7 @@ namespace
     const juce::Colour filterCurveColour { 0xff4890e0 };
     const juce::Colour selectedBandColour { 0xff4890e0 };
     const juce::Colour gridColour { 0xff383838 };
+    const juce::Colour overviewGridColour { 0xff505450 };
     const juce::Colour bandLineColour { 0xff585858 };
     const juce::Colour labelColour { 0xffc0c0c0 };
     const juce::Colour dimLabelColour { 0xff707070 };
@@ -413,13 +414,14 @@ void ResponseGraph::paint (juce::Graphics& g)
 {
     const auto p = plot();
     const auto bounds = getLocalBounds().toFloat().reduced (1.0f);
-    g.fillAll (juce::Colours::black);
+    // The overview panel's graph is grey with lighter lines [I1].
+    g.fillAll (overview ? Colours::screenPanel : juce::Colours::black);
 
     // Grid: a line for every 10, 20 ... 90 Hz, 100, 200 ... and the levels
     // (every 5 dB on the full screens, four divisions otherwise), all in the
     // same dark grey.
     const auto cp = curvePlot();
-    g.setColour (gridColour);
+    g.setColour (overview ? overviewGridColour : gridColour);
     for (float decade : { 10.0f, 100.0f, 1000.0f, 10000.0f })
         for (int m = 1; m <= 9; ++m)
         {

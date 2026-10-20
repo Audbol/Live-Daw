@@ -71,6 +71,19 @@ impl PluginBridge for Bridge<'_> {
     }
 }
 
+/// Sets the number of channels; new channels get their fader at 0 dB (a new
+/// channel's fader is down, as on the WING), the level these tests start from.
+fn set_channels(engine: &Engine, count: usize) {
+    let before = engine.num_channels();
+    engine.set_num_channels(count);
+    for s in engine.strips(StripKind::Channel).iter().skip(before) {
+        s.params.fader_db.store(0.0);
+    }
+}
+
+/// A new DCA's level: the fader down, as on the WING.
+const FACTORY_DCA_DB: f32 = -144.0;
+
 fn ch(engine: &Engine, i: usize) -> Arc<Strip> {
     engine.channel_at(i).unwrap()
 }
@@ -83,7 +96,7 @@ fn dyn_param(s: &Strip, id: &str) -> f32 {
 fn console_survives_a_show_round_trip() {
     let engine = Engine::new(0);
     let mut host = FakeHost::default();
-    engine.set_num_channels(3);
+    set_channels(&engine, 3);
     let big_bus = engine.add_bus(79).unwrap();
 
     let kick = ch(&engine, 0);
@@ -178,14 +191,14 @@ fn console_survives_a_show_round_trip() {
     assert_eq!(e2.strip_at(StripKind::Matrix, 1).unwrap().params.direct_source.load(Relaxed), 2);
     assert!(e2.controls.solo_afl.load(Relaxed));
     assert_eq!(e2.controls.output_ceiling_db.load(), -1.5);
-    assert_eq!(ch(&e2, 1).name(), "Ch 2");
+    assert_eq!(ch(&e2, 1).name(), "", "unnamed, as on the WING");
 }
 
 #[test]
 fn scenes_respect_scope_and_recall_safe() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(2);
+    set_channels(&engine, 2);
     let mut show = Show::new();
     show.add_scene(&engine, &mut np, "A", -1);
 
@@ -202,7 +215,7 @@ fn scenes_respect_scope_and_recall_safe() {
     assert_eq!(a.params.fader_db.load(), 0.0);
     assert_eq!(a.params.input_left.load(Relaxed), 7, "routing is outside the default scope");
     assert_eq!(a.params.dca_mask.load(Relaxed), 0, "DCA assignments are in the default scope");
-    assert_eq!(engine.controls.dcas[0].fader_db.load(), 0.0, "DCA levels recall with the faders");
+    assert_eq!(engine.controls.dcas[0].fader_db.load(), FACTORY_DCA_DB, "DCA levels recall with the faders");
     assert_eq!(b.params.fader_db.load(), -30.0);
 
     show.scene_mut(0).unwrap().scope = section::ALL;
@@ -214,7 +227,7 @@ fn scenes_respect_scope_and_recall_safe() {
 fn snippets_touch_only_their_strips_and_sections() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(3);
+    set_channels(&engine, 3);
     let mut show = Show::new();
     show.add_scene(&engine, &mut np, "A", -1);
     let (a, b) = (ch(&engine, 0), ch(&engine, 1));
@@ -246,7 +259,7 @@ fn snippets_touch_only_their_strips_and_sections() {
 fn model_changes_recall_with_their_parameters() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(1);
+    set_channels(&engine, 1);
     let a = ch(&engine, 0);
     a.params.dynamics.set_model(model_index(DYN_MODELS, "LA").unwrap());
     a.params.dynamics.param("peak").unwrap().store(70.0);
@@ -262,7 +275,7 @@ fn model_changes_recall_with_their_parameters() {
 fn fades_glide_and_survive_removed_strips() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(2);
+    set_channels(&engine, 2);
     let bus = engine.bus_in_slot(0).unwrap();
     let (a, b) = (ch(&engine, 0), ch(&engine, 1));
     a.sends.get_or_create(bus.id() as usize).unwrap().level_db.store(-10.0);
@@ -308,7 +321,7 @@ fn fades_glide_and_survive_removed_strips() {
 fn levels_fade_along_the_fader_travel() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(1);
+    set_channels(&engine, 1);
     let a = ch(&engine, 0);
     let dca = &engine.controls.dcas[0];
     a.params.fader_db.store(0.0);
@@ -342,7 +355,7 @@ fn levels_fade_along_the_fader_travel() {
 fn fades_glide_dcas_widths_and_send_pans_while_switches_jump() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(1);
+    set_channels(&engine, 1);
     let bus = engine.bus_in_slot(0).unwrap();
     let a = ch(&engine, 0);
     let slot = bus.id() as usize;
@@ -389,7 +402,7 @@ fn fades_glide_dcas_widths_and_send_pans_while_switches_jump() {
 fn a_value_moved_during_a_fade_leaves_the_fade() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(2);
+    set_channels(&engine, 2);
     let bus = engine.bus_in_slot(0).unwrap();
     let slot = bus.id() as usize;
     let (a, b) = (ch(&engine, 0), ch(&engine, 1));
@@ -460,7 +473,7 @@ fn show_files_are_atomic_with_backup_and_safe_mode() {
 
     let engine = Engine::new(0);
     let mut host = FakeHost::default();
-    engine.set_num_channels(2);
+    set_channels(&engine, 2);
     host.load(&engine, 1, "Delay", "S");
     let mut show = Show::new();
     show.name = "First".into();
@@ -632,7 +645,7 @@ fn legacy_v2_show_converts_to_the_wing_layout() {
 fn capture_and_apply_by_section() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(2);
+    set_channels(&engine, 2);
     let a = ch(&engine, 0);
     a.params.eq.param("1g", false).unwrap().store(5.0);
     a.params.dynamics.param("thr").unwrap().store(-12.0);
@@ -647,7 +660,7 @@ fn capture_and_apply_by_section() {
     assert_eq!(dyn_param(&a, "thr"), -30.0);
 
     // Strips missing from the console are counted, not fatal.
-    engine.set_num_channels(1);
+    set_channels(&engine, 1);
     let r = console::apply(&engine, &state, section::ALL, None, true, None, &mut np);
     assert_eq!(r.strips_missing, 1);
 }
@@ -709,7 +722,7 @@ fn round_trip(engine: &Engine, show: &Show) -> (Engine, Show) {
 #[test]
 fn wing_settings_survive_a_show_round_trip() {
     let engine = Engine::new(0);
-    engine.set_num_channels(1);
+    set_channels(&engine, 1);
     let c = &engine.controls;
     let a = ch(&engine, 0);
     let send = a.sends.get_or_create(3).unwrap();
@@ -746,7 +759,7 @@ fn wing_settings_survive_a_show_round_trip() {
 #[test]
 fn key_source_and_tap_survive_a_show_round_trip() {
     let engine = Engine::new(0);
-    engine.set_num_channels(3);
+    set_channels(&engine, 3);
     let a = ch(&engine, 0);
     a.params.gate.sc_source.store(2, Relaxed);
     a.params.gate.sc_tap.store(7, Relaxed); // POST
@@ -768,14 +781,14 @@ fn key_source_and_tap_survive_a_show_round_trip() {
 #[test]
 fn matrix_pan_link_and_dca_icons_survive_a_show_round_trip() {
     let engine = Engine::new(0);
-    engine.set_num_channels(1);
+    set_channels(&engine, 1);
     let a = ch(&engine, 0);
     a.params.matrix[1].pan_link.store(false, Relaxed);
     a.params.matrix[1].pan.store(-40.0);
     a.params.matrix[2].pan_reversed.store(true, Relaxed);
     let d = &engine.controls.dcas[4];
     d.icon.store(112, Relaxed);
-    d.led.store(false, Relaxed);
+    d.led.store(true, Relaxed);
 
     let (e2, _) = round_trip(&engine, &Show::new());
     let b = ch(&e2, 0);
@@ -785,12 +798,12 @@ fn matrix_pan_link_and_dca_icons_survive_a_show_round_trip() {
     assert!(m[0].pan_link.load(Relaxed) && !m[0].pan_reversed.load(Relaxed));
     let d2 = &e2.controls.dcas[4];
     assert_eq!(d2.icon.load(Relaxed), 112);
-    assert!(!d2.led.load(Relaxed) && e2.controls.dcas[0].led.load(Relaxed));
+    assert!(d2.led.load(Relaxed) && !e2.controls.dcas[0].led.load(Relaxed), "a DCA's light is off by default");
 
     // Shows from before PAN LINK: a centred send stays linked (as it sounded),
     // one with a pan keeps that pan.
     let mut text = Show::new().to_xml(&engine, &mut NoPlugins).to_document();
-    for attr in [" plink=\"0\"", " plink=\"1\"", " prev=\"0\"", " prev=\"1\"", " icon=\"112\"", " led=\"0\""] {
+    for attr in [" plink=\"0\"", " plink=\"1\"", " prev=\"0\"", " prev=\"1\"", " icon=\"112\"", " led=\"1\""] {
         text = text.replace(attr, "");
     }
     let e3 = Engine::new(0);
@@ -799,13 +812,31 @@ fn matrix_pan_link_and_dca_icons_survive_a_show_round_trip() {
     assert!(!m[1].pan_link.load(Relaxed), "panned: its own pan");
     assert!(m[2].pan_link.load(Relaxed) && !m[2].pan_reversed.load(Relaxed));
     assert_eq!(e3.controls.dcas[4].icon.load(Relaxed), 0);
-    assert!(e3.controls.dcas[4].led.load(Relaxed));
+    assert!(!e3.controls.dcas[4].led.load(Relaxed));
+}
+
+#[test]
+fn customization_link_survives_a_show_round_trip() {
+    let engine = Engine::new(0);
+    engine.set_num_channels(2);
+    assert!(ch(&engine, 0).params.cust_link.load(Relaxed), "a new channel is linked to its source");
+    ch(&engine, 1).params.cust_link.store(false, Relaxed);
+
+    let (e2, _) = round_trip(&engine, &Show::new());
+    assert!(ch(&e2, 0).params.cust_link.load(Relaxed));
+    assert!(!ch(&e2, 1).params.cust_link.load(Relaxed));
+
+    // Shows from before the link keep showing the channels' own customization.
+    let text = Show::new().to_xml(&engine, &mut NoPlugins).to_document().replace(" clink=\"1\"", "");
+    let e3 = Engine::new(0);
+    Show::new().load_from_text(&e3, &mut NoPlugins, &text, true).unwrap();
+    assert!(!ch(&e3, 0).params.cust_link.load(Relaxed));
 }
 
 #[test]
 fn shows_without_the_new_settings_load_with_the_old_behaviour() {
     let engine = Engine::new(0);
-    engine.set_num_channels(1);
+    set_channels(&engine, 1);
     let a = ch(&engine, 0);
     a.sends.get_or_create(3).unwrap().enabled.store(true, Relaxed); // PRE
     let post = a.sends.get_or_create(4).unwrap();
@@ -872,7 +903,7 @@ fn scenes_recall_solo_and_automix_settings_but_not_preferences_or_keys() {
 fn scene_tags_skip_and_link() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(1);
+    set_channels(&engine, 1);
     let a = ch(&engine, 0);
     let mut show = Show::new();
     for i in 0..5 {
@@ -951,7 +982,7 @@ fn scene_tags_skip_and_link() {
 fn send_midi_goes_with_every_recall_of_its_scene() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(1);
+    set_channels(&engine, 1);
     let mut show = Show::new();
     for i in 0..3 {
         show.add_scene(&engine, &mut np, &format!("S{i}"), -1);
@@ -989,7 +1020,7 @@ fn send_midi_goes_with_every_recall_of_its_scene() {
 fn alt_inputs_and_input_select_are_saved_and_recalled_with_routing() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(2);
+    set_channels(&engine, 2);
     let c = &engine.controls;
     let a = ch(&engine, 0);
     let aux = engine.strip_at(StripKind::Aux, 3).unwrap();
@@ -1055,7 +1086,7 @@ fn mute_groups(engine: &Engine) -> u32 {
 fn per_strip_scene_scope_and_item_masks() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(3);
+    set_channels(&engine, 3);
     let mut show = Show::new();
     show.add_scene(&engine, &mut np, "A", -1);
     let (a, b) = (ch(&engine, 0), ch(&engine, 1));
@@ -1078,7 +1109,7 @@ fn per_strip_scene_scope_and_item_masks() {
     assert_eq!(a.params.fader_db.load(), 0.0);
     assert_eq!(b.params.fader_db.load(), -20.0, "outside the scene's strips");
     assert_eq!(engine.controls.dcas[0].fader_db.load(), -7.0, "DCA 1 is outside the scope");
-    assert_eq!(engine.controls.dcas[1].fader_db.load(), 0.0);
+    assert_eq!(engine.controls.dcas[1].fader_db.load(), FACTORY_DCA_DB);
     assert_eq!(engine.controls.fx[2].mix.load(), 30.0, "no FX slot in the scope");
 
     // The scope survives a save and load; older scenes recall everything.
@@ -1095,7 +1126,7 @@ fn per_strip_scene_scope_and_item_masks() {
 fn global_safes_beyond_strips() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(2);
+    set_channels(&engine, 2);
     let mut show = Show::new();
     show.add_scene(&engine, &mut np, "A", -1);
     show.scene_mut(0).unwrap().scope = section::ALL;
@@ -1115,7 +1146,7 @@ fn global_safes_beyond_strips() {
     assert!(a.params.gate.on.load(Relaxed), "the gate is a safe section");
     assert_eq!(a.params.fader_db.load(), 0.0);
     assert_eq!(engine.controls.dcas[0].fader_db.load(), -5.0, "DCA 1 is safe");
-    assert_eq!(engine.controls.dcas[1].fader_db.load(), 0.0);
+    assert_eq!(engine.controls.dcas[1].fader_db.load(), FACTORY_DCA_DB);
     assert_eq!(mute_groups(&engine), 0b100, "group 3 is safe, group 1 recalled off");
     assert_eq!(engine.controls.fx[3].mix.load(), 40.0, "FX 4 is safe");
     assert_eq!(engine.controls.fx[4].mix.load(), 100.0);
@@ -1127,7 +1158,7 @@ fn global_safes_beyond_strips() {
     let r = show.recall_scene_with(&engine, &mut np, 0, None, false);
     assert_eq!(r.strips_skipped_safe, 0);
     assert!(!a.params.gate.on.load(Relaxed));
-    assert_eq!(engine.controls.dcas[0].fader_db.load(), 0.0);
+    assert_eq!(engine.controls.dcas[0].fader_db.load(), FACTORY_DCA_DB);
     assert_eq!(mute_groups(&engine), 0);
     assert_eq!(engine.controls.fx[3].mix.load(), 100.0);
 
@@ -1144,7 +1175,7 @@ fn global_safes_beyond_strips() {
 fn partial_load_and_update_keep_their_scope() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(2);
+    set_channels(&engine, 2);
     let mut show = Show::new();
     show.add_scene(&engine, &mut np, "A", -1);
     let (a, b) = (ch(&engine, 0), ch(&engine, 1));
@@ -1187,7 +1218,7 @@ fn partial_load_and_update_keep_their_scope() {
 fn snippet_rec_records_the_changed_parameters() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(4);
+    set_channels(&engine, 4);
     let mut show = Show::new();
     show.add_scene(&engine, &mut np, "A", -1);
     let (a, b, c) = (ch(&engine, 0), ch(&engine, 1), ch(&engine, 2));
@@ -1258,7 +1289,7 @@ fn snippet_rec_records_the_changed_parameters() {
 fn snippet_items_and_partial_load() {
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(3);
+    set_channels(&engine, 3);
     let mut show = Show::new();
     show.add_scene(&engine, &mut np, "A", -1);
     let (a, b) = (ch(&engine, 0), ch(&engine, 1));
@@ -1302,7 +1333,7 @@ fn spill_layers_follow_the_console() {
     use livedaw_session::layers::{spill_faders, SpillKind, RIGHT, SPILL_ID};
 
     let engine = Engine::new(0);
-    engine.set_num_channels(4);
+    set_channels(&engine, 4);
     let (a, b, c) = (ch(&engine, 0), ch(&engine, 1), ch(&engine, 2));
     let strip = |s: &Strip| FaderRef::Strip(StripRef::of(s));
 
@@ -1406,7 +1437,7 @@ fn channel_presets_load_onto_other_strips_within_their_scope() {
     use livedaw_session::presets;
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(4);
+    set_channels(&engine, 4);
     let (a, b) = (ch(&engine, 0), ch(&engine, 1));
     a.set_name("Kick");
     a.params.gate.on.store(true, Relaxed);
@@ -1450,7 +1481,7 @@ fn scene_and_snippet_files_round_trip_into_another_show() {
     use livedaw_session::library::{self, FileType};
     let engine = Engine::new(0);
     let mut np = NoPlugins;
-    engine.set_num_channels(4);
+    set_channels(&engine, 4);
     let (a, b) = (ch(&engine, 0), ch(&engine, 1));
     a.params.fader_db.store(-6.0);
     b.params.fader_db.store(-12.0);
