@@ -3,7 +3,15 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
-## [Unreleased]
+## [0.1.3] - beta
+
+The first round of matching Sidecar to a real WING, side by side with the console:
+INSERT and the FX menus, the EFFECTS rack, ROUTING, SETUP, LIBRARY, CUSTOM CONTROLS,
+CHANNEL COPY / INIT, a full INITIALIZE CONSOLE page, and the GATE, EQ, FILTER and COMP
+pages now follow the console's own screens, and new channels start with the WING's
+factory gate, compressor, filter and EQ settings read from a real console. A tool to
+compare Sidecar with a WING parameter by parameter is included. Known limitations: see
+the [README](https://github.com/Audbol/Live-Daw/blob/main/README.md#known-limitations).
 
 ### Added
 

@@ -15,7 +15,7 @@ anything can be sent to any hardware output. It runs on Windows, macOS and Linux
 > SETUP > GENERAL > ABOUT, lists the differences). Don't rely on it for a critical
 > live show without testing it thoroughly first.
 
-**Status: v0.1.2 beta**, a bug-fix release of the second public beta. Expect rough edges, and please
+**Status: v0.1.3 beta**, the third public beta: the first round of matching a real WING screen by screen. Expect rough edges, and please
 [report what you find](#reporting-problems).
 
 ## Screenshots

@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 # The version. Release builds pass the release tag (e.g. -DLIVEDAW_VERSION=v0.1.1-beta.2):
 # its numeric part becomes the CMake/JUCE version (Windows version info, Info.plist), and
 # the full string is what the app shows (about box, SETUP, log) as JUCE_APPLICATION_VERSION_STRING.
-set(LIVEDAW_DEFAULT_VERSION 0.1.2)
+set(LIVEDAW_DEFAULT_VERSION 0.1.3)
 set(LIVEDAW_VERSION "" CACHE STRING "Version to stamp, e.g. 0.1.1-beta.2 or v0.1.1-beta.2 (default: ${LIVEDAW_DEFAULT_VERSION})")
 if(LIVEDAW_VERSION)
     string(REGEX REPLACE "^[vV]" "" LIVEDAW_VERSION_STRING "${LIVEDAW_VERSION}")
