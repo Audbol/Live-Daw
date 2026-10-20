@@ -57,6 +57,9 @@ All notable changes to Sidecar are listed here. Versions follow
   mid/side pair; on the pair's second source it changed nothing you could hear (the
   pair plays at the first source's gain). It now sets both, in 0.5 dB steps, like
   the fader and the wheel.
+- Spills (DCA SPILL, a bus's sources) didn't follow the console: a strip assigned to
+  the spilled DCA, or a send switched on to the spilled bus, only showed up after
+  another layer change. The spill now updates at once.
 
 ## [0.1.0] - beta
 
