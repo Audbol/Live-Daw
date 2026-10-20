@@ -3,7 +3,14 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
-## [Unreleased]
+## [0.1.1] - beta
+
+The second beta: plugin delay compensation, an optional plugin sandbox (experimental),
+the WING's oscillator, scene and snippet files, the CLIP player, SEND MIDI, MIDI CC
+faders, gate and dynamics KEY TAP, matrix send PAN LINK, much more of the WING remote
+protocol (88.2 % of its parameters) and many fixes found by using the console end to
+end. Known limitations: see the
+[README](https://github.com/Audbol/Live-Daw/blob/main/README.md#known-limitations).
 
 ### Added
 

@@ -15,7 +15,7 @@ anything can be sent to any hardware output. It runs on Windows, macOS and Linux
 > SETUP > GENERAL > ABOUT, lists the differences). Don't rely on it for a critical
 > live show without testing it thoroughly first.
 
-**Status: v0.1.0 beta**, the first public release. Expect rough edges, and please
+**Status: v0.1.1 beta**, the second public release. Expect rough edges, and please
 [report what you find](#reporting-problems).
 
 ## Screenshots
