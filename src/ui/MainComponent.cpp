@@ -250,9 +250,6 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     midiRemote = std::make_unique<MidiRemote> (engine, show);
     ctx.midi = midiRemote.get();
     midiui::connect (ctx);
-    // WING remote clients recall scenes (/$ctl/lib) like MIDI does.
-    engine.getWing().attachShow (&show, [this] (const juce::String& what, const state::ApplyResult& r)
-                                 { logRecall (ctx, what, r); });
 
     channelStrip = std::make_unique<ChannelStripSection> (ctx);
     display = std::make_unique<MainDisplay> (ctx);
@@ -263,6 +260,22 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     // The 4-Channel section works on the right fader section's four strips.
     fourChannel = std::make_unique<FourChannelSection> (ctx, [this] (int i) { return sections[LayerSet::Right] != nullptr ? sections[LayerSet::Right]->getStrip (i) : nullptr; });
     soloWatcher = std::make_unique<SoloWatcher> (*this);
+
+    // WING remote clients recall scenes (/$ctl/lib) like MIDI does, and change
+    // the layers and custom controls (/$ctl/layer, /$ctl/user) like the surface.
+    engine.getWing().setSurfaceCallbacks ([this] { return customControlAssignments->currentLayer; },
+                                          [this] (int changes, int bank)
+                                          {
+                                              if ((changes & WingRemote::surfaceControls) != 0)
+                                                  customControlAssignments->reload();
+                                              if (bank >= 0)
+                                                  customControlAssignments->currentLayer = bank;
+                                              customControls->refresh();
+                                              if ((changes & WingRemote::surfaceLayers) != 0)
+                                                  refreshSections();
+                                          });
+    engine.getWing().attachShow (&show, [this] (const juce::String& what, const state::ApplyResult& r)
+                                 { logRecall (ctx, what, r); });
     for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) display.get(), (juce::Component*) monitor.get(),
                                 (juce::Component*) customControls.get(), (juce::Component*) fourChannel.get() })
         addAndMakeVisible (c);
@@ -301,8 +314,9 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
 
 MainComponent::~MainComponent()
 {
-    // MIDI and the WING remote's scene control go first: their callbacks reach the views.
+    // MIDI and the WING remote's scene and surface control go first: their callbacks reach the views.
     engine.getWing().attachShow (nullptr);
+    engine.getWing().setSurfaceCallbacks ({}, {});
     ctx.midi = nullptr;
     midiRemote.reset();
     engine.onPluginWarning = nullptr;

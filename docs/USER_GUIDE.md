@@ -442,7 +442,7 @@ and open-source projects (see below), and it is **experimental**.
   test battery and model capture, its OSC client), and every OSC path the Bitfocus
   Companion WING module builds that exists in the 3.1 tree. **WING Edit and WING
   Copilot have not been tried**, so they may not work.
-- **What maps:** 84.4 % of the WING 3.1 tree's parameters (57,874 of 68,556,
+- **What maps:** 88.2 % of the WING 3.1 tree's parameters (60,471 of 68,556,
   counting every model's parameters) drive the engine: channels, aux, buses, mains
   and matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
   dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,
@@ -469,7 +469,20 @@ and open-source projects (see below), and it is **experimental**.
   goes to each member's monitor bus), a channel's TAP SOLO (`$presolo`: solo is
   PFL or AFL per strip type), the player's song tags (`$artist`, `$album`, `$songs`)
   and the safes of source and output groups, surface areas, custom controls and
-  setup. The rest (surface layers, user controls, cards, ...) is remembered so
+  setup. The fader sections' layers (`/$ctl/layer/L`, `C`, `R`) and the custom
+  controls (`/$ctl/user`) are the show's, both ways: clients select layer keys
+  (`sel`), spill (`spidx`: DCA, FX, a bus's sources, automix X / Y), scroll the
+  shown layer (`ofs`), name the USER keys' user layers and assign faders (`type`,
+  `i`, `dst`: channels, buses, DCAs, sends, FX parameters, MIDI CCs; a default key
+  becomes an edited key as on VIEW > CONFIG), and set each custom control's
+  functions (`mode`), name and colour and the CC layer (`sel`); the console's
+  changes show to clients within a tenth of a second. Sidecar's layers have no
+  gaps (a fader assigned past the end is appended, OFF removes one), only the shown
+  layer has a scroll position, and a new function starts at its first target
+  (clients can't choose it: the WING's tree only has the function). The encoding of
+  fader assignments and the custom controls of `U1`-`U3` (taken as the 4-Channel
+  section's F1-F3 layers) are educated guesses. The rest (the other WING models'
+  layers, the 4-Channel and button section modes, cards, ...) is remembered so
   clients can read back what they wrote, but does nothing.
   `cargo run -p livedaw-wing --example wing_coverage` prints the full report.
 - **Files:** LIBRARY > SHOW > **IMPORT WING** applies a WING snapshot (`.snap`) to

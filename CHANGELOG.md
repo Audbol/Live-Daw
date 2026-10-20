@@ -22,22 +22,24 @@ All notable changes to Sidecar are listed here. Versions follow
   folder; IMPORT (or a double-click on the file) adds it to the show.
 - LIBRARY: the CLIP tab plays an audio clip (WAV, FLAC, AIFF, MP3) chosen at INT / USB
   on the USB player, with PLAY, PAUSE, STOP, meter, time and format.
-- WING remote: more of the WING 3.1 parameter tree drives the console: 83.7 % of its parameters
-  (57,353 of 68,556, up from 82.8 %). New: LISTEN from remote apps (BAND SOLO with
+- WING remote: more of the WING 3.1 parameter tree drives the console: 88.2 % of its parameters
+  (60,471 of 68,556, up from 82.8 % in 0.1.0). New: LISTEN from remote apps (BAND SOLO with
   its band, KEY SOLO of the GATE and DYNAMICS slots, XOVER SOLO on channels, aux,
   buses, mains and matrices), the inserts' state, which strip uses each FX slot, a
   channel's source GAIN and +48V, the active RTA source and settings, the monitor
-  paths' actual level, and scene control (`/$ctl/lib`: GO, GO NEXT, GO PREV, GO TAG,
-  PREV / NEXT, the current scene and show).
+  paths' actual level, scene control (`/$ctl/lib`: GO, GO NEXT, GO PREV, GO TAG,
+  PREV / NEXT, the current scene and show), and the show's fader layers and custom
+  controls both ways (`/$ctl/layer`, `/$ctl/user`: layer keys, spill, scroll
+  position, user layer names and fader assignments, edited layer keys, each custom
+  control's functions, name and colour, the CC layer).
 - **Matrix send PAN LINK** (HOME > MATRIX SENDS, the pan ring's pop-up; FEED
   CONFIGURATION's SEND PANNING): a channel's or aux's matrix send pans with the
   channel (LINK REVERSED mirrors it), or with its own PAN when unlinked. Saved with
   shows and scenes.
 - A DCA's **icon** and scribble strip **LIGHT** (VIEW > OVERVIEW, the DCA's name),
   shown on the fader strips and saved with the show.
-- WING remote: 84.4 % of the WING 3.1 parameter tree (57,874 of 68,556, up from
-  83.7 %): the matrix sends' PAN LINK, `$muteovr` on every strip, DCA `icon` / `led`,
-  the USB recorder and player (`/rec`, `/play`: transport, PLAYFILE, position,
+- WING remote also drives the matrix sends' PAN LINK, `$muteovr` on every strip,
+  DCA `icon` / `led`, the USB recorder and player (`/rec`, `/play`: transport, PLAYFILE, position,
   REPEAT, REC PATH, format, state and file) and the recall safes (`/$ctl/safes`:
   strips, DCAs, mute groups, FX).
 - Plugin delay compensation: the latency each hosted plugin reports (and its

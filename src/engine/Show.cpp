@@ -724,6 +724,14 @@ juce::Result Show::importWingShow (ld::LdWing* wing, const juce::File& file, juc
     return ok ? juce::Result::ok() : juce::Result::fail (report);
 }
 
+juce::uint32 Show::syncWingSurface (ld::LdWing* wing, int ccBank, int& requestedBank)
+{
+    int32_t bank = -1;
+    const auto changes = ld::ld_wing_sync_surface (wing, handle, ccBank, &bank);
+    requestedBank = bank;
+    return changes;
+}
+
 void Show::clear (int numChannels)
 {
     stopTimer();

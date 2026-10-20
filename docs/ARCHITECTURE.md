@@ -662,7 +662,7 @@ dependencies beyond the other Sidecar crates.
   numbers. Ports: AES50 A/B/C 1-48 are hardware ports 1-144 and the WING-LIVE card
   (CRD) is the recorder's playback channels. Nodes without an engine equivalent live
   in a **shadow store** (`WingState`) so clients and snapshots read back what they
-  wrote; they do nothing. `map::coverage()` counts what maps (84.4 % of the leaves).
+  wrote; they do nothing. `map::coverage()` counts what maps (88.2 % of the leaves).
   The console level maps too: TAP WIDTH / TAP EQ (`/ch/N/tapwid`, `peq`), `/cfg/solo`
   (mode, the solo bus, mute, SOURCE SOLO), `/$ctl/cfg/muteovr`, `/cfg/talk`, both
   monitor paths (`/cfg/mon/1` PHONES, `/2` SPEAKERS), the RTA settings and the
@@ -696,6 +696,22 @@ dependencies beyond the other Sidecar crates.
   `WingRemote::pump` does all of it on the 10 Hz timer. Safes lists are written
   "1,3,5-8"; lists and 0/1 flag strings are read (the console's own format is not
   documented).
+- **Surface control** (`surface.rs`: `/$ctl/layer/L|C|R`, `/$ctl/user`). The layers
+  and custom controls are the show's (`LayerSet`, `CustomControls`), so the same
+  pattern: the host's timer calls `ld_wing_sync_surface` (through
+  `Show::syncWingSurface`), which applies the `SurfaceEdit`s clients queued and
+  publishes a `Surface` (the show in WING terms: each section's `sel`, `spidx`,
+  scroll position, layer keys with their faders as TYPE / FDR INDEX / DEST INDEX,
+  the spill; each control's functions as `mode` items, name, colour; the CC layer)
+  under one lock, so no edit lands in between. A client's set updates the published
+  surface at once (reads return it) and queues the edit; the host reports what
+  changed (`WingRemote::setSurfaceCallbacks`: `MainComponent` reloads the custom
+  controls and refreshes the fader sections). Until a show is attached the nodes are
+  shadow. The module docs list the meanings taken from the protocol document and
+  the guesses (fader encoding, `U1`-`U3`). Not mapped: the Compact, Rack, EXT and
+  VRT layers, the button and 4-Channel section modes, LEDs, GPIO keys, the DAW
+  keys' `btn` and the mode-dependent target nodes, which libwing's tree does not
+  list.
 - **Servers** (`server.rs`, `osc.rs`, `native.rs`, `meters.rs`). Plain `std::net`
   threads, started and stopped from the app: discovery (UDP), OSC (UDP), the native
   protocol (TCP, one thread per client, up to 16; meters as UDP datagrams) and a

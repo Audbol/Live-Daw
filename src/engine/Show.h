@@ -253,6 +253,11 @@ public:
     /** Adds the snapshot scenes of a WING .show file (see WingRemote::importShow);
         `report` gets what was skipped. The console only grows to 40 channels. */
     juce::Result importWingShow (ld::LdWing*, const juce::File&, juce::String& report);
+    /** WING remote surface control (see WingRemote::setSurfaceCallbacks): applies the layer and
+        custom control changes clients made, then publishes the layers and custom controls with
+        the upper custom control layer `ccBank`. Returns ld::kWingSurface* flags; `requestedBank`
+        gets the layer a client chose (-1 none). */
+    juce::uint32 syncWingSurface (ld::LdWing*, int ccBank, int& requestedBank);
 
     /** Clears scenes and resets the console to `numChannels` channels (the WING has 40). */
     void clear (int numChannels);
