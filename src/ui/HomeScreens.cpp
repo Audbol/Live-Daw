@@ -1699,9 +1699,9 @@ public:
         face = &make<Faceplate>();
         face->onTouched = [this] (int param)
         {
-            if (param / 6 != knobPage)
+            if (param / kModelKnobs != knobPage)
             {
-                knobPage = param / 6;
+                knobPage = param / kModelKnobs;
                 notifyKnobs();
             }
         };
@@ -1720,7 +1720,7 @@ public:
         if (bands.isEmpty())
         {
             const auto& spec = models::model (static_cast<models::Table> (strip.getEqTable()), eq.model.load());
-            for (int i = knobPage * 6; i < juce::jmin ((int) spec.params.size(), knobPage * 6 + 5); ++i)
+            for (int i = knobPage * kModelKnobs; i < juce::jmin ((int) spec.params.size(), (knobPage + 1) * kModelKnobs); ++i)
                 k.push_back ({ bindConsoleParam (eq.values[i], spec.params[(size_t) i]), styleOf (KnobStyle::Bar::Auto, {}, face) });
             while (k.size() < 5)
                 k.push_back ({});
@@ -1877,6 +1877,9 @@ public:
     }
 
 private:
+    /** An analog model's parameters on the first five knobs (EQ MIX is the sixth), a page at a time. */
+    static constexpr int kModelKnobs = 5;
+
     void updateBands()
     {
         bands = ResponseGraph::stdBands (strip);

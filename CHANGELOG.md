@@ -15,6 +15,9 @@ All notable changes to Sidecar are listed here. Versions follow
   stopped at 200 Hz.
 - INPUT: with a negative BALANCE the post-trim meter showed the right side boosted
   instead of turned down.
+- EQ: with an analog EQ model, every 6th parameter (SOUL's LM GAIN and HF GAIN...)
+  never came onto the knobs: the knob pages held five parameters but were chosen
+  in sixes.
 
 ## [0.1.0] - beta
 
