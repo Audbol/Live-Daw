@@ -108,7 +108,8 @@ fn imports_the_fixture() {
     assert_eq!(e.controls.mute_groups.load(Relaxed), 0b10);
     let fx1 = &e.controls.fx[0];
     assert_eq!(livedaw_dsp::wing::FX_MODELS[fx1.model_index()].token, "HALL");
-    assert_eq!(fx1.param("dcy").unwrap().load(), 2.2);
+    // 2.2 s lands on the nearest of the decay's 101 steps, as on the console.
+    assert_eq!(fx1.param("dcy").unwrap().load(), 2.165238);
     let fx2 = &e.controls.fx[1];
     assert_eq!(fx2.mix.load(), 80.0);
     assert_eq!(fx2.param("feed").unwrap().load(), 35.0);
@@ -179,16 +180,22 @@ fn export_follows_the_format_and_round_trips() {
     assert_eq!(ch1.get("tags").and_then(Json::as_str), Some("#D1,#M1,kick"));
     // TAP EQ and kept values come back out; so do the monitor paths and sources.
     assert_eq!(ch1.get("peq").unwrap().get("1g").and_then(Json::as_f64), Some(2.0));
-    assert_eq!(ae.get("fx").unwrap().get("1").unwrap().get("dcy").and_then(Json::as_f64), Some(2.2));
+    assert_eq!(ae.get("fx").unwrap().get("1").unwrap().get("dcy").and_then(Json::as_f64), Some(2.165238));
 
-    // Export -> import into a fresh console -> export: the same file.
+    // Export -> import into a fresh console -> export: the same file, once the
+    // import has put the engine's own defaults (the monitor EQ's 80 Hz...) on
+    // their steps.
     let e2 = engine(40);
     let st2 = WingState::default();
     let r = snap::import_text(&e2, &st2, &text, &ImportOptions::default()).unwrap();
     assert_eq!(r.error_count, 0, "{}", r.details());
     assert_eq!(r.unknown_count, 0, "{}", r.details());
-    let again = json::parse(&snap::export_text(&e2, &st2)).unwrap();
-    assert_eq!(without_created(&again), without_created(&j));
+    let text2 = snap::export_text(&e2, &st2);
+    let e3 = engine(40);
+    let st3 = WingState::default();
+    snap::import_text(&e3, &st3, &text2, &ImportOptions::default()).unwrap();
+    let again = json::parse(&snap::export_text(&e3, &st3)).unwrap();
+    assert_eq!(without_created(&again), without_created(&json::parse(&text2).unwrap()));
 }
 
 fn temp_dir(name: &str) -> PathBuf {
@@ -313,7 +320,8 @@ fn console_level_settings_round_trip_through_a_snapshot() {
     let m2 = &c2.monitor;
     assert_eq!(m2.source_solo.load(Relaxed), 1);
     assert!(m2.paths[1].eq_on.load(Relaxed));
-    assert_eq!((m2.paths[1].eq[5].gain_db.load(), m2.paths[1].eq[5].freq.load()), (3.5, 3000.0));
+    // 3 kHz comes back on its step: "2k99" on the console too.
+    assert_eq!((m2.paths[1].eq[5].gain_db.load(), m2.paths[1].eq[5].freq.load()), (3.5, 2992.4714));
     assert!(m2.paths[1].delay_on.load(Relaxed));
     assert_eq!(m2.paths[1].delay_m.load(), 8.0);
     assert_eq!(m2.paths[1].direct_source.load(Relaxed), 45);
@@ -329,7 +337,12 @@ fn console_level_settings_round_trip_through_a_snapshot() {
     assert_eq!(s2.get(10).unwrap().colour.load(Relaxed), 4);
     assert_eq!(s2.get(21).unwrap().mode.load(Relaxed), source_mode::STEREO);
     assert_eq!(s2.name(click), "Click");
-    // And the exported file is stable.
-    let again = json::parse(&snap::export_text(&e2, &st2)).unwrap();
-    assert_eq!(without_created(&again), without_created(&json::parse(&text).unwrap()));
+    // And the exported file is stable once the import has put the values on
+    // their steps (the engine's own 3000 Hz was 2992.4714 in e2).
+    let text2 = snap::export_text(&e2, &st2);
+    let e3 = engine(40);
+    let st3 = WingState::default();
+    snap::import_text(&e3, &st3, &text2, &ImportOptions::default()).unwrap();
+    let again = json::parse(&snap::export_text(&e3, &st3)).unwrap();
+    assert_eq!(without_created(&again), without_created(&json::parse(&text2).unwrap()));
 }

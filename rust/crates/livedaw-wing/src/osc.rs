@@ -128,12 +128,17 @@ pub enum SubFormat {
 }
 
 /// The reply to a parameter get: `,s` (strings, enums), `,sff` (floats: display,
-/// 0..1 position, value) or `,sfi` (integers).
+/// 0..1 position, value) or `,sfi` (integers: display, 0..1 position, and the
+/// step from the bottom of the range, as the console counts it: "1" of 1..12
+/// is 0, "0" of -200..200 is 200).
 pub fn param_reply(addr: &str, def: &Def, v: &Value) -> Message {
     let text = value::display(def, v);
     let args = match def.ty {
         NodeType::Str | NodeType::StrEnum | NodeType::Node => vec![Arg::Str(text)],
-        NodeType::Int => vec![Arg::Str(text), Arg::Float(value::to_raw(def, v)), Arg::Int(v.as_i32().unwrap_or(0))],
+        NodeType::Int => {
+            let step = v.as_i32().unwrap_or(0).saturating_sub(def.min_int);
+            vec![Arg::Str(text), Arg::Float(value::to_raw(def, v)), Arg::Int(step)]
+        }
         _ => vec![Arg::Str(text), Arg::Float(value::to_raw(def, v)), Arg::Float(v.as_f32().unwrap_or(0.0))],
     };
     Message::new(addr, args)
@@ -227,33 +232,31 @@ fn describe_line(c: &Console, node: Node, with_value: bool) -> String {
             line.push_str(&value::display(def, &v));
         }
     }
-    if def.read_only {
-        line.push_str(" r/o");
-    }
+    // The console doesn't mark read-only parameters.
     let u = unit::name(def.unit);
     let us = if u.is_empty() { String::new() } else { format!(" {u}") };
-    // The sweep's float32 artefacts (20000.002) shown as the console would.
-    let num = |x: f32| {
-        if (x - x.round()).abs() < 0.01 {
-            format!("{:.0}", x.round())
+    // Bounds as the console writes the values ("20.0 .. 20k00", "-15.0 .. +15.0").
+    let bound = |x: f32| {
+        let t = value::format_float(def, x);
+        if x > 0.0 && value::signed(def) {
+            format!("+{t}")
         } else {
-            let t = format!("{x:.3}");
-            t.trim_end_matches('0').trim_end_matches('.').to_owned()
+            t
         }
     };
     match def.ty {
-        NodeType::Node => line.push_str(" node"),
-        NodeType::LinFloat => line.push_str(&format!(" lin [{} .. {}{us}], {} steps", num(def.min), num(def.max), def.steps)),
-        NodeType::LogFloat => line.push_str(&format!(" log [{} .. {}{us}], {} steps", num(def.min), num(def.max), def.steps)),
-        NodeType::Fader => line.push_str(" fader [-oo .. 10 dB], 1024 steps"),
-        NodeType::Int => line.push_str(&format!(" int [{} .. {}]", def.min_int, def.max_int)),
+        NodeType::Node => line.push_str(" (node)"),
+        NodeType::LinFloat => line.push_str(&format!(" lin [{} .. {}{us}], {} steps", bound(def.min), bound(def.max), def.steps)),
+        NodeType::LogFloat => line.push_str(&format!(" log [{} .. {}{us}], {} steps", bound(def.min), bound(def.max), def.steps)),
+        NodeType::Fader => line.push_str(" fader [-oo .. 10.0 dB], 1024 steps"),
+        NodeType::Int => line.push_str(&format!(" int [{} .. {}{us}]", def.min_int, def.max_int)),
         NodeType::StrEnum => {
             let items: Vec<&str> = def.items().iter().map(|i| i.item).collect();
             line.push_str(&format!(" list [{}]", items.join(", ")));
         }
         NodeType::FloatEnum => {
-            let items: Vec<String> = def.items().iter().map(|i| num(i.value)).collect();
-            line.push_str(&format!(" flist [{}{us}]", items.join(", ")));
+            let items: Vec<String> = def.items().iter().map(|i| value::format_float_item(def, i.value)).collect();
+            line.push_str(&format!(" list [{}]", items.join(", ")));
         }
         NodeType::Str => line.push_str(&format!(" string [{}]", def.max_len)),
     }
@@ -446,5 +449,56 @@ mod tests {
         // The compliant empty-tag form.
         assert_eq!(decode(b"/?\0\0,\0\0\0"), Some(Message::new("/?", vec![])));
         assert_eq!(reply_port("/%10027/ch/1/mute"), (Some(10027), "/ch/1/mute"));
+    }
+
+    #[test]
+    fn describes_and_replies_like_the_console() {
+        use crate::map::WingState;
+        let e = livedaw_engine::Engine::new(0);
+        e.set_num_channels(40);
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let s = schema();
+        let node = |path: &str| s.resolve(path, &c).unwrap_or_else(|| panic!("{path}"));
+        c.set(node("/ch/1/dyn/mdl"), &Value::str("COMP")).unwrap();
+        // Lines of a factory-set WING's `,s ?` descriptions (firmware 3.1):
+        // no "r/o", decimals and "+" as in the values, kHz, units on ints,
+        // float enums as lists.
+        for (path, want) in [
+            ("/ch/1", " 1 (node)"),
+            ("/ch/1/fdr", " fdr fader [-oo .. 10.0 dB], 1024 steps"),
+            ("/ch/1/$fdr", " $fdr fader [-oo .. 10.0 dB], 1024 steps"),
+            ("/ch/1/in/set/trim", " trim lin [-18.0 .. +18.0 dB], 361 steps"),
+            ("/ch/1/pan", " pan lin [-100 .. +100], 201 steps"),
+            ("/ch/1/wid", " wid lin [-150 .. 150 %], 61 steps"),
+            ("/ch/1/dynxo/depth", " depth lin [-30.0 .. 30.0 dB], 121 steps"),
+            ("/io/in/LCL/1/g", " g lin [-2.5 .. 45.0 dB], 20 steps"),
+            ("/$ctl/$globals/mousespd", " mousespd lin [0.10 .. 2.00], 191 steps"),
+            ("/play/$pos", " $pos lin [0:00 .. 9:59:59], 36000 steps"),
+            ("/cards/wlive/1/$stat/sdfree", " sdfree lin [0:00:00 .. 0:00:00], 36000000 steps"),
+            ("/ch/1/flt/lcf", " lcf log [20.0 .. 2k00 Hz], 641 steps"),
+            ("/ch/1/flt/hcf", " hcf log [50.0 .. 20k00 Hz], 833 steps"),
+            ("/ch/1/dynsc/f", " f log [20 .. 20k0 Hz], 901 steps"),
+            ("/ch/1/peq/1f", " 1f log [20 .. 20k0 Hz], 960 steps"),
+            ("/ch/1/peq/1q", " 1q log [0.44 .. 10.00], 181 steps"),
+            ("/ch/1/dyn/rel", " rel log [4 .. 4000 ms], 121 steps"),
+            ("/$ctl/cfg/lights/chedit", " chedit int [5 .. 100 %]"),
+            ("/$globals/clkrate", " clkrate list [48000.0, 44100.0]"),
+            ("/cfg/rta/eqrange", " eqrange list [30, 60]"),
+            (
+                "/ch/1/dyn/ratio",
+                " ratio list [1.1, 1.2, 1.3, 1.5, 1.7, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0,  10,  20,  50, 100]",
+            ),
+        ] {
+            let n = node(path);
+            let line = if s.is_leaf(n, &c) { describe(&c, n, false) } else { describe_line(&c, n, false) };
+            assert_eq!(line, want, "{path}");
+        }
+        // Integers: the reply's number counts from the bottom of the range.
+        let reply = |path: &str, v: Value| param_reply(path, s.def(node(path), &c).unwrap(), &v).args;
+        assert_eq!(reply("/ch/1/col", Value::Int(1)), [Arg::Str("1".into()), Arg::Float(0.0), Arg::Int(0)]);
+        assert_eq!(reply("/$stat/ppm", Value::Int(0)), [Arg::Str("0".into()), Arg::Float(0.5), Arg::Int(200)]);
+        assert_eq!(reply("/$ctl/$stat/sof", Value::Int(0)).last(), Some(&Arg::Int(1)));
+        assert_eq!(reply("/ch/1/mute", Value::Int(1)), [Arg::Str("1".into()), Arg::Float(1.0), Arg::Int(1)]);
     }
 }

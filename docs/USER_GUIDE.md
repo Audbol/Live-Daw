@@ -505,7 +505,15 @@ and open-source projects (see below), and it is **experimental**.
 - **OSC** (UDP 2223): get and set any parameter by path or by `#id`, toggles, node
   lists, node dumps and descriptions, node strings (`/ch.1.fdr=-3,mute=1`), and the
   `/*s`, `/*S` and `/*b` subscriptions (renew every 10 s). Changes from the UI, scene
-  recalls and other clients are pushed to the subscriber.
+  recalls and other clients are pushed to the subscriber. Replies and descriptions are
+  formatted as a WING 3.1 formats them (checked against a factory-set console): values
+  with the parameter's fixed decimals and kHz notation (`100.2`, `1k50`, `1k0`),
+  running times as `0:00`, descriptions such as `lin [-15.0 .. +15.0 dB], 301 steps`,
+  `int [0 .. 100 %]`, `list [48000.0, 44100.0]` and `(node)`, and an integer's number
+  counted from the bottom of its range (`/ch/1/col` 1 replies `"1" 0.0 0`). Like the
+  console, Sidecar keeps a float set over OSC or the Native protocol (or from a
+  snapshot) on the nearest of the parameter's steps, so a Q of 1.00 reads back
+  0.9979702 and 100 Hz on the TAP EQ 99.68543.
 - **Native protocol** (TCP 2222): node definitions and data, set/get by id, navigation,
   change notifications to every connected client, and meters over UDP.
 - **Comparing with a real WING:** `tools/wing/wing_compare.py` (Python 3.8 or newer,
