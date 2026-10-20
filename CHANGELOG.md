@@ -27,6 +27,10 @@ All notable changes to Sidecar are listed here. Versions follow
   USB HOST SPEED row is no longer cut off; long event log entries wrap onto a
   second line (the tooltip shows the whole entry). MONITORS' unlit MUTE key reads
   on its dark red.
+- Small windows, HOME and other screens: two-line keys no longer break a word
+  ("PARTIA L UPDATE"); key labels (DELAY, FILTER), format chips, the dynamics
+  graphs' level scale ("-2" for -20), the sends' TAP / POST and PAN LINK and the
+  VIEW > SENDS values fit their space; the EQ screen's FILTER key keeps its room.
 
 ## [0.1.0] - beta
 

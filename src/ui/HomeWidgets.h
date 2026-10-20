@@ -300,7 +300,7 @@ public:
             drawIcon (g, *icon, keyArea.reduced (keyArea.getHeight() * 0.22f), on ? juce::Colours::black : offInk);
             r.removeFromLeft (r.getHeight() * 0.18f);
             g.setColour (isEnabled() ? offInk : colours::dim.withAlpha (0.55f));
-            g.setFont (homeFont (TypeScale::body, r.getHeight() * 0.42f));
+            g.setFont (fontFittingWidth (homeFont (TypeScale::body, r.getHeight() * 0.42f), getButtonText(), r.getWidth()));
             g.drawFittedText (getButtonText(), r.toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
             return;
         }
@@ -318,7 +318,10 @@ public:
 
         if (! icon.has_value())
         {
-            g.setFont (homeFont (TypeScale::body, r.getHeight() * (twoLines ? 0.34f : 0.5f)));
+            auto font = homeFont (TypeScale::body, r.getHeight() * (twoLines ? 0.34f : 0.5f));
+            if (! twoLines)
+                font = fontFittingWidth (font, keyText, r.getWidth() - 6.0f, 0.7f);
+            g.setFont (font);
             // Narrow keys (MAIN SENDS PRE at 1280x800) give the text the full width.
             g.drawFittedText (keyText, r.toNearestInt().reduced (juce::jlimit (1, 3, getWidth() / 12), 0), juce::Justification::centred, twoLines ? 2 : 1,
                               0.7f);
@@ -334,14 +337,15 @@ public:
             auto label = r.removeFromBottom (juce::jmax (11.0f, r.getHeight() * 0.32f));
             drawIcon (g, *icon, r.reduced (r.getHeight() * 0.1f), ink);
             g.setColour (ink);
-            g.setFont (homeFont (TypeScale::statusCaption * 1.2f, label.getHeight() * 0.9f));
+            g.setFont (fontFittingWidth (homeFont (TypeScale::statusCaption * 1.2f, label.getHeight() * 0.9f), keyText, label.getWidth() - 2.0f, 0.8f));
             g.drawFittedText (keyText, label.toNearestInt().reduced (1, 0), juce::Justification::centredTop, 1, 0.8f);
             return;
         }
         auto iconBox = r.removeFromLeft (juce::jmin (r.getHeight(), r.getWidth() * 0.4f)).reduced (r.getHeight() * 0.2f);
         drawIcon (g, *icon, iconBox, ink);
         g.setColour (ink);
-        g.setFont (homeFont (TypeScale::body, r.getHeight() * 0.46f));
+        // Narrow keys (small windows) shrink the label rather than cut it.
+        g.setFont (fontFittingWidth (homeFont (TypeScale::body, r.getHeight() * 0.46f), keyText, r.getWidth() - 4.0f, 0.8f));
         g.drawFittedText (keyText, r.toNearestInt().reduced (2, 0), juce::Justification::centredLeft, 1, 0.8f);
     }
 

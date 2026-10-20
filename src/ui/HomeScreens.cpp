@@ -1756,7 +1756,8 @@ public:
         if (filter != nullptr)
         {
             auto keys = span (752.0f, 960.0f);
-            const int kw = keys.getHeight();
+            // Square keys, narrower in a small window so FILTER keeps a third.
+            const int kw = juce::jmin (keys.getHeight(), (keys.getWidth() - 8) / 3);
             loCut->setBounds (keys.removeFromLeft (kw));
             keys.removeFromLeft (4);
             hiCut->setBounds (keys.removeFromLeft (kw));
@@ -2807,7 +2808,8 @@ public:
         auto modeRow = box.removeFromTop (juce::jlimit (12.0f, screenCap (20.0f), boxArea.getHeight() * 0.24f));
         modeArea = modeRow;
         // TAP | POST side by side: small enough for both words in the column.
-        g.setFont (homeFont (TypeScale::body, juce::jmin (modeRow.getHeight() * 0.85f, modeRow.getWidth() * 0.3f)));
+        g.setFont (fontFittingWidth (homeFont (TypeScale::body, juce::jmin (modeRow.getHeight() * 0.85f, modeRow.getWidth() * 0.3f)), "POST",
+                                     modeRow.getWidth() * 0.5f - 1.0f, 0.85f));
         if (busSource())
         {
             g.setColour (colours::caption);
@@ -2842,8 +2844,9 @@ public:
         if (send != nullptr)
         {
             g.setColour (linked ? colours::link : colours::dim);
-            g.setFont (homeFont (TypeScale::body, linkArea.getHeight() * 0.85f));
-            g.drawFittedText (linked && send->panReversed.load() ? "LINK REV" : "PAN LINK", linkArea.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+            const auto linkText = linked && send->panReversed.load() ? "LINK REV" : "PAN LINK";
+            g.setFont (fontFittingWidth (homeFont (TypeScale::body, linkArea.getHeight() * 0.85f), linkText, linkArea.getWidth() - 2.0f, 0.85f));
+            g.drawFittedText (linkText, linkArea.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         }
     }
 

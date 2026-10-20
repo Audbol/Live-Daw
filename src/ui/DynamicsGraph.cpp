@@ -236,14 +236,16 @@ void DynTransferGraph::paint (juce::Graphics& g)
     paintDots (g, plot, pxPerDb * 5.0f, pxPerDb * 5.0f, juce::jmax (1.0f, pxPerDb * 0.2f));
 
     // The levels down the left, the ticks at the right (lit up to the output level).
-    g.setFont (wingFontPx (juce::jlimit (6.0f, 11.0f, pxPerDb * 1.6f)));
+    // The column fits "-60" (small windows shrink the labels rather than cut them).
+    const float labelW = plot.getX() - bounds.getX() - bounds.getWidth() * 0.03f;
+    g.setFont (fontFittingWidth (wingFontPx (juce::jlimit (6.0f, 11.0f, pxPerDb * 1.6f)), "-60", labelW - 3.0f, 1.0f));
     const float tickX = plot.getRight() + bounds.getWidth() * 0.03f;
     const float tickW = juce::jmax (4.0f, bounds.getWidth() * 0.018f);
     for (int db = 0; db >= -(int) range; db -= 10)
     {
         const float y = yFor ((float) db);
         g.setColour (axisText);
-        g.drawText (juce::String (db), juce::Rectangle<float> (bounds.getX() + 3.0f, y - 8.0f, plot.getX() - bounds.getX() - bounds.getWidth() * 0.03f, 16.0f),
+        g.drawText (juce::String (db), juce::Rectangle<float> (bounds.getX() + 3.0f, y - 8.0f, labelW, 16.0f),
                     juce::Justification::centredLeft, false);
         g.setColour (out >= (float) db && slot.on.load() ? juce::Colour (0xff35d05a) : tick);
         g.fillRect (tickX, y - 1.0f, tickW, 2.0f);

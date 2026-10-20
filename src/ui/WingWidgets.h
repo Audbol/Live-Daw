@@ -89,7 +89,12 @@ public:
             for (auto& line : lineList)
                 font = fontFittingWidth (font, line, content.getWidth() - 2.0f);
             g.setFont (font);
-            g.drawFittedText (getButtonText(), content.toNearestInt(), juce::Justification::centred, 2, 0.75f);
+            // Line by line, so a narrow key squashes a word instead of breaking it.
+            const float lineH = font.getHeight() * 1.05f;
+            auto textArea = content.withSizeKeepingCentre (content.getWidth(), juce::jmin (content.getHeight(), lineH * (float) lines));
+            const float rowH = textArea.getHeight() / (float) juce::jmax (1, lines);
+            for (auto& line : lineList)
+                g.drawFittedText (line, textArea.removeFromTop (rowH).toNearestInt(), juce::Justification::centred, 1, 0.75f);
         }
     }
 
