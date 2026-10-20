@@ -4,198 +4,509 @@
 namespace livedaw::ui
 {
 
+using routing::Group;
+
 namespace
 {
-    constexpr int kTilesPerRow = 8, kTargetsPerPage = 48, kPortsPerGroup = 48;
+    constexpr int kTilesPerRow = 8, kTargetsPerPage = 48, kSignalsPerPage = 64;
     // A source's GAIN and an oscillator's LEVEL (dB).
     constexpr float kGainMin = -12.0f, kGainMax = 60.0f, kOscLevelMin = -40.0f, kOscLevelMax = -6.0f;
 
-    // ROUTING's own colours [3.1]: port labels blue for mono and olive for
-    // stereo, ALT orange, +1 AUTO yellow, the locked padlock red.
-    const juce::Colour monoLabel = Colours::valueBlue, stereoLabel = Colours::lime, altOrange = Colours::alt, autoYellow = KnobColours::yellow,
-        lockRed = Colours::tapRed,
-        playbackStrip (0xff2f5a32);
+    // ROUTING's own colours (sampled from the console's screen, firmware 3.1):
+    // port labels blue for mono and olive for stereo, n/a tiles in dim blue and
+    // grey, unpatched tiles darker than patched ones, the locked padlock red.
+    const juce::Colour monoLabel = Colours::choice, stereoLabel = Dark::olive, naLabel { 0xff203860 }, naText = Colours::chipOff,
+        tileOff { 0xff181818 }, numberGrey { 0xffb8b8b8 }, iconGrey { 0xffc8c8c8 }, greyKey = Colours::chipOff, lockRed { 0xfff85c58 },
+        autoYellow = KnobColours::yellow, playbackStrip (0xff2f5a32);
 
-    /** A ROUTING tile (D13, D14): a name strip in the signal's colour over a
-        #303030 body with the icon at the left, the number at the right and the
-        port label at the bottom. */
-    struct TileSpec
+    /** `v` px of the WING's 1280 x 800 screen in px of this screen. */
+    int px (float v) { return juce::roundToInt (wingPx (v)); }
+
+    /** A rectangle given in WING px from the page's top left (the page starts
+        under the status bar, at the console's y = 80). */
+    juce::Rectangle<int> wingRect (float x, float y, float w, float h)
     {
-        juce::Colour strip;
-        juce::String name, number, label;
-        juce::Colour labelColour = monoLabel;
-        std::function<void (juce::Graphics&, juce::Rectangle<float>)> icon;
-        juce::String chip; // "ALT", top right of the body
-        juce::Colour chipColour = altOrange;
-        bool selected = false;
-        float rightColumn = 0.0f; // share of the body kept free at the right (source chips and meter)
-    };
-
-    void paintTile (juce::Graphics& g, juce::Rectangle<int> area, const TileSpec& t)
-    {
-        auto r = area.toFloat();
-        auto bar = r.removeFromTop (juce::jmax (12.0f, r.getHeight() * 0.22f));
-        g.setColour (t.strip);
-        g.fillRect (bar);
-        if (t.name.isNotEmpty())
-        {
-            g.setColour (juce::Colours::black);
-            g.setFont (wingFontFit (TypeScale::body, bar.getHeight() * 0.95f));
-            g.drawFittedText (t.name, bar.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
-        }
-        g.setColour (Colours::screenTile);
-        g.fillRect (r);
-
-        // [D14] the port label in small print in the bottom quarter.
-        auto label = r.removeFromBottom (juce::jmin (screenCap (20.0f), r.getHeight() * 0.3f));
-        g.setColour (t.labelColour);
-        g.setFont (wingFontFit (TypeScale::body * 0.85f, label.getHeight() * 0.9f));
-        g.drawFittedText (t.label, label.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
-
-        auto body = r.reduced (3.0f, 2.0f);
-        body.removeFromRight (body.getWidth() * t.rightColumn);
-        auto numberArea = body.removeFromRight (body.getWidth() * 0.42f);
-        if (t.icon)
-            t.icon (g, body.withSizeKeepingCentre (juce::jmin (body.getWidth(), body.getHeight()), body.getHeight()).reduced (1.0f));
-        g.setColour (Dark::text);
-        g.setFont (wingFontFit (TypeScale::value * 0.8f, juce::jmin (numberArea.getHeight() * 0.7f, numberArea.getWidth() * 0.9f), WingWeight::SemiBold));
-        g.drawFittedText (t.number, numberArea.toNearestInt(), juce::Justification::centredRight, 1, 0.6f);
-        if (t.chip.isNotEmpty())
-            drawChip (g, r.withHeight (screenCap (12.0f)).withTrimmedLeft (r.getWidth() - screenCap (24.0f)).translated (-2.0f, 2.0f), t.chip, t.chipColour, juce::Colours::black);
-
-        if (t.selected)
-        {
-            g.setColour (Colours::yellow);
-            g.drawRect (area.toFloat().expanded (2.0f), 3.0f);
-        }
+        return { px (x), px (y), px (x + w) - px (x), px (y + h) - px (y) };
     }
 
-    std::function<void (juce::Graphics&, juce::Rectangle<float>)> iconOf (Icon icon, juce::Colour c = Dark::text)
+    /** The console's fonts by the height of their capitals in WING px. */
+    juce::Font capFont (float capWingPx, WingWeight weight = WingWeight::Medium)
     {
-        return [icon, c] (juce::Graphics& g, juce::Rectangle<float> r) { drawIcon (g, icon, r, c); };
+        return wingFontPx (juce::jmax (5.0f, wingPx (capWingPx)), weight);
     }
 
-    std::function<void (juce::Graphics&, juce::Rectangle<float>)> iconOf (const Strip& s)
-    {
-        return [&s] (juce::Graphics& g, juce::Rectangle<float> r) { drawStripIcon (g, s, r, Dark::text); };
-    }
-
-    const char* const signalGroups[] = { "CHANNEL", "AUX", "BUS", "MAIN", "MATRIX", "MONITOR" };
+    /** A channel or source without a source: its colour at a quarter (the console's dim strips). */
+    juce::Colour dimmed (juce::Colour c) { return c.withMultipliedBrightness (0.25f); }
 
     bool hasCustomName (const Strip& s)
     {
         return stripName (s) != s.getLabel();
     }
 
-    void drawKey (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& text, bool on, juce::Colour onColour, bool enabled = true)
+    /** The icons of the group menus and selectors (line art like the console's). */
+    void drawGroupIcon (juce::Graphics& g, Group group, juce::Rectangle<float> area, juce::Colour c)
+    {
+        const float s = juce::jmin (area.getWidth(), area.getHeight());
+        const auto r = area.withSizeKeepingCentre (s, s);
+        auto P = [&r, s] (float u, float v) { return juce::Point<float> (r.getX() + u * s, r.getY() + v * s); };
+        const float w = juce::jmax (1.2f, s * 0.055f);
+        const juce::PathStrokeType stroke (w, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+        auto ring = [&] (float u, float v, float radius)
+        {
+            juce::Path p;
+            p.addEllipse (P (u, v).x - radius * s, P (u, v).y - radius * s, radius * 2.0f * s, radius * 2.0f * s);
+            g.strokePath (p, stroke);
+        };
+        auto text = [&] (const juce::String& t, float u, float v, float cap, float width)
+        {
+            g.setFont (wingFontPx (juce::jmax (4.0f, cap * s), WingWeight::SemiBold));
+            g.drawFittedText (t, juce::Rectangle<float> (width * s, cap * s * 1.6f).withCentre (P (u, v)).toNearestInt(), juce::Justification::centred, 1, 0.6f);
+        };
+        // A round connector shell with its latch at the top (XLR, AES50).
+        auto shell = [&]
+        {
+            ring (0.5f, 0.54f, 0.34f);
+            g.fillEllipse (juce::Rectangle<float> (s * 0.12f, s * 0.12f).withCentre (P (0.5f, 0.2f)));
+        };
+        auto xlrPins = [&]
+        {
+            for (auto [u, v] : { std::pair { 0.38f, 0.48f }, { 0.62f, 0.48f }, { 0.5f, 0.68f } })
+                ring (u, v, 0.055f);
+        };
+        // An RJ45 socket: a box with its latch notch and contacts.
+        auto rj45 = [&] (juce::Rectangle<float> box)
+        {
+            juce::Path p;
+            p.addRoundedRectangle (box, s * 0.03f);
+            g.strokePath (p, stroke);
+            const float pin = box.getWidth() / 9.0f;
+            for (int i = 0; i < 4; ++i)
+                g.fillRect (juce::Rectangle<float> (pin * 0.8f, box.getHeight() * 0.22f).withPosition (box.getX() + pin * (1.5f + 1.7f * (float) i), box.getY() + box.getHeight() * 0.14f));
+        };
+        g.setColour (c);
+        juce::Path p;
+        switch (group)
+        {
+            case Group::LocalIn:
+            case Group::LocalOut:
+                shell();
+                xlrPins();
+                return;
+            case Group::AesIn:
+            case Group::AesOut:
+                shell();
+                xlrPins();
+                // The square wave of a digital signal.
+                p.startNewSubPath (P (0.66f, 0.16f));
+                for (int i = 0; i < 3; ++i)
+                {
+                    const float u = 0.66f + 0.08f * (float) i;
+                    p.lineTo (P (u, 0.08f));
+                    p.lineTo (P (u + 0.04f, 0.08f));
+                    p.lineTo (P (u + 0.04f, 0.16f));
+                    p.lineTo (P (u + 0.08f, 0.16f));
+                }
+                g.strokePath (p, juce::PathStrokeType (w * 0.7f));
+                return;
+            case Group::AuxIn:
+            case Group::AuxOut:
+                ring (0.5f, 0.5f, 0.24f);
+                ring (0.5f, 0.5f, 0.13f);
+                return;
+            case Group::Oscillator:
+                ring (0.5f, 0.5f, 0.34f);
+                p.startNewSubPath (P (0.32f, 0.52f));
+                p.cubicTo (P (0.4f, 0.32f), P (0.46f, 0.36f), P (0.5f, 0.5f));
+                p.cubicTo (P (0.54f, 0.64f), P (0.6f, 0.68f), P (0.68f, 0.48f));
+                g.strokePath (p, stroke);
+                return;
+            case Group::Aes50A:
+            case Group::Aes50B:
+            case Group::Aes50C:
+                shell();
+                rj45 (juce::Rectangle<float> (P (0.33f, 0.38f), P (0.67f, 0.66f)));
+                text (group == Group::Aes50A ? "A" : group == Group::Aes50B ? "B" : "C", 0.5f, 0.61f, 0.09f, 0.2f);
+                return;
+            case Group::StConnect:
+                text ("SC", 0.52f, 0.4f, 0.24f, 0.6f);
+                p.startNewSubPath (P (0.22f, 0.66f));
+                p.cubicTo (P (0.34f, 0.66f), P (0.38f, 0.58f), P (0.5f, 0.6f));
+                p.lineTo (P (0.86f, 0.6f));
+                g.strokePath (p, stroke);
+                g.fillEllipse (juce::Rectangle<float> (s * 0.08f, s * 0.08f).withCentre (P (0.18f, 0.66f)));
+                p.clear();
+                p.addTriangle (P (0.9f, 0.6f), P (0.82f, 0.55f), P (0.82f, 0.65f));
+                g.fillPath (p);
+                return;
+            case Group::UsbAudio:
+                p.addRoundedRectangle (juce::Rectangle<float> (P (0.2f, 0.2f), P (0.8f, 0.8f)), s * 0.06f);
+                g.strokePath (p, stroke);
+                p.clear();
+                // The USB-B socket with its chip.
+                p.startNewSubPath (P (0.3f, 0.7f));
+                p.lineTo (P (0.3f, 0.4f));
+                p.lineTo (P (0.38f, 0.3f));
+                p.lineTo (P (0.62f, 0.3f));
+                p.lineTo (P (0.7f, 0.4f));
+                p.lineTo (P (0.7f, 0.7f));
+                p.closeSubPath();
+                g.strokePath (p, stroke);
+                p.clear();
+                p.addRectangle (juce::Rectangle<float> (P (0.4f, 0.42f), P (0.6f, 0.6f)));
+                g.strokePath (p, juce::PathStrokeType (w * 0.7f));
+                return;
+            case Group::WlivePlay:
+            case Group::WliveRec:
+                p.addRectangle (juce::Rectangle<float> (P (0.1f, 0.4f), P (0.9f, 0.62f)));
+                g.strokePath (p, stroke);
+                g.fillRect (juce::Rectangle<float> (s * 0.1f, s * 0.09f).withCentre (P (0.32f, 0.51f)));
+                for (int i = 0; i < 4; ++i)
+                    g.fillEllipse (juce::Rectangle<float> (s * 0.05f, s * 0.05f).withCentre (P (0.48f + 0.1f * (float) i, 0.51f)));
+                return;
+            case Group::Dante:
+                p.addRoundedRectangle (juce::Rectangle<float> (P (0.22f, 0.2f), P (0.78f, 0.8f)), s * 0.06f);
+                g.strokePath (p, stroke);
+                rj45 (juce::Rectangle<float> (P (0.33f, 0.33f), P (0.67f, 0.63f)));
+                return;
+            case Group::UsbPlayer:
+            case Group::Recorder:
+                p.addRoundedRectangle (juce::Rectangle<float> (P (0.34f, 0.38f), P (0.66f, 0.86f)), s * 0.06f);
+                p.addRectangle (juce::Rectangle<float> (P (0.39f, 0.14f), P (0.61f, 0.38f)));
+                g.strokePath (p, stroke);
+                g.fillRect (juce::Rectangle<float> (P (0.44f, 0.22f), P (0.47f, 0.28f)));
+                g.fillRect (juce::Rectangle<float> (P (0.53f, 0.22f), P (0.56f, 0.28f)));
+                return;
+            case Group::Bus:
+            case Group::Main:
+            case Group::Matrix:
+            {
+                // A return arrow with the group's name in its loop.
+                p.startNewSubPath (P (0.24f, 0.36f));
+                p.cubicTo (P (0.24f, 0.28f), P (0.28f, 0.26f), P (0.34f, 0.26f));
+                p.lineTo (P (0.7f, 0.26f));
+                p.cubicTo (P (0.84f, 0.26f), P (0.86f, 0.5f), P (0.7f, 0.5f));
+                p.lineTo (P (0.16f, 0.5f));
+                p.startNewSubPath (P (0.28f, 0.4f));
+                p.lineTo (P (0.16f, 0.5f));
+                p.lineTo (P (0.28f, 0.6f));
+                g.strokePath (p, stroke);
+                g.fillEllipse (juce::Rectangle<float> (s * 0.07f, s * 0.07f).withCentre (P (0.24f, 0.36f)));
+                const auto name = group == Group::Bus ? "BUS" : group == Group::Main ? "MAIN" : "MATRIX";
+                const auto band = juce::Rectangle<float> (s * 0.42f, s * 0.12f).withCentre (P (0.53f, 0.26f));
+                g.saveState();
+                g.setColour (Colours::screenTile);
+                g.fillRect (band);
+                g.restoreState();
+                g.setColour (c);
+                text (name, 0.53f, 0.26f, 0.08f, 0.44f);
+                return;
+            }
+            case Group::UserSignal:
+            {
+                p.startNewSubPath (P (0.72f, 0.24f));
+                p.lineTo (P (0.24f, 0.24f));
+                p.lineTo (P (0.24f, 0.48f));
+                p.lineTo (P (0.74f, 0.48f));
+                p.lineTo (P (0.74f, 0.72f));
+                p.lineTo (P (0.32f, 0.72f));
+                juce::Path dashed;
+                const float dashes[] = { s * 0.06f, s * 0.04f };
+                juce::PathStrokeType (w).createDashedStroke (dashed, p, dashes, 2);
+                g.fillPath (dashed);
+                ring (0.78f, 0.24f, 0.06f);
+                ring (0.26f, 0.72f, 0.06f);
+                g.fillEllipse (juce::Rectangle<float> (s * 0.05f, s * 0.05f).withCentre (P (0.78f, 0.24f)));
+                g.fillEllipse (juce::Rectangle<float> (s * 0.05f, s * 0.05f).withCentre (P (0.26f, 0.72f)));
+                return;
+            }
+            case Group::Monitor:
+                p.addRoundedRectangle (juce::Rectangle<float> (P (0.46f, 0.2f), P (0.76f, 0.8f)), s * 0.03f);
+                g.strokePath (p, stroke);
+                ring (0.61f, 0.34f, 0.05f);
+                ring (0.61f, 0.6f, 0.1f);
+                p.clear();
+                p.addCentredArc (P (0.4f, 0.6f).x, P (0.4f, 0.6f).y, s * 0.14f, s * 0.14f, 0.0f, -juce::MathConstants<float>::halfPi * 1.2f, 0.0f, true);
+                g.strokePath (p, stroke);
+                g.fillRoundedRectangle (juce::Rectangle<float> (P (0.24f, 0.6f), P (0.32f, 0.74f)), s * 0.02f);
+                return;
+            case Group::FxSend:
+                p.addRoundedRectangle (juce::Rectangle<float> (P (0.22f, 0.2f), P (0.78f, 0.78f)), s * 0.05f);
+                g.strokePath (p, stroke);
+                text ("FX", 0.5f, 0.5f, 0.26f, 0.5f);
+                return;
+        }
+    }
+
+    /** The console's icon of a source: a WING icon (SOURCES > ICON/COLOR) or its group's. */
+    void drawSourceIcon (juce::Graphics& g, int source, int wingIcon, juce::Rectangle<float> r, juce::Colour c)
+    {
+        if (wingIcon > 0 && drawWingIcon (g, wingIcon, r, c))
+            return;
+        const auto group = routing::groupOfSource (source);
+        if (group == Group::WlivePlay)
+            drawIcon (g, Icon::Waveform, r, c);
+        else
+            drawGroupIcon (g, group == Group::Aes50B || group == Group::Aes50C ? Group::LocalIn : group, r, c);
+    }
+
+    /** A key with centred text: grey (#585858) with black print, or lit. */
+    void drawKey (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& text, bool on, juce::Colour onColour, float cap = 14.0f)
     {
         if (r.isEmpty())
             return;
-        // An unavailable key keeps its #303030 body with dim text, as on the console.
-        g.setColour (on && enabled ? onColour : Dark::key);
+        g.setColour (on ? onColour : greyKey);
         g.fillRect (r);
-        g.setColour (on && enabled ? Dark::choiceInk : (enabled ? Dark::text : Dark::textDim));
-        const bool twoLines = text.containsChar ('\n');
-        g.setFont (wingFontFit (TypeScale::value * 0.85f, (float) r.getHeight() * (twoLines ? 0.42f : 0.5f), WingWeight::SemiBold));
-        g.drawFittedText (text, r.reduced (juce::jlimit (1, 2, r.getWidth() / 20), 0), juce::Justification::centred, 2, 0.7f);
+        g.setColour (juce::Colours::black);
+        g.setFont (fontFittingWidth (capFont (cap, WingWeight::SemiBold), text, (float) r.getWidth() - 4.0f, 0.75f));
+        g.drawFittedText (text, r.reduced (2, 0), juce::Justification::centred, 2, 0.75f);
     }
 
-    /** An outlined key [I8]: a grey frame on the panel, an optional icon at the
-        left (INITIALIZE) or above the caption (48V, POL); filled when lit. */
+    /** A black caption bar over a pair of keys (CHANNEL INPUT, COPY CUSTOMIZATION). */
+    void drawCaptionBar (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& text)
+    {
+        if (r.isEmpty())
+            return;
+        g.setColour (juce::Colours::black);
+        g.fillRect (r);
+        g.setColour (Dark::caption);
+        g.setFont (fontFittingWidth (capFont (9.0f), text, (float) r.getWidth() - 4.0f, 0.75f));
+        g.drawText (text, r, juce::Justification::centred);
+    }
+
+    /** An outlined key [I8]: a frame on the panel, an optional icon at the left
+        (INITIALIZE); filled when lit. */
     void drawOutlinedKey (juce::Graphics& g, juce::Rectangle<int> r, std::optional<Icon> icon, const juce::String& text, bool on, juce::Colour onColour,
-                          bool iconAbove = false)
+                          juce::Colour frame = Dark::caption)
     {
         if (r.isEmpty())
             return;
         auto f = r.toFloat();
-        if (on)
-        {
-            g.setColour (onColour);
-            g.fillRect (f);
-        }
-        g.setColour (on ? onColour : Dark::keyOutline);
-        g.drawRect (f, 1.5f);
+        g.setColour (on ? onColour : Colours::screenTile);
+        g.fillRect (f);
+        g.setColour (on ? onColour : frame);
+        g.drawRect (f, juce::jmax (1.0f, wingPx (1.5f)));
         const auto ink = on ? juce::Colours::black : Dark::caption;
-        if (iconAbove && icon.has_value())
-        {
-            auto label = f.removeFromBottom (f.getHeight() * 0.3f);
-            drawIcon (g, *icon, f.reduced (f.getHeight() * 0.18f), ink);
-            g.setColour (ink);
-            g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), label.getHeight() * 0.6f)));
-            g.drawFittedText (text, label.toNearestInt(), juce::Justification::centredTop, 1, 0.8f);
-            return;
-        }
         if (icon.has_value())
         {
             auto ib = f.removeFromLeft (f.getHeight()).reduced (f.getHeight() * 0.22f);
-            drawIcon (g, *icon, ib, ink);
+            drawIcon (g, *icon, ib.translated (wingPx (6.0f), 0.0f), ink);
         }
         g.setColour (ink);
-        g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), f.getHeight() * 0.36f)));
+        g.setFont (capFont (13.0f));
         g.drawFittedText (text, f.toNearestInt().reduced (4, 0), juce::Justification::centred, 1, 0.8f);
     }
 
-    /** An icon over a small caption (NONE, RENAME). */
+    /** A square key with an icon and its caption under it (+48V, POL). */
+    void drawIconKeyBelow (juce::Graphics& g, juce::Rectangle<int> key, Icon icon, const juce::String& caption, bool on, juce::Colour onColour)
+    {
+        if (key.isEmpty())
+            return;
+        g.setColour (juce::Colours::black);
+        g.fillRect (key.expanded (px (2.0f)));
+        g.setColour (on ? onColour : Colours::screenTile);
+        g.fillRect (key);
+        drawIcon (g, icon, key.toFloat().reduced ((float) key.getHeight() * 0.24f), on ? juce::Colours::black : Dark::caption);
+        g.setColour (on ? onColour : Dark::caption.withAlpha (0.8f));
+        g.setFont (capFont (13.0f));
+        g.drawText (caption, key.withY (key.getBottom() + px (6.0f)).withHeight (px (24.0f)).expanded (px (16.0f), 0), juce::Justification::centred);
+    }
+
+    /** An icon over a small caption (RENAME, NONE). */
     void drawIconKey (juce::Graphics& g, juce::Rectangle<int> r, Icon icon, const juce::String& text, bool enabled = true)
     {
         if (r.isEmpty())
             return;
-        const auto ink = enabled ? Dark::text : Dark::textDim.withAlpha (0.5f);
+        const auto ink = enabled ? Dark::caption : Dark::textDim.withAlpha (0.5f);
         auto f = r.toFloat();
         auto label = f.removeFromBottom (f.getHeight() * 0.36f);
-        drawIcon (g, icon, f.reduced (f.getHeight() * 0.12f), ink);
+        drawIcon (g, icon, f.reduced (f.getHeight() * 0.1f), ink);
         g.setColour (ink);
-        g.setFont (wingFontFit (TypeScale::statusCaption * 1.2f, label.getHeight() * 0.85f));
-        g.drawFittedText (text, label.toNearestInt(), juce::Justification::centredTop, 1);
+        g.setFont (capFont (9.0f));
+        g.drawFittedText (text, label.toNearestInt(), juce::Justification::centred, 1);
     }
 
-    /** A drop-down field: a small caption over a big value, and the dots key at the right. */
-    void drawField (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& caption, const juce::String& value, juce::Colour valueColour)
+    /** A group selector [ROUTING header]: in a black frame the group's icon,
+        the caption over the group's name, and the drop-down arrow key. */
+    void drawSelector (juce::Graphics& g, juce::Rectangle<int> r, Group group, const juce::String& caption)
     {
         if (r.isEmpty())
             return;
-        g.setColour (Dark::key);
+        g.setColour (juce::Colours::black);
         g.fillRect (r);
-        auto dots = r.removeFromRight (juce::jmin (r.getHeight() / 2, screenCap (24))).toFloat();
+        r = r.reduced (px (2.0f));
+        auto arrow = r.removeFromRight (px (30.0f));
+        g.setColour (Colours::screenTile);
+        g.fillRect (arrow);
+        juce::Path tri;
+        const auto c = arrow.getCentre().toFloat();
+        const float tw = wingPx (8.0f), th = wingPx (8.0f);
+        tri.addTriangle (c.x - tw, c.y - th * 0.5f, c.x + tw, c.y - th * 0.5f, c.x, c.y + th * 0.5f);
+        g.setColour (Dark::caption);
+        g.fillPath (tri);
+        r.removeFromRight (px (2.0f));
+        g.setColour (Colours::screenPanel);
+        g.fillRect (r);
+        auto ib = r.removeFromLeft (r.getHeight()).reduced (px (6.0f));
+        drawGroupIcon (g, group, ib.toFloat(), Dark::caption);
+        r.removeFromLeft (px (4.0f));
+        g.setColour (Dark::caption);
+        const auto name = juce::String (routing::info (group).name);
+        g.setFont (fontFittingWidth (capFont (12.5f), caption, (float) r.getWidth(), 0.8f));
+        g.drawText (caption, r.withHeight (r.getHeight() * 44 / 100).translated (0, px (2.0f)), juce::Justification::bottomLeft);
         g.setColour (Dark::text);
-        const float d = juce::jlimit (3.0f, screenCap (6.0f), dots.getHeight() * 0.12f);
-        for (int i = -1; i <= 1; ++i)
-            g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (dots.getCentre().translated (0.0f, (float) i * d * 2.0f)));
-        auto t = r.reduced (juce::jlimit (3, screenCap (6), r.getWidth() / 24), 2);
-        g.setColour (Dark::textDim);
-        // Narrow fields (small windows) shrink the text rather than cut it.
-        g.setFont (fontFittingWidth (wingFontFit (TypeScale::statusCaption * 1.2f, (float) t.getHeight() * 0.32f), caption, (float) t.getWidth(), 0.7f));
-        g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 40 / 100), juce::Justification::bottomLeft, 1, 0.7f);
-        g.setColour (valueColour);
-        g.setFont (fontFittingWidth (wingFontFit (TypeScale::value, (float) t.getHeight() * 0.85f, WingWeight::SemiBold), value, (float) t.getWidth(), 0.7f));
-        g.drawFittedText (value, t, juce::Justification::centredLeft, 1);
+        g.setFont (fontFittingWidth (capFont (19.0f, WingWeight::SemiBold), name, (float) r.getWidth(), 0.7f));
+        g.drawText (name, r.withTrimmedTop (r.getHeight() * 44 / 100), juce::Justification::centredLeft);
     }
 
-    /** A group selector: icon, caption over the group's name, and a down-arrow key. */
-    void drawSelector (juce::Graphics& g, juce::Rectangle<int> r, Icon icon, const juce::String& caption, const juce::String& value)
+    /** The mini meter of a tile: a column of segments, `pos` (0..1) lit. */
+    void drawMiniMeter (juce::Graphics& g, juce::Rectangle<float> meter, float pos)
     {
-        g.setColour (Dark::well);
-        g.fillRect (r);
-        auto arrow = r.removeFromRight (r.getHeight() * 2 / 3);
-        g.setColour (Dark::key);
-        g.fillRect (arrow.withTrimmedLeft (3));
-        juce::Path tri;
-        const auto c = arrow.withTrimmedLeft (3).getCentre().toFloat();
-        tri.addTriangle (c.x - 7.0f, c.y - 4.0f, c.x + 7.0f, c.y - 4.0f, c.x, c.y + 5.0f);
-        g.setColour (Dark::text);
-        g.fillPath (tri);
-        auto ib = r.removeFromLeft (r.getHeight()).reduced (6);
-        drawIcon (g, icon, ib.toFloat(), Dark::text);
-        r.removeFromLeft (4);
-        g.setColour (Dark::textDim);
-        g.setFont (fontFittingWidth (wingFontFit (TypeScale::statusCaption * 1.2f, (float) r.getHeight() * 0.3f), caption, (float) r.getWidth(), 0.7f));
-        g.drawFittedText (caption, r.removeFromTop (r.getHeight() * 42 / 100), juce::Justification::bottomLeft, 1, 0.7f);
-        g.setColour (Dark::text);
-        g.setFont (fontFittingWidth (wingFontFit (TypeScale::value, (float) r.getHeight() * 0.8f, WingWeight::SemiBold), value, (float) r.getWidth(), 0.7f));
-        g.drawFittedText (value, r, juce::Justification::centredLeft, 1);
+        const int segments = juce::jmax (4, (int) (meter.getHeight() / juce::jmax (2.0f, wingPx (3.0f))));
+        const float segH = meter.getHeight() / (float) segments;
+        for (int i = 0; i < segments; ++i)
+        {
+            const bool lit = pos > (float) i / (float) segments;
+            g.setColour (lit ? (i == segments - 1 ? Colours::meterRed : Colours::meterGreen) : Colours::screenWell);
+            g.fillRect (meter.getX(), meter.getBottom() - (float) (i + 1) * segH, meter.getWidth(), juce::jmax (1.0f, segH - 1.0f));
+        }
+    }
+
+    /** The source meter's scale [SOURCES]: CLIP, -6 ... -60 equally spaced. */
+    constexpr float kScaleMarks[] = { 0.0f, -6.0f, -12.0f, -24.0f, -36.0f, -48.0f, -60.0f };
+    float scalePosition (float db)
+    {
+        db = juce::jlimit (-60.0f, 0.0f, db);
+        for (int i = 0; i + 1 < (int) std::size (kScaleMarks); ++i)
+            if (db >= kScaleMarks[i + 1])
+                return ((float) i + (kScaleMarks[i] - db) / (kScaleMarks[i] - kScaleMarks[i + 1])) / 6.0f;
+        return 1.0f;
+    }
+
+    /** An n/a tile: the dim strip over a black body with "n/a" and its label. */
+    void paintNaTile (juce::Graphics& g, juce::Rectangle<int> area, juce::Colour strip, const juce::String& label, float stripShare, bool meter,
+                      bool selected)
+    {
+        auto r = area.toFloat();
+        g.setColour (dimmed (strip));
+        g.fillRect (r.removeFromTop (r.getHeight() * stripShare));
+        if (meter)
+            drawMiniMeter (g, r.withTrimmedLeft (r.getWidth() * 0.9f).withTrimmedRight (r.getWidth() * 0.04f).reduced (0.0f, wingPx (4.0f)), 0.0f);
+        auto labelRow = r.removeFromBottom (r.getHeight() * 0.34f);
+        g.setColour (naText);
+        g.setFont (capFont (13.0f));
+        g.drawText ("n/a", r.withTrimmedRight (meter ? r.getWidth() * 0.1f : 0.0f).toNearestInt(), juce::Justification::centred);
+        g.setColour (naLabel);
+        g.setFont (capFont (9.5f));
+        g.drawFittedText (label, labelRow.withTrimmedRight (meter ? labelRow.getWidth() * 0.1f : 0.0f).toNearestInt(), juce::Justification::centredTop, 1, 0.7f);
+        if (selected)
+        {
+            g.setColour (Colours::gold);
+            g.drawRect (area.toFloat().expanded (wingPx (4.0f)), wingPx (3.0f));
+        }
+    }
+
+    void drawSelection (juce::Graphics& g, juce::Rectangle<int> area)
+    {
+        g.setColour (Colours::gold);
+        g.drawRect (area.toFloat().expanded (wingPx (4.0f)), juce::jmax (2.0f, wingPx (3.0f)));
     }
 } // namespace
 
+//==============================================================================
+/** A group menu [ROUTING]: the groups as tiles of four (icon over name) under
+    the selector, over the dimmed page; the current group framed gold. */
+class RoutingPage::GroupMenu final : public juce::Component
+{
+public:
+    GroupMenu (routing::Menu m, int current, juce::Point<int> origin, std::function<void (int)> chosen)
+        : menu (std::move (m)), selected (current), topLeft (origin), onChosen (std::move (chosen))
+    {
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.setColour (Colours::scrim);
+        g.fillAll();
+        g.setColour (Colours::screenPanel);
+        g.fillRect (frame());
+        for (auto& [area, id] : tiles())
+        {
+            const bool sel = id == selected;
+            g.setColour (sel ? Colours::gold : juce::Colours::black);
+            g.fillRect (area);
+            const auto inner = area.reduced (juce::jmax (2, px (sel ? 3.0f : 2.0f)));
+            g.setColour (id == pressed ? Colours::chipOff : Colours::screenTile);
+            g.fillRect (inner);
+            auto f = inner.toFloat();
+            auto caption = f.removeFromBottom (f.getHeight() * 0.3f);
+            drawGroupIcon (g, (Group) id, f.expanded (f.getHeight() * 0.04f).translated (0.0f, f.getHeight() * 0.06f), iconGrey);
+            const auto name = juce::String (routing::info ((Group) id).name);
+            g.setColour (Dark::caption);
+            g.setFont (fontFittingWidth (capFont (10.0f), name, caption.getWidth() - 2.0f, 0.75f));
+            g.drawText (name, caption.toNearestInt(), juce::Justification::centred);
+        }
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        pressed = tileAt (e.getPosition());
+        repaint();
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        const int was = std::exchange (pressed, -1);
+        const int id = tileAt (e.getPosition());
+        auto chosen = onChosen;
+        if (was >= 0 && id == was)
+            chosen (id);
+        else if (! frame().contains (e.getPosition()))
+            chosen (-1);
+        else
+            repaint();
+    }
+
+private:
+    // [WING px] tiles 88 square on a pitch of 91, the fourth column and the
+    // spaced rows 8 further apart, 4 of padding.
+    juce::Rectangle<int> frame() const
+    {
+        const int rows = (int) menu.rows.size();
+        return wingRect (0.0f, 0.0f, 8.0f + 3.0f * 91.0f + 8.0f + 88.0f, 8.0f + (float) (rows - 1) * 91.0f + 8.0f * (float) menu.spacedRows.size() + 88.0f)
+            .translated (topLeft.x, topLeft.y);
+    }
+
+    std::vector<std::pair<juce::Rectangle<int>, int>> tiles() const
+    {
+        std::vector<std::pair<juce::Rectangle<int>, int>> out;
+        float y = 4.0f;
+        for (size_t row = 0; row < menu.rows.size(); ++row)
+        {
+            if (std::find (menu.spacedRows.begin(), menu.spacedRows.end(), (int) row) != menu.spacedRows.end())
+                y += 8.0f;
+            for (size_t col = 0; col < menu.rows[row].size(); ++col)
+                if (const int id = menu.rows[row][col]; id >= 0)
+                    out.push_back ({ wingRect (4.0f + (float) col * 91.0f + (col == 3 ? 8.0f : 0.0f), y, 88.0f, 88.0f).translated (topLeft.x, topLeft.y), id });
+            y += 91.0f;
+        }
+        return out;
+    }
+
+    int tileAt (juce::Point<int> p) const
+    {
+        for (auto& [area, id] : tiles())
+            if (area.contains (p))
+                return id;
+        return -1;
+    }
+
+    routing::Menu menu;
+    int selected, pressed = -1;
+    juce::Point<int> topLeft;
+    std::function<void (int)> onChosen;
+};
+
+//==============================================================================
 RoutingPage::RoutingPage (UiContext& c) : ctx (c)
 {
     // Where the drop-down lists of the hand-drawn fields open.
@@ -204,38 +515,32 @@ RoutingPage::RoutingPage (UiContext& c) : ctx (c)
     startTimerHz (10); // the source meters
 }
 
+RoutingPage::~RoutingPage() = default;
+
 StatusTitle RoutingPage::getStatusTitle()
 {
-    // SOURCES and OUTPUTS show the selected source or output (grey tile,
-    // connector icon), CHANNELS the selected channel.
+    // SOURCES and OUTPUTS show the selected source or output (grey tile, its
+    // number, icon and group: "1 LOCAL IN"), CHANNELS the selected channel.
     StatusTitle t;
     if (mode == Mode::Sources)
     {
         t.kind = StatusTitle::Kind::Source;
-        const bool usbPlayer = UsbRecorder::isPlayerSource (selectedSource);
-        const bool osc = MixerEngine::isOscSource (selectedSource);
-        const bool playback = Recorder::isPlaybackSource (selectedSource) || usbPlayer;
-        t.prefix = juce::String ((osc         ? MixerEngine::oscChannelOf (selectedSource)
-                                  : usbPlayer ? UsbRecorder::playerChannelOf (selectedSource)
-                                  : playback  ? Recorder::playbackChannelOf (selectedSource)
-                                              : selectedSource) + 1);
+        const auto group = routing::groupOfSource (selectedSource);
+        t.prefix = juce::String (routing::numberInGroup (selectedSource) + 1);
         const auto custom = ctx.engine.getSourceName (MixerEngine::sourceIndex (selectedSource));
-        t.text = custom.isNotEmpty() ? custom.toUpperCase()
-                                     : juce::String (osc ? "OSCILLATOR" : usbPlayer ? "USB PLAYER" : playback ? "PLAYBACK" : "AUDIO IN");
-        t.icon = osc ? Icon::Sine : playback ? Icon::Waveform : Icon::Xlr;
+        t.text = custom.isNotEmpty() ? custom.toUpperCase() : juce::String (routing::info (group).name);
+        t.icon = group == Group::Oscillator ? Icon::Sine : group == Group::WlivePlay ? Icon::Waveform : group == Group::UsbPlayer ? Icon::UsbStick : Icon::Xlr;
     }
     else if (mode == Mode::Outputs)
     {
         t.kind = StatusTitle::Kind::Source;
-        const bool rec = isRecorderPort (selectedPort);
-        t.prefix = juce::String ((rec ? selectedPort - kRecorderPortBase : selectedPort) + 1);
-        t.text = rec ? "RECORDER" : "AUDIO OUT";
-        t.icon = Icon::Speaker;
+        const auto group = routing::groupOfOutput (selectedPort);
+        t.prefix = juce::String (routing::outputNumber (selectedPort));
+        t.text = routing::info (group).name;
+        t.icon = group == Group::Recorder ? Icon::UsbStick : Icon::Xlr;
     }
     return t;
 }
-
-RoutingPage::~RoutingPage() = default;
 
 std::vector<StatusKey> RoutingPage::getStatusKeys()
 {
@@ -275,15 +580,31 @@ namespace
 std::vector<RoutingPage::Signal> RoutingPage::signals() const
 {
     std::vector<Signal> list;
-    if (signalGroup == 5)
-        return { { nullptr, 0 }, { nullptr, 1 }, { nullptr, 2 }, { nullptr, 3 } };
-    const StripKind kinds[] = { StripKind::Channel, StripKind::Aux, StripKind::Bus, StripKind::Main, StripKind::Matrix };
-    for (auto& s : ctx.engine.getStrips (kinds[juce::jlimit (0, 4, signalGroup)]))
+    auto addStrips = [&] (StripKind kind)
     {
-        list.push_back ({ s.get(), 0 });
-        if (s->isOutput() || s->params.stereo.load())
-            list.push_back ({ s.get(), 1 });
+        for (auto& s : ctx.engine.getStrips (kind))
+        {
+            list.push_back ({ s.get(), 0 });
+            if (s->isOutput() || s->params.stereo.load())
+                list.push_back ({ s.get(), 1 });
+        }
+    };
+    if (signalGroup == Group::Bus)
+        addStrips (StripKind::Bus);
+    else if (signalGroup == Group::Main)
+        addStrips (StripKind::Main);
+    else if (signalGroup == Group::Matrix)
+        addStrips (StripKind::Matrix);
+    else if (signalGroup == Group::UserSignal)
+    {
+        addStrips (StripKind::Channel);
+        addStrips (StripKind::Aux);
     }
+    else if (signalGroup == Group::Monitor)
+        for (int ch = 0; ch < kMonitorSignals; ++ch)
+            list.push_back ({ nullptr, ch });
+    else // inputs can't feed outputs directly here, and there are no FX sends
+        list.assign ((size_t) routing::info (signalGroup).size, Signal { nullptr, -1 });
     return list;
 }
 
@@ -292,23 +613,19 @@ int RoutingPage::numTargetPages() const
     return juce::jmax (1, ((int) channelTargets().size() + kTargetsPerPage - 1) / kTargetsPerPage);
 }
 
-int RoutingPage::numPorts (bool outputs) const
+int RoutingPage::numHardware (bool outputs) const
 {
-    const auto& names = outputs ? ctx.engine.getHardwareOutputNames() : ctx.engine.getHardwareInputNames();
-    return juce::jmax (kPortsPerGroup, (names.size() + kPortsPerGroup - 1) / kPortsPerGroup * kPortsPerGroup);
+    return (outputs ? ctx.engine.getHardwareOutputNames() : ctx.engine.getHardwareInputNames()).size();
 }
 
-int RoutingPage::numPortGroups (bool outputs) const
+bool RoutingPage::sourcePresent (int source) const
 {
-    return numPorts (outputs) / kPortsPerGroup;
-}
-
-juce::String RoutingPage::portName (int index, bool output) const
-{
-    const auto& names = output ? ctx.engine.getHardwareOutputNames() : ctx.engine.getHardwareInputNames();
-    if (index < names.size() && names[index].isNotEmpty())
-        return names[index].toUpperCase();
-    return (output ? "OUT " : "IN ") + juce::String (index + 1);
+    if (source < 0)
+        return false;
+    const auto group = routing::groupOfSource (source);
+    if (group == Group::LocalIn || group == Group::Aes50B || group == Group::Aes50C)
+        return source < numHardware (false);
+    return true;
 }
 
 Strip* RoutingPage::selectedStrip() const
@@ -341,6 +658,7 @@ void RoutingPage::select (Strip* s)
 void RoutingPage::setMode (Mode m)
 {
     mode = m;
+    groupMenu.reset();
     if (auto* s = selectedStrip(); s == nullptr || ! s->isInput())
     {
         selectedKind = StripKind::Channel;
@@ -373,17 +691,18 @@ void RoutingPage::timerCallback()
         auto moved = [] (float a, float b)
         { return std::abs (juce::Decibels::gainToDecibels (a, -60.0f) - juce::Decibels::gainToDecibels (b, -60.0f)) > 0.5f; };
         const auto& grid = mode == Mode::Channels ? rightPorts : leftPorts;
-        sourcePeaks.resize ((size_t) kPortsPerGroup, 0.0f);
-        for (int i = 0; i < kPortsPerGroup; ++i)
+        sourcePeaks.resize (grid.size(), 0.0f);
+        for (size_t i = 0; i < grid.size(); ++i)
         {
-            auto* src = ctx.engine.getSource (MixerEngine::sourceIndex (sourceAt (inputGroup, i)));
+            const int source = routing::sourceAt (inputGroup, (int) i);
+            auto* src = source >= 0 ? ctx.engine.getSource (MixerEngine::sourceIndex (source)) : nullptr;
             const float peak = src != nullptr ? src->peak.exchange (0.0f) : 0.0f;
-            auto& shown = sourcePeaks[(size_t) i];
+            auto& shown = sourcePeaks[i];
             const float before = shown;
             shown = juce::jmax (peak, shown * 0.5f);
-            if (moved (before, shown) && juce::isPositiveAndBelow (i, (int) grid.size()))
-                repaint (grid[(size_t) i]);
-            if (sourceAt (inputGroup, i) == selectedSource)
+            if (moved (before, shown))
+                repaint (grid[i]);
+            if (source == selectedSource && source >= 0)
             {
                 if (moved (selectedSourcePeak, shown) && mode == Mode::Sources)
                     repaint (sourceMeter);
@@ -398,67 +717,67 @@ void RoutingPage::timerCallback()
 
 void RoutingPage::resized()
 {
-    auto b = getLocalBounds();
-    leftPanel = b.removeFromLeft (b.getWidth() * (mode == Mode::Sources ? 52 : 46) / 100);
-    b.removeFromLeft (8);
-    rightPanel = b;
-
-    const int headerH = juce::jlimit (44, screenCap (64), getHeight() / 8);
-    leftHeader = leftPanel.withHeight (headerH);
-    rightHeader = rightPanel.withHeight (headerH);
-
-    for (auto* r : { &inputField, &stereoKey, &autoKey, &lockKey, &unlockKey, &prevPage, &nextPage, &leftSelector, &rightSelector,
-                     &noneKey, &copyCaption, &srcToChKey, &chToSrcKey, &renameKey, &srcSoloKey })
+    // [WING px] Each side: a header box 80 tall, an 8 px gap, then the tiles in
+    // a framed black box. CHANNELS and OUTPUTS split the page 544 | 712,
+    // SOURCES 712 | 544 (the settings on the right).
+    for (auto* r : { &inputCaption, &mainKey, &altKey, &stereoKey, &autoKey, &lockFrame, &lockKey, &unlockKey, &prevPage, &nextPage, &leftSelector,
+                     &rightSelector, &noneKey, &copyCaption, &srcToChKey, &chToSrcKey, &renameKey, &srcSoloKey, &meterLegend, &prevSignals, &nextSignals })
         *r = {};
 
-    auto lh = leftHeader.reduced (6, 6);
+    const float split = mode == Mode::Sources ? 712.0f : 544.0f;
+    leftPanel = wingRect (8.0f, 0.0f, split, 800.0f).withBottom (getHeight());
+    rightPanel = wingRect (16.0f + split, 0.0f, 1264.0f - 8.0f - split, 800.0f).withBottom (getHeight());
+    leftHeader = leftPanel.withHeight (px (80.0f));
+    rightHeader = rightPanel.withHeight (px (80.0f));
+
     if (mode == Mode::Sources)
     {
-        renameKey = lh.removeFromRight (lh.getHeight() + 10);
-        lh.removeFromRight (8);
+        leftSelector = wingRect (16.0f, 8.0f, 264.0f, 64.0f);
+        renameKey = wingRect (648.0f, 12.0f, 64.0f, 60.0f);
         // SRC SOLO (fig. 36), while SOURCE SOLO is on (SETUP > AUDIO).
-        srcSoloKey = lh.removeFromRight (juce::jmin (screenCap (90), lh.getWidth() / 4)).reduced (0, 3);
-        lh.removeFromRight (8);
-        leftSelector = lh.withWidth (juce::jmin (lh.getWidth(), screenCap (300)));
+        srcSoloKey = wingRect (520.0f, 20.0f, 104.0f, 44.0f);
     }
     else
     {
-        unlockKey = lh.removeFromRight (lh.getHeight());
-        lh.removeFromRight (2);
-        lockKey = lh.removeFromRight (lh.getHeight());
-        lh.removeFromRight (8);
-        autoKey = lh.removeFromRight (juce::jmin (screenCap (64), juce::jmax (lh.getWidth() / 5, lh.getHeight() * 5 / 4)));
-        lh.removeFromRight (juce::jlimit (4, screenCap (8), lh.getWidth() / 40));
+        lockFrame = wingRect (428.0f, 12.0f, 112.0f, 56.0f);
+        lockKey = wingRect (430.0f, 14.0f, 54.0f, 52.0f);
+        unlockKey = wingRect (486.0f, 14.0f, 52.0f, 52.0f);
+        autoKey = wingRect (322.0f, 14.0f, 76.0f, 52.0f);
         if (mode == Mode::Channels)
         {
-            const bool paged = numTargetPages() > 1;
-            nextPage = paged ? lh.removeFromRight (lh.getHeight()) : juce::Rectangle<int>();
-            if (paged)
-                lh.removeFromRight (2);
-            prevPage = paged ? lh.removeFromRight (lh.getHeight()) : juce::Rectangle<int>();
-            auto input = lh.withWidth (juce::jmin (lh.getWidth(), screenCap (210)));
-            stereoKey = input.removeFromRight (input.getHeight()).reduced (2, 1);
-            input.removeFromRight (4);
-            inputField = input;
+            inputCaption = wingRect (16.0f, 8.0f, 162.0f, 16.0f);
+            mainKey = wingRect (16.0f, 24.0f, 80.0f, 48.0f);
+            altKey = wingRect (98.0f, 24.0f, 80.0f, 48.0f);
+            // Sidecar's ST (a channel's stereo pair of any two inputs) and the
+            // page keys of consoles with more than 40 channels.
+            stereoKey = wingRect (188.0f, 24.0f, 40.0f, 48.0f);
+            if (numTargetPages() > 1)
+            {
+                prevPage = wingRect (236.0f, 24.0f, 40.0f, 48.0f);
+                nextPage = wingRect (278.0f, 24.0f, 40.0f, 48.0f);
+            }
         }
         else
-            leftSelector = lh.withWidth (juce::jmin (lh.getWidth(), screenCap (300)));
-    }
+            leftSelector = wingRect (16.0f, 8.0f, 264.0f, 64.0f);
 
-    auto rh = rightHeader.reduced (6, 6);
-    if (mode == Mode::Channels)
-    {
-        auto copy = rh.removeFromRight (juce::jmin (screenCap (170), rh.getWidth() / 3));
-        copyCaption = copy.removeFromTop (copy.getHeight() * 38 / 100);
-        srcToChKey = copy.removeFromLeft (copy.getWidth() / 2).reduced (1, 1);
-        chToSrcKey = copy.reduced (1, 1);
-        rh.removeFromRight (8);
-    }
-    if (mode != Mode::Sources)
-    {
-        noneKey = rh.removeFromRight (rh.getHeight() + 10);
-        rh.removeFromRight (8);
-        rightSelector = rh.withWidth (juce::jmin (rh.getWidth(), screenCap (300)));
+        rightSelector = wingRect (568.0f, 8.0f, 264.0f, 64.0f);
+        // NONE (clears the patch) is Sidecar's; the console has none here.
+        noneKey = wingRect (mode == Mode::Channels ? 1024.0f : 848.0f, 12.0f, 64.0f, 60.0f);
+        if (mode == Mode::Channels)
+        {
+            copyCaption = wingRect (1102.0f, 8.0f, 162.0f, 16.0f);
+            srcToChKey = wingRect (1102.0f, 24.0f, 80.0f, 48.0f);
+            chToSrcKey = wingRect (1184.0f, 24.0f, 80.0f, 48.0f);
+        }
+        else
+        {
+            meterLegend = wingRect (1068.0f, 22.0f, 196.0f, 40.0f);
+            if (signals().size() > (size_t) kSignalsPerPage)
+            {
+                prevSignals = wingRect (924.0f, 24.0f, 40.0f, 48.0f);
+                nextSignals = wingRect (968.0f, 24.0f, 40.0f, 48.0f);
+            }
+        }
     }
     layoutSourcePanel();
     layoutTiles();
@@ -468,122 +787,101 @@ void RoutingPage::layoutTiles()
 {
     layoutVersion = ctx.engine.getStructureVersion();
     targetPage = juce::jlimit (0, numTargetPages() - 1, targetPage);
-    inputGroup = juce::jlimit (0, numSourceGroups() - 1, inputGroup);
-    outputGroup = juce::jlimit (0, numOutputGroups() - 1, outputGroup);
     channelTiles.clear();
     leftPorts.clear();
     rightPorts.clear();
     signalTiles.clear();
-    separator = {};
+    separator = leftGrid = rightGrid = {};
     if (leftPanel.isEmpty())
         return;
 
-    auto grid = leftPanel.withTrimmedTop (leftHeader.getHeight() + 6).reduced (6);
-    auto rightGrid = rightPanel.withTrimmedTop (rightHeader.getHeight() + 6).reduced (6);
-    auto portGrid = [] (juce::Rectangle<int> area, int count, int rows, std::vector<juce::Rectangle<int>>& out)
+    // [WING px] Tiles start 8 inside the box's 4 px frame. Channel tiles are
+    // 59 x 77 on a pitch of 67 x 84, output tiles 59 x 69 (pitch 67 x 76),
+    // source and signal tiles 80 x 68 (pitch 88 x 76). Rows that don't fit
+    // the page get closer.
+    const float bottom = (float) getHeight() * 800.0f / juce::jmax (1.0f, getWingScreenHeight()) - 8.0f;
+    auto grid = [&] (juce::Rectangle<int>& box, float boxX, float boxW, float pitchX, float tileW, float pitchY, float tileH, int count,
+                     std::vector<juce::Rectangle<int>>& out)
     {
-        const int w = area.getWidth() / kTilesPerRow, h = juce::jmin (area.getHeight() / rows, w * 5 / 4);
+        const int rows = juce::jmax (1, (count + kTilesPerRow - 1) / kTilesPerRow);
+        const float scale = juce::jmin (1.0f, (bottom - 96.0f - 8.0f + (pitchY - tileH)) / ((float) rows * pitchY));
+        pitchY *= scale;
+        tileH = pitchY - (pitchY / scale - tileH);
         for (int i = 0; i < count; ++i)
-            out.push_back (juce::Rectangle<int> (area.getX() + (i % kTilesPerRow) * w, area.getY() + (i / kTilesPerRow) * h, w, h).reduced (3));
+            out.push_back (wingRect (boxX + 8.0f + (float) (i % kTilesPerRow) * pitchX, 96.0f + (float) (i / kTilesPerRow) * pitchY, tileW, tileH));
+        box = wingRect (boxX, 88.0f, boxW, 16.0f + (float) (rows - 1) * pitchY + tileH);
     };
 
+    const float rightX = mode == Mode::Sources ? 720.0f : 560.0f;
+    const float rightW = 1272.0f - rightX;
     if (mode == Mode::Channels)
     {
-        // Up to 48 channels, with a gap before the first aux.
+        // Up to 48 channels; the aux channels on a row of their own under a line.
         const auto list = channelTargets();
         const int first = targetPage * kTargetsPerPage;
         const int count = juce::jmin (kTargetsPerPage, (int) list.size() - first);
-        const int sepH = 14;
-        const int rows = juce::jmax (6, (count + kTilesPerRow - 1) / kTilesPerRow);
-        const int tileW = grid.getWidth() / kTilesPerRow;
-        const int tileH = juce::jmin ((grid.getHeight() - sepH) / rows, tileW * 5 / 4);
-        int row = 0, col = 0;
-        bool separated = false;
+        int channelRows = 0, auxCount = 0;
+        for (int i = 0; i < count; ++i)
+            auxCount += list[(size_t) (first + i)]->getKind() == StripKind::Aux ? 1 : 0;
+        channelRows = (count - auxCount + kTilesPerRow - 1) / kTilesPerRow;
+        const int auxRows = (auxCount + kTilesPerRow - 1) / kTilesPerRow;
+        const bool split = auxCount > 0 && auxCount < count;
+        float pitchY = 84.0f, tileH = 77.0f, gap = split ? 24.0f : 0.0f;
+        const float needed = (float) (channelRows + auxRows) * pitchY + gap;
+        if (const float avail = bottom - 96.0f - 8.0f + (pitchY - tileH); needed > avail)
+        {
+            const float scale = avail / needed;
+            pitchY *= scale;
+            tileH = pitchY - 7.0f * scale;
+            gap *= scale;
+        }
+        int ch = 0, aux = 0;
+        float lastBottom = 96.0f;
         for (int i = 0; i < count; ++i)
         {
             auto* s = list[(size_t) (first + i)];
-            if (! separated && s->getKind() == StripKind::Aux && i > 0)
-            {
-                if (col != 0)
-                {
-                    col = 0;
-                    ++row;
-                }
-                separator = juce::Rectangle<int> (grid.getX() + 8, grid.getY() + row * tileH + sepH / 2 - 1, grid.getWidth() - 16, 2);
-                separated = true;
-            }
-            const int y = grid.getY() + row * tileH + (separated ? sepH : 0);
-            channelTiles.push_back ({ juce::Rectangle<int> (grid.getX() + col * tileW, y, tileW, tileH).reduced (3), s });
-            if (++col == kTilesPerRow)
-            {
-                col = 0;
-                ++row;
-            }
+            const bool isAux = s->getKind() == StripKind::Aux;
+            const int n = isAux ? aux++ : ch++;
+            const float y = 96.0f + (float) ((isAux ? channelRows : 0) + n / kTilesPerRow) * pitchY + (isAux ? gap : 0.0f);
+            channelTiles.push_back ({ wingRect (16.0f + (float) (n % kTilesPerRow) * 67.0f, y, 59.0f, tileH), s });
+            lastBottom = juce::jmax (lastBottom, y + tileH);
         }
-        portGrid (rightGrid, kPortsPerGroup, kPortsPerGroup / kTilesPerRow, rightPorts);
+        if (split)
+            separator = wingRect (24.0f, 96.0f + (float) channelRows * pitchY - (pitchY - tileH) + (pitchY - tileH + gap) / 2.0f - 1.5f, 512.0f, 3.0f);
+        leftGrid = wingRect (8.0f, 88.0f, 544.0f, lastBottom + 8.0f - 88.0f);
+        grid (rightGrid, rightX, rightW, 88.0f, 80.0f, 76.0f, 68.0f, routing::tileCount (inputGroup, numHardware (false)), rightPorts);
     }
     else if (mode == Mode::Sources)
-        portGrid (grid, kPortsPerGroup, kPortsPerGroup / kTilesPerRow, leftPorts);
+        grid (leftGrid, 8.0f, 712.0f, 88.0f, 80.0f, 76.0f, 68.0f, routing::tileCount (inputGroup, numHardware (false)), leftPorts);
     else
     {
-        portGrid (grid, kPortsPerGroup, kPortsPerGroup / kTilesPerRow, leftPorts);
+        grid (leftGrid, 8.0f, 544.0f, 67.0f, 59.0f, 76.0f, 69.0f, routing::tileCount (outputGroup, numHardware (true)), leftPorts);
         const auto list = signals();
-        const int pages = juce::jmax (1, ((int) list.size() + kTargetsPerPage - 1) / kTargetsPerPage);
+        const int pages = juce::jmax (1, ((int) list.size() + kSignalsPerPage - 1) / kSignalsPerPage);
         signalPage = juce::jlimit (0, pages - 1, signalPage);
+        const int first = signalPage * kSignalsPerPage;
+        const int count = juce::jmin (kSignalsPerPage, (int) list.size() - first);
         std::vector<juce::Rectangle<int>> areas;
-        portGrid (rightGrid, kTargetsPerPage, kTargetsPerPage / kTilesPerRow, areas);
-        for (int i = 0; i < kTargetsPerPage && signalPage * kTargetsPerPage + i < (int) list.size(); ++i)
-            signalTiles.push_back ({ areas[(size_t) i], list[(size_t) (signalPage * kTargetsPerPage + i)] });
+        grid (rightGrid, rightX, rightW, 88.0f, 80.0f, 76.0f, 68.0f, count, areas);
+        for (int i = 0; i < count; ++i)
+            signalTiles.push_back ({ areas[(size_t) i], list[(size_t) (first + i)] });
     }
 }
 
-juce::String RoutingPage::inputUsers (int port) const
+std::vector<std::pair<Strip*, bool>> RoutingPage::sourceUsers (int port) const
 {
-    juce::StringArray users;
+    std::vector<std::pair<Strip*, bool>> users;
     for (auto* s : channelTargets())
     {
-        const auto name = hasCustomName (*s) ? s->getLabel() + " " + stripName (*s).toUpperCase() : s->getLabel();
         const bool stereo = s->params.stereo.load();
         const int l = s->getInputLeft(), r = s->getInputRight();
         if (l == port || (stereo && (r == port || (r < 0 && l >= 0 && l + 1 == port))))
-            users.add (name);
+            users.push_back ({ s, false });
         const int al = s->getAltInputLeft(), ar = s->getAltInputRight();
         if (al == port || (stereo && (ar == port || (ar < 0 && al >= 0 && al + 1 == port))))
-            users.add (name + " (ALT)");
+            users.push_back ({ s, true });
     }
-    return users.joinIntoString (", ");
-}
-
-int RoutingPage::numSourceGroups() const
-{
-    // The hardware inputs, the playback channels, the USB PLAYER, then the OSCILLATOR.
-    return numPortGroups (false) + (Recorder::kNumPlaybackChannels + kPortsPerGroup - 1) / kPortsPerGroup + 2;
-}
-
-juce::String RoutingPage::sourceGroupName (int group) const
-{
-    const int hw = numPortGroups (false);
-    if (group < hw)
-        return "AUDIO IN " + juce::String (group * kPortsPerGroup + 1) + "-" + juce::String (group * kPortsPerGroup + kPortsPerGroup);
-    if (group == numSourceGroups() - 1)
-        return "OSCILLATOR";
-    if (group == numSourceGroups() - 2)
-        return "USB PLAYER";
-    const int first = (group - hw) * kPortsPerGroup;
-    return "PLAY " + juce::String (first + 1) + "-" + juce::String (juce::jmin (Recorder::kNumPlaybackChannels, first + kPortsPerGroup));
-}
-
-int RoutingPage::sourceAt (int group, int index) const
-{
-    const int hw = numPortGroups (false);
-    if (group < hw)
-        return group * kPortsPerGroup + index;
-    if (group == numSourceGroups() - 1)
-        return index < ld::kNumOscillators ? MixerEngine::oscSource (index) : -1;
-    if (group == numSourceGroups() - 2)
-        return index < UsbRecorder::kNumChannels ? UsbRecorder::playerSource (index) : -1;
-    const int channel = (group - hw) * kPortsPerGroup + index;
-    return channel < Recorder::kNumPlaybackChannels ? Recorder::playbackSource (channel) : -1;
+    return users;
 }
 
 juce::String RoutingPage::sourceName (int source) const
@@ -594,41 +892,15 @@ juce::String RoutingPage::sourceName (int source) const
     if (const int index = MixerEngine::sourceIndex (source); index >= 0)
         if (auto name = ctx.engine.getSourceName (index); name.isNotEmpty())
             return name;
-    if (Recorder::isPlaybackSource (source))
-        return Recorder::playbackSourceName (Recorder::playbackChannelOf (source));
-    if (UsbRecorder::isPlayerSource (source))
-        return UsbRecorder::playerSourceName (UsbRecorder::playerChannelOf (source));
-    if (MixerEngine::isOscSource (source))
-        return MixerEngine::oscSourceName (MixerEngine::oscChannelOf (source));
-    return portName (source, false);
-}
-
-int RoutingPage::numOutputGroups() const
-{
-    return numPortGroups (true) + 1; // the hardware outputs, then the USB RECORDER
-}
-
-juce::String RoutingPage::outputGroupName (int group) const
-{
-    if (group >= numPortGroups (true))
-        return "RECORDER";
-    const int a = group * kPortsPerGroup + 1;
-    return "AUDIO OUT " + juce::String (a) + "-" + juce::String (a + kPortsPerGroup - 1);
-}
-
-int RoutingPage::outputPortAt (int group, int index) const
-{
-    if (group >= numPortGroups (true))
-        return index < UsbRecorder::kNumChannels ? kRecorderPortBase + index : -1;
-    return group * kPortsPerGroup + index;
+    return routing::sourceLabel (source);
 }
 
 RoutingPage::Signal RoutingPage::feederOf (int port) const
 {
-    if (isRecorderPort (port))
+    if (routing::isRecorderPort (port))
     {
         // A RECORDER port taps a strip's output (the USB recorder's own patch).
-        const auto tap = ctx.engine.getUsbRecorder().getTap (port - kRecorderPortBase);
+        const auto tap = ctx.engine.getUsbRecorder().getTap (port - routing::kRecorderPortBase);
         if (tap.kind != UsbRecorder::Tap::Kind::Strip)
             return { nullptr, -1 };
         auto& strips = ctx.engine.getStrips (tap.stripKind);
@@ -660,95 +932,142 @@ juce::String RoutingPage::signalLabel (const Signal& sig) const
         return {};
     if (sig.strip == nullptr) // PHONES L / R, SPKR L / R: separate outputs
         return juce::String (sig.channel < 2 ? "PHONES" : "SPKR") + (sig.channel % 2 == 0 ? " L" : " R");
+    // "BUS 1L", "MAIN 1R", "MTX 2L", "CH 3", "AUX 1L".
     const bool stereo = sig.strip->isOutput() || sig.strip->params.stereo.load();
-    return shortStripLabel (*sig.strip) + (stereo ? (sig.channel == 0 ? " L" : " R") : juce::String());
+    const char* kind = sig.strip->isBus() ? "BUS " : sig.strip->getKind() == StripKind::Main ? "MAIN " : sig.strip->getKind() == StripKind::Matrix ? "MTX "
+                       : sig.strip->getKind() == StripKind::Aux                                ? "AUX "
+                                                                                               : "CH ";
+    return kind + juce::String (sig.strip->getNumber()) + (stereo ? (sig.channel == 0 ? "L" : "R") : juce::String());
 }
 
+//==============================================================================
 void RoutingPage::paintChannelTile (juce::Graphics& g, juce::Rectangle<int> area, Strip& s, bool selected) const
 {
-    // The input being patched (MAIN or ALT); a channel listening to its ALT
-    // input is marked "ALT" in orange. Without any source the colour is dim.
+    // [WING 59 x 77] The channel's colour strip (17 px, its name in black) over
+    // the body: a patched channel shows its icon and its source's label (blue
+    // mono, olive stereo), an unpatched one only its number on a darker body.
+    // The input shown is the one being patched (MAIN or ALT); a channel
+    // listening to its ALT input carries an orange ALT chip.
     const int port = editAlt ? s.getAltInputLeft() : s.getInputLeft();
     const int portRight = editAlt ? s.getAltInputRight() : s.getInputRight();
     const bool stereo = s.params.stereo.load();
 
-    TileSpec t;
-    t.strip = stripDisplayColour (s);
-    t.name = hasCustomName (s) ? stripName (s).toUpperCase() : juce::String();
-    t.number = shortStripLabel (s);
-    t.icon = iconOf (s);
-    t.selected = selected;
-    t.chip = s.isUsingAltInput() ? "ALT" : "";
+    auto r = area.toFloat();
+    auto strip = r.removeFromTop (r.getHeight() * 17.0f / 77.0f);
+    g.setColour (stripHasSource (s) ? s.getColour() : dimmed (s.getColour()));
+    g.fillRect (strip);
+    if (hasCustomName (s))
+    {
+        g.setColour (juce::Colours::black);
+        g.setFont (fontFittingWidth (capFont (9.0f), stripName (s).toUpperCase(), strip.getWidth() - 4.0f, 0.7f));
+        g.drawFittedText (stripName (s).toUpperCase(), strip.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
+    }
+    g.setColour (port >= 0 ? Colours::screenTile : tileOff);
+    g.fillRect (r);
+
+    auto label = r.removeFromBottom (r.getHeight() * 18.0f / 60.0f);
+    g.setFont (capFont (port >= 0 ? 9.5f : 10.5f));
     if (port >= 0)
     {
-        // Mono sources in blue, stereo in olive.
-        t.labelColour = stereo ? stereoLabel : monoLabel;
-        t.label = sourceName (port);
-        if (stereo && MixerEngine::isOscSource (port))
-            t.label = "OSC 1/2";
-        else if (stereo && UsbRecorder::isPlayerSource (port))
-            t.label = "PLAYER " + juce::String (UsbRecorder::playerChannelOf (port) + 1) + "/"
-                      + juce::String (UsbRecorder::playerChannelOf (portRight >= 0 ? portRight : port + 1) + 1);
-        else if (stereo && ! Recorder::isPlaybackSource (port))
-            t.label = juce::String (port + 1) + "/" + juce::String ((portRight >= 0 ? portRight : port + 1) + 1);
-        else if (stereo)
-            t.label = "PLAY " + juce::String (Recorder::playbackChannelOf (port) + 1) + "/"
-                      + juce::String (Recorder::playbackChannelOf (portRight >= 0 ? portRight : port + 1) + 1);
+        drawStripIcon (g, s, r.reduced (r.getWidth() * 0.18f, r.getHeight() * 0.08f).translated (0.0f, r.getHeight() * 0.04f), iconGrey);
+        auto text = sourceName (port);
+        if (stereo && sourceName (port) == routing::sourceLabel (port))
+            text = routing::pairLabel (port, portRight >= 0 ? portRight : port + 1);
+        g.setColour (! sourcePresent (port) ? naLabel : stereo ? stereoLabel : monoLabel);
+        g.setFont (fontFittingWidth (g.getCurrentFont(), text, label.getWidth() - 2.0f, 0.7f));
+        g.drawFittedText (text, label.toNearestInt().reduced (1, 0), juce::Justification::centredTop, 1, 0.7f);
     }
-    paintTile (g, area, t);
+    else
+    {
+        g.setColour (numberGrey);
+        g.drawText (shortStripLabel (s), label.toNearestInt().translated (0, -px (2.0f)), juce::Justification::centredTop);
+    }
+    if (s.isUsingAltInput())
+        drawChip (g, juce::Rectangle<float> (wingPx (24.0f), wingPx (12.0f)).withPosition (r.getRight() - wingPx (26.0f), r.getY() + wingPx (2.0f)), "ALT",
+                  Colours::alt, juce::Colours::black);
+    if (selected)
+        drawSelection (g, area);
 }
 
-void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, int port, bool marked) const
+void RoutingPage::paintSourceTile (juce::Graphics& g, juce::Rectangle<int> area, Group group, int index, bool marked, int slot) const
 {
-    if (port < 0)
-        return;
-    // The source's colour and icon (SOURCES > ICON/COLOR), its name, the 48
-    // (phantom) and M (mute) chips, a mini meter, and a stereo / mid-side
-    // pair's label in olive with the link glyph.
-    const bool usbPlayer = UsbRecorder::isPlayerSource (port);
-    const bool osc = MixerEngine::isOscSource (port);
-    const bool playback = Recorder::isPlaybackSource (port) || usbPlayer;
-    const auto* src = sourceParams (port);
+    // [WING 80 x 68] The source's colour strip (16 px, its name) over the body:
+    // its icon, the 48 (phantom) and M (mute) chips beside a mini meter, and
+    // the label (CHANNELS: "LCL 3", blue or olive for a pair; SOURCES: the
+    // number in blue and the gain). A port the interface lacks reads n/a.
+    const int port = routing::sourceAt (group, index);
+    const auto* src = port >= 0 ? sourceParams (port) : nullptr;
     const int colour = src != nullptr ? src->colour.load() : 1;
-    const int icon = src != nullptr ? src->icon.load() : 0;
-    const int pairing = src != nullptr ? src->mode.load() : (int) ld::kSourceMono;
-    TileSpec t;
-    t.strip = playback && colour == 1 ? playbackStrip : wingColour (colour);
-    const int index = MixerEngine::sourceIndex (port);
-    t.name = index >= 0 ? ctx.engine.getSourceName (index).toUpperCase() : juce::String();
-    t.number = juce::String ((osc         ? MixerEngine::oscChannelOf (port)
-                              : usbPlayer ? UsbRecorder::playerChannelOf (port)
-                              : playback  ? Recorder::playbackChannelOf (port)
-                                          : port) + 1);
-    t.label = osc         ? MixerEngine::oscSourceName (MixerEngine::oscChannelOf (port))
-              : usbPlayer ? UsbRecorder::playerSourceName (UsbRecorder::playerChannelOf (port))
-              : playback  ? Recorder::playbackSourceName (Recorder::playbackChannelOf (port))
-                          : portName (port, false);
-    t.labelColour = pairing != ld::kSourceMono ? stereoLabel : (playback ? FileColours::wav : monoLabel);
-    t.icon = [icon, playback, osc] (juce::Graphics& gr, juce::Rectangle<float> r)
+    const bool playback = group == Group::WlivePlay || group == Group::UsbPlayer;
+    const auto stripColour = playback && colour == 1 ? playbackStrip : wingColour (colour);
+    const bool numbered = mode == Mode::Sources;
+    if (port < 0 || src == nullptr || ! sourcePresent (port))
     {
-        if (icon <= 0 || ! drawWingIcon (gr, icon, r, Dark::textDim))
-            drawIcon (gr, osc ? Icon::Sine : playback ? Icon::Waveform : Icon::Xlr, r, Dark::textDim);
-    };
-    t.selected = marked;
-    // [3.1, D14] the right edge of the body holds the 48 / M chips (grey when
-    // off) beside a vertical mini meter, so the number moves left of them.
-    // Small tiles (small windows) keep only the meter.
-    const bool roomy = area.getHeight() >= 34;
-    t.rightColumn = src != nullptr ? (roomy ? 0.36f : 0.1f) : 0.0f;
-    paintTile (g, area, t);
-    if (src == nullptr)
+        const auto label = port >= 0 ? routing::sourceLabel (port) : juce::String (routing::info (group).prefix) + " " + juce::String (index + 1);
+        if (! numbered)
+        {
+            paintNaTile (g, area, stripColour, label, 16.0f / 68.0f, true, marked);
+            return;
+        }
+        paintNaTile (g, area, stripColour, {}, 16.0f / 68.0f, true, marked);
+        auto bottom = area.toFloat().withTrimmedTop (area.getHeight() * 0.66f).withTrimmedRight (area.getWidth() * 0.12f).reduced (wingPx (6.0f), 0.0f);
+        g.setColour (naLabel);
+        g.setFont (capFont (9.5f));
+        g.drawText (juce::String (index + 1), bottom.toNearestInt(), juce::Justification::centredLeft);
+        if (src != nullptr)
+        {
+            g.setColour (naText);
+            g.drawText (juce::String (src->gainDb.load(), 1) + " dB", bottom.toNearestInt(), juce::Justification::centredRight);
+        }
         return;
+    }
 
-    auto body = area.toFloat();
-    body.removeFromTop (juce::jmax (12.0f, body.getHeight() * 0.22f));
-    body.removeFromBottom (juce::jmin (screenCap (20.0f), body.getHeight() * 0.3f));
-    body = body.reduced (0.0f, 2.0f);
+    const int pairing = src->mode.load();
+    auto r = area.toFloat();
+    auto strip = r.removeFromTop (r.getHeight() * 16.0f / 68.0f);
+    g.setColour (stripColour);
+    g.fillRect (strip);
+    if (const int idx = MixerEngine::sourceIndex (port); idx >= 0)
+        if (const auto name = ctx.engine.getSourceName (idx).toUpperCase(); name.isNotEmpty())
+        {
+            g.setColour (juce::Colours::black);
+            g.setFont (fontFittingWidth (capFont (9.0f), name, strip.getWidth() - 4.0f, 0.7f));
+            g.drawFittedText (name, strip.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
+        }
+    g.setColour (Colours::screenTile);
+    g.fillRect (r);
+
+    // The mini meter at the right edge (the group's tiles keep their peaks).
+    const float peak = juce::isPositiveAndBelow (slot, (int) sourcePeaks.size()) ? sourcePeaks[(size_t) slot] : 0.0f;
+    const float u = r.getWidth() / 80.0f, v = r.getHeight() / 52.0f;
+    drawMiniMeter (g, juce::Rectangle<float> (r.getX() + 72.0f * u, r.getY() + 2.0f * v, 4.0f * u, 46.0f * v),
+                   juce::jlimit (0.0f, 1.0f, (juce::Decibels::gainToDecibels (peak, -60.0f) + 60.0f) / 60.0f));
+
+    // The icon at the left, 48 over M (grey, lit red) beside the meter.
+    const auto iconArea = juce::Rectangle<float> (r.getX() + 6.0f * u, r.getY() + 4.0f * v, 30.0f * u, 30.0f * v);
+    drawSourceIcon (g, port, src->icon.load(), iconArea.withSizeKeepingCentre (juce::jmin (iconArea.getWidth(), iconArea.getHeight()), juce::jmin (iconArea.getWidth(), iconArea.getHeight())),
+                    iconGrey);
+    if (area.getHeight() >= 30)
+    {
+        const auto chip48 = juce::Rectangle<float> (r.getX() + 52.0f * u, r.getY() + 4.0f * v, 17.0f * u, 12.0f * v);
+        // An oscillator has no preamp: its chip shows SIN, PNK or WHT (a pair's, OSC 1's).
+        if (group == Group::Oscillator)
+        {
+            static const char* const types[] = { "SIN", "PNK", "WHT" };
+            const auto* o = ctx.engine.getOscillator (pairing != ld::kSourceMono ? 0 : MixerEngine::oscChannelOf (port));
+            drawChip (g, chip48.withLeft (chip48.getX() - 6.0f * u), types[juce::jlimit (0, 2, o != nullptr ? (int) o->mode.load() : 0)], Colours::chipOff,
+                      juce::Colours::black);
+        }
+        else
+            drawChip (g, chip48, "48", src->phantom.load() ? Colours::mute : Colours::chipOff, juce::Colours::black);
+        drawChip (g, chip48.translated (0.0f, 14.0f * v), "M", src->mute.load() ? Colours::mute : Colours::chipOff, juce::Colours::black);
+    }
+
+    // A stereo or mid/side pair: the link glyph (o-o; o|o for mid/side) under the icon.
     if (pairing != ld::kSourceMono)
     {
-        // The pair's link glyph (o-o; o|o for mid/side) at the top left.
-        const float d = juce::jlimit (4.0f, screenCap (7.0f), body.getHeight() * 0.22f);
-        auto link = juce::Rectangle<float> (d * 3.2f, d).withPosition (body.getX() + 3.0f, body.getY());
+        const float d = 6.0f * u;
+        auto link = juce::Rectangle<float> (d * 3.2f, d).withPosition (r.getX() + 38.0f * u, r.getY() + 4.0f * v);
         g.setColour (stereoLabel);
         g.drawEllipse (link.withWidth (d), 1.2f);
         g.drawEllipse (link.withTrimmedLeft (link.getWidth() - d), 1.2f);
@@ -758,90 +1077,131 @@ void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, 
             g.drawLine (link.getCentreX(), link.getY(), link.getCentreX(), link.getBottom(), 1.2f);
     }
 
-    // The mini meter (the tiles of the source group shown keep their peaks):
-    // a thin vertical bar of segments at the right edge.
-    const auto& grid = mode == Mode::Channels ? rightPorts : leftPorts;
-    const int slot = (int) (std::find (grid.begin(), grid.end(), area) - grid.begin());
-    const float peak = juce::isPositiveAndBelow (slot, (int) sourcePeaks.size()) ? sourcePeaks[(size_t) slot] : 0.0f;
-    auto meter = body.removeFromRight (juce::jmax (3.0f, body.getWidth() * 0.07f)).translated (-2.0f, 0.0f);
-    const float pos = juce::jlimit (0.0f, 1.0f, (juce::Decibels::gainToDecibels (peak, -60.0f) + 60.0f) / 60.0f);
-    const int segments = juce::jmax (4, (int) (meter.getHeight() / 2.5f));
-    const float segH = meter.getHeight() / (float) segments;
-    for (int i = 0; i < segments; ++i)
+    auto bottom = juce::Rectangle<float> (r.getX() + 4.0f * u, r.getY() + 36.0f * v, 66.0f * u, 14.0f * v);
+    g.setFont (capFont (9.5f));
+    if (numbered)
     {
-        const bool lit = pos > (float) i / (float) segments;
-        g.setColour (lit ? (i == segments - 1 ? Colours::meterRed : Colours::meterGreen) : Colours::screenWell);
-        g.fillRect (meter.getX(), meter.getBottom() - (float) (i + 1) * segH + 0.5f, meter.getWidth(), juce::jmax (1.0f, segH - 1.0f));
-    }
-
-    if (! roomy)
-        return;
-    // 48 (phantom) over M (mute): grey with dark text, lit red when on.
-    auto chips = body.removeFromRight (body.getWidth() * 0.26f).reduced (1.0f, 0.0f).translated (-3.0f, 0.0f);
-    const float chipH = juce::jmin (screenCap (11.0f), chips.getHeight() * 0.42f);
-    chips = chips.withSizeKeepingCentre (chips.getWidth(), chipH * 2.0f + 2.0f);
-    // An oscillator has no preamp: its chip shows SIN, PNK or WHT (a pair's, OSC 1's).
-    if (osc)
-    {
-        static const char* const types[] = { "SIN", "PNK", "WHT" };
-        const auto* o = ctx.engine.getOscillator (pairing != ld::kSourceMono ? 0 : MixerEngine::oscChannelOf (port));
-        drawChip (g, chips.removeFromTop (chipH), types[juce::jlimit (0, 2, o != nullptr ? (int) o->mode.load() : 0)], Colours::chipOff, juce::Colours::black);
+        g.setColour (pairing != ld::kSourceMono ? stereoLabel : monoLabel);
+        g.drawText (juce::String (routing::numberInGroup (port) + 1), bottom.toNearestInt(), juce::Justification::centredLeft);
+        g.setColour (Colours::textDim);
+        g.drawText (juce::String (src->gainDb.load(), 1) + " dB", bottom.toNearestInt(), juce::Justification::centredRight);
     }
     else
-        drawChip (g, chips.removeFromTop (chipH), "48", src->phantom.load() ? Colours::mute : Colours::chipOff, juce::Colours::black);
-    chips.removeFromTop (2.0f);
-    drawChip (g, chips.removeFromTop (chipH), "M", src->mute.load() ? Colours::mute : Colours::chipOff, juce::Colours::black);
+    {
+        const auto label = routing::sourceLabel (port);
+        g.setColour (pairing != ld::kSourceMono ? stereoLabel : monoLabel);
+        g.setFont (fontFittingWidth (g.getCurrentFont(), label, bottom.getWidth(), 0.7f));
+        g.drawText (label, bottom.toNearestInt(), juce::Justification::centred);
+    }
+    if (marked)
+        drawSelection (g, area);
 }
 
-void RoutingPage::paintOutputPort (juce::Graphics& g, juce::Rectangle<int> area, int port, bool selected) const
+void RoutingPage::paintOutputTile (juce::Graphics& g, juce::Rectangle<int> area, Group group, int index, bool selected) const
 {
-    const auto feeder = feederOf (port);
-    if (feeder.channel < 0)
+    // [WING 59 x 69] The feeding signal's colour strip (14 px) over the body:
+    // a mini level bar, the output's number at the right and the signal's
+    // label (olive: one side of a stereo signal). Unpatched: dim strip, darker body.
+    const int port = routing::outputAt (group, index);
+    const auto feeder = port >= 0 ? feederOf (port) : Signal { nullptr, -1 };
+    const bool present = port >= 0 && (routing::isRecorderPort (port) || port < numHardware (true));
+    const auto colour = feeder.channel < 0 ? wingColour (1) : feeder.strip != nullptr ? feeder.strip->getColour() : Colours::lime;
+    if (! present)
     {
-        // An unpatched output: only its number in a ring.
-        auto r = area.toFloat();
-        g.setColour (Colours::screenTile);
-        g.fillRect (r);
-        const float d = juce::jmin (r.getWidth(), r.getHeight()) * 0.56f;
-        auto ring = juce::Rectangle<float> (d, d).withCentre (r.getCentre());
-        g.setColour (Dark::textDim);
-        g.drawEllipse (ring, 2.0f);
-        g.setFont (wingFontFit (TypeScale::value * 0.85f, d * 0.48f, WingWeight::SemiBold));
-        g.drawFittedText (juce::String ((isRecorderPort (port) ? port - kRecorderPortBase : port) + 1), ring.toNearestInt(), juce::Justification::centred, 1, 0.6f);
-        if (selected)
-        {
-            g.setColour (Colours::yellow);
-            g.drawRect (r.expanded (2.0f), 3.0f);
-        }
+        paintNaTile (g, area, colour, feeder.channel >= 0 ? signalLabel (feeder) : juce::String (routing::info (group).prefix) + " " + juce::String (index + 1),
+                     14.0f / 69.0f, false, selected);
         return;
     }
-
-    TileSpec t;
-    t.strip = feeder.strip != nullptr ? stripDisplayColour (*feeder.strip) : Colours::lime;
-    t.name = feeder.strip != nullptr ? (hasCustomName (*feeder.strip) ? stripName (*feeder.strip).toUpperCase() : juce::String())
-                                     : monitorSignalName (feeder.channel);
-    t.number = juce::String ((isRecorderPort (port) ? port - kRecorderPortBase : port) + 1);
-    t.label = signalLabel (feeder);
-    t.labelColour = feeder.strip == nullptr || feeder.strip->isOutput() || feeder.strip->params.stereo.load() ? stereoLabel : monoLabel;
-    t.icon = feeder.strip != nullptr ? iconOf (*feeder.strip) : iconOf (feeder.channel < 2 ? Icon::Headphones : Icon::Speaker);
-    t.selected = selected;
-    paintTile (g, area, t);
+    auto r = area.toFloat();
+    auto strip = r.removeFromTop (r.getHeight() * 14.0f / 69.0f);
+    g.setColour (feeder.channel < 0 ? dimmed (colour) : colour);
+    g.fillRect (strip);
+    if (feeder.strip != nullptr && hasCustomName (*feeder.strip))
+    {
+        g.setColour (juce::Colours::black);
+        g.setFont (fontFittingWidth (capFont (8.0f), stripName (*feeder.strip).toUpperCase(), strip.getWidth() - 4.0f, 0.7f));
+        g.drawFittedText (stripName (*feeder.strip).toUpperCase(), strip.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
+    }
+    g.setColour (feeder.channel < 0 ? tileOff : Colours::screenTile);
+    g.fillRect (r);
+    const float u = r.getWidth() / 59.0f, v = r.getHeight() / 55.0f;
+    g.setColour (Colours::screenWell);
+    g.fillRect (juce::Rectangle<float> (r.getX() + 36.0f * u, r.getY() + 3.0f * v, 20.0f * u, 5.0f * v));
+    g.setColour (numberGrey);
+    g.setFont (capFont (13.0f));
+    g.drawText (juce::String (routing::outputNumber (port)), juce::Rectangle<float> (r.getX(), r.getY() + 12.0f * v, 56.0f * u, 22.0f * v).toNearestInt(),
+                juce::Justification::centredRight);
+    if (feeder.channel >= 0)
+    {
+        const bool stereo = feeder.strip == nullptr || feeder.strip->isOutput() || feeder.strip->params.stereo.load();
+        const auto text = signalLabel (feeder);
+        auto label = juce::Rectangle<float> (r.getX(), r.getY() + 38.0f * v, r.getWidth(), 15.0f * v);
+        g.setColour (stereo ? stereoLabel : monoLabel);
+        g.setFont (fontFittingWidth (capFont (9.5f), text, label.getWidth() - 2.0f, 0.7f));
+        g.drawText (text, label.toNearestInt(), juce::Justification::centred);
+    }
+    if (selected)
+        drawSelection (g, area);
 }
 
-void RoutingPage::paintSignal (juce::Graphics& g, juce::Rectangle<int> area, const Signal& sig, bool marked) const
+void RoutingPage::paintSignal (juce::Graphics& g, juce::Rectangle<int> area, const Signal& sig, int index, bool marked) const
 {
-    TileSpec t;
-    t.strip = sig.strip != nullptr ? stripDisplayColour (*sig.strip) : Colours::lime;
-    t.name = sig.strip != nullptr ? (hasCustomName (*sig.strip) ? stripName (*sig.strip).toUpperCase() : juce::String())
-                                  : monitorSignalName (sig.channel);
-    t.number = sig.strip != nullptr ? shortStripLabel (*sig.strip) : monitorSignalNumber (sig.channel);
-    t.label = signalLabel (sig);
-    t.labelColour = sig.strip == nullptr || sig.strip->isOutput() || sig.strip->params.stereo.load() ? stereoLabel : monoLabel;
-    t.icon = sig.strip != nullptr ? iconOf (*sig.strip) : iconOf (sig.channel < 2 ? Icon::Headphones : Icon::Speaker);
-    t.selected = marked;
-    paintTile (g, area, t);
+    // [WING 80 x 68] The signal's colour strip over its number ("1L"), a mini
+    // meter, the stereo link glyph and the group chip in the signal's colour.
+    if (sig.channel < 0)
+    {
+        paintNaTile (g, area, wingColour (1), juce::String (routing::info (signalGroup).prefix) + " " + juce::String (index + 1), 16.0f / 68.0f, true,
+                     false);
+        return;
+    }
+    const auto colour = sig.strip != nullptr ? stripDisplayColour (*sig.strip) : Colours::lime;
+    auto r = area.toFloat();
+    auto strip = r.removeFromTop (r.getHeight() * 16.0f / 68.0f);
+    g.setColour (colour);
+    g.fillRect (strip);
+    const auto name = sig.strip != nullptr ? (hasCustomName (*sig.strip) ? stripName (*sig.strip).toUpperCase() : juce::String()) : monitorSignalName (sig.channel);
+    if (name.isNotEmpty())
+    {
+        g.setColour (juce::Colours::black);
+        g.setFont (fontFittingWidth (capFont (9.0f), name, strip.getWidth() - 4.0f, 0.7f));
+        g.drawFittedText (name, strip.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
+    }
+    g.setColour (Colours::screenTile);
+    g.fillRect (r);
+    const float u = r.getWidth() / 80.0f, v = r.getHeight() / 52.0f;
+    drawMiniMeter (g, juce::Rectangle<float> (r.getX() + 70.0f * u, r.getY() + 4.0f * v, 4.0f * u, 26.0f * v), 0.0f);
+
+    const bool stereo = sig.strip == nullptr || sig.strip->isOutput() || sig.strip->params.stereo.load();
+    juce::String number;
+    if (sig.strip == nullptr)
+        number = monitorSignalNumber (sig.channel);
+    else
+        number = (sig.strip->getKind() == StripKind::Aux ? "A" : "") + juce::String (sig.strip->getNumber()) + (stereo ? (sig.channel == 0 ? "L" : "R") : "");
+    g.setColour (numberGrey);
+    g.setFont (fontFittingWidth (capFont (14.0f), number, 60.0f * u, 0.7f));
+    g.drawText (number, juce::Rectangle<float> (r.getX(), r.getY() + 6.0f * v, 66.0f * u, 24.0f * v).toNearestInt(), juce::Justification::centredRight);
+
+    // o-o for a stereo signal, o for a mono one.
+    const float d = 7.0f * u, y = r.getY() + 41.0f * v;
+    g.setColour (Colours::chipOff);
+    g.drawEllipse (juce::Rectangle<float> (d, d).withCentre ({ r.getX() + 10.0f * u, y }), juce::jmax (1.0f, wingPx (1.5f)));
+    if (stereo)
+    {
+        g.drawEllipse (juce::Rectangle<float> (d, d).withCentre ({ r.getX() + 32.0f * u, y }), juce::jmax (1.0f, wingPx (1.5f)));
+        g.drawLine (r.getX() + 10.0f * u + d / 2.0f, y, r.getX() + 32.0f * u - d / 2.0f, y, juce::jmax (1.0f, wingPx (1.5f)));
+    }
+    const char* chip = sig.strip == nullptr                            ? "MON"
+                       : sig.strip->isBus()                            ? "BUS"
+                       : sig.strip->getKind() == StripKind::Main       ? "MAIN"
+                       : sig.strip->getKind() == StripKind::Matrix     ? "MTX"
+                       : sig.strip->getKind() == StripKind::Aux        ? "AUX"
+                                                                       : "CH";
+    drawChip (g, juce::Rectangle<float> (r.getX() + 46.0f * u, r.getY() + 35.0f * v, 30.0f * u, 12.0f * v), chip, colour, juce::Colours::black);
+    if (marked)
+        drawSelection (g, area);
 }
 
+//==============================================================================
 ld::SourceParams* RoutingPage::sourceParams (int port) const
 {
     // A stereo or mid/side pair runs on its first source's settings.
@@ -870,272 +1230,369 @@ namespace
 
 void RoutingPage::layoutSourcePanel()
 {
-    // The SOURCES settings (fig. 31): the tab row, the connections banner, then
-    // INITIALIZE, the source box and MONO / STEREO / MID/SIDE at the left, the
-    // meter in the middle, +48V, POL, MUTE and the GAIN fader at the right.
+    // [WING px, page coordinates] The SOURCES settings (fig. 31): the tabs, the
+    // banner with the channels using the source, then the boxes: INITIALIZE;
+    // the source (group, number, MONO / STEREO / MID/SIDE); REMOTE and RCV
+    // CUST; the meter with +48V, POL, MUTE and the GAIN fader.
     sourceColourCells.clear();
     sourceIconCells.clear();
-    auto r = rightPanel;
-    auto tabs = r.removeFromTop (juce::jlimit (30, screenCap (40), r.getHeight() / 11));
-    const int tw = tabs.getWidth() / 3;
-    for (auto& t : sourceTabKeys)
-        t = tabs.removeFromLeft (tw).reduced (1, 0);
-    r.removeFromTop (6);
-    sourceBanner = r.removeFromTop (juce::jlimit (30, screenCap (46), r.getHeight() / 9)).reduced (6, 0);
-    r.removeFromTop (8);
-    sourceBody = r.reduced (6, 0);
+    sourceTagCells.clear();
+    const float bottom = juce::jmin (672.0f, (float) getHeight() * 800.0f / juce::jmax (1.0f, getWingScreenHeight()) - 2.0f);
+    sourceTabBar = wingRect (728.0f, 0.0f, 544.0f, 58.0f);
+    sourceTabKeys[0] = wingRect (728.0f, 0.0f, 158.0f, 56.0f);
+    sourceTabKeys[1] = wingRect (888.0f, 0.0f, 158.0f, 56.0f);
+    sourceTabKeys[2] = wingRect (1048.0f, 0.0f, 158.0f, 56.0f);
+    sourceBanner = wingRect (728.0f, 72.0f, 544.0f, 76.0f);
+    sourceBody = wingRect (728.0f, 160.0f, 544.0f, bottom - 160.0f);
 
-    auto body = sourceBody;
-    const int kh = juce::jlimit (16, screenCap (40), body.getHeight() / 9);
-    auto left = body.removeFromLeft (body.getWidth() * 46 / 100);
-    sourceInitKey = left.removeFromTop (kh).withWidth (juce::jmin (left.getWidth(), screenCap (170)));
-    left.removeFromTop (10);
-    // The box takes what INITIALIZE and the three mode keys leave (small screens).
-    sourceBox = left.removeFromTop (juce::jmax (kh, juce::jmin (left.getHeight() - 3 * (kh + 4) - 6, kh * 3))).withWidth (juce::jmin (left.getWidth(), screenCap (170)));
-    left.removeFromTop (6);
-    for (auto& k : sourceModeKeys)
-    {
-        k = left.removeFromTop (kh).withWidth (juce::jmin (left.getWidth(), screenCap (170)));
-        left.removeFromTop (4);
-    }
-    body.removeFromLeft (6);
-    sourceMeter = body.removeFromLeft (juce::jlimit (36, screenCap (60), body.getWidth() / 4)).withTrimmedBottom (kh / 2);
-    body.removeFromLeft (10);
-    auto keys = body.removeFromLeft (juce::jmin (body.getWidth() / 2, screenCap (96)));
-    // [I8] 48V and POL square icon keys at the top, MUTE at the bottom.
-    for (auto* k : { &sourcePhantomKey, &sourcePolKey })
-    {
-        *k = keys.removeFromTop (juce::jmin (keys.getWidth() * 4 / 5, kh * 2)).withSizeKeepingCentre (juce::jmin (keys.getWidth(), kh * 2) * 4 / 5, juce::jmin (keys.getWidth() * 4 / 5, kh * 2));
-        keys.removeFromTop (8);
-    }
-    keys.removeFromBottom (kh / 2);
-    sourceMuteKey = keys.removeFromBottom (kh + 6);
-    body.removeFromLeft (8);
-    sourceGainFader = body.withTrimmedBottom (kh / 2);
-    // An OSC source: SINE / PINK / WHITE keys in the 48V / POL column, the FREQ
-    // field across that column and the fader's, LEVEL under it.
-    {
-        auto osc = keys.withTop (sourcePhantomKey.getY());
-        for (auto& k : oscModeKeys)
-        {
-            k = osc.removeFromTop (kh);
-            osc.removeFromTop (4);
-        }
-        osc.removeFromTop (4);
-        oscFreqField = osc.removeFromTop (kh * 3 / 2).withRight (sourceGainFader.getRight());
-        oscLevelFader = sourceGainFader.withTop (oscFreqField.getBottom() + 6);
-    }
+    initBox = wingRect (728.0f, 160.0f, 220.0f, 144.0f);
+    sourceInitKey = wingRect (744.0f, 204.0f, 186.0f, 56.0f);
+    sourceBox = wingRect (728.0f, 312.0f, 220.0f, bottom - 312.0f);
+    const float modeTop = juce::jmin (464.0f, bottom - 16.0f - 192.0f);
+    modeBox = wingRect (744.0f, modeTop, 188.0f, 192.0f);
+    for (int i = 0; i < 3; ++i)
+        sourceModeKeys[(size_t) i] = wingRect (744.0f, modeTop + 64.0f * (float) i, 188.0f, 64.0f);
+
+    remoteBox = wingRect (956.0f, 160.0f, 82.0f, 290.0f);
+    for (int i = 0; i < 4; ++i)
+        remoteKeys[(size_t) i] = wingRect (964.0f, 180.0f + 66.0f * (float) i, 66.0f, 64.0f);
+    rcvBox = wingRect (956.0f, bottom - 147.0f, 82.0f, 82.0f);
+    rcvKey = rcvBox.reduced (px (8.0f));
+
+    meterBox = wingRect (1046.0f, 160.0f, 226.0f, bottom - 160.0f);
+    sourceMeter = wingRect (1060.0f, 200.0f, 56.0f, juce::jmin (360.0f, bottom - 200.0f - 120.0f));
+    sourcePhantomKey = wingRect (1200.0f, 184.0f, 48.0f, 48.0f);
+    sourcePolKey = wingRect (1200.0f, 288.0f, 48.0f, 48.0f);
+    sourceMuteKey = wingRect (1062.0f, bottom - 72.0f, 84.0f, 56.0f);
+    sourceGainFader = wingRect (1192.0f, juce::jmax (388.0f, bottom - 284.0f), 64.0f, juce::jmin (268.0f, bottom - 16.0f - 388.0f));
+    // An OSC source: SINE / PINK / WHITE in the REMOTE column, FREQ above the
+    // LEVEL fader in place of +48V and POL.
+    for (int i = 0; i < 3; ++i)
+        oscModeKeys[(size_t) i] = remoteKeys[(size_t) i + 1];
+    oscFreqField = wingRect (1140.0f, 184.0f, 122.0f, 64.0f);
+    oscLevelFader = sourceGainFader;
 
     // TAGS: the 8 mute groups the source belongs to (2 x 4).
-    sourceTagCells.clear();
     {
-        auto tags = sourceBody.withTrimmedTop (juce::jlimit (24, screenCap (34), sourceBody.getHeight() / 9) + 6);
-        tags = tags.withHeight (juce::jmin (tags.getHeight(), screenCap (150)));
+        auto tags = sourceBody.withTrimmedTop (px (40.0f));
+        tags = tags.withHeight (juce::jmin (tags.getHeight(), px (200.0f)));
         const int cw = tags.getWidth() / 4, chh = tags.getHeight() / 2;
         for (int i = 0; i < kNumMuteGroups; ++i)
-            sourceTagCells.push_back ({ juce::Rectangle<int> (tags.getX() + (i % 4) * cw, tags.getY() + (i / 4) * chh, cw, chh).reduced (4), i });
+            sourceTagCells.push_back ({ juce::Rectangle<int> (tags.getX() + (i % 4) * cw, tags.getY() + (i / 4) * chh, cw, chh).reduced (px (4.0f)), i });
     }
 
     // ICON/COLOR: the 18 colours (6 x 3) and a row of icons.
-    auto look = sourceBody;
+    auto look = sourceBody.reduced (px (8.0f));
     auto colours = look.removeFromTop (look.getHeight() / 2);
     const int cw = colours.getWidth() / 6, ch = colours.getHeight() / 3;
     for (int i = 0; i < 18; ++i)
-        sourceColourCells.push_back ({ juce::Rectangle<int> (colours.getX() + (i % 6) * cw, colours.getY() + (i / 6) * ch, cw, ch).reduced (4), i + 1 });
-    look.removeFromTop (10);
+        sourceColourCells.push_back ({ juce::Rectangle<int> (colours.getX() + (i % 6) * cw, colours.getY() + (i / 6) * ch, cw, ch).reduced (px (4.0f)), i + 1 });
+    look.removeFromTop (px (10.0f));
     static constexpr int icons[] = { 0, 1, 2, 100, 102, 103, 107, 113, 114, 200, 202, 205, 300, 304, 308, 400, 402, 506, 602, 605 };
     const int iw = look.getWidth() / 10, ih = juce::jmin (look.getHeight() / 2, iw);
     for (int i = 0; i < (int) std::size (icons); ++i)
-        sourceIconCells.push_back ({ juce::Rectangle<int> (look.getX() + (i % 10) * iw, look.getY() + (i / 10) * ih, iw, ih).reduced (3), icons[i] });
+        sourceIconCells.push_back ({ juce::Rectangle<int> (look.getX() + (i % 10) * iw, look.getY() + (i / 10) * ih, iw, ih).reduced (px (3.0f)), icons[i] });
 }
 
 void RoutingPage::paintSourcePanel (juce::Graphics& g) const
 {
-    g.setColour (Dark::body);
-    g.fillRect (rightPanel);
+    // The tabs: the selected one #303030 with a gold top line and big gold
+    // print, the others #202020 with grey print, black lines between them.
+    g.setColour (Colours::screenPanel);
+    g.fillRect (sourceTabBar);
     const char* names[] = { "SETTINGS", "ICON/COLOR", "TAGS" };
     for (int i = 0; i < 3; ++i)
     {
         auto t = sourceTabKeys[(size_t) i];
-        const bool on = i == sourceTab, enabled = true;
-        g.setColour (on ? Dark::tabOn : Dark::tabOff);
+        const bool on = i == sourceTab;
+        g.setColour (juce::Colours::black);
+        g.fillRect (t.expanded (px (2.0f), 0));
+        g.setColour (on ? Colours::screenTile : Colours::screenPanel);
         g.fillRect (t);
         if (on)
         {
-            g.setColour (Colours::yellow);
-            g.fillRect (t.withHeight (3));
+            g.setColour (Colours::gold);
+            g.fillRect (t.withHeight (px (3.0f)));
         }
-        g.setColour (on ? Colours::yellow : (enabled ? Dark::textDim : Dark::textDim.withAlpha (0.4f)));
-        g.setFont (wingFontFit (TypeScale::value * 0.85f, (float) t.getHeight() * 0.5f, WingWeight::SemiBold));
+        g.setColour (on ? Colours::gold : Dark::caption);
+        g.setFont (capFont (on ? 19.0f : 14.0f, on ? WingWeight::SemiBold : WingWeight::Medium));
         g.drawText (names[i], t, juce::Justification::centred);
     }
 
-    // Where the source goes: "NO CONNECTIONS" or the channels patched to it.
-    g.setColour (Dark::header);
+    // Where the source goes: an arrow and the channels patched to it as tiles.
+    g.setColour (Colours::screenPanel);
     g.fillRect (sourceBanner);
-    auto users = inputUsers (selectedSource);
-    // A soloed source also goes to the SOURCE SOLO channel ("-> 39 SRC SOLO").
-    if (auto* host = ctx.engine.getSourceSoloHost(); host != nullptr && ctx.engine.isSourceSoloed (selectedSource))
-        users = (users.isEmpty() ? juce::String() : users + ", ") + host->getLabel() + " SRC SOLO";
-    g.setColour (users.isEmpty() ? Dark::textDim : Dark::text);
-    g.setFont (wingFontFit (TypeScale::value * 0.85f, (float) sourceBanner.getHeight() * 0.5f, WingWeight::SemiBold));
-    g.drawFittedText (users.isEmpty() ? juce::String ("NO CONNECTIONS") : "-> " + users, sourceBanner.reduced (8, 0), juce::Justification::centred, 2);
+    {
+        auto b = sourceBanner.reduced (px (6.0f), px (4.0f));
+        auto arrowArea = b.removeFromLeft (px (28.0f)).toFloat();
+        juce::Path arrow;
+        const auto c = arrowArea.getCentre();
+        const float a = wingPx (10.0f);
+        arrow.addArrow ({ c.x - a, c.y, c.x + a, c.y }, wingPx (6.0f), wingPx (16.0f), wingPx (10.0f));
+        g.setColour (Colours::chipOff);
+        g.fillPath (arrow);
+        auto users = sourceUsers (selectedSource);
+        if (users.empty())
+        {
+            g.setColour (Colours::textDim);
+            g.setFont (capFont (13.0f));
+            g.drawText ("NO CONNECTIONS", b.withTrimmedLeft (px (8.0f)), juce::Justification::centredLeft);
+        }
+        // A soloed source also goes to the SOURCE SOLO channel.
+        if (auto* host = ctx.engine.getSourceSoloHost(); host != nullptr && ctx.engine.isSourceSoloed (selectedSource))
+            users.push_back ({ host, false });
+        const int tileW = px (104.0f);
+        for (size_t i = 0; i < users.size() && b.getWidth() >= tileW; ++i)
+        {
+            auto [s, alt] = users[i];
+            auto tile = b.removeFromLeft (tileW);
+            b.removeFromLeft (px (4.0f));
+            g.setColour (juce::Colours::black);
+            g.fillRect (tile);
+            auto in = tile.reduced (px (2.0f)).toFloat();
+            g.setColour (s->getColour());
+            g.fillRect (in.removeFromTop (in.getHeight() * 0.36f));
+            g.setColour (Colours::screenTile);
+            g.fillRect (in);
+            g.setColour (Colours::textDim);
+            g.setFont (capFont (14.0f));
+            g.drawText (shortStripLabel (*s), in.reduced (wingPx (6.0f), 0.0f).toNearestInt(), juce::Justification::centredLeft);
+            drawStripIcon (g, *s, in.removeFromRight (in.getHeight()).reduced (in.getHeight() * 0.18f), Colours::textDim);
+            if (alt)
+                drawChip (g, juce::Rectangle<float> (wingPx (24.0f), wingPx (12.0f)).withCentre (in.getCentre()), "ALT", Colours::alt, juce::Colours::black);
+        }
+    }
 
     if (sourceTab == 1)
         paintSourceLook (g);
     else if (sourceTab == 2)
         paintSourceTags (g);
-    else if (sourceTab == 0)
-        paintSourceSettings (g, sourceBody);
+    else
+        paintSourceSettings (g);
 }
 
-void RoutingPage::paintSourceSettings (juce::Graphics& g, juce::Rectangle<int>) const
+void RoutingPage::paintSourceSettings (juce::Graphics& g) const
 {
+    for (auto box : { initBox, sourceBox, remoteBox, rcvBox, meterBox })
+    {
+        g.setColour (Colours::screenPanel);
+        g.fillRect (box);
+    }
     const auto* src = sourceParams (selectedSource);
     if (src == nullptr)
     {
         g.setColour (Dark::textDim);
-        g.setFont (wingFont (TypeScale::body));
-        g.drawFittedText ("THIS PORT HAS NO SOURCE SETTINGS", sourceBody, juce::Justification::centredTop, 2);
+        g.setFont (capFont (13.0f));
+        g.drawFittedText ("THIS PORT HAS NO SOURCE SETTINGS", sourceBox.reduced (px (8.0f)), juce::Justification::centredTop, 2);
         return;
     }
 
-    drawOutlinedKey (g, sourceInitKey, Icon::Warning, "INITIALIZE", false, Dark::choice);
+    drawOutlinedKey (g, sourceInitKey, Icon::Reset, "INITIALIZE", false, Dark::choice);
 
-    // The source box: the colour strip with the name, the connector and number.
+    // The source: its group, its number in a gold ring between corner marks.
     {
-        auto box = sourceBox;
-        g.setColour (Dark::well);
-        g.fillRect (box);
-        auto strip = box.removeFromTop (juce::jmax (16, box.getHeight() / 4));
-        g.setColour (wingColour (src->colour.load()));
-        g.fillRect (strip);
-        g.setColour (juce::Colours::black);
-        g.setFont (wingFontFit (TypeScale::body, (float) strip.getHeight() * 0.8f));
-        g.drawFittedText (sourceName (selectedSource).toUpperCase(), strip.reduced (4, 0), juce::Justification::centred, 1, 0.7f);
-        const bool playback = Recorder::isPlaybackSource (selectedSource) || UsbRecorder::isPlayerSource (selectedSource);
-        const auto ring = box.reduced (6).toFloat().withSizeKeepingCentre ((float) juce::jmin (box.getHeight() - 12, screenCap (64)), (float) juce::jmin (box.getHeight() - 12, screenCap (64)));
-        g.setColour (Colours::yellow);
-        g.drawEllipse (ring, 2.0f);
-        const bool osc = MixerEngine::isOscSource (selectedSource);
-        if (src->icon.load() <= 0 || ! drawWingIcon (g, src->icon.load(), ring.reduced (ring.getWidth() * 0.22f), Dark::text))
-            drawIcon (g, osc ? Icon::Sine : playback ? Icon::Waveform : Icon::Xlr, ring.reduced (ring.getWidth() * 0.22f), Dark::text);
+        const auto group = routing::groupOfSource (selectedSource);
+        g.setColour (Dark::caption);
+        g.setFont (capFont (13.0f));
+        g.drawText (routing::info (group).name, sourceBox.withHeight (px (28.0f)).translated (0, px (10.0f)), juce::Justification::centred);
+        const auto centre = juce::Point<float> ((float) sourceBox.getCentreX(), (float) sourceBox.getY() + wingPx (86.0f));
+        const float rad = wingPx (21.0f);
+        g.setColour (Colours::gold);
+        g.drawEllipse (juce::Rectangle<float> (rad * 2.0f, rad * 2.0f).withCentre (centre), wingPx (2.5f));
+        for (auto off : { juce::Point<float> (-0.8f, -0.8f), juce::Point<float> (0.8f, 0.8f) })
+            g.drawEllipse (juce::Rectangle<float> (wingPx (7.0f), wingPx (7.0f)).withCentre (centre + off * rad), wingPx (2.0f));
         g.setColour (Dark::text);
-        g.setFont (wingFont (TypeScale::body));
-        const int shownNumber = osc                                          ? MixerEngine::oscChannelOf (selectedSource)
-                                : UsbRecorder::isPlayerSource (selectedSource) ? UsbRecorder::playerChannelOf (selectedSource)
-                                : playback                                   ? Recorder::playbackChannelOf (selectedSource)
-                                                                             : selectedSource;
-        g.drawText (juce::String (shownNumber + 1),
-                    box.withTrimmedLeft (box.getWidth() * 3 / 4).reduced (2), juce::Justification::bottomRight);
+        g.setFont (capFont (12.0f, WingWeight::SemiBold));
+        g.drawText (juce::String (routing::numberInGroup (selectedSource) + 1), juce::Rectangle<float> (rad * 2.0f, rad * 2.0f).withCentre (centre).toNearestInt(),
+                    juce::Justification::centred);
+        // The corner marks.
+        g.setColour (Colours::chipOff);
+        const float t = wingPx (3.0f), len = wingPx (16.0f), h = wingPx (36.0f);
+        const float left = (float) sourceBox.getX() + wingPx (16.0f), right = (float) sourceBox.getRight() - wingPx (16.0f), top = centre.y;
+        g.fillRect (left, top, len, t);
+        g.fillRect (left, top, t, h);
+        g.fillRect (right - len, top, len, t);
+        g.fillRect (right - t, top, t, h);
     }
 
-    // MONO / STEREO / MID-SIDE (a pair: ports 1-2, 3-4, ...).
-    // [I8] in a black box, the chosen one lit blue.
-    const char* modes[] = { "MONO", "STEREO", "MID/SIDE" };
-    g.setColour (juce::Colours::black);
-    g.fillRect (sourceModeKeys[0].getUnion (sourceModeKeys[2]).expanded (0, 2));
-    for (int i = 0; i < 3; ++i)
+    // MONO / STEREO / MID-SIDE (a pair: ports 1-2, 3-4, ...): in a black box,
+    // the chosen one lit blue, each with its glyph.
     {
-        const bool on = src->mode.load() == i;
-        auto k = sourceModeKeys[(size_t) i];
-        if (on)
+        const char* modes[] = { "MONO", "STEREO", "MID/SIDE" };
+        g.setColour (juce::Colours::black);
+        g.fillRect (modeBox);
+        for (int i = 0; i < 3; ++i)
         {
-            g.setColour (Colours::valueBlue);
-            g.fillRect (k);
+            const bool on = src->mode.load() == i;
+            auto k = sourceModeKeys[(size_t) i];
+            if (on)
+            {
+                g.setColour (Colours::choice);
+                g.fillRect (k);
+            }
+            const auto ink = on ? juce::Colours::black : Dark::text;
+            auto glyph = k.toFloat().withWidth (wingPx (96.0f)).withSizeKeepingCentre (wingPx (60.0f), wingPx (30.0f));
+            const float d = glyph.getHeight(), lw = wingPx (2.5f);
+            g.setColour (ink);
+            if (i == 0)
+                g.drawEllipse (juce::Rectangle<float> (d, d).withCentre (glyph.getCentre()).reduced (lw / 2.0f), lw);
+            else
+            {
+                const auto a = juce::Rectangle<float> (d, d).withCentre (glyph.getCentre().translated (-d * 0.45f, 0.0f)).reduced (lw / 2.0f);
+                const auto b = juce::Rectangle<float> (d, d).withCentre (glyph.getCentre().translated (d * 0.45f, 0.0f)).reduced (lw / 2.0f);
+                if (i == 1)
+                {
+                    g.setColour (on ? juce::Colours::black : Dark::text);
+                    g.fillEllipse (a);
+                    g.drawEllipse (b, lw);
+                }
+                else
+                {
+                    g.drawEllipse (a.translated (-d * 0.1f, 0.0f), lw);
+                    g.drawEllipse (b.translated (d * 0.1f, 0.0f), lw);
+                    g.fillRect (juce::Rectangle<float> (lw, d).withCentre (glyph.getCentre()));
+                }
+            }
+            g.setFont (capFont (13.0f));
+            g.drawText (modes[i], k.withTrimmedLeft (px (96.0f)), juce::Justification::centredLeft);
         }
-        g.setColour (on ? juce::Colours::black : Dark::text);
-        g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), (float) k.getHeight() * 0.36f)));
-        g.drawText (modes[i], k, juce::Justification::centred);
     }
 
-    // The meter (after gain, mute and polarity).
+    // The meter (after gain, mute and polarity): the scale beside a column of segments.
     {
         auto m = sourceMeter.toFloat();
-        g.setColour (Dark::well);
-        g.fillRect (m);
+        auto bar = m.removeFromRight (wingPx (12.0f)).reduced (0.0f, wingPx (4.0f));
         const float db = juce::Decibels::gainToDecibels (selectedSourcePeak, -60.0f);
-        const float pos = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
-        // [I8] a narrow bar at the right with the scale (CLIP .. -60) beside it.
-        auto inner = m.reduced (3.0f, 8.0f);
-        auto bar = inner.removeFromRight (juce::jmax (5.0f, inner.getWidth() * 0.32f));
-        g.setColour (Dark::key);
-        g.fillRect (bar);
-        g.setColour (db > -0.5f ? Colours::meterRed : db > -12.0f ? Colours::meterYellow : Colours::meterGreen);
-        g.fillRect (bar.withTop (bar.getBottom() - bar.getHeight() * pos));
-        g.setColour (Dark::textDim);
-        g.setFont (wingFontPx (juce::jmin (TypeScale::meterScale * getWingScreenHeight(), inner.getWidth() * 0.3f)));
-        for (const auto& [label, at] : { std::pair { "CLIP", 0.0f }, { "-6", 6.0f }, { "-12", 12.0f }, { "-24", 24.0f }, { "-36", 36.0f }, { "-48", 48.0f }, { "-60", 60.0f } })
+        const int segments = juce::jmax (8, (int) (bar.getHeight() / juce::jmax (2.0f, wingPx (4.0f))));
+        const float segH = bar.getHeight() / (float) segments;
+        const float lit = 1.0f - scalePosition (db);
+        for (int i = 0; i < segments; ++i)
         {
-            const float y = bar.getY() + bar.getHeight() * at / 60.0f;
-            g.drawText (label, juce::Rectangle<float> (inner.getX(), y - 6.0f, inner.getWidth() - 2.0f, 12.0f), juce::Justification::centredRight, false);
+            const float at = (float) i / (float) segments;
+            const bool on = selectedSourcePeak > 0.0f && lit > at;
+            g.setColour (on ? (at > 0.95f ? Colours::meterRed : at > 0.66f ? Colours::meterYellow : Colours::meterGreen) : Colours::screenWell);
+            g.fillRect (bar.getX(), bar.getBottom() - (float) (i + 1) * segH, bar.getWidth(), juce::jmax (1.0f, segH - 1.0f));
         }
+        g.setColour (Dark::caption);
+        g.setFont (capFont (8.0f));
+        const char* labels[] = { "CLIP", "-6", "-12", "-24", "-36", "-48", "-60" };
+        for (int i = 0; i < 7; ++i)
+        {
+            const float y = bar.getY() + bar.getHeight() * (float) i / 6.0f;
+            g.drawText (labels[i], juce::Rectangle<float> (m.getX(), y - wingPx (8.0f), m.getWidth() - wingPx (4.0f), wingPx (16.0f)), juce::Justification::centredRight, false);
+        }
+        g.drawText ("IN", juce::Rectangle<float> (bar.getX() - wingPx (8.0f), bar.getBottom() + wingPx (2.0f), bar.getWidth() + wingPx (16.0f), wingPx (16.0f)),
+                    juce::Justification::centred, false);
     }
 
-    if (const auto* osc = selectedOscillator())
+    // REMOTE (the AES50 stage boxes' preamps) and RCV CUST don't exist here:
+    // OFF stays lit, the other keys are drawn dim. An oscillator puts its type
+    // (SINE / PINK / WHITE) in this column.
+    const auto* osc = selectedOscillator();
+    g.setColour (Dark::caption);
+    g.setFont (capFont (9.0f));
+    g.drawText (osc != nullptr ? "TYPE" : "REMOTE", remoteBox.withHeight (px (20.0f)), juce::Justification::centred);
+    if (osc != nullptr)
     {
-        // The oscillator [WING: ROUTING > SOURCES, OSC group]: its type, FREQ
-        // (a sine's) and LEVEL; MUTE switches it off.
         const char* types[] = { "SINE", "PINK", "WHITE" };
-        g.setColour (juce::Colours::black);
-        g.fillRect (oscModeKeys[0].getUnion (oscModeKeys[2]).expanded (0, 2));
         for (int i = 0; i < 3; ++i)
         {
             const bool on = osc->mode.load() == i;
             auto k = oscModeKeys[(size_t) i];
-            if (on)
-            {
-                g.setColour (Colours::valueBlue);
-                g.fillRect (k);
-            }
+            g.setColour (on ? Colours::choice : juce::Colours::black);
+            g.fillRect (k);
             g.setColour (on ? juce::Colours::black : Dark::text);
-            g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), (float) k.getHeight() * 0.36f)));
+            g.setFont (capFont (10.0f));
             g.drawText (types[i], k, juce::Justification::centred);
         }
-        // "250 Hz", "1.00 kHz"; dim while a noise plays.
+    }
+    else
+    {
+        const char* remote[] = { "OFF", "AES50 A", "AES50 B", "AES50 C" };
+        for (int i = 0; i < 4; ++i)
+        {
+            auto k = remoteKeys[(size_t) i];
+            g.setColour (i == 0 ? Colours::screenLine : juce::Colours::black);
+            g.fillRect (k);
+            auto f = k.toFloat();
+            auto caption = f.removeFromBottom (f.getHeight() * 0.3f);
+            const auto ink = i == 0 ? Dark::text : Colours::textDim;
+            if (i == 0)
+                drawIcon (g, Icon::ClearCircle, f.reduced (f.getHeight() * 0.24f), ink);
+            else
+                drawGroupIcon (g, i == 1 ? Group::Aes50A : i == 2 ? Group::Aes50B : Group::Aes50C, f.reduced (f.getHeight() * 0.06f), ink);
+            g.setColour (ink);
+            g.setFont (capFont (9.0f));
+            g.drawText (remote[i], caption.toNearestInt(), juce::Justification::centredTop);
+        }
+    }
+    g.setColour (juce::Colours::black);
+    g.fillRect (rcvKey);
+    {
+        auto f = rcvKey.toFloat();
+        auto caption = f.removeFromBottom (f.getHeight() * 0.3f);
+        drawIcon (g, Icon::KeyboardEdit, f.reduced (f.getHeight() * 0.16f), Colours::textDim);
+        g.setColour (Colours::textDim);
+        g.setFont (capFont (9.0f));
+        g.drawText ("RCV CUST", caption.toNearestInt(), juce::Justification::centredTop);
+    }
+
+    if (osc != nullptr)
+    {
+        // The oscillator [WING: ROUTING > SOURCES, OSC group]: FREQ (a sine's)
+        // and LEVEL; MUTE switches it off. "250 Hz", "1.00 kHz"; dim while a noise plays.
         const auto hz = formatHz (osc->freqHz.load());
-        drawField (g, oscFreqField, "FREQ", hz.endsWithChar ('k') ? hz.dropLastCharacters (1) + " kHz" : hz + " Hz",
-                   osc->mode.load() == ld::kOscSine ? Dark::text : Dark::textDim);
-        drawOutlinedKey (g, sourceMuteKey, std::nullopt, "MUTE", src->mute.load(), Colours::mute);
-        paintLevelFader (g, oscLevelFader, osc->levelDb.load(), kOscLevelMin, kOscLevelMax, "LEVEL");
+        g.setColour (Colours::screenWell);
+        g.fillRect (oscFreqField);
+        auto f = oscFreqField.reduced (px (6.0f), px (4.0f));
+        g.setColour (Dark::caption);
+        g.setFont (capFont (9.0f));
+        g.drawText ("FREQ", f.removeFromTop (f.getHeight() / 3), juce::Justification::centredLeft);
+        g.setColour (osc->mode.load() == ld::kOscSine ? Dark::text : Dark::textDim);
+        g.setFont (capFont (14.0f, WingWeight::SemiBold));
+        g.drawText (hz.endsWithChar ('k') ? hz.dropLastCharacters (1) + " kHz" : hz + " Hz", f, juce::Justification::centredLeft);
+        drawOutlinedKey (g, sourceMuteKey, std::nullopt, "MUTE", src->mute.load(), Colours::mute, juce::Colours::black);
+        paintLevelFader (g, oscLevelFader, osc->levelDb.load(), kOscLevelMin, kOscLevelMax);
         return;
     }
 
-    drawOutlinedKey (g, sourcePhantomKey, Icon::Power, "48V", src->phantom.load(), Colours::mute, true);
-    drawOutlinedKey (g, sourcePolKey, Icon::Invert, "POL", src->invert.load(), Colours::yellow, true);
-    drawOutlinedKey (g, sourceMuteKey, std::nullopt, "MUTE", src->mute.load(), Colours::mute);
-    paintLevelFader (g, sourceGainFader, src->gainDb.load(), kGainMin, kGainMax, "GAIN");
+    drawIconKeyBelow (g, sourcePhantomKey, Icon::Power, "+48V", src->phantom.load(), Colours::mute);
+    drawIconKeyBelow (g, sourcePolKey, Icon::Invert, "POL", src->invert.load(), Colours::gold);
+    drawOutlinedKey (g, sourceMuteKey, std::nullopt, "MUTE", src->mute.load(), Colours::mute, juce::Colours::black);
+    paintLevelFader (g, sourceGainFader, src->gainDb.load(), kGainMin, kGainMax);
 }
 
-void RoutingPage::paintLevelFader (juce::Graphics& g, juce::Rectangle<int> area, float value, float min, float max, const juce::String& caption) const
+void RoutingPage::paintLevelFader (juce::Graphics& g, juce::Rectangle<int> area, float value, float min, float max) const
 {
-
-    // GAIN (-12 .. +60 dB) or an oscillator's LEVEL (-40 .. -6 dB): a fader with the value flag.
-    {
-        auto f = area.toFloat();
-        g.setColour (Dark::well);
-        g.fillRect (f);
-        const float gain = value;
-        const float pos = juce::jlimit (0.0f, 1.0f, (gain - min) / (max - min));
-        auto slot = f.withSizeKeepingCentre (juce::jmin (screenCap (10.0f), f.getWidth() * 0.25f), f.getHeight() - 24.0f);
-        g.setColour (Dark::key);
-        g.fillRect (slot);
-        g.setColour (KnobColours::orange);
-        g.fillRect (slot.withTop (slot.getBottom() - slot.getHeight() * pos));
-        const float y = slot.getBottom() - slot.getHeight() * pos;
-        auto flag = juce::Rectangle<float> (juce::jmin (f.getWidth() - 4.0f, screenCap (64.0f)), 18.0f).withCentre ({ f.getCentreX(), juce::jlimit (f.getY() + 9.0f, f.getBottom() - 9.0f, y) });
-        g.setColour (juce::Colours::white);
-        g.fillRect (flag);
-        g.setColour (juce::Colours::black);
-        g.setFont (wingFont (TypeScale::statusCaption));
-        g.drawFittedText (juce::String (gain, 1) + " dB", flag.toNearestInt(), juce::Justification::centred, 1, 0.6f);
-        g.setColour (Dark::textDim);
-        g.drawText (caption, f.withY (f.getBottom() + 2.0f).withHeight (14.0f), juce::Justification::centred);
-    }
+    // GAIN (-12 .. +60 dB) or an oscillator's LEVEL (-40 .. -6 dB): in a black
+    // frame a dark fader with a black slot, the white value flag on its gold handle.
+    g.setColour (juce::Colours::black);
+    g.fillRect (area);
+    auto f = area.toFloat().reduced (wingPx (2.0f));
+    g.setColour (Colours::screenWell);
+    g.fillRect (f);
+    const float pos = juce::jlimit (0.0f, 1.0f, (value - min) / (max - min));
+    auto slot = f.withSizeKeepingCentre (wingPx (10.0f), f.getHeight() - wingPx (20.0f));
+    g.setColour (juce::Colours::black);
+    g.fillRect (slot);
+    const float y = slot.getBottom() - slot.getHeight() * pos;
+    g.setColour (Colours::gold);
+    g.fillRect (juce::Rectangle<float> (wingPx (12.0f), wingPx (6.0f)).withCentre ({ f.getCentreX(), juce::jlimit (f.getY() + wingPx (14.0f), f.getBottom() - wingPx (3.0f), y + wingPx (10.0f)) }));
+    auto flag = juce::Rectangle<float> (juce::jmin (f.getWidth() + wingPx (6.0f), wingPx (60.0f)), wingPx (22.0f))
+                    .withCentre ({ f.getCentreX(), juce::jlimit (f.getY() + wingPx (11.0f), f.getBottom() - wingPx (14.0f), y) });
+    g.setColour (juce::Colours::black);
+    g.fillRect (flag.expanded (1.0f));
+    g.setColour (Colours::text);
+    g.fillRect (flag);
+    g.setColour (juce::Colours::black);
+    g.setFont (capFont (10.0f));
+    g.drawFittedText (juce::String (value, 1) + " dB", flag.toNearestInt(), juce::Justification::centred, 1, 0.6f);
 }
 
 void RoutingPage::paintSourceLook (juce::Graphics& g) const
 {
+    g.setColour (Colours::screenPanel);
+    g.fillRect (sourceBody);
     const auto* src = sourceParams (selectedSource);
     if (src == nullptr)
         return;
@@ -1145,7 +1602,7 @@ void RoutingPage::paintSourceLook (juce::Graphics& g) const
         g.fillRect (cell);
         if (colour == src->colour.load())
         {
-            g.setColour (Colours::yellow);
+            g.setColour (Colours::gold);
             g.drawRect (cell.expanded (3), 3);
         }
     }
@@ -1158,7 +1615,7 @@ void RoutingPage::paintSourceLook (juce::Graphics& g) const
         if (icon == 0)
         {
             g.setColour (ink);
-            g.setFont (wingFont (TypeScale::statusCaption));
+            g.setFont (capFont (9.0f));
             g.drawText ("NONE", cell, juce::Justification::centred);
         }
         else
@@ -1169,12 +1626,12 @@ void RoutingPage::paintSourceLook (juce::Graphics& g) const
 void RoutingPage::paintSourceTags (juce::Graphics& g) const
 {
     // The mute groups (manual p. 40): while one of them is engaged, the source is muted.
+    g.setColour (Colours::screenPanel);
+    g.fillRect (sourceBody);
     const auto* src = sourceParams (selectedSource);
     if (src == nullptr)
         return;
-    auto title = sourceBody.withHeight (juce::jlimit (24, screenCap (34), sourceBody.getHeight() / 9));
-    g.setColour (Dark::header);
-    g.fillRect (title);
+    auto title = sourceBody.withHeight (px (34.0f));
     g.setColour (Dark::caption);
     g.setFont (panelTitleFont (title.getHeight()));
     g.drawText ("MUTE GROUPS", title, juce::Justification::centred);
@@ -1192,17 +1649,17 @@ void RoutingPage::paintSourceTags (juce::Graphics& g) const
         }
         auto r = cell.reduced (4);
         g.setColour (on ? juce::Colours::black : Dark::caption);
-        g.setFont (wingFontFit (TypeScale::statusCaption, (float) r.getHeight() * 0.3f));
+        g.setFont (capFont (9.0f));
         g.drawText ("MGRP " + juce::String (i + 1), r.removeFromTop (r.getHeight() / 3), juce::Justification::centred);
         g.setColour (on ? juce::Colours::black : Dark::text);
-        g.setFont (wingFontFit (TypeScale::body, (float) r.getHeight() * 0.45f));
+        g.setFont (capFont (12.0f));
         g.drawFittedText (ctx.engine.getMuteGroupName (i).toUpperCase(), r, juce::Justification::centred, 1, 0.7f);
     }
     // The source's state.
     g.setColour (Dark::textDim);
-    g.setFont (wingFont (TypeScale::statusCaption * 1.2f));
+    g.setFont (capFont (10.0f));
     const auto state = src->mute.load() ? "MUTED" : ((mask & engaged) != 0 ? "MUTED BY A MUTE GROUP" : "");
-    g.drawText (state, sourceBody.withTrimmedTop (sourceTagCells.empty() ? 0 : sourceTagCells.back().first.getBottom() - sourceBody.getY() + 10).withHeight (20),
+    g.drawText (state, sourceBody.withTrimmedTop (sourceTagCells.empty() ? 0 : sourceTagCells.back().first.getBottom() - sourceBody.getY() + 10).withHeight (px (24.0f)),
                 juce::Justification::centred);
 }
 
@@ -1235,13 +1692,13 @@ void RoutingPage::renameSource()
 void RoutingPage::setSourceGainFromY (int y)
 {
     const auto fader = levelFader();
-    auto slot = fader.toFloat().withSizeKeepingCentre (10.0f, (float) fader.getHeight() - 24.0f);
+    auto slot = fader.toFloat().reduced (wingPx (2.0f)).withSizeKeepingCentre (wingPx (10.0f), (float) fader.getHeight() - wingPx (24.0f));
     const float pos = juce::jlimit (0.0f, 1.0f, (slot.getBottom() - (float) y) / juce::jmax (1.0f, slot.getHeight()));
     if (auto* osc = selectedOscillator())
         osc->levelDb = std::round ((kOscLevelMin + pos * (kOscLevelMax - kOscLevelMin)) * 2.0f) / 2.0f;
     else
     {
-        const float gain = std::round ((pos * 72.0f - 12.0f) * 2.0f) / 2.0f; // 0.5 dB steps
+        const float gain = std::round ((kGainMin + pos * (kGainMax - kGainMin)) * 2.0f) / 2.0f; // 0.5 dB steps
         forSourcePair (ctx.engine, selectedSource, [gain] (ld::SourceParams& s) { s.gainDb = gain; });
     }
     repaint();
@@ -1309,10 +1766,10 @@ std::vector<KnobBinding> RoutingPage::getKnobs()
     }
     // A stereo / mid-side pair has one gain (the engine plays the first
     // source's): the knob sets both, as the fader and the wheel do.
-    auto gain = bindLinear ("GAIN", src->gainDb, -12.0f, 60.0f, " dB", 1, 0.0f);
+    auto gain = bindLinear ("GAIN", src->gainDb, kGainMin, kGainMax, " dB", 1, 0.0f);
     gain.set = [&engine = ctx.engine, port = selectedSource] (float p)
     {
-        const float g = -12.0f + juce::jlimit (0.0f, 1.0f, p) * 72.0f;
+        const float g = kGainMin + juce::jlimit (0.0f, 1.0f, p) * (kGainMax - kGainMin);
         forSourcePair (engine, port, [g] (ld::SourceParams& s) { s.gainDb = g; });
     };
     gain.steps = 145.0f; // 0.5 dB steps, as the fader
@@ -1349,130 +1806,162 @@ void RoutingPage::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWh
     if (mode == Mode::Sources && sourceTab == 0 && sourceGainFader.contains (e.getPosition()))
         if (auto* src = sourceParams (selectedSource))
         {
-            const float gain = juce::jlimit (-12.0f, 60.0f, src->gainDb.load() + (w.deltaY > 0.0f ? 0.5f : -0.5f));
+            const float gain = juce::jlimit (kGainMin, kGainMax, src->gainDb.load() + (w.deltaY > 0.0f ? 0.5f : -0.5f));
             forSourcePair (ctx.engine, selectedSource, [gain] (ld::SourceParams& s) { s.gainDb = gain; });
             repaint();
         }
 }
 
-void RoutingPage::paint (juce::Graphics& g)
+//==============================================================================
+void RoutingPage::paintHeaders (juce::Graphics& g) const
 {
-    g.fillAll (juce::Colours::black);
-
-    // Each side: a header box, a black gap, then the tile box.
-    g.setColour (Dark::header);
+    g.setColour (Colours::screenPanel);
     g.fillRect (leftHeader);
     if (mode != Mode::Sources)
         g.fillRect (rightHeader);
-    g.setColour (Dark::body);
-    for (auto panel : { leftPanel, rightPanel })
-        if (mode != Mode::Sources || panel == leftPanel)
-            g.fillRect (panel.withTrimmedTop (leftHeader.getHeight() + 6));
 
     auto* sel = selectedStrip();
-    auto caption = [&g] (juce::Rectangle<int> r, const juce::String& text)
-    {
-        if (r.isEmpty())
-            return;
-        g.setColour (Dark::caption);
-        g.setFont (wingFontFit (TypeScale::statusCaption, (float) r.getHeight() * 0.8f));
-        g.drawText (text, r, juce::Justification::centred);
-    };
-
-    // Left header.
     if (mode == Mode::Channels)
     {
-        // The channel's MAIN / ALT input: which one the source grid patches.
-        // ST pairs the input with the next one.
-        drawField (g, inputField, "CHANNEL INPUT", editAlt ? "ALT" : "MAIN", editAlt ? altOrange : Dark::text);
-        drawKey (g, stereoKey, "ST", sel != nullptr && sel->params.stereo.load(), Dark::choice);
-        drawKey (g, prevPage, "<", false, Dark::choice);
-        drawKey (g, nextPage, ">", false, Dark::choice);
+        // CHANNEL INPUT: which input of the channel the source grid patches.
+        // Sidecar's ST pairs the channel's input with the next one.
+        drawCaptionBar (g, inputCaption, "CHANNEL INPUT");
+        drawKey (g, mainKey, "MAIN", ! editAlt, Colours::valueBlue);
+        drawKey (g, altKey, "ALT", editAlt, Colours::valueBlue);
+        drawKey (g, stereoKey, "ST", sel != nullptr && sel->params.stereo.load(), Colours::valueBlue);
+        drawKey (g, prevPage, "<", false, Colours::valueBlue);
+        drawKey (g, nextPage, ">", false, Colours::valueBlue);
     }
     if (mode == Mode::Sources)
     {
-        drawSelector (g, leftSelector, Icon::Xlr, "SOURCE GROUP",
-                      sourceGroupName (inputGroup));
+        drawSelector (g, leftSelector, inputGroup, "SOURCE GROUP");
         drawIconKey (g, renameKey, Icon::Edit, "RENAME", sourceParams (selectedSource) != nullptr);
         if (ctx.engine.monitor.sourceSolo.load() != ld::kSourceSoloOff)
             drawKey (g, srcSoloKey, "SRC SOLO", ctx.engine.isSourceSoloed (selectedSource), Colours::gold);
+        return;
+    }
+
+    if (mode == Mode::Outputs)
+        drawSelector (g, leftSelector, outputGroup, "OUTPUT GROUP");
+    // +1 AUTO: grey print, lit yellow.
+    if (autoAdvance)
+    {
+        g.setColour (autoYellow);
+        g.fillRect (autoKey);
+    }
+    g.setColour (autoAdvance ? juce::Colours::black : Dark::caption);
+    g.setFont (capFont (13.0f));
+    g.drawText ("+1", autoKey.withHeight (autoKey.getHeight() / 2).translated (0, px (4.0f)), juce::Justification::centred);
+    g.drawText ("AUTO", autoKey.withTrimmedTop (autoKey.getHeight() / 2), juce::Justification::centred);
+    // The lock pair in a black frame: locked lights the closed lock red,
+    // unlocked the open one green; the other stays #303030.
+    g.setColour (juce::Colours::black);
+    g.fillRect (lockFrame);
+    g.setColour (locked ? lockRed : Colours::screenTile);
+    g.fillRect (lockKey);
+    drawIcon (g, Icon::LockClosed, lockKey.toFloat().reduced ((float) lockKey.getHeight() * 0.2f), locked ? juce::Colours::black : Colours::textDim);
+    g.setColour (! locked ? Dark::post : Colours::screenTile);
+    g.fillRect (unlockKey);
+    drawIcon (g, Icon::LockOpen, unlockKey.toFloat().reduced ((float) unlockKey.getHeight() * 0.2f), ! locked ? juce::Colours::black : Colours::textDim);
+
+    drawSelector (g, rightSelector, mode == Mode::Channels ? inputGroup : signalGroup, "SOURCE GROUP");
+    drawIconKey (g, noneKey, Icon::ClearCircle, "NONE");
+    if (mode == Mode::Channels)
+    {
+        // Source customization doesn't exist yet.
+        drawCaptionBar (g, copyCaption, "COPY CUSTOMIZATION");
+        drawKey (g, srcToChKey, "SRC->CH", false, Colours::valueBlue);
+        drawKey (g, chToSrcKey, "CH->SRC", false, Colours::valueBlue);
     }
     else
     {
-        if (mode == Mode::Outputs)
-            drawSelector (g, leftSelector, Icon::Speaker, "OUTPUT GROUP", outputGroupName (outputGroup));
-        drawKey (g, autoKey, "+1\nAUTO", autoAdvance, autoYellow);
-        // Locked: the closed lock lit red; unlocked: the open lock lit green
-        // (as on the console); the other one black.
-        g.setColour (locked ? lockRed : juce::Colours::black);
-        g.fillRect (lockKey);
-        drawIcon (g, Icon::LockClosed, lockKey.toFloat().reduced ((float) lockKey.getHeight() * 0.2f), locked ? juce::Colours::black : Dark::text);
-        g.setColour (! locked ? Dark::post : juce::Colours::black);
-        g.fillRect (unlockKey);
-        drawIcon (g, Icon::LockOpen, unlockKey.toFloat().reduced ((float) unlockKey.getHeight() * 0.2f), ! locked ? juce::Colours::black : Dark::text);
+        // The tiles' meter scale.
+        auto legend = meterLegend;
+        auto labels = legend.removeFromBottom (legend.getHeight() / 2);
+        const char* marks[] = { "-60", "-48", "-36", "-24", "-12", "-6", "CLIP" };
+        const int segments = 18;
+        const float segW = (float) legend.getWidth() / (float) segments;
+        g.setColour (Colours::screenTile);
+        for (int i = 0; i < segments; ++i)
+            g.fillRect (juce::Rectangle<float> ((float) legend.getX() + (float) i * segW, (float) legend.getY() + (float) legend.getHeight() * 0.3f,
+                                                juce::jmax (1.0f, segW - wingPx (3.0f)), (float) legend.getHeight() * 0.6f));
+        g.setColour (Dark::caption);
+        g.setFont (capFont (8.0f));
+        const float step = (float) labels.getWidth() / 7.0f;
+        for (int i = 0; i < 7; ++i)
+            g.drawText (marks[i], juce::Rectangle<float> ((float) labels.getX() + step * (float) i, (float) labels.getY(), step, (float) labels.getHeight()).toNearestInt(),
+                        juce::Justification::centred);
+        drawKey (g, prevSignals, "<", false, Colours::valueBlue);
+        drawKey (g, nextSignals, ">", false, Colours::valueBlue);
     }
+}
 
-    // Right header.
-    if (mode == Mode::Channels)
-    {
-        drawSelector (g, rightSelector, Icon::Xlr, "SOURCE GROUP",
-                      sourceGroupName (inputGroup));
-        // Source customization doesn't exist yet.
-        caption (copyCaption, "COPY CUSTOMIZATION");
-        drawKey (g, srcToChKey, "SRC -> CH", false, Dark::choice, false);
-        drawKey (g, chToSrcKey, "CH -> SRC", false, Dark::choice, false);
-    }
-    else if (mode == Mode::Outputs)
-        drawSelector (g, rightSelector, Icon::Bus, "SOURCE GROUP", signalGroups[juce::jlimit (0, 5, signalGroup)]);
-    if (mode != Mode::Sources)
-        drawIconKey (g, noneKey, Icon::ClearCircle, "NONE");
+void RoutingPage::paint (juce::Graphics& g)
+{
+    g.fillAll (juce::Colours::black);
+    paintHeaders (g);
 
-    // Grids.
+    // The tile boxes: black inside a 4 px #202020 frame.
+    for (auto box : { leftGrid, rightGrid })
+        if (! box.isEmpty())
+        {
+            g.setColour (Colours::screenPanel);
+            g.fillRect (box);
+            g.setColour (juce::Colours::black);
+            g.fillRect (box.reduced (px (4.0f)));
+        }
     if (! separator.isEmpty())
     {
-        g.setColour (Dark::textDim);
+        g.setColour (Colours::screenPanel);
         g.fillRect (separator);
     }
 
+    auto* sel = selectedStrip();
     if (mode == Mode::Channels)
     {
         for (auto& [area, strip] : channelTiles)
             paintChannelTile (g, area, *strip, strip == sel);
         for (size_t i = 0; i < rightPorts.size(); ++i)
         {
-            const int port = sourceAt (inputGroup, (int) i);
+            const int port = routing::sourceAt (inputGroup, (int) i);
             bool mine = false;
-            if (sel != nullptr)
+            if (sel != nullptr && port >= 0)
             {
                 const int l = editAlt ? sel->getAltInputLeft() : sel->getInputLeft(), r = editAlt ? sel->getAltInputRight() : sel->getInputRight();
-                mine = port >= 0 && (l == port || (sel->params.stereo.load() && (r == port || (r < 0 && l >= 0 && l + 1 == port))));
+                mine = l == port || (sel->params.stereo.load() && (r == port || (r < 0 && l >= 0 && l + 1 == port)));
             }
-            paintInputPort (g, rightPorts[i], port, mine);
+            paintSourceTile (g, rightPorts[i], inputGroup, (int) i, mine, (int) i);
         }
     }
     else if (mode == Mode::Sources)
     {
         for (size_t i = 0; i < leftPorts.size(); ++i)
-            paintInputPort (g, leftPorts[i], sourceAt (inputGroup, (int) i), sourceAt (inputGroup, (int) i) == selectedSource);
+        {
+            const int port = routing::sourceAt (inputGroup, (int) i);
+            paintSourceTile (g, leftPorts[i], inputGroup, (int) i, port >= 0 && port == selectedSource, (int) i);
+        }
         paintSourcePanel (g);
     }
     else
     {
         for (size_t i = 0; i < leftPorts.size(); ++i)
-            if (const int port = outputPortAt (outputGroup, (int) i); port >= 0)
-                paintOutputPort (g, leftPorts[i], port, port == selectedPort);
+            paintOutputTile (g, leftPorts[i], outputGroup, (int) i, routing::outputAt (outputGroup, (int) i) == selectedPort);
         const auto feeder = feederOf (selectedPort);
-        for (auto& [area, sig] : signalTiles)
-            paintSignal (g, area, sig, feeder.channel >= 0 && feeder.strip == sig.strip && feeder.channel == sig.channel);
+        for (size_t i = 0; i < signalTiles.size(); ++i)
+        {
+            const auto& [area, sig] = signalTiles[i];
+            paintSignal (g, area, sig, signalPage * kSignalsPerPage + (int) i, sig.channel >= 0 && feeder.channel >= 0 && feeder.strip == sig.strip && feeder.channel == sig.channel);
+        }
     }
 
     if (locked && mode != Mode::Sources)
     {
         g.setColour (juce::Colours::black.withAlpha (0.25f));
-        g.fillRect (rightPanel.withTrimmedTop (rightHeader.getHeight() + 6));
+        g.fillRect (rightGrid);
     }
 }
 
+//==============================================================================
 void RoutingPage::assignInput (int port, bool right)
 {
     auto* s = selectedStrip();
@@ -1518,9 +2007,9 @@ void RoutingPage::assignInput (int port, bool right)
 
 void RoutingPage::clearOutput (int port)
 {
-    if (isRecorderPort (port))
+    if (routing::isRecorderPort (port))
     {
-        ctx.engine.getUsbRecorder().setTap (port - kRecorderPortBase, {});
+        ctx.engine.getUsbRecorder().setTap (port - routing::kRecorderPortBase, {});
         ctx.engine.getUsbRecorder().saveSettings (ctx.settings);
         return;
     }
@@ -1539,12 +2028,12 @@ void RoutingPage::clearOutput (int port)
 
 void RoutingPage::assignOutput (int port, const Signal& sig)
 {
-    if (locked)
+    if (locked || port < 0 || sig.channel < 0)
         return;
     // One signal per output. A strip has one output pair, so patching it to a
     // new output moves it there (engine item E4: many outputs per signal).
     // The RECORDER ports tap the signal instead, leaving its outputs alone.
-    if (isRecorderPort (port))
+    if (routing::isRecorderPort (port))
     {
         UsbRecorder::Tap tap;
         if (sig.strip != nullptr)
@@ -1557,7 +2046,7 @@ void RoutingPage::assignOutput (int port, const Signal& sig)
                     tap.stripNumber = sig.strip->isBus() ? sig.strip->getId() + 1 : (int) i + 1;
             tap.channel = sig.channel;
         }
-        ctx.engine.getUsbRecorder().setTap (port - kRecorderPortBase, tap);
+        ctx.engine.getUsbRecorder().setTap (port - routing::kRecorderPortBase, tap);
         ctx.engine.getUsbRecorder().saveSettings (ctx.settings);
     }
     else
@@ -1568,14 +2057,15 @@ void RoutingPage::assignOutput (int port, const Signal& sig)
         else
             (sig.channel == 0 ? sig.strip->params.outputLeft : sig.strip->params.outputRight) = port;
     }
+    // +1 AUTO: on to the group's next output.
     if (autoAdvance)
-        selectedPort = isRecorderPort (selectedPort) ? juce::jmin (kRecorderPortBase + UsbRecorder::kNumChannels - 1, selectedPort + 1)
-                                                     : juce::jmin (numPorts (true) - 1, selectedPort + 1);
-    if (const int group = isRecorderPort (selectedPort) ? numOutputGroups() - 1 : selectedPort / kPortsPerGroup; group != outputGroup)
-    {
-        outputGroup = group;
-        layoutTiles();
-    }
+        for (int i = 0; i + 1 < (int) leftPorts.size(); ++i)
+            if (routing::outputAt (outputGroup, i) == port && routing::outputAt (outputGroup, i + 1) >= 0)
+            {
+                selectedPort = routing::outputAt (outputGroup, i + 1);
+                notifyStatusKeysChanged();
+                break;
+            }
     repaint();
 }
 
@@ -1587,45 +2077,63 @@ juce::Component& RoutingPage::anchorAt (juce::Rectangle<int> area)
 
 void RoutingPage::showGroupMenu (bool rightSide)
 {
-    juce::StringArray items;
-    int current = 0, selected = 0;
+    // The menu opens over the tile box under its selector.
+    routing::Menu menu;
+    Group current = inputGroup;
+    if (mode == Mode::Outputs)
+    {
+        menu = rightSide ? routing::sourceMenu (true, true) : routing::outputMenu();
+        current = rightSide ? signalGroup : outputGroup;
+    }
+    else
+        menu = routing::sourceMenu (mode == Mode::Channels);
+    const auto box = rightSide ? rightGrid : leftGrid;
+    const auto origin = juce::Point<int> ((rightSide ? rightPanel : leftPanel).getX() + px (8.0f), box.getY());
+    juce::Component::SafePointer<RoutingPage> safe (this);
+    groupMenu = std::make_unique<GroupMenu> (std::move (menu), (int) current, origin, [safe, rightSide] (int group)
+    {
+        // Closing the menu deletes it: finish on the message loop.
+        juce::MessageManager::callAsync ([safe, rightSide, group]
+        {
+            if (safe == nullptr)
+                return;
+            safe->groupMenu.reset();
+            if (group >= 0)
+                safe->chooseGroup (rightSide, group);
+            safe->repaint();
+        });
+    });
+    addAndMakeVisible (*groupMenu);
+    groupMenu->setBounds (getLocalBounds());
+}
+
+void RoutingPage::chooseGroup (bool rightSide, int group)
+{
+    const auto g = (Group) group;
     if (mode == Mode::Outputs && rightSide)
     {
-        for (auto* name : signalGroups)
-            items.add (name);
-        current = 1;
-        selected = signalGroup;
+        signalGroup = g;
+        signalPage = 0;
+        resized(); // the page keys
+    }
+    else if (mode == Mode::Outputs)
+    {
+        outputGroup = g;
+        if (const int first = routing::outputAt (g, 0); first >= 0)
+            selectedPort = first;
     }
     else
     {
-        const bool outputs = mode == Mode::Outputs;
-        if (outputs)
-            for (int i = 0; i < numOutputGroups(); ++i)
-                items.add (outputGroupName (i));
-        else
-            for (int i = 0; i < numSourceGroups(); ++i)
-                items.add (sourceGroupName (i));
-        current = outputs ? 2 : 0;
-        selected = outputs ? outputGroup : inputGroup;
-    }
-    juce::Component::SafePointer<RoutingPage> safe (this);
-    popups::chooseFrom (anchorAt (rightSide ? rightSelector : leftSelector), items, selected, [safe, current] (int r)
-    {
-        if (safe == nullptr)
-            return;
-        if (current == 1)
+        inputGroup = g;
+        // SOURCES: the group's first source.
+        if (const int first = routing::sourceAt (g, 0); mode == Mode::Sources && first >= 0)
         {
-            safe->signalGroup = r;
-            safe->signalPage = 0;
+            selectSource (first);
+            notifyKnobsChanged();
         }
-        else if (current == 2)
-            safe->outputGroup = r;
-        else
-            safe->inputGroup = r;
-        safe->layoutTiles();
-        safe->repaint();
-        safe->notifyStatusKeysChanged();
-    });
+    }
+    layoutTiles();
+    notifyStatusKeysChanged();
 }
 
 void RoutingPage::mouseUp (const juce::MouseEvent& e)
@@ -1717,19 +2225,14 @@ void RoutingPage::mouseUp (const juce::MouseEvent& e)
         targetPage = (targetPage + (nextPage.contains (pos) ? 1 : numTargetPages() - 1)) % numTargetPages();
         layoutTiles();
     }
-    else if (inputField.contains (pos))
+    else if (prevSignals.contains (pos) || nextSignals.contains (pos))
     {
-        // CHANNEL INPUT: which input of the channel the source grid patches.
-        juce::Component::SafePointer<RoutingPage> safe (this);
-        popups::chooseFrom (anchorAt (inputField), { "MAIN", "ALT" }, editAlt ? 1 : 0, [safe] (int i)
-        {
-            if (safe != nullptr)
-            {
-                safe->editAlt = i == 1;
-                safe->repaint();
-            }
-        });
+        const int pages = juce::jmax (1, ((int) signals().size() + kSignalsPerPage - 1) / kSignalsPerPage);
+        signalPage = (signalPage + (nextSignals.contains (pos) ? 1 : pages - 1)) % pages;
+        layoutTiles();
     }
+    else if (mainKey.contains (pos) || altKey.contains (pos))
+        editAlt = altKey.contains (pos); // CHANNEL INPUT: which input of the channel the source grid patches
     else if (leftSelector.contains (pos))
         showGroupMenu (false);
     else if (rightSelector.contains (pos))
@@ -1772,7 +2275,7 @@ void RoutingPage::mouseUp (const juce::MouseEvent& e)
             if (rightPorts[i].contains (pos))
             {
                 // Right click or shift: the right input of a stereo channel.
-                if (const int source = sourceAt (inputGroup, (int) i); source >= 0)
+                if (const int source = routing::sourceAt (inputGroup, (int) i); source >= 0)
                     assignInput (source, e.mods.isPopupMenu() || e.mods.isShiftDown());
                 return;
             }
@@ -1780,8 +2283,11 @@ void RoutingPage::mouseUp (const juce::MouseEvent& e)
             if (leftPorts[i].contains (pos))
             {
                 if (mode == Mode::Sources)
-                    selectSource (juce::jmax (0, sourceAt (inputGroup, (int) i)));
-                else if (const int port = outputPortAt (outputGroup, (int) i); port >= 0)
+                {
+                    if (const int source = routing::sourceAt (inputGroup, (int) i); source >= 0)
+                        selectSource (source);
+                }
+                else if (const int port = routing::outputAt (outputGroup, (int) i); port >= 0)
                     selectedPort = port;
                 repaint();
                 notifyStatusKeysChanged(); // the title tile shows the selection

@@ -17,13 +17,21 @@ All notable changes to Sidecar are listed here. Versions follow
 - SET CUST names the channel after the device's short name (DIMCRS) and gives it the
   FX icon; the INS tile shows the premium diamond for a device in FX 1-8; the EFFECTS
   rack has no FX MIX knobs.
-
 - INS 1 / INS 2, the FX TYPE list and the EFFECTS rack look like the WING's 3.1
   screens: FX PROCESSOR opens the SELECT FX PROCESSOR window (the 16 slots in four
   columns, who uses each), FX TYPE a list of device tiles with the FX1-8 / STD / CH
   tabs in the console's order, and FX TYPE, RESET and FX SPILL only show once a slot
   is chosen. SET CUST is on every strip's INS. A few device names follow the console's
   screen (DELAY/REVERB, DIMENSION CRS, 2-BAND DEESSER, TREMOLO/PANNER).
+- **ROUTING** is laid out like the console's screen (firmware 3.1): its proportions,
+  colours and fonts, the CHANNEL INPUT MAIN | ALT keys, +1 AUTO and the lock, the
+  tiles (patched channels show their source's icon and label, unpatched ones only
+  their number), the SOURCES settings boxes and the OUTPUTS tiles with their meter
+  scale. The group selectors open the console's icon menus with its groups: the
+  interface's inputs and outputs are **LOCAL IN** / **LOCAL OUT** (LCL 1 ...; ports
+  past 48 in AES50 B / C), the recorder's playback is **WLIVE PLAY**, the channels'
+  own outputs are under **USER SIGNAL**; groups Sidecar doesn't have show n/a tiles.
+  +1 AUTO is off by default, as on the console.
 
 ## [0.1.2] - beta
 

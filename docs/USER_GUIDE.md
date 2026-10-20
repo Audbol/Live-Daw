@@ -144,26 +144,44 @@ Barlow Condensed.
   - **METERS:** pre-fader meters of the channels in groups of eight, AUX, BUS 1-8 / 9-16,
     DCA, MAIN and MATRIX, with number keys in the strips' colours (select) and mute
     squares. A group's header opens its section's FADERS screen. Bigger consoles page.
-  - **ROUTING** (status-bar keys CHANNELS / SOURCES / OUTPUTS): pick a channel, then its
-    source. **MAIN / ALT** choose which of the channel's two inputs you patch (the ALT
-    input, WING INPUT SELECT, can be a recorder playback channel: source groups
-    PLAY 1-48 / 49-64). **+1 AUTO** moves on to the next channel; the lock (red when
-    locked, green when open) protects the patch. SOURCES sets each input's source:
+  - **ROUTING** (status-bar keys CHANNELS / SOURCES / OUTPUTS), laid out as the
+    console's: pick a channel, then its source. **MAIN / ALT** (CHANNEL INPUT) choose
+    which of the channel's two inputs you patch (the ALT input, WING INPUT SELECT, can
+    be a recorder playback channel). **+1 AUTO** moves on to the next channel; the
+    lock (red when locked, green when open) protects the patch. **ST** and **NONE**
+    are Sidecar's: ST pairs a channel's input with the next one, NONE clears the
+    patch. The **SOURCE GROUP** selector opens the console's group menu. Sidecar's
+    ports sit in the groups they stand in for: **LOCAL IN** is your audio interface's
+    inputs 1-48 (LCL 1 ..., 24 tiles as on the console, more for bigger interfaces;
+    tiles past the interface's inputs read n/a but can be patched), inputs 49-96 and
+    97-144 are **AES50 B** / **C** (as the WING remote protocol numbers them),
+    **WLIVE PLAY** the multitrack recorder's 64 playback channels (PLAY 1 ...),
+    **USB PLAYER** the USB player and **OSCILLATOR** OSC 1 / 2. The other groups
+    (AUX IN, AES/EBU, AES50 A, ST CONNECT, USB AUDIO, DANTE, BUS, MAIN, MATRIX, USER
+    SIGNAL) can be selected and show n/a tiles, like a console without that card.
+    SOURCES sets each input's source:
     name (RENAME), colour and icon, GAIN, +48V (stored), POL, MUTE and MONO / STEREO /
     MID-SIDE pairs (a channel patched to a pair becomes stereo), its mute groups
-    (TAGS), with its meter and the channels using it; channels get the source's
-    processing first. With SOURCE SOLO on, **SRC SOLO** solos the selected source
+    (TAGS), with its meter and the channels using it (as tiles under the tabs);
+    channels get the source's processing first. REMOTE (stage-box preamps) and RCV
+    CUST are shown but have nothing to control here. With SOURCE SOLO on, **SRC
+    SOLO** solos the selected source
     through CH39 or AUX7 (the solo follows the selection; CLR SOLO ends it). The
     **OSCILLATOR** source group holds the WING's signal generator, OSC 1 and OSC 2:
     patch them to channels like any input. Selecting one on SOURCES shows SINE /
-    PINK / WHITE, FREQ (the sine's frequency, 20 Hz to 20 kHz: click for the usual
-    test frequencies, or use the wheel or the FREQ knob) and LEVEL (-40 to -6 dBFS,
-    the sine's peak; the noises have the same RMS) in place of +48V, POL and GAIN;
-    MUTE switches it off. STEREO pairs OSC 1 and 2 on OSC 1's settings (the sine in
-    phase on both sides, the noises uncorrelated), MID/SIDE decodes them as for
-    other sources. The settings are saved with the show. OUTPUTS
-    works output-first: pick an output, then the signal feeding it (a strip's L / R, or
-    the MONITOR group's PHONES 1L / 1R and SPEAKERS 2L / 2R).
+    PINK / WHITE (in the REMOTE column), FREQ (the sine's frequency, 20 Hz to 20 kHz:
+    click for the usual test frequencies, or use the wheel or the FREQ knob) and LEVEL
+    (-40 to -6 dBFS, the sine's peak; the noises have the same RMS) in place of +48V,
+    POL and GAIN; MUTE switches it off. STEREO pairs OSC 1 and 2 on OSC 1's settings
+    (the sine in phase on both sides, the noises uncorrelated), MID/SIDE decodes them
+    as for other sources. The settings are saved with the show. OUTPUTS works
+    output-first: pick an output (OUTPUT GROUP **LOCAL OUT** is the interface's
+    outputs; **RECORDER** taps a signal for the USB recorder), then the signal feeding
+    it from the source group: **BUS**, **MAIN**, **MATRIX** (each L / R), **MONITOR**
+    (PHONES 1L / 1R, SPEAKERS 2L / 2R) or **USER SIGNAL** (the channels' and aux
+    channels' own outputs). Defaults: every interface input on its channel (the
+    console patches its eight local inputs to channels 1-8) and MAIN 1 on LOCAL OUT
+    1-2 (the console uses LOCAL OUT 7-8 and feeds buses 1-6 to 1-6).
   - **SETUP:** GENERAL (lighting, clock, console info and size, OPERATION, OPTIONS),
     AUDIO (clock rate, INPUT SELECT: the global MAIN / ALT switch and each channel's,
     preferences such as MAIN LINK, DCA MUTEGROUPS, MUTEGROUP/SIP OVERRIDE, GLOBAL INPUT
