@@ -13,6 +13,8 @@ All notable changes to Sidecar are listed here. Versions follow
   the old file name, so the next SAVE brought the old file back.
 - The parameter bar under the screen printed a long name and value over each other
   (recorder screen: POSITION, LOOP OUT).
+- Two-line key captions were cut or wrapped onto a third line when the key was narrow
+  (LIBRARY GO PREV / GO NEXT, recorder RECORD ALL CHANNELS); they now shrink to fit.
 
 ## [0.1.0] - beta
 
