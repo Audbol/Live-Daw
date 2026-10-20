@@ -204,8 +204,8 @@ Barlow Condensed.
   both levels.
 - **4-Channel section** (under the monitoring panel): GAIN, GATE, COMP, FILTER, F1-F3
   and PAN keys give the four strips of the right fader section an encoder and a key
-  each (trim; gate / comp threshold and on; low / high cut; bus sends; pan / width and
-  MAIN 1), with their scribble strips on a four-way LCD.
+  each (trim and the source's +48V; gate / comp threshold and on; low / high cut; bus
+  sends; pan / width and MAIN 1), with their scribble strips on a four-way LCD.
 - **Custom controls** (between the center and right sections): the upper part's 16
   layers of four encoders and eight keys (assigned on CC EDIT; UP / DOWN; names and
   colours on the LCD), the lower layers **USER** (eight assignable keys), **2-TRACK

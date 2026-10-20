@@ -12,7 +12,7 @@ namespace livedaw::ui
     SETUP > SURFACE); holding them jumps to the first / last layer. While the
     section spills (a DCA, bus, FX slot, automix group or a strip's sends) it
     shows the spill and no layer key is lit; a layer key ends the spill. */
-class FaderSection final : public juce::Component
+class FaderSection final : public juce::Component, private juce::Timer
 {
 public:
     static constexpr int kMinStripWidth = 54;
@@ -42,6 +42,7 @@ public:
     void resized() override;
 
 private:
+    void timerCallback() override;
     void selectLayer (const juce::String& id);
     void shift (int direction);
     void jumpToEnd (int direction);

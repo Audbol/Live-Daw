@@ -2309,6 +2309,10 @@ MuteGroupsViewPage::MuteGroupsViewPage (UiContext& c) : ViewPage (c, Screen::Mut
         for (int k = 0; k < kNumStripKinds; ++k)
             for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
                 s->params.muteGroupMask = s->params.muteGroupMask.load() & ~bit;
+        // The sources' tags (ROUTING > SOURCES > TAGS) too.
+        for (int i = 0; i < ctx.engine.getNumSources(); ++i)
+            if (auto* src = ctx.engine.getSource (i))
+                src->muteGroups = src->muteGroups.load() & ~bit;
         repaint();
     };
     addAndMakeVisible (unassignKey);
@@ -2409,11 +2413,25 @@ void MuteGroupsViewPage::paintContent (juce::Graphics& g)
         g.drawFittedText (text, area, juce::Justification::centred, 1, 0.75f);
         if (text == "SOURCES")
         {
+            // The sources tagged with the group (ROUTING > SOURCES > TAGS): the
+            // source's name for one, how many for more.
+            int group = 0;
+            for (int gi = 0; gi < kNumMuteGroups; ++gi)
+                if (area.getX() >= columns[gi].getX() && area.getRight() <= columns[gi].getRight())
+                    group = gi;
+            juce::StringArray names;
+            for (int i = 0; i < ctx.engine.getNumSources(); ++i)
+                if (const auto* src = ctx.engine.getSource (i); src != nullptr && ((src->muteGroups.load() >> (uint32_t) group) & 1u) != 0)
+                {
+                    const auto name = ctx.engine.getSourceName (i);
+                    names.add ((name.isNotEmpty() ? name : inputPortName (MixerEngine::sourcePort (i))).toUpperCase());
+                }
             auto box = area.translated (0, area.getHeight() + 1).withHeight (juce::jmax (10, area.getHeight() + 2)).reduced (4, 0);
             g.setColour (juce::Colours::black);
             g.fillRect (box);
-            g.setColour (Dark::textDim);
-            g.drawText ("-", box, juce::Justification::centred);
+            g.setColour (names.isEmpty() ? Dark::textDim : Dark::text);
+            g.drawFittedText (names.isEmpty() ? juce::String ("-") : (names.size() == 1 ? names[0] : juce::String (names.size())),
+                              box, juce::Justification::centred, 1, 0.6f);
         }
     }
     for (auto& c : cells)

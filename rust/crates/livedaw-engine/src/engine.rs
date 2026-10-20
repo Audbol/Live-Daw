@@ -651,6 +651,27 @@ impl Engine {
         &self.sources
     }
 
+    /// Message thread: MONO / STEREO / MID-SIDE on ROUTING > SOURCES. The
+    /// channels and aux patched to the pair's first source follow it, as on the
+    /// console: stereo on the pair for STEREO and MID/SIDE, mono on the first
+    /// source for MONO (MAIN and ALT inputs alike).
+    pub fn set_source_mode(&self, index: usize, mode: i32) {
+        self.sources.set_mode(index, mode);
+        let first = crate::sources::pair_first(index);
+        let Some(port) = crate::sources::source_port(first) else { return };
+        let stereo = self.sources.params().get(first).is_some_and(|p| p.mode.load(Relaxed) != crate::sources::source_mode::MONO);
+        for s in self.strips(StripKind::Channel).iter().chain(&self.strips(StripKind::Aux)) {
+            let p = &s.params;
+            if p.input_left.load(Relaxed) == port {
+                p.stereo.store(stereo, Relaxed);
+                p.input_right.store(if stereo { port + 1 } else { -1 }, Relaxed);
+            }
+            if p.alt_input_left.load(Relaxed) == port {
+                p.alt_input_right.store(if stereo { port + 1 } else { -1 }, Relaxed);
+            }
+        }
+    }
+
     /// Message thread: the MUTE key of a strip, with MUTEGROUP/SIP OVERRIDE
     /// (see [`solo::press_mute`]).
     pub fn press_mute(&self, s: &Strip) {

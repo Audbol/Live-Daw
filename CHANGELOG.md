@@ -53,6 +53,30 @@ All notable changes to Sidecar are listed here. Versions follow
   layers are named after their key instead of copying the shown layer's name.
 - The recorder screen's keys, labels and readouts fit their boxes at every window
   size, from 1152 x 680 to 4K and ultrawide.
+- ROUTING > SOURCES: the GAIN knob set only the selected source of a stereo or
+  mid/side pair; on the pair's second source it changed nothing you could hear (the
+  pair plays at the first source's gain). It now sets both, in 0.5 dB steps, like
+  the fader and the wheel.
+- Spills (DCA SPILL, a bus's sources) didn't follow the console: a strip assigned to
+  the spilled DCA, or a send switched on to the spilled bus, only showed up after
+  another layer change. The spill now updates at once.
+- HOME > NAME: the name field always drew its caret at the end and dropped a space
+  typed at the end, so after the arrow keys moved the caret, typing went somewhere
+  else than the caret showed. The field now shows the text as typed with the caret
+  where typing goes.
+- 4-Channel section: in GAIN / 48 V mode the keys under the encoders did nothing;
+  they now switch the +48V of the strip's source (stored, as on HOME > INPUT and
+  ROUTING > SOURCES) and light while it is on.
+- ROUTING > SOURCES: switching a source to STEREO or MID/SIDE left the channels
+  already patched to it mono (they only heard the left source), and switching back
+  to MONO left them stereo. Channels and aux on the pair's first source now follow
+  its mode, as on the console and as WING remote apps already did.
+- HOME > OVERVIEW: the INPUT panel's source MUTE key was always disabled (from
+  before sources were modelled). It now mutes the channel's source (both sources of
+  a pair) as ROUTING > SOURCES does, and lights while the source is muted.
+- VIEW > MUTE GROUPS: the SOURCES box always showed "-", even with sources tagged to
+  the group on ROUTING > SOURCES > TAGS, and UNASSIGN left those tags. The box now
+  shows the tagged source (or how many) and UNASSIGN clears them too.
 
 ## [0.1.0] - beta
 

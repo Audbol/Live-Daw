@@ -1158,7 +1158,17 @@ std::vector<KnobBinding> RoutingPage::getKnobs()
     auto* src = sourceParams (selectedSource);
     if (src == nullptr)
         return {};
-    return { bindLinear ("GAIN", src->gainDb, -12.0f, 60.0f, " dB", 1, 0.0f) };
+    // A stereo / mid-side pair has one gain (the engine plays the first
+    // source's): the knob sets both, as the fader and the wheel do.
+    auto gain = bindLinear ("GAIN", src->gainDb, -12.0f, 60.0f, " dB", 1, 0.0f);
+    gain.set = [&engine = ctx.engine, port = selectedSource] (float p)
+    {
+        const float g = -12.0f + juce::jlimit (0.0f, 1.0f, p) * 72.0f;
+        forSourcePair (engine, port, [g] (ld::SourceParams& s) { s.gainDb = g; });
+    };
+    gain.steps = 145.0f; // 0.5 dB steps, as the fader
+    gain.reset = [&engine = ctx.engine, port = selectedSource] { forSourcePair (engine, port, [] (ld::SourceParams& s) { s.gainDb = 0.0f; }); };
+    return { gain };
 }
 
 void RoutingPage::mouseDown (const juce::MouseEvent& e)
