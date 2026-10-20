@@ -357,6 +357,7 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     int getNumRows() override;
     void paintListBoxItem (int row, juce::Graphics&, int width, int height, bool selected) override;
+    juce::String getTooltipForRow (int row) override;
 
     struct HealthRow
     {

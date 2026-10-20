@@ -501,7 +501,8 @@ namespace
             b.removeFromLeft (gap);
             auto optionsArea = b;
             console.setBounds (consoleArea);
-            const int rowH = fitRowHeight (optionsArea.getHeight() - darkHeaderHeight() - 24, 6.0f);
+            // Three sub-boxes: the header, their gaps and margins come off first.
+            const int rowH = fitRowHeight (optionsArea.getHeight() - darkHeaderHeight() - 3 * kDarkHeaderGap - 24, 6.0f);
             operation.rowHeight = options.rowHeight = rowH;
             operation.setBounds (operationArea.withHeight (juce::jmin (operationArea.getHeight(), operation.preferredHeight())));
             options.setBounds (optionsArea.withHeight (juce::jmin (optionsArea.getHeight(), options.preferredHeight())));
@@ -738,8 +739,9 @@ namespace
             // The title stays centred, clear of the CLEAR key at the right.
             auto body = drawDarkPanel (g, errorsArea, " ");
             g.setColour (Dark::caption);
-            g.setFont (panelTitleFont (darkHeaderHeight()));
-            g.drawFittedText ("ERRORS", errorsArea.withHeight (darkHeaderHeight()).reduced (clearKey.getWidth() + 2, 0), juce::Justification::centred, 1, 0.8f);
+            const auto title = errorsArea.withHeight (darkHeaderHeight()).reduced (clearKey.getWidth() + 2, 0);
+            g.setFont (fontFittingWidth (panelTitleFont (darkHeaderHeight()), "ERRORS", (float) title.getWidth(), 0.8f));
+            g.drawFittedText ("ERRORS", title, juce::Justification::centred, 1, 0.8f);
             auto* d = ctx.deviceManager.getCurrentAudioDevice();
             const std::pair<const char*, juce::String> rows[] = { { "XRUNS", d != nullptr ? juce::String (d->getXRunCount()) : juce::String ("-") },
                                                                   { "SAFETY CLIPS", juce::String (ctx.engine.outputClipEvents.load()) } };

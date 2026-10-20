@@ -21,6 +21,12 @@ All notable changes to Sidecar are listed here. Versions follow
   controls' upper part), the custom controls stay between the fader sections down
   to 40 px strips, and the top row keeps the WING's arrangement. Dropdown fields
   (VIEW > CONFIG and others) shrink their text instead of cutting it.
+- Small windows: panel titles, ROUTING's fields and group selectors, the MONITORS
+  tabs, fields and EQ key shrink their text instead of cutting it ("PHO...",
+  "ERRO..."); METERS' two-digit strip numbers no longer overlap; SETUP > GENERAL's
+  USB HOST SPEED row is no longer cut off; long event log entries wrap onto a
+  second line (the tooltip shows the whole entry). MONITORS' unlit MUTE key reads
+  on its dark red.
 
 ## [0.1.0] - beta
 

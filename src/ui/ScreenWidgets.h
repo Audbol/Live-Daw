@@ -118,7 +118,7 @@ inline juce::Rectangle<int> drawDarkPanel (juce::Graphics& g, juce::Rectangle<in
         g.setColour (Dark::header);
         g.fillRect (header);
         g.setColour (Dark::caption);
-        g.setFont (panelTitleFont (headerHeight));
+        g.setFont (fontFittingWidth (panelTitleFont (headerHeight), title, (float) header.getWidth() - 12.0f, 0.7f));
         g.drawFittedText (title, header.reduced (6, 0), juce::Justification::centred, 1);
         area.removeFromTop (kDarkHeaderGap);
     }

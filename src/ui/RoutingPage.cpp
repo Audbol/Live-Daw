@@ -161,10 +161,11 @@ namespace
             g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (dots.getCentre().translated (0.0f, (float) i * d * 2.0f)));
         auto t = r.reduced (juce::jlimit (3, screenCap (6), r.getWidth() / 24), 2);
         g.setColour (Dark::textDim);
-        g.setFont (wingFontFit (TypeScale::statusCaption * 1.2f, (float) t.getHeight() * 0.32f));
+        // Narrow fields (small windows) shrink the text rather than cut it.
+        g.setFont (fontFittingWidth (wingFontFit (TypeScale::statusCaption * 1.2f, (float) t.getHeight() * 0.32f), caption, (float) t.getWidth(), 0.7f));
         g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 40 / 100), juce::Justification::bottomLeft, 1, 0.7f);
         g.setColour (valueColour);
-        g.setFont (wingFontFit (TypeScale::value, (float) t.getHeight() * 0.85f, WingWeight::SemiBold));
+        g.setFont (fontFittingWidth (wingFontFit (TypeScale::value, (float) t.getHeight() * 0.85f, WingWeight::SemiBold), value, (float) t.getWidth(), 0.7f));
         g.drawFittedText (value, t, juce::Justification::centredLeft, 1);
     }
 
@@ -185,10 +186,10 @@ namespace
         drawIcon (g, icon, ib.toFloat(), Dark::text);
         r.removeFromLeft (4);
         g.setColour (Dark::textDim);
-        g.setFont (wingFontFit (TypeScale::statusCaption * 1.2f, (float) r.getHeight() * 0.3f));
+        g.setFont (fontFittingWidth (wingFontFit (TypeScale::statusCaption * 1.2f, (float) r.getHeight() * 0.3f), caption, (float) r.getWidth(), 0.7f));
         g.drawFittedText (caption, r.removeFromTop (r.getHeight() * 42 / 100), juce::Justification::bottomLeft, 1, 0.7f);
         g.setColour (Dark::text);
-        g.setFont (wingFontFit (TypeScale::value, (float) r.getHeight() * 0.8f, WingWeight::SemiBold));
+        g.setFont (fontFittingWidth (wingFontFit (TypeScale::value, (float) r.getHeight() * 0.8f, WingWeight::SemiBold), value, (float) r.getWidth(), 0.7f));
         g.drawFittedText (value, r, juce::Justification::centredLeft, 1);
     }
 } // namespace
