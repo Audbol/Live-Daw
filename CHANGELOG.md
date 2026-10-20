@@ -77,6 +77,8 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Fixed
 
+- The window reopens fitted to its screen: a size saved on a bigger screen (an external
+  monitor since unplugged) left part of the surface off screen.
 - Recorder: RECORD ALL CHANNELS (or any track) failed with "Input ... doesn't exist"
   for a channel patched to a USB PLAYER source; those sources always exist.
 - HOME > NAME took no typing from the computer keyboard until the on-screen keyboard
