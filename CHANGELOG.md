@@ -29,6 +29,12 @@ All notable changes to Sidecar are listed here. Versions follow
   channel's source GAIN and +48V, the active RTA source and settings, the monitor
   paths' actual level, and scene control (`/$ctl/lib`: GO, GO NEXT, GO PREV, GO TAG,
   PREV / NEXT, the current scene and show).
+- Plugin delay compensation: the latency each hosted plugin reports (and its
+  changes) is compensated so that every source summed into a bus, main or matrix
+  arrives in time, across bus stages; a plugin's FX MIX delays its dry signal to
+  match. On by default; SETUP > PLUGINS turns it off and shows the total
+  compensation and each loaded plugin's latency. Compensation stops at 8192
+  samples; a plugin reporting more is logged and the limit is shown.
 
 ### Changed
 
@@ -45,6 +51,8 @@ All notable changes to Sidecar are listed here. Versions follow
 - VIEW > CONFIG: deleting the user layer on USER 1 moved USER 2's layer onto USER 1 and
   left nothing to delete on USER 2. The USER keys now keep their layers, and new user
   layers are named after their key instead of copying the shown layer's name.
+- The recorder screen's keys, labels and readouts fit their boxes at every window
+  size, from 1152 x 680 to 4K and ultrawide.
 
 ## [0.1.0] - beta
 

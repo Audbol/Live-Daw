@@ -44,6 +44,21 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
     five guitar/bass amps, body resonance, stereo imager and speaker manager.
   - **5 channel strips:** EVEN, SOUL, VINTAGE, BUS and MASTER.
   - **EXT:** a **VST3, AU (macOS) or LV2 (Linux) plugin**.
+- **Plugin delay compensation:** plugins that report a latency (lookahead limiters,
+  linear-phase EQs...) delay their signal. Sidecar reads each plugin's latency and
+  delays the other sources summed into the same bus, main or matrix by the
+  difference, so parallel paths stay in time: a channel going to Main 1 directly and
+  through a bus with a plugin arrives once, not twice. The compensation follows the
+  bus stages (buses 9-16 into buses 1-8, buses into mains, mains into matrices) and
+  the tap of each send (an insert counts only once the send's tap point is past it).
+  A plugin's FX MIX delays its dry signal by the plugin's latency too. It is on by
+  default; **SETUP > PLUGINS > DELAY COMPENSATION** turns it off, and the panel
+  below shows the total compensation (the longest path the console is aligned to)
+  and each loaded plugin's latency. Compensation stops at 8192 samples (about 170
+  ms at 48 kHz): a plugin reporting more is written to the event log and the panel
+  shows the limit. Solo, the monitor paths, direct outs and the recorder's taps are
+  not compensated, and a bypassed plugin adds no latency (the others are realigned
+  within a tenth of a second).
 - Processing models are recreated from the WING's parameter set (controls, ranges and
   behaviour), not circuit-modelled. The model tables are generated from the console's
   published parameter map.
@@ -138,7 +153,7 @@ Barlow Condensed.
     AUTOMIX), SURFACE (meter taps, SEL DBL CLICK, SOF and scribble options, CH
     AUTOSELECT, FADER SPEED, paging, user layer link, alternative SOF, section widths),
     REMOTE (MIDI REMOTE CONTROL and MIDI PORTS, WING REMOTE) and DAW (DAW CONTROL, DAW
-    PORTS; see *MIDI and DAW remote control*), PLUGINS and LOG (system health and the
+    PORTS; see *MIDI and DAW remote control*), PLUGINS (scanning, delay compensation) and LOG (system health and the
     event log), with INITIALIZE CONSOLE and SHUTDOWN. The status bar has MONITORS (the
     toolbar with the talk keys, PHONES / SPEAKERS / PH+SPK, DIM, MUTE, MONO, LR SWAP;
     TALK A / B: switch mode, talkback channel, AUTO DIM, USE SEND LEVELS and the bus,

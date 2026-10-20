@@ -211,6 +211,9 @@ public:
     ld::StripMeters& meters;
 
     int getNumChannels() const noexcept { return ld::ld_strip_num_channels (handle); }
+    /** The plugin latency of the strip's output in samples (its inserts plus
+        what delay compensation aligned its sources to). */
+    int getLatency() const noexcept { return ld::ld_strip_latency (handle); }
     bool isIdle() const noexcept { return ld::ld_strip_is_idle (handle); }
 
 private:

@@ -171,7 +171,9 @@ This list matches the notice Sidecar shows at start-up.
   masking model).
 - **Plugins** (VST3, AU, LV2) run inside the mixer process, not in a sandbox: a plugin
   that crashes takes Sidecar down (safe mode then restores the show without plugins).
-  There is no plugin delay compensation.
+  Delay compensation (SETUP > PLUGINS) lines up the paths into buses, mains and
+  matrices up to 8192 samples; solo, monitoring, direct outs and recorder taps are
+  not compensated.
 - **WING remote apps:** the WING network protocols cover 83.7 % of the WING 3.1
   parameter tree (the rest is stored but does nothing). WING Edit and WING Copilot
   have not been tried, and exported WING snapshots have not been loaded into a

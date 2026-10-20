@@ -1791,8 +1791,10 @@ namespace
     };
 
     //==============================================================================
-    /** PLUGINS (app-specific): plugin scanning; the plugins become FX slot devices. */
-    class PluginsTab final : public juce::Component, private juce::ChangeListener
+    /** PLUGINS (app-specific): plugin scanning (the plugins become FX slot
+        devices), and DELAY COMPENSATION: the setting, the total compensation
+        and each loaded plugin's latency. */
+    class PluginsTab final : public juce::Component, private juce::ChangeListener, private juce::Timer
     {
     public:
         explicit PluginsTab (UiContext& c) : ctx (c)
@@ -1801,6 +1803,20 @@ namespace
             styleIconKey (scan);
             addAndMakeVisible (scan);
             ctx.host.getKnownPlugins().addChangeListener (this);
+
+            // An app setting (MainComponent applies it at start-up).
+            compensation.addRow ("DELAY COMPENSATION",
+                                 std::make_unique<OnKey> ([this] { return ctx.engine.isLatencyCompensationOn(); },
+                                                          [this] (bool on)
+                                                          {
+                                                              ctx.engine.setLatencyCompensation (on);
+                                                              ctx.engine.updateLatencyCompensation();
+                                                              ctx.settings.setValue (uiprefs::latencyCompensation, on);
+                                                              repaint();
+                                                          }),
+                                 1.3f);
+            addAndMakeVisible (compensation);
+            startTimerHz (4);
         }
 
         ~PluginsTab() override { ctx.host.getKnownPlugins().removeChangeListener (this); }
@@ -1812,29 +1828,113 @@ namespace
             g.fillAll (juce::Colours::black);
             auto body = drawDarkPanel (g, box, "PLUGINS");
             auto r = body.reduced (12, 10);
+            r.removeFromBottom (scan.getHeight() + 6);
             const auto types = ctx.host.getSortedTypes();
             g.setColour (Dark::text);
-            g.setFont (wingFont (TypeScale::statusTitle, WingWeight::SemiBold));
-            g.drawText (juce::String (types.size()) + " PLUGINS KNOWN", r.removeFromTop (34), juce::Justification::centredLeft);
+            auto title = r.removeFromTop (juce::jmin (r.getHeight() / 3, screenCap (34)));
+            const auto known = juce::String (types.size()) + " PLUGINS KNOWN";
+            g.setFont (fontFittingWidth (wingFontFit (TypeScale::statusTitle, (float) title.getHeight(), WingWeight::SemiBold), known, (float) title.getWidth()));
+            g.drawText (known, title, juce::Justification::centredLeft);
             g.setColour (Dark::textDim);
             g.setFont (wingFont (TypeScale::body));
             juce::String text;
             text << "VST3, AU, LV2" << (ctx.host.getFormatManager().getNumFormats() > 3 ? ", VST2" : "")
                  << ". Load them into FX slots on the EFFECTS screen (device EXT), then assign the slots to channel inserts. "
                  << "Plugins are scanned in a separate process, so a crashing plugin can't take the console down.";
-            g.drawFittedText (text, r.removeFromTop (70), juce::Justification::topLeft, 4);
+            g.drawFittedText (text, r, juce::Justification::topLeft, juce::jmax (1, r.getHeight() / juce::jmax (1, (int) g.getCurrentFont().getHeight())), 0.85f);
+
+            paintCompensation (g);
         }
 
         void resized() override
         {
-            box = getLocalBounds().withWidth (juce::jmin (getWidth(), screenCap (720))).withHeight (juce::jmin (getHeight(), screenCap (240)));
-            scan.setBounds (darkPanelBody (box, true).reduced (12, 10).removeFromBottom (44).removeFromLeft (260));
+            auto b = getLocalBounds();
+            const int w = juce::jmin (b.getWidth(), screenCap (720));
+            box = b.removeFromTop (juce::jmin (b.getHeight() * 45 / 100, screenCap (240))).withWidth (w);
+            scan.setBounds (darkPanelBody (box, true).reduced (12, 10).removeFromBottom (juce::jmin (44, box.getHeight() / 4)).removeFromLeft (juce::jmin (260, w / 2)));
+            b.removeFromTop (8);
+            auto lower = b.withWidth (w);
+            compensation.rowHeight = fitRowHeight (lower.getHeight(), 6.0f);
+            compensation.setBounds (lower.removeFromTop (juce::jmin (lower.getHeight() / 3, compensation.preferredHeight())));
+            lower.removeFromTop (4);
+            latencyList = lower;
         }
 
     private:
+        /** The total compensation, the limit warning and the latency of every loaded plugin. */
+        void paintCompensation (juce::Graphics& g)
+        {
+            auto& engine = ctx.engine;
+            auto& fx = engine.getFx();
+            auto body = drawDarkPanel (g, latencyList, "PLUGIN LATENCY").reduced (12, 6);
+            const int rowH = fitRowHeight (body.getHeight(), (float) kNumFx / 2.0f + 2.0f);
+            const double rate = juce::jmax (1.0, engine.getSampleRate());
+            auto samples = [rate] (int n) { return juce::String (n) + " SMP (" + juce::String (1000.0 * n / rate, 1) + " MS)"; };
+
+            auto total = body.removeFromTop (rowH);
+            const auto totalText = engine.isLatencyCompensationOn() ? "TOTAL COMPENSATION: " + samples (engine.getTotalCompensation())
+                                                                    : juce::String ("DELAY COMPENSATION OFF");
+            g.setColour (Dark::text);
+            g.setFont (fontFittingWidth (wingFontFit (TypeScale::paramLabel, (float) rowH * 0.8f, WingWeight::SemiBold), totalText, (float) total.getWidth()));
+            g.drawFittedText (totalText, total, juce::Justification::centredLeft, 1, 0.8f);
+            if (engine.isLatencyCompensationOn() && engine.isCompensationLimited())
+            {
+                auto warn = body.removeFromTop (rowH);
+                g.setColour (Dark::pre);
+                const juce::String limit = "A PATH NEEDS MORE THAN " + juce::String (MixerEngine::kMaxCompensation) + " SMP: IT STAYS LATE BY THE REST";
+                g.setFont (fontFittingWidth (wingFontFit (TypeScale::body, (float) rowH * 0.8f), limit, (float) warn.getWidth()));
+                g.drawFittedText (limit, warn, juce::Justification::centredLeft, 1, 0.8f);
+            }
+            body.removeFromTop (4);
+
+            // Two columns of the slots holding a plugin.
+            juce::Array<int> loaded;
+            for (int slot = 0; slot < kNumFx; ++slot)
+                if (fx.getPlugin (slot) != nullptr)
+                    loaded.add (slot);
+            g.setFont (wingFontFit (TypeScale::body, (float) rowH * 0.75f));
+            if (loaded.isEmpty())
+            {
+                g.setColour (Dark::textDim);
+                g.drawFittedText ("NO PLUGIN LOADED", body.removeFromTop (rowH), juce::Justification::centredLeft, 1, 0.8f);
+                return;
+            }
+            const int colW = body.getWidth() / 2;
+            const int perColumn = juce::jmax (1, body.getHeight() / rowH);
+            for (int i = 0; i < loaded.size() && i < perColumn * 2; ++i)
+            {
+                const int slot = loaded[i];
+                auto row = juce::Rectangle<int> (body.getX() + (i / perColumn) * colW, body.getY() + (i % perColumn) * rowH, colW - 8, rowH);
+                const int latency = fx.getLatency (slot);
+                auto value = row.removeFromRight (juce::jmin (row.getWidth() / 2, screenCap (150)));
+                g.setColour (latency > MixerEngine::kMaxCompensation ? Dark::pre : (latency > 0 ? Dark::text : Dark::textDim));
+                g.drawFittedText (samples (latency), value, juce::Justification::centredRight, 1, 0.75f);
+                g.setColour (Dark::text);
+                g.drawFittedText (fx.describe (slot).toUpperCase(), row.withTrimmedRight (6), juce::Justification::centredLeft, 1, 0.75f);
+            }
+        }
+
+        void timerCallback() override
+        {
+            if (! isShowing())
+                return;
+            // Repaint only when what the panel shows changes.
+            auto& fx = ctx.engine.getFx();
+            juce::int64 hash = ctx.engine.getTotalCompensation() * 4 + (ctx.engine.isCompensationLimited() ? 1 : 0) + (ctx.engine.isLatencyCompensationOn() ? 2 : 0);
+            for (int slot = 0; slot < kNumFx; ++slot)
+                hash = hash * 31 + fx.getLatency (slot) + (fx.getPlugin (slot) != nullptr ? 7 : 0);
+            if (hash != lastHash)
+            {
+                lastHash = hash;
+                repaint();
+            }
+        }
+
         UiContext& ctx;
         WingKey scan { "SCAN FOR PLUGINS", Icon::Folder };
-        juce::Rectangle<int> box;
+        SettingsPanel compensation;
+        juce::Rectangle<int> box, latencyList;
+        juce::int64 lastHash = -1;
     };
 } // namespace
 

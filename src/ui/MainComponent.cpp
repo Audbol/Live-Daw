@@ -166,6 +166,10 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
     setLookAndFeel (&lookAndFeel);
 
+    // Plugin delay compensation (SETUP > PLUGINS) is an app setting, on by default.
+    engine.setLatencyCompensation (settings.getBoolValue (uiprefs::latencyCompensation, true));
+    engine.onPluginWarning = [this] (const juce::String& text) { log.warning (text); };
+
     ctx.selectStrip = [this] (Strip* strip) { selectStrip (strip); };
     ctx.getSelectedStrip = [this] { return getSelectedStrip(); };
     ctx.showScreen = [this] (Screen screen) { display->showScreen (screen); };
@@ -291,6 +295,7 @@ MainComponent::~MainComponent()
     engine.getWing().attachShow (nullptr);
     ctx.midi = nullptr;
     midiRemote.reset();
+    engine.onPluginWarning = nullptr;
 
     // Unsaved project changes survive the quit in the autosave (offered on the next open).
     recording->autosave();

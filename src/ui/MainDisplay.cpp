@@ -183,14 +183,24 @@ public:
         auto b = getLocalBounds();
         auto bar = b.removeFromBottom (juce::roundToInt (thumbH) + 2).toFloat();
         const bool touched = isMouseOverOrDragging() || focused || encoderTouched;
-        g.setFont (wingFontPx (juce::jmin (TypeScale::paramLabel * screenH, (float) b.getHeight() * 0.5f)));
+        // The label and value share the line: the font shrinks when both
+        // wouldn't fit, and the value keeps its room on the right.
+        const auto label = binding.label.toUpperCase();
+        const float gap = juce::jmax (4.0f, screenH * 0.01f);
+        auto font = wingFontPx (juce::jmin (TypeScale::paramLabel * screenH, (float) b.getHeight() * 0.5f));
+        const float needed = juce::GlyphArrangement::getStringWidth (font, label) + juce::GlyphArrangement::getStringWidth (font, valueText) + gap;
+        if (needed * 0.85f > (float) b.getWidth() && needed > 0.0f)
+            font = font.withHeight (juce::jmax (6.0f, font.getHeight() * (float) b.getWidth() / (needed * 0.85f)));
+        g.setFont (font);
+        auto valueArea = b.removeFromRight (juce::jmin (b.getWidth() * 2 / 3, juce::roundToInt (juce::GlyphArrangement::getStringWidth (font, valueText)) + 1));
+        b.removeFromRight (juce::roundToInt (gap));
         g.setColour (touched ? Colours::gold : Colours::caption);
-        g.drawFittedText (binding.label.toUpperCase(), b, juce::Justification::centredLeft, 1, 0.75f);
+        g.drawFittedText (label, b, juce::Justification::centredLeft, 1, 0.75f);
         // A negative (inverted) WIDTH turns red, as on the console.
         const auto colour = binding.label.containsIgnoreCase ("WIDTH") && valueText.trimStart().startsWithChar ('-')
                                 ? KnobColours::red : style.colour;
         g.setColour (colour);
-        g.drawFittedText (valueText, b, juce::Justification::centredRight, 1, 0.75f);
+        g.drawFittedText (valueText, valueArea, juce::Justification::centredRight, 1, 0.75f);
 
         const float y = bar.getCentreY();
         const float x = bar.getX() + position * bar.getWidth();

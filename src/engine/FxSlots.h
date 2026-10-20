@@ -23,6 +23,10 @@ namespace livedaw
     ld_engine_collect). Plugins run in stereo: a mono strip feeds both inputs and
     takes the left output back.
 
+    Each plugin's latency (getLatencySamples) goes to the engine's plugin
+    delay compensation: when the plugin is installed, whenever it reports a
+    change (from any thread: only an atomic store) and on updateLatencies().
+
     Stateless view: any number of FxSlots may view one engine. */
 class FxSlots
 {
@@ -58,6 +62,13 @@ public:
     float getLoad (int slot) const noexcept { return ld::ld_fx_load (engine, slot); }
     /** Number of strip inserts using the slot. */
     int getNumUsers (int slot) const noexcept { return ld::ld_fx_num_users (engine, slot); }
+    /** The latency the slot's plugin reports, in samples (0 without one). */
+    int getLatency (int slot) const noexcept { return ld::ld_fx_latency (engine, slot); }
+
+    /** Message thread: passes every plugin's current latency to the engine (a
+        safety net for plugins that change it without telling their host).
+        Returns true if one changed. */
+    bool updateLatencies();
 
     FxParams& params (int slot) const noexcept { return ld::ld_engine_controls (engine)->fx[juce::jlimit (0, kNumFx - 1, slot)]; }
 
