@@ -780,11 +780,11 @@ void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, 
     auto chips = body.removeFromRight (body.getWidth() * 0.26f).reduced (1.0f, 0.0f).translated (-3.0f, 0.0f);
     const float chipH = juce::jmin (screenCap (11.0f), chips.getHeight() * 0.42f);
     chips = chips.withSizeKeepingCentre (chips.getWidth(), chipH * 2.0f + 2.0f);
-    // An oscillator has no preamp: its chip shows SIN, PNK or WHT.
+    // An oscillator has no preamp: its chip shows SIN, PNK or WHT (a pair's, OSC 1's).
     if (osc)
     {
         static const char* const types[] = { "SIN", "PNK", "WHT" };
-        const auto* o = ctx.engine.getOscillator (MixerEngine::oscChannelOf (port));
+        const auto* o = ctx.engine.getOscillator (pairing != ld::kSourceMono ? 0 : MixerEngine::oscChannelOf (port));
         drawChip (g, chips.removeFromTop (chipH), types[juce::jlimit (0, 2, o != nullptr ? (int) o->mode.load() : 0)], Colours::chipOff, juce::Colours::black);
     }
     else
@@ -1092,7 +1092,10 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g, juce::Rectangle<int>) 
             g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), (float) k.getHeight() * 0.36f)));
             g.drawText (types[i], k, juce::Justification::centred);
         }
-        drawField (g, oscFreqField, "FREQ", formatHz (osc->freqHz.load()) + " Hz", osc->mode.load() == ld::kOscSine ? Dark::text : Dark::textDim);
+        // "250 Hz", "1.00 kHz"; dim while a noise plays.
+        const auto hz = formatHz (osc->freqHz.load());
+        drawField (g, oscFreqField, "FREQ", hz.endsWithChar ('k') ? hz.dropLastCharacters (1) + " kHz" : hz + " Hz",
+                   osc->mode.load() == ld::kOscSine ? Dark::text : Dark::textDim);
         drawOutlinedKey (g, sourceMuteKey, std::nullopt, "MUTE", src->mute.load(), Colours::mute);
         paintLevelFader (g, oscLevelFader, osc->levelDb.load(), kOscLevelMin, kOscLevelMax, "LEVEL");
         return;
@@ -1271,7 +1274,8 @@ void RoutingPage::showOscFreqMenu()
     int current = -1;
     for (int i = 0; i < (int) std::size (freqs); ++i)
     {
-        items.add (formatHz (freqs[i]) + " Hz");
+        const auto hz = formatHz (freqs[i]);
+        items.add (hz.endsWithChar ('k') ? hz.dropLastCharacters (1) + " kHz" : hz + " Hz");
         if (std::abs (osc->freqHz.load() - freqs[i]) < 0.01f)
             current = i;
     }
