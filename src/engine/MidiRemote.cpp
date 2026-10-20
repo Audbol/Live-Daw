@@ -480,8 +480,8 @@ void MidiRemote::handleMessage (int port, const juce::MidiMessage& m)
 //==============================================================================
 float MidiRemote::faderPosition (float db) noexcept
 {
-    // Four linear segments meeting at -60, -30 and -10 dB; 0 dB at 0.75 and
-    // +10 dB at the top (the WING / X32 fader law).
+    // Four linear segments meeting at -60, -30 and -10 dB; 0 dB at 0.75,
+    // +10 dB at the top and -90 dB at the bottom (the WING / X32 fader law).
     const float d = juce::jlimit (kFaderMinDb, kFaderMaxDb, db);
     float pos;
     if (d >= -10.0f)
@@ -491,7 +491,7 @@ float MidiRemote::faderPosition (float db) noexcept
     else if (d >= -60.0f)
         pos = (d + 70.0f) / 160.0f;
     else
-        pos = 0.0625f * (d - kFaderMinDb) / (-60.0f - kFaderMinDb);
+        pos = (d + 90.0f) / 480.0f;
     return juce::jlimit (0.0f, 1.0f, pos);
 }
 
@@ -504,7 +504,7 @@ float MidiRemote::faderDb (float position) noexcept
         return p * 80.0f - 50.0f;
     if (p >= 0.0625f)
         return p * 160.0f - 70.0f;
-    return kFaderMinDb + p / 0.0625f * (-60.0f - kFaderMinDb);
+    return p > 0.0f ? p * 480.0f - 90.0f : kFaderMinDb;
 }
 
 void MidiRemote::refreshCcStrips() const
