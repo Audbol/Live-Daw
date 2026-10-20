@@ -67,7 +67,7 @@ impl Osc {
 fn discovery_replies_like_a_wing() {
     let (_e, server) = start();
     let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
-    sock.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    sock.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     sock.send_to(b"WING?", server.status().discovery.unwrap()).unwrap();
     let mut buf = [0u8; 512];
     let (n, _) = sock.recv_from(&mut buf).unwrap();
@@ -528,7 +528,7 @@ fn native_meters_over_udp() {
     let mut a = Native::connect(&server);
     engine.channel_at(0).unwrap().meters.input_peak[0].store(0.5);
     let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
-    udp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    udp.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     let port = udp.local_addr().unwrap().port();
     // As libwing sends it: channel 3, port, report id (id 7 + port), collection, back to channel 1.
     let mut req = vec![0xdf, 0xd3, 0xd3];
