@@ -36,6 +36,8 @@ public:
             expect (engine.getChannels()[0]->params.mains[0].on.load(), "channels feed Main 1");
             expect (! engine.getBuses()[0]->params.mains[0].on.load(), "buses start as aux mixes");
             expect (engine.getChannels()[0]->getColour() == wingColour (1));
+            expectEquals (engine.getChannels()[0]->params.filter.lowCutFreq.load(), kLowCutDefaultHz, "the LO CUT reset matches");
+            expectEquals (engine.getChannels()[0]->params.filter.highCutFreq.load(), kHighCutDefaultHz, "the HI CUT reset matches");
             expectEquals (wingColourName (9), juce::String ("Red"));
 
             // Wrappers survive structure changes; numbering follows position.

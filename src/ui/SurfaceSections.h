@@ -97,6 +97,8 @@ private:
     int eqElement = 0; // 0 gain, 1 width (Q), 2 freq
     int eqBand = 0;    // the band knob last touched
     bool eqShift = false, eqMixShown = false, viewOpened = false;
+    int eqPages = 0; // analog EQ models: pages of four parameters (0: the WING EQ)
+    int eqPage = 0;  // the page on the band encoders (SHIFT steps through them)
     int eqModel = -1;
 
     juce::Rectangle<int> panelArea, screenArea, processingHeading, eqHeading, legendLow, legendHigh;

@@ -633,6 +633,25 @@ void ResponseGraph::mouseUp (const juce::MouseEvent&)
     dragBand = -1;
 }
 
+void ResponseGraph::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    const int line = cutLineAt (e.position);
+    if (line < 0)
+        return;
+    auto& f = strip->params.filter;
+    if (line == 0)
+        f.lowCutFreq = kLowCutDefaultHz;
+    else if (line == 1)
+        f.highCutFreq = kHighCutDefaultHz;
+    else
+    {
+        const auto& tool = models::model (models::FilterTools, f.toolModel.load());
+        if (const int i = tool.find ("f"); i >= 0)
+            f.toolParams[i] = tool.params[(size_t) i].defaultValue;
+    }
+    repaint();
+}
+
 void ResponseGraph::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
 {
     if (block == Filter)

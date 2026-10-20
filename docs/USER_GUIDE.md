@@ -121,8 +121,8 @@ Barlow Condensed.
     INPUT, TRIM & BALANCE pad, FILTER, DELAY), FILTER SETUP, GATE / COMP with the
     model's faceplate, EQ, INS 1 / INS 2 (with automix), MAIN SENDS and BUS / MATRIX
     SENDS. On MATRIX SENDS a channel's or aux's send has **PAN LINK** as on BUS SENDS
-    (touch the pan ring): linked (the default) its pan follows the channel's, LINK
-    REVERSED mirrors it, unlinked it has its own PAN; buses and mains send their
+    (touch the pan ring: OFF, LINK or LINK REVERSED): linked (the default) its pan
+    follows the channel's, LINK REVERSED mirrors it, OFF gives it its own PAN; buses and mains send their
     panned output. **INIT** and **COPY** open CHANNEL INIT / COPY (scope and destinations);
     a bus, main or matrix's feed grid (on HOME, or the INPUT screen's BUS FEED / FEED
     box) opens its **FEED CONFIGURATION** (WING 3.0.5): the CHANNEL, AUX and BUS
@@ -202,7 +202,13 @@ Barlow Condensed.
   PROCESSING with an encoder over each of INPUT, FILTER, GATE, COMP, INSERT and MAIN
   (press: show it on the screen, again: next parameter; hold: on/off); CHANNEL
   EQUALIZER with SHIFT, four band encoders, BLEND/MIX, EQ and GAIN / WIDTH / FREQ;
-  VIEW opens the shown slot on HOME.
+  VIEW opens the shown slot on HOME. With the WING EQ the encoders are bands 1-4 and
+  SHIFT gives the shelves (bus EQs: bands 5-8 and the shelves); GAIN / WIDTH / FREQ
+  choose what they set. With an analog EQ model the encoders set the model's
+  parameters in the order of its screen, four at a time: each SHIFT press moves on to
+  the next four (1-4, 5-8, 9-12, 13-16, then back to 1-4; SHIFT lights past the first
+  four), the caption under SHIFT shows which four, and the names under the encoders
+  show the parameter on each.
 - **USB / monitoring panel** (top right): VIEW (the MONITORS screen; held: the USB
   recorder / player), TALK LEVEL,
   PHONES LEVEL, MONITOR LEVEL, **TALK A / TALK B** (AUTO: held talks while held, a
@@ -323,8 +329,13 @@ the USB key on the screen to choose another folder).
 - A **scene** is a console snapshot with a **recall scope**: the sections (Name,
   Routing, Input, Gate, EQ, Dynamics, Inserts, Sends, Fader, DCA/Mute), which strips,
   DCAs, mute groups and FX slots, and the console settings (monitor setup, INPUT
-  SELECT, automix enables); an optional **fade time** for faders, pans and send levels,
-  and notes. **Recall-safe** strips and the **GLOBAL safes** (DCAs, mute groups, FX
+  SELECT, automix enables); an optional **fade time**, and notes. A fade glides the
+  continuous values: channel, aux, bus, main, matrix and DCA faders, pan and width,
+  and the send levels and pans (bus, main and matrix sends). Everything else (mutes,
+  ON keys, send modes, links, routing, processing) is set when the fade starts. Moving
+  a fader or knob that is fading (on the surface, the screen, from MIDI, a DAW or a
+  WING remote) takes it out of the fade: it stays where you put it while the rest
+  carries on. A new recall finishes a running fade first. **Recall-safe** strips and the **GLOBAL safes** (DCAs, mute groups, FX
   slots, sections, console settings) are skipped. **PARTIAL LOAD** recalls a chosen
   scope (**NO GLOB** ignores the safes), **RESTORE** all of the scene, **PARTIAL
   UPDATE** stores a chosen scope into it; both partial keys keep their last scope. Use
