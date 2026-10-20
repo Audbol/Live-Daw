@@ -16,6 +16,11 @@ All notable changes to Sidecar are listed here. Versions follow
 - LIBRARY: the SNAP scene NOTES are in the screen's body type (they were tiny);
   SNIP's REC key reads white on red while recording; MONITORS shows SRC LEVEL,
   SRC MIX, TALK LVL and DIR LVL in dB.
+- Small windows keep every section of the surface: the minimum window is now
+  1344 x 680 (was 1152 x 680, which hid the 4-Channel section and the custom
+  controls' upper part), the custom controls stay between the fader sections down
+  to 40 px strips, and the top row keeps the WING's arrangement. Dropdown fields
+  (VIEW > CONFIG and others) shrink their text instead of cutting it.
 
 ## [0.1.0] - beta
 

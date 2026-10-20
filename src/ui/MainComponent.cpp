@@ -408,7 +408,7 @@ MainComponent::BottomRowPlan MainComponent::planBottomRow (int total, int height
     // are at most about 0.15 of the row's height wide.
     const int banks = LayerSet::kNumSections * FaderSection::kBankColumnWidth;
     const int strips = juce::jmax (1, fixedStrips + autoCount * 12);
-    constexpr int ccStrips = 4, minStripWithCc = 50;
+    constexpr int ccStrips = 4, minStripWithCc = 40;
     BottomRowPlan plan;
     plan.stripW = (total - banks - FaderSection::kBankColumnWidth) / (strips + ccStrips);
     plan.withCc = plan.stripW >= minStripWithCc;
@@ -536,7 +536,7 @@ void MainComponent::layoutTopRow()
     // the left, the monitoring panel over the 4-Channel section at the right.
     const auto sides = topRowSideWidths (top.getWidth());
     juce::Rectangle<int> right;
-    if (top.getWidth() - sides.total() >= juce::jmin (MainDisplay::preferredWidth (top.getHeight()), top.getWidth() * 43 / 100))
+    if (top.getWidth() - sides.total() >= juce::jmin (MainDisplay::preferredWidth (top.getHeight()), top.getWidth() * 40 / 100))
     {
         monitor->setBounds (top.removeFromLeft (sides.monitor));
         right = top.removeFromRight (sides.fourChannel);

@@ -1823,7 +1823,9 @@ void CustomControlSection::resized()
     row = b.removeFromTop (lcdH * 3 / 4);
     lowerView.setBounds (juce::Rectangle<int> (viewSize, viewSize).withCentre (left (row).getCentre()));
     lowerLcd = right (row);
-    b.removeFromTop (26);
+    // Short windows (the minimum size) close the gaps up, so the arrows and
+    // the wheel keep room below the frame.
+    b.removeFromTop (juce::jmin (26, h / 20));
     for (int r = 0; r < 2; ++r)
     {
         row = b.removeFromTop (keyH + 4);
@@ -1836,8 +1838,8 @@ void CustomControlSection::resized()
     frame = getLocalBounds().reduced (3, 3).withBottom (b.getY() + 4);
 
     // Navigation arrows (a diamond) and the scroll wheel.
-    b.removeFromTop (10);
-    const int nav = juce::jlimit (14, 24, b.getHeight() / 5);
+    b.removeFromTop (juce::jmin (10, h / 40));
+    const int nav = juce::jmin (juce::jlimit (14, 24, b.getHeight() / 5), (b.getHeight() - 2) / 3);
     // The wheel: at most about 0.3 of the section's height, so wide strips
     // don't blow it up.
     const int wheelSize = juce::jmin (b.getHeight() - 4, b.getWidth() / 2, h * 3 / 10);
