@@ -4,6 +4,7 @@
 //! way libwing and the protocol document encode them.
 
 use livedaw_engine::{Engine, StripKind};
+use livedaw_wing::map::{LibAction, Library};
 use livedaw_wing::osc::{self, Arg, Message};
 use livedaw_wing::server::{Config, EngineHandle, WingServer};
 use livedaw_wing::{schema, Identity, WingState};
@@ -169,6 +170,49 @@ fn osc_subscriptions_push_changes_from_anywhere() {
         got = sub.recv().filter(|m| m.addr == "/ch/5/name");
     }
     assert_eq!(got.unwrap().args, vec![Arg::Str("Vox".into())]);
+}
+
+#[test]
+fn osc_scene_control_and_listen() {
+    let engine = Arc::new(Engine::new(0));
+    engine.set_num_channels(40);
+    let state = Arc::new(WingState::default());
+    let config =
+        Config { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), discovery_port: 0, osc_port: 0, native_port: 0, ..Config::default() };
+    let handle: Arc<dyn EngineHandle> = Arc::new(engine.clone());
+    let server = WingServer::start(handle, state.clone(), &config);
+    let c = Osc::new(&server);
+    // The host publishes its show; GO queues a recall it runs.
+    state.set_library(Library { attached: true, show: "Gig".into(), num_scenes: 4, current: 0, scene: "Intro".into(), tag: 0 });
+    assert_eq!(c.get("/$ctl/lib/$active").args, vec![Arg::Str("Intro".into())]);
+    c.send(&Message::new("/$ctl/lib/$actionidx", vec![Arg::Int(2)]));
+    c.send(&Message::new("/$ctl/lib/$action", vec![Arg::Str("GO".into())]));
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut action = None;
+    while Instant::now() < deadline && action.is_none() {
+        action = state.take_lib_action();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(action, Some(LibAction::Go(2)));
+    // The recall shows to subscribers.
+    c.send(&Message::new("/*S", vec![]));
+    std::thread::sleep(Duration::from_millis(300));
+    state.set_library(Library { attached: true, show: "Gig".into(), num_scenes: 4, current: 2, scene: "Chorus".into(), tag: 0 });
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut seen = false;
+    while Instant::now() < deadline && !seen {
+        seen = c.recv().is_some_and(|m| m == Message::new("/$ctl/lib/$active", vec![Arg::Str("Chorus".into())]));
+    }
+    assert!(seen, "scene change not pushed");
+    // LISTEN: KEY SOLO of CH 4's DYNAMICS.
+    c.send(&Message::new("/ch/4/dynsc/$solo", vec![Arg::Int(1)]));
+    let a = engine.analysis().controls();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline && a.listen_mode.load(Relaxed) == 0 {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(a.listen_mode.load(Relaxed), livedaw_engine::analyser::listen_mode::DYN_KEY);
+    assert_eq!(a.listen_id.load(Relaxed), engine.channel_at(3).unwrap().id());
 }
 
 // ---- Native ------------------------------------------------------------------------

@@ -172,7 +172,7 @@ This list matches the notice Sidecar shows at start-up.
 - **Plugins** (VST3, AU, LV2) run inside the mixer process, not in a sandbox: a plugin
   that crashes takes Sidecar down (safe mode then restores the show without plugins).
   There is no plugin delay compensation.
-- **WING remote apps:** the WING network protocols cover 82.8 % of the WING 3.1
+- **WING remote apps:** the WING network protocols cover 83.7 % of the WING 3.1
   parameter tree (the rest is stored but does nothing). WING Edit and WING Copilot
   have not been tried, and exported WING snapshots have not been loaded into a
   console.

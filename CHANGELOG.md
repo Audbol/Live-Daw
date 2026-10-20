@@ -22,6 +22,13 @@ All notable changes to Sidecar are listed here. Versions follow
   folder; IMPORT (or a double-click on the file) adds it to the show.
 - LIBRARY: the CLIP tab plays an audio clip (WAV, FLAC, AIFF, MP3) chosen at INT / USB
   on the USB player, with PLAY, PAUSE, STOP, meter, time and format.
+- WING remote: more of the WING 3.1 parameter tree drives the console: 83.7 % of its parameters
+  (57,353 of 68,556, up from 82.8 %). New: LISTEN from remote apps (BAND SOLO with
+  its band, KEY SOLO of the GATE and DYNAMICS slots, XOVER SOLO on channels, aux,
+  buses, mains and matrices), the inserts' state, which strip uses each FX slot, a
+  channel's source GAIN and +48V, the active RTA source and settings, the monitor
+  paths' actual level, and scene control (`/$ctl/lib`: GO, GO NEXT, GO PREV, GO TAG,
+  PREV / NEXT, the current scene and show).
 
 ### Changed
 
