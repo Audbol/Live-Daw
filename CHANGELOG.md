@@ -17,6 +17,9 @@ All notable changes to Sidecar are listed here. Versions follow
   (LIBRARY GO PREV / GO NEXT, recorder RECORD ALL CHANNELS); they now shrink to fit.
 - Text cut in fixed-size boxes on large windows: EFFECTS slot numbers 10 and 14 showed
   "...", the recorder's marker times and the SNIP counter's PARAMETERS were cut.
+- USB recorder / player: renaming a clip (or its folder) that is in the open playlist
+  left the playlist pointing at the old file, so the clip showed as missing
+  (1970-01-01) and couldn't play.
 
 ## [0.1.0] - beta
 

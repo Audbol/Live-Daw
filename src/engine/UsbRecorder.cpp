@@ -164,11 +164,16 @@ juce::Result UsbRecorder::rename (const juce::File& item, const juce::String& ne
         return juce::Result::fail ("\"" + clean + "\" already exists");
     if (! item.moveFileTo (target))
         return juce::Result::fail ("Can't rename " + item.getFileName());
-    if (renamed != nullptr)
-        *renamed = target;
     if (recPath == item)
         recPath = target;
+    else if (recPath.isAChildOf (item))
+        recPath = target.getChildFile (recPath.getRelativePathFrom (item));
+    // An open playlist keeps the renamed clips (a folder queue re-reads its files).
+    const Utf8 from (item.getFullPathName()), to (target.getFullPathName());
+    ld::ld_usb_queue_rename (engine, from.data, from.size, to.data, to.size);
     refreshQueue();
+    if (renamed != nullptr) // last: it may be `item` itself
+        *renamed = target;
     return juce::Result::ok();
 }
 
