@@ -3,6 +3,20 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Changed
+
+- **ROUTING** is laid out like the console's screen (firmware 3.1): its proportions,
+  colours and fonts, the CHANNEL INPUT MAIN | ALT keys, +1 AUTO and the lock, the
+  tiles (patched channels show their source's icon and label, unpatched ones only
+  their number), the SOURCES settings boxes and the OUTPUTS tiles with their meter
+  scale. The group selectors open the console's icon menus with its groups: the
+  interface's inputs and outputs are **LOCAL IN** / **LOCAL OUT** (LCL 1 ...; ports
+  past 48 in AES50 B / C), the recorder's playback is **WLIVE PLAY**, the channels'
+  own outputs are under **USER SIGNAL**; groups Sidecar doesn't have show n/a tiles.
+  +1 AUTO is off by default, as on the console.
+
 ## [0.1.2] - beta
 
 A fix for a crash in 0.1.1 and earlier: scrolling the start-up notice could close

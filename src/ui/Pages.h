@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ui/DisplayPage.h"
+#include "ui/RoutingGroups.h"
 #include "ui/ScreenWidgets.h"
 #include "ui/ShowPanel.h"
 #include "ui/WingPopups.h"
@@ -101,10 +102,12 @@ private:
 };
 
 /** ROUTING (manual 5.4), switched with the status-bar keys CHANNELS, SOURCES
-    and OUTPUTS. CHANNELS: pick a channel on the left, then its source on the
-    right (+1 AUTO moves on to the next channel; the lock protects the patch).
-    SOURCES: the inputs and which channels use them. OUTPUTS: pick an output on
-    the left, then the signal that feeds it (a strip's L / R, or the monitor). */
+    and OUTPUTS, laid out as the console's (firmware 3.1). CHANNELS: pick a
+    channel on the left, then its source on the right (+1 AUTO moves on to the
+    next channel; the lock protects the patch). SOURCES: the inputs of a group
+    and the selected one's settings. OUTPUTS: pick an output on the left, then
+    the signal that feeds it. The groups are the WING's (routing::Group), with
+    Sidecar's own ports in the ones they stand in for. */
 class RoutingPage final : public DisplayPage, private juce::Timer
 {
 public:
@@ -120,6 +123,9 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
 
 private:
+    using Group = routing::Group;
+    class GroupMenu;
+
     enum class Mode
     {
         Channels,
@@ -127,7 +133,8 @@ private:
         Outputs
     };
 
-    /** A signal that can feed an output: a strip's left or right channel, or the monitor (strip == nullptr). */
+    /** A signal that can feed an output: a strip's left or right channel, or
+        the monitor (strip == nullptr, channel 0-3). Channel -1: an n/a tile. */
     struct Signal
     {
         Strip* strip = nullptr;
@@ -137,11 +144,10 @@ private:
     void timerCallback() override;
     void setMode (Mode);
     std::vector<Strip*> channelTargets() const;
+    /** The tiles of the OUTPUTS source group (n/a tiles for groups without signals here). */
     std::vector<Signal> signals() const;
     int numTargetPages() const;
-    int numPorts (bool outputs) const;
-    int numPortGroups (bool outputs) const;
-    juce::String portName (int index, bool output) const;
+    int numHardware (bool outputs) const;
     Strip* selectedStrip() const;
     void select (Strip*);
     void layoutTiles();
@@ -151,50 +157,42 @@ private:
     /** What feeds output `port` (strip nullptr + channel -1: nothing). */
     Signal feederOf (int port) const;
     juce::String signalLabel (const Signal&) const;
-    juce::String inputUsers (int port) const;
-    /** Source groups: the hardware inputs in groups of 48, then the recorder's
-        playback channels (PLAY 1-48, PLAY 49-64). */
-    int numSourceGroups() const;
-    juce::String sourceGroupName (int group) const;
-    /** The input index of tile `index` of a source group (-1 past its end). */
-    int sourceAt (int group, int index) const;
-    /** "IN 3" (or the port's name), "PLAY 5", "OSC 1", "NONE". */
+    /** The channels patched to a source, each with true when it's their ALT input. */
+    std::vector<std::pair<Strip*, bool>> sourceUsers (int port) const;
+    /** A source's name (RENAME), else its label ("LCL 3"). */
     juce::String sourceName (int source) const;
-    /** Output groups: the hardware outputs in groups of 48, then the USB
-        RECORDER's four ports (kRecorderPortBase + n), which tap a strip's
-        output (UsbRecorder::Tap) instead of patching it. */
-    static constexpr int kRecorderPortBase = 0x20000;
-    static bool isRecorderPort (int port) noexcept { return port >= kRecorderPortBase && port < kRecorderPortBase + UsbRecorder::kNumChannels; }
-    int numOutputGroups() const;
-    juce::String outputGroupName (int group) const;
-    /** The output of tile `index` of an output group (-1 past its end). */
-    int outputPortAt (int group, int index) const;
+    /** False for an interface port the interface doesn't have (drawn n/a). */
+    bool sourcePresent (int source) const;
     void showGroupMenu (bool rightSide);
+    void chooseGroup (bool rightSide, int group);
     /** The invisible component the drop-down lists open under, moved over `area`. */
     juce::Component& anchorAt (juce::Rectangle<int> area);
 
+    void paintHeaders (juce::Graphics&) const;
     void paintChannelTile (juce::Graphics&, juce::Rectangle<int>, Strip&, bool selected) const;
-    void paintInputPort (juce::Graphics&, juce::Rectangle<int>, int port, bool marked) const;
-    void paintOutputPort (juce::Graphics&, juce::Rectangle<int>, int port, bool selected) const;
-    void paintSignal (juce::Graphics&, juce::Rectangle<int>, const Signal&, bool marked) const;
+    void paintSourceTile (juce::Graphics&, juce::Rectangle<int>, Group, int index, bool marked, int slot) const;
+    void paintOutputTile (juce::Graphics&, juce::Rectangle<int>, Group, int index, bool selected) const;
+    void paintSignal (juce::Graphics&, juce::Rectangle<int>, const Signal&, int index, bool marked) const;
     void paintSourcePanel (juce::Graphics&) const;
 
     UiContext& ctx;
     Mode mode = Mode::Channels;
-    int targetPage = 0, inputGroup = 0, outputGroup = 0, signalGroup = 2, signalPage = 0, layoutVersion = -1;
+    Group inputGroup = Group::LocalIn, outputGroup = Group::LocalOut, signalGroup = Group::Bus;
+    int targetPage = 0, signalPage = 0, layoutVersion = -1;
     int selectedPort = 0, selectedSource = 0;
     StripKind selectedKind = StripKind::Channel;
     int selectedIndex = 0;
-    bool autoAdvance = true, locked = false;
+    bool autoAdvance = false, locked = false; // the console's defaults
     bool editAlt = false; // CHANNEL INPUT MAIN / ALT: which input the source grid patches
 
-    juce::Rectangle<int> leftPanel, rightPanel, leftHeader, rightHeader;
-    juce::Rectangle<int> inputField, stereoKey, autoKey, lockKey, unlockKey, prevPage, nextPage, leftSelector, rightSelector,
-        noneKey, copyCaption, srcToChKey, chToSrcKey, separator, renameKey;
+    juce::Rectangle<int> leftPanel, rightPanel, leftHeader, rightHeader, leftGrid, rightGrid;
+    juce::Rectangle<int> inputCaption, mainKey, altKey, stereoKey, autoKey, lockFrame, lockKey, unlockKey, prevPage, nextPage, leftSelector,
+        rightSelector, noneKey, copyCaption, srcToChKey, chToSrcKey, separator, renameKey, meterLegend, prevSignals, nextSignals;
     std::vector<std::pair<juce::Rectangle<int>, Strip*>> channelTiles;
     std::vector<juce::Rectangle<int>> leftPorts, rightPorts;
     std::vector<std::pair<juce::Rectangle<int>, Signal>> signalTiles;
     juce::Component anchor;
+    std::unique_ptr<GroupMenu> groupMenu;
 
 public:
     // SOURCES settings (fig. 31): the parameter bar holds the source's GAIN.
@@ -208,9 +206,9 @@ private:
     /** The source table entry of an input port (nullptr if it has none). */
     ld::SourceParams* sourceParams (int port) const;
     void layoutSourcePanel();
-    void paintSourceSettings (juce::Graphics&, juce::Rectangle<int>) const;
-    /** The GAIN (or an oscillator's LEVEL) fader with its value flag and caption. */
-    void paintLevelFader (juce::Graphics&, juce::Rectangle<int>, float value, float min, float max, const juce::String& caption) const;
+    void paintSourceSettings (juce::Graphics&) const;
+    /** The GAIN (or an oscillator's LEVEL) fader with its value flag. */
+    void paintLevelFader (juce::Graphics&, juce::Rectangle<int>, float value, float min, float max) const;
     void paintSourceLook (juce::Graphics&) const;
     void paintSourceTags (juce::Graphics&) const;
     void selectSource (int port);
@@ -222,9 +220,13 @@ private:
 
     int sourceTab = 0; // SETTINGS, ICON/COLOR, TAGS
     std::array<juce::Rectangle<int>, 3> sourceTabKeys, sourceModeKeys;
-    juce::Rectangle<int> sourceBanner, sourceBody, sourceInitKey, sourceBox, sourceMeter, sourcePhantomKey, sourcePolKey, sourceMuteKey,
-        sourceGainFader;
-    // An OSC source: SINE / PINK / WHITE and FREQ in place of +48V and POL, LEVEL in place of GAIN.
+    // The SETTINGS boxes: INITIALIZE, the source (group, number, MONO / STEREO
+    // / MID/SIDE), REMOTE, RCV CUST and the meter, +48V, POL, MUTE and GAIN.
+    juce::Rectangle<int> sourceTabBar, sourceBanner, sourceBody, initBox, sourceInitKey, sourceBox, modeBox, remoteBox, rcvBox, rcvKey, meterBox,
+        sourceMeter, sourcePhantomKey, sourcePolKey, sourceMuteKey, sourceGainFader;
+    std::array<juce::Rectangle<int>, 4> remoteKeys;
+    // An OSC source: SINE / PINK / WHITE in the REMOTE column, FREQ in place of
+    // +48V and POL, LEVEL in place of GAIN.
     std::array<juce::Rectangle<int>, 3> oscModeKeys;
     juce::Rectangle<int> oscFreqField, oscLevelFader;
     /** The GAIN fader, or an OSC source's LEVEL fader. */
