@@ -61,6 +61,7 @@ namespace Colours
     const juce::Colour active = green;
     const juce::Colour meterGreen { 0xff35d05a };
     const juce::Colour meterYellow { 0xffe8d23a };
+    const juce::Colour meterOrange { 0xfff0641e };
     const juce::Colour meterRed { 0xffe8413a };
 
     // Control surface hardware (the WING's dark panel: same layout and print
