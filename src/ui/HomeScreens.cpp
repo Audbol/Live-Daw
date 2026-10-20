@@ -1141,9 +1141,10 @@ private:
 };
 
 //==============================================================================
-/** FILTER SETUP (Fig. 63): the header with FREEZE, LO CUT, HI CUT and the tool
-    filter's key and CLOSE; the graph with the LC / HC lines; the TOOL FILTER
-    list and the slopes. */
+/** FILTER SETUP (Fig. 63, as a 3.1 console shows it): the header with the
+    title, FREEZE, the LO CUT / HI CUT / tool filter keys and CLOSE; the graph
+    with the LC / HC lines; the TOOL FILTER list and the slopes in a panel at
+    the right. */
 class FilterTab final : public HomeScreen, private juce::Timer
 {
 public:
@@ -1163,13 +1164,18 @@ public:
         toolKey = &key (toolFilterName (f.toolModel.load()), toolFilterIcon (f.toolModel.load()), toolFilterColour (f.toolModel.load()));
         toolKey->iconAbove = true;
         bindKey (*toolKey, f.tool);
-        // On the header bar without a key body [Fig. 63].
+        // On the header bar without a key body, drawn in their colour until lit [3.1].
         for (auto* k : { loCut, hiCut, toolKey })
         {
             k->offColour = colours::panel;
             k->frame = colours::panel;
+            k->offInk = colours::eqOn;
         }
+        toolKey->offInk = toolFilterColour (f.toolModel.load());
         close = &key ("CLOSE", Icon::Check);
+        close->iconAfter = true;
+        close->offColour = colours::panel;
+        close->frame = colours::panel;
         close->offInk = colours::caption;
         close->onClick = [this] { if (ctx.showHomeTab) ctx.showHomeTab (HomeTab::Home); };
 
@@ -1177,7 +1183,8 @@ public:
         graph->setStrip (&strip, ResponseGraph::Filter);
         graph->setRuler (ResponseGraph::Ruler::Top);
 
-        toolCaption = &label ("TOOL FILTER", 13.0f, colours::caption);
+        toolCaption = &label ("TOOL FILTER", 15.0f, colours::caption);
+        toolCaption->setJustificationType (juce::Justification::centred);
         for (int m = 0; m < (int) models::table (models::FilterTools).size(); ++m)
         {
             // Each tool lights in its colour: TILT cyan, MAXER orange, AP yellow.
@@ -1197,11 +1204,16 @@ public:
             };
             tools.push_back (&k);
         }
-        lcCaption = &label ("LC", 13.0f, colours::caption);
+        lcCaption = &label ("LC", 15.0f, colours::caption);
         lcCaption->setJustificationType (juce::Justification::centred);
+        for (auto** unit : { &lcUnit, &hcUnit })
+        {
+            *unit = &label ("dB/Oct", 10.0f, colours::dim);
+            (*unit)->setJustificationType (juce::Justification::centred);
+        }
         lcSlopes = &make<Segmented> (models::list (models::LowCutSlopes), [&f] { return f.lowCutSlope.load(); }, [&f] (int i) { f.lowCutSlope = i; });
         lcSlopes->vertical = true;
-        hcCaption = &label ("HC", 13.0f, colours::caption);
+        hcCaption = &label ("HC", 15.0f, colours::caption);
         hcCaption->setJustificationType (juce::Justification::centred);
         hcSlopes = &make<Segmented> (models::list (models::HighCutSlopes), [&f] { return f.highCutSlope.load(); }, [&f] (int i) { f.highCutSlope = i; });
         hcSlopes->vertical = true;
@@ -1229,58 +1241,48 @@ public:
     void resized() override
     {
         clearBoxes();
-        auto b = getLocalBounds();
-        // Fig. 63: the title at the left, FREEZE, the LO CUT / HI CUT / tool
-        // keys (icons over captions) and CLOSE at the right.
-        header = b.removeFromTop (juce::jlimit (32, screenCap (60), b.getHeight() / 9));
-        const float u = (float) header.getWidth() / 1160.0f;
-        auto h = header.reduced (0, juce::jmax (3, header.getHeight() / 9));
-        auto span = [&h, u, this] (float x0, float x1)
-        { return juce::Rectangle<int> (header.getX() + juce::roundToInt (x0 * u), h.getY(), juce::roundToInt ((x1 - x0) * u), h.getHeight()); };
-        freeze->setBounds (span (484.0f, 592.0f));
-        loCut->setBounds (span (612.0f, 692.0f));
-        hiCut->setBounds (span (700.0f, 780.0f));
-        toolKey->setBounds (span (788.0f, 868.0f));
-        close->setBounds (span (1004.0f, 1144.0f));
-        b.removeFromTop (juce::jmax (4, getHeight() / 100));
-
-        auto side = b.removeFromRight (juce::jmax (120, b.getWidth() * 22 / 100));
-        b.removeFromRight (6);
-        graph->setBounds (b);
-
-        // [Fig. 63] TOOL FILTER over the four tool keys, then LC and HC side
-        // by side, each a column of square slope keys.
-        auto s = box (side, {});
-        const int capH = juce::roundToInt (juce::jmax (14.0f, wingPx (26.0f)));
-        const int gap = juce::roundToInt (juce::jmax (2.0f, wingPx (6.0f)));
-        toolCaption->setBounds (s.removeFromTop (capH));
-        const int kh = juce::jlimit (18, juce::jmax (18, s.getHeight() / 9), juce::roundToInt (wingPx (52.0f)));
-        for (auto* k : tools)
+        // In WING pixels from the content's top left (1160 wide) [3.1]: the
+        // header 80 high with FREEZE, the LO CUT / HI CUT / tool keys (icons
+        // over captions) and CLOSE; the graph under it; at the right a panel
+        // with TOOL FILTER over the four tool keys, then the LC and HC slope
+        // columns.
+        const auto b = getLocalBounds();
+        const float u = (float) b.getWidth() / 1160.0f;
+        auto at = [u, &b] (float x0, float y0, float x1, float y1)
         {
-            k->setBounds (s.removeFromTop (kh));
-            s.removeFromTop (gap);
-        }
-        s.removeFromTop (gap * 2);
-        auto captions = s.removeFromTop (capH);
-        const int colW = juce::jmin ((s.getWidth() - gap) / 2, kh);
-        const int sq = juce::jmin (colW, (s.getHeight() - 3 * gap) / 4);
-        auto lcCol = juce::Rectangle<int> (s.getCentreX() - gap / 2 - colW, s.getY(), colW, s.getHeight());
-        auto hcCol = juce::Rectangle<int> (s.getCentreX() + gap / 2 + (gap % 2), s.getY(), colW, s.getHeight());
-        lcCaption->setBounds (lcCol.withY (captions.getY()).withHeight (capH));
-        hcCaption->setBounds (hcCol.withY (captions.getY()).withHeight (capH));
-        lcSlopes->setBounds (lcCol.withHeight (sq * 4 + gap * 3).withSizeKeepingCentre (sq, sq * 4 + gap * 3));
-        hcSlopes->setBounds (hcCol.withHeight (sq * 2 + gap).withSizeKeepingCentre (sq, sq * 2 + gap));
+            return juce::Rectangle<int> (b.getX() + juce::roundToInt (x0 * u), b.getY() + juce::roundToInt (y0 * u), juce::roundToInt ((x1 - x0) * u),
+                                         juce::roundToInt ((y1 - y0) * u));
+        };
+        header = at (0.0f, 0.0f, 1160.0f, 80.0f);
+        freeze->setBounds (at (628.0f, 8.0f, 736.0f, 72.0f));
+        loCut->setBounds (at (752.0f, 12.0f, 808.0f, 68.0f));
+        hiCut->setBounds (at (816.0f, 12.0f, 872.0f, 68.0f));
+        toolKey->setBounds (at (880.0f, 12.0f, 936.0f, 68.0f));
+        close->setBounds (at (1024.0f, 16.0f, 1144.0f, 64.0f));
+        graph->setBounds (at (0.0f, 88.0f, 960.0f, 88.0f).withBottom (b.getBottom()));
+
+        side = at (972.0f, 88.0f, 1160.0f, 88.0f).withBottom (b.getBottom() - juce::roundToInt (6.0f * u));
+        toolCaption->setBounds (at (972.0f, 100.0f, 1160.0f, 128.0f));
+        for (size_t i = 0; i < tools.size(); ++i)
+            tools[i]->setBounds (at (980.0f, 136.0f + 63.0f * (float) i, 1152.0f, 200.0f + 63.0f * (float) i));
+        lcCaption->setBounds (at (990.0f, 408.0f, 1062.0f, 432.0f));
+        hcCaption->setBounds (at (1069.0f, 408.0f, 1141.0f, 432.0f));
+        lcUnit->setBounds (at (990.0f, 430.0f, 1062.0f, 448.0f));
+        hcUnit->setBounds (at (1069.0f, 430.0f, 1141.0f, 448.0f));
+        lcSlopes->setBounds (at (1000.0f, 450.0f, 1052.0f, 650.0f));
+        hcSlopes->setBounds (at (1079.0f, 450.0f, 1131.0f, 550.0f));
     }
 
     void paint (juce::Graphics& g) override
     {
         HomeScreen::paint (g);
-        auto h = header.toFloat();
         g.setColour (colours::panel);
-        g.fillRect (h);
+        g.fillRect (header);
+        g.fillRect (side);
         g.setColour (colours::caption);
-        g.setFont (panelTitleFont (header.getHeight()));
-        g.drawFittedText ("FILTER SETUP", h.withTrimmedLeft (h.getWidth() * 0.03f).withWidth (h.getWidth() * 0.36f).toNearestInt(), juce::Justification::centredLeft, 1);
+        g.setFont (homeFont (TypeScale::header, (float) header.getHeight() * 0.4f));
+        const int titleX = juce::roundToInt ((float) header.getWidth() * 33.0f / 1160.0f);
+        g.drawText ("FILTER SETUP", header.withTrimmedLeft (titleX).withWidth (header.getWidth() * 36 / 100), juce::Justification::centredLeft, false);
     }
 
 private:
@@ -1293,16 +1295,17 @@ private:
             toolKey->setButtonText (toolFilterName (shownTool));
             toolKey->setIcon (toolFilterIcon (shownTool));
             toolKey->setOnColour (toolFilterColour (shownTool));
+            toolKey->offInk = toolFilterColour (shownTool);
             notifyKnobs();
         }
     }
 
     IconKey *freeze = nullptr, *loCut = nullptr, *hiCut = nullptr, *toolKey = nullptr, *close = nullptr;
     std::vector<IconKey*> tools;
-    juce::Label *toolCaption = nullptr, *lcCaption = nullptr, *hcCaption = nullptr;
+    juce::Label *toolCaption = nullptr, *lcCaption = nullptr, *hcCaption = nullptr, *lcUnit = nullptr, *hcUnit = nullptr;
     Segmented *lcSlopes = nullptr, *hcSlopes = nullptr;
     ResponseGraph* graph = nullptr;
-    juce::Rectangle<int> header;
+    juce::Rectangle<int> header, side;
     int shownTool = -1;
 };
 
@@ -1312,13 +1315,16 @@ private:
 class DynTab final : public HomeScreen, private juce::Timer
 {
 public:
-    /** GATE (manual Fig. 94) or COMP (Fig. 92, 93), firmware 3.1: two rows of
-        controls over the model. Row 1: ON, the model field, MIX (COMP), KEY
-        TAP and KEY SOURCE at the right. Row 2: GAIN (COMP) or ACCENT (the
-        gate/expander), XOVER SOLO and XOVER MODE (COMP), KEY SOLO and KEY
-        FILTER; their ">" keys open FREQ / Q (/ DEPTH) under the row. The
+    /** GATE or COMP as a factory-set 3.1 console shows them, in WING pixels
+        from the content's top left (1160 wide): two panel rows over the
+        model. Row 1: ON, the model field, MIX and XOVER MODE / XOVER SOLO
+        (COMP). Row 2: ACCENT (the gate) or GAIN (COMP), KEY TAP (only while a
+        channel keys the slot), KEY SOURCE, KEY FILTER and KEY SOLO. The
         WING's own models show the transfer graph with the ENVELOPE panel and
-        the DETECTOR / ENVELOPE / AUTO ENV keys; the others their front panel. */
+        the DETECTOR / AUTO ENV keys; the others their front panel. The ">"
+        keys of KEY FILTER and XOVER MODE open the GATE KEY FILTER / COMP
+        XOVER page over the slot: the filter's response, its type and the
+        solo key, FREQ on the knobs. */
     DynTab (UiContext& c, Strip& s, bool gateSlot) : HomeScreen (c, s), isGate (gateSlot), slot (gateSlot ? s.params.gate : s.params.dynamics)
     {
         on = &key ("ON", std::nullopt, colours::accent);
@@ -1343,8 +1349,8 @@ public:
             slot, readGr, [this] { return isGate ? strip.meters.gateKeyDb.load() : strip.meters.dynKeyDb.load(); },
             [this] { return isGate ? strip.meters.gateOutPeak.exchange (0.0f) : strip.meters.dynOutPeak.exchange (0.0f); });
         envelope = &make<DynEnvelopeGraph> (slot);
+        // DETECTOR left, AUTO ENV right; the 3.1 screen has no ENVELOPE (LIN / LOG) key.
         for (auto [id, caption, names] : { std::tuple { "det", "DETECTOR", juce::StringArray { "PEAK", "RMS" } },
-                                           std::tuple { "env", "ENVELOPE", juce::StringArray { "LIN", "LOG" } },
                                            std::tuple { "auto", "AUTO ENV", juce::StringArray { "OFF", "ON" } } })
         {
             const juce::String paramId (id);
@@ -1361,7 +1367,7 @@ public:
                     if (i >= 0)
                         slot.values[i] = (float) v;
                 },
-                kSegmentOn);
+                colours::choice);
             toggles.push_back ({ &k, caption, paramId });
         }
         // The model's front panel.
@@ -1375,16 +1381,19 @@ public:
             }
         };
 
-        keySource = &field ("KEY SOURCE", keySourceNames (ctx.engine), slot.scSource, "SELF");
+        keySource = &make<ChoiceField> ("KEY SOURCE",
+                                        [this]
+                                        {
+                                            const int source = slot.scSource.load();
+                                            return source < 0 ? juce::String ("SELF") : "CH." + juce::String (source + 1);
+                                        },
+                                        [this] (ChoiceField& f) { chooseKeySource (f); });
         keySource->arrowKey = true;
-        keyFilter = &field ("KEY FILTER", models::list (models::SidechainFilters), slot.scFilter);
+        keyFilter = &field ("KEY FILTER", keyFilterNames(), slot.scFilter);
         keyFilter->chevronKey = true;
-        keyFilter->onKey = [this] { toggleDetail (Detail::Key); };
-        keyFilter->keyLit = [this] { return detail == Detail::Key; };
-        // Where the key is taken from the KEY SOURCE channel (no effect while SELF).
+        keyFilter->onKey = [this] { showPage (Page::Key); };
+        // Where the key is taken from the KEY SOURCE channel (shown while a channel keys the slot).
         keyTap = &field ("KEY TAP", tapPointNames(), slot.scTap);
-        keyFreq = &make<KnobBox> (wingFreq ("KEY FREQ", slot.scFreq, 20.0f, 20000.0f, 1000.0f));
-        keyQ = &make<KnobBox> (bindLog ("KEY Q", slot.scQ, 0.44f, 10.0f, {}, 1.0f));
         // The key signal after the key filter on the solo bus.
         keySolo = &key ("KEY SOLO");
         keySolo->outlined = true;
@@ -1392,16 +1401,34 @@ public:
 
         if (! isGate)
         {
-            xoMode = &field ("XOVER MODE", models::list (models::XoverTypes), slot.xoKind);
+            xoMode = &field ("XOVER MODE", xoverNames(), slot.xoKind);
             xoMode->chevronKey = true;
-            xoMode->onKey = [this] { toggleDetail (Detail::Xover); };
-            xoMode->keyLit = [this] { return detail == Detail::Xover; };
-            xoFreq = &make<KnobBox> (wingFreq ("XO FREQ", slot.xoFreq, 20.0f, 20000.0f, 1000.0f));
-            xoDepth = &make<KnobBox> (bindLinear ("DEPTH", slot.xoDepth, -30.0f, 30.0f, " dB", 1, 0.0f));
-            xoQ = &make<KnobBox> (bindLog ("XO Q", slot.xoQ, 0.4f, 4.0f, {}, 1.0f));
+            xoMode->onKey = [this] { showPage (Page::Xover); };
             xoSolo = &key ("XOVER SOLO");
             xoSolo->outlined = true;
             bindListen (*xoSolo, strip, ld::kListenXover); // the crossover band on the solo bus
+        }
+
+        // The GATE KEY FILTER / COMP XOVER page.
+        pageClose = &key ("CLOSE", Icon::Check);
+        pageClose->iconAfter = true;
+        pageClose->offColour = colours::panel;
+        pageClose->frame = colours::panel;
+        pageClose->offInk = colours::caption;
+        pageClose->onClick = [this] { showPage (Page::Slot); };
+        pageGraph = &make<ResponseGraph>();
+        pageGraph->setRuler (ResponseGraph::Ruler::Top);
+        pageType = &typeField ("FILTER TYPE", keyFilterNames(), slot.scFilter);
+        if (! isGate)
+            pageXoType = &typeField ("XOVER MODE", xoverNames(), slot.xoKind);
+        pageKeySolo = &key ("KEY SOLO");
+        pageKeySolo->outlined = true;
+        bindListen (*pageKeySolo, strip, isGate ? ld::kListenGateKey : ld::kListenDynKey);
+        if (! isGate)
+        {
+            pageXoSolo = &key ("XOVER SOLO");
+            pageXoSolo->outlined = true;
+            bindListen (*pageXoSolo, strip, ld::kListenXover);
         }
         bindModel();
         startTimerHz (8);
@@ -1410,6 +1437,20 @@ public:
     std::vector<HomeKnob> knobs() override
     {
         std::vector<HomeKnob> k;
+        if (page != Page::Slot)
+        {
+            // FREQ on the fifth knob [3.1]; Q (band pass, notch, the crossover's
+            // PEAK) on the sixth, the crossover's DEPTH on the fourth.
+            const bool xover = page == Page::Xover;
+            auto& freq = xover ? slot.xoFreq : slot.scFreq;
+            k.resize (6);
+            if (xover && slot.xoKind.load() > 0)
+                k[3] = { bindLinear ("DEPTH", slot.xoDepth, -30.0f, 30.0f, " dB", 1, 6.0f), widthStyle (pageGraph) };
+            k[4] = { wingFreq ("FREQ", freq, 20.0f, 20000.0f, kKeyFilterDefaultHz), freqStyle (pageGraph) };
+            if (xover ? slot.xoKind.load() == 5 : slot.scFilter.load() >= 3)
+                k[5] = { xover ? bindLog ("Q", slot.xoQ, 0.4f, 4.0f, {}, 0.4f) : bindLog ("Q", slot.scQ, 0.44f, 10.0f, {}, 1.995882f), widthStyle (pageGraph) };
+            return k;
+        }
         const auto& spec = models::model (models::Dynamics, slot.model.load());
         const auto order = encoderParams (spec);
         for (int i = knobPage * 6; i < juce::jmin ((int) order.size(), knobPage * 6 + 6); ++i)
@@ -1430,112 +1471,102 @@ public:
     void resized() override
     {
         clearBoxes();
-        auto b = getLocalBounds();
+        const auto b = getLocalBounds();
         const float u = (float) b.getWidth() / 1160.0f;
-        auto x = [u, &b] (float px) { return b.getX() + juce::roundToInt (px * u); };
-        const int rowH = juce::jlimit (28, screenCap (64), b.getHeight() * 9 / 100);
-        const int gap = juce::jmax (4, b.getHeight() / 90);
-        auto span = [&x] (juce::Rectangle<int> row, float x0, float x1) { return juce::Rectangle<int> (x (x0), row.getY(), x (x1) - x (x0), row.getHeight()); };
-
-        // Row 1 [Fig. 92, 94].
-        b.removeFromTop (gap);
-        row1 = b.removeFromTop (rowH);
-        on->setBounds (span (row1, 16.0f, 110.0f).reduced (0, rowH / 8));
-        model->setBounds (span (row1, 126.0f, 436.0f));
-        mix->setBounds (span (row1, 448.0f, 616.0f));
-        keyTap->setBounds (span (row1, 744.0f, 932.0f));
-        keySource->setBounds (span (row1, 944.0f, 1144.0f));
-
-        // Row 2.
-        b.removeFromTop (gap);
-        row2 = b.removeFromTop (rowH);
-        gain->setBounds (span (row2, 16.0f, 216.0f));
-        accent->setBounds (span (row2, 16.0f, 216.0f));
-        if (xoSolo != nullptr)
+        auto at = [u, &b] (float x0, float y0, float x1, float y1)
         {
-            xoSolo->setBounds (span (row2, 470.0f, 588.0f).reduced (0, rowH / 10));
-            xoMode->setBounds (span (row2, 600.0f, 830.0f));
-        }
-        keySolo->setBounds (span (row2, 842.0f, 960.0f).reduced (0, rowH / 10));
-        keyFilter->setBounds (span (row2, 972.0f, 1144.0f));
-
-        // The ">" keys' settings under row 2.
-        const bool peak = models::list (models::XoverTypes)[slot.xoKind.load()].containsIgnoreCase ("PEAK");
-        const bool keyQShown = slot.scFilter.load() >= 3; // BP, NOTCH
-        for (auto* c : { (juce::Component*) keyFreq, (juce::Component*) keyQ, (juce::Component*) xoFreq, (juce::Component*) xoDepth, (juce::Component*) xoQ })
+            return juce::Rectangle<int> (b.getX() + juce::roundToInt (x0 * u), b.getY() + juce::roundToInt (y0 * u), juce::roundToInt ((x1 - x0) * u),
+                                         juce::roundToInt ((y1 - y0) * u));
+        };
+        const bool slotPage = page == Page::Slot;
+        for (auto* c : std::initializer_list<juce::Component*> { on, model, mix, gain, accent, keyTap, keySource, keyFilter, keySolo, xoMode, xoSolo, graph, envelope, face })
+            if (c != nullptr)
+                c->setVisible (slotPage);
+        for (auto* c : std::initializer_list<juce::Component*> { pageClose, pageGraph, pageType, pageXoType, pageKeySolo, pageXoSolo })
             if (c != nullptr)
                 c->setVisible (false);
-        detailRow = {};
-        if (detail != Detail::None)
+        for (auto& t : toggles)
+            t.keys->setVisible (false);
+        bands.clear();
+        togglePanel = {};
+        if (! slotPage)
         {
-            b.removeFromTop (gap);
-            detailRow = b.removeFromTop (rowH);
-            std::vector<juce::Component*> shown;
-            if (detail == Detail::Key)
-                shown = keyQShown ? std::vector<juce::Component*> { keyFreq, keyQ } : std::vector<juce::Component*> { keyFreq };
-            else if (xoFreq != nullptr)
-                shown = peak ? std::vector<juce::Component*> { xoFreq, xoDepth, xoQ } : std::vector<juce::Component*> { xoFreq, xoDepth };
-            float right = 1144.0f;
-            for (auto it = shown.rbegin(); it != shown.rend(); ++it)
-            {
-                (*it)->setVisible (true);
-                (*it)->setBounds (span (detailRow, right - 176.0f, right));
-                right -= 188.0f;
-            }
+            layoutPage (at);
+            return;
         }
 
-        // The model.
-        b.removeFromTop (gap);
-        body = b.withTrimmedBottom (gap).withLeft (x (16.0f)).withRight (x (1144.0f));
+        // Row 1 [3.1].
+        bands.push_back (at (0.0f, 0.0f, 1160.0f, 80.0f));
+        on->setBounds (at (16.0f, 16.0f, 112.0f, 64.0f));
+        model->setBounds (at (128.0f, 8.0f, 432.0f, 72.0f));
+        mix->setBounds (at (448.0f, 8.0f, 612.0f, 72.0f));
+        mix->setVisible (! isGate);
+        if (xoMode != nullptr)
+        {
+            xoMode->setBounds (at (808.0f, 8.0f, 1000.0f, 72.0f));
+            xoSolo->setBounds (at (1016.0f, 8.0f, 1144.0f, 72.0f));
+        }
+
+        // Row 2.
+        bands.push_back (at (0.0f, 88.0f, 1160.0f, 184.0f));
+        gain->setBounds (at (16.0f, 104.0f, 180.0f, 168.0f));
+        gain->setVisible (! isGate);
+        accent->setBounds (at (16.0f, 104.0f, 180.0f, 168.0f));
+        accent->setVisible (isGate && accent->getBinding().isValid());
+        keyTap->setBounds (at (392.0f, 104.0f, 584.0f, 168.0f));
+        keyTap->setVisible (slot.scSource.load() >= 0);
+        keySource->setBounds (at (600.0f, 104.0f, 792.0f, 168.0f));
+        keyFilter->setBounds (at (808.0f, 104.0f, 1000.0f, 168.0f));
+        keySolo->setBounds (at (1016.0f, 104.0f, 1144.0f, 168.0f));
+
+        // The model: the transfer graph left, ENVELOPE (title, shape, keys) right.
+        body = at (0.0f, 192.0f, 1160.0f, 192.0f).withBottom (b.getBottom());
         const bool native = hasTransferGraph (shownModel);
         graph->setVisible (native);
         envelope->setVisible (native);
         face->setVisible (! native);
-        for (auto& t : toggles)
-            t.keys->setVisible (false);
-        togglePanel = {};
         if (! native)
         {
             face->setBounds (body);
             return;
         }
-        auto left = body.withWidth (juce::roundToInt ((float) body.getWidth() * 0.485f));
-        graph->setBounds (left);
-        auto right = body.withTrimmedLeft (left.getWidth() + juce::jmax (4, juce::roundToInt (8.0f * u)));
+        graph->setBounds (body.withRight (at (0.0f, 0.0f, 552.0f, 0.0f).getRight()));
+        auto right = body.withLeft (at (560.0f, 0.0f, 560.0f, 0.0f).getX());
+        envelope->setBounds (right.withBottom (at (0.0f, 0.0f, 0.0f, 512.0f).getBottom()));
+        togglePanel = right.withTop (at (0.0f, 520.0f, 0.0f, 520.0f).getY());
         const auto& spec = models::model (models::Dynamics, shownModel);
-        auto envArea = right.removeFromTop (right.getHeight() * 68 / 100);
-        envelope->setBounds (envArea);
-        right.removeFromTop (juce::jmax (4, juce::roundToInt (8.0f * u)));
-        togglePanel = right;
-        std::vector<Toggle*> present;
+        // DETECTOR around x 680, AUTO ENV around x 1040: 128 x 56 keys under their captions.
         for (auto& t : toggles)
-            if (spec.find (t.paramId) >= 0)
-                present.push_back (&t);
-        if (present.empty())
-            return;
-        const int cellW = togglePanel.getWidth() / 3;
-        const int keyH = juce::jlimit (20, screenCap (52), togglePanel.getHeight() * 36 / 100);
-        const int keyW = juce::jmin (cellW * 3 / 4, keyH * 3);
-        // DETECTOR left, AUTO ENV right, ENVELOPE in the middle [Fig. 92; 93 without ENVELOPE in the 3.x list].
-        for (auto* t : present)
         {
-            const int column = t->paramId == "det" ? 0 : (t->paramId == "env" ? 1 : 2);
-            auto cell = juce::Rectangle<int> (togglePanel.getX() + column * cellW, togglePanel.getY(), cellW, togglePanel.getHeight());
-            t->caption = cell.withTrimmedTop (cell.getHeight() * 22 / 100).withHeight (cell.getHeight() * 20 / 100);
-            t->keys->setBounds (juce::Rectangle<int> (keyW, keyH).withCentre ({ cell.getCentreX(), cell.getY() + cell.getHeight() * 64 / 100 }));
-            t->keys->setVisible (true);
+            if (spec.find (t.paramId) < 0)
+                continue;
+            const float cx = t.paramId == "det" ? 680.0f : 1040.0f;
+            t.caption = at (cx - 90.0f, 0.0f, cx + 90.0f, 0.0f).withY (togglePanel.getY() + juce::roundToInt (28.0f * u)).withHeight (juce::roundToInt (32.0f * u));
+            t.keys->setBounds (at (cx - 64.0f, 0.0f, cx + 64.0f, 0.0f).withY (togglePanel.getY() + juce::roundToInt (68.0f * u)).withHeight (juce::roundToInt (56.0f * u)));
+            t.keys->setVisible (true);
         }
     }
 
     void paint (juce::Graphics& g) override
     {
         HomeScreen::paint (g);
+        g.setColour (colours::panel);
+        for (auto& r : bands)
+            g.fillRect (r);
+        if (page != Page::Slot)
+        {
+            // The page's title over the middle of the graph [3.1].
+            const auto header = bands.front();
+            g.setColour (colours::caption);
+            g.setFont (homeFont (TypeScale::header, (float) header.getHeight() * 0.4f));
+            g.drawText (pageTitle(), header.withWidth (header.getWidth() * 960 / 1160), juce::Justification::centred, false);
+            return;
+        }
         if (! togglePanel.isEmpty())
         {
-            g.setColour (Colours::screenPanel);
             g.fillRect (togglePanel);
             g.setColour (Colours::text);
-            g.setFont (wingFontPx (TypeScale::body * getWingScreenHeight()));
+            g.setFont (homeFont (TypeScale::body, (float) togglePanel.getHeight() * 0.14f));
             for (auto& t : toggles)
                 if (t.keys->isVisible())
                     g.drawText (t.label, t.caption, juce::Justification::centred, false);
@@ -1543,9 +1574,9 @@ public:
     }
 
 private:
-    enum class Detail
+    enum class Page
     {
-        None,
+        Slot,
         Key,
         Xover
     };
@@ -1557,39 +1588,92 @@ private:
         juce::Rectangle<int> caption {};
     };
 
-    // The lit choice of DETECTOR / ENVELOPE / AUTO ENV (3.x: orange).
-    static inline const juce::Colour kSegmentOn { 0xfff5a00a };
-
     bool isGate;
     DynSlotParams& slot;
     IconKey *on = nullptr, *keySolo = nullptr, *xoSolo = nullptr;
     ChoiceField* model = nullptr;
     juce::StringArray allowed;
-    KnobBox *mix = nullptr, *gain = nullptr, *accent = nullptr, *keyFreq = nullptr, *keyQ = nullptr, *xoFreq = nullptr, *xoDepth = nullptr,
-            *xoQ = nullptr;
+    KnobBox *mix = nullptr, *gain = nullptr, *accent = nullptr;
     DynTransferGraph* graph = nullptr;
     DynEnvelopeGraph* envelope = nullptr;
     std::vector<Toggle> toggles;
     Faceplate* face = nullptr;
     ChoiceField *keySource = nullptr, *keyFilter = nullptr, *keyTap = nullptr, *xoMode = nullptr;
-    juce::Rectangle<int> row1, row2, detailRow, body, togglePanel;
-    int shownModel = -1, shownXo = -1, shownKeyFilter = -1, knobPage = 0;
-    Detail detail = Detail::None;
+    IconKey *pageClose = nullptr, *pageKeySolo = nullptr, *pageXoSolo = nullptr;
+    ResponseGraph* pageGraph = nullptr;
+    ChoiceField *pageType = nullptr, *pageXoType = nullptr;
+    std::vector<juce::Rectangle<int>> bands;
+    juce::Rectangle<int> body, togglePanel;
+    int shownModel = -1, shownXo = -1, shownKeyFilter = -1, shownSource = -2, knobPage = 0;
+    Page page = Page::Slot;
 
-    /** "SELF" is the field's none text; the channels as the console lists them (CH.1 ...). */
-    static juce::StringArray keySourceNames (MixerEngine& engine)
+    /** SELECT CHANNEL: SELF, or one of the channels by its colour, number and icon. */
+    void chooseKeySource (ChoiceField& f)
     {
-        juce::StringArray items;
-        for (int i = 0; i < (int) engine.getChannels().size(); ++i)
-            items.add ("CH." + juce::String (i + 1));
-        return items;
+        std::vector<popups::ChannelTile> tiles;
+        for (auto& channel : ctx.engine.getChannels())
+        {
+            const Strip* ch = channel.get();
+            popups::ChannelTile t;
+            t.number = juce::String (ch->getNumber());
+            t.colour = stripDisplayColour (*ch);
+            if (stripHasSource (*ch))
+                t.paintIcon = [ch] (juce::Graphics& g, juce::Rectangle<float> r) { drawStripIcon (g, *ch, r, Colours::caption); };
+            tiles.push_back (std::move (t));
+        }
+        popups::chooseChannel (f, "SELECT CHANNEL", "SELF", std::move (tiles), slot.scSource.load(), [this] (int i) { slot.scSource = i; });
     }
 
-    void toggleDetail (Detail d)
+    /** The key filter types and crossover modes by the console's long names. */
+    static juce::StringArray keyFilterNames() { return { "FLAT", "LOWPASS", "HIGHPASS", "BANDPASS", "NOTCH" }; }
+    static juce::StringArray xoverNames() { return { "FLAT", "LOW", "HIGH", "6 dB/Oct", "12 dB/Oct", "PEAK" }; }
+
+    /** The page's type field: its list opens right under it, without a caption row [3.1]. */
+    ChoiceField& typeField (const juce::String& caption, const juce::StringArray& items, std::atomic<int32_t>& value)
     {
-        detail = detail == d ? Detail::None : d;
+        return make<ChoiceField> (caption, [items, &value] { return items[value.load()]; },
+                                  [items, &value] (ChoiceField& f) { popups::chooseFrom (f, items, value.load(), [&value] (int i) { value = i; }); });
+    }
+
+    juce::String pageTitle() const
+    {
+        if (page == Page::Xover)
+            return "COMP XOVER";
+        return isGate ? "GATE KEY FILTER" : "COMP KEY FILTER";
+    }
+
+    void showPage (Page p)
+    {
+        page = p;
+        if (p != Page::Slot)
+            pageGraph->setStrip (&strip, p == Page::Xover ? ResponseGraph::Xover : (isGate ? ResponseGraph::GateKey : ResponseGraph::DynamicsKey));
+        notifyKnobs();
         resized();
         repaint();
+    }
+
+    /** The key filter / crossover page: the header with the title and CLOSE,
+        the graph with the ruler at the top, FILTER TYPE (XOVER MODE) in a
+        panel at the right and the solo key at the bottom of the panel under it. */
+    template <typename At>
+    void layoutPage (At at)
+    {
+        bands.push_back (at (0.0f, 0.0f, 1160.0f, 80.0f));
+        pageClose->setBounds (at (1024.0f, 16.0f, 1144.0f, 64.0f));
+        pageClose->setVisible (true);
+        const int bottom = getLocalBounds().getBottom();
+        pageGraph->setBounds (at (0.0f, 88.0f, 960.0f, 88.0f).withBottom (bottom));
+        pageGraph->setVisible (true);
+        const bool xover = page == Page::Xover;
+        bands.push_back (at (972.0f, 88.0f, 1160.0f, 168.0f));
+        auto* type = xover ? pageXoType : pageType;
+        type->setBounds (at (980.0f, 96.0f, 1152.0f, 160.0f));
+        type->setVisible (true);
+        auto lower = at (972.0f, 176.0f, 1160.0f, 176.0f).withBottom (bottom - juce::roundToInt (6.0f * (float) getWidth() / 1160.0f));
+        bands.push_back (lower);
+        auto* solo = xover ? pageXoSolo : pageKeySolo;
+        solo->setBounds (at (980.0f, 0.0f, 1152.0f, 64.0f).withY (lower.getBottom() - juce::roundToInt (72.0f * (float) getWidth() / 1160.0f)));
+        solo->setVisible (true);
     }
 
     /** The parameters on the six knobs, in the console's order: the WING
@@ -1624,7 +1708,6 @@ private:
         const auto& spec = models::model (models::Dynamics, shownModel);
         const int acc = spec.find ("acc");
         accent->setBinding (acc >= 0 ? bindConsoleParam (slot.values[acc], spec.params[(size_t) acc]) : KnobBinding {});
-        accent->setVisible (isGate && acc >= 0);
         knobPage = 0;
         notifyKnobs();
         resized();
@@ -1635,10 +1718,13 @@ private:
     {
         if (slot.model.load() != shownModel)
             bindModel();
-        if (slot.xoKind.load() != shownXo || slot.scFilter.load() != shownKeyFilter)
+        if (slot.xoKind.load() != shownXo || slot.scFilter.load() != shownKeyFilter || slot.scSource.load() != shownSource)
         {
+            // The knobs (Q, DEPTH) and KEY TAP follow the filter types and the key source.
             shownXo = slot.xoKind.load();
             shownKeyFilter = slot.scFilter.load();
+            shownSource = slot.scSource.load();
+            notifyKnobs();
             resized();
         }
     }
@@ -1646,11 +1732,12 @@ private:
 
 //==============================================================================
 /** EQ (firmware 3.1): the header with ON, the EQ MODEL field, the MIX knob
-    box, FREEZE, LO CUT / HI CUT / FILTER on input channels and the tool
-    filter's knob box at the right; a piano-key ruler over the graph; the WING
-    EQ's band list (the cut / shelf bands with their icon, the PEQ bands by
-    number; hold a key to reset its band) with BAND SOLO under it. An analog
-    model shows its front panel under the graph instead. */
+    box, FREEZE and, on input channels, the LO CUT / HI CUT / tool filter keys
+    and the FILTER field (its ">" opens FILTER SETUP); a piano-key ruler over
+    the graph; the WING EQ's band list (the cut / shelf bands with their icon,
+    the PEQ bands by number; hold a key to reset its band) with BAND SOLO at
+    the bottom of its panel. An analog model shows its front panel under the
+    graph instead. */
 class EqTab final : public HomeScreen, private juce::Timer
 {
 public:
@@ -1668,30 +1755,46 @@ public:
         model = &make<ChoiceField> ("EQ MODEL", [this, table] { return models::model (table, strip.params.eq.model.load()).name.toUpperCase(); },
                                     [this, table] (ChoiceField& field)
                                     {
-                                        ModelSelector::choose (field, table, strip.params.eq.model.load(),
-                                                               [this] (int m) { strip.setModel (ModelBlock::Eq, m); }, allowed);
+                                        ModelSelector::chooseEq (field, table, strip.params.eq.model.load(),
+                                                                 [this] (int m) { strip.setModel (ModelBlock::Eq, m); }, allowed);
                                     });
         model->arrowKey = true;
         mix = &make<KnobBox> (bindLinear ("MIX", eq.mix, 0.0f, 125.0f, " %", 0, 100.0f));
         if (strip.getKind() == StripKind::Channel)
         {
-            loCut = &key ({}, Icon::LowCut, colours::eqOn);
-            loCut->setTooltip ("LO CUT");
-            bindKey (*loCut, strip.params.filter.lowCut);
-            hiCut = &key ({}, Icon::HighCut, colours::eqOn);
-            hiCut->setTooltip ("HI CUT");
-            bindKey (*hiCut, strip.params.filter.highCut);
-            filter = &key ("FILTER", std::nullopt);
-            filter->onClick = [this] { if (ctx.showHomeTab) ctx.showHomeTab (HomeTab::Filter); };
-            // The tool filter's main control ("filter controls on EQ page", 3.0).
+            // The FILTER block's keys as on FILTER SETUP: icons over captions in
+            // their colour on the header, filled while on [3.1].
             auto& f = strip.params.filter;
-            const auto& tool = models::model (models::FilterTools, f.toolModel.load());
-            if (! tool.params.empty())
+            shownTool = f.toolModel.load();
+            loCut = &key ("LO CUT", Icon::LowCut, colours::eqOn);
+            bindKey (*loCut, f.lowCut);
+            hiCut = &key ("HI CUT", Icon::HighCut, colours::eqOn);
+            bindKey (*hiCut, f.highCut);
+            toolKey = &key (toolFilterName (shownTool), toolFilterIcon (shownTool), toolFilterColour (shownTool));
+            bindKey (*toolKey, f.tool);
+            for (auto* k : { loCut, hiCut, toolKey })
             {
-                tilt = &make<KnobBox> (bindConsoleParam (f.toolParams[0], tool.params[0]));
-                tilt->ringColour = toolFilterColour (f.toolModel.load());
-                shownTool = f.toolModel.load();
+                k->iconAbove = true;
+                k->offColour = colours::panel;
+                k->frame = colours::panel;
+                k->offInk = colours::eqOn;
             }
+            toolKey->offInk = toolFilterColour (shownTool);
+            // FILTER: the blocks in use ("LC/HC/TILT"); the field picks the
+            // tool filter, its ">" opens FILTER SETUP.
+            filter = &make<ChoiceField> ("FILTER", [&f] { return "LC/HC/" + toolFilterToken (f.toolModel.load()); },
+                                         [this] (ChoiceField& field)
+                                         {
+                                             juce::StringArray names;
+                                             for (int m = 0; m < (int) models::table (models::FilterTools).size(); ++m)
+                                                 names.add (toolFilterName (m));
+                                             popups::ListOptions options;
+                                             options.caption = "TOOL FILTER";
+                                             popups::chooseFrom (field, names, strip.params.filter.toolModel.load(),
+                                                                 [this] (int m) { strip.setModel (ModelBlock::FilterTool, m); }, options);
+                                         });
+            filter->chevronKey = true;
+            filter->onKey = [this] { if (ctx.showHomeTab) ctx.showHomeTab (HomeTab::Filter); };
         }
         // BAND SOLO: the selected band's range on the solo bus (it follows
         // the band selection while it plays).
@@ -1752,58 +1855,50 @@ public:
     void resized() override
     {
         clearBoxes();
-        auto b = getLocalBounds();
-        // The 3.1 header (WING pixels from the content's left edge, 1160 wide):
-        // ON 16-112, EQ MODEL 128-432, MIX 448-612, FREEZE 628-736, the tool
-        // filter's box 976-1152; LO CUT / HI CUT / FILTER fill the gap.
-        header = b.removeFromTop (juce::jlimit (32, screenCap (72), b.getHeight() * 12 / 100));
-        auto h = header.withSizeKeepingCentre (header.getWidth(), header.getHeight() * 4 / 5);
-        const float u = (float) header.getWidth() / 1160.0f;
-        auto span = [&h, u, this] (float x0, float x1)
-        { return juce::Rectangle<int> (header.getX() + juce::roundToInt (x0 * u), h.getY(), juce::roundToInt ((x1 - x0) * u), h.getHeight()); };
-        on->setBounds (span (16.0f, 112.0f).withSizeKeepingCentre (juce::roundToInt (96.0f * u), header.getHeight() * 3 / 5));
-        model->setBounds (span (128.0f, 432.0f));
-        mix->setBounds (span (448.0f, 612.0f));
-        freeze->setBounds (span (628.0f, 736.0f));
+        // The 3.1 screen in WING pixels from the content's top left (1160
+        // wide): the header 80 high with ON 16-112, EQ MODEL 128-432, MIX
+        // 448-612, FREEZE 628-736, the LO CUT / HI CUT / tool keys 752-936 and
+        // FILTER 952-1144; the graph 0-960 under it; the band panel 972-1160.
+        const auto b = getLocalBounds();
+        const float u = (float) b.getWidth() / 1160.0f;
+        auto at = [u, &b] (float x0, float y0, float x1, float y1)
+        {
+            return juce::Rectangle<int> (b.getX() + juce::roundToInt (x0 * u), b.getY() + juce::roundToInt (y0 * u), juce::roundToInt ((x1 - x0) * u),
+                                         juce::roundToInt ((y1 - y0) * u));
+        };
+        header = at (0.0f, 0.0f, 1160.0f, 80.0f);
+        on->setBounds (at (16.0f, 16.0f, 112.0f, 64.0f));
+        model->setBounds (at (128.0f, 8.0f, 432.0f, 72.0f));
+        mix->setBounds (at (448.0f, 8.0f, 612.0f, 72.0f));
+        freeze->setBounds (at (628.0f, 8.0f, 736.0f, 72.0f));
         if (filter != nullptr)
         {
-            auto keys = span (752.0f, 960.0f);
-            // Square keys, narrower in a small window so FILTER keeps a third.
-            const int kw = juce::jmin (keys.getHeight(), (keys.getWidth() - 8) / 3);
-            loCut->setBounds (keys.removeFromLeft (kw));
-            keys.removeFromLeft (4);
-            hiCut->setBounds (keys.removeFromLeft (kw));
-            keys.removeFromLeft (4);
-            filter->setBounds (keys);
+            loCut->setBounds (at (752.0f, 12.0f, 808.0f, 68.0f));
+            hiCut->setBounds (at (816.0f, 12.0f, 872.0f, 68.0f));
+            toolKey->setBounds (at (880.0f, 12.0f, 936.0f, 68.0f));
+            filter->setBounds (at (952.0f, 8.0f, 1144.0f, 72.0f));
         }
-        if (tilt != nullptr)
-            tilt->setBounds (span (976.0f, 1152.0f));
-        b.removeFromTop (juce::jmax (4, getHeight() / 100));
 
         const bool wingEq = ! bands.isEmpty();
         face->setVisible (! wingEq);
 
-        // The band list at the right (980-1152), BAND SOLO under it.
-        auto side = b.removeFromRight (juce::roundToInt (172.0f * u));
-        b.removeFromRight (juce::roundToInt (20.0f * u));
-        const int kh = juce::jlimit (22, screenCap (46), side.getHeight() / 9);
-        bandSolo->setBounds (side.removeFromBottom (kh));
-        side.removeFromBottom (juce::jmax (6, kh / 2));
-        bandKeyArea = side;
-        // [D10] 52 px keys 60 px apart.
-        bandKeyGap = juce::roundToInt (juce::jmax (2.0f, wingPx (8.0f)));
-        bandKeyH = juce::jlimit (16, juce::roundToInt (juce::jmax (16.0f, wingPx (52.0f))),
-                                 bandKeyArea.getHeight() / juce::jmax (6, bands.size()) - bandKeyGap);
+        // The band keys 56 high 60 apart from the panel's top, BAND SOLO at its bottom.
+        sidePanel = at (972.0f, 88.0f, 1160.0f, 88.0f).withBottom (b.getBottom() - juce::roundToInt (6.0f * u));
+        bandSolo->setBounds (at (980.0f, 0.0f, 1152.0f, 64.0f).withY (sidePanel.getBottom() - juce::roundToInt (72.0f * u)));
+        bandKeyArea = at (980.0f, 96.0f, 1152.0f, 96.0f).withBottom (bandSolo->getY() - juce::roundToInt (8.0f * u));
+        bandKeyGap = juce::roundToInt (4.0f * u);
+        bandKeyH = juce::jmin (juce::roundToInt (56.0f * u), bandKeyArea.getHeight() / juce::jmax (6, bands.size()) - bandKeyGap);
+        auto rest = at (0.0f, 88.0f, 960.0f, 88.0f).withBottom (b.getBottom());
 
         if (! wingEq)
         {
-            graph->setBounds (b.removeFromTop (b.getHeight() * 38 / 100));
-            b.removeFromTop (4);
-            face->setBounds (b);
+            graph->setBounds (rest.removeFromTop (rest.getHeight() * 38 / 100));
+            rest.removeFromTop (4);
+            face->setBounds (rest);
             freeze->setVisible (true);
             return;
         }
-        graph->setBounds (b);
+        graph->setBounds (rest);
     }
 
     void paint (juce::Graphics& g) override
@@ -1811,7 +1906,7 @@ public:
         HomeScreen::paint (g);
         g.setColour (colours::panel);
         g.fillRect (header);
-        g.fillRect (bandKeyArea.getUnion (bandSolo->getBounds()).expanded (4));
+        g.fillRect (sidePanel);
 
         // The band list.
         bandKeys.clear();
@@ -1895,8 +1990,9 @@ private:
     void updateBands()
     {
         bands = ResponseGraph::stdBands (strip);
+        // Band 4 is selected at first, as on a factory-set console.
         if (graph->getSelectedBand() < 0 && ! bands.isEmpty())
-            graph->setSelectedBand (juce::jmin (bands.size() - 1, 1));
+            graph->setSelectedBand (bands.contains ("4") ? bands.indexOf ("4") : juce::jmin (bands.size() - 1, 1));
         // Analog models have no bands to solo.
         bandSolo->setEnabled (! bands.isEmpty());
         bindBand();
@@ -1953,17 +2049,14 @@ private:
     void timerCallback() override
     {
         auto& eq = strip.params.eq;
-        if (tilt != nullptr && strip.params.filter.toolModel.load() != shownTool)
+        if (toolKey != nullptr && strip.params.filter.toolModel.load() != shownTool)
         {
-            // The tool filter changed: its knob box follows.
-            auto& f = strip.params.filter;
-            shownTool = f.toolModel.load();
-            const auto& tool = models::model (models::FilterTools, shownTool);
-            owned.removeObject (tilt);
-            tilt = tool.params.empty() ? nullptr : &make<KnobBox> (bindConsoleParam (f.toolParams[0], tool.params[0]));
-            if (tilt != nullptr)
-                tilt->ringColour = toolFilterColour (shownTool);
-            resized();
+            // The tool filter changed: its key follows.
+            shownTool = strip.params.filter.toolModel.load();
+            toolKey->setButtonText (toolFilterName (shownTool));
+            toolKey->setIcon (toolFilterIcon (shownTool));
+            toolKey->setOnColour (toolFilterColour (shownTool));
+            toolKey->offInk = toolFilterColour (shownTool);
         }
         if (eq.model.load() == shownModel)
             return;
@@ -1975,14 +2068,14 @@ private:
         notifyKnobs();
     }
 
-    IconKey *on = nullptr, *loCut = nullptr, *hiCut = nullptr, *filter = nullptr, *bandSolo = nullptr, *freeze = nullptr;
-    ChoiceField* model = nullptr;
-    KnobBox *mix = nullptr, *tilt = nullptr;
+    IconKey *on = nullptr, *loCut = nullptr, *hiCut = nullptr, *toolKey = nullptr, *bandSolo = nullptr, *freeze = nullptr;
+    ChoiceField *model = nullptr, *filter = nullptr;
+    KnobBox* mix = nullptr;
     ResponseGraph* graph = nullptr;
     Faceplate* face = nullptr;
     juce::StringArray bands, allowed;
     std::vector<juce::Rectangle<int>> bandKeys;
-    juce::Rectangle<int> header, bandKeyArea;
+    juce::Rectangle<int> header, sidePanel, bandKeyArea;
     int bandKeyH = 30, bandKeyGap = 4, shownModel = -1, shownTool = -1, knobPage = 0, pressCount = 0;
     bool heldReset = false;
 };
@@ -3263,7 +3356,7 @@ public:
             auto freq = wingFreq ("FREQ", b.freq, 20.0f, 20000.0f, kDefaultFreqs[i]);
             freq.text = [&f = b.freq] { return wingHz (f.load(), false); };
             for (auto binding : { bindLinear ("GAIN", b.gainDb, -15.0f, 15.0f, " dB", 1, 0.0f), freq,
-                                  bindLog ("Q", b.q, 0.442f, 10.0f, {}, i == 1 ? 1.0f : 0.707f) })
+                                  bindLog ("Q", b.q, 0.442f, 10.0f, {}, kDefaultQ) })
                 addAndMakeVisible (boxes.add (new KnobBox (binding)));
         }
         for (int i = 0; i < 200; ++i)
@@ -3423,7 +3516,9 @@ public:
 
 private:
     static constexpr float kRangeDb = 18.0f;
-    static constexpr float kDefaultFreqs[ld::kTapEqBands] = { 100.0f, 1000.0f, 10000.0f };
+    // The engine's defaults (100 Hz, 1 kHz, 10 kHz at Q 1.00 on the console's steps).
+    static constexpr float kDefaultFreqs[ld::kTapEqBands] = { 99.68543f, 999.2505f, 10016.53f };
+    static constexpr float kDefaultQ = 0.9979702f;
 
     float xForFreq (float f) const { return plot.getX() + plot.getWidth() * std::log (juce::jmax (20.0f, f) / 20.0f) / std::log (1000.0f); }
     float freqForX (float x) const { return 20.0f * std::pow (1000.0f, juce::jlimit (0.0f, 1.0f, (x - plot.getX()) / plot.getWidth())); }

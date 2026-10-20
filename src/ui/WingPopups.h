@@ -107,9 +107,9 @@ struct Tile
     juce::String caption;
 };
 
-/** A grid of picture tiles over the page (the dynamics model list, 3.1):
-    rows of tiles, extra space above the rows listed in `spacedRows`, the
-    tile `selected` framed gold. `paintPicture` draws a tile's picture;
+/** A grid of picture tiles under `anchor` (the dynamics and EQ model lists,
+    3.1): rows of tiles, the rows from the first of `spacedRows` on a lighter
+    panel a little lower, the tile `selected` framed gold. `paintPicture` draws a tile's picture;
     `onChosen` gets the id touched (not called when closed). */
 void chooseTile (juce::Component& anchor, std::vector<std::vector<Tile>> rows, std::vector<int> spacedRows, int selected,
                  std::function<void (juce::Graphics&, juce::Rectangle<float>, int id)> paintPicture, std::function<void (int id)> onChosen);
@@ -149,6 +149,20 @@ void chooseRackSlot (juce::Component& over, std::vector<RackSlot> slots, int sel
                      std::function<bool (juce::Graphics&, juce::Rectangle<float>, int slot)> paintDevice,
                      std::function<void (juce::Graphics&, juce::Rectangle<float>, int slot)> paintSourceIcon,
                      std::function<void (int slot)> onChosen);
+
+/** A channel of chooseChannel: its number, colour and icon. */
+struct ChannelTile
+{
+    juce::String number;
+    juce::Colour colour;
+    std::function<void (juce::Graphics&, juce::Rectangle<float>)> paintIcon;
+};
+
+/** SELECT CHANNEL (KEY SOURCE, 3.1): the `noneText` key (SELF), the title
+    and CLOSE over the channels' tiles eight to a row. `onChosen` gets the
+    channel's index, or -1 for the none key; `selected` -1 lights the none key. */
+void chooseChannel (juce::Component& anchor, const juce::String& title, const juce::String& noneText, std::vector<ChannelTile> tiles, int selected,
+                    std::function<void (int)> onChosen);
 
 /** An on-screen confirmation over `host`; red when `danger`. */
 void confirm (juce::Component& host, const juce::String& title, const juce::String& text,

@@ -57,6 +57,13 @@ public:
             expect (comp >= 0);
             const auto& m = models::model (models::Dynamics, comp);
             expectEquals (m.name, juce::String ("Wing Compressor"));
+            // A factory-set console's WING GATE and WING COMPRESSOR.
+            const auto& gate = models::model (models::Dynamics, models::findModel (models::Dynamics, "GATE"));
+            expectEquals (gate.name, juce::String ("Wing Gate"));
+            expectEquals (gate.params[(size_t) gate.find ("ratio")].display (gate.params[(size_t) gate.find ("ratio")].defaultValue), juce::String ("1:3"));
+            expectEquals (gate.params[(size_t) gate.find ("range")].defaultValue, 40.0f);
+            expectEquals (m.params[(size_t) m.find ("thr")].defaultValue, -10.0f);
+            expectEquals (m.params[(size_t) m.find ("knee")].defaultValue, 3.0f);
             const int ratio = m.find ("ratio");
             expect (ratio >= 0 && m.params[(size_t) ratio].kind == models::ParamKind::Values);
             expectEquals (m.params[(size_t) m.find ("thr")].display (-20.0f), juce::String ("-20.0 dB"));
@@ -106,6 +113,7 @@ public:
             for (size_t i = 0; i < m.params.size(); ++i)
                 values[i] = m.params[i].defaultValue;
             values[(size_t) m.find ("knee")] = 0.0f;
+            values[(size_t) m.find ("thr")] = -20.0f;
             const float in[] = { -40.0f, -6.0f };
             float out[] = { 0.0f, 0.0f };
             expect (models::dynStaticCurve (comp, values.data(), (int) values.size(), in, out, 2));
@@ -120,6 +128,7 @@ public:
             auto& ch = *engine.getChannels()[0];
             ch.setModel (ModelBlock::Dynamics, comp);
             ch.params.dynamics.values[m.find ("knee")] = 0.0f;
+            ch.params.dynamics.values[m.find ("thr")] = -20.0f;
             ch.params.dynamics.on = true;
             ch.params.pan = -100.0f;
             rig.setInput (0, 0.5f); // -6 dB: 14 dB over, 9.3 dB of reduction

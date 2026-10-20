@@ -28,6 +28,9 @@ juce::String consoleText (const models::Param& p, float v)
 {
     const bool dyn = p.table == models::Dynamics;
     const bool eq = p.table == models::ChannelEq || p.table == models::BusEq;
+    // The TILT EQ reads to a hundredth of a dB ("0.00 dB", 3.1).
+    if (p.table == models::FilterTools && p.id == "tilt")
+        return juce::String (v, 2) + " dB";
     if (! dyn && ! eq)
         return p.display (v);
     const auto token = tokenOf (p);
@@ -53,6 +56,10 @@ juce::String consoleText (const models::Param& p, float v)
         const float db = 10.0f - 30.0f * (v - p.min) / juce::jmax (1.0e-6f, p.max - p.min);
         return (db > 0.05f ? "+" : "") + juce::String (db, 1) + " dB";
     }
+    // Percentages in whole steps read without decimals (the WING GATE's ACCENT: "0 %").
+    if (p.unit == "%" && p.isContinuous() && p.steps > 1)
+        if (const float step = (p.max - p.min) / (float) (p.steps - 1); step >= 1.0f && std::abs (step - std::round (step)) < 1.0e-3f)
+            return juce::String (juce::roundToInt (v)) + " %";
     if (eq && token == "SOUL" && (p.id == "lmq" || p.id == "hmq"))
     {
         // Narrow (2.5) to wide (0.3) clockwise.
@@ -374,7 +381,7 @@ void ModelSelector::chooseDynamics (juce::Component& anchor, const DynSlotParams
     const int current = slot.model.load();
     auto values = slotValues (slot);
     popups::chooseTile (anchor, rows, { 2 }, current,
-                        [current, values, on = slot.on.load()] (juce::Graphics& g, juce::Rectangle<float> r, int m)
+                        [current, values] (juce::Graphics& g, juce::Rectangle<float> r, int m)
                         {
                             if (hasTransferGraph (m))
                             {
@@ -387,12 +394,80 @@ void ModelSelector::chooseDynamics (juce::Component& anchor, const DynSlotParams
                                     for (size_t i = 0; i < spec.params.size() && i < v.size(); ++i)
                                         v[i] = spec.params[i].defaultValue;
                                 }
-                                paintDynamicsTile (g, r, m, v.data(), m != current || on);
+                                paintDynamicsTile (g, r, m, v.data(), true); // orange whether the slot is on or not [3.1]
                             }
                             else
                                 Faceplate::paintThumbnail (g, r, models::Dynamics, m, {});
                         },
                         std::move (onSelect));
+}
+
+void ModelSelector::chooseEq (juce::Component& anchor, models::Table t, int current, std::function<void (int)> onSelect,
+                              const juce::StringArray& allowed)
+{
+    // The 3.1 list: the WING EQ alone in the first row, the analog models three to a row.
+    std::vector<std::vector<popups::Tile>> rows;
+    for (auto& spec : models::table (t))
+    {
+        if (allowed.size() > 0 && ! allowed.contains (spec.token))
+            continue;
+        if (rows.empty() || rows.size() == 1 || rows.back().size() == 3)
+            rows.emplace_back();
+        rows.back().push_back ({ spec.index, spec.name.toUpperCase() });
+    }
+    popups::chooseTile (anchor, rows, {}, current,
+                        [t] (juce::Graphics& g, juce::Rectangle<float> r, int m)
+                        {
+                            if (models::model (t, m).token == "STD")
+                                paintWingEqTile (g, r);
+                            else
+                                Faceplate::paintThumbnail (g, r, t, m, {});
+                        },
+                        std::move (onSelect));
+}
+
+void ModelSelector::paintWingEqTile (juce::Graphics& g, juce::Rectangle<float> r)
+{
+    // A dark grid with an amber curve through six band rings, as the 3.1 model list draws it.
+    g.setColour (juce::Colour (0xff000400));
+    g.fillRect (r);
+    g.setColour (juce::Colour (0xff283038));
+    for (int i = 1; i < 8; ++i)
+        g.fillRect (r.getX() + r.getWidth() * (float) i / 8.0f, r.getY(), 1.0f, r.getHeight());
+    g.fillRect (r.getX(), r.getCentreY(), r.getWidth(), 1.0f);
+    // Bands as (position 0..1, gain -1..1, width).
+    static const float bands[][3] = { { 0.08f, 0.25f, 0.18f }, { 0.28f, 0.7f, 0.1f }, { 0.48f, -0.25f, 0.1f },
+                                      { 0.65f, 0.15f, 0.08f }, { 0.8f, -0.3f, 0.08f }, { 0.94f, 0.35f, 0.12f } };
+    auto gainAt = [] (float x)
+    {
+        float sum = 0.0f;
+        for (auto& b : bands)
+            sum += b[1] * std::exp (-std::pow ((x - b[0]) / b[2], 2.0f));
+        return sum;
+    };
+    auto pointAt = [&r] (float x, float gain) { return juce::Point<float> (r.getX() + x * r.getWidth(), r.getCentreY() - gain * r.getHeight() * 0.32f); };
+    juce::Path curve, fill;
+    for (int i = 0; i <= 64; ++i)
+    {
+        const float x = (float) i / 64.0f;
+        const auto pt = pointAt (x, gainAt (x));
+        if (i == 0)
+            curve.startNewSubPath (pt);
+        else
+            curve.lineTo (pt);
+    }
+    fill = curve;
+    fill.lineTo (r.getRight(), r.getCentreY());
+    fill.lineTo (r.getX(), r.getCentreY());
+    fill.closeSubPath();
+    g.setColour (juce::Colour (0xff38280f));
+    g.fillPath (fill);
+    g.setColour (juce::Colour (0xfff0a830));
+    g.strokePath (curve, juce::PathStrokeType (juce::jmax (1.0f, r.getHeight() * 0.03f)));
+    const float d = juce::jmax (3.0f, r.getHeight() * 0.11f);
+    g.setColour (juce::Colour (0xffc0c0c0));
+    for (auto& b : bands)
+        g.drawEllipse (juce::Rectangle<float> (d, d).withCentre (pointAt (b[0], gainAt (b[0]))), juce::jmax (1.0f, d * 0.15f));
 }
 
 void ModelSelector::bind (models::Table t, std::atomic<int32_t>* m, std::function<void (int)> onSelect,

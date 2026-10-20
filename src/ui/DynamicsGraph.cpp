@@ -9,12 +9,12 @@ namespace livedaw::ui
 
 namespace
 {
-    // Firmware 3.x (manual Fig. 92-94, the model list): a #1c1c1c plot with
+    // Firmware 3.x (manual Fig. 92-94, the model list): a #202020 plot with
     // a dot grid, a grey threshold line with a white handle, the curve orange.
-    const juce::Colour plotBg { 0xff1c1c1c };
+    const juce::Colour plotBg { 0xff202020 };
     const juce::Colour gridDot { 0xff3c3c3c };
     const juce::Colour axisText { 0xffb8b8b8 };
-    const juce::Colour thresholdLine { 0xff5c5c5c };
+    const juce::Colour thresholdLine { 0xff484848 };
     const juce::Colour curveOn { 0xfff09a28 };
     const juce::Colour curveOff { 0xff707070 };
     const juce::Colour levelDot { 0xffffe23a };
@@ -23,11 +23,18 @@ namespace
     const juce::Colour tick { 0xff585858 };
     const juce::Colour envLineOn { 0xff1ed21e };
     const juce::Colour envFillOn { 0xff0b4a0b };
-    const juce::Colour envLineOff { 0xff4e4e4e };
-    const juce::Colour envFillOff { 0xff1a2a1a };
+    const juce::Colour envLineOff { 0xff606460 };
+    const juce::Colour envFillOff { 0xff282828 };
     const juce::Colour envGuide { 0xff6a6a6a };
 
     const juce::String& tokenOf (int model) { return models::model (models::Dynamics, model).token; }
+
+    /** The gate and the ducker draw their ENVELOPE green whether the slot is on or not [3.1]. */
+    bool greenEnvelope (int model)
+    {
+        const auto& t = tokenOf (model);
+        return t == "GATE" || t == "DUCK";
+    }
 
     /** Largest reduction the graph's GR meter shows. */
     float grMeterRange (int model, float range)
@@ -145,13 +152,13 @@ void paintDynamicsTile (juce::Graphics& g, juce::Rectangle<float> r, int model, 
         if (i < 0)
             return 0.2f;
         const auto& p = spec.params[(size_t) i];
-        return juce::String (id) == "hld" ? (values[i] - p.min) / juce::jmax (1.0e-6f, p.max - p.min) : p.toNormalised (values[i]);
+        return p.toNormalised (values[i]);
     };
     auto title = r.removeFromTop (r.getHeight() * 0.2f);
     g.setColour (axisText);
     g.setFont (wingFontPx (juce::jmax (4.0f, title.getHeight() * 0.5f)));
     g.drawText ("ENVELOPE", title, juce::Justification::centred, false);
-    DynEnvelopeGraph::paintShape (g, r.reduced (1.0f, 0.0f), norm ("att"), norm ("hld"), norm ("rel"), true, false);
+    DynEnvelopeGraph::paintShape (g, r.reduced (1.0f, 0.0f), norm ("att"), norm ("hld"), norm ("rel"), greenEnvelope (model), false);
 }
 
 //==============================================================================
@@ -185,7 +192,14 @@ void DynTransferGraph::timerCallback()
     key = newKey > key ? newKey : key * 0.6f + newKey * 0.4f;
     const float outDb = peak > 0.0f ? 20.0f * std::log10 (peak) : -120.0f;
     out = outDb > out ? outDb : juce::jmax (outDb, out - 1.5f);
-    repaint();
+    // Only when the meters moved: the graph is big and a pop-up may lie over it.
+    if (std::abs (gr - shownGr) > 0.05f || std::abs (key - shownKey) > 0.1f || std::abs (out - shownOut) > 0.1f)
+    {
+        shownGr = gr;
+        shownKey = key;
+        shownOut = out;
+        repaint();
+    }
 }
 
 juce::Rectangle<float> DynTransferGraph::plotArea() const
@@ -365,10 +379,9 @@ std::array<float, 3> DynEnvelopeGraph::positions() const
             continue;
         }
         const auto& param = spec.params[(size_t) idx];
-        // HOLD is drawn in proportion to its time (the gate's 10 ms of 1 s is a
-        // sliver in Fig. 94); ATTACK and RELEASE as their knobs are turned.
-        p[(size_t) i] = i == 1 ? juce::jlimit (0.0f, 1.0f, (valueOf (slot, idx) - param.min) / juce::jmax (1.0e-6f, param.max - param.min))
-                               : param.toNormalised (valueOf (slot, idx));
+        // Each as its knob is turned: the gate's 10 ms HOLD (a log knob)
+        // a third of the way, the compressor's 20 ms a tenth [3.1].
+        p[(size_t) i] = param.toNormalised (valueOf (slot, idx));
     }
     return p;
 }
@@ -469,7 +482,7 @@ void DynEnvelopeGraph::paint (juce::Graphics& g)
     const auto p = positions();
     if (p[0] < 0.0f && p[2] < 0.0f)
         return;
-    paintShape (g, graphArea(), p[0], juce::jmax (0.0f, p[1]), p[2], slot.on.load(), true);
+    paintShape (g, graphArea(), p[0], juce::jmax (0.0f, p[1]), p[2], slot.on.load() || greenEnvelope (slot.model.load()), true);
 }
 
 void DynEnvelopeGraph::mouseDown (const juce::MouseEvent& e)
@@ -501,7 +514,7 @@ void DynEnvelopeGraph::mouseDrag (const juce::MouseEvent& e)
     const float sign = dragHandle == 0 ? -1.0f : 1.0f;
     const float pos = juce::jlimit (0.0f, 1.0f, dragStart + sign * (float) e.getDistanceFromDragStartX() / w);
     const auto& param = spec.params[(size_t) idx];
-    slot.values[idx] = dragHandle == 1 ? param.min + pos * (param.max - param.min) : param.fromNormalised (pos);
+    slot.values[idx] = param.fromNormalised (pos);
     timerCallback();
 }
 

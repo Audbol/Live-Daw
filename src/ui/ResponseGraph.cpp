@@ -17,6 +17,7 @@ namespace
     const juce::Colour labelColour { 0xffc0c0c0 };
     const juce::Colour dimLabelColour { 0xff707070 };
     const juce::Colour allPassColour { 0xffe0d400 };
+    const juce::Colour keyCurveColour { 0xff18e460 }; // GATE KEY FILTER (the crossover is blue)
 
     /** "20", "100", "1K", "10K" (the console writes an upper-case K). */
     juce::String rulerText (float f)
@@ -100,7 +101,7 @@ int ResponseGraph::rtaViewId() const
         case RtaView::Filter: return ld::kRtaViewFilter;
         case RtaView::Auto:   break;
     }
-    return block == Filter ? ld::kRtaViewFilter : (ruler == Ruler::Top ? ld::kRtaViewEq : ld::kRtaViewHome);
+    return block == Filter || isKeyView() ? ld::kRtaViewFilter : (ruler == Ruler::Top ? ld::kRtaViewEq : ld::kRtaViewHome);
 }
 
 ResponseGraph::RtaLayout ResponseGraph::rtaLayout() const
@@ -121,7 +122,8 @@ ResponseGraph::RtaLayout ResponseGraph::rtaLayout() const
         static const float fractions[] = { 0.0f, 0.25f, 1.0f / 3.0f, 0.5f, 1.0f / 3.0f, 1.0f };
         const int d = juce::jlimit (0, 5, display);
         l.fraction = fractions[d];
-        l.split = d >= 1 && d <= 3 && block == Eq;
+        // The full screens (EQ, FILTER SETUP, the key filter pages) put it in its own strip.
+        l.split = d >= 1 && d <= 3 && ruler == Ruler::Top;
     }
     if (l.fraction <= 0.0f)
         l.view = -1;
@@ -293,7 +295,25 @@ void ResponseGraph::timerCallback()
             changed = true;
         }
     }
-    if (changed || block == Filter)
+    // The lines and handles can move without the response changing (a cut
+    // that is off, a band at 0 dB, a flat key filter).
+    std::vector<float> marks;
+    if (auto* freq = keyFreq())
+        marks.push_back (freq->load());
+    else if (block == Filter)
+    {
+        auto& f = strip->params.filter;
+        marks = { f.lowCutFreq.load(), f.highCutFreq.load(), (float) f.toolModel.load(), f.toolParams[0].load(), f.toolParams[1].load() };
+    }
+    else
+        for (auto& band : bands)
+            marks.push_back (strip->params.eq.values[band.f].load());
+    if (marks != shownMarks)
+    {
+        shownMarks = std::move (marks);
+        changed = true;
+    }
+    if (changed)
         repaint();
 }
 
@@ -313,7 +333,7 @@ juce::Rectangle<float> ResponseGraph::plot() const
         r.removeFromBottom (juce::jmax (15.0f, wingPx (22.0f)));
         // (Under an RTA strip the band names go inside the curve's area.)
         const auto l = rtaLayout();
-        if ((block == Filter || ! bands.empty()) && ! (rtaShown && l.view >= 0 && l.split))
+        if ((block == Filter || isKeyView() || ! bands.empty()) && ! (rtaShown && l.view >= 0 && l.split))
             r.removeFromTop (juce::jmax (18.0f, wingPx (30.0f)));
     }
     return r;
@@ -336,16 +356,43 @@ float ResponseGraph::freqForX (float x) const
     return 20.0f * std::pow (1000.0f, juce::jlimit (0.0f, 1.0f, (x - p.getX()) / p.getWidth()));
 }
 
+float ResponseGraph::topDb() const
+{
+    // The full screens: +-20 dB (+10 .. -30 for a key filter) in 5 dB steps [3.1].
+    if (isKeyView())
+        return 10.0f;
+    return showLabels() ? 20.0f : kRangeDb;
+}
+
+float ResponseGraph::bottomDb() const { return isKeyView() ? -30.0f : -topDb(); }
+
 float ResponseGraph::yForDb (float db) const
 {
     const auto p = curvePlot();
-    return p.getCentreY() - juce::jlimit (-kRangeDb, kRangeDb, db) / kRangeDb * p.getHeight() * 0.5f;
+    // A key filter's response runs on under the bottom edge (clipped there) [3.1].
+    const float lowest = isKeyView() ? bottomDb() - 30.0f : bottomDb();
+    return p.getY() + (topDb() - juce::jlimit (lowest, topDb(), db)) / (topDb() - bottomDb()) * p.getHeight();
 }
 
 float ResponseGraph::dbForY (float y) const
 {
     const auto p = curvePlot();
-    return (p.getCentreY() - y) / (p.getHeight() * 0.5f) * kRangeDb;
+    return topDb() - (y - p.getY()) / juce::jmax (1.0f, p.getHeight()) * (topDb() - bottomDb());
+}
+
+std::atomic<float>* ResponseGraph::keyFreq() const
+{
+    if (strip == nullptr)
+        return nullptr;
+    switch (block)
+    {
+        case GateKey:     return &strip->params.gate.scFreq;
+        case DynamicsKey: return &strip->params.dynamics.scFreq;
+        case Xover:       return &strip->params.dynamics.xoFreq;
+        case Eq:
+        case Filter:      break;
+    }
+    return nullptr;
 }
 
 juce::Path ResponseGraph::curveOf (const std::vector<double>& db) const
@@ -368,8 +415,9 @@ void ResponseGraph::paint (juce::Graphics& g)
     const auto bounds = getLocalBounds().toFloat().reduced (1.0f);
     g.fillAll (juce::Colours::black);
 
-    // Grid: a line for every 10, 20 ... 90 Hz, 100, 200 ... and four level
-    // divisions, all in the same dark grey.
+    // Grid: a line for every 10, 20 ... 90 Hz, 100, 200 ... and the levels
+    // (every 5 dB on the full screens, four divisions otherwise), all in the
+    // same dark grey.
     const auto cp = curvePlot();
     g.setColour (gridColour);
     for (float decade : { 10.0f, 100.0f, 1000.0f, 10000.0f })
@@ -380,8 +428,9 @@ void ResponseGraph::paint (juce::Graphics& g)
                 continue;
             g.drawVerticalLine (juce::roundToInt (xForFreq (f)), cp.getY(), p.getBottom());
         }
-    for (int i = 0; i <= 4; ++i)
-        g.drawHorizontalLine (juce::roundToInt (cp.getY() + (cp.getHeight() - 1.0f) * (float) i / 4.0f), cp.getX(), cp.getRight());
+    const int levels = showLabels() ? juce::roundToInt ((topDb() - bottomDb()) / 5.0f) : 4;
+    for (int i = 0; i <= levels; ++i)
+        g.drawHorizontalLine (juce::roundToInt (cp.getY() + (cp.getHeight() - 1.0f) * (float) i / (float) levels), cp.getX(), cp.getRight());
 
     // The piano-key ruler.
     const float rulerH = juce::jlimit (5.0f, screenCap (14.0f), getHeight() * 0.03f);
@@ -423,35 +472,73 @@ void ResponseGraph::paint (juce::Graphics& g)
         }
     }
 
+    // LC, HC (the all-pass AP, a key filter's FREQ): vertical lines labelled
+    // at the top (under an RTA strip: inside the curve's area), an open ring
+    // handle near the bottom.
+    const float ringRadius = juce::jlimit (5.0f, screenCap (14.0f), getHeight() / 34.0f);
+    auto line = [&] (float freq, juce::Colour colour, const juce::String& name)
+    {
+        const float x = xForFreq (freq);
+        const float lh = juce::jmax (15.0f, wingPx (26.0f));
+        const bool under = cp.getY() > p.getY() + 1.0f;
+        const float labelY = under ? cp.getY() + lh * 0.5f + 2.0f : p.getY() - lh * 0.5f - 2.0f;
+        const float lineTop = under ? cp.getY() + lh + 4.0f : p.getY();
+        g.setColour (colour);
+        g.fillRect (x - 1.0f, lineTop, 2.0f, p.getBottom() - lineTop);
+        g.setFont (wingFont (TypeScale::body));
+        g.drawText (name, juce::Rectangle<float> (lh * 2.4f, lh).withCentre ({ x, labelY }), juce::Justification::centred);
+        paintRing (g, { x, p.getBottom() - ringRadius * 3.9f }, ringRadius, juce::Colours::white, true);
+    };
+
+    if (isKeyView())
+    {
+        if (! rtaArea.isEmpty())
+            paintRta (g, rtaArea, layout);
+        // The filter's response with the area under it filled, the grid
+        // showing through [3.1].
+        const auto colour = block == Xover ? filterCurveColour : keyCurveColour;
+        g.saveState();
+        g.reduceClipRegion (cp.toNearestInt());
+        const auto curve = curveOf (response);
+        juce::Path fill (curve);
+        fill.lineTo (cp.getRight() + 2.0f, cp.getBottom() + 2.0f);
+        fill.lineTo (cp.getX() - 2.0f, cp.getBottom() + 2.0f);
+        fill.closeSubPath();
+        g.setColour (colour.withAlpha (block == Xover ? 0.36f : 0.4f));
+        g.fillPath (fill);
+        g.setColour (colour);
+        g.strokePath (curve, juce::PathStrokeType (juce::jlimit (2.0f, 3.0f, getHeight() / 120.0f)));
+        g.restoreState();
+        if (auto* freq = keyFreq())
+            line (freq->load(), labelColour, "FREQ");
+        return;
+    }
+
     if (block == Filter)
     {
         if (! rtaArea.isEmpty())
             paintRta (g, rtaArea, layout);
-        // The channel EQ behind, the filter in blue.
+        // The channel EQ behind (grey while it's off), the filter in blue
+        // with what it cuts shaded against 0 dB.
         g.saveState();
         g.reduceClipRegion (p.toNearestInt());
         const auto eqCurve = curveOf (eqResponse);
-        g.setColour (eqCurveColour.withAlpha (strip->params.eq.on.load() ? 0.55f : 0.25f));
-        g.strokePath (eqCurve, juce::PathStrokeType (1.5f));
+        g.setColour (strip->params.eq.on.load() ? eqCurveColour.withAlpha (0.55f) : dimLabelColour);
+        g.strokePath (eqCurve, juce::PathStrokeType (juce::jlimit (1.5f, 2.0f, getHeight() / 120.0f)));
+        const auto curve = curveOf (response);
+        juce::Path cut (curve);
+        cut.lineTo (cp.getRight() + 2.0f, yForDb (0.0f));
+        cut.lineTo (cp.getX() - 2.0f, yForDb (0.0f));
+        cut.closeSubPath();
+        g.setColour (filterCurveColour.withAlpha (0.25f));
+        g.fillPath (cut);
         g.setColour (filterCurveColour);
-        g.strokePath (curveOf (response), juce::PathStrokeType (juce::jlimit (2.0f, 3.0f, getHeight() / 90.0f)));
+        g.strokePath (curve, juce::PathStrokeType (juce::jlimit (2.0f, 3.0f, getHeight() / 120.0f)));
         g.restoreState();
 
-        // LC, HC (and the all-pass AP): vertical lines labelled at the top,
-        // an open ring handle near the bottom.
-        const float radius = juce::jlimit (5.0f, screenCap (10.0f), getHeight() / 34.0f);
-        auto line = [&] (float freq, juce::Colour colour, const juce::String& name)
-        {
-            const float x = xForFreq (freq);
-            g.setColour (colour);
-            g.fillRect (x - 1.0f, p.getY(), 2.0f, p.getHeight());
-            g.setFont (wingFont (TypeScale::body));
-            const float lh = juce::jmax (15.0f, wingPx (26.0f));
-            g.drawText (name, juce::Rectangle<float> (x - lh * 1.2f, p.getY() - lh - 2.0f, lh * 2.4f, lh), juce::Justification::centred);
-            paintRing (g, { x, p.getBottom() - radius * 2.5f }, radius, colour, true);
-        };
-        line (f.lowCutFreq.load(), f.lowCut.load() ? juce::Colours::white : dimLabelColour, "LC");
-        line (f.highCutFreq.load(), f.highCut.load() ? juce::Colours::white : dimLabelColour, "HC");
+        // The LC / HC lines stay light grey whether the cut is on or off [3.1].
+        line (f.lowCutFreq.load(), labelColour, "LC");
+        line (f.highCutFreq.load(), labelColour, "HC");
         const auto& tool = models::model (models::FilterTools, f.toolModel.load());
         if (tool.token.startsWith ("AP"))
             if (const int i = tool.find ("f"); i >= 0)
@@ -564,7 +651,12 @@ int ResponseGraph::bandAt (juce::Point<float> pos) const
 
 int ResponseGraph::cutLineAt (juce::Point<float> pos) const
 {
-    if (strip == nullptr || block != Filter)
+    if (strip == nullptr)
+        return -1;
+    // 3: a key filter's or the crossover's FREQ line.
+    if (auto* freq = keyFreq())
+        return std::abs (xForFreq (freq->load()) - pos.x) <= 16.0f ? 3 : -1;
+    if (block != Filter)
         return -1;
     auto& f = strip->params.filter;
     const float lc = std::abs (xForFreq (f.lowCutFreq.load()) - pos.x);
@@ -581,7 +673,7 @@ int ResponseGraph::cutLineAt (juce::Point<float> pos) const
 void ResponseGraph::mouseDown (const juce::MouseEvent& e)
 {
     dragLine = cutLineAt (e.position);
-    if (block == Filter)
+    if (block == Filter || isKeyView())
         return;
     dragBand = bandAt (e.position);
     if (dragBand >= 0)
@@ -598,6 +690,13 @@ void ResponseGraph::mouseDrag (const juce::MouseEvent& e)
     if (strip == nullptr)
         return;
 
+    if (dragLine == 3)
+    {
+        if (auto* freq = keyFreq())
+            *freq = juce::jlimit (20.0f, 20000.0f, freqForX (e.position.x));
+        repaint();
+        return;
+    }
     if (dragLine >= 0)
     {
         auto& f = strip->params.filter;
@@ -639,7 +738,12 @@ void ResponseGraph::mouseDoubleClick (const juce::MouseEvent& e)
     if (line < 0)
         return;
     auto& f = strip->params.filter;
-    if (line == 0)
+    if (line == 3)
+    {
+        if (auto* freq = keyFreq())
+            *freq = kKeyFilterDefaultHz;
+    }
+    else if (line == 0)
         f.lowCutFreq = kLowCutDefaultHz;
     else if (line == 1)
         f.highCutFreq = kHighCutDefaultHz;
@@ -654,7 +758,7 @@ void ResponseGraph::mouseDoubleClick (const juce::MouseEvent& e)
 
 void ResponseGraph::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel)
 {
-    if (block == Filter)
+    if (block == Filter || isKeyView())
         return;
     const int i = bandAt (e.position) >= 0 ? bandAt (e.position) : selectedBand;
     if (strip == nullptr || i < 0 || bands[(size_t) i].q < 0)

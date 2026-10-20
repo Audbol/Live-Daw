@@ -316,9 +316,12 @@ mod tests {
         let mut v = [0.0; MAX_DYN_PARAMS];
         comp.defaults_into(&mut v);
         let p = Params::new(comp, &v);
-        assert_eq!(p.f("thr"), -20.0);
+        // As a factory-set console: THR -10 dB, 3:1, KNEE 3, RMS, AUTO ENV on.
+        assert_eq!(p.f("thr"), -10.0);
         assert_eq!(p.f("ratio"), 3.0);
+        assert_eq!(p.f("knee"), 3.0);
         assert_eq!(p.text("det"), "RMS");
+        assert!(p.on("auto"));
         let rel = &comp.params[comp.param_index("rel").unwrap()];
         assert!((rel.from_normalised(rel.to_normalised(150.0)) - 150.0).abs() < 0.01);
         assert_eq!(rel.display(1500.0), "1.50 s");
@@ -326,5 +329,35 @@ mod tests {
         assert_eq!(parse_freq("35"), Some(35.0));
         assert_eq!(parse_freq("OFF"), None);
         assert!((dial_log(10.0, 30.0, 450.0) - 450.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn wing_models_start_as_a_factory_set_console() {
+        let values = |table: &'static [ModelSpec], token| {
+            let spec = &table[model_index(table, token).unwrap()];
+            let mut v = [0.0; MAX_EQ_PARAMS];
+            spec.defaults_into(&mut v);
+            (spec, v)
+        };
+        // GATE: THR -40.0 dB, RATIO 1:3, RANGE 40.0 dB, ATTACK 10 ms, HOLD 10 ms, RELEASE 200 ms, ACCENT 0 %.
+        let (gate, v) = values(DYN_MODELS, "GATE");
+        let p = Params::new(gate, &v);
+        assert_eq!(gate.name, "Wing Gate");
+        assert_eq!((p.f("thr"), p.text("ratio"), p.f("range")), (-40.0, "1:3", 40.0));
+        assert_eq!((p.f("att"), p.f("hld"), p.f("rel"), p.f("acc")), (10.0, 10.0, 200.4749, 0.0));
+        // COMP: ATTACK 50 ms, HOLD 20 ms, RELEASE 150 ms.
+        let (comp, v) = values(DYN_MODELS, "COMP");
+        let p = Params::new(comp, &v);
+        assert_eq!((p.f("att"), p.f("hld"), p.f("rel")), (50.0, 20.0, 150.3349));
+        // The channel EQ's bands on the frequency steps: band 4 reads 3k99 Hz.
+        let (eq, v) = values(EQ_MODELS_CH, "STD");
+        let p = Params::new(eq, &v);
+        let freqs = ["lf", "1f", "2f", "3f", "4f", "hf"].map(|id| p.f(id));
+        for (f, want) in freqs.iter().zip([80.0, 200.0, 600.0, 1500.0, 4000.0, 12000.0]) {
+            assert!((f / want - 1.0).abs() < 0.005, "{f} Hz for {want} Hz");
+        }
+        assert!((freqs[4] - 3990.5).abs() < 0.1);
+        // Q 1.00 on its steps, the shelves too.
+        assert_eq!((p.f("4q"), p.f("lq"), p.f("4g")), (0.9979702, 0.9979702, 0.0));
     }
 }
