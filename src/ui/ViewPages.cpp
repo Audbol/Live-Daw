@@ -1557,6 +1557,62 @@ void SendsViewPage::mouseDoubleClick (const juce::MouseEvent& e)
 }
 
 //==============================================================================
+//==============================================================================
+namespace
+{
+    /** A new user layer's name: "USER n" after its place in the list (so the
+        layer on the USER 2 key reads USER 2), or the next n not taken yet. */
+    juce::String freeUserLayerName (LayerSet& layers)
+    {
+        const auto& user = layers.getUserLayers();
+        for (int n = (int) user.size() + 1;; ++n)
+        {
+            const auto name = "USER " + juce::String (n);
+            if (std::none_of (user.begin(), user.end(), [&] (const Layer& l) { return l.name.equalsIgnoreCase (name); }))
+                return name;
+        }
+    }
+
+    int userLayerIndex (LayerSet& layers, const juce::String& id)
+    {
+        const auto& user = layers.getUserLayers();
+        for (int i = 0; i < (int) user.size(); ++i)
+            if (user[(size_t) i].id == id)
+                return i;
+        return -1;
+    }
+
+    /** USER 1 / USER 2's layer as it starts out: empty, named after its key. */
+    bool isBlankUserKeyLayer (LayerSet& layers, const juce::String& id)
+    {
+        const int i = userLayerIndex (layers, id);
+        if (i < 0 || i >= 2)
+            return false;
+        const auto& l = layers.getUserLayers()[(size_t) i];
+        return l.faders.empty() && l.name.equalsIgnoreCase ("USER " + juce::String (i + 1));
+    }
+
+    /** Deletes a user layer. The layers behind USER 1 / USER 2 keep their
+        keys: deleting USER 1's layer leaves it blank rather than moving USER
+        2's layer onto it. Blank key layers left at the end go too. */
+    void deleteUserLayer (LayerSet& layers, const juce::String& id)
+    {
+        const int index = userLayerIndex (layers, id);
+        if (index < 0)
+            return;
+        const int count = (int) layers.getUserLayers().size();
+        layers.removeUserLayer (id);
+        if (index < 2 && index < count - 1)
+        {
+            const auto blank = layers.addUserLayer ("USER " + juce::String (index + 1));
+            for (int i = (int) layers.getUserLayers().size() - 1; i > index; --i)
+                layers.moveUserLayer (blank, -1);
+        }
+        while (! layers.getUserLayers().empty() && isBlankUserKeyLayer (layers, layers.getUserLayers().back().id))
+            layers.removeUserLayer (layers.getUserLayers().back().id);
+    }
+} // namespace
+
 ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
 {
     // SENDS (the input channels' sends to a bus, main or matrix), BUS -> BUS
@@ -1603,9 +1659,9 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
     };
     newKey.onClick = [this]
     {
+        // A new name ("USER 3"), so it isn't mistaken for the layer it copies.
         const auto layer = currentLayer();
-        const auto name = layer.user || layer.id.startsWith ("user-") ? "USER " + juce::String ((int) ctx.show.layers.getUserLayers().size() + 1) : layer.name;
-        const auto id = ctx.show.layers.addUserLayer (name, layer.faders);
+        const auto id = ctx.show.layers.addUserLayer (freeUserLayerName (ctx.show.layers), layer.faders);
         notifyLayersChangedAsync (ctx);
         selectLayer (id);
         resized();
@@ -1613,13 +1669,15 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
     deleteKey.onClick = [this]
     {
         const auto layer = currentLayer();
-        if (const auto id = userLayerId (layer, false); id.isNotEmpty())
+        if (const auto id = userLayerId (layer, false); id.isNotEmpty() && ! isBlankUserKeyLayer (ctx.show.layers, id))
         {
-            popups::confirm (*this, "DELETE LAYER", "Delete the user layer \"" + layer.name + "\"?", "DELETE", [this, id]
+            popups::confirm (*this, "DELETE LAYER", "Delete the user layer \"" + layer.name + "\"?", "DELETE", [this, id, viaKey = ! layer.user]
             {
-                ctx.show.layers.removeUserLayer (id);
+                deleteUserLayer (ctx.show.layers, id);
+                // USER 1 / USER 2 stay selected (now blank); another layer
+                // goes back to the section's first key.
                 const auto defaults = ctx.show.layers.getDefaultLayers (ctx.engine, section());
-                if (! defaults.empty())
+                if (! viaKey && ! defaults.empty())
                     selectLayer (defaults.front().id);
                 notifyLayersChangedAsync (ctx);
                 resized();
@@ -1685,7 +1743,9 @@ void ConfigViewPage::updateKeys()
     const auto layer = currentLayer();
     enableKey (clearKey, ! layer.faders.empty());
     enableKey (renameKey, layer.user || layer.id == "user-1" || layer.id == "user-2");
-    enableKey (deleteKey, userLayerId (layer, false).isNotEmpty() || ctx.show.layers.hasDefaultOverride (section(), layer.id));
+    const auto userId = userLayerId (layer, false);
+    enableKey (deleteKey, (userId.isNotEmpty() && ! isBlankUserKeyLayer (ctx.show.layers, userId))
+                              || ctx.show.layers.hasDefaultOverride (section(), layer.id));
     deleteKey.setButtonText (! layer.user && ctx.show.layers.hasDefaultOverride (section(), layer.id) ? "RESTORE" : "DELETE");
 }
 
