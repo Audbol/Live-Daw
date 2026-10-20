@@ -31,6 +31,8 @@ inline bool isInputKind (StripKind k) noexcept { return k == StripKind::Channel 
 /** The WING colour palette (index 1..18). */
 juce::Colour wingColour (int index) noexcept;
 juce::String wingColourName (int index);
+/** ICON/COLOR's colour grid: the colour index at place 0..17 (row by row, three to a row). */
+inline int wingColourAtGrid (int position) noexcept { return ld::ld_colour_at_grid (position); }
 
 /** A strip's sends to every bus slot (storage in the Rust engine, grown on demand). */
 class SendBank
@@ -107,16 +109,34 @@ public:
     /** The engine the strip belongs to (its analysis: RTA, scope, LISTEN). */
     ld::Engine* getEngineHandle() const noexcept { return engineHandle; }
 
-    juce::String getName() const { return takeString (ld::ld_strip_name (handle)); }
+    //==============================================================================
+    // Customization: name, colour and icon. With LINK CUSTOMIZATION TO SOURCE
+    // on (input and aux channels, params.custLink) the strip shows those of
+    // the source in use (MAIN or ALT); without a source, and with the link
+    // off, its own. The setters change the strip's own.
+
+    /** The name the strip shows (its source's while linked). */
+    juce::String getName() const;
+    /** The strip's own name. */
+    juce::String getOwnName() const { return takeString (ld::ld_strip_name (handle)); }
     void setName (const juce::String& newName) const
     {
         const Utf8 u (newName);
         ld::ld_strip_set_name (handle, u.data, u.size);
     }
 
-    int getColourIndex() const noexcept { return params.colour.load(); }
+    /** The colour the strip shows (1..18; its source's while linked). */
+    int getColourIndex() const noexcept;
     void setColourIndex (int index) const noexcept { params.colour.store (juce::jlimit (1, 18, index)); }
     juce::Colour getColour() const noexcept { return wingColour (getColourIndex()); }
+
+    /** The WING icon the strip shows (0 = none; its source's while linked). */
+    int getIcon() const noexcept;
+
+    /** The source table index whose customization the strip shows: linked,
+        an input kind and a source in use; else -1. */
+    int linkedSourceIndex() const noexcept;
+    ld::SourceParams* linkedSource() const noexcept;
 
     /** Selects a model for a block and loads its defaults. */
     void setModel (ModelBlock block, int model) const noexcept
@@ -225,6 +245,8 @@ public:
 
 private:
     const ld::EngineControls* controls;
+    ld::SourceParams* sources = nullptr;
+    int numSources = 0;
     ld::Engine* engineHandle;
     ld::Strip* handle;
     StripKind kind;

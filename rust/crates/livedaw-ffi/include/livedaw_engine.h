@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 11;
+constexpr int kAbiVersion = 12;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -42,6 +42,8 @@ constexpr int kMaxDynParams = 20;
 constexpr int kMaxEqParams = 32;
 constexpr int kMaxToolParams = 2;
 constexpr int kMaxFxParams = 36;
+/** The WING colour (1..18) of a new channel, source and DCA: Purple. */
+constexpr int kDefaultColour = 1;
 /** FX slot models (indices into model table 4): an empty slot, and EXT (a plugin). */
 constexpr int kFxNone = 0;
 constexpr int kFxExt = 1;
@@ -229,6 +231,10 @@ struct StripParams
     // ABI 7, input channels: the signal TAP-mode sends take.
     std::atomic<float> tapWidth; // TAP WIDTH, -150..150 % (stereo channels)
     TapEqParams tapEq;           // TAP EQ
+
+    // ABI 12, input and aux channels: LINK CUSTOMIZATION TO SOURCE (show the
+    // source's name, colour and icon instead of the strip's own).
+    std::atomic<bool> custLink;
 };
 
 struct StripMeters
@@ -564,7 +570,9 @@ struct LayoutInfo
         monitorDsp, monitorControls, offControlsMonitor, offMonitorDspEq, offMonitorDspPan, offMonitorControlsSourceSolo,
         offSourceMuteGroups,
         // ABI 11 (matrix send PAN LINK, DCA icon and light)
-        offMatrixSendPanReversed, offDcaIcon;
+        offMatrixSendPanReversed, offDcaIcon,
+        // ABI 12 (LINK CUSTOMIZATION TO SOURCE)
+        offCustLink;
 };
 
 struct ParamInfo
@@ -859,6 +867,8 @@ extern "C"
     int32_t ld_list_count (int32_t list);
     LdString* ld_list_item (int32_t list, int32_t index);
     uint32_t ld_colour_rgb (int32_t index);
+    /** ICON/COLOR's grid: the colour index at place 0..17 (row by row, three to a row). */
+    int32_t ld_colour_at_grid (int32_t position);
 
     // Strings
     const char* ld_string_data (const LdString*);
@@ -1346,6 +1356,7 @@ inline const char* verifyLayout()
         { info.offSourceMuteGroups, offsetof (SourceParams, muteGroups), "SourceParams.muteGroups" },
         { info.offMatrixSendPanReversed, offsetof (MatrixSendParams, panReversed), "MatrixSendParams.panReversed" },
         { info.offDcaIcon, offsetof (DcaParams, icon), "DcaParams.icon" },
+        { info.offCustLink, offsetof (StripParams, custLink), "StripParams.custLink" },
     };
 
     if (info.abiVersion != kAbiVersion)

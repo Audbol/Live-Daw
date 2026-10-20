@@ -204,7 +204,7 @@ private:
         MixerEngine engine (0);
         OfflineRig rig (engine, 1, 2);
         engine.outputProtection = false; // two channels sum above 0 dBFS
-        engine.setNumChannels (2);
+        test::setChannels (engine, 2);
         for (auto& ch : engine.getChannels())
             ch->params.inputLeft = 0;
 
@@ -258,7 +258,7 @@ private:
 
         MixerEngine engine (1);
         OfflineRig rig (engine, 2, 2);
-        engine.setNumChannels (1);
+        test::setChannels (engine, 1);
         auto& strip = *engine.getChannels()[0];
         auto& fx = engine.getFx();
         rig.setInput (0, 0.25f);

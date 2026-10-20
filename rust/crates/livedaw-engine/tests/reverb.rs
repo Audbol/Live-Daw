@@ -4,6 +4,8 @@
 //! after the input stops.
 
 use livedaw_dsp::wing::fx::model_index;
+mod common;
+use common::{set_channels, unity_console};
 use livedaw_engine::params::StripKind;
 use livedaw_engine::{Engine, Strip};
 use std::sync::atomic::Ordering::Relaxed;
@@ -28,8 +30,9 @@ struct Rig {
 impl Rig {
     fn new(sample_rate: f64, block: usize) -> Self {
         let engine = Arc::new(Engine::new(0));
+        unity_console(&engine);
         unsafe { engine.prepare(sample_rate, block, &[0, 1], &[0, 1]) };
-        engine.set_num_channels(2);
+        set_channels(&engine, 2);
         let main = engine.strip_at(StripKind::Main, 0).unwrap();
         main.params.output_left.store(0, Relaxed);
         main.params.output_right.store(1, Relaxed);

@@ -388,6 +388,8 @@ pub enum SF {
     ActColour,
     Icon,
     ActIcon,
+    /// `clink`: LINK CUSTOMIZATION TO SOURCE (input and aux channels).
+    CustLink,
     Led,
     Mute,
     Fader,
@@ -720,6 +722,7 @@ fn strip_field(kind: StripKind, n: u16, rest: &[&str]) -> Option<SF> {
         ["icon"] => SF::Icon,
         ["$icon"] => SF::ActIcon,
         ["led"] => SF::Led,
+        ["clink"] if input => SF::CustLink,
         ["mute"] => SF::Mute,
         ["fdr"] => SF::Fader,
         ["pan"] => SF::Pan,
@@ -1999,9 +2002,26 @@ impl<'a> Console<'a> {
         let s = self.strip(kind, n)?;
         let p = &s.params;
         Some(match field {
-            SF::Name | SF::ActName => Value::Str(s.name()),
-            SF::Colour | SF::ActColour => int(&p.colour),
-            SF::Icon | SF::ActIcon => int(&p.icon),
+            SF::Name => Value::Str(s.name()),
+            SF::Colour => int(&p.colour),
+            SF::Icon => int(&p.icon),
+            // What the strip shows: its source's while customization is linked.
+            SF::ActName | SF::ActColour | SF::ActIcon => {
+                let table = self.engine.sources();
+                match self.linked_source(kind, n, s).and_then(|i| Some((i, table.get(i)?))) {
+                    Some((i, src)) => match field {
+                        SF::ActName => Value::Str(table.name(i)),
+                        SF::ActColour => int(&src.colour),
+                        _ => int(&src.icon),
+                    },
+                    None => match field {
+                        SF::ActName => Value::Str(s.name()),
+                        SF::ActColour => int(&p.colour),
+                        _ => int(&p.icon),
+                    },
+                }
+            }
+            SF::CustLink => b(&p.cust_link),
             SF::Led => b(&p.led),
             SF::Mute => b(&p.mute),
             SF::Fader | SF::EffFader => lvl(&p.fader_db),
@@ -2182,6 +2202,15 @@ impl<'a> Console<'a> {
 
     /// The source (table index) an input strip takes, as the WING shows its
     /// patch (the ALT input while in use): only `port::SOURCE_GROUPS`.
+    /// The source whose name, colour and icon the strip shows (customization
+    /// linked and a source in use).
+    fn linked_source(&self, kind: StripKind, n: u16, s: &Strip) -> Option<usize> {
+        if !kind.is_input() || !s.params.cust_link.load(Relaxed) {
+            return None;
+        }
+        self.strip_source(kind, n, s)
+    }
+
     fn strip_source(&self, kind: StripKind, n: u16, s: &Strip) -> Option<usize> {
         let c = &self.engine.controls;
         let alt = s.uses_alt_input(c.input_select_global.load(Relaxed), c.global_alt.load(Relaxed));
@@ -2823,6 +2852,7 @@ impl<'a> Console<'a> {
             SF::Colour => p.colour.store(v.as_i32().unwrap_or(1), Relaxed),
             SF::Icon => p.icon.store(v.as_i32().unwrap_or(0), Relaxed),
             SF::Led => set_b(&p.led, v),
+            SF::CustLink => set_b(&p.cust_link, v),
             SF::Mute => set_b(&p.mute, v),
             SF::Fader => set_lvl(&p.fader_db, v),
             SF::Pan => set_f(&p.pan, v),
@@ -3785,6 +3815,34 @@ mod tests {
         assert!(c.strip(StripKind::Bus, 5).unwrap().console.mute_override.load(Relaxed));
         assert_eq!(c.get(node(&c, "/bus/5/$muteovr")), Some(Value::Int(1)));
         assert_eq!(c.get(node(&c, "/ch/1/$muteovr")), Some(Value::Int(0)));
+    }
+
+    #[test]
+    fn customization_link_shows_the_sources_name_colour_and_icon() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let ch2 = c.strip(StripKind::Channel, 2).unwrap().clone();
+        ch2.set_name("OWN");
+        ch2.params.colour.store(9, Relaxed);
+        c.set(node(&c, "/ch/2/in/conn/grp"), &Value::str("A")).unwrap();
+        c.set(node(&c, "/ch/2/in/conn/in"), &Value::Int(4)).unwrap();
+        let src = e.sources().get(3).unwrap();
+        src.colour.store(14, Relaxed);
+        src.icon.store(200, Relaxed);
+        e.sources().set_name(3, "KICK");
+
+        assert_eq!(c.get(node(&c, "/ch/2/clink")), Some(Value::Int(1)), "linked by default");
+        assert_eq!(c.get(node(&c, "/ch/2/$name")), Some(Value::str("KICK")));
+        assert_eq!(c.get(node(&c, "/ch/2/$col")), Some(Value::Int(14)));
+        assert_eq!(c.get(node(&c, "/ch/2/$icon")), Some(Value::Int(200)));
+        assert_eq!(c.get(node(&c, "/ch/2/col")), Some(Value::Int(9)), "the channel's own colour");
+
+        c.set(node(&c, "/ch/2/clink"), &Value::Int(0)).unwrap();
+        assert!(!ch2.params.cust_link.load(Relaxed));
+        assert_eq!(c.get(node(&c, "/ch/2/$name")), Some(Value::str("OWN")));
+        assert_eq!(c.get(node(&c, "/ch/2/$col")), Some(Value::Int(9)));
+        assert!(schema().resolve("/bus/1/clink", &c).is_none());
     }
 
     #[test]

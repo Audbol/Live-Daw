@@ -160,7 +160,8 @@ struct GroupNames {
 impl Default for GroupNames {
     fn default() -> Self {
         Self {
-            dcas: std::array::from_fn(|i| format!("DCA.{}", i + 1)),
+            // The WING's factory names: DCAs unnamed, mute groups MGRP.n.
+            dcas: std::array::from_fn(|_| String::new()),
             mute_groups: std::array::from_fn(|i| format!("MGRP.{}", i + 1)),
         }
     }
@@ -263,16 +264,6 @@ unsafe impl Send for Engine {}
 const DEFAULT_SAMPLE_RATE: f64 = 48000.0;
 const DEFAULT_BLOCK: usize = 512;
 
-fn default_name(kind: StripKind, index: usize) -> String {
-    match kind {
-        StripKind::Channel => format!("Ch {}", index + 1),
-        StripKind::Aux => format!("Aux {}", index + 1),
-        StripKind::Bus => format!("Bus {}", index + 1),
-        StripKind::Main => format!("Main {}", index + 1),
-        StripKind::Matrix => format!("Mtx {}", index + 1),
-    }
-}
-
 /// The monitor paths a DCA name controls (bit 0 = SPEAKERS, bit 1 = PHONES):
 /// "MON A" (PHONES, path 1 on the WING), "MON B" (SPEAKERS), "MON LVL" (both),
 /// ignoring case, spaces and dots.
@@ -360,9 +351,9 @@ impl Engine {
     // =========================================================================
     // Structure (message thread)
 
-    fn new_strip(&self, st: &Structure, kind: StripKind, id: i32, index: usize) -> Arc<Strip> {
+    fn new_strip(&self, st: &Structure, kind: StripKind, id: i32) -> Arc<Strip> {
+        // Unnamed, as on the WING (the screens show "CH 3" and so on).
         let s = Arc::new(Strip::new(kind, id));
-        s.set_name(&default_name(kind, index));
         // SAFETY: not published yet.
         unsafe { s.prepare(st.device.sample_rate, st.device.block_size) };
         s
@@ -370,10 +361,10 @@ impl Engine {
 
     /// Aux channels, the WING's 16 buses, 4 mains and 8 matrices.
     fn build_fixed(&self, st: &mut Structure) {
-        st.auxes = (0..NUM_AUX).map(|i| self.new_strip(st, StripKind::Aux, i as i32, i)).collect();
-        st.buses = (0..WING_BUSES).map(|i| self.new_strip(st, StripKind::Bus, i as i32, i)).collect();
-        st.mains = (0..NUM_MAINS).map(|i| self.new_strip(st, StripKind::Main, i as i32, i)).collect();
-        st.matrices = (0..NUM_MATRICES).map(|i| self.new_strip(st, StripKind::Matrix, i as i32, i)).collect();
+        st.auxes = (0..NUM_AUX).map(|i| self.new_strip(st, StripKind::Aux, i as i32)).collect();
+        st.buses = (0..WING_BUSES).map(|i| self.new_strip(st, StripKind::Bus, i as i32)).collect();
+        st.mains = (0..NUM_MAINS).map(|i| self.new_strip(st, StripKind::Main, i as i32)).collect();
+        st.matrices = (0..NUM_MATRICES).map(|i| self.new_strip(st, StripKind::Matrix, i as i32)).collect();
         // Main 1 plays on the first two outputs.
         st.mains[0].params.output_left.store(0, Relaxed);
         st.mains[0].params.output_right.store(1, Relaxed);
@@ -407,7 +398,7 @@ impl Engine {
         let id = if id_free { requested_id } else { st.next_channel_id };
         st.next_channel_id = st.next_channel_id.max(id + 1);
 
-        let strip = self.new_strip(st, StripKind::Channel, id, index);
+        let strip = self.new_strip(st, StripKind::Channel, id);
         let patched = st.device.num_hw_inputs == 0 || index < st.device.num_hw_inputs;
         strip.params.input_left.store(if patched { index as i32 } else { -1 }, Relaxed);
         strip
@@ -459,7 +450,7 @@ impl Engine {
             }
         }
 
-        let strip = self.new_strip(&st, StripKind::Bus, slot as i32, slot);
+        let strip = self.new_strip(&st, StripKind::Bus, slot as i32);
         st.buses.push(strip.clone());
         st.buses.sort_by_key(|b| b.id());
         self.publish(&st);

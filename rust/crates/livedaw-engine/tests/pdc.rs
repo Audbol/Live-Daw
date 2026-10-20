@@ -1,6 +1,8 @@
 //! Plugin delay compensation: parallel paths with plugins of different
 //! latencies arrive at their bus / main in time.
 
+mod common;
+use common::{set_channels, unity_console};
 use livedaw_engine::params::StripKind;
 use livedaw_engine::{pdc_tap, Engine, InsertCallbacks, MAX_PDC};
 use std::ffi::c_void;
@@ -57,9 +59,10 @@ struct Rig {
 impl Rig {
     fn new(channels: usize) -> Self {
         let engine = Engine::new(0);
+        unity_console(&engine);
         unsafe { engine.prepare(48000.0, BLOCK, &[0], &[0, 1]) };
         engine.controls.output_protection.store(false, Relaxed); // sums go above 0 dBFS
-        engine.set_num_channels(channels);
+        set_channels(&engine, channels);
         for i in 0..channels {
             engine.channel_at(i).unwrap().params.input_left.store(0, Relaxed); // all on input 1
         }

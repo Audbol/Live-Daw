@@ -8,6 +8,34 @@
 
 namespace livedaw::test
 {
+/** The fixed strips (aux, buses, mains, matrices) and the DCAs at 0 dB with
+    their EQ on, buses not feeding the mains: the console the audio tests were
+    written for (a factory WING has the faders down and the EQs off). */
+inline void unityConsole (MixerEngine& engine)
+{
+    for (auto kind : { StripKind::Aux, StripKind::Bus, StripKind::Main, StripKind::Matrix })
+        for (auto& s : engine.getStrips (kind))
+        {
+            s->params.faderDb = 0.0f;
+            s->params.eq.on = true;
+            if (kind == StripKind::Bus)
+                s->params.mains[0].on = false;
+        }
+    for (int i = 0; i < kNumDcas; ++i)
+        engine.getDca (i).faderDb = 0.0f;
+}
+
+/** Sets the number of channels; new channels get their fader at 0 dB (a new
+    channel's fader is down, as on the WING). */
+inline void setChannels (MixerEngine& engine, int count)
+{
+    const int before = (int) engine.getChannels().size();
+    engine.setNumChannels (count);
+    const auto& channels = engine.getChannels();
+    for (int i = before; i < (int) channels.size(); ++i)
+        channels[(size_t) i]->params.faderDb = 0.0f;
+}
+
 /** Drives a MixerEngine with constant (DC) inputs and captures its outputs. */
 struct OfflineRig
 {
@@ -15,6 +43,7 @@ struct OfflineRig
 
     OfflineRig (MixerEngine& e, int numIns, int numOuts) : engine (e)
     {
+        unityConsole (engine);
         engine.prepareOffline (48000.0, kBlock, numIns, numOuts);
         inputs.assign ((size_t) numIns, std::vector<float> (kBlock, 0.0f));
         outputs.assign ((size_t) numOuts, std::vector<float> (kBlock, 0.0f));
