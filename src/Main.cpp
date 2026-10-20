@@ -332,9 +332,12 @@ private:
            #endif
             setContentOwned (content, true);
             setResizable (true, true);
-            // Below about 1152x680 the main display and the fader sections
-            // no longer fit side by side and on top of each other.
-            setResizeLimits (1152, 680, 32768, 32768);
+            // The WING's whole surface: below about 1344 px the 24 faders of
+            // the default layers and the custom controls section no longer
+            // fit side by side with usable strips, and below 680 px the main
+            // display and the fader sections no longer fit on top of each
+            // other.
+            setResizeLimits (1344, 680, 32768, 32768);
 
             // Reopen where it was (size, position, maximised); fall back to centred.
             if (savedState.isEmpty() || ! restoreWindowStateFromString (savedState))

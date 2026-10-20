@@ -262,9 +262,10 @@ namespace
         auto r = area.reduced (area.getWidth() * 0.05f, area.getHeight() * 0.04f);
         const float capPx = juce::jmax (6.0f, r.getHeight() * 0.055f);
         g.setColour (Colours::textDim);
-        g.setFont (font (capPx));
+        // CLIP shrinks to the bank's width (narrow in small windows) rather than being cut.
+        g.setFont (fontFittingWidth (font (capPx), "CLIP", r.getWidth(), 0.8f));
         auto top = r.removeFromTop (capPx * 1.6f);
-        g.drawText ("CLIP", top.withWidth (r.getWidth() * 0.4f), juce::Justification::centredLeft, false);
+        g.drawText ("CLIP", top, juce::Justification::centredLeft, false);
         auto scale = r.removeFromLeft (r.getWidth() * 0.22f);
         // The CLIP row, then 18 segments (3 per scale step).
         constexpr int kSegments = 18;
@@ -1091,7 +1092,8 @@ void UsbRecorderPage::paintToolbar (juce::Graphics& g)
                 return ! k.enabled || k.enabled();
         return false;
     };
-    const auto songs = u.isPlaylistOpen() ? juce::String ((int) u.getQueue().size()) + " SONGS" : juce::String ("0 SONGS");
+    const int numSongs = u.isPlaylistOpen() ? (int) u.getQueue().size() : 0;
+    const auto songs = juce::String (numSongs) + (numSongs == 1 ? " SONG" : " SONGS");
     tool (0, "USB", shared (Icon::UsbStick), true, ! playlistView, Colours::gold);
     tool (1, songs, musicNotes, true, playlistView || u.isPlaylistOpen(), playlistView ? Dark::choice : Dark::choice.withAlpha (0.55f));
     if (playlistView)
@@ -1356,36 +1358,42 @@ void UsbRecorderPage::paintPlaylistKeys (juce::Graphics& g)
           u.isPlaylistOpen());
 }
 
+bool UsbRecorderPage::currentFileInfo (UsbRecorder::FileInfo& info, int64_t& length, bool& mismatch) const
+{
+    auto& u = usb();
+    length = u.getLength();
+    mismatch = false;
+    if (u.getCurrentInfo (info, length, mismatch))
+        return true;
+
+    // Not opened yet: the header of the cued (or selected) file.
+    auto file = u.getCurrentFile();
+    if (file == juce::File())
+        if (const auto* row = selectedRow(); row != nullptr && row->kind == (int) UsbRecorder::ItemKind::Wav)
+            file = row->file;
+    if (file == juce::File())
+        for (const auto& e : u.getQueue())
+            if (! e.skip)
+            {
+                file = e.file;
+                break;
+            }
+    if (file == juce::File() || ! UsbRecorder::readFileInfo (file, info))
+        return false;
+    mismatch = juce::roundToInt (u.getSampleRate()) != info.sampleRate;
+    length = (int64_t) std::ceil ((double) info.frames * u.getSampleRate() / juce::jmax (1, info.sampleRate));
+    return true;
+}
+
 void UsbRecorderPage::paintPlayer (juce::Graphics& g)
 {
     auto& u = usb();
     const float sh = (float) getHeight();
     const auto state = u.getPlayState();
     UsbRecorder::FileInfo info;
-    int64_t length = u.getLength();
+    int64_t length = 0;
     bool mismatch = false;
-    bool known = u.getCurrentInfo (info, length, mismatch);
-    if (! known)
-    {
-        // Not opened yet: the header of the cued (or selected) file.
-        auto file = u.getCurrentFile();
-        if (file == juce::File())
-            if (const auto* row = selectedRow(); row != nullptr && row->kind == (int) UsbRecorder::ItemKind::Wav)
-                file = row->file;
-        if (file == juce::File())
-            for (const auto& e : u.getQueue())
-                if (! e.skip)
-                {
-                    file = e.file;
-                    break;
-                }
-        if (file != juce::File() && UsbRecorder::readFileInfo (file, info))
-        {
-            known = true;
-            mismatch = juce::roundToInt (u.getSampleRate()) != info.sampleRate;
-            length = (int64_t) std::ceil ((double) info.frames * u.getSampleRate() / juce::jmax (1, info.sampleRate));
-        }
-    }
+    const bool known = currentFileInfo (info, length, mismatch);
 
     g.setColour (panelGrey);
     g.fillRect (playBox);
@@ -1459,7 +1467,11 @@ void UsbRecorderPage::paintTimeline (juce::Graphics& g)
     g.setColour (juce::Colour (0xff343434));
     g.drawRect (r, 1.0f);
     g.fillRect (r.getX(), r.getCentreY(), r.getWidth(), 1.0f);
-    const auto length = u.getLength();
+    // The length as soon as it's known (the player's time left shows it too).
+    UsbRecorder::FileInfo info;
+    int64_t length = 0;
+    bool mismatch = false;
+    currentFileInfo (info, length, mismatch);
     const auto pos = u.getPosition();
     const float frac = length > 0 ? (float) juce::jlimit (0.0, 1.0, (double) pos / (double) length) : 0.0f;
     const float x = r.getX() + frac * r.getWidth();

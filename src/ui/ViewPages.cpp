@@ -361,7 +361,7 @@ namespace
         // Narrow strips (12 strips in a small window) leave out the unit
         // rather than cutting the value.
         auto text = fader::text (db) + " dB";
-        if (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text) * 0.6f > box.getWidth() - 2.0f)
+        if (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text) * 0.85f > box.getWidth() - 2.0f)
             text = fader::text (db);
         g.drawFittedText (text, box.toNearestInt(), juce::Justification::centred, 1, 0.6f);
     }

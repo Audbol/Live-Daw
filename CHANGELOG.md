@@ -166,6 +166,34 @@ All notable changes to Sidecar are listed here. Versions follow
 - LIBRARY (INT / USB) and the USB RECORDER / PLAYER browser didn't show files copied
   into, deleted from or renamed in their folder outside the app until the screen
   was opened again; they now follow such changes within a second.
+- HOME INS screens: the FX PROCESSOR list shows NONE and all 16 slots without
+  scrolling (FX 9-16 beside FX 1-8), and FX SPILL is unavailable while the insert
+  has no FX processor.
+- USB player: "1 SONG" instead of "1 SONGS"; the timeline shows the clip's length
+  as soon as it is known (from the file's header before it has played), as the
+  player panel does; the meters' CLIP label no longer gets cut in small windows.
+- LIBRARY: the SNAP scene NOTES are in the screen's body type (they were tiny);
+  SNIP's REC key reads white on red while recording; MONITORS shows SRC LEVEL,
+  SRC MIX, TALK LVL and DIR LVL in dB.
+- Small windows keep every section of the surface: the minimum window is now
+  1344 x 680 (was 1152 x 680, which hid the 4-Channel section and the custom
+  controls' upper part), the custom controls stay between the fader sections down
+  to 40 px strips, and the top row keeps the WING's arrangement. Dropdown fields
+  (VIEW > CONFIG and others) shrink their text instead of cutting it.
+- Small windows: panel titles, ROUTING's fields and group selectors, the MONITORS
+  tabs, fields and EQ key shrink their text instead of cutting it ("PHO...",
+  "ERRO..."); METERS' two-digit strip numbers no longer overlap; SETUP > GENERAL's
+  USB HOST SPEED row is no longer cut off; long event log entries wrap onto a
+  second line (the tooltip shows the whole entry). MONITORS' unlit MUTE key reads
+  on its dark red.
+- Small windows, HOME and other screens: two-line keys no longer break a word
+  ("PARTIA L UPDATE"); key labels (DELAY, FILTER), format chips, the dynamics
+  graphs' level scale ("-2" for -20), the sends' TAP / POST and PAN LINK and the
+  VIEW > SENDS values fit their space; the EQ screen's FILTER key keeps its room.
+- Screen only on a large display: the SNAP scene's FADE and NOTES rows no longer
+  overlap, slider values (CEILING, FADE, MOUSE SPEED) use the screen's type, and
+  SETUP > AUDIO's INPUT SELECT captions grow with the screen (in a small window its
+  cells are no longer squeezed out by them).
 
 ## [0.1.0] - beta
 

@@ -31,7 +31,8 @@ namespace
         g.setColour (fill);
         g.fillRoundedRectangle (r, 2.0f);
         g.setColour (juce::Colours::black);
-        g.setFont (juce::FontOptions (juce::jlimit (9.0f, screenCap (18.0f), juce::jmin (r.getHeight() * 0.86f, r.getWidth() * (number >= 10 ? 0.62f : 0.9f))),
+        // Narrow keys (small windows) get smaller numbers rather than overlapping ones.
+        g.setFont (juce::FontOptions (juce::jlimit (6.0f, screenCap (18.0f), juce::jmin (r.getHeight() * 0.86f, r.getWidth() * (number >= 10 ? 0.62f : 0.9f))),
                                       juce::Font::bold));
         g.drawFittedText (juce::String (number), r.toNearestInt(), juce::Justification::centred, 1, 0.6f);
     }

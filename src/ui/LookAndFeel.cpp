@@ -449,6 +449,9 @@ juce::Font ConsoleLookAndFeel::getComboBoxFont (juce::ComboBox& box)
 
 juce::Font ConsoleLookAndFeel::getLabelFont (juce::Label& label)
 {
+    // A slider's value box (CEILING, MOUSE SPEED, FADE) follows the screen's type.
+    if (dynamic_cast<juce::Slider*> (label.getParentComponent()) != nullptr)
+        return wingFontFit (TypeScale::body * 1.1f, (float) label.getHeight() * 0.8f);
     return label.getFont();
 }
 
@@ -605,7 +608,7 @@ void drawChip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& 
     g.setColour (fill);
     g.fillRoundedRectangle (r, 2.0f);
     g.setColour (textColour);
-    g.setFont (wingFontPx (juce::jlimit (5.0f, screenCap (12.0f), r.getHeight() * 0.56f)));
+    g.setFont (fontFittingWidth (wingFontPx (juce::jlimit (5.0f, screenCap (12.0f), r.getHeight() * 0.56f)), text, r.getWidth() - 2.0f));
     g.drawFittedText (text, r.toNearestInt(), juce::Justification::centred, 1, 0.75f);
 }
 

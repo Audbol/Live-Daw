@@ -1765,7 +1765,8 @@ public:
         if (filter != nullptr)
         {
             auto keys = span (752.0f, 960.0f);
-            const int kw = keys.getHeight();
+            // Square keys, narrower in a small window so FILTER keeps a third.
+            const int kw = juce::jmin (keys.getHeight(), (keys.getWidth() - 8) / 3);
             loCut->setBounds (keys.removeFromLeft (kw));
             keys.removeFromLeft (4);
             hiCut->setBounds (keys.removeFromLeft (kw));
@@ -2098,12 +2099,16 @@ public:
                                         },
                                         [this] (ChoiceField& field)
                                         {
-                                            // NONE and the 16 slots, in two columns.
+                                            // NONE and the 16 slots in two columns, all
+                                            // in view: NONE and FX 1-8 (the premium
+                                            // slots), FX 9-16 beside FX 1-8.
                                             juce::StringArray items { "NONE" };
                                             for (int i = 0; i < kNumFx; ++i)
                                                 items.add (ctx.engine.getFx().describe (i));
                                             popups::ListOptions options;
                                             options.columns = 2;
+                                            options.gapsBefore = { 1 + kNumFx / 2 };
+                                            options.maxRows = 1 + kNumFx / 2;
                                             options.caption = "FX PROCESSOR";
                                             popups::chooseFrom (field, items, ins.fx.load() + 1, [this] (int i) { ins.fx = i - 1; }, options);
                                         });
@@ -2243,6 +2248,7 @@ public:
                 typeText = models::model (models::Fx, model).name.toUpperCase();
             type->setEnabled (slot >= 0);
             openSlot->setEnabled (slot >= 0);
+            spill->setEnabled (slot >= 0);
             reset->setEnabled (slot >= 0 && model > ld::kFxExt);
             if (setCust != nullptr)
                 setCust->setEnabled (slot >= 0 && fx.isLoaded (slot));
@@ -2821,7 +2827,8 @@ public:
         auto modeRow = box.removeFromTop (juce::jlimit (12.0f, screenCap (20.0f), boxArea.getHeight() * 0.24f));
         modeArea = modeRow;
         // TAP | POST side by side: small enough for both words in the column.
-        g.setFont (homeFont (TypeScale::body, juce::jmin (modeRow.getHeight() * 0.85f, modeRow.getWidth() * 0.3f)));
+        g.setFont (fontFittingWidth (homeFont (TypeScale::body, juce::jmin (modeRow.getHeight() * 0.85f, modeRow.getWidth() * 0.3f)), "POST",
+                                     modeRow.getWidth() * 0.5f - 1.0f, 0.85f));
         if (busSource())
         {
             g.setColour (colours::caption);
@@ -2859,8 +2866,9 @@ public:
         if (hasLink)
         {
             g.setColour (linked ? colours::link : colours::dim);
-            g.setFont (homeFont (TypeScale::body, linkArea.getHeight() * 0.85f));
-            g.drawFittedText (linked && reversed ? "LINK REV" : "PAN LINK", linkArea.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+            const auto linkText = linked && reversed ? "LINK REV" : "PAN LINK";
+            g.setFont (fontFittingWidth (homeFont (TypeScale::body, linkArea.getHeight() * 0.85f), linkText, linkArea.getWidth() - 2.0f, 0.85f));
+            g.drawFittedText (linkText, linkArea.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         }
     }
 

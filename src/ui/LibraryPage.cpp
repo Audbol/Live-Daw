@@ -420,8 +420,8 @@ public:
         auto body = drawDarkPanel (g, extras, "SCENE");
         juce::ignoreUnused (body);
         g.setColour (Dark::textDim);
-        g.setFont (wingFont (TypeScale::statusCaption * 1.2f));
-        g.drawText ("FADE (FADERS, PANS, SENDS)", fadeLabel, juce::Justification::centredLeft);
+        g.setFont (wingFont (TypeScale::caption));
+        g.drawFittedText ("FADE (FADERS, PANS, SENDS)", fadeLabel, juce::Justification::centredLeft, 1, 0.7f);
         g.drawText ("NOTES", notesLabel, juce::Justification::bottomLeft);
     }
 
@@ -432,11 +432,16 @@ public:
         layoutKeyRows (b, rows, rowH, 4);
         extras = b.withTop (rows.back().band.getBottom() + 8);
         auto e = darkPanelBody (extras, true).reduced (8, 4);
-        auto f = e.removeFromTop (28);
+        // The rows grow with the screen (screen only on a large display).
+        auto f = e.removeFromTop (screenCap (28));
         fadeLabel = f.removeFromLeft (juce::jmin (screenCap (190), f.getWidth() / 2));
+        fade.setTextBoxStyle (juce::Slider::TextBoxRight, false, screenCap (64), juce::jmin (f.getHeight(), screenCap (24)));
         fade.setBounds (f);
-        notesLabel = e.removeFromTop (18);
+        notesLabel = e.removeFromTop (screenCap (18));
         notes.setBounds (e.withTrimmedTop (2));
+        // The notes in the screen's body type, which follows the screen size.
+        notes.setFont (wingFont (TypeScale::body * 1.15f));
+        notes.applyFontToAllText (wingFont (TypeScale::body * 1.15f));
     }
 
 private:
@@ -498,6 +503,7 @@ public:
         recFocus->isOn = [this] { return page.focusEdited; };
         rec->isOn = [this] { return page.ctx.show.isRecordingSnippet(); };
         rec->iconColour = Colours::text;
+        rec->onInk = Colours::text; // white on the red, as the recorder's REC
         rows = { { {}, { save }, { exportKey } }, { {}, { update }, { loadFocus } }, { {}, { loadKey, partialLoad }, { importKey } },
                  { {}, { rec, stop }, { recFocus } }, { {}, { addItems, removeItems }, { clearAll } } };
         // EXPORT / IMPORT: snippet files in the folder at INT / USB; an imported one goes into the selected scene.

@@ -61,7 +61,8 @@ namespace
         else
             draw (ink);
         g.setColour (ink);
-        g.setFont (wingFontFit (TypeScale::value * 0.85f, (float) r.getHeight() * 0.5f, WingWeight::SemiBold));
+        // Narrow tabs (small windows) shrink the text rather than cut it.
+        g.setFont (fontFittingWidth (wingFontFit (TypeScale::value * 0.85f, (float) r.getHeight() * 0.5f, WingWeight::SemiBold), text, (float) r.getWidth() - 12.0f, 0.7f));
         g.drawFittedText (text, r.reduced (6, 0), juce::Justification::centredLeft, 1);
     }
 
@@ -120,10 +121,11 @@ namespace
             g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (kc.translated (0.0f, (float) i * d * 2.2f)));
         auto t = r.reduced (6, 3);
         g.setColour (Dark::textDim.withAlpha (a));
-        g.setFont (wingFontPx (juce::jmin (TypeScale::caption * getWingScreenHeight(), (float) t.getHeight() * 0.2f)));
+        // Narrow fields (small windows) shrink the text rather than cut it.
+        g.setFont (fontFittingWidth (wingFontPx (juce::jmin (TypeScale::caption * getWingScreenHeight(), (float) t.getHeight() * 0.2f)), caption, (float) t.getWidth(), 0.7f));
         g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 38 / 100), juce::Justification::bottomLeft, 1);
         g.setColour (Dark::text.withAlpha (a));
-        g.setFont (wingFontPx (juce::jmin (TypeScale::value * getWingScreenHeight(), (float) t.getHeight() * 0.5f)));
+        g.setFont (fontFittingWidth (wingFontPx (juce::jmin (TypeScale::value * getWingScreenHeight(), (float) t.getHeight() * 0.5f)), value, (float) t.getWidth(), 0.8f));
         g.drawFittedText (value, t, juce::Justification::centredLeft, 1, 0.8f);
     }
 } // namespace
@@ -659,8 +661,8 @@ void MonitorsPage::showPathTab (int t)
     pathTab = juce::jlimit (0, 1, t);
     auto& src = pathSource();
     auto& d = pathDsp();
-    srcLevel.setBinding (bindFader ("SRC LEVEL", src.sourceLevelDb));
-    srcMix.setBinding (bindFader ("SRC MIX", src.sourceMixDb));
+    srcLevel.setBinding (home::wingFader ("SRC LEVEL", src.sourceLevelDb));
+    srcMix.setBinding (home::wingFader ("SRC MIX", src.sourceMixDb));
     dim.setBinding (bindLinear ("DIM", pathDim(), 0.0f, 40.0f, " dB", 0, 20.0f));
     pflDim.setBinding (bindLinear ("PFL DIM", src.pflDimDb, 0.0f, 40.0f, " dB", 0, 0.0f));
     bandSolo.setBinding (bindLinear ("BAND SOLO", d.bandSoloDb, 0.0f, 24.0f, " dB", 0, 12.0f));
@@ -704,8 +706,8 @@ std::vector<KnobBinding> MonitorsPage::getKnobs()
     auto& d = pathDsp();
     auto dist = bindLog ("DIST", d.delayM, 0.1f, 100.0f, " m", 0.1f);
     dist.text = [&m = d.delayM] { return juce::String (m.load(), m.load() < 10.0f ? 1 : 0) + " m"; };
-    return { bindFader ("TALK LVL", ctx.engine.talk.levelDb), srcLevel.getBinding(), srcMix.getBinding(), pflDim.getBinding(), dist,
-             bindFader ("DIR LVL", d.directLevelDb) };
+    return { home::wingFader ("TALK LVL", ctx.engine.talk.levelDb), srcLevel.getBinding(), srcMix.getBinding(), pflDim.getBinding(), dist,
+             home::wingFader ("DIR LVL", d.directLevelDb) };
 }
 
 std::vector<KnobStyle> MonitorsPage::getKnobStyles()
@@ -873,7 +875,10 @@ void MonitorsPage::paintToolbar (juce::Graphics& g)
         auto r = t.area.toFloat();
         g.setColour (lit ? t.colour : t.colour.withMultipliedBrightness (0.35f).withMultipliedAlpha (enabled ? 1.0f : 0.6f));
         g.fillRect (r);
-        const auto ink = lit ? juce::Colours::black : (enabled ? t.colour : t.colour.withMultipliedAlpha (0.5f));
+        // Unlit: the key's colour on its dark tint; a dark colour (MUTE's red) is
+        // lightened so it reads on its own tint.
+        const auto offInk = t.colour.getPerceivedBrightness() < 0.5f ? t.colour.interpolatedWith (juce::Colours::white, 0.4f) : t.colour;
+        const auto ink = lit ? juce::Colours::black : (enabled ? offInk : offInk.withMultipliedAlpha (0.5f));
         auto label = r.removeFromBottom (r.getHeight() * 0.3f);
         drawIcon (g, t.icon, r.reduced (r.getHeight() * 0.18f), ink);
         g.setColour (ink);
@@ -953,8 +958,8 @@ void MonitorsPage::paintEqKey (juce::Graphics& g)
     g.fillRect (r);
     g.setColour (on ? juce::Colours::black : Dark::text);
     auto text = r.removeFromLeft (juce::jmin (r.getWidth() * 0.3f, screenCap (40.0f)));
-    g.setFont (wingFontPx (juce::jmin (TypeScale::value * getWingScreenHeight(), r.getHeight() * 0.36f)));
-    g.drawText ("EQ", text.reduced (6.0f, 0.0f), juce::Justification::centredLeft);
+    g.setFont (fontFittingWidth (wingFontPx (juce::jmin (TypeScale::value * getWingScreenHeight(), r.getHeight() * 0.36f)), "EQ", text.getWidth() - 8.0f, 1.0f));
+    g.drawText ("EQ", text.reduced (4.0f, 0.0f), juce::Justification::centredLeft, false);
     auto c = r.reduced (6.0f, r.getHeight() * 0.25f);
     std::vector<float> freqs (eqKeyFreqs.begin(), eqKeyFreqs.end()), db (eqKeyFreqs.size(), 0.0f);
     ctx.engine.getMonitorEqResponse (showsPhones(), -1, freqs.data(), db.data(), (int) freqs.size());

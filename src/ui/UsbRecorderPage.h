@@ -101,6 +101,10 @@ private:
     void paintList (juce::Graphics&);
     void paintRecorder (juce::Graphics&);
     void paintPlaylistKeys (juce::Graphics&);
+    /** The current file's format and its length in frames at the console's
+        rate; before it has been opened, those of the cued (or selected) file,
+        from its header. False when there is no file. */
+    bool currentFileInfo (UsbRecorder::FileInfo&, int64_t& length, bool& mismatch) const;
     void paintPlayer (juce::Graphics&);
     void paintTimeline (juce::Graphics&);
     void paintKey (juce::Graphics&, juce::Rectangle<int>, const juce::String& text, std::function<void (juce::Graphics&, juce::Rectangle<float>, juce::Colour)> icon,

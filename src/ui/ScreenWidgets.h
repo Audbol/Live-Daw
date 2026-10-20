@@ -118,7 +118,7 @@ inline juce::Rectangle<int> drawDarkPanel (juce::Graphics& g, juce::Rectangle<in
         g.setColour (Dark::header);
         g.fillRect (header);
         g.setColour (Dark::caption);
-        g.setFont (panelTitleFont (headerHeight));
+        g.setFont (fontFittingWidth (panelTitleFont (headerHeight), title, (float) header.getWidth() - 12.0f, 0.7f));
         g.drawFittedText (title, header.reduced (6, 0), juce::Justification::centred, 1);
         area.removeFromTop (kDarkHeaderGap);
     }
@@ -520,10 +520,11 @@ public:
         }
         const float screenH = getWingScreenHeight();
         g.setColour ((open ? Dark::text : Dark::caption).withAlpha (alpha));
-        g.setFont (wingFontPx (juce::jmin (TypeScale::body * screenH, (float) t.getHeight() * 0.22f)));
+        // Narrow fields (small windows) shrink the text rather than cut it.
+        g.setFont (fontFittingWidth (wingFontPx (juce::jmin (TypeScale::body * screenH, (float) t.getHeight() * 0.22f)), caption, (float) t.getWidth(), 0.6f));
         g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 40 / 100), juce::Justification::centredLeft, 1, 0.6f);
         g.setColour (Dark::text.withAlpha (alpha));
-        g.setFont (wingFontPx (juce::jmin (TypeScale::value * screenH, (float) t.getHeight() * 0.5f)));
+        g.setFont (fontFittingWidth (wingFontPx (juce::jmin (TypeScale::value * screenH, (float) t.getHeight() * 0.5f)), shownValue, (float) t.getWidth(), 0.8f));
         g.drawFittedText (shownValue, t, juce::Justification::centredLeft, 1, 0.8f);
     }
 

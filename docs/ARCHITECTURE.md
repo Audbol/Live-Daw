@@ -501,7 +501,10 @@ laid out as on the console: the WING panel with USB AUDIO/DATA and MONITORING/TA
 panel and screen (`SurfaceSections.*`), and the 4-Channel section
 (`FourChannelSection.*`, the right fader section's four strips) at the right. Windows
 too narrow for that keep the channel strip at the left and the monitoring panel over
-the 4-Channel section (or the custom controls' lower part) at the right. SETUP
+the 4-Channel section (or the custom controls' lower part) at the right. The minimum
+window, 1344 x 680, keeps every section with the default layers (12 + 8 + 4 faders,
+strips 40 px wide); only wider fader sections can push the custom controls' upper part
+and the 4-Channel section out. SETUP
 shows CUSTOM CONTROLS (`CustomControlsPage.*`, also the assignments' model and what
 each function does) and MONITORS (`MonitorsPage.*`) in place of its tabs. The
 preferences the surface, the status bar and the pages share are `uiprefs::` keys in

@@ -71,7 +71,17 @@ void UtilityPage::paintListBoxItem (int row, juce::Graphics& g, int width, int h
     g.setColour (e.level == EventLog::Level::Error     ? Colours::mute
                  : e.level == EventLog::Level::Warning ? Colours::solo
                                                        : Colours::text);
-    g.drawText (e.message, r, juce::Justification::centredLeft);
+    // A long message wraps onto a second, smaller line rather than being cut;
+    // its tooltip holds the whole text.
+    if (juce::GlyphArrangement::getStringWidth (font, e.message) * 0.85f > (float) r.getWidth())
+        g.setFont (font.withHeight (juce::jmin (font.getHeight(), (float) height * 0.44f)));
+    g.drawFittedText (e.message, r, juce::Justification::centredLeft, 2, 0.85f);
+}
+
+juce::String UtilityPage::getTooltipForRow (int row)
+{
+    const auto& entries = ctx.log.getEntries();
+    return juce::isPositiveAndBelow (row, entries.size()) ? entries.getReference (row).message : juce::String();
 }
 
 void UtilityPage::timerCallback()

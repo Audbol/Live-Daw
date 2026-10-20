@@ -89,6 +89,8 @@ struct ListOptions
     int columns = 1;
     std::vector<int> disabled;  // indices drawn dim and not selectable
     juce::String caption;
+    std::vector<int> gapsBefore; // indices with an empty cell before them (lines up the columns)
+    int maxRows = 8;             // rows shown before the list scrolls (fewer when the screen is short)
 };
 
 /** An anchored list under `anchor` (or beside it when there's no room below);
