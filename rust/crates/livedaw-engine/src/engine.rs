@@ -57,7 +57,7 @@ use livedaw_dsp::util::*;
 use livedaw_dsp::wing::fx::{allowed_in_slot, FxContext, FxDevice};
 use livedaw_dsp::wing::FX_MODELS;
 use livedaw_recorder::usb::{RecTap, UsbDeck, USB_CHANNELS};
-use livedaw_recorder::{playback_channel, RecordStream, RecordTrackSpec, Recorder, SourceKind};
+use livedaw_recorder::{playback_channel, usb_player_channel, RecordStream, RecordTrackSpec, Recorder, SourceKind};
 use std::cell::UnsafeCell;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicPtr, AtomicU32, Ordering::*};
@@ -569,7 +569,9 @@ impl Engine {
             let src = &t.source;
             if src.kind == SourceKind::HardwareInput {
                 for port in src.port..src.port + t.num_channels.clamp(1, 2) as i32 {
-                    if playback_channel(port).is_none() && usize::try_from(port).map_or(true, |p| p >= num_hw_inputs) {
+                    // Playback channels and the USB PLAYER always exist.
+                    let internal = playback_channel(port).is_some() || usb_player_channel(port).is_some();
+                    if !internal && usize::try_from(port).map_or(true, |p| p >= num_hw_inputs) {
                         return Err(format!("Input {} doesn't exist", port + 1));
                     }
                 }
