@@ -67,6 +67,10 @@ All notable changes to Sidecar are listed here. Versions follow
 - 4-Channel section: in GAIN / 48 V mode the keys under the encoders did nothing;
   they now switch the +48V of the strip's source (stored, as on HOME > INPUT and
   ROUTING > SOURCES) and light while it is on.
+- ROUTING > SOURCES: switching a source to STEREO or MID/SIDE left the channels
+  already patched to it mono (they only heard the left source), and switching back
+  to MONO left them stereo. Channels and aux on the pair's first source now follow
+  its mode, as on the console and as WING remote apps already did.
 
 ## [0.1.0] - beta
 

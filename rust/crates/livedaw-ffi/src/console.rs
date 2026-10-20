@@ -54,7 +54,7 @@ pub unsafe extern "C" fn ld_source_set_name(e: *const Engine, index: i32, utf8: 
 pub unsafe extern "C" fn ld_source_set_mode(e: *const Engine, index: i32, mode: i32) {
     if let Some(e) = engine(e) {
         if source(e, index).is_some() {
-            guard((), || e.sources().set_mode(index as usize, mode));
+            guard((), || e.set_source_mode(index as usize, mode));
         }
     }
 }

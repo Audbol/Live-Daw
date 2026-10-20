@@ -1171,7 +1171,8 @@ extern "C"
     int32_t ld_source_port (int32_t index);
     LdString* ld_source_name (const Engine*, int32_t index);
     void ld_source_set_name (const Engine*, int32_t index, const char* utf8, size_t len);
-    /** SourceMode for the source and its pair partner (a new pair takes the first one's settings). */
+    /** SourceMode for the source and its pair partner (a new pair takes the first one's settings);
+        channels and aux patched to the pair's first source follow it (stereo or mono). */
     void ld_source_set_mode (const Engine*, int32_t index, int32_t mode);
     /** INITIALIZE (the pair's settings and names; the pairing stays). */
     void ld_source_initialize (const Engine*, int32_t index);

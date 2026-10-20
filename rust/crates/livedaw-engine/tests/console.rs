@@ -467,6 +467,34 @@ fn sources_process_the_ports_before_the_channels() {
 }
 
 #[test]
+fn channels_follow_their_sources_mode() {
+    let engine = Engine::new(0);
+    engine.set_num_channels(3);
+    let ch = |i| engine.channel_at(i).unwrap();
+    // CH 1 on IN 3, CH 2 on IN 4 (the pair's second source), CH 3's ALT on IN 3.
+    ch(0).params.input_left.store(2, Relaxed);
+    ch(1).params.input_left.store(3, Relaxed);
+    ch(2).params.input_left.store(0, Relaxed);
+    ch(2).params.alt_input_left.store(2, Relaxed);
+
+    engine.set_source_mode(3, source_mode::STEREO);
+    let p = &ch(0).params;
+    assert!(p.stereo.load(Relaxed));
+    assert_eq!(p.input_right.load(Relaxed), 3);
+    assert!(!ch(1).params.stereo.load(Relaxed), "only the first source's channels follow");
+    assert_eq!(ch(2).params.alt_input_right.load(Relaxed), 3);
+    assert!(!ch(2).params.stereo.load(Relaxed));
+
+    engine.set_source_mode(2, source_mode::MID_SIDE);
+    assert!(p.stereo.load(Relaxed));
+
+    engine.set_source_mode(2, source_mode::MONO);
+    assert!(!p.stereo.load(Relaxed));
+    assert_eq!((p.input_left.load(Relaxed), p.input_right.load(Relaxed)), (2, -1));
+    assert_eq!(ch(2).params.alt_input_right.load(Relaxed), -1);
+}
+
+#[test]
 fn unpatched_channels_stay_idle_with_processed_sources() {
     let mut rig = Rig::new(2, 2);
     rig.engine.set_num_channels(4);
