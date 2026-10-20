@@ -533,7 +533,8 @@ namespace
             auto r = getLocalBounds().toFloat().reduced (4.0f);
             g.setColour (Dark::well);
             g.fillRect (getLocalBounds());
-            const float captionH = 13.0f;
+            // The captions give way to the cells in a short box (small windows).
+            const float captionH = juce::jmin (screenCap (13.0f), r.getHeight() / 9.0f);
             const float cell = juce::jmin ((r.getWidth()) / 8.0f, (r.getHeight() - captionH * 2.0f - 6.0f) / 6.0f);
             auto drawGrid = [&] (const char* caption, StripKind kind, int rows)
             {
@@ -773,6 +774,8 @@ namespace
             const int rowH = fitRowHeight (getHeight() - darkHeaderHeight() - 30, 11.0f);
             for (auto* p : { &clock, &inputSelect, &prefsPanel, &solo, &device, &automix })
                 p->rowHeight = rowH;
+            if (ceiling != nullptr)
+                ceiling->setTextBoxStyle (juce::Slider::TextBoxRight, false, screenCap (64), juce::jmin (rowH, screenCap (20)));
 
             clock.setBounds (c1.removeFromTop (clock.preferredHeight()));
             c1.removeFromTop (gap);

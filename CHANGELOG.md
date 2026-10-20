@@ -31,6 +31,10 @@ All notable changes to Sidecar are listed here. Versions follow
   ("PARTIA L UPDATE"); key labels (DELAY, FILTER), format chips, the dynamics
   graphs' level scale ("-2" for -20), the sends' TAP / POST and PAN LINK and the
   VIEW > SENDS values fit their space; the EQ screen's FILTER key keeps its room.
+- Screen only on a large display: the SNAP scene's FADE and NOTES rows no longer
+  overlap, slider values (CEILING, FADE, MOUSE SPEED) use the screen's type, and
+  SETUP > AUDIO's INPUT SELECT captions grow with the screen (in a small window its
+  cells are no longer squeezed out by them).
 
 ## [0.1.0] - beta
 

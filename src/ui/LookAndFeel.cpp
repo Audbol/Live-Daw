@@ -449,6 +449,9 @@ juce::Font ConsoleLookAndFeel::getComboBoxFont (juce::ComboBox& box)
 
 juce::Font ConsoleLookAndFeel::getLabelFont (juce::Label& label)
 {
+    // A slider's value box (CEILING, MOUSE SPEED, FADE) follows the screen's type.
+    if (dynamic_cast<juce::Slider*> (label.getParentComponent()) != nullptr)
+        return wingFontFit (TypeScale::body * 1.1f, (float) label.getHeight() * 0.8f);
     return label.getFont();
 }
 
