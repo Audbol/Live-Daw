@@ -231,7 +231,8 @@ fn osc_surface_layers_and_custom_controls() {
     let (mut layers, mut custom) = (LayerSet::default(), CustomControls::default());
     let sync = |layers: &mut LayerSet, custom: &mut CustomControls| surface::sync(&state, &engine, layers, custom, 0);
     sync(&mut layers, &mut custom);
-    assert_eq!(c.get("/$ctl/layer/L/sel").args.last(), Some(&Arg::Int(1)));
+    // "1" of 1..22: the console's ,sfi reply counts from the bottom of the range.
+    assert_eq!(c.get("/$ctl/layer/L/sel").args, vec![Arg::Str("1".into()), Arg::Float(0.0), Arg::Int(0)]);
 
     // A client picks the left section's 25-36 key and assigns USER 1's first fader.
     c.send(&Message::new("/$ctl/layer/L/sel", vec![Arg::Int(3)]));

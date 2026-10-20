@@ -15,6 +15,15 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- WING remote: OSC replies and node descriptions are formatted as on a real WING
+  (firmware 3.1): no "r/o", nodes as "(node)", ranges and values with the
+  parameter's fixed decimals, "+" on signed ranges and kHz notation ("lin [-15.0 ..
+  +15.0 dB]", "log [20 .. 20k0 Hz]", "1k0"), units on integer ranges, float choices
+  as `list [...]`, running times as "0:00", and an integer reply's number counted
+  from the bottom of its range. Floats set over OSC, the Native protocol or from a
+  snapshot land on the parameter's nearest step, as on the console, and the 0..1
+  positions are the steps'. The fader law below -60 dB follows the console (-90 dB
+  is the bottom of the travel).
 - The strip LED meters light -6 to -18 in orange, as on the console.
 - SET CUST names the channel after the device's short name (DIMCRS) and gives it the
   FX icon; the INS tile shows the premium diamond for a device in FX 1-8; the EFFECTS

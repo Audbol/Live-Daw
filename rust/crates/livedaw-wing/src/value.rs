@@ -109,10 +109,17 @@ pub fn to_raw(def: &Def, v: &Value) -> f32 {
         }
         NodeType::Str | NodeType::Node => 0.0,
     };
-    if r.is_finite() {
-        r.clamp(0.0, 1.0)
-    } else {
-        0.0
+    if !r.is_finite() {
+        return 0.0;
+    }
+    let r = r.clamp(0.0, 1.0);
+    // A stepped float sits on one of its steps: k / (steps - 1), as the console sends it.
+    match def.ty {
+        NodeType::LinFloat | NodeType::LogFloat if def.steps > 1 => {
+            let n = (def.steps - 1) as f64;
+            ((r as f64 * n).round() / n) as f32
+        }
+        _ => r,
     }
 }
 
@@ -229,29 +236,179 @@ pub fn default_value(def: &Def) -> Value {
     }
 }
 
-/// Hz as the console writes it: "80.2", "601.4", "1k50", "10k02".
-pub fn format_hz(v: f32) -> String {
-    if v < 1000.0 {
-        return format!("{v:.1}");
+/// Hz as the console writes it: below 1 kHz with `decimals` decimals ("80.2",
+/// "100"), from 1 kHz up in kHz with one digit more after the "k" ("1k50",
+/// "10k0").
+pub fn format_hz(v: f32, decimals: usize) -> String {
+    let text = format!("{v:.decimals$}");
+    if text.parse::<f32>().is_ok_and(|r| r.abs() < 1000.0) {
+        return text;
     }
-    let k = v / 1000.0;
-    let mut whole = k.trunc() as i64;
-    let mut frac = ((k - k.trunc()) * 100.0).round() as i64;
-    if frac >= 100 {
-        whole += 1;
-        frac -= 100;
-    }
-    format!("{whole}k{frac:02}")
+    let digits = decimals + 1;
+    let scale = 10i64.pow(digits as u32);
+    let n = (v as f64 / 1000.0 * scale as f64).round() as i64;
+    format!("{}k{:0digits$}", n / scale, n % scale)
 }
 
-fn decimals_for_step(step: f32) -> usize {
-    if step >= 0.999 {
+/// Positions the console shows as a running time: the player's seconds
+/// ("9:59:59") and the WING-LIVE card's milliseconds, to the hundredth
+/// ("2:35:20").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Clock {
+    Seconds,
+    Millis,
+}
+
+fn clock(def: &Def) -> Option<Clock> {
+    if def.ty != NodeType::LinFloat || def.unit != unit::NONE || def.min != 0.0 {
+        return None;
+    }
+    match def.steps {
+        36_000 => Some(Clock::Seconds),
+        36_000_000 => Some(Clock::Millis),
+        _ => None,
+    }
+}
+
+fn format_clock(c: Clock, v: f32) -> String {
+    let v = v.max(0.0) as f64;
+    match c {
+        Clock::Seconds => {
+            let t = v.round() as i64;
+            let (h, m, s) = (t / 3600, t / 60 % 60, t % 60);
+            if h > 0 {
+                format!("{h}:{m:02}:{s:02}")
+            } else {
+                format!("{m}:{s:02}")
+            }
+        }
+        Clock::Millis => {
+            // Hours wrap at 100: the console's range reads "0:00:00 .. 0:00:00".
+            let t = (v / 10.0).round() as i64;
+            let (h, m, s, cs) = (t / 360_000 % 100, t / 6000 % 60, t / 100 % 60, t % 100);
+            if h > 0 {
+                format!("{h}:{m:02}:{s:02}:{cs:02}")
+            } else {
+                format!("{m}:{s:02}:{cs:02}")
+            }
+        }
+    }
+}
+
+fn parse_clock(c: Clock, text: &str) -> Option<f32> {
+    let parts: Vec<f64> = text.split(':').map(|p| p.trim().parse::<f64>().ok()).collect::<Option<_>>()?;
+    let (scale, fields): (f64, &[f64]) = match c {
+        Clock::Seconds => (1.0, &[3600.0, 60.0, 1.0]),
+        Clock::Millis => (10.0, &[360_000.0, 6000.0, 100.0, 1.0]),
+    };
+    if parts.len() > fields.len() {
+        return None;
+    }
+    let units = &fields[fields.len() - parts.len()..];
+    Some((parts.iter().zip(units).map(|(p, u)| p * u).sum::<f64>() * scale) as f32)
+}
+
+/// Decimals of a float parameter's text, fixed per parameter as on the
+/// console (its value and the bounds of its range alike). None for floats
+/// without a range.
+pub fn decimals(def: &Def) -> Option<usize> {
+    if def.steps < 2 || def.max == def.min {
+        return None;
+    }
+    let lo = def.min.min(def.max);
+    Some(match def.ty {
+        // As many as the step needs: 0.1 -> 1, 2.5 -> 1, 0.25 -> 2, 5 -> 0.
+        NodeType::LinFloat => {
+            let step = (def.max - def.min).abs() as f64 / (def.steps - 1) as f64;
+            (0..3)
+                .find(|&d| {
+                    let x = step * 10f64.powi(d);
+                    (x - x.round()).abs() < 1e-3 * x.max(1.0)
+                })
+                .unwrap_or(3) as usize
+        }
+        // The EQs, filters and the oscillator (an odd count of 320 or more
+        // steps per decade) show tenths of a hertz, the sidechain filters
+        // (300 per decade) and the channel PEQ (960 steps) whole hertz.
+        NodeType::LogFloat if def.unit == unit::HZ && lo >= 10.0 => {
+            let per_decade = (def.steps - 1) as f32 / (def.max / def.min).abs().log10();
+            usize::from(def.steps % 2 == 1 && per_decade >= 319.0)
+        }
+        NodeType::LogFloat if lo < 1.0 => 2,
+        NodeType::LogFloat if def.unit == unit::MS => 0,
+        NodeType::LogFloat if lo < 10.0 => 1,
+        NodeType::LogFloat => 0,
+        _ => return None,
+    })
+}
+
+/// Signed ranges whose positive bound the console writes with a "+" ("lin
+/// [-15.0 .. +15.0 dB]"): gains, trims, balances and pans, but not widths
+/// (%) or the dynamic EQ's +/-30 dB depth.
+pub fn signed(def: &Def) -> bool {
+    def.ty == NodeType::LinFloat
+        && def.min < 0.0
+        && def.max == -def.min
+        && def.unit != unit::PERCENT
+        && !(def.unit == unit::DB && def.max >= 30.0)
+}
+
+/// A float parameter's number as the console writes it (its value, or a bound
+/// of its range).
+pub fn format_float(def: &Def, x: f32) -> String {
+    if let Some(c) = clock(def) {
+        return format_clock(c, x);
+    }
+    let d = decimals(def).unwrap_or(if x.abs() >= 100.0 || (def.unit == unit::MS && x.abs() >= 10.0) {
         0
-    } else if step >= 0.0999 {
+    } else if x.abs() >= 10.0 {
         1
     } else {
         2
+    });
+    if def.unit == unit::HZ {
+        format_hz(x, d)
+    } else {
+        format!("{x:.d$}")
     }
+}
+
+/// A float enum's item as the console lists it: one decimal ("48000.0",
+/// "3.0"), whole dB ("30"), and in lists that also hold items below 10 (the
+/// ratios) the items from 10 up whole and padded to three characters (" 10").
+pub fn format_float_item(def: &Def, x: f32) -> String {
+    let items = def.items();
+    let mixed = items.iter().any(|i| i.value.abs() < 10.0) && items.iter().any(|i| i.value.abs() >= 10.0);
+    if def.unit == unit::DB {
+        format!("{x:.0}")
+    } else if mixed && x.abs() >= 10.0 {
+        format!("{x:3.0}")
+    } else {
+        format!("{x:.1}")
+    }
+}
+
+/// The value at the nearest of the parameter's steps: the console keeps a
+/// float at one of its `steps` positions (a Q of 1.00 reads back 0.9979702,
+/// 100 Hz 99.68543, 150 ms 150.3349).
+pub fn quantise(def: &Def, v: &Value) -> Value {
+    let Value::Float(x) = *v else { return v.clone() };
+    if def.steps < 2 || def.max == def.min || !x.is_finite() {
+        return v.clone();
+    }
+    let (min, max, n) = (def.min as f64, def.max as f64, (def.steps - 1) as f64);
+    let q = match def.ty {
+        NodeType::LinFloat => {
+            let k = ((x as f64 - min) / (max - min) * n).round();
+            min + (max - min) * k / n
+        }
+        NodeType::LogFloat if min > 0.0 && max > 0.0 && x > 0.0 => {
+            let k = ((x as f64 / min).ln() / (max / min).ln() * n).round();
+            min * (max / min).powf(k / n)
+        }
+        _ => return v.clone(),
+    };
+    Value::Float(q as f32)
 }
 
 /// The value as the console displays it (the first argument of an OSC reply).
@@ -269,14 +426,7 @@ pub fn display(def: &Def, v: &Value) -> String {
                 other => other.as_i32().map(|i| i.to_string()).unwrap_or_default(),
             },
         },
-        NodeType::FloatEnum => {
-            let x = v.as_f32().unwrap_or(0.0);
-            if x.fract() == 0.0 && x.abs() < 1e6 {
-                format!("{x:.0}")
-            } else {
-                format!("{x:.1}")
-            }
-        }
+        NodeType::FloatEnum => format_float_item(def, v.as_f32().unwrap_or(0.0)).trim_start().to_owned(),
         NodeType::Int => v.as_i32().unwrap_or(0).to_string(),
         NodeType::Fader => {
             let x = v.as_f32().unwrap_or(FADER_MIN);
@@ -286,33 +436,24 @@ pub fn display(def: &Def, v: &Value) -> String {
                 format!("{x:.1}")
             }
         }
-        NodeType::LinFloat | NodeType::LogFloat => {
-            let x = v.as_f32().unwrap_or(0.0);
-            if def.unit == unit::HZ {
-                return format_hz(x);
-            }
-            let d = if def.ty == NodeType::LinFloat && def.steps > 1 {
-                decimals_for_step((def.max - def.min).abs() / (def.steps - 1) as f32)
-            } else if x.abs() >= 100.0 || (def.unit == unit::MS && x.abs() >= 10.0) {
-                0
-            } else if x.abs() >= 10.0 {
-                1
-            } else {
-                2
-            };
-            format!("{x:.d$}")
-        }
+        NodeType::LinFloat | NodeType::LogFloat => format_float(def, v.as_f32().unwrap_or(0.0)),
     }
 }
 
-/// Parses display text back into a value ("-oo", "1k50", an enum item...).
+/// Parses display text back into a value ("-oo", "1k50", "2:35:20", an enum item...).
 pub fn parse_display(def: &Def, text: &str) -> Option<Value> {
     let t = text.trim();
     let t = t.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')).unwrap_or(t);
     match def.ty {
         NodeType::Str => Some(Value::str(t)),
         NodeType::StrEnum | NodeType::FloatEnum => coerce(def, &Value::str(t)),
-        _ => coerce(def, &Value::Float(parse_number(t)?)),
+        _ => {
+            let x = match clock(def) {
+                Some(c) if t.contains(':') => parse_clock(c, t)?,
+                _ => parse_number(t)?,
+            };
+            coerce(def, &Value::Float(x))
+        }
     }
 }
 
@@ -353,6 +494,62 @@ mod tests {
         assert_eq!(parse_number("-oo"), Some(-144.0));
         assert_eq!(parse_display(def("/ch/1/fdr"), "-oo"), Some(Value::Float(-144.0)));
         assert_eq!(parse_display(def("/ch/1/mon"), "a+b"), Some(Value::str("A+B")));
+    }
+
+    #[test]
+    fn values_read_as_on_the_console() {
+        // A factory-set WING's replies (text, value): decimals fixed per
+        // parameter, kHz with one digit more than below 1 kHz.
+        for (path, text, x) in [
+            ("/ch/1/flt/lcf", "60.1", 60.13884),
+            ("/ch/1/flt/hcf", "10k02", 10018.26),
+            ("/io/in/OSC/1/osc/f", "1k00", 999.992),
+            ("/cfg/mon/1/eq/hsf", "12k00", 11999.27),
+            ("/ch/1/dynsc/f", "1k0", 1002.374),
+            ("/ch/1/peq/1f", "100", 99.68543),
+            ("/ch/1/peq/1f", "999", 999.2505),
+            ("/ch/1/peq/1f", "10k0", 10016.53),
+            ("/ch/1/peq/1q", "1.00", 0.9979702),
+            ("/ch/1/dynxo/q", "0.40", 0.4),
+            ("/ch/1/dynxo/depth", "6.0", 6.0),
+            ("/io/in/LCL/1/g", "0.0", 0.0),
+            ("/$ctl/$globals/mousespd", "1.77", 1.77),
+            ("/ch/1/in/set/trim", "0.0", 0.0),
+            ("/ch/1/pan", "0", 0.0),
+            ("/ch/1/wid", "100", 100.0),
+            ("/play/$pos", "0:00", 0.0),
+            ("/cards/wlive/1/$stat/sdfree", "2:35:20", 155200.0),
+            ("/cards/wlive/2/$stat/sdfree", "1:12:52:85", 4372850.0),
+            ("/$globals/clkrate", "48000.0", 48000.0),
+            ("/cfg/rta/eqrange", "30", 30.0),
+        ] {
+            let d = def(path);
+            assert_eq!(display(d, &Value::Float(x)), text, "{path}");
+            let back = parse_display(d, text).and_then(|v| v.as_f32()).unwrap();
+            assert_eq!(quantise(d, &Value::Float(back)).as_f32(), quantise(d, &Value::Float(x)).as_f32(), "{path} {text}");
+        }
+        assert_eq!(display(def("/play/$pos"), &Value::Float(35999.0)), "9:59:59");
+        assert_eq!(parse_display(def("/play/$pos"), "1:00:05"), Some(Value::Float(3605.0)));
+    }
+
+    #[test]
+    fn floats_are_kept_on_their_steps() {
+        // What a WING reads back after a client sets a round value.
+        for (path, set, read) in [
+            ("/ch/1/peq/1q", 1.0, 0.9979702),
+            ("/ch/1/peq/1f", 100.0, 99.68543),
+            ("/ch/1/dynsc/f", 1000.0, 1002.374),
+            ("/io/in/OSC/1/osc/f", 1000.0, 999.992),
+            ("/cfg/mon/1/eq/hsf", 12000.0, 11999.27),
+            ("/ch/1/in/set/trim", 4.53, 4.5),
+            ("/io/in/LCL/1/g", 3.0, 2.5),
+        ] {
+            let Some(Value::Float(got)) = Some(quantise(def(path), &Value::Float(set))) else { panic!() };
+            assert!((got - read).abs() <= 2e-6 * read.max(1.0), "{path}: {got} for {set}, the console reads {read}");
+        }
+        // Integers, enums and faders as they are.
+        assert_eq!(quantise(def("/ch/1/fdr"), &Value::Float(-3.3)), Value::Float(-3.3));
+        assert_eq!(quantise(def("/ch/1/col"), &Value::Int(3)), Value::Int(3));
     }
 
     #[test]

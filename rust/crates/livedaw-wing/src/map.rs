@@ -2360,7 +2360,8 @@ impl<'a> Console<'a> {
     }
 
     /// Sets a parameter. The value is coerced to the parameter's type and range
-    /// first; returns the value now in effect.
+    /// and, like the console, put on the parameter's nearest step first;
+    /// returns the value now in effect.
     pub fn set(&self, node: Node, v: &Value) -> Result<Value, SetError> {
         let def = self.def(node).ok_or(SetError::NotFound)?;
         if !def.is_leaf() {
@@ -2372,7 +2373,7 @@ impl<'a> Console<'a> {
         let cv = match (node, self.binding(node)) {
             // The delay's range depends on its unit (meters, feet, ms, samples).
             (_, Binding::Strip(_, _, SF::Dly)) => Value::Float(v.as_f32().ok_or(SetError::BadValue)?.clamp(0.0, 1000.0)),
-            _ => value::coerce(def, v).ok_or(SetError::BadValue)?,
+            _ => value::quantise(def, &value::coerce(def, v).ok_or(SetError::BadValue)?),
         };
         let applied = match node {
             Node::Root => return Err(SetError::NotFound),
@@ -3260,9 +3261,11 @@ mod tests {
         for (path, v) in cases {
             let n = node(&c, path);
             assert!(c.is_mapped(n), "{path} not mapped");
+            // Floats land on the parameter's nearest step (the LC's 120 Hz near 120).
+            let want = value::quantise(c.def(n).unwrap(), v);
             let got = c.set(n, v).unwrap_or_else(|e| panic!("{path}: {e}"));
-            assert_eq!(&got, v, "{path}");
-            assert_eq!(c.get(n).as_ref(), Some(v), "{path}");
+            assert_eq!(got, want, "{path}");
+            assert_eq!(c.get(n), Some(want), "{path}");
         }
         // The engine saw it.
         let ch3 = c.strip(StripKind::Channel, 3).unwrap();
@@ -3308,8 +3311,10 @@ mod tests {
         c.set(node(&c, "/fx/1/mdl"), &Value::str("HALL")).unwrap();
         let dcy = node(&c, "/fx/1/dcy");
         c.set(dcy, &Value::Float(3.0)).unwrap();
-        assert_eq!(c.get(dcy), Some(Value::Float(3.0)));
-        assert_eq!(e.controls.fx[0].param("dcy").unwrap().load(), 3.0);
+        // On the nearest of its 101 steps, as the console keeps it.
+        let Some(Value::Float(got)) = c.get(dcy) else { panic!() };
+        assert!(got != 3.0 && (got - 3.0).abs() < 0.03, "{got}");
+        assert_eq!(e.controls.fx[0].param("dcy").unwrap().load(), got);
         // Premium devices only in slots 1-8.
         assert!(matches!(c.set(node(&c, "/fx/12/mdl"), &Value::str("HALL")), Err(SetError::Unsupported(_) | SetError::BadValue)));
     }
@@ -3363,7 +3368,8 @@ mod tests {
         assert!(!c.is_mapped(peq));
         assert_eq!(c.get(peq), Some(Value::Float(0.0)));
         c.set(peq, &Value::Float(3.0)).unwrap();
-        assert_eq!(c.get(peq), Some(Value::Float(3.0)));
+        // The local preamps' gain steps are 2.5 dB.
+        assert_eq!(c.get(peq), Some(Value::Float(2.5)));
         assert_eq!(c.set(node(&c, "/ch/1/$sololed"), &Value::Int(1)), Err(SetError::ReadOnly));
         assert_eq!(c.set(node(&c, "/ch/1"), &Value::Int(1)), Err(SetError::IsNode));
         assert_eq!(c.set(node(&c, "/ch/1/mon"), &Value::str("nope")), Err(SetError::BadValue));
@@ -3402,8 +3408,9 @@ mod tests {
         assert_eq!(p.tap_width.load(), -50.0);
         assert!(p.tap_eq.on.load(Relaxed));
         assert_eq!(p.tap_eq.bands[1].gain_db.load(), 4.5);
-        assert_eq!(p.tap_eq.bands[2].freq.load(), 8000.0);
-        assert_eq!(p.tap_eq.bands[0].q.load(), 2.0);
+        // On their steps, as the console reads them back (Q 2.00 is 1.995882).
+        assert!((p.tap_eq.bands[2].freq.load() - 8000.0).abs() < 30.0);
+        assert!((p.tap_eq.bands[0].q.load() - 1.995882).abs() < 1e-5);
         p.tap_eq.bands[0].gain_db.store(-3.0);
         assert_eq!(c.get(node(&c, "/ch/3/peq/1g")), Some(Value::Float(-3.0)));
         assert!(c.is_mapped(node(&c, "/ch/3/tapwid")));
@@ -3472,8 +3479,9 @@ mod tests {
         c.set(node(&c, "/cfg/mon/1/src"), &Value::str("BUS.3")).unwrap();
         c.set(node(&c, "/cfg/mon/1/dirin"), &Value::str("AUX.6")).unwrap();
         assert!(phones.eq_on.load(Relaxed));
-        assert_eq!((phones.eq[3].gain_db.load(), phones.eq[3].q.load()), (5.0, 3.0));
-        assert_eq!(phones.eq[0].freq.load(), 120.0);
+        assert_eq!(phones.eq[3].gain_db.load(), 5.0);
+        assert!((phones.eq[3].q.load() - 3.0).abs() < 0.03);
+        assert!((phones.eq[0].freq.load() - 120.0).abs() < 0.5);
         assert_eq!(phones.eq[7].gain_db.load(), -4.0);
         assert!(phones.invert.load(Relaxed) && !speakers.invert.load(Relaxed));
         assert_eq!((phones.width.load(), phones.limiter_db.load(), phones.band_solo_db.load()), (50.0, -10.0, 6.0));
@@ -3583,7 +3591,8 @@ mod tests {
         c.set(node(&c, "/io/in/OSC/2/mute"), &Value::Int(1)).unwrap();
         c.set(node(&c, "/io/in/OSC/2/name"), &Value::str("Noise")).unwrap();
         let osc = table.osc(1).unwrap();
-        assert_eq!((osc.mode.load(Relaxed), osc.level_db.load(), osc.freq_hz.load()), (1, -30.0, 250.0));
+        assert_eq!((osc.mode.load(Relaxed), osc.level_db.load()), (1, -30.0));
+        assert!((osc.freq_hz.load() - 250.0).abs() < 0.5);
         let index = sources::OSC_SOURCE_INDEX + 1;
         assert!(table.get(index).unwrap().mute.load(Relaxed));
         assert_eq!(table.name(index), "Noise");
