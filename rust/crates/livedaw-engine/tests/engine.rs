@@ -819,6 +819,61 @@ fn group_sends_ignore_the_send_level_and_reversed_pan_link() {
 }
 
 #[test]
+fn matrix_send_pan_link() {
+    let mut rig = Rig::new(1, 1, 6);
+    rig.engine.set_num_channels(1);
+    let ch = rig.ch(0);
+    ch.params.mains[0].on.store(false, Relaxed);
+    rig.set_input(0, 0.5);
+    let send = &ch.params.matrix[1];
+    send.on.store(true, Relaxed);
+    let mtx = rig.strip(StripKind::Matrix, 1);
+    mtx.params.output_left.store(2, Relaxed);
+    mtx.params.output_right.store(3, Relaxed);
+    assert!(send.pan_link.load(Relaxed), "linked by default");
+
+    // Linked: the send follows the channel's pan, POST and TAP alike; its own pan doesn't count.
+    ch.params.pan.store(-100.0);
+    send.pan.store(100.0);
+    for pre in [false, true] {
+        send.pre.store(pre, Relaxed);
+        rig.run(20);
+        assert!(close(rig.out(2), 0.5, 1e-5) && close(rig.out(3), 0.0, 1e-5), "pre {pre}: {} {}", rig.out(2), rig.out(3));
+    }
+
+    // LINK REVERSED mirrors the channel's pan.
+    send.pan_reversed.store(true, Relaxed);
+    for pre in [false, true] {
+        send.pre.store(pre, Relaxed);
+        rig.run(20);
+        assert!(close(rig.out(2), 0.0, 1e-5) && close(rig.out(3), 0.5, 1e-5), "reversed, pre {pre}");
+    }
+
+    // Unlinked: the send's own pan, whatever the channel's.
+    send.pan_link.store(false, Relaxed);
+    send.pan.store(0.0);
+    for pre in [false, true] {
+        send.pre.store(pre, Relaxed);
+        rig.run(20);
+        assert!(close(rig.out(2), 0.5 * CENTRE, 1e-5) && close(rig.out(3), 0.5 * CENTRE, 1e-5), "own pan, pre {pre}");
+    }
+    send.pan.store(100.0);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.0, 1e-5) && close(rig.out(3), 0.5, 1e-5));
+
+    // A bus has no PAN LINK: its panned output, balanced by the send's pan.
+    send.on.store(false, Relaxed);
+    ch.sends.get_or_create(4).unwrap().enabled.store(true, Relaxed);
+    let bus = rig.strip(StripKind::Bus, 4);
+    let bus_send = &bus.params.matrix[1];
+    bus_send.on.store(true, Relaxed);
+    bus_send.pan_link.store(false, Relaxed);
+    bus.params.pan.store(-100.0);
+    rig.run(20);
+    assert!(close(rig.out(2), 0.5, 1e-4) && close(rig.out(3), 0.0, 1e-5), "{} {}", rig.out(2), rig.out(3));
+}
+
+#[test]
 fn automix_enables_input_channels_only_and_follows_the_fader() {
     let mut rig = Rig::new(1, 2, 4);
     rig.engine.set_num_channels(2);

@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 10;
+constexpr int kAbiVersion = 11;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -159,6 +159,8 @@ struct MatrixSendParams
 {
     std::atomic<bool> on, pre;
     std::atomic<bool> ignoreMute; // IGNORE CHANNEL MUTE (input/aux channels, pre/TAP mode only)
+    std::atomic<bool> panLink;    // PAN LINK (input/aux channels): the pan follows the channel's
+    std::atomic<bool> panReversed; // with panLink: mirrored (LINK REVERSED)
     std::atomic<float> levelDb, pan;
 };
 
@@ -254,7 +256,9 @@ struct DcaParams
 {
     std::atomic<float> faderDb;
     std::atomic<bool> mute, solo;
+    std::atomic<bool> led; // scribble strip light
     std::atomic<int32_t> colour;
+    std::atomic<int32_t> icon; // WING icon number (0 none)
 };
 
 struct FxParams
@@ -534,7 +538,9 @@ struct LayoutInfo
         offControlsPhones, offTalkPaths, offMonitorPathPeak, offSourcePeak,
         // ABI 8 (monitors)
         monitorDsp, monitorControls, offControlsMonitor, offMonitorDspEq, offMonitorDspPan, offMonitorControlsSourceSolo,
-        offSourceMuteGroups;
+        offSourceMuteGroups,
+        // ABI 11 (matrix send PAN LINK, DCA icon and light)
+        offMatrixSendPanReversed, offDcaIcon;
 };
 
 struct ParamInfo
@@ -1158,6 +1164,22 @@ extern "C"
     /** The next scene recall a client asked for: action 1 GO (index: the scene, 0-based),
         2 GO NEXT, 3 GO PREV, 4 GO TAG (index: the tag). False if none. */
     bool ld_wing_take_library_action (LdWing*, int32_t* action, int32_t* index);
+    /** Publishes the USB recorder's settings for /rec (the storage folder, REC PATH relative
+        to it with "/", channels 2 / 4, bits 16 / 24); clients' REC, NEW FILE and PLAYFILE then
+        reach the host (ld_wing_take_usb_action). ld_wing_clear_usb: no host any more. */
+    void ld_wing_set_usb (LdWing*, const char* storage, size_t storageLen, const char* recPath, size_t recPathLen,
+                          int32_t channels, int32_t bits);
+    void ld_wing_clear_usb (LdWing*);
+    /** The settings a client changed (recPath may be null). False if none. */
+    bool ld_wing_take_usb_settings (LdWing*, int32_t* channels, int32_t* bits, LdString** recPath);
+    /** The next USB action a client asked for: 1 REC (a new recording), 2 NEW FILE,
+        3 PLAYFILE (*file: relative to the storage folder; may be null). False if none. */
+    bool ld_wing_take_usb_action (LdWing*, int32_t* action, LdString** file);
+    /** Publishes the show's global safes for /$ctl/safes (bit n = DCA / mute group / FX n+1);
+        ld_wing_take_safes: the masks a client changed (false if none). */
+    void ld_wing_set_safes (LdWing*, uint32_t dcas, uint32_t muteGroups, uint32_t fx);
+    void ld_wing_clear_safes (LdWing*);
+    bool ld_wing_take_safes (LdWing*, uint32_t* dcas, uint32_t* muteGroups, uint32_t* fx);
     /** MIDI SYSEX CONTROL on the WING tree: cmd 2 executes a node string
         ("/ch.1.fdr=-1,mute=0"), 3 dumps a node, 5 describes one. True with
         *out the data (empty for 2), false with *out the error text. */
@@ -1287,6 +1309,8 @@ inline const char* verifyLayout()
         { info.offMonitorDspPan, offsetof (MonitorDspParams, pan), "MonitorDspParams.pan" },
         { info.offMonitorControlsSourceSolo, offsetof (MonitorControls, sourceSolo), "MonitorControls.sourceSolo" },
         { info.offSourceMuteGroups, offsetof (SourceParams, muteGroups), "SourceParams.muteGroups" },
+        { info.offMatrixSendPanReversed, offsetof (MatrixSendParams, panReversed), "MatrixSendParams.panReversed" },
+        { info.offDcaIcon, offsetof (DcaParams, icon), "DcaParams.icon" },
     };
 
     if (info.abiVersion != kAbiVersion)

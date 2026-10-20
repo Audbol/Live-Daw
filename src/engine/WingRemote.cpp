@@ -165,16 +165,28 @@ void WingRemote::attachShow (Show* s, std::function<void (const juce::String&, c
     {
         stopTimer();
         ld::ld_wing_clear_library (handle);
+        ld::ld_wing_clear_safes (handle);
+        ld::ld_wing_clear_usb (handle);
         return;
     }
     publishLibrary();
+    pumpSafes();
+    pumpUsb();
     startTimerHz (10);
 }
 
 void WingRemote::timerCallback()
 {
-    if (libraryShow == nullptr || ! isRunning())
+    if (isRunning())
+        pump();
+}
+
+void WingRemote::pump()
+{
+    if (libraryShow == nullptr)
         return;
+    pumpSafes();
+    pumpUsb();
     int32_t action = 0, index = 0;
     while (ld::ld_wing_take_library_action (handle, &action, &index))
     {
@@ -219,6 +231,64 @@ void WingRemote::publishLibrary()
     const Utf8 name (showName), sceneUtf8 (sceneName);
     ld::ld_wing_set_library (handle, name.data, name.size, libraryShow->getNumScenes(), current, sceneUtf8.data, sceneUtf8.size,
                              scene ? scene->tag : 0);
+}
+
+void WingRemote::pumpSafes()
+{
+    juce::uint32 dcas = 0, muteGroups = 0, fx = 0;
+    auto safe = libraryShow->getGlobalSafe();
+    if (ld::ld_wing_take_safes (handle, &dcas, &muteGroups, &fx))
+    {
+        safe.dcas = dcas;
+        safe.muteGroups = muteGroups;
+        safe.fx = fx;
+        libraryShow->setGlobalSafe (safe);
+    }
+    ld::ld_wing_set_safes (handle, safe.dcas, safe.muteGroups, safe.fx);
+}
+
+void WingRemote::pumpUsb()
+{
+    auto& usb = engine.getUsbRecorder();
+    const auto storage = usb.getStorageFolder();
+    // Clients name files relative to the USB folder ("/" separated); nothing outside it.
+    auto inStorage = [&] (const juce::String& relative)
+    {
+        const auto f = storage.getChildFile (relative.trimCharactersAtStart ("/\\"));
+        return usb.isInsideStorage (f) ? f : juce::File();
+    };
+
+    int32_t channels = 0, bits = 0;
+    ld::LdString* recPath = nullptr;
+    if (ld::ld_wing_take_usb_settings (handle, &channels, &bits, &recPath))
+    {
+        usb.setRecChannels (channels);
+        usb.setRecBits (bits);
+        if (const auto folder = inStorage (takeString (recPath)); folder != juce::File())
+            usb.setRecPath (folder);
+    }
+
+    int32_t action = 0;
+    ld::LdString* file = nullptr;
+    while (ld::ld_wing_take_usb_action (handle, &action, &file))
+    {
+        const auto name = takeString (file);
+        switch (action)
+        {
+            case 1: usb.record(); break;
+            case 2: usb.newFile(); break;
+            case 3:
+                if (const auto f = inStorage (name); f.existsAsFile())
+                    usb.playFile (f);
+                break;
+            default: break;
+        }
+    }
+
+    const auto rec = usb.getRecPath();
+    const auto relative = rec == storage || ! usb.isInsideStorage (rec) ? juce::String() : rec.getRelativePathFrom (storage).replaceCharacter ('\\', '/');
+    const Utf8 storageUtf8 (storage.getFullPathName()), recUtf8 (relative);
+    ld::ld_wing_set_usb (handle, storageUtf8.data, storageUtf8.size, recUtf8.data, recUtf8.size, usb.getRecChannels(), usb.getRecBits());
 }
 
 juce::String WingRemote::coverageReport()

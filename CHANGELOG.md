@@ -29,6 +29,17 @@ All notable changes to Sidecar are listed here. Versions follow
   channel's source GAIN and +48V, the active RTA source and settings, the monitor
   paths' actual level, and scene control (`/$ctl/lib`: GO, GO NEXT, GO PREV, GO TAG,
   PREV / NEXT, the current scene and show).
+- **Matrix send PAN LINK** (HOME > MATRIX SENDS, the pan ring's pop-up; FEED
+  CONFIGURATION's SEND PANNING): a channel's or aux's matrix send pans with the
+  channel (LINK REVERSED mirrors it), or with its own PAN when unlinked. Saved with
+  shows and scenes.
+- A DCA's **icon** and scribble strip **LIGHT** (VIEW > OVERVIEW, the DCA's name),
+  shown on the fader strips and saved with the show.
+- WING remote: 84.4 % of the WING 3.1 parameter tree (57,874 of 68,556, up from
+  83.7 %): the matrix sends' PAN LINK, `$muteovr` on every strip, DCA `icon` / `led`,
+  the USB recorder and player (`/rec`, `/play`: transport, PLAYFILE, position,
+  REPEAT, REC PATH, format, state and file) and the recall safes (`/$ctl/safes`:
+  strips, DCAs, mute groups, FX).
 - Plugin delay compensation: the latency each hosted plugin reports (and its
   changes) is compensated so that every source summed into a bus, main or matrix
   arrives in time, across bus stages; a plugin's FX MIX delays its dry signal to
@@ -37,6 +48,11 @@ All notable changes to Sidecar are listed here. Versions follow
   samples; a plugin reporting more is logged and the limit is shown.
 
 ### Changed
+
+- Matrix sends of input and aux channels pan instead of balancing the channel's
+  panned output: linked (the default) they follow the channel's pan, unlinked they
+  use their own. Shows from before load a centred send linked (it sounds as before)
+  and a panned one with its pan. The engine's ABI version is 11.
 
 - Only the custom controls' GPIO and SD functions (no hardware) are still drawn
   disabled; the start-up notice and the known limitations say so.

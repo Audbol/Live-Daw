@@ -21,12 +21,15 @@ use livedaw_engine::params::{
     DynSlotParams, EngineControls, InsertParams, MonitorSourceParams, StripParams, FX_EXT, FX_NONE, NUM_DCAS, NUM_FX,
     NUM_MUTE_GROUPS,
 };
+use livedaw_engine::recorder::codec::FileFormat;
+use livedaw_engine::recorder::usb::{PlayerState, RecFormat, RecState};
 use livedaw_engine::sends::send_mode;
 use livedaw_engine::solo::solo_mode;
 use livedaw_engine::sources::{self, source_mode, SourceParams};
 use livedaw_engine::talk::TALK_OFF;
 use livedaw_engine::{Engine, Strip, StripKind, PLAYBACK_SOURCE_BASE};
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering::Relaxed};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -86,8 +89,53 @@ pub enum LibAction {
     GoTag(i32),
 }
 
+/// The USB recorder's settings as the host keeps them (`/rec`). The host
+/// names the files (REC PATH, the USB folder), so REC, NEW FILE and PLAYFILE
+/// go to it as [`UsbAction`]s; the transport itself is the engine's
+/// (`Engine::usb`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UsbSettings {
+    /// A host takes the actions (else REC from STOP, NEW FILE and PLAYFILE are refused).
+    pub attached: bool,
+    /// The USB storage folder (paths are shown relative to it).
+    pub storage: String,
+    /// REC PATH, relative to the storage folder ("/" separated).
+    pub rec_path: String,
+    /// The next recording's format: 2 or 4 channels, 16 or 24 bit.
+    pub channels: i32,
+    pub bits: i32,
+}
+
+impl Default for UsbSettings {
+    fn default() -> Self {
+        Self { attached: false, storage: String::new(), rec_path: String::new(), channels: 2, bits: 24 }
+    }
+}
+
+/// What the host's USB recorder does for a client (`/rec/$action`, `/play/$action`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UsbAction {
+    /// REC from STOP: a new file in REC PATH.
+    Record,
+    NewFile,
+    /// PLAYFILE: `$playfile`, relative to the storage folder.
+    PlayFile(String),
+}
+
+/// The GLOBAL recall safes of the show (`/$ctl/safes/dca`, `mute`, `fx`;
+/// bit n = DCA, mute group or FX slot n+1). The show lives on the host's
+/// message thread, which publishes them and takes the clients' changes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Safes {
+    pub attached: bool,
+    pub dcas: u32,
+    pub mute_groups: u32,
+    pub fx: u32,
+}
+
 /// State of the virtual console beyond the engine: values of nodes Sidecar
-/// has no equivalent for, the console identity and the scene library.
+/// has no equivalent for, the console identity, the scene library, the USB
+/// recorder's settings and the show's recall safes.
 #[derive(Default)]
 pub struct WingState {
     pub shadow: Mutex<HashMap<ShadowKey, Value>>,
@@ -96,6 +144,13 @@ pub struct WingState {
     /// `$actionidx`: the scene (or tag) GO and GOTAG use.
     pub lib_index: AtomicI32,
     lib_actions: Mutex<VecDeque<LibAction>>,
+    /// The USB settings; `.1`: a client changed them (the host takes them).
+    usb: Mutex<(UsbSettings, bool)>,
+    usb_actions: Mutex<VecDeque<UsbAction>>,
+    /// `/play/$playfile`.
+    play_file: Mutex<String>,
+    /// The global safes; `.1`: a client changed them.
+    safes: Mutex<(Safes, bool)>,
 }
 
 impl WingState {
@@ -125,6 +180,68 @@ impl WingState {
         }
     }
 
+    pub fn usb_settings(&self) -> UsbSettings {
+        lock(&self.usb).0.clone()
+    }
+
+    /// Host: publishes its USB settings, unless a client's change is still
+    /// to be taken (`take_usb_settings` first).
+    pub fn set_usb_settings(&self, settings: UsbSettings) {
+        let mut u = lock(&self.usb);
+        if !u.1 {
+            u.0 = settings;
+        }
+    }
+
+    /// Host: the settings a client changed since the last call.
+    pub fn take_usb_settings(&self) -> Option<UsbSettings> {
+        let mut u = lock(&self.usb);
+        std::mem::take(&mut u.1).then(|| u.0.clone())
+    }
+
+    fn change_usb_settings(&self, f: impl FnOnce(&mut UsbSettings)) {
+        let mut u = lock(&self.usb);
+        f(&mut u.0);
+        u.1 = true;
+    }
+
+    /// Host: the next action a client asked the USB recorder for.
+    pub fn take_usb_action(&self) -> Option<UsbAction> {
+        lock(&self.usb_actions).pop_front()
+    }
+
+    fn push_usb_action(&self, a: UsbAction) {
+        let mut q = lock(&self.usb_actions);
+        if q.len() < 64 {
+            q.push_back(a);
+        }
+    }
+
+    pub fn safes(&self) -> Safes {
+        lock(&self.safes).0
+    }
+
+    /// Host: publishes the show's global safes (unless a client's change is
+    /// still to be taken).
+    pub fn set_safes(&self, safes: Safes) {
+        let mut s = lock(&self.safes);
+        if !s.1 {
+            s.0 = safes;
+        }
+    }
+
+    fn change_safes(&self, f: impl FnOnce(&mut Safes)) {
+        let mut s = lock(&self.safes);
+        f(&mut s.0);
+        s.1 = true;
+    }
+
+    /// Host: the safes a client changed since the last call.
+    pub fn take_safes(&self) -> Option<Safes> {
+        let mut s = lock(&self.safes);
+        std::mem::take(&mut s.1).then_some(s.0)
+    }
+
     fn shadow_get(&self, key: ShadowKey) -> Option<Value> {
         self.shadow.lock().unwrap_or_else(|e| e.into_inner()).get(&key).cloned()
     }
@@ -140,6 +257,10 @@ impl WingState {
     pub fn clear_shadow(&self) {
         self.shadow.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
+}
+
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 // ---- ports -------------------------------------------------------------------------
@@ -264,6 +385,8 @@ pub enum SF {
     Solo,
     SoloLed,
     SoloSafe,
+    /// `$muteovr`: MUTEGROUP/SIP OVERRIDE unmuted the strip.
+    MuteOverride,
     Mon,
     EffFader,
     EffMute,
@@ -337,6 +460,8 @@ pub enum MainF {
 pub enum DcaF {
     Name,
     Colour,
+    Icon,
+    Led,
     Mute,
     Fader,
     Solo,
@@ -485,6 +610,54 @@ pub enum Binding {
     FxAssign(u8, bool),
     /// `/$ctl/lib`: scene control (the show lives on the host's message thread).
     Lib(LibF),
+    /// The USB player (`/play`) and recorder (`/rec`).
+    Play(PlayF),
+    Rec(RecF),
+    /// Recall safes (`/$ctl/safes`).
+    Safe(SafeF),
+}
+
+/// `/play/...`: the transport (`$action`, `$actstate`, `$pos`), what plays
+/// (`$actfile`, `$song`, the queue as `$actlist` / `$actidx`, the clip's
+/// format), PLAYFILE's `$playfile` and REPEAT.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlayF {
+    Action,
+    State,
+    File,
+    Song,
+    List,
+    Index,
+    PlayFile,
+    Pos,
+    Total,
+    Resolution,
+    Channels,
+    Rate,
+    Format,
+    Repeat,
+}
+
+/// `/rec/...`: `$action`, `$actstate`, `$actfile`, `$time`, REC PATH and the format.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecF {
+    Action,
+    State,
+    File,
+    Path,
+    Resolution,
+    Channels,
+    Time,
+}
+
+/// `/$ctl/safes/...`: the strips' recall safe (`ch`, `aux`, `bus`, `main`,
+/// `mtx`) and the show's GLOBAL safes for DCAs, mute groups and FX slots.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SafeF {
+    Strips(StripKind),
+    Dcas,
+    MuteGroups,
+    Fx,
 }
 
 /// `/$ctl/lib/...`: `$action`, `$actionidx`, `$actidx`, `$active`, `$activeid`, `$actshow`.
@@ -529,6 +702,7 @@ fn strip_field(kind: StripKind, n: u16, rest: &[&str]) -> Option<SF> {
         ["$solo"] => SF::Solo,
         ["$sololed"] => SF::SoloLed,
         ["solosafe"] => SF::SoloSafe,
+        ["$muteovr"] => SF::MuteOverride,
         ["mon"] => SF::Mon,
         ["$fdr"] => SF::EffFader,
         ["$mute"] => SF::EffMute,
@@ -634,6 +808,7 @@ fn strip_field(kind: StripKind, n: u16, rest: &[&str]) -> Option<SF> {
                     "pon" if input => SendF::Pon,
                     "mode" if input => SendF::Mode,
                     "pan" if input => SendF::Pan,
+                    "plink" if input => SendF::Plink,
                     "pre" if !input => SendF::Pre,
                     _ => return None,
                 };
@@ -726,6 +901,8 @@ pub fn bind(parts: &[&str]) -> Binding {
                 match *f {
                     "name" => Binding::Dca(i, DcaF::Name),
                     "col" => Binding::Dca(i, DcaF::Colour),
+                    "icon" => Binding::Dca(i, DcaF::Icon),
+                    "led" => Binding::Dca(i, DcaF::Led),
                     "mute" => Binding::Dca(i, DcaF::Mute),
                     "fdr" => Binding::Dca(i, DcaF::Fader),
                     "$solo" => Binding::Dca(i, DcaF::Solo),
@@ -746,6 +923,14 @@ pub fn bind(parts: &[&str]) -> Binding {
         ["fx", n, f @ ("$a_chn" | "$a_pos")] => {
             number(n, NUM_FX as u16).map_or(Binding::None, |n| Binding::FxAssign(n as u8 - 1, *f == "$a_pos"))
         }
+        ["play", f] => play_field(f).map_or(Binding::None, Binding::Play),
+        ["rec", f] => rec_field(f).map_or(Binding::None, Binding::Rec),
+        ["$ctl", "safes", f] => match *f {
+            "dca" => Binding::Safe(SafeF::Dcas),
+            "mute" => Binding::Safe(SafeF::MuteGroups),
+            "fx" => Binding::Safe(SafeF::Fx),
+            k => strip_kind(k).map_or(Binding::None, |kind| Binding::Safe(SafeF::Strips(kind))),
+        },
         ["$ctl", "lib", f] => match *f {
             "$action" => Binding::Lib(LibF::Action),
             "$actionidx" => Binding::Lib(LibF::ActionIndex),
@@ -831,6 +1016,108 @@ pub fn bind(parts: &[&str]) -> Binding {
         ["$syscfg", "$cnsmdl"] => Binding::Info(InfoF::Model),
         _ => Binding::None,
     }
+}
+
+fn play_field(f: &str) -> Option<PlayF> {
+    Some(match f {
+        "$action" => PlayF::Action,
+        "$actstate" => PlayF::State,
+        "$actfile" => PlayF::File,
+        "$song" => PlayF::Song,
+        "$actlist" => PlayF::List,
+        "$actidx" => PlayF::Index,
+        "$playfile" => PlayF::PlayFile,
+        "$pos" => PlayF::Pos,
+        "$total" => PlayF::Total,
+        "$resolution" => PlayF::Resolution,
+        "$channels" => PlayF::Channels,
+        "$rate" => PlayF::Rate,
+        "$format" => PlayF::Format,
+        "repeat" => PlayF::Repeat,
+        // $songs, $album, $artist (the files' tags, which Sidecar doesn't
+        // read) and $actionidx stay in the shadow store.
+        _ => return None,
+    })
+}
+
+fn rec_field(f: &str) -> Option<RecF> {
+    Some(match f {
+        "$action" => RecF::Action,
+        "$actstate" => RecF::State,
+        "$actfile" => RecF::File,
+        "$path" => RecF::Path,
+        "resolution" => RecF::Resolution,
+        "channels" => RecF::Channels,
+        "$time" => RecF::Time,
+        _ => return None,
+    })
+}
+
+/// The number of strips of a kind on the WING (its safes lists).
+fn wing_strips(kind: StripKind) -> u16 {
+    match kind {
+        StripKind::Channel => 40,
+        StripKind::Aux | StripKind::Matrix => 8,
+        StripKind::Bus => 16,
+        StripKind::Main => 4,
+    }
+}
+
+/// A safes list: the numbers set in `mask` (bit 0 = 1), "1,3,5-8".
+fn number_list(mask: u64) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut n = 0;
+    while n < 64 {
+        if mask & (1 << n) == 0 {
+            n += 1;
+            continue;
+        }
+        let start = n;
+        while n + 1 < 64 && mask & (1 << (n + 1)) != 0 {
+            n += 1;
+        }
+        out.push(if n > start + 1 {
+            format!("{}-{}", start + 1, n + 1)
+        } else if n > start {
+            format!("{},{}", start + 1, n + 1)
+        } else {
+            (start + 1).to_string()
+        });
+        n += 1;
+    }
+    out.join(",")
+}
+
+/// A safes list read back: numbers and ranges ("1,3,5-8", spaces or commas
+/// between them) or a string of 0/1 flags, one per item; up to `max` items.
+fn parse_number_list(text: &str, max: u16) -> u64 {
+    let max = u64::from(max.min(64));
+    let all = if max >= 64 { u64::MAX } else { (1 << max) - 1 };
+    let t = text.trim();
+    if !t.is_empty() && t.len() as u64 == max && t.bytes().all(|c| c == b'0' || c == b'1') {
+        return t.bytes().enumerate().filter(|(_, c)| *c == b'1').fold(0, |m, (i, _)| m | 1 << i);
+    }
+    let mut mask = 0u64;
+    for part in t.split(|c: char| c == ',' || c.is_whitespace()).filter(|p| !p.is_empty()) {
+        let (a, b) = part.split_once('-').unwrap_or((part, part));
+        let (Ok(a), Ok(b)) = (a.trim().parse::<u64>(), b.trim().parse::<u64>()) else { continue };
+        for n in a.max(1)..=b.min(max) {
+            mask |= 1 << (n - 1);
+        }
+    }
+    mask & all
+}
+
+/// A path under the USB storage folder as the WING shows it ("REC/R_1.wav");
+/// the file name for a file outside it.
+fn usb_path(storage: &str, path: &Path) -> String {
+    if !storage.is_empty() {
+        if let Ok(rel) = path.strip_prefix(storage) {
+            let parts: Vec<String> = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+            return parts.join("/");
+        }
+    }
+    path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
 fn mon_field(rest: &[&str]) -> Option<MonF> {
@@ -1105,6 +1392,21 @@ fn item(def: &Def, index: i32) -> Value {
         .unwrap_or_else(|| value::item_value(def, 0).unwrap_or(Value::Int(0)))
 }
 
+/// PAN LINK: 0 off, 1 linked, 2 linked reversed.
+fn plink_value(link: &AtomicBool, reversed: &AtomicBool) -> i32 {
+    match (link.load(Relaxed), reversed.load(Relaxed)) {
+        (false, _) => 0,
+        (true, false) => 1,
+        (true, true) => 2,
+    }
+}
+
+fn set_plink(link: &AtomicBool, reversed: &AtomicBool, v: &Value) {
+    let k = v.as_i32().unwrap_or(0);
+    link.store(k != 0, Relaxed);
+    reversed.store(k == 2, Relaxed);
+}
+
 fn set_b(a: &AtomicBool, v: &Value) {
     a.store(v.as_bool(), Relaxed);
 }
@@ -1360,6 +1662,8 @@ impl<'a> Console<'a> {
                 match field {
                     DcaF::Name => Value::Str(e.dca_name(i as usize)),
                     DcaF::Colour => int(&d.colour),
+                    DcaF::Icon => int(&d.icon),
+                    DcaF::Led => b(&d.led),
                     DcaF::Mute => b(&d.mute),
                     DcaF::Fader => lvl(&d.fader_db),
                     DcaF::Solo | DcaF::SoloLed => b(&d.solo),
@@ -1491,6 +1795,9 @@ impl<'a> Console<'a> {
                     .unwrap_or((0, false));
                 Value::Int(if pos { post as i32 } else { number })
             }
+            Binding::Play(pf) => return self.get_play(def, pf),
+            Binding::Rec(rf) => return self.get_rec(def, rf),
+            Binding::Safe(sf) => Value::Str(number_list(self.safe_mask(sf))),
             Binding::Lib(lf) => {
                 let lib = self.state.library();
                 match lf {
@@ -1652,6 +1959,7 @@ impl<'a> Console<'a> {
             SF::Solo => b(&p.solo),
             SF::SoloLed => b(&p.solo),
             SF::SoloSafe => b(&p.solo_safe),
+            SF::MuteOverride => b(&s.console.mute_override),
             SF::Mon => item(def, p.monitor_bus.load(Relaxed)),
             SF::EffMute => {
                 let c = &self.engine.controls;
@@ -1757,11 +2065,7 @@ impl<'a> Console<'a> {
                     SendF::Lvl => lvl(&send.level_db),
                     SendF::Pon => b(&send.ignore_mute),
                     SendF::Mode => item(def, send.mode.load(Relaxed)),
-                    SendF::Plink => Value::Int(match (send.pan_link.load(Relaxed), send.pan_reversed.load(Relaxed)) {
-                        (false, _) => 0,
-                        (true, false) => 1,
-                        (true, true) => 2,
-                    }),
+                    SendF::Plink => Value::Int(plink_value(&send.pan_link, &send.pan_reversed)),
                     SendF::Pan => f(&send.pan),
                     SendF::Pre => Value::bool(send.mode.load(Relaxed) == send_mode::PRE),
                 },
@@ -1784,7 +2088,7 @@ impl<'a> Console<'a> {
                     SendF::Mode => Value::str(if m.pre.load(Relaxed) { "PRE" } else { "POST" }),
                     SendF::Pan => f(&m.pan),
                     SendF::Pre => b(&m.pre),
-                    SendF::Plink => return None,
+                    SendF::Plink => Value::Int(plink_value(&m.pan_link, &m.pan_reversed)),
                 }
             }
             SF::Tags => {
@@ -1839,6 +2143,161 @@ impl<'a> Console<'a> {
         let (Some(p), Some(rack)) = (self.engine.controls.fx.get(i), self.engine.fx(i)) else { return false };
         let model = p.model_index();
         model != FX_NONE && (model != FX_EXT || rack.is_loaded()) && !rack.is_faulted()
+    }
+
+    fn get_play(&self, def: &Def, pf: PlayF) -> Option<Value> {
+        let d = self.engine.usb();
+        let entry = d.current_entry();
+        let info = d.file_info(entry);
+        let path = d.queue().entry(entry).map(|q| q.path.clone()).or_else(|| info.as_ref().map(|i| i.path.clone()));
+        let named = |text: &str| value::coerce(def, &Value::str(text));
+        Some(match pf {
+            PlayF::Action => item(def, 0), // IDLE: an action is taken at once
+            PlayF::State => item(def, d.player_state() as i32),
+            PlayF::File => Value::Str(path.map(|p| usb_path(&self.state.usb_settings().storage, &p)).unwrap_or_default()),
+            PlayF::Song => {
+                Value::Str(path.and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned())).unwrap_or_default())
+            }
+            PlayF::List => {
+                // The playlist, else the folder the queue plays.
+                let q = d.queue();
+                let from = q.playlist_file().or_else(|| q.folder()).and_then(|p| p.file_stem());
+                Value::Str(from.map(|s| s.to_string_lossy().into_owned()).unwrap_or_default())
+            }
+            PlayF::Index => Value::Int(d.queue().index_of(entry).map_or(-1, |i| i as i32)),
+            PlayF::PlayFile => Value::Str(lock(&self.state.play_file).clone()),
+            PlayF::Pos => Value::Float(seconds(d.position(), d.sample_rate())),
+            PlayF::Total => Value::Float(seconds(d.length(), d.sample_rate())),
+            PlayF::Resolution => named(if info?.bits <= 16 { "16" } else { "24" })?,
+            PlayF::Channels => item(def, info?.channels as i32 - 1),
+            PlayF::Rate => named(if info?.sample_rate == 44100 { "44.1" } else { "48" })?,
+            PlayF::Format => named(match info?.format {
+                FileFormat::Mp3 => "MP3",
+                FileFormat::Flac => "FLAC",
+                // AIFF is uncompressed PCM, as WAV (the WING doesn't list it).
+                FileFormat::Wav | FileFormat::Aiff => "WAV",
+            })?,
+            PlayF::Repeat => Value::bool(d.queue().repeat()),
+        })
+    }
+
+    fn set_play(&self, def: &Def, pf: PlayF, v: &Value) -> Result<(), SetError> {
+        let d = self.engine.usb();
+        match pf {
+            PlayF::Action => match item_name(def, v)? {
+                "STOP" => d.stop(),
+                "PLAY" => d.play(),
+                // PAUSE pauses, or goes on when paused (the PAUSE key).
+                "PAUSE" => match d.player_state() {
+                    PlayerState::Playing => d.pause(),
+                    PlayerState::Paused => d.play(),
+                    _ => {}
+                },
+                "NEXT" => {
+                    d.next();
+                }
+                "PREV" => {
+                    d.prev();
+                }
+                "PLAYFILE" => {
+                    let file = lock(&self.state.play_file).clone();
+                    if file.trim().is_empty() {
+                        return Err(SetError::BadValue);
+                    }
+                    if !self.state.usb_settings().attached {
+                        return Err(SetError::Unsupported("no USB storage to play files from".into()));
+                    }
+                    self.state.push_usb_action(UsbAction::PlayFile(file));
+                }
+                _ => {}
+            },
+            PlayF::PlayFile => *lock(&self.state.play_file) = str_of(v),
+            PlayF::Pos => d.seek((f64::from(v.as_f32().unwrap_or(0.0)) * d.sample_rate()).round() as i64),
+            PlayF::Repeat => d.queue().set_repeat(v.as_bool()),
+            _ => return Err(SetError::ReadOnly),
+        }
+        Ok(())
+    }
+
+    fn get_rec(&self, def: &Def, rf: RecF) -> Option<Value> {
+        let d = self.engine.usb();
+        let u = self.state.usb_settings();
+        Some(match rf {
+            RecF::Action => item(def, 0),
+            RecF::State => item(def, d.rec_state() as i32),
+            RecF::File => Value::Str(d.rec_file().map(|p| usb_path(&u.storage, &p)).unwrap_or_default()),
+            RecF::Path => Value::Str(u.rec_path),
+            RecF::Resolution => value::coerce(def, &Value::Str(u.bits.to_string()))?,
+            RecF::Channels => value::coerce(def, &Value::Str(u.channels.to_string()))?,
+            RecF::Time => Value::Float(seconds(d.rec_time(), d.sample_rate())),
+        })
+    }
+
+    fn set_rec(&self, def: &Def, rf: RecF, v: &Value) -> Result<(), SetError> {
+        let d = self.engine.usb();
+        let attached = self.state.usb_settings().attached;
+        let no_storage = || SetError::Unsupported("no USB storage to record to".into());
+        match rf {
+            RecF::Action => match (item_name(def, v)?, d.rec_state()) {
+                ("STOP", _) => d.stop_recording(),
+                // Resuming a paused recording keeps its file: no name needed.
+                ("REC" | "PAUSE", RecState::Paused) => {
+                    d.record(Path::new(""), RecFormat::default()).map_err(SetError::Unsupported)?
+                }
+                ("REC", RecState::Stopped) if attached => self.state.push_usb_action(UsbAction::Record),
+                ("REC", RecState::Stopped) => return Err(no_storage()),
+                ("PAUSE", RecState::Recording) => d.pause_recording(),
+                ("NEWFILE", RecState::Recording | RecState::Paused) if attached => self.state.push_usb_action(UsbAction::NewFile),
+                ("NEWFILE", RecState::Recording | RecState::Paused) => return Err(no_storage()),
+                _ => {}
+            },
+            RecF::Path => {
+                let path = str_of(v);
+                self.state.change_usb_settings(|u| u.rec_path = path);
+            }
+            RecF::Resolution | RecF::Channels => {
+                let n: i32 = item_name(def, v)?.parse().map_err(|_| SetError::BadValue)?;
+                self.state.change_usb_settings(|u| if rf == RecF::Channels { u.channels = n } else { u.bits = n });
+            }
+            RecF::State | RecF::File | RecF::Time => return Err(SetError::ReadOnly),
+        }
+        Ok(())
+    }
+
+    /// The strips (bit n = WING number n+1), DCAs, mute groups or FX slots that are recall-safe.
+    fn safe_mask(&self, sf: SafeF) -> u64 {
+        let g = self.state.safes();
+        match sf {
+            SafeF::Strips(kind) => (1..=wing_strips(kind))
+                .filter(|&n| self.strip(kind, n).is_some_and(|s| s.params.recall_safe.load(Relaxed)))
+                .fold(0, |m, n| m | 1 << (n - 1)),
+            SafeF::Dcas => u64::from(g.dcas),
+            SafeF::MuteGroups => u64::from(g.mute_groups),
+            SafeF::Fx => u64::from(g.fx),
+        }
+    }
+
+    fn set_safes(&self, sf: SafeF, text: &str) {
+        let max = match sf {
+            SafeF::Strips(kind) => wing_strips(kind),
+            SafeF::Dcas => NUM_DCAS as u16,
+            SafeF::MuteGroups => NUM_MUTE_GROUPS as u16,
+            SafeF::Fx => NUM_FX as u16,
+        };
+        let mask = parse_number_list(text, max);
+        if let SafeF::Strips(kind) = sf {
+            for n in 1..=max {
+                if let Some(st) = self.strip(kind, n) {
+                    st.params.recall_safe.store(mask & (1 << (n - 1)) != 0, Relaxed);
+                }
+            }
+            return;
+        }
+        self.state.change_safes(|g| match sf {
+            SafeF::Dcas => g.dcas = mask as u32,
+            SafeF::MuteGroups => g.mute_groups = mask as u32,
+            _ => g.fx = mask as u32,
+        });
     }
 
     /// SOURCE SOLO is on: `$srcsolo`, or the host's own SOLO (as the engine sees it).
@@ -1937,6 +2396,8 @@ impl<'a> Console<'a> {
                 match field {
                     DcaF::Name => e.set_dca_name(i as usize, &str_of(v)),
                     DcaF::Colour => d.colour.store(v.as_i32().unwrap_or(1), Relaxed),
+                    DcaF::Icon => d.icon.store(v.as_i32().unwrap_or(0), Relaxed),
+                    DcaF::Led => set_b(&d.led, v),
                     DcaF::Mute => set_b(&d.mute, v),
                     DcaF::Fader => set_lvl(&d.fader_db, v),
                     DcaF::Solo => set_b(&d.solo, v),
@@ -2118,6 +2579,9 @@ impl<'a> Console<'a> {
                 }
             }
             Binding::RtaShown(_) | Binding::FxAssign(..) => return Err(SetError::ReadOnly),
+            Binding::Play(pf) => self.set_play(def, pf, v)?,
+            Binding::Rec(rf) => self.set_rec(def, rf, v)?,
+            Binding::Safe(sf) => self.set_safes(sf, &str_of(v)),
             Binding::Lib(lf) => {
                 let lib_index = &self.state.lib_index;
                 match lf {
@@ -2292,6 +2756,9 @@ impl<'a> Console<'a> {
             SF::Width => set_f(&p.width, v),
             SF::Solo => set_b(&p.solo, v),
             SF::SoloSafe => set_b(&p.solo_safe, v),
+            // As the MUTE key: the override holds only while a group, DCA or
+            // SIP mutes the strip and MUTEGROUP/SIP OVERRIDE is on.
+            SF::MuteOverride => set_b(&s.console.mute_override, v),
             SF::Mon => set_item(&p.monitor_bus, def, v),
             SF::Proc => set_item(&p.process_order, def, v),
             SF::Tap => set_item(&p.tap, def, v),
@@ -2411,11 +2878,7 @@ impl<'a> Console<'a> {
                     SendF::Lvl => set_lvl(&send.level_db, v),
                     SendF::Pon => set_b(&send.ignore_mute, v),
                     SendF::Mode => set_item(&send.mode, def, v),
-                    SendF::Plink => {
-                        let k = v.as_i32().unwrap_or(0);
-                        send.pan_link.store(k != 0, Relaxed);
-                        send.pan_reversed.store(k == 2, Relaxed);
-                    }
+                    SendF::Plink => set_plink(&send.pan_link, &send.pan_reversed, v),
                     SendF::Pan => set_f(&send.pan, v),
                     SendF::Pre => send.mode.store(if v.as_bool() { send_mode::PRE } else { send_mode::POST }, Relaxed),
                 }
@@ -2435,7 +2898,7 @@ impl<'a> Console<'a> {
                     }
                     SendF::Pan => set_f(&m.pan, v),
                     SendF::Pre => set_b(&m.pre, v),
-                    SendF::Plink => return Ok(false),
+                    SendF::Plink => set_plink(&m.pan_link, &m.pan_reversed, v),
                 }
             }
             SF::Tags => {
@@ -2507,6 +2970,20 @@ impl<'a> Console<'a> {
             }
         }
     }
+}
+
+/// The item text of an enum value.
+fn item_name(def: &Def, v: &Value) -> Result<&'static str, SetError> {
+    let i = value::enum_index(def, v).ok_or(SetError::BadValue)?;
+    def.items().get(i).map(|it| it.item).ok_or(SetError::BadValue)
+}
+
+/// Frames as seconds (0.1 s steps, so a poll doesn't push every block).
+fn seconds(frames: i64, rate: f64) -> f32 {
+    if rate <= 0.0 {
+        return 0.0;
+    }
+    ((frames as f64 / rate * 10.0).floor() / 10.0) as f32
 }
 
 fn str_of(v: &Value) -> String {
@@ -3174,12 +3651,137 @@ mod tests {
     }
 
     #[test]
+    fn matrix_pan_link_dca_icon_and_mute_override() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let ch3 = c.strip(StripKind::Channel, 3).unwrap().clone();
+        let m = &ch3.params.matrix[1];
+        assert_eq!(c.get(node(&c, "/ch/3/send/MX2/plink")), Some(Value::Int(1)), "linked by default");
+        c.set(node(&c, "/ch/3/send/MX2/plink"), &Value::Int(0)).unwrap();
+        assert!(!m.pan_link.load(Relaxed));
+        c.set(node(&c, "/aux/2/send/MX8/plink"), &Value::Int(2)).unwrap();
+        let aux2 = c.strip(StripKind::Aux, 2).unwrap();
+        assert!(aux2.params.matrix[7].pan_link.load(Relaxed) && aux2.params.matrix[7].pan_reversed.load(Relaxed));
+        assert_eq!(c.get(node(&c, "/aux/2/send/MX8/plink")), Some(Value::Int(2)));
+        // Buses have no matrix PAN LINK on the WING.
+        assert!(schema().resolve("/bus/1/send/MX1/plink", &c).is_none());
+
+        c.set(node(&c, "/dca/4/icon"), &Value::Int(205)).unwrap();
+        c.set(node(&c, "/dca/4/led"), &Value::Int(0)).unwrap();
+        assert_eq!(e.controls.dcas[3].icon.load(Relaxed), 205);
+        assert!(!e.controls.dcas[3].led.load(Relaxed));
+        assert_eq!(c.get(node(&c, "/dca/4/led")), Some(Value::Int(0)));
+        assert!(!c.is_mapped(node(&c, "/dca/4/mon")), "DCA solo follows each member's monitor bus");
+
+        c.set(node(&c, "/bus/5/$muteovr"), &Value::Int(1)).unwrap();
+        assert!(c.strip(StripKind::Bus, 5).unwrap().console.mute_override.load(Relaxed));
+        assert_eq!(c.get(node(&c, "/bus/5/$muteovr")), Some(Value::Int(1)));
+        assert_eq!(c.get(node(&c, "/ch/1/$muteovr")), Some(Value::Int(0)));
+    }
+
+    #[test]
+    fn usb_recorder_and_player() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let d = e.usb();
+        // SAFETY: no audio thread runs.
+        unsafe { d.prepare(48000.0, 256) };
+        assert_eq!(c.get(node(&c, "/rec/$actstate")), Some(Value::str("STOP")));
+        assert_eq!(c.get(node(&c, "/play/$actstate")), Some(Value::str("STOP")));
+
+        // The format and REC PATH read back and wait for the host.
+        c.set(node(&c, "/rec/channels"), &Value::str("4")).unwrap();
+        c.set(node(&c, "/rec/resolution"), &Value::str("16")).unwrap();
+        c.set(node(&c, "/rec/$path"), &Value::str("LIVE/SUNDAY")).unwrap();
+        assert_eq!(c.get(node(&c, "/rec/channels")), Some(Value::str("4")));
+        assert_eq!(c.get(node(&c, "/rec/$path")), Some(Value::str("LIVE/SUNDAY")));
+        let dir = std::env::temp_dir().join(format!("ld-wing-usb-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("LIVE")).unwrap();
+        let storage = dir.to_string_lossy().into_owned();
+        // The host publishing its own settings doesn't undo a change it hasn't taken.
+        st.set_usb_settings(UsbSettings { attached: true, storage: storage.clone(), ..UsbSettings::default() });
+        assert_eq!(c.get(node(&c, "/rec/resolution")), Some(Value::str("16")));
+        let taken = st.take_usb_settings().unwrap();
+        assert_eq!((taken.channels, taken.bits, taken.rec_path.as_str()), (4, 16, "LIVE/SUNDAY"));
+        assert_eq!(st.take_usb_settings(), None);
+        st.set_usb_settings(UsbSettings { attached: true, storage: storage.clone(), ..UsbSettings::default() });
+        assert_eq!(c.get(node(&c, "/rec/channels")), Some(Value::str("2")));
+
+        // REC from STOP: the host names the file.
+        let action = node(&c, "/rec/$action");
+        assert_eq!(c.set(action, &Value::str("REC")), Ok(Value::str("IDLE")));
+        assert_eq!(st.take_usb_action(), Some(UsbAction::Record));
+        let file = dir.join("LIVE").join("R_1.wav");
+        d.record(&file, RecFormat::default()).unwrap();
+        assert_eq!(c.get(node(&c, "/rec/$actstate")), Some(Value::str("REC")));
+        assert_eq!(c.get(node(&c, "/rec/$actfile")), Some(Value::str("LIVE/R_1.wav")));
+        c.set(action, &Value::str("NEWFILE")).unwrap();
+        assert_eq!(st.take_usb_action(), Some(UsbAction::NewFile));
+        c.set(action, &Value::str("STOP")).unwrap();
+        assert_eq!(c.get(node(&c, "/rec/$actstate")), Some(Value::str("STOP")));
+
+        // The player: transport, PLAYFILE through the host, REPEAT.
+        let play = node(&c, "/play/$action");
+        c.set(play, &Value::str("PLAY")).unwrap();
+        assert_eq!(c.get(node(&c, "/play/$actstate")), Some(Value::str("PLAY")));
+        c.set(play, &Value::str("STOP")).unwrap();
+        assert_eq!(c.get(node(&c, "/play/$actstate")), Some(Value::str("STOP")));
+        c.set(node(&c, "/play/$playfile"), &Value::str("LIVE/R_1.wav")).unwrap();
+        c.set(play, &Value::str("PLAYFILE")).unwrap();
+        assert_eq!(st.take_usb_action(), Some(UsbAction::PlayFile("LIVE/R_1.wav".into())));
+        c.set(node(&c, "/play/repeat"), &Value::Int(1)).unwrap();
+        assert!(d.queue().repeat());
+        assert!(c.set(node(&c, "/play/$actstate"), &Value::str("PLAY")).is_err());
+
+        // Without a host there is nowhere to record to.
+        st.set_usb_settings(UsbSettings::default());
+        assert!(matches!(c.set(action, &Value::str("REC")), Err(SetError::Unsupported(_))));
+        assert!(matches!(c.set(play, &Value::str("PLAYFILE")), Err(SetError::Unsupported(_))));
+        assert!(!c.is_mapped(node(&c, "/play/$artist")));
+        d.wait_for_disk(std::time::Duration::from_secs(5));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn recall_safes() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        c.set(node(&c, "/$ctl/safes/ch"), &Value::str("1,3-5")).unwrap();
+        let safe = |kind, n| c.strip(kind, n).unwrap().params.recall_safe.load(Relaxed);
+        assert!(safe(StripKind::Channel, 1) && !safe(StripKind::Channel, 2) && safe(StripKind::Channel, 5));
+        assert_eq!(c.get(node(&c, "/$ctl/safes/ch")), Some(Value::str("1,3-5")));
+        // A string of flags, one per strip, reads too.
+        c.set(node(&c, "/$ctl/safes/mtx"), &Value::str("10100000")).unwrap();
+        assert_eq!(c.get(node(&c, "/$ctl/safes/mtx")), Some(Value::str("1,3")));
+        c.strip(StripKind::Bus, 16).unwrap().params.recall_safe.store(true, Relaxed);
+        assert_eq!(c.get(node(&c, "/$ctl/safes/bus")), Some(Value::str("16")));
+
+        // DCAs, mute groups and FX: the show's global safes, through the host.
+        c.set(node(&c, "/$ctl/safes/dca"), &Value::str("2 16")).unwrap();
+        c.set(node(&c, "/$ctl/safes/fx"), &Value::str("1-2,9")).unwrap();
+        st.set_safes(Safes { attached: true, ..Safes::default() });
+        assert_eq!(c.get(node(&c, "/$ctl/safes/dca")), Some(Value::str("2,16")));
+        let taken = st.take_safes().unwrap();
+        assert_eq!((taken.dcas, taken.mute_groups, taken.fx), (1 << 1 | 1 << 15, 0, 0b1_0000_0011));
+        st.set_safes(Safes { attached: true, mute_groups: 0b101, ..Safes::default() });
+        assert_eq!(c.get(node(&c, "/$ctl/safes/mute")), Some(Value::str("1,3")));
+        assert_eq!(c.get(node(&c, "/$ctl/safes/dca")), Some(Value::str("")));
+        assert!(!c.is_mapped(node(&c, "/$ctl/safes/source/A")));
+        assert_eq!(number_list(0b1110_1011), "1,2,4,6-8");
+        assert_eq!(parse_number_list("0-3, 7-99", 8), 0b1100_0111);
+    }
+
+    #[test]
     fn coverage_counts() {
         let cov = coverage();
         assert!(cov.total > 60000, "{}", cov.total);
-        assert!(cov.mapped > 57000, "{}", cov.report());
+        assert!(cov.mapped > 57800, "{}", cov.report());
         // Groups that map completely.
-        for g in ["/ch/N/eq", "/ch/N/gatesc", "/ch/N/dynxo", "/bus/N/eq", "/bus/N/preins", "/main/N/postins", "/mtx/N/eq"] {
+        for g in ["/ch/N/eq", "/ch/N/gatesc", "/ch/N/dynxo", "/bus/N/eq", "/bus/N/preins", "/main/N/postins", "/mtx/N/eq", "/rec"]
+        {
             let (m, t) = cov.by_group[g];
             assert_eq!(m, t, "{g}");
         }

@@ -2665,15 +2665,22 @@ public:
         setUp();
     }
 
-    /** A matrix send: TAP (PRE) / POST, no pan link. */
+    /** A matrix send: TAP (PRE) / POST; PAN LINK for input and aux channels. */
     SendOptions (MatrixSendParams& m, bool inputSource, bool canIgnoreMute)
         : mode (juce::StringArray { sendModeName (0, inputSource), "POST" }, [&m] { return m.pre.load() ? 0 : 1; }, [&m] (int i) { m.pre = i == 0; }),
           panBox (wingPan ("PAN", m.pan)), canIgnore (canIgnoreMute)
     {
         bindKey (ignoreMute, m.ignoreMute);
-        link.setVisible (false);
         isTap = [&m] { return m.pre.load(); };
-        isLinked = [] { return false; };
+        if (inputSource)
+        {
+            bindKey (link, m.panLink);
+            isLinked = [&m] { return m.panLink.load(); };
+        }
+        else
+        {
+            isLinked = [] { return false; };
+        }
         setUp();
     }
 
@@ -2830,15 +2837,18 @@ public:
         // The pan ring, PAN LINK under it.
         auto linkArea = box.removeFromBottom (juce::jlimit (10.0f, screenCap (18.0f), boxArea.getHeight() * 0.22f));
         panArea = box.reduced (2.0f);
-        const bool linked = send != nullptr && send->panLink.load();
-        const float chPan = send != nullptr && send->panReversed.load() ? -src.params.pan.load() : src.params.pan.load();
+        // Matrix sends of input and aux channels have PAN LINK too.
+        const bool hasLink = send != nullptr || src.isInput();
+        const bool reversed = send != nullptr ? send->panReversed.load() : mtx->panReversed.load();
+        const bool linked = hasLink && (send != nullptr ? send->panLink.load() : mtx->panLink.load());
+        const float chPan = reversed ? -src.params.pan.load() : src.params.pan.load();
         const float panValue = linked ? chPan : (send != nullptr ? send->pan.load() : mtx->pan.load());
         paintSendPan (g, panArea, panValue, linked ? src.params.width.load() : 100.0f, isOnNow());
-        if (send != nullptr)
+        if (hasLink)
         {
             g.setColour (linked ? colours::link : colours::dim);
             g.setFont (homeFont (TypeScale::body, linkArea.getHeight() * 0.85f));
-            g.drawFittedText (linked && send->panReversed.load() ? "LINK REV" : "PAN LINK", linkArea.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+            g.drawFittedText (linked && reversed ? "LINK REV" : "PAN LINK", linkArea.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         }
     }
 
@@ -3584,7 +3594,8 @@ public:
         {
             auto& m = strip.params.matrix[selected];
             k.push_back ({ wingFader ("SEND LVL", m.levelDb), levelStyle (col->getFader()) });
-            k.push_back ({ wingPan ("PAN", m.pan), thumbStyle (col) });
+            if (! (strip.isInput() && m.panLink.load()))
+                k.push_back ({ wingPan ("PAN", m.pan), thumbStyle (col) });
         }
         else
         {
@@ -3930,6 +3941,8 @@ void copyStripParams (MixerEngine& engine, const Strip& src, const Strip& dst, j
                 d.matrix[i].ignoreMute = s.matrix[i].ignoreMute.load();
                 d.matrix[i].levelDb = s.matrix[i].levelDb.load();
                 d.matrix[i].pan = s.matrix[i].pan.load();
+                d.matrix[i].panLink = s.matrix[i].panLink.load();
+                d.matrix[i].panReversed = s.matrix[i].panReversed.load();
             }
     }
     if (has (MainBit) && dst.getKind() != StripKind::Main && dst.getKind() != StripKind::Matrix
@@ -4276,8 +4289,8 @@ public:
         panKeys = std::make_unique<Segmented> (juce::StringArray { "KEEP", "SET TO\nCENTER", "SET TO\nCH PAN", "LINK\nTO CH PAN", "LINK\nREVERSED" },
                                                [this] { return panChoice; }, [this] (int i) { panChoice = i; }, colours::accent);
         panKeys->twoLines = true;
-        // Mains have no send pan, matrix sends no pan link.
-        panKeys->isEnabledAt = [mainTarget, busTarget] (int i) { return i == 0 || (! mainTarget && (busTarget || i < 3)); };
+        // Mains have no send pan; matrix sends link to the pan of input and aux channels only.
+        panKeys->isEnabledAt = [mainTarget] (int i) { return i == 0 || ! mainTarget; };
         levelKeys = std::make_unique<Segmented> (juce::StringArray { "KEEP", "SET TO\n-oo dB", "SET TO\n-10 dB", "SET TO\n0 dB" },
                                                  [this] { return levelChoice; }, [this] (int i) { levelChoice = i; }, colours::accent);
         levelKeys->twoLines = true;
@@ -4552,7 +4565,8 @@ private:
         auto& m = src.params.matrix[juce::jlimit (0, kNumMatrices - 1, dst.getId())];
         on = m.on.load();
         mode = m.pre.load() ? 0 : 1;
-        pan = m.pan.load();
+        link = src.isInput() && m.panLink.load();
+        pan = link ? (m.panReversed.load() ? -src.params.pan.load() : src.params.pan.load()) : m.pan.load();
     }
 
     void timerCallback() override
@@ -4617,10 +4631,17 @@ private:
                     m.pre = modeChoice == 1;
                 if (ignoreChoice > 0 && src->canIgnoreMuteOnSends())
                     m.ignoreMute = ignoreChoice == 2;
-                if (panChoice == 1)
-                    m.pan = 0.0f;
-                else if (panChoice == 2)
-                    m.pan = src->params.pan.load();
+                if (panChoice == 1 || panChoice == 2)
+                {
+                    m.panLink = false;
+                    m.panReversed = false;
+                    m.pan = panChoice == 1 ? 0.0f : src->params.pan.load();
+                }
+                else if ((panChoice == 3 || panChoice == 4) && src->isInput())
+                {
+                    m.panLink = true;
+                    m.panReversed = panChoice == 4;
+                }
                 if (levelChoice > 0)
                     m.levelDb = levels[levelChoice];
                 if (enableChoice > 0)

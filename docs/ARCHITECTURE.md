@@ -171,7 +171,7 @@ views after a show load changes the console from Rust.
   engine controls are `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same
   memory as `std::atomic<float/bool/int32_t>` structs, and the UI writes them directly
   with no FFI call. Both sides describe the layout; `ld::verifyLayout()` compares the
-  two at startup and in the tests (ABI version 8), and the app refuses to run if they
+  two at startup and in the tests (ABI version 11), and the app refuses to run if they
   differ.
 - **FX slots.** The 16 slots are the WING's FX rack. Each holds one device from the
   console's FX table (`FX_MODELS`, generated like the processing models): the 26
@@ -662,7 +662,7 @@ dependencies beyond the other Sidecar crates.
   numbers. Ports: AES50 A/B/C 1-48 are hardware ports 1-144 and the WING-LIVE card
   (CRD) is the recorder's playback channels. Nodes without an engine equivalent live
   in a **shadow store** (`WingState`) so clients and snapshots read back what they
-  wrote; they do nothing. `map::coverage()` counts what maps (83.7 % of the leaves).
+  wrote; they do nothing. `map::coverage()` counts what maps (84.4 % of the leaves).
   The console level maps too: TAP WIDTH / TAP EQ (`/ch/N/tapwid`, `peq`), `/cfg/solo`
   (mode, the solo bus, mute, SOURCE SOLO), `/$ctl/cfg/muteovr`, `/cfg/talk`, both
   monitor paths (`/cfg/mon/1` PHONES, `/2` SPEAKERS), the RTA settings and the
@@ -671,7 +671,10 @@ dependencies beyond the other Sidecar crates.
   and 3/4 (SPEAKERS L/R). The strips' `$solo` / `$solobd` nodes drive LISTEN
   (`AnalysisControls::listen_*`, one strip and block at a time, as the LISTEN key),
   `in/set/$g` / `$vph` the source the strip is patched to, and the inserts' `$stat`
-  and the FX slots' `$a_chn` / `$a_pos` are computed from the inserts.
+  and the FX slots' `$a_chn` / `$a_pos` are computed from the inserts. A strip's
+  `$muteovr` is `StripConsole::mute_override` (the console pass drops it once the
+  cause it overrode changes), matrix sends' `plink` is `MatrixSendParams::pan_link`
+  / `pan_reversed`, a DCA's `icon` / `led` are `DcaParams::icon` / `led`.
 - **Scene control** (`/$ctl/lib`). The show lives on the message thread, so
   `WingState::library` holds what the host publishes (show name, number of scenes,
   current scene, its name and tag) and `$action` queues `LibAction`s (GO, GO NEXT,
@@ -679,6 +682,20 @@ dependencies beyond the other Sidecar crates.
   (from `MainComponent`) polls them at 10 Hz through `ld_wing_take_library_action`,
   recalls through `Show` like MIDI does and republishes with `ld_wing_set_library`.
   Without an attached show `$action` is refused.
+- **USB recorder and safes** (`/play`, `/rec`, `/$ctl/safes`). The transport runs on
+  the engine's `UsbDeck` directly (PLAY, PAUSE, STOP, NEXT, PREV, seek, REPEAT, a
+  paused recording's REC / PAUSE, STOP; state, position, the clip's format). File
+  names belong to the host's `UsbRecorder` (USB folder, REC PATH, format), so REC
+  from STOP, NEW FILE and PLAYFILE queue `UsbAction`s, and REC PATH, channels and
+  resolution are `WingState::usb_settings`, which the host publishes
+  (`ld_wing_set_usb`) and takes back when a client changed them
+  (`ld_wing_take_usb_settings`, a dirty flag so a publish never undoes a change not
+  yet taken). The strips' recall safes (`ch`, `aux`, `bus`, `main`, `mtx`) are
+  `StripParams::recall_safe`; the show's GLOBAL safes for DCAs, mute groups and FX
+  go the same way as the USB settings (`ld_wing_set_safes`, `ld_wing_take_safes`).
+  `WingRemote::pump` does all of it on the 10 Hz timer. Safes lists are written
+  "1,3,5-8"; lists and 0/1 flag strings are read (the console's own format is not
+  documented).
 - **Servers** (`server.rs`, `osc.rs`, `native.rs`, `meters.rs`). Plain `std::net`
   threads, started and stopped from the app: discovery (UDP), OSC (UDP), the native
   protocol (TCP, one thread per client, up to 16; meters as UDP datagrams) and a

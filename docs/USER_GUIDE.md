@@ -117,7 +117,10 @@ Barlow Condensed.
     **SAFE** key. The slot screens follow chapter 6 of the manual: INPUT (CHANNEL
     INPUT, TRIM & BALANCE pad, FILTER, DELAY), FILTER SETUP, GATE / COMP with the
     model's faceplate, EQ, INS 1 / INS 2 (with automix), MAIN SENDS and BUS / MATRIX
-    SENDS. **INIT** and **COPY** open CHANNEL INIT / COPY (scope and destinations);
+    SENDS. On MATRIX SENDS a channel's or aux's send has **PAN LINK** as on BUS SENDS
+    (touch the pan ring): linked (the default) its pan follows the channel's, LINK
+    REVERSED mirrors it, unlinked it has its own PAN; buses and mains send their
+    panned output. **INIT** and **COPY** open CHANNEL INIT / COPY (scope and destinations);
     a bus, main or matrix's feed grid (on HOME, or the INPUT screen's BUS FEED / FEED
     box) opens its **FEED CONFIGURATION** (WING 3.0.5): the CHANNEL, AUX and BUS
     sources (disabled sends greyed out), selected by touch and drag or with NONE /
@@ -179,7 +182,8 @@ Barlow Condensed.
     PREV / NEXT / GO, the SCOPE window (strips, DCAs, mute groups, FX slots, the console
     settings and contents) and the GLOBAL safes in the status bar.
   - **VIEW screens** (a fader section's VIEW key): OVERVIEW (every strip's blocks;
-    EXCL SOLO in the status bar), FADERS (send faders of a layer, and Sends on
+    EXCL SOLO in the status bar; touching a DCA's name or number lists NAME, ICON, the
+    scribble strip LIGHT and its colours), FADERS (send faders of a layer, and Sends on
     Fader, show and set the send level, MUTE switching the send), SENDS (sends on faders to one bus, main or matrix), CONFIG (edit any layer
     key by dragging channels, buses, DCAs, send levels, bus-to-bus sends, FX
     parameters or MIDI CCs onto or between slots, with a page map; a **MIDI CC** fader
@@ -438,7 +442,7 @@ and open-source projects (see below), and it is **experimental**.
   test battery and model capture, its OSC client), and every OSC path the Bitfocus
   Companion WING module builds that exists in the 3.1 tree. **WING Edit and WING
   Copilot have not been tried**, so they may not work.
-- **What maps:** 83.7 % of the WING 3.1 tree's parameters (57,353 of 68,556,
+- **What maps:** 84.4 % of the WING 3.1 tree's parameters (57,874 of 68,556,
   counting every model's parameters) drive the engine: channels, aux, buses, mains
   and matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
   dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,
@@ -454,7 +458,18 @@ and open-source projects (see below), and it is **experimental**.
   +48V from the channel (`in/set/$g`, `$vph`), and recall scenes (`/$ctl/lib`:
   `$actionidx` with GO, GO NEXT, GO PREV, GO TAG; PREV / NEXT move the selection;
   `$active`, `$activeid` (the scene's tag) and `$actshow` show the current scene and
-  show). The rest (surface layers, user controls, cards, ...) is remembered so
+  show). They also drive the matrix sends' PAN LINK (`send/MXn/plink`), a strip's
+  MUTEGROUP/SIP OVERRIDE state (`$muteovr`), a DCA's icon and scribble strip light,
+  the USB recorder and player (`/rec`, `/play`: REC, PAUSE, STOP, NEW FILE, PLAY,
+  NEXT, PREV, PLAYFILE with `$playfile` relative to the USB folder, the position,
+  REPEAT, REC PATH and the recording format; state, file, time and the clip's format
+  read back) and the recall safes (`/$ctl/safes`: `ch`, `aux`, `bus`, `main`, `mtx`
+  are the strips' SAFE keys, `dca`, `mute`, `fx` the GLOBAL safes; lists such as
+  `1,3,5-8`). Not mapped, with no meaning in Sidecar: a DCA's monitor bus (DCA solo
+  goes to each member's monitor bus), a channel's TAP SOLO (`$presolo`: solo is
+  PFL or AFL per strip type), the player's song tags (`$artist`, `$album`, `$songs`)
+  and the safes of source and output groups, surface areas, custom controls and
+  setup. The rest (surface layers, user controls, cards, ...) is remembered so
   clients can read back what they wrote, but does nothing.
   `cargo run -p livedaw-wing --example wing_coverage` prints the full report.
 - **Files:** LIBRARY > SHOW > **IMPORT WING** applies a WING snapshot (`.snap`) to

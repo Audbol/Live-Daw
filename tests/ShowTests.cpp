@@ -500,6 +500,10 @@ public:
             ch.sends[2].ignoreMute = true;
             ch.sends[2].panReversed = true;
             ch.params.matrix[1].ignoreMute = true;
+            ch.params.matrix[3].panLink = false;
+            ch.params.matrix[4].panReversed = true;
+            engine.getDca (2).icon = 112;
+            engine.getDca (2).led = false;
             engine.setSoloAfl (StripKind::Main, false);
             engine.monitorDimDb = 15.0f;
             engine.dcaMuteGroups = false;
@@ -514,6 +518,10 @@ public:
             auto& c2 = *e2.getChannels()[0];
             expect (c2.sends[2].ignoreMute.load() && c2.sends[2].panReversed.load());
             expect (c2.params.matrix[1].ignoreMute.load() && ! c2.params.matrix[0].ignoreMute.load());
+            expect (! c2.params.matrix[3].panLink.load() && c2.params.matrix[0].panLink.load());
+            expect (c2.params.matrix[4].panLink.load() && c2.params.matrix[4].panReversed.load());
+            expectEquals ((int) e2.getDca (2).icon.load(), 112);
+            expect (! e2.getDca (2).led.load() && e2.getDca (0).led.load());
             expect (! e2.isSoloAfl (StripKind::Main) && e2.isSoloAfl (StripKind::Bus));
             expectEquals (e2.monitorDimDb.load(), 15.0f);
             expect (! e2.dcaMuteGroups.load() && e2.startupMainMute.load());

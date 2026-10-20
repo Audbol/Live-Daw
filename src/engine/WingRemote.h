@@ -84,8 +84,15 @@ public:
 
     /** Scene control for clients (/$ctl/lib): publishes `show`'s scenes and runs
         the recalls clients ask for (GO, GO NEXT / PREV, GO TAG), reporting each
-        to `onRecalled`. nullptr detaches (detach before the show goes away). */
+        to `onRecalled`. Also the show's GLOBAL safes (/$ctl/safes/dca, mute, fx)
+        and the USB recorder's file actions (/rec, /play: REC, NEW FILE,
+        PLAYFILE, REC PATH and format), which need the message thread. nullptr
+        detaches (detach before the show goes away). */
     void attachShow (Show*, std::function<void (const juce::String& what, const state::ApplyResult&)> onRecalled = {});
+
+    /** Runs what clients asked of the show and the USB recorder, and publishes
+        their state (the timer does this while the servers run; tests call it). */
+    void pump();
 
     /** How much of the WING parameter tree maps onto Sidecar. */
     static juce::String coverageReport();
@@ -95,6 +102,8 @@ public:
 private:
     void timerCallback() override;
     void publishLibrary();
+    void pumpSafes();
+    void pumpUsb();
 
     MixerEngine& engine;
     ld::LdWing* handle;

@@ -30,7 +30,7 @@ juce::String text()
            "takes " + kAppName + " down (safe mode then restores the show without plugins). "
            "Delay compensation (SETUP > PLUGINS) lines up the paths into buses, mains and matrices "
            "up to 8192 samples; solo, monitoring, direct outs and recorder taps are not compensated.\n"
-           "- WING remote apps: the WING network protocols cover 83.7 % of the WING 3.1 parameter tree "
+           "- WING remote apps: the WING network protocols cover 84.4 % of the WING 3.1 parameter tree "
            "(the rest is stored but does nothing). WING Edit and WING Copilot have not been tried, "
            "and exported WING snapshots have not been loaded into a console.\n"
            "- MIDI and DAW remote control (MCU / HUI) have not been tested with real hardware.\n"

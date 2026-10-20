@@ -31,7 +31,7 @@ use std::mem::{offset_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-pub const LD_ABI_VERSION: i32 = 10;
+pub const LD_ABI_VERSION: i32 = 11;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -137,6 +137,9 @@ pub struct LdLayoutInfo {
     pub off_monitor_dsp_pan: i32,
     pub off_monitor_controls_source_solo: i32,
     pub off_source_mute_groups: i32,
+    // ABI 11: matrix send PAN LINK, DCA icon and light
+    pub off_matrix_send_pan_reversed: i32,
+    pub off_dca_icon: i32,
 }
 
 #[no_mangle]
@@ -219,6 +222,8 @@ pub unsafe extern "C" fn ld_layout_info(out: *mut LdLayoutInfo) {
         off_monitor_dsp_pan: offset_of!(MonitorDspParams, pan) as i32,
         off_monitor_controls_source_solo: offset_of!(MonitorControls, source_solo) as i32,
         off_source_mute_groups: offset_of!(SourceParams, mute_groups) as i32,
+        off_matrix_send_pan_reversed: offset_of!(MatrixSendParams, pan_reversed) as i32,
+        off_dca_icon: offset_of!(DcaParams, icon) as i32,
     };
 }
 
