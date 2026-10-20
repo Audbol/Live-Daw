@@ -13,6 +13,8 @@ All notable changes to Sidecar are listed here. Versions follow
 - FILTER: HI CUT goes down to 50 Hz as on the WING (and as the engine allows) on the
   FILTER screen, its graph, the channel strip section and the 4-Channel section; it
   stopped at 200 Hz.
+- INPUT: with a negative BALANCE the post-trim meter showed the right side boosted
+  instead of turned down.
 
 ## [0.1.0] - beta
 

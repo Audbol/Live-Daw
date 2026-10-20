@@ -899,7 +899,8 @@ public:
                   // Post TRIM: the meter bank only reads the input peak (the engine's
                   // trimPeak isn't in it yet), so scale it by the trim and balance.
                   const float bal = strip.getNumChannels() == 2 ? strip.params.input.balanceDb.load() : 0.0f;
-                  const float gainDb = strip.params.input.trimDb.load() + (ch == 0 ? -juce::jmax (0.0f, bal) : juce::jmin (0.0f, bal) * -1.0f);
+                  // As the engine: a positive balance turns the left side down, a negative one the right.
+                  const float gainDb = strip.params.input.trimDb.load() + (ch == 0 ? -juce::jmax (0.0f, bal) : juce::jmin (0.0f, bal));
                   return ctx.meters.get (&strip, true, ch) * juce::Decibels::decibelsToGain (gainDb);
               },
               [this] { return strip.getNumChannels(); })
