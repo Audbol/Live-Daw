@@ -1211,7 +1211,7 @@ public:
             k.push_back ({ bindConsoleParam (f.toolParams[i], spec.params[(size_t) i]), toolStyle (graph, colour) });
         while (k.size() < 5)
             k.push_back ({});
-        k.push_back ({ wingFreq ("HC FREQ", f.highCutFreq, 200.0f, 20000.0f, 10000.0f), freqStyle (graph) });
+        k.push_back ({ wingFreq ("HC FREQ", f.highCutFreq, 50.0f, 20000.0f, 10000.0f), freqStyle (graph) });
         return k;
     }
 

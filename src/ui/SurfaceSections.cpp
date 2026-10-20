@@ -241,7 +241,7 @@ std::vector<KnobBinding> ChannelStripSection::slotParams (int slot) const
             if (channel)
             {
                 list.push_back (bindFreq ("LO CUT", p.filter.lowCutFreq, 20.0f, 2000.0f, 80.0f));
-                list.push_back (bindFreq ("HI CUT", p.filter.highCutFreq, 200.0f, 20000.0f, 10000.0f));
+                list.push_back (bindFreq ("HI CUT", p.filter.highCutFreq, 50.0f, 20000.0f, 10000.0f));
                 modelParams (models::FilterTools, p.filter.toolModel.load(), p.filter.toolParams);
             }
             break;

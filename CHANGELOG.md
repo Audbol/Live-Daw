@@ -10,6 +10,9 @@ All notable changes to Sidecar are listed here. Versions follow
 - FX: the Vintage Room's early reflections and the Concert reverb's reflection
   clusters now sit at their ER / REFL times as soon as the device is loaded (they
   stayed at the start until the time was changed).
+- FILTER: HI CUT goes down to 50 Hz as on the WING (and as the engine allows) on the
+  FILTER screen, its graph, the channel strip section and the 4-Channel section; it
+  stopped at 200 Hz.
 
 ## [0.1.0] - beta
 

@@ -188,7 +188,7 @@ void FourChannelSection::bind()
                 case Comp:   b = thresholdOf (p.dynamics, "COMP THR"); break;
                 case Filter:
                     if (channel)
-                        b = alternate ? bindFreq ("HI CUT", p.filter.highCutFreq, 200.0f, 20000.0f, 10000.0f)
+                        b = alternate ? bindFreq ("HI CUT", p.filter.highCutFreq, 50.0f, 20000.0f, 10000.0f)
                                       : bindFreq ("LO CUT", p.filter.lowCutFreq, 20.0f, 2000.0f, 80.0f);
                     break;
                 case Pan:
