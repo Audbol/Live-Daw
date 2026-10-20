@@ -26,6 +26,8 @@ All notable changes to Sidecar are listed here. Versions follow
 - Channel strip section: the INPUT encoder's DELAY now has the INPUT screen's range
   (up to 500 ms in every unit, at the current sample rate); it stopped at 150 m,
   500 ft or 24000 samples, so the two controls disagreed.
+- INPUT: the TRIM & BALANCE pad's balance handle follows the ST key while the screen
+  is open (it stayed disabled, or enabled, until the screen was opened again).
 
 ## [0.1.0] - beta
 

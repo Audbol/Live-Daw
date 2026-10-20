@@ -423,7 +423,10 @@ private:
 class TrimBalancePad final : public juce::Component, private juce::Timer
 {
 public:
-    TrimBalancePad (std::atomic<float>& t, std::atomic<float>& b, bool stereo) : trim (t), bal (b), hasBalance (stereo) { startTimerHz (12); }
+    TrimBalancePad (std::atomic<float>& t, std::atomic<float>& b, std::function<bool()> stereo) : trim (t), bal (b), hasBalance (std::move (stereo))
+    {
+        startTimerHz (12);
+    }
 
     /** The trim field (+-18 dB, the balance across it) in the black box
         [I7]: 276 x 552 WING px, the field 31-246 across and 30-462 down. */
@@ -511,7 +514,7 @@ public:
         for (int i = -1; i <= 1; ++i)
             g.fillRect (juce::Rectangle<float> (hd * 0.5f, juce::jmax (1.0f, 2.0f * k)).withCentre ({ x, y + (float) i * hd * 0.16f }));
         auto balHandle = juce::Rectangle<float> (hd, hd).withCentre ({ x, tickY });
-        g.setColour (hasBalance ? colours::fader : juce::Colour (0xff3a4a5a));
+        g.setColour (hasBalance() ? colours::fader : juce::Colour (0xff3a4a5a));
         g.fillEllipse (balHandle);
         g.setColour (juce::Colours::white);
         for (int i = -1; i <= 1; ++i)
@@ -520,7 +523,7 @@ public:
 
     void mouseDown (const juce::MouseEvent& e) override
     {
-        balanceOnly = hasBalance && e.position.y > balanceRow().getY();
+        balanceOnly = hasBalance() && e.position.y > balanceRow().getY();
         startTrim = trim.load();
         startBal = bal.load();
     }
@@ -529,7 +532,7 @@ public:
     {
         const auto p = pad();
         const float fine = e.mods.isShiftDown() ? 0.2f : 1.0f;
-        if (hasBalance)
+        if (hasBalance())
             bal = juce::jlimit (-9.0f, 9.0f, startBal + fine * (float) e.getDistanceFromDragStartX() / (p.getWidth() * 0.5f) * 9.0f);
         if (! balanceOnly)
             trim = juce::jlimit (-18.0f, 18.0f, startTrim - fine * (float) e.getDistanceFromDragStartY() / (p.getHeight() * 0.5f) * 18.0f);
@@ -545,7 +548,7 @@ public:
 private:
     void timerCallback() override
     {
-        const auto now = std::make_pair (trim.load(), bal.load());
+        const auto now = std::make_tuple (trim.load(), bal.load(), hasBalance());
         if (now != shown)
         {
             shown = now;
@@ -555,9 +558,10 @@ private:
 
     std::atomic<float>& trim;
     std::atomic<float>& bal;
-    bool hasBalance, balanceOnly = false;
+    std::function<bool()> hasBalance; // a stereo strip (the ST key can change it while shown)
+    bool balanceOnly = false;
     float startTrim = 0.0f, startBal = 0.0f;
-    std::pair<float, float> shown { 1.0e9f, 0.0f };
+    std::tuple<float, float, bool> shown { 1.0e9f, 0.0f, false };
 };
 
 /** "IN 3", "PLAY 5" or "NONE" for a channel input index (stereo: "IN 3/4"). */
@@ -908,7 +912,7 @@ public:
               [this] { return strip.getNumChannels(); })
     {
         auto& p = strip.params;
-        pad = &make<TrimBalancePad> (p.input.trimDb, p.input.balanceDb, strip.getNumChannels() == 2 || strip.isOutput() || p.stereo.load());
+        pad = &make<TrimBalancePad> (p.input.trimDb, p.input.balanceDb, [this] { return strip.getNumChannels() == 2 || strip.isOutput() || strip.params.stereo.load(); });
         trimMeter.showScale = true;
         addAndMakeVisible (trimMeter);
         invert = &key ("INVERT", Icon::Invert, colours::accent);
