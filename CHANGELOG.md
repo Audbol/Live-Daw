@@ -71,6 +71,9 @@ All notable changes to Sidecar are listed here. Versions follow
   already patched to it mono (they only heard the left source), and switching back
   to MONO left them stereo. Channels and aux on the pair's first source now follow
   its mode, as on the console and as WING remote apps already did.
+- HOME > OVERVIEW: the INPUT panel's source MUTE key was always disabled (from
+  before sources were modelled). It now mutes the channel's source (both sources of
+  a pair) as ROUTING > SOURCES does, and lights while the source is muted.
 
 ## [0.1.0] - beta
 

@@ -269,11 +269,27 @@ public:
         else
         {
             source = &make<SourceTile> (ctx, strip, open (HomeTab::Input));
-            // The source mute belongs to the Sources (manual 5.4); the console's
-            // sources are not modelled, so the key is shown off.
-            sourceMute = &key ("MUTE");
-            sourceMute->setEnabled (false);
-            sourceMute->setTooltip ("Source mute (sources are not modelled: the channel MUTE is in the LEVEL panel)");
+            // The source mute belongs to the Sources (manual 5.4): the source on
+            // the strip's MAIN input, both sources of a pair, as ROUTING > SOURCES.
+            sourceMute = &key ("MUTE", std::nullopt, colours::mute);
+            sourceMute->setTooltip ("Mutes the channel's source (ROUTING > SOURCES); the channel MUTE is in the LEVEL panel");
+            sourceMute->isOn = [this]
+            {
+                const auto* src = sourceOf (strip);
+                return src != nullptr && src->mute.load();
+            };
+            sourceMute->onClick = [this]
+            {
+                const int index = strip.getInputLeft() >= 0 ? MixerEngine::sourceIndex (strip.getInputLeft()) : -1;
+                auto* src = ctx.engine.getSource (index);
+                if (src == nullptr)
+                    return;
+                const bool paired = src->mode.load() != ld::kSourceMono;
+                const bool mute = ! sourceOf (strip)->mute.load();
+                for (int i : { paired ? (index & ~1) : index, paired ? (index | 1) : -1 })
+                    if (auto* each = ctx.engine.getSource (i))
+                        each->mute = mute;
+            };
         }
         trim = &make<KnobBox> (wingTrim ("TRIM", p.input.trimDb));
         processors = &make<ProcessorThumbs> (ctx, strip);
@@ -432,8 +448,24 @@ public:
     }
 
 private:
+    /** The settings of the source on the strip's MAIN input (a pair runs on its first source's). */
+    ld::SourceParams* sourceOf (const Strip& s) const
+    {
+        const int index = s.getInputLeft() >= 0 ? MixerEngine::sourceIndex (s.getInputLeft()) : -1;
+        auto* src = ctx.engine.getSource (index);
+        if (src != nullptr && src->mode.load() != ld::kSourceMono)
+            return ctx.engine.getSource (index & ~1);
+        return src;
+    }
+
     void timerCallback() override
     {
+        if (sourceMute != nullptr)
+        {
+            // Without a source there is nothing to mute; ROUTING can change both.
+            sourceMute->setEnabled (sourceOf (strip) != nullptr);
+            sourceMute->repaint();
+        }
         // The FILTER panel's third key is named after the current tool filter.
         if (tool != nullptr && tool->getButtonText() != toolFilterName (strip.params.filter.toolModel.load()))
         {
