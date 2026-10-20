@@ -121,7 +121,9 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
   m) crossfades between the old and new tap of a line that is always written; the
   LIMITER (-40..0 dB) is a stereo-linked peak limiter with instant attack and an 80
   ms release that meters its gain reduction (`limiter_gr_db`). A path that turns
-  non-finite is reset and silenced for the block.
+  non-finite is reset and silenced for the block. The RTA of MONITORS EQ reads a
+  path before or after its EQ: `AnalysisControls::strip_kind` = `ANALYSE_MONITOR`
+  (-2), `strip_id` = the path, view `rta_view::MONITOR` (`analyser.rs`).
 - **Talkback** (`talk.rs`, `EngineControls::talk`): the talkback channel (any input or
   aux channel; CH40 / AUX8 on SETUP) feeds its PFL copy to the buses (1-16), matrices
   and mains each talk path selects while its key is on, at TALK LEVEL or (USE SEND
@@ -760,16 +762,16 @@ README's *Known limitations*; keep the three in step.
   `livedaw-session/custom.rs`) cover the phase-1 functions: faders, pan, DCAs, bus
   sends, FX parameters, monitoring, mutes / solos, mute groups, sends on fader, pages,
   show control, scene recall, single actions, the USB PLAY/REC functions, DAW buttons /
-  V-pots and MIDI CC / note / program change; spill, SD and GPIO functions are listed
-  disabled (the spill layers themselves exist: DCA SPILL, the SENDS screens' SPILL and
-  FX SPILL use them).
+  V-pots, MIDI CC / note / program change and FADER SPILL (the layer set's spills:
+  DCA, bus sources, FX slot, automix group, selected strip's sends); SD and GPIO
+  functions are listed disabled (no hardware).
 - LIBRARY: scenes and snippets live in the show (no stand-alone `.snap` / `.snip`
   files, so ADD ITEM TO SHOW is disabled); 10 content sections instead of the
   console's 17 (CONTENTS keys sharing a section light together); the SCOPE window's
   SFC, PREFS and L / C / R tiles (surface and preferences in scenes) are disabled; no
-  CLIP player or SEND MIDI.
-- Not yet: remote preamp control (HA REMOTE, RCV CUST; drawn disabled) and the RTA on
-  MONITORS EQ (the analyser follows strips).
+  CLIP player. SEND MIDI is a scene's text (`livedaw-session/show.rs`), collected by
+  each recall and parsed and sent by `MidiRemote` on EXTERNAL MIDI CONTROL's port.
+- Not yet: remote preamp control (HA REMOTE, RCV CUST; drawn disabled).
 - Recorder: no transport without a running audio device (play stays in Starting);
   a loop change while rolling plays the old content for ~50 ms before the
   crossfade; take files are flushed every 2 s but only synced to disk when
@@ -777,5 +779,3 @@ README's *Known limitations*; keep the three in step.
 - Projects: one tempo and time signature for the whole timeline (for the grid only);
   Save As keeps referring to the old folder's audio instead of copying it; playback
   assumes the project's sample rate is the console's (a mismatch is flagged).
-- Shown on the screens but disabled until the engine supports them (the WING manual
-  describes them): MIDI CC faders in custom layers.

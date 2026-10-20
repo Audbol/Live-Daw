@@ -573,8 +573,9 @@ impl MonitorPathDsp {
         self.limiter.gain = 1.0;
     }
 
-    /// EQ, PAN / WIDTH / INVERT and DELAY: the stage before the level.
-    pub fn process_pre(&mut self, p: &MonitorDspParams, l: &mut [f32], r: &mut [f32]) {
+    /// The EQ: the first stage before the level (the RTA of MONITORS EQ
+    /// reads either side of it), then `process_image`.
+    pub fn process_eq(&mut self, p: &MonitorDspParams, l: &mut [f32], r: &mut [f32]) {
         let on = p.eq_on.load(Relaxed);
         if on || self.eq_off_samples < EQ_SETTLE_SAMPLES {
             let mut v = [0.0; MAX_EQ_PARAMS];
@@ -583,7 +584,10 @@ impl MonitorPathDsp {
             // Switched off, WingEq glides its gains to flat first.
             self.eq_off_samples = if on { 0 } else { self.eq_off_samples + l.len() };
         }
+    }
 
+    /// PAN / WIDTH / INVERT and DELAY, after the EQ.
+    pub fn process_image(&mut self, p: &MonitorDspParams, l: &mut [f32], r: &mut [f32]) {
         let image = image_matrix(p.pan.load(), p.width.load(), p.invert.load(Relaxed));
         apply_matrix(l, r, self.image, image);
         self.image = image;

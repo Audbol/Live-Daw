@@ -41,6 +41,26 @@ namespace
 
     Strip* stripOf (UiContext& ctx, int target) { return state::findStrip (ctx.engine, decodeStrip (target)); }
 
+    /** FADER SPILL: the spill of a target, kind * 100 + index (custom.rs);
+        SEL SENDS spills the selected strip's sends (none without one). */
+    std::optional<LayerSet::Spill> spillOf (UiContext& ctx, int target)
+    {
+        const int kind = target / 100, index = target % 100;
+        if (! juce::isPositiveAndBelow (kind, 5) || index < 0)
+            return std::nullopt;
+        LayerSet::Spill spill { static_cast<LayerSet::Spill::Kind> (kind), index, {} };
+        if (spill.kind == LayerSet::Spill::Kind::Sends)
+        {
+            auto* sel = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr;
+            if (sel == nullptr)
+                return std::nullopt;
+            spill.index = 0;
+            spill.strip = state::StripRef::of (*sel);
+        }
+        return spill;
+    }
+    const char* const spillKindNames[] = { "DCA", "BUS", "FX", "AUTOMIX", "SEL SENDS" };
+
     /** Every strip in CHANNEL SELECT order. */
     std::vector<Strip*> allStrips (UiContext& ctx)
     {
@@ -155,7 +175,8 @@ bool categoryAvailable (Slot s, int category)
 {
     if (s == Slot::Encoder)
         return juce::isPositiveAndBelow (category, (int) kNumEncoderCategories);
-    return category < BtnFaderSpill || category == BtnDawButtons || category == BtnMidi || category == BtnUsbPlayer || category == BtnCcBank;
+    // SD RECORDER and GPIO need the console's hardware.
+    return category != BtnSdRecorder && category != BtnGpio && juce::isPositiveAndBelow (category, (int) kNumButtonCategories);
 }
 
 juce::Colour categoryColour (Slot s, int category)
@@ -322,6 +343,11 @@ void press (UiContext& ctx, const Function& f)
         case BtnSceneRecall:
             logRecall (ctx, "scene #" + juce::String (f.target), ctx.show.recallSceneByTag (f.target));
             break;
+        case BtnFaderSpill:
+            // On the left section (as the screens' SPILL keys); again: back.
+            if (const auto spill = spillOf (ctx, f.target))
+                toggleSpill (ctx, std::nullopt, *spill);
+            break;
         case BtnDawButtons:
             midiui::pressDawCommand (ctx, f.option, true);
             break;
@@ -446,6 +472,10 @@ bool isLit (UiContext& ctx, const Function& f)
             break;
         case BtnGlobalPage:
             return juce::isPositiveAndBelow (f.option, (int) std::size (globalScreens)) && ctx.getScreen && ctx.getScreen() == globalScreens[f.option];
+        case BtnFaderSpill:
+            if (const auto spill = spillOf (ctx, f.target))
+                return isSpilling (ctx, *spill);
+            break;
         case BtnDawButtons: return midiui::dawCommandLed (ctx, f.option) != 0;
         case BtnMidi: return midiui::midiKeyLit (ctx, f.target, f.option);
         case BtnOther:
@@ -518,6 +548,15 @@ juce::String describe (UiContext& ctx, Slot s, const Function& f)
         case BtnShowControl:  return juce::String ("SCN ") + showControls[juce::jlimit (0, 4, f.option)];
         case BtnSceneRecall:  return "SCENE #" + juce::String (f.target);
         case BtnOther:        return otherNames[juce::jlimit (0, kNumOthers - 1, f.option)];
+        case BtnFaderSpill:
+        {
+            const int kind = juce::jlimit (0, 4, f.target / 100), index = f.target % 100;
+            if (kind == 4)
+                return "SPILL SENDS";
+            if (kind == 3)
+                return juce::String ("SPILL AM ") + (index == 0 ? "X" : "Y");
+            return juce::String ("SPILL ") + spillKindNames[kind] + juce::String (index + 1);
+        }
         case BtnDawButtons:   return midiui::describeDawCommand (ctx, f.option);
         case BtnMidi:         return midiui::describeMidiKey (f.target, f.option);
         case BtnUsbPlayer:    return juce::String ("USB ") + usbNames[juce::jlimit (0, kNumUsbFunctions - 1, f.option)];
@@ -804,6 +843,51 @@ void CustomControlsPage::rebuildLists()
                 }
                 break;
             case BtnOther: addNames (options, optionCodes, "OTHER", otherNames, kNumOthers); break;
+            case BtnFaderSpill:
+            {
+                // SPILL (kind), then which one: both set the target (the
+                // option codes are whole targets, kind * 100 + index).
+                targets.title = "SPILL";
+                const int kind = juce::jlimit (0, 4, f.target / 100);
+                for (int k = 0; k < 5; ++k)
+                {
+                    targets.rows.add (spillKindNames[k]);
+                    targetCodes.push_back (k * 100 + (k == kind ? f.target % 100 : 0));
+                }
+                auto add = [this, &options, kind] (const juce::String& row, int item)
+                {
+                    options.rows.add (row);
+                    optionCodes.push_back (kind * 100 + item);
+                };
+                switch (kind)
+                {
+                    case 0:
+                        options.title = "DCA";
+                        for (int i = 0; i < kNumDcas; ++i)
+                            add (juce::String (i + 1) + "   " + ctx.engine.getDcaName (i).toUpperCase(), i);
+                        break;
+                    case 1:
+                        options.title = "BUS";
+                        for (auto& b : ctx.engine.getBuses())
+                            add (shortStripLabel (*b) + "\t" + (stripName (*b) != b->getLabel() ? stripName (*b).toUpperCase() : juce::String()), b->getId());
+                        break;
+                    case 2:
+                        options.title = "EFFECT PROCESSOR";
+                        for (int i = 0; i < kNumFx; ++i)
+                            add ("FX" + juce::String (i + 1) + "   " + models::model (models::Fx, ctx.engine.getFx().getModel (i)).name.toUpperCase(), i);
+                        break;
+                    case 3:
+                        options.title = "AUTOMIX";
+                        add ("GROUP X", 0);
+                        add ("GROUP Y", 1);
+                        break;
+                    default:
+                        options.title = "SPILL";
+                        add ("SELECTED CHANNEL'S SENDS", 0);
+                        break;
+                }
+                break;
+            }
             case BtnDawButtons:
             {
                 // GROUP, then the group's MCU / HUI commands (the other
@@ -862,8 +946,9 @@ void CustomControlsPage::rebuildLists()
     for (size_t i = 0; i < targetCodes.size(); ++i)
         if (targetCodes[i] == f.target)
             targets.selected = (int) i;
+    const int optionValue = slot != Slot::Encoder && f.category == BtnFaderSpill ? f.target : f.option;
     for (size_t i = 0; i < optionCodes.size(); ++i)
-        if (optionCodes[i] == f.option)
+        if (optionCodes[i] == optionValue)
             options.selected = (int) i;
     // An option-only function shows its list in the first sub-list column.
     if (targets.rows.isEmpty() && ! options.rows.isEmpty())
@@ -932,7 +1017,7 @@ void CustomControlsPage::choose (int list, int row)
         return;
     if (const auto& enabled = lists[list].enabled; juce::isPositiveAndBelow (row, (int) enabled.size()) && ! enabled[(size_t) row])
         return;
-    (isTarget ? f.target : f.option) = codes[(size_t) row];
+    (isTarget || (slot != Slot::Encoder && f.category == BtnFaderSpill) ? f.target : f.option) = codes[(size_t) row];
     if (slot != Slot::Encoder && f.category == BtnDawButtons && isTarget)
     {
         // A new group: its first command.

@@ -8,7 +8,8 @@ namespace livedaw
 {
 
 /** C++ view of the engine's analysis (rust/crates/livedaw-engine/src/analyser.rs):
-    the RTA and the LR vector scope of the analysed strip, and LISTEN (BAND
+    the RTA (of the analysed strip, or of a monitor path) and the LR vector
+    scope of the analysed strip, and LISTEN (BAND
     SOLO, KEY SOLO, XOVER SOLO), which replaces the solo bus for one strip at
     a time. Stateless like Strip: the settings are the engine's shared
     atomics, so a view can be made from any Strip (or the engine) at any time.
@@ -48,10 +49,24 @@ public:
     }
     void hideRta() noexcept { controls.rtaOn = false; }
 
+    /** Shows the RTA of a monitor path (MONITORS EQ; 0 SPEAKERS, 1 PHONES),
+        PRE | POST its EQ as EQ/RTA SETTINGS' RTA SOURCE says. */
+    void showMonitorRta (int path) noexcept
+    {
+        controls.stripKind = ld::kAnalyseMonitor;
+        controls.stripId = path;
+        controls.view = ld::kRtaViewMonitor;
+        controls.rtaOn = true;
+    }
+    bool isAnalysingMonitor (int path) const noexcept
+    {
+        return controls.stripKind.load() == ld::kAnalyseMonitor && controls.stripId.load() == path;
+    }
+
     bool isFrozen() const noexcept { return controls.rtaFreeze.load(); }
     void setFrozen (bool f) noexcept { controls.rtaFreeze = f; }
 
-    /** The settings of a view: HOME (RTA SETTINGS) or EQ / FILTER (EQ/RTA SETTINGS). */
+    /** The settings of a view: HOME (RTA SETTINGS) or EQ / FILTER / MONITOR (EQ/RTA SETTINGS). */
     ld::RtaViewSettings& settings (int view) const noexcept { return view == ld::kRtaViewHome ? controls.home : controls.eq; }
 
     struct Bands

@@ -177,10 +177,9 @@ This list matches the notice Sidecar shows at start-up.
   console.
 - **MIDI and DAW remote control** (MCU / HUI) have not been tested with real hardware.
 - **LIBRARY** keeps scenes and snippets in the show (no stand-alone .snap / .snip
-  files); the CLIP player and SEND MIDI are not built.
-- **Drawn but disabled for now:** GPIO, SD and spill functions in the custom controls,
-  MIDI CC faders in custom layers, the RTA on MONITORS EQ, and settings that only make
-  sense on the hardware.
+  files); the CLIP player is not built.
+- **Drawn but disabled:** the GPIO and SD functions of the custom controls (there is
+  no GPIO socket or SD card), and settings that only make sense on the hardware.
 
 ## Reporting problems
 

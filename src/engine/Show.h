@@ -49,6 +49,7 @@ public:
         int tag = 0;           // EDIT TAG #1..#128 (0 = none)
         bool skip = false;     // SKIP: GO PREV/NEXT and recalls pass over it
         bool linkNext = false; // LINK: recalling it also recalls the scene below
+        juce::String midi;     // SEND MIDI: MIDI data sent when it's recalled (see MidiRemote::parseMidiText)
     };
 
     static constexpr int maxSceneTag = 128;
@@ -93,6 +94,8 @@ public:
     void setSceneSkip (int index, bool skip);
     /** The link follows the scene: after a move it links to its new neighbour below. */
     void setSceneLink (int index, bool linkNext);
+    /** SEND MIDI (the EDIT MIDI TEXT STRING window). */
+    void setSceneMidi (int index, const juce::String&);
     /** The first scene tagged `tag` that isn't skipped, or -1. */
     int findSceneByTag (int tag) const noexcept { return ld::ld_show_find_scene_by_tag (handle, tag); }
 
@@ -231,6 +234,10 @@ public:
 
     /** Called before a show load empties FX slot `slot` (close its plugin editor here). */
     std::function<void (int slot)> onFxCleared;
+
+    /** SEND MIDI: after a recall, the MIDI data of the scenes it recalled
+        (linked ones too), in order. Set by the MIDI service. */
+    std::function<void (const juce::StringArray&)> onSceneMidi;
 
     static constexpr const char* fileExtension = ".lshow";
 

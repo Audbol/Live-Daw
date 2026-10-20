@@ -85,6 +85,7 @@ public:
         testFx();
         testCustomAndScenes();
         testSysexAndExternal();
+        testSendMidi();
         testMcu();
         testHui();
         testDawRouting();
@@ -397,6 +398,59 @@ private:
         expectEquals (midi.getExternalCc (3, 7), 99);
         midi.handleMessage (MidiRemote::Din, juce::MidiMessage::noteOn (2, 60, (juce::uint8) 100));
         expect (midi.getExternalToggle (2, 60, true));
+    }
+
+    void testSendMidi()
+    {
+        beginTest ("SEND MIDI: the EDIT MIDI TEXT STRING data, sent with scene recalls");
+        std::vector<MidiRemote::PortMessage> out;
+        juce::String error;
+        expect (MidiRemote::parseMidiText ("C002", out, error));
+        expect (out.size() == 1 && out[0].port == -1 && out[0].message.isProgramChange() && out[0].message.getProgramChangeNumber() == 2);
+        // Separators are optional; several messages in a row; a port prefix holds for what follows.
+        expect (MidiRemote::parseMidiText ("b0,01,7f C003 u:90 3C 64,80,3c,00 d:F0 00 20 32 F7", out, error));
+        expectEquals ((int) out.size(), 5);
+        if (out.size() == 5)
+        {
+            expect (out[0].port == -1 && out[0].message.isController() && out[0].message.getControllerNumber() == 1
+                    && out[0].message.getControllerValue() == 127);
+            expect (out[1].port == -1 && out[1].message.isProgramChange());
+            expect (out[2].port == MidiRemote::Usb && out[2].message.isNoteOn() && out[2].message.getNoteNumber() == 60);
+            expect (out[3].port == MidiRemote::Usb && out[3].message.isNoteOff());
+            expect (out[4].port == MidiRemote::Din && out[4].message.isSysEx() && out[4].message.getSysExDataSize() == 3);
+        }
+        for (auto* bad : { "B0,01", "7F", "C0G2", "C00", "F0 01 02", "90 3C 80" })
+            expect (! MidiRemote::parseMidiText (bad, out, error) && error.isNotEmpty(), bad);
+        expect (MidiRemote::parseMidiText ("", out, error) && out.empty());
+
+        MixerEngine engine (0);
+        PluginHost host (nullptr);
+        Show show (engine, host);
+        MidiRemote midi (engine, show, false);
+        Sent sent;
+        midi.onSend = [&sent] (int port, const juce::MidiMessage& m) { sent.messages.emplace_back (port, m); };
+        show.addScene ("A");
+        show.addScene ("B");
+        show.setSceneMidi (0, "B0,07,64");
+        show.setSceneMidi (1, "U:C005");
+        expectEquals (show.getScene (1)->midi, juce::String ("U:C005"));
+        // EXTERNAL MIDI CONTROL off: nothing goes out.
+        show.recallScene (0);
+        expectEquals (sent.size(), 0);
+        auto s = midi.getSettings();
+        s.routes[MidiRemote::ExternalMidi] = MidiRemote::RouteDin;
+        midi.apply (s);
+        show.recallScene (0);
+        expect (sent.size() == 1 && sent.portAt (0) == MidiRemote::Din && sent.has (cc (1, 7, 100)));
+        // GO NEXT; the U: prefix picks the USB port.
+        sent.clear();
+        show.recallNext();
+        expect (sent.size() == 1 && sent.portAt (0) == MidiRemote::Usb && sent.has (juce::MidiMessage::programChange (1, 5)));
+        // A linked scene sends its MIDI too, after the first.
+        sent.clear();
+        show.setSceneLink (0, true);
+        show.recallScene (0);
+        expect (sent.size() == 2 && sent.at (0).isController() && sent.at (1).isProgramChange());
     }
 
     void testMcu()

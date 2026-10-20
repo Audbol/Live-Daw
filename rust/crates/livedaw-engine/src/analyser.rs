@@ -3,7 +3,8 @@
 //!
 //! * The audio side only copies samples: the analysed strip pushes its signal
 //!   at the RTA tap (mono) and after its INPUT block (L/R, decimated) into
-//!   lock-free rings ([`SampleRing`]).
+//!   lock-free rings ([`SampleRing`]). The RTA can read a monitor path instead
+//!   of a strip (MONITORS EQ): [`ANALYSE_MONITOR`] as the analysed kind.
 //! * A non-realtime thread (started on first use, see
 //!   [`Analyser::ensure_thread`]) reads the RTA ring and computes 120 semitone
 //!   bands, E0 (20.6 Hz) to D#10 (19.9 kHz): the piano-key ruler the console
@@ -49,7 +50,14 @@ pub mod rta_tap {
     pub const POST_EQ: usize = 4;
     /// After the fader.
     pub const POST_FADER: usize = 5;
+    /// A monitor path (`ANALYSE_MONITOR`): its sum before / after its EQ.
+    pub const MONITOR_PRE_EQ: usize = 6;
+    pub const MONITOR_POST_EQ: usize = 7;
 }
+
+/// `AnalysisControls::strip_kind` for a monitor path: `strip_id` is the path
+/// (0 SPEAKERS, 1 PHONES, as `MonitorControls::paths`).
+pub const ANALYSE_MONITOR: i32 = -2;
 
 /// The graph showing the RTA: it decides the tap and the settings used.
 pub mod rta_view {
@@ -59,6 +67,8 @@ pub mod rta_view {
     pub const EQ: i32 = 1;
     /// FILTER SETUP (PRE | POST the filter; the EQ view's other settings).
     pub const FILTER: i32 = 2;
+    /// MONITORS EQ (a monitor path, PRE | POST its EQ; the EQ view's settings).
+    pub const MONITOR: i32 = 3;
 }
 
 /// LISTEN modes (`AnalysisControls::listen_mode`).
@@ -206,6 +216,9 @@ impl AnalysisControls {
         match self.view.load(Relaxed) {
             rta_view::EQ => [rta_tap::PRE_EQ, rta_tap::POST_EQ][self.eq.tap.load(Relaxed).clamp(0, 1) as usize],
             rta_view::FILTER => [rta_tap::PRE_FILTER, rta_tap::POST_FILTER][self.filter_tap.load(Relaxed).clamp(0, 1) as usize],
+            rta_view::MONITOR => {
+                [rta_tap::MONITOR_PRE_EQ, rta_tap::MONITOR_POST_EQ][self.eq.tap.load(Relaxed).clamp(0, 1) as usize]
+            }
             _ => [rta_tap::IN, rta_tap::POST_EQ, rta_tap::POST_FADER][self.home.tap.load(Relaxed).clamp(0, 2) as usize],
         }
     }
@@ -687,6 +700,8 @@ struct ListenAudio {
 pub(crate) struct Probes {
     rta: *const Strip,
     rta_tap: usize,
+    /// The analysed monitor path (`ANALYSE_MONITOR`), -1 = none.
+    monitor_rta: i32,
     scope: *const Strip,
     listen: *const Strip,
     listen_mode: i32,
@@ -714,6 +729,7 @@ impl Probes {
     pub(crate) const NONE: Probes = Probes {
         rta: std::ptr::null(),
         rta_tap: 0,
+        monitor_rta: -1,
         scope: std::ptr::null(),
         listen: std::ptr::null(),
         listen_mode: 0,
@@ -729,6 +745,12 @@ impl Probes {
             scope: self.scope == me,
             listen: (self.listen == me).then_some((self.listen_mode, self.listen_band)),
         }
+    }
+
+    /// The RTA tap of monitor path `path` this block, if it is analysed.
+    #[inline]
+    pub(crate) fn monitor_rta(&self, path: usize) -> Option<usize> {
+        (self.monitor_rta == path as i32).then_some(self.rta_tap)
     }
 
     /// Pushes a block of a strip (1 or 2 channels) into the RTA ring, as mono.
@@ -881,6 +903,9 @@ impl Analyser {
         if rta_on {
             p.rta = target;
             p.rta_tap = c.engine_tap();
+            if kind == ANALYSE_MONITOR {
+                p.monitor_rta = id.clamp(0, 1);
+            }
         }
         if scope_on {
             p.scope = target;

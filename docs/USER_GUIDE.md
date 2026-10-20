@@ -144,7 +144,8 @@ Barlow Condensed.
     TALK A / B: switch mode, talkback channel, AUTO DIM, USE SEND LEVELS and the bus,
     matrix and main destinations; PHONES and SPEAKERS, each its own: SOURCE, SRC LEVEL,
     SRC MIX, DIM, PFL DIM, BAND SOLO, DIRECT IN (any channel, bus, main or matrix, at
-    its own level), the EQ (MONITORS EQ: 8 bands, PAN, WIDTH), the DIST slider with
+    its own level), the EQ (MONITORS EQ: 8 bands, PAN, WIDTH, and an RTA of the path,
+    PRE or POST its EQ as EQ/RTA SETTINGS' RTA SOURCE says), the DIST slider with
     INVERT and DELAY, LIMITER with its gain reduction on the meter, and the level) and
     CC EDIT (also SETUP pressed twice): the custom
     control layers, a function list and the target lists, COLOR, CLR ALL and NAME,
@@ -152,7 +153,9 @@ Barlow Condensed.
   - **LIBRARY:** a file browser with the locations INT (`Documents/Sidecar/Library`),
     USB (a folder of your choice) and SHOW (the show's scenes and snippets: tags, SKIP,
     LINK, REMOVE, RENAME, UP / DOWN), with FOLDER, RENAME, DELETE and sorting. Tabs:
-    SHOW (open and save shows, also from the list), SNAP (SAVE, UPDATE, PARTIAL UPDATE,
+    SHOW (open and save shows, also from the list; **SEND MIDI**: MIDI data the
+    selected scene sends each time it is recalled, see *MIDI and DAW remote control*),
+    SNAP (SAVE, UPDATE, PARTIAL UPDATE,
     LOAD, PARTIAL LOAD with NO GLOB, RESTORE, EDIT SCOPE), SNIP (REC / STOP with the
     counter of changed parameters, SAVE, UPDATE, PARTIAL LOAD, REC FOCUS, ADD / REMOVE
     ITEMS, CLEAR ALL), FX and CHAN presets (CLIP is drawn disabled), GO PREV / GO NEXT /
@@ -161,8 +164,10 @@ Barlow Condensed.
   - **VIEW screens** (a fader section's VIEW key): OVERVIEW (every strip's blocks;
     EXCL SOLO in the status bar), FADERS (send faders of a layer, and Sends on
     Fader, show and set the send level, MUTE switching the send), SENDS (sends on faders to one bus, main or matrix), CONFIG (edit any layer
-    key by dragging channels, buses, DCAs, send levels, bus-to-bus sends or FX
-    parameters onto or between slots, with a page map) and MUTE GROUPS (members, names,
+    key by dragging channels, buses, DCAs, send levels, bus-to-bus sends, FX
+    parameters or MIDI CCs onto or between slots, with a page map; a **MIDI CC** fader
+    sends its CC, 0-127, out of EXTERNAL MIDI CONTROL and follows the CC coming in) and
+    MUTE GROUPS (members, names,
     group keys).
   - **UTILITY:** system health and the event log (also on SETUP > LOG).
   - **RECORDER** (the status bar's **LIVE** card icon, red while recording): laid out
@@ -281,6 +286,10 @@ the USB key on the screen to choose another folder).
 - **Custom controls:** the USB PLAY/REC functions (PLAY, PAUSE, STOP, PREV, NEXT,
   REC, REC PAUSE, REC STOP, NEW FILE, REPEAT) on any CC key, and **CC BANK 1-16**
   (WING 3.0.6): a CC key that switches the custom controls to a bank.
+- **FADER SPILL** on any CC key: spills a DCA, the sources sending to a bus, an FX
+  slot's parameters, automix group X or Y, or the selected channel's sends onto the
+  left fader section (lit while it shows; pressed again, the section's layer comes
+  back). SD RECORDER and GPIO need the console's hardware and stay disabled.
 
 ## Shows, scenes and snippets
 
@@ -330,7 +339,7 @@ documentation, firmware 1.07+), on the computer's MIDI devices.
   note); **SYSEX CONTROL** (`F0 00 20 32 57 <cmd> <data> F7`: identity, execute node
   strings like `/ch.1.fdr=-3,mute=1`, dump and describe nodes of the WING tree);
   **EXTERNAL MIDI CONTROL** (where the custom controls' MIDI CC encoders and MIDI CC /
-  NOTE / PGM keys send); **SCENE CHANGE** (channel 7: program change, bank for scenes
+  NOTE / PGM keys, the MIDI CC faders of the layers and the scenes' SEND MIDI send); **SCENE CHANGE** (channel 7: program change, bank for scenes
   past 128); **SHOW CONTROL** (channel 8: scene tags; channel 9: GO, PREV, NEXT, GO
   PREV, GO NEXT); **SCENE MIDI TX** (recalls go out as channel 7 program changes).
   Console changes made anywhere go back out for CH CONTROL and FX PARAMETER CONTROL.
@@ -352,6 +361,17 @@ documentation, firmware 1.07+), on the computer's MIDI devices.
   display). The wheel is the jog wheel, the arrows the DAW's cursor keys.
 - **Custom controls:** DAW BUTTONS (the WING's MCU / HUI command list), DAW V-POTS,
   MIDI CC encoders and MIDI CC / NOTE (toggle or push) / PGM CHANGE keys.
+- **MIDI CC faders:** VIEW > CONFIG's MIDI CC field picks a MIDI channel and 32 of its
+  CCs; drag them into any layer. The fader sends its CC (0-127) on EXTERNAL MIDI
+  CONTROL's port; the scribble strip shows the CC, its value and the MIDI channel.
+- **SEND MIDI** (LIBRARY > SHOW, for the selected scene): the EDIT MIDI TEXT STRING
+  window takes hexadecimal MIDI bytes, with or without separators (`C002`,
+  `B0,01,7F`, several messages in a row, SysEx as `F0 ... F7`); `U:` or `D:` before
+  the bytes sends them (and what follows) to the USB or DIN port instead of EXTERNAL
+  MIDI CONTROL's (that port has to be in use by a MIDI REMOTE CONTROL row). They go
+  out each time the scene is recalled (GO, GO NEXT / PREV, by tag, by MIDI; a linked
+  scene sends its own after the first), with EXTERNAL MIDI CONTROL on DIN or USB.
+  Data that isn't MIDI is refused with the reason.
 
 ## WING remote apps and WING files
 
