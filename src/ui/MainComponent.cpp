@@ -236,6 +236,9 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     midiRemote = std::make_unique<MidiRemote> (engine, show);
     ctx.midi = midiRemote.get();
     midiui::connect (ctx);
+    // WING remote clients recall scenes (/$ctl/lib) like MIDI does.
+    engine.getWing().attachShow (&show, [this] (const juce::String& what, const state::ApplyResult& r)
+                                 { logRecall (ctx, what, r); });
 
     channelStrip = std::make_unique<ChannelStripSection> (ctx);
     display = std::make_unique<MainDisplay> (ctx);
@@ -284,7 +287,8 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
 
 MainComponent::~MainComponent()
 {
-    // MIDI goes first: its callbacks reach the views.
+    // MIDI and the WING remote's scene control go first: their callbacks reach the views.
+    engine.getWing().attachShow (nullptr);
     ctx.midi = nullptr;
     midiRemote.reset();
 

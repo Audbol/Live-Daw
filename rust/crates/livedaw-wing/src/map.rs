@@ -14,17 +14,19 @@ use crate::value::{self, Value, FADER_MAX, FADER_MIN};
 use livedaw_dsp::util::MINUS_INF_DB;
 use livedaw_dsp::wing::fx::allowed_in_slot;
 use livedaw_dsp::wing::{model_index, ModelSpec, ParamKind, DYN_MODELS, EQ_MODELS_BUS, EQ_MODELS_CH, FILTER_TOOLS, FX_MODELS};
+use livedaw_engine::analyser::{listen_mode, rta_view};
 use livedaw_engine::atomic::AtomicF32;
 use livedaw_engine::monitor::{MonitorDspParams, MONITOR_EQ_BANDS};
 use livedaw_engine::params::{
-    DynSlotParams, EngineControls, InsertParams, MonitorSourceParams, StripParams, FX_EXT, NUM_DCAS, NUM_FX, NUM_MUTE_GROUPS,
+    DynSlotParams, EngineControls, InsertParams, MonitorSourceParams, StripParams, FX_EXT, FX_NONE, NUM_DCAS, NUM_FX,
+    NUM_MUTE_GROUPS,
 };
 use livedaw_engine::sends::send_mode;
 use livedaw_engine::solo::solo_mode;
 use livedaw_engine::sources::{self, source_mode, SourceParams};
 use livedaw_engine::talk::TALK_OFF;
 use livedaw_engine::{Engine, Strip, StripKind, PLAYBACK_SOURCE_BASE};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering::Relaxed};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -58,17 +60,69 @@ pub enum ShadowKey {
     Param(u16, u16, u8),
 }
 
+/// The show's scenes as the host shows them (`/$ctl/lib`). Scenes live in
+/// the show on the host's message thread: it publishes this and runs the
+/// [`LibAction`]s clients queue.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Library {
+    /// A host runs the actions (else `$action` is refused).
+    pub attached: bool,
+    pub show: String,
+    pub num_scenes: i32,
+    /// The current scene (-1 none), its name and EDIT TAG (0 none).
+    pub current: i32,
+    pub scene: String,
+    pub tag: i32,
+}
+
+/// A scene recall for the host (`/$ctl/lib/$action`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LibAction {
+    /// GO: the scene at an index (0-based).
+    Go(i32),
+    GoNext,
+    GoPrev,
+    /// GOTAG: the first scene with this tag (1-128).
+    GoTag(i32),
+}
+
 /// State of the virtual console beyond the engine: values of nodes Sidecar
-/// has no equivalent for, and the console identity.
+/// has no equivalent for, the console identity and the scene library.
 #[derive(Default)]
 pub struct WingState {
     pub shadow: Mutex<HashMap<ShadowKey, Value>>,
     pub identity: Mutex<Identity>,
+    pub library: Mutex<Library>,
+    /// `$actionidx`: the scene (or tag) GO and GOTAG use.
+    pub lib_index: AtomicI32,
+    lib_actions: Mutex<VecDeque<LibAction>>,
 }
 
 impl WingState {
     pub fn new(identity: Identity) -> Self {
-        Self { shadow: Mutex::default(), identity: Mutex::new(identity) }
+        Self { identity: Mutex::new(identity), ..Self::default() }
+    }
+
+    pub fn library(&self) -> Library {
+        self.library.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Host: publishes the show's scenes (and that it runs the actions).
+    pub fn set_library(&self, library: Library) {
+        *self.library.lock().unwrap_or_else(|e| e.into_inner()) = library;
+    }
+
+    /// Host: the next scene recall a client asked for.
+    pub fn take_lib_action(&self) -> Option<LibAction> {
+        self.lib_actions.lock().unwrap_or_else(|e| e.into_inner()).pop_front()
+    }
+
+    fn push_lib_action(&self, a: LibAction) {
+        let mut q = self.lib_actions.lock().unwrap_or_else(|e| e.into_inner());
+        // A host that stopped polling must not let the queue grow.
+        if q.len() < 64 {
+            q.push_back(a);
+        }
     }
 
     fn shadow_get(&self, key: ShadowKey) -> Option<Value> {
@@ -177,6 +231,8 @@ pub enum InsF {
     Fx,
     Mode,
     W,
+    /// `$stat`: "-" (no FX), "OK", "N/A" (the FX slot can't run).
+    Stat,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -254,6 +310,13 @@ pub enum SF {
     TapWidth,
     TapEqOn,
     TapEq(u8, TapF),
+    /// LISTEN (`analyser::listen_mode`): `eq/$solo`, `gatesc/$solo`,
+    /// `dynsc/$solo`, `dynxo/$solo`; and the band BAND SOLO plays (`eq/$solobd`).
+    Listen(i32),
+    ListenBand,
+    /// `in/set/$g`, `$vph`: the GAIN and +48V of the source the strip is patched to.
+    SrcGain,
+    SrcPhantom,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -361,6 +424,8 @@ pub enum RtaF {
     Range,
     Gain,
     AutoGain,
+    /// The analysed strip (`$src`, read-only).
+    Source,
 }
 
 /// `/io/in/<group>/<n>/...`: a source's settings.
@@ -413,6 +478,24 @@ pub enum Binding {
     Source(&'static str, u16, SrcF),
     /// RTA settings: false = HOME (`rta*`), true = EQ (`eq*`).
     Rta(bool, RtaF),
+    /// The RTA on screen (`/cfg/rta/$src`, `$dec`, `$det`).
+    RtaShown(RtaF),
+    /// FX slot (0-based) assignment: the strip using it (`$a_chn`, false) or
+    /// the insert it is in (`$a_pos`, true).
+    FxAssign(u8, bool),
+    /// `/$ctl/lib`: scene control (the show lives on the host's message thread).
+    Lib(LibF),
+}
+
+/// `/$ctl/lib/...`: `$action`, `$actionidx`, `$actidx`, `$active`, `$activeid`, `$actshow`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LibF {
+    Action,
+    ActionIndex,
+    Current,
+    Active,
+    ActiveTag,
+    Show,
 }
 
 fn strip_kind(name: &str) -> Option<StripKind> {
@@ -471,6 +554,13 @@ fn strip_field(kind: StripKind, n: u16, rest: &[&str]) -> Option<SF> {
         ["dly", "on"] if out => SF::DlyOn,
         ["dly", "mode"] if out => SF::DlyMode,
         ["dly", "dly"] if out => SF::Dly,
+        ["in", "set", "$g"] if input => SF::SrcGain,
+        ["in", "set", "$vph"] if input => SF::SrcPhantom,
+        ["eq", "$solo"] => SF::Listen(listen_mode::BAND),
+        ["eq", "$solobd"] => SF::ListenBand,
+        ["gatesc", "$solo"] if ch => SF::Listen(listen_mode::GATE_KEY),
+        ["dynsc", "$solo"] => SF::Listen(listen_mode::DYN_KEY),
+        ["dynxo", "$solo"] if kind != Aux => SF::Listen(listen_mode::XOVER),
         ["flt"] if ch => SF::Slot(Blk::Tool),
         ["flt", f] if ch => match *f {
             "lc" => SF::LowCut,
@@ -517,6 +607,8 @@ fn strip_field(kind: StripKind, n: u16, rest: &[&str]) -> Option<SF> {
         }),
         ["preins", "on"] => SF::Ins(false, InsF::On),
         ["preins", "ins"] => SF::Ins(false, InsF::Fx),
+        ["preins", "$stat"] => SF::Ins(false, InsF::Stat),
+        ["postins", "$stat"] if kind != Aux => SF::Ins(true, InsF::Stat),
         ["postins", "on"] if kind != Aux => SF::Ins(true, InsF::On),
         ["postins", "ins"] if kind != Aux => SF::Ins(true, InsF::Fx),
         ["postins", "mode"] if ch => SF::Ins(true, InsF::Mode),
@@ -651,6 +743,21 @@ pub fn bind(parts: &[&str]) -> Binding {
         ["fx", n] => number(n, NUM_FX as u16).map_or(Binding::None, |n| Binding::FxSlot(n as u8 - 1)),
         ["fx", n, "mdl"] => number(n, NUM_FX as u16).map_or(Binding::None, |n| Binding::FxModel(n as u8 - 1)),
         ["fx", n, "fxmix"] => number(n, NUM_FX as u16).map_or(Binding::None, |n| Binding::FxMix(n as u8 - 1)),
+        ["fx", n, f @ ("$a_chn" | "$a_pos")] => {
+            number(n, NUM_FX as u16).map_or(Binding::None, |n| Binding::FxAssign(n as u8 - 1, *f == "$a_pos"))
+        }
+        ["$ctl", "lib", f] => match *f {
+            "$action" => Binding::Lib(LibF::Action),
+            "$actionidx" => Binding::Lib(LibF::ActionIndex),
+            "$actidx" => Binding::Lib(LibF::Current),
+            "$active" => Binding::Lib(LibF::Active),
+            "$activeid" => Binding::Lib(LibF::ActiveTag),
+            "$actshow" => Binding::Lib(LibF::Show),
+            _ => Binding::None,
+        },
+        ["cfg", "rta", "$src"] => Binding::RtaShown(RtaF::Source),
+        ["cfg", "rta", "$dec"] => Binding::RtaShown(RtaF::Decay),
+        ["cfg", "rta", "$det"] => Binding::RtaShown(RtaF::Detector),
         ["cfg", "mainlink"] => Binding::Ctl(CtlF::MainLink),
         ["cfg", "dcamgrp"] => Binding::Ctl(CtlF::DcaMuteGroups),
         ["cfg", "solo", "chtap"] => Binding::Ctl(CtlF::SoloAfl(StripKind::Channel)),
@@ -729,7 +836,7 @@ pub fn bind(parts: &[&str]) -> Binding {
 fn mon_field(rest: &[&str]) -> Option<MonF> {
     let last = MONITOR_EQ_BANDS as u8 - 1;
     Some(match rest {
-        ["$lvl"] | ["lvl"] => MonF::Level,
+        ["$lvl"] | ["lvl"] | ["$lvlact"] => MonF::Level,
         ["inv"] => MonF::Inv,
         ["pan"] => MonF::Pan,
         ["wid"] => MonF::Width,
@@ -1157,6 +1264,19 @@ impl<'a> Console<'a> {
         self.channels.len()
     }
 
+    /// The WING's 76 strips with their number in its strip order (FX `$a_chn`,
+    /// RTA `$src`): channels 1-40, aux 41-48, buses 49-64, mains 65-68, matrices 69-76.
+    fn numbered(&self) -> impl Iterator<Item = (StripKind, i32, &Arc<Strip>)> + '_ {
+        fn list(kind: StripKind, base: i32, max: usize, v: &[Arc<Strip>]) -> impl Iterator<Item = (StripKind, i32, &Arc<Strip>)> {
+            v.iter().take(max).enumerate().map(move |(i, s)| (kind, base + i as i32 + 1, s))
+        }
+        list(StripKind::Channel, 0, 40, &self.channels)
+            .chain(list(StripKind::Aux, 40, 8, &self.aux))
+            .chain(self.buses.iter().enumerate().filter_map(|(i, s)| Some((StripKind::Bus, 48 + i as i32 + 1, s.as_ref()?))))
+            .chain(list(StripKind::Main, 64, 4, &self.mains))
+            .chain(list(StripKind::Matrix, 68, 8, &self.matrices))
+    }
+
     pub fn binding(&self, node: Node) -> Binding {
         match node {
             Node::Row(r) => bindings()[r as usize],
@@ -1342,6 +1462,44 @@ impl<'a> Console<'a> {
                     RtaF::Range => item(def, v.range.load(Relaxed)),
                     RtaF::Gain => f(&v.gain_db),
                     RtaF::AutoGain => b(&v.autogain),
+                    RtaF::Source => return None,
+                }
+            }
+            Binding::RtaShown(rf) => {
+                let a = e.analysis().controls();
+                let v = if a.view.load(Relaxed) == rta_view::HOME { &a.home } else { &a.eq };
+                match rf {
+                    RtaF::Source => {
+                        let kind = StripKind::from_i32(a.strip_kind.load(Relaxed))?;
+                        let id = a.strip_id.load(Relaxed);
+                        Value::Int(self.numbered().find(|(k, _, s)| *k == kind && s.id() == id).map(|(_, n, _)| n)?)
+                    }
+                    RtaF::Decay => item(def, v.decay.load(Relaxed)),
+                    RtaF::Detector => item(def, v.detector.load(Relaxed)),
+                    _ => return None,
+                }
+            }
+            Binding::FxAssign(i, pos) => {
+                // The first insert using the slot, in the WING's strip order.
+                let (number, post) = self
+                    .numbered()
+                    .find_map(|(kind, n, s)| {
+                        let p = &s.params;
+                        let post = kind != StripKind::Aux && p.post_insert.fx.load(Relaxed) == i as i32;
+                        (p.pre_insert.fx.load(Relaxed) == i as i32 || post).then_some((n, post))
+                    })
+                    .unwrap_or((0, false));
+                Value::Int(if pos { post as i32 } else { number })
+            }
+            Binding::Lib(lf) => {
+                let lib = self.state.library();
+                match lf {
+                    LibF::Action => item(def, 0), // IDLE: an action is taken at once
+                    LibF::ActionIndex => Value::Int(self.state.lib_index.load(Relaxed)),
+                    LibF::Current => Value::Int(lib.current),
+                    LibF::Active => Value::Str(lib.scene),
+                    LibF::ActiveTag => Value::Int(lib.tag),
+                    LibF::Show => Value::Str(lib.show),
                 }
             }
             Binding::Source(group, n, sf) => {
@@ -1578,6 +1736,11 @@ impl<'a> Console<'a> {
                     InsF::Fx => fx_item(ins.fx.load(Relaxed)),
                     InsF::Mode => item(def, ins.mode.load(Relaxed)),
                     InsF::W => f(&ins.weight),
+                    InsF::Stat => Value::str(match usize::try_from(ins.fx.load(Relaxed)) {
+                        Err(_) => "-",
+                        Ok(i) if self.fx_runs(i) => "OK",
+                        Ok(_) => "N/A",
+                    }),
                 }
             }
             SF::Main(i, mf) => {
@@ -1645,7 +1808,37 @@ impl<'a> Console<'a> {
                     TapF::Q => f(&b.q),
                 }
             }
+            SF::Listen(mode) => Value::bool(self.listening(kind, s, mode)),
+            // The band played while listening here; else the band set (shadow).
+            SF::ListenBand if self.listening(kind, s, listen_mode::BAND) => {
+                Value::Int(self.engine.analysis().controls().listen_band.load(Relaxed) + 1)
+            }
+            SF::ListenBand => return None,
+            SF::SrcGain => f(&self.engine.sources().get(self.strip_source(kind, n, s)?)?.gain_db),
+            SF::SrcPhantom => b(&self.engine.sources().get(self.strip_source(kind, n, s)?)?.phantom),
         })
+    }
+
+    /// LISTEN `mode` is on for strip `s`.
+    fn listening(&self, kind: StripKind, s: &Strip, mode: i32) -> bool {
+        let a = self.engine.analysis().controls();
+        a.listen_mode.load(Relaxed) == mode && a.listen_kind.load(Relaxed) == kind as i32 && a.listen_id.load(Relaxed) == s.id()
+    }
+
+    /// The source (table index) an input strip takes, as the WING shows its
+    /// patch (the ALT input while in use): only `port::SOURCE_GROUPS`.
+    fn strip_source(&self, kind: StripKind, n: u16, s: &Strip) -> Option<usize> {
+        let c = &self.engine.controls;
+        let alt = s.uses_alt_input(c.input_select_global.load(Relaxed), c.global_alt.load(Relaxed));
+        let (g, k) = self.conn_pair(*conn_rows().get(&(kind, n))?, &s.params, alt);
+        source_of(g, u16::try_from(k).ok()?)
+    }
+
+    /// FX slot `i` holds a device that runs (a model, or EXT with a plugin) and hasn't faulted.
+    fn fx_runs(&self, i: usize) -> bool {
+        let (Some(p), Some(rack)) = (self.engine.controls.fx.get(i), self.engine.fx(i)) else { return false };
+        let model = p.model_index();
+        model != FX_NONE && (model != FX_EXT || rack.is_loaded()) && !rack.is_faulted()
     }
 
     /// SOURCE SOLO is on: `$srcsolo`, or the host's own SOLO (as the engine sees it).
@@ -1899,6 +2092,7 @@ impl<'a> Console<'a> {
                     RtaF::Range => set_item(&rv.range, def, v),
                     RtaF::Gain => set_f(&rv.gain_db, v),
                     RtaF::AutoGain => set_b(&rv.autogain, v),
+                    RtaF::Source => return Err(SetError::ReadOnly),
                 }
             }
             Binding::Source(group, n, sf) => {
@@ -1921,6 +2115,41 @@ impl<'a> Console<'a> {
                         self.state.shadow_set(ShadowKey::Row(row), Value::Str(compose_tags(dca, 0, &extra)));
                     }
                     SrcF::MuteState => return Err(SetError::ReadOnly),
+                }
+            }
+            Binding::RtaShown(_) | Binding::FxAssign(..) => return Err(SetError::ReadOnly),
+            Binding::Lib(lf) => {
+                let lib_index = &self.state.lib_index;
+                match lf {
+                    LibF::ActionIndex => lib_index.store(v.as_i32().unwrap_or(0), Relaxed),
+                    LibF::Action => {
+                        let lib = self.state.library();
+                        let i = value::enum_index(def, v).ok_or(SetError::BadValue)?;
+                        let at = lib_index.load(Relaxed);
+                        let action = match def.items().get(i).map_or("IDLE", |it| it.item) {
+                            "IDLE" => None,
+                            // PREV / NEXT move the selection only, as the LIBRARY's keys.
+                            "PREV" => {
+                                lib_index.store((at - 1).max(0), Relaxed);
+                                None
+                            }
+                            "NEXT" => {
+                                lib_index.store((at + 1).min((lib.num_scenes - 1).max(0)), Relaxed);
+                                None
+                            }
+                            "GO" => Some(LibAction::Go(at)),
+                            "GONEXT" => Some(LibAction::GoNext),
+                            "GOPREV" => Some(LibAction::GoPrev),
+                            _ => Some(LibAction::GoTag(at)),
+                        };
+                        if let Some(a) = action {
+                            if !lib.attached {
+                                return Err(SetError::Unsupported("no show to recall scenes from".into()));
+                            }
+                            self.state.push_lib_action(a);
+                        }
+                    }
+                    _ => return Err(SetError::ReadOnly),
                 }
             }
             Binding::Info(InfoF::Name) => {
@@ -2164,6 +2393,7 @@ impl<'a> Console<'a> {
                     InsF::Fx => ins.fx.store(fx_from_item(v).ok_or(SetError::BadValue)?, Relaxed),
                     InsF::Mode => set_item(&ins.mode, def, v),
                     InsF::W => set_f(&ins.weight, v),
+                    InsF::Stat => return Err(SetError::ReadOnly),
                 }
             }
             SF::Main(i, mf) => {
@@ -2226,6 +2456,37 @@ impl<'a> Console<'a> {
                     TapF::Gain => set_f(&b.gain_db, v),
                     TapF::Freq => set_f(&b.freq, v),
                     TapF::Q => set_f(&b.q, v),
+                }
+            }
+            SF::Listen(mode) => {
+                // As the LISTEN key: one strip and block at a time.
+                let a = self.engine.analysis().controls();
+                if v.as_bool() {
+                    let band = match self.sibling(row, "$solobd").filter(|_| mode == listen_mode::BAND) {
+                        Some(r) => self.get(Node::Row(r)).and_then(|b| b.as_i32()).unwrap_or(1) - 1,
+                        None => 0,
+                    };
+                    a.listen_kind.store(kind as i32, Relaxed);
+                    a.listen_id.store(s.id(), Relaxed);
+                    a.listen_band.store(band.max(0), Relaxed);
+                    a.listen_mode.store(mode, Relaxed);
+                } else if self.listening(kind, s, mode) {
+                    a.listen_mode.store(listen_mode::OFF, Relaxed);
+                }
+            }
+            SF::ListenBand => {
+                let band = v.as_i32().unwrap_or(1);
+                self.state.shadow_set(ShadowKey::Row(row), Value::Int(band));
+                if self.listening(kind, s, listen_mode::BAND) {
+                    self.engine.analysis().controls().listen_band.store(band - 1, Relaxed);
+                }
+            }
+            SF::SrcGain | SF::SrcPhantom => {
+                let Some(p) = self.strip_source(kind, n, s).and_then(|i| self.engine.sources().get(i)) else { return Ok(false) };
+                if field == SF::SrcGain {
+                    set_f(&p.gain_db, v)
+                } else {
+                    set_b(&p.phantom, v)
                 }
             }
             SF::ActName | SF::ActColour | SF::ActIcon | SF::SoloLed | SF::EffFader | SF::EffMute | SF::Mode | SF::Slot(_) => {
@@ -2757,9 +3018,170 @@ mod tests {
     }
 
     #[test]
+    fn listen_band_key_and_xover_solo() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let a = e.analysis().controls();
+        let ch2 = c.strip(StripKind::Channel, 2).unwrap().clone();
+        // BAND SOLO on the band chosen first (1 = the low band).
+        c.set(node(&c, "/ch/2/eq/$solobd"), &Value::Int(3)).unwrap();
+        assert_eq!(a.listen_mode.load(Relaxed), listen_mode::OFF, "choosing a band doesn't listen");
+        c.set(node(&c, "/ch/2/eq/$solo"), &Value::Int(1)).unwrap();
+        assert_eq!(a.listen_mode.load(Relaxed), listen_mode::BAND);
+        assert_eq!((a.listen_kind.load(Relaxed), a.listen_id.load(Relaxed)), (StripKind::Channel as i32, ch2.id()));
+        assert_eq!(a.listen_band.load(Relaxed), 2);
+        c.set(node(&c, "/ch/2/eq/$solobd"), &Value::Int(5)).unwrap();
+        assert_eq!(a.listen_band.load(Relaxed), 4, "the band moves while listening");
+        // The UI's LISTEN reads back.
+        a.listen_band.store(1, Relaxed);
+        assert_eq!(c.get(node(&c, "/ch/2/eq/$solobd")), Some(Value::Int(2)));
+        assert_eq!(c.get(node(&c, "/ch/3/eq/$solo")), Some(Value::Int(0)));
+        // One block at a time: KEY SOLO replaces BAND SOLO.
+        c.set(node(&c, "/ch/2/gatesc/$solo"), &Value::Int(1)).unwrap();
+        assert_eq!(a.listen_mode.load(Relaxed), listen_mode::GATE_KEY);
+        assert_eq!(c.get(node(&c, "/ch/2/eq/$solo")), Some(Value::Int(0)));
+        c.set(node(&c, "/ch/2/dynsc/$solo"), &Value::Int(1)).unwrap();
+        assert_eq!(a.listen_mode.load(Relaxed), listen_mode::DYN_KEY);
+        // Releasing another strip's LISTEN changes nothing; this one's ends it.
+        c.set(node(&c, "/ch/9/dynsc/$solo"), &Value::Int(0)).unwrap();
+        assert_eq!(a.listen_mode.load(Relaxed), listen_mode::DYN_KEY);
+        c.set(node(&c, "/ch/2/dynsc/$solo"), &Value::Int(0)).unwrap();
+        assert_eq!(a.listen_mode.load(Relaxed), listen_mode::OFF);
+        // Buses, mains and matrices: XOVER SOLO and BAND SOLO on the 8-band EQ.
+        let bus3 = c.strip(StripKind::Bus, 3).unwrap().clone();
+        c.set(node(&c, "/bus/3/dynxo/$solo"), &Value::Int(1)).unwrap();
+        assert_eq!(a.listen_mode.load(Relaxed), listen_mode::XOVER);
+        assert_eq!((a.listen_kind.load(Relaxed), a.listen_id.load(Relaxed)), (StripKind::Bus as i32, bus3.id()));
+        c.set(node(&c, "/mtx/4/eq/$solobd"), &Value::Int(8)).unwrap();
+        c.set(node(&c, "/mtx/4/eq/$solo"), &Value::Int(1)).unwrap();
+        assert_eq!((a.listen_kind.load(Relaxed), a.listen_band.load(Relaxed)), (StripKind::Matrix as i32, 7));
+        assert_eq!(c.get(node(&c, "/mtx/4/eq/$solo")), Some(Value::Int(1)));
+        assert!(c.is_mapped(node(&c, "/main/1/dynsc/$solo")) && c.is_mapped(node(&c, "/aux/1/eq/$solo")));
+    }
+
+    #[test]
+    fn insert_state_and_fx_assignment() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let stat = |path: &str| c.get(node(&c, path)).unwrap();
+        assert_eq!(stat("/ch/5/preins/$stat"), Value::str("-"));
+        c.set(node(&c, "/ch/5/preins/ins"), &Value::str("FX3")).unwrap();
+        assert_eq!(stat("/ch/5/preins/$stat"), Value::str("N/A"), "FX 3 is empty");
+        c.set(node(&c, "/fx/3/mdl"), &Value::str("PLATE")).unwrap();
+        assert_eq!(stat("/ch/5/preins/$stat"), Value::str("OK"));
+        c.set(node(&c, "/fx/4/mdl"), &Value::str("EXT")).unwrap();
+        c.set(node(&c, "/bus/2/postins/ins"), &Value::str("FX4")).unwrap();
+        assert_eq!(stat("/bus/2/postins/$stat"), Value::str("N/A"), "EXT without a plugin");
+        assert_eq!(c.set(node(&c, "/ch/5/preins/$stat"), &Value::str("OK")), Err(SetError::ReadOnly));
+        // Who uses each slot, in the WING's strip numbering (bus 2 = 50).
+        assert_eq!((stat("/fx/3/$a_chn"), stat("/fx/3/$a_pos")), (Value::Int(5), Value::Int(0)));
+        assert_eq!((stat("/fx/4/$a_chn"), stat("/fx/4/$a_pos")), (Value::Int(50), Value::Int(1)));
+        assert_eq!(stat("/fx/9/$a_chn"), Value::Int(0));
+        c.set(node(&c, "/mtx/8/preins/ins"), &Value::str("FX9")).unwrap();
+        assert_eq!(stat("/fx/9/$a_chn"), Value::Int(76));
+    }
+
+    #[test]
+    fn channel_source_gain_and_phantom() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        // CH 3 on A 4 (port 3): its $g / $vph are that source's GAIN / +48V.
+        c.set(node(&c, "/ch/3/in/conn/grp"), &Value::str("A")).unwrap();
+        c.set(node(&c, "/ch/3/in/conn/in"), &Value::Int(4)).unwrap();
+        c.set(node(&c, "/ch/3/in/set/$g"), &Value::Float(24.0)).unwrap();
+        c.set(node(&c, "/ch/3/in/set/$vph"), &Value::Int(1)).unwrap();
+        let src = e.sources().get(3).unwrap();
+        assert_eq!(src.gain_db.load(), 24.0);
+        assert!(src.phantom.load(Relaxed));
+        src.gain_db.store(10.5);
+        assert_eq!(c.get(node(&c, "/ch/3/in/set/$g")), Some(Value::Float(10.5)));
+        assert_eq!(c.get(node(&c, "/io/in/A/4/g")), Some(Value::Float(10.5)));
+        // The ALT input while in use.
+        c.set(node(&c, "/ch/3/in/conn/altgrp"), &Value::str("B")).unwrap();
+        c.set(node(&c, "/ch/3/in/conn/altin"), &Value::Int(2)).unwrap();
+        c.set(node(&c, "/ch/3/in/set/altsrc"), &Value::Int(1)).unwrap();
+        c.set(node(&c, "/ch/3/in/set/$g"), &Value::Float(30.0)).unwrap();
+        assert_eq!(e.sources().get(49).unwrap().gain_db.load(), 30.0);
+        assert_eq!(src.gain_db.load(), 10.5);
+        // A source that isn't one of Sidecar's (a bus) keeps the value in the shadow store.
+        c.set(node(&c, "/ch/9/in/conn/grp"), &Value::str("BUS")).unwrap();
+        c.set(node(&c, "/ch/9/in/set/$g"), &Value::Float(6.0)).unwrap();
+        assert_eq!(c.get(node(&c, "/ch/9/in/set/$g")), Some(Value::Float(6.0)));
+    }
+
+    #[test]
+    fn rta_shown_and_monitor_level() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let a = e.analysis().controls();
+        let aux2 = c.strip(StripKind::Aux, 2).unwrap().clone();
+        a.strip_kind.store(StripKind::Aux as i32, Relaxed);
+        a.strip_id.store(aux2.id(), Relaxed);
+        assert_eq!(c.get(node(&c, "/cfg/rta/$src")), Some(Value::Int(42)));
+        a.home.decay.store(0, Relaxed);
+        a.eq.decay.store(2, Relaxed);
+        a.view.store(rta_view::HOME, Relaxed);
+        assert_eq!(c.get(node(&c, "/cfg/rta/$dec")), Some(Value::str("SLOW")));
+        a.view.store(rta_view::EQ, Relaxed);
+        assert_eq!(c.get(node(&c, "/cfg/rta/$dec")), Some(Value::str("FAST")));
+        assert!(c.set(node(&c, "/cfg/rta/$src"), &Value::Int(1)).is_err());
+        e.controls.phones.level_db.store(-9.0);
+        assert_eq!(c.get(node(&c, "/cfg/mon/1/$lvlact")), Some(Value::Float(-9.0)));
+    }
+
+    #[test]
+    fn library_scene_control() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let action = node(&c, "/$ctl/lib/$action");
+        // Without a host there is nothing to recall.
+        assert!(matches!(c.set(action, &Value::str("GO")), Err(SetError::Unsupported(_))));
+        st.set_library(Library {
+            attached: true,
+            show: "Sunday".into(),
+            num_scenes: 5,
+            current: 1,
+            scene: "Verse".into(),
+            tag: 7,
+        });
+        assert_eq!(c.get(node(&c, "/$ctl/lib/$actshow")), Some(Value::str("Sunday")));
+        assert_eq!(c.get(node(&c, "/$ctl/lib/$active")), Some(Value::str("Verse")));
+        assert_eq!(c.get(node(&c, "/$ctl/lib/$activeid")), Some(Value::Int(7)));
+        assert_eq!(c.get(node(&c, "/$ctl/lib/$actidx")), Some(Value::Int(1)));
+        c.set(node(&c, "/$ctl/lib/$actionidx"), &Value::Int(3)).unwrap();
+        assert_eq!(c.set(action, &Value::str("GO")), Ok(Value::str("IDLE")));
+        assert_eq!(st.take_lib_action(), Some(LibAction::Go(3)));
+        assert_eq!(st.take_lib_action(), None);
+        // NEXT / PREV move the selection within the show.
+        c.set(action, &Value::str("NEXT")).unwrap();
+        c.set(action, &Value::str("NEXT")).unwrap();
+        assert_eq!(st.lib_index.load(Relaxed), 4);
+        c.set(action, &Value::str("PREV")).unwrap();
+        assert_eq!(c.get(node(&c, "/$ctl/lib/$actionidx")), Some(Value::Int(3)));
+        assert_eq!(st.take_lib_action(), None);
+        c.set(action, &Value::str("GONEXT")).unwrap();
+        c.set(action, &Value::str("GOPREV")).unwrap();
+        c.set(action, &Value::str("GOTAG")).unwrap();
+        assert_eq!(st.take_lib_action(), Some(LibAction::GoNext));
+        assert_eq!(st.take_lib_action(), Some(LibAction::GoPrev));
+        assert_eq!(st.take_lib_action(), Some(LibAction::GoTag(3)));
+        assert_eq!(c.set(node(&c, "/$ctl/lib/$active"), &Value::str("x")), Err(SetError::ReadOnly));
+    }
+
+    #[test]
     fn coverage_counts() {
         let cov = coverage();
         assert!(cov.total > 60000, "{}", cov.total);
-        assert!(cov.mapped > 30000, "{}", cov.report());
+        assert!(cov.mapped > 57000, "{}", cov.report());
+        // Groups that map completely.
+        for g in ["/ch/N/eq", "/ch/N/gatesc", "/ch/N/dynxo", "/bus/N/eq", "/bus/N/preins", "/main/N/postins", "/mtx/N/eq"] {
+            let (m, t) = cov.by_group[g];
+            assert_eq!(m, t, "{g}");
+        }
     }
 }

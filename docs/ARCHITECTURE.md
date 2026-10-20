@@ -643,13 +643,23 @@ dependencies beyond the other Sidecar crates.
   numbers. Ports: AES50 A/B/C 1-48 are hardware ports 1-144 and the WING-LIVE card
   (CRD) is the recorder's playback channels. Nodes without an engine equivalent live
   in a **shadow store** (`WingState`) so clients and snapshots read back what they
-  wrote; they do nothing. `map::coverage()` counts what maps (82.8 % of the leaves).
+  wrote; they do nothing. `map::coverage()` counts what maps (83.7 % of the leaves).
   The console level maps too: TAP WIDTH / TAP EQ (`/ch/N/tapwid`, `peq`), `/cfg/solo`
   (mode, the solo bus, mute, SOURCE SOLO), `/$ctl/cfg/muteovr`, `/cfg/talk`, both
   monitor paths (`/cfg/mon/1` PHONES, `/2` SPEAKERS), the RTA settings and the
   sources of the A/B/C and CRD groups (`/io/in/G/N`: name, colour, icon, gain, mute,
   polarity, +48 V, mode, `#M` tags); the MONITOR outputs are MON 1/2 (PHONES L/R)
-  and 3/4 (SPEAKERS L/R).
+  and 3/4 (SPEAKERS L/R). The strips' `$solo` / `$solobd` nodes drive LISTEN
+  (`AnalysisControls::listen_*`, one strip and block at a time, as the LISTEN key),
+  `in/set/$g` / `$vph` the source the strip is patched to, and the inserts' `$stat`
+  and the FX slots' `$a_chn` / `$a_pos` are computed from the inserts.
+- **Scene control** (`/$ctl/lib`). The show lives on the message thread, so
+  `WingState::library` holds what the host publishes (show name, number of scenes,
+  current scene, its name and tag) and `$action` queues `LibAction`s (GO, GO NEXT,
+  GO PREV, GO TAG; PREV / NEXT only move `$actionidx`). `WingRemote::attachShow`
+  (from `MainComponent`) polls them at 10 Hz through `ld_wing_take_library_action`,
+  recalls through `Show` like MIDI does and republishes with `ld_wing_set_library`.
+  Without an attached show `$action` is refused.
 - **Servers** (`server.rs`, `osc.rs`, `native.rs`, `meters.rs`). Plain `std::net`
   threads, started and stopped from the app: discovery (UDP), OSC (UDP), the native
   protocol (TCP, one thread per client, up to 16; meters as UDP datagrams) and a

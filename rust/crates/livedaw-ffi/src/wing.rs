@@ -8,6 +8,7 @@
 use super::guard;
 use super::session::{str_arg, LdShow, LdString};
 use livedaw_engine::Engine;
+use livedaw_wing::map::{LibAction, Library};
 use livedaw_wing::server::{ClientKind, Config, EngineHandle, EnginePtr, WingServer};
 use livedaw_wing::{snap, Identity, WingState};
 use std::fmt::Write as _;
@@ -228,6 +229,62 @@ pub unsafe extern "C" fn ld_wing_import_show(
     }
 }
 
+/// Publishes the show for `/$ctl/lib`: its name, number of scenes and the
+/// current scene (index, -1 none; name; EDIT TAG, 0 none). From then on the
+/// host runs the scene recalls clients ask for (`ld_wing_take_library_action`).
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn ld_wing_set_library(
+    w: *mut LdWing,
+    show: *const u8,
+    show_len: usize,
+    num_scenes: i32,
+    current: i32,
+    scene: *const u8,
+    scene_len: usize,
+    tag: i32,
+) {
+    let Some(w) = wing(w) else { return };
+    let library = Library {
+        attached: true,
+        show: str_arg(show, show_len).into_owned(),
+        num_scenes,
+        current,
+        scene: str_arg(scene, scene_len).into_owned(),
+        tag,
+    };
+    guard((), || w.state.set_library(library));
+}
+
+/// No host runs scene recalls any more (clients' GO is refused).
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_clear_library(w: *mut LdWing) {
+    if let Some(w) = wing(w) {
+        guard((), || w.state.set_library(Library::default()));
+    }
+}
+
+/// The next scene recall a client asked for: true with `action` 1 GO (`index`
+/// the scene, 0-based), 2 GO NEXT, 3 GO PREV or 4 GO TAG (`index` the tag).
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_take_library_action(w: *mut LdWing, action: *mut i32, index: *mut i32) -> bool {
+    let Some(w) = wing(w) else { return false };
+    let Some(a) = guard(None, || w.state.take_lib_action()) else { return false };
+    let (code, i) = match a {
+        LibAction::Go(i) => (1, i),
+        LibAction::GoNext => (2, 0),
+        LibAction::GoPrev => (3, 0),
+        LibAction::GoTag(t) => (4, t),
+    };
+    if let Some(out) = action.as_mut() {
+        *out = code;
+    }
+    if let Some(out) = index.as_mut() {
+        *out = i;
+    }
+    true
+}
+
 /// How much of the WING tree maps onto the engine (a text report).
 #[no_mangle]
 pub extern "C" fn ld_wing_coverage() -> *mut LdString {
@@ -305,6 +362,34 @@ mod tests {
             assert!(take(ld_wing_coverage()).starts_with("WING tree coverage"));
             ld_wing_stop(w);
             assert!(!ld_wing_running(w) && ld_wing_port(w, 1) == -1);
+            ld_wing_destroy(w);
+            drop(Box::from_raw(engine));
+        }
+    }
+
+    #[test]
+    fn library_actions_reach_the_host() {
+        let engine = Box::into_raw(Box::new(Engine::new(0)));
+        unsafe {
+            let w = ld_wing_create(engine);
+            let (mut action, mut index) = (0, 0);
+            assert!(!ld_wing_take_library_action(w, &mut action, &mut index));
+            let (show, scene) = ("Gig", "Intro");
+            ld_wing_set_library(w, show.as_ptr(), show.len(), 3, 0, scene.as_ptr(), scene.len(), 5);
+            let state = (*w).state.clone();
+            let c = livedaw_wing::Console::new(&*engine, &state);
+            let node = |p: &str| livedaw_wing::schema().resolve(p, &c).unwrap();
+            assert_eq!(c.get(node("/$ctl/lib/$activeid")), Some(livedaw_wing::Value::Int(5)));
+            c.set(node("/$ctl/lib/$actionidx"), &livedaw_wing::Value::Int(2)).unwrap();
+            c.set(node("/$ctl/lib/$action"), &livedaw_wing::Value::str("GO")).unwrap();
+            c.set(node("/$ctl/lib/$action"), &livedaw_wing::Value::str("GOTAG")).unwrap();
+            assert!(ld_wing_take_library_action(w, &mut action, &mut index));
+            assert_eq!((action, index), (1, 2));
+            assert!(ld_wing_take_library_action(w, &mut action, &mut index));
+            assert_eq!((action, index), (4, 2));
+            ld_wing_clear_library(w);
+            assert!(c.set(node("/$ctl/lib/$action"), &livedaw_wing::Value::str("GO")).is_err());
+            drop(c);
             ld_wing_destroy(w);
             drop(Box::from_raw(engine));
         }

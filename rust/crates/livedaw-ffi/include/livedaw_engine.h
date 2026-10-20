@@ -1099,6 +1099,14 @@ extern "C"
     /** Adds a WING .show's snapshot scenes to the show (the console only grows to 40 channels). */
     bool ld_wing_import_show (LdWing*, Show*, const char* path, size_t len, LdString** report);
     LdString* ld_wing_coverage();
+    /** Publishes the show for /$ctl/lib (scene index -1 / tag 0: none); the host then runs the
+        scene recalls clients ask for. ld_wing_clear_library: no host any more. */
+    void ld_wing_set_library (LdWing*, const char* show, size_t showLen, int32_t numScenes, int32_t current,
+                              const char* scene, size_t sceneLen, int32_t tag);
+    void ld_wing_clear_library (LdWing*);
+    /** The next scene recall a client asked for: action 1 GO (index: the scene, 0-based),
+        2 GO NEXT, 3 GO PREV, 4 GO TAG (index: the tag). False if none. */
+    bool ld_wing_take_library_action (LdWing*, int32_t* action, int32_t* index);
     /** MIDI SYSEX CONTROL on the WING tree: cmd 2 executes a node string
         ("/ch.1.fdr=-1,mute=0"), 3 dumps a node, 5 describes one. True with
         *out the data (empty for 2), false with *out the error text. */

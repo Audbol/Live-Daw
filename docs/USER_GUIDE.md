@@ -375,7 +375,7 @@ and open-source projects (see below), and it is **experimental**.
   test battery and model capture, its OSC client), and every OSC path the Bitfocus
   Companion WING module builds that exists in the 3.1 tree. **WING Edit and WING
   Copilot have not been tried**, so they may not work.
-- **What maps:** 82.8 % of the WING 3.1 tree's parameters (56,770 of 68,556,
+- **What maps:** 83.7 % of the WING 3.1 tree's parameters (57,353 of 68,556,
   counting every model's parameters) drive the engine: channels, aux, buses, mains
   and matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
   dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,
@@ -384,9 +384,15 @@ and open-source projects (see below), and it is **experimental**.
   icon, gain, mute, polarity, +48V, mode, mute-group tags), SOLO MODE, the solo bus,
   MUTEGROUP/SIP OVERRIDE and SOURCE SOLO, talkback, both monitor paths (`/cfg/mon`:
   source, levels, DIM, PFL DIM, BAND SOLO, DIRECT IN, EQ, PAN, WIDTH, INVERT, DELAY,
-  LIMITER), the RTA settings and other console settings. The rest (surface layers,
-  user controls, cards, ...) is remembered so clients can read back what they wrote,
-  but does nothing.
+  LIMITER), the RTA settings and other console settings. Clients can also use
+  LISTEN (BAND SOLO, KEY SOLO and XOVER SOLO: `eq/$solo`, `$solobd`, `gatesc/$solo`,
+  `dynsc/$solo`, `dynxo/$solo`), see the inserts' state (`$stat`) and which strip
+  uses each FX slot (`/fx/N/$a_chn`, `$a_pos`), set a channel's source GAIN and
+  +48V from the channel (`in/set/$g`, `$vph`), and recall scenes (`/$ctl/lib`:
+  `$actionidx` with GO, GO NEXT, GO PREV, GO TAG; PREV / NEXT move the selection;
+  `$active`, `$activeid` (the scene's tag) and `$actshow` show the current scene and
+  show). The rest (surface layers, user controls, cards, ...) is remembered so
+  clients can read back what they wrote, but does nothing.
   `cargo run -p livedaw-wing --example wing_coverage` prints the full report.
 - **Files:** LIBRARY > SHOW > **IMPORT WING** applies a WING snapshot (`.snap`) to
   the console, or adds a WING show's (`.show`) snapshots as scenes. The log lists

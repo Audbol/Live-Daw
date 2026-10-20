@@ -4,6 +4,7 @@
 
 #include <juce_data_structures/juce_data_structures.h>
 
+#include <functional>
 #include <vector>
 
 namespace livedaw
@@ -12,6 +13,11 @@ namespace livedaw
 class MixerEngine;
 class Show;
 
+namespace state
+{
+struct ApplyResult;
+}
+
 /** The WING remote: Sidecar answers the Behringer WING's network protocols
     (discovery on UDP 2222, OSC on UDP 2223, the native protocol on TCP 2222
     with meters over UDP) so WING remote clients can control the console, and
@@ -19,11 +25,11 @@ class Show;
     threads in the Rust engine (livedaw-wing); this class is message thread only.
 
     Owned by MixerEngine, which destroys it (stopping the servers) first. */
-class WingRemote
+class WingRemote final : private juce::Timer
 {
 public:
     explicit WingRemote (MixerEngine&);
-    ~WingRemote();
+    ~WingRemote() override;
 
     /** The REMOTE settings (SETUP > REMOTE), kept in the app settings. */
     struct Settings
@@ -76,15 +82,25 @@ public:
     /** Adds the snapshot scenes of a WING .show file to `show`. */
     juce::Result importShow (Show&, const juce::File&, juce::String& report);
 
+    /** Scene control for clients (/$ctl/lib): publishes `show`'s scenes and runs
+        the recalls clients ask for (GO, GO NEXT / PREV, GO TAG), reporting each
+        to `onRecalled`. nullptr detaches (detach before the show goes away). */
+    void attachShow (Show*, std::function<void (const juce::String& what, const state::ApplyResult&)> onRecalled = {});
+
     /** How much of the WING parameter tree maps onto Sidecar. */
     static juce::String coverageReport();
 
     ld::LdWing* getHandle() const noexcept { return handle; }
 
 private:
+    void timerCallback() override;
+    void publishLibrary();
+
     MixerEngine& engine;
     ld::LdWing* handle;
     Settings running;
+    Show* libraryShow = nullptr;
+    std::function<void (const juce::String&, const state::ApplyResult&)> onRecalled;
 
     JUCE_DECLARE_NON_COPYABLE (WingRemote)
 };

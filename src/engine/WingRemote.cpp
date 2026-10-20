@@ -13,6 +13,7 @@ WingRemote::WingRemote (MixerEngine& e) : engine (e), handle (ld::ld_wing_create
 
 WingRemote::~WingRemote()
 {
+    stopTimer();
     ld::ld_wing_destroy (handle);
 }
 
@@ -153,6 +154,71 @@ juce::Result WingRemote::exportSnapshot (const juce::File& file)
 juce::Result WingRemote::importShow (Show& show, const juce::File& file, juce::String& report)
 {
     return show.importWingShow (handle, file, report);
+}
+
+//==============================================================================
+void WingRemote::attachShow (Show* s, std::function<void (const juce::String&, const state::ApplyResult&)> recalled)
+{
+    libraryShow = s;
+    onRecalled = std::move (recalled);
+    if (libraryShow == nullptr)
+    {
+        stopTimer();
+        ld::ld_wing_clear_library (handle);
+        return;
+    }
+    publishLibrary();
+    startTimerHz (10);
+}
+
+void WingRemote::timerCallback()
+{
+    if (libraryShow == nullptr || ! isRunning())
+        return;
+    int32_t action = 0, index = 0;
+    while (ld::ld_wing_take_library_action (handle, &action, &index))
+    {
+        juce::String what;
+        state::ApplyResult result;
+        switch (action)
+        {
+            case 1:
+                if (! juce::isPositiveAndBelow (index, libraryShow->getNumScenes()))
+                    continue;
+                what = "scene " + juce::String (index + 1);
+                result = libraryShow->recallScene (index);
+                break;
+            case 2:
+                what = "next scene";
+                result = libraryShow->recallNext();
+                break;
+            case 3:
+                what = "previous scene";
+                result = libraryShow->recallPrevious();
+                break;
+            case 4:
+                if (libraryShow->findSceneByTag (index) < 0)
+                    continue;
+                what = "scene #" + juce::String (index);
+                result = libraryShow->recallSceneByTag (index);
+                break;
+            default: continue;
+        }
+        if (onRecalled)
+            onRecalled (what + " (WING remote)", result);
+    }
+    publishLibrary();
+}
+
+void WingRemote::publishLibrary()
+{
+    const int current = libraryShow->getCurrentSceneIndex();
+    const auto scene = libraryShow->getScene (current);
+    const auto showName = libraryShow->getName();
+    const auto sceneName = scene ? scene->name : juce::String();
+    const Utf8 name (showName), sceneUtf8 (sceneName);
+    ld::ld_wing_set_library (handle, name.data, name.size, libraryShow->getNumScenes(), current, sceneUtf8.data, sceneUtf8.size,
+                             scene ? scene->tag : 0);
 }
 
 juce::String WingRemote::coverageReport()
