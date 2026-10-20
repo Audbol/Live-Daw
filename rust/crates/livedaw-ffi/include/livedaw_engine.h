@@ -1088,6 +1088,8 @@ extern "C"
     /** The browser's folder: the queue's files (or, with a playlist open, the folder CLOSE returns to). */
     void ld_usb_queue_set_folder (const Engine*, const char* folder, size_t len);
     void ld_usb_queue_refresh (const Engine*);
+    /** RENAME moved `from` (a file or folder) to `to`: the queue's entries under it follow. */
+    void ld_usb_queue_rename (const Engine*, const char* from, size_t fromLen, const char* to, size_t toLen);
     int32_t ld_usb_queue_kind (const Engine*);
     LdString* ld_usb_queue_playlist_file (const Engine*);
     bool ld_usb_queue_dirty (const Engine*);

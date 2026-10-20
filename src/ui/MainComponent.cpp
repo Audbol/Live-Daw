@@ -198,6 +198,16 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     ctx.saveShow = [this] (bool saveAs) { saveShow (saveAs); };
     ctx.openShowFile = [this] (const juce::File& file) { openShowFile (file); };
     ctx.saveShowTo = [this] (const juce::File& file) { saveShowTo (file); };
+    ctx.showFileRenamed = [this] (const juce::File& from, const juce::File& to)
+    {
+        // The open show's file: SAVE writes the new one, and the show takes its name.
+        if (showFile == juce::File() || from != showFile)
+            return;
+        showFile = to;
+        show.setName (to.getFileNameWithoutExtension());
+        updateTitle();
+        display->refreshLibrary();
+    };
 
     // The recording session (the recorder screen, the editor and MULTI TRANSP share it).
     recording = std::make_unique<daw::Session> (engine.getRecorder(), &settings);
@@ -986,13 +996,16 @@ void MainComponent::openShowFile (const juce::File& file)
 void MainComponent::saveShowTo (juce::File file)
 {
     file = file.withFileExtension (Show::fileExtension);
-    if (show.getName() == "Untitled show" || show.getName() == "Imported session")
-        show.setName (file.getFileNameWithoutExtension());
+    // As on the WING, the show is called what its file is called (also after
+    // SAVE AS under a new name).
+    const auto previousName = show.getName();
+    show.setName (file.getFileNameWithoutExtension());
 
     const auto result = show.saveToFile (file);
 
     if (result.failed())
     {
+        show.setName (previousName);
         log.error ("Save failed: " + result.getErrorMessage());
         popups::warn (*display, "SAVE SHOW", result.getErrorMessage());
         return;

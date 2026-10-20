@@ -77,6 +77,22 @@ All notable changes to Sidecar are listed here. Versions follow
 - VIEW > MUTE GROUPS: the SOURCES box always showed "-", even with sources tagged to
   the group on ROUTING > SOURCES > TAGS, and UNASSIGN left those tags. The box now
   shows the tagged source (or how many) and UNASSIGN clears them too.
+- LIBRARY > SHOW > SAVE AS: the show takes the new name (it kept the old one, so the
+  title bar and the LIBRARY showed the name of the show it was copied from).
+- LIBRARY: renaming the open show's file (RENAME at INT / USB) left the show saving to
+  the old file name, so the next SAVE brought the old file back.
+- The parameter bar under the screen printed a long name and value over each other
+  (recorder screen: POSITION, LOOP OUT).
+- Two-line key captions were cut or wrapped onto a third line when the key was narrow
+  (LIBRARY GO PREV / GO NEXT, recorder RECORD ALL CHANNELS); they now shrink to fit.
+- Text cut in fixed-size boxes on large windows: EFFECTS slot numbers 10 and 14 showed
+  "...", the recorder's marker times and the SNIP counter's PARAMETERS were cut.
+- USB recorder / player: renaming a clip (or its folder) that is in the open playlist
+  left the playlist pointing at the old file, so the clip showed as missing
+  (1970-01-01) and couldn't play.
+- SETUP > GENERAL > CONSOLE NAME only took effect after a restart: the running WING
+  remote kept announcing the old name, and the MIDI identity (SysEx) kept it in both
+  places it can be edited.
 
 ## [0.1.0] - beta
 

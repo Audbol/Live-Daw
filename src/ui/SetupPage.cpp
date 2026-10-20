@@ -243,7 +243,14 @@ namespace
             {
                 editText (this, "CONSOLE NAME", ctx.settings.getValue (prefs::consoleName, "LIVE-DAW"), [this] (const juce::String& name)
                 {
-                    ctx.settings.setValue (prefs::consoleName, name.isNotEmpty() ? name.toUpperCase() : juce::String ("LIVE-DAW"));
+                    const auto newName = name.isNotEmpty() ? name.toUpperCase() : juce::String ("LIVE-DAW");
+                    ctx.settings.setValue (prefs::consoleName, newName);
+                    // The running WING remote and the MIDI identity answer with it right away
+                    // (as when it is changed on SETUP > REMOTE).
+                    if (ctx.engine.getWing().isRunning())
+                        ctx.engine.getWing().setName (newName);
+                    if (ctx.midi != nullptr)
+                        ctx.midi->consoleName = newName;
                     repaint();
                 });
             };
@@ -1340,6 +1347,8 @@ namespace
             auto change = [this] (const WingRemote::Settings& s)
             {
                 s.save (ctx.settings);
+                if (ctx.midi != nullptr)
+                    ctx.midi->consoleName = s.name;
                 applySettings();
             };
             wing.addRow ("ENABLE WING REMOTE",

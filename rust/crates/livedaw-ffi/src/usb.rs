@@ -379,6 +379,15 @@ pub unsafe extern "C" fn ld_usb_queue_refresh(e: *const Engine) {
     }
 }
 
+/// RENAME moved `from` (a file or folder) to `to`: the queue's entries under
+/// it follow.
+#[no_mangle]
+pub unsafe extern "C" fn ld_usb_queue_rename(e: *const Engine, from: *const u8, from_len: usize, to: *const u8, to_len: usize) {
+    let Some(d) = deck(e) else { return };
+    let (from, to) = (path_arg(from, from_len), path_arg(to, to_len));
+    guard((), || d.queue().rename_path(&from, &to));
+}
+
 /// 0 a folder's files, 1 a playlist.
 #[no_mangle]
 pub unsafe extern "C" fn ld_usb_queue_kind(e: *const Engine) -> i32 {
