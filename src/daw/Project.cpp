@@ -400,6 +400,23 @@ void Project::setTimeSignature (int numerator, int denominator)
     state.setProperty (ids::sigDen, denominator == 2 || denominator == 8 || denominator == 16 ? denominator : 4, &undo);
 }
 
+bool Project::setSampleRate (double rate)
+{
+    if (rate < 8000.0)
+        return false;
+    for (auto t : tracksTree())
+        if (t.getNumChildren() > 0)
+            return false;
+    const double ratio = rate / getSampleRate();
+    auto scaled = [ratio] (const juce::var& v) { return (int64) std::llround ((double) toInt64 (v) * ratio); };
+    for (auto m : markersTree())
+        m.setProperty (ids::position, scaled (m[ids::position]), &undo);
+    state.setProperty (ids::loopStart, scaled (state[ids::loopStart]), &undo);
+    state.setProperty (ids::loopEnd, scaled (state[ids::loopEnd]), &undo);
+    state.setProperty (ids::sampleRate, rate, &undo);
+    return true;
+}
+
 int64 Project::getLoopStart() const { return juce::jmax<int64> (0, toInt64 (state[ids::loopStart])); }
 int64 Project::getLoopEnd() const { return juce::jmax (getLoopStart(), toInt64 (state[ids::loopEnd])); }
 bool Project::isLoopOn() const { return (bool) state[ids::loopOn]; }
@@ -738,6 +755,34 @@ void Project::crossfadeOverlaps (int64 trackId)
                 setClip (b);
             }
         }
+}
+
+std::vector<Project::Crossfade> Project::getCrossfades (int64 trackId) const
+{
+    std::vector<Crossfade> list;
+    const auto clips = getClips (trackId);
+    for (auto& a : clips)
+        for (auto& b : clips)
+        {
+            const int64 overlap = a.end() - b.start;
+            if (a.id != b.id && a.start < b.start && overlap > 0 && b.end() > a.end() && a.fadeOut == overlap && b.fadeIn == overlap)
+                list.push_back ({ a.id, b.id, overlap });
+        }
+    return list;
+}
+
+void Project::releaseCrossfades (const std::vector<Crossfade>& crossfades)
+{
+    for (auto& x : crossfades)
+    {
+        const auto a = getClip (x.first), b = getClip (x.second);
+        if (a && b && trackOfClip (a->id) == trackOfClip (b->id) && b->start < a->end() && a->start < b->end())
+            continue; // still overlapping: crossfadeOverlaps() fits the fades
+        if (a && a->fadeOut == x.length)
+            setClipProperty (a->id, ids::fadeOut, (int64) 0);
+        if (b && b->fadeIn == x.length)
+            setClipProperty (b->id, ids::fadeIn, (int64) 0);
+    }
 }
 
 //==============================================================================

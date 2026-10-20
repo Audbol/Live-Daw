@@ -263,13 +263,36 @@ void DawEditorState::pruneSelection()
     selection.swap (existing);
 }
 
+std::vector<daw::Project::Crossfade> DawEditorState::crossfadesOn (const std::set<daw::int64>& clipTracks) const
+{
+    std::vector<daw::Project::Crossfade> list;
+    for (auto t : clipTracks)
+        for (auto& x : project.getCrossfades (t))
+            list.push_back (x);
+    return list;
+}
+
+void DawEditorState::fitCrossfades (const std::vector<daw::Project::Crossfade>& before, const std::set<daw::int64>& clipTracks)
+{
+    if (! session.autoCrossfade)
+        return;
+    project.releaseCrossfades (before);
+    for (auto t : clipTracks)
+        project.crossfadeOverlaps (t);
+}
+
 void DawEditorState::deleteSelection()
 {
     if (selection.empty())
         return;
+    std::set<daw::int64> clipTracks;
+    for (auto id : selection)
+        clipTracks.insert (project.trackOfClip (id));
+    const auto crossfades = crossfadesOn (clipTracks);
     project.beginEdit ("Delete clips");
     for (auto id : selection)
         project.removeClip (id);
+    fitCrossfades (crossfades, {});
     clearSelection();
 }
 
@@ -329,9 +352,14 @@ void DawEditorState::cutSelection()
     copySelection();
     if (selection.empty())
         return;
+    std::set<daw::int64> clipTracks;
+    for (auto id : selection)
+        clipTracks.insert (project.trackOfClip (id));
+    const auto crossfades = crossfadesOn (clipTracks);
     project.beginEdit ("Cut clips");
     for (auto id : selection)
         project.removeClip (id);
+    fitCrossfades (crossfades, {});
     clearSelection();
 }
 
@@ -401,9 +429,14 @@ void DawEditorState::nudge (int direction, bool fine)
         delta = juce::jmax (delta, -c.start);
     if (delta == 0)
         return;
+    std::set<daw::int64> clipTracks;
+    for (auto& c : list)
+        clipTracks.insert (project.trackOfClip (c.id));
+    const auto crossfades = crossfadesOn (clipTracks);
     project.beginEdit ("Nudge");
     for (auto& c : list)
         project.setClip (daw::clipmath::moveTo (c, c.start + delta));
+    fitCrossfades (crossfades, clipTracks);
 }
 
 void DawEditorState::toggleMuteSelection()

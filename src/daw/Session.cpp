@@ -312,6 +312,18 @@ juce::Result Session::record()
     if (! any)
         return juce::Result::fail ("No track is armed: press R on the tracks to record");
 
+    // Takes are recorded at the console's rate: a project at another rate
+    // would place and play them at the wrong length and speed.
+    if (! rateMatches())
+    {
+        const auto rate = recorder.getSampleRate();
+        project.beginEdit ("Sample rate");
+        if (! project.setSampleRate (rate))
+            return juce::Result::fail ("The project runs at " + juce::String (project.getSampleRate() / 1000.0, 1) + " kHz but the console at "
+                                       + juce::String (rate / 1000.0, 1) + " kHz: record into a new project (or set the clock rate back)");
+        message ("The project (no audio yet) now runs at the console's " + juce::String (rate / 1000.0, 1) + " kHz");
+    }
+
     if (const auto why = recordFormat.check (2, recorder.getSampleRate()); why.isNotEmpty())
         return juce::Result::fail (why + " (choose another record format)");
     if (auto r = ensureFolder(); r.failed())

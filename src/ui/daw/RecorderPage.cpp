@@ -826,8 +826,11 @@ void RecorderPage::virtualSoundcheck()
     auto& engine = ctx.engine;
     if (isVirtualSoundcheckOn())
     {
-        // Back to the live inputs.
-        engine.setGlobalAlt (false);
+        // Back to the live inputs, with INPUT SELECT as it was before.
+        const auto [global, alt] = inputSelectBeforeSoundcheck.value_or (std::pair { engine.isInputSelectGlobal(), false });
+        inputSelectBeforeSoundcheck.reset();
+        engine.setInputSelectGlobal (global);
+        engine.setGlobalAlt (alt);
         ctx.log.info ("Virtual soundcheck off: the channels listen to their MAIN inputs");
         return;
     }
@@ -853,6 +856,7 @@ void RecorderPage::virtualSoundcheck()
         for (auto& s : engine.getChannels())
             if (s->getNumber() == r.channelNumber)
                 s->setAltInput (Recorder::playbackSource (r.playChannel), r.stereo ? Recorder::playbackSource (r.playChannel + 1) : -1);
+    inputSelectBeforeSoundcheck = std::pair { engine.isInputSelectGlobal(), engine.isGlobalAlt() };
     engine.setInputSelectGlobal (true);
     engine.setGlobalAlt (true);
     ctx.log.info ("Virtual soundcheck: " + juce::String ((int) routes.size()) + " channels play back their tracks (ALT inputs, INPUT SELECT GLOBAL)");

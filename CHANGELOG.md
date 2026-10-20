@@ -135,6 +135,29 @@ All notable changes to Sidecar are listed here. Versions follow
   500 ft or 24000 samples, so the two controls disagreed.
 - INPUT: the TRIM & BALANCE pad's balance handle follows the ST key while the screen
   is open (it stayed disabled, or enabled, until the screen was opened again).
+- Multitrack editor: an automatic crossfade stayed on both clips after they were
+  moved apart (or one was deleted), so each faded out or in over nothing. Moves,
+  nudges, trims, deletes and cuts now take back the fades of crossfades whose
+  clips no longer overlap; nudges and trims also crossfade new overlaps, as moves
+  did.
+- Recorder: after the clock rate changed (SETUP > AUDIO), recording went on into the
+  open project at its old rate, so the take was placed and played at the wrong
+  length and speed (an octave off after a 48 / 96 kHz change). A project without
+  audio now moves to the console's rate (markers and loop keep their times), and
+  one with audio refuses to record and says why.
+- Recorder screen: pressing VIRTUAL SOUNDCHECK again went back to MAIN but left
+  SETUP > AUDIO > GLOBAL INPUT SELECT OVERRIDE on, so channels set to ALT on their
+  own were stuck on MAIN. Leaving virtual soundcheck now puts INPUT SELECT back as
+  it was.
+- SETUP > GENERAL counted one DSP thread less (the workers only) than the event log
+  and SETUP > LOG, which count the audio thread too.
+- LIBRARY > SNAP / SNIP > EXPORT: the scene or snippet in the file kept its old name
+  when it was exported under another one, so the list showed the file as "Scene 1x"
+  but IMPORT added "Scene 1". The exported scene or snippet now takes the name it
+  was saved under.
+- LIBRARY (INT / USB) and the USB RECORDER / PLAYER browser didn't show files copied
+  into, deleted from or renamed in their folder outside the app until the screen
+  was opened again; they now follow such changes within a second.
 
 ## [0.1.0] - beta
 

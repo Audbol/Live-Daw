@@ -147,6 +147,11 @@ struct DawEditorState
     /** Moves the selected clips by one grid step (or 10 ms without snapping). */
     void nudge (int direction, bool fine);
     void toggleMuteSelection();
+    /** The crossfades on `tracks` before an edit of their clips. */
+    std::vector<daw::Project::Crossfade> crossfadesOn (const std::set<daw::int64>& clipTracks) const;
+    /** After the edit, with auto crossfades on: crossfades whose clips came
+        apart lose their fades, and the overlaps on `clipTracks` get crossfades. */
+    void fitCrossfades (const std::vector<daw::Project::Crossfade>& before, const std::set<daw::int64>& clipTracks);
     void addTrack();
     void deleteTrack (daw::int64 trackId);
     void selectTrack (daw::int64 trackId);

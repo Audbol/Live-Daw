@@ -447,6 +447,7 @@ void UsbRecorderPage::reload()
             rows.push_back ({ item.file, (int) item.kind, 0, false, false, item.modified });
     }
     folderShown = u.getBrowserFolder();
+    folderShownTime = folderShown.getLastModificationTime();
     queueVersion = u.getQueueVersion();
     selected = -1;
     for (size_t i = 0; i < rows.size(); ++i)
@@ -980,6 +981,16 @@ void UsbRecorderPage::timerCallback()
 
     if (u.getQueueVersion() != queueVersion || (! playlistView && u.getBrowserFolder() != folderShown))
         reload();
+    else if (! playlistView && isShowing() && ++folderCheckTicks >= 20)
+    {
+        // The folder changed on disk (files copied in, deleted or renamed outside the app).
+        folderCheckTicks = 0;
+        if (folderShown.getLastModificationTime() != folderShownTime)
+        {
+            u.refreshQueue();
+            reload();
+        }
+    }
 
     // Repaint what changed.
     juce::String state;

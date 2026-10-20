@@ -822,6 +822,10 @@ void DawLanes::beginMove (const juce::MouseEvent& e)
             if (state.isSelected (c.id))
                 moving.push_back ({ c, r });
     copying = e.mods.isCommandDown();
+    std::set<int64> tracks;
+    for (auto& m : moving)
+        tracks.insert (state.rows[(size_t) m.row].id);
+    crossfadesBefore = state.crossfadesOn (tracks);
     state.project.beginEdit (copying ? "Copy clips" : "Move clips");
     if (copying)
         for (auto& m : moving)
@@ -882,7 +886,10 @@ void DawLanes::mouseDrag (const juce::MouseEvent& e)
         {
             case Zone::Body:      beginMove (e); break;
             case Zone::TrimStart:
-            case Zone::TrimEnd:   state.project.beginEdit ("Trim clip"); break;
+            case Zone::TrimEnd:
+                crossfadesBefore = state.crossfadesOn ({ state.rows[(size_t) down.row].id });
+                state.project.beginEdit ("Trim clip");
+                break;
             case Zone::FadeIn:
             case Zone::FadeOut:   state.project.beginEdit ("Fade"); break;
             case Zone::Gain:      state.project.beginEdit ("Clip gain"); break;
@@ -950,14 +957,23 @@ void DawLanes::mouseUp (const juce::MouseEvent& e)
 {
     if (dragging)
     {
-        if (down.zone == Zone::Body && state.session.autoCrossfade)
+        // Overlaps get crossfades; crossfades the edit pulled apart lose their fades.
+        if (down.zone == Zone::Body)
         {
             std::set<int64> tracks;
             for (auto& m : moving)
+            {
                 tracks.insert (state.project.trackOfClip (m.original.id));
-            for (auto t : tracks)
-                state.project.crossfadeOverlaps (t);
+                if (juce::isPositiveAndBelow (m.row, (int) state.rows.size()))
+                    tracks.insert (state.rows[(size_t) m.row].id); // where it came from (and a copy stays)
+            }
+            state.fitCrossfades (crossfadesBefore, tracks);
         }
+        else if (down.zone == Zone::TrimStart || down.zone == Zone::TrimEnd)
+        {
+            state.fitCrossfades (crossfadesBefore, { state.project.trackOfClip (downClip.id) });
+        }
+        crossfadesBefore.clear();
         state.session.setGestureActive (false);
         if (! rubber.isEmpty())
             repaint (rubber.expanded (2));
