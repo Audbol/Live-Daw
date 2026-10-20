@@ -128,6 +128,8 @@ All notable changes to Sidecar are listed here. Versions follow
   SETUP > AUDIO > GLOBAL INPUT SELECT OVERRIDE on, so channels set to ALT on their
   own were stuck on MAIN. Leaving virtual soundcheck now puts INPUT SELECT back as
   it was.
+- SETUP > GENERAL counted one DSP thread less (the workers only) than the event log
+  and SETUP > LOG, which count the audio thread too.
 
 ## [0.1.0] - beta
 

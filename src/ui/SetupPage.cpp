@@ -319,7 +319,8 @@ namespace
             auto* device = ctx.deviceManager.getCurrentAudioDevice();
             const std::pair<juce::String, juce::String> info[] = {
                 { "CONSOLE NAME (network)", ctx.settings.getValue (prefs::consoleName, "SIDECAR") },
-                { "ENGINE", "RUST, " + juce::String (ctx.engine.getNumWorkerThreads()) + " DSP THREADS" },
+                // The audio thread and the workers, as the log and SETUP > LOG count them.
+                { "ENGINE", "RUST, " + juce::String (ctx.engine.getNumWorkerThreads() + 1) + " DSP THREADS" },
                 { "SOFTWARE", juce::String (kAppName).toUpperCase() + " " + juce::String (JUCE_APPLICATION_VERSION_STRING) },
                 { "AUDIO DEVICE", device != nullptr ? device->getName().toUpperCase() : juce::String ("NONE") },
             };
