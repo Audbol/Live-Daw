@@ -603,14 +603,17 @@ public:
         inner.removeFromLeft (inner.getHeight() * 0.5f);
         auto clear = clearArea.toFloat().reduced (clearArea.getHeight() * 0.24f);
         inner.removeFromRight (clearArea.getWidth());
-        const auto name = scribbleName (strip);
+        // The text as typed (a space at its end included), the caret where
+        // typing goes (the arrow keys move it).
+        const auto name = keyboard->getText();
         g.setColour (colours::ink);
         const juce::Font font (homeFont (TypeScale::value * 1.2f, inner.getHeight() * 0.92f));
         g.setFont (font);
         g.drawText (name, inner.toNearestInt(), juce::Justification::centredLeft, true);
         if (caretOn)
         {
-            const float x = inner.getX() + juce::jmin (inner.getWidth(), juce::GlyphArrangement::getStringWidth (font, name)) + 2.0f;
+            const auto beforeCaret = name.substring (0, keyboard->getCaretPosition());
+            const float x = inner.getX() + juce::jmin (inner.getWidth(), juce::GlyphArrangement::getStringWidth (font, beforeCaret)) + 2.0f;
             g.setColour (colours::accent);
             g.fillRect (x, inner.getY(), 2.0f, inner.getHeight());
         }

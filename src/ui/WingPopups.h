@@ -49,6 +49,8 @@ public:
 
     void setText (const juce::String&);
     juce::String getText() const;
+    /** Where typing goes in the text (0 = before the first character). */
+    int getCaretPosition() const;
     void setActionText (const juce::String&);
 
     /** The icon drawn left of the text in the field. */

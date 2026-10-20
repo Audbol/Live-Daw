@@ -60,6 +60,10 @@ All notable changes to Sidecar are listed here. Versions follow
 - Spills (DCA SPILL, a bus's sources) didn't follow the console: a strip assigned to
   the spilled DCA, or a send switched on to the spilled bus, only showed up after
   another layer change. The spill now updates at once.
+- HOME > NAME: the name field always drew its caret at the end and dropped a space
+  typed at the end, so after the arrow keys moved the caret, typing went somewhere
+  else than the caret showed. The field now shows the text as typed with the caret
+  where typing goes.
 
 ## [0.1.0] - beta
 
