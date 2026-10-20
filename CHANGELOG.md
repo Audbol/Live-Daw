@@ -3,6 +3,22 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Added
+
+- Plugin delay compensation: the latency each hosted plugin reports (and its
+  changes) is compensated so that every source summed into a bus, main or matrix
+  arrives in time, across bus stages; a plugin's FX MIX delays its dry signal to
+  match. On by default; SETUP > PLUGINS turns it off and shows the total
+  compensation and each loaded plugin's latency. Compensation stops at 8192
+  samples; a plugin reporting more is logged and the limit is shown.
+
+### Fixed
+
+- The recorder screen's keys, labels and readouts fit their boxes at every window
+  size, from 1152 x 680 to 4K and ultrawide.
+
 ## [0.1.0] - beta
 
 The first public release. Sidecar was developed as "Live DAW" before it was renamed;

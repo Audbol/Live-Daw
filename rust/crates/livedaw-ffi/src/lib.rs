@@ -26,12 +26,12 @@ use livedaw_engine::params::{
 use livedaw_engine::params::{MonitorPathParams, MonitorSourceParams};
 use livedaw_engine::sources::SourceParams;
 use livedaw_engine::talk::{TalkParams, TalkPathParams};
-use livedaw_engine::{Engine, EngineControls, InsertCallbacks, SendParams, Strip, StripKind, StripMeters, StripParams};
+use livedaw_engine::{pdc_tap, Engine, EngineControls, InsertCallbacks, SendParams, Strip, StripKind, StripMeters, StripParams};
 use std::mem::{offset_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-pub const LD_ABI_VERSION: i32 = 9;
+pub const LD_ABI_VERSION: i32 = 10;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -503,6 +503,63 @@ pub unsafe extern "C" fn ld_fx_num_users(e: *const Engine, slot: i32) -> i32 {
     engine(e).map_or(0, |e| if slot >= 0 { e.fx_users(slot as usize).len() as i32 } else { 0 })
 }
 
+// ---- plugin delay compensation (ABI 10) -------------------------------------------
+
+/// Any thread: the latency (samples) the plugin in slot `slot` reports
+/// (`AudioProcessor::getLatencySamples`). Reset when a plugin is installed.
+#[no_mangle]
+pub unsafe extern "C" fn ld_fx_set_latency(e: *const Engine, slot: i32, samples: i32) {
+    if let Some(r) = engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)) {
+        r.set_latency(samples.max(0) as u32);
+    }
+}
+
+/// The latency reported for slot `slot`'s plugin (0 without one).
+#[no_mangle]
+pub unsafe extern "C" fn ld_fx_latency(e: *const Engine, slot: i32) -> i32 {
+    engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)).map_or(0, |r| r.reported_latency() as i32)
+}
+
+/// DELAY COMPENSATION on / off (default on); takes effect with the next plan.
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_set_pdc(e: *const Engine, on: bool) {
+    if let Some(e) = engine(e) {
+        e.pdc().enabled.store(on, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_pdc(e: *const Engine) -> bool {
+    engine(e).is_some_and(|e| e.pdc().enabled.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Message thread: works out the compensation plan now (`ld_engine_collect`
+/// also does).
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_update_pdc(e: *const Engine) {
+    if let Some(e) = engine(e) {
+        guard((), || e.update_pdc());
+    }
+}
+
+/// The plan's longest path latency (samples): what the compensation aligns to.
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_pdc_total(e: *const Engine) -> i32 {
+    engine(e).map_or(0, |e| e.pdc().total.load(std::sync::atomic::Ordering::Relaxed) as i32)
+}
+
+/// A path needs more compensation than `kMaxPdc` samples (it stays late by the rest).
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_pdc_limited(e: *const Engine) -> bool {
+    engine(e).is_some_and(|e| e.pdc().limited.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// The plugin latency of a strip's output (its inserts plus what it was aligned to).
+#[no_mangle]
+pub unsafe extern "C" fn ld_strip_latency(s: *const Strip) -> i32 {
+    strip(s).map_or(0, |s| s.pdc.latency(pdc_tap::OUT) as i32)
+}
+
 // ---- strips ---------------------------------------------------------------------
 
 #[no_mangle]
@@ -646,6 +703,38 @@ mod tests {
             ld_strip_response(ch, 1, freqs.as_ptr(), out.as_mut_ptr(), 2, 48000.0);
             assert!(out[0].abs() < 0.01 && out[1].abs() < 0.01);
             ld_engine_collect(e);
+            ld_engine_destroy(e);
+        }
+    }
+
+    unsafe extern "C" fn pass(_: *mut std::ffi::c_void, _: *const *mut f32, _: i32, _: i32) -> i32 {
+        0
+    }
+
+    #[test]
+    fn delay_compensation_through_the_c_abi() {
+        unsafe {
+            let e = ld_engine_create(0);
+            ld_engine_set_num_channels(e, 2);
+            assert!(ld_engine_pdc(e));
+            let cb = InsertCallbacks { process: pass, release: None, ctx: std::ptr::null_mut() };
+            ld_fx_set(e, 2, &cb);
+            ld_fx_set_latency(e, 2, 256);
+            assert_eq!(ld_fx_latency(e, 2), 256);
+            let ch = ld_engine_strip_at(e, 0, 0);
+            let p = &*ld_strip_params(ch);
+            p.pre_insert.on.store(true, std::sync::atomic::Ordering::Relaxed);
+            p.pre_insert.fx.store(2, std::sync::atomic::Ordering::Relaxed);
+            ld_engine_update_pdc(e);
+            assert_eq!(ld_strip_latency(ch), 256);
+            assert_eq!(ld_strip_latency(ld_engine_strip_at(e, StripKind::Main as i32, 0)), 256);
+            assert_eq!(ld_engine_pdc_total(e), 256);
+            assert!(!ld_engine_pdc_limited(e));
+            ld_engine_set_pdc(e, false);
+            ld_engine_collect(e);
+            assert_eq!(ld_engine_pdc_total(e), 0);
+            ld_fx_set(e, 2, std::ptr::null());
+            assert_eq!(ld_fx_latency(e, 2), 0);
             ld_engine_destroy(e);
         }
     }

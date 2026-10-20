@@ -196,6 +196,19 @@ views after a show load changes the console from Rust.
     assigned. The engine measures each slot's load.
   - Devices are stereo. A mono strip feeds both inputs and takes the average of the
     two outputs back.
+- **Plugin delay compensation** (`livedaw-engine/src/pdc.rs`). `FxSlots` passes each
+  plugin's `getLatencySamples()` to its slot (`ld_fx_set_latency`, an atomic store,
+  also from the plugin's latency-change notification). On the message thread,
+  `Engine::update_pdc` (run by `ld_engine_collect`) works out a plan stage by stage:
+  each strip's tap latencies (TAP, PFL, POST, OUT) from its inserts, and for every
+  bus, main and matrix the latency of its latest enabled source, which it aligns
+  the others to and carries on into its own taps. The audio thread reads a source
+  delayed by `target - latency` from a history ring of that tap: one ring per
+  (strip, tap) serves every destination, holds 8192 samples plus a block, stores
+  each sample twice so any window is contiguous, and is allocated by the plan only
+  where a delay is needed (retired when none is). Input channels write their rings
+  after automix, the others right after they run. A slot's FX MIX delays its dry
+  copy by the plugin's latency from a ring of its own.
 - **FX in sessions.** A slot saves its device and parameter values. Plugins are
   reached through a *plugin bridge* implemented by `Show`: capture a slot (description
   XML + base64 state), restore one (state only, or by creating the plugin on show load)

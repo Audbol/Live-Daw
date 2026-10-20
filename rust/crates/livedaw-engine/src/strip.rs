@@ -19,6 +19,7 @@ use crate::analyser::{listen_mode, rta_tap, Probes, StripProbe};
 use crate::fx::FxRack;
 use crate::monitor::SoloPatch;
 use crate::params::{DcaParams, DynSlotParams, FxParams, StripKind, StripMeters, StripParams, NUM_MAINS, NUM_MATRICES};
+use crate::pdc::{pdc_tap, StripPdc};
 use crate::sends::SendBank;
 use crate::solo::StripConsole;
 use crate::tapsend::TapShaper;
@@ -213,6 +214,8 @@ pub struct Strip {
     /// Console-level state: talk tags, MUTEGROUP/SIP OVERRIDE, the block's
     /// effective solo and mute decision (`solo.rs`).
     pub console: StripConsole,
+    /// Plugin delay compensation: tap latencies and history rings (`pdc.rs`).
+    pub pdc: StripPdc,
     dsp: UnsafeCell<StripDsp>,
     last_main: [UnsafeCell<[f32; 2]>; NUM_MAINS],
     last_mtx: [UnsafeCell<[f32; 2]>; NUM_MATRICES],
@@ -234,6 +237,7 @@ impl Strip {
             name: Mutex::new(String::new()),
             tags: Mutex::new(String::new()),
             console: StripConsole::default(),
+            pdc: StripPdc::default(),
             dsp: UnsafeCell::new(StripDsp::new()),
             last_main: Default::default(),
             last_mtx: Default::default(),
@@ -302,7 +306,7 @@ impl Strip {
     }
 
     /// The INS 2 slot runs an FX slot (not automix), with `fx` its slot index.
-    fn post_insert_fx(&self) -> Option<i32> {
+    pub(crate) fn post_insert_fx(&self) -> Option<i32> {
         let ins = &self.params.post_insert;
         (self.has_post_insert() && ins.on.load(Relaxed) && ins.mode.load(Relaxed) == 0).then(|| ins.fx.load(Relaxed))
     }
@@ -319,10 +323,52 @@ impl Strip {
         (p.pre_insert.on.load(Relaxed) && p.pre_insert.fx.load(Relaxed) >= 0) || self.post_insert_fx().is_some_and(|fx| fx >= 0)
     }
 
+    /// The plugin latency of each of the strip's taps (`pdc_tap` order)
+    /// relative to its input, given the latency of every FX slot: INS 1 counts
+    /// from the pre-fader point on (and at the TAP point when that follows
+    /// INS 1 in the process order), INS 2 after the fader.
+    pub(crate) fn own_latency(&self, fx_latency: &[u32]) -> [u32; pdc_tap::COUNT] {
+        let p = &self.params;
+        let slot = |fx: i32| usize::try_from(fx).ok().and_then(|i| fx_latency.get(i)).copied().unwrap_or(0);
+        let pre = if p.pre_insert.on.load(Relaxed) { slot(p.pre_insert.fx.load(Relaxed)) } else { 0 };
+        let post = self.post_insert_fx().map_or(0, slot);
+        let tap = if self.has_selectable_tap() {
+            match p.tap.load(Relaxed).clamp(0, 7) as usize {
+                tap::IN | tap::FILT => 0,
+                // TAP 3/4/5: after the 1st/2nd/3rd block of the process order.
+                t @ 2..=4 => {
+                    if self.pre_fader_order().iter().take(t - 1).any(|&b| b == b'I') {
+                        pre
+                    } else {
+                        0
+                    }
+                }
+                tap::POST => pre + post,
+                _ => pre,
+            }
+        } else {
+            pre
+        };
+        [tap, pre, pre + post, pre + post]
+    }
+
+    /// Writes this block's taps into their compensation rings (the ones that exist).
+    ///
+    /// # Safety
+    /// Owning task only, after the strip ran (and, for input channels, after automix).
+    pub(crate) unsafe fn write_pdc(&self, n: usize) {
+        let (d, p) = (self.dsp(), &self.pdc);
+        p.write(pdc_tap::TAP, d.tap_signal(0, n), d.tap_signal(1, n));
+        p.write(pdc_tap::PFL, d.pfl(0, n), d.pfl(1, n));
+        p.write(pdc_tap::POST, d.post(0, n), d.post(1, n));
+        p.write(pdc_tap::OUT, d.out(0, n), d.out(1, n));
+    }
+
     /// # Safety
     /// The audio thread must not be able to reach this strip (device stopped or
     /// strip not yet published).
     pub(crate) unsafe fn prepare(&self, sample_rate: f64, max_block: usize) {
+        self.pdc.drop_rings(); // sized for the old block size; the next plan rebuilds them
         let d = &mut *self.dsp.get();
         d.sample_rate = sample_rate;
         d.max_block = max_block.max(1);

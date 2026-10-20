@@ -4,8 +4,14 @@
 namespace livedaw
 {
 
-struct FxSlots::Holder
+struct FxSlots::Holder final : private juce::AudioProcessorListener
 {
+    Holder (ld::Engine* e, int s) : engine (e), slot (s) {}
+
+    ld::Engine* engine;
+    int slot;
+    /** Cleared once replaced: a retired plugin must not report into its old slot. */
+    std::atomic<bool> installed { true };
     std::unique_ptr<juce::AudioPluginInstance> plugin;
     juce::AudioBuffer<float> scratch;
     juce::MidiBuffer midi;
@@ -57,8 +63,33 @@ struct FxSlots::Holder
     /** Message thread (from ld_engine_collect / engine destruction). */
     static void release (void* ctx)
     {
-        delete static_cast<Holder*> (ctx);
+        auto* h = static_cast<Holder*> (ctx);
+        h->plugin->removeListener (h);
+        delete h;
     }
+
+    /** Message thread: reports the latency to the engine and follows its changes. */
+    void listen()
+    {
+        reportLatency();
+        plugin->addListener (this);
+    }
+
+    /** Any thread (a plugin may change its latency inside processBlock): an atomic store. */
+    void reportLatency()
+    {
+        if (installed.load())
+            ld::ld_fx_set_latency (engine, slot, plugin->getLatencySamples());
+    }
+
+private:
+    void audioProcessorChanged (juce::AudioProcessor*, const ChangeDetails& details) override
+    {
+        if (details.latencyChanged)
+            reportLatency();
+    }
+
+    void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override {}
 };
 
 namespace
@@ -89,6 +120,7 @@ void FxSlots::prepare (double sampleRate, int maxBlockSize)
         {
             h->plugin->releaseResources();
             h->prepare (sampleRate, maxBlockSize);
+            h->reportLatency(); // plugins may change it in prepareToPlay
         }
     }
 }
@@ -98,19 +130,37 @@ void FxSlots::setPlugin (int slot, std::unique_ptr<juce::AudioPluginInstance> pl
     if (! juce::isPositiveAndBelow (slot, kNumFx))
         return;
 
+    if (auto* old = holderAt (slot))
+        old->installed = false;
+
     if (plugin == nullptr)
     {
         ld::ld_fx_set (engine, slot, nullptr);
         return;
     }
 
-    auto* holder = new Holder();
+    auto* holder = new Holder (engine, slot);
     holder->plugin = std::move (plugin);
     configureForStereo (*holder->plugin);
     holder->prepare (ld::ld_engine_sample_rate (engine), ld::ld_engine_block_size (engine));
 
     const ld::InsertCallbacks callbacks { &Holder::process, &Holder::release, holder };
     ld::ld_fx_set (engine, slot, &callbacks);
+    holder->listen(); // after ld_fx_set, which resets the slot's latency
+}
+
+bool FxSlots::updateLatencies()
+{
+    bool changed = false;
+    for (int slot = 0; slot < kNumFx; ++slot)
+    {
+        if (auto* h = holderAt (slot); h != nullptr && h->plugin->getLatencySamples() != getLatency (slot))
+        {
+            h->reportLatency();
+            changed = true;
+        }
+    }
+    return changed;
 }
 
 juce::AudioPluginInstance* FxSlots::getPlugin (int slot) const noexcept

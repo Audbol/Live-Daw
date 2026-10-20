@@ -106,6 +106,23 @@ public:
     /** The RTA, LR vector scope and LISTEN (BAND / KEY / XOVER SOLO) of the analysed strip. */
     Analysis getAnalysis() const noexcept { return Analysis (engine); }
 
+    //==============================================================================
+    // Plugin delay compensation (SETUP > PLUGINS, an app setting): every bus,
+    // main and matrix reads its sources delayed so that paths through plugins
+    // of different latencies arrive together, up to kMaxCompensation samples.
+    static constexpr int kMaxCompensation = ld::kMaxPdc;
+    void setLatencyCompensation (bool on) noexcept { ld::ld_engine_set_pdc (engine, on); }
+    bool isLatencyCompensationOn() const noexcept { return ld::ld_engine_pdc (engine); }
+    /** Message thread: reads the plugins' latencies and works out the
+        compensation now (the engine's timer does this 10 times a second). */
+    void updateLatencyCompensation();
+    /** The longest path latency the compensation aligns the console to (samples). */
+    int getTotalCompensation() const noexcept { return ld::ld_engine_pdc_total (engine); }
+    /** A path needs more than kMaxCompensation samples (it stays late by the rest). */
+    bool isCompensationLimited() const noexcept { return ld::ld_engine_pdc_limited (engine); }
+    /** Message thread: plugin warnings (a latency beyond kMaxCompensation) for the event log. */
+    std::function<void (const juce::String&)> onPluginWarning;
+
 private:
     ld::Engine* engine;
     ld::EngineControls& controls;
@@ -350,6 +367,8 @@ private:
     std::vector<std::unique_ptr<Worker>> workers;
 
     std::array<StripList, kNumStripKinds> lists;
+    /** Plugins already reported for a latency beyond kMaxCompensation (per FX slot). */
+    std::array<juce::AudioProcessor*, kNumFx> warnedLatency {};
     int structureVersion = 0;
 
     juce::StringArray inputNames, outputNames;

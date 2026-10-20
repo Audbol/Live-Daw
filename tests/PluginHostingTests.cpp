@@ -101,3 +101,187 @@ public:
 };
 
 static PluginHostingTests pluginHostingTests;
+
+//==============================================================================
+namespace
+{
+    /** A plugin with latency, as a lookahead limiter or a linear-phase EQ has:
+        it delays its input by its reported latency, which can change while it
+        runs (setLatencySamples notifies the host, as JUCE plugin wrappers do). */
+    class LatencyPlugin final : public juce::AudioPluginInstance
+    {
+    public:
+        explicit LatencyPlugin (int latency)
+            : juce::AudioPluginInstance (BusesProperties()
+                                             .withInput ("In", juce::AudioChannelSet::stereo())
+                                             .withOutput ("Out", juce::AudioChannelSet::stereo()))
+        {
+            history.setSize (2, kHistory);
+            history.clear();
+            setLatencySamples (latency);
+        }
+
+        void fillInPluginDescription (juce::PluginDescription& d) const override
+        {
+            d.name = getName();
+            d.pluginFormatName = "Fake";
+            d.fileOrIdentifier = "fake-latency";
+            d.numInputChannels = d.numOutputChannels = 2;
+        }
+
+        const juce::String getName() const override { return "Latency"; }
+        void prepareToPlay (double, int) override {}
+        void releaseResources() override {}
+
+        using juce::AudioPluginInstance::processBlock;
+
+        void processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) override
+        {
+            const int delay = juce::jlimit (0, kHistory - 1, getLatencySamples());
+            for (int i = 0; i < buffer.getNumSamples(); ++i)
+            {
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    history.setSample (ch, pos, buffer.getSample (ch, i));
+                    buffer.setSample (ch, i, history.getSample (ch, (pos + kHistory - delay) % kHistory));
+                }
+                pos = (pos + 1) % kHistory;
+            }
+        }
+
+        double getTailLengthSeconds() const override { return 0.0; }
+        bool acceptsMidi() const override { return false; }
+        bool producesMidi() const override { return false; }
+        juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+        bool hasEditor() const override { return false; }
+        int getNumPrograms() override { return 1; }
+        int getCurrentProgram() override { return 0; }
+        void setCurrentProgram (int) override {}
+        const juce::String getProgramName (int) override { return {}; }
+        void changeProgramName (int, const juce::String&) override {}
+        void getStateInformation (juce::MemoryBlock&) override {}
+        void setStateInformation (const void*, int) override {}
+
+    private:
+        static constexpr int kHistory = 16384;
+        juce::AudioBuffer<float> history;
+        int pos = 0;
+    };
+} // namespace
+
+/** Plugin delay compensation with hosted plugins: their reported latency
+    (and its changes) lines up parallel paths at the buses and mains. */
+class LatencyCompensationTests final : public juce::UnitTest
+{
+public:
+    LatencyCompensationTests() : juce::UnitTest ("Plugin delay compensation", "LiveDAW") {}
+
+    /** Main 1 left after a unit impulse on input 1 (settled on silence first),
+        as (sample, value) for every non-silent sample. */
+    static std::vector<std::pair<int, float>> impulse (MixerEngine& engine, int blocks)
+    {
+        constexpr int n = OfflineRig::kBlock;
+        engine.updateLatencyCompensation();
+        std::vector<float> in ((size_t) n, 0.0f), outL ((size_t) n), outR ((size_t) n);
+        const float* ins[] = { in.data() };
+        float* outs[] = { outL.data(), outR.data() };
+        for (int b = 0; b < 2 * MixerEngine::kMaxCompensation / n + 4; ++b)
+            engine.processBlock (ins, 1, outs, 2, n);
+        std::vector<std::pair<int, float>> peaks;
+        for (int b = 0; b < blocks; ++b)
+        {
+            in[0] = b == 0 ? 1.0f : 0.0f;
+            engine.processBlock (ins, 1, outs, 2, n);
+            for (int i = 0; i < n; ++i)
+                if (std::abs (outL[(size_t) i]) > 1.0e-4f)
+                    peaks.push_back ({ b * n + i, outL[(size_t) i] });
+        }
+        return peaks;
+    }
+
+    void runTest() override
+    {
+        using livedaw::test::kCentre;
+        MixerEngine engine (0);
+        OfflineRig rig (engine, 1, 2);
+        engine.outputProtection = false; // two channels sum above 0 dBFS
+        engine.setNumChannels (2);
+        for (auto& ch : engine.getChannels())
+            ch->params.inputLeft = 0;
+        auto& fx = engine.getFx();
+        auto* plugin = new LatencyPlugin (100);
+        fx.setPlugin (2, std::unique_ptr<juce::AudioPluginInstance> (plugin));
+        auto& ch1 = *engine.getChannels()[0];
+        ch1.params.preInsert.on = true;
+        ch1.params.preInsert.fx = 2;
+
+        beginTest ("Compensation is on by default and lines up channels at Main 1");
+        expect (engine.isLatencyCompensationOn());
+        expectEquals (fx.getLatency (2), 100);
+        auto peaks = impulse (engine, 4);
+        expectEquals ((int) peaks.size(), 1);
+        if (! peaks.empty())
+        {
+            expectEquals (peaks[0].first, 100);
+            expectWithinAbsoluteError (peaks[0].second, 2.0f * kCentre, 1.0e-4f);
+        }
+        expectEquals (engine.getTotalCompensation(), 100);
+        expectEquals (ch1.getLatency(), 100);
+        expectEquals (engine.getMain().getLatency(), 100);
+
+        beginTest ("A latency change reported by the plugin is followed");
+        plugin->setLatencySamples (300); // the listener passes it on at once
+        expectEquals (fx.getLatency (2), 300);
+        peaks = impulse (engine, 5);
+        expectEquals ((int) peaks.size(), 1);
+        if (! peaks.empty())
+            expectEquals (peaks[0].first, 300);
+
+        beginTest ("A bus with a plugin lines up with the direct path");
+        auto& ch2 = *engine.getChannels()[1];
+        ch2.params.mains[0].on = false;
+        ch1.params.preInsert.on = false;
+        auto& bus = *engine.getBusInSlot (0);
+        auto& send = ch2.sends[0];
+        send.enabled = true;
+        send.mode = 1; // POST
+        bus.params.mains[0].on = true;
+        bus.params.preInsert.on = true;
+        bus.params.preInsert.fx = 2;
+        plugin->setLatencySamples (64);
+        peaks = impulse (engine, 3);
+        expectEquals ((int) peaks.size(), 1);
+        if (! peaks.empty())
+            expectEquals (peaks[0].first, 64);
+        expectEquals (engine.getMain().getLatency(), 64);
+
+        beginTest ("DELAY COMPENSATION off leaves the paths apart");
+        engine.setLatencyCompensation (false);
+        peaks = impulse (engine, 3);
+        expectEquals ((int) peaks.size(), 2);
+        if (peaks.size() == 2)
+        {
+            expectEquals (peaks[0].first, 0);
+            expectEquals (peaks[1].first, 64);
+        }
+        expectEquals (engine.getTotalCompensation(), 0);
+        engine.setLatencyCompensation (true);
+
+        beginTest ("Compensation beyond the maximum is capped and reported");
+        plugin->setLatencySamples (MixerEngine::kMaxCompensation + 100);
+        engine.updateLatencyCompensation();
+        expect (engine.isCompensationLimited());
+        plugin->setLatencySamples (10);
+        engine.updateLatencyCompensation();
+        expect (! engine.isCompensationLimited());
+
+        beginTest ("A removed plugin no longer counts");
+        fx.setPlugin (2, nullptr);
+        engine.getGarbage().collectAllNow();
+        expectEquals (fx.getLatency (2), 0);
+        engine.updateLatencyCompensation();
+        expectEquals (engine.getTotalCompensation(), 0);
+    }
+};
+
+static LatencyCompensationTests latencyCompensationTests;

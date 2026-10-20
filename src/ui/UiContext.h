@@ -234,6 +234,9 @@ namespace uiprefs
     constexpr const char* autoSelect[3] = { "ui.autoSelectL", "ui.autoSelectC", "ui.autoSelectR" };
     constexpr const char* f1f3AsCustom = "ui.f1f3AsCustomControls";
 
+    // PLUGINS (SETUP > PLUGINS).
+    constexpr const char* latencyCompensation = "engine.latencyCompensation"; // bool, default true: plugin delay compensation
+
     /** How long the faders take to travel to a new position (FADER SPEED). */
     inline int faderGlideMs (juce::PropertiesFile& s)
     {

@@ -99,25 +99,27 @@ private:
         auto r = juce::Rectangle<int> (width, height).reduced (4, 2).toFloat();
         g.setColour (rowColour);
         g.fillRect (r);
-        auto number = r.removeFromLeft (30.0f);
+        auto number = r.removeFromLeft (juce::jmin (r.getWidth() * 0.2f, screenCap (30.0f)));
         g.setColour (open ? Dark::on : Dark::box);
         g.fillRect (number);
         g.setColour (open ? juce::Colours::black : Dark::text);
-        g.setFont (wingFont (TypeScale::body));
-        g.drawText (juce::String ((int) files.size() - row), number.toNearestInt(), juce::Justification::centred);
+        g.setFont (wingFontFit (TypeScale::body, r.getHeight() * 0.5f));
+        g.drawFittedText (juce::String ((int) files.size() - row), number.toNearestInt(), juce::Justification::centred, 1, 0.7f);
         auto t = r.reduced (8.0f, 2.0f);
-        auto chip = t.removeFromRight (64.0f);
+        auto chip = t.removeFromRight (juce::jmin (t.getWidth() * 0.3f, screenCap (64.0f)));
+        auto name = t.removeFromTop (t.getHeight() * 0.55f);
         g.setColour (Dark::text);
-        g.setFont (wingFont (TypeScale::body));
+        g.setFont (wingFontFit (TypeScale::body, name.getHeight()));
         g.drawFittedText ((open ? project.getName() : f.getFileNameWithoutExtension()).toUpperCase() + (open && project.isDirty() ? " *" : ""),
-                          t.removeFromTop (t.getHeight() * 0.55f).toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
+                          name.toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
         g.setColour (Dark::textDim);
-        g.setFont (wingFont (TypeScale::statusCaption));
-        g.drawText (f.getParentDirectory().getCreationTime().formatted ("%Y-%m-%d  %H:%M"), t.toNearestInt(), juce::Justification::centredLeft);
+        g.setFont (wingFontFit (TypeScale::statusCaption, t.getHeight()));
+        g.drawFittedText (f.getParentDirectory().getCreationTime().formatted ("%Y-%m-%d  %H:%M"), t.toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
         g.setColour (Dark::textDim);
         g.fillRect (chip.getX(), chip.getY() + 4.0f, 1.0f, chip.getHeight() - 8.0f);
-        g.setFont (wingFont (TypeScale::statusCaption));
-        g.drawText (open ? juce::String (project.getNumTracks()) + " TR" : juce::String ("LDPROJ"), chip.toNearestInt(), juce::Justification::centred);
+        g.setFont (wingFontFit (TypeScale::statusCaption, chip.getHeight() * 0.5f));
+        g.drawFittedText (open ? juce::String (project.getNumTracks()) + " TR" : juce::String ("LDPROJ"), chip.toNearestInt().withTrimmedLeft (2),
+                          juce::Justification::centred, 1, 0.7f);
         if (rowSelected || open)
         {
             g.setColour (open ? Dark::on : Dark::selectedOutline);
@@ -181,12 +183,12 @@ private:
         auto r = juce::Rectangle<int> (width, height).reduced (4, 2).toFloat();
         g.setColour (rowColour);
         g.fillRect (r);
-        auto tag = r.removeFromLeft (38.0f);
+        auto tag = r.removeFromLeft (juce::jmin (r.getWidth() * 0.25f, screenCap (38.0f)));
         g.setColour (rowSelected ? Dark::on : Dark::box);
         g.fillRect (tag);
         g.setColour (rowSelected ? juce::Colours::black : Dark::text);
-        g.setFont (wingFont (TypeScale::statusCaption * 1.2f));
-        g.drawText ("M" + juce::String (row + 1), tag.toNearestInt(), juce::Justification::centred);
+        g.setFont (wingFontFit (TypeScale::statusCaption * 1.2f, r.getHeight() * 0.6f));
+        g.drawFittedText ("M" + juce::String (row + 1), tag.toNearestInt(), juce::Justification::centred, 1, 0.7f);
         auto t = r.reduced (8.0f, 0.0f).toNearestInt();
         const auto grid = juce::String (daw::TimeGrid { page.session.getProject().getSampleRate() }.formatTime (m.position));
         g.setColour (Dark::text);
@@ -432,9 +434,12 @@ void RecorderPage::visibilityChanged()
         refresh();
 }
 
+/** A track tile's minimum width (70 px on the screen of a 1920 x 1080 window). */
+static int trackTileWidth() { return screenCap (70); }
+
 int RecorderPage::tracksPerPage() const
 {
-    return juce::jmax (1, (trackGrid.getWidth() / 70) * 2);
+    return juce::jmax (1, (trackGrid.getWidth() / trackTileWidth()) * 2);
 }
 
 int RecorderPage::numTrackPages() const
@@ -448,11 +453,11 @@ void RecorderPage::resized()
     // Sizes follow the WING screen (header 61 of its 800 px, rows 32), so the
     // player keeps its meters and time in a small window.
     const float screenH = getWingScreenHeight();
-    const int rowPx = juce::jlimit (12, 20, juce::roundToInt (screenH * 0.04f));
-    header = b.removeFromTop (juce::jlimit (20, 38, juce::jmin (getHeight() / 12, juce::roundToInt (screenH * 0.076f))));
+    const int rowPx = juce::jlimit (12, screenCap (20), juce::roundToInt (screenH * 0.04f));
+    header = b.removeFromTop (juce::jlimit (20, screenCap (38), juce::jmin (getHeight() / 12, juce::roundToInt (screenH * 0.076f))));
     {
         auto h = header.reduced (2, 2);
-        const int w = juce::jmin (100, h.getWidth() / 8);
+        const int w = juce::jmin (screenCap (100), h.getWidth() / 8);
         editKey.setBounds (h.removeFromRight (w));
         h.removeFromRight (4);
         saveKey.setBounds (h.removeFromRight (w));
@@ -462,7 +467,8 @@ void RecorderPage::resized()
         formatKey.setBounds (h.removeFromRight (w * 13 / 10));
     }
     b.removeFromTop (4);
-    tracksPanel = b.removeFromBottom (juce::jlimit (juce::roundToInt (screenH * 0.2f), 170, getHeight() * 30 / 100));
+    tracksPanel = b.removeFromBottom (juce::jlimit (juce::roundToInt (screenH * 0.2f), juce::jmax (juce::roundToInt (screenH * 0.2f), screenCap (170)),
+                                                    getHeight() * 30 / 100));
     b.removeFromBottom (4);
     const int w = b.getWidth();
     player = b.removeFromLeft (w * 46 / 100);
@@ -474,9 +480,11 @@ void RecorderPage::resized()
     // Panel headers with their tool keys (NAME / DELETE, UPDATE / DELETE).
     const int headerH = darkHeaderHeight();
     auto sh = sessionsPanel.withHeight (headerH);
-    const int toolW = juce::jlimit (30, 46, juce::roundToInt (screenH * 0.092f));
+    const int toolW = juce::jlimit (30, screenCap (46), juce::roundToInt (screenH * 0.092f));
     renameKey.setBounds (sh.removeFromLeft (toolW));
     deleteKey.setBounds (sh.removeFromRight (toolW));
+    sessions->setRowHeight (juce::jlimit (24, screenCap (40), juce::roundToInt (screenH * 0.08f)));
+    markers->setRowHeight (juce::jlimit (20, screenCap (34), juce::roundToInt (screenH * 0.068f)));
     sessions->setBounds (sessionsPanel.withTrimmedTop (headerH + 2));
     auto mh = markersPanel.withHeight (headerH);
     updateKey.setBounds (mh.removeFromLeft (toolW * 52 / 46));
@@ -486,19 +494,19 @@ void RecorderPage::resized()
     // PLAYER: chips, meters with the red time, transport, disk info, timeline.
     auto p = player.withTrimmedTop (headerH + 2).reduced (6, 4);
     const int gap = rowPx < 16 ? 2 : 4;
-    timeline = p.removeFromBottom (juce::jlimit (10, 26, p.getHeight() / 9));
+    timeline = p.removeFromBottom (juce::jlimit (10, screenCap (26), p.getHeight() / 9));
     p.removeFromBottom (gap);
     infoRow = p.removeFromBottom (rowPx);
     p.removeFromBottom (gap);
-    auto transport = p.removeFromBottom (juce::jlimit (18, 40, p.getHeight() / 4));
+    auto transport = p.removeFromBottom (juce::jlimit (18, screenCap (40), p.getHeight() / 4));
     p.removeFromBottom (gap);
     chipsRow = p.removeFromTop (rowPx);
     p.removeFromTop (2);
-    timeArea = p.removeFromBottom (juce::jlimit (14, 36, p.getHeight() / 3));
+    timeArea = p.removeFromBottom (juce::jlimit (14, screenCap (36), p.getHeight() / 3));
     meterArea = p;
     {
         auto t = transport;
-        modeKey.setBounds (t.removeFromRight (juce::jmin (64, t.getWidth() / 6)));
+        modeKey.setBounds (t.removeFromRight (juce::jmin (screenCap (64), t.getWidth() / 6)));
         t.removeFromRight (6);
         const int k = juce::jmin (t.getHeight() + 14, t.getWidth() / 6 - 3);
         for (auto* key : { &stopKey, &playKey, &prevKey, &nextKey, &addMarkerKey })
@@ -511,7 +519,7 @@ void RecorderPage::resized()
 
     // TRACKS: the setup keys left, the tiles right.
     auto tr = tracksPanel.withTrimmedTop (headerH + 2).reduced (4, 4);
-    auto keys = tr.removeFromLeft (juce::jmin (250, tr.getWidth() / 3));
+    auto keys = tr.removeFromLeft (juce::jmin (screenCap (250), tr.getWidth() / 3));
     const int kh = (keys.getHeight() - 4) / 2;
     auto row1 = keys.removeFromTop (kh);
     keys.removeFromTop (4);
@@ -522,7 +530,7 @@ void RecorderPage::resized()
     keys.removeFromLeft (4);
     disarmKey.setBounds (keys);
     tr.removeFromLeft (8);
-    auto pages = tr.removeFromRight (30);
+    auto pages = tr.removeFromRight (juce::jmin (screenCap (30), tr.getWidth() / 8));
     pagePrev.setBounds (pages.removeFromTop (pages.getHeight() / 2).reduced (0, 2));
     pageNext.setBounds (pages.reduced (0, 2));
     trackGrid = tr;
@@ -530,7 +538,7 @@ void RecorderPage::resized()
 
     // Tile areas.
     trackTiles.clear();
-    const int perRow = juce::jmax (1, trackGrid.getWidth() / 70);
+    const int perRow = juce::jmax (1, trackGrid.getWidth() / trackTileWidth());
     const float tw = (float) trackGrid.getWidth() / (float) perRow, th = (float) trackGrid.getHeight() / 2.0f;
     auto& project = session.getProject();
     for (int i = 0; i < tracksPerPage(); ++i)
@@ -585,11 +593,11 @@ void RecorderPage::paintPlayer (juce::Graphics& g)
     auto& project = session.getProject();
     // Chips: armed channels, the session, the rate.
     auto chips = chipsRow;
-    const int chipW = juce::jmax (30, chips.getHeight() * 23 / 10);
+    const int chipW = juce::jmin (chips.getWidth() / 4, juce::jmax (30, chips.getHeight() * 23 / 10));
     drawChip (g, chips.removeFromLeft (chipW).toFloat(), juce::String (session.getNumArmedChannels()) + " CH", Dark::key, Dark::text);
     drawChip (g, chips.removeFromRight (chipW).toFloat(), rateText (project.getSampleRate()), session.rateMatches() ? Dark::key : Dark::pre, Dark::text);
     g.setColour (Dark::text);
-    g.setFont (wingFont (TypeScale::statusCaption * 1.2f));
+    g.setFont (wingFontFit (TypeScale::statusCaption * 1.2f, (float) chips.getHeight() * 0.8f));
     g.drawFittedText (project.getName().toUpperCase(), chips.reduced (8, 0), juce::Justification::centredLeft, 1, 0.7f);
 
     // Meters of the armed tracks.
@@ -609,7 +617,7 @@ void RecorderPage::paintPlayer (juce::Graphics& g)
     {
         const int count = (int) juce::jmin<size_t> (armed.size(), 64);
         // At most 16 px per bar, the bank centred like the WING-LIVE's.
-        const float w = juce::jmin (16.0f, (float) (meterArea.getWidth() - 8) / (float) count);
+        const float w = juce::jmin (screenCap (16.0f), (float) (meterArea.getWidth() - 8) / (float) count);
         auto area = meterArea.reduced (4, 4).toFloat();
         area = area.withSizeKeepingCentre (w * (float) count, area.getHeight());
         // Scale lines at -12 and -36 like the WING's meter bank.
@@ -639,7 +647,7 @@ void RecorderPage::paintPlayer (juce::Graphics& g)
     }
 
     // The red time (the take's length while recording, else the position).
-    auto t = timeArea.reduced (juce::jmax (0, (timeArea.getWidth() - 260) / 2), 0);
+    auto t = timeArea.reduced (juce::jmax (0, (timeArea.getWidth() - screenCap (260)) / 2), 0);
     g.setColour (juce::Colours::black);
     g.fillRect (t);
     g.setColour (timeRed.withAlpha (0.6f));
@@ -651,10 +659,11 @@ void RecorderPage::paintPlayer (juce::Graphics& g)
 
     // Disk and record time.
     auto info = infoRow;
-    drawChip (g, info.removeFromLeft (64).toFloat(), bytesText (session.getFreeDiskBytes()), Dark::box, Dark::textDim);
+    drawChip (g, info.removeFromLeft (juce::jmin (info.getWidth() / 4, juce::jmax (40, info.getHeight() * 16 / 5))).toFloat(),
+              bytesText (session.getFreeDiskBytes()), Dark::box, Dark::textDim);
     info.removeFromLeft (10);
     g.setColour (Dark::text);
-    g.setFont (wingFont (TypeScale::statusCaption * 1.2f));
+    g.setFont (wingFontFit (TypeScale::statusCaption * 1.2f, (float) info.getHeight() * 0.8f));
     const int dropouts = session.getRecorder().getDropouts();
     g.drawFittedText ("REC TIME LEFT: " + durationText (session.getRecordSecondsLeft())
                           + (dropouts > 0 ? "   DROPOUTS " + juce::String (dropouts) : juce::String()),
@@ -689,7 +698,8 @@ void RecorderPage::paintTracks (juce::Graphics& g)
     {
         g.setColour (Dark::textDim);
         g.setFont (wingFont (TypeScale::body));
-        g.drawFittedText ("NO TRACKS: RECORD ALL CHANNELS makes one per channel", trackGrid, juce::Justification::centred, 2);
+        g.setFont (wingFontFit (TypeScale::body, (float) trackGrid.getHeight() * 0.3f));
+        g.drawFittedText ("NO TRACKS: RECORD ALL CHANNELS MAKES ONE PER CHANNEL", trackGrid.reduced (4, 0), juce::Justification::centred, 2, 0.8f);
         return;
     }
     for (auto& [r, id] : trackTiles)
@@ -704,15 +714,16 @@ void RecorderPage::paintTracks (juce::Graphics& g)
         g.fillRect (f);
         g.setColour (colour);
         g.fillRect (f.removeFromTop (4.0f));
-        auto content = f.reduced (4.0f, 2.0f);
+        auto content = f.reduced (4.0f, 2.0f).withTrimmedBottom (3.0f); // above the level bar
         auto top = content.removeFromTop (content.getHeight() * 0.5f);
         g.setColour (t.arm ? Dark::pre : Dark::key);
         auto dot = top.removeFromRight (top.getHeight()).reduced (3.0f);
         g.fillEllipse (dot);
         g.setColour (Dark::textDim);
-        g.setFont (wingFont (TypeScale::statusCaption));
+        g.setFont (wingFontFit (TypeScale::statusCaption, top.getHeight()));
         g.drawText (juce::String (index + 1), top.toNearestInt(), juce::Justification::centredLeft);
         g.setColour (Dark::text);
+        g.setFont (wingFontFit (TypeScale::statusCaption, content.getHeight()));
         g.drawFittedText (t.name.toUpperCase(), content.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
         // Level along the bottom edge.
         const float db = juce::jmax (session.getTrackLevel (id, 0), session.getTrackLevel (id, 1));
@@ -726,10 +737,13 @@ void RecorderPage::paintTracks (juce::Graphics& g)
         }
     }
     g.setColour (Dark::textDim);
-    g.setFont (wingFont (TypeScale::statusCaption));
     if (numTrackPages() > 1)
-        g.drawText (juce::String (trackPage + 1) + "/" + juce::String (numTrackPages()), pagePrev.getBounds().withY (pagePrev.getY() - 14).withHeight (12),
-                    juce::Justification::centred);
+    {
+        // Between the two page keys.
+        const auto r = pagePrev.getBounds().withY (pagePrev.getBottom()).withBottom (pageNext.getY()).expanded (0, 2);
+        g.setFont (wingFontFit (TypeScale::statusCaption, (float) r.getHeight()));
+        g.drawFittedText (juce::String (trackPage + 1) + "/" + juce::String (numTrackPages()), r, juce::Justification::centred, 1, 0.7f);
+    }
 }
 
 //==============================================================================

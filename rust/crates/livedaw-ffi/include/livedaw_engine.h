@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 9;
+constexpr int kAbiVersion = 10;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -58,6 +58,8 @@ constexpr int32_t kUsbPlayerSourceBase = 0x20000;
     kUsbTapStripBase + kind * 0x100000 + (number - 1) * 2 + channel a strip. */
 constexpr int32_t kUsbTapStripBase = 0x01000000;
 constexpr int kSamplesPerPeak = 256;
+/** The longest plugin delay compensation (samples); paths needing more stay late by the rest. */
+constexpr int kMaxPdc = 8192;
 /** TAP EQ bands (low shelf, peak, high shelf). */
 constexpr int kTapEqBands = 3;
 /** RTA bands: one per semitone, E0 (20.6 Hz) .. D#10 (19.9 kHz), see ld_rta_band_hz. */
@@ -734,6 +736,24 @@ extern "C"
     void ld_fx_clear_flags (const Engine*, int32_t slot);
     float ld_fx_load (const Engine*, int32_t slot);
     int32_t ld_fx_num_users (const Engine*, int32_t slot);
+
+    // Plugin delay compensation (ABI 10): every bus, main and matrix reads its
+    // sources delayed so that paths through plugins of different latencies
+    // arrive together (capped at kMaxPdc samples).
+    /** Any thread: the latency (samples) slot `slot`'s plugin reports; reset by ld_fx_set. */
+    void ld_fx_set_latency (const Engine*, int32_t slot, int32_t samples);
+    int32_t ld_fx_latency (const Engine*, int32_t slot);
+    /** DELAY COMPENSATION on / off (default on). */
+    void ld_engine_set_pdc (const Engine*, bool on);
+    bool ld_engine_pdc (const Engine*);
+    /** Message thread: works out the plan now (ld_engine_collect also does). */
+    void ld_engine_update_pdc (const Engine*);
+    /** The longest path latency (samples) the plan aligns to. */
+    int32_t ld_engine_pdc_total (const Engine*);
+    /** A path needs more than kMaxPdc samples of compensation. */
+    bool ld_engine_pdc_limited (const Engine*);
+    /** The plugin latency of a strip's output (its inserts plus what its sources were aligned to). */
+    int32_t ld_strip_latency (const Strip*);
 
     // Strips
     int32_t ld_strip_kind (const Strip*);
