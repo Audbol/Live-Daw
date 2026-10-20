@@ -713,6 +713,18 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
             g.strokePath (p, stroke);
             return;
         }
+        case Icon::Sine:
+        {
+            // One cycle of a sine: the oscillator (OSC sources).
+            p.startNewSubPath (P (0.1f, 0.5f));
+            for (int i = 1; i <= 24; ++i)
+            {
+                const float t = (float) i / 24.0f;
+                p.lineTo (P (0.1f + 0.8f * t, 0.5f - 0.3f * std::sin (t * juce::MathConstants<float>::twoPi)));
+            }
+            g.strokePath (p, stroke);
+            return;
+        }
         case Icon::Premium:
         {
             // A cut gem: the crown's outline and its girdle line.

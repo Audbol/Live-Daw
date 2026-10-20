@@ -571,11 +571,15 @@ juce::String inputSourceText (int left, int right, bool stereo)
         return "NONE";
     const bool playback = Recorder::isPlaybackSource (left);
     const bool usbPlayer = UsbRecorder::isPlayerSource (left);
-    auto number = [playback, usbPlayer] (int source)
+    const bool osc = MixerEngine::isOscSource (left);
+    auto number = [playback, usbPlayer, osc] (int source)
     {
-        return juce::String ((usbPlayer ? UsbRecorder::playerChannelOf (source) : playback ? Recorder::playbackChannelOf (source) : source) + 1);
+        return juce::String ((osc         ? MixerEngine::oscChannelOf (source)
+                              : usbPlayer ? UsbRecorder::playerChannelOf (source)
+                              : playback  ? Recorder::playbackChannelOf (source)
+                                          : source) + 1);
     };
-    const auto prefix = juce::String (usbPlayer ? "PLAYER " : playback ? "PLAY " : "IN ");
+    const auto prefix = juce::String (osc ? "OSC " : usbPlayer ? "PLAYER " : playback ? "PLAY " : "IN ");
     if (stereo)
         return prefix + number (left) + "/" + number (right >= 0 ? right : left + 1);
     return prefix + number (left);
@@ -678,7 +682,7 @@ void paintInputSourceTile (juce::Graphics& g, juce::Rectangle<float> r, MixerEng
     const int icon = src != nullptr ? src->icon.load() : 0;
     const auto ink = colours::caption.withAlpha (left < 0 ? 0.4f : 1.0f);
     if (icon <= 0 || ! drawWingIcon (g, icon, iconArea, ink))
-        drawIcon (g, playback ? Icon::Waveform : Icon::Xlr, iconArea, ink);
+        drawIcon (g, MixerEngine::isOscSource (left) ? Icon::Sine : playback ? Icon::Waveform : Icon::Xlr, iconArea, ink);
 
     if (left < 0 || ! roomy)
         return;

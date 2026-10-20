@@ -248,6 +248,21 @@ public:
     /** INITIALIZE: the source's (pair's) settings and name back to the defaults. */
     void initializeSource (int index) const noexcept { ld::ld_source_initialize (engine, index); }
 
+    /** The oscillators (the OSC source group): OSC n is input oscSource (n), its
+        MODE, LEVEL and FREQ getOscillator (n); on / off is the source's MUTE. */
+    static constexpr int oscSource (int n) noexcept { return ld::kOscSourceBase + n; }
+    static constexpr int oscChannelOf (int input) noexcept
+    {
+        return input >= ld::kOscSourceBase && input < ld::kOscSourceBase + ld::kNumOscillators ? input - ld::kOscSourceBase : -1;
+    }
+    static constexpr bool isOscSource (int input) noexcept { return oscChannelOf (input) >= 0; }
+    /** "OSC 1", "OSC 2". */
+    static juce::String oscSourceName (int n) { return "OSC " + juce::String (n + 1); }
+    ld::OscParams* getOscillator (int n) const noexcept
+    {
+        return juce::isPositiveAndBelow (n, numOscillators) ? oscillators + n : nullptr;
+    }
+
     //==============================================================================
     // Monitor path processing and SOURCE SOLO (ABI 8, saved with the show;
     // scenes recall the paths with ROUTING). monitor.paths[0] = SPEAKERS,
@@ -379,6 +394,8 @@ private:
     // Console level: the source table, the talk keys' press times.
     ld::SourceParams* sourceTable = nullptr;
     int numSources = 0;
+    ld::OscParams* oscillators = nullptr;
+    int numOscillators = 0;
     std::array<juce::uint32, 2> talkPressMs {};
     std::array<bool, 2> talkEndsOnRelease {};
 

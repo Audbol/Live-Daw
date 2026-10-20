@@ -48,7 +48,8 @@ anything can be sent to any hardware output. It runs on Windows, macOS and Linux
   soundcheck) and a built-in multitrack editor; the WING's **2/4-track USB recorder
   and player** using a folder on disk.
 - **Monitoring and talkback:** phones and speakers paths with their own sources, EQ,
-  delay and limiter, and two talk keys.
+  delay and limiter, and two talk keys. The WING's **oscillator** (sine, pink and white
+  noise) is a source group to patch to channels for line checks.
 - **MIDI remote control and DAW remote control** (Mackie Control / HUI) as on the WING.
 - **WING remote apps and files (experimental):** Sidecar answers the WING's network
   protocols (discovery, OSC and the native protocol), so WING remote software can

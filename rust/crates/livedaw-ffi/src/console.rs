@@ -4,7 +4,7 @@
 
 use crate::session::{str_arg, LdString};
 use crate::{engine, guard, strip};
-use livedaw_engine::sources::{self, SourceParams};
+use livedaw_engine::sources::{self, OscParams, SourceParams};
 use livedaw_engine::{Engine, Strip};
 use std::sync::atomic::Ordering::Relaxed;
 
@@ -68,6 +68,16 @@ pub unsafe extern "C" fn ld_source_initialize(e: *const Engine, index: i32) {
             guard((), || e.sources().initialize(index as usize));
         }
     }
+}
+
+/// The oscillators' settings (`*count` entries: OSC 1, OSC 2).
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_oscillators(e: *const Engine, count: *mut i32) -> *const OscParams {
+    let Some(e) = engine(e) else { return std::ptr::null() };
+    if let Some(c) = count.as_mut() {
+        *c = e.sources().oscillators().len() as i32;
+    }
+    e.sources().oscillators().as_ptr()
 }
 
 /// HOME > TAGS talk tags (bits: TALK SOLO, TALK ON, TALK A SOLO, TALK A ON,
@@ -136,6 +146,13 @@ mod tests {
             crate::session::ld_string_free(s);
             ld_source_initialize(e, 4);
             assert!((*table.add(4)).is_default() || (*table.add(4)).mode.load(Relaxed) == 1);
+
+            // The oscillators: OSC 2 is the last source.
+            assert_eq!(ld_source_index(sources::OSC_SOURCE_BASE + 1), count - 1);
+            let osc = ld_engine_oscillators(e, &mut count);
+            assert_eq!(count, 2);
+            assert_eq!(std::mem::size_of::<OscParams>(), 12, "OscParams in livedaw_engine.h");
+            assert_eq!((*osc.add(1)).freq_hz.load(), sources::OSC_DEFAULT_FREQ_HZ);
 
             ld_engine_set_num_channels(e, 1);
             let ch = ld_engine_strip_at(e, 0, 0);

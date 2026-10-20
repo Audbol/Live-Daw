@@ -97,6 +97,7 @@ enum class Icon
     MarkerNext,    // ▶I
     SdCard,        // the WING-LIVE card (status bar)
     Waveform,      // the editor (EDIT, DAW)
+    Sine,          // the oscillator (OSC sources)
     // HOME, CC EDIT and the insert screens
     Premium,       // the premium-effect diamond (FX slots 1-8)
     Sun,           // ICON/COLOR: LIGHT

@@ -6,6 +6,7 @@ use livedaw_engine::recorder::wav::{WavReader, WavWriter};
 use livedaw_engine::recorder::{
     Clip, PlaybackTrack, Playlist, RecordSource, RecordTrackSpec, SourceKind, Take, TransportState, DECLICK_SAMPLES,
 };
+use livedaw_engine::sources::OSC_SOURCE_BASE;
 use livedaw_engine::{Engine, PLAYBACK_SOURCE_BASE, USB_PLAYER_SOURCE_BASE};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering::Relaxed;
@@ -156,15 +157,18 @@ fn a_recorded_hardware_input_matches_at_the_reported_start() {
 }
 
 #[test]
-fn tracks_record_usb_player_sources() {
-    // RECORD ALL CHANNELS gives a channel patched to the USB PLAYER a track on
-    // its source port: it always exists, whatever the device has.
+fn tracks_record_usb_player_and_oscillator_sources() {
+    // RECORD ALL CHANNELS gives a channel patched to the USB PLAYER or an
+    // oscillator a track on its source port: they always exist, whatever the
+    // device has.
     let dir = temp_dir("usb-player");
     let rig = Rig::new(2, 2);
-    let file = dir.join("player.wav");
-    let source = input_source(USB_PLAYER_SOURCE_BASE);
-    rig.engine.record(&[RecordTrackSpec { track: 0, source, num_channels: 2, file }]).unwrap();
-    rig.engine.recorder().stop();
+    for (i, port) in [USB_PLAYER_SOURCE_BASE, OSC_SOURCE_BASE].into_iter().enumerate() {
+        let file = dir.join(format!("source{i}.wav"));
+        let source = input_source(port);
+        rig.engine.record(&[RecordTrackSpec { track: 0, source, num_channels: 2, file }]).unwrap();
+        rig.engine.recorder().stop();
+    }
     let _ = std::fs::remove_dir_all(dir);
 }
 

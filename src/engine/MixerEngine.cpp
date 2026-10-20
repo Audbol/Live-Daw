@@ -1,5 +1,8 @@
 #include "engine/MixerEngine.h"
 
+// OscParams has no LayoutInfo entry: livedaw-ffi checks its size too.
+static_assert (sizeof (ld::OscParams) == 12);
+
 namespace livedaw
 {
 
@@ -86,6 +89,7 @@ MixerEngine::MixerEngine (int numWorkerThreads)
       fx (engine)
 {
     sourceTable = ld::ld_engine_sources (engine, &numSources);
+    oscillators = ld::ld_engine_oscillators (engine, &numOscillators);
     syncStrips();
     startWorkers (getSampleRate(), getBlockSize());
     startTimerHz (10);

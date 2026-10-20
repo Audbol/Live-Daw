@@ -7,6 +7,11 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Added
 
+- The WING's **oscillator**: the OSCILLATOR source group on ROUTING > SOURCES has OSC 1
+  and OSC 2, which generate a sine (20 Hz to 20 kHz), pink or white noise at -40 to
+  -6 dBFS. Patch them to channels like any input; SOURCES shows SINE / PINK / WHITE,
+  FREQ and LEVEL for them, MUTE switches them off and STEREO pairs them. Saved with
+  the show and driven by WING remote apps (`/io/in/OSC`).
 - LIBRARY > SHOW > **SEND MIDI**: MIDI data (hexadecimal bytes, `U:` / `D:` for the
   USB / DIN port) that a scene sends each time it is recalled, on the EDIT MIDI TEXT
   STRING window; it goes out of EXTERNAL MIDI CONTROL's port and is saved with the
@@ -23,7 +28,7 @@ All notable changes to Sidecar are listed here. Versions follow
 - LIBRARY: the CLIP tab plays an audio clip (WAV, FLAC, AIFF, MP3) chosen at INT / USB
   on the USB player, with PLAY, PAUSE, STOP, meter, time and format.
 - WING remote: more of the WING 3.1 parameter tree drives the console: 88.2 % of its parameters
-  (60,471 of 68,556, up from 82.8 % in 0.1.0). New: LISTEN from remote apps (BAND SOLO with
+  (60,491 of 68,556, up from 82.8 % in 0.1.0). New: LISTEN from remote apps (BAND SOLO with
   its band, KEY SOLO of the GATE and DYNAMICS slots, XOVER SOLO on channels, aux,
   buses, mains and matrices), the inserts' state, which strip uses each FX slot, a
   channel's source GAIN and +48V, the active RTA source and settings, the monitor

@@ -148,7 +148,15 @@ Barlow Condensed.
     MID-SIDE pairs (a channel patched to a pair becomes stereo), its mute groups
     (TAGS), with its meter and the channels using it; channels get the source's
     processing first. With SOURCE SOLO on, **SRC SOLO** solos the selected source
-    through CH39 or AUX7 (the solo follows the selection; CLR SOLO ends it). OUTPUTS
+    through CH39 or AUX7 (the solo follows the selection; CLR SOLO ends it). The
+    **OSCILLATOR** source group holds the WING's signal generator, OSC 1 and OSC 2:
+    patch them to channels like any input. Selecting one on SOURCES shows SINE /
+    PINK / WHITE, FREQ (the sine's frequency, 20 Hz to 20 kHz: click for the usual
+    test frequencies, or use the wheel or the FREQ knob) and LEVEL (-40 to -6 dBFS,
+    the sine's peak; the noises have the same RMS) in place of +48V, POL and GAIN;
+    MUTE switches it off. STEREO pairs OSC 1 and 2 on OSC 1's settings (the sine in
+    phase on both sides, the noises uncorrelated), MID/SIDE decodes them as for
+    other sources. The settings are saved with the show. OUTPUTS
     works output-first: pick an output, then the signal feeding it (a strip's L / R, or
     the MONITOR group's PHONES 1L / 1R and SPEAKERS 2L / 2R).
   - **SETUP:** GENERAL (lighting, clock, console info and size, OPERATION, OPTIONS),
@@ -446,13 +454,14 @@ and open-source projects (see below), and it is **experimental**.
   test battery and model capture, its OSC client), and every OSC path the Bitfocus
   Companion WING module builds that exists in the 3.1 tree. **WING Edit and WING
   Copilot have not been tried**, so they may not work.
-- **What maps:** 88.2 % of the WING 3.1 tree's parameters (60,471 of 68,556,
+- **What maps:** 88.2 % of the WING 3.1 tree's parameters (60,491 of 68,556,
   counting every model's parameters) drive the engine: channels, aux, buses, mains
   and matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
   dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,
   main sends, solo, TAP WIDTH and TAP EQ), DCAs, mute groups, the FX rack, output
   routing, the sources of the AES50 A/B/C and WING-LIVE card groups (name, colour,
-  icon, gain, mute, polarity, +48V, mode, mute-group tags), SOLO MODE, the solo bus,
+  icon, gain, mute, polarity, +48V, mode, mute-group tags), the oscillator (the OSC
+  group: its sources and `osc/mode`, `lvl`, `f`), SOLO MODE, the solo bus,
   MUTEGROUP/SIP OVERRIDE and SOURCE SOLO, talkback, both monitor paths (`/cfg/mon`:
   source, levels, DIM, PFL DIM, BAND SOLO, DIRECT IN, EQ, PAN, WIDTH, INVERT, DELAY,
   LIMITER), the RTA settings and other console settings. Clients can also use
