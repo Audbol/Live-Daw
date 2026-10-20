@@ -201,7 +201,7 @@ public:
     /** The SYSEX CONTROL identity ("WING,<ip>,<name>,ngc-full,..."). */
     juce::String getIdentity() const;
     /** The console name the identity reports (SETUP > GENERAL). */
-    juce::String consoleName { "LIVE-DAW" };
+    juce::String consoleName { "SIDECAR" };
     /** SYSEX CONTROL execute / dump / describe through the WING parameter
         tree: set by the app (they need the WING remote's tree). Return an
         error text ("NODE NOT FOUND") or the data. */

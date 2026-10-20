@@ -51,6 +51,9 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- The default console name on the network (WING discovery, MIDI identity) is now
+  SIDECAR instead of LIVE-DAW, and the WING remote reports the model "sidecar". A
+  name set on SETUP > GENERAL is kept.
 - Matrix sends of input and aux channels pan instead of balancing the channel's
   panned output: linked (the default) they follow the channel's pan, unlinked they
   use their own. Shows from before load a centred send linked (it sounds as before)

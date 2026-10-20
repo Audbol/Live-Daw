@@ -24,7 +24,7 @@ WingRemote::Settings WingRemote::Settings::load (juce::PropertiesFile& p)
     s.enabled = p.getBoolValue ("wing.enabled", s.enabled);
     s.name = p.getValue (nameKey, s.name).trim();
     if (s.name.isEmpty())
-        s.name = "LIVE-DAW";
+        s.name = "SIDECAR";
     auto port = [&p] (const char* key, int fallback)
     {
         const int v = p.getIntValue (key, fallback);

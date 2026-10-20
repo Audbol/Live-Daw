@@ -74,7 +74,7 @@ fn discovery_replies_like_a_wing() {
     let reply = std::str::from_utf8(&buf[..n]).unwrap();
     let f: Vec<&str> = reply.split(',').collect();
     assert_eq!(f.len(), 6, "{reply}");
-    assert_eq!((f[0], f[1], f[2], f[3]), ("WING", "127.0.0.1", "TEST-DESK", "live-daw"));
+    assert_eq!((f[0], f[1], f[2], f[3]), ("WING", "127.0.0.1", "TEST-DESK", "sidecar"));
     assert!(f[5].starts_with("3.1"));
 }
 

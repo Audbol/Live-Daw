@@ -35,7 +35,7 @@ public:
     struct Settings
     {
         bool enabled = false;
-        juce::String name { "LIVE-DAW" };
+        juce::String name { "SIDECAR" };
         int discoveryPort = 2222, oscPort = 2223, nativePort = 2222;
         bool discovery = true, osc = true, native = true;
 

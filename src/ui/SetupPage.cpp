@@ -241,9 +241,9 @@ namespace
         {
             editKey.onClick = [this]
             {
-                editText (this, "CONSOLE NAME", ctx.settings.getValue (prefs::consoleName, "LIVE-DAW"), [this] (const juce::String& name)
+                editText (this, "CONSOLE NAME", ctx.settings.getValue (prefs::consoleName, "SIDECAR"), [this] (const juce::String& name)
                 {
-                    const auto newName = name.isNotEmpty() ? name.toUpperCase() : juce::String ("LIVE-DAW");
+                    const auto newName = name.isNotEmpty() ? name.toUpperCase() : juce::String ("SIDECAR");
                     ctx.settings.setValue (prefs::consoleName, newName);
                     // The running WING remote and the MIDI identity answer with it right away
                     // (as when it is changed on SETUP > REMOTE).
@@ -318,7 +318,7 @@ namespace
 
             auto* device = ctx.deviceManager.getCurrentAudioDevice();
             const std::pair<juce::String, juce::String> info[] = {
-                { "CONSOLE NAME (network)", ctx.settings.getValue (prefs::consoleName, "LIVE-DAW") },
+                { "CONSOLE NAME (network)", ctx.settings.getValue (prefs::consoleName, "SIDECAR") },
                 { "ENGINE", "RUST, " + juce::String (ctx.engine.getNumWorkerThreads()) + " DSP THREADS" },
                 { "SOFTWARE", juce::String (kAppName).toUpperCase() + " " + juce::String (JUCE_APPLICATION_VERSION_STRING) },
                 { "AUDIO DEVICE", device != nullptr ? device->getName().toUpperCase() : juce::String ("NONE") },
@@ -1367,7 +1367,7 @@ namespace
                                                                              [this, change] (const juce::String& name)
                                                                              {
                                                                                  auto s = WingRemote::Settings::load (ctx.settings);
-                                                                                 s.name = name.isNotEmpty() ? name.toUpperCase() : juce::String ("LIVE-DAW");
+                                                                                 s.name = name.isNotEmpty() ? name.toUpperCase() : juce::String ("SIDECAR");
                                                                                  change (s);
                                                                              });
                                                                }),

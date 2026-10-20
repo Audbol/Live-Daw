@@ -894,8 +894,8 @@ void MidiRemote::handleScenes (int port, const juce::MidiMessage& m)
 //==============================================================================
 juce::String MidiRemote::getIdentity() const
 {
-    return "WING," + juce::IPAddress::getLocalAddress().toString() + "," + consoleName + ",ngc-full,LIVE-DAW,"
-           + juce::String (JUCE_APPLICATION_VERSION_STRING) + ":live-daw";
+    return "WING," + juce::IPAddress::getLocalAddress().toString() + "," + consoleName + ",ngc-full,SIDECAR,"
+           + juce::String (JUCE_APPLICATION_VERSION_STRING) + ":sidecar";
 }
 
 void MidiRemote::handleSysex (int port, const juce::MidiMessage& m)

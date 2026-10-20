@@ -12,7 +12,7 @@ void connect (UiContext& ctx)
     if (ctx.midi == nullptr)
         return;
     auto& midi = *ctx.midi;
-    midi.consoleName = ctx.settings.getValue (WingRemote::Settings::nameKey, "LIVE-DAW");
+    midi.consoleName = ctx.settings.getValue (WingRemote::Settings::nameKey, "SIDECAR");
 
     // CUSTOM CONTROLS (RX ONLY): MIDI turns the encoders and presses the keys
     // of the upper part's layers, whatever layer the surface shows.

@@ -48,11 +48,11 @@ pub struct Identity {
 impl Default for Identity {
     fn default() -> Self {
         Self {
-            name: "LIVE-DAW".into(),
-            model: "live-daw".into(),
-            serial: "LIVEDAW0001".into(),
+            name: "SIDECAR".into(),
+            model: "sidecar".into(),
+            serial: "SIDECAR0001".into(),
             // Our tree is the WING 3.1 tree (libwing compares the leading numbers).
-            firmware: "3.1-0-livedaw:release".into(),
+            firmware: "3.1-0-sidecar:release".into(),
         }
     }
 }
