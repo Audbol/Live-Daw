@@ -94,6 +94,8 @@ set(LIVEDAW_ENGINE_SOURCES
     src/engine/MixerEngine.cpp
     src/engine/PluginHost.cpp
     src/engine/PluginScanner.cpp
+    src/engine/SandboxedPlugin.cpp
+    src/sandbox/SandboxShared.cpp
     src/engine/ConsoleState.cpp
     src/engine/Layers.cpp
     src/engine/Show.cpp
@@ -265,6 +267,65 @@ juce_add_binary_data(LiveDAWResources SOURCES
 target_link_libraries(LiveDAW PRIVATE LiveDAWResources)
 
 #-------------------------------------------------------------------------------
+# Plugin sandbox helper (src/sandbox): Sidecar starts one SidecarPluginHost per
+# sandboxed plugin. It ships next to the app's executable (Linux, Windows) or in
+# Sidecar.app/Contents/Helpers (macOS); the build copies it there.
+#-------------------------------------------------------------------------------
+set(LIVEDAW_HELPER_PLIST_EXTRAS "<plist version=\"1.0\"><dict>
+<key>LSMinimumSystemVersion</key><string>${CMAKE_OSX_DEPLOYMENT_TARGET}</string>
+<key>LSUIElement</key><true/>
+</dict></plist>")
+
+juce_add_gui_app(SidecarPluginHost
+    PRODUCT_NAME "SidecarPluginHost"
+    COMPANY_NAME "Sidecar"
+    COMPANY_COPYRIGHT "Copyright (C) Sidecar contributors. Licensed under the GNU AGPLv3."
+    BUNDLE_ID "org.sidecar.pluginhost"
+    VERSION ${PROJECT_VERSION}
+    PLIST_TO_MERGE "${LIVEDAW_HELPER_PLIST_EXTRAS}")
+
+target_sources(SidecarPluginHost PRIVATE
+    src/sandbox/HostProcess.cpp
+    src/sandbox/SandboxShared.cpp
+    src/sandbox/TestPlugins.cpp)
+target_include_directories(SidecarPluginHost PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_definitions(SidecarPluginHost PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_PLUGINHOST_VST3=1
+    JUCE_PLUGINHOST_LV2=1
+    JUCE_APPLICATION_NAME_STRING="SidecarPluginHost"
+    JUCE_APPLICATION_VERSION_STRING="${LIVEDAW_VERSION_STRING}")
+if(APPLE)
+    target_compile_definitions(SidecarPluginHost PRIVATE JUCE_PLUGINHOST_AU=1)
+endif()
+if(LIVEDAW_VST2_SDK_DIR)
+    target_compile_definitions(SidecarPluginHost PRIVATE JUCE_PLUGINHOST_VST=1)
+endif()
+target_link_libraries(SidecarPluginHost
+    PRIVATE
+        juce::juce_audio_processors
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags
+        livedaw_warning_overrides)
+
+add_dependencies(LiveDAW SidecarPluginHost)
+if(APPLE)
+    add_custom_command(TARGET SidecarPluginHost POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_BUNDLE_CONTENT_DIR:LiveDAW>/Helpers"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "$<TARGET_BUNDLE_DIR:SidecarPluginHost>"
+                "$<TARGET_BUNDLE_CONTENT_DIR:LiveDAW>/Helpers/SidecarPluginHost.app"
+        VERBATIM)
+else()
+    add_custom_command(TARGET SidecarPluginHost POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:LiveDAW>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:SidecarPluginHost>" "$<TARGET_FILE_DIR:LiveDAW>"
+        VERBATIM)
+endif()
+
+#-------------------------------------------------------------------------------
 # Tests
 #-------------------------------------------------------------------------------
 if(LIVEDAW_BUILD_TESTS)
@@ -284,9 +345,15 @@ if(LIVEDAW_BUILD_TESTS)
         tests/UsbRecorderTests.cpp
         tests/DawTests.cpp
         tests/WingTests.cpp
+        tests/SandboxTests.cpp
+        src/sandbox/TestPlugins.cpp
         ${LIVEDAW_ENGINE_SOURCES}
         ${LIVEDAW_DAW_SOURCES})
     livedaw_configure_juce_target(LiveDAWTests)
+
+    # The sandbox tests start the real helper (with its test plugins).
+    add_dependencies(LiveDAWTests SidecarPluginHost)
+    target_compile_definitions(LiveDAWTests PRIVATE LIVEDAW_TEST_PLUGIN_HOST="$<TARGET_FILE:SidecarPluginHost>")
 
     add_test(NAME LiveDAWTests COMMAND LiveDAWTests)
 

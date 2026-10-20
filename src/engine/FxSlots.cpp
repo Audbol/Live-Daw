@@ -1,5 +1,6 @@
 #include "engine/FxSlots.h"
 #include "engine/Models.h"
+#include "engine/SandboxedPlugin.h"
 
 namespace livedaw
 {
@@ -13,6 +14,7 @@ struct FxSlots::Holder final : private juce::AudioProcessorListener
     /** Cleared once replaced: a retired plugin must not report into its old slot. */
     std::atomic<bool> installed { true };
     std::unique_ptr<juce::AudioPluginInstance> plugin;
+    SandboxedPlugin* sandboxed = nullptr; // the plugin, if it runs in the sandbox
     juce::AudioBuffer<float> scratch;
     juce::MidiBuffer midi;
     int numPluginChannels = 2;
@@ -21,6 +23,7 @@ struct FxSlots::Holder final : private juce::AudioProcessorListener
     void prepare (double sampleRate, int maxBlock)
     {
         blockSize = juce::jmax (1, maxBlock);
+        sandboxed = dynamic_cast<SandboxedPlugin*> (plugin.get());
         plugin->setRateAndBufferSizeDetails (sampleRate, blockSize);
         plugin->prepareToPlay (sampleRate, blockSize);
         numPluginChannels = juce::jmax (2, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels());
@@ -47,6 +50,8 @@ struct FxSlots::Holder final : private juce::AudioProcessorListener
                 juce::AudioBuffer<float> view (h.scratch.getArrayOfWritePointers(), h.numPluginChannels, n);
                 h.midi.clear();
                 h.plugin->processBlock (view, h.midi);
+                if (h.sandboxed != nullptr && h.sandboxed->didLastBlockFail())
+                    return 1; // timed out or the helper is gone: same as a plugin error
 
                 for (int ch = 0; ch < numChannels; ++ch)
                     juce::FloatVectorOperations::copy (channels[ch] + start, h.scratch.getReadPointer (ch), n);
@@ -168,6 +173,13 @@ juce::AudioPluginInstance* FxSlots::getPlugin (int slot) const noexcept
     auto* h = holderAt (slot);
     return h != nullptr ? h->plugin.get() : nullptr;
 }
+
+bool FxSlots::isSandboxed (int slot) const noexcept
+{
+    auto* h = holderAt (slot);
+    return h != nullptr && h->sandboxed != nullptr;
+}
+
 
 bool FxSlots::isAllowed (int model, int slot)
 {

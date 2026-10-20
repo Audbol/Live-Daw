@@ -19,9 +19,12 @@ mkdir -p "$3"
 out=$(cd "$3" && pwd)
 root=$(cd "$(dirname "$0")/.." && pwd)
 exe="$build/LiveDAW_artefacts/Release/Sidecar"
+# The plugin sandbox helper; the build copies it next to the app.
+helper="$build/LiveDAW_artefacts/Release/SidecarPluginHost"
 name="Sidecar-$version-Linux-x86_64"
 
 [ -x "$exe" ] || { echo "no Release build at $exe" >&2; exit 1; }
+[ -x "$helper" ] || { echo "no plugin sandbox helper at $helper" >&2; exit 1; }
 
 stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
@@ -43,6 +46,8 @@ dir="$stage/$name"
 mkdir -p "$dir"
 install -m 755 "$exe" "$dir/Sidecar"
 strip --strip-unneeded "$dir/Sidecar"
+install -m 755 "$helper" "$dir/SidecarPluginHost"
+strip --strip-unneeded "$dir/SidecarPluginHost"
 install -m 644 "$root/packaging/linux/sidecar.desktop" "$dir/sidecar.desktop"
 install -m 644 "$root/resources/icon/sidecar-256.png" "$dir/sidecar.png"
 install -m 644 "$root/resources/icon/sidecar.svg" "$dir/sidecar.svg"
@@ -56,6 +61,7 @@ if [ -n "${APPIMAGETOOL:-}" ]; then
     mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" "$appdir/usr/share/doc/sidecar" \
              "$appdir/usr/share/icons/hicolor/scalable/apps"
     install -m 755 "$dir/Sidecar" "$appdir/usr/bin/Sidecar"
+    install -m 755 "$dir/SidecarPluginHost" "$appdir/usr/bin/SidecarPluginHost"
     install -m 644 "$root/packaging/linux/sidecar.desktop" "$appdir/usr/share/applications/sidecar.desktop"
     install -m 644 "$root/packaging/linux/sidecar.desktop" "$appdir/sidecar.desktop"
     for size in 16 32 48 64 128 256 512; do

@@ -634,11 +634,76 @@ blinking LEDs.
   scanner is started.
 - `PluginHost::createInstance` writes a "plugin being loaded" marker. On the next start,
   `checkForCrashDuringPluginLoad()` blacklists the plugin if the marker is still there.
+- The plugin sandbox (below, optional) moves a plugin's crashes and hangs out of the
+  process.
 - `DeviceWatchdog` (Main.cpp) watches the device manager and the engine's
   last-callback timestamp. It reopens the device with a back-off.
 - A `running.lock` file marks an unclean exit. The next start loads the autosave
   without plugins (safe mode) and autosaves to a separate file until the user reloads
   the plugins.
+
+## Plugin sandbox
+
+Experimental, off by default (SETUP > PLUGINS > RUN PLUGINS IN SANDBOX, setting
+`plugins.sandbox`). With it on, `PluginHost::createInstance` returns a
+`SandboxedPlugin` (`src/engine/SandboxedPlugin.*`): an `AudioPluginInstance` whose
+plugin runs in a helper process, `SidecarPluginHost` (`src/sandbox/HostProcess.cpp`, a
+separate CMake target copied next to the app's executable, or into
+`Sidecar.app/Contents/Helpers` on macOS; the packaging scripts ship it). One helper per
+plugin. Everything else (`FxSlots`, `Show`'s plugin bridge, the editor window, the
+generic controls) sees an ordinary plugin; with the option off nothing changes, and the
+setting only affects plugins loaded afterwards.
+
+- **Control** goes through a named pipe (`sandbox::PingingConnection`, a JUCE
+  `InterprocessConnection` that pings every second from its own thread; 10 s of
+  silence counts as a lost connection, and the helper then exits). Requests: load,
+  prepare, get / set state, parameter text, program, open / close editor, quit.
+  Sidecar starts the helper with `juce::ChildProcess`, so it can kill it.
+- **Audio** goes through a shared memory block (`sandbox::SharedBlock`: POSIX
+  `shm_open` or a Windows file mapping, pages touched on creation) and a named
+  semaphore. On the audio thread `processBlock` first collects the output of the
+  previous block: it spins (yielding) until the helper's `doneSeq` matches, at most
+  until (1 + `waitFraction`) block durations after that block was handed over (0.5 by
+  default). Then it copies the new input in, bumps `requestSeq` (release) and posts the
+  semaphore (never blocks). Output plays from a small FIFO one block late, so the
+  latency is exactly one prepared block whatever the callback sizes; it is reported
+  with `setLatencySamples` (plus the plugin's own latency, which the supervisor
+  follows), so `FxSlots`' latency listener passes it to the plugin delay compensation
+  (`pdc.rs`) and the FX MIX dry delay like any plugin's latency. After an idle gap (the slot bypassed or unassigned) the FIFO restarts from
+  silence. No locks or allocations; the helper's processing thread is a realtime
+  thread blocked on the semaphore.
+- **Faults:** a missed deadline or a lost helper makes the block fail; `FxSlots`
+  returns an error from the slot callback, so the engine restores the dry signal and
+  auto-bypasses the slot (the existing policy). A message-thread timer
+  (`SandboxedPlugin::supervise`, 20 Hz) then restarts a dead helper; for a timed-out
+  block it resumes if the helper catches up, or kills and restarts it after
+  `hangTimeoutMs` (2 s); each event goes to the event log. A restart reloads the plugin
+  and restores the last known state (cached from every get / set state and refreshed
+  every 10 s). After `maxRestarts` (3) in a minute the plugin stays off. The slot stays
+  bypassed until the fault is cleared, as for any plugin fault.
+- **Handshake with the message thread:** the audio thread raises `inProcess`, then
+  checks `status`; the message thread moves `status` away from running and waits for
+  `inProcess` to drop (both sequentially consistent) before it touches the pipeline
+  (prepare, restart). The audio thread only moves `status` from running to faulted
+  (compare-exchange).
+- **Parameters** are mirrored through shared memory, lock-free both ways: Sidecar
+  writes `toHelper[i]` (value, then a serial; any thread), which the helper applies at
+  the start of the next block (or from a 15 Hz timer while no audio flows); the helper
+  publishes values the plugin changed (its editor, a state restore) in `fromHelper[]`,
+  which the supervisor mirrors into the proxy's parameters (a value set in Sidecar
+  within the last 300 ms wins). Parameter text is a synchronous request with a short
+  timeout. Up to 4096 parameters; the list is fixed at load.
+- **Editor:** `createEditor()` returns Sidecar's own editor: the sandbox state, a SHOW
+  PLUGIN WINDOW key and a `GenericAudioProcessorEditor` of the proxy. The plugin's own
+  editor opens in a top-level window of the helper (`AllowSetForegroundWindow` on
+  Windows; an `LSUIElement` helper app on macOS). Without a display the helper says so
+  and the generic controls remain.
+- **Tests** (`tests/SandboxTests.cpp`) run the real helper with its test plugins
+  (`src/sandbox/TestPlugins.*`, offered only with `SIDECAR_SANDBOX_TEST_PLUGINS=1`):
+  output identical to the in-process plugin one block later with varying block sizes,
+  parameters and state through the sandbox, and plugins that crash or hang when a
+  parameter is automated (slot faulted, dry signal, the rest of the engine running,
+  helper restarted with its state, processing again once the fault is cleared).
 
 ## WING remote and WING files
 
@@ -810,9 +875,13 @@ README's *Known limitations*; keep the three in step.
 - MIDI and DAW remote control (MCU / HUI) have not been tried with real hardware;
   the WING remote has not been tried with WING Edit or WING Copilot, and exported
   snapshots have not been loaded into a console.
-- Plugins run inside the mixer process. Bad output and exceptions are contained, but
-  a plugin that segfaults takes the app down (safe mode then recovers the show).
-  Hosting each plugin in a sandbox process is the next step for full isolation.
+- Plugins run inside the mixer process by default. Bad output and exceptions are
+  contained, but a plugin that segfaults takes the app down (safe mode then recovers
+  the show). The plugin sandbox (experimental, off by default; see *Plugin sandbox*)
+  isolates each plugin in a helper process. Not done there yet: several plugins in one
+  helper, parameter lists that change after loading, MIDI and more than stereo,
+  moving loaded plugins in or out of the sandbox without reloading them, and a
+  restart that doesn't block the message thread while the plugin reloads.
 - The FX devices recreate each unit's controls and characteristic sound, not the
   console's exact algorithms.
 - Plugin delay compensation covers the paths into buses, mains and matrices (up to

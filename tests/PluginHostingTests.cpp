@@ -1,5 +1,6 @@
 #include "TestHelpers.h"
 #include "engine/PluginHost.h"
+#include "engine/SandboxedPlugin.h"
 
 using namespace livedaw;
 using livedaw::test::OfflineRig;
@@ -90,6 +91,37 @@ public:
             juce::MemoryBlock state;
             fx.getPlugin (0)->getStateInformation (state);
             logMessage ("State size: " + juce::String ((int) state.getSize()) + " bytes");
+
+            const float inProcessOut = rig.out (0);
+            fx.setPlugin (0, nullptr);
+            engine.getGarbage().collectAllNow();
+
+            // The same plugin in the plugin sandbox (the real helper): same steady-state
+            // output, state through the sandbox.
+            beginTest ("A real plugin in the plugin sandbox");
+            auto options = host.getSandboxOptions();
+            options.helper = juce::File (LIVEDAW_TEST_PLUGIN_HOST);
+            options.minWaitMs = 2000.0; // the offline rig runs blocks back to back
+            host.setSandboxOptions (options);
+            host.setSandboxEnabled (true);
+            auto sandboxed = host.createInstance (*desc, 48000.0, OfflineRig::kBlock, error);
+            host.setSandboxEnabled (false);
+            expect (dynamic_cast<SandboxedPlugin*> (sandboxed.get()) != nullptr, error);
+            if (sandboxed == nullptr)
+                return;
+
+            fx.setPlugin (0, std::move (sandboxed));
+            fx.clearFlags (0);
+            rig.run (200);
+            expect (! fx.isFaulted (0), "sandboxed plugin faulted");
+            expectWithinAbsoluteError (rig.out (0), inProcessOut, 1.0e-4f);
+
+            juce::MemoryBlock sandboxState;
+            fx.getPlugin (0)->getStateInformation (sandboxState);
+            expectEquals ((int) sandboxState.getSize(), (int) state.getSize());
+            fx.getPlugin (0)->setStateInformation (state.getData(), (int) state.getSize());
+            rig.run (20);
+            expect (! fx.isFaulted (0), "faulted after a state restore");
 
             fx.setPlugin (0, nullptr);
             engine.getGarbage().collectAllNow();

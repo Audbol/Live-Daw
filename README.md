@@ -169,8 +169,12 @@ This list matches the notice Sidecar shows at start-up.
   folder on disk (with an editor); the USB recorder uses a folder of your choice
   instead of a USB stick. The MP3 encoder is basic (constant bit rate, a simple
   masking model).
-- **Plugins** (VST3, AU, LV2) run inside the mixer process, not in a sandbox: a plugin
-  that crashes takes Sidecar down (safe mode then restores the show without plugins).
+- **Plugins** (VST3, AU, LV2) run inside the mixer process by default: a plugin that
+  crashes takes Sidecar down (safe mode then restores the show without plugins). The
+  experimental **plugin sandbox** (SETUP > PLUGINS > RUN PLUGINS IN SANDBOX, off by
+  default) runs each plugin in its own helper process instead: a crash or hang only
+  bypasses that FX slot. It adds one audio block of latency (delay-compensated like a
+  plugin's own), and the plugin's editor opens in a separate window.
   Delay compensation (SETUP > PLUGINS) lines up the paths into buses, mains and
   matrices up to 8192 samples; solo, monitoring, direct outs and recorder taps are
   not compensated.

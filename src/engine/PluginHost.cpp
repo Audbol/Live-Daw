@@ -5,6 +5,7 @@ namespace livedaw
 {
 
 static constexpr const char* kPluginListKey = "pluginList";
+static constexpr const char* kSandboxKey = "plugins.sandbox";
 
 PluginHost::PluginHost (juce::PropertiesFile* s) : settings (s)
 {
@@ -18,6 +19,26 @@ PluginHost::PluginHost (juce::PropertiesFile* s) : settings (s)
 
     // A plugin that crashes during scanning only takes down the scanner process.
     knownPlugins.setCustomScanner (std::make_unique<OutOfProcessScanner>());
+
+    SandboxOptions options;
+    options.helper = SandboxedPlugin::findHelper();
+    sandboxOptions = std::make_shared<const SandboxOptions> (std::move (options));
+    sandboxEnabled = settings != nullptr && settings->getBoolValue (kSandboxKey, false);
+}
+
+void PluginHost::setSandboxEnabled (bool on)
+{
+    sandboxEnabled = on;
+    if (settings != nullptr)
+    {
+        settings->setValue (kSandboxKey, on);
+        settings->saveIfNeeded();
+    }
+}
+
+void PluginHost::setSandboxOptions (const SandboxOptions& options)
+{
+    sandboxOptions = std::make_shared<const SandboxOptions> (options);
 }
 
 PluginHost::~PluginHost()
@@ -72,6 +93,15 @@ std::unique_ptr<juce::AudioPluginInstance> PluginHost::createInstance (const juc
                                                                        double sampleRate, int blockSize,
                                                                        juce::String& errorMessage)
 {
+    if (sandboxEnabled)
+    {
+        // A crash while loading only takes down the helper: no marker needed.
+        auto sandboxed = SandboxedPlugin::create (description, sampleRate, blockSize, sandboxOptions, errorMessage);
+        if (sandboxed == nullptr && errorMessage.isNotEmpty())
+            errorMessage = "in the plugin sandbox: " + errorMessage;
+        return sandboxed;
+    }
+
     const auto pending = getPendingLoadFile();
     pending.getParentDirectory().createDirectory();
     pending.replaceWithText (description.fileOrIdentifier + "\n" + description.name);

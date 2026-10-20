@@ -1802,8 +1802,9 @@ namespace
 
     //==============================================================================
     /** PLUGINS (app-specific): plugin scanning (the plugins become FX slot
-        devices), and DELAY COMPENSATION: the setting, the total compensation
-        and each loaded plugin's latency. */
+        devices), RUN PLUGINS IN SANDBOX (experimental: each plugin loaded afterwards
+        runs in a helper process, SandboxedPlugin), and DELAY COMPENSATION: the
+        setting, the total compensation and each loaded plugin's latency. */
     class PluginsTab final : public juce::Component, private juce::ChangeListener, private juce::Timer
     {
     public:
@@ -1822,6 +1823,17 @@ namespace
                                                               ctx.engine.setLatencyCompensation (on);
                                                               ctx.engine.updateLatencyCompensation();
                                                               ctx.settings.setValue (uiprefs::latencyCompensation, on);
+                                                              repaint();
+                                                          }),
+                                 1.3f);
+            // Saved by PluginHost; applies to plugins loaded from now on.
+            compensation.addRow ("RUN PLUGINS IN SANDBOX (EXPERIMENTAL)",
+                                 std::make_unique<OnKey> ([this] { return ctx.host.isSandboxEnabled(); },
+                                                          [this] (bool on)
+                                                          {
+                                                              ctx.host.setSandboxEnabled (on);
+                                                              ctx.log.info (on ? "Plugin sandbox on (experimental): plugins loaded from now on run in a helper process"
+                                                                               : "Plugin sandbox off: plugins loaded from now on run inside Sidecar");
                                                               repaint();
                                                           }),
                                  1.3f);
@@ -1850,7 +1862,9 @@ namespace
             juce::String text;
             text << "VST3, AU, LV2" << (ctx.host.getFormatManager().getNumFormats() > 3 ? ", VST2" : "")
                  << ". Load them into FX slots on the EFFECTS screen (device EXT), then assign the slots to channel inserts. "
-                 << "Plugins are scanned in a separate process, so a crashing plugin can't take the console down.";
+                 << "Plugins are scanned in a separate process, so a crashing plugin can't take the console down. "
+                 << "With RUN PLUGINS IN SANDBOX (below), each plugin loaded from then on also runs in its own process: if it "
+                 << "crashes or hangs, only its FX slot is bypassed. That adds one audio block of latency (compensated).";
             g.drawFittedText (text, r, juce::Justification::topLeft, juce::jmax (1, r.getHeight() / juce::jmax (1, (int) g.getCurrentFont().getHeight())), 0.85f);
 
             paintCompensation (g);
@@ -1920,7 +1934,8 @@ namespace
                 g.setColour (latency > MixerEngine::kMaxCompensation ? Dark::pre : (latency > 0 ? Dark::text : Dark::textDim));
                 g.drawFittedText (samples (latency), value, juce::Justification::centredRight, 1, 0.75f);
                 g.setColour (Dark::text);
-                g.drawFittedText (fx.describe (slot).toUpperCase(), row.withTrimmedRight (6), juce::Justification::centredLeft, 1, 0.75f);
+                g.drawFittedText (fx.describe (slot).toUpperCase() + (fx.isSandboxed (slot) ? " (SANDBOX)" : ""), row.withTrimmedRight (6),
+                                  juce::Justification::centredLeft, 1, 0.75f);
             }
         }
 

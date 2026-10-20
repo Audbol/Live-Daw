@@ -16,8 +16,11 @@ Set-StrictMode -Version Latest
 
 $root = Split-Path -Parent $PSScriptRoot
 $exe = Join-Path $BuildDir 'LiveDAW_artefacts/Release/Sidecar.exe'
+# The plugin sandbox helper; the build copies it next to the app.
+$helper = Join-Path $BuildDir 'LiveDAW_artefacts/Release/SidecarPluginHost.exe'
 $name = "Sidecar-$Version-Windows-x64"
 if (-not (Test-Path $exe)) { throw "no Release build at $exe" }
+if (-not (Test-Path $helper)) { throw "no plugin sandbox helper at $helper" }
 
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $OutDir = (Resolve-Path $OutDir).Path
@@ -27,6 +30,7 @@ New-Item -ItemType Directory -Force $stage | Out-Null
 
 try {
     Copy-Item $exe $stage
+    Copy-Item $helper $stage
     # LICENSE and THIRD_PARTY_NOTICES.md are optional so older commits still package.
     foreach ($f in 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'CHANGELOG.md') {
         $src = Join-Path $root $f

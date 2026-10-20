@@ -4,7 +4,8 @@
 #   packaging/package-macos.sh <Sidecar.app> <x86_64 Sidecar.app or ""> <version> <output dir>
 #
 # With a second (x86_64) build, its executable is merged into the first with lipo,
-# making a universal (arm64 + x86_64) app. The app is signed ad hoc (it isn't
+# making a universal (arm64 + x86_64) app; so is the plugin sandbox helper the build puts in
+# Sidecar.app/Contents/Helpers. The app is signed ad hoc (it isn't
 # notarized, so the first launch needs right-click > Open) and written to
 # <output dir>/Sidecar-<version>-macOS.dmg with an /Applications link.
 set -euo pipefail
@@ -27,12 +28,18 @@ trap 'rm -rf "$stage"' EXIT
 
 ditto "$app" "$stage/Sidecar.app"
 bin="$stage/Sidecar.app/Contents/MacOS/Sidecar"
+helper_rel="Contents/Helpers/SidecarPluginHost.app/Contents/MacOS/SidecarPluginHost"
+helper="$stage/Sidecar.app/$helper_rel"
+[ -f "$helper" ] || { echo "no plugin sandbox helper at $helper" >&2; exit 1; }
 
 if [ -n "$other" ]; then
     lipo -create "$bin" "$other/Contents/MacOS/Sidecar" -output "$bin.universal"
     mv "$bin.universal" "$bin"
+    lipo -create "$helper" "$other/$helper_rel" -output "$helper.universal"
+    mv "$helper.universal" "$helper"
 fi
 lipo -info "$bin"
+lipo -info "$helper"
 
 codesign --force --deep --sign - "$stage/Sidecar.app"
 codesign --verify --deep --strict --verbose=2 "$stage/Sidecar.app"
