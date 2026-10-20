@@ -117,6 +117,10 @@ private:
     port. Used by INPUT and the overview's INPUT panel. */
 void paintInputSourceTile (juce::Graphics&, juce::Rectangle<float> r, MixerEngine&, int left, int right, bool stereo, bool signal);
 
+/** The input DELAY as a knob, in its unit up to the engine's 500 ms (the INPUT
+    screen and the channel strip section share it). */
+KnobBinding inputDelayBinding (UiContext&, InputParams&);
+
 // The block screens.
 std::unique_ptr<HomeScreen> makeInputScreen (UiContext&, Strip&);
 std::unique_ptr<HomeScreen> makeFilterScreen (UiContext&, Strip&);

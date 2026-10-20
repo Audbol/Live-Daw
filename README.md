@@ -182,7 +182,8 @@ This list matches the notice Sidecar shows at start-up.
 - **LIBRARY:** scene and snippet files are Sidecar's own (.lsnap / .lsnip), not the
   WING's .snap / .snip, and the CLIP tab plays its clip on the USB player.
 - **Drawn but disabled:** the GPIO and SD functions of the custom controls (there is
-  no GPIO socket or SD card), and settings that only make sense on the hardware.
+  no GPIO socket or SD card), the gate and dynamics KEY TAP (a key from another channel
+  is taken at its input), and settings that only make sense on the hardware.
 
 ## Reporting problems
 

@@ -114,6 +114,27 @@ All notable changes to Sidecar are listed here. Versions follow
 - SETUP > GENERAL > CONSOLE NAME only took effect after a restart: the running WING
   remote kept announcing the old name, and the MIDI identity (SysEx) kept it in both
   places it can be edited.
+- FX: the Vintage Room's early reflections and the Concert reverb's reflection
+  clusters now sit at their ER / REFL times as soon as the device is loaded (they
+  stayed at the start until the time was changed).
+- FILTER: HI CUT goes down to 50 Hz as on the WING (and as the engine allows) on the
+  FILTER screen, its graph, the channel strip section and the 4-Channel section; it
+  stopped at 200 Hz.
+- INPUT: with a negative BALANCE the post-trim meter showed the right side boosted
+  instead of turned down.
+- EQ: with an analog EQ model, every 6th parameter (SOUL's LM GAIN and HF GAIN...)
+  never came onto the knobs: the knob pages held five parameters but were chosen
+  in sixes.
+- GATE / DYNAMICS: KEY TAP is drawn disabled; it looked active but the engine always
+  keys from the source channel's input (listed under the known limitations).
+- CHANNEL COPY / INIT: CONN now copies the ALT input and the MAIN / ALT switch too,
+  SEND copies TAP WIDTH and TAP EQ, and a MACH EQ4 isn't copied onto an aux channel
+  (which doesn't offer it).
+- Channel strip section: the INPUT encoder's DELAY now has the INPUT screen's range
+  (up to 500 ms in every unit, at the current sample rate); it stopped at 150 m,
+  500 ft or 24000 samples, so the two controls disagreed.
+- INPUT: the TRIM & BALANCE pad's balance handle follows the ST key while the screen
+  is open (it stayed disabled, or enabled, until the screen was opened again).
 
 ## [0.1.0] - beta
 
