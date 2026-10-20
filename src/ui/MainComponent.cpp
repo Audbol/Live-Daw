@@ -977,13 +977,16 @@ void MainComponent::openShowFile (const juce::File& file)
 void MainComponent::saveShowTo (juce::File file)
 {
     file = file.withFileExtension (Show::fileExtension);
-    if (show.getName() == "Untitled show" || show.getName() == "Imported session")
-        show.setName (file.getFileNameWithoutExtension());
+    // As on the WING, the show is called what its file is called (also after
+    // SAVE AS under a new name).
+    const auto previousName = show.getName();
+    show.setName (file.getFileNameWithoutExtension());
 
     const auto result = show.saveToFile (file);
 
     if (result.failed())
     {
+        show.setName (previousName);
         log.error ("Save failed: " + result.getErrorMessage());
         popups::warn (*display, "SAVE SHOW", result.getErrorMessage());
         return;

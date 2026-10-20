@@ -3,6 +3,13 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Fixed
+
+- LIBRARY > SHOW > SAVE AS: the show takes the new name (it kept the old one, so the
+  title bar and the LIBRARY showed the name of the show it was copied from).
+
 ## [0.1.0] - beta
 
 The first public release. Sidecar was developed as "Live DAW" before it was renamed;
