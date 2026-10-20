@@ -1099,7 +1099,7 @@ pub unsafe extern "C" fn ld_library_info(path: *const u8, len: usize, out: *mut 
 }
 
 /// Saves scene `scene` (snippet < 0, with its snippets) or snippet `snippet`
-/// of it to `path`. False with `message` on failure.
+/// of it to `path`, named after the file. False with `message` on failure.
 #[no_mangle]
 pub unsafe extern "C" fn ld_show_export_library(
     s: *mut LdShow,
@@ -1111,14 +1111,7 @@ pub unsafe extern "C" fn ld_show_export_library(
 ) -> bool {
     let Some(s) = show(s) else { return false };
     let path = PathBuf::from(str_arg(path, path_len).into_owned());
-    let r = guard(Err("internal error".into()), || {
-        let file = if snippet < 0 {
-            library::scene_file(&s.show, scene).ok_or("No such scene")?
-        } else {
-            library::snippet_file(&s.show, scene, snippet).ok_or("No such snippet")?
-        };
-        library::save(&path, &file).map(|()| Vec::new())
-    });
+    let r = guard(Err("internal error".into()), || library::export(&s.show, scene, snippet, &path).map(|()| Vec::new()));
     finish(r, message)
 }
 

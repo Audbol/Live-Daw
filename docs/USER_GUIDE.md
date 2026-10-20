@@ -348,7 +348,7 @@ or the USB folder of the file list.
 - **EXPORT** on the SNAP tab saves the selected scene, with its snippets, as a scene
   file (`.lsnap`) in the folder shown at INT / USB (at SHOW: the INT folder); on the
   SNIP tab it saves the selected snippet as a snippet file (`.lsnip`). You are asked
-  for the file name.
+  for the file name; the scene or snippet in the file takes that name.
 - **IMPORT** on the SNAP tab adds the scene file selected at INT / USB (or chosen in a
   file dialog) after the selected scene; on the SNIP tab it adds the snippet file to
   the selected scene. Double-clicking a file in the list imports it too. Importing

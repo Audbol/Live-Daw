@@ -69,22 +69,49 @@ fn parse_snippet(e: &Element) -> Snippet {
     read_snippet(e, &mut state_of, &|s: &str| refs_from_string(s))
 }
 
-/// Scene `index` of the show as a scene file (with its snippets).
-pub fn scene_file(show: &Show, index: i32) -> Option<Element> {
-    let scene = show.scene(index)?;
+fn scene_root(scene: &Scene) -> Element {
     let mut root = Element::new(SCENE_ROOT);
     root.set("version", LIBRARY_VERSION);
     root.add(scene_to_xml(scene));
-    Some(root)
+    root
+}
+
+fn snippet_root(snippet: &Snippet) -> Element {
+    let mut root = Element::new(SNIPPET_ROOT);
+    root.set("version", LIBRARY_VERSION);
+    root.add(snippet_to_xml(snippet));
+    root
+}
+
+/// Scene `index` of the show as a scene file (with its snippets).
+pub fn scene_file(show: &Show, index: i32) -> Option<Element> {
+    show.scene(index).map(scene_root)
 }
 
 /// Snippet `snippet` of scene `scene` as a snippet file.
 pub fn snippet_file(show: &Show, scene: i32, snippet: i32) -> Option<Element> {
-    let sn = show.snippet(scene, snippet)?;
-    let mut root = Element::new(SNIPPET_ROOT);
-    root.set("version", LIBRARY_VERSION);
-    root.add(snippet_to_xml(sn));
-    Some(root)
+    show.snippet(scene, snippet).map(snippet_root)
+}
+
+/// EXPORT: saves scene `scene` (with its snippets; `snippet` < 0) or snippet
+/// `snippet` of it at `path`, named after the file, as the WING names a
+/// scene or snippet saved to USB by the name it was saved under.
+pub fn export(show: &Show, scene: i32, snippet: i32, path: &Path) -> Result<(), String> {
+    let name = path.file_stem().map(|s| s.to_string_lossy().trim().to_owned()).filter(|n| !n.is_empty());
+    let file = if snippet < 0 {
+        let mut sc = show.scene(scene).ok_or("No such scene")?.clone();
+        if let Some(name) = name {
+            sc.name = name;
+        }
+        scene_root(&sc)
+    } else {
+        let mut sn = show.snippet(scene, snippet).ok_or("No such snippet")?.clone();
+        if let Some(name) = name {
+            sn.name = name;
+        }
+        snippet_root(&sn)
+    };
+    save(path, &file)
 }
 
 /// Adds the scene of a scene file to the show at `index` (appended if out of
@@ -152,6 +179,27 @@ mod tests {
         let (scene, snippet) = (scene_file(&show, 0).unwrap(), snippet_file(&show, 0, 0).unwrap());
         assert!(import_snippet(&mut show, &scene, 0).is_err());
         assert!(import_scene(&mut show, &snippet, 0).is_err());
+    }
+
+    #[test]
+    fn export_names_after_the_file() {
+        let mut show = Show::new();
+        let scene = Scene {
+            name: "Verse".into(),
+            snippets: vec![Snippet { name: "Solo".into(), ..Snippet::default() }],
+            ..Scene::default()
+        };
+        show.insert_scene(scene, -1);
+        let dir = std::env::temp_dir().join(format!("livedaw-library-{}", std::process::id()));
+        let (scene_path, snippet_path) = (dir.join("Verse 2.lsnap"), dir.join("Solo B.lsnip"));
+        export(&show, 0, -1, &scene_path).unwrap();
+        export(&show, 0, 0, &snippet_path).unwrap();
+        assert_eq!(info(&load(&scene_path).unwrap()).map(|i| i.name), Some("Verse 2".into()));
+        assert_eq!(info(&load(&snippet_path).unwrap()).map(|i| i.name), Some("Solo B".into()));
+        assert!(export(&show, 1, -1, &scene_path).is_err() && export(&show, 0, 1, &snippet_path).is_err());
+        // The show keeps its names.
+        assert_eq!(show.scene(0).map(|s| s.name.as_str()), Some("Verse"));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

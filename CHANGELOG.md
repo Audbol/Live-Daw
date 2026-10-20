@@ -130,6 +130,10 @@ All notable changes to Sidecar are listed here. Versions follow
   it was.
 - SETUP > GENERAL counted one DSP thread less (the workers only) than the event log
   and SETUP > LOG, which count the audio thread too.
+- LIBRARY > SNAP / SNIP > EXPORT: the scene or snippet in the file kept its old name
+  when it was exported under another one, so the list showed the file as "Scene 1x"
+  but IMPORT added "Scene 1". The exported scene or snippet now takes the name it
+  was saved under.
 
 ## [0.1.0] - beta
 
