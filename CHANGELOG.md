@@ -10,6 +10,9 @@ All notable changes to Sidecar are listed here. Versions follow
 - HOME INS screens: the FX PROCESSOR list shows NONE and all 16 slots without
   scrolling (FX 9-16 beside FX 1-8), and FX SPILL is unavailable while the insert
   has no FX processor.
+- USB player: "1 SONG" instead of "1 SONGS"; the timeline shows the clip's length
+  as soon as it is known (from the file's header before it has played), as the
+  player panel does; the meters' CLIP label no longer gets cut in small windows.
 
 ## [0.1.0] - beta
 
