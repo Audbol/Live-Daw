@@ -56,6 +56,14 @@ All notable changes to Sidecar are listed here. Versions follow
   parameter changes work through the sandbox; the plugin's own editor opens in a
   window of the helper process. The sandbox's one block of latency is reported like a
   plugin's own, so delay compensation covers it.
+- GATE / DYNAMICS **KEY TAP**: a key from another channel (KEY SOURCE) is taken at
+  that channel's tap point: IN (after the input trim), FILT, 3, 4, 5, PFL, AFL or
+  POST, so a key taken AFL or POST follows the source's fader and mute. A key from a
+  channel later in the console arrives in the same block (channels run in order of
+  their keys); keys that form a cycle, or a channel keyed by itself, are one block
+  late. Saved with shows and scenes and set from WING remote apps (`gatesc/tap`,
+  `dynsc/tap` on channels). Until now a key from another channel was always that
+  channel's raw input, before its trim.
 
 ### Changed
 
@@ -151,8 +159,6 @@ All notable changes to Sidecar are listed here. Versions follow
 - EQ: with an analog EQ model, every 6th parameter (SOUL's LM GAIN and HF GAIN...)
   never came onto the knobs: the knob pages held five parameters but were chosen
   in sixes.
-- GATE / DYNAMICS: KEY TAP is drawn disabled; it looked active but the engine always
-  keys from the source channel's input (listed under the known limitations).
 - CHANNEL COPY / INIT: CONN now copies the ALT input and the MAIN / ALT switch too,
   SEND copies TAP WIDTH and TAP EQ, and a MACH EQ4 isn't copied onto an aux channel
   (which doesn't offer it).
@@ -212,6 +218,15 @@ All notable changes to Sidecar are listed here. Versions follow
   overlap, slider values (CEILING, FADE, MOUSE SPEED) use the screen's type, and
   SETUP > AUDIO's INPUT SELECT captions grow with the screen (in a small window its
   cells are no longer squeezed out by them).
+- Automix: a channel set to AUTO X / AUTO Y with its INS 2 ON key off was listed on
+  the automix screen, spilled by AUTOMIX FADER SPILL and lit on the surface's AUTO
+  LEDs, but not gain-shared. As on the console, INS 2's ON key switches automix in
+  and out: only AUTO X / Y with INS 2 ON is a member, everywhere. The selected
+  channel stays on its own automix screen while its INS 2 is off, drawn as not a
+  member.
+- Automix screen: the channel columns now follow other channels joining or leaving
+  the groups (from their own INS 2, a scene or a remote app) and channels being added
+  or removed, instead of only refreshing when the screen was opened.
 
 ## [0.1.0] - beta
 

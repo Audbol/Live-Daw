@@ -75,7 +75,28 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
 - INS 2 of input channels can run an FX slot or join automix group X or Y (each with its
   ENABLE switch in `EngineControls::automix_enable`). The audio thread computes the
   gain sharing between stages 1 and 2 (`engine.rs`, `automix`) from the post-fader level,
-  so the channel fader shapes it; channels leaving automix glide back to unity.
+  so the channel fader shapes it; channels leaving automix glide back to unity. A
+  channel is a member when INS 2 is AUTO X / AUTO Y *and* ON (`Strip::automix_group`,
+  `Strip::automixGroup` in C++): gain sharing, the automix screen, AUTOMIX spills and
+  the surface's AUTO LEDs all use that one rule.
+- **KEY TAP** (`keytap.rs`): a GATE or DYNAMICS slot keyed from an input channel
+  (`DynSlotParams::sc_source`) takes the key at that channel's tap point `sc_tap`
+  (IN, FILT, 3, 4, 5, PFL, AFL, POST as in `TAP_POINTS`; mono, a stereo channel's
+  L + R / 2; POST with the channel's automix gain of the previous block, since
+  automix runs after stage 1). The source writes each tap a key uses into a buffer
+  of its own (allocated by `Engine::update_keys` from `collect`, published through
+  an `AtomicPtr` and retired through the garbage list like the PDC rings; until it
+  exists the key is the channel's input). Processing order: before stage 1 the
+  audio thread sorts the input and aux channels into up to four *waves* by key
+  dependency (`KeySchedule`, no allocation) and runs the waves one after the other,
+  each in parallel; a key reads its source's tap of this block when the source ran
+  in an earlier wave (buses, mains and matrices always do), else the previous
+  block's. So keys from a channel later in the console are on time, while cycles (A
+  keys B and B keys A, a channel keyed by itself) and chains deeper than four waves
+  are one block late. Each buffer has two halves by block parity: a source writes
+  the half of the current block while same-wave readers take the other, so parallel
+  strips never share memory being written. An idle (unpatched) source writes
+  silence. Without keys from other channels stage 1 is one wave, as before.
 - **Sources** (`sources.rs`): every hardware input port (the first 576) and playback
   channel has a source with gain, mute, polarity, +48 V (stored only), colour, icon,
   name and a pairing with its neighbour (ports 1-2, 3-4, ...: STEREO, or MID/SIDE
@@ -246,6 +267,8 @@ completed a full cycle, so no running callback can still hold a pointer to them.
 publishes a job (generation, task count and next index packed into one 64-bit atomic),
 wakes the workers (spin, then park/unpark) and helps with the work itself. Each block
 has five parallel stages: channels and aux, buses 9+, buses 1-8, mains, matrices.
+Channels and aux run in more than one fork/join (waves) only when keys come from
+other channels (*KEY TAP* above).
 Automix, the monitor and writing the outputs run on the audio thread.
 
 ## Recorder

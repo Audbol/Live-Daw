@@ -675,11 +675,12 @@ void ChannelStripSection::paintPanel (juce::Graphics& g)
         const float labelX = groups + step * 4.0f + 1.0f, labelW = W * 0.06f;
         text (labelX, labelW, 0, "MAIN");
 
-        const int automix = any ? p->postInsert.mode.load() : 0;
+        // The automix group the selected channel is a member of (INS 2 ON).
+        const int automix = any ? strip->automixGroup() : -1;
         text (groups, step, 1, "X", juce::Justification::centred);
-        ledAt (groups + step, 1, automix == (int) PostInsertMode::AutomixX);
+        ledAt (groups + step, 1, automix == 0);
         text (groups + step * 2.0f, step, 1, "Y", juce::Justification::centred);
-        ledAt (groups + step * 3.0f, 1, automix == (int) PostInsertMode::AutomixY);
+        ledAt (groups + step * 3.0f, 1, automix == 1);
         text (labelX, labelW, 1, "AUTO");
 
         // Eight DCA LEDs for 16 DCAs: LED i shows DCA i or i + 8.

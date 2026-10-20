@@ -132,6 +132,13 @@ public:
     bool hasPostInsert() const noexcept { return kind != StripKind::Aux; }
     /** Automix X/Y (in INS 2): the input channels only. */
     bool hasAutomix() const noexcept { return kind == StripKind::Channel; }
+    /** The automix group the strip is a member of (0 X, 1 Y; -1 none): INS 2
+        set to AUTO X / AUTO Y and ON, as the engine shares gain (`Strip::automix_group`). */
+    int automixGroup() const noexcept
+    {
+        const int mode = params.postInsert.mode.load();
+        return hasAutomix() && params.postInsert.on.load() && (mode == 1 || mode == 2) ? mode - 1 : -1;
+    }
     /** A selectable TAP point and process order: input channels only (the
         others tap after INS 1, pre-fader, and have a fixed order). */
     bool hasSelectableTap() const noexcept { return kind == StripKind::Channel; }

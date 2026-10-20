@@ -3188,6 +3188,8 @@ mod tests {
             ("/ch/3/ptap", Value::str("POST")),
             ("/ch/3/preins/ins", Value::str("FX3")),
             ("/ch/3/postins/mode", Value::str("AUTO_X")),
+            ("/ch/3/gatesc/tap", Value::str("POST")),
+            ("/ch/3/dynsc/tap", Value::str("PFL")),
             ("/ch/3/main/2/on", Value::Int(1)),
             ("/ch/3/main/2/lvl", Value::Float(-3.0)),
             ("/ch/3/send/5/on", Value::Int(1)),
@@ -3230,6 +3232,8 @@ mod tests {
         assert_eq!(ch3.params.dca_mask.load(Relaxed), 1);
         assert_eq!(ch3.params.mute_group_mask.load(Relaxed), 4);
         assert_eq!(ch3.name(), "Kick");
+        // KEY TAP (TAP_POINTS order).
+        assert_eq!((ch3.params.gate.sc_tap.load(Relaxed), ch3.params.dynamics.sc_tap.load(Relaxed)), (7, 5));
         assert!(ch3.sends.find(4).unwrap().pan_reversed.load(Relaxed));
         assert_eq!(e.controls.main_link.load(Relaxed), 2);
         assert_eq!(e.dca_name(2), "Drums");

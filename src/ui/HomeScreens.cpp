@@ -1377,9 +1377,8 @@ public:
         keyFilter->chevronKey = true;
         keyFilter->onKey = [this] { toggleDetail (Detail::Key); };
         keyFilter->keyLit = [this] { return detail == Detail::Key; };
+        // Where the key is taken from the KEY SOURCE channel (no effect while SELF).
         keyTap = &field ("KEY TAP", tapPointNames(), slot.scTap);
-        // Not in the engine yet: another channel keys from its input (the setting is only stored).
-        keyTap->setEnabled (false);
         keyFreq = &make<KnobBox> (wingFreq ("KEY FREQ", slot.scFreq, 20.0f, 20000.0f, 1000.0f));
         keyQ = &make<KnobBox> (bindLog ("KEY Q", slot.scQ, 0.44f, 10.0f, {}, 1.0f));
         // The key signal after the key filter on the solo bus.
@@ -1986,7 +1985,9 @@ private:
 
 //==============================================================================
 /** One channel of the automix screen: colour strip with the number, icon and
-    name, the X / Y group, the attenuation meter and the weight slider. */
+    name, the X / Y group, the attenuation meter and the weight slider. The
+    selected channel set to AUTO with INS 2 off is not a member: its group key
+    is drawn dim and its meter stays empty. */
 class AutomixColumn final : public juce::Component, private juce::Timer
 {
 public:
@@ -2011,7 +2012,8 @@ public:
         g.drawFittedText (stripName (strip).toUpperCase(), name.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         groupKey = r.removeFromTop (juce::jlimit (16.0f, screenCap (24.0f), r.getHeight() * 0.1f)).reduced (r.getWidth() * 0.2f, 1.0f);
         const int mode = strip.params.postInsert.mode.load();
-        g.setColour (mode == 1 ? colours::fader : Colours::active);
+        const bool member = strip.automixGroup() >= 0;
+        g.setColour (! member ? colours::dim : (mode == 1 ? colours::fader : Colours::active));
         g.fillRect (groupKey);
         g.setColour (juce::Colours::black);
         g.setFont (homeFont (TypeScale::value, groupKey.getHeight() * 0.8f, WingWeight::SemiBold));
@@ -2022,7 +2024,7 @@ public:
         auto meter = r.removeFromRight (juce::jmax (4.0f, r.getWidth() * 0.18f)).reduced (0.0f, 2.0f);
         g.setColour (colours::well);
         g.fillRect (meter);
-        const float att = juce::jlimit (0.0f, 1.0f, -strip.meters.automixDb.load() / 40.0f);
+        const float att = member ? juce::jlimit (0.0f, 1.0f, -strip.meters.automixDb.load() / 40.0f) : 0.0f;
         const int segs = 20;
         for (int i = 0; i < segs; ++i)
         {
@@ -2196,15 +2198,31 @@ public:
 
     bool automix() const { return post && strip.hasAutomix() && ins.mode.load() > 0; }
 
+    /** The channels the automix screen lists: the members of groups X and Y
+        (INS 2 AUTO X / AUTO Y and ON, as the engine shares gain), and the
+        selected channel itself (drawn as not a member while its INS 2 is off),
+        with the structure they belong to. */
+    std::vector<std::pair<Strip*, int>> automixMembers() const
+    {
+        std::vector<std::pair<Strip*, int>> list;
+        if (! automix())
+            return list;
+        list.emplace_back (nullptr, ctx.engine.getStructureVersion());
+        for (auto& ch : ctx.engine.getChannels())
+            if (const int group = ch->automixGroup(); group >= 0 || ch.get() == &strip)
+                list.emplace_back (ch.get(), group);
+        return list;
+    }
+
     void rebuildAutomix()
     {
         for (auto* col : columns)
             owned.removeObject (col);
         columns.clear();
-        if (automix())
-            for (auto& ch : ctx.engine.getChannels())
-                if (ch->params.postInsert.mode.load() > 0)
-                    columns.push_back (&make<AutomixColumn> (*ch, ch.get() == &strip));
+        shownMembers = automixMembers();
+        for (auto& [ch, group] : shownMembers)
+            if (ch != nullptr)
+                columns.push_back (&make<AutomixColumn> (*ch, ch == &strip));
         shownAutomix = automix();
         resized();
         notifyKnobs();
@@ -2233,7 +2251,9 @@ public:
         auto& fx = ctx.engine.getFx();
         const int model = slot >= 0 ? fx.getModel (slot) : -1;
         const bool plugin = slot >= 0 && fx.hasPlugin (slot);
-        if (automix() != shownAutomix)
+        // Channels joining or leaving a group (here, on their own INS 2, from a
+        // scene or a remote) and added or removed channels rebuild the list.
+        if (automix() != shownAutomix || automixMembers() != shownMembers)
             rebuildAutomix();
         if (slot != shownSlot || model != shownModel || plugin != shownPlugin)
         {
@@ -2365,6 +2385,7 @@ private:
     Segmented* modeKeys = nullptr;
     Faceplate* face = nullptr;
     std::vector<AutomixColumn*> columns;
+    std::vector<std::pair<Strip*, int>> shownMembers;
     juce::Rectangle<int> header, row2;
     juce::String typeText { "NONE" };
     int shownSlot = -2, shownModel = -2, knobPage = 0;
