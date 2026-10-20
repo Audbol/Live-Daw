@@ -656,8 +656,9 @@ pub unsafe extern "C" fn ld_strip_set_model(s: *const Strip, block: i32, model: 
     });
 }
 
-/// Writes the response (dB) of a strip's EQ (block 1), FILTER (block 3) or
-/// TAP EQ (block 4) at `count` frequencies - the same filters the engine runs.
+/// Writes the response (dB) of a strip's EQ (block 1), FILTER (block 3), TAP EQ
+/// (block 4), GATE / DYNAMICS key filter (5 / 6) or DYNAMICS crossover (7) at
+/// `count` frequencies - the same filters the engine runs.
 #[no_mangle]
 pub unsafe extern "C" fn ld_strip_response(
     s: *const Strip,
@@ -707,6 +708,18 @@ mod tests {
             let mut out = [1.0; 2];
             ld_strip_response(ch, 1, freqs.as_ptr(), out.as_mut_ptr(), 2, 48000.0);
             assert!(out[0].abs() < 0.01 && out[1].abs() < 0.01);
+            // The key filters and the crossover: flat until a filter type is chosen.
+            for block in 5..=7 {
+                ld_strip_response(ch, block, freqs.as_ptr(), out.as_mut_ptr(), 2, 48000.0);
+                assert!(out[0].abs() < 1e-6 && out[1].abs() < 1e-6, "block {block}");
+            }
+            let p = &*ld_strip_params(ch);
+            p.gate.sc_filter.store(1, std::sync::atomic::Ordering::Relaxed); // LOWPASS at 1 kHz
+            ld_strip_response(ch, 5, freqs.as_ptr(), out.as_mut_ptr(), 2, 48000.0);
+            assert!(out[0].abs() < 0.1 && (out[1] + 3.0).abs() < 0.2, "{out:?}");
+            p.dynamics.xo_kind.store(2, std::sync::atomic::Ordering::Relaxed); // HIGH at 1 kHz
+            ld_strip_response(ch, 7, freqs.as_ptr(), out.as_mut_ptr(), 2, 48000.0);
+            assert!(out[0] < -30.0 && (out[1] + 3.0).abs() < 0.2, "{out:?}");
             ld_engine_collect(e);
             ld_engine_destroy(e);
         }

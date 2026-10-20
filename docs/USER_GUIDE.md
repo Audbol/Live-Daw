@@ -121,8 +121,15 @@ Barlow Condensed.
     groups, the talk tags TALK ON / TALK SOLO for both talk keys, A or B) and the
     **SAFE** key. The slot screens follow chapter 6 of the manual: INPUT (CHANNEL
     INPUT, TRIM & BALANCE pad, FILTER, DELAY), FILTER SETUP, GATE / COMP with the
-    model's faceplate, EQ, INS 1 / INS 2 (with automix), MAIN SENDS and BUS / MATRIX
-    SENDS. On MATRIX SENDS a channel's or aux's send has **PAN LINK** as on BUS SENDS
+    model's faceplate (the KEY FILTER and XOVER MODE `>` keys open GATE KEY FILTER /
+    COMP XOVER with the filter's response and FREQ; KEY SOURCE opens SELECT CHANNEL;
+    the model fields open the WING's picture lists), EQ, INS 1 / INS 2 (with
+    automix), MAIN SENDS and BUS / MATRIX SENDS. A new channel starts as a
+    factory-set WING: GATE -40 dB, 1:3, RANGE 40 dB, 10 / 10 / 200 ms; COMP -10 dB,
+    3:1, KNEE 3, 50 / 20 / 150 ms, RMS, AUTO ENV on (aux: the WING GATE at -36 dB);
+    key filters 1k0 Hz Q 2.00; LC 100.2 Hz (24 dB/oct), HC 10k02 Hz; the EQ bands at
+    80.2, 200, 601.4 Hz, 1k50, 3k99 and 12k00 at Q 1.00 (buses, mains and matrices
+    from 60.1 Hz to 12k00). On MATRIX SENDS a channel's or aux's send has **PAN LINK** as on BUS SENDS
     (touch the pan ring: OFF, LINK or LINK REVERSED): linked (the default) its pan
     follows the channel's, LINK REVERSED mirrors it, OFF gives it its own PAN; buses and mains send their
     panned output. **INIT** and **COPY** open CHANNEL INIT / COPY (scope and destinations);

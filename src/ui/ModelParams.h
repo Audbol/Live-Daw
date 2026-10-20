@@ -120,6 +120,15 @@ public:
     static void chooseDynamics (juce::Component& anchor, const DynSlotParams& slot, std::function<void (int)> onSelect,
                                 const juce::StringArray& allowed = {});
 
+    /** The EQ model list of table `t` as the 3.1 console shows it: the WING
+        EQ's tile alone in the first row, then the analog models' front
+        panels three to a row (only those in `allowed`, when given). */
+    static void chooseEq (juce::Component& anchor, models::Table t, int current, std::function<void (int)> onSelect,
+                          const juce::StringArray& allowed = {});
+
+    /** The WING EQ's picture in the model list: an amber curve through its band rings. */
+    static void paintWingEqTile (juce::Graphics&, juce::Rectangle<float>);
+
 private:
     void timerCallback() override;
     std::atomic<int32_t>* model = nullptr;

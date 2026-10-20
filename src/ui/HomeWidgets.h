@@ -265,6 +265,7 @@ public:
 
     std::function<bool()> isOn;
     bool iconAbove = false, outlined = false, twoLines = false, labelBeside = false;
+    bool iconAfter = false; // the caption, then the icon at the right (CLOSE of the 3.1 pages)
     juce::Colour offColour = colours::keyOff;
     juce::Colour offInk = colours::dim;  // the text of an unlit key
     juce::Colour frame = juce::Colours::black;  // keyboard-style keys: #484848
@@ -330,6 +331,15 @@ public:
         if (keyText.isEmpty())
         {
             drawIcon (g, *icon, r.reduced (r.getHeight() * 0.2f), ink);
+            return;
+        }
+        if (iconAfter)
+        {
+            auto iconBox = r.removeFromRight (juce::jmin (r.getHeight(), r.getWidth() * 0.4f)).reduced (r.getHeight() * 0.12f);
+            drawIcon (g, *icon, iconBox, ink);
+            g.setColour (ink);
+            g.setFont (fontFittingWidth (homeFont (TypeScale::body, r.getHeight() * 0.46f), keyText, r.getWidth() - 4.0f, 0.8f));
+            g.drawFittedText (keyText, r.toNearestInt().reduced (4, 0), juce::Justification::centredRight, 1, 0.8f);
             return;
         }
         if (iconAbove)

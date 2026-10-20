@@ -584,27 +584,30 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
             g.strokePath (p, stroke);
             return;
         case Icon::Maxer:
-            p.startNewSubPath (P (0.12f, 0.62f));
-            p.cubicTo (P (0.3f, 0.62f), P (0.32f, 0.3f), P (0.5f, 0.3f));
-            p.cubicTo (P (0.68f, 0.3f), P (0.7f, 0.62f), P (0.88f, 0.62f));
-            p.startNewSubPath (P (0.12f, 0.78f));
-            p.lineTo (P (0.88f, 0.78f));
-            g.strokePath (p, stroke);
+            // Three bold slanted bars [3.1].
+            for (int i = 0; i < 3; ++i)
+            {
+                const float left = 0.2f + 0.24f * (float) i;
+                p.startNewSubPath (P (left, 0.74f));
+                p.lineTo (P (left + 0.14f, 0.26f));
+            }
+            g.strokePath (p, juce::PathStrokeType (s * 0.13f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             return;
         case Icon::AllPass90:
         case Icon::AllPass180:
         {
-            p.startNewSubPath (P (0.12f, 0.35f));
-            p.lineTo (P (0.88f, 0.35f));
+            // The phase falling by 90 degrees (a gentle S) or 180 (a deeper S, flat at both ends) [3.1].
+            const bool deep = icon == Icon::AllPass180;
+            p.startNewSubPath (P (0.12f, deep ? 0.2f : 0.28f));
+            if (deep)
+            {
+                p.lineTo (P (0.3f, 0.2f));
+                p.cubicTo (P (0.5f, 0.2f), P (0.42f, 0.8f), P (0.62f, 0.8f));
+                p.lineTo (P (0.88f, 0.8f));
+            }
+            else
+                p.cubicTo (P (0.4f, 0.28f), P (0.55f, 0.72f), P (0.88f, 0.72f));
             g.strokePath (p, stroke);
-            p.clear();
-            const float end = icon == Icon::AllPass90 ? 0.55f : 0.78f;
-            p.startNewSubPath (P (0.12f, 0.55f));
-            p.cubicTo (P (0.45f, 0.55f), P (0.55f, end), P (0.88f, end));
-            g.strokePath (p, stroke);
-            g.setFont (juce::FontOptions (s * 0.3f, juce::Font::bold));
-            g.drawText (icon == Icon::AllPass90 ? "90" : "180", juce::Rectangle<float> (P (0.12f, 0.0f).x, P (0.0f, 0.02f).y, s * 0.76f, s * 0.3f),
-                        juce::Justification::centred);
             return;
         }
         case Icon::DeltaT:

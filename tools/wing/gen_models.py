@@ -15,14 +15,14 @@ rows = [json.loads(l) for l in open(sys.argv[1])]
 by_name = {r["fullname"]: r for r in rows}
 
 DYN_NAMES = {  # as the console names them
-    "GATE": "Gate/Expander", "DUCK": "Ducker", "E88": "Even 88 Gate", "9000G": "Soul 9000 Gate",
-    "D241G": "Draw More 241", "DS902": "BDX 902 De-Esser", "DEQ": "Dynamic EQ", "DEQ2": "Dual Dynamic EQ",
-    "WAVE": "Wave Designer", "PSE": "Source Extractor", "CMB": "Extractor + Leveler", "RIDE": "Auto Rider",
+    "GATE": "Wing Gate", "DUCK": "Wing Ducker", "E88": "Even 88 Gate", "9000G": "Soul 9000 Gate",
+    "D241G": "Draw More 241", "DS902": "BDX902 Deesser", "DEQ": "Dynamic EQ", "DEQ2": "Dual Dynamic EQ",
+    "WAVE": "Wave Designer", "PSE": "Source Extractor", "CMB": "PSE/LA Combo", "RIDE": "Auto Rider",
     "WARM": "Soul Warmth Pre", "COMP": "Wing Compressor", "EXP": "Wing Expander", "B160": "BDX 160 Comp",
     "B560": "BDX 560 Easy", "D241C": "Draw More Comp", "ECL33": "Even Comp/Lim", "9000C": "Soul 9000",
     "SBUS": "Soul Bus Comp", "RED3": "Red3 Compressor", "76LA": "76 Limiter Amp", "LA": "LA Leveler",
     "F670": "Fair Kid", "BLISS": "Eternal Bliss", "NSTR": "No-Stressor", "2250": "PIA2250 Rack",
-    "L100": "LTA100 Leveler", "E88C": "Even 88 Comp", "LMT": "Transient Limiter", "ONEC": "One-Knob Comp",
+    "L100": "LTA100 Leveler", "E88C": "Even 88 Comp", "LMT": "LMT Compressor", "ONEC": "One Knob Comp",
 }
 DYN_KIND = {  # broad category, used to group the model menu like the console
     "GATE": "gate", "DUCK": "gate", "E88": "gate", "9000G": "gate", "D241G": "gate", "PSE": "gate",
@@ -35,10 +35,16 @@ EQ_NAMES = {
 }
 TOOL_NAMES = {"TILT": "Tilt EQ", "MAX": "Maxer", "AP1": "All-Pass 1st", "AP2": "All-Pass 2nd"}
 
-# (model, param) -> default value (choices: the item text)
+class Exact(float):
+    """A value a factory-set console reports, written as it is (not rounded)."""
+
+
+# (model, param) -> default value (choices: the item text). The WING GATE and
+# WING COMPRESSOR start as a console at factory settings reports them (its log
+# knobs on their steps: RELEASE 200 ms is 200.4749).
 DEFAULTS = {
-    ("GATE", "thr"): -40, ("GATE", "range"): 60, ("GATE", "att"): 0, ("GATE", "hld"): 50, ("GATE", "rel"): 200,
-    ("GATE", "acc"): 0, ("GATE", "ratio"): "gate",
+    ("GATE", "thr"): -40, ("GATE", "range"): 40, ("GATE", "att"): 10, ("GATE", "hld"): 10, ("GATE", "rel"): Exact(200.4749),
+    ("GATE", "acc"): 0, ("GATE", "ratio"): "1:3",
     ("DUCK", "thr"): -30, ("DUCK", "range"): 12, ("DUCK", "att"): 5, ("DUCK", "hld"): 100, ("DUCK", "rel"): 400,
     ("E88", "thr"): -30, ("E88", "hyst"): 5, ("E88", "range"): 40, ("E88", "rel"): 300,
     ("9000G", "thr"): -30, ("9000G", "range"): 30, ("9000G", "hld"): 50, ("9000G", "rel"): 300,
@@ -56,8 +62,8 @@ DEFAULTS = {
     ("RIDE", "thr"): -40, ("RIDE", "tgt"): -18, ("RIDE", "spd"): 10, ("RIDE", "ratio"): 4, ("RIDE", "hld"): 1,
     ("RIDE", "range"): 6,
     ("WARM", "drv"): 50, ("WARM", "hrm"): 0, ("WARM", "col"): 0, ("WARM", "trim"): 0, ("WARM", "wmix"): 100,
-    ("COMP", "thr"): -20, ("COMP", "ratio"): 3, ("COMP", "knee"): 2, ("COMP", "det"): "RMS", ("COMP", "att"): 10,
-    ("COMP", "hld"): 1, ("COMP", "rel"): 150, ("COMP", "env"): "LOG",
+    ("COMP", "thr"): -10, ("COMP", "ratio"): 3, ("COMP", "knee"): 3, ("COMP", "det"): "RMS", ("COMP", "att"): 50,
+    ("COMP", "hld"): 20, ("COMP", "rel"): Exact(150.3349), ("COMP", "env"): "LOG", ("COMP", "auto"): 1,
     ("EXP", "thr"): -40, ("EXP", "ratio"): 2, ("EXP", "knee"): 2, ("EXP", "att"): 5, ("EXP", "hld"): 20,
     ("EXP", "rel"): 200,
     ("B160", "thr"): 0.5, ("B160", "comp"): 3, ("B560", "thr"): 0, ("B560", "ratio"): 3,
@@ -92,8 +98,12 @@ DEFAULTS = {
     ("MACH4", "airm"): "10k",
     ("TILT", "tilt"): 0, ("MAX", "low"): 0, ("MAX", "proc"): 0, ("AP1", "f"): 1000, ("AP2", "f"): 1000, ("AP2", "q"): 1,
 }
-STD_CH_FREQ = {"l": 100, "1": 250, "2": 630, "3": 1600, "4": 4000, "h": 10000}
-STD_BUS_FREQ = {"l": 80, "1": 160, "2": 315, "3": 630, "4": 1250, "5": 2500, "6": 5000, "h": 12000}
+# The WING EQ's band frequencies and Q as a factory-set console reports them
+# (on the parameters' steps: 4 kHz is 3990.524, "3k99"; Q 1.00 is 0.9979702).
+STD_CH_FREQ = {"l": 80.19642, "1": 200.0, "2": 601.3884, "3": 1499.788, "4": 3990.524, "h": 11999.28}
+STD_BUS_FREQ = {"l": 60.13884, "1": 129.8763, "2": 299.2472, "3": 699.4875, "4": 1499.788, "5": 2992.471, "6": 6013.884,
+                "h": 11999.28}
+STD_Q = 0.9979702
 
 
 def items_of(r):
@@ -109,11 +119,11 @@ def default_for(model, pid, r, std_freqs):
         if pid.endswith("g") or pid == "tilt":
             return 0.0
         if pid.endswith("f"):
-            return float(std_freqs.get(band, 1000))
+            return Exact(std_freqs.get(band, 1000))
         if pid.endswith("eq"):
             return float(items.index("SHV"))
         if pid.endswith("q"):
-            return 0.7 if band in "lh" else 1.0
+            return Exact(STD_Q)
     if model.startswith("FX:"):
         key = (model[3:], pid)
         d = fx_default(model[3:], pid)
@@ -139,7 +149,7 @@ def default_for(model, pid, r, std_freqs):
             # numeric default for a float enum: nearest item
             vals = [float(x) for x in items]
             return float(min(range(len(vals)), key=lambda i: abs(vals[i] - d)))
-        return float(d)
+        return d if isinstance(d, Exact) else float(d)
     if items:
         return 0.0
     if t == "integer":
@@ -176,6 +186,8 @@ def rust_str(s):
 
 
 def fnum(x):
+    if isinstance(x, Exact):
+        return repr(float(x))
     # The sweep carries float32 artefacts (1000.0001220703125, 1.100000023841858).
     x = round(float(x), 4)
     if abs(x - round(x)) < 1e-3 and abs(x) < 1e7:

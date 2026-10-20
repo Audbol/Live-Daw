@@ -77,6 +77,7 @@ private:
     int builtModel = -1;
     std::vector<float> builtValues, curve;
     float range = 60.0f, gr = 0.0f, key = -120.0f, out = 0.0f;
+    float shownGr = 0.0f, shownKey = -120.0f, shownOut = 0.0f;
     bool builtOn = false, dragging = false;
 };
 

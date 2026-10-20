@@ -218,8 +218,13 @@ pub struct DynSlotParams {
     pub xo_depth: AtomicF32,
 }
 
+/// The aux channels' dynamics slot holds the WING GATE at -36 dB on a
+/// factory-set console.
+pub const AUX_GATE_THRESHOLD_DB: f32 = -36.0;
+
 impl DynSlotParams {
     pub fn new(model_token: &str) -> Self {
+        let (sc, xo) = (SidechainSettings::default(), XoverSettings::default());
         let p = Self {
             on: AtomicBool::new(false),
             model: AtomicI32::new(0),
@@ -227,14 +232,14 @@ impl DynSlotParams {
             mix: AtomicF32::new(100.0),
             gain: AtomicF32::new(0.0),
             sc_filter: AtomicI32::new(0),
-            sc_freq: AtomicF32::new(1000.0),
-            sc_q: AtomicF32::new(1.0),
+            sc_freq: AtomicF32::new(sc.freq),
+            sc_q: AtomicF32::new(sc.q),
             sc_source: AtomicI32::new(-1),
             sc_tap: AtomicI32::new(0),
             xo_kind: AtomicI32::new(0),
-            xo_freq: AtomicF32::new(1000.0),
-            xo_q: AtomicF32::new(1.0),
-            xo_depth: AtomicF32::new(0.0),
+            xo_freq: AtomicF32::new(xo.freq),
+            xo_q: AtomicF32::new(xo.q),
+            xo_depth: AtomicF32::new(xo.depth),
         };
         p.set_model(model_index(DYN_MODELS, model_token).unwrap_or(0));
         p
@@ -494,8 +499,9 @@ pub struct TapEqParams {
 }
 
 pub const TAP_EQ_BANDS: usize = 3;
-/// Default frequency and Q of the TAP EQ bands.
-pub const TAP_EQ_DEFAULTS: [(f32, f32); TAP_EQ_BANDS] = [(100.0, 0.707), (1000.0, 1.0), (10000.0, 0.707)];
+/// Default frequency and Q of the TAP EQ bands: 100 Hz, 1 kHz and 10 kHz at Q
+/// 1.00, as a factory-set console reports them (on the parameters' steps).
+pub const TAP_EQ_DEFAULTS: [(f32, f32); TAP_EQ_BANDS] = [(99.68543, 0.9979702), (999.2505, 0.9979702), (10016.53, 0.9979702)];
 pub const TAP_EQ_GAIN_RANGE: f32 = 15.0;
 pub const TAP_EQ_Q_RANGE: (f32, f32) = (0.442, 10.0);
 pub const TAP_WIDTH_RANGE: f32 = 150.0;
@@ -591,6 +597,27 @@ mod colour_tests {
     }
 }
 
+#[cfg(test)]
+mod factory_tests {
+    use super::*;
+
+    #[test]
+    fn dynamics_slots_start_as_a_factory_set_console() {
+        // Channels: COMP in the dynamics slot; aux: the WING GATE at -36 dB.
+        let ch = StripParams::new(StripKind::Channel);
+        assert_eq!(DYN_MODELS[ch.dynamics.model_index()].token, "COMP");
+        let aux = StripParams::new(StripKind::Aux);
+        assert_eq!(DYN_MODELS[aux.dynamics.model_index()].token, "GATE");
+        assert_eq!(aux.dynamics.param("thr").unwrap().load(), AUX_GATE_THRESHOLD_DB);
+        // Key filters 1k0 Hz / Q 2.00, the crossover 1k0 Hz / Q 0.40 / DEPTH 6 dB.
+        let s = &ch.gate;
+        assert_eq!((s.sc_freq.load(), s.sc_q.load()), (1002.374, 1.995882));
+        let s = &ch.dynamics;
+        assert_eq!((s.xo_freq.load(), s.xo_q.load(), s.xo_depth.load()), (1002.374, 0.4, 6.0));
+        assert_eq!(ch.tap_eq.bands[2].q.load(), 0.9979702);
+    }
+}
+
 /// Default WING colour per kind.
 pub fn default_colour(kind: StripKind) -> i32 {
     match kind {
@@ -625,7 +652,7 @@ impl StripParams {
             filter: FilterParams::default(),
             gate: DynSlotParams::new("GATE"),
             eq: EqBlockParams::new(output),
-            dynamics: DynSlotParams::new("COMP"),
+            dynamics: DynSlotParams::new(if kind == StripKind::Aux { "GATE" } else { "COMP" }),
             pre_insert: InsertParams::default(),
             post_insert: InsertParams::default(),
             process_order: AtomicI32::new(0),
@@ -663,6 +690,11 @@ impl StripParams {
             tap_eq: TapEqParams::default(),
         };
         p.eq.on.store(true, Relaxed);
+        if kind == StripKind::Aux {
+            if let Some(thr) = p.dynamics.param("thr") {
+                thr.store(AUX_GATE_THRESHOLD_DB);
+            }
+        }
         p
     }
 }

@@ -3,6 +3,28 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Changed
+
+- GATE, COMP, EQ and FILTER SETUP look like a WING at factory settings: the panel
+  rows and positions, KEY TAP only while a channel keys the slot, the console's
+  names (FLAT / LOWPASS ..., WING GATE, LMT COMPRESSOR ...), DETECTOR / AUTO ENV
+  keys in blue, the EQ header's LO CUT / HI CUT / TILT EQ keys and FILTER field,
+  band 4 selected, the TOOL FILTER icons and "0.00 dB" for TILT.
+- The KEY FILTER and XOVER MODE `>` keys open GATE KEY FILTER / COMP XOVER (the
+  filter's response filled green or blue, its type, the solo key, FREQ on the knobs);
+  KEY SOURCE opens SELECT CHANNEL (SELF and the channel tiles); the dynamics and EQ
+  model lists are the console's picture grids.
+- New channels start with a factory-set WING's values: GATE -40 dB, 1:3, RANGE
+  40 dB, ATTACK 10 ms, HOLD 10 ms; COMP -10 dB, KNEE 3, ATTACK 50 ms, HOLD 20 ms,
+  AUTO ENV on; aux channels' dynamics slot the WING GATE at -36 dB; key filters 1k0 Hz
+  Q 2.00, crossover 1k0 Hz Q 0.40 DEPTH 6 dB; LC 100.2 Hz at 24 dB/oct, HC 10k02 Hz;
+  the WING EQ's bands at 80.2, 200, 601.4 Hz, 1k50, 3k99, 12k00 (buses, mains and
+  matrices 60.1, 129.9, 299.2, 699.5 Hz, 1k50, 2k99, 6k01, 12k00), every band at
+  Q 1.00; the TAP EQ at Q 1.00. The values are the console's own (on its parameter
+  steps), read from a factory-set WING. Saved shows keep their values.
+
 ## [0.1.2] - beta
 
 A fix for a crash in 0.1.1 and earlier: scrolling the start-up notice could close

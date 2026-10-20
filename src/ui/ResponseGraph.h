@@ -17,7 +17,10 @@ namespace livedaw::ui
     (the selected band's line blue, its ring filled black): drag to set
     frequency and gain, mouse wheel for Q. The FILTER view draws the filter in
     blue over the EQ curve, LC / HC (and the all-pass AP, yellow) as vertical
-    lines labelled at the top with a ring handle near the bottom.
+    lines labelled at the top with a ring handle near the bottom. The key
+    filter and crossover views (GATE KEY FILTER, COMP XOVER) fill the area
+    under the filter's response (green for a key filter, blue for the
+    crossover) on a +10 .. -30 dB scale, with the FREQ line to drag.
 
     The RTA of the strip (the engine's analyser) shows behind the curves as
     one bar per semitone with a peak-hold mark, as RTA SETTINGS / EQ/RTA
@@ -27,10 +30,14 @@ namespace livedaw::ui
 class ResponseGraph final : public juce::Component, private juce::Timer
 {
 public:
+    /** The block shown (the block numbers of ld_strip_response). */
     enum Block
     {
         Eq = 1,
-        Filter = 3
+        Filter = 3,
+        GateKey = 5,
+        DynamicsKey = 6,
+        Xover = 7
     };
 
     ResponseGraph();
@@ -139,6 +146,13 @@ private:
     int bandAt (juce::Point<float>) const;
     int cutLineAt (juce::Point<float>) const;
     juce::Path curveOf (const std::vector<double>&) const;
+    /** A key filter or crossover view. */
+    bool isKeyView() const noexcept { return block == GateKey || block == DynamicsKey || block == Xover; }
+    /** The frequency the key / crossover view's FREQ line sets. */
+    std::atomic<float>* keyFreq() const;
+    /** The levels at the top and bottom of the curve's area. */
+    float topDb() const;
+    float bottomDb() const;
 
     Strip* strip = nullptr;
     Block block = Eq;
@@ -146,6 +160,8 @@ private:
     /** eqResponse: the other block drawn alongside (FILTER: the channel EQ
         behind it; EQ: the low/high cut filters over it). */
     std::vector<double> freqs, response, eqResponse;
+    /** The line and band positions drawn last. */
+    std::vector<float> shownMarks;
     std::vector<Band> bands;
     int builtModel = -1, selectedBand = -1, dragBand = -1, dragLine = -1;
 

@@ -3,6 +3,8 @@
 #include "ui/LookAndFeel.h"
 #include "ui/ScreenWidgets.h"
 
+#include <map>
+
 namespace livedaw::ui::popups
 {
 
@@ -1099,9 +1101,11 @@ namespace
         int pressed = 0;
     };
     //==========================================================================
-    /** The model list of a dynamics slot (firmware 3.1): a grid of tiles over
-        the whole page, each the model's picture over its name; the loaded
-        model framed gold. Touch a tile to load it. */
+    /** The model list of a dynamics or EQ slot (firmware 3.1): a panel of
+        172 x 92 tiles 8 px apart (WING pixels) under the model field, each the
+        model's picture over its name; the rows after a spaced row (the
+        compressors) on a lighter panel; the loaded model framed gold. Touch a
+        tile to load it. */
     class TilePopup final : public Popup
     {
     public:
@@ -1118,29 +1122,43 @@ namespace
         {
             g.setColour (Colours::scrim);
             g.fillRect (getLocalBounds());
-            g.setColour (juce::Colour (0xff2a2a2a));
-            g.fillRect (frame());
-            for (auto& [area, tile] : layout())
+            const auto f = frame();
+            g.setColour (juce::Colour (0xff202020));
+            g.fillRect (f);
+            const float u = unit();
+            const auto tiles = layout();
+            if (! spaced.empty() && (size_t) spaced.front() < rows.size())
+            {
+                // The second section (the compressors) on #303030 from 8 px above its first row.
+                size_t first = 0;
+                for (size_t i = 0; i < (size_t) spaced.front(); ++i)
+                    first += rows[i].size();
+                if (first < tiles.size())
+                {
+                    g.setColour (juce::Colour (0xff303030));
+                    g.fillRect (f.withTop (tiles[first].first.getY() - 8.0f * u));
+                }
+            }
+            for (auto& [area, tile] : tiles)
             {
                 if (tile.id < 0)
                     continue;
                 const bool sel = tile.id == selected;
                 const bool down = tile.id == pressed;
-                g.setColour (juce::Colours::black);
+                g.setColour (down ? juce::Colour (0xff303030) : juce::Colours::black);
                 g.fillRect (area);
-                auto inner = area.reduced (juce::jmax (2.0f, area.getHeight() * 0.035f));
-                auto name = inner.removeFromBottom (inner.getHeight() * 0.3f);
+                // The picture 156 x 48 at 8 px in, the name under it.
+                const auto pictureArea = juce::Rectangle<float> (area.getX() + 8.0f * u, area.getY() + 8.0f * u, area.getWidth() - 16.0f * u, 48.0f * u);
                 if (picture)
-                    picture (g, inner, tile.id);
-                g.setColour (down ? juce::Colour (0xff303030) : juce::Colour (0xff151515));
-                g.fillRect (name);
+                    g.drawImage (pictureOf (tile.id, pictureArea, g.getInternalContext().getPhysicalPixelScaleFactor()), pictureArea);
+                auto name = area.withTop (pictureArea.getBottom()).reduced (4.0f * u, 0.0f);
                 g.setColour (Colours::text);
-                g.setFont (wingFontPx (juce::jmin (TypeScale::body * screenHeight(), name.getHeight() * 0.36f)));
-                g.drawFittedText (tile.caption, name.toNearestInt().reduced (3, 0), juce::Justification::centred, 1, 0.7f);
+                g.setFont (wingFontPx (juce::jmin (TypeScale::body * screenHeight(), name.getHeight() * 0.5f)));
+                g.drawFittedText (tile.caption, name.toNearestInt(), juce::Justification::centred, 1, 0.7f);
                 if (sel)
                 {
                     g.setColour (Colours::gold);
-                    g.drawRect (area, juce::jmax (2.0f, area.getHeight() * 0.03f));
+                    g.drawRect (area, juce::jmax (2.0f, 4.0f * u));
                 }
             }
         }
@@ -1172,28 +1190,63 @@ namespace
             }
         }
 
-        juce::Rectangle<float> frame() const { return getLocalBounds().toFloat().reduced (juce::jmax (4.0f, (float) getWidth() * 0.008f)); }
+        /** A tile's picture, drawn once at its size: the page under the list
+            keeps repainting (meters, graphs), and drawing every front panel
+            each time would take the message thread's whole time. */
+        const juce::Image& pictureOf (int id, juce::Rectangle<float> area, float scale)
+        {
+            auto& image = pictures[id];
+            const int w = juce::jmax (1, juce::roundToInt (area.getWidth() * scale)), h = juce::jmax (1, juce::roundToInt (area.getHeight() * scale));
+            if (! image.isValid() || image.getWidth() != w || image.getHeight() != h)
+            {
+                image = juce::Image (juce::Image::ARGB, w, h, true);
+                juce::Graphics ig (image);
+                ig.addTransform (juce::AffineTransform::scale ((float) w / area.getWidth(), (float) h / area.getHeight()));
+                picture (ig, { area.getWidth(), area.getHeight() }, id);
+            }
+            return image;
+        }
+
+        /** One WING pixel, smaller when the grid would not fit the page. */
+        float unit() const
+        {
+            size_t columns = 1;
+            for (auto& row : rows)
+                columns = juce::jmax (columns, row.size());
+            const float w = 8.0f + 180.0f * (float) columns;
+            const float h = 8.0f + 100.0f * (float) rows.size() + 8.0f * (float) spaced.size();
+            return juce::jmin (screenHeight() / 800.0f, (float) getWidth() / (w + 16.0f), (float) getHeight() / (h + 16.0f));
+        }
+
+        /** The panel: under the anchor (16 px down, from its left edge), kept
+            48 px from the screen's right edge and 24 px from its bottom. */
+        juce::Rectangle<float> frame() const
+        {
+            const float u = unit();
+            size_t columns = 1;
+            for (auto& row : rows)
+                columns = juce::jmax (columns, row.size());
+            const float w = (8.0f + 180.0f * (float) columns) * u;
+            const float h = (8.0f + 100.0f * (float) rows.size() + 8.0f * (float) spaced.size()) * u;
+            auto a = anchor != nullptr ? getLocalArea (anchor, anchor->getLocalBounds()).toFloat() : juce::Rectangle<float> (8.0f * u, 0.0f, 0.0f, 0.0f);
+            const float x = juce::jlimit (8.0f * u, juce::jmax (8.0f * u, (float) getWidth() - 48.0f * u - w), a.getX());
+            const float y = juce::jlimit (8.0f * u, juce::jmax (8.0f * u, (float) getHeight() - 24.0f * u - h), a.getBottom() + 16.0f * u);
+            return { x, y, w, h };
+        }
 
         std::vector<std::pair<juce::Rectangle<float>, Tile>> layout() const
         {
             std::vector<std::pair<juce::Rectangle<float>, Tile>> out;
-            auto r = frame().reduced (juce::jmax (4.0f, (float) getWidth() * 0.006f));
-            size_t columns = 1;
-            for (auto& row : rows)
-                columns = juce::jmax (columns, row.size());
-            const float gapX = r.getWidth() * 0.008f;
-            const float w = (r.getWidth() - gapX * (float) (columns - 1)) / (float) columns;
-            const float spacer = w * 0.12f;
-            const float rowsH = r.getHeight() - spacer * (float) spaced.size();
-            const float h = juce::jmin (w * 0.52f, rowsH / (float) juce::jmax ((size_t) 1, rows.size()));
-            float y = r.getY();
+            const float u = unit();
+            const auto f = frame();
+            float y = f.getY() + 8.0f * u;
             for (size_t i = 0; i < rows.size(); ++i)
             {
                 if (std::find (spaced.begin(), spaced.end(), (int) i) != spaced.end())
-                    y += spacer;
+                    y += 8.0f * u;
                 for (size_t c = 0; c < rows[i].size(); ++c)
-                    out.push_back ({ juce::Rectangle<float> (r.getX() + (float) c * (w + gapX), y, w, h * 0.94f), rows[i][c] });
-                y += h;
+                    out.push_back ({ juce::Rectangle<float> (f.getX() + (8.0f + 180.0f * (float) c) * u, y, 172.0f * u, 92.0f * u), rows[i][c] });
+                y += 100.0f * u;
             }
             return out;
         }
@@ -1211,6 +1264,174 @@ namespace
         std::vector<int> spaced;
         int selected, pressed = -1;
         std::function<void (juce::Graphics&, juce::Rectangle<float>, int)> picture;
+        std::map<int, juce::Image> pictures;
+        std::function<void (int)> onChosen;
+    };
+
+    //==========================================================================
+    /** SELECT CHANNEL (KEY SOURCE, firmware 3.1): a header with the none key
+        (SELF, gold while chosen), the title and CLOSE, over a frame of
+        channel tiles eight to a row, each the channel's colour over its
+        number and icon. In WING pixels: 876 wide at the right of the screen,
+        from 4 px above the anchor; 96 x 64 tiles 108 x 76 apart. */
+    class ChannelPopup final : public Popup
+    {
+    public:
+        ChannelPopup (juce::Component& anchorComponent, juce::String titleText, juce::String noneKey, std::vector<ChannelTile> channelTiles,
+                      int selectedIndex, std::function<void (int)> chosen)
+            : anchor (&anchorComponent), title (std::move (titleText)), noneText (std::move (noneKey)), tiles (std::move (channelTiles)),
+              selected (selectedIndex), onChosen (std::move (chosen))
+        {
+            anchor->getProperties().set ("wingListOpen", true);
+            anchor->repaint();
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            g.setColour (Colours::scrim);
+            g.fillRect (getLocalBounds());
+            const float u = unit();
+            const auto header = headerArea();
+            g.setColour (juce::Colour (0xff202020));
+            g.fillRect (header);
+            const auto none = noneKey();
+            g.setColour (selected < 0 ? Colours::gold : juce::Colour (0xff303030));
+            g.fillRect (none);
+            g.setColour (selected < 0 ? juce::Colours::black : Colours::text);
+            g.setFont (wingFontPx (14.0f * u));
+            g.drawText (noneText, none, juce::Justification::centred, false);
+            g.setColour (Colours::text);
+            g.setFont (wingFontPx (18.0f * u));
+            g.drawText (title, header, juce::Justification::centred, false);
+            auto close = closeKey();
+            g.setFont (wingFontPx (14.0f * u));
+            g.drawText ("CLOSE", close.withTrimmedRight (40.0f * u), juce::Justification::centredRight, false);
+            drawIcon (g, Icon::Check, close.removeFromRight (34.0f * u).withSizeKeepingCentre (34.0f * u, 34.0f * u), Colours::text);
+
+            const auto grid = gridArea();
+            g.setColour (juce::Colour (0xff202020));
+            g.fillRect (grid);
+            g.setColour (juce::Colours::black);
+            g.fillRect (grid.reduced (4.0f * u));
+            for (int i = 0; i < (int) tiles.size(); ++i)
+            {
+                const auto r = tileArea (i);
+                const auto& t = tiles[(size_t) i];
+                g.setColour (t.colour);
+                g.fillRect (r.withHeight (22.0f * u));
+                auto body = r.withTrimmedTop (22.0f * u);
+                g.setColour (i == pressed ? juce::Colour (0xff484848) : juce::Colour (0xff303030));
+                g.fillRect (body);
+                // The number dark on a grey badge at the left, the icon at the right.
+                const auto font = wingFontPx (22.0f * u, WingWeight::SemiBold);
+                const float badgeW = juce::GlyphArrangement::getStringWidth (font, t.number) + 6.0f * u;
+                const auto badge = juce::Rectangle<float> (body.getX() + 2.0f * u, body.getY() + 6.0f * u, badgeW, body.getHeight() - 10.0f * u);
+                g.setColour (juce::Colour (0xff707070));
+                g.fillRect (badge);
+                g.setColour (juce::Colour (0xff202020));
+                g.setFont (font);
+                g.drawText (t.number, badge, juce::Justification::centred, false);
+                if (t.paintIcon != nullptr)
+                    t.paintIcon (g, body.withTrimmedLeft (body.getWidth() - 36.0f * u).reduced (5.0f * u));
+                if (i == selected)
+                {
+                    g.setColour (Colours::gold);
+                    g.drawRect (r, 3.0f * u);
+                }
+            }
+        }
+
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            pressed = tileAt (e.position);
+            repaint();
+        }
+
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            const int was = pressed;
+            pressed = -1;
+            repaint();
+            if (was >= 0 && tileAt (e.position) == was)
+                choose (was);
+            else if (noneKey().contains (e.position))
+                choose (-1);
+            else if (closeKey().contains (e.position) || ! (headerArea().contains (e.position) || gridArea().contains (e.position)))
+                cancel();
+        }
+
+    private:
+        void choose (int index)
+        {
+            closeThen ([chosen = onChosen, index] { if (chosen != nullptr) chosen (index); });
+        }
+
+        void onClosing() override
+        {
+            if (anchor != nullptr)
+            {
+                anchor->getProperties().set ("wingListOpen", false);
+                anchor->repaint();
+            }
+        }
+
+        int numRows() const { return juce::jmax (1, ((int) tiles.size() + 7) / 8); }
+
+        /** One WING pixel, smaller when the grid would not fit the page. */
+        float unit() const
+        {
+            const float h = 64.0f + 8.0f + 12.0f + 76.0f * (float) numRows();
+            return juce::jmin (screenHeight() / 800.0f, (float) getWidth() / 892.0f, (float) getHeight() / (h + 16.0f));
+        }
+
+        juce::Rectangle<float> headerArea() const
+        {
+            const float u = unit();
+            const float w = 876.0f * u;
+            const float gridH = (12.0f + 76.0f * (float) numRows()) * u;
+            auto a = anchor != nullptr ? getLocalArea (anchor, anchor->getLocalBounds()).toFloat() : juce::Rectangle<float>();
+            const float x = juce::jmax (0.0f, (float) getWidth() - 8.0f * u - w);
+            const float y = juce::jlimit (0.0f, juce::jmax (0.0f, (float) getHeight() - 8.0f * u - gridH - 72.0f * u), a.getY() - 4.0f * u);
+            return { x, y, w, 64.0f * u };
+        }
+
+        juce::Rectangle<float> gridArea() const
+        {
+            const auto h = headerArea();
+            return { h.getX(), h.getBottom() + 8.0f * unit(), h.getWidth(), (12.0f + 76.0f * (float) numRows()) * unit() };
+        }
+
+        juce::Rectangle<float> noneKey() const
+        {
+            const auto h = headerArea();
+            return { h.getX() + 12.0f * unit(), h.getY() + 4.0f * unit(), 96.0f * unit(), 56.0f * unit() };
+        }
+
+        juce::Rectangle<float> closeKey() const
+        {
+            const auto h = headerArea();
+            return h.withTrimmedLeft (h.getWidth() - 136.0f * unit()).withTrimmedRight (16.0f * unit());
+        }
+
+        juce::Rectangle<float> tileArea (int i) const
+        {
+            const float u = unit();
+            const auto grid = gridArea();
+            return { grid.getX() + (12.0f + 108.0f * (float) (i % 8)) * u, grid.getY() + (12.0f + 76.0f * (float) (i / 8)) * u, 96.0f * u, 64.0f * u };
+        }
+
+        int tileAt (juce::Point<float> p) const
+        {
+            for (int i = 0; i < (int) tiles.size(); ++i)
+                if (tileArea (i).contains (p))
+                    return i;
+            return -1;
+        }
+
+        juce::Component::SafePointer<juce::Component> anchor;
+        juce::String title, noneText;
+        std::vector<ChannelTile> tiles;
+        int selected, pressed = -1;
         std::function<void (int)> onChosen;
     };
 
@@ -1492,6 +1713,15 @@ void chooseTile (juce::Component& anchor, std::vector<std::vector<Tile>> rows, s
     if (layer == nullptr || rows.empty())
         return;
     (new TilePopup (anchor, std::move (rows), std::move (spacedRows), selected, std::move (paintPicture), std::move (onChosen)))->open (*layer);
+}
+
+void chooseChannel (juce::Component& anchor, const juce::String& title, const juce::String& noneText, std::vector<ChannelTile> tiles, int selected,
+                    std::function<void (int)> onChosen)
+{
+    auto* layer = layerFor (anchor);
+    if (layer == nullptr)
+        return;
+    (new ChannelPopup (anchor, title, noneText, std::move (tiles), selected, std::move (onChosen)))->open (*layer);
 }
 
 void editText (juce::Component& host, const juce::String& title, const juce::String& initial,

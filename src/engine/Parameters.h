@@ -23,9 +23,13 @@ constexpr int kWingBuses = ld::kWingBuses;
 /** Buses 9+ can feed buses 1-8. */
 constexpr int kBusToBusTargets = 8;
 /** The filter frequencies of a new or INITed channel (the engine's defaults),
-    which the LO CUT / HI CUT controls reset to. */
-constexpr float kLowCutDefaultHz = 80.0f;
-constexpr float kHighCutDefaultHz = 18000.0f;
+    which the LO CUT / HI CUT controls reset to: 100 Hz and 10 kHz on the
+    console's steps (100.2 Hz, 10k02 Hz). */
+constexpr float kLowCutDefaultHz = 100.2374f;
+constexpr float kHighCutDefaultHz = 10018.26f;
+/** The key filters' and the crossover's FREQ of a new channel (1k0 Hz on the
+    console's steps), which their controls reset to. */
+constexpr float kKeyFilterDefaultHz = 1002.374f;
 
 using InputParams = ld::InputParams;
 using FilterParams = ld::FilterParams;

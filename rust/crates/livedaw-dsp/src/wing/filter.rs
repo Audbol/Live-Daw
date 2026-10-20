@@ -25,14 +25,20 @@ pub struct FilterSettings {
     pub tool_params: [f32; MAX_TOOL_PARAMS],
 }
 
+/// The cut frequencies of a factory-set console: 100 Hz and 10 kHz on the
+/// parameters' steps, which it shows as 100.2 Hz and 10k02 Hz.
+pub const LOW_CUT_DEFAULT_HZ: f32 = 100.2374;
+pub const HIGH_CUT_DEFAULT_HZ: f32 = 10018.26;
+
 impl Default for FilterSettings {
+    /// As a factory-set console: both cuts off, 24 dB/oct low cut, 12 dB/oct high cut.
     fn default() -> Self {
         Self {
             low_cut: false,
-            low_cut_freq: 80.0,
-            low_cut_slope: 1,
+            low_cut_freq: LOW_CUT_DEFAULT_HZ,
+            low_cut_slope: 3,
             high_cut: false,
-            high_cut_freq: 18000.0,
+            high_cut_freq: HIGH_CUT_DEFAULT_HZ,
             high_cut_slope: 1,
             tool: false,
             tool_model: 0,
@@ -228,6 +234,15 @@ mod tests {
         for f in [50.0, 500.0, 5000.0] {
             assert!(s.response_db(f, sr).abs() < 1e-6);
         }
+    }
+
+    #[test]
+    fn starts_as_a_factory_set_console() {
+        // Everything off; LC 100.2 Hz at 24 dB/oct, HC 10k02 Hz at 12 dB/oct.
+        let s = FilterSettings::default();
+        assert!(!s.is_active());
+        assert_eq!((LOW_CUT_SLOPES[s.low_cut_slope], HIGH_CUT_SLOPES[s.high_cut_slope]), ("24", "12"));
+        assert!((s.low_cut_freq - 100.24).abs() < 0.01 && (s.high_cut_freq - 10018.26).abs() < 0.01);
     }
 
     #[test]

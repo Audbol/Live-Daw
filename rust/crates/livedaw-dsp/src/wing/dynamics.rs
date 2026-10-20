@@ -29,9 +29,14 @@ pub struct SidechainSettings {
     pub q: f32,
 }
 
+/// The key filters' and the crossover's frequency as a factory-set console
+/// reports it (1 kHz on the parameter's steps, "1k0").
+pub const KEY_FILTER_DEFAULT_HZ: f32 = 1002.374;
+
 impl Default for SidechainSettings {
+    /// FLAT at 1k0 Hz, Q 2.00 (1.995882 on its steps), as a factory-set console.
     fn default() -> Self {
-        Self { filter: 0, freq: 1000.0, q: 1.0 }
+        Self { filter: 0, freq: KEY_FILTER_DEFAULT_HZ, q: 1.995882 }
     }
 }
 
@@ -62,7 +67,8 @@ pub struct XoverSettings {
 
 impl Default for XoverSettings {
     fn default() -> Self {
-        Self { kind: 0, freq: 1000.0, q: 1.0, depth: 0.0 }
+        // FLAT at 1k0 Hz, Q 0.40, DEPTH 6 dB, as a factory-set console.
+        Self { kind: 0, freq: KEY_FILTER_DEFAULT_HZ, q: 0.4, depth: 6.0 }
     }
 }
 
@@ -1812,6 +1818,7 @@ mod tests {
     fn compressor_follows_ratio() {
         let (m, mut v) = defaults("COMP");
         set(m, &mut v, "knee", 0.0);
+        set(m, &mut v, "thr", -20.0);
         // 0 dBFS-ish sine RMS -3 dB; threshold -20 dB, 4:1 -> about 12.75 dB reduction.
         pick(m, &mut v, "ratio", "4");
         let (out, s) = run(m, &v, &sine(1.0, 200.0, 96000));
@@ -2365,7 +2372,16 @@ mod tests {
         // level drops, then recovers 63 % in RELEASE (manual p.102).
         let (m, v) = model(
             "COMP",
-            &[("thr", "-26"), ("ratio", "100"), ("knee", "0"), ("det", "PEAK"), ("att", "20"), ("hld", "50"), ("rel", "100")],
+            &[
+                ("thr", "-26"),
+                ("ratio", "100"),
+                ("knee", "0"),
+                ("det", "PEAK"),
+                ("att", "20"),
+                ("hld", "50"),
+                ("rel", "100"),
+                ("auto", "0"),
+            ],
         );
         let mut d = WingDynamics::default();
         d.prepare(48000.0);
