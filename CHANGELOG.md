@@ -134,6 +134,9 @@ All notable changes to Sidecar are listed here. Versions follow
   when it was exported under another one, so the list showed the file as "Scene 1x"
   but IMPORT added "Scene 1". The exported scene or snippet now takes the name it
   was saved under.
+- LIBRARY (INT / USB) and the USB RECORDER / PLAYER browser didn't show files copied
+  into, deleted from or renamed in their folder outside the app until the screen
+  was opened again; they now follow such changes within a second.
 
 ## [0.1.0] - beta
 

@@ -207,11 +207,13 @@ private:
 /** The INT / USB file list: folders first (".." to go up), then the shows,
     scene and snippet files, presets and audio clips, each with its type chip
     and date. */
-class ShowPanel::FileList final : public juce::ListBox, private juce::ListBoxModel
+class ShowPanel::FileList final : public juce::ListBox, private juce::ListBoxModel, private juce::Timer
 {
 public:
     explicit FileList (ShowPanel& p) : panel (p)
     {
+        // Files copied in, deleted or renamed outside the app show up.
+        startTimer (1000);
         setModel (this);
         setColour (backgroundColourId, juce::Colours::black);
         setColour (outlineColourId, juce::Colours::transparentBlack);
@@ -228,6 +230,7 @@ public:
     };
 
     juce::File root, folder;
+    juce::Time folderTime; // when the shown folder last changed, as listed
     juce::String filter;
     bool byDate = false;
     std::vector<Entry> entries;
@@ -256,6 +259,7 @@ public:
     void rebuild()
     {
         const auto previous = selectedFile();
+        folderTime = folder.getLastModificationTime();
         entries.clear();
         if (folder.isDirectory())
         {
@@ -384,6 +388,18 @@ private:
         }
         else if (panel.onFileActivated)
             panel.onFileActivated (e.file);
+    }
+
+    void timerCallback() override
+    {
+        if (isShowing() && folder.isDirectory() && folder.getLastModificationTime() != folderTime)
+        {
+            const auto previous = selectedFile();
+            rebuild();
+            panel.updateKeys();
+            if (selectedFile() != previous && panel.onFileSelected)
+                panel.onFileSelected (selectedFile());
+        }
     }
 
     ShowPanel& panel;
