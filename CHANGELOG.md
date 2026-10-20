@@ -124,6 +124,10 @@ All notable changes to Sidecar are listed here. Versions follow
   length and speed (an octave off after a 48 / 96 kHz change). A project without
   audio now moves to the console's rate (markers and loop keep their times), and
   one with audio refuses to record and says why.
+- Recorder screen: pressing VIRTUAL SOUNDCHECK again went back to MAIN but left
+  SETUP > AUDIO > GLOBAL INPUT SELECT OVERRIDE on, so channels set to ALT on their
+  own were stuck on MAIN. Leaving virtual soundcheck now puts INPUT SELECT back as
+  it was.
 
 ## [0.1.0] - beta
 
