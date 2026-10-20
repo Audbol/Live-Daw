@@ -33,10 +33,12 @@ namespace Dark
     const juce::Colour textDim = Colours::textDim;
     const juce::Colour caption = Colours::caption;     // unlit choice-key text, field captions
 
-    const juce::Colour choice = Colours::valueBlue;    // lit choice key (MAIN, NORM|FINE|AUTO, MCU|HUI, ...)
+    const juce::Colour choice = Colours::choice;       // lit choice key (NORM|FINE|AUTO, MCU|HUI, ...)
     const juce::Colour choiceInk { 0xff0d1a33 };
-    const juce::Colour pre = Colours::pfl;             // PRE, PFL
+    const juce::Colour offLit = Colours::chipOff;      // a lit OFF key (MAIN LINK, SOURCE SOLO, MIDI functions)
+    const juce::Colour pre = Colours::tapRed;          // PRE, PFL
     const juce::Colour post = Colours::green;          // POST, AFL
+    const juce::Colour usbGreen { 0xff00bc00 };        // USB HOST SPEED HS, DAW CONNECTION USB
     const juce::Colour olive { 0xff809800 };           // LIVE|STUDIO|SIP
     const juce::Colour orange = Colours::alt;          // ALT, USB HOST SPEED FS
     const juce::Colour on = Colours::gold;             // ON chip
@@ -54,12 +56,13 @@ namespace Dark
 namespace FileColours
 {
     const juce::Colour show { 0xff2486bd };
-    const juce::Colour snap { 0xffd08a30 };
+    const juce::Colour snap { 0xfff0a028 };
     const juce::Colour snip { 0xffc5a16a };
     const juce::Colour clip { 0xffa6c87a };
     const juce::Colour fx { 0xffc47ac4 };
     const juce::Colour chan { 0xffd2d376 };
     const juce::Colour wav { 0xff5ea557 };
+    const juce::Colour libraryTitle { 0xff904400 }; // the status bar's title tile on LIBRARY
 } // namespace FileColours
 
 /** Console preferences kept in the app settings (SETUP). */
@@ -110,7 +113,8 @@ inline juce::Font panelTitleFont (int headerHeight)
 
 /** Draws a dark WING panel: a header bar with the title centred, a thin black
     gap, then the body. Returns the body. An empty title draws only the body. */
-inline juce::Rectangle<int> drawDarkPanel (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& title, int headerHeight = darkHeaderHeight())
+inline juce::Rectangle<int> drawDarkPanel (juce::Graphics& g, juce::Rectangle<int> area, const juce::String& title, int headerHeight = darkHeaderHeight(),
+                                           int headerGap = kDarkHeaderGap)
 {
     if (title.isNotEmpty())
     {
@@ -120,7 +124,7 @@ inline juce::Rectangle<int> drawDarkPanel (juce::Graphics& g, juce::Rectangle<in
         g.setColour (Dark::caption);
         g.setFont (fontFittingWidth (panelTitleFont (headerHeight), title, (float) header.getWidth() - 12.0f, 0.7f));
         g.drawFittedText (title, header.reduced (6, 0), juce::Justification::centred, 1);
-        area.removeFromTop (kDarkHeaderGap);
+        area.removeFromTop (headerGap);
     }
     g.setColour (Dark::body);
     g.fillRect (area);
@@ -128,10 +132,15 @@ inline juce::Rectangle<int> drawDarkPanel (juce::Graphics& g, juce::Rectangle<in
 }
 
 /** The body of a panel drawn by drawDarkPanel. */
-inline juce::Rectangle<int> darkPanelBody (juce::Rectangle<int> area, bool hasTitle, int headerHeight = darkHeaderHeight())
+inline juce::Rectangle<int> darkPanelBody (juce::Rectangle<int> area, bool hasTitle, int headerHeight = darkHeaderHeight(), int headerGap = kDarkHeaderGap)
 {
-    return hasTitle ? area.withTrimmedTop (headerHeight + kDarkHeaderGap) : area;
+    return hasTitle ? area.withTrimmedTop (headerHeight + headerGap) : area;
 }
+
+/** SETUP's panel metrics, in px of the WING's 800 px screen: 64 px headers
+    with an 8 px gap under them, 8 px between panels and around the page. */
+inline int setupHeaderHeight() { return panelHeaderHeight(); }
+inline int setupGap() { return juce::jmax (2, juce::roundToInt (wingPx (8.0f))); }
 
 /** Enables or disables a key, dimming it when disabled (the console's
     unavailable keys are drawn faint). */
@@ -334,7 +343,8 @@ public:
                               : juce::Rectangle<float> (r.getX() + w * (float) i, r.getY(), w, r.getHeight()).reduced (1.0f, 0.0f);
             const bool on = i == shown;
             auto fill = on ? (i < (int) litColours.size() ? litColours[(size_t) i] : Dark::choice) : Dark::key;
-            auto ink = on ? Dark::choiceInk : Dark::caption;
+            // Dark ink on a lit key, light ink on the grey of a lit OFF.
+            auto ink = on ? (fill.getPerceivedBrightness() < 0.4f ? Dark::text : Dark::choiceInk) : Dark::caption;
             if (! enabled)
             {
                 fill = fill.withMultipliedSaturation (0.5f).darker (0.55f);
@@ -597,22 +607,29 @@ public:
 
     /** Height in px of a single row (set by the owner from the screen size). */
     int rowHeight = 28;
+    /** The header bar and the black gap under it. */
+    int headerHeight = darkHeaderHeight(), headerGap = kDarkHeaderGap;
+    /** The console's own row metrics (SETUP): a row of keys is 56 px of the
+        800 px screen and a row with an ON key 52 (`rowHeight`); keys are 46 px
+        tall, the ON key 46 x 38, 12 px in from the sides. */
+    bool wingRows = false;
+
     bool hasHeader() const { return title.isNotEmpty(); }
 
     /** Height the panel needs for its rows. */
     int preferredHeight() const
     {
-        float units = 0.0f;
+        int px = 0;
         for (auto& r : rows)
-            units += r.heightRows;
+            px += rowPx (r);
         const int groups = rows.empty() ? 0 : rows.back().group + 1;
-        return (hasHeader() ? darkHeaderHeight() + kDarkHeaderGap : 0) + juce::roundToInt (units * (float) rowHeight) + groups * 8 + juce::jmax (0, groups - 1) * kDarkHeaderGap;
+        return (hasHeader() ? headerHeight + headerGap : 0) + px + groups * 8 + juce::jmax (0, groups - 1) * kDarkHeaderGap;
     }
 
     void paint (juce::Graphics& g) override
     {
         // The body is cut into sub-boxes by black gaps (SOLO SYSTEM, OPTIONS).
-        const auto body = drawDarkPanel (g, getLocalBounds(), title);
+        const auto body = drawDarkPanel (g, getLocalBounds(), title, headerHeight, headerGap);
         if (boxes.size() > 1)
         {
             g.setColour (juce::Colours::black);
@@ -630,7 +647,8 @@ public:
             auto l = r.labelArea;
             g.setColour (r.enabled ? Dark::caption : Dark::textDim.darker (0.2f));
             const bool caption = r.control == nullptr;
-            g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), (float) rowHeight * (caption ? 0.26f : 0.34f))));
+            const float cap = TypeScale::body * getWingScreenHeight() * (caption && wingRows ? 0.75f : 1.0f);
+            g.setFont (wingFontPx (juce::jmin (cap, (float) rowHeight * (caption ? 0.26f : 0.34f))));
             const float d = (float) juce::jmin (l.getHeight() - 6, screenCap (16));
             // The info icon keeps its own room, so a long label in a narrow
             // panel (SETUP > REMOTE at 1280x800) is squashed rather than covered.
@@ -638,17 +656,21 @@ public:
             if (r.info)
                 g.setFont (fontFittingWidth (g.getCurrentFont(), r.label, (float) textArea.getWidth()));
             const int textW = juce::jmin (textArea.getWidth(), juce::GlyphArrangement::getStringWidthInt (g.getCurrentFont(), r.label));
-            g.drawFittedText (r.label, textArea, caption && r.rightAligned ? juce::Justification::centredRight : juce::Justification::centredLeft, 1, 0.75f);
+            g.drawFittedText (r.label, textArea, caption && r.rightAligned ? juce::Justification::centredRight : juce::Justification::centredLeft,
+                              caption ? 2 : 1, 0.75f);
             if (r.info)
-                drawIcon (g, Icon::Info, juce::Rectangle<float> (d, d).withCentre ({ (float) juce::jmin (l.getRight() - (int) d, l.getX() + textW + 10) + d * 0.5f,
-                                                                                    (float) l.getCentreY() }),
+            {
+                // The WING sets the ⓘ in a column of its own, just left of the keys.
+                const float x = wingRows ? (float) l.getRight() - d - (float) inset() * 0.5f : (float) juce::jmin (l.getRight() - (int) d, l.getX() + textW + 10);
+                drawIcon (g, Icon::Info, juce::Rectangle<float> (d, d).withCentre ({ x + d * 0.5f, (float) l.getCentreY() }),
                           r.enabled ? Dark::text : Dark::textDim);
+            }
         }
     }
 
     void resized() override
     {
-        auto b = darkPanelBody (getLocalBounds(), hasHeader());
+        auto b = darkPanelBody (getLocalBounds(), hasHeader(), headerHeight, headerGap);
         boxes.clear();
         int lastGroup = -1;
         juce::Rectangle<int> box;
@@ -666,13 +688,16 @@ public:
                 b.removeFromTop (4);
                 lastGroup = r.group;
             }
-            const int h = juce::roundToInt ((float) rowHeight * r.heightRows);
+            const int h = rowPx (r);
             auto row = b.removeFromTop (h);
             box = box.getUnion (row);
-            auto inner = row.reduced (10, 0);
+            auto inner = row.reduced (inset(), 0);
             if (r.control != nullptr)
             {
-                const int ch = juce::jmin (inner.getHeight() - 4, juce::roundToInt ((float) rowHeight * r.heightRows) - 6);
+                int ch = juce::jmin (inner.getHeight() - 4, h - 6);
+                if (wingRows)
+                    ch = r.heightRows == 1.0f ? juce::roundToInt ((float) rowHeight * (isOnKey (r) ? 38.0f : 46.0f) / 52.0f)
+                                              : h - juce::roundToInt ((float) rowHeight * 16.0f / 52.0f); // a field: 64 px in 80
                 if (r.controlRows <= 0.0f)
                 {
                     r.control->setBounds (inner.withSizeKeepingCentre (inner.getWidth(), ch));
@@ -680,7 +705,8 @@ public:
                 }
                 else
                 {
-                    const int w = juce::jmin (inner.getWidth() * 55 / 100, juce::roundToInt ((float) rowHeight * r.controlRows));
+                    const float wide = wingRows && isOnKey (r) ? 46.0f / 52.0f : r.controlRows;
+                    const int w = juce::jmin (inner.getWidth() * (wingRows ? 75 : 55) / 100, juce::roundToInt ((float) rowHeight * wide));
                     r.control->setBounds (inner.removeFromRight (w).withSizeKeepingCentre (w, ch));
                     inner.removeFromRight (6);
                 }
@@ -702,6 +728,17 @@ private:
         juce::Rectangle<int> labelArea {};
         bool rightAligned = true;
     };
+
+    static bool isOnKey (const Row& r) { return dynamic_cast<OnKey*> (r.control) != nullptr; }
+
+    int inset() const { return wingRows ? juce::roundToInt ((float) rowHeight * 12.0f / 52.0f) : 10; }
+
+    int rowPx (const Row& r) const
+    {
+        // A single row of keys is a little taller than one with an ON key.
+        const float tall = wingRows && r.heightRows == 1.0f && r.control != nullptr && ! isOnKey (r) ? 56.0f / 52.0f : r.heightRows;
+        return juce::roundToInt ((float) rowHeight * tall);
+    }
 
     juce::String title;
     juce::OwnedArray<juce::Component> owned;

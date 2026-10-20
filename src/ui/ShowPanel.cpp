@@ -48,9 +48,8 @@ public:
 
     Item itemAt (int row) const { return juce::isPositiveAndBelow (row, (int) rows.size()) ? rows[(size_t) row] : Item {}; }
 
-    void paint (juce::Graphics& g) override
+    void paintOverChildren (juce::Graphics& g) override
     {
-        juce::ListBox::paint (g);
         // The empty slots under the list: dark frames on black (Fig. 45).
         const int h = getRowHeight();
         const int w = getWidth() - (getVerticalScrollBar().isVisible() ? getVerticalScrollBar().getWidth() : 0);
@@ -215,7 +214,7 @@ public:
         // Files copied in, deleted or renamed outside the app show up.
         startTimer (1000);
         setModel (this);
-        setColour (backgroundColourId, juce::Colours::black);
+        setColour (backgroundColourId, Dark::body);
         setColour (outlineColourId, juce::Colours::transparentBlack);
         getVerticalScrollBar().setColour (juce::ScrollBar::thumbColourId, Dark::key);
         getVerticalScrollBar().setColour (juce::ScrollBar::backgroundColourId, Dark::body);
@@ -318,6 +317,18 @@ public:
         deselectAllRows();
     }
 
+    void paintOverChildren (juce::Graphics& g) override
+    {
+        // [Fig. 46] the empty rows under the list: black boxes 6 px apart.
+        const int h = getRowHeight();
+        const int w = getWidth() - (getVerticalScrollBar().isVisible() ? getVerticalScrollBar().getWidth() : 0);
+        const float gap = juce::jmax (1.0f, (float) h * 6.0f / 56.0f);
+        g.setColour (juce::Colours::black);
+        for (int y = (int) entries.size() * h - getViewport()->getViewPositionY(); y < getHeight(); y += h)
+            if (y + h > 0)
+                g.fillRect (juce::Rectangle<float> (0.0f, (float) y, (float) w, (float) h - gap));
+    }
+
 private:
     int getNumRows() override { return (int) entries.size(); }
 
@@ -326,9 +337,13 @@ private:
         if (! juce::isPositiveAndBelow (row, (int) entries.size()))
             return;
         const auto& e = entries[(size_t) row];
+        // [Fig. 46] each row a black box, 6 px under the one above.
         auto r = juce::Rectangle<int> (width, height).toFloat();
         g.setColour (Colours::screenPanel);
-        g.fillRect (r.removeFromBottom (1.0f));
+        g.fillRect (r);
+        r.removeFromBottom (juce::jmax (1.0f, (float) height * 6.0f / 56.0f));
+        g.setColour (juce::Colours::black);
+        g.fillRect (r);
         if (rowSelected)
         {
             g.setColour (Dark::selectedRow);
@@ -336,15 +351,27 @@ private:
             g.setColour (Dark::selectedOutline);
             g.drawRect (r.reduced (1.0f), 2.0f);
         }
-        auto t = r.reduced (8.0f, 2.0f);
+        auto t = r.reduced (r.getHeight() * 0.2f, 2.0f);
 
         if (e.folder)
         {
-            drawIcon (g, Icon::Folder, t.removeFromLeft (t.getHeight() * 0.8f).reduced (2.0f), Dark::textDim);
-            t.removeFromLeft (6.0f);
-            g.setColour (Dark::text);
+            // The name as it is, in light blue, an outlined folder and the > key at the right.
+            const juce::Colour folderInk (0xffa0b8e0);
+            auto key = r.removeFromRight (r.getHeight() * 0.64f);
+            g.setColour (juce::Colour (0xff282c38));
+            g.fillRect (key);
+            const auto kc = key.getCentre();
+            const float a = key.getHeight() * 0.16f;
+            juce::Path chevron;
+            chevron.startNewSubPath (kc.x - a * 0.5f, kc.y - a);
+            chevron.lineTo (kc.x + a * 0.5f, kc.y);
+            chevron.lineTo (kc.x - a * 0.5f, kc.y + a);
+            g.setColour (folderInk);
+            g.strokePath (chevron, juce::PathStrokeType (juce::jmax (1.5f, a * 0.3f)));
+            t = t.withRight (key.getX());
+            drawIcon (g, Icon::Folder, t.removeFromRight (t.getHeight() * 1.1f).reduced (t.getHeight() * 0.12f), folderInk);
             g.setFont (wingFontFit (TypeScale::value * 1.15f, t.getHeight() * 0.62f, WingWeight::SemiBold));
-            g.drawFittedText (e.parent ? juce::String ("..") : e.file.getFileName().toUpperCase(), t.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+            g.drawFittedText (e.parent ? juce::String ("..") : e.file.getFileName(), t.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
             return;
         }
 
@@ -353,14 +380,17 @@ private:
         typeOf (e.file, chipText, colour);
         const bool normal = filter.isNotEmpty() && e.file.hasFileExtension (filter);
         // The type chip with the date and time under it.
-        const float chipW = juce::jmin (screenCap (46.0f), t.getWidth() * 0.16f), chipH = juce::jlimit (12.0f, screenCap (18.0f), t.getHeight() * 0.4f);
-        auto dateColumn = t.removeFromRight (juce::jmax (chipW, 74.0f));
-        auto chip = dateColumn.withWidth (chipW).withHeight (chipH).withY (t.getY() + 2.0f).withX (dateColumn.getRight() - chipW);
+        // [Fig. 46] the type chip with the date beside it and the time under the date.
+        const float chipW = juce::jmin (screenCap (46.0f), t.getWidth() * 0.16f), chipH = juce::jlimit (12.0f, screenCap (18.0f), t.getHeight() * 0.42f);
+        auto dateColumn = t.removeFromRight (juce::jmin (t.getWidth() * 0.4f, chipW + t.getHeight() * 2.1f));
+        auto top = dateColumn.removeFromTop (dateColumn.getHeight() * 0.5f);
+        auto chip = top.removeFromLeft (chipW).withSizeKeepingCentre (chipW, chipH);
         drawChip (g, chip, chipText, colour.withMultipliedAlpha (normal ? 1.0f : 0.45f), juce::Colours::black);
         const auto time = e.file.getLastModificationTime();
-        g.setColour (Dark::textDim);
-        g.setFont (wingFontFit (TypeScale::statusCaption, t.getHeight() * 0.25f));
-        g.drawText (time.formatted ("%Y-%m-%d  %H:%M:%S"), dateColumn.withTop (chip.getBottom()).toNearestInt(), juce::Justification::centredRight);
+        g.setColour (Dark::textDim.withMultipliedAlpha (normal ? 1.0f : 0.7f));
+        g.setFont (wingFontFit (TypeScale::caption, top.getHeight() * 0.6f));
+        g.drawFittedText (time.formatted ("%Y-%m-%d"), top.toNearestInt(), juce::Justification::centredRight, 1, 0.8f);
+        g.drawFittedText (time.formatted ("%H:%M:%S"), dateColumn.toNearestInt(), juce::Justification::centredRight, 1, 0.8f);
 
         g.setColour (normal ? Dark::text : Dark::textDim.withAlpha (0.6f));
         g.setFont (wingFontFit (TypeScale::value * 1.15f, t.getHeight() * 0.62f, WingWeight::SemiBold));
@@ -776,34 +806,47 @@ void ShowPanel::paint (juce::Graphics& g)
     g.fillAll (juce::Colours::black);
     g.setColour (Dark::header);
     g.fillRect (toolbar);
+    // [Fig. 46] the source keys sit in dark wells: INT and USB share one, SHOW has its own.
+    g.setColour (Dark::well);
+    g.fillRect (intKey.getBounds().getUnion (usbKey.getBounds()));
+    g.fillRect (showKey.getBounds());
     g.setColour (Dark::body);
     g.fillRect (listArea);
 }
 
 void ShowPanel::resized()
 {
+    // [Fig. 46] in px of the 648 px wide list: a 64 px toolbar (60 px source
+    // keys, FOLDER, RENAME, DELETE, the two sort keys at the right), an 8 px
+    // gap, then the list on its #202020 frame with 56 px rows.
     auto b = getLocalBounds();
-    toolbar = b.removeFromTop (juce::jlimit (36, screenCap (52), getHeight() * 11 / 100));
-    b.removeFromTop (2);
+    const float sx = (float) getWidth() / 648.0f;
+    auto px = [sx] (float v) { return juce::roundToInt (v * sx); };
+    toolbar = b.removeFromTop (juce::jmax (30, juce::roundToInt (wingPx (64.0f))));
+    b.removeFromTop (juce::jmax (2, juce::roundToInt (wingPx (8.0f))));
     listArea = b;
-    list->setRowHeight (juce::jlimit (28, screenCap (44), getHeight() / 12));
-    list->setBounds (listArea);
-    files->setRowHeight (juce::jlimit (28, screenCap (44), getHeight() / 12));
-    files->setBounds (listArea);
+    const int inner = juce::jmax (2, juce::roundToInt (wingPx (6.0f)));
+    const int rowH = juce::jmax (24, juce::roundToInt (wingPx (56.0f)));
+    list->setRowHeight (rowH);
+    list->setBounds (listArea.reduced (inner));
+    files->setRowHeight (rowH);
+    files->setBounds (listArea.reduced (inner));
 
-    auto t = toolbar.reduced (2, 2);
-    const int w = juce::jmin (t.getHeight() + 14, t.getWidth() / 10);
-    for (auto* k : { &intKey, &usbKey, &showKey })
-        k->setBounds (t.removeFromLeft (w));
+    auto t = toolbar.reduced (px (4.0f), juce::roundToInt ((float) toolbar.getHeight() / 16.0f));
+    const int w = px (60.0f);
+    auto sources = t.withTrimmedLeft (px (4.0f));
+    intKey.setBounds (sources.removeFromLeft (w));
+    usbKey.setBounds (sources.removeFromLeft (w));
+    sources.removeFromLeft (px (4.0f));
+    showKey.setBounds (sources.removeFromLeft (w));
     // At INT / USB: FOLDER, RENAME, (gap) DELETE, and the sort keys at the right.
-    auto f = t;
-    f.removeFromLeft (w / 2);
-    sortDateKey.setBounds (f.removeFromRight (w));
-    sortTypeKey.setBounds (f.removeFromRight (w));
-    folderKey.setBounds (f.removeFromLeft (w));
-    fileRenameKey.setBounds (f.removeFromLeft (w));
-    f.removeFromLeft (w / 2);
-    deleteKey.setBounds (f.removeFromLeft (w));
+    auto at = [&] (float left, float width) { return juce::Rectangle<int> (toolbar.getX() + px (left), t.getY(), px (width), t.getHeight()); };
+    folderKey.setBounds (at (262.0f, 60.0f));
+    fileRenameKey.setBounds (at (326.0f, 60.0f));
+    deleteKey.setBounds (at (450.0f, 60.0f));
+    sortTypeKey.setBounds (at (532.0f, 56.0f));
+    sortDateKey.setBounds (at (592.0f, 52.0f));
+    t = t.withTrimmedLeft (showKey.getRight() - t.getX());
     t.removeFromLeft (juce::jmax (4, (t.getWidth() - 6 * w) / 2));
     for (auto* k : { &removeKey, &renameKey, &skipKey, &linkKey, &upKey, &downKey })
         k->setBounds (t.removeFromLeft (w));

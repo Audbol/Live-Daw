@@ -134,6 +134,10 @@ std::unique_ptr<HomeScreen> makeSendsScreen (UiContext&, Strip&, bool matrixPage
 // The overlay screens of Channel Home.
 /** CHANNEL INIT or CHANNEL COPY, with the scope preselected for the slot `from`. */
 std::unique_ptr<home::OverlayScreen> makeInitCopyScreen (UiContext&, Strip&, bool copy, HomeTab from);
+/** INITIALIZE CONSOLE (SETUP): the strips, DCAs, mute groups and FX slots of
+    `scope` back to a fresh console's (the strips within its sections, as
+    CHANNEL INIT does). Returns the number of strips initialized. */
+int initializeParts (UiContext&, const state::Scope&);
 /** BUS n / MAIN n / MATRIX n FEED CONFIGURATION. */
 std::unique_ptr<home::OverlayScreen> makeFeedConfigScreen (UiContext&, Strip&);
 /** RTA SETTINGS (OVERVIEW, FILTER) or EQ/RTA SETTINGS (EQ). */

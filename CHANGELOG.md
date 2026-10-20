@@ -10,6 +10,8 @@ All notable changes to Sidecar are listed here. Versions follow
 - `tools/wing/wing_compare.py` reads every parameter from a WING and from Sidecar
   over OSC (read-only) and reports what differs, for checking Sidecar against a real
   console.
+- INITIALIZE CONSOLE is a page: choose the strips, contents, DCAs, mute groups, FX
+  slots and source groups to reset (everything: a fresh 40-channel console, as before).
 
 ### Changed
 
@@ -32,6 +34,16 @@ All notable changes to Sidecar are listed here. Versions follow
   past 48 in AES50 B / C), the recorder's playback is **WLIVE PLAY**, the channels'
   own outputs are under **USER SIGNAL**; groups Sidecar doesn't have show n/a tiles.
   +1 AUTO is off by default, as on the console.
+- SETUP, LIBRARY, CUSTOM CONTROLS and CHANNEL COPY / INIT are laid out like the
+  console's own screens at 1280 x 800: SETUP's 64 px headers, 52 / 56 px rows and
+  key sizes, the GENERAL lighting tiles (CH STRIP, GLOW), the option order and colours
+  of every tab (a lit OFF is grey, PFL / PRE red, HS and USB green), SEND PAGE
+  ACTIVATES SOLO (not there yet); LIBRARY's toolbar, file rows, tabs, key bands and
+  its orange title tile; the USER key on CUSTOM CONTROLS; CHANNEL COPY / INIT as a
+  window over the page.
+- SURFACE's section widths, SHIFT STEP and FADER VALUES moved to FADER SECTIONS (the
+  SECTIONS key in the FADERS header); REMOTE's MIDI ports sit under MIDI REMOTE CONTROL
+  and show whether each device is open.
 
 ## [0.1.2] - beta
 

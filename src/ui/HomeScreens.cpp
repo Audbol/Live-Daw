@@ -3920,7 +3920,8 @@ void copyStripParams (MixerEngine& engine, const Strip& src, const Strip& dst, j
     }
     if (has (Cust))
     {
-        dst.setName (src.getName());
+        // A default name ("Ch 1") is the strip's own label, not a name to copy.
+        dst.setName (hasDefaultName (src) ? juce::String() : src.getName());
         d.colour = s.colour.load();
         d.icon = s.icon.load();
         d.led = s.led.load();
@@ -4073,6 +4074,9 @@ public:
         return nullptr;
     }
 
+    /** A fresh console's DCA (all sixteen start the same). */
+    const ld::DcaParams* dca() const { return engine != nullptr ? &ld::ld_engine_controls (engine)->dcas[0] : nullptr; }
+
 private:
     ld::Engine* engine;
     std::vector<std::unique_ptr<Strip>> strips;
@@ -4126,7 +4130,11 @@ public:
         }
         for (juce::Component* comp : { (juce::Component*) &none, (juce::Component*) &all, (juce::Component*) &action })
             addAndMakeVisible (comp);
+        action.outlined = true;
+        action.offInk = colours::caption;
         updateTabs();
+        // [Fig. 22] a window over the dimmed page, 788 x 654 of the 1280 x 720 page.
+        setPlacement (OverlayPlacement::centred (788.0f / 1280.0f, 654.0f / 720.0f));
         startTimerHz (4);
     }
 
@@ -4134,14 +4142,17 @@ public:
     {
         OverlayScreen::paint (g);
         // SCOPE: the title at the left, NONE and ALL in the header.
-        drawSectionBox (g, scopePanel, " ");
-        {
-            auto header = sectionHeader (scopePanel).withTrimmedLeft (12);
-            g.setColour (colours::caption);
-            g.setFont (wingFontPx (juce::jmin (TypeScale::header * getWingScreenHeight(), (float) header.getHeight() * 0.42f)));
-            g.drawText ("SCOPE", header, juce::Justification::centredLeft, false);
-        }
-        drawSectionBox (g, destPanel, "DESTINATION");
+        const int headerH = scopeHeader.getHeight(), gap = scopeBody.getY() - scopeHeader.getBottom();
+        drawDarkPanel (g, scopePanel, " ", headerH, gap);
+        g.setColour (colours::caption);
+        g.setFont (panelTitleFont (headerH));
+        g.drawText ("SCOPE", scopeHeader.withTrimmedLeft (juce::roundToInt ((float) headerH * 0.33f)), juce::Justification::centredLeft, false);
+        // The rule under the scope keys.
+        g.setColour (juce::Colours::black);
+        g.fillRect (scopeRule);
+        drawDarkPanel (g, destPanel, "DESTINATION", headerH, gap);
+        g.setColour (juce::Colours::black);
+        g.fillRect (gridArea.expanded (juce::roundToInt (wingPx (4.0f))));
         if (copy)
             if (auto* src = state::findStrip (ctx.engine, source))
             {
@@ -4150,7 +4161,7 @@ public:
                 g.drawRect (sourceTile.toFloat(), 2.0f);
             }
 
-        // The destination tiles.
+        // The destination tiles: 64 x 78 on a 66 x 83 pitch.
         tiles.clear();
         const auto& list = ctx.engine.getStrips (destKind);
         const int n = (int) list.size();
@@ -4159,10 +4170,11 @@ public:
         auto grid = gridArea;
         const int columns = 8;
         const int rows = juce::jmax (5, (n + columns - 1) / columns);
-        const float w = (float) grid.getWidth() / (float) columns, h = juce::jmin ((float) grid.getHeight() / (float) rows, w * 0.8f);
+        const float w = (float) grid.getWidth() / (float) columns, h = juce::jmin ((float) grid.getHeight() / (float) rows, w * 83.0f / 66.0f);
         for (int i = 0; i < n; ++i)
         {
-            auto r = juce::Rectangle<float> ((float) grid.getX() + (float) (i % columns) * w, (float) grid.getY() + (float) (i / columns) * h, w, h).reduced (2.0f);
+            auto r = juce::Rectangle<float> ((float) grid.getX() + (float) (i % columns) * w, (float) grid.getY() + (float) (i / columns) * h, w, h)
+                         .reduced (w / 66.0f, h * 2.5f / 83.0f);
             const auto ref = state::StripRef::of (*list[(size_t) i]);
             const bool sel = std::find (destinations.begin(), destinations.end(), ref) != destinations.end();
             const bool isSource = copy && ref == source;
@@ -4171,41 +4183,40 @@ public:
         }
     }
 
-    void layoutContent (juce::Rectangle<int> b) override
+    void layoutContent (juce::Rectangle<int>) override
     {
-        scopePanel = b.removeFromLeft (b.getWidth() * 40 / 100);
-        b.removeFromLeft (6);
-        destPanel = b;
-
-        auto header = sectionHeader (scopePanel);
-        const int iconKeyW = juce::jmin (header.getHeight() + 8, header.getWidth() / 5);
-        all.setBounds (header.removeFromRight (iconKeyW).reduced (2));
-        none.setBounds (header.removeFromRight (iconKeyW).reduced (2));
-        auto s = sectionContent (scopePanel, true);
-        if (copy)
+        // [Fig. 22] in px of the console's window (788 x 654 at 232, 104 of the
+        // 1280 x 800 screen): SCOPE 236 px wide with 52 px keys on a 56 px
+        // pitch, DESTINATION 544 px with its tabs and the tile grid.
+        const auto window = windowArea();
+        const float sx = (float) window.getWidth() / 788.0f, sy = (float) window.getHeight() / 654.0f;
+        auto rect = [&] (float x0, float y0, float x1, float y1)
         {
-            auto top = s.removeFromTop (juce::jlimit (30, screenCap (52), s.getHeight() / 7));
-            sourceTile = top.removeFromLeft (juce::jmin (top.getWidth() / 3, top.getHeight() * 3 / 2));
-            s.removeFromTop (8);
-        }
-        action.setBounds (s.removeFromBottom (juce::jlimit (28, screenCap (44), s.getHeight() / 7)).withSizeKeepingCentre (juce::jmin (screenCap (160), s.getWidth()), juce::jlimit (28, screenCap (44), s.getHeight() / 7)));
-        s.removeFromBottom (8);
+            return juce::Rectangle<int>::leftTopRightBottom (window.getX() + juce::roundToInt ((x0 - 232.0f) * sx), window.getY() + juce::roundToInt ((y0 - 104.0f) * sy),
+                                                             window.getX() + juce::roundToInt ((x1 - 232.0f) * sx), window.getY() + juce::roundToInt ((y1 - 104.0f) * sy));
+        };
+        scopePanel = rect (232.0f, 192.0f, 468.0f, 758.0f);
+        destPanel = rect (476.0f, 192.0f, 1020.0f, 758.0f);
+        scopeHeader = rect (232.0f, 192.0f, 468.0f, 256.0f);
+        scopeBody = rect (232.0f, 264.0f, 468.0f, 758.0f);
+        all.setBounds (rect (412.0f, 196.0f, 456.0f, 252.0f));
+        none.setBounds (rect (356.0f, 196.0f, 400.0f, 252.0f));
+        // The source (COPY): a small tile at the left of the title bar.
+        sourceTile = copy ? rect (240.0f, 108.0f, 360.0f, 180.0f) : juce::Rectangle<int>();
+        scopeRule = rect (248.0f, 566.0f, 452.0f, 570.0f);
+        action.setBounds (rect (278.0f, 674.0f, 422.0f, 738.0f));
         // CONN CONFIG CUST TAGS / IN FILTER GATE DYN / EQ DELAY PRE POST / SEND MAIN / FDR MUTE PAN
         const int layout[5][4] = { { Conn, Config, Cust, Tags }, { In, FilterBit, GateBit, DynBit }, { EqBit, DelayBit, Pre, Post },
                                    { Send, MainBit, -1, -1 }, { Fdr, MuteBit, PanBit, -1 } };
-        const int kh = s.getHeight() / 5, kw = s.getWidth() / 4;
         for (int r = 0; r < 5; ++r)
             for (int col = 0; col < 4; ++col)
                 if (layout[r][col] >= 0)
-                    scopeKeys[layout[r][col]]->setBounds (juce::Rectangle<int> (s.getX() + col * kw, s.getY() + r * kh, kw, kh).reduced (1));
+                    scopeKeys[layout[r][col]]->setBounds (rect (240.0f + 56.0f * (float) col, 272.0f + 56.0f * (float) r, 292.0f + 56.0f * (float) col,
+                                                                324.0f + 56.0f * (float) r));
 
-        auto d = sectionContent (destPanel, true);
-        auto tabRow = d.removeFromTop (juce::jlimit (24, screenCap (36), d.getHeight() / 9));
-        const int tw = tabRow.getWidth() / kNumStripKinds;
-        for (auto* t : tabs)
-            t->setBounds (tabRow.removeFromLeft (tw).reduced (3, 0));
-        d.removeFromTop (6);
-        gridArea = d;
+        for (int k = 0; k < tabs.size(); ++k)
+            tabs[k]->setBounds (rect (483.0f + 106.75f * (float) k, 270.0f, 585.0f + 106.75f * (float) k, 326.0f));
+        gridArea = rect (484.0f, 336.0f, 1012.0f, 751.0f);
     }
 
     void mouseUp (const juce::MouseEvent& e) override
@@ -4260,14 +4271,14 @@ public:
 
 private:
     /** A destination tile [Fig. 22]: the colour strip with the name, the icon
-        large in the middle and the number under it; a gold frame when chosen. */
-    static void paintDestinationTile (juce::Graphics& g, juce::Rectangle<float> r, const Strip& s, bool selected, bool dim)
+        large in the middle and the number under it; a light frame when chosen. */
+    static void paintDestinationTile (juce::Graphics& g, juce::Rectangle<float> r, const Strip& s, bool selected, bool isSource)
     {
-        const auto colour = dim ? stripDisplayColour (s).withMultipliedBrightness (0.5f) : stripDisplayColour (s);
-        g.setColour (colours::keyOff);
+        const auto colour = stripDisplayColour (s);
+        g.setColour (juce::Colour (0xff202420));
         g.fillRect (r);
         auto body = r;
-        auto bar = body.removeFromTop (juce::jmax (8.0f, r.getHeight() * 0.2f));
+        auto bar = body.removeFromTop (juce::jmax (6.0f, r.getHeight() * 16.0f / 78.0f));
         g.setColour (colour);
         g.fillRect (bar);
         if (! hasDefaultName (s))
@@ -4283,9 +4294,10 @@ private:
         auto iconArea = body.reduced (2.0f).withSizeKeepingCentre (juce::jmin (body.getWidth(), body.getHeight()), juce::jmin (body.getWidth(), body.getHeight()) - 2.0f);
         if (! drawWingIcon (g, s.params.icon.load(), iconArea, colours::caption) && ! s.isInput())
             drawIcon (g, stripIcon (s.getKind()), iconArea.reduced (iconArea.getHeight() * 0.1f), colours::dim);
-        if (selected)
+        if (selected || isSource)
         {
-            g.setColour (colours::accent);
+            // [Fig. 22] a light grey frame round a chosen tile and the source (COPY).
+            g.setColour (colours::caption);
             g.drawRect (r.expanded (1.0f), 2.0f);
         }
     }
@@ -4334,7 +4346,7 @@ private:
     IconKey none { "NONE", Icon::ListNone }, all { "ALL", Icon::ListAll }, action { "INIT", Icon::Reset, colours::accent };
     juce::OwnedArray<IconKey> scopeKeys;
     juce::OwnedArray<IconKey> tabs;
-    juce::Rectangle<int> scopePanel, destPanel, sourceTile, gridArea;
+    juce::Rectangle<int> scopePanel, destPanel, scopeHeader, scopeBody, scopeRule, sourceTile, gridArea;
     std::vector<std::pair<juce::Rectangle<int>, state::StripRef>> tiles;
     juce::Component sourceAnchor; // where the source list opens (not shown)
 };
@@ -4896,6 +4908,64 @@ std::unique_ptr<HomeScreen> makeEqScreen (UiContext& c, Strip& s) { return std::
 std::unique_ptr<HomeScreen> makeInsertScreen (UiContext& c, Strip& s, bool post) { return std::make_unique<InsertTab> (c, s, post); }
 std::unique_ptr<HomeScreen> makeMainScreen (UiContext& c, Strip& s) { return std::make_unique<MainTab> (c, s); }
 std::unique_ptr<HomeScreen> makeSendsScreen (UiContext& c, Strip& s, bool matrixPage) { return std::make_unique<SendsTab> (c, s, matrixPage); }
+
+int initializeParts (UiContext& ctx, const state::Scope& scope)
+{
+    // The CHANNEL INIT parts of each of our sections.
+    auto bit = [] (int b) { return 1u << b; };
+    const std::pair<juce::uint32, juce::uint32> parts[] = {
+        { state::Name, bit (Cust) },
+        { state::Routing, bit (Conn) | bit (Config) },
+        { state::Preamp, bit (In) | bit (FilterBit) | bit (DelayBit) },
+        { state::Gate, bit (GateBit) },
+        { state::Eq, bit (EqBit) },
+        { state::Dynamics, bit (DynBit) },
+        { state::Inserts, bit (Pre) | bit (Post) },
+        { state::Sends, bit (Send) | bit (MainBit) },
+        { state::Fader, bit (Fdr) | bit (MuteBit) | bit (PanBit) },
+        { state::Groups, bit (Tags) },
+    };
+    juce::uint32 initScope = 0;
+    for (auto [section, b] : parts)
+        if ((scope.sections & section) != 0)
+            initScope |= b;
+
+    DefaultStrips defaults;
+    int done = 0;
+    if (initScope != 0)
+        for (int k = 0; k < kNumStripKinds; ++k)
+            for (auto& strip : ctx.engine.getStrips (static_cast<StripKind> (k)))
+                if (scope.includes (state::StripRef::of (*strip)))
+                    if (const auto* src = defaults.of (strip->getKind()))
+                    {
+                        copyStripParams (ctx.engine, *src, *strip, initScope);
+                        ++done;
+                    }
+
+    if (const auto* fresh = defaults.dca())
+        for (int i = 0; i < kNumDcas; ++i)
+            if ((scope.dcas >> i) & 1u)
+            {
+                auto& d = ctx.engine.getDca (i);
+                d.faderDb = fresh->faderDb.load();
+                d.mute = fresh->mute.load();
+                d.solo = fresh->solo.load();
+                d.led = fresh->led.load();
+                d.colour = fresh->colour.load();
+                d.icon = fresh->icon.load();
+                ctx.engine.setDcaName (i, {});
+            }
+    for (int i = 0; i < kNumMuteGroups; ++i)
+        if ((scope.muteGroups >> i) & 1u)
+        {
+            ctx.engine.muteGroups &= ~(1u << i);
+            ctx.engine.setMuteGroupName (i, {});
+        }
+    for (int i = 0; i < kNumFx; ++i)
+        if ((scope.fx >> i) & 1u)
+            clearFx (ctx, i);
+    return done;
+}
 
 std::unique_ptr<OverlayScreen> makeInitCopyScreen (UiContext& c, Strip& s, bool copy, HomeTab from)
 {

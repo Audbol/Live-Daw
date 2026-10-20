@@ -1048,68 +1048,64 @@ void CustomControlsPage::timerCallback()
 
 void CustomControlsPage::layoutList (ListColumn& l, juce::Rectangle<int> area)
 {
-    l.header = area.removeFromTop (juce::jlimit (30, 64, getHeight() / 12));
-    area.removeFromTop (6);
-    auto keys = area.removeFromBottom (juce::jlimit (18, 30, getHeight() / 22));
-    area.removeFromBottom (4);
-    l.upKey = keys.withWidth (keys.getHeight() + 12).withX (area.getCentreX() - keys.getHeight() - 14);
-    l.downKey = l.upKey.withX (area.getCentreX() + 2);
+    // As on the console: a 64 px header, the list (64 px rows on a 72 px pitch, the
+    // scroll bar at the right) and the ▲ ▼ page keys under it.
+    l.header = area.removeFromTop (juce::roundToInt (wingPx (64.0f)));
+    area.removeFromTop (juce::roundToInt (wingPx (8.0f)));
+    auto keys = area.removeFromBottom (juce::roundToInt (wingPx (40.0f)));
+    const int kh = juce::roundToInt (wingPx (16.0f)), kw = juce::roundToInt (wingPx (28.0f));
+    l.upKey = juce::Rectangle<int> (area.getCentreX() - kw - juce::roundToInt (wingPx (6.0f)), keys.getCentreY() - kh / 2, kw, kh);
+    l.downKey = l.upKey.withX (area.getCentreX() + juce::roundToInt (wingPx (6.0f)));
     l.body = area;
     l.rowAreas.clear();
-    auto rows = area.reduced (6, 6);
-    rows.removeFromRight (juce::jmin (26, rows.getWidth() / 8)); // the scroll bar
-    const int rowH = juce::jlimit (22, 64, getHeight() / 12);
-    const int visible = juce::jmax (1, (rows.getHeight() + 6) / (rowH + 6));
+    const int pad = juce::roundToInt (wingPx (8.0f));
+    auto rows = area.reduced (pad, pad);
+    rows.removeFromRight (juce::roundToInt (wingPx (40.0f))); // the scroll bar
+    const int rowH = juce::jmax (18, juce::roundToInt (wingPx (64.0f))), rowGap = juce::roundToInt (wingPx (8.0f));
+    const int visible = juce::jmax (1, (rows.getHeight() + rowGap) / (rowH + rowGap));
     l.scroll = juce::jlimit (0, juce::jmax (0, l.rows.size() - visible), l.scroll);
     for (int i = 0; i < visible && l.scroll + i < l.rows.size(); ++i)
-        l.rowAreas.push_back (rows.removeFromTop (rowH + 6).withTrimmedBottom (6));
+        l.rowAreas.push_back (rows.removeFromTop (rowH + rowGap).withTrimmedBottom (rowGap));
 }
 
 void CustomControlsPage::resized()
 {
-    auto b = getLocalBounds();
-    header = b.removeFromTop (juce::jlimit (36, 80, getHeight() / 9));
-    b.removeFromTop (8);
-    auto h = header.reduced (10, 8);
-    prevKey = h.removeFromLeft (h.getHeight() + 6);
-    h.removeFromLeft (8);
-    nextKey = h.removeFromLeft (h.getHeight() + 6);
-    h.removeFromLeft (h.getHeight());
-    gpioKey = h.removeFromLeft (h.getHeight() * 2);
+    // In px of the 1280 x 800 screen (this page starts 80 px down):
+    // the 80 px header, the LAYER column 376 px wide and three 288 px lists.
+    const float sx = (float) getWidth() / 1280.0f;
+    auto rect = [&] (float x0, float y0, float x1, float y1)
+    {
+        return juce::Rectangle<int>::leftTopRightBottom (juce::roundToInt (x0 * sx), juce::roundToInt (wingPx (y0 - 80.0f)), juce::roundToInt (x1 * sx),
+                                                         juce::roundToInt (wingPx (y1 - 80.0f)));
+    };
+    header = rect (8.0f, 80.0f, 1272.0f, 160.0f);
+    prevKey = rect (20.0f, 92.0f, 76.0f, 148.0f);
+    nextKey = rect (84.0f, 92.0f, 140.0f, 148.0f);
+    userKey = rect (148.0f, 92.0f, 228.0f, 148.0f);
+    gpioKey = rect (236.0f, 92.0f, 316.0f, 148.0f);
     title = header;
 
-    const int gap = 8;
-    auto left = b.removeFromLeft (b.getWidth() * 30 / 100);
-    b.removeFromLeft (gap);
-    const int colW = (b.getWidth() - 2 * gap) / 3;
-    layoutList (lists[0], b.removeFromLeft (colW));
-    b.removeFromLeft (gap);
-    layoutList (lists[1], b.removeFromLeft (colW));
-    b.removeFromLeft (gap);
-    layoutList (lists[2], b);
+    const float listTop = 168.0f, listBottom = 792.0f;
+    layoutList (lists[0], rect (392.0f, listTop, 680.0f, listBottom));
+    layoutList (lists[1], rect (688.0f, listTop, 976.0f, listBottom));
+    layoutList (lists[2], rect (984.0f, listTop, 1272.0f, listBottom));
 
     // LAYER panel, then SETTINGS | CONTROL.
-    layerHeader = left.removeFromTop (lists[0].header.getHeight());
-    left.removeFromTop (6);
-    layerBody = left.removeFromTop (left.getHeight() * 52 / 100);
-    left.removeFromTop (6);
-    auto settings = left.removeFromLeft ((left.getWidth() - gap) / 2);
-    left.removeFromLeft (gap);
-    auto controlArea = left;
-    const int hh = juce::jlimit (26, 56, getHeight() / 14);
-    settingsHeader = settings.removeFromTop (hh);
-    controlHeader = controlArea.removeFromTop (hh);
-    settings.removeFromTop (6);
-    controlArea.removeFromTop (6);
-    const int kh = juce::jmin (settings.getHeight() / 2 - 6, hh + 10);
-    colourKey = settings.removeFromTop (settings.getHeight() / 2).withSizeKeepingCentre (settings.getWidth() - 20, kh);
-    clearKey = settings.withSizeKeepingCentre (settings.getWidth() - 20, kh);
-    nameKey = controlArea.removeFromTop (controlArea.getHeight() / 2).withSizeKeepingCentre (controlArea.getWidth() - 20, kh);
+    layerHeader = rect (8.0f, 168.0f, 384.0f, 232.0f);
+    layerBody = rect (8.0f, 240.0f, 384.0f, 496.0f);
+    settingsHeader = rect (8.0f, 504.0f, 192.0f, 560.0f);
+    controlHeader = rect (200.0f, 504.0f, 384.0f, 560.0f);
+    colourBox = rect (8.0f, 568.0f, 192.0f, 656.0f);
+    clearBox = rect (8.0f, 664.0f, 192.0f, 752.0f);
+    nameBox = rect (200.0f, 568.0f, 384.0f, 752.0f);
+    colourKey = rect (24.0f, 584.0f, 176.0f, 640.0f);
+    clearKey = rect (24.0f, 680.0f, 176.0f, 736.0f);
+    nameKey = rect (216.0f, 584.0f, 368.0f, 640.0f);
 
     // The layer's map: four columns of colour bar, encoder and two keys.
     elements.clear();
     colourBars.clear();
-    auto m = layerBody.reduced (10, 10);
+    auto m = layerBody.reduced (juce::roundToInt (wingPx (12.0f)), juce::roundToInt (wingPx (12.0f)));
     const int cw = m.getWidth() / cc::kNumControls;
     const bool keysOnly = cc::isLowerLayer (layer);
     const int rowH = m.getHeight() / (keysOnly ? 2 : 3);
@@ -1181,7 +1177,21 @@ void CustomControlsPage::paintList (juce::Graphics& g, ListColumn& l, bool focus
     }
 
     // The scroll bar and the ▲ ▼ page keys.
-    auto bar = l.body.reduced (6, 6).removeFromRight (juce::jmin (26, l.body.getWidth() / 8)).withTrimmedLeft (6);
+    // A ▲ over the scroll well and a ▼ under it.
+    auto bar = l.body.reduced (juce::roundToInt (wingPx (8.0f))).removeFromRight (juce::roundToInt (wingPx (32.0f)));
+    for (bool up : { true, false })
+    {
+        auto end = up ? bar.removeFromTop (juce::roundToInt (wingPx (28.0f))) : bar.removeFromBottom (juce::roundToInt (wingPx (28.0f)));
+        const auto c = end.getCentre().toFloat();
+        const float a = (float) end.getWidth() * 0.45f, h = a * 0.55f;
+        juce::Path tri;
+        if (up)
+            tri.addTriangle (c.x - a, c.y + h * 0.5f, c.x + a, c.y + h * 0.5f, c.x, c.y - h * 0.5f);
+        else
+            tri.addTriangle (c.x - a, c.y - h * 0.5f, c.x + a, c.y - h * 0.5f, c.x, c.y + h * 0.5f);
+        g.setColour (Dark::textDim);
+        g.fillPath (tri);
+    }
     g.setColour (juce::Colours::black);
     g.fillRect (bar);
     if (l.rows.size() > (int) l.rowAreas.size() && ! l.rows.isEmpty())
@@ -1236,10 +1246,11 @@ void CustomControlsPage::paintLayer (juce::Graphics& g)
         auto square = r.withSizeKeepingCentre (s, s);
         if (e.slot == cc::Slot::Encoder)
         {
+            // A #303030 tile in a black frame.
             g.setColour (juce::Colours::black);
             g.fillRect (square);
-            g.setColour (Dark::keyOutline.withAlpha (0.5f));
-            g.drawRect (square, 1);
+            g.setColour (Dark::key);
+            g.fillRect (square.reduced (1));
             // A knob: a ring open at the bottom.
             auto k = square.toFloat().reduced ((float) s * 0.18f);
             juce::Path ring;
@@ -1268,16 +1279,21 @@ void CustomControlsPage::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colours::black);
 
-    // Header: ‹ ›, GPIO (not here yet) and the title.
+    // Header: ‹ ›, USER (these controls) and GPIO (not here yet), the title.
     g.setColour (Dark::header);
     g.fillRect (header);
     arrowKey (g, prevKey, false);
     arrowKey (g, nextKey, true);
-    g.setColour (Dark::key.withAlpha (0.5f));
-    g.fillRect (gpioKey);
-    g.setColour (Dark::textDim.withAlpha (0.5f));
-    g.setFont (juce::FontOptions (juce::jmin (20.0f, (float) gpioKey.getHeight() * 0.45f)));
-    g.drawText ("GPIO", gpioKey, juce::Justification::centred);
+    for (auto [r, text, enabled] : { std::tuple { userKey, "USER", true }, std::tuple { gpioKey, "GPIO", false } })
+    {
+        g.setColour (juce::Colours::black);
+        g.fillRect (r);
+        g.setColour (enabled ? Dark::key : Dark::key.withAlpha (0.5f));
+        g.fillRect (r.reduced (1));
+        g.setColour (enabled ? Dark::caption : Dark::textDim.withAlpha (0.5f));
+        g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), (float) r.getHeight() * 0.3f)));
+        g.drawText (text, r, juce::Justification::centred);
+    }
     g.setColour (Dark::text);
     g.setFont (wingFontPx (juce::jmin (TypeScale::statusTitle * getWingScreenHeight() * 0.8f, (float) title.getHeight() * 0.36f), WingWeight::SemiBold));
     g.drawText ("CUSTOM CONTROLS", title, juce::Justification::centred);
@@ -1290,13 +1306,13 @@ void CustomControlsPage::paint (juce::Graphics& g)
     {
         g.setColour (Dark::header);
         g.fillRect (r);
-        g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (juce::jmin (20.0f, (float) r.getHeight() * 0.45f)));
+        g.setColour (Dark::caption);
+        g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), (float) r.getHeight() * 0.3f)));
         g.drawText (text, r, juce::Justification::centred);
     }
     g.setColour (Dark::body);
-    g.fillRect (colourKey.getUnion (clearKey).expanded (10, 8));
-    g.fillRect (nameKey.expanded (10, 8).withBottom (clearKey.getBottom() + 8));
+    for (auto r : { colourBox, clearBox, nameBox })
+        g.fillRect (r);
     outlinedKey (g, colourKey, Icon::PaintBucket, "COLOR");
     outlinedKey (g, clearKey, Icon::Warning, "CLR ALL");
     outlinedKey (g, nameKey, Icon::Edit, "NAME");

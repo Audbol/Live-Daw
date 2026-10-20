@@ -274,6 +274,10 @@ private:
     /** Shows a screen of SETUP in place of its tabs (nullptr: back to the tabs). */
     void showSubScreen (std::unique_ptr<DisplayPage>);
     void closeSubScreen();
+    /** INITIALIZE CONSOLE: the page choosing what to reset. */
+    void openInitialize();
+    void closeInitialize();
+    void initialize (const state::Scope&, juce::uint32 sourceGroups, bool everything);
 
     UiContext& ctx;
     TabRow tabRow;
@@ -283,6 +287,8 @@ private:
     WingKey initKey { "INITIALIZE\nCONSOLE", Icon::Reset }, shutdownKey { "SHUTDOWN", Icon::Power };
     OverlayHolder overlays;
     std::unique_ptr<DisplayPage> subScreen;
+    std::unique_ptr<juce::Component> initWindow; // a ScopeWindow
+    juce::Rectangle<int> tabBar;
 };
 
 /** LIBRARY (manual 5.6): the open show's scenes and snippets on the left
@@ -352,7 +358,7 @@ private:
         nextKey { "NEXT", Icon::ChevronRight }, goKey { "GO", Icon::Play };
     std::unique_ptr<juce::Component> scope;
     std::unique_ptr<juce::FileChooser> chooser;
-    juce::Rectangle<int> rightPanel, transportArea;
+    juce::Rectangle<int> rightPanel, transportArea, tabBar;
 
     // The snippet REC FOCUS: what SAVE on the SNIP tab captures (or keeps of a recording).
     state::Scope focus = state::Scope::none();

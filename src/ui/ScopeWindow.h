@@ -16,7 +16,13 @@ namespace livedaw::ui
     the rest: the show's global safes). CONFIG in CONFIGURATION is the
     console-wide settings (monitor setup, INPUT SELECT, automix enables); the
     other configuration tiles (surface, preferences, sections) are drawn
-    disabled. CONTENTS keys that share one of our sections light together. */
+    disabled. CONTENTS keys that share one of our sections light together.
+
+    SETUP's INITIALIZE CONSOLE page is the same window (Mode::Initialize)
+    with the SOURCE and OUTPUT groups and INIT: Sidecar's source groups take
+    the console's LCL (the audio interface's inputs), CRD (the multitrack
+    playback channels), PLAY (the USB player) and OSC; the other source and
+    output groups are drawn disabled. */
 class ScopeWindow final : public juce::Component
 {
 public:
@@ -28,8 +34,19 @@ public:
         SnippetRemove,
         Global,
         PartialLoad,
-        PartialUpdate
+        PartialUpdate,
+        Initialize
     };
+
+    /** The SOURCE groups of INITIALIZE CONSOLE, as bits of getSourceGroups(). */
+    enum SourceGroup
+    {
+        SourceLocal = 1 << 0,    // LCL: the audio interface's inputs
+        SourceCard = 1 << 7,     // CRD: the multitrack playback channels
+        SourcePlayer = 1 << 9,   // PLAY: the USB player
+        SourceOsc = 1 << 12      // OSC: the oscillators
+    };
+    juce::uint32 getSourceGroups() const noexcept { return sourceGroups; }
 
     ScopeWindow (UiContext&, Mode, juce::String title, state::Scope);
 
@@ -49,7 +66,9 @@ private:
         MuteGroup,
         Fx,
         Config,
-        Content
+        Content,
+        Source,
+        Output
     };
 
     struct Tile
@@ -58,8 +77,9 @@ private:
         juce::Rectangle<int> area;
         juce::String caption, number;
         state::StripRef strip {};
-        juce::uint32 bits = 0; // Content: sections; Dca, MuteGroup, Fx: the item's bit; Config: 1 = CONFIG
+        juce::uint32 bits = 0; // Content: sections; Dca, MuteGroup, Fx, Source: the item's bit; Config: 1 = CONFIG
         bool dropdown = false;
+        std::optional<Icon> icon {}; // Config and Content keys: an icon over the caption
     };
 
     struct Group
@@ -81,9 +101,10 @@ private:
     juce::String title;
     state::Scope selection;
     bool noGlobal = false;
+    juce::uint32 sourceGroups = 0;
     std::vector<Tile> tiles;
     std::vector<Group> groups;
-    juce::Rectangle<int> titleArea, configHeader, contentsHeader;
+    juce::Rectangle<int> titleArea, configHeader, contentsHeader, configBox, contentsBox;
     WingKey noneKey { "NONE", Icon::ListNone }, allKey { "ALL", Icon::ListAll }, cancelKey { "CANCEL", Icon::ClearCircle },
         noGlobKey { "NO GLOB", Icon::LockOpen }, saveKey { "SAVE", Icon::SaveTray };
 };

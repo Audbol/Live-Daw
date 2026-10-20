@@ -5,8 +5,8 @@ namespace livedaw::ui
 
 namespace
 {
-    const juce::Colour tileBlue = Colours::valueBlue, tileYellow = Colours::gold, configLit = Colours::valueBlue, configUnlit (0xff1f4973),
-                       tileOff = Colours::screenTile, groupHeader = Colours::screenLine;
+    const juce::Colour tileBlue = Colours::valueBlue, tileYellow = Colours::gold, configLit = Colours::valueBlue, tileOff = Colours::screenPanel,
+                       groupHeader = Colours::screenLine;
 
     /** The CONTENTS keys and the console sections they map to (our ten
         sections; the console has seventeen categories). */
@@ -15,17 +15,38 @@ namespace
         const char* name;
         juce::uint32 bits;
         bool dropdown;
+        Icon icon;
     };
 
     constexpr juce::uint32 kNoneKey = 0xffff0000u, kAllKey = 0xfffe0000u, kBlank = 0;
 
     const ContentKey contentKeys[] = {
-        { "CUST", state::Name, false },       { "TAGS", state::Groups, false },  { "NONE", kNoneKey, false },          { "ALL", kAllKey, false },
-        { "CONN", state::Routing, false },    { "IN", state::Preamp, false },    { "FILTER", state::Preamp, false },   { "DELAY", state::Preamp, false },
-        { "GATE", state::Gate, false },       { "DYN", state::Dynamics, false }, { "PRE", state::Inserts, false },     { "POST", state::Inserts, false },
-        { "EQ", state::Eq, false },           { "PAN", state::Fader, false },    { "MAIN", state::Sends, true },       { "SEND", state::Sends, true },
-        { "FDR", state::Fader, false },       { "MUTE", state::Fader, false },   { "", kBlank, false },                { "CONFIG", state::Inserts, false },
+        { "CUST", state::Name, false, Icon::KeyboardEdit }, { "TAGS", state::Groups, false, Icon::Tag },   { "NONE", kNoneKey, false, Icon::ListNone },
+        { "ALL", kAllKey, false, Icon::ListAll },          { "CONN", state::Routing, false, Icon::Link },  { "IN", state::Preamp, false, Icon::Gear },
+        { "FILTER", state::Preamp, false, Icon::LowCut },  { "DELAY", state::Preamp, false, Icon::DeltaT }, { "GATE", state::Gate, false, Icon::Gate },
+        { "DYN", state::Dynamics, false, Icon::Compressor }, { "PRE", state::Inserts, false, Icon::Insert }, { "POST", state::Inserts, false, Icon::Insert },
+        { "EQ", state::Eq, false, Icon::Eq },              { "PAN", state::Fader, false, Icon::Circle },   { "MAIN", state::Sends, true, Icon::Faders },
+        { "SEND", state::Sends, true, Icon::Sends },       { "FDR", state::Fader, false, Icon::GainArrows }, { "MUTE", state::Fader, false, Icon::MuteGroup },
+        { "", kBlank, false, Icon::Circle },               { "CONFIG", state::Inserts, false, Icon::Wrench },
     };
+
+    /** The CONFIGURATION keys: CONFIG is the console-wide settings, the rest
+        (the surface, preferences, safes and layer sets) aren't kept here. */
+    struct ConfigKey
+    {
+        const char* name;
+        Icon icon;
+        bool dropdown;
+    };
+    const ConfigKey configKeys[] = { { "CONFIG", Icon::Overview, false }, { "SFC", Icon::Faders, false },  { "PREFS", Icon::Wrench, false },
+                                     { "SAFES", Icon::LockClosed, false }, { "L", Icon::Layers, true },    { "C", Icon::Layers, true },
+                                     { "R", Icon::Layers, true },         { "CC", Icon::CcEdit, true },    { "CMPCT", Icon::Layers, true },
+                                     { "RCK", Icon::Layers, true },       { "EXT", Icon::Layers, true },   { "VRT", Icon::Layers, true } };
+
+    /** INITIALIZE CONSOLE's SOURCE and OUTPUT groups (the console's names). */
+    const char* const sourceNames[] = { "LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "MOD", "PLAY", "AES", "USR", "OSC" };
+    const char* const outputNames[] = { "LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "MOD", "REC", "AES" };
+    constexpr juce::uint32 kSidecarSources = ScopeWindow::SourceLocal | ScopeWindow::SourceCard | ScopeWindow::SourcePlayer | ScopeWindow::SourceOsc;
 
     constexpr juce::uint32 kConsoleTile = 1;
 } // namespace
@@ -33,13 +54,19 @@ namespace
 ScopeWindow::ScopeWindow (UiContext& c, Mode m, juce::String t, state::Scope initial)
     : ctx (c), mode (m), title (std::move (t)), selection (std::move (initial))
 {
-    // NONE / ALL / CANCEL: icons over their captions, as on the console.
+    // NONE and ALL: icons over their captions; CANCEL: the caption beside its icon.
     for (auto* k : { &noneKey, &allKey, &cancelKey, &saveKey, &noGlobKey })
     {
         styleIconKey (*k, k == &noneKey || k == &allKey || k == &cancelKey);
         addAndMakeVisible (k);
     }
+    cancelKey.iconAbove = false;
     noGlobKey.setVisible (mode == Mode::PartialLoad);
+    if (mode == Mode::Initialize)
+    {
+        saveKey.setButtonText ("INIT");
+        saveKey.setIcon (Icon::Reset);
+    }
     noGlobKey.isOn = [this] { return noGlobal; };
     noGlobKey.onClick = [this] { noGlobal = ! noGlobal; noGlobKey.repaint(); };
     if (mode == Mode::PartialLoad)
@@ -53,6 +80,7 @@ ScopeWindow::ScopeWindow (UiContext& c, Mode m, juce::String t, state::Scope ini
             if (isActive (tile) && tile.kind != Kind::Content)
                 toggle (tile, false);
         selection.sections = 0;
+        sourceGroups = 0;
         repaint();
     };
     allKey.onClick = [this]
@@ -82,7 +110,7 @@ ScopeWindow::ScopeWindow (UiContext& c, Mode m, juce::String t, state::Scope ini
         if (onSave)
             onSave (selection, noGlobal);
     };
-    if (selection.allStrips)
+    if (selection.allStrips && mode != Mode::Initialize)
     {
         // Show "every strip" as every strip ticked.
         selection.allStrips = false;
@@ -113,9 +141,11 @@ juce::uint32* ScopeWindow::maskOf (Kind k)
         case Kind::Dca:       return &selection.dcas;
         case Kind::MuteGroup: return &selection.muteGroups;
         case Kind::Fx:        return &selection.fx;
+        case Kind::Source:    return &sourceGroups;
         case Kind::Strip:
         case Kind::Config:
-        case Kind::Content:   break;
+        case Kind::Content:
+        case Kind::Output:    break;
     }
     return nullptr;
 }
@@ -128,8 +158,11 @@ bool ScopeWindow::isActive (const Tile& t) const
         case Kind::Dca:
         case Kind::MuteGroup:
         case Kind::Fx:      return true;
-        case Kind::Config:  return t.bits == kConsoleTile;
+        // INITIALIZE CONSOLE resets strips, groups, FX and sources, not the console-wide settings.
+        case Kind::Config:  return t.bits == kConsoleTile && mode != Mode::Initialize;
         case Kind::Content: return t.bits != kBlank;
+        case Kind::Source:  return (t.bits & kSidecarSources) != 0;
+        case Kind::Output:  return false;
     }
     return false;
 }
@@ -143,6 +176,8 @@ bool ScopeWindow::isSelected (const Tile& t) const
         case Kind::MuteGroup: return (selection.muteGroups & t.bits) != 0;
         case Kind::Fx:        return (selection.fx & t.bits) != 0;
         case Kind::Config:    return t.bits == kConsoleTile && selection.console;
+        case Kind::Source:    return (sourceGroups & t.bits) != 0;
+        case Kind::Output:    return false;
         case Kind::Content:
             if (t.bits == kNoneKey || t.bits == kAllKey || t.bits == kBlank)
                 return false;
@@ -164,30 +199,37 @@ void ScopeWindow::toggle (const Tile& t, bool on)
 void ScopeWindow::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colours::black);
-    // What the window edits (EDIT SCOPE: <scene>, GLOBAL SAFE, ...) on the
-    // #202020 window title bar of the other WING windows.
-    g.setColour (Colours::screenHeader);
-    g.fillRect (titleArea);
-    g.setColour (Colours::caption);
-    g.setFont (panelTitleFont (titleArea.getHeight()));
-    g.drawFittedText (title, titleArea.reduced (12, 0), juce::Justification::centredLeft, 1, 0.8f);
+    // What the window edits (EDIT SCOPE: <scene>, GLOBAL SAFE, ...) in the free
+    // space above the DCAs (INITIALIZE CONSOLE has SOURCE and OUTPUT there).
+    if (! titleArea.isEmpty())
+    {
+        g.setColour (Colours::caption);
+        g.setFont (panelTitleFont (juce::roundToInt (wingPx (64.0f))));
+        g.drawFittedText (title, titleArea, juce::Justification::centred, 3, 0.8f);
+    }
 
+    // [Fig. 47] a group: a #484848 bar with its title over a black well in a
+    // #484848 frame.
+    const int frame = juce::jmax (1, juce::roundToInt (wingPx (3.0f)));
+    auto paintGroup = [&] (juce::Rectangle<int> header, juce::Rectangle<int> box, const juce::String& text)
+    {
+        g.setColour (groupHeader);
+        g.fillRect (header.getUnion (box));
+        g.setColour (juce::Colours::black);
+        g.fillRect (box.reduced (frame));
+        g.setColour (Dark::caption);
+        g.setFont (wingFontFit (TypeScale::body, (float) header.getHeight() * 0.7f, WingWeight::SemiBold));
+        g.drawText (text, header, juce::Justification::centred);
+    };
     for (auto& gr : groups)
     {
-        g.setColour (groupHeader);
-        g.fillRect (gr.header);
-        g.setColour (Dark::text);
-        g.setFont (wingFontFit (TypeScale::body, (float) gr.header.getHeight() * 0.8f, WingWeight::SemiBold));
-        g.drawText (gr.title, gr.header, juce::Justification::centred);
+        juce::Rectangle<int> box;
+        for (size_t i = gr.first; i < gr.first + gr.count; ++i)
+            box = box.isEmpty() ? tiles[i].area : box.getUnion (tiles[i].area);
+        paintGroup (gr.header, box.expanded (frame).withTop (gr.header.getBottom()), gr.title);
     }
-    for (auto [area, text] : { std::pair { configHeader, "CONFIGURATION" }, std::pair { contentsHeader, "CONTENTS" } })
-    {
-        g.setColour (groupHeader);
-        g.fillRect (area);
-        g.setColour (Dark::text);
-        g.setFont (wingFontFit (TypeScale::body, (float) area.getHeight() * 0.8f, WingWeight::SemiBold));
-        g.drawText (text, area, juce::Justification::centred);
-    }
+    paintGroup (configHeader, configBox, "CONFIGURATION");
+    paintGroup (contentsHeader, contentsBox, "CONTENTS");
 
     for (auto& t : tiles)
     {
@@ -195,33 +237,42 @@ void ScopeWindow::paint (juce::Graphics& g)
             continue;
         const bool active = isActive (t);
         const bool on = isSelected (t);
-        auto r = t.area.toFloat().reduced (1.5f);
+        auto r = t.area.toFloat().reduced (juce::jmax (1.0f, wingPx (2.0f)));
         juce::Colour fill = tileOff;
-        if (t.kind == Kind::Config)
-            fill = on ? configLit : configUnlit;
-        else if (on)
-            fill = t.kind == Kind::Content ? tileYellow : tileBlue;
-        if (! active)
-            fill = fill.darker (0.55f).withMultipliedSaturation (0.6f);
+        if (on)
+            fill = t.kind == Kind::Content ? tileYellow : (t.kind == Kind::Config ? configLit : tileBlue);
         g.setColour (fill);
-        g.fillRect (r);
-        auto ink = on ? juce::Colours::black : Dark::text;
-        if (! active)
-            ink = ink.withAlpha (0.45f);
-        g.setColour (ink);
-        if (t.caption.isNotEmpty())
+        g.fillRoundedRectangle (r, wingPx (3.0f));
+        auto ink = on ? juce::Colours::black : (active ? Dark::textDim.brighter (0.25f) : Dark::textDim.withAlpha (0.35f));
+        if (t.icon.has_value())
         {
-            auto cap = r.removeFromTop (r.getHeight() * 0.36f);
-            g.setFont (wingFontFit (TypeScale::statusCaption, cap.getHeight() * 0.9f));
-            g.drawText (t.caption, cap.toNearestInt(), juce::Justification::centred);
+            // An icon over its caption.
+            auto label = r.removeFromBottom (r.getHeight() * 0.34f);
+            drawIcon (g, *t.icon, r.reduced (r.getHeight() * 0.16f), ink);
+            g.setColour (ink);
+            g.setFont (fontFittingWidth (wingFontFit (TypeScale::statusCaption, label.getHeight() * 0.85f), t.number, label.getWidth() - 2.0f, 0.7f));
+            g.drawText (t.number, label.toNearestInt(), juce::Justification::centredTop);
         }
-        g.setFont (wingFontFit (TypeScale::value, juce::jmin (r.getHeight() * 0.8f, r.getWidth() * 0.4f), WingWeight::SemiBold));
-        g.drawFittedText (t.number, r.toNearestInt(), juce::Justification::centred, 1, 0.7f);
+        else
+        {
+            // A small caption over a rule, the number under it.
+            auto cap = r.removeFromTop (r.getHeight() * 0.38f);
+            g.setColour (on ? juce::Colours::black : Dark::textDim.withAlpha (active ? 0.8f : 0.35f));
+            g.setFont (wingFontFit (TypeScale::statusCaption, cap.getHeight() * 0.75f));
+            g.drawText (t.caption, cap.toNearestInt(), juce::Justification::centred);
+            g.setColour (on ? juce::Colours::black.withAlpha (0.5f) : juce::Colours::black);
+            g.fillRect (cap.getX() + cap.getWidth() * 0.1f, cap.getBottom() - 1.0f, cap.getWidth() * 0.8f, juce::jmax (1.0f, wingPx (2.0f)));
+            g.setColour (ink);
+            g.setFont (wingFontFit (TypeScale::value, juce::jmin (r.getHeight() * 0.75f, r.getWidth() * 0.4f)));
+            g.drawFittedText (t.number, r.toNearestInt(), juce::Justification::centred, 1, 0.7f);
+        }
         if (t.dropdown)
         {
             juce::Path tri;
-            const auto br = t.area.toFloat().reduced (3.0f).getBottomRight();
-            tri.addTriangle (br.x - 7.0f, br.y - 4.0f, br.x - 1.0f, br.y - 4.0f, br.x - 4.0f, br.y);
+            const auto br = t.area.toFloat().reduced (wingPx (4.0f)).getBottomRight();
+            const float a = juce::jmax (3.0f, wingPx (4.0f));
+            tri.addTriangle (br.x - a * 1.6f, br.y - a, br.x, br.y - a, br.x - a * 0.8f, br.y);
+            g.setColour (ink);
             g.fillPath (tri);
         }
     }
@@ -232,17 +283,38 @@ void ScopeWindow::resized()
     tiles.clear();
     groups.clear();
 
-    auto b = getLocalBounds();
-    titleArea = b.removeFromTop (juce::jlimit (20, 30, getHeight() / 16));
-    b.removeFromTop (4);
-    const int gap = 10;
-    auto left = b.removeFromLeft (b.getWidth() * 38 / 100);
-    b.removeFromLeft (gap);
-    auto middle = b.removeFromLeft (b.getWidth() * 60 / 100);
-    b.removeFromLeft (gap);
-    auto right = b;
+    // [Fig. 47] in px of the 1280 x 720 page under the status bar: the strip
+    // groups at the left (52 px tiles on a 56 px pitch), SOURCE, OUTPUT (only
+    // on INITIALIZE CONSOLE), DCA, MUTEGROUP and FX in the middle, NONE / ALL /
+    // CANCEL, CONFIGURATION, CONTENTS and SAVE (INIT, LOAD ...) at the right.
+    const float sx = (float) getWidth() / 1280.0f, sy = (float) getHeight() / 720.0f;
+    auto X = [&] (float px) { return juce::roundToInt (px * sx); };
+    auto Y = [&] (float px) { return juce::roundToInt ((px - 80.0f) * sy); };
+    auto rect = [&] (float x0, float y0, float x1, float y1) { return juce::Rectangle<int>::leftTopRightBottom (X (x0), Y (y0), X (x1), Y (y1)); };
+    const int headerH = juce::jmax (10, Y (108.0f) - Y (84.0f));
+    const int pitchX = X (92.0f) - X (36.0f);
 
-    // Left column: the strips, 8 to a row.
+    // A group of `count` tiles, eight to a row, from `top`; returns the bottom.
+    auto addGroup = [&] (const juce::String& groupTitle, float left, int top, int count, int pitch, std::function<Tile (int index, juce::Rectangle<int>)> make)
+    {
+        Group gr { groupTitle, juce::Rectangle<int> (X (left - 6.0f), top, X (left + 450.0f) - X (left - 6.0f), headerH), tiles.size(), (size_t) count };
+        const int y0 = top + headerH + juce::roundToInt (4.0f * sy);
+        for (int i = 0; i < count; ++i)
+            tiles.push_back (make (i, juce::Rectangle<int> (X (left) + (i % 8) * pitchX, y0 + (i / 8) * pitch, pitchX, pitch)));
+        groups.push_back (gr);
+        return y0 + (count + 7) / 8 * pitch + juce::roundToInt (4.0f * sy);
+    };
+    auto simple = [] (Kind kind, const char* caption)
+    {
+        return [kind, caption] (int i, juce::Rectangle<int> area)
+        {
+            Tile t { kind, area, caption, juce::String (i + 1) };
+            t.bits = 1u << i;
+            return t;
+        };
+    };
+
+    // Left column: the strips; more than the console's 40 channels shrink the rows.
     struct StripGroup
     {
         const char* title;
@@ -251,7 +323,6 @@ void ScopeWindow::resized()
     };
     const StripGroup stripGroups[] = { { "CHANNEL", "CH", StripKind::Channel }, { "AUX", "AUX", StripKind::Aux }, { "BUS", "BUS", StripKind::Bus },
                                        { "MAIN", "MAIN", StripKind::Main }, { "MATRIX", "MTX", StripKind::Matrix } };
-    const int headerH = juce::jlimit (12, 18, getHeight() / 28);
     int rows = 0, nonEmpty = 0;
     for (auto& sg : stripGroups)
     {
@@ -259,80 +330,76 @@ void ScopeWindow::resized()
         rows += (n + 7) / 8;
         nonEmpty += n > 0 ? 1 : 0;
     }
-    const int tileW = left.getWidth() / 8;
-    const int tileH = juce::jlimit (10, juce::jmax (10, tileW * 3 / 4), (left.getHeight() - nonEmpty * (headerH + 4)) / juce::jmax (1, rows));
-    auto l = left;
+    const int stripPitch = juce::jmin (Y (168.0f) - Y (112.0f),
+                                       (Y (792.0f) - Y (84.0f) - nonEmpty * (headerH + juce::roundToInt (8.0f * sy))) / juce::jmax (1, rows));
+    int y = Y (84.0f);
     for (auto& sg : stripGroups)
     {
         auto& strips = ctx.engine.getStrips (sg.kind);
         if (strips.empty())
             continue;
-        Group gr { sg.title, l.removeFromTop (headerH), tiles.size(), strips.size() };
-        for (size_t i = 0; i < strips.size(); ++i)
+        y = addGroup (sg.title, 36.0f, y, (int) strips.size(), stripPitch, [&strips, &sg] (int i, juce::Rectangle<int> area)
         {
-            const auto& s = *strips[i];
-            const int col = (int) i % 8, row = (int) i / 8;
-            tiles.push_back ({ Kind::Strip, juce::Rectangle<int> (l.getX() + col * tileW, l.getY() + row * tileH, tileW, tileH), sg.caption,
-                               juce::String (s.getNumber()), state::StripRef::of (s) });
-        }
-        l.removeFromTop (((int) strips.size() + 7) / 8 * tileH + 4);
-        groups.push_back (gr);
+            const auto& s = *strips[(size_t) i];
+            return Tile { Kind::Strip, area, sg.caption, juce::String (s.getNumber()), state::StripRef::of (s) };
+        });
     }
 
-    // Middle column: DCA, MUTEGROUP and FX.
-    auto m = middle;
-    const int mw = m.getWidth() / 8;
-    const int mh = juce::jmin (tileH, mw * 3 / 4);
-    auto addRowGroup = [&] (const char* groupTitle, const char* caption, Kind kind, int count)
+    // Middle column.
+    const int pitchY = Y (168.0f) - Y (112.0f);
+    titleArea = {};
+    if (mode == Mode::Initialize)
     {
-        Group gr { groupTitle, m.removeFromTop (headerH), tiles.size(), (size_t) count };
-        for (int i = 0; i < count; ++i)
+        addGroup ("SOURCE", 530.0f, Y (84.0f), (int) std::size (sourceNames), pitchY, [] (int i, juce::Rectangle<int> area)
         {
-            Tile t { kind, juce::Rectangle<int> (m.getX() + (i % 8) * mw, m.getY() + (i / 8) * mh, mw, mh), caption, juce::String (i + 1) };
+            Tile t { Kind::Source, area, "SRC", sourceNames[i] };
             t.bits = 1u << i;
-            tiles.push_back (t);
-        }
-        m.removeFromTop ((count + 7) / 8 * mh + 6);
-        groups.push_back (gr);
-    };
-    addRowGroup ("DCA", "DCA", Kind::Dca, kNumDcas);
-    addRowGroup ("MUTEGROUP", "MUTE", Kind::MuteGroup, kNumMuteGroups);
-    addRowGroup ("FX", "FX", Kind::Fx, kNumFx);
+            t.dropdown = true;
+            return t;
+        });
+        addGroup ("OUTPUT", 530.0f, Y (245.0f), (int) std::size (outputNames), pitchY, [] (int i, juce::Rectangle<int> area)
+        {
+            Tile t { Kind::Output, area, "OUT", outputNames[i] };
+            t.dropdown = true;
+            return t;
+        });
+    }
+    else
+        titleArea = rect (530.0f, 100.0f, 980.0f, 380.0f);
+    const int mgTop = addGroup ("DCA", 530.0f, Y (406.0f), kNumDcas, pitchY, simple (Kind::Dca, "DCA"));
+    addGroup ("MUTEGROUP", 530.0f, mgTop, kNumMuteGroups, pitchY, simple (Kind::MuteGroup, "MUTE"));
+    addGroup ("FX", 530.0f, Y (652.0f), kNumFx, pitchY, simple (Kind::Fx, "FX"));
 
-    // Right column: NONE / ALL / CANCEL (NO GLOB), CONFIGURATION, CONTENTS and SAVE.
-    auto r = right;
-    const int keyH = juce::jlimit (26, 40, getHeight() / 12);
-    auto top = r.removeFromTop (keyH);
-    const int kw = top.getWidth() / 3;
-    noneKey.setBounds (top.removeFromLeft (kw).reduced (2, 0));
-    allKey.setBounds (top.removeFromLeft (kw).reduced (2, 0));
-    cancelKey.setBounds (top.reduced (2, 0));
-    auto bottom = r.removeFromBottom (keyH);
-    saveKey.setBounds (bottom.removeFromRight (bottom.getWidth() / 2).reduced (2, 0));
-    noGlobKey.setBounds (bottom.reduced (2, 0));
-    r.removeFromBottom (4);
-    r.removeFromTop (6);
+    // Right column.
+    noneKey.setBounds (rect (999.0f, 84.0f, 1061.0f, 148.0f));
+    allKey.setBounds (rect (1063.0f, 84.0f, 1119.0f, 148.0f));
+    cancelKey.setBounds (rect (1123.0f, 84.0f, 1269.0f, 148.0f));
+    saveKey.setBounds (rect (1057.0f, 716.0f, 1211.0f, 772.0f));
+    noGlobKey.setBounds (rect (999.0f, 716.0f, 1053.0f, 772.0f));
+    if (noGlobKey.isVisible())
+        saveKey.setBounds (rect (1123.0f, 716.0f, 1269.0f, 772.0f));
 
-    const int cw = r.getWidth() / 4;
-    const int ch = juce::jlimit (16, 40, (r.getHeight() - 2 * (headerH + 6)) / 7);
-    configHeader = r.removeFromTop (headerH);
-    const char* configKeys[] = { "CONFIG", "SFC", "PREFS", "L", "C", "R" };
-    for (int i = 0; i < 6; ++i)
+    const int keyPitch = X (1080.0f) - X (1024.0f);
+    configHeader = rect (1018.0f, 167.0f, 1250.0f, 191.0f);
+    for (int i = 0; i < (int) std::size (configKeys); ++i)
     {
-        Tile t { Kind::Config, juce::Rectangle<int> (r.getX() + (i % 3) * (r.getWidth() / 3), r.getY() + (i / 3) * ch, r.getWidth() / 3, ch), {},
-                 configKeys[i] };
+        Tile t { Kind::Config, juce::Rectangle<int> (X (1024.0f) + (i % 4) * keyPitch, Y (195.0f) + (i / 4) * pitchY, keyPitch, pitchY), {}, configKeys[i].name };
         t.bits = i == 0 ? kConsoleTile : 0;
+        t.icon = configKeys[i].icon;
+        t.dropdown = configKeys[i].dropdown;
         tiles.push_back (t);
     }
-    r.removeFromTop (2 * ch + 6);
-    contentsHeader = r.removeFromTop (headerH);
+    configBox = juce::Rectangle<int>::leftTopRightBottom (configHeader.getX(), configHeader.getBottom(), configHeader.getRight(), Y (195.0f) + 3 * pitchY + juce::roundToInt (4.0f * sy));
+    contentsHeader = rect (1018.0f, 384.0f, 1250.0f, 408.0f);
     for (int i = 0; i < (int) std::size (contentKeys); ++i)
     {
-        Tile t { Kind::Content, juce::Rectangle<int> (r.getX() + (i % 4) * cw, r.getY() + (i / 4) * ch, cw, ch), {}, contentKeys[i].name };
+        Tile t { Kind::Content, juce::Rectangle<int> (X (1024.0f) + (i % 4) * keyPitch, Y (412.0f) + (i / 4) * pitchY, keyPitch, pitchY), {}, contentKeys[i].name };
         t.bits = contentKeys[i].bits;
         t.dropdown = contentKeys[i].dropdown;
+        t.icon = contentKeys[i].icon;
         tiles.push_back (t);
     }
+    contentsBox = juce::Rectangle<int>::leftTopRightBottom (contentsHeader.getX(), contentsHeader.getBottom(), contentsHeader.getRight(), Y (412.0f) + 5 * pitchY + juce::roundToInt (4.0f * sy));
 }
 
 void ScopeWindow::mouseUp (const juce::MouseEvent& e)

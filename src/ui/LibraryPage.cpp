@@ -22,23 +22,28 @@ namespace
         std::vector<juce::Component*> left, right;
     };
 
+    /** [Fig. 46] a band of keys: 80 px of the 800 px screen, or less to fit. */
+    int keyBandHeight (int most) { return juce::jmax (24, juce::jmin (juce::roundToInt (wingPx (80.0f)), most)); }
+
+    /** [Fig. 46] 144 x 64 keys, 8 px apart and 8 px in from the band's edges. */
     void layoutKeyRows (juce::Rectangle<int> area, std::vector<KeyRow>& rows, int rowH, int gap)
     {
+        const int inset = juce::jmax (2, juce::roundToInt ((float) rowH * 8.0f / 80.0f));
         for (auto& row : rows)
         {
             row.band = area.removeFromTop (rowH);
             area.removeFromTop (gap);
-            auto r = row.band.reduced (4, 4);
-            const int w = juce::jmin (screenCap (150), r.getWidth() * 30 / 100);
+            auto r = row.band.reduced (inset);
+            const int w = juce::jmin (r.getWidth() * 30 / 100, juce::roundToInt ((float) row.band.getWidth() * 144.0f / 608.0f));
             for (auto* c : row.left)
             {
                 c->setBounds (r.removeFromLeft (w));
-                r.removeFromLeft (4);
+                r.removeFromLeft (inset);
             }
             for (auto* c : row.right)
             {
                 c->setBounds (r.removeFromRight (w));
-                r.removeFromRight (4);
+                r.removeFromRight (inset);
             }
         }
     }
@@ -164,8 +169,8 @@ public:
     void resized() override
     {
         auto b = getLocalBounds();
-        const int rowH = juce::jlimit (36, screenCap (56), getHeight() / 5);
-        layoutKeyRows (b, rows, rowH, 4);
+        const int rowH = keyBandHeight (getHeight() / 5);
+        layoutKeyRows (b, rows, rowH, juce::jmax (2, juce::roundToInt (wingPx (4.0f))));
         info = b.withTop (rows.back().band.getBottom() + 8).reduced (8, 4);
     }
 
@@ -428,8 +433,8 @@ public:
     void resized() override
     {
         auto b = getLocalBounds();
-        const int rowH = juce::jlimit (32, screenCap (56), getHeight() / 7);
-        layoutKeyRows (b, rows, rowH, 4);
+        const int rowH = keyBandHeight (getHeight() / 7);
+        layoutKeyRows (b, rows, rowH, juce::jmax (2, juce::roundToInt (wingPx (4.0f))));
         extras = b.withTop (rows.back().band.getBottom() + 8);
         auto e = darkPanelBody (extras, true).reduced (8, 4);
         // The rows grow with the screen (screen only on a large display).
@@ -637,8 +642,8 @@ public:
     void resized() override
     {
         auto b = getLocalBounds();
-        const int rowH = juce::jlimit (32, screenCap (52), getHeight() / 6);
-        layoutKeyRows (b, rows, rowH, 4);
+        const int rowH = keyBandHeight (getHeight() / 6);
+        layoutKeyRows (b, rows, rowH, juce::jmax (2, juce::roundToInt (wingPx (4.0f))));
         // REC and STOP are narrower, to make room for the parameter counter.
         auto band = rows[3].band.reduced (4, 4);
         const int w = juce::jmin (rec->getWidth(), (recFocus->getX() - band.getX() - 90) / 2 - 4);
@@ -820,8 +825,8 @@ public:
     void resized() override
     {
         auto b = getLocalBounds();
-        const int rowH = juce::jlimit (36, screenCap (56), getHeight() / 6);
-        layoutKeyRows (b, rows, rowH, 4);
+        const int rowH = keyBandHeight (getHeight() / 6);
+        layoutKeyRows (b, rows, rowH, juce::jmax (2, juce::roundToInt (wingPx (4.0f))));
         auto g = b.withTop (rows.back().band.getBottom() + 12).withHeight (juce::jmin (screenCap (140), b.getHeight() / 3)).reduced (4, 0);
         slotKey.setBounds (g.removeFromRight (juce::jmin (screenCap (44), g.getWidth() / 10)).withSizeKeepingCentre (juce::jmin (screenCap (44), g.getWidth() / 10), 40));
         presetBox = g.removeFromLeft (g.getWidth() * 44 / 100);
@@ -984,8 +989,8 @@ public:
     void resized() override
     {
         auto b = getLocalBounds();
-        const int rowH = juce::jlimit (36, screenCap (56), getHeight() / 6);
-        layoutKeyRows (b, rows, rowH, 4);
+        const int rowH = keyBandHeight (getHeight() / 6);
+        layoutKeyRows (b, rows, rowH, juce::jmax (2, juce::roundToInt (wingPx (4.0f))));
         // The strip box at the top right of the first row, with its chooser.
         const auto band = rows.front().band.reduced (4);
         stripKey.setBounds (band.withLeft (band.getRight() - 36));
@@ -1256,10 +1261,10 @@ public:
     void resized() override
     {
         auto b = getLocalBounds();
-        const int rowH = juce::jlimit (36, screenCap (56), getHeight() / 6);
+        const int rowH = keyBandHeight (getHeight() / 6);
         graphic = b.removeFromTop (juce::jmin (screenCap (120), b.getHeight() / 3));
         b.removeFromTop (4);
-        layoutKeyRows (b, rows, rowH, 4);
+        layoutKeyRows (b, rows, rowH, juce::jmax (2, juce::roundToInt (wingPx (4.0f))));
         note = b.withTop (rows.back().band.getBottom() + 8).reduced (8, 6);
     }
 
@@ -1417,12 +1422,11 @@ StatusTitle LibraryPage::getStatusTitle()
     t.kind = StatusTitle::Kind::Text;
     // The show's name is the small caption over the scene ("INT:" on the console).
     t.prefix = ctx.show.getName().toUpperCase() + ":";
+    // [Fig. 46] the title tile is dark orange on LIBRARY.
+    t.fill = FileColours::libraryTitle;
+    t.ink = juce::Colours::black;
     if (const auto scene = ctx.show.getScene (ctx.show.getCurrentSceneIndex()))
-    {
         t.text = scene->name.toUpperCase();
-        t.fill = FileColours::snap;
-        t.ink = juce::Colours::black;
-    }
     else
     {
         t.icon = Icon::ShowFile;
@@ -1682,36 +1686,48 @@ void LibraryPage::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colours::black);
     g.setColour (Dark::header);
+    g.fillRect (tabBar);
     g.fillRect (transportArea);
 }
 
 void LibraryPage::resized()
 {
+    // [Fig. 46] in px of the 1280 x 800 screen: the list 648 px wide at the
+    // left, the tabs (86 px) on a 64 px bar at the right, the tab's key bands
+    // 8 px under it and the 136 px transport band at the bottom.
     auto b = getLocalBounds();
-    list->setBounds (b.removeFromLeft (b.getWidth() * 51 / 100));
-    b.removeFromLeft (6);
+    const int gap = juce::jmax (2, juce::roundToInt (wingPx (8.0f)));
+    b = b.reduced (gap, 0).withTrimmedBottom (juce::roundToInt (wingPx (26.0f)));
+    const float sx = (float) b.getWidth() / 1264.0f;
+    list->setBounds (b.removeFromLeft (juce::roundToInt (648.0f * sx)));
+    b.removeFromLeft (gap);
     rightPanel = b;
-    tabs.setBounds (b.removeFromTop (juce::jlimit (36, screenCap (52), getHeight() * 11 / 100)));
-    b.removeFromTop (4);
-    transportArea = b.removeFromBottom (juce::jlimit (52, screenCap (96), getHeight() * 16 / 100));
-    b.removeFromBottom (4);
+    tabBar = b.removeFromTop (juce::jmax (30, juce::roundToInt (wingPx (64.0f))));
+    const int tabW = juce::roundToInt (88.0f * sx);
+    tabs.setBounds (tabBar.withHeight (tabBar.getHeight() * 56 / 64).withWidth (juce::jmin (tabBar.getWidth(), 6 * tabW)));
+    b.removeFromTop (gap);
+    transportArea = b.removeFromBottom (juce::jmax (52, juce::roundToInt (wingPx (136.0f))));
+    b.removeFromBottom (gap);
     for (auto* p : tabPages)
         p->setBounds (b);
 
-    // GO PREV, GO NEXT, a gap, PREV over NEXT, GO (icons over the text when narrow).
-    auto t = transportArea.reduced (4);
-    const int w = t.getWidth() / 5;
+    // GO PREV, GO NEXT, a gap, PREV over NEXT, GO: 128 px keys, 8 px apart.
+    auto t = transportArea.reduced (juce::roundToInt (8.0f * sx), gap);
+    const int w = juce::roundToInt (128.0f * sx), kGap = juce::roundToInt (8.0f * sx);
     for (auto* k : { &goPrevKey, &goNextKey, &goKey })
     {
         k->iconAbove = w < 120;
         k->setButtonText (k == &goKey ? "GO" : (w < 120 ? juce::String (k == &goPrevKey ? "GO PREV" : "GO NEXT") : juce::String (k == &goPrevKey ? "GO\nPREV" : "GO\nNEXT")));
     }
-    goPrevKey.setBounds (t.removeFromLeft (w).reduced (2));
-    goNextKey.setBounds (t.removeFromLeft (w).reduced (2));
-    goKey.setBounds (t.removeFromRight (w).reduced (2));
+    goPrevKey.setBounds (t.removeFromLeft (w));
+    t.removeFromLeft (kGap);
+    goNextKey.setBounds (t.removeFromLeft (w));
+    goKey.setBounds (t.removeFromRight (w));
+    t.removeFromRight (kGap);
     auto steps = t.removeFromRight (w);
-    prevKey.setBounds (steps.removeFromTop (steps.getHeight() / 2).reduced (2, 1));
-    nextKey.setBounds (steps.reduced (2, 1));
+    prevKey.setBounds (steps.removeFromTop ((steps.getHeight() - kGap) / 2));
+    steps.removeFromTop (kGap);
+    nextKey.setBounds (steps);
 
     if (scope != nullptr)
         scope->setBounds (getLocalBounds());
