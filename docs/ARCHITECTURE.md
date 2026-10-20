@@ -782,7 +782,8 @@ README's *Known limitations*; keep the three in step.
   Hosting each plugin in a sandbox process is the next step for full isolation.
 - The FX devices recreate each unit's controls and characteristic sound, not the
   console's exact algorithms.
-- No plugin delay compensation.
+- Plugin delay compensation covers the paths into buses, mains and matrices (up to
+  8192 samples); solo, monitoring, direct outs and recorder taps are not compensated.
 - Plugins always run in stereo. A mono strip feeds both plugin inputs and takes the
   left output back (built-in devices return the average of both).
 - Custom controls (`CustomControlsPage.*`; stored with the show by
