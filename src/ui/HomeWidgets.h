@@ -28,14 +28,14 @@ namespace colours
 {
     const juce::Colour eqOn = Colours::valueBlue;   // block keys: EQ on; LC / HC chips
     const juce::Colour dynOn { 0xffe07a22 };        // dynamics on
-    const juce::Colour insOn { 0xff9a2cf0 };        // inserts on
+    const juce::Colour insOn { 0xff9800f8 };        // inserts on (I1)
     const juce::Colour fader = Colours::valueBlue;  // screen faders, levels
     const juce::Colour tap = Colours::tapRed;       // TAP / PRE sends, the TAP POINT node
     const juce::Colour post = Colours::green;       // POST sends
     const juce::Colour group = Colours::valueBlue;  // GROUP sends
     const juce::Colour stereo { 0xff809800 };       // stereo source label (olive)
     const juce::Colour mono = Colours::valueBlue;   // mono source label
-    const juce::Colour soloBus = Colours::green;    // SOLO BUS keys
+    const juce::Colour soloBus { 0xff809800 };      // SOLO BUS keys (olive, I1)
     const juce::Colour panArc = Colours::width;     // pan / width arc
     const juce::Colour link = Colours::green;       // PAN LINK while linked
     const juce::Colour keyOff = Colours::screenKey; // unlit keys, the front tab
@@ -60,9 +60,10 @@ namespace colours
     const juce::Colour allPass = KnobColours::yellow; //               AP 90 / AP 180
     const juce::Colour eqCurve = Colours::amber;      // EQ curve
     const juce::Colour eqFill = Colours::eqFill;      // and the area under it
-    const juce::Colour dcaTag { 0xff203860 };       // TAGS: DCA strips (unassigned)
-    const juce::Colour muteTag { 0xff680008 };      //       mute group strips
-    const juce::Colour talkOff { 0xff005c18 };      //       TALK tags
+    const juce::Colour muteTag { 0xffb03c38 };      // TAGS: mute group strips
+    const juce::Colour talkOff { 0xff786018 };      //       TALK tag strips
+    const juce::Colour tagBody { 0xff202420 };      //       DCA and mute group tiles
+    const juce::Colour talkBody { 0xff181818 };     //       TALK tiles
 } // namespace colours
 
 /** A screen font for HOME: the console's type scale (TypeScale), no taller
@@ -237,6 +238,7 @@ inline KnobStyle widthStyle (juce::Component* t = nullptr) { return styleOf (Kno
 inline KnobStyle thumbStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Thumb, KnobColours::white, t); }
 inline KnobStyle balStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Thumb, KnobColours::blue, t); }
 inline KnobStyle distStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Fill, KnobColours::yellow, t); }
+inline KnobStyle gainStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Fill, KnobColours::yellow, t); }
 inline KnobStyle toolStyle (juce::Component* t = nullptr, juce::Colour c = colours::tilt) { return styleOf (KnobStyle::Bar::Centre, c, t); }
 
 /** The 3.1 key: a flat fill inside a black frame (the frame shows on the grey
@@ -265,6 +267,8 @@ public:
 
     std::function<bool()> isOn;
     bool iconAbove = false, outlined = false, twoLines = false, labelBeside = false;
+    /** A square icon key with its caption under it on the panel (INVERT, DELAY, I7). */
+    bool captionBelow = false;
     juce::Colour offColour = colours::keyOff;
     juce::Colour offInk = colours::dim;  // the text of an unlit key
     juce::Colour frame = juce::Colours::black;  // keyboard-style keys: #484848
@@ -288,6 +292,21 @@ public:
     {
         const bool on = getToggleState();
         auto r = getLocalBounds().toFloat();
+        if (captionBelow && icon.has_value())
+        {
+            auto caption = r.removeFromBottom (juce::jmax (12.0f, r.getHeight() * 0.3f));
+            const float side = juce::jmin (r.getWidth(), r.getHeight());
+            auto keyArea = juce::Rectangle<float> (side, side).withCentre ({ r.getCentreX(), r.getY() + side * 0.5f });
+            auto fill = on ? onColour : offColour;
+            if (down || (over && isEnabled()))
+                fill = fill.brighter (down ? 0.15f : 0.07f);
+            paintKeyBody (g, keyArea, fill, frame);
+            drawIcon (g, *icon, keyArea.reduced (keyArea.getHeight() * 0.2f), on ? juce::Colours::black : offInk);
+            g.setColour (isEnabled() ? colours::dim : colours::dim.withAlpha (0.55f));
+            g.setFont (fontFittingWidth (homeFont (TypeScale::header * 0.8f, caption.getHeight() * 0.9f), getButtonText(), (float) getWidth()));
+            g.drawFittedText (getButtonText(), caption.toNearestInt(), juce::Justification::centred, 1, 0.75f);
+            return;
+        }
         if (labelBeside && icon.has_value())
         {
             // A square icon key with its label beside it on the panel
@@ -665,7 +684,8 @@ public:
             const float lh = font.getHeight();
             g.setFont (font);
             g.setColour (colours::caption);
-            for (float db : { 10.0f, 5.0f, 0.0f, -5.0f, -10.0f, -20.0f, -30.0f, -40.0f, -50.0f })
+            // [I1] evenly spaced on the fader law: no -40.
+            for (float db : { 10.0f, 5.0f, 0.0f, -5.0f, -10.0f, -20.0f, -30.0f, -50.0f })
             {
                 const float y = slot.getBottom() - slot.getHeight() * fader::dbToPos (db);
                 g.drawText ((db > 0 ? "+" : "") + juce::String ((int) db), scaleArea.withY (y - lh * 0.5f).withHeight (lh).toNearestInt(),
@@ -683,10 +703,16 @@ public:
         g.setColour (fillColour ? fillColour() : colours::fader);
         g.fillRect (slot.withTop (y).reduced (slot.getWidth() * 0.12f, 0.0f));
 
-        // The value tag: white, grey while the send is off or at -oo.
-        const bool on = (! isOn || isOn()) && faderDb.load() > -89.9f;
+        // The value tag on a blue line across the well [I1]: white, grey while
+        // the send is off.
+        const bool on = ! isOn || isOn();
         auto tag = juce::Rectangle<float> (juce::jmin (r.getWidth() - 2.0f, juce::jmax (44.0f, tagH * 2.7f)), tagH).withCentre ({ slot.getCentreX(), y });
         tag.setX (juce::jlimit (0.0f, (float) getWidth() - tag.getWidth(), tag.getX()));
+        if (on)
+        {
+            g.setColour (colours::fader);
+            g.fillRect (well.getX() - 2.0f, tag.getCentreY() - 1.0f, well.getWidth() + 4.0f, 2.0f);
+        }
         g.setColour (on ? colours::ink : colours::dim);
         g.fillRect (tag);
         g.setColour (juce::Colours::black);
@@ -747,6 +773,8 @@ public:
     }
 
     bool showScale = true;
+    /** Two bars and L R even for a mono strip (the LEVEL panel). */
+    bool alwaysStereo = false;
 
     static float proportion (float db) { return juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f); }
 
@@ -756,7 +784,7 @@ public:
         // unlit segments darker than the panel; the scale right-aligned at
         // their left, L and R under them (WING pixels).
         auto r = getLocalBounds().toFloat();
-        const int n = juce::jlimit (1, 2, numChannels ? numChannels() : 2);
+        const int n = alwaysStereo ? 2 : juce::jlimit (1, 2, numChannels ? numChannels() : 2);
         const auto font = homeFont (TypeScale::meterScale, screenCap (13.0f));
         auto labels = n == 2 ? r.removeFromBottom (juce::jmax (12.0f, font.getHeight() * 1.3f)) : juce::Rectangle<float>();
         auto scaleArea = showScale ? r.removeFromLeft (juce::jmin (juce::jmax (24.0f, wingPx (32.0f)), r.getWidth() * 0.45f)) : juce::Rectangle<float>();
@@ -812,7 +840,7 @@ private:
     void timerCallback() override
     {
         bool changed = false;
-        const int n = numChannels ? numChannels() : 2;
+        const int n = alwaysStereo ? 2 : (numChannels ? numChannels() : 2);
         for (size_t ch = 0; ch < 2; ++ch)
         {
             const float db = (int) ch < n && reader ? dsp::gainToDb (reader ((int) ch)) : -100.0f;
@@ -849,8 +877,10 @@ class LevelPanel final : public juce::Component
 {
 public:
     LevelPanel (UiContext& ctx, Strip& s)
-        : meter ([&ctx, &s] (int ch) { return ctx.meters.get (&s, false, ch); }, [&s] { return s.getNumChannels(); }), fader (s.params.faderDb)
+        : meter ([&ctx, &s] (int ch) { return ctx.meters.get (&s, false, s.getNumChannels() == 2 ? ch : 0); }, [&s] { return s.getNumChannels(); }),
+          fader (s.params.faderDb)
     {
+        meter.alwaysStereo = true;
         bindKey (mute, s.params.mute);
         bindKey (solo, s.params.solo);
         for (juce::Component* c : { (juce::Component*) &mute, (juce::Component*) &solo, (juce::Component*) &meter, (juce::Component*) &fader })
@@ -896,6 +926,7 @@ public:
         repaint();
     }
     juce::Colour ringColour = colours::ink;  // TAP WIDTH: green
+    juce::Colour valueColour = colours::ink; // GAIN: yellow
 
     void paint (juce::Graphics& g) override
     {
@@ -908,23 +939,25 @@ public:
         auto ring = r.removeFromLeft (ringW).withSizeKeepingCentre (ringW, ringW).reduced (ringW * 0.1f);
         const float a0 = juce::MathConstants<float>::pi * 1.25f, a1 = juce::MathConstants<float>::pi * 2.75f;
         const float pos = enabled ? binding.get() : 0.0f;
-        juce::Path track, value;
-        const float rad = ring.getWidth() * 0.4f;
-        const float from = binding.bipolar ? (a0 + a1) * 0.5f : a0;
+        // [I1] a thick grey ring with a mark at the value (no fill).
+        juce::Path track;
+        const float rad = ring.getWidth() * 0.4f, thick = ring.getWidth() * 0.2f;
         track.addCentredArc (ring.getCentreX(), ring.getCentreY(), rad, rad, 0.0f, a0, a1, true);
-        value.addCentredArc (ring.getCentreX(), ring.getCentreY(), rad, rad, 0.0f, from, a0 + pos * (a1 - a0), true);
         g.setColour (colours::chipOff);
-        g.strokePath (track, juce::PathStrokeType (ring.getWidth() * 0.2f));
+        g.strokePath (track, juce::PathStrokeType (thick));
         if (enabled)
         {
+            const float a = a0 + pos * (a1 - a0);
+            const auto c = ring.getCentre();
+            const auto at = [c, a] (float radius) { return c.getPointOnCircumference (radius, a); };
             g.setColour (ringColour);
-            g.strokePath (value, juce::PathStrokeType (ring.getWidth() * 0.2f));
+            g.drawLine ({ at (rad - thick * 0.5f), at (rad + thick * 0.5f) }, juce::jmax (2.0f, thick * 0.4f));
         }
         r.removeFromLeft (4.0f);
         g.setColour (enabled ? colours::caption : colours::dim);
         g.setFont (homeFont (TypeScale::caption, r.getHeight() * 0.32f));
         g.drawFittedText (binding.label, r.removeFromTop (r.getHeight() * 0.4f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.7f);
-        g.setColour (enabled ? colours::ink : colours::dim);
+        g.setColour (enabled ? valueColour : colours::dim);
         g.setFont (homeFont (TypeScale::value, r.getHeight() * 0.9f));
         g.drawFittedText (binding.text ? binding.text() : juce::String ("--"), r.toNearestInt(), juce::Justification::topLeft, 1, 0.7f);
     }
@@ -1137,7 +1170,7 @@ inline void paintStripTile (juce::Graphics& g, juce::Rectangle<float> r, const S
     t.name = hasDefaultName (s) ? juce::String() : stripName (s);
     t.label = shortLabel (s);
     t.boxed = s.isInput();
-    t.wingIcon = s.params.icon.load();
+    t.wingIcon = s.getIcon();
     t.kindIcon = stripIcon (s.getKind());
     t.selected = selected;
     paintWingTile (g, r, t);

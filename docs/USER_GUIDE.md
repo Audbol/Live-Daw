@@ -109,17 +109,25 @@ Barlow Condensed.
   - The **status bar**: the selected channel's tab in its colour (number box, icon,
     name; the number opens **CHANNEL SELECT**, the rest Channel Home; a red TALKBACK
     frame on the talkback channel and while talking), the status tiles (the SIP badge
-    lights with SOLO MODE SIP, filled while it mutes), the screen's own keys (INIT /
-    COPY / SETTINGS on HOME) and the clock.
+    lights with SOLO MODE SIP, filled while it mutes; the sample rate and clock; the
+    AES50 A B C and SC chips, grey here; the DSP load is on UTILITY), the screen's own
+    keys (INIT / COPY / SETTINGS on the HOME tabs) and the clock.
   - The **parameter bar** under the screen: six controls that follow what the screen
     shows (drag, mouse wheel, double-click to reset), values coloured by type as on
     the console; touching one outlines the control it changes.
   - **HOME** for the selected strip: the toolbar (thumbnails at the WING's fixed rows,
     the fader bar with the TAP point, MAIN, SENDS; on Channel Home also the on keys
     and the wrench to drag the slots and the TAP point), the **OVERVIEW** (INPUT,
-    FILTER, LEVEL, EQ and MAIN panels), **ICON/COLOR**, **NAME**, **TAGS** (DCAs, mute
-    groups, the talk tags TALK ON / TALK SOLO for both talk keys, A or B) and the
-    **SAFE** key. The slot screens follow chapter 6 of the manual: INPUT (CHANNEL
+    FILTER, LEVEL, EQ and MAIN panels; INPUT has the source's +48V and GAIN),
+    **ICON/COLOR**, **NAME**, **TAGS** (DCAs, mute groups, the talk tags TALK ON / TALK
+    SOLO for both talk keys, A or B) and the **SAFE** key. As on a factory-initialized
+    WING the faders start at -oo (buses 9-16 at 0 dB), the EQs off, and channels and
+    aux have **LINK CUSTOMIZATION TO SOURCE** on: the strip shows the name, colour and
+    icon of the source it listens to, and ICON/COLOR and NAME edit the source (the link key on those tabs, or NONE /
+    ALL for every channel, turns it off; the channel then shows its own). Touching the
+    MAIN tile on the INPUT screen opens **SELECT MAIN INPUT**: the source groups, NONE,
+    the source's M / ST / M/S pairing, and COPY CUSTOMIZATION between the channel and
+    its source (<< and >>). The slot screens follow chapter 6 of the manual: INPUT (CHANNEL
     INPUT, TRIM & BALANCE pad, FILTER, DELAY), FILTER SETUP, GATE / COMP with the
     model's faceplate, EQ, INS 1 / INS 2 (with automix), MAIN SENDS and BUS / MATRIX
     SENDS. On MATRIX SENDS a channel's or aux's send has **PAN LINK** as on BUS SENDS

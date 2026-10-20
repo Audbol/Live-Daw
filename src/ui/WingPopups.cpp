@@ -511,6 +511,12 @@ void WingKeyboard::setMaxLength (int n)
     setText (impl->text);
 }
 
+void WingKeyboard::setCapsLock (bool on)
+{
+    impl->caps = on;
+    repaint();
+}
+
 void WingKeyboard::setFieldVisible (bool v)
 {
     impl->fieldVisible = v;

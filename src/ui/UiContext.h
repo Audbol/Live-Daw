@@ -323,7 +323,18 @@ inline juce::Colour stripDisplayColour (const Strip& s)
     return stripHasSource (s) ? s.getColour() : s.getColour().withMultipliedBrightness (0.5f);
 }
 
-/** Draws the strip's icon: its WING icon (params.icon) when set, else its kind's. */
+/** The glyph of a source without a WING icon: a sine for an oscillator, a
+    waveform for a playback channel, else the XLR connector. */
+inline Icon sourceIcon (int port)
+{
+    if (MixerEngine::isOscSource (port))
+        return Icon::Sine;
+    if (Recorder::isPlaybackSource (port) || UsbRecorder::isPlayerSource (port))
+        return Icon::Waveform;
+    return Icon::Xlr;
+}
+
+/** Draws the strip's icon: its WING icon (Strip::getIcon) when set, else its kind's. */
 void drawStripIcon (juce::Graphics&, const Strip&, juce::Rectangle<float> area, juce::Colour);
 
 /** The icon of a kind of strip (XLR for channels, jack for aux, ...). */

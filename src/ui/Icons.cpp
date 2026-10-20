@@ -48,11 +48,18 @@ void drawIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> area, juce::
             g.strokePath (p, juce::PathStrokeType (s * 0.1f));
             return;
         case Icon::Xlr:
-            p.addEllipse (r.reduced (s * 0.12f));
-            g.strokePath (p, stroke);
-            for (auto pt : { P (0.38f, 0.42f), P (0.62f, 0.42f), P (0.5f, 0.64f) })
-                g.fillEllipse (pt.x - s * 0.06f, pt.y - s * 0.06f, s * 0.12f, s * 0.12f);
+        {
+            // The female XLR as the WING draws it: the shell with its latch
+            // bump at the top and three hollow pins.
+            const auto c = P (0.5f, 0.55f);
+            p.addEllipse (c.x - s * 0.36f, c.y - s * 0.36f, s * 0.72f, s * 0.72f);
+            for (auto pt : { P (0.365f, 0.47f), P (0.635f, 0.47f), P (0.5f, 0.69f) })
+                p.addEllipse (pt.x - s * 0.068f, pt.y - s * 0.068f, s * 0.136f, s * 0.136f);
+            g.strokePath (p, juce::PathStrokeType (juce::jmax (1.1f, s * 0.055f)));
+            const auto bump = P (0.5f, 0.19f);
+            g.fillEllipse (bump.x - s * 0.075f, bump.y - s * 0.06f, s * 0.15f, s * 0.12f);
             return;
+        }
         case Icon::Jack:
             p.addRoundedRectangle (P (0.4f, 0.1f).x, P (0.4f, 0.1f).y, s * 0.2f, s * 0.5f, s * 0.04f);
             p.startNewSubPath (P (0.5f, 0.6f));
@@ -949,6 +956,19 @@ namespace
             p.addCentredArc (P (cx, cy).x, P (cx, cy).y, rx * u, ry * u, 0.0f, juce::degreesToRadians (from), juce::degreesToRadians (to), true);
         }
 
+        /** A filled polygon. */
+        void fill (std::initializer_list<float> xy)
+        {
+            draw();
+            juce::Path shape;
+            const auto* v = xy.begin();
+            shape.startNewSubPath (P (v[0], v[1]));
+            for (size_t i = 2; i + 1 < xy.size(); i += 2)
+                shape.lineTo (P (v[i], v[i + 1]));
+            shape.closeSubPath();
+            g.fillPath (shape);
+        }
+
         void dot (float cx, float cy, float r) { g.fillEllipse (P (cx - r, cy - r).x, P (cx - r, cy - r).y, 2.0f * r * u, 2.0f * r * u); }
         void block (float x, float y, float w, float h) { g.fillRect (P (x, y).x, P (x, y).y, w * u, h * u); }
 
@@ -1081,9 +1101,6 @@ bool drawWingIcon (juce::Graphics& g, int number, juce::Rectangle<float> area, j
     switch (number)
     {
         case 1:   drawIcon (g, Icon::Xlr, area, colour); return true;
-        case 5:   drawIcon (g, Icon::Faders, area, colour); return true;
-        case 7:   drawIcon (g, Icon::Matrix, area, colour); return true;
-        case 11:  drawIcon (g, Icon::Bus, area, colour); return true;
         case 109: drawIcon (g, Icon::Speaker, area, colour); return true;
         case 602: drawIcon (g, Icon::Headphones, area, colour); return true;
         case 608: drawIcon (g, Icon::UsbStick, area, colour); return true;
@@ -1097,25 +1114,47 @@ bool drawWingIcon (juce::Graphics& g, int number, juce::Rectangle<float> area, j
     Art a (g, area, colour);
     switch (number)
     {
-        // General
-        case 2:
-            a.line (12.0f, 2.0f, 12.0f, 4.5f);
-            a.rect (10.6f, 4.5f, 2.8f, 6.0f);
-            a.rect (9.0f, 10.5f, 6.0f, 9.0f, 1.0f);
-            a.line (12.0f, 19.5f, 12.0f, 22.5f);
+        // General [I13]: line art as the WING's gallery draws it.
+        case 2: // TRS jack: the ringed tip, the shaft, the open sleeve
+            a.poly ({ 11.0f, 5.0f, 11.0f, 2.6f, 12.0f, 1.2f, 13.0f, 2.6f, 13.0f, 5.0f }, true);
+            a.line (11.0f, 3.6f, 13.0f, 3.6f);
+            a.rect (10.6f, 5.0f, 2.8f, 7.5f);
+            a.line (10.6f, 8.5f, 13.4f, 8.5f);
+            a.poly ({ 8.5f, 21.0f, 8.5f, 12.5f, 15.5f, 12.5f, 15.5f, 21.0f });
             return true;
-        case 3:
-            a.line (12.0f, 4.0f, 12.0f, 6.0f);
-            a.rect (11.0f, 6.0f, 2.0f, 5.0f);
-            a.rect (9.8f, 11.0f, 4.4f, 7.0f, 1.0f);
-            a.line (12.0f, 18.0f, 12.0f, 22.0f);
+        case 3: // TS jack, smaller
+            a.poly ({ 11.2f, 8.5f, 11.2f, 6.6f, 12.0f, 5.4f, 12.8f, 6.6f, 12.8f, 8.5f }, true);
+            a.rect (10.9f, 8.5f, 2.2f, 6.0f);
+            a.line (10.9f, 11.0f, 13.1f, 11.0f);
+            a.poly ({ 9.6f, 21.0f, 9.6f, 14.5f, 14.4f, 14.5f, 14.4f, 21.0f });
             return true;
-        case 4:
-            a.circle (12.0f, 12.0f, 8.5f);
-            a.circle (12.0f, 12.0f, 4.5f);
-            a.dot (12.0f, 12.0f, 1.6f);
+        case 4: // a small connector
+            a.rect (11.0f, 13.0f, 2.0f, 3.5f, 1.0f);
+            a.poly ({ 9.6f, 21.0f, 9.6f, 16.5f, 14.4f, 16.5f, 14.4f, 21.0f });
             return true;
-        case 6:  a.text ("FX", 1.0f, 4.0f, 22.0f, 16.0f); return true;
+        case 5: // three faders
+            for (auto [x, y] : { std::pair { 5.5f, 15.0f }, { 12.0f, 10.5f }, { 18.5f, 5.0f } })
+            {
+                a.line (x, 3.0f, x, y);
+                a.rect (x - 1.8f, y, 3.6f, 4.0f, 0.4f);
+                a.line (x, y + 4.0f, x, 21.0f);
+            }
+            return true;
+        case 6: // FX: an F with a hooked top and an X
+            a.curve (2.5f, 9.5f, 3.0f, 6.8f, 4.5f, 6.0f, 11.0f, 6.0f);
+            a.line (7.0f, 6.0f, 7.0f, 19.0f);
+            a.line (7.0f, 12.0f, 10.5f, 12.0f);
+            a.line (11.5f, 6.0f, 20.5f, 19.0f);
+            a.line (20.0f, 6.0f, 12.0f, 19.0f);
+            return true;
+        case 7: // routing: one box feeding a row of three
+            a.rect (10.0f, 4.0f, 4.0f, 4.0f, 0.4f);
+            a.line (12.0f, 8.0f, 12.0f, 12.0f);
+            for (float x : { 3.0f, 10.0f, 17.0f })
+                a.rect (x, 12.0f, 4.0f, 4.0f, 0.4f);
+            a.line (7.0f, 14.0f, 10.0f, 14.0f);
+            a.line (14.0f, 14.0f, 17.0f, 14.0f);
+            return true;
         case 8:
             a.curve (7.0f, 10.0f, 6.5f, 4.5f, 16.5f, 3.5f, 17.0f, 9.0f);
             a.curve (17.0f, 9.0f, 17.5f, 15.0f, 11.0f, 19.5f, 5.5f, 21.0f);
@@ -1130,20 +1169,47 @@ bool drawWingIcon (juce::Graphics& g, int number, juce::Rectangle<float> area, j
             a.curve (10.5f, 12.5f, 5.5f, 16.0f, 8.0f, 21.0f, 13.0f, 20.0f);
             a.curve (13.0f, 20.0f, 18.0f, 19.0f, 17.0f, 12.5f, 12.5f, 13.0f);
             return true;
-        case 10:
-            a.curve (2.5f, 7.0f, 10.0f, 7.0f, 12.0f, 17.0f, 19.5f, 17.0f);
-            a.curve (2.5f, 17.0f, 10.0f, 17.0f, 12.0f, 7.0f, 19.5f, 7.0f);
-            a.poly ({ 18.0f, 4.5f, 21.5f, 7.0f, 18.0f, 9.5f });
-            a.poly ({ 18.0f, 14.5f, 21.5f, 17.0f, 18.0f, 19.5f });
+        case 10: // the routing matrix: lines crossing, a node on some crossings
+            for (float y : { 6.0f, 10.0f, 14.0f, 18.0f })
+                a.line (2.5f, y, 21.5f, y);
+            for (float x : { 7.0f, 12.0f, 17.0f })
+                a.line (x, 3.0f, x, 21.0f);
+            for (auto [x, y] : { std::pair { 7.0f, 4.5f }, { 17.0f, 8.5f }, { 12.0f, 12.5f }, { 17.0f, 16.5f } })
+                a.rect (x - 1.5f, y, 3.0f, 3.0f, 0.4f);
             return true;
-        case 12: a.poly ({ 18.0f, 4.0f, 6.0f, 4.0f, 13.0f, 12.0f, 6.0f, 20.0f, 18.0f, 20.0f }); return true;
+        case 11: // a bus: rows into a spine, the top one an arrow
+            a.line (7.0f, 4.0f, 7.0f, 20.0f);
+            a.line (3.0f, 4.0f, 20.0f, 4.0f);
+            a.poly ({ 18.5f, 2.5f, 21.0f, 4.0f, 18.5f, 5.5f }, true);
+            for (float x : { 10.0f, 13.0f })
+                a.line (x, 4.0f, x, 8.0f);
+            for (float y : { 8.0f, 12.0f, 16.0f, 20.0f })
+            {
+                a.line (3.0f, y, 19.5f, y);
+                a.dot (20.0f, y, 1.2f);
+            }
+            return true;
+        case 12: // a sum: four rows into a column of nodes
+            for (float y : { 5.5f, 10.0f, 14.5f, 19.0f })
+            {
+                a.line (3.0f, y, 16.5f, y);
+                a.rect (16.5f, y - 1.5f, 3.0f, 3.0f, 0.4f);
+            }
+            a.line (18.0f, 2.5f, 18.0f, 4.0f);
+            for (float y : { 7.0f, 11.5f, 16.0f })
+                a.line (18.0f, y, 18.0f, y + 1.5f);
+            a.line (18.0f, 20.5f, 18.0f, 22.0f);
+            return true;
         case 13:
             a.circle (12.0f, 12.0f, 9.0f);
             a.dot (9.0f, 9.5f, 1.2f);
             a.dot (15.0f, 9.5f, 1.2f);
             a.arc (12.0f, 12.0f, 5.0f, 5.0f, 115.0f, 245.0f);
             return true;
-        case 14: a.text ("W", 2.0f, 3.0f, 20.0f, 18.0f); return true;
+        case 14: // a plain bold W
+            a.fill ({ 1.5f, 6.0f, 5.6f, 6.0f, 8.3f, 15.0f, 10.6f, 8.0f, 13.4f, 8.0f, 15.7f, 15.0f, 18.4f, 6.0f, 22.5f, 6.0f,
+                      17.8f, 19.0f, 14.0f, 19.0f, 12.0f, 12.6f, 10.0f, 19.0f, 6.2f, 19.0f });
+            return true;
 
         // Vocals and microphones
         case 101:

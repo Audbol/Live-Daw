@@ -236,7 +236,8 @@ namespace
 //==============================================================================
 // Delay units: the engine stores the delay in the unit selected (M, FT, MS, SMP).
 constexpr float kSpeedOfSound = 343.0f;
-constexpr float kMaxDelayMs = 500.0f;
+// The WING's range (`/ch/n/in/set/dly`: DIST 0.1 .. 150 m) in any unit.
+constexpr float kMinDelayM = 0.1f, kMaxDelayM = 150.0f;
 
 float sampleRateOf (UiContext& ctx)
 {
@@ -266,23 +267,31 @@ float msToDelay (float ms, int mode, float sr)
     }
 }
 
+/** The delay range in `mode`'s unit. */
+juce::NormalisableRange<float> delayRange (int mode, float sr)
+{
+    auto inUnit = [mode, sr] (float metres) { return msToDelay (delayToMs (metres, 0, sr), mode, sr); };
+    return { inUnit (kMinDelayM), inUnit (kMaxDelayM) };
+}
+
 juce::String delayText (float value, int mode)
 {
     static const char* units[] = { " m", " ft", " ms", "" };
-    return juce::String (value, mode == 3 ? 0 : 1) + units[juce::jlimit (0, 3, mode)];
+    return (mode == 3 ? juce::String (juce::roundToInt (value)) : juce::String (value, 1)) + units[juce::jlimit (0, 3, mode)];
 }
 
-/** The delay as a knob: a square-law taper up to 500 ms in the current unit. */
+/** The delay as a knob: linear over the WING's range in the current unit. */
 KnobBinding delayBinding (UiContext& ctx, InputParams& in)
 {
     KnobBinding b;
     const int mode = juce::jlimit (0, 3, (int) in.delayMode.load());
     b.label = mode <= 1 ? "DIST" : (mode == 2 ? "TIME" : "SAMPLES");
-    auto maxFor = [&ctx, &in] { return msToDelay (kMaxDelayMs, juce::jlimit (0, 3, (int) in.delayMode.load()), sampleRateOf (ctx)); };
-    b.get = [&in, maxFor] { return juce::jlimit (0.0f, 1.0f, std::sqrt (in.delay.load() / maxFor())); };
-    b.set = [&in, maxFor] (float p) { in.delay = p * p * maxFor(); };
+    auto range = [&ctx, &in] { return delayRange (juce::jlimit (0, 3, (int) in.delayMode.load()), sampleRateOf (ctx)); };
+    b.get = [&in, range] { return juce::jlimit (0.0f, 1.0f, range().convertTo0to1 (in.delay.load())); };
+    b.set = [&in, range] (float p) { in.delay = range().convertFrom0to1 (juce::jlimit (0.0f, 1.0f, p)); };
     b.text = [&in] { return delayText (in.delay.load(), juce::jlimit (0, 3, (int) in.delayMode.load())); };
-    b.reset = [&in] { in.delay = 0.0f; };
+    b.reset = [&in, range] { in.delay = range().start; };
+    b.steps = 1500.0f;
     return b;
 }
 
@@ -300,14 +309,17 @@ public:
         auto scale = r.removeFromLeft (r.getWidth() * 0.42f);
         auto track = r.withSizeKeepingCentre (juce::jlimit (8.0f, screenCap (22.0f), r.getWidth() * 0.4f), r.getHeight() - tagH);
         const int mode = juce::jlimit (0, 3, (int) in.delayMode.load());
-        const float max = msToDelay (kMaxDelayMs, mode, sampleRateOf (ctx));
+        const auto range = delayRange (mode, sampleRateOf (ctx));
         g.setFont (homeFont (TypeScale::caption, juce::jlimit (9.0f, screenCap (12.0f), r.getHeight() * 0.045f)));
         g.setColour (Colours::textDim);
-        for (float frac : { 1.0f, 0.5f, 0.25f, 0.1f, 0.02f, 0.0f })
+        // [I7] the minimum with its unit (0.1 m), then five equal steps to the top.
+        for (int i = 0; i <= 5; ++i)
         {
-            const float y = track.getBottom() - track.getHeight() * std::sqrt (frac);
-            g.drawText (juce::String (max * frac, mode == 3 || max * frac >= 10.0f ? 0 : 1),
-                        scale.withY (y - 6.0f).withHeight (12.0f).toNearestInt(), juce::Justification::centredRight);
+            const float frac = (float) i / 5.0f;
+            const float y = track.getBottom() - track.getHeight() * frac;
+            const float v = i == 0 ? range.start : range.end * frac;
+            const auto text = i == 0 ? delayText (v, mode) : juce::String (v, mode == 3 || v >= 10.0f ? 0 : 1);
+            g.drawText (text, scale.withY (y - 6.0f).withHeight (12.0f).toNearestInt(), juce::Justification::centredRight);
         }
         g.setColour (colours::well);
         g.fillRect (track);
@@ -330,7 +342,7 @@ public:
         delayBinding (ctx, in).set (juce::jlimit (0.0f, 1.0f, start - (float) e.getDistanceFromDragStartY() / juce::jmax (60.0f, (float) getHeight()) * (e.mods.isShiftDown() ? 0.2f : 1.0f)));
         repaint();
     }
-    void mouseDoubleClick (const juce::MouseEvent&) override { in.delay = 0.0f; }
+    void mouseDoubleClick (const juce::MouseEvent&) override { delayBinding (ctx, in).reset(); }
 
 private:
     void timerCallback() override
@@ -360,8 +372,10 @@ public:
         static const char* names[] = { "METERS", "FEET", "MS", "SAMPLES" };
         for (int m = 0; m < 4; ++m)
         {
-            auto* k = units.add (new IconKey (names[m], std::nullopt, colours::fader));
+            // [I7] the chosen unit lit in the choice blue, the others light grey.
+            auto* k = units.add (new IconKey (names[m], std::nullopt, colours::choice));
             k->twoLines = true;
+            k->offInk = colours::caption;
             k->isOn = [this, m] { return in.delayMode.load() == m; };
             k->onClick = [this, m]
             {
@@ -376,6 +390,7 @@ public:
             addAndMakeVisible (k);
         }
         delayKey.setTooltip ("Delay on");
+        delayKey.captionBelow = true;
         bindKey (delayKey, in.delayOn);
         addAndMakeVisible (delayKey);
         startTimerHz (5);
@@ -387,14 +402,19 @@ public:
 
     void resized() override
     {
+        // [I7] (WING pixels in a 288 x 408 body): the slider at the left, the
+        // four unit keys stacked from the top right (96 x 56), the 48 px DELAY
+        // key with its caption at the bottom.
         auto b = getLocalBounds();
         auto right = b.removeFromRight (b.getWidth() * 45 / 100);
         slider.setBounds (b.reduced (0, 2));
-        delayKey.setBounds (right.removeFromBottom (juce::jlimit (24, screenCap (46), right.getHeight() / 5)).reduced (4, 0));
-        right.removeFromBottom (6);
-        const int h = juce::jmin (screenCap (46), right.getHeight() / 4);
+        const float v = (float) getHeight() / 408.0f;
+        auto keyCol = right.withSizeKeepingCentre (juce::jmin (right.getWidth() - 8, juce::roundToInt (96.0f * v)), right.getHeight());
+        delayKey.setBounds (keyCol.removeFromBottom (juce::roundToInt (88.0f * v)).withTrimmedTop (juce::roundToInt (8.0f * v)));
+        keyCol.removeFromTop (juce::roundToInt (16.0f * v));
+        const int h = juce::jmin (juce::roundToInt (56.0f * v), keyCol.getHeight() / 4);
         for (auto* k : units)
-            k->setBounds (right.removeFromTop (h).reduced (4, 2));
+            k->setBounds (keyCol.removeFromTop (h));
     }
 
 private:
@@ -558,7 +578,7 @@ private:
 
     std::atomic<float>& trim;
     std::atomic<float>& bal;
-    std::function<bool()> hasBalance; // a stereo strip (the ST key can change it while shown)
+    std::function<bool()> hasBalance; // a stereo strip (SELECT MAIN INPUT can change it while shown)
     bool balanceOnly = false;
     float startTrim = 0.0f, startBal = 0.0f;
     std::tuple<float, float, bool> shown { 1.0e9f, 0.0f, false };
@@ -642,6 +662,32 @@ ld::SourceParams* inputSourceParams (MixerEngine& engine, int port)
 
 KnobBinding inputDelayBinding (UiContext& ctx, InputParams& in) { return delayBinding (ctx, in); }
 
+KnobBinding sourceGainBinding (UiContext& ctx, Strip& strip)
+{
+    constexpr float kMin = -12.0f, kMax = 60.0f;
+    auto& engine = ctx.engine;
+    KnobBinding b;
+    b.label = "GAIN";
+    b.get = [&engine, &strip]
+    {
+        const auto* src = inputSourceParams (engine, strip.getInputLeft());
+        return src != nullptr ? juce::jlimit (0.0f, 1.0f, (src->gainDb.load() - kMin) / (kMax - kMin)) : 0.0f;
+    };
+    b.set = [&engine, &strip] (float p)
+    {
+        const float gain = std::round ((kMin + juce::jlimit (0.0f, 1.0f, p) * (kMax - kMin)) * 2.0f) / 2.0f;
+        forInputSource (engine, strip.getInputLeft(), [gain] (ld::SourceParams& s) { s.gainDb = gain; });
+    };
+    b.text = [&engine, &strip]
+    {
+        const auto* src = inputSourceParams (engine, strip.getInputLeft());
+        return src != nullptr ? juce::String (src->gainDb.load(), 1) + " dB" : juce::String ("-");
+    };
+    b.reset = [&engine, &strip] { forInputSource (engine, strip.getInputLeft(), [] (ld::SourceParams& s) { s.gainDb = 0.0f; }); };
+    b.steps = (kMax - kMin) * 2.0f;
+    return b;
+}
+
 /** A routing-style source tile [3.1, D16]: the source's name strip in its
     colour over a #303030 body with the icon, the signal ring and the 48V /
     MUTE chips at the right and the port in blue (olive for stereo). */
@@ -652,11 +698,26 @@ void paintInputSourceTile (juce::Graphics& g, juce::Rectangle<float> r, MixerEng
     const int index = left >= 0 ? MixerEngine::sourceIndex (left) : -1;
     const auto* src = inputSourceParams (engine, left);
     const auto port = inputSourceText (left, right, stereo);
-    juce::String name = index >= 0 ? engine.getSourceName (index) : juce::String();
-    if (name.isEmpty())
-        name = left < 0 ? juce::String ("NONE") : port;
-    const int colourIndex = src != nullptr ? src->colour.load() : 1;
-    const auto colour = left < 0 ? colours::chipOff : (playback && colourIndex == 1 ? juce::Colour (0xff2f5a32) : wingColour (colourIndex));
+    // [I7] no source: a grey strip over a black tile with a circled plus.
+    if (left < 0)
+    {
+        g.setColour (colours::chipOff);
+        g.fillRect (r.removeFromTop (juce::jmax (12.0f, r.getHeight() * 0.18f)));
+        g.setColour (juce::Colours::black);
+        g.fillRect (r);
+        const float d = juce::jmin (r.getWidth(), r.getHeight()) * 0.42f;
+        const auto plus = juce::Rectangle<float> (d, d).withCentre (r.getCentre());
+        g.setColour (juce::Colour (0xff303430));
+        g.drawEllipse (plus, juce::jmax (1.5f, d * 0.06f));
+        const auto c = plus.getCentre();
+        g.drawLine (c.x - d * 0.25f, c.y, c.x + d * 0.25f, c.y, juce::jmax (1.5f, d * 0.06f));
+        g.drawLine (c.x, c.y - d * 0.25f, c.x, c.y + d * 0.25f, juce::jmax (1.5f, d * 0.06f));
+        return;
+    }
+    // The strip carries the source's name once it has one [I1].
+    const juce::String name = index >= 0 ? engine.getSourceName (index) : juce::String();
+    const int colourIndex = src != nullptr ? src->colour.load() : ld::kDefaultColour;
+    const auto colour = playback && colourIndex == ld::kDefaultColour ? juce::Colour (0xff2f5a32) : wingColour (colourIndex);
     const float screenH = getWingScreenHeight();
     // Small tiles (small windows) keep the icon and the port only.
     const bool roomy = r.getHeight() >= 44.0f && r.getWidth() >= 64.0f;
@@ -671,8 +732,10 @@ void paintInputSourceTile (juce::Graphics& g, juce::Rectangle<float> r, MixerEng
     g.setColour (colours::keyOff);
     g.fillRect (r);
     auto label = r.removeFromBottom (juce::jmax (11.0f, r.getHeight() * 0.26f));
-    g.setColour (left < 0 ? colours::dim : (stereo ? colours::stereo : colours::mono));
-    g.setFont (homeFont (TypeScale::body, label.getHeight() * 0.72f));
+    g.setColour (colours::chipOff);
+    g.fillRect (label.getX() + 3.0f, label.getY(), label.getWidth() - 6.0f, juce::jmax (1.0f, label.getHeight() * 0.06f));
+    g.setColour (stereo ? colours::stereo : colours::mono);
+    g.setFont (homeFont (TypeScale::body * 1.25f, label.getHeight() * 0.8f));
     g.drawFittedText (port, label.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
 
     auto body = r.reduced (3.0f, 2.0f);
@@ -680,11 +743,11 @@ void paintInputSourceTile (juce::Graphics& g, juce::Rectangle<float> r, MixerEng
     const float iconSide = juce::jmin (body.getWidth(), body.getHeight()) * 0.86f;
     auto iconArea = juce::Rectangle<float> (iconSide, iconSide).withCentre (body.getCentre());
     const int icon = src != nullptr ? src->icon.load() : 0;
-    const auto ink = colours::caption.withAlpha (left < 0 ? 0.4f : 1.0f);
+    const auto ink = colours::caption;
     if (icon <= 0 || ! drawWingIcon (g, icon, iconArea, ink))
-        drawIcon (g, MixerEngine::isOscSource (left) ? Icon::Sine : playback ? Icon::Waveform : Icon::Xlr, iconArea, ink);
+        drawIcon (g, sourceIcon (left), iconArea, ink);
 
-    if (left < 0 || ! roomy)
+    if (! roomy)
         return;
     // The signal ring over the 48V and MUTE chips (grey when off, red when on).
     const float chipH = juce::jlimit (6.0f, screenH * 0.024f, side.getHeight() * 0.27f);
@@ -820,8 +883,8 @@ public:
             return;
         if (! alt)
         {
-            if (ctx.showScreen)
-                ctx.showScreen (Screen::Routing);
+            if (onSelect)
+                onSelect();
             return;
         }
         juce::Component::SafePointer<InputSourcePanel> safe (this);
@@ -834,6 +897,9 @@ public:
             }
         });
     }
+
+    /** The MAIN tile was touched (SELECT MAIN INPUT). */
+    std::function<void()> onSelect;
 
 private:
     static float tagHeight() { return juce::jlimit (12.0f, screenCap (20.0f), getWingScreenHeight() * 0.036f); }
@@ -873,6 +939,327 @@ private:
     bool draggingGain = false;
     juce::Rectangle<int> tile, phantomKey, phantomCaption, gainSlider;
     juce::String shown;
+};
+
+/** SELECT MAIN INPUT [I7, firmware 3.1], opened from the MAIN source tile: the
+    SOURCE GROUP list, NONE, the source's M / ST / M/S, CLOSE, then the
+    group's sources (eight to a row, the MAIN input framed gold, ports the
+    audio interface doesn't have "n/a"). A touch patches the source. */
+class SourceSelectPanel final : public juce::Component, private juce::Timer
+{
+public:
+    SourceSelectPanel (UiContext& c, Strip& s) : ctx (c), strip (s)
+    {
+        group = groupOf (strip.getInputLeft());
+        groupField = std::make_unique<DropdownField> ("SOURCE GROUP", [this] { return groupName (group); }, [this] (DropdownField& f)
+        {
+            juce::StringArray names;
+            for (int i = 0; i < numGroups(); ++i)
+                names.add (groupName (i));
+            popups::chooseFrom (f, names, group, [safe = juce::Component::SafePointer<SourceSelectPanel> (this)] (int i)
+            {
+                if (safe != nullptr)
+                {
+                    safe->group = i;
+                    safe->repaint();
+                }
+            });
+        });
+        groupField->icon = Icon::Xlr;
+        groupField->arrowKey = true;
+        addAndMakeVisible (*groupField);
+        none.offInk = colours::caption;
+        none.captionBelow = true;
+        none.offColour = colours::panel;
+        none.onClick = [this]
+        {
+            strip.params.inputLeft = -1;
+            strip.params.inputRight = -1;
+        };
+        addAndMakeVisible (none);
+        // The selected source's pairing (ROUTING > SOURCES MODE).
+        mode = std::make_unique<Segmented> (juce::StringArray { "M", "ST", "M/S" }, [this]
+        {
+            const auto* src = ctx.engine.getSource (sourceIndexOf (strip.getInputLeft()));
+            return src != nullptr ? (int) src->mode.load() : -1;
+        }, [this] (int m)
+        {
+            if (const int index = sourceIndexOf (strip.getInputLeft()); index >= 0)
+                ctx.engine.setSourceMode (index, m);
+        });
+        mode->colourAt = [] (int) { return colours::fader; };
+        addAndMakeVisible (*mode);
+        close.offInk = colours::caption;
+        close.offColour = colours::panel;
+        close.onClick = [this] { if (onClose) onClose(); };
+        addAndMakeVisible (close);
+        startTimerHz (5);
+    }
+
+    std::function<void()> onClose;
+
+    void resized() override
+    {
+        // WING pixels (712 x 324 from x 560): the header 80 tall with the
+        // group field (264), NONE, M | ST | M/S (182) and CLOSE; then the
+        // tiles, 80 x 72 on an 88 x 76 pitch.
+        auto b = getLocalBounds();
+        const float u = (float) getWidth() / 712.0f;
+        header = b.removeFromTop (juce::roundToInt (80.0f * u));
+        b.removeFromTop (juce::roundToInt (8.0f * u));
+        gridArea = b.withHeight (juce::jmin (b.getHeight(), juce::roundToInt (236.0f * u)));
+        auto h = header.reduced (juce::roundToInt (8.0f * u));
+        groupField->setBounds (h.removeFromLeft (juce::roundToInt (264.0f * u)));
+        h.removeFromLeft (juce::roundToInt (16.0f * u));
+        none.setBounds (h.removeFromLeft (juce::roundToInt (48.0f * u)));
+        h.removeFromLeft (juce::roundToInt (32.0f * u));
+        mode->setBounds (h.removeFromLeft (juce::roundToInt (182.0f * u)).reduced (0, juce::roundToInt (4.0f * u)));
+        close.setBounds (h.removeFromRight (juce::roundToInt (120.0f * u)).reduced (0, juce::roundToInt (4.0f * u)));
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.setColour (colours::panel);
+        g.fillRect (header);
+        g.fillRect (gridArea);
+        auto inner = gridArea.toFloat().reduced (juce::jmax (2.0f, (float) getWidth() / 356.0f));
+        g.setColour (juce::Colours::black);
+        g.fillRect (inner);
+        tiles.clear();
+        const float pw = inner.getWidth() / 8.0f, ph = inner.getHeight() / 3.0f;
+        const int numPorts = ctx.engine.getHardwareInputNames().size();
+        for (int i = 0; i < 24; ++i)
+        {
+            const int port = sourceAt (group, i);
+            if (port == kNoSource)
+                continue;
+            auto cell = juce::Rectangle<float> (inner.getX() + pw * (float) (i % 8), inner.getY() + ph * (float) (i / 8), pw, ph).reduced (pw * 0.04f, ph * 0.05f);
+            tiles.push_back ({ cell.toNearestInt(), port });
+            const bool missing = port >= 0 && port < ld::kPlaybackSourceBase && port >= numPorts;
+            if (missing)
+            {
+                // A port the audio interface doesn't have: "n/a" on a dark tile.
+                g.setColour (juce::Colour (0xff10103a));
+                g.fillRect (cell.removeFromTop (cell.getHeight() * 0.2f));
+                g.setColour (colours::panel);
+                g.fillRect (cell);
+                g.setColour (colours::dim);
+                g.setFont (homeFont (TypeScale::body, cell.getHeight() * 0.3f));
+                g.drawText ("n/a", cell.withTrimmedBottom (cell.getHeight() * 0.35f), juce::Justification::centred);
+                g.setColour (colours::mono.withAlpha (0.6f));
+                g.setFont (homeFont (TypeScale::caption, cell.getHeight() * 0.24f));
+                g.drawText (inputPortName (port), cell.withTrimmedTop (cell.getHeight() * 0.65f), juce::Justification::centred);
+                continue;
+            }
+            paintInputSourceTile (g, cell, ctx.engine, port, port + 1, false, false);
+            if (port == strip.getInputLeft())
+            {
+                g.setColour (colours::accent);
+                g.drawRect (cell.expanded (2.0f), 2.5f);
+            }
+        }
+        g.setColour (colours::caption);
+        g.setFont (homeFont (TypeScale::body, close.getHeight() * 0.4f));
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        for (auto& [area, port] : tiles)
+            if (area.contains (e.getPosition()))
+            {
+                patch (port);
+                repaint();
+                return;
+            }
+    }
+
+private:
+    static constexpr int kNoSource = -2;
+    static constexpr int kGroupSize = 24;
+
+    static int sourceIndexOf (int port) { return port >= 0 ? MixerEngine::sourceIndex (port) : -1; }
+
+    int numHardwareGroups() const
+    {
+        const int ports = ctx.engine.getHardwareInputNames().size();
+        return juce::jmax (1, (ports + kGroupSize - 1) / kGroupSize);
+    }
+    int numPlaybackGroups() const { return (Recorder::kNumPlaybackChannels + kGroupSize - 1) / kGroupSize; }
+    int numGroups() const { return numHardwareGroups() + numPlaybackGroups() + 2; }
+
+    juce::String groupName (int g) const
+    {
+        const int hw = numHardwareGroups();
+        auto range = [] (const char* prefix, int first, int last) { return juce::String (prefix) + juce::String (first) + "-" + juce::String (last); };
+        if (g < hw)
+            return range ("AUDIO IN ", g * kGroupSize + 1, g * kGroupSize + kGroupSize);
+        if (g < hw + numPlaybackGroups())
+            return range ("PLAY ", (g - hw) * kGroupSize + 1, juce::jmin (Recorder::kNumPlaybackChannels, (g - hw + 1) * kGroupSize));
+        return g == numGroups() - 1 ? "OSCILLATOR" : "USB PLAYER";
+    }
+
+    /** The source `i` of group `g`, or kNoSource. */
+    int sourceAt (int g, int i) const
+    {
+        const int hw = numHardwareGroups();
+        if (g < hw)
+            return g * kGroupSize + i;
+        if (g < hw + numPlaybackGroups())
+        {
+            const int channel = (g - hw) * kGroupSize + i;
+            return channel < Recorder::kNumPlaybackChannels ? Recorder::playbackSource (channel) : kNoSource;
+        }
+        if (g == numGroups() - 1)
+            return i < ld::kNumOscillators ? MixerEngine::oscSource (i) : kNoSource;
+        return i < UsbRecorder::kNumChannels ? UsbRecorder::playerSource (i) : kNoSource;
+    }
+
+    int groupOf (int port) const
+    {
+        for (int g = 0; g < numGroups(); ++g)
+            for (int i = 0; i < kGroupSize; ++i)
+                if (port >= 0 && sourceAt (g, i) == port)
+                    return g;
+        return 0;
+    }
+
+    /** Patches the MAIN input as ROUTING does: a paired source in stereo. */
+    void patch (int port)
+    {
+        auto& p = strip.params;
+        if (auto* src = ctx.engine.getSource (sourceIndexOf (port)); src != nullptr && src->mode.load() != ld::kSourceMono)
+        {
+            const int first = MixerEngine::sourcePort (sourceIndexOf (port) & ~1);
+            p.inputLeft = first;
+            p.inputRight = first + 1;
+            p.stereo = true;
+        }
+        else
+        {
+            p.inputLeft = port;
+            p.inputRight = -1;
+        }
+    }
+
+    void timerCallback() override
+    {
+        const auto now = juce::String (strip.getInputLeft()) + "|" + juce::String (group);
+        if (now != shown)
+        {
+            shown = now;
+            repaint();
+        }
+    }
+
+    UiContext& ctx;
+    Strip& strip;
+    int group = 0;
+    std::unique_ptr<DropdownField> groupField;
+    IconKey none { "NONE", Icon::ClearCircle };
+    std::unique_ptr<Segmented> mode;
+    IconKey close { "CLOSE", Icon::Check };
+    juce::Rectangle<int> header, gridArea;
+    std::vector<std::pair<juce::Rectangle<int>, int>> tiles;
+    juce::String shown;
+};
+
+/** COPY CUSTOMIZATION under SELECT MAIN INPUT [I7]: the channel's tile and
+    the source's, with << (the source's name, colour and icon to the channel)
+    and >> (the channel's to the source) between them. */
+class CopyCustomizationPanel final : public juce::Component, private juce::Timer
+{
+public:
+    CopyCustomizationPanel (UiContext& c, Strip& s) : ctx (c), strip (s) { startTimerHz (4); }
+
+    void resized() override
+    {
+        auto b = getLocalBounds();
+        const float u = (float) getWidth() / 392.0f;
+        auto row = b.withTrimmedTop (juce::roundToInt (16.0f * u));
+        auto caption = row.removeFromTop (juce::roundToInt (32.0f * u));
+        juce::ignoreUnused (caption);
+        const int tile = juce::jmin (juce::roundToInt (112.0f * u), row.getHeight());
+        channelTile = juce::Rectangle<int> (tile, tile).withPosition (b.getX() + juce::roundToInt (32.0f * u), row.getY());
+        sourceTile = channelTile.withX (b.getRight() - juce::roundToInt (32.0f * u) - tile);
+        toChannel = juce::Rectangle<int> (channelTile.getRight(), row.getY(), (sourceTile.getX() - channelTile.getRight()) / 2, tile);
+        toSource = toChannel.withX (toChannel.getRight());
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.setColour (colours::panel);
+        g.fillRect (getLocalBounds());
+        g.setColour (colours::caption);
+        g.setFont (homeFont (TypeScale::body * 1.1f, (float) channelTile.getHeight() * 0.18f));
+        for (auto [tile, text] : { std::pair { channelTile, "CHANNEL" }, { sourceTile, "SOURCE" } })
+            g.drawText (text, tile.withY (tile.getY() - tile.getHeight() * 30 / 100).withHeight (tile.getHeight() * 26 / 100), juce::Justification::centred);
+
+        // The channel: its own colour over a grey body with the number.
+        auto c = channelTile.toFloat();
+        g.setColour (juce::Colours::black);
+        g.fillRect (c);
+        c = c.reduced (c.getWidth() * 0.07f, c.getHeight() * 0.18f);
+        g.setColour (wingColour (strip.params.colour.load()));
+        g.fillRect (c.removeFromTop (c.getHeight() * 0.28f));
+        g.setColour (colours::keyOff);
+        g.fillRect (c);
+        g.setColour (juce::Colours::black);
+        g.fillRect (c.withWidth (c.getHeight() * 0.5f).reduced (2.0f));
+        g.setColour (colours::caption);
+        g.setFont (homeFont (TypeScale::value, c.getHeight() * 0.8f));
+        g.drawText (juce::String (strip.getNumber()), c.withWidth (c.getHeight() * 0.5f), juce::Justification::centred);
+
+        g.setColour (juce::Colours::black);
+        g.fillRect (sourceTile);
+        paintInputSourceTile (g, sourceTile.toFloat().reduced (3.0f), ctx.engine, strip.getInputLeft(), strip.getInputRight(), strip.params.stereo.load(), false);
+
+        // << and >>, dim without a source.
+        const bool enabled = ctx.engine.getSource (sourceIndex()) != nullptr;
+        g.setColour (enabled ? colours::caption : colours::dim);
+        for (auto [area, left] : { std::pair { toChannel, true }, { toSource, false } })
+        {
+            auto a = area.toFloat().withSizeKeepingCentre ((float) area.getWidth() * 0.6f, (float) area.getHeight() * 0.36f);
+            juce::Path chevrons;
+            for (float dx : { 0.0f, 0.45f })
+            {
+                const float x0 = a.getX() + a.getWidth() * (left ? dx + 0.4f : dx), x1 = a.getX() + a.getWidth() * (left ? dx : dx + 0.4f);
+                chevrons.startNewSubPath (x0, a.getY());
+                chevrons.lineTo (x1, a.getCentreY());
+                chevrons.lineTo (x0, a.getBottom());
+            }
+            g.strokePath (chevrons, juce::PathStrokeType (juce::jmax (1.5f, a.getHeight() * 0.1f)));
+        }
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        const int index = sourceIndex();
+        auto* src = ctx.engine.getSource (index);
+        if (src == nullptr)
+            return;
+        if (toChannel.contains (e.getPosition()))
+        {
+            strip.setName (ctx.engine.getSourceName (index));
+            strip.params.colour = src->colour.load();
+            strip.params.icon = src->icon.load();
+        }
+        else if (toSource.contains (e.getPosition()))
+        {
+            ctx.engine.setSourceName (index, strip.getOwnName());
+            src->colour = strip.params.colour.load();
+            src->icon = strip.params.icon.load();
+        }
+        repaint();
+    }
+
+private:
+    int sourceIndex() const { return strip.getInputLeft() >= 0 ? MixerEngine::sourceIndex (strip.getInputLeft()) : -1; }
+
+    void timerCallback() override { repaint(); }
+
+    UiContext& ctx;
+    Strip& strip;
+    juce::Rectangle<int> channelTile, sourceTile, toChannel, toSource;
 };
 
 /** Draws a bracket over the MAIN / ALT keys (Fig. 62). */
@@ -920,7 +1307,7 @@ public:
         trimMeter.showScale = true;
         addAndMakeVisible (trimMeter);
         invert = &key ("INVERT", Icon::Invert, colours::accent);
-        invert->iconAbove = true;
+        invert->captionBelow = true;
         bindKey (*invert, p.input.invert);
 
         if (strip.isInput())
@@ -941,7 +1328,11 @@ public:
             // 3.1: MAIN lights blue, ALT orange.
             inputSel->colourAt = [] (int i) { return i == 1 ? colours::alt : colours::fader; };
             mainTile = &make<InputSourcePanel> (ctx, strip, false);
+            mainTile->onSelect = [this] { showSourceSelect (true); };
             altTile = &make<InputSourcePanel> (ctx, strip, true);
+            sourceSelect = &make<SourceSelectPanel> (ctx, strip);
+            sourceSelect->onClose = [this] { showSourceSelect (false); };
+            copyCustomization = &make<CopyCustomizationPanel> (ctx, strip);
             inputSelectLabel = &key ("INPUT SELECT");
             inputSelectLabel->setTooltip ("The console's INPUT SELECT (SETUP > AUDIO)");
             // A title bar, not a key [I7].
@@ -952,11 +1343,8 @@ public:
             selectMode = &make<Segmented> (juce::StringArray { "INDIVIDUAL", "GLOBAL" }, [&engine] { return engine.isInputSelectGlobal() ? 1 : 0; },
                                            [&engine] (int i) { engine.setInputSelectGlobal (i == 1); });
             // INDIVIDUAL lights blue, GLOBAL gold (1.11's MANUAL | AUTO were orange).
-            selectMode->colourAt = [] (int i) { return i == 1 ? colours::accent : colours::fader; };
+            selectMode->colourAt = [] (int i) { return i == 1 ? colours::accent : colours::choice; };
             selectMode->vertical = true;
-            stereo = &key ("ST", std::nullopt, colours::stereo);
-            stereo->setTooltip ("Stereo channel (two inputs)");
-            bindKey (*stereo, p.stereo);
         }
         else
         {
@@ -971,13 +1359,13 @@ public:
         if (strip.getKind() == StripKind::Channel)
         {
             loCut = &key ("LOCUT", Icon::LowCut, colours::eqOn);
-            loCut->iconAbove = true;
+            loCut->captionBelow = true;
             bindKey (*loCut, p.filter.lowCut);
             hiCut = &key ("HICUT", Icon::HighCut, colours::eqOn);
-            hiCut->iconAbove = true;
+            hiCut->captionBelow = true;
             bindKey (*hiCut, p.filter.highCut);
             tool = &key (toolFilterName (p.filter.toolModel.load()), toolFilterIcon (p.filter.toolModel.load()), toolFilterColour (p.filter.toolModel.load()));
-            tool->iconAbove = true;
+            tool->captionBelow = true;
             bindKey (*tool, p.filter.tool);
         }
 
@@ -1002,11 +1390,27 @@ public:
         }
     }
 
+    /** SELECT MAIN INPUT in place of TRIM & BALANCE, FILTER and DELAY, COPY
+        CUSTOMIZATION under the MAIN column [I7]. */
+    void showSourceSelect (bool show)
+    {
+        selecting = show;
+        resized();
+        repaint();
+        notifyKnobs();
+    }
+
     std::vector<HomeKnob> knobs() override
     {
+        if (selecting)
+            return {};
         auto& p = strip.params;
         auto bal = bindLinear ("BAL", p.input.balanceDb, -9.0f, 9.0f, " dB", 1, 0.0f);
-        std::vector<HomeKnob> k { {}, { wingTrim ("TRIM", p.input.trimDb), thumbStyle (pad) }, {}, { bal, balStyle (pad) }, {} };
+        // [I7] GAIN (the MAIN source's), TRIM, BAL and the delay.
+        HomeKnob gain;
+        if (strip.isInput())
+            gain = { sourceGainBinding (ctx, strip), gainStyle (mainTile) };
+        std::vector<HomeKnob> k { gain, { wingTrim ("TRIM", p.input.trimDb), thumbStyle (pad) }, {}, { bal, balStyle (pad) }, {} };
         if (delay != nullptr)
             k.push_back ({ delayBinding (ctx, p.input), distStyle (delay->getSlider()) });
         return k;
@@ -1030,7 +1434,7 @@ public:
             // WING pixels [I7]: the key row's box 80 tall, then the 192 px
             // columns with 8 px black gaps: the MAIN column; the ALT box (192),
             // the INPUT SELECT bar (64) and the INDIVIDUAL / GLOBAL box.
-            box (left, "CHANNEL INPUT");
+            box (left, selecting ? "SELECT MAIN INPUT" : "CHANNEL INPUT");
             auto ci = sectionBody (left, true);
             channelInputBody = ci;
             const int gap = juce::roundToInt (juce::jmax (3.0f, wingPx (8.0f)));
@@ -1046,14 +1450,30 @@ public:
             altTile->setBounds (ci.removeFromTop (juce::roundToInt (192.0f * v)));
             ci.removeFromTop (gap);
             const int selTop = ci.getBottom() - juce::roundToInt (248.0f * v);
-            stereo->setBounds (juce::Rectangle<int> (ci.getX(), ci.getY(), ci.getWidth(), juce::jmax (0, selTop - ci.getY() - gap))
-                                   .withSizeKeepingCentre (juce::jmin (juce::roundToInt (wingPx (64.0f)), ci.getWidth() / 3), juce::roundToInt (wingPx (48.0f))));
             ci.setTop (selTop);
             inputSelectLabel->setBounds (ci.removeFromTop (juce::roundToInt (64.0f * v)));
             ci.removeFromTop (gap);
             modesBox = ci;
             const int kh = juce::roundToInt (56.0f * v);
             selectMode->setBounds (ci.withSizeKeepingCentre (juce::roundToInt (ci.getWidth() * 0.58f), kh * 2));
+
+            // SELECT MAIN INPUT: COPY CUSTOMIZATION over the lower half of the
+            // MAIN column and the INPUT SELECT boxes; the picker at the right.
+            copyArea = {};
+            if (selecting)
+            {
+                copyArea = channelInputBody.withTop (selTop);
+                copyCustomization->setBounds (sectionBody (copyArea, true));
+                sourceSelect->setBounds (middle.getUnion (right).withHeight (juce::roundToInt ((float) middle.getHeight() * 0.48f)));
+                mainTile->setBounds (mainTile->getBounds().withBottom (selTop - gap));
+            }
+            // [I7] the rest of CHANNEL INPUT dims while the picker is open.
+            for (juce::Component* c : { (juce::Component*) bracket, (juce::Component*) inputSel, (juce::Component*) altTile })
+                c->setAlpha (selecting ? 0.35f : 1.0f);
+            for (juce::Component* c : { (juce::Component*) inputSelectLabel, (juce::Component*) selectMode })
+                c->setVisible (! selecting);
+            copyCustomization->setVisible (selecting);
+            sourceSelect->setVisible (selecting);
         }
         else
         {
@@ -1079,6 +1499,13 @@ public:
                 directLevel->setBounds (d.removeFromTop (juce::jmin (screenCap (48), d.getHeight())).withWidth (juce::jmin (d.getWidth(), screenCap (150))));
             }
         }
+
+        for (juce::Component* c : { (juce::Component*) pad, (juce::Component*) &trimMeter, (juce::Component*) invert, (juce::Component*) delay,
+                                    (juce::Component*) loCut, (juce::Component*) hiCut, (juce::Component*) tool })
+            if (c != nullptr)
+                c->setVisible (! selecting);
+        if (selecting)
+            return;
 
         auto tb = box (middle, "TRIM & BALANCE");
         auto meterCol = tb.removeFromRight (juce::jmax (54, tb.getWidth() * 24 / 100));
@@ -1114,7 +1541,10 @@ public:
         g.fillRect (channelInputBody);
         g.setColour (colours::panel);
         g.fillRect (bracketBox);
-        g.fillRect (modesBox);
+        if (! selecting)
+            g.fillRect (modesBox);
+        else
+            drawSectionBox (g, copyArea, "COPY CUSTOMIZATION");
     }
 
     void mouseUp (const juce::MouseEvent& e) override
@@ -1124,10 +1554,13 @@ public:
     }
 
 private:
-    juce::Rectangle<int> channelInputBody, bracketBox, modesBox;
+    juce::Rectangle<int> channelInputBody, bracketBox, modesBox, copyArea;
+    SourceSelectPanel* sourceSelect = nullptr;
+    CopyCustomizationPanel* copyCustomization = nullptr;
+    bool selecting = false;
     TrimBalancePad* pad = nullptr;
     LedMeter trimMeter;
-    IconKey *invert = nullptr, *stereo = nullptr, *mono = nullptr, *inputSelectLabel = nullptr, *feed = nullptr;
+    IconKey *invert = nullptr, *mono = nullptr, *inputSelectLabel = nullptr, *feed = nullptr;
     FeedGrid* feedGrid = nullptr;
     IconKey *loCut = nullptr, *hiCut = nullptr, *tool = nullptr;
     IconKey *directOn = nullptr, *directInvert = nullptr, *directPre = nullptr;
@@ -2009,7 +2442,7 @@ public:
         g.setFont (homeFont (TypeScale::value, top.getHeight() * 0.85f, WingWeight::SemiBold));
         g.drawText (juce::String (strip.getNumber()), top.toNearestInt(), juce::Justification::centred);
         auto iconArea = r.removeFromTop (r.getHeight() * 0.1f);
-        drawChannelIcon (g, strip.params.icon.load(), strip.getKind(), iconArea.reduced (iconArea.getHeight() * 0.15f), colours::caption);
+        drawChannelIcon (g, strip.getIcon(), strip.getKind(), iconArea.reduced (iconArea.getHeight() * 0.15f), colours::caption);
         auto name = r.removeFromTop (14.0f);
         g.setColour (Colours::text);
         g.setFont (wingFont (TypeScale::caption));
@@ -3926,10 +4359,12 @@ void copyStripParams (MixerEngine& engine, const Strip& src, const Strip& dst, j
     }
     if (has (Cust))
     {
-        dst.setName (src.getName());
+        dst.setName (src.getOwnName());
         d.colour = s.colour.load();
         d.icon = s.icon.load();
         d.led = s.led.load();
+        if (src.isInput() && dst.isInput())
+            d.custLink = s.custLink.load();
     }
     if (has (Tags))
     {
@@ -4287,7 +4722,7 @@ private:
         g.setFont (wingFontPx (number.getHeight() * 0.62f));
         g.drawText (s.isInput() ? juce::String (s.getNumber()) : shortLabel (s), number, juce::Justification::centred, false);
         auto iconArea = body.reduced (2.0f).withSizeKeepingCentre (juce::jmin (body.getWidth(), body.getHeight()), juce::jmin (body.getWidth(), body.getHeight()) - 2.0f);
-        if (! drawWingIcon (g, s.params.icon.load(), iconArea, colours::caption) && ! s.isInput())
+        if (! drawWingIcon (g, s.getIcon(), iconArea, colours::caption) && ! s.isInput())
             drawIcon (g, stripIcon (s.getKind()), iconArea.reduced (iconArea.getHeight() * 0.1f), colours::dim);
         if (selected)
         {

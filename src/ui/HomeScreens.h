@@ -117,9 +117,13 @@ private:
     port. Used by INPUT and the overview's INPUT panel. */
 void paintInputSourceTile (juce::Graphics&, juce::Rectangle<float> r, MixerEngine&, int left, int right, bool stereo, bool signal);
 
-/** The input DELAY as a knob, in its unit up to the engine's 500 ms (the INPUT
-    screen and the channel strip section share it). */
+/** The input DELAY as a knob, in its unit over the WING's 0.1 .. 150 m (the
+    INPUT screen and the channel strip section share it). */
 KnobBinding inputDelayBinding (UiContext&, InputParams&);
+
+/** The GAIN of the source on the strip's MAIN input (both sources of a pair),
+    as the WING's preamp gain: -12 .. +60 dB in 0.5 dB steps. */
+KnobBinding sourceGainBinding (UiContext&, Strip&);
 
 // The block screens.
 std::unique_ptr<HomeScreen> makeInputScreen (UiContext&, Strip&);

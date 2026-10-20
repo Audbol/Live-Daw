@@ -709,11 +709,11 @@ void RoutingPage::paintInputPort (juce::Graphics& g, juce::Rectangle<int> area, 
     const bool osc = MixerEngine::isOscSource (port);
     const bool playback = Recorder::isPlaybackSource (port) || usbPlayer;
     const auto* src = sourceParams (port);
-    const int colour = src != nullptr ? src->colour.load() : 1;
+    const int colour = src != nullptr ? src->colour.load() : ld::kDefaultColour;
     const int icon = src != nullptr ? src->icon.load() : 0;
     const int pairing = src != nullptr ? src->mode.load() : (int) ld::kSourceMono;
     TileSpec t;
-    t.strip = playback && colour == 1 ? playbackStrip : wingColour (colour);
+    t.strip = playback && colour == ld::kDefaultColour ? playbackStrip : wingColour (colour);
     const int index = MixerEngine::sourceIndex (port);
     t.name = index >= 0 ? ctx.engine.getSourceName (index).toUpperCase() : juce::String();
     t.number = juce::String ((osc         ? MixerEngine::oscChannelOf (port)

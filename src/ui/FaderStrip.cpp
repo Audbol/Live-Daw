@@ -15,7 +15,8 @@ void drawLightBar (juce::Graphics& g, juce::Rectangle<float> bar, juce::Colour c
     const float radius = bar.getHeight() * 0.5f;
     if (! on)
     {
-        g.setColour (Colours::ledOff);
+        // Off: the frosted window, light grey.
+        g.setColour (Colours::ledWindow);
         g.fillRoundedRectangle (bar, radius);
         return;
     }
@@ -93,19 +94,27 @@ namespace
     }
 } // namespace
 
+juce::Colour scribbleBacklight (juce::Colour stripColour, float backlight)
+{
+    // A colour-lit LCD looks like a bright, slightly paler version of the
+    // strip's colour (the console's screen colours are much darker).
+    return juce::Colour (stripColour.getHue(), stripColour.getSaturation() * 0.78f, juce::jlimit (0.0f, 1.0f, 0.82f * backlight), 1.0f);
+}
+
 void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const ScribbleInfo& info)
 {
-    // A negative LCD: light text on the indigo backlight. SCRIBBLE sets the
-    // backlight (the text, lit by it, follows), SCR CONT how far the text
-    // stands out from the background.
+    // A negative LCD: light text on the backlight, the strip's colour (or
+    // indigo). SCRIBBLE sets the backlight (the text, lit by it, follows),
+    // SCR CONT how far the text stands out from the background.
     const float backlight = juce::jlimit (0.2f, 1.6f, info.backlight);
-    const auto bg = Colours::scribbleLcd.withMultipliedBrightness (backlight);
+    const auto bg = info.backlightColour.has_value() ? scribbleBacklight (*info.backlightColour, backlight)
+                                                     : Colours::scribbleLcd.withMultipliedBrightness (backlight);
     g.setColour (bg);
     g.fillRect (lcd);
     if (info.isEmpty())
         return;
     const float contrast = juce::jlimit (0.0f, 1.0f, 0.55f + 0.75f * (info.contrast - 0.4f));
-    const auto ink = bg.interpolatedWith (Colours::scribbleInk, 0.45f + 0.55f * contrast)
+    const auto ink = bg.interpolatedWith (info.backlightColour.has_value() ? juce::Colours::white : Colours::scribbleInk, 0.45f + 0.55f * contrast)
                          .withMultipliedBrightness (juce::jlimit (0.55f, 1.0f, 0.55f + 0.45f * backlight));
 
     const float H = lcd.getHeight(), W = lcd.getWidth();
@@ -176,28 +185,22 @@ void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const Scribble
     }
     // With no icon (and nothing else) in the centre, the name takes the whole
     // area in larger type, as on the console.
-    const bool hasIcon = (info.strip != nullptr && info.strip->params.icon.load() > 0) || info.icon.has_value();
+    const bool hasIcon = (info.strip != nullptr && info.strip->getIcon() > 0) || info.icon.has_value();
     const bool centreFree = info.value.isEmpty() && ! hasIcon && info.line2.isEmpty() && info.line3.isEmpty();
     if (info.name.isNotEmpty() && centreFree && ! info.nameInverted)
     {
-        // One row, or two when the name breaks at a space.
-        auto area = r.reduced (0.0f, juce::jmax (1.0f, r.getHeight() * 0.06f));
-        const float cap = juce::jmin (H * 0.2f, area.getHeight() * 0.42f);
-        const auto font = lcdFont (cap, cap < 7.0f ? WingWeight::SemiBold : WingWeight::Medium);
-        auto rows = nameRows (info.name, font, area.getWidth(), 2);
+        // Large bold capitals, about six to the strip's width (a seventh is
+        // cut off), two rows broken at a space as the console does.
+        auto area = r.reduced (0.0f, juce::jmax (1.0f, r.getHeight() * 0.04f));
+        const float probe = 20.0f;
+        const float widthCap = probe * area.getWidth() / juce::GlyphArrangement::getStringWidth (lcdFont (probe, WingWeight::SemiBold), "CHANNE");
+        const float rowCap = juce::jmin (widthCap, area.getHeight() / 2.0f / 1.3f);
+        g.setFont (lcdFont (rowCap, WingWeight::SemiBold));
+        const auto rows = nameRows (info.name, g.getCurrentFont(), area.getWidth(), 2);
         g.setColour (ink);
-        if (rows.size() == 1)
-        {
-            g.setFont (font);
-            nameRow (g, rows[0], area);
-            return;
-        }
-        const float rowCap = juce::jmin (cap, area.getHeight() / 2.0f / 1.45f);
-        g.setFont (lcdFont (rowCap, rowCap < 7.0f ? WingWeight::SemiBold : WingWeight::Medium));
-        rows = nameRows (info.name, g.getCurrentFont(), area.getWidth(), 2);
-        auto block = area.withSizeKeepingCentre (area.getWidth(), rowCap * 1.45f * (float) rows.size());
+        auto block = area.withSizeKeepingCentre (area.getWidth(), rowCap * 1.3f * (float) rows.size());
         for (const auto& row : rows)
-            nameRow (g, row, block.removeFromTop (rowCap * 1.45f));
+            nameRow (g, row, block.removeFromTop (rowCap * 1.3f));
         return;
     }
     if (info.name.isNotEmpty())
@@ -247,7 +250,7 @@ void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const Scribble
     }
     const float s = juce::jmin (centre.getHeight() * 0.82f, centre.getWidth() * 0.5f);
     const auto iconArea = centre.withSizeKeepingCentre (s, s);
-    if (const int wingIcon = info.strip != nullptr ? (int) info.strip->params.icon.load() : info.wingIcon; wingIcon > 0)
+    if (const int wingIcon = info.strip != nullptr ? (int) info.strip->getIcon() : info.wingIcon; wingIcon > 0)
     {
         drawWingIcon (g, wingIcon, iconArea, ink);
         return;
@@ -330,6 +333,7 @@ void setScribbleStrip (ScribbleInfo& info, const Strip& s, bool showSource)
     }
     info.name = scribbleName (s);
     info.strip = &s;
+    info.backlightColour = stripDisplayColour (s);
 }
 
 //==============================================================================
@@ -682,6 +686,7 @@ ScribbleInfo FaderStrip::scribbleInfo() const
                                      .equalsIgnoreCase ("DCA" + juce::String (dca + 1));
         info.name = defaultName ? juce::String() : shownName;
         info.wingIcon = ctx.engine.getDca (dca).icon.load();
+        info.backlightColour = wingColour (ctx.engine.getDca (dca).colour.load());
     }
     else if (fxp)
     {
@@ -750,7 +755,7 @@ void FaderStrip::timerCallback()
         colour = strip->getColourIndex();
         // The source tag (ALT source switches, SHOW SOURCE ON SCRIBBLE) and the icon.
         source = scribbleSourceTag (*strip, ctx.settings.getBoolValue (uiprefs::sourceOnScribble, true)) + "|"
-                 + juce::String (strip->params.icon.load());
+                 + juce::String (strip->getIcon());
 
         // Input level, like the console's strip meters.
         const int channels = juce::jlimit (1, 2, strip->getNumChannels());

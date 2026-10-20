@@ -807,7 +807,7 @@ private:
         t.name = home::hasDefaultName (s) ? juce::String() : stripName (s);
         t.label = home::shortLabel (s);
         t.boxed = s.isInput();
-        t.wingIcon = s.params.icon.load();
+        t.wingIcon = s.getIcon();
         if ((s.isInput() && stripHasSource (s)) || s.getKind() == StripKind::Main)
             t.kindIcon = stripIcon (s.getKind());
         // Firmware 3.0: "Channel select overlay metering set to input".
@@ -1331,10 +1331,11 @@ void MainDisplay::showChannelSelect (bool show)
 
 void MainDisplay::applyLighting()
 {
-    // SETUP > GENERAL's LIGHTS: MAIN LCD dims the screen; BTNS/LEDS and
-    // BACKLIGHT the lit and unlit keys of the surface.
-    const float lcd = (float) juce::jlimit (0, 100, ctx.settings.getIntValue (kMainLcd, kMainLcdDefault)) / 100.0f;
-    const float alpha = (1.0f - lcd) * 0.8f;
+    // SETUP > GENERAL's LIGHTS: MAIN LCD dims the screen below its default
+    // (which shows the console's colours as its screen draws them); BTNS/LEDS
+    // and BACKLIGHT the lit and unlit keys of the surface.
+    const float lcd = (float) juce::jlimit (0, 100, ctx.settings.getIntValue (kMainLcd, kMainLcdDefault)) / (float) kMainLcdDefault;
+    const float alpha = juce::jmax (0.0f, 1.0f - lcd) * 0.8f;
     if (std::abs (alpha - lcdScrim->alpha) > 0.002f)
     {
         lcdScrim->alpha = alpha;
@@ -1361,9 +1362,8 @@ void MainDisplay::timerCallback()
     juce::uint32 hash = 0;
     if (auto* s = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr)
         hash = (juce::uint32) juce::DefaultHashFunctions::generateHash (describeStrip (*s) + juce::String (s->getColourIndex())
-                                                                            + juce::String (s->params.icon.load()) + (stripHasSource (*s) ? "s" : ""),
+                                                                            + juce::String (s->getIcon()) + (stripHasSource (*s) ? "s" : ""),
                                                                         1 << 30);
-    hash = hash * 31u + (juce::uint32) juce::roundToInt (ctx.engine.getDspLoad() * 100.0f);
     hash = hash * 31u + (juce::uint32) ctx.engine.getNumFaultedFx();
     hash = hash * 31u + (ctx.deviceManager.getCurrentAudioDevice() != nullptr ? 1u : 0u);
     hash = hash * 31u + (ctx.sendsOnFader ? 1u : 0u) + (ctx.settings.getBoolValue (uiprefs::showSofFrame, false) ? 2u : 0u);
@@ -1484,9 +1484,9 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
     }
     else if (title.kind == StatusTitle::Kind::Channel)
     {
-        // The selected strip's tile, in its colour (dimmed without a source).
-        const auto colour = strip != nullptr ? stripDisplayColour (*strip) : Colours::screenTile;
-        const auto ink = colour.getPerceivedBrightness() > 0.3f ? juce::Colours::black : Colours::text;
+        // The selected strip's tile, in its colour, black print [I1].
+        const auto colour = strip != nullptr ? strip->getColour() : Colours::screenTile;
+        const auto ink = juce::Colours::black;
         g.setColour (colour);
         g.fillRoundedRectangle (tab, corner);
         if (strip != nullptr)
@@ -1502,19 +1502,28 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
             }
             else
             {
-                // The number in a black box, in the strip's colour, filling the box.
+                // The number in a black box, in the strip's colour, filling the
+                // box; without a source a black outline and a black number.
                 const auto numberFont = wingFontPx (juce::jmin (bigCap, h * 0.66f), WingWeight::SemiBold);
                 const float boxW = juce::jmax (60.0f * k, juce::GlyphArrangement::getStringWidth (numberFont, label) + 18.0f * k);
                 auto box = t.removeFromLeft (boxW);
                 g.setColour (juce::Colours::black);
-                g.fillRect (box);
-                g.setColour (strip->getColour().getPerceivedBrightness() < 0.25f ? strip->getColour().brighter (0.6f) : strip->getColour());
+                if (stripHasSource (*strip))
+                {
+                    g.fillRect (box);
+                    g.setColour (colour.getPerceivedBrightness() < 0.25f ? colour.brighter (0.6f) : colour);
+                }
+                else
+                {
+                    g.drawRect (box.reduced (1.5f * k), 3.0f * k);
+                }
                 g.setFont (numberFont);
                 g.drawText (label, box, juce::Justification::centred, false);
                 t.removeFromLeft (16.0f * k);
-                auto iconArea = t.removeFromLeft (h * 1.15f).withSizeKeepingCentre (h * 1.15f, h * 1.15f);
-                if (! drawWingIcon (g, strip->params.icon.load(), iconArea, ink))
-                    drawIcon (g, stripIcon (strip->getKind()), iconArea.reduced (h * 0.08f), ink);
+                // The WING icon (none: nothing), a linked source's own glyph.
+                auto iconArea = t.removeFromLeft (h * 1.3f).withSizeKeepingCentre (h * 1.3f, h * 1.3f);
+                if (! drawWingIcon (g, strip->getIcon(), iconArea, ink) && strip->linkedSource() != nullptr)
+                    drawIcon (g, sourceIcon (strip->getActiveInputLeft()), iconArea.reduced (h * 0.08f), ink);
                 t.removeFromLeft (12.0f * k);
                 if (! home::hasDefaultName (*strip))
                     drawText (stripName (*strip), ink, t);
@@ -1616,9 +1625,10 @@ void MainDisplay::paintStatusBar (juce::Graphics& g)
 
     paintTitleTile (g);
 
-    // The audio status: the SIP badge, the sample rate and clock source (green
-    // chips), then protection, FX faults and the DSP load. It flashes while
-    // there are new FX faults; a click opens SETUP > AUDIO.
+    // The audio status [I1]: the SIP badge, the sample rate and clock source
+    // (green chips), the AES50 ports A, B, C and StageConnect (SC), grey: none
+    // here. It flashes while there are new FX faults; a click opens SETUP >
+    // AUDIO (the DSP load is on UTILITY).
     tile (chipsTile, flash ? juce::Colour (0xff680008) : Colours::screenHeader);
     {
         auto* device = ctx.deviceManager.getCurrentAudioDevice();
@@ -1641,14 +1651,13 @@ void MainDisplay::paintStatusBar (juce::Graphics& g)
         {
             drawChip (g, { x0 + x * k, r.getY() + y * k, w * k, chipH }, text, fill, ink);
         };
-        const auto offInk = juce::Colour (0xff1e1e1e);
+        const auto offInk = juce::Colour (0xff181c18);
         const auto rate = device != nullptr ? juce::String (juce::roundToInt (device->getCurrentSampleRate() / 1000.0)) + "K" : juce::String ("--");
         chip (0.0f, 5.0f, 28.0f, rate, device != nullptr ? Colours::green : Colours::mute, juce::Colours::black);
-        chip (32.0f, 5.0f, 29.0f, device != nullptr ? "INT" : "NO DEV", device != nullptr ? Colours::green : Colours::mute, juce::Colours::black);
-        const int faults = ctx.engine.getNumFaultedFx();
-        chip (0.0f, 25.0f, 28.0f, "P", ctx.engine.outputProtection.load() ? Colours::green : Colours::screenLine, ctx.engine.outputProtection.load() ? juce::Colours::black : offInk);
-        chip (32.0f, 25.0f, 29.0f, "FX", faults > 0 ? Colours::mute : Colours::screenLine, faults > 0 ? Colours::text : offInk);
-        chip (0.0f, 45.0f, 61.0f, juce::String (juce::roundToInt (ctx.engine.getDspLoad() * 100.0f)) + " %", Colours::screenLine, offInk);
+        chip (33.0f, 5.0f, 23.0f, device != nullptr ? "INT" : "NO DEV", device != nullptr ? Colours::green : Colours::mute, juce::Colours::black);
+        for (int i = 0; i < 3; ++i)
+            chip (22.0f * (float) i, 25.0f, 16.0f, juce::String::charToString ((juce::juce_wchar) ('A' + i)), Colours::chipOff, offInk);
+        chip (0.0f, 45.0f, 28.0f, "SC", Colours::chipOff, offInk);
     }
 
     // The USB stick (the USB recorder's folder): opens the USB recorder; red while it records.

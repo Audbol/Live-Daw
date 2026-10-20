@@ -84,6 +84,7 @@ namespace Colours
     const juce::Colour scribbleRule { 0xffa6a2dc }; // the rules between an LCD's strips
     const juce::Colour scribbleRim { 0xff4a4690 };  // the lighter rim round the LCD
     const juce::Colour ledOff { 0xff2c2d30 };       // an unlit LED
+    const juce::Colour ledWindow { 0xff8e9094 };    // an unlit colour light bar's frosted window
     const juce::Colour ledYellow { 0xfff5e14a };    // a lit surface key
     const juce::Colour viewGreen { 0xff52d36b };    // lit VIEW keys
 } // namespace Colours
