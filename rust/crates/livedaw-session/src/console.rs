@@ -11,7 +11,8 @@ use livedaw_dsp::wing::{model_index, ModelSpec, DYN_MODELS, EQ_MODELS_BUS, EQ_MO
 use livedaw_engine::analyser::RtaViewSettings;
 use livedaw_engine::atomic::AtomicF32;
 use livedaw_engine::params::{
-    DynSlotParams, EqBlockParams, InsertParams, StripParams, FX_EXT, FX_NONE, NUM_DCAS, NUM_FX, NUM_MUTE_GROUPS, WING_BUSES,
+    DynSlotParams, EqBlockParams, InsertParams, MatrixSendParams, StripParams, FX_EXT, FX_NONE, NUM_DCAS, NUM_FX,
+    NUM_MUTE_GROUPS, WING_BUSES,
 };
 use livedaw_engine::{Engine, Strip, StripKind, MAX_BUSES};
 use std::collections::HashMap;
@@ -414,6 +415,8 @@ fn capture_strip(s: &Strip, sections: u32, slots: &[usize]) -> Element {
                 put_b(x, "ignmute", &ms.ignore_mute);
                 put_f(x, "lvl", &ms.level_db);
                 put_f(x, "pan", &ms.pan);
+                put_b(x, "plink", &ms.pan_link);
+                put_b(x, "prev", &ms.pan_reversed);
             }
         }
         if !matches!(kind, StripKind::Main | StripKind::Matrix) {
@@ -560,6 +563,15 @@ fn apply_rta(engine: &Engine, parent: &Element) {
     }
 }
 
+/// A matrix send's PAN LINK. Shows from before it balanced the channel's
+/// panned output with the send's pan: a send left centred loads linked (as
+/// it sounded), one with a pan loads with its own pan.
+fn get_matrix_pan_link(e: &Element, ms: &MatrixSendParams) {
+    let linked = e.bool_or("plink", ms.pan.load() == 0.0);
+    ms.pan_link.store(linked, Relaxed);
+    ms.pan_reversed.store(e.bool_or("prev", false), Relaxed);
+}
+
 /// IGNORE CHANNEL MUTE. Shows from before the flag had pre-fader sends that
 /// never followed the channel mute: such a send (`pre`) loads with the flag on.
 fn get_ignore_mute(e: &Element, v: &AtomicBool, pre: bool) {
@@ -664,6 +676,8 @@ fn capture_dcas(engine: &Engine, parent: &mut Element, names: bool) {
         if names {
             x.set("name", engine.dca_name(i));
             put_i(x, "colour", &dca.colour);
+            put_i(x, "icon", &dca.icon);
+            put_b(x, "led", &dca.led);
         }
         put_f(x, "lvl", &dca.fader_db);
         put_b(x, "mute", &dca.mute);
@@ -679,6 +693,8 @@ fn apply_dcas(engine: &Engine, parent: &Element) {
             engine.set_dca_name(i as usize, n);
         }
         get_i(x, "colour", &dca.colour);
+        get_i(x, "icon", &dca.icon);
+        get_b(x, "led", &dca.led);
         get_f(x, "lvl", &dca.fader_db);
         get_b(x, "mute", &dca.mute);
     }
@@ -924,6 +940,7 @@ fn apply_strip(s: &Arc<Strip>, e: &Element, requested: u32, fades: &mut Option<&
                 get_ignore_mute(x, &ms.ignore_mute, ms.pre.load(Relaxed));
                 get_fadable(x, "lvl", FadeParam::MatrixLevel(s.clone(), i), fades);
                 get_f(x, "pan", &ms.pan);
+                get_matrix_pan_link(x, ms);
             }
         }
         if let Some(m) = e.child("Mains") {

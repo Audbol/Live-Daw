@@ -4,6 +4,7 @@
 #include "engine/WingRemote.h"
 
 #include <bit>
+#include <cstring>
 
 using namespace livedaw;
 
@@ -161,6 +162,56 @@ public:
             auto scene = show.getScene (before);
             expect (scene.has_value() && scene->name == "Opener" && scene->tag == 2);
             expect (report.contains ("Mutes"), report);
+            dir.deleteRecursively();
+        }
+
+        beginTest ("Remote clients reach the GLOBAL safes and the USB recorder through the message thread");
+        {
+            auto dir = tempDir ("usb");
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            engine.setNumChannels (4);
+            engine.prepareOffline (48000.0, 256, 2, 2);
+            auto& usb = engine.getUsbRecorder();
+            usb.setStorageFolder (dir);
+            dir.getChildFile ("LIVE").createDirectory();
+            auto& wing = engine.getWing();
+            wing.attachShow (&show);
+            auto run = [&wing] (const char* nodeString)
+            {
+                ld::LdString* out = nullptr;
+                const bool ok = ld::ld_wing_sysex (wing.getHandle(), 2, nodeString, std::strlen (nodeString), &out);
+                takeString (out);
+                return ok;
+            };
+            expect (run ("/$ctl.safes.dca=5"));
+            expect (run ("/$ctl.safes.ch=2"));
+            expect (run ("/rec.channels=4,resolution=16,$path=LIVE"));
+            wing.pump();
+            expectEquals ((int) show.getGlobalSafe().dcas, 1 << 4);
+            expect (engine.getChannels()[1]->params.recallSafe.load(), "a strip's SAFE key");
+            expect (usb.getRecChannels() == 4 && usb.getRecBits() == 16);
+            expect (usb.getRecPath() == dir.getChildFile ("LIVE"), usb.getRecPath().getFullPathName());
+
+            // REC from STOP: the host names the file in REC PATH.
+            expect (run ("/rec.$action=REC"));
+            wing.pump();
+            expect (usb.isRecording());
+            expect (usb.getRecFile().getParentDirectory() == dir.getChildFile ("LIVE"), usb.getRecFile().getFullPathName());
+            usb.stopRecording();
+            usb.waitForDisk();
+
+            // The show's safes changed on the console reach the clients.
+            auto safe = show.getGlobalSafe();
+            safe.fx = 0b11;
+            show.setGlobalSafe (safe);
+            wing.pump();
+            ld::LdString* dump = nullptr;
+            expect (ld::ld_wing_sysex (wing.getHandle(), 3, "/$ctl.safes.fx", std::strlen ("/$ctl.safes.fx"), &dump));
+            const auto text = takeString (dump);
+            expect (text.contains ("1,2"), text);
+            wing.attachShow (nullptr);
             dir.deleteRecursively();
         }
 

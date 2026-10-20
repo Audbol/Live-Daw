@@ -1,6 +1,7 @@
 #include "ui/ViewPages.h"
 #include "dsp/DspUtils.h"
 #include "engine/Models.h"
+#include "ui/HomeIcons.h"
 
 #include <array>
 
@@ -377,19 +378,60 @@ namespace
         }
     }
 
-    /** A DCA's name and colour: a list (NAME, then the 18 colours) under `anchor`. */
+    /** A DCA's scribble strip icon: the gallery's category, then its icons. */
+    void chooseDcaIcon (UiContext& ctx, int dca, juce::Component& anchor)
+    {
+        const auto& cats = home::wingIconCategories();
+        juce::StringArray names;
+        for (auto& c : cats)
+            names.add (c.name);
+        popups::ListOptions options;
+        options.caption = "DCA " + juce::String (dca + 1) + " ICON";
+        juce::Component::SafePointer<juce::Component> safeAnchor (&anchor);
+        const int current = ctx.engine.getDca (dca).icon.load();
+        popups::chooseFrom (anchor, names, home::wingIconCategory (current), [&ctx, dca, safeAnchor, current] (int c)
+        {
+            const auto& icons = home::wingIconCategories()[(size_t) juce::jlimit (0, 6, c)].icons;
+            std::vector<std::vector<popups::Tile>> rows;
+            for (size_t i = 0; i < icons.size(); ++i)
+            {
+                if (i % 5 == 0)
+                    rows.emplace_back();
+                rows.back().push_back ({ icons[i].number, icons[i].name.toUpperCase() });
+            }
+            if (safeAnchor == nullptr || rows.empty())
+                return;
+            popups::chooseTile (*safeAnchor, rows, {}, current,
+                                [] (juce::Graphics& g, juce::Rectangle<float> r, int icon)
+                                {
+                                    if (icon != 0)
+                                        drawWingIcon (g, icon, r.reduced (r.getHeight() * 0.15f), Colours::text);
+                                },
+                                [&ctx, dca] (int icon) { ctx.engine.getDca (dca).icon = icon; });
+        }, options);
+    }
+
+    /** A DCA's name, icon, light and colour: a list (NAME, ICON, LIGHT, then
+        the 18 colours) under `anchor`. */
     void editDca (UiContext& ctx, int dca, juce::Component& page, juce::Component& anchor)
     {
-        juce::StringArray items { "NAME" };
+        auto& d = ctx.engine.getDca (dca);
+        juce::StringArray items { "NAME", "ICON", d.led.load() ? "LIGHT OFF" : "LIGHT ON" };
+        constexpr int firstColour = 3;
         for (int k = 1; k <= 18; ++k)
             items.add (wingColourName (k).toUpperCase());
         popups::ListOptions options;
         options.caption = "DCA " + juce::String (dca + 1);
-        juce::Component::SafePointer<juce::Component> safePage (&page);
-        popups::chooseFrom (anchor, items, ctx.engine.getDca (dca).colour.load(), [&ctx, dca, safePage] (int r)
+        juce::Component::SafePointer<juce::Component> safePage (&page), safeAnchor (&anchor);
+        popups::chooseFrom (anchor, items, d.colour.load() - 1 + firstColour, [&ctx, dca, safePage, safeAnchor] (int r)
         {
-            if (r >= 1 && r <= 18)
-                ctx.engine.getDca (dca).colour = r;
+            auto& dc = ctx.engine.getDca (dca);
+            if (r >= firstColour && r < firstColour + 18)
+                dc.colour = r - firstColour + 1;
+            else if (r == 1 && safeAnchor != nullptr)
+                chooseDcaIcon (ctx, dca, *safeAnchor);
+            else if (r == 2)
+                dc.led = ! dc.led.load();
             else if (r == 0 && safePage != nullptr)
             {
                 // DCAs named MON A, MON B or MON LVL control the monitor level (firmware 1.09).

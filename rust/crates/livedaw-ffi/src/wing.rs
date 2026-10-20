@@ -8,7 +8,7 @@
 use super::guard;
 use super::session::{str_arg, LdShow, LdString};
 use livedaw_engine::Engine;
-use livedaw_wing::map::{LibAction, Library};
+use livedaw_wing::map::{LibAction, Library, Safes, UsbAction, UsbSettings};
 use livedaw_wing::server::{ClientKind, Config, EngineHandle, EnginePtr, WingServer};
 use livedaw_wing::{snap, Identity, WingState};
 use std::fmt::Write as _;
@@ -285,6 +285,117 @@ pub unsafe extern "C" fn ld_wing_take_library_action(w: *mut LdWing, action: *mu
     true
 }
 
+/// Publishes the host's USB recorder settings for `/rec`: the storage folder,
+/// REC PATH (relative to it, "/" separated) and the next recording's channels
+/// (2, 4) and bits (16, 24). From then on clients' REC, NEW FILE and PLAYFILE
+/// reach the host (`ld_wing_take_usb_action`). A client's change still to be
+/// taken (`ld_wing_take_usb_settings`) is kept.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn ld_wing_set_usb(
+    w: *mut LdWing,
+    storage: *const u8,
+    storage_len: usize,
+    rec_path: *const u8,
+    rec_path_len: usize,
+    channels: i32,
+    bits: i32,
+) {
+    let Some(w) = wing(w) else { return };
+    let settings = UsbSettings {
+        attached: true,
+        storage: str_arg(storage, storage_len).into_owned(),
+        rec_path: str_arg(rec_path, rec_path_len).into_owned(),
+        channels,
+        bits,
+    };
+    guard((), || w.state.set_usb_settings(settings));
+}
+
+/// No host takes the USB actions any more.
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_clear_usb(w: *mut LdWing) {
+    if let Some(w) = wing(w) {
+        guard((), || {
+            w.state.take_usb_settings();
+            w.state.set_usb_settings(UsbSettings::default());
+        });
+    }
+}
+
+/// The USB settings a client changed: true with the channels, bits and REC
+/// PATH (relative to the storage folder; `rec_path` may be null).
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_take_usb_settings(
+    w: *mut LdWing,
+    channels: *mut i32,
+    bits: *mut i32,
+    rec_path: *mut *mut LdString,
+) -> bool {
+    let Some(w) = wing(w) else { return false };
+    let Some(u) = guard(None, || w.state.take_usb_settings()) else { return false };
+    if let Some(out) = channels.as_mut() {
+        *out = u.channels;
+    }
+    if let Some(out) = bits.as_mut() {
+        *out = u.bits;
+    }
+    write(rec_path, u.rec_path);
+    true
+}
+
+/// The next USB recorder action a client asked for: true with `action` 1 REC
+/// (a new recording), 2 NEW FILE or 3 PLAYFILE (`file`: the file, relative to
+/// the storage folder; may be null).
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_take_usb_action(w: *mut LdWing, action: *mut i32, file: *mut *mut LdString) -> bool {
+    let Some(w) = wing(w) else { return false };
+    let Some(a) = guard(None, || w.state.take_usb_action()) else { return false };
+    let (code, text) = match a {
+        UsbAction::Record => (1, String::new()),
+        UsbAction::NewFile => (2, String::new()),
+        UsbAction::PlayFile(f) => (3, f),
+    };
+    if let Some(out) = action.as_mut() {
+        *out = code;
+    }
+    write(file, text);
+    true
+}
+
+/// Publishes the show's GLOBAL safes for `/$ctl/safes` (bit n = DCA, mute
+/// group or FX slot n+1), unless a client's change is still to be taken.
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_set_safes(w: *mut LdWing, dcas: u32, mute_groups: u32, fx: u32) {
+    if let Some(w) = wing(w) {
+        guard((), || w.state.set_safes(Safes { attached: true, dcas, mute_groups, fx }));
+    }
+}
+
+/// No show any more.
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_clear_safes(w: *mut LdWing) {
+    if let Some(w) = wing(w) {
+        guard((), || {
+            w.state.take_safes();
+            w.state.set_safes(Safes::default());
+        });
+    }
+}
+
+/// The global safes a client changed: true with the masks (any pointer may be null).
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_take_safes(w: *mut LdWing, dcas: *mut u32, mute_groups: *mut u32, fx: *mut u32) -> bool {
+    let Some(w) = wing(w) else { return false };
+    let Some(s) = guard(None, || w.state.take_safes()) else { return false };
+    for (out, v) in [(dcas, s.dcas), (mute_groups, s.mute_groups), (fx, s.fx)] {
+        if let Some(out) = out.as_mut() {
+            *out = v;
+        }
+    }
+    true
+}
+
 /// How much of the WING tree maps onto the engine (a text report).
 #[no_mangle]
 pub extern "C" fn ld_wing_coverage() -> *mut LdString {
@@ -389,6 +500,49 @@ mod tests {
             assert_eq!((action, index), (4, 2));
             ld_wing_clear_library(w);
             assert!(c.set(node("/$ctl/lib/$action"), &livedaw_wing::Value::str("GO")).is_err());
+            drop(c);
+            ld_wing_destroy(w);
+            drop(Box::from_raw(engine));
+        }
+    }
+
+    #[test]
+    fn usb_actions_and_safes_reach_the_host() {
+        let engine = Box::into_raw(Box::new(Engine::new(0)));
+        unsafe {
+            (*engine).set_num_channels(4);
+            let w = ld_wing_create(engine);
+            let (storage, rec) = ("/tmp/usb", "REC");
+            ld_wing_set_usb(w, storage.as_ptr(), storage.len(), rec.as_ptr(), rec.len(), 4, 16);
+            ld_wing_set_safes(w, 0b11, 0, 0);
+            let state = (*w).state.clone();
+            let c = livedaw_wing::Console::new(&*engine, &state);
+            let node = |p: &str| livedaw_wing::schema().resolve(p, &c).unwrap();
+            assert_eq!(c.get(node("/rec/$path")), Some(livedaw_wing::Value::str("REC")));
+            assert_eq!(c.get(node("/$ctl/safes/dca")), Some(livedaw_wing::Value::str("1,2")));
+            c.set(node("/rec/resolution"), &livedaw_wing::Value::str("24")).unwrap();
+            c.set(node("/rec/$action"), &livedaw_wing::Value::str("REC")).unwrap();
+            c.set(node("/play/$playfile"), &livedaw_wing::Value::str("a.wav")).unwrap();
+            c.set(node("/play/$action"), &livedaw_wing::Value::str("PLAYFILE")).unwrap();
+            c.set(node("/$ctl/safes/mute"), &livedaw_wing::Value::str("8")).unwrap();
+
+            let (mut channels, mut bits, mut path) = (0, 0, std::ptr::null_mut());
+            assert!(ld_wing_take_usb_settings(w, &mut channels, &mut bits, &mut path));
+            assert_eq!((channels, bits, take(path).as_str()), (4, 24, "REC"));
+            assert!(!ld_wing_take_usb_settings(w, &mut channels, &mut bits, std::ptr::null_mut()));
+            let (mut action, mut file) = (0, std::ptr::null_mut());
+            assert!(ld_wing_take_usb_action(w, &mut action, &mut file));
+            assert_eq!((action, take(file).as_str()), (1, ""));
+            assert!(ld_wing_take_usb_action(w, &mut action, &mut file));
+            assert_eq!((action, take(file).as_str()), (3, "a.wav"));
+            assert!(!ld_wing_take_usb_action(w, &mut action, std::ptr::null_mut()));
+            let (mut dcas, mut groups, mut fx) = (0, 0, 0);
+            assert!(ld_wing_take_safes(w, &mut dcas, &mut groups, &mut fx));
+            assert_eq!((dcas, groups, fx), (0b11, 1 << 7, 0));
+            assert!(!ld_wing_take_safes(w, &mut dcas, std::ptr::null_mut(), std::ptr::null_mut()));
+            ld_wing_clear_usb(w);
+            assert!(c.set(node("/rec/$action"), &livedaw_wing::Value::str("REC")).is_err());
+            ld_wing_clear_safes(w);
             drop(c);
             ld_wing_destroy(w);
             drop(Box::from_raw(engine));

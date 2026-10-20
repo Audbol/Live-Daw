@@ -615,6 +615,43 @@ fn wing_settings_survive_a_show_round_trip() {
 }
 
 #[test]
+fn matrix_pan_link_and_dca_icons_survive_a_show_round_trip() {
+    let engine = Engine::new(0);
+    engine.set_num_channels(1);
+    let a = ch(&engine, 0);
+    a.params.matrix[1].pan_link.store(false, Relaxed);
+    a.params.matrix[1].pan.store(-40.0);
+    a.params.matrix[2].pan_reversed.store(true, Relaxed);
+    let d = &engine.controls.dcas[4];
+    d.icon.store(112, Relaxed);
+    d.led.store(false, Relaxed);
+
+    let (e2, _) = round_trip(&engine, &Show::new());
+    let b = ch(&e2, 0);
+    let m = &b.params.matrix;
+    assert!(!m[1].pan_link.load(Relaxed) && m[1].pan.load() == -40.0);
+    assert!(m[2].pan_link.load(Relaxed) && m[2].pan_reversed.load(Relaxed));
+    assert!(m[0].pan_link.load(Relaxed) && !m[0].pan_reversed.load(Relaxed));
+    let d2 = &e2.controls.dcas[4];
+    assert_eq!(d2.icon.load(Relaxed), 112);
+    assert!(!d2.led.load(Relaxed) && e2.controls.dcas[0].led.load(Relaxed));
+
+    // Shows from before PAN LINK: a centred send stays linked (as it sounded),
+    // one with a pan keeps that pan.
+    let mut text = Show::new().to_xml(&engine, &mut NoPlugins).to_document();
+    for attr in [" plink=\"0\"", " plink=\"1\"", " prev=\"0\"", " prev=\"1\"", " icon=\"112\"", " led=\"0\""] {
+        text = text.replace(attr, "");
+    }
+    let e3 = Engine::new(0);
+    Show::new().load_from_text(&e3, &mut NoPlugins, &text, true).unwrap();
+    let m = &ch(&e3, 0).params.matrix;
+    assert!(!m[1].pan_link.load(Relaxed), "panned: its own pan");
+    assert!(m[2].pan_link.load(Relaxed) && !m[2].pan_reversed.load(Relaxed));
+    assert_eq!(e3.controls.dcas[4].icon.load(Relaxed), 0);
+    assert!(e3.controls.dcas[4].led.load(Relaxed));
+}
+
+#[test]
 fn shows_without_the_new_settings_load_with_the_old_behaviour() {
     let engine = Engine::new(0);
     engine.set_num_channels(1);

@@ -1576,6 +1576,29 @@ unsafe fn tap_at(src: &Strip, tap: usize, target: u32, ch: usize, n: usize) -> &
     }
 }
 
+/// Where a matrix send reads its source (`pdc_tap`) and the pan it applies
+/// there (`None`: the strip's own). Input and aux channels: PAN LINK follows
+/// the channel's pan (POST: its panned output, with the width), LINK
+/// REVERSED mirrors it, else the send pans itself. Buses and mains send
+/// their output (or tap) as panned, balanced by the send's pan.
+fn matrix_send_route(s: &Strip, send: &MatrixSendParams) -> (usize, Option<f32>) {
+    let pre = send.pre.load(Relaxed);
+    if !s.kind().is_input() {
+        return (if pre { pdc_tap::TAP } else { pdc_tap::OUT }, None);
+    }
+    let pan = match (send.pan_link.load(Relaxed), send.pan_reversed.load(Relaxed)) {
+        (true, false) => None,
+        (true, true) => Some(-s.params.pan.load() / 100.0),
+        (false, _) => Some(send.pan.load() / 100.0),
+    };
+    let tap = match (pre, pan) {
+        (true, _) => pdc_tap::TAP,
+        (false, None) => pdc_tap::OUT,
+        (false, Some(_)) => pdc_tap::POST,
+    };
+    (tap, pan)
+}
+
 /// The (source, tap) pairs summing strip `dst` adds up, as its stage reads
 /// them: the enabled sends (and a matrix's direct input).
 fn pdc_feeds<'a>(st: &'a Structure, dst: &Strip) -> Vec<(&'a Arc<Strip>, usize)> {
@@ -1608,7 +1631,7 @@ fn pdc_feeds<'a>(st: &'a Structure, dst: &Strip) -> Vec<(&'a Arc<Strip>, usize)>
             for s in inputs.chain(&st.buses).chain(&st.mains) {
                 let send = &s.params.matrix[index.min(NUM_MATRICES - 1)];
                 if send.on.load(Relaxed) {
-                    feeds.push((s, tap_or_out(send.pre.load(Relaxed))));
+                    feeds.push((s, matrix_send_route(s, send).0));
                 }
             }
             let p = &dst.params;
@@ -1710,8 +1733,16 @@ unsafe fn sum_matrix(mtx: &Strip, index: usize, topo: &Topology, n: usize) {
             *last = [0.0, 0.0];
             continue;
         }
+        let (tap, pan) = matrix_send_route(s, send);
+        if s.kind().is_input() {
+            // The pan gains, unless the channel's panned output is taken as it is.
+            let g = if tap == pdc_tap::OUT { [1.0, 1.0] } else { pre_gains(s, pan) };
+            let (l, r) = (tap_at(s, tap, target, 0, n), tap_at(s, tap, target, 1, n));
+            add_pair(mtx, n, l, r, last, [level * g[0], level * g[1]]);
+            continue;
+        }
         let (bl, br) = stereo_balance(send.pan.load() / 100.0);
-        if send.pre.load(Relaxed) {
+        if tap == pdc_tap::TAP {
             let g = pre_gains(s, None);
             let (l, r) = (tap_at(s, pdc_tap::TAP, target, 0, n), tap_at(s, pdc_tap::TAP, target, 1, n));
             add_pair(mtx, n, l, r, last, [level * g[0] * bl, level * g[1] * br]);

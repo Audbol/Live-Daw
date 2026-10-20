@@ -26,6 +26,7 @@ struct ScribbleInfo
     bool tagFirst = false;        // the tag at the left, the number at the right
     std::optional<Icon> icon;     // drawn when `strip` has no WING icon
     const Strip* strip = nullptr; // draws its WING icon (none when unset)
+    int wingIcon = 0;             // a WING icon without a strip (a DCA's)
     juce::String value, caption;  // "-3.5" in large type in place of the icon
     juce::String line2, line3;    // small centre lines (no icon or value)
     juce::String name, footer;
@@ -35,7 +36,7 @@ struct ScribbleInfo
     bool isEmpty() const noexcept
     {
         return number.isEmpty() && tag.isEmpty() && sendTag.isEmpty() && name.isEmpty() && value.isEmpty() && line2.isEmpty()
-               && line3.isEmpty() && footer.isEmpty() && strip == nullptr && ! icon.has_value();
+               && line3.isEmpty() && footer.isEmpty() && strip == nullptr && wingIcon == 0 && ! icon.has_value();
     }
 };
 

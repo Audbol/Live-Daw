@@ -247,9 +247,9 @@ void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const Scribble
     }
     const float s = juce::jmin (centre.getHeight() * 0.82f, centre.getWidth() * 0.5f);
     const auto iconArea = centre.withSizeKeepingCentre (s, s);
-    if (info.strip != nullptr && info.strip->params.icon.load() > 0)
+    if (const int wingIcon = info.strip != nullptr ? (int) info.strip->params.icon.load() : info.wingIcon; wingIcon > 0)
     {
-        drawWingIcon (g, info.strip->params.icon.load(), iconArea, ink);
+        drawWingIcon (g, wingIcon, iconArea, ink);
         return;
     }
     if (info.icon.has_value())
@@ -681,6 +681,7 @@ ScribbleInfo FaderStrip::scribbleInfo() const
         const bool defaultName = shownName.retainCharacters ("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
                                      .equalsIgnoreCase ("DCA" + juce::String (dca + 1));
         info.name = defaultName ? juce::String() : shownName;
+        info.wingIcon = ctx.engine.getDca (dca).icon.load();
     }
     else if (fxp)
     {
@@ -763,8 +764,9 @@ void FaderStrip::timerCallback()
     {
         auto& d = ctx.engine.getDca (dca);
         name = ctx.engine.getDcaName (dca);
-        light = true;
+        light = d.led.load();
         colour = d.colour.load();
+        source = juce::String (d.icon.load()); // repaints when the icon changes
     }
     else if (midi)
         light = true;
