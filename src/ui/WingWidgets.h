@@ -37,6 +37,13 @@ public:
 
     std::function<bool()> isOn;
     juce::Colour offColour = Colours::screenKey;
+
+    void setIcon (std::optional<Icon> keyIcon)
+    {
+        icon = keyIcon;
+        repaint();
+    }
+
     /** The icon's colour while the key is off (the recorder's red record dot). */
     std::optional<juce::Colour> iconColour;
     /** The ink while the key is lit (black by default; white on a dark fill such as red). */

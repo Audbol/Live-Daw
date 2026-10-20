@@ -3,6 +3,26 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Changed
+
+- SETUP, LIBRARY, CUSTOM CONTROLS and CHANNEL COPY / INIT are laid out like the
+  console's own screens at 1280 x 800: SETUP's 64 px headers, 52 / 56 px rows and
+  key sizes, the GENERAL lighting tiles (CH STRIP, GLOW), the option order and colours
+  of every tab (a lit OFF is grey, PFL / PRE red, HS and USB green), SEND PAGE
+  ACTIVATES SOLO (not there yet); LIBRARY's toolbar, file rows, tabs, key bands and
+  its orange title tile; the USER key on CUSTOM CONTROLS; CHANNEL COPY / INIT as a
+  window over the page.
+- SURFACE's section widths, SHIFT STEP and FADER VALUES moved to FADER SECTIONS (the
+  SECTIONS key in the FADERS header); REMOTE's MIDI ports sit under MIDI REMOTE CONTROL
+  and show whether each device is open.
+
+### Added
+
+- INITIALIZE CONSOLE is a page: choose the strips, contents, DCAs, mute groups, FX
+  slots and source groups to reset (everything: a fresh 40-channel console, as before).
+
 ## [0.1.2] - beta
 
 A fix for a crash in 0.1.1 and earlier: scrolling the start-up notice could close

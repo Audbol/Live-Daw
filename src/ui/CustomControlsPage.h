@@ -199,7 +199,8 @@ private:
     cc::Slot slot = cc::Slot::Encoder;
     int focusedList = 0;
     ListColumn lists[3];
-    juce::Rectangle<int> header, prevKey, nextKey, gpioKey, title, layerHeader, layerBody, settingsHeader, controlHeader, colourKey, clearKey, nameKey;
+    juce::Rectangle<int> header, prevKey, nextKey, userKey, gpioKey, title, layerHeader, layerBody, settingsHeader, controlHeader, colourKey, clearKey, nameKey,
+        colourBox, clearBox, nameBox;
     struct Element
     {
         juce::Rectangle<int> area;

@@ -167,11 +167,17 @@ Barlow Condensed.
     SELECT OVERRIDE, SOURCE SOLO (CH39 / AUX7) and the TALKBACK channel, SOLO SYSTEM with SOLO MODE LIVE / STUDIO /
     SIP, PFL/AFL per strip type and the solo / select preferences, audio device,
     AUTOMIX), SURFACE (meter taps, SEL DBL CLICK, SOF and scribble options, CH
-    AUTOSELECT, FADER SPEED, paging, user layer link, alternative SOF, section widths),
-    REMOTE (MIDI REMOTE CONTROL and MIDI PORTS, WING REMOTE) and DAW (DAW CONTROL, DAW
-    PORTS; see *MIDI and DAW remote control*), PLUGINS (scanning, delay compensation,
+    AUTOSELECT, FADER SPEED, paging, user layer link, alternative SOF; the **SECTIONS**
+    key in the FADERS header opens Sidecar's FADER SECTIONS: section widths, SHIFT STEP
+    and FADER VALUES), REMOTE (MIDI REMOTE CONTROL with the DIN and USB MIDI ports under
+    it, HA REMOTE, NETWORK, REMOTE LOCK and Sidecar's WING REMOTE) and DAW (DAW CONTROL,
+    DAW PORTS; see *MIDI and DAW remote control*), PLUGINS (scanning, delay compensation,
     RUN PLUGINS IN SANDBOX; see *Stability*) and LOG (system health and the
-    event log), with INITIALIZE CONSOLE and SHUTDOWN. The status bar has MONITORS (the
+    event log), with INITIALIZE CONSOLE and SHUTDOWN. **INITIALIZE CONSOLE** opens a page
+    like the LIBRARY's scope window: pick strips, the CONTENTS to reset, DCAs, mute
+    groups, FX slots and SOURCE groups (LCL: the audio interface's inputs, CRD: the
+    playback channels, PLAY: the USB player, OSC), then INIT. With everything picked it
+    resets the whole console to a fresh 40-channel one, as before. The status bar has MONITORS (the
     toolbar with the talk keys, PHONES / SPEAKERS / PH+SPK, DIM, MUTE, MONO, LR SWAP;
     TALK A / B: switch mode, talkback channel, AUTO DIM, USE SEND LEVELS and the bus,
     matrix and main destinations; PHONES and SPEAKERS, each its own: SOURCE, SRC LEVEL,
@@ -398,7 +404,7 @@ The WING's MIDI remote control and DAW remote control (WING MIDI and DAW
 documentation, firmware 1.07+), on the computer's MIDI devices.
 
 - **Ports.** The WING's DIN socket and its USB MIDI ports become MIDI devices of the
-  computer: SETUP > REMOTE > MIDI PORTS picks an input and an output for DIN and for
+  computer: SETUP > REMOTE, under MIDI REMOTE CONTROL, picks an input and an output for DIN and for
   USB (the WING's "MIDI Control" port), SETUP > DAW > DAW PORTS for MIDI DAW 1-3. Where
   the system allows it (Linux, macOS) a port can be the app's own **virtual port**
   ("Sidecar MIDI Control", "Sidecar MIDI DAW 1"...), which other apps then see like a
