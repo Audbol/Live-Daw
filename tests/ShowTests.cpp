@@ -603,6 +603,46 @@ public:
             show.recallSnippet (0, sn);
             expectEquals (engine.getDca (0).faderDb.load(), -8.0f);
         }
+
+        beginTest ("LIBRARY scene and snippet files");
+        {
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            engine.setNumChannels (2);
+            auto& a = *engine.getChannels()[0];
+            a.params.faderDb = -9.0f;
+            expectEquals (show.addScene ("Verse"), 0);
+            const auto refA = state::StripRef::of (a);
+            expectEquals (show.addSnippet (0, "Lead", state::Scope::only (state::Fader, { refA })), 0);
+
+            const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("LiveDAWLibraryTest");
+            dir.deleteRecursively();
+            const auto sceneFile = dir.getChildFile (juce::String ("Verse") + Show::sceneFileExtension);
+            const auto snippetFile = dir.getChildFile (juce::String ("Lead") + Show::snippetFileExtension);
+            expect (show.exportScene (0, sceneFile).wasOk());
+            expect (show.exportSnippet (0, 0, snippetFile).wasOk());
+            expect (show.exportSnippet (0, 3, snippetFile.getSiblingFile ("x.lsnip")).failed());
+
+            const auto info = Show::readLibraryFile (sceneFile);
+            expect (info.kind == Show::LibraryFileInfo::Kind::Scene);
+            expectEquals (info.name, juce::String ("Verse"));
+            expectEquals (info.count, 1);
+            expect (Show::readLibraryFile (snippetFile).kind == Show::LibraryFileInfo::Kind::Snippet);
+
+            // Back in as a new first scene and a second snippet of it.
+            juce::String error;
+            expectEquals (show.importScene (sceneFile, 0, error), 0);
+            expectEquals (show.getNumScenes(), 2);
+            expectEquals (show.getCurrentSceneIndex(), 1);
+            expectEquals (show.importSnippet (snippetFile, 0, error), 1);
+            expectEquals (show.importSnippet (sceneFile, 0, error), -1);
+            expect (error.isNotEmpty());
+            a.params.faderDb = 0.0f;
+            show.recallSnippet (0, 1);
+            expectEquals (a.params.faderDb.load(), -9.0f);
+            dir.deleteRecursively();
+        }
     }
 };
 

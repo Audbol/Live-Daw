@@ -1252,3 +1252,80 @@ fn channel_presets_load_onto_other_strips_within_their_scope() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(presets::load(&dir.join("missing.lchn")).is_err());
 }
+
+// ---- LIBRARY scene and snippet files -----------------------------------------------------
+
+#[test]
+fn scene_and_snippet_files_round_trip_into_another_show() {
+    use livedaw_session::library::{self, FileType};
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    engine.set_num_channels(4);
+    let (a, b) = (ch(&engine, 0), ch(&engine, 1));
+    a.params.fader_db.store(-6.0);
+    b.params.fader_db.store(-12.0);
+
+    let mut show = Show::new();
+    let verse = show.add_scene(&engine, &mut np, "Verse", -1);
+    {
+        let scene = show.scene_mut(verse).unwrap();
+        scene.notes = "Capo 2".into();
+        scene.fade_seconds = 2.5;
+        scene.tag = 7;
+        scene.link_next = true;
+        scene.set_recall_scope(&Scope::strips(section::FADER, vec![StripRef::of(&a)]));
+    }
+    let solo = show.add_snippet(&engine, &mut np, verse, "Solo", section::FADER, vec![StripRef::of(&b)]);
+    show.snippet_mut(verse, solo).unwrap().fire_with_scene = true;
+
+    let dir = std::env::temp_dir().join(format!("livedaw-library-{}", std::process::id()));
+    let (scene_path, snippet_path) = (dir.join("Verse.lsnap"), dir.join("Solo.lsnip"));
+    library::save(&scene_path, &library::scene_file(&show, verse).unwrap()).unwrap();
+    library::save(&snippet_path, &library::snippet_file(&show, verse, solo).unwrap()).unwrap();
+
+    // The headers name what the files hold.
+    let scene_file = library::load(&scene_path).unwrap();
+    let info = library::info(&scene_file).unwrap();
+    assert_eq!((info.kind, info.name.as_str(), info.count), (FileType::Scene, "Verse", 1));
+    let snippet_file = library::load(&snippet_path).unwrap();
+    let info = library::info(&snippet_file).unwrap();
+    assert_eq!((info.kind, info.name.as_str()), (FileType::Snippet, "Solo"));
+    assert!(info.count > 0);
+
+    // Into another show, between its scenes: the settings come along.
+    let mut other = Show::new();
+    other.add_scene(&engine, &mut np, "Intro", -1);
+    other.add_scene(&engine, &mut np, "Outro", -1);
+    assert_eq!(other.current_scene(), 1);
+    let at = library::import_scene(&mut other, &scene_file, 1).unwrap();
+    assert_eq!((at, other.num_scenes(), other.current_scene()), (1, 3, 2));
+    let imported = other.scene(at).unwrap();
+    assert_eq!((imported.name.as_str(), imported.notes.as_str(), imported.fade_seconds), ("Verse", "Capo 2", 2.5));
+    assert_eq!((imported.tag, imported.link_next, imported.scope), (7, true, section::FADER));
+    assert_eq!(imported.scope_strips, Some(vec![StripRef::of(&a)]));
+    assert_eq!(imported.snippets.len(), 1);
+    assert!(imported.snippets[0].fire_with_scene);
+    let sn = library::import_snippet(&mut other, &snippet_file, 0).unwrap();
+    assert_eq!(other.snippet(0, sn).unwrap().name, "Solo");
+    assert!(library::import_snippet(&mut other, &snippet_file, 9).is_err());
+
+    // They recall what was saved.
+    other.scene_mut(at).unwrap().fade_seconds = 0.0;
+    other.scene_mut(at).unwrap().link_next = false;
+    a.params.fader_db.store(0.0);
+    b.params.fader_db.store(0.0);
+    other.recall_scene(&engine, &mut np, at);
+    assert_eq!(a.params.fader_db.load(), -6.0);
+    assert_eq!(b.params.fader_db.load(), -12.0, "the scene's own snippet fires with it");
+    b.params.fader_db.store(0.0);
+    other.recall_snippet(&engine, &mut np, 0, sn);
+    assert_eq!(b.params.fader_db.load(), -12.0);
+
+    // Not library files, or the wrong kind.
+    assert!(library::import_scene(&mut other, &snippet_file, 0).is_err());
+    let lfx = dir.join("x.lfx");
+    std::fs::write(&lfx, "<LiveDAWPreset type=\"fx\" version=\"1\"/>").unwrap();
+    assert!(library::load(&lfx).is_err());
+    assert!(library::load(&dir.join("missing.lsnap")).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}

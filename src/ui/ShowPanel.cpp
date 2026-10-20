@@ -1,5 +1,6 @@
 #include "ui/ShowPanel.h"
 #include "engine/AppPaths.h"
+#include "engine/AudioFileFormat.h"
 
 namespace livedaw::ui
 {
@@ -203,8 +204,9 @@ private:
 };
 
 //==============================================================================
-/** The INT / USB file list: folders first (".." to go up), then the shows and
-    presets, each with its type chip and date. */
+/** The INT / USB file list: folders first (".." to go up), then the shows,
+    scene and snippet files, presets and audio clips, each with its type chip
+    and date. */
 class ShowPanel::FileList final : public juce::ListBox, private juce::ListBoxModel
 {
 public:
@@ -240,8 +242,12 @@ public:
             chip = "FX", colour = FileColours::fx;
         else if (ext == Show::channelPresetExtension)
             chip = "CHN", colour = FileColours::chan;
-        else if (ext == ".snap")
+        else if (ext == Show::sceneFileExtension || ext == ".snap")
             chip = "SNAP", colour = FileColours::snap;
+        else if (ext == Show::snippetFileExtension)
+            chip = "SNIP", colour = FileColours::snip;
+        else if (AudioFileFormat::isAudioFile (f))
+            chip = AudioFileFormat::typeName (AudioFileFormat::typeOfFile (f)), colour = FileColours::clip;
         else
             return false;
         return true;

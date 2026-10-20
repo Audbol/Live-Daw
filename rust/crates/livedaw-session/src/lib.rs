@@ -1,5 +1,5 @@
 //! Sidecar sessions: per-section console state, Show > Scene > Snippet with
-//! fades, WING-style fader layers, and crash-safe show files.
+//! fades, WING-style fader layers, crash-safe show files and LIBRARY files.
 //!
 //! Everything here runs on the message thread and talks to the realtime engine
 //! only through its shared atomics and structure API. Plugin instances (the FX
@@ -11,6 +11,7 @@ pub mod custom;
 pub mod globals;
 pub mod layers;
 pub mod legacy;
+pub mod library;
 pub mod presets;
 pub mod refs;
 pub mod scope;

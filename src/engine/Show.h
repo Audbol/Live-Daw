@@ -205,6 +205,34 @@ public:
     static bool setPresetScope (const juce::File&, juce::uint32 scope);
 
     //==============================================================================
+    // LIBRARY scene and snippet files (SNAP and SNIP tabs): Sidecar's own
+    // format, not the WING's .snap (imported on the SHOW tab).
+    struct LibraryFileInfo
+    {
+        enum class Kind
+        {
+            None,
+            Scene,
+            Snippet
+        };
+        Kind kind = Kind::None;
+        juce::String name;
+        int count = 0; // a scene's snippets, a snippet's parameters
+    };
+
+    static constexpr const char* sceneFileExtension = ".lsnap";
+    static constexpr const char* snippetFileExtension = ".lsnip";
+
+    static LibraryFileInfo readLibraryFile (const juce::File&);
+    /** A scene with its snippets. */
+    juce::Result exportScene (int index, const juce::File&) const;
+    juce::Result exportSnippet (int sceneIndex, int snippetIndex, const juce::File&) const;
+    /** Inserts the file's scene at `index` (-1: appended); its new index, or -1 with `error`. */
+    int importScene (const juce::File&, int index, juce::String& error);
+    /** Adds the file's snippet to scene `sceneIndex`; its index, or -1 with `error`. */
+    int importSnippet (const juce::File&, int sceneIndex, juce::String& error);
+
+    //==============================================================================
     bool isFading() const noexcept { return ld::ld_show_is_fading (handle); }
     void cancelFade();
 

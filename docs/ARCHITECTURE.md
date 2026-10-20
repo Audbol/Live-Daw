@@ -423,6 +423,10 @@ Show
 - `livedaw-session/src/presets.rs`: FX presets (`.lfx`, one `<Slot>` through the same
   per-slot capture / apply as shows) and channel presets (`.lchn`, one `<Strip>` with a
   scope, applied to another strip of the same family by rewriting its `ref`).
+- `livedaw-session/src/library.rs`: scene files (`.lsnap`, a `<LiveDAWScene>` with one
+  `<Scene>` and its snippets) and snippet files (`.lsnip`, a `<LiveDAWSnippet>` with
+  one `<Snippet>`), written and read by the same functions as the show file's scene
+  list. Importing inserts into the show and never touches the console.
 
 - The console also keeps the console-level state of `livedaw-session/src/globals.rs`:
   SOLO MODE, the solo bus, MUTEGROUP/SIP OVERRIDE and SOURCE SOLO, talkback, the
@@ -765,12 +769,13 @@ README's *Known limitations*; keep the three in step.
   V-pots, MIDI CC / note / program change and FADER SPILL (the layer set's spills:
   DCA, bus sources, FX slot, automix group, selected strip's sends); SD and GPIO
   functions are listed disabled (no hardware).
-- LIBRARY: scenes and snippets live in the show (no stand-alone `.snap` / `.snip`
-  files, so ADD ITEM TO SHOW is disabled); 10 content sections instead of the
+- LIBRARY: scene and snippet files are Sidecar's XML (`.lsnap` / `.lsnip`), not the
+  WING's; ADD ITEM TO SHOW is disabled; 10 content sections instead of the
   console's 17 (CONTENTS keys sharing a section light together); the SCOPE window's
-  SFC, PREFS and L / C / R tiles (surface and preferences in scenes) are disabled; no
-  CLIP player. SEND MIDI is a scene's text (`livedaw-session/show.rs`), collected by
-  each recall and parsed and sent by `MidiRemote` on EXTERNAL MIDI CONTROL's port.
+  SFC, PREFS and L / C / R tiles (surface and preferences in scenes) are disabled; the
+  CLIP tab drives the USB player rather than a player of its own. SEND MIDI is a
+  scene's text (`livedaw-session/show.rs`), collected by each recall and parsed and
+  sent by `MidiRemote` on EXTERNAL MIDI CONTROL's port.
 - Not yet: remote preamp control (HA REMOTE, RCV CUST; drawn disabled).
 - Recorder: no transport without a running audio device (play stays in Starting);
   a loop change while rolling plays the old content for ~50 ms before the

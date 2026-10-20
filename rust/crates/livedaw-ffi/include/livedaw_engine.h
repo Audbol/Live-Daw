@@ -611,6 +611,15 @@ struct PresetInfoC
     LdString* detail;
 };
 
+/// A LIBRARY scene / snippet file's header: kind 0 = not one, 1 = scene (.lsnap),
+/// 2 = snippet (.lsnip); count = a scene's snippets or a snippet's parameters;
+/// `name` is the caller's to free.
+struct LibraryInfoC
+{
+    int32_t kind, count;
+    LdString* name;
+};
+
 struct ApplyResultC
 {
     int32_t stripsApplied, stripsSkippedSafe, stripsMissing;
@@ -901,6 +910,14 @@ extern "C"
                                       uint32_t scope, LdString** message);
     /** UPDATE SCOPE of a channel preset file. */
     bool ld_preset_set_scope (const char* path, size_t len, uint32_t scope);
+
+    // LIBRARY scene (.lsnap) and snippet (.lsnip) files
+    bool ld_library_info (const char* path, size_t len, LibraryInfoC* out);
+    /** Scene `scene` with its snippets (snippet < 0), or one of its snippets, to `path`. */
+    bool ld_show_export_library (Show*, int32_t scene, int32_t snippet, const char* path, size_t len, LdString** message);
+    /** A scene file inserted at scene `index` (-1: appended), or a snippet file added to scene `index`;
+        the new index, or -1 with `message`. */
+    int32_t ld_show_import_library (Show*, const char* path, size_t len, int32_t index, LdString** message);
 
     bool ld_show_is_fading (Show*);
     void ld_show_cancel_fade (Show*);

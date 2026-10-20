@@ -14,9 +14,10 @@ namespace livedaw::ui
       one below it that it LINKs), with REMOVE, RENAME, SKIP, LINK, UP, DOWN.
       Scene tags show as "#n", skipped scenes dimmed with the SKIP mark.
     - INT: the library folder (Documents/Sidecar/Library) and USB: a folder of
-      your choice (USB again chooses another). Shows, FX presets and channel
-      presets with their type chip and date, folders first; FOLDER, RENAME,
-      DELETE and sorting by name and type or by date.
+      your choice (USB again chooses another). Shows, scene and snippet files,
+      FX and channel presets and audio clips with their type chip and date,
+      folders first; FOLDER, RENAME, DELETE and sorting by name and type or
+      by date.
 
     Rows whose type doesn't match the open tab on the right are greyed, as on
     the console. */
@@ -58,7 +59,8 @@ public:
 
     /** Which rows are shown normally: 0 all (SHOW), 1 scenes (SNAP), 2 snippets (SNIP), -1 none. */
     void setTypeFilter (int filter);
-    /** At INT / USB: the file extension shown normally (e.g. "lfx"; empty: none). */
+    /** At INT / USB: the file extensions shown normally (e.g. "lfx", or
+        "wav;mp3"; empty: none). */
     void setFileFilter (const juce::String& extension);
 
     /** Re-reads the show and the folder (call after they changed). */

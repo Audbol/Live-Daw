@@ -17,11 +17,27 @@ All notable changes to Sidecar are listed here. Versions follow
   automix group X / Y or the selected channel's sends onto the left section.
 - An **RTA on MONITORS EQ** (the RTA key): the monitor path's spectrum, PRE or POST
   its EQ, drawn as EQ/RTA SETTINGS say.
+- LIBRARY: scene and snippet files. EXPORT on the SNAP and SNIP tabs saves the selected
+  scene (with its snippets) or snippet as a `.lsnap` / `.lsnip` file in the INT or USB
+  folder; IMPORT (or a double-click on the file) adds it to the show.
+- LIBRARY: the CLIP tab plays an audio clip (WAV, FLAC, AIFF, MP3) chosen at INT / USB
+  on the USB player, with PLAY, PAUSE, STOP, meter, time and format.
 
 ### Changed
 
 - Only the custom controls' GPIO and SD functions (no hardware) are still drawn
   disabled; the start-up notice and the known limitations say so.
+
+### Fixed
+
+- HOME > NAME took no typing from the computer keyboard until the on-screen keyboard
+  was clicked, and a space typed at the end of a name vanished; the default name
+  ("Ch 2") now starts as an empty field, so typing replaces it.
+- Scribble strips: a long name keeps its size, runs on to the right and breaks onto a
+  second row at a space, as on the WING, instead of being squeezed onto one row.
+- VIEW > CONFIG: deleting the user layer on USER 1 moved USER 2's layer onto USER 1 and
+  left nothing to delete on USER 2. The USER keys now keep their layers, and new user
+  layers are named after their key instead of copying the shown layer's name.
 
 ## [0.1.0] - beta
 
