@@ -20,6 +20,9 @@ All notable changes to Sidecar are listed here. Versions follow
   in sixes.
 - GATE / DYNAMICS: KEY TAP is drawn disabled; it looked active but the engine always
   keys from the source channel's input (listed under the known limitations).
+- CHANNEL COPY / INIT: CONN now copies the ALT input and the MAIN / ALT switch too,
+  SEND copies TAP WIDTH and TAP EQ, and a MACH EQ4 isn't copied onto an aux channel
+  (which doesn't offer it).
 
 ## [0.1.0] - beta
 

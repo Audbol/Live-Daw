@@ -3836,8 +3836,12 @@ void copyStripParams (MixerEngine& engine, const Strip& src, const Strip& dst, j
 
     if (has (Conn) && src.isInput() && dst.isInput())
     {
+        // Both inputs and the MAIN / ALT switch (as a scene's input connection).
         d.inputLeft = s.inputLeft.load();
         d.inputRight = s.inputRight.load();
+        d.altInputLeft = s.altInputLeft.load();
+        d.altInputRight = s.altInputRight.load();
+        d.altSelected = s.altSelected.load();
     }
     if (has (Config))
     {
@@ -3889,7 +3893,9 @@ void copyStripParams (MixerEngine& engine, const Strip& src, const Strip& dst, j
         copyDyn (src, dst, ModelBlock::Gate);
     if (has (DynBit))
         copyDyn (src, dst, ModelBlock::Dynamics);
-    if (has (EqBit) && src.getEqTable() == dst.getEqTable())
+    // (Aux channels don't offer the MACH EQ4.)
+    if (has (EqBit) && src.getEqTable() == dst.getEqTable()
+        && ! (dst.getKind() == StripKind::Aux && models::model (models::ChannelEq, s.eq.model.load()).token == "MACH4"))
     {
         dst.setModel (ModelBlock::Eq, s.eq.model.load());
         for (int i = 0; i < ld::kMaxEqParams; ++i)
@@ -3927,6 +3933,18 @@ void copyStripParams (MixerEngine& engine, const Strip& src, const Strip& dst, j
             to.mode = from != nullptr ? from->mode.load() : 1;
             to.levelDb = from != nullptr ? from->levelDb.load() : -100.0f;
             to.pan = from != nullptr ? from->pan.load() : 0.0f;
+        }
+        // TAP WIDTH and TAP EQ shape what the channel's TAP-mode sends take.
+        if (bothChannels)
+        {
+            d.tapWidth = s.tapWidth.load();
+            d.tapEq.on = s.tapEq.on.load();
+            for (int i = 0; i < ld::kTapEqBands; ++i)
+            {
+                d.tapEq.bands[i].gainDb = s.tapEq.bands[i].gainDb.load();
+                d.tapEq.bands[i].freq = s.tapEq.bands[i].freq.load();
+                d.tapEq.bands[i].q = s.tapEq.bands[i].q.load();
+            }
         }
         if (dst.getKind() != StripKind::Matrix && src.getKind() != StripKind::Matrix)
             for (int i = 0; i < kNumMatrices; ++i)
