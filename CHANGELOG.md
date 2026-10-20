@@ -3,7 +3,25 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
-## [Unreleased]
+## [0.1.3] - beta
+
+The first round of matching Sidecar to a real WING, side by side with the console:
+HOME, the input page, INSERT and the FX menus, the EFFECTS rack, ROUTING, SETUP,
+LIBRARY, CUSTOM CONTROLS, CHANNEL COPY / INIT, a full INITIALIZE CONSOLE page, and the
+GATE, EQ, FILTER and COMP pages now follow the console's own screens; the scribble
+strips are lit like the console's; a new console starts as a factory-initialized WING
+(faders, EQ, names, colours, gate, compressor, filter and EQ settings read from a real
+console); and the WING remote answers in the console's exact format. A tool to compare
+Sidecar with a WING parameter by parameter is included. Known limitations: see the
+[README](https://github.com/Audbol/Live-Daw/blob/main/README.md#known-limitations).
+
+### Added
+
+- `tools/wing/wing_compare.py` reads every parameter from a WING and from Sidecar
+  over OSC (read-only) and reports what differs, for checking Sidecar against a real
+  console.
+- INITIALIZE CONSOLE is a page: choose the strips, contents, DCAs, mute groups, FX
+  slots and source groups to reset (everything: a fresh 40-channel console, as before).
 
 ### Changed
 
@@ -28,27 +46,6 @@ All notable changes to Sidecar are listed here. Versions follow
 - Scribble strips are lit in the strip's colour with large two-row names; an unlit
   colour light bar is light grey. The MAIN LCD brightness default no longer dims the
   screen.
-
-## [0.1.3] - beta
-
-The first round of matching Sidecar to a real WING, side by side with the console:
-INSERT and the FX menus, the EFFECTS rack, ROUTING, SETUP, LIBRARY, CUSTOM CONTROLS,
-CHANNEL COPY / INIT, a full INITIALIZE CONSOLE page, and the GATE, EQ, FILTER and COMP
-pages now follow the console's own screens, and new channels start with the WING's
-factory gate, compressor, filter and EQ settings read from a real console. A tool to
-compare Sidecar with a WING parameter by parameter is included. Known limitations: see
-the [README](https://github.com/Audbol/Live-Daw/blob/main/README.md#known-limitations).
-
-### Added
-
-- `tools/wing/wing_compare.py` reads every parameter from a WING and from Sidecar
-  over OSC (read-only) and reports what differs, for checking Sidecar against a real
-  console.
-- INITIALIZE CONSOLE is a page: choose the strips, contents, DCAs, mute groups, FX
-  slots and source groups to reset (everything: a fresh 40-channel console, as before).
-
-### Changed
-
 - WING remote: OSC replies and node descriptions are formatted as on a real WING
   (firmware 3.1): no "r/o", nodes as "(node)", ranges and values with the
   parameter's fixed decimals, "+" on signed ranges and kHz notation ("lin [-15.0 ..
