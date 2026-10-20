@@ -183,14 +183,20 @@ public:
         auto b = getLocalBounds();
         auto bar = b.removeFromBottom (juce::roundToInt (thumbH) + 2).toFloat();
         const bool touched = isMouseOverOrDragging() || focused || encoderTouched;
-        g.setFont (wingFontPx (juce::jmin (TypeScale::paramLabel * screenH, (float) b.getHeight() * 0.5f)));
+        const auto font = wingFontPx (juce::jmin (TypeScale::paramLabel * screenH, (float) b.getHeight() * 0.5f));
+        g.setFont (font);
+        // The value keeps its width (up to 60 %), the name gets the rest, so a
+        // long name and value (POSITION 0:00.000) don't print over each other.
+        const int valueW = juce::jmin (b.getWidth() * 6 / 10, juce::roundToInt (juce::GlyphArrangement::getStringWidth (font, valueText)) + 2);
+        auto valueArea = b.removeFromRight (valueW);
+        b.removeFromRight (juce::jmin (6, b.getWidth() / 8));
         g.setColour (touched ? Colours::gold : Colours::caption);
         g.drawFittedText (binding.label.toUpperCase(), b, juce::Justification::centredLeft, 1, 0.75f);
         // A negative (inverted) WIDTH turns red, as on the console.
         const auto colour = binding.label.containsIgnoreCase ("WIDTH") && valueText.trimStart().startsWithChar ('-')
                                 ? KnobColours::red : style.colour;
         g.setColour (colour);
-        g.drawFittedText (valueText, b, juce::Justification::centredRight, 1, 0.75f);
+        g.drawFittedText (valueText, valueArea, juce::Justification::centredRight, 1, 0.75f);
 
         const float y = bar.getCentreY();
         const float x = bar.getX() + position * bar.getWidth();
