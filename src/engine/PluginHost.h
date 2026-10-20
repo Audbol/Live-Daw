@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/SandboxedPlugin.h"
+
 #include <juce_audio_processors/juce_audio_processors.h>
 
 namespace livedaw
@@ -26,13 +28,23 @@ public:
 
     /** Synchronously instantiates a plugin (message thread). The plugin being
         loaded is recorded on disk first, so a crash inside its constructor can be
-        traced and that plugin blacklisted on the next start. */
+        traced and that plugin blacklisted on the next start. With the sandbox on,
+        the plugin is created in a helper process instead (a SandboxedPlugin). */
     std::unique_ptr<juce::AudioPluginInstance> createInstance (const juce::PluginDescription& description,
                                                                double sampleRate, int blockSize,
                                                                juce::String& errorMessage);
 
     /** Plugin types sorted for a popup menu. */
     juce::Array<juce::PluginDescription> getSortedTypes() const;
+
+    /** RUN PLUGINS IN SANDBOX (SETUP > PLUGINS, experimental, off by default):
+        plugins loaded from now on run in a helper process each. Saved in the settings. */
+    bool isSandboxEnabled() const noexcept { return sandboxEnabled; }
+    void setSandboxEnabled (bool);
+    /** The sandbox settings for plugins created from now on (helper path, timeouts,
+        event handler). Plugins already loaded keep theirs. */
+    SandboxOptions getSandboxOptions() const { return *sandboxOptions; }
+    void setSandboxOptions (const SandboxOptions&);
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
@@ -41,6 +53,8 @@ private:
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList knownPlugins;
     juce::PropertiesFile* settings;
+    bool sandboxEnabled = false;
+    std::shared_ptr<const SandboxOptions> sandboxOptions;
 
     JUCE_DECLARE_NON_COPYABLE (PluginHost)
 };

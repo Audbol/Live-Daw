@@ -30,8 +30,9 @@ Choose the driver and device in SETUP > AUDIO. For low latency, add yourself to 
 Menu entry (tarball)
 --------------------
   mkdir -p ~/.local/bin ~/.local/share/applications ~/.local/share/icons/hicolor/256x256/apps
-  cp Sidecar ~/.local/bin/
+  cp Sidecar SidecarPluginHost ~/.local/bin/
   cp sidecar.desktop ~/.local/share/applications/
   cp sidecar.png ~/.local/share/icons/hicolor/256x256/apps/
 
-(~/.local/bin must be on your PATH for the menu entry's "Exec=Sidecar".)
+(~/.local/bin must be on your PATH for the menu entry's "Exec=Sidecar". SidecarPluginHost,
+the plugin sandbox helper, must stay next to Sidecar.)

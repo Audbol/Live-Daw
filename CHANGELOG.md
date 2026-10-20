@@ -3,6 +3,19 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Added
+
+- Experimental plugin sandbox: SETUP > PLUGINS > RUN PLUGINS IN SANDBOX (off by
+  default) runs each plugin in its own helper process (`SidecarPluginHost`, shipped
+  next to the app). Audio goes through shared memory with a bounded wait, so a plugin
+  that crashes or hangs only bypasses its FX slot (dry signal, event log entry); the
+  helper is restarted with the plugin's last known state. State save / restore and
+  parameter changes work through the sandbox; the plugin's own editor opens in a
+  window of the helper process. The sandbox adds one block of latency (shown on the
+  EFFECTS screen, not compensated).
+
 ## [0.1.0] - beta
 
 The first public release. Sidecar was developed as "Live DAW" before it was renamed;

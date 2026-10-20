@@ -1791,7 +1791,9 @@ namespace
     };
 
     //==============================================================================
-    /** PLUGINS (app-specific): plugin scanning; the plugins become FX slot devices. */
+    /** PLUGINS (app-specific): plugin scanning; the plugins become FX slot devices.
+        RUN PLUGINS IN SANDBOX (experimental) runs each plugin loaded afterwards in a
+        helper process (SandboxedPlugin). */
     class PluginsTab final : public juce::Component, private juce::ChangeListener
     {
     public:
@@ -1800,6 +1802,7 @@ namespace
             scan.onClick = [this] { if (ctx.showPluginScanner) ctx.showPluginScanner(); };
             styleIconKey (scan);
             addAndMakeVisible (scan);
+            addAndMakeVisible (sandbox);
             ctx.host.getKnownPlugins().addChangeListener (this);
         }
 
@@ -1823,18 +1826,42 @@ namespace
                  << ". Load them into FX slots on the EFFECTS screen (device EXT), then assign the slots to channel inserts. "
                  << "Plugins are scanned in a separate process, so a crashing plugin can't take the console down.";
             g.drawFittedText (text, r.removeFromTop (70), juce::Justification::topLeft, 4);
+
+            // The sandbox option: the key is placed by resized().
+            g.setColour (Dark::text);
+            g.setFont (wingFont (TypeScale::body, WingWeight::SemiBold));
+            g.drawText ("RUN PLUGINS IN SANDBOX (EXPERIMENTAL)", sandboxRow.withRight (sandbox.getX() - 8), juce::Justification::centredLeft);
+            g.setColour (Dark::textDim);
+            g.setFont (wingFont (TypeScale::body));
+            g.drawFittedText ("Each plugin loaded from now on runs in its own helper process: if it crashes or hangs, its FX slot is "
+                              "bypassed (dry signal), the event log says so and the console keeps running. Adds one audio block of "
+                              "latency, which is not compensated. The plugin's own editor opens in a separate window. "
+                              "Plugins already loaded stay where they are until you reload them (or the show).",
+                              sandboxText, juce::Justification::topLeft, 5);
         }
 
         void resized() override
         {
-            box = getLocalBounds().withWidth (juce::jmin (getWidth(), screenCap (720))).withHeight (juce::jmin (getHeight(), screenCap (240)));
-            scan.setBounds (darkPanelBody (box, true).reduced (12, 10).removeFromBottom (44).removeFromLeft (260));
+            box = getLocalBounds().withWidth (juce::jmin (getWidth(), screenCap (720))).withHeight (juce::jmin (getHeight(), screenCap (400)));
+            auto r = darkPanelBody (box, true).reduced (12, 10);
+            scan.setBounds (r.removeFromBottom (44).removeFromLeft (260));
+            r.removeFromTop (34 + 70 + 8);
+            sandboxRow = r.removeFromTop (32);
+            sandbox.setBounds (sandboxRow.withLeft (sandboxRow.getRight() - 70).reduced (0, 2));
+            sandboxText = r.removeFromTop (juce::jmax (0, r.getHeight() - 8));
         }
 
     private:
         UiContext& ctx;
         WingKey scan { "SCAN FOR PLUGINS", Icon::Folder };
-        juce::Rectangle<int> box;
+        OnKey sandbox { [this] { return ctx.host.isSandboxEnabled(); },
+                        [this] (bool on)
+                        {
+                            ctx.host.setSandboxEnabled (on);
+                            ctx.log.info (on ? "Plugin sandbox on (experimental): plugins loaded from now on run in a helper process"
+                                             : "Plugin sandbox off: plugins loaded from now on run inside Sidecar");
+                        } };
+        juce::Rectangle<int> box, sandboxRow, sandboxText;
     };
 } // namespace
 

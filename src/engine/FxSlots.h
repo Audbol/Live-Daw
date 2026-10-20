@@ -21,7 +21,8 @@ namespace livedaw
     Replaced plugins are destroyed on the message thread once the engine can no
     longer call them (the engine invokes the release callback from
     ld_engine_collect). Plugins run in stereo: a mono strip feeds both inputs and
-    takes the left output back.
+    takes the left output back. A sandboxed plugin (SandboxedPlugin) that misses a
+    block or loses its helper process is reported like one that throws.
 
     Stateless view: any number of FxSlots may view one engine. */
 class FxSlots
@@ -37,6 +38,11 @@ public:
 
     /** Message thread only. */
     juce::AudioPluginInstance* getPlugin (int slot) const noexcept;
+    /** Message thread: the slot's plugin runs in the plugin sandbox (a helper process). */
+    bool isSandboxed (int slot) const noexcept;
+    /** Message thread: the plugin's reported latency in samples (with the sandbox's
+        block). The engine doesn't compensate it yet. */
+    int getLatencySamples (int slot) const noexcept;
 
     /** The slot's model (index into model table 4: kFxNone, kFxExt or a device). */
     int getModel (int slot) const noexcept { return params (slot).model.load(); }

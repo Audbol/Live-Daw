@@ -469,8 +469,12 @@ public:
             g.setFont (wingFont (TypeScale::value));
             juce::String info ("EXT DEVICE: A VST3 / AU / LV2 PLUGIN");
             if (plugin != nullptr)
+            {
                 info = plugin->getPluginDescription().manufacturerName.toUpperCase() + "   " + plugin->getPluginDescription().pluginFormatName
                        + "   LOAD " + juce::String (juce::roundToInt (fx.getLoad (slot) * 100.0f)) + " %";
+                if (fx.isSandboxed (slot)) // the sandbox's block of latency isn't compensated
+                    info << "   SANDBOX, LATENCY " << fx.getLatencySamples (slot) << " SAMPLES";
+            }
             g.drawFittedText (info, r.removeFromTop (28), juce::Justification::centredLeft, 1);
         }
     }

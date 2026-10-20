@@ -168,9 +168,12 @@ This list matches the notice Sidecar shows at start-up.
   folder on disk (with an editor); the USB recorder uses a folder of your choice
   instead of a USB stick. The MP3 encoder is basic (constant bit rate, a simple
   masking model).
-- **Plugins** (VST3, AU, LV2) run inside the mixer process, not in a sandbox: a plugin
-  that crashes takes Sidecar down (safe mode then restores the show without plugins).
-  There is no plugin delay compensation.
+- **Plugins** (VST3, AU, LV2) run inside the mixer process by default: a plugin that
+  crashes takes Sidecar down (safe mode then restores the show without plugins). The
+  experimental **plugin sandbox** (SETUP > PLUGINS > RUN PLUGINS IN SANDBOX, off by
+  default) runs each plugin in its own helper process instead: a crash or hang only
+  bypasses that FX slot. It adds one audio block of latency, and the plugin's editor
+  opens in a separate window. There is no plugin delay compensation.
 - **WING remote apps:** the WING network protocols cover 82.8 % of the WING 3.1
   parameter tree (the rest is stored but does nothing). WING Edit and WING Copilot
   have not been tried, and exported WING snapshots have not been loaded into a

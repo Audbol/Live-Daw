@@ -138,8 +138,8 @@ Barlow Condensed.
     AUTOMIX), SURFACE (meter taps, SEL DBL CLICK, SOF and scribble options, CH
     AUTOSELECT, FADER SPEED, paging, user layer link, alternative SOF, section widths),
     REMOTE (MIDI REMOTE CONTROL and MIDI PORTS, WING REMOTE) and DAW (DAW CONTROL, DAW
-    PORTS; see *MIDI and DAW remote control*), PLUGINS and LOG (system health and the
-    event log), with INITIALIZE CONSOLE and SHUTDOWN. The status bar has MONITORS (the
+    PORTS; see *MIDI and DAW remote control*), PLUGINS (scanning, and RUN PLUGINS IN
+    SANDBOX; see *Stability*) and LOG (system health and the event log), with INITIALIZE CONSOLE and SHUTDOWN. The status bar has MONITORS (the
     toolbar with the talk keys, PHONES / SPEAKERS / PH+SPK, DIM, MUTE, MONO, LR SWAP;
     TALK A / B: switch mode, talkback channel, AUTO DIM, USE SEND LEVELS and the bus,
     matrix and main destinations; PHONES and SPEAKERS, each its own: SOURCE, SRC LEVEL,
@@ -421,6 +421,7 @@ Live sound gets no second take, so stability is designed in at every layer:
 | Plugins | A plugin that outputs NaN/Inf or throws is **auto-bypassed on the spot**. Its input passes through, and the FX slot is flagged. Two inserts on one slot never run it concurrently. Per-slot CPU is measured. |
 | Plugin scanning | Scans run **in a separate process**, so a plugin that crashes during a scan only kills the scanner. |
 | Plugin loading | The plugin being loaded is recorded on disk first. If it crashes the app, it's blacklisted on the next start. |
+| Plugin sandbox (experimental) | With **SETUP > PLUGINS > RUN PLUGINS IN SANDBOX** on, each plugin loaded afterwards runs in its own helper process (see below): a plugin that crashes or hangs only takes its helper down. Its FX slot is bypassed, the event log says so, and the console keeps running. |
 | Strips | Every strip checks its own output. NaN/Inf is silenced and the DSP reset before it can poison a bus. |
 | Outputs | A brick-wall **safety clip** (adjustable ceiling) protects the amplifiers and speakers. |
 | Device | A **watchdog** reopens the audio device if it errors, disappears or stops calling back. Retries back off. |
@@ -430,3 +431,33 @@ Live sound gets no second take, so stability is designed in at every layer:
 | Testing | Unit, integration (real LV2 plugins) and multi-threaded stress tests run under AddressSanitizer, UndefinedBehaviorSanitizer and ThreadSanitizer in CI. |
 
 The **UTILITY** screen shows device health, xruns, DSP load, fault counters and an event log.
+
+### Plugin sandbox (experimental)
+
+**SETUP > PLUGINS > RUN PLUGINS IN SANDBOX** (off by default) runs every plugin you
+load from then on in its own helper process (`SidecarPluginHost`, installed with
+Sidecar). Plugins already loaded keep running where they are until you load them
+again (or reload the show); shows store only the plugin and its state, so they open
+either way.
+
+- **Faults:** if the plugin crashes, or doesn't deliver a block in time, its FX slot is
+  bypassed on the spot (the dry signal passes; the slot shows FAULT - BYPASSED) and
+  the event log says what happened. Sidecar restarts the helper with the plugin's last
+  known state (from the last show save, or at most 10 s old); the slot stays bypassed
+  until you clear the fault (EFFECTS, UTILITY). A plugin that fails three times in a
+  minute stays off until you load it again.
+- **Latency:** the sandbox adds one audio block (the buffer size, e.g. 128 samples) on
+  top of the plugin's own latency; the EFFECTS screen shows it. Sidecar has no plugin
+  delay compensation yet, so a sandboxed insert is one block late against the rest of
+  the console, and an FX MIX below 100 % mixes the dry signal with the late wet one
+  (comb filtering). Keep FX MIX at 100 %, or leave latency-critical plugins in-process.
+- **Editor:** opening the plugin shows a Sidecar window with SHOW PLUGIN WINDOW and
+  generic controls for its parameters; the plugin's own editor opens in a separate
+  window of the helper. If it can't open (no display, or the plugin refuses), the
+  window says so and the generic controls still work.
+- **State and automation:** saving and loading shows, scenes that recall plugin state
+  and parameter changes from Sidecar all go through the sandbox. Plugins run in stereo
+  and take no MIDI, as in-process.
+- Each sandboxed plugin is a process of its own, and every block makes a round trip
+  to it, so the sandbox costs some memory and CPU per plugin. Restarting a helper
+  briefly holds up the screens while the plugin reloads.

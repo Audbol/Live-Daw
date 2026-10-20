@@ -207,11 +207,25 @@ public:
         getRunningMarker().replaceWithText (juce::String (juce::Time::getCurrentTime().toMilliseconds()));
 
         pluginHost = std::make_unique<PluginHost> (&settings);
+        {
+            // Sandboxed plugins report their crashes, hangs and restarts here.
+            auto sandbox = pluginHost->getSandboxOptions();
+            sandbox.onEvent = [this] (const juce::String& message, bool isError)
+            {
+                if (isError)
+                    log.error (message);
+                else
+                    log.warning (message);
+            };
+            pluginHost->setSandboxOptions (sandbox);
+        }
         engine = std::make_unique<MixerEngine>();
         show = std::make_unique<Show> (*engine, *pluginHost);
 
         log.info ("Sidecar " + getApplicationVersion() + " starting, "
                   + juce::String (engine->getNumWorkerThreads() + 1) + " DSP threads");
+        if (pluginHost->isSandboxEnabled())
+            log.info ("Plugins run in the plugin sandbox (experimental)");
 
         const auto crashedPlugin = pluginHost->checkForCrashDuringPluginLoad();
         if (crashedPlugin.isNotEmpty())
