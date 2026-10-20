@@ -67,10 +67,28 @@ All notable changes to Sidecar are listed here. Versions follow
   use their own. Shows from before load a centred send linked (it sounds as before)
   and a panned one with its pan. The engine's ABI version is 11.
 
+- Scene fades also glide DCA faders, strip widths and the bus and matrix send pans
+  (before: faders, pans and send levels only). Switches and settings still apply when
+  the fade starts.
+- Channel strip section with an analog EQ model: SHIFT pages through all of the
+  model's parameters four at a time (1-4, 5-8, 9-12, 13-16), so models with 12-16
+  parameters are reachable from the encoders; the captions show the page and the
+  parameter on each encoder.
 - Only the custom controls' GPIO and SD functions (no hardware) are still drawn
   disabled; the start-up notice and the known limitations say so.
 
 ### Fixed
+
+- A scene fade overwrote a fader (or send, pan, DCA) moved while it ran until the
+  fade ended. Moving one now takes it out of the fade, from the surface, the screen,
+  MIDI, a DAW remote or a WING remote.
+- The send pan pop-up (HOME > BUS / MATRIX SENDS, the pan ring) had only an on/off
+  link key, so LINK REVERSED could only be set on FEED CONFIGURATION. Its PAN LINK is
+  now OFF / LINK / LINK REVERSED.
+- HI CUT reset (double-click) went to 10 kHz while a new or INITed channel has 18 kHz;
+  it now resets to 18 kHz on the FILTER screen, the channel strip section and the
+  4-Channel section. Double-clicking the LC, HC (or all-pass) line on the FILTER graph
+  resets it too.
 
 - HOME > NAME took no typing from the computer keyboard until the on-screen keyboard
   was clicked, and a space typed at the end of a name vanished; the default name

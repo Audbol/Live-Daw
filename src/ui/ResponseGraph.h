@@ -99,6 +99,8 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
+    /** On the FILTER graph: resets the LC / HC (or all-pass) line to its default. */
+    void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
     static constexpr float kRangeDb = 18.0f;

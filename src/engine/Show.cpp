@@ -507,13 +507,13 @@ void Show::setSnippetFireWithScene (int sceneIndex, int snippetIndex, bool fire)
 //==============================================================================
 void Show::cancelFade()
 {
-    ld::ld_show_cancel_fade (handle);
+    ld::ld_show_cancel_fade (handle, engine.getHandle());
     stopTimer();
 }
 
 void Show::timerCallback()
 {
-    if (! ld::ld_show_tick (handle))
+    if (! ld::ld_show_tick (handle, engine.getHandle()))
         stopTimer();
 }
 

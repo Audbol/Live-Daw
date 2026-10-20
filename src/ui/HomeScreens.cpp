@@ -1210,7 +1210,7 @@ public:
     std::vector<HomeKnob> knobs() override
     {
         auto& f = strip.params.filter;
-        std::vector<HomeKnob> k { { wingFreq ("LC FREQ", f.lowCutFreq, 20.0f, 2000.0f, 80.0f), freqStyle (graph) } };
+        std::vector<HomeKnob> k { { wingFreq ("LC FREQ", f.lowCutFreq, 20.0f, 2000.0f, kLowCutDefaultHz), freqStyle (graph) } };
         // The tool filter's parameters (TILT...) in the middle, HC FREQ always on the 6th knob.
         const auto& spec = models::model (models::FilterTools, f.toolModel.load());
         const auto colour = toolFilterColour (f.toolModel.load());
@@ -1218,7 +1218,7 @@ public:
             k.push_back ({ bindConsoleParam (f.toolParams[i], spec.params[(size_t) i]), toolStyle (graph, colour) });
         while (k.size() < 5)
             k.push_back ({});
-        k.push_back ({ wingFreq ("HC FREQ", f.highCutFreq, 50.0f, 20000.0f, 10000.0f), freqStyle (graph) });
+        k.push_back ({ wingFreq ("HC FREQ", f.highCutFreq, 50.0f, 20000.0f, kHighCutDefaultHz), freqStyle (graph) });
         return k;
     }
 
@@ -2667,7 +2667,8 @@ void paintSendPan (juce::Graphics& g, juce::Rectangle<float> r, float pan, float
 }
 
 /** The pop-up of a send's pan knob: MODE, IGNORE CHANNEL MUTE (TAP mode
-    only), LINK SEND PAN TO CHANNEL PAN and the send pan. */
+    only), PAN LINK (OFF, LINK to the channel pan or LINK REVERSED, mirrored, as
+    FEED CONFIGURATION sets it) and the send pan. */
 class SendOptions final : public juce::Component, private juce::Timer
 {
 public:
@@ -2677,7 +2678,7 @@ public:
           panBox (wingPan ("PAN", s.pan)), canIgnore (canIgnoreMute)
     {
         bindKey (ignoreMute, s.ignoreMute);
-        bindKey (link, s.panLink);
+        link = makeLink (s.panLink, s.panReversed);
         isTap = [&s] { return s.mode.load() == 0; };
         isLinked = [&s] { return s.panLink.load(); };
         setUp();
@@ -2692,7 +2693,7 @@ public:
         isTap = [&m] { return m.pre.load(); };
         if (inputSource)
         {
-            bindKey (link, m.panLink);
+            link = makeLink (m.panLink, m.panReversed);
             isLinked = [&m] { return m.panLink.load(); };
         }
         else
@@ -2702,17 +2703,29 @@ public:
         setUp();
     }
 
+    static std::unique_ptr<Segmented> makeLink (std::atomic<bool>& linked, std::atomic<bool>& reversed)
+    {
+        auto keys = std::make_unique<Segmented> (juce::StringArray { "OFF", "LINK", "LINK\nREVERSED" },
+                                                 [&] { return linked.load() ? (reversed.load() ? 2 : 1) : 0; },
+                                                 [&] (int i)
+                                                 {
+                                                     reversed = i == 2;
+                                                     linked = i > 0;
+                                                 });
+        keys->twoLines = true;
+        return keys;
+    }
+
     void setUp()
     {
         ignoreMute.twoLines = true;
-        link.twoLines = true;
         for (juce::Component* c : { (juce::Component*) &mode, (juce::Component*) &ignoreMute, (juce::Component*) &panBox })
             addAndMakeVisible (c);
-        addChildComponent (link);
-        link.setVisible (isLinked != nullptr && link.onClick != nullptr);
+        if (link != nullptr)
+            addAndMakeVisible (*link);
         timerCallback();
         startTimerHz (6);
-        setSize (300, 210);
+        setSize (300, link != nullptr ? 276 : 210);
     }
 
     void timerCallback() override
@@ -2727,6 +2740,8 @@ public:
         g.setColour (Colours::textDim);
         g.setFont (wingFont (TypeScale::caption));
         g.drawText ("MODE", getLocalBounds().reduced (10, 6).removeFromTop (14), juce::Justification::centredLeft);
+        if (link != nullptr)
+            g.drawText ("PAN LINK", link->getBounds().withY (link->getY() - 16).withHeight (14), juce::Justification::centredLeft);
     }
 
     void resized() override
@@ -2735,16 +2750,20 @@ public:
         r.removeFromTop (16);
         mode.setBounds (r.removeFromTop (32));
         r.removeFromTop (8);
-        auto row = r.removeFromTop (46);
-        ignoreMute.setBounds (row.removeFromLeft (row.getWidth() / 2).reduced (2, 0));
-        link.setBounds (row.reduced (2, 0));
+        ignoreMute.setBounds (r.removeFromTop (46).withTrimmedRight (r.getWidth() / 2).reduced (2, 0));
+        if (link != nullptr)
+        {
+            r.removeFromTop (24);
+            link->setBounds (r.removeFromTop (42));
+        }
         r.removeFromTop (8);
         panBox.setBounds (r.removeFromTop (44));
     }
 
 private:
     Segmented mode;
-    IconKey ignoreMute { "IGNORE CHANNEL MUTE", std::nullopt, colours::accent }, link { "LINK SEND PAN TO CHANNEL PAN", std::nullopt, colours::accent };
+    IconKey ignoreMute { "IGNORE CHANNEL MUTE", std::nullopt, colours::accent };
+    std::unique_ptr<Segmented> link; // PAN LINK, where the send has it
     KnobBox panBox;
     bool canIgnore;
     std::function<bool()> isTap, isLinked;

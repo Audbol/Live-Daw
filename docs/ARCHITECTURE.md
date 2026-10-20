@@ -450,9 +450,14 @@ Show
   It then applies the scene's auto-fire snippets.
 - Snippets ignore recall safes, which makes them the tool for deliberately changing a
   protected channel.
-- Fades collect fade targets (fader, pan and send levels) instead of setting them, and
-  `ld_show_tick` interpolates the atomics. A fade target holds its strip (`Arc`), so
-  removing a strip mid-fade is safe. A new recall finishes any fade still running.
+- Fades collect fade targets (strip and DCA faders, pan, width, bus / main / matrix
+  send levels and bus / matrix send pans) instead of setting them, and
+  `ld_show_tick` interpolates the atomics; everything else applies at the start. A
+  fade target holds its strip (`Arc`), so removing a strip mid-fade is safe. Each
+  target remembers the value it last wrote: a value that differs (by more than 0.01)
+  was moved by the surface, the UI, MIDI or a remote, and leaves the fade, as a moved
+  fader does on a console. A new recall finishes any fade still running, leaving
+  the moved values alone.
 - FX slots recall their built-in device and its parameters. A plugin's state is
   recalled only when the same plugin is already in that slot; recalls never
   instantiate or remove plugins, and a premium device is refused in slots 9-16.

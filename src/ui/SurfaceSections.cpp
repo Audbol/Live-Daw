@@ -72,9 +72,18 @@ ChannelStripSection::ChannelStripSection (UiContext& c) : ctx (c)
 
     shiftKey.shape = SurfaceKey::Shape::Square;
     shiftKey.ledColour = Colours::keyWhite;
-    shiftKey.setTooltip ("SHIFT: the shelving filters (bus EQs: bands 5-8)");
-    shiftKey.onPress = [this] { eqShift = ! eqShift; bindEq(); };
-    shiftKey.ledState = [this] { return eqShift ? SurfaceKey::Lit : SurfaceKey::Off; };
+    shiftKey.setTooltip ("SHIFT: the shelving filters (bus EQs: bands 5-8); analog EQ models: the next four parameters");
+    shiftKey.onPress = [this]
+    {
+        // Analog models page through their parameters four at a time (1-4, 5-8,
+        // 9-12, 13-16, back to 1-4); the WING EQ toggles bands 5-8 / the shelves.
+        if (eqPages > 0)
+            eqPage = (eqPage + 1) % eqPages;
+        else
+            eqShift = ! eqShift;
+        bindEq();
+    };
+    shiftKey.ledState = [this] { return (eqPages > 0 ? eqPage > 0 : eqShift) ? SurfaceKey::Lit : SurfaceKey::Off; };
 
     eqKey.ledColour = Colours::keyLayer;
     eqKey.setTooltip ("EQ: press to show it on the screen, hold to switch it on/off");
@@ -225,8 +234,8 @@ std::vector<KnobBinding> ChannelStripSection::slotParams (int slot) const
         case Filter:
             if (channel)
             {
-                list.push_back (bindFreq ("LO CUT", p.filter.lowCutFreq, 20.0f, 2000.0f, 80.0f));
-                list.push_back (bindFreq ("HI CUT", p.filter.highCutFreq, 50.0f, 20000.0f, 10000.0f));
+                list.push_back (bindFreq ("LO CUT", p.filter.lowCutFreq, 20.0f, 2000.0f, kLowCutDefaultHz));
+                list.push_back (bindFreq ("HI CUT", p.filter.highCutFreq, 50.0f, 20000.0f, kHighCutDefaultHz));
                 modelParams (models::FilterTools, p.filter.toolModel.load(), p.filter.toolParams);
             }
             break;
@@ -345,6 +354,8 @@ void ChannelStripSection::bindEq()
         k.setBinding ({});
     eqMix.setBinding ({});
     eqKey.setEnabled (strip != nullptr);
+    eqPages = 0;
+    repaint(); // the band captions
     if (strip == nullptr)
         return;
 
@@ -356,10 +367,12 @@ void ChannelStripSection::bindEq()
 
     if (bands.isEmpty())
     {
-        // Analog models: their parameters, four at a time.
+        // Analog models: their parameters, four at a time, SHIFT for the next four.
+        eqPages = juce::jmax (1, ((int) spec.params.size() + 3) / 4);
+        eqPage = juce::jlimit (0, eqPages - 1, eqPage);
         for (int i = 0; i < 4; ++i)
         {
-            const int index = (eqShift ? 4 : 0) + i;
+            const int index = eqPage * 4 + i;
             if (index < (int) spec.params.size())
                 eqKnobs[i].setBinding (bindModelParam (eq.values[index], spec.params[(size_t) index]));
         }
@@ -443,7 +456,7 @@ juce::String ChannelStripSection::panelState() const
     for (int i = 0; i < 16; ++i)
         if (auto* send = strip->sends.find (i))
             s << (send->enabled.load() ? i : 0) << ',';
-    s << stripName (*strip) << strip->getColourIndex() << shownSlot << eqBand << bit (eqMixShown) << bit (eqShift);
+    s << stripName (*strip) << strip->getColourIndex() << shownSlot << eqBand << bit (eqMixShown) << bit (eqShift) << eqPage;
     auto knob = shownSlot == EqSlot ? (eqMixShown ? &eqMix : &eqKnobs[eqBand]) : &slotKnobs[shownSlot];
     if (knob->getBinding().isValid())
         s << knob->getBinding().label << knob->getBinding().text();
@@ -478,7 +491,10 @@ void ChannelStripSection::paint (juce::Graphics& g)
     drawSilk (g, below (*slotKeys[Input], 12), "(HOLD FOR ON/OFF)", small);
     drawSilk (g, below (eqKey, 12), "(HOLD FOR ON/OFF)", small);
     drawSilk (g, shiftKey.getBounds().withHeight (12).translated (0, -13).expanded (8, 0).toFloat(), "SHIFT", small);
-    drawSilk (g, below (shiftKey, 12), "5-8", small);
+    // Analog EQ models: the parameters SHIFT has on the encoders.
+    const auto pageText = juce::String (eqPage * 4 + 1) + "-" + juce::String (eqPage * 4 + 4);
+    drawSilk (g, below (shiftKey, 12), eqPages > 0 ? pageText : juce::String ("5-8"), small, juce::Justification::centred,
+              eqPages > 0 && eqPage > 0 ? Colours::yellow : Colours::silk);
     drawSilk (g, below (gainKey, 12), "GAIN", small);
     drawSilk (g, below (widthKey, 12), "WIDTH", small);
     drawSilk (g, below (freqKey, 12), "FREQ", small);
@@ -486,6 +502,15 @@ void ChannelStripSection::paint (juce::Graphics& g)
     drawSilk (g, below (eqMix, 12), "BLEND/MIX", small);
     for (int i = 0; i < 4; ++i)
     {
+        if (eqPages > 0)
+        {
+            // Analog models: the parameter on the encoder (lit while touched).
+            const auto& b = eqKnobs[i].getBinding();
+            const bool selected = shownSlot == EqSlot && ! eqMixShown && eqBand == i;
+            drawSilk (g, below (eqKnobs[i], 12).reduced (10.0f, 0.0f), b.isValid() ? b.label : juce::String(), small,
+                      juce::Justification::centred, selected ? Colours::yellow : Colours::silk);
+            continue;
+        }
         // "[1] 5": the band digit inverted; the selected band's box lit.
         auto cap = below (eqKnobs[i], 12).withSizeKeepingCentre (26.0f, 12.0f);
         auto box = cap.removeFromLeft (12.0f);

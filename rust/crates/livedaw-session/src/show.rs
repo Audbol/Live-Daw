@@ -5,7 +5,10 @@
 //!   patching), layers and every scene.
 //! * Scene   - a snapshot of the console. Recalling it applies the sections in
 //!   its recall scope to every strip that isn't recall-safe, optionally gliding
-//!   faders, pans and send levels over a fade time.
+//!   the continuous values (faders, DCA faders, pans, widths, send levels and
+//!   pans) over a fade time. Everything else (mutes, switches, modes, models,
+//!   EQ and dynamics settings) jumps when the fade starts. A value moved during
+//!   the fade (surface, MIDI, a remote) leaves the fade and stays where it is put.
 //! * Snippet - a partial snapshot that belongs to a scene: chosen strips x chosen
 //!   sections. Fired on its own, or automatically straight after its scene.
 //!
@@ -200,6 +203,19 @@ struct Fade {
     param: FadeParam,
     start: f32,
     target: f32,
+    /// The value the fade last wrote: anything else means it was moved.
+    written: f32,
+}
+
+/// How far a fading value may drift from what the fade wrote before it counts
+/// as moved by hand (dB, pan and width units), so a remote echoing a value
+/// back with a little rounding doesn't stop the fade.
+const FADE_TAKEOVER: f32 = 0.01;
+
+impl Fade {
+    fn moved(&self, current: f32) -> bool {
+        (current - self.written).abs() > FADE_TAKEOVER
+    }
 }
 
 pub struct Show {
@@ -410,7 +426,7 @@ impl Show {
         let (scope, fade_seconds) = (scene.recall_scope(), scene.fade_seconds);
         let snippets: Vec<Snippet> = scene.snippets.iter().filter(|s| s.fire_with_scene && s.state.is_some()).cloned().collect();
 
-        self.cancel_fade();
+        self.cancel_fade(engine);
 
         let fade = fade_seconds > 0.0;
         let mut targets = Vec::new();
@@ -425,7 +441,7 @@ impl Show {
         }
 
         if fade {
-            self.start_fade(targets, fade_seconds);
+            self.start_fade(engine, targets, fade_seconds);
         }
         self.current_scene = index;
         result
@@ -443,7 +459,7 @@ impl Show {
         ignore_safes: bool,
     ) -> ApplyResult {
         let Some(state) = self.scene(index).and_then(|s| s.state.clone()) else { return ApplyResult::default() };
-        self.cancel_fade();
+        self.cancel_fade(engine);
         let safe = self.global_safe.clone();
         let result = match scope {
             Some(scope) => {
@@ -729,14 +745,15 @@ impl Show {
         !self.fades.is_empty()
     }
 
-    fn start_fade(&mut self, targets: Vec<FadeTarget>, seconds: f64) {
+    fn start_fade(&mut self, engine: &Engine, targets: Vec<FadeTarget>, seconds: f64) {
         self.fades.clear();
         for t in targets {
             // A later target for the same parameter (e.g. from a snippet) wins.
             if let Some(existing) = self.fades.iter_mut().find(|f| f.param.same(&t.param)) {
                 existing.target = t.target;
-            } else if let Some(v) = t.param.value() {
-                self.fades.push(Fade { start: v.load(), param: t.param, target: t.target });
+            } else if let Some(v) = t.param.value(engine) {
+                let start = v.load();
+                self.fades.push(Fade { start, param: t.param, target: t.target, written: start });
             }
         }
         self.fade_start = Instant::now();
@@ -744,30 +761,38 @@ impl Show {
     }
 
     /// Jumps to the end of a running fade so the previous scene is fully applied.
-    pub fn cancel_fade(&mut self) {
+    /// Values moved by hand during the fade stay where they were put.
+    pub fn cancel_fade(&mut self, engine: &Engine) {
         for f in self.fades.drain(..) {
-            if let Some(v) = f.param.value() {
+            if let Some(v) = f.param.value(engine).filter(|v| !f.moved(v.load())) {
                 v.store(f.target);
             }
         }
     }
 
     /// Advances running fades (call at ~60 Hz). Returns true while fading.
-    pub fn tick(&mut self) -> bool {
-        self.tick_at(Instant::now())
+    pub fn tick(&mut self, engine: &Engine) -> bool {
+        self.tick_at(engine, Instant::now())
     }
 
-    pub fn tick_at(&mut self, now: Instant) -> bool {
+    /// As on a console with moving faders, a value moved while it fades (from
+    /// the surface, the UI, MIDI or a remote) is taken out of the fade: the
+    /// fade notices that the value is no longer the one it wrote and leaves it.
+    pub fn tick_at(&mut self, engine: &Engine, now: Instant) -> bool {
         if self.fades.is_empty() {
             return false;
         }
         let elapsed = now.saturating_duration_since(self.fade_start).as_secs_f64();
         let t = (elapsed / self.fade_duration.as_secs_f64().max(0.001)).clamp(0.0, 1.0) as f32;
-        for f in &self.fades {
-            if let Some(v) = f.param.value() {
-                v.store(f.start + t * (f.target - f.start));
+        self.fades.retain_mut(|f| {
+            let Some(v) = f.param.value(engine) else { return false };
+            if f.moved(v.load()) {
+                return false;
             }
-        }
+            f.written = f.start + t * (f.target - f.start);
+            v.store(f.written);
+            true
+        });
         if t >= 1.0 {
             self.fades.clear();
         }
@@ -807,7 +832,7 @@ impl Show {
         xml: &Element,
         load_plugins: bool,
     ) -> Result<Vec<String>, String> {
-        self.cancel_fade();
+        self.cancel_fade(engine);
 
         // Version 1 files were a bare console ("session").
         if xml.has_tag("LiveDAWSession") {
@@ -915,7 +940,7 @@ impl Show {
 
     /// Clears scenes and resets the console to `num_channels` channels (the WING has 40).
     pub fn clear(&mut self, engine: &Engine, num_channels: usize) {
-        self.cancel_fade();
+        self.cancel_fade(engine);
         self.scenes.clear();
         self.current_scene = -1;
         self.name = "Untitled show".into();

@@ -949,8 +949,8 @@ extern "C"
     int32_t ld_show_import_library (Show*, const char* path, size_t len, int32_t index, LdString** message);
 
     bool ld_show_is_fading (Show*);
-    void ld_show_cancel_fade (Show*);
-    bool ld_show_tick (Show*);
+    void ld_show_cancel_fade (Show*, const Engine*);
+    bool ld_show_tick (Show*, const Engine*);
 
     LdString* ld_show_to_xml (Show*, const Engine*);
     /** False if nothing was loaded (error in *message); true may still set *message (warnings). */
