@@ -82,12 +82,16 @@ public:
         g.drawRect (b, sel ? 2.5f : 1.5f);
 
         // Slot number, bottom right.
-        auto number = juce::Rectangle<float> (b.getRight() - 22.0f, b.getBottom() - 18.0f, 20.0f, 16.0f);
+        // (The box grows with the text: two digits didn't fit at larger screen sizes.)
+        const auto font = wingFont (TypeScale::body, WingWeight::SemiBold);
+        const juce::String text (slot + 1);
+        const float w = juce::jmax (20.0f, juce::GlyphArrangement::getStringWidth (font, text) + 6.0f);
+        auto number = juce::Rectangle<float> (b.getRight() - w - 2.0f, b.getBottom() - 18.0f, w, 16.0f);
         g.setColour (Dark::textDim);
         g.fillRect (number);
         g.setColour (juce::Colours::black);
-        g.setFont (wingFont (TypeScale::body, WingWeight::SemiBold));
-        g.drawText (juce::String (slot + 1), number, juce::Justification::centred);
+        g.setFont (font);
+        g.drawText (text, number, juce::Justification::centred);
 
         auto inner = b.reduced (6.0f);
         auto left = inner.removeFromLeft (inner.getWidth() * 0.28f);

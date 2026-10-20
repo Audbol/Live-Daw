@@ -28,6 +28,8 @@ All notable changes to Sidecar are listed here. Versions follow
   500 ft or 24000 samples, so the two controls disagreed.
 - INPUT: the TRIM & BALANCE pad's balance handle follows the ST key while the screen
   is open (it stayed disabled, or enabled, until the screen was opened again).
+- EFFECTS: the rack's slot numbers 10 and 14 showed as "..." (the number box was too
+  narrow for two digits).
 
 ## [0.1.0] - beta
 
