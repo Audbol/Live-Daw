@@ -400,6 +400,23 @@ void Project::setTimeSignature (int numerator, int denominator)
     state.setProperty (ids::sigDen, denominator == 2 || denominator == 8 || denominator == 16 ? denominator : 4, &undo);
 }
 
+bool Project::setSampleRate (double rate)
+{
+    if (rate < 8000.0)
+        return false;
+    for (auto t : tracksTree())
+        if (t.getNumChildren() > 0)
+            return false;
+    const double ratio = rate / getSampleRate();
+    auto scaled = [ratio] (const juce::var& v) { return (int64) std::llround ((double) toInt64 (v) * ratio); };
+    for (auto m : markersTree())
+        m.setProperty (ids::position, scaled (m[ids::position]), &undo);
+    state.setProperty (ids::loopStart, scaled (state[ids::loopStart]), &undo);
+    state.setProperty (ids::loopEnd, scaled (state[ids::loopEnd]), &undo);
+    state.setProperty (ids::sampleRate, rate, &undo);
+    return true;
+}
+
 int64 Project::getLoopStart() const { return juce::jmax<int64> (0, toInt64 (state[ids::loopStart])); }
 int64 Project::getLoopEnd() const { return juce::jmax (getLoopStart(), toInt64 (state[ids::loopEnd])); }
 bool Project::isLoopOn() const { return (bool) state[ids::loopOn]; }

@@ -592,6 +592,43 @@ private:
                 session.stop();
             }
         }
+
+        beginTest ("Session: a take never goes into a project at another rate than the console's");
+        {
+            TempFolder temp;
+            MixerEngine engine (0);
+            engine.prepareOffline (48000.0, 128, 2, 2);
+            auto& recorder = engine.getRecorder();
+            Session session (recorder, nullptr);
+            session.setDefaultFolder (temp.folder);
+            auto& p = session.getProject();
+            TrackData td;
+            td.arm = true;
+            const auto t = p.addTrack (td);
+            const auto m = p.addMarker (48000);
+            p.setLoop (24000, 96000);
+
+            // The clock rate changes: a project without audio follows it, markers keep their time.
+            engine.prepareOffline (96000.0, 128, 2, 2);
+            expect (! session.rateMatches());
+            auto result = session.record();
+            expect (result.wasOk(), result.getErrorMessage());
+            session.stop();
+            expectEquals (p.getSampleRate(), 96000.0);
+            expect (session.rateMatches());
+            expectEquals (p.getMarkers()[0].position, (int64) 96000);
+            expect (p.getMarkers()[0].id == m);
+            expectEquals (p.getLoopStart(), (int64) 48000);
+            expectEquals (p.getLoopEnd(), (int64) 192000);
+
+            // With audio it stays, and recording is refused.
+            p.addClip (t, makeClip (0, 1000));
+            engine.prepareOffline (48000.0, 128, 2, 2);
+            result = session.record();
+            expect (result.failed());
+            expect (! session.isRecording());
+            expectEquals (p.getSampleRate(), 96000.0);
+        }
     }
 
     void testImportAndRender()

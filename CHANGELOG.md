@@ -119,6 +119,11 @@ All notable changes to Sidecar are listed here. Versions follow
   nudges, trims, deletes and cuts now take back the fades of crossfades whose
   clips no longer overlap; nudges and trims also crossfade new overlaps, as moves
   did.
+- Recorder: after the clock rate changed (SETUP > AUDIO), recording went on into the
+  open project at its old rate, so the take was placed and played at the wrong
+  length and speed (an octave off after a 48 / 96 kHz change). A project without
+  audio now moves to the console's rate (markers and loop keep their times), and
+  one with audio refuses to record and says why.
 
 ## [0.1.0] - beta
 

@@ -215,6 +215,9 @@ public:
     int getSigDenominator() const;
     void setTempo (double bpm);
     void setTimeSignature (int numerator, int denominator);
+    /** Moves a project without clips to another sample rate; its markers and
+        loop keep their times. False (and nothing changes) if it has clips. */
+    bool setSampleRate (double rate);
 
     int64 getLoopStart() const;
     int64 getLoopEnd() const;
