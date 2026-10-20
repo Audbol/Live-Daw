@@ -429,7 +429,8 @@ def parse_describe(args):
         ro = "r/o" in toks[1:]
         kind = None
         if t:
-            kind = "node" if t[0] == "node" else "leaf"
+            # Sidecar writes "node", the console "(node)".
+            kind = "node" if t[0].strip("()[]") == "node" else "leaf"
         out[name] = (kind, ro, rest)
     return out
 
