@@ -460,7 +460,7 @@ and open-source projects (see below), and it is **experimental**.
   SETUP > GENERAL > CONSOLE NAME), the ports and which servers run are saved in the
   app settings, and the servers start with the app when enabled. The panel below
   shows what is listening and which clients are connected.
-- **Discovery** (UDP 2222) answers `WING?` with the console name, model `live-daw`,
+- **Discovery** (UDP 2222) answers `WING?` with the console name, model `sidecar`,
   serial and firmware `3.1-...` (Sidecar speaks the WING 3.1 parameter tree).
 - **OSC** (UDP 2223): get and set any parameter by path or by `#id`, toggles, node
   lists, node dumps and descriptions, node strings (`/ch.1.fdr=-3,mute=1`), and the
@@ -468,6 +468,15 @@ and open-source projects (see below), and it is **experimental**.
   recalls and other clients are pushed to the subscriber.
 - **Native protocol** (TCP 2222): node definitions and data, set/get by id, navigation,
   change notifications to every connected client, and meters over UDP.
+- **Comparing with a real WING:** `tools/wing/wing_compare.py` (Python 3.8 or newer,
+  nothing to install) reads every parameter from a console over OSC, read-only, and
+  reports the differences. With Sidecar's WING REMOTE enabled and a WING on the same
+  network: `python3 wing_compare.py discover` lists both (Sidecar answers with model
+  `sidecar`), then `python3 wing_compare.py compare WING_IP SIDECAR_IP` writes
+  `wing.json`, `sidecar.json` and `report.md` to a new `wing_compare-...` folder. The
+  report lists the parameters only one side has and every value, type, range and
+  choice that differs, per top-level node. Initialize both consoles (or load the same
+  show) first; `dump` and `diff` run the two steps separately.
 - **What is tested:** libwing's own clients (`wingprop`, `wingmon`, `wingdrive`'s
   test battery and model capture, its OSC client), and every OSC path the Bitfocus
   Companion WING module builds that exists in the 3.1 tree. **WING Edit and WING

@@ -5,7 +5,18 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ## [Unreleased]
 
+### Added
+
+- `tools/wing/wing_compare.py` reads every parameter from a WING and from Sidecar
+  over OSC (read-only) and reports what differs, for checking Sidecar against a real
+  console.
+
 ### Changed
+
+- The strip LED meters light -6 to -18 in orange, as on the console.
+- SET CUST names the channel after the device's short name (DIMCRS) and gives it the
+  FX icon; the INS tile shows the premium diamond for a device in FX 1-8; the EFFECTS
+  rack has no FX MIX knobs.
 
 - INS 1 / INS 2, the FX TYPE list and the EFFECTS rack look like the WING's 3.1
   screens: FX PROCESSOR opens the SELECT FX PROCESSOR window (the 16 slots in four

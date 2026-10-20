@@ -1746,6 +1746,9 @@ private:
                     g.drawFittedText ("NONE", at (6.0f, 38.0f, 84.0f, 22.0f).toNearestInt(), juce::Justification::centredRight, 1, 0.6f);
                     return;
                 }
+                // A premium device (slots 1-8) adds a small diamond (3.1).
+                if (mode == 0 && slot < 8)
+                    drawIcon (g, Icon::Premium, at (66.0f, 5.0f, 18.0f, 18.0f), isOn (tab) ? colours::accent : colours::dim);
                 g.setColour (colours::ink);
                 g.setFont (wingFontPx (13.0f * v));
                 g.drawFittedText (device, at (6.0f, 38.0f, 84.0f, 22.0f).toNearestInt(), juce::Justification::centredRight, 1, 0.6f);

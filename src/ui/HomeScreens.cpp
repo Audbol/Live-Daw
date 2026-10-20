@@ -2149,14 +2149,16 @@ public:
         setCust->iconAbove = true;
         setCust->outlined = true;
         setCust->frame = juce::Colours::transparentBlack;
-        setCust->setTooltip ("Name the channel after the effect");
+        setCust->setTooltip ("Name the channel after the effect and give it the FX icon");
         setCust->onClick = [this]
         {
             const int slot = ins.fx.load();
             if (slot < 0 || ! ctx.engine.getFx().isLoaded (slot))
                 return;
             auto* plugin = ctx.engine.getFx().getPlugin (slot);
-            strip.setName (plugin != nullptr ? plugin->getName() : models::model (models::Fx, ctx.engine.getFx().getModel (slot)).name.toUpperCase());
+            // [3.1] The device's short name and the FX icon; the colour stays.
+            strip.setName (plugin != nullptr ? plugin->getName().toUpperCase() : juce::String (models::model (models::Fx, ctx.engine.getFx().getModel (slot)).token));
+            strip.params.icon = 6;
         };
         openEditor = &key ("OPEN EDITOR", Icon::Edit);
         openEditor->onClick = [this]

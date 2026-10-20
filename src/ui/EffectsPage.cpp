@@ -628,13 +628,7 @@ std::vector<KnobBinding> EffectsPage::getKnobs()
 {
     if (editor != nullptr && editor->isVisible())
         return editor->knobs();
-    std::vector<KnobBinding> k;
-    if (selected < 0)
-        return k; // [3.1] the rack opens with no slot touched and no knobs
-    const int row = selected / 4 * 4;
-    for (int i = 0; i < 4; ++i)
-        k.push_back (bindLinear ("FX" + juce::String (row + i + 1) + " MIX", ctx.engine.getFx().params (row + i).mix, 0.0f, 100.0f, "%", 0, 100.0f));
-    return k;
+    return {}; // [3.1] the rack has no knobs, touched slot or not
 }
 
 void EffectsPage::paint (juce::Graphics& g)
