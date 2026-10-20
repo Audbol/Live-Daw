@@ -74,6 +74,9 @@ All notable changes to Sidecar are listed here. Versions follow
 - HOME > OVERVIEW: the INPUT panel's source MUTE key was always disabled (from
   before sources were modelled). It now mutes the channel's source (both sources of
   a pair) as ROUTING > SOURCES does, and lights while the source is muted.
+- VIEW > MUTE GROUPS: the SOURCES box always showed "-", even with sources tagged to
+  the group on ROUTING > SOURCES > TAGS, and UNASSIGN left those tags. The box now
+  shows the tagged source (or how many) and UNASSIGN clears them too.
 
 ## [0.1.0] - beta
 
