@@ -25,6 +25,13 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- WING COMP and WING GATE time and bend as recordings of a WING do: ENVELOPE LIN moves the
+  gain in straight lines of 10 dB per ATTACK / RELEASE time and LOG exponentially with
+  them as time constants, the release gets going over twice the HOLD time, AUTO has its own
+  program-dependent attack and release, the RMS detector is faster (5 ms) and KNEE bends
+  over 7.2 dB per step; the GATE opens and closes on a linear gain scale (ATTACK and
+  RELEASE are 10-90 % times), ratio GATE closes in a straight line over RELEASE and RANGE
+  60 closes completely.
 - The channel filter's HIGH CUT keeps its slope up to the top of the band, as on the console
   (a 5 kHz cut at 6 dB/oct is -13 dB at 20 kHz, not -21).
 - The FILTER tool's TILT goes the console's way and as far: TILT +3 lifts the lows by 3 dB
