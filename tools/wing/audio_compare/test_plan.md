@@ -72,6 +72,15 @@ same signal on both sides).
 | `/ch/1/gatesc/src` | SELF | CH 1 > GATE > KEY SOURCE |
 | `/ch/1/eq/on` | 0 | CH 1 > EQ on |
 | `/ch/1/eq/mix` | 100 | CH 1 > EQ > MIX |
+| `/ch/1/eq/mdl` | STD | CH 1 > EQ > model |
+| `/ch/1/eq/leq` | SHV | CH 1 > EQ > EQ L (band type) |
+| `/ch/1/eq/heq` | SHV | CH 1 > EQ > EQ H (band type) |
+| `/ch/1/eq/lg` | 0 | CH 1 > EQ > GAIN L |
+| `/ch/1/eq/1g` | 0 | CH 1 > EQ > GAIN 1 |
+| `/ch/1/eq/2g` | 0 | CH 1 > EQ > GAIN 2 |
+| `/ch/1/eq/3g` | 0 | CH 1 > EQ > GAIN 3 |
+| `/ch/1/eq/4g` | 0 | CH 1 > EQ > GAIN 4 |
+| `/ch/1/eq/hg` | 0 | CH 1 > EQ > GAIN H |
 | `/ch/1/dyn/on` | 0 | CH 1 > DYNAMICS (COMP) on |
 | `/ch/1/dyn/mix` | 100 | CH 1 > DYNAMICS > MIX |
 | `/ch/1/dyn/gain` | 0 | CH 1 > DYNAMICS > GAIN |

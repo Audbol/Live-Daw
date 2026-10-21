@@ -25,6 +25,11 @@ COMMON = {
     "/ch/1/gate/on": 0, "/ch/1/gate/mix": 100.0, "/ch/1/gate/gain": 0.0,
     "/ch/1/gatesc/type": "OFF", "/ch/1/gatesc/src": "SELF",
     "/ch/1/eq/on": 0, "/ch/1/eq/mix": 100.0,
+    # Every WING EQ band flat and the outer bands shelves again, so no band
+    # of an earlier test is left in (a test sets only its own bands).
+    "/ch/1/eq/mdl": "STD", "/ch/1/eq/leq": "SHV", "/ch/1/eq/heq": "SHV",
+    "/ch/1/eq/lg": 0.0, "/ch/1/eq/1g": 0.0, "/ch/1/eq/2g": 0.0, "/ch/1/eq/3g": 0.0, "/ch/1/eq/4g": 0.0,
+    "/ch/1/eq/hg": 0.0,
     "/ch/1/dyn/on": 0, "/ch/1/dyn/mix": 100.0, "/ch/1/dyn/gain": 0.0,
     "/ch/1/dynsc/type": "OFF", "/ch/1/dynsc/src": "SELF", "/ch/1/dynxo/type": "OFF",
     "/ch/1/preins/on": 0, "/ch/1/postins/on": 0,
