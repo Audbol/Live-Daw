@@ -2,6 +2,7 @@
 #include "engine/AppPaths.h"
 #include "ui/MidiRemoteUi.h"
 #include "ui/StartupNotice.h"
+#include "ui/WebMirror.h"
 #include "ui/WingPopups.h"
 #include "ui/daw/DawEditor.h"
 
@@ -251,6 +252,10 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     ctx.midi = midiRemote.get();
     midiui::connect (ctx);
 
+    // The web remote (SETUP > REMOTE): starts now if it is enabled.
+    webMirror = std::make_unique<WebMirror> (*this, settings, log);
+    ctx.web = webMirror.get();
+
     channelStrip = std::make_unique<ChannelStripSection> (ctx);
     display = std::make_unique<MainDisplay> (ctx);
     monitor = std::make_unique<MonitorSection> (ctx);
@@ -314,6 +319,9 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
 
 MainComponent::~MainComponent()
 {
+    // The web remote stops watching the window and closes its browsers.
+    ctx.web = nullptr;
+    webMirror.reset();
     // MIDI and the WING remote's scene and surface control go first: their callbacks reach the views.
     engine.getWing().attachShow (nullptr);
     engine.getWing().setSurfaceCallbacks ({}, {});

@@ -3,6 +3,15 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Added
+
+- Web remote: SETUP > REMOTE > WEB REMOTE serves Sidecar's screen to browsers on the
+  local network (`http://<this computer>:8080/`, port configurable). The page mirrors
+  the window and sends the mouse, touch, wheel and keys back; optional 4-8 digit PIN
+  (checked by Sidecar, wrong guesses rate-limited) and VIEW ONLY. Off by default.
+
 ## [0.1.3] - beta
 
 The first round of matching Sidecar to a real WING, side by side with the console:

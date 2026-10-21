@@ -18,6 +18,7 @@ namespace livedaw::ui
 {
 
 class DawEditor;
+class WebMirror;
 
 /** The window: a WING surface. Top: the channel strip section, the main
     display and the monitoring panel. Bottom: the left (12) and center (8)
@@ -121,6 +122,7 @@ private:
     std::unique_ptr<daw::Session> recording;
     std::unique_ptr<cc::Assignments> customControlAssignments;
     std::unique_ptr<MidiRemote> midiRemote; // MIDI remote control and DAW remote control
+    std::unique_ptr<WebMirror> webMirror;   // the web remote (screen mirror)
     std::unique_ptr<DawEditor> editor;
     bool editorShown = false;
     bool screenMaximized = false, fullScreen = false;

@@ -103,7 +103,8 @@ set(LIVEDAW_ENGINE_SOURCES
     src/engine/Recorder.cpp
     src/engine/UsbRecorder.cpp
     src/engine/VirtualAudioDevice.cpp
-    src/engine/WingRemote.cpp)
+    src/engine/WingRemote.cpp
+    src/engine/WebRemote.cpp)
 
 # MIDI remote control and DAW remote control (MCU / HUI).
 list(APPEND LIVEDAW_ENGINE_SOURCES
@@ -247,6 +248,7 @@ target_sources(LiveDAW PRIVATE
     src/ui/CustomControlsPage.cpp
     src/ui/MonitorsPage.cpp
     src/ui/FourChannelSection.cpp
+    src/ui/WebMirror.cpp
     src/ui/MainComponent.cpp)
 
 # MIDI remote control and DAW remote control: the UI side.
@@ -349,6 +351,7 @@ if(LIVEDAW_BUILD_TESTS)
         tests/UsbRecorderTests.cpp
         tests/DawTests.cpp
         tests/WingTests.cpp
+        tests/WebTests.cpp
         tests/RoutingTests.cpp
         tests/SandboxTests.cpp
         src/sandbox/TestPlugins.cpp
