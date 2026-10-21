@@ -112,7 +112,7 @@ pub mod source_mode {
 pub const SOURCE_GAIN_MIN_DB: f32 = -12.0;
 pub const SOURCE_GAIN_MAX_DB: f32 = 60.0;
 
-/// Default source colour (the WING's factory Purple).
+/// Default source colour (the WING's factory Dark Blue).
 pub const DEFAULT_SOURCE_COLOUR: i32 = crate::params::DEFAULT_COLOUR;
 
 /// One source's settings, shared with the UI (`ld_engine_sources`).

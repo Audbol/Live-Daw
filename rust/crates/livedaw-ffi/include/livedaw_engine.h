@@ -42,7 +42,7 @@ constexpr int kMaxDynParams = 20;
 constexpr int kMaxEqParams = 32;
 constexpr int kMaxToolParams = 2;
 constexpr int kMaxFxParams = 36;
-/** The WING colour (1..18) of a new channel, source and DCA: Purple. */
+/** The WING colour (1..18) of a new channel, source and DCA: Dark Blue. */
 constexpr int kDefaultColour = 1;
 /** FX slot models (indices into model table 4): an empty slot, and EXT (a plugin). */
 constexpr int kFxNone = 0;

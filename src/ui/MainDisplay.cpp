@@ -1511,7 +1511,7 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
                 if (stripHasSource (*strip))
                 {
                     g.fillRect (box);
-                    g.setColour (colour.getPerceivedBrightness() < 0.25f ? colour.brighter (0.6f) : colour);
+                    g.setColour (colour); // exactly the strip's colour, dark ones too
                 }
                 else
                 {

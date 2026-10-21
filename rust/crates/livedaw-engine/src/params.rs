@@ -542,14 +542,14 @@ impl TapEqParams {
 
 /// The WING's 18 strip colours (index 1..18 in `colour`): a name for each and
 /// the RGB the console draws, measured on a full-size WING's ICON/COLOR screen.
-/// Colour 1 (Purple) is the factory colour of channels, sources and DCAs (read
+/// Colour 1 (Dark Blue) is the factory colour of channels, sources and DCAs (read
 /// from a factory-initialized console); the other indices follow the earlier
 /// manual measurements (5 Green, 11 Magenta, 15 Salmon, 16 Teal ...) matched
 /// to the nearest colour of the screen. `WING_COLOUR_GRID` is the screen's layout.
 pub const WING_COLOURS: [(&str, u32); 18] = [
-    ("Purple", 0x380088),
+    ("Dark Blue", 0x380088),
     ("Blue", 0x0084f0),
-    ("Dark Blue", 0x3000d0),
+    ("Indigo", 0x3000d0),
     ("Turquoise", 0x10a880),
     ("Green", 0x00bc00),
     ("Olive", 0xc89800),
@@ -571,7 +571,7 @@ pub const WING_COLOURS: [(&str, u32); 18] = [
 /// at each place, as the console lays them out.
 pub const WING_COLOUR_GRID: [i32; 18] = [6, 11, 14, 7, 10, 5, 2, 9, 4, 3, 13, 16, 1, 15, 17, 12, 8, 18];
 
-/// The colour the WING gives a new channel, aux, main, matrix, source and DCA (Purple).
+/// The colour the WING gives a new channel, aux, main, matrix, source and DCA (Dark Blue).
 pub const DEFAULT_COLOUR: i32 = 1;
 
 /// The RGB values the first versions used for the 18 colours. Shows saved
@@ -614,7 +614,7 @@ mod colour_tests {
         }
         assert_eq!(colour_rgb(0), 0x9a9a9a);
         assert_eq!(nearest_colour(0xff0000), 9); // pure red is the WING's Red
-        assert_eq!(colour_rgb(DEFAULT_COLOUR), 0x380088); // the factory Purple
+        assert_eq!(colour_rgb(DEFAULT_COLOUR), 0x380088); // the factory Dark Blue
         let mut grid = WING_COLOUR_GRID;
         grid.sort_unstable();
         assert_eq!(grid, std::array::from_fn(|i| i as i32 + 1), "every colour once");
@@ -623,7 +623,7 @@ mod colour_tests {
     #[test]
     fn new_strips_start_as_the_wings_factory_init() {
         // A channel: fader down, EQ off, customization linked to its source,
-        // Purple, the delay in METERS at its 0.1 m minimum.
+        // Dark Blue, the delay in METERS at its 0.1 m minimum.
         let ch = StripParams::new(StripKind::Channel);
         assert_eq!(ch.fader_db.load(), livedaw_dsp::fader::FADER_MIN);
         assert!(!ch.eq.on.load(Relaxed));

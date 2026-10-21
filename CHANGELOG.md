@@ -25,6 +25,8 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- The channel number in the HOME header is drawn in exactly the strip's colour, as on the
+  console (dark colours were lightened); the factory colour is named Dark Blue, as on the WING.
 - WING COMP and WING GATE time and bend as recordings of a WING do: ENVELOPE LIN moves the
   gain in straight lines of 10 dB per ATTACK / RELEASE time and LOG exponentially with
   them as time constants, the release gets going over twice the HOLD time, AUTO has its own
