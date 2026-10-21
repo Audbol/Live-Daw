@@ -615,6 +615,19 @@ enum AudioFileFormat : int32_t
     kFormatMp3 = 3
 };
 struct LdWing;    // opaque WING remote (servers + snapshot files), see ld_wing_*
+struct LdWeb;     // opaque web remote (HTTP + WebSocket screen mirror), see ld_web_*
+
+/** An input event from a browser (ld_web_take_input). */
+struct LdWebInput
+{
+    int32_t kind;   // 0 move, 1 down, 2 up, 3 leave, 4 wheel, 5 key down, 6 key up
+    float x, y;     // fractions of the screen (0..1)
+    float dx, dy;   // wheel deltas (JUCE units)
+    int32_t buttons; // held after the event: 1 left, 2 right, 4 middle
+    int32_t key;    // a character, or a negative special key (WebRemote::Key)
+    uint32_t mods;  // 1 shift, 2 ctrl, 4 alt, 8 meta
+    uint32_t client;
+};
 
 struct StripRefC
 {
@@ -1170,6 +1183,32 @@ extern "C"
     void ld_afr_close (LdAudioReader*);
     /** Why `channels` at `rate` can't be written in the format (an empty string if they can). */
     LdString* ld_audio_format_check (int32_t format, int32_t bits, int32_t kbps, int32_t channels, int32_t rate);
+
+    // Web remote. Start, stop and status: message thread; the screen and input
+    // functions: any one thread at a time.
+    LdWeb* ld_web_create();
+    void ld_web_destroy (LdWeb*);
+    /** Port 0 = any free port; pin: 4-8 digits or empty. Restarts if running; false if
+        the port could not be bound (see ld_web_status). */
+    bool ld_web_start (LdWeb*, int32_t port, const char* pin, size_t pinLen, bool viewOnly);
+    void ld_web_stop (LdWeb*);
+    bool ld_web_running (LdWeb*);
+    /** Bound port, or -1. */
+    int32_t ld_web_port (LdWeb*);
+    /** Tab-separated lines: "error\tmsg", "client\taddr\twatching\tseconds", "traffic\tbytes\tframes". */
+    LdString* ld_web_status (LdWeb*);
+    /** Whether any browser watches (snapshot only then). */
+    bool ld_web_watched (LdWeb*);
+    /** New screen size: all tiles unknown. Returns the generation for ld_web_put_tile. */
+    uint32_t ld_web_reset_screen (LdWeb*, int32_t width, int32_t height, int32_t tile);
+    /** Writes the candidate tiles whose pixels changed to `changed` (room for `count`); returns how many. */
+    size_t ld_web_changed_tiles (LdWeb*, const uint8_t* pixels, int32_t stride, int32_t height, int32_t bpp,
+                                 const uint32_t* candidates, size_t count, uint32_t* changed);
+    /** A tile's image (format 0 PNG, 1 JPEG); false if `generation` is out of date. */
+    bool ld_web_put_tile (LdWeb*, uint32_t generation, uint32_t index, int32_t format, const uint8_t* data, size_t len);
+    /** Sends the tiles put since the last call. */
+    void ld_web_publish (LdWeb*);
+    bool ld_web_take_input (LdWeb*, LdWebInput* out);
 
     // WING remote (message thread). Destroy it before the engine.
     LdWing* ld_wing_create (const Engine*);

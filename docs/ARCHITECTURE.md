@@ -199,6 +199,7 @@ same tables through `ld_model_*` (`livedaw-ffi/src/models.rs`, `src/engine/Model
 | Recorder (SPSC rings, WAV / RF64, AIFF, FLAC and MP3 codecs, transport, disk reader and writer threads, playlist rendering) and the USB recorder / player (`usb`) | Rust | `rust/crates/livedaw-recorder` |
 | Sessions (console state, Show > Scene > Snippet, fades, fader banks, show files, legacy import) | Rust | `rust/crates/livedaw-session` |
 | WING interoperability (parameter tree, mapping, discovery / OSC / native servers, .snap / .show files) | Rust | `rust/crates/livedaw-wing` |
+| Web remote server (HTTP + WebSocket, PIN, screen tiles, browser input) | Rust | `rust/crates/livedaw-web` |
 | C ABI | Rust + C++ header | `rust/crates/livedaw-ffi`, `include/livedaw_engine.h` |
 | Audio devices (ASIO, CoreAudio, ALSA, JACK, WASAPI), plugin hosting (VST3/AU/LV2), UI | C++ / JUCE | `src/` |
 
@@ -875,6 +876,41 @@ Meters are approximate (RTA, source and output meters stay silent). Getting a mo
 parameter position the active model doesn't have gets no answer (libwing's
 `wingdrive --probe-echo` relies on the console answering it). Export is unvalidated
 on a console.
+
+## Web remote
+
+A screen mirror for browsers on the local network (SETUP > REMOTE > WEB REMOTE).
+
+- **Server** (`rust/crates/livedaw-web`, std only): a listener thread and, per
+  connection, a thread reading the HTTP request (`http.rs`: a table of embedded
+  assets, `/` is `web/mirror.html`, one self-contained page, and `/ws` the WebSocket;
+  Host must be an address, `localhost` or a `.local` / single-label name against DNS
+  rebinding, and a WebSocket's Origin must match its Host) and then the WebSocket
+  messages (`ws.rs`, with its own SHA-1 and base64 for the handshake). The PIN
+  (`auth.rs`) is checked before anything is sent; wrong guesses are slowed per
+  address and overall. A second thread per browser writes frames.
+- **Tiles** (`screen.rs`): the host reports which candidate tiles changed (a hash per
+  64 px tile) and puts their encoded images; the screen keeps only the newest image of
+  each tile with a version, and each browser's `View` the versions it has. A browser
+  acknowledges every frame it has drawn and may have two outstanding, and each frame
+  carries everything it lacks, so a slow browser gets fewer frames, never a backlog,
+  and a new one gets the whole screen at once. Nothing waits on the network but the
+  writer threads.
+- **Window side** (`src/ui/WebMirror.*`, owned by `MainComponent`; the server wrapper
+  and the settings are `src/engine/WebRemote.*`, C ABI `ld_web_*`). While a browser
+  watches, a `CachedComponentImage` installed on the top-level window (and on menus
+  and alerts over it) only listens: JUCE reports every repaint in the window there.
+  At most 30 times a second the dirty areas are painted into an RGB image with
+  `paintEntireComponent` under a clip (the cost follows what changed: a still screen
+  costs nothing), the touched tiles are hashed in Rust, and the changed ones go to an
+  encoder thread (PNG, JPEG at 0.85 when that is under half the size) that replaces
+  tiles still waiting with newer copies. Input from the page (normalised positions)
+  is played on the message thread through the window's (or an overlay's)
+  `ComponentPeer::handleMouseEvent` / `handleMouseWheel` / `handleKeyPress` as the
+  main mouse source, so components see ordinary JUCE events (drags, double-clicks,
+  right-clicks). A press first moves the system pointer there and waits a round, as
+  `PopupMenu::Options::withMousePosition` and other code read the real pointer.
+  With nobody watching the tracker is removed and the timer polls at 4 Hz.
 
 ## MIDI remote control and DAW remote control
 

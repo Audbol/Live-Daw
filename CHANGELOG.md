@@ -22,6 +22,10 @@ All notable changes to Sidecar are listed here. Versions follow
   (default) or the black WING BK (black surface, printed frames, frosted light keys,
   silver fader caps). It is kept in the app settings, not the show, and switches the
   surface at once; the touchscreen is the same in both.
+- Web remote: SETUP > REMOTE > WEB REMOTE serves Sidecar's screen to browsers on the
+  local network (`http://<this computer>:8080/`, port configurable). The page mirrors
+  the window and sends the mouse, touch, wheel and keys back; optional 4-8 digit PIN
+  (checked by Sidecar, wrong guesses rate-limited) and VIEW ONLY. Off by default.
 
 ### Changed
 

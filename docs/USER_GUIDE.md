@@ -221,7 +221,7 @@ touchscreen looks the same in both.
     AUTOSELECT, FADER SPEED, paging, user layer link, alternative SOF; the **SECTIONS**
     key in the FADERS header opens Sidecar's FADER SECTIONS: section widths, SHIFT STEP
     and FADER VALUES), REMOTE (MIDI REMOTE CONTROL with the DIN and USB MIDI ports under
-    it, HA REMOTE, NETWORK, REMOTE LOCK and Sidecar's WING REMOTE) and DAW (DAW CONTROL,
+    it, HA REMOTE, NETWORK, REMOTE LOCK and Sidecar's WING REMOTE and WEB REMOTE) and DAW (DAW CONTROL,
     DAW PORTS; see *MIDI and DAW remote control*), PLUGINS (scanning, delay compensation,
     RUN PLUGINS IN SANDBOX; see *Stability*) and LOG (system health and the
     event log), with INITIALIZE CONSOLE and SHUTDOWN. **INITIALIZE CONSOLE** opens a page
@@ -609,6 +609,39 @@ and open-source projects (see below), and it is **experimental**.
 Testing against libwing: `tools/wing/libwing_tools.sh DIR` builds its clients, then
 `LIBWING_TOOLS=DIR/tools/target/release cargo test -p livedaw-wing --test libwing`.
 `cargo run -p livedaw-wing --example wing_emulator` runs the protocols without the app.
+
+## Web remote
+
+Any browser on the local network (a tablet, a phone, another computer) can show
+Sidecar's window and control it: the page shows exactly what the window shows, and
+clicks, drags, the wheel and keys in the page act on Sidecar as if done here.
+
+- **Turn it on:** SETUP > REMOTE > WEB REMOTE > ENABLE (off by default). **PORT** is
+  8080 unless changed (touch the box). The column beside HA REMOTE lists the addresses
+  to open, such as `http://192.168.1.20:8080`, and how many browsers are watching. The
+  settings are saved in the app settings and the server starts with the app when enabled.
+- **PIN:** touch the PIN box and enter 4 to 8 digits (empty: no PIN). The page asks for
+  it before it shows anything; the PIN is checked by Sidecar, and wrong guesses lock the
+  address out for a while (3 tries, then 5 s, doubling up to 5 minutes; 20 wrong PINs
+  a minute from anywhere lock everybody out for a minute). Without a PIN anybody on the
+  network can control the console.
+- **VIEW ONLY:** browsers watch, their input is ignored.
+- **In the page:** the screen is fitted to the browser window. A mouse works as here
+  (right-click, double-click, wheel); keys go to Sidecar while the screen has the focus
+  (the browser keeps F5, F11, F12 and its Ctrl+R, L, T, W, N, Q). On a touch screen one
+  finger is the mouse (a press waits 90 ms, or until the finger moves, so that a second
+  finger can still start a pinch); two fingers pinch and pan the page's view, and
+  Ctrl+wheel (a trackpad pinch) zooms it. **FIT** shows the whole screen again,
+  **RIGHT** makes the next touch a right-click, **FULL** fills the screen. The bar shows
+  the frames and kilobytes per second and the round trip. The page reconnects by itself.
+- **Limits:** one shared view: the page follows what the window shows and every browser
+  sees the same. Menus and alerts over the window are shown; other windows (plugin
+  editors, the scope, file choosers) are not. A browser's press moves this computer's
+  mouse pointer there (menus open at the pointer); the last input wins when someone
+  works here and in a browser at once. Up to 8 browsers at a time, at up to 30 frames a
+  second: only what changed is sent (64-pixel tiles, PNG, JPEG for busy pictures), so a
+  still screen costs nothing and a moving fader some 100-200 KB/s. The page is plain
+  HTTP: use it on a network you trust. Nothing but the screen is served.
 
 ## Drivers and performance
 

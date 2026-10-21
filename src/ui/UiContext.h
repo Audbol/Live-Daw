@@ -27,6 +27,7 @@ namespace livedaw::ui
 {
 
 struct KnobBinding;
+class WebMirror;
 
 namespace cc
 {
@@ -182,6 +183,10 @@ struct UiContext
     /** MIDI remote control and DAW remote control (owned by the main component;
         SETUP > REMOTE and DAW, the surface's DAW key). */
     MidiRemote* midi = nullptr;
+
+    /** The web remote's screen mirror and its server (owned by the main
+        component; SETUP > REMOTE). */
+    WebMirror* web = nullptr;
 };
 
 /** SETUP settings that the status bar, the surface and the pages share. */

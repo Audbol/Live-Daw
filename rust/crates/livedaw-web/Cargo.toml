@@ -1,0 +1,9 @@
+[package]
+name = "livedaw-web"
+description = "Sidecar's web remote: an embedded HTTP + WebSocket server that mirrors the app's window to browsers on the local network and takes their input"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]

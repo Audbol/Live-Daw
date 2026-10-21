@@ -16,6 +16,7 @@ pub mod monitor;
 pub mod recorder;
 pub mod session;
 pub mod usb;
+pub mod web;
 pub mod wing;
 
 use livedaw_engine::monitor::{MonitorControls, MonitorDspParams};

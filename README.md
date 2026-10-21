@@ -54,6 +54,8 @@ anything can be sent to any hardware output. It runs on Windows, macOS and Linux
 - **WING remote apps and files (experimental):** Sidecar answers the WING's network
   protocols (discovery, OSC and the native protocol), so WING remote software can
   find and drive it, and it imports and exports WING snapshots.
+- **Web remote:** open the console's screen in a browser on a tablet, phone or another
+  computer on the network and control it from there (optional PIN).
 - **Built for stability:** a realtime engine in Rust with no allocations or locks on
   the audio thread, plugin faults contained, an audio device watchdog, autosave
   every 30 s and a safe mode after a crash.

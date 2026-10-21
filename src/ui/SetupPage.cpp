@@ -10,6 +10,7 @@
 #include "ui/ScopeWindow.h"
 #include "ui/ScreenWidgets.h"
 #include "ui/StartupNotice.h"
+#include "ui/WebMirror.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>
 
@@ -1301,6 +1302,128 @@ namespace
     };
 
     //==============================================================================
+    /** WEB REMOTE: the port and the PIN, each in a box (click to change). The
+        port turns red if the server is on but could not listen on it. */
+    class WebAccessRow final : public juce::Component
+    {
+    public:
+        WebAccessRow (UiContext& c, std::function<void (const WebRemote::Settings&)> applyChange, std::function<bool()> failedCheck)
+            : ctx (c), apply (std::move (applyChange)), failed (std::move (failedCheck))
+        {
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            const auto s = WebRemote::Settings::load (ctx.settings);
+            auto box = [&] (juce::Rectangle<int> area, const juce::String& text, bool red)
+            {
+                auto r = area.toFloat();
+                g.setColour (red ? Dark::muted : juce::Colour (0xff5a5a5a));
+                g.fillRect (r);
+                g.setColour (juce::Colours::black);
+                g.setFont (wingFontFit (TypeScale::body, r.getHeight() * 0.62f));
+                g.drawFittedText (text, area.reduced (2, 0), juce::Justification::centred, 1, 0.8f);
+            };
+            box (portArea, "PORT " + juce::String (s.port), failed());
+            box (pinArea, s.pin.isEmpty() ? juce::String ("NO PIN") : "PIN " + juce::String::repeatedString ("*", s.pin.length()), false);
+        }
+
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (juce::roundToInt (wingPx (12.0f)), juce::roundToInt (wingPx (7.0f)));
+            portArea = r.removeFromLeft (r.getWidth() / 2 - 2);
+            r.removeFromLeft (4);
+            pinArea = r;
+        }
+
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            const auto s = WebRemote::Settings::load (ctx.settings);
+            if (portArea.contains (e.getPosition()))
+                editText (this, "WEB REMOTE PORT", juce::String (s.port), [this] (const juce::String& text)
+                {
+                    const int v = text.getIntValue();
+                    if (v <= 0 || v > 65535)
+                        return;
+                    auto changed = WebRemote::Settings::load (ctx.settings);
+                    changed.port = v;
+                    apply (changed);
+                    repaint();
+                });
+            else if (pinArea.contains (e.getPosition()))
+                editText (this, "WEB REMOTE PIN (4-8 DIGITS, EMPTY: NONE)", s.pin, [this] (const juce::String& text)
+                {
+                    if (! WebRemote::Settings::isValidPin (text))
+                    {
+                        ctx.log.warning ("Web remote: a PIN is 4 to 8 digits");
+                        return;
+                    }
+                    auto changed = WebRemote::Settings::load (ctx.settings);
+                    changed.pin = text;
+                    apply (changed);
+                    repaint();
+                });
+        }
+
+    private:
+        UiContext& ctx;
+        std::function<void (const WebRemote::Settings&)> apply;
+        std::function<bool()> failed;
+        juce::Rectangle<int> portArea, pinArea;
+    };
+
+    /** WEB REMOTE status: the browsers watching (and waiting at the PIN) and
+        the addresses to open, or the error (in the narrow column beside HA
+        REMOTE). */
+    class WebStatusView final : public juce::Component
+    {
+    public:
+        WebRemote::Status status;
+        juce::StringArray urls;
+
+        void paint (juce::Graphics& g) override
+        {
+            g.fillAll (Dark::body);
+            auto r = getLocalBounds().reduced (juce::roundToInt (wingPx (8.0f)), juce::roundToInt (wingPx (6.0f)));
+            const float fh = juce::jlimit (8.0f, screenCap (12.0f), wingPx (11.0f));
+            const int lineH = juce::roundToInt (fh * 1.5f);
+            auto line = [&] (const juce::String& text, juce::Colour colour, int lines = 1)
+            {
+                if (r.getHeight() < lineH)
+                    return;
+                g.setColour (colour);
+                g.setFont (wingFontPx (fh));
+                g.drawFittedText (text, r.removeFromTop (juce::jmin (r.getHeight(), lineH * lines)), juce::Justification::topLeft, lines, 0.75f);
+            };
+
+            line ("WEB REMOTE", Dark::caption);
+            if (! status.running)
+            {
+                line ("OFF", Dark::text);
+                r.removeFromTop (lineH / 2);
+                g.setColour (Dark::textDim);
+                g.setFont (wingFontPx (fh * 0.85f));
+                g.drawFittedText ("BROWSERS ON THE NETWORK SHOW THIS SCREEN AND CONTROL IT.", r, juce::Justification::topLeft,
+                                  juce::jmax (1, r.getHeight() / juce::jmax (1, lineH - 2)));
+                return;
+            }
+            if (status.error.isNotEmpty())
+            {
+                line (status.error.toUpperCase(), Dark::muted, 4);
+                return;
+            }
+            const int watching = status.numWatching(), waiting = (int) status.clients.size() - watching;
+            line (juce::String (watching) + (watching == 1 ? " BROWSER" : " BROWSERS"), Dark::text);
+            if (waiting > 0)
+                line (juce::String (waiting) + " AT THE PIN", Dark::textDim);
+            r.removeFromTop (lineH / 3);
+            line ("OPEN", Dark::textDim);
+            for (auto& url : urls)
+                line (url.fromFirstOccurrenceOf ("://", false, false).trimCharactersAtEnd ("/"), Dark::caption);
+        }
+    };
+
+    //==============================================================================
     // MIDI (SETUP > REMOTE and DAW): the settings live in the app settings and
     // go to the MIDI service at once.
 
@@ -1457,7 +1580,10 @@ namespace
         (Sidecar) the computer's devices for the WING's DIN and USB ports. HA remote is
         drawn disabled. WING REMOTE (Sidecar, under HA REMOTE, its console name and clients
         in the free column) runs the WING protocol servers (discovery, OSC, native) for
-        WING remote apps; it starts with the app when enabled. */
+        WING remote apps; it starts with the app when enabled. WEB REMOTE (Sidecar, under
+        NETWORK, which keeps only what this computer has: its address and name; its status
+        and addresses in the free column) shows the screen in browsers on the network
+        (ui::WebMirror). */
     class RemoteTab final : public juce::Component, private juce::Timer
     {
     public:
@@ -1503,15 +1629,41 @@ namespace
             octets.addTokens (ip, ".", {});
             while (octets.size() < 4)
                 octets.add ("0");
-            network.addRow ({}, std::make_unique<DropdownField> ("IP MODE", [] { return juce::String ("SYSTEM"); }), 0.0f, false, false, kFieldRows);
             network.addCaption ("IP ADDRESS", false);
             network.addRow ({}, std::make_unique<OctetBoxes> (octets), 0.0f, false, false, 0.85f);
-            network.addCaption ("SUBNET MASK", false);
-            network.addRow ({}, std::make_unique<OctetBoxes> (juce::StringArray { "-", "-", "-", "-" }), 0.0f, false, false, 0.85f);
-            network.addCaption ("GATEWAY", false);
-            network.addRow ({}, std::make_unique<OctetBoxes> (juce::StringArray { "-", "-", "-", "-" }), 0.0f, false, false, 0.85f);
             network.addCaption ("DEVICE NAME: " + juce::SystemStats::getComputerName().toUpperCase(), false);
             addAndMakeVisible (network);
+
+            // WEB REMOTE (Sidecar): the settings live in the app settings.
+            auto changeWeb = [this] (const WebRemote::Settings& s)
+            {
+                s.save (ctx.settings);
+                applyWebSettings();
+            };
+            web.addRow ("ENABLE",
+                        std::make_unique<OnKey> ([this] { return WebRemote::Settings::load (ctx.settings).enabled; },
+                                                 [this, changeWeb] (bool on)
+                                                 {
+                                                     auto s = WebRemote::Settings::load (ctx.settings);
+                                                     s.enabled = on;
+                                                     changeWeb (s);
+                                                 }),
+                        1.3f);
+            web.addRow ({}, std::make_unique<WebAccessRow> (ctx, changeWeb, [this] { return webStatus.status.running && webStatus.status.port < 0; }),
+                        0.0f);
+            web.addRow ("VIEW ONLY",
+                        std::make_unique<OnKey> ([this] { return WebRemote::Settings::load (ctx.settings).viewOnly; },
+                                                 [this, changeWeb] (bool on)
+                                                 {
+                                                     auto s = WebRemote::Settings::load (ctx.settings);
+                                                     s.viewOnly = on;
+                                                     changeWeb (s);
+                                                 }),
+                        1.3f);
+            addAndMakeVisible (web);
+            addAndMakeVisible (webStatus);
+            appliedWeb = WebRemote::Settings::load (ctx.settings); // the web remote started with the app
+            refreshWebStatus();
 
             lock.addRow ("OSC", OnKey::fixed (false), 1.3f, false, true);
             lock.addRow ("TCP", OnKey::fixed (false), 1.3f, false, true);
@@ -1581,13 +1733,14 @@ namespace
         {
             // [Fig. 42] MIDI REMOTE CONTROL 512 px, HA REMOTE 336, NETWORK 248
             // at the right edge; WING REMOTE (Sidecar) under HA REMOTE and its
-            // console name and clients in the free column left of NETWORK.
+            // console name and clients in the free column left of NETWORK; WEB
+            // REMOTE (Sidecar) under NETWORK and its status in the free column.
             auto b = getLocalBounds();
             const int gap = setupGap();
             const float sx = (float) b.getWidth() / 1264.0f;
             auto x = [&] (float px) { return b.getX() + juce::roundToInt (px * sx); };
             int rowH = juce::roundToInt (wingPx (52.0f));
-            for (auto* p : { &midi, &ports, &ha, &network, &lock, &wing })
+            for (auto* p : { &midi, &ports, &ha, &network, &web, &lock, &wing })
                 setupPanel (*p, rowH);
             auto c1 = juce::Rectangle<int>::leftTopRightBottom (b.getX(), b.getY(), x (512.0f), b.getBottom());
             auto c2 = juce::Rectangle<int>::leftTopRightBottom (x (520.0f), b.getY(), x (856.0f), b.getBottom());
@@ -1597,13 +1750,13 @@ namespace
             auto tallest = [&]
             {
                 return juce::jmax (midi.preferredHeight() + gap + ports.preferredHeight(), ha.preferredHeight() + gap + wing.preferredHeight(),
-                                   network.preferredHeight() + gap + lock.preferredHeight());
+                                   network.preferredHeight() + gap + web.preferredHeight() + gap + lock.preferredHeight());
             };
             ports.rowHeight = rowH * 44 / 52;
             while (rowH > 10 && tallest() > getHeight())
             {
                 --rowH;
-                for (auto* p : { &midi, &ha, &network, &lock, &wing })
+                for (auto* p : { &midi, &ha, &network, &web, &lock, &wing })
                     p->rowHeight = rowH;
                 ports.rowHeight = rowH * 44 / 52;
             }
@@ -1616,11 +1769,14 @@ namespace
             haClear.setBounds (ha.getBounds().withHeight (hh).removeFromRight (hh + 16).reduced (2, 1));
             c2.removeFromTop (gap);
             wing.setBounds (c2.removeFromTop (juce::jmin (c2.getHeight(), wing.preferredHeight())));
+            webStatus.setBounds (c3.withBottom (ha.getBottom()));
             c3 = c3.withTop (wing.getY());
             wingName->setBounds (c3.removeFromTop (juce::roundToInt (wingPx (64.0f))));
             c3.removeFromTop (gap);
             wingStatus.setBounds (c3.withBottom (juce::jmax (wing.getBottom(), ports.getBottom())));
-            network.setBounds (c4.removeFromTop (juce::jmin (c4.getHeight() - lock.preferredHeight() - gap, network.preferredHeight())));
+            network.setBounds (c4.removeFromTop (network.preferredHeight()));
+            c4.removeFromTop (gap);
+            web.setBounds (c4.removeFromTop (juce::jmin (c4.getHeight() - lock.preferredHeight() - gap, web.preferredHeight())));
             c4.removeFromTop (gap);
             lock.setBounds (c4.withHeight (juce::jmin (c4.getHeight(), lock.preferredHeight())));
             for (auto& p : pairLayouts)
@@ -1656,6 +1812,32 @@ namespace
             wing.repaint();
         }
 
+        /** Starts, restarts or stops the web remote to match the settings. */
+        void applyWebSettings()
+        {
+            const auto s = WebRemote::Settings::load (ctx.settings);
+            appliedWeb = s;
+            if (ctx.web == nullptr)
+                return;
+            const auto error = ctx.web->apply (s);
+            if (error.isNotEmpty())
+                ctx.log.error ("Web remote: " + error);
+            else if (s.enabled)
+                ctx.log.info ("Web remote on port " + juce::String (s.port) + (s.pin.isNotEmpty() ? " (with a PIN)" : "")
+                              + (s.viewOnly ? ", view only" : ""));
+            refreshWebStatus();
+        }
+
+        void refreshWebStatus()
+        {
+            if (ctx.web == nullptr)
+                return;
+            webStatus.status = ctx.web->getStatus();
+            webStatus.urls = WebRemote::getUrls (webStatus.status.port);
+            webStatus.repaint();
+            web.repaint(); // the port's listening state
+        }
+
         /** A touch on a MIDI REMOTE CONTROL row's name (ⓘ): its MIDI map. */
         void mouseUp (const juce::MouseEvent& e) override
         {
@@ -1674,8 +1856,11 @@ namespace
         {
             if (WingRemote::Settings::load (ctx.settings) != applied)
                 applySettings();
+            if (WebRemote::Settings::load (ctx.settings) != appliedWeb)
+                applyWebSettings();
             if (isShowing())
             {
+                refreshWebStatus();
                 wingStatus.status = ctx.engine.getWing().getStatus();
                 wingStatus.repaint();
                 wing.repaint(); // the ports' listening state
@@ -1687,6 +1872,9 @@ namespace
         static constexpr float kPairRows = 160.0f / 52.0f;
 
         SettingsPanel midi { "MIDI REMOTE CONTROL" }, ha { "HA REMOTE" }, network { "NETWORK" }, lock { "REMOTE LOCK" }, wing { "WING REMOTE" };
+        SettingsPanel web { "WEB REMOTE" };
+        WebStatusView webStatus;
+        WebRemote::Settings appliedWeb;
         SettingsPanel ports; // MIDI PORTS
         WingKey haClear { "CLEAR", Icon::ClearCircle };
         std::unique_ptr<DropdownField> wingName;
