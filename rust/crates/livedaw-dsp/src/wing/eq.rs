@@ -145,8 +145,10 @@ const STD_BANDS: [[&str; 3]; 8] = [
 /// for a cut), so the bell is wider than a peaking filter of that Q: the
 /// filter's Q is the set Q over 10^(|gain| / 40). Measured on a WING: Q 1.00
 /// and 2.00 at +6 dB come out as Q 0.707 and 1.413, Q 4.00 at -9 dB as 2.38.
+/// High bells keep their analog shape up to Nyquist (a 12 kHz bell measured
+/// within 0.03 dB of that), so the design is the decramped one.
 fn wing_peak(sr: f64, f: f32, q: f32, g: f32) -> BiquadCoeffs {
-    peak(sr, f, q / 10f32.powf(g.abs() / 40.0), g)
+    BiquadCoeffs::peak_decramped(sr, f as f64, (q / 10f32.powf(g.abs() / 40.0)) as f64, g as f64)
 }
 
 fn design_std(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {

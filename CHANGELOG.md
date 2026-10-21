@@ -27,7 +27,9 @@ All notable changes to Sidecar are listed here. Versions follow
 
 - The WING EQ's bells are as wide as a WING's: the set Q is the resonance of the boosting
   (or, for a cut, the cutting) section, so the filter's Q is the set Q over 10^(|gain| / 40)
-  (measured on a console: Q 1.00 at +6 dB is as wide as a Q 0.707 peaking filter).
+  (measured on a console: Q 1.00 at +6 dB is as wide as a Q 0.707 peaking filter). High
+  bells keep their shape up to the top of the band, as on the console (a 12 kHz bell no
+  longer drops 1.8 dB short at 16-20 kHz).
 - Scribble strip LCDs have one backlight colour on every strip, as on the console; only
   the light bar above each strip shows the strip's colour.
 - The +48V keys (HOME OVERVIEW and INPUT, ROUTING > SOURCES, and the 4-Channel

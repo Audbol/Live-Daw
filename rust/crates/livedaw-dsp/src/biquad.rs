@@ -45,6 +45,47 @@ impl BiquadCoeffs {
         normalise(1.0 + p.alpha * a, -2.0 * p.cosw, 1.0 - p.alpha * a, 1.0 + p.alpha / a, -2.0 * p.cosw, 1.0 - p.alpha / a)
     }
 
+    /// A peaking filter that keeps the analog bell's shape up to Nyquist
+    /// (no cramping of high bells): Orfanidis' design with the analog gain at
+    /// Nyquist, the band edges at the half-gain (dB) points `freq / q` apart.
+    /// Falls back to [`Self::peak`] where the design doesn't apply (a bell too
+    /// wide for the band, or no gain).
+    pub fn peak_decramped(sr: f64, freq: f64, q: f64, gain_db: f64) -> Self {
+        let freq = freq.clamp(10.0, sr * 0.49);
+        let q = q.max(0.025);
+        let w0 = 2.0 * PI * freq / sr;
+        let dw = w0 / q;
+        if gain_db.abs() < 1e-3 || dw >= 0.95 * PI {
+            return Self::peak(sr, freq, q, gain_db);
+        }
+        let g = 10f64.powf(gain_db / 20.0);
+        let gb2 = g; // the half-gain level, squared
+        let f = (g * g - gb2).abs();
+        let g00 = (g * g - 1.0).abs();
+        let f00 = (gb2 - 1.0).abs();
+        let pi2 = PI * PI;
+        let num = (w0 * w0 - pi2).powi(2) + g * g * f00 * pi2 * dw * dw / f;
+        let den = (w0 * w0 - pi2).powi(2) + f00 * pi2 * dw * dw / f;
+        let g1 = (num / den).sqrt();
+        let g01 = (g * g - g1).abs();
+        let g11 = (g * g - g1 * g1).abs();
+        let f01 = (gb2 - g1).abs();
+        let f11 = (gb2 - g1 * g1).abs();
+        if f11 < 1e-12 || g00 < 1e-12 {
+            return Self::peak(sr, freq, q, gain_db);
+        }
+        let w2 = (g11 / g00).sqrt() * (w0 / 2.0).tan().powi(2);
+        let dww = (1.0 + (f00 / f11).sqrt() * w2) * (dw / 2.0).tan();
+        let c = f11 * dww * dww - 2.0 * w2 * (f01 - (f00 * f11).sqrt());
+        let d = 2.0 * w2 * (g01 - (g00 * g11).sqrt());
+        let a = ((c + d) / f).sqrt();
+        let b = ((g * g * c + gb2 * d) / f).sqrt();
+        if !(a.is_finite() && b.is_finite()) {
+            return Self::peak(sr, freq, q, gain_db);
+        }
+        normalise(g1 + w2 + b, -2.0 * (g1 - w2), g1 - b + w2, 1.0 + w2 + a, -2.0 * (1.0 - w2), 1.0 + w2 - a)
+    }
+
     pub fn low_shelf(sr: f64, freq: f64, q: f64, gain_db: f64) -> Self {
         let p = prewarp(sr, freq, q);
         let a = 10f64.powf(gain_db / 40.0);
@@ -195,6 +236,24 @@ mod tests {
         let hp = BiquadCoeffs::high_pass(48000.0, 100.0, std::f64::consts::FRAC_1_SQRT_2);
         assert!((gain_to_db(hp.magnitude_at(100.0, 48000.0) as f32) + 3.01).abs() < 0.05);
         assert!(hp.magnitude_at(20.0, 48000.0) < 0.05);
+    }
+
+    #[test]
+    fn decramped_peak_keeps_the_analog_bell() {
+        // A 12 kHz +6 dB bell (Q 1.413): a WING measured +2.35 dB at 18 kHz
+        // and +1.6 dB at 20 kHz, the analog bell's levels; the bilinear
+        // design falls well short.
+        let db = |c: BiquadCoeffs, f: f64| gain_to_db(c.magnitude_at(f, 48000.0) as f32);
+        let c = BiquadCoeffs::peak_decramped(48000.0, 12000.0, 1.413, 6.0);
+        assert!((db(c, 12000.0) - 6.0).abs() < 0.05);
+        assert!((db(c, 18000.0) - 2.35).abs() < 0.1 && (db(c, 20000.0) - 1.6).abs() < 0.1);
+        assert!(db(BiquadCoeffs::peak(48000.0, 12000.0, 1.413, 6.0), 20000.0) < 1.0);
+        // Low bells and cuts are the ordinary peaking filter.
+        let (a, b) = (BiquadCoeffs::peak_decramped(48000.0, 1500.0, 2.38, -9.0), BiquadCoeffs::peak(48000.0, 1500.0, 2.38, -9.0));
+        for f in [500.0, 1500.0, 3000.0] {
+            assert!((db(a, f) - db(b, f)).abs() < 0.05);
+        }
+        assert_eq!(BiquadCoeffs::peak_decramped(48000.0, 1000.0, 1.0, 0.0), BiquadCoeffs::peak(48000.0, 1000.0, 1.0, 0.0));
     }
 
     #[test]
