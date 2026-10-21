@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ui/DisplayPage.h"
+#include "ui/HoldToSwitch.h"
 #include "ui/RoutingGroups.h"
 #include "ui/ScreenWidgets.h"
 #include "ui/ShowPanel.h"
@@ -214,6 +215,8 @@ private:
     void selectSource (int port);
     void renameSource();
     void setSourceGainFromY (int y);
+    /** Switches the selected source's +48V (both of a pair), when its key has been held. */
+    void switchPhantom();
     /** The selected source's oscillator (OSC 1 / 2; a pair's is OSC 1's), else nullptr. */
     ld::OscParams* selectedOscillator() const;
     void showOscFreqMenu();
@@ -239,6 +242,7 @@ private:
     float selectedSourcePeak = 0.0f;
     int refreshTicks = 0;
     bool draggingGain = false;
+    HoldKey phantomHold { [this] { switchPhantom(); }, [this] { repaint (sourcePhantomKey); } };
 };
 
 /** SETUP (manual 5.5): the tabs GENERAL | AUDIO | SURFACE | REMOTE | DAW (and

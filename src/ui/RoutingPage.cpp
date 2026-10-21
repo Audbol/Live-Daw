@@ -296,8 +296,10 @@ namespace
         g.drawFittedText (text, f.toNearestInt().reduced (4, 0), juce::Justification::centred, 1, 0.8f);
     }
 
-    /** A square key with an icon and its caption under it (+48V, POL). */
-    void drawIconKeyBelow (juce::Graphics& g, juce::Rectangle<int> key, Icon icon, const juce::String& caption, bool on, juce::Colour onColour)
+    /** A square key with an icon and its caption under it (+48V, POL); a held
+        key (`hold` 0 .. 1) fills with the colour it switches to. */
+    void drawIconKeyBelow (juce::Graphics& g, juce::Rectangle<int> key, Icon icon, const juce::String& caption, bool on, juce::Colour onColour,
+                           float hold = 0.0f)
     {
         if (key.isEmpty())
             return;
@@ -305,6 +307,7 @@ namespace
         g.fillRect (key.expanded (px (2.0f)));
         g.setColour (on ? onColour : Colours::screenTile);
         g.fillRect (key);
+        paintHoldProgress (g, key.toFloat(), hold, on ? Colours::screenTile : onColour);
         drawIcon (g, icon, key.toFloat().reduced ((float) key.getHeight() * 0.24f), on ? juce::Colours::black : Dark::caption);
         g.setColour (on ? onColour : Dark::caption.withAlpha (0.8f));
         g.setFont (capFont (13.0f));
@@ -1556,7 +1559,7 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g) const
         return;
     }
 
-    drawIconKeyBelow (g, sourcePhantomKey, Icon::Power, "+48V", src->phantom.load(), Colours::mute);
+    drawIconKeyBelow (g, sourcePhantomKey, Icon::Power, "+48V", src->phantom.load(), Colours::mute, phantomHold.progress());
     drawIconKeyBelow (g, sourcePolKey, Icon::Invert, "POL", src->invert.load(), Colours::gold);
     drawOutlinedKey (g, sourceMuteKey, std::nullopt, "MUTE", src->mute.load(), Colours::mute, juce::Colours::black);
     paintLevelFader (g, sourceGainFader, src->gainDb.load(), kGainMin, kGainMax);
@@ -1782,12 +1785,30 @@ void RoutingPage::mouseDown (const juce::MouseEvent& e)
     draggingGain = mode == Mode::Sources && sourceTab == 0 && levelFader().contains (e.getPosition()) && sourceParams (selectedSource) != nullptr;
     if (draggingGain)
         setSourceGainFromY (e.y);
+    // +48V switches when held (kPhantomHoldSeconds), as on the console; an
+    // oscillator has FREQ there.
+    if (mode == Mode::Sources && sourceTab == 0 && selectedOscillator() == nullptr && sourceParams (selectedSource) != nullptr
+        && sourcePhantomKey.contains (e.getPosition()))
+        phantomHold.press();
 }
 
 void RoutingPage::mouseDrag (const juce::MouseEvent& e)
 {
     if (draggingGain)
         setSourceGainFromY (e.y);
+    if (! sourcePhantomKey.contains (e.getPosition()))
+        phantomHold.release();
+}
+
+void RoutingPage::switchPhantom()
+{
+    if (const auto* src = sourceParams (selectedSource))
+    {
+        const bool on = ! src->phantom.load();
+        forSourcePair (ctx.engine, selectedSource, [on] (ld::SourceParams& s) { s.phantom = on; });
+    }
+    repaint();
+    notifyStatusKeysChanged();
 }
 
 void RoutingPage::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
@@ -2139,6 +2160,7 @@ void RoutingPage::chooseGroup (bool rightSide, int group)
 void RoutingPage::mouseUp (const juce::MouseEvent& e)
 {
     const auto pos = e.getPosition();
+    phantomHold.release();
     if (draggingGain)
     {
         draggingGain = false;
@@ -2177,8 +2199,6 @@ void RoutingPage::mouseUp (const juce::MouseEvent& e)
                     if (oscModeKeys[(size_t) m].contains (pos))
                         osc->mode = m;
             }
-            else if (sourcePhantomKey.contains (pos))
-                flip (&ld::SourceParams::phantom);
             else if (sourcePolKey.contains (pos))
                 flip (&ld::SourceParams::invert);
             else if (sourceMuteKey.contains (pos))

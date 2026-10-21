@@ -350,6 +350,7 @@ if(LIVEDAW_BUILD_TESTS)
         tests/DawTests.cpp
         tests/WingTests.cpp
         tests/RoutingTests.cpp
+        tests/HoldToSwitchTests.cpp
         tests/SandboxTests.cpp
         src/sandbox/TestPlugins.cpp
         ${LIVEDAW_ENGINE_SOURCES}

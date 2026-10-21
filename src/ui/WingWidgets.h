@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ui/HoldToSwitch.h"
 #include "ui/Icons.h"
 #include "ui/LookAndFeel.h"
 
@@ -336,7 +337,9 @@ struct SurfaceLighting
     A short press runs `onPress`; holding the key for kHoldMs runs `onHold`
     instead (and the release then does nothing). Right-click and Ctrl-click are
     the mouse's "hold". A key without `onHold` acts as soon as it's pressed,
-    like the console's. */
+    like the console's. While `switchesOnHold` returns true the key runs
+    `onPress` only once held for kPhantomHoldSeconds (+48V), its cap filling
+    meanwhile; a tap does nothing. */
 class SurfaceKey : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
 {
 public:
@@ -365,6 +368,7 @@ public:
 
     std::function<void()> onPress, onHold;
     std::function<int()> ledState;
+    std::function<bool()> switchesOnHold;
     juce::Colour ledColour = Colours::ledYellow;
     Shape shape = Shape::Rect;
     /** A key printed dark (LISTEN, DAW). */
@@ -432,6 +436,13 @@ public:
         g.setGradientFill (juce::ColourGradient (body.brighter (dark ? 0.05f : 0.1f), 0.0f, capArea.getY(),
                                                  body.darker (dark ? 0.05f : 0.12f), 0.0f, capArea.getBottom(), false));
         g.fillPath (cap);
+        if (const float held = guardedPress.progress(); held > 0.0f)
+        {
+            // Held: the cap fills from the bottom with how it'll be lit.
+            juce::Graphics::ScopedSaveState state (g);
+            g.reduceClipRegion (cap);
+            paintHoldProgress (g, capArea, held, lit ? unlitCap : SurfaceLighting::lit (ledColour, unlitCap));
+        }
         if (dark && ! lit)
         {
             g.setColour (Colours::silk.withAlpha (isEnabled() ? 0.85f : 0.35f));
@@ -501,6 +512,11 @@ public:
         TransientPopups::closeAll();
         pressed = false;
         holdDone = false;
+        if (switchesOnHold != nullptr && switchesOnHold())
+        {
+            guardedPress.press();
+            return;
+        }
         if (e.mods.isPopupMenu() || e.mods.isCommandDown())
         {
             holdDone = true;
@@ -516,8 +532,15 @@ public:
         }
     }
 
+    void mouseDrag (const juce::MouseEvent& e) override
+    {
+        if (! getLocalBounds().contains (e.getPosition()))
+            guardedPress.release();
+    }
+
     void mouseUp (const juce::MouseEvent& e) override
     {
+        guardedPress.release();
         const bool shortPress = pressed && ! holdDone && getLocalBounds().contains (e.getPosition());
         pressed = false;
         if (shortPress)
@@ -561,6 +584,7 @@ private:
     std::optional<Icon> icon;
     juce::uint32 downTime = 0;
     bool pressed = false, holdDone = false, shownLit = false;
+    HoldKey guardedPress { [this] { fire (onPress); }, [this] { repaint(); } };
 };
 
 /** A round VIEW key: lit green while its screen is shown (`isActive`). */

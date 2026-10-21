@@ -4,6 +4,7 @@
 #include "ui/DisplayPage.h"
 #include "ui/DynamicsGraph.h"
 #include "ui/Faceplate.h"
+#include "ui/HoldToSwitch.h"
 #include "ui/HomeIcons.h"
 #include "ui/Icons.h"
 #include "ui/Knobs.h"
@@ -13,6 +14,7 @@
 #include <array>
 #include <cmath>
 #include <functional>
+#include <memory>
 
 /* Widgets the HOME screens share, drawn after the WING's Channel Home and
    processing-slot screens (manual 5.1 and chapter 6). */
@@ -289,6 +291,33 @@ public:
         }
     }
 
+    /** The key switches when held for `seconds` instead of on a click (+48V),
+        filling with the colour it turns to meanwhile; a tap does nothing. */
+    void switchOnHold (std::function<void()> onHeld, double seconds = kPhantomHoldSeconds)
+    {
+        hold = std::make_unique<HoldKey> ([this, onHeld = std::move (onHeld)]
+        {
+            juce::Component::SafePointer<IconKey> safe (this);
+            onHeld();
+            if (safe != nullptr && isOn)
+                setToggleState (isOn(), juce::dontSendNotification);
+        }, [this] { repaint(); }, seconds);
+    }
+
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        juce::TextButton::mouseDown (e);
+        if (hold != nullptr && getState() == buttonDown)
+            hold->press();
+    }
+
+    void buttonStateChanged() override
+    {
+        // Let go, or dragged off the key: the hold is cancelled.
+        if (hold != nullptr && getState() != buttonDown)
+            hold->release();
+    }
+
     void paintButton (juce::Graphics& g, bool over, bool down) override
     {
         const bool on = getToggleState();
@@ -332,6 +361,8 @@ public:
         if (! isEnabled() && on)
             fill = fill.darker (0.45f);
         paintKeyBody (g, r, fill, frame);
+        if (hold != nullptr)
+            paintHoldProgress (g, r.reduced (1.5f), hold->progress(), on ? offColour : onColour);
         const auto ink = on ? juce::Colours::black : (isEnabled() ? offInk : colours::dim.withAlpha (0.55f));
         g.setColour (ink);
         const auto keyText = getButtonText();
@@ -388,6 +419,7 @@ private:
 
     std::optional<Icon> icon;
     juce::Colour onColour;
+    std::unique_ptr<HoldKey> hold;
 };
 
 /** A key bound to an atomic flag. */
