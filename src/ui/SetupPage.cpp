@@ -274,7 +274,8 @@ namespace
     };
 
     //==============================================================================
-    /** CONSOLE: name, software, engine, audio device, the console size and the data folders. */
+    /** CONSOLE: name, software, engine, audio device, the console size, the
+        surface's finish and the data folders. */
     class ConsolePanel final : public juce::Component
     {
     public:
@@ -339,6 +340,7 @@ namespace
                 k->offColour = Dark::key;
             for (auto* k : { &editKey, &aboutKey, &chMinus, &chPlus, &chWing, &busMinus, &busPlus, &dataKey, &showKey })
                 addAndMakeVisible (k);
+            addAndMakeVisible (finishKeys);
         }
 
         void update()
@@ -396,6 +398,8 @@ namespace
                 g.setFont (wingFontFit (TypeScale::value, (float) row.getHeight() * 0.7f, WingWeight::SemiBold));
                 g.drawText (juce::String (value), valueArea, juce::Justification::centred);
             }
+            g.setFont (wingFontFit (TypeScale::body, (float) finishRow.getHeight() * 0.55f));
+            g.drawFittedText ("SURFACE FINISH", finishRow.withRight (finishKeys.getX() - 4), juce::Justification::centredLeft, 1, 0.8f);
         }
 
         void resized() override
@@ -414,7 +418,7 @@ namespace
             showKey.setBounds (d);
 
             auto r = b.reduced (juce::roundToInt (wingPx (16.0f)), juce::roundToInt (wingPx (8.0f)));
-            const int configH = r.getHeight() * 30 / 100;
+            const int configH = r.getHeight() * 40 / 100;
             auto config = r.removeFromBottom (configH);
             const int rowH = r.getHeight() / 4;
             for (auto& row : infoRows)
@@ -423,8 +427,8 @@ namespace
             editKey.setBounds (infoRows[0].withTrimmedLeft (infoRows[0].getWidth() - keyW).reduced (0, 2));
             aboutKey.setBounds (infoRows[2].withTrimmedLeft (infoRows[2].getWidth() - keyW).reduced (0, 2));
 
-            configCaption = config.removeFromTop (config.getHeight() / 4);
-            const int h = config.getHeight() / 2;
+            configCaption = config.removeFromTop (config.getHeight() / 5);
+            const int h = config.getHeight() / 3;
             for (auto [row, minus, value, plus] : { std::tuple { &chRow, &chMinus, &chValue, &chPlus }, std::tuple { &busRow, &busMinus, &busValue, &busPlus } })
             {
                 auto rr = config.removeFromTop (h).reduced (0, 2);
@@ -437,6 +441,8 @@ namespace
                 plus->setBounds (keys.removeFromRight (rr.getHeight() + 6).reduced (2, 0));
                 *value = keys;
             }
+            finishRow = config.removeFromTop (h).reduced (0, 2);
+            finishKeys.setBounds (finishRow.withTrimmedLeft (finishRow.getWidth() - juce::jmin (finishRow.getWidth() * 62 / 100, screenCap (200))).reduced (2, 0));
         }
 
     private:
@@ -454,7 +460,19 @@ namespace
         UiContext& ctx;
         WingKey editKey { "EDIT", Icon::Edit }, aboutKey { "ABOUT", Icon::Info }, chMinus { "-" }, chPlus { "+" }, chWing { "WING" }, busMinus { "-" }, busPlus { "+" },
             dataKey { "DATA FOLDER", Icon::Folder }, showKey { "SHOW FOLDER", Icon::Folder };
-        juce::Rectangle<int> infoBox, dataBox, dataTitle, infoRows[4], configCaption, chRow, busRow, chValue, busValue;
+        juce::Rectangle<int> infoBox, dataBox, dataTitle, infoRows[4], configCaption, chRow, busRow, chValue, busValue, finishRow;
+        // SURFACE FINISH: the surface view in the silver or the black WING's colours.
+        ChoiceKeys finishKeys { { ConsoleLook::finishName (SurfaceFinish::Silver), ConsoleLook::finishName (SurfaceFinish::Black) },
+                                [this] { return (int) ConsoleLook::load (ctx.settings).finish; },
+                                [this] (int i)
+                                {
+                                    auto look = ConsoleLook::load (ctx.settings);
+                                    look.finish = i == 1 ? SurfaceFinish::Black : SurfaceFinish::Silver;
+                                    look.save (ctx.settings);
+                                    setSurfaceFinish (look.finish);
+                                    if (auto* top = getTopLevelComponent())
+                                        top->repaint();
+                                } };
     };
 
     //==============================================================================

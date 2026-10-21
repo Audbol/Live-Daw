@@ -303,7 +303,7 @@ void paintUpperLcd (juce::Graphics& g, juce::Rectangle<int> area, UiContext& ctx
         const bool exists = channel < d->getNumChannels();
         const auto& s = d->getStrip (channel);
         // A white bar over the channels the controller has.
-        drawLightBar (g, cell.removeFromTop (juce::jmax (4, cell.getHeight() / 9)).toFloat(), Colours::silk, exists);
+        drawLightBar (g, cell.removeFromTop (juce::jmax (4, cell.getHeight() / 9)).toFloat(), surfaceColours().silk, exists);
         cell.removeFromTop (juce::jmax (3, cell.getHeight() / 8));
         // The V-pot ring under the text: eleven LEDs and the centre dot.
         auto ringArea = cell.removeFromBottom (juce::jmax (5, cell.getHeight() / 6));
@@ -322,7 +322,7 @@ void paintUpperLcd (juce::Graphics& g, juce::Rectangle<int> area, UiContext& ctx
         {
             auto led = juce::Rectangle<float> ((float) ringArea.getX() + lw * ((float) l + 0.5f), (float) ringArea.getY() + 1.0f, lw * 0.75f,
                                                (float) ringArea.getHeight() - 2.0f);
-            g.setColour ((leds >> l) & 1 ? Colours::ledYellow : Colours::silk.withAlpha (0.12f));
+            g.setColour ((leds >> l) & 1 ? Colours::ledYellow : surfaceColours().silk.withAlpha (0.12f));
             g.fillRect (led);
         }
     }

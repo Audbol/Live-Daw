@@ -75,7 +75,11 @@ The screens follow the WING's own: the same panels, keys, colours and layout, se
 Barlow Condensed. The surface around them looks like the silver WING: a light grey
 surface with mid grey decks (monitoring, channel strip, 4-Channel, custom controls),
 light grey keys and dark grey SELECT / SOLO / MUTE keys, black fader caps, and the
-scribble strips, meters and LCDs in black windows.
+scribble strips, meters and LCDs in black windows. SETUP > GENERAL > CONSOLE >
+SURFACE FINISH **BLACK** shows the black WING instead: a black surface with printed
+frames, frosted light grey keys in black bezels and silver fader caps. The finish is
+an app preference (not saved in shows) and changes the surface at once; the
+touchscreen looks the same in both.
 
 - **Three fader sections:** left (12 faders), center (8) and right (4), each with the
   WING's layer column: **VIEW** (the section's OVERVIEW; hold for CONFIG), seven layer
@@ -201,7 +205,8 @@ scribble strips, meters and LCDs in black windows.
     channels' own outputs). Defaults: every interface input on its channel (the
     console patches its eight local inputs to channels 1-8) and MAIN 1 on LOCAL OUT
     1-2 (the console uses LOCAL OUT 7-8 and feeds buses 1-6 to 1-6).
-  - **SETUP:** GENERAL (lighting, clock, console info and size, OPERATION, OPTIONS),
+  - **SETUP:** GENERAL (lighting, clock, console info and size, the surface's finish
+    SILVER / BLACK, OPERATION, OPTIONS),
     AUDIO (clock rate, INPUT SELECT: the global MAIN / ALT switch and each channel's,
     preferences such as MAIN LINK, DCA MUTEGROUPS, MUTEGROUP/SIP OVERRIDE, GLOBAL INPUT
     SELECT OVERRIDE, SOURCE SOLO (CH39 / AUX7) and the TALKBACK channel, SOLO SYSTEM with SOLO MODE LIVE / STUDIO /

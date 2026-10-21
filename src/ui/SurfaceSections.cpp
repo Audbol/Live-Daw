@@ -24,7 +24,7 @@ namespace
     {
         if (x2 - x1 > 4.0f)
         {
-            g.setColour (Colours::silk.withAlpha (0.55f));
+            g.setColour (surfaceColours().silk.withAlpha (0.55f));
             g.fillRect (x1 + 2.0f, y - 0.75f, x2 - x1 - 4.0f, 1.5f);
         }
     }
@@ -465,7 +465,7 @@ juce::String ChannelStripSection::panelState() const
 
 void ChannelStripSection::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::surface);
+    g.fillAll (surfaceColours().surface);
     drawDeck (g, getLocalBounds().toFloat().reduced (3.0f));
 
     paintPanel (g);
@@ -490,7 +490,7 @@ void ChannelStripSection::paint (juce::Graphics& g)
     // Analog EQ models: the parameters SHIFT has on the encoders.
     const auto pageText = juce::String (eqPage * 4 + 1) + "-" + juce::String (eqPage * 4 + 4);
     drawSilk (g, below (shiftKey, 13), eqPages > 0 ? pageText : juce::String ("5-8"), small, juce::Justification::centred,
-              eqPages > 0 && eqPage > 0 ? Colours::yellow : Colours::silk);
+              eqPages > 0 && eqPage > 0 ? Colours::yellow : surfaceColours().silk);
     drawSilk (g, below (gainKey, 13), "GAIN", small);
     drawSilk (g, below (widthKey, 13), "WIDTH", small);
     drawSilk (g, below (freqKey, 13), "FREQ", small);
@@ -504,29 +504,29 @@ void ChannelStripSection::paint (juce::Graphics& g)
             const auto& b = eqKnobs[i].getBinding();
             const bool selected = shownSlot == EqSlot && ! eqMixShown && eqBand == i;
             drawSilk (g, below (eqKnobs[i], 13).reduced (10.0f, 0.0f), b.isValid() ? b.label : juce::String(), small,
-                      juce::Justification::centred, selected ? Colours::yellow : Colours::silk);
+                      juce::Justification::centred, selected ? Colours::yellow : surfaceColours().silk);
             continue;
         }
         // "[1] 5": the band digit inverted; the selected band's box lit.
         auto cap = below (eqKnobs[i], 13).withSizeKeepingCentre (30.0f, 13.0f);
         auto box = cap.removeFromLeft (13.0f);
         const bool selected = shownSlot == EqSlot && ! eqMixShown && eqBand == i;
-        g.setColour (selected ? Colours::yellow : Colours::silk);
+        g.setColour (selected ? Colours::yellow : surfaceColours().silk);
         g.fillRect (box);
-        drawSilk (g, box, juce::String (i + 1), small, juce::Justification::centred, Colours::deck);
-        drawSilk (g, cap, juce::String (i + 5), small, juce::Justification::centred, eqShift ? Colours::yellow : Colours::silk);
+        drawSilk (g, box, juce::String (i + 1), small, juce::Justification::centred, surfaceColours().deck);
+        drawSilk (g, cap, juce::String (i + 5), small, juce::Justification::centred, eqShift ? Colours::yellow : surfaceColours().silk);
     }
 
     // The dark legend plates beside GAIN / WIDTH / FREQ.
     for (auto [plate, icons] : { std::pair { legendLow, std::array<Icon, 3> { Icon::LowCut, Icon::Bell, Icon::LowShelf } },
                                  std::pair { legendHigh, std::array<Icon, 3> { Icon::HighShelf, Icon::Bell, Icon::HighCut } } })
     {
-        g.setColour (juce::Colour (0xff2a2b2e));
+        g.setColour (surfaceColours().plate);
         g.fillRoundedRectangle (plate.toFloat(), 3.0f);
         auto r = plate.toFloat().reduced (4.0f, 2.0f);
         const float w = r.getWidth() / 3.0f;
         for (auto icon : icons)
-            drawIcon (g, icon, r.removeFromLeft (w).reduced (1.0f), Colours::silk);
+            drawIcon (g, icon, r.removeFromLeft (w).reduced (1.0f), surfaceColours().silk);
     }
 }
 
@@ -546,20 +546,20 @@ void ChannelStripSection::paintPanel (juce::Graphics& g)
     auto rowY = [&] (int row) { return top + rowH * (float) row; };
     auto ledAt = [&] (float x, int row, bool on, juce::Colour colour = juce::Colours::white)
     {
-        g.setColour (on ? colour : Colours::ledOff);
+        g.setColour (on ? colour : surfaceColours().ledOff);
         g.fillRect (x, rowY (row) + (rowH - led * 0.75f) * 0.5f, led, led * 0.75f);
     };
     auto text = [&] (float x, float w, int row, const juce::String& t, juce::Justification j = juce::Justification::centredLeft)
     {
-        drawSilk (g, { x, rowY (row), w, rowH }, t, font, j, Colours::silk);
+        drawSilk (g, { x, rowY (row), w, rowH }, t, font, j, surfaceColours().silk);
     };
     auto title = [&] (float x, float w, const juce::String& t, juce::Justification j = juce::Justification::centred)
     {
-        drawSilk (g, { x, r.getY(), w, titleH }, t, titleFont, j, Colours::silk);
+        drawSilk (g, { x, r.getY(), w, titleH }, t, titleFont, j, surfaceColours().silk);
     };
     auto rule = [&] (float x)
     {
-        g.setColour (Colours::silk.withAlpha (0.7f));
+        g.setColour (surfaceColours().silk.withAlpha (0.7f));
         g.fillRect (x, top, 1.5f, rowH * 8.0f);
     };
 
@@ -683,11 +683,11 @@ void ChannelStripSection::paintPanel (juce::Graphics& g)
         const auto dcas = any ? p->dcaMask.load() : 0u;
         rowOf (3, 4, [&] (int i) { return ((dcas >> i) | (dcas >> (i + 8))) & 1u; });
         rowOf (4, 4, [&] (int i) { return ((dcas >> (i + 4)) | (dcas >> (i + 12))) & 1u; });
-        drawSilk (g, { labelX, rowY (3), labelW, rowH * 2.0f }, "DCA", font, juce::Justification::centredLeft, Colours::silk);
+        drawSilk (g, { labelX, rowY (3), labelW, rowH * 2.0f }, "DCA", font, juce::Justification::centredLeft, surfaceColours().silk);
         const auto mutes = any ? p->muteGroupMask.load() : 0u;
         rowOf (6, 4, [&] (int i) { return (mutes >> i) & 1u; });
         rowOf (7, 4, [&] (int i) { return (mutes >> (i + 4)) & 1u; });
-        drawSilk (g, { labelX, rowY (6), labelW, rowH * 2.0f }, "MUTE", font, juce::Justification::centredLeft, Colours::silk);
+        drawSilk (g, { labelX, rowY (6), labelW, rowH * 2.0f }, "MUTE", font, juce::Justification::centredLeft, surfaceColours().silk);
     }
 }
 
@@ -908,24 +908,24 @@ MonitorSection::MonitorSection (UiContext& c) : ctx (c)
 
 void MonitorSection::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::surface);
+    g.fillAll (surfaceColours().surface);
 
     // The panel's top: the PHONES socket mark and the app's own name (not the
     // console maker's logo: Sidecar is not affiliated with them).
     if (! logoArea.isEmpty())
     {
         auto mark = logoArea.reduced (14, 8).removeFromTop (16).toFloat();
-        g.setColour (Colours::surfacePrint);
+        g.setColour (surfaceColours().surfacePrint);
         g.drawLine (mark.getX() + 1.0f, mark.getY() - 2.0f, mark.getX() + 1.0f, mark.getCentreY() + 2.0f, 1.0f);
         g.drawLine (mark.getX() + 1.0f, mark.getCentreY() + 2.0f, mark.getX() + 12.0f, mark.getCentreY() + 2.0f, 1.0f);
-        drawIcon (g, Icon::Headphones, juce::Rectangle<float> (14.0f, 14.0f).withPosition (mark.getX() + 15.0f, mark.getY()), Colours::surfacePrint);
-        drawSilk (g, mark.withTrimmedLeft (32.0f), "PHONES", 9.0f, juce::Justification::centredLeft, Colours::surfacePrint);
+        drawIcon (g, Icon::Headphones, juce::Rectangle<float> (14.0f, 14.0f).withPosition (mark.getX() + 15.0f, mark.getY()), surfaceColours().surfacePrint);
+        drawSilk (g, mark.withTrimmedLeft (32.0f), "PHONES", 9.0f, juce::Justification::centredLeft, surfaceColours().surfacePrint);
 
         const juce::String name = juce::String (kAppName).toUpperCase();
         auto logo = logoArea.toFloat().withSizeKeepingCentre ((float) logoArea.getWidth() * 0.7f, (float) logoArea.getHeight() * 0.2f);
         const auto font = juce::Font (juce::FontOptions (logo.getHeight() * 1.1f, juce::Font::bold)).withExtraKerningFactor (0.06f);
         g.setFont (fontFittingWidth (font, name, logo.getWidth(), 1.0f));
-        g.setColour (Colours::surfacePrint.withAlpha (0.8f));
+        g.setColour (surfaceColours().surfacePrint.withAlpha (0.8f));
         g.drawText (name, logo, juce::Justification::centred);
     }
 
@@ -934,7 +934,7 @@ void MonitorSection::paint (juce::Graphics& g)
     drawDeck (g, wingPanel.toFloat());
     for (auto [bar, title] : { std::pair { usbTitle, "USB AUDIO/DATA" }, std::pair { monitorTitle, "MONITORING/TALKBACK" } })
     {
-        g.setColour (Colours::sectionLine);
+        g.setColour (surfaceColours().sectionLine);
         g.fillRect (bar.toFloat().reduced ((float) bar.getWidth() * 0.06f, 0.0f).withHeight (1.5f));
         drawSilk (g, bar.toFloat().withTrimmedTop (2.0f), title, juce::jlimit (8.0f, 12.0f, (float) bar.getHeight() * 0.72f));
     }
@@ -950,11 +950,11 @@ void MonitorSection::paint (juce::Graphics& g)
     drawSilk (g, caption.withWidth (caption.getWidth() * 0.55f), "5V  1000mA", 8.0f, juce::Justification::centredLeft);
     drawSilk (g, caption.withTrimmedLeft (caption.getWidth() * 0.6f), "ACCESS", 8.0f, juce::Justification::centredLeft);
     auto socket = inner.removeFromLeft (inner.getWidth() * 0.5f).reduced (2.0f, 1.0f);
-    g.setColour (Colours::silk);
+    g.setColour (surfaceColours().silk);
     g.drawRoundedRectangle (socket, 2.0f, 1.5f);
     g.drawRect (socket.reduced (socket.getWidth() * 0.18f, socket.getHeight() * 0.3f), 1.0f);
-    drawIcon (g, Icon::Usb, inner.removeFromLeft (inner.getWidth() * 0.4f), Colours::silk);
-    g.setColour (Colours::ledOff.brighter (0.2f));
+    drawIcon (g, Icon::Usb, inner.removeFromLeft (inner.getWidth() * 0.4f), surfaceColours().silk);
+    g.setColour (surfaceColours().ledOff.brighter (0.2f));
     g.fillRect (inner.withSizeKeepingCentre (juce::jmin (16.0f, inner.getWidth() * 0.8f), 5.0f));
 
     // Captions under the pots and keys.
@@ -1708,7 +1708,7 @@ void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> are
 
 void CustomControlSection::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::surface);
+    g.fillAll (surfaceColours().surface);
 
     // The deck under the encoders, keys and LCDs (the arrows and the wheel
     // sit on the surface below it).
@@ -1743,7 +1743,7 @@ void CustomControlSection::paint (juce::Graphics& g)
     g.drawText (text, layerDisplay.reduced (2, 0), juce::Justification::centredRight);
 
     drawSilk (g, heading.toFloat(), "CUSTOM CONTROLS", 11.0f);
-    g.setColour (Colours::silk.withAlpha (0.6f));
+    g.setColour (surfaceColours().silk.withAlpha (0.6f));
     g.fillRect (divider);
 }
 

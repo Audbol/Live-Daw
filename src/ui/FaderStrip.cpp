@@ -98,23 +98,25 @@ juce::Colour scribbleBacklight (juce::Colour stripColour, float backlight)
 {
     // A colour-lit LCD looks like a bright, pale version of the strip's
     // colour (the console's screen colours are much darker).
-    return juce::Colour (stripColour.getHue(), stripColour.getSaturation() * 0.5f, juce::jlimit (0.0f, 1.0f, 0.84f * backlight), 1.0f);
+    const auto& sc = surfaceColours();
+    return juce::Colour (stripColour.getHue(), stripColour.getSaturation() * sc.scribbleSaturation,
+                         juce::jlimit (0.0f, 1.0f, sc.scribbleBrightness * backlight), 1.0f);
 }
 
 void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const ScribbleInfo& info)
 {
     // A negative LCD: light text on the backlight, the strip's colour (or
-    // periwinkle). SCRIBBLE sets the backlight (the text, lit by it, follows),
+    // the finish's plain backlight). SCRIBBLE sets the backlight (the text, lit by it, follows),
     // SCR CONT how far the text stands out from the background.
     const float backlight = juce::jlimit (0.2f, 1.6f, info.backlight);
     const auto bg = info.backlightColour.has_value() ? scribbleBacklight (*info.backlightColour, backlight)
-                                                     : Colours::scribbleLcd.withMultipliedBrightness (backlight);
+                                                     : surfaceColours().scribbleLcd.withMultipliedBrightness (backlight);
     g.setColour (bg);
     g.fillRect (lcd);
     if (info.isEmpty())
         return;
     const float contrast = juce::jlimit (0.0f, 1.0f, 0.55f + 0.75f * (info.contrast - 0.4f));
-    const auto ink = bg.interpolatedWith (info.backlightColour.has_value() ? juce::Colours::white : Colours::scribbleInk, 0.45f + 0.55f * contrast)
+    const auto ink = bg.interpolatedWith (info.backlightColour.has_value() ? juce::Colours::white : surfaceColours().scribbleInk, 0.45f + 0.55f * contrast)
                          .withMultipliedBrightness (juce::jlimit (0.55f, 1.0f, 0.55f + 0.45f * backlight));
 
     const float H = lcd.getHeight(), W = lcd.getWidth();
@@ -284,7 +286,7 @@ void drawScribbleFrame (juce::Graphics& g, juce::Rectangle<float> lcd, bool firs
 {
     // The rim (top, bottom and the display's ends), pixel aligned so it stays
     // a crisp line at every size, and the rule to the next strip.
-    const auto rim = Colours::scribbleRim.withMultipliedBrightness (juce::jlimit (0.4f, 1.3f, backlight));
+    const auto rim = surfaceColours().scribbleRim.withMultipliedBrightness (juce::jlimit (0.4f, 1.3f, backlight));
     const auto r = lcd.toNearestInt().toFloat();
     g.setColour (rim);
     g.fillRect (r.withHeight (1.0f));
@@ -295,7 +297,7 @@ void drawScribbleFrame (juce::Graphics& g, juce::Rectangle<float> lcd, bool firs
         g.fillRect (r.withTrimmedLeft (r.getWidth() - 1.0f));
     else
     {
-        g.setColour (Colours::scribbleRule.withMultipliedBrightness (juce::jlimit (0.5f, 1.0f, 0.5f + 0.5f * backlight)).withAlpha (0.8f));
+        g.setColour (surfaceColours().scribbleRule.withMultipliedBrightness (juce::jlimit (0.5f, 1.0f, 0.5f + 0.5f * backlight)).withAlpha (0.8f));
         g.fillRect (r.getRight() - 1.0f, r.getY() + 1.0f, 1.0f, r.getHeight() - 2.0f);
     }
 }
@@ -834,7 +836,7 @@ void FaderStrip::setModuleEdges (bool first, bool last)
 
 void FaderStrip::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::surface);
+    g.fillAll (surfaceColours().surface);
 
     // The black display window and the meter panel run across the strips of
     // a module of four, rounded at its outer edges.
@@ -857,7 +859,7 @@ void FaderStrip::paint (juce::Graphics& g)
     // Colour light bar (COLOR LED brightness) and scribble strip; one LCD
     // runs across the module, with a fine rule between the strips.
     const juce::Colour colour = strip != nullptr ? stripDisplayColour (*strip)
-                                : (dca >= 0 ? wingColour (shownColour) : (fxp ? kFxColour : (midi ? Colours::midiCc : Colours::ledOff)));
+                                : (dca >= 0 ? wingColour (shownColour) : (fxp ? kFxColour : (midi ? Colours::midiCc : surfaceColours().ledOff)));
     drawLightBar (g, barArea.toFloat(), colour.withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
                   target.has_value() && shownLight);
     auto info = target ? scribbleInfo() : ScribbleInfo {};
@@ -878,7 +880,7 @@ void FaderStrip::paint (juce::Graphics& g)
         auto barLed = [&] (int i, bool on, juce::Colour c)
         {
             auto r = row (i).withSizeKeepingCentre (pairW, juce::jmax (2.0f, rowH * 0.6f));
-            g.setColour (on ? c.withMultipliedBrightness (bright) : Colours::ledOff);
+            g.setColour (on ? c.withMultipliedBrightness (bright) : surfaceColours().ledOff);
             g.fillRect (r);
         };
         barLed (0, shownDyn, Colours::block);

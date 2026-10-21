@@ -33,7 +33,7 @@ struct ScribbleInfo
     bool nameInverted = false;
     float backlight = 1.0f, contrast = 1.0f; // SETUP > GENERAL: SCRIBBLE and SCR CONT
     /** The strip's colour: the console lights its LCD in it (white print).
-        Unset: the plain periwinkle LCD. */
+        Unset: the finish's plain LCD (SurfacePalette::scribbleLcd). */
     std::optional<juce::Colour> backlightColour;
 
     bool isEmpty() const noexcept

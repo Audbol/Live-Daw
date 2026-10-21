@@ -144,7 +144,7 @@ namespace leds
     {
         for (int i = 0; i < numSegments; ++i)
         {
-            g.setColour (i >= numSegments - lit ? colour (i) : Colours::ledOff);
+            g.setColour (i >= numSegments - lit ? colour (i) : surfaceColours().ledOff);
             g.fillRect (segment (area, numSegments, i));
         }
     }
@@ -153,7 +153,7 @@ namespace leds
     {
         for (int i = 0; i < numSegments; ++i)
         {
-            g.setColour (i < lit ? colour : Colours::ledOff);
+            g.setColour (i < lit ? colour : surfaceColours().ledOff);
             g.fillRect (segment (area, numSegments, i));
         }
     }

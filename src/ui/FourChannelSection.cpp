@@ -289,13 +289,13 @@ void FourChannelSection::timerCallback()
 
 void FourChannelSection::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::surface);
+    g.fillAll (surfaceColours().surface);
 
     // The key panel and the knob panel are grey decks, joined at the left by
     // a printed bracket; the LCD sits in a black window between them.
     drawDeck (g, keyPanel.toFloat());
     drawDeck (g, knobPanel.toFloat());
-    g.setColour (Colours::surfacePrint.withAlpha (0.7f));
+    g.setColour (surfaceColours().surfacePrint.withAlpha (0.7f));
     {
         const float x = (float) panel.getX() + 1.0f, y0 = (float) keyPanel.getCentreY(), y1 = (float) knobPanel.getCentreY();
         juce::Path bracket;
@@ -352,7 +352,7 @@ void FourChannelSection::paint (juce::Graphics& g)
     }
 
     // Rules between the encoder columns.
-    g.setColour (Colours::sectionLine.withAlpha (0.85f));
+    g.setColour (surfaceColours().sectionLine.withAlpha (0.85f));
     for (int i = 1; i < 4; ++i)
     {
         const int x = knobPanel.getX() + knobPanel.getWidth() * i / 4;

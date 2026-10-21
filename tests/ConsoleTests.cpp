@@ -1,11 +1,13 @@
 #include "TestHelpers.h"
 #include "engine/Show.h"
+#include "ui/ConsoleLook.h"
 
 using namespace livedaw;
 using livedaw::test::OfflineRig;
 
 /** The console-level features through the C++ facade: SOLO MODE, MUTEGROUP/SIP
-    OVERRIDE, the talk keys, the PHONES path, MON DCAs and sources. */
+    OVERRIDE, the talk keys, the PHONES path, MON DCAs and sources; and the
+    console look (the surface finish) kept in the app settings. */
 class ConsoleTests final : public juce::UnitTest
 {
 public:
@@ -319,6 +321,25 @@ public:
             expectEquals (restoredEngine.monitorPath (true).delayM.load(), 20.0f);
             expectEquals ((int) restoredEngine.monitor.sourceSolo.load(), (int) ld::kSourceSoloCh39);
             expectEquals ((int) restoredEngine.getSource (0)->muteGroups.load(), 2);
+        }
+
+        beginTest ("The surface finish persists in the app settings");
+        {
+            juce::TemporaryFile file (".settings");
+            juce::PropertiesFile::Options o;
+            o.applicationName = "looktest";
+            {
+                juce::PropertiesFile props (file.getFile(), o);
+                expect (ui::ConsoleLook::load (props).finish == ui::SurfaceFinish::Silver); // the default
+                ui::ConsoleLook look;
+                look.finish = ui::SurfaceFinish::Black;
+                look.save (props);
+                expectEquals (props.getValue (ui::ConsoleLook::finishKey), juce::String ("BLACK"));
+            }
+            juce::PropertiesFile reopened (file.getFile(), o);
+            expect (ui::ConsoleLook::load (reopened).finish == ui::SurfaceFinish::Black);
+            reopened.setValue (ui::ConsoleLook::finishKey, "GOLD"); // unknown: silver
+            expect (ui::ConsoleLook::load (reopened).finish == ui::SurfaceFinish::Silver);
         }
     }
 };

@@ -115,7 +115,7 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (Colours::surface);
+        g.fillAll (surfaceColours().surface);
         auto band = [this, &g] (juce::Rectangle<int> rows, int margin, juce::Colour colour)
         {
             const float left = moduleFirst ? 3.0f : 0.0f, right = (float) getWidth() - (moduleLast ? 3.0f : 0.0f);
@@ -130,7 +130,7 @@ public:
 
         auto* d = midiui::daw (ctx);
         const bool active = d != nullptr && channel >= 0;
-        drawLightBar (g, barArea.toFloat(), Colours::silk.withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
+        drawLightBar (g, barArea.toFloat(), surfaceColours().silk.withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
                       active && d->isConnected (channel / DawRemote::kStrips));
         ScribbleInfo info;
         info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
@@ -166,7 +166,7 @@ public:
             const float lw = ringRow.getWidth() / 11.0f;
             for (int i = 0; i < 11; ++i)
             {
-                g.setColour (((ring >> i) & 1) != 0 ? Colours::ledYellow.withMultipliedBrightness (bright) : Colours::ledOff);
+                g.setColour (((ring >> i) & 1) != 0 ? Colours::ledYellow.withMultipliedBrightness (bright) : surfaceColours().ledOff);
                 g.fillRect (ringRow.getX() + lw * (float) i + 0.5f, ringRow.getY(), lw - 1.0f, ringRow.getHeight());
             }
         }
@@ -339,11 +339,11 @@ void DawFaderSection::timerCallback()
 
 void DawFaderSection::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::surface);
-    g.setColour (Colours::surfaceLine);
+    g.fillAll (surfaceColours().surface);
+    g.setColour (surfaceColours().surfaceLine);
     g.fillRect (getWidth() - 1, 0, 1, getHeight());
     // DAW over the column: the section controls the DAW.
-    g.setColour (Colours::surfacePrint);
+    g.setColour (surfaceColours().surfacePrint);
     g.setFont (silkFont (9.0f));
     g.drawText ("DAW", column.withHeight (14).translated (0, 2), juce::Justification::centred);
 }

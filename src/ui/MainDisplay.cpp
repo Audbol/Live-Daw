@@ -387,11 +387,11 @@ public:
             g.fillRoundedRectangle (r.reduced (r.getWidth() * 0.32f, r.getHeight() * 0.42f), 2.0f);
             return;
         }
-        g.setColour (lit ? juce::Colours::black : Colours::silk);
+        g.setColour (lit ? juce::Colours::black : surfaceColours().silk);
         if (icon)
         {
             const float side = juce::jmin (r.getWidth(), r.getHeight()) * 0.62f;
-            drawIcon (g, *icon, r.withSizeKeepingCentre (side, side), lit ? juce::Colours::black : Colours::silk);
+            drawIcon (g, *icon, r.withSizeKeepingCentre (side, side), lit ? juce::Colours::black : surfaceColours().silk);
             return;
         }
         const auto keyText = getButtonText();
@@ -486,7 +486,7 @@ public:
         g.setColour (juce::Colour (0xff4a4d53));
         g.drawEllipse (k.reduced (d * 0.1f), 1.0f);
         const auto target = getTarget ? getTarget() : KnobBinding {};
-        g.setColour (target.isValid() ? Colours::silkDim : Colours::silkDim.withAlpha (0.4f));
+        g.setColour (target.isValid() ? surfaceColours().silkDim : surfaceColours().silkDim.withAlpha (0.4f));
         g.setFont (silkFont (11.0f));
         g.drawFittedText (target.isValid() ? target.label.toUpperCase() : juce::String(), r.toNearestInt(), juce::Justification::centred, 1, 0.6f);
     }
@@ -605,14 +605,14 @@ public:
         const float barW = juce::jmin (12.0f, (r.getWidth() - 6.0f) / 2.0f);
         const float x0 = r.getX() + 2.0f;
         g.setFont (silkFont (juce::jlimit (8.0f, 11.0f, r.getHeight() / 22.0f)));
-        g.setColour (Colours::silkDim);
+        g.setColour (surfaceColours().silkDim);
         g.drawText ("L", juce::Rectangle<float> (x0, header.getY(), barW, header.getHeight()).toNearestInt(), juce::Justification::centred);
         g.drawText ("R", juce::Rectangle<float> (x0 + barW + 4.0f, header.getY(), barW, header.getHeight()).toNearestInt(), juce::Justification::centred);
         const float segH = r.getHeight() / 18.0f;
         for (int s = 0; s < 18; ++s)
         {
             const float y = r.getY() + (float) s * segH;
-            g.setColour (Colours::silkDim);
+            g.setColour (surfaceColours().silkDim);
             g.drawText (s == 0 ? juce::String ("CLIP") : juce::String ((int) thresholds[s]), labels.withY (y).withHeight (segH).toNearestInt(), juce::Justification::centredRight);
             for (int ch = 0; ch < 2; ++ch)
             {
@@ -1734,12 +1734,12 @@ void MainDisplay::paint (juce::Graphics& g)
     {
         // Screen only: the display's frame centred on black.
         g.fillAll (juce::Colours::black);
-        g.setColour (Colours::displayUnit);
+        g.setColour (surfaceColours().displayUnit);
         g.fillRoundedRectangle (frameArea.toFloat(), 6.0f);
     }
     else
     {
-        g.fillAll (Colours::displayUnit);
+        g.fillAll (surfaceColours().displayUnit);
     }
 
     // The screen, framed by a bezel.
