@@ -3,6 +3,22 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Added
+
+- `tools/wing/audio_compare` compares the sound of a WING's processing with Sidecar's:
+  test signals for the WING's USB player (sweeps, level steps, level jumps, tone steps,
+  noise, clicks, a synthetic band) with sync chirps and an ID code, a test plan of 65
+  channel settings in order of importance (WING EQ, filters, COMP and GATE first, then
+  the other EQ and dynamics models, key filter, crossover and FX), an optional OSC
+  helper that sets the WING up and reads the values back, and an analysis that aligns
+  the recordings (latency, clock drift, level) and reports the differences with
+  tolerances: magnitude and phase, harmonics, static curves, attack / hold / release,
+  reverb decay, delay echoes, modulation. Sidecar's side is rendered offline by the
+  engine with the new `render` example of livedaw-wing (WING parameter paths in, WAV
+  out).
+
 ## [0.1.3] - beta
 
 The first round of matching Sidecar to a real WING, side by side with the console:

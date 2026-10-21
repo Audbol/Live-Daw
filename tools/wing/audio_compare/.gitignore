@@ -1,0 +1,8 @@
+# Generated audio and results: large, and made again by the scripts.
+*.wav
+*.WAV
+signals/
+results-*/
+wing_recordings/
+wing_settings/
+__pycache__/

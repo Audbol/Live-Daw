@@ -288,7 +288,10 @@ cd rust && RUSTFLAGS=-Zsanitizer=thread cargo +nightly test -Zbuild-std --target
   module builds against a running server.
 - `cargo run -p livedaw-wing --example wing_emulator` runs the WING protocols without
   the app; `--example wing_coverage` prints how much of the WING tree maps to the
-  engine; `--example wing_snap` imports or exports a WING snapshot headlessly.
+  engine; `--example wing_snap` imports or exports a WING snapshot headlessly;
+  `--example render` runs a WAV file through channel 1 set up from WING parameter
+  paths, offline (used by `tools/wing/audio_compare`, which compares Sidecar's sound
+  with recordings of a WING).
 
 ## Project layout
 
