@@ -59,11 +59,11 @@ fn close(a: f32, b: f32, tol: f32) -> bool {
     (a - b).abs() <= tol
 }
 
-/// Channels hard left, each on its own input with its own level.
+/// Channels at centre (unity on each side: the WING's pan law), each on its
+/// own input with its own level.
 fn channels(rig: &mut Rig, levels: &[f32]) {
     set_channels(&rig.engine, levels.len());
     for (i, &v) in levels.iter().enumerate() {
-        rig.ch(i).params.pan.store(-100.0);
         rig.set_input(i, v);
     }
 }
@@ -76,7 +76,6 @@ fn sip_mutes_every_input_that_is_neither_soloed_nor_solo_safe() {
     let c = &engine.controls;
     let aux = rig.strip(StripKind::Aux, 0);
     aux.params.input_left.store(3, Relaxed);
-    aux.params.pan.store(-100.0);
     rig.set_input(3, 0.05);
     rig.run(4);
     assert!(close(rig.out(0), 0.75, 1e-5), "{}", rig.out(0));
@@ -341,7 +340,7 @@ fn talkback_reaches_its_destinations_with_modes_levels_and_dims() {
     main2.params.output_left.store(5, Relaxed);
     c.monitor_output_left.store(6, Relaxed);
     rig.run(4);
-    let ch0_on_bus = 0.4; // the PRE send follows the channel's pan (hard left)
+    let ch0_on_bus = 0.4; // the PRE send follows the channel's pan (centre: unity on each side)
     assert!(close(rig.out(2), ch0_on_bus, 1e-5), "{}", rig.out(2));
     assert!(rig.out(4).abs() < 1e-7 && rig.out(5).abs() < 1e-7);
     assert!(close(rig.out(6), 0.6, 1e-5));
@@ -351,7 +350,7 @@ fn talkback_reaches_its_destinations_with_modes_levels_and_dims() {
     a.on.store(true, Relaxed);
     rig.run(4);
     assert!(close(rig.out(2), ch0_on_bus * 0.1 + 0.25, 1e-4), "{}", rig.out(2));
-    assert!(close(rig.out(3), 0.25, 1e-4), "talk is centred: {}", rig.out(3));
+    assert!(close(rig.out(3), ch0_on_bus * 0.1 + 0.25, 1e-4), "talk is centred: {}", rig.out(3));
     assert!(close(rig.out(6), 0.3, 1e-4), "{}", rig.out(6));
     assert!(rig.out(4).abs() < 1e-7, "TALK B is off");
 
@@ -359,7 +358,7 @@ fn talkback_reaches_its_destinations_with_modes_levels_and_dims() {
     a.individual.store(true, Relaxed);
     talk_ch.sends.get_or_create(0).unwrap().level_db.store(-12.0412);
     rig.run(4);
-    assert!(close(rig.out(3), 0.125, 1e-4), "{}", rig.out(3));
+    assert!(close(rig.out(3), ch0_on_bus * 0.1 + 0.125, 1e-4), "{}", rig.out(3));
 
     // TALK B to a matrix and a main (no bus dim there).
     a.on.store(false, Relaxed);

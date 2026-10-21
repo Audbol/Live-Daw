@@ -22,9 +22,7 @@ public:
             test::setChannels (engine, 2);
             auto& a = *engine.getChannels()[0];
             auto& b = *engine.getChannels()[1];
-            b.params.inputLeft = 1;
-            a.params.pan = -100.0f;
-            b.params.pan = -100.0f;
+            b.params.inputLeft = 1; // both centred: unity on the left (the WING pan law)
             rig.setInput (0, 0.5f);
             rig.setInput (1, 0.25f);
             expectEquals ((int) engine.soloMode.load(), (int) ld::kSoloStudio);
@@ -113,7 +111,6 @@ public:
             OfflineRig rig (engine, 1, 6);
             test::setChannels (engine, 1);
             auto& ch = *engine.getChannels()[0];
-            ch.params.pan = -100.0f;
             rig.setInput (0, 0.5f);
             engine.monitorOutputLeft = 2;
             engine.phones.outputLeft = 4;
@@ -149,7 +146,6 @@ public:
             OfflineRig rig (engine, 2, 2);
             test::setChannels (engine, 1);
             auto& ch = *engine.getChannels()[0];
-            ch.params.pan = -100.0f;
             rig.setInput (0, 0.25f);
             expectEquals (engine.getNumSources(), ld::kNumSources);
             const int index = MixerEngine::sourceIndex (0);
@@ -191,7 +187,6 @@ public:
             OfflineRig rig (engine, 2, 2);
             test::setChannels (engine, 1);
             auto& ch = *engine.getChannels()[0];
-            ch.params.pan = -100.0f;
             ch.params.inputLeft = MixerEngine::oscSource (1);
             expectEquals (MixerEngine::sourceIndex (MixerEngine::oscSource (1)), ld::kNumSources - 1);
             auto* osc = engine.getOscillator (1);
@@ -229,10 +224,7 @@ public:
             test::setChannels (engine, 40);
             engine.phones.outputLeft = 4;
             for (auto& ch : engine.getChannels())
-            {
-                ch->params.pan = -100.0f;
                 ch->params.inputLeft = -1;
-            }
             auto& ch1 = *engine.getChannels()[0];
             auto& ch2 = *engine.getChannels()[1];
             ch1.params.inputLeft = 0;

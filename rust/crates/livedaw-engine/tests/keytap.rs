@@ -10,7 +10,8 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::sync::Arc;
 
 const BLOCK: usize = 128;
-const CENTRE: f32 = std::f32::consts::FRAC_1_SQRT_2;
+/// A mono channel's gain on each side at pan centre (the WING's pan law: unity).
+const CENTRE: f32 = 1.0;
 
 /// Tap points (`TAP_POINTS` order).
 const IN: i32 = 0;

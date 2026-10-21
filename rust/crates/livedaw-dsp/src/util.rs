@@ -81,11 +81,20 @@ pub fn all_finite(data: &[f32]) -> bool {
     acc == 0.0
 }
 
-/// Constant-power (-3 dB centre) pan law for a mono source; `pan` is -1 (L) .. +1 (R).
+/// The WING's pan law for a mono source; `pan` is -1 (L) .. +1 (R). Unity on
+/// both sides at centre; panning rises the near side linearly to +3 dB and
+/// lowers the far side linearly to silence (measured on a WING: centre 0 / 0 dB,
+/// L50 +1.63 / -6.02 dB, L100 +3.01 dB / off).
 #[inline]
-pub fn constant_power_pan(pan: f32) -> (f32, f32) {
-    let angle = (pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
-    (angle.cos(), angle.sin())
+pub fn wing_mono_pan(pan: f32) -> (f32, f32) {
+    let pan = pan.clamp(-1.0, 1.0);
+    let near = 1.0 + pan.abs() * (std::f32::consts::SQRT_2 - 1.0);
+    let far = 1.0 - pan.abs();
+    if pan < 0.0 {
+        (near, far)
+    } else {
+        (far, near)
+    }
 }
 
 /// Balance law for a stereo source: the opposite side is attenuated, centre is unity.
@@ -109,10 +118,13 @@ mod tests {
 
     #[test]
     fn pan_laws() {
-        let (l, r) = constant_power_pan(0.0);
-        assert!((l - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-3 && (r - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-3);
-        let (l, r) = constant_power_pan(-1.0);
-        assert!((l - 1.0).abs() < 1e-6 && r.abs() < 1e-6);
+        // The levels a WING gives at centre, L50 and L100.
+        assert_eq!(wing_mono_pan(0.0), (1.0, 1.0));
+        let (l, r) = wing_mono_pan(-0.5);
+        assert!((gain_to_db(l) - 1.63).abs() < 0.01 && (gain_to_db(r) + 6.02).abs() < 0.01);
+        let (l, r) = wing_mono_pan(-1.0);
+        assert!((gain_to_db(l) - 3.01).abs() < 0.01 && r == 0.0);
+        assert_eq!(wing_mono_pan(0.5), (wing_mono_pan(-0.5).1, wing_mono_pan(-0.5).0));
         assert_eq!(stereo_balance(0.0), (1.0, 1.0));
         let (l, r) = stereo_balance(0.5);
         assert!((l - 0.5).abs() < 1e-6 && r == 1.0);

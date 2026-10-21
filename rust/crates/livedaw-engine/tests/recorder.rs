@@ -231,7 +231,7 @@ fn a_playback_impulse_through_an_alt_input_records_at_its_timeline_position() {
     let post_samples = &read_wav(&post)[0];
     let (k, v) = argmax(post_samples);
     assert_eq!(takes[0].start + k as i64, T as i64, "the impulse lands at T");
-    assert!((v - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-3, "post-fader: pan law ({v})");
+    assert!((v - 1.0).abs() < 1e-3, "post-fader: pan law, unity at centre ({v})");
     assert!(post_samples.iter().enumerate().all(|(i, &x)| i == k || x.abs() < 1e-3));
 
     let pre_samples = read_wav(&pre);

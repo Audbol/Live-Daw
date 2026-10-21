@@ -41,6 +41,9 @@ All notable changes to Sidecar are listed here. Versions follow
   periwinkle scribble LCDs under thicker light bars; larger channel strip keys and
   captions; blue digits on the custom controls' layer display; framed TALK A / B
   letters. The 4-Channel LCD has no light bars, as on the console.
+- A mono channel's pan follows the WING's law, measured on a console: unity on both
+  sides at centre, the near side rising to +3 dB and the far side falling to off at the
+  edge (Sidecar used a -3 dB centre).
 
 ## [0.1.3] - beta
 

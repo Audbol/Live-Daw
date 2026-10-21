@@ -114,12 +114,10 @@ fn max_step(x: &[f32]) -> f32 {
     x.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max)
 }
 
-/// Channel 1 (hard left) on Main 1 at `main`, channel 2 off the mains.
+/// Channel 1 (centred: unity on each side) on Main 1 at `main`, channel 2 off
+/// the mains.
 fn two_channels(rig: &mut Rig, main: f32, other: f32) {
     set_channels(&rig.engine, 2);
-    for i in 0..2 {
-        rig.ch(i).params.pan.store(-100.0);
-    }
     rig.ch(1).params.mains[0].on.store(false, Relaxed);
     rig.dc(0, main);
     rig.dc(1, other);
@@ -199,32 +197,34 @@ fn eq_shapes_only_its_path() {
 fn invert_pan_and_width_on_each_path() {
     let mut rig = Rig::new(2);
     set_channels(&rig.engine, 2);
-    // Channel 1 hard left, channel 2 hard right.
+    // Channel 1 hard left, channel 2 hard right (+3 dB on the near side).
     rig.ch(0).params.pan.store(-100.0);
     rig.ch(1).params.pan.store(100.0);
     rig.dc(0, 0.4);
     rig.dc(1, 0.2);
+    let (l, r) = (0.4 * std::f32::consts::SQRT_2, 0.2 * std::f32::consts::SQRT_2);
     rig.run(4, PH);
-    assert!(close(rig.last(SPK), 0.4, 1e-5) && close(rig.last(SPK + 1), 0.2, 1e-5));
+    assert!(close(rig.last(SPK), l, 1e-5) && close(rig.last(SPK + 1), r, 1e-5));
 
     rig.speakers().invert.store(true, Relaxed);
     let flip = rig.run(4, SPK);
-    assert!(close(rig.last(SPK), -0.4, 1e-5) && close(rig.last(SPK + 1), -0.2, 1e-5));
-    assert!(close(rig.last(PH), 0.4, 1e-5), "PHONES unchanged");
+    assert!(close(rig.last(SPK), -l, 1e-5) && close(rig.last(SPK + 1), -r, 1e-5));
+    assert!(close(rig.last(PH), l, 1e-5), "PHONES unchanged");
     assert!(max_step(&flip) < 0.05, "ramped through zero");
 
     // WIDTH 0: mono on the PHONES; -100: the sides swapped.
     rig.phones().width.store(0.0);
     rig.run(4, PH);
-    assert!(close(rig.last(PH), 0.3, 1e-5) && close(rig.last(PH + 1), 0.3, 1e-5));
+    let mono = (l + r) / 2.0;
+    assert!(close(rig.last(PH), mono, 1e-5) && close(rig.last(PH + 1), mono, 1e-5));
     rig.phones().width.store(-100.0);
     rig.run(4, PH);
-    assert!(close(rig.last(PH), 0.2, 1e-5) && close(rig.last(PH + 1), 0.4, 1e-5));
+    assert!(close(rig.last(PH), r, 1e-5) && close(rig.last(PH + 1), l, 1e-5));
     // PAN hard left silences the right side.
     rig.phones().width.store(100.0);
     rig.phones().pan.store(-100.0);
     rig.run(4, PH);
-    assert!(close(rig.last(PH), 0.4, 1e-5) && close(rig.last(PH + 1), 0.0, 1e-6));
+    assert!(close(rig.last(PH), l, 1e-5) && close(rig.last(PH + 1), 0.0, 1e-6));
 }
 
 #[test]
@@ -289,7 +289,6 @@ fn source_solo_patches_and_solos_its_host() {
     let c = &engine.controls;
     let m = &c.monitor;
     for i in 0..40 {
-        rig.ch(i).params.pan.store(-100.0);
         rig.ch(i).params.input_left.store(-1, Relaxed);
     }
     // Channel 1 on input 1 in the mix; CH39 patched to input 4 (silent), off the mains.
@@ -365,7 +364,6 @@ fn source_solo_patches_and_solos_its_host() {
 fn sources_follow_their_mute_groups() {
     let mut rig = Rig::new(2);
     set_channels(&rig.engine, 1);
-    rig.ch(0).params.pan.store(-100.0);
     rig.dc(0, 0.5);
     let engine = rig.engine.clone();
     let src = engine.sources().get(0).unwrap();

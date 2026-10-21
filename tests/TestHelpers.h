@@ -70,7 +70,8 @@ struct OfflineRig
     std::vector<std::vector<float>> inputs, outputs;
 };
 
-inline constexpr float kCentre = 0.70710678f; // constant-power pan at centre
+inline constexpr float kCentre = 1.0f; // a mono channel at pan centre: unity on each side (the WING pan law)
+inline constexpr float kEdge = 1.41421356f; // a mono channel panned hard: +3 dB on the near side
 } // namespace livedaw::test
 
 #include <juce_audio_processors/juce_audio_processors.h>

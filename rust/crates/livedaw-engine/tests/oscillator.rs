@@ -55,13 +55,12 @@ fn a_channel_patched_to_osc_plays_its_tone() {
     let engine = rig.engine.clone();
     let ch = engine.channel_at(0).unwrap();
     ch.params.input_left.store(OSC_SOURCE_BASE, Relaxed);
-    ch.params.pan.store(-100.0);
     let osc = engine.sources().osc(0).unwrap();
     osc.level_db.store(-12.0);
     osc.freq_hz.store(440.0);
 
     let [l, _] = rig.run(SR as usize);
-    // Past the channel's ramps: a -12 dBFS sine (unity channel and main).
+    // Past the channel's ramps: a -12 dBFS sine (unity channel, centre pan and main).
     let tail = &l[4800..];
     assert!((20.0 * peak(tail).log10() - -12.0).abs() < 0.1, "peak {}", peak(tail));
     let crossings = l.windows(2).filter(|w| w[0] < 0.0 && w[1] >= 0.0).count();

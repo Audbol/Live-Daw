@@ -10,7 +10,12 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 use std::sync::Arc;
 
 const BLOCK: usize = 128;
-const CENTRE: f32 = std::f32::consts::FRAC_1_SQRT_2;
+/// A mono channel's gain on each side at pan centre (the WING's pan law: unity).
+const CENTRE: f32 = 1.0;
+/// The near side's gain of a mono channel panned hard (the WING's pan law: +3 dB).
+const EDGE: f32 = std::f32::consts::SQRT_2;
+/// Each of two equal automix talkers' gain (half the power, -3 dB).
+const SHARE: f32 = std::f32::consts::FRAC_1_SQRT_2;
 
 /// Drives an engine with constant (DC) inputs and captures its outputs.
 struct Rig {
@@ -109,7 +114,7 @@ fn channel_reaches_main_1_through_pan_law() {
 
     rig.ch(0).params.pan.store(-100.0);
     rig.run(20);
-    assert!(close(rig.out(0), 0.5, 1e-5) && close(rig.out(1), 0.0, 1e-5));
+    assert!(close(rig.out(0), 0.5 * EDGE, 1e-5) && close(rig.out(1), 0.0, 1e-5));
 }
 
 #[test]
@@ -197,7 +202,7 @@ fn bus_sends_pre_post_and_subgroup() {
     send.pan_link.store(false, Relaxed);
     send.pan.store(100.0);
     rig.run(20);
-    assert!(close(rig.out(2), 0.0, 1e-5) && close(rig.out(3), 0.5, 1e-5));
+    assert!(close(rig.out(2), 0.0, 1e-5) && close(rig.out(3), 0.5 * EDGE, 1e-5));
 
     // GRP: post-fader, post-pan; the bus feeds Main 1.
     send.mode.store(2, Relaxed);
@@ -205,7 +210,7 @@ fn bus_sends_pre_post_and_subgroup() {
     bus.params.mains[0].on.store(true, Relaxed);
     ch.params.pan.store(-100.0);
     rig.run(20);
-    assert!(close(rig.out(0), 0.5, 1e-5) && close(rig.out(1), 0.0, 1e-5));
+    assert!(close(rig.out(0), 0.5 * EDGE, 1e-5) && close(rig.out(1), 0.0, 1e-5));
 }
 
 #[test]
@@ -222,7 +227,7 @@ fn upper_buses_feed_buses_1_to_8() {
     fx_bus.sends.get_or_create(0).unwrap().mode.store(1, Relaxed);
     bus1.params.output_left.store(2, Relaxed);
     rig.run(20);
-    // Mono channel -> stereo bus 13 at -3 dB per side -> bus 1 (post, centred).
+    // Mono channel -> stereo bus 13 at unity per side -> bus 1 (post, centred).
     assert!(close(rig.out(2), 0.5 * CENTRE, 1e-4), "{}", rig.out(2));
 }
 
@@ -276,7 +281,8 @@ fn gate_model_and_process_order() {
     rig.set_input(0, 0.001); // -60 dB, below the -40 dB default threshold
     ch.params.gate.on.store(true, Relaxed);
     rig.run(200);
-    assert!(rig.out(0).abs() < 1e-5, "gate didn't close: {}", rig.out(0));
+    // Closed down towards its 40 dB default range (1e-5 here).
+    assert!(rig.out(0).abs() < 2e-5, "gate didn't close: {}", rig.out(0));
     assert!(ch.meters.gate_active.load(Relaxed));
 
     // The gate slot can hold a compressor model too.
@@ -345,7 +351,7 @@ fn automix_shares_gain() {
     }
     rig.run(50);
     // Two equal talkers: each gets half the power (-3 dB), the sum stays at one talker's level.
-    assert!(close(rig.out(0), 0.5 * CENTRE * 2.0 * CENTRE, 1e-3), "{}", rig.out(0));
+    assert!(close(rig.out(0), 0.5 * CENTRE * 2.0 * SHARE, 1e-3), "{}", rig.out(0));
     assert_eq!(rig.ch(0).automix_group(), Some(0));
 
     // AUTO_X with INS 2 off is not a member: it isn't shared and takes no
@@ -364,7 +370,7 @@ fn automix_shares_gain() {
     assert!(close(rig.out(0), 2.0 * 0.5 * CENTRE, 1e-3), "{}", rig.out(0));
     rig.ch(1).params.post_insert.mode.store(1, Relaxed);
     rig.run(50);
-    assert!(close(rig.out(0), 0.5 * CENTRE * 2.0 * CENTRE, 1e-3), "{}", rig.out(0));
+    assert!(close(rig.out(0), 0.5 * CENTRE * 2.0 * SHARE, 1e-3), "{}", rig.out(0));
 }
 
 // ---- FX slots through the C ABI --------------------------------------------
@@ -833,17 +839,17 @@ fn group_sends_ignore_the_send_level_and_reversed_pan_link() {
     ch.params.pan.store(-100.0);
     send.pan_reversed.store(true, Relaxed);
     rig.run(20);
-    assert!(close(rig.out(2), 0.0, 1e-5) && close(rig.out(3), 0.5, 1e-5), "{} {}", rig.out(2), rig.out(3));
+    assert!(close(rig.out(2), 0.0, 1e-5) && close(rig.out(3), 0.5 * EDGE, 1e-5), "{} {}", rig.out(2), rig.out(3));
     send.pan_reversed.store(false, Relaxed);
     rig.run(20);
-    assert!(close(rig.out(2), 0.5, 1e-5) && close(rig.out(3), 0.0, 1e-5));
+    assert!(close(rig.out(2), 0.5 * EDGE, 1e-5) && close(rig.out(3), 0.0, 1e-5));
 
     // GROUP: post-fader, post-pan, no send level.
     send.mode.store(2, Relaxed);
     send.level_db.store(-100.0);
     ch.params.fader_db.store(-6.0206);
     rig.run(20);
-    assert!(close(rig.out(2), 0.25, 1e-4), "{}", rig.out(2));
+    assert!(close(rig.out(2), 0.25 * EDGE, 1e-4), "{}", rig.out(2));
 }
 
 #[test]
@@ -866,7 +872,7 @@ fn matrix_send_pan_link() {
     for pre in [false, true] {
         send.pre.store(pre, Relaxed);
         rig.run(20);
-        assert!(close(rig.out(2), 0.5, 1e-5) && close(rig.out(3), 0.0, 1e-5), "pre {pre}: {} {}", rig.out(2), rig.out(3));
+        assert!(close(rig.out(2), 0.5 * EDGE, 1e-5) && close(rig.out(3), 0.0, 1e-5), "pre {pre}: {} {}", rig.out(2), rig.out(3));
     }
 
     // LINK REVERSED mirrors the channel's pan.
@@ -874,7 +880,7 @@ fn matrix_send_pan_link() {
     for pre in [false, true] {
         send.pre.store(pre, Relaxed);
         rig.run(20);
-        assert!(close(rig.out(2), 0.0, 1e-5) && close(rig.out(3), 0.5, 1e-5), "reversed, pre {pre}");
+        assert!(close(rig.out(2), 0.0, 1e-5) && close(rig.out(3), 0.5 * EDGE, 1e-5), "reversed, pre {pre}");
     }
 
     // Unlinked: the send's own pan, whatever the channel's.
@@ -887,7 +893,7 @@ fn matrix_send_pan_link() {
     }
     send.pan.store(100.0);
     rig.run(20);
-    assert!(close(rig.out(2), 0.0, 1e-5) && close(rig.out(3), 0.5, 1e-5));
+    assert!(close(rig.out(2), 0.0, 1e-5) && close(rig.out(3), 0.5 * EDGE, 1e-5));
 
     // A bus has no PAN LINK: its panned output, balanced by the send's pan.
     send.on.store(false, Relaxed);
@@ -898,7 +904,7 @@ fn matrix_send_pan_link() {
     bus_send.pan_link.store(false, Relaxed);
     bus.params.pan.store(-100.0);
     rig.run(20);
-    assert!(close(rig.out(2), 0.5, 1e-4) && close(rig.out(3), 0.0, 1e-5), "{} {}", rig.out(2), rig.out(3));
+    assert!(close(rig.out(2), 0.5 * EDGE, 1e-4) && close(rig.out(3), 0.0, 1e-5), "{} {}", rig.out(2), rig.out(3));
 }
 
 #[test]
@@ -914,7 +920,7 @@ fn automix_enables_input_channels_only_and_follows_the_fader() {
         ins.mode.store(1, Relaxed); // AUTO_X
     }
     rig.run(50);
-    let shared = 0.5 * CENTRE * 2.0 * CENTRE;
+    let shared = 0.5 * CENTRE * 2.0 * SHARE;
     assert!(close(rig.out(0), shared, 1e-3), "{}", rig.out(0));
     assert!(close(rig.ch(0).meters.automix_db.load(), -3.0103, 0.05));
 
@@ -927,7 +933,7 @@ fn automix_enables_input_channels_only_and_follows_the_fader() {
     assert!(close(rig.out(2), 0.5 * CENTRE, 1e-3), "{}", rig.out(2));
     a.params.tap.store(7, Relaxed); // POST PROC
     rig.run(50);
-    assert!(close(rig.out(2), 0.5 * CENTRE * CENTRE, 1e-3), "{}", rig.out(2));
+    assert!(close(rig.out(2), 0.5 * CENTRE * SHARE, 1e-3), "{}", rig.out(2));
     a.params.tap.store(5, Relaxed);
 
     // X ENABLE off: both glide back to unity.
@@ -975,14 +981,15 @@ fn monitor_dim_mute_mono_and_swap() {
     rig.ch(0).params.pan.store(-100.0);
     rig.set_input(0, 0.5);
     rig.run(20);
-    assert!(close(rig.out(2), 0.5, 1e-5) && close(rig.out(3), 0.0, 1e-5));
+    let hard = 0.5 * EDGE;
+    assert!(close(rig.out(2), hard, 1e-5) && close(rig.out(3), 0.0, 1e-5));
 
     c.monitor_dim.store(true, Relaxed);
     rig.run(20);
-    assert!(close(rig.out(2), 0.05, 1e-5), "{}", rig.out(2));
+    assert!(close(rig.out(2), hard * 0.1, 1e-5), "{}", rig.out(2));
     c.monitor_dim_db.store(6.0206);
     rig.run(20);
-    assert!(close(rig.out(2), 0.25, 1e-4));
+    assert!(close(rig.out(2), hard * 0.5, 1e-4));
     c.monitor_mute.store(true, Relaxed);
     rig.run(20);
     assert!(rig.out(2).abs() < 1e-7);
@@ -992,13 +999,13 @@ fn monitor_dim_mute_mono_and_swap() {
 
     c.monitor_mono.store(true, Relaxed);
     rig.run(20);
-    assert!(close(rig.out(2), 0.25, 1e-5) && close(rig.out(3), 0.25, 1e-5));
+    assert!(close(rig.out(2), hard * 0.5, 1e-5) && close(rig.out(3), hard * 0.5, 1e-5));
     c.monitor_mono.store(false, Relaxed);
     c.monitor_swap.store(true, Relaxed);
     rig.run(20);
-    assert!(close(rig.out(2), 0.0, 1e-5) && close(rig.out(3), 0.5, 1e-5));
+    assert!(close(rig.out(2), 0.0, 1e-5) && close(rig.out(3), hard, 1e-5));
     // Main 1 itself is unaffected.
-    assert!(close(rig.out(0), 0.5, 1e-5));
+    assert!(close(rig.out(0), hard, 1e-5));
 }
 
 #[test]
@@ -1097,7 +1104,7 @@ fn post_solo_follows_the_pan() {
         strip.params.solo.store(true, Relaxed);
         rig.run(20);
         let (near, far) = if pan < 0.0 { (rig.out(2), rig.out(3)) } else { (rig.out(3), rig.out(2)) };
-        assert!(close(near, 0.5, 1e-4) && far.abs() < 1e-5, "{near} {far}");
+        assert!(close(near, 0.5 * EDGE, 1e-4) && far.abs() < 1e-5, "{near} {far}");
         strip.params.solo.store(false, Relaxed);
     }
 
@@ -1105,7 +1112,7 @@ fn post_solo_follows_the_pan() {
     ch.params.dca_mask.store(1, Relaxed);
     c.dcas[0].solo.store(true, Relaxed);
     rig.run(20);
-    assert!(close(rig.out(2), 0.5, 1e-4) && rig.out(3).abs() < 1e-5, "{} {}", rig.out(2), rig.out(3));
+    assert!(close(rig.out(2), 0.5 * EDGE, 1e-4) && rig.out(3).abs() < 1e-5, "{} {}", rig.out(2), rig.out(3));
     // PFL ignores it.
     c.solo_afl.store(false, Relaxed);
     rig.run(20);

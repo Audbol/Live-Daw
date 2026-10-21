@@ -9,7 +9,8 @@ use std::ffi::c_void;
 use std::sync::atomic::Ordering::Relaxed;
 
 const BLOCK: usize = 64;
-const CENTRE: f32 = std::f32::consts::FRAC_1_SQRT_2;
+/// A mono channel's gain on each side at pan centre (the WING's pan law: unity).
+const CENTRE: f32 = 1.0;
 
 /// A plugin that delays its input by `latency` samples (as a lookahead
 /// limiter or a linear-phase EQ would) and reports it.

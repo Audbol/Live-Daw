@@ -981,7 +981,7 @@ impl Strip {
         let pan = p.pan.load() / 100.0;
 
         let target = if nc == 1 {
-            let (l, r) = constant_power_pan(pan);
+            let (l, r) = wing_mono_pan(pan);
             d.pan_gains = [l, r];
             [l, 0.0, r, 0.0]
         } else {

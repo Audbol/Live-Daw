@@ -227,7 +227,8 @@ fn band_solo_plays_the_selected_band_on_the_monitor() {
     // Without LISTEN the monitor follows Main 1.
     rig.sine(0, 2000.0, 0.5);
     let main = rms(&rig.run(20, 2)[BLOCK * 10..]);
-    assert!((main - 0.5 * std::f32::consts::FRAC_1_SQRT_2 * std::f32::consts::FRAC_1_SQRT_2).abs() < 0.01, "{main}");
+    // The sine's RMS; the centred channel is at unity on each side.
+    assert!((main - 0.5 * std::f32::consts::FRAC_1_SQRT_2).abs() < 0.01, "{main}");
 
     rig.listen(&ch, listen_mode::BAND, 2);
     let at_band = rms(&rig.run(40, 2)[BLOCK * 20..]);

@@ -62,6 +62,13 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
 - PFL solo, direct outs, the matrix direct input (`direct_pre`) and the pre-fader meter
   (`StripMeters::pfl_peak`) read the PFL copy; AFL solo and post-fader sends read the
   output. `trim_peak` measures after trim, `input_peak` before it.
+- Pan laws (`livedaw-dsp/util.rs`): a mono strip pans with the WING's law
+  (`wing_mono_pan`, measured on a WING 3.1): unity on both sides at centre, the near
+  side rising linearly to +3 dB (gain √2) and the far side falling linearly to off at the
+  edge (L50: +1.63 / -6.02 dB). A stereo strip's PAN is a balance (`stereo_balance`:
+  the far side attenuated, unity at centre; not yet measured on a console). Sends
+  that pan a mono source themselves (TAP/PRE, a send's own pan) use the same laws
+  (`pre_gains`); the monitor paths' PAN is a balance.
 - Send modes: TAP/PRE reads the tap point and is cut while the source is muted (own
   mute, mute groups, DCA mutes when DCA MUTEGROUPS is on), unless an input or aux
   channel's send has IGNORE CHANNEL MUTE (`SendParams::ignore_mute`,

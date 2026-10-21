@@ -30,7 +30,10 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
   - Gate, EQ, dynamics and the pre insert run in any of the **24 process orders**, and
     bus sends tap at IN, FILT, 3, 4, 5, PFL, AFL or POST.
   - Fader, DCAs, mute groups, width and pan; sends to the 16 buses (PRE, POST or GRP
-    mode, with pan), to the 4 mains and the 8 matrices.
+    mode, with pan), to the 4 mains and the 8 matrices. A mono channel pans like the
+    WING: 0 dB on both sides at centre, the near side rising to +3 dB and the far side
+    falling to off at the edge (a stereo channel's pan is a balance: unity at centre,
+    the far side turned down).
 - **Buses 9+ feed buses 1-8**, matrices take the mains and a **direct input** from any
   channel (invert it for a mix-minus).
 - **FX rack:** 16 slots, used by any strip's insert, each holding one of the WING's

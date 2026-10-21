@@ -7,6 +7,7 @@ using namespace livedaw;
 
 using livedaw::test::OfflineRig;
 using livedaw::test::kCentre;
+using livedaw::test::kEdge;
 
 class EngineTests final : public juce::UnitTest
 {
@@ -164,7 +165,6 @@ public:
             ch.params.dynamics.values[m.find ("knee")] = 0.0f;
             ch.params.dynamics.values[m.find ("thr")] = -20.0f;
             ch.params.dynamics.on = true;
-            ch.params.pan = -100.0f;
             rig.setInput (0, 0.5f); // -6 dB: 14 dB over, 9.3 dB of reduction
             rig.run (200);
             const float gr = ch.meters.dynReductionDb.load();
@@ -186,7 +186,7 @@ public:
 
             engine.getChannels()[0]->params.pan = -100.0f;
             rig.run();
-            expectWithinAbsoluteError (rig.out (0), 0.5f, 1.0e-5f);
+            expectWithinAbsoluteError (rig.out (0), 0.5f * kEdge, 1.0e-5f);
             expectWithinAbsoluteError (rig.out (1), 0.0f, 1.0e-5f);
         }
 
@@ -377,30 +377,31 @@ public:
             engine.setSoloAfl (StripKind::Bus, false);
             expect (! engine.busSoloAfl.load());
             rig.run();
-            expectWithinAbsoluteError (rig.out (2), 0.5f, 1.0e-5f); // PFL, panned hard left
+            const float hard = 0.5f * kEdge; // panned hard left: +3 dB
+            expectWithinAbsoluteError (rig.out (2), hard, 1.0e-5f); // PFL of the bus
             bus.params.solo = false;
             rig.run();
 
             engine.monitorDim = true; // default 20 dB
             rig.run();
-            expectWithinAbsoluteError (rig.out (2), 0.05f, 1.0e-5f);
+            expectWithinAbsoluteError (rig.out (2), hard * 0.1f, 1.0e-5f);
             expectEquals (engine.monitorLevelDb.load(), 0.0f);
             engine.monitorDimDb = 6.0206f;
             rig.run();
-            expectWithinAbsoluteError (rig.out (2), 0.25f, 1.0e-4f);
+            expectWithinAbsoluteError (rig.out (2), hard * 0.5f, 1.0e-4f);
             engine.monitorDim = false;
             engine.monitorMono = true;
             rig.run();
-            expectWithinAbsoluteError (rig.out (2), 0.25f, 1.0e-5f);
-            expectWithinAbsoluteError (rig.out (3), 0.25f, 1.0e-5f);
+            expectWithinAbsoluteError (rig.out (2), hard * 0.5f, 1.0e-5f);
+            expectWithinAbsoluteError (rig.out (3), hard * 0.5f, 1.0e-5f);
             engine.monitorMono = false;
             engine.monitorSwap = true;
             rig.run();
-            expectWithinAbsoluteError (rig.out (3), 0.5f, 1.0e-5f);
+            expectWithinAbsoluteError (rig.out (3), hard, 1.0e-5f);
             engine.monitorMute = true;
             rig.run();
             expectWithinAbsoluteError (rig.out (3), 0.0f, 1.0e-7f);
-            expectWithinAbsoluteError (rig.out (0), 0.5f, 1.0e-5f); // Main 1 untouched
+            expectWithinAbsoluteError (rig.out (0), hard, 1.0e-5f); // Main 1 untouched
         }
 
         beginTest ("WING strip types: fixed taps, no aux INS 2, post-fader bus EQ, meters");
