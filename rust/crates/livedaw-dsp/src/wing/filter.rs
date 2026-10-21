@@ -79,10 +79,12 @@ impl FilterSettings {
         }
         if self.high_cut {
             let f = self.high_cut_freq.clamp(50.0, 20000.0) as f64;
+            // As on a WING, the slope holds up to Nyquist (measured at 5 kHz:
+            // -13.15 dB at 20 kHz for 6 dB/oct, -24.9 dB for 12 dB/oct).
             if self.high_cut_slope == 0 {
-                push(BiquadCoeffs::low_pass_1(sr, f));
+                push(BiquadCoeffs::low_pass_1_matched(sr, f));
             } else {
-                push(BiquadCoeffs::low_pass(sr, f, FRAC_1_SQRT_2));
+                push(BiquadCoeffs::low_pass_matched(sr, f, FRAC_1_SQRT_2));
             }
         }
         if self.tool {

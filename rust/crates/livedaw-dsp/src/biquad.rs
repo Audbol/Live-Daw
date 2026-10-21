@@ -30,6 +30,27 @@ fn prewarp(sample_rate: f64, freq: f64, q: f64) -> Prewarp {
     Prewarp { cosw: w0.cos(), alpha: w0.sin() / (2.0 * q) }
 }
 
+/// Solves a 3 x 3 linear system (Cramer's rule); None when it is singular.
+fn solve3(m: [[f64; 3]; 3], r: [f64; 3]) -> Option<[f64; 3]> {
+    let det = |a: [[f64; 3]; 3]| {
+        a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
+            + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0])
+    };
+    let d = det(m);
+    if d.abs() < 1e-18 {
+        return None;
+    }
+    let mut out = [0.0; 3];
+    for (col, v) in out.iter_mut().enumerate() {
+        let mut a = m;
+        for row in 0..3 {
+            a[row][col] = r[row];
+        }
+        *v = det(a) / d;
+    }
+    Some(out)
+}
+
 fn normalise(b0: f64, b1: f64, b2: f64, a0: f64, a1: f64, a2: f64) -> BiquadCoeffs {
     BiquadCoeffs { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0 }
 }
@@ -123,6 +144,61 @@ impl BiquadCoeffs {
             c
         } else {
             Self::peak(sr, freq, q, gain_db)
+        }
+    }
+
+    /// A first-order low-pass with the analog response kept up to Nyquist:
+    /// the pole by impulse invariance, the zero so the gain at Nyquist is the
+    /// analog filter's (the bilinear design falls to nothing there).
+    pub fn low_pass_1_matched(sr: f64, freq: f64) -> Self {
+        let freq = freq.clamp(10.0, sr * 0.49);
+        let p = (-2.0 * PI * freq / sr).exp();
+        let nyquist = 1.0 / (1.0 + (sr * 0.5 / freq).powi(2)).sqrt();
+        let (dc, top) = (1.0 - p, nyquist * (1.0 + p));
+        BiquadCoeffs { b0: 0.5 * (dc + top), b1: 0.5 * (dc - top), b2: 0.0, a1: -p, a2: 0.0 }
+    }
+
+    /// A second-order low-pass with the analog response kept up to Nyquist
+    /// (Vicanek's matched design): the poles by impulse invariance, the zeros
+    /// so the magnitude equals the analog filter's at DC, the cutoff and Nyquist.
+    pub fn low_pass_matched(sr: f64, freq: f64, q: f64) -> Self {
+        let freq = freq.clamp(10.0, sr * 0.49);
+        let q = q.max(0.025);
+        let w0 = 2.0 * PI * freq / sr;
+        let zeta = 1.0 / (2.0 * q);
+        let a1 = if zeta <= 1.0 {
+            -2.0 * (-zeta * w0).exp() * ((1.0 - zeta * zeta).sqrt() * w0).cos()
+        } else {
+            -2.0 * (-zeta * w0).exp() * ((zeta * zeta - 1.0).sqrt() * w0).cosh()
+        };
+        let a2 = (-2.0 * zeta * w0).exp();
+        let den = [(1.0 + a1 + a2).powi(2), (1.0 - a1 + a2).powi(2), -4.0 * a2];
+        // |N|^2 = B0 phi0 + B1 phi1 + B2 phi2 at the three frequencies.
+        let phi = |w: f64| {
+            let p1 = (w / 2.0).sin().powi(2);
+            let p0 = 1.0 - p1;
+            [p0, p1, 4.0 * p0 * p1]
+        };
+        let analog = |w: f64| {
+            let x = w / w0;
+            1.0 / ((1.0 - x * x).powi(2) + (x / q).powi(2))
+        };
+        let mut m = [[0.0; 3]; 3];
+        let mut rhs = [0.0; 3];
+        for (row, w) in [1e-6, w0, PI].into_iter().enumerate() {
+            let ph = phi(w);
+            m[row] = ph;
+            rhs[row] = analog(w) * (ph[0] * den[0] + ph[1] * den[1] + ph[2] * den[2]);
+        }
+        let Some([bb0, bb1, bb2]) = solve3(m, rhs) else { return Self::low_pass(sr, freq, q) };
+        let (s0, s1) = (bb0.max(0.0).sqrt(), bb1.max(0.0).sqrt());
+        let w = 0.5 * (s0 + s1);
+        let b0 = 0.5 * (w + (w * w + bb2).max(0.0).sqrt());
+        let c = BiquadCoeffs { b0, b1: 0.5 * (s0 - s1), b2: -bb2 / (4.0 * b0), a1, a2 };
+        if [c.b0, c.b1, c.b2].iter().all(|v| v.is_finite()) {
+            c
+        } else {
+            Self::low_pass(sr, freq, q)
         }
     }
 
@@ -288,6 +364,13 @@ mod tests {
         assert!((db(c, 12000.0) - 6.0).abs() < 0.05);
         assert!((db(c, 18000.0) - 2.35).abs() < 0.1 && (db(c, 20000.0) - 1.6).abs() < 0.1);
         assert!(db(BiquadCoeffs::peak(48000.0, 12000.0, 1.413, 6.0), 20000.0) < 1.0);
+        // A WING's 5 kHz high cuts: 6 dB/oct -13.15 dB and 12 dB/oct -24.9 dB
+        // at 20 kHz (the bilinear designs fall far lower).
+        let c = BiquadCoeffs::low_pass_1_matched(48000.0, 5000.0);
+        assert!((db(c, 5000.0) + 3.06).abs() < 0.1 && (db(c, 20000.0) + 13.15).abs() < 0.3);
+        let c = BiquadCoeffs::low_pass_matched(48000.0, 5000.0, std::f64::consts::FRAC_1_SQRT_2);
+        assert!((db(c, 5000.0) + 3.01).abs() < 0.05 && (db(c, 20000.0) + 24.9).abs() < 0.5);
+        assert!(db(c, 20.0).abs() < 0.01);
         // Low bells and cuts are the ordinary peaking filter.
         let (a, b) = (BiquadCoeffs::peak_decramped(48000.0, 1500.0, 2.38, -9.0), BiquadCoeffs::peak(48000.0, 1500.0, 2.38, -9.0));
         for f in [500.0, 1500.0, 3000.0] {

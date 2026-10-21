@@ -25,6 +25,8 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- The channel filter's HIGH CUT keeps its slope up to the top of the band, as on the console
+  (a 5 kHz cut at 6 dB/oct is -13 dB at 20 kHz, not -21).
 - The FILTER tool's TILT goes the console's way and as far: TILT +3 lifts the lows by 3 dB
   and lowers the highs by 3 dB on a gentle slope through about 700 Hz (Sidecar tilted the
   other way, by half as much).
