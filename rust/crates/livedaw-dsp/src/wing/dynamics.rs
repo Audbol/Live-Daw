@@ -124,11 +124,98 @@ const MINUS_INF: f32 = -120.0;
 
 // ---- configuration --------------------------------------------------------------------
 
-/// dB of soft knee per step of the WING compressor's / expander's KNEE (0..5).
-pub const KNEE_STEP_DB: f32 = 6.0;
+/// dB of soft knee per step of the WING compressor's / expander's KNEE (0..5):
+/// on a WING (firmware 3.1) KNEE 2, 3 and 5 bend quadratically over 14.4,
+/// 21.7 and 36.1 dB.
+pub const KNEE_STEP_DB: f32 = 7.22;
 
 fn coef(ms: f32, sr: f32) -> f32 {
     (-1.0 / (ms.max(0.005) * 0.001 * sr)).exp()
+}
+
+// The WING's own GATE and COMP, as recorded on a WING (firmware 3.1) with a
+// 1 kHz tone jumping 40 dB (tools/wing/audio_compare). Their gain moves
+// 0.25 ms (COMP) / 0.1 ms (GATE) after the audio: the detector runs that much
+// behind. The peak detector holds a sine's peaks, decaying 0.5 ms between them.
+
+/// The COMP's detector delay (ms).
+const WING_COMP_DELAY_MS: f32 = 0.25;
+/// The GATE's detector delay (ms).
+const WING_GATE_DELAY_MS: f32 = 0.1;
+/// Decay of the WING's peak detector (ms).
+const WING_PEAK_DECAY_MS: f32 = 0.5;
+/// Averaging of the COMP's RMS detector (ms): KNEE-free 2:1 and 10:1 lag a
+/// pure exponential attack by about a millisecond, as a 5 ms mean square does.
+const WING_RMS_MS: f32 = 5.0;
+/// LIN envelope: dB the gain moves per ATTACK / RELEASE time (a 15 dB attack
+/// at ATTACK 5 ms takes 7.5 ms; a 15 dB release at RELEASE 100 ms, 150 ms).
+const WING_LIN_DB: f32 = 10.0;
+/// Shortest ATTACK the envelope uses (ms): ATTACK 0 moves 20 dB/ms.
+const WING_MIN_ATTACK_MS: f32 = 0.5;
+/// AUTO: the attack's time constant for small changes (ms) and the change (dB)
+/// that doubles its speed - 14 dB of reduction is 77 % done after 1 ms, the
+/// last dB takes about 20 ms, whatever ATTACK is set to.
+const WING_AUTO_ATTACK_MS: f32 = 18.0;
+const WING_AUTO_ATTACK_DB: f32 = 1.8;
+/// AUTO release time constants (ms) with the PEAK and the RMS detector.
+const WING_AUTO_RELEASE_PEAK_MS: f32 = 60.0;
+const WING_AUTO_RELEASE_RMS_MS: f32 = 480.0;
+/// AUTO with RMS: the release starts at 1/6 of its speed and gets up to it
+/// with this time constant (ms).
+const WING_AUTO_ONSET_MS: f32 = 50.0;
+const WING_AUTO_ONSET: f32 = 5.0;
+/// The GATE opens over at least this many samples (ATTACK 0).
+const WING_GATE_MIN_RAMP: f32 = 8.0;
+/// RANGE at its end closes the GATE completely.
+const WING_GATE_FULL_RANGE: f32 = 60.0;
+/// Detector delays are at most this long (samples).
+const KEY_LINE: usize = 64;
+
+/// The WING COMP's / EXP's envelope (ATTACK, HOLD, RELEASE, ENVELOPE, AUTO).
+#[derive(Clone, Copy, Debug)]
+struct WingEnv {
+    /// Detector delay (samples).
+    delay: usize,
+    times: WingTimes,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum WingTimes {
+    /// LIN: straight lines in dB, `att` / `rel` dB per sample. LOG: exponential
+    /// in dB, `att` / `rel` the one-pole coefficients (the set times are the
+    /// time constants). After an attack the release starts from standstill and
+    /// gets up to speed linearly over `hold_ramp` samples (2 x HOLD): a straight
+    /// line release starts HOLD after the level drops.
+    Set { lin: bool, att: f32, rel: f32, hold_ramp: f32 },
+    /// AUTO: the attack time constant (samples) for small changes, shorter the
+    /// further the gain has to go; an exponential release (`rel` coefficient);
+    /// with RMS, a release that starts slow (`onset`, decaying by `onset_coef`).
+    Auto { att_n: f32, rel: f32, onset: f32, onset_coef: f32 },
+}
+
+/// The WING GATE: the gain moves on a linear scale.
+#[derive(Clone, Copy, Debug)]
+struct WingGate {
+    /// Detector delay (samples).
+    delay: usize,
+    /// Opening: one-pole coefficient, ATTACK its 10-90 % time.
+    att: f32,
+    /// Closing, expander ratios: the same with RELEASE.
+    rel: f32,
+    /// Closing, ratio GATE: a straight line from open to closed over RELEASE
+    /// (step per sample).
+    ramp: f32,
+    /// Lowest gain (linear; 0 = closes completely).
+    floor: f32,
+}
+
+fn delay_samples(ms: f32, sr: f32) -> usize {
+    ((ms * 0.001 * sr).round() as usize).min(KEY_LINE - 1)
+}
+
+/// One-pole coefficient whose 10-90 % time is `ms`.
+fn coef_10_90(ms: f32, sr: f32) -> f32 {
+    (-9f32.ln() / (ms * 0.001 * sr).max(1e-3)).exp()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -147,6 +234,8 @@ struct GateCfg {
     hold: u32,
     accent_db: f32,
     rms: bool,
+    /// The WING GATE's envelope (None: the dB one-poles of the other models).
+    wing: Option<WingGate>,
 }
 
 /// Static gain computer of a compressor stage (gain change in dB, <= 0).
@@ -229,8 +318,9 @@ struct CompCfg {
     release: Release,
     hold: u32,
     rms: bool,
-    /// LIN envelope: the gain moves on a linear scale instead of in dB.
-    lin_env: bool,
+    /// The WING COMP's / EXP's detector and envelope (None: the one-poles and
+    /// detectors of the other models).
+    wing: Option<WingEnv>,
     feedback: bool,
     /// HF emphasis of the detector (0 = flat).
     det_tilt: f32,
@@ -263,7 +353,7 @@ impl Default for CompCfg {
             release: Release::Fixed,
             hold: 0,
             rms: false,
-            lin_env: false,
+            wing: None,
             feedback: false,
             det_tilt: 0.0,
             pre_db: 0.0,
@@ -400,6 +490,7 @@ fn configure(spec: &ModelSpec, v: &[f32], sr: f32) -> Config {
         hold: (hold_ms * 0.001 * sr) as u32,
         accent_db: 0.0,
         rms: false,
+        wing: None,
     };
     // LA-style opto leveler, shared by LA and CMB (p.113-114): the cell is
     // program dependent and frequency sensitive, and releases in stages - most
@@ -418,8 +509,17 @@ fn configure(spec: &ModelSpec, v: &[f32], sr: f32) -> Config {
         // ---- gates and expanders -------------------------------------------------------
         "GATE" => {
             let ratio = [1.5, 2.0, 3.0, 4.0, 0.0][p.choice("ratio").min(4)];
-            let mut g = gate(p.f("thr"), p.f("range"), ratio, p.f("att"), p.f("hld"), p.f("rel"));
+            let (range, rel) = (p.f("range"), p.f("rel"));
+            let full = range >= WING_GATE_FULL_RANGE;
+            let mut g = gate(p.f("thr"), if full { -MINUS_INF } else { range }, ratio, p.f("att"), p.f("hld"), rel);
             g.accent_db = p.f("acc") / 100.0 * 6.0;
+            g.wing = Some(WingGate {
+                delay: delay_samples(WING_GATE_DELAY_MS, sr),
+                att: coef_10_90(p.f("att"), sr),
+                rel: coef_10_90(rel, sr),
+                ramp: 1.0 / (rel * 0.001 * sr).max(1.0),
+                floor: if full { 0.0 } else { db_to_gain(-range) },
+            });
             Config::Gate(g)
         }
         "DUCK" => Config::Duck(gate(p.f("thr"), p.f("range"), 0.0, p.f("att"), p.f("hld"), p.f("rel"))),
@@ -524,16 +624,29 @@ fn configure(spec: &ModelSpec, v: &[f32], sr: f32) -> Config {
             // KNEE 0..5: each step widens the transition by 6 dB (3 = about
             // 18 dB, as the curve of the manual's figure 92 bends).
             let (thr, knee) = (p.f("thr"), p.f("knee") * KNEE_STEP_DB);
-            let mut c = comp(thr, ratio, knee, p.f("att"), p.f("rel"));
-            c.hold = (p.f("hld") * 0.001 * sr) as u32;
+            let (att, rel) = (p.f("att").max(WING_MIN_ATTACK_MS), p.f("rel"));
+            let mut c = comp(thr, ratio, knee, att, rel);
             c.rms = p.text("det") == "RMS";
-            // ENVELOPE shapes attack, hold and release alike (p.101).
-            c.lin_env = p.text("env") == "LIN";
-            if p.on("auto") {
-                // AUTO ENV: faster attack on transients, longer release after more reduction.
-                c.attack = Attack::Crest { min_scale: 0.1 };
-                c.release = Release::Auto { max_ms: (p.f("rel") * 6.0).clamp(p.f("rel"), 4000.0), full_db: 12.0 };
-            }
+            let samples = |ms: f32| ms * 0.001 * sr;
+            let hold_ramp = (2.0 * samples(p.f("hld"))).max(1.0);
+            let times = if p.on("auto") {
+                // AUTO replaces ATTACK, HOLD and RELEASE: the attack is program
+                // dependent, the release exponential whatever ENVELOPE is.
+                let onset = if c.rms { WING_AUTO_ONSET } else { 0.0 };
+                let rel_ms = if c.rms { WING_AUTO_RELEASE_RMS_MS } else { WING_AUTO_RELEASE_PEAK_MS };
+                WingTimes::Auto {
+                    att_n: samples(WING_AUTO_ATTACK_MS),
+                    rel: coef(rel_ms, sr),
+                    onset,
+                    onset_coef: coef(WING_AUTO_ONSET_MS, sr),
+                }
+            } else if p.text("env") == "LIN" {
+                let (att, rel) = (WING_LIN_DB / samples(att), WING_LIN_DB / samples(rel));
+                WingTimes::Set { lin: true, att, rel, hold_ramp }
+            } else {
+                WingTimes::Set { lin: false, att: c.att, rel: c.rel, hold_ramp }
+            };
+            c.wing = Some(WingEnv { delay: delay_samples(WING_COMP_DELAY_MS, sr), times });
             if spec.token == "EXP" {
                 c.curve = Curve::Expand { thr, ratio, knee, range: 60.0 };
             }
@@ -915,6 +1028,11 @@ struct CompState {
     power: f32,
     /// Reduction when the release began (anti-log release).
     rel_from: f32,
+    /// WING envelope: samples since the last attack, the slow start of an
+    /// AUTO release and the peak detector.
+    since: u32,
+    onset: f32,
+    wing_peak: f32,
     /// Auto gain (dB).
     makeup: f32,
     /// Smoothed input and output gains of the stage (dB), so knobs that
@@ -937,6 +1055,8 @@ struct GateState {
 #[derive(Clone, Copy, Default)]
 struct Coefs {
     rms: f32,
+    wing_rms: f32,
+    wing_peak: f32,
     gate_peak: f32,
     accent: f32,
     tilt: f32,
@@ -958,6 +1078,8 @@ impl Coefs {
     fn new(sr: f32) -> Self {
         Self {
             rms: coef(10.0, sr),
+            wing_rms: coef(WING_RMS_MS, sr),
+            wing_peak: coef(WING_PEAK_DECAY_MS, sr),
             gate_peak: coef(5.0, sr),
             accent: coef(30.0, sr),
             // One-pole low pass at 1 kHz: its complement is the detector's HF emphasis.
@@ -983,8 +1105,10 @@ pub struct WingDynamics {
     cfg: Option<Config>,
     comp: [CompState; 2],
     gate: GateState,
-    // Key filter (mono key)
+    // Key filter (mono key) and the detector delay of the WING's own models
     sc: Biquad,
+    key_line: [f32; KEY_LINE],
+    key_pos: usize,
     sc_settings: Option<SidechainSettings>,
     // Crossover band filter (per channel) and its settings
     xo: Biquad,
@@ -1020,6 +1144,8 @@ impl Default for WingDynamics {
             comp: [CompState::default(); 2],
             gate: GateState::default(),
             sc: Biquad::default(),
+            key_line: [0.0; KEY_LINE],
+            key_pos: 0,
             sc_settings: None,
             xo: Biquad::default(),
             xo_settings: None,
@@ -1073,14 +1199,10 @@ fn exp_curve(x: f32, thr: f32, ratio: f32, knee: f32, range: f32) -> f32 {
     g.max(-range)
 }
 
-/// One-pole step from `cur` toward `target` in dB, or on a linear scale.
+/// One-pole step from `cur` toward `target`.
 #[inline]
-fn smooth(cur: f32, target: f32, c: f32, linear: bool) -> f32 {
-    if linear {
-        gain_to_db((c * db_to_gain(cur) + (1.0 - c) * db_to_gain(target)).max(1e-6))
-    } else {
-        c * cur + (1.0 - c) * target
-    }
+fn smooth(cur: f32, target: f32, c: f32) -> f32 {
+    c * cur + (1.0 - c) * target
 }
 
 /// Moves `cur` toward `target` by at most `step`.
@@ -1102,6 +1224,7 @@ impl WingDynamics {
         self.comp = [CompState::default(); 2];
         self.gate = GateState { gain: 1.0, ..Default::default() };
         self.sc.reset();
+        self.key_line = [0.0; KEY_LINE];
         self.sc_settings = None;
         self.xo.reset();
         self.xo_settings = None;
@@ -1152,6 +1275,7 @@ impl WingDynamics {
     fn clear_state(&mut self) {
         self.comp = [CompState::default(); 2];
         self.gate = GateState { gain: 1.0, ..Default::default() };
+        self.key_line = [0.0; KEY_LINE];
         for f in &mut self.aux_filters {
             f.reset();
         }
@@ -1305,6 +1429,7 @@ impl WingDynamics {
         match *cfg {
             Config::Gate(g) | Config::Duck(g) => {
                 let duck = matches!(cfg, Config::Duck(_));
+                let key = self.delay_key(key, g.wing.map_or(0, |w| w.delay));
                 let (gain, lvl) = self.gate_tick(&g, key, duck);
                 st.key_db = st.key_db.max(lvl);
                 st.active |= gain < -1.0;
@@ -1312,6 +1437,7 @@ impl WingDynamics {
                 (Some(gain), x)
             }
             Config::Comp(c) => {
+                let key = self.delay_key(key, c.wing.map_or(0, |w| w.delay));
                 let (y, gr, lvl) = self.comp_tick(&c, 0, key, x, 1.0);
                 st.report(gr, lvl);
                 (None, y)
@@ -1459,9 +1585,21 @@ impl WingDynamics {
         }
     }
 
+    /// The key `n` samples ago (0: `key` itself).
+    #[inline]
+    fn delay_key(&mut self, key: f32, n: usize) -> f32 {
+        self.key_line[self.key_pos] = key;
+        let out = self.key_line[(self.key_pos + KEY_LINE - n) % KEY_LINE];
+        self.key_pos = (self.key_pos + 1) % KEY_LINE;
+        out
+    }
+
     /// Gate / expander / ducker gain in dB.
     #[inline]
     fn gate_tick(&mut self, g: &GateCfg, key: f32, duck: bool) -> (f32, f32) {
+        if let Some(w) = g.wing {
+            return self.wing_gate_tick(g, &w, key);
+        }
         let k = self.k;
         let s = &mut self.gate;
         let v = key.abs();
@@ -1521,6 +1659,94 @@ impl WingDynamics {
         (next + accent, lvl)
     }
 
+    /// The WING GATE (gain in dB, detector level). Above the threshold it
+    /// opens (a one-pole on the linear gain, ATTACK its 10-90 % time, at least
+    /// 8 samples); HOLD after the level falls under it, it closes: an expander
+    /// ratio heads for its gain the same way at RELEASE, ratio GATE ramps the
+    /// gain down in a straight line over RELEASE. While closed, rising peaks
+    /// that lift the expander's gain restart HOLD, so it sits on the peaks.
+    #[inline]
+    fn wing_gate_tick(&mut self, g: &GateCfg, w: &WingGate, key: f32) -> (f32, f32) {
+        let k = self.k;
+        let s = &mut self.gate;
+        s.env = key.abs().max(s.env * k.wing_peak);
+        let lvl = gain_to_db(s.env + 1e-9);
+        let was_open = s.open;
+        if lvl >= g.thr {
+            s.open = true;
+            s.hold = g.hold;
+        } else if lvl < g.close {
+            if s.hold > 0 {
+                s.hold -= 1;
+            } else {
+                s.open = false;
+            }
+        }
+        if s.open && !was_open {
+            s.accent = g.accent_db;
+        }
+        let target = if s.open {
+            1.0
+        } else if g.ratio > 0.0 {
+            let under = (g.close - lvl).max(0.0);
+            db_to_gain(-(g.ratio - 1.0) * under - g.growth * under * under).max(w.floor)
+        } else {
+            w.floor
+        };
+        let cur = s.gain;
+        s.gain = if target > cur {
+            if !s.open && target > cur * 1.0001 {
+                s.hold = g.hold;
+            }
+            (target + (cur - target) * w.att).min(cur + 1.0 / WING_GATE_MIN_RAMP)
+        } else if target < cur && s.hold == 0 {
+            if g.ratio > 0.0 {
+                target + (cur - target) * w.rel
+            } else {
+                (cur - w.ramp).max(target)
+            }
+        } else {
+            cur
+        };
+        let accent = s.accent;
+        s.accent *= k.accent;
+        (gain_to_db(s.gain) + accent, lvl)
+    }
+
+    /// The WING COMP's / EXP's next reduction (dB) from `gr` toward `target`.
+    #[inline]
+    fn wing_envelope(s: &mut CompState, w: &WingEnv, target: f32, attacking: bool) -> f32 {
+        let gr = s.gr;
+        if attacking {
+            s.since = 0;
+            s.onset = 1.0;
+            return match w.times {
+                WingTimes::Set { lin: true, att, .. } => step_toward(gr, target, att),
+                WingTimes::Set { att, .. } => smooth(gr, target, att),
+                WingTimes::Auto { att_n, .. } => {
+                    let d = (target - gr).abs();
+                    step_toward(gr, target, d * (1.0 + d / WING_AUTO_ATTACK_DB) / att_n)
+                }
+            };
+        }
+        s.since = s.since.saturating_add(1);
+        match w.times {
+            WingTimes::Set { lin, rel, hold_ramp, .. } => {
+                let speed = (s.since as f32 / hold_ramp).min(1.0);
+                if lin {
+                    step_toward(gr, target, rel * speed)
+                } else {
+                    smooth(gr, target, 1.0 - (1.0 - rel) * speed)
+                }
+            }
+            WingTimes::Auto { rel, onset, onset_coef, .. } => {
+                let speed = 1.0 / (1.0 + onset * s.onset);
+                s.onset *= onset_coef;
+                smooth(gr, target, 1.0 - (1.0 - rel) * speed)
+            }
+        }
+    }
+
     /// Compressor/limiter/expander stage on samples `x`, keyed by `key`.
     /// `gr_scale` scales the stage's reduction (the LMT transient shaper).
     #[inline]
@@ -1547,8 +1773,12 @@ impl WingDynamics {
             det += c.det_tilt * (det - s.tilt_lp);
         }
         let lvl = if c.rms {
-            s.ms = k.rms * s.ms + (1.0 - k.rms) * det * det;
+            let kr = if c.wing.is_some() { k.wing_rms } else { k.rms };
+            s.ms = kr * s.ms + (1.0 - kr) * det * det;
             10.0 * (s.ms + 1e-12).log10()
+        } else if c.wing.is_some() {
+            s.wing_peak = det.abs().max(s.wing_peak * k.wing_peak);
+            gain_to_db(s.wing_peak + 1e-9)
         } else {
             gain_to_db(det.abs() + 1e-9)
         };
@@ -1576,7 +1806,9 @@ impl WingDynamics {
         let ka = if amount > s.amount { k.amount_charge } else { k.amount_rel };
         s.amount = ka * s.amount + (1.0 - ka) * amount;
 
-        if attacking {
+        if let Some(w) = c.wing {
+            s.gr = Self::wing_envelope(s, &w, target, attacking);
+        } else if attacking {
             let a = match c.attack {
                 Attack::Fixed => c.att,
                 Attack::Program { fast_ms, slow_ms, full_db } => {
@@ -1585,7 +1817,7 @@ impl WingDynamics {
                 }
                 Attack::Crest { min_scale } => coef(c.att_ms * crest_scale.max(min_scale), sr),
             };
-            s.gr = smooth(s.gr, target, a, c.lin_env);
+            s.gr = smooth(s.gr, target, a);
             s.hold = c.hold;
             s.rel_from = s.gr;
         } else if s.hold > 0 {
@@ -1609,7 +1841,7 @@ impl WingDynamics {
                         Release::Crest => coef(c.rel_ms * crest_scale.max(0.1), sr),
                         _ => c.rel,
                     };
-                    s.gr = smooth(s.gr, target, r, c.lin_env);
+                    s.gr = smooth(s.gr, target, r);
                 }
             }
         }
@@ -2036,20 +2268,6 @@ mod tests {
     }
 
     #[test]
-    fn lin_envelope_shapes_the_attack_too() {
-        let gr_after = |env: &str| {
-            let (m, v) =
-                model("COMP", &[("thr", "-40"), ("ratio", "100"), ("knee", "0"), ("att", "10"), ("det", "PEAK"), ("env", env)]);
-            let mut d = WingDynamics::default();
-            d.prepare(48000.0);
-            run_on(&mut d, m, &v, &vec![0.5; 240]);
-            d.comp[0].gr
-        };
-        let (lin, log) = (gr_after("LIN"), gr_after("LOG"));
-        assert!(lin > log + 2.0, "LIN {lin} vs LOG {log}");
-    }
-
-    #[test]
     fn soul9000_peak_switch_selects_the_hard_knee() {
         // THR 0 dBu = -18 dBFS; a sine 1 dB below it (RMS).
         let amp = db_to_gain(-19.0 + 3.0);
@@ -2313,7 +2531,16 @@ mod tests {
         // output peak sits 5 dB over the threshold for a peak 20 dB over it.
         let (m, v) = model(
             "COMP",
-            &[("thr", "-20"), ("ratio", "4"), ("knee", "0"), ("det", "PEAK"), ("att", "0"), ("hld", "200"), ("rel", "1000")],
+            &[
+                ("thr", "-20"),
+                ("ratio", "4"),
+                ("knee", "0"),
+                ("det", "PEAK"),
+                ("att", "0"),
+                ("hld", "200"),
+                ("rel", "1000"),
+                ("auto", "0"),
+            ],
         );
         let (out, st) = run_full(m, &v, &sine(1.0, 1000.0, 48000), 1.0, 0.0);
         let peak = gain_to_db(peak_tail(&out));
@@ -2322,8 +2549,10 @@ mod tests {
         assert!(st.key_db.abs() < 0.1, "detector {}", st.key_db);
         assert_eq!(static_output_db(m, &v, 0.0), Some(-15.0));
         // RMS: a 0 dBFS sine reads -3 dB, 17 dB over -> 4.25 dB over.
-        let (m, v) =
-            model("COMP", &[("thr", "-20"), ("ratio", "4"), ("knee", "0"), ("det", "RMS"), ("att", "5"), ("rel", "200")]);
+        let (m, v) = model(
+            "COMP",
+            &[("thr", "-20"), ("ratio", "4"), ("knee", "0"), ("det", "RMS"), ("att", "5"), ("rel", "200"), ("auto", "0")],
+        );
         let input = sine(1.0, 1000.0, 48000);
         let (out, st) = run_full(m, &v, &input, 1.0, 0.0);
         let rms_out = gain_to_db(rms_tail(&out));
@@ -2345,11 +2574,22 @@ mod tests {
         assert_eq!(curve("0", "4", -30.0), -30.0);
         assert!((curve("0", "2", -10.0) + 15.0).abs() < 1e-4);
         assert!((curve("0", "100", 0.0) + 19.8).abs() < 1e-3);
-        // KNEE 3 = 18 dB: at the threshold 3/4 * 18/8 dB down; the full ratio
-        // from 9 dB over, unity from 9 dB under.
-        assert!((curve("3", "4", -20.0) - (-20.0 - 0.75 * 18.0 / 8.0)).abs() < 1e-3);
-        assert!((curve("3", "4", -11.0) + 17.75).abs() < 1e-3);
-        assert_eq!(curve("3", "4", -29.0), -29.0);
+        // KNEE 3 = 21.66 dB: at the threshold 3/4 * 21.66/8 dB down; the full
+        // ratio from 10.83 dB over, unity from 10.83 dB under.
+        assert!((curve("3", "4", -20.0) - (-20.0 - 0.75 * 21.66 / 8.0)).abs() < 1e-3);
+        assert!((curve("3", "4", -9.0) + 17.25).abs() < 1e-3);
+        assert_eq!(curve("3", "4", -31.0), -31.0);
+        // As a WING bends (gain at the RMS level, recorded): KNEE 5 10:1 at THR
+        // -20 is 4.1 dB down at the threshold and 13.7 dB down 15 dB over it;
+        // KNEE 3 3:1 at THR -30 is 1.85 dB down at it; KNEE 2 2:1 at -40, 0.97.
+        let gain = |knee: &str, ratio: &str, thr: &str, x: f32| {
+            let (m, v) = model("COMP", &[("thr", thr), ("ratio", ratio), ("knee", knee)]);
+            static_output_db(m, &v, x).unwrap() - x
+        };
+        assert!((gain("5", "10", "-20", -20.0) + 4.1).abs() < 0.15);
+        assert!((gain("5", "10", "-20", -5.0) + 13.7).abs() < 0.15);
+        assert!((gain("3", "3", "-30", -30.0) + 1.85).abs() < 0.15);
+        assert!((gain("2", "2", "-40", -40.0) + 0.97).abs() < 0.15);
         // The curve never falls as the level rises.
         for knee in ["0", "1", "3", "5"] {
             let mut last = f32::NEG_INFINITY;
@@ -2365,43 +2605,240 @@ mod tests {
         assert_eq!(static_output_db(m, &v, -20.0), Some(-20.0));
     }
 
-    #[test]
-    fn attack_hold_and_release_are_the_labelled_time_constants() {
-        // A constant level 20 dB over an infinite-ratio threshold: the gain
-        // reaches 63 % of its target in ATTACK, stays put for HOLD after the
-        // level drops, then recovers 63 % in RELEASE (manual p.102).
-        let (m, v) = model(
-            "COMP",
-            &[
-                ("thr", "-26"),
-                ("ratio", "100"),
-                ("knee", "0"),
-                ("det", "PEAK"),
-                ("att", "20"),
-                ("hld", "50"),
-                ("rel", "100"),
-                ("auto", "0"),
-            ],
-        );
+    /// The gain (dB) per sample of the WING COMP (its reduction) or GATE on a
+    /// 1 kHz tone at -50 dBFS (peak) that jumps to -10 dBFS and back, as on the
+    /// recordings: (rise, fall), `n` samples each.
+    fn jump_gain(m: usize, v: &[f32], gate: bool, n: usize) -> (Vec<f32>, Vec<f32>) {
         let mut d = WingDynamics::default();
         d.prepare(48000.0);
-        let lvl = db_to_gain(-6.0);
-        let target = comp_curve(gain_to_db(lvl), -26.0, slope_of(100.0), 0.0);
-        run_on(&mut d, m, &v, &vec![lvl; 960]); // 20 ms
-        let frac = d.comp[0].gr / target;
-        assert!((frac - 0.632).abs() < 0.02, "after ATTACK: {frac} of the target");
-        run_on(&mut d, m, &v, &vec![lvl; 48000]);
-        let full = d.comp[0].gr;
-        run_on(&mut d, m, &v, &vec![0.0; 2400 - 48]); // just inside HOLD
-        assert!((d.comp[0].gr - full).abs() < 1e-3, "moved during HOLD");
-        run_on(&mut d, m, &v, &vec![0.0; 48 + 4800]); // HOLD + RELEASE
-        let left = d.comp[0].gr / full;
-        assert!((left - 0.368).abs() < 0.02, "after RELEASE: {left} left");
+        let mut i = 0usize;
+        let mut tone = |d: &mut WingDynamics, db: f32, len: usize| -> Vec<f32> {
+            (0..len)
+                .map(|_| {
+                    let x = db_to_gain(db) * (i as f32 * 2.0 * std::f32::consts::PI / 48.0).sin();
+                    i += 1;
+                    run_on(d, m, v, &[x]);
+                    if gate {
+                        gain_to_db(d.gate.gain)
+                    } else {
+                        d.comp[0].gr
+                    }
+                })
+                .collect()
+        };
+        tone(&mut d, -50.0, 48000);
+        let rise = tone(&mut d, -10.0, n);
+        let fall = tone(&mut d, -50.0, n);
+        (rise, fall)
+    }
+
+    /// Times (ms) to 10, 63 and 90 % of the change in `trace`.
+    fn edge_ms(trace: &[f32]) -> [f32; 3] {
+        let (g0, g1) = (trace[0], trace[trace.len() - 1]);
+        [0.1, 0.632, 0.9].map(|p| trace.iter().position(|g| (g - g0) / (g1 - g0) >= p).map_or(f32::NAN, |i| i as f32 / 48.0))
     }
 
     #[test]
-    fn gate_range_ratio_and_timing() {
-        // Expander 1:2, 10 dB under the threshold -> 10 dB down; gate -> RANGE.
+    fn wing_comp_and_gate_times_are_as_recorded() {
+        // Times (ms) after the 40 dB jumps up / down, recorded on a WING
+        // (firmware 3.1, mean of three jumps); the kit's tolerance: 20 % or 2 ms.
+        #[allow(clippy::type_complexity)]
+        let cases: [(&str, &[(&str, &str)], [f32; 3], [f32; 3]); 8] = [
+            // LIN: straight lines in dB, 10 dB per ATTACK / RELEASE; the release
+            // gets up to speed over 2 x HOLD.
+            (
+                "COMP",
+                &[
+                    ("thr", "-30"),
+                    ("ratio", "4"),
+                    ("knee", "0"),
+                    ("det", "PEAK"),
+                    ("att", "5"),
+                    ("hld", "10"),
+                    ("rel", "100"),
+                    ("env", "LIN"),
+                    ("auto", "0"),
+                ],
+                [1.1, 5.1, 7.8],
+                [25.2, 105.6, 146.2],
+            ),
+            (
+                "COMP",
+                &[
+                    ("thr", "-20"),
+                    ("ratio", "100"),
+                    ("knee", "0"),
+                    ("det", "PEAK"),
+                    ("att", "0"),
+                    ("hld", "1"),
+                    ("rel", "50"),
+                    ("env", "LIN"),
+                    ("auto", "0"),
+                ],
+                [0.2, 0.8, 1.1],
+                [6.2, 32.8, 46.2],
+            ),
+            // LOG: exponential in dB, ATTACK / RELEASE the time constants.
+            (
+                "COMP",
+                &[
+                    ("thr", "-40"),
+                    ("ratio", "2"),
+                    ("knee", "2"),
+                    ("det", "RMS"),
+                    ("att", "10"),
+                    ("hld", "20"),
+                    ("rel", "200"),
+                    ("env", "LOG"),
+                    ("auto", "0"),
+                ],
+                [1.9, 11.7, 25.1],
+                [45.2, 224.2, 484.9],
+            ),
+            (
+                "COMP",
+                &[
+                    ("thr", "-20"),
+                    ("ratio", "10"),
+                    ("knee", "5"),
+                    ("det", "RMS"),
+                    ("att", "20"),
+                    ("hld", "20"),
+                    ("rel", "300"),
+                    ("env", "LOG"),
+                    ("auto", "0"),
+                ],
+                [3.8, 22.9, 49.8],
+                [53.2, 320.2, 704.8],
+            ),
+            // AUTO: the same program-dependent attack at ATTACK 5 and 50; the
+            // release by detector.
+            (
+                "COMP",
+                &[
+                    ("thr", "-30"),
+                    ("ratio", "4"),
+                    ("knee", "0"),
+                    ("det", "PEAK"),
+                    ("att", "5"),
+                    ("hld", "10"),
+                    ("rel", "100"),
+                    ("env", "LIN"),
+                    ("auto", "1"),
+                ],
+                [0.7, 4.3, 17.3],
+                [6.8, 60.7, 138.9],
+            ),
+            (
+                "COMP",
+                &[
+                    ("thr", "-30"),
+                    ("ratio", "3"),
+                    ("knee", "3"),
+                    ("det", "RMS"),
+                    ("att", "50"),
+                    ("hld", "20"),
+                    ("rel", "150"),
+                    ("env", "LOG"),
+                    ("auto", "1"),
+                ],
+                [0.7, 5.8, 23.0],
+                [123.4, 545.5, 1086.3],
+            ),
+            // GATE: a one-pole on the linear gain, ATTACK / RELEASE its 10-90 % times.
+            (
+                "GATE",
+                &[("thr", "-40"), ("ratio", "1:3"), ("range", "40"), ("att", "10"), ("hld", "10"), ("rel", "200")],
+                [0.0, 2.2, 6.8],
+                [33.4, 175.3, 287.2],
+            ),
+            (
+                "GATE",
+                &[("thr", "-35"), ("ratio", "1:2"), ("range", "20"), ("att", "5"), ("hld", "20"), ("rel", "500")],
+                [0.0, 1.3, 3.8],
+                [67.7, 371.8, 634.2],
+            ),
+        ];
+        for (token, sets, rise_ms, fall_ms) in cases {
+            let (m, v) = model(token, sets);
+            let (rise, fall) = jump_gain(m, &v, token == "GATE", 48000 * 3);
+            for (what, got, want) in [("rise", edge_ms(&rise), rise_ms), ("fall", edge_ms(&fall), fall_ms)] {
+                for k in 0..3 {
+                    let tol = (want[k] * 0.2).max(2.0);
+                    assert!((got[k] - want[k]).abs() <= tol, "{token} {sets:?} {what}: {got:?} ms, the WING {want:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn wing_comp_auto_with_peak_holds_a_db_less_on_a_tone() {
+        // The peak detector drops between a sine's peaks and AUTO has no hold:
+        // the gain recovers a little each cycle. Recorded: 4:1 at 20 dB over is
+        // -14.09 dB with AUTO, -15.08 without; 2 dB over, -1.03 instead of -1.58.
+        let gain = |auto: &str, x: f32| {
+            let sets = [
+                ("thr", "-30"),
+                ("ratio", "4"),
+                ("knee", "0"),
+                ("det", "PEAK"),
+                ("att", "5"),
+                ("hld", "10"),
+                ("rel", "100"),
+                ("env", "LIN"),
+                ("auto", auto),
+            ];
+            let (m, v) = model("COMP", &sets);
+            sine_gain(m, &v, db_to_gain(x), 1000.0, 48000)
+        };
+        assert!((gain("1", -10.0) + 14.09).abs() < 0.2, "{}", gain("1", -10.0));
+        assert!((gain("0", -10.0) + 15.0).abs() < 0.1, "{}", gain("0", -10.0));
+        assert!((gain("1", -28.0) + 1.03).abs() < 0.3, "{}", gain("1", -28.0));
+    }
+
+    #[test]
+    fn wing_comp_lin_release_is_a_straight_line_after_hold() {
+        // Recorded (4:1, ATTACK 5, HOLD 10, RELEASE 100, LIN): 15 dB of
+        // reduction comes off at 0.1 dB/ms - 20 ms after the drop -14.16 dB,
+        // 150 ms -1.12 dB, gone by 162 ms; the attack moves 2 dB/ms.
+        let (m, v) = model(
+            "COMP",
+            &[
+                ("thr", "-30"),
+                ("ratio", "4"),
+                ("knee", "0"),
+                ("det", "PEAK"),
+                ("att", "5"),
+                ("hld", "10"),
+                ("rel", "100"),
+                ("env", "LIN"),
+                ("auto", "0"),
+            ],
+        );
+        let (rise, fall) = jump_gain(m, &v, false, 48000);
+        assert!((rise[48 * 3] - rise[48 * 2] + 2.0).abs() < 0.1, "attack {} dB/ms", rise[48 * 3] - rise[48 * 2]);
+        assert!((fall[48 * 20] + 14.1).abs() < 0.3, "{}", fall[48 * 20]);
+        assert!((fall[48 * 150] + 1.1).abs() < 0.3, "{}", fall[48 * 150]);
+        assert!(fall[48 * 165] > -0.01, "{}", fall[48 * 165]);
+    }
+
+    #[test]
+    fn wing_gate_ratio_gate_ramps_and_full_range_closes() {
+        // Ratio GATE, RANGE 60, ATTACK 0, HOLD 50, RELEASE 100, recorded: the gain
+        // falls in a straight line from HOLD on (0.891, 0.692, 0.495, 0.295 and
+        // 0.097 at 60, 80, 100, 120, 140 ms), then the output is digital silence;
+        // it opens again within 8 samples.
+        let (m, v) =
+            model("GATE", &[("thr", "-30"), ("ratio", "gate"), ("range", "60"), ("att", "0"), ("hld", "50"), ("rel", "100")]);
+        let (rise, fall) = jump_gain(m, &v, true, 48000);
+        for (ms, want) in [(60, 0.891), (80, 0.692), (100, 0.495), (120, 0.295), (140, 0.097)] {
+            let got = db_to_gain(fall[48 * ms]);
+            assert!((got - want).abs() < 0.02, "{ms} ms: {got}, the WING {want}");
+        }
+        assert_eq!(db_to_gain(fall[48 * 160]), 0.0);
+        let open = rise.iter().position(|g| *g > -0.01).unwrap();
+        assert!(open <= 16, "open after {open} samples");
+        // Expander ratios and smaller RANGEs keep the static curve's floor.
         let (m, v) = model("GATE", &[("thr", "-30"), ("ratio", "1:2"), ("range", "40")]);
         assert!((sine_gain(m, &v, db_to_gain(-40.0), 1000.0, 48000) + 10.0).abs() < 0.5);
         assert_eq!(static_output_db(m, &v, -40.0), Some(-50.0));
@@ -2410,22 +2847,6 @@ mod tests {
         assert!((g + 40.0).abs() < 0.5, "gate: {g}");
         assert_eq!(static_output_db(m, &v, -60.0), Some(-100.0));
         assert_eq!(static_output_db(m, &v, -20.0), Some(-20.0));
-        // Opening at ATTACK (63 % of the way in dB), closing after HOLD at RELEASE.
-        let (m, v) =
-            model("GATE", &[("thr", "-30"), ("ratio", "gate"), ("range", "60"), ("att", "10"), ("hld", "100"), ("rel", "200")]);
-        let mut d = WingDynamics::default();
-        d.prepare(48000.0);
-        run_on(&mut d, m, &v, &vec![0.0; 48000 * 3]);
-        assert!((gain_to_db(d.gate.gain) + 60.0).abs() < 0.1);
-        run_on(&mut d, m, &v, &vec![0.5; 480]);
-        let opened = gain_to_db(d.gate.gain);
-        assert!((opened - (-60.0 * 0.368)).abs() < 1.0, "after ATTACK: {opened} dB");
-        run_on(&mut d, m, &v, &vec![0.5; 4800]);
-        run_on(&mut d, m, &v, &vec![0.0; 4800 - 480]); // within HOLD (+ the detector's decay)
-        assert!(gain_to_db(d.gate.gain) > -0.1, "closed during HOLD");
-        run_on(&mut d, m, &v, &vec![0.0; 480 + 9600]);
-        let closed = gain_to_db(d.gate.gain);
-        assert!(closed < -60.0 * 0.5 && closed > -60.0 * 0.8, "after RELEASE: {closed} dB");
     }
 
     #[test]
