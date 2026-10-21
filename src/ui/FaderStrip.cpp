@@ -96,15 +96,15 @@ namespace
 
 juce::Colour scribbleBacklight (juce::Colour stripColour, float backlight)
 {
-    // A colour-lit LCD looks like a bright, slightly paler version of the
-    // strip's colour (the console's screen colours are much darker).
-    return juce::Colour (stripColour.getHue(), stripColour.getSaturation() * 0.78f, juce::jlimit (0.0f, 1.0f, 0.82f * backlight), 1.0f);
+    // A colour-lit LCD looks like a bright, pale version of the strip's
+    // colour (the console's screen colours are much darker).
+    return juce::Colour (stripColour.getHue(), stripColour.getSaturation() * 0.5f, juce::jlimit (0.0f, 1.0f, 0.84f * backlight), 1.0f);
 }
 
 void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const ScribbleInfo& info)
 {
     // A negative LCD: light text on the backlight, the strip's colour (or
-    // indigo). SCRIBBLE sets the backlight (the text, lit by it, follows),
+    // periwinkle). SCRIBBLE sets the backlight (the text, lit by it, follows),
     // SCR CONT how far the text stands out from the background.
     const float backlight = juce::jlimit (0.2f, 1.6f, info.backlight);
     const auto bg = info.backlightColour.has_value() ? scribbleBacklight (*info.backlightColour, backlight)
@@ -373,7 +373,10 @@ FaderStrip::FaderStrip (UiContext& c, LayerSet::Section s) : ctx (c), section (s
     soloKey.ledColour = Colours::solo;
     muteKey.ledColour = Colours::mute;
     for (auto* k : { &selectKey, &soloKey, &muteKey })
+    {
+        k->grey = true;
         addAndMakeVisible (k);
+    }
 
     selectKey.onPress = [this] { pressSelect(); };
     selectKey.ledState = [this]
@@ -823,7 +826,7 @@ void FaderStrip::setModuleEdges (bool first, bool last)
 
 void FaderStrip::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::panel);
+    g.fillAll (Colours::surface);
 
     // The black display window and the meter panel run across the strips of
     // a module of four, rounded at its outer edges.
@@ -859,14 +862,14 @@ void FaderStrip::paint (juce::Graphics& g)
     {
         auto m = meterArea.toFloat();
         const float rowH = m.getHeight() / (float) kMeterRows;
-        const float ledW = juce::jlimit (5.0f, 10.0f, m.getWidth() * 0.13f);
-        const float pairW = ledW * 2.7f;
+        const float ledW = juce::jlimit (5.0f, 10.0f, m.getWidth() * 0.12f);
+        const float pairW = ledW * 2.85f;
         auto row = [&] (int i) { return juce::Rectangle<float> (m.getX(), m.getY() + rowH * (float) i, m.getWidth(), rowH); };
         // SETUP > GENERAL > METERS sets the LED brightness.
         const float bright = uiprefs::brightness (ctx.settings, "meters", 40);
         auto barLed = [&] (int i, bool on, juce::Colour c)
         {
-            auto r = row (i).withSizeKeepingCentre (pairW, juce::jmax (2.0f, rowH * 0.5f));
+            auto r = row (i).withSizeKeepingCentre (pairW, juce::jmax (2.0f, rowH * 0.6f));
             g.setColour (on ? c.withMultipliedBrightness (bright) : Colours::ledOff);
             g.fillRect (r);
         };
@@ -897,13 +900,14 @@ void FaderStrip::resized()
     // edge to edge across the module (inset at the module's ends).
     // The LCD is wider than tall, as on the console (about 1.4 : 1).
     const int lcdH = juce::jlimit (38, 120, juce::roundToInt ((float) w * 0.72f));
-    const int barH = juce::jlimit (3, 5, lcdH / 14);
-    const int barRow = barH + 12;
+    const int barH = juce::jlimit (3, 8, w / 12);
+    // The black window has room above the LCD, the light bars in its middle.
+    const int barRow = juce::jlimit (barH + 12, barH + 36, juce::roundToInt ((float) w * 0.4f));
     scribbleArea = b.removeFromTop (barRow + lcdH + 5);
-    barArea = juce::Rectangle<int> (juce::roundToInt ((float) w * 0.7f), barH).withCentre ({ w / 2, scribbleArea.getY() + barRow / 2 });
+    barArea = juce::Rectangle<int> (juce::roundToInt ((float) w * 0.78f), barH).withCentre ({ w / 2, scribbleArea.getY() + barRow / 2 });
     lcdArea = scribbleArea.withTrimmedTop (barRow).withTrimmedBottom (5)
                   .withTrimmedLeft (moduleFirst ? 9 : 0).withTrimmedRight (moduleLast ? 9 : 0);
-    b.removeFromTop (juce::jlimit (8, 18, w / 6));
+    b.removeFromTop (juce::jlimit (8, 36, w * 3 / 10));
 
     // SELECT, SOLO and MUTE are small keys, about two thirds of the strip wide.
     b = b.reduced (2, 0);

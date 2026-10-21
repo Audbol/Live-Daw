@@ -3,6 +3,19 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Changed
+
+- The control surface looks like the silver WING, matched to photos of a real console:
+  a light grey surface with mid grey decks and a black display unit; light grey keys
+  and dark grey SELECT / SOLO / MUTE / SOF FLIP keys in a light bevel, with the console's
+  smaller, wider print; black fader caps with a white line and dark printed scales;
+  frosted grey unlit LEDs with the printed dashes beside the meter labels; paler
+  periwinkle scribble LCDs under thicker light bars; larger channel strip keys and
+  captions; blue digits on the custom controls' layer display; framed TALK A / B
+  letters. The 4-Channel LCD has no light bars, as on the console.
+
 ## [0.1.3] - beta
 
 The first round of matching Sidecar to a real WING, side by side with the console:

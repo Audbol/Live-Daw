@@ -74,6 +74,7 @@ public:
                                                                      { &muteKey, DawRemote::StripButton::Mute } };
         for (auto [k, button] : keys)
         {
+            k->grey = true;
             const auto b = button;
             k->onTalk = [this, b] (bool down)
             {
@@ -114,7 +115,7 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        g.fillAll (Colours::panel);
+        g.fillAll (Colours::surface);
         auto band = [this, &g] (juce::Rectangle<int> rows, int margin, juce::Colour colour)
         {
             const float left = moduleFirst ? 3.0f : 0.0f, right = (float) getWidth() - (moduleLast ? 3.0f : 0.0f);
@@ -338,11 +339,11 @@ void DawFaderSection::timerCallback()
 
 void DawFaderSection::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::panel);
-    g.setColour (Colours::outline);
+    g.fillAll (Colours::surface);
+    g.setColour (Colours::surfaceLine);
     g.fillRect (getWidth() - 1, 0, 1, getHeight());
     // DAW over the column: the section controls the DAW.
-    g.setColour (Colours::silk.withAlpha (0.8f));
+    g.setColour (Colours::surfacePrint);
     g.setFont (silkFont (9.0f));
     g.drawText ("DAW", column.withHeight (14).translated (0, 2), juce::Justification::centred);
 }

@@ -64,6 +64,7 @@ FaderSection::FaderSection (UiContext& c, LayerSet::Section s) : ctx (c), sectio
     if (section == LayerSet::Center)
     {
         sofKey.ledColour = Colours::solo;
+        sofKey.grey = true;
         sofKey.setTooltip ("SOF FLIP (Sends on Fader): select a bus, main or matrix to set every input's send to it "
                            "on the input faders, or select an input to set its sends on the bus, main and matrix faders");
         // SOF BUTTON (SETUP > SURFACE): AUTO lights during SOF and flashes in
@@ -266,22 +267,15 @@ void FaderSection::refreshFaders()
 
 void FaderSection::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::panel);
-
-    // The layer column: a lighter grey plate the height of the section.
-    const auto plate = column.reduced (4, 2).toFloat();
-    g.setGradientFill (juce::ColourGradient (Colours::layerColumn.brighter (0.12f), plate.getX(), 0.0f,
-                                             Colours::layerColumn.darker (0.1f), plate.getRight(), 0.0f, false));
-    g.fillRoundedRectangle (plate, 5.0f);
-    g.setColour (juce::Colours::black.withAlpha (0.5f));
-    g.drawRoundedRectangle (plate.reduced (0.5f), 5.0f, 1.0f);
+    g.fillAll (Colours::surface);
 
     // SENDS ON FADERS over the SOF FLIP key.
     if (section == LayerSet::Center && sofKey.isVisible())
         drawSilk (g, sofKey.getBounds().translated (0, -14).withHeight (12).expanded (6, 0).toFloat(), "SENDS ON FADERS",
-                  juce::jlimit (7.0f, 9.0f, (float) column.getWidth() * 0.15f), juce::Justification::centred, Colours::keyPrint);
+                  juce::jlimit (7.0f, 9.0f, (float) column.getWidth() * 0.15f), juce::Justification::centred, Colours::surfacePrint);
 
-    g.setColour (juce::Colours::black.withAlpha (0.6f));
+    // The printed line between the sections.
+    g.setColour (Colours::surfaceLine);
     g.fillRect (getWidth() - 1, 0, 1, getHeight());
 }
 
@@ -299,8 +293,8 @@ void FaderSection::paintOverChildren (juce::Graphics& g)
         const int last = juce::jmin (strips.size(), first + 4) - 1;
         if (last + 1 < strips.size())
         {
-            g.setColour (Colours::background);
-            g.fillRect (strips[last]->getRight() - 1, 0, 2, getHeight());
+            g.setColour (Colours::surfaceLine);
+            g.fillRect (strips[last]->getRight(), 0, 1, getHeight());
         }
 
         const float rowH = (float) meter.getHeight() / (float) FaderStrip::kMeterRows;
@@ -313,6 +307,13 @@ void FaderSection::paintOverChildren (juce::Graphics& g)
             for (int r = 0; r < FaderStrip::kMeterSegments; ++r)
                 drawSilk (g, row (r + 1), FaderStrip::kMeterLabels[r], size);
 
+            // A dash either side of each label, as printed.
+            const float dash = juce::jmin (5.0f, (float) strips[i]->getWidth() * 0.06f), gap = w * 0.5f + dash * 0.6f;
+            g.setColour (Colours::silk.withAlpha (0.8f));
+            for (int r = 0; r < FaderStrip::kMeterRows && dash >= 2.0f; ++r)
+                for (float side : { -1.0f, 1.0f })
+                    g.fillRect (juce::Rectangle<float> (x + side * gap - (side < 0 ? dash : 0.0f), row (r).getCentreY() - 0.5f, dash, 1.0f));
+
             // DYN outlined, GATE inverse, as printed.
             auto dyn = row (0).reduced (0.0f, rowH * 0.06f);
             g.setColour (Colours::silk);
@@ -321,7 +322,7 @@ void FaderSection::paintOverChildren (juce::Graphics& g)
             auto gate = row (FaderStrip::kMeterRows - 1).reduced (0.0f, rowH * 0.06f);
             g.setColour (Colours::silk);
             g.fillRoundedRectangle (gate, 2.0f);
-            drawSilk (g, gate, "GATE", size * 0.9f, juce::Justification::centred, Colours::panel);
+            drawSilk (g, gate, "GATE", size * 0.9f, juce::Justification::centred, juce::Colours::black);
         }
     }
 }

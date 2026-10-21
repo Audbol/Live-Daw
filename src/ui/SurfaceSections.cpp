@@ -465,17 +465,13 @@ juce::String ChannelStripSection::panelState() const
 
 void ChannelStripSection::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::panel);
-    g.setColour (juce::Colours::black.withAlpha (0.6f));
-    g.fillRect (getWidth() - 1, 0, 1, getHeight());
-    // The section's printed frame.
-    g.setColour (Colours::sectionLine.withAlpha (0.6f));
-    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (3.5f), 5.0f, 1.0f);
+    g.fillAll (Colours::surface);
+    drawDeck (g, getLocalBounds().toFloat().reduced (3.0f));
 
     paintPanel (g);
 
-    drawSilk (g, processingHeading.toFloat(), "CHANNEL PROCESSING", 13.0f);
-    drawSilk (g, eqHeading.toFloat(), "CHANNEL EQUALIZER", 13.0f);
+    drawSilk (g, processingHeading.toFloat(), "CHANNEL PROCESSING", 15.0f);
+    drawSilk (g, eqHeading.toFloat(), "CHANNEL EQUALIZER", 15.0f);
 
     // Printed lines joining the slot keys, and SHIFT to the band encoders.
     for (int i = 0; i + 1 < kNumSlots; ++i)
@@ -486,20 +482,20 @@ void ChannelStripSection::paint (juce::Graphics& g)
         drawConnector (g, (float) eqKnobs[i].getRight(), (float) eqKnobs[i + 1].getX(), eqY);
 
     // Captions.
-    const float small = 9.5f;
-    auto below = [] (juce::Component& c, int h) { return c.getBounds().withY (c.getBottom() + 1).withHeight (h).expanded (16, 0).toFloat(); };
-    drawSilk (g, below (*slotKeys[Input], 12), "(HOLD FOR ON/OFF)", small);
-    drawSilk (g, below (eqKey, 12), "(HOLD FOR ON/OFF)", small);
+    const float small = 11.0f;
+    auto below = [] (juce::Component& c, int h) { return c.getBounds().withY (c.getBottom() + 1).withHeight (h).expanded (20, 0).toFloat(); };
+    drawSilk (g, below (*slotKeys[Input], 13), "(HOLD FOR ON/OFF)", small);
+    drawSilk (g, below (eqKey, 13), "(HOLD FOR ON/OFF)", small);
     drawSilk (g, shiftKey.getBounds().withHeight (12).translated (0, -13).expanded (8, 0).toFloat(), "SHIFT", small);
     // Analog EQ models: the parameters SHIFT has on the encoders.
     const auto pageText = juce::String (eqPage * 4 + 1) + "-" + juce::String (eqPage * 4 + 4);
-    drawSilk (g, below (shiftKey, 12), eqPages > 0 ? pageText : juce::String ("5-8"), small, juce::Justification::centred,
+    drawSilk (g, below (shiftKey, 13), eqPages > 0 ? pageText : juce::String ("5-8"), small, juce::Justification::centred,
               eqPages > 0 && eqPage > 0 ? Colours::yellow : Colours::silk);
-    drawSilk (g, below (gainKey, 12), "GAIN", small);
-    drawSilk (g, below (widthKey, 12), "WIDTH", small);
-    drawSilk (g, below (freqKey, 12), "FREQ", small);
-    drawSilk (g, below (listenKey, 12), "EQ-BAND/KEY", small);
-    drawSilk (g, below (eqMix, 12), "BLEND/MIX", small);
+    drawSilk (g, below (gainKey, 13), "GAIN", small);
+    drawSilk (g, below (widthKey, 13), "WIDTH", small);
+    drawSilk (g, below (freqKey, 13), "FREQ", small);
+    drawSilk (g, below (listenKey, 13), "EQ-BAND/KEY", small);
+    drawSilk (g, below (eqMix, 13), "BLEND/MIX", small);
     for (int i = 0; i < 4; ++i)
     {
         if (eqPages > 0)
@@ -507,25 +503,25 @@ void ChannelStripSection::paint (juce::Graphics& g)
             // Analog models: the parameter on the encoder (lit while touched).
             const auto& b = eqKnobs[i].getBinding();
             const bool selected = shownSlot == EqSlot && ! eqMixShown && eqBand == i;
-            drawSilk (g, below (eqKnobs[i], 12).reduced (10.0f, 0.0f), b.isValid() ? b.label : juce::String(), small,
+            drawSilk (g, below (eqKnobs[i], 13).reduced (10.0f, 0.0f), b.isValid() ? b.label : juce::String(), small,
                       juce::Justification::centred, selected ? Colours::yellow : Colours::silk);
             continue;
         }
         // "[1] 5": the band digit inverted; the selected band's box lit.
-        auto cap = below (eqKnobs[i], 12).withSizeKeepingCentre (26.0f, 12.0f);
-        auto box = cap.removeFromLeft (12.0f);
+        auto cap = below (eqKnobs[i], 13).withSizeKeepingCentre (30.0f, 13.0f);
+        auto box = cap.removeFromLeft (13.0f);
         const bool selected = shownSlot == EqSlot && ! eqMixShown && eqBand == i;
         g.setColour (selected ? Colours::yellow : Colours::silk);
         g.fillRect (box);
-        drawSilk (g, box, juce::String (i + 1), small, juce::Justification::centred, Colours::panel);
+        drawSilk (g, box, juce::String (i + 1), small, juce::Justification::centred, Colours::deck);
         drawSilk (g, cap, juce::String (i + 5), small, juce::Justification::centred, eqShift ? Colours::yellow : Colours::silk);
     }
 
-    // The black legend plates beside GAIN / WIDTH / FREQ.
+    // The dark legend plates beside GAIN / WIDTH / FREQ.
     for (auto [plate, icons] : { std::pair { legendLow, std::array<Icon, 3> { Icon::LowCut, Icon::Bell, Icon::LowShelf } },
                                  std::pair { legendHigh, std::array<Icon, 3> { Icon::HighShelf, Icon::Bell, Icon::HighCut } } })
     {
-        g.setColour (juce::Colours::black);
+        g.setColour (juce::Colour (0xff2a2b2e));
         g.fillRoundedRectangle (plate.toFloat(), 3.0f);
         auto r = plate.toFloat().reduced (4.0f, 2.0f);
         const float w = r.getWidth() / 3.0f;
@@ -780,9 +776,10 @@ void ChannelStripSection::resized()
     auto colCentre = [&] (float i) { return b.getX() + juce::roundToInt (colW * (i + 0.5f)); };
 
     const int h = b.getHeight();
-    const int headingH = 14, keyH = juce::jlimit (18, 28, h / 15), captionH = 12;
+    // The keys are about 1.6 : 1, as on the console.
+    const int keyW = juce::jmin ((int) (colW * 0.62f), 72);
+    const int headingH = 16, keyH = juce::jlimit (18, 40, juce::jmin (h / 12, keyW * 62 / 100)), captionH = 13;
     const int knob = juce::jlimit (26, 64, juce::jmin ((int) (colW * 0.62f), (h - 2 * headingH - 2 * keyH - 3 * captionH - 30) / 2));
-    const int keyW = juce::jmin ((int) (colW * 0.66f), 64);
 
     // Spread what's left over the gaps between the rows.
     const int used = 2 * headingH + 2 * (knob + 4) + 2 * keyH + 2 + 3 * captionH + 18;
@@ -872,6 +869,7 @@ MonitorSection::MonitorSection (UiContext& c) : ctx (c)
     {
         auto& k = path == 0 ? talkA : talkB;
         k.shape = SurfaceKey::Shape::Square;
+        k.framed = true;
         k.ledColour = Colours::yellow;
         k.onTalk = [this, path] (bool down) { ctx.engine.talkKey (path, down); };
         // Lit while talking; blinking while the key is on without a talkback channel.
@@ -910,38 +908,35 @@ MonitorSection::MonitorSection (UiContext& c) : ctx (c)
 
 void MonitorSection::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::panel);
-    g.setColour (juce::Colours::black.withAlpha (0.6f));
-    g.fillRect (getWidth() - 1, 0, 1, getHeight());
+    g.fillAll (Colours::surface);
 
     // The panel's top: the PHONES socket mark and the app's own name (not the
     // console maker's logo: Sidecar is not affiliated with them).
     if (! logoArea.isEmpty())
     {
         auto mark = logoArea.reduced (14, 8).removeFromTop (16).toFloat();
-        g.setColour (Colours::silkDim);
+        g.setColour (Colours::surfacePrint);
         g.drawLine (mark.getX() + 1.0f, mark.getY() - 2.0f, mark.getX() + 1.0f, mark.getCentreY() + 2.0f, 1.0f);
         g.drawLine (mark.getX() + 1.0f, mark.getCentreY() + 2.0f, mark.getX() + 12.0f, mark.getCentreY() + 2.0f, 1.0f);
-        drawIcon (g, Icon::Headphones, juce::Rectangle<float> (14.0f, 14.0f).withPosition (mark.getX() + 15.0f, mark.getY()), Colours::silkDim);
-        drawSilk (g, mark.withTrimmedLeft (32.0f), "PHONES", 9.0f, juce::Justification::centredLeft, Colours::silkDim);
+        drawIcon (g, Icon::Headphones, juce::Rectangle<float> (14.0f, 14.0f).withPosition (mark.getX() + 15.0f, mark.getY()), Colours::surfacePrint);
+        drawSilk (g, mark.withTrimmedLeft (32.0f), "PHONES", 9.0f, juce::Justification::centredLeft, Colours::surfacePrint);
 
         const juce::String name = juce::String (kAppName).toUpperCase();
         auto logo = logoArea.toFloat().withSizeKeepingCentre ((float) logoArea.getWidth() * 0.7f, (float) logoArea.getHeight() * 0.2f);
         const auto font = juce::Font (juce::FontOptions (logo.getHeight() * 1.1f, juce::Font::bold)).withExtraKerningFactor (0.06f);
         g.setFont (fontFittingWidth (font, name, logo.getWidth(), 1.0f));
-        g.setColour (juce::Colour (0xffb2b5ba));
+        g.setColour (Colours::surfacePrint.withAlpha (0.8f));
         g.drawText (name, logo, juce::Justification::centred);
     }
 
-    // The USB AUDIO/DATA and MONITORING/TALKBACK plate: a printed frame with
-    // grey title bars.
-    g.setColour (Colours::sectionLine.withAlpha (0.6f));
-    g.drawRoundedRectangle (wingPanel.toFloat().reduced (0.5f), 4.0f, 1.0f);
+    // The USB AUDIO/DATA and MONITORING/TALKBACK deck: each title under a
+    // printed line.
+    drawDeck (g, wingPanel.toFloat());
     for (auto [bar, title] : { std::pair { usbTitle, "USB AUDIO/DATA" }, std::pair { monitorTitle, "MONITORING/TALKBACK" } })
     {
-        g.setColour (juce::Colour (0xff55585e));
-        g.fillRect (bar);
-        drawSilk (g, bar.toFloat(), title, juce::jlimit (8.0f, 12.0f, (float) bar.getHeight() * 0.72f), juce::Justification::centred, Colours::text);
+        g.setColour (Colours::sectionLine);
+        g.fillRect (bar.toFloat().reduced ((float) bar.getWidth() * 0.06f, 0.0f).withHeight (1.5f));
+        drawSilk (g, bar.toFloat().withTrimmedTop (2.0f), title, juce::jlimit (8.0f, 12.0f, (float) bar.getHeight() * 0.72f));
     }
 
     // The USB socket plate: socket, 5V 1000mA, the USB mark and the ACCESS LED.
@@ -1066,6 +1061,7 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
     {
         auto* k = layerKeys.add (new SurfaceKey (layerNames[i]));
         k->ledColour = Colours::keyLayer;
+        k->grey = true;
         k->onPress = [this, i] { setLowerLayer (i); };
         k->ledState = [this, i] { return lowerLayer == i ? SurfaceKey::Lit : SurfaceKey::Off; };
         addAndMakeVisible (k);
@@ -1712,17 +1708,11 @@ void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> are
 
 void CustomControlSection::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::panel);
-    g.setColour (juce::Colours::black.withAlpha (0.6f));
-    g.fillRect (getWidth() - 1, 0, 1, getHeight());
+    g.fillAll (Colours::surface);
 
-    // The printed frame round the encoders, keys and LCDs (the arrows and
-    // the wheel sit outside it).
-    if (! frame.isEmpty())
-    {
-        g.setColour (Colours::sectionLine.withAlpha (0.75f));
-        g.drawRoundedRectangle (frame.toFloat().reduced (0.5f), 5.0f, 1.2f);
-    }
+    // The deck under the encoders, keys and LCDs (the arrows and the wheel
+    // sit on the surface below it).
+    drawDeck (g, (frame.isEmpty() ? getLocalBounds().reduced (3) : frame).toFloat());
 
     paintLcd (g, lowerLcd, false, false);
     drawSilk (g, dawKey.getBounds().translated (0, -24).withHeight (22).expanded (10, 0).toFloat(), "REMOTE\nCONTROL", 9.0f);
@@ -1738,10 +1728,10 @@ void CustomControlSection::paint (juce::Graphics& g)
     drawSilk (g, upKey.getBounds().translated (0, -14).withHeight (12).expanded (8, 0).toFloat(), "PRESETS", 9.0f);
 
     // The two-digit layer display (in DAW mode the DAW's assignment display):
-    // white seven-segment digits over the unlit "88".
-    g.setColour (juce::Colours::black);
+    // blue seven-segment digits over the unlit "88" behind a smoked window.
+    g.setColour (juce::Colour (0xff232326));
     g.fillRoundedRectangle (layerDisplay.toFloat(), 2.0f);
-    g.setColour (Colours::outline);
+    g.setColour (juce::Colours::black.withAlpha (0.6f));
     g.drawRoundedRectangle (layerDisplay.toFloat(), 2.0f, 1.0f);
     const auto digits = juce::Font (juce::FontOptions ((float) layerDisplay.getHeight() * 0.95f, juce::Font::bold)).withHorizontalScale (0.8f);
     g.setFont (digits);
@@ -1749,7 +1739,7 @@ void CustomControlSection::paint (juce::Graphics& g)
     const auto text = assignment.isNotEmpty() ? assignment : juce::String (currentLayer() + 1);
     g.setColour (juce::Colours::white.withAlpha (0.08f));
     g.drawText ("88", layerDisplay.reduced (2, 0), juce::Justification::centredRight);
-    g.setColour (juce::Colour (0xfff2f2f2));
+    g.setColour (Colours::segmentBlue);
     g.drawText (text, layerDisplay.reduced (2, 0), juce::Justification::centredRight);
 
     drawSilk (g, heading.toFloat(), "CUSTOM CONTROLS", 11.0f);
@@ -1850,7 +1840,7 @@ void CustomControlSection::resized()
 
     // Navigation arrows (a diamond) and the scroll wheel.
     b.removeFromTop (juce::jmin (10, h / 40));
-    const int nav = juce::jmin (juce::jlimit (14, 24, b.getHeight() / 5), (b.getHeight() - 2) / 3);
+    const int nav = juce::jmin (juce::jlimit (14, 30, b.getHeight() / 5), (b.getHeight() - 2) / 3);
     // The wheel: at most about 0.3 of the section's height, so wide strips
     // don't blow it up.
     const int wheelSize = juce::jmin (b.getHeight() - 4, b.getWidth() / 2, h * 3 / 10);

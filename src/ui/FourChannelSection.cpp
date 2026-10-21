@@ -289,15 +289,13 @@ void FourChannelSection::timerCallback()
 
 void FourChannelSection::paint (juce::Graphics& g)
 {
-    g.fillAll (Colours::panel);
-    g.setColour (juce::Colours::black.withAlpha (0.6f));
-    g.fillRect (getWidth() - 1, 0, 1, getHeight());
+    g.fillAll (Colours::surface);
 
-    // The key panel and the knob panel are printed frames, joined at the left
-    // by a bracket; the LCD sits in a black window between them.
-    g.setColour (Colours::sectionLine.withAlpha (0.8f));
-    g.drawRoundedRectangle (keyPanel.toFloat().reduced (0.5f), 4.0f, 1.2f);
-    g.drawRoundedRectangle (knobPanel.toFloat().reduced (0.5f), 4.0f, 1.2f);
+    // The key panel and the knob panel are grey decks, joined at the left by
+    // a printed bracket; the LCD sits in a black window between them.
+    drawDeck (g, keyPanel.toFloat());
+    drawDeck (g, knobPanel.toFloat());
+    g.setColour (Colours::surfacePrint.withAlpha (0.7f));
     {
         const float x = (float) panel.getX() + 1.0f, y0 = (float) keyPanel.getCentreY(), y1 = (float) knobPanel.getCentreY();
         juce::Path bracket;
@@ -310,7 +308,8 @@ void FourChannelSection::paint (juce::Graphics& g)
         g.strokePath (bracket, juce::PathStrokeType (1.2f));
     }
 
-    // The LCD: the four strips with the mode's value under the name.
+    // The LCD (no light bars: the strips' colours show on the fader
+    // section's scribble strips below).
     g.setColour (juce::Colours::black);
     g.fillRoundedRectangle (lcd.toFloat().expanded (3.0f), 4.0f);
     auto r = lcd.reduced (3, 4);
@@ -319,11 +318,6 @@ void FourChannelSection::paint (juce::Graphics& g)
     {
         auto cell = juce::Rectangle<int> (r.getX() + i * w, r.getY(), w, r.getHeight());
         auto* s = strips[(size_t) i];
-        if (s != nullptr)
-            drawLightBar (g, cell.removeFromTop (juce::jmax (4, cell.getHeight() / 9)).toFloat().reduced ((float) w * 0.15f, 0.5f), stripDisplayColour (*s), s->params.led.load());
-        else
-            cell.removeFromTop (juce::jmax (4, cell.getHeight() / 9));
-        cell.removeFromTop (3);
         ScribbleInfo info;
         if (const auto* c = customControl (i))
         {
@@ -358,7 +352,7 @@ void FourChannelSection::paint (juce::Graphics& g)
     }
 
     // Rules between the encoder columns.
-    g.setColour (Colours::silk.withAlpha (0.35f));
+    g.setColour (Colours::sectionLine.withAlpha (0.85f));
     for (int i = 1; i < 4; ++i)
     {
         const int x = knobPanel.getX() + knobPanel.getWidth() * i / 4;

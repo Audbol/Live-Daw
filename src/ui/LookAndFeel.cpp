@@ -46,29 +46,34 @@ juce::Font silkFont (float height, bool bold)
     return juce::Font (juce::FontOptions (kSilkTypefaceName, height, bold ? juce::Font::bold : juce::Font::plain));
 }
 
+juce::Font keyFont (float height)
+{
+    return juce::Font (juce::FontOptions (kScreenTypefaceName, height, juce::Font::bold));
+}
+
 namespace
 {
     /** The fader cap's height for a fader `sliderHeight` px tall. */
-    float surfaceFaderCapHeight (float sliderHeight) { return juce::jlimit (22.0f, 56.0f, sliderHeight * 0.14f); }
+    float surfaceFaderCapHeight (float sliderHeight) { return juce::jlimit (22.0f, 60.0f, sliderHeight * 0.16f); }
 
     /** A fader of the WING's fader sections: a black slot between two printed
         tick ladders, two frames over the +5 .. -5 zone, the scale (10 .. -60,
-        -oo) to the right, and the tall silver cap with its centre groove. */
+        -oo) to the right, and the tall black cap with its white centre line. */
     void drawSurfaceFader (juce::Graphics& g, juce::Rectangle<float> bounds, float sliderPos, juce::Slider& slider)
     {
         const float w = bounds.getWidth();
         const bool numerals = w > 34.0f;
         const float slotX = bounds.getX() + w * (numerals ? 0.42f : 0.5f);
-        const float capW = juce::jmin (w * (numerals ? 0.5f : 0.62f), 44.0f);
+        const float capW = juce::jmin (w * (numerals ? 0.52f : 0.62f), 46.0f);
         const float capH = surfaceFaderCapHeight (bounds.getHeight());
         const float top = (float) slider.getPositionOfValue (slider.getMaximum());
         const float bottom = (float) slider.getPositionOfValue (slider.getMinimum());
         auto yOf = [&slider] (double db) { return (float) slider.getPositionOfValue (db); };
 
-        // Tick ladders either side of the slot.
-        const float inner = juce::jmax (3.0f, w * 0.055f), outer = juce::jmin (capW * 0.5f, w * 0.25f);
-        const float pitch = juce::jmax (3.0f, (bottom - top) / 64.0f);
-        g.setColour (Colours::silkDim.withAlpha (0.55f));
+        // Tick ladders either side of the slot, printed dark on the light surface.
+        const float inner = juce::jmax (3.0f, w * 0.06f), outer = juce::jmin (capW * 0.55f, w * 0.27f);
+        const float pitch = juce::jmax (3.0f, (bottom - top) / 40.0f);
+        g.setColour (Colours::surfacePrint.withAlpha (0.75f));
         for (float y = top; y <= bottom + 0.5f; y += pitch)
         {
             g.fillRect (slotX - outer, y, outer - inner, 1.0f);
@@ -84,9 +89,9 @@ namespace
         {
             if (frame.getHeight() < 6.0f)
                 continue;
-            g.setColour (Colours::panel);
+            g.setColour (Colours::surface);
             g.fillRoundedRectangle (frame, 3.0f);
-            g.setColour (Colours::silkDim.withAlpha (0.8f));
+            g.setColour (Colours::surfacePrint.withAlpha (0.8f));
             g.drawRoundedRectangle (frame.reduced (0.5f), 3.0f, 1.0f);
         }
 
@@ -97,8 +102,8 @@ namespace
 
         if (numerals)
         {
-            g.setFont (silkFont (juce::jlimit (8.0f, 11.5f, w * 0.17f)));
-            g.setColour (Colours::silk.withAlpha (0.85f));
+            g.setFont (keyFont (juce::jlimit (8.0f, 12.0f, w * 0.15f)));
+            g.setColour (Colours::surfacePrint);
             const float textX = slotX + outer + 2.0f;
             for (double db : { 10.0, 5.0, 0.0, -5.0, -10.0, -20.0, -30.0, -40.0, -50.0, -60.0, -100.0 })
             {
@@ -107,33 +112,29 @@ namespace
             }
         }
 
-        // The cap: a shadow, silver body in two halves, a dark groove with a
-        // highlight; the groove takes the fader's colour when it has one (sends, FX).
+        // The cap: a shadow, a black body whose upper and lower halves curve
+        // away from the white centre line; the line takes the fader's colour
+        // when it has one (sends, FX).
         auto cap = juce::Rectangle<float> (capW, capH).withCentre ({ slotX, sliderPos });
-        g.setColour (juce::Colours::black.withAlpha (0.45f));
+        g.setColour (juce::Colours::black.withAlpha (0.3f));
         g.fillRoundedRectangle (cap.translated (2.0f, 3.0f).expanded (1.0f), 3.0f);
         const bool enabled = slider.isEnabled();
-        const auto light = juce::Colour (enabled ? 0xffd9dbdf : 0xff9a9ca0), dark = juce::Colour (enabled ? 0xff7d8086 : 0xff5c5e62);
+        const auto body = enabled ? Colours::faderCap : Colours::faderCap.brighter (0.4f);
         auto upper = cap.withHeight (capH * 0.5f), lower = cap.withTrimmedTop (capH * 0.5f);
-        g.setGradientFill (juce::ColourGradient (light, 0.0f, upper.getY(), dark, 0.0f, upper.getBottom(), false));
+        g.setGradientFill (juce::ColourGradient (body.brighter (0.5f), 0.0f, upper.getY(), body, 0.0f, upper.getBottom(), false));
         g.fillRoundedRectangle (upper, 2.5f);
-        g.setGradientFill (juce::ColourGradient (light.darker (0.08f), 0.0f, lower.getY(), dark.darker (0.15f), 0.0f, lower.getBottom(), false));
+        g.setGradientFill (juce::ColourGradient (body, 0.0f, lower.getY(), body.brighter (0.35f), 0.0f, lower.getBottom(), false));
         g.fillRoundedRectangle (lower, 2.5f);
-        // Darker side edges.
-        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.28f), cap.getX(), 0.0f,
-                                                 juce::Colours::transparentBlack, cap.getX() + capW * 0.22f, 0.0f, false));
-        g.fillRect (cap.withWidth (capW * 0.22f));
-        g.setGradientFill (juce::ColourGradient (juce::Colours::black.withAlpha (0.28f), cap.getRight(), 0.0f,
-                                                 juce::Colours::transparentBlack, cap.getRight() - capW * 0.22f, 0.0f, false));
-        g.fillRect (cap.withLeft (cap.getRight() - capW * 0.22f));
-        g.setColour (juce::Colours::black.withAlpha (0.7f));
+        // Lighter side edges.
+        g.setGradientFill (juce::ColourGradient (juce::Colours::white.withAlpha (0.12f), cap.getX(), 0.0f,
+                                                 juce::Colours::transparentWhite, cap.getX() + capW * 0.2f, 0.0f, false));
+        g.fillRect (cap.withWidth (capW * 0.2f));
+        g.setColour (juce::Colours::black);
         g.drawRoundedRectangle (cap, 2.5f, 1.0f);
         const auto line = slider.findColour (juce::Slider::thumbColourId);
         const bool coloured = line != Colours::text;
-        g.setColour (coloured ? line : juce::Colour (0xff2a2c30));
-        g.fillRect (cap.getX() + 1.0f, cap.getCentreY() - (coloured ? 1.25f : 0.75f), capW - 2.0f, coloured ? 2.5f : 1.5f);
-        g.setColour (juce::Colours::white.withAlpha (0.35f));
-        g.fillRect (cap.getX() + 1.0f, cap.getCentreY() + 1.0f, capW - 2.0f, 1.0f);
+        g.setColour (coloured ? line : juce::Colour (0xffe8e8e8));
+        g.fillRect (cap.getX() + 1.0f, cap.getCentreY() - (coloured ? 1.25f : 1.0f), capW - 2.0f, coloured ? 2.5f : 2.0f);
     }
 } // namespace
 
@@ -610,6 +611,15 @@ void drawChip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& 
     g.setColour (textColour);
     g.setFont (fontFittingWidth (wingFontPx (juce::jlimit (5.0f, screenCap (12.0f), r.getHeight() * 0.56f)), text, r.getWidth() - 2.0f));
     g.drawFittedText (text, r.toNearestInt(), juce::Justification::centred, 1, 0.75f);
+}
+
+void drawDeck (juce::Graphics& g, juce::Rectangle<float> area)
+{
+    // A faint shadow below the plate, then the plate.
+    g.setColour (juce::Colours::black.withAlpha (0.12f));
+    g.fillRoundedRectangle (area.translated (0.0f, 1.5f), 7.0f);
+    g.setColour (Colours::deck);
+    g.fillRoundedRectangle (area, 7.0f);
 }
 
 void drawSilk (juce::Graphics& g, juce::Rectangle<float> area, const juce::String& text, float fontSize,
