@@ -253,6 +253,12 @@ class Capture:
         else:
             self.info["gain_cal_db"] = 0.0
             self.ref = signal.copy()
+        # The processing's delay (a WING's 46 samples), for measures that set
+        # the output against the reference sample by sample.
+        content = slice(timeline["start_chirp"], timeline["length"])
+        lag = fractional_delay(self.ref[content], self.out[content, 0])
+        self.latency = int(round(lag)) if abs(lag) < 0.05 * SR else 0
+        self.info["latency_samples"] = self.latency
         self.info["noise_dbfs"] = float(rms_db(self.out[quiet, 0]))
         clip = float(np.max(np.abs(data[:, :2]))) if data.shape[1] else 0.0
         self.info["peak_dbfs"] = float(db20(clip))
@@ -606,8 +612,16 @@ def analyze_static(res, W, S, seg, section="static curve"):
 
 
 def gain_trajectory(cap, a, b, floor_db):
-    """Gain (dB) over time of a 1 kHz signal (1 ms RMS); the output no lower than `floor_db`."""
-    env_o = np.maximum(moving_rms(cap.out[a:b, 0]), 10.0 ** (floor_db / 20.0) / np.sqrt(2.0))
+    """Gain (dB) over time of a 1 kHz signal (1 ms RMS); the output no lower than `floor_db`.
+
+    The output is taken `cap.latency` later, so a level jump reaches both at the
+    same moment (left in, the WING's 1 ms of latency reads as an instant gain
+    change at every jump)."""
+    d = getattr(cap, "latency", 0)
+    out = cap.out[max(0, a + d):b + d, 0]
+    if len(out) < b - a:
+        out = np.concatenate([np.zeros(b - a - len(out)), out]) if a + d < 0 else np.pad(out, (0, b - a - len(out)))
+    env_o = np.maximum(moving_rms(out), 10.0 ** (floor_db / 20.0) / np.sqrt(2.0))
     env_i = moving_rms(cap.ref[a:b])
     return db20(env_o) - db20(env_i)
 
