@@ -511,7 +511,15 @@ def analyze_sweep(res, W, S, seg, label, mag_tol, mag_skirt_tol, phase_tol, post
               float(np.mean((rsd - ls)[main])) if main.any() else 0, res.tol["level_db"], section=sec)
     if with_phase:
         Hw, Hs = rw[0]["H"], rs[0]["H"]
-        ratio = Hs * np.conj(Hw)
+        # The bulk delay between the two (the console's latency) first, from
+        # their impulse responses: left in, its phase turns too fast across a
+        # 1/12-octave band to smooth and unwrap (a WING's 46 samples are 3600
+        # degrees at 10 kHz).
+        nfft = 2 * (len(fw) - 1)
+        bulk = fractional_delay(band_limited_ir(fw, Hw, nfft), band_limited_ir(fw, Hs, nfft))
+        if abs(bulk) > SR * 0.05:
+            bulk = 0.0
+        ratio = Hs * np.conj(Hw) * np.exp(2j * np.pi * fw * bulk / SR)
         ratio /= np.maximum(np.abs(ratio), EPS)
         dph = np.angle(smooth_complex(fw, ratio, grid))
         band = main & (grid >= 100) & (grid <= 10000)
@@ -519,6 +527,7 @@ def analyze_sweep(res, W, S, seg, label, mag_tol, mag_skirt_tol, phase_tol, post
         un -= np.round(un[np.argmin(np.abs(grid - 1000.0))] / (2 * np.pi)) * 2 * np.pi
         tau = -np.sum(un[band] * grid[band]) / (2 * np.pi * np.sum(grid[band] ** 2)) if band.sum() > 4 else 0.0
         resid = np.degrees(np.angle(np.exp(1j * (un + 2 * np.pi * grid * tau))))
+        tau += bulk / SR
         res.series[f"{label}: phase difference"] = {"x": grid.tolist(), "sidecar - wing": resid.tolist(),
                                                     "xlabel": "Hz", "ylabel": "degrees", "logx": True}
         res.check_diff("relative delay", tau * 1e6, None, unit="us", section=f"{label} phase")
