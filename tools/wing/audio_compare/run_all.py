@@ -47,15 +47,18 @@ RUST = os.path.join(REPO, "rust")
 
 
 def find_render(explicit=None, build=True, profile="release"):
-    """The render binary: explicit, else built in the repository (building it if needed)."""
+    """The render binary: explicit, else built from the repository as it is now.
+
+    cargo rebuilds only what changed, so the render always uses the current
+    engine (a binary left from an older checkout would compare the WING with
+    an old Sidecar)."""
     if explicit:
         return explicit
     exe = "render.exe" if os.name == "nt" else "render"
-    for prof in (profile, "release", "debug"):
-        p = os.path.join(RUST, "target", prof, "examples", exe)
-        if os.path.exists(p):
-            return p
+    path = os.path.join(RUST, "target", profile, "examples", exe)
     if not build:
+        if os.path.exists(path):
+            return path
         raise SystemExit("render binary not found: build it with "
                          "`cargo build --release -p livedaw-wing --example render` in rust/")
     cmd = ["cargo", "build", "-j3", "-p", "livedaw-wing", "--example", "render"]
@@ -63,7 +66,7 @@ def find_render(explicit=None, build=True, profile="release"):
         cmd.insert(2, "--release")
     print("building Sidecar's render tool:", " ".join(cmd), file=sys.stderr)
     subprocess.run(cmd, cwd=RUST, check=True)
-    return os.path.join(RUST, "target", profile, "examples", exe)
+    return path
 
 
 def settings_for(plan, test, overrides=None):
