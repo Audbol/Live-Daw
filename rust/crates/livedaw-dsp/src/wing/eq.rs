@@ -141,12 +141,20 @@ const STD_BANDS: [[&str; 3]; 8] = [
     ["hg", "hf", "hq"],
 ];
 
+/// A WING EQ bell. Its Q is the resonance of the boosting section (the cut's
+/// for a cut), so the bell is wider than a peaking filter of that Q: the
+/// filter's Q is the set Q over 10^(|gain| / 40). Measured on a WING: Q 1.00
+/// and 2.00 at +6 dB come out as Q 0.707 and 1.413, Q 4.00 at -9 dB as 2.38.
+fn wing_peak(sr: f64, f: f32, q: f32, g: f32) -> BiquadCoeffs {
+    peak(sr, f, q / 10f32.powf(g.abs() / 40.0), g)
+}
+
 fn design_std(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
     let band = |ids: &[&str; 3]| (p.f(ids[0]) * k, p.f(ids[1]), p.f(ids[2]));
 
     let (g, f, q) = band(&STD_BANDS[0]);
     match p.text("leq") {
-        "PEQ" => push_gain(d, g, || peak(sr, f, q, g)),
+        "PEQ" => push_gain(d, g, || wing_peak(sr, f, q, g)),
         "SHV" => push_gain(d, g, || low_shelf(sr, f, q, g)),
         kind => push_cut(d, sr, kind, f, q, true),
     }
@@ -155,11 +163,11 @@ fn design_std(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
             break;
         }
         let (g, f, q) = band(ids);
-        push_gain(d, g, || peak(sr, f, q, g));
+        push_gain(d, g, || wing_peak(sr, f, q, g));
     }
     let (g, f, q) = band(&STD_BANDS[7]);
     match p.text("heq") {
-        "PEQ" => push_gain(d, g, || peak(sr, f, q, g)),
+        "PEQ" => push_gain(d, g, || wing_peak(sr, f, q, g)),
         "SHV" => push_gain(d, g, || high_shelf(sr, f, q, g)),
         kind => push_cut(d, sr, kind, f, q, false),
     }
