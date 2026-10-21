@@ -90,9 +90,16 @@ impl FilterSettings {
                 let p = Params::new(spec, &self.tool_params);
                 match spec.token {
                     "TILT" => {
+                        // TILT +t lifts the lows by t and lowers the highs by
+                        // t on a very gentle slope (measured on a WING at +3:
+                        // +2.9 dB at 20 Hz, 0 near 700 Hz, -3.0 dB at 20 kHz),
+                        // which is a 2t low shelf at 665 Hz, Q 0.2, t lower.
                         let t = p.f("tilt") as f64;
-                        push(BiquadCoeffs::low_shelf(sr, 1000.0, 0.5, -t * 0.5));
-                        push(BiquadCoeffs::high_shelf(sr, 1000.0, 0.5, t * 0.5));
+                        if t.abs() > 1e-3 {
+                            push(BiquadCoeffs::low_shelf(sr, 665.0, 0.2, 2.0 * t));
+                            let g = 10f64.powf(-t / 20.0);
+                            push(BiquadCoeffs { b0: g, ..BiquadCoeffs::identity() });
+                        }
                     }
                     "MAX" => {
                         // Low contour: deep bass lift with a slight low-mid scoop.
@@ -228,7 +235,13 @@ mod tests {
         let sr = 48000.0;
         let tilt = model_index(FILTER_TOOLS, "TILT").unwrap();
         let s = FilterSettings { tool: true, tool_model: tilt, tool_params: [6.0, 0.0], ..Default::default() };
-        assert!(s.response_db(10000.0, sr) > 2.0 && s.response_db(50.0, sr) < -2.0);
+        // TILT +6: the lows up, the highs down (a WING at +3: +2.9 dB at
+        // 20 Hz, -0.2 at 1 kHz, -3.0 at 20 kHz).
+        assert!(s.response_db(50.0, sr) > 4.5 && s.response_db(10000.0, sr) < -4.5);
+        let s = FilterSettings { tool: true, tool_model: tilt, tool_params: [3.0, 0.0], ..Default::default() };
+        for (f, want) in [(20.0, 2.9), (1000.0, -0.22), (20000.0, -2.99)] {
+            assert!((s.response_db(f, sr) - want).abs() < 0.15, "{f} Hz: {}", s.response_db(f, sr));
+        }
         let ap = model_index(FILTER_TOOLS, "AP2").unwrap();
         let s = FilterSettings { tool: true, tool_model: ap, tool_params: [500.0, 1.0], ..Default::default() };
         for f in [50.0, 500.0, 5000.0] {

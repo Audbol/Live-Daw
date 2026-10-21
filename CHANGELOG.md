@@ -25,6 +25,9 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- The FILTER tool's TILT goes the console's way and as far: TILT +3 lifts the lows by 3 dB
+  and lowers the highs by 3 dB on a gentle slope through about 700 Hz (Sidecar tilted the
+  other way, by half as much).
 - The WING EQ's bells are as wide as a WING's: the set Q is the resonance of the boosting
   (or, for a cut, the cutting) section, so the filter's Q is the set Q over 10^(|gain| / 40)
   (measured on a console: Q 1.00 at +6 dB is as wide as a Q 0.707 peaking filter). High
