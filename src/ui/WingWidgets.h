@@ -369,8 +369,9 @@ public:
     Shape shape = Shape::Rect;
     /** A black key with a printed frame (LISTEN, DAW). */
     bool dark = false;
-    /** A dark grey key with white print in a light bevel (SELECT, SOLO,
-        MUTE, SOF FLIP). */
+    /** A SELECT, SOLO, MUTE or SOF FLIP key: on the silver surface dark grey
+        with white print in a light bevel, on the black one a light key in a
+        wider black bezel (SurfacePalette). */
     bool grey = false;
     /** The label printed in a frame (TALK A / B). */
     bool framed = false;
@@ -421,7 +422,8 @@ public:
         const auto capArea = r.reduced (bezel + bevel);
         const auto cap = shapeOf (capArea);
 
-        g.setColour (Colours::keyBezel);
+        const auto& sc = surfaceColours();
+        g.setColour (sc.keyBezel);
         g.fillPath (outer);
         if (lit)
         {
@@ -432,14 +434,14 @@ public:
         {
             // The bevel: lighter towards the top.
             const auto ring = r.reduced (bezel);
-            g.setGradientFill (juce::ColourGradient (Colours::keyBevel, 0.0f, ring.getY(), Colours::keyBevel.darker (0.35f), 0.0f, ring.getBottom(), false));
+            g.setGradientFill (juce::ColourGradient (sc.keyBevel, 0.0f, ring.getY(), sc.keyBevel.darker (0.35f), 0.0f, ring.getBottom(), false));
             g.fillPath (shapeOf (ring));
         }
 
-        const auto unlitCap = SurfaceLighting::unlit (dark ? Colours::keyCapDark : (grey ? Colours::keyCapGrey : Colours::keyCap));
+        const auto unlitCap = SurfaceLighting::unlit (dark ? Colours::keyCapDark : (grey ? sc.keyCapGrey : sc.keyCap));
         auto body = lit ? SurfaceLighting::lit (ledColour, unlitCap) : unlitCap;
         if (! isEnabled() && ! dark && ! grey)
-            body = body.interpolatedWith (Colours::surface, 0.3f);
+            body = body.interpolatedWith (sc.surface, 0.3f);
         if (down)
             body = body.darker (0.25f);
         else if (isMouseOver() && isEnabled())
@@ -460,15 +462,17 @@ public:
         g.fillPath (cap);
         if (dark && ! lit)
         {
-            g.setColour (Colours::silk.withAlpha (isEnabled() ? 0.85f : 0.35f));
+            g.setColour (sc.silk.withAlpha (isEnabled() ? 0.85f : 0.35f));
             g.strokePath (shapeOf (capArea.reduced (juce::jmax (1.0f, side * 0.06f))), juce::PathStrokeType (1.2f));
         }
 
         juce::Colour ink;
         if (lit)
             ink = body.getPerceivedBrightness() > 0.55f ? body.darker (0.9f).withMultipliedSaturation (1.2f) : juce::Colours::white.withAlpha (0.9f);
-        else if (dark || grey)
-            ink = isEnabled() ? Colours::silk : Colours::silk.withAlpha (0.35f);
+        else if (dark)
+            ink = isEnabled() ? sc.silk : sc.silk.withAlpha (0.35f);
+        else if (grey)
+            ink = isEnabled() ? sc.keyGreyPrint : sc.keyGreyPrint.withAlpha (0.35f);
         else
             ink = isEnabled() ? Colours::keyPrint : Colours::keyPrint.withAlpha (0.4f);
         auto content = capArea.reduced (juce::jmin (3.0f, capArea.getWidth() * 0.06f), 0.5f);

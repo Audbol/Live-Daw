@@ -554,13 +554,27 @@ blinking LEDs.
 
 - **Look.** `ConsoleLookAndFeel` (`LookAndFeel.*`) holds the WING palette (black
   screen, grey panels with header bars, amber channel tab, yellow ON keys, lime knob
-  rings, cyan selections; the surface follows the silver WING: a light grey surface
-  with mid grey decks (`drawDeck`), light grey key caps and dark grey ones in a light
-  bevel (`SurfaceKey::grey`) lit in their LED colour, periwinkle scribble LCDs under
-  glowing light bars, black fader caps, plain encoder caps) and uses Barlow Condensed (SIL OFL, `resources/fonts/`,
-  embedded with `juce_add_binary_data`).
+  rings, cyan selections) and uses Barlow Condensed (SIL OFL, `resources/fonts/`,
+  embedded with `juce_add_binary_data`). The surface's hardware colours come from a
+  `SurfacePalette`, one per finish, read through `surfaceColours()`: the silver WING
+  (a light grey surface with mid grey decks (`drawDeck`), light grey key caps and dark
+  grey ones in a light bevel (`SurfaceKey::grey`), periwinkle scribble LCDs, black
+  fader caps) or the black WING BK (a black surface with printed frames for decks,
+  lighter grey layer key columns, frosted light key caps in black bezels, indigo
+  scribble LCDs, silver fader caps). The layout, print and key face are the same in
+  both, and the touchscreen's colours never change.
+- **Console look and model.** `ConsoleLook` (`ConsoleLook.h`) is how the console
+  looks, kept in the app settings, not the show: today the surface FINISH (SILVER /
+  BLACK, SETUP > GENERAL > CONSOLE), which `MainComponent` applies at start-up and
+  SETUP applies at once (`setSurfaceFinish`, then a repaint of the window). Planned
+  beside it: a console MODEL, WING (full-size), WING COMPACT or WING RACK. The models
+  differ in surface layout and features (the compact's smaller fader sections and
+  surface, the rack's lack of a fader surface beyond the screen), so the model will
+  choose which sections the surface view builds and which features apply, while the
+  finish stays a palette. Only the full-size WING is modelled so far; FINISH applies
+  to it, and the finishes of the compact and rack models are still to be decided.
 - **Scribble strips** (`drawScribble`, `ScribbleInfo` in `FaderStrip.*`) follow the
-  3.x firmware: a negative LCD (light ink on periwinkle) with a top row under a rule (an
+  3.x firmware: a negative LCD (light ink on the finish's backlight) with a top row under a rule (an
   input's number and its source on an inverted tag, `5 | IN5`, `IN7/8`, the ALT
   source while active, `MONO` / `ST` with SHOW SOURCE ON SCRIBBLE off; other strips
   the kind on the tag and the number at the right, `BUS | 1`), the WING icon centred

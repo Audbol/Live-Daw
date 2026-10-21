@@ -165,6 +165,8 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
 {
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
     setLookAndFeel (&lookAndFeel);
+    // The surface's finish (SETUP > GENERAL > CONSOLE) is an app setting.
+    setSurfaceFinish (ConsoleLook::load (settings).finish);
 
     // Plugin delay compensation (SETUP > PLUGINS) is an app setting, on by default.
     engine.setLatencyCompensation (settings.getBoolValue (uiprefs::latencyCompensation, true));
@@ -410,7 +412,7 @@ void MainComponent::refreshSections()
 //==============================================================================
 void MainComponent::paint (juce::Graphics& g)
 {
-    g.fillAll (screenMaximized ? juce::Colours::black : Colours::surface);
+    g.fillAll (screenMaximized ? juce::Colours::black : surfaceColours().surface);
 }
 
 int MainComponent::topRowHeight() const

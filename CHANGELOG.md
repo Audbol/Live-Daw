@@ -18,6 +18,10 @@ All notable changes to Sidecar are listed here. Versions follow
   reverb decay, delay echoes, modulation. Sidecar's side is rendered offline by the
   engine with the new `render` example of livedaw-wing (WING parameter paths in, WAV
   out).
+- SETUP > GENERAL > CONSOLE > SURFACE FINISH: the surface view as the silver WING
+  (default) or the black WING BK (black surface, printed frames, frosted light keys,
+  silver fader caps). It is kept in the app settings, not the show, and switches the
+  surface at once; the touchscreen is the same in both.
 
 ### Changed
 
