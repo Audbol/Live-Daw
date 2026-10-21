@@ -2465,9 +2465,11 @@ private:
         const auto& spec = models::model (static_cast<models::Table> (strip.getEqTable()), eq.model.load());
         const auto band = bands[juce::jlimit (0, bands.size() - 1, graph->getSelectedBand())];
         const auto suffixName = band.toUpperCase();
+        const bool shelf = isShelf (spec, band);
         for (auto suffix : { "g", "f", "q", "eq" })
         {
-            const int i = spec.find (band + suffix);
+            // A shelf has no Q on the console (its slope is fixed).
+            const int i = shelf && juce::String (suffix) == "q" ? -1 : spec.find (band + suffix);
             auto b = i >= 0 ? bindConsoleParam (eq.values[i], spec.params[(size_t) i]) : KnobBinding {};
             if (i >= 0)
             {
@@ -2479,6 +2481,13 @@ private:
             k.push_back (b);
         }
         return k;
+    }
+
+    /** The band is a shelf (the outer bands' SHV type). */
+    bool isShelf (const models::Model& spec, const juce::String& band) const
+    {
+        const int i = spec.find (band + "eq");
+        return i >= 0 && spec.params[(size_t) i].display (strip.params.eq.values[i].load()) == "SHV";
     }
 
     void bindBand()
@@ -2501,6 +2510,16 @@ private:
             toolKey->setOnColour (toolFilterColour (shownTool));
             toolKey->offInk = toolFilterColour (shownTool);
         }
+        if (! bands.isEmpty())
+        {
+            // The selected band switched between shelf and bell: its Q comes or goes.
+            const auto& spec = models::model (static_cast<models::Table> (strip.getEqTable()), eq.model.load());
+            if (const bool shelf = isShelf (spec, bands[juce::jlimit (0, bands.size() - 1, graph->getSelectedBand())]); shelf != shownShelf)
+            {
+                shownShelf = shelf;
+                notifyKnobs();
+            }
+        }
         if (eq.model.load() == shownModel)
             return;
         shownModel = eq.model.load();
@@ -2520,7 +2539,7 @@ private:
     std::vector<juce::Rectangle<int>> bandKeys;
     juce::Rectangle<int> header, sidePanel, bandKeyArea;
     int bandKeyH = 30, bandKeyGap = 4, shownModel = -1, shownTool = -1, knobPage = 0, pressCount = 0;
-    bool heldReset = false;
+    bool heldReset = false, shownShelf = false;
 };
 
 //==============================================================================
