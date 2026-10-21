@@ -62,8 +62,6 @@ const SurfacePalette& SurfacePalette::of (SurfaceFinish finish)
         .scribbleInk = juce::Colour (0xfff4f4ff),
         .scribbleRule = juce::Colour (0xffdcdcf8),
         .scribbleRim = juce::Colour (0xff8a90dc),
-        .scribbleSaturation = 0.5f,
-        .scribbleBrightness = 0.84f,
         .ledOff = juce::Colour (0xff68686b),
     };
     // The black WING (WING BK): the surface the keys, decks and scales are
@@ -93,12 +91,10 @@ const SurfacePalette& SurfacePalette::of (SurfaceFinish finish)
         .faderCapBottom = juce::Colour (0xff7d8086).darker (0.15f),
         .faderCapEdge = juce::Colours::black.withAlpha (0.28f),
         .faderLine = juce::Colour (0xff2a2c30),
-        .scribbleLcd = juce::Colour (0xff201d4a),
-        .scribbleInk = juce::Colour (0xffeeedff),
-        .scribbleRule = juce::Colour (0xffa6a2dc),
-        .scribbleRim = juce::Colour (0xff4a4690),
-        .scribbleSaturation = 0.78f,
-        .scribbleBrightness = 0.82f,
+        .scribbleLcd = juce::Colour (0xff5f66c4), // the same LCD as the silver console's
+        .scribbleInk = juce::Colour (0xfff4f4ff),
+        .scribbleRule = juce::Colour (0xffdcdcf8),
+        .scribbleRim = juce::Colour (0xff8a90dc),
         .ledOff = juce::Colour (0xff2c2d30),
     };
     return finish == SurfaceFinish::Black ? black : silver;

@@ -25,6 +25,8 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- Scribble strip LCDs have one backlight colour on every strip, as on the console; only
+  the light bar above each strip shows the strip's colour.
 - The +48V keys (HOME OVERVIEW and INPUT, ROUTING > SOURCES, and the 4-Channel
   section's keys in GAIN / 48 V mode) switch phantom power only when held for 2 s, as
   on the console; the key fills up while held, and a tap does nothing. Remote control,

@@ -558,11 +558,12 @@ blinking LEDs.
   embedded with `juce_add_binary_data`). The surface's hardware colours come from a
   `SurfacePalette`, one per finish, read through `surfaceColours()`: the silver WING
   (a light grey surface with mid grey decks (`drawDeck`), light grey key caps and dark
-  grey ones in a light bevel (`SurfaceKey::grey`), periwinkle scribble LCDs, black
-  fader caps) or the black WING BK (a black surface with printed frames for decks,
-  lighter grey layer key columns, frosted light key caps in black bezels, indigo
-  scribble LCDs, silver fader caps). The layout, print and key face are the same in
-  both, and the touchscreen's colours never change.
+  grey ones in a light bevel (`SurfaceKey::grey`), black fader caps) or the black
+  WING BK (a black surface with printed frames for decks, lighter grey layer key
+  columns, frosted light key caps in black bezels, silver fader caps). The layout,
+  print, key face and the periwinkle scribble LCDs are the same in both (an LCD is
+  one colour on every strip; only the light bar above it shows the strip's colour),
+  and the touchscreen's colours never change.
 - **Console look and model.** `ConsoleLook` (`ConsoleLook.h`) is how the console
   looks, kept in the app settings, not the show: today the surface FINISH (SILVER /
   BLACK, SETUP > GENERAL > CONSOLE), which `MainComponent` applies at start-up and

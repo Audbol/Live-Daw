@@ -96,7 +96,8 @@ touchscreen looks the same in both.
   default, an EQ gain to 0 dB). Spill from the right section goes to the center
   section, everything else to the left; the same key again brings back the layer and
   its scroll position.
-- **Fader strips** follow the WING's: a colour light bar, the scribble strip (number,
+- **Fader strips** follow the WING's: a colour light bar (the strip's colour), the
+  scribble strip (one backlight colour on every strip; number,
   source ports or mono, icon, the name on an inverted bar), SELECT, SOLO, the meter
   block (DYN LED, a stereo six-segment input meter, GATE LED), MUTE and the fader with
   its printed scale. SELECT on the selected strip again opens its HOME screen. MUTE

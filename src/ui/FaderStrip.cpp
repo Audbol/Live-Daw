@@ -94,29 +94,20 @@ namespace
     }
 } // namespace
 
-juce::Colour scribbleBacklight (juce::Colour stripColour, float backlight)
-{
-    // A colour-lit LCD looks like a bright, pale version of the strip's
-    // colour (the console's screen colours are much darker).
-    const auto& sc = surfaceColours();
-    return juce::Colour (stripColour.getHue(), stripColour.getSaturation() * sc.scribbleSaturation,
-                         juce::jlimit (0.0f, 1.0f, sc.scribbleBrightness * backlight), 1.0f);
-}
-
 void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const ScribbleInfo& info)
 {
-    // A negative LCD: light text on the backlight, the strip's colour (or
-    // the finish's plain backlight). SCRIBBLE sets the backlight (the text, lit by it, follows),
-    // SCR CONT how far the text stands out from the background.
+    // A negative LCD: light text on the backlight, which is one colour on
+    // every strip (only the light bar above shows the strip's colour).
+    // SCRIBBLE sets the backlight (the text, lit by it, follows), SCR CONT
+    // how far the text stands out from the background.
     const float backlight = juce::jlimit (0.2f, 1.6f, info.backlight);
-    const auto bg = info.backlightColour.has_value() ? scribbleBacklight (*info.backlightColour, backlight)
-                                                     : surfaceColours().scribbleLcd.withMultipliedBrightness (backlight);
+    const auto bg = surfaceColours().scribbleLcd.withMultipliedBrightness (backlight);
     g.setColour (bg);
     g.fillRect (lcd);
     if (info.isEmpty())
         return;
     const float contrast = juce::jlimit (0.0f, 1.0f, 0.55f + 0.75f * (info.contrast - 0.4f));
-    const auto ink = bg.interpolatedWith (info.backlightColour.has_value() ? juce::Colours::white : surfaceColours().scribbleInk, 0.45f + 0.55f * contrast)
+    const auto ink = bg.interpolatedWith (surfaceColours().scribbleInk, 0.45f + 0.55f * contrast)
                          .withMultipliedBrightness (juce::jlimit (0.55f, 1.0f, 0.55f + 0.45f * backlight));
 
     const float H = lcd.getHeight(), W = lcd.getWidth();
@@ -343,7 +334,6 @@ void setScribbleStrip (ScribbleInfo& info, const Strip& s, bool showSource)
     }
     info.name = scribbleName (s);
     info.strip = &s;
-    info.backlightColour = stripDisplayColour (s);
 }
 
 //==============================================================================
@@ -699,7 +689,6 @@ ScribbleInfo FaderStrip::scribbleInfo() const
                                      .equalsIgnoreCase ("DCA" + juce::String (dca + 1));
         info.name = defaultName ? juce::String() : shownName;
         info.wingIcon = ctx.engine.getDca (dca).icon.load();
-        info.backlightColour = wingColour (ctx.engine.getDca (dca).colour.load());
     }
     else if (fxp)
     {

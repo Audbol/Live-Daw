@@ -88,10 +88,11 @@ namespace Colours
       print (monitoring, channel strip, 4-Channel, custom controls), light grey
       keys with dark print and dark grey ones with white print (SELECT, SOLO,
       MUTE, SOF FLIP) in a light bevel, black fader caps, frosted grey unlit
-      LEDs, a black display unit and pale periwinkle scribble LCDs.
+      LEDs, a black display unit.
     - Black: a black surface with light print and printed frames instead of
       decks, lighter grey layer key columns, frosted light grey keys in black
-      bezels, silver fader caps, dark unlit LEDs and deep indigo scribble LCDs. */
+      bezels, silver fader caps and dark unlit LEDs.
+    Both have the same pale periwinkle scribble LCDs. */
 struct SurfacePalette
 {
     juce::Colour surface;          // the surface
@@ -122,8 +123,6 @@ struct SurfacePalette
     juce::Colour scribbleInk;      // its text, icons and inverted tags
     juce::Colour scribbleRule;     // the rules between an LCD's strips
     juce::Colour scribbleRim;      // the lighter rim round the LCD
-    float scribbleSaturation;      // a colour-lit LCD: the share of the strip colour's saturation ...
-    float scribbleBrightness;      // ... and its brightness at the default backlight
     juce::Colour ledOff;           // an unlit LED
 
     static const SurfacePalette& of (SurfaceFinish);
