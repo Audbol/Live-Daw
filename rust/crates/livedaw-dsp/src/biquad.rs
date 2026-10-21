@@ -53,11 +53,18 @@ impl BiquadCoeffs {
     pub fn peak_decramped(sr: f64, freq: f64, q: f64, gain_db: f64) -> Self {
         let freq = freq.clamp(10.0, sr * 0.49);
         let q = q.max(0.025);
-        let w0 = 2.0 * PI * freq / sr;
-        let dw = w0 / q;
-        if gain_db.abs() < 1e-3 || dw >= 0.95 * PI {
+        if gain_db.abs() < 1e-3 {
             return Self::peak(sr, freq, q, gain_db);
         }
+        // The analog bell's upper half-gain edge: past Nyquist the band
+        // can't be prescribed, so the bell is matched by its poles instead.
+        let span = freq / q;
+        let upper = 0.5 * (span + (span * span + 4.0 * freq * freq).sqrt());
+        if upper >= 0.95 * sr * 0.5 {
+            return Self::peak_matched(sr, freq, q, gain_db);
+        }
+        let w0 = 2.0 * PI * freq / sr;
+        let dw = w0 / q;
         let g = 10f64.powf(gain_db / 20.0);
         let gb2 = g; // the half-gain level, squared
         let f = (g * g - gb2).abs();
@@ -84,6 +91,39 @@ impl BiquadCoeffs {
             return Self::peak(sr, freq, q, gain_db);
         }
         normalise(g1 + w2 + b, -2.0 * (g1 - w2), g1 - b + w2, 1.0 + w2 + a, -2.0 * (1.0 - w2), 1.0 + w2 - a)
+    }
+
+    /// Vicanek's matched peaking filter: the analog bell's poles by impulse
+    /// invariance, the zeros matching its magnitude at DC, the centre and
+    /// Nyquist. For bells reaching past Nyquist.
+    fn peak_matched(sr: f64, freq: f64, q: f64, gain_db: f64) -> Self {
+        let g = 10f64.powf(gain_db / 20.0);
+        let w0 = 2.0 * PI * freq / sr;
+        let zeta = 1.0 / (2.0 * q * g.sqrt());
+        let a1 = if zeta <= 1.0 {
+            -2.0 * (-zeta * w0).exp() * ((1.0 - zeta * zeta).sqrt() * w0).cos()
+        } else {
+            -2.0 * (-zeta * w0).exp() * ((zeta * zeta - 1.0).sqrt() * w0).cosh()
+        };
+        let a2 = (-2.0 * zeta * w0).exp();
+        let (aa0, aa1, aa2) = ((1.0 + a1 + a2).powi(2), (1.0 - a1 + a2).powi(2), -4.0 * a2);
+        let p1 = (w0 / 2.0).sin().powi(2);
+        let p0 = 1.0 - p1;
+        let p2 = 4.0 * p0 * p1;
+        let r1 = (aa0 * p0 + aa1 * p1 + aa2 * p2) * g * g;
+        let r2 = (-aa0 + aa1 + 4.0 * (p0 - p1) * aa2) * g * g;
+        let bb0 = aa0;
+        let bb2 = (r1 - r2 * p1 - bb0) / (4.0 * p1 * p1);
+        let bb1 = r2 + bb0 + 4.0 * (p1 - p0) * bb2;
+        let (s0, s1) = (bb0.sqrt(), bb1.max(0.0).sqrt());
+        let w = 0.5 * (s0 + s1);
+        let b0 = 0.5 * (w + (w * w + bb2).max(0.0).sqrt());
+        let c = BiquadCoeffs { b0, b1: 0.5 * (s0 - s1), b2: -bb2 / (4.0 * b0), a1, a2 };
+        if [c.b0, c.b1, c.b2, c.a1, c.a2].iter().all(|v| v.is_finite()) {
+            c
+        } else {
+            Self::peak(sr, freq, q, gain_db)
+        }
     }
 
     pub fn low_shelf(sr: f64, freq: f64, q: f64, gain_db: f64) -> Self {
@@ -254,6 +294,11 @@ mod tests {
             assert!((db(a, f) - db(b, f)).abs() < 0.05);
         }
         assert_eq!(BiquadCoeffs::peak_decramped(48000.0, 1000.0, 1.0, 0.0), BiquadCoeffs::peak(48000.0, 1000.0, 1.0, 0.0));
+        // A 15 kHz -6 dB cut (Q 0.707) reaches past Nyquist: a WING measured
+        // -3.6 dB at 8 kHz, -6.0 at 15 kHz and -4.8 at 20 kHz.
+        let c = BiquadCoeffs::peak_decramped(48000.0, 15000.0, 0.7065, -6.0);
+        assert!((db(c, 15000.0) + 6.0).abs() < 0.05);
+        assert!((db(c, 8000.0) + 3.6).abs() < 0.7 && (db(c, 20000.0) + 4.8).abs() < 0.7);
     }
 
     #[test]

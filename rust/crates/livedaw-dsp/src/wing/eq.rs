@@ -151,13 +151,27 @@ fn wing_peak(sr: f64, f: f32, q: f32, g: f32) -> BiquadCoeffs {
     BiquadCoeffs::peak_decramped(sr, f as f64, (q / 10f32.powf(g.abs() / 40.0)) as f64, g as f64)
 }
 
+/// A WING EQ shelf. Its frequency is where the boosting section's poles (the
+/// cutting one's zeros) sit, not the half-gain point: the shelf's midpoint is
+/// 10^(|gain| / 80) above it for a low shelf, below it for a high one. Its
+/// slope is always Q 0.707; measured on a WING, the band's Q (0.5 to 2) left
+/// the shelves unchanged.
+fn wing_shelf(sr: f64, f: f32, g: f32, low: bool) -> BiquadCoeffs {
+    let shift = 10f32.powf(g.abs() / 80.0);
+    if low {
+        low_shelf(sr, f * shift, std::f32::consts::FRAC_1_SQRT_2, g)
+    } else {
+        high_shelf(sr, f / shift, std::f32::consts::FRAC_1_SQRT_2, g)
+    }
+}
+
 fn design_std(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
     let band = |ids: &[&str; 3]| (p.f(ids[0]) * k, p.f(ids[1]), p.f(ids[2]));
 
     let (g, f, q) = band(&STD_BANDS[0]);
     match p.text("leq") {
         "PEQ" => push_gain(d, g, || wing_peak(sr, f, q, g)),
-        "SHV" => push_gain(d, g, || low_shelf(sr, f, q, g)),
+        "SHV" => push_gain(d, g, || wing_shelf(sr, f, g, true)),
         kind => push_cut(d, sr, kind, f, q, true),
     }
     for ids in &STD_BANDS[1..7] {
@@ -170,7 +184,7 @@ fn design_std(p: &Params, sr: f64, k: f32, d: &mut EqDesign) {
     let (g, f, q) = band(&STD_BANDS[7]);
     match p.text("heq") {
         "PEQ" => push_gain(d, g, || wing_peak(sr, f, q, g)),
-        "SHV" => push_gain(d, g, || high_shelf(sr, f, q, g)),
+        "SHV" => push_gain(d, g, || wing_shelf(sr, f, g, false)),
         kind => push_cut(d, sr, kind, f, q, false),
     }
     let tilt = p.f("tilt") * k;

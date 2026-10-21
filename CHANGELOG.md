@@ -29,7 +29,9 @@ All notable changes to Sidecar are listed here. Versions follow
   (or, for a cut, the cutting) section, so the filter's Q is the set Q over 10^(|gain| / 40)
   (measured on a console: Q 1.00 at +6 dB is as wide as a Q 0.707 peaking filter). High
   bells keep their shape up to the top of the band, as on the console (a 12 kHz bell no
-  longer drops 1.8 dB short at 16-20 kHz).
+  longer drops 1.8 dB short at 16-20 kHz). The shelves' frequency is where the boost (or
+  cut) section turns, as on the console, so a shelf's midpoint lies 10^(|gain| / 80) further
+  out (a +6 dB low shelf at 80 Hz is half way at 95 Hz), and their slope is always Q 0.707.
 - Scribble strip LCDs have one backlight colour on every strip, as on the console; only
   the light bar above each strip shows the strip's colour.
 - The +48V keys (HOME OVERVIEW and INPUT, ROUTING > SOURCES, and the 4-Channel
