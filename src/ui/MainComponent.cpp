@@ -410,7 +410,7 @@ void MainComponent::refreshSections()
 //==============================================================================
 void MainComponent::paint (juce::Graphics& g)
 {
-    g.fillAll (screenMaximized ? juce::Colours::black : Colours::background);
+    g.fillAll (screenMaximized ? juce::Colours::black : Colours::surface);
 }
 
 int MainComponent::topRowHeight() const

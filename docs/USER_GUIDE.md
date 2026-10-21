@@ -72,7 +72,10 @@ The smallest window, 1344 x 680, still holds every section of the surface; fader
 sections set wider than 12 + 8 + 4 faders (SETUP > SURFACE) need a wider window for
 the whole custom controls and 4-Channel sections.
 The screens follow the WING's own: the same panels, keys, colours and layout, set in
-Barlow Condensed.
+Barlow Condensed. The surface around them looks like the silver WING: a light grey
+surface with mid grey decks (monitoring, channel strip, 4-Channel, custom controls),
+light grey keys and dark grey SELECT / SOLO / MUTE keys, black fader caps, and the
+scribble strips, meters and LCDs in black windows.
 
 - **Three fader sections:** left (12 faders), center (8) and right (4), each with the
   WING's layer column: **VIEW** (the section's OVERVIEW; hold for CONFIG), seven layer

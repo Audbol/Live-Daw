@@ -367,8 +367,13 @@ public:
     std::function<int()> ledState;
     juce::Colour ledColour = Colours::ledYellow;
     Shape shape = Shape::Rect;
-    /** A key printed dark (LISTEN, DAW). */
+    /** A black key with a printed frame (LISTEN, DAW). */
     bool dark = false;
+    /** A dark grey key with white print in a light bevel (SELECT, SOLO,
+        MUTE, SOF FLIP). */
+    bool grey = false;
+    /** The label printed in a frame (TALK A / B). */
+    bool framed = false;
     /** A triangle printed before (-1) or after (+1) the label: the shift keys'
         "◄4" / "4►". Without a label: a triangle pointing left (-1), right (+1),
         up (-2) or down (+2). */
@@ -396,52 +401,73 @@ public:
         const bool lit = shownLit && isEnabled();
         const bool down = isMouseButtonDown() && isEnabled();
 
-        // The WING's keys: a frosted light grey cap (dark keys: black with a
-        // printed frame) in a black bezel, the print dark. Lit, the cap takes
-        // the LED colour and the bezel glows.
-        const float bezel = juce::jlimit (1.5f, 3.0f, juce::jmin (r.getWidth(), r.getHeight()) * 0.09f);
+        // The WING's keys: a light grey cap (dark grey keys: a dark cap in a
+        // light bevel; black keys: a printed frame) in a thin dark outline.
+        // Lit, the cap takes the LED colour, brightest in the middle, and the
+        // outline glows.
+        const float side = juce::jmin (r.getWidth(), r.getHeight());
+        const float bezel = juce::jlimit (1.0f, 2.0f, side * 0.06f);
+        const float bevel = grey ? juce::jlimit (1.5f, 3.5f, side * 0.1f) : 0.0f;
         auto shapeOf = [this] (juce::Rectangle<float> area)
         {
             juce::Path p;
             if (shape == Shape::Round)
                 p.addEllipse (area);
             else
-                p.addRoundedRectangle (area, juce::jmin (4.0f, area.getHeight() * 0.2f));
+                p.addRoundedRectangle (area, juce::jmin (3.5f, area.getHeight() * 0.16f));
             return p;
         };
         const auto outer = shapeOf (r);
-        const auto capArea = r.reduced (bezel);
+        const auto capArea = r.reduced (bezel + bevel);
         const auto cap = shapeOf (capArea);
 
         g.setColour (Colours::keyBezel);
         g.fillPath (outer);
         if (lit)
         {
-            g.setColour (ledColour.withAlpha (0.55f * juce::jlimit (0.3f, 1.0f, SurfaceLighting::leds() / 0.9f)));
+            g.setColour (ledColour.withAlpha (0.6f * juce::jlimit (0.3f, 1.0f, SurfaceLighting::leds() / 0.9f)));
             g.fillPath (outer);
         }
+        if (grey)
+        {
+            // The bevel: lighter towards the top.
+            const auto ring = r.reduced (bezel);
+            g.setGradientFill (juce::ColourGradient (Colours::keyBevel, 0.0f, ring.getY(), Colours::keyBevel.darker (0.35f), 0.0f, ring.getBottom(), false));
+            g.fillPath (shapeOf (ring));
+        }
 
-        const auto unlitCap = SurfaceLighting::unlit (dark ? Colours::keyCapDark : Colours::keyCap);
+        const auto unlitCap = SurfaceLighting::unlit (dark ? Colours::keyCapDark : (grey ? Colours::keyCapGrey : Colours::keyCap));
         auto body = lit ? SurfaceLighting::lit (ledColour, unlitCap) : unlitCap;
-        if (! isEnabled() && ! dark)
-            body = body.interpolatedWith (Colours::panel, 0.15f);
+        if (! isEnabled() && ! dark && ! grey)
+            body = body.interpolatedWith (Colours::surface, 0.3f);
         if (down)
             body = body.darker (0.25f);
         else if (isMouseOver() && isEnabled())
             body = body.brighter (0.07f);
-        g.setGradientFill (juce::ColourGradient (body.brighter (dark ? 0.05f : 0.1f), 0.0f, capArea.getY(),
-                                                 body.darker (dark ? 0.05f : 0.12f), 0.0f, capArea.getBottom(), false));
+        if (lit)
+        {
+            // The LED shines through the cap's middle.
+            const auto centre = capArea.getCentre();
+            juce::ColourGradient glow (body.withRotatedHue (0.03f).brighter (0.2f), centre.x, centre.y,
+                                       body.darker (0.08f), capArea.getX(), capArea.getY(), true);
+            g.setGradientFill (glow);
+        }
+        else
+        {
+            g.setGradientFill (juce::ColourGradient (body.brighter (dark || grey ? 0.06f : 0.08f), 0.0f, capArea.getY(),
+                                                     body.darker (dark || grey ? 0.06f : 0.1f), 0.0f, capArea.getBottom(), false));
+        }
         g.fillPath (cap);
         if (dark && ! lit)
         {
             g.setColour (Colours::silk.withAlpha (isEnabled() ? 0.85f : 0.35f));
-            g.strokePath (shapeOf (capArea.reduced (juce::jmax (1.0f, bezel * 0.5f))), juce::PathStrokeType (1.2f));
+            g.strokePath (shapeOf (capArea.reduced (juce::jmax (1.0f, side * 0.06f))), juce::PathStrokeType (1.2f));
         }
 
         juce::Colour ink;
         if (lit)
             ink = body.getPerceivedBrightness() > 0.55f ? body.darker (0.9f).withMultipliedSaturation (1.2f) : juce::Colours::white.withAlpha (0.9f);
-        else if (dark)
+        else if (dark || grey)
             ink = isEnabled() ? Colours::silk : Colours::silk.withAlpha (0.35f);
         else
             ink = isEnabled() ? Colours::keyPrint : Colours::keyPrint.withAlpha (0.4f);
@@ -470,9 +496,10 @@ public:
         if (label.isNotEmpty())
         {
             const int lines = juce::StringArray::fromLines (label).size();
-            const float size = juce::jlimit (7.0f, 16.0f, content.getHeight() * (lines > 1 ? 0.46f : 0.6f));
+            // The print is small on the cap, in a wider face than the panel's.
+            const float size = juce::jlimit (7.0f, 14.0f, content.getHeight() * (lines > 1 ? 0.4f : 0.46f));
             g.setColour (ink);
-            g.setFont (silkFont (size));
+            g.setFont (keyFont (size));
             if (arrow != 0)
             {
                 // Triangle and label centred together.
@@ -490,6 +517,11 @@ public:
                 return;
             }
             g.drawFittedText (label, content.toNearestInt(), juce::Justification::centred, lines, 0.6f);
+            if (framed)
+            {
+                const float s = size * 1.05f;
+                g.drawRoundedRectangle (content.withSizeKeepingCentre (s, s), 1.5f, 1.2f);
+            }
         }
     }
 

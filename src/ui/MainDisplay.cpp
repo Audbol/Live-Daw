@@ -1734,12 +1734,12 @@ void MainDisplay::paint (juce::Graphics& g)
     {
         // Screen only: the display's frame centred on black.
         g.fillAll (juce::Colours::black);
-        g.setColour (Colours::panel);
+        g.setColour (Colours::displayUnit);
         g.fillRoundedRectangle (frameArea.toFloat(), 6.0f);
     }
     else
     {
-        g.fillAll (Colours::panel);
+        g.fillAll (Colours::displayUnit);
     }
 
     // The screen, framed by a bezel.

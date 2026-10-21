@@ -554,12 +554,13 @@ blinking LEDs.
 
 - **Look.** `ConsoleLookAndFeel` (`LookAndFeel.*`) holds the WING palette (black
   screen, grey panels with header bars, amber channel tab, yellow ON keys, lime knob
-  rings, cyan selections; the surface follows the dark WING's panel: frosted light
-  key caps in black bezels lit in their LED colour, indigo scribble LCDs under thin
-  glowing light bars, silver fader caps, plain encoder caps) and uses Barlow Condensed (SIL OFL, `resources/fonts/`,
+  rings, cyan selections; the surface follows the silver WING: a light grey surface
+  with mid grey decks (`drawDeck`), light grey key caps and dark grey ones in a light
+  bevel (`SurfaceKey::grey`) lit in their LED colour, periwinkle scribble LCDs under
+  glowing light bars, black fader caps, plain encoder caps) and uses Barlow Condensed (SIL OFL, `resources/fonts/`,
   embedded with `juce_add_binary_data`).
 - **Scribble strips** (`drawScribble`, `ScribbleInfo` in `FaderStrip.*`) follow the
-  3.x firmware: a negative LCD (light ink on indigo) with a top row under a rule (an
+  3.x firmware: a negative LCD (light ink on periwinkle) with a top row under a rule (an
   input's number and its source on an inverted tag, `5 | IN5`, `IN7/8`, the ALT
   source while active, `MONO` / `ST` with SHOW SOURCE ON SCRIBBLE off; other strips
   the kind on the tag and the number at the right, `BUS | 1`), the WING icon centred

@@ -9,7 +9,7 @@ namespace livedaw::ui
     console's 16-bit panel: black, #202020 panels, #303030 keys and tiles,
     #101010 wells, #484848 outlines, grey #707070 unlit text and the gold
     accent (selected tab, ON keys, list selection, frames). The control
-    surface around the screen keeps its own darker hardware colours. */
+    surface around the screen has its own hardware colours. */
 namespace Colours
 {
     // Control surface (around the screen)
@@ -64,30 +64,38 @@ namespace Colours
     const juce::Colour meterOrange { 0xfff0641e };
     const juce::Colour meterRed { 0xffe8413a };
 
-    // Control surface hardware (the WING's dark panel: same layout and print
-    // as the silver one)
-    const juce::Colour keyBody { 0xff36383d };      // an unlit key
-    const juce::Colour keyEdge { 0xff0d0e10 };
-    const juce::Colour keyCap { 0xffc8cbd1 };       // an unlit key's frosted cap
+    // Control surface hardware (the silver WING): a light grey surface with
+    // dark print, mid grey decks with white print (monitoring, channel strip,
+    // 4-Channel, custom controls), light grey keys with dark print and dark
+    // grey ones with white print (SELECT, SOLO, MUTE, SOF FLIP) in a light
+    // bevel, black panels behind the LCDs and meters.
+    const juce::Colour surface { 0xffc9c6bf };      // the light grey surface
+    const juce::Colour deck { 0xff595a5e };         // the mid grey decks
+    const juce::Colour displayUnit { 0xff131416 };  // the display unit's black frame
+    const juce::Colour surfacePrint { 0xff2b2c2f }; // print on the light surface
+    const juce::Colour surfaceLine { 0xff77746e };  // printed section borders on it
+    const juce::Colour keyCap { 0xffc4c3bf };       // an unlit light key's cap
+    const juce::Colour keyCapGrey { 0xff3d3d40 };   // the dark grey keys (SELECT, SOLO, MUTE)
     const juce::Colour keyCapDark { 0xff16171a };   // the black keys (LISTEN, DAW)
-    const juce::Colour keyBezel { 0xff08090a };     // the black ring round a key
-    const juce::Colour keyPrint { 0xff1b1c1f };     // print on a key cap
+    const juce::Colour keyBevel { 0xffd2d1cd };     // the light bevel round a dark grey key
+    const juce::Colour keyBezel { 0xff17181a };     // the thin dark outline round a key
+    const juce::Colour keyPrint { 0xff1b1c1f };     // print on a light key cap
     const juce::Colour keySelect { 0xff4fdc64 };    // a lit SELECT key
     const juce::Colour keyLayer { 0xffff9a28 };     // a lit layer or slot key
     const juce::Colour keyWhite { 0xfff4f6fb };     // a key lit white
-    const juce::Colour silk { 0xffc4c7cc };         // panel print
-    const juce::Colour silkDim { 0xff8a8d92 };      // fainter print (fader scales)
-    const juce::Colour layerColumn { 0xff44474c };  // the lighter grey layer key columns
-    const juce::Colour plate { 0xff1d1e21 };        // the darker plates (4-CHANNEL)
-    const juce::Colour sectionLine { 0xff8b8e94 };  // printed section borders
-    const juce::Colour scribbleLcd { 0xff201d4a };  // a scribble strip LCD's backlight (deep indigo)
-    const juce::Colour scribbleInk { 0xffeeedff };  // its text, icons and inverted tags
-    const juce::Colour scribbleRule { 0xffa6a2dc }; // the rules between an LCD's strips
-    const juce::Colour scribbleRim { 0xff4a4690 };  // the lighter rim round the LCD
-    const juce::Colour ledOff { 0xff2c2d30 };       // an unlit LED
+    const juce::Colour silk { 0xffe4e5e8 };         // print on the decks and black panels
+    const juce::Colour silkDim { 0xffa4a6aa };      // fainter print
+    const juce::Colour sectionLine { 0xffd8d9dc };  // printed lines on the decks
+    const juce::Colour faderCap { 0xff1c1d1f };     // the black fader caps
+    const juce::Colour scribbleLcd { 0xff5f66c4 };  // a scribble strip LCD's backlight (periwinkle)
+    const juce::Colour scribbleInk { 0xfff4f4ff };  // its text, icons and inverted tags
+    const juce::Colour scribbleRule { 0xffdcdcf8 }; // the rules between an LCD's strips
+    const juce::Colour scribbleRim { 0xff8a90dc };  // the lighter rim round the LCD
+    const juce::Colour ledOff { 0xff68686b };       // an unlit LED (frosted grey)
     const juce::Colour ledWindow { 0xff8e9094 };    // an unlit colour light bar's frosted window
     const juce::Colour ledYellow { 0xfff5e14a };    // a lit surface key
     const juce::Colour viewGreen { 0xff52d36b };    // lit VIEW keys
+    const juce::Colour segmentBlue { 0xff5a78ff };  // the custom controls' layer display
 } // namespace Colours
 
 //==============================================================================
@@ -161,6 +169,10 @@ inline juce::Font fontFittingWidth (juce::Font f, const juce::String& text, floa
 /** The surface print's narrower face (Barlow Condensed), `height` px tall in
     JUCE terms: for silk print, hardware keys and scales around the screen. */
 juce::Font silkFont (float height, bool bold = true);
+
+/** The wider print on the surface's keys and fader scales (Barlow Semi
+    Condensed SemiBold), `height` px tall in JUCE terms. */
+juce::Font keyFont (float height);
 
 /** The typeface name that ConsoleLookAndFeel maps to the surface face
     (Barlow Condensed); every other sans-serif font gets the screen face. */
@@ -236,6 +248,11 @@ juce::Rectangle<int> sectionHeader (juce::Rectangle<int> area);
 
 /** A small rounded label chip ("48K", "PRE", "SNAP"). */
 void drawChip (juce::Graphics&, juce::Rectangle<float> r, const juce::String& text, juce::Colour fill, juce::Colour textColour);
+
+/** A deck of the control surface: a mid grey plate with rounded corners
+    on the light surface (monitoring, channel strip, 4-Channel, custom
+    controls). */
+void drawDeck (juce::Graphics&, juce::Rectangle<float> area);
 
 /** Panel print on the control surface (captions, headings): bold caps, one
     line per '\n'. */
