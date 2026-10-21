@@ -831,6 +831,7 @@ public:
         auto k = phantomKey.toFloat();
         g.setColour (phantom ? colours::mute : colours::keyOff);
         g.fillRect (k);
+        paintHoldProgress (g, k, phantomHold.progress(), phantom ? colours::keyOff : colours::mute);
         drawIcon (g, Icon::Power, k.reduced (k.getWidth() * 0.22f), (phantom ? colours::ink : colours::caption).withAlpha (alpha));
         g.setColour (colours::dim.withAlpha (alpha));
         g.setFont (homeFont (TypeScale::caption, (float) phantomCaption.getHeight()));
@@ -859,26 +860,26 @@ public:
         draggingGain = ! alt && gainSlider.expanded (10, 4).contains (e.getPosition());
         if (draggingGain)
             setGainFromY (e.y);
+        // +48V switches when held (kPhantomHoldSeconds), as on the console.
+        if (! alt && phantomKey.contains (e.getPosition()) && inputSourceParams (ctx.engine, strip.getInputLeft()) != nullptr)
+            phantomHold.press();
     }
 
     void mouseDrag (const juce::MouseEvent& e) override
     {
         if (draggingGain)
             setGainFromY (e.y);
+        if (! phantomKey.contains (e.getPosition()))
+            phantomHold.release();
     }
 
     void mouseUp (const juce::MouseEvent& e) override
     {
+        phantomHold.release();
         if (draggingGain || ! getLocalBounds().contains (e.getPosition()))
             return;
         if (! alt && phantomKey.contains (e.getPosition()))
-        {
-            const auto* src = inputSourceParams (ctx.engine, strip.getInputLeft());
-            const bool on = src != nullptr && src->phantom.load();
-            forInputSource (ctx.engine, strip.getInputLeft(), [on] (ld::SourceParams& s) { s.phantom = ! on; });
-            repaint();
             return;
-        }
         if (! tile.contains (e.getPosition()))
             return;
         if (! alt)
@@ -915,6 +916,14 @@ private:
         repaint();
     }
 
+    void switchPhantom()
+    {
+        const auto* src = inputSourceParams (ctx.engine, strip.getInputLeft());
+        const bool on = src != nullptr && src->phantom.load();
+        forInputSource (ctx.engine, strip.getInputLeft(), [on] (ld::SourceParams& s) { s.phantom = ! on; });
+        repaint();
+    }
+
     void timerCallback() override
     {
         const int left = alt ? strip.getAltInputLeft() : strip.getInputLeft();
@@ -939,6 +948,7 @@ private:
     bool draggingGain = false;
     juce::Rectangle<int> tile, phantomKey, phantomCaption, gainSlider;
     juce::String shown;
+    HoldKey phantomHold { [this] { switchPhantom(); }, [this] { repaint (phantomKey); } };
 };
 
 /** SELECT MAIN INPUT [I7, firmware 3.1], opened from the MAIN source tile: the

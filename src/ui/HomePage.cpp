@@ -304,20 +304,21 @@ public:
         {
             // [I1] the MAIN source's +48V and GAIN beside its tile.
             phantom = &key ({}, Icon::Power, colours::mute);
-            phantom->setTooltip ("+48 V phantom power of the channel's source (ROUTING > SOURCES)");
+            phantom->setTooltip ("+48 V phantom power of the channel's source (ROUTING > SOURCES): hold 2 s to switch");
             phantom->isOn = [this]
             {
                 const auto* src = sourceOf (strip);
                 return src != nullptr && src->phantom.load();
             };
-            phantom->onClick = [this]
+            // As the console's, the key switches only when held (kPhantomHoldSeconds).
+            phantom->switchOnHold ([this]
             {
                 const auto* src = sourceOf (strip);
                 if (src == nullptr)
                     return;
                 const bool on = ! src->phantom.load();
                 forEachSourceOf (strip, [on] (ld::SourceParams& each) { each.phantom = on; });
-            };
+            });
             phantomLabel = &label ("+48V", 12.0f, colours::dim);
             phantomLabel->setJustificationType (juce::Justification::centredTop);
             gain = &make<KnobBox> (sourceGainBinding (ctx, strip));

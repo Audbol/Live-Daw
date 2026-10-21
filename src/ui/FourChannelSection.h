@@ -23,7 +23,8 @@ namespace livedaw::ui
     | F1-F3  | send level to the key's bus      | send on        |
     | PAN    | pan (press again: width)         | MAIN 1 on      |
 
-    Holding F1-F3 picks the bus it sends to. With USE F1-F3 AS CUSTOM CONTROLS
+    The 48 V keys switch only when held for 2 s, as the console's. Holding
+    F1-F3 picks the bus it sends to. With USE F1-F3 AS CUSTOM CONTROLS
     (SETUP > SURFACE) they're custom control layers U1-U3 instead. */
 class FourChannelSection final : public juce::Component, private juce::Timer
 {

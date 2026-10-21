@@ -55,7 +55,7 @@ FourChannelSection::FourChannelSection (UiContext& c, std::function<Strip* (int)
         }
         addAndMakeVisible (k);
     }
-    modeKeys[Gain]->setTooltip ("GAIN: input trim; the key below switches the source's +48V (stored: no preamps here)");
+    modeKeys[Gain]->setTooltip ("GAIN: input trim; holding the key below for 2 s switches the source's +48V (stored: no preamps here)");
     modeKeys[Filter]->setTooltip ("FILTER: low cut (press again: high cut); the key below switches the low cut");
     modeKeys[Pan]->setTooltip ("PAN: pan (press again: width); the key below switches the MAIN 1 send");
 
@@ -80,7 +80,8 @@ FourChannelSection::FourChannelSection (UiContext& c, std::function<Strip* (int)
             switch (mode)
             {
                 case Gain:
-                    // +48V of the strip's source (and its partner when paired), as HOME > INPUT.
+                    // +48V of the strip's source (and its partner when paired), as HOME > INPUT;
+                    // the key has been held for kPhantomHoldSeconds (switchesOnHold).
                     if (auto* src = inputSource (ctx.engine, *s))
                     {
                         const bool on = ! src->phantom.load();
@@ -104,6 +105,8 @@ FourChannelSection::FourChannelSection (UiContext& c, std::function<Strip* (int)
                 default: break;
             }
         };
+        // As the console's, +48V switches only when the key is held.
+        k->switchesOnHold = [this, i] { return mode == Gain && customControl (i) == nullptr; };
         k->ledState = [this, i]
         {
             if (const auto* control = customControl (i))

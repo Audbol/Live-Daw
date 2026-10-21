@@ -125,7 +125,9 @@ touchscreen looks the same in both.
   - **HOME** for the selected strip: the toolbar (thumbnails at the WING's fixed rows,
     the fader bar with the TAP point, MAIN, SENDS; on Channel Home also the on keys
     and the wrench to drag the slots and the TAP point), the **OVERVIEW** (INPUT,
-    FILTER, LEVEL, EQ and MAIN panels; INPUT has the source's +48V and GAIN),
+    FILTER, LEVEL, EQ and MAIN panels; INPUT has the source's +48V and GAIN; as on
+    the console, hold the +48V key for 2 s to switch it: it fills up meanwhile, and a
+    tap does nothing),
     **ICON/COLOR**, **NAME**, **TAGS** (DCAs, mute groups, the talk tags TALK ON / TALK
     SOLO for both talk keys, A or B) and the **SAFE** key. As on a factory-initialized
     WING the faders start at -oo (buses 9-16 at 0 dB), the EQs off, and channels and
@@ -183,10 +185,10 @@ touchscreen looks the same in both.
     (AUX IN, AES/EBU, AES50 A, ST CONNECT, USB AUDIO, DANTE, BUS, MAIN, MATRIX, USER
     SIGNAL) can be selected and show n/a tiles, like a console without that card.
     SOURCES sets each input's source:
-    name (RENAME), colour and icon, GAIN, +48V (stored), POL, MUTE and MONO / STEREO /
-    MID-SIDE pairs (a channel patched to a pair becomes stereo), its mute groups
-    (TAGS), with its meter and the channels using it (as tiles under the tabs);
-    channels get the source's processing first. REMOTE (stage-box preamps) and RCV
+    name (RENAME), colour and icon, GAIN, +48V (stored; hold the key 2 s), POL, MUTE
+    and MONO / STEREO / MID-SIDE pairs (a channel patched to a pair becomes stereo),
+    its mute groups (TAGS), with its meter and the channels using it (as tiles under
+    the tabs); channels get the source's processing first. REMOTE (stage-box preamps) and RCV
     CUST are shown but have nothing to control here. With SOURCE SOLO on, **SRC
     SOLO** solos the selected source
     through CH39 or AUX7 (the solo follows the selection; CLR SOLO ends it). The
@@ -279,8 +281,9 @@ touchscreen looks the same in both.
   both levels.
 - **4-Channel section** (under the monitoring panel): GAIN, GATE, COMP, FILTER, F1-F3
   and PAN keys give the four strips of the right fader section an encoder and a key
-  each (trim and the source's +48V; gate / comp threshold and on; low / high cut; bus
-  sends; pan / width and MAIN 1), with their scribble strips on a four-way LCD.
+  each (trim and the source's +48V, switched by holding the key 2 s; gate / comp
+  threshold and on; low / high cut; bus sends; pan / width and MAIN 1), with their
+  scribble strips on a four-way LCD.
 - **Custom controls** (between the center and right sections): the upper part's 16
   layers of four encoders and eight keys (assigned on CC EDIT; UP / DOWN; names and
   colours on the LCD), the lower layers **USER** (eight assignable keys), **2-TRACK

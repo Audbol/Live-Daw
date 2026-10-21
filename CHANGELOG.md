@@ -25,6 +25,10 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- The +48V keys (HOME OVERVIEW and INPUT, ROUTING > SOURCES, and the 4-Channel
+  section's keys in GAIN / 48 V mode) switch phantom power only when held for 2 s, as
+  on the console; the key fills up while held, and a tap does nothing. Remote control,
+  snapshots and scenes still switch it at once.
 - A patched channel's scribble strip with neither name nor icon shows its source's glyph
   (the XLR connector for a local input), as on the console.
 - The control surface looks like the silver WING, matched to photos of a real console:
