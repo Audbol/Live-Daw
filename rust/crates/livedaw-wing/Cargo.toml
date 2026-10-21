@@ -10,3 +10,8 @@ rust-version.workspace = true
 livedaw-dsp = { path = "../livedaw-dsp" }
 livedaw-engine = { path = "../livedaw-engine" }
 livedaw-session = { path = "../livedaw-session" }
+
+# The settings parser and the render path have unit tests (run by `cargo test`).
+[[example]]
+name = "render"
+test = true

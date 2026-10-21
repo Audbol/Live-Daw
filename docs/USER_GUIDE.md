@@ -528,6 +528,14 @@ and open-source projects (see below), and it is **experimental**.
   report lists the parameters only one side has and every value, type, range and
   choice that differs, per top-level node. Initialize both consoles (or load the same
   show) first; `dump` and `diff` run the two steps separately.
+- **Comparing the sound with a real WING:** `tools/wing/audio_compare` (Python 3.8+ with
+  numpy and scipy) writes test signals to play on the WING's USB player, a test plan
+  (EQ, filters, gate, compressor and other dynamics models, FX) with the settings for
+  channel 1, and reports, from the WING's USB recordings, how Sidecar's processing of
+  the same signals differs: frequency and phase response, distortion, static curves,
+  attack and release, reverb decay, delay echoes. Sidecar's side is rendered offline
+  by its engine (`cargo run --release -p livedaw-wing --example render`). See the
+  kit's README for the steps.
 - **What is tested:** libwing's own clients (`wingprop`, `wingmon`, `wingdrive`'s
   test battery and model capture, its OSC client), and every OSC path the Bitfocus
   Companion WING module builds that exists in the 3.1 tree. **WING Edit and WING
