@@ -260,6 +260,14 @@ void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const Scribble
         drawIcon (g, *info.icon, iconArea.reduced (s * 0.08f), ink);
         return;
     }
+    // A patched channel with neither name nor icon shows its source's glyph
+    // (the XLR connector for a local input), as on the console.
+    if (info.strip != nullptr && info.strip->isInput() && info.name.isEmpty() && info.line2.isEmpty() && info.line3.isEmpty()
+        && stripHasSource (*info.strip))
+    {
+        drawIcon (g, sourceIcon (info.strip->getActiveInputLeft()), iconArea.reduced (s * 0.08f), ink);
+        return;
+    }
     if (info.line2.isNotEmpty() || info.line3.isNotEmpty())
     {
         const bool two = info.line2.isNotEmpty() && info.line3.isNotEmpty();

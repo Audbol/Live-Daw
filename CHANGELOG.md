@@ -7,6 +7,8 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- A patched channel's scribble strip with neither name nor icon shows its source's glyph
+  (the XLR connector for a local input), as on the console.
 - The control surface looks like the silver WING, matched to photos of a real console:
   a light grey surface with mid grey decks and a black display unit; light grey keys
   and dark grey SELECT / SOLO / MUTE / SOF FLIP keys in a light bevel, with the console's
