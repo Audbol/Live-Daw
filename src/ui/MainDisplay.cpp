@@ -353,8 +353,9 @@ class MainDisplay::ConsoleKey final : public juce::Button, private juce::Timer
 public:
     explicit ConsoleKey (const juce::String& keyText) : juce::Button (keyText) { startTimerHz (10); }
 
-    juce::Colour litColour = Colours::viewGreen; // a screen key lights green while its screen shows
+    juce::Colour litColour = Colours::keyLayer; // a screen key lights orange while its screen shows
     bool led = false; // the blank key: an LED instead of a lit key
+    bool backlit = false; // CLR SOLO: a dark face in a rim that carries the light, like SOLO
     std::optional<Icon> icon; // printed instead of the text (the maximize key)
     std::function<void()> onPress, onHold;
 
@@ -373,6 +374,29 @@ public:
         // On the black console the keys are backlit lavender, brightest in
         // the middle (the blank key stays dark round its LED).
         const auto& sc = surfaceColours();
+        if (backlit)
+        {
+            // The rim and the print take the light; the face stays dark.
+            auto rimLight = lit ? SurfaceLighting::lit (litColour, sc.keyFace) : SurfaceLighting::backlit (sc.keyRim, sc.keyFace);
+            if (down)
+                rimLight = rimLight.darker (0.2f);
+            else if (over)
+                rimLight = rimLight.brighter (0.06f);
+            g.setColour (sc.keyBezel);
+            g.fillRoundedRectangle (r, 5.0f);
+            const auto ring = r.reduced (1.0f);
+            const float rim = juce::jlimit (1.5f, 4.0f, juce::jmin (ring.getWidth(), ring.getHeight()) * 0.1f);
+            g.setColour (rimLight);
+            g.fillRoundedRectangle (ring, 4.5f);
+            const auto face = ring.reduced (rim).withTrimmedBottom (rim * 0.4f);
+            g.setColour (lit ? sc.keyFace.interpolatedWith (litColour, 0.1f) : sc.keyFace);
+            g.fillRoundedRectangle (face, 3.5f);
+            g.setColour (rimLight);
+            const auto keyText = getButtonText();
+            g.setFont (silkFont (juce::jlimit (10.0f, 15.0f, face.getHeight() * 0.3f)));
+            g.drawFittedText (keyText, face.toNearestInt().reduced (2, 0), juce::Justification::centred, 2, 0.7f);
+            return;
+        }
         const bool backlitCap = ! led && ! sc.keyCapEdge.isTransparent();
         const auto unlitBody = SurfaceLighting::unlit (backlitCap ? sc.keyCap : juce::Colour (0xff2c2e32));
         auto fill = lit && ! led ? SurfaceLighting::lit (litColour, unlitBody) : unlitBody;
@@ -983,7 +1007,8 @@ MainDisplay::MainDisplay (UiContext& c) : ctx (c)
 
     // Right of the display: CLR SOLO, the main meter, the knob, the blank key.
     clearSoloKey = std::make_unique<ConsoleKey> ("CLR\nSOLO");
-    clearSoloKey->litColour = Colours::ledYellow;
+    clearSoloKey->litColour = Colours::keySolo; // an orange rim, blinking while anything is soloed
+    clearSoloKey->backlit = true;
     clearSoloKey->onPress = [this] { clearSoloPressed(); };
     clearSoloKey->setTooltip ("Release every channel and bus on the solo bus");
     addAndMakeVisible (*clearSoloKey);
