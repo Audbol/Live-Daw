@@ -9,9 +9,30 @@ namespace livedaw::ui
 
 namespace
 {
-    // The toolbar's colours (fig. 72).
-    const juce::Colour talkYellow = KnobColours::yellow, pathLime = Colours::lime, dimGreen = Colours::green, muteRed = Colours::mute,
-                       monoOrange = KnobColours::orange;
+    // The toolbar's colours (fig. 72; measured off the console's screen,
+    // firmware 3.1): unlit keys are their colour at a fifth on a dark tint.
+    const juce::Colour talkYellow { 0xfff8c430 }, pathOlive = Dark::olive, dimGreen = Colours::green, muteRed { 0xffd84848 },
+                       monoOrange = Colours::alt, levelLime { 0xffa0c000 }, gridHeader { 0xff404840 };
+
+    /** `v` px of the WING's 1280 x 800 screen in px of this screen. */
+    int px (float v) { return juce::roundToInt (wingPx (v)); }
+
+    /** A rectangle given in WING px from the page's top left (the page starts
+        under the status bar, at the console's y = 80). */
+    juce::Rectangle<int> wingRect (float x, float y, float w, float h)
+    {
+        return { px (x), px (y), px (x + w) - px (x), px (y + h) - px (y) };
+    }
+
+    /** The console's fonts by the height of their capitals in WING px. */
+    juce::Font capFont (float capWingPx, WingWeight weight = WingWeight::Medium)
+    {
+        return wingFontPx (juce::jmax (5.0f, wingPx (capWingPx)), weight);
+    }
+
+    /** The talkback side is drawn at half brightness while there is no
+        talkback channel (the console's TALKBACK DISABLED). */
+    juce::Colour dimmed (juce::Colour c, bool dim) { return dim ? c.withMultipliedBrightness (0.5f) : c; }
 
     /** The console's meter scale: CLIP, -6, -12, -24, -36, -48, -60 evenly spaced. */
     float meterPos (float db)
@@ -25,107 +46,102 @@ namespace
         return 1.0f;
     }
 
-    void panel (juce::Graphics& g, juce::Rectangle<int> header, const juce::String& title)
+    /** A panel header: a #202020 box with its title in light grey. */
+    void panel (juce::Graphics& g, juce::Rectangle<int> header, const juce::String& title, bool dim = false)
     {
-        g.setColour (Dark::header);
+        g.setColour (dimmed (Dark::header, dim));
         g.fillRect (header);
-        g.setColour (Dark::text);
-        g.setFont (panelTitleFont (header.getHeight()));
+        g.setColour (dimmed (Colours::caption, dim));
+        g.setFont (capFont (20.0f));
         g.drawFittedText (title, header.reduced (6, 0), juce::Justification::centred, 1);
     }
 
     /** A tab with an icon (an `Icon`, or a WING icon number when `wingIcon` >= 0):
-        lit with a yellow top line and yellow text. */
-    void tab (juce::Graphics& g, juce::Rectangle<int> r, Icon icon, const juce::String& text, bool on, bool enabled, int wingIcon = -1)
+        lit #303030 with a gold top line and gold print, unlit grey on #202020. */
+    void tab (juce::Graphics& g, juce::Rectangle<int> r, Icon icon, const juce::String& text, bool on, bool dim, int wingIcon = -1)
     {
-        g.setColour (on ? Dark::tabOn : Dark::tabOff);
+        g.setColour (dimmed (on ? Dark::tabOn : Dark::tabOff, dim));
         g.fillRect (r);
-        const auto ink = on ? talkYellow : (enabled ? Dark::textDim : Dark::textDim.withAlpha (0.4f));
+        const auto ink = dimmed (on ? Colours::gold : Colours::caption, dim);
         if (on)
         {
-            g.setColour (talkYellow);
-            g.fillRect (r.withHeight (3));
+            g.setColour (ink);
+            g.fillRect (r.withHeight (px (4.0f)));
         }
-        auto ib = r.removeFromLeft (r.getHeight()).reduced (r.getHeight() / 5);
-        auto draw = [&] (juce::Colour c)
-        {
-            if (wingIcon < 0 || ! drawWingIcon (g, wingIcon, ib.toFloat(), c))
-                drawIcon (g, icon, ib.toFloat(), c);
-        };
-        if (on)
-        {
-            g.setColour (talkYellow);
-            g.fillRect (ib.expanded (2));
-            draw (juce::Colours::black);
-        }
-        else
-            draw (ink);
+        auto ib = r.removeFromLeft (px (56.0f)).toFloat().withSizeKeepingCentre (wingPx (40.0f), wingPx (40.0f));
+        if (wingIcon < 0 || ! drawWingIcon (g, wingIcon, ib, ink))
+            drawIcon (g, icon, ib, ink);
         g.setColour (ink);
-        // Narrow tabs (small windows) shrink the text rather than cut it.
-        g.setFont (fontFittingWidth (wingFontFit (TypeScale::value * 0.85f, (float) r.getHeight() * 0.5f, WingWeight::SemiBold), text, (float) r.getWidth() - 12.0f, 0.7f));
-        g.drawFittedText (text, r.reduced (6, 0), juce::Justification::centredLeft, 1);
+        g.setFont (fontFittingWidth (capFont (on ? 20.0f : 15.0f), text, (float) r.getWidth() - 8.0f, 0.7f));
+        g.drawFittedText (text, r.reduced (px (8.0f), 0), on ? juce::Justification::centredLeft : juce::Justification::centred, 1);
     }
 
-    /** The tiles of a grid (count tiles, `columns` wide) under its title row. */
+    /** The tiles of a TALK TO grid: `count` tiles 52 px square 56 apart,
+        `columns` wide, under the grid's 24 px title bar. */
     std::vector<juce::Rectangle<int>> gridTiles (juce::Rectangle<int> area, int count, int columns)
     {
-        area.removeFromTop (juce::jmin (screenCap (16), area.getHeight() / 5) + 2);
-        const int rows = (count + columns - 1) / columns;
-        const int w = area.getWidth() / columns, h = area.getHeight() / juce::jmax (1, rows);
         std::vector<juce::Rectangle<int>> tiles;
+        const int x0 = area.getX(), y0 = area.getY();
         for (int i = 0; i < count; ++i)
-            tiles.push_back (juce::Rectangle<int> (area.getX() + (i % columns) * w, area.getY() + (i / columns) * h, w, h).reduced (2));
+        {
+            const float x = 6.0f + 56.0f * (float) (i % columns), y = 28.0f + 56.0f * (float) (i / columns);
+            tiles.push_back ({ x0 + px (x), y0 + px (y), px (x + 52.0f) - px (x), px (y + 52.0f) - px (y) });
+        }
         return tiles;
     }
 
-    /** A TALK TO grid: the title row, then small tiles ("BUS" over "1"), lit
-        yellow for the destinations in `mask`. */
+    /** A TALK TO grid [WING]: a title bar over black, framed in its grey, and
+        tiles ("BUS" over "1"), lit yellow for the destinations in `mask`. */
     void tileGrid (juce::Graphics& g, juce::Rectangle<int> area, const std::vector<juce::Rectangle<int>>& tiles, const juce::String& title,
-                   const juce::String& caption, uint32_t mask)
+                   const juce::String& caption, uint32_t mask, bool dim)
     {
-        auto head = area.removeFromTop (juce::jmin (screenCap (16), area.getHeight() / 5));
-        g.setColour (Dark::key);
-        g.fillRect (head);
-        g.setColour (Dark::textDim);
-        g.setFont (wingFontFit (TypeScale::statusCaption, (float) head.getHeight() * 0.8f));
+        g.setColour (dimmed (gridHeader, dim));
+        g.fillRect (area);
+        g.setColour (juce::Colours::black);
+        g.fillRect (area.reduced (px (2.0f)).withTrimmedTop (px (22.0f)));
+        auto head = area.withHeight (px (24.0f));
+        g.setColour (dimmed (Colours::caption, dim));
+        g.setFont (capFont (12.0f));
         g.drawText (title, head, juce::Justification::centred);
         for (size_t i = 0; i < tiles.size(); ++i)
         {
             auto t = tiles[i];
             const bool on = (mask >> i) & 1u;
-            g.setColour (on ? talkYellow : Dark::key);
+            g.setColour (dimmed (on ? talkYellow : Dark::body, dim));
             g.fillRect (t);
-            g.setColour (on ? juce::Colours::black : Dark::textDim);
-            g.setFont (wingFontFit (TypeScale::meterScale, (float) t.getHeight() * 0.35f));
+            g.setColour (dimmed (on ? juce::Colours::black : Colours::screenLine, dim));
+            g.setFont (capFont (9.0f));
             g.drawText (caption, t.removeFromTop (t.getHeight() * 2 / 5), juce::Justification::centred);
-            g.setColour (on ? juce::Colours::black : Dark::text);
-            g.setFont (wingFontFit (TypeScale::body, (float) t.getHeight() * 0.7f));
-            g.drawText (juce::String (i + 1), t, juce::Justification::centred);
+            g.setColour (dimmed (on ? juce::Colours::black : Colours::textDim, dim));
+            g.setFont (capFont (14.0f));
+            g.drawText (juce::String (i + 1), t, juce::Justification::centredTop);
         }
     }
 
-    /** A drop-down field (caption over value, dots key), dim when disabled. */
+    /** A drop-down field [WING]: caption over value on #101010, the dots key
+        framed black at the right. */
     void field (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& caption, const juce::String& value, bool enabled)
     {
         const float a = enabled ? 1.0f : 0.45f;
-        auto key = r.removeFromRight (juce::jmin (r.getHeight() / 2, screenCap (22)));
-        r.removeFromRight (3);
+        g.setColour (juce::Colours::black);
+        g.fillRect (r);
+        auto key = r.removeFromRight (px (32.0f));
+        r = r.reduced (px (2.0f));
         g.setColour (Dark::well);
         g.fillRect (r);
         g.setColour (Dark::key.withAlpha (a));
-        g.fillRect (key);
-        g.setColour (Dark::text.withAlpha (a));
+        g.fillRect (key.reduced (px (2.0f)));
+        g.setColour (Colours::caption.withAlpha (a));
         const auto kc = key.getCentre().toFloat();
-        const float d = juce::jlimit (3.0f, screenCap (5.0f), (float) key.getHeight() * 0.1f);
+        const float d = wingPx (7.0f);
         for (int i = -1; i <= 1; ++i)
-            g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (kc.translated (0.0f, (float) i * d * 2.2f)));
-        auto t = r.reduced (6, 3);
-        g.setColour (Dark::textDim.withAlpha (a));
-        // Narrow fields (small windows) shrink the text rather than cut it.
-        g.setFont (fontFittingWidth (wingFontPx (juce::jmin (TypeScale::caption * getWingScreenHeight(), (float) t.getHeight() * 0.2f)), caption, (float) t.getWidth(), 0.7f));
-        g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 38 / 100), juce::Justification::bottomLeft, 1);
+            g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (kc.translated (0.0f, (float) i * wingPx (12.0f))));
+        auto t = r.reduced (px (8.0f), px (4.0f));
+        g.setColour (Colours::caption.withAlpha (a));
+        g.setFont (fontFittingWidth (capFont (14.0f), caption, (float) t.getWidth(), 0.7f));
+        g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 45 / 100), juce::Justification::centredLeft, 1);
         g.setColour (Dark::text.withAlpha (a));
-        g.setFont (fontFittingWidth (wingFontPx (juce::jmin (TypeScale::value * getWingScreenHeight(), (float) t.getHeight() * 0.5f)), value, (float) t.getWidth(), 0.8f));
+        g.setFont (fontFittingWidth (capFont (18.0f), value, (float) t.getWidth(), 0.8f));
         g.drawFittedText (value, t, juce::Justification::centredLeft, 1, 0.8f);
     }
 } // namespace
@@ -157,13 +173,16 @@ void KnobField::paint (juce::Graphics& g)
     const bool on = binding.isValid();
     const float a = on ? 1.0f : 0.4f;
     auto r = getLocalBounds();
-    g.setColour (Dark::well);
+    // [WING] #101010 in a 2 px black frame.
+    g.setColour (juce::Colours::black);
     g.fillRect (r);
+    g.setColour (Dark::well);
+    g.fillRect (r.reduced (juce::roundToInt (wingPx (2.0f))));
     // A narrow field (AUTO DIM at 1280x800) keeps half its width for the text.
     const int knobW = juce::jmin (r.getHeight(), r.getWidth() / 2);
-    auto knob = r.removeFromLeft (knobW).toFloat().withSizeKeepingCentre ((float) knobW, (float) knobW).reduced ((float) knobW * 0.16f);
+    auto knob = r.removeFromLeft (knobW).toFloat().withSizeKeepingCentre ((float) knobW, (float) knobW).reduced ((float) knobW * 0.12f);
     const float a0 = juce::MathConstants<float>::pi * 1.25f, a1 = juce::MathConstants<float>::pi * 2.75f;
-    const float rad = knob.getWidth() * 0.42f, thick = juce::jmax (2.5f, knob.getWidth() * 0.16f);
+    const float rad = knob.getWidth() * 0.42f, thick = juce::jmax (2.5f, knob.getWidth() * 0.2f);
     juce::Path track, arc;
     track.addCentredArc (knob.getCentreX(), knob.getCentreY(), rad, rad, 0.0f, a0, a1, true);
     g.setColour (Dark::key.withAlpha (a));
@@ -175,11 +194,11 @@ void KnobField::paint (juce::Graphics& g)
         g.strokePath (arc, juce::PathStrokeType (thick));
     }
     auto t = r.reduced (juce::jlimit (1, screenCap (4), r.getWidth() / 12), 3);
-    g.setColour (Dark::textDim.withAlpha (a));
-    g.setFont (wingFontPx (juce::jmin (TypeScale::caption * getWingScreenHeight(), (float) t.getHeight() * 0.2f)));
-    g.drawFittedText (on ? binding.label.toUpperCase() : placeholder, t.removeFromTop (t.getHeight() * 38 / 100), juce::Justification::bottomLeft, 1, 0.7f);
+    g.setColour (Colours::caption.withAlpha (a));
+    g.setFont (wingFontPx (juce::jmin (wingPx (14.0f), (float) t.getHeight() * 0.26f)));
+    g.drawFittedText (on ? binding.label.toUpperCase() : placeholder, t.removeFromTop (t.getHeight() * 45 / 100), juce::Justification::bottomLeft, 1, 0.7f);
     g.setColour (Dark::text.withAlpha (a));
-    g.setFont (wingFontPx (juce::jmin (TypeScale::value * getWingScreenHeight(), (float) t.getHeight() * 0.5f)));
+    g.setFont (wingFontPx (juce::jmin (wingPx (21.0f), (float) t.getHeight() * 0.8f)));
     g.drawFittedText (on && binding.text ? binding.text() : placeholderValue, t, juce::Justification::centredLeft, 1, 0.7f);
 }
 
@@ -590,9 +609,9 @@ MonitorsPage::MonitorsPage (UiContext& c) : ctx (c)
     tools = {
         { "TALK A", Icon::ChevronUp, talkYellow, [&e] { return e.isTalkOn (0); }, nullptr, {}, 0 },
         { "TALK B", Icon::ChevronUp, talkYellow, [&e] { return e.isTalkOn (1); }, nullptr, {}, 1 },
-        { "PHONES", Icon::Headphones, pathLime, [&e] { return e.soloBus.load() == 0; }, [pickPath] { pickPath (0); }, {} },
-        { "SPEAKERS", Icon::Speaker, pathLime, [&e] { return e.soloBus.load() == 1; }, [pickPath] { pickPath (1); }, {} },
-        { "PH+SPK", Icon::Speakers, pathLime, [&e] { return e.soloBus.load() == 2; }, [pickPath] { pickPath (2); }, {} },
+        { "PHONES", Icon::Headphones, pathOlive, [&e] { return e.soloBus.load() == 0; }, [pickPath] { pickPath (0); }, {} },
+        { "SPEAKERS", Icon::Speaker, pathOlive, [&e] { return e.soloBus.load() == 1; }, [pickPath] { pickPath (1); }, {} },
+        { "PH+SPK", Icon::Speakers, pathOlive, [&e] { return e.soloBus.load() == 2; }, [pickPath] { pickPath (2); }, {} },
         { "DIM", Icon::ChevronDown, dimGreen, [&e] { return e.monitorDim.load(); }, [&e, flip] { flip (e.monitorDim); }, {} },
         { "MUTE", Icon::Cancel, muteRed, [&e] { return e.monitorMute.load(); }, [&e, flip] { flip (e.monitorMute); }, {} },
         { "MONO", Icon::Circle, monoOrange, [&e] { return e.monitorMono.load(); }, [&e, flip] { flip (e.monitorMono); }, {} },
@@ -701,12 +720,12 @@ std::vector<KnobBinding> MonitorsPage::getKnobs()
 {
     if (isEqShown())
         return eqView->knobs();
-    // The parameter bar (fig. 72): TALK LVL, SRC LEVEL, SRC MIX, PFL DIM, DIST,
-    // then the DIRECT IN level (the console has no control for it).
+    // The parameter bar (fig. 72, firmware 3.1): SRC LEVEL, SRC MIX, PFL DIM,
+    // DIST, then the DIRECT IN level (the console has no control for it).
     auto& d = pathDsp();
     auto dist = bindLog ("DIST", d.delayM, 0.1f, 100.0f, " m", 0.1f);
     dist.text = [&m = d.delayM] { return juce::String (m.load(), m.load() < 10.0f ? 1 : 0) + " m"; };
-    return { home::wingFader ("TALK LVL", ctx.engine.talk.levelDb), srcLevel.getBinding(), srcMix.getBinding(), pflDim.getBinding(), dist,
+    return { {}, srcLevel.getBinding(), srcMix.getBinding(), pflDim.getBinding(), dist,
              home::wingFader ("DIR LVL", d.directLevelDb) };
 }
 
@@ -722,7 +741,7 @@ std::vector<KnobStyle> MonitorsPage::getKnobStyles()
     if (isEqShown())
         return { {}, style (KnobStyle::Bar::Centre, KnobColours::white), {}, style (KnobStyle::Bar::Fill, KnobColours::blue),
                  style (KnobStyle::Bar::Fill, KnobColours::green) };
-    return { style (KnobStyle::Bar::Fill, KnobColours::yellow), style (KnobStyle::Bar::Fill, KnobColours::white),
+    return { {}, style (KnobStyle::Bar::Fill, KnobColours::white),
              style (KnobStyle::Bar::Fill, KnobColours::white), style (KnobStyle::Bar::Fill, KnobColours::blue),
              style (KnobStyle::Bar::Fill, Colours::lime), style (KnobStyle::Bar::Fill, KnobColours::blue) };
 }
@@ -851,6 +870,14 @@ void MonitorsPage::timerCallback()
         shownEq = state;
         repaint (pathArea);
     }
+    // The talk side's controls dim with it (no talkback channel).
+    const float talkAlpha = ctx.engine.getTalkStrip() == nullptr ? 0.5f : 1.0f;
+    for (juce::Component* c : { (juce::Component*) switchMode.get(), (juce::Component*) sendLevels.get(), (juce::Component*) &busDim, (juce::Component*) &monDim })
+        if (c->getAlpha() != talkAlpha)
+        {
+            c->setAlpha (talkAlpha);
+            repaint (talkTabs.getUnion (autoDimBox).getUnion (talkArea));
+        }
     repaint (toolbar);
     repaint (talkArea);
 }
@@ -871,78 +898,128 @@ void MonitorsPage::paintToolbar (juce::Graphics& g)
     for (auto& t : tools)
     {
         const bool lit = t.lit && t.lit();
-        const bool enabled = t.press != nullptr || t.talkPath >= 0 || lit;
+        // [WING] a 2 px black frame; unlit: the colour at a fifth, its print in the colour.
         auto r = t.area.toFloat();
-        g.setColour (lit ? t.colour : t.colour.withMultipliedBrightness (0.35f).withMultipliedAlpha (enabled ? 1.0f : 0.6f));
+        g.setColour (juce::Colours::black);
         g.fillRect (r);
-        // Unlit: the key's colour on its dark tint; a dark colour (MUTE's red) is
-        // lightened so it reads on its own tint.
-        const auto offInk = t.colour.getPerceivedBrightness() < 0.5f ? t.colour.interpolatedWith (juce::Colours::white, 0.4f) : t.colour;
-        const auto ink = lit ? juce::Colours::black : (enabled ? offInk : offInk.withMultipliedAlpha (0.5f));
-        auto label = r.removeFromBottom (r.getHeight() * 0.3f);
-        drawIcon (g, t.icon, r.reduced (r.getHeight() * 0.18f), ink);
+        r = r.reduced (wingPx (2.0f));
+        g.setColour (lit ? t.colour : t.colour.withMultipliedBrightness (0.22f));
+        g.fillRect (r);
+        const auto ink = lit ? juce::Colours::black : t.colour;
+        auto label = r.removeFromBottom (wingPx (24.0f));
+        auto icon = r.withSizeKeepingCentre (wingPx (32.0f), wingPx (32.0f)).translated (0.0f, wingPx (4.0f));
         g.setColour (ink);
-        g.setFont (wingFontFit (TypeScale::statusCaption, label.getHeight() * 0.85f));
-        g.drawFittedText (t.text, label.toNearestInt(), juce::Justification::centredTop, 1, 0.6f);
+        juce::Path p;
+        if (t.icon == Icon::ChevronUp)
+        {
+            // TALK: a filled triangle up.
+            p.addTriangle (icon.getX(), icon.getCentreY() + icon.getHeight() * 0.22f, icon.getRight(), icon.getCentreY() + icon.getHeight() * 0.22f,
+                           icon.getCentreX(), icon.getCentreY() - icon.getHeight() * 0.25f);
+            g.fillPath (p);
+        }
+        else if (t.icon == Icon::ChevronDown)
+        {
+            // DIM: a small filled triangle down.
+            auto s = icon.reduced (icon.getWidth() * 0.18f);
+            p.addTriangle (s.getX(), s.getCentreY() - s.getHeight() * 0.2f, s.getRight(), s.getCentreY() - s.getHeight() * 0.2f, s.getCentreX(),
+                           s.getCentreY() + s.getHeight() * 0.25f);
+            g.fillPath (p);
+        }
+        else if (t.icon == Icon::Cancel)
+        {
+            // MUTE: a cross.
+            auto s = icon.reduced (icon.getWidth() * 0.3f);
+            g.drawLine ({ s.getTopLeft(), s.getBottomRight() }, wingPx (3.0f));
+            g.drawLine ({ s.getTopRight(), s.getBottomLeft() }, wingPx (3.0f));
+        }
+        else if (t.icon == Icon::WidthArrows)
+        {
+            // LR SWAP: two rings side by side, the left one filled.
+            auto s = icon.withSizeKeepingCentre (icon.getWidth() * 0.8f, icon.getWidth() * 0.45f);
+            const float d = s.getHeight();
+            g.fillEllipse (s.getX(), s.getY(), d, d);
+            g.drawEllipse (s.getRight() - d, s.getY(), d, d, wingPx (2.0f));
+        }
+        else if (t.icon == Icon::Circle)
+            g.drawEllipse (icon.reduced (icon.getWidth() * 0.25f), wingPx (2.0f)); // MONO: a ring
+        else
+            drawIcon (g, t.icon, icon, ink);
+        g.setColour (ink);
+        g.setFont (capFont (10.0f, WingWeight::SemiBold));
+        g.drawFittedText (t.text, label.toNearestInt(), juce::Justification::centred, 1, 0.6f);
     }
 }
 
 void MonitorsPage::paintTalk (juce::Graphics& g)
 {
+    // Without a talkback channel the talk side is dim (TALKBACK DISABLED).
+    const bool talkDim = ctx.engine.getTalkStrip() == nullptr;
     constexpr int handheldMic = 102; // the WING's talkback icon
-    tab (g, talkTabs.withWidth (talkTabs.getWidth() / 2).reduced (1, 0), Icon::Edit, "TALK A", talkTab == 0, true, handheldMic);
-    tab (g, talkTabs.withTrimmedLeft (talkTabs.getWidth() / 2).reduced (1, 0), Icon::Edit, "TALK B", talkTab == 1, true, handheldMic);
+    g.setColour (dimmed (Dark::header, talkDim));
+    g.fillRect (talkTabs);
+    for (int i = 0; i < 2; ++i)
+        tab (g, talkTabKeys[i], Icon::Edit, i == 0 ? "TALK A" : "TALK B", talkTab == i, talkDim, handheldMic);
+    g.setColour (juce::Colours::black);
+    g.fillRect (talkTabKeys[0].getUnion (talkTabKeys[1]).withTop (talkTabKeys[0].getBottom()).withHeight (px (3.0f)));
 
-    g.setColour (Dark::body);
-    g.fillRect (talkArea);
-    auto left = switchBox;
-    panel (g, left.removeFromTop (juce::jmin (darkHeaderHeight(), left.getHeight() / 5)), "SWITCH MODE");
-    field (g, talkChannelField, "TALKBACK", talkChannelName(), true);
-    auto dimArea = autoDimBox;
-    panel (g, dimArea.removeFromTop (juce::jmin (darkHeaderHeight(), dimArea.getHeight() / 4)), "AUTO DIM");
+    panel (g, switchHeader, "SWITCH MODE", talkDim);
+    panel (g, autoDimHeader, "AUTO DIM", talkDim);
+    g.setColour (dimmed (Dark::body, talkDim));
+    for (auto r : { switchBox, autoDimBox, talkArea })
+        g.fillRect (r);
 
-    g.setColour (Dark::textDim);
-    g.setFont (wingFont (TypeScale::statusCaption));
+    if (talkDim)
+    {
+        // TALKBACK DISABLED (touch it to choose the channel).
+        auto r = talkChannelField.reduced (px (20.0f), 0);
+        const auto ink = Colours::gold.withMultipliedBrightness (0.75f);
+        drawIcon (g, Icon::Info, r.removeFromLeft (px (28.0f)).toFloat().withSizeKeepingCentre (wingPx (24.0f), wingPx (24.0f)), ink);
+        g.setColour (ink);
+        g.setFont (capFont (15.0f));
+        g.drawFittedText ("TALKBACK\nDISABLED", r, juce::Justification::centred, 2, 0.8f);
+    }
+    else
+        field (g, talkChannelField.reduced (px (8.0f), px (7.0f)), "TALKBACK", talkChannelName(), true);
+
+    g.setColour (dimmed (Colours::caption, talkDim));
+    g.setFont (capFont (15.0f));
     g.drawText ("USE SEND LEVELS", sendLevelsRow, juce::Justification::centredLeft);
     const auto& p = talkPath();
-    tileGrid (g, busGrid, busTiles, "TALK TO BUS", "BUS", p.buses.load());
-    tileGrid (g, mtxGrid, mtxTiles, "TALK TO MATRIX", "MTX", p.matrices.load());
-    tileGrid (g, mainGrid, mainTiles, "TALK TO MAIN", "MAIN", p.mains.load());
+    tileGrid (g, busGrid, busTiles, "TALK TO BUS", "BUS", p.buses.load(), talkDim);
+    tileGrid (g, mtxGrid, mtxTiles, "TALK TO MATRIX", "MTX", p.matrices.load(), talkDim);
+    tileGrid (g, mainGrid, mainTiles, "TALK TO MAIN", "MAIN", p.mains.load(), talkDim);
 }
 
 void MonitorsPage::paintPath (juce::Graphics& g)
 {
-    tab (g, pathTabs.withWidth (pathTabs.getWidth() / 2).reduced (1, 0), Icon::Headphones, "PHONES", showsPhones(), true);
-    tab (g, pathTabs.withTrimmedLeft (pathTabs.getWidth() / 2).reduced (1, 0), Icon::Speaker, "SPEAKERS", ! showsPhones(), true);
+    g.setColour (Dark::header);
+    g.fillRect (pathTabs);
+    tab (g, pathTabKeys[0], Icon::Headphones, "PHONES", showsPhones(), false);
+    tab (g, pathTabKeys[1], Icon::Speaker, "SPEAKERS", ! showsPhones(), false);
+    g.setColour (juce::Colours::black);
+    g.fillRect (pathTabKeys[0].getUnion (pathTabKeys[1]).withTop (pathTabKeys[0].getBottom()).withHeight (px (3.0f)));
     panel (g, pathHeader, showsPhones() ? "PHONES SETTINGS" : "SPEAKERS SETTINGS");
     g.setColour (Dark::body);
-    g.fillRect (pathArea);
+    for (auto r : { sourceBox, dimBox, directBox, distBox })
+        g.fillRect (r);
 
     auto& d = pathDsp();
     field (g, sourceField, "SOURCE", MixerEngine::monitorSourceName (pathSource().source.load()), true);
     field (g, directField, "DIRECT IN", MixerEngine::directSourceName (d.directSource.load()), true);
     paintEqKey (g);
-
-    // The boxes: DIM / PFL DIM / BAND SOLO, and the DIST slider with INVERT and DELAY.
-    for (auto box : { dimBox, distBox })
-    {
-        g.setColour (Dark::header);
-        g.fillRect (box);
-        g.setColour (juce::Colours::black);
-        g.drawRect (box, 1);
-    }
     paintDistSlider (g);
     auto key = [&g] (juce::Rectangle<int> r, Icon icon, const juce::String& text, bool on, juce::Colour onColour)
     {
+        // An outlined icon key, its caption under it.
         auto f = r.toFloat();
-        auto label = f.removeFromBottom (juce::jmin (screenCap (16.0f), f.getHeight() * 0.32f));
         g.setColour (on ? onColour : Dark::key);
-        g.fillRoundedRectangle (f.reduced (1.0f), 2.0f);
-        const auto ink = on ? juce::Colours::black : Dark::text;
-        drawIcon (g, icon, f.withSizeKeepingCentre (juce::jmin (f.getWidth(), f.getHeight()), juce::jmin (f.getWidth(), f.getHeight())).reduced (f.getHeight() * 0.2f), ink);
-        g.setColour (on ? onColour : Dark::textDim);
-        g.setFont (wingFontFit (TypeScale::statusCaption, label.getHeight() * 0.85f));
-        g.drawFittedText (text, label.toNearestInt(), juce::Justification::centred, 1, 0.7f);
+        g.fillRect (f);
+        g.setColour (Colours::screenLine);
+        g.drawRect (f, 1.0f);
+        drawIcon (g, icon, f.reduced (f.getWidth() * 0.15f), on ? juce::Colours::black : Colours::screenLine.brighter (0.4f));
+        g.setColour (on ? onColour : Colours::screenLine.brighter (0.4f));
+        g.setFont (capFont (15.0f));
+        g.drawText (text, r.withY (r.getBottom() + px (10.0f)).withHeight (px (24.0f)).expanded (px (30.0f), 0), juce::Justification::centred, false);
     };
     key (invertKey, Icon::Invert, "INVERT", d.invert.load(), KnobColours::yellow);
     key (delayKey, Icon::DeltaT, "DELAY", d.delayOn.load(), Colours::lime);
@@ -950,17 +1027,20 @@ void MonitorsPage::paintPath (juce::Graphics& g)
 
 void MonitorsPage::paintEqKey (juce::Graphics& g)
 {
-    // "EQ" and the path's curve (a flat line while the EQ does nothing); gold while on.
+    // "EQ" and the path's curve (a flat line while the EQ does nothing):
+    // outlined on black, gold while on.
     auto& d = pathDsp();
     const bool on = d.eqOn.load();
     auto r = eqKey.toFloat();
-    g.setColour (on ? Colours::gold : Dark::well);
+    g.setColour (on ? Colours::gold : juce::Colours::black);
     g.fillRect (r);
-    g.setColour (on ? juce::Colours::black : Dark::text);
-    auto text = r.removeFromLeft (juce::jmin (r.getWidth() * 0.3f, screenCap (40.0f)));
-    g.setFont (fontFittingWidth (wingFontPx (juce::jmin (TypeScale::value * getWingScreenHeight(), r.getHeight() * 0.36f)), "EQ", text.getWidth() - 8.0f, 1.0f));
-    g.drawText ("EQ", text.reduced (4.0f, 0.0f), juce::Justification::centredLeft, false);
-    auto c = r.reduced (6.0f, r.getHeight() * 0.25f);
+    g.setColour (Colours::caption);
+    g.drawRect (r, wingPx (1.5f));
+    g.setColour (on ? juce::Colours::black : Colours::caption);
+    auto text = r.removeFromLeft (wingPx (40.0f));
+    g.setFont (capFont (15.0f));
+    g.drawText ("EQ", text.withTrimmedLeft (wingPx (8.0f)), juce::Justification::centredLeft, false);
+    auto c = r.reduced (wingPx (6.0f), r.getHeight() * 0.25f);
     std::vector<float> freqs (eqKeyFreqs.begin(), eqKeyFreqs.end()), db (eqKeyFreqs.size(), 0.0f);
     ctx.engine.getMonitorEqResponse (showsPhones(), -1, freqs.data(), db.data(), (int) freqs.size());
     juce::Path p;
@@ -973,21 +1053,33 @@ void MonitorsPage::paintEqKey (juce::Graphics& g)
         else
             p.lineTo (pt);
     }
-    g.strokePath (p, juce::PathStrokeType (1.5f));
+    g.strokePath (p, juce::PathStrokeType (wingPx (1.5f)));
 }
 
 namespace
 {
-    // The DIST slider's scale: 0.1 .. 100 m, logarithmic.
-    float distToPos (float m) { return juce::jlimit (0.0f, 1.0f, std::log (juce::jmax (0.1f, m) / 0.1f) / std::log (1000.0f)); }
-    float posToDist (float p) { return 0.1f * std::pow (1000.0f, juce::jlimit (0.0f, 1.0f, p)); }
+    // The DIST slider [WING]: 0.1 .. 100 m, linear (100, 75, 50, 25 on its scale).
+    float distToPos (float m) { return juce::jlimit (0.0f, 1.0f, (m - 0.1f) / 99.9f); }
+    float posToDist (float p) { return 0.1f + 99.9f * juce::jlimit (0.0f, 1.0f, p); }
 
-    /** The slider's track inside its area (above the value box). */
+    /** The travel of the slider's cap inside its well. */
     juce::Rectangle<float> distTrack (juce::Rectangle<int> slider)
     {
-        auto r = slider.toFloat().reduced (2.0f, 8.0f);
-        r.removeFromBottom (juce::jmin (screenCap (36.0f), r.getHeight() * 0.28f));
-        return r.withTrimmedLeft (r.getWidth() * 0.45f).withWidth (juce::jmin (screenCap (10.0f), r.getWidth() * 0.25f));
+        return slider.toFloat().withTrimmedTop (wingPx (14.0f)).withTrimmedBottom (wingPx (14.0f));
+    }
+
+    /** A fader's well [WING]: a 2 px black frame round #101010, a black slot. */
+    juce::Rectangle<float> paintWell (juce::Graphics& g, juce::Rectangle<float> r, float slotTop, float slotBottom)
+    {
+        g.setColour (juce::Colours::black);
+        g.fillRect (r);
+        g.setColour (Dark::well);
+        g.fillRect (r.reduced (wingPx (2.0f)));
+        const float w = wingPx (12.0f);
+        const juce::Rectangle<float> slot (r.getCentreX() - w / 2.0f, slotTop, w, slotBottom - slotTop);
+        g.setColour (juce::Colours::black);
+        g.fillRoundedRectangle (slot, w * 0.3f);
+        return slot;
     }
 } // namespace
 
@@ -996,35 +1088,32 @@ void MonitorsPage::paintDistSlider (juce::Graphics& g)
     auto& d = pathDsp();
     const bool on = d.delayOn.load();
     const float m = d.delayM.load();
-    auto track = distTrack (distSlider);
-    g.setColour (Dark::well);
-    g.fillRect (track);
+    const auto track = distTrack (distSlider);
+    const auto slot = paintWell (g, distSlider.toFloat(), (float) distSlider.getY() + wingPx (8.0f), track.getBottom());
     const float y = track.getBottom() - track.getHeight() * distToPos (m);
-    g.setColour (on ? Colours::lime : Dark::textDim);
-    g.fillRect (track.withTop (y));
-    // The thumb and the scale.
-    g.setColour (Dark::text);
-    g.fillRect (juce::Rectangle<float> (track.getWidth() + 8.0f, 4.0f).withCentre ({ track.getCentreX(), y }));
-    g.setColour (Dark::textDim);
-    g.setFont (wingFont (TypeScale::statusCaption));
-    for (float mark : { 0.1f, 1.0f, 10.0f, 100.0f })
+    if (on)
+    {
+        g.setColour (Colours::lime);
+        g.fillRect (slot.withTop (y));
+    }
+    // The scale left of the well.
+    g.setColour (Colours::caption);
+    g.setFont (capFont (10.0f));
+    for (float mark : { 25.0f, 50.0f, 75.0f, 100.0f })
     {
         const float my = track.getBottom() - track.getHeight() * distToPos (mark);
-        g.drawText (mark < 1.0f ? juce::String (mark, 1) : juce::String (juce::roundToInt (mark)),
-                    juce::Rectangle<float> (distSlider.getX() + 2.0f, my - 6.0f, track.getX() - distSlider.getX() - 5.0f, 12.0f),
+        g.drawText (juce::String (juce::roundToInt (mark)), juce::Rectangle<float> ((float) distSlider.getX() - wingPx (40.0f), my - wingPx (8.0f), wingPx (34.0f), wingPx (16.0f)),
                     juce::Justification::centredRight);
     }
-    // The value: the distance, and the delay it makes.
-    auto value = distSlider.toFloat().withTop (track.getBottom() + 6.0f).reduced (2.0f, 0.0f);
-    auto box = value.removeFromTop (juce::jmin (screenCap (18.0f), value.getHeight() * 0.5f));
-    g.setColour (Dark::key);
+    g.drawText ("0.1 m", juce::Rectangle<float> ((float) distSlider.getX() - wingPx (46.0f), track.getBottom() - wingPx (8.0f), wingPx (42.0f), wingPx (16.0f)),
+                juce::Justification::centredRight);
+    // The cap: the distance in a grey box.
+    auto box = juce::Rectangle<float> (wingPx (60.0f), wingPx (24.0f)).withCentre ({ slot.getCentreX(), y });
+    g.setColour (on ? Colours::lime : Colours::caption.darker (0.15f));
     g.fillRect (box);
-    g.setColour (Dark::text);
-    g.setFont (wingFontFit (TypeScale::statusCaption * 1.2f, box.getHeight() * 0.8f));
+    g.setColour (juce::Colours::black);
+    g.setFont (capFont (12.0f));
     g.drawFittedText (juce::String (m, m < 10.0f ? 1 : 0) + " m", box.toNearestInt(), juce::Justification::centred, 1, 0.7f);
-    g.setColour (on ? Colours::lime : Dark::textDim);
-    g.setFont (wingFontFit (TypeScale::statusCaption, value.getHeight() * 0.8f));
-    g.drawFittedText (juce::String (MixerEngine::monitorDelayMs (m), 1) + " ms", value.toNearestInt(), juce::Justification::centred, 1, 0.7f);
 }
 
 void MonitorsPage::paintLevel (juce::Graphics& g)
@@ -1033,174 +1122,132 @@ void MonitorsPage::paintLevel (juce::Graphics& g)
     g.setColour (Dark::body);
     g.fillRect (levelArea);
 
-    // The meter (L R) with the CLIP .. -60 scale, and the limiter's gain reduction.
+    // The meter (L R) with the CLIP .. -60 scale, segments lit green, yellow, red.
     auto m = meterArea.toFloat();
-    g.setColour (Dark::well);
-    g.fillRect (m);
-    auto scale = m.removeFromLeft (m.getWidth() * 0.38f);
-    auto grBar = m.removeFromRight (juce::jmax (5.0f, m.getWidth() * 0.22f));
-    g.setColour (Dark::textDim);
-    g.setFont (wingFont (TypeScale::statusCaption));
+    g.setColour (Colours::caption);
+    g.setFont (capFont (9.0f));
     for (auto [text, db] : { std::pair { "CLIP", 0.0f }, std::pair { "-6", -6.0f }, std::pair { "-12", -12.0f }, std::pair { "-24", -24.0f },
                              std::pair { "-36", -36.0f }, std::pair { "-48", -48.0f }, std::pair { "-60", -60.0f } })
     {
-        const float y = m.getBottom() - 14.0f - (m.getHeight() - 20.0f) * meterPos (db);
-        g.drawText (text, juce::Rectangle<float> (scale.getX(), y - 6.0f, scale.getWidth() - 2.0f, 12.0f), juce::Justification::centredRight);
+        const float y = m.getBottom() - m.getHeight() * meterPos (db);
+        g.drawText (text, juce::Rectangle<float> (m.getX() - wingPx (40.0f), y - wingPx (8.0f), wingPx (34.0f), wingPx (16.0f)), juce::Justification::centredRight);
     }
-    auto bars = m.reduced (2.0f, 6.0f).withTrimmedBottom (8.0f);
-    const float w = bars.getWidth() / 2.0f;
+    const float segment = wingPx (3.0f);
     for (int ch = 0; ch < 2; ++ch)
     {
-        auto bar = juce::Rectangle<float> (bars.getX() + w * (float) ch, bars.getY(), w, bars.getHeight()).reduced (2.0f, 0.0f);
-        g.setColour (Dark::key);
-        g.fillRect (bar);
+        auto bar = juce::Rectangle<float> (m.getX() + wingPx (19.0f) * (float) ch, m.getY(), wingPx (12.0f), m.getHeight());
         const float level = shownPeak[(size_t) ch];
-        auto lit = bar.withTop (bar.getBottom() - bar.getHeight() * level);
-        g.setColour (level > meterPos (-0.5f) ? Colours::meterRed : level > meterPos (-12.0f) ? Colours::meterYellow : Colours::meterGreen);
-        g.fillRect (lit);
-        g.setColour (Dark::textDim);
-        g.drawText (ch == 0 ? "L" : "R", juce::Rectangle<float> (bar.getX(), bars.getBottom() + 1.0f, bar.getWidth(), 10.0f), juce::Justification::centred);
+        for (float y = bar.getBottom() - segment; y >= bar.getY(); y -= segment)
+        {
+            const float pos = (bar.getBottom() - y) / bar.getHeight();
+            const bool lit = pos <= level;
+            g.setColour (! lit ? Colours::screenTile
+                               : (pos > meterPos (-0.5f) ? Colours::meterRed : pos > meterPos (-12.0f) ? Colours::meterYellow : Colours::meterGreen));
+            g.fillRect (bar.getX(), y, bar.getWidth(), segment - wingPx (1.0f));
+        }
+        g.setColour (Colours::caption);
+        g.drawText (ch == 0 ? "L" : "R", juce::Rectangle<float> (bar.getX(), bar.getBottom() + wingPx (2.0f), bar.getWidth(), wingPx (16.0f)), juce::Justification::centred);
     }
-    // GR (firmware 1.11): down from the top, 0 .. 20 dB.
-    auto gr = grBar.reduced (1.0f, 6.0f).withTrimmedBottom (8.0f);
-    g.setColour (Dark::key);
-    g.fillRect (gr);
-    g.setColour (Colours::amber);
-    g.fillRect (gr.withHeight (gr.getHeight() * juce::jlimit (0.0f, 1.0f, shownGr / 20.0f)));
-    g.setColour (Dark::textDim);
-    g.setFont (wingFont (TypeScale::meterScale));
-    g.drawText ("GR", juce::Rectangle<float> (gr.getX() - 4.0f, gr.getBottom() + 1.0f, gr.getWidth() + 8.0f, 10.0f), juce::Justification::centred);
+    // The limiter's gain reduction (firmware 1.11) down from the top, beside the meter.
+    if (shownGr > 0.1f)
+    {
+        auto gr = juce::Rectangle<float> (m.getX() + wingPx (36.0f), m.getY(), wingPx (4.0f), m.getHeight());
+        g.setColour (Colours::amber);
+        g.fillRect (gr.withHeight (gr.getHeight() * juce::jlimit (0.0f, 1.0f, shownGr / 20.0f)));
+    }
 
-    // The level fader (set by PHONES LEVEL / MONITOR LEVEL): a lime fill and a value flag.
+    // The level fader (set by PHONES LEVEL / MONITOR LEVEL): its scale, a lime
+    // fill and the value in a white box at the cap.
     const float levelDb = pathLevel().load();
     auto f = faderArea.toFloat();
-    g.setColour (Dark::well);
-    g.fillRect (f);
-    const float pos = fader::dbToPos (juce::jlimit (-144.0f, 10.0f, levelDb));
-    auto slot = f.withSizeKeepingCentre (juce::jmin (screenCap (10.0f), f.getWidth() * 0.3f), f.getHeight() - 16.0f);
-    g.setColour (Dark::key);
-    g.fillRect (slot);
-    g.setColour (pathLime);
-    g.fillRect (slot.withTop (slot.getBottom() - slot.getHeight() * pos));
-    const float y = slot.getBottom() - slot.getHeight() * pos;
-    auto flag = juce::Rectangle<float> (f.getWidth() * 0.9f, 16.0f).withCentre ({ f.getCentreX(), juce::jlimit (f.getY() + 8.0f, f.getBottom() - 8.0f, y) });
+    const auto lane = f.withTrimmedTop (wingPx (15.0f)).withTrimmedBottom (wingPx (15.0f));
+    const auto slot = paintWell (g, f, f.getY() + wingPx (10.0f), lane.getBottom());
+    g.setColour (Colours::caption);
+    g.setFont (capFont (9.0f));
+    for (float db : { 10.0f, 5.0f, 0.0f, -5.0f, -10.0f, -20.0f, -30.0f, -50.0f, -144.0f })
+    {
+        const float y = lane.getBottom() - lane.getHeight() * fader::dbToPos (db);
+        const auto text = db < -100.0f ? juce::String ("-oo") : (db > 0.0f ? "+" : "") + juce::String (juce::roundToInt (db));
+        g.drawText (text, juce::Rectangle<float> (f.getX() - wingPx (40.0f), y - wingPx (8.0f), wingPx (34.0f), wingPx (16.0f)), juce::Justification::centredRight);
+    }
+    const float y = lane.getBottom() - lane.getHeight() * fader::dbToPos (juce::jlimit (-144.0f, 10.0f, levelDb));
+    g.setColour (levelLime);
+    g.fillRect (slot.withTop (y));
+    auto flag = juce::Rectangle<float> (wingPx (64.0f), wingPx (24.0f)).withCentre ({ f.getCentreX(), y });
+    g.fillRect (juce::Rectangle<float> (f.getX(), y - wingPx (2.0f), f.getWidth(), wingPx (4.0f)));
     g.setColour (juce::Colours::white);
-    g.fillRect (flag);
+    g.fillRoundedRectangle (flag, wingPx (2.0f));
     g.setColour (juce::Colours::black);
-    g.setFont (wingFont (TypeScale::statusCaption));
-    g.drawFittedText (fader::text (levelDb) + " dB", flag.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+    g.setFont (capFont (12.0f));
+    g.drawFittedText (home::wingDb (levelDb) + " dB", flag.toNearestInt(), juce::Justification::centred, 1, 0.6f);
 }
 
 void MonitorsPage::resized()
 {
-    auto b = getLocalBounds();
+    // [WING] firmware 3.1, in the console's pixels from the page's top
+    // (the status bar's bottom, y = 80).
     if (eqView != nullptr)
-        eqView->setBounds (b);
-    toolbar = b.removeFromLeft (juce::jlimit (48, screenCap (90), getWidth() * 8 / 100));
-    b.removeFromLeft (4);
-    const int tabH = juce::jlimit (26, screenCap (44), getHeight() / 12);
-    const int gap = 4;
+        eqView->setBounds (getLocalBounds());
 
-    // Toolbar keys, top to bottom.
+    // The toolbar: TALK A / B, PHONES / SPEAKERS / PH+SPK, DIM / MUTE / MONO / LR SWAP.
+    toolbar = wingRect (8.0f, 0.0f, 80.0f, 672.0f);
     {
-        auto t = toolbar.reduced (4, 4);
-        const int h = t.getHeight() / (int) tools.size();
-        for (auto& k : tools)
-            k.area = t.removeFromTop (h).reduced (0, 2);
+        static constexpr float tops[] = { 4.0f, 74.0f, 160.0f, 230.0f, 300.0f, 386.0f, 456.0f, 526.0f, 596.0f };
+        for (size_t i = 0; i < tools.size() && i < std::size (tops); ++i)
+            tools[i].area = wingRect (12.0f, tops[i], 72.0f, 70.0f);
     }
 
-    auto talk = b.removeFromLeft ((b.getWidth() - gap) * 45 / 100);
-    b.removeFromLeft (gap);
-    auto right = b;
+    // TALK A / TALK B.
+    talkTabs = wingRect (128.0f, 0.0f, 464.0f, 64.0f);
+    talkTabKeys[0] = wingRect (128.0f, 0.0f, 190.0f, 55.0f);
+    talkTabKeys[1] = wingRect (320.0f, 0.0f, 190.0f, 55.0f);
+    switchHeader = wingRect (128.0f, 72.0f, 192.0f, 64.0f);
+    switchBox = wingRect (128.0f, 144.0f, 192.0f, 202.0f);
+    switchMode->setBounds (wingRect (165.0f, 160.0f, 118.0f, 170.0f));
+    talkChannelField = wingRect (128.0f, 346.0f, 192.0f, 78.0f);
+    autoDimHeader = wingRect (128.0f, 424.0f, 192.0f, 64.0f);
+    autoDimBox = wingRect (128.0f, 496.0f, 192.0f, 176.0f);
+    busDim.setBounds (wingRect (144.0f, 512.0f, 160.0f, 64.0f));
+    monDim.setBounds (wingRect (144.0f, 592.0f, 160.0f, 64.0f));
+    talkArea = wingRect (328.0f, 72.0f, 264.0f, 600.0f);
+    sendLevelsRow = wingRect (348.0f, 72.0f, 170.0f, 64.0f);
+    sendLevels->setBounds (wingRect (528.0f, 84.0f, 48.0f, 40.0f));
+    busGrid = wingRect (344.0f, 140.0f, 232.0f, 254.0f);
+    mtxGrid = wingRect (344.0f, 411.0f, 232.0f, 142.0f);
+    mainGrid = wingRect (344.0f, 570.0f, 232.0f, 86.0f);
+    busTiles = gridTiles (busGrid, kWingBuses, 4);
+    mtxTiles = gridTiles (mtxGrid, kNumMatrices, 4);
+    mainTiles = gridTiles (mainGrid, kNumMains, 4);
 
-    talkTabs = talk.removeFromTop (tabH);
-    talk.removeFromTop (gap);
-    talkArea = talk;
-    {
-        auto t = talkArea.reduced (4);
-        auto col = t.removeFromLeft (t.getWidth() * 40 / 100);
-        t.removeFromLeft (6);
-        switchBox = col.removeFromTop (col.getHeight() * 46 / 100);
-        col.removeFromTop (gap);
-        autoDimBox = col;
-        auto sw = switchBox.withTrimmedTop (juce::jmin (darkHeaderHeight(), switchBox.getHeight() / 5) + 6).reduced (8, 0);
-        // [Fig. 80] AUTO / PUSH / LATCH stacked, the TALKBACK channel field under them.
-        talkChannelField = sw.removeFromBottom (juce::jmin (sw.getHeight() / 3, screenCap (48)));
-        sw.removeFromBottom (8);
-        switchMode->setBounds (sw.withSizeKeepingCentre (juce::jmin (sw.getWidth(), screenCap (140)), juce::jmin (sw.getHeight(), 3 * 34)));
-        auto ad = autoDimBox.withTrimmedTop (juce::jmin (darkHeaderHeight(), autoDimBox.getHeight() / 4) + 6).reduced (6, 0);
-        const int kh = juce::jmin (screenCap (48), ad.getHeight() / 2 - 4);
-        busDim.setBounds (ad.removeFromTop (kh));
-        ad.removeFromTop (6);
-        monDim.setBounds (ad.removeFromTop (kh));
+    // PHONES / SPEAKERS SETTINGS: SOURCE, SRC LEVEL, SRC MIX; DIM, PFL DIM,
+    // BAND SOLO; DIRECT IN; the EQ key, the DIST slider, INVERT and DELAY.
+    pathTabs = wingRect (632.0f, 0.0f, 640.0f, 64.0f);
+    pathTabKeys[0] = wingRect (632.0f, 0.0f, 189.0f, 55.0f);
+    pathTabKeys[1] = wingRect (824.0f, 0.0f, 189.0f, 55.0f);
+    pathHeader = wingRect (632.0f, 72.0f, 424.0f, 64.0f);
+    sourceBox = wingRect (632.0f, 144.0f, 208.0f, 264.0f);
+    sourceField = wingRect (648.0f, 160.0f, 176.0f, 64.0f);
+    srcLevel.setBounds (wingRect (648.0f, 248.0f, 176.0f, 64.0f));
+    srcMix.setBounds (wingRect (648.0f, 328.0f, 176.0f, 64.0f));
+    dimBox = wingRect (632.0f, 416.0f, 208.0f, 256.0f);
+    dim.setBounds (wingRect (648.0f, 432.0f, 176.0f, 64.0f));
+    pflDim.setBounds (wingRect (648.0f, 512.0f, 176.0f, 64.0f));
+    bandSolo.setBounds (wingRect (648.0f, 592.0f, 176.0f, 64.0f));
+    directBox = wingRect (848.0f, 144.0f, 208.0f, 96.0f);
+    directField = wingRect (864.0f, 160.0f, 176.0f, 64.0f);
+    distBox = wingRect (848.0f, 248.0f, 208.0f, 424.0f);
+    eqKey = wingRect (864.0f, 260.0f, 176.0f, 64.0f);
+    distSlider = wingRect (894.0f, 336.0f, 64.0f, 320.0f);
+    invertKey = wingRect (983.0f, 457.0f, 48.0f, 48.0f);
+    delayKey = wingRect (983.0f, 577.0f, 48.0f, 48.0f);
+    pathArea = wingRect (632.0f, 144.0f, 424.0f, 528.0f);
 
-        sendLevelsRow = t.removeFromTop (juce::jmin (screenCap (28), t.getHeight() / 8));
-        sendLevels->setBounds (sendLevelsRow.removeFromRight (juce::jmin (screenCap (48), sendLevelsRow.getWidth() / 4)).reduced (0, 3));
-        busGrid = t.removeFromTop (t.getHeight() * 50 / 100);
-        t.removeFromTop (6);
-        mtxGrid = t.removeFromTop (t.getHeight() * 55 / 100);
-        t.removeFromTop (6);
-        mainGrid = t;
-        busTiles = gridTiles (busGrid, kWingBuses, 4);
-        mtxTiles = gridTiles (mtxGrid, kNumMatrices, 4);
-        mainTiles = gridTiles (mainGrid, kNumMains, 4);
-    }
-
-    auto level = right.removeFromRight (juce::jlimit (90, screenCap (200), right.getWidth() * 30 / 100));
-    right.removeFromRight (gap);
-    pathTabs = right.removeFromTop (tabH);
-    right.removeFromTop (gap);
-    pathHeader = right.removeFromTop (darkHeaderHeight());
-    right.removeFromTop (2);
-    pathArea = right;
-    {
-        // Two columns (fig. 72). Left: SOURCE, SRC LEVEL, SRC MIX, then a box
-        // with DIM, PFL DIM and BAND SOLO. Right: DIRECT IN, the EQ key, then a
-        // box with the DIST slider, INVERT and DELAY.
-        auto p = pathArea.reduced (4);
-        const int rowH = juce::jlimit (30, screenCap (52), (p.getHeight() - 20) / 6);
-        auto leftCol = p.removeFromLeft (p.getWidth() / 2 - 3);
-        p.removeFromLeft (6);
-        auto rightCol = p;
-
-        sourceField = leftCol.removeFromTop (rowH).reduced (0, 2);
-        leftCol.removeFromTop (4);
-        for (auto* k : { &srcLevel, &srcMix })
-        {
-            k->setBounds (leftCol.removeFromTop (rowH).reduced (0, 2));
-            leftCol.removeFromTop (2);
-        }
-        leftCol.removeFromTop (6);
-        dimBox = leftCol;
-        auto box = dimBox.reduced (3);
-        const int kh = juce::jmin (rowH, box.getHeight() / 3);
-        for (auto* k : { &dim, &pflDim, &bandSolo })
-            k->setBounds (box.removeFromTop (kh).reduced (0, 2));
-
-        directField = rightCol.removeFromTop (rowH).reduced (0, 2);
-        rightCol.removeFromTop (4);
-        eqKey = rightCol.removeFromTop (rowH).reduced (0, 2);
-        rightCol.removeFromTop (8);
-        distBox = rightCol;
-        auto db = distBox.reduced (3);
-        distSlider = db.removeFromLeft (db.getWidth() * 52 / 100);
-        db.removeFromLeft (4);
-        const int keyH = juce::jmin (db.getWidth() + 14, db.getHeight() / 2 - 6);
-        invertKey = db.withHeight (keyH).withY (db.getY() + db.getHeight() / 4 - keyH / 2).reduced (2, 0);
-        delayKey = db.withHeight (keyH).withY (db.getY() + db.getHeight() * 3 / 4 - keyH / 2).reduced (2, 0);
-    }
-
-    levelHeader = level.removeFromTop (tabH + gap + darkHeaderHeight());
-    levelHeader = levelHeader.withTrimmedTop (tabH + gap);
-    level.removeFromTop (2);
-    levelArea = level;
-    {
-        auto l = levelArea.reduced (4);
-        limiter.setBounds (l.removeFromTop (juce::jlimit (30, screenCap (52), (pathArea.getHeight() - 28) / 6)).reduced (0, 2));
-        l.removeFromTop (6);
-        meterArea = l.removeFromLeft (l.getWidth() * 55 / 100);
-        faderArea = l.withTrimmedLeft (4);
-    }
+    // LEVEL: LIMITER, the meter, the level fader.
+    levelHeader = wingRect (1064.0f, 72.0f, 208.0f, 64.0f);
+    levelArea = wingRect (1064.0f, 144.0f, 208.0f, 528.0f);
+    limiter.setBounds (wingRect (1080.0f, 160.0f, 176.0f, 64.0f));
+    meterArea = wingRect (1104.0f, 254.0f, 31.0f, 326.0f);
+    faderArea = wingRect (1176.0f, 240.0f, 80.0f, 416.0f);
 }
 
 void MonitorsPage::setDistanceFromY (int y)
@@ -1282,10 +1329,10 @@ void MonitorsPage::mouseUp (const juce::MouseEvent& e)
     if (toggle (busTiles, talkPathParams.buses, pos) || toggle (mtxTiles, talkPathParams.matrices, pos) || toggle (mainTiles, talkPathParams.mains, pos))
         return;
     auto& d = pathDsp();
-    if (talkTabs.contains (pos))
-        showTalkTab (pos.x < talkTabs.getCentreX() ? 0 : 1);
-    else if (pathTabs.contains (pos))
-        showPathTab (pos.x < pathTabs.getCentreX() ? 0 : 1);
+    if (talkTabKeys[0].contains (pos) || talkTabKeys[1].contains (pos))
+        showTalkTab (talkTabKeys[0].contains (pos) ? 0 : 1);
+    else if (pathTabKeys[0].contains (pos) || pathTabKeys[1].contains (pos))
+        showPathTab (pathTabKeys[0].contains (pos) ? 0 : 1);
     else if (talkChannelField.contains (pos))
         chooseTalkChannel();
     else if (sourceField.contains (pos))

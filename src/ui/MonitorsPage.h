@@ -113,8 +113,8 @@ private:
     int talkTab = 0, pathTab = 0, pressedTalk = -1;
     bool draggingDist = false;
     std::vector<ToolKey> tools;
-    juce::Rectangle<int> toolbar, talkTabs, talkArea, pathTabs, pathHeader, pathArea, levelHeader, levelArea;
-    juce::Rectangle<int> switchBox, autoDimBox, sendLevelsRow, busGrid, mtxGrid, mainGrid, talkChannelField, sourceField, directField,
+    juce::Rectangle<int> toolbar, talkTabs, talkArea, pathTabs, pathHeader, pathArea, levelHeader, levelArea, talkTabKeys[2], pathTabKeys[2];
+    juce::Rectangle<int> switchHeader, switchBox, autoDimHeader, autoDimBox, sourceBox, directBox, sendLevelsRow, busGrid, mtxGrid, mainGrid, talkChannelField, sourceField, directField,
         eqKey, dimBox, distBox, distSlider, invertKey, delayKey, meterArea, faderArea;
     std::vector<juce::Rectangle<int>> busTiles, mtxTiles, mainTiles;
     KnobField srcLevel, srcMix, dim, pflDim, bandSolo, busDim, monDim, limiter;

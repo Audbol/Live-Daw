@@ -230,12 +230,14 @@ touchscreen looks the same in both.
     playback channels, PLAY: the USB player, OSC), then INIT. With everything picked it
     resets the whole console to a fresh 40-channel one, as before. The status bar has MONITORS (the
     toolbar with the talk keys, PHONES / SPEAKERS / PH+SPK, DIM, MUTE, MONO, LR SWAP;
-    TALK A / B: switch mode, talkback channel, AUTO DIM, USE SEND LEVELS and the bus,
-    matrix and main destinations; PHONES and SPEAKERS, each its own: SOURCE, SRC LEVEL,
+    TALK A / B: switch mode, AUTO DIM, USE SEND LEVELS and the bus, matrix and main
+    destinations, the talk side dim with TALKBACK DISABLED while no talkback channel is
+    set (touch it to pick one); PHONES and SPEAKERS, each its own: SOURCE, SRC LEVEL,
     SRC MIX, DIM, PFL DIM, BAND SOLO, DIRECT IN (any channel, bus, main or matrix, at
     its own level), the EQ (MONITORS EQ: 8 bands, PAN, WIDTH, and an RTA of the path,
-    PRE or POST its EQ as EQ/RTA SETTINGS' RTA SOURCE says), the DIST slider with
-    INVERT and DELAY, LIMITER with its gain reduction on the meter, and the level) and
+    PRE or POST its EQ as EQ/RTA SETTINGS' RTA SOURCE says), the DIST slider (0.1-100 m,
+    linear) with INVERT and DELAY, LIMITER with its gain reduction beside the meter, and
+    the level; laid out as on a WING with firmware 3.1) and
     CC EDIT (also SETUP pressed twice): the custom
     control layers, a function list and the target lists, COLOR, CLR ALL and NAME,
     saved with the show.
@@ -252,15 +254,25 @@ touchscreen looks the same in both.
     FX and CHAN presets, GO PREV / GO NEXT /
     PREV / NEXT / GO, the SCOPE window (strips, DCAs, mute groups, FX slots, the console
     settings and contents) and the GLOBAL safes in the status bar.
-  - **VIEW screens** (a fader section's VIEW key): OVERVIEW (every strip's blocks;
-    EXCL SOLO in the status bar; touching a DCA's name or number lists NAME, ICON, the
+  - **VIEW screens** (a fader section's VIEW key), laid out as on a WING with firmware
+    3.1: the layer column on the right picks the section's layer (DCA, MAIN, AUX,
+    BUSES, USER1, USER2) and the section (LEFT / CENTER / RIGHT); the bank keys left of
+    it (1-8 ... 33-40, AUX, BUS 1-8, BUS 9-16, MAIN, MTX, DCA 1-8, DCA 9-16) show one
+    bank of eight instead of the layer, the arrows under them page. OVERVIEW (every
+    strip's blocks, EXCL SOLO in the status bar on a page with channels; a DCA shows its
+    members, and touching it opens its assign screen: the DCA's tile in the title, the
+    eight DCAs as tabs, the channels, aux, buses, mains and matrices as tiles, members
+    framed gold, UNASSIGN and CLOSE; its tab touched again lists NAME, ICON, the
     scribble strip LIGHT and its colours), FADERS (send faders of a layer, and Sends on
-    Fader, show and set the send level, MUTE switching the send), SENDS (sends on faders to one bus, main or matrix), CONFIG (edit any layer
-    key by dragging channels, buses, DCAs, send levels, bus-to-bus sends, FX
-    parameters or MIDI CCs onto or between slots, with a page map; a **MIDI CC** fader
-    sends its CC, 0-127, out of EXTERNAL MIDI CONTROL and follows the CC coming in) and
-    MUTE GROUPS (members, names,
-    group keys).
+    Fader, show and set the send level, MUTE switching the send), SENDS (sends on faders
+    to one bus, main or matrix), CONFIG (edit any layer key by dragging channels, buses,
+    DCAs, send levels, bus-to-bus sends, FX parameters or MIDI CCs onto or between the
+    page's slots; the arrows page, one page past the end to append; NEW and DELETE /
+    RESTORE left of the slots; a **MIDI CC** fader sends its CC, 0-127, out of EXTERNAL
+    MIDI CONTROL and follows the CC coming in) and MUTE GROUPS (the eight groups'
+    members, a column red while its group is engaged, the group keys on the right;
+    touching a column opens the group's assign screen like a DCA's, with a SOURCE tab
+    for the sources it mutes, 64 at a time, and its tab touched again renames it).
   - **UTILITY:** system health and the event log (also on SETUP > LOG).
   - **RECORDER** (the status bar's **LIVE** card icon, red while recording): laid out
     like the WING-LIVE screens. See *Multitrack recording* below.

@@ -45,9 +45,9 @@ namespace Dark
     const juce::Colour gold = Colours::gold;           // tabs, selection
     const juce::Colour selectedRow { 0xff3b3215 };
     const juce::Colour selectedOutline = Colours::gold;
-    const juce::Colour layer { 0xff3d72ce };           // VIEW: the active layer
-    const juce::Colour section { 0xff829c01 };         // VIEW: the viewed fader section
-    const juce::Colour muteGroup { 0xfff24e52 };       // MUTE GROUPS headers and engaged keys
+    const juce::Colour layer = Colours::choice;        // VIEW: the active layer
+    const juce::Colour section = olive;                 // VIEW: the viewed fader section
+    const juce::Colour muteGroup { 0xfff05050 };       // MUTE GROUPS headers and engaged keys
     const juce::Colour faderFill = Colours::valueBlue;
     const juce::Colour muted { 0xffe0595b };
 } // namespace Dark

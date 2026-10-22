@@ -29,6 +29,13 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- MONITOR / TALKBACK, MUTE GROUPS and the VIEW screens with a DCA layer (OVERVIEW,
+  FADERS, SENDS, CONFIG) are laid out like a WING's (firmware 3.1, measured off the
+  console's screens): the layer column with bank keys (1-8 ... DCA 9-16), DCA and mute
+  group columns showing their members, assign screens for a DCA's or mute group's members
+  (tiles framed gold, UNASSIGN, CLOSE; a mute group's SOURCE tab), the talk side dim
+  while no talkback channel is set, and a linear DIST slider. The monitor parameter bar
+  no longer has TALK LVL (the surface's TALK LEVEL knob sets it).
 - SETUP starts with the WING's factory settings (checked on a console after INITIALIZE):
   USE CRSR/WHEEL, SHOW SOF FRAME, CH STRIP TOUCH SELECT and TAP TEMPO FLASH on, SEL DBL
   CLICK BUSFX, MAIN METER TAP POST. Settings you've changed are kept.
