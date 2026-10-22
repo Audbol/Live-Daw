@@ -286,6 +286,14 @@ bool loadPluginIntoFx (UiContext&, int slot, const juce::PluginDescription& desc
 /** Removes the plugin in an FX slot (closing its editor first). */
 void clearFx (UiContext&, int slot);
 
+/** Adds `desc` at the end of an FX slot's plugin chain (or loads it into an
+    empty slot). False if it couldn't be created or the chain is full. */
+bool addPluginToChain (UiContext&, int slot, const juce::PluginDescription& desc);
+/** Removes plugin `index` of a slot's chain (closing its editor first); the last one empties the slot. */
+void removePluginFromChain (UiContext&, int slot, int index);
+/** The scanned effect plugins by manufacturer; `chosen` gets the one picked. */
+juce::PopupMenu pluginTypesMenu (UiContext&, std::function<void (const juce::PluginDescription&)> chosen);
+
 /** Default click on a slot: open the editor if loaded, otherwise show the menu. */
 void clickFxSlot (UiContext&, int slot, juce::Component* target);
 

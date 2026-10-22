@@ -1553,3 +1553,62 @@ fn scene_and_snippet_files_round_trip_into_another_show() {
     assert!(library::load(&dir.join("missing.lsnap")).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Plugin host for chains: a slot holds a whole saved description (a
+/// `<PLUGINCHAIN>` carries its members' states, so the state is empty).
+struct ChainBridge<'a> {
+    engine: &'a Engine,
+    slots: HashMap<usize, String>,
+}
+
+impl PluginBridge for ChainBridge<'_> {
+    fn capture_fx(&mut self, slot: usize) -> Option<CapturedInsert> {
+        Some(CapturedInsert { description: self.slots.get(&slot)?.clone(), state: String::new() })
+    }
+
+    fn restore_fx(&mut self, slot: usize, mode: InsertMode, description: &str, _: &str) -> Result<(), RestoreError> {
+        let same = self.slots.get(&slot).map(|d| xml::parse(d).ok()) == Some(xml::parse(description).ok());
+        match mode {
+            InsertMode::StateOnly if !same => Err(RestoreError::Mismatch),
+            InsertMode::StateOnly => Ok(()),
+            InsertMode::Instantiate => {
+                let cb = InsertCallbacks { process: pass_through, release: None, ctx: std::ptr::null_mut() };
+                self.engine.set_fx_plugin(slot, Some(cb));
+                self.slots.insert(slot, description.to_owned());
+                Ok(())
+            }
+        }
+    }
+
+    fn clear_fx(&mut self, slot: usize) {
+        self.slots.remove(&slot);
+        self.engine.set_fx_plugin(slot, None);
+    }
+}
+
+#[test]
+fn plugin_chains_are_saved_loaded_and_recalled_whole() {
+    use livedaw_session::presets;
+    let chain = r#"<PLUGINCHAIN name="A + B"><MEMBER bypass="0"><PLUGIN name="A" format="Fake"/><STATE>s1</STATE></MEMBER><MEMBER bypass="1"><PLUGIN name="B" format="Fake"/><STATE>s2</STATE></MEMBER></PLUGINCHAIN>"#;
+    let engine = Engine::new(0);
+    let mut bridge = ChainBridge { engine: &engine, slots: HashMap::new() };
+    bridge.restore_fx(2, InsertMode::Instantiate, chain, "").unwrap();
+
+    let text = Show::new().to_xml(&engine, &mut bridge).to_document();
+    let e2 = Engine::new(0);
+    let mut loaded = ChainBridge { engine: &e2, slots: HashMap::new() };
+    let mut show = Show::new();
+    let warnings = show.load_from_text(&e2, &mut loaded, &text, true).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(loaded.slots.get(&2).map(|d| xml::parse(d).unwrap()), Some(xml::parse(chain).unwrap()));
+
+    // A recall goes into the same chain only; the warning names it.
+    show.add_scene(&e2, &mut loaded, "Chain", -1);
+    assert!(show.recall_scene(&e2, &mut loaded, 0).warnings.is_empty());
+    loaded.slots.insert(2, r#"<PLUGIN name="A" format="Fake"/>"#.into());
+    assert_eq!(show.recall_scene(&e2, &mut loaded, 0).warnings, vec!["FX 3: expected A + B, not recalled".to_string()]);
+
+    // FX presets name the chain.
+    let preset = presets::capture_fx(&engine, &mut bridge, 2, "Chain").unwrap();
+    assert_eq!(presets::info(&preset).unwrap().detail, "A + B");
+}

@@ -57,6 +57,82 @@ bool loadPluginIntoFx (UiContext& ctx, int slot, const juce::PluginDescription& 
     return true;
 }
 
+bool addPluginToChain (UiContext& ctx, int slot, const juce::PluginDescription& desc)
+{
+    auto& fx = ctx.engine.getFx();
+    if (fx.getNumChainMembers (slot) >= PluginChain::kMaxMembers)
+        return false;
+
+    juce::String error;
+    auto instance = ctx.host.createInstance (desc, ctx.engine.getSampleRate(), ctx.engine.getBlockSize(), error);
+    if (instance == nullptr)
+    {
+        ctx.log.warning ("Could not add " + desc.name + " to FX " + juce::String (slot + 1) + ": " + error);
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                "Could not load plugin", desc.name + "\n" + error);
+        return false;
+    }
+
+    if (! fx.hasPlugin (slot))
+        fx.setPlugin (slot, std::move (instance)); // the first one
+    else if (! fx.addToChain (slot, std::move (instance)))
+        return false;
+    ctx.log.info ("Added " + desc.name + " to FX " + juce::String (slot + 1) + " (" + juce::String (fx.getNumChainMembers (slot))
+                  + (fx.getNumChainMembers (slot) == 1 ? " plugin)" : " plugins in its chain)"));
+    return true;
+}
+
+void removePluginFromChain (UiContext& ctx, int slot, int index)
+{
+    auto& fx = ctx.engine.getFx();
+    auto* plugin = fx.getChainMember (slot, index);
+    if (plugin == nullptr)
+        return;
+    if (fx.getNumChainMembers (slot) == 1)
+    {
+        clearFx (ctx, slot); // the last one: the slot is empty (its window closes)
+        return;
+    }
+
+    const auto name = plugin->getName();
+    if (ctx.pluginRemoved)
+        ctx.pluginRemoved (plugin); // its editor goes first
+    fx.removeFromChain (slot, index);
+    ctx.log.info ("Removed " + name + " from FX " + juce::String (slot + 1));
+}
+
+juce::PopupMenu pluginTypesMenu (UiContext& ctx, std::function<void (const juce::PluginDescription&)> chosen)
+{
+    // The scanned effects by manufacturer.
+    juce::PopupMenu plugins;
+    juce::String currentMaker;
+    juce::PopupMenu makerMenu;
+
+    auto flushMaker = [&]
+    {
+        if (currentMaker.isNotEmpty())
+            plugins.addSubMenu (currentMaker, makerMenu);
+        makerMenu = {};
+    };
+
+    for (const auto& desc : ctx.host.getSortedTypes())
+    {
+        if (desc.isInstrument)
+            continue;
+
+        const auto maker = desc.manufacturerName.isEmpty() ? juce::String ("Unknown") : desc.manufacturerName;
+        if (maker != currentMaker)
+        {
+            flushMaker();
+            currentMaker = maker;
+        }
+
+        makerMenu.addItem (desc.name + " (" + desc.pluginFormatName + ")", [chosen, desc] { chosen (desc); });
+    }
+    flushMaker();
+    return plugins;
+}
+
 void clearFx (UiContext& ctx, int slot)
 {
     auto& fx = ctx.engine.getFx();
@@ -92,42 +168,28 @@ void showFxSlotMenu (UiContext& ctx, int slot, juce::Component* target)
         if (fx.isFaulted (slot) || fx.isDoubleAssigned (slot))
             menu.addItem ("Clear fault / double-assignment", [&ctx, slot] { ctx.engine.getFx().clearFlags (slot); });
 
-        menu.addItem ("Remove", [&ctx, slot] { clearFx (ctx, slot); });
+        const int members = fx.getNumChainMembers (slot);
+        menu.addItem (members > 1 ? "Remove all " + juce::String (members) + " plugins" : juce::String ("Remove"), [&ctx, slot] { clearFx (ctx, slot); });
         menu.addSeparator();
     }
 
-    juce::PopupMenu plugins;
     const auto types = ctx.host.getSortedTypes();
-    juce::String currentMaker;
-    juce::PopupMenu makerMenu;
-
-    auto flushMaker = [&]
+    auto plugins = pluginTypesMenu (ctx, [&ctx, slot] (const juce::PluginDescription& desc)
     {
-        if (currentMaker.isNotEmpty())
-            plugins.addSubMenu (currentMaker, makerMenu);
-        makerMenu = {};
-    };
+        if (loadPluginIntoFx (ctx, slot, desc) && ctx.openPluginEditor)
+            ctx.openPluginEditor (slot);
+    });
 
-    for (const auto& desc : types)
+    if (existing != nullptr)
     {
-        if (desc.isInstrument)
-            continue;
-
-        const auto maker = desc.manufacturerName.isEmpty() ? juce::String ("Unknown") : desc.manufacturerName;
-        if (maker != currentMaker)
-        {
-            flushMaker();
-            currentMaker = maker;
-        }
-
-        makerMenu.addItem (desc.name + " (" + desc.pluginFormatName + ")", [&ctx, slot, desc]
-        {
-            if (loadPluginIntoFx (ctx, slot, desc) && ctx.openPluginEditor)
-                ctx.openPluginEditor (slot);
-        });
+        // Another plugin after the slot's (a chain of up to 8, in one window).
+        menu.addSubMenu ("Add to chain", pluginTypesMenu (ctx, [&ctx, slot] (const juce::PluginDescription& desc)
+                         {
+                             if (addPluginToChain (ctx, slot, desc) && ctx.openPluginEditor)
+                                 ctx.openPluginEditor (slot);
+                         }),
+                         ! types.isEmpty() && fx.getNumChainMembers (slot) < PluginChain::kMaxMembers);
     }
-    flushMaker();
-
     menu.addSubMenu (existing != nullptr ? "Replace with" : "Load plugin (EXT)", plugins, ! types.isEmpty());
     menu.addItem ("Scan for plugins...", [&ctx] { if (ctx.showPluginScanner) ctx.showPluginScanner(); });
 

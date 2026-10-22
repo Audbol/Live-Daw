@@ -245,6 +245,33 @@ private:
         }
         expect (! fx.isFaulted (2));
 
+        // In a chain with an in-process plugin and a second sandboxed one: the
+        // latencies add up, the running helper carries on.
+        fx.params (2).mix = 100.0f;
+        auto local = TestPluginFormat::create (TestPluginFormat::Kind::gain);
+        local->getParameters()[1]->setValue (0.0f);
+        expect (fx.addToChain (2, std::move (local), 0));
+        auto second = SandboxedPlugin::create (TestPluginFormat::describe (TestPluginFormat::Kind::gain), 48000.0, kBlock,
+                                               options (2000.0), error);
+        expect (second != nullptr, error);
+        if (second != nullptr)
+        {
+            second->getParameters()[0]->setValue (0.5f);
+            second->getParameters()[1]->setValue (0.0f);
+            expect (fx.addToChain (2, std::move (second)));
+        }
+        expect (fx.isSandboxed (2));
+        expectEquals (fx.getNumChainMembers (2), 3);
+        expectEquals (fx.getLatency (2), 2 * kBlock);
+        peaks = impulse (engine, 6);
+        expectEquals ((int) peaks.size(), 1);
+        if (! peaks.empty())
+        {
+            expectEquals (peaks[0].first, 2 * kBlock);
+            expectWithinAbsoluteError (peaks[0].second, 2.0f * kCentre, 1.0e-4f);
+        }
+        expect (! fx.isFaulted (2));
+
         fx.setPlugin (2, nullptr);
         engine.getGarbage().collectAllNow();
     }

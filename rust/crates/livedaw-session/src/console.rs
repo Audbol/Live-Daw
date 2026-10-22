@@ -51,7 +51,9 @@ pub enum InsertMode {
 }
 
 pub struct CapturedInsert {
-    /// The plugin description as an XML element (`<PLUGIN .../>`).
+    /// The plugin description as an XML element (`<PLUGIN .../>`), or a chain
+    /// of plugins (`<PLUGINCHAIN>`, holding each plugin's description and state;
+    /// `state` is then empty).
     pub description: String,
     /// Plugin state, base64.
     pub state: String,
@@ -84,6 +86,12 @@ impl PluginBridge for NoPlugins {
     fn restore_fx(&mut self, _: usize, _: InsertMode, _: &str, _: &str) -> Result<(), RestoreError> {
         Err(RestoreError::Failed("plugin hosting is not available".into()))
     }
+}
+
+/// A saved FX slot's plugin: its `<PLUGIN>` or, for a chain of plugins, its
+/// `<PLUGINCHAIN>` (both have a `name`).
+pub(crate) fn plugin_element(slot: &Element) -> Option<&Element> {
+    slot.child("PLUGIN").or_else(|| slot.child("PLUGINCHAIN"))
 }
 
 // ---- results and fades -------------------------------------------------------------
@@ -811,7 +819,7 @@ pub(crate) fn apply_fx_slot(
     // Shows from before the FX rack hold plugins only.
     let saved = match x.attr("mdl") {
         Some(t) => model_index(FX_MODELS, t).unwrap_or(FX_NONE),
-        None if x.child("PLUGIN").is_some() => FX_EXT,
+        None if plugin_element(x).is_some() => FX_EXT,
         None => FX_NONE,
     };
     let current = p.model_index();
@@ -834,7 +842,7 @@ pub(crate) fn apply_fx_slot(
     }
 
     let Some(mode) = mode else { return };
-    let Some(desc) = x.child("PLUGIN") else { return };
+    let Some(desc) = plugin_element(x) else { return };
     let name = desc.str_or("name", "plugin");
     if recall && current != FX_EXT {
         warnings.push(format!("FX {}: {name} isn't loaded, not recalled", i + 1));

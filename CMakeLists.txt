@@ -92,6 +92,7 @@ set(LIVEDAW_ENGINE_SOURCES
     src/engine/Models.cpp
     src/engine/Strip.cpp
     src/engine/MixerEngine.cpp
+    src/engine/PluginChain.cpp
     src/engine/PluginHost.cpp
     src/engine/PluginScanner.cpp
     src/engine/SandboxedPlugin.cpp
@@ -220,6 +221,8 @@ target_sources(LiveDAW PRIVATE
     src/ui/FaceplateDesigns.cpp
     src/ui/MeterComponent.cpp
     src/ui/PluginMenu.cpp
+    src/ui/PluginChainView.cpp
+    src/ui/PluginChainWindow.cpp
     src/ui/FaderStrip.cpp
     src/ui/FaderSection.cpp
     src/ui/ResponseGraph.cpp
@@ -345,6 +348,8 @@ if(LIVEDAW_BUILD_TESTS)
         tests/ShowTests.cpp
         tests/StabilityTests.cpp
         tests/PluginHostingTests.cpp
+        tests/PluginChainTests.cpp
+        src/ui/PluginChainView.cpp
         tests/LayerTests.cpp
         tests/DeviceTests.cpp
         tests/RecorderTests.cpp

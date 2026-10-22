@@ -63,7 +63,7 @@ pub fn info(preset: &Element) -> Option<PresetInfo> {
     match preset.str_or("type", "") {
         "fx" => {
             let slot = preset.child("Slot")?;
-            let detail = match slot.child("PLUGIN") {
+            let detail = match console::plugin_element(slot) {
                 Some(p) => p.str_or("name", "PLUGIN").to_owned(),
                 None => slot.attr("mdl").and_then(|t| model_index(FX_MODELS, t)).map_or("NONE", |m| FX_MODELS[m].name).to_owned(),
             };

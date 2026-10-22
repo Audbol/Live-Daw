@@ -1,6 +1,7 @@
 #include "ui/MainComponent.h"
 #include "engine/AppPaths.h"
 #include "ui/MidiRemoteUi.h"
+#include "ui/PluginChainWindow.h"
 #include "ui/StartupNotice.h"
 #include "ui/WebMirror.h"
 #include "ui/WingPopups.h"
@@ -10,43 +11,6 @@
 
 namespace livedaw::ui
 {
-
-//==============================================================================
-class MainComponent::PluginWindow final : public juce::DocumentWindow
-{
-public:
-    PluginWindow (juce::AudioProcessor& p, const juce::String& title, MainComponent& o)
-        : juce::DocumentWindow (title, Colours::panel, closeButton | minimiseButton), processor (p), owner (o)
-    {
-        setUsingNativeTitleBar (true);
-
-        juce::AudioProcessorEditor* editor = processor.hasEditor() ? processor.createEditorAndMakeActive() : nullptr;
-        if (editor == nullptr)
-            editor = new juce::GenericAudioProcessorEditor (processor);
-
-        setContentOwned (editor, true);
-        setResizable (editor->isResizable(), false);
-        centreWithSize (getWidth(), getHeight());
-        setVisible (true);
-    }
-
-    ~PluginWindow() override { clearContentComponent(); }
-
-    void closeButtonPressed() override
-    {
-        juce::MessageManager::callAsync ([o = juce::Component::SafePointer<MainComponent> (&owner),
-                                          w = juce::Component::SafePointer<PluginWindow> (this)]
-        {
-            if (o != nullptr && w != nullptr)
-                o->pluginWindows.removeObject (w.getComponent());
-        });
-    }
-
-    juce::AudioProcessor& processor;
-
-private:
-    MainComponent& owner;
-};
 
 //==============================================================================
 /** Surface lock: covers the surface (everything but the main display), ignores
@@ -801,27 +765,32 @@ void MainComponent::showPluginScanner()
 
 void MainComponent::openPluginEditor (int slot)
 {
-    auto* plugin = engine.getFx().getPlugin (slot);
-    if (plugin == nullptr)
+    if (! engine.getFx().hasPlugin (slot))
         return;
 
     for (auto* w : pluginWindows)
     {
-        if (&w->processor == plugin)
+        if (w->getSlot() == slot)
         {
             w->toFront (true);
             return;
         }
     }
 
-    pluginWindows.add (new PluginWindow (*plugin, "FX " + juce::String (slot + 1) + ": " + plugin->getName(), *this));
+    // One window per slot: its plugins' editors side by side.
+    pluginWindows.add (new PluginChainWindow (ctx, slot, [this] (PluginChainWindow& w) { pluginWindows.removeObject (&w); }));
 }
 
 void MainComponent::closePluginWindowsFor (juce::AudioProcessor* p)
 {
+    // The slot's plugin (or chain) closes its window; a plugin of a chain only its editor.
     for (int i = pluginWindows.size(); --i >= 0;)
-        if (&pluginWindows[i]->processor == p)
+    {
+        if (pluginWindows[i]->getShownProcessor() == p)
             pluginWindows.remove (i);
+        else
+            pluginWindows[i]->dropEditorFor (p);
+    }
 }
 
 void MainComponent::closeAllPluginWindows()

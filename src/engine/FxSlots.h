@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/Parameters.h"
+#include "engine/PluginChain.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -29,6 +30,12 @@ namespace livedaw
     delay compensation: when the plugin is installed, whenever it reports a
     change (from any thread: only an atomic store) and on updateLatencies().
 
+    An EXT slot may hold a serial chain of up to 8 plugins (a PluginChain, run as
+    one plugin; a plugin on its own is a chain of one). addToChain(),
+    removeFromChain() and moveInChain() build the new chain on the message thread
+    and swap it in like setPlugin(); the plugins that stay keep their instance
+    and state, and keep running.
+
     Stateless view: any number of FxSlots may view one engine. */
 class FxSlots
 {
@@ -43,8 +50,28 @@ public:
 
     /** Message thread only. */
     juce::AudioPluginInstance* getPlugin (int slot) const noexcept;
-    /** Message thread: the slot's plugin runs in the plugin sandbox (a helper process). */
+    /** Message thread: the slot's plugin (or a plugin of its chain) runs in the plugin sandbox (a helper process). */
     bool isSandboxed (int slot) const noexcept;
+
+    //==============================================================================
+    // Plugin chains (message thread). Member indices are in processing order.
+
+    /** The slot's PluginChain, or nullptr (no plugin, or a plugin on its own). */
+    PluginChain* getChain (int slot) const noexcept;
+    /** Plugins in the slot: 0, 1 for a plugin on its own, else the chain's size. */
+    int getNumChainMembers (int slot) const noexcept;
+    juce::AudioPluginInstance* getChainMember (int slot, int index) const noexcept;
+    bool isChainMemberBypassed (int slot, int index) const noexcept;
+    /** No latency while bypassed. Bypassing a plugin on its own makes it a chain of one. */
+    void setChainMemberBypassed (int slot, int index, bool bypassed);
+    /** Inserts `plugin` at `index` (-1: the end). False (and `plugin` dropped) if
+        the slot has no plugin yet or its chain is full. */
+    bool addToChain (int slot, std::unique_ptr<juce::AudioPluginInstance> plugin, int index = -1);
+    /** Removes a member (the last one empties the slot). It is destroyed once
+        the engine can no longer call it: close its editor first. */
+    bool removeFromChain (int slot, int index);
+    /** Moves a member to position `to`. */
+    bool moveInChain (int slot, int from, int to);
 
     /** The slot's model (index into model table 4: kFxNone, kFxExt or a device). */
     int getModel (int slot) const noexcept { return params (slot).model.load(); }
@@ -82,6 +109,9 @@ public:
 private:
     struct Holder;
     Holder* holderAt (int slot) const noexcept;
+    void install (int slot, std::shared_ptr<juce::AudioPluginInstance> plugin);
+    /** The slot's plugins as chain members (wrapping a plugin on its own). */
+    std::vector<PluginChain::MemberPtr> members (int slot) const;
 
     ld::Engine* engine;
 };

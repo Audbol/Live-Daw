@@ -13,17 +13,22 @@ struct FxSlots::Holder final : private juce::AudioProcessorListener
     int slot;
     /** Cleared once replaced: a retired plugin must not report into its old slot. */
     std::atomic<bool> installed { true };
-    std::unique_ptr<juce::AudioPluginInstance> plugin;
+    /** Shared with a PluginChain that takes the plugin over (FxSlots::addToChain). */
+    std::shared_ptr<juce::AudioPluginInstance> plugin;
     SandboxedPlugin* sandboxed = nullptr; // the plugin, if it runs in the sandbox
+    PluginChain* chain = nullptr;         // the plugin, if it's a chain
     juce::AudioBuffer<float> scratch;
     juce::MidiBuffer midi;
     int numPluginChannels = 2;
     int blockSize = 512;
+    double sampleRate = 0.0;
 
-    void prepare (double sampleRate, int maxBlock)
+    void prepare (double rate, int maxBlock)
     {
         blockSize = juce::jmax (1, maxBlock);
+        sampleRate = rate;
         sandboxed = dynamic_cast<SandboxedPlugin*> (plugin.get());
+        chain = dynamic_cast<PluginChain*> (plugin.get());
         plugin->setRateAndBufferSizeDetails (sampleRate, blockSize);
         plugin->prepareToPlay (sampleRate, blockSize);
         numPluginChannels = juce::jmax (2, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels());
@@ -52,6 +57,8 @@ struct FxSlots::Holder final : private juce::AudioProcessorListener
                 h.plugin->processBlock (view, h.midi);
                 if (h.sandboxed != nullptr && h.sandboxed->didLastBlockFail())
                     return 1; // timed out or the helper is gone: same as a plugin error
+                if (h.chain != nullptr && h.chain->didLastBlockFail())
+                    return 1; // a member failed (the chain knows which)
 
                 for (int ch = 0; ch < numChannels; ++ch)
                     juce::FloatVectorOperations::copy (channels[ch] + start, h.scratch.getReadPointer (ch), n);
@@ -97,20 +104,6 @@ private:
     void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override {}
 };
 
-namespace
-{
-    void configureForStereo (juce::AudioPluginInstance& plugin)
-    {
-        auto layout = plugin.getBusesLayout();
-        if (layout.inputBuses.size() > 0)
-            layout.inputBuses.getReference (0) = juce::AudioChannelSet::stereo();
-        if (layout.outputBuses.size() > 0)
-            layout.outputBuses.getReference (0) = juce::AudioChannelSet::stereo();
-        if (plugin.checkBusesLayoutSupported (layout))
-            plugin.setBusesLayout (layout);
-    }
-} // namespace
-
 FxSlots::Holder* FxSlots::holderAt (int slot) const noexcept
 {
     // Every slot context registered with the engine is a Holder (see setPlugin).
@@ -132,6 +125,11 @@ void FxSlots::prepare (double sampleRate, int maxBlockSize)
 
 void FxSlots::setPlugin (int slot, std::unique_ptr<juce::AudioPluginInstance> plugin)
 {
+    install (slot, std::move (plugin));
+}
+
+void FxSlots::install (int slot, std::shared_ptr<juce::AudioPluginInstance> plugin)
+{
     if (! juce::isPositiveAndBelow (slot, kNumFx))
         return;
 
@@ -146,7 +144,8 @@ void FxSlots::setPlugin (int slot, std::unique_ptr<juce::AudioPluginInstance> pl
 
     auto* holder = new Holder (engine, slot);
     holder->plugin = std::move (plugin);
-    configureForStereo (*holder->plugin);
+    if (dynamic_cast<PluginChain*> (holder->plugin.get()) == nullptr) // a chain is stereo (its members may be running)
+        PluginChain::configureForStereo (*holder->plugin);
     holder->prepare (ld::ld_engine_sample_rate (engine), ld::ld_engine_block_size (engine));
 
     const ld::InsertCallbacks callbacks { &Holder::process, &Holder::release, holder };
@@ -159,7 +158,10 @@ bool FxSlots::updateLatencies()
     bool changed = false;
     for (int slot = 0; slot < kNumFx; ++slot)
     {
-        if (auto* h = holderAt (slot); h != nullptr && h->plugin->getLatencySamples() != getLatency (slot))
+        auto* h = holderAt (slot);
+        if (h != nullptr && h->chain != nullptr)
+            h->chain->updateLatency(); // its members may have changed theirs quietly
+        if (h != nullptr && h->plugin->getLatencySamples() != getLatency (slot))
         {
             h->reportLatency();
             changed = true;
@@ -177,7 +179,96 @@ juce::AudioPluginInstance* FxSlots::getPlugin (int slot) const noexcept
 bool FxSlots::isSandboxed (int slot) const noexcept
 {
     auto* h = holderAt (slot);
-    return h != nullptr && h->sandboxed != nullptr;
+    return h != nullptr && (h->sandboxed != nullptr || (h->chain != nullptr && h->chain->hasSandboxedMember()));
+}
+
+//==============================================================================
+PluginChain* FxSlots::getChain (int slot) const noexcept
+{
+    auto* h = holderAt (slot);
+    return h != nullptr ? h->chain : nullptr;
+}
+
+int FxSlots::getNumChainMembers (int slot) const noexcept
+{
+    auto* h = holderAt (slot);
+    return h == nullptr ? 0 : (h->chain != nullptr ? h->chain->size() : 1);
+}
+
+juce::AudioPluginInstance* FxSlots::getChainMember (int slot, int index) const noexcept
+{
+    auto* h = holderAt (slot);
+    if (h == nullptr || ! juce::isPositiveAndBelow (index, getNumChainMembers (slot)))
+        return nullptr;
+    return h->chain != nullptr ? &h->chain->getMember (index) : h->plugin.get();
+}
+
+bool FxSlots::isChainMemberBypassed (int slot, int index) const noexcept
+{
+    auto* chain = getChain (slot);
+    return chain != nullptr && juce::isPositiveAndBelow (index, chain->size()) && chain->isBypassed (index);
+}
+
+std::vector<PluginChain::MemberPtr> FxSlots::members (int slot) const
+{
+    auto* h = holderAt (slot);
+    if (h == nullptr)
+        return {};
+    if (h->chain != nullptr)
+        return h->chain->getMembers();
+    // A plugin on its own: running, prepared by its holder.
+    return { PluginChain::makeMember (h->plugin, false, h->sampleRate, h->blockSize) };
+}
+
+void FxSlots::setChainMemberBypassed (int slot, int index, bool bypassed)
+{
+    if (! juce::isPositiveAndBelow (index, getNumChainMembers (slot)))
+        return;
+    if (getChain (slot) == nullptr)
+    {
+        if (! bypassed)
+            return;
+        install (slot, std::make_shared<PluginChain> (members (slot)));
+    }
+    getChain (slot)->setBypassed (index, bypassed);
+}
+
+bool FxSlots::addToChain (int slot, std::unique_ptr<juce::AudioPluginInstance> plugin, int index)
+{
+    auto list = members (slot);
+    if (plugin == nullptr || list.empty() || (int) list.size() >= PluginChain::kMaxMembers)
+        return false;
+    if (! juce::isPositiveAndNotGreaterThan (index, (int) list.size()))
+        index = (int) list.size();
+    list.insert (list.begin() + index, PluginChain::makeMember (std::move (plugin)));
+    install (slot, std::make_shared<PluginChain> (std::move (list)));
+    return true;
+}
+
+bool FxSlots::removeFromChain (int slot, int index)
+{
+    auto list = members (slot);
+    if (! juce::isPositiveAndBelow (index, (int) list.size()))
+        return false;
+    list.erase (list.begin() + index);
+    if (list.empty())
+        install (slot, nullptr);
+    else
+        install (slot, std::make_shared<PluginChain> (std::move (list)));
+    return true;
+}
+
+bool FxSlots::moveInChain (int slot, int from, int to)
+{
+    auto list = members (slot);
+    const int n = (int) list.size();
+    if (! juce::isPositiveAndBelow (from, n) || ! juce::isPositiveAndBelow (to, n) || from == to)
+        return false;
+    auto member = list[(size_t) from];
+    list.erase (list.begin() + from);
+    list.insert (list.begin() + to, std::move (member));
+    install (slot, std::make_shared<PluginChain> (std::move (list)));
+    return true;
 }
 
 
