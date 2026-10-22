@@ -67,14 +67,14 @@ public:
         addAndMakeVisible (fader);
 
         selectKey.ledColour = Colours::keySelect;
-        soloKey.ledColour = Colours::solo;
-        muteKey.ledColour = Colours::mute;
+        soloKey.ledColour = Colours::keySolo;
+        muteKey.ledColour = Colours::keyMute;
         const std::pair<TalkKey*, DawRemote::StripButton> keys[] = { { &selectKey, DawRemote::StripButton::Select },
                                                                      { &soloKey, DawRemote::StripButton::Solo },
                                                                      { &muteKey, DawRemote::StripButton::Mute } };
         for (auto [k, button] : keys)
         {
-            k->grey = true;
+            k->backlit = true;
             const auto b = button;
             k->onTalk = [this, b] (bool down)
             {

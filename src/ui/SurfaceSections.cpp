@@ -1061,7 +1061,6 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
     {
         auto* k = layerKeys.add (new SurfaceKey (layerNames[i]));
         k->ledColour = Colours::keyLayer;
-        k->grey = true;
         k->onPress = [this, i] { setLowerLayer (i); };
         k->ledState = [this, i] { return lowerLayer == i ? SurfaceKey::Lit : SurfaceKey::Off; };
         addAndMakeVisible (k);

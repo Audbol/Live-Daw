@@ -328,6 +328,13 @@ struct SurfaceLighting
 
     /** An unlit key's body with the backlight: a faint lift of the print. */
     static juce::Colour unlit (juce::Colour body) { return body.brighter (juce::jlimit (0.0f, 1.0f, backlight() - 0.25f) * 0.3f); }
+
+    /** A backlit key's unlit rim or print: `light` at the default backlight,
+        fading toward the key's `face` below it. */
+    static juce::Colour backlit (juce::Colour light, juce::Colour face)
+    {
+        return unlit (face.interpolatedWith (light, juce::jlimit (0.0f, 1.0f, 0.6f + 1.6f * backlight())));
+    }
 };
 
 /** A key of the control surface (as opposed to the touch screen): a rounded
@@ -373,10 +380,10 @@ public:
     Shape shape = Shape::Rect;
     /** A black key with a printed frame (LISTEN, DAW). */
     bool dark = false;
-    /** A SELECT, SOLO, MUTE or SOF FLIP key: on the silver surface dark grey
-        with white print in a light bevel, on the black one a light key in a
-        wider black bezel (SurfacePalette). */
-    bool grey = false;
+    /** A SELECT, SOLO, MUTE or SOF FLIP key: a dark face in a translucent rim
+        that carries the light. Unlit, rim and print glow with the backlight;
+        lit, they take the LED colour and the face stays dark. */
+    bool backlit = false;
     /** The label printed in a frame (TALK A / B). */
     bool framed = false;
     /** A triangle printed before (-1) or after (+1) the label: the shift keys'
@@ -406,13 +413,13 @@ public:
         const bool lit = shownLit && isEnabled();
         const bool down = isMouseButtonDown() && isEnabled();
 
-        // The WING's keys: a light grey cap (dark grey keys: a dark cap in a
-        // light bevel; black keys: a printed frame) in a thin dark outline.
-        // Lit, the cap takes the LED colour, brightest in the middle, and the
-        // outline glows.
+        // The WING's keys: a light grey cap (black keys: a printed frame) in a
+        // thin dark outline. Lit, the cap takes the LED colour, brightest in
+        // the middle, and the outline glows. Backlit keys: a dark face in a
+        // rim, thicker at the bottom, that takes the light instead of the cap.
         const float side = juce::jmin (r.getWidth(), r.getHeight());
         const float bezel = juce::jlimit (1.0f, 2.0f, side * 0.06f);
-        const float bevel = grey ? juce::jlimit (1.5f, 3.5f, side * 0.1f) : 0.0f;
+        const float rim = backlit ? juce::jlimit (1.5f, 4.0f, side * 0.1f) : 0.0f;
         auto shapeOf = [this] (juce::Rectangle<float> area)
         {
             juce::Path p;
@@ -423,7 +430,9 @@ public:
             return p;
         };
         const auto outer = shapeOf (r);
-        const auto capArea = r.reduced (bezel + bevel);
+        auto capArea = r.reduced (bezel + rim);
+        if (backlit)
+            capArea.removeFromBottom (rim * 0.4f);
         const auto cap = shapeOf (capArea);
 
         const auto& sc = surfaceColours();
@@ -431,26 +440,34 @@ public:
         g.fillPath (outer);
         if (lit)
         {
-            g.setColour (ledColour.withAlpha (0.6f * juce::jlimit (0.3f, 1.0f, SurfaceLighting::leds() / 0.9f)));
+            g.setColour (ledColour.withAlpha ((backlit ? 0.35f : 0.6f) * juce::jlimit (0.3f, 1.0f, SurfaceLighting::leds() / 0.9f)));
             g.fillPath (outer);
         }
-        if (grey)
+        juce::Colour rimLight;
+        if (backlit)
         {
-            // The bevel: lighter towards the top.
+            // The rim: lighter towards the top, a darker line where it
+            // meets the face.
+            rimLight = lit ? SurfaceLighting::lit (ledColour, sc.keyFace) : SurfaceLighting::backlit (sc.keyRim, sc.keyFace);
+            if (! isEnabled())
+                rimLight = rimLight.interpolatedWith (sc.keyFace, 0.5f);
             const auto ring = r.reduced (bezel);
-            g.setGradientFill (juce::ColourGradient (sc.keyBevel, 0.0f, ring.getY(), sc.keyBevel.darker (0.35f), 0.0f, ring.getBottom(), false));
+            g.setGradientFill (juce::ColourGradient (rimLight.brighter (0.15f), 0.0f, ring.getY(), rimLight.darker (0.1f), 0.0f, ring.getBottom(), false));
             g.fillPath (shapeOf (ring));
+            g.setColour (rimLight.interpolatedWith (sc.keyFace, 0.55f));
+            g.strokePath (shapeOf (capArea.expanded (0.5f)), juce::PathStrokeType (1.0f));
         }
 
-        const auto unlitCap = SurfaceLighting::unlit (dark ? Colours::keyCapDark : (grey ? sc.keyCapGrey : sc.keyCap));
-        auto body = lit ? SurfaceLighting::lit (ledColour, unlitCap) : unlitCap;
-        if (! isEnabled() && ! dark && ! grey)
+        const auto unlitCap = SurfaceLighting::unlit (dark ? Colours::keyCapDark : (backlit ? sc.keyFace : sc.keyCap));
+        // A backlit key's face stays dark lit, a faint tint of the light at most.
+        auto body = ! lit ? unlitCap : (backlit ? unlitCap.interpolatedWith (ledColour, 0.1f) : SurfaceLighting::lit (ledColour, unlitCap));
+        if (! isEnabled() && ! dark && ! backlit)
             body = body.interpolatedWith (sc.surface, 0.3f);
         if (down)
             body = body.darker (0.25f);
         else if (isMouseOver() && isEnabled())
             body = body.brighter (0.07f);
-        if (lit)
+        if (lit && ! backlit)
         {
             // The LED shines through the cap's middle.
             const auto centre = capArea.getCentre();
@@ -460,8 +477,8 @@ public:
         }
         else
         {
-            g.setGradientFill (juce::ColourGradient (body.brighter (dark || grey ? 0.06f : 0.08f), 0.0f, capArea.getY(),
-                                                     body.darker (dark || grey ? 0.06f : 0.1f), 0.0f, capArea.getBottom(), false));
+            g.setGradientFill (juce::ColourGradient (body.brighter (dark || backlit ? 0.06f : 0.08f), 0.0f, capArea.getY(),
+                                                     body.darker (dark || backlit ? 0.06f : 0.1f), 0.0f, capArea.getBottom(), false));
         }
         g.fillPath (cap);
         if (const float held = guardedPress.progress(); held > 0.0f)
@@ -478,12 +495,12 @@ public:
         }
 
         juce::Colour ink;
-        if (lit)
+        if (backlit)
+            ink = lit ? rimLight.brighter (0.25f) : SurfaceLighting::backlit (sc.keyLegend, sc.keyFace).withAlpha (isEnabled() ? 1.0f : 0.35f);
+        else if (lit)
             ink = body.getPerceivedBrightness() > 0.55f ? body.darker (0.9f).withMultipliedSaturation (1.2f) : juce::Colours::white.withAlpha (0.9f);
         else if (dark)
             ink = isEnabled() ? sc.silk : sc.silk.withAlpha (0.35f);
-        else if (grey)
-            ink = isEnabled() ? sc.keyGreyPrint : sc.keyGreyPrint.withAlpha (0.35f);
         else
             ink = isEnabled() ? Colours::keyPrint : Colours::keyPrint.withAlpha (0.4f);
         auto content = capArea.reduced (juce::jmin (3.0f, capArea.getWidth() * 0.06f), 0.5f);

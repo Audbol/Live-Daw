@@ -29,6 +29,11 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- The surface's SELECT, SOLO, MUTE and SOF FLIP keys light as on the console: a dark face in
+  a backlit rim, pale lavender unlit (light grey on the silver finish), the rim and print
+  green, orange or red lit while the face stays dark. The meter block's GATE LED is red
+  (gate closed) and its DYN LED orange (dynamics working); the center section's USER,
+  2-TRACK, MULTI, MUTE GROUPS and SHOW CNTRL keys are light keys, as on the console.
 - A WING snapshot loads the console's way: on LIBRARY > SNAP, select the `.snap` file at INT
   or USB and press LOAD (or double-click it). IMPORT WING on the SHOW tab still works.
 - The center fader section has no INPUTS layer key, as on the console (DCA, MAIN MATRIX,

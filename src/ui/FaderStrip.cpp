@@ -370,11 +370,11 @@ FaderStrip::FaderStrip (UiContext& c, LayerSet::Section s) : ctx (c), section (s
     addAndMakeVisible (fader);
 
     selectKey.ledColour = Colours::keySelect;
-    soloKey.ledColour = Colours::solo;
-    muteKey.ledColour = Colours::mute;
+    soloKey.ledColour = Colours::keySolo;
+    muteKey.ledColour = Colours::keyMute;
     for (auto* k : { &selectKey, &soloKey, &muteKey })
     {
-        k->grey = true;
+        k->backlit = true;
         addAndMakeVisible (k);
     }
 
@@ -872,8 +872,8 @@ void FaderStrip::paint (juce::Graphics& g)
             g.setColour (on ? c.withMultipliedBrightness (bright) : surfaceColours().ledOff);
             g.fillRect (r);
         };
-        barLed (0, shownDyn, Colours::block);
-        barLed (kMeterRows - 1, shownGate, Colours::active);
+        barLed (0, shownDyn, Colours::ledDyn);
+        barLed (kMeterRows - 1, shownGate, Colours::ledGate);
 
         auto columns = juce::Rectangle<float> (m.getCentreX() - pairW * 0.5f, m.getY() + rowH, pairW, rowH * kMeterSegments);
         const bool stereo = strip->getNumChannels() > 1;

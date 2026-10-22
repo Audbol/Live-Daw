@@ -63,8 +63,8 @@ FaderSection::FaderSection (UiContext& c, LayerSet::Section s) : ctx (c), sectio
 
     if (section == LayerSet::Center)
     {
-        sofKey.ledColour = Colours::solo;
-        sofKey.grey = true;
+        sofKey.ledColour = Colours::keySolo;
+        sofKey.backlit = true;
         sofKey.setTooltip ("SOF FLIP (Sends on Fader): select a bus, main or matrix to set every input's send to it "
                            "on the input faders, or select an input to set its sends on the bus, main and matrix faders");
         // SOF BUTTON (SETUP > SURFACE): AUTO lights during SOF and flashes in
