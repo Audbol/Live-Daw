@@ -7,12 +7,17 @@
 namespace livedaw::ui
 {
 
+class MemberAssignView;
+
 /** The VIEW screens (manual 5.7-5.11), opened by the fader sections' VIEW keys
     and by each other's status-bar keys: OVERVIEW (every strip's blocks),
     FADERS, SENDS, CONFIG (fader layers) and MUTE GROUPS. They show the fader
     section in ctx.viewSection; the layer column on the right picks its layer
-    (blue), the section (green) and the page. With FADER/SCREEN LAYER LINK on
-    (SETUP > SURFACE) a layer chosen here also switches the section's faders. */
+    (blue) and the section (green), the bank keys left of it (1-8 ... DCA 9-16)
+    show one bank of eight instead of the layer, the arrows under them page.
+    With FADER/SCREEN LAYER LINK on (SETUP > SURFACE) a layer chosen here also
+    switches the section's faders. Laid out in the WING's 1280 x 800 pixels
+    (firmware 3.1). */
 class ViewPage : public DisplayPage, protected juce::Timer
 {
 public:
@@ -33,6 +38,10 @@ public:
 protected:
     /** False for the left section's OVERVIEW and for MUTE GROUPS. */
     virtual bool hasLayerColumn() const { return true; }
+    /** False for CONFIG (it edits the layer itself): a narrow column without bank keys. */
+    virtual bool hasBankKeys() const { return true; }
+    /** The last page the arrows reach (CONFIG: one more, to append to). */
+    virtual int lastPage() const { return numPages() - 1; }
     virtual void layoutContent() {}
     virtual void paintContent (juce::Graphics&) {}
     virtual void layerChanged() {}
@@ -42,15 +51,27 @@ protected:
     LayerSet::Section section() const noexcept { return ctx.viewSection; }
     juce::String currentLayerId() const;
     Layer currentLayer() const;
+    /** A bank of the bank keys: "1-8" ... "DCA 9-16" and its faders. */
+    struct Bank
+    {
+        juce::String key, title;
+        std::vector<state::FaderRef> faders;
+        int group = 0; // the column leaves a gap between groups
+    };
+    std::vector<Bank> banks() const;
+    /** The bank shown instead of the layer (-1: the layer). */
+    int shownBank() const noexcept { return bank[section()]; }
     /** Faders shown at once (the section's width). */
     int pageSize() const;
     int numPages() const;
     /** The faders of the current page of the layer. */
     std::vector<state::FaderRef> pageFaders() const;
-    /** `count` strip columns in `area`, right-aligned against the layer column. */
+    /** `count` strip columns from `area`'s top to its bottom, 96 WING px wide
+        106 apart, right-aligned against the layer column. */
     std::vector<juce::Rectangle<int>> stripColumns (juce::Rectangle<int> area, int count) const;
 
     void selectLayer (const juce::String& id);
+    void selectBank (int);
     void selectSection (LayerSet::Section);
     void stepPage (int delta);
     /** The invisible component the drop-down lists open under, moved over `area`. */
@@ -64,24 +85,33 @@ protected:
 private:
     std::unique_ptr<LayerColumn> column;
     juce::String browsed[LayerSet::kNumSections];
+    int bank[LayerSet::kNumSections] { -1, -1, -1 };
     juce::String shownTitle;
     juce::Component anchor;
 };
 
 /** OVERVIEW (fig. 53-54): each strip of the layer as a column of mini blocks
-    in processing order. A click opens the strip's block on HOME. */
+    in processing order. A click opens the strip's block on HOME. A DCA's
+    column shows its members [WING]; a click on it opens the DCA's assign
+    screen (the title tile in its colour). */
 class OverviewViewPage final : public ViewPage
 {
 public:
-    explicit OverviewViewPage (UiContext& c) : ViewPage (c, Screen::Overview) {}
+    explicit OverviewViewPage (UiContext&);
+    ~OverviewViewPage() override;
     void mouseUp (const juce::MouseEvent&) override;
     /** The VIEW keys, then EXCLUSIVE SOLO (WING 3.0.5: on the CHANNEL OVERVIEW
         page; the SETUP > AUDIO preference). */
     std::vector<StatusKey> getStatusKeys() override;
+    StatusTitle getStatusTitle() override;
+    void resized() override;
 
 protected:
     bool hasLayerColumn() const override { return section() != LayerSet::Left; }
     void paintContent (juce::Graphics&) override;
+
+private:
+    std::unique_ptr<MemberAssignView> assign;
 };
 
 /** FADERS (fig. 56): a virtual fader for each strip of the layer. */
@@ -151,8 +181,9 @@ private:
     inserts and shifts the rest), or click a slot; drag a slot away to remove
     it, drag within the slots to reorder. Every layer key is editable: USER 1 /
     USER 2 hold user layers, the other keys keep an edited copy in the show
-    (DELETE restores the generated one). The page map at the bottom shows every
-    slot of the layer and the window on screen; touch it to page. */
+    (RESTORE gives back the generated one). The slots of the page shown sit in
+    groups of four on blue plates, their numbers under them; the arrows page,
+    one page past the end to append. */
 class ConfigViewPage final : public ViewPage
 {
 public:
@@ -162,6 +193,8 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
 
 protected:
+    bool hasBankKeys() const override { return false; }
+    int lastPage() const override { return numPages(); }
     void layoutContent() override;
     void paintContent (juce::Graphics&) override;
     void layerChanged() override;
@@ -201,8 +234,8 @@ private:
     int category = 0; // CHANNELS, BUS/MAIN, DCA, then SENDS, BUS -> BUS, FX, MIDI CC (the fields)
     int sendDest = 0, busDest = 0, fxSlot = 0, midiBank = 0;
     std::vector<state::FaderRef> selectedItems;
-    std::vector<juce::Rectangle<int>> categoryKeys, sourceTiles, slotAreas, mapCells;
-    juce::Rectangle<int> sourceArea, slotsArea, hintArea, mapArea;
+    std::vector<juce::Rectangle<int>> categoryKeys, sourceTiles, slotAreas, plates;
+    juce::Rectangle<int> sourceArea, slotsArea, hintArea;
     juce::OwnedArray<DropdownField> fields;
     WingKey clearKey { "CLEAR", Icon::Trash }, renameKey { "RENAME", Icon::Edit }, newKey { "NEW", Icon::Plus }, deleteKey { "DELETE" };
 
@@ -212,21 +245,26 @@ private:
     juce::Point<int> dragPoint;
 };
 
-/** MUTE GROUPS (fig. 61): the eight groups' members (click a column, then its
-    cells), names (click the header) and the group keys on the right. */
+/** MUTE GROUPS (fig. 61, firmware 3.1): the eight groups' members as columns
+    (red while the group is engaged) and the group keys on the right (a key
+    engages its group). A click on a column opens the group's assign screen;
+    there its tab touched again renames the group. */
 class MuteGroupsViewPage final : public ViewPage
 {
 public:
     explicit MuteGroupsViewPage (UiContext& c);
+    ~MuteGroupsViewPage() override;
     void mouseUp (const juce::MouseEvent&) override;
 
-    /** A muted-speaker icon and MUTE GROUPS (manual fig. 61). */
+    /** A red muted-speaker icon and MUTE GROUPS (manual fig. 61). */
     StatusTitle getStatusTitle() override
     {
         StatusTitle t;
         t.kind = StatusTitle::Kind::Text;
         t.text = "MUTE GROUPS";
         t.icon = Icon::MuteGroup;
+        t.ink = Colours::textDim;
+        t.iconInk = juce::Colour (0xfff05050);
         return t;
     }
 
@@ -236,18 +274,8 @@ protected:
     void paintContent (juce::Graphics&) override;
 
 private:
-    struct Cell
-    {
-        juce::Rectangle<int> area;
-        Strip* strip;
-        int group;
-    };
-
-    int selectedGroup = 0;
-    juce::Rectangle<int> columns[kNumMuteGroups], headers[kNumMuteGroups], groupKeys[kNumMuteGroups];
-    std::vector<Cell> cells;
-    std::vector<std::pair<juce::Rectangle<int>, juce::String>> captions;
-    WingKey unassignKey { "UNASSIGN", Icon::ClearCircle };
+    juce::Rectangle<int> columns[kNumMuteGroups], groupKeys[kNumMuteGroups];
+    std::unique_ptr<MemberAssignView> assign;
 };
 
 /** "OVERVIEW", "FADERS", ... */

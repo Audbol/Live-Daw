@@ -82,6 +82,7 @@ struct StatusTitle
     juce::String text;
     std::optional<Icon> icon;
     juce::Colour fill {}, ink {}; // transparent: the kind's default colours
+    juce::Colour iconInk {};      // a plain title's icon in its own colour (MUTE GROUPS: red)
 };
 
 /** A screen of the main display. */

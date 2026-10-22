@@ -2,6 +2,7 @@
 #include "dsp/DspUtils.h"
 #include "engine/Models.h"
 #include "ui/HomeIcons.h"
+#include "ui/HomeWidgets.h"
 
 #include <array>
 
@@ -15,6 +16,49 @@ namespace
     const juce::Colour blockFill = Colours::screenTile, blockOutline = Colours::screenLine, chipOff = Colours::chipOff, track = Colours::screenDark,
                        eqCurve = Colours::amber,
         panGreen = Colours::width, sendRed = Colours::tapRed;
+
+    // Measured off the console's screens (firmware 3.1): unlit text, the dim
+    // print of empty cells and dark labels, the mute groups' red.
+    const juce::Colour keyText = Colours::caption, cellText { 0xff585858 }, darkLabel { 0xff0c0c0c }, groupRed { 0xfff05050 },
+                       engagedColumn { 0xff883838 }, slotPlate { 0xff204870 };
+
+    /** `v` px of the WING's 1280 x 800 screen in px of this screen. */
+    int px (float v) { return juce::roundToInt (wingPx (v)); }
+
+    /** A rectangle given in WING px from the page's top left (the page starts
+        under the status bar, at the console's y = 80). */
+    juce::Rectangle<int> wingRect (float x, float y, float w, float h)
+    {
+        return { px (x), px (y), px (x + w) - px (x), px (y + h) - px (y) };
+    }
+
+    /** The console's fonts by the height of their capitals in WING px. */
+    juce::Font capFont (float capWingPx, WingWeight weight = WingWeight::Medium)
+    {
+        return wingFontPx (juce::jmax (5.0f, wingPx (capWingPx)), weight);
+    }
+
+    /** capFont, no taller than `maxHeightPx` (JUCE font height) so it fits small tiles. */
+    juce::Font capFontFit (float capWingPx, float maxHeightPx, WingWeight weight = WingWeight::Medium)
+    {
+        auto f = capFont (capWingPx, weight);
+        return f.getHeight() > maxHeightPx ? f.withHeight (juce::jmax (6.0f, maxHeightPx)) : f;
+    }
+
+    /** A WING key: a 2 px black frame round a #303030 face (or `fill`), its
+        text centred. */
+    void wingKey (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& text, juce::Colour fill = Colours::screenTile,
+                  juce::Colour ink = keyText, float cap = 14.0f)
+    {
+        auto f = r.toFloat();
+        g.setColour (juce::Colours::black);
+        g.fillRoundedRectangle (f, wingPx (3.0f));
+        g.setColour (fill);
+        g.fillRoundedRectangle (f.reduced (wingPx (2.0f)), wingPx (2.0f));
+        g.setColour (ink);
+        g.setFont (capFont (cap));
+        g.drawFittedText (text, r.reduced (px (4.0f), 0), juce::Justification::centred, 1, 0.7f);
+    }
 
     /** A screen font on the console's type scale (TypeScale), no taller than
         `maxHeightPx` so it fits small tiles. */
@@ -188,7 +232,7 @@ namespace
         g.setColour (colour);
         g.fillRect (r);
         g.setColour (juce::Colours::black);
-        g.setFont (viewFont (TypeScale::body, r.getHeight() * 0.86f));
+        g.setFont (capFontFit (13.0f, r.getHeight() * 0.86f, WingWeight::SemiBold));
         g.drawFittedText (name, r.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.6f);
     }
 
@@ -196,9 +240,9 @@ namespace
     {
         g.setColour (blockFill);
         g.fillRect (r);
-        auto inner = r.reduced (3.0f, 2.0f);
+        auto inner = r.reduced (wingPx (6.0f), 2.0f);
         g.setColour (Dark::textDim);
-        g.setFont (viewFont (TypeScale::value * 1.2f, inner.getHeight() * 0.9f));
+        g.setFont (capFontFit (20.0f, inner.getHeight() * 0.9f, WingWeight::SemiBold));
         const auto number = numberOf (t);
         g.drawFittedText (number, inner.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
         if (t.strip != nullptr && inner.getWidth() > inner.getHeight() * 2.2f)
@@ -333,36 +377,37 @@ namespace
         }
     }
 
-    /** A screen fader: dark track, blue (or red) fill to the cap, a white value box at the cap. */
+    /** A screen fader [WING]: a black slot, the fill under the cap, the value
+        in a white box at the cap with blue marks out to the well's edges. */
     void paintFader (juce::Graphics& g, juce::Rectangle<float> r, float db, juce::Colour fill, bool active)
     {
-        const float boxH = juce::jlimit (12.0f, screenCap (18.0f), r.getWidth() * 0.26f);
-        auto lane = r.reduced (0.0f, boxH * 0.5f);
-        const float trackW = juce::jmax (4.0f, r.getWidth() * 0.2f);
-        auto trk = lane.withSizeKeepingCentre (trackW, lane.getHeight());
+        const float boxH = juce::jmin (wingPx (25.0f), r.getHeight() * 0.1f);
+        auto lane = r.withTrimmedTop (wingPx (12.0f)).withTrimmedBottom (wingPx (14.0f));
+        const float slotW = juce::jmax (4.0f, juce::jmin (wingPx (12.0f), r.getWidth() * 0.2f));
+        auto slot = juce::Rectangle<float> (r.getCentreX() - slotW / 2.0f, r.getY() + wingPx (10.0f), slotW, lane.getBottom() - r.getY() - wingPx (10.0f));
         g.setColour (juce::Colours::black);
-        g.fillRect (trk);
+        g.fillRoundedRectangle (slot, slotW * 0.3f);
         const float pos = fader::dbToPos (db);
         const float y = lane.getBottom() - lane.getHeight() * pos;
-        if (active)
+        if (active && pos > 0.0f)
         {
             g.setColour (fill);
-            g.fillRect (trk.withTop (y));
+            g.fillRect (slot.withTop (y));
         }
-        // The unity mark.
-        g.setColour (Dark::faderFill);
-        const float unity = lane.getBottom() - lane.getHeight() * fader::dbToPos (0.0f);
-        g.fillEllipse (juce::Rectangle<float> (4.0f, 4.0f).withCentre ({ trk.getRight() + 6.0f, unity }));
-        auto box = juce::Rectangle<float> (juce::jmin (r.getWidth(), screenCap (64.0f)), boxH).withCentre ({ r.getCentreX(), y });
-        g.setColour (active ? juce::Colours::white : Colours::textDim);
-        g.fillRoundedRectangle (box, 2.0f);
+        auto box = juce::Rectangle<float> (juce::jmin (r.getWidth() - wingPx (10.0f), wingPx (60.0f)), boxH).withCentre ({ r.getCentreX(), y });
+        g.setColour (fill);
+        const float mark = juce::jmin (wingPx (5.0f), boxH * 0.3f);
+        g.fillRect (juce::Rectangle<float> (r.getX(), y - mark / 2.0f, box.getX() - r.getX(), mark));
+        g.fillRect (juce::Rectangle<float> (box.getRight(), y - mark / 2.0f, r.getRight() - box.getRight(), mark));
+        g.setColour (active ? Colours::text : Colours::textDim);
+        g.fillRoundedRectangle (box, wingPx (3.0f));
         g.setColour (juce::Colours::black);
-        g.setFont (viewFont (TypeScale::caption, boxH * 0.8f));
+        g.setFont (capFontFit (12.0f, boxH * 0.8f));
         // Narrow strips (12 strips in a small window) leave out the unit
         // rather than cutting the value.
-        auto text = fader::text (db) + " dB";
+        auto text = home::wingDb (db) + " dB";
         if (juce::GlyphArrangement::getStringWidth (g.getCurrentFont(), text) * 0.85f > box.getWidth() - 2.0f)
-            text = fader::text (db);
+            text = home::wingDb (db);
         g.drawFittedText (text, box.toNearestInt(), juce::Justification::centred, 1, 0.6f);
     }
 
@@ -468,10 +513,31 @@ const char* viewScreenName (Screen s)
 }
 
 //==============================================================================
-/** The layer column of the VIEW screens: the section's seven layer keys (and
-    any further user layers) on the right with LEFT / CENTER / RIGHT under them;
-    on the left, the pages of the layer shown ("1-8", "9-16", ...), with the
-    page keys at the bottom. */
+namespace
+{
+    /** A layer key's caption in the VIEW screens' column (and their title):
+        one word, as the console prints it ("MAIN", "AUX", "BUSES", "USER1"). */
+    juce::String columnLabel (const Layer& l)
+    {
+        static const std::pair<const char*, const char*> keys[] = { { "dca-1", "DCA" }, { "out-1", "MAIN" },    { "aux", "AUX" },
+                                                                    { "bus-1", "BUSES" }, { "user-1", "USER1" }, { "user-2", "USER2" } };
+        if (! l.user)
+            for (auto [id, label] : keys)
+                if (l.id == id)
+                    return label;
+        return (l.user ? l.name.toUpperCase() : LayerSet::keyLabel (l)).replaceCharacter ('\n', ' ');
+    }
+
+    // The column's rows (WING px from the page's top): keys 48 tall every 52,
+    // 5 more between groups of bank keys; LEFT / CENTER / RIGHT at the bottom.
+    constexpr float kColumnKeyH = 48.0f, kColumnStep = 52.0f, kColumnGroupGap = 5.0f, kColumnTop = 4.0f, kSectionTop = 492.0f,
+                    kColumnPanelH = 648.0f, kPagerTop = 656.0f, kPagerH = 56.0f;
+} // namespace
+
+/** The layer column of the VIEW screens (firmware 3.1): on a #202020 panel
+    the section's layer keys (and any further user layers) on the right with
+    LEFT / CENTER / RIGHT at the bottom; the bank keys on the left (1-8 ...
+    DCA 9-16; not on CONFIG); the page arrows on a panel under them. */
 class ViewPage::LayerColumn final : public juce::Component
 {
 public:
@@ -480,49 +546,46 @@ public:
     void rebuild()
     {
         keys.clear();
-        pageKeys.clear();
-        auto b = getLocalBounds().reduced (3);
-        auto pager = b.removeFromBottom (juce::jlimit (20, screenCap (34), getHeight() / 14));
-        prevKey = pager.removeFromLeft (pager.getWidth() / 2).reduced (2, 0);
-        nextKey = pager.reduced (2, 0);
-        b.removeFromBottom (6);
+        bankKeys.clear();
+        const bool withBanks = page.hasBankKeys();
+        const float colW = withBanks ? 192.0f : 96.0f;
+        // WING px inside the column (its left edge at x = 0).
+        auto at = [] (float x, float y, float w, float h) { return wingRect (x, y, w, h); };
+        const float rightX = withBanks ? 100.0f : 4.0f;
+        prevKey = at (0.0f, kPagerTop, colW / 2.0f, kPagerH);
+        nextKey = at (colW / 2.0f, kPagerTop, colW / 2.0f, kPagerH);
 
         auto& layers = page.ctx.show.layers;
         std::vector<Layer> right = layers.getDefaultLayers (page.ctx.engine, page.section());
         const auto& user = layers.getUserLayers();
         for (size_t i = 2; i < user.size(); ++i)
             right.push_back (user[i]); // user layers without a USER key
-
-        const int numPages = page.numPages();
-        const int rowsNeeded = juce::jmax (numPages, (int) right.size() + 4);
-        const int keyH = juce::jlimit (16, screenCap (40), b.getHeight() / juce::jmax (1, rowsNeeded));
-        const int colW = (b.getWidth() - 4) / 2;
-        auto lc = b.removeFromLeft (colW);
-        b.removeFromLeft (4);
-        auto rc = b;
-        for (int i = 2; i >= 0; --i)
-            sectionKeys[i] = rc.removeFromBottom (keyH).reduced (0, 2);
-        rc.removeFromBottom (keyH / 2);
+        for (int i = 0; i < 3; ++i)
+            sectionKeys[i] = at (rightX, kSectionTop + kColumnStep * (float) i, 88.0f, kColumnKeyH);
+        float y = kColumnTop;
         for (auto& l : right)
-            if (rc.getHeight() >= keyH)
-                keys.push_back ({ rc.removeFromTop (keyH).reduced (0, 2), l.id, l.user ? l.name.toUpperCase() : LayerSet::keyLabel (l) });
-
-        // The pages of the layer, labelled by their first and last fader.
-        const auto layer = page.currentLayer();
-        const int size = page.pageSize();
-        for (int i = 0; i < numPages && lc.getHeight() >= keyH; ++i)
         {
-            const int first = i * size, last = juce::jmin ((int) layer.faders.size(), first + size) - 1;
-            juce::String label = juce::String (i + 1);
-            if (last >= first)
-            {
-                const auto a = resolve (page.ctx, layer.faders[(size_t) first]), z = resolve (page.ctx, layer.faders[(size_t) last]);
-                if (a.isValid() && z.isValid())
-                    label = first == last ? numberOf (a) : numberOf (a) + "-" + numberOf (z);
-            }
-            pageKeys.push_back ({ lc.removeFromTop (keyH).reduced (0, 2), juce::String (i), label });
+            if (y + kColumnKeyH > kSectionTop - 4.0f)
+                break;
+            keys.push_back ({ at (rightX, y, 88.0f, kColumnKeyH), l.id, columnLabel (l) });
+            y += kColumnStep;
         }
-        shownLayer = layer.id;
+
+        if (withBanks)
+        {
+            y = kColumnTop;
+            const auto all = page.banks();
+            for (size_t i = 0; i < all.size(); ++i)
+            {
+                if (i > 0 && all[i].group != all[i - 1].group)
+                    y += kColumnGroupGap;
+                if (y + kColumnKeyH > kColumnPanelH)
+                    break;
+                bankKeys.push_back ({ at (4.0f, y, 88.0f, kColumnKeyH), juce::String ((int) i), all[i].key });
+                y += kColumnStep;
+            }
+        }
+        shownLayer = page.currentLayerId();
         repaint();
     }
 
@@ -537,41 +600,34 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        g.setColour (Colours::screenDark);
-        g.fillRect (getLocalBounds());
+        const float colW = page.hasBankKeys() ? 192.0f : 96.0f;
+        g.setColour (Colours::screenPanel);
+        g.fillRect (wingRect (0.0f, 0.0f, colW, kColumnPanelH));
+        g.fillRect (wingRect (0.0f, kPagerTop, colW, kPagerH));
         const auto current = page.currentLayerId();
-        auto key = [&g] (juce::Rectangle<int> r, const juce::String& text, juce::Colour fill, juce::Colour ink)
-        {
-            g.setColour (fill);
-            g.fillRect (r);
-            g.setColour (ink);
-            const int lines = text.containsChar ('\n') ? 2 : 1;
-            g.setFont (viewFont (TypeScale::body, (float) r.getHeight() * (lines == 2 ? 0.4f : 0.55f)));
-            g.drawFittedText (text, r.reduced (2, 0), juce::Justification::centred, lines, 0.6f);
-        };
+        const int shown = page.shownBank();
         for (auto& k : keys)
         {
-            const bool on = k.id == current;
-            key (k.area, k.name, on ? Dark::layer : Colours::screenTile, on ? juce::Colours::white : Dark::text);
+            const bool on = shown < 0 && k.id == current;
+            wingKey (g, k.area, k.name, on ? Dark::layer : Colours::screenTile, on ? Dark::choiceInk : keyText);
         }
-        for (auto& k : pageKeys)
+        for (auto& k : bankKeys)
         {
-            const bool on = k.id.getIntValue() == page.page && pageKeys.size() > 1;
-            key (k.area, k.name, on ? Dark::layer : Colours::screenPanel, on ? juce::Colours::white : Dark::textDim);
+            const bool on = k.id.getIntValue() == shown;
+            wingKey (g, k.area, k.name, on ? Dark::layer : Colours::screenTile, on ? Dark::choiceInk : keyText);
         }
         const char* names[] = { "LEFT", "CENTER", "RIGHT" };
         for (int i = 0; i < 3; ++i)
         {
             const bool on = (int) page.section() == i;
-            key (sectionKeys[i], names[i], on ? Dark::section : Colours::screenTile, on ? juce::Colours::black : Dark::text);
+            wingKey (g, sectionKeys[i], names[i], on ? Dark::section : Colours::screenTile, on ? juce::Colours::black : keyText);
         }
-        const bool paged = page.numPages() > 1;
+        const bool paged = page.lastPage() > 0;
         for (auto [r, icon, enabled] : { std::tuple { prevKey, Icon::ChevronLeft, paged && page.page > 0 },
-                                         std::tuple { nextKey, Icon::ChevronRight, paged && page.page < page.numPages() - 1 } })
+                                         std::tuple { nextKey, Icon::ChevronRight, paged && page.page < page.lastPage() } })
         {
-            g.setColour (Colours::screenPanel);
-            g.fillRect (r);
-            drawIcon (g, icon, r.toFloat().reduced ((float) r.getHeight() * 0.2f), enabled ? Dark::text : Dark::textDim.withAlpha (0.4f));
+            const float s = wingPx (36.0f);
+            drawIcon (g, icon, r.toFloat().withSizeKeepingCentre (s, s), enabled ? Dark::text : Colours::screenLine);
         }
     }
 
@@ -584,10 +640,10 @@ public:
                 page.selectLayer (k.id);
                 return;
             }
-        for (auto& k : pageKeys)
+        for (auto& k : bankKeys)
             if (k.area.contains (pos))
             {
-                page.stepPage (k.id.getIntValue() - page.page);
+                page.selectBank (k.id.getIntValue());
                 return;
             }
         for (int i = 0; i < 3; ++i)
@@ -610,7 +666,7 @@ private:
     };
 
     ViewPage& page;
-    std::vector<Key> keys, pageKeys;
+    std::vector<Key> keys, bankKeys;
     juce::Rectangle<int> sectionKeys[3], prevKey, nextKey;
     juce::String shownLayer;
 };
@@ -649,14 +705,15 @@ StatusTitle ViewPage::getStatusTitle()
     t.kind = StatusTitle::Kind::Layer;
     const char letters[] = { 'L', 'C', 'R' };
     t.prefix = juce::String::charToString ((juce::juce_wchar) letters[juce::jlimit (0, 2, (int) section())]);
-    t.text = currentLayer().name.toUpperCase();
+    const auto all = banks();
+    t.text = juce::isPositiveAndBelow (shownBank(), (int) all.size()) ? all[(size_t) shownBank()].title : columnLabel (currentLayer());
     t.icon = Icon::Layers;
     return t;
 }
 
 void ViewPage::refresh()
 {
-    page = juce::jlimit (0, numPages() - 1, page);
+    page = juce::jlimit (0, lastPage(), page);
     resized();
     repaint();
     notifyStatusKeysChanged();
@@ -690,6 +747,44 @@ Layer ViewPage::currentLayer() const
     return ctx.show.layers.findLayer (ctx.engine, section(), currentLayerId());
 }
 
+std::vector<ViewPage::Bank> ViewPage::banks() const
+{
+    // Each kind in banks of eight ("1-8" ... "33-40", "AUX", "BUS 1-8", ...),
+    // the mains and matrices one group, then the DCAs.
+    std::vector<Bank> out;
+    auto addStrips = [this, &out] (StripKind kind, const juce::String& prefix, const juce::String& titlePrefix, int group)
+    {
+        auto& strips = ctx.engine.getStrips (kind);
+        const int n = (int) strips.size();
+        for (int first = 0; first < n; first += 8)
+        {
+            Bank b;
+            const auto range = juce::String (first + 1) + "-" + juce::String (juce::jmin (n, first + 8));
+            b.key = n <= 8 && prefix.isNotEmpty() ? prefix.trim() : prefix + range;
+            b.title = n <= 8 ? titlePrefix.trim() : titlePrefix + range;
+            b.group = group;
+            for (int i = first; i < juce::jmin (n, first + 8); ++i)
+                b.faders.push_back (state::FaderRef::of (state::StripRef::of (*strips[(size_t) i])));
+            out.push_back (std::move (b));
+        }
+    };
+    addStrips (StripKind::Channel, {}, "CH ", 0);
+    addStrips (StripKind::Aux, "AUX ", "AUX ", 1);
+    addStrips (StripKind::Bus, "BUS ", "BUS ", 2);
+    addStrips (StripKind::Main, "MAIN ", "MAIN ", 3);
+    addStrips (StripKind::Matrix, "MTX ", "MATRIX ", 3);
+    for (int first = 0; first < kNumDcas; first += 8)
+    {
+        Bank b;
+        b.key = b.title = "DCA " + juce::String (first + 1) + "-" + juce::String (juce::jmin (kNumDcas, first + 8));
+        b.group = 4;
+        for (int i = first; i < juce::jmin (kNumDcas, first + 8); ++i)
+            b.faders.push_back (state::FaderRef::ofDca (i));
+        out.push_back (std::move (b));
+    }
+    return out;
+}
+
 int ViewPage::pageSize() const
 {
     return juce::jmax (1, ctx.show.layers.getEffectiveWidth (section()));
@@ -697,14 +792,18 @@ int ViewPage::pageSize() const
 
 int ViewPage::numPages() const
 {
+    if (shownBank() >= 0)
+        return 1;
     const int n = (int) currentLayer().faders.size();
     return juce::jmax (1, (n + pageSize() - 1) / pageSize());
 }
 
 std::vector<state::FaderRef> ViewPage::pageFaders() const
 {
+    if (const auto all = banks(); juce::isPositiveAndBelow (shownBank(), (int) all.size()))
+        return all[(size_t) shownBank()].faders;
     const auto layer = currentLayer();
-    const int size = pageSize(), first = juce::jlimit (0, numPages() - 1, page) * size;
+    const int size = pageSize(), first = juce::jlimit (0, lastPage(), page) * size;
     std::vector<state::FaderRef> out;
     for (int i = first; i < juce::jmin ((int) layer.faders.size(), first + size); ++i)
         out.push_back (layer.faders[(size_t) i]);
@@ -713,13 +812,17 @@ std::vector<state::FaderRef> ViewPage::pageFaders() const
 
 std::vector<juce::Rectangle<int>> ViewPage::stripColumns (juce::Rectangle<int> area, int count) const
 {
-    // Strips are a twelfth of the screen wide (a section of 8 leaves room on
-    // the left, as on the console); wider sections shrink them to fit.
+    // [WING] 96 px strips 106 apart, the last ending 21 px left of the layer
+    // column (x = 1059); wider sections (12 strips) shrink them to fit.
     count = juce::jmax (1, count);
-    const int w = area.getWidth() / juce::jmax (count, hasLayerColumn() ? 10 : count);
+    const float right = hasLayerColumn() ? 1059.0f : 1272.0f;
+    const float pitch = juce::jmin (106.0f, (right - 9.0f + 10.0f) / (float) count), w = pitch - 10.0f;
     std::vector<juce::Rectangle<int>> out;
     for (int i = 0; i < count; ++i)
-        out.push_back (juce::Rectangle<int> (area.getRight() - (count - i) * w, area.getY(), w, area.getHeight()).reduced (2, 0));
+    {
+        const float x = right - (float) (count - i) * pitch + 10.0f;
+        out.push_back (juce::Rectangle<int> (px (x), area.getY(), px (x + w) - px (x), area.getHeight()));
+    }
     return out;
 }
 
@@ -727,6 +830,7 @@ void ViewPage::selectLayer (const juce::String& id)
 {
     const auto s = section();
     browsed[s] = id;
+    bank[s] = -1;
     if (prefs::screenFollowsLayer (ctx) && id != ctx.show.layers.getSelectedLayerId (s))
     {
         ctx.show.layers.setSelectedLayerId (s, id);
@@ -747,9 +851,25 @@ void ViewPage::selectSection (LayerSet::Section s)
     repaint();
 }
 
+void ViewPage::selectBank (int index)
+{
+    bank[section()] = index;
+    page = 0;
+    layerChanged();
+    column->rebuild();
+    notifyStatusKeysChanged();
+    repaint();
+}
+
 void ViewPage::stepPage (int delta)
 {
-    page = juce::jlimit (0, numPages() - 1, page + delta);
+    if (const int shown = shownBank(); shown >= 0)
+    {
+        // A bank: the arrows step through the banks.
+        selectBank (juce::jlimit (0, (int) banks().size() - 1, shown + delta));
+        return;
+    }
+    page = juce::jlimit (0, lastPage(), page + delta);
     layerChanged();
     column->rebuild();
     repaint();
@@ -767,13 +887,448 @@ void ViewPage::resized()
     column->setVisible (hasLayerColumn());
     if (hasLayerColumn())
     {
-        column->setBounds (b.removeFromRight (juce::jlimit (110, screenCap (200), getWidth() * 16 / 100)));
-        b.removeFromRight (4);
+        // [WING] x = 1080 (CONFIG: 1176) to 1272, to the page arrows' panel's bottom.
+        const float x = hasBankKeys() ? 1080.0f : 1176.0f;
+        column->setBounds (wingRect (x, 0.0f, 1272.0f - x, kPagerTop + kPagerH));
+        b.setRight (px (x) - px (8.0f));
         column->rebuild();
     }
     content = b;
     layoutContent();
 }
+
+//==============================================================================
+namespace
+{
+    /** A strip a cell or tile of a member grid stands for. */
+    struct MemberCell
+    {
+        juce::Rectangle<int> area;
+        Strip* strip = nullptr;
+    };
+
+    /** The kinds a DCA or mute group takes and how many of each the WING shows. */
+    constexpr std::pair<StripKind, int> memberKinds[] = { { StripKind::Channel, 40 }, { StripKind::Aux, 8 }, { StripKind::Bus, 16 },
+                                                          { StripKind::Main, 4 },     { StripKind::Matrix, 8 } };
+
+    const char* memberCaption (StripKind k)
+    {
+        switch (k)
+        {
+            case StripKind::Channel: return "CHANNEL";
+            case StripKind::Aux:     return "AUX";
+            case StripKind::Bus:     return "BUS";
+            case StripKind::Main:    return "MAIN";
+            case StripKind::Matrix:  return "MATRIX";
+        }
+        return "";
+    }
+
+    /** The OVERVIEW column of a DCA or mute group [WING]: on its panel
+        (`body`, WING y = 152 to 752) a caption over each kind and its members
+        as 20 px cells, four to a row, then the monitor paths' two cells.
+        Returns the strips' cells. */
+    std::vector<MemberCell> paintMemberColumn (juce::Graphics& g, UiContext& ctx, juce::Rectangle<int> body, juce::Colour panel,
+                                               const std::function<bool (const Strip&)>& isMember, juce::Colour memberColour,
+                                               const juce::String& phonesText, const juce::String& speakersText)
+    {
+        std::vector<MemberCell> cells;
+        g.setColour (panel);
+        g.fillRect (body);
+        const int x0 = body.getX(), y0 = body.getY();
+        auto at = [x0, y0] (float x, float y, float w, float h)
+        { return juce::Rectangle<int> (x0 + px (x), y0 + px (y), px (x + w) - px (x), px (y + h) - px (y)); };
+        auto cell = [&g] (juce::Rectangle<int> r, const juce::String& text, bool on, juce::Colour onColour)
+        {
+            g.setColour (on ? onColour : Colours::screenDark);
+            g.fillRoundedRectangle (r.toFloat(), wingPx (2.0f));
+            g.setColour (on ? juce::Colours::black : cellText);
+            g.drawFittedText (text, r, juce::Justification::centred, 1, 0.6f);
+        };
+        float y = 0.0f;
+        for (auto [kind, count] : memberKinds)
+        {
+            g.setColour (keyText);
+            g.setFont (capFont (10.0f));
+            g.drawText (memberCaption (kind), at (0.0f, y, 96.0f, 22.0f), juce::Justification::centred);
+            y += 22.0f;
+            auto& strips = ctx.engine.getStrips (kind);
+            const int n = juce::jmin (count, (int) strips.size());
+            for (int i = 0; i < n; ++i)
+            {
+                auto& s = *strips[(size_t) i];
+                const auto r = at (5.0f + 22.0f * (float) (i % 4), y + 22.0f * (float) (i / 4), 20.0f, 20.0f);
+                cell (r, juce::String (i + 1), isMember (s), memberColour);
+                cells.push_back ({ r, &s });
+            }
+            y += 22.0f * (float) ((count + 3) / 4);
+        }
+        // The monitor paths (a DCA or mute group can't take them in Sidecar).
+        y += 4.0f;
+        cell (at (5.0f, y, 42.0f, 20.0f), phonesText, false, memberColour);
+        cell (at (49.0f, y, 42.0f, 20.0f), speakersText, false, memberColour);
+        return cells;
+    }
+
+    /** A strip's tile on the assign screens and CONFIG [WING]: a 22 px bar in
+        its colour (its name, black), the #303030 body with the number (an
+        input's in a grey badge) and its icon; framed gold when chosen. */
+    void paintStripTile (juce::Graphics& g, juce::Rectangle<int> area, const Strip& s, bool framed)
+    {
+        auto r = area.toFloat();
+        const float corner = wingPx (3.0f);
+        auto bar = r.removeFromTop (r.getHeight() * 22.0f / 64.0f);
+        g.setColour (stripDisplayColour (s));
+        g.fillRoundedRectangle (bar.withBottom (bar.getBottom() + corner), corner);
+        g.setColour (Colours::screenTile);
+        g.fillRect (r);
+        if (stripName (s) != s.getLabel())
+        {
+            g.setColour (juce::Colours::black);
+            g.setFont (fontFittingWidth (capFont (12.0f, WingWeight::SemiBold), stripName (s).toUpperCase(), bar.getWidth() - wingPx (6.0f)));
+            g.drawFittedText (stripName (s).toUpperCase(), bar.toNearestInt().reduced (px (3.0f), 0), juce::Justification::centred, 1, 0.6f);
+        }
+        const auto label = shortStripLabel (s);
+        const auto font = capFont (juce::jmin (20.0f, r.getHeight() / wingPx (1.0f) * 0.48f), WingWeight::SemiBold);
+        auto inner = r.reduced (wingPx (6.0f), r.getHeight() * 0.17f);
+        if (s.isInput())
+        {
+            const float w = juce::GlyphArrangement::getStringWidth (font, label) + wingPx (6.0f);
+            auto badge = inner.removeFromLeft (w);
+            g.setColour (Colours::textDim);
+            g.fillRoundedRectangle (badge, wingPx (2.0f));
+            g.setColour (juce::Colours::black);
+            g.setFont (font);
+            g.drawText (label, badge, juce::Justification::centred, false);
+            const float icon = juce::jmin (inner.getHeight(), wingPx (26.0f));
+            if (inner.getWidth() > icon * 1.5f)
+                drawStripIcon (g, s, inner.removeFromRight (icon).withSizeKeepingCentre (icon, icon), Colours::textDim);
+        }
+        else
+        {
+            g.setColour (Colours::textDim);
+            g.setFont (font);
+            g.drawText (label, r.reduced (wingPx (3.0f), 0.0f), juce::Justification::centredLeft, false);
+        }
+        if (framed)
+        {
+            g.setColour (Colours::gold);
+            g.drawRoundedRectangle (area.toFloat().expanded (wingPx (2.0f)), corner, wingPx (2.0f));
+        }
+    }
+} // namespace
+
+/** Assigning a DCA's or a mute group's members [WING]: the eight groups as
+    tabs on top (the one edited bright), the channels, aux and buses as tiles
+    in the frame, the mains and matrices on the right under CLOSE and
+    UNASSIGN. A tile toggles its strip, members are framed gold. A mute group
+    has a SOURCE tab too: the sources it mutes (ROUTING > SOURCES > TAGS). */
+class MemberAssignView final : public juce::Component
+{
+public:
+    enum class Kind
+    {
+        Dca,
+        MuteGroup
+    };
+
+    MemberAssignView (UiContext& c, Kind k) : ctx (c), kind (k) {}
+
+    std::function<void()> onClose;
+    /** The tab of the group edited touched again (rename it). */
+    std::function<void (int)> onEdit;
+
+    void show (int g)
+    {
+        group = juce::jlimit (0, groupCount() - 1, g);
+        sources = false;
+        setVisible (true);
+        toFront (false);
+        resized();
+        repaint();
+    }
+
+    int getGroup() const noexcept { return group; }
+
+    void resized() override
+    {
+        tiles.clear();
+        sourceTiles.clear();
+        const float tabX = kind == Kind::Dca ? 221.0f : 9.0f;
+        for (int i = 0; i < 8; ++i)
+            tabs[i] = wingRect (tabX + 106.0f * (float) i, 0.0f, 96.0f, 64.0f);
+        frame = wingRect (24.0f, 72.0f, 838.0f, 630.0f);
+        if (sources)
+        {
+            // The sources, 64 at a time.
+            const int n = ctx.engine.getNumSources();
+            for (int i = sourcePage * 64; i < juce::jmin (n, sourcePage * 64 + 64); ++i)
+            {
+                const int k = i % 64;
+                sourceTiles.push_back ({ wingRect (31.0f + 104.0f * (float) (k % 8), 79.0f + 77.0f * (float) (k / 8), 96.0f, 64.0f), i });
+            }
+        }
+        else
+        {
+            auto add = [this] (StripKind k, int count, float y)
+            {
+                auto& strips = ctx.engine.getStrips (k);
+                for (int i = 0; i < juce::jmin (count, (int) strips.size()); ++i)
+                    tiles.push_back ({ wingRect (31.0f + 104.0f * (float) (i % 8), y + 72.0f * (float) (i / 8), 96.0f, 64.0f), strips[(size_t) i].get() });
+            };
+            add (StripKind::Channel, 40, 79.0f);
+            add (StripKind::Aux, 8, 463.0f);
+            add (StripKind::Bus, 16, 559.0f);
+        }
+        auto& mains = ctx.engine.getStrips (StripKind::Main);
+        for (int i = 0; i < juce::jmin (4, (int) mains.size()); ++i)
+            tiles.push_back ({ wingRect (891.0f, 247.0f + 72.0f * (float) i, 96.0f, 64.0f), mains[(size_t) i].get() });
+        auto& matrices = ctx.engine.getStrips (StripKind::Matrix);
+        for (int i = 0; i < juce::jmin (8, (int) matrices.size()); ++i)
+            tiles.push_back ({ wingRect (i < 4 ? 1049.0f : 1153.0f, 247.0f + 72.0f * (float) (i % 4), 96.0f, 64.0f), matrices[(size_t) i].get() });
+        channelTab = wingRect (884.0f, 72.0f, 117.0f, 55.0f);
+        sourceTab = wingRect (1004.0f, 72.0f, 117.0f, 55.0f);
+        closeKey = kind == Kind::Dca ? wingRect (884.0f, 72.0f, 372.0f, 64.0f) : wingRect (1124.0f, 72.0f, 132.0f, 55.0f);
+        unassignKey = wingRect (977.0f, 160.0f, 186.0f, 56.0f);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (juce::Colours::black);
+        paintTabs (g);
+
+        // The frame round the tiles, the panels on the right.
+        g.setColour (Colours::screenPanel);
+        g.drawRect (frame, px (4.0f));
+        for (auto r : { wingRect (884.0f, 240.0f, 372.0f, 294.0f), wingRect (884.0f, 620.0f, 372.0f, 60.0f) })
+            g.drawRect (r, px (4.0f));
+        g.fillRect (wingRect (884.0f, 72.0f, 372.0f, 64.0f));
+        g.fillRect (wingRect (884.0f, 144.0f, 372.0f, 88.0f));
+        if (kind == Kind::MuteGroup)
+        {
+            // CHANNEL | SOURCE: the one shown with a gold line and gold print.
+            for (auto [r, text, on] : { std::tuple { channelTab, "CHANNEL", ! sources }, std::tuple { sourceTab, "SOURCE", sources } })
+            {
+                g.setColour (on ? Colours::screenTile : Colours::screenPanel);
+                g.fillRect (r);
+                if (on)
+                {
+                    g.setColour (Colours::gold);
+                    g.fillRect (r.withHeight (px (4.0f)));
+                }
+                g.setColour (on ? Colours::gold : Colours::caption);
+                g.setFont (capFont (on ? 17.0f : 14.0f));
+                const auto caption = on && sources && numSourcePages() > 1
+                                         ? juce::String (text) + " " + juce::String (sourcePage + 1) + "/" + juce::String (numSourcePages())
+                                         : juce::String (text);
+                g.drawFittedText (caption, r.reduced (px (4.0f), 0), juce::Justification::centred, 1, 0.6f);
+            }
+            g.setColour (juce::Colours::black);
+            g.fillRect (wingRect (1001.0f, 72.0f, 3.0f, 55.0f));
+            g.fillRect (wingRect (1121.0f, 72.0f, 3.0f, 55.0f));
+            g.fillRect (wingRect (884.0f, 127.0f, 372.0f, 3.0f));
+        }
+        // CLOSE and its ticked box.
+        auto close = closeKey.withTrimmedRight (px (16.0f));
+        auto box = close.removeFromRight (px (32.0f)).withSizeKeepingCentre (px (32.0f), px (32.0f));
+        g.setColour (Colours::caption);
+        g.drawRect (box, juce::jmax (1, px (2.0f)));
+        juce::Path tick;
+        const auto b = box.toFloat();
+        tick.startNewSubPath (b.getX() + b.getWidth() * 0.22f, b.getY() + b.getHeight() * 0.5f);
+        tick.lineTo (b.getX() + b.getWidth() * 0.42f, b.getY() + b.getHeight() * 0.72f);
+        tick.lineTo (b.getRight() - b.getWidth() * 0.05f, b.getY() + b.getHeight() * 0.08f);
+        g.strokePath (tick, juce::PathStrokeType (wingPx (2.0f)));
+        close.removeFromRight (px (12.0f));
+        g.setFont (capFont (14.0f));
+        g.drawText ("CLOSE", close, juce::Justification::centredRight, false);
+
+        // UNASSIGN: an outlined key with a crossed ring.
+        g.setColour (Colours::screenTile);
+        g.fillRect (unassignKey);
+        g.setColour (Colours::caption);
+        g.drawRect (unassignKey, 1);
+        auto u = unassignKey.toFloat().reduced (wingPx (16.0f), 0.0f);
+        const float ring = wingPx (32.0f);
+        drawIcon (g, Icon::ClearCircle, u.removeFromLeft (ring).withSizeKeepingCentre (ring, ring), Colours::caption);
+        g.setFont (capFont (14.0f));
+        g.drawText ("UNASSIGN", u, juce::Justification::centred, false);
+
+        // PHONES LEVEL / SPK LEVEL: the console's DCAs and mute groups can
+        // take the monitor levels; Sidecar's can't, so they are dim.
+        for (int i = 0; i < 2; ++i)
+        {
+            auto t = wingRect (891.0f + 74.0f * (float) i, 627.0f, 66.0f, 46.0f).toFloat();
+            auto top = t.removeFromTop (t.getHeight() / 2.0f);
+            g.setColour (Dark::olive.withMultipliedBrightness (0.45f));
+            g.fillRect (top);
+            g.setColour (Colours::screenPanel);
+            g.fillRect (t);
+            g.setFont (capFont (11.0f, WingWeight::SemiBold));
+            g.setColour (juce::Colours::black);
+            g.drawText (i == 0 ? "PHONES" : "SPK", top, juce::Justification::centred, false);
+            g.setColour (Colours::screenLine);
+            g.drawText ("LEVEL", t, juce::Justification::centred, false);
+        }
+
+        for (auto& t : tiles)
+            paintStripTile (g, t.area, *t.strip, isMember (*t.strip));
+        for (auto& [area, index] : sourceTiles)
+            paintSourceTile (g, area, index);
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        const auto pos = e.getPosition();
+        for (int i = 0; i < 8; ++i)
+            if (tabs[i].contains (pos))
+            {
+                const int g = firstTab() + i;
+                if (g == group && onEdit)
+                    onEdit (g);
+                else if (g < groupCount())
+                    group = g;
+                repaint();
+                return;
+            }
+        if (closeKey.contains (pos))
+        {
+            setVisible (false);
+            if (onClose)
+                onClose();
+            return;
+        }
+        if (unassignKey.contains (pos))
+        {
+            unassignAll();
+            return;
+        }
+        if (kind == Kind::MuteGroup && (channelTab.contains (pos) || sourceTab.contains (pos)))
+        {
+            // SOURCE touched again shows the next 64 sources.
+            const bool toSources = sourceTab.contains (pos);
+            sourcePage = toSources ? (sources ? (sourcePage + 1) % juce::jmax (1, numSourcePages()) : sourcePage) : 0;
+            sources = toSources;
+            resized();
+            repaint();
+            return;
+        }
+        for (auto& t : tiles)
+            if (t.area.contains (pos))
+            {
+                toggle (*t.strip);
+                repaint();
+                return;
+            }
+        for (auto& [area, index] : sourceTiles)
+            if (area.contains (pos))
+            {
+                if (auto* src = ctx.engine.getSource (index))
+                    src->muteGroups = src->muteGroups.load() ^ bit();
+                repaint();
+                return;
+            }
+    }
+
+private:
+    int groupCount() const noexcept { return kind == Kind::Dca ? kNumDcas : kNumMuteGroups; }
+    int firstTab() const noexcept { return kind == Kind::Dca ? group / 8 * 8 : 0; }
+    uint32_t bit() const noexcept { return 1u << (uint32_t) group; }
+    int numSourcePages() const { return (ctx.engine.getNumSources() + 63) / 64; }
+
+    bool isMember (const Strip& s) const
+    {
+        return ((kind == Kind::Dca ? s.params.dcaMask.load() : s.params.muteGroupMask.load()) & bit()) != 0;
+    }
+
+    void toggle (Strip& s)
+    {
+        auto& mask = kind == Kind::Dca ? s.params.dcaMask : s.params.muteGroupMask;
+        mask = mask.load() ^ bit();
+    }
+
+    void unassignAll()
+    {
+        for (int k = 0; k < kNumStripKinds; ++k)
+            for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
+            {
+                auto& mask = kind == Kind::Dca ? s->params.dcaMask : s->params.muteGroupMask;
+                mask = mask.load() & ~bit();
+            }
+        // A mute group's sources too (ROUTING > SOURCES > TAGS).
+        if (kind == Kind::MuteGroup)
+            for (int i = 0; i < ctx.engine.getNumSources(); ++i)
+                if (auto* src = ctx.engine.getSource (i))
+                    src->muteGroups = src->muteGroups.load() & ~bit();
+        repaint();
+    }
+
+    void paintTabs (juce::Graphics& g)
+    {
+        for (int i = 0; i < 8; ++i)
+        {
+            const int index = firstTab() + i;
+            if (index >= groupCount())
+                continue;
+            const bool on = index == group;
+            auto r = tabs[i];
+            const auto colour = kind == Kind::Dca ? wingColour (ctx.engine.getDca (index).colour.load()) : groupRed;
+            const auto bar = r.removeFromTop (px (22.0f));
+            g.setColour (on ? colour : colour.withMultipliedBrightness (0.5f));
+            g.fillRect (bar);
+            g.setColour (on ? Colours::screenTile : juce::Colour (0xff181818));
+            g.fillRect (r);
+            const auto name = kind == Kind::Dca ? ctx.engine.getDcaName (index) : ctx.engine.getMuteGroupName (index);
+            const bool defaultName = kind == Kind::Dca && name.removeCharacters (" .").equalsIgnoreCase ("DCA" + juce::String (index + 1));
+            if (! defaultName)
+            {
+                g.setColour (on ? juce::Colours::black : juce::Colours::black.withAlpha (0.6f));
+                g.setFont (capFont (13.0f, WingWeight::SemiBold));
+                g.drawFittedText (name.toUpperCase(), bar, juce::Justification::centred, 1, 0.6f);
+            }
+            g.setColour (on ? Colours::textDim : Colours::screenTile);
+            g.setFont (capFont (20.0f, WingWeight::SemiBold));
+            if (kind == Kind::Dca)
+                g.drawText ("D" + juce::String (index + 1), r.withTrimmedLeft (px (5.0f)), juce::Justification::centredLeft, false);
+            else
+                g.drawText (juce::String (index + 1), r, juce::Justification::centred, false);
+        }
+    }
+
+    void paintSourceTile (juce::Graphics& g, juce::Rectangle<int> area, int index)
+    {
+        const auto* src = ctx.engine.getSource (index);
+        const int port = MixerEngine::sourcePort (index);
+        auto r = area.toFloat();
+        auto bar = r.removeFromTop (r.getHeight() * 22.0f / 64.0f);
+        g.setColour (Colours::screenPanel);
+        g.fillRect (bar);
+        g.setColour (Colours::screenTile);
+        g.fillRect (r);
+        g.setColour (Colours::caption);
+        g.setFont (capFont (12.0f, WingWeight::SemiBold));
+        g.drawFittedText (ctx.engine.getSourceName (index).toUpperCase(), bar.toNearestInt().reduced (px (3.0f), 0), juce::Justification::centred, 1, 0.6f);
+        auto inner = r.reduced (wingPx (6.0f), wingPx (7.0f));
+        const float icon = juce::jmin (inner.getHeight(), wingPx (26.0f));
+        drawIcon (g, sourceIcon (port), inner.removeFromRight (icon).withSizeKeepingCentre (icon, icon), Colours::textDim);
+        g.setColour (Colours::textDim);
+        g.setFont (capFont (14.0f, WingWeight::SemiBold));
+        g.drawFittedText (inputPortName (port), inner.toNearestInt(), juce::Justification::centredLeft, 1, 0.6f);
+        if (src != nullptr && (src->muteGroups.load() & bit()) != 0)
+        {
+            g.setColour (Colours::gold);
+            g.drawRoundedRectangle (area.toFloat().expanded (wingPx (2.0f)), wingPx (3.0f), wingPx (2.0f));
+        }
+    }
+
+    UiContext& ctx;
+    const Kind kind;
+    int group = 0, sourcePage = 0;
+    bool sources = false;
+    juce::Rectangle<int> tabs[8], frame, channelTab, sourceTab, closeKey, unassignKey;
+    std::vector<MemberCell> tiles;
+    std::vector<std::pair<juce::Rectangle<int>, int>> sourceTiles;
+};
 
 //==============================================================================
 namespace
@@ -833,11 +1388,10 @@ namespace
     {
         OverviewRows r;
         auto c = column.toFloat();
-        const float h = c.getHeight();
-        r.name = c.removeFromTop (h * 0.045f);
-        c.removeFromTop (2.0f);
-        r.number = c.removeFromTop (h * 0.07f);
-        c.removeFromTop (4.0f);
+        r.name = c.removeFromTop (wingPx (22.0f));
+        r.number = c.removeFromTop (wingPx (42.0f));
+        c.removeFromTop (wingPx (8.0f));
+        const float h = column.getHeight();
         const float barH = juce::jmax (5.0f, h * 0.028f);
         const float gap = 3.0f;
         const float blockH = (c.getHeight() - barH - gap * 9.0f) / 8.0f;
@@ -978,10 +1532,51 @@ namespace
     }
 } // namespace
 
+OverviewViewPage::OverviewViewPage (UiContext& c) : ViewPage (c, Screen::Overview)
+{
+    assign = std::make_unique<MemberAssignView> (ctx, MemberAssignView::Kind::Dca);
+    assign->onClose = [this] { notifyStatusKeysChanged(); };
+    assign->onEdit = [this] (int dca) { editDca (ctx, dca, *this, anchorAt (wingRect (221.0f + 106.0f * (float) (dca % 8), 0.0f, 96.0f, 64.0f))); };
+    addChildComponent (*assign);
+}
+
+OverviewViewPage::~OverviewViewPage() = default;
+
+void OverviewViewPage::resized()
+{
+    ViewPage::resized();
+    assign->setBounds (getLocalBounds());
+}
+
+StatusTitle OverviewViewPage::getStatusTitle()
+{
+    // Assigning a DCA: the title tile in its colour with "D1" (or its name).
+    if (! assign->isVisible())
+        return ViewPage::getStatusTitle();
+    const int dca = assign->getGroup();
+    StatusTitle t;
+    t.kind = StatusTitle::Kind::Text;
+    t.fill = wingColour (ctx.engine.getDca (dca).colour.load());
+    t.ink = juce::Colours::black;
+    const auto name = ctx.engine.getDcaName (dca);
+    const bool defaultName = name.isEmpty() || name.removeCharacters (" .").equalsIgnoreCase ("DCA" + juce::String (dca + 1));
+    t.text = defaultName ? "D" + juce::String (dca + 1) : name.toUpperCase();
+    return t;
+}
+
+namespace
+{
+    /** Where the VIEW pages' strips end: the WING's y = 752. */
+    juce::Rectangle<int> stripArea (juce::Rectangle<int> content)
+    {
+        return content.withHeight (px (672.0f));
+    }
+} // namespace
+
 void OverviewViewPage::paintContent (juce::Graphics& g)
 {
     const auto faders = pageFaders();
-    const auto cols = stripColumns (content, juce::jmax ((int) faders.size(), pageSize()));
+    const auto cols = stripColumns (stripArea (content), juce::jmax ((int) faders.size(), pageSize()));
     auto* selected = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr;
     for (size_t i = 0; i < faders.size() && i < cols.size(); ++i)
     {
@@ -989,12 +1584,22 @@ void OverviewViewPage::paintContent (juce::Graphics& g)
         if (! t.isValid())
             continue;
         const auto blocks = t.strip != nullptr ? blocksOf (*t.strip) : Blocks {};
-        const auto rows = overviewRows (cols[i].withTrimmedBottom (6), blocks.beforeFader);
+        const auto rows = overviewRows (cols[i], blocks.beforeFader);
         paintNameBar (g, rows.name, colourOf (ctx, t), barName (ctx, t));
         paintNumberTile (g, rows.number, t);
-        levelBar (g, rows.bar, faderOf (ctx, t).load(), muteOf (ctx, t).load());
         if (t.strip == nullptr)
-            continue; // a DCA: name, number and level only
+        {
+            // [WING] a DCA: its members, "DCA" at the bottom.
+            const uint32_t bit = 1u << (uint32_t) t.dca;
+            const auto body = cols[i].withTop (cols[i].getY() + px (72.0f));
+            paintMemberColumn (g, ctx, body, Colours::screenPanel, [bit] (const Strip& s) { return (s.params.dcaMask.load() & bit) != 0; },
+                               colourOf (ctx, t), "PH", "SPK");
+            g.setColour (darkLabel);
+            g.setFont (capFont (20.0f, WingWeight::SemiBold));
+            g.drawText ("DCA", body.withTop (body.getY() + px (561.0f)).withHeight (px (32.0f)), juce::Justification::centred, false);
+            continue;
+        }
+        levelBar (g, rows.bar, faderOf (ctx, t).load(), muteOf (ctx, t).load());
 
         auto& s = *t.strip;
         paintInputBlock (g, rows.input, ctx, s);
@@ -1031,7 +1636,11 @@ void OverviewViewPage::paintContent (juce::Graphics& g)
 
 std::vector<StatusKey> OverviewViewPage::getStatusKeys()
 {
+    // Only while the page shows channels: a DCA or bus layer has the five VIEW keys.
     auto keys = ViewPage::getStatusKeys();
+    const auto faders = pageFaders();
+    if (std::none_of (faders.begin(), faders.end(), [] (const state::FaderRef& f) { return ! f.dca && ! f.fxParam && ! f.midiCc && isInputKind (f.strip.kind); }))
+        return keys;
     const bool exclusive = ctx.settings.getBoolValue (uiprefs::exclusiveSolo, false);
     keys.push_back ({ "EXCL SOLO", std::nullopt, exclusive, [this, exclusive]
                       {
@@ -1044,7 +1653,7 @@ std::vector<StatusKey> OverviewViewPage::getStatusKeys()
 void OverviewViewPage::mouseUp (const juce::MouseEvent& e)
 {
     const auto faders = pageFaders();
-    const auto cols = stripColumns (content, juce::jmax ((int) faders.size(), pageSize()));
+    const auto cols = stripColumns (stripArea (content), juce::jmax ((int) faders.size(), pageSize()));
     const auto pos = e.position;
     for (size_t i = 0; i < faders.size() && i < cols.size(); ++i)
     {
@@ -1052,11 +1661,12 @@ void OverviewViewPage::mouseUp (const juce::MouseEvent& e)
             continue;
         const auto t = resolve (ctx, faders[i]);
         const auto blocks = t.strip != nullptr ? blocksOf (*t.strip) : Blocks {};
-        const auto rows = overviewRows (cols[i].withTrimmedBottom (6), blocks.beforeFader);
+        const auto rows = overviewRows (cols[i], blocks.beforeFader);
         if (t.dca >= 0)
         {
-            if (rows.name.contains (pos) || rows.number.contains (pos))
-                editDca (ctx, t.dca, *this, anchorAt (cols[i]));
+            // A DCA's column opens its assign screen.
+            assign->show (t.dca);
+            notifyStatusKeysChanged();
             return;
         }
         if (t.strip == nullptr)
@@ -1084,39 +1694,48 @@ namespace
 {
     struct FaderRows
     {
-        juce::Rectangle<float> name, number, pan, gr, mute, fader, assign, label;
+        juce::Rectangle<float> name, number, pan, gr, panel, mute, fader, meter, assign, label;
     };
 
     FaderRows faderRows (juce::Rectangle<int> column)
     {
+        // WING px down the column (its top at the page's top, y = 80).
+        const auto c = column.toFloat();
+        auto at = [&c] (float x, float y, float w, float h) { return juce::Rectangle<float> (c.getX() + wingPx (x), c.getY() + wingPx (y), wingPx (w), wingPx (h)); };
         FaderRows r;
-        auto c = column.toFloat();
-        const float h = c.getHeight();
-        r.name = c.removeFromTop (h * 0.045f);
-        c.removeFromTop (2.0f);
-        r.number = c.removeFromTop (h * 0.065f);
-        c.removeFromTop (4.0f);
-        r.pan = c.removeFromTop (h * 0.1f);
-        c.removeFromTop (3.0f);
-        r.gr = c.removeFromTop (h * 0.055f);
-        c.removeFromTop (3.0f);
-        r.mute = c.removeFromTop (h * 0.065f);
-        c.removeFromTop (4.0f);
-        r.label = c.removeFromBottom (h * 0.07f);
-        r.assign = c.removeFromBottom (juce::jmax (10.0f, h * 0.035f));
-        c.removeFromBottom (3.0f);
-        r.fader = c;
+        r.name = at (0.0f, 0.0f, 96.0f, 22.0f);
+        r.number = at (0.0f, 22.0f, 96.0f, 42.0f);
+        r.pan = at (0.0f, 72.0f, 96.0f, 52.0f);
+        r.gr = at (0.0f, 128.0f, 96.0f, 18.0f);
+        r.assign = at (4.0f, 150.0f, 88.0f, 10.0f);
+        r.panel = at (0.0f, 164.0f, 96.0f, 508.0f);
+        r.mute = at (4.0f, 168.0f, 88.0f, 50.0f);
+        r.fader = at (4.0f, 224.0f, 70.0f, 400.0f);
+        r.meter = at (77.0f, 227.0f, 15.0f, 394.0f);
+        r.label = at (0.0f, 632.0f, 96.0f, 32.0f);
         return r;
     }
 
+    /** MUTE [WING]: a 3 px black frame round the key, lit red while muted. */
     void paintMuteKey (juce::Graphics& g, juce::Rectangle<float> r, bool muted)
     {
-        auto k = r.reduced (r.getWidth() * 0.12f, 1.0f);
-        g.setColour (muted ? Dark::muted : chipOff);
+        g.setColour (juce::Colours::black);
+        g.fillRect (r);
+        auto k = r.reduced (wingPx (3.0f));
+        g.setColour (muted ? Dark::muted : Colours::screenTile);
         g.fillRect (k);
         g.setColour (muted ? juce::Colours::black : Dark::textDim);
-        g.setFont (viewFont (TypeScale::body, k.getHeight() * 0.55f, WingWeight::Medium));
+        g.setFont (capFontFit (14.0f, k.getHeight() * 0.55f));
         g.drawFittedText ("MUTE", k.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+    }
+
+    /** The fader's well: a 2 px black frame round #101010. */
+    void paintFaderWell (juce::Graphics& g, juce::Rectangle<float> r)
+    {
+        g.setColour (juce::Colours::black);
+        g.fillRect (r);
+        g.setColour (Colours::screenDark);
+        g.fillRect (r.reduced (wingPx (2.0f)));
     }
 
     /** DCA 1-16, MAIN 1-4 and MUTE GROUP 1-8 membership as rows of tiny cells. */
@@ -1147,23 +1766,31 @@ namespace
 void FadersViewPage::paintContent (juce::Graphics& g)
 {
     const auto faders = pageFaders();
-    const auto cols = stripColumns (content, juce::jmax ((int) faders.size(), pageSize()));
+    const auto cols = stripColumns (stripArea (content), juce::jmax ((int) faders.size(), pageSize()));
     auto* selected = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr;
     for (size_t i = 0; i < faders.size() && i < cols.size(); ++i)
     {
         const auto t = withSendsOnFader (ctx, resolve (ctx, faders[i]));
         if (! t.isValid())
             continue;
-        const auto rows = faderRows (cols[i].withTrimmedBottom (6));
-        g.setColour (Colours::screenDark);
-        g.fillRect (rows.mute.getUnion (rows.label));
+        const auto rows = faderRows (cols[i]);
+        g.setColour (Colours::screenPanel);
+        g.fillRect (rows.panel);
         paintNameBar (g, rows.name, colourOf (ctx, t), barName (ctx, t));
         paintNumberTile (g, rows.number, t);
         // A send fader's MUTE switches the send (lit while it's off), as on the surface.
         paintMuteKey (g, rows.mute, t.isSend() ? ! t.sendOn->load() : muteOf (ctx, t).load());
+        paintFaderWell (g, rows.fader);
 
-        auto faderArea = rows.fader.reduced (2.0f, 0.0f);
-        if (t.strip != nullptr)
+        auto faderArea = rows.fader.reduced (wingPx (2.0f));
+        if (t.strip == nullptr)
+        {
+            // A DCA has no meter: the console draws only its top segments.
+            for (int ch = 0; ch < 2; ++ch)
+                verticalMeter (g, rows.meter.withHeight (wingPx (86.0f)).withWidth (rows.meter.getWidth() / 2.0f - 1.0f).translated ((float) ch * rows.meter.getWidth() / 2.0f, 0.0f),
+                               0.0f, Colours::meterGreen, juce::Colours::black);
+        }
+        else
         {
             auto& s = *t.strip;
             block (g, rows.pan);
@@ -1194,19 +1821,18 @@ void FadersViewPage::paintContent (juce::Graphics& g)
                 }
             }
             // [fig. 56] the level meter right of the fader: a column of
-            // segments (unlit #303030) along the whole fader.
-            auto meter = faderArea.removeFromRight (juce::jmax (8.0f, faderArea.getWidth() * 0.16f)).reduced (0.0f, 2.0f);
-            faderArea.removeFromRight (2.0f);
+            // segments (unlit black) along the whole fader.
+            auto meter = rows.meter;
             const int numCh = juce::jlimit (1, 2, s.getNumChannels());
             for (int ch = 0; ch < numCh; ++ch)
-                verticalMeter (g, meter.withWidth (meter.getWidth() / (float) numCh - (numCh > 1 ? 0.5f : 0.0f)).translated ((float) ch * meter.getWidth() / (float) numCh, 0.0f),
-                               meterPos (dsp::gainToDb (ctx.meters.get (&s, prefs::meterPoint (ctx, s.getKind()), ch))), Colours::meterGreen, Colours::screenTile);
-            paintAssignments (g, rows.assign.reduced (3.0f, 0.0f), s);
+                verticalMeter (g, meter.withWidth (meter.getWidth() / (float) numCh - (numCh > 1 ? 1.0f : 0.0f)).translated ((float) ch * meter.getWidth() / (float) numCh, 0.0f),
+                               meterPos (dsp::gainToDb (ctx.meters.get (&s, prefs::meterPoint (ctx, s.getKind()), ch))), Colours::meterGreen, juce::Colours::black);
+            paintAssignments (g, rows.assign, s);
         }
         // Send faders are drawn in the send colour, with the destination under them.
         paintFader (g, faderArea, faderOf (ctx, t).load(), t.isSend() ? sendRed : Dark::faderFill, ! t.isSend() || t.sendOn->load());
-        g.setColour (t.isSend() ? sendRed.brighter (0.4f) : Dark::textDim);
-        g.setFont (viewFont (TypeScale::value, rows.label.getHeight() * 0.7f));
+        g.setColour (t.isSend() ? sendRed.brighter (0.4f) : darkLabel);
+        g.setFont (capFontFit (20.0f, rows.label.getHeight() * 0.9f, WingWeight::SemiBold));
         g.drawFittedText (t.isSend() ? t.sendTag : bottomLabel (t), rows.label.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         if (t.strip != nullptr && t.strip == selected)
         {
@@ -1219,12 +1845,12 @@ void FadersViewPage::paintContent (juce::Graphics& g)
 std::atomic<float>* FadersViewPage::faderAt (juce::Point<int> pos, juce::Rectangle<int>* columnOut) const
 {
     const auto faders = pageFaders();
-    const auto cols = stripColumns (content, juce::jmax ((int) faders.size(), pageSize()));
+    const auto cols = stripColumns (stripArea (content), juce::jmax ((int) faders.size(), pageSize()));
     for (size_t i = 0; i < faders.size() && i < cols.size(); ++i)
         if (cols[i].contains (pos))
         {
             const auto t = withSendsOnFader (ctx, resolve (ctx, faders[i]));
-            if (! t.isValid() || ! faderRows (cols[i].withTrimmedBottom (6)).fader.contains (pos.toFloat()))
+            if (! t.isValid() || ! faderRows (cols[i]).fader.contains (pos.toFloat()))
                 return nullptr;
             if (columnOut != nullptr)
                 *columnOut = cols[i];
@@ -1264,14 +1890,14 @@ void FadersViewPage::mouseUp (const juce::MouseEvent& e)
     if (dragged)
         return;
     const auto faders = pageFaders();
-    const auto cols = stripColumns (content, juce::jmax ((int) faders.size(), pageSize()));
+    const auto cols = stripColumns (stripArea (content), juce::jmax ((int) faders.size(), pageSize()));
     const auto pos = e.position;
     for (size_t i = 0; i < faders.size() && i < cols.size(); ++i)
     {
         if (! cols[i].toFloat().contains (pos))
             continue;
         const auto t = withSendsOnFader (ctx, resolve (ctx, faders[i]));
-        const auto rows = faderRows (cols[i].withTrimmedBottom (6));
+        const auto rows = faderRows (cols[i]);
         if (rows.mute.contains (pos))
         {
             auto& m = t.isSend() ? *t.sendOn : muteOf (ctx, t);
@@ -1397,28 +2023,26 @@ std::atomic<bool>* SendsViewPage::sendOn (Strip& s, bool create) const
 
 void SendsViewPage::layoutContent()
 {
-    auto b = content;
-    auto top = b.removeFromTop (juce::jlimit (40, screenCap (80), getHeight() * 15 / 100));
-    b.removeFromTop (6);
-    strips = b;
+    // [WING] the destination keys on a panel from x = 221, the destination
+    // tiles on one from x = 587 (WING y = 80 to 164); the strips under them.
+    strips = stripArea (content).withTrimmedTop (px (92.0f));
     groupKeys.clear();
     destTiles.clear();
     const int buses = (int) ctx.engine.getBuses().size();
-    const int groups = (buses + 7) / 8 + 2;
-    auto keys = top.removeFromLeft (top.getWidth() * 34 / 100);
-    keys = keys.withSizeKeepingCentre (keys.getWidth(), juce::jmin (keys.getHeight(), screenCap (40)));
-    const int kw = keys.getWidth() / juce::jmax (4, juce::jmin (groups, 6));
-    for (int i = 0; i < groups && i < 6; ++i)
-        groupKeys.push_back (keys.removeFromLeft (kw).reduced (2, 0));
-    top.removeFromLeft (8);
-    const int tw = top.getWidth() / 8;
+    const int groups = juce::jmin (6, (buses + 7) / 8 + 2);
+    const float kw = juce::jmin (87.0f, 348.0f / (float) juce::jmax (4, groups));
+    for (int i = 0; i < groups; ++i)
+        groupKeys.push_back (wingRect (230.0f + kw * (float) i, 5.0f, kw - 4.0f, 70.0f));
     for (int i = 0; i < 8; ++i)
-        destTiles.push_back (top.removeFromLeft (tw).reduced (2, 0));
+        destTiles.push_back (wingRect (591.0f + 58.0f * (float) i, 0.0f, 58.0f, 80.0f));
 }
 
 void SendsViewPage::paintContent (juce::Graphics& g)
 {
-    // Destination layer keys.
+    // The panels, the destination keys (BUS 1-8, BUS 9-16, MAIN, MATRIX).
+    g.setColour (Colours::screenPanel);
+    g.fillRect (wingRect (221.0f, 0.0f, 362.0f, 84.0f));
+    g.fillRect (wingRect (587.0f, 0.0f, 472.0f, 84.0f));
     const int buses = (int) ctx.engine.getBuses().size();
     const int busGroups = (buses + 7) / 8;
     for (size_t i = 0; i < groupKeys.size(); ++i)
@@ -1427,51 +2051,53 @@ void SendsViewPage::paintContent (juce::Graphics& g)
         const juce::String name = gi < busGroups ? "BUS " + juce::String (gi * 8 + 1) + "-" + juce::String (juce::jmin (buses, gi * 8 + 8))
                                                  : gi == busGroups ? juce::String ("MAIN") : juce::String ("MATRIX");
         const bool on = gi == group;
-        g.setColour (on ? Dark::layer : Colours::screenTile);
-        g.fillRect (groupKeys[i]);
-        g.setColour (on ? juce::Colours::white : Dark::text);
-        g.setFont (viewFont (TypeScale::body, (float) groupKeys[i].getHeight() * 0.4f));
-        g.drawFittedText (name, groupKeys[i].reduced (2, 0), juce::Justification::centred, 2, 0.6f);
+        wingKey (g, groupKeys[i], name, on ? Dark::layer : Colours::screenTile, on ? Dark::choiceInk : keyText, 13.0f);
     }
 
-    // Destination tiles: number header in the destination's colour, icon, name.
+    // Destination tiles: the label on a bar in the destination's colour, its
+    // icon and name below; the chosen one framed gold.
     const auto dests = destinations();
     for (size_t i = 0; i < destTiles.size(); ++i)
     {
-        auto r = destTiles[i].toFloat();
         if (i >= dests.size())
             continue;
         auto& list = ctx.engine.getStrips (dests[i].kind);
         if (! juce::isPositiveAndBelow (dests[i].index, (int) list.size()))
             continue;
         auto& s = *list[(size_t) dests[i].index];
-        auto header = r.removeFromTop (r.getHeight() * 0.28f);
+        auto r = destTiles[i].toFloat().reduced (wingPx (2.0f));
+        auto header = r.removeFromTop (wingPx (16.0f));
         g.setColour (stripDisplayColour (s));
         g.fillRect (header);
         g.setColour (juce::Colours::black);
-        g.setFont (viewFont (TypeScale::body, header.getHeight() * 0.85f));
+        g.setFont (capFontFit (10.0f, header.getHeight(), WingWeight::SemiBold));
         g.drawFittedText (shortStripLabel (s), header.toNearestInt(), juce::Justification::centred, 1);
         g.setColour (blockFill);
         g.fillRect (r);
-        auto name = r.removeFromBottom (r.getHeight() * 0.36f);
-        drawStripIcon (g, s, r.reduced (r.getHeight() * 0.15f), Dark::textDim);
-        g.setColour (Dark::text);
-        g.setFont (viewFont (TypeScale::caption, name.getHeight() * 0.9f));
-        g.drawFittedText (stripName (s).toUpperCase(), name.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+        auto name = r.removeFromBottom (wingPx (16.0f));
+        g.setColour (juce::Colours::black);
+        g.fillRect (name.withHeight (wingPx (1.0f)).translated (0.0f, -wingPx (1.0f)));
+        drawWingIcon (g, s.getIcon(), r.reduced (r.getHeight() * 0.15f), Dark::textDim);
+        if (stripName (s) != s.getLabel())
+        {
+            g.setColour (Dark::text);
+            g.setFont (capFontFit (9.0f, name.getHeight() * 0.9f));
+            g.drawFittedText (stripName (s).toUpperCase(), name.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+        }
         if ((int) i == chosen)
         {
             g.setColour (Dark::selectedOutline);
-            g.drawRect (destTiles[i].toFloat().expanded (1.0f), 2.5f);
+            g.drawRect (destTiles[i].toFloat(), wingPx (2.0f));
         }
     }
 
-    // The layer's strips as send faders.
+    // The layer's strips as send faders (a DCA has none: nothing shows, as on the console).
     const auto faders = pageFaders();
     const auto cols = stripColumns (strips, juce::jmax ((int) faders.size(), pageSize()));
     for (size_t i = 0; i < faders.size() && i < cols.size(); ++i)
     {
         const auto t = resolve (ctx, faders[i]);
-        if (! t.isValid())
+        if (t.strip == nullptr)
             continue;
         auto c = cols[i].withTrimmedBottom (6).toFloat();
         const float h = c.getHeight();
@@ -1930,83 +2556,75 @@ std::vector<state::FaderRef> ConfigViewPage::sourceItems() const
 
 void ConfigViewPage::layoutContent()
 {
-    auto b = content;
-    auto top = b.removeFromTop (juce::jlimit (36, screenCap (56), getHeight() / 10));
-    b.removeFromTop (6);
+    // [WING] the top panel (x = 8 to 1168): CHANNELS, BUS/MAIN, DCA, the four
+    // fields, CLEAR and RENAME; the items as tiles 106 apart centred under it
+    // (a new row for each kind); the page's slots at the bottom.
     categoryKeys.clear();
-    const int kw = juce::jmin (screenCap (100), top.getWidth() / 11);
     for (int i = 0; i < 3; ++i)
-        categoryKeys.push_back (top.removeFromLeft (kw).reduced (2, 2));
-    top.removeFromLeft (6);
-    deleteKey.setBounds (top.removeFromRight (kw).reduced (2, 2));
-    newKey.setBounds (top.removeFromRight (kw * 2 / 3).reduced (2, 2));
-    renameKey.setBounds (top.removeFromRight (kw * 3 / 4).reduced (2, 2));
-    clearKey.setBounds (top.removeFromRight (kw * 3 / 4).reduced (2, 2));
-    top.removeFromRight (6);
-    const int fw = top.getWidth() / juce::jmax (1, fields.size());
-    for (auto* f : fields)
-        f->setBounds (top.removeFromLeft (fw).reduced (2, 2));
+        categoryKeys.push_back (wingRect (16.0f + 124.0f * (float) i, 8.0f, 112.0f, 64.0f));
+    for (int i = 0; i < fields.size(); ++i)
+        fields[i]->setBounds (wingRect (388.0f + 152.0f * (float) i, 8.0f, 140.0f, 64.0f));
+    clearKey.setBounds (wingRect (1018.0f, 8.0f, 64.0f, 64.0f));
+    renameKey.setBounds (wingRect (1094.0f, 8.0f, 68.0f, 64.0f));
+    // A user layer's own keys (not on the console) left of the slots.
+    newKey.setBounds (wingRect (16.0f, 624.0f, 88.0f, 64.0f));
+    deleteKey.setBounds (wingRect (112.0f, 624.0f, 92.0f, 64.0f));
 
-    // The page map at the very bottom, the layer's slots above it, the source grid on top.
-    mapArea = b.removeFromBottom (juce::jlimit (14, screenCap (22), getHeight() / 26));
-    b.removeFromBottom (4);
-    slotsArea = b.removeFromBottom (juce::jlimit (50, screenCap (96), getHeight() * 17 / 100));
-    b.removeFromBottom (8);
-    sourceArea = b;
+    // The page's slots, four to a blue plate, centred under the grid.
+    slotAreas.clear();
+    plates.clear();
+    const int n = pageSize();
+    const int numPlates = (n + 3) / 4;
+    const float centre = 588.0f, platesW = 376.0f * (float) numPlates - 4.0f;
+    const float x0 = juce::jmax (8.0f, centre - platesW / 2.0f);
+    for (int p = 0; p < numPlates; ++p)
+        plates.push_back (wingRect (x0 + 376.0f * (float) p, 620.0f, 372.0f, 72.0f));
+    for (int i = 0; i < n; ++i)
+        slotAreas.push_back (wingRect (x0 + 376.0f * (float) (i / 4) + 4.0f + 92.0f * (float) (i % 4), 624.0f, 88.0f, 64.0f));
+    slotsArea = wingRect (x0, 620.0f, platesW, 92.0f);
     hintArea = slotsArea;
 
+    // The items: a kind (channels, aux, buses, mains, matrices, DCAs) starts
+    // a new row, 24 px further down; rows close up when they don't fit.
     sourceTiles.clear();
     const auto items = sourceItems();
-    int rowsNeeded = 0, firstAux = -1;
+    auto kindOf = [] (const state::FaderRef& f) { return f.dca ? -1 : (f.send ? 100 : (int) f.strip.kind); };
+    struct Place
+    {
+        int row, col, gaps;
+    };
+    std::vector<Place> places;
+    int rows = 0, gaps = 0, col = 8;
     for (size_t i = 0; i < items.size(); ++i)
-        if (! items[i].dca && items[i].strip.kind == StripKind::Aux && firstAux < 0)
-            firstAux = (int) i;
-    // Aux tiles start a new row (fig. 58).
-    const int beforeAux = firstAux < 0 ? (int) items.size() : firstAux;
-    rowsNeeded = (beforeAux + 7) / 8 + ((int) items.size() - beforeAux + 7) / 8;
-    const int tw = sourceArea.getWidth() / 8;
-    const int th = juce::jlimit (12, screenCap (44), sourceArea.getHeight() / juce::jmax (1, rowsNeeded));
-    for (int i = 0; i < (int) items.size(); ++i)
     {
-        const int index = i < beforeAux ? i : (beforeAux + 7) / 8 * 8 + (i - beforeAux);
-        sourceTiles.push_back (juce::Rectangle<int> (sourceArea.getX() + (index % 8) * tw, sourceArea.getY() + (index / 8) * th, tw, th).reduced (2));
+        const bool newKind = i > 0 && ! items[i].fxParam && ! items[i].midiCc && kindOf (items[i]) != kindOf (items[i - 1]);
+        if (col >= 8 || newKind)
+        {
+            gaps += newKind ? 1 : 0;
+            ++rows;
+            col = 0;
+        }
+        places.push_back ({ rows - 1, col++, gaps });
     }
-
-    slotAreas.clear();
-    const int n = pageSize();
-    auto s = slotsArea.withTrimmedBottom (14);
-    const int sw = s.getWidth() / juce::jmax (n, 8);
-    for (int i = 0; i < n; ++i)
-        slotAreas.push_back (juce::Rectangle<int> (s.getX() + i * sw, s.getY(), sw, s.getHeight()).reduced (3, 4));
-
-    // Every slot of the layer (whole pages, one more page to append to), in groups of four.
-    mapCells.clear();
-    const int slots = (numPages() + 1) * n;
-    const int groups = (slots + 3) / 4;
-    const float cell = juce::jmin ((float) mapArea.getHeight(), (float) mapArea.getWidth() / ((float) slots + (float) groups * 0.5f));
-    float x = (float) mapArea.getX();
-    for (int i = 0; i < slots; ++i)
-    {
-        if (i > 0 && i % 4 == 0)
-            x += cell * 0.5f;
-        mapCells.push_back (juce::Rectangle<float> (x, (float) mapArea.getY(), cell, (float) mapArea.getHeight()).reduced (1.0f, 0.0f).toNearestInt());
-        x += cell;
-    }
+    const float top = 126.0f, bottom = 612.0f;
+    const float pitch = juce::jmin (72.0f, (bottom - top - 24.0f * (float) gaps) / (float) juce::jmax (1, rows));
+    const float tileH = juce::jmin (64.0f, pitch - 4.0f);
+    for (auto& p : places)
+        sourceTiles.push_back (wingRect (169.0f + 106.0f * (float) p.col, top + pitch * (float) p.row + 24.0f * (float) p.gaps, 96.0f, tileH));
+    sourceArea = wingRect (169.0f, top, 838.0f, bottom - top);
     updateKeys();
 }
 
 void ConfigViewPage::paintContent (juce::Graphics& g)
 {
-    // Category keys.
+    // The top panel and the category keys (the chosen one light grey).
+    g.setColour (Colours::screenPanel);
+    g.fillRect (wingRect (8.0f, 0.0f, 1160.0f, 80.0f));
     const char* names[] = { "CHANNELS", "BUS/MAIN", "DCA" };
     for (int i = 0; i < 3; ++i)
     {
         const bool on = i == category;
-        g.setColour (on ? Colours::caption : Dark::key);
-        g.fillRect (categoryKeys[(size_t) i]);
-        g.setColour (on ? juce::Colours::black : Dark::text);
-        g.setFont (viewFont (TypeScale::body, (float) categoryKeys[(size_t) i].getHeight() * 0.4f));
-        g.drawFittedText (names[i], categoryKeys[(size_t) i].reduced (2, 0), juce::Justification::centred, 1, 0.6f);
+        wingKey (g, categoryKeys[(size_t) i], names[i], on ? Colours::caption : Colours::screenTile, on ? juce::Colours::black : Dark::text, 14.0f);
     }
 
     // The active SENDS / BUS -> BUS / FX field is framed.
@@ -2058,6 +2676,28 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
         const auto t = resolve (ctx, f);
         if (! t.isValid())
             return;
+        if (t.strip != nullptr && ! f.send)
+        {
+            paintStripTile (g, r.toNearestInt(), *t.strip, highlighted);
+            return;
+        }
+        if (t.dca >= 0)
+        {
+            // [WING] a DCA: its colour bar (its name), "D1" plain.
+            auto bar = r.removeFromTop (r.getHeight() * 22.0f / 64.0f);
+            paintNameBar (g, bar, colourOf (ctx, t), barName (ctx, t));
+            g.setColour (blockFill);
+            g.fillRect (r);
+            g.setColour (Dark::textDim);
+            g.setFont (capFontFit (20.0f, r.getHeight() * 0.7f, WingWeight::SemiBold));
+            g.drawText (numberOf (t), r.reduced (wingPx (5.0f), 0.0f), juce::Justification::centredLeft, false);
+            if (highlighted)
+            {
+                g.setColour (Colours::gold);
+                g.drawRect (bar.getUnion (r).expanded (wingPx (2.0f)), wingPx (2.0f));
+            }
+            return;
+        }
         auto bar = r.removeFromTop (r.getHeight() * 0.36f);
         paintNameBar (g, bar, colourOf (ctx, t), barName (ctx, t));
         g.setColour (blockFill);
@@ -2096,16 +2736,13 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
     // its number large and dim over EMPTY.
     const auto layer = currentLayer();
     const auto faders = pageFaders();
-    // [I10] each group of four sits on a filled #284c78 plate (kept apart
-    // from the next group in small windows).
-    int platePad = 4;
-    if (slotAreas.size() > 4)
-        platePad = juce::jlimit (1, screenCap (4), (slotAreas[4].getX() - slotAreas[3].getRight()) / 2 - 2);
-    for (size_t i = 0; i < slotAreas.size(); i += 4)
+    // [WING] each group of four sits on a #204870 plate, the slots' numbers
+    // on a bar of the same blue under it.
+    for (auto& p : plates)
     {
-        const auto last = slotAreas[juce::jmin (slotAreas.size() - 1, i + 3)];
-        g.setColour (juce::Colour (0xff284c78));
-        g.fillRect (slotAreas[i].getUnion (last).expanded (platePad, 4).toFloat());
+        g.setColour (slotPlate);
+        g.fillRect (p);
+        g.fillRect (p.withY (p.getBottom() + px (4.0f)).withHeight (px (16.0f)));
     }
     for (size_t i = 0; i < slotAreas.size(); ++i)
     {
@@ -2124,9 +2761,9 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
             g.setFont (viewFont (TypeScale::caption, text.getHeight() * 0.8f));
             g.drawFittedText ("EMPTY", text.toNearestInt(), juce::Justification::centredTop, 1);
         }
-        g.setColour (Dark::textDim);
-        g.setFont (wingFont (TypeScale::meterScale));
-        g.drawText (juce::String (number), juce::Rectangle<int> (slotAreas[i].getX(), slotAreas[i].getBottom() + 5, slotAreas[i].getWidth(), 12),
+        g.setColour (juce::Colours::black);
+        g.setFont (capFont (9.0f, WingWeight::SemiBold));
+        g.drawText (juce::String (number), juce::Rectangle<int> (slotAreas[i].getX(), slotAreas[i].getBottom() + px (8.0f), slotAreas[i].getWidth(), px (16.0f)),
                     juce::Justification::centred);
     }
 
@@ -2146,31 +2783,11 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
                 g.drawRect (slotAreas[(size_t) local].expanded (2).toFloat(), 3.0f);
         }
 
-    // The page map: every slot (filled where assigned), the shown window framed blue.
-    const int total = (int) layer.faders.size();
-    for (size_t i = 0; i < mapCells.size(); ++i)
-    {
-        g.setColour ((int) i < total ? Dark::textDim : Dark::key);
-        g.fillRect (mapCells[i]);
-        if (mapCells[i].getWidth() >= 12)
-        {
-            g.setColour ((int) i < total ? juce::Colours::black : Dark::textDim);
-            g.setFont (viewFont (TypeScale::caption, (float) mapCells[i].getHeight() * 0.7f));
-            g.drawFittedText (juce::String ((int) i + 1), mapCells[i], juce::Justification::centred, 1, 0.5f);
-        }
-    }
-    const int first = page * pageSize(), last = juce::jmin ((int) mapCells.size(), first + pageSize()) - 1;
-    if (juce::isPositiveAndBelow (first, (int) mapCells.size()) && last >= first)
-    {
-        g.setColour (Dark::layer.brighter (0.4f));
-        g.drawRect (mapCells[(size_t) first].getUnion (mapCells[(size_t) last]).expanded (2, 2).toFloat(), 2.0f);
-    }
-
     if (! layer.user && ctx.show.layers.hasDefaultOverride (section(), layer.id) && faders.empty() && page == 0)
     {
         g.setColour (Dark::text);
         g.setFont (wingFont (TypeScale::body));
-        g.drawFittedText ("EDITED LAYER KEY: RESTORE GIVES IT ITS OWN FADERS BACK", hintArea.withTrimmedBottom (14).reduced (8, 0),
+        g.drawFittedText ("EDITED LAYER KEY: RESTORE GIVES IT ITS OWN FADERS BACK", hintArea.withTrimmedBottom (px (20.0f)).reduced (8, 0),
                           juce::Justification::centred, 1);
     }
 
@@ -2308,15 +2925,6 @@ void ConfigViewPage::mouseUp (const juce::MouseEvent& e)
             return;
         }
 
-    // The page map pages the slots.
-    for (size_t i = 0; i < mapCells.size(); ++i)
-        if (mapCells[i].expanded (1, 4).contains (pos))
-        {
-            stepPage ((int) i / pageSize() - page);
-            resized();
-            return;
-        }
-
     // A click on a tile toggles it; a click on a slot places the selected tiles there.
     const auto items = sourceItems();
     for (size_t i = 0; i < items.size() && i < sourceTiles.size(); ++i)
@@ -2343,78 +2951,39 @@ void ConfigViewPage::mouseUp (const juce::MouseEvent& e)
 //==============================================================================
 MuteGroupsViewPage::MuteGroupsViewPage (UiContext& c) : ViewPage (c, Screen::MuteGroups)
 {
-    styleIconKey (unassignKey);
-    unassignKey.setTooltip ("Clears every assignment of the selected mute group");
-    unassignKey.onClick = [this]
+    assign = std::make_unique<MemberAssignView> (ctx, MemberAssignView::Kind::MuteGroup);
+    assign->onEdit = [this] (int gi)
     {
-        const uint32_t bit = 1u << (uint32_t) selectedGroup;
-        for (int k = 0; k < kNumStripKinds; ++k)
-            for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
-                s->params.muteGroupMask = s->params.muteGroupMask.load() & ~bit;
-        // The sources' tags (ROUTING > SOURCES > TAGS) too.
-        for (int i = 0; i < ctx.engine.getNumSources(); ++i)
-            if (auto* src = ctx.engine.getSource (i))
-                src->muteGroups = src->muteGroups.load() & ~bit;
-        repaint();
+        // Rename the group.
+        popups::TextOptions options;
+        options.icon = Icon::MuteGroup;
+        juce::Component::SafePointer<MuteGroupsViewPage> safe (this);
+        popups::editText (*this, "MUTE GROUP " + juce::String (gi + 1) + " NAME", ctx.engine.getMuteGroupName (gi),
+                          [safe, gi] (const juce::String& text)
+                          {
+                              if (safe == nullptr)
+                                  return;
+                              safe->ctx.engine.setMuteGroupName (gi, text.trim());
+                              safe->repaint();
+                              safe->assign->repaint();
+                          },
+                          options);
     };
-    addAndMakeVisible (unassignKey);
+    addChildComponent (*assign);
 }
+
+MuteGroupsViewPage::~MuteGroupsViewPage() = default;
 
 void MuteGroupsViewPage::layoutContent()
 {
-    cells.clear();
-    captions.clear();
-    auto b = content;
-    auto left = b.removeFromLeft (b.getWidth() * 63 / 100);
-    b.removeFromLeft (8);
-    auto right = b;
-
-    const int colW = left.getWidth() / kNumMuteGroups;
-    struct GridSpec
-    {
-        const char* caption;
-        StripKind kind;
-    };
-    const GridSpec grids[] = { { "CHANNEL", StripKind::Channel }, { "AUX", StripKind::Aux }, { "BUS", StripKind::Bus },
-                               { "MAIN", StripKind::Main }, { "MATRIX", StripKind::Matrix } };
-    int rows = 0;
-    for (auto& gs : grids)
-        rows += ((int) ctx.engine.getStrips (gs.kind).size() + 3) / 4;
-    const int headerH = juce::jlimit (14, screenCap (22), left.getHeight() / 26);
-    const int numberH = juce::jlimit (16, screenCap (34), left.getHeight() / 15);
-    const int captionH = juce::jlimit (10, screenCap (14), left.getHeight() / 34);
-    const int sourcesH = captionH + juce::jlimit (10, screenCap (16), left.getHeight() / 30);
-    const int available = left.getHeight() - headerH - numberH - 8 - 5 * captionH - sourcesH;
-    const int cell = juce::jlimit (4, (colW - 8) / 4, available / juce::jmax (1, rows));
-
+    // [WING] eight columns 106 apart from x = 9, the group keys in two
+    // columns of four on the right.
     for (int gi = 0; gi < kNumMuteGroups; ++gi)
     {
-        auto col = juce::Rectangle<int> (left.getX() + gi * colW, left.getY(), colW, left.getHeight()).reduced (3, 0);
-        columns[gi] = col;
-        headers[gi] = col.removeFromTop (headerH);
-        col.removeFromTop (2);
-        col.removeFromTop (numberH);
-        col.removeFromTop (4);
-        auto grid = col.reduced (2, 0);
-        for (auto& gs : grids)
-        {
-            captions.push_back ({ grid.removeFromTop (captionH), gs.caption });
-            auto& strips = ctx.engine.getStrips (gs.kind);
-            const int x0 = grid.getCentreX() - cell * 2;
-            for (size_t i = 0; i < strips.size(); ++i)
-                cells.push_back ({ juce::Rectangle<int> (x0 + ((int) i % 4) * cell, grid.getY() + ((int) i / 4) * cell, cell, cell), strips[i].get(), gi });
-            grid.removeFromTop (((int) strips.size() + 3) / 4 * cell + 1);
-        }
-        captions.push_back ({ grid.removeFromTop (captionH), "SOURCES" });
+        columns[gi] = wingRect (9.0f + 106.0f * (float) gi, 0.0f, 96.0f, 672.0f);
+        groupKeys[gi] = wingRect (856.0f + 212.0f * (float) (gi / 4), 72.0f + 152.0f * (float) (gi % 4), 204.0f, 144.0f);
     }
-
-    // The group keys: 1-4 in the first column, 5-8 in the second.
-    auto keysArea = right;
-    unassignKey.setBounds (keysArea.removeFromBottom (juce::jlimit (28, screenCap (44), getHeight() / 11)).withTrimmedLeft (keysArea.getWidth() / 2).reduced (4, 2));
-    keysArea.removeFromBottom (6);
-    const int kw = keysArea.getWidth() / 2, kh = keysArea.getHeight() / 4;
-    for (int gi = 0; gi < kNumMuteGroups; ++gi)
-        groupKeys[gi] = juce::Rectangle<int> (keysArea.getX() + (gi / 4) * kw, keysArea.getY() + (gi % 4) * kh, kw, kh).reduced (4);
+    assign->setBounds (getLocalBounds());
 }
 
 void MuteGroupsViewPage::paintContent (juce::Graphics& g)
@@ -2422,93 +2991,62 @@ void MuteGroupsViewPage::paintContent (juce::Graphics& g)
     const uint32_t engaged = ctx.engine.muteGroups.load();
     for (int gi = 0; gi < kNumMuteGroups; ++gi)
     {
-        const bool sel = gi == selectedGroup;
+        const uint32_t bit = 1u << (uint32_t) gi;
+        const bool on = (engaged & bit) != 0;
         auto col = columns[gi];
-        g.setColour (Colours::screenDark);
-        g.fillRect (col.withTrimmedTop (headers[gi].getHeight() + 2));
-        // Name on the salmon bar, then the number.
-        g.setColour (Dark::muteGroup);
-        g.fillRect (headers[gi]);
+        // The name on the red bar, the number, then the members (the column
+        // red while the group is engaged).
+        const auto bar = col.removeFromTop (px (22.0f));
+        g.setColour (groupRed);
+        g.fillRect (bar);
         g.setColour (juce::Colours::black);
-        g.setFont (viewFont (TypeScale::body, (float) headers[gi].getHeight() * 0.75f));
-        g.drawFittedText (ctx.engine.getMuteGroupName (gi).toUpperCase(), headers[gi].reduced (2, 0), juce::Justification::centred, 1, 0.6f);
-        auto number = col.withTrimmedTop (headers[gi].getHeight() + 2).withHeight (juce::jlimit (16, screenCap (34), columns[gi].getHeight() / 15));
-        g.setColour (Colours::screenPanel);
+        g.setFont (capFont (13.0f, WingWeight::SemiBold));
+        g.drawFittedText (ctx.engine.getMuteGroupName (gi).toUpperCase(), bar.reduced (px (2.0f), 0), juce::Justification::centred, 1, 0.6f);
+        const auto number = col.removeFromTop (px (42.0f));
+        g.setColour (Colours::screenTile);
         g.fillRect (number);
         g.setColour (Dark::textDim);
-        g.setFont (viewFont (TypeScale::value, (float) number.getHeight() * 0.8f));
+        g.setFont (capFont (20.0f, WingWeight::SemiBold));
         g.drawText (juce::String (gi + 1), number, juce::Justification::centred);
-        if (sel)
-        {
-            g.setColour (Dark::muteGroup.withAlpha (0.18f));
-            g.fillRect (col.withTop (number.getBottom() + 2));
-        }
-    }
-    for (auto& [area, text] : captions)
-    {
-        const bool sel = area.getX() >= columns[selectedGroup].getX() && area.getRight() <= columns[selectedGroup].getRight();
-        g.setColour (sel ? Dark::muteGroup.withAlpha (0.55f) : Colours::screenPanel);
-        g.fillRect (area);
-        g.setColour (sel ? juce::Colours::white : Dark::textDim);
-        // Narrow columns (1280x800) shrink the caption until it fits.
-        g.setFont (fontFittingWidth (viewFont (TypeScale::value, (float) area.getHeight() * 0.85f), text, (float) area.getWidth() - 2.0f));
-        g.drawFittedText (text, area, juce::Justification::centred, 1, 0.75f);
-        if (text == "SOURCES")
-        {
-            // The sources tagged with the group (ROUTING > SOURCES > TAGS): the
-            // source's name for one, how many for more.
-            int group = 0;
-            for (int gi = 0; gi < kNumMuteGroups; ++gi)
-                if (area.getX() >= columns[gi].getX() && area.getRight() <= columns[gi].getRight())
-                    group = gi;
-            juce::StringArray names;
-            for (int i = 0; i < ctx.engine.getNumSources(); ++i)
-                if (const auto* src = ctx.engine.getSource (i); src != nullptr && ((src->muteGroups.load() >> (uint32_t) group) & 1u) != 0)
-                {
-                    const auto name = ctx.engine.getSourceName (i);
-                    names.add ((name.isNotEmpty() ? name : inputPortName (MixerEngine::sourcePort (i))).toUpperCase());
-                }
-            auto box = area.translated (0, area.getHeight() + 1).withHeight (juce::jmax (10, area.getHeight() + 2)).reduced (4, 0);
-            g.setColour (juce::Colours::black);
-            g.fillRect (box);
-            g.setColour (names.isEmpty() ? Dark::textDim : Dark::text);
-            g.drawFittedText (names.isEmpty() ? juce::String ("-") : (names.size() == 1 ? names[0] : juce::String (names.size())),
-                              box, juce::Justification::centred, 1, 0.6f);
-        }
-    }
-    for (auto& c : cells)
-    {
-        const bool on = (c.strip->params.muteGroupMask.load() >> (uint32_t) c.group) & 1u;
-        auto r = c.area.toFloat().reduced (0.5f);
-        g.setColour (on ? stripDisplayColour (*c.strip) : Dark::well);
-        g.fillRect (r);
-        if (r.getHeight() >= 9.0f)
-        {
-            g.setColour (on ? juce::Colours::black : Colours::chipOff);
-            g.setFont (viewFont (TypeScale::caption, r.getHeight() * 0.7f));
-            g.drawFittedText (juce::String (c.strip->getNumber()), r.toNearestInt(), juce::Justification::centred, 1, 0.5f);
-        }
-    }
-    g.setColour (Dark::muteGroup);
-    g.drawRect (columns[selectedGroup].toFloat().expanded (1.0f), 2.0f);
+        col.removeFromTop (px (8.0f));
+        paintMemberColumn (g, ctx, col, on ? engagedColumn : Colours::screenPanel,
+                           [bit] (const Strip& s) { return (s.params.muteGroupMask.load() & bit) != 0; }, groupRed, "M PH", "M SPK");
 
-    // The group keys: big number, and the key lit salmon while the group is engaged.
+        // SOURCES: how many sources the group mutes (ROUTING > SOURCES > TAGS).
+        int sources = 0;
+        for (int i = 0; i < ctx.engine.getNumSources(); ++i)
+            if (const auto* src = ctx.engine.getSource (i); src != nullptr && (src->muteGroups.load() & bit) != 0)
+                ++sources;
+        auto at = [&col] (float y, float x, float w, float h) { return juce::Rectangle<int> (col.getX() + px (x), col.getY() + px (y), px (x + w) - px (x), px (y + h) - px (y)); };
+        g.setColour (keyText);
+        g.setFont (capFont (10.0f));
+        g.drawText ("SOURCES", at (555.0f, 0.0f, 96.0f, 22.0f), juce::Justification::centred);
+        const auto box = at (576.0f, 5.0f, 86.0f, 20.0f);
+        g.setColour (Colours::screenDark);
+        g.fillRoundedRectangle (box.toFloat(), wingPx (2.0f));
+        g.setColour (sources > 0 ? Dark::text : cellText);
+        g.drawText (juce::String (sources), box, juce::Justification::centred);
+    }
+
+    // The group keys: the number large and dim, the key lit red while the group is engaged.
     for (int gi = 0; gi < kNumMuteGroups; ++gi)
     {
         auto r = groupKeys[gi];
         g.setColour (Colours::screenPanel);
         g.fillRect (r);
-        auto num = r.removeFromTop (r.getHeight() * 40 / 100);
-        g.setColour (Dark::textDim);
-        g.setFont (viewFont (TypeScale::statusTitle, (float) num.getHeight() * 0.9f));
-        g.drawText (juce::String (gi + 1), num, juce::Justification::centred);
-        auto key = r.reduced (r.getWidth() / 5, r.getHeight() / 6);
+        g.setColour (Colours::screenLine);
+        g.setFont (capFont (28.0f, WingWeight::SemiBold));
+        g.drawText (juce::String (gi + 1), r.withHeight (px (60.0f)), juce::Justification::centred);
         const bool on = (engaged >> (uint32_t) gi) & 1u;
-        g.setColour (on ? Colours::mute : Colours::screenTile);
+        auto key = juce::Rectangle<int> (r.getX() + px (42.0f), r.getY() + px (60.0f), px (120.0f), px (64.0f));
+        g.setColour (juce::Colours::black);
         g.fillRect (key);
-        g.setColour (on ? juce::Colours::white : Dark::textDim);
-        g.setFont (viewFont (TypeScale::body, (float) key.getHeight() * 0.45f));
-        g.drawFittedText (ctx.engine.getMuteGroupName (gi).toUpperCase(), key.reduced (2, 0), juce::Justification::centred, 1, 0.6f);
+        key = key.reduced (px (3.0f));
+        g.setColour (on ? groupRed : Colours::screenTile);
+        g.fillRect (key);
+        g.setColour (on ? juce::Colours::black : Dark::textDim);
+        g.setFont (capFont (14.0f));
+        g.drawFittedText (ctx.engine.getMuteGroupName (gi).toUpperCase(), key.reduced (px (4.0f), 0), juce::Justification::centred, 1, 0.6f);
     }
 }
 
@@ -2523,42 +3061,13 @@ void MuteGroupsViewPage::mouseUp (const juce::MouseEvent& e)
             repaint();
             return;
         }
-        if (headers[gi].contains (pos))
+        // A column opens the group's assign screen.
+        if (columns[gi].contains (pos))
         {
-            // Rename the group.
-            selectedGroup = gi;
-            popups::TextOptions options;
-            options.icon = Icon::MuteGroup;
-            juce::Component::SafePointer<MuteGroupsViewPage> safe (this);
-            popups::editText (*this, "MUTE GROUP " + juce::String (gi + 1) + " NAME", ctx.engine.getMuteGroupName (gi),
-                              [safe, gi] (const juce::String& text)
-                              {
-                                  if (safe == nullptr)
-                                      return;
-                                  safe->ctx.engine.setMuteGroupName (gi, text.trim());
-                                  safe->repaint();
-                              },
-                              options);
-            repaint();
+            assign->show (gi);
             return;
         }
     }
-    // A cell of the selected group toggles its strip; elsewhere in a column selects that group.
-    for (auto& c : cells)
-        if (c.area.contains (pos) && c.group == selectedGroup)
-        {
-            const uint32_t bit = 1u << (uint32_t) c.group;
-            c.strip->params.muteGroupMask = c.strip->params.muteGroupMask.load() ^ bit;
-            repaint();
-            return;
-        }
-    for (int gi = 0; gi < kNumMuteGroups; ++gi)
-        if (columns[gi].contains (pos))
-        {
-            selectedGroup = gi;
-            repaint();
-            return;
-        }
 }
 
 } // namespace livedaw::ui
