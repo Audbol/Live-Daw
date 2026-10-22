@@ -311,7 +311,7 @@ public:
         auto freq = home::wingFreq ("FREQ " + tag, b.freq, lo, hi, kDefaultFreqs[selected]);
         std::vector<KnobBinding> k { {}, bindLinear ("GAIN " + tag, b.gainDb, -15.0f, 15.0f, " dB", 1, 0.0f), {}, freq };
         if (! isShelf (selected))
-            k.push_back (bindLog ("Q " + tag, b.q, 0.442f, 10.0f, {}, 1.0f));
+            k.push_back (bindLog ("Q " + tag, b.q, 0.442f, 10.0f, {}, 2.0f));
         return k;
     }
 
@@ -472,7 +472,8 @@ public:
 
 private:
     static constexpr float kRangeDb = 18.0f;
-    static constexpr float kDefaultFreqs[ld::kMonitorEqBands] = { 80.0f, 160.0f, 315.0f, 630.0f, 1250.0f, 2500.0f, 5000.0f, 12000.0f };
+    // A WING after INITIALIZE (livedaw-engine MONITOR_EQ_DEFAULTS).
+    static constexpr float kDefaultFreqs[ld::kMonitorEqBands] = { 60.14f, 129.88f, 299.25f, 699.49f, 1499.8f, 2992.5f, 6013.9f, 12000.0f };
 
     static bool isShelf (int band) { return band == 0 || band == ld::kMonitorEqBands - 1; }
     static juce::String bandTag (int band) { return band == 0 ? "L" : band == ld::kMonitorEqBands - 1 ? "H" : juce::String (band); }
@@ -670,8 +671,8 @@ void MonitorsPage::showTalkTab (int t)
 {
     talkTab = juce::jlimit (0, 1, t);
     auto& p = talkPath();
-    busDim.setBinding (bindLinear ("BUS DIM", p.busDimDb, 0.0f, 40.0f, " dB", 0, 9.0f));
-    monDim.setBinding (bindLinear ("MON DIM", p.monDimDb, 0.0f, 40.0f, " dB", 0, 9.0f));
+    busDim.setBinding (bindLinear ("BUS DIM", p.busDimDb, 0.0f, 40.0f, " dB", 0, 0.0f));
+    monDim.setBinding (bindLinear ("MON DIM", p.monDimDb, 0.0f, 40.0f, " dB", 0, 0.0f));
     repaint();
 }
 
@@ -683,8 +684,8 @@ void MonitorsPage::showPathTab (int t)
     srcLevel.setBinding (home::wingFader ("SRC LEVEL", src.sourceLevelDb));
     srcMix.setBinding (home::wingFader ("SRC MIX", src.sourceMixDb));
     dim.setBinding (bindLinear ("DIM", pathDim(), 0.0f, 40.0f, " dB", 0, 20.0f));
-    pflDim.setBinding (bindLinear ("PFL DIM", src.pflDimDb, 0.0f, 40.0f, " dB", 0, 0.0f));
-    bandSolo.setBinding (bindLinear ("BAND SOLO", d.bandSoloDb, 0.0f, 24.0f, " dB", 0, 12.0f));
+    pflDim.setBinding (bindLinear ("PFL DIM", src.pflDimDb, 0.0f, 40.0f, " dB", 0, 12.0f));
+    bandSolo.setBinding (bindLinear ("BAND SOLO", d.bandSoloDb, 0.0f, 24.0f, " dB", 0, 0.0f));
     limiter.setBinding (bindLinear ("LIMITER", d.limiterDb, -40.0f, 0.0f, " dB", 0, 0.0f));
     if (eqView != nullptr)
         eqView->setPath (showsPhones());

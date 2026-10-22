@@ -174,6 +174,74 @@ fn studio_solos_to_the_selected_path_and_live_to_each_strips_path() {
 }
 
 #[test]
+fn factory_monitor_settings_are_the_wings() {
+    // A WING's parameter dump after INITIALIZE (`/cfg/solo`, `/cfg/mon`,
+    // `/cfg/talk`, `/cfg/rta`, `/dca/n/mon`).
+    let e = Engine::new(0);
+    let c = &e.controls;
+    let check = || {
+        assert_eq!(c.solo_mode.load(Relaxed), solo_mode::LIVE);
+        assert_eq!(c.solo_bus.load(Relaxed), 0, "PH");
+        assert!(c.bus_solo_afl.load(Relaxed) && !c.main_solo_afl.load(Relaxed) && !c.matrix_solo_afl.load(Relaxed));
+        for src in [&c.speakers, &c.phones.source] {
+            assert_eq!(src.pfl_dim_db.load(), 12.0);
+        }
+        for path in &c.monitor.paths {
+            assert_eq!(path.band_solo_db.load(), 0.0);
+            assert_eq!((path.eq[0].freq.load(), path.eq[1].freq.load(), path.eq[1].q.load()), (60.14, 129.88, 2.0));
+        }
+        for talk in &c.talk.paths {
+            assert_eq!((talk.mon_dim_db.load(), talk.bus_dim_db.load()), (0.0, 0.0));
+        }
+        let a = e.analysis().controls();
+        for v in [&a.home, &a.eq] {
+            assert_eq!((v.range.load(Relaxed), v.decay.load(Relaxed), v.detector.load(Relaxed)), (0, 1, 0), "30 dB, MED, PEAK");
+        }
+        assert!(c.dcas.iter().all(|d| d.mon.load(Relaxed) == 0), "SOLO BUS A");
+    };
+    check();
+    c.solo_mode.store(solo_mode::STUDIO, Relaxed);
+    c.solo_bus.store(2, Relaxed);
+    c.talk.paths[1].mon_dim_db.store(9.0);
+    c.monitor.paths[0].band_solo_db.store(12.0);
+    c.dcas[3].mon.store(2, Relaxed);
+    e.reset();
+    check();
+}
+
+#[test]
+fn live_dca_solo_goes_to_the_dcas_solo_bus() {
+    let mut rig = Rig::new(2, 6);
+    channels(&mut rig, &[0.5, 0.25]);
+    let engine = rig.engine.clone();
+    let c = &engine.controls;
+    c.monitor_output_left.store(2, Relaxed); // speakers
+    c.phones.output_left.store(4, Relaxed); // phones
+    c.solo_mode.store(solo_mode::LIVE, Relaxed);
+
+    // Channel 2 in DCA 1, its own SOLO BUS the phones, DCA 1's the speakers.
+    rig.ch(1).params.dca_mask.store(1, Relaxed);
+    rig.ch(1).params.monitor_bus.store(0, Relaxed);
+    c.dcas[0].mon.store(1, Relaxed);
+    c.dcas[0].solo.store(true, Relaxed);
+    rig.run(4);
+    assert!(close(rig.out(2), 0.25, 1e-5), "the DCA's bus: {}", rig.out(2));
+    assert!(close(rig.out(4), 0.75, 1e-5), "not the channel's: {}", rig.out(4));
+
+    // The channel's own solo adds its own bus.
+    rig.ch(1).params.solo.store(true, Relaxed);
+    rig.run(4);
+    assert!(close(rig.out(2), 0.25, 1e-5) && close(rig.out(4), 0.25, 1e-5));
+
+    // STUDIO: the selected path, whatever the DCA's SOLO BUS.
+    rig.ch(1).params.solo.store(false, Relaxed);
+    c.solo_mode.store(solo_mode::STUDIO, Relaxed);
+    c.solo_bus.store(0, Relaxed);
+    rig.run(4);
+    assert!(close(rig.out(2), 0.75, 1e-5) && close(rig.out(4), 0.25, 1e-5));
+}
+
+#[test]
 fn monitor_paths_have_their_own_source_level_dim_and_keys() {
     let mut rig = Rig::new(1, 6);
     channels(&mut rig, &[0.5]);

@@ -663,8 +663,10 @@ namespace
     {
     public:
         TextWindow (juce::String titleText, const juce::String& initial, std::function<void (const juce::String&)> done, TextOptions opts)
-            : title (std::move (titleText)), onDone (std::move (done)), onNext (opts.onNext), hasSuggestions (! opts.suggestions.isEmpty())
+            : title (std::move (titleText)), onDone (std::move (done)), onNext (opts.onNext), hasSuggestions (! opts.suggestions.isEmpty()),
+              live (opts.onChange != nullptr), centreX (opts.centreX)
         {
+            keyboard.setCapsLock (opts.capsLock);
             keyboard.setMaxLength (opts.maxLength);
             keyboard.setText (initial);
             keyboard.setIcon (opts.icon);
@@ -672,7 +674,8 @@ namespace
             keyboard.setActionText (onNext != nullptr ? juce::String ("NEXT") : opts.actionText);
             keyboard.onAction = [this] (const juce::String& t) { finish (t); };
             keyboard.onCancel = [this] { cancel(); };
-            closeKey.onClick = [this] { cancel(); };
+            closeKey.onClick = [this] { if (live) finish (keyboard.getText()); else cancel(); };
+            keyboard.onChange = opts.onChange;
             addAndMakeVisible (keyboard);
             addAndMakeVisible (closeKey);
         }
@@ -715,7 +718,9 @@ namespace
             auto heightFor = [&] (float width) { return screenH * 0.08f + width / 11.75f * units + 6.0f; };
             if (heightFor (w) > (float) b.getHeight() * 0.96f)
                 w = ((float) b.getHeight() * 0.96f - screenH * 0.08f - 6.0f) * 11.75f / units;
-            return b.withSizeKeepingCentre (juce::roundToInt (w), juce::roundToInt (heightFor (w)));
+            const auto r = b.withSizeKeepingCentre (juce::roundToInt (w), juce::roundToInt (heightFor (w)));
+            const int x = juce::roundToInt ((float) b.getWidth() * centreX - w / 2.0f);
+            return r.withX (b.getX() + juce::jlimit (0, juce::jmax (0, b.getWidth() - r.getWidth()), x));
         }
 
         void finish (const juce::String& text)
@@ -734,7 +739,8 @@ namespace
         juce::String title;
         std::function<void (const juce::String&)> onDone;
         std::function<void()> onNext;
-        bool hasSuggestions;
+        bool hasSuggestions, live;
+        float centreX;
         WingKeyboard keyboard;
         CloseKey closeKey;
     };

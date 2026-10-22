@@ -67,13 +67,13 @@ fn shows_from_before_load_with_the_defaults() {
     xml.replace_range(start..end, "");
 
     let e2 = engine_with_channels(0);
-    e2.analysis().controls().home.range.store(0, Relaxed);
+    e2.analysis().controls().home.range.store(1, Relaxed);
     let mut loaded = Show::new();
     loaded.load_from_text(&e2, &mut NoPlugins, &xml, true).unwrap();
     let ch = e2.channel_at(0).unwrap();
     assert_eq!(ch.params.tap_width.load(), 100.0);
     assert!(!ch.params.tap_eq.on.load(Relaxed));
-    assert_eq!(e2.analysis().controls().home.range.load(Relaxed), 1, "a loaded show starts from the defaults");
+    assert_eq!(e2.analysis().controls().home.range.load(Relaxed), 0, "a loaded show starts from the defaults");
 }
 
 #[test]

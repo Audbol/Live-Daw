@@ -123,14 +123,15 @@ pub struct RtaViewSettings {
 
 impl RtaViewSettings {
     fn new(display: i32, tap: i32) -> Self {
-        // The console's defaults (manual figs. 24-25).
+        // The console's defaults (manual figs. 24-25); range, decay and
+        // detector as a WING after INITIALIZE (30 dB, MED, PEAK).
         Self {
             display: AtomicI32::new(display),
             colour: AtomicI32::new(8),
             tap: AtomicI32::new(tap),
-            range: AtomicI32::new(1),
-            decay: AtomicI32::new(2),
-            detector: AtomicI32::new(2),
+            range: AtomicI32::new(0),
+            decay: AtomicI32::new(1),
+            detector: AtomicI32::new(0),
             autogain: AtomicBool::new(true),
             gain_db: AtomicF32::new(0.0),
         }

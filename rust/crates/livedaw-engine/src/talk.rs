@@ -44,8 +44,9 @@ pub mod talk_tag {
     pub const ALL: u32 = 0x3f;
 }
 
-/// Default AUTO DIM amounts (dB) as on the MONITORS screen (fig. 72).
-pub const DEFAULT_TALK_DIM_DB: f32 = 9.0;
+/// Default AUTO DIM amounts (dB): none, as a WING after INITIALIZE (`busdim`,
+/// `mondim` 0).
+pub const DEFAULT_TALK_DIM_DB: f32 = 0.0;
 
 /// `assign_kind` without a talkback channel.
 pub const TALK_OFF: i32 = -1;

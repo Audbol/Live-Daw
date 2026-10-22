@@ -22,6 +22,12 @@ fn engine(channels: usize) -> Engine {
 #[test]
 fn imports_the_fixture() {
     let e = engine(2);
+    // Away from the factory settings the fixture has, so the import is seen setting them.
+    let c = &e.controls;
+    c.solo_mode.store(livedaw_engine::solo::solo_mode::STUDIO, Relaxed);
+    c.solo_bus.store(2, Relaxed);
+    c.main_solo_afl.store(true, Relaxed);
+    c.phones.source.pfl_dim_db.store(0.0);
     let st = WingState::default();
     let r = snap::import_text(&e, &st, FIXTURE, &ImportOptions::default()).unwrap();
     assert_eq!(r.file_type, "snapshot.11");

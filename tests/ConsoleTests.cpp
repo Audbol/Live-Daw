@@ -25,7 +25,7 @@ public:
             b.params.inputLeft = 1; // both centred: unity on the left (the WING pan law)
             rig.setInput (0, 0.5f);
             rig.setInput (1, 0.25f);
-            expectEquals ((int) engine.soloMode.load(), (int) ld::kSoloStudio);
+            expectEquals ((int) engine.soloMode.load(), (int) ld::kSoloStudio); // the test console's (unityConsole)
 
             engine.soloMode = ld::kSoloSip;
             a.params.solo = true;

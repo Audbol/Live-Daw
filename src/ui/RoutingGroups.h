@@ -4,6 +4,8 @@
 #include "engine/Recorder.h"
 #include "engine/UsbRecorder.h"
 
+#include <juce_graphics/juce_graphics.h>
+
 #include <vector>
 
 namespace livedaw::ui::routing
@@ -214,6 +216,23 @@ inline Menu sourceMenu (bool forChannels, bool monitor = false)
         m.rows.push_back ({ id (Group::Monitor), id (Group::FxSend), -1, -1 });
     return m;
 }
+
+// ROUTING's tiles, for the other screens that pick sources (MUTE GROUPS >
+// SOURCE). Defined in RoutingPage.cpp.
+
+/** A group's icon as the group menus and selectors draw it (line art). */
+void drawGroupIcon (juce::Graphics&, Group, juce::Rectangle<float>, juce::Colour);
+
+/** A group menu's tile: the group's icon over its name on a grey tile in a
+    black frame, the frame gold when `selected`. */
+void paintGroupTile (juce::Graphics&, juce::Rectangle<int>, Group, bool selected, bool pressed = false);
+
+/** Tile `index` of input group `group` as ROUTING > CHANNELS draws it [WING
+    80 x 68]: the source's colour strip and name, its icon, the 48 and M chips
+    beside a mini meter (`peak`, linear) and its label ("LCL 3"); n/a for a
+    port Sidecar or the interface doesn't have. `numbered` (ROUTING >
+    SOURCES): the number and the gain instead of the label. */
+void paintSourceTile (juce::Graphics&, juce::Rectangle<int>, MixerEngine&, Group, int index, float peak, bool marked, bool numbered = false);
 
 /** The OUTPUT GROUP menu. */
 inline Menu outputMenu()

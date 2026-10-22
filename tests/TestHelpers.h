@@ -9,8 +9,11 @@
 namespace livedaw::test
 {
 /** The fixed strips (aux, buses, mains, matrices) and the DCAs at 0 dB with
-    their EQ on, buses not feeding the mains: the console the audio tests were
-    written for (a factory WING has the faders down and the EQs off). */
+    their EQ on, buses not feeding the mains, and the monitoring of Sidecar
+    before it took the WING's factory monitor settings (SOLO MODE STUDIO to
+    PH+SPK, mains and matrices AFL, no PFL DIM, BAND SOLO +12 dB, talkback AUTO
+    DIM 9 dB): the console the audio tests were written for (a factory WING has
+    the faders down and the EQs off, solos LIVE to the phones). */
 inline void unityConsole (MixerEngine& engine)
 {
     for (auto kind : { StripKind::Aux, StripKind::Bus, StripKind::Main, StripKind::Matrix })
@@ -23,6 +26,19 @@ inline void unityConsole (MixerEngine& engine)
         }
     for (int i = 0; i < kNumDcas; ++i)
         engine.getDca (i).faderDb = 0.0f;
+    engine.soloMode = ld::kSoloStudio;
+    engine.soloBus = 2;
+    engine.mainSoloAfl = true;
+    engine.matrixSoloAfl = true;
+    engine.speakers.pflDimDb = 0.0f;
+    engine.phones.source.pflDimDb = 0.0f;
+    for (auto& path : engine.monitor.paths)
+        path.bandSoloDb = 12.0f;
+    for (auto& talk : engine.talk.paths)
+    {
+        talk.monDimDb = 9.0f;
+        talk.busDimDb = 9.0f;
+    }
 }
 
 /** Sets the number of channels; new channels get their fader at 0 dB (a new

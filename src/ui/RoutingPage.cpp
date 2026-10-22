@@ -4,6 +4,7 @@
 namespace livedaw::ui
 {
 
+using routing::drawGroupIcon;
 using routing::Group;
 
 namespace
@@ -42,200 +43,204 @@ namespace
     {
         return stripName (s) != s.getLabel();
     }
+} // namespace
 
-    /** The icons of the group menus and selectors (line art like the console's). */
-    void drawGroupIcon (juce::Graphics& g, Group group, juce::Rectangle<float> area, juce::Colour c)
+/** The icons of the group menus and selectors (line art like the console's). */
+void routing::drawGroupIcon (juce::Graphics& g, Group group, juce::Rectangle<float> area, juce::Colour c)
+{
+    const float s = juce::jmin (area.getWidth(), area.getHeight());
+    const auto r = area.withSizeKeepingCentre (s, s);
+    auto P = [&r, s] (float u, float v) { return juce::Point<float> (r.getX() + u * s, r.getY() + v * s); };
+    const float w = juce::jmax (1.2f, s * 0.055f);
+    const juce::PathStrokeType stroke (w, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+    auto ring = [&] (float u, float v, float radius)
     {
-        const float s = juce::jmin (area.getWidth(), area.getHeight());
-        const auto r = area.withSizeKeepingCentre (s, s);
-        auto P = [&r, s] (float u, float v) { return juce::Point<float> (r.getX() + u * s, r.getY() + v * s); };
-        const float w = juce::jmax (1.2f, s * 0.055f);
-        const juce::PathStrokeType stroke (w, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
-        auto ring = [&] (float u, float v, float radius)
-        {
-            juce::Path p;
-            p.addEllipse (P (u, v).x - radius * s, P (u, v).y - radius * s, radius * 2.0f * s, radius * 2.0f * s);
-            g.strokePath (p, stroke);
-        };
-        auto text = [&] (const juce::String& t, float u, float v, float cap, float width)
-        {
-            g.setFont (wingFontPx (juce::jmax (4.0f, cap * s), WingWeight::SemiBold));
-            g.drawFittedText (t, juce::Rectangle<float> (width * s, cap * s * 1.6f).withCentre (P (u, v)).toNearestInt(), juce::Justification::centred, 1, 0.6f);
-        };
-        // A round connector shell with its latch at the top (XLR, AES50).
-        auto shell = [&]
-        {
-            ring (0.5f, 0.54f, 0.34f);
-            g.fillEllipse (juce::Rectangle<float> (s * 0.12f, s * 0.12f).withCentre (P (0.5f, 0.2f)));
-        };
-        auto xlrPins = [&]
-        {
-            for (auto [u, v] : { std::pair { 0.38f, 0.48f }, { 0.62f, 0.48f }, { 0.5f, 0.68f } })
-                ring (u, v, 0.055f);
-        };
-        // An RJ45 socket: a box with its latch notch and contacts.
-        auto rj45 = [&] (juce::Rectangle<float> box)
-        {
-            juce::Path p;
-            p.addRoundedRectangle (box, s * 0.03f);
-            g.strokePath (p, stroke);
-            const float pin = box.getWidth() / 9.0f;
-            for (int i = 0; i < 4; ++i)
-                g.fillRect (juce::Rectangle<float> (pin * 0.8f, box.getHeight() * 0.22f).withPosition (box.getX() + pin * (1.5f + 1.7f * (float) i), box.getY() + box.getHeight() * 0.14f));
-        };
-        g.setColour (c);
         juce::Path p;
-        switch (group)
+        p.addEllipse (P (u, v).x - radius * s, P (u, v).y - radius * s, radius * 2.0f * s, radius * 2.0f * s);
+        g.strokePath (p, stroke);
+    };
+    auto text = [&] (const juce::String& t, float u, float v, float cap, float width)
+    {
+        g.setFont (wingFontPx (juce::jmax (4.0f, cap * s), WingWeight::SemiBold));
+        g.drawFittedText (t, juce::Rectangle<float> (width * s, cap * s * 1.6f).withCentre (P (u, v)).toNearestInt(), juce::Justification::centred, 1, 0.6f);
+    };
+    // A round connector shell with its latch at the top (XLR, AES50).
+    auto shell = [&]
+    {
+        ring (0.5f, 0.54f, 0.34f);
+        g.fillEllipse (juce::Rectangle<float> (s * 0.12f, s * 0.12f).withCentre (P (0.5f, 0.2f)));
+    };
+    auto xlrPins = [&]
+    {
+        for (auto [u, v] : { std::pair { 0.38f, 0.48f }, { 0.62f, 0.48f }, { 0.5f, 0.68f } })
+            ring (u, v, 0.055f);
+    };
+    // An RJ45 socket: a box with its latch notch and contacts.
+    auto rj45 = [&] (juce::Rectangle<float> box)
+    {
+        juce::Path p;
+        p.addRoundedRectangle (box, s * 0.03f);
+        g.strokePath (p, stroke);
+        const float pin = box.getWidth() / 9.0f;
+        for (int i = 0; i < 4; ++i)
+            g.fillRect (juce::Rectangle<float> (pin * 0.8f, box.getHeight() * 0.22f).withPosition (box.getX() + pin * (1.5f + 1.7f * (float) i), box.getY() + box.getHeight() * 0.14f));
+    };
+    g.setColour (c);
+    juce::Path p;
+    switch (group)
+    {
+        case Group::LocalIn:
+        case Group::LocalOut:
+            shell();
+            xlrPins();
+            return;
+        case Group::AesIn:
+        case Group::AesOut:
+            shell();
+            xlrPins();
+            // The square wave of a digital signal.
+            p.startNewSubPath (P (0.66f, 0.16f));
+            for (int i = 0; i < 3; ++i)
+            {
+                const float u = 0.66f + 0.08f * (float) i;
+                p.lineTo (P (u, 0.08f));
+                p.lineTo (P (u + 0.04f, 0.08f));
+                p.lineTo (P (u + 0.04f, 0.16f));
+                p.lineTo (P (u + 0.08f, 0.16f));
+            }
+            g.strokePath (p, juce::PathStrokeType (w * 0.7f));
+            return;
+        case Group::AuxIn:
+        case Group::AuxOut:
+            ring (0.5f, 0.5f, 0.24f);
+            ring (0.5f, 0.5f, 0.13f);
+            return;
+        case Group::Oscillator:
+            ring (0.5f, 0.5f, 0.34f);
+            p.startNewSubPath (P (0.32f, 0.52f));
+            p.cubicTo (P (0.4f, 0.32f), P (0.46f, 0.36f), P (0.5f, 0.5f));
+            p.cubicTo (P (0.54f, 0.64f), P (0.6f, 0.68f), P (0.68f, 0.48f));
+            g.strokePath (p, stroke);
+            return;
+        case Group::Aes50A:
+        case Group::Aes50B:
+        case Group::Aes50C:
+            shell();
+            rj45 (juce::Rectangle<float> (P (0.33f, 0.38f), P (0.67f, 0.66f)));
+            text (group == Group::Aes50A ? "A" : group == Group::Aes50B ? "B" : "C", 0.5f, 0.61f, 0.09f, 0.2f);
+            return;
+        case Group::StConnect:
+            text ("SC", 0.52f, 0.4f, 0.24f, 0.6f);
+            p.startNewSubPath (P (0.22f, 0.66f));
+            p.cubicTo (P (0.34f, 0.66f), P (0.38f, 0.58f), P (0.5f, 0.6f));
+            p.lineTo (P (0.86f, 0.6f));
+            g.strokePath (p, stroke);
+            g.fillEllipse (juce::Rectangle<float> (s * 0.08f, s * 0.08f).withCentre (P (0.18f, 0.66f)));
+            p.clear();
+            p.addTriangle (P (0.9f, 0.6f), P (0.82f, 0.55f), P (0.82f, 0.65f));
+            g.fillPath (p);
+            return;
+        case Group::UsbAudio:
+            p.addRoundedRectangle (juce::Rectangle<float> (P (0.2f, 0.2f), P (0.8f, 0.8f)), s * 0.06f);
+            g.strokePath (p, stroke);
+            p.clear();
+            // The USB-B socket with its chip.
+            p.startNewSubPath (P (0.3f, 0.7f));
+            p.lineTo (P (0.3f, 0.4f));
+            p.lineTo (P (0.38f, 0.3f));
+            p.lineTo (P (0.62f, 0.3f));
+            p.lineTo (P (0.7f, 0.4f));
+            p.lineTo (P (0.7f, 0.7f));
+            p.closeSubPath();
+            g.strokePath (p, stroke);
+            p.clear();
+            p.addRectangle (juce::Rectangle<float> (P (0.4f, 0.42f), P (0.6f, 0.6f)));
+            g.strokePath (p, juce::PathStrokeType (w * 0.7f));
+            return;
+        case Group::WlivePlay:
+        case Group::WliveRec:
+            p.addRectangle (juce::Rectangle<float> (P (0.1f, 0.4f), P (0.9f, 0.62f)));
+            g.strokePath (p, stroke);
+            g.fillRect (juce::Rectangle<float> (s * 0.1f, s * 0.09f).withCentre (P (0.32f, 0.51f)));
+            for (int i = 0; i < 4; ++i)
+                g.fillEllipse (juce::Rectangle<float> (s * 0.05f, s * 0.05f).withCentre (P (0.48f + 0.1f * (float) i, 0.51f)));
+            return;
+        case Group::Dante:
+            p.addRoundedRectangle (juce::Rectangle<float> (P (0.22f, 0.2f), P (0.78f, 0.8f)), s * 0.06f);
+            g.strokePath (p, stroke);
+            rj45 (juce::Rectangle<float> (P (0.33f, 0.33f), P (0.67f, 0.63f)));
+            return;
+        case Group::UsbPlayer:
+        case Group::Recorder:
+            p.addRoundedRectangle (juce::Rectangle<float> (P (0.34f, 0.38f), P (0.66f, 0.86f)), s * 0.06f);
+            p.addRectangle (juce::Rectangle<float> (P (0.39f, 0.14f), P (0.61f, 0.38f)));
+            g.strokePath (p, stroke);
+            g.fillRect (juce::Rectangle<float> (P (0.44f, 0.22f), P (0.47f, 0.28f)));
+            g.fillRect (juce::Rectangle<float> (P (0.53f, 0.22f), P (0.56f, 0.28f)));
+            return;
+        case Group::Bus:
+        case Group::Main:
+        case Group::Matrix:
         {
-            case Group::LocalIn:
-            case Group::LocalOut:
-                shell();
-                xlrPins();
-                return;
-            case Group::AesIn:
-            case Group::AesOut:
-                shell();
-                xlrPins();
-                // The square wave of a digital signal.
-                p.startNewSubPath (P (0.66f, 0.16f));
-                for (int i = 0; i < 3; ++i)
-                {
-                    const float u = 0.66f + 0.08f * (float) i;
-                    p.lineTo (P (u, 0.08f));
-                    p.lineTo (P (u + 0.04f, 0.08f));
-                    p.lineTo (P (u + 0.04f, 0.16f));
-                    p.lineTo (P (u + 0.08f, 0.16f));
-                }
-                g.strokePath (p, juce::PathStrokeType (w * 0.7f));
-                return;
-            case Group::AuxIn:
-            case Group::AuxOut:
-                ring (0.5f, 0.5f, 0.24f);
-                ring (0.5f, 0.5f, 0.13f);
-                return;
-            case Group::Oscillator:
-                ring (0.5f, 0.5f, 0.34f);
-                p.startNewSubPath (P (0.32f, 0.52f));
-                p.cubicTo (P (0.4f, 0.32f), P (0.46f, 0.36f), P (0.5f, 0.5f));
-                p.cubicTo (P (0.54f, 0.64f), P (0.6f, 0.68f), P (0.68f, 0.48f));
-                g.strokePath (p, stroke);
-                return;
-            case Group::Aes50A:
-            case Group::Aes50B:
-            case Group::Aes50C:
-                shell();
-                rj45 (juce::Rectangle<float> (P (0.33f, 0.38f), P (0.67f, 0.66f)));
-                text (group == Group::Aes50A ? "A" : group == Group::Aes50B ? "B" : "C", 0.5f, 0.61f, 0.09f, 0.2f);
-                return;
-            case Group::StConnect:
-                text ("SC", 0.52f, 0.4f, 0.24f, 0.6f);
-                p.startNewSubPath (P (0.22f, 0.66f));
-                p.cubicTo (P (0.34f, 0.66f), P (0.38f, 0.58f), P (0.5f, 0.6f));
-                p.lineTo (P (0.86f, 0.6f));
-                g.strokePath (p, stroke);
-                g.fillEllipse (juce::Rectangle<float> (s * 0.08f, s * 0.08f).withCentre (P (0.18f, 0.66f)));
-                p.clear();
-                p.addTriangle (P (0.9f, 0.6f), P (0.82f, 0.55f), P (0.82f, 0.65f));
-                g.fillPath (p);
-                return;
-            case Group::UsbAudio:
-                p.addRoundedRectangle (juce::Rectangle<float> (P (0.2f, 0.2f), P (0.8f, 0.8f)), s * 0.06f);
-                g.strokePath (p, stroke);
-                p.clear();
-                // The USB-B socket with its chip.
-                p.startNewSubPath (P (0.3f, 0.7f));
-                p.lineTo (P (0.3f, 0.4f));
-                p.lineTo (P (0.38f, 0.3f));
-                p.lineTo (P (0.62f, 0.3f));
-                p.lineTo (P (0.7f, 0.4f));
-                p.lineTo (P (0.7f, 0.7f));
-                p.closeSubPath();
-                g.strokePath (p, stroke);
-                p.clear();
-                p.addRectangle (juce::Rectangle<float> (P (0.4f, 0.42f), P (0.6f, 0.6f)));
-                g.strokePath (p, juce::PathStrokeType (w * 0.7f));
-                return;
-            case Group::WlivePlay:
-            case Group::WliveRec:
-                p.addRectangle (juce::Rectangle<float> (P (0.1f, 0.4f), P (0.9f, 0.62f)));
-                g.strokePath (p, stroke);
-                g.fillRect (juce::Rectangle<float> (s * 0.1f, s * 0.09f).withCentre (P (0.32f, 0.51f)));
-                for (int i = 0; i < 4; ++i)
-                    g.fillEllipse (juce::Rectangle<float> (s * 0.05f, s * 0.05f).withCentre (P (0.48f + 0.1f * (float) i, 0.51f)));
-                return;
-            case Group::Dante:
-                p.addRoundedRectangle (juce::Rectangle<float> (P (0.22f, 0.2f), P (0.78f, 0.8f)), s * 0.06f);
-                g.strokePath (p, stroke);
-                rj45 (juce::Rectangle<float> (P (0.33f, 0.33f), P (0.67f, 0.63f)));
-                return;
-            case Group::UsbPlayer:
-            case Group::Recorder:
-                p.addRoundedRectangle (juce::Rectangle<float> (P (0.34f, 0.38f), P (0.66f, 0.86f)), s * 0.06f);
-                p.addRectangle (juce::Rectangle<float> (P (0.39f, 0.14f), P (0.61f, 0.38f)));
-                g.strokePath (p, stroke);
-                g.fillRect (juce::Rectangle<float> (P (0.44f, 0.22f), P (0.47f, 0.28f)));
-                g.fillRect (juce::Rectangle<float> (P (0.53f, 0.22f), P (0.56f, 0.28f)));
-                return;
-            case Group::Bus:
-            case Group::Main:
-            case Group::Matrix:
-            {
-                // A return arrow with the group's name in its loop.
-                p.startNewSubPath (P (0.24f, 0.36f));
-                p.cubicTo (P (0.24f, 0.28f), P (0.28f, 0.26f), P (0.34f, 0.26f));
-                p.lineTo (P (0.7f, 0.26f));
-                p.cubicTo (P (0.84f, 0.26f), P (0.86f, 0.5f), P (0.7f, 0.5f));
-                p.lineTo (P (0.16f, 0.5f));
-                p.startNewSubPath (P (0.28f, 0.4f));
-                p.lineTo (P (0.16f, 0.5f));
-                p.lineTo (P (0.28f, 0.6f));
-                g.strokePath (p, stroke);
-                g.fillEllipse (juce::Rectangle<float> (s * 0.07f, s * 0.07f).withCentre (P (0.24f, 0.36f)));
-                const auto name = group == Group::Bus ? "BUS" : group == Group::Main ? "MAIN" : "MATRIX";
-                const auto band = juce::Rectangle<float> (s * 0.42f, s * 0.12f).withCentre (P (0.53f, 0.26f));
-                g.saveState();
-                g.setColour (Colours::screenTile);
-                g.fillRect (band);
-                g.restoreState();
-                g.setColour (c);
-                text (name, 0.53f, 0.26f, 0.08f, 0.44f);
-                return;
-            }
-            case Group::UserSignal:
-            {
-                p.startNewSubPath (P (0.72f, 0.24f));
-                p.lineTo (P (0.24f, 0.24f));
-                p.lineTo (P (0.24f, 0.48f));
-                p.lineTo (P (0.74f, 0.48f));
-                p.lineTo (P (0.74f, 0.72f));
-                p.lineTo (P (0.32f, 0.72f));
-                juce::Path dashed;
-                const float dashes[] = { s * 0.06f, s * 0.04f };
-                juce::PathStrokeType (w).createDashedStroke (dashed, p, dashes, 2);
-                g.fillPath (dashed);
-                ring (0.78f, 0.24f, 0.06f);
-                ring (0.26f, 0.72f, 0.06f);
-                g.fillEllipse (juce::Rectangle<float> (s * 0.05f, s * 0.05f).withCentre (P (0.78f, 0.24f)));
-                g.fillEllipse (juce::Rectangle<float> (s * 0.05f, s * 0.05f).withCentre (P (0.26f, 0.72f)));
-                return;
-            }
-            case Group::Monitor:
-                p.addRoundedRectangle (juce::Rectangle<float> (P (0.46f, 0.2f), P (0.76f, 0.8f)), s * 0.03f);
-                g.strokePath (p, stroke);
-                ring (0.61f, 0.34f, 0.05f);
-                ring (0.61f, 0.6f, 0.1f);
-                p.clear();
-                p.addCentredArc (P (0.4f, 0.6f).x, P (0.4f, 0.6f).y, s * 0.14f, s * 0.14f, 0.0f, -juce::MathConstants<float>::halfPi * 1.2f, 0.0f, true);
-                g.strokePath (p, stroke);
-                g.fillRoundedRectangle (juce::Rectangle<float> (P (0.24f, 0.6f), P (0.32f, 0.74f)), s * 0.02f);
-                return;
-            case Group::FxSend:
-                p.addRoundedRectangle (juce::Rectangle<float> (P (0.22f, 0.2f), P (0.78f, 0.78f)), s * 0.05f);
-                g.strokePath (p, stroke);
-                text ("FX", 0.5f, 0.5f, 0.26f, 0.5f);
-                return;
+            // A return arrow with the group's name in its loop.
+            p.startNewSubPath (P (0.24f, 0.36f));
+            p.cubicTo (P (0.24f, 0.28f), P (0.28f, 0.26f), P (0.34f, 0.26f));
+            p.lineTo (P (0.7f, 0.26f));
+            p.cubicTo (P (0.84f, 0.26f), P (0.86f, 0.5f), P (0.7f, 0.5f));
+            p.lineTo (P (0.16f, 0.5f));
+            p.startNewSubPath (P (0.28f, 0.4f));
+            p.lineTo (P (0.16f, 0.5f));
+            p.lineTo (P (0.28f, 0.6f));
+            g.strokePath (p, stroke);
+            g.fillEllipse (juce::Rectangle<float> (s * 0.07f, s * 0.07f).withCentre (P (0.24f, 0.36f)));
+            const auto name = group == Group::Bus ? "BUS" : group == Group::Main ? "MAIN" : "MATRIX";
+            const auto band = juce::Rectangle<float> (s * 0.42f, s * 0.12f).withCentre (P (0.53f, 0.26f));
+            g.saveState();
+            g.setColour (Colours::screenTile);
+            g.fillRect (band);
+            g.restoreState();
+            g.setColour (c);
+            text (name, 0.53f, 0.26f, 0.08f, 0.44f);
+            return;
         }
+        case Group::UserSignal:
+        {
+            p.startNewSubPath (P (0.72f, 0.24f));
+            p.lineTo (P (0.24f, 0.24f));
+            p.lineTo (P (0.24f, 0.48f));
+            p.lineTo (P (0.74f, 0.48f));
+            p.lineTo (P (0.74f, 0.72f));
+            p.lineTo (P (0.32f, 0.72f));
+            juce::Path dashed;
+            const float dashes[] = { s * 0.06f, s * 0.04f };
+            juce::PathStrokeType (w).createDashedStroke (dashed, p, dashes, 2);
+            g.fillPath (dashed);
+            ring (0.78f, 0.24f, 0.06f);
+            ring (0.26f, 0.72f, 0.06f);
+            g.fillEllipse (juce::Rectangle<float> (s * 0.05f, s * 0.05f).withCentre (P (0.78f, 0.24f)));
+            g.fillEllipse (juce::Rectangle<float> (s * 0.05f, s * 0.05f).withCentre (P (0.26f, 0.72f)));
+            return;
+        }
+        case Group::Monitor:
+            p.addRoundedRectangle (juce::Rectangle<float> (P (0.46f, 0.2f), P (0.76f, 0.8f)), s * 0.03f);
+            g.strokePath (p, stroke);
+            ring (0.61f, 0.34f, 0.05f);
+            ring (0.61f, 0.6f, 0.1f);
+            p.clear();
+            p.addCentredArc (P (0.4f, 0.6f).x, P (0.4f, 0.6f).y, s * 0.14f, s * 0.14f, 0.0f, -juce::MathConstants<float>::halfPi * 1.2f, 0.0f, true);
+            g.strokePath (p, stroke);
+            g.fillRoundedRectangle (juce::Rectangle<float> (P (0.24f, 0.6f), P (0.32f, 0.74f)), s * 0.02f);
+            return;
+        case Group::FxSend:
+            p.addRoundedRectangle (juce::Rectangle<float> (P (0.22f, 0.2f), P (0.78f, 0.78f)), s * 0.05f);
+            g.strokePath (p, stroke);
+            text ("FX", 0.5f, 0.5f, 0.26f, 0.5f);
+            return;
     }
+}
+
+namespace
+{
 
     /** The console's icon of a source: a WING icon (SOURCES > ICON/COLOR) or its group's. */
     void drawSourceIcon (juce::Graphics& g, int source, int wingIcon, juce::Rectangle<float> r, juce::Colour c)
@@ -408,6 +413,27 @@ namespace
         }
     }
 
+    /** False for an interface port the interface doesn't have (drawn n/a). */
+    bool sourceAvailable (MixerEngine& engine, int source)
+    {
+        if (source < 0)
+            return false;
+        const auto group = routing::groupOfSource (source);
+        if (group == Group::LocalIn || group == Group::Aes50B || group == Group::Aes50C)
+            return source < engine.getHardwareInputNames().size();
+        return true;
+    }
+
+    /** A source's settings: a stereo or mid/side pair runs on its first source's. */
+    ld::SourceParams* sourceSettings (MixerEngine& engine, int port)
+    {
+        const int index = MixerEngine::sourceIndex (port);
+        auto* src = engine.getSource (index);
+        if (src != nullptr && src->mode.load() != ld::kSourceMono)
+            return engine.getSource (index & ~1);
+        return src;
+    }
+
     void drawSelection (juce::Graphics& g, juce::Rectangle<int> area)
     {
         g.setColour (Colours::gold);
@@ -433,21 +459,7 @@ public:
         g.setColour (Colours::screenPanel);
         g.fillRect (frame());
         for (auto& [area, id] : tiles())
-        {
-            const bool sel = id == selected;
-            g.setColour (sel ? Colours::gold : juce::Colours::black);
-            g.fillRect (area);
-            const auto inner = area.reduced (juce::jmax (2, px (sel ? 3.0f : 2.0f)));
-            g.setColour (id == pressed ? Colours::chipOff : Colours::screenTile);
-            g.fillRect (inner);
-            auto f = inner.toFloat();
-            auto caption = f.removeFromBottom (f.getHeight() * 0.3f);
-            drawGroupIcon (g, (Group) id, f.expanded (f.getHeight() * 0.04f).translated (0.0f, f.getHeight() * 0.06f), iconGrey);
-            const auto name = juce::String (routing::info ((Group) id).name);
-            g.setColour (Dark::caption);
-            g.setFont (fontFittingWidth (capFont (10.0f), name, caption.getWidth() - 2.0f, 0.75f));
-            g.drawText (name, caption.toNearestInt(), juce::Justification::centred);
-        }
+            routing::paintGroupTile (g, area, (Group) id, id == selected, id == pressed);
     }
 
     void mouseDown (const juce::MouseEvent& e) override
@@ -623,12 +635,7 @@ int RoutingPage::numHardware (bool outputs) const
 
 bool RoutingPage::sourcePresent (int source) const
 {
-    if (source < 0)
-        return false;
-    const auto group = routing::groupOfSource (source);
-    if (group == Group::LocalIn || group == Group::Aes50B || group == Group::Aes50C)
-        return source < numHardware (false);
-    return true;
+    return sourceAvailable (ctx.engine, source);
 }
 
 Strip* RoutingPage::selectedStrip() const
@@ -992,19 +999,41 @@ void RoutingPage::paintChannelTile (juce::Graphics& g, juce::Rectangle<int> area
         drawSelection (g, area);
 }
 
+void routing::paintGroupTile (juce::Graphics& g, juce::Rectangle<int> area, Group group, bool selected, bool pressed)
+{
+    g.setColour (selected ? Colours::gold : juce::Colours::black);
+    g.fillRect (area);
+    const auto inner = area.reduced (juce::jmax (2, px (selected ? 3.0f : 2.0f)));
+    g.setColour (pressed ? Colours::chipOff : Colours::screenTile);
+    g.fillRect (inner);
+    auto f = inner.toFloat();
+    auto caption = f.removeFromBottom (f.getHeight() * 0.3f);
+    drawGroupIcon (g, group, f.expanded (f.getHeight() * 0.04f).translated (0.0f, f.getHeight() * 0.06f), iconGrey);
+    const auto name = juce::String (routing::info (group).name);
+    g.setColour (Dark::caption);
+    g.setFont (fontFittingWidth (capFont (10.0f), name, caption.getWidth() - 2.0f, 0.75f));
+    g.drawText (name, caption.toNearestInt(), juce::Justification::centred);
+}
+
 void RoutingPage::paintSourceTile (juce::Graphics& g, juce::Rectangle<int> area, Group group, int index, bool marked, int slot) const
+{
+    const float peak = juce::isPositiveAndBelow (slot, (int) sourcePeaks.size()) ? sourcePeaks[(size_t) slot] : 0.0f;
+    routing::paintSourceTile (g, area, ctx.engine, group, index, peak, marked, mode == Mode::Sources);
+}
+
+void routing::paintSourceTile (juce::Graphics& g, juce::Rectangle<int> area, MixerEngine& engine, Group group, int index, float peak, bool marked,
+                               bool numbered)
 {
     // [WING 80 x 68] The source's colour strip (16 px, its name) over the body:
     // its icon, the 48 (phantom) and M (mute) chips beside a mini meter, and
     // the label (CHANNELS: "LCL 3", blue or olive for a pair; SOURCES: the
     // number in blue and the gain). A port the interface lacks reads n/a.
     const int port = routing::sourceAt (group, index);
-    const auto* src = port >= 0 ? sourceParams (port) : nullptr;
+    const auto* src = port >= 0 ? sourceSettings (engine, port) : nullptr;
     const int colour = src != nullptr ? src->colour.load() : 1;
     const bool playback = group == Group::WlivePlay || group == Group::UsbPlayer;
     const auto stripColour = playback && colour == 1 ? playbackStrip : wingColour (colour);
-    const bool numbered = mode == Mode::Sources;
-    if (port < 0 || src == nullptr || ! sourcePresent (port))
+    if (port < 0 || src == nullptr || ! sourceAvailable (engine, port))
     {
         const auto label = port >= 0 ? routing::sourceLabel (port) : juce::String (routing::info (group).prefix) + " " + juce::String (index + 1);
         if (! numbered)
@@ -1031,7 +1060,7 @@ void RoutingPage::paintSourceTile (juce::Graphics& g, juce::Rectangle<int> area,
     g.setColour (stripColour);
     g.fillRect (strip);
     if (const int idx = MixerEngine::sourceIndex (port); idx >= 0)
-        if (const auto name = ctx.engine.getSourceName (idx).toUpperCase(); name.isNotEmpty())
+        if (const auto name = engine.getSourceName (idx).toUpperCase(); name.isNotEmpty())
         {
             g.setColour (juce::Colours::black);
             g.setFont (fontFittingWidth (capFont (9.0f), name, strip.getWidth() - 4.0f, 0.7f));
@@ -1041,7 +1070,6 @@ void RoutingPage::paintSourceTile (juce::Graphics& g, juce::Rectangle<int> area,
     g.fillRect (r);
 
     // The mini meter at the right edge (the group's tiles keep their peaks).
-    const float peak = juce::isPositiveAndBelow (slot, (int) sourcePeaks.size()) ? sourcePeaks[(size_t) slot] : 0.0f;
     const float u = r.getWidth() / 80.0f, v = r.getHeight() / 52.0f;
     drawMiniMeter (g, juce::Rectangle<float> (r.getX() + 72.0f * u, r.getY() + 2.0f * v, 4.0f * u, 46.0f * v),
                    juce::jlimit (0.0f, 1.0f, (juce::Decibels::gainToDecibels (peak, -60.0f) + 60.0f) / 60.0f));
@@ -1057,7 +1085,7 @@ void RoutingPage::paintSourceTile (juce::Graphics& g, juce::Rectangle<int> area,
         if (group == Group::Oscillator)
         {
             static const char* const types[] = { "SIN", "PNK", "WHT" };
-            const auto* o = ctx.engine.getOscillator (pairing != ld::kSourceMono ? 0 : MixerEngine::oscChannelOf (port));
+            const auto* o = engine.getOscillator (pairing != ld::kSourceMono ? 0 : MixerEngine::oscChannelOf (port));
             drawChip (g, chip48.withLeft (chip48.getX() - 6.0f * u), types[juce::jlimit (0, 2, o != nullptr ? (int) o->mode.load() : 0)], Colours::chipOff,
                       juce::Colours::black);
         }
@@ -1207,12 +1235,7 @@ void RoutingPage::paintSignal (juce::Graphics& g, juce::Rectangle<int> area, con
 //==============================================================================
 ld::SourceParams* RoutingPage::sourceParams (int port) const
 {
-    // A stereo or mid/side pair runs on its first source's settings.
-    const int index = MixerEngine::sourceIndex (port);
-    auto* src = ctx.engine.getSource (index);
-    if (src != nullptr && src->mode.load() != ld::kSourceMono)
-        return ctx.engine.getSource (index & ~1);
-    return src;
+    return sourceSettings (ctx.engine, port);
 }
 
 namespace

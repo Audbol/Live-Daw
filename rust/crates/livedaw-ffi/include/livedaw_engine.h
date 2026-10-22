@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 12;
+constexpr int kAbiVersion = 13;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -272,6 +272,7 @@ struct DcaParams
     std::atomic<bool> led; // scribble strip light
     std::atomic<int32_t> colour;
     std::atomic<int32_t> icon; // WING icon number (0 none)
+    std::atomic<int32_t> mon;  // ABI 13, SOLO BUS (/dca/n/mon): 0 A (phones), 1 B (speakers), 2 A+B
 };
 
 struct FxParams
@@ -426,7 +427,7 @@ struct MonitorDspParams
 {
     std::atomic<int32_t> directSource; // DIRECT IN (0..kNumDirectSources-1, -1 = OFF), ld_monitor_direct_name
     std::atomic<float> directLevelDb;  // its level
-    std::atomic<float> bandSoloDb;     // BAND SOLO boost of an EQ band LISTEN on this path, 0..24 (default 12)
+    std::atomic<float> bandSoloDb;     // BAND SOLO boost of an EQ band LISTEN on this path, 0..24 (default 0)
     std::atomic<bool> eqOn, invert, delayOn;
     MonitorEqBand eq[kMonitorEqBands];
     std::atomic<float> pan;         // -100..100
@@ -572,7 +573,9 @@ struct LayoutInfo
         // ABI 11 (matrix send PAN LINK, DCA icon and light)
         offMatrixSendPanReversed, offDcaIcon,
         // ABI 12 (LINK CUSTOMIZATION TO SOURCE)
-        offCustLink;
+        offCustLink,
+        // ABI 13 (DCA SOLO BUS)
+        offDcaMon;
 };
 
 struct ParamInfo
@@ -1397,6 +1400,7 @@ inline const char* verifyLayout()
         { info.offMatrixSendPanReversed, offsetof (MatrixSendParams, panReversed), "MatrixSendParams.panReversed" },
         { info.offDcaIcon, offsetof (DcaParams, icon), "DcaParams.icon" },
         { info.offCustLink, offsetof (StripParams, custLink), "StripParams.custLink" },
+        { info.offDcaMon, offsetof (DcaParams, mon), "DcaParams.mon" },
     };
 
     if (info.abiVersion != kAbiVersion)

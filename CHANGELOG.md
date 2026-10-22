@@ -29,6 +29,25 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- The monitors start with a WING's factory settings, read from a console's parameter dump
+  after INITIALIZE: SOLO MODE LIVE, the solo bus PH (phones), mains and matrices solo PFL,
+  PFL DIM 12 dB and BAND SOLO 0 dB on both paths, the monitor EQs' bands at 60.1, 129.9,
+  299.2, 699.5 Hz, 1.50, 2.99 and 6.01 kHz with Q 2.0, talkback AUTO DIM (BUS DIM, MON
+  DIM) 0 dB, and the RTAs at 30 dB range, MED decay and PEAK detector. Saved shows keep
+  their settings.
+- DCAs have a SOLO BUS (`/dca/n/mon`: A = phones, B = speakers, A+B), saved with the
+  show: in SOLO MODE LIVE a soloed DCA sends its members' solo there (their own solo
+  still goes to their own SOLO BUS).
+- Renaming DCAs and mute groups as on the WING, instead of touching the selected tab of an
+  assign screen again: a DCA's title tile on its assign screen (and its name on FADERS)
+  opens the DCA's panel (LIGHT and the 18 colours in the console's order, the icon
+  gallery, SOLO BUS, the name field and the keyboard); a mute group's header on MUTE
+  GROUPS opens the MUTE GROUP n window. The SOURCE tab of a mute group's assign screen
+  shows one source group at a time, eight sources to a row, with the source groups as
+  tiles on the right, instead of 64 sources a page.
+- The DCA and mute group columns of OVERVIEW and MUTE GROUPS fill a member's cell in the
+  member's own colour, and a DCA's "DCA" label (OVERVIEW, FADERS) turns yellow while the
+  DCA is soloed. The layer column's section key is darker olive while a bank is shown.
 - MONITOR / TALKBACK, MUTE GROUPS and the VIEW screens with a DCA layer (OVERVIEW,
   FADERS, SENDS, CONFIG) are laid out like a WING's (firmware 3.1, measured off the
   console's screens): the layer column with bank keys (1-8 ... DCA 9-16), DCA and mute

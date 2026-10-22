@@ -37,9 +37,11 @@ use std::sync::OnceLock;
 
 /// Monitor EQ bands: L (low shelf), 1-6 (PEQ), H (high shelf).
 pub const MONITOR_EQ_BANDS: usize = 8;
-/// Default (frequency, Q) of the bands (the bus WING EQ's).
+/// Default (frequency, Q) of the bands: a WING after INITIALIZE (`/cfg/mon/n/eq`,
+/// on the console's frequency steps: 60.1, 129.9, 299.2, 699.5 Hz, 1.50, 2.99,
+/// 6.01, 12.0 kHz; Q 2.00).
 pub const MONITOR_EQ_DEFAULTS: [(f32, f32); MONITOR_EQ_BANDS] =
-    [(80.0, 0.7), (160.0, 1.0), (315.0, 1.0), (630.0, 1.0), (1250.0, 1.0), (2500.0, 1.0), (5000.0, 1.0), (12000.0, 0.7)];
+    [(60.14, 0.7), (129.88, 2.0), (299.25, 2.0), (699.49, 2.0), (1499.8, 2.0), (2992.5, 2.0), (6013.9, 2.0), (12000.0, 0.7)];
 /// Frequency range of each band (`/cfg/mon/n/eq/lsf` 20-2000 Hz, `hsf` 200-20000 Hz).
 pub const MONITOR_EQ_FREQ_RANGE: [(f32, f32); MONITOR_EQ_BANDS] = [
     (20.0, 2000.0),
@@ -63,7 +65,7 @@ pub const MONITOR_DELAY_RANGE_M: (f32, f32) = (0.1, 100.0);
 pub const MONITOR_LIMITER_RANGE_DB: (f32, f32) = (-40.0, 0.0);
 /// BAND SOLO boost (`eqbdtrim`), dB.
 pub const BAND_SOLO_MAX_DB: f32 = 24.0;
-pub const BAND_SOLO_DEFAULT_DB: f32 = 12.0;
+pub const BAND_SOLO_DEFAULT_DB: f32 = 0.0;
 
 /// Milliseconds of delay for a distance in meters.
 pub fn delay_ms(meters: f32) -> f32 {
@@ -257,7 +259,7 @@ impl MonitorDspParams {
             out[q] = if i == 0 || i == MONITOR_EQ_BANDS - 1 {
                 SHELF_Q
             } else {
-                finite(b.q.load(), 1.0).clamp(MONITOR_EQ_Q_RANGE.0, MONITOR_EQ_Q_RANGE.1)
+                finite(b.q.load(), MONITOR_EQ_DEFAULTS[i].1).clamp(MONITOR_EQ_Q_RANGE.0, MONITOR_EQ_Q_RANGE.1)
             };
         }
         out[ids.low_type] = 1.0; // SHV

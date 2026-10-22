@@ -115,6 +115,11 @@ public:
     /** The status bar's title tile for this screen. */
     virtual StatusTitle getStatusTitle() { return {}; }
 
+    /** The title tile touched (a DCA's assign screen: the DCA's name, colour
+        and icon panel). Return true when the page handled it; false does what
+        the tile does on every screen. */
+    virtual bool titleClicked() { return false; }
+
     /** The UTILITY key "only lights up where it serves a specific function"
         (manual 4.1): pages with one return true and act in utilityPressed(). */
     virtual bool hasUtilityFunction() const { return false; }

@@ -27,6 +27,11 @@ struct TextOptions
     int maxLength = 16;
     juce::String actionText = "DONE";
     std::function<void()> onNext;    // shows a NEXT key (e.g. rename the next channel)
+    /** Live editing (MUTE GROUP n): every change is passed on at once and
+        CLOSE, in the title bar or as the action key, keeps the text. */
+    std::function<void (const juce::String&)> onChange;
+    bool capsLock = false;           // the keyboard starts in capitals
+    float centreX = 0.5f;            // the window's centre, a fraction of the screen's width
 };
 
 /** A CONTROL NAME-style keyboard window over `host`. `onDone` gets the text; it

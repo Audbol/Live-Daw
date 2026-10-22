@@ -701,6 +701,7 @@ fn capture_dcas(engine: &Engine, parent: &mut Element, names: bool) {
             put_i(x, "colour", &dca.colour);
             put_i(x, "icon", &dca.icon);
             put_b(x, "led", &dca.led);
+            put_i(x, "mon", &dca.mon);
         }
         put_f(x, "lvl", &dca.fader_db);
         put_b(x, "mute", &dca.mute);
@@ -718,6 +719,7 @@ fn apply_dcas(engine: &Engine, parent: &Element, fades: &mut Option<&mut Vec<Fad
         get_i(x, "colour", &dca.colour);
         get_i(x, "icon", &dca.icon);
         get_b(x, "led", &dca.led);
+        get_i(x, "mon", &dca.mon);
         get_fadable(x, "lvl", FadeParam::Dca(i as usize), engine, fades);
         get_b(x, "mute", &dca.mute);
     }
