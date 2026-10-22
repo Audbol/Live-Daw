@@ -80,7 +80,6 @@ namespace Colours
     const juce::Colour ledGate { 0xfff82049 };      // the meter block's GATE LED (gate closed)
     const juce::Colour ledDyn { 0xffec7f1e };       // its DYN LED (dynamics working)
     const juce::Colour ledGreen { 0xff2ee86a };     // a lit status LED (CHANNEL STRIP DETAILS, GROUPS)
-    const juce::Colour ledAmber { 0xfffcb424 };     // the LED meters' -6 .. -18 LEDs
     const juce::Colour segmentBlue { 0xff5a78ff };  // the custom controls' layer display
 } // namespace Colours
 

@@ -53,8 +53,7 @@ All notable changes to Sidecar are listed here. Versions follow
   blinks while anything is soloed; in MUTE GROUPS the custom controls' lower LCD shows "MUTE
   GROUPS" over the eight group names in four columns, the active ones inverted, over
   blank keys; the 4-Channel section's LCD leaves the key row empty under PAN for a main or
-  matrix (no MAIN 1 send); the CHANNEL STRIP DETAILS and GROUPS LEDs are green and the
-  LED meters' -6 to -18 LEDs amber. On the black finish the keys are backlit lavender with
+  matrix (no MAIN 1 send); the CHANNEL STRIP DETAILS and GROUPS LEDs are green. On the black finish the keys are backlit lavender with
   dark navy print (a key with nothing to do shows its grey cap), as on a black WING.
 - A WING snapshot loads the console's way: on LIBRARY > SNAP, select the `.snap` file at INT
   or USB and press LOAD (or double-click it). IMPORT WING on the SHOW tab still works.
