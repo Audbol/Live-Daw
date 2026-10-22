@@ -353,6 +353,11 @@ private:
     void importSelected (bool snippet);
     /** A scene file goes in after the selected scene, a snippet file into it. */
     void importFile (const juce::File&);
+    /** The WING snapshot (.snap) selected at INT / USB, if any. */
+    juce::File selectedWingSnapshot() const;
+    /** Applies a WING snapshot (.snap) to the console, or adds a WING show's
+        (.show) snapshots as scenes; the log gets what could not be applied. */
+    void applyWingFile (const juce::File&);
 
     UiContext& ctx;
     std::unique_ptr<ShowPanel> list;

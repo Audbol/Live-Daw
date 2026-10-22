@@ -239,24 +239,7 @@ private:
             const auto file = fc.getResult();
             if (safe == nullptr || file == juce::File())
                 return;
-            auto& ctx = safe->page.ctx;
-            juce::String report;
-            const auto result = file.hasFileExtension ("show") ? ctx.engine.getWing().importShow (ctx.show, file, report)
-                                                               : ctx.engine.getWing().importSnapshot (file, report);
-            juce::StringArray lines;
-            lines.addLines (report);
-            lines.removeEmptyStrings();
-            if (result.failed())
-                ctx.log.error (file.getFileName() + ": " + lines.joinIntoString ("; "));
-            else if (! lines.isEmpty())
-            {
-                ctx.log.info (file.getFileName() + ": " + lines[0]);
-                for (int i = 1; i < lines.size(); ++i)
-                    ctx.log.warning (lines[i].trim());
-            }
-            if (ctx.structureChanged)
-                ctx.structureChanged();
-            safe->page.list->refresh();
+            safe->page.applyWingFile (file);
             safe->repaint();
         });
     }
@@ -344,9 +327,12 @@ public:
                             });
         };
         editScope->onClick = [this] { openScope (page.selectedScene()); };
+        // LOAD: the selected scene, or (as on the WING) a WING snapshot selected at INT / USB.
         loadKey->onClick = [this]
         {
-            if (page.selectedScene() >= 0)
+            if (const auto snap = page.selectedWingSnapshot(); snap != juce::File())
+                page.confirmLoad ("the WING snapshot \"" + snap.getFileNameWithoutExtension() + "\"", [this, snap] { page.applyWingFile (snap); });
+            else if (page.selectedScene() >= 0)
                 page.load ({ page.selectedScene(), -1 });
         };
         // PARTIAL LOAD: a scope window; NO GLOB ignores the GLOBAL safes for this load.
@@ -409,8 +395,9 @@ public:
     void refresh()
     {
         const auto scene = page.ctx.show.getScene (page.selectedScene());
-        for (auto* k : { update, partialUpdate, editScope, loadKey, partialLoad, restore, exportKey })
+        for (auto* k : { update, partialUpdate, editScope, partialLoad, restore, exportKey })
             enableKey (*k, scene.has_value());
+        enableKey (*loadKey, scene.has_value() || page.selectedWingSnapshot() != juce::File());
         fade.setEnabled (scene.has_value());
         notes.setEnabled (scene.has_value());
         if (! fade.isMouseButtonDown())
@@ -1337,6 +1324,8 @@ LibraryPage::LibraryPage (UiContext& c) : ctx (c)
             chan->refresh();
         if (auto* clip = dynamic_cast<ClipTab*> (tabPages[TabClip]))
             clip->refresh();
+        if (auto* snap = dynamic_cast<SnapTab*> (tabPages[TabSnap]))
+            snap->refresh();
     };
     list->onFileActivated = [this] (const juce::File& file)
     {
@@ -1348,6 +1337,8 @@ LibraryPage::LibraryPage (UiContext& c) : ctx (c)
             });
         else if (file.hasFileExtension (Show::sceneFileExtension) || file.hasFileExtension (Show::snippetFileExtension))
             importFile (file);
+        else if (file.hasFileExtension ("snap"))
+            confirmLoad ("the WING snapshot \"" + file.getFileNameWithoutExtension() + "\"", [this, file] { applyWingFile (file); });
         else if (auto* clip = dynamic_cast<ClipTab*> (tabPages[TabClip]); clip != nullptr && AudioFileFormat::isAudioFile (file))
         {
             tabs.setCurrent (TabClip);
@@ -1473,7 +1464,8 @@ void LibraryPage::showTab (int t)
     for (int i = 0; i < tabPages.size(); ++i)
         tabPages[i]->setVisible (i == t);
     list->setTypeFilter (t == TabShow ? 0 : t == TabSnap ? 1 : t == TabSnip ? 2 : -1);
-    const char* filters[] = { Show::fileExtension, Show::sceneFileExtension, Show::snippetFileExtension, "wav;wave;flac;aif;aiff;aifc;mp3",
+    const juce::String snapFilter = juce::String (Show::sceneFileExtension).trimCharactersAtStart (".") + ";snap"; // WING snapshots too
+    const char* filters[] = { Show::fileExtension, snapFilter.toRawUTF8(), Show::snippetFileExtension, "wav;wave;flac;aif;aiff;aifc;mp3",
                               Show::fxPresetExtension, Show::channelPresetExtension };
     list->setFileFilter (juce::isPositiveAndBelow (t, (int) std::size (filters)) ? filters[t] : "");
     // Presets and clips are files; scenes and snippets live in the show (INT / USB hold their files).
@@ -1662,6 +1654,36 @@ void LibraryPage::importFile (const juce::File& file)
     }
     else
         ctx.log.error (file.getFileName() + ": not a Sidecar scene or snippet file");
+    refresh();
+}
+
+juce::File LibraryPage::selectedWingSnapshot() const
+{
+    if (list->getLocation() == ShowPanel::Location::Show)
+        return {};
+    const auto file = list->getSelectedFile();
+    return file.hasFileExtension ("snap") ? file : juce::File();
+}
+
+void LibraryPage::applyWingFile (const juce::File& file)
+{
+    juce::String report;
+    const auto result = file.hasFileExtension ("show") ? ctx.engine.getWing().importShow (ctx.show, file, report)
+                                                       : ctx.engine.getWing().importSnapshot (file, report);
+    juce::StringArray lines;
+    lines.addLines (report);
+    lines.removeEmptyStrings();
+    if (result.failed())
+        ctx.log.error (file.getFileName() + ": " + lines.joinIntoString ("; "));
+    else if (! lines.isEmpty())
+    {
+        ctx.log.info (file.getFileName() + ": " + lines[0]);
+        for (int i = 1; i < lines.size(); ++i)
+            ctx.log.warning (lines[i].trim());
+    }
+    if (ctx.structureChanged)
+        ctx.structureChanged();
+    list->refresh();
     refresh();
 }
 

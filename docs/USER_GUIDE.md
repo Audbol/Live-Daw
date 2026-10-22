@@ -439,7 +439,8 @@ or the USB folder of the file list.
   the selected scene. Double-clicking a file in the list imports it too. Importing
   never changes the console: load the scene or snippet when you want it.
 - The files are Sidecar's own XML, like show files and presets. They are not the WING's
-  `.snap` / `.snip` files; a WING snapshot is imported with IMPORT WING on the SHOW tab.
+  `.snap` / `.snip` files; a WING snapshot selected in the list is applied with LOAD (or
+  IMPORT WING on the SHOW tab).
   A scene refers to strips by number, so strips the console doesn't have are skipped
   when it is recalled.
 - **CLIP** plays an audio clip (WAV, FLAC, AIFF or MP3) selected in the file list at
@@ -596,8 +597,10 @@ and open-source projects (see below), and it is **experimental**.
   layers, the 4-Channel and button section modes, cards, ...) is remembered so
   clients can read back what they wrote, but does nothing.
   `cargo run -p livedaw-wing --example wing_coverage` prints the full report.
-- **Files:** LIBRARY > SHOW > **IMPORT WING** applies a WING snapshot (`.snap`) to
-  the console, or adds a WING show's (`.show`) snapshots as scenes. The log lists
+- **Files:** as on the WING, select a WING snapshot (`.snap`) at INT or USB on LIBRARY >
+  SNAP and press **LOAD** (or double-click it) to apply it to the console. LIBRARY > SHOW
+  > **IMPORT WING** does the same from a file dialog, or adds a WING show's (`.show`)
+  snapshots as scenes. The log lists
   what could not be applied. **EXPORT WING** writes the console as a
   WING snapshot (experimental: its format follows snapshots saved by WING consoles on
   firmware 2.1 and 3.1, and it reads back into Sidecar, but it has not been loaded
