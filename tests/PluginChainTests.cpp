@@ -365,7 +365,9 @@ public:
             expect (view.getWidth() > single); // grows to fit
             expect (view.wantsResizableWindow());
 
-            // Beyond the screen it scrolls.
+            // Beyond the screen it scrolls. (The default limit follows the
+            // primary display, which may be small on a CI machine.)
+            view.setMaxSize ({ 4000, 2000 });
             const auto natural = view.getBounds();
             view.setMaxSize ({ 500, 2000 });
             expectEquals (view.getWidth(), 500);
