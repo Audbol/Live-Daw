@@ -98,7 +98,8 @@ All notable changes to Sidecar are listed here. Versions follow
 - The surface's keys and LCDs as in photos of a silver WING: lit layer, function and mute
   group keys, the SOF FLIP rim and lit screen keys (HOME, EFFECTS...) are red-orange
   (brighter in the middle), lit VIEW keys bright green, and CLR SOLO an orange rim that
-  blinks while anything is soloed; in MUTE GROUPS the custom controls' lower LCD shows "MUTE
+  blinks while anything is soloed; the light bars light DARK BLUE (colour 1, the
+  inputs' and mains' default) plain blue, as the console's LEDs do; in MUTE GROUPS the custom controls' lower LCD shows "MUTE
   GROUPS" over the eight group names in four columns, the active ones inverted, over
   blank keys; the 4-Channel section's LCD leaves the key row empty under PAN for a main or
   matrix (no MAIN 1 send); the CHANNEL STRIP DETAILS and GROUPS LEDs are green. On the black finish the keys are backlit lavender with

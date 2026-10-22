@@ -1639,7 +1639,7 @@ void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> are
         {
             // The control's colour (CC EDIT > COLOR).
             drawLightBar (g, cell.removeFromTop (juce::jmax (4, cell.getHeight() / 9)).toFloat().reduced ((float) w * 0.15f, 0.5f),
-                          wingColour (juce::jmax (1, control.colour)).withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
+                          lightBarColour (wingColour (juce::jmax (1, control.colour))).withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
                           control.colour > 0);
             cell.removeFromTop (juce::jmax (3, cell.getHeight() / 8));
         }

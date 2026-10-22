@@ -8,6 +8,18 @@
 namespace livedaw::ui
 {
 
+juce::Colour lightBarColour (juce::Colour screenColour)
+{
+    // Measured off photos of a WING's light bars at the factory colour.
+    const auto darkBlue = wingColour (1);
+    const juce::Colour ledBlue (0xff1468ff);
+    if (screenColour == darkBlue)
+        return ledBlue;
+    if (screenColour == darkBlue.withMultipliedBrightness (0.5f))
+        return ledBlue.withMultipliedBrightness (0.5f);
+    return screenColour;
+}
+
 void drawLightBar (juce::Graphics& g, juce::Rectangle<float> bar, juce::Colour colour, bool on)
 {
     // A thin light bar under a frosted window: off it's a dark line; lit it
@@ -856,7 +868,7 @@ void FaderStrip::paint (juce::Graphics& g)
     // runs across the module, with a fine rule between the strips.
     const juce::Colour colour = strip != nullptr ? stripDisplayColour (*strip)
                                 : (dca >= 0 ? wingColour (shownColour) : (fxp ? kFxColour : (midi ? Colours::midiCc : surfaceColours().ledOff)));
-    drawLightBar (g, barArea.toFloat(), colour.withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
+    drawLightBar (g, barArea.toFloat(), lightBarColour (colour).withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
                   target.has_value() && shownLight);
     auto info = target ? scribbleInfo() : ScribbleInfo {};
     info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);

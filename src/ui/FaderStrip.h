@@ -62,6 +62,10 @@ juce::String scribbleSourceTag (const Strip&, bool showSource);
 /** Fills the top row, the name and the icon for a strip. */
 void setScribbleStrip (ScribbleInfo&, const Strip&, bool showSource);
 
+/** The colour a WING colour lights a light bar in: the screens' DARK BLUE
+    (colour 1, the inputs' and mains' default) lights its LEDs plain blue. */
+juce::Colour lightBarColour (juce::Colour screenColour);
+
 /** Draws the colour light bar above a scribble strip (dark when off). */
 void drawLightBar (juce::Graphics&, juce::Rectangle<float> bar, juce::Colour, bool on);
 
