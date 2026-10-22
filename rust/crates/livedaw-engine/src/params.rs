@@ -542,34 +542,33 @@ impl TapEqParams {
 
 /// The WING's 18 strip colours (index 1..18 in `colour`): a name for each and
 /// the RGB the console draws, measured on a full-size WING's ICON/COLOR screen.
-/// Colour 1 (Dark Blue) is the factory colour of channels, sources and DCAs (read
-/// from a factory-initialized console); the other indices follow the earlier
-/// manual measurements (5 Green, 11 Magenta, 15 Salmon, 16 Teal ...) matched
-/// to the nearest colour of the screen. `WING_COLOUR_GRID` is the screen's layout.
+/// The index of each swatch was read from a WING (channel 1's colour number
+/// as each swatch was touched); colour 1 (Dark Blue) is the factory colour of
+/// channels, sources and DCAs. `WING_COLOUR_GRID` is the screen's layout.
 pub const WING_COLOURS: [(&str, u32); 18] = [
     ("Dark Blue", 0x380088),
-    ("Blue", 0x0084f0),
     ("Indigo", 0x3000d0),
-    ("Turquoise", 0x10a880),
+    ("Violet", 0x8800d8),
+    ("Teal", 0x0088a0),
     ("Green", 0x00bc00),
-    ("Olive", 0xc89800),
+    ("Lime", 0x70f400),
     ("Yellow", 0xd0d400),
     ("Brown", 0x904400),
     ("Red", 0xe00000),
+    ("Salmon", 0xf05c78),
     ("Pink", 0xf80090),
     ("Magenta", 0xd800f8),
-    ("Violet", 0x8800d8),
+    ("Olive", 0xc89800),
+    ("Blue", 0x0084f0),
     ("Orange", 0xd05400),
-    ("Lime", 0x70f400),
-    ("Salmon", 0xf05c78),
-    ("Teal", 0x0088a0),
+    ("Turquoise", 0x10a880),
     ("Gray", 0x605460),
     ("Lavender", 0xc8b8e0),
 ];
 
 /// ICON/COLOR's colour grid, row by row (three to a row): the colour index
 /// at each place, as the console lays them out.
-pub const WING_COLOUR_GRID: [i32; 18] = [6, 11, 14, 7, 10, 5, 2, 9, 4, 3, 13, 16, 1, 15, 17, 12, 8, 18];
+pub const WING_COLOUR_GRID: [i32; 18] = [13, 12, 6, 7, 11, 5, 14, 9, 16, 2, 15, 4, 1, 10, 17, 3, 8, 18];
 
 /// The colour the WING gives a new channel, aux, main, matrix, source and DCA (Dark Blue).
 pub const DEFAULT_COLOUR: i32 = 1;
@@ -759,8 +758,8 @@ impl StripParams {
     }
 
     /// A new strip in slot `index` of its kind, as on a factory-initialized
-    /// WING: buses 1-8 (aux mixes) Pink with the fader down; buses 9-10 Olive
-    /// and 11-16 Violet, at 0 dB into Main 1.
+    /// WING: buses 1-8 (aux mixes) Salmon (colour 10) with the fader down;
+    /// buses 9-10 Lime (6) and 11-16 Magenta (12), at 0 dB into Main 1.
     pub fn new_in_slot(kind: StripKind, index: usize) -> Self {
         let p = Self::new(kind);
         if kind == StripKind::Bus && (8..WING_BUSES).contains(&index) {

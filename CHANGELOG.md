@@ -29,6 +29,9 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- The 18 strip colours have the WING's numbers, read from a console swatch by swatch (they
+  had been guessed apart from colour 1): shows and WING snapshots now come up in the
+  console's colours, and new buses are Salmon (1-8), Lime (9-10) and Magenta (11-16).
 - The surface's SELECT, SOLO, MUTE and SOF FLIP keys light as on the console: a dark face in
   a backlit rim, pale lavender unlit (light grey on the silver finish), the rim and print
   green, orange or red lit while the face stays dark. The meter block's GATE LED is red
