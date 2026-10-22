@@ -1258,7 +1258,7 @@ impl Engine {
             let soloed = any_solo && !listen && s.console.is_soloed();
             let route = match (soloed, live) {
                 (false, _) => 0,
-                (true, true) => solo::path_mask(s.params.monitor_bus.load(Relaxed)),
+                (true, true) => s.live_solo_paths(&c.dcas),
                 (true, false) => selected,
             };
             solo_paths |= route;

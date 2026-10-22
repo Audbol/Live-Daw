@@ -121,7 +121,7 @@ fn console_level_state_survives_a_show_round_trip() {
     // Older shows (no console-level elements) load the defaults.
     let bare = xml::parse(r#"<Console version="3"><Channels/></Console>"#).unwrap();
     console::load_console(&other, &bare, &mut NoPlugins, false);
-    assert_eq!(other.controls.solo_mode.load(Relaxed), 1);
+    assert_eq!(other.controls.solo_mode.load(Relaxed), 0, "LIVE, as a WING after INITIALIZE");
     assert_eq!(other.controls.talk.assignment(), None);
     assert!(other.sources().params()[0].is_default());
     assert!(other.sources().osc(1).unwrap().is_default());

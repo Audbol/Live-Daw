@@ -32,7 +32,7 @@ use std::mem::{offset_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-pub const LD_ABI_VERSION: i32 = 12;
+pub const LD_ABI_VERSION: i32 = 13;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -143,6 +143,8 @@ pub struct LdLayoutInfo {
     pub off_dca_icon: i32,
     // ABI 12: LINK CUSTOMIZATION TO SOURCE
     pub off_cust_link: i32,
+    // ABI 13: DCA SOLO BUS
+    pub off_dca_mon: i32,
 }
 
 #[no_mangle]
@@ -228,6 +230,7 @@ pub unsafe extern "C" fn ld_layout_info(out: *mut LdLayoutInfo) {
         off_matrix_send_pan_reversed: offset_of!(MatrixSendParams, pan_reversed) as i32,
         off_dca_icon: offset_of!(DcaParams, icon) as i32,
         off_cust_link: offset_of!(StripParams, cust_link) as i32,
+        off_dca_mon: offset_of!(DcaParams, mon) as i32,
     };
 }
 

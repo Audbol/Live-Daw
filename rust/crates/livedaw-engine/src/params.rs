@@ -815,6 +815,9 @@ pub struct DcaParams {
     pub colour: AtomicI32,
     /// WING icon number on the scribble strip (0 = none).
     pub icon: AtomicI32,
+    /// ABI 13: SOLO BUS (`/dca/n/mon`), an index into [`MONITOR_BUSES`]
+    /// (A = PHONES, B = SPEAKERS, A+B): where the members' solo goes in LIVE.
+    pub mon: AtomicI32,
 }
 
 impl Default for DcaParams {
@@ -827,6 +830,7 @@ impl Default for DcaParams {
             led: AtomicBool::new(false),
             colour: AtomicI32::new(DEFAULT_COLOUR),
             icon: AtomicI32::new(0),
+            mon: AtomicI32::new(0),
         }
     }
 }
@@ -892,6 +896,8 @@ pub const MAIN_LINK_MODES: [&str; 4] = ["OFF", "1 > 2", "1 > 2-3", "1 > 2-4"];
 
 /// Default monitor DIM amount in dB.
 pub const DEFAULT_DIM_DB: f32 = 20.0;
+/// Default PFL DIM of both monitor paths, dB.
+pub const DEFAULT_PFL_DIM_DB: f32 = 12.0;
 
 /// A monitor path's SOURCE choices (`MonitorSourceParams::source`): what the
 /// path plays without a solo: MAIN.1-4, MTX.1-8, BUS.1-16, AUX.1-8.
@@ -944,7 +950,8 @@ impl Default for MonitorSourceParams {
             source: AtomicI32::new(0),
             source_level_db: AtomicF32::new(0.0),
             source_mix_db: AtomicF32::new(SOURCE_MIX_OFF_DB),
-            pfl_dim_db: AtomicF32::new(0.0),
+            // The WING after INITIALIZE: `/cfg/mon/n/pfldim` 12.
+            pfl_dim_db: AtomicF32::new(DEFAULT_PFL_DIM_DB),
         }
     }
 }
@@ -1093,9 +1100,10 @@ impl Default for EngineControls {
             mute_groups: AtomicU32::new(0),
             dcas: Default::default(),
             fx: Default::default(),
+            // A WING after INITIALIZE: buses AFL, mains and matrices PFL.
             bus_solo_afl: AtomicBool::new(true),
-            main_solo_afl: AtomicBool::new(true),
-            matrix_solo_afl: AtomicBool::new(true),
+            main_solo_afl: AtomicBool::new(false),
+            matrix_solo_afl: AtomicBool::new(false),
             monitor_dim: AtomicBool::new(false),
             monitor_mute: AtomicBool::new(false),
             monitor_mono: AtomicBool::new(false),
@@ -1107,8 +1115,8 @@ impl Default for EngineControls {
             main_link: AtomicI32::new(0),
             input_select_global: AtomicBool::new(false),
             global_alt: AtomicBool::new(false),
-            solo_mode: AtomicI32::new(solo_mode::STUDIO),
-            solo_bus: AtomicI32::new(2),
+            solo_mode: AtomicI32::new(solo_mode::LIVE),
+            solo_bus: AtomicI32::new(0),
             solo_bus_override: AtomicBool::new(false),
             mute_override: AtomicBool::new(false),
             sip_active: AtomicBool::new(false),
@@ -1140,9 +1148,9 @@ impl EngineControls {
     /// Resets the console-wide settings (not the status counters).
     pub fn reset(&self) {
         self.solo_afl.store(false, Relaxed);
-        for afl in [&self.bus_solo_afl, &self.main_solo_afl, &self.matrix_solo_afl] {
-            afl.store(true, Relaxed);
-        }
+        self.bus_solo_afl.store(true, Relaxed);
+        self.main_solo_afl.store(false, Relaxed);
+        self.matrix_solo_afl.store(false, Relaxed);
         for key in [&self.monitor_dim, &self.monitor_mute, &self.monitor_mono, &self.monitor_swap] {
             key.store(false, Relaxed);
         }
@@ -1155,8 +1163,8 @@ impl EngineControls {
         self.main_link.store(0, Relaxed);
         self.input_select_global.store(false, Relaxed);
         self.global_alt.store(false, Relaxed);
-        self.solo_mode.store(solo_mode::STUDIO, Relaxed);
-        self.solo_bus.store(2, Relaxed);
+        self.solo_mode.store(solo_mode::LIVE, Relaxed);
+        self.solo_bus.store(0, Relaxed);
         self.solo_bus_override.store(false, Relaxed);
         self.mute_override.store(false, Relaxed);
         self.talk.reset();
@@ -1172,6 +1180,7 @@ impl EngineControls {
             d.led.store(false, Relaxed);
             d.colour.store(DEFAULT_COLOUR, Relaxed);
             d.icon.store(0, Relaxed);
+            d.mon.store(0, Relaxed);
         }
         for f in &self.fx {
             f.bypass.store(false, Relaxed);

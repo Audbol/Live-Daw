@@ -1817,6 +1817,8 @@ void MainDisplay::mouseUp (const juce::MouseEvent& e)
         showScreen (Screen::UsbRecorder); // "clicking on the USB icon on the top of every screen" (manual p. 20)
     else if (liveTile.contains (p))
         showScreen (Screen::Recorder);
+    else if (channelTab.contains (p) && page (screen)->titleClicked())
+        return;
     else if (numberBox.contains (p))
         showChannelSelect (! channelSelect->isVisible());
     else if (channelTab.contains (p))

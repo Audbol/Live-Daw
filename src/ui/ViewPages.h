@@ -8,6 +8,7 @@ namespace livedaw::ui
 {
 
 class MemberAssignView;
+class DcaPanel;
 
 /** The VIEW screens (manual 5.7-5.11), opened by the fader sections' VIEW keys
     and by each other's status-bar keys: OVERVIEW (every strip's blocks),
@@ -76,6 +77,8 @@ protected:
     void stepPage (int delta);
     /** The invisible component the drop-down lists open under, moved over `area`. */
     juce::Component& anchorAt (juce::Rectangle<int> area);
+    /** A DCA's panel over the page: its colour, light, icon, SOLO BUS and name. */
+    void showDcaPanel (int dca);
 
     UiContext& ctx;
     const Screen screen;
@@ -84,6 +87,7 @@ protected:
 
 private:
     std::unique_ptr<LayerColumn> column;
+    std::unique_ptr<DcaPanel> dcaPanel;
     juce::String browsed[LayerSet::kNumSections];
     int bank[LayerSet::kNumSections] { -1, -1, -1 };
     juce::String shownTitle;
@@ -92,8 +96,9 @@ private:
 
 /** OVERVIEW (fig. 53-54): each strip of the layer as a column of mini blocks
     in processing order. A click opens the strip's block on HOME. A DCA's
-    column shows its members [WING]; a click on it opens the DCA's assign
-    screen (the title tile in its colour). */
+    column shows its members [WING] ("DCA" at its foot yellow while the DCA is
+    soloed); a click on it opens the DCA's assign screen, whose title tile (in
+    the DCA's colour) opens the DCA's panel. */
 class OverviewViewPage final : public ViewPage
 {
 public:
@@ -104,6 +109,7 @@ public:
         page; the SETUP > AUDIO preference). */
     std::vector<StatusKey> getStatusKeys() override;
     StatusTitle getStatusTitle() override;
+    bool titleClicked() override;
     void resized() override;
 
 protected:
@@ -114,7 +120,8 @@ private:
     std::unique_ptr<MemberAssignView> assign;
 };
 
-/** FADERS (fig. 56): a virtual fader for each strip of the layer. */
+/** FADERS (fig. 56): a virtual fader for each strip of the layer. A DCA's
+    name opens its panel; its label at the foot is yellow while it's soloed. */
 class FadersViewPage final : public ViewPage
 {
 public:
@@ -247,8 +254,9 @@ private:
 
 /** MUTE GROUPS (fig. 61, firmware 3.1): the eight groups' members as columns
     (red while the group is engaged) and the group keys on the right (a key
-    engages its group). A click on a column opens the group's assign screen;
-    there its tab touched again renames the group. */
+    engages its group). A column's header (MGRP.n over the number) opens the
+    MUTE GROUP n window to rename the group [WING]; the rest of the column
+    opens the group's assign screen. */
 class MuteGroupsViewPage final : public ViewPage
 {
 public:
@@ -274,7 +282,9 @@ protected:
     void paintContent (juce::Graphics&) override;
 
 private:
-    juce::Rectangle<int> columns[kNumMuteGroups], groupKeys[kNumMuteGroups];
+    void renameGroup (int);
+
+    juce::Rectangle<int> columns[kNumMuteGroups], headers[kNumMuteGroups], groupKeys[kNumMuteGroups];
     std::unique_ptr<MemberAssignView> assign;
 };
 

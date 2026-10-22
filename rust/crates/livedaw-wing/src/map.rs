@@ -479,6 +479,8 @@ pub enum DcaF {
     Fader,
     Solo,
     SoloLed,
+    /// SOLO BUS: A, B, A+B.
+    Mon,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -935,6 +937,7 @@ pub fn bind(parts: &[&str]) -> Binding {
                     "fdr" => Binding::Dca(i, DcaF::Fader),
                     "$solo" => Binding::Dca(i, DcaF::Solo),
                     "$sololed" => Binding::Dca(i, DcaF::SoloLed),
+                    "mon" => Binding::Dca(i, DcaF::Mon),
                     _ => Binding::None,
                 }
             }
@@ -1704,6 +1707,7 @@ impl<'a> Console<'a> {
                     DcaF::Mute => b(&d.mute),
                     DcaF::Fader => lvl(&d.fader_db),
                     DcaF::Solo | DcaF::SoloLed => b(&d.solo),
+                    DcaF::Mon => item(def, d.mon.load(Relaxed)),
                 }
             }
             Binding::MuteGroup(i, true) => Value::bool(c.mute_groups.load(Relaxed) & (1 << i) != 0),
@@ -2483,6 +2487,7 @@ impl<'a> Console<'a> {
                     DcaF::Fader => set_lvl(&d.fader_db, v),
                     DcaF::Solo => set_b(&d.solo, v),
                     DcaF::SoloLed => return Err(SetError::ReadOnly),
+                    DcaF::Mon => set_item(&d.mon, def, v),
                 }
             }
             Binding::MuteGroup(i, true) => {
@@ -3818,7 +3823,11 @@ mod tests {
         assert_eq!(e.controls.dcas[3].icon.load(Relaxed), 205);
         assert!(!e.controls.dcas[3].led.load(Relaxed));
         assert_eq!(c.get(node(&c, "/dca/4/led")), Some(Value::Int(0)));
-        assert!(!c.is_mapped(node(&c, "/dca/4/mon")), "DCA solo follows each member's monitor bus");
+        // SOLO BUS: A (phones), B (speakers), A+B.
+        assert_eq!(c.get(node(&c, "/dca/4/mon")), Some(Value::str("A")));
+        c.set(node(&c, "/dca/4/mon"), &Value::str("B")).unwrap();
+        assert_eq!(e.controls.dcas[3].mon.load(Relaxed), 1);
+        assert_eq!(c.get(node(&c, "/dca/4/mon")), Some(Value::str("B")));
 
         c.set(node(&c, "/bus/5/$muteovr"), &Value::Int(1)).unwrap();
         assert!(c.strip(StripKind::Bus, 5).unwrap().console.mute_override.load(Relaxed));

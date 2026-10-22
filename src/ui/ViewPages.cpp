@@ -3,6 +3,7 @@
 #include "engine/Models.h"
 #include "ui/HomeIcons.h"
 #include "ui/HomeWidgets.h"
+#include "ui/RoutingGroups.h"
 
 #include <array>
 
@@ -423,71 +424,294 @@ namespace
         }
     }
 
-    /** A DCA's scribble strip icon: the gallery's category, then its icons. */
-    void chooseDcaIcon (UiContext& ctx, int dca, juce::Component& anchor)
+    /** CLOSE and its ticked box at the right of `r` [WING title rows]. */
+    void drawCloseKey (juce::Graphics& g, juce::Rectangle<int> r)
     {
-        const auto& cats = home::wingIconCategories();
-        juce::StringArray names;
-        for (auto& c : cats)
-            names.add (c.name);
-        popups::ListOptions options;
-        options.caption = "DCA " + juce::String (dca + 1) + " ICON";
-        juce::Component::SafePointer<juce::Component> safeAnchor (&anchor);
-        const int current = ctx.engine.getDca (dca).icon.load();
-        popups::chooseFrom (anchor, names, home::wingIconCategory (current), [&ctx, dca, safeAnchor, current] (int c)
-        {
-            const auto& icons = home::wingIconCategories()[(size_t) juce::jlimit (0, 6, c)].icons;
-            std::vector<std::vector<popups::Tile>> rows;
-            for (size_t i = 0; i < icons.size(); ++i)
-            {
-                if (i % 5 == 0)
-                    rows.emplace_back();
-                rows.back().push_back ({ icons[i].number, icons[i].name.toUpperCase() });
-            }
-            if (safeAnchor == nullptr || rows.empty())
-                return;
-            popups::chooseTile (*safeAnchor, rows, {}, current,
-                                [] (juce::Graphics& g, juce::Rectangle<float> r, int icon)
-                                {
-                                    if (icon != 0)
-                                        drawWingIcon (g, icon, r.reduced (r.getHeight() * 0.15f), Colours::text);
-                                },
-                                [&ctx, dca] (int icon) { ctx.engine.getDca (dca).icon = icon; });
-        }, options);
+        auto close = r.withTrimmedRight (px (16.0f));
+        auto box = close.removeFromRight (px (32.0f)).withSizeKeepingCentre (px (32.0f), px (32.0f));
+        g.setColour (Colours::caption);
+        g.drawRect (box, juce::jmax (1, px (2.0f)));
+        juce::Path tick;
+        const auto b = box.toFloat();
+        tick.startNewSubPath (b.getX() + b.getWidth() * 0.22f, b.getY() + b.getHeight() * 0.5f);
+        tick.lineTo (b.getX() + b.getWidth() * 0.42f, b.getY() + b.getHeight() * 0.72f);
+        tick.lineTo (b.getRight() - b.getWidth() * 0.05f, b.getY() + b.getHeight() * 0.08f);
+        g.strokePath (tick, juce::PathStrokeType (wingPx (2.0f)));
+        close.removeFromRight (px (12.0f));
+        g.setFont (capFont (14.0f));
+        g.drawText ("CLOSE", close, juce::Justification::centredRight, false);
     }
 
-    /** A DCA's name, icon, light and colour: a list (NAME, ICON, LIGHT, then
-        the 18 colours) under `anchor`. */
-    void editDca (UiContext& ctx, int dca, juce::Component& page, juce::Component& anchor)
-    {
-        auto& d = ctx.engine.getDca (dca);
-        juce::StringArray items { "NAME", "ICON", d.led.load() ? "LIGHT OFF" : "LIGHT ON" };
-        constexpr int firstColour = 3;
-        for (int k = 1; k <= 18; ++k)
-            items.add (wingColourName (k).toUpperCase());
-        popups::ListOptions options;
-        options.caption = "DCA " + juce::String (dca + 1);
-        juce::Component::SafePointer<juce::Component> safePage (&page), safeAnchor (&anchor);
-        popups::chooseFrom (anchor, items, d.colour.load() - 1 + firstColour, [&ctx, dca, safePage, safeAnchor] (int r)
-        {
-            auto& dc = ctx.engine.getDca (dca);
-            if (r >= firstColour && r < firstColour + 18)
-                dc.colour = r - firstColour + 1;
-            else if (r == 1 && safeAnchor != nullptr)
-                chooseDcaIcon (ctx, dca, *safeAnchor);
-            else if (r == 2)
-                dc.led = ! dc.led.load();
-            else if (r == 0 && safePage != nullptr)
-            {
-                // DCAs named MON A, MON B or MON LVL control the monitor level (firmware 1.09).
-                popups::TextOptions text;
-                text.suggestions = { "MON A", "MON B", "MON LVL" };
-                popups::editText (*safePage, "DCA " + juce::String (dca + 1) + " NAME", ctx.engine.getDcaName (dca),
-                                  [&ctx, dca] (const juce::String& name) { ctx.engine.setDcaName (dca, name.trim()); }, text);
-            }
-        }, options);
-    }
+    /** The SOLO BUS keys' lit olive [WING]. */
+    const juce::Colour soloBusOlive { 0xff809800 };
 } // namespace
+
+/** A DCA's panel [WING, firmware 3.1], over the page: LIGHT (the scribble
+    strip light) and the 18 colours in a row, the chosen one framed gold; the
+    icon gallery (category keys, a grid of five columns); SOLO BUS (PHONES /
+    SPEAKERS keys: where the members' solo goes in SOLO MODE LIVE), the title
+    and CLOSE; the name field and the keyboard, whose CLOSE closes the panel
+    too. Every change applies at once. A touch beside the panel closes it. */
+class DcaPanel final : public juce::Component, private juce::Timer
+{
+public:
+    explicit DcaPanel (UiContext& c) : ctx (c)
+    {
+        keyboard.setFieldVisible (false);
+        keyboard.setMaxLength (16);
+        keyboard.setCapsLock (true);
+        keyboard.setActionText ("CLOSE");
+        keyboard.onChange = [this] (const juce::String& t) { setName (t); };
+        keyboard.onAction = [this] (const juce::String&) { close(); };
+        keyboard.onCancel = [this] { close(); };
+        addAndMakeVisible (keyboard);
+    }
+
+    void show (int index)
+    {
+        dca = juce::jlimit (0, kNumDcas - 1, index);
+        category = home::wingIconCategory (ctx.engine.getDca (dca).icon.load());
+        // The default name ("DCA.1") reads as an empty field, as on the console.
+        keyboard.setText (isDefaultName() ? juce::String() : ctx.engine.getDcaName (dca));
+        setVisible (true);
+        toFront (false);
+        startTimerHz (3);
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<juce::Component> (&keyboard)]
+        {
+            if (safe != nullptr && safe->isShowing())
+                safe->grabKeyboardFocus();
+        });
+        repaint();
+    }
+
+    void resized() override
+    {
+        // WING px from the page's top (the console's y = 80).
+        lightRow = wingRect (10.0f, 122.0f, 1256.0f, 70.0f);
+        lightKey = wingRect (18.0f, 129.0f, 56.0f, 56.0f);
+        for (int i = 0; i < 18; ++i)
+            swatches[i] = wingRect (200.0f + 58.8f * (float) i, 129.0f, 55.0f, 55.0f);
+        iconPanel = wingRect (10.0f, 196.0f, 500.0f, 442.0f);
+        for (int i = 0; i < 7; ++i)
+            categoryKeys[i] = wingRect (18.0f, 205.0f + 61.0f * (float) i, 56.0f, 56.0f);
+        for (int i = 0; i < 25; ++i)
+            cells[i] = wingRect (78.0f + 85.8f * (float) (i % 5), 204.0f + 86.0f * (float) (i / 5), 82.0f, 82.0f);
+        titleRow = wingRect (514.0f, 196.0f, 752.0f, 64.0f);
+        phonesKey = wingRect (583.0f, 201.0f, 54.0f, 54.0f);
+        speakerKey = wingRect (639.0f, 201.0f, 54.0f, 54.0f);
+        closeKey = wingRect (1120.0f, 196.0f, 146.0f, 64.0f);
+        fieldPanel = wingRect (514.0f, 264.0f, 752.0f, 100.0f);
+        field = wingRect (690.0f, 278.0f, 400.0f, 72.0f);
+        clearKey = field.withLeft (field.getRight() - field.getHeight());
+        keyboardPanel = wingRect (514.0f, 368.0f, 752.0f, 328.0f);
+        keyboard.setBounds (keyboardPanel.reduced (px (8.0f)));
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        // The page dimmed round the panel.
+        juce::RectangleList<int> panel;
+        for (auto r : { lightRow, iconPanel, titleRow, fieldPanel, keyboardPanel })
+            panel.add (r);
+        g.saveState();
+        g.excludeClipRegion (lightRow);
+        g.excludeClipRegion (iconPanel);
+        g.excludeClipRegion (titleRow.getUnion (keyboardPanel));
+        g.setColour (Colours::scrim);
+        g.fillAll();
+        g.restoreState();
+        g.setColour (juce::Colours::black);
+        g.fillRect (titleRow.getUnion (keyboardPanel));
+        g.setColour (Colours::screenPanel);
+        for (auto r : panel)
+            g.fillRect (r);
+
+        auto& d = ctx.engine.getDca (dca);
+
+        // LIGHT: the sun on a key lit gold while the light is on, then the colours.
+        const bool lit = d.led.load();
+        g.setColour (lit ? Colours::gold : Colours::screenTile);
+        g.fillRect (lightKey);
+        g.setColour (Colours::screenLine);
+        g.drawRect (lightKey, 1);
+        drawIcon (g, Icon::Sun, lightKey.toFloat().reduced (wingPx (12.0f)), lit ? juce::Colours::black : Colours::caption);
+        g.setColour (Colours::caption);
+        g.setFont (capFont (14.0f));
+        g.drawText ("LIGHT", wingRect (88.0f, 129.0f, 100.0f, 56.0f), juce::Justification::centredLeft, false);
+        g.setColour (juce::Colours::black);
+        g.fillRect (wingRect (196.0f, 125.0f, 1066.0f, 63.0f));
+        for (int i = 0; i < 18; ++i)
+        {
+            g.setColour (wingColour (swatchColour (i)));
+            g.fillRect (swatches[i]);
+            if (d.colour.load() == swatchColour (i))
+            {
+                g.setColour (Colours::gold);
+                g.drawRect (swatches[i].expanded (px (2.0f)), juce::jmax (2, px (2.0f)));
+            }
+        }
+
+        // The icon gallery: the category keys (the shown one light grey), the
+        // icons on #303030 cells, the chosen one framed gold.
+        const auto& cats = home::wingIconCategories();
+        for (int i = 0; i < 7 && i < (int) cats.size(); ++i)
+        {
+            const bool on = i == category;
+            g.setColour (on ? Colours::caption : Colours::screenTile);
+            g.fillRect (categoryKeys[i]);
+            home::drawIconCategory (g, i, categoryKeys[i].toFloat().reduced (wingPx (9.0f)), on ? Colours::screenPanel : Colours::caption);
+        }
+        g.setColour (juce::Colours::black);
+        g.fillRect (wingRect (76.0f, 202.0f, 428.0f, 432.0f));
+        const auto& icons = cats[(size_t) juce::jlimit (0, (int) cats.size() - 1, category)].icons;
+        for (int i = 0; i < 25; ++i)
+        {
+            g.setColour (Colours::screenPanel);
+            g.fillRect (cells[i]);
+            if (i >= (int) icons.size())
+                continue;
+            const int icon = icons[(size_t) i].number;
+            if (icon != 0)
+                drawWingIcon (g, icon, cells[i].toFloat().reduced (wingPx (14.0f)), Colours::caption);
+            if (icon == d.icon.load())
+            {
+                g.setColour (Colours::gold);
+                g.drawRect (cells[i], juce::jmax (2, px (2.0f)));
+            }
+        }
+
+        // SOLO BUS: PHONES (A) and SPEAKERS (B) lit olive; the title; CLOSE.
+        g.setColour (Colours::caption);
+        g.setFont (capFont (14.0f));
+        g.drawFittedText ("SOLO\nBUS", wingRect (522.0f, 200.0f, 56.0f, 56.0f), juce::Justification::centred, 2, 0.8f);
+        const int mon = juce::jlimit (0, 2, (int) d.mon.load());
+        for (int k = 0; k < 2; ++k)
+        {
+            const auto key = k == 0 ? phonesKey : speakerKey;
+            const bool on = k == 0 ? mon != 1 : mon != 0;
+            g.setColour (juce::Colours::black);
+            g.fillRect (key);
+            g.setColour (on ? soloBusOlive : Colours::screenTile);
+            g.fillRect (key.reduced (px (2.0f)));
+            drawIcon (g, k == 0 ? Icon::Headphones : Icon::Speaker, key.toFloat().reduced (wingPx (10.0f)), on ? juce::Colours::black : Colours::caption);
+        }
+        g.setColour (Colours::text);
+        g.setFont (capFont (18.0f, WingWeight::SemiBold));
+        g.drawText ("DCA " + juce::String (dca + 1), titleRow.withTrimmedLeft (px (200.0f)).withTrimmedRight (px (200.0f)), juce::Justification::centred, false);
+        drawCloseKey (g, closeKey);
+
+        // The name: a black field with a gold caret and the circled clear key.
+        g.setColour (juce::Colours::black);
+        g.fillRect (field);
+        g.setColour (Colours::screenLine);
+        g.drawRect (field, juce::jmax (1, px (1.5f)));
+        auto text = field.toFloat().withTrimmedRight ((float) clearKey.getWidth()).withTrimmedLeft (wingPx (22.0f));
+        const auto name = keyboard.getText();
+        const auto font = capFont (20.0f);
+        g.setFont (font);
+        g.setColour (Colours::textDim);
+        g.drawText (name, text.toNearestInt(), juce::Justification::centredLeft, true);
+        if (caretOn)
+        {
+            const float x = text.getX() + juce::GlyphArrangement::getStringWidth (font, name.substring (0, keyboard.getCaretPosition())) + wingPx (2.0f);
+            g.setColour (Colours::gold);
+            g.fillRect (x, text.getY() + text.getHeight() * 0.25f, juce::jmax (2.0f, wingPx (2.0f)), text.getHeight() * 0.5f);
+        }
+        drawIcon (g, Icon::ClearCircle, clearKey.toFloat().reduced (wingPx (18.0f)), Colours::caption);
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        const auto pos = e.getPosition();
+        auto& d = ctx.engine.getDca (dca);
+        if (lightKey.contains (pos))
+            d.led = ! d.led.load();
+        else if (closeKey.contains (pos))
+            close();
+        else if (clearKey.contains (pos))
+        {
+            keyboard.setText ({});
+            setName ({});
+        }
+        else if (phonesKey.contains (pos) || speakerKey.contains (pos))
+        {
+            // A key toggles its path; one of the two stays on (A, B or A+B).
+            const int mon = juce::jlimit (0, 2, (int) d.mon.load());
+            bool a = mon != 1, b = mon != 0;
+            (phonesKey.contains (pos) ? a : b) ^= true;
+            if (a || b)
+                d.mon = a && b ? 2 : a ? 0 : 1;
+        }
+        else if (! (lightRow.contains (pos) || iconPanel.contains (pos) || titleRow.getUnion (keyboardPanel).contains (pos)))
+        {
+            close();
+            return;
+        }
+        for (int i = 0; i < 18; ++i)
+            if (swatches[i].contains (pos))
+                d.colour = swatchColour (i);
+        for (int i = 0; i < 7; ++i)
+            if (categoryKeys[i].contains (pos))
+                category = i;
+        const auto& icons = home::wingIconCategories()[(size_t) category].icons;
+        for (int i = 0; i < 25 && i < (int) icons.size(); ++i)
+            if (cells[i].contains (pos))
+                d.icon = icons[(size_t) i].number;
+        repaint();
+    }
+
+    std::function<void()> onClose;
+
+private:
+    /** The colour of swatch `i` of the row: ICON/COLOR's grid (three columns
+        of six) read column by column, as the console lines them up. */
+    static int swatchColour (int i) { return wingColourAtGrid (i % 6 * 3 + i / 6); }
+
+    bool isDefaultName() const
+    {
+        const auto name = ctx.engine.getDcaName (dca);
+        return name.isEmpty() || name.removeCharacters (" .").equalsIgnoreCase ("DCA" + juce::String (dca + 1));
+    }
+
+    void setName (const juce::String& name)
+    {
+        ctx.engine.setDcaName (dca, name.trim());
+        repaint (field);
+    }
+
+    void close()
+    {
+        stopTimer();
+        setVisible (false);
+        if (onClose)
+            onClose();
+    }
+
+    void timerCallback() override
+    {
+        caretOn = ! caretOn;
+        repaint (field);
+    }
+
+    UiContext& ctx;
+    int dca = 0, category = 0;
+    bool caretOn = true;
+    popups::WingKeyboard keyboard;
+    juce::Rectangle<int> lightRow, lightKey, swatches[18], iconPanel, categoryKeys[7], cells[25], titleRow, phonesKey, speakerKey, closeKey, fieldPanel,
+        field, clearKey, keyboardPanel;
+};
+
+void ViewPage::showDcaPanel (int dca)
+{
+    if (dcaPanel == nullptr)
+    {
+        dcaPanel = std::make_unique<DcaPanel> (ctx);
+        dcaPanel->onClose = [this] { notifyStatusKeysChanged(); };
+        addChildComponent (*dcaPanel);
+    }
+    dcaPanel->setBounds (getLocalBounds());
+    dcaPanel->show (dca);
+}
 
 const char* viewScreenName (Screen s)
 {
@@ -616,11 +840,13 @@ public:
             const bool on = k.id.getIntValue() == shown;
             wingKey (g, k.area, k.name, on ? Dark::layer : Colours::screenTile, on ? Dark::choiceInk : keyText);
         }
+        // The section's key olive, darker while a bank is shown instead of its layer [WING].
         const char* names[] = { "LEFT", "CENTER", "RIGHT" };
+        const auto sectionFill = shown >= 0 ? Dark::section.withMultipliedBrightness (0.55f) : Dark::section;
         for (int i = 0; i < 3; ++i)
         {
             const bool on = (int) page.section() == i;
-            wingKey (g, sectionKeys[i], names[i], on ? Dark::section : Colours::screenTile, on ? juce::Colours::black : keyText);
+            wingKey (g, sectionKeys[i], names[i], on ? sectionFill : Colours::screenTile, on ? juce::Colours::black : keyText);
         }
         const bool paged = page.lastPage() > 0;
         for (auto [r, icon, enabled] : { std::tuple { prevKey, Icon::ChevronLeft, paged && page.page > 0 },
@@ -731,6 +957,9 @@ void ViewPage::timerCallback()
         shownTitle = title.prefix + title.text;
         notifyStatusKeysChanged();
     }
+    // Under a DCA's panel the page stays as it was (the panel repaints what it changes).
+    if (dcaPanel != nullptr && dcaPanel->isVisible())
+        return;
     repaint();
 }
 
@@ -926,11 +1155,11 @@ namespace
 
     /** The OVERVIEW column of a DCA or mute group [WING]: on its panel
         (`body`, WING y = 152 to 752) a caption over each kind and its members
-        as 20 px cells, four to a row, then the monitor paths' two cells.
-        Returns the strips' cells. */
+        as 20 px cells, four to a row (a member's cell in the member's own
+        colour), then the monitor paths' two cells. Returns the strips' cells. */
     std::vector<MemberCell> paintMemberColumn (juce::Graphics& g, UiContext& ctx, juce::Rectangle<int> body, juce::Colour panel,
-                                               const std::function<bool (const Strip&)>& isMember, juce::Colour memberColour,
-                                               const juce::String& phonesText, const juce::String& speakersText)
+                                               const std::function<bool (const Strip&)>& isMember, const juce::String& phonesText,
+                                               const juce::String& speakersText)
     {
         std::vector<MemberCell> cells;
         g.setColour (panel);
@@ -958,15 +1187,15 @@ namespace
             {
                 auto& s = *strips[(size_t) i];
                 const auto r = at (5.0f + 22.0f * (float) (i % 4), y + 22.0f * (float) (i / 4), 20.0f, 20.0f);
-                cell (r, juce::String (i + 1), isMember (s), memberColour);
+                cell (r, juce::String (i + 1), isMember (s), stripDisplayColour (s));
                 cells.push_back ({ r, &s });
             }
             y += 22.0f * (float) ((count + 3) / 4);
         }
         // The monitor paths (a DCA or mute group can't take them in Sidecar).
         y += 4.0f;
-        cell (at (5.0f, y, 42.0f, 20.0f), phonesText, false, memberColour);
-        cell (at (49.0f, y, 42.0f, 20.0f), speakersText, false, memberColour);
+        cell (at (5.0f, y, 42.0f, 20.0f), phonesText, false, {});
+        cell (at (49.0f, y, 42.0f, 20.0f), speakersText, false, {});
         return cells;
     }
 
@@ -1019,10 +1248,13 @@ namespace
 } // namespace
 
 /** Assigning a DCA's or a mute group's members [WING]: the eight groups as
-    tabs on top (the one edited bright), the channels, aux and buses as tiles
-    in the frame, the mains and matrices on the right under CLOSE and
-    UNASSIGN. A tile toggles its strip, members are framed gold. A mute group
-    has a SOURCE tab too: the sources it mutes (ROUTING > SOURCES > TAGS). */
+    tabs on top (the one edited bright; a tab picks its group), the channels,
+    aux and buses as tiles in the frame, the mains and matrices on the right
+    under CLOSE and UNASSIGN. A tile toggles its strip, members are framed
+    gold. A mute group has a SOURCE tab too: the sources it mutes (ROUTING >
+    SOURCES > TAGS), one source group at a time as ROUTING's tiles (eight to a
+    row), the source groups as tiles of four on the right (the one shown framed
+    gold). */
 class MemberAssignView final : public juce::Component
 {
 public:
@@ -1035,8 +1267,6 @@ public:
     MemberAssignView (UiContext& c, Kind k) : ctx (c), kind (k) {}
 
     std::function<void()> onClose;
-    /** The tab of the group edited touched again (rename it). */
-    std::function<void (int)> onEdit;
 
     void show (int g)
     {
@@ -1058,15 +1288,21 @@ public:
         for (int i = 0; i < 8; ++i)
             tabs[i] = wingRect (tabX + 106.0f * (float) i, 0.0f, 96.0f, 64.0f);
         frame = wingRect (24.0f, 72.0f, 838.0f, 630.0f);
+        groupTiles.clear();
         if (sources)
         {
-            // The sources, 64 at a time.
-            const int n = ctx.engine.getNumSources();
-            for (int i = sourcePage * 64; i < juce::jmin (n, sourcePage * 64 + 64); ++i)
-            {
-                const int k = i % 64;
-                sourceTiles.push_back ({ wingRect (31.0f + 104.0f * (float) (k % 8), 79.0f + 77.0f * (float) (k / 8), 96.0f, 64.0f), i });
-            }
+            // The group's sources in rows of eight (LOCAL IN: 24, more for a
+            // bigger interface), the groups in rows of four on the right.
+            const int n = juce::jmin (64, routing::tileCount (sourceGroup, ctx.engine.getHardwareInputNames().size()));
+            for (int i = 0; i < n; ++i)
+                sourceTiles.push_back ({ wingRect (83.0f + 88.0f * (float) (i % 8), 79.0f + 76.0f * (float) (i / 8), 80.0f, 68.0f), i });
+            frame = wingRect (76.0f, 72.0f, 710.0f, 76.0f * (float) ((n + 7) / 8) + 6.0f);
+            const auto menu = routing::sourceMenu (false);
+            for (size_t r = 0; r < menu.rows.size(); ++r)
+                for (size_t c = 0; c < menu.rows[r].size(); ++c)
+                    if (menu.rows[r][c] >= 0)
+                        groupTiles.push_back ({ wingRect (c < 3 ? 887.0f + 91.0f * (float) c : 1165.0f, 243.0f + 91.0f * (float) r + (r >= 3 ? 5.0f : 0.0f), 86.0f, 86.0f),
+                                                menu.rows[r][c] });
         }
         else
         {
@@ -1079,13 +1315,13 @@ public:
             add (StripKind::Channel, 40, 79.0f);
             add (StripKind::Aux, 8, 463.0f);
             add (StripKind::Bus, 16, 559.0f);
+            auto& mains = ctx.engine.getStrips (StripKind::Main);
+            for (int i = 0; i < juce::jmin (4, (int) mains.size()); ++i)
+                tiles.push_back ({ wingRect (891.0f, 247.0f + 72.0f * (float) i, 96.0f, 64.0f), mains[(size_t) i].get() });
+            auto& matrices = ctx.engine.getStrips (StripKind::Matrix);
+            for (int i = 0; i < juce::jmin (8, (int) matrices.size()); ++i)
+                tiles.push_back ({ wingRect (i < 4 ? 1049.0f : 1153.0f, 247.0f + 72.0f * (float) (i % 4), 96.0f, 64.0f), matrices[(size_t) i].get() });
         }
-        auto& mains = ctx.engine.getStrips (StripKind::Main);
-        for (int i = 0; i < juce::jmin (4, (int) mains.size()); ++i)
-            tiles.push_back ({ wingRect (891.0f, 247.0f + 72.0f * (float) i, 96.0f, 64.0f), mains[(size_t) i].get() });
-        auto& matrices = ctx.engine.getStrips (StripKind::Matrix);
-        for (int i = 0; i < juce::jmin (8, (int) matrices.size()); ++i)
-            tiles.push_back ({ wingRect (i < 4 ? 1049.0f : 1153.0f, 247.0f + 72.0f * (float) (i % 4), 96.0f, 64.0f), matrices[(size_t) i].get() });
         channelTab = wingRect (884.0f, 72.0f, 117.0f, 55.0f);
         sourceTab = wingRect (1004.0f, 72.0f, 117.0f, 55.0f);
         closeKey = kind == Kind::Dca ? wingRect (884.0f, 72.0f, 372.0f, 64.0f) : wingRect (1124.0f, 72.0f, 132.0f, 55.0f);
@@ -1097,11 +1333,15 @@ public:
         g.fillAll (juce::Colours::black);
         paintTabs (g);
 
-        // The frame round the tiles, the panels on the right.
+        // The frame round the tiles, the panels on the right (SOURCE: the
+        // source groups' panel reaches down to PHONES LEVEL).
         g.setColour (Colours::screenPanel);
         g.drawRect (frame, px (4.0f));
-        for (auto r : { wingRect (884.0f, 240.0f, 372.0f, 294.0f), wingRect (884.0f, 620.0f, 372.0f, 60.0f) })
-            g.drawRect (r, px (4.0f));
+        if (sources)
+            g.fillRect (wingRect (884.0f, 240.0f, 372.0f, 372.0f));
+        else
+            g.drawRect (wingRect (884.0f, 240.0f, 372.0f, 294.0f), px (4.0f));
+        g.drawRect (wingRect (884.0f, 620.0f, 372.0f, 60.0f), px (4.0f));
         g.fillRect (wingRect (884.0f, 72.0f, 372.0f, 64.0f));
         g.fillRect (wingRect (884.0f, 144.0f, 372.0f, 88.0f));
         if (kind == Kind::MuteGroup)
@@ -1118,30 +1358,14 @@ public:
                 }
                 g.setColour (on ? Colours::gold : Colours::caption);
                 g.setFont (capFont (on ? 17.0f : 14.0f));
-                const auto caption = on && sources && numSourcePages() > 1
-                                         ? juce::String (text) + " " + juce::String (sourcePage + 1) + "/" + juce::String (numSourcePages())
-                                         : juce::String (text);
-                g.drawFittedText (caption, r.reduced (px (4.0f), 0), juce::Justification::centred, 1, 0.6f);
+                g.drawFittedText (text, r.reduced (px (4.0f), 0), juce::Justification::centred, 1, 0.6f);
             }
             g.setColour (juce::Colours::black);
             g.fillRect (wingRect (1001.0f, 72.0f, 3.0f, 55.0f));
             g.fillRect (wingRect (1121.0f, 72.0f, 3.0f, 55.0f));
             g.fillRect (wingRect (884.0f, 127.0f, 372.0f, 3.0f));
         }
-        // CLOSE and its ticked box.
-        auto close = closeKey.withTrimmedRight (px (16.0f));
-        auto box = close.removeFromRight (px (32.0f)).withSizeKeepingCentre (px (32.0f), px (32.0f));
-        g.setColour (Colours::caption);
-        g.drawRect (box, juce::jmax (1, px (2.0f)));
-        juce::Path tick;
-        const auto b = box.toFloat();
-        tick.startNewSubPath (b.getX() + b.getWidth() * 0.22f, b.getY() + b.getHeight() * 0.5f);
-        tick.lineTo (b.getX() + b.getWidth() * 0.42f, b.getY() + b.getHeight() * 0.72f);
-        tick.lineTo (b.getRight() - b.getWidth() * 0.05f, b.getY() + b.getHeight() * 0.08f);
-        g.strokePath (tick, juce::PathStrokeType (wingPx (2.0f)));
-        close.removeFromRight (px (12.0f));
-        g.setFont (capFont (14.0f));
-        g.drawText ("CLOSE", close, juce::Justification::centredRight, false);
+        drawCloseKey (g, closeKey);
 
         // UNASSIGN: an outlined key with a crossed ring.
         g.setColour (Colours::screenTile);
@@ -1173,8 +1397,11 @@ public:
 
         for (auto& t : tiles)
             paintStripTile (g, t.area, *t.strip, isMember (*t.strip));
+        // The meters stay down: ROUTING is the source peaks' only reader.
         for (auto& [area, index] : sourceTiles)
-            paintSourceTile (g, area, index);
+            routing::paintSourceTile (g, area, ctx.engine, sourceGroup, index, 0.0f, isMember (index));
+        for (auto& [area, id] : groupTiles)
+            routing::paintGroupTile (g, area, (routing::Group) id, id == (int) sourceGroup);
     }
 
     void mouseUp (const juce::MouseEvent& e) override
@@ -1183,10 +1410,7 @@ public:
         for (int i = 0; i < 8; ++i)
             if (tabs[i].contains (pos))
             {
-                const int g = firstTab() + i;
-                if (g == group && onEdit)
-                    onEdit (g);
-                else if (g < groupCount())
+                if (const int g = firstTab() + i; g < groupCount())
                     group = g;
                 repaint();
                 return;
@@ -1205,14 +1429,19 @@ public:
         }
         if (kind == Kind::MuteGroup && (channelTab.contains (pos) || sourceTab.contains (pos)))
         {
-            // SOURCE touched again shows the next 64 sources.
-            const bool toSources = sourceTab.contains (pos);
-            sourcePage = toSources ? (sources ? (sourcePage + 1) % juce::jmax (1, numSourcePages()) : sourcePage) : 0;
-            sources = toSources;
+            sources = sourceTab.contains (pos);
             resized();
             repaint();
             return;
         }
+        for (auto& [area, id] : groupTiles)
+            if (area.contains (pos))
+            {
+                sourceGroup = (routing::Group) id;
+                resized();
+                repaint();
+                return;
+            }
         for (auto& t : tiles)
             if (t.area.contains (pos))
             {
@@ -1223,7 +1452,7 @@ public:
         for (auto& [area, index] : sourceTiles)
             if (area.contains (pos))
             {
-                if (auto* src = ctx.engine.getSource (index))
+                if (auto* src = sourceOf (index))
                     src->muteGroups = src->muteGroups.load() ^ bit();
                 repaint();
                 return;
@@ -1234,7 +1463,19 @@ private:
     int groupCount() const noexcept { return kind == Kind::Dca ? kNumDcas : kNumMuteGroups; }
     int firstTab() const noexcept { return kind == Kind::Dca ? group / 8 * 8 : 0; }
     uint32_t bit() const noexcept { return 1u << (uint32_t) group; }
-    int numSourcePages() const { return (ctx.engine.getNumSources() + 63) / 64; }
+
+    /** The source of tile `index` of the group shown (nullptr: n/a). */
+    ld::SourceParams* sourceOf (int index) const
+    {
+        const int port = routing::sourceAt (sourceGroup, index);
+        return port >= 0 ? ctx.engine.getSource (MixerEngine::sourceIndex (port)) : nullptr;
+    }
+
+    bool isMember (int sourceTile) const
+    {
+        const auto* src = sourceOf (sourceTile);
+        return src != nullptr && (src->muteGroups.load() & bit()) != 0;
+    }
 
     bool isMember (const Strip& s) const
     {
@@ -1295,39 +1536,14 @@ private:
         }
     }
 
-    void paintSourceTile (juce::Graphics& g, juce::Rectangle<int> area, int index)
-    {
-        const auto* src = ctx.engine.getSource (index);
-        const int port = MixerEngine::sourcePort (index);
-        auto r = area.toFloat();
-        auto bar = r.removeFromTop (r.getHeight() * 22.0f / 64.0f);
-        g.setColour (Colours::screenPanel);
-        g.fillRect (bar);
-        g.setColour (Colours::screenTile);
-        g.fillRect (r);
-        g.setColour (Colours::caption);
-        g.setFont (capFont (12.0f, WingWeight::SemiBold));
-        g.drawFittedText (ctx.engine.getSourceName (index).toUpperCase(), bar.toNearestInt().reduced (px (3.0f), 0), juce::Justification::centred, 1, 0.6f);
-        auto inner = r.reduced (wingPx (6.0f), wingPx (7.0f));
-        const float icon = juce::jmin (inner.getHeight(), wingPx (26.0f));
-        drawIcon (g, sourceIcon (port), inner.removeFromRight (icon).withSizeKeepingCentre (icon, icon), Colours::textDim);
-        g.setColour (Colours::textDim);
-        g.setFont (capFont (14.0f, WingWeight::SemiBold));
-        g.drawFittedText (inputPortName (port), inner.toNearestInt(), juce::Justification::centredLeft, 1, 0.6f);
-        if (src != nullptr && (src->muteGroups.load() & bit()) != 0)
-        {
-            g.setColour (Colours::gold);
-            g.drawRoundedRectangle (area.toFloat().expanded (wingPx (2.0f)), wingPx (3.0f), wingPx (2.0f));
-        }
-    }
-
     UiContext& ctx;
     const Kind kind;
-    int group = 0, sourcePage = 0;
+    int group = 0;
     bool sources = false;
+    routing::Group sourceGroup = routing::Group::LocalIn;
     juce::Rectangle<int> tabs[8], frame, channelTab, sourceTab, closeKey, unassignKey;
     std::vector<MemberCell> tiles;
-    std::vector<std::pair<juce::Rectangle<int>, int>> sourceTiles;
+    std::vector<std::pair<juce::Rectangle<int>, int>> sourceTiles, groupTiles;
 };
 
 //==============================================================================
@@ -1536,7 +1752,6 @@ OverviewViewPage::OverviewViewPage (UiContext& c) : ViewPage (c, Screen::Overvie
 {
     assign = std::make_unique<MemberAssignView> (ctx, MemberAssignView::Kind::Dca);
     assign->onClose = [this] { notifyStatusKeysChanged(); };
-    assign->onEdit = [this] (int dca) { editDca (ctx, dca, *this, anchorAt (wingRect (221.0f + 106.0f * (float) (dca % 8), 0.0f, 96.0f, 64.0f))); };
     addChildComponent (*assign);
 }
 
@@ -1546,6 +1761,15 @@ void OverviewViewPage::resized()
 {
     ViewPage::resized();
     assign->setBounds (getLocalBounds());
+}
+
+bool OverviewViewPage::titleClicked()
+{
+    // Assigning a DCA: its title tile opens the DCA's panel [WING].
+    if (! assign->isVisible())
+        return false;
+    showDcaPanel (assign->getGroup());
+    return true;
 }
 
 StatusTitle OverviewViewPage::getStatusTitle()
@@ -1593,8 +1817,9 @@ void OverviewViewPage::paintContent (juce::Graphics& g)
             const uint32_t bit = 1u << (uint32_t) t.dca;
             const auto body = cols[i].withTop (cols[i].getY() + px (72.0f));
             paintMemberColumn (g, ctx, body, Colours::screenPanel, [bit] (const Strip& s) { return (s.params.dcaMask.load() & bit) != 0; },
-                               colourOf (ctx, t), "PH", "SPK");
-            g.setColour (darkLabel);
+                               "PH", "SPK");
+            // Yellow while the DCA is soloed [WING].
+            g.setColour (ctx.engine.getDca (t.dca).solo.load() ? Colours::solo : darkLabel);
             g.setFont (capFont (20.0f, WingWeight::SemiBold));
             g.drawText ("DCA", body.withTop (body.getY() + px (561.0f)).withHeight (px (32.0f)), juce::Justification::centred, false);
             continue;
@@ -1831,7 +2056,9 @@ void FadersViewPage::paintContent (juce::Graphics& g)
         }
         // Send faders are drawn in the send colour, with the destination under them.
         paintFader (g, faderArea, faderOf (ctx, t).load(), t.isSend() ? sendRed : Dark::faderFill, ! t.isSend() || t.sendOn->load());
-        g.setColour (t.isSend() ? sendRed.brighter (0.4f) : darkLabel);
+        // A DCA's label is yellow while the DCA is soloed [WING].
+        const bool dcaSolo = t.strip == nullptr && ! t.isSend() && ctx.engine.getDca (t.dca).solo.load();
+        g.setColour (t.isSend() ? sendRed.brighter (0.4f) : dcaSolo ? Colours::solo : darkLabel);
         g.setFont (capFontFit (20.0f, rows.label.getHeight() * 0.9f, WingWeight::SemiBold));
         g.drawFittedText (t.isSend() ? t.sendTag : bottomLabel (t), rows.label.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         if (t.strip != nullptr && t.strip == selected)
@@ -1906,7 +2133,7 @@ void FadersViewPage::mouseUp (const juce::MouseEvent& e)
         else if (rows.name.contains (pos) || rows.number.contains (pos))
         {
             if (t.dca >= 0)
-                editDca (ctx, t.dca, *this, anchorAt (cols[i]));
+                showDcaPanel (t.dca);
             else if (t.strip != nullptr)
             {
                 if (ctx.selectStrip)
@@ -2952,24 +3179,26 @@ void ConfigViewPage::mouseUp (const juce::MouseEvent& e)
 MuteGroupsViewPage::MuteGroupsViewPage (UiContext& c) : ViewPage (c, Screen::MuteGroups)
 {
     assign = std::make_unique<MemberAssignView> (ctx, MemberAssignView::Kind::MuteGroup);
-    assign->onEdit = [this] (int gi)
-    {
-        // Rename the group.
-        popups::TextOptions options;
-        options.icon = Icon::MuteGroup;
-        juce::Component::SafePointer<MuteGroupsViewPage> safe (this);
-        popups::editText (*this, "MUTE GROUP " + juce::String (gi + 1) + " NAME", ctx.engine.getMuteGroupName (gi),
-                          [safe, gi] (const juce::String& text)
-                          {
-                              if (safe == nullptr)
-                                  return;
-                              safe->ctx.engine.setMuteGroupName (gi, text.trim());
-                              safe->repaint();
-                              safe->assign->repaint();
-                          },
-                          options);
-    };
     addChildComponent (*assign);
+}
+
+void MuteGroupsViewPage::renameGroup (int gi)
+{
+    // [WING] MUTE GROUP n: the name field over the keyboard; the name changes
+    // as it's typed, both CLOSE keys keep it.
+    popups::TextOptions options;
+    options.actionText = "CLOSE";
+    options.capsLock = true;
+    options.centreX = 428.0f / 1280.0f; // over the columns, as on the console
+    juce::Component::SafePointer<MuteGroupsViewPage> safe (this);
+    options.onChange = [safe, gi] (const juce::String& text)
+    {
+        if (safe == nullptr)
+            return;
+        safe->ctx.engine.setMuteGroupName (gi, text.trim());
+        safe->repaint();
+    };
+    popups::editText (*this, "MUTE GROUP " + juce::String (gi + 1), ctx.engine.getMuteGroupName (gi), options.onChange, options);
 }
 
 MuteGroupsViewPage::~MuteGroupsViewPage() = default;
@@ -2981,6 +3210,7 @@ void MuteGroupsViewPage::layoutContent()
     for (int gi = 0; gi < kNumMuteGroups; ++gi)
     {
         columns[gi] = wingRect (9.0f + 106.0f * (float) gi, 0.0f, 96.0f, 672.0f);
+        headers[gi] = columns[gi].withHeight (px (64.0f));
         groupKeys[gi] = wingRect (856.0f + 212.0f * (float) (gi / 4), 72.0f + 152.0f * (float) (gi % 4), 204.0f, 144.0f);
     }
     assign->setBounds (getLocalBounds());
@@ -3010,7 +3240,7 @@ void MuteGroupsViewPage::paintContent (juce::Graphics& g)
         g.drawText (juce::String (gi + 1), number, juce::Justification::centred);
         col.removeFromTop (px (8.0f));
         paintMemberColumn (g, ctx, col, on ? engagedColumn : Colours::screenPanel,
-                           [bit] (const Strip& s) { return (s.params.muteGroupMask.load() & bit) != 0; }, groupRed, "M PH", "M SPK");
+                           [bit] (const Strip& s) { return (s.params.muteGroupMask.load() & bit) != 0; }, "M PH", "M SPK");
 
         // SOURCES: how many sources the group mutes (ROUTING > SOURCES > TAGS).
         int sources = 0;
@@ -3061,7 +3291,13 @@ void MuteGroupsViewPage::mouseUp (const juce::MouseEvent& e)
             repaint();
             return;
         }
-        // A column opens the group's assign screen.
+        // The header (MGRP.n over the number) renames the group, the rest of
+        // the column opens the group's assign screen.
+        if (headers[gi].contains (pos))
+        {
+            renameGroup (gi);
+            return;
+        }
         if (columns[gi].contains (pos))
         {
             assign->show (gi);

@@ -398,11 +398,11 @@ fn tap_width_and_tap_eq_shape_tap_sends_only() {
 fn reset_restores_the_analysis_defaults() {
     let e = Engine::new(0);
     let c = e.analysis().controls();
-    c.home.range.store(0, Relaxed);
+    c.home.range.store(1, Relaxed);
     c.listen_mode.store(listen_mode::BAND, Relaxed);
     c.eq.gain_db.store(20.0);
     e.reset();
-    assert_eq!(c.home.range.load(Relaxed), 1);
+    assert_eq!(c.home.range.load(Relaxed), 0, "30 dB, as a WING after INITIALIZE");
     assert_eq!(c.listen_mode.load(Relaxed), listen_mode::OFF);
     assert_eq!(c.eq.gain_db.load(), 0.0);
 }

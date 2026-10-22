@@ -262,17 +262,24 @@ touchscreen looks the same in both.
     strip's blocks, EXCL SOLO in the status bar on a page with channels; a DCA shows its
     members, and touching it opens its assign screen: the DCA's tile in the title, the
     eight DCAs as tabs, the channels, aux, buses, mains and matrices as tiles, members
-    framed gold, UNASSIGN and CLOSE; its tab touched again lists NAME, ICON, the
-    scribble strip LIGHT and its colours), FADERS (send faders of a layer, and Sends on
+    framed gold, UNASSIGN and CLOSE; touching the DCA's tile in the title opens the
+    DCA's panel: LIGHT and the 18 colours in a row, the icon gallery, SOLO BUS (phones
+    and/or speakers: where the members' solo goes in SOLO MODE LIVE), the name field
+    and the keyboard, every change applying at once; the "DCA" at a DCA column's foot
+    is yellow while the DCA is soloed), FADERS (a DCA's name opens its panel, its
+    label at the foot is yellow while it's soloed; send faders of a layer, and Sends on
     Fader, show and set the send level, MUTE switching the send), SENDS (sends on faders
     to one bus, main or matrix), CONFIG (edit any layer key by dragging channels, buses,
     DCAs, send levels, bus-to-bus sends, FX parameters or MIDI CCs onto or between the
     page's slots; the arrows page, one page past the end to append; NEW and DELETE /
     RESTORE left of the slots; a **MIDI CC** fader sends its CC, 0-127, out of EXTERNAL
     MIDI CONTROL and follows the CC coming in) and MUTE GROUPS (the eight groups'
-    members, a column red while its group is engaged, the group keys on the right;
-    touching a column opens the group's assign screen like a DCA's, with a SOURCE tab
-    for the sources it mutes, 64 at a time, and its tab touched again renames it).
+    members, a column red while its group is engaged, the group keys on the right; a
+    column's header (MGRP.n over its number) opens the MUTE GROUP n window, a name
+    field and the keyboard, the name changing as it's typed; touching the rest of a
+    column opens the group's assign screen like a DCA's, with a SOURCE tab for the
+    sources it mutes: one source group at a time as ROUTING's tiles, eight to a row,
+    the groups (LOCAL IN ... USER SIGNAL) as tiles on the right).
   - **UTILITY:** system health and the event log (also on SETUP > LOG).
   - **RECORDER** (the status bar's **LIVE** card icon, red while recording): laid out
     like the WING-LIVE screens. See *Multitrack recording* below.
@@ -569,7 +576,7 @@ and open-source projects (see below), and it is **experimental**.
   counting every model's parameters) drive the engine: channels, aux, buses, mains
   and matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
   dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,
-  main sends, solo, TAP WIDTH and TAP EQ), DCAs, mute groups, the FX rack, output
+  main sends, solo, TAP WIDTH and TAP EQ), DCAs (with their SOLO BUS), mute groups, the FX rack, output
   routing, the sources of the AES50 A/B/C and WING-LIVE card groups (name, colour,
   icon, gain, mute, polarity, +48V, mode, mute-group tags), the oscillator (the OSC
   group: its sources and `osc/mode`, `lvl`, `f`), SOLO MODE, the solo bus,

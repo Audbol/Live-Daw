@@ -496,6 +496,24 @@ impl Strip {
         mask != 0 && dcas.iter().enumerate().any(|(i, d)| mask & (1 << i) != 0 && d.solo.load(Relaxed))
     }
 
+    /// SOLO MODE LIVE: the monitor paths (`solo::path_mask`) a soloed strip
+    /// goes to. A soloed DCA sends its members to its own SOLO BUS (`mon`);
+    /// the strip's own solo (and a talk or source solo) to the strip's.
+    pub(crate) fn live_solo_paths(&self, dcas: &[DcaParams]) -> u32 {
+        let p = &self.params;
+        let mask = p.dca_mask.load(Relaxed);
+        let from_dcas = dcas
+            .iter()
+            .enumerate()
+            .filter(|(i, d)| mask & (1 << i) != 0 && d.solo.load(Relaxed))
+            .fold(0, |paths, (_, d)| paths | crate::solo::path_mask(d.mon.load(Relaxed)));
+        if p.solo.load(Relaxed) || from_dcas == 0 {
+            from_dcas | crate::solo::path_mask(p.monitor_bus.load(Relaxed))
+        } else {
+            from_dcas
+        }
+    }
+
     fn dca_offset_db(&self, dcas: &[DcaParams]) -> f32 {
         let mask = self.params.dca_mask.load(Relaxed);
         if mask == 0 {

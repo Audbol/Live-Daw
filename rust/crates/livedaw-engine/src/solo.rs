@@ -1,8 +1,9 @@
 //! Console-level solo and mute (SETUP > AUDIO, manual pp. 45-46):
 //!
 //! * SOLO MODE. LIVE: each soloed strip goes to the monitor path its SOLO BUS
-//!   chooses (`StripParams::monitor_bus`: A = PHONES, B = SPEAKERS, A+B), until
-//!   a path is picked on the MONITORS screen while soloing. STUDIO: solos go
+//!   chooses (`StripParams::monitor_bus`: A = PHONES, B = SPEAKERS, A+B; a DCA
+//!   solo goes to the DCA's own SOLO BUS, `DcaParams::mon`), until a path is
+//!   picked on the MONITORS screen while soloing. STUDIO: solos go
 //!   to the solo bus selected on the MONITORS screen (`solo_bus`). SIP (solo in
 //!   place): as STUDIO, and every input and aux channel that is neither soloed
 //!   nor SOLO SAFE is muted, so the buses, mains and matrices hear the solo.

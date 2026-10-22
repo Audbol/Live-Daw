@@ -779,7 +779,7 @@ fn key_source_and_tap_survive_a_show_round_trip() {
 }
 
 #[test]
-fn matrix_pan_link_and_dca_icons_survive_a_show_round_trip() {
+fn matrix_pan_link_dca_icons_and_solo_buses_survive_a_show_round_trip() {
     let engine = Engine::new(0);
     set_channels(&engine, 1);
     let a = ch(&engine, 0);
@@ -789,6 +789,7 @@ fn matrix_pan_link_and_dca_icons_survive_a_show_round_trip() {
     let d = &engine.controls.dcas[4];
     d.icon.store(112, Relaxed);
     d.led.store(true, Relaxed);
+    d.mon.store(1, Relaxed);
 
     let (e2, _) = round_trip(&engine, &Show::new());
     let b = ch(&e2, 0);
@@ -799,11 +800,12 @@ fn matrix_pan_link_and_dca_icons_survive_a_show_round_trip() {
     let d2 = &e2.controls.dcas[4];
     assert_eq!(d2.icon.load(Relaxed), 112);
     assert!(d2.led.load(Relaxed) && !e2.controls.dcas[0].led.load(Relaxed), "a DCA's light is off by default");
+    assert_eq!((d2.mon.load(Relaxed), e2.controls.dcas[0].mon.load(Relaxed)), (1, 0), "SOLO BUS B; A by default");
 
     // Shows from before PAN LINK: a centred send stays linked (as it sounded),
     // one with a pan keeps that pan.
     let mut text = Show::new().to_xml(&engine, &mut NoPlugins).to_document();
-    for attr in [" plink=\"0\"", " plink=\"1\"", " prev=\"0\"", " prev=\"1\"", " icon=\"112\"", " led=\"1\""] {
+    for attr in [" plink=\"0\"", " plink=\"1\"", " prev=\"0\"", " prev=\"1\"", " icon=\"112\"", " led=\"1\"", " mon=\"1\""] {
         text = text.replace(attr, "");
     }
     let e3 = Engine::new(0);
@@ -813,6 +815,7 @@ fn matrix_pan_link_and_dca_icons_survive_a_show_round_trip() {
     assert!(m[2].pan_link.load(Relaxed) && !m[2].pan_reversed.load(Relaxed));
     assert_eq!(e3.controls.dcas[4].icon.load(Relaxed), 0);
     assert!(!e3.controls.dcas[4].led.load(Relaxed));
+    assert_eq!(e3.controls.dcas[4].mon.load(Relaxed), 0);
 }
 
 #[test]
