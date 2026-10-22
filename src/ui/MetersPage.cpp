@@ -9,10 +9,22 @@ namespace
 {
     constexpr int kChannelsPerPage = 40, kBusesPerPage = 16;
 
-    /** Fig. 29 (WING pixels): the group headers 40 px tall with small titles,
-        the scale column 40 px wide. */
-    int groupHeaderHeight() { return juce::jmax (16, juce::roundToInt (wingPx (40.0f))); }
-    int scaleWidth() { return juce::jmax (26, juce::roundToInt (wingPx (40.0f))); }
+    // [3.1] WING pixels of the 1280 x 720 page: the title bar 8..1272 x 0..64,
+    // the rows' headers 32 tall at 72 and 400 over their bodies (4 under,
+    // 272 tall), the scale column 8..40; a group 16 px plus 23 per strip
+    // wide, 4 apart, 12 between the blocks.
+    constexpr float kTitleH = 64.0f, kHeaderH = 32.0f, kBodyGap = 4.0f, kBodyH = 272.0f;
+    constexpr float kRowTops[] = { 72.0f, 400.0f };
+    constexpr float kGroupPad = 8.0f, kGroupGap = 4.0f, kBlockGap = 12.0f, kSlot = 23.0f;
+    // In a body: the number keys 8..27, the meter 45..228 (61 segments of 3),
+    // the M keys 246..264.
+    constexpr float kNumberTop = 8.0f, kNumberH = 19.0f, kMeterTop = 45.0f, kMeterBottom = 228.0f, kMuteTop = 246.0f, kMuteH = 18.0f;
+    constexpr int kSegments = 61;
+
+    const juce::Colour bodyFill { 0xff101010 };
+    const juce::Colour segmentOff { 0xff202020 };
+    const juce::Colour litGreen { 0xff00bc38 };
+    const juce::Colour litYellow { 0xfff8c430 };
 
     /** The console's meter scale: CLIP, -6, -12, -24, -36, -48, -60 evenly spaced. */
     float meterPos (float db)
@@ -26,21 +38,114 @@ namespace
         return 1.0f;
     }
 
+    /** A group's width in WING pixels (at 23 per strip). */
+    float groupWidth (int count) { return kGroupPad * 2.0f + kSlot * (float) juce::jmax (4, count); }
+
     void numberKey (juce::Graphics& g, juce::Rectangle<float> r, int number, juce::Colour fill)
     {
         g.setColour (fill);
-        g.fillRoundedRectangle (r, 2.0f);
+        g.fillRoundedRectangle (r, juce::jmax (1.0f, r.getHeight() * 0.12f));
         g.setColour (juce::Colours::black);
-        // Narrow keys (small windows) get smaller numbers rather than overlapping ones.
-        g.setFont (juce::FontOptions (juce::jlimit (6.0f, screenCap (18.0f), juce::jmin (r.getHeight() * 0.86f, r.getWidth() * (number >= 10 ? 0.62f : 0.9f))),
-                                      juce::Font::bold));
-        g.drawFittedText (juce::String (number), r.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+        // Two digits squeezed into the key, as on the console.
+        g.setFont (wingFontPx (juce::jmin (r.getHeight() * 0.74f, r.getWidth() * (number >= 10 ? 0.62f : 0.9f)), WingWeight::SemiBold));
+        g.drawFittedText (juce::String (number), r.toNearestInt(), juce::Justification::centred, 1, 0.5f);
     }
 } // namespace
+
+/** METERS > SETTINGS [3.1]: PRE or POST for the channels' (and aux'), buses',
+    mains', matrices' and DCAs' meters over the dimmed page; the factory
+    setting is PRE for channels and DCAs, POST for the others. */
+class MetersPage::Settings final : public juce::Component
+{
+public:
+    explicit Settings (MetersPage& p) : page (p)
+    {
+        closeKey.onClick = [this] { page.showSettings (false); };
+        addAndMakeVisible (closeKey);
+        for (int i = 0; i < prefs::kNumMeterTaps; ++i)
+            addAndMakeVisible (keys.add (new ChoiceKeys (
+                { "PRE", "POST" }, [this, i] { return prefs::meterTapPre (page.ctx, i) ? 0 : 1; },
+                [this, i] (int v) { page.ctx.settings.setValue (prefs::meterTapKey (i), v == 0); }, ChoiceKeys::prePost())));
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.setColour (Colours::scrim);
+        g.fillAll();
+        const auto w = window();
+        g.setColour (juce::Colours::black);
+        g.fillRect (w);
+        paintWindowTitle (g, w, "SETTINGS", true);
+        g.setColour (Colours::screenPanel);
+        g.fillRect (body());
+        static const char* const names[] = { "CHANNELS", "BUSES", "MAINS", "MATRICES", "DCAS" };
+        g.setColour (Colours::caption);
+        g.setFont (wingFontPx (wingPx (14.0f)));
+        const int x = body().getX() + juce::roundToInt (page.px (12.0f));
+        for (int i = 0; i < keys.size(); ++i)
+            g.drawText (names[i], juce::Rectangle<int> (x, keys[i]->getY(), keys[i]->getX() - x, keys[i]->getHeight()), juce::Justification::centredLeft, false);
+    }
+
+    void resized() override
+    {
+        const auto w = window();
+        closeKey.setBounds (w.withHeight (titleH()).removeFromRight (juce::roundToInt (page.px (128.0f))).reduced (juce::roundToInt (page.px (8.0f))));
+        // [3.1] keys 128 x 48 at 200 px into the window, 56 apart from 12 down.
+        for (int i = 0; i < keys.size(); ++i)
+            keys[i]->setBounds (juce::Rectangle<float> ((float) w.getX() + page.px (200.0f), (float) body().getY() + page.py (12.0f + 56.0f * (float) i),
+                                                        page.px (128.0f), page.py (48.0f))
+                                    .toNearestInt());
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        // Touching the dimmed page closes the window.
+        if (! window().contains (e.getPosition()))
+            page.showSettings (false);
+    }
+
+private:
+    /** [3.1] 340 x 364 at 460, 80; the title 64 tall, the rows 4 under it. */
+    juce::Rectangle<int> window() const
+    {
+        return juce::Rectangle<float> (page.px (460.0f), page.py (80.0f), page.px (340.0f), page.py (364.0f)).toNearestInt();
+    }
+    int titleH() const { return juce::roundToInt (page.py (64.0f)); }
+    juce::Rectangle<int> body() const { return window().withTrimmedTop (titleH() + juce::roundToInt (page.py (4.0f))); }
+
+    MetersPage& page;
+    CloseKey closeKey;
+    juce::OwnedArray<ChoiceKeys> keys;
+};
 
 MetersPage::MetersPage (UiContext& c) : ctx (c)
 {
     startTimerHz (25);
+}
+
+MetersPage::~MetersPage() = default;
+
+std::vector<StatusKey> MetersPage::getStatusKeys()
+{
+    StatusKey key { "SETTINGS", Icon::Gear, settings != nullptr && settings->isVisible(),
+                    [this] { showSettings (settings == nullptr || ! settings->isVisible()); } };
+    key.atRight = true;
+    return { key };
+}
+
+void MetersPage::showSettings (bool show)
+{
+    if (show && settings == nullptr)
+    {
+        settings = std::make_unique<Settings> (*this);
+        addChildComponent (*settings);
+    }
+    if (settings != nullptr)
+    {
+        settings->setBounds (getLocalBounds());
+        settings->setVisible (show);
+    }
+    notifyStatusKeysChanged();
 }
 
 int MetersPage::numPages() const
@@ -80,41 +185,44 @@ void MetersPage::timerCallback()
 
 float MetersPage::unitsOf (const std::vector<Group*>& items)
 {
+    // The groups' widths in WING pixels, each with the gap after it.
     float units = 0.0f;
     for (auto* item : items)
-        units += (float) (juce::jmax (4, item->count) + 1);
+        units += groupWidth (item->count) + kGroupGap;
     return units;
 }
 
-void MetersPage::layoutRow (juce::Rectangle<int> row, float unit, std::vector<Group*> left, std::vector<Group*> centre, std::vector<Group*> right)
+void MetersPage::layoutRow (int row, float k, std::vector<Group*> left, std::vector<Group*> centre, std::vector<Group*> right)
 {
-    auto place = [&row, unit] (Group& g, float x)
+    // Left from the scale column, right up to the page's edge, centre between them.
+    auto place = [this, row, k] (Group& g, float x)
     {
-        const float w = unit * (float) (juce::jmax (4, g.count) + 1);
-        auto area = juce::Rectangle<int> (juce::roundToInt (x), row.getY(), juce::roundToInt (w) - 4, row.getHeight());
-        g.header = area.removeFromTop (groupHeaderHeight());
-        area.removeFromTop (4);
-        g.body = area;
-        return w;
+        const float w = groupWidth (g.count) * k;
+        g.header = juce::Rectangle<float> (px (x), py (kRowTops[row]), px (w), py (kHeaderH)).toNearestInt();
+        g.body = juce::Rectangle<float> (px (x), py (kRowTops[row] + kHeaderH + kBodyGap), px (w), py (kBodyH)).toNearestInt();
+        return w + kGroupGap * k;
     };
 
-    float x = (float) row.getX();
+    float x = 44.0f;
     for (auto* g : left)
         x += place (*g, x);
-    const float leftEnd = x;
+    const float leftEnd = x - kGroupGap * k;
 
-    x = (float) row.getRight() + 4.0f - unit * unitsOf (right);
+    // The right-hand groups (MAIN, MATRIX) 12 apart.
+    x = 1272.0f + kBlockGap * k - (unitsOf (right) + (kBlockGap - kGroupGap) * (float) right.size()) * k;
     const float rightStart = x;
     for (auto* g : right)
-        x += place (*g, x);
+        x += place (*g, x) + (kBlockGap - kGroupGap) * k;
 
-    x = (leftEnd + rightStart) / 2.0f - unit * unitsOf (centre) / 2.0f;
+    x = (leftEnd + rightStart) / 2.0f - (unitsOf (centre) - kGroupGap) * k / 2.0f;
     for (auto* g : centre)
         x += place (*g, x);
 }
 
 void MetersPage::resized()
 {
+    if (settings != nullptr)
+        settings->setBounds (getLocalBounds());
     laidOutCounts.clear();
     for (int k = 0; k < kNumStripKinds; ++k)
         laidOutCounts.push_back ((int) ctx.engine.getStrips (static_cast<StripKind> (k)).size());
@@ -138,19 +246,18 @@ void MetersPage::resized()
     groups.push_back ({ "MAIN", StripKind::Main, false, 0, laidOutCounts[(size_t) StripKind::Main], LayerSet::Right, {}, {} });
     groups.push_back ({ "MATRIX", StripKind::Matrix, false, 0, laidOutCounts[(size_t) StripKind::Matrix], LayerSet::Right, {}, {} });
 
-    auto b = getLocalBounds();
-    titleArea = b.removeFromTop (juce::jmin (screenCap (52), b.getHeight() / 9));
-    auto keys = titleArea.reduced (6);
+    titleArea = juce::Rectangle<float> (px (8.0f), 0.0f, px (1264.0f), py (kTitleH)).toNearestInt();
+    auto keys = titleArea.reduced (juce::roundToInt (px (8.0f)));
     nextKey = numPages() > 1 ? keys.removeFromRight (keys.getHeight() * 2) : juce::Rectangle<int>();
     keys.removeFromRight (6);
     prevKey = numPages() > 1 ? keys.removeFromRight (keys.getHeight() * 2) : juce::Rectangle<int>();
-    b.removeFromTop (8);
 
-    auto top = b.removeFromTop ((b.getHeight() - 16) / 2);
-    b.removeFromTop (16);
-    auto bottom = b;
-    scaleTop = top.removeFromLeft (scaleWidth());
-    scaleBottom = bottom.removeFromLeft (scaleWidth());
+    for (int row = 0; row < 2; ++row)
+    {
+        (row == 0 ? scaleHeaderTop : scaleHeaderBottom) = juce::Rectangle<float> (px (8.0f), py (kRowTops[row]), px (32.0f), py (kHeaderH)).toNearestInt();
+        (row == 0 ? scaleTop : scaleBottom) =
+            juce::Rectangle<float> (px (8.0f), py (kRowTops[row] + kHeaderH + kBodyGap), px (32.0f), py (kBodyH)).toNearestInt();
+    }
 
     std::vector<Group*> channelsRow, auxRow, busRow, dcaRow, outRow;
     for (size_t i = 0; i < groups.size(); ++i)
@@ -168,31 +275,33 @@ void MetersPage::resized()
             outRow.push_back (g);
     }
 
-    // One scale for both rows, like the console: every group of eight is the same width.
-    const float gaps = 2.0f;
-    const float units = juce::jmax (unitsOf (channelsRow) + unitsOf (auxRow) + gaps,
-                                    unitsOf (busRow) + unitsOf (dcaRow) + unitsOf (outRow) + gaps * 2.0f, 40.0f);
-    const float unit = (float) top.getWidth() / units;
-    layoutRow (top, unit, channelsRow, {}, auxRow);
-    layoutRow (bottom, unit, busRow, dcaRow, outRow);
+    // One scale for both rows, like the console: 23 WING pixels a strip,
+    // squeezed when a bigger console's groups would not fit.
+    const float room = 1272.0f - 44.0f;
+    const float needed = juce::jmax (unitsOf (channelsRow) + unitsOf (auxRow) + kBlockGap - kGroupGap * 2.0f,
+                                     unitsOf (busRow) + unitsOf (dcaRow) + unitsOf (outRow) + kBlockGap * (float) (outRow.size() + 1) - kGroupGap * (float) (outRow.size() + 2));
+    const float k = juce::jmin (1.0f, room / juce::jmax (1.0f, needed));
+    slotW = kSlot * k;
+    layoutRow (0, k, channelsRow, {}, auxRow);
+    layoutRow (1, k, busRow, dcaRow, outRow);
 }
 
 juce::Rectangle<int> MetersPage::numberRow (const Group& group) const
 {
-    return group.body.reduced (6, 0).withTrimmedTop (8).withHeight (juce::jlimit (16, screenCap (24), group.body.getHeight() / 11));
+    return juce::Rectangle<float> ((float) group.body.getX(), (float) group.body.getY() + py (kNumberTop), (float) group.body.getWidth(), py (kNumberH))
+        .toNearestInt();
 }
 
 juce::Rectangle<int> MetersPage::muteRow (const Group& group) const
 {
-    auto r = group.body.reduced (6, 0).withTrimmedBottom (8);
-    return r.removeFromBottom (juce::jlimit (14, screenCap (20), group.body.getHeight() / 13));
+    return juce::Rectangle<float> ((float) group.body.getX(), (float) group.body.getY() + py (kMuteTop), (float) group.body.getWidth(), py (kMuteH))
+        .toNearestInt();
 }
 
 juce::Rectangle<float> MetersPage::slot (const Group& group, int index) const
 {
-    auto row = group.body.reduced (6, 0).toFloat();
-    const float w = row.getWidth() / (float) juce::jmax (1, juce::jmax (4, group.count));
-    return { row.getX() + w * (float) index, (float) group.body.getY(), w, (float) group.body.getHeight() };
+    const float w = px (slotW);
+    return { (float) group.body.getX() + px (kGroupPad * slotW / kSlot) + w * (float) index, (float) group.body.getY(), w, (float) group.body.getHeight() };
 }
 
 Strip* MetersPage::stripOf (const Group& group, int index) const
@@ -206,8 +315,9 @@ Strip* MetersPage::stripOf (const Group& group, int index) const
 
 bool MetersPage::isStereo (const Group& group, int index) const
 {
+    // A DCA shows its members' left and right [3.1].
     if (group.dca)
-        return false;
+        return true;
     auto* s = stripOf (group, index);
     return s != nullptr && (s->params.stereo.load() || s->isOutput());
 }
@@ -222,28 +332,31 @@ bool MetersPage::isMuted (const Group& group, int index) const
 
 float MetersPage::levelOf (const Group& group, int index, int channel) const
 {
-    // The METERS screen shows pre-fader levels (manual 5.3).
+    // PRE or POST as SETTINGS says for the kind of strip.
     if (! group.dca)
-        return meterPos (dsp::gainToDb (ctx.meters.get (stripOf (group, index), MeterPoint::PreFader, channel)));
+    {
+        auto* s = stripOf (group, index);
+        return s != nullptr ? meterPos (dsp::gainToDb (ctx.meters.get (s, prefs::meterPoint (ctx, s->getKind()), channel))) : 0.0f;
+    }
 
-    // A DCA shows the loudest of its members.
+    // A DCA shows the loudest of its members, before or after their faders.
     const uint32_t bit = 1u << (uint32_t) (group.first + index);
+    const auto point = prefs::meterTapPre (ctx, 4) ? MeterPoint::PreFader : MeterPoint::Output;
     float peak = 0.0f;
     for (auto kind : { StripKind::Channel, StripKind::Aux, StripKind::Bus, StripKind::Main, StripKind::Matrix })
         for (auto& s : ctx.engine.getStrips (kind))
             if ((s->params.dcaMask.load() & bit) != 0)
-                peak = juce::jmax (peak, ctx.meters.get (s.get(), MeterPoint::PreFader, channel));
+                peak = juce::jmax (peak, ctx.meters.get (s.get(), point, channel));
     return meterPos (dsp::gainToDb (peak));
 }
 
 void MetersPage::paintScale (juce::Graphics& g, juce::Rectangle<int> column, const Group& reference) const
 {
-    g.setColour (Colours::screenHeader);
-    g.fillRect (column.withTrimmedRight (4).withTrimmedTop (groupHeaderHeight() + 4));
-    const auto numbers = numberRow (reference), mutes = muteRow (reference);
-    const float top = (float) numbers.getBottom() + 10.0f, bottom = (float) mutes.getY() - 8.0f;
-    g.setColour (Colours::text);
-    g.setFont (wingFontFit (TypeScale::meterScale, (bottom - top) / 4.0f));
+    g.setColour (Colours::screenPanel);
+    g.fillRect (column);
+    const float top = (float) reference.body.getY() + py (kMeterTop), bottom = (float) reference.body.getY() + py (kMeterBottom);
+    g.setColour (Colours::caption);
+    g.setFont (wingFontPx (juce::jmax (5.0f, wingPx (8.5f))));
     const std::pair<const char*, float> marks[] = { { "CLIP", 0.0f }, { "-6", -6.0f }, { "-12", -12.0f }, { "-24", -24.0f },
                                                     { "-36", -36.0f }, { "-48", -48.0f }, { "-60", -60.0f } };
     // Labels that would overlap the previous one are left out (small windows).
@@ -255,7 +368,7 @@ void MetersPage::paintScale (juce::Graphics& g, juce::Rectangle<int> column, con
         if (y - lastY < minGap)
             continue;
         lastY = y;
-        g.drawText (text, juce::Rectangle<float> ((float) column.getX(), y - minGap * 0.6f, (float) column.getWidth() - 6.0f, minGap * 1.2f),
+        g.drawText (text, juce::Rectangle<float> ((float) column.getX(), y - minGap * 0.6f, (float) column.getWidth() - px (4.0f), minGap * 1.2f),
                     juce::Justification::centredRight);
     }
 }
@@ -267,8 +380,8 @@ void MetersPage::paint (juce::Graphics& g)
     // Title bar.
     g.setColour (Colours::screenPanel);
     g.fillRect (titleArea);
-    g.setColour (Colours::text);
-    g.setFont (wingFontFit (TypeScale::header, titleArea.getHeight() * 0.55f));
+    g.setColour (Colours::caption);
+    g.setFont (wingFontPx (wingPx (19.0f)));
     juce::String title = "METERS";
     if (numPages() > 1)
         title << "  -  PAGE " << (page + 1) << " / " << numPages();
@@ -277,7 +390,7 @@ void MetersPage::paint (juce::Graphics& g)
     {
         if (r.isEmpty())
             continue;
-        g.setColour (Colours::screenHeader);
+        g.setColour (Colours::screenTile);
         g.fillRoundedRectangle (r.toFloat(), 2.0f);
         g.setColour (Colours::text);
         g.setFont (juce::FontOptions ((float) r.getHeight() * 0.7f, juce::Font::bold));
@@ -286,6 +399,9 @@ void MetersPage::paint (juce::Graphics& g)
 
     if (groups.empty())
         return;
+    g.setColour (Colours::screenHeader);
+    g.fillRect (scaleHeaderTop);
+    g.fillRect (scaleHeaderBottom);
     paintScale (g, scaleTop, groups.front());
     for (auto& group : groups)
         if (group.body.getY() >= scaleBottom.getY())
@@ -294,76 +410,65 @@ void MetersPage::paint (juce::Graphics& g)
             break;
         }
 
-    auto* selected = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr;
-
+    const float k = slotW / kSlot;
     for (auto& group : groups)
     {
         g.setColour (Colours::screenHeader);
         g.fillRect (group.header);
-        g.setColour (Colours::text);
-        g.setFont (wingFontFit (TypeScale::body * 1.15f, group.header.getHeight() * 0.68f));
+        g.setColour (Colours::caption);
+        g.setFont (wingFontPx (juce::jmin (wingPx (14.0f), (float) group.header.getHeight() * 0.5f)));
         g.drawFittedText (group.title, group.header.reduced (4, 0), juce::Justification::centred, 1);
 
-        g.setColour (Dark::body);
+        g.setColour (bodyFill);
         g.fillRect (group.body);
 
         const auto numbers = numberRow (group), mutes = muteRow (group);
-        const float meterTop = (float) numbers.getBottom() + 10.0f, meterBottom = (float) mutes.getY() - 8.0f;
-        const int segments = juce::jlimit (12, 40, juce::roundToInt ((meterBottom - meterTop) / 4.5f));
-        const float segH = (meterBottom - meterTop) / (float) segments;
+        const float meterTop = (float) group.body.getY() + py (kMeterTop), meterBottom = (float) group.body.getY() + py (kMeterBottom);
+        const float segH = (meterBottom - meterTop) / (float) kSegments;
 
         for (int i = 0; i < group.count; ++i)
         {
-            auto s = slot (group, i);
-            const auto cell = s.reduced (juce::jmin (2.0f, s.getWidth() * 0.08f), 0.0f);
+            const auto s = slot (group, i);
             auto* strip = stripOf (group, i);
             const int number = group.first + i + 1;
-            // Number keys in the strip's colour; the selected strip gets an accent frame.
-            const auto numberArea = cell.withY ((float) numbers.getY()).withHeight ((float) numbers.getHeight());
+            // [3.1] number keys 19 px square in the strip's colour, 2 in from the slot.
+            const auto numberArea = juce::Rectangle<float> (s.getX() + px (2.0f * k), (float) numbers.getY(), px (19.0f * k), (float) numbers.getHeight());
             numberKey (g, numberArea, number, group.dca ? wingColour (ctx.engine.getDca (group.first + i).colour.load())
                                                  : (strip != nullptr ? stripDisplayColour (*strip) : Colours::cyan));
-            if (strip != nullptr && strip == selected)
-            {
-                g.setColour (Colours::yellow);
-                g.drawRoundedRectangle (numberArea.expanded (1.5f), 2.0f, 2.0f);
-            }
 
-            // LED meter: two narrow columns (one for mono), green / yellow / red, with peak hold.
+            // LED meter: one column 7 px wide, or two of 6 a pixel apart, with peak hold.
             const bool stereo = isStereo (group, i);
-            const float colW = juce::jmin (5.0f, cell.getWidth() * 0.22f);
-            const float gap = colW * 0.6f;
+            const float colW = px ((stereo ? 6.0f : 7.0f) * k), gap = px (k);
             const float total = stereo ? colW * 2.0f + gap : colW;
-            float x = cell.getCentreX() - total / 2.0f;
+            float x = numberArea.getCentreX() - total / 2.0f;
             for (int ch = 0; ch < (stereo ? 2 : 1); ++ch, x += colW + gap)
             {
                 const float level = levelOf (group, i, ch);
                 const auto* key = static_cast<const char*> (group.dca ? (const void*) &ctx.engine.getDca (group.first + i) : (const void*) strip) + ch;
                 const auto hold = holds.find (key);
-                const int holdSeg = hold != holds.end() && hold->second.level > 0.0f ? juce::jmin (segments - 1, (int) (hold->second.level * (float) segments)) : -1;
-                for (int k = 0; k < segments; ++k)
+                const int holdSeg = hold != holds.end() && hold->second.level > 0.0f ? juce::jmin (kSegments - 1, (int) (hold->second.level * (float) kSegments)) : -1;
+                for (int seg = 0; seg < kSegments; ++seg)
                 {
-                    const float pos = ((float) k + 0.5f) / (float) segments;
+                    const float pos = ((float) seg + 0.5f) / (float) kSegments;
                     const bool lit = level >= pos;
-                    juce::Colour c = Colours::screenTile;
+                    // [3.1] green, yellow from -18 dB, red at the top.
+                    juce::Colour c = segmentOff;
                     if (lit)
-                        c = pos > meterPos (-0.5f) ? Colours::mute : (pos > meterPos (-12.0f) ? Colours::meterYellow : Colours::meterGreen);
-                    else if (k == holdSeg)
+                        c = pos > meterPos (-0.5f) ? Colours::mute : (pos > meterPos (-18.0f) ? litYellow : litGreen);
+                    else if (seg == holdSeg)
                         c = Colours::amber; // the peak-hold dash
                     g.setColour (c);
-                    g.fillRect (x, meterBottom - (float) (k + 1) * segH + 0.5f, colW, juce::jmax (1.0f, segH - 1.5f));
+                    g.fillRect (x, meterBottom - (float) (seg + 1) * segH, colW, juce::jmax (1.0f, segH * 2.0f / 3.0f));
                 }
             }
 
-            // Mute: an empty square, filled red while muted.
-            const auto m = cell.withY ((float) mutes.getY()).withHeight ((float) mutes.getHeight()).withSizeKeepingCentre (
-                juce::jmin (cell.getWidth(), (float) mutes.getHeight()), (float) mutes.getHeight()).reduced (1.0f);
-            if (isMuted (group, i))
-            {
-                g.setColour (Colours::mute);
-                g.fillRect (m);
-            }
-            g.setColour (Colours::screenLine);
-            g.drawRect (m, 1.0f);
+            // M: a dark key with a black M, red while muted.
+            const auto m = juce::Rectangle<float> (s.getX() + px (3.0f * k), (float) mutes.getY(), px (17.0f * k), (float) mutes.getHeight());
+            g.setColour (isMuted (group, i) ? Colours::mute : segmentOff);
+            g.fillRoundedRectangle (m, juce::jmax (1.0f, m.getHeight() * 0.1f));
+            g.setColour (juce::Colours::black);
+            g.setFont (wingFontPx (juce::jmin (m.getHeight() * 0.62f, m.getWidth() * 0.6f), WingWeight::SemiBold));
+            g.drawText ("M", m, juce::Justification::centred, false);
         }
     }
 }

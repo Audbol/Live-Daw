@@ -150,6 +150,8 @@ fn format_number(v: f32, unit: &str) -> String {
         "ms" if v >= 1000.0 => format!("{:.2} s", v / 1000.0),
         "ms" if v < 10.0 => format!("{v:.1} ms"),
         "ms" => format!("{v:.0} ms"),
+        // Reverb decays as the console writes them: "1.35 s", "1.50 s".
+        "s" => format!("{v:.2} s"),
         "" => {
             if v.abs() >= 100.0 {
                 format!("{v:.0}")
@@ -325,6 +327,10 @@ mod tests {
         let rel = &comp.params[comp.param_index("rel").unwrap()];
         assert!((rel.from_normalised(rel.to_normalised(150.0)) - 150.0).abs() < 0.01);
         assert_eq!(rel.display(1500.0), "1.50 s");
+        // A reverb's DECAY keeps two decimals, as the rack shows it.
+        let decay =
+            ParamSpec { id: "dcy", label: "DECAY", unit: "s", kind: ParamKind::Log, min: 0.1, max: 5.0, steps: 51, default: 1.8 };
+        assert_eq!(decay.display(1.5), "1.50 s");
         assert_eq!(parse_freq("1k6"), Some(1600.0));
         assert_eq!(parse_freq("35"), Some(35.0));
         assert_eq!(parse_freq("OFF"), None);

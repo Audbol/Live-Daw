@@ -23,6 +23,8 @@ public:
     ~EffectsPage() override;
 
     std::vector<KnobBinding> getKnobs() override;
+    /** The rack has no parameter bar [3.1]; a slot's editor has. */
+    bool usesKnobs() const override;
     void resized() override;
     void paint (juce::Graphics&) override;
 
@@ -45,25 +47,32 @@ private:
     std::unique_ptr<Editor> editor;
     double lastTap = 0.0;
     juce::Rectangle<int> rack, premiumLabel, standardLabel;
-    int selected = -1; // the slot touched last (none at start: no gold frame)
+    juce::Image metal; // the rack's background at its size
 };
 
-/** METERS (manual 5.3): channels and buses in groups of eight with number keys
-    in the strips' colours (select) and mute squares, AUX, DCA, MAIN and MATRIX.
-    Touching a group's header opens its section's FADERS screen. Consoles with
-    more than 40 channels or 16 buses page through them. */
+/** METERS (manual 5.3, laid out as firmware 3.1): channels and buses in
+    groups of eight with number keys in the strips' colours (select) and M
+    keys (mute), AUX, DCA, MAIN and MATRIX, a CLIP..-60 scale per row. The
+    SETTINGS key in the status bar sets PRE or POST per kind of strip (the
+    settings SETUP > SURFACE > METERING also holds). Touching a group's header
+    opens its section's FADERS screen. Consoles with more than 40 channels or
+    16 buses page through them. */
 class MetersPage final : public DisplayPage, private juce::Timer
 {
 public:
     explicit MetersPage (UiContext&);
+    ~MetersPage() override;
 
     bool usesKnobs() const override { return false; }
+    std::vector<StatusKey> getStatusKeys() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent&) override;
 
 private:
+    class Settings;
+
     struct Group
     {
         juce::String title;
@@ -82,7 +91,7 @@ private:
 
     void timerCallback() override;
     static float unitsOf (const std::vector<Group*>&);
-    static void layoutRow (juce::Rectangle<int> row, float unit, std::vector<Group*> left, std::vector<Group*> centre, std::vector<Group*> right);
+    void layoutRow (int headerY, float k, std::vector<Group*> left, std::vector<Group*> centre, std::vector<Group*> right);
     int numPages() const;
     juce::Rectangle<int> numberRow (const Group&) const;
     juce::Rectangle<int> muteRow (const Group&) const;
@@ -93,10 +102,16 @@ private:
     Strip* stripOf (const Group&, int index) const;
     void paintScale (juce::Graphics&, juce::Rectangle<int> column, const Group& reference) const;
     void bringToSection (const Group&, int index);
+    void showSettings (bool);
+    /** A length in WING pixels (1280 x 720 page) across and down the page. */
+    float px (float wingX) const { return wingX * (float) getWidth() / 1280.0f; }
+    float py (float wingY) const { return wingY * (float) getHeight() / 720.0f; }
 
     UiContext& ctx;
+    std::unique_ptr<Settings> settings;
     std::vector<Group> groups;
-    juce::Rectangle<int> titleArea, prevKey, nextKey, scaleTop, scaleBottom;
+    juce::Rectangle<int> titleArea, prevKey, nextKey, scaleTop, scaleBottom, scaleHeaderTop, scaleHeaderBottom;
+    float slotW = 23.0f; // a strip's width in the groups (23 WING pixels unless squeezed)
     int page = 0;
     std::vector<int> laidOutCounts;
     std::unordered_map<const void*, Hold> holds;

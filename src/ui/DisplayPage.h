@@ -22,6 +22,9 @@ struct StatusKey
     /** The icon and caption colour of an unlit key (LIBRARY's GLOBAL: a green
         open padlock, red while something is global-safe); grey when unset. */
     std::optional<juce::Colour> ink {};
+    /** Sits at the right end, next to the clock (METERS' SETTINGS), not in
+        the row from the left. */
+    bool atRight = false;
 };
 
 /** How the parameter bar shows one of the six knobs. The WING colours each value
@@ -36,6 +39,7 @@ struct KnobStyle
         Auto,     // chosen from the binding (label, steps, bipolar)
         Fill,     // filled from the left
         Centre,   // filled from the centre, with a centre tick
+        Width,    // filled either side of a centre tick, the wider the lower the value (Q)
         Thumb,    // a thumb on a grey line
         Segments  // one lit segment per step (BUS 1-16, MATRIX 1-8)
     };
@@ -51,7 +55,8 @@ struct KnobStyle
 namespace KnobColours
 {
     const juce::Colour blue { 0xff4890e0 };      // levels, frequencies, BAL, PAGE
-    const juce::Colour green { 0xff40a618 };     // width, EQ Q
+    const juce::Colour green { 0xff40a618 };     // width
+    const juce::Colour qGreen { 0xff18e460 };    // Q (EQ, key filter, crossover)
     const juce::Colour yellow { 0xffe0d400 };    // distance, AP frequency
     const juce::Colour cyan { 0xff48f0f8 };      // tilt
     const juce::Colour white { 0xfff8f8f8 };     // trim, pan, EQ gain

@@ -42,7 +42,7 @@ void paintDynamicsTile (juce::Graphics&, juce::Rectangle<float>, int model, cons
 /** The transfer graph of a WING dynamics model (manual Fig. 92-94, firmware
     3.x): a dark plot with a dot grid every 5 dB and the levels 0 .. -60 (-80
     for the gate) down the left; the static curve (computed by the engine from
-    the model's own settings), orange while the slot is on; the threshold as a
+    the model's own settings), blue while the slot is on; the threshold as a
     grey line across with the round handle at the right (drag it); the live
     level as a yellow dot on the curve; the gain reduction as a red segment
     meter down the left edge and the slot's output level on the ticks at the
@@ -84,8 +84,8 @@ private:
 //==============================================================================
 /** The ENVELOPE panel of a WING dynamics model: the title bar, then ATTACK as
     a ramp, HOLD as a flat top between two grey lines and RELEASE as a ramp
-    down, each as wide as its knob is turned, green over a dark green fill
-    while the slot is on. The round handles (attack and release at the
+    down, each as wide as its knob is turned: green over a dark green fill
+    for the gate and the ducker, grey for the others, on or off. The round handles (attack and release at the
     bottom, hold at the top) drag their parameter sideways. */
 class DynEnvelopeGraph final : public juce::Component, private juce::Timer
 {

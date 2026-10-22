@@ -237,6 +237,7 @@ inline KnobStyle styleOf (KnobStyle::Bar bar, juce::Colour c, juce::Component* t
 inline KnobStyle levelStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Fill, KnobColours::blue, t); }
 inline KnobStyle freqStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Fill, KnobColours::blue, t); }
 inline KnobStyle widthStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Centre, KnobColours::green, t); }
+inline KnobStyle qStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Width, KnobColours::qGreen, t); }
 inline KnobStyle thumbStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Thumb, KnobColours::white, t); }
 inline KnobStyle balStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Thumb, KnobColours::blue, t); }
 inline KnobStyle distStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Fill, KnobColours::yellow, t); }
@@ -970,6 +971,16 @@ public:
     }
     juce::Colour ringColour = colours::ink;  // TAP WIDTH: green
     juce::Colour valueColour = colours::ink; // GAIN: yellow
+    /** How the ring shows the value: a mark (the default), a fill from the
+        top (the crossover's DEPTH) or a fill either side of the top, the
+        wider the lower the value (Q), as the 3.1 KEY FILTER / XOVER pages. */
+    enum class Ring
+    {
+        Mark,
+        Centre,
+        Width
+    };
+    Ring ringFill = Ring::Mark;
 
     void paint (juce::Graphics& g) override
     {
@@ -988,7 +999,17 @@ public:
         track.addCentredArc (ring.getCentreX(), ring.getCentreY(), rad, rad, 0.0f, a0, a1, true);
         g.setColour (colours::chipOff);
         g.strokePath (track, juce::PathStrokeType (thick));
-        if (enabled)
+        if (enabled && ringFill != Ring::Mark)
+        {
+            const float mid = (a0 + a1) * 0.5f;
+            const float from = ringFill == Ring::Centre ? mid : mid - (1.0f - pos) * (a1 - a0) * 0.5f;
+            const float to = ringFill == Ring::Centre ? a0 + pos * (a1 - a0) : mid + (1.0f - pos) * (a1 - a0) * 0.5f;
+            juce::Path value;
+            value.addCentredArc (ring.getCentreX(), ring.getCentreY(), rad, rad, 0.0f, juce::jmin (from, to), juce::jmax (from, to), true);
+            g.setColour (ringColour);
+            g.strokePath (value, juce::PathStrokeType (thick));
+        }
+        else if (enabled)
         {
             const float a = a0 + pos * (a1 - a0);
             const auto c = ring.getCentre();

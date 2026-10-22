@@ -19,13 +19,20 @@ namespace
     const juce::Colour curveOff { 0xff707070 };
     const juce::Colour levelDot { 0xffffe23a };
     const juce::Colour grLit { 0xffe8302a };
-    const juce::Colour segmentOff { 0xff080808 };
-    const juce::Colour tick { 0xff585858 };
-    const juce::Colour envLineOn { 0xff1ed21e };
-    const juce::Colour envFillOn { 0xff0b4a0b };
-    const juce::Colour envLineOff { 0xff606460 };
+    const juce::Colour segmentOff { 0xff101010 };
+    const juce::Colour tick { 0xff484848 };
+    // The COMP and GATE screens of a console: one-pixel #c0c0c0 dots, the
+    // curve #707070 over a #484848 threshold line while off, blue over #707070
+    // while on; the ENVELOPE green (gate, ducker) or grey (compressor,
+    // expander), on or off, between #707070 guide lines.
+    const juce::Colour screenDot { 0xffc0c0c0 };
+    const juce::Colour curveScreenOn { 0xff4890e0 };
+    const juce::Colour thresholdLineOn { 0xff707070 };
+    const juce::Colour envLineOn { 0xff18e460 };
+    const juce::Colour envFillOn { 0xff185030 };
+    const juce::Colour envLineOff { 0xff484848 };
     const juce::Colour envFillOff { 0xff282828 };
-    const juce::Colour envGuide { 0xff6a6a6a };
+    const juce::Colour envGuide { 0xff707070 };
 
     const juce::String& tokenOf (int model) { return models::model (models::Dynamics, model).token; }
 
@@ -43,9 +50,9 @@ namespace
         return t == "GATE" || t == "DUCK" ? range - 20.0f : 20.0f;
     }
 
-    void paintDots (juce::Graphics& g, juce::Rectangle<float> r, float stepX, float stepY, float d)
+    void paintDots (juce::Graphics& g, juce::Rectangle<float> r, float stepX, float stepY, float d, juce::Colour colour = gridDot)
     {
-        g.setColour (gridDot);
+        g.setColour (colour);
         for (float y = r.getY(); y <= r.getBottom() + 0.5f; y += stepY)
             for (float x = r.getX(); x <= r.getRight() + 0.5f; x += stepX)
                 g.fillRect (x - d * 0.5f, y - d * 0.5f, d, d);
@@ -247,7 +254,7 @@ void DynTransferGraph::paint (juce::Graphics& g)
     g.fillRect (bounds);
     const auto plot = plotArea();
     const float pxPerDb = plot.getHeight() / range;
-    paintDots (g, plot, pxPerDb * 5.0f, pxPerDb * 5.0f, juce::jmax (1.0f, pxPerDb * 0.2f));
+    paintDots (g, plot, pxPerDb * 5.0f, pxPerDb * 5.0f, juce::jmax (1.0f, pxPerDb * 0.135f), screenDot);
 
     // The levels down the left, the ticks at the right (lit up to the output level).
     // The column fits "-60" (small windows shrink the labels rather than cut them).
@@ -262,7 +269,7 @@ void DynTransferGraph::paint (juce::Graphics& g)
         g.drawText (juce::String (db), juce::Rectangle<float> (bounds.getX() + 3.0f, y - 8.0f, labelW, 16.0f),
                     juce::Justification::centredLeft, false);
         g.setColour (out >= (float) db && slot.on.load() ? juce::Colour (0xff35d05a) : tick);
-        g.fillRect (tickX, y - 1.0f, tickW, 2.0f);
+        g.fillRect (tickX, y - 1.5f, tickW, juce::jmax (2.0f, pxPerDb * 0.4f));
     }
 
     // The gain reduction meter along the left edge of the plot.
@@ -283,7 +290,7 @@ void DynTransferGraph::paint (juce::Graphics& g)
     const int ti = thresholdIndex();
     const float thr = ti >= 0 ? slot.values[ti].load() : 0.0f;
     const auto handle = handleArea();
-    g.setColour (thresholdLine);
+    g.setColour (slot.on.load() ? thresholdLineOn : thresholdLine);
     g.fillRect (juce::Rectangle<float> (plot.getX(), yFor (thr) - 1.0f, handle.getX() - plot.getX(), 2.0f));
 
     if (! curve.empty())
@@ -300,7 +307,7 @@ void DynTransferGraph::paint (juce::Graphics& g)
         }
         g.saveState();
         g.reduceClipRegion (plot.toNearestInt());
-        g.setColour (slot.on.load() ? curveOn : curveOff);
+        g.setColour (slot.on.load() ? curveScreenOn : curveOff);
         g.strokePath (p, juce::PathStrokeType (juce::jmax (1.5f, pxPerDb * 0.35f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         // The live level on the curve.
         if (slot.on.load() && key > -range)
@@ -429,11 +436,8 @@ void DynEnvelopeGraph::paintShape (juce::Graphics& g, juce::Rectangle<float> are
     g.setColour (plotBg);
     g.fillRect (area);
     paintDots (g, area.reduced (area.getWidth() * 0.02f, area.getHeight() * 0.05f), area.getWidth() / 24.0f, area.getHeight() / 8.0f,
-               juce::jmax (1.0f, area.getHeight() * 0.006f));
+               juce::jmax (1.0f, area.getHeight() * (handles ? 0.004f : 0.006f)), handles ? screenDot : gridDot);
     const auto s = shapeIn (area, attack, hold, release);
-    g.setColour (envGuide);
-    g.fillRect (s.x1 - 0.75f, area.getY(), 1.5f, area.getHeight());
-    g.fillRect (s.x2 - 0.75f, area.getY(), 1.5f, area.getHeight());
     juce::Path p;
     p.startNewSubPath (s.x0, s.bottom);
     p.lineTo (s.x1, s.top);
@@ -443,8 +447,16 @@ void DynEnvelopeGraph::paintShape (juce::Graphics& g, juce::Rectangle<float> are
     fill.closeSubPath();
     g.setColour (on ? envFillOn : envFillOff);
     g.fillPath (fill);
+    // The guides at the ends of the hold, dimmed where they cross the fill.
+    const float guideW = juce::jmax (1.5f, area.getHeight() * 0.012f);
+    g.setColour (envGuide.withAlpha (0.6f));
+    g.fillRect (s.x1 - guideW * 0.5f, area.getY(), guideW, area.getHeight());
+    g.fillRect (s.x2 - guideW * 0.5f, area.getY(), guideW, area.getHeight());
+    g.setColour (envGuide);
+    g.fillRect (s.x1 - guideW * 0.5f, area.getY(), guideW, s.top - area.getY());
+    g.fillRect (s.x2 - guideW * 0.5f, area.getY(), guideW, s.top - area.getY());
     g.setColour (on ? envLineOn : envLineOff);
-    g.strokePath (p, juce::PathStrokeType (juce::jmax (1.2f, area.getHeight() * 0.014f)));
+    g.strokePath (p, juce::PathStrokeType (juce::jmax (1.2f, area.getHeight() * 0.012f)));
     if (! handles)
         return;
     const float d = juce::jlimit (10.0f, 30.0f, area.getHeight() * 0.11f);
@@ -482,7 +494,7 @@ void DynEnvelopeGraph::paint (juce::Graphics& g)
     const auto p = positions();
     if (p[0] < 0.0f && p[2] < 0.0f)
         return;
-    paintShape (g, graphArea(), p[0], juce::jmax (0.0f, p[1]), p[2], slot.on.load() || greenEnvelope (slot.model.load()), true);
+    paintShape (g, graphArea(), p[0], juce::jmax (0.0f, p[1]), p[2], greenEnvelope (slot.model.load()), true);
 }
 
 void DynEnvelopeGraph::mouseDown (const juce::MouseEvent& e)

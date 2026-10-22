@@ -242,11 +242,12 @@ pub(crate) fn strip_response(s: &Strip, block: i32, freqs: &[f64], out: &mut [f6
         return;
     }
     if (5..=7).contains(&block) {
-        // The GATE's or the DYNAMICS' key filter, the DYNAMICS' crossover.
+        // The GATE's or the DYNAMICS' key filter, the DYNAMICS' crossover (as
+        // its page draws it: PEAK as the band taken down by DEPTH).
         let c = match block {
             5 => s.params.gate.sidechain().coefficients(sr),
             6 => s.params.dynamics.sidechain().coefficients(sr),
-            _ => s.params.dynamics.xover().coefficients(sr),
+            _ => s.params.dynamics.xover().graph_coefficients(sr),
         };
         for (f, o) in freqs.iter().zip(out.iter_mut()) {
             *o = 20.0 * c.magnitude_at(*f, sr).max(1e-9).log10();

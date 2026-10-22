@@ -981,8 +981,9 @@ namespace
                                                               }),
                              3.6f, true, false, kFieldRows);
             metering.addRow ("MAIN METER TAP", fixedChoice ({ "AUTO", "PRE", "POST" }, 2, ChoiceKeys::autoPrePost()), 3.6f, false);
-            // PRE or POST per strip type: the VIEW screens' meters follow these (the
-            // surface's LED meters can read them with prefs::meterPoint).
+            // PRE or POST per strip type: the METERS and VIEW screens' meters follow
+            // these (METERS > SETTINGS sets them too; the surface's LED meters can
+            // read them with prefs::meterPoint).
             for (int i = 0; i < prefs::kNumMeterTaps; ++i)
                 metering.addRow (prefs::meterTapNames[i],
                                  std::make_unique<ChoiceKeys> (juce::StringArray { "PRE", "POST" }, [this, i] { return prefs::meterTapPre (ctx, i) ? 0 : 1; },

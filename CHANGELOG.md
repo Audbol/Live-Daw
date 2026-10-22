@@ -29,6 +29,25 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- METERS, the USB recorder / player, the EFFECTS rack and a channel's COMP page with
+  its KEY FILTER and XOVER pages laid out and coloured like a WING's (firmware 3.1,
+  measured off the console's screens). METERS: the WING's group and scale geometry,
+  61-segment meters (yellow from -18 dB), M keys, DCAs in pairs, and a **SETTINGS**
+  key that sets PRE or POST per strip type (channels and DCAs PRE, the others POST, as
+  a factory-set console; the METERS screen used to show every meter pre-fader). USB:
+  the PLAYLIST tab, ADD ALL (with nothing selected, the folder shown), folder rows in
+  blue with their own `>` key, upright red counters without colons, a yellow square
+  while stopped, keys framed while enabled, and a blank player with PLAY off until a
+  clip is chosen. EFFECTS: no parameter bar, the slots where the console has them, a
+  scratched-metal rack, and a device inserted nowhere shown dimmed (no ON or source
+  column); reverb decays show two decimals ("1.50 s"). COMP: the transfer curve blue
+  while on, the ENVELOPE grey for the compressor whether on or not, the dot grid and
+  ticks as the console's; the KEY FILTER / XOVER pages have the plot where the console
+  has it, an open FREQ ring, Q and DEPTH boxes, DEPTH, Q and FREQ on knobs 3-5, and the
+  XOVER curve for PEAK shows the band taken down by DEPTH (a dip at FREQ). Q on the
+  parameter bar is a green fill either side of the centre, wider for a lower Q; the
+  X/O tag lights blue; lit status-bar keys are #707070; the HOME screens keep 8 px
+  margins left and right.
 - MONITOR / TALKBACK, MUTE GROUPS and the VIEW screens with a DCA layer (OVERVIEW,
   FADERS, SENDS, CONFIG) are laid out like a WING's (firmware 3.1, measured off the
   console's screens): the layer column with bank keys (1-8 ... DCA 9-16), DCA and mute
