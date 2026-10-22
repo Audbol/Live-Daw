@@ -567,14 +567,15 @@ blinking LEDs.
   `SurfacePalette`, one per finish, read through `surfaceColours()`: the silver WING
   (a light grey surface with mid grey decks (`drawDeck`), light grey key caps, black
   fader caps) or the black WING BK (a black surface with printed frames for decks,
-  lighter grey layer key columns, frosted light key caps in black bezels, silver fader
-  caps). The layout, print, key face and the periwinkle scribble LCDs are the same in
+  lighter grey layer key columns, key caps backlit lavender in black bezels (grey for a
+  key with nothing to do), silver fader caps). The layout, print, key face and the periwinkle scribble LCDs are the same in
   both (an LCD is one colour on every strip; only the light bar above it shows the
   strip's colour), and the touchscreen's colours never change. SELECT, SOLO, MUTE and
   SOF FLIP are backlit keys (`SurfaceKey::backlit`): a dark face in a rim that carries
   the light, rim and print pale lavender unlit (washed out to light grey on the silver
   finish, as daylight does) and in the key's colour lit (`Colours::keySelect`,
-  `keySolo`, `keyMute`) while the face stays dark. The meter block's GATE LED lights
+  `keySolo`, `keyMute`; SOF FLIP red-orange, `keyLayer`, as the lit layer keys) while the
+  face stays dark. The meter block's GATE LED lights
   red while the gate is closed, the DYN LED orange while the dynamics work.
 - **Console look and model.** `ConsoleLook` (`ConsoleLook.h`) is how the console
   looks, kept in the app settings, not the show: today the surface FINISH (SILVER /

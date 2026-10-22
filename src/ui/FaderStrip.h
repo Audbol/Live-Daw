@@ -30,6 +30,7 @@ struct ScribbleInfo
     juce::String value, caption;  // "-3.5" in large type in place of the icon
     juce::String line2, line3;    // small centre lines (no icon or value)
     juce::String name, footer;
+    bool footerRow = false;       // the footer's row under its rule even when empty (a key that does nothing here)
     bool nameInverted = false;
     float backlight = 1.0f, contrast = 1.0f; // SETUP > GENERAL: SCRIBBLE and SCR CONT
 
@@ -42,6 +43,10 @@ struct ScribbleInfo
 
 /** Draws a scribble strip LCD into `lcd`. */
 void drawScribble (juce::Graphics&, juce::Rectangle<float> lcd, const ScribbleInfo&);
+
+/** A scribble LCD's backlight and ink at SCRIBBLE `backlight` and SCR CONT
+    `contrast` (as in ScribbleInfo). */
+std::pair<juce::Colour, juce::Colour> scribbleColours (float backlight, float contrast);
 
 /** Draws the LCD's frame: its lighter rim along the given edges of one strip's
     LCD (`first` / `last`: the left / right ends of the display), and the rule

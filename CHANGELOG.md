@@ -47,6 +47,14 @@ All notable changes to Sidecar are listed here. Versions follow
   green, orange or red lit while the face stays dark. The meter block's GATE LED is red
   (gate closed) and its DYN LED orange (dynamics working); the center section's USER,
   2-TRACK, MULTI, MUTE GROUPS and SHOW CNTRL keys are light keys, as on the console.
+- The surface's keys and LCDs as in photos of a silver WING: lit layer, function and mute
+  group keys and the SOF FLIP rim are red-orange (brighter in the middle), lit VIEW and
+  screen keys bright green; in MUTE GROUPS the custom controls' lower LCD shows "MUTE
+  GROUPS" over the eight group names in four columns, the active ones inverted, over
+  blank keys; the 4-Channel section's LCD leaves the key row empty under PAN for a main or
+  matrix (no MAIN 1 send); the CHANNEL STRIP DETAILS and GROUPS LEDs are green and the
+  LED meters' -6 to -18 LEDs amber. On the black finish the keys are backlit lavender with
+  dark navy print (a key with nothing to do shows its grey cap), as on a black WING.
 - A WING snapshot loads the console's way: on LIBRARY > SNAP, select the `.snap` file at INT
   or USB and press LOAD (or double-click it). IMPORT WING on the SHOW tab still works.
 - The center fader section has no INPUTS layer key, as on the console (DCA, MAIN MATRIX,

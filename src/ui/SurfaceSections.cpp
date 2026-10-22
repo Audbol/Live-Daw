@@ -544,7 +544,7 @@ void ChannelStripSection::paintPanel (juce::Graphics& g)
     const float led = juce::jlimit (3.0f, 7.0f, rowH * 0.42f);
     const float top = r.getY() + titleH + 2.0f;
     auto rowY = [&] (int row) { return top + rowH * (float) row; };
-    auto ledAt = [&] (float x, int row, bool on, juce::Colour colour = juce::Colours::white)
+    auto ledAt = [&] (float x, int row, bool on, juce::Colour colour = Colours::ledGreen)
     {
         g.setColour (on ? colour : surfaceColours().ledOff);
         g.fillRect (x, rowY (row) + (rowH - led * 0.75f) * 0.5f, led, led * 0.75f);
@@ -650,7 +650,7 @@ void ChannelStripSection::paintPanel (juce::Graphics& g)
             auto* send = any ? strip->sends.find (i) : nullptr;
             const bool on = send != nullptr && send->enabled.load() && ctx.engine.getBusInSlot (i) != nullptr;
             const float lx = busSend + W * (left ? 0.03f : 0.055f);
-            ledAt (lx, row, on);
+            ledAt (lx, row, on, juce::Colours::white);
             if (left)
                 text (busSend, W * 0.027f, row, juce::String (i + 1), juce::Justification::centredRight);
             else
@@ -1199,10 +1199,11 @@ void CustomControlSection::setLowerLayer (int layer)
     {
         const auto name = lowerKeyName (i);
         const bool transport = layer == MultiTrack || layer == TwoTrack;
-        lowerKeys[i]->setLabel (transport ? juce::String() : name);
+        // Mute group keys are blank, as on the console: the LCD names them.
+        lowerKeys[i]->setLabel (transport || layer == MuteGroups ? juce::String() : name);
         lowerKeys[i]->setIcon (transport ? std::optional<Icon> (layer == TwoTrack ? usbIcons[i] : transportIcons[i]) : std::nullopt);
         lowerKeys[i]->setEnabled (transport || name.isNotEmpty());
-        lowerKeys[i]->ledColour = layer == MuteGroups ? Colours::mute
+        lowerKeys[i]->ledColour = layer == MuteGroups ? Colours::keyLayer
                                   : transport && i == 7 ? Colours::mute
                                   : transport && i == 6 ? Colours::meterGreen
                                                         : Colours::keyWhite;
@@ -1524,11 +1525,14 @@ void CustomControlSection::timerCallback()
         if (k->isEnabled() != arrows)
             k->setEnabled (arrows);
 
-    // The lower LCD follows the mute group names and the scenes.
+    // The lower LCD follows the mute groups and the scenes.
     juce::String state (lowerLayer);
     if (lowerLayer == MuteGroups)
+    {
+        state << (int) ctx.engine.muteGroups.load() << '|';
         for (int i = 0; i < kNumMuteGroups; ++i)
             state << ctx.engine.getMuteGroupName (i) << '|';
+    }
     else if (lowerLayer == ShowControl)
         state << ctx.show.getCurrentSceneIndex() << ctx.show.getNumScenes() << '|' << sceneCursor;
     else if (lowerLayer == TwoTrack)
@@ -1558,10 +1562,64 @@ void CustomControlSection::timerCallback()
     }
 }
 
+void CustomControlSection::paintMuteGroupLcd (juce::Graphics& g, juce::Rectangle<int> area)
+{
+    // As the console's: "MUTE GROUPS" over a rule, then the groups' names in
+    // four columns, the top row over the bottom row as the keys below; an
+    // active group is inverted.
+    const auto lcd = area.reduced (3, 4).toFloat();
+    const float backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
+    const auto colours = scribbleColours (backlight, uiprefs::brightness (ctx.settings, "scrCont", 50));
+    const auto bg = colours.first, ink = colours.second;
+    g.setColour (bg);
+    g.fillRect (lcd);
+    auto r = lcd.reduced (juce::jmax (2.0f, lcd.getWidth() * 0.01f), 1.0f);
+    const auto titleRow = r.removeFromTop (std::round (r.getHeight() * 0.36f));
+    const float cap = juce::jlimit (4.0f, 11.0f, juce::jmin (titleRow.getHeight(), r.getHeight() / 2.0f) * 0.5f);
+    const auto font = wingFontPx (cap, cap < 6.0f ? WingWeight::SemiBold : WingWeight::Medium);
+    g.setFont (font);
+    g.setColour (ink);
+    g.drawText ("MUTE GROUPS", titleRow, juce::Justification::centred, false);
+    g.fillRect (juce::Rectangle<float> (r.getX(), std::round (r.getY()) - 1.0f, r.getWidth(), 1.0f));
+
+    const auto active = ctx.engine.muteGroups.load();
+    const float w = r.getWidth() / 4.0f;
+    for (int i = 0; i < 4; ++i)
+    {
+        const auto column = juce::Rectangle<float> (r.getX() + w * (float) i, r.getY(), w, r.getHeight());
+        if (i > 0)
+        {
+            g.setColour (ink);
+            g.fillRect (juce::Rectangle<float> (std::round (column.getX()), column.getY(), 1.0f, column.getHeight() - 1.0f));
+        }
+        for (int row = 0; row < 2; ++row)
+        {
+            const int group = i + row * 4;
+            const auto name = ctx.engine.getMuteGroupName (group).toUpperCase();
+            const auto line = column.withTrimmedTop (column.getHeight() * 0.5f * (float) row).withHeight (column.getHeight() * 0.5f);
+            const float textW = juce::jmin (juce::GlyphArrangement::getStringWidth (font, name), column.getWidth() - cap * 1.2f);
+            const auto box = line.withSizeKeepingCentre (textW + cap * 0.6f, juce::jmin (line.getHeight(), cap * 1.7f));
+            g.setColour (ink);
+            if (((active >> group) & 1u) != 0)
+            {
+                g.fillRect (box);
+                g.setColour (bg);
+            }
+            g.drawFittedText (name, box.toNearestInt(), juce::Justification::centred, 1, 0.6f);
+        }
+    }
+    drawScribbleFrame (g, lcd, true, true, backlight);
+}
+
 void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> area, bool colourBars, bool upper)
 {
     g.setColour (juce::Colours::black);
     g.fillRoundedRectangle (area.toFloat(), 4.0f);
+    if (! upper && lowerCcLayer() < 0 && lowerLayer == MuteGroups)
+    {
+        paintMuteGroupLcd (g, area);
+        return;
+    }
     auto r = area.reduced (3, 4);
     const int w = r.getWidth() / 4;
 
@@ -1618,15 +1676,6 @@ void CustomControlSection::paintLcd (juce::Graphics& g, juce::Rectangle<int> are
             {
                 info.name = keys;
             }
-        }
-        else if (lowerLayer == MuteGroups)
-        {
-            // The names of the groups on the keys below: top row, then bottom row.
-            info.tag = "MGRP";
-            info.tagFirst = true;
-            info.number = juce::String (i + 1) + "/" + juce::String (i + 5);
-            info.line2 = ctx.engine.getMuteGroupName (i);
-            info.name = ctx.engine.getMuteGroupName (i + 4);
         }
         else if (lowerLayer == ShowControl)
         {

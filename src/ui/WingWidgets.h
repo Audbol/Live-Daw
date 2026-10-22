@@ -458,10 +458,13 @@ public:
             g.strokePath (shapeOf (capArea.expanded (0.5f)), juce::PathStrokeType (1.0f));
         }
 
-        const auto unlitCap = SurfaceLighting::unlit (dark ? Colours::keyCapDark : (backlit ? sc.keyFace : sc.keyCap));
+        // On the black console the caps are backlit; a key with nothing to do
+        // is dark, its grey cap showing.
+        const bool dimCap = ! isEnabled() && ! dark && ! backlit && ! sc.keyCapDim.isTransparent();
+        const auto unlitCap = SurfaceLighting::unlit (dark ? Colours::keyCapDark : backlit ? sc.keyFace : dimCap ? sc.keyCapDim : sc.keyCap);
         // A backlit key's face stays dark lit, a faint tint of the light at most.
         auto body = ! lit ? unlitCap : (backlit ? unlitCap.interpolatedWith (ledColour, 0.1f) : SurfaceLighting::lit (ledColour, unlitCap));
-        if (! isEnabled() && ! dark && ! backlit)
+        if (! isEnabled() && ! dark && ! backlit && ! dimCap)
             body = body.interpolatedWith (sc.surface, 0.3f);
         if (down)
             body = body.darker (0.25f);
@@ -469,11 +472,20 @@ public:
             body = body.brighter (0.07f);
         if (lit && ! backlit)
         {
-            // The LED shines through the cap's middle.
+            // The LED shines through the cap's middle (a red-orange one
+            // toward orange there).
             const auto centre = capArea.getCentre();
-            juce::ColourGradient glow (body.withRotatedHue (0.03f).brighter (0.2f), centre.x, centre.y,
+            juce::ColourGradient glow (body.withRotatedHue (body.getHue() < 0.17f ? 0.03f : 0.0f).brighter (0.2f), centre.x, centre.y,
                                        body.darker (0.08f), capArea.getX(), capArea.getY(), true);
             g.setGradientFill (glow);
+        }
+        else if (! dark && ! backlit && ! dimCap && ! sc.keyCapEdge.isTransparent())
+        {
+            // A backlit cap: brightest in the middle.
+            const auto edge = SurfaceLighting::unlit (sc.keyCapEdge)
+                                  .withMultipliedBrightness (body.getBrightness() / juce::jmax (0.01f, unlitCap.getBrightness()));
+            const auto centre = capArea.getCentre();
+            g.setGradientFill (juce::ColourGradient (body, centre.x, centre.y, edge, capArea.getX(), capArea.getY(), true));
         }
         else
         {
@@ -502,7 +514,7 @@ public:
         else if (dark)
             ink = isEnabled() ? sc.silk : sc.silk.withAlpha (0.35f);
         else
-            ink = isEnabled() ? Colours::keyPrint : Colours::keyPrint.withAlpha (0.4f);
+            ink = isEnabled() || dimCap ? sc.keyPrint : sc.keyPrint.withAlpha (0.4f);
         auto content = capArea.reduced (juce::jmin (3.0f, capArea.getWidth() * 0.06f), 0.5f);
         if (label.isEmpty() && arrow != 0)
         {

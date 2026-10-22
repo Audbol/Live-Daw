@@ -189,6 +189,7 @@ private:
     void pressLowerKey (int key);
     bool lowerKeyLit (int key) const;
     void paintLcd (juce::Graphics&, juce::Rectangle<int>, bool colourBars, bool upper);
+    void paintMuteGroupLcd (juce::Graphics&, juce::Rectangle<int>);
     bool useCursorWheel() const;
     void turnWheel (int steps);
     /** The custom control layer of the upper part (CC EDIT edits the same one). */

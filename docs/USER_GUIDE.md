@@ -80,7 +80,7 @@ surface with mid grey decks (monitoring, channel strip, 4-Channel, custom contro
 light grey keys and dark grey SELECT / SOLO / MUTE keys, black fader caps, and the
 scribble strips, meters and LCDs in black windows. SETUP > GENERAL > CONSOLE >
 SURFACE FINISH **BLACK** shows the black WING instead: a black surface with printed
-frames, frosted light grey keys in black bezels and silver fader caps. The finish is
+frames, keys backlit lavender in black bezels and silver fader caps. The finish is
 an app preference (not saved in shows) and changes the surface at once; the
 touchscreen looks the same in both.
 

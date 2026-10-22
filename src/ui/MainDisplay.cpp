@@ -353,7 +353,7 @@ class MainDisplay::ConsoleKey final : public juce::Button, private juce::Timer
 public:
     explicit ConsoleKey (const juce::String& keyText) : juce::Button (keyText) { startTimerHz (10); }
 
-    juce::Colour litColour = juce::Colour (0xfff2f2f2);
+    juce::Colour litColour = Colours::viewGreen; // a screen key lights green while its screen shows
     bool led = false; // the blank key: an LED instead of a lit key
     std::optional<Icon> icon; // printed instead of the text (the maximize key)
     std::function<void()> onPress, onHold;
@@ -370,16 +370,24 @@ public:
     {
         auto r = getLocalBounds().toFloat().reduced (1.0f);
         const bool lit = getToggleState();
-        const auto unlitBody = SurfaceLighting::unlit (juce::Colour (0xff2c2e32));
+        // On the black console the keys are backlit lavender, brightest in
+        // the middle (the blank key stays dark round its LED).
+        const auto& sc = surfaceColours();
+        const bool backlitCap = ! led && ! sc.keyCapEdge.isTransparent();
+        const auto unlitBody = SurfaceLighting::unlit (backlitCap ? sc.keyCap : juce::Colour (0xff2c2e32));
         auto fill = lit && ! led ? SurfaceLighting::lit (litColour, unlitBody) : unlitBody;
         if (down)
             fill = fill.brighter (0.15f);
         else if (over)
             fill = fill.brighter (0.06f);
-        g.setColour (fill);
+        if (backlitCap && ! lit)
+            g.setGradientFill (juce::ColourGradient (fill, r.getCentreX(), r.getCentreY(),
+                                                     SurfaceLighting::unlit (sc.keyCapEdge), r.getX(), r.getY(), true));
+        else
+            g.setColour (fill);
         g.fillRoundedRectangle (r, 5.0f);
         const bool latched = juce::Time::getMillisecondCounter() < latchedUntil;
-        g.setColour (latched ? Colours::gold : juce::Colour (0xff4a4d53));
+        g.setColour (latched ? Colours::gold : backlitCap ? sc.keyBezel : juce::Colour (0xff4a4d53));
         g.drawRoundedRectangle (r, 5.0f, latched ? 2.0f : 1.2f);
         if (led)
         {
@@ -387,11 +395,12 @@ public:
             g.fillRoundedRectangle (r.reduced (r.getWidth() * 0.32f, r.getHeight() * 0.42f), 2.0f);
             return;
         }
-        g.setColour (lit ? juce::Colours::black : surfaceColours().silk);
+        const auto ink = lit ? juce::Colours::black : backlitCap ? sc.keyPrint : sc.silk;
+        g.setColour (ink);
         if (icon)
         {
             const float side = juce::jmin (r.getWidth(), r.getHeight()) * 0.62f;
-            drawIcon (g, *icon, r.withSizeKeepingCentre (side, side), lit ? juce::Colours::black : surfaceColours().silk);
+            drawIcon (g, *icon, r.withSizeKeepingCentre (side, side), ink);
             return;
         }
         const auto keyText = getButtonText();

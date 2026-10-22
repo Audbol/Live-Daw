@@ -69,17 +69,18 @@ namespace Colours
     // Control surface hardware, the same in both finishes (the rest is in
     // SurfacePalette).
     const juce::Colour keyCapDark { 0xff16171a };   // the black keys (LISTEN, DAW)
-    const juce::Colour keyPrint { 0xff1b1c1f };     // print on a light key cap
     const juce::Colour keySelect { 0xff12f046 };    // a lit SELECT key's rim and print
-    const juce::Colour keySolo { 0xffe07a1e };      // a lit SOLO (and SOF FLIP) key's
+    const juce::Colour keySolo { 0xffe07a1e };      // a lit SOLO key's
     const juce::Colour keyMute { 0xfff8103f };      // a lit MUTE key's
-    const juce::Colour keyLayer { 0xffff9a28 };     // a lit layer or slot key
+    const juce::Colour keyLayer { 0xfff94c10 };     // a lit layer, function or mute group key, and SOF FLIP's rim: red-orange
     const juce::Colour keyWhite { 0xfff4f6fb };     // a key lit white
     const juce::Colour ledWindow { 0xff8e9094 };    // an unlit colour light bar's frosted window
     const juce::Colour ledYellow { 0xfff5e14a };    // a lit surface key
-    const juce::Colour viewGreen { 0xff52d36b };    // lit VIEW keys
+    const juce::Colour viewGreen { 0xff0ee34b };    // lit VIEW keys
     const juce::Colour ledGate { 0xfff82049 };      // the meter block's GATE LED (gate closed)
     const juce::Colour ledDyn { 0xffec7f1e };       // its DYN LED (dynamics working)
+    const juce::Colour ledGreen { 0xff2ee86a };     // a lit status LED (CHANNEL STRIP DETAILS, GROUPS)
+    const juce::Colour ledAmber { 0xfffcb424 };     // the LED meters' -6 .. -18 LEDs
     const juce::Colour segmentBlue { 0xff5a78ff };  // the custom controls' layer display
 } // namespace Colours
 
@@ -93,8 +94,9 @@ namespace Colours
       keys with dark print, black fader caps, frosted grey unlit LEDs, a black
       display unit.
     - Black: a black surface with light print and printed frames instead of
-      decks, lighter grey layer key columns, frosted light grey keys in black
-      bezels, silver fader caps and dark unlit LEDs.
+      decks, lighter grey layer key columns, keys backlit lavender (brightest
+      in the middle, dark navy print; a key with nothing to do is unlit grey)
+      in black bezels, silver fader caps and dark unlit LEDs.
     Both have the same backlit SELECT, SOLO, MUTE and SOF FLIP keys (a dark
     face in a rim that carries the light: pale lavender unlit, which daylight
     on the silver surface washes out to a light grey) and the same pale
@@ -114,7 +116,10 @@ struct SurfacePalette
     juce::Colour silk;             // print on the decks and black panels
     juce::Colour silkDim;          // fainter print
     juce::Colour sectionLine;      // printed lines on the decks
-    juce::Colour keyCap;           // an unlit key's cap
+    juce::Colour keyCap;           // an unlit key's cap, at its middle ...
+    juce::Colour keyCapEdge;       // ... and toward its edges (transparent: a plain top-lit cap)
+    juce::Colour keyCapDim;        // a key with nothing to do (transparent: keyCap, greyed)
+    juce::Colour keyPrint;         // print on an unlit key cap
     juce::Colour keyFace;          // the backlit keys' (SELECT, SOLO, MUTE, SOF FLIP) dark face
     juce::Colour keyRim;           // their rim, unlit, at the default backlight
     juce::Colour keyLegend;        // their print, unlit

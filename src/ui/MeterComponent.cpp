@@ -162,8 +162,8 @@ namespace leds
     {
         if (thresholdDb > -0.5f)
             return Colours::meterRed;
-        // The WING's LED meters: -6 to -18 orange, below that green.
-        return thresholdDb >= -18.0f ? Colours::meterOrange : Colours::meterGreen;
+        // The WING's LED meters: -6 to -18 amber, below that green.
+        return thresholdDb >= -18.0f ? Colours::ledAmber : Colours::meterGreen;
     }
 } // namespace leds
 

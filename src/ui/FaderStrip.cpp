@@ -94,21 +94,28 @@ namespace
     }
 } // namespace
 
-void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const ScribbleInfo& info)
+std::pair<juce::Colour, juce::Colour> scribbleColours (float backlightSetting, float contrastSetting)
 {
     // A negative LCD: light text on the backlight, which is one colour on
     // every strip (only the light bar above shows the strip's colour).
     // SCRIBBLE sets the backlight (the text, lit by it, follows), SCR CONT
     // how far the text stands out from the background.
-    const float backlight = juce::jlimit (0.2f, 1.6f, info.backlight);
+    const float backlight = juce::jlimit (0.2f, 1.6f, backlightSetting);
     const auto bg = surfaceColours().scribbleLcd.withMultipliedBrightness (backlight);
+    const float contrast = juce::jlimit (0.0f, 1.0f, 0.55f + 0.75f * (contrastSetting - 0.4f));
+    const auto ink = bg.interpolatedWith (surfaceColours().scribbleInk, 0.45f + 0.55f * contrast)
+                         .withMultipliedBrightness (juce::jlimit (0.55f, 1.0f, 0.55f + 0.45f * backlight));
+    return { bg, ink };
+}
+
+void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const ScribbleInfo& info)
+{
+    const auto colours = scribbleColours (info.backlight, info.contrast);
+    const auto bg = colours.first, ink = colours.second;
     g.setColour (bg);
     g.fillRect (lcd);
     if (info.isEmpty())
         return;
-    const float contrast = juce::jlimit (0.0f, 1.0f, 0.55f + 0.75f * (info.contrast - 0.4f));
-    const auto ink = bg.interpolatedWith (surfaceColours().scribbleInk, 0.45f + 0.55f * contrast)
-                         .withMultipliedBrightness (juce::jlimit (0.55f, 1.0f, 0.55f + 0.45f * backlight));
 
     const float H = lcd.getHeight(), W = lcd.getWidth();
     const float pad = juce::jlimit (2.0f, 6.0f, W * 0.04f);
@@ -167,7 +174,7 @@ void drawScribble (juce::Graphics& g, juce::Rectangle<float> lcd, const Scribble
 
     // Bottom: the footer under its rule, then the name, centred (on an
     // inverted bar for a CC named "|...").
-    if (info.footer.isNotEmpty())
+    if (info.footer.isNotEmpty() || info.footerRow)
     {
         auto foot = r.removeFromBottom (juce::jmax (8.0f, std::round (H * 0.18f)));
         g.setColour (ink.withMultipliedAlpha (0.85f));

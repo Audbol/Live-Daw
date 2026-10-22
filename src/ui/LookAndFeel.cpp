@@ -47,7 +47,10 @@ const SurfacePalette& SurfacePalette::of (SurfaceFinish finish)
         .silk = juce::Colour (0xffe4e5e8),
         .silkDim = juce::Colour (0xffa4a6aa),
         .sectionLine = juce::Colour (0xffd8d9dc),
-        .keyCap = juce::Colour (0xffc4c3bf),
+        .keyCap = juce::Colour (0xffc1c0c4), // a shade cooler than the surface
+        .keyCapEdge = juce::Colours::transparentBlack,
+        .keyCapDim = juce::Colours::transparentBlack,
+        .keyPrint = juce::Colour (0xff1b1c1f),
         .keyFace = juce::Colour (0xff3e3d41),
         .keyRim = juce::Colour (0xffacabb4),
         .keyLegend = juce::Colour (0xffbdbbc3),
@@ -80,7 +83,10 @@ const SurfacePalette& SurfacePalette::of (SurfaceFinish finish)
         .silk = juce::Colour (0xffc4c7cc),
         .silkDim = juce::Colour (0xff8a8d92),
         .sectionLine = juce::Colour (0xff8b8e94),
-        .keyCap = juce::Colour (0xffc8cbd1),
+        .keyCap = juce::Colour (0xffa9a6ea), // backlit lavender, dimmer toward the edges
+        .keyCapEdge = juce::Colour (0xff7b74aa),
+        .keyCapDim = juce::Colour (0xff9ea6a6), // no backlight: the grey cap itself
+        .keyPrint = juce::Colour (0xff1c1e3c),
         .keyFace = juce::Colour (0xff2a2a2e),
         .keyRim = juce::Colour (0xffaaa2e2),
         .keyLegend = juce::Colour (0xffa497d8),

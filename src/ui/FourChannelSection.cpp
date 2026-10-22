@@ -95,7 +95,7 @@ FourChannelSection::FourChannelSection (UiContext& c, std::function<Strip* (int)
                 case Gate:   if (s->getKind() == StripKind::Channel) flip (p.gate.on); break;
                 case Comp:   flip (p.dynamics.on); break;
                 case Filter: if (s->getKind() == StripKind::Channel) flip (p.filter.lowCut); break;
-                case Pan:    flip (p.mains[0].on); break;
+                case Pan:    if (s->isInput() || s->isBus()) flip (p.mains[0].on); break;
                 case F1:
                 case F2:
                 case F3:
@@ -122,7 +122,7 @@ FourChannelSection::FourChannelSection (UiContext& c, std::function<Strip* (int)
                 case Gate:   on = p.gate.on.load(); break;
                 case Comp:   on = p.dynamics.on.load(); break;
                 case Filter: on = p.filter.lowCut.load(); break;
-                case Pan:    on = p.mains[0].on.load(); break;
+                case Pan:    on = (s->isInput() || s->isBus()) && p.mains[0].on.load(); break;
                 case F1:
                 case F2:
                 case F3:
@@ -344,8 +344,12 @@ void FourChannelSection::paint (juce::Graphics& g)
             if (info.value.endsWith (" dB"))
                 info.value = info.value.dropLastCharacters (3);
             info.caption = b.label.endsWith (" THR") ? juce::String ("THR") : modeCaption();
-            if (channelKeys[i]->isEnabled() && channelKeys[i]->ledState)
+            // A main or matrix has no MAIN 1 send: under PAN its key's row
+            // stays empty.
+            const bool noKey = mode == Pan && ! (s->isInput() || s->isBus());
+            if (channelKeys[i]->isEnabled() && channelKeys[i]->ledState && ! noKey)
                 info.footer = channelKeys[i]->ledState() == SurfaceKey::Lit ? "ON" : "OFF";
+            info.footerRow = noKey;
         }
         info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
         info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
