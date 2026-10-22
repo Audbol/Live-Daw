@@ -512,7 +512,7 @@ namespace
             addAndMakeVisible (operation);
 
             // The CC section's arrows and wheel move a focus frame over the screen and edit it (firmware 1.13).
-            options.addRow ("USE CRSR/WHEEL FOR PARAMETERS", OnKey::forSetting (ctx.settings, uiprefs::useCursorWheel, false), 1.3f);
+            options.addRow ("USE CRSR/WHEEL FOR PARAMETERS", OnKey::forSetting (ctx.settings, uiprefs::useCursorWheel, true), 1.3f);
             options.addRow ("TOUCH FADER SELECT", OnKey::forSetting (ctx.settings, uiprefs::touchFaderSelect, false), 1.3f);
             options.addRow ("TOUCH FADER RES",
                             std::make_unique<ChoiceKeys> (juce::StringArray { "NORM", "FINE", "AUTO" },
@@ -980,7 +980,7 @@ namespace
                                                                                       [&settings] (int i) { settings.setValue ("ui.mainMeter", i); });
                                                               }),
                              3.6f, true, false, kFieldRows);
-            metering.addRow ("MAIN METER TAP", fixedChoice ({ "AUTO", "PRE", "POST" }, 0, ChoiceKeys::autoPrePost()), 3.6f, false);
+            metering.addRow ("MAIN METER TAP", fixedChoice ({ "AUTO", "PRE", "POST" }, 2, ChoiceKeys::autoPrePost()), 3.6f, false);
             // PRE or POST per strip type: the VIEW screens' meters follow these (the
             // surface's LED meters can read them with prefs::meterPoint).
             for (int i = 0; i < prefs::kNumMeterTaps; ++i)
@@ -990,12 +990,12 @@ namespace
                                  2.4f);
             addAndMakeVisible (metering);
 
-            // SELECT on the selected strip again (ui.selDblClick: 0 HOME, 1 BUSFX, 2 OFF).
+            // SELECT on the selected strip again (ui.selDblClick: 0 HOME, 1 BUSFX (the factory setting), 2 OFF).
             general.addRow ("SEL DBL CLICK",
                             std::make_unique<ChoiceKeys> (juce::StringArray { "OFF", "HOME", "BUSFX" },
                                                           [this]
                                                           {
-                                                              const int v = ctx.settings.getIntValue ("ui.selDblClick", 0);
+                                                              const int v = ctx.settings.getIntValue ("ui.selDblClick", 1);
                                                               return v == 2 ? 0 : v == 1 ? 2 : 1;
                                                           },
                                                           [this] (int i)
@@ -1005,14 +1005,14 @@ namespace
                                                           }),
                             3.7f);
             // The rest change how the fader strips, the channel strip and the status bar behave.
-            general.addRow ("TAP TEMPO FLASH", fixedChoice ({ "OFF", "8X", "ON" }, 0), 3.7f, false); // custom control tap keys
+            general.addRow ("TAP TEMPO FLASH", fixedChoice ({ "OFF", "8X", "ON" }, 2), 3.7f, false); // custom control tap keys
             general.addRow ("SOF BUTTON", choiceSetting (uiprefs::sofButton, { "AUTO", "ON", "FLASH" }, 0), 3.7f);
-            general.addRow ("SHOW SOF FRAME", OnKey::forSetting (ctx.settings, uiprefs::showSofFrame, false), 1.3f);
+            general.addRow ("SHOW SOF FRAME", OnKey::forSetting (ctx.settings, uiprefs::showSofFrame, true), 1.3f);
             general.addRow ("SHOW SOURCE ON SCRIBBLE", onSetting (uiprefs::sourceOnScribble, true), 1.3f);
             general.addRow ("SHOW FADER VALUE ON SCRIBBLE", onSetting (uiprefs::faderValueOnScribble, false), 1.3f);
             general.addRow ("USE F1-F3 AS CUSTOM CONTROLS", onSetting (uiprefs::f1f3AsCustom, false), 1.3f);
             general.addRow ("SCREEN FOLLOWS CH STRIP", OnKey::forSetting (ctx.settings, uiprefs::screenFollowsStrip, false), 1.3f);
-            general.addRow ("CH STRIP TOUCH SELECT", OnKey::forSetting (ctx.settings, uiprefs::stripTouchSelect, false), 1.3f);
+            general.addRow ("CH STRIP TOUCH SELECT", OnKey::forSetting (ctx.settings, uiprefs::stripTouchSelect, true), 1.3f);
             addAndMakeVisible (general);
 
             faders.addRow ("FADER SPEED", choiceSetting (uiprefs::faderSpeed, { "SLOW", "MED", "FAST" }, 1), 3.65f);

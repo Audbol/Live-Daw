@@ -663,7 +663,7 @@ void FaderStrip::pressSelect()
     // 0 = Channel Home, 1 = INS1 for buses (Channel Home otherwise), 2 = nothing.
     if (ctx.getSelectedStrip && ctx.getSelectedStrip() == strip)
     {
-        const int mode = ctx.settings.getIntValue ("ui.selDblClick", 0);
+        const int mode = ctx.settings.getIntValue ("ui.selDblClick", 1);
         if (mode != 2 && ctx.showHomeTab)
             ctx.showHomeTab (mode == 1 && strip->isBus() ? HomeTab::PreInsert : HomeTab::Home);
         return;

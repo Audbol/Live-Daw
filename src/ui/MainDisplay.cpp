@@ -1366,7 +1366,7 @@ void MainDisplay::timerCallback()
                                                                         1 << 30);
     hash = hash * 31u + (juce::uint32) ctx.engine.getNumFaultedFx();
     hash = hash * 31u + (ctx.deviceManager.getCurrentAudioDevice() != nullptr ? 1u : 0u);
-    hash = hash * 31u + (ctx.sendsOnFader ? 1u : 0u) + (ctx.settings.getBoolValue (uiprefs::showSofFrame, false) ? 2u : 0u);
+    hash = hash * 31u + (ctx.sendsOnFader ? 1u : 0u) + (ctx.settings.getBoolValue (uiprefs::showSofFrame, true) ? 2u : 0u);
     hash = hash * 31u + (juce::uint32) ctx.show.getCurrentSceneIndex() + (ctx.settings.getBoolValue (uiprefs::alwaysShowScene, false) ? 1000u : 0u);
     // The SIP badge and the talkback frame.
     hash = hash * 31u + (juce::uint32) ctx.engine.soloMode.load() * 4u + (ctx.engine.sipActive.load() ? 2u : 0u) + (ctx.engine.isTalking() ? 1u : 0u);
@@ -1565,7 +1565,7 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
     }
 
     // SHOW SOF FRAME: a frame and a SOF badge while Sends on Fader is on.
-    if (ctx.sendsOnFader && ctx.settings.getBoolValue (uiprefs::showSofFrame, false))
+    if (ctx.sendsOnFader && ctx.settings.getBoolValue (uiprefs::showSofFrame, true))
         paintTabBadge (g, tab, "SOF", Colours::gold, true);
     // The talkback frame (firmware 1.11, "frame on selected channel and during
     // talk"): on the talkback channel's tab, and on any tab while talking.

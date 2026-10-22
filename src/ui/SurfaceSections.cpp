@@ -294,7 +294,7 @@ void ChannelStripSection::followScreen (int slot, bool touch)
     // SCREEN FOLLOWS CH STRIP: the display shows the block being edited here;
     // CH STRIP TOUCH SELECT: touching an encoder does too (SETUP > SURFACE).
     const bool follow = ctx.settings.getBoolValue (uiprefs::screenFollowsStrip, false)
-                        || (touch && ctx.settings.getBoolValue (uiprefs::stripTouchSelect, false));
+                        || (touch && ctx.settings.getBoolValue (uiprefs::stripTouchSelect, true));
     if (follow && strip != nullptr && ctx.showHomeTab)
         ctx.showHomeTab (homeTabOf (slot));
 }
@@ -1313,7 +1313,7 @@ void CustomControlSection::pressLowerKey (int key)
 
 bool CustomControlSection::useCursorWheel() const
 {
-    return ctx.settings.getBoolValue (uiprefs::useCursorWheel, false);
+    return ctx.settings.getBoolValue (uiprefs::useCursorWheel, true);
 }
 
 int CustomControlSection::currentLayer() const
