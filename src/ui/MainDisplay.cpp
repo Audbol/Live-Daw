@@ -97,7 +97,9 @@ namespace
         };
         const auto choose = [&]() -> Choice
         {
-            if (label.contains ("WIDTH") || word ("Q"))
+            if (word ("Q"))
+                return { KnobStyle::Bar::Width, KnobColours::qGreen };
+            if (label.contains ("WIDTH"))
                 return { KnobStyle::Bar::Centre, KnobColours::green };
             if (label.contains ("TILT"))
                 return { KnobStyle::Bar::Centre, KnobColours::cyan };
@@ -231,6 +233,17 @@ public:
                     g.setColour (Colours::text);
                     g.fillRect (bar.getCentreX() - 1.0f, y - thumbH * 0.5f, 2.0f, thumbH);
                 }
+                return;
+            }
+            case KnobStyle::Bar::Width:
+            {
+                // The lowest Q fills the track, a higher one less of it.
+                line();
+                const float half = (1.0f - position) * bar.getWidth() * 0.5f;
+                g.setColour (colour);
+                g.fillRoundedRectangle (bar.getCentreX() - half, y - thick * 0.5f, half * 2.0f, thick, thick * 0.3f);
+                g.setColour (Colours::text);
+                g.fillRect (bar.getCentreX() - 1.0f, y - thumbH * 0.5f, 2.0f, thumbH);
                 return;
             }
             case KnobStyle::Bar::Thumb:
@@ -1732,7 +1745,7 @@ void MainDisplay::paintStatusBar (juce::Graphics& g)
     {
         const auto& key = statusKeys[i];
         const auto area = statusKeyAreas[i];
-        tile (area, key.lit ? Colours::caption : Colours::screenHeader);
+        tile (area, key.lit ? Colours::textDim : Colours::screenHeader); // lit: #707070 [3.1]
         const auto keyInk = key.lit ? juce::Colours::black : key.ink.value_or (Colours::textDim);
         auto r = area.toFloat().reduced (3.0f * k);
         g.setColour (keyInk);
@@ -1987,8 +2000,15 @@ void MainDisplay::layoutStatusBar()
     statusKeyAreas.clear();
     const int n = (int) statusKeys.size();
     const float keyW = n <= 5 ? 72.0f : (392.0f - 8.0f * (float) (n - 1)) / (float) n;
-    for (int i = 0; i < n; ++i)
-        statusKeyAreas.push_back (wingRect (736.0f + (keyW + 8.0f) * (float) i, 8.0f, keyW, 64.0f));
+    int left = 0, right = 0;
+    for (auto& key : statusKeys)
+        right += key.atRight ? 1 : 0;
+    for (auto& key : statusKeys)
+    {
+        // The right-hand keys end at the clock (1128), the others start at 736.
+        const float x = key.atRight ? 1128.0f - (keyW + 8.0f) * (float) (right--) + 8.0f : 736.0f + (keyW + 8.0f) * (float) (left++);
+        statusKeyAreas.push_back (wingRect (x, 8.0f, keyW, 64.0f));
+    }
 }
 
 } // namespace livedaw::ui

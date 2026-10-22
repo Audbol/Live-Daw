@@ -218,7 +218,8 @@ void ResponseGraph::paintRta (juce::Graphics& g, juce::Rectangle<float> area, co
 juce::Rectangle<float> ResponseGraph::curvePlot() const
 {
     auto p = plot();
-    if (rtaShown)
+    // (KEY FILTER / XOVER keep their whole plot [3.1].)
+    if (rtaShown && ! (isKeyView() && showLabels()))
         if (const auto l = rtaLayout(); l.view >= 0 && l.split)
             p.removeFromTop (p.getHeight() * l.fraction); // the RTA's strip under the ruler [D10]
     return p;
@@ -323,6 +324,14 @@ juce::Rectangle<float> ResponseGraph::plot() const
     // Labels only when there is room for them (the full screens); the overview
     // panel shows the bare grid like the console.
     auto r = getLocalBounds().toFloat().reduced (1.0f);
+    if (isKeyView() && showLabels())
+    {
+        // [3.1] KEY FILTER / XOVER: the plot from 140 WING pixels under the
+        // ruler's top (the FREQ name inside it), the frequencies under it.
+        r.removeFromBottom (juce::jmax (15.0f, wingPx (24.0f)));
+        r.removeFromTop (wingPx (139.0f));
+        return r;
+    }
     const float rulerH = juce::jlimit (5.0f, screenCap (14.0f), getHeight() * 0.03f);
     if (ruler == Ruler::Top)
         r.removeFromTop (rulerH + juce::jmax (4.0f, getHeight() * 0.02f));
@@ -512,7 +521,25 @@ void ResponseGraph::paint (juce::Graphics& g)
         g.strokePath (curve, juce::PathStrokeType (juce::jlimit (2.0f, 3.0f, getHeight() / 120.0f)));
         g.restoreState();
         if (auto* freq = keyFreq())
-            line (freq->load(), labelColour, "FREQ");
+        {
+            if (! showLabels())
+            {
+                line (freq->load(), labelColour, "FREQ");
+                return;
+            }
+            // [3.1] the name 25 px into the plot, the line from 56 px down to
+            // the bottom, an open white ring 56 px over the bottom.
+            const float x = xForFreq (freq->load());
+            const auto ring = juce::Point<float> (x, p.getBottom() - wingPx (56.0f));
+            const float radius = wingPx (12.5f), stroke = juce::jmax (1.5f, wingPx (3.0f));
+            g.setColour (labelColour);
+            g.fillRect (x - 1.0f, p.getY() + wingPx (56.0f), 2.0f, ring.y - radius - p.getY() - wingPx (56.0f));
+            g.fillRect (x - 1.0f, ring.y + radius, 2.0f, p.getBottom() - ring.y - radius);
+            g.setFont (wingFont (TypeScale::body));
+            g.drawText ("FREQ", juce::Rectangle<float> (wingPx (80.0f), wingPx (26.0f)).withCentre ({ x, p.getY() + wingPx (25.0f) }), juce::Justification::centred);
+            g.setColour (juce::Colours::white);
+            g.drawEllipse (juce::Rectangle<float> (radius * 2.0f, radius * 2.0f).withCentre (ring), stroke);
+        }
         return;
     }
 

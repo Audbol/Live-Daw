@@ -1873,6 +1873,12 @@ public:
             pageXoSolo->outlined = true;
             bindListen (*pageXoSolo, strip, ld::kListenXover);
         }
+        // The page's DEPTH (the crossover) and Q (band pass, notch, PEAK) boxes.
+        pageDepth = &make<KnobBox> (depthBinding());
+        pageDepth->ringFill = KnobBox::Ring::Centre;
+        pageQ = &make<KnobBox> (KnobBinding {});
+        pageQ->ringFill = KnobBox::Ring::Width;
+        pageQ->ringColour = pageQ->valueColour = KnobColours::qGreen;
         bindModel();
         startTimerHz (8);
     }
@@ -1882,16 +1888,15 @@ public:
         std::vector<HomeKnob> k;
         if (page != Page::Slot)
         {
-            // FREQ on the fifth knob [3.1]; Q (band pass, notch, the crossover's
-            // PEAK) on the sixth, the crossover's DEPTH on the fourth.
-            const bool xover = page == Page::Xover;
-            auto& freq = xover ? slot.xoFreq : slot.scFreq;
+            // [3.1] the crossover's DEPTH on the third knob, Q (band pass,
+            // notch, the crossover's PEAK) on the fourth, FREQ on the fifth.
             k.resize (6);
-            if (xover && slot.xoKind.load() > 0)
-                k[3] = { bindLinear ("DEPTH", slot.xoDepth, -30.0f, 30.0f, " dB", 1, 6.0f), widthStyle (pageGraph) };
-            k[4] = { wingFreq ("FREQ", freq, 20.0f, 20000.0f, kKeyFilterDefaultHz), freqStyle (pageGraph) };
-            if (xover ? slot.xoKind.load() == 5 : slot.scFilter.load() >= 3)
-                k[5] = { xover ? bindLog ("Q", slot.xoQ, 0.4f, 4.0f, {}, 0.4f) : bindLog ("Q", slot.scQ, 0.44f, 10.0f, {}, 1.995882f), widthStyle (pageGraph) };
+            if (showsDepth())
+                k[2] = { depthBinding(), styleOf (KnobStyle::Bar::Centre, KnobColours::white, pageDepth) };
+            if (showsQ())
+                k[3] = { qBinding(), qStyle (pageQ) };
+            k[4] = { wingFreq ("FREQ", page == Page::Xover ? slot.xoFreq : slot.scFreq, 20.0f, 20000.0f, kKeyFilterDefaultHz),
+                     styleOf (KnobStyle::Bar::Thumb, KnobColours::blue, pageGraph) };
             return k;
         }
         const auto& spec = models::model (models::Dynamics, slot.model.load());
@@ -1925,7 +1930,7 @@ public:
         for (auto* c : std::initializer_list<juce::Component*> { on, model, mix, gain, accent, keyTap, keySource, keyFilter, keySolo, xoMode, xoSolo, graph, envelope, face })
             if (c != nullptr)
                 c->setVisible (slotPage);
-        for (auto* c : std::initializer_list<juce::Component*> { pageClose, pageGraph, pageType, pageXoType, pageKeySolo, pageXoSolo })
+        for (auto* c : std::initializer_list<juce::Component*> { pageClose, pageGraph, pageType, pageXoType, pageKeySolo, pageXoSolo, pageDepth, pageQ })
             if (c != nullptr)
                 c->setVisible (false);
         for (auto& t : toggles)
@@ -2044,6 +2049,7 @@ private:
     ChoiceField *keySource = nullptr, *keyFilter = nullptr, *keyTap = nullptr, *xoMode = nullptr;
     IconKey *pageClose = nullptr, *pageKeySolo = nullptr, *pageXoSolo = nullptr;
     ResponseGraph* pageGraph = nullptr;
+    KnobBox *pageDepth = nullptr, *pageQ = nullptr;
     ChoiceField *pageType = nullptr, *pageXoType = nullptr;
     std::vector<juce::Rectangle<int>> bands;
     juce::Rectangle<int> body, togglePanel;
@@ -2076,6 +2082,14 @@ private:
     {
         return make<ChoiceField> (caption, [items, &value] { return items[value.load()]; },
                                   [items, &value] (ChoiceField& f) { popups::chooseFrom (f, items, value.load(), [&value] (int i) { value = i; }); });
+    }
+
+    bool showsDepth() const { return page == Page::Xover && slot.xoKind.load() > 0; }
+    bool showsQ() const { return page == Page::Xover ? slot.xoKind.load() == 5 : slot.scFilter.load() >= 3; }
+    KnobBinding depthBinding() { return bindLinear ("DEPTH", slot.xoDepth, -30.0f, 30.0f, " dB", 1, 6.0f); }
+    KnobBinding qBinding()
+    {
+        return page == Page::Xover ? bindLog ("Q", slot.xoQ, 0.4f, 4.0f, {}, 0.4f) : bindLog ("Q", slot.scQ, 0.44f, 10.0f, {}, 1.995882f);
     }
 
     juce::String pageTitle() const
@@ -2117,6 +2131,12 @@ private:
         auto* solo = xover ? pageXoSolo : pageKeySolo;
         solo->setBounds (at (980.0f, 0.0f, 1152.0f, 64.0f).withY (lower.getBottom() - juce::roundToInt (72.0f * (float) getWidth() / 1160.0f)));
         solo->setVisible (true);
+        // DEPTH, then Q, in the panel's upper part [3.1].
+        pageDepth->setBounds (at (980.0f, 256.0f, 1152.0f, 320.0f));
+        pageDepth->setVisible (showsDepth());
+        pageQ->setBinding (qBinding());
+        pageQ->setBounds (at (980.0f, 328.0f, 1152.0f, 392.0f));
+        pageQ->setVisible (showsQ());
     }
 
     /** The parameters on the six knobs, in the console's order: the WING
@@ -4171,7 +4191,7 @@ public:
             k.push_back ({ band, styleOf (KnobStyle::Bar::Segments, colours::accent, tapEqPanel, ld::kTapEqBands) });
             k.push_back ({});
             k.push_back ({ bindLinear ("GAIN", b.gainDb, -15.0f, 15.0f, " dB", 1, 0.0f), thumbStyle (tapEqPanel) });
-            k.push_back ({ bindLog ("Q", b.q, 0.442f, 10.0f, {}, 1.0f), widthStyle (tapEqPanel) });
+            k.push_back ({ bindLog ("Q", b.q, 0.442f, 10.0f, {}, 1.0f), qStyle (tapEqPanel) });
             k.push_back ({ wingFreq ("FREQ", b.freq, 20.0f, 20000.0f, 1000.0f), styleOf (KnobStyle::Bar::Thumb, KnobColours::blue, tapEqPanel) });
             k.push_back ({ wingWidth ("TAP WIDTH", strip.params.tapWidth), widthStyle (tapWidth) });
             return k;

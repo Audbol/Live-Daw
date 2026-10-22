@@ -85,6 +85,19 @@ impl XoverSettings {
             _ => BiquadCoeffs::identity(),
         }
     }
+
+    /// The curve the COMP XOVER page draws (firmware 3.1): for PEAK the
+    /// signal with the band taken down by DEPTH (a dip of DEPTH dB at FREQ, as
+    /// wide as Q says: `1 - k * band` over the band's own poles); the other
+    /// modes draw their band filter.
+    pub fn graph_coefficients(&self, sr: f64) -> BiquadCoeffs {
+        if self.kind != 5 {
+            return self.coefficients(sr);
+        }
+        let band = self.coefficients(sr);
+        let k = 1.0 - 10f64.powf(-(self.depth as f64) / 20.0);
+        BiquadCoeffs { b0: 1.0 - k * band.b0, b1: band.a1 - k * band.b1, b2: band.a2 - k * band.b2, a1: band.a1, a2: band.a2 }
+    }
 }
 
 /// What the slot did in the last block (meters and LEDs).
@@ -1914,6 +1927,17 @@ mod tests {
     use crate::wing::{model_index, ParamKind};
 
     const SR: f32 = 48000.0;
+
+    #[test]
+    fn xover_graph_dips_by_depth() {
+        // PEAK at 1 kHz, Q 0.40, DEPTH 6 dB: -6 dB at FREQ, flat far from it; FLAT is flat.
+        let peak = XoverSettings { kind: 5, ..Default::default() }.graph_coefficients(48000.0);
+        let db = |f: f64| 20.0 * peak.magnitude_at(f, 48000.0).log10();
+        assert!((db(1000.0) + 6.0).abs() < 0.1, "{}", db(1000.0));
+        assert!(db(20.0).abs() < 0.5 && db(20000.0).abs() < 0.5);
+        let flat = XoverSettings::default().graph_coefficients(48000.0);
+        assert!((flat.magnitude_at(1000.0, 48000.0) - 1.0).abs() < 1e-9);
+    }
 
     fn defaults(token: &str) -> (usize, [f32; MAX_DYN_PARAMS]) {
         let i = model_index(DYN_MODELS, token).unwrap();

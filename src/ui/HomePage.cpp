@@ -1290,14 +1290,14 @@ public:
             return;
 
         auto b = getLocalBounds();
-        // On Channel Home (WING pixels): thumbnails 8-104, the key's pointer at
-        // 116-124, keys 124-192, then the black gap up to the content at 284
-        // (the tag chips and, in wrench mode, the TAP flag). The slot screens
-        // show only the thumbnails.
-        const int unitW = keys ? 276 : 96;
+        // On Channel Home (WING pixels, the column from 8): thumbnails 8-104,
+        // the key's pointer at 116-124, keys 124-192, then the black gap up to
+        // the content at 284 (the tag chips and, in wrench mode, the TAP flag).
+        // The slot screens show only the thumbnails.
+        const int unitW = keys ? 268 : 96;
         const int thumbW = b.getWidth() * 96 / unitW;
         const int keyW = keys ? b.getWidth() * 68 / unitW : 0;
-        const int keyX = b.getX() + b.getWidth() * 116 / unitW;
+        const int keyX = b.getX() + b.getWidth() * 108 / unitW;
         gapArea = keys ? b.withLeft (keyX + keyW) : juce::Rectangle<int>();
         keyLeft = keyX;
         // Nine rows and the thin fader bar.
@@ -1882,7 +1882,7 @@ private:
                 g.fillRect (at (66.0f, 5.0f, 7.0f, 7.0f));
                 chip (g, at (6.0f, 44.0f, 24.0f, 15.0f), "S/C", slot.scSource.load() >= 0);
                 if (! gate)
-                    chip (g, at (36.0f, 44.0f, 24.0f, 15.0f), "X/O", slot.xoKind.load() > 0);
+                    chip (g, at (36.0f, 44.0f, 24.0f, 15.0f), "X/O", slot.xoKind.load() > 0, KnobColours::blue); // blue, as the crossover's curve
                 return;
             }
 
@@ -2325,13 +2325,16 @@ void HomePage::resized()
     if (overlay != nullptr)
         overlay->setBounds (b);
 
-    // The toolbar: thumbnails, keys and the black gap on Channel Home (the
-    // content starts at 284 of 1280 WING pixels), only the thumbnails on the
-    // slot screens (content from 112).
+    // The toolbar, 8 of 1280 WING pixels in: thumbnails, keys and the black
+    // gap on Channel Home (the content starts at 284), only the thumbnails on
+    // the slot screens (content from 112); the content ends 8 px from the
+    // right edge.
     const bool overviewGroup = isOverviewGroup (current);
     const int screenW = getWidth();
     const int thumbW = juce::jlimit (40, 120, screenW * 75 / 1000);
-    const int colW = overviewGroup ? thumbW * 276 / 96 : thumbW;
+    const int colW = overviewGroup ? thumbW * 268 / 96 : thumbW;
+    b.removeFromLeft (juce::jmax (4, screenW / 160));
+    b.removeFromRight (juce::jmax (4, screenW / 160));
     column->setBounds (b.removeFromLeft (colW));
     b.removeFromLeft (juce::jmax (4, screenW / 160));
 

@@ -7,29 +7,32 @@ namespace livedaw::ui
 
 namespace
 {
-    // fig. 78's colours [manual p. 87].
+    // The USB screen's colours (firmware 3.1).
     const juce::Colour panelGrey { 0xff202020 };
-    const juce::Colour keyGrey { 0xff333333 };
-    const juce::Colour keyLine { 0xff4a4a4a };
-    const juce::Colour rowLine { 0xff1c1c1c };
+    const juce::Colour keyGrey { 0xff303030 };     // an enabled key, framed #c0c0c0
+    const juce::Colour keyOffInk { 0xff484848 };   // a disabled key's icon and caption
     const juce::Colour selectedFill { 0xff342d12 };
-    const juce::Colour wavChip { 0xffa6c87a };
+    const juce::Colour folderBlue { 0xffa0b8e0 };  // folder names and icons
+    const juce::Colour openKey { 0xff282c38 };     // a folder row's > key
+    const juce::Colour wavChip { 0xff98b870 };
     const juce::Colour listChip { 0xff6ca0dc };
-    const juce::Colour timeRed { 0xfff0453a };
+    const juce::Colour dateGrey { 0xff585858 };
+    const juce::Colour timeRed { 0xfff05050 };
     const juce::Colour recRed { 0xfff54d42 };
     const juce::Colour playGreen { 0xff1dee60 };
-    const juce::Colour captionGrey { 0xff3c3c3c };
-    const juce::Colour chipGrey { 0xff3b3b3b };
-    const juce::Colour formatOff { 0xff59595b };
+    const juce::Colour stopYellow { 0xfff8c430 };  // the state light while stopped
+    const juce::Colour captionGrey { 0xff484848 };
+    const juce::Colour chipGrey { 0xff585858 };
     const juce::Colour reelGrey { 0xff949494 };
     const juce::Colour timelineFill { 0xff7f6a2f };
     const juce::Colour titleBlue { 0xff448ad7 };
     const juce::Colour flagYellow { 0xffe8d020 };
+    const juce::Colour playlistInk { 0xff204870 }; // the PLAYLIST tab while the browser shows
 
-    constexpr float kFigW = 1560.0f, kFigTop = 100.0f, kFigH = 878.0f;
+    constexpr float kFigW = 1280.0f, kFigTop = 80.0f, kFigH = 720.0f;
 
-    /** A rectangle given in fig. 78's coordinates (1560 x 978, the status bar
-        above y = 100), scaled to the page. */
+    /** A rectangle given in WING screen pixels (1280 x 800, the status bar
+        above y = 80), scaled to the page. */
     juce::Rectangle<int> fig (juce::Rectangle<int> page, float x0, float y0, float x1, float y1)
     {
         const float sx = (float) page.getWidth() / kFigW, sy = (float) page.getHeight() / kFigH;
@@ -159,11 +162,12 @@ namespace
         g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (r.getCentre()));
     }
 
-    /** A seven-segment readout (the WING's red time). */
+    /** A seven-segment readout (the WING's red time): upright digits 16 x 26
+        with 2 px segments; a colon is a blank gap, as on the console. */
     float sevenSegment (juce::Graphics& g, juce::Rectangle<float> area, const juce::String& text, juce::Colour on, juce::Justification just)
     {
         static const int masks[] = { 0x3f, 0x06, 0x5b, 0x4f, 0x66, 0x6d, 0x7d, 0x07, 0x7f, 0x6f };
-        const float h = area.getHeight(), w = h * 0.5f, gap = h * 0.16f, colonW = h * 0.2f, t = juce::jmax (1.5f, h * 0.095f);
+        const float h = area.getHeight(), w = h * 0.62f, gap = h * 0.08f, colonW = h * 0.23f, t = juce::jmax (1.2f, h * 0.08f);
         float total = 0.0f;
         for (auto ch : text)
             total += (ch == ':' ? colonW : w) + gap;
@@ -173,17 +177,10 @@ namespace
                                                                : area.getCentreX() - total * 0.5f;
         const float y = area.getY();
         g.setColour (on);
-        // A slight slant, as on the console.
-        const auto slant = juce::AffineTransform::shear (-0.08f, 0.0f).translated (0.08f * (y + h), 0.0f);
         for (auto ch : text)
         {
             if (ch == ':')
             {
-                const float d = t * 1.1f;
-                juce::Path dots;
-                dots.addEllipse (x + colonW * 0.5f - d * 0.5f, y + h * 0.3f - d * 0.5f, d, d);
-                dots.addEllipse (x + colonW * 0.5f - d * 0.5f, y + h * 0.72f - d * 0.5f, d, d);
-                g.fillPath (dots, slant);
                 x += colonW + gap;
                 continue;
             }
@@ -194,8 +191,8 @@ namespace
                 mask = 0x40;
             juce::Path p;
             const float m = h * 0.5f;
-            auto horiz = [&] (float yy) { p.addRoundedRectangle (x + t * 0.6f, yy - t * 0.5f, w - t * 1.2f, t, t * 0.4f); };
-            auto vert = [&] (float xx, float y0, float y1) { p.addRoundedRectangle (xx - t * 0.5f, y0 + t * 0.6f, t, y1 - y0 - t * 1.2f, t * 0.4f); };
+            auto horiz = [&] (float yy) { p.addRectangle (x + t * 0.8f, yy - t * 0.5f, w - t * 1.6f, t); };
+            auto vert = [&] (float xx, float y0, float y1) { p.addRectangle (xx - t * 0.5f, y0 + t * 0.8f, t, y1 - y0 - t * 1.6f); };
             if (mask & 0x01) horiz (y + t * 0.5f);
             if (mask & 0x02) vert (x + w - t * 0.5f, y, y + m);
             if (mask & 0x04) vert (x + w - t * 0.5f, y + m, y + h);
@@ -203,7 +200,7 @@ namespace
             if (mask & 0x10) vert (x + t * 0.5f, y + m, y + h);
             if (mask & 0x20) vert (x + t * 0.5f, y, y + m);
             if (mask & 0x40) horiz (y + m);
-            g.fillPath (p, slant);
+            g.fillPath (p);
             x += w + gap;
         }
         return x - gap;
@@ -242,63 +239,47 @@ namespace
         g.fillEllipse (juce::Rectangle<float> (roller * 0.8f, roller * 0.8f).withCentre ({ cx2 - d * 0.2f, by }));
     }
 
-    /** The console's meter scale: -60, -48, -36, -24, -12, -6, 0 dB evenly spaced (0..1). */
-    float meterPos (float db)
+    /** The recorder's and player's meter scale in segments from the bottom:
+        -60, -48, -24, -12, -6 and CLIP three segments apart. */
+    float meterSegments (float db)
     {
-        static constexpr float marks[] = { -60.0f, -48.0f, -36.0f, -24.0f, -12.0f, -6.0f, 0.0f };
+        static constexpr float marks[] = { -60.0f, -48.0f, -24.0f, -12.0f, -6.0f, 0.0f };
         if (db <= marks[0])
-            return 0.0f;
-        for (int i = 1; i < 7; ++i)
+            return -1.0f;
+        for (int i = 1; i < 6; ++i)
             if (db <= marks[i])
-                return ((float) (i - 1) + (db - marks[i - 1]) / (marks[i] - marks[i - 1])) / 6.0f;
-        return 1.0f;
+                return 3.0f * ((float) (i - 1) + (db - marks[i - 1]) / (marks[i] - marks[i - 1]));
+        return 15.0f;
     }
 
-    /** The meter bank: CLIP on top, a scale, one LED bar per channel. */
+    /** The meter bank [3.1], 106 x 157 WING pixels: the scale CLIP .. -60 at the
+        left, four bars of 16 segments (lit for the channels in use), the top
+        one CLIP. */
     void meterBank (juce::Graphics& g, juce::Rectangle<float> area, const std::array<float, 4>& levels, int channels)
     {
         g.setColour (juce::Colours::black);
         g.fillRect (area);
-        auto r = area.reduced (area.getWidth() * 0.05f, area.getHeight() * 0.04f);
-        const float capPx = juce::jmax (6.0f, r.getHeight() * 0.055f);
-        g.setColour (Colours::textDim);
-        // CLIP shrinks to the bank's width (narrow in small windows) rather than being cut.
-        g.setFont (fontFittingWidth (font (capPx), "CLIP", r.getWidth(), 0.8f));
-        auto top = r.removeFromTop (capPx * 1.6f);
-        g.drawText ("CLIP", top, juce::Justification::centredLeft, false);
-        auto scale = r.removeFromLeft (r.getWidth() * 0.22f);
-        // The CLIP row, then 18 segments (3 per scale step).
-        constexpr int kSegments = 18;
-        const float clipH = r.getHeight() / (float) (kSegments + 2);
-        auto clipRow = r.removeFromTop (clipH * 1.4f);
-        const float segH = r.getHeight() / (float) kSegments;
-        const float marks[] = { 0.0f, -6.0f, -12.0f, -24.0f, -36.0f, -48.0f };
-        g.setFont (font (juce::jmax (5.0f, segH * 1.1f)));
-        for (float db : marks)
-        {
-            const float y = r.getBottom() - meterPos (db) * r.getHeight();
-            g.drawText (juce::String ((int) db), scale.withY (y - segH).withHeight (segH * 2.0f).reduced (1.0f, 0.0f), juce::Justification::centredRight,
+        const float sx = area.getWidth() / 106.0f, sy = area.getHeight() / 157.0f;
+        constexpr int kSegments = 16;
+        auto segment = [&] (int fromTop) { return area.getY() + (8.0f + 9.0f * (float) fromTop) * sy; };
+        g.setColour (Colours::caption);
+        // The scale shrinks to the bank's width (narrow in small windows) rather than being cut.
+        g.setFont (fontFittingWidth (font (juce::jmax (5.0f, 7.0f * sy), false), "CLIP", 26.0f * sx, 0.8f));
+        const std::pair<const char*, int> marks[] = { { "CLIP", 0 }, { "-6", 3 }, { "-12", 6 }, { "-24", 9 }, { "-48", 12 }, { "-60", 15 } };
+        for (auto& [text, row] : marks)
+            g.drawText (text, juce::Rectangle<float> (area.getX(), segment (row) - 6.0f * sy, 28.0f * sx, 18.0f * sy), juce::Justification::centredRight,
                         false);
-        }
         const int n = juce::jlimit (1, 4, channels);
-        const float barW = r.getWidth() / 4.0f;
-        auto bars = r.withSizeKeepingCentre (barW * (float) n, r.getHeight());
-        auto clips = clipRow.withSizeKeepingCentre (barW * (float) n, clipRow.getHeight());
-        for (int ch = 0; ch < n; ++ch)
+        for (int ch = 0; ch < 4; ++ch)
         {
-            auto bar = bars.removeFromLeft (barW).reduced (barW * 0.1f, 0.0f);
-            auto clipLed = clips.removeFromLeft (barW).reduced (barW * 0.1f, clipRow.getHeight() * 0.22f);
-            const float pos = meterPos (levels[(size_t) ch]);
-            const bool clipped = levels[(size_t) ch] >= -0.1f;
-            g.setColour (clipped ? Colours::meterRed : Colours::meterRed.withAlpha (0.15f));
-            g.fillRect (clipLed);
+            const float x = area.getX() + (34.0f + 17.0f * (float) ch) * sx;
+            const float lit = ch < n ? meterSegments (levels[(size_t) ch]) : -1.0f;
             for (int seg = 0; seg < kSegments; ++seg)
             {
-                auto box = juce::Rectangle<float> (bar.getX(), bar.getBottom() - (float) (seg + 1) * segH, bar.getWidth(), segH).reduced (0.0f, segH * 0.16f);
-                const bool lit = levels[(size_t) ch] > -59.5f && pos > ((float) seg + 0.5f) / (float) kSegments;
-                const auto colour = seg >= kSegments - 3 ? Colours::meterYellow : Colours::meterGreen;
-                g.setColour (lit ? colour : colour.withAlpha (0.12f));
-                g.fillRect (box);
+                const int fromBottom = kSegments - 1 - seg;
+                const auto colour = fromBottom == kSegments - 1 ? Colours::meterRed : (fromBottom >= 12 ? Colours::meterYellow : Colours::meterGreen);
+                g.setColour (lit >= (float) fromBottom ? colour : juce::Colour (0xff101010));
+                g.fillRect (x, segment (seg), 13.0f * sx, 6.0f * sy);
             }
         }
     }
@@ -306,7 +287,7 @@ namespace
     void chip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& text, juce::Colour fill, juce::Colour ink)
     {
         g.setColour (fill);
-        g.fillRect (r);
+        g.fillRoundedRectangle (r, juce::jmax (1.0f, r.getHeight() * 0.06f));
         g.setColour (ink);
         g.setFont (font (r.getHeight() * 0.5f));
         g.drawFittedText (text, r.toNearestInt().reduced (1, 0), juce::Justification::centred, 1, 0.7f);
@@ -407,7 +388,7 @@ StatusTitle UsbRecorderPage::getStatusTitle()
     t.ink = juce::Colours::black;
     const auto* row = selectedRow();
     auto file = row != nullptr ? row->file : usb().getCurrentFile();
-    t.text = file != juce::File() ? displayName (file) : juce::String ("USB");
+    t.text = file != juce::File() ? displayName (file) : juce::String();
     return t;
 }
 
@@ -553,8 +534,8 @@ void UsbRecorderPage::addSelected()
 {
     const auto* row = selectedRow();
     if (row == nullptr)
-        return;
-    if (row->kind == (int) UsbRecorder::ItemKind::Folder)
+        usb().addAll (usb().getBrowserFolder()); // ADD ALL: the folder shown
+    else if (row->kind == (int) UsbRecorder::ItemKind::Folder)
         usb().addAll (row->file); // ADD ALL
     else if (row->kind == (int) UsbRecorder::ItemKind::Wav)
     {
@@ -718,6 +699,24 @@ void UsbRecorderPage::playSelected()
         u.play();
 }
 
+bool UsbRecorderPage::canPlay() const
+{
+    // Something to play: paused, a clip cued or selected, or a playlist.
+    UsbRecorder::FileInfo info;
+    int64_t length = 0;
+    bool mismatch = false;
+    return usb().getPlayState() == UsbRecorder::PlayState::Paused || currentFileInfo (info, length, mismatch);
+}
+
+bool UsbRecorderPage::canStep() const
+{
+    // < >: through the playlist, or the folder once a clip is cued.
+    auto& u = usb();
+    return ! u.getQueue().empty() && (u.isPlaylistOpen() || u.getCurrentFile() != juce::File());
+}
+
+int UsbRecorderPage::openKeyWidth() const { return fig (getLocalBounds(), 0, 0, 32, 0).getWidth(); }
+
 void UsbRecorderPage::pressPlay (UiContext& ctx)
 {
     auto& u = ctx.engine.getUsbRecorder();
@@ -764,68 +763,78 @@ void UsbRecorderPage::layout()
     const auto b = getLocalBounds();
     auto f = [&b] (float x0, float y0, float x1, float y1) { return fig (b, x0, y0, x1, y1); };
 
-    leftPanel = f (15, 105, 800, 945);
-    toolbar = f (15, 105, 800, 183);
-    listArea = f (15, 192, 800, 945);
-    scrollBar = f (752, 195, 798, 945);
-    scrollUp = f (752, 195, 798, 228);
-    scrollDown = f (752, 912, 798, 945);
-    if (playlistView)
+    // [3.1] the browser 8..656 (the toolbar 80..144, the list 152..774 with
+    // rows 50 tall, 56 apart, and the scroll bar at 618..650); the recorder,
+    // its keys, the playlist keys, the player, its keys and the timeline in
+    // 664..1272.
+    leftPanel = f (8, 80, 656, 774);
+    toolbar = f (8, 80, 656, 144);
+    listArea = f (8, 152, 656, 774);
+    scrollBar = f (618, 158, 650, 768);
+    scrollUp = f (618, 158, 650, 184);
+    scrollDown = f (618, 742, 650, 768);
+    // In a folder of the stick, its row (with the key back up) heads the list.
+    const bool topFolder = usb().getBrowserFolder() == usb().getStorageFolder();
+    if (playlistView || topFolder)
     {
-        listHeader = {};
-        rowsArea = f (15, 195, 748, 945);
+        listHeader = headerFolderKey = {};
+        rowsArea = f (14, 158, 612, 774);
     }
     else
     {
-        listHeader = f (15, 195, 748, 262);
-        rowsArea = f (15, 265, 748, 945);
+        listHeader = f (14, 158, 612, 208);
+        headerFolderKey = f (580, 158, 612, 208);
+        rowsArea = f (14, 214, 612, 774);
     }
-    headerFolderKey = f (640, 200, 700, 258);
-    headerOpenKey = f (704, 200, 744, 258);
-    rowHeight = juce::jmax (18, f (0, 265, 10, 332).getHeight());
+    rowHeight = juce::jmax (18, f (0, 158, 10, 214).getHeight());
 
-    // The toolbar keys (fig. 78 for the browser, fig. 79 for the playlist).
-    const float browserX[7][2] = { { 18, 90 }, { 96, 168 }, { 198, 270 }, { 328, 400 }, { 408, 480 }, { 558, 630 }, { 706, 786 } };
-    const float playlistX[8][2] = { { 31, 92 }, { 108, 178 }, { 215, 272 }, { 342, 399 }, { 495, 549 }, { 569, 626 }, { 646, 702 }, { 722, 780 } };
+    // The toolbar keys (60 x 56, fig. 79's spacing for the playlist).
+    const float browserX[7][2] = { { 12, 72 }, { 76, 136 }, { 162, 222 }, { 270, 330 }, { 334, 394 }, { 458, 518 }, { 580, 642 } };
+    const float playlistX[8][2] = { { 12, 72 }, { 76, 136 }, { 176, 223 }, { 281, 327 }, { 406, 450 }, { 467, 514 }, { 530, 576 }, { 592, 640 } };
     for (size_t i = 0; i < toolKeys.size(); ++i)
     {
         if (playlistView)
-            toolKeys[i] = f (playlistX[i][0], 108, playlistX[i][1], 180);
+            toolKeys[i] = f (playlistX[i][0], 84, playlistX[i][1], 140);
         else
-            toolKeys[i] = i < 7 ? f (browserX[i][0], 108, browserX[i][1], 180) : juce::Rectangle<int>();
+            toolKeys[i] = i < 7 ? f (browserX[i][0], 84, browserX[i][1], 140) : juce::Rectangle<int>();
     }
 
     // Right: the recorder, the playlist keys, the player, the timeline.
-    recBox = f (810, 105, 1545, 308);
-    recMeter = f (815, 110, 948, 303);
-    recTime = f (962, 112, 1250, 168);
-    recReels = f (962, 180, 1170, 303);
-    channelKeys = { f (1383, 115, 1456, 170), f (1462, 115, 1535, 170) };
-    bitKeys = { f (1383, 184, 1456, 240), f (1462, 184, 1535, 240) };
-    formatKey = f (1180, 184, 1376, 240);
+    recBox = f (664, 80, 1272, 253);
+    recMeter = f (672, 88, 778, 245);
+    recLight = f (797, 94, 821, 118);
+    recTime = f (845, 93, 1100, 119);
+    recReels = f (797, 152, 947, 232);
+    channelFrame = f (1136, 88, 1264, 136);
+    bitFrame = f (1136, 144, 1264, 192);
+    channelKeys = { f (1138, 90, 1199, 134), f (1201, 90, 1262, 134) };
+    bitKeys = { f (1138, 146, 1199, 190), f (1201, 146, 1262, 190) };
+    formatKey = f (968, 144, 1128, 192); // Sidecar's file formats
     kbpsKey = bitKeys[0].getUnion (bitKeys[1]);
-    recPathText = f (1180, 244, 1538, 266);
-    recCaption = f (1180, 266, 1540, 306);
-    recKeys = f (810, 318, 1545, 413);
-    playlistKeys = f (810, 423, 1545, 498);
-    playBox = f (810, 508, 1545, 713);
-    playMeter = f (815, 513, 948, 708);
-    playTime = f (962, 515, 1250, 602);
-    playReels = f (962, 592, 1170, 708);
-    playChips = f (1402, 535, 1530, 608);
-    playCaption = f (1180, 670, 1540, 710);
-    playKeys = f (810, 721, 1545, 816);
-    timeline = f (815, 826, 1540, 940);
-    const float keyX[4][2] = { { 815, 995 }, { 1002, 1180 }, { 1187, 1363 }, { 1370, 1540 } };
+    recPathText = f (968, 198, 1264, 216);
+    recCaption = f (968, 218, 1264, 248);
+    recKeys = f (664, 257, 1272, 337);
+    playlistKeys = f (664, 347, 1272, 403);
+    playBox = f (664, 413, 1272, 586);
+    playMeter = f (672, 421, 778, 578);
+    playLight = f (797, 427, 821, 451);
+    playTime = f (845, 425, 1100, 451);
+    playRest = f (845, 458, 949, 474);
+    playReels = f (797, 485, 947, 565);
+    playChips = f (1154, 431, 1254, 499);
+    playCaption = f (968, 551, 1264, 581);
+    playKeys = f (664, 590, 1272, 670);
+    timeline = f (672, 682, 1264, 766);
+    const float keyX[4][2] = { { 672, 816 }, { 824, 968 }, { 976, 1120 }, { 1128, 1264 } };
     for (size_t i = 0; i < 4; ++i)
     {
-        recKeyAreas[i] = f (keyX[i][0], 325, keyX[i][1], 408);
-        playlistKeyAreas[i] = f (keyX[i][0], 428, keyX[i][1], 494);
+        recKeyAreas[i] = f (keyX[i][0], 265, keyX[i][1], 329);
+        playlistKeyAreas[i] = f (keyX[i][0], 351, keyX[i][1], 399);
     }
     for (size_t i = 0; i < 3; ++i)
-        playKeyAreas[i] = f (keyX[i][0], 728, keyX[i][1], 811);
-    playKeyAreas[3] = f (1370, 728, 1452, 811);
-    playKeyAreas[4] = f (1459, 728, 1540, 811);
+        playKeyAreas[i] = f (keyX[i][0], 598, keyX[i][1], 662);
+    playKeyAreas[3] = f (1128, 598, 1192, 662);
+    playKeyAreas[4] = f (1200, 598, 1264, 662);
 
     // What the keys do.
     keys.clear();
@@ -886,18 +895,13 @@ void UsbRecorderPage::layout()
         };
         addKey (toolKeys[0], [self] { self->showBrowser(); }, {}, [self] { self->chooseStorageFolder(); });
         addKey (toolKeys[1], [self] { self->showPlaylist(); });
-        addKey (toolKeys[2], [self] { self->addSelected(); }, [isKind] { return isKind (UsbRecorder::ItemKind::Wav) || isKind (UsbRecorder::ItemKind::Folder); });
+        addKey (toolKeys[2], [self] { self->addSelected(); }, [isKind] { return ! isKind (UsbRecorder::ItemKind::Playlist); });
         addKey (toolKeys[3], [self] { self->newFolder(); });
         addKey (toolKeys[4], [self] { self->renameSelected(); }, [self] { return self->selected >= 0; });
         addKey (toolKeys[5], [self] { self->deleteSelected(); }, [self] { return self->selected >= 0; });
         addKey (toolKeys[6], [self] { self->setRecPath(); });
-        addKey (headerFolderKey, [self] { self->openFolder (self->usb().getBrowserFolder().getParentDirectory()); },
-                [self] { return self->usb().getBrowserFolder() != self->usb().getStorageFolder(); });
-        addKey (headerOpenKey, [self, isKind]
-        {
-            if (isKind (UsbRecorder::ItemKind::Folder))
-                self->openFolder (self->selectedRow()->file);
-        }, [isKind] { return isKind (UsbRecorder::ItemKind::Folder); });
+        if (! headerFolderKey.isEmpty())
+            addKey (headerFolderKey, [self] { self->openFolder (self->usb().getBrowserFolder().getParentDirectory()); });
     }
     addKey (scrollUp, [self] { self->scrollBy (-1); });
     addKey (scrollDown, [self] { self->scrollBy (1); });
@@ -954,12 +958,13 @@ void UsbRecorderPage::layout()
     addKey (playlistKeyAreas[3], [self] { self->closePlaylist(); }, [&u] { return u.isPlaylistOpen(); });
 
     // The player.
-    addKey (playKeyAreas[0], [self] { self->playSelected(); });
+    addKey (playKeyAreas[0], [self] { self->playSelected(); }, [self, &u] { return self->canPlay() && u.getPlayState() != UsbRecorder::PlayState::Playing; });
     addKey (playKeyAreas[1], [&u] { u.togglePlayPause(); },
             [&u] { return u.getPlayState() == UsbRecorder::PlayState::Playing || u.getPlayState() == UsbRecorder::PlayState::Paused; });
-    addKey (playKeyAreas[2], [&u] { u.stop(); });
-    addKey (playKeyAreas[3], [&u] { u.previous(); }, [&u] { return ! u.getQueue().empty(); });
-    addKey (playKeyAreas[4], [&u] { u.next(); }, [&u] { return ! u.getQueue().empty(); });
+    addKey (playKeyAreas[2], [&u] { u.stop(); },
+            [&u] { return u.getPlayState() == UsbRecorder::PlayState::Playing || u.getPlayState() == UsbRecorder::PlayState::Paused; });
+    addKey (playKeyAreas[3], [&u] { u.previous(); }, [self] { return self->canStep(); });
+    addKey (playKeyAreas[4], [&u] { u.next(); }, [self] { return self->canStep(); });
 }
 
 //==============================================================================
@@ -1020,18 +1025,18 @@ void UsbRecorderPage::paintKey (juce::Graphics& g, juce::Rectangle<int> area, co
 {
     if (area.isEmpty())
         return;
+    // [3.1] an enabled key #303030 framed #c0c0c0, a disabled one flat with a
+    // black frame and #484848 ink; a lit key is filled.
     auto r = area.toFloat();
-    g.setColour (lit ? litColour : keyGrey);
+    g.setColour (lit ? litColour : (enabled ? keyGrey : panelGrey));
     g.fillRect (r);
-    g.setColour (lit ? litColour.darker (0.3f) : keyLine);
-    g.drawRect (r, 1.2f);
-    auto ink = lit ? juce::Colours::black : Colours::text;
-    if (! enabled)
-        ink = Colours::textDim.withAlpha (0.55f);
-    auto content = r.reduced (r.getHeight() * 0.12f);
+    g.setColour (lit ? litColour.darker (0.3f) : (enabled ? Colours::caption : juce::Colours::black));
+    g.drawRect (r, 1.0f);
+    const auto ink = lit ? juce::Colours::black : (enabled ? Colours::caption : keyOffInk);
+    auto content = r.reduced (r.getHeight() * 0.2f, r.getHeight() * 0.12f);
     if (icon)
     {
-        const float s = text.isEmpty() ? juce::jmin (content.getWidth(), content.getHeight()) * 0.6f : content.getHeight() * 0.62f;
+        const float s = text.isEmpty() ? juce::jmin (content.getWidth(), content.getHeight()) * 0.6f : content.getHeight() * 0.66f;
         auto iconBox = text.isEmpty() ? content.withSizeKeepingCentre (s, s) : content.removeFromLeft (content.getHeight()).withSizeKeepingCentre (s, s);
         icon (g, iconBox, ink);
     }
@@ -1039,7 +1044,7 @@ void UsbRecorderPage::paintKey (juce::Graphics& g, juce::Rectangle<int> area, co
     {
         const int lines = juce::StringArray::fromLines (text).size();
         g.setColour (ink);
-        g.setFont (font (juce::jmin (content.getHeight() * (lines > 1 ? 0.28f : 0.34f), getHeight() * 0.024f)));
+        g.setFont (font (juce::jmin (content.getHeight() * (lines > 1 ? 0.3f : 0.34f), getHeight() * 0.022f)));
         g.drawFittedText (text, content.toNearestInt(), juce::Justification::centred, lines, 0.7f);
     }
 }
@@ -1060,31 +1065,35 @@ void UsbRecorderPage::paintToolbar (juce::Graphics& g)
     auto& u = usb();
     g.setColour (panelGrey);
     g.fillRect (toolbar);
-    // A toolbar key: an icon over a small caption; lit keys are filled.
+    // A toolbar key: an icon over a small caption; lit keys are filled, an
+    // unlit key with a fill of its own (PLAYLIST) shows it.
     auto tool = [&] (int i, const juce::String& caption, std::function<void (juce::Graphics&, juce::Rectangle<float>, juce::Colour)> icon, bool enabled,
-                     bool lit = false, juce::Colour litColour = Colours::gold, juce::Colour ink = Colours::text)
+                     bool lit = false, juce::Colour litColour = Colours::gold, juce::Colour ink = Colours::caption, juce::Colour fill = {})
     {
         const auto area = toolKeys[(size_t) i];
         if (area.isEmpty())
             return;
         auto r = area.toFloat();
-        if (lit)
+        if (lit || ! fill.isTransparent())
         {
-            g.setColour (litColour);
+            g.setColour (lit ? litColour : fill);
             g.fillRect (r);
         }
-        auto c = lit ? juce::Colours::black : ink;
-        if (! enabled)
-            c = c.withAlpha (0.3f);
+        auto c = lit ? juce::Colours::black : (enabled ? ink : keyOffInk);
         auto label = r.removeFromBottom (r.getHeight() * 0.3f);
-        icon (g, r.reduced (r.getHeight() * 0.14f), c);
-        g.setColour (lit ? juce::Colours::black : (enabled ? Colours::caption : Colours::textDim.withAlpha (0.5f)));
-        if (ink != Colours::text && ! lit && enabled)
-            g.setColour (ink);
+        icon (g, r.reduced (r.getHeight() * 0.1f), c);
+        g.setColour (c);
         g.setFont (font (juce::jmin (label.getHeight() * 0.62f, getHeight() * 0.017f), false));
         g.drawFittedText (caption, label.toNearestInt().reduced (1, 0), juce::Justification::centredTop, 1, 0.7f);
     };
     auto shared = [] (Icon icon) { return [icon] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c) { drawIcon (gr, icon, r, c); }; };
+    // [3.1] the stick drawn on its side.
+    auto stick = [] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c)
+    {
+        juce::Graphics::ScopedSaveState state (gr);
+        gr.addTransform (juce::AffineTransform::rotation (juce::MathConstants<float>::pi * 0.25f, r.getCentreX(), r.getCentreY()));
+        drawIcon (gr, Icon::UsbStick, r, c);
+    };
     auto enabledKey = [this] (int i)
     {
         for (auto& k : keys)
@@ -1092,10 +1101,11 @@ void UsbRecorderPage::paintToolbar (juce::Graphics& g)
                 return ! k.enabled || k.enabled();
         return false;
     };
+    // PLAYLIST, or the open playlist's number of clips.
     const int numSongs = u.isPlaylistOpen() ? (int) u.getQueue().size() : 0;
-    const auto songs = juce::String (numSongs) + (numSongs == 1 ? " SONG" : " SONGS");
-    tool (0, "USB", shared (Icon::UsbStick), true, ! playlistView, Colours::gold);
-    tool (1, songs, musicNotes, true, playlistView || u.isPlaylistOpen(), playlistView ? Dark::choice : Dark::choice.withAlpha (0.55f));
+    const auto songs = ! u.isPlaylistOpen() ? juce::String ("PLAYLIST") : juce::String (numSongs) + (numSongs == 1 ? " SONG" : " SONGS");
+    tool (0, "USB", stick, true, ! playlistView, Colours::gold);
+    tool (1, songs, musicNotes, true, playlistView, Dark::choice, u.isPlaylistOpen() ? Dark::choice : playlistInk, juce::Colours::black);
     if (playlistView)
     {
         tool (2, "REPEAT", repeatArrows, enabledKey (2), u.getRepeat(), Colours::gold);
@@ -1108,12 +1118,13 @@ void UsbRecorderPage::paintToolbar (juce::Graphics& g)
     }
     else
     {
+        // [3.1] the browser's keys stay lit whatever is selected.
         const auto* row = selectedRow();
-        const bool folder = row != nullptr && row->kind == (int) UsbRecorder::ItemKind::Folder;
-        tool (2, folder ? "ADD ALL" : "ADD", circlePlus, enabledKey (2));
+        const bool file = row != nullptr && row->kind == (int) UsbRecorder::ItemKind::Wav;
+        tool (2, file ? "ADD" : "ADD ALL", circlePlus, true);
         tool (3, "FOLDER", folderPlus, true);
-        tool (4, "RENAME", shared (Icon::Edit), enabledKey (4));
-        tool (5, "DELETE", shared (Icon::Trash), enabledKey (5));
+        tool (4, "RENAME", shared (Icon::Edit), true);
+        tool (5, "DELETE", shared (Icon::Trash), true);
         tool (6, "REC PATH", shared (Icon::Folder), true);
     }
 }
@@ -1122,23 +1133,31 @@ void UsbRecorderPage::paintList (juce::Graphics& g)
 {
     auto& u = usb();
     const float sh = (float) getHeight();
-    // The folder row: its name, the up key (folder) and the open key (>).
+    g.setColour (panelGrey);
+    g.fillRect (listArea);
+    const int gap = juce::jmax (1, rowHeight - fig (getLocalBounds(), 0, 0, 0, 50).getHeight()); // 6 px between rows
+    const auto nameFont = font (sh * 0.0275f);
+    // A folder's > key: its icon left of it.
+    auto folderKeys = [&] (juce::Rectangle<int> inner, Icon arrow)
+    {
+        auto key = inner.removeFromRight (openKeyWidth());
+        g.setColour (openKey);
+        g.fillRect (key);
+        drawIcon (g, arrow, key.toFloat().reduced ((float) key.getWidth() * 0.2f), folderBlue);
+        auto icon = inner.removeFromRight (inner.getHeight() * 9 / 10).toFloat().reduced ((float) inner.getHeight() * 0.18f);
+        drawIcon (g, Icon::Folder, icon, folderBlue);
+        return inner;
+    };
+    // In a folder of the stick: its row first, the key back up at its right.
     if (! listHeader.isEmpty())
     {
-        g.setColour (rowLine);
-        g.fillRect (listHeader.getX(), listHeader.getBottom(), listHeader.getWidth(), 2);
-        const auto folder = u.getBrowserFolder();
-        const bool top = folder == u.getStorageFolder();
-        g.setColour (Colours::text);
-        g.setFont (font (sh * 0.028f));
-        g.drawFittedText (top ? juce::String ("USB") : folder.getFileName().toUpperCase(), listHeader.withRight (headerFolderKey.getX()).reduced (sh * 0.02f, 0),
-                          juce::Justification::centredLeft, 1, 0.7f);
-        drawIcon (g, Icon::Folder, headerFolderKey.toFloat().reduced (headerFolderKey.getHeight() * 0.18f), top ? Colours::textDim : Colours::text);
-        const auto* row = selectedRow();
-        const bool canOpen = row != nullptr && row->kind == (int) UsbRecorder::ItemKind::Folder;
-        g.setColour (canOpen ? Dark::choice : Dark::choice.withAlpha (0.35f));
-        g.fillRect (headerOpenKey);
-        drawIcon (g, Icon::ChevronRight, headerOpenKey.toFloat().reduced (headerOpenKey.getWidth() * 0.2f), juce::Colours::white.withAlpha (canOpen ? 1.0f : 0.5f));
+        auto inner = listHeader;
+        g.setColour (juce::Colours::black);
+        g.fillRect (inner);
+        auto t = folderKeys (inner, Icon::ChevronLeft).withTrimmedLeft ((int) (sh * 0.015f));
+        g.setColour (folderBlue);
+        g.setFont (nameFont);
+        g.drawFittedText (u.getBrowserFolder().getFileName().toUpperCase(), t, juce::Justification::centredLeft, 1, 0.7f);
     }
 
     // The rows.
@@ -1151,26 +1170,26 @@ void UsbRecorderPage::paintList (juce::Graphics& g)
         auto r = rowArea (v);
         if (r.getBottom() > rowsArea.getBottom() + 1)
             break;
-        g.setColour (rowLine);
-        g.fillRect (r.getX(), r.getBottom() - 2, r.getWidth(), 2);
         const int index = scroll + v;
         if (! juce::isPositiveAndBelow (index, (int) rows.size()))
             continue;
         const auto& row = rows[(size_t) index];
-        auto inner = r.withTrimmedBottom (2).reduced (2, 1);
+        auto inner = r.withTrimmedBottom (gap);
+        g.setColour (index == selected ? selectedFill : juce::Colours::black);
+        g.fillRect (inner);
         if (index == selected)
         {
-            g.setColour (selectedFill);
-            g.fillRect (inner);
             g.setColour (Dark::selectedOutline.withAlpha (0.8f));
             g.drawRect (inner, 2);
         }
-        auto t = inner.reduced ((int) (sh * 0.014f), 0);
+        const bool folder = row.kind == (int) UsbRecorder::ItemKind::Folder;
+        auto t = folder ? folderKeys (inner, Icon::ChevronRight) : inner;
+        t = t.withTrimmedLeft ((int) (sh * 0.015f)).withTrimmedRight ((int) (sh * 0.01f));
         // The clip playing (green) or cued (grey); the file being recorded (red).
         const bool isCurrent = row.file == current && current != juce::File();
         if (row.file == recFile)
             recordDot (g, t.removeFromLeft (t.getHeight() / 2).toFloat(), recRed);
-        else if (isCurrent && row.kind != (int) UsbRecorder::ItemKind::Folder)
+        else if (isCurrent && ! folder)
         {
             auto tri = t.removeFromLeft (t.getHeight() / 2).toFloat().withSizeKeepingCentre ((float) t.getHeight() * 0.28f, (float) t.getHeight() * 0.34f);
             juce::Path p;
@@ -1178,35 +1197,29 @@ void UsbRecorderPage::paintList (juce::Graphics& g)
             g.setColour (playState == UsbRecorder::PlayState::Playing ? playGreen : Colours::textDim);
             g.fillPath (p);
         }
-        if (row.kind == (int) UsbRecorder::ItemKind::Folder)
+        if (! folder)
         {
-            drawIcon (g, Icon::Folder, t.removeFromLeft (t.getHeight()).toFloat().reduced ((float) t.getHeight() * 0.22f), Colours::caption);
-            t.removeFromLeft ((int) (sh * 0.006f));
-        }
-        // The date and time (dim) and the type chip at the right.
-        auto right = t.removeFromRight ((int) (t.getWidth() * 0.32f));
-        auto date = right.removeFromRight ((int) (right.getWidth() * 0.56f));
-        g.setColour (Colours::textDim);
-        g.setFont (font (sh * 0.016f, false));
-        g.drawText (row.modified.formatted ("%Y-%m-%d"), date.removeFromTop (date.getHeight() / 2).withTrimmedTop (date.getHeight() / 10), juce::Justification::bottomRight,
-                    false);
-        g.drawText (row.modified.formatted ("%H:%M:%S"), date.withTrimmedBottom (date.getHeight() / 5), juce::Justification::topRight, false);
-        if (row.kind != (int) UsbRecorder::ItemKind::Folder)
-        {
-            auto c = right.removeFromRight ((int) (sh * 0.081f)).withTrimmedRight ((int) (sh * 0.006f)).toFloat();
-            c = c.withHeight ((float) inner.getHeight() * 0.36f).withY ((float) inner.getY() + (float) inner.getHeight() * 0.08f);
+            // [3.1] the type chip, then the date over the time (grey) at the right.
+            auto date = t.removeFromRight ((int) (sh * 0.13f));
+            g.setColour (dateGrey);
+            g.setFont (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), sh * 0.024f, juce::Font::bold));
+            g.drawText (row.modified.formatted ("%Y-%m-%d"), date.withHeight (date.getHeight() / 2), juce::Justification::centredRight, false);
+            g.drawText (row.modified.formatted ("%H:%M:%S"), date.withTrimmedTop (date.getHeight() / 2), juce::Justification::centredRight, false);
+            t.removeFromRight ((int) (sh * 0.008f));
+            auto c = t.removeFromRight ((int) (sh * 0.067f)).toFloat();
+            c = c.withHeight ((float) inner.getHeight() * 0.42f).withY ((float) inner.getY() + (float) inner.getHeight() * 0.06f);
             chip (g, c, row.kind == (int) UsbRecorder::ItemKind::Playlist ? juce::String ("M3U") : AudioFileFormat::typeName (AudioFileFormat::typeOfFile (row.file)),
                   row.kind == (int) UsbRecorder::ItemKind::Playlist ? listChip : wavChip, juce::Colours::black);
+            // SKIP / STOP flags (playlist), left of the chip.
+            const int flag = juce::jmin (t.getHeight() * 6 / 10, t.getWidth() / 4);
+            if (row.stop)
+                stopCircle (g, t.removeFromRight (flag).toFloat().withSizeKeepingCentre ((float) flag, (float) flag).reduced ((float) flag * 0.08f), flagYellow);
+            if (row.skip)
+                drawIcon (g, Icon::Skip, t.removeFromRight (flag).toFloat().withSizeKeepingCentre ((float) flag, (float) flag).reduced ((float) flag * 0.14f), flagYellow);
         }
-        // SKIP / STOP flags (playlist), left of the chip.
-        const int flag = juce::jmin (right.getHeight() * 6 / 10, right.getWidth() / 2);
-        if (row.stop)
-            stopCircle (g, right.removeFromRight (flag).toFloat().withSizeKeepingCentre ((float) flag, (float) flag).reduced ((float) flag * 0.08f), flagYellow);
-        if (row.skip)
-            drawIcon (g, Icon::Skip, right.removeFromRight (flag).toFloat().withSizeKeepingCentre ((float) flag, (float) flag).reduced ((float) flag * 0.14f), flagYellow);
-        g.setColour (row.skip ? Colours::textDim : Colours::text);
-        g.setFont (font (sh * 0.028f));
-        g.drawFittedText (displayName (row.file), t, juce::Justification::centredLeft, 1, 0.75f);
+        g.setColour (folder ? folderBlue : (row.skip ? Colours::textDim : Colours::caption));
+        g.setFont (nameFont);
+        g.drawFittedText (folder ? displayName (row.file).toUpperCase() : displayName (row.file), t, juce::Justification::centredLeft, 1, 0.75f);
     }
     if (rows.empty())
     {
@@ -1218,21 +1231,21 @@ void UsbRecorderPage::paintList (juce::Graphics& g)
         g.drawFittedText (hint, rowArea (0).reduced ((int) (sh * 0.02f), 0), juce::Justification::centredLeft, 2);
     }
 
-    // The scroll bar: up / down arrows and the thumb.
-    g.setColour (juce::Colour (0xff0a0a0a));
-    g.fillRect (scrollBar);
+    // The scroll bar: black arrows on the panel over a black track with the thumb.
     juce::Path up, down;
-    auto ua = scrollUp.toFloat().reduced ((float) scrollUp.getWidth() * 0.22f, (float) scrollUp.getHeight() * 0.25f);
+    auto ua = scrollUp.toFloat().withHeight ((float) scrollUp.getHeight() * 0.62f);
     up.addTriangle (ua.getCentreX(), ua.getY(), ua.getRight(), ua.getBottom(), ua.getX(), ua.getBottom());
-    auto da = scrollDown.toFloat().reduced ((float) scrollDown.getWidth() * 0.22f, (float) scrollDown.getHeight() * 0.25f);
+    auto da = scrollDown.toFloat().withTrimmedTop ((float) scrollDown.getHeight() * 0.38f);
     down.addTriangle (da.getX(), da.getY(), da.getRight(), da.getY(), da.getCentreX(), da.getBottom());
-    g.setColour (juce::Colour (0xff2a2a2a));
+    g.setColour (juce::Colours::black);
     g.fillPath (up);
     g.fillPath (down);
+    auto track = scrollBar.withTrimmedTop (scrollUp.getHeight()).withTrimmedBottom (scrollDown.getHeight());
+    g.fillRect (track);
     const int total = (int) rows.size();
     if (total > n)
     {
-        auto track = scrollBar.withTrimmedTop (scrollUp.getHeight()).withTrimmedBottom (scrollDown.getHeight()).reduced (scrollBar.getWidth() / 4, 2);
+        track = track.reduced (scrollBar.getWidth() / 5, 2);
         const float h = (float) track.getHeight() * (float) n / (float) total;
         const float y = (float) track.getY() + ((float) track.getHeight() - h) * (float) scroll / (float) juce::jmax (1, total - n);
         g.setColour (juce::Colour (0xff3a3a3a));
@@ -1247,51 +1260,57 @@ void UsbRecorderPage::paintRecorder (juce::Graphics& g)
     const auto state = u.getRecState();
     const bool fs = u.isFullSpeedOnly();
     const int channels = u.isRecording() ? juce::jmax (2, u.getRecChannels()) : (fs ? 2 : u.getRecChannels());
-
     g.setColour (panelGrey);
     g.fillRect (recBox);
     meterBank (g, recMeter.toFloat(), recLevels, channels);
 
-    // The state light and the red time.
-    auto t = recTime.toFloat();
-    auto light = t.removeFromLeft (t.getHeight());
+    // The state light (a yellow square while stopped, red while recording,
+    // blinking while paused) and the red time.
     const bool blinkOn = (juce::Time::getMillisecondCounter() / 400) % 2 == 0;
-    const auto lightColour = state == UsbRecorder::RecState::Recording ? recRed
-                             : state == UsbRecorder::RecState::Paused  ? (blinkOn ? recRed : recRed.withAlpha (0.25f))
-                             : state == UsbRecorder::RecState::Error   ? Colours::warning
-                                                                       : juce::Colour (0xff4a2020);
-    recordDot (g, light, lightColour);
-    t.removeFromLeft (t.getHeight() * 0.25f);
-    sevenSegment (g, t.withHeight (t.getHeight() * 0.86f).withY (t.getY() + t.getHeight() * 0.07f), timeText (u.getRecTime(), u.getSampleRate()),
-                  u.isRecording() ? timeRed : timeRed.withAlpha (0.45f), juce::Justification::left);
+    const auto light = recLight.toFloat();
+    if (state == UsbRecorder::RecState::Stopped)
+    {
+        g.setColour (stopYellow);
+        g.fillRoundedRectangle (light, light.getHeight() * 0.12f);
+    }
+    else
+    {
+        recordDot (g, light.expanded (light.getWidth() * 0.3f), state == UsbRecorder::RecState::Error ? Colours::warning
+                                                               : state == UsbRecorder::RecState::Paused && ! blinkOn ? recRed.withAlpha (0.25f)
+                                                                                                                     : recRed);
+    }
+    sevenSegment (g, recTime.toFloat(), timeText (u.getRecTime(), u.getSampleRate()), timeRed, juce::Justification::left);
     reels (g, recReels.toFloat(), reelAngle[0], state == UsbRecorder::RecState::Recording);
 
-    // 2-CH | 4-CH and 16 bit | 24 bit.
+    // 2-CH | 4-CH and 16 bit | 24 bit: pairs of keys in a black frame, the
+    // chosen one blue with black ink.
     auto choice = [&] (juce::Rectangle<int> r, const juce::String& text, bool lit, bool enabled)
     {
-        g.setColour (lit ? Dark::choice : formatOff);
+        g.setColour (lit ? Dark::choice : keyGrey);
         g.fillRect (r);
-        g.setColour (lit ? juce::Colours::white : (enabled ? juce::Colour (0xffd0d0d0) : juce::Colour (0xff8a8a8a)));
-        g.setFont (font ((float) r.getHeight() * 0.36f));
+        g.setColour (lit ? juce::Colours::black : (enabled ? Colours::caption : keyOffInk));
+        g.setFont (font ((float) r.getHeight() * 0.4f));
         g.drawFittedText (text, r.reduced (2, 0), juce::Justification::centred, 1, 0.7f);
     };
     const bool mp3 = u.getRecFileType() == AudioFileFormat::Type::Mp3;
     const int fmtChannels = u.getEffectiveRecChannels(), fmtBits = fs ? 16 : u.getRecBits();
+    g.setColour (juce::Colours::black);
+    g.fillRect (channelFrame);
     choice (channelKeys[0], "2-CH", fmtChannels == 2, ! u.isRecording());
     choice (channelKeys[1], "4-CH", fmtChannels == 4, ! u.isRecording() && ! fs && ! mp3);
     // FORMAT and (for MP3) the bit rate: lists, drawn like the console's dropdown fields.
     auto list = [&] (juce::Rectangle<int> r, const juce::String& caption, const juce::String& value, bool enabled)
     {
-        g.setColour (formatOff);
+        g.setColour (keyGrey);
         g.fillRect (r);
         auto inner = r.reduced (juce::jmax (2, r.getHeight() / 12));
         auto top = inner.removeFromTop (inner.getHeight() * 36 / 100);
-        g.setColour (enabled ? juce::Colour (0xffd0d0d0) : juce::Colour (0xff8a8a8a));
+        g.setColour (enabled ? Colours::caption : keyOffInk);
         g.setFont (font ((float) top.getHeight() * 0.9f, false));
         g.drawFittedText (caption, top, juce::Justification::centredLeft, 1, 0.7f);
         auto chevron = inner.removeFromRight (inner.getHeight()).toFloat().reduced ((float) inner.getHeight() * 0.18f);
-        drawIcon (g, Icon::ChevronDown, chevron, enabled ? juce::Colours::white : juce::Colour (0xff8a8a8a));
-        g.setColour (enabled ? juce::Colours::white : juce::Colour (0xff8a8a8a));
+        drawIcon (g, Icon::ChevronDown, chevron, enabled ? juce::Colours::white : keyOffInk);
+        g.setColour (enabled ? juce::Colours::white : keyOffInk);
         g.setFont (font ((float) inner.getHeight() * 0.72f));
         g.drawFittedText (value, inner, juce::Justification::centredLeft, 1, 0.7f);
     };
@@ -1300,20 +1319,23 @@ void UsbRecorderPage::paintRecorder (juce::Graphics& g)
         list (kbpsKey, "BIT RATE", juce::String (u.getRecKbps()) + " kbps", ! u.isRecording());
     else
     {
+        g.setColour (juce::Colours::black);
+        g.fillRect (bitFrame);
         choice (bitKeys[0], "16 bit", fmtBits == 16, ! u.isRecording());
         choice (bitKeys[1], "24 bit", fmtBits == 24, ! u.isRecording() && ! fs);
     }
 
-    // The REC PATH above the caption, the caption itself.
+    // The REC PATH (when not the stick's top) above the caption, the caption itself.
     const auto storage = u.getStorageFolder();
     auto rel = u.getRecPath().getRelativePathFrom (storage).replaceCharacter ('\\', '/');
-    if (rel == "." || rel.isEmpty())
-        rel = {};
-    g.setColour (Colours::textDim);
-    g.setFont (font (sh * 0.016f, false));
-    g.drawFittedText ("/" + rel, recPathText, juce::Justification::centredRight, 1, 0.7f);
+    if (rel != "." && rel.isNotEmpty())
+    {
+        g.setColour (Colours::textDim);
+        g.setFont (font (sh * 0.016f, false));
+        g.drawFittedText ("/" + rel, recPathText, juce::Justification::centredRight, 1, 0.7f);
+    }
     g.setColour (captionGrey);
-    g.setFont (font (sh * 0.034f));
+    g.setFont (font (sh * 0.03f));
     g.drawFittedText ("4-TRACK RECORDER", recCaption, juce::Justification::centredRight, 1, 0.7f);
 
     // REC, PAUSE, STOP, NEW FILE.
@@ -1322,7 +1344,7 @@ void UsbRecorderPage::paintRecorder (juce::Graphics& g)
     const bool recording = state == UsbRecorder::RecState::Recording;
     const bool paused = state == UsbRecorder::RecState::Paused;
     paintKey (g, recKeyAreas[0], "REC", [recording] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c)
-    { recordDot (gr, r, recording ? c : recRed); }, ! recording);
+    { recordDot (gr, r.expanded (r.getWidth() * 0.2f), recording ? recRed : c); }, ! recording);
     paintKey (g, recKeyAreas[1], "PAUSE", [] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c) { drawIcon (gr, Icon::Pause, r, c); },
               u.isRecording(), paused, Colours::gold);
     paintKey (g, recKeyAreas[2], "STOP", [] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c) { drawIcon (gr, Icon::Stop, r, c); },
@@ -1337,17 +1359,15 @@ void UsbRecorderPage::paintPlaylistKeys (juce::Graphics& g)
     g.fillRect (playlistKeys);
     const auto* row = selectedRow();
     const bool canOpen = ! playlistView && row != nullptr && row->kind == (int) UsbRecorder::ItemKind::Playlist;
-    // These are flat (no key body), as in fig. 78.
+    // These are flat (no key body), the caption in two lines right of the icon.
     auto flat = [&] (juce::Rectangle<int> area, const juce::String& text, std::function<void (juce::Graphics&, juce::Rectangle<float>, juce::Colour)> icon, bool enabled)
     {
         auto r = area.toFloat();
-        g.setColour (juce::Colour (0xff292929));
-        g.fillRect (r);
-        const auto ink = enabled ? Colours::text : Colours::textDim.withAlpha (0.45f);
-        auto content = r.reduced (r.getHeight() * 0.12f);
-        icon (g, content.removeFromLeft (content.getHeight()).reduced (content.getHeight() * 0.12f), ink);
+        const auto ink = enabled ? Colours::caption : keyOffInk;
+        auto content = r.reduced (r.getHeight() * 0.1f, r.getHeight() * 0.08f);
+        icon (g, content.removeFromLeft (content.getHeight()).reduced (content.getHeight() * 0.1f), ink);
         g.setColour (ink);
-        g.setFont (font (juce::jmin (content.getHeight() * 0.3f, (float) getHeight() * 0.02f)));
+        g.setFont (font (juce::jmin (content.getHeight() * 0.36f, (float) getHeight() * 0.024f)));
         g.drawFittedText (text, content.toNearestInt(), juce::Justification::centred, 2, 0.7f);
     };
     flat (playlistKeyAreas[0], "CREATE\nPLAYLIST", [] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c) { drawIcon (gr, Icon::Edit, r, c); }, true);
@@ -1371,7 +1391,8 @@ bool UsbRecorderPage::currentFileInfo (UsbRecorder::FileInfo& info, int64_t& len
     if (file == juce::File())
         if (const auto* row = selectedRow(); row != nullptr && row->kind == (int) UsbRecorder::ItemKind::Wav)
             file = row->file;
-    if (file == juce::File())
+    // [3.1] a folder's clips wait for one to be chosen; a playlist cues its first.
+    if (file == juce::File() && u.isPlaylistOpen())
         for (const auto& e : u.getQueue())
             if (! e.skip)
             {
@@ -1399,60 +1420,68 @@ void UsbRecorderPage::paintPlayer (juce::Graphics& g)
     g.fillRect (playBox);
     meterBank (g, playMeter.toFloat(), playLevels, known ? juce::jlimit (2, 4, info.channels) : 4);
 
-    // The state (green play, paused, stopped), the time and the time left.
-    auto t = playTime.toFloat();
-    auto top = t.removeFromTop (t.getHeight() * 0.62f);
-    auto light = top.removeFromLeft (top.getHeight() * 0.8f).reduced (top.getHeight() * 0.1f);
+    // The state (green play, paused, a yellow square while stopped), the time
+    // and under it the time left, smaller; both unlit without a clip.
+    const auto light = playLight.toFloat();
     if (state == UsbRecorder::PlayState::Paused)
-        drawIcon (g, Icon::Pause, light, Colours::gold);
+        drawIcon (g, Icon::Pause, light.expanded (light.getWidth() * 0.2f), Colours::gold);
     else if (state == UsbRecorder::PlayState::Error)
-        drawIcon (g, Icon::Cancel, light, Colours::warning);
-    else
+        drawIcon (g, Icon::Cancel, light.expanded (light.getWidth() * 0.2f), Colours::warning);
+    else if (state == UsbRecorder::PlayState::Playing)
     {
         juce::Path p;
-        auto tri = light.withSizeKeepingCentre (light.getWidth() * 0.62f, light.getHeight() * 0.7f);
+        auto tri = light.withSizeKeepingCentre (light.getWidth() * 0.8f, light.getHeight());
         p.addTriangle (tri.getX(), tri.getY(), tri.getRight(), tri.getCentreY(), tri.getX(), tri.getBottom());
-        g.setColour (state == UsbRecorder::PlayState::Playing ? playGreen : playGreen.withAlpha (0.3f));
+        g.setColour (playGreen);
         g.fillPath (p);
     }
-    top.removeFromLeft (top.getHeight() * 0.2f);
+    else
+    {
+        g.setColour (stopYellow);
+        g.fillRoundedRectangle (light, light.getHeight() * 0.12f);
+    }
     const auto pos = u.getPosition();
-    const bool active = state == UsbRecorder::PlayState::Playing || state == UsbRecorder::PlayState::Paused;
-    // The time, then the time left under its right end, smaller (fig. 78).
-    const auto digits = top.withHeight (top.getHeight() * 0.74f).withY (top.getY() + top.getHeight() * 0.13f);
-    const float end = sevenSegment (g, digits, timeText (pos, u.getSampleRate()), active ? timeRed : timeRed.withAlpha (0.45f), juce::Justification::left);
-    const float restH = digits.getHeight() * 0.52f;
-    auto rest = juce::Rectangle<float> (digits.getX(), digits.getBottom() + restH * 0.25f, end - digits.getX(), restH);
-    sevenSegment (g, rest, "-" + timeText (juce::jmax<int64_t> (0, length - pos), u.getSampleRate()), active ? timeRed : timeRed.withAlpha (0.45f),
-                  juce::Justification::right);
+    const auto ink = known ? timeRed : timeRed.withAlpha (0.08f);
+    const float end = sevenSegment (g, playTime.toFloat(), timeText (pos, u.getSampleRate()), ink, juce::Justification::left);
+    sevenSegment (g, playRest.toFloat().withRight (end), clockText (juce::jmax<int64_t> (0, length - pos), u.getSampleRate()),
+                  known ? timeRed : timeRed.withAlpha (0.45f), juce::Justification::right);
     reels (g, playReels.toFloat(), reelAngle[1], state == UsbRecorder::PlayState::Playing);
 
-    // The format chips: WAV | 4-CH over 48K | 24 bit (the rate in orange when resampled).
+    // The format chips: WAV | 4-CH over 48K | 24 bit (the rate in orange when
+    // resampled); four blank tiles without a clip.
     auto chips = playChips.toFloat();
-    const float cw = chips.getWidth() * 0.48f, ch = chips.getHeight() * 0.44f;
-    const auto ink = known ? juce::Colour (0xffb8b8b8) : juce::Colour (0xff6a6a6a);
-    const auto typeName = known ? AudioFileFormat::typeName (info.type) : juce::String ("WAV");
-    chip (g, { chips.getX(), chips.getY(), cw, ch }, typeName, chipGrey, ink);
-    chip (g, { chips.getRight() - cw, chips.getY(), cw, ch }, known ? juce::String (info.channels) + "-CH" : juce::String ("-CH"), chipGrey, ink);
-    const auto rate = known ? (info.sampleRate == 44100 ? juce::String ("44.1K") : juce::String (juce::roundToInt (info.sampleRate / 1000.0)) + "K") : juce::String ("--K");
-    chip (g, { chips.getX(), chips.getBottom() - ch, cw, ch }, rate, known && mismatch ? Dark::orange : chipGrey, known && mismatch ? juce::Colours::black : ink);
-    const auto depth = ! known ? juce::String ("-- bit")
-                       : info.type == AudioFileFormat::Type::Mp3 ? juce::String (info.kbps) + "k"
-                                                                  : juce::String (info.bits) + " bit";
-    chip (g, { chips.getRight() - cw, chips.getBottom() - ch, cw, ch }, depth, chipGrey, ink);
+    const float cw = chips.getWidth() * 0.48f, ch = chips.getHeight() * 0.47f;
+    const juce::Rectangle<float> cells[] = { { chips.getX(), chips.getY(), cw, ch }, { chips.getRight() - cw, chips.getY(), cw, ch },
+                                             { chips.getX(), chips.getBottom() - ch, cw, ch }, { chips.getRight() - cw, chips.getBottom() - ch, cw, ch } };
+    if (! known)
+    {
+        for (auto& c : cells)
+            chip (g, c, {}, chipGrey, juce::Colours::black);
+    }
+    else
+    {
+        const auto rate = info.sampleRate == 44100 ? juce::String ("44.1K") : juce::String (juce::roundToInt (info.sampleRate / 1000.0)) + "K";
+        const auto depth = info.type == AudioFileFormat::Type::Mp3 ? juce::String (info.kbps) + "k" : juce::String (info.bits) + " bit";
+        chip (g, cells[0], AudioFileFormat::typeName (info.type), chipGrey, juce::Colours::black);
+        chip (g, cells[1], juce::String (info.channels) + "-CH", chipGrey, juce::Colours::black);
+        chip (g, cells[2], rate, mismatch ? Dark::orange : chipGrey, juce::Colours::black);
+        chip (g, cells[3], depth, chipGrey, juce::Colours::black);
+    }
 
     g.setColour (captionGrey);
-    g.setFont (font (sh * 0.034f));
+    g.setFont (font (sh * 0.03f));
     g.drawFittedText ("4-TRACK PLAYER", playCaption, juce::Justification::centredRight, 1, 0.7f);
 
     // PLAY, PAUSE, STOP, < >.
+    const bool active = state == UsbRecorder::PlayState::Playing || state == UsbRecorder::PlayState::Paused;
     g.setColour (panelGrey);
     g.fillRect (playKeys);
-    paintKey (g, playKeyAreas[0], "PLAY", [] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c) { drawIcon (gr, Icon::Play, r, c); }, true);
+    paintKey (g, playKeyAreas[0], "PLAY", [] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c) { drawIcon (gr, Icon::Play, r, c); },
+              canPlay() && state != UsbRecorder::PlayState::Playing);
     paintKey (g, playKeyAreas[1], "PAUSE", [] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c) { drawIcon (gr, Icon::Pause, r, c); },
               active, state == UsbRecorder::PlayState::Paused, Colours::gold);
-    paintKey (g, playKeyAreas[2], "STOP", [] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c) { drawIcon (gr, Icon::Stop, r, c); }, true);
-    const bool any = ! u.getQueue().empty();
+    paintKey (g, playKeyAreas[2], "STOP", [] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c) { drawIcon (gr, Icon::Stop, r, c); }, active);
+    const bool any = canStep();
     paintKey (g, playKeyAreas[3], {}, [] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c) { drawIcon (gr, Icon::ChevronLeft, r, c); }, any);
     paintKey (g, playKeyAreas[4], {}, [] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c) { drawIcon (gr, Icon::ChevronRight, r, c); }, any);
 }
@@ -1461,25 +1490,27 @@ void UsbRecorderPage::paintTimeline (juce::Graphics& g)
 {
     auto& u = usb();
     const float sh = (float) getHeight();
+    // [3.1] a #101010 box in a 2 px #585858 frame; empty without a clip.
     auto r = timeline.toFloat();
-    g.setColour (juce::Colour (0xff111111));
+    g.setColour (chipGrey);
     g.fillRect (r);
-    g.setColour (juce::Colour (0xff343434));
-    g.drawRect (r, 1.0f);
-    g.fillRect (r.getX(), r.getCentreY(), r.getWidth(), 1.0f);
-    // The length as soon as it's known (the player's time left shows it too).
+    const float frame = juce::jmax (1.0f, r.getHeight() / 42.0f);
+    r = r.reduced (frame);
+    g.setColour (juce::Colour (0xff101010));
+    g.fillRect (r);
     UsbRecorder::FileInfo info;
     int64_t length = 0;
     bool mismatch = false;
-    currentFileInfo (info, length, mismatch);
+    if (! currentFileInfo (info, length, mismatch) || length <= 0)
+        return;
     const auto pos = u.getPosition();
-    const float frac = length > 0 ? (float) juce::jlimit (0.0, 1.0, (double) pos / (double) length) : 0.0f;
+    const float frac = (float) juce::jlimit (0.0, 1.0, (double) pos / (double) length);
     const float x = r.getX() + frac * r.getWidth();
     g.setColour (timelineFill);
-    g.fillRect (r.withRight (x).reduced (0.0f, 1.0f));
+    g.fillRect (r.withRight (x));
     g.setColour (Colours::gold);
     g.fillRect (x - 1.0f, r.getY(), 2.0f, r.getHeight());
-    // The position (top left) and the length (top right).
+    // The position (top left) and the time left (top right).
     const float chipH = juce::jmax (10.0f, r.getHeight() * 0.18f);
     g.setFont (font (chipH * 0.62f, false));
     const auto posText = clockText (pos, u.getSampleRate());
@@ -1525,7 +1556,11 @@ void UsbRecorderPage::mouseDown (const juce::MouseEvent& e)
             return;
         }
     if (const int row = rowAt (p); row >= 0)
+    {
         select (row);
+        if (rows[(size_t) row].kind == (int) UsbRecorder::ItemKind::Folder && p.x >= rowsArea.getRight() - openKeyWidth())
+            openFolder (rows[(size_t) row].file);
+    }
 }
 
 void UsbRecorderPage::mouseDrag (const juce::MouseEvent& e)

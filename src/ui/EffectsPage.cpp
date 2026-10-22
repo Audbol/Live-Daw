@@ -44,6 +44,43 @@ namespace
         return -1;
     }
 
+    /** The rack's scratched dark metal [3.1]: grain, fine light scratches and
+        a few long dark ones, the same every time. */
+    juce::Image scratchedMetal (int w, int h, float scale)
+    {
+        juce::Image image (juce::Image::RGB, juce::jmax (1, w), juce::jmax (1, h), false);
+        juce::Random random (7);
+        {
+            juce::Image::BitmapData data (image, juce::Image::BitmapData::writeOnly);
+            for (int y = 0; y < image.getHeight(); ++y)
+                for (int x = 0; x < image.getWidth(); ++x)
+                {
+                    const auto v = (juce::uint8) (22 + random.nextInt (12));
+                    data.setPixelColour (x, y, juce::Colour (v, (juce::uint8) (v + 1), v));
+                }
+        }
+        juce::Graphics g (image);
+        const float fw = (float) image.getWidth(), fh = (float) image.getHeight();
+        for (int i = 0; i < 260; ++i)
+        {
+            const float x = random.nextFloat() * fw, y = random.nextFloat() * fh;
+            const float angle = random.nextFloat() * juce::MathConstants<float>::pi, length = (8.0f + random.nextFloat() * 110.0f) * scale;
+            g.setColour (juce::Colours::white.withAlpha (0.04f + random.nextFloat() * 0.12f));
+            g.drawLine (x, y, x + std::cos (angle) * length, y + std::sin (angle) * length, juce::jmax (0.6f, scale * 0.8f));
+        }
+        for (int i = 0; i < 24; ++i)
+        {
+            const float x = random.nextFloat() * fw, y = random.nextFloat() * fh;
+            const float angle = random.nextFloat() * juce::MathConstants<float>::pi, length = (60.0f + random.nextFloat() * 260.0f) * scale;
+            g.setColour (juce::Colours::black.withAlpha (0.35f + random.nextFloat() * 0.3f));
+            g.drawLine (x, y, x + std::cos (angle) * length, y + std::sin (angle) * length, juce::jmax (1.0f, scale * 1.4f));
+        }
+        // Darker towards the edges.
+        g.setGradientFill (juce::ColourGradient (juce::Colours::transparentBlack, fw * 0.5f, fh * 0.5f, juce::Colours::black.withAlpha (0.35f), 0.0f, 0.0f, true));
+        g.fillAll();
+        return image;
+    }
+
     void segmentMeter (juce::Graphics& g, juce::Rectangle<float> r, float level)
     {
         const int segments = juce::jmax (6, (int) (r.getHeight() / 4.0f));
@@ -70,55 +107,58 @@ public:
     {
         auto& fx = ctx.engine.getFx();
         auto& params = fx.params (slot);
-        auto b = getLocalBounds().toFloat().reduced (1.5f);
+        const auto b = getLocalBounds().toFloat();
         const int model = fx.getModel (slot);
         const bool device = model > ld::kFxExt;
         const bool loaded = fx.hasPlugin (slot) || device;
-        const bool sel = page.selected == slot;
+        const auto user = loaded ? findUser (ctx.engine, slot) : FxUser {};
+        const bool inUse = user.strip != nullptr;
 
-        // [3.1] an empty slot's outline, number box and blank unit are #383838
-        // on black; a slot in use has the brighter outline and number box.
-        const juce::Colour emptyGrey (0xff383838);
+        // [3.1] WING pixels of the 282 x 140 tile.
+        const float sx = b.getWidth() / 282.0f, sy = b.getHeight() / 140.0f;
+        auto at = [&b, sx, sy] (float x, float y, float w, float h) { return juce::Rectangle<float> (b.getX() + x * sx, b.getY() + y * sy, w * sx, h * sy); };
+
+        // A slot in use has a #707070 outline and number box; an empty slot,
+        // or one whose device is inserted nowhere, #383838 on black.
+        const juce::Colour dimGrey (0xff383838);
         g.setColour (juce::Colours::black);
         g.fillRect (b);
-        g.setColour (sel ? Colours::yellow : (loaded ? Colours::screenLine : emptyGrey));
-        g.drawRect (b, sel ? 2.5f : 2.0f);
+        g.setColour (inUse ? Colours::textDim : dimGrey);
+        g.drawRect (b, juce::jmax (1.0f, 2.0f * sy));
 
         // Slot number, bottom right: 16 of the tile's 140 px (wider for 10-16).
-        const float numberH = juce::jmax (12.0f, b.getHeight() * 16.0f / 140.0f);
+        const float numberH = juce::jmax (12.0f, 16.0f * sy);
         const auto numberFont = wingFontPx (numberH * 0.6f, WingWeight::SemiBold);
         const float numberW = juce::jmax (numberH, juce::GlyphArrangement::getStringWidth (numberFont, juce::String (slot + 1)) + numberH * 0.35f);
-        auto number = juce::Rectangle<float> (b.getRight() - numberW - 2.0f, b.getBottom() - numberH - 2.0f, numberW, numberH);
-        g.setColour (loaded ? Dark::textDim : emptyGrey);
+        auto number = juce::Rectangle<float> (b.getRight() - numberW - 2.0f * sx, b.getBottom() - numberH - 2.0f * sy, numberW, numberH);
+        g.setColour (inUse ? Colours::textDim : dimGrey);
         g.fillRect (number);
         g.setColour (juce::Colours::black);
         g.setFont (numberFont);
         g.drawText (juce::String (slot + 1), number, juce::Justification::centred);
 
-        // [3.1] the unit 196 x 60 px, 78 px from the tile's left and 8 from its top.
-        auto inner = b.reduced (b.getWidth() * 8.0f / 282.0f, b.getHeight() * 8.0f / 140.0f);
-        auto left = inner.removeFromLeft (b.getWidth() * 64.0f / 282.0f);
-        inner.removeFromLeft (b.getWidth() * 6.0f / 282.0f);
-        deviceArea = inner.removeFromTop (b.getHeight() * 60.0f / 140.0f);
-        meterArea = deviceArea.removeFromRight (juce::jmin (24.0f, deviceArea.getWidth() * 0.12f));
-        deviceArea.removeFromRight (3.0f);
+        // The unit: a #202020 plate 196 x 60 at 78, 8 with the device's
+        // face 6 in and its meter at the right.
+        const auto plate = at (78.0f, 8.0f, 196.0f, 60.0f);
+        meterArea = at (246.0f, 12.0f, 24.0f, 52.0f);
+        deviceArea = at (84.0f, 14.0f, 158.0f, 48.0f);
+        g.setColour (loaded ? Colours::screenPanel : Colours::screenDark);
+        g.fillRect (plate);
 
         if (! loaded)
         {
             // An empty slot: a blank unit with its unlit meter and a circled "+".
-            const auto unit = deviceArea.getUnion (meterArea);
-            g.setColour (Colours::screenDark);
-            g.fillRect (unit);
-            const auto meter = meterArea.reduced (2.0f, 4.0f);
+            const auto meter = meterArea.reduced (0.0f, 2.0f);
             const int segments = juce::jmax (6, (int) (meter.getHeight() / 4.0f));
             const float segH = meter.getHeight() / (float) segments, segW = (meter.getWidth() - 2.0f) / 2.0f;
             g.setColour (juce::Colour (0xff080808));
             for (int col = 0; col < 2; ++col)
                 for (int i = 0; i < segments; ++i)
                     g.fillRect (meter.getX() + (float) col * (segW + 2.0f), meter.getY() + (float) i * segH, segW, juce::jmax (1.0f, segH - 1.5f));
-            const float d = deviceArea.getHeight() * 0.65f, stroke = juce::jmax (1.5f, d * 0.07f);
-            auto circle = juce::Rectangle<float> (d, d).withCentre (deviceArea.getCentre());
-            g.setColour (emptyGrey);
+            const auto unit = plate.withTrimmedRight (plate.getRight() - meterArea.getX());
+            const float d = plate.getHeight() * 0.65f, stroke = juce::jmax (1.5f, d * 0.07f);
+            auto circle = juce::Rectangle<float> (d, d).withCentre (unit.getCentre());
+            g.setColour (dimGrey);
             g.drawEllipse (circle.reduced (stroke * 0.5f), stroke);
             g.fillRect (juce::Rectangle<float> (d * 0.4f, stroke * 1.4f).withCentre (circle.getCentre()));
             g.fillRect (juce::Rectangle<float> (stroke * 1.4f, d * 0.4f).withCentre (circle.getCentre()));
@@ -158,8 +198,7 @@ public:
                               label.toNearestInt(), juce::Justification::centredTop, 1);
         }
 
-        const auto user = findUser (ctx.engine, slot);
-        const float level = user.strip != nullptr && ! params.bypass.load()
+        const float level = inUse && ! params.bypass.load()
                                 ? juce::jlimit (0.0f, 1.0f, (dsp::gainToDb (ctx.meters.get (user.strip, false, 0)) + 60.0f) / 60.0f)
                                 : 0.0f;
         segmentMeter (g, meterArea, level);
@@ -174,19 +213,17 @@ public:
             g.drawFittedText (fx.isFaulted (slot) ? "FAULT - BYPASSED" : "DOUBLE ASSIGNED", warn.toNearestInt(), juce::Justification::centred, 1);
         }
 
-        // Source strip, PRE/POST and ON.
-        const float chipH = juce::jlimit (12.0f, 22.0f, left.getHeight() * 0.13f);
-        onArea = left.removeFromBottom (chipH);
-        left.removeFromBottom (3.0f);
-        prePostArea = left.removeFromBottom (chipH);
-        left.removeFromBottom (4.0f);
-        sourceArea = left;
-        if (user.strip != nullptr)
+        // The destination (in use only): its name in a bar of its colour (plain
+        // when it has its default name) over its icon and default label, then
+        // PRE / POST and ON, in the column 8..72.
+        sourceArea = at (8.0f, 8.0f, 64.0f, 76.0f);
+        prePostArea = at (8.0f, 89.0f, 64.0f, 20.0f);
+        onArea = at (8.0f, 112.0f, 64.0f, 20.0f);
+        const bool on = ! params.bypass.load();
+        if (inUse)
         {
-            // The destination: its name in a bar of its colour (plain when it has
-            // its default name), its icon, and its default label under the icon.
-            auto src = left;
-            auto bar = src.removeFromTop (juce::jmax (10.0f, src.getHeight() * 0.18f));
+            auto src = sourceArea;
+            auto bar = src.removeFromTop (16.0f * sy);
             g.setColour (stripDisplayColour (*user.strip));
             g.fillRect (bar);
             if (stripName (*user.strip) != user.strip->getLabel())
@@ -197,33 +234,27 @@ public:
             }
             g.setColour (Colours::screenTile);
             g.fillRect (src);
-            auto name = src.removeFromBottom (juce::jmin (18.0f, src.getHeight() * 0.32f));
+            auto name = src.removeFromBottom (juce::jmin (18.0f * sy, src.getHeight() * 0.32f));
             drawStripIcon (g, *user.strip, src.reduced (src.getWidth() * 0.22f, 3.0f), juce::Colours::white);
             g.setColour (juce::Colours::white);
             g.setFont (wingFontFit (TypeScale::body, name.getHeight(), WingWeight::SemiBold));
             g.drawFittedText (user.strip->getLabel(), name.toNearestInt(), juce::Justification::centred, 1, 0.7f);
 
             // PRE lit red, POST green, as on the console.
-            auto pre = prePostArea.removeFromLeft (prePostArea.getWidth() / 2.0f);
+            auto pre = prePostArea.withWidth (prePostArea.getWidth() / 2.0f);
             drawChip (g, pre, "PRE", user.post ? Colours::screenTile : Dark::pre, user.post ? Dark::textDim : juce::Colours::black);
-            drawChip (g, prePostArea, "POST", user.post ? Dark::post : Colours::screenTile, user.post ? juce::Colours::black : Dark::textDim);
-            prePostArea = pre.getUnion (prePostArea);
+            drawChip (g, prePostArea.withTrimmedLeft (pre.getWidth()), "POST", user.post ? Dark::post : Colours::screenTile,
+                      user.post ? juce::Colours::black : Dark::textDim);
+            drawChip (g, onArea, "ON", on ? Colours::yellow : Colours::screenTile, on ? juce::Colours::black : Dark::textDim);
         }
         else
         {
-            // Not inserted anywhere: the grey column with the FX logo (fig. 28).
-            g.setColour (Colours::screenTile);
-            g.fillRect (left);
-            g.setColour (Colours::caption.withAlpha (0.55f));
-            g.setFont (wingFontPx (juce::jmin (left.getWidth() * 0.32f, left.getHeight() * 0.3f), WingWeight::SemiBold).italicised());
-            g.drawText ("FX", left, juce::Justification::centred, false);
+            sourceArea = prePostArea = onArea = {};
         }
-        const bool on = ! params.bypass.load();
-        drawChip (g, onArea, "ON", on ? Colours::yellow : Colours::screenTile, on ? juce::Colours::black : Dark::textDim);
 
-        // Ring and value: the device's key control (a plugin's: MIX).
-        auto bottom = inner.withTrimmedTop (4.0f).withTrimmedRight (24.0f);
-        knobArea = bottom.removeFromLeft (juce::jmin (bottom.getHeight(), bottom.getWidth() * 0.4f));
+        // Ring and value: the device's key control (a plugin's: MIX), the
+        // ring 48 px at 90, 80, the caption and value from 151.
+        knobArea = at (90.0f, 80.0f, 48.0f, 48.0f);
         ringParam = device ? keyParam (spec) : -1;
         float mix = juce::jlimit (0.0f, 1.0f, params.mix.load() / 100.0f);
         juce::String ringLabel ("MIX"), ringValue (juce::String (juce::roundToInt (params.mix.load())) + " %");
@@ -235,23 +266,29 @@ public:
             ringLabel = p.label.toUpperCase();
             ringValue = p.display (v);
         }
-        const auto k = knobArea.reduced (knobArea.getWidth() * 0.12f);
+        const auto k = knobArea;
         const float a0 = juce::MathConstants<float>::pi * 1.2f, a1 = juce::MathConstants<float>::pi * 2.8f;
-        const float rad = k.getWidth() * 0.4f, thick = k.getWidth() * 0.18f;
+        const float rad = k.getWidth() * 0.4f, thick = k.getWidth() * 0.19f;
         juce::Path track, value;
         track.addCentredArc (k.getCentreX(), k.getCentreY(), rad, rad, 0.0f, a0, a1, true);
         value.addCentredArc (k.getCentreX(), k.getCentreY(), rad, rad, 0.0f, a0, a0 + mix * (a1 - a0), true);
-        g.setColour (Colours::screenTile);
+        g.setColour (Colours::screenLine);
         g.strokePath (track, juce::PathStrokeType (thick));
-        g.setColour (on ? Colours::text : Dark::textDim);
+        g.setColour (on || ! inUse ? Colours::text : Dark::textDim);
         g.strokePath (value, juce::PathStrokeType (thick));
-        bottom.removeFromLeft (6.0f);
         g.setColour (Colours::text);
-        // [Fig. 28] the caption about a tenth of the tile tall, the value larger.
-        g.setFont (wingFontPx (juce::jmin ((float) getHeight() * 0.1f, bottom.getHeight() * 0.3f)));
-        g.drawFittedText (ringLabel, bottom.removeFromTop (bottom.getHeight() / 2.0f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.8f);
-        g.setFont (wingFontPx (juce::jmin ((float) getHeight() * 0.155f, bottom.getHeight() * 0.62f), WingWeight::SemiBold));
-        g.drawFittedText (ringValue, bottom.toNearestInt(), juce::Justification::topLeft, 1, 0.8f);
+        g.setFont (wingFontPx (13.0f * sy));
+        g.drawFittedText (ringLabel, at (151.0f, 80.0f, 110.0f, 20.0f).toNearestInt(), juce::Justification::bottomLeft, 1, 0.8f);
+        g.setFont (wingFontPx (18.0f * sy, WingWeight::SemiBold));
+        g.drawFittedText (ringValue, at (151.0f, 101.0f, 110.0f, 28.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+
+        // [3.1] a device inserted nowhere is shown at half brightness.
+        if (! inUse)
+        {
+            g.setColour (juce::Colours::black.withAlpha (0.5f));
+            g.fillRect (b.reduced (2.0f * sx, 2.0f * sy).withTrimmedBottom (numberH));
+            g.fillRect (b.reduced (2.0f * sx, 2.0f * sy).withTop (number.getY()).withRight (number.getX()));
+        }
     }
 
     void mouseDown (const juce::MouseEvent& e) override
@@ -277,11 +314,6 @@ public:
 
     void mouseUp (const juce::MouseEvent& e) override
     {
-        page.selected = slot;
-        page.notifyKnobsChanged();
-        for (auto* t : page.tiles)
-            t->repaint();
-
         auto& params = ctx.engine.getFx().params (slot);
         if (e.mods.isPopupMenu())
             showFxSlotMenu (ctx, slot, this);
@@ -340,7 +372,7 @@ private:
         const int model = fx.getModel (slot);
         juce::String sig;
         sig << model << '|' << (juce::pointer_sized_int) fx.getPlugin (slot) << '|' << (int) params.bypass.load() << '|' << params.mix.load() << '|'
-            << (int) fx.isFaulted (slot) << (int) fx.isDoubleAssigned (slot) << (int) (page.selected == slot);
+            << (int) fx.isFaulted (slot) << (int) fx.isDoubleAssigned (slot);
         if (model > ld::kFxExt)
         {
             const auto& spec = models::model (models::Fx, model);
@@ -581,14 +613,12 @@ void EffectsPage::editSlot (int slot)
 {
     const bool open = juce::isPositiveAndBelow (slot, kNumFx);
     if (open)
-    {
-        selected = slot;
         editor->setSlot (slot);
-    }
     editor->setVisible (open);
     for (auto* t : tiles)
         t->setVisible (! open);
     notifyKnobsChanged();
+    notifyStatusKeysChanged(); // the rack has no parameter bar
     repaint();
 }
 
@@ -631,43 +661,39 @@ std::vector<KnobBinding> EffectsPage::getKnobs()
     return {}; // [3.1] the rack has no knobs, touched slot or not
 }
 
+bool EffectsPage::usesKnobs() const { return editor != nullptr && editor->isVisible(); }
+
 void EffectsPage::paint (juce::Graphics& g)
 {
     g.fillAll (Colours::screen);
     if (editor != nullptr && editor->isVisible())
         return;
 
-    // The rack: dark brushed metal with screws.
-    juce::ColourGradient metal (juce::Colour (0xff0e100e), (float) rack.getX(), (float) rack.getY(), juce::Colour (0xff0a0c0a), (float) rack.getRight(),
-                                (float) rack.getBottom(), false);
-    metal.addColour (0.45, juce::Colour (0xff1a1c1a));
-    g.setGradientFill (metal);
-    g.fillRect (rack);
-    juce::Random random (7);
-    for (int i = 0; i < 90; ++i)
-    {
-        const float x = (float) rack.getX() + random.nextFloat() * (float) rack.getWidth();
-        const float y = (float) rack.getY() + random.nextFloat() * (float) rack.getHeight();
-        g.setColour (juce::Colours::white.withAlpha (0.03f + random.nextFloat() * 0.04f));
-        g.drawLine (x, y, x + random.nextFloat() * 40.0f - 20.0f, y + random.nextFloat() * 6.0f - 3.0f, 1.0f);
-    }
+    // The rack: scratched dark metal (drawn once per size) with screws.
+    if (metal.getWidth() != rack.getWidth() || metal.getHeight() != rack.getHeight())
+        metal = scratchedMetal (rack.getWidth(), rack.getHeight(), (float) getHeight() / 720.0f);
+    g.drawImageAt (metal, rack.getX(), rack.getY());
     // [3.1] the screws 28 px in from the rack's corners, the embossed FX mark at its top left.
     const float ux = (float) getWidth() / 1280.0f, uy = (float) getHeight() / 720.0f;
     for (auto p : { juce::Point<float> (38.0f, 43.0f), juce::Point<float> (1238.0f, 43.0f), juce::Point<float> (38.0f, 682.0f), juce::Point<float> (1238.0f, 682.0f) })
     {
         const auto c = juce::Point<float> (p.x * ux, p.y * uy);
-        const float d = 20.0f * juce::jmin (ux, uy);
-        g.setColour (juce::Colour (0xff2c2e2c));
-        g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (c));
+        const float d = 22.0f * juce::jmin (ux, uy);
+        const auto head = juce::Rectangle<float> (d, d).withCentre (c);
+        g.setGradientFill (juce::ColourGradient (juce::Colour (0xff6a6a62), head.getX(), head.getY(), juce::Colour (0xff1c1c1a), head.getRight(),
+                                                 head.getBottom(), false));
+        g.fillEllipse (head);
         g.setColour (juce::Colour (0xff0c0c0c));
-        g.drawEllipse (juce::Rectangle<float> (d, d).withCentre (c), 1.0f);
-        g.drawLine (c.x - d * 0.3f, c.y - d * 0.3f, c.x + d * 0.3f, c.y + d * 0.3f, 1.5f);
+        g.drawEllipse (head, 1.0f);
+        // The cross slot.
+        g.drawLine (c.x - d * 0.28f, c.y - d * 0.1f, c.x + d * 0.28f, c.y + d * 0.1f, juce::jmax (1.5f, d * 0.12f));
+        g.drawLine (c.x - d * 0.1f, c.y + d * 0.28f, c.x + d * 0.1f, c.y - d * 0.28f, juce::jmax (1.5f, d * 0.12f));
     }
     const auto mark = juce::Rectangle<float> (140.0f * ux, 22.0f * uy, 60.0f * ux, 40.0f * uy);
     g.setFont (wingFontPx (mark.getHeight() * 0.72f, WingWeight::SemiBold).italicised());
-    g.setColour (juce::Colour (0xff606260));
+    g.setColour (juce::Colour (0xff7a7c7a));
     g.drawText ("FX", mark.translated (-1.0f, -1.0f), juce::Justification::centredLeft, false);
-    g.setColour (juce::Colour (0xff1c1e1c));
+    g.setColour (juce::Colour (0xff262826));
     g.drawText ("FX", mark, juce::Justification::centredLeft, false);
 
     // The group captions, #707070 and centred under their two columns.
@@ -686,16 +712,16 @@ void EffectsPage::paint (juce::Graphics& g)
 void EffectsPage::resized()
 {
     editor->setBounds (getLocalBounds());
-    // The 3.1 rack, in WING pixels of the 1280 x 720 page: the rack 10 px in;
-    // the slots 282 x 140 px, 287 px across and 145 px down, the standard
-    // pair 12 px further right; the captions under them.
+    // The 3.1 rack, in WING pixels of the 1280 x 720 page (no parameter bar):
+    // the rack 10 px in; the slots 282 x 140 px from 63, 75, 287 px across and
+    // 145 px down, the standard pair 12 px further right; the captions under them.
     const float ux = (float) getWidth() / 1280.0f, uy = (float) getHeight() / 720.0f;
     auto at = [ux, uy] (float x, float y, float w, float h)
     { return juce::Rectangle<float> (x * ux, y * uy, w * ux, h * uy).toNearestInt(); };
-    rack = at (10.0f, 10.0f, 1260.0f, 696.0f);
-    premiumLabel = at (53.0f, 656.0f, 569.0f, 30.0f);
-    standardLabel = at (639.0f, 656.0f, 569.0f, 30.0f);
-    static constexpr float columns[] = { 53.0f, 340.0f, 639.0f, 926.0f };
+    rack = at (10.0f, 10.0f, 1260.0f, 700.0f);
+    premiumLabel = at (63.0f, 657.0f, 569.0f, 30.0f);
+    standardLabel = at (649.0f, 657.0f, 569.0f, 30.0f);
+    static constexpr float columns[] = { 63.0f, 350.0f, 649.0f, 936.0f };
     for (int i = 0; i < tiles.size(); ++i)
     {
         // Slots run down the columns: 1-4 in the first, 5-8 in the second ...

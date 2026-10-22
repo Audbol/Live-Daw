@@ -76,6 +76,10 @@ private:
     const Row* selectedRow() const;
     void openFolder (const juce::File&);
     void playSelected();
+    bool canPlay() const;
+    bool canStep() const;
+    /** A folder row's > key (at its right end). */
+    int openKeyWidth() const;
     void seekFromTimeline (int x);
     void saveSettings();
     void warn (const juce::String& title, const juce::Result&);
@@ -123,10 +127,10 @@ private:
     juce::File selectedFile; // kept across reloads
 
     // Layout (page coordinates).
-    juce::Rectangle<int> leftPanel, toolbar, listArea, listHeader, rowsArea, scrollBar, scrollUp, scrollDown, headerFolderKey, headerOpenKey;
+    juce::Rectangle<int> leftPanel, toolbar, listArea, listHeader, rowsArea, scrollBar, scrollUp, scrollDown, headerFolderKey;
     juce::Rectangle<int> recBox, recKeys, playlistKeys, playBox, playKeys, timeline;
-    juce::Rectangle<int> recMeter, recTime, recReels, recFormat, recPathText, recCaption;
-    juce::Rectangle<int> playMeter, playTime, playReels, playChips, playCaption;
+    juce::Rectangle<int> recMeter, recLight, recTime, recReels, recPathText, recCaption, channelFrame, bitFrame;
+    juce::Rectangle<int> playMeter, playLight, playTime, playRest, playReels, playChips, playCaption;
     std::array<juce::Rectangle<int>, 8> toolKeys;
     std::array<juce::Rectangle<int>, 4> recKeyAreas, playlistKeyAreas;
     std::array<juce::Rectangle<int>, 5> playKeyAreas;

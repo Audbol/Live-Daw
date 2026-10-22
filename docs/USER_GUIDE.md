@@ -143,7 +143,9 @@ touchscreen looks the same in both.
     its source (<< and >>). The slot screens follow chapter 6 of the manual: INPUT (CHANNEL
     INPUT, TRIM & BALANCE pad, FILTER, DELAY), FILTER SETUP, GATE / COMP with the
     model's faceplate (the KEY FILTER and XOVER MODE `>` keys open GATE KEY FILTER /
-    COMP XOVER with the filter's response and FREQ; KEY SOURCE opens SELECT CHANNEL;
+    COMP XOVER with the filter's response, FREQ and, for a band pass, notch or PEAK, Q
+    (the crossover's DEPTH too) in boxes and on the knobs; for PEAK the XOVER page draws
+    the signal with the band taken down by DEPTH; KEY SOURCE opens SELECT CHANNEL;
     the model fields open the WING's picture lists), EQ, INS 1 / INS 2 (with
     automix), MAIN SENDS and BUS / MATRIX SENDS. On INS 1 / INS 2, FX PROCESSOR opens
     **SELECT FX PROCESSOR** (NONE and the 16 slots, who uses each and its device) and FX
@@ -163,16 +165,20 @@ touchscreen looks the same in both.
     PANNING, SEND LEVEL and SEND ENABLE, each with KEEP, changed on APPLY. Holding an
     EQ band key resets that band.
   - **EFFECTS:** the FX rack, slots 1-8 premium and 9-16 standard. Each slot shows its
-    device, the strip using it (PRE/POST), ON and its mix. Tapping a slot opens the
+    device and its main control (DECAY, TIME ...), and while a strip inserts it, the
+    strip (PRE/POST) and ON; a device inserted nowhere is shown dimmed. Tapping a slot opens the
     device on its **faceplate**, drawn like the hardware it recreates (a LARC remote
     for the vintage reverbs, a black 1176-style limiter with its VU meter...). The
     device list shows a tile per device: NONE and EXTERNAL (a plugin) first, then the
     tabs **FX1-8** (the premium devices, slots 1-8 only), **STD** and **CH** (the EQs and
     channel strips), in the console's order. The GATE, EQ and
     DYNAMICS screens show their model's faceplate too.
-  - **METERS:** pre-fader meters of the channels in groups of eight, AUX, BUS 1-8 / 9-16,
-    DCA, MAIN and MATRIX, with number keys in the strips' colours (select) and mute
-    squares. A group's header opens its section's FADERS screen. Bigger consoles page.
+  - **METERS:** meters of the channels in groups of eight, AUX, BUS 1-8 / 9-16, DCA,
+    MAIN and MATRIX, with number keys in the strips' colours (select) and M keys (mute).
+    **SETTINGS** in the status bar sets PRE or POST for CHANNELS (and aux), BUSES, MAINS,
+    MATRICES and DCAS, as on the console: PRE for channels and DCAs, POST for the others
+    at first (the same settings as SETUP > SURFACE > METERING). A group's header opens
+    its section's FADERS screen. Bigger consoles page.
   - **ROUTING** (status-bar keys CHANNELS / SOURCES / OUTPUTS), laid out as the
     console's: pick a channel, then its source. **MAIN / ALT** (CHANNEL INPUT) choose
     which of the channel's two inputs you patch (the ALT input, WING INPUT SELECT, can
@@ -378,9 +384,10 @@ computer as the "USB stick": `Documents/Sidecar/USB` by default (hold or right-c
 the USB key on the screen to choose another folder).
 
 - **Screen** (the status bar's **USB** icon, red while recording, or hold VIEW on the
-  monitoring panel), laid out as the console's: the browser on the left (USB | N SONGS
-  | ADD | FOLDER | RENAME | DELETE | REC PATH; folders, WAV / FLAC / AIFF / MP3 files and playlists; the
-  folder row goes up a level, `>` opens the selected folder, a double click plays),
+  monitoring panel), laid out as the console's: the browser on the left (USB | PLAYLIST
+  | ADD ALL | FOLDER | RENAME | DELETE | REC PATH; folders, WAV / FLAC / AIFF / MP3 files and playlists; a
+  folder's `>` opens it, inside a folder its row at the top goes up a level, a double click plays;
+  ADD ALL with no clip selected adds the folder shown, ADD a selected clip),
   the **4-TRACK RECORDER**, the playlist keys and the **4-TRACK PLAYER** with its
   timeline on the right.
 - **Recorder:** records the RECORDER output group (four ports; MAIN 1 L/R on 1-2 by
@@ -396,9 +403,10 @@ the USB key on the screen to choose another folder).
   rate is resampled and its rate chip turns orange) into the **USB PLAYER** source
   group, which channels patch on ROUTING like any input (PLAYER 1-4, with source
   settings). PLAY, PAUSE, STOP, `<` `>`, and the timeline (drag the cursor while
-  paused). The files of the browsed folder play one at a time.
+  paused). Choose a clip first (select or double-click it): the files of the browsed folder
+  then play one at a time; until then PLAY is off and the player blank, as on the console.
 - **Playlists:** CREATE PLAYLIST (or ADD a clip, ADD ALL for a folder), then on the
-  N SONGS page REPEAT, REMOVE, SKIP (passed over), STOP (stop after the clip; held: all
+  PLAYLIST page (its key shows N SONGS while a playlist is open) REPEAT, REMOVE, SKIP (passed over), STOP (stop after the clip; held: all
   clips), UP / DOWN; clips follow each other without a gap. SAVE / OPEN / CLOSE
   PLAYLIST store M3U files in the USB folder.
 - **Custom controls:** the USB PLAY/REC functions (PLAY, PAUSE, STOP, PREV, NEXT,
