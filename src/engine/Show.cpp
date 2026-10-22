@@ -14,14 +14,28 @@ namespace
         return s;
     }
 
-    void restorePluginState (juce::AudioPluginInstance& plugin, const juce::String& base64)
+    /** A saved FX slot's plugins: a <PLUGINCHAIN>, or a <PLUGIN> with its state (a plugin on its own). */
+    bool parseSavedFx (const juce::String& description, const juce::String& state, std::vector<PluginChain::Saved>& saved)
     {
-        if (base64.isEmpty())
-            return;
+        const auto xml = juce::parseXML (description);
+        if (xml == nullptr)
+            return false;
+        if (xml->hasTagName (PluginChain::kXmlTag))
+            return PluginChain::parseXml (*xml, saved);
 
-        juce::MemoryBlock block;
-        if (block.fromBase64Encoding (base64))
-            plugin.setStateInformation (block.getData(), static_cast<int> (block.getSize()));
+        PluginChain::Saved single;
+        if (! single.description.loadFromXml (*xml))
+            return false;
+        if (state.isNotEmpty())
+            single.state.fromBase64Encoding (state);
+        saved = { std::move (single) };
+        return true;
+    }
+
+    void restoreState (juce::AudioPluginInstance& plugin, const juce::MemoryBlock& state)
+    {
+        if (state.getSize() > 0)
+            plugin.setStateInformation (state.getData(), static_cast<int> (state.getSize()));
     }
 } // namespace
 
@@ -60,9 +74,20 @@ bool Show::captureFx (void* ctx, int32_t slot, ld::LdSink* description, ld::LdSi
 
     try
     {
-        auto* plugin = self.engine.getFx().getPlugin (slot);
+        auto& fx = self.engine.getFx();
+        auto* plugin = fx.getPlugin (slot);
         if (plugin == nullptr)
             return false;
+
+        // A chain is saved whole; a chain of one (not bypassed) like a plugin on
+        // its own, so such shows open in earlier versions too.
+        if (auto* chain = fx.getChain (slot); chain != nullptr && (chain->size() > 1 || chain->isBypassed (0)))
+        {
+            appendTo (description, chain->createXml()->toString (juce::XmlElement::TextFormat().singleLine().withoutHeader()));
+            return true;
+        }
+        if (fx.getChain (slot) != nullptr)
+            plugin = fx.getChainMember (slot, 0);
 
         const auto desc = plugin->getPluginDescription().createXml();
         appendTo (description, desc->toString (juce::XmlElement::TextFormat().singleLine().withoutHeader()));
@@ -85,40 +110,69 @@ int32_t Show::restoreFx (void* ctx, int32_t slot, int32_t mode, const char* desc
 
     try
     {
-        juce::PluginDescription desc;
-        const auto descXml = juce::parseXML (juce::String::fromUTF8 (descriptionUtf8, (int) descriptionLen));
-        if (descXml == nullptr || ! desc.loadFromXml (*descXml))
+        std::vector<PluginChain::Saved> saved;
+        if (! parseSavedFx (juce::String::fromUTF8 (descriptionUtf8, (int) descriptionLen),
+                            juce::String::fromUTF8 (stateUtf8, (int) stateLen), saved))
         {
             appendTo (error, "invalid plugin description");
             return 2;
         }
 
-        const auto state = juce::String::fromUTF8 (stateUtf8, (int) stateLen);
         auto& fx = self.engine.getFx();
 
-        if (mode == 0) // recall: only into the same plugin already loaded
+        if (mode == 0) // recall: only into the same plugins already loaded, in the same order
         {
-            auto* current = fx.getPlugin (slot);
-            if (current == nullptr
-                || current->getPluginDescription().createIdentifierString() != desc.createIdentifierString())
+            const int n = fx.getNumChainMembers (slot);
+            if (n != (int) saved.size())
                 return 1;
+            for (int i = 0; i < n; ++i)
+                if (fx.getChainMember (slot, i)->getPluginDescription().createIdentifierString()
+                    != saved[(size_t) i].description.createIdentifierString())
+                    return 1;
 
-            restorePluginState (*current, state);
+            for (int i = 0; i < n; ++i)
+            {
+                restoreState (*fx.getChainMember (slot, i), saved[(size_t) i].state);
+                if (saved[(size_t) i].bypassed != fx.isChainMemberBypassed (slot, i))
+                    fx.setChainMemberBypassed (slot, i, saved[(size_t) i].bypassed);
+            }
             return 0;
         }
 
-        // Show load: create the plugin.
-        juce::String message;
-        auto instance = self.host.createInstance (desc, self.engine.getSampleRate(), self.engine.getBlockSize(), message);
-        if (instance == nullptr)
+        // Show load: create the plugins (each recorded for the crash blacklist,
+        // or in the sandbox). One that can't be created is left out and reported.
+        std::vector<std::pair<std::unique_ptr<juce::AudioPluginInstance>, bool>> created; // with bypass
+        juce::StringArray failures;
+        for (const auto& s : saved)
         {
-            appendTo (error, message.isNotEmpty() ? message : juce::String ("could not be created"));
-            return 2;
+            juce::String message;
+            auto instance = self.host.createInstance (s.description, self.engine.getSampleRate(), self.engine.getBlockSize(), message);
+            if (instance == nullptr)
+            {
+                failures.add ((saved.size() > 1 ? s.description.name + ": " : juce::String())
+                              + (message.isNotEmpty() ? message : juce::String ("could not be created")));
+                continue;
+            }
+            restoreState (*instance, s.state);
+            created.emplace_back (std::move (instance), s.bypassed);
         }
 
-        restorePluginState (*instance, state);
-        fx.setPlugin (slot, std::move (instance));
-        return 0;
+        if (created.size() == 1 && ! created.front().second)
+        {
+            fx.setPlugin (slot, std::move (created.front().first)); // a plugin on its own
+        }
+        else if (! created.empty())
+        {
+            std::vector<PluginChain::MemberPtr> members;
+            for (auto& [instance, bypassed] : created)
+                members.push_back (PluginChain::makeMember (std::move (instance), bypassed));
+            fx.setPlugin (slot, std::make_unique<PluginChain> (std::move (members)));
+        }
+
+        if (failures.isEmpty())
+            return 0;
+        appendTo (error, failures.joinIntoString ("; "));
+        return 2;
     }
     catch (const std::exception& e)
     {

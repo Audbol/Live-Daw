@@ -248,6 +248,20 @@ void MixerEngine::timerCallback()
         {
             warnedLatency[(size_t) slot] = nullptr;
         }
+
+        // A chain's fault (auto-bypassed like a plugin's) names the member.
+        if (auto* chain = p != nullptr && fx.isFaulted (slot) ? fx.getChain (slot) : nullptr)
+        {
+            if (const auto fault = chain->takeFault(); juce::isPositiveAndBelow (fault.member, chain->size()) && onPluginWarning)
+            {
+                const auto what = fault.kind == PluginChain::FaultKind::threw       ? "threw an exception"
+                                : fault.kind == PluginChain::FaultKind::nonFinite   ? "output NaN/Inf"
+                                                                                    : "missed its block in the sandbox";
+                onPluginWarning ("FX " + juce::String (slot + 1) + ": " + chain->getMember (fault.member).getName() + " (plugin "
+                                 + juce::String (fault.member + 1) + " of " + juce::String (chain->size()) + " in the chain) " + what
+                                 + "; the FX slot is bypassed until you clear the fault");
+            }
+        }
     }
     garbage.collect(); // also works out the delay compensation
 }

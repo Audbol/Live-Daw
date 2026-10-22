@@ -231,6 +231,17 @@ views after a show load changes the console from Rust.
     and `release` callbacks with the engine (`ld_fx_set`, which also sets the model to
     EXT). A replaced plugin's `release` runs on the message thread once no audio
     callback can still reach it.
+  - A slot's plugin may be a `PluginChain` (`src/engine/PluginChain.*`): up to 8
+    plugins in series behind one `AudioPluginInstance`, so the engine, fault
+    detection and the slot's CPU meter see one plugin. Chains are immutable; adding,
+    removing or moving a plugin (`FxSlots::addToChain`...) builds a new chain that
+    shares the members (`shared_ptr`, with their bypass flag and what they were
+    prepared for) and swaps it in through `ld_fx_set`. The engine runs one chain or
+    the other, never both, and members already prepared aren't prepared again, so they
+    keep running. The chain's latency is the sum of its non-bypassed members'. Shows
+    store a chain as a `<PLUGINCHAIN>` element in place of `<PLUGIN>` (the Rust session
+    passes either through the plugin bridge); a chain of one is stored as a plain
+    plugin.
   - Rust runs the slot from whichever thread runs the strip whose PRE or POST insert
     uses it, keeps a dry copy for the slot's FX MIX, and auto-bypasses the slot if a
     plugin reports an error (a C++ exception is caught in the callback) or a device or

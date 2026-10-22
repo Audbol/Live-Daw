@@ -18,6 +18,7 @@ namespace livedaw::ui
 {
 
 class DawEditor;
+class PluginChainWindow;
 class WebMirror;
 
 /** The window: a WING surface. Top: the channel strip section, the main
@@ -57,7 +58,6 @@ public:
     juce::String getWindowStateBeforeFullScreen() const { return windowStateBeforeFullScreen; }
 
 private:
-    class PluginWindow;
     class LockOverlay;
     class SoloWatcher;
 
@@ -150,7 +150,7 @@ private:
     ResizerBar splitter { false };
     float topFraction = 0.52f;
 
-    juce::OwnedArray<PluginWindow> pluginWindows;
+    juce::OwnedArray<PluginChainWindow> pluginWindows;
     std::unique_ptr<juce::DocumentWindow> scannerWindow;
     std::unique_ptr<juce::FileChooser> fileChooser;
     juce::File showFile;

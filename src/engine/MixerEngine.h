@@ -120,7 +120,8 @@ public:
     int getTotalCompensation() const noexcept { return ld::ld_engine_pdc_total (engine); }
     /** A path needs more than kMaxCompensation samples (it stays late by the rest). */
     bool isCompensationLimited() const noexcept { return ld::ld_engine_pdc_limited (engine); }
-    /** Message thread: plugin warnings (a latency beyond kMaxCompensation) for the event log. */
+    /** Message thread: plugin warnings (a latency beyond kMaxCompensation, the
+        plugin of a chain that failed) for the event log. */
     std::function<void (const juce::String&)> onPluginWarning;
 
 private:

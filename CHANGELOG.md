@@ -7,6 +7,16 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Added
 
+- Plugin chains: an EXT FX slot runs up to 8 plugins in series (VST3, AU, LV2, each one
+  sandboxed or not). The slot's plugin window shows all their editors side by side in
+  chain order, each with a header strip (name, BYP, move left / right, remove) and a
+  + at the end that adds a plugin; it grows to fit and scrolls beyond the screen. The FX
+  slot menu has Add to chain, and the EFFECTS tile names the chain ("A + B", "A +2").
+  The slot stays one unit for the engine (FX MIX, bypass, CPU, fault handling); a
+  plugin's latency counts unless it is bypassed, and a failing plugin is named in the
+  event log. Changing the chain keeps the other plugins running with their state.
+  Shows, scenes, snippets and FX presets store and recall the whole chain; a single
+  plugin is saved as before.
 - `tools/wing/audio_compare` compares the sound of a WING's processing with Sidecar's:
   test signals for the WING's USB player (sweeps, level steps, level jumps, tone steps,
   noise, clicks, a synthetic band) with sync chirps and an ID code, a test plan of 65
