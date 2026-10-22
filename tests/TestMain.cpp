@@ -3,6 +3,8 @@
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 
+#include <iostream>
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init; // engine uses the message manager / timers
@@ -20,7 +22,12 @@ int main (int argc, char** argv)
         }
     }
 
-    juce::UnitTestRunner runner;
+    // JUCE's runner logs through juce::Logger, which on Windows goes to the
+    // debugger only; print to stdout so a CI log shows what failed.
+    struct StdoutRunner final : juce::UnitTestRunner
+    {
+        void logMessage (const juce::String& message) override { std::cout << message << std::endl; }
+    } runner;
     runner.setAssertOnFailure (false);
 
     if (argc > 1)
