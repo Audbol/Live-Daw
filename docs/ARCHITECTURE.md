@@ -523,7 +523,7 @@ Show
 - Each section has the WING's seven layer keys, computed from the console whenever
   they're asked for so they can't go stale: left `1-12` `13-24` `25-36`
   `37-40 AUX IN` `BUS MASTER` `USER 1` `USER 2`; center `DCA` `MAIN MATRIX` `AUX IN`
-  `INPUTS` `BUS MASTER` `USER 1` `USER 2`; right `MAIN MATRIX` `DCA` `INPUTS` `AUX IN`
+  `BUS MASTER` `USER 1` `USER 2`; right `MAIN MATRIX` `DCA` `INPUTS` `AUX IN`
   `BUS MASTER` `USER 1` `USER 2`. A layer longer than its section stays one key; the
   surface scrolls it with the shift keys. Ids are stable, and ids of older shows
   (`bus-2`, `dca-2`, `all`, ...) resolve to the key that holds those faders now.

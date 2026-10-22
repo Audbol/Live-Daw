@@ -85,9 +85,9 @@ an app preference (not saved in shows) and changes the surface at once; the
 touchscreen looks the same in both.
 
 - **Three fader sections:** left (12 faders), center (8) and right (4), each with the
-  WING's layer column: **VIEW** (the section's OVERVIEW; hold for CONFIG), seven layer
+  WING's layer column: **VIEW** (the section's OVERVIEW; hold for CONFIG), the layer
   keys (left `1-12` ... `37-40 AUX IN`, `BUS MASTER`; center `DCA`, `MAIN MATRIX`,
-  `AUX IN`, `INPUTS`, `BUS MASTER`; right `MAIN MATRIX`, `DCA`, `INPUTS`, `AUX IN`,
+  `AUX IN`, `BUS MASTER`; right `MAIN MATRIX`, `DCA`, `INPUTS`, `AUX IN`,
   `BUS MASTER`; all with `USER 1` / `USER 2` for your own banks) and the shift keys
   **◄4 / 4►**, which scroll longer layers four faders at a time (hold: to the start /
   end). Set a section to **Auto** (SETUP > SURFACE) and it shows as many faders as fit,

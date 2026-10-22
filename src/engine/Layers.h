@@ -27,7 +27,7 @@ struct Layer
     Left section: 12 faders, center: 8, right: 4, each with its own layer
     selection and the WING's seven layer keys (manual 4.2):
       left:   1-12, 13-24, 25-36, 37-40 AUX IN, BUS MASTER, USER 1, USER 2
-      center: DCA, MAIN MATRIX, AUX IN, INPUTS, BUS MASTER, USER 1, USER 2
+      center: DCA, MAIN MATRIX, AUX IN, BUS MASTER, USER 1, USER 2
       right:  MAIN MATRIX, DCA, INPUTS, AUX IN, BUS MASTER, USER 1, USER 2
     They're generated from the console whenever they're asked for, so they
     always cover every strip; a layer longer than its section is scrolled with

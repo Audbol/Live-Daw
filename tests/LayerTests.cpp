@@ -44,7 +44,7 @@ public:
                 return l.joinIntoString ("|");
             };
             expectEquals (labels (S::Left), juce::String ("1-12|13-24|25-36|37-40 AUX IN|BUS MASTER|USER 1|USER 2"));
-            expectEquals (labels (S::Center), juce::String ("DCA|MAIN MATRIX|AUX IN|INPUTS|BUS MASTER|USER 1|USER 2"));
+            expectEquals (labels (S::Center), juce::String ("DCA|MAIN MATRIX|AUX IN|BUS MASTER|USER 1|USER 2")); // no INPUTS in the center
             expectEquals (labels (S::Right), juce::String ("MAIN MATRIX|DCA|INPUTS|AUX IN|BUS MASTER|USER 1|USER 2"));
             expectEquals (names (layers.getDefaultLayers (engine, S::Left)).joinIntoString ("|"),
                           juce::String::fromUTF8 ("CH 1-12|CH 13-24|CH 25-36|CH 37-40 \xc2\xb7 AUX 1-8|BUS 1-16|USER 1|USER 2"));
@@ -52,7 +52,7 @@ public:
             // The first key of each section is lit after a reset; long layers stay one key.
             expectEquals (layers.getSelectedLayer (engine, S::Center).name, juce::String ("DCA 1-16"));
             expectEquals (layers.getSelectedLayer (engine, S::Right).name, juce::String::fromUTF8 ("MAIN 1-4 \xc2\xb7 MTX 1-8"));
-            expectEquals ((int) layers.findLayer (engine, S::Center, "inputs").faders.size(), 40);
+            expectEquals ((int) layers.findLayer (engine, S::Right, "inputs").faders.size(), 40);
 
             // Layer ids of older shows still resolve.
             const auto dcas = layers.findLayer (engine, S::Center, "dca-2");

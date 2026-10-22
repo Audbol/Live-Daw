@@ -29,6 +29,8 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- The center fader section has no INPUTS layer key, as on the console (DCA, MAIN MATRIX,
+  AUX IN, BUS MASTER, USER 1, USER 2); shows that had it selected there start on DCA.
 - The channel number in the HOME header is drawn in exactly the strip's colour, as on the
   console (dark colours were lightened); the factory colour is named Dark Blue, as on the WING.
 - WING COMP and WING GATE time and bend as recordings of a WING do: ENVELOPE LIN moves the

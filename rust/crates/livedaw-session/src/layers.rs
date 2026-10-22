@@ -6,7 +6,8 @@
 //! they're asked for so they always cover every strip:
 //!
 //! - left: `1-12`, `13-24`, `25-36`, `37-40 AUX IN`, `BUS MASTER`, `USER 1`, `USER 2`
-//! - center: `DCA`, `MAIN MATRIX`, `AUX IN`, `INPUTS`, `BUS MASTER`, `USER 1`, `USER 2`
+//! - center: `DCA`, `MAIN MATRIX`, `AUX IN`, `BUS MASTER`, `USER 1`, `USER 2` (no INPUTS key,
+//!   as on the console)
 //! - right: `MAIN MATRIX`, `DCA`, `INPUTS`, `AUX IN`, `BUS MASTER`, `USER 1`, `USER 2`
 //!
 //! A layer longer than its section stays one layer: the surface scrolls it with
@@ -458,7 +459,7 @@ impl LayerSet {
         let inputs = layer("inputs", &channels, "CH");
 
         let mut layers = match section {
-            CENTER => vec![dca, out, aux, inputs, bus],
+            CENTER => vec![dca, out, aux, bus],
             RIGHT => vec![out, dca, inputs, aux, bus],
             _ => {
                 // A section wider than 12 (Auto width on a big screen) gets longer input keys.
@@ -823,12 +824,12 @@ mod tests {
 
         // Layers longer than the section stay one key (the shift keys scroll them).
         let center = set.default_layers_for(CENTER, &console);
-        assert_eq!(ids(&center), ["dca-1", "out-1", "aux", "inputs", "bus-1", "user-1", "user-2"]);
+        assert_eq!(ids(&center), ["dca-1", "out-1", "aux", "bus-1", "user-1", "user-2"]);
         assert_eq!(center[0].name, "DCA 1-16");
         assert_eq!(center[0].faders[8], FaderRef::Dca(8));
         assert_eq!(center[1].name, "MAIN 1-4 · MTX 1-8");
         assert_eq!(center[2].name, "AUX 1-8");
-        assert_eq!(center[3].name, "CH 1-40");
+        assert_eq!(center[3].name, "BUS 1-16");
 
         let right = set.default_layers_for(RIGHT, &console);
         assert_eq!(ids(&right), ["out-1", "dca-1", "inputs", "aux", "bus-1", "user-1", "user-2"]);
@@ -888,7 +889,8 @@ mod tests {
         assert_eq!(find(LEFT, "in-5"), "in-1");
         assert_eq!(find(LEFT, "dca-2"), "in-1"); // no DCA key on the left
         assert_eq!(find(CENTER, "dca-2"), "dca-1");
-        assert_eq!(find(CENTER, "in-3"), "inputs");
+        assert_eq!(find(CENTER, "in-3"), "dca-1"); // no INPUTS key in the center
+        assert_eq!(find(RIGHT, "in-3"), "inputs");
         assert_eq!(find(CENTER, "all"), "dca-1");
         assert_eq!(find(RIGHT, "out-3"), "out-1");
         assert_eq!(find(RIGHT, "user-0123"), "out-1");
@@ -929,8 +931,8 @@ mod tests {
         assert_eq!(left[0].faders, vec![ch(5), FaderRef::Dca(1)]);
         assert!(left[5].faders.is_empty());
         assert!(set.has_default_override(LEFT, "in-1"));
-        assert!(!set.has_default_override(CENTER, "in-1"));
-        assert_eq!(set.default_layers_for(CENTER, &console)[3].faders.len(), 40);
+        assert!(!set.has_default_override(RIGHT, "in-1"));
+        assert_eq!(set.default_layers_for(RIGHT, &console)[2].faders.len(), 40);
 
         let mut loaded = LayerSet::default();
         loaded.from_xml(&set.to_xml());
