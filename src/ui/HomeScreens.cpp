@@ -2431,6 +2431,16 @@ public:
             }
     }
 
+    void mouseDoubleClick (const juce::MouseEvent& e) override
+    {
+        // A double-click on a band key resets the band too (mouse only: taps
+        // on a touch screen hold the key instead).
+        if (e.source.isMouse())
+            for (size_t i = 0; i < bandKeys.size(); ++i)
+                if (bandKeys[i].contains (e.getPosition()))
+                    resetBand ((int) i);
+    }
+
     void mouseUp (const juce::MouseEvent& e) override
     {
         ++pressCount;

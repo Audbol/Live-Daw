@@ -84,7 +84,9 @@ All notable changes to Sidecar are listed here. Versions follow
   XOVER curve for PEAK shows the band taken down by DEPTH (a dip at FREQ). Q on the
   parameter bar is a green fill either side of the centre, wider for a lower Q; the
   X/O tag lights blue; the ticks right of the COMP and GATE transfer graphs are plain grey
-  lines, not an output meter, and the yellow level dot trails a short fading tail; lit status-bar keys are #707070; the HOME screens keep 8 px
+  lines, not an output meter, and the yellow level dot trails a short fading tail;
+  double-clicking an EQ band's handle on the graph, or its band key, with the mouse resets
+  the band to the model's defaults (touches don't, so taps can't reset one by accident); lit status-bar keys are #707070; the HOME screens keep 8 px
   margins left and right.
 - MONITOR / TALKBACK, MUTE GROUPS and the VIEW screens with a DCA layer (OVERVIEW,
   FADERS, SENDS, CONFIG) are laid out like a WING's (firmware 3.1, measured off the

@@ -763,6 +763,26 @@ void ResponseGraph::mouseUp (const juce::MouseEvent&)
 
 void ResponseGraph::mouseDoubleClick (const juce::MouseEvent& e)
 {
+    // A double-click on an EQ band resets it (gain, frequency, Q, type) to
+    // the model's defaults; mouse only, so that taps on a touch screen
+    // don't reset a band by accident.
+    if (block != Filter && ! isKeyView() && strip != nullptr && e.source.isMouse())
+    {
+        if (const int b = bandAt (e.position); b >= 0)
+        {
+            auto& eq = strip->params.eq;
+            const auto& spec = models::model (static_cast<models::Table> (strip->getEqTable()), eq.model.load());
+            const auto& band = bands[(size_t) b];
+            for (const int i : { band.g, band.f, band.q, spec.find (band.id + "eq") })
+                if (i >= 0)
+                    eq.values[i] = spec.params[(size_t) i].defaultValue;
+            selectedBand = b;
+            if (onBandSelected)
+                onBandSelected (b);
+            repaint();
+            return;
+        }
+    }
     const int line = cutLineAt (e.position);
     if (line < 0)
         return;
