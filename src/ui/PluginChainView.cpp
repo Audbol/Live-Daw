@@ -123,7 +123,12 @@ public:
         editor.reset (plugin.hasEditor() ? plugin.createEditorAndMakeActive() : nullptr);
         if (editor == nullptr)
             editor = std::make_unique<juce::GenericAudioProcessorEditor> (plugin);
-        addAndMakeVisible (*editor);
+        // The editor sits in a holder: zooming by a transform scales the
+        // holder, never the editor itself (JUCE leaves that to the host scale).
+        holder.setInterceptsMouseClicks (false, true);
+        holder.onEditorResized = [this] { placeEditor(); };
+        addAndMakeVisible (holder);
+        holder.addAndMakeVisible (*editor);
         base = { juce::jmax (1, editor->getWidth()), juce::jmax (1, editor->getHeight()) };
         chooseMethod();
 
@@ -141,6 +146,7 @@ public:
     ~Card() override
     {
         // Before the plugin may go (plugin formats' editors tell it themselves; others don't).
+        holder.onEditorResized = nullptr;
         plugin.editorBeingDeleted (editor.get());
         editor = nullptr;
     }
@@ -158,8 +164,8 @@ public:
         const int zoom = method == ZoomMethod::fixed ? 100 : view.zoom;
         if (zoom != applied)
             applyZoom (zoom);
-        editor->setVisible (! collapsed);
-        editor->setAlpha (bypassed || faulted ? 0.45f : 1.0f); // both out of the signal path
+        holder.setVisible (! collapsed);
+        holder.setAlpha (bypassed || faulted ? 0.45f : 1.0f); // both out of the signal path
 
         const auto desc = plugin.getPluginDescription();
         setTooltip (plugin.getName() + " (" + desc.manufacturerName + ", " + desc.pluginFormatName + "), plugin " + juce::String (index + 1)
@@ -325,6 +331,17 @@ public:
 
     PluginChainView& owner;
     juce::AudioPluginInstance& plugin;
+    /** The editor's parent, scaled by a transform zoom; it follows the
+        editor when the plugin resizes it. */
+    struct Holder final : juce::Component
+    {
+        std::function<void()> onEditorResized;
+        void childBoundsChanged (juce::Component*) override
+        {
+            if (onEditorResized)
+                onEditorResized();
+        }
+    } holder;
     std::unique_ptr<juce::AudioProcessorEditor> editor;
     juce::Point<int> base; // the editor's size at 100 %
     ZoomMethod method = ZoomMethod::fixed;
@@ -401,15 +418,17 @@ private:
             return;
         const auto size = shownSize();
         const int x = juce::jmax (0, (getWidth() - size.x) / 2);
+        editor->setTopLeftPosition (0, 0);
         if (method == ZoomMethod::transform)
         {
-            editor->setTopLeftPosition (0, 0);
             const float s = (float) applied / 100.0f;
-            editor->setTransform (juce::AffineTransform::scale (s).translated ((float) x, (float) kTitleHeight));
+            holder.setBounds (0, 0, editor->getWidth(), editor->getHeight());
+            holder.setTransform (juce::AffineTransform::scale (s).translated ((float) x, (float) kTitleHeight));
         }
         else
         {
-            editor->setTopLeftPosition (x, kTitleHeight);
+            holder.setTransform ({});
+            holder.setBounds (x, kTitleHeight, editor->getWidth(), editor->getHeight());
         }
     }
 
@@ -954,7 +973,7 @@ juce::Rectangle<int> PluginChainView::getEditorBounds (int index) const
     if (! juce::isPositiveAndBelow (index, getNumCards()))
         return {};
     auto& card = *cards[(size_t) index];
-    return card.editor->isVisible() ? card.editor->getBoundsInParent() : juce::Rectangle<int>();
+    return card.holder.isVisible() ? card.holder.getBoundsInParent() : juce::Rectangle<int>();
 }
 
 bool PluginChainView::isCardVisible (int index) const
