@@ -323,6 +323,52 @@ public:
             engine.getGarbage().collectAllNow();
         }
 
+        beginTest ("Editing a faulted slot's chain (zoom, collapse, add, move) keeps it bypassed until cleared");
+        {
+            MixerEngine engine (0);
+            OfflineRig rig (engine, 1, 2);
+            test::setChannels (engine, 1);
+            auto& strip = *engine.getChannels()[0];
+            strip.params.preInsert.on = true;
+            strip.params.preInsert.fx = 0;
+            auto& fx = engine.getFx();
+            auto* bad = new FakePlugin (1.0f, FakePlugin::Mode::Throw, "bad");
+            fx.setPlugin (0, std::unique_ptr<juce::AudioPluginInstance> (bad)); // a plugin on its own
+            rig.setInput (0, 0.5f);
+            rig.run();
+            expect (fx.isFaulted (0));
+
+            // Collapsing its card in the plugin window makes it a chain of one.
+            fx.setChainMemberView (0, 0, { 100, true });
+            expect (fx.getChain (0) != nullptr);
+            expect (fx.isFaulted (0), "a view change cleared the slot's fault");
+            fx.setChainMemberView (0, 0, { 67, true });
+            expect (fx.isFaulted (0));
+
+            expect (fx.addToChain (0, std::make_unique<FakePlugin> (2.0f)));
+            expect (fx.isFaulted (0), "adding a plugin cleared the slot's fault");
+            expect (fx.moveInChain (0, 1, 0));
+            expect (fx.isFaulted (0), "moving a plugin cleared the slot's fault");
+            bad->mode = FakePlugin::Mode::Gain;
+            rig.run (2);
+            expectWithinAbsoluteError (rig.out (0), 0.5f * kCentre, 1.0e-5f); // still bypassed: dry
+
+            // Only clearing the fault runs the slot again.
+            fx.clearFlags (0);
+            rig.run (2);
+            expect (! fx.isFaulted (0));
+            expectWithinAbsoluteError (rig.out (0), 0.5f * 2.0f * kCentre, 1.0e-5f);
+
+            // A new plugin (not a rearrangement) starts unfaulted, as before.
+            fx.setPlugin (0, std::make_unique<FakePlugin> (1.0f, FakePlugin::Mode::Throw, "bad"));
+            rig.run();
+            expect (fx.isFaulted (0));
+            fx.setPlugin (0, std::make_unique<FakePlugin> (1.0f));
+            expect (! fx.isFaulted (0));
+            fx.setPlugin (0, nullptr);
+            engine.getGarbage().collectAllNow();
+        }
+
         beginTest ("Zoom steps and FIT");
         {
             using V = ui::PluginChainView;

@@ -795,6 +795,8 @@ extern "C"
 
     // FX slots (message thread)
     void ld_fx_set (const Engine*, int32_t slot, const InsertCallbacks* callbacks);
+    /** As ld_fx_set with a processor holding the same plugins (a chain rearranged): a faulted slot stays faulted. */
+    void ld_fx_replace (const Engine*, int32_t slot, const InsertCallbacks* callbacks);
     void* ld_fx_ctx (const Engine*, int32_t slot);
     /** what: 0 = a plugin is loaded, 1 = faulted (auto-bypassed), 2 = double-assigned,
         3 = a built-in device is running. */

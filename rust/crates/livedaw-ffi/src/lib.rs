@@ -458,6 +458,19 @@ pub unsafe extern "C" fn ld_fx_set(e: *const Engine, slot: i32, callbacks: *cons
     guard((), || e.set_fx_plugin(slot as usize, cb));
 }
 
+/// Message thread: as `ld_fx_set` with a processor holding the same plugins as
+/// the slot's current one (a plugin chain rearranged): a faulted (auto-bypassed)
+/// slot stays faulted.
+#[no_mangle]
+pub unsafe extern "C" fn ld_fx_replace(e: *const Engine, slot: i32, callbacks: *const InsertCallbacks) {
+    let Some(e) = engine(e) else { return };
+    if slot < 0 || slot as usize >= e.num_fx() {
+        return;
+    }
+    let Some(cb) = callbacks.as_ref().copied() else { return };
+    guard((), || e.replace_fx_plugin(slot as usize, cb));
+}
+
 /// Message thread: selects the device of a slot (index into the FX table,
 /// model table 4), creating it now; `defaults` resets its settings. Returns
 /// false if the device isn't allowed there (premium devices need slots 1-8).

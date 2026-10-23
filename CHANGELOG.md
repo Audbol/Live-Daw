@@ -161,6 +161,13 @@ All notable changes to Sidecar are listed here. Versions follow
   sides at centre, the near side rising to +3 dB and the far side falling to off at the
   edge (Sidecar used a -3 dB centre).
 
+### Fixed
+
+- An FX slot auto-bypassed by a failing plugin ran that plugin again as soon as its
+  chain was edited: zooming or collapsing the plugin in the plugin window, bypassing it,
+  or adding or moving a plugin cleared the slot's fault. The slot now stays bypassed
+  until you clear the fault.
+
 ## [0.1.3] - beta
 
 The first round of matching Sidecar to a real WING, side by side with the console:

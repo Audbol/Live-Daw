@@ -824,6 +824,17 @@ impl Engine {
         }
     }
 
+    /// Message thread: as `set_fx_plugin` with a processor holding the same
+    /// plugins as the slot's current one (a plugin chain rearranged): an
+    /// auto-bypassed slot stays faulted.
+    pub fn replace_fx_plugin(&self, i: usize, cb: InsertCallbacks) {
+        let (Some(rack), Some(params)) = (self.fx.get(i), self.controls.fx.get(i)) else { return };
+        rack.replace(cb, &self.garbage);
+        if params.model_index() != FX_EXT {
+            self.set_fx_model(i, FX_EXT, true); // (selecting a model clears the fault)
+        }
+    }
+
     fn fx_context(&self) -> FxContext {
         let st = self.lock();
         FxContext { sample_rate: st.device.sample_rate as f32, max_block: st.device.block_size }
