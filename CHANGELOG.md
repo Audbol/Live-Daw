@@ -3,7 +3,19 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
-## [Unreleased]
+## [0.1.4] - beta
+
+The second round of matching Sidecar to a real WING, from screenshots, photos and a
+parameter dump of a console: the MONITOR / TALKBACK, MUTE GROUPS and DCA screens (with
+renaming, the DCA SOLO BUS and the SOURCE tab), METERS with its PRE / POST settings, the
+USB recorder and player, the EFFECTS rack and the COMP page with its KEY FILTER and
+XOVER pages now follow the console's own screens; the monitor, solo and RTA settings
+start as a factory-initialized WING; the surface's keys, LEDs and light bars are lit
+like the console's, with a black finish beside the silver one; and a WING snapshot
+loads from LIBRARY as on the console. New: plugin chains, up to 8 plugins in one FX
+slot, shown side by side in one window with zoom, collapse and per-plugin fault
+bypass. The screens use less CPU. Known limitations: see the
+[README](https://github.com/Audbol/Live-Daw/blob/main/README.md#known-limitations).
 
 ### Added
 
