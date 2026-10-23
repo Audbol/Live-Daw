@@ -128,7 +128,7 @@ void FxSlots::setPlugin (int slot, std::unique_ptr<juce::AudioPluginInstance> pl
     install (slot, std::move (plugin));
 }
 
-void FxSlots::install (int slot, std::shared_ptr<juce::AudioPluginInstance> plugin)
+void FxSlots::install (int slot, std::shared_ptr<juce::AudioPluginInstance> plugin, bool rearranged)
 {
     if (! juce::isPositiveAndBelow (slot, kNumFx))
         return;
@@ -149,7 +149,10 @@ void FxSlots::install (int slot, std::shared_ptr<juce::AudioPluginInstance> plug
     holder->prepare (ld::ld_engine_sample_rate (engine), ld::ld_engine_block_size (engine));
 
     const ld::InsertCallbacks callbacks { &Holder::process, &Holder::release, holder };
-    ld::ld_fx_set (engine, slot, &callbacks);
+    if (rearranged)
+        ld::ld_fx_replace (engine, slot, &callbacks); // the slot's plugins rearranged: a faulted slot stays bypassed
+    else
+        ld::ld_fx_set (engine, slot, &callbacks);
     holder->listen(); // after ld_fx_set, which resets the slot's latency
 }
 
@@ -228,7 +231,7 @@ void FxSlots::setChainMemberBypassed (int slot, int index, bool bypassed)
     {
         if (! bypassed)
             return;
-        install (slot, std::make_shared<PluginChain> (members (slot)));
+        install (slot, std::make_shared<PluginChain> (members (slot)), true);
     }
     getChain (slot)->setBypassed (index, bypassed);
 }
@@ -274,7 +277,7 @@ void FxSlots::setChainMemberView (int slot, int index, PluginChain::View view)
     {
         if (view.isDefault())
             return;
-        install (slot, std::make_shared<PluginChain> (members (slot)));
+        install (slot, std::make_shared<PluginChain> (members (slot)), true);
     }
     getChain (slot)->setView (index, view);
 }
@@ -287,7 +290,7 @@ bool FxSlots::addToChain (int slot, std::unique_ptr<juce::AudioPluginInstance> p
     if (! juce::isPositiveAndNotGreaterThan (index, (int) list.size()))
         index = (int) list.size();
     list.insert (list.begin() + index, PluginChain::makeMember (std::move (plugin)));
-    install (slot, std::make_shared<PluginChain> (std::move (list)));
+    install (slot, std::make_shared<PluginChain> (std::move (list)), true);
     return true;
 }
 
@@ -300,7 +303,7 @@ bool FxSlots::removeFromChain (int slot, int index)
     if (list.empty())
         install (slot, nullptr);
     else
-        install (slot, std::make_shared<PluginChain> (std::move (list)));
+        install (slot, std::make_shared<PluginChain> (std::move (list)), true);
     return true;
 }
 
@@ -313,7 +316,7 @@ bool FxSlots::moveInChain (int slot, int from, int to)
     auto member = list[(size_t) from];
     list.erase (list.begin() + from);
     list.insert (list.begin() + to, std::move (member));
-    install (slot, std::make_shared<PluginChain> (std::move (list)));
+    install (slot, std::make_shared<PluginChain> (std::move (list)), true);
     return true;
 }
 

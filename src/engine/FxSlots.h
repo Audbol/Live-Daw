@@ -123,7 +123,9 @@ public:
 private:
     struct Holder;
     Holder* holderAt (int slot) const noexcept;
-    void install (int slot, std::shared_ptr<juce::AudioPluginInstance> plugin);
+    /** `rearranged`: `plugin` is a chain of the slot's plugins (added to, moved, removed from), so
+        a faulted (auto-bypassed) slot stays faulted until the fault is cleared. */
+    void install (int slot, std::shared_ptr<juce::AudioPluginInstance> plugin, bool rearranged = false);
     /** The slot's plugins as chain members (wrapping a plugin on its own). */
     std::vector<PluginChain::MemberPtr> members (int slot) const;
 

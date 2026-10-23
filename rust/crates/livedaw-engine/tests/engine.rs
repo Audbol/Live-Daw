@@ -441,6 +441,16 @@ fn fx_slots_as_inserts_and_faulty_ones_are_auto_bypassed() {
     assert!(engine.fx(2).unwrap().is_faulted());
     assert_eq!(engine.num_faulted_fx(), 2);
 
+    // The host rearranging the slot's plugins (a chain edited) keeps it
+    // auto-bypassed; a new processor starts unfaulted.
+    engine.replace_fx_plugin(1, fake(1.0, 0).0);
+    rig.run(5);
+    assert!(engine.fx(1).unwrap().is_faulted());
+    engine.set_fx_plugin(1, Some(fake(1.0, 0).0));
+    assert!(!engine.fx(1).unwrap().is_faulted());
+    rig.run(5);
+    assert!(!engine.fx(1).unwrap().is_faulted());
+
     // Two strips on one slot: never concurrent, reported.
     b.params.pre_insert.fx.store(0, Relaxed);
     rig.set_input(1, 0.5);

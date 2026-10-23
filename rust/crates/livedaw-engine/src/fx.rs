@@ -150,9 +150,22 @@ impl FxRack {
 
     /// Message thread: installs (or clears, with None) the slot's processor.
     pub fn set(&self, cb: Option<InsertCallbacks>, garbage: &Garbage) {
+        self.swap(cb, false, garbage);
+    }
+
+    /// Message thread: swaps in a processor holding the same plugins as the
+    /// current one (a plugin chain rearranged): as `set`, but an auto-bypassed
+    /// slot stays so until its fault is cleared.
+    pub fn replace(&self, cb: InsertCallbacks, garbage: &Garbage) {
+        self.swap(Some(cb), true, garbage);
+    }
+
+    fn swap(&self, cb: Option<InsertCallbacks>, keep_fault: bool, garbage: &Garbage) {
         let new = cb.map_or(std::ptr::null_mut(), |cb| Box::into_raw(Box::new(Slot { cb })));
         let old = self.slot.swap(new, AcqRel);
-        self.faulted.store(false, Relaxed);
+        if !keep_fault {
+            self.faulted.store(false, Relaxed);
+        }
         self.load.store(0.0);
         self.latency.store(0, Relaxed); // the host reports the new plugin's
         if !old.is_null() {
