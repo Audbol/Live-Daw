@@ -366,9 +366,12 @@ class MainDisplay::ConsoleKey final : public juce::Button, private juce::Timer
 public:
     explicit ConsoleKey (const juce::String& keyText) : juce::Button (keyText) { startTimerHz (10); }
 
-    juce::Colour litColour = Colours::keyLayer; // a screen key lights orange while its screen shows
+    juce::Colour litColour = Colours::keySelect; // a screen key lights green while its screen shows
     bool led = false; // the blank key: an LED instead of a lit key
-    bool backlit = false; // CLR SOLO: a dark face in a rim that carries the light, like SOLO
+    /** The screen keys and CLR SOLO: a black face in a rim that carries the
+        light, the print lit too (lavender unlit, in the black glass round the
+        display on either finish). */
+    bool backlit = false;
     std::optional<Icon> icon; // printed instead of the text (the maximize key)
     std::function<void()> onPress, onHold;
 
@@ -390,7 +393,8 @@ public:
         if (backlit)
         {
             // The rim and the print take the light; the face stays dark.
-            auto rimLight = lit ? SurfaceLighting::lit (litColour, sc.keyFace) : SurfaceLighting::backlit (sc.keyRim, sc.keyFace);
+            const juce::Colour faceColour (0xff141416), rimUnlit (0xffaaa2e2);
+            auto rimLight = lit ? SurfaceLighting::lit (litColour, faceColour) : SurfaceLighting::backlit (rimUnlit, faceColour);
             if (down)
                 rimLight = rimLight.darker (0.2f);
             else if (over)
@@ -402,7 +406,7 @@ public:
             g.setColour (rimLight);
             g.fillRoundedRectangle (ring, 4.5f);
             const auto face = ring.reduced (rim).withTrimmedBottom (rim * 0.4f);
-            g.setColour (lit ? sc.keyFace.interpolatedWith (litColour, 0.1f) : sc.keyFace);
+            g.setColour (lit ? faceColour.interpolatedWith (litColour, 0.1f) : faceColour);
             g.fillRoundedRectangle (face, 3.5f);
             g.setColour (rimLight);
             const auto keyText = getButtonText();
@@ -968,6 +972,7 @@ MainDisplay::MainDisplay (UiContext& c) : ctx (c)
     for (auto s : screens)
     {
         auto* b = screenButtons.add (new ConsoleKey (screenName (s)));
+        b->backlit = true;
         b->onPress = [this, s] { screenKeyPressed (s); };
         addAndMakeVisible (b);
     }

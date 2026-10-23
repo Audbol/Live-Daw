@@ -72,7 +72,7 @@ namespace Colours
     const juce::Colour keySelect { 0xff12f046 };    // a lit SELECT key's rim and print
     const juce::Colour keySolo { 0xffe07a1e };      // a lit SOLO key's
     const juce::Colour keyMute { 0xfff8103f };      // a lit MUTE key's
-    const juce::Colour keyLayer { 0xffff9a28 };     // a lit layer, function or mute group key, a screen key, and SOF FLIP's rim: light orange
+    const juce::Colour keyLayer { 0xffff9a28 };     // a lit layer, function or mute group key, and SOF FLIP's rim: light orange
     const juce::Colour keyWhite { 0xfff4f6fb };     // a key lit white
     const juce::Colour ledWindow { 0xff8e9094 };    // an unlit colour light bar's frosted window
     const juce::Colour ledYellow { 0xfff5e14a };    // a lit surface key
