@@ -44,9 +44,9 @@ void paintDynamicsTile (juce::Graphics&, juce::Rectangle<float>, int model, cons
     for the gate) down the left; the static curve (computed by the engine from
     the model's own settings), blue while the slot is on; the threshold as a
     grey line across with the round handle at the right (drag it); the live
-    level as a yellow dot on the curve; the gain reduction as a red segment
-    meter down the left edge and the slot's output level on the ticks at the
-    right. */
+    level as a yellow dot on the curve, trailing a fading tail of where it
+    was; the gain reduction as a red segment meter down the left edge; plain
+    grey ticks every 10 dB at the right. */
 class DynTransferGraph final : public juce::Component, private juce::Timer
 {
 public:
@@ -78,6 +78,8 @@ private:
     std::vector<float> builtValues, curve;
     float range = 60.0f, gr = 0.0f, key = -120.0f, out = 0.0f;
     float shownGr = 0.0f, shownKey = -120.0f, shownOut = 0.0f;
+    // The level dot's tail: its recent positions, newest first (30 per second).
+    std::array<float, 10> trail {};
     bool builtOn = false, dragging = false;
 };
 

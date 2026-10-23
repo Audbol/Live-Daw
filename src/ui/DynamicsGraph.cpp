@@ -2,6 +2,7 @@
 
 #include "ui/LookAndFeel.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace livedaw::ui
@@ -199,8 +200,12 @@ void DynTransferGraph::timerCallback()
     key = newKey > key ? newKey : key * 0.6f + newKey * 0.4f;
     const float outDb = peak > 0.0f ? 20.0f * std::log10 (peak) : -120.0f;
     out = outDb > out ? outDb : juce::jmax (outDb, out - 1.5f);
+    // The tail follows the dot a few frames behind.
+    std::move_backward (trail.begin(), trail.end() - 1, trail.end());
+    trail[0] = key;
+    const bool tailMoving = std::abs (trail.back() - key) > 0.1f;
     // Only when the meters moved: the graph is big and a pop-up may lie over it.
-    if (std::abs (gr - shownGr) > 0.05f || std::abs (key - shownKey) > 0.1f || std::abs (out - shownOut) > 0.1f)
+    if (std::abs (gr - shownGr) > 0.05f || std::abs (key - shownKey) > 0.1f || tailMoving)
     {
         shownGr = gr;
         shownKey = key;
@@ -256,7 +261,7 @@ void DynTransferGraph::paint (juce::Graphics& g)
     const float pxPerDb = plot.getHeight() / range;
     paintDots (g, plot, pxPerDb * 5.0f, pxPerDb * 5.0f, juce::jmax (1.0f, pxPerDb * 0.135f), screenDot);
 
-    // The levels down the left, the ticks at the right (lit up to the output level).
+    // The levels down the left, plain ticks at the right (not a meter).
     // The column fits "-60" (small windows shrink the labels rather than cut them).
     const float labelW = plot.getX() - bounds.getX() - bounds.getWidth() * 0.03f;
     g.setFont (fontFittingWidth (wingFontPx (juce::jlimit (6.0f, 11.0f, pxPerDb * 1.6f)), "-60", labelW - 3.0f, 1.0f));
@@ -268,7 +273,7 @@ void DynTransferGraph::paint (juce::Graphics& g)
         g.setColour (axisText);
         g.drawText (juce::String (db), juce::Rectangle<float> (bounds.getX() + 3.0f, y - 8.0f, labelW, 16.0f),
                     juce::Justification::centredLeft, false);
-        g.setColour (out >= (float) db && slot.on.load() ? juce::Colour (0xff35d05a) : tick);
+        g.setColour (tick);
         g.fillRect (tickX, y - 1.5f, tickW, juce::jmax (2.0f, pxPerDb * 0.4f));
     }
 
@@ -309,16 +314,32 @@ void DynTransferGraph::paint (juce::Graphics& g)
         g.reduceClipRegion (plot.toNearestInt());
         g.setColour (slot.on.load() ? curveScreenOn : curveOff);
         g.strokePath (p, juce::PathStrokeType (juce::jmax (1.5f, pxPerDb * 0.35f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-        // The live level on the curve.
-        if (slot.on.load() && key > -range)
+        // The live level on the curve, with a fading tail of where it was.
+        if (slot.on.load())
         {
-            const float pos = juce::jlimit (0.0f, 1.0f, (key + range) / range) * (float) (curve.size() - 1);
-            const auto i0 = (size_t) pos;
-            const auto i1 = juce::jmin (curve.size() - 1, i0 + 1);
-            const float y = curve[i0] + (curve[i1] - curve[i0]) * (pos - (float) i0);
+            auto onCurve = [this] (float level)
+            {
+                const float pos = juce::jlimit (0.0f, 1.0f, (level + range) / range) * (float) (curve.size() - 1);
+                const auto i0 = (size_t) pos;
+                const auto i1 = juce::jmin (curve.size() - 1, i0 + 1);
+                const float y = curve[i0] + (curve[i1] - curve[i0]) * (pos - (float) i0);
+                return juce::Point<float> (xFor (juce::jmin (level, 0.0f)), yFor (y));
+            };
             const float d = juce::jmax (5.0f, pxPerDb * 1.6f);
-            g.setColour (levelDot);
-            g.fillEllipse (juce::Rectangle<float> (d, d).withCentre ({ xFor (juce::jmin (key, 0.0f)), yFor (y) }));
+            for (size_t i = trail.size() - 1; i > 0; --i)
+            {
+                if (trail[i] <= -range)
+                    continue;
+                const float age = (float) i / (float) trail.size();
+                const float di = d * (1.0f - 0.6f * age);
+                g.setColour (levelDot.withAlpha (0.55f * (1.0f - age)));
+                g.fillEllipse (juce::Rectangle<float> (di, di).withCentre (onCurve (trail[i])));
+            }
+            if (key > -range)
+            {
+                g.setColour (levelDot);
+                g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (onCurve (key)));
+            }
         }
         g.restoreState();
     }
