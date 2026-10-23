@@ -165,7 +165,7 @@ void showFxSlotMenu (UiContext& ctx, int slot, juce::Component* target)
             ctx.engine.getFx().params (slot).bypass = ! bypassed;
         });
 
-        if (fx.isFaulted (slot) || fx.isDoubleAssigned (slot))
+        if (fx.isFaulted (slot) || fx.isDoubleAssigned (slot) || fx.getNumFaultedChainMembers (slot) > 0)
             menu.addItem ("Clear fault / double-assignment", [&ctx, slot] { ctx.engine.getFx().clearFlags (slot); });
 
         const int members = fx.getNumChainMembers (slot);

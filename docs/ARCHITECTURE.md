@@ -238,10 +238,16 @@ views after a show load changes the console from Rust.
     shares the members (`shared_ptr`, with their bypass flag and what they were
     prepared for) and swaps it in through `ld_fx_set`. The engine runs one chain or
     the other, never both, and members already prepared aren't prepared again, so they
-    keep running. The chain's latency is the sum of its non-bypassed members'. Shows
-    store a chain as a `<PLUGINCHAIN>` element in place of `<PLUGIN>` (the Rust session
-    passes either through the plugin bridge); a chain of one is stored as a plain
-    plugin.
+    keep running. In a chain of several, the chain checks each member on its own
+    (exceptions, NaN/Inf per block, a sandboxed member's missed block): a failing
+    member is marked faulted (an atomic on the shared member) and passed through,
+    and the slot doesn't fault; `MixerEngine::pollPlugins` logs it. A chain of one
+    fails the block, so the engine auto-bypasses the slot as for a plugin on its
+    own. The chain's latency is the sum of its members' that are neither bypassed nor
+    faulted. Shows store a chain as a `<PLUGINCHAIN>` element in place of `<PLUGIN>`
+    (the Rust session passes either through the plugin bridge), with each member's
+    chain window zoom and collapsed state; a chain of one with default settings is
+    stored as a plain plugin.
   - Rust runs the slot from whichever thread runs the strip whose PRE or POST insert
     uses it, keeps a dry copy for the slot's FX MIX, and auto-bypasses the slot if a
     plugin reports an error (a C++ exception is caught in the callback) or a device or

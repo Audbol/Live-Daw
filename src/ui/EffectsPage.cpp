@@ -212,6 +212,16 @@ public:
             g.setFont (wingFont (TypeScale::body, WingWeight::SemiBold));
             g.drawFittedText (fx.isFaulted (slot) ? "FAULT - BYPASSED" : "DOUBLE ASSIGNED", warn.toNearestInt(), juce::Justification::centred, 1);
         }
+        else if (const int faulted = fx.getNumFaultedChainMembers (slot); faulted > 0)
+        {
+            // A chain keeps running without its faulted plugins.
+            auto warn = deviceArea.withSizeKeepingCentre (deviceArea.getWidth(), 20.0f);
+            g.setColour (Colours::amber);
+            g.fillRect (warn);
+            g.setColour (juce::Colours::black);
+            g.setFont (wingFont (TypeScale::body, WingWeight::SemiBold));
+            g.drawFittedText (juce::String (faulted) + (faulted == 1 ? " PLUGIN FAULTED" : " PLUGINS FAULTED"), warn.toNearestInt(), juce::Justification::centred, 1);
+        }
 
         // The destination (in use only): its name in a bar of its colour (plain
         // when it has its default name) over its icon and default label, then
@@ -372,7 +382,7 @@ private:
         const int model = fx.getModel (slot);
         juce::String sig;
         sig << model << '|' << (juce::pointer_sized_int) fx.getPlugin (slot) << '|' << (int) params.bypass.load() << '|' << params.mix.load() << '|'
-            << (int) fx.isFaulted (slot) << (int) fx.isDoubleAssigned (slot);
+            << (int) fx.isFaulted (slot) << (int) fx.isDoubleAssigned (slot) << fx.getNumFaultedChainMembers (slot);
         if (model > ld::kFxExt)
         {
             const auto& spec = models::model (models::Fx, model);

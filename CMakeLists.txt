@@ -350,6 +350,7 @@ if(LIVEDAW_BUILD_TESTS)
         tests/PluginHostingTests.cpp
         tests/PluginChainTests.cpp
         src/ui/PluginChainView.cpp
+        src/ui/LookAndFeel.cpp
         tests/LayerTests.cpp
         tests/DeviceTests.cpp
         tests/RecorderTests.cpp
@@ -364,6 +365,7 @@ if(LIVEDAW_BUILD_TESTS)
         ${LIVEDAW_ENGINE_SOURCES}
         ${LIVEDAW_DAW_SOURCES})
     livedaw_configure_juce_target(LiveDAWTests)
+    target_link_libraries(LiveDAWTests PRIVATE LiveDAWResources) # the screen fonts (the plugin chain view)
 
     # The sandbox tests start the real helper (with its test plugins).
     add_dependencies(LiveDAWTests SidecarPluginHost)

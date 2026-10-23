@@ -233,6 +233,52 @@ void FxSlots::setChainMemberBypassed (int slot, int index, bool bypassed)
     getChain (slot)->setBypassed (index, bypassed);
 }
 
+bool FxSlots::isChainMemberFaulted (int slot, int index) const noexcept
+{
+    auto* chain = getChain (slot);
+    return chain != nullptr && juce::isPositiveAndBelow (index, chain->size()) && chain->isFaulted (index);
+}
+
+void FxSlots::clearChainMemberFault (int slot, int index)
+{
+    if (auto* chain = getChain (slot))
+        chain->clearFault (index);
+}
+
+int FxSlots::getNumFaultedChainMembers (int slot) const noexcept
+{
+    auto* chain = getChain (slot);
+    return chain != nullptr ? chain->getNumFaulted() : 0;
+}
+
+void FxSlots::clearFlags (int slot)
+{
+    ld::ld_fx_clear_flags (engine, slot);
+    if (auto* chain = getChain (slot))
+        for (int i = 0; i < chain->size(); ++i)
+            if (chain->isFaulted (i))
+                chain->clearFault (i);
+}
+
+PluginChain::View FxSlots::getChainMemberView (int slot, int index) const noexcept
+{
+    auto* chain = getChain (slot);
+    return chain != nullptr && juce::isPositiveAndBelow (index, chain->size()) ? chain->getView (index) : PluginChain::View {};
+}
+
+void FxSlots::setChainMemberView (int slot, int index, PluginChain::View view)
+{
+    if (! juce::isPositiveAndBelow (index, getNumChainMembers (slot)))
+        return;
+    if (getChain (slot) == nullptr)
+    {
+        if (view.isDefault())
+            return;
+        install (slot, std::make_shared<PluginChain> (members (slot)));
+    }
+    getChain (slot)->setView (index, view);
+}
+
 bool FxSlots::addToChain (int slot, std::unique_ptr<juce::AudioPluginInstance> plugin, int index)
 {
     auto list = members (slot);

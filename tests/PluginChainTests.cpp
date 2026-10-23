@@ -2,6 +2,7 @@
 #include "engine/PluginChain.h"
 #include "engine/Show.h"
 #include "sandbox/TestPlugins.h"
+#include "ui/LookAndFeel.h"
 #include "ui/PluginChainView.h"
 
 using namespace livedaw;
@@ -216,30 +217,128 @@ public:
             engine.getGarbage().collectAllNow();
         }
 
-        beginTest ("A member that fails auto-bypasses the slot and is named");
+        beginTest ("A plugin that fails in a chain bypasses only itself; the rest keeps running");
         {
             for (auto mode : { FakePlugin::Mode::Throw, FakePlugin::Mode::EmitNaN })
             {
                 MixerEngine engine (0);
                 OfflineRig rig (engine, 1, 2);
+                engine.outputProtection = false;
                 test::setChannels (engine, 1);
                 auto& strip = *engine.getChannels()[0];
                 strip.params.preInsert.on = true;
                 strip.params.preInsert.fx = 0;
                 auto& fx = engine.getFx();
-                fx.setPlugin (0, std::make_unique<FakePlugin> (0.5f));
-                fx.addToChain (0, std::make_unique<FakePlugin> (1.0f, mode, "bad"));
-                rig.setInput (0, 0.5f);
-                rig.run();
+                juce::StringArray warnings;
+                engine.onPluginWarning = [&warnings] (const juce::String& text) { warnings.add (text); };
 
-                expect (fx.isFaulted (0));
-                expectWithinAbsoluteError (rig.out (0), 0.5f * kCentre, 1.0e-5f); // dry signal passes
-                const auto fault = fx.getChain (0)->takeFault();
-                expectEquals (fault.member, 1);
-                expect (fault.kind == (mode == FakePlugin::Mode::Throw ? PluginChain::FaultKind::threw : PluginChain::FaultKind::nonFinite));
-                expectEquals (fx.getChain (0)->takeFault().member, -1); // reported once
+                fx.setPlugin (0, std::make_unique<FakePlugin> (0.5f));
+                auto* bad = new FakePlugin (1.0f, FakePlugin::Mode::Gain, "bad");
+                bad->setLatencySamples (100);
+                fx.addToChain (0, std::unique_ptr<juce::AudioPluginInstance> (bad));
+                fx.addToChain (0, std::make_unique<FakePlugin> (2.0f));
+                rig.setInput (0, 0.25f);
+                rig.run();
+                expectEquals (fx.getLatency (0), 100);
+
+                bad->mode = mode;
+                rig.run (4);
+                expect (! fx.isFaulted (0), "the slot faulted");
+                expect (fx.isChainMemberFaulted (0, 1));
+                expect (! fx.isChainMemberFaulted (0, 0) && ! fx.isChainMemberFaulted (0, 2));
+                expectEquals (fx.getNumFaultedChainMembers (0), 1);
+                expectWithinAbsoluteError (rig.out (0), 0.25f * 0.5f * 2.0f * kCentre, 1.0e-5f); // through the other two
+
+                // Named once in the log; a faulted plugin counts as bypassed for the latency.
+                engine.pollPlugins();
+                engine.pollPlugins();
+                expectEquals (warnings.size(), 1);
+                const auto what = mode == FakePlugin::Mode::Throw ? juce::String ("threw an exception") : juce::String ("output NaN/Inf");
+                expectEquals (warnings[0], "FX 1: Fake bad (plugin 2 of 3) " + what + "; bypassed, the rest of the chain keeps running");
+                expectEquals (fx.getLatency (0), 0);
+                expect (! fx.getChain (0)->createXml()->toString().containsIgnoreCase ("fault")); // not saved
+
+                // CLEAR tries it again: still failing, it faults again (and is reported again).
+                fx.clearChainMemberFault (0, 1);
+                expect (! fx.isChainMemberFaulted (0, 1));
+                rig.run (2);
+                expect (fx.isChainMemberFaulted (0, 1));
+                engine.pollPlugins();
+                expectEquals (warnings.size(), 2);
+
+                // Fixed: CLEAR brings it back.
+                bad->mode = FakePlugin::Mode::Gain;
+                bad->gain = 3.0f;
+                fx.clearChainMemberFault (0, 1);
+                rig.run (2);
+                expect (! fx.isChainMemberFaulted (0, 1));
+                expectWithinAbsoluteError (rig.out (0), 0.25f * 0.5f * 3.0f * 2.0f * kCentre, 1.0e-5f);
+                engine.pollPlugins();
+                expectEquals (fx.getLatency (0), 100);
+
+                // BYP on or off clears a fault too, and the slot's CLEAR clears its plugins'.
+                bad->mode = mode;
+                rig.run (2);
+                expect (fx.isChainMemberFaulted (0, 1));
+                fx.setChainMemberBypassed (0, 1, true);
+                expect (! fx.isChainMemberFaulted (0, 1) && fx.isChainMemberBypassed (0, 1));
+                fx.setChainMemberBypassed (0, 1, false);
+                rig.run (2);
+                expect (fx.isChainMemberFaulted (0, 1));
+                fx.clearFlags (0);
+                expect (! fx.isChainMemberFaulted (0, 1));
+
+                engine.onPluginWarning = nullptr;
+                fx.setPlugin (0, nullptr);
                 engine.getGarbage().collectAllNow();
             }
+        }
+
+        beginTest ("A chain of one that fails auto-bypasses the slot, as a plugin on its own");
+        {
+            MixerEngine engine (0);
+            OfflineRig rig (engine, 1, 2);
+            test::setChannels (engine, 1);
+            auto& strip = *engine.getChannels()[0];
+            strip.params.preInsert.on = true;
+            strip.params.preInsert.fx = 0;
+            auto& fx = engine.getFx();
+            auto* bad = new FakePlugin (1.0f, FakePlugin::Mode::Gain, "bad");
+            fx.setPlugin (0, std::unique_ptr<juce::AudioPluginInstance> (bad));
+            fx.setChainMemberBypassed (0, 0, true); // a chain of one
+            fx.setChainMemberBypassed (0, 0, false);
+            expect (fx.getChain (0) != nullptr);
+            bad->mode = FakePlugin::Mode::EmitNaN;
+            rig.setInput (0, 0.5f);
+            rig.run();
+
+            expect (fx.isFaulted (0));
+            expect (! fx.isChainMemberFaulted (0, 0));
+            expectWithinAbsoluteError (rig.out (0), 0.5f * kCentre, 1.0e-5f); // dry signal passes
+            const auto fault = fx.getChain (0)->takeFault();
+            expectEquals (fault.member, 0);
+            expect (fault.kind == PluginChain::FaultKind::nonFinite);
+            expectEquals (fx.getChain (0)->takeFault().member, -1); // reported once
+            fx.setPlugin (0, nullptr);
+            engine.getGarbage().collectAllNow();
+        }
+
+        beginTest ("Zoom steps and FIT");
+        {
+            using V = ui::PluginChainView;
+            expectEquals (V::nextZoom (100, -1), 85);
+            expectEquals (V::nextZoom (85, -1), 75);
+            expectEquals (V::nextZoom (67, -1), 50);
+            expectEquals (V::nextZoom (50, -1), 50);
+            expectEquals (V::nextZoom (67, 1), 75);
+            expectEquals (V::nextZoom (100, 1), 100); // no growing past 100 %
+            expectEquals (PluginChain::snapZoom (70), 67);
+            expectEquals (PluginChain::snapZoom (130), 100);
+            expectEquals (V::fitZoom (400, 500), 100);
+            expectEquals (V::fitZoom (400, 340), 85);
+            expectEquals (V::fitZoom (400, 300), 75);
+            expectEquals (V::fitZoom (400, 299), 67);
+            expectEquals (V::fitZoom (400, 100), 50); // the smallest step if none fits
         }
 
         beginTest ("A 3-plugin chain survives a show save and load, and scenes recall it");
@@ -262,6 +361,8 @@ public:
             fx.addToChain (6, withGain (gains[1]));
             fx.addToChain (6, withGain (gains[2]));
             fx.setChainMemberBypassed (6, 1, true);
+            fx.setChainMemberView (6, 0, { 67, false });
+            fx.setChainMemberView (6, 2, { 100, true });
             const auto xml = show.toXml();
             expect (xml->toString().contains (PluginChain::kXmlTag));
 
@@ -286,6 +387,24 @@ public:
                 expectWithinAbsoluteError (param (*fx2.getChainMember (6, i), 0), gains[i], 1.0e-6f);
                 expect (fx2.isChainMemberBypassed (6, i) == (i == 1));
             }
+            expectEquals (fx2.getChainMemberView (6, 0).zoom, 67);
+            expect (! fx2.getChainMemberView (6, 0).collapsed);
+            expect (fx2.getChainMemberView (6, 1).isDefault());
+            expect (fx2.getChainMemberView (6, 2).collapsed && fx2.getChainMemberView (6, 2).zoom == 100);
+
+            // Chains saved before zoom and collapse read with the defaults.
+            auto saved = fx.getChain (6)->createXml();
+            expect (saved->getChildElement (0)->getIntAttribute ("zoom") == 67 && saved->getChildElement (2)->getBoolAttribute ("collapsed"));
+            for (auto* member : saved->getChildIterator())
+            {
+                member->removeAttribute ("zoom");
+                member->removeAttribute ("collapsed");
+            }
+            std::vector<PluginChain::Saved> members;
+            expect (PluginChain::parseXml (*saved, members));
+            expectEquals ((int) members.size(), 3);
+            for (auto& m : members)
+                expect (m.view.isDefault());
             expectEquals (fx2.getPlugin (6)->getName(), juce::String ("Sidecar Test gain +2"));
 
             // A different chain isn't recalled into.
@@ -327,6 +446,11 @@ public:
             fx.removeFromChain (3, 1);
             expect (fx.getChain (3) != nullptr);
             expect (! show.toXmlString().contains (PluginChain::kXmlTag));
+            // ... unless its window view isn't the default.
+            fx.setChainMemberView (3, 0, { 75, false });
+            expect (show.toXmlString().contains (PluginChain::kXmlTag));
+            fx.setChainMemberView (3, 0, {});
+            expect (! show.toXmlString().contains (PluginChain::kXmlTag));
 
             MixerEngine engine2 (0);
             OfflineRig rig2 (engine2, 1, 2);
@@ -343,56 +467,126 @@ public:
             engine2.getGarbage().collectAllNow();
         }
 
-        beginTest ("The plugin window shows the chain's editors side by side");
+        beginTest ("The plugin window: chain bar, cards, zoom, collapse, faults, ROW and FOCUS");
         {
+            using V = ui::PluginChainView;
+            const auto snapshots = juce::SystemStats::getEnvironmentVariable ("SIDECAR_CHAIN_SNAPSHOT_DIR", {});
+            std::unique_ptr<ui::ConsoleLookAndFeel> look;
+            if (snapshots.isNotEmpty())
+            {
+                look = std::make_unique<ui::ConsoleLookAndFeel>();
+                juce::LookAndFeel::setDefaultLookAndFeel (look.get());
+            }
+
             MixerEngine engine (0);
             OfflineRig rig (engine, 1, 2);
+            engine.outputProtection = false;
+            test::setChannels (engine, 1);
+            auto& strip = *engine.getChannels()[0];
+            strip.params.preInsert.on = true;
+            strip.params.preInsert.fx = 0;
             auto& fx = engine.getFx();
             fx.setPlugin (0, TestPluginFormat::create (TestPluginFormat::Kind::gain));
             int adds = 0;
-            ui::PluginChainView view (fx, 0, { [&adds] (juce::Component&) { ++adds; }, {}, {} });
-            expectEquals (view.getNumColumns(), 1);
-            expect (view.shows (fx.getPlugin (0)));
-            const int single = view.getWidth();
-            expect (single >= ui::PluginChainView::kMinColumnWidth + ui::PluginChainView::kPlusWidth);
-
-            fx.addToChain (0, TestPluginFormat::create (TestPluginFormat::Kind::crash));
-            fx.addToChain (0, std::make_unique<FakePlugin> (1.0f)); // no editor: generic controls
-            fx.setChainMemberBypassed (0, 1, true);
-            view.refresh();
-            expectEquals (view.getNumColumns(), 3);
-            expect (view.shows (fx.getPlugin (0)) && view.shows (fx.getChainMember (0, 2)));
-            expect (view.getWidth() > single); // grows to fit
-            expect (view.wantsResizableWindow());
-
-            // Beyond the screen it scrolls. (The default limit follows the
-            // primary display, which may be small on a CI machine.)
-            view.setMaxSize ({ 4000, 2000 });
-            const auto natural = view.getBounds();
-            view.setMaxSize ({ 500, 2000 });
-            expectEquals (view.getWidth(), 500);
-            view.setMaxSize ({ 4000, 2000 });
-            expect (view.getBounds() == natural);
-
-            if (const auto path = juce::SystemStats::getEnvironmentVariable ("SIDECAR_CHAIN_SNAPSHOT", {}); path.isNotEmpty())
+            auto layoutSaved = V::Layout::row;
             {
-                juce::File file (path);
-                file.deleteFile();
-                juce::FileOutputStream out (file);
-                juce::PNGImageFormat().writeImageToStream (view.createComponentSnapshot (view.getLocalBounds(), true, 1.0f), out);
-                logMessage ("Saved " + path);
-            }
+                V view (fx, 0, { [&adds] (juce::Component&) { ++adds; }, {}, {}, [&layoutSaved] (V::Layout l) { layoutSaved = l; } });
+                view.setMaxSize ({ 4000, 2000 }); // not the screen's: CI displays may be small
+                expectEquals (view.getNumCards(), 1);
+                expect (view.shows (fx.getPlugin (0)));
+                const int single = view.getWidth();
+                expect (single >= V::kMinCardWidth);
+                expect (view.getZoomMethod (0) == V::ZoomMethod::transform); // generic controls
 
-            // A removed plugin's editor goes before the plugin.
-            view.dropEditorFor (fx.getChainMember (0, 2));
-            fx.removeFromChain (0, 2);
-            expectEquals (view.getNumColumns(), 2);
-            view.refresh();
-            expectEquals (view.getNumColumns(), 2);
-            fx.setPlugin (0, nullptr);
-            view.refresh();
-            expectEquals (view.getNumColumns(), 0);
+                fx.addToChain (0, TestPluginFormat::create (TestPluginFormat::Kind::crash));
+                auto* nan = new FakePlugin (1.0f, FakePlugin::Mode::Gain, "nan"); // no editor: generic controls
+                fx.addToChain (0, std::unique_ptr<juce::AudioPluginInstance> (nan));
+                view.refresh();
+                expectEquals (view.getNumCards(), 3);
+                expect (view.shows (fx.getPlugin (0)) && view.shows (fx.getChainMember (0, 2)));
+                expect (view.getWidth() > single); // grows to fit
+                const int full0 = view.getEditorBounds (0).getHeight(), full2 = view.getEditorBounds (2).getHeight();
+
+                // Zoom: a generic editor is scaled with a transform.
+                const auto full = view.getEditorBounds (0);
+                view.setZoom (0, 67);
+                expectEquals (fx.getChainMemberView (0, 0).zoom, 67);
+                const auto small = view.getEditorBounds (0);
+                expectWithinAbsoluteError ((float) small.getWidth(), (float) full.getWidth() * 0.67f, 1.5f);
+                expectWithinAbsoluteError ((float) small.getHeight(), (float) full.getHeight() * 0.67f, 1.5f);
+                expectEquals (small.getY(), V::kTitleHeight);
+                view.stepZoom (0, 1);
+                expectEquals (fx.getChainMemberView (0, 0).zoom, 75);
+                view.stepZoom (0, -1);
+                expectEquals (fx.getChainMemberView (0, 0).zoom, 67);
+
+                // Collapse: a thin column in ROW, the others move up close.
+                const int before = view.getCardBounds (2).getX();
+                view.setCollapsed (1, true);
+                expect (fx.getChainMemberView (0, 1).collapsed);
+                expectEquals (view.getCardBounds (1).getWidth(), V::kCollapsedWidth);
+                expect (view.getEditorBounds (1).isEmpty());
+                expect (view.getCardBounds (2).getX() < before);
+
+                // A faulted plugin (the rest of the chain runs).
+                rig.setInput (0, 0.25f);
+                nan->mode = FakePlugin::Mode::EmitNaN;
+                rig.run (2);
+                expect (fx.isChainMemberFaulted (0, 2) && ! fx.isFaulted (0));
+                view.refresh();
+
+                auto snapshot = [&] (const juce::String& fileName)
+                {
+                    if (snapshots.isEmpty())
+                        return;
+                    juce::File file (juce::File (snapshots).getChildFile (fileName));
+                    file.deleteFile();
+                    juce::FileOutputStream out (file);
+                    juce::PNGImageFormat().writeImageToStream (view.createComponentSnapshot (view.getLocalBounds(), true, 1.0f), out);
+                    logMessage ("Saved " + file.getFullPathName());
+                };
+                snapshot ("chain_row.png");
+
+                // FOCUS: one card at a time, the chips as tabs.
+                view.setLayout (V::Layout::focus);
+                expect (layoutSaved == V::Layout::focus);
+                view.select (2);
+                expectEquals (view.getSelected(), 2);
+                expect (view.isCardVisible (2) && ! view.isCardVisible (0) && ! view.isCardVisible (1));
+                snapshot ("chain_focus.png");
+                view.select (0);
+                expect (view.isCardVisible (0) && ! view.isCardVisible (2));
+                view.setLayout (V::Layout::row);
+                expect (view.isCardVisible (0) && view.isCardVisible (2));
+
+                // FIT: the largest steps that fit the window's height (collapsed ones stay).
+                view.setSize (view.getWidth(), V::kBarHeight + V::kTitleHeight + 100);
+                view.fitToHeight();
+                expectEquals (fx.getChainMemberView (0, 0).zoom, V::fitZoom (full0, 100));
+                expectEquals (fx.getChainMemberView (0, 2).zoom, V::fitZoom (full2, 100));
+                expect (fx.getChainMemberView (0, 1).collapsed && fx.getChainMemberView (0, 1).zoom == 100);
+
+                // Beyond the size limit it scrolls.
+                view.setMaxSize ({ 4000, 2000 });
+                const auto natural = view.getBounds();
+                view.setMaxSize ({ 500, 2000 });
+                expectEquals (view.getWidth(), 500);
+                view.setMaxSize ({ 4000, 2000 });
+                expect (view.getBounds() == natural);
+
+                // A removed plugin's editor goes before the plugin.
+                view.dropEditorFor (fx.getChainMember (0, 2));
+                fx.removeFromChain (0, 2);
+                expectEquals (view.getNumCards(), 2);
+                view.refresh();
+                expectEquals (view.getNumCards(), 2);
+                fx.setPlugin (0, nullptr);
+                view.refresh();
+                expectEquals (view.getNumCards(), 0);
+            }
             engine.getGarbage().collectAllNow();
+            if (look != nullptr)
+                juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
         }
     }
 };
