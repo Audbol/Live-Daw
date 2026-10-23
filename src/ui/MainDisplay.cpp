@@ -2,6 +2,7 @@
 #include "dsp/DspUtils.h"
 #include "ui/HomeWidgets.h"
 #include "ui/Icons.h"
+#include "ui/PaintHash.h"
 #include "ui/WingPopups.h"
 
 namespace livedaw::ui
@@ -865,10 +866,19 @@ private:
         return t;
     }
 
-    void timerCallback() override { repaint(); }
+    void timerCallback() override
+    {
+        // Only when a tile changes: the overlay covers the whole screen.
+        if (const auto hash = paintHash (*this); hash != shownHash)
+        {
+            shownHash = hash;
+            repaint();
+        }
+    }
 
     UiContext& ctx;
     std::vector<std::pair<juce::Rectangle<int>, Strip*>> tiles;
+    juce::uint64 shownHash = 0;
 };
 
 //==============================================================================

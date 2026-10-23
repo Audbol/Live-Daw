@@ -47,6 +47,9 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- Lower CPU use with the VIEW screens (OVERVIEW, FADERS, SENDS, CONFIG, MUTE GROUPS),
+  METERS and CHANNEL SELECT open: they redraw only when something they show changes,
+  instead of the whole screen 15-25 times a second.
 - The monitors start with a WING's factory settings, read from a console's parameter dump
   after INITIALIZE: SOLO MODE LIVE, the solo bus PH (phones), mains and matrices solo PFL,
   PFL DIM 12 dB and BAND SOLO 0 dB on both paths, the monitor EQs' bands at 60.1, 129.9,
