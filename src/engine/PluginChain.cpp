@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 namespace livedaw
 {
@@ -11,12 +12,35 @@ namespace
 {
     bool allFinite (const float* data, int n) noexcept
     {
+        // As the engine checks: inf * 0 and NaN * 0 are NaN, and NaN poisons the
+        // sum, so one branch per block.
+        float acc = 0.0f;
         for (int i = 0; i < n; ++i)
-            if (! std::isfinite (data[i]))
-                return false;
-        return true;
+            acc += data[i] * 0.0f;
+        return acc == 0.0f;
     }
 } // namespace
+
+int PluginChain::snapZoom (int percent) noexcept
+{
+    int best = 100;
+    for (const int step : kZoomSteps)
+        if (std::abs (step - percent) < std::abs (best - percent))
+            best = step;
+    return best;
+}
+
+juce::String PluginChain::describeFault (FaultKind kind)
+{
+    switch (kind)
+    {
+        case FaultKind::threw:     return "threw an exception";
+        case FaultKind::nonFinite: return "output NaN/Inf";
+        case FaultKind::sandbox:   return "missed its block or lost its helper in the sandbox";
+        case FaultKind::none:      break;
+    }
+    return {};
+}
 
 //==============================================================================
 PluginChain::Member::Member (std::shared_ptr<juce::AudioPluginInstance> p) : plugin (std::move (p))
@@ -92,8 +116,37 @@ void PluginChain::setBypassed (int index, bool bypassed)
 {
     if (! juce::isPositiveAndBelow (index, size()))
         return;
-    members[(size_t) index]->bypassed = bypassed;
+    auto& m = *members[(size_t) index];
+    m.bypassed = bypassed;
+    m.fault = FaultKind::none; // BYP on or off clears a fault
+    m.faultUnreported = false;
     updateLatency();
+}
+
+void PluginChain::clearFault (int index)
+{
+    if (! juce::isPositiveAndBelow (index, size()))
+        return;
+    auto& m = *members[(size_t) index];
+    m.fault = FaultKind::none;
+    m.faultUnreported = false;
+    updateLatency();
+}
+
+int PluginChain::getNumFaulted() const noexcept
+{
+    return (int) std::count_if (members.begin(), members.end(), [] (auto& m) { return m->fault.load() != FaultKind::none; });
+}
+
+void PluginChain::setView (int index, View view)
+{
+    if (juce::isPositiveAndBelow (index, size()))
+        members[(size_t) index]->view = { snapZoom (view.zoom), view.collapsed };
+}
+
+bool PluginChain::needsChainFormat() const noexcept
+{
+    return size() > 1 || members.front()->bypassed.load() || ! members.front()->view.isDefault();
 }
 
 bool PluginChain::hasSandboxedMember() const noexcept
@@ -105,7 +158,7 @@ void PluginChain::updateLatency()
 {
     int total = 0;
     for (auto& m : members)
-        if (! m->bypassed.load())
+        if (! m->bypassed.load() && m->fault.load() == FaultKind::none)
             total += m->plugin->getLatencySamples();
     setLatencySamples (total); // tells FxSlots when it changes
 }
@@ -158,6 +211,7 @@ void PluginChain::prepareToPlay (double sampleRate, int maxBlock)
         m->preparedBlock = maxBlock;
     }
     scratch.setSize (maxChannels, juce::jmax (1, maxBlock), false, true, false);
+    dry.setSize (2, juce::jmax (1, maxBlock), false, true, false);
     updateLatency(); // plugins may change it in prepareToPlay
 }
 
@@ -181,7 +235,7 @@ double PluginChain::getTailLengthSeconds() const
 {
     double tail = 0.0;
     for (auto& m : members)
-        if (! m->bypassed.load())
+        if (! m->bypassed.load() && m->fault.load() == FaultKind::none)
             tail += m->plugin->getTailLengthSeconds();
     return tail;
 }
@@ -202,6 +256,18 @@ PluginChain::Fault PluginChain::takeFault() noexcept
     return f;
 }
 
+PluginChain::Fault PluginChain::takeMemberFault() noexcept
+{
+    for (int i = 0; i < size(); ++i)
+    {
+        auto& m = *members[(size_t) i];
+        if (m.faultUnreported.exchange (false))
+            if (const auto kind = m.fault.load(); kind != FaultKind::none)
+                return { i, kind };
+    }
+    return {};
+}
+
 void PluginChain::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     lastBlockFailed = false;
@@ -219,37 +285,49 @@ void PluginChain::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuff
     scratch.copyFrom (0, 0, buffer, 0, 0, n);
     scratch.copyFrom (1, 0, buffer, juce::jmin (1, numChannels - 1), 0, n);
 
+    // In a chain of several a failing member bypasses only itself.
+    const bool isolate = size() > 1;
     for (int i = 0; i < size(); ++i)
     {
         auto& m = *members[(size_t) i];
-        if (m.bypassed.load (std::memory_order_relaxed))
+        if (m.bypassed.load (std::memory_order_relaxed) || m.fault.load (std::memory_order_relaxed) != FaultKind::none)
             continue;
 
+        if (isolate)
+            for (int ch = 0; ch < 2; ++ch)
+                dry.copyFrom (ch, 0, scratch, ch, 0, n);
         for (int ch = 2; ch < m.numChannels; ++ch)
             scratch.clear (ch, 0, n); // side-chain inputs are silent
         juce::AudioBuffer<float> view (scratch.getArrayOfWritePointers(), m.numChannels, n);
         midi.clear();
 
+        auto kind = FaultKind::none;
         try
         {
             m.plugin->processBlock (view, midi);
         }
         catch (...)
         {
-            fail (i, FaultKind::threw);
-            return;
+            kind = FaultKind::threw;
         }
+        if (kind == FaultKind::none && m.sandboxed != nullptr && m.sandboxed->didLastBlockFail())
+            kind = FaultKind::sandbox;
+        if (kind == FaultKind::none && (! allFinite (scratch.getReadPointer (0), n) || ! allFinite (scratch.getReadPointer (1), n)))
+            kind = FaultKind::nonFinite;
+        if (kind == FaultKind::none)
+            continue;
 
-        if (m.sandboxed != nullptr && m.sandboxed->didLastBlockFail())
+        if (! isolate)
         {
-            fail (i, FaultKind::sandbox);
+            fail (i, kind);
             return;
         }
-        if (! allFinite (scratch.getReadPointer (0), n) || ! allFinite (scratch.getReadPointer (1), n))
-        {
-            fail (i, FaultKind::nonFinite);
-            return;
-        }
+        // Faulted: its input goes on to the next member (the latency follows on
+        // the message thread, see updateLatency()).
+        m.fault.store (kind);
+        m.faultUnreported.store (true);
+        for (int ch = 0; ch < 2; ++ch)
+            scratch.copyFrom (ch, 0, dry, ch, 0, n);
     }
 
     for (int ch = 0; ch < juce::jmin (2, numChannels); ++ch)
@@ -265,6 +343,10 @@ std::unique_ptr<juce::XmlElement> PluginChain::createXml() const
     {
         auto* e = xml->createNewChildElement ("MEMBER");
         e->setAttribute ("bypass", m->bypassed.load() ? 1 : 0);
+        if (m->view.zoom != 100)
+            e->setAttribute ("zoom", m->view.zoom);
+        if (m->view.collapsed)
+            e->setAttribute ("collapsed", 1);
         e->addChildElement (m->plugin->getPluginDescription().createXml().release());
 
         juce::MemoryBlock data;
@@ -293,6 +375,8 @@ bool PluginChain::parseXml (const juce::XmlElement& xml, std::vector<Saved>& sav
         if (desc == nullptr || ! s.description.loadFromXml (*desc))
             return false;
         s.bypassed = e->getBoolAttribute ("bypass");
+        s.view.zoom = snapZoom (e->getIntAttribute ("zoom", 100)); // older shows: neither
+        s.view.collapsed = e->getBoolAttribute ("collapsed");
         if (auto* state = e->getChildByName ("STATE"))
             if (const auto text = state->getAllSubText().trim(); text.isNotEmpty())
                 s.state.fromBase64Encoding (text);
@@ -315,6 +399,7 @@ bool PluginChain::restore (const std::vector<Saved>& saved)
         if (s.state.getSize() > 0)
             getMember (i).setStateInformation (s.state.getData(), (int) s.state.getSize());
         members[(size_t) i]->bypassed = s.bypassed;
+        members[(size_t) i]->view = s.view;
     }
     updateLatency();
     return true;

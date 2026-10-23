@@ -159,6 +159,9 @@ public:
 
         beginTest ("A plugin that hangs is faulted, its helper killed and restarted");
         faultTest (TestPluginFormat::Kind::hang);
+
+        beginTest ("A sandboxed plugin that crashes in a chain of three bypasses only itself and comes back");
+        chainFaultTest();
     }
 
 private:
@@ -359,6 +362,98 @@ private:
         expect (! fx.isFaulted (0), "faulted after the restart");
         expectWithinAbsoluteError (rig.out (0), 0.5f * dry, 1.0e-4f);
 
+        fx.setPlugin (0, nullptr);
+        engine.getGarbage().collectAllNow();
+    }
+
+    void chainFaultTest()
+    {
+        events.clear();
+        PluginHost host (nullptr);
+        host.setSandboxOptions (*options (200.0));
+        host.setSandboxEnabled (true);
+
+        MixerEngine engine (1);
+        OfflineRig rig (engine, 2, 2);
+        test::setChannels (engine, 1);
+        auto& strip = *engine.getChannels()[0];
+        auto& fx = engine.getFx();
+        rig.setInput (0, 0.25f);
+        rig.run (40);
+        const float dry = rig.out (0);
+        expect (dry > 0.01f);
+
+        // In-process x0.5, the sandboxed crash plugin at x1, in-process x0.5.
+        auto halve = []
+        {
+            auto p = TestPluginFormat::create (TestPluginFormat::Kind::gain);
+            p->getParameters()[0]->setValue (0.25f);
+            return p;
+        };
+        juce::String error;
+        auto instance = host.createInstance (TestPluginFormat::describe (TestPluginFormat::Kind::crash), 48000.0, kBlock, error);
+        expect (instance != nullptr, error);
+        auto* sandboxed = dynamic_cast<SandboxedPlugin*> (instance.get());
+        expect (sandboxed != nullptr, "not sandboxed");
+        if (sandboxed == nullptr)
+            return;
+        sandboxed->getParameters()[0]->setValue (0.5f);
+        juce::MemoryBlock state;
+        sandboxed->getStateInformation (state); // also cached for a restart
+
+        fx.setPlugin (0, halve());
+        expect (fx.addToChain (0, std::move (instance)));
+        expect (fx.addToChain (0, halve()));
+        fx.clearFlags (0);
+        strip.params.preInsert.on = true;
+        strip.params.preInsert.fx = 0;
+        rig.run (40);
+        expect (! fx.isFaulted (0) && fx.getNumFaultedChainMembers (0) == 0, "faulted while healthy");
+        expectWithinAbsoluteError (rig.out (0), 0.25f * dry, 1.0e-4f);
+        engine.pollPlugins();
+        expectEquals (fx.getLatency (0), kBlock);
+        const int firstPid = sandboxed->getHelperProcessId();
+
+        // It crashes: only it is faulted, the other two keep processing.
+        juce::StringArray warnings;
+        engine.onPluginWarning = [&warnings] (const juce::String& text) { warnings.add (text); };
+        sandboxed->getParameters()[2]->setValue (1.0f);
+        for (int i = 0; i < 40 && ! fx.isChainMemberFaulted (0, 1); ++i)
+            rig.run (1);
+        expect (fx.isChainMemberFaulted (0, 1), "not faulted");
+        expect (! fx.isFaulted (0), "the slot faulted");
+        expectEquals (engine.getNumFaultedFx(), 0);
+        rig.run (20);
+        expect (std::isfinite (rig.out (0)));
+        expectWithinAbsoluteError (rig.out (0), 0.25f * dry, 1.0e-4f);
+        engine.pollPlugins();
+        expectEquals (warnings.size(), 1);
+        expect (warnings[0].startsWith ("FX 1: Sidecar Test crash (plugin 2 of 3) ")
+                    && warnings[0].endsWith ("; bypassed, the rest of the chain keeps running"),
+                warnings[0]);
+        expectEquals (fx.getLatency (0), 0); // counted as bypassed
+
+        // Its helper is restarted (as for a plugin on its own); CLEAR runs it again.
+        const auto start = juce::Time::getMillisecondCounter();
+        while ((sandboxed->getStatus() != SandboxedPlugin::Status::running || sandboxed->getHelperProcessId() == firstPid)
+               && juce::Time::getMillisecondCounter() - start < 10000)
+        {
+            juce::Thread::sleep (20);
+            sandboxed->supervise();
+        }
+        expect (sandboxed->getStatus() == SandboxedPlugin::Status::running, "not restarted");
+        expect (sandboxed->getHelperProcessId() != firstPid, "same helper");
+        sandboxed->getParameters()[2]->setValue (0.0f);
+        rig.run (5);
+        expect (fx.isChainMemberFaulted (0, 1), "un-faulted before CLEAR");
+        fx.clearChainMemberFault (0, 1);
+        rig.run (40);
+        expect (! fx.isChainMemberFaulted (0, 1), "faulted after the restart");
+        expectWithinAbsoluteError (rig.out (0), 0.25f * dry, 1.0e-4f);
+        engine.pollPlugins();
+        expectEquals (fx.getLatency (0), kBlock);
+
+        engine.onPluginWarning = nullptr;
         fx.setPlugin (0, nullptr);
         engine.getGarbage().collectAllNow();
     }

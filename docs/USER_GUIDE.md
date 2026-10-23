@@ -51,21 +51,48 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
   - **EXT:** a **VST3, AU (macOS) or LV2 (Linux) plugin**, or a **chain of up to 8
     plugins** in series (see *Plugin chains*).
 - **Plugin chains:** an EXT slot can run several plugins one after the other, and
-  shows them in one window. Opening the slot's plugin (OPEN EDITOR, or tapping a
-  plugin slot) shows every plugin's editor side by side, in processing order, each
-  under a header strip: its name, **BYP**, move left / right and remove (X). The **+**
-  at the end adds a plugin from the plugin list (the FX slot menu has **Add to chain**
-  too). The window grows to fit and scrolls sideways when the chain is wider than the
-  screen; a plugin without an editor gets generic controls, and a sandboxed plugin
-  shows SHOW PLUGIN WINDOW with its generic controls. A single plugin looks as it
-  always did, with the + beside it. The EFFECTS tile names the chain ("TAL-Reverb +
-  Pro-Q 3", or the first plugin and "+2" for three or more). The slot is still one
-  unit: its FX MIX, bypass, CPU meter and fault handling cover the whole chain, and a
-  plugin that throws or outputs NaN/Inf bypasses the slot like a single plugin, with
-  the event log naming the plugin of the chain. A plugin's BYP takes it out of the
-  chain and out of the latency. Adding, removing and moving plugins swaps the new chain
-  in without stopping the audio; the plugins that stay keep running with their
-  state. Removing the last plugin empties the slot.
+  shows them in one window (OPEN EDITOR, or tapping a plugin slot).
+  - **Chain bar** across the top: **IN ▸ plugin ▸ plugin ▸ … ▸ OUT**, then **+**
+    (adds a plugin from the plugin list; the FX slot menu has **Add to chain** too).
+    Each chip shows the plugin's name, a dot (green: running, hollow: bypassed, red:
+    faulted; click it to bypass) and its latency when it has one. Click a chip to go
+    to that plugin; drag it to move the plugin in the chain; right-click it for
+    Bypass, Clear fault, Move earlier / later, Zoom, Collapse and Remove.
+  - **Cards:** below the bar each plugin's editor sits under a slim title row:
+    collapse ▾, the name, **BYP**, zoom **−** / **%** / **+** and remove (✕). A
+    collapsed plugin shrinks to a thin column (ROW) so the others move up close;
+    click it to open it again. Bypassed and faulted plugins are dimmed.
+  - **ROW / FOCUS** (right end of the bar): ROW shows the editors side by side,
+    scrolling sideways; FOCUS shows one at a time, with the chips as its tabs. The
+    choice and the window's size are kept per FX slot.
+  - **Zoom:** 50, 67, 75, 85 or 100 % per plugin; **FIT** picks for every plugin the
+    largest step at which the whole chain fits the window's height. Sidecar shrinks
+    an editor the best way it allows: a resizable editor is resized; a VST3 / VST /
+    LV2 editor is asked to draw at a smaller scale (kept only if it gets smaller);
+    generic controls, the sandbox panel and other built-in editors are scaled down. A
+    plugin whose own window can't be scaled (most fixed-size VST3/AU editors without
+    scaling support) shows **FIXED** with its zoom keys greyed out: collapse it
+    instead. For a sandboxed plugin the zoom applies to Sidecar's panel, not to the
+    plugin's own window (SHOW PLUGIN WINDOW). Zoom and collapse are saved per plugin
+    with the show.
+
+  A plugin without an editor gets generic controls, and a sandboxed plugin shows SHOW
+  PLUGIN WINDOW with its generic controls. The EFFECTS tile names the chain
+  ("TAL-Reverb + Pro-Q 3", or the first plugin and "+2" for three or more). The slot's
+  FX MIX, bypass and CPU meter cover the whole chain. **A plugin that fails bypasses
+  only itself:** if a plugin of a chain of two or more throws, outputs NaN/Inf or (in
+  the sandbox) misses its block or loses its helper, its input passes straight on to
+  the next plugin and the rest of the chain keeps running. Its header and chip show
+  FAULT in red, the EFFECTS tile shows "1 PLUGIN FAULTED", and the event log names it
+  ("FX 3: Pro-Q 3 (plugin 2 of 3) output NaN/Inf; bypassed, the rest of the chain
+  keeps running"). **CLEAR** in its header (or BYP off and on, the chip's menu, or
+  clearing the slot's fault) runs it again; a sandboxed plugin's helper is restarted
+  meanwhile as for a single plugin. A faulted plugin counts as bypassed for the
+  latency, and faults aren't saved. A plugin on its own (or a chain of one) faults
+  the whole slot as before. A plugin's BYP takes it out of the chain and out of the
+  latency. Adding, removing and moving plugins swaps the new chain in without
+  stopping the audio; the plugins that stay keep running with their state. Removing
+  the last plugin empties the slot.
 - **Plugin delay compensation:** plugins that report a latency (lookahead limiters,
   linear-phase EQs...) delay their signal. Sidecar reads each plugin's latency and
   delays the other sources summed into the same bus, main or matrix by the
@@ -77,7 +104,7 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
   default; **SETUP > PLUGINS > DELAY COMPENSATION** turns it off, and the panel
   below shows the total compensation (the longest path the console is aligned to)
   and each loaded plugin's latency (a chain's is the sum of its plugins' that aren't
-  bypassed). Compensation stops at 8192 samples (about 170
+  bypassed or faulted). Compensation stops at 8192 samples (about 170
   ms at 48 kHz): a plugin reporting more is written to the event log and the panel
   shows the limit. Solo, the monitor paths, direct outs and the recorder's taps are
   not compensated, and a bypassed plugin adds no latency (the others are realigned
@@ -460,8 +487,8 @@ the USB key on the screen to choose another folder).
   the snippet holds exactly the parameters you changed (within REC FOCUS). Fire it by
   hand, or mark it to **fire with its scene**.
 - Plugins are saved with their state; a chain with all of its plugins in order, with
-  each one's BYP and state (a single plugin is saved as before, so shows without chains
-  still open in earlier versions). Scenes, snippets and FX presets recall a chain's
+  each one's BYP, state, zoom and collapsed state (a single plugin is saved as before,
+  so shows without chains still open in earlier versions). Scenes, snippets and FX presets recall a chain's
   states and BYP keys into the same plugins in the same order only, and report a
   slot whose chain differs. In safe mode no plugin is loaded; **Reload with plugins** loads each
   plugin of a chain on its own (one that fails is left out and reported), and a plugin
@@ -714,7 +741,7 @@ Live sound gets no second take, so stability is designed in at every layer:
 | Layer | Protection |
 |---|---|
 | Audio thread | No allocations, locks or file I/O. Denormals are flushed. Channel/bus/plugin changes are lock-free swaps with deferred deletion. |
-| Plugins | A plugin that outputs NaN/Inf or throws is **auto-bypassed on the spot**. Its input passes through, and the FX slot is flagged. In a plugin chain the whole slot is bypassed and the event log names the plugin. Two inserts on one slot never run it concurrently. Per-slot CPU is measured. |
+| Plugins | A plugin that outputs NaN/Inf or throws is **auto-bypassed on the spot**. Its input passes through, and the FX slot is flagged. In a plugin chain of two or more only that plugin is bypassed (the rest keeps running) and the event log names it. Two inserts on one slot never run it concurrently. Per-slot CPU is measured. |
 | Plugin scanning | Scans run **in a separate process**, so a plugin that crashes during a scan only kills the scanner. |
 | Plugin loading | The plugin being loaded is recorded on disk first. If it crashes the app, it's blacklisted on the next start. |
 | Plugin sandbox (experimental) | With **SETUP > PLUGINS > RUN PLUGINS IN SANDBOX** on, each plugin loaded afterwards runs in its own helper process (see below): a plugin that crashes or hangs only takes its helper down. Its FX slot is bypassed, the event log says so, and the console keeps running. |
@@ -739,7 +766,8 @@ running in-process, depending on when each was loaded).
 
 - **Faults:** if the plugin crashes, or doesn't deliver a block in time, its FX slot is
   bypassed on the spot (the dry signal passes; the slot shows FAULT - BYPASSED) and
-  the event log says what happened. Sidecar restarts the helper with the plugin's last
+  the event log says what happened. In a chain of two or more only that plugin is
+  bypassed, and CLEAR in its header runs it again. Sidecar restarts the helper with the plugin's last
   known state (from the last show save, or at most 10 s old); the slot stays bypassed
   until you clear the fault (EFFECTS, UTILITY). A plugin that fails three times in a
   minute stays off until you load it again.

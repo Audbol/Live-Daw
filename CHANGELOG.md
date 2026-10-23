@@ -8,15 +8,23 @@ All notable changes to Sidecar are listed here. Versions follow
 ### Added
 
 - Plugin chains: an EXT FX slot runs up to 8 plugins in series (VST3, AU, LV2, each one
-  sandboxed or not). The slot's plugin window shows all their editors side by side in
-  chain order, each with a header strip (name, BYP, move left / right, remove) and a
-  + at the end that adds a plugin; it grows to fit and scrolls beyond the screen. The FX
-  slot menu has Add to chain, and the EFFECTS tile names the chain ("A + B", "A +2").
-  The slot stays one unit for the engine (FX MIX, bypass, CPU, fault handling); a
-  plugin's latency counts unless it is bypassed, and a failing plugin is named in the
-  event log. Changing the chain keeps the other plugins running with their state.
-  Shows, scenes, snippets and FX presets store and recall the whole chain; a single
-  plugin is saved as before.
+  sandboxed or not), shown in one window: a chain bar (IN ▸ chips ▸ OUT, +; a chip
+  shows the name, a bypass dot, a fault mark and the latency, scrolls to its plugin,
+  drags to reorder and has a right-click menu) over the editors as cards with a slim
+  title row (collapse, name, BYP, zoom − % +, remove). ROW shows the editors side by
+  side, FOCUS one at a time with the chips as tabs; the choice and the window size are
+  kept per slot. Each plugin can be zoomed to 50-100 % (resized, host-scaled for VST3 /
+  VST / LV2, or transform-scaled for generic and built-in editors; fixed-size native
+  editors say FIXED) or collapsed, and FIT fits the whole chain to the window's
+  height; zoom and collapse are saved per plugin with the show. A plugin that throws,
+  outputs NaN/Inf or fails in the sandbox bypasses only itself: its input passes on,
+  the rest of the chain keeps running, its header shows FAULT with CLEAR, and the
+  event log names it ("FX 3: Pro-Q 3 (plugin 2 of 3) output NaN/Inf; bypassed, the rest
+  of the chain keeps running"); a chain of one faults the slot as a single plugin does.
+  The FX slot menu has Add to chain, and the EFFECTS tile names the chain ("A + B",
+  "A +2"). A plugin's latency counts unless it is bypassed or faulted. Changing the
+  chain keeps the other plugins running with their state. Shows, scenes, snippets and
+  FX presets store and recall the whole chain; a single plugin is saved as before.
 - `tools/wing/audio_compare` compares the sound of a WING's processing with Sidecar's:
   test signals for the WING's USB player (sweeps, level steps, level jumps, tone steps,
   noise, clicks, a synthetic band) with sync chirps and an ID code, a test plan of 65

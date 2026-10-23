@@ -34,7 +34,9 @@ namespace livedaw
     one plugin; a plugin on its own is a chain of one). addToChain(),
     removeFromChain() and moveInChain() build the new chain on the message thread
     and swap it in like setPlugin(); the plugins that stay keep their instance
-    and state, and keep running.
+    and state, and keep running. In a chain of several a failing plugin is
+    faulted on its own (passed through) and the slot keeps running; see
+    PluginChain.
 
     Stateless view: any number of FxSlots may view one engine. */
 class FxSlots
@@ -62,8 +64,19 @@ public:
     int getNumChainMembers (int slot) const noexcept;
     juce::AudioPluginInstance* getChainMember (int slot, int index) const noexcept;
     bool isChainMemberBypassed (int slot, int index) const noexcept;
-    /** No latency while bypassed. Bypassing a plugin on its own makes it a chain of one. */
+    /** No latency while bypassed. Bypassing a plugin on its own makes it a chain
+        of one. Bypassing on or off clears the plugin's fault. */
     void setChainMemberBypassed (int slot, int index, bool bypassed);
+    /** The plugin failed in a chain of several and is passed through until cleared. */
+    bool isChainMemberFaulted (int slot, int index) const noexcept;
+    /** Un-faults the plugin: it runs again. */
+    void clearChainMemberFault (int slot, int index);
+    /** Plugins of the slot's chain that are faulted on their own (the slot isn't). */
+    int getNumFaultedChainMembers (int slot) const noexcept;
+    /** How the chain window shows a plugin (zoom, collapsed; saved with the show). */
+    PluginChain::View getChainMemberView (int slot, int index) const noexcept;
+    /** A view other than the default for a plugin on its own makes it a chain of one. */
+    void setChainMemberView (int slot, int index, PluginChain::View);
     /** Inserts `plugin` at `index` (-1: the end). False (and `plugin` dropped) if
         the slot has no plugin yet or its chain is full. */
     bool addToChain (int slot, std::unique_ptr<juce::AudioPluginInstance> plugin, int index = -1);
@@ -88,7 +101,8 @@ public:
     float getMeter (int slot) const noexcept { return ld::ld_fx_meter (engine, slot); }
     bool isFaulted (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 1); }
     bool isDoubleAssigned (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 2); }
-    void clearFlags (int slot) noexcept { ld::ld_fx_clear_flags (engine, slot); }
+    /** Clears the slot's fault and double assignment, and its chain's faulted plugins. */
+    void clearFlags (int slot);
     /** Share of the block time the plugin took (smoothed). */
     float getLoad (int slot) const noexcept { return ld::ld_fx_load (engine, slot); }
     /** Number of strip inserts using the slot. */

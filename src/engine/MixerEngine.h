@@ -123,6 +123,9 @@ public:
     /** Message thread: plugin warnings (a latency beyond kMaxCompensation, the
         plugin of a chain that failed) for the event log. */
     std::function<void (const juce::String&)> onPluginWarning;
+    /** Message thread (the engine's timer calls it 10 times a second): follows the
+        plugins' latencies and reports their warnings through onPluginWarning. */
+    void pollPlugins();
 
 private:
     ld::Engine* engine;

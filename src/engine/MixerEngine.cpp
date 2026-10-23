@@ -233,6 +233,12 @@ void MixerEngine::setMuteGroupName (int index, const juce::String& name)
 
 void MixerEngine::timerCallback()
 {
+    pollPlugins();
+    garbage.collect(); // also works out the delay compensation
+}
+
+void MixerEngine::pollPlugins()
+{
     fx.updateLatencies();
     for (int slot = 0; slot < kNumFx; ++slot)
     {
@@ -249,21 +255,24 @@ void MixerEngine::timerCallback()
             warnedLatency[(size_t) slot] = nullptr;
         }
 
-        // A chain's fault (auto-bypassed like a plugin's) names the member.
-        if (auto* chain = p != nullptr && fx.isFaulted (slot) ? fx.getChain (slot) : nullptr)
+        // A chain of one's fault (auto-bypassed like a plugin's) names the member.
+        auto* chain = p != nullptr ? fx.getChain (slot) : nullptr;
+        if (chain != nullptr && fx.isFaulted (slot))
         {
             if (const auto fault = chain->takeFault(); juce::isPositiveAndBelow (fault.member, chain->size()) && onPluginWarning)
-            {
-                const auto what = fault.kind == PluginChain::FaultKind::threw       ? "threw an exception"
-                                : fault.kind == PluginChain::FaultKind::nonFinite   ? "output NaN/Inf"
-                                                                                    : "missed its block in the sandbox";
                 onPluginWarning ("FX " + juce::String (slot + 1) + ": " + chain->getMember (fault.member).getName() + " (plugin "
-                                 + juce::String (fault.member + 1) + " of " + juce::String (chain->size()) + " in the chain) " + what
-                                 + "; the FX slot is bypassed until you clear the fault");
-            }
+                                 + juce::String (fault.member + 1) + " of " + juce::String (chain->size()) + " in the chain) "
+                                 + PluginChain::describeFault (fault.kind) + "; the FX slot is bypassed until you clear the fault");
         }
+
+        // In a chain of several a plugin that fails bypasses only itself
+        // (updateLatencies() above already left it out of the latency).
+        for (auto fault = chain != nullptr ? chain->takeMemberFault() : PluginChain::Fault {}; fault.member >= 0; fault = chain->takeMemberFault())
+            if (onPluginWarning)
+                onPluginWarning ("FX " + juce::String (slot + 1) + ": " + chain->getMember (fault.member).getName() + " (plugin "
+                                 + juce::String (fault.member + 1) + " of " + juce::String (chain->size()) + ") "
+                                 + PluginChain::describeFault (fault.kind) + "; bypassed, the rest of the chain keeps running");
     }
-    garbage.collect(); // also works out the delay compensation
 }
 
 void MixerEngine::updateLatencyCompensation()

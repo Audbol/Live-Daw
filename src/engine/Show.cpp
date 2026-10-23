@@ -79,9 +79,9 @@ bool Show::captureFx (void* ctx, int32_t slot, ld::LdSink* description, ld::LdSi
         if (plugin == nullptr)
             return false;
 
-        // A chain is saved whole; a chain of one (not bypassed) like a plugin on
-        // its own, so such shows open in earlier versions too.
-        if (auto* chain = fx.getChain (slot); chain != nullptr && (chain->size() > 1 || chain->isBypassed (0)))
+        // A chain is saved whole; a chain of one (not bypassed, default view)
+        // like a plugin on its own, so such shows open in earlier versions too.
+        if (auto* chain = fx.getChain (slot); chain != nullptr && chain->needsChainFormat())
         {
             appendTo (description, chain->createXml()->toString (juce::XmlElement::TextFormat().singleLine().withoutHeader()));
             return true;
@@ -141,7 +141,7 @@ int32_t Show::restoreFx (void* ctx, int32_t slot, int32_t mode, const char* desc
 
         // Show load: create the plugins (each recorded for the crash blacklist,
         // or in the sandbox). One that can't be created is left out and reported.
-        std::vector<std::pair<std::unique_ptr<juce::AudioPluginInstance>, bool>> created; // with bypass
+        std::vector<std::pair<std::unique_ptr<juce::AudioPluginInstance>, const PluginChain::Saved*>> created;
         juce::StringArray failures;
         for (const auto& s : saved)
         {
@@ -154,18 +154,21 @@ int32_t Show::restoreFx (void* ctx, int32_t slot, int32_t mode, const char* desc
                 continue;
             }
             restoreState (*instance, s.state);
-            created.emplace_back (std::move (instance), s.bypassed);
+            created.emplace_back (std::move (instance), &s);
         }
 
-        if (created.size() == 1 && ! created.front().second)
+        if (created.size() == 1 && ! created.front().second->bypassed && created.front().second->view.isDefault())
         {
             fx.setPlugin (slot, std::move (created.front().first)); // a plugin on its own
         }
         else if (! created.empty())
         {
             std::vector<PluginChain::MemberPtr> members;
-            for (auto& [instance, bypassed] : created)
-                members.push_back (PluginChain::makeMember (std::move (instance), bypassed));
+            for (auto& [instance, s] : created)
+            {
+                members.push_back (PluginChain::makeMember (std::move (instance), s->bypassed));
+                members.back()->view = s->view;
+            }
             fx.setPlugin (slot, std::make_unique<PluginChain> (std::move (members)));
         }
 
