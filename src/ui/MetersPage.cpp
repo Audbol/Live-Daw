@@ -1,5 +1,6 @@
 #include "dsp/DspUtils.h"
 #include "ui/Icons.h"
+#include "ui/PaintHash.h"
 #include "ui/Pages.h"
 
 namespace livedaw::ui
@@ -180,7 +181,14 @@ void MetersPage::timerCallback()
                 else if (--h.frames < 0)
                     h.level = juce::jmax (level, h.level - 0.02f);
             }
-    repaint();
+    // Only when a segment, a key or the title changes (idle meters cost nothing).
+    if (! isShowing())
+        return;
+    if (const auto hash = paintHash (*this); hash != shownHash)
+    {
+        shownHash = hash;
+        repaint();
+    }
 }
 
 float MetersPage::unitsOf (const std::vector<Group*>& items)

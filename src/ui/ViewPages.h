@@ -91,6 +91,7 @@ private:
     juce::String browsed[LayerSet::kNumSections];
     int bank[LayerSet::kNumSections] { -1, -1, -1 };
     juce::String shownTitle;
+    juce::uint64 shownHash = 0;
     juce::Component anchor;
 };
 

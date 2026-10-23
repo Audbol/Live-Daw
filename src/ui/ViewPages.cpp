@@ -3,6 +3,7 @@
 #include "engine/Models.h"
 #include "ui/HomeIcons.h"
 #include "ui/HomeWidgets.h"
+#include "ui/PaintHash.h"
 #include "ui/RoutingGroups.h"
 
 #include <array>
@@ -960,7 +961,13 @@ void ViewPage::timerCallback()
     // Under a DCA's panel the page stays as it was (the panel repaints what it changes).
     if (dcaPanel != nullptr && dcaPanel->isVisible())
         return;
-    repaint();
+    // Only when something it shows changed: a full redraw of the page fifteen
+    // times a second costs far more than walking its paint.
+    if (const auto hash = paintHash (*this); hash != shownHash)
+    {
+        shownHash = hash;
+        repaint();
+    }
 }
 
 juce::String ViewPage::currentLayerId() const

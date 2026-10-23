@@ -114,6 +114,7 @@ private:
     float slotW = 23.0f; // a strip's width in the groups (23 WING pixels unless squeezed)
     int page = 0;
     std::vector<int> laidOutCounts;
+    juce::uint64 shownHash = 0;
     std::unordered_map<const void*, Hold> holds;
 };
 
