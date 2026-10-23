@@ -591,7 +591,7 @@ blinking LEDs.
   SOF FLIP are backlit keys (`SurfaceKey::backlit`): a dark face in a rim that carries
   the light, rim and print pale lavender unlit (washed out to light grey on the silver
   finish, as daylight does) and in the key's colour lit (`Colours::keySelect`,
-  `keySolo`, `keyMute`; SOF FLIP red-orange, `keyLayer`, as the lit layer keys) while the
+  `keySolo`, `keyMute`; SOF FLIP light orange, `keyLayer`, as the lit layer keys) while the
   face stays dark. The meter block's GATE LED lights
   red while the gate is closed, the DYN LED orange while the dynamics work.
 - **Console look and model.** `ConsoleLook` (`ConsoleLook.h`) is how the console
