@@ -786,7 +786,9 @@ void MainComponent::closePluginWindowsFor (juce::AudioProcessor* p)
     // The slot's plugin (or chain) closes its window; a plugin of a chain only its editor.
     for (int i = pluginWindows.size(); --i >= 0;)
     {
-        if (pluginWindows[i]->getShownProcessor() == p)
+        // The slot's current plugin counts too: the window notices a chain
+        // swapped elsewhere only on its next refresh.
+        if (pluginWindows[i]->getShownProcessor() == p || engine.getFx().getPlugin (pluginWindows[i]->getSlot()) == p)
             pluginWindows.remove (i);
         else
             pluginWindows[i]->dropEditorFor (p);

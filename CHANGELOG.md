@@ -163,6 +163,8 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Fixed
 
+- A slot's plugin window closes when its plugins are removed right after its chain was
+  changed from elsewhere (it could stay open for a moment and outlive the editors' plugins).
 - An FX slot auto-bypassed by a failing plugin ran that plugin again as soon as its
   chain was edited: zooming or collapsing the plugin in the plugin window, bypassing it,
   or adding or moving a plugin cleared the slot's fault. The slot now stays bypassed
