@@ -89,10 +89,34 @@ juce::String PluginHost::checkForCrashDuringPluginLoad()
     return lines[1].isNotEmpty() ? lines[1] : identifier;
 }
 
-std::unique_ptr<juce::AudioPluginInstance> PluginHost::createInstance (const juce::PluginDescription& description,
+juce::PluginDescription PluginHost::resolveDescription (const juce::PluginDescription& description)
+{
+    // On Linux a VST3 instance describes itself with the library inside its
+    // bundle (X.vst3/Contents/x86_64-linux/X.so), which no format accepts, and
+    // shows saved that: load the bundle instead.
+    if (description.pluginFormatName != "VST3" || ! juce::File::isAbsolutePath (description.fileOrIdentifier))
+        return description;
+    const juce::File file (description.fileOrIdentifier);
+    if (file.hasFileExtension (".vst3"))
+        return description;
+    for (auto dir = file.getParentDirectory(); dir != dir.getParentDirectory(); dir = dir.getParentDirectory())
+    {
+        if (dir.hasFileExtension (".vst3"))
+        {
+            auto resolved = description;
+            resolved.fileOrIdentifier = dir.getFullPathName();
+            return resolved;
+        }
+    }
+    return description;
+}
+
+std::unique_ptr<juce::AudioPluginInstance> PluginHost::createInstance (const juce::PluginDescription& requested,
                                                                        double sampleRate, int blockSize,
                                                                        juce::String& errorMessage)
 {
+    const auto description = resolveDescription (requested);
+
     if (sandboxEnabled)
     {
         // A crash while loading only takes down the helper: no marker needed.

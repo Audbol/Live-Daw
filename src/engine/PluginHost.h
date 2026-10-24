@@ -34,6 +34,11 @@ public:
                                                                double sampleRate, int blockSize,
                                                                juce::String& errorMessage);
 
+    /** `description` with a VST3 library path inside a bundle (what an in-process
+        VST3 instance reports on Linux, and so what shows store) turned back into
+        the bundle's, which the VST3 format loads. Others unchanged. */
+    static juce::PluginDescription resolveDescription (const juce::PluginDescription& description);
+
     /** Plugin types sorted for a popup menu. */
     juce::Array<juce::PluginDescription> getSortedTypes() const;
 

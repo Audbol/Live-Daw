@@ -1,5 +1,6 @@
 #include "engine/FxSlots.h"
 #include "engine/Models.h"
+#include "engine/MonoBuses.h"
 #include "engine/SandboxedPlugin.h"
 
 namespace livedaw
@@ -20,6 +21,7 @@ struct FxSlots::Holder final : private juce::AudioProcessorListener
     juce::AudioBuffer<float> scratch;
     juce::MidiBuffer midi;
     int numPluginChannels = 2;
+    MonoBuses mono;
     int blockSize = 512;
     double sampleRate = 0.0;
 
@@ -32,6 +34,7 @@ struct FxSlots::Holder final : private juce::AudioProcessorListener
         plugin->setRateAndBufferSizeDetails (sampleRate, blockSize);
         plugin->prepareToPlay (sampleRate, blockSize);
         numPluginChannels = juce::jmax (2, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels());
+        mono = MonoBuses::of (*plugin);
         scratch.setSize (numPluginChannels, blockSize, false, true, false);
         midi.ensureSize (256);
     }
@@ -54,7 +57,9 @@ struct FxSlots::Holder final : private juce::AudioProcessorListener
 
                 juce::AudioBuffer<float> view (h.scratch.getArrayOfWritePointers(), h.numPluginChannels, n);
                 h.midi.clear();
+                h.mono.beforeProcessing (view);
                 h.plugin->processBlock (view, h.midi);
+                h.mono.afterProcessing (view);
                 if (h.sandboxed != nullptr && h.sandboxed->didLastBlockFail())
                     return 1; // timed out or the helper is gone: same as a plugin error
                 if (h.chain != nullptr && h.chain->didLastBlockFail())

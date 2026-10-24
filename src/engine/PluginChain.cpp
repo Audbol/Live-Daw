@@ -1,4 +1,5 @@
 #include "engine/PluginChain.h"
+#include "engine/MonoBuses.h"
 #include "engine/SandboxedPlugin.h"
 
 #include <algorithm>
@@ -47,6 +48,7 @@ PluginChain::Member::Member (std::shared_ptr<juce::AudioPluginInstance> p) : plu
 {
     sandboxed = dynamic_cast<SandboxedPlugin*> (plugin.get());
     numChannels = juce::jmax (2, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels());
+    mono = MonoBuses::of (*plugin); // its layout is set (makeMember)
     plugin->addListener (this);
 }
 
@@ -207,6 +209,7 @@ void PluginChain::prepareToPlay (double sampleRate, int maxBlock)
             continue;
         m->plugin->setRateAndBufferSizeDetails (sampleRate, maxBlock);
         m->plugin->prepareToPlay (sampleRate, maxBlock);
+        m->mono = MonoBuses::of (*m->plugin);
         m->preparedRate = sampleRate;
         m->preparedBlock = maxBlock;
     }
@@ -300,11 +303,13 @@ void PluginChain::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuff
             scratch.clear (ch, 0, n); // side-chain inputs are silent
         juce::AudioBuffer<float> view (scratch.getArrayOfWritePointers(), m.numChannels, n);
         midi.clear();
+        m.mono.beforeProcessing (view);
 
         auto kind = FaultKind::none;
         try
         {
             m.plugin->processBlock (view, midi);
+            m.mono.afterProcessing (view);
         }
         catch (...)
         {

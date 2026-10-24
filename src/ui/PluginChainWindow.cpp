@@ -44,8 +44,28 @@ juce::String PluginChainWindow::settingsKey (const char* what) const
 void PluginChainWindow::resized()
 {
     juce::DocumentWindow::resized();
+    keepOnScreen();
     if (remembering && view.getWidth() > 0 && view.getHeight() > 0)
         ctx.settings.setValue (settingsKey ("Size"), juce::String (view.getWidth()) + " " + juce::String (view.getHeight()));
+}
+
+void PluginChainWindow::keepOnScreen()
+{
+    if (placing || ! isOnDesktop())
+        return;
+    const auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (getScreenBounds());
+    if (display == nullptr)
+        return;
+    auto area = display->userBounds.toNearestInt();
+    if (auto* peer = getPeer())
+        if (const auto frame = peer->getFrameSizeIfPresent())
+            area = frame->subtractedFrom (area);
+    const auto bounds = getBounds();
+    if (const auto fitted = bounds.constrainedWithin (area); fitted != bounds && ! area.isEmpty())
+    {
+        const juce::ScopedValueSetter<bool> busy (placing, true);
+        setBounds (fitted);
+    }
 }
 
 PluginChainWindow::~PluginChainWindow()

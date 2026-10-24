@@ -22,7 +22,8 @@ namespace livedaw
     Replaced plugins are destroyed on the message thread once the engine can no
     longer call them (the engine invokes the release callback from
     ld_engine_collect). Plugins run in stereo: a mono strip feeds both inputs and
-    takes the left output back. A sandboxed plugin (SandboxedPlugin) that misses a
+    takes the left output back; a plugin with a mono main bus gets both sides
+    mixed and feeds both (MonoBuses). A sandboxed plugin (SandboxedPlugin) that misses a
     block or loses its helper process is reported like one that throws; its latency
     includes the sandbox's block, so delay compensation covers it.
 

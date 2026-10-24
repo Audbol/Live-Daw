@@ -10,9 +10,10 @@ namespace livedaw::ui
     window with the slot's chain bar and the editors of all its plugins, in
     chain order (PluginChainView). + adds a plugin (the plugin list); the chips
     and title rows bypass, clear, move, zoom, collapse and remove plugins. The
-    title names the chain; the window grows to fit and scrolls beyond the
-    screen. It is resizable; its size and its layout (ROW / FOCUS) are kept per
-    slot in the settings. It closes itself when the slot empties. */
+    title names the chain; the window grows to fit (staying on its screen)
+    and scrolls beyond the screen. It is resizable; its size and its layout
+    (ROW / FOCUS) are kept per slot in the settings. It closes itself when the
+    slot empties. */
 class PluginChainWindow final : public juce::DocumentWindow
 {
 public:
@@ -35,11 +36,15 @@ private:
     void showAddMenu (juce::Component& target);
     void removeMember (int index);
     juce::String settingsKey (const char* what) const;
+    /** Moves (or shrinks) the window back onto its screen: it grows when a plugin's
+        editor takes its real size, after the window was placed. */
+    void keepOnScreen();
 
     UiContext& ctx;
     PluginChainView view;
     std::function<void (PluginChainWindow&)> onClose;
     bool remembering = false; // the size is saved once the window is set up
+    bool placing = false;     // keepOnScreen() moving it
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginChainWindow)
 };
