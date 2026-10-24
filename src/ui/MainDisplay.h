@@ -66,6 +66,12 @@ public:
         allows, its right-hand column) wants at that height: more than this
         only leaves empty panel beside it. */
     static int preferredWidth (int height);
+    /** The height the display unit needs for a screen `screenHeight` px tall. */
+    static int heightForScreen (int screenHeight);
+    /** The smallest screen height whose body text (TypeScale::body) is still
+        about 9 px: the console view keeps the screen at least this tall when
+        the window allows (it is the screen of a 1680 x 1000 window). */
+    static constexpr int kLegibleScreenHeight = 360;
 
     void paint (juce::Graphics&) override;
     void resized() override;

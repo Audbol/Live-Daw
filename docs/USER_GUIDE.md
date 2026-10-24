@@ -116,9 +116,14 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
 ## The surface
 
 The window is a WING control surface and resizes to any screen, including ultrawides.
-The smallest window, 1344 x 680, still holds every section of the surface; fader
-sections set wider than 12 + 8 + 4 faders (SETUP > SURFACE) need a wider window for
-the whole custom controls and 4-Channel sections.
+The smallest window, 1280 x 640, still holds every section of the surface, so a
+1366 x 768 screen (the smallest supported) shows the whole console, maximized or not;
+fader sections set wider than 12 + 8 + 4 faders (SETUP > SURFACE) need a wider window
+for the whole custom controls and 4-Channel sections. The window first opens fitted
+to the screen. In short windows the main display keeps a legible screen (as in a
+1680 x 1000 window): the channel strip and the monitoring column narrow, and below
+about 100 px of fader travel the strips fold their meter blocks away. For the
+largest screen, show the display on its own (F10).
 The screens follow the WING's own: the same panels, keys, colours and layout, set in
 Barlow Condensed. The surface around them looks like the silver WING: a light grey
 surface with mid grey decks (monitoring, channel strip, 4-Channel, custom controls),
