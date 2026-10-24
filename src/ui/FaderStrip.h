@@ -100,6 +100,10 @@ public:
 
     /** The meter block's rows: DYN, the six segments, GATE. */
     static constexpr int kMeterRows = 8;
+    /** The shortest fader travel: shorter strips fold their meter away first. */
+    static constexpr int kMinFaderTravel = 100;
+    /** About the height of the narrowest strip with its meter folded away. */
+    static constexpr int kMinCompactHeight = 250;
     static constexpr int kMeterSegments = 6;
     static constexpr float kMeterThresholds[kMeterSegments] = { -0.1f, -6.0f, -12.0f, -18.0f, -30.0f, -60.0f };
     static constexpr const char* kMeterLabels[kMeterSegments] = { "CLIP", "-6", "-12", "-18", "-30", "-60" };

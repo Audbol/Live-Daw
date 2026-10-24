@@ -332,20 +332,42 @@ private:
            #endif
             setContentOwned (content, true);
             setResizable (true, true);
-            // The WING's whole surface: below about 1344 px the 24 faders of
-            // the default layers and the custom controls section no longer
-            // fit side by side with usable strips, and below 680 px the main
-            // display and the fader sections no longer fit on top of each
-            // other.
-            setResizeLimits (1344, 680, 32768, 32768);
+            // The WING's whole surface: a 1280 x 720 screen less a taskbar and
+            // the title bar. Below that the 24 faders of the default layers
+            // and the custom controls no longer fit side by side with usable
+            // strips, or the main display (legible) and the fader sections no
+            // longer fit on top of each other.
+            setResizeLimits (1280, 640, 32768, 32768);
 
-            // Reopen where it was (size, position, maximised); fall back to centred.
+            // Reopen where it was (size, position, maximised); fall back to
+            // centred in the main display's work area (a 1366 x 768 laptop
+            // can't take the default size).
             if (savedState.isEmpty() || ! restoreWindowStateFromString (savedState))
-                centreWithSize (getWidth(), getHeight());
+            {
+                const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
+                const auto area = display != nullptr ? contentArea (*display) : juce::Rectangle<int> (getWidth(), getHeight());
+                setBounds (juce::Rectangle<int> (juce::jmin (getWidth(), area.getWidth()), juce::jmin (getHeight(), area.getHeight()))
+                               .withCentre (area.getCentre()));
+            }
             else if (! isFullScreen())
+            {
                 keepOnScreen();
+            }
 
             setVisible (true);
+        }
+
+        /** A display's work area less this window's frame (the title bar and
+            borders, guessed until the window manager tells): where the
+            content fits with the title bar on screen. */
+        juce::Rectangle<int> contentArea (const juce::Displays::Display& display) const
+        {
+            juce::BorderSize<int> frame (32, 0, 0, 0);
+            if (auto* peer = getPeer())
+                if (const auto size = peer->getFrameSizeIfPresent())
+                    frame = *size;
+            const auto area = display.userBounds.toNearestInt();
+            return frame.subtractedFrom (area).getIntersection (area);
         }
 
         /** A size saved on a bigger screen (an external monitor since unplugged,
@@ -355,9 +377,11 @@ private:
         void keepOnScreen()
         {
             const auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (getScreenBounds());
-            if (display == nullptr || display->userBounds.toNearestInt().contains (getScreenBounds()))
+            if (display == nullptr)
                 return;
-            const auto area = display->userBounds.toNearestInt();
+            const auto area = contentArea (*display);
+            if (area.contains (getScreenBounds()))
+                return;
             auto bounds = getBounds();
             bounds.setSize (juce::jmin (bounds.getWidth(), area.getWidth()), juce::jmin (bounds.getHeight(), area.getHeight()));
             setBounds (bounds.constrainedWithin (area));

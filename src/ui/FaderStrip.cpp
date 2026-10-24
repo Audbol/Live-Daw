@@ -850,6 +850,8 @@ void FaderStrip::paint (juce::Graphics& g)
     // a module of four, rounded at its outer edges.
     auto band = [this, &g] (juce::Rectangle<int> rows, int margin, juce::Colour colour)
     {
+        if (rows.isEmpty())
+            return;
         const float left = moduleFirst ? 4.0f : 0.0f, right = (float) getWidth() - (moduleLast ? 4.0f : 0.0f);
         juce::Path p;
         p.addRoundedRectangle (left, (float) (rows.getY() - margin), right - left, (float) (rows.getHeight() + 2 * margin), 4.0f, 4.0f,
@@ -876,7 +878,7 @@ void FaderStrip::paint (juce::Graphics& g)
     drawScribbleFrame (g, lcdArea.toFloat(), moduleFirst, moduleLast, info.backlight);
 
     // Meter block: DYN LED, two 6-segment columns (input level), GATE LED.
-    if (strip != nullptr)
+    if (strip != nullptr && ! meterArea.isEmpty())
     {
         auto m = meterArea.toFloat();
         const float rowH = m.getHeight() / (float) kMeterRows;
@@ -913,6 +915,7 @@ void FaderStrip::resized()
 {
     auto b = getLocalBounds().reduced (0, 3);
     const int w = b.getWidth();
+    showValue = ctx.settings.getBoolValue ("ui.faderValues", false);
 
     // The display window: the thin colour light bar over the LCD, which runs
     // edge to edge across the module (inset at the module's ends).
@@ -939,12 +942,19 @@ void FaderStrip::resized()
     b.removeFromTop (6);
     key (soloKey);
     b.removeFromTop (9);
-    meterArea = b.removeFromTop (juce::jlimit (56, 100, juce::roundToInt ((float) keyH * 3.3f)));
-    b.removeFromTop (9);
+    // Short windows: the meter gives way to the fader (at least kMinFaderTravel
+    // tall), and folds away when it would be too short to read.
+    int meterH = juce::jlimit (56, 100, juce::roundToInt ((float) keyH * 3.3f));
+    const int belowMeter = 9 + keyH + juce::jlimit (6, 16, w / 8) + (showValue ? 14 : 0);
+    meterH = juce::jmin (meterH, b.getHeight() - belowMeter - kMinFaderTravel);
+    if (meterH < 40)
+        meterH = 0;
+    meterArea = b.removeFromTop (meterH);
+    if (meterH > 0)
+        b.removeFromTop (9);
     key (muteKey);
     b.removeFromTop (juce::jlimit (6, 16, w / 8));
 
-    showValue = ctx.settings.getBoolValue ("ui.faderValues", false);
     valueArea = showValue ? b.removeFromBottom (14) : juce::Rectangle<int>();
     fader.setBounds (b);
 }

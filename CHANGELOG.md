@@ -3,6 +3,25 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Fixed
+
+- 1366 x 768 screens: the window opened at 1680 x 1000, off the top and left of a
+  laptop screen with the start-up notice's buttons out of reach. It now opens fitted
+  and centred in the main display's work area (a size saved on a bigger screen is
+  fitted too, title bar included), and the smallest window is 1280 x 640 (a 1280 x 720
+  screen less taskbar and title bar; was 1344 x 680).
+- Short windows keep the main display's screen legible (360 px tall, body text about
+  9 px, as in a 1680 x 1000 window) instead of shrinking it to about 285 px: the
+  channel strip and the monitoring / 4-Channel column narrow to make room, the fader
+  sections get the rest and fold their strips' meter blocks away below 100 px of
+  fader travel (the screen, the channel strip and the main meter still show levels),
+  and the layer keys pack closer so all of them stay on the surface. Large windows
+  are unchanged.
+- A sandboxed plugin's editor window larger than the screen opens with its title bar
+  on screen (and shrinks to the work area when the editor is resizable).
+
 ## [0.1.4] - beta
 
 The second round of matching Sidecar to a real WING, from screenshots, photos and a

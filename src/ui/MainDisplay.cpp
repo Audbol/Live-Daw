@@ -1903,6 +1903,15 @@ int MainDisplay::preferredWidth (int height)
     return w;
 }
 
+int MainDisplay::heightForScreen (int screenHeight)
+{
+    // The encoder row grows with the height; one round more settles it.
+    int h = screenHeight + 24 + 28;
+    for (int i = 0; i < 2; ++i)
+        h = screenHeight + 24 + displayEncoderHeight (h);
+    return h;
+}
+
 void MainDisplay::resized()
 {
     auto b = getLocalBounds();

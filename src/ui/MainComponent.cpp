@@ -394,7 +394,11 @@ int MainComponent::topRowHeight() const
     // it the screen, the most important part) takes up to 8 % more.
     const float aspect = (float) getWidth() / (float) juce::jmax (1, h);
     const float wideBoost = juce::jlimit (0.0f, 0.08f, (aspect - 2.0f) * 0.06f);
-    return juce::jlimit (300, juce::jmax (300, h - 260), juce::roundToInt ((float) h * (topFraction + wideBoost)));
+    // Short windows (a 1366 x 768 laptop) keep the screen legible, as tall as
+    // the fader sections' compact layout (meters folded away) allows.
+    const int legible = juce::jlimit (300, juce::jmax (300, h - 6 - FaderStrip::kMinCompactHeight),
+                                      MainDisplay::heightForScreen (MainDisplay::kLegibleScreenHeight));
+    return juce::jlimit (legible, juce::jmax (legible, h - 260), juce::roundToInt ((float) h * (topFraction + wideBoost)));
 }
 
 MainComponent::BottomRowPlan MainComponent::planBottomRow (int total, int height) const
@@ -540,10 +544,13 @@ void MainComponent::layoutTopRow()
     // put the lower part of the custom controls there instead. Width the
     // display unit can't use is shared either side of it.
     // Windows too narrow for that keep the display wide: the channel strip at
-    // the left, the monitoring panel over the 4-Channel section at the right.
+    // the left, the monitoring panel over the 4-Channel section at the right,
+    // both narrowed (to a point) until the screen is legible.
     const auto sides = topRowSideWidths (top.getWidth());
+    const int displayW = MainDisplay::preferredWidth (top.getHeight());
+    const int legibleW = MainDisplay::preferredWidth (MainDisplay::heightForScreen (MainDisplay::kLegibleScreenHeight));
     juce::Rectangle<int> right;
-    if (top.getWidth() - sides.total() >= juce::jmin (MainDisplay::preferredWidth (top.getHeight()), top.getWidth() * 40 / 100))
+    if (top.getWidth() - sides.total() >= juce::jmin (displayW, juce::jmax (legibleW, top.getWidth() * 40 / 100)))
     {
         monitor->setBounds (top.removeFromLeft (sides.monitor));
         right = top.removeFromRight (sides.fourChannel);
@@ -551,8 +558,18 @@ void MainComponent::layoutTopRow()
     }
     else
     {
-        channelStrip->setBounds (top.removeFromLeft (juce::jlimit (330, 620, top.getWidth() * 29 / 100)));
-        right = top.removeFromRight (juce::jlimit (260, 460, top.getWidth() * 22 / 100));
+        int stripW = juce::jlimit (330, 620, top.getWidth() * 29 / 100);
+        int rightW = juce::jlimit (260, 460, top.getWidth() * 22 / 100);
+        if (const int over = stripW + rightW + displayW - top.getWidth(); over > 0)
+        {
+            const int stripSpare = stripW - kMinCompactStripWidth, rightSpare = rightW - kMinCompactRightWidth;
+            const int cut = juce::jmin (over, stripSpare + rightSpare);
+            const int stripCut = cut * stripSpare / juce::jmax (1, stripSpare + rightSpare);
+            stripW -= stripCut;
+            rightW -= cut - stripCut;
+        }
+        channelStrip->setBounds (top.removeFromLeft (stripW));
+        right = top.removeFromRight (rightW);
         monitor->setBounds (right.removeFromTop (right.getHeight() * (ccInBottomRow ? 46 : 55) / 100));
     }
     top = top.withSizeKeepingCentre (juce::jmin (top.getWidth(), MainDisplay::preferredWidth (top.getHeight())), top.getHeight());

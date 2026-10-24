@@ -425,7 +425,14 @@ private:
                 editor = new juce::GenericAudioProcessorEditor (p);
             setContentOwned (editor, true);
             setResizable (editor->isResizable(), false);
-            centreWithSize (getWidth(), getHeight());
+            // Within the main display's work area, title bar on screen: an
+            // editor taller or wider than a small screen shrinks if it can,
+            // else hangs off the bottom right.
+            auto area = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userBounds.toNearestInt().withTrimmedTop (32);
+            if (editor->isResizable())
+                setSize (juce::jmin (getWidth(), area.getWidth()), juce::jmin (getHeight(), area.getHeight()));
+            auto bounds = getBounds().withCentre (area.getCentre());
+            setBounds (bounds.withPosition (juce::jmax (area.getX(), bounds.getX()), juce::jmax (area.getY(), bounds.getY())));
             setVisible (true);
         }
 
