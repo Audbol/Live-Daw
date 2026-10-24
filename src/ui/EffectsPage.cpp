@@ -1,5 +1,6 @@
 #include "dsp/DspUtils.h"
 #include "engine/Models.h"
+#include "engine/PluginHost.h"
 #include "ui/Faceplate.h"
 #include "ui/HomeWidgets.h"
 #include "ui/Pages.h"
@@ -194,7 +195,7 @@ public:
                               label.removeFromTop (label.getHeight() * 0.62f).toNearestInt(), juce::Justification::centredBottom, 1);
             g.setColour (juce::Colour (0xffc8c8c8));
             g.setFont (wingFontFit (TypeScale::caption, label.getHeight() * 0.7f));
-            g.drawFittedText (plugin != nullptr ? plugin->getPluginDescription().manufacturerName.toUpperCase() : juce::String ("EXT"),
+            g.drawFittedText (plugin != nullptr ? PluginHost::describe (*plugin).manufacturerName.toUpperCase() : juce::String ("EXT"),
                               label.toNearestInt(), juce::Justification::centredTop, 1);
         }
 
@@ -527,7 +528,7 @@ public:
             juce::String info ("EXT DEVICE: A VST3 / AU / LV2 PLUGIN");
             if (plugin != nullptr)
             {
-                info = plugin->getPluginDescription().manufacturerName.toUpperCase() + "   " + plugin->getPluginDescription().pluginFormatName
+                info = PluginHost::describe (*plugin).manufacturerName.toUpperCase() + "   " + PluginHost::describe (*plugin).pluginFormatName
                        + "   LOAD " + juce::String (juce::roundToInt (fx.getLoad (slot) * 100.0f)) + " %";
                 if (fx.isSandboxed (slot)) // the plugin's latency includes the sandbox's block (compensated)
                     info << "   SANDBOX, LATENCY " << fx.getLatency (slot) << " SAMPLES";

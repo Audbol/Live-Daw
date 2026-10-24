@@ -1,5 +1,6 @@
 #include "engine/PluginChain.h"
 #include "engine/MonoBuses.h"
+#include "engine/PluginHost.h"
 #include "engine/SandboxedPlugin.h"
 
 #include <algorithm>
@@ -185,7 +186,7 @@ void PluginChain::fillInPluginDescription (juce::PluginDescription& d) const
 {
     if (size() == 1)
     {
-        d = members.front()->plugin->getPluginDescription();
+        d = PluginHost::describe (*members.front()->plugin);
         return;
     }
     d = {};
@@ -352,7 +353,7 @@ std::unique_ptr<juce::XmlElement> PluginChain::createXml() const
             e->setAttribute ("zoom", m->view.zoom);
         if (m->view.collapsed)
             e->setAttribute ("collapsed", 1);
-        e->addChildElement (m->plugin->getPluginDescription().createXml().release());
+        e->addChildElement (PluginHost::describe (*m->plugin).createXml().release());
 
         juce::MemoryBlock data;
         try
@@ -395,7 +396,7 @@ bool PluginChain::restore (const std::vector<Saved>& saved)
     if ((int) saved.size() != size())
         return false;
     for (int i = 0; i < size(); ++i)
-        if (getMember (i).getPluginDescription().createIdentifierString() != saved[(size_t) i].description.createIdentifierString())
+        if (PluginHost::describe (getMember (i)).createIdentifierString() != PluginHost::resolveDescription (saved[(size_t) i].description).createIdentifierString())
             return false;
 
     for (int i = 0; i < size(); ++i)

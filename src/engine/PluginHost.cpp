@@ -1,11 +1,31 @@
 #include "engine/PluginHost.h"
 #include "engine/PluginScanner.h"
 
+#include <map>
+#include <mutex>
+
 namespace livedaw
 {
 
 static constexpr const char* kPluginListKey = "pluginList";
 static constexpr const char* kSandboxKey = "plugins.sandbox";
+
+namespace
+{
+    /** The descriptions in-process plugins were created from, by instance (see
+        PluginHost::describe). An entry is only trusted while the instance at that
+        address has the same name (a deleted plugin's address may be reused).
+        Deleted with the app's other singletons at shutdown. */
+    struct CreatedPlugins final : private juce::DeletedAtShutdown
+    {
+        ~CreatedPlugins() override { clearSingletonInstance(); }
+
+        std::mutex lock;
+        std::map<const juce::AudioPluginInstance*, juce::PluginDescription> descriptions;
+
+        JUCE_DECLARE_SINGLETON_INLINE (CreatedPlugins, true)
+    };
+} // namespace
 
 PluginHost::PluginHost (juce::PropertiesFile* s) : settings (s)
 {
@@ -133,7 +153,27 @@ std::unique_ptr<juce::AudioPluginInstance> PluginHost::createInstance (const juc
     auto instance = formatManager.createPluginInstance (description, sampleRate, blockSize, errorMessage);
 
     pending.deleteFile();
+    if (auto* created = instance != nullptr ? CreatedPlugins::getInstance() : nullptr)
+    {
+        const std::lock_guard<std::mutex> l (created->lock);
+        created->descriptions[instance.get()] = description;
+    }
     return instance;
+}
+
+juce::PluginDescription PluginHost::describe (const juce::AudioPluginInstance& plugin)
+{
+    if (auto* created = CreatedPlugins::getInstanceWithoutCreating())
+    {
+        const std::lock_guard<std::mutex> l (created->lock);
+        if (const auto it = created->descriptions.find (&plugin); it != created->descriptions.end())
+        {
+            if (it->second.name == plugin.getName())
+                return it->second;
+            created->descriptions.erase (it); // another plugin now lives there
+        }
+    }
+    return plugin.getPluginDescription();
 }
 
 juce::Array<juce::PluginDescription> PluginHost::getSortedTypes() const
