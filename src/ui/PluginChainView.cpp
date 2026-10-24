@@ -126,7 +126,14 @@ public:
         // The editor sits in a holder: zooming by a transform scales the
         // holder, never the editor itself (JUCE leaves that to the host scale).
         holder.setInterceptsMouseClicks (false, true);
-        holder.onEditorResized = [this] { placeEditor(); };
+        holder.onEditorResized = [this]
+        {
+            // A native editor (VST3 on Linux) takes its real size only once it's
+            // on screen: its size at 100 % is the one it gives itself there.
+            if (applied == 100 && ! zooming)
+                base = { juce::jmax (1, editor->getWidth()), juce::jmax (1, editor->getHeight()) };
+            placeEditor();
+        };
         addAndMakeVisible (holder);
         holder.addAndMakeVisible (*editor);
         base = { juce::jmax (1, editor->getWidth()), juce::jmax (1, editor->getHeight()) };
@@ -210,10 +217,19 @@ public:
         return kTitleHeight + shownSize().y;
     }
 
-    /** Called by the view's timer: a host scale factor the editor hasn't followed
-        is dropped (the editor then has a fixed size). True if so. */
+    /** Called by the view's timer: an editor that went back to its size after a
+        resize tries the next way, and a host scale factor the editor hasn't
+        followed is dropped (the editor then has a fixed size). True if so. */
     bool checkHostScale()
     {
+        if (method == ZoomMethod::resize && applied < 100 && ! collapsed && ! smallerThanBase())
+        {
+            // It took the smaller size, then went back to its own (an LV2 UI with
+            // a minimum size): try the next way.
+            method = fallback();
+            applyZoom (method == ZoomMethod::fixed ? 100 : applied);
+            return true;
+        }
         if (hostCheckTicks <= 0 || method != ZoomMethod::hostScale)
             return false;
         if (smallerThanBase())
@@ -375,6 +391,7 @@ private:
 
     void applyZoom (int zoom)
     {
+        const juce::ScopedValueSetter<bool> busy (zooming, true);
         applied = zoom;
         const float s = (float) zoom / 100.0f;
         switch (method)
@@ -455,6 +472,7 @@ private:
     bool bypassed = false, faulted = false, selected = false, vertical = true;
     bool native = false, hostScaleCapable = false;
     int hostCheckTicks = 0;
+    bool zooming = false; // applyZoom() resizing the editor
     juce::Rectangle<int> nameArea, faultArea, zoomArea;
     Key collapse { Key::Glyph::collapse, {}, {} };
     Key clear { Key::Glyph::word, "CLEAR", "Clear the fault: the plugin runs again", Colours::mute };

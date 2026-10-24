@@ -30,9 +30,10 @@ namespace livedaw::ui
 
     Zoom (50 / 67 / 75 / 85 / 100 %, FIT: the largest steps that fit the
     window's height) shrinks an editor the best way it allows (ZoomMethod): a
-    resizable editor is resized within its constrainer; a VST3 / VST / LV2
-    editor gets the host scale factor (setScaleFactor), kept only if it got
-    smaller; JUCE component editors (generic controls, the sandbox's panel,
+    resizable editor is resized within its constrainer (one that goes back to
+    its size tries the next way); a VST3 / VST / LV2 editor gets the host scale
+    factor (setScaleFactor), kept only if it got smaller (than its size at 100 %,
+    the one it gives itself once on screen); JUCE component editors (generic controls, the sandbox's panel,
     in-process plugins) are scaled with a transform; any other native view has
     a fixed size (the zoom keys are disabled, COLLAPSE still works). Zoom and
     collapse are kept per plugin by FxSlots (saved with the show).

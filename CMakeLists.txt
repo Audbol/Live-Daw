@@ -362,6 +362,7 @@ if(LIVEDAW_BUILD_TESTS)
         tests/RoutingTests.cpp
         tests/HoldToSwitchTests.cpp
         tests/SandboxTests.cpp
+        tests/RealPluginTests.cpp
         src/sandbox/TestPlugins.cpp
         ${LIVEDAW_ENGINE_SOURCES}
         ${LIVEDAW_DAW_SOURCES})

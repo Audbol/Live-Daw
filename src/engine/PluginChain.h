@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/MonoBuses.h"
+
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <atomic>
@@ -80,6 +82,7 @@ public:
         std::shared_ptr<juce::AudioPluginInstance> plugin;
         SandboxedPlugin* sandboxed = nullptr;
         int numChannels = 2; // the plugin's buffer: at least stereo, more for side-chain buses
+        MonoBuses mono;      // a mono main input or output (see MonoBuses)
         std::atomic<bool> bypassed { false };
         /** Set by the audio thread when it failed in a chain of several (it's then
             passed through); cleared by the user. Not saved. */

@@ -90,6 +90,36 @@ inline constexpr float kCentre = 1.0f; // a mono channel at pan centre: unity on
 inline constexpr float kEdge = 1.41421356f; // a mono channel panned hard: +3 dB on the near side
 } // namespace livedaw::test
 
+#include <juce_events/juce_events.h>
+
+#if JUCE_MAC
+ #include <CoreFoundation/CoreFoundation.h>
+#else
+namespace juce::detail
+{
+bool dispatchNextMessageOnSystemQueue (bool returnIfNoPendingMessages); // juce_events, platform code
+} // namespace juce::detail
+#endif
+
+namespace livedaw::test
+{
+/** Runs the message loop for `ms` (timers, async updates, plugins' latency
+    changes and the sandbox's replies are delivered through it). */
+inline void pumpMessages (int ms)
+{
+    const auto end = juce::Time::getMillisecondCounter() + (juce::uint32) ms;
+    while (juce::Time::getMillisecondCounter() < end)
+    {
+#if JUCE_MAC
+        CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.002, true);
+#else
+        if (! juce::detail::dispatchNextMessageOnSystemQueue (true))
+            juce::Thread::sleep (2);
+#endif
+    }
+}
+} // namespace livedaw::test
+
 #include <juce_audio_processors/juce_audio_processors.h>
 
 namespace livedaw::test

@@ -3,6 +3,7 @@
 // Sidecar hands it through shared memory and opens the plugin's editor in its own
 // window. If the plugin crashes or hangs, only this process is lost.
 
+#include "engine/MonoBuses.h"
 #include "sandbox/SandboxShared.h"
 #include "sandbox/TestPlugins.h"
 
@@ -183,7 +184,9 @@ private:
             out.writeString (plugin->getName());
             out.writeInt (plugin->getLatencySamples());
             out.writeDouble (plugin->getTailLengthSeconds());
-            out.writeBool (plugin->hasEditor());
+            // Sidecar doesn't use it (the sandbox's panel is always there), and asking
+            // a VST3 creates its editor view: LSP's crash without a display.
+            out.writeBool (true);
             const int numPrograms = juce::jmin (plugin->getNumPrograms(), 1024);
             out.writeInt (numPrograms);
             out.writeInt (plugin->getCurrentProgram());
@@ -230,6 +233,7 @@ private:
         plugin->setRateAndBufferSizeDetails (sampleRate, blockSize);
         plugin->prepareToPlay (sampleRate, blockSize);
         numChannels = juce::jmax (2, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels());
+        mono = MonoBuses::of (*plugin);
         scratch.setSize (numChannels, kMaxBlock, false, true, false);
         midi.ensureSize (256);
         shared->latency.store (plugin->getLatencySamples(), std::memory_order_relaxed);
@@ -382,6 +386,7 @@ private:
 
                 juce::AudioBuffer<float> view (scratch.getArrayOfWritePointers(), numChannels, n);
                 midi.clear();
+                mono.beforeProcessing (view);
                 try
                 {
                     plugin->processBlock (view, midi);
@@ -390,6 +395,7 @@ private:
                 {
                     juce::Process::terminate(); // reported to Sidecar as a crash
                 }
+                mono.afterProcessing (view);
 
                 for (int ch = 0; ch < 2; ++ch)
                     juce::FloatVectorOperations::copy (shared->output[ch], scratch.getReadPointer (ch), n);
@@ -486,6 +492,7 @@ private:
     juce::AudioBuffer<float> scratch;
     juce::MidiBuffer midi;
     int numChannels = 2;
+    MonoBuses mono;
 
     std::unique_ptr<EditorWindow> editorWindow;
     AudioThread audioThread { *this };

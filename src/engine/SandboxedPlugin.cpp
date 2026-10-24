@@ -502,7 +502,13 @@ bool SandboxedPlugin::loadInHelper (double sampleRate, int newBlockSize, bool fi
             params.add (param.get());
             addHostedParameter (std::move (param));
         }
+        // The values just read are the ones the helper published while loading:
+        // mirrored already. Left unseen, they would overwrite a change made here
+        // before the first sync (300 ms later), though the helper has it.
+        shared->seenFromSerial = shared->block->fromHelperSerial.load (std::memory_order_acquire);
         shared->seenFrom.assign ((size_t) numParams, 0);
+        for (int i = 0; i < numParams && i < sandbox::kMaxParams; ++i)
+            shared->seenFrom[(size_t) i] = shared->block->fromHelper[i].serial.load (std::memory_order_acquire);
     }
     else if (numParams != params.size())
     {
