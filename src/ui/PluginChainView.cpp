@@ -1,4 +1,5 @@
 #include "ui/PluginChainView.h"
+#include "engine/PluginHost.h"
 #include "engine/SandboxedPlugin.h"
 #include "ui/LookAndFeel.h"
 
@@ -174,7 +175,7 @@ public:
         holder.setVisible (! collapsed);
         holder.setAlpha (bypassed || faulted ? 0.45f : 1.0f); // both out of the signal path
 
-        const auto desc = plugin.getPluginDescription();
+        const auto desc = PluginHost::describe (plugin);
         setTooltip (plugin.getName() + " (" + desc.manufacturerName + ", " + desc.pluginFormatName + "), plugin " + juce::String (index + 1)
                     + " of " + juce::String (count));
         collapse.setToggleState (collapsed, juce::dontSendNotification);
@@ -367,7 +368,7 @@ public:
 private:
     void chooseMethod()
     {
-        const auto format = plugin.getPluginDescription().pluginFormatName;
+        const auto format = PluginHost::describe (plugin).pluginFormatName;
         const bool juceComponents = dynamic_cast<juce::GenericAudioProcessorEditor*> (editor.get()) != nullptr
                                  || dynamic_cast<SandboxedPlugin*> (&plugin) != nullptr; // the sandbox's own panel
         native = ! juceComponents && isNativeFormat (format);

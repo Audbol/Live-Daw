@@ -1,6 +1,7 @@
 #include "TestHelpers.h"
 #include "engine/PluginHost.h"
 #include "engine/SandboxedPlugin.h"
+#include "sandbox/TestPlugins.h"
 
 using namespace livedaw;
 using livedaw::test::OfflineRig;
@@ -434,6 +435,27 @@ public:
             expectEquals (PluginHost::resolveDescription (d).fileOrIdentifier, d.fileOrIdentifier);
             d.fileOrIdentifier = "http://lsp-plug.in/plugins/lv2/comp_delay_stereo"; // not a path
             expectEquals (PluginHost::resolveDescription (d).fileOrIdentifier, d.fileOrIdentifier);
+        }
+
+        beginTest ("A plugin Sidecar made is described by what it was made from, without asking it");
+        {
+            using sandbox::TestPluginFormat;
+            PluginHost host (nullptr);
+            host.getFormatManager().addFormat (std::make_unique<TestPluginFormat>());
+            auto requested = TestPluginFormat::describe (TestPluginFormat::Kind::gain);
+            requested.version = "9.9 (from the scan)"; // the instance itself doesn't say this
+            juce::String error;
+            auto plugin = host.createInstance (requested, 48000.0, 128, error);
+            expect (plugin != nullptr, error);
+            if (plugin != nullptr)
+            {
+                expect (plugin->getPluginDescription().version != requested.version);
+                expectEquals (PluginHost::describe (*plugin).version, requested.version);
+
+                // A plugin Sidecar didn't make (or one at a reused address) describes itself.
+                test::FakePlugin fake;
+                expectEquals (PluginHost::describe (fake).name, fake.getPluginDescription().name);
+            }
         }
     }
 };

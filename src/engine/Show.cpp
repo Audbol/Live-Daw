@@ -89,7 +89,7 @@ bool Show::captureFx (void* ctx, int32_t slot, ld::LdSink* description, ld::LdSi
         if (fx.getChain (slot) != nullptr)
             plugin = fx.getChainMember (slot, 0);
 
-        const auto desc = plugin->getPluginDescription().createXml();
+        const auto desc = PluginHost::describe (*plugin).createXml();
         appendTo (description, desc->toString (juce::XmlElement::TextFormat().singleLine().withoutHeader()));
 
         juce::MemoryBlock data;
@@ -126,8 +126,8 @@ int32_t Show::restoreFx (void* ctx, int32_t slot, int32_t mode, const char* desc
             if (n != (int) saved.size())
                 return 1;
             for (int i = 0; i < n; ++i)
-                if (fx.getChainMember (slot, i)->getPluginDescription().createIdentifierString()
-                    != saved[(size_t) i].description.createIdentifierString())
+                if (PluginHost::describe (*fx.getChainMember (slot, i)).createIdentifierString()
+                    != PluginHost::resolveDescription (saved[(size_t) i].description).createIdentifierString())
                     return 1;
 
             for (int i = 0; i < n; ++i)

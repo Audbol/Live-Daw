@@ -39,6 +39,15 @@ public:
         the bundle's, which the VST3 format loads. Others unchanged. */
     static juce::PluginDescription resolveDescription (const juce::PluginDescription& description);
 
+    /** What Sidecar shows and saves for `plugin`: for a plugin createInstance()
+        made in-process, the (resolved) description it was made from; for any
+        other, its own getPluginDescription(). Use it instead of
+        getPluginDescription(): asking a JUCE VST3 instance for its description
+        sets its factory's host context again, and LSP's factory then keeps a
+        reference it never releases (the instance's host context leaks). It also
+        saves the bundle (and the version) the scan found, not the library inside. */
+    static juce::PluginDescription describe (const juce::AudioPluginInstance& plugin);
+
     /** Plugin types sorted for a popup menu. */
     juce::Array<juce::PluginDescription> getSortedTypes() const;
 

@@ -25,7 +25,10 @@ All notable changes to Sidecar are listed here. Versions follow
   a test that runs them when they are installed):
   - Linux: a show with a VST3 plugin loaded in-process didn't load it back ("No
     compatible plug-in format exists"): the show stored the library inside the
-    plugin's bundle. Such shows now load (also with the sandbox on).
+    plugin's bundle. Such shows now load (also with the sandbox on), and shows now
+    store the description the plugin was loaded from (the bundle). Sidecar no
+    longer asks a loaded plugin for its description (the EFFECTS screen did on every
+    repaint), which made LSP's VST3 plugins leak a small host object each.
   - A mono plugin (no stereo layout, such as LSP's "Mono" versions) on a stereo
     channel silenced the right side. It now gets both sides mixed to mono and its
     output feeds both (in-process, in a chain and in the sandbox).

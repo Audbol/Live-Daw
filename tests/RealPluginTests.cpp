@@ -287,7 +287,7 @@ public:
                 if (sandboxed && ! juce::File (LIVEDAW_TEST_PLUGIN_HOST).existsAsFile())
                     continue;
                 configure (host, sandboxed);
-                runSuite (host, *set, sandboxed);
+                runSuite (host, *set, sandboxed, set == &vst3 && lv2.usable() ? &lv2 : nullptr);
             }
         }
         host.setSandboxEnabled (false);
@@ -381,7 +381,9 @@ private:
         rig.engine.updateLatencyCompensation();
     }
 
-    void runSuite (PluginHost& host, const LspSet& lsp, bool sandboxed)
+    /** `others`: LV2 versions of the chain's 2nd and 3rd plugins, for the in-process
+        VST3 run (see the chain test). */
+    void runSuite (PluginHost& host, const LspSet& lsp, bool sandboxed, const LspSet* others)
     {
         tag = lsp.format + (sandboxed ? " (sandbox): " : " (in-process): ");
 
@@ -612,7 +614,14 @@ private:
             auto& fx = rig.engine.getFx();
             rig.run (60);
             const float dry = rig.toneDb (1000.0);
-            auto eq = create (host, *lsp.eq), limiter = create (host, *lsp.limiter), delay = create (host, *lsp.delay);
+            // In-process, LSP's VST3 factory keeps a reference to the host context of
+            // every instance but the last when several are alive at once (it doesn't
+            // release the one it held when JUCE sets the next instance's), so a
+            // Debug run would end with leaks reported: in-process, the VST3 EQ is
+            // chained with the LV2 limiter and delay, and each VST3 plugin is gone
+            // before the next is made. In the sandbox each plugin has its own process.
+            const auto& mates = ! sandboxed && others != nullptr ? *others : lsp;
+            auto eq = create (host, *lsp.eq), limiter = create (host, *mates.limiter), delay = create (host, *mates.delay);
             if (eq == nullptr || limiter == nullptr || delay == nullptr)
                 return;
             fx.setPlugin (5, std::move (eq));
@@ -654,6 +663,16 @@ private:
             if (const auto dir = juce::SystemStats::getEnvironmentVariable ("SIDECAR_REAL_PLUGIN_SHOW_DIR", {}); dir.isNotEmpty())
                 juce::File (dir).getChildFile (lsp.format + (sandboxed ? "-sandbox" : "") + ".lshow").replaceWithText (show.toXmlString());
 
+            // What the loaded chain must match; then the first one goes (see above).
+            juce::StringArray expectedTexts;
+            for (int i = 0; i < 3; ++i)
+                for (auto paramName : { "Output gain", "Threshold", "Wet amount", "Gain boost" })
+                    expectedTexts.add (findParam (*fx.getChainMember (5, i), paramName) != nullptr
+                                           ? paramText (*fx.getChainMember (5, i), paramName) : juce::String());
+            const float levelBefore = rig.toneDb (1000.0);
+            fx.setPlugin (5, nullptr);
+            rig.engine.getGarbage().collectAllNow();
+
             ToneRig rig2;
             Show loaded (rig2.engine, host);
             const auto result = loaded.loadFromXml (*xml);
@@ -668,15 +687,16 @@ private:
                 expectEquals (fx2.getChain (5)->describeMembers(), order);
                 expectEquals (fx2.getChainMemberView (5, 1).zoom, 75);
                 expect (fx2.isSandboxed (5) == sandboxed);
+                int k = 0;
                 for (int i = 0; i < 3; ++i)
                     for (auto paramName : { "Output gain", "Threshold", "Wet amount", "Gain boost" })
-                        if (findParam (*fx.getChainMember (5, i), paramName) != nullptr)
-                            expectEquals (paramText (*fx2.getChainMember (5, i), paramName), paramText (*fx.getChainMember (5, i), paramName),
+                        if (const auto& expected = expectedTexts[k++]; expected.isNotEmpty())
+                            expectEquals (paramText (*fx2.getChainMember (5, i), paramName), expected,
                                           juce::String ("member ") + juce::String (i) + " " + paramName);
                 rig2.run (100);
                 logMessage (tag + "after a show save and load (" + order + "): 1 kHz " + juce::String (rig2.toneDb (1000.0) - dry, 2)
-                            + " dB (before " + juce::String (rig.toneDb (1000.0) - dry, 2) + " dB)");
-                expectWithinAbsoluteError (rig2.toneDb (1000.0), rig.toneDb (1000.0), 0.1f);
+                            + " dB (before " + juce::String (levelBefore - dry, 2) + " dB)");
+                expectWithinAbsoluteError (rig2.toneDb (1000.0), levelBefore, 0.1f);
             }
 
             //==================================================================
@@ -685,9 +705,19 @@ private:
             {
                 logMessage ("No display: skipping the editors");
             }
+            else if (JUCE_CHECK_MEMORY_LEAKS && lsp.format == "VST3" && ! sandboxed
+                     && juce::SystemStats::getEnvironmentVariable ("SIDECAR_REAL_PLUGIN_VST3_EDITORS", {}).isEmpty())
+            {
+                // Creating an LSP VST3 editor in-process (even with JUCE alone:
+                // createEditorAndMakeActive, then delete it) leaves a reference on
+                // the instance's host context that is never released, which a build
+                // with JUCE's leak checks reports at exit. Release builds run this;
+                // SIDECAR_REAL_PLUGIN_VST3_EDITORS=1 runs it here too.
+                logMessage ("Leak checks on: skipping the in-process LSP VST3 editors (they leak a host context)");
+            }
             else
             {
-                checkEditors (fx, 5, sandboxed);
+                checkEditors (fx2, 5, sandboxed);
             }
         }
     }
