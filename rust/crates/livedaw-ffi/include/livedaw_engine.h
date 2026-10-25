@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 13;
+constexpr int kAbiVersion = 14;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -83,11 +83,12 @@ enum StripKindId : int32_t
     kMatrix = 4
 };
 
-/// Fader reference kinds beyond the strip kinds (0..4): DCAs, FX parameters
-/// and MIDI CCs.
+/// Fader reference kinds beyond the strip kinds (0..4): DCAs, FX parameters,
+/// MIDI CCs and blank layer slots.
 constexpr int32_t kFaderDca = 5;
 constexpr int32_t kFaderFxParam = 6;
 constexpr int32_t kFaderMidiCc = 7;
+constexpr int32_t kFaderEmpty = 8; // a blank layer slot (ABI 14)
 
 /// Tap points (index into list 1). WING names: INPUT, FILTER, TAP 3-5, PRE FDR,
 /// POST FDR, POST PROC. Only input channels choose theirs; aux, buses, mains and
@@ -640,7 +641,8 @@ struct StripRefC
 /// A fader on the surface: kind 0..4 = a strip, or with toKind 2..4 the send
 /// level from it to bus / main / matrix `toId`; kFaderDca = DCA (id 0..15);
 /// kFaderFxParam = FX slot `id`'s parameter `toId`; kFaderMidiCc = CC `toId`
-/// (0-127) on MIDI channel `id` (0-15). toKind is -1 when unused.
+/// (0-127) on MIDI channel `id` (0-15); kFaderEmpty = a blank slot of a
+/// layer (ABI 14). toKind is -1 when unused.
 struct FaderRefC
 {
     int32_t kind, id;
@@ -1046,6 +1048,10 @@ extern "C"
     void ld_layers_add_to_user (LayerSet*, const char* id, size_t len, FaderRefC ref);
     void ld_layers_remove_from_user (LayerSet*, const char* id, size_t len, FaderRefC ref);
     void ld_layers_move_within_user (LayerSet*, const char* id, size_t len, int32_t index, int32_t delta);
+    void ld_layers_set_user_faders (LayerSet*, const char* id, size_t len, const FaderRefC* faders, int32_t n);
+    void ld_layers_set_user_slot (LayerSet*, const char* id, size_t len, int32_t index, FaderRefC ref);
+    void ld_layers_clear_user_slot (LayerSet*, const char* id, size_t len, int32_t index);
+    void ld_layers_swap_user_slots (LayerSet*, const char* id, size_t len, int32_t a, int32_t b);
     void ld_layers_set_override (LayerSet*, int32_t section, const char* id, size_t len, const FaderRefC* faders, int32_t n);
     void ld_layers_clear_override (LayerSet*, int32_t section, const char* id, size_t len);
     bool ld_layers_has_override (LayerSet*, int32_t section, const char* id, size_t len);

@@ -3,6 +3,65 @@
 namespace livedaw
 {
 
+namespace layerslots
+{
+    state::FaderRef get (const std::vector<state::FaderRef>& faders, int i)
+    {
+        return juce::isPositiveAndBelow (i, (int) faders.size()) ? faders[(size_t) i] : state::FaderRef::blank();
+    }
+
+    void trim (std::vector<state::FaderRef>& faders)
+    {
+        while (! faders.empty() && faders.back().isEmpty())
+            faders.pop_back();
+    }
+
+    void set (std::vector<state::FaderRef>& faders, int i, const state::FaderRef& f)
+    {
+        if (i < 0)
+            return;
+        if ((int) faders.size() <= i)
+            faders.resize ((size_t) i + 1, state::FaderRef::blank());
+        faders[(size_t) i] = f;
+        trim (faders);
+    }
+
+    void clear (std::vector<state::FaderRef>& faders, int i) { set (faders, i, state::FaderRef::blank()); }
+
+    void swap (std::vector<state::FaderRef>& faders, int a, int b)
+    {
+        if (a < 0 || b < 0 || a == b)
+            return;
+        const auto fa = get (faders, a), fb = get (faders, b);
+        set (faders, a, fb);
+        set (faders, b, fa);
+    }
+
+    void place (std::vector<state::FaderRef>& faders, const std::vector<state::FaderRef>& items, int index)
+    {
+        if (index < 0)
+            return;
+        int slot = index;
+        for (const auto& item : items)
+        {
+            if (item.isEmpty())
+                continue;
+            // Already elsewhere in the layer: it moves (its old slot turns blank).
+            for (int i = 0; i < (int) faders.size(); ++i)
+                if (i != slot && faders[(size_t) i] == item)
+                    faders[(size_t) i] = state::FaderRef::blank();
+            set (faders, slot++, item);
+        }
+        trim (faders);
+    }
+} // namespace layerslots
+
+std::optional<state::FaderRef> LayerSet::surfaceTarget (const Layer& layer, int index)
+{
+    const auto f = layerslots::get (layer.faders, index);
+    return f.isEmpty() ? std::nullopt : std::optional<state::FaderRef> (f);
+}
+
 LayerSet::LayerSet() : handle (ld::ld_layers_create()), owned (true) {}
 
 LayerSet::~LayerSet()
@@ -167,6 +226,33 @@ void LayerSet::moveWithinUserLayer (const juce::String& layerId, int index, int 
 {
     const Utf8 u (layerId);
     ld::ld_layers_move_within_user (handle, u.data, u.size, index, delta);
+}
+
+void LayerSet::setUserLayerFaders (const juce::String& layerId, const std::vector<state::FaderRef>& faders)
+{
+    const Utf8 u (layerId);
+    std::vector<ld::FaderRefC> refs;
+    for (auto& f : faders)
+        refs.push_back (f.toC());
+    ld::ld_layers_set_user_faders (handle, u.data, u.size, refs.data(), (int32_t) refs.size());
+}
+
+void LayerSet::setUserLayerSlot (const juce::String& layerId, int index, const state::FaderRef& ref)
+{
+    const Utf8 u (layerId);
+    ld::ld_layers_set_user_slot (handle, u.data, u.size, index, ref.toC());
+}
+
+void LayerSet::clearUserLayerSlot (const juce::String& layerId, int index)
+{
+    const Utf8 u (layerId);
+    ld::ld_layers_clear_user_slot (handle, u.data, u.size, index);
+}
+
+void LayerSet::swapUserLayerSlots (const juce::String& layerId, int a, int b)
+{
+    const Utf8 u (layerId);
+    ld::ld_layers_swap_user_slots (handle, u.data, u.size, a, b);
 }
 
 void LayerSet::setDefaultOverride (Section s, const juce::String& id, const std::vector<state::FaderRef>& faders)

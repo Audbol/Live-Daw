@@ -4007,7 +4007,8 @@ mod tests {
         assert_eq!(c.get(node(&c, "/$ctl/layer/R/1/1/type")), Some(Value::str("BUS")));
         assert_eq!(c.get(node(&c, "/$ctl/layer/R/1/1/i")), Some(Value::Int(17)));
 
-        // A client edits USER 1: a send replaces the DCA, a bus is appended, OFF removes CH 3.
+        // A client edits USER 1: a send replaces the DCA, a bus goes to slot 9
+        // (blanks before it), OFF blanks slot 1. Nothing shifts.
         let f = |p: &str, v: Value| c.set(node(&c, p), &v).unwrap();
         f("/$ctl/layer/L/6/2/type", Value::str("SEND"));
         f("/$ctl/layer/L/6/2/i", Value::Int(41));
@@ -4024,12 +4025,14 @@ mod tests {
         let main1 = StripRef::of(&e.strips(StripKind::Main)[0]);
         let user = layers.user_layer(&drums).unwrap();
         assert_eq!(user.name, "Band");
-        assert_eq!(
-            user.faders,
-            vec![FaderRef::Send { from: aux1, to: main1 }, FaderRef::Strip(StripRef::new(StripKind::Bus, 3))]
-        );
+        let mut expected = vec![FaderRef::Empty; 9];
+        expected[1] = FaderRef::Send { from: aux1, to: main1 };
+        expected[8] = FaderRef::Strip(StripRef::new(StripKind::Bus, 3));
+        assert_eq!(user.faders, expected);
         assert_eq!(layers.user_layers()[1].faders, vec![FaderRef::midi_cc(15, 74)], "USER 2 made");
-        assert_eq!(c.get(node(&c, "/$ctl/layer/L/6/9/type")), Some(Value::str("OFF")), "republished");
+        assert_eq!(c.get(node(&c, "/$ctl/layer/L/6/1/type")), Some(Value::str("OFF")), "a blank slot is OFF");
+        assert_eq!(c.get(node(&c, "/$ctl/layer/L/6/9/type")), Some(Value::str("BUS")), "republished in place");
+        assert_eq!(c.get(node(&c, "/$ctl/layer/L/6/3/type")), Some(Value::str("OFF")));
         // A default key becomes an edited key; setting what it holds changes nothing.
         f("/$ctl/layer/C/1/1/type", Value::str("DCA"));
         assert!(!sync(&mut layers, &mut custom).layers);

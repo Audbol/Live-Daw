@@ -325,11 +325,9 @@ touchscreen looks the same in both.
     is yellow while the DCA is soloed), FADERS (a DCA's name opens its panel, its
     label at the foot is yellow while it's soloed; send faders of a layer, and Sends on
     Fader, show and set the send level, MUTE switching the send), SENDS (sends on faders
-    to one bus, main or matrix), CONFIG (edit any layer key by dragging channels, buses,
-    DCAs, send levels, bus-to-bus sends, FX parameters or MIDI CCs onto or between the
-    page's slots; the arrows page, one page past the end to append; NEW and DELETE /
-    RESTORE left of the slots; a **MIDI CC** fader sends its CC, 0-127, out of EXTERNAL
-    MIDI CONTROL and follows the CC coming in) and MUTE GROUPS (the eight groups'
+    to one bus, main or matrix), CONFIG (edit any layer key; see *Editing user layers*
+    below; a **MIDI CC** fader sends its CC, 0-127, out of EXTERNAL MIDI CONTROL and
+    follows the CC coming in) and MUTE GROUPS (the eight groups'
     members, a column red while its group is engaged, the group keys on the right; a
     column's header (MGRP.n over its number) opens the MUTE GROUP n window, a name
     field and the keyboard, the name changing as it's typed; touching the rest of a
@@ -339,6 +337,25 @@ touchscreen looks the same in both.
   - **UTILITY:** system health and the event log (also on SETUP > LOG).
   - **RECORDER** (the status bar's **LIVE** card icon, red while recording): laid out
     like the WING-LIVE screens. See *Multitrack recording* below.
+- **Editing user layers** (VIEW > CONFIG): as on the WING, a layer's slots are
+  fixed and a slot can be blank. A blank slot is an inactive strip on the surface:
+  a dark scribble strip, light bar off, the fader doing nothing and SELECT / SOLO /
+  MUTE unlit; on CONFIG it shows its number over EMPTY. The page's slots sit at the
+  bottom in groups of four (as many as the section has faders); the arrows page, one
+  page past the end to add more.
+  - **Assign:** pick items in the grid (CHANNELS, BUS/MAIN, DCA, SENDS, BUS -> BUS,
+    FX, MIDI CC) and drag them onto a slot, or tap the slot: the item goes into
+    exactly that slot, replacing what was there (several items fill that slot and
+    the next ones). Nothing shifts, so you can leave gaps. An item that is already in
+    the layer moves to the new slot, and its old slot turns blank.
+  - **Move:** drag a filled slot onto another slot. Onto a blank slot it moves there;
+    onto a filled one the two swap.
+  - **Clear:** drag a slot off the slots, or right-click it (long-press on a touch
+    screen) and choose CLEAR SLOT. CLEAR in the top panel blanks the whole layer.
+  - NEW copies the layer shown into a new user layer, blanks included; DELETE
+    removes a user layer (RESTORE gives an edited layer key its own faders back).
+    The layer keys other than USER 1 / USER 2 can be edited the same way. Blank
+    slots are saved with the show; shows from before blank slots load unchanged.
 - **Channel strip section** (top left): the CHANNEL STRIP DETAILS LED panel (sources,
   filters, LEVEL and GR meters, bus sends, groups) around a small screen; CHANNEL
   PROCESSING with an encoder over each of INPUT, FILTER, GATE, COMP, INSERT and MAIN
@@ -672,9 +689,9 @@ and open-source projects (see below), and it is **experimental**.
   `i`, `dst`: channels, buses, DCAs, sends, FX parameters, MIDI CCs; a default key
   becomes an edited key as on VIEW > CONFIG), and set each custom control's
   functions (`mode`), name and colour and the CC layer (`sel`); the console's
-  changes show to clients within a tenth of a second. Sidecar's layers have no
-  gaps (a fader assigned past the end is appended, OFF removes one), only the shown
-  layer has a scroll position, and a new function starts at its first target
+  changes show to clients within a tenth of a second. As on the console, a
+  layer's slots are fixed: OFF blanks a slot, and a fader assigned past the end
+  leaves blank slots before it. Only the shown layer has a scroll position, and a new function starts at its first target
   (clients can't choose it: the WING's tree only has the function). The encoding of
   fader assignments and the custom controls of `U1`-`U3` (taken as the 4-Channel
   section's F1-F3 layers) are educated guesses. The rest (the other WING models'

@@ -32,7 +32,8 @@ use std::mem::{offset_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-pub const LD_ABI_VERSION: i32 = 13;
+// ABI 14: LdFaderRef kind 8 = a blank layer slot.
+pub const LD_ABI_VERSION: i32 = 14;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)

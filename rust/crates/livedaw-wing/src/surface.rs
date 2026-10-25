@@ -51,7 +51,7 @@ use crate::value::Value;
 use livedaw_engine::params::{NUM_DCAS, NUM_FX};
 use livedaw_engine::{Engine, StripKind};
 use livedaw_session::custom::{CcFunction, CustomControls, FIRST_DAW_LAYER, NUM_CONTROLS, NUM_LAYERS};
-use livedaw_session::layers::{ConsoleRefs, FaderRef, Layer, LayerSet, SpillKind, NUM_SECTIONS};
+use livedaw_session::layers::{slots, ConsoleRefs, FaderRef, Layer, LayerSet, SpillKind, NUM_SECTIONS};
 use livedaw_session::refs::StripRef;
 use std::collections::VecDeque;
 
@@ -588,6 +588,7 @@ impl Numbering {
     fn encode(&self, f: &FaderRef) -> WingFader {
         let w = |ty, i, dst| WingFader { ty, i, dst };
         match *f {
+            FaderRef::Empty => WingFader::OFF,
             FaderRef::Strip(r) => match self.number(&r) {
                 Some(n) if n <= 48 => w(T_CH, n, 1),
                 Some(n) => w(T_BUS, n - 48, 1),
@@ -800,15 +801,10 @@ fn apply(engine: &Engine, layers: &mut LayerSet, custom: &mut CustomControls, ed
                     l.faders
                 }
             };
+            // Fixed slots: OFF blanks the slot, a fader past the end leaves
+            // blanks before it; the other slots stay where they are.
             let mut faders = current.clone();
-            match new {
-                Some(f) if pos < faders.len() => faders[pos] = f,
-                Some(f) => faders.push(f),
-                None if pos < faders.len() => {
-                    faders.remove(pos);
-                }
-                None => {}
-            }
+            slots::set(&mut faders, pos, new.unwrap_or(FaderRef::Empty));
             if faders == current {
                 return;
             }
