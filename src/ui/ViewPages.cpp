@@ -1875,7 +1875,7 @@ std::vector<StatusKey> OverviewViewPage::getStatusKeys()
     const auto faders = pageFaders();
     if (std::none_of (faders.begin(), faders.end(), [] (const state::FaderRef& f) { return (f.isStrip() || f.send) && isInputKind (f.strip.kind); }))
         return keys;
-    const bool exclusive = ctx.settings.getBoolValue (uiprefs::exclusiveSolo, false);
+    const bool exclusive = ctx.settings.getBoolValue (uiprefs::exclusiveSolo, uiprefs::exclusiveSoloDefault);
     keys.push_back ({ "EXCL SOLO", std::nullopt, exclusive, [this, exclusive]
                       {
                           ctx.settings.setValue (uiprefs::exclusiveSolo, ! exclusive);

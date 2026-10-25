@@ -489,7 +489,7 @@ void FaderStrip::refresh()
     // Sends on Fader between the selected strip (or the ALTERNATIVE SOF
     // strip) and this one: the send from an input (or bus) to a bus, main or
     // matrix. RIGHT SECTION SENDS ON FADERS off keeps the right section's faders.
-    const bool sofHere = section != LayerSet::Right || ctx.settings.getBoolValue (uiprefs::rightSectionSof, true);
+    const bool sofHere = section != LayerSet::Right || ctx.settings.getBoolValue (uiprefs::rightSectionSof, uiprefs::rightSectionSofDefault);
     const bool sendFader = target.has_value() && target->send;
     if ((sendFader || (ctx.sendsOnFader && sofHere)) && strip != nullptr)
     {

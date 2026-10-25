@@ -103,12 +103,12 @@ private:
         known = now;
         if (added == nullptr)
             return;
-        if (owner.settings.getBoolValue (uiprefs::exclusiveSolo, false))
+        if (owner.settings.getBoolValue (uiprefs::exclusiveSolo, uiprefs::exclusiveSoloDefault))
         {
             clearAllBut (added);
             known = { added };
         }
-        if (owner.settings.getBoolValue (uiprefs::selectFollowsSolo, false))
+        if (owner.settings.getBoolValue (uiprefs::selectFollowsSolo, uiprefs::selectFollowsSoloDefault))
             if (auto* s = stripOf (added); s != nullptr && s != owner.getSelectedStrip())
                 owner.selectStrip (s);
     }

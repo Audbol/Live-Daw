@@ -70,8 +70,8 @@ fn records_the_recorder_group_and_plays_it_back_as_usb_player_sources() {
     let mut rig = Rig::new();
     let usb = rig.engine.usb();
     // REC 1 = input 1 (a source), REC 2 = MAIN 1 L, whose hardware output 1
-    // the rig captures (by default REC 1/2 = MAIN 1 L/R).
-    assert_eq!(usb.tap(1), RecTap::Strip { kind: StripKind::Main as i32, number: 1, channel: 1 });
+    // the rig captures (the ports start OFF, as on the WING).
+    assert_eq!(usb.tap(1), RecTap::Off);
     usb.set_tap(0, RecTap::Source(0));
     usb.set_tap(1, RecTap::Strip { kind: StripKind::Main as i32, number: 1, channel: 0 });
     let ch1 = rig.engine.channel_at(0).unwrap();

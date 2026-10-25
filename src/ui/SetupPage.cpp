@@ -789,7 +789,7 @@ namespace
                                                                       { "SELECT FOLLOWS SOLO", uiprefs::selectFollowsSolo },
                                                                       { "BUS SoF/SPILL ACTIVATES SOLO", uiprefs::sofActivatesSolo } };
             for (auto [name, key] : soloPrefs)
-                solo.addRow (name, OnKey::forSetting (ctx.settings, key, false), 1.3f);
+                solo.addRow (name, OnKey::forSetting (ctx.settings, key, uiprefs::soloOptionDefault (key)), 1.3f);
             solo.addRow ("SEND PAGE ACTIVATES SOLO", OnKey::fixed (false), 1.3f, false); // not there yet
             addAndMakeVisible (solo);
 
@@ -962,12 +962,12 @@ namespace
     public:
         explicit SurfaceTab (UiContext& c) : ctx (c)
         {
-            // The L/R meter beside the display: the monitor or a main (ui.mainMeter: 0 MONITOR, 1-4 MAIN n).
+            // The L/R meter beside the display: the monitor or a main (ui.mainMeter: 0 MONITOR, 1-4 MAIN n), and where it measures.
             metering.addRow ("MAIN METER",
                              std::make_unique<DropdownField> ("SOURCE",
                                                               [this]
                                                               {
-                                                                  const int v = juce::jlimit (0, kNumMains, ctx.settings.getIntValue ("ui.mainMeter", 0));
+                                                                  const int v = juce::jlimit (0, kNumMains, ctx.settings.getIntValue (uiprefs::mainMeter, uiprefs::mainMeterDefault));
                                                                   return v == 0 ? juce::String ("MONITOR") : "MAIN." + juce::String (v);
                                                               },
                                                               [this] (DropdownField& f)
@@ -976,11 +976,15 @@ namespace
                                                                   for (int i = 1; i <= kNumMains; ++i)
                                                                       items.add ("MAIN." + juce::String (i));
                                                                   auto& settings = ctx.settings;
-                                                                  popups::chooseFrom (f, items, ctx.settings.getIntValue ("ui.mainMeter", 0),
-                                                                                      [&settings] (int i) { settings.setValue ("ui.mainMeter", i); });
+                                                                  popups::chooseFrom (f, items, ctx.settings.getIntValue (uiprefs::mainMeter, uiprefs::mainMeterDefault),
+                                                                                      [&settings] (int i) { settings.setValue (uiprefs::mainMeter, i); });
                                                               }),
                              3.6f, true, false, kFieldRows);
-            metering.addRow ("MAIN METER TAP", fixedChoice ({ "AUTO", "PRE", "POST" }, 2, ChoiceKeys::autoPrePost()), 3.6f, false);
+            metering.addRow ("MAIN METER TAP",
+                             std::make_unique<ChoiceKeys> (juce::StringArray { "AUTO", "PRE", "POST" },
+                                                           [this] { return juce::jlimit (0, 2, ctx.settings.getIntValue (uiprefs::mainMeterTap, uiprefs::mainMeterTapDefault)); },
+                                                           [this] (int v) { ctx.settings.setValue (uiprefs::mainMeterTap, v); }, ChoiceKeys::autoPrePost()),
+                             3.6f);
             // PRE or POST per strip type: the METERS and VIEW screens' meters follow
             // these (METERS > SETTINGS sets them too; the surface's LED meters can
             // read them with prefs::meterPoint).
@@ -1018,7 +1022,7 @@ namespace
 
             faders.addRow ("FADER SPEED", choiceSetting (uiprefs::faderSpeed, { "SLOW", "MED", "FAST" }, 1), 3.65f);
             faders.addRow ("ALTERNATIVE SOF MODE", onSetting (uiprefs::alternativeSof, false), 1.3f);
-            faders.addRow ("RIGHT SECTION SENDS ON FADER", onSetting (uiprefs::rightSectionSof, true), 1.3f);
+            faders.addRow ("RIGHT SECTION SENDS ON FADER", onSetting (uiprefs::rightSectionSof, uiprefs::rightSectionSofDefault), 1.3f);
             faders.addRow ("FULL FADER PAGING", onSetting (uiprefs::fullFaderPaging, false), 1.3f);
             faders.addRow ("CH AUTOSELECT", std::make_unique<ToggleKeys> (ctx, juce::StringArray { "L", "C", "R" },
                                                                          std::vector<const char*> (std::begin (uiprefs::autoSelect), std::end (uiprefs::autoSelect))),
@@ -1027,7 +1031,7 @@ namespace
                                                                            std::vector<const char*> (std::begin (uiprefs::userLayerLink), std::end (uiprefs::userLayerLink))),
                            2.35f);
             faders.addRow ("DCA SPILL", onSetting (uiprefs::dcaSpill, false), 1.3f);
-            faders.addRow ("FADER/SCREEN LAYER LINK", OnKey::forSetting (ctx.settings, prefs::layerLink, true), 1.3f);
+            faders.addRow ("FADER/SCREEN LAYER LINK", OnKey::forSetting (ctx.settings, prefs::layerLink, prefs::layerLinkDefault), 1.3f);
             addAndMakeVisible (faders);
 
             sectionsKey.offColour = Dark::header;
@@ -2477,6 +2481,15 @@ void SetupPage::initialize (const state::Scope& chosen, juce::uint32 sources, bo
             clearFx (ctx, i);
         ctx.engine.reset();
         ctx.engine.setNumChannels (kWingChannels);
+        // The console's own settings as on a factory-initialized WING: SETUP's
+        // surface, solo, metering and lighting options, the USB recorder's
+        // RECORDER ports (OFF) and the player's REPEAT (on).
+        if (! ctx.engine.getWing().resetHostSettings().isEmpty() && ctx.layersChanged)
+            ctx.layersChanged();
+        auto& usb = ctx.engine.getUsbRecorder();
+        for (int port = 0; port < UsbRecorder::kNumChannels; ++port)
+            usb.setTap (port, {});
+        usb.setRepeat (true);
     }
     const int strips = everything ? 0 : initializeParts (ctx, chosen);
     // The source groups: the audio interface's inputs (LCL), the playback

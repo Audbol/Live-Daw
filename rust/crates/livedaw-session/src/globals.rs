@@ -178,20 +178,25 @@ fn apply_talk(engine: &Engine, parent: &Element) {
     }
 }
 
-/// Sources that differ from the defaults (or have a name).
+/// `<Sources factory="...">`: the defaults the sources left out had. Shows
+/// without it were saved when every source (the USB player's too) started
+/// unnamed, Dark Blue, mono and without an icon, and the oscillators at -20 dB.
+const SOURCE_DEFAULTS_ATTR: &str = "factory";
+const SOURCE_DEFAULTS_WING: &str = "wing";
+
+/// Sources that differ from their factory settings and name.
 fn capture_sources(engine: &Engine, parent: &mut Element) {
     let table = engine.sources();
     let e = parent.add_new("Sources");
+    e.set(SOURCE_DEFAULTS_ATTR, SOURCE_DEFAULTS_WING);
     for (i, p) in table.params().iter().enumerate() {
         let name = table.name(i);
-        if p.is_default() && name.is_empty() {
+        if table.is_factory(i) {
             continue;
         }
         let x = e.add_new("Source");
         x.set("i", i);
-        if !name.is_empty() {
-            x.set("name", name);
-        }
+        x.set("name", name);
         put_f(x, "gain", &p.gain_db);
         put_b(x, "mute", &p.mute);
         put_b(x, "inv", &p.invert);
@@ -225,8 +230,12 @@ fn apply_source(x: &Element, p: &SourceParams) {
 }
 
 fn apply_sources(engine: &Engine, parent: &Element) {
-    let Some(e) = parent.child("Sources") else { return };
     let table = engine.sources();
+    let e = parent.child("Sources");
+    if e.and_then(|e| e.attr(SOURCE_DEFAULTS_ATTR)) != Some(SOURCE_DEFAULTS_WING) {
+        table.apply_legacy_defaults();
+    }
+    let Some(e) = e else { return };
     for x in e.children_named("Source") {
         let Ok(i) = usize::try_from(x.int_or("i", -1)) else { continue };
         let Some(p) = table.get(i) else { continue };

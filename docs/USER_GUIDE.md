@@ -457,8 +457,8 @@ the USB key on the screen to choose another folder).
   ADD ALL with no clip selected adds the folder shown, ADD a selected clip),
   the **4-TRACK RECORDER**, the playlist keys and the **4-TRACK PLAYER** with its
   timeline on the right.
-- **Recorder:** records the RECORDER output group (four ports; MAIN 1 L/R on 1-2 by
-  default; ROUTING > OUTPUTS > group RECORDER taps any strip's output without moving
+- **Recorder:** records the RECORDER output group (four ports, OFF on a new console
+  as on the WING; ROUTING > OUTPUTS > group RECORDER taps any strip's output without moving
   its own outputs) to a 2-CH or 4-CH, 16 or 24 bit file `R_YYYYMMDD-HHMMSS.<ext>` in
   the REC PATH folder, at the console's rate. **FORMAT** (a list next to 2-CH | 4-CH)
   picks WAV, FLAC, AIFF or MP3; for MP3 a **BIT RATE** list (128 - 320 kbit/s)
@@ -660,8 +660,8 @@ and open-source projects (see below), and it is **experimental**.
   Companion WING module builds that exists in the 3.1 tree. **WING Edit and WING
   Copilot have not been tried**, so they may not work.
 - **What maps:** every parameter of the WING 3.1 tree but one answers (68,555 of
-  68,556, counting every model's parameters). 61,115 of them (89.1 %) drive the
-  engine, 63 are Sidecar's SETUP settings, and the 7,377 Sidecar has no equivalent
+  68,556, counting every model's parameters). 61,114 of them (89.1 %) drive the
+  engine, 64 are Sidecar's SETUP settings, and the 7,377 Sidecar has no equivalent
   for answer what a factory-initialized WING answers (see below). Driving the engine: channels, aux, buses, mains
   and matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
   dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,
@@ -691,14 +691,15 @@ and open-source projects (see below), and it is **experimental**.
   are the strips' SAFE keys, `dca`, `mute`, `fx` the GLOBAL safes; in the console's
   format, a `+` or a space per strip, as `+ +` for 1 and 3; lists such as `1,3,5-8`
   are taken too). SETUP's options are Sidecar's settings, both ways: METERING's taps
-  (`/cfg/mtr/mtrpage`, `mtrsfc`: one setting per strip type for both) and MAIN METER,
+  (`/cfg/mtr/mtrpage`, `mtrsfc`: one setting per strip type for both), MAIN METER and
+  MAIN METER TAP,
   the GENERAL, SURFACE and SOLO SYSTEM options (`/$ctl/cfg`, `/$ctl/$globals`:
   confirm load, wheel, touch fader select and resolution, fader speed, SOF button,
   frame and mode, autoselect, user layer link, DCA spill, solo exclusive and
   follows, the brightness tiles, the time and date format...), MIDI REMOTE CONTROL
   (`/$ctl/midi`) and DAW (`/$ctl/daw`: enable, connection, emulation, upper CC,
-  wheel, preset); rows Sidecar shows fixed answer its value and refuse others (MAIN
-  METER TAP is POST). `/$globals/clkrate` is the audio device's rate. Not mapped:
+  wheel, preset); rows Sidecar shows fixed answer its value and refuse others (TAP
+  TEMPO FLASH is ON). `/$globals/clkrate` is the audio device's rate. Not mapped:
   DAW CONFIGURATION (`/$ctl/daw/config`), whose 3.1 choices (CC, MSTR) can't show
   Sidecar's MCU with extenders. The fader sections' layers (`/$ctl/layer/L`, `C`, `R`) and the custom
   controls (`/$ctl/user`) are the show's, both ways: clients select layer keys

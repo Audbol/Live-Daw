@@ -314,6 +314,7 @@ public:
             last->params.faderDb = 0.0f; // a new bus's fader is down
             auto& send = engine.getChannels()[0]->sends[(size_t) last->getId()];
             send.enabled = true;
+            send.levelDb = 0.0f; // a new send is at -oo, as on the WING
 
             rig.setInput (0, 0.5f);
             rig.run();

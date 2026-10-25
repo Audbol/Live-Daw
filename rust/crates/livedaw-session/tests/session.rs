@@ -785,6 +785,7 @@ fn matrix_pan_link_dca_icons_and_solo_buses_survive_a_show_round_trip() {
     let a = ch(&engine, 0);
     a.params.matrix[1].pan_link.store(false, Relaxed);
     a.params.matrix[1].pan.store(-40.0);
+    a.params.matrix[2].pan_link.store(true, Relaxed); // off by default, as on the WING
     a.params.matrix[2].pan_reversed.store(true, Relaxed);
     let d = &engine.controls.dcas[4];
     d.icon.store(112, Relaxed);
@@ -796,7 +797,7 @@ fn matrix_pan_link_dca_icons_and_solo_buses_survive_a_show_round_trip() {
     let m = &b.params.matrix;
     assert!(!m[1].pan_link.load(Relaxed) && m[1].pan.load() == -40.0);
     assert!(m[2].pan_link.load(Relaxed) && m[2].pan_reversed.load(Relaxed));
-    assert!(m[0].pan_link.load(Relaxed) && !m[0].pan_reversed.load(Relaxed));
+    assert!(!m[0].pan_link.load(Relaxed) && !m[0].pan_reversed.load(Relaxed));
     let d2 = &e2.controls.dcas[4];
     assert_eq!(d2.icon.load(Relaxed), 112);
     assert!(d2.led.load(Relaxed) && !e2.controls.dcas[0].led.load(Relaxed), "a DCA's light is off by default");
@@ -845,6 +846,7 @@ fn shows_without_the_new_settings_load_with_the_old_behaviour() {
     let post = a.sends.get_or_create(4).unwrap();
     post.mode.store(1, Relaxed);
     a.params.matrix[0].pre.store(true, Relaxed);
+    a.params.matrix[1].pre.store(false, Relaxed); // channels' matrix sends start in PRE, as on the WING
     let mut show = Show::new();
     show.add_scene(&engine, &mut NoPlugins, "A", -1);
     let mut text = show.to_xml(&engine, &mut NoPlugins).to_document();
