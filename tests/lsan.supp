@@ -1,3 +1,7 @@
 # Leaks inside third-party LV2 plugin libraries (allocated by their own static
 # initialisers when lilv dlopen()s them). They belong to the plugin, not Sidecar.
 leak:lilv_lib_open
+# JUCE 8.0.15's LV2 host (juce_LV2PluginFormatImpl.h, Port::getScalePoints) wraps
+# lilv_port_get_scale_points() in a non-owning ScalePoints and never calls
+# lilv_scale_points_free(): each LV2 instance leaks its ports' scale points.
+leak:lilv_port_get_scale_points
