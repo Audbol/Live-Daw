@@ -443,9 +443,11 @@ pub fn display(def: &Def, v: &Value) -> String {
 /// Parses display text back into a value ("-oo", "1k50", "2:35:20", an enum item...).
 pub fn parse_display(def: &Def, text: &str) -> Option<Value> {
     let t = text.trim();
-    let t = t.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')).unwrap_or(t);
+    let quoted = t.strip_prefix('\'').and_then(|x| x.strip_suffix('\''));
+    let t = quoted.unwrap_or(t);
     match def.ty {
-        NodeType::Str => Some(Value::str(t)),
+        // Spaces count in strings (a safes list's " " flags).
+        NodeType::Str => Some(Value::str(quoted.unwrap_or(text))),
         NodeType::StrEnum | NodeType::FloatEnum => coerce(def, &Value::str(t)),
         _ => {
             let x = match clock(def) {

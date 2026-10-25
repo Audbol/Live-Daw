@@ -247,6 +247,21 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
                                           });
     engine.getWing().attachShow (&show, [this] (const juce::String& what, const state::ApplyResult& r)
                                  { logRecall (ctx, what, r); });
+    // ... and SETUP's options that are WING parameters (metering, surface, solo, MIDI, DAW).
+    engine.getWing().setHostSettings (&settings,
+                                      [this] (const juce::StringArray& keys)
+                                      {
+                                          for (const auto& k : keys)
+                                              if (k.startsWith ("midi.") || k.startsWith ("daw."))
+                                              {
+                                                  if (midiRemote != nullptr)
+                                                      midiRemote->apply (MidiRemote::Settings::load (settings));
+                                                  break;
+                                              }
+                                          if (keys.contains ("ui.selDblClick") || keys.contains ("setup.faderScreenLayerLink"))
+                                              notifyLayersChangedAsync (ctx);
+                                          repaint();
+                                      });
     for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) display.get(), (juce::Component*) monitor.get(),
                                 (juce::Component*) customControls.get(), (juce::Component*) fourChannel.get() })
         addAndMakeVisible (c);
@@ -291,6 +306,7 @@ MainComponent::~MainComponent()
     // MIDI and the WING remote's scene and surface control go first: their callbacks reach the views.
     engine.getWing().attachShow (nullptr);
     engine.getWing().setSurfaceCallbacks ({}, {});
+    engine.getWing().setHostSettings (nullptr);
     ctx.midi = nullptr;
     midiRemote.reset();
     engine.onPluginWarning = nullptr;

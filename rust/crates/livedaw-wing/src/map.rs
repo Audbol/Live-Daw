@@ -5,9 +5,13 @@
 //! path; model parameters bind through their slot (a strip's GATE, EQ,
 //! DYNAMICS or filter tool, or an FX slot) and the active model's parameter
 //! of the same name (our model tables come from the same sweep, so names and
-//! ranges line up). Nodes without a Sidecar equivalent are kept in a shadow
-//! store ([`WingState`]), so a client reads back what it wrote and snapshot
-//! files keep them, but they don't affect the audio.
+//! ranges line up). Nodes without a Sidecar equivalent ([`Binding::Stored`]:
+//! the cards, the console's hardware and network, other models' surfaces...)
+//! answer the factory value a factory-initialized WING answered
+//! ([`factory_value`]) and are kept in a shadow store ([`WingState`]), so a
+//! client reads back what it wrote and snapshot files keep them, but they
+//! don't affect the audio. SETUP options the application keeps in its
+//! settings are bridged through the host ([`crate::host`]).
 
 use crate::schema::{schema, Def, ModelSource, NoModels, Node, NodeType};
 use crate::surface::{self, LayerF, Surface, SurfaceEdit, UserF};
@@ -23,7 +27,7 @@ use livedaw_engine::params::{
     NUM_MUTE_GROUPS,
 };
 use livedaw_engine::recorder::codec::FileFormat;
-use livedaw_engine::recorder::usb::{PlayerState, RecFormat, RecState};
+use livedaw_engine::recorder::usb::{PlayerState, RecFormat, RecState, RecTap};
 use livedaw_engine::sends::send_mode;
 use livedaw_engine::solo::solo_mode;
 use livedaw_engine::sources::{self, source_mode, SourceParams};
@@ -156,6 +160,8 @@ pub struct WingState {
     /// The show's layers and custom controls as the host published them.
     pub(crate) surface: Mutex<Surface>,
     pub(crate) surface_edits: Mutex<VecDeque<SurfaceEdit>>,
+    /// The host's settings that are WING parameters (see [`crate::host`]).
+    pub(crate) host: Mutex<crate::host::HostValues>,
 }
 
 impl WingState {
@@ -273,13 +279,16 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// How Sidecar's inputs and outputs appear on the WING's patch.
 ///
 /// Hardware ports are laid out as the AES50 groups: A 1-48 = ports 1-48, B
-/// 1-48 = ports 49-96, C = 97-144. The recorder's 64 playback channels are the
-/// WING-LIVE card (CRD), the two oscillators the OSC group. On import, other
-/// input groups (LCL, AUX, SC, USB, MOD, AES, USR) land on the port of the
-/// same number; PLAY and the internal BUS/MAIN/MTX sources have no equivalent.
+/// 1-48 = ports 49-96, C = 97-144. LCL is Sidecar's LOCAL IN / LOCAL OUT,
+/// ROUTING's name for ports 1-48: LCL n is A n. The recorder's 64 playback
+/// channels are the WING-LIVE card (CRD), the USB player's four channels the
+/// PLAY group, the two oscillators the OSC group. On import, other input
+/// groups (AUX, SC, USB, MOD, AES, USR) land on the port of the same number;
+/// the internal BUS/MAIN/MTX sources have no equivalent.
 pub mod port {
     use super::PLAYBACK_SOURCE_BASE;
     use livedaw_engine::sources::{osc_channel, NUM_OSCILLATORS, OSC_SOURCE_BASE};
+    use livedaw_engine::{USB_CHANNELS, USB_PLAYER_SOURCE_BASE};
 
     pub const BLOCK: i32 = 48;
     pub const BLOCKS: [&str; 3] = ["A", "B", "C"];
@@ -291,6 +300,9 @@ pub mod port {
         }
         if let Some(n) = osc_channel(src) {
             return Some(("OSC", n as i32 + 1));
+        }
+        if let Some(n) = livedaw_engine::recorder::usb_player_channel(src) {
+            return Some(("PLAY", n as i32 + 1));
         }
         if src >= PLAYBACK_SOURCE_BASE {
             let n = src - PLAYBACK_SOURCE_BASE;
@@ -310,6 +322,7 @@ pub mod port {
             "C" => Some(2 * BLOCK + n - 1),
             "CRD" => (n <= 64).then_some(PLAYBACK_SOURCE_BASE + n - 1),
             "OSC" => (n <= NUM_OSCILLATORS as i32).then_some(OSC_SOURCE_BASE + n - 1),
+            "PLAY" => (n <= USB_CHANNELS as i32).then_some(USB_PLAYER_SOURCE_BASE + n - 1),
             "LCL" | "AUX" | "SC" | "USB" | "MOD" | "AES" | "USR" => Some(n - 1),
             _ => None,
         }
@@ -324,10 +337,25 @@ pub mod port {
     pub const IN_GROUPS: [&str; 13] = ["LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "MOD", "PLAY", "AES", "USR", "OSC"];
 
     /// Input groups whose sources are Sidecar's sources (ROUTING > SOURCES):
-    /// the AES50 ports, the WING-LIVE card and the oscillators. The other
-    /// groups share port numbers with them here, so their source settings stay
-    /// in the shadow store.
-    pub const SOURCE_GROUPS: [&str; 5] = ["A", "B", "C", "CRD", "OSC"];
+    /// LOCAL IN (the same ports as AES50 A), the AES50 ports, the WING-LIVE
+    /// card, the USB player and the oscillators. The other groups only share
+    /// port numbers with them here (for patches from WING snapshots): their
+    /// source settings are stored as set.
+    pub const SOURCE_GROUPS: [&str; 7] = ["LCL", "A", "B", "C", "CRD", "PLAY", "OSC"];
+
+    /// Output groups that are Sidecar's outputs: LOCAL OUT (ports 1-8 here, as
+    /// A 1-8) and the AES50 blocks.
+    pub const OUT_GROUPS: [&str; 4] = ["LCL", "A", "B", "C"];
+
+    /// An output group's first port (LCL is A).
+    pub fn out_block(group: &str) -> Option<usize> {
+        match group {
+            "LCL" | "A" => Some(0),
+            "B" => Some(1),
+            "C" => Some(2),
+            _ => None,
+        }
+    }
 }
 
 // ---- bindings ----------------------------------------------------------------------
@@ -580,6 +608,8 @@ pub enum SrcF {
     Icon,
     Tags,
     MuteState,
+    /// MONO / STEREO (`$BUS` ... sources, which are stereo).
+    Mode,
 }
 
 /// `/io/in/OSC/<n>/osc/...`: an oscillator's settings.
@@ -601,8 +631,25 @@ pub enum InfoF {
 /// What a node of the tree is in Sidecar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Binding {
-    /// No equivalent: the shadow store.
+    /// A Sidecar feature this layer doesn't bind (yet): the shadow store.
     None,
+    /// No Sidecar equivalent (a card, the console's hardware, another
+    /// model's surface...): answers the WING's factory value
+    /// ([`factory_value`]) and keeps what a client sets, as the shadow store.
+    Stored,
+    /// What Sidecar does where the WING has a choice it doesn't offer (a
+    /// SETUP row Sidecar shows fixed): this item or number, other values are refused.
+    Fixed(&'static str),
+    /// A host setting (index into [`crate::host::HOST_SETTINGS`]).
+    Host(u8),
+    /// `/$globals/clkrate`: the audio device's rate (set on Sidecar's SETUP > AUDIO).
+    ClockRate,
+    /// `/io/in/$BUS|$MAIN|$MTX/<n>/...`: a bus, main or matrix as a source
+    /// (read only): signal `n` (1-based, two per strip), the field.
+    StripSource(StripKind, u16, SrcF),
+    /// `/io/out/REC/<n>/grp`, `in` (false / true): what the USB recorder's
+    /// RECORDER port n (0-based) records.
+    RecOut(u8, bool),
     /// Strip kind, WING number (1-based), parameter.
     Strip(StripKind, u16, SF),
     Dca(u8, DcaF),
@@ -698,6 +745,16 @@ pub enum LibF {
     Active,
     ActiveTag,
     Show,
+}
+
+fn kind_name(kind: StripKind) -> &'static str {
+    match kind {
+        StripKind::Channel => "ch",
+        StripKind::Aux => "aux",
+        StripKind::Bus => "bus",
+        StripKind::Main => "main",
+        StripKind::Matrix => "mtx",
+    }
 }
 
 fn strip_kind(name: &str) -> Option<StripKind> {
@@ -1027,10 +1084,32 @@ pub fn bind(parts: &[&str]) -> Binding {
         ["cfg", "amix", "y"] => Binding::Ctl(CtlF::AutomixY),
         ["io", "altsw"] => Binding::Ctl(CtlF::GlobalAlt),
         ["io", "autoaltovr"] => Binding::Ctl(CtlF::InputSelectGlobal),
-        ["io", "out", g, n, f] => match (port::BLOCKS.iter().position(|b| b == g), number(n, 64)) {
+        ["io", "out", "REC", n, f @ ("grp" | "in")] => {
+            number(n, livedaw_engine::USB_CHANNELS as u16).map_or(Binding::Stored, |n| Binding::RecOut(n as u8 - 1, *f == "in"))
+        }
+        ["io", "out", g, n, f] => match (port::out_block(g), number(n, 64)) {
             (Some(b), Some(n)) if n as i32 <= port::BLOCK && (*f == "grp" || *f == "in") => Binding::Out(b as u8, n, *f == "in"),
             _ => Binding::None,
         },
+        ["io", "in", g @ ("$BUS" | "$MAIN" | "$MTX"), n, f] => {
+            let kind = match *g {
+                "$BUS" => StripKind::Bus,
+                "$MAIN" => StripKind::Main,
+                _ => StripKind::Matrix,
+            };
+            let field = match *f {
+                "name" => Some(SrcF::Name),
+                "col" => Some(SrcF::Colour),
+                "icon" => Some(SrcF::Icon),
+                "tags" => Some(SrcF::Tags),
+                "mode" => Some(SrcF::Mode),
+                _ => None,
+            };
+            match (number(n, 2 * wing_strips(kind)), field) {
+                (Some(n), Some(f)) => Binding::StripSource(kind, n, f),
+                _ => Binding::None,
+            }
+        }
         ["io", "in", "OSC", n, "osc", f] => match (number(n, sources::NUM_OSCILLATORS as u16), *f) {
             (Some(n), "lvl") => Binding::Osc(n as u8 - 1, OscF::Level),
             (Some(n), "mode") => Binding::Osc(n as u8 - 1, OscF::Mode),
@@ -1053,7 +1132,50 @@ pub fn bind(parts: &[&str]) -> Binding {
         ["$syscfg", "$firmware"] => Binding::Info(InfoF::Firmware),
         ["$syscfg", "$serial"] => Binding::Info(InfoF::Serial),
         ["$syscfg", "$cnsmdl"] => Binding::Info(InfoF::Model),
+        ["$globals", "clkrate"] => Binding::ClockRate,
         _ => Binding::None,
+    }
+}
+
+/// What Sidecar shows fixed on SETUP where the WING has a setting.
+fn fixed(parts: &[&str]) -> Option<&'static str> {
+    Some(match parts {
+        // MAIN METER TAP: the main meter reads the post-fader signal.
+        ["cfg", "mtr", "mainpos"] => "POST",
+        // TAP TEMPO FLASH: the custom controls' tap keys always flash.
+        ["$ctl", "$globals", "tapflash"] => "ON",
+        // No screen lock, no mouse-disables-touch, no send page solo, no remote locks.
+        ["$ctl", "$globals", "lockmtr" | "mousetchdis"]
+        | ["$ctl", "cfg", "sfdr2solo"]
+        | ["$ctl", "osc", "ronly"]
+        | ["$syscfg", "tcplock"] => "0",
+        _ => return None,
+    })
+}
+
+/// A Sidecar feature this layer leaves unbound: `/$ctl/daw/config` (DAW
+/// CONFIGURATION), whose firmware 3.1 choices (CC, MSTR) can't show
+/// Sidecar's MCU + extender setups.
+fn unbound_feature(parts: &[&str]) -> bool {
+    parts == ["$ctl", "daw", "config"]
+}
+
+/// The binding of a static node: what [`bind`] finds, a host setting, a
+/// fixed choice, or the WING's factory value where Sidecar has no equivalent.
+fn bind_row(parts: &[&str]) -> Binding {
+    match bind(parts) {
+        Binding::None => {
+            if let Some(h) = crate::host::find(&format!("/{}", parts.join("/"))) {
+                Binding::Host(h)
+            } else if let Some(v) = fixed(parts) {
+                Binding::Fixed(v)
+            } else if unbound_feature(parts) {
+                Binding::None
+            } else {
+                Binding::Stored
+            }
+        }
+        b => b,
     }
 }
 
@@ -1102,7 +1224,24 @@ fn wing_strips(kind: StripKind) -> u16 {
     }
 }
 
-/// A safes list: the numbers set in `mask` (bit 0 = 1), "1,3,5-8".
+/// The items of a safes list.
+fn safe_count(sf: SafeF) -> u16 {
+    match sf {
+        SafeF::Strips(kind) => wing_strips(kind),
+        SafeF::Dcas => NUM_DCAS as u16,
+        SafeF::MuteGroups => NUM_MUTE_GROUPS as u16,
+        SafeF::Fx => NUM_FX as u16,
+    }
+}
+
+/// A safes list as the console writes it: one character per item, "+" safe,
+/// " " not ("+ +" = 1 and 3 of 3).
+fn safe_flags(mask: u64, count: u16) -> String {
+    (0..count.min(64)).map(|i| if mask & (1 << i) != 0 { '+' } else { ' ' }).collect()
+}
+
+/// A safes list as numbers and ranges, "1,3,5-8" (bit 0 = 1).
+#[cfg(test)]
 fn number_list(mask: u64) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut n = 0;
@@ -1127,11 +1266,15 @@ fn number_list(mask: u64) -> String {
     out.join(",")
 }
 
-/// A safes list read back: numbers and ranges ("1,3,5-8", spaces or commas
-/// between them) or a string of 0/1 flags, one per item; up to `max` items.
+/// A safes list read back: the console's "+" / " " flags, one per item (a
+/// string of 0/1 flags too), or numbers and ranges ("1,3,5-8", spaces or
+/// commas between them); up to `max` items.
 fn parse_number_list(text: &str, max: u16) -> u64 {
     let max = u64::from(max.min(64));
     let all = if max >= 64 { u64::MAX } else { (1 << max) - 1 };
+    if text.bytes().all(|c| c == b'+' || c == b' ') {
+        return text.bytes().enumerate().filter(|(_, c)| *c == b'+').fold(0, |m, (i, _)| m | 1 << i) & all;
+    }
     let t = text.trim();
     if !t.is_empty() && t.len() as u64 == max && t.bytes().all(|c| c == b'0' || c == b'1') {
         return t.bytes().enumerate().filter(|(_, c)| *c == b'1').fold(0, |m, (i, _)| m | 1 << i);
@@ -1274,7 +1417,7 @@ fn source_mute_state(p: &SourceParams, mute_groups: u32) -> i32 {
 }
 
 fn port_group(g: &str) -> Option<&'static str> {
-    ["LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "MOD", "AES", "USR", "OSC"].into_iter().find(|x| *x == g)
+    ["LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "MOD", "PLAY", "AES", "USR", "OSC"].into_iter().find(|x| *x == g)
 }
 
 /// Bindings of every static row (computed once).
@@ -1286,10 +1429,71 @@ pub fn bindings() -> &'static [Binding] {
             .map(|r| {
                 let parts = s.row_parts(r);
                 let refs: Vec<&str> = parts.iter().map(|p| p.as_ref()).collect();
-                bind(&refs)
+                if s.defs[s.rows[r as usize].def as usize].is_leaf() {
+                    bind_row(&refs)
+                } else {
+                    bind(&refs)
+                }
             })
             .collect()
     })
+}
+
+/// The WING's factory values (`tools/wing`'s dump of a factory-initialized
+/// console, folded by `examples/wing_factory.rs`).
+static FACTORY: &str = include_str!("../data/wing_factory.tsv");
+
+/// A path with its numbers as `*` (the factory table's patterns).
+fn number_pattern(path: &str) -> String {
+    path.split('/')
+        .map(|p| if !p.is_empty() && p.bytes().all(|c| c.is_ascii_digit()) { "*" } else { p })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// A factory table value as a node value.
+fn factory_parse(def: &Def, text: &str) -> Option<Value> {
+    match def.ty {
+        NodeType::Node => None,
+        NodeType::LinFloat | NodeType::LogFloat | NodeType::Fader => value::parse_number(text).map(Value::Float),
+        NodeType::Int => text.trim().parse::<i32>().ok().map(Value::Int),
+        NodeType::Str => Some(Value::str(text)),
+        // An item our tree doesn't list (a list the console fills at run time) shows as is.
+        NodeType::StrEnum => value::parse_display(def, text).or_else(|| Some(Value::str(text))),
+        NodeType::FloatEnum => value::parse_display(def, text),
+    }
+}
+
+/// The WING's factory value of a static parameter (None where the dump
+/// has none: a value of the dumped console's own, like its IP address).
+pub fn factory_value(row: u16) -> Option<&'static Value> {
+    static T: OnceLock<Vec<Option<Value>>> = OnceLock::new();
+    T.get_or_init(|| {
+        let (mut exact, mut patterns) = (HashMap::new(), HashMap::new());
+        for line in FACTORY.lines() {
+            if let Some((k, v)) = line.split_once('\t') {
+                if k.contains('*') {
+                    patterns.insert(k, v);
+                } else {
+                    exact.insert(k, v);
+                }
+            }
+        }
+        let s = schema();
+        (0..s.num_rows() as u16)
+            .map(|r| {
+                let def = &s.defs[s.rows[r as usize].def as usize];
+                if !def.is_leaf() {
+                    return None;
+                }
+                let path = format!("/{}", s.row_parts(r).join("/"));
+                let text = exact.get(path.as_str()).or_else(|| patterns.get(number_pattern(&path).as_str()))?;
+                factory_parse(def, text)
+            })
+            .collect()
+    })
+    .get(row as usize)?
+    .as_ref()
 }
 
 /// The row of each input strip's main patch group (`/ch/N/in/conn/grp`).
@@ -1630,7 +1834,7 @@ impl<'a> Console<'a> {
         match node {
             Node::Root => false,
             Node::Row(r) => match bindings()[r as usize] {
-                Binding::None => false,
+                Binding::None | Binding::Stored => false,
                 Binding::Strip(kind, n, _) => self.strip(kind, n).is_some(),
                 Binding::Layer(..) | Binding::User(_) => self.state.surface().attached,
                 _ => true,
@@ -1688,15 +1892,52 @@ impl<'a> Console<'a> {
         if let Some(v) = mapped {
             return Some(v);
         }
-        Some(self.shadow_key(node).and_then(|k| self.state.shadow_get(k)).unwrap_or_else(|| value::default_value(def)))
+        if let Some(v) = self.shadow_key(node).and_then(|k| self.state.shadow_get(k)) {
+            return Some(v);
+        }
+        if let Node::Row(r) = node {
+            if let Some(v) = factory_value(r) {
+                return Some(v.clone());
+            }
+        }
+        Some(value::default_value(def))
     }
 
     fn get_row(&self, row: u16, def: &Def) -> Option<Value> {
         let e = self.engine;
         let c = &e.controls;
         Some(match bindings()[row as usize] {
-            Binding::None | Binding::FxSlot(_) => return None,
+            Binding::None | Binding::Stored | Binding::FxSlot(_) => return None,
             Binding::Strip(kind, n, field) => return self.get_strip(row, def, kind, n, field),
+            Binding::Fixed(text) => value::parse_display(def, text)?,
+            Binding::Host(h) => return crate::host::get(self.state, h, def),
+            Binding::ClockRate => {
+                let rate = e.sample_rate();
+                value::coerce(def, &Value::Float(if (rate - 44100.0).abs() < 1.0 { 44100.0 } else { 48000.0 }))?
+            }
+            Binding::StripSource(kind, n, field) => {
+                let st = self.strip(kind, n.div_ceil(2))?;
+                let p = &st.params;
+                match field {
+                    SrcF::Name => Value::Str(st.name()),
+                    SrcF::Colour => int(&p.colour),
+                    SrcF::Icon => int(&p.icon),
+                    // Buses, mains and matrices are stereo here.
+                    SrcF::Mode => value::coerce(def, &Value::str("ST"))?,
+                    _ => {
+                        let path = format!("/{}/{}/tags", kind_name(kind), n.div_ceil(2));
+                        return self.get(schema().resolve(&path, &NoModels)?);
+                    }
+                }
+            }
+            Binding::RecOut(port, number) => {
+                let (g, k) = self.rec_tap_pair(row, port as usize);
+                if number {
+                    Value::Int(k)
+                } else {
+                    Value::str(g)
+                }
+            }
             Binding::Dca(i, field) => {
                 let d = c.dcas.get(i as usize)?;
                 match field {
@@ -1846,7 +2087,7 @@ impl<'a> Console<'a> {
             }
             Binding::Play(pf) => return self.get_play(def, pf),
             Binding::Rec(rf) => return self.get_rec(def, rf),
-            Binding::Safe(sf) => Value::Str(number_list(self.safe_mask(sf))),
+            Binding::Safe(sf) => Value::Str(safe_flags(self.safe_mask(sf), safe_count(sf))),
             Binding::Lib(lf) => {
                 let lib = self.state.library();
                 match lf {
@@ -1890,6 +2131,7 @@ impl<'a> Console<'a> {
                         Value::Str(compose_tags(dca, p.mute_groups.load(Relaxed), &extra))
                     }
                     SrcF::MuteState => Value::Int(source_mute_state(p, c.mute_groups.load(Relaxed))),
+                    SrcF::Mode => return None,
                 }
             }
             Binding::Info(info) => {
@@ -2248,7 +2490,8 @@ impl<'a> Console<'a> {
                 let from = q.playlist_file().or_else(|| q.folder()).and_then(|p| p.file_stem());
                 Value::Str(from.map(|s| s.to_string_lossy().into_owned()).unwrap_or_default())
             }
-            PlayF::Index => Value::Int(d.queue().index_of(entry).map_or(-1, |i| i as i32)),
+            // 0 with nothing queued, as the console.
+            PlayF::Index => Value::Int(d.queue().index_of(entry).map_or(0, |i| i as i32)),
             PlayF::PlayFile => Value::Str(lock(&self.state.play_file).clone()),
             PlayF::Pos => Value::Float(seconds(d.position(), d.sample_rate())),
             PlayF::Total => Value::Float(seconds(d.length(), d.sample_rate())),
@@ -2362,12 +2605,7 @@ impl<'a> Console<'a> {
     }
 
     fn set_safes(&self, sf: SafeF, text: &str) {
-        let max = match sf {
-            SafeF::Strips(kind) => wing_strips(kind),
-            SafeF::Dcas => NUM_DCAS as u16,
-            SafeF::MuteGroups => NUM_MUTE_GROUPS as u16,
-            SafeF::Fx => NUM_FX as u16,
-        };
+        let max = safe_count(sf);
         let mask = parse_number_list(text, max);
         if let SafeF::Strips(kind) = sf {
             for n in 1..=max {
@@ -2474,8 +2712,32 @@ impl<'a> Console<'a> {
         let e = self.engine;
         let c = &e.controls;
         match bindings()[row as usize] {
-            Binding::None | Binding::FxSlot(_) => return Ok(false),
+            Binding::None | Binding::Stored | Binding::FxSlot(_) => return Ok(false),
             Binding::Strip(kind, n, field) => return self.set_strip(row, def, kind, n, field, v),
+            Binding::Fixed(text) => {
+                if value::parse_display(def, text).as_ref() != Some(v) {
+                    return Err(SetError::Unsupported(format!("Sidecar's is fixed at {text}")));
+                }
+            }
+            Binding::Host(h) => crate::host::set(self.state, h, def, v)?,
+            Binding::ClockRate => {
+                if self.get_row(row, def).as_ref() != Some(v) {
+                    return Err(SetError::Unsupported("the audio device sets the rate (SETUP > AUDIO)".into()));
+                }
+            }
+            Binding::StripSource(..) => return Err(SetError::ReadOnly),
+            Binding::RecOut(port, number) => {
+                let (cur_g, cur_n) = self.rec_tap_pair(row, port as usize);
+                let (g, k) = if number { (cur_g.to_owned(), v.as_i32().unwrap_or(1)) } else { (str_of(v), cur_n) };
+                let tap = self.rec_tap_of(&g, k);
+                self.engine.usb().set_tap(port as usize, tap.unwrap_or(RecTap::Off));
+                // Keep the pair as set (the number of an OFF port, a source Sidecar can't record).
+                for (name, val) in [("grp", Value::Str(g)), ("in", Value::Int(k))] {
+                    if let Some(r) = self.sibling(row, name) {
+                        self.state.shadow_set(ShadowKey::Row(r), val);
+                    }
+                }
+            }
             Binding::Dca(i, field) => {
                 let d = c.dcas.get(i as usize).ok_or(SetError::NotFound)?;
                 match field {
@@ -2661,7 +2923,7 @@ impl<'a> Console<'a> {
                         // Sources have no DCAs here: their #D tags are kept with the rest.
                         self.state.shadow_set(ShadowKey::Row(row), Value::Str(compose_tags(dca, 0, &extra)));
                     }
-                    SrcF::MuteState => return Err(SetError::ReadOnly),
+                    SrcF::MuteState | SrcF::Mode => return Err(SetError::ReadOnly),
                 }
             }
             Binding::RtaShown(_) | Binding::FxAssign(..) => return Err(SetError::ReadOnly),
@@ -2781,6 +3043,49 @@ impl<'a> Console<'a> {
             }
         }
         Ok(true)
+    }
+
+    /// What RECORDER port `port` records, as the WING's (group, number):
+    /// a bus, main or matrix signal or a source; else the pair as set (OFF
+    /// with its number, or a signal Sidecar can't record).
+    fn rec_tap_pair(&self, row: u16, port: usize) -> (&'static str, i32) {
+        let shown = match self.engine.usb().tap(port) {
+            RecTap::Off => None,
+            RecTap::Source(src) => port::source_to_wing(src).filter(|(g, _)| *g != "OFF"),
+            RecTap::Strip { kind, number, channel } => {
+                let group = match StripKind::from_i32(kind) {
+                    Some(StripKind::Bus) => Some("BUS"),
+                    Some(StripKind::Main) => Some("MAIN"),
+                    Some(StripKind::Matrix) => Some("MTX"),
+                    _ => None, // a channel's direct out: no WING group
+                };
+                group.map(|g| (g, 2 * (number - 1) + channel as i32 + 1))
+            }
+        };
+        match (shown, self.shadow_pair(row, "grp", "in")) {
+            (Some(gk), _) => gk,
+            (None, Some((g, k))) => {
+                let unrecordable = def_items_find(self.sibling(row, "grp"), &g).filter(|g| self.rec_tap_of(g, k).is_none());
+                (unrecordable.unwrap_or("OFF"), k)
+            }
+            (None, None) => ("OFF", 1),
+        }
+    }
+
+    /// The RECORDER tap of the WING's (group, number); None: OFF, or nothing Sidecar can record.
+    fn rec_tap_of(&self, group: &str, n: i32) -> Option<RecTap> {
+        let strip = |kind: StripKind| {
+            let number = (n + 1) / 2;
+            self.strip(kind, u16::try_from(number).ok()?)?;
+            Some(RecTap::Strip { kind: kind as i32, number, channel: ((n - 1) % 2).unsigned_abs() as usize })
+        };
+        match group {
+            "OFF" => None,
+            "BUS" => strip(StripKind::Bus),
+            "MAIN" => strip(StripKind::Main),
+            "MTX" => strip(StripKind::Matrix),
+            g => port::wing_to_source(g, n).filter(|p| *p >= 0).map(RecTap::Source),
+        }
     }
 
     fn shadow_pair(&self, row: u16, gname: &str, nname: &str) -> Option<(String, i32)> {
@@ -3134,15 +3439,22 @@ pub struct Coverage {
     pub by_group: BTreeMap<String, (usize, usize)>,
     pub mapped: usize,
     pub total: usize,
+    /// Of the mapped: the host's settings, and the stored values of
+    /// parameters without a Sidecar equivalent (the WING's factory value).
+    pub settings: usize,
+    pub stored: usize,
 }
 
 impl Coverage {
     pub fn report(&self) -> String {
         let mut out = format!(
-            "WING tree coverage: {} of {} parameters map to Sidecar ({:.1} %)\n",
+            "WING tree coverage: {} of {} parameters map to Sidecar ({:.1} %)\n  \
+             {} of them Sidecar's settings, {} stored values for what Sidecar has no equivalent of\n",
             self.mapped,
             self.total,
-            100.0 * self.mapped as f64 / self.total.max(1) as f64
+            100.0 * self.mapped as f64 / self.total.max(1) as f64,
+            self.settings,
+            self.stored
         );
         for (g, (m, t)) in &self.by_group {
             out.push_str(&format!("  {g:<34} {m:>6} / {t:<6}\n"));
@@ -3192,6 +3504,11 @@ pub fn coverage() -> Coverage {
             e.0 += 1;
             cov.mapped += 1;
         }
+        match b[r] {
+            Binding::Stored => cov.stored += 1,
+            Binding::Host(_) => cov.settings += 1,
+            _ => {}
+        }
     }
     for slot in &s.slots {
         let parts = s.row_parts(slot.row);
@@ -3213,9 +3530,15 @@ pub fn coverage() -> Coverage {
                 let e = cov.by_group.entry(key.clone()).or_default();
                 e.1 += 1;
                 cov.total += 1;
-                if spec.is_some_and(|sp| sp.param_index(p.name).is_some()) {
+                // A parameter our model doesn't have (a page selector, EXT's
+                // hardware send) keeps what a client sets.
+                let stored = spec.is_some_and(|sp| sp.param_index(p.name).is_none());
+                if spec.is_some() {
                     e.0 += 1;
                     cov.mapped += 1;
+                }
+                if stored {
+                    cov.stored += 1;
                 }
             }
         }
@@ -3399,12 +3722,14 @@ mod tests {
         let e = engine();
         let st = WingState::default();
         let c = Console::new(&e, &st);
-        let peq = node(&c, "/io/in/LCL/1/g"); // a LCL source shares its port with A 1 here
-        assert!(!c.is_mapped(peq));
-        assert_eq!(c.get(peq), Some(Value::Float(0.0)));
-        c.set(peq, &Value::Float(3.0)).unwrap();
-        // The local preamps' gain steps are 2.5 dB.
-        assert_eq!(c.get(peq), Some(Value::Float(2.5)));
+        let speed = node(&c, "/$ctl/$globals/mousespd"); // Sidecar has no mouse speed
+        assert!(!c.is_mapped(speed));
+        assert_eq!(c.binding(speed), Binding::Stored);
+        assert_eq!(c.get(speed), Some(Value::Float(1.77)), "the WING's factory value");
+        c.set(speed, &Value::Float(1.234)).unwrap();
+        // On the parameter's steps (0.01).
+        let Some(Value::Float(got)) = c.get(speed) else { panic!() };
+        assert!((got - 1.23).abs() < 1e-4, "{got}");
         assert_eq!(c.set(node(&c, "/ch/1/$sololed"), &Value::Int(1)), Err(SetError::ReadOnly));
         assert_eq!(c.set(node(&c, "/ch/1"), &Value::Int(1)), Err(SetError::IsNode));
         assert_eq!(c.set(node(&c, "/ch/1/mon"), &Value::str("nope")), Err(SetError::BadValue));
@@ -3587,8 +3912,12 @@ mod tests {
         assert_eq!(c.get(node(&c, "/io/in/A/5/$mute")), Some(Value::Int(0)));
         e.controls.mute_groups.store(0b10, Relaxed);
         assert_eq!(c.get(node(&c, "/io/in/A/5/$mute")), Some(Value::Int(2)));
-        // Other groups share ports here: they stay in the shadow store.
-        assert!(!c.is_mapped(node(&c, "/io/in/LCL/5/name")));
+        // LOCAL IN is A here: the same sources.
+        assert!(c.is_mapped(node(&c, "/io/in/LCL/5/name")));
+        assert_eq!(c.get(node(&c, "/io/in/LCL/5/name")), Some(Value::str("Snare")));
+        // Groups Sidecar doesn't have only share port numbers: their settings are stored.
+        assert!(!c.is_mapped(node(&c, "/io/in/USB/5/name")));
+        assert_eq!(c.binding(node(&c, "/io/in/USB/5/name")), Binding::Stored);
         // MODE pairs Sidecar's sources.
         c.set(node(&c, "/io/in/A/7/mode"), &Value::str("M/S")).unwrap();
         assert_eq!(table.get(7).unwrap().mode.load(Relaxed), source_mode::MID_SIDE);
@@ -3932,27 +4261,34 @@ mod tests {
         let e = engine();
         let st = WingState::default();
         let c = Console::new(&e, &st);
-        c.set(node(&c, "/$ctl/safes/ch"), &Value::str("1,3-5")).unwrap();
+        // The console's format: a "+" (safe) or " " per strip.
+        assert_eq!(c.get(node(&c, "/$ctl/safes/main")), Some(Value::str("    ")));
+        c.set(node(&c, "/$ctl/safes/ch"), &Value::str("+ +++")).unwrap();
         let safe = |kind, n| c.strip(kind, n).unwrap().params.recall_safe.load(Relaxed);
         assert!(safe(StripKind::Channel, 1) && !safe(StripKind::Channel, 2) && safe(StripKind::Channel, 5));
-        assert_eq!(c.get(node(&c, "/$ctl/safes/ch")), Some(Value::str("1,3-5")));
-        // A string of flags, one per strip, reads too.
+        assert_eq!(c.get(node(&c, "/$ctl/safes/ch")), Some(Value::Str(format!("+ +++{}", " ".repeat(35)))));
+        // Numbers and ranges, and 0/1 flags, read too.
+        c.set(node(&c, "/$ctl/safes/aux"), &Value::str("1,3-5")).unwrap();
+        assert_eq!(c.get(node(&c, "/$ctl/safes/aux")), Some(Value::str("+ +++   ")));
         c.set(node(&c, "/$ctl/safes/mtx"), &Value::str("10100000")).unwrap();
-        assert_eq!(c.get(node(&c, "/$ctl/safes/mtx")), Some(Value::str("1,3")));
+        assert_eq!(c.get(node(&c, "/$ctl/safes/mtx")), Some(Value::str("+ +     ")));
         c.strip(StripKind::Bus, 16).unwrap().params.recall_safe.store(true, Relaxed);
-        assert_eq!(c.get(node(&c, "/$ctl/safes/bus")), Some(Value::str("16")));
+        assert_eq!(c.get(node(&c, "/$ctl/safes/bus")), Some(Value::Str(format!("{}+", " ".repeat(15)))));
 
         // DCAs, mute groups and FX: the show's global safes, through the host.
-        c.set(node(&c, "/$ctl/safes/dca"), &Value::str("2 16")).unwrap();
+        c.set(node(&c, "/$ctl/safes/dca"), &Value::str(" +             +")).unwrap();
         c.set(node(&c, "/$ctl/safes/fx"), &Value::str("1-2,9")).unwrap();
         st.set_safes(Safes { attached: true, ..Safes::default() });
-        assert_eq!(c.get(node(&c, "/$ctl/safes/dca")), Some(Value::str("2,16")));
+        assert_eq!(c.get(node(&c, "/$ctl/safes/dca")), Some(Value::str(" +             +")));
         let taken = st.take_safes().unwrap();
         assert_eq!((taken.dcas, taken.mute_groups, taken.fx), (1 << 1 | 1 << 15, 0, 0b1_0000_0011));
         st.set_safes(Safes { attached: true, mute_groups: 0b101, ..Safes::default() });
-        assert_eq!(c.get(node(&c, "/$ctl/safes/mute")), Some(Value::str("1,3")));
-        assert_eq!(c.get(node(&c, "/$ctl/safes/dca")), Some(Value::str("")));
-        assert!(!c.is_mapped(node(&c, "/$ctl/safes/source/A")));
+        assert_eq!(c.get(node(&c, "/$ctl/safes/mute")), Some(Value::str("+ +     ")));
+        assert_eq!(c.get(node(&c, "/$ctl/safes/dca")), Some(Value::str(" ".repeat(16))));
+        // Source safes: Sidecar has none; stored as set.
+        let source = node(&c, "/$ctl/safes/source/A");
+        assert!(!c.is_mapped(source));
+        assert_eq!(c.get(source), Some(Value::str(" ".repeat(48))));
         assert_eq!(number_list(0b1110_1011), "1,2,4,6-8");
         assert_eq!(parse_number_list("0-3, 7-99", 8), 0b1100_0111);
     }
@@ -4135,16 +4471,250 @@ mod tests {
     #[test]
     fn coverage_counts() {
         let cov = coverage();
-        assert!(cov.total > 60000, "{}", cov.total);
-        assert!(cov.mapped > 60400, "{}", cov.report());
-        // Groups that map completely.
-        for g in ["/ch/N/eq", "/ch/N/gatesc", "/ch/N/dynxo", "/bus/N/eq", "/bus/N/preins", "/main/N/postins", "/mtx/N/eq", "/rec"]
-        {
-            let (m, t) = cov.by_group[g];
-            assert_eq!(m, t, "{g}");
+        assert_eq!(cov.total, 68556, "{}", cov.report());
+        // Everything answers but DAW CONFIGURATION (see `unbound_feature`).
+        assert_eq!(cov.mapped, 68555, "{}", cov.report());
+        assert_eq!((cov.settings, cov.stored), (63, 7377), "{}", cov.report());
+        for (g, (m, t)) in &cov.by_group {
+            assert!(m == t || g == "/$ctl/daw", "{g}: {m} of {t}");
         }
-        // The three fader sections of the full-size console; the other models' stay shadow.
-        assert_eq!(cov.by_group["/$ctl/layer"].0, 1936);
-        assert_eq!(cov.by_group["/$ctl/user"].0, 661);
+        assert_eq!(cov.by_group["/$ctl/daw"], (14, 15));
+        // The engine-backed share: everything but the settings and the stored values.
+        assert_eq!(cov.mapped - cov.settings - cov.stored, 61115);
+        let b = bindings();
+        let row = |p: &str| match schema().resolve(p, &NoModels) {
+            Some(Node::Row(r)) => r as usize,
+            _ => panic!("{p}"),
+        };
+        assert_eq!(b[row("/$ctl/daw/config")], Binding::None);
+        assert_eq!(b[row("/cards/wlive/1/$stat/state")], Binding::Stored);
+        assert_eq!(b[row("/$ctl/layer/CMPCT/sel")], Binding::Stored);
+        assert!(matches!(b[row("/cfg/mtr/mtrpage/in")], Binding::Host(_)));
+        assert_eq!(b[row("/cfg/mtr/mainpos")], Binding::Fixed("POST"));
+    }
+
+    fn get_text(c: &Console, path: &str) -> String {
+        let n = node(c, path);
+        value::display(c.def(n).unwrap(), &c.get(n).unwrap())
+    }
+
+    #[test]
+    fn stored_parameters_answer_the_wings_factory_values() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        // As a factory-initialized WING answered (its dump).
+        for (path, text) in [
+            ("/$stat/usbvolname", "NO DRIVE"),
+            ("/$syscfg/opt_mod", "DANTE"),
+            ("/$syscfg/$hwversion", "SX45-XU2"),
+            ("/$globals/usbacfg", "48/48"),
+            ("/cards/wmadi/mode", "SFP1"),
+            ("/io/in/$MON/1/name", "PHONES"),
+            ("/io/in/$MON/3/icon", "503"),
+            ("/io/in/$SEND/3/name", "FX SEND 2"),
+            ("/io/in/USB/1/name", "USB 1/2"),
+            ("/$ctl/lib/$scenes", ""),
+            ("/play/$songs", ""),
+            ("/fx/1/$emode", "ST"),
+            ("/$ctl/$globals/mousespd", "1.77"),
+            ("/$ctl/layer/CMPCT/sel", "1"),
+            ("/bus/1/send/2/lvl", "-oo"),
+            ("/ch/1/$presolo", "0"),
+            ("/cards/wlive/2/$stat/sessionlist", "2027-01-06 00:07:16 +10"),
+        ] {
+            assert_eq!(get_text(&c, path), text, "{path}");
+            assert_eq!(c.binding(node(&c, path)), Binding::Stored, "{path}");
+        }
+        // The dumped console's own values (its address) aren't factory values.
+        assert_eq!(get_text(&c, "/$syscfg/ip0"), "0");
+        // Writable ones keep what a client sets; read-only ones stay.
+        let usb = node(&c, "/$globals/usbacfg");
+        assert_eq!(c.set(usb, &Value::str("8/8")), Ok(Value::str("8/8")));
+        assert_eq!(c.get(usb), Some(Value::str("8/8")));
+        assert_eq!(c.set(node(&c, "/cards/$type"), &Value::str("x")), Err(SetError::ReadOnly));
+        // Every stored parameter the dump has answers its factory value.
+        let s = schema();
+        let mut checked = 0;
+        for (r, b) in bindings().iter().enumerate() {
+            if *b == Binding::Stored
+                && s.defs[s.rows[r].def as usize].is_leaf()
+                && st.shadow_get(ShadowKey::Row(r as u16)).is_none()
+            {
+                if let Some(v) = factory_value(r as u16) {
+                    assert_eq!(c.get(Node::Row(r as u16)).as_ref(), Some(v));
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked > 7000, "{checked}");
+        // Unbound parameters answer the factory value too (where the strip is missing).
+        let e8 = Engine::new(0);
+        e8.set_num_channels(8);
+        let c8 = Console::new(&e8, &st);
+        assert_eq!(get_text(&c8, "/ch/20/fdr"), "-oo");
+    }
+
+    #[test]
+    fn host_settings_both_ways() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        // Sidecar's defaults until the host publishes.
+        assert_eq!(get_text(&c, "/cfg/mtr/mtrpage/in"), "PRE");
+        assert_eq!(get_text(&c, "/cfg/mtr/mtrsfc/bus"), "POST");
+        assert_eq!(get_text(&c, "/$ctl/daw/conn"), "USB");
+        assert_eq!(get_text(&c, "/$ctl/cfg/seldblclick"), "BUSFX");
+        assert_eq!(get_text(&c, "/$ctl/$globals/datefmt"), "YMD");
+        // The host's values.
+        st.set_host_setting("setup.meterTapPre.1", "1");
+        st.set_host_setting("ui.selDblClick", "0");
+        st.set_host_setting("ui.dateFormat", "DD-MM-YYYY");
+        st.set_host_setting("daw.on", "true");
+        st.set_host_setting("not.a.wing.setting", "1");
+        assert_eq!(get_text(&c, "/cfg/mtr/mtrpage/bus"), "PRE");
+        assert_eq!(get_text(&c, "/cfg/mtr/mtrsfc/bus"), "PRE", "one tap for the METERS screen and the surface");
+        assert_eq!(get_text(&c, "/$ctl/cfg/seldblclick"), "HOME");
+        assert_eq!(get_text(&c, "/$ctl/$globals/datefmt"), "DMY");
+        assert_eq!(get_text(&c, "/$ctl/daw/on"), "1");
+        // A client's changes reach the host as its settings.
+        let set = |p: &str, v: Value| c.set(node(&c, p), &v);
+        set("/cfg/mtr/mtrsfc/main", Value::str("PRE")).unwrap();
+        set("/$ctl/cfg/seldblclick", Value::str("OFF")).unwrap();
+        set("/$ctl/midi/enscenes", Value::str("USB")).unwrap();
+        set("/$ctl/cfg/lights/meters", Value::Int(70)).unwrap();
+        set("/$ctl/$globals/timefmt", Value::str("12H")).unwrap();
+        set("/cfg/mtr/mainmtr", Value::str("MAIN.3")).unwrap();
+        assert!(matches!(set("/cfg/mtr/mainmtr", Value::str("MTX.1")), Err(SetError::Unsupported(_))));
+        // The host's own value doesn't undo a change it hasn't taken.
+        st.set_host_setting("setup.meterTapPre.2", "0");
+        assert_eq!(get_text(&c, "/cfg/mtr/mtrpage/main"), "PRE");
+        let mut taken = Vec::new();
+        while let Some(kv) = st.take_host_setting() {
+            taken.push(kv);
+        }
+        let taken: Vec<(&str, &str)> = taken.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        assert_eq!(
+            taken,
+            [
+                ("setup.meterTapPre.2", "1"),
+                ("ui.selDblClick", "2"),
+                ("midi.enscenes", "2"),
+                ("setup.brightness.meters", "70"),
+                ("ui.clock24", "0"),
+                ("ui.mainMeter", "3"),
+            ]
+        );
+        st.set_host_setting("setup.meterTapPre.2", "0");
+        assert_eq!(get_text(&c, "/cfg/mtr/mtrpage/main"), "POST");
+        assert!(crate::host::keys().contains(&"daw.preset"));
+
+        // Fixed SETUP rows: what Sidecar does, nothing else.
+        assert_eq!(get_text(&c, "/cfg/mtr/mainpos"), "POST");
+        assert!(matches!(set("/cfg/mtr/mainpos", Value::str("AUTO")), Err(SetError::Unsupported(_))));
+        assert_eq!(set("/cfg/mtr/mainpos", Value::str("POST")), Ok(Value::str("POST")));
+        assert_eq!(get_text(&c, "/$ctl/$globals/tapflash"), "ON");
+        // The clock rate is the audio device's.
+        assert_eq!(get_text(&c, "/$globals/clkrate"), "48000.0");
+        assert!(matches!(set("/$globals/clkrate", Value::Float(44100.0)), Err(SetError::Unsupported(_))));
+    }
+
+    #[test]
+    fn local_and_player_sources() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let table = e.sources();
+        let set = |p: &str, v: Value| c.set(node(&c, p), &v).unwrap();
+        // LCL 3 is port 3 (A 3).
+        set("/io/in/LCL/3/name", Value::str("Vox"));
+        set("/io/in/LCL/3/col", Value::Int(5));
+        set("/io/in/LCL/3/vph", Value::Int(1));
+        assert_eq!(table.name(2), "Vox");
+        assert_eq!(table.get(2).unwrap().colour.load(Relaxed), 5);
+        assert!(table.get(2).unwrap().phantom.load(Relaxed));
+        assert_eq!(get_text(&c, "/io/in/A/3/name"), "Vox");
+        // The USB player is the PLAY group.
+        let player = sources::USB_PLAYER_SOURCE_INDEX;
+        set("/io/in/PLAY/1/mode", Value::str("ST"));
+        set("/io/in/PLAY/2/name", Value::str("Walk-in"));
+        set("/io/in/PLAY/2/mute", Value::Int(1));
+        assert_eq!(table.name(player + 1), "Walk-in");
+        assert!(table.get(player + 1).unwrap().mute.load(Relaxed));
+        assert_eq!(table.get(player).unwrap().mode.load(Relaxed), source_mode::STEREO);
+        assert_eq!(get_text(&c, "/io/in/PLAY/2/mode"), "ST");
+        // Channels patch to it.
+        set("/ch/6/in/conn/grp", Value::str("PLAY"));
+        set("/ch/6/in/conn/in", Value::Int(2));
+        let ch6 = c.strip(StripKind::Channel, 6).unwrap();
+        assert_eq!(ch6.params.input_left.load(Relaxed), livedaw_engine::USB_PLAYER_SOURCE_BASE + 1);
+        assert_eq!(get_text(&c, "/ch/6/in/conn/grp"), "PLAY");
+        assert_eq!(get_text(&c, "/ch/6/$name"), "Walk-in");
+    }
+
+    #[test]
+    fn local_outputs_and_recorder_taps() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let set = |p: &str, v: Value| c.set(node(&c, p), &v).unwrap();
+        // LOCAL OUT 3 is port 3 (A 3).
+        set("/io/out/LCL/3/in", Value::Int(5));
+        set("/io/out/LCL/3/grp", Value::str("BUS"));
+        assert_eq!(c.strip(StripKind::Bus, 3).unwrap().params.output_left.load(Relaxed), 2);
+        assert_eq!((get_text(&c, "/io/out/A/3/grp"), get_text(&c, "/io/out/A/3/in")), ("BUS".into(), "5".into()));
+        // RECORDER ports: Main 1 by default (Sidecar's), any bus, main, matrix or source.
+        let usb = e.usb();
+        assert_eq!((get_text(&c, "/io/out/REC/2/grp"), get_text(&c, "/io/out/REC/2/in")), ("MAIN".into(), "2".into()));
+        set("/io/out/REC/1/in", Value::Int(3));
+        set("/io/out/REC/1/grp", Value::str("MTX"));
+        assert_eq!(usb.tap(0), RecTap::Strip { kind: StripKind::Matrix as i32, number: 2, channel: 0 });
+        set("/io/out/REC/2/grp", Value::str("B"));
+        set("/io/out/REC/2/in", Value::Int(4));
+        assert_eq!(usb.tap(1), RecTap::Source(51));
+        assert_eq!((get_text(&c, "/io/out/REC/2/grp"), get_text(&c, "/io/out/REC/2/in")), ("B".into(), "4".into()));
+        set("/io/out/REC/3/grp", Value::str("PLAY"));
+        assert_eq!(usb.tap(2), RecTap::Source(livedaw_engine::USB_PLAYER_SOURCE_BASE));
+        // FX sends can't be recorded: off, shown as set.
+        set("/io/out/REC/4/grp", Value::str("SEND"));
+        assert_eq!(usb.tap(3), RecTap::Off);
+        assert_eq!(get_text(&c, "/io/out/REC/4/grp"), "SEND");
+        set("/io/out/REC/4/grp", Value::str("OFF"));
+        assert_eq!(get_text(&c, "/io/out/REC/4/grp"), "OFF");
+        // Outputs Sidecar doesn't have are stored.
+        assert_eq!(c.binding(node(&c, "/io/out/USB/1/grp")), Binding::Stored);
+    }
+
+    #[test]
+    fn buses_mains_and_matrices_as_sources() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let bus2 = c.strip(StripKind::Bus, 2).unwrap();
+        bus2.set_name("Drums");
+        bus2.params.colour.store(7, Relaxed);
+        bus2.params.icon.store(300, Relaxed);
+        c.set(node(&c, "/bus/2/tags"), &Value::str("#D4,band")).unwrap();
+        for signal in [3, 4] {
+            assert_eq!(get_text(&c, &format!("/io/in/$BUS/{signal}/name")), "Drums");
+            assert_eq!(get_text(&c, &format!("/io/in/$BUS/{signal}/col")), "7");
+            assert_eq!(get_text(&c, &format!("/io/in/$BUS/{signal}/icon")), "300");
+            assert_eq!(get_text(&c, &format!("/io/in/$BUS/{signal}/mode")), "ST");
+            assert_eq!(get_text(&c, &format!("/io/in/$BUS/{signal}/tags")), "#D4,band");
+        }
+        assert_eq!(get_text(&c, "/io/in/$MTX/16/col"), get_text(&c, "/mtx/8/col"));
+        c.strip(StripKind::Main, 4).unwrap().set_name("Sub");
+        assert_eq!(get_text(&c, "/io/in/$MAIN/8/name"), "Sub");
+        assert_eq!(c.set(node(&c, "/io/in/$BUS/1/name"), &Value::str("x")), Err(SetError::ReadOnly));
+    }
+
+    #[test]
+    fn channel_delay_is_described_in_meters() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let d = c.def(node(&c, "/ch/3/in/set/dly")).unwrap();
+        assert_eq!((d.unit, d.steps), (crate::schema::unit::METERS, 1500));
+        assert!((d.min - 0.1).abs() < 1e-4 && (d.max - 150.0).abs() < 1e-3);
     }
 }

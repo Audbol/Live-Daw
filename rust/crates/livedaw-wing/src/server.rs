@@ -235,7 +235,7 @@ fn mapped_rows() -> &'static [u16] {
         bindings()
             .iter()
             .enumerate()
-            .filter(|(r, b)| **b != Binding::None && s.defs[s.rows[*r].def as usize].is_leaf())
+            .filter(|(r, b)| !matches!(**b, Binding::None | Binding::Stored) && s.defs[s.rows[*r].def as usize].is_leaf())
             .map(|(r, _)| r as u16)
             .collect()
     })

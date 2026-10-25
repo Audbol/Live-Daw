@@ -659,13 +659,19 @@ and open-source projects (see below), and it is **experimental**.
   test battery and model capture, its OSC client), and every OSC path the Bitfocus
   Companion WING module builds that exists in the 3.1 tree. **WING Edit and WING
   Copilot have not been tried**, so they may not work.
-- **What maps:** 88.2 % of the WING 3.1 tree's parameters (60,491 of 68,556,
-  counting every model's parameters) drive the engine: channels, aux, buses, mains
+- **What maps:** every parameter of the WING 3.1 tree but one answers (68,555 of
+  68,556, counting every model's parameters). 61,115 of them (89.1 %) drive the
+  engine, 63 are Sidecar's SETUP settings, and the 7,377 Sidecar has no equivalent
+  for answer what a factory-initialized WING answers (see below). Driving the engine: channels, aux, buses, mains
   and matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
   dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,
   main sends, solo, TAP WIDTH and TAP EQ), DCAs (with their SOLO BUS), mute groups, the FX rack, output
-  routing, the sources of the AES50 A/B/C and WING-LIVE card groups (name, colour,
-  icon, gain, mute, polarity, +48V, mode, mute-group tags), the oscillator (the OSC
+  routing (LOCAL OUT is A 1-8, as on ROUTING), the USB recorder's RECORDER ports
+  (`/io/out/REC/1-4`: any bus, main, matrix or source), the sources of the LOCAL IN
+  (the same ports as AES50 A), AES50 A/B/C, WING-LIVE card and USB player (`PLAY`)
+  groups (name, colour, icon, gain, mute, polarity, +48V, mode, mute-group tags),
+  the buses, mains and matrices as sources (`/io/in/$BUS`, `$MAIN`, `$MTX`: name,
+  colour, icon, tags, read only), the oscillator (the OSC
   group: its sources and `osc/mode`, `lvl`, `f`), SOLO MODE, the solo bus,
   MUTEGROUP/SIP OVERRIDE and SOURCE SOLO, talkback, both monitor paths (`/cfg/mon`:
   source, levels, DIM, PFL DIM, BAND SOLO, DIRECT IN, EQ, PAN, WIDTH, INVERT, DELAY,
@@ -682,12 +688,19 @@ and open-source projects (see below), and it is **experimental**.
   NEXT, PREV, PLAYFILE with `$playfile` relative to the USB folder, the position,
   REPEAT, REC PATH and the recording format; state, file, time and the clip's format
   read back) and the recall safes (`/$ctl/safes`: `ch`, `aux`, `bus`, `main`, `mtx`
-  are the strips' SAFE keys, `dca`, `mute`, `fx` the GLOBAL safes; lists such as
-  `1,3,5-8`). Not mapped, with no meaning in Sidecar: a DCA's monitor bus (DCA solo
-  goes to each member's monitor bus), a channel's TAP SOLO (`$presolo`: solo is
-  PFL or AFL per strip type), the player's song tags (`$artist`, `$album`, `$songs`)
-  and the safes of source and output groups, surface areas, custom controls and
-  setup. The fader sections' layers (`/$ctl/layer/L`, `C`, `R`) and the custom
+  are the strips' SAFE keys, `dca`, `mute`, `fx` the GLOBAL safes; in the console's
+  format, a `+` or a space per strip, as `+ +` for 1 and 3; lists such as `1,3,5-8`
+  are taken too). SETUP's options are Sidecar's settings, both ways: METERING's taps
+  (`/cfg/mtr/mtrpage`, `mtrsfc`: one setting per strip type for both) and MAIN METER,
+  the GENERAL, SURFACE and SOLO SYSTEM options (`/$ctl/cfg`, `/$ctl/$globals`:
+  confirm load, wheel, touch fader select and resolution, fader speed, SOF button,
+  frame and mode, autoselect, user layer link, DCA spill, solo exclusive and
+  follows, the brightness tiles, the time and date format...), MIDI REMOTE CONTROL
+  (`/$ctl/midi`) and DAW (`/$ctl/daw`: enable, connection, emulation, upper CC,
+  wheel, preset); rows Sidecar shows fixed answer its value and refuse others (MAIN
+  METER TAP is POST). `/$globals/clkrate` is the audio device's rate. Not mapped:
+  DAW CONFIGURATION (`/$ctl/daw/config`), whose 3.1 choices (CC, MSTR) can't show
+  Sidecar's MCU with extenders. The fader sections' layers (`/$ctl/layer/L`, `C`, `R`) and the custom
   controls (`/$ctl/user`) are the show's, both ways: clients select layer keys
   (`sel`), spill (`spidx`: DCA, FX, a bus's sources, automix X / Y), scroll the
   shown layer (`ofs`), name the USER keys' user layers and assign faders (`type`,
@@ -699,9 +712,14 @@ and open-source projects (see below), and it is **experimental**.
   leaves blank slots before it. Only the shown layer has a scroll position, and a new function starts at its first target
   (clients can't choose it: the WING's tree only has the function). The encoding of
   fader assignments and the custom controls of `U1`-`U3` (taken as the 4-Channel
-  section's F1-F3 layers) are educated guesses. The rest (the other WING models'
-  layers, the 4-Channel and button section modes, cards, ...) is remembered so
-  clients can read back what they wrote, but does nothing.
+  section's F1-F3 layers) are educated guesses. What Sidecar has no equivalent for
+  (the cards, the console's hardware, network and status, the other WING models'
+  layers, the 4-Channel and button section modes, the input groups Sidecar doesn't
+  have (AUX, AES, SC, USB, MOD, USR), a DCA's monitor bus, a channel's TAP SOLO,
+  the player's song tags, the safes of source and output groups, bus-to-bus sends
+  the engine doesn't have, ...) starts at the factory-initialized WING's value
+  (`livedaw-wing/data/wing_factory.tsv`) and is remembered so clients can read back
+  what they wrote (read-only ones as the WING marks them), but does nothing.
   `cargo run -p livedaw-wing --example wing_coverage` prints the full report.
 - **Files:** as on the WING, select a WING snapshot (`.snap`) at INT or USB on LIBRARY >
   SNAP and press **LOAD** (or double-click it) to apply it to the console. LIBRARY > SHOW

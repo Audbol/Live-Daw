@@ -181,8 +181,9 @@ This list matches the notice Sidecar shows at start-up.
   Delay compensation (SETUP > PLUGINS) lines up the paths into buses, mains and
   matrices up to 8192 samples; solo, monitoring, direct outs and recorder taps are
   not compensated.
-- **WING remote apps:** the WING network protocols cover 88.2 % of the WING 3.1
-  parameter tree (the rest is stored but does nothing). WING Edit and WING Copilot
+- **WING remote apps:** the WING network protocols answer every parameter of the
+  WING 3.1 tree but one; 89.2 % drive the engine or Sidecar's settings, the rest
+  answers the WING's factory value and is stored but does nothing. WING Edit and WING Copilot
   have not been tried, and exported WING snapshots have not been loaded into a
   console.
 - **MIDI and DAW remote control** (MCU / HUI) have not been tested with real hardware.

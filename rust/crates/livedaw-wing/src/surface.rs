@@ -11,7 +11,8 @@
 //! libwing's tree (guesses are marked):
 //!
 //! - `L`, `C`, `R` are the three fader sections (`CMPCT`, `RCK`, `EXT` and
-//!   `VRT`, the other models' surfaces, stay in the shadow store). `sel` 1-7
+//!   `VRT`, the other models' surfaces, answer the WING's factory values and
+//!   keep what a client sets). `sel` 1-7
 //!   picks a layer key in the console's order (left: CH 1-12, 13-24, 25-36,
 //!   37-40 / AUX, BUSES, USER 1, USER 2; center: DCA, MAIN, AUX, BUSES, USER 1,
 //!   USER 2; right: MAIN, DCA, CH 1-40, AUX, BUSES, USER 1, USER 2) and reads
