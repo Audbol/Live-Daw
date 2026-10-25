@@ -62,9 +62,57 @@ pub struct CustomControls {
     layers: Vec<[CcControl; NUM_CONTROLS]>,
 }
 
+/// Key category 13, DAW BUTTONS: the target is the command's group and the
+/// option the command, both in the order of the WING's DAW BUTTONS list
+/// (the application's `DawRemote::commands()`).
+pub const DAW_BUTTONS_CATEGORY: i32 = 13;
+
+/// The DAW BUTTONS command list's groups: (code prefix, number of commands),
+/// in the list's order (TRANSPORT T1-T20, NAVIGATION N1-N9, ...).
+const DAW_COMMAND_GROUPS: [(&str, i32); 10] =
+    [("T", 20), ("N", 9), ("A", 16), ("F", 8), ("V", 15), ("AU", 12), ("SY", 10), ("OT", 12), ("E", 10), ("SP", 6)];
+
+/// The DAW BUTTONS key of command `code` ("T1", "AU4", ...).
+fn daw_key(code: &str) -> CcFunction {
+    let mut first = 0;
+    for (group, (prefix, count)) in DAW_COMMAND_GROUPS.iter().enumerate() {
+        if let Some(n) = code.strip_prefix(prefix).and_then(|n| n.parse::<i32>().ok()).filter(|n| (1..=*count).contains(n)) {
+            return CcFunction { category: DAW_BUTTONS_CATEGORY, target: group as i32, option: first + n - 1 };
+        }
+        first += count;
+    }
+    CcFunction::default()
+}
+
+/// The DAW layers DAW 1-4 of a factory-initialized WING (`/$ctl/user/daw1-4`):
+/// per control the upper key's command, the lower key's and the name.
+const FACTORY_DAW_LAYERS: [[(&str, &str, &str); NUM_CONTROLS]; 4] = [
+    [("T1", "T4", "STOP"), ("T2", "T5", "PLAY"), ("T8", "OT4", "CYCLE"), ("T3", "SY6", "RECORD")],
+    [("T1", "T4", "STOP"), ("T2", "T5", "PLAY"), ("", "", ""), ("T3", "T6", "RECORD")],
+    [("T1", "T4", "STOP"), ("T2", "T5", "PLAY"), ("AU4", "AU1", " |TOUCH"), ("AU5", "AU2", " |LATCH")],
+    [("OT3", "OT1", "NAME/VALUE"), ("", "SP2", "[V-POTS]"), ("", "SP3", "[RECRDY]"), ("N5", "T11", "ZOOM")],
+];
+
+/// The factory assignment of control `index` of `layer`: the DAW layers'
+/// keys; every other control is not assigned.
+pub fn factory_control(layer: usize, index: usize) -> CcControl {
+    let Some(daw) = layer.checked_sub(FIRST_DAW_LAYER).and_then(|l| FACTORY_DAW_LAYERS.get(l)) else {
+        return CcControl::default();
+    };
+    let (upper, lower, name) = daw[index.min(NUM_CONTROLS - 1)];
+    CcControl { upper: daw_key(upper), lower: daw_key(lower), name: name.to_owned(), ..CcControl::default() }
+}
+
+/// `<CustomControls factory="...">`: the defaults the controls left out had.
+/// Shows without it were saved when every control, the DAW layers' too,
+/// started not assigned.
+const FACTORY_ATTR: &str = "factory";
+const FACTORY_WING: &str = "wing";
+
 impl Default for CustomControls {
+    /// A factory-initialized WING's: the DAW layers assigned, nothing else.
     fn default() -> Self {
-        Self { layers: vec![Default::default(); NUM_LAYERS] }
+        Self { layers: (0..NUM_LAYERS).map(|l| std::array::from_fn(|i| factory_control(l, i))).collect() }
     }
 }
 
@@ -84,16 +132,24 @@ impl CustomControls {
         }
     }
 
+    /// Back to a factory-initialized WING's controls.
     pub fn reset(&mut self) {
         *self = Self::default();
     }
 
-    /// `<CustomControls>` with a `<Control>` per assigned or named control.
+    /// What a show saved before the factory DAW layers starts with: nothing assigned.
+    pub fn legacy() -> Self {
+        Self { layers: vec![Default::default(); NUM_LAYERS] }
+    }
+
+    /// `<CustomControls>` with a `<Control>` per control that differs from its
+    /// factory assignment.
     pub fn to_xml(&self) -> Element {
         let mut xml = Element::new("CustomControls");
+        xml.set(FACTORY_ATTR, FACTORY_WING);
         for (l, layer) in self.layers.iter().enumerate() {
             for (i, c) in layer.iter().enumerate() {
-                if c.is_default() {
+                if *c == factory_control(l, i) {
                     continue;
                 }
                 xml.add_new("Control")
@@ -110,7 +166,7 @@ impl CustomControls {
     }
 
     pub fn from_xml(&mut self, xml: &Element) {
-        self.reset();
+        *self = if xml.attr(FACTORY_ATTR) == Some(FACTORY_WING) { Self::default() } else { Self::legacy() };
         for e in xml.children_named("Control") {
             let (Ok(layer), Ok(index)) = (usize::try_from(e.int_or("layer", -1)), usize::try_from(e.int_or("index", -1))) else {
                 continue;
@@ -173,6 +229,34 @@ mod tests {
         loaded.clear_layer(3);
         assert!(loaded.control(3, 2).unwrap().is_default());
         assert_eq!(cc.to_xml().children_named("Control").count(), 2);
+    }
+
+    #[test]
+    fn the_daw_layers_start_as_a_factory_set_wing() {
+        // DAW 1: STOP / REWIND, PLAY / FFWD, CYCLE / TIME/BEATS, RECORD / UNDO.
+        let cc = CustomControls::default();
+        let stop = cc.control(FIRST_DAW_LAYER, 0).unwrap();
+        assert_eq!(stop.name, "STOP");
+        assert_eq!(stop.upper, CcFunction { category: DAW_BUTTONS_CATEGORY, target: 0, option: 0 });
+        assert_eq!(stop.lower, CcFunction { category: DAW_BUTTONS_CATEGORY, target: 0, option: 3 });
+        let record = cc.control(FIRST_DAW_LAYER, 3).unwrap();
+        assert_eq!(record.lower, CcFunction { category: DAW_BUTTONS_CATEGORY, target: 6, option: 85 }); // SY6 UNDO
+        let vpots = cc.control(FIRST_DAW_LAYER + 3, 1).unwrap();
+        assert!(!vpots.upper.is_assigned());
+        assert_eq!(vpots.lower, CcFunction { category: DAW_BUTTONS_CATEGORY, target: 9, option: 113 }); // SP2
+        assert!(cc.control(FIRST_DAW_LAYER + 1, 2).unwrap().is_default());
+        assert!(cc.control(0, 0).unwrap().is_default() && cc.control(16, 0).unwrap().is_default());
+
+        // A factory set saves nothing; a cleared DAW key is saved.
+        assert_eq!(cc.to_xml().children_named("Control").count(), 0);
+        let mut changed = cc.clone();
+        changed.clear_layer(FIRST_DAW_LAYER);
+        let mut loaded = CustomControls::legacy();
+        loaded.from_xml(&changed.to_xml());
+        assert_eq!(loaded, changed);
+        // Shows saved before the factory DAW layers keep theirs empty.
+        loaded.from_xml(&Element::new("CustomControls"));
+        assert_eq!(loaded, CustomControls::legacy());
     }
 
     #[test]

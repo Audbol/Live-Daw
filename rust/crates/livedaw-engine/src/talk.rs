@@ -240,7 +240,11 @@ impl<'a> TalkBlock<'a> {
         if slot >= WING_BUSES {
             return TalkGains::NONE;
         }
-        self.gains(|p| p.buses & (1 << slot) != 0, |s| s.sends.find(slot).map_or(0.0, |send| send.level_db.load()), true)
+        self.gains(
+            |p| p.buses & (1 << slot) != 0,
+            |s| s.sends.find(slot).map_or(crate::sends::DEFAULT_SEND_LEVEL_DB, |send| send.level_db.load()),
+            true,
+        )
     }
 
     pub fn main(&self, i: usize) -> TalkGains {

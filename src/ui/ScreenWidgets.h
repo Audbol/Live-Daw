@@ -73,7 +73,8 @@ namespace prefs
     constexpr const char* touchFaderRes = "setup.touchFaderRes";          // 0 NORM, 1 FINE, 2 AUTO
     constexpr const char* clock12h = "setup.clock12h";
     constexpr const char* dateDayFirst = "setup.dateDayFirst";
-    constexpr const char* layerLink = "setup.faderScreenLayerLink";       // VIEW screens follow the section's layer
+    constexpr const char* layerLink = "setup.faderScreenLayerLink";       // VIEW screens follow the section's layer (default off)
+    constexpr bool layerLinkDefault = false;
     constexpr const char* brightnessPrefix = "setup.brightness.";
 
     /** SETUP > SURFACE > METERING: PRE or POST for the meters of each strip type. */
@@ -95,7 +96,7 @@ namespace prefs
 
     inline bool confirmLoad (UiContext& ctx) { return ctx.settings.getBoolValue (confirmLibraryLoad, true); }
     inline int faderResolution (UiContext& ctx) { return ctx.settings.getIntValue (touchFaderRes, 2); }
-    inline bool screenFollowsLayer (UiContext& ctx) { return ctx.settings.getBoolValue (layerLink, true); }
+    inline bool screenFollowsLayer (UiContext& ctx) { return ctx.settings.getBoolValue (layerLink, layerLinkDefault); }
 } // namespace prefs
 
 /** Height of a dark panel's header bar (SETUP, LIBRARY, MONITORS, the recorder):

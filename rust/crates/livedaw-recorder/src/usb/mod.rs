@@ -120,9 +120,6 @@ impl RecTap {
     }
 }
 
-/// The engine's `StripKind::Main` as i32 (the default taps: MAIN 1 L/R).
-const STRIP_KIND_MAIN: i32 = 3;
-
 // ---- states ----------------------------------------------------------------------------
 
 /// `/play/$actstate`.
@@ -358,7 +355,8 @@ pub(crate) struct DeckShared {
 
 impl DeckShared {
     fn new() -> Self {
-        let main_tap = |channel| AtomicI32::new(RecTap::Strip { kind: STRIP_KIND_MAIN, number: 1, channel }.code());
+        // The RECORDER ports start OFF, as on a factory-initialized WING.
+        let off = || AtomicI32::new(RecTap::Off.code());
         Self {
             sample_rate: AtomicU64::new(48000f64.to_bits()),
             max_block: AtomicUsize::new(512),
@@ -378,7 +376,7 @@ impl DeckShared {
             ready_entry: AtomicU64::new(0),
             ready_len: AtomicI64::new(0),
             ready_pos: AtomicI64::new(0),
-            queue: Mutex::new(Queue::default()),
+            queue: Mutex::new(Queue::factory()),
             infos: Mutex::new(VecDeque::new()),
             play_levels: Default::default(),
             rec_cmds: SpscQueue::new(64),
@@ -389,7 +387,7 @@ impl DeckShared {
             rec_frames: AtomicI64::new(0),
             rec_file_start: AtomicI64::new(0),
             rec_levels: Default::default(),
-            taps: [main_tap(0), main_tap(1), AtomicI32::new(-1), AtomicI32::new(-1)],
+            taps: [off(), off(), off(), off()],
             dropouts: AtomicU32::new(0),
             disk_busy: AtomicBool::new(false),
             kick: AtomicU64::new(0),

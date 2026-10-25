@@ -445,8 +445,7 @@ impl Engine {
         // is left alone: a callback may still be finishing with a removed bus.)
         for s in st.channels.iter().chain(&st.auxes).chain(&st.buses) {
             if let Some(send) = s.sends.find(slot) {
-                send.enabled.store(false, Relaxed);
-                send.level_db.store(0.0);
+                send.reset(s.sends.default_mode(slot));
             }
         }
 

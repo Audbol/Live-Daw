@@ -99,14 +99,20 @@ public:
 
     void runTest() override
     {
-        beginTest ("RECORDER taps encode like the engine's; MAIN 1 L/R by default");
+        beginTest ("RECORDER taps encode like the engine's; OFF by default, as on the WING");
         {
             MixerEngine engine (0);
             auto& usb = engine.getUsbRecorder();
-            auto tap = usb.getTap (0);
-            expect (tap.kind == UsbRecorder::Tap::Kind::Strip && tap.stripKind == StripKind::Main && tap.stripNumber == 1 && tap.channel == 0);
-            expectEquals (usb.getTap (1).channel, 1);
-            expect (usb.getTap (3).kind == UsbRecorder::Tap::Kind::Off);
+            for (int port = 0; port < UsbRecorder::kNumChannels; ++port)
+                expect (usb.getTap (port).kind == UsbRecorder::Tap::Kind::Off);
+            UsbRecorder::Tap main;
+            main.kind = UsbRecorder::Tap::Kind::Strip;
+            main.stripKind = StripKind::Main;
+            main.stripNumber = 1;
+            main.channel = 1;
+            usb.setTap (1, main);
+            auto tap = usb.getTap (1);
+            expect (tap.kind == UsbRecorder::Tap::Kind::Strip && tap.stripKind == StripKind::Main && tap.stripNumber == 1 && tap.channel == 1);
             UsbRecorder::Tap bus;
             bus.kind = UsbRecorder::Tap::Kind::Strip;
             bus.stripKind = StripKind::Bus;

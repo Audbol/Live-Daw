@@ -252,7 +252,7 @@ impl Strip {
             // Buses are numbered by their slot (`id`), whose factory settings differ.
             params: StripParams::new_in_slot(kind, usize::try_from(id).unwrap_or(0)),
             meters: StripMeters::default(),
-            sends: SendBank::default(),
+            sends: SendBank::for_kind(kind),
             name: Mutex::new(String::new()),
             tags: Mutex::new(String::new()),
             console: StripConsole::default(),
