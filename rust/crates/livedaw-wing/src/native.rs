@@ -198,6 +198,9 @@ pub struct Session {
     cursor: Cursor,
     audio: Vec<u8>,
     meter: Vec<u8>,
+    /// The report id of the last `d4` (a collection that arrives after a
+    /// renewal was resolved on its own belongs to it).
+    meter_id: Option<u32>,
     origin: Origin,
     /// Responses for the client (channel 2 payload, unframed).
     pub out: Vec<u8>,
@@ -211,6 +214,7 @@ impl Session {
             cursor: Cursor::Node(Node::Root),
             audio: Vec::new(),
             meter: Vec::new(),
+            meter_id: None,
             origin,
             out: Vec::new(),
             meter_requests: Vec::new(),
@@ -250,6 +254,11 @@ impl Session {
                 Event::Data(..) => {}
             }
         }
+        // A renewal as the protocol document sends it (`df d3 d4 <id>`) has
+        // nothing after it to show where it ends: take it as soon as it is in,
+        // not at the client's next channel switch, which may come after the
+        // meters have timed out.
+        self.flush_meter();
     }
 
     /// Feeds unframed Audio Engine tokens (an OSC blob).
@@ -412,9 +421,10 @@ impl Session {
             }
             0xd4 => {
                 if self.meter.len() < 6 {
-                    return false; // a lone renewal is resolved at the next channel switch
+                    return false; // a lone renewal: see flush_meter
                 }
                 let report_id = u32::from_be_bytes([self.meter[1], self.meter[2], self.meter[3], self.meter[4]]);
+                self.meter_id = Some(report_id);
                 if self.meter[5] != 0xdc {
                     self.meter.drain(..5);
                     self.meter_requests.push(MeterRequest::Renew { report_id });
@@ -424,6 +434,14 @@ impl Session {
                 let meters = decode_meters(&self.meter[6..end]);
                 self.meter.drain(..=end);
                 self.meter_requests.push(MeterRequest::Subscribe { report_id, meters });
+                true
+            }
+            // A collection whose report id came in an earlier read.
+            0xdc if self.meter_id.is_some() => {
+                let Some(end) = self.meter.iter().position(|&b| b == 0xde) else { return false };
+                let meters = decode_meters(&self.meter[1..end]);
+                self.meter.drain(..=end);
+                self.meter_requests.push(MeterRequest::Subscribe { report_id: self.meter_id.unwrap_or(0), meters });
                 true
             }
             _ => {
@@ -436,6 +454,7 @@ impl Session {
     fn flush_meter(&mut self) {
         if self.meter.len() == 5 && self.meter[0] == 0xd4 {
             let report_id = u32::from_be_bytes([self.meter[1], self.meter[2], self.meter[3], self.meter[4]]);
+            self.meter_id = Some(report_id);
             self.meter_requests.push(MeterRequest::Renew { report_id });
             self.meter.clear();
         }

@@ -19,6 +19,30 @@ All notable changes to Sidecar are listed here. Versions follow
   the rest). C ABI 14: `kFaderEmpty` and the user layer slot functions. CONFIG's NEW
   and DELETE keys no longer cover the first slots of a 12-fader section.
 
+- WING REMOTE: dropouts with Mixing Station and WING Edit, found with simulated
+  clients run for minutes (a soak test, `livedaw-wing/tests/soak.rs`, now runs a
+  short version in CI):
+  - A Native client (WING Edit) that read slowly, on busy Wi-Fi or while syncing the
+    tree, held up everything: every change pushed to it waited for its connection,
+    so OSC replies (Mixing Station) stopped for seconds, meters stopped for every
+    client and, after 2 s, the slow client was disconnected (and reconnected, and
+    synced again...). Each Native client now has its own send queue and writer; a
+    client is dropped only when its connection takes nothing for 10 s.
+  - Two OSC remotes (Mixing Station on two tablets, or with Companion) took the
+    event subscription from each other at every renewal, so each stopped seeing
+    changes for up to 10 s at a time. Every OSC client that subscribes is now served,
+    and one that subscribed with a reply port (`/%<port>/*S`) no longer gets its own
+    changes echoed back.
+  - A meter renewal sent as the protocol document shows it (`df d3 d4 <id>`, nothing
+    after it) was applied only at the client's next channel switch: meters froze for
+    about a second after the first 5 s, and again whenever the client was idle.
+  - After a scene recall, the hundreds of OSC events left in one burst and overflowed
+    the client's receive buffer (a quarter of them were lost even on the same
+    computer): they are now paced at 8 per millisecond.
+  - Subscriptions last 20% longer than the console's 10 s (OSC) and 5 s (meters), so
+    a renewal delayed by the network doesn't open a gap.
+  - Windows: a client that went away (its port unreachable) paused the OSC and
+    discovery servers on each error report, delaying the other clients' replies.
 - 1366 x 768 screens: the window opened at 1680 x 1000, off the top and left of a
   laptop screen with the start-up notice's buttons out of reach. It now opens fitted
   and centred in the main display's work area (a size saved on a bigger screen is

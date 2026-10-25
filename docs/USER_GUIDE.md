@@ -622,7 +622,12 @@ and open-source projects (see below), and it is **experimental**.
 - **OSC** (UDP 2223): get and set any parameter by path or by `#id`, toggles, node
   lists, node dumps and descriptions, node strings (`/ch.1.fdr=-3,mute=1`), and the
   `/*s`, `/*S` and `/*b` subscriptions (renew every 10 s). Changes from the UI, scene
-  recalls and other clients are pushed to the subscriber. Replies and descriptions are
+  recalls and other clients are pushed to the subscribers: unlike the console, which
+  serves only the last client to subscribe, Sidecar serves every client that does, so
+  two OSC remotes don't take the event stream from each other. Events after a scene
+  recall are paced (8 per millisecond) so a phone or tablet doesn't drop them. A slow
+  Native client (a tablet on busy Wi-Fi) waits in its own queue and holds up no one
+  else. Replies and descriptions are
   formatted as a WING 3.1 formats them (checked against a factory-set console): values
   with the parameter's fixed decimals and kHz notation (`100.2`, `1k50`, `1k0`),
   running times as `0:00`, descriptions such as `lin [-15.0 .. +15.0 dB], 301 steps`,
