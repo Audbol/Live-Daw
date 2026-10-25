@@ -299,6 +299,22 @@ void Faceplate::bind (models::Table t, int model, std::atomic<float>* v, std::fu
     repaint();
 }
 
+int Faceplate::getNumPages() const noexcept
+{
+    int n = 1;
+    if (design != nullptr)
+        for (const auto& e : design->elements)
+            n = juce::jmax (n, e.page + 1, e.type == fp::Type::Key && e.look == fp::Look::TabKey ? e.choice + 1 : 0);
+    return n;
+}
+
+void Faceplate::setPage (int p)
+{
+    page = juce::jlimit (0, getNumPages() - 1, p);
+    layoutControls();
+    repaint();
+}
+
 void Faceplate::unbind()
 {
     spec = nullptr;

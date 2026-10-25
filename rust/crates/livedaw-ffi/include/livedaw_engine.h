@@ -868,6 +868,11 @@ extern "C"
     /** Static curve of a dynamics model (its transfer graph): the output level for each input
         level in `inDb` (dB; peak or RMS as the model detects). False for models without one. */
     bool ld_dyn_static_curve (int32_t model, const float* values, int32_t numValues, const float* inDb, float* outDb, int32_t count);
+    /** Frequency response (dB at `freqs`) of a model as set, for its front panel's graph: the
+        EQ models (tables 1, 2) and the FX devices that have one (EQ devices and the channel
+        strips' EQ sections, the graphic EQs, the speaker manager). False for the others. */
+    bool ld_model_response (int32_t table, int32_t model, const float* values, int32_t numValues, const float* freqs, float* outDb,
+                            int32_t count);
 
     // Analysis: RTA, LR vector scope, LISTEN
     AnalysisControls* ld_engine_analysis (const Engine*);

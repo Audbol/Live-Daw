@@ -7,6 +7,12 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Added
 
+- Every FX device and processing model now has its own front panel, so none fall back
+  to the generic knob grid. Before this, 49 of them did: 47 FX devices, the PSE/LA
+  COMBO dynamics model and the PIA 560 bus EQ. Each new panel has the controls of
+  every parameter, with the console's captions and value text, laid out in the
+  colours, knobs and print of the unit it recreates. Units with many controls (VSS3,
+  COMBINATOR, SPEAKER MANAGER, TRIPLE DEQ, the channel strips) have pages.
 - WING REMOTE: the parameter tree is finished. Every parameter of the WING 3.1 tree
   but one now answers (68,555 of 68,556, up from 60,555, 88.3 %):
   - Newly driving Sidecar: the LOCAL IN sources (the same ports as AES50 A, as on
@@ -48,6 +54,30 @@ All notable changes to Sidecar are listed here. Versions follow
   which are still taken). A string set over OSC keeps its leading and trailing spaces.
   CH 3's input delay is described in meters like the other channels (the tree had
   caught it in ms). `/play/$actidx` reads 0 with nothing queued, inside its range.
+- The panels have graphs where the unit has something to show:
+  - EQ curves for the graphic EQs, PIA 560, SPEAKER MANAGER and the channel strips'
+    EQ sections. These are computed by the DSP itself, using the new C ABI function
+    `ld_model_response`. No structure changes.
+  - Echoes for the delays.
+  - Envelopes for the reverbs, including gated and reverse.
+  - The LFO for FLANGER, PHASER and TREMOLO.
+  - The filter of the MOOD FILTER.
+  - Limiter and compressor curves.
+  - Band levels for COMBINATOR and SUB MONSTER.
+  - The dynamic EQs (DYNAMIC EQ, DUAL and TRIPLE) now show the range each band can
+    move through and, for cuts, where the gain reduction has it now.
+  - The BDX 902 DE-ESSER shows the band it works on and its live cut.
+- A test checks that every model has a panel and that every parameter has a control
+  on it that moves. With `SIDECAR_FACEPLATE_SNAPSHOT_DIR` set, it also saves every
+  page as a picture. LiveDAWTests now takes one test's name as its argument
+  (`LiveDAWTests Faceplates`).
+
+### Fixed
+
+- Rates below 10 Hz now show two decimals ("0.50 Hz"). LFO speeds used to read
+  "0 Hz".
+- BLUE PLATE's damping readout is labelled kHz. It read HZ.
+- The infinity sign on the BDX 560 and PIA 2250 ratio scales now draws correctly.
 
 - User layers can have blank slots, as on the WING. On VIEW > CONFIG an item dragged
   (or tapped) onto a slot now goes into exactly that slot instead of being packed to

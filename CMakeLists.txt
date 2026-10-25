@@ -219,6 +219,7 @@ target_sources(LiveDAW PRIVATE
     src/ui/Faceplate.cpp
     src/ui/FaceplateDraw.cpp
     src/ui/FaceplateDesigns.cpp
+    src/ui/FaceplateDevices.cpp
     src/ui/MeterComponent.cpp
     src/ui/PluginMenu.cpp
     src/ui/PluginChainView.cpp
@@ -377,4 +378,17 @@ if(LIVEDAW_BUILD_TESTS)
 
     # MIDI remote control and DAW remote control.
     target_sources(LiveDAWTests PRIVATE tests/MidiTests.cpp)
+
+    # The processing models' front panels (FX rack devices, dynamics, EQs).
+    target_sources(LiveDAWTests PRIVATE
+        tests/FaceplateTests.cpp
+        src/ui/Faceplate.cpp
+        src/ui/FaceplateDraw.cpp
+        src/ui/FaceplateDesigns.cpp
+        src/ui/FaceplateDevices.cpp
+        src/ui/ModelParams.cpp
+        src/ui/Knobs.cpp
+        src/ui/DynamicsGraph.cpp
+        src/ui/WingPopups.cpp
+        src/ui/Icons.cpp)
 endif()

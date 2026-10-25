@@ -76,6 +76,14 @@ public:
     std::function<void (int param)> onTouched;
     int getLastTouched() const noexcept { return lastTouched; }
 
+    /** Whether the bound model has a drawn panel (FaceplateDesign.h). */
+    bool hasDesign() const noexcept { return design != nullptr; }
+
+    /** The pages of a tabbed panel (1 for most), and the one shown. */
+    int getNumPages() const noexcept;
+    int getPage() const noexcept { return page; }
+    void setPage (int);
+
     /** Draws only the panel (no controls): for small thumbnails. */
     static void paintThumbnail (juce::Graphics&, juce::Rectangle<float>, models::Table, int model, const juce::String& caption);
 

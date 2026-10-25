@@ -120,4 +120,10 @@ juce::StringArray list (List);
     peak or RMS as the model detects). False for models without a level curve. */
 bool dynStaticCurve (int model, const float* values, int numValues, const float* inDb, float* outDb, int count);
 
+/** The frequency response (dB at `freqs`) of a model as set, for its front
+    panel's graph: the EQ models and the FX devices that have one (EQ devices,
+    the channel strips' EQ sections, the graphic EQs, the speaker manager).
+    False for the others. */
+bool modelResponse (Table, int model, const float* values, int numValues, const float* freqs, float* outDb, int count);
+
 } // namespace livedaw::models

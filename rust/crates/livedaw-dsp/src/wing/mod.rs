@@ -146,6 +146,8 @@ impl ParamSpec {
 fn format_number(v: f32, unit: &str) -> String {
     match unit {
         "Hz" if v >= 1000.0 => format!("{:.2} kHz", v / 1000.0),
+        // LFO rates below 10 Hz ("0.50 Hz"), filter frequencies whole.
+        "Hz" if v < 10.0 => format!("{v:.2} Hz"),
         "Hz" => format!("{v:.0} Hz"),
         "ms" if v >= 1000.0 => format!("{:.2} s", v / 1000.0),
         "ms" if v < 10.0 => format!("{v:.1} ms"),
