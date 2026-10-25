@@ -23,6 +23,11 @@ bool dynStaticCurve (int model, const float* values, int numValues, const float*
     return ld::ld_dyn_static_curve (model, values, numValues, inDb, outDb, count);
 }
 
+bool modelResponse (Table t, int model, const float* values, int numValues, const float* freqs, float* outDb, int count)
+{
+    return ld::ld_model_response (t, model, values, numValues, freqs, outDb, count);
+}
+
 int Model::find (const juce::String& id) const noexcept
 {
     for (size_t i = 0; i < params.size(); ++i)

@@ -47,7 +47,15 @@ int main (int argc, char** argv)
     } runner;
     runner.setAssertOnFailure (false);
 
+    // An argument names a category, or one test ("Faceplates").
+    juce::Array<juce::UnitTest*> named;
     if (argc > 1)
+        for (auto* t : juce::UnitTest::getAllTests())
+            if (t->getName() == juce::String (argv[1]))
+                named.add (t);
+    if (! named.isEmpty())
+        runner.runTests (named);
+    else if (argc > 1)
         runner.runTestsInCategory (argv[1]);
     else
         runner.runTestsInCategory ("LiveDAW");
