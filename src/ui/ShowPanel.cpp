@@ -5,6 +5,64 @@
 namespace livedaw::ui
 {
 
+namespace
+{
+    /** [3.1] The LIBRARY list's scroll column: 44 px of panel right of the rows
+        with a 26 x 16 ▲ over a black 32 px track (a 22 px #707070 thumb) and a
+        ▼ under it; the arrows and thumb go black while there is nothing to scroll. */
+    class LibraryScrollLook final : public juce::LookAndFeel_V4
+    {
+    public:
+        bool areScrollbarButtonsVisible() override { return true; }
+        int getScrollbarButtonSize (juce::ScrollBar& bar) override { return juce::roundToInt ((float) bar.getWidth() * 26.0f / 44.0f); }
+        int getMinimumScrollbarThumbSize (juce::ScrollBar& bar) override { return bar.getWidth(); }
+
+        static bool canScroll (juce::ScrollBar& bar) { return bar.getCurrentRange().getLength() < bar.getRangeLimit().getLength(); }
+
+        void drawScrollbarButton (juce::Graphics& g, juce::ScrollBar& bar, int width, int height, int direction, bool, bool, bool) override
+        {
+            g.fillAll (Dark::body);
+            const float u = (float) width / 44.0f;
+            const bool up = direction == 0;
+            auto tri = juce::Rectangle<float> (9.0f * u, up ? 0.0f : (float) height - 16.0f * u, 26.0f * u, 16.0f * u);
+            juce::Path p;
+            if (up)
+                p.addTriangle (tri.getX(), tri.getBottom(), tri.getRight(), tri.getBottom(), tri.getCentreX(), tri.getY());
+            else
+                p.addTriangle (tri.getX(), tri.getY(), tri.getRight(), tri.getY(), tri.getCentreX(), tri.getBottom());
+            g.setColour (canScroll (bar) ? Dark::textDim : juce::Colours::black);
+            g.fillPath (p);
+        }
+
+        void drawScrollbar (juce::Graphics& g, juce::ScrollBar& bar, int x, int y, int width, int height, bool, int thumbStart, int thumbSize, bool, bool) override
+        {
+            const float u = (float) width / 44.0f;
+            g.setColour (Dark::body);
+            g.fillRect (x, y, width, height);
+            g.setColour (juce::Colours::black);
+            g.fillRect (juce::Rectangle<float> ((float) x + 6.0f * u, (float) y, 32.0f * u, (float) height));
+            if (canScroll (bar) && thumbSize > 0)
+            {
+                g.setColour (Dark::textDim);
+                g.fillRect (juce::Rectangle<float> ((float) x + 11.0f * u, (float) thumbStart + 5.0f * u, 22.0f * u, juce::jmax (2.0f, (float) thumbSize - 10.0f * u)));
+            }
+        }
+    };
+
+    LibraryScrollLook& libraryScrollLook()
+    {
+        static LibraryScrollLook look;
+        return look;
+    }
+
+    void styleLibraryScrollBar (juce::ListBox& list)
+    {
+        auto& bar = list.getVerticalScrollBar();
+        bar.setLookAndFeel (&libraryScrollLook());
+        bar.setAutoHide (false);
+    }
+} // namespace
+
 //==============================================================================
 class ShowPanel::List final : public juce::ListBox, private juce::ListBoxModel
 {
@@ -14,11 +72,14 @@ public:
         setModel (this);
         setColour (backgroundColourId, juce::Colours::black);
         setColour (outlineColourId, juce::Colours::transparentBlack);
-        getVerticalScrollBar().setColour (juce::ScrollBar::thumbColourId, Dark::key);
-        getVerticalScrollBar().setColour (juce::ScrollBar::backgroundColourId, Dark::body);
+        styleLibraryScrollBar (*this);
     }
 
-    ~List() override { setModel (nullptr); }
+    ~List() override
+    {
+        getVerticalScrollBar().setLookAndFeel (nullptr);
+        setModel (nullptr);
+    }
 
     std::vector<Item> rows;
     int filter = 0;
@@ -216,11 +277,14 @@ public:
         setModel (this);
         setColour (backgroundColourId, Dark::body);
         setColour (outlineColourId, juce::Colours::transparentBlack);
-        getVerticalScrollBar().setColour (juce::ScrollBar::thumbColourId, Dark::key);
-        getVerticalScrollBar().setColour (juce::ScrollBar::backgroundColourId, Dark::body);
+        styleLibraryScrollBar (*this);
     }
 
-    ~FileList() override { setModel (nullptr); }
+    ~FileList() override
+    {
+        getVerticalScrollBar().setLookAndFeel (nullptr);
+        setModel (nullptr);
+    }
 
     struct Entry
     {
@@ -274,7 +338,8 @@ public:
                 else if (typeOf (f, chip, colour))
                     items.push_back ({ f, false, false });
             }
-            auto byName = [] (const Entry& a, const Entry& b) { return a.file.getFileName().compareNatural (b.file.getFileName()) < 0; };
+            // By name without the extension, as on the console ("MARCUS DEFAULT" before "MARCUS DEFAULT 3.0").
+            auto byName = [] (const Entry& a, const Entry& b) { return a.file.getFileNameWithoutExtension().compareNatural (b.file.getFileNameWithoutExtension()) < 0; };
             std::sort (dirs.begin(), dirs.end(), byName);
             std::sort (items.begin(), items.end(), [this, byName] (const Entry& a, const Entry& b)
             {
@@ -357,20 +422,23 @@ private:
         {
             // The name as it is, in light blue, an outlined folder and the > key at the right.
             const juce::Colour folderInk (0xffa0b8e0);
-            auto key = r.removeFromRight (r.getHeight() * 0.64f);
+            // [3.1] in a 50 px row: a 32 px key with a 15 x 26 chevron drawn
+            // 3 px thick, the folder 34 x 29 ending 12 px left of the key.
+            const float u = r.getHeight() / 50.0f;
+            auto key = r.removeFromRight (32.0f * u);
             g.setColour (juce::Colour (0xff282c38));
             g.fillRect (key);
             const auto kc = key.getCentre();
-            const float a = key.getHeight() * 0.16f;
             juce::Path chevron;
-            chevron.startNewSubPath (kc.x - a * 0.5f, kc.y - a);
-            chevron.lineTo (kc.x + a * 0.5f, kc.y);
-            chevron.lineTo (kc.x - a * 0.5f, kc.y + a);
+            chevron.startNewSubPath (kc.x - 7.5f * u, kc.y - 13.0f * u);
+            chevron.lineTo (kc.x + 7.5f * u, kc.y);
+            chevron.lineTo (kc.x - 7.5f * u, kc.y + 13.0f * u);
             g.setColour (folderInk);
-            g.strokePath (chevron, juce::PathStrokeType (juce::jmax (1.5f, a * 0.3f)));
-            t = t.withRight (key.getX());
-            drawIcon (g, Icon::Folder, t.removeFromRight (t.getHeight() * 1.1f).reduced (t.getHeight() * 0.12f), folderInk);
-            g.setFont (wingFontFit (TypeScale::value * 1.15f, t.getHeight() * 0.62f, WingWeight::SemiBold));
+            g.strokePath (chevron, juce::PathStrokeType (juce::jmax (1.5f, 3.0f * u)));
+            const auto folderIcon = juce::Rectangle<float> (key.getX() - 46.0f * u, r.getY() + 10.0f * u, 34.0f * u, 29.0f * u);
+            t = t.withRight (folderIcon.getX());
+            drawIcon (g, Icon::Folder, folderIcon.expanded (5.0f * u), folderInk);
+            g.setFont (wingFontPx ((float) height * 20.0f / 56.0f, WingWeight::SemiBold));
             g.drawFittedText (e.parent ? juce::String ("..") : e.file.getFileName(), t.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
             return;
         }
@@ -379,21 +447,23 @@ private:
         juce::Colour colour;
         typeOf (e.file, chipText, colour);
         const bool normal = filter.isNotEmpty() && e.file.hasFileExtension (filter);
-        // The type chip with the date and time under it.
-        // [Fig. 46] the type chip with the date beside it and the time under the date.
-        const float chipW = juce::jmin (screenCap (46.0f), t.getWidth() * 0.16f), chipH = juce::jlimit (12.0f, screenCap (18.0f), t.getHeight() * 0.42f);
-        auto dateColumn = t.removeFromRight (juce::jmin (t.getWidth() * 0.4f, chipW + t.getHeight() * 2.1f));
-        auto top = dateColumn.removeFromTop (dateColumn.getHeight() * 0.5f);
-        auto chip = top.removeFromLeft (chipW).withSizeKeepingCentre (chipW, chipH);
-        drawChip (g, chip, chipText, colour.withMultipliedAlpha (normal ? 1.0f : 0.45f), juce::Colours::black);
+        // [Fig. 46, 3.1] in a 56 px row: the 48 x 21 type chip 3 px down, ending
+        // 102 px from the row's right; the date (11 px caps) right-aligned 8 px
+        // in, 7 px down, the time under it at 32; names with 20 px caps. A row
+        // of another type is greyed: #606060 names, darker chip and date.
+        const float u = (float) height / 56.0f;
+        auto chip = juce::Rectangle<float> (r.getRight() - 150.0f * u, r.getY() + 3.0f * u, 48.0f * u, 21.0f * u);
+        drawChip (g, chip, chipText, colour.withMultipliedBrightness (normal ? 1.0f : 0.45f), juce::Colours::black);
         const auto time = e.file.getLastModificationTime();
-        g.setColour (Dark::textDim.withMultipliedAlpha (normal ? 1.0f : 0.7f));
-        g.setFont (wingFontFit (TypeScale::caption, top.getHeight() * 0.6f));
-        g.drawFittedText (time.formatted ("%Y-%m-%d"), top.toNearestInt(), juce::Justification::centredRight, 1, 0.8f);
-        g.drawFittedText (time.formatted ("%H:%M:%S"), dateColumn.toNearestInt(), juce::Justification::centredRight, 1, 0.8f);
+        g.setColour (normal ? Colours::chipOff : juce::Colour (0xff282c28));
+        g.setFont (wingFontPx (11.0f * u));
+        const auto dateArea = juce::Rectangle<float> (chip.getRight() + 4.0f * u, r.getY(), r.getRight() - 8.0f * u - chip.getRight() - 4.0f * u, 24.0f * u);
+        g.drawFittedText (time.formatted ("%Y-%m-%d"), dateArea.toNearestInt(), juce::Justification::centredRight, 1, 0.8f);
+        g.drawFittedText (time.formatted ("%H:%M:%S"), dateArea.translated (0.0f, 25.0f * u).toNearestInt(), juce::Justification::centredRight, 1, 0.8f);
+        t = t.withRight (chip.getX() - 4.0f * u);
 
-        g.setColour (normal ? Dark::text : Dark::textDim.withAlpha (0.6f));
-        g.setFont (wingFontFit (TypeScale::value * 1.15f, t.getHeight() * 0.62f, WingWeight::SemiBold));
+        g.setColour (normal ? Dark::caption : juce::Colour (0xff606060));
+        g.setFont (wingFontPx (20.0f * u, WingWeight::SemiBold));
         g.drawFittedText (e.file.getFileNameWithoutExtension().toUpperCase(), t.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
     }
 
@@ -474,6 +544,9 @@ ShowPanel::ShowPanel (UiContext& c) : ctx (c)
     folderKey.onClick = [this] { newFolder(); };
     fileRenameKey.onClick = [this] { renameFile(); };
     deleteKey.onClick = [this] { deleteFile(); };
+    // [3.1] TYPE / ↓ / NAME in print, and the calendar alone.
+    sortTypeKey.faceLines = juce::StringArray { "TYPE", "|", "NAME" }; // "|": a drawn arrow
+    sortDateKey.iconOnly = true;
     sortTypeKey.litColour = Dark::choice;
     sortTypeKey.isLit = [this] { return ! files->byDate; };
     sortTypeKey.onClick = [this] { files->byDate = false; files->rebuild(); };
@@ -827,10 +900,15 @@ void ShowPanel::resized()
     listArea = b;
     const int inner = juce::jmax (2, juce::roundToInt (wingPx (6.0f)));
     const int rowH = juce::jmax (24, juce::roundToInt (wingPx (56.0f)));
-    list->setRowHeight (rowH);
-    list->setBounds (listArea.reduced (inner));
-    files->setRowHeight (rowH);
-    files->setBounds (listArea.reduced (inner));
+    // The rows end 44 px short of the frame's right edge: the scroll column.
+    const auto rowsArea = listArea.reduced (inner).withRight (listArea.getRight());
+    const int scrollW = juce::roundToInt ((float) listArea.getWidth() * 44.0f / 648.0f);
+    for (juce::ListBox* l : { static_cast<juce::ListBox*> (list.get()), static_cast<juce::ListBox*> (files.get()) })
+    {
+        l->setRowHeight (rowH);
+        l->getViewport()->setScrollBarThickness (scrollW);
+        l->setBounds (rowsArea);
+    }
 
     auto t = toolbar.reduced (px (4.0f), juce::roundToInt ((float) toolbar.getHeight() / 16.0f));
     const int w = px (60.0f);

@@ -209,34 +209,49 @@ namespace
     /** Two tape reels with the tape between them; `angle` turns the spokes. */
     void reels (juce::Graphics& g, juce::Rectangle<float> area, double angle, bool running)
     {
-        const float d = juce::jmin (area.getHeight() * 0.86f, area.getWidth() * 0.46f);
-        const float gapX = area.getWidth() * 0.02f;
+        // [3.1] two reels 8 px apart (71 px across): the rim, a hub ring of
+        // 0.35 d round a light 0.155 d hub, three spokes out towards the rim;
+        // the tape runs from under each reel down over guide rollers to the
+        // white head between them, 0.58 d under the reels' centres.
+        const float d = juce::jmin (area.getHeight() * 0.9f, area.getWidth() * 0.47f);
+        const float gapX = d * 4.0f / 71.0f;
         const float cx1 = area.getCentreX() - d * 0.5f - gapX, cx2 = area.getCentreX() + d * 0.5f + gapX, cy = area.getY() + d * 0.5f;
-        const float t = juce::jmax (1.2f, d * 0.035f);
+        const float t = juce::jmax (1.2f, d * 0.04f);
         const auto ink = running ? reelGrey.brighter (0.25f) : reelGrey;
+        const auto light = juce::Colour (0xffa0a4a0);
         for (const float cx : { cx1, cx2 })
         {
             g.setColour (ink);
-            g.drawEllipse (juce::Rectangle<float> (d, d).withCentre ({ cx, cy }), t);
-            g.drawEllipse (juce::Rectangle<float> (d * 0.62f, d * 0.62f).withCentre ({ cx, cy }), t * 0.8f);
-            g.fillEllipse (juce::Rectangle<float> (d * 0.18f, d * 0.18f).withCentre ({ cx, cy }));
+            g.drawEllipse (juce::Rectangle<float> (d, d).withCentre ({ cx, cy }).reduced (t * 0.5f), t);
+            g.drawEllipse (juce::Rectangle<float> (d * 0.35f, d * 0.35f).withCentre ({ cx, cy }), t * 0.6f);
+            g.setColour (light);
+            g.fillEllipse (juce::Rectangle<float> (d * 0.155f, d * 0.155f).withCentre ({ cx, cy }));
             for (int k = 0; k < 3; ++k)
             {
                 const auto a = (float) (angle + k * juce::MathConstants<double>::twoPi / 3.0);
-                g.drawLine (cx + std::cos (a) * d * 0.12f, cy + std::sin (a) * d * 0.12f, cx + std::cos (a) * d * 0.31f, cy + std::sin (a) * d * 0.31f,
+                g.drawLine (cx + std::cos (a) * d * 0.24f, cy + std::sin (a) * d * 0.24f, cx + std::cos (a) * d * 0.40f, cy + std::sin (a) * d * 0.40f,
                             t * 1.4f);
             }
         }
-        // The tape along the bottom, over a guide roller.
-        const float by = cy + d * 0.5f;
-        g.setColour (ink.withAlpha (0.8f));
-        g.drawLine (cx1, by, cx2, by, t * 0.8f);
-        g.setColour (juce::Colours::white);
-        const float roller = d * 0.09f;
-        g.fillEllipse (juce::Rectangle<float> (roller, roller).withCentre ({ area.getCentreX() + d * 0.15f, by }));
+        // The tape and its rollers.
+        const float by = cy + d * 0.58f, roller = d * 0.1f;
+        const float x0 = cx1 - d * 0.105f, x1 = cx1 + d * 0.15f, x2 = cx2 - d * 0.16f, x3 = cx2 + d * 0.105f;
         g.setColour (ink);
-        g.fillEllipse (juce::Rectangle<float> (roller * 0.8f, roller * 0.8f).withCentre ({ cx1 + d * 0.2f, by }));
-        g.fillEllipse (juce::Rectangle<float> (roller * 0.8f, roller * 0.8f).withCentre ({ cx2 - d * 0.2f, by }));
+        juce::Path tape;
+        tape.startNewSubPath (cx1 - d * 0.40f, cy + d * 0.25f);
+        tape.lineTo (x0, by);
+        tape.lineTo (x3, by);
+        tape.lineTo (cx2 + d * 0.40f, cy + d * 0.25f);
+        g.strokePath (tape, juce::PathStrokeType (t * 0.6f));
+        for (const float x : { x0, x1, x2, x3 })
+        {
+            g.setColour (Colours::screenPanel);
+            g.fillEllipse (juce::Rectangle<float> (roller, roller).withCentre ({ x, by }));
+            g.setColour (light);
+            g.drawEllipse (juce::Rectangle<float> (roller, roller).withCentre ({ x, by }), t * 0.5f);
+        }
+        g.setColour (juce::Colours::white);
+        g.fillRect (juce::Rectangle<float> (d * 0.11f, d * 0.11f).withCentre ({ area.getCentreX(), by }));
     }
 
     /** The recorder's and player's meter scale in segments from the bottom:
@@ -1140,12 +1155,23 @@ void UsbRecorderPage::paintList (juce::Graphics& g)
     // A folder's > key: its icon left of it.
     auto folderKeys = [&] (juce::Rectangle<int> inner, Icon arrow)
     {
+        // [3.1] in a 50 px row: a 15 x 26 chevron drawn 3 px thick in the
+        // 32 px key, the folder 34 x 29 ending 12 px left of the key, 10 px down.
         auto key = inner.removeFromRight (openKeyWidth());
         g.setColour (openKey);
         g.fillRect (key);
-        drawIcon (g, arrow, key.toFloat().reduced ((float) key.getWidth() * 0.2f), folderBlue);
-        auto icon = inner.removeFromRight (inner.getHeight() * 9 / 10).toFloat().reduced ((float) inner.getHeight() * 0.18f);
-        drawIcon (g, Icon::Folder, icon, folderBlue);
+        const float wu = (float) inner.getHeight() / 50.0f;
+        const auto kc = key.getCentre().toFloat();
+        const float dx = (arrow == Icon::ChevronLeft ? -7.5f : 7.5f) * wu;
+        juce::Path chevron;
+        chevron.startNewSubPath (kc.x - dx, kc.y - 13.0f * wu);
+        chevron.lineTo (kc.x + dx, kc.y);
+        chevron.lineTo (kc.x - dx, kc.y + 13.0f * wu);
+        g.setColour (folderBlue);
+        g.strokePath (chevron, juce::PathStrokeType (juce::jmax (1.5f, 3.0f * wu)));
+        auto icon = juce::Rectangle<float> ((float) key.getX() - 46.0f * wu, (float) inner.getY() + 10.0f * wu, 34.0f * wu, 29.0f * wu);
+        drawIcon (g, Icon::Folder, icon.expanded (5.0f * wu), folderBlue); // (the glyph has a margin)
+        inner.setRight ((int) icon.getX());
         return inner;
     };
     // In a folder of the stick: its row first, the key back up at its right.
@@ -1165,14 +1191,19 @@ void UsbRecorderPage::paintList (juce::Graphics& g)
     const auto current = u.getCurrentFile();
     const auto playState = u.getPlayState();
     const auto recFile = u.isRecording() ? u.getRecFile() : juce::File();
-    for (int v = 0; v <= n; ++v)
+    for (int v = 0; v <= n + 1; ++v)
     {
         auto r = rowArea (v);
-        if (r.getBottom() > rowsArea.getBottom() + 1)
+        if (r.getBottom() - gap > rowsArea.getBottom() + 1)
             break;
         const int index = scroll + v;
         if (! juce::isPositiveAndBelow (index, (int) rows.size()))
+        {
+            // [3.1] the empty rows under the list are black boxes too.
+            g.setColour (juce::Colours::black);
+            g.fillRect (r.withTrimmedBottom (gap));
             continue;
+        }
         const auto& row = rows[(size_t) index];
         auto inner = r.withTrimmedBottom (gap);
         g.setColour (index == selected ? selectedFill : juce::Colours::black);
@@ -1441,10 +1472,10 @@ void UsbRecorderPage::paintPlayer (juce::Graphics& g)
         g.fillRoundedRectangle (light, light.getHeight() * 0.12f);
     }
     const auto pos = u.getPosition();
-    const auto ink = known ? timeRed : timeRed.withAlpha (0.08f);
-    const float end = sevenSegment (g, playTime.toFloat(), timeText (pos, u.getSampleRate()), ink, juce::Justification::left);
-    sevenSegment (g, playRest.toFloat().withRight (end), clockText (juce::jmax<int64_t> (0, length - pos), u.getSampleRate()),
-                  known ? timeRed : timeRed.withAlpha (0.45f), juce::Justification::right);
+    // [3.1] lit red even with no clip chosen (0 00 00 over 00 00 00).
+    const float end = sevenSegment (g, playTime.toFloat(), timeText (pos, u.getSampleRate()), timeRed, juce::Justification::left);
+    sevenSegment (g, playRest.toFloat().withRight (end), clockText (juce::jmax<int64_t> (0, length - pos), u.getSampleRate()), timeRed,
+                  juce::Justification::right);
     reels (g, playReels.toFloat(), reelAngle[1], state == UsbRecorder::PlayState::Playing);
 
     // The format chips: WAV | 4-CH over 48K | 24 bit (the rate in orange when

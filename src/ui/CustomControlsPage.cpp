@@ -591,13 +591,18 @@ namespace
 
     void outlinedKey (juce::Graphics& g, juce::Rectangle<int> r, Icon icon, const juce::String& text, bool enabled = true)
     {
-        const auto ink = enabled ? Dark::text : Dark::textDim.withAlpha (0.5f);
-        g.setColour (ink.withAlpha (0.8f));
-        g.drawRect (r.toFloat(), 1.5f);
-        auto inner = r.reduced (6, 4);
-        drawIcon (g, icon, inner.removeFromLeft (inner.getHeight()).toFloat().reduced (2.0f), ink);
+        // [3.1] a #303030 key in a 1 px #c0c0c0 frame, the icon in its left
+        // 52 px (34 px tall) and the caption centred in the rest.
+        const auto ink = enabled ? Dark::caption : Dark::textDim.withAlpha (0.5f);
+        g.setColour (Dark::key);
+        g.fillRect (r);
         g.setColour (ink);
-        g.setFont (juce::FontOptions (juce::jlimit (10.0f, 18.0f, (float) inner.getHeight() * 0.5f), juce::Font::bold));
+        g.drawRect (r, 1);
+        auto inner = r;
+        auto iconArea = inner.removeFromLeft (juce::roundToInt (wingPx (52.0f)));
+        drawIcon (g, icon, iconArea.withSizeKeepingCentre (juce::roundToInt (wingPx (34.0f)), juce::roundToInt (wingPx (34.0f))).toFloat(), ink);
+        g.setColour (ink);
+        g.setFont (wingFontPx (wingPx (14.0f)));
         g.drawFittedText (text, inner, juce::Justification::centred, 1);
     }
 } // namespace
@@ -1053,9 +1058,10 @@ void CustomControlsPage::layoutList (ListColumn& l, juce::Rectangle<int> area)
     l.header = area.removeFromTop (juce::roundToInt (wingPx (64.0f)));
     area.removeFromTop (juce::roundToInt (wingPx (8.0f)));
     auto keys = area.removeFromBottom (juce::roundToInt (wingPx (40.0f)));
-    const int kh = juce::roundToInt (wingPx (16.0f)), kw = juce::roundToInt (wingPx (28.0f));
-    l.upKey = juce::Rectangle<int> (area.getCentreX() - kw - juce::roundToInt (wingPx (6.0f)), keys.getCentreY() - kh / 2, kw, kh);
-    l.downKey = l.upKey.withX (area.getCentreX() + juce::roundToInt (wingPx (6.0f)));
+    // [3.1] ▲ 39 to 9 px left of the column's centre, ▼ 1 to 31 px right of it, 16 px from the list.
+    const int kh = juce::roundToInt (wingPx (16.0f)), kw = juce::roundToInt (wingPx (30.0f));
+    l.upKey = juce::Rectangle<int> (area.getCentreX() - juce::roundToInt (wingPx (39.0f)), keys.getY() + juce::roundToInt (wingPx (16.0f)), kw, kh);
+    l.downKey = l.upKey.withX (area.getCentreX() + juce::roundToInt (wingPx (1.0f)));
     l.body = area;
     l.rowAreas.clear();
     const int pad = juce::roundToInt (wingPx (8.0f));
@@ -1109,6 +1115,21 @@ void CustomControlsPage::resized()
     const int cw = m.getWidth() / cc::kNumControls;
     const bool keysOnly = cc::isLowerLayer (layer);
     const int rowH = m.getHeight() / (keysOnly ? 2 : 3);
+    if (! keysOnly)
+    {
+        // [3.1] columns 82 px wide on a 90 px pitch from x 20: the 8 px colour
+        // bar at y 252, the encoder (its tile at the bottom) at 265-336, the
+        // keys at 340-408 and 408-476 (each key 18 px down).
+        for (int i = 0; i < cc::kNumControls; ++i)
+        {
+            const float x = 20.0f + 90.0f * (float) i;
+            colourBars.push_back (rect (x, 252.0f, x + 82.0f, 260.0f));
+            elements.push_back ({ rect (x, 265.0f, x + 82.0f, 336.0f), i, cc::Slot::Encoder });
+            elements.push_back ({ rect (x, 340.0f, x + 82.0f, 408.0f), i, cc::Slot::Upper });
+            elements.push_back ({ rect (x, 408.0f, x + 82.0f, 476.0f), i, cc::Slot::Lower });
+        }
+        return;
+    }
     for (int i = 0; i < cc::kNumControls; ++i)
     {
         auto col = juce::Rectangle<int> (m.getX() + i * cw, m.getY(), cw, m.getHeight()).reduced (4, 0);
@@ -1130,7 +1151,7 @@ void CustomControlsPage::paintList (juce::Graphics& g, ListColumn& l, bool focus
     }
     g.setColour (Dark::header);
     g.fillRect (l.header);
-    g.setColour (Dark::text);
+    g.setColour (Dark::caption);
     g.setFont (panelTitleFont (l.header.getHeight()));
     g.drawFittedText (l.title, l.header.reduced (6, 0), juce::Justification::centred, 1);
     g.setColour (Dark::body);
@@ -1157,7 +1178,7 @@ void CustomControlsPage::paintList (juce::Graphics& g, ListColumn& l, bool focus
                     drawStripIcon (g, *s, icon.withWidth (icon.getHeight()).toFloat().reduced ((float) icon.getHeight() * 0.2f), Dark::text);
                 }
         }
-        g.setColour (enabled ? Dark::text : Dark::textDim.withAlpha (0.45f));
+        g.setColour (enabled ? Dark::caption : Dark::textDim.withAlpha (0.45f));
         g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), (float) r.getHeight() * 0.3f))); // [D1]
         if (l.rows[row].containsChar ('\t'))
         {
@@ -1204,14 +1225,14 @@ void CustomControlsPage::paintList (juce::Graphics& g, ListColumn& l, bool focus
     }
     for (auto [r, up] : { std::pair { l.upKey, true }, std::pair { l.downKey, false } })
     {
+        // [3.1] a 30 x 16 triangle filling the key.
         juce::Path tri;
-        const auto c = r.getCentre().toFloat();
-        const float s = (float) r.getHeight() * 0.32f;
+        const auto k = r.toFloat();
         if (up)
-            tri.addTriangle (c.x - s, c.y + s * 0.6f, c.x + s, c.y + s * 0.6f, c.x, c.y - s * 0.6f);
+            tri.addTriangle (k.getX(), k.getBottom(), k.getRight(), k.getBottom(), k.getCentreX(), k.getY());
         else
-            tri.addTriangle (c.x - s, c.y - s * 0.6f, c.x + s, c.y - s * 0.6f, c.x, c.y + s * 0.6f);
-        g.setColour (focused ? Dark::text : Dark::textDim);
+            tri.addTriangle (k.getX(), k.getY(), k.getRight(), k.getY(), k.getCentreX(), k.getBottom());
+        g.setColour (focused ? Dark::textDim : Dark::textDim.withAlpha (0.5f));
         g.fillPath (tri);
     }
 }
@@ -1220,7 +1241,7 @@ void CustomControlsPage::paintLayer (juce::Graphics& g)
 {
     g.setColour (Dark::header);
     g.fillRect (layerHeader);
-    g.setColour (Dark::text);
+    g.setColour (Dark::caption);
     g.setFont (panelTitleFont (layerHeader.getHeight()));
     g.drawText (cc::layerName (layer), layerHeader, juce::Justification::centred);
     g.setColour (Dark::body);
@@ -1237,40 +1258,47 @@ void CustomControlsPage::paintLayer (juce::Graphics& g)
         const auto c = assignments.get (layer, e.index);
         const auto& f = c.slot (e.slot);
         auto r = e.area;
-        auto caption = r.removeFromTop (juce::jmax (12, r.getHeight() * 28 / 100));
+        const bool keysOnly = cc::isLowerLayer (layer);
+        // [3.1] the encoder a 52 px tile 2 px above the element's bottom, a key
+        // 40 px (a #707070 cap in a 4 px #303030 frame) 18 px from its top.
+        const int s = keysOnly ? juce::jmin (r.getHeight() - 4, r.getWidth() * 2 / 3)
+                               : juce::roundToInt (wingPx (e.slot == cc::Slot::Encoder ? 52.0f : 40.0f));
+        auto square = keysOnly ? r.withSizeKeepingCentre (s, s)
+                     : (e.slot == cc::Slot::Encoder ? juce::Rectangle<int> (r.getCentreX() - s / 2, r.getBottom() - juce::roundToInt (wingPx (2.0f)) - s, s, s)
+                                                    : juce::Rectangle<int> (r.getCentreX() - s / 2, r.getY() + juce::roundToInt (wingPx (18.0f)), s, s));
+        auto caption = r.withBottom (square.getY());
         juce::String text = e.slot == cc::Slot::Encoder && c.name.isNotEmpty() ? c.name : cc::describe (ctx, e.slot, f);
-        g.setColour (Dark::text);
-        g.setFont (juce::FontOptions (juce::jlimit (8.0f, 14.0f, (float) caption.getHeight() * 0.8f)));
+        g.setColour (Dark::caption);
+        g.setFont (wingFontPx (juce::jlimit (6.0f, wingPx (11.0f), (float) caption.getHeight() * 0.6f)));
         g.drawFittedText (text.removeCharacters ("|*"), caption, juce::Justification::centredBottom, 1, 0.6f);
-        const int s = juce::jmin (r.getHeight() - 4, r.getWidth() * 2 / 3);
-        auto square = r.withSizeKeepingCentre (s, s);
         if (e.slot == cc::Slot::Encoder)
         {
-            // A #303030 tile in a black frame.
+            // A panel-coloured tile in a 2 px black frame.
+            const int frame = juce::jmax (1, juce::roundToInt (wingPx (2.0f)));
             g.setColour (juce::Colours::black);
             g.fillRect (square);
-            g.setColour (Dark::key);
-            g.fillRect (square.reduced (1));
-            // A knob: a ring open at the bottom.
-            auto k = square.toFloat().reduced ((float) s * 0.18f);
+            g.setColour (Dark::body);
+            g.fillRect (square.reduced (frame));
+            // A knob: a thick ring open at the bottom (8 of 52 px, 34 px across).
+            const auto k = square.toFloat();
+            const float radius = (float) s * 13.0f / 52.0f, stroke = (float) s * 8.0f / 52.0f;
             juce::Path ring;
-            ring.addCentredArc (k.getCentreX(), k.getCentreY(), k.getWidth() * 0.4f, k.getWidth() * 0.4f, 0.0f, juce::MathConstants<float>::pi * 1.2f,
+            ring.addCentredArc (k.getCentreX(), k.getCentreY(), radius, radius, 0.0f, juce::MathConstants<float>::pi * 1.2f,
                                 juce::MathConstants<float>::pi * 2.8f, true);
-            g.setColour (f.isAssigned() ? keyGrey : unsetGrey);
-            g.strokePath (ring, juce::PathStrokeType (juce::jmax (3.0f, (float) s * 0.12f)));
+            g.setColour (f.isAssigned() ? keyGrey : Colours::screenLine);
+            g.strokePath (ring, juce::PathStrokeType (stroke));
         }
         else
         {
-            auto key = square.reduced (s / 6);
-            g.setColour (Dark::body.darker (0.4f));
+            g.setColour (Dark::key);
             g.fillRect (square);
             g.setColour (f.isAssigned() ? keyGrey : unsetGrey);
-            g.fillRect (key);
+            g.fillRect (square.reduced (juce::jmax (1, s / 10)));
         }
         if (e.index == index && e.slot == slot)
         {
             g.setColour (Colours::yellow);
-            g.drawRect (e.area.expanded (2).toFloat(), 2.0f);
+            g.drawRect (e.area.expanded (2).toFloat(), juce::jmax (2.0f, wingPx (3.0f)));
         }
     }
 }
@@ -1284,7 +1312,7 @@ void CustomControlsPage::paint (juce::Graphics& g)
     g.fillRect (header);
     arrowKey (g, prevKey, false);
     arrowKey (g, nextKey, true);
-    for (auto [r, text, enabled] : { std::tuple { userKey, "USER", true }, std::tuple { gpioKey, "GPIO", false } })
+    for (auto [r, text, enabled] : { std::tuple { userKey, "USER", true }, std::tuple { gpioKey, "GPIO", true } })
     {
         g.setColour (juce::Colours::black);
         g.fillRect (r);
@@ -1294,8 +1322,8 @@ void CustomControlsPage::paint (juce::Graphics& g)
         g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), (float) r.getHeight() * 0.3f)));
         g.drawText (text, r, juce::Justification::centred);
     }
-    g.setColour (Dark::text);
-    g.setFont (wingFontPx (juce::jmin (TypeScale::statusTitle * getWingScreenHeight() * 0.8f, (float) title.getHeight() * 0.36f), WingWeight::SemiBold));
+    g.setColour (Dark::caption);
+    g.setFont (wingFontPx (juce::jmin (wingPx (19.0f), (float) title.getHeight() * 0.36f)));
     g.drawText ("CUSTOM CONTROLS", title, juce::Justification::centred);
 
     paintLayer (g);

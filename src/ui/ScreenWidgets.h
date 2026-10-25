@@ -174,6 +174,10 @@ public:
     std::function<bool()> isLit;
     std::function<juce::String()> caption; // overrides the text (SHOW: "5 SCNS")
     juce::Colour litColour = Dark::on;
+    /** Lines of print instead of the icon and caption (LIBRARY's TYPE / ↓ / NAME). */
+    juce::StringArray faceLines;
+    /** The icon alone, filling the key (LIBRARY's sort-by-date key). */
+    bool iconOnly = false;
 
     void paintButton (juce::Graphics& g, bool over, bool down) override
     {
@@ -187,6 +191,34 @@ public:
         auto c = lit ? juce::Colours::black : ink;
         if (! isEnabled())
             c = c.withAlpha (0.3f);
+        if (! faceLines.isEmpty())
+        {
+            g.setColour (c);
+            g.setFont (wingFontPx (r.getHeight() * 0.17f));
+            const float lineH = r.getHeight() / (float) (faceLines.size() + 1);
+            for (int i = 0; i < faceLines.size(); ++i)
+            {
+                const auto line = r.withY (r.getY() + lineH * (0.5f + (float) i)).withHeight (lineH);
+                if (faceLines[i] == "|")
+                {
+                    // A small down arrow.
+                    const auto cx = line.getCentreX();
+                    const float h = line.getHeight() * 0.7f, y0 = line.getCentreY() - h * 0.5f;
+                    g.drawLine (cx, y0, cx, y0 + h * 0.8f, juce::jmax (1.0f, h * 0.14f));
+                    juce::Path head;
+                    head.addTriangle (cx - h * 0.3f, y0 + h * 0.55f, cx + h * 0.3f, y0 + h * 0.55f, cx, y0 + h);
+                    g.fillPath (head);
+                }
+                else
+                    g.drawText (faceLines[i], line, juce::Justification::centred);
+            }
+            return;
+        }
+        if (iconOnly)
+        {
+            drawIcon (g, icon, r.reduced (r.getHeight() * 0.14f), c);
+            return;
+        }
         auto label = r.removeFromBottom (r.getHeight() * 0.34f);
         drawIcon (g, icon, r.reduced (r.getHeight() * 0.1f), c);
         g.setColour (c);
@@ -416,16 +448,18 @@ public:
     void paint (juce::Graphics& g) override
     {
         shown = getter != nullptr && getter();
-        auto r = getLocalBounds().toFloat().reduced (0.5f);
+        // [3.1] a 48 x 40 key: a 2 px black frame round the face.
+        auto r = getLocalBounds().toFloat();
         auto fill = shown ? Dark::on : Dark::key;
         if (! isEnabled())
             fill = fill.withMultipliedSaturation (0.5f).darker (0.55f);
-        g.setColour (fill);
-        g.fillRect (r);
         g.setColour (juce::Colours::black);
-        g.drawRect (r, 1.0f);
+        g.fillRect (r);
+        g.setColour (fill);
+        g.fillRect (r.reduced (juce::jmax (1.0f, (float) juce::roundToInt (r.getHeight() / 20.0f))));
         g.setColour (shown ? (isEnabled() ? juce::Colours::black : juce::Colours::black.withAlpha (0.6f)) : (isEnabled() ? Dark::textDim : Dark::textDim.darker (0.3f)));
-        g.setFont (wingFontPx (wingKeyCap (r.getHeight(), 0.36f)));
+        // [3.1] small print: a 10 px cap in a 40 px key.
+        g.setFont (wingFontPx (wingKeyCap (r.getHeight(), 0.27f)));
         g.drawFittedText (text, r.toNearestInt(), juce::Justification::centred, 1);
     }
 
@@ -480,6 +514,10 @@ public:
     std::function<bool()> keyLit;
     bool keyHidden = false;         // no key (INS: the FX PROCESSOR field has its own > key, D8)
     std::optional<Icon> icon;       // drawn left of the caption (ROUTING group selectors)
+    /** The SETUP / MONITOR fields' metrics [3.1]: a 2 px black frame, a key
+        30 of 64 px wide behind a 2 px black line, a caption with a 14 px cap
+        10 px down and a value with a 20 px cap 34 px down (in a 64 px field). */
+    bool consoleMetrics = false;
 
     /** While its list is open (popups::chooseFrom sets the anchor's
         "wingListOpen" property) the field turns grey, as on the console. */
@@ -489,9 +527,17 @@ public:
     {
         shownValue = getValue ? getValue() : juce::String();
         auto r = getLocalBounds();
-        auto key = keyHidden ? juce::Rectangle<int>() : r.removeFromRight (juce::jmin (r.getHeight() * 2 / 3, r.getWidth() / 4));
+        const float u = (float) r.getHeight() / 64.0f; // consoleMetrics: one WING pixel
+        if (consoleMetrics)
+        {
+            g.setColour (juce::Colours::black);
+            g.fillRect (r);
+            r = r.reduced (juce::jmax (1, juce::roundToInt (2.0f * u)));
+        }
+        auto key = keyHidden ? juce::Rectangle<int>()
+                             : r.removeFromRight (consoleMetrics ? juce::roundToInt (30.0f * u) : juce::jmin (r.getHeight() * 2 / 3, r.getWidth() / 4));
         if (! keyHidden)
-            r.removeFromRight (3);
+            r.removeFromRight (consoleMetrics ? juce::jmax (1, juce::roundToInt (2.0f * u)) : 3);
         const float alpha = isEnabled() ? 1.0f : 0.45f;
         const bool open = isListOpen();
         g.setColour (open ? Dark::textDim : Dark::well);
@@ -530,6 +576,17 @@ public:
             t.removeFromLeft (6);
         }
         const float screenH = getWingScreenHeight();
+        if (consoleMetrics && ! icon.has_value())
+        {
+            auto tc = r.withTrimmedLeft (juce::roundToInt (7.0f * u)).withTrimmedRight (juce::roundToInt (4.0f * u));
+            g.setColour ((open ? Dark::text : Dark::caption).withAlpha (alpha));
+            g.setFont (fontFittingWidth (wingFontPx (14.0f * u), caption, (float) tc.getWidth(), 0.6f));
+            g.drawFittedText (caption, tc.withY (r.getY() + juce::roundToInt (2.0f * u)).withHeight (juce::roundToInt (26.0f * u)), juce::Justification::centredLeft, 1, 0.6f);
+            g.setColour (Dark::text.withAlpha (alpha));
+            g.setFont (fontFittingWidth (wingFontPx (20.0f * u), shownValue, (float) tc.getWidth(), 0.8f));
+            g.drawFittedText (shownValue, tc.withY (r.getY() + juce::roundToInt (24.0f * u)).withHeight (juce::roundToInt (36.0f * u)), juce::Justification::centredLeft, 1, 0.8f);
+            return;
+        }
         g.setColour ((open ? Dark::text : Dark::caption).withAlpha (alpha));
         // Narrow fields (small windows) shrink the text rather than cut it.
         g.setFont (fontFittingWidth (wingFontPx (juce::jmin (TypeScale::body * screenH, (float) t.getHeight() * 0.22f)), caption, (float) t.getWidth(), 0.6f));
@@ -543,7 +600,7 @@ public:
     {
         if (! isEnabled() || ! getLocalBounds().contains (e.getPosition()))
             return;
-        if (chevronKey && onKey && e.x >= getWidth() - juce::jmin (getHeight() * 2 / 3, getWidth() / 4))
+        if (chevronKey && onKey && e.x >= getWidth() - (consoleMetrics ? getHeight() / 2 : juce::jmin (getHeight() * 2 / 3, getWidth() / 4)))
         {
             onKey();
             repaint();
@@ -597,10 +654,11 @@ public:
     }
 
     /** A row with only a caption (the column captions of HA REMOTE, right-aligned). */
-    void addCaption (const juce::String& text, bool rightAligned = true)
+    void addCaption (const juce::String& text, bool rightAligned = true, float scale = 0.75f)
     {
         rows.push_back ({ text, nullptr, 0.0f, 0.7f, true, false, group });
         rows.back().rightAligned = rightAligned;
+        rows.back().captionScale = scale;
     }
 
     /** The following rows go into a new sub-box. */
@@ -621,10 +679,18 @@ public:
     int preferredHeight() const
     {
         int px = 0;
-        for (auto& r : rows)
-            px += rowPx (r);
+        for (size_t i = 0; i < rows.size(); ++i)
+        {
+            px += rowPx (rows[i]);
+            // A box's padding, above its first row and below its last.
+            if (i == 0 || rows[i].group != rows[i - 1].group)
+                px += boxPad (rows[i]);
+            // (The last box runs to the panel's bottom: no padding counted under it.)
+            if (i + 1 < rows.size() && rows[i].group != rows[i + 1].group)
+                px += boxPad (rows[i]);
+        }
         const int groups = rows.empty() ? 0 : rows.back().group + 1;
-        return (hasHeader() ? headerHeight + headerGap : 0) + px + groups * 8 + juce::jmax (0, groups - 1) * kDarkHeaderGap;
+        return (hasHeader() ? headerHeight + headerGap : 0) + px + juce::jmax (0, groups - 1) * kDarkHeaderGap;
     }
 
     void paint (juce::Graphics& g) override
@@ -648,7 +714,7 @@ public:
             auto l = r.labelArea;
             g.setColour (r.enabled ? Dark::caption : Dark::textDim.darker (0.2f));
             const bool caption = r.control == nullptr;
-            const float cap = TypeScale::body * getWingScreenHeight() * (caption && wingRows ? 0.75f : 1.0f);
+            const float cap = TypeScale::body * getWingScreenHeight() * (caption && wingRows ? r.captionScale : 1.0f);
             g.setFont (wingFontPx (juce::jmin (cap, (float) rowHeight * (caption ? 0.26f : 0.34f))));
             const float d = (float) juce::jmin (l.getHeight() - 6, screenCap (16));
             // The info icon keeps its own room, so a long label in a narrow
@@ -673,31 +739,33 @@ public:
     {
         auto b = darkPanelBody (getLocalBounds(), hasHeader(), headerHeight, headerGap);
         boxes.clear();
-        int lastGroup = -1;
-        juce::Rectangle<int> box;
+        int lastGroup = -1, boxTop = b.getY();
+        const Row* previous = nullptr;
         for (auto& r : rows)
         {
             if (r.group != lastGroup)
             {
                 if (lastGroup >= 0)
                 {
-                    boxes.push_back (box.withBottom (box.getBottom() + 4));
-                    b.removeFromTop (4);
+                    b.removeFromTop (boxPad (*previous));
+                    boxes.push_back (b.withTop (boxTop).withBottom (b.getY()));
                     b.removeFromTop (kDarkHeaderGap);
                 }
-                box = b.withHeight (0);
-                b.removeFromTop (4);
+                boxTop = b.getY();
+                b.removeFromTop (boxPad (r));
                 lastGroup = r.group;
             }
+            previous = &r;
             const int h = rowPx (r);
             auto row = b.removeFromTop (h);
-            box = box.getUnion (row);
             auto inner = row.reduced (inset(), 0);
             if (r.control != nullptr)
             {
+                if (auto* field = dynamic_cast<DropdownField*> (r.control))
+                    field->consoleMetrics = wingRows;
                 int ch = juce::jmin (inner.getHeight() - 4, h - 6);
                 if (wingRows)
-                    ch = r.heightRows == 1.0f ? juce::roundToInt ((float) rowHeight * (isOnKey (r) ? 38.0f : 46.0f) / 52.0f)
+                    ch = r.heightRows == 1.0f || isOnKey (r) ? juce::roundToInt ((float) rowHeight * (isOnKey (r) ? 40.0f : 46.0f) / 52.0f)
                                               : h - juce::roundToInt ((float) rowHeight * 16.0f / 52.0f); // a field: 64 px in 80
                 if (r.controlRows <= 0.0f)
                 {
@@ -706,16 +774,20 @@ public:
                 }
                 else
                 {
-                    const float wide = wingRows && isOnKey (r) ? 46.0f / 52.0f : r.controlRows;
+                    const float wide = wingRows && isOnKey (r) ? 48.0f / 52.0f : r.controlRows;
                     const int w = juce::jmin (inner.getWidth() * (wingRows ? 75 : 55) / 100, juce::roundToInt ((float) rowHeight * wide));
-                    r.control->setBounds (inner.removeFromRight (w).withSizeKeepingCentre (w, ch));
+                    auto keyArea = inner.removeFromRight (w).withSizeKeepingCentre (w, ch);
+                    // [3.1] keys sit 4 px under the top of their row, not centred.
+                    if (wingRows && (r.heightRows == 1.0f || isOnKey (r)))
+                        keyArea.setY (row.getY() + juce::roundToInt ((float) rowHeight * 4.0f / 52.0f));
+                    r.control->setBounds (keyArea);
                     inner.removeFromRight (6);
                 }
             }
             r.labelArea = inner;
         }
         if (lastGroup >= 0)
-            boxes.push_back (box.withBottom (getHeight()));
+            boxes.push_back (b.withTop (boxTop).withBottom (getHeight()));
     }
 
 private:
@@ -728,9 +800,14 @@ private:
         int group;
         juce::Rectangle<int> labelArea {};
         bool rightAligned = true;
+        float captionScale = 0.75f;
     };
 
     static bool isOnKey (const Row& r) { return dynamic_cast<OnKey*> (r.control) != nullptr; }
+
+    /** [3.1] A box is padded 4 px above and below its rows, except next to a
+        dropdown field, whose 80 px row already holds 8 px either side. */
+    int boxPad (const Row& r) const { return wingRows && dynamic_cast<DropdownField*> (r.control) != nullptr ? 0 : 4; }
 
     int inset() const { return wingRows ? juce::roundToInt ((float) rowHeight * 12.0f / 52.0f) : 10; }
 

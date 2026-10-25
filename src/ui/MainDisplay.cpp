@@ -1606,6 +1606,24 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
         g.setColour (fill);
         g.fillRoundedRectangle (tab, corner);
         t.removeFromLeft (6.0f * k);
+        const auto icon = title.icon.has_value() ? title.icon : (source ? std::optional<Icon> (Icon::Xlr) : (layer ? std::optional<Icon> (Icon::Layers) : std::nullopt));
+        if (layer || (title.kind == StatusTitle::Kind::Text && title.prefix.isEmpty() && icon.has_value()))
+        {
+            // [3.1] the VIEW screens' "C (layers) DCA" and MUTE GROUPS: the
+            // section letter 32 px in, the icon centred 112 px in, the text from 155.
+            if (title.prefix.isNotEmpty())
+            {
+                auto prefixArea = juce::Rectangle<float> (tab.getX() + 32.0f * k, t.getY(), 60.0f * k, t.getHeight());
+                drawText (title.prefix, ink, prefixArea);
+            }
+            if (icon.has_value())
+                drawIcon (g, *icon, juce::Rectangle<float> (46.0f * k, 46.0f * k).withCentre ({ tab.getX() + 112.0f * k, tab.getCentreY() }),
+                          title.iconInk.isTransparent() ? ink : title.iconInk);
+            auto textArea = t.withLeft (tab.getX() + 155.0f * k);
+            drawText (title.text, ink, textArea);
+        }
+        else
+        {
         if (title.prefix.isNotEmpty() && title.kind == StatusTitle::Kind::Text)
         {
             // A plain title's prefix (LIBRARY: the show) is a small caption over it.
@@ -1620,13 +1638,13 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
             auto prefixArea = t.removeFromLeft (juce::GlyphArrangement::getStringWidth (bigFont, title.prefix) + 14.0f * k);
             drawText (title.prefix, ink, prefixArea);
         }
-        const auto icon = title.icon.has_value() ? title.icon : (source ? std::optional<Icon> (Icon::Xlr) : (layer ? std::optional<Icon> (Icon::Layers) : std::nullopt));
         if (icon.has_value())
         {
             drawIcon (g, *icon, t.removeFromLeft (h).reduced (h * 0.08f), title.iconInk.isTransparent() ? ink : title.iconInk);
             t.removeFromLeft (12.0f * k);
         }
         drawText (title.text, ink, t);
+        }
     }
 
     // SHOW SOF FRAME: a frame and a SOF badge while Sends on Fader is on.
