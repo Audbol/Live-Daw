@@ -13,11 +13,11 @@ use crate::osc::{self, Arg, Effect, Message, SubFormat};
 use crate::schema::{schema, Node};
 use crate::value::Value;
 use livedaw_engine::Engine;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -54,12 +54,34 @@ pub const NATIVE_PORT: u16 = 2222;
 
 /// Maximum Native clients (the console's limit).
 pub const MAX_NATIVE_CLIENTS: usize = 16;
-/// Subscriptions die without a renewal (OSC: 10 s, meters: 5 s).
-pub const OSC_SUBSCRIPTION_LIFE: Duration = Duration::from_secs(10);
-pub const METER_LIFE: Duration = Duration::from_secs(5);
+/// Subscriptions die without a renewal (the console: OSC 10 s, meters 5 s).
+/// Sidecar gives a renewal that arrives a little late (Wi-Fi) 20% more, so a
+/// client renewing just inside the console's limit never sees a gap.
+pub const OSC_SUBSCRIPTION_LIFE: Duration = Duration::from_secs(12);
+pub const METER_LIFE: Duration = Duration::from_secs(6);
 /// A Native client that sends nothing for this long is dropped (the console
 /// uses 10 s; clients send a keep-alive every 7 s).
 pub const NATIVE_IDLE: Duration = Duration::from_secs(12);
+/// A Native client whose connection takes nothing for this long is dropped.
+/// Its data waits in its own queue meanwhile: a slow client (a tablet on
+/// Wi-Fi) never holds up the other clients, the OSC server or the meters.
+pub const NATIVE_WRITE_STALL: Duration = Duration::from_secs(10);
+/// A Native client with this much data waiting is dropped.
+pub const NATIVE_MAX_QUEUED: usize = 32 << 20;
+/// A Native client's requests are read only while less than this waits for it
+/// (TCP then holds the client back, as a console would).
+const NATIVE_READ_PAUSE: usize = 1 << 20;
+/// OSC subscribers served at once. The console serves one (the last to ask);
+/// Sidecar serves each client that subscribes, so two remotes on OSC don't
+/// take the event stream from each other every few seconds.
+pub const MAX_OSC_SUBSCRIBERS: usize = 16;
+/// OSC events leave at most this many datagrams per millisecond. A scene
+/// recall changes hundreds of parameters at once, one datagram each: sent in
+/// one go they overflow the receive buffer of the client (a phone or tablet,
+/// often on Wi-Fi) and it misses changes.
+pub const OSC_EVENTS_PER_MS: usize = 8;
+/// OSC events waiting beyond this are dropped (oldest first).
+const OSC_MAX_QUEUED: usize = 1 << 18;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -124,7 +146,10 @@ pub struct Status {
 }
 
 struct OscSubscription {
+    /// Where events go (the requester, or its `/%<port>`).
     addr: SocketAddr,
+    /// Who asked (its own changes aren't echoed to it).
+    requester: SocketAddr,
     format: SubFormat,
     expires: Instant,
 }
@@ -139,22 +164,40 @@ struct MeterSub {
 struct NativeClient {
     id: u64,
     peer: SocketAddr,
-    writer: Mutex<TcpStream>,
+    /// For shutting the connection down from any thread.
+    stream: TcpStream,
+    /// Data waiting for the client's writer thread.
+    out: Mutex<Vec<u8>>,
+    ready: Condvar,
     meters: Mutex<MeterSub>,
     alive: AtomicBool,
     since: Instant,
 }
 
 impl NativeClient {
+    /// Queues `bytes` for the client; never blocks on the network.
     fn send(&self, bytes: &[u8]) {
         if !self.alive.load(Ordering::Relaxed) {
             return;
         }
-        let mut w = self.writer.lock().unwrap_or_else(|e| e.into_inner());
-        if w.write_all(bytes).is_err() {
-            self.alive.store(false, Ordering::Relaxed);
-            let _ = w.shutdown(std::net::Shutdown::Both);
+        let mut out = lock(&self.out);
+        if out.len() + bytes.len() > NATIVE_MAX_QUEUED {
+            drop(out);
+            self.close();
+            return;
         }
+        out.extend_from_slice(bytes);
+        self.ready.notify_one();
+    }
+
+    fn queued(&self) -> usize {
+        lock(&self.out).len()
+    }
+
+    fn close(&self) {
+        self.alive.store(false, Ordering::Relaxed);
+        let _ = self.stream.shutdown(std::net::Shutdown::Both);
+        self.ready.notify_all();
     }
 }
 
@@ -167,9 +210,13 @@ pub struct Shared {
     /// Bumped (under `notify`) by every client change; see `poll_changes`.
     generation: AtomicU64,
     clients: Mutex<Vec<Arc<NativeClient>>>,
-    osc_sub: Mutex<Option<OscSubscription>>,
+    osc_subs: Mutex<Vec<OscSubscription>>,
     osc_peers: Mutex<HashMap<SocketAddr, Instant>>,
-    osc_tx: Mutex<Option<UdpSocket>>,
+    /// The paced OSC event sender runs (`osc_send_loop`).
+    osc_events_on: AtomicBool,
+    /// OSC events for the paced sender (`osc_send_loop`).
+    osc_events: Mutex<VecDeque<(SocketAddr, Arc<[u8]>)>>,
+    osc_ready: Condvar,
     stop: AtomicBool,
     next_id: AtomicU64,
     osc_messages: AtomicU64,
@@ -202,9 +249,11 @@ impl Shared {
             notify: Mutex::new(None),
             generation: AtomicU64::new(0),
             clients: Mutex::default(),
-            osc_sub: Mutex::new(None),
+            osc_subs: Mutex::default(),
             osc_peers: Mutex::default(),
-            osc_tx: Mutex::new(None),
+            osc_events_on: AtomicBool::new(false),
+            osc_events: Mutex::default(),
+            osc_ready: Condvar::new(),
             stop: AtomicBool::new(false),
             next_id: AtomicU64::new(1),
             osc_messages: AtomicU64::new(0),
@@ -229,7 +278,8 @@ impl Shared {
     }
 
     fn has_listeners(&self) -> bool {
-        let osc = lock(&self.osc_sub).as_ref().is_some_and(|s| s.expires > Instant::now());
+        let now = Instant::now();
+        let osc = lock(&self.osc_subs).iter().any(|s| s.expires > now);
         osc || !lock(&self.clients).is_empty()
     }
 
@@ -260,49 +310,13 @@ impl Shared {
         Ok(v)
     }
 
-    /// Pushes changes to the OSC subscriber and the Native clients (not to `origin`).
+    /// Pushes changes to the OSC subscribers and the Native clients (not to `origin`).
     fn broadcast(&self, c: &Console, changes: &[(Node, Value)], origin: Origin) {
         if changes.is_empty() {
             return;
         }
         let s = schema();
-        // OSC
-        let sub = lock(&self.osc_sub).as_ref().filter(|s| s.expires > Instant::now()).map(|s| (s.addr, s.format));
-        if let Some((addr, format)) = sub {
-            if origin != Origin::Osc(addr) {
-                if let Some(sock) = lock(&self.osc_tx).as_ref() {
-                    match format {
-                        SubFormat::Binary => {
-                            let mut blob = Vec::new();
-                            for (n, v) in changes {
-                                native::encode_data(&mut blob, s.id(*n), v);
-                                if blob.len() > osc::MAX_PACKET - 512 {
-                                    let _ = sock.send_to(
-                                        &osc::encode(&Message::new("/", vec![Arg::Blob(std::mem::take(&mut blob))])),
-                                        addr,
-                                    );
-                                }
-                            }
-                            if !blob.is_empty() {
-                                let _ = sock.send_to(&osc::encode(&Message::new("/", vec![Arg::Blob(blob)])), addr);
-                            }
-                        }
-                        _ => {
-                            for (n, v) in changes {
-                                let Some(def) = s.def(*n, c) else { continue };
-                                let path = s.path(*n, c);
-                                let msg = if format == SubFormat::Native {
-                                    osc::native_event(&path, def, v)
-                                } else {
-                                    osc::param_reply(&path, def, v)
-                                };
-                                let _ = sock.send_to(&osc::encode(&msg), addr);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        self.queue_osc_events(c, changes, origin);
         // Native
         let clients: Vec<Arc<NativeClient>> = lock(&self.clients).clone();
         if clients.iter().any(|cl| origin != Origin::Native(cl.id)) {
@@ -314,6 +328,59 @@ impl Shared {
             for cl in clients.iter().filter(|cl| origin != Origin::Native(cl.id)) {
                 cl.send(&wire);
             }
+        }
+    }
+
+    /// Queues the events of `changes` for the OSC subscribers (not `origin`)
+    /// for the paced sender.
+    fn queue_osc_events(&self, c: &Console, changes: &[(Node, Value)], origin: Origin) {
+        let now = Instant::now();
+        let subs: Vec<(SocketAddr, SubFormat)> = lock(&self.osc_subs)
+            .iter()
+            .filter(|s| s.expires > now && origin != Origin::Osc(s.requester))
+            .map(|s| (s.addr, s.format))
+            .collect();
+        if subs.is_empty() || !self.osc_events_on.load(Ordering::Relaxed) {
+            return;
+        }
+        let s = schema();
+        // Each format's datagrams are built once for all its subscribers.
+        for format in [SubFormat::Binary, SubFormat::Triplet, SubFormat::Native] {
+            let to: Vec<SocketAddr> = subs.iter().filter(|s| s.1 == format).map(|s| s.0).collect();
+            if to.is_empty() {
+                continue;
+            }
+            let mut packets: Vec<Arc<[u8]>> = Vec::new();
+            if format == SubFormat::Binary {
+                let mut blob = Vec::new();
+                for (n, v) in changes {
+                    native::encode_data(&mut blob, s.id(*n), v);
+                    if blob.len() > osc::MAX_PACKET - 512 {
+                        packets.push(osc::encode(&Message::new("/", vec![Arg::Blob(std::mem::take(&mut blob))])).into());
+                    }
+                }
+                if !blob.is_empty() {
+                    packets.push(osc::encode(&Message::new("/", vec![Arg::Blob(blob)])).into());
+                }
+            } else {
+                for (n, v) in changes {
+                    let Some(def) = s.def(*n, c) else { continue };
+                    let path = s.path(*n, c);
+                    let msg = if format == SubFormat::Native {
+                        osc::native_event(&path, def, v)
+                    } else {
+                        osc::param_reply(&path, def, v)
+                    };
+                    packets.push(osc::encode(&msg).into());
+                }
+            }
+            let mut q = lock(&self.osc_events);
+            for addr in to {
+                q.extend(packets.iter().map(|p| (addr, p.clone())));
+            }
+            let excess = q.len().saturating_sub(OSC_MAX_QUEUED);
+            q.drain(..excess);
+            self.osc_ready.notify_one();
         }
     }
 
@@ -394,8 +461,17 @@ impl Shared {
         }
     }
 
-    fn subscribe_osc(&self, addr: SocketAddr, format: SubFormat) {
-        *lock(&self.osc_sub) = Some(OscSubscription { addr, format, expires: Instant::now() + OSC_SUBSCRIPTION_LIFE });
+    fn subscribe_osc(&self, addr: SocketAddr, requester: SocketAddr, format: SubFormat) {
+        let now = Instant::now();
+        let mut subs = lock(&self.osc_subs);
+        subs.retain(|s| s.expires > now && s.addr != addr);
+        if subs.len() >= MAX_OSC_SUBSCRIBERS {
+            // The longest without a renewal makes way.
+            if let Some(i) = subs.iter().enumerate().min_by_key(|(_, s)| s.expires).map(|(i, _)| i) {
+                subs.remove(i);
+            }
+        }
+        subs.push(OscSubscription { addr, requester, format, expires: now + OSC_SUBSCRIPTION_LIFE });
     }
 
     pub fn status(&self) -> (Vec<ClientInfo>, u64, u64) {
@@ -410,14 +486,15 @@ impl Shared {
                 seconds: now.duration_since(cl.since).as_secs(),
             });
         }
-        let sub = lock(&self.osc_sub).as_ref().filter(|s| s.expires > now).map(|s| s.addr);
+        let subs: Vec<(SocketAddr, SocketAddr)> =
+            lock(&self.osc_subs).iter().filter(|s| s.expires > now).map(|s| (s.addr, s.requester)).collect();
         let mut peers = lock(&self.osc_peers);
         peers.retain(|_, seen| now.duration_since(*seen) < Duration::from_secs(15));
         for (addr, seen) in peers.iter() {
             out.push(ClientInfo {
                 kind: ClientKind::Osc,
                 addr: *addr,
-                subscribed: sub == Some(*addr),
+                subscribed: subs.iter().any(|(to, from)| to == addr || from == addr),
                 seconds: now.duration_since(*seen).as_secs(),
             });
         }
@@ -432,7 +509,7 @@ impl Shared {
         let (mut replies, port, effect) = osc::handle(self, &msg, Origin::Osc(from));
         let dest = port.map_or(from, |p| SocketAddr::new(from.ip(), p));
         if let Some(Effect::Subscribe(format)) = effect {
-            self.subscribe_osc(dest, format);
+            self.subscribe_osc(dest, from, format);
         }
         // `/?` reports the address the client reached us on.
         for r in replies.iter_mut() {
@@ -491,7 +568,11 @@ impl WingServer {
             match UdpSocket::bind((config.bind, config.osc_port)) {
                 Ok(sock) => {
                     status.osc = sock.local_addr().ok();
-                    *lock(&shared.osc_tx) = sock.try_clone().ok();
+                    if let Ok(tx) = sock.try_clone() {
+                        shared.osc_events_on.store(true, Ordering::Relaxed);
+                        let sh = shared.clone();
+                        threads.push(spawn("wing-osc-events", move || osc_send_loop(&sh, tx)));
+                    }
                     let sh = shared.clone();
                     threads.push(spawn("wing-osc", move || osc_loop(&sh, sock)));
                 }
@@ -529,7 +610,7 @@ impl WingServer {
     pub fn stop(&mut self) {
         self.shared.stop.store(true, Ordering::Relaxed);
         for cl in lock(&self.shared.clients).iter() {
-            let _ = lock(&cl.writer).shutdown(std::net::Shutdown::Both);
+            cl.close();
         }
         for t in self.threads.drain(..) {
             let _ = t.join();
@@ -566,10 +647,25 @@ fn discovery_loop(sh: &Shared, sock: UdpSocket) {
                     let _ = sock.send_to(sh.info_string(Some(local_ip_for(from))).as_bytes(), from);
                 }
             }
-            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted) => {}
+            Err(e) if quiet_udp_error(&e) => {}
             Err(_) => std::thread::sleep(TICK),
         }
     }
+}
+
+/// Errors a UDP server just reads past: timeouts, and the "port unreachable"
+/// a client that went away leaves behind (Windows reports it on the next
+/// receive). Pausing on those would hold up every other client's replies.
+fn quiet_udp_error(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        ErrorKind::WouldBlock
+            | ErrorKind::TimedOut
+            | ErrorKind::Interrupted
+            | ErrorKind::ConnectionReset
+            | ErrorKind::ConnectionRefused
+            | ErrorKind::ConnectionAborted
+    )
 }
 
 fn osc_loop(sh: &Shared, sock: UdpSocket) {
@@ -578,9 +674,30 @@ fn osc_loop(sh: &Shared, sock: UdpSocket) {
     while !sh.stop.load(Ordering::Relaxed) {
         match sock.recv_from(&mut buf) {
             Ok((n, from)) => sh.handle_osc(&sock, &buf[..n], from),
-            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted) => {}
-            // e.g. an ICMP "port unreachable" from a client that went away (Windows)
+            Err(e) if quiet_udp_error(&e) => {}
             Err(_) => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+}
+
+/// Sends the OSC events, paced (OSC_EVENTS_PER_MS).
+fn osc_send_loop(sh: &Shared, sock: UdpSocket) {
+    let mut batch = Vec::with_capacity(OSC_EVENTS_PER_MS);
+    while !sh.stop.load(Ordering::Relaxed) {
+        let more = {
+            let mut q = lock(&sh.osc_events);
+            while q.is_empty() && !sh.stop.load(Ordering::Relaxed) {
+                q = sh.osc_ready.wait_timeout(q, TICK).unwrap_or_else(|e| e.into_inner()).0;
+            }
+            let n = q.len().min(OSC_EVENTS_PER_MS);
+            batch.extend(q.drain(..n));
+            !q.is_empty()
+        };
+        for (addr, p) in batch.drain(..) {
+            let _ = sock.send_to(&p, addr);
+        }
+        if more {
+            std::thread::sleep(Duration::from_millis(1));
         }
     }
 }
@@ -596,18 +713,22 @@ fn native_loop(sh: &Arc<Shared>, listener: TcpListener) {
                     drop(stream);
                     continue;
                 }
-                let Ok(writer) = stream.try_clone() else { continue };
+                let (Ok(writer), Ok(control)) = (stream.try_clone(), stream.try_clone()) else { continue };
                 let _ = stream.set_nodelay(true);
-                let _ = writer.set_write_timeout(Some(Duration::from_secs(2)));
+                let _ = writer.set_write_timeout(Some(NATIVE_WRITE_STALL));
                 let client = Arc::new(NativeClient {
                     id: sh.next_id.fetch_add(1, Ordering::Relaxed),
                     peer,
-                    writer: Mutex::new(writer),
+                    stream: control,
+                    out: Mutex::default(),
+                    ready: Condvar::new(),
                     meters: Mutex::new(MeterSub { port: None, report_id: 0, meters: Vec::new(), expires: Instant::now() }),
                     alive: AtomicBool::new(true),
                     since: Instant::now(),
                 });
                 lock(&sh.clients).push(client.clone());
+                let (sh2, cl2) = (sh.clone(), client.clone());
+                readers.push(spawn("wing-native-write", move || writer_loop(&sh2, &cl2, writer)));
                 let sh2 = sh.clone();
                 readers.push(spawn("wing-native-client", move || client_loop(&sh2, client, stream)));
             }
@@ -621,12 +742,45 @@ fn native_loop(sh: &Arc<Shared>, listener: TcpListener) {
     }
 }
 
+/// Sends a Native client what was queued for it.
+fn writer_loop(sh: &Shared, client: &NativeClient, mut stream: TcpStream) {
+    let mut buf = Vec::new();
+    loop {
+        {
+            let mut out = lock(&client.out);
+            while out.is_empty() && client.alive.load(Ordering::Relaxed) && !sh.stop.load(Ordering::Relaxed) {
+                out = client.ready.wait_timeout(out, TICK).unwrap_or_else(|e| e.into_inner()).0;
+            }
+            if !client.alive.load(Ordering::Relaxed) || sh.stop.load(Ordering::Relaxed) {
+                return;
+            }
+            std::mem::swap(&mut *out, &mut buf);
+        }
+        // write_all finishes partial sends; one that stalls for
+        // NATIVE_WRITE_STALL means the client is gone.
+        if stream.write_all(&buf).is_err() {
+            client.close();
+            return;
+        }
+        buf.clear();
+        if buf.capacity() > 1 << 20 {
+            buf = Vec::new();
+        }
+    }
+}
+
 fn client_loop(sh: &Shared, client: Arc<NativeClient>, mut stream: TcpStream) {
     let _ = stream.set_read_timeout(Some(TICK));
     let mut session = Session::new(Origin::Native(client.id));
     let mut buf = vec![0u8; 16384];
     let mut last = Instant::now();
     while !sh.stop.load(Ordering::Relaxed) && client.alive.load(Ordering::Relaxed) {
+        if client.queued() > NATIVE_READ_PAUSE {
+            // Let the client catch up before answering more; it isn't idle meanwhile.
+            std::thread::sleep(Duration::from_millis(10));
+            last = Instant::now();
+            continue;
+        }
         match stream.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
@@ -662,8 +816,7 @@ fn client_loop(sh: &Shared, client: Arc<NativeClient>, mut stream: TcpStream) {
             Err(_) => break,
         }
     }
-    client.alive.store(false, Ordering::Relaxed);
-    let _ = stream.shutdown(std::net::Shutdown::Both);
+    client.close();
     lock(&sh.clients).retain(|c| c.id != client.id);
 }
 
