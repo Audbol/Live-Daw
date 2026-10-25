@@ -33,7 +33,7 @@
 
 use livedaw_engine::Engine;
 use livedaw_wing::osc::{self, Arg, Message};
-use livedaw_wing::server::{Config, EngineHandle, WingServer};
+use livedaw_wing::server::{ClientKind, Config, EngineHandle, WingServer};
 use livedaw_wing::{schema, Identity, WingState};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -44,10 +44,28 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-/// Timeouts and gap limits are this many times longer in debug builds (and
-/// under the sanitizers). The faults this test is for show as gaps of a
-/// second or more either way.
-const SLACK: u64 = if cfg!(debug_assertions) { 2 } else { 1 };
+/// Timeouts and gap limits are this many times longer in debug builds, and
+/// longer still under ThreadSanitizer (5-10 times slower; detected by the
+/// TSAN_OPTIONS its runs set). SOAK_SLACK=<n> sets it. The faults this test
+/// is for show as gaps of a second or more either way.
+fn slack() -> u64 {
+    static SLACK: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *SLACK.get_or_init(|| {
+        if let Some(n) = std::env::var("SOAK_SLACK").ok().and_then(|s| s.parse::<u64>().ok()) {
+            n.max(1)
+        } else if std::env::var_os("TSAN_OPTIONS").is_some() {
+            8
+        } else if cfg!(debug_assertions) {
+            2
+        } else {
+            1
+        }
+    })
+}
+
+fn slack_ms(ms: u64) -> Duration {
+    Duration::from_millis(ms * slack())
+}
 
 /// Counts allocations made on the audio threads (the callback and its workers).
 struct Counting;
@@ -188,7 +206,9 @@ impl Latency {
 // ============================================================================
 // Mixing Station (OSC)
 
-const OSC_REPLY_TIMEOUT: Duration = Duration::from_millis(1000 * SLACK);
+fn osc_reply_timeout() -> Duration {
+    slack_ms(1000)
+}
 
 fn osc_client(name: &str, to: SocketAddr, secs: f64, stop: Arc<AtomicBool>, t0: Instant) -> Report {
     let mut r = Report::new(name);
@@ -212,7 +232,7 @@ fn osc_client(name: &str, to: SocketAddr, secs: f64, stop: Arc<AtomicBool>, t0: 
     };
 
     // Waits for the reply to `addr` (a get: 3 arguments, or `/?`), passing events to `events`.
-    let mut events = GapWatch::new(Duration::from_millis(1000 * SLACK));
+    let mut events = GapWatch::new(slack_ms(1000));
     let mut event_values = 0u64;
     let mut on_event = |at: Instant, m: &Message, events: &mut GapWatch| {
         if m.addr == "/ch/20/fdr" && m.args.len() == 1 {
@@ -228,7 +248,7 @@ fn osc_client(name: &str, to: SocketAddr, secs: f64, stop: Arc<AtomicBool>, t0: 
                           until_empty: bool| {
         // Receives until the oldest pending request is answered (or every one, `until_empty`).
         while let Some((want, sent)) = addrs.front().cloned() {
-            let left = OSC_REPLY_TIMEOUT.saturating_sub(sent.elapsed());
+            let left = osc_reply_timeout().saturating_sub(sent.elapsed());
             match rx.recv_timeout(left) {
                 Ok((at, m)) => {
                     // Replies to gets are matched by address; the rest are events.
@@ -241,7 +261,7 @@ fn osc_client(name: &str, to: SocketAddr, secs: f64, stop: Arc<AtomicBool>, t0: 
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {
-                    r.problem(t0, format!("no reply to {want} within {} ms", OSC_REPLY_TIMEOUT.as_millis()));
+                    r.problem(t0, format!("no reply to {want} within {} ms", osc_reply_timeout().as_millis()));
                     addrs.pop_front();
                 }
                 Err(RecvTimeoutError::Disconnected) => return,
@@ -338,8 +358,8 @@ fn osc_client(name: &str, to: SocketAddr, secs: f64, stop: Arc<AtomicBool>, t0: 
             }
         }
         while let Some((a, s)) = poll_pending.front() {
-            if s.elapsed() > OSC_REPLY_TIMEOUT {
-                r.problem(t0, format!("no reply to poll {a} within {} ms", OSC_REPLY_TIMEOUT.as_millis()));
+            if s.elapsed() > osc_reply_timeout() {
+                r.problem(t0, format!("no reply to poll {a} within {} ms", osc_reply_timeout().as_millis()));
                 poll_pending.pop_front();
             } else {
                 break;
@@ -534,7 +554,9 @@ fn escaped(payload: &[u8]) -> Vec<u8> {
     v
 }
 
-const NATIVE_REPLY_TIMEOUT: Duration = Duration::from_secs(2 * SLACK);
+fn native_reply_timeout() -> Duration {
+    slack_ms(2000)
+}
 
 fn native_client(
     to: SocketAddr,
@@ -580,7 +602,7 @@ fn native_client(
     });
 
     let fdr1 = id("/ch/1/fdr");
-    let mut notes = GapWatch::new(Duration::from_millis(1000 * SLACK));
+    let mut notes = GapWatch::new(slack_ms(1000));
     let mut pending: VecDeque<Instant> = VecDeque::new();
     let mut lat_walk = Latency::default();
     let mut lat_poll = Latency::default();
@@ -631,7 +653,7 @@ fn native_client(
     let started = Instant::now();
     let _ = w.write_all(&[0xdf, 0xd1, 0xda, 0xdd]);
     pending.push_back(Instant::now());
-    drain(&mut pending, &mut lat_walk, &mut r, &mut defs, &mut notes, 0, NATIVE_REPLY_TIMEOUT);
+    drain(&mut pending, &mut lat_walk, &mut r, &mut defs, &mut notes, 0, native_reply_timeout());
     let mut queue: VecDeque<u32> = defs.drain(..).filter(|(_, n)| *n).map(|(i, _)| i).collect();
     let mut nodes = 0usize;
     let mut leaves = 0usize;
@@ -642,7 +664,7 @@ fn native_client(
         let _ = w.write_all(&escaped(&req));
         pending.push_back(Instant::now());
         nodes += 1;
-        drain(&mut pending, &mut lat_walk, &mut r, &mut defs, &mut notes, 7, NATIVE_REPLY_TIMEOUT);
+        drain(&mut pending, &mut lat_walk, &mut r, &mut defs, &mut notes, 7, native_reply_timeout());
         for (i, n) in defs.drain(..) {
             if n {
                 queue.push_back(i);
@@ -651,7 +673,7 @@ fn native_client(
             }
         }
         if queue.is_empty() {
-            drain(&mut pending, &mut lat_walk, &mut r, &mut defs, &mut notes, 0, NATIVE_REPLY_TIMEOUT);
+            drain(&mut pending, &mut lat_walk, &mut r, &mut defs, &mut notes, 0, native_reply_timeout());
             for (i, n) in defs.drain(..) {
                 if n {
                     queue.push_back(i);
@@ -749,7 +771,7 @@ fn native_client(
                 Err(_) => break,
             }
         }
-        if pending.front().is_some_and(|s| s.elapsed() > NATIVE_REPLY_TIMEOUT) {
+        if pending.front().is_some_and(|s| s.elapsed() > native_reply_timeout()) {
             r.problem(t0, "no reply to a keep-alive get".into());
             pending.pop_front();
         }
@@ -776,7 +798,7 @@ fn meter_receiver(
     name: &'static str,
 ) -> JoinHandle<Report> {
     std::thread::spawn(move || {
-        let mut gw = GapWatch::new(Duration::from_millis(250 * SLACK));
+        let mut gw = GapWatch::new(slack_ms(250));
         let mut buf = [0u8; 4096];
         let mut sources = std::collections::HashSet::new();
         let mut bad = 0u64;
@@ -860,7 +882,12 @@ fn escaped_tail(v: &[u8], skip: usize) -> Vec<u8> {
 /// A client on a slow link (a tablet on busy Wi-Fi) syncing: it asks for all
 /// values four times (about 1 MB) and reads 128 KB a second. It must get it
 /// all without being dropped, and without holding up anyone else.
-fn slow_client(to: SocketAddr, secs: f64, t0: Instant) -> Report {
+///
+/// `strict`: all of it within the run (`secs`). Otherwise (the short run in
+/// CI) it may take longer, as long as the data keeps coming: how fast a
+/// reader this slow gets data depends on the TCP stack (macOS's delayed ACKs
+/// halve it) and on the machine's load.
+fn slow_client(to: SocketAddr, secs: f64, t0: Instant, strict: bool) -> Report {
     let mut r = Report::new("Native (slow link)");
     let mut tcp = TcpStream::connect(to).unwrap();
     tcp.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
@@ -868,13 +895,19 @@ fn slow_client(to: SocketAddr, secs: f64, t0: Instant) -> Report {
         let _ = tcp.write_all(&[0xdf, 0xd1, 0xda, 0xdc]);
     }
     let end = t0 + Duration::from_secs_f64(secs);
+    let deadline = if strict { end } else { end + slack_ms(30_000) };
     let mut dec = Decoder::default();
     let mut toks = Vec::new();
     let mut ends = 0;
     let mut bytes = 0usize;
     let mut buf = vec![0u8; 16384];
     let mut last_keep = Instant::now();
-    while Instant::now() < end && ends < 4 {
+    let mut last_data = Instant::now();
+    while Instant::now() < deadline && ends < 4 {
+        if last_data.elapsed() > slack_ms(5000) {
+            r.problem(t0, format!("no data for {} s after {bytes} bytes", last_data.elapsed().as_secs()));
+            return r;
+        }
         match tcp.read(&mut buf[..12800]) {
             Ok(0) => {
                 r.problem(t0, format!("the server closed the connection after {bytes} bytes"));
@@ -882,6 +915,7 @@ fn slow_client(to: SocketAddr, secs: f64, t0: Instant) -> Report {
             }
             Ok(n) => {
                 bytes += n;
+                last_data = Instant::now();
                 dec.feed(&buf[..n], &mut toks);
                 ends += toks.drain(..).filter(|t| matches!(t, Tok::End)).count();
             }
@@ -898,7 +932,8 @@ fn slow_client(to: SocketAddr, secs: f64, t0: Instant) -> Report {
         std::thread::sleep(Duration::from_millis(100));
     }
     if ends < 4 {
-        r.problem(t0, format!("only {ends} of 4 replies ({bytes} bytes) in {secs} s"));
+        let waited = deadline.saturating_duration_since(t0).as_secs_f64();
+        r.problem(t0, format!("only {ends} of 4 replies ({bytes} bytes) in {waited:.0} s"));
     }
     r.notes.push(format!("{bytes} bytes at 128 KB/s, {ends} of 4 replies in {:.1} s", t0.elapsed().as_secs_f64()));
     r
@@ -1079,8 +1114,9 @@ fn start_server(engine: &Arc<Engine>) -> WingServer {
 
 /// Runs the clients for `secs` seconds against a fresh server; returns the
 /// reports, with the audio callback's times (`workers`: run the audio with
-/// that many workers).
-fn soak(secs: f64, workers: Option<usize>, stalled: bool) -> Vec<Report> {
+/// that many workers; `strict`: the slow-link client must have everything
+/// within `secs`, see `slow_client`).
+fn soak(secs: f64, workers: Option<usize>, stalled: bool, strict: bool) -> Vec<Report> {
     TRACE_ALLOCS.store(std::env::var_os("SOAK_ALLOC_TRACES").is_some(), Relaxed);
     let engine = Arc::new(Engine::new(workers.unwrap_or(0)));
     engine.set_num_channels(40);
@@ -1133,7 +1169,7 @@ fn soak(secs: f64, workers: Option<usize>, stalled: bool) -> Vec<Report> {
     };
     let slow = {
         let to = st.native.unwrap();
-        std::thread::spawn(move || slow_client(to, secs, t0))
+        std::thread::spawn(move || slow_client(to, secs, t0, strict))
     };
     let stall_stop = Arc::new(AtomicBool::new(false));
     let stall = stalled.then(|| {
@@ -1223,7 +1259,7 @@ fn print(reports: &[Report]) -> usize {
 fn soak_short() {
     // Long enough for the 10 s subscription life and the 5 s meter life to need renewals.
     // The audio runs too (no workers): nothing a client does may allocate on it.
-    let reports = soak(12.0, Some(0), true);
+    let reports = soak(12.0, Some(0), true, false);
     assert_eq!(print(&reports), 0, "see the problems above");
 }
 
@@ -1233,7 +1269,7 @@ fn soak_long() {
     let secs: f64 = std::env::var("SOAK_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(120.0);
     let stalled = std::env::var_os("SOAK_NO_STALL").is_none();
     let workers = std::env::var("SOAK_WORKERS").ok().and_then(|s| s.parse().ok()).unwrap_or(2);
-    let reports = soak(secs, Some(workers), stalled);
+    let reports = soak(secs, Some(workers), stalled, true);
     assert_eq!(print(&reports), 0, "see the problems above");
 }
 
@@ -1313,43 +1349,63 @@ fn a_burst_of_changes_reaches_every_client() {
         .collect();
     let mut tcp = TcpStream::connect(st.native.unwrap()).unwrap();
     tcp.set_read_timeout(Some(Duration::from_millis(300))).unwrap();
-    std::thread::sleep(Duration::from_millis(400));
+    // All three are known to the server before the burst.
+    let registered = Instant::now() + slack_ms(5000);
+    loop {
+        let clients = server.status().clients;
+        let osc = clients.iter().filter(|c| c.kind == ClientKind::Osc && c.subscribed).count();
+        let native = clients.iter().filter(|c| c.kind == ClientKind::Native).count();
+        if osc == 2 && native == 1 {
+            break;
+        }
+        assert!(Instant::now() < registered, "the clients didn't register: {clients:?}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let strips = [
+        (StripKind::Channel, "ch", 40),
+        (StripKind::Aux, "aux", 8),
+        (StripKind::Bus, "bus", 16),
+        (StripKind::Main, "main", 4),
+        (StripKind::Matrix, "mtx", 8),
+    ];
+    let mut paths = std::collections::HashSet::new();
+    for (_, prefix, count) in strips {
+        for i in 0..count {
+            for p in ["fdr", "pan", "mute"] {
+                paths.insert(format!("/{prefix}/{}/{p}", i + 1));
+            }
+        }
+    }
+    let paths = Arc::new(paths);
+    // The server finds the changes within its poll (100 ms) and paces the
+    // events out; a slow machine (or ThreadSanitizer) takes longer for both,
+    // so each client waits for all of them, up to a generous limit.
+    let deadline = Instant::now() + slack_ms(10_000);
     // Each client reads all the time, as an app does.
     let readers: Vec<JoinHandle<std::collections::HashSet<String>>> = subs
         .into_iter()
         .map(|s| {
+            let paths = paths.clone();
             std::thread::spawn(move || {
                 let mut got = std::collections::HashSet::new();
                 let mut buf = vec![0u8; 65536];
-                let mut quiet_since = Instant::now();
-                while quiet_since.elapsed() < Duration::from_millis(600) {
+                while Instant::now() < deadline && !paths.iter().all(|p| got.contains(p)) {
                     if let Ok((n, _)) = s.recv_from(&mut buf) {
                         if let Some(m) = osc::decode(&buf[..n]) {
                             got.insert(m.addr);
                         }
-                        quiet_since = Instant::now();
                     }
                 }
                 got
             })
         })
         .collect();
-    let mut paths = std::collections::HashSet::new();
-    for (kind, prefix, count) in [
-        (StripKind::Channel, "ch", 40),
-        (StripKind::Aux, "aux", 8),
-        (StripKind::Bus, "bus", 16),
-        (StripKind::Main, "main", 4),
-        (StripKind::Matrix, "mtx", 8),
-    ] {
+    for (kind, _, count) in strips {
         for i in 0..count {
             let s = engine.strip_at(kind, i).unwrap();
             s.params.fader_db.store(-3.0 - (i % 7) as f32);
             s.params.pan.store(10.0 + i as f32);
             s.params.mute.store(true, Relaxed);
-            for p in ["fdr", "pan", "mute"] {
-                paths.insert(format!("/{prefix}/{}/{p}", i + 1));
-            }
         }
     }
     let ids: std::collections::HashSet<u32> = paths.iter().map(|p| id(p)).collect();
@@ -1360,14 +1416,18 @@ fn a_burst_of_changes_reaches_every_client() {
     }
     let mut dec = Decoder::default();
     let mut toks = Vec::new();
+    let mut got = std::collections::HashSet::new();
     let mut buf = vec![0u8; 65536];
-    while let Ok(n) = tcp.read(&mut buf) {
-        if n == 0 {
-            break;
+    while Instant::now() < deadline && !ids.is_subset(&got) {
+        match tcp.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                dec.feed(&buf[..n], &mut toks);
+                got.extend(toks.drain(..).filter_map(|t| if let Tok::Data(i) = t { Some(i) } else { None }));
+            }
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+            Err(_) => break,
         }
-        dec.feed(&buf[..n], &mut toks);
     }
-    let got: std::collections::HashSet<u32> =
-        toks.iter().filter_map(|t| if let Tok::Data(i) = t { Some(*i) } else { None }).collect();
     assert_eq!(ids.difference(&got).count(), 0, "the Native client missed changes");
 }
