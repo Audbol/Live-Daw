@@ -14,7 +14,9 @@
 //! the shift keys. Bigger consoles get more input keys on the left. `USER 1` and
 //! `USER 2` show the first two user layers, which hold any faders (strips,
 //! DCAs, send levels and FX parameters) in any order and are saved with the
-//! show. A section can also fit as many faders as its space allows (width
+//! show. User layers have fixed slots: a slot can be blank ([`FaderRef::Empty`],
+//! an inactive strip on the surface), and editing a slot never moves the
+//! others. A section can also fit as many faders as its space allows (width
 //! "Auto"), for big channel counts on wide screens.
 //!
 //! **Spill** puts a computed layer on a section for a while: a DCA's members,
@@ -39,9 +41,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// send level from a strip to a bus, main or matrix ("send:ch:3>bus:0"), a
 /// parameter of an FX slot's device ("fxp:2.5": slot 3, parameter 6) or a MIDI
 /// CC sent out of EXTERNAL MIDI CONTROL ("midi:0.7": MIDI channel 1, CC 7; the
-/// WING's layer node type MIDI).
+/// WING's layer node type MIDI). `Empty` is a blank slot of a user layer (or
+/// an edited layer key): an inactive strip, saved as "-".
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FaderRef {
+    Empty,
     Strip(StripRef),
     Dca(i32),
     Send {
@@ -65,7 +69,15 @@ impl FaderRef {
         FaderRef::MidiCc { channel: channel.clamp(0, 15), cc: cc.clamp(0, 127) }
     }
 
+    /// A blank slot.
+    pub fn is_empty(&self) -> bool {
+        matches!(self, FaderRef::Empty)
+    }
+
     pub fn parse(s: &str) -> Self {
+        if s == BLANK_TOKEN {
+            return FaderRef::Empty;
+        }
         if let Some(i) = s.strip_prefix("dca:") {
             return FaderRef::Dca(parse_int_prefix(i));
         }
@@ -88,6 +100,7 @@ impl FaderRef {
 impl fmt::Display for FaderRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            FaderRef::Empty => f.write_str(BLANK_TOKEN),
             FaderRef::Strip(r) => r.fmt(f),
             FaderRef::Dca(i) => write!(f, "dca:{i}"),
             FaderRef::Send { from, to } => write!(f, "send:{from}>{to}"),
@@ -100,6 +113,56 @@ impl fmt::Display for FaderRef {
 impl From<StripRef> for FaderRef {
     fn from(r: StripRef) -> Self {
         FaderRef::Strip(r)
+    }
+}
+
+/// How a blank slot is saved.
+const BLANK_TOKEN: &str = "-";
+
+/// Fixed-slot editing of a layer's faders: slot `i` is `faders[i]`, or blank
+/// past the end. Nothing here moves another slot; trailing blanks are dropped
+/// (the slots past the end are blank anyway).
+pub mod slots {
+    use super::{FaderRef, MAX_SLOTS};
+
+    /// The fader in slot `i` (blank past the end).
+    pub fn get(faders: &[FaderRef], i: usize) -> FaderRef {
+        faders.get(i).copied().unwrap_or(FaderRef::Empty)
+    }
+
+    /// Drops the trailing blanks.
+    pub fn trim(faders: &mut Vec<FaderRef>) {
+        while faders.last().is_some_and(FaderRef::is_empty) {
+            faders.pop();
+        }
+    }
+
+    /// Puts `f` in slot `i`, replacing what was there (blanks fill the gap).
+    /// Slots past [`MAX_SLOTS`] are ignored.
+    pub fn set(faders: &mut Vec<FaderRef>, i: usize, f: FaderRef) {
+        if i >= MAX_SLOTS {
+            return;
+        }
+        if faders.len() <= i {
+            faders.resize(i + 1, FaderRef::Empty);
+        }
+        faders[i] = f;
+        trim(faders);
+    }
+
+    /// Makes slot `i` blank.
+    pub fn clear(faders: &mut Vec<FaderRef>, i: usize) {
+        set(faders, i, FaderRef::Empty);
+    }
+
+    /// Swaps slots `a` and `b` (moving into a blank slot leaves `a` blank).
+    pub fn swap(faders: &mut Vec<FaderRef>, a: usize, b: usize) {
+        if a >= MAX_SLOTS || b >= MAX_SLOTS {
+            return;
+        }
+        let (fa, fb) = (get(faders, a), get(faders, b));
+        set(faders, a, fb);
+        set(faders, b, fa);
     }
 }
 
@@ -130,6 +193,8 @@ pub const WING_WIDTHS: [i32; NUM_SECTIONS] = [12, 8, 4];
 /// Width 0 = Auto: the section holds as many faders as fit.
 pub const AUTO_WIDTH: i32 = 0;
 pub const MAX_WIDTH: i32 = 256;
+/// Slots a layer can have (keeps a stray index from making a huge layer).
+pub const MAX_SLOTS: usize = 1024;
 /// The first key of each section, lit after a reset (manual fig. 9).
 pub const DEFAULT_SELECTION: [&str; NUM_SECTIONS] = ["in-1", "dca-1", "out-1"];
 /// Channels per input key on the left section (`1-12`, `13-24`, ...).
@@ -537,6 +602,9 @@ impl LayerSet {
 
     /// The default layer of a section that contains `fader` (not the USER keys).
     pub fn find_default_layer_containing(&self, engine: &Engine, section: usize, fader: &FaderRef) -> Option<String> {
+        if fader.is_empty() {
+            return None;
+        }
         self.default_layers(engine, section)
             .into_iter()
             .find(|l| !USER_KEYS.contains(&l.id.as_str()) && l.faders.contains(fader))
@@ -637,7 +705,8 @@ impl LayerSet {
     }
 
     /// Creates a user layer and returns its id.
-    pub fn add_user_layer(&mut self, name: &str, faders: Vec<FaderRef>) -> String {
+    pub fn add_user_layer(&mut self, name: &str, mut faders: Vec<FaderRef>) -> String {
+        slots::trim(&mut faders);
         let id = format!("user-{}", new_uuid());
         self.user_layers.push(Layer { id: id.clone(), name: name.into(), faders, user: true });
         id
@@ -662,35 +731,63 @@ impl LayerSet {
         }
     }
 
-    /// Adds a fader to a user layer (no duplicates).
+    /// Adds a fader to a user layer's first blank slot, or after its last
+    /// (no duplicates).
     pub fn add_to_user_layer(&mut self, id: &str, f: FaderRef) {
+        if f.is_empty() {
+            return;
+        }
         if let Some(l) = self.user_layer_mut(id) {
             if !l.faders.contains(&f) {
-                l.faders.push(f);
+                let slot = l.faders.iter().position(FaderRef::is_empty).unwrap_or(l.faders.len());
+                slots::set(&mut l.faders, slot, f);
             }
         }
     }
 
-    /// Replaces a user layer's faders (as given: duplicates are kept).
-    pub fn set_user_layer_faders(&mut self, id: &str, faders: Vec<FaderRef>) {
+    /// Replaces a user layer's faders (as given: blanks and duplicates are kept).
+    pub fn set_user_layer_faders(&mut self, id: &str, mut faders: Vec<FaderRef>) {
+        faders.truncate(MAX_SLOTS);
+        slots::trim(&mut faders);
         if let Some(l) = self.user_layer_mut(id) {
             l.faders = faders;
         }
     }
 
+    /// Blanks the slots holding `f` (the other slots stay where they are).
     pub fn remove_from_user_layer(&mut self, id: &str, f: &FaderRef) {
         if let Some(l) = self.user_layer_mut(id) {
-            l.faders.retain(|x| x != f);
+            for x in l.faders.iter_mut().filter(|x| **x == *f) {
+                *x = FaderRef::Empty;
+            }
+            slots::trim(&mut l.faders);
         }
     }
 
-    pub fn move_within_user_layer(&mut self, id: &str, index: i32, delta: i32) {
+    /// Puts `f` in slot `index` of a user layer, replacing what was there.
+    pub fn set_user_slot(&mut self, id: &str, index: usize, f: FaderRef) {
         if let Some(l) = self.user_layer_mut(id) {
-            let size = l.faders.len() as i64;
-            let (i, t) = (i64::from(index), i64::from(index) + i64::from(delta));
-            if (0..size).contains(&i) && (0..size).contains(&t) {
-                l.faders.swap(i as usize, t as usize);
-            }
+            slots::set(&mut l.faders, index, f);
+        }
+    }
+
+    /// Makes slot `index` of a user layer blank.
+    pub fn clear_user_slot(&mut self, id: &str, index: usize) {
+        self.set_user_slot(id, index, FaderRef::Empty);
+    }
+
+    /// Swaps two slots of a user layer (a move when one of them is blank).
+    pub fn swap_user_slots(&mut self, id: &str, a: usize, b: usize) {
+        if let Some(l) = self.user_layer_mut(id) {
+            slots::swap(&mut l.faders, a, b);
+        }
+    }
+
+    /// Swaps slot `index` with slot `index + delta`.
+    pub fn move_within_user_layer(&mut self, id: &str, index: i32, delta: i32) {
+        let target = i64::from(index) + i64::from(delta);
+        if let (Ok(a), Ok(b)) = (usize::try_from(index), usize::try_from(target)) {
+            self.swap_user_slots(id, a, b);
         }
     }
 
@@ -698,7 +795,9 @@ impl LayerSet {
 
     /// Replaces the faders of a section's default key (not USER 1 / USER 2,
     /// which show user layers).
-    pub fn set_default_override(&mut self, section: usize, id: &str, faders: Vec<FaderRef>) {
+    pub fn set_default_override(&mut self, section: usize, id: &str, mut faders: Vec<FaderRef>) {
+        faders.truncate(MAX_SLOTS);
+        slots::trim(&mut faders);
         if section >= NUM_SECTIONS || id.is_empty() || id.starts_with("user-") {
             return;
         }
@@ -752,12 +851,10 @@ impl LayerSet {
             if !id.starts_with("user-") {
                 id = format!("user-{}", new_uuid());
             }
-            self.user_layers.push(Layer {
-                id,
-                name: e.str_or("name", "User").to_owned(),
-                faders: faders_from_string(e.str_or("faders", "")),
-                user: true,
-            });
+            let mut faders = faders_from_string(e.str_or("faders", ""));
+            faders.truncate(MAX_SLOTS);
+            slots::trim(&mut faders);
+            self.user_layers.push(Layer { id, name: e.str_or("name", "User").to_owned(), faders, user: true });
         }
         for e in xml.children_named("Override") {
             let section = usize::try_from(parse_int_prefix(e.str_or("section", "-1"))).unwrap_or(NUM_SECTIONS);
@@ -991,6 +1088,104 @@ mod tests {
         let mut loaded = LayerSet::default();
         loaded.from_xml(&set.to_xml());
         assert_eq!(loaded.user_layer(&id).map(|l| l.faders.clone()), Some(faders));
+    }
+
+    #[test]
+    fn user_layer_slots_are_fixed() {
+        let mut set = LayerSet::default();
+        let id = set.add_user_layer("Band", vec![ch(1), ch(2), ch(3)]);
+        let faders = |set: &LayerSet| set.user_layer(&id).unwrap().faders.clone();
+        let e = FaderRef::Empty;
+
+        // Set past the end: blanks fill the gap.
+        set.set_user_slot(&id, 6, FaderRef::Dca(0));
+        assert_eq!(faders(&set), vec![ch(1), ch(2), ch(3), e, e, e, FaderRef::Dca(0)]);
+        // Replace in place.
+        set.set_user_slot(&id, 1, ch(9));
+        assert_eq!(faders(&set)[..3], [ch(1), ch(9), ch(3)]);
+        // Clear: the others stay where they are.
+        set.clear_user_slot(&id, 0);
+        assert_eq!(faders(&set), vec![e, ch(9), ch(3), e, e, e, FaderRef::Dca(0)]);
+        // Swap two filled slots, then move one into a blank slot.
+        set.swap_user_slots(&id, 1, 2);
+        assert_eq!(faders(&set)[..3], [e, ch(3), ch(9)]);
+        set.swap_user_slots(&id, 2, 4);
+        assert_eq!(faders(&set), vec![e, ch(3), e, e, ch(9), e, FaderRef::Dca(0)]);
+        // Clearing the last slot drops the trailing blanks.
+        set.clear_user_slot(&id, 6);
+        assert_eq!(faders(&set), vec![e, ch(3), e, e, ch(9)]);
+        // Removing a fader blanks its slot; adding fills the first blank.
+        set.remove_from_user_layer(&id, &ch(3));
+        assert_eq!(faders(&set), vec![e, e, e, e, ch(9)]);
+        set.add_to_user_layer(&id, ch(5));
+        assert_eq!(faders(&set), vec![ch(5), e, e, e, ch(9)]);
+        set.add_to_user_layer(&id, FaderRef::Empty);
+        assert_eq!(faders(&set).len(), 5);
+        // A stray index doesn't make a huge layer.
+        set.set_user_slot(&id, usize::MAX, ch(7));
+        set.swap_user_slots(&id, 0, MAX_SLOTS);
+        assert_eq!(faders(&set), vec![ch(5), e, e, e, ch(9)]);
+        set.move_within_user_layer(&id, 4, -3);
+        assert_eq!(faders(&set), vec![ch(5), ch(9)]);
+        set.move_within_user_layer(&id, 0, -1);
+        assert_eq!(faders(&set), vec![ch(5), ch(9)]);
+    }
+
+    #[test]
+    fn blank_slots_are_saved() {
+        let mut set = LayerSet::default();
+        let e = FaderRef::Empty;
+        let id = set.add_user_layer("Gaps", vec![e, ch(2), e, FaderRef::Dca(3), e, e]);
+        assert_eq!(set.user_layer(&id).unwrap().faders, vec![e, ch(2), e, FaderRef::Dca(3)]);
+        set.set_default_override(LEFT, "in-2", vec![ch(4), e, ch(6)]);
+        let xml = set.to_xml();
+        assert_eq!(xml.children_named("Layer").next().unwrap().str_or("faders", ""), "-,ch:2,-,dca:3");
+
+        let mut loaded = LayerSet::default();
+        loaded.from_xml(&xml);
+        assert_eq!(loaded.user_layers(), set.user_layers());
+        let console = ConsoleRefs::wing(40);
+        assert_eq!(loaded.default_layers_for(LEFT, &console)[1].faders, vec![ch(4), e, ch(6)]);
+        assert_eq!(FaderRef::parse("-"), e);
+        assert_eq!(faders_from_string("-, ch:1 ,-"), vec![e, ch(1), e]);
+    }
+
+    #[test]
+    fn shows_without_blanks_load_unchanged() {
+        // A show saved before blank slots existed.
+        let mut old = Element::new("Layers");
+        old.set("widths", "12,8,4").set("left", "in-1").set("center", "dca-1").set("right", "out-1");
+        old.add_new("Layer").set("id", "user-0123").set("name", "Drums").set("faders", "ch:1,ch:2,dca:0,send:ch:3>bus:1");
+        old.add_new("Layer").set("id", "user-4567").set("name", "Empty").set("faders", "");
+        let mut set = LayerSet::default();
+        set.from_xml(&old);
+        let send = FaderRef::Send { from: StripRef::new(StripKind::Channel, 3), to: StripRef::new(StripKind::Bus, 1) };
+        assert_eq!(set.user_layers()[0].faders, vec![ch(1), ch(2), FaderRef::Dca(0), send]);
+        assert!(set.user_layers()[1].faders.is_empty());
+        assert!(set.user_layers().iter().all(|l| !l.faders.iter().any(FaderRef::is_empty)));
+        // Saved again, it reads the same.
+        assert_eq!(set.to_xml().children_named("Layer").next().unwrap().str_or("faders", ""), "ch:1,ch:2,dca:0,send:ch:3>bus:1");
+    }
+
+    #[test]
+    fn user_keys_keep_blank_slots() {
+        let mut set = LayerSet::default();
+        let console = ConsoleRefs::wing(8);
+        let id = set.add_user_layer("Drums", vec![]);
+        set.set_user_slot(&id, 2, ch(1));
+        set.set_user_slot(&id, 5, FaderRef::Dca(0));
+
+        let user1 = set.default_layers_for(CENTER, &console).into_iter().find(|l| l.id == "user-1").unwrap();
+        assert_eq!(user1.faders.len(), 6);
+        assert_eq!(slots::get(&user1.faders, 2), ch(1));
+        assert_eq!(slots::get(&user1.faders, 5), FaderRef::Dca(0));
+        for i in [0, 1, 3, 4, 6, 7, 100] {
+            assert!(slots::get(&user1.faders, i).is_empty(), "slot {i}");
+        }
+        assert_eq!(set.find_layer_for(LEFT, &console, &id).faders, user1.faders);
+        // A blank slot is in no default layer ("go to strip" finds nothing).
+        let e = Engine::new(0);
+        assert_eq!(set.find_default_layer_containing(&e, LEFT, &FaderRef::Empty), None);
     }
 
     #[test]

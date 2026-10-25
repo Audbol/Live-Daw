@@ -7,6 +7,18 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Fixed
 
+- User layers can have blank slots, as on the WING. On VIEW > CONFIG an item dragged
+  (or tapped) onto a slot now goes into exactly that slot instead of being packed to
+  the left with everything after it shifting; a filled slot dragged onto another swaps
+  with it (or moves into a blank one); dragging a slot off the slots, right-click or
+  long-press > CLEAR SLOT blanks it. A blank slot is an inactive strip on the surface
+  (dark scribble strip, light bar off, the fader and keys doing nothing), also on the
+  VIEW screens, the custom controls, Sends on Fader, spill and the remote controls.
+  Blank slots are saved with the show (as "-"); older shows load unchanged. The WING
+  remote maps a blank slot to OFF both ways (OFF used to remove the fader and shift
+  the rest). C ABI 14: `kFaderEmpty` and the user layer slot functions. CONFIG's NEW
+  and DELETE keys no longer cover the first slots of a 12-fader section.
+
 - 1366 x 768 screens: the window opened at 1680 x 1000, off the top and left of a
   laptop screen with the start-up notice's buttons out of reach. It now opens fitted
   and centred in the main display's work area (a size saved on a bigger screen is

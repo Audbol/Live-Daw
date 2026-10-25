@@ -20,7 +20,7 @@ public:
     {
         std::vector<Strip*> strips;
         for (auto& f : layer.faders)
-            if (! f.dca)
+            if (! f.dca && ! f.isEmpty())
                 if (auto* s = state::findStrip (engine, f.strip))
                     strips.push_back (s);
         return strips;
@@ -169,6 +169,94 @@ public:
             loaded.clear (4);
             expect (loaded.layers.getUserLayers().empty());
             expectEquals ((int) e2.getChannels().size(), 4);
+        }
+
+        beginTest ("User layer slots are fixed: CONFIG drops land where they're dropped");
+        {
+            using state::FaderRef;
+            const auto ch = [] (int id) { return FaderRef::of ({ StripKind::Channel, id }); };
+            const auto blank = FaderRef::blank();
+            const auto isBlank = [] (const std::vector<FaderRef>& f, std::initializer_list<int> slots)
+            {
+                for (int i : slots)
+                    if (! layerslots::get (f, i).isEmpty())
+                        return false;
+                return true;
+            };
+
+            expect (blank.isEmpty() && ! blank.isStrip() && blank == FaderRef::blank() && ! (blank == ch (0)) && ! (ch (0) == blank));
+            expect (FaderRef::fromC (blank.toC()).isEmpty());
+
+            // The reported bug: an item dropped on slot 6 of an empty layer goes to slot 6.
+            std::vector<FaderRef> f;
+            layerslots::place (f, { ch (1) }, 5);
+            expectEquals ((int) f.size(), 6);
+            expect (f[5] == ch (1) && isBlank (f, { 0, 1, 2, 3, 4, 6, 7 }));
+            // Another on slot 3: slot 6 stays.
+            layerslots::place (f, { ch (2) }, 2);
+            expect (f[2] == ch (2) && f[5] == ch (1) && isBlank (f, { 0, 1, 3, 4 }));
+            // Several items fill the slots from the target on, replacing what's there.
+            layerslots::place (f, { ch (3), ch (4) }, 4);
+            expect (f[2] == ch (2) && f[4] == ch (3) && f[5] == ch (4) && isBlank (f, { 0, 1, 3, 6 }));
+            // An item already in the layer moves; its old slot turns blank.
+            layerslots::place (f, { ch (2) }, 0);
+            expect (f[0] == ch (2) && f[4] == ch (3) && f[5] == ch (4) && isBlank (f, { 1, 2, 3 }));
+            // Dropped onto its own slot: nothing changes.
+            const auto before = f;
+            layerslots::place (f, { ch (3) }, 4);
+            expect (f == before);
+            // A slot dragged onto a filled slot swaps with it; onto a blank slot it moves.
+            layerslots::swap (f, 0, 5);
+            expect (f[0] == ch (4) && f[5] == ch (2) && f[4] == ch (3));
+            layerslots::swap (f, 4, 9);
+            expect (f[9] == ch (3) && isBlank (f, { 1, 2, 3, 4, 6, 7, 8 }) && f[0] == ch (4) && f[5] == ch (2));
+            expectEquals ((int) f.size(), 10);
+            // Clearing blanks the slot alone; trailing blanks are dropped.
+            layerslots::clear (f, 0);
+            expect (isBlank (f, { 0 }) && f[5] == ch (2) && f[9] == ch (3));
+            layerslots::clear (f, 9);
+            expectEquals ((int) f.size(), 6);
+            layerslots::set (f, -1, ch (7));
+            layerslots::swap (f, -1, 2);
+            expectEquals ((int) f.size(), 6);
+
+            // The surface: a blank slot (or past the end) is an inactive strip.
+            Layer layer;
+            layer.faders = { blank, ch (1), blank, FaderRef::ofDca (2) };
+            expect (! LayerSet::surfaceTarget (layer, 0).has_value());
+            expect (LayerSet::surfaceTarget (layer, 1) == std::optional<FaderRef> (ch (1)));
+            expect (! LayerSet::surfaceTarget (layer, 2).has_value());
+            expect (LayerSet::surfaceTarget (layer, 3)->dca);
+            expect (! LayerSet::surfaceTarget (layer, 4).has_value() && ! LayerSet::surfaceTarget (layer, -1).has_value());
+
+            // Through the C ABI and a show round trip: the blanks stay.
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            engine.setNumChannels (8);
+            const auto c1 = FaderRef::of (state::StripRef::of (*engine.getChannels()[0]));
+            const auto c5 = FaderRef::of (state::StripRef::of (*engine.getChannels()[4]));
+            const auto id = show.layers.addUserLayer ("USER 1");
+            show.layers.setUserLayerFaders (id, { blank, c1, blank, blank, FaderRef::ofDca (0), blank });
+            auto user1 = show.layers.findLayer (engine, S::Left, "user-1");
+            expectEquals ((int) user1.faders.size(), 5);
+            expect (user1.faders[1] == c1 && user1.faders[4].dca && isBlank (user1.faders, { 0, 2, 3, 5 }));
+            show.layers.setUserLayerSlot (id, 7, c5);
+            show.layers.swapUserLayerSlots (id, 1, 3);
+            show.layers.clearUserLayerSlot (id, 4);
+            user1 = show.layers.findLayer (engine, S::Center, "user-1");
+            expect (user1.faders.size() == 8 && user1.faders[3] == c1 && user1.faders[7] == c5 && isBlank (user1.faders, { 0, 1, 2, 4, 5, 6 }));
+
+            auto xml = show.toXml();
+            MixerEngine e2 (0);
+            Show loaded (e2, host);
+            expect (loaded.loadFromXml (*xml).wasOk());
+            const auto again = loaded.layers.findLayer (e2, S::Right, "user-1");
+            expect (again.faders == user1.faders);
+            expect (! LayerSet::surfaceTarget (again, 0).has_value() && LayerSet::surfaceTarget (again, 3).has_value());
+
+            // "Go to strip" never looks for a blank slot.
+            expect (show.layers.findDefaultLayerContaining (engine, S::Left, blank).isEmpty());
         }
 
         beginTest ("Spill layers, send, FX parameter and MIDI CC faders");

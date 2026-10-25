@@ -184,11 +184,15 @@ private:
     int lastY = 0;
 };
 
-/** CONFIG (fig. 58, [I10]): edits the fader layers. Pick items in the top grid
-    and drag them onto a slot (replaces it) or between two slots (a blue line:
-    inserts and shifts the rest), or click a slot; drag a slot away to remove
-    it, drag within the slots to reorder. Every layer key is editable: USER 1 /
-    USER 2 hold user layers, the other keys keep an edited copy in the show
+/** CONFIG (fig. 58, [I10]): edits the fader layers, whose slots are fixed as
+    on the WING: nothing ever shifts, and a slot can be blank (an inactive
+    strip on the surface). Pick items in the top grid and drag them onto a slot,
+    or click a slot with items picked: they fill that slot (and the next ones
+    for several items), replacing what was there; an item already in the layer
+    moves. Drag a slot onto another to swap the two (onto a blank slot: move
+    it), drag it off the slots, right-click it or long-press it (CLEAR SLOT) to
+    blank it. CLEAR blanks the whole layer. Every layer key is editable: USER 1
+    / USER 2 hold user layers, the other keys keep an edited copy in the show
     (RESTORE gives back the generated one). The slots of the page shown sit in
     groups of four on blue plates, their numbers under them; the arrows page,
     one page past the end to append. */
@@ -208,12 +212,8 @@ protected:
     void layerChanged() override;
 
 private:
-    /** Where a drop lands: on slot `index` (replace) or before it (insert). */
-    struct DropTarget
-    {
-        int index = -1;
-        bool insert = false;
-    };
+    /** A press this long on a filled slot opens CLEAR SLOT (touch screens). */
+    static constexpr int kLongPressMs = 600;
 
     std::vector<state::FaderRef> sourceItems() const;
     /** The destinations of SENDS (every bus, main and matrix) or BUS -> BUS
@@ -226,9 +226,15 @@ private:
     juce::String userLayerId (const Layer&, bool create);
     /** Stores the layer's faders (a user layer's, or the default key's edited copy). */
     void setLayerFaders (const Layer&, const std::vector<state::FaderRef>&);
-    /** Puts `items` at layer position `index`, replacing what's there or inserting. */
-    void placeAt (const std::vector<state::FaderRef>&, int index, bool insert);
-    DropTarget dropTargetAt (juce::Point<int>) const;
+    /** Applies a fixed-slot edit (layerslots) to the layer shown. */
+    void editSlots (const std::function<void (std::vector<state::FaderRef>&)>&);
+    /** Puts `items` in slot `index` onward, replacing what's there (layerslots::place). */
+    void placeAt (const std::vector<state::FaderRef>&, int index);
+    void clearSlot (int index);
+    /** CLEAR SLOT for slot `local` of the page shown. */
+    void showSlotMenu (int local);
+    /** The layer slot under `pos` (-1: none). */
+    int slotAt (juce::Point<int>) const;
     void updateKeys();
 
     /** MIDI CC: 32 CCs of one MIDI channel at a time ("CH 1  CC 0-31"). */

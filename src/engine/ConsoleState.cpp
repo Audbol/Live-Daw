@@ -83,6 +83,8 @@ std::vector<ld::StripRefC> toC (const std::vector<StripRef>& refs)
 
 ld::FaderRefC FaderRef::toC() const noexcept
 {
+    if (empty)
+        return { ld::kFaderEmpty, 0, -1, 0 };
     if (dca)
         return { ld::kFaderDca, dcaIndex, -1, 0 };
     if (fxParam)
@@ -96,6 +98,8 @@ ld::FaderRefC FaderRef::toC() const noexcept
 
 FaderRef FaderRef::fromC (ld::FaderRefC r) noexcept
 {
+    if (r.kind == ld::kFaderEmpty)
+        return blank();
     if (r.kind == ld::kFaderDca)
         return ofDca (r.id);
     if (r.kind == ld::kFaderFxParam)

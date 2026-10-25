@@ -260,7 +260,7 @@ void FaderSection::refreshFaders()
     for (int i = 0; i < n; ++i)
     {
         const int index = offset + i;
-        strips[i]->setTarget (index < total ? std::optional<state::FaderRef> (layer.faders[(size_t) index]) : std::nullopt);
+        strips[i]->setTarget (LayerSet::surfaceTarget (layer, index)); // a blank slot: an inactive strip
     }
     repaint();
 }

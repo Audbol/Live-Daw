@@ -456,7 +456,8 @@ FaderStrip::FaderStrip (UiContext& c, LayerSet::Section s) : ctx (c), section (s
 
 void FaderStrip::setTarget (std::optional<state::FaderRef> t)
 {
-    target = t;
+    // A blank layer slot is an inactive strip, as past the end of a layer.
+    target = t.has_value() && t->isEmpty() ? std::nullopt : t;
     refresh();
 }
 
@@ -873,7 +874,8 @@ void FaderStrip::paint (juce::Graphics& g)
     drawLightBar (g, barArea.toFloat(), lightBarColour (colour).withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
                   target.has_value() && shownLight);
     auto info = target ? scribbleInfo() : ScribbleInfo {};
-    info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
+    // A blank slot (or past the end of the layer): a dark LCD with no text.
+    info.backlight = target ? uiprefs::brightness (ctx.settings, "scribble", 60) : 0.0f;
     drawScribble (g, lcdArea.toFloat(), info);
     drawScribbleFrame (g, lcdArea.toFloat(), moduleFirst, moduleLast, info.backlight);
 
