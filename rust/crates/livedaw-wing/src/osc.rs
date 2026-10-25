@@ -221,7 +221,7 @@ pub(crate) fn dump(c: &Console, node: Node) -> String {
 }
 
 /// One line of a node description (`?`, or `#` with values).
-fn describe_line(c: &Console, node: Node, with_value: bool) -> String {
+pub(crate) fn describe_line(c: &Console, node: Node, with_value: bool) -> String {
     let s = schema();
     let name = s.name(node, c);
     let Some(def) = s.def(node, c) else { return format!(" {name}") };
@@ -500,5 +500,62 @@ mod tests {
         assert_eq!(reply("/$stat/ppm", Value::Int(0)), [Arg::Str("0".into()), Arg::Float(0.5), Arg::Int(200)]);
         assert_eq!(reply("/$ctl/$stat/sof", Value::Int(0)).last(), Some(&Arg::Int(1)));
         assert_eq!(reply("/ch/1/mute", Value::Int(1)), [Arg::Str("1".into()), Arg::Float(1.0), Arg::Int(1)]);
+    }
+
+    /// Every parameter a factory-set WING described in its dump
+    /// (`tests/data/wing_desc.tsv`, written by `examples/wing_factory.rs`;
+    /// the active models' parameters too) is described the same here.
+    #[test]
+    fn descriptions_match_the_wings_dump() {
+        use crate::map::WingState;
+        let fixture = include_str!("../tests/data/wing_desc.tsv");
+        let (mut exact, mut patterns) = (std::collections::HashMap::new(), std::collections::HashMap::new());
+        for line in fixture.lines() {
+            let (k, v) = line.split_once('\t').unwrap();
+            if k.contains('*') {
+                patterns.insert(k, v);
+            } else {
+                exact.insert(k, v);
+            }
+        }
+        let pattern = |p: &str| {
+            p.split('/')
+                .map(|x| if !x.is_empty() && x.bytes().all(|b| b.is_ascii_digit()) { "*" } else { x })
+                .collect::<Vec<_>>()
+                .join("/")
+        };
+        // What the console describes from its state, which a static tree can't follow.
+        let exceptions = |p: &str| {
+            let pat = pattern(p);
+            // The patched preamp's range (a local or a remote one).
+            pat.ends_with("/*/in/set/$g")
+                // Firmware after 3.1 added MSTR1EXT and MSTR2EXT.
+                || p == "/$ctl/daw/config"
+                // The cards' session lists, filled at run time.
+                || pat == "/cards/wlive/*/$stat/sessionlist"
+        };
+        let e = livedaw_engine::Engine::new(0);
+        e.set_num_channels(40);
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let s = schema();
+        let mut leaves = Vec::new();
+        c.leaves(Node::Root, &mut leaves);
+        let (mut compared, mut wrong) = (0, Vec::new());
+        for n in leaves {
+            let path = s.path(n, &c);
+            let Some(want) = exact.get(path.as_str()).or_else(|| patterns.get(pattern(&path).as_str())) else { continue };
+            if exceptions(&path) {
+                continue;
+            }
+            let name = s.name(n, &c);
+            let line = describe_line(&c, n, false);
+            compared += 1;
+            if line[name.len() + 2..] != **want {
+                wrong.push(format!("{path}: {line} (WING: {want})"));
+            }
+        }
+        assert!(wrong.is_empty(), "{} of {compared} differ:\n{}", wrong.len(), wrong.join("\n"));
+        assert!(compared > 29800, "{compared}");
     }
 }

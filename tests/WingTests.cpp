@@ -1,4 +1,5 @@
 #include "TestHelpers.h"
+#include "engine/DawRemote.h"
 #include "engine/PluginHost.h"
 #include "engine/Show.h"
 #include "engine/WingRemote.h"
@@ -229,8 +230,42 @@ public:
             ld::LdString* dump = nullptr;
             expect (ld::ld_wing_sysex (wing.getHandle(), 3, "/$ctl.safes.fx", std::strlen ("/$ctl.safes.fx"), &dump));
             const auto text = takeString (dump);
-            expect (text.contains ("1,2"), text);
+            expect (text.contains ("++    "), text); // the console's "+" / " " per slot
             wing.attachShow (nullptr);
+            dir.deleteRecursively();
+        }
+
+        beginTest ("Remote clients read and change SETUP's settings");
+        {
+            auto dir = tempDir ("settings");
+            MixerEngine engine (0);
+            juce::PropertiesFile settings (dir.getChildFile ("test.settings"), juce::PropertiesFile::Options());
+            settings.setValue ("setup.meterTapPre.1", true); // BUS METERS: PRE
+            auto& wing = engine.getWing();
+            juce::StringArray changed;
+            wing.setHostSettings (&settings, [&changed] (const juce::StringArray& keys) { changed.addArray (keys); });
+            auto sysex = [&wing] (int cmd, const char* text)
+            {
+                ld::LdString* out = nullptr;
+                const bool ok = ld::ld_wing_sysex (wing.getHandle(), cmd, text, std::strlen (text), &out);
+                const auto s = takeString (out);
+                return ok ? s : juce::String ("ERROR ") + s;
+            };
+            const auto meters = sysex (3, "/cfg.mtr.mtrpage");
+            expect (meters.contains ("bus=PRE") && meters.contains ("main=POST"), meters);
+            expect (sysex (2, "/cfg.mtr.mtrsfc.main=PRE").isEmpty());
+            expect (sysex (2, "/cfg.mtr.mainmtr=MAIN.2").isEmpty());
+            expect (sysex (2, "/$ctl.daw.emul=HUI").isEmpty());
+            wing.pumpHostSettings();
+            expect (settings.getBoolValue ("setup.meterTapPre.2", false), "MAIN METERS: PRE");
+            expectEquals (settings.getIntValue ("ui.mainMeter", 0), 2);
+            expect (DawRemote::Settings::load (settings).emulation == DawRemote::Emulation::Hui);
+            expect (changed.contains ("daw.emul") && changed.contains ("ui.mainMeter"), changed.joinIntoString (","));
+            // Changed in the app: clients see it.
+            settings.setValue ("ui.faderSpeed", 2);
+            wing.pumpHostSettings();
+            expect (sysex (3, "/$ctl.$globals").contains ("fdrspd=FAST"));
+            wing.setHostSettings (nullptr);
             dir.deleteRecursively();
         }
 

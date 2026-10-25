@@ -560,3 +560,70 @@ fn native_meters_over_udp() {
     a.tcp.write_all(&renew).unwrap();
     assert!(udp.recv_from(&mut buf).is_ok());
 }
+
+/// The parameters mapped since the first coverage report, set and read
+/// through both protocols: the engine, the host's settings or the stored
+/// value change.
+#[test]
+fn osc_and_native_reach_sources_outputs_safes_and_settings() {
+    use livedaw_engine::recorder::usb::RecTap;
+    use livedaw_engine::sources::USB_PLAYER_SOURCE_INDEX;
+    let engine = Arc::new(Engine::new(0));
+    engine.set_num_channels(40);
+    let state = Arc::new(WingState::default());
+    let config =
+        Config { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), discovery_port: 0, osc_port: 0, native_port: 0, ..Config::default() };
+    let handle: Arc<dyn EngineHandle> = Arc::new(engine.clone());
+    let server = WingServer::start(handle, state.clone(), &config);
+    let c = Osc::new(&server);
+    let text = |m: Message| match m.args.first() {
+        Some(Arg::Str(s)) => s.clone(),
+        other => panic!("{other:?}"),
+    };
+
+    // OSC: LOCAL IN is A (Sidecar's ports 1-48).
+    c.send(&Message::new("/io/in/LCL/4/name", vec![Arg::Str("Gtr".into())]));
+    assert_eq!(text(c.get("/io/in/A/4/name")), "Gtr");
+    assert_eq!(engine.sources().name(3), "Gtr");
+    // The USB recorder's RECORDER ports.
+    c.send(&Message::new("/io/out/REC/1/grp", vec![Arg::Str("BUS".into())]));
+    c.send(&Message::new("/io/out/REC/1/in", vec![Arg::Int(3)]));
+    assert_eq!(text(c.get("/io/out/REC/1/grp")), "BUS");
+    assert_eq!(engine.usb().tap(0), RecTap::Strip { kind: StripKind::Bus as i32, number: 2, channel: 0 });
+    // Safes in the console's format.
+    c.send(&Message::new("/$ctl/safes/main", vec![Arg::Str(" +".into())]));
+    assert_eq!(text(c.get("/$ctl/safes/main")), " +  ");
+    assert!(engine.strip_by_number(StripKind::Main, 2).unwrap().params.recall_safe.load(Relaxed));
+    // A host setting: METERS > bus meters PRE.
+    c.send(&Message::new("/cfg/mtr/mtrpage/bus", vec![Arg::Str("PRE".into())]));
+    assert_eq!(text(c.get("/cfg/mtr/mtrpage/bus")), "PRE");
+    assert_eq!(state.take_host_setting(), Some(("setup.meterTapPre.1", "1".to_owned())));
+    // A stored factory value, kept as set.
+    assert_eq!(text(c.get("/cards/wmadi/mode")), "SFP1");
+    c.send(&Message::new("/cards/wmadi/mode", vec![Arg::Str("BNC".into())]));
+    assert_eq!(text(c.get("/cards/wmadi/mode")), "BNC");
+
+    // Native: the USB player's source name, a DAW setting, a stored value.
+    let mut a = Native::connect(&server);
+    std::thread::sleep(Duration::from_millis(150));
+    let name = id("/io/in/PLAY/1/name");
+    let mut req = Native::select(name);
+    req.push(0x7f + 3);
+    req.extend_from_slice(b"BGM");
+    req.push(0xdc);
+    a.send(&req);
+    assert!(a.read_until_ends(1).contains(&Tok::Data(name, livedaw_wing::Value::str("BGM"))));
+    assert_eq!(engine.sources().name(USB_PLAYER_SOURCE_INDEX), "BGM");
+    let conn = id("/$ctl/daw/conn");
+    let mut req = Native::select(conn);
+    req.push(0x00); // DIN
+    req.push(0xdc);
+    a.send(&req);
+    assert!(a.read_until_ends(1).contains(&Tok::Data(conn, livedaw_wing::Value::str("DIN"))));
+    assert_eq!(state.take_host_setting(), Some(("daw.conn", "0".to_owned())));
+    let vol = id("/$stat/usbvolname");
+    let mut req = Native::select(vol);
+    req.push(0xdc);
+    a.send(&req);
+    assert!(a.read_until_ends(1).contains(&Tok::Data(vol, livedaw_wing::Value::str("NO DRIVE"))));
+}

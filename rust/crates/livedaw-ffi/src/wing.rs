@@ -396,6 +396,47 @@ pub unsafe extern "C" fn ld_wing_take_safes(w: *mut LdWing, dcas: *mut u32, mute
     true
 }
 
+/// The keys of the host settings that are WING parameters (`livedaw_wing::host`),
+/// one per line: the host publishes these from its settings file.
+#[no_mangle]
+pub extern "C" fn ld_wing_host_setting_keys() -> *mut LdString {
+    LdString::new(guard(String::new(), || livedaw_wing::host::keys().join("\n")))
+}
+
+/// Publishes a host setting's value (its text in the settings file), unless
+/// a client's change to it is still to be taken.
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_set_host_setting(
+    w: *mut LdWing,
+    key: *const u8,
+    key_len: usize,
+    value: *const u8,
+    value_len: usize,
+) {
+    if let Some(w) = wing(w) {
+        let (key, value) = (str_arg(key, key_len), str_arg(value, value_len));
+        guard((), || w.state.set_host_setting(&key, &value));
+    }
+}
+
+/// The next host setting a client changed: true with its key and new value (either pointer may be null).
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_take_host_setting(w: *mut LdWing, key: *mut *mut LdString, value: *mut *mut LdString) -> bool {
+    let Some(w) = wing(w) else { return false };
+    let Some((k, v)) = guard(None, || w.state.take_host_setting()) else { return false };
+    write(key, k.to_owned());
+    write(value, v);
+    true
+}
+
+/// No host for the settings any more (they read Sidecar's defaults again).
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_clear_host_settings(w: *mut LdWing) {
+    if let Some(w) = wing(w) {
+        guard((), || w.state.clear_host_settings());
+    }
+}
+
 /// `ld_wing_sync_surface`'s result (`kWingSurface*` in the header): the show's layers changed.
 pub const LD_WING_SURFACE_LAYERS: u32 = 1;
 /// The show's custom controls changed.
@@ -552,7 +593,7 @@ mod tests {
             let c = livedaw_wing::Console::new(&*engine, &state);
             let node = |p: &str| livedaw_wing::schema().resolve(p, &c).unwrap();
             assert_eq!(c.get(node("/rec/$path")), Some(livedaw_wing::Value::str("REC")));
-            assert_eq!(c.get(node("/$ctl/safes/dca")), Some(livedaw_wing::Value::str("1,2")));
+            assert_eq!(c.get(node("/$ctl/safes/dca")), Some(livedaw_wing::Value::str("++              ")));
             c.set(node("/rec/resolution"), &livedaw_wing::Value::str("24")).unwrap();
             c.set(node("/rec/$action"), &livedaw_wing::Value::str("REC")).unwrap();
             c.set(node("/play/$playfile"), &livedaw_wing::Value::str("a.wav")).unwrap();
@@ -576,6 +617,32 @@ mod tests {
             ld_wing_clear_usb(w);
             assert!(c.set(node("/rec/$action"), &livedaw_wing::Value::str("REC")).is_err());
             ld_wing_clear_safes(w);
+            drop(c);
+            ld_wing_destroy(w);
+            drop(Box::from_raw(engine));
+        }
+    }
+
+    #[test]
+    fn host_settings_reach_the_host() {
+        let engine = Box::into_raw(Box::new(Engine::new(0)));
+        unsafe {
+            let w = ld_wing_create(engine);
+            let keys = take(ld_wing_host_setting_keys());
+            assert!(keys.lines().any(|k| k == "setup.meterTapPre.0") && keys.lines().any(|k| k == "midi.enchctl"), "{keys}");
+            let (key, value) = ("ui.faderSpeed", "2");
+            ld_wing_set_host_setting(w, key.as_ptr(), key.len(), value.as_ptr(), value.len());
+            let state = (*w).state.clone();
+            let c = livedaw_wing::Console::new(&*engine, &state);
+            let node = |p: &str| livedaw_wing::schema().resolve(p, &c).unwrap();
+            assert_eq!(c.get(node("/$ctl/$globals/fdrspd")), Some(livedaw_wing::Value::str("FAST")));
+            c.set(node("/$ctl/daw/emul"), &livedaw_wing::Value::str("HUI")).unwrap();
+            let (mut k, mut v) = (std::ptr::null_mut(), std::ptr::null_mut());
+            assert!(ld_wing_take_host_setting(w, &mut k, &mut v));
+            assert_eq!((take(k).as_str(), take(v).as_str()), ("daw.emul", "1"));
+            assert!(!ld_wing_take_host_setting(w, std::ptr::null_mut(), std::ptr::null_mut()));
+            ld_wing_clear_host_settings(w);
+            assert_eq!(c.get(node("/$ctl/$globals/fdrspd")), Some(livedaw_wing::Value::str("MED")));
             drop(c);
             ld_wing_destroy(w);
             drop(Box::from_raw(engine));

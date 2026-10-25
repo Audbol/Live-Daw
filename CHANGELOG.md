@@ -5,7 +5,49 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ## [Unreleased]
 
+### Added
+
+- WING REMOTE: the parameter tree is finished. Every parameter of the WING 3.1 tree
+  but one now answers (68,555 of 68,556, up from 60,555, 88.3 %):
+  - Newly driving Sidecar: the LOCAL IN sources (the same ports as AES50 A, as on
+    ROUTING) and the USB player's (the `PLAY` group: name, colour, icon, mute,
+    polarity, mode; channels patch to `PLAY` 1-4), LOCAL OUT (A 1-8), the USB
+    recorder's RECORDER ports (`/io/out/REC/1-4`: a bus, main or matrix signal or a
+    source), the buses, mains and matrices as sources (`/io/in/$BUS`, `$MAIN`, `$MTX`,
+    read only) and `/$globals/clkrate` (the audio device's rate).
+  - SETUP's options are Sidecar's settings, both ways (C ABI: `ld_wing_host_setting_keys`,
+    `ld_wing_set_host_setting`, `ld_wing_take_host_setting`, `ld_wing_clear_host_settings`;
+    `WingRemote::setHostSettings`): METERING's taps (`/cfg/mtr/mtrpage`, `mtrsfc`) and
+    MAIN METER, the GENERAL, SURFACE and SOLO SYSTEM options and brightness tiles
+    (`/$ctl/cfg`, `/$ctl/$globals`), MIDI REMOTE CONTROL (`/$ctl/midi`) and DAW
+    (`/$ctl/daw`). Rows Sidecar shows fixed (MAIN METER TAP POST, TAP TEMPO FLASH ON,
+    no screen lock...) answer that and refuse other values.
+  - What Sidecar has no equivalent for (cards, the console's hardware, network and
+    status, other models' surfaces, input and output groups Sidecar doesn't have,
+    bus-to-bus sends the engine doesn't have, source and output safes, the player's
+    song tags...) answers what a factory-initialized WING answers
+    (`livedaw-wing/data/wing_factory.tsv`, from a dump of a real console) and keeps
+    what a client sets, read-only where the WING marks it. Unbound nodes and missing
+    strips answer the factory value too, instead of a neutral one.
+  - Left unmapped: `/$ctl/daw/config`, whose 3.1 choices (CC, MSTR) can't show
+    Sidecar's MCU with extenders.
+  - Defaults that deliberately stay Sidecar's (the WING's factory value in brackets):
+    MAIN METER the monitor (MAIN.1), MAIN METER TAP POST (AUTO), RIGHT SECTION SOF on
+    (L/C), EXCLUSIVE SOLO and SELECT FOLLOWS SOLO off (on), FADER/SCREEN LAYER LINK on
+    (off), the RECORDER ports on Main 1 (OFF), the USB player's sources unnamed,
+    purple, mono and without an icon ("2TR", 8, stereo, 608) and the local sources
+    without an icon (1: a local input is A's source here).
+  - A unit test compares the description of every parameter a factory-set WING
+    described (`tests/data/wing_desc.tsv`, 29,871 parameters) with Sidecar's; a
+    protocol test sets and reads the new mappings over OSC and the native protocol.
+
 ### Fixed
+
+- WING REMOTE: the recall safes (`/$ctl/safes`) answer in the console's format, a "+"
+  or a space per strip, DCA, mute group or FX slot (they were lists like `1,3-5`,
+  which are still taken). A string set over OSC keeps its leading and trailing spaces.
+  CH 3's input delay is described in meters like the other channels (the tree had
+  caught it in ms). `/play/$actidx` reads 0 with nothing queued, inside its range.
 
 - User layers can have blank slots, as on the WING. On VIEW > CONFIG an item dragged
   (or tapped) onto a slot now goes into exactly that slot instead of being packed to

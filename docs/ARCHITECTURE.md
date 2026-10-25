@@ -813,10 +813,18 @@ dependencies beyond the other Sidecar crates.
   or mute group field, an FX slot, a console control, an output patch...) and
   `Console` gets and sets values in WING units (dB, Hz, enums by name, fader law with
   -144 for -oo), converting to the engine's parameters, model tables and port
-  numbers. Ports: AES50 A/B/C 1-48 are hardware ports 1-144 and the WING-LIVE card
-  (CRD) is the recorder's playback channels. Nodes without an engine equivalent live
-  in a **shadow store** (`WingState`) so clients and snapshots read back what they
-  wrote; they do nothing. `map::coverage()` counts what maps (88.2 % of the leaves).
+  numbers. Ports: AES50 A/B/C 1-48 are hardware ports 1-144 (LCL is A), the
+  WING-LIVE card (CRD) is the recorder's playback channels and PLAY the USB player.
+  SETUP options the app keeps in its settings file are `Binding::Host` (`host.rs`:
+  the node, the settings key, Sidecar's default, the value encoding); the app
+  publishes and stores them (`WingRemote::setHostSettings`). Nodes without a Sidecar
+  equivalent are `Binding::Stored`: they answer the factory-initialized WING's
+  value (`data/wing_factory.tsv`, written from a console dump by
+  `examples/wing_factory.rs`) and live in a **shadow store** (`WingState`) so
+  clients and snapshots read back what they wrote; they do nothing.
+  `map::coverage()` counts what maps (68,555 of 68,556 leaves; 61,115 engine-backed).
+  `tests/data/wing_desc.tsv` holds the same console's descriptions, which a unit
+  test compares with every parameter's.
   The console level maps too: TAP WIDTH / TAP EQ (`/ch/N/tapwid`, `peq`), `/cfg/solo`
   (mode, the solo bus, mute, SOURCE SOLO), `/$ctl/cfg/muteovr`, `/cfg/talk`, both
   monitor paths (`/cfg/mon/1` PHONES, `/2` SPEAKERS), the RTA settings and the

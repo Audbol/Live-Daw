@@ -1267,6 +1267,15 @@ extern "C"
     void ld_wing_set_safes (LdWing*, uint32_t dcas, uint32_t muteGroups, uint32_t fx);
     void ld_wing_clear_safes (LdWing*);
     bool ld_wing_take_safes (LdWing*, uint32_t* dcas, uint32_t* muteGroups, uint32_t* fx);
+    /** The app settings that are WING parameters (SETUP's surface, metering, solo, MIDI and
+        DAW options): their keys, one per line. The host publishes each key's text from its
+        settings file (ld_wing_set_host_setting; keys it doesn't have read Sidecar's default)
+        and stores what clients change (ld_wing_take_host_setting: false if nothing; either
+        pointer may be null). ld_wing_clear_host_settings: no host any more. */
+    LdString* ld_wing_host_setting_keys();
+    void ld_wing_set_host_setting (LdWing*, const char* key, size_t keyLen, const char* value, size_t valueLen);
+    bool ld_wing_take_host_setting (LdWing*, LdString** key, LdString** value);
+    void ld_wing_clear_host_settings (LdWing*);
     /** Surface control (/$ctl/layer, /$ctl/user): applies the layer and custom control changes
         clients made to the show, then publishes its layers and custom controls with the upper
         custom control layer ccBank (0-15). Returns kWingSurface* flags; *requestedBank is the
