@@ -520,8 +520,10 @@ namespace
                                                           [this] (int i) { ctx.settings.setValue (prefs::touchFaderRes, i); }),
                             3.6f);
             options.newBox();
-            options.addRow ("MOUSE DISABLES TOUCH", OnKey::fixed (false), 1.3f, false);
-            options.addRow ("MOUSE SPEED", std::make_unique<juce::Slider> (juce::Slider::LinearHorizontal, juce::Slider::NoTextBox), 2.5f, false);
+            // [3.1] a 48 px row and a 40 px one (the slider's thumb 24 px tall).
+            options.addRow ("MOUSE DISABLES TOUCH", OnKey::fixed (false), 1.3f, false, false, 48.0f / 52.0f);
+            options.addRow ("MOUSE SPEED", std::make_unique<juce::Slider> (juce::Slider::LinearHorizontal, juce::Slider::NoTextBox), 2.5f, false, false,
+                            40.0f / 52.0f);
             options.newBox();
             // USB HOST SPEED: FS records 2 channels at 16 bit, HS 4 tracks at 24 bit (the USB recorder).
             options.addRow ("USB HOST SPEED",
@@ -611,38 +613,38 @@ namespace
         void paint (juce::Graphics& g) override
         {
             // [Fig. 34] 20 px rounded cells on a 22 px pitch, dark blue (dark
-            // orange on ALT) with black numbers, under small grey captions.
+            // orange on ALT) with black numbers, under small grey captions:
+            // CHANNEL's 10 px caption 4 px down, its cells from 19 px, AUX's
+            // caption at 147 and its cells at 157 (squeezed in a short box).
             cells.clear();
-            auto r = getLocalBounds().toFloat().reduced (4.0f);
-            const float captionH = juce::jmin (wingPx (20.0f), r.getHeight() / 9.0f);
-            const float cell = juce::jmin (wingPx (22.0f), r.getWidth() / 8.0f, (r.getHeight() - captionH * 2.0f - wingPx (16.0f)) / 6.0f);
-            r.removeFromTop (wingPx (6.0f));
-            auto drawGrid = [&] (const char* caption, StripKind kind, int rows)
+            auto r = getLocalBounds().toFloat();
+            const float k = juce::jmin (wingPx (1.0f), r.getHeight() / 182.0f, r.getWidth() / 176.0f);
+            const float pitch = 22.0f * k, cellSize = 20.0f * k;
+            auto drawGrid = [&] (const char* caption, StripKind kind, int rows, float top)
             {
                 g.setColour (Dark::caption);
-                g.setFont (wingFontPx (juce::jmin (TypeScale::statusCaption * getWingScreenHeight(), captionH * 0.6f)));
-                g.drawText (caption, r.removeFromTop (captionH), juce::Justification::centred);
+                g.setFont (wingFontPx (10.0f * k));
+                g.drawText (caption, juce::Rectangle<float> (r.getX(), r.getY() + top * k - 3.0f * k, r.getWidth(), 16.0f * k), juce::Justification::centred);
                 const auto& strips = ctx.engine.getStrips (kind);
                 for (int i = 0; i < rows * 8; ++i)
                 {
-                    auto c = juce::Rectangle<float> (r.getCentreX() - cell * 4.0f + cell * (float) (i % 8), r.getY() + cell * (float) (i / 8), cell, cell)
-                                 .reduced (cell * 0.05f);
+                    auto c = juce::Rectangle<float> (r.getCentreX() - pitch * 4.0f + 1.0f * k + pitch * (float) (i % 8),
+                                                     r.getY() + (top + 15.0f) * k + pitch * (float) (i / 8), cellSize, cellSize);
                     auto* s = i < (int) strips.size() ? strips[(size_t) i].get() : nullptr;
                     const bool alt = s != nullptr && s->isUsingAltInput();
                     g.setColour (alt ? altCell : mainCell);
-                    g.fillRoundedRectangle (c, cell * 0.12f);
+                    g.fillRoundedRectangle (c, 2.0f * k);
                     if (s != nullptr)
                     {
                         g.setColour (juce::Colours::black);
-                        g.setFont (wingFontPx (c.getHeight() * 0.5f));
+                        g.setFont (wingFontPx (11.0f * k));
                         g.drawText (juce::String (s->getNumber()), c, juce::Justification::centred);
                         cells.push_back ({ c, s });
                     }
                 }
-                r.removeFromTop (cell * (float) rows + wingPx (16.0f));
             };
-            drawGrid ("CHANNEL", StripKind::Channel, 5);
-            drawGrid ("AUX", StripKind::Aux, 1);
+            drawGrid ("CHANNEL", StripKind::Channel, 5, 4.0f);
+            drawGrid ("AUX", StripKind::Aux, 1, 142.0f);
         }
 
         void mouseUp (const juce::MouseEvent& e) override
@@ -1630,8 +1632,9 @@ namespace
             octets.addTokens (ip, ".", {});
             while (octets.size() < 4)
                 octets.add ("0");
-            network.addCaption ("IP ADDRESS", false);
-            network.addRow ({}, std::make_unique<OctetBoxes> (octets), 0.0f, false, false, 0.85f);
+            // [Fig. 42] a row-sized caption over light grey boxes (shown, not set, here).
+            network.addCaption ("IP ADDRESS", false, 1.0f);
+            network.addRow ({}, std::make_unique<OctetBoxes> (octets), 0.0f, true, false, 0.85f);
             network.addCaption ("DEVICE NAME: " + juce::SystemStats::getComputerName().toUpperCase(), false);
             addAndMakeVisible (network);
 
@@ -2102,8 +2105,9 @@ namespace
             g.setColour (Dark::caption);
             g.setFont (panelTitleFont (header.getHeight()));
             g.drawText ("DAW CONTROL", header, juce::Justification::centred);
-            g.setColour (Dark::textDim.brighter (0.3f));
-            g.setFont (wingFont (TypeScale::meterScale * 1.3f));
+            // [3.1] three lines of #686868 print, 12 px caps, under the DAW CONTROL column.
+            g.setColour (juce::Colour (0xff686868));
+            g.setFont (wingFontPx (wingPx (12.5f)));
             g.drawFittedText ("All third-party DAW trademarks are the property of their respective owners. Their use neither constitutes a claim of the "
                               "trademark nor affiliation of the trademark owners with the makers of this software. Product names are mentioned solely as "
                               "a reference for compatibility.",
@@ -2150,7 +2154,9 @@ namespace
             // the 376 x 262 drawing at the right; the disclaimer at the bottom.
             auto b = getLocalBounds();
             const int gap = setupGap();
-            disclaimer = b.removeFromBottom (juce::roundToInt (wingPx (64.0f))).withTrimmedLeft (juce::roundToInt (wingPx (4.0f)));
+            disclaimer = b.removeFromBottom (juce::roundToInt (wingPx (64.0f))).withTrimmedLeft (juce::roundToInt (wingPx (4.0f)))
+                             .withTrimmedBottom (juce::roundToInt (wingPx (6.0f)));
+            disclaimer.setWidth (juce::jmin (disclaimer.getWidth(), juce::roundToInt (wingPx (752.0f))));
             auto area = b.withWidth (juce::roundToInt ((float) b.getWidth() * 760.0f / 1264.0f));
             setupPanel (daw, juce::roundToInt (wingPx (52.0f)));
             setupPanel (ports, daw.rowHeight);
@@ -2557,10 +2563,14 @@ std::vector<StatusKey> SetupPage::getStatusKeys()
     // CUSTOM CONTROLS and MONITORS have no keys of their own.
     if (subScreen != nullptr)
         return subScreen->getStatusKeys();
-    return {
+    // [3.1] both against the clock.
+    std::vector<StatusKey> keys {
         { "MONITORS", Icon::Monitors, false, [this] { openMonitors(); } },
         { "CC EDIT", Icon::CcEdit, false, [this] { openCustomControls (-1); } },
     };
+    for (auto& k : keys)
+        k.atRight = true;
+    return keys;
 }
 
 void SetupPage::showTab()

@@ -21,7 +21,7 @@ namespace
 
     // Measured off the console's screens (firmware 3.1): unlit text, the dim
     // print of empty cells and dark labels, the mute groups' red.
-    const juce::Colour keyText = Colours::caption, cellText { 0xff585858 }, darkLabel { 0xff0c0c0c }, groupRed { 0xfff05050 },
+    const juce::Colour keyText = Colours::caption, cellText { 0xff585858 }, darkLabel { 0xff000000 }, groupRed { 0xfff05050 },
                        engagedColumn { 0xff883838 }, slotPlate { 0xff204870 };
 
     /** `v` px of the WING's 1280 x 800 screen in px of this screen. */
@@ -1238,9 +1238,12 @@ namespace
             g.setColour (juce::Colours::black);
             g.setFont (font);
             g.drawText (label, badge, juce::Justification::centred, false);
+            // [3.1] only an icon of its own (the strip's or, linked, its
+            // source's): an input without one shows none (CONFIG and the
+            // assign screens: CH 1, 9-40, AUX 3-8 on a console set so).
             const float icon = juce::jmin (inner.getHeight(), wingPx (26.0f));
             if (inner.getWidth() > icon * 1.5f)
-                drawStripIcon (g, s, inner.removeFromRight (icon).withSizeKeepingCentre (icon, icon), Colours::textDim);
+                drawWingIcon (g, s.getIcon(), inner.removeFromRight (icon).withSizeKeepingCentre (icon, icon), Colours::textDim);
         }
         else
         {
@@ -1829,7 +1832,7 @@ void OverviewViewPage::paintContent (juce::Graphics& g)
                                "PH", "SPK");
             // Yellow while the DCA is soloed [WING].
             g.setColour (ctx.engine.getDca (t.dca).solo.load() ? Colours::solo : darkLabel);
-            g.setFont (capFont (20.0f, WingWeight::SemiBold));
+            g.setFont (capFont (22.0f, WingWeight::SemiBold)); // [3.1] 22 px caps
             g.drawText ("DCA", body.withTop (body.getY() + px (561.0f)).withHeight (px (32.0f)), juce::Justification::centred, false);
             continue;
         }
@@ -2068,7 +2071,7 @@ void FadersViewPage::paintContent (juce::Graphics& g)
         // A DCA's label is yellow while the DCA is soloed [WING].
         const bool dcaSolo = t.strip == nullptr && ! t.isSend() && ctx.engine.getDca (t.dca).solo.load();
         g.setColour (t.isSend() ? sendRed.brighter (0.4f) : dcaSolo ? Colours::solo : darkLabel);
-        g.setFont (capFontFit (20.0f, rows.label.getHeight() * 0.9f, WingWeight::SemiBold));
+        g.setFont (capFontFit (22.0f, rows.label.getHeight() * 1.2f, WingWeight::SemiBold)); // [3.1] 22 px caps
         g.drawFittedText (t.isSend() ? t.sendTag : bottomLabel (t), rows.label.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         if (t.strip != nullptr && t.strip == selected)
         {

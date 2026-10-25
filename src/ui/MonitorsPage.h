@@ -20,6 +20,8 @@ public:
     const KnobBinding& getBinding() const noexcept { return binding; }
     /** The label to show while unbound (the console's control that isn't here yet). */
     juce::String placeholder, placeholderValue;
+    /** The ring shows the way down from the top of the range (LIMITER: empty at 0 dB [3.1]). */
+    bool ringFromTop = false;
 
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;

@@ -47,6 +47,39 @@ All notable changes to Sidecar are listed here. Versions follow
     described (`tests/data/wing_desc.tsv`, 29,871 parameters) with Sidecar's; a
     protocol test sets and reads the new mappings over OSC and the native protocol.
 
+### Changed
+
+- A third pass of matching the screens to a WING (firmware 3.1), side by side with
+  the console's screenshots at 1280 x 800:
+  - SETUP: the settings boxes are padded as on the console (4 px, none next to a
+    dropdown field), ON keys are 48 x 40 in a 2 px frame 4 px under the top of their
+    row with smaller print, dropdown fields (CLOCK RATE, DEVICE, CONSOLE NAME...)
+    have the console's 2 px frame, 30 px key and caption / value sizes, MOUSE
+    DISABLES TOUCH and MOUSE SPEED have their shorter rows, MONITORS and CC EDIT sit
+    against the clock, the INPUT SELECT grid has the console's cell positions, the
+    NETWORK IP ADDRESS caption is row-sized over light boxes, and the DAW disclaimer
+    is the console's small grey print under the DAW CONTROL column.
+  - CUSTOM CONTROLS: the layer map has the console's columns (82 px on a 90 px
+    pitch), the encoder tile with a thick open ring, 40 px keys, grey captions and
+    titles, a GPIO key drawn like USER, COLOR / NAME / CLR ALL as #303030 keys in a
+    grey frame and the list's page keys as full-size triangles.
+  - LIBRARY (INT / USB) and the USB recorder's browser: folder rows with the
+    console's 32 px > key, chevron and folder sizes, the scroll column (arrows, a
+    black track and a grey thumb) right of the rows, file rows with the type chip,
+    date and time where the console has them and 20 px names, the TYPE / NAME and
+    calendar sort keys as on the console, a blue SHOW key, and files sorted by
+    name without their extension ("MARCUS DEFAULT" before "MARCUS DEFAULT 3.0").
+    The USB browser fills the rows under the list with black boxes, as on the console.
+  - USB player: the time readout is lit red with no clip chosen; the tape reels are
+    drawn as the console's (hub ring, spokes, rollers and the head).
+  - METERS: the number keys of strips without a source are no longer dimmed.
+  - VIEW screens: the status title "C (layers) DCA" and MUTE GROUPS laid out as on
+    the console; the DCA label under a DCA (OVERVIEW, FADERS) is black with 22 px
+    caps; tiles of inputs without an icon of their own (CONFIG, the assign screens)
+    show none.
+  - MONITOR: the parameter bar ends at DIST while DIRECT IN is OFF (DIR LVL shows
+    once a source is chosen); the LIMITER ring is empty at 0 dB.
+
 ### Fixed
 
 - WING REMOTE: the recall safes (`/$ctl/safes`) answer in the console's format, a "+"
