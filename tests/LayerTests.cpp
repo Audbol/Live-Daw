@@ -63,6 +63,40 @@ public:
             expectEquals (layers.findLayer (engine, S::Left, "all").id, juce::String ("in-1"));
         }
 
+        beginTest ("The WING COMPACT: one section of 12 with nine layer keys");
+        {
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            engine.setNumChannels (40);
+            auto& layers = show.layers;
+            expect (layers.getModel() == ConsoleModel::Full);
+            layers.setWidth (S::Left, LayerSet::kAutoWidth);
+            layers.setFittedWidth (S::Left, 20);
+            layers.setModel (ConsoleModel::Compact);
+            expect (layers.getModel() == ConsoleModel::Compact);
+
+            juce::StringArray labels;
+            for (auto& layer : layers.getDefaultLayers (engine, S::Left))
+                labels.add (LayerSet::keyLabel (layer).replace ("\n", " "));
+            expectEquals (labels.joinIntoString ("|"), juce::String ("1-12|13-24|25-36|37-40 AUX IN|BUS MASTER|MAIN MATRIX|DCA|USER 1|USER 2"));
+            expectEquals (labels.size(), (int) consoleModelInfo (ConsoleModel::Compact).layerKeys);
+            expectEquals (layers.getEffectiveWidth (S::Left), 12); // whatever the width setting
+            layers.setSelectedLayerId (S::Left, "dca-1");
+            expectEquals (layers.getSelectedLayer (engine, S::Left).name, juce::String ("DCA 1-16"));
+
+            // An app setting: a new show and a loaded one keep it.
+            show.clear (40);
+            expect (layers.getModel() == ConsoleModel::Compact);
+            auto xml = show.toXml();
+            expect (show.loadFromXml (*xml).wasOk());
+            expect (layers.getModel() == ConsoleModel::Compact);
+
+            layers.setModel (ConsoleModel::Full);
+            expectEquals ((int) layers.getDefaultLayers (engine, S::Left).size(), 7);
+            expectEquals (layers.getEffectiveWidth (S::Left), 12);
+        }
+
         beginTest ("Banks follow the console and the section width");
         {
             MixerEngine engine (0);

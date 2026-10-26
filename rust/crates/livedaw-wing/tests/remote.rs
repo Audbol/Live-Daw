@@ -6,6 +6,7 @@
 use livedaw_engine::{Engine, StripKind};
 use livedaw_session::custom::CustomControls;
 use livedaw_session::layers::{FaderRef, LayerSet, LEFT};
+use livedaw_session::ConsoleModel;
 use livedaw_wing::map::{LibAction, Library};
 use livedaw_wing::osc::{self, Arg, Message};
 use livedaw_wing::server::{Config, EngineHandle, WingServer};
@@ -76,6 +77,29 @@ fn discovery_replies_like_a_wing() {
     assert_eq!(f.len(), 6, "{reply}");
     assert_eq!((f[0], f[1], f[2], f[3]), ("WING", "127.0.0.1", "TEST-DESK", "sidecar"));
     assert!(f[5].starts_with("3.1"));
+}
+
+#[test]
+fn a_compact_reports_its_model() {
+    let engine: Arc<dyn EngineHandle> = Arc::new(Arc::new(Engine::new(0)));
+    let config = Config {
+        identity: Identity { name: "SMALL-DESK".into(), ..Identity::of_model(ConsoleModel::Compact) },
+        bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
+        discovery_port: 0,
+        osc_port: 0,
+        native_port: 0,
+        ..Config::default()
+    };
+    let state = Arc::new(WingState::default());
+    let server = WingServer::start(engine, state.clone(), &config);
+    assert!(server.status().errors.is_empty(), "{:?}", server.status().errors);
+    let c = Osc::new(&server);
+    let info = c.get("/?");
+    assert!(matches!(&info.args[..], [Arg::Str(s)] if s.starts_with("WING,127.0.0.1,SMALL-DESK,wing-compact,")), "{info:?}");
+    assert_eq!(c.get("/$syscfg/$cnsmdl").args, vec![Arg::Str("wing-compact".into())]);
+    // Switching the model reaches clients at once.
+    state.set_console_model(ConsoleModel::Full);
+    assert!(matches!(&c.get("/?").args[..], [Arg::Str(s)] if s.starts_with("WING,127.0.0.1,SMALL-DESK,sidecar,")));
 }
 
 #[test]

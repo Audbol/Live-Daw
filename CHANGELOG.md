@@ -3,6 +3,29 @@
 All notable changes to Sidecar are listed here. Versions follow
 [semantic versioning](https://semver.org); 0.x releases are betas.
 
+## [Unreleased]
+
+### Added
+
+- WING COMPACT: SETUP > GENERAL > CONSOLE > CONSOLE MODEL **FULL** / **COMPACT** shows
+  the surface of a WING COMPACT instead of the full-size WING, at once. The top row is
+  the display unit with the monitoring panel at its right. Below: one fader section of
+  12 faders (three modules of four) with the COMPACT's nine layer keys (`1-12`, `13-24`,
+  `25-36`, `37-48 AUX IN`, `BUS MASTER`, `MAIN MATRIX`, `DCA`, `USER 1`, `USER 2`) and
+  the shift keys, and the key section: **BUS**, **DCA**, **MAIN MATRIX** and **USER**
+  choose what the 16 keys do (BUS: Sends on Fader to the bus, hold to spill it; MAIN
+  MATRIX: Sends on Fader to MAIN 1-4 and MATRIX 1-8; DCA: spill; USER: custom control
+  keys), a small LCD names them, and **fader 13** is the main fader (MAIN 1; touch the
+  LCD's title to put another main, matrix, DCA, channel, aux or bus on it). There is no
+  channel strip, custom controls, 4-Channel, center or right section, as on the
+  console. The COMPACT is black: it shows the black finish. CH AUTOSELECT has one key,
+  CMPCT (`autosel_CMPCT`). WING remote clients see a COMPACT: discovery, `/?` and
+  `/$syscfg/$cnsmdl` report the model `wing-compact` (the full-size console still says
+  `sidecar`). The model is an app preference, not saved in shows; it fits a 1366 x 768
+  window. The C ABI is version 14 (`ld_console_model_info`, `ld_layers_set_model`,
+  `ld_wing_set_model`): the models' local I/O (24 local preamps and 1x2 GPIO on the
+  COMPACT, 8 and 2x2 on the full size; no local aux I/O on the COMPACT).
+
 ## [0.1.4] - beta
 
 The second round of matching Sidecar to a real WING, from screenshots, photos and a

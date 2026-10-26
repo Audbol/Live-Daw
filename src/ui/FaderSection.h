@@ -16,7 +16,7 @@ class FaderSection final : public juce::Component, private juce::Timer
 {
 public:
     static constexpr int kMinStripWidth = 54;
-    static constexpr int kBankColumnWidth = 56;
+    static constexpr int kBankColumnWidth = layout::kBankColumnWidth;
 
     FaderSection (UiContext&, LayerSet::Section);
 

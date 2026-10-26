@@ -8,6 +8,7 @@
 use super::guard;
 use super::session::{str_arg, LdShow, LdString};
 use livedaw_engine::Engine;
+use livedaw_session::ConsoleModel;
 use livedaw_wing::map::{LibAction, Library, Safes, UsbAction, UsbSettings};
 use livedaw_wing::server::{ClientKind, Config, EngineHandle, EnginePtr, WingServer};
 use livedaw_wing::{snap, surface, Identity, WingState};
@@ -19,6 +20,8 @@ pub struct LdWing {
     engine: *const Engine,
     state: Arc<WingState>,
     server: Option<WingServer>,
+    /// The console model the identity reports (kept across restarts).
+    model: ConsoleModel,
 }
 
 unsafe fn wing<'a>(w: *mut LdWing) -> Option<&'a mut LdWing> {
@@ -45,7 +48,12 @@ pub unsafe extern "C" fn ld_wing_create(e: *const Engine) -> *mut LdWing {
         return std::ptr::null_mut();
     }
     guard(std::ptr::null_mut(), || {
-        Box::into_raw(Box::new(LdWing { engine: e, state: Arc::new(WingState::default()), server: None }))
+        Box::into_raw(Box::new(LdWing {
+            engine: e,
+            state: Arc::new(WingState::default()),
+            server: None,
+            model: ConsoleModel::Full,
+        }))
     })
 }
 
@@ -77,7 +85,7 @@ pub unsafe extern "C" fn ld_wing_start(
             s.stop();
         }
         let port = |p: i32| u16::try_from(p).unwrap_or(0);
-        let mut identity = Identity::default();
+        let mut identity = Identity::of_model(w.model);
         if !name.trim().is_empty() {
             identity.name = name.trim().to_string();
         }
@@ -123,6 +131,18 @@ pub unsafe extern "C" fn ld_wing_set_name(w: *mut LdWing, name: *const u8, len: 
     if !name.is_empty() {
         guard((), || w.state.identity.lock().unwrap_or_else(|e| e.into_inner()).name = name);
     }
+}
+
+/// The console model the console reports itself as (0 full size, 1
+/// COMPACT: "wing-compact" in discovery, `/?` and `/$syscfg/$cnsmdl`), at
+/// once and across restarts.
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_set_model(w: *mut LdWing, model: i32) {
+    let Some(w) = wing(w) else { return };
+    guard((), || {
+        w.model = ConsoleModel::from_i32(model);
+        w.state.set_console_model(w.model);
+    });
 }
 
 /// The bound port of a server (0 discovery, 1 OSC, 2 Native), or -1.
@@ -503,6 +523,15 @@ mod tests {
             let status = take(ld_wing_status(w));
             assert!(status.contains("client\tosc\t127.0.0.1:"), "{status}");
             assert!(status.contains("traffic\t2\t0"), "{status}");
+
+            // The COMPACT reports its model at once, and still after a restart.
+            assert!(ask(&sock).contains(",sidecar,"));
+            ld_wing_set_model(w, 1);
+            assert!(ask(&sock).contains("MONITORS,wing-compact,"));
+            assert!(ld_wing_start(w, renamed.as_ptr(), renamed.len(), 0, osc, 0, 2));
+            assert!(ask(&sock).contains(",wing-compact,"));
+            ld_wing_set_model(w, 0);
+            assert!(ask(&sock).contains(",sidecar,"));
             assert!(take(ld_wing_coverage()).starts_with("WING tree coverage"));
             ld_wing_stop(w);
             assert!(!ld_wing_running(w) && ld_wing_port(w, 1) == -1);

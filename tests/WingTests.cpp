@@ -124,6 +124,13 @@ public:
             expect (ask (sock, st.oscPort, oscGet ("/?")).contains ("TEST-WING"));
             wing.setName ("RENAMED");
             expect (ask (sock, st.oscPort, oscGet ("/?")).contains ("RENAMED"));
+            // The model: Sidecar's own name, or the COMPACT's for WING Edit and Mixing Station.
+            expect (ask (sock, st.oscPort, oscGet ("/?")).contains ("RENAMED,sidecar,"));
+            wing.setConsoleModel (ConsoleModel::Compact);
+            expect (ask (sock, st.oscPort, oscGet ("/?")).contains ("RENAMED,wing-compact,"));
+            expect (ask (sock, st.oscPort, oscGet ("/$syscfg/$cnsmdl")).contains ("wing-compact"));
+            wing.setConsoleModel (ConsoleModel::Full);
+            expect (ask (sock, st.oscPort, oscGet ("/?")).contains ("RENAMED,sidecar,"));
 
             const auto set = oscFloat ("/ch/2/fdr", -12.0f);
             sock.write ("127.0.0.1", st.oscPort, set.getData(), (int) set.getSize());

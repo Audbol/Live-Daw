@@ -129,6 +129,34 @@ frames, keys backlit lavender in black bezels and silver fader caps. The finish 
 an app preference (not saved in shows) and changes the surface at once; the
 touchscreen looks the same in both.
 
+SETUP > GENERAL > CONSOLE > CONSOLE MODEL **COMPACT** shows a WING COMPACT instead of
+the full-size WING. The surface changes at once, and the choice is an app preference
+like the finish. The COMPACT is black, so it always shows the black finish. It fits a
+1366 x 768 window.
+
+- **Top row:** the display unit (screen keys, screen, knob and CLR SOLO, the six
+  encoders) and, at its right, the panel with USB AUDIO/DATA and MONITORING/TALKBACK.
+- **Fader section:** 12 faders in three modules of four, with the COMPACT's layer
+  column: **VIEW**, `1-12`, `13-24`, `25-36`, `37-48 AUX IN`, `BUS MASTER`,
+  `MAIN MATRIX`, `DCA`, `USER 1`, `USER 2` and the shift keys. The section width
+  settings don't apply: it always has 12 faders.
+- **Key section:** **BUS**, **DCA**, **MAIN MATRIX** and **USER** choose what the 16
+  keys do. BUS: keys 1-16 are BUS 1-16; press for Sends on Fader to the bus, hold to
+  spill the bus. MAIN MATRIX: keys 1-4 are MAIN 1-4 and keys 5-12 MATRIX 1-8; press
+  for Sends on Fader. DCA: press to spill the DCA. USER: custom control keys; keys
+  1-8 are the USER layer, keys 9-16 the custom control layer shown, each control's
+  upper key then its lower one. **VIEW** opens CUSTOM CONTROLS. The small LCD names
+  the keys, a lit key's cell filled.
+- **Fader 13** is the main fader, MAIN 1 by default. Touch the LCD's title to put
+  another main, a matrix, DCA, channel, aux or bus on it (`/$ctl/cfg/mfdr`).
+- The COMPACT has no channel strip section, custom controls section, 4-Channel
+  section, center or right fader section, wheel or DAW key; Sidecar leaves them out.
+  SETUP > SURFACE > CH AUTOSELECT has one key, **CMPCT**.
+- WING remote clients see a COMPACT: Sidecar answers with model `wing-compact`.
+- The COMPACT has 24 local MIDAS PRO preamps where the full-size WING has 8, no local
+  aux inputs and outputs, and 1x2 GPIO instead of 2x2. Sidecar's sources are its
+  audio interface's inputs either way, so this changes no routing.
+
 - **Three fader sections:** left (12 faders), center (8) and right (4), each with the
   WING's layer column: **VIEW** (the section's OVERVIEW; hold for CONFIG), the layer
   keys (left `1-12` ... `37-40 AUX IN`, `BUS MASTER`; center `DCA`, `MAIN MATRIX`,
@@ -263,7 +291,7 @@ touchscreen looks the same in both.
     console patches its eight local inputs to channels 1-8) and MAIN 1 on LOCAL OUT
     1-2 (the console uses LOCAL OUT 7-8 and feeds buses 1-6 to 1-6).
   - **SETUP:** GENERAL (lighting, clock, console info and size, the surface's finish
-    SILVER / BLACK, OPERATION, OPTIONS),
+    SILVER / BLACK, the console model FULL / COMPACT, OPERATION, OPTIONS),
     AUDIO (clock rate, INPUT SELECT: the global MAIN / ALT switch and each channel's,
     preferences such as MAIN LINK, DCA MUTEGROUPS, MUTEGROUP/SIP OVERRIDE, GLOBAL INPUT
     SELECT OVERRIDE, SOURCE SOLO (CH39 / AUX7) and the TALKBACK channel, SOLO SYSTEM with SOLO MODE LIVE / STUDIO /
@@ -596,7 +624,10 @@ and open-source projects (see below), and it is **experimental**.
   app settings, and the servers start with the app when enabled. The panel below
   shows what is listening and which clients are connected.
 - **Discovery** (UDP 2222) answers `WING?` with the console name, model `sidecar`,
-  serial and firmware `3.1-...` (Sidecar speaks the WING 3.1 parameter tree).
+  serial and firmware `3.1-...` (Sidecar speaks the WING 3.1 parameter tree). With
+  CONSOLE MODEL COMPACT the model is `wing-compact`, as a WING COMPACT says, so WING
+  Edit and Mixing Station show a Compact; the serial `SIDECAR0001` still tells Sidecar
+  apart.
 - **OSC** (UDP 2223): get and set any parameter by path or by `#id`, toggles, node
   lists, node dumps and descriptions, node strings (`/ch.1.fdr=-3,mute=1`), and the
   `/*s`, `/*S` and `/*b` subscriptions (renew every 10 s). Changes from the UI, scene

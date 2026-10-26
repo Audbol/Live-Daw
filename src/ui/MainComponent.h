@@ -2,6 +2,7 @@
 
 #include "daw/Session.h"
 #include "engine/MidiRemote.h"
+#include "ui/CompactSection.h"
 #include "ui/Controls.h"
 #include "ui/DawSurface.h"
 #include "ui/FaderSection.h"
@@ -27,7 +28,10 @@ class WebMirror;
     section, each fader section with its layer keys. The multitrack editor
     can take the whole window instead (Ctrl+E, EDIT on the recorder screen,
     the surface's DAW key). The main display can take the whole window too
-    (F10, its maximize key): the rest of the surface stays alive underneath. */
+    (F10, its maximize key): the rest of the surface stays alive underneath.
+    As a WING COMPACT (SETUP > GENERAL > CONSOLE MODEL): the display and the
+    monitoring panel on top; one fader section of 12 with the COMPACT's nine
+    layer keys, and its key section with fader 13, below (layout::compact). */
 class MainComponent final : public juce::Component
 {
 public:
@@ -69,6 +73,13 @@ private:
     void refreshSections();
     void layoutTopRow();
     void layoutSections();
+    /** The WING COMPACT's surface (both rows). */
+    void layoutCompact();
+    /** The display in `bounds`, or over the whole window in screen-only mode. */
+    void placeDisplay (juce::Rectangle<int> bounds);
+    /** Shows the surface as `model` (saved in the app settings with `save`). */
+    void applyConsoleModel (ConsoleModel model, bool save);
+    bool isCompact() const noexcept { return ctx.consoleModel == ConsoleModel::Compact; }
     /** The top row's height: the splitter's share, a little more on wide
         windows (the screen gains most from it). */
     int topRowHeight() const;
@@ -143,6 +154,7 @@ private:
     std::unique_ptr<FourChannelSection> fourChannel;
     std::unique_ptr<FaderSection> sections[LayerSet::kNumSections];
     std::unique_ptr<CustomControlSection> customControls;
+    std::unique_ptr<CompactSection> compactKeys; // the WING COMPACT's key section and fader 13
     std::unique_ptr<DawFaderSection> dawSections[LayerSet::kNumSections]; // the fader sections in DAW mode
     bool ccInBottomRow = true; // else docked under the monitoring panel
     std::unique_ptr<LockOverlay> lockOverlay;

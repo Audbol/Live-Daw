@@ -381,7 +381,10 @@ FaderStrip::FaderStrip (UiContext& c, LayerSet::Section s) : ctx (c), section (s
     {
         // CH AUTOSELECT (SETUP > SURFACE): moving a fader selects its strip.
         const auto now = juce::Time::getMillisecondCounter();
-        if (strip != nullptr && ctx.settings.getBoolValue (uiprefs::autoSelect[juce::jlimit (0, 2, (int) section)], false)
+        // The COMPACT has one setting for its surface (autosel_CMPCT).
+        const char* autoSelect = ctx.consoleModel == ConsoleModel::Compact ? uiprefs::autoSelectCompact
+                                                                           : uiprefs::autoSelect[juce::jlimit (0, 2, (int) section)];
+        if (strip != nullptr && ctx.settings.getBoolValue (autoSelect, false)
             && now - lastAutoSelect > 300 && ctx.selectStrip && (! ctx.getSelectedStrip || ctx.getSelectedStrip() != strip))
             ctx.selectStrip (strip);
         lastAutoSelect = now;
@@ -861,19 +864,23 @@ void FaderStrip::paint (juce::Graphics& g)
         g.setColour (juce::Colours::white.withAlpha (0.07f));
         g.fillRect (left + inset, (float) (rows.getY() - margin), right - left - inset - (moduleLast ? 3.0f : 0.0f), 1.0f);
     };
-    band (scribbleArea, 0, juce::Colours::black);
+    if (scribbleShown)
+        band (scribbleArea, 0, juce::Colours::black);
     band (meterArea, 4, juce::Colour (0xff0c0d0e));
 
     // Colour light bar (COLOR LED brightness) and scribble strip; one LCD
     // runs across the module, with a fine rule between the strips.
-    const juce::Colour colour = strip != nullptr ? stripDisplayColour (*strip)
-                                : (dca >= 0 ? wingColour (shownColour) : (fxp ? kFxColour : (midi ? Colours::midiCc : surfaceColours().ledOff)));
-    drawLightBar (g, barArea.toFloat(), lightBarColour (colour).withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
-                  target.has_value() && shownLight);
-    auto info = target ? scribbleInfo() : ScribbleInfo {};
-    info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
-    drawScribble (g, lcdArea.toFloat(), info);
-    drawScribbleFrame (g, lcdArea.toFloat(), moduleFirst, moduleLast, info.backlight);
+    if (scribbleShown)
+    {
+        const juce::Colour colour = strip != nullptr ? stripDisplayColour (*strip)
+                                    : (dca >= 0 ? wingColour (shownColour) : (fxp ? kFxColour : (midi ? Colours::midiCc : surfaceColours().ledOff)));
+        drawLightBar (g, barArea.toFloat(), lightBarColour (colour).withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
+                      target.has_value() && shownLight);
+        auto info = target ? scribbleInfo() : ScribbleInfo {};
+        info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
+        drawScribble (g, lcdArea.toFloat(), info);
+        drawScribbleFrame (g, lcdArea.toFloat(), moduleFirst, moduleLast, info.backlight);
+    }
 
     // Meter block: DYN LED, two 6-segment columns (input level), GATE LED.
     if (strip != nullptr)
@@ -909,23 +916,43 @@ void FaderStrip::paint (juce::Graphics& g)
     }
 }
 
+int FaderStrip::topRowsHeight (int w)
+{
+    return layout::stripTopRowsHeight (w);
+}
+
+void FaderStrip::setScribbleShown (bool shown)
+{
+    if (shown != scribbleShown)
+    {
+        scribbleShown = shown;
+        resized();
+        repaint();
+    }
+}
+
 void FaderStrip::resized()
 {
     auto b = getLocalBounds().reduced (0, 3);
     const int w = b.getWidth();
 
-    // The display window: the thin colour light bar over the LCD, which runs
-    // edge to edge across the module (inset at the module's ends).
-    // The LCD is wider than tall, as on the console (about 1.4 : 1).
-    const int lcdH = juce::jlimit (38, 120, juce::roundToInt ((float) w * 0.72f));
-    const int barH = juce::jlimit (3, 8, w / 12);
-    // The black window has room above the LCD, the light bars in its middle.
-    const int barRow = juce::jlimit (barH + 12, barH + 36, juce::roundToInt ((float) w * 0.4f));
-    scribbleArea = b.removeFromTop (barRow + lcdH + 5);
-    barArea = juce::Rectangle<int> (juce::roundToInt ((float) w * 0.78f), barH).withCentre ({ w / 2, scribbleArea.getY() + barRow / 2 });
-    lcdArea = scribbleArea.withTrimmedTop (barRow).withTrimmedBottom (5)
-                  .withTrimmedLeft (moduleFirst ? 9 : 0).withTrimmedRight (moduleLast ? 9 : 0);
-    b.removeFromTop (juce::jlimit (8, 36, w * 3 / 10));
+    if (scribbleShown)
+    {
+        // The display window: the thin colour light bar over the LCD, which
+        // runs edge to edge across the module (inset at the module's ends).
+        using namespace layout;
+        const int barH = scribbleBarHeight (w), barRow = scribbleBarRow (w);
+        scribbleArea = b.removeFromTop (scribbleWindowHeight (w));
+        barArea = juce::Rectangle<int> (juce::roundToInt ((float) w * 0.78f), barH).withCentre ({ w / 2, scribbleArea.getY() + barRow / 2 });
+        lcdArea = scribbleArea.withTrimmedTop (barRow).withTrimmedBottom (5)
+                      .withTrimmedLeft (moduleFirst ? 9 : 0).withTrimmedRight (moduleLast ? 9 : 0);
+        b.removeFromTop (gapUnderScribble (w));
+    }
+    else
+    {
+        // No display window: SELECT at the top.
+        scribbleArea = barArea = lcdArea = {};
+    }
 
     // SELECT, SOLO and MUTE are small keys, about two thirds of the strip wide.
     b = b.reduced (2, 0);

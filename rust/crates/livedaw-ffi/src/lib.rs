@@ -32,7 +32,7 @@ use std::mem::{offset_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-pub const LD_ABI_VERSION: i32 = 13;
+pub const LD_ABI_VERSION: i32 = 14;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -145,6 +145,8 @@ pub struct LdLayoutInfo {
     pub off_cust_link: i32,
     // ABI 13: DCA SOLO BUS
     pub off_dca_mon: i32,
+    // ABI 14: the console model (ld_console_model_info, ld_layers_set_model, ld_wing_set_model)
+    pub console_model_info: i32,
 }
 
 #[no_mangle]
@@ -231,6 +233,7 @@ pub unsafe extern "C" fn ld_layout_info(out: *mut LdLayoutInfo) {
         off_dca_icon: offset_of!(DcaParams, icon) as i32,
         off_cust_link: offset_of!(StripParams, cust_link) as i32,
         off_dca_mon: offset_of!(DcaParams, mon) as i32,
+        console_model_info: size_of::<session::LdConsoleModelInfo>() as i32,
     };
 }
 

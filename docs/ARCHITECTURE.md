@@ -212,7 +212,7 @@ views after a show load changes the console from Rust.
   engine controls are `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same
   memory as `std::atomic<float/bool/int32_t>` structs, and the UI writes them directly
   with no FFI call. Both sides describe the layout; `ld::verifyLayout()` compares the
-  two at startup and in the tests (ABI version 13), and the app refuses to run if they
+  two at startup and in the tests (ABI version 14), and the app refuses to run if they
   differ.
 - **FX slots.** The 16 slots are the WING's FX rack. Each holds one device from the
   console's FX table (`FX_MODELS`, generated like the processing models): the 26
@@ -554,6 +554,11 @@ Show
   right section to the center, the rest to the left. The layer set keeps each
   section's scroll offset, so ending a spill restores the layer and the offset; a
   layer key ends it without going back.
+- **Console model** (`livedaw-session/src/model.rs`, `ConsoleModel`: FULL or COMPACT,
+  an app setting the host passes in with `set_model`, kept by `reset` and show
+  loads): on the WING COMPACT the left section is its 12 faders whatever the width
+  setting, with the COMPACT's nine keys (the left keys plus `MAIN MATRIX` and `DCA`).
+  `ModelIo` lists each model's surface and local I/O (C ABI `ld_console_model_info`).
 
 ## The UI
 
@@ -569,7 +574,10 @@ too narrow for that keep the channel strip at the left and the monitoring panel 
 the 4-Channel section (or the custom controls' lower part) at the right. The minimum
 window, 1344 x 680, keeps every section with the default layers (12 + 8 + 4 faders,
 strips 40 px wide); only wider fader sections can push the custom controls' upper part
-and the 4-Channel section out. SETUP
+and the 4-Channel section out. As a WING COMPACT (`ConsoleLook::model`) the main
+component lays out the display, the monitoring panel, the left fader section and the
+COMPACT's key section with fader 13 (`CompactSection.*`) from `layout::compact`
+(`SurfaceLayout.h`, header-only, checked by the tests at 1366 x 768). SETUP
 shows CUSTOM CONTROLS (`CustomControlsPage.*`, also the assignments' model and what
 each function does) and MONITORS (`MonitorsPage.*`) in place of its tabs. The
 preferences the surface, the status bar and the pages share are `uiprefs::` keys in

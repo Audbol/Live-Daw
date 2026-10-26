@@ -137,6 +137,10 @@ class MonitorSection final : public juce::Component
 public:
     explicit MonitorSection (UiContext&);
 
+    /** The panel right of the WING COMPACT's display (logo, USB AUDIO/DATA,
+        MONITORING/TALKBACK): the model under the name. */
+    void setConsoleModel (ConsoleModel);
+
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -148,6 +152,7 @@ private:
     SurfaceKey dimKey { "DIM" }, monoKey { {}, Icon::Circle };
     juce::Rectangle<int> logoArea, wingPanel, usbPlate, monitorTitle, usbTitle;
     bool viewOpened = false;
+    ConsoleModel model = ConsoleModel::Full;
 };
 
 /** The CUSTOM CONTROLS section between the center and right fader sections

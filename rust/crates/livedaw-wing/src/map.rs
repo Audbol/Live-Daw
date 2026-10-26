@@ -29,6 +29,7 @@ use livedaw_engine::solo::solo_mode;
 use livedaw_engine::sources::{self, source_mode, SourceParams};
 use livedaw_engine::talk::TALK_OFF;
 use livedaw_engine::{Engine, Strip, StripKind, PLAYBACK_SOURCE_BASE};
+use livedaw_session::ConsoleModel;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering::Relaxed};
@@ -54,6 +55,24 @@ impl Default for Identity {
             // Our tree is the WING 3.1 tree (libwing compares the leading numbers).
             firmware: "3.1-0-sidecar:release".into(),
         }
+    }
+}
+
+impl Identity {
+    /// The model a console of `model` reports (discovery, `/?`,
+    /// `/$syscfg/$cnsmdl`): Sidecar's own name for the full-size console, the
+    /// COMPACT's own "wing-compact" (WING remote protocols, `$cnscfg` /
+    /// `$cnsmdl`), so WING Edit and Mixing Station show a Compact.
+    pub fn model_name(model: ConsoleModel) -> &'static str {
+        match model {
+            ConsoleModel::Full => "sidecar",
+            ConsoleModel::Compact => "wing-compact",
+        }
+    }
+
+    /// The default identity of a console of `model`.
+    pub fn of_model(model: ConsoleModel) -> Self {
+        Self { model: Self::model_name(model).into(), ..Self::default() }
     }
 }
 
@@ -257,6 +276,12 @@ impl WingState {
 
     pub fn identity(&self) -> Identity {
         self.identity.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// The console reports itself as `model` from now on (clients see it at
+    /// their next discovery or `/?`).
+    pub fn set_console_model(&self, model: ConsoleModel) {
+        lock(&self.identity).model = Identity::model_name(model).into();
     }
 
     pub fn clear_shadow(&self) {
@@ -3392,6 +3417,23 @@ mod tests {
         assert!(ch5.params.stereo.load(Relaxed));
         assert_eq!(ch5.params.input_right.load(Relaxed), 9);
         assert_eq!(c.get(node(&c, "/ch/5/in/set/$mode")), Some(Value::str("ST")));
+    }
+
+    #[test]
+    fn the_console_model_is_in_the_identity() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let model = node(&c, "/$syscfg/$cnsmdl");
+        // The full-size console keeps Sidecar's own name.
+        assert_eq!(c.get(model), Some(Value::str("sidecar")));
+        st.set_console_model(ConsoleModel::Compact);
+        assert_eq!(c.get(model), Some(Value::str("wing-compact")));
+        assert_eq!(st.identity().model, "wing-compact");
+        st.set_console_model(ConsoleModel::Full);
+        assert_eq!(st.identity(), Identity::default());
+        assert_eq!(Identity::of_model(ConsoleModel::Compact).model, "wing-compact");
+        assert_eq!(Identity::of_model(ConsoleModel::Full), Identity::default());
     }
 
     #[test]

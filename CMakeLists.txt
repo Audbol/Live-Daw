@@ -252,6 +252,7 @@ target_sources(LiveDAW PRIVATE
     src/ui/CustomControlsPage.cpp
     src/ui/MonitorsPage.cpp
     src/ui/FourChannelSection.cpp
+    src/ui/CompactSection.cpp
     src/ui/WebMirror.cpp
     src/ui/MainComponent.cpp)
 
@@ -361,6 +362,7 @@ if(LIVEDAW_BUILD_TESTS)
         tests/WebTests.cpp
         tests/RoutingTests.cpp
         tests/HoldToSwitchTests.cpp
+        tests/SurfaceLayoutTests.cpp
         tests/SandboxTests.cpp
         src/sandbox/TestPlugins.cpp
         ${LIVEDAW_ENGINE_SOURCES}

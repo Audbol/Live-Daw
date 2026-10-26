@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/ConsoleModel.h"
 #include "livedaw_engine.h"
 
 #include <juce_data_structures/juce_data_structures.h>
@@ -54,6 +55,10 @@ public:
     bool isRunning() const;
     /** Renames the console at once (discovery and connected clients). */
     void setName (const juce::String&);
+    /** The model the console reports (discovery, /? and /$syscfg/$cnsmdl): the
+        COMPACT says "wing-compact", so WING Edit and Mixing Station show a
+        Compact. At once, and across restarts. */
+    void setConsoleModel (ConsoleModel);
 
     struct Client
     {

@@ -101,6 +101,11 @@ void WingRemote::setName (const juce::String& newName)
     running.name = newName;
 }
 
+void WingRemote::setConsoleModel (ConsoleModel model)
+{
+    ld::ld_wing_set_model (handle, (int32_t) model);
+}
+
 WingRemote::Status WingRemote::getStatus() const
 {
     Status st;
