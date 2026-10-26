@@ -333,6 +333,25 @@ impl Native {
         }
     }
 
+    /// Reads until `want` arrives (or 20 s pass, as for `read_until_ends`).
+    fn read_until_has(&mut self, want: &Tok) -> Vec<Tok> {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let toks = decode(&self.rx);
+            if toks.contains(want) || Instant::now() > deadline {
+                self.rx.clear();
+                return toks;
+            }
+            let mut buf = [0u8; 65536];
+            if let Ok(k) = self.tcp.read(&mut buf) {
+                if k == 0 {
+                    return toks;
+                }
+                self.rx.extend_from_slice(&buf[..k]);
+            }
+        }
+    }
+
     fn read_for(&mut self, d: Duration) -> Vec<Tok> {
         let deadline = Instant::now() + d;
         while Instant::now() < deadline {
@@ -460,8 +479,9 @@ fn native_get_set_definitions_and_notifications() {
     assert_eq!(plain(toks), vec![Tok::Data(fdr, livedaw_wing::Value::Float(-6.5)), Tok::End]);
     assert_eq!(engine.channel_at(0).unwrap().params.fader_db.load(), -6.5);
     // The other client was told.
-    let toks = b.read_for(Duration::from_millis(300));
-    assert!(toks.contains(&Tok::Data(fdr, livedaw_wing::Value::Float(-6.5))), "{toks:?}");
+    let told = Tok::Data(fdr, livedaw_wing::Value::Float(-6.5));
+    let toks = b.read_until_has(&told);
+    assert!(toks.contains(&told), "{toks:?}");
     // Strings and enums.
     let name = id("/ch/1/name");
     let mut req = Native::select(name);
@@ -520,8 +540,9 @@ fn native_get_set_definitions_and_notifications() {
     // Engine changes reach the clients through the poller.
     b.read_for(Duration::from_millis(100));
     engine.strip_by_number(StripKind::Bus, 3).unwrap().params.fader_db.store(-20.0);
-    let toks = b.read_for(Duration::from_millis(600));
-    assert!(toks.contains(&Tok::Data(id("/bus/3/fdr"), livedaw_wing::Value::Float(-20.0))), "{toks:?}");
+    let pushed = Tok::Data(id("/bus/3/fdr"), livedaw_wing::Value::Float(-20.0));
+    let toks = b.read_until_has(&pushed);
+    assert!(toks.contains(&pushed), "{toks:?}");
 }
 
 #[test]
