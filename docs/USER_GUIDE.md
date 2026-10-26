@@ -677,8 +677,8 @@ and open-source projects (see below), and it is **experimental**.
   kit's README for the steps.
 - **What is tested:** libwing's own clients (`wingprop`, `wingmon`, `wingdrive`'s
   test battery and model capture, its OSC client), and every OSC path the Bitfocus
-  Companion WING module builds that exists in the 3.1 tree. **WING Edit and WING
-  Copilot have not been tried**, so they may not work.
+  Companion WING module builds that exists in the 3.1 tree. Testers use **WING Edit**
+  and **Mixing Station** with it; **WING Copilot has not been tried**, so it may not work.
 - **What maps:** every parameter of the WING 3.1 tree but one answers (68,555 of
   68,556, counting every model's parameters). 61,108 of them (89.1 %) drive the
   engine, 70 are Sidecar's SETUP settings, and the 7,377 Sidecar has no equivalent

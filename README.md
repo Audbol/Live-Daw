@@ -15,7 +15,7 @@ anything can be sent to any hardware output. It runs on Windows, macOS and Linux
 > SETUP > GENERAL > ABOUT, lists the differences). Don't rely on it for a critical
 > live show without testing it thoroughly first.
 
-**Status: v0.1.4 beta**, the fourth public beta: the second round of matching a real WING screen by screen, and plugin chains. Expect rough edges, and please
+**Status: v0.1.5 beta**, the fifth public beta: the third round of matching a real WING, from its factory parameter dump and screenshots. Expect rough edges, and please
 [report what you find](#reporting-problems).
 
 ## Screenshots
@@ -126,8 +126,8 @@ for the files of each version.
    ENABLE** starts the WING network servers (UDP 2222 discovery, UDP 2223 OSC, TCP
    2222 native). Remote apps on the same network can then discover Sidecar under its
    console name. Allow Sidecar through your firewall. Tested with libwing's clients
-   and the Bitfocus Companion WING module's OSC paths; WING Edit and WING Copilot
-   have not been tried.
+   and the Bitfocus Companion WING module's OSC paths, and by testers with WING Edit
+   and Mixing Station; WING Copilot has not been tried.
 
 ## Keyboard shortcuts
 
@@ -183,9 +183,9 @@ This list matches the notice Sidecar shows at start-up.
   not compensated.
 - **WING remote apps:** the WING network protocols answer every parameter of the
   WING 3.1 tree but one; 89.2 % drive the engine or Sidecar's settings, the rest
-  answers the WING's factory value and is stored but does nothing. WING Edit and WING Copilot
-  have not been tried, and exported WING snapshots have not been loaded into a
-  console.
+  answers the WING's factory value and is stored but does nothing. Testers use WING
+  Edit and Mixing Station with it; WING Copilot has not been tried, and exported WING
+  snapshots have not been loaded into a console.
 - **MIDI and DAW remote control** (MCU / HUI) have not been tested with real hardware.
 - **LIBRARY:** scene and snippet files are Sidecar's own (.lsnap / .lsnip), not the
   WING's .snap / .snip, and the CLIP tab plays its clip on the USB player.

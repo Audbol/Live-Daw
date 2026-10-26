@@ -5,6 +5,20 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ## [Unreleased]
 
+## [0.1.5] - beta
+
+The third round of matching Sidecar to a real WING, from the factory parameter dump,
+screenshots and answers from a console's owner: a factory-initialized show now starts
+with the WING's own values; the SETUP, LIBRARY, USB, VIEW, MONITOR, HOME, GATE, EQ,
+COMP, FILTER and ROUTING screens follow the console more closely; source GAIN has
+each source group's real range and steps; ROUTING starts locked; user layers work
+like the WING's (fixed slots, blanks, duplicates); and channels without a source show
+no tag. The WING remote parameter tree is finished, and the dropouts with Mixing
+Station and WING Edit are fixed. Every FX device and processing model has its own
+front panel, the dynamic EQs and the BDX 902 de-esser were corrected against
+measurements, and 1366 x 768 screens are supported. Known limitations: see the
+[README](https://github.com/Audbol/Live-Daw/blob/main/README.md#known-limitations).
+
 ### Added
 
 - Every FX device and processing model now has its own front panel, so none fall back
@@ -277,8 +291,6 @@ All notable changes to Sidecar are listed here. Versions follow
   - The WING comparison kit's DYNAMIC EQ test had GAIN 0, so it tested nothing. It
     now has GAIN -12. New tests: the 902 in FULL mode, DUAL DYNAMIC EQ shelves, and
     a FILTER OFF dynamic EQ for clean ATTACK / RELEASE timing.
-
-### Fixed
 
 - Rates below 10 Hz now show two decimals ("0.50 Hz"). LFO speeds used to read
   "0 Hz".
