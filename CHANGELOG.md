@@ -82,6 +82,8 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- VIEW > FADERS: touching a DCA's name no longer opens its LIGHT/ICON/NAME panel; as on
+  the WING, that panel opens from the DCA OVERVIEW title.
 - A channel without a source no longer shows "OFF" on its scribble strip: the tag is left
   out, as on the WING.
 - Source GAIN now has the WING's range and steps for the source's group, everywhere

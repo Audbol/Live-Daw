@@ -2146,9 +2146,9 @@ void FadersViewPage::mouseUp (const juce::MouseEvent& e)
         }
         else if (rows.name.contains (pos) || rows.number.contains (pos))
         {
-            if (t.dca >= 0)
-                showDcaPanel (t.dca);
-            else if (t.strip != nullptr)
+            // A DCA's name opens nothing here (its LIGHT/ICON/NAME panel is
+            // reached from OVERVIEW's title, as on the console).
+            if (t.strip != nullptr)
             {
                 if (ctx.selectStrip)
                     ctx.selectStrip (t.strip);

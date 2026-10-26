@@ -332,7 +332,7 @@ touchscreen looks the same in both.
     DCA's panel: LIGHT and the 18 colours in a row, the icon gallery, SOLO BUS (phones
     and/or speakers: where the members' solo goes in SOLO MODE LIVE), the name field
     and the keyboard, every change applying at once; the "DCA" at a DCA column's foot
-    is yellow while the DCA is soloed), FADERS (a DCA's name opens its panel, its
+    is yellow while the DCA is soloed), FADERS (a DCA's name opens nothing, as on the console; its
     label at the foot is yellow while it's soloed; send faders of a layer, and Sends on
     Fader, show and set the send level, MUTE switching the send), SENDS (sends on faders
     to one bus, main or matrix), CONFIG (edit any layer key; see *Editing user layers*
