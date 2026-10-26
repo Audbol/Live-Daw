@@ -315,7 +315,8 @@ impl Native {
 
     /// Reads tokens until `n` request ends (or a timeout).
     fn read_until_ends(&mut self, n: usize) -> Vec<Tok> {
-        let deadline = Instant::now() + Duration::from_secs(3);
+        // Generous: under ThreadSanitizer on a shared CI runner a reply can take seconds.
+        let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             let toks = decode(&self.rx);
             if toks.iter().filter(|t| **t == Tok::End).count() >= n || Instant::now() > deadline {
