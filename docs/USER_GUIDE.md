@@ -14,7 +14,8 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
   mains, 8 stereo matrices, 16 DCAs, 8 mute groups and 16 FX slots. Unlike the
   hardware, the channel count is only limited by CPU and more buses can be added.
 - **Channel processing, in the WING's order:**
-  - **INPUT:** trim, balance, polarity and delay (m, ft, ms or samples).
+  - **INPUT:** trim, balance, polarity and delay (m, ft, ms or samples, converted as
+    the WING does: 0.3 m per ms, 0.1 to 150 m, at least 16 samples).
   - **FILTER:** low cut (6-24 dB/oct), high cut (6/12 dB/oct) and the tool filter
     (TILT, MAX, AP1, AP2).
   - **GATE slot and DYNAMICS slot:** each holds any of the WING's **32 dynamics models**
@@ -233,9 +234,14 @@ touchscreen looks the same in both.
     console's: pick a channel, then its source. **MAIN / ALT** (CHANNEL INPUT) choose
     which of the channel's two inputs you patch (the ALT input, WING INPUT SELECT, can
     be a recorder playback channel). **+1 AUTO** moves on to the next channel; the
-    lock (red when locked, green when open) protects the patch. **ST** and **NONE**
-    are Sidecar's: ST pairs a channel's input with the next one, NONE clears the
-    patch. The **SOURCE GROUP** selector opens the console's group menu. Sidecar's
+    lock (red when locked, green when open) protects the patch; as on the console it
+    is locked on a new console and after INITIALIZE CONSOLE. Unlocked, **NONE**
+    (clears the patch) and **M** / **ST** / **M/S** (the pairing of the channel's
+    source: mono, stereo or mid-side with its neighbour; the channels on it follow)
+    appear; locked hides them, as on the console. Ports are named as on the WING:
+    LCL 1 ..., B 1 ..., C 1 ... (on the source tiles, HOME, SELECT MAIN INPUT, the
+    ALT list and the scribble strips' source tag); a name you give a source stays
+    its name. The **SOURCE GROUP** selector opens the console's group menu. Sidecar's
     ports sit in the groups they stand in for: **LOCAL IN** is your audio interface's
     inputs 1-48 (LCL 1 ..., 24 tiles as on the console, more for bigger interfaces;
     tiles past the interface's inputs read n/a but can be patched), inputs 49-96 and
@@ -245,7 +251,10 @@ touchscreen looks the same in both.
     (AUX IN, AES/EBU, AES50 A, ST CONNECT, USB AUDIO, DANTE, BUS, MAIN, MATRIX, USER
     SIGNAL) can be selected and show n/a tiles, like a console without that card.
     SOURCES sets each input's source:
-    name (RENAME), colour and icon, GAIN, +48V (stored; hold the key 2 s), POL, MUTE
+    name (RENAME), colour and icon, GAIN (digital here, in the WING's range for the
+    group: LOCAL IN -2.5 to +45 dB in 2.5 dB steps, AES50 B / C -3 to +45.5 dB in
+    0.5 dB steps; WLIVE PLAY and the USB player have none, as on the WING), +48V
+    (stored; hold the key 2 s), POL, MUTE
     and MONO / STEREO / MID-SIDE pairs (a channel patched to a pair becomes stereo),
     its mute groups (TAGS), with its meter and the channels using it (as tiles under
     the tabs); channels get the source's processing first. REMOTE (stage-box preamps) and RCV

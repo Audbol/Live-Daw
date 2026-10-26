@@ -313,6 +313,33 @@ fn input_delay_shifts_the_signal() {
     assert_eq!(first, 64);
 }
 
+/// The delay in meters, as the WING: 0.3 m per ms (3 m = 10 ms = 480
+/// samples at 48 kHz) and never shorter than its 0.1 m = 16 samples.
+#[test]
+fn input_delay_in_meters_converts_as_the_wing() {
+    for (meters, samples) in [(0.1, 16), (3.0, 480)] {
+        let mut rig = Rig::new(0, 1, 2);
+        set_channels(&rig.engine, 1);
+        let ch = rig.ch(0);
+        ch.params.input.delay_on.store(true, Relaxed);
+        ch.params.input.delay_mode.store(0, Relaxed); // meters
+        ch.params.input.delay.store(meters);
+        rig.run(10); // ramps settle in silence
+        rig.inputs[0].fill(0.0);
+        rig.inputs[0][0] = 1.0;
+        let mut first = None;
+        for block in 0..4 {
+            rig.run(1);
+            rig.inputs[0][0] = 0.0;
+            if let Some(i) = rig.outputs[0].iter().position(|x| x.abs() > 0.1) {
+                first = Some(block * rig.outputs[0].len() + i);
+                break;
+            }
+        }
+        assert_eq!(first, Some(samples), "{meters} m");
+    }
+}
+
 #[test]
 fn unpatched_channels_idle_and_resume_cleanly() {
     let mut rig = Rig::new(Engine::default_num_workers(), 8, 2);

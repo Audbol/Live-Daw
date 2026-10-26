@@ -248,6 +248,9 @@ fn apply_sources(engine: &Engine, parent: &Element) {
         let mode = x.int_or("mode", source_mode::MONO);
         p.mode.store(mode.clamp(0, 2), Relaxed);
     }
+    // Shows saved with the wider range (-12 .. +60 dB everywhere) clamp to
+    // each group's WING range.
+    table.clamp_gains();
     for x in e.children_named("Osc") {
         let Some(o) = usize::try_from(x.int_or("i", -1)).ok().and_then(|i| table.osc(i)) else { continue };
         get_i(x, "mode", &o.mode);

@@ -85,6 +85,11 @@ public:
     /** Bumped by every structural change (for views that cache strip pointers). */
     int getStructureVersion() const noexcept { return structureVersion; }
 
+    /** Bumped by reset() and SETUP's INITIALIZE CONSOLE (markInitialized()):
+        views with console defaults of their own (ROUTING's lock) go back to them. */
+    int getInitializeVersion() const noexcept { return initializeVersion; }
+    void markInitialized() noexcept { ++initializeVersion; }
+
     //==============================================================================
     // Groups and FX
     DcaParams& getDca (int index) const noexcept { return controls.dcas[juce::jlimit (0, kNumDcas - 1, index)]; }
@@ -252,6 +257,36 @@ public:
     /** INITIALIZE: the source's (pair's) settings and name back to the defaults. */
     void initializeSource (int index) const noexcept { ld::ld_source_initialize (engine, index); }
 
+    /** A source's GAIN range and step (dB), as the WING describes its group's
+        gain: LOCAL IN -2.5 .. +45 dB in 2.5 dB steps, AES50 B / C -3 .. +45.5 dB
+        in 0.5 dB steps. Groups the WING gives no gain (WLIVE PLAY, USB PLAYER,
+        OSCILLATOR) stay at 0 dB (hasGain() false). */
+    struct GainRange
+    {
+        float min = 0.0f, max = 0.0f, step = 0.0f;
+
+        bool hasGain() const noexcept { return max > min; }
+        /** The number of values (the WING's "steps"). */
+        int steps() const noexcept { return hasGain() ? juce::roundToInt ((max - min) / step) + 1 : 1; }
+        /** `db` in range and on the nearest step. */
+        float clamp (float db) const noexcept
+        {
+            if (! hasGain() || ! std::isfinite (db))
+                return 0.0f;
+            const float k = std::round ((juce::jlimit (min, max, db) - min) / step);
+            return juce::jlimit (min, max, min + k * step);
+        }
+        float toProportion (float db) const noexcept { return hasGain() ? juce::jlimit (0.0f, 1.0f, (clamp (db) - min) / (max - min)) : 0.0f; }
+        /** A position 0..1 along the range as a gain on a step. */
+        float fromProportion (float p) const noexcept { return clamp (min + juce::jlimit (0.0f, 1.0f, p) * (max - min)); }
+    };
+    static GainRange sourceGainRange (int index) noexcept
+    {
+        GainRange r;
+        ld::ld_source_gain_range (index, &r.min, &r.max, &r.step);
+        return r;
+    }
+
     /** The oscillators (the OSC source group): OSC n is input oscSource (n), its
         MODE, LEVEL and FREQ getOscillator (n); on / off is the source's MUTE. */
     static constexpr int oscSource (int n) noexcept { return ld::kOscSourceBase + n; }
@@ -388,7 +423,7 @@ private:
     std::array<StripList, kNumStripKinds> lists;
     /** Plugins already reported for a latency beyond kMaxCompensation (per FX slot). */
     std::array<juce::AudioProcessor*, kNumFx> warnedLatency {};
-    int structureVersion = 0;
+    int structureVersion = 0, initializeVersion = 0;
 
     juce::StringArray inputNames, outputNames;
     std::atomic<juce::uint32> lastCallbackMs { 0 };

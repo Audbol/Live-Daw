@@ -111,9 +111,66 @@ pub mod source_mode {
     pub const MID_SIDE: i32 = 2;
 }
 
-/// GAIN range in dB.
-pub const SOURCE_GAIN_MIN_DB: f32 = -12.0;
-pub const SOURCE_GAIN_MAX_DB: f32 = 60.0;
+/// A source group's GAIN: its range and step (dB), as the WING describes
+/// its group's `/io/in/<grp>/<n>/g`. Sidecar's gain is digital (it can't
+/// reach the interface's preamps), but it takes the WING's range and steps.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GainRange {
+    pub min: f32,
+    pub max: f32,
+    pub step: f32,
+}
+
+impl GainRange {
+    /// LOCAL IN (`LCL`, the full-size WING's own preamps): -2.5 .. +45 dB in
+    /// 2.5 dB steps ("lin [-2.5 .. 45.0 dB], 20 steps").
+    pub const LOCAL: Self = Self { min: -2.5, max: 45.0, step: 2.5 };
+    /// AES50 A / B / C (stage box preamps): -3 .. +45.5 dB in 0.5 dB steps
+    /// ("lin [-3.0 .. 45.5 dB], 98 steps").
+    pub const AES50: Self = Self { min: -3.0, max: 45.5, step: 0.5 };
+    /// Groups without a gain on the WING (WLIVE PLAY, the USB player, the
+    /// oscillators): fixed at 0 dB.
+    pub const NONE: Self = Self { min: 0.0, max: 0.0, step: 0.0 };
+
+    /// The group has a GAIN.
+    pub fn has_gain(&self) -> bool {
+        self.max > self.min
+    }
+
+    /// The number of values (the WING's "steps").
+    pub fn steps(&self) -> u32 {
+        if self.has_gain() {
+            ((self.max - self.min) / self.step).round() as u32 + 1
+        } else {
+            1
+        }
+    }
+
+    /// `db` in range, on the nearest step (0 dB for a group without a gain).
+    pub fn clamp(&self, db: f32) -> f32 {
+        if !self.has_gain() || !db.is_finite() {
+            return 0.0f32.clamp(self.min, self.max);
+        }
+        let k = ((db.clamp(self.min, self.max) - self.min) / self.step).round();
+        (self.min + k * self.step).clamp(self.min, self.max)
+    }
+}
+
+/// The hardware ports of LOCAL IN (the WING's LCL group; the remote's AES50 A).
+pub const NUM_LOCAL_SOURCES: usize = 48;
+
+/// The GAIN range of source `index`: LOCAL IN's ports take the local
+/// preamps', the other hardware ports (AES50 B / C and beyond) the AES50
+/// stage boxes', the rest has none.
+pub fn source_gain_range(index: usize) -> GainRange {
+    if index < NUM_LOCAL_SOURCES {
+        GainRange::LOCAL
+    } else if index < NUM_HW_SOURCES {
+        GainRange::AES50
+    } else {
+        GainRange::NONE
+    }
+}
 
 /// Default source colour (the WING's factory Dark Blue).
 pub const DEFAULT_SOURCE_COLOUR: i32 = crate::params::DEFAULT_COLOUR;
@@ -215,12 +272,12 @@ impl SourceParams {
         self.mute.load(Relaxed) || self.mute_groups.load(Relaxed) & mute_groups != 0
     }
 
-    /// The gain the source applies (mute, mute groups, gain, polarity).
-    fn gain(&self, mute_groups: u32) -> f32 {
+    /// The gain the source applies (mute, mute groups, gain in `range`, polarity).
+    fn gain(&self, range: GainRange, mute_groups: u32) -> f32 {
         if self.is_muted(mute_groups) {
             return 0.0;
         }
-        let g = db_to_gain(self.gain_db.load().clamp(SOURCE_GAIN_MIN_DB, SOURCE_GAIN_MAX_DB));
+        let g = db_to_gain(range.clamp(self.gain_db.load()));
         if self.invert.load(Relaxed) {
             -g
         } else {
@@ -291,6 +348,26 @@ impl SourceTable {
 
     pub fn get(&self, index: usize) -> Option<&SourceParams> {
         self.params.get(index)
+    }
+
+    /// Sets source `index`'s GAIN, in its group's range and on its steps
+    /// ([`source_gain_range`]).
+    pub fn set_gain(&self, index: usize, db: f32) {
+        if let Some(p) = self.params.get(index) {
+            p.gain_db.store(source_gain_range(index).clamp(db));
+        }
+    }
+
+    /// Puts every source's GAIN in its group's range (a show or snapshot
+    /// saved with the wider range Sidecar had before).
+    pub fn clamp_gains(&self) {
+        for (i, p) in self.params.iter().enumerate() {
+            let db = p.gain_db.load();
+            let clamped = source_gain_range(i).clamp(db);
+            if clamped != db {
+                p.gain_db.store(clamped);
+            }
+        }
     }
 
     /// Oscillator `n` (0-based).
@@ -529,10 +606,11 @@ impl SourceDsp {
         let p = &table.params[index..index + 2];
         let mode = p[0].mode.load(Relaxed);
         // A pair shares the first source's settings.
+        let range = source_gain_range(index);
         let gains = if mode == source_mode::MONO {
-            [p[0].gain(mute_groups), p[1].gain(mute_groups)]
+            [p[0].gain(range, mute_groups), p[1].gain(source_gain_range(index + 1), mute_groups)]
         } else {
-            [p[0].gain(mute_groups); 2]
+            [p[0].gain(range, mute_groups); 2]
         };
         let matrix = if mode == source_mode::MID_SIDE { MID_SIDE } else { IDENTITY };
         let last = [self.last_gain[slot], self.last_gain[slot + 1]];
@@ -630,6 +708,50 @@ mod tests {
         t.apply_legacy_defaults();
         assert!(t.get(p).unwrap().is_default() && t.name(p).is_empty());
         assert_eq!(t.osc(1).unwrap().level_db.load(), OSC_LEGACY_LEVEL_DB);
+    }
+
+    /// GAIN takes the WING's range and steps of the source's group:
+    /// LOCAL IN -2.5 .. +45 dB in 2.5 dB steps, AES50 -3 .. +45.5 dB in 0.5 dB
+    /// steps, none for WLIVE PLAY, the USB player and the oscillators.
+    #[test]
+    fn gain_ranges_follow_the_wing_groups() {
+        assert_eq!(source_gain_range(0), GainRange::LOCAL);
+        assert_eq!(source_gain_range(NUM_LOCAL_SOURCES - 1), GainRange::LOCAL);
+        assert_eq!(source_gain_range(NUM_LOCAL_SOURCES), GainRange::AES50);
+        assert_eq!(source_gain_range(NUM_HW_SOURCES - 1), GainRange::AES50);
+        for none in [NUM_HW_SOURCES, USB_PLAYER_SOURCE_INDEX, OSC_SOURCE_INDEX + 1] {
+            assert!(!source_gain_range(none).has_gain(), "{none}");
+        }
+        assert!(!source_gain_range(NUM_SOURCES).has_gain());
+        assert_eq!((GainRange::LOCAL.steps(), GainRange::AES50.steps(), GainRange::NONE.steps()), (20, 98, 1));
+
+        let l = GainRange::LOCAL;
+        assert_eq!(
+            [l.clamp(60.0), l.clamp(-12.0), l.clamp(0.0), l.clamp(6.0), l.clamp(1.2), l.clamp(f32::NAN)],
+            [45.0, -2.5, 0.0, 5.0, 0.0, 0.0]
+        );
+        let a = GainRange::AES50;
+        assert_eq!([a.clamp(60.0), a.clamp(-12.0), a.clamp(0.0), a.clamp(6.2), a.clamp(-0.74)], [45.5, -3.0, 0.0, 6.0, -0.5]);
+        assert_eq!(GainRange::NONE.clamp(12.0), 0.0);
+
+        // Set in range; values from before (-12 .. +60 everywhere) clamp.
+        let t = SourceTable::default();
+        let gain = |i: usize| t.get(i).unwrap().gain_db.load();
+        t.set_gain(0, 60.0);
+        t.set_gain(48, -12.0);
+        t.set_gain(USB_PLAYER_SOURCE_INDEX, 6.0);
+        assert_eq!([gain(0), gain(48), gain(USB_PLAYER_SOURCE_INDEX)], [45.0, -3.0, 0.0]);
+        for (i, db) in [(1, 60.0), (49, -12.0), (NUM_HW_SOURCES, 12.0), (2, 25.0)] {
+            t.get(i).unwrap().gain_db.store(db);
+        }
+        t.clamp_gains();
+        assert_eq!([gain(1), gain(49), gain(NUM_HW_SOURCES), gain(2)], [45.0, -3.0, 0.0, 25.0]);
+
+        // The audio takes the clamped gain even before that.
+        let p = &t.params()[3];
+        p.gain_db.store(60.0);
+        assert!((p.gain(source_gain_range(3), 0) - db_to_gain(45.0)).abs() < 1e-3);
+        assert_eq!(t.params()[NUM_HW_SOURCES + 1].gain(source_gain_range(NUM_HW_SOURCES + 1), 0), 1.0);
     }
 
     #[test]

@@ -1304,6 +1304,9 @@ extern "C"
     /** Source table index of an input port (hardware input or playback source), -1 if none. */
     int32_t ld_source_index (int32_t port);
     int32_t ld_source_port (int32_t index);
+    /** A source's GAIN range and step (dB), its WING group's (LOCAL IN -2.5 .. +45 in 2.5 dB
+        steps, AES50 -3 .. +45.5 in 0.5 dB steps); false (all 0) when the group has no GAIN. */
+    bool ld_source_gain_range (int32_t index, float* min, float* max, float* step);
     LdString* ld_source_name (const Engine*, int32_t index);
     void ld_source_set_name (const Engine*, int32_t index, const char* utf8, size_t len);
     /** SourceMode for the source and its pair partner (a new pair takes the first one's settings);

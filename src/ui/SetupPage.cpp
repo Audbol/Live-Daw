@@ -2480,6 +2480,8 @@ void SetupPage::closeInitialize()
 
 void SetupPage::initialize (const state::Scope& chosen, juce::uint32 sources, bool everything)
 {
+    // Pages with console defaults of their own go back to them (ROUTING locks).
+    ctx.engine.markInitialized();
     if (everything)
     {
         // Everything: a fresh 40-channel console, as before the parts could be chosen.

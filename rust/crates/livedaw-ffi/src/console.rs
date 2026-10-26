@@ -29,6 +29,20 @@ pub extern "C" fn ld_source_index(port: i32) -> i32 {
     sources::source_index(port).map_or(-1, |i| i as i32)
 }
 
+/// Source `index`'s GAIN range and step in dB (its WING group's: LOCAL IN
+/// -2.5 .. +45 in 2.5 dB steps, AES50 -3 .. +45.5 in 0.5 dB steps); false
+/// (all 0) for a source without a GAIN on the WING.
+#[no_mangle]
+pub unsafe extern "C" fn ld_source_gain_range(index: i32, min: *mut f32, max: *mut f32, step: *mut f32) -> bool {
+    let r = usize::try_from(index).map_or(sources::GainRange::NONE, sources::source_gain_range);
+    for (out, v) in [(min, r.min), (max, r.max), (step, r.step)] {
+        if let Some(o) = out.as_mut() {
+            *o = v;
+        }
+    }
+    r.has_gain()
+}
+
 /// The input port of a source table index, -1 if out of range.
 #[no_mangle]
 pub extern "C" fn ld_source_port(index: i32) -> i32 {
