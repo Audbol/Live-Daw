@@ -122,6 +122,19 @@ public:
             for (auto m : { compact::KeyMode::Bus, compact::KeyMode::Dca, compact::KeyMode::Main, compact::KeyMode::User })
                 expect (compact::keyModeFromToken (compact::keyModeToken (m)) == m);
             expect (compact::keyModeFromToken ("") == compact::KeyMode::Bus);
+
+            // What a key puts on fader 13: BUS 1-16; MAIN 1-4 on keys 1-4, MATRIX 1-8 on 9-16.
+            using KM = compact::KeyMode;
+            expect (compact::keyMainFader (KM::Bus, 0) == MF { MF::Bus, 1 });
+            expect (compact::keyMainFader (KM::Bus, 15) == MF { MF::Bus, 16 });
+            expect (compact::keyMainFader (KM::Main, 3) == MF { MF::Main, 4 });
+            expect (compact::keyMainFader (KM::Main, 8) == MF { MF::Matrix, 1 });
+            expect (compact::keyMainFader (KM::Main, 15) == MF { MF::Matrix, 8 });
+            for (int key = 4; key < 8; ++key)
+                expect (! compact::keyMainFader (KM::Main, key).has_value(), "MAIN MATRIX key " + juce::String (key + 1));
+            for (int key = 0; key < 16; ++key)
+                expect (! compact::keyMainFader (KM::Dca, key) && ! compact::keyMainFader (KM::User, key));
+            expect (! compact::keyMainFader (KM::Bus, 16).has_value());
         }
     }
 };

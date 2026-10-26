@@ -386,7 +386,23 @@ impl Schema {
                 }
             }
         }
-        Some(Schema { enums, defs, rows, families, slots, children, root_children, slot_of_row, by_id })
+        let mut s = Schema { enums, defs, rows, families, slots, children, root_children, slot_of_row, by_id };
+        s.fix_sweep();
+        Some(s)
+    }
+
+    /// Corrects what the parameter sweep caught in a state the console
+    /// doesn't start in: CH 3's input delay was read in ms, while a
+    /// factory-set WING describes every channel's in meters (its DLY MODE
+    /// changes the unit, which `SF::Dly` handles).
+    fn fix_sweep(&mut self) {
+        let row = |s: &Schema, path: &str| match s.resolve(path, &NoModels) {
+            Some(Node::Row(r)) => Some(r as usize),
+            _ => None,
+        };
+        if let (Some(good), Some(bad)) = (row(self, "/ch/1/in/set/dly"), row(self, "/ch/3/in/set/dly")) {
+            self.rows[bad].def = self.rows[good].def;
+        }
     }
 
     pub fn num_rows(&self) -> usize {

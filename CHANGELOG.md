@@ -12,19 +12,409 @@ All notable changes to Sidecar are listed here. Versions follow
   the display unit with the monitoring panel at its right. Below: one fader section of
   12 faders (three modules of four) with the COMPACT's nine layer keys (`1-12`, `13-24`,
   `25-36`, `37-48 AUX IN`, `BUS MASTER`, `MAIN MATRIX`, `DCA`, `USER 1`, `USER 2`) and
-  the shift keys, and the key section: **BUS**, **DCA**, **MAIN MATRIX** and **USER**
-  choose what the 16 keys do (BUS: Sends on Fader to the bus, hold to spill it; MAIN
-  MATRIX: Sends on Fader to MAIN 1-4 and MATRIX 1-8; DCA: spill; USER: custom control
-  keys), a small LCD names them, and **fader 13** is the main fader (MAIN 1; touch the
-  LCD's title to put another main, matrix, DCA, channel, aux or bus on it). There is no
-  channel strip, custom controls, 4-Channel, center or right section, as on the
-  console. The COMPACT is black: it shows the black finish. CH AUTOSELECT has one key,
-  CMPCT (`autosel_CMPCT`). WING remote clients see a COMPACT: discovery, `/?` and
-  `/$syscfg/$cnsmdl` report the model `wing-compact` (the full-size console still says
-  `sidecar`). The model is an app preference, not saved in shows; it fits a 1366 x 768
-  window. The C ABI is version 14 (`ld_console_model_info`, `ld_layers_set_model`,
-  `ld_wing_set_model`): the models' local I/O (24 local preamps and 1x2 GPIO on the
+  the shift keys, and the key section. **BUS**, **DCA**, **MAIN MATRIX** and **USER**
+  choose what the 16 keys do. BUS: a key spills its bus and puts it on fader 13. MAIN
+  MATRIX: keys 1-4 put MAIN 1-4 on fader 13, keys 9-16 MATRIX 1-8. DCA: a key spills
+  its DCA. USER: custom control keys. **VIEW** opens CUSTOM CONTROLS on the USER layer.
+  **Fader 13** is the main fader, MAIN 1 at first; it has no scribble strip, only its
+  meter, and the small LCD beside it names it and the 16 keys. There is no channel
+  strip, custom controls, 4-Channel, center or right section, as on the console, and
+  ROUTING has no AUX IN or AUX OUT (the COMPACT has no local aux I/O). The COMPACT is
+  black: it shows the black finish. CH AUTOSELECT has one key, CMPCT. WING REMOTE:
+  `/$ctl/cfg/mfdr`, `cscmode` and `autosel_CMPCT` are fader 13, the keys' mode and CH
+  AUTOSELECT CMPCT, both ways. The model is an app preference, not saved in shows; it
+  fits a 1366 x 768 window. LCL 1-24 (the COMPACT's 24 local preamps) all take LOCAL
+  IN's GAIN range. C ABI version 16 (`ld_console_model_info`, `ld_layers_set_model`,
+  `ld_wing_set_model`): each model's local I/O (24 local preamps and 1x2 GPIO on the
   COMPACT, 8 and 2x2 on the full size; no local aux I/O on the COMPACT).
+- WING REMOTE reports the WING's own model: discovery, `/?` and `/$syscfg/$cnsmdl` say
+  `ngc-full` for the full-size console (it said `sidecar`) and `wing-compact` for the
+  COMPACT, and `/$syscfg/$cnscfg` (where WING Edit takes its ACTIVE WING MODEL from)
+  `wing-fullsize` or `wing-compact`, so WING Edit and Mixing Station show the right
+  model. Exported snapshots name the model as WING Edit's do. The serial
+  `SIDECAR0001` and the firmware's `sidecar` still tell Sidecar apart.
+
+## [0.1.5] - beta
+
+The third round of matching Sidecar to a real WING, from the factory parameter dump,
+screenshots and answers from a console's owner: a factory-initialized show now starts
+with the WING's own values; the SETUP, LIBRARY, USB, VIEW, MONITOR, HOME, GATE, EQ,
+COMP, FILTER and ROUTING screens follow the console more closely; source GAIN has
+each source group's real range and steps; ROUTING starts locked; user layers work
+like the WING's (fixed slots, blanks, duplicates); and channels without a source show
+no tag. The WING remote parameter tree is finished, and the dropouts with Mixing
+Station and WING Edit are fixed. Every FX device and processing model has its own
+front panel, the dynamic EQs and the BDX 902 de-esser were corrected against
+measurements, and 1366 x 768 screens are supported. Known limitations: see the
+[README](https://github.com/Audbol/Live-Daw/blob/main/README.md#known-limitations).
+
+### Added
+
+- Every FX device and processing model now has its own front panel, so none fall back
+  to the generic knob grid. Before this, 49 of them did: 47 FX devices, the PSE/LA
+  COMBO dynamics model and the PIA 560 bus EQ. Each new panel has the controls of
+  every parameter, with the console's captions and value text, laid out in the
+  colours, knobs and print of the unit it recreates. Units with many controls (VSS3,
+  COMBINATOR, SPEAKER MANAGER, TRIPLE DEQ, the channel strips) have pages.
+- WING REMOTE: the parameter tree is finished. Every parameter of the WING 3.1 tree
+  but one now answers (68,555 of 68,556, up from 60,555, 88.3 %):
+  - Newly driving Sidecar: the LOCAL IN sources (the same ports as AES50 A, as on
+    ROUTING) and the USB player's (the `PLAY` group: name, colour, icon, mute,
+    polarity, mode; channels patch to `PLAY` 1-4), LOCAL OUT (A 1-8), the USB
+    recorder's RECORDER ports (`/io/out/REC/1-4`: a bus, main or matrix signal or a
+    source), the buses, mains and matrices as sources (`/io/in/$BUS`, `$MAIN`, `$MTX`,
+    read only) and `/$globals/clkrate` (the audio device's rate).
+  - SETUP's options are Sidecar's settings, both ways (C ABI: `ld_wing_host_setting_keys`,
+    `ld_wing_set_host_setting`, `ld_wing_take_host_setting`, `ld_wing_clear_host_settings`;
+    `WingRemote::setHostSettings`): METERING's taps (`/cfg/mtr/mtrpage`, `mtrsfc`),
+    MAIN METER and MAIN METER TAP, the GENERAL, SURFACE and SOLO SYSTEM options and
+    brightness tiles (`/$ctl/cfg`, `/$ctl/$globals`), MIDI REMOTE CONTROL (`/$ctl/midi`)
+    and DAW (`/$ctl/daw`). The rows of features Sidecar doesn't have (TAP TEMPO FLASH,
+    SHOW METER PAGE WHEN LOCKED, MOUSE DISABLES TOUCH, SEND PAGE ACTIVATES SOLO, the
+    OSC and TCP remote locks) are kept as settings, as SETUP keeps them.
+  - What Sidecar has no equivalent for (cards, the console's hardware, network and
+    status, other models' surfaces, input and output groups Sidecar doesn't have,
+    bus-to-bus sends the engine doesn't have, source and output safes, the player's
+    song tags...) answers what a factory-initialized WING answers
+    (`livedaw-wing/data/wing_factory.tsv`, from a dump of a real console) and keeps
+    what a client sets, read-only where the WING marks it. Unbound nodes and missing
+    strips answer the factory value too, instead of a neutral one.
+  - Left unmapped: `/$ctl/daw/config`, whose 3.1 choices (CC, MSTR) can't show
+    Sidecar's MCU with extenders.
+  - A new console and INITIALIZE CONSOLE now come up as a factory-initialized WING
+    everywhere Sidecar has the setting: compared parameter by parameter with a real
+    console's dump after INITIALIZE (29,862 parameters), 178 values still differ
+    (3,506 before). What changed (Sidecar's old default in brackets):
+    - SETUP: MAIN METER MAIN.1 (the monitor); MAIN METER TAP is a setting, AUTO (the
+      MAIN METERS tap), PRE or POST, starting AUTO (fixed POST); RIGHT SECTION SENDS ON
+      FADER off, L/C (ALL); EXCLUSIVE SOLO and SELECT FOLLOWS SOLO on (off);
+      FADER/SCREEN LAYER LINK off (on).
+    - Sends: bus sends off at -oo (0 dB); from channels and aux PRE to buses 1-8, GRP to
+      buses 9-10 and POST to buses 11-16 (all PRE), PAN LINK on only for buses 9-16
+      (all); buses 9-16 send POST to buses 1-8 (PRE). Matrix sends at -oo (0 dB)
+      without PAN LINK (on), PRE from channels and aux (post-fader). A matrix's direct
+      input at -oo (0 dB). A channel's TAP point "5", after the third block of the
+      process order (PFL).
+    - AUX 2 plays the USB player's PLAY 1/2 (not patched); the player's first pair is
+      named "2TR", colour 8, icon 608, stereo (unnamed, Dark Blue, no icon, mono).
+    - The RECORDER ports OFF (Main 1 L/R on 1-2); the player's REPEAT on (off); the
+      oscillators at -6 dB (-20 dB); MUTEGROUP/SIP OVERRIDE on (off); INPUT SELECT
+      GLOBAL (`/io/autoaltovr`, per channel).
+    - The DAW layers DAW 1-4 of the custom controls are the console's (transport,
+      markers, automation, FLIP, NAME/VALUE, V-POTS, RECRDY, SCRUB, ZOOM; empty).
+    - WING remote: an unassigned custom control's `$fname` reads empty ("NOT
+      ASSIGNED"); the default layer keys answer the console's names ("CH1-12",
+      "BUSES"...), a section spilling nothing `SPILL`; `/$ctl/lib/$actidx` reads 0 with
+      no scene active (-1).
+    - INITIALIZE CONSOLE (everything) also resets SETUP's surface, solo, metering,
+      general and lighting options, the RECORDER ports and REPEAT (MIDI REMOTE
+      CONTROL and DAW keep their connection settings).
+    - Saved shows load with their own values: shows from before keep the USB player's
+      sources, the oscillators, the DAW layers, INPUT SELECT and MUTEGROUP/SIP
+      OVERRIDE as they had them.
+    - Still different: the local sources' icon (the WING gives LOCAL IN icon 1 and
+      AES50 A icon 0; they are the same sources here, kept at 0), the channels' and
+      outputs' patch (the audio interface's inputs on the channels, Main 1 on outputs
+      1-2), AUX 1 on the WING's own USB audio (no such ports here), the user layers'
+      names (USER 1, not USER1), the function names of assigned keys (`$fname`), the
+      show name, and what is the machine's (IP, names, clock) or the console's
+      hardware (fader and knob positions).
+  - A unit test compares the description of every parameter a factory-set WING
+    described (`tests/data/wing_desc.tsv`, 29,871 parameters) with Sidecar's; a
+    protocol test sets and reads the new mappings over OSC and the native protocol.
+
+### Changed
+
+- A RATIO picked from a list reads as on the WING: "2.0:1" (an expander's "1:2.0"),
+  "1.43:1" where the list has hundredths; Sidecar showed "2.00" or "2:1".
+- VIEW > FADERS: touching a DCA's name no longer opens its LIGHT/ICON/NAME panel; as on
+  the WING, that panel opens from the DCA OVERVIEW title.
+- A channel without a source no longer shows "OFF" on its scribble strip: the tag is left
+  out, as on the WING.
+- Source GAIN now has the WING's range and steps for the source's group, everywhere
+  it is set (HOME and INPUT knob and fader, ROUTING > SOURCES fader, knob and wheel,
+  the parameter bar, WING REMOTE `/io/in/<grp>/<n>/g` and `/ch/<n>/in/set/$g`, WING
+  snapshots, shows and scenes). It was -12 to +60 dB in 0.5 dB steps for every source.
+  - LOCAL IN (the full-size WING's own preamps; the same ports as AES50 A here):
+    -2.5 to +45 dB in 2.5 dB steps (20 values, `lin [-2.5 .. 45.0 dB], 20 steps`).
+  - AES50 B / C (and interface ports past 48): -3 to +45.5 dB in 0.5 dB steps (98
+    values, `lin [-3.0 .. 45.5 dB], 98 steps`).
+  - WLIVE PLAY, the USB player and the oscillators have no GAIN on the WING, so they
+    have none here either: they stay at 0 dB, and the GAIN control reads "-".
+  - Gains outside the range, or off its steps, move to the nearest value, also in
+    shows and scenes saved before. Sidecar's gain is still digital (it can't reach the
+    interface's preamps). The gain thumb, knob and fader follow the range, so 0 dB sits
+    near the bottom for LOCAL IN, as in the console's screenshots. C ABI:
+    `ld_source_gain_range`.
+- Channel, aux, bus, main and matrix delays convert between meters, feet, ms and
+  samples as the WING does: 0.3 m per ms (the WING's DIST range, 0.1 to 150 m, is 1/3
+  to 500 ms; Sidecar used 343 m/s), never shorter than 16 samples. 0.1 m now reads
+  0.3 ft, 0.3 ms and 16 samples at 48 kHz, and delays by 16 samples (it read and
+  delayed 14). SAMPLES starts at 16 at every rate (0.1 m is 32 samples at 96 kHz).
+  WING REMOTE takes `in/set/dly` and `dly/dly` in the unit's range: up to 24,000
+  samples at 48 kHz, where it stopped at 1,000. Saved delays keep their values; their
+  time is now the WING's.
+- ROUTING's lock starts locked (the closed lock lit red), as on the console: on a new
+  console and again after INITIALIZE CONSOLE. It started unlocked.
+- ROUTING > CHANNELS: the keys that change the patch, NONE and the new M / ST / M/S
+  (the pairing of the channel's source, as in SELECT MAIN INPUT), show only while
+  ROUTING is unlocked; locked hides them, as on the WING. They replace Sidecar's own ST
+  key, which made the channel stereo without pairing its source. OUTPUTS' NONE too.
+- Local inputs are named LCL 1, LCL 2 ... as on the WING (AES50 B / C ports B 1 ...,
+  C 1 ...), where they read IN 1 ...: on HOME's source tile, SELECT MAIN INPUT, the ALT
+  source list and the scribble strips' source tag (LCL7/8), as ROUTING and the mute
+  groups' SOURCE tab already did. Names given to sources are kept.
+- The channel TAP points are checked against the WING: they are the nodes of the
+  channel's chain in its process order (IN, FILTER, then TAP 3 / 4 / 5 after the first,
+  second and third of GATE, EQ, COMP and INS 1, PRE FDR after the fourth, POST FDR,
+  POST PROC after INS 2), so the factory TAP 5 with GEDI sits between COMP and INS 1,
+  where the WING's HOME screen draws it. The engine already took the sends, keys and
+  delay compensation from there; a new test holds it to that for every order.
+- Answers from a real WING:
+  - The surface's blank strips are blank: a blank user-layer slot, a strip past the
+    end of a layer, a strip whose target is gone, a DAW strip without a channel and
+    the 4-Channel section's LCD over such a strip show no text at all and stay unlit,
+    as on the console. (The DAW custom control section does the same for channels
+    the controller doesn't have.)
+  - SETUP draws the rows of features Sidecar doesn't have (SHOW METER PAGE WHEN
+    LOCKED, MOUSE DISABLES TOUCH, MOUSE SPEED, SEND PAGE ACTIVATES SOLO, TAP TEMPO
+    FLASH, the PATCH, GLOW and LAMP tiles, HA REMOTE, the OSC and TCP remote locks,
+    SYNC SOURCE, IN/OUT) normally instead of dimmed. Their values are kept (and
+    answer over WING REMOTE) but change nothing.
+  - The dynamics thumbnails on HOME draw the GATE and COMP transfer curves blue while
+    the gate or compressor is on and grey while it's off, as the GATE and COMP
+    screens do (they were orange). The model list keeps its orange tiles.
+  - GRAPHIC EQ (GEQ): the 31 faders with TRIM and the response curve are on pages of
+    their own (FADERS, CURVE), the GEQ TYPE beside the curve.
+  - GATED REVERB, REVERSE REVERB and DELAY/REVERB have panels of their own instead of
+    the HALL's remote: the envelope (gated or reverse) or the echoes as a graph, beside
+    sections for the envelope, the space or density and the EQ (the delay and the
+    reverb for DELAY/REVERB), in the style of the other non-remote reverbs.
+  - Scenes and snippets that recall a plugin's state also recall its zoom and
+    collapse in the plugin window. Scenes stored before keep the current view.
+
+- A third pass of matching the screens to a WING (firmware 3.1), side by side with
+  the console's screenshots at 1280 x 800:
+  - SETUP: the settings boxes are padded as on the console (4 px, none next to a
+    dropdown field), ON keys are 48 x 40 in a 2 px frame 4 px under the top of their
+    row with smaller print, dropdown fields (CLOCK RATE, DEVICE, CONSOLE NAME...)
+    have the console's 2 px frame, 30 px key and caption / value sizes, MOUSE
+    DISABLES TOUCH and MOUSE SPEED have their shorter rows, MONITORS and CC EDIT sit
+    against the clock, the INPUT SELECT grid has the console's cell positions, the
+    NETWORK IP ADDRESS caption is row-sized over light boxes, and the DAW disclaimer
+    is the console's small grey print under the DAW CONTROL column.
+  - CUSTOM CONTROLS: the layer map has the console's columns (82 px on a 90 px
+    pitch), the encoder tile with a thick open ring, 40 px keys, grey captions and
+    titles, a GPIO key drawn like USER, COLOR / NAME / CLR ALL as #303030 keys in a
+    grey frame and the list's page keys as full-size triangles.
+  - LIBRARY (INT / USB) and the USB recorder's browser: folder rows with the
+    console's 32 px > key, chevron and folder sizes, the scroll column (arrows, a
+    black track and a grey thumb) right of the rows, file rows with the type chip,
+    date and time where the console has them and 20 px names, the TYPE / NAME and
+    calendar sort keys as on the console, a blue SHOW key, and files sorted by
+    name without their extension ("MARCUS DEFAULT" before "MARCUS DEFAULT 3.0").
+    The USB browser fills the rows under the list with black boxes, as on the console.
+  - USB player: the time readout is lit red with no clip chosen; the tape reels are
+    drawn as the console's (hub ring, spokes, rollers and the head).
+  - METERS: the number keys of strips without a source are no longer dimmed.
+  - VIEW screens: the status title "C (layers) DCA" and MUTE GROUPS laid out as on
+    the console; the DCA label under a DCA (OVERVIEW, FADERS) is black with 22 px
+    caps; tiles of inputs without an icon of their own (CONFIG, the assign screens)
+    show none.
+  - MONITOR: the parameter bar ends at DIST while DIRECT IN is OFF (DIR LVL shows
+    once a source is chosen); the LIMITER ring is empty at 0 dB.
+- The channel's HOME screens, ROUTING, CHANNEL INIT / COPY and INITIALIZE CONSOLE matched
+  again to a WING's (firmware 3.1, measured side by side with the console's screenshots at 1280 x
+  800):
+  - The block column: blocks 65 px tall at the console's 73 px pitch, the fader bar 16 px,
+    the keys 68 px wide with a 44 px key in a black rim, and the console's icons for GATE,
+    EQ, COMP, INS and the wrench. The thumbnails fill their block as on the console: the
+    chips, LED and 11-segment meters where the console has them, the EQ curve in a plain
+    black box, MAIN with numbered main squares and a stereo meter, and SENDS with the
+    matrix sends over a black line and the bus sends in two groups. An insert with no FX
+    slot no longer shows the premium diamond. The TAP line is drawn in the blocks' grey.
+  - OVERVIEW, ICON/COLOR, NAME and TAGS: the panels, tabs (smaller text on unselected
+    tabs, the tab bar behind them), SAFE, the LEVEL panel (MUTE, SOLO, the meter's evenly
+    spaced CLIP to -60 scale, the fader well with its value tag), the MAIN ring, mains
+    squares and SOLO BUS keys, the icon gallery and colour grid, the keyboard (2 px key
+    outlines, grey letters, the console's rows) and the tag tiles are at the console's
+    positions and sizes.
+  - CHANNEL INPUT: the panels, the bracket, the MAIN column's frame and GAIN fader, the
+    TRIM & BALANCE pad (to -18 dB, a grey trim handle, a blue balance handle), the trim
+    meter with IN under it, INVERT, the FILTER keys and the DELAY panel (its well and value
+    tag, larger unit names).
+  - GATE / COMP: the transfer graph's scale and line weight as the console's, the curve
+    running on to the bottom edge; DETECTOR / AUTO ENV captions. EQ: the response graph's
+    ruler, RTA strip and grid, smaller grey rings, band lines that stop short of the
+    edges, the console's shelf mark and the band keys' layout. FILTER SETUP: the LC / HC
+    lines and rings, the slope keys' grey print.
+  - The KEY FILTER and XOVER pages show no status keys (PREV CH ... COPY), as on the
+    console. CHANNEL INIT / COPY sit where the console puts them, with an 80 px title, and
+    blank the parameter bar; their INIT / COPY key stays lit with no destination chosen.
+  - The EQ and DYNAMICS MODEL lists and SELECT CHANNEL (KEY SOURCE) dim only the screen
+    they belong to: the block column stays lit and the parameter bar goes blank. ROUTING's
+    group menus dim only their own side.
+  - The HOME screens' drop-down fields use the console's frame, key and type sizes (as
+    SETUP's); knob boxes the console's ring (open 290 degrees, dark grey,
+    filled from the start, or from the top for TRIM) and larger captions; the parameter
+    bar's text and track sit as on the console, the source GAIN is a gold thumb, TRIM and
+    EQ gain fill from the centre, WIDTH fills either side of the centre and the EQ's Q is
+    the green spread fill; the track is #707070. The HOME page ends at y 752, where the
+    parameter bar starts.
+  - ROUTING: the channel's number in the status bar unboxed on CHANNELS, the sources'
+    and outputs' title spaced as on the console. INITIALIZE CONSOLE: the group titles in
+    the console's size.
+
+### Fixed
+
+- WING REMOTE: the recall safes (`/$ctl/safes`) answer in the console's format, a "+"
+  or a space per strip, DCA, mute group or FX slot (they were lists like `1,3-5`,
+  which are still taken). A string set over OSC keeps its leading and trailing spaces.
+  CH 3's input delay is described in meters like the other channels (the tree had
+  caught it in ms). `/play/$actidx` reads 0 with nothing queued, inside its range.
+- The panels have graphs where the unit has something to show:
+  - EQ curves for the graphic EQs, PIA 560, SPEAKER MANAGER and the channel strips'
+    EQ sections. These are computed by the DSP itself, using the new C ABI function
+    `ld_model_response`. No structure changes.
+  - Echoes for the delays.
+  - Envelopes for the reverbs, including gated and reverse.
+  - The LFO for FLANGER, PHASER and TREMOLO.
+  - The filter of the MOOD FILTER.
+  - Limiter and compressor curves.
+  - Band levels for COMBINATOR and SUB MONSTER.
+  - The dynamic EQs (DYNAMIC EQ, DUAL and TRIPLE) now show the range each band can
+    move through and, for cuts, where the gain reduction has it now.
+  - The BDX 902 DE-ESSER shows the band it works on and its live cut.
+- A test checks that every model has a panel and that every parameter has a control
+  on it that moves. With `SIDECAR_FACEPLATE_SNAPSHOT_DIR` set, it also saves every
+  page as a picture. LiveDAWTests now takes one test's name as its argument
+  (`LiveDAWTests Faceplates`).
+- The BDX 902 DE-ESSER and the dynamic EQs, measured with tones, sibilance bursts
+  over a low tone and level steps:
+  - BDX 902, HF mode: the cut was a high pass subtracted out of phase. It boosted
+    up to +0.6 dB just under FREQ and cut only about a third of RANGE above it. A
+    6 dB reduction took 0.4 dB off a 4-8 kHz "s". It is now a 12 dB/oct high shelf
+    that never boosts: at RANGE 12 it takes 5.2 dB off that "s" and leaves the tone
+    under it untouched.
+  - BDX 902: RANGE was only a ceiling. RANGE 6 and RANGE 12 both took 3.4 dB off the
+    same sibilance. Now it sets the depth: 3.6 dB at 6, 7.2 dB at 12. The detector
+    compares the power above FREQ with the whole signal's. It still has no
+    threshold, so a vocal 30 dB quieter is de-essed the same.
+  - BDX 902: in silence the meter read the full RANGE, because no signal counted
+    as "all sibilance". It now reads 0. The first samples of a note are no longer
+    cut by the full RANGE. The reduction no longer changes with the sample rate:
+    at 8 kHz it read -11.3, -12.0 and -11.1 dB at 44.1, 48 and 96 kHz.
+  - Dynamic EQ (DYNAMIC EQ, DUAL, the TRIPLE DEQ FX and the SPEAKER MANAGER's band):
+    the LP12 and HP12 shelves rose +0.9 dB past FREQ when cutting and dipped -2.5 dB
+    on the other side when boosting. They are now true second-order shelves that
+    move monotonically from 0 dB to the gain.
+  - The panels draw what the DSP does: the dynamic EQ bands' bells and shelves are
+    the DSP's own curves (the bell was drawn about twice as wide), and the 902
+    graph shows its detector's high pass and its HF shelf.
+  - The DYNAMIC EQ, DUAL and TRIPLE DEQ graphs show each band's live movement,
+    up as well as down. Before, a boosting band never moved, and DUAL / TRIPLE
+    drew every cutting band at the slot's largest reduction. The DSP reports each
+    band's signed gain. New C ABI functions: `ld_strip_dyn_band_gain` (GATE /
+    DYNAMICS slot, bands 0-1) and `ld_fx_band_gain` (FX slot, bands 0-2). No
+    struct layout changes, so the ABI version stays 15.
+  - The WING comparison kit's DYNAMIC EQ test had GAIN 0, so it tested nothing. It
+    now has GAIN -12. New tests: the 902 in FULL mode, DUAL DYNAMIC EQ shelves, and
+    a FILTER OFF dynamic EQ for clean ATTACK / RELEASE timing.
+
+- Rates below 10 Hz now show two decimals ("0.50 Hz"). LFO speeds used to read
+  "0 Hz".
+- BLUE PLATE's damping readout is labelled kHz. It read HZ.
+- The infinity sign on the BDX 560 and PIA 2250 ratio scales now draws correctly.
+
+- User layers work like the WING's: their slots are fixed, a slot can be blank, and
+  the same channel can sit in two (or more) slots of one layer. On VIEW > CONFIG:
+  - An item dragged (or tapped) onto a slot's body goes into exactly that slot,
+    replacing what was there, instead of being packed to the left with everything
+    after it shifting. An item the layer already holds gets another slot; the first
+    copy stays where it is (it used to move).
+  - Dropped near the boundary between two slots (a gold bar with arrow heads marks
+    the spot), items are inserted there and the following slots move one place to
+    the right, as on the WING. A trailing blank slot makes room; when the layer's
+    last slot (1024) is in use the drop is refused with a LAYER FULL notice (red
+    marker) instead of losing a fader.
+  - A filled slot dragged onto another swaps with it (or moves into a blank one);
+    dragged between two slots it is inserted there and its old slot turns blank;
+    dragged off the slots it is blanked.
+  - Right-click or long-press a slot for CLEAR SLOT and INSERT EMPTY SLOT (a blank
+    slot inserted before it, the rest moving right).
+  A blank slot is an inactive strip on the surface (dark scribble strip, light bar
+  off, the fader and keys doing nothing), also on the VIEW screens, the custom
+  controls, Sends on Fader, spill and the remote controls. Two slots holding the same
+  strip are two faders on that strip and follow each other. Blank slots and
+  duplicates are saved with the show (a blank as "-"); older shows load unchanged.
+  The WING remote maps a blank slot to OFF both ways (OFF used to remove the fader and
+  shift the rest) and each copy of a fader reads and sets on its own. C ABI 15:
+  `kFaderEmpty` and the user layer slot functions (14), `ld_layers_insert_user_slots`,
+  `ld_layers_max_slots`, `ld_layers_remove_from_user` taking the slot and
+  `ld_layers_add_to_user` returning whether there was room (15). CONFIG's NEW and
+  DELETE keys no longer cover the first slots of a 12-fader section.
+
+- WING REMOTE: dropouts with Mixing Station and WING Edit, found with simulated
+  clients run for minutes (a soak test, `livedaw-wing/tests/soak.rs`, now runs a
+  short version in CI):
+  - A Native client (WING Edit) that read slowly, on busy Wi-Fi or while syncing the
+    tree, held up everything: every change pushed to it waited for its connection,
+    so OSC replies (Mixing Station) stopped for seconds, meters stopped for every
+    client and, after 2 s, the slow client was disconnected (and reconnected, and
+    synced again...). Each Native client now has its own send queue and writer; a
+    client is dropped only when its connection takes nothing for 10 s.
+  - Two OSC remotes (Mixing Station on two tablets, or with Companion) took the
+    event subscription from each other at every renewal, so each stopped seeing
+    changes for up to 10 s at a time. Every OSC client that subscribes is now served,
+    and one that subscribed with a reply port (`/%<port>/*S`) no longer gets its own
+    changes echoed back.
+  - A meter renewal sent as the protocol document shows it (`df d3 d4 <id>`, nothing
+    after it) was applied only at the client's next channel switch: meters froze for
+    about a second after the first 5 s, and again whenever the client was idle.
+  - After a scene recall, the hundreds of OSC events left in one burst and overflowed
+    the client's receive buffer (a quarter of them were lost even on the same
+    computer): they are now paced at 8 per millisecond.
+  - Subscriptions last 20% longer than the console's 10 s (OSC) and 5 s (meters), so
+    a renewal delayed by the network doesn't open a gap.
+  - Windows: a client that went away (its port unreachable) paused the OSC and
+    discovery servers on each error report, delaying the other clients' replies.
+- 1366 x 768 screens: the window opened at 1680 x 1000, off the top and left of a
+  laptop screen with the start-up notice's buttons out of reach. It now opens fitted
+  and centred in the main display's work area (a size saved on a bigger screen is
+  fitted too, title bar included), and the smallest window is 1280 x 640 (a 1280 x 720
+  screen less taskbar and title bar; was 1344 x 680).
+- Short windows keep the main display's screen legible (360 px tall, body text about
+  9 px, as in a 1680 x 1000 window) instead of shrinking it to about 285 px: the
+  channel strip and the monitoring / 4-Channel column narrow to make room, the fader
+  sections get the rest and fold their strips' meter blocks away below 100 px of
+  fader travel (the screen, the channel strip and the main meter still show levels),
+  and the layer keys pack closer so all of them stay on the surface. Large windows
+  are unchanged.
+- A sandboxed plugin's editor window larger than the screen opens with its title bar
+  on screen (and shrinks to the work area when the editor is resizable).
+- Found by testing with real plugins (the LSP plugins, VST3 and LV2, now covered by
+  a test that runs them when they are installed):
+  - Linux: a show with a VST3 plugin loaded in-process didn't load it back ("No
+    compatible plug-in format exists"): the show stored the library inside the
+    plugin's bundle. Such shows now load (also with the sandbox on), and shows now
+    store the description the plugin was loaded from (the bundle). Sidecar no
+    longer asks a loaded plugin for its description (the EFFECTS screen did on every
+    repaint), which made LSP's VST3 plugins leak a small host object each.
+  - A mono plugin (no stereo layout, such as LSP's "Mono" versions) on a stereo
+    channel silenced the right side. It now gets both sides mixed to mono and its
+    output feeds both (in-process, in a chain and in the sandbox).
+  - The plugin window's zoom ended at FIXED for VST3 editors on Linux, which take
+    their real size only once shown: they now shrink by the host scale. An editor
+    that goes back to its own size after being resized smaller (LSP's LV2 UIs) now
+    tries the host scale, then shows FIXED, instead of claiming the zoom.
+  - The plugin window grew off the screen when the plugin's editor took its real
+    size after the window was placed (a 1366 x 768 screen); it now stays on screen.
+  - Sandbox: a parameter set right after a plugin loaded (a scene recall, a
+    remote) snapped back to its old value in Sidecar 300 ms later, though the
+    plugin had it.
+  - Sandbox: the helper no longer asks a plugin whether it has an editor while
+    loading it (Sidecar didn't use the answer); LSP's VST3 plugins crashed there
+    without a display.
 
 ## [0.1.4] - beta
 

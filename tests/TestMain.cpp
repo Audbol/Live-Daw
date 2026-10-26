@@ -4,9 +4,26 @@
 #include <juce_events/juce_events.h>
 
 #include <iostream>
+#include <utility>
 
 int main (int argc, char** argv)
 {
+#if JUCE_LINUX || JUCE_BSD
+    // JUCE installs an X error handler only in GUI apps; without one, Xlib's default
+    // ends this console runner on any X error, such as JUCE asking a bare Xvfb (no
+    // window manager) for _NET_WM_STATE while a plugin window test runs. Report and go on.
+    static juce::DynamicLibrary x11 ("libX11.so.6");
+    using Handler = int (*) (void*, void*);
+    if (auto* setHandler = reinterpret_cast<Handler (*) (Handler)> (x11.getFunction ("XSetErrorHandler")))
+        setHandler ([] (void*, void*)
+        {
+            static bool reported = false;
+            if (! std::exchange (reported, true))
+                std::cerr << "(X errors are ignored)" << std::endl;
+            return 0;
+        });
+#endif
+
     juce::ScopedJuceInitialiser_GUI init; // engine uses the message manager / timers
 
     // The out-of-process plugin scanner relaunches this executable as its worker.
@@ -30,7 +47,15 @@ int main (int argc, char** argv)
     } runner;
     runner.setAssertOnFailure (false);
 
+    // An argument names a category, or one test ("Faceplates").
+    juce::Array<juce::UnitTest*> named;
     if (argc > 1)
+        for (auto* t : juce::UnitTest::getAllTests())
+            if (t->getName() == juce::String (argv[1]))
+                named.add (t);
+    if (! named.isEmpty())
+        runner.runTests (named);
+    else if (argc > 1)
         runner.runTestsInCategory (argv[1]);
     else
         runner.runTestsInCategory ("LiveDAW");

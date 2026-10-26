@@ -260,7 +260,7 @@ void FaderSection::refreshFaders()
     for (int i = 0; i < n; ++i)
     {
         const int index = offset + i;
-        strips[i]->setTarget (index < total ? std::optional<state::FaderRef> (layer.faders[(size_t) index]) : std::nullopt);
+        strips[i]->setTarget (LayerSet::surfaceTarget (layer, index)); // a blank slot: an inactive strip
     }
     repaint();
 }
@@ -310,9 +310,10 @@ void FaderSection::paintOverChildren (juce::Graphics& g)
             g.fillRect (strips[last]->getRight(), 0, 1, getHeight());
         }
 
+        // (Short windows fold the meters away.)
         const float rowH = (float) meter.getHeight() / (float) FaderStrip::kMeterRows;
         const float size = juce::jlimit (7.0f, 11.0f, rowH * 0.9f);
-        for (int i = first; i < last; ++i)
+        for (int i = first; i < last && ! meter.isEmpty(); ++i)
         {
             const float x = (float) strips[i]->getRight();
             const float w = juce::jmin (22.0f, (float) strips[i]->getWidth() * 0.36f);
@@ -370,7 +371,8 @@ void FaderSection::resized()
     c.removeFromBottom (6);
 
     const int numKeys = layerKeys.size() + 2 + (section == LayerSet::Center ? 1 : 0);
-    const int pitch = juce::jlimit (18, 44, c.getHeight() / juce::jmax (1, numKeys));
+    // (Down to 16 px a key in the shortest windows, so all of them fit.)
+    const int pitch = juce::jlimit (16, 44, c.getHeight() / juce::jmax (1, numKeys));
     const int keyH = juce::jmin (juce::roundToInt ((float) keyW * 0.66f), pitch - juce::jmax (4, pitch / 4));
     auto place = [&] (juce::Component& k)
     {

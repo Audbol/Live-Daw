@@ -51,7 +51,7 @@ fn console_level_state_survives_a_show_round_trip() {
     c.phones.output_right.store(7, Relaxed);
 
     let src = engine.sources();
-    src.params()[0].gain_db.store(24.0);
+    src.params()[0].gain_db.store(25.0);
     src.params()[0].phantom.store(true, Relaxed);
     src.params()[0].colour.store(9, Relaxed);
     src.params()[0].icon.store(12, Relaxed);
@@ -98,7 +98,7 @@ fn console_level_state_survives_a_show_round_trip() {
 
     let os = other.sources();
     let p = os.params();
-    assert_eq!(p[0].gain_db.load(), 24.0);
+    assert_eq!(p[0].gain_db.load(), 25.0);
     assert!(p[0].phantom.load(Relaxed));
     assert_eq!((p[0].colour.load(Relaxed), p[0].icon.load(Relaxed)), (9, 12));
     assert_eq!(os.name(0), "Kick In");
@@ -110,6 +110,13 @@ fn console_level_state_survives_a_show_round_trip() {
     let osc = os.osc(1).unwrap();
     assert_eq!((osc.mode.load(Relaxed), osc.level_db.load(), osc.freq_hz.load()), (2, -30.0, 63.0));
     assert!(os.osc(0).unwrap().is_default());
+    // The USB player's first pair keeps its factory "2TR" customization.
+    let player = livedaw_engine::sources::USB_PLAYER_SOURCE_INDEX;
+    assert!(os.is_factory(player) && os.is_factory(player + 1));
+    assert_eq!(
+        (os.name(player), p[player].icon.load(Relaxed), p[player].mode.load(Relaxed)),
+        ("2TR".into(), 608, source_mode::STEREO)
+    );
 
     let tags = |kind, id| find_strip(&other, &StripRef::new(kind, id)).unwrap().console.talk_tags.load(Relaxed);
     let ch4 = engine.channel_at(3).unwrap().id();
@@ -118,14 +125,37 @@ fn console_level_state_survives_a_show_round_trip() {
     assert_eq!(tags(StripKind::Channel, 1), 0);
     assert_eq!(other.dca_monitor_paths(4), 2, "MON DCAs follow their names (MON A: phones)");
 
-    // Older shows (no console-level elements) load the defaults.
+    // Older shows (no console-level elements) load the defaults, and the
+    // sources they left out as they were then: the USB player plain and the
+    // oscillators at -20 dB.
     let bare = xml::parse(r#"<Console version="3"><Channels/></Console>"#).unwrap();
     console::load_console(&other, &bare, &mut NoPlugins, false);
     assert_eq!(other.controls.solo_mode.load(Relaxed), 0, "LIVE, as a WING after INITIALIZE");
     assert_eq!(other.controls.talk.assignment(), None);
     assert!(other.sources().params()[0].is_default());
-    assert!(other.sources().osc(1).unwrap().is_default());
+    assert!(other.sources().params()[player].is_default() && other.sources().name(player).is_empty());
+    assert_eq!(other.sources().osc(1).unwrap().level_db.load(), livedaw_engine::sources::OSC_LEGACY_LEVEL_DB);
     assert_eq!(other.controls.phones.output_left.load(Relaxed), -1);
+}
+
+/// Shows saved when every source's GAIN went from -12 to +60 dB load with
+/// each gain in its group's WING range and on its steps.
+#[test]
+fn old_source_gains_clamp_to_the_groups_range() {
+    let old = xml::parse(
+        r#"<Console version="3"><Channels/><Sources factory="wing">
+             <Source i="0" gain="60"/><Source i="1" gain="-12"/><Source i="2" gain="6"/>
+             <Source i="48" gain="60"/><Source i="49" gain="-12"/><Source i="50" gain="6.2"/>
+             <Source i="576" gain="12"/>
+           </Sources></Console>"#,
+    )
+    .unwrap();
+    let engine = Engine::new(0);
+    console::load_console(&engine, &old, &mut NoPlugins, false);
+    let gain = |i: usize| engine.sources().params()[i].gain_db.load();
+    assert_eq!([gain(0), gain(1), gain(2)], [45.0, -2.5, 5.0], "LOCAL IN: -2.5 .. +45 dB in 2.5 dB steps");
+    assert_eq!([gain(48), gain(49), gain(50)], [45.5, -3.0, 6.0], "AES50: -3 .. +45.5 dB in 0.5 dB steps");
+    assert_eq!(gain(576), 0.0, "WLIVE PLAY has no gain");
 }
 
 #[test]

@@ -75,6 +75,12 @@ pub fn audio_files_in(folder: &Path) -> Vec<PathBuf> {
 }
 
 impl Queue {
+    /// The player's queue on a fresh console: empty, REPEAT on (`/play/repeat`
+    /// on a factory-initialized WING).
+    pub fn factory() -> Self {
+        Self { repeat: true, ..Self::default() }
+    }
+
     pub fn entries(&self) -> &[QueueEntry] {
         &self.entries
     }

@@ -139,6 +139,10 @@ private:
     bool screenMaximized = false, fullScreen = false;
     /** Screen only: the display's layout height; taller windows scale it up. */
     static constexpr float kMaxScreenOnlyLayoutHeight = 1100.0f;
+    /** The narrowest the channel strip and the right-hand column (monitoring
+        over the 4-Channel section) get when a narrow window's top row makes
+        room for a legible screen. */
+    static constexpr int kMinCompactStripWidth = 300, kMinCompactRightWidth = 220;
     juce::String windowStateBeforeFullScreen;
     juce::uint32 lastFullScreenSwitch = 0;
 

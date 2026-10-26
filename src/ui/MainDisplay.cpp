@@ -101,7 +101,7 @@ namespace
             if (word ("Q"))
                 return { KnobStyle::Bar::Width, KnobColours::qGreen };
             if (label.contains ("WIDTH"))
-                return { KnobStyle::Bar::Centre, KnobColours::green };
+                return { KnobStyle::Bar::Spread, KnobColours::green };
             if (label.contains ("TILT"))
                 return { KnobStyle::Bar::Centre, KnobColours::cyan };
             if (word ("BAL") || word ("BALANCE"))
@@ -184,13 +184,15 @@ public:
         const float thick = juce::jmax (3.0f, std::round (screenH * 0.01f));
         const float thumbH = juce::jmax (6.0f, std::round (screenH * 0.0175f));
         auto b = getLocalBounds();
-        auto bar = b.removeFromBottom (juce::roundToInt (thumbH) + 2).toFloat();
+        auto bar = b.removeFromBottom (juce::roundToInt (thumbH)).toFloat();
         const bool touched = isMouseOverOrDragging() || focused || encoderTouched;
         // The label and value share the line: the font shrinks when both
         // wouldn't fit, and the value keeps its room on the right.
         const auto label = binding.label.toUpperCase();
         const float gap = juce::jmax (4.0f, screenH * 0.01f);
         auto font = wingFontPx (juce::jmin (TypeScale::paramLabel * screenH, (float) b.getHeight() * 0.5f));
+        // The text sits just over the track (capitals 765-781 of 800 on the console).
+        b.removeFromTop (juce::roundToInt (screenH * 12.0f / 800.0f));
         const float needed = juce::GlyphArrangement::getStringWidth (font, label) + juce::GlyphArrangement::getStringWidth (font, valueText) + gap;
         if (needed * 0.85f > (float) b.getWidth() && needed > 0.0f)
             font = font.withHeight (juce::jmax (6.0f, font.getHeight() * (float) b.getWidth() / (needed * 0.85f)));
@@ -234,6 +236,17 @@ public:
                     g.setColour (Colours::text);
                     g.fillRect (bar.getCentreX() - 1.0f, y - thumbH * 0.5f, 2.0f, thumbH);
                 }
+                return;
+            }
+            case KnobStyle::Bar::Spread:
+            {
+                // WIDTH: the fill reaches as far either side as the value is from the centre.
+                line();
+                const float half = std::abs (position - 0.5f) * bar.getWidth();
+                g.setColour (colour);
+                g.fillRoundedRectangle (bar.getCentreX() - half, y - thick * 0.5f, half * 2.0f, thick, thick * 0.3f);
+                g.setColour (Colours::text);
+                g.fillRect (bar.getCentreX() - 1.0f, y - thumbH * 0.5f, 2.0f, thumbH);
                 return;
             }
             case KnobStyle::Bar::Width:
@@ -635,13 +648,14 @@ private:
 //==============================================================================
 /** The main L/R meter right of the display: 18 segments per side,
     CLIP -1 -2 -3 -4 -6 -8 -10 -12 -15 -18 -24 -30 -36 -42 -48 -54 -60. It shows
-    the bus chosen with a right-click (MONITOR, or MAIN 1-4). */
+    the bus chosen with a right-click (MONITOR, or MAIN 1-4) at SETUP's MAIN
+    METER TAP (AUTO: the MAIN METERS tap). */
 class MainDisplay::MainMeter final : public juce::Component, private juce::Timer
 {
 public:
     explicit MainMeter (UiContext& c) : ctx (c)
     {
-        source = juce::jlimit (0, kNumMains, ctx.settings.getIntValue ("ui.mainMeter", 0));
+        source = juce::jlimit (0, kNumMains, ctx.settings.getIntValue (uiprefs::mainMeter, uiprefs::mainMeterDefault));
         startTimerHz (30);
     }
 
@@ -691,13 +705,15 @@ private:
     void choose (int s)
     {
         source = s;
-        ctx.settings.setValue ("ui.mainMeter", s);
+        ctx.settings.setValue (uiprefs::mainMeter, s);
     }
 
     void timerCallback() override
     {
         // SETUP can change the source too.
-        source = juce::jlimit (0, kNumMains, ctx.settings.getIntValue ("ui.mainMeter", source));
+        source = juce::jlimit (0, kNumMains, ctx.settings.getIntValue (uiprefs::mainMeter, source));
+        const int tap = ctx.settings.getIntValue (uiprefs::mainMeterTap, uiprefs::mainMeterTapDefault);
+        const auto point = tap == 1 ? MeterPoint::PreFader : tap == 2 ? MeterPoint::Output : prefs::meterPoint (ctx, StripKind::Main);
         bool changed = false;
         for (int ch = 0; ch < 2; ++ch)
         {
@@ -705,7 +721,7 @@ private:
             if (source == 0)
                 peak = ctx.meters.getMonitor (ch);
             else if (source - 1 < (int) ctx.engine.getMains().size())
-                peak = ctx.meters.get (ctx.engine.getMains()[(size_t) (source - 1)].get(), false, ch);
+                peak = ctx.meters.get (ctx.engine.getMains()[(size_t) (source - 1)].get(), point, ch);
             const float db = dsp::gainToDb (peak);
             if (std::abs (db - level[(size_t) ch]) > 0.3f)
             {
@@ -1570,7 +1586,9 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
                 const float boxW = juce::jmax (60.0f * k, juce::GlyphArrangement::getStringWidth (numberFont, label) + 18.0f * k);
                 auto box = t.removeFromLeft (boxW);
                 g.setColour (juce::Colours::black);
-                if (stripHasSource (*strip))
+                if (title.plainNumber)
+                    g.setColour (ink);
+                else if (stripHasSource (*strip))
                 {
                     g.fillRect (box);
                     g.setColour (colour); // exactly the strip's colour, dark ones too
@@ -1603,6 +1621,24 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
         g.setColour (fill);
         g.fillRoundedRectangle (tab, corner);
         t.removeFromLeft (6.0f * k);
+        const auto icon = title.icon.has_value() ? title.icon : (source ? std::optional<Icon> (Icon::Xlr) : (layer ? std::optional<Icon> (Icon::Layers) : std::nullopt));
+        if (layer || (title.kind == StatusTitle::Kind::Text && title.prefix.isEmpty() && icon.has_value()))
+        {
+            // [3.1] the VIEW screens' "C (layers) DCA" and MUTE GROUPS: the
+            // section letter 32 px in, the icon centred 112 px in, the text from 155.
+            if (title.prefix.isNotEmpty())
+            {
+                auto prefixArea = juce::Rectangle<float> (tab.getX() + 32.0f * k, t.getY(), 60.0f * k, t.getHeight());
+                drawText (title.prefix, ink, prefixArea);
+            }
+            if (icon.has_value())
+                drawIcon (g, *icon, juce::Rectangle<float> (46.0f * k, 46.0f * k).withCentre ({ tab.getX() + 112.0f * k, tab.getCentreY() }),
+                          title.iconInk.isTransparent() ? ink : title.iconInk);
+            auto textArea = t.withLeft (tab.getX() + 155.0f * k);
+            drawText (title.text, ink, textArea);
+        }
+        else
+        {
         if (title.prefix.isNotEmpty() && title.kind == StatusTitle::Kind::Text)
         {
             // A plain title's prefix (LIBRARY: the show) is a small caption over it.
@@ -1614,16 +1650,29 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
         }
         else if (title.prefix.isNotEmpty())
         {
-            auto prefixArea = t.removeFromLeft (juce::GlyphArrangement::getStringWidth (bigFont, title.prefix) + 14.0f * k);
-            drawText (title.prefix, ink, prefixArea);
+            // ROUTING's sources and outputs (3.1): the number centred 38 px in,
+            // the icon 56 px across centred at 111, the name from 152.
+            const float w = juce::GlyphArrangement::getStringWidth (bigFont, title.prefix) + 14.0f * k;
+            auto prefixArea = source ? t.removeFromLeft (juce::jmax (w, 70.0f * k)) : t.removeFromLeft (w);
+            if (source)
+            {
+                g.setColour (ink);
+                g.setFont (bigFont);
+                g.drawText (title.prefix, prefixArea, juce::Justification::centred, false);
+            }
+            else
+                drawText (title.prefix, ink, prefixArea);
         }
-        const auto icon = title.icon.has_value() ? title.icon : (source ? std::optional<Icon> (Icon::Xlr) : (layer ? std::optional<Icon> (Icon::Layers) : std::nullopt));
         if (icon.has_value())
         {
-            drawIcon (g, *icon, t.removeFromLeft (h).reduced (h * 0.08f), title.iconInk.isTransparent() ? ink : title.iconInk);
+            if (source)
+                drawIcon (g, *icon, t.removeFromLeft (70.0f * k).withSizeKeepingCentre (56.0f * k, 56.0f * k), title.iconInk.isTransparent() ? ink : title.iconInk);
+            else
+                drawIcon (g, *icon, t.removeFromLeft (h).reduced (h * 0.08f), title.iconInk.isTransparent() ? ink : title.iconInk);
             t.removeFromLeft (12.0f * k);
         }
         drawText (title.text, ink, t);
+        }
     }
 
     // SHOW SOF FRAME: a frame and a SOF badge while Sends on Fader is on.
@@ -1903,6 +1952,15 @@ int MainDisplay::preferredWidth (int height)
     return w;
 }
 
+int MainDisplay::heightForScreen (int screenHeight)
+{
+    // The encoder row grows with the height; one round more settles it.
+    int h = screenHeight + 24 + 28;
+    for (int i = 0; i < 2; ++i)
+        h = screenHeight + 24 + displayEncoderHeight (h);
+    return h;
+}
+
 void MainDisplay::resized()
 {
     auto b = getLocalBounds();
@@ -1972,7 +2030,8 @@ void MainDisplay::resized()
     const int statusH = juce::roundToInt ((float) s.getHeight() * 0.1f);
     statusArea = s.removeFromTop (statusH);
     const bool knobs = page (screen)->usesKnobs();
-    slotArea = knobs ? s.removeFromBottom (juce::roundToInt ((float) screenArea.getHeight() * 50.0f / 800.0f)) : juce::Rectangle<int>();
+    // The page ends at 752, where the parameter bar's slots start.
+    slotArea = knobs ? s.removeFromBottom (juce::roundToInt ((float) screenArea.getHeight() * 48.0f / 800.0f)) : juce::Rectangle<int>();
     if (! knobs)
         s.removeFromBottom (4);
     pageArea = s;

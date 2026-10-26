@@ -190,6 +190,44 @@ inline Group groupOfOutput (int port)
     return port < kBlock ? Group::LocalOut : port < 2 * kBlock ? Group::Aes50B : Group::Aes50C;
 }
 
+/** ROUTING's lock (CHANNELS and OUTPUTS: the patch can't be changed while
+    locked). As on the console it starts locked, the closed lock lit red, on
+    a fresh console and again after INITIALIZE CONSOLE (the engine's
+    initialize version). It is the page's own state, not part of a show. */
+class PatchLock
+{
+public:
+    explicit PatchLock (const MixerEngine& e) noexcept : engine (e), seenInitialize (e.getInitializeVersion()) {}
+
+    bool isLocked() const noexcept { return locked; }
+    /** The lock keys. True if the lock changed. */
+    bool set (bool shouldLock) noexcept
+    {
+        const bool changed = locked != shouldLock;
+        locked = shouldLock;
+        return changed;
+    }
+    /** Locks again when the console has been initialized since the last
+        call. True if the lock changed. */
+    bool update() noexcept
+    {
+        if (engine.getInitializeVersion() == seenInitialize)
+            return false;
+        seenInitialize = engine.getInitializeVersion();
+        return set (true);
+    }
+
+private:
+    const MixerEngine& engine;
+    int seenInitialize;
+    bool locked = true;
+};
+
+/** The keys that change the patch (NONE, and on CHANNELS the source's M / ST /
+    M/S) show only while ROUTING is unlocked, as on the console: locked, the
+    default, hides them. */
+inline bool showsPatchKeys (const PatchLock& lock) noexcept { return ! lock.isLocked(); }
+
 /** A group menu: rows of four tiles (-1 a gap), the fourth column set apart,
     and the rows that get extra space above them. */
 struct Menu
@@ -199,12 +237,13 @@ struct Menu
 };
 
 /** The SOURCE GROUP menu: CHANNELS (`forChannels`, which also lists BUS, MAIN
-    and MATRIX) or SOURCES; with `monitor` (OUTPUTS) MONITOR and FX SEND follow. */
-inline Menu sourceMenu (bool forChannels, bool monitor = false)
+    and MATRIX) or SOURCES; with `monitor` (OUTPUTS) MONITOR and FX SEND follow.
+    The WING COMPACT (`compact`) has no local aux inputs: no AUX IN. */
+inline Menu sourceMenu (bool forChannels, bool monitor = false, bool compact = false)
 {
     auto id = [] (Group g) { return (int) g; };
     Menu m;
-    m.rows = { { id (Group::LocalIn), id (Group::AuxIn), id (Group::AesIn), id (Group::Oscillator) },
+    m.rows = { { id (Group::LocalIn), compact ? -1 : id (Group::AuxIn), id (Group::AesIn), id (Group::Oscillator) },
                { id (Group::Aes50A), id (Group::Aes50B), id (Group::Aes50C), id (Group::StConnect) },
                { id (Group::UsbAudio), id (Group::WlivePlay), id (Group::Dante), id (Group::UsbPlayer) } };
     if (forChannels)
@@ -234,11 +273,11 @@ void paintGroupTile (juce::Graphics&, juce::Rectangle<int>, Group, bool selected
     SOURCES): the number and the gain instead of the label. */
 void paintSourceTile (juce::Graphics&, juce::Rectangle<int>, MixerEngine&, Group, int index, float peak, bool marked, bool numbered = false);
 
-/** The OUTPUT GROUP menu. */
-inline Menu outputMenu()
+/** The OUTPUT GROUP menu (the WING COMPACT's without AUX OUT: it has no local aux outputs). */
+inline Menu outputMenu (bool compact = false)
 {
     auto id = [] (Group g) { return (int) g; };
-    return { { { id (Group::LocalOut), id (Group::AuxOut), id (Group::AesOut), -1 },
+    return { { { id (Group::LocalOut), compact ? -1 : id (Group::AuxOut), id (Group::AesOut), -1 },
                { id (Group::Aes50A), id (Group::Aes50B), id (Group::Aes50C), id (Group::StConnect) },
                { id (Group::UsbAudio), id (Group::WliveRec), id (Group::Dante), id (Group::Recorder) } },
              {} };

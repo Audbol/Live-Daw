@@ -513,6 +513,88 @@ public:
             engine2.getGarbage().collectAllNow();
         }
 
+        beginTest ("Scenes and snippets recall the plugin window's zoom and collapse; older scenes keep the current view");
+        {
+            PluginHost host (nullptr);
+            host.getFormatManager().addFormat (std::make_unique<TestPluginFormat>());
+            MixerEngine engine (0);
+            OfflineRig rig (engine, 1, 2);
+            Show show (engine, host);
+            auto& fx = engine.getFx();
+
+            // FX 5 a plugin on its own (the single-plugin format while its view is the default), FX 6 a chain of two.
+            fx.setPlugin (4, TestPluginFormat::create (TestPluginFormat::Kind::gain));
+            fx.setPlugin (5, TestPluginFormat::create (TestPluginFormat::Kind::gain));
+            fx.addToChain (5, TestPluginFormat::create (TestPluginFormat::Kind::gain));
+            fx.setChainMemberView (5, 0, { 67, false });
+            fx.setChainMemberView (5, 1, { 100, true });
+            show.addScene ("Zoomed");
+            expect (show.toXmlString().contains (PluginChain::kDefaultViewAttribute));
+            fx.setChainMemberView (5, 0, {});
+            fx.setChainMemberView (5, 1, { 50, false });
+            fx.setChainMemberView (4, 0, { 75, true });
+            show.addScene ("Default and 50");
+
+            expectEquals ((int) show.recallScene (0).warnings.size(), 0);
+            expectEquals (fx.getChainMemberView (5, 0).zoom, 67);
+            expect (! fx.getChainMemberView (5, 0).collapsed);
+            expect (fx.getChainMemberView (5, 1).collapsed && fx.getChainMemberView (5, 1).zoom == 100);
+            expect (fx.getChainMemberView (4, 0).isDefault(), "the plugin on its own kept its view");
+            expectEquals ((int) show.recallScene (1).warnings.size(), 0);
+            expect (fx.getChainMemberView (5, 0).isDefault(), "a default view stored in the scene isn't recalled");
+            expectEquals (fx.getChainMemberView (5, 1).zoom, 50);
+            expect (! fx.getChainMemberView (5, 1).collapsed);
+            expect (fx.getChainMemberView (4, 0).collapsed && fx.getChainMemberView (4, 0).zoom == 75);
+
+            // A snippet that recalls the slot's plugin state recalls its view as well.
+            fx.setChainMemberView (5, 0, { 85, false });
+            auto scope = state::Scope::none();
+            scope.sections = state::Inserts;
+            scope.fx = 1u << 5;
+            const int snippet = show.addSnippet (0, "FX 6", scope);
+            expect (snippet >= 0);
+            fx.setChainMemberView (5, 0, { 50, true });
+            expectEquals ((int) show.recallSnippet (0, snippet).warnings.size(), 0);
+            expectEquals (fx.getChainMemberView (5, 0).zoom, 85);
+            expect (! fx.getChainMemberView (5, 0).collapsed);
+
+            // Scenes from before views were stored: the current view stays, except
+            // where the chain stored a view other than the default (as it always did).
+            auto old = show.toXml();
+            std::function<void (juce::XmlElement&)> forget = [&forget] (juce::XmlElement& e)
+            {
+                e.removeAttribute ("views");
+                e.removeAttribute (PluginChain::kDefaultViewAttribute);
+                for (auto* child : e.getChildIterator())
+                    forget (*child);
+            };
+            forget (*old);
+            expect (! old->toString().contains (PluginChain::kDefaultViewAttribute) && ! old->toString().contains ("views="));
+
+            MixerEngine engine2 (0);
+            OfflineRig rig2 (engine2, 1, 2);
+            Show loaded (engine2, host);
+            expect (loaded.loadFromXml (*old).wasOk());
+            auto& fx2 = engine2.getFx();
+            expectEquals (fx2.getNumChainMembers (5), 2);
+            fx2.setChainMemberView (5, 0, { 75, true });
+            fx2.setChainMemberView (4, 0, { 67, false });
+            expectEquals ((int) loaded.recallScene (0).warnings.size(), 0);
+            expectEquals (fx2.getChainMemberView (5, 0).zoom, 67);
+            expectEquals (fx2.getChainMemberView (4, 0).zoom, 67); // the plugin on its own: no view stored
+            expectEquals ((int) loaded.recallScene (1).warnings.size(), 0);
+            expectEquals (fx2.getChainMemberView (5, 1).zoom, 50);
+            fx2.setChainMemberView (5, 0, { 75, true });
+            expectEquals ((int) loaded.recallScene (1).warnings.size(), 0);
+            expect (fx2.getChainMemberView (5, 0).zoom == 75 && fx2.getChainMemberView (5, 0).collapsed); // stored at the default: unknown then
+
+            for (auto* f : { &fx, &fx2 })
+                for (int slot : { 4, 5 })
+                    f->setPlugin (slot, nullptr);
+            engine.getGarbage().collectAllNow();
+            engine2.getGarbage().collectAllNow();
+        }
+
         beginTest ("The plugin window: chain bar, cards, zoom, collapse, faults, ROW and FOCUS");
         {
             using V = ui::PluginChainView;
@@ -638,3 +720,150 @@ public:
 };
 
 static PluginChainTests pluginChainTests;
+
+//==============================================================================
+namespace
+{
+    /** A plugin whose editor behaves like a real plugin's native one: it starts
+        tiny and takes its real size later (a VST3 view on Linux, once attached),
+        follows the host scale factor, and (`snapsBack`) goes back to its size
+        after the host resizes it smaller (an LV2 UI with a minimum size). */
+    class NativeEditorPlugin final : public juce::AudioPluginInstance
+    {
+    public:
+        static constexpr int kWidth = 400, kHeight = 300;
+
+        class Editor final : public juce::AudioProcessorEditor
+        {
+        public:
+            Editor (NativeEditorPlugin& p, bool resizable, bool snaps) : juce::AudioProcessorEditor (p), snapsBack (snaps)
+            {
+                setResizable (resizable, false);
+                setSize (32, 32);
+            }
+
+            void attach() { setSize (kWidth, kHeight); }
+
+            void setScaleFactor (float s) override
+            {
+                scale = s;
+                setSize (juce::roundToInt (kWidth * s), juce::roundToInt (kHeight * s));
+            }
+
+            void resized() override
+            {
+                if (snapsBack && scale == 1.0f && getWidth() > 32 && getWidth() < kWidth)
+                    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<Editor> (this)]
+                    {
+                        if (safe != nullptr)
+                            safe->setSize (kWidth, kHeight);
+                    });
+            }
+
+            void paint (juce::Graphics& g) override { g.fillAll (juce::Colours::darkgrey); }
+
+            float scale = 1.0f;
+            bool snapsBack;
+        };
+
+        NativeEditorPlugin (juce::String f, bool r, bool s)
+            : juce::AudioPluginInstance (BusesProperties()
+                                             .withInput ("In", juce::AudioChannelSet::stereo())
+                                             .withOutput ("Out", juce::AudioChannelSet::stereo())),
+              format (std::move (f)), resizable (r), snaps (s)
+        {
+        }
+
+        Editor* editor = nullptr;
+
+        void fillInPluginDescription (juce::PluginDescription& d) const override
+        {
+            d.name = getName();
+            d.pluginFormatName = format;
+            d.fileOrIdentifier = "native-editor-" + format;
+            d.numInputChannels = d.numOutputChannels = 2;
+        }
+
+        const juce::String getName() const override { return "Native editor " + format; }
+        void prepareToPlay (double, int) override {}
+        void releaseResources() override {}
+        using juce::AudioPluginInstance::processBlock;
+        void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override {}
+        double getTailLengthSeconds() const override { return 0.0; }
+        bool acceptsMidi() const override { return false; }
+        bool producesMidi() const override { return false; }
+        juce::AudioProcessorEditor* createEditor() override { return editor = new Editor (*this, resizable, snaps); }
+        bool hasEditor() const override { return true; }
+        int getNumPrograms() override { return 1; }
+        int getCurrentProgram() override { return 0; }
+        void setCurrentProgram (int) override {}
+        const juce::String getProgramName (int) override { return {}; }
+        void changeProgramName (int, const juce::String&) override {}
+        void getStateInformation (juce::MemoryBlock&) override {}
+        void setStateInformation (const void*, int) override {}
+
+    private:
+        juce::String format;
+        bool resizable, snaps;
+    };
+} // namespace
+
+/** The plugin window's zoom with editors that act as real plugins' native ones. */
+class PluginChainZoomTests final : public juce::UnitTest
+{
+public:
+    PluginChainZoomTests() : juce::UnitTest ("Plugin window zoom with native editors", "LiveDAW") {}
+
+    void runTest() override
+    {
+        using V = ui::PluginChainView;
+        MixerEngine engine (0);
+        OfflineRig rig (engine, 1, 2);
+        auto& fx = engine.getFx();
+
+        beginTest ("A native editor that takes its real size once shown zooms by the host scale");
+        {
+            auto* plugin = new NativeEditorPlugin ("VST3", false, false);
+            fx.setPlugin (0, std::unique_ptr<juce::AudioPluginInstance> (plugin));
+            V view (fx, 0, {});
+            view.setMaxSize ({ 4000, 2000 });
+            expect (plugin->editor != nullptr);
+            if (plugin->editor != nullptr)
+            {
+                plugin->editor->attach(); // its real size, as a VST3 view gets once attached
+                test::pumpMessages (50);
+                expect (view.getZoomMethod (0) == V::ZoomMethod::hostScale);
+                view.setZoom (0, 67);
+                test::pumpMessages (1000); // the view's timer drops a host scale the editor doesn't follow
+                expect (view.getZoomMethod (0) == V::ZoomMethod::hostScale, "the host scale was dropped");
+                expectEquals (view.getEditorBounds (0).getWidth(), juce::roundToInt (NativeEditorPlugin::kWidth * 0.67f));
+                view.setZoom (0, 100);
+                expectEquals (view.getEditorBounds (0).getWidth(), NativeEditorPlugin::kWidth);
+            }
+        }
+
+        beginTest ("An editor that goes back to its size after a resize falls back to the host scale");
+        {
+            auto* plugin = new NativeEditorPlugin ("LV2", true, true);
+            fx.setPlugin (1, std::unique_ptr<juce::AudioPluginInstance> (plugin));
+            V view (fx, 1, {});
+            view.setMaxSize ({ 4000, 2000 });
+            if (plugin->editor != nullptr)
+            {
+                plugin->editor->attach();
+                test::pumpMessages (50);
+                expect (view.getZoomMethod (0) == V::ZoomMethod::resize);
+                view.setZoom (0, 67);
+                test::pumpMessages (1000);
+                expect (view.getZoomMethod (0) == V::ZoomMethod::hostScale, "still shown as resized");
+                expectEquals (view.getEditorBounds (0).getWidth(), juce::roundToInt (NativeEditorPlugin::kWidth * 0.67f));
+            }
+        }
+
+        fx.setPlugin (0, nullptr);
+        fx.setPlugin (1, nullptr);
+        engine.getGarbage().collectAllNow();
+    }
+};
+
+static PluginChainZoomTests pluginChainZoomTests;

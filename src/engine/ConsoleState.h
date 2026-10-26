@@ -51,9 +51,11 @@ std::vector<ld::StripRefC> toC (const std::vector<StripRef>&);
 Strip* findStrip (const MixerEngine&, const StripRef&) noexcept;
 
 /** A fader on the surface: a strip, a DCA, a send level (from `strip` to the
-    bus, main or matrix `to`) or an FX slot's parameter. */
+    bus, main or matrix `to`), an FX slot's parameter, a MIDI CC, or a blank
+    slot of a layer (`empty`: an inactive strip, nothing else is set). */
 struct FaderRef
 {
+    bool empty = false;
     bool dca = false;
     StripRef strip; // the strip, or a send's source
     int dcaIndex = 0;
@@ -64,6 +66,13 @@ struct FaderRef
     bool midiCc = false;
     int midiChannel = 0, cc = 0; // 0-15, 0-127
 
+    /** A blank layer slot. */
+    static FaderRef blank() noexcept
+    {
+        FaderRef f;
+        f.empty = true;
+        return f;
+    }
     static FaderRef of (const StripRef& r) noexcept
     {
         FaderRef f;
@@ -104,11 +113,14 @@ struct FaderRef
         return f;
     }
 
-    /** A strip's own fader (not a DCA, send, FX parameter or MIDI CC). */
-    bool isStrip() const noexcept { return ! dca && ! send && ! fxParam && ! midiCc; }
+    /** A strip's own fader (not a blank slot, DCA, send, FX parameter or MIDI CC). */
+    bool isStrip() const noexcept { return ! empty && ! dca && ! send && ! fxParam && ! midiCc; }
+    bool isEmpty() const noexcept { return empty; }
 
     bool operator== (const FaderRef& o) const noexcept
     {
+        if (empty || o.empty)
+            return empty == o.empty;
         if (dca != o.dca || send != o.send || fxParam != o.fxParam || midiCc != o.midiCc)
             return false;
         if (dca)

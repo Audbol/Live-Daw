@@ -1,0 +1,1543 @@
+/$ctl/$globals/$noautosave	int [0 .. 1]
+/$ctl/$globals/$savenow	int [0 .. 1]
+/$ctl/$globals/cf_load	int [0 .. 1]
+/$ctl/$globals/cf_upd	int [0 .. 1]
+/$ctl/$globals/datefmt	list [YMD, DMY]
+/$ctl/$globals/fdrres	list [NORM, FINE, AUTO]
+/$ctl/$globals/fdrsel	int [0 .. 1]
+/$ctl/$globals/fdrspd	list [SLOW, MED, FAST]
+/$ctl/$globals/filesort	list [NAME, TYPE, 0->9, 9->0]
+/$ctl/$globals/lockmtr	int [0 .. 1]
+/$ctl/$globals/mousespd	lin [0.10 .. 2.00], 191 steps
+/$ctl/$globals/mousetchdis	int [0 .. 1]
+/$ctl/$globals/showscene	int [0 .. 1]
+/$ctl/$globals/srcdisp	int [0 .. 1]
+/$ctl/$globals/tapflash	list [OFF, 8X, ON]
+/$ctl/$globals/timefmt	list [24H, 12H]
+/$ctl/$globals/usewheel	int [0 .. 1]
+/$ctl/$stat/bandidx	int [1 .. 8]
+/$ctl/$stat/chsetuptab	int [1 .. 4]
+/$ctl/$stat/cnslock	string [19]
+/$ctl/$stat/pageidx	int [0 .. 30]
+/$ctl/$stat/selidx	int [1 .. 76]
+/$ctl/$stat/sendpage	list [BUS, MATRIX]
+/$ctl/$stat/sof	int [-1 .. 76]
+/$ctl/cfg/autosel_C	int [0 .. 1]
+/$ctl/cfg/autosel_CMPCT	int [0 .. 1]
+/$ctl/cfg/autosel_EXT	int [0 .. 1]
+/$ctl/cfg/autosel_L	int [0 .. 1]
+/$ctl/cfg/autosel_R	int [0 .. 1]
+/$ctl/cfg/autosel_RCK	int [0 .. 1]
+/$ctl/cfg/autosel_VRT	int [0 .. 1]
+/$ctl/cfg/autoview	int [0 .. 1]
+/$ctl/cfg/busspill	int [0 .. 1]
+/$ctl/cfg/cscmode	list [BUS, DCA, MAIN, USER]
+/$ctl/cfg/csctouch	int [0 .. 1]
+/$ctl/cfg/dcacc	int [0 .. 1]
+/$ctl/cfg/dcaspill	int [0 .. 1]
+/$ctl/cfg/fdrbanking	int [0 .. 1]
+/$ctl/cfg/fdrscrnlink	int [0 .. 1]
+/$ctl/cfg/layerlinkl	int [0 .. 1]
+/$ctl/cfg/layerlinkr	int [0 .. 1]
+/$ctl/cfg/lights/btns	int [0 .. 100 %]
+/$ctl/cfg/lights/chedit	int [5 .. 100 %]
+/$ctl/cfg/lights/chlcdctr	int [0 .. 100 %]
+/$ctl/cfg/lights/chlcds	int [5 .. 100 %]
+/$ctl/cfg/lights/glow	int [0 .. 100 %]
+/$ctl/cfg/lights/lamp	int [0 .. 100 %]
+/$ctl/cfg/lights/leds	int [5 .. 100 %]
+/$ctl/cfg/lights/main	int [5 .. 100 %]
+/$ctl/cfg/lights/meters	int [0 .. 100 %]
+/$ctl/cfg/lights/patch	int [0 .. 100 %]
+/$ctl/cfg/lights/rgbleds	int [0 .. 100 %]
+/$ctl/cfg/mainspill	int [0 .. 1]
+/$ctl/cfg/mfdr	list [OFF, MAIN.1, MAIN.2, MAIN.3, MAIN.4, MTX.1, MTX.2, MTX.3, MTX.4, MTX.5, MTX.6, MTX.7, MTX.8, DCA.1, DCA.2, DCA.3, DCA.4, DCA.5, DCA.6, DCA.7, DCA.8, DCA.9, DCA.10, DCA.11, DCA.12, DCA.13, DCA.14, DCA.15, DCA.16, CH.1, CH.2, CH.3, CH.4, CH.5, CH.6, CH.7, CH.8, CH.9, CH.10, CH.11, CH.12, CH.13, CH.14, CH.15, CH.16, CH.17, CH.18, CH.19, CH.20, CH.21, CH.22, CH.23, CH.24, CH.25, CH.26, CH.27, CH.28, CH.29, CH.30, CH.31, CH.32, CH.33, CH.34, CH.35, CH.36, CH.37, CH.38, CH.39, CH.40, AUX.1, AUX.2, AUX.3, AUX.4, AUX.5, AUX.6, AUX.7, AUX.8, BUS 1, BUS 2, BUS 3, BUS 4, BUS 5, BUS 6, BUS 7, BUS 8, BUS 9, BUS 10, BUS 11, BUS 12, BUS 13, BUS 14, BUS 15, BUS 16]
+/$ctl/cfg/mfdrkeep	int [0 .. 1]
+/$ctl/cfg/mtxspill	int [0 .. 1]
+/$ctl/cfg/muteovr	int [0 .. 1]
+/$ctl/cfg/rackmode	list [CH, MGRP, CC, USB, SD-A, SD-B]
+/$ctl/cfg/rta/cheqtap	list [PRE, POST]
+/$ctl/cfg/rta/chflttap	list [PRE, POST]
+/$ctl/cfg/rta/eqcol	list [RD25, RD50, RD75, AM25, AM50, AM75, BL25, BL50, BL75]
+/$ctl/cfg/rta/eqdisp	list [OFF, 1/4, 1/3, 1/2, OVL/3, OVL]
+/$ctl/cfg/rta/homecol	list [RD25, RD50, RD75, AM25, AM50, AM75, BL25, BL50, BL75]
+/$ctl/cfg/rta/homedisp	list [OFF, 1/3, FULL]
+/$ctl/cfg/rta/hometap	list [IN, EQ, POST]
+/$ctl/cfg/seldblclick	list [OFF, HOME, BUSFX]
+/$ctl/cfg/selfsolo	int [0 .. 1]
+/$ctl/cfg/sfdr2solo	int [0 .. 1]
+/$ctl/cfg/showfdr	int [0 .. 1]
+/$ctl/cfg/sof2solo	int [0 .. 1]
+/$ctl/cfg/sofbutton	list [AUTO, ON, FLASH]
+/$ctl/cfg/soffdr	list [L/C, ALL]
+/$ctl/cfg/sofframe	int [0 .. 1]
+/$ctl/cfg/sofmode	int [0 .. 1]
+/$ctl/cfg/soloexcl	int [0 .. 1]
+/$ctl/cfg/solofsel	int [0 .. 1]
+/$ctl/cfg/usrmode	list [BUS, CC]
+/$ctl/daw/$bpage	int [0 .. 4]
+/$ctl/daw/$btnauto	int [0 .. 1]
+/$ctl/daw/$btninsert	int [0 .. 1]
+/$ctl/daw/$btnrecrdy	int [0 .. 1]
+/$ctl/daw/$btntouch	int [0 .. 1]
+/$ctl/daw/$btnvpot	int [0 .. 1]
+/$ctl/daw/$btnvsel	int [0 .. 1]
+/$ctl/daw/$on	int [0 .. 1]
+/$ctl/daw/ccup	int [0 .. 1]
+/$ctl/daw/config	list [CC, MSTR, MSTR1EXT, MSTR2EXT]
+/$ctl/daw/conn	list [DIN, USB]
+/$ctl/daw/disjog	int [0 .. 1]
+/$ctl/daw/emul	list [MCU, HUI]
+/$ctl/daw/on	int [0 .. 1]
+/$ctl/daw/preset	list [-, cubase, live, logicx, nuendo, protools, reaper, studioone]
+/$ctl/gpio/*/$state	int [0 .. 1]
+/$ctl/gpio/*/gpstate	int [0 .. 1]
+/$ctl/gpio/*/mode	list [TGLNO, TGLNC, INNO, INNC, OUTNO, OUTNC]
+/$ctl/layer/C/$spill/*/dst	int [1 .. 28]
+/$ctl/layer/C/$spill/*/i	int [0 .. 127]
+/$ctl/layer/C/$spill/*/type	list [OFF, CH, BUS, DCA, MIDI, SEND, FX, SENDS]
+/$ctl/layer/C/$spill/name	string [10]
+/$ctl/layer/C/$spill/ofs	int [0 .. 68]
+/$ctl/layer/C/*/*/dst	int [1 .. 28]
+/$ctl/layer/C/*/*/i	int [0 .. 127]
+/$ctl/layer/C/*/*/type	list [OFF, CH, BUS, DCA, MIDI, SEND, FX, SENDS]
+/$ctl/layer/C/*/name	string [10]
+/$ctl/layer/C/*/ofs	int [0 .. 8]
+/$ctl/layer/C/sel	int [1 .. 22]
+/$ctl/layer/C/spidx	int [0 .. 64]
+/$ctl/layer/CMPCT/$spill/*/dst	int [1 .. 28]
+/$ctl/layer/CMPCT/$spill/*/i	int [0 .. 127]
+/$ctl/layer/CMPCT/$spill/*/type	list [OFF, CH, BUS, DCA, MIDI, SEND, FX, SENDS]
+/$ctl/layer/CMPCT/$spill/name	string [10]
+/$ctl/layer/CMPCT/$spill/ofs	int [0 .. 64]
+/$ctl/layer/CMPCT/*/*/dst	int [1 .. 28]
+/$ctl/layer/CMPCT/*/*/i	int [0 .. 127]
+/$ctl/layer/CMPCT/*/*/type	list [OFF, CH, BUS, DCA, MIDI, SEND, FX, SENDS]
+/$ctl/layer/CMPCT/*/name	string [10]
+/$ctl/layer/CMPCT/*/ofs	int [0 .. 12]
+/$ctl/layer/CMPCT/sel	int [1 .. 22]
+/$ctl/layer/CMPCT/spidx	int [0 .. 64]
+/$ctl/layer/EXT/$spill/*/dst	int [1 .. 28]
+/$ctl/layer/EXT/$spill/*/i	int [0 .. 127]
+/$ctl/layer/EXT/$spill/*/type	list [OFF, CH, BUS, DCA, MIDI, SEND, FX, SENDS]
+/$ctl/layer/EXT/$spill/name	string [10]
+/$ctl/layer/EXT/$spill/ofs	int [0 .. 68]
+/$ctl/layer/EXT/*/*/dst	int [1 .. 28]
+/$ctl/layer/EXT/*/*/i	int [0 .. 127]
+/$ctl/layer/EXT/*/*/type	list [OFF, CH, BUS, DCA, MIDI, SEND, FX, SENDS]
+/$ctl/layer/EXT/*/name	string [10]
+/$ctl/layer/EXT/*/ofs	int [0 .. 8]
+/$ctl/layer/EXT/sel	int [1 .. 22]
+/$ctl/layer/EXT/spidx	int [0 .. 64]
+/$ctl/layer/L/$spill/*/dst	int [1 .. 28]
+/$ctl/layer/L/$spill/*/i	int [0 .. 127]
+/$ctl/layer/L/$spill/*/type	list [OFF, CH, BUS, DCA, MIDI, SEND, FX, SENDS]
+/$ctl/layer/L/$spill/name	string [10]
+/$ctl/layer/L/$spill/ofs	int [0 .. 64]
+/$ctl/layer/L/*/*/dst	int [1 .. 28]
+/$ctl/layer/L/*/*/i	int [0 .. 127]
+/$ctl/layer/L/*/*/type	list [OFF, CH, BUS, DCA, MIDI, SEND, FX, SENDS]
+/$ctl/layer/L/*/name	string [10]
+/$ctl/layer/L/*/ofs	int [0 .. 12]
+/$ctl/layer/L/sel	int [1 .. 22]
+/$ctl/layer/L/spidx	int [0 .. 64]
+/$ctl/layer/R/$spill/*/dst	int [1 .. 28]
+/$ctl/layer/R/$spill/*/i	int [0 .. 127]
+/$ctl/layer/R/$spill/*/type	list [OFF, CH, BUS, DCA, MIDI, SEND, FX, SENDS]
+/$ctl/layer/R/$spill/name	string [10]
+/$ctl/layer/R/$spill/ofs	int [0 .. 72]
+/$ctl/layer/R/*/*/dst	int [1 .. 28]
+/$ctl/layer/R/*/*/i	int [0 .. 127]
+/$ctl/layer/R/*/*/type	list [OFF, CH, BUS, DCA, MIDI, SEND, FX, SENDS]
+/$ctl/layer/R/*/name	string [10]
+/$ctl/layer/R/*/ofs	int [0 .. 12]
+/$ctl/layer/R/sel	int [1 .. 22]
+/$ctl/layer/R/spidx	int [0 .. 64]
+/$ctl/layer/RCK/$spill/*/dst	int [1 .. 28]
+/$ctl/layer/RCK/$spill/*/i	int [0 .. 127]
+/$ctl/layer/RCK/$spill/*/type	list [OFF, CH, BUS, DCA, MIDI, SEND, FX, SENDS]
+/$ctl/layer/RCK/$spill/name	string [10]
+/$ctl/layer/RCK/$spill/ofs	int [0 .. 72]
+/$ctl/layer/RCK/*/*/dst	int [1 .. 28]
+/$ctl/layer/RCK/*/*/i	int [0 .. 127]
+/$ctl/layer/RCK/*/*/type	list [OFF, CH, BUS, DCA, MIDI, SEND, FX, SENDS]
+/$ctl/layer/RCK/*/name	string [10]
+/$ctl/layer/RCK/*/ofs	int [0 .. 12]
+/$ctl/layer/RCK/sel	int [1 .. 22]
+/$ctl/layer/RCK/spidx	int [0 .. 64]
+/$ctl/layer/VRT/$spill/*/dst	int [1 .. 28]
+/$ctl/layer/VRT/$spill/*/i	int [0 .. 127]
+/$ctl/layer/VRT/$spill/*/type	list [OFF, CH, BUS, DCA, MIDI, SEND, FX, SENDS]
+/$ctl/layer/VRT/$spill/name	string [10]
+/$ctl/layer/VRT/$spill/ofs	int [0 .. 68]
+/$ctl/layer/VRT/*/*/dst	int [1 .. 28]
+/$ctl/layer/VRT/*/*/i	int [0 .. 127]
+/$ctl/layer/VRT/*/*/type	list [OFF, CH, BUS, DCA, MIDI, SEND, FX, SENDS]
+/$ctl/layer/VRT/*/name	string [10]
+/$ctl/layer/VRT/*/ofs	int [0 .. 8]
+/$ctl/layer/VRT/sel	int [1 .. 22]
+/$ctl/layer/VRT/spidx	int [0 .. 64]
+/$ctl/lib/$actidx	int [0 .. 0]
+/$ctl/lib/$action	list [IDLE, GOPREV, GONEXT, GO, PREV, NEXT, GOTAG]
+/$ctl/lib/$actionidx	int [0 .. 16384]
+/$ctl/lib/$active	string [256]
+/$ctl/lib/$activeid	int [0 .. 128]
+/$ctl/lib/$actshow	string [256]
+/$ctl/lib/$scenes	list []
+/$ctl/midi/enchctl	list [OFF, DIN, USB]
+/$ctl/midi/encustctl	list [OFF, DIN, USB]
+/$ctl/midi/enfxctl	list [OFF, DIN, USB]
+/$ctl/midi/enmidicc	list [OFF, DIN, USB]
+/$ctl/midi/enscenes	list [OFF, DIN, USB]
+/$ctl/midi/enscenetx	list [OFF, DIN, USB]
+/$ctl/midi/enshowctl	list [OFF, DIN, USB]
+/$ctl/midi/ensysex	list [OFF, DIN, USB]
+/$ctl/osc/ronly	int [0 .. 1]
+/$ctl/safes/area/CENTER	string [6]
+/$ctl/safes/area/COMPACT	string [9]
+/$ctl/safes/area/EXTERN	string [8]
+/$ctl/safes/area/LEFT	string [7]
+/$ctl/safes/area/RACK	string [5]
+/$ctl/safes/area/RIGHT	string [7]
+/$ctl/safes/area/VIRTUAL	string [8]
+/$ctl/safes/aux	string [8]
+/$ctl/safes/bus	string [16]
+/$ctl/safes/ch	string [40]
+/$ctl/safes/custom	string [31]
+/$ctl/safes/dca	string [16]
+/$ctl/safes/fx	string [16]
+/$ctl/safes/main	string [4]
+/$ctl/safes/mtx	string [8]
+/$ctl/safes/mute	string [8]
+/$ctl/safes/output/A	string [48]
+/$ctl/safes/output/AES	string [2]
+/$ctl/safes/output/AUX	string [8]
+/$ctl/safes/output/B	string [48]
+/$ctl/safes/output/C	string [48]
+/$ctl/safes/output/CRD	string [64]
+/$ctl/safes/output/LCL	string [8]
+/$ctl/safes/output/MOD	string [64]
+/$ctl/safes/output/REC	string [4]
+/$ctl/safes/output/SC	string [32]
+/$ctl/safes/output/USB	string [48]
+/$ctl/safes/setup	string [3]
+/$ctl/safes/source/A	string [48]
+/$ctl/safes/source/AES	string [2]
+/$ctl/safes/source/AUX	string [8]
+/$ctl/safes/source/B	string [48]
+/$ctl/safes/source/C	string [48]
+/$ctl/safes/source/CRD	string [64]
+/$ctl/safes/source/LCL	string [24]
+/$ctl/safes/source/MOD	string [64]
+/$ctl/safes/source/OSC	string [2]
+/$ctl/safes/source/PLAY	string [4]
+/$ctl/safes/source/SC	string [32]
+/$ctl/safes/source/USB	string [48]
+/$ctl/safes/source/USR	string [56]
+/$ctl/user/*/*/bd/$fname	string [16]
+/$ctl/user/*/*/bd/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/*/*/bd/name	string [16]
+/$ctl/user/*/*/bu/$fname	string [16]
+/$ctl/user/*/*/bu/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/*/*/bu/name	string [16]
+/$ctl/user/*/*/col	int [1 .. 18]
+/$ctl/user/*/*/enc/$fname	string [16]
+/$ctl/user/*/*/enc/mode	list [OFF, FDR, PAN, DCA, SSND, FSND, FX, DAWMCU, MON, OTHER, MIDICC, SD A, SD B]
+/$ctl/user/*/*/enc/name	string [16]
+/$ctl/user/*/*/led	int [0 .. 1]
+/$ctl/user/D1/*/bu/$fname	string [16]
+/$ctl/user/D1/*/bu/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/D1/*/bu/name	string [16]
+/$ctl/user/D1/*/col	int [1 .. 18]
+/$ctl/user/D1/*/led	int [0 .. 1]
+/$ctl/user/D2/*/bu/$fname	string [16]
+/$ctl/user/D2/*/bu/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/D2/*/bu/name	string [16]
+/$ctl/user/D2/*/col	int [1 .. 18]
+/$ctl/user/D2/*/led	int [0 .. 1]
+/$ctl/user/D3/*/bu/$fname	string [16]
+/$ctl/user/D3/*/bu/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/D3/*/bu/name	string [16]
+/$ctl/user/D3/*/col	int [1 .. 18]
+/$ctl/user/D3/*/led	int [0 .. 1]
+/$ctl/user/D4/*/bu/$fname	string [16]
+/$ctl/user/D4/*/bu/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/D4/*/bu/name	string [16]
+/$ctl/user/D4/*/col	int [1 .. 18]
+/$ctl/user/D4/*/led	int [0 .. 1]
+/$ctl/user/MM/*/bu/$fname	string [16]
+/$ctl/user/MM/*/bu/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/MM/*/bu/name	string [16]
+/$ctl/user/MM/*/col	int [1 .. 18]
+/$ctl/user/MM/*/led	int [0 .. 1]
+/$ctl/user/U1/*/bu/$fname	string [16]
+/$ctl/user/U1/*/bu/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/U1/*/bu/name	string [16]
+/$ctl/user/U1/*/col	int [1 .. 18]
+/$ctl/user/U1/*/led	int [0 .. 1]
+/$ctl/user/U2/*/bu/$fname	string [16]
+/$ctl/user/U2/*/bu/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/U2/*/bu/name	string [16]
+/$ctl/user/U2/*/col	int [1 .. 18]
+/$ctl/user/U2/*/led	int [0 .. 1]
+/$ctl/user/U3/*/bu/$fname	string [16]
+/$ctl/user/U3/*/bu/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/U3/*/bu/name	string [16]
+/$ctl/user/U3/*/col	int [1 .. 18]
+/$ctl/user/U3/*/led	int [0 .. 1]
+/$ctl/user/U4/*/bu/$fname	string [16]
+/$ctl/user/U4/*/bu/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/U4/*/bu/name	string [16]
+/$ctl/user/U4/*/col	int [1 .. 18]
+/$ctl/user/U4/*/led	int [0 .. 1]
+/$ctl/user/cmode	list [HA, GATE, COMP, FLT, U1, U2, U3, PAN]
+/$ctl/user/cuser/*	int [1 .. 24]
+/$ctl/user/daw1/*/bd/$fname	string [16]
+/$ctl/user/daw1/*/bd/btn	list [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, N1, N2, N3, N4, N5, N6, N7, N8, N9, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, F1, F2, F3, F4, F5, F6, F7, F8, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, AU1, AU2, AU3, AU4, AU5, AU6, AU7, AU8, AU9, AU10, AU11, AU12, SY1, SY2, SY3, SY4, SY5, SY6, SY7, SY8, SY9, SY10, OT1, OT2, OT3, OT4, OT5, OT6, OT7, OT8, OT9, OT10, OT11, OT12, E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, SP1, SP2, SP3, SP4, SP5, SP6]
+/$ctl/user/daw1/*/bd/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/daw1/*/bd/name	string [16]
+/$ctl/user/daw1/*/bu/$fname	string [16]
+/$ctl/user/daw1/*/bu/btn	list [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, N1, N2, N3, N4, N5, N6, N7, N8, N9, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, F1, F2, F3, F4, F5, F6, F7, F8, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, AU1, AU2, AU3, AU4, AU5, AU6, AU7, AU8, AU9, AU10, AU11, AU12, SY1, SY2, SY3, SY4, SY5, SY6, SY7, SY8, SY9, SY10, OT1, OT2, OT3, OT4, OT5, OT6, OT7, OT8, OT9, OT10, OT11, OT12, E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, SP1, SP2, SP3, SP4, SP5, SP6]
+/$ctl/user/daw1/*/bu/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/daw1/*/bu/name	string [16]
+/$ctl/user/daw2/*/bd/$fname	string [16]
+/$ctl/user/daw2/*/bd/btn	list [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, N1, N2, N3, N4, N5, N6, N7, N8, N9, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, F1, F2, F3, F4, F5, F6, F7, F8, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, AU1, AU2, AU3, AU4, AU5, AU6, AU7, AU8, AU9, AU10, AU11, AU12, SY1, SY2, SY3, SY4, SY5, SY6, SY7, SY8, SY9, SY10, OT1, OT2, OT3, OT4, OT5, OT6, OT7, OT8, OT9, OT10, OT11, OT12, E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, SP1, SP2, SP3, SP4, SP5, SP6]
+/$ctl/user/daw2/*/bd/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/daw2/*/bd/name	string [16]
+/$ctl/user/daw2/*/bu/$fname	string [16]
+/$ctl/user/daw2/*/bu/btn	list [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, N1, N2, N3, N4, N5, N6, N7, N8, N9, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, F1, F2, F3, F4, F5, F6, F7, F8, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, AU1, AU2, AU3, AU4, AU5, AU6, AU7, AU8, AU9, AU10, AU11, AU12, SY1, SY2, SY3, SY4, SY5, SY6, SY7, SY8, SY9, SY10, OT1, OT2, OT3, OT4, OT5, OT6, OT7, OT8, OT9, OT10, OT11, OT12, E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, SP1, SP2, SP3, SP4, SP5, SP6]
+/$ctl/user/daw2/*/bu/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/daw2/*/bu/name	string [16]
+/$ctl/user/daw3/*/bd/$fname	string [16]
+/$ctl/user/daw3/*/bd/btn	list [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, N1, N2, N3, N4, N5, N6, N7, N8, N9, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, F1, F2, F3, F4, F5, F6, F7, F8, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, AU1, AU2, AU3, AU4, AU5, AU6, AU7, AU8, AU9, AU10, AU11, AU12, SY1, SY2, SY3, SY4, SY5, SY6, SY7, SY8, SY9, SY10, OT1, OT2, OT3, OT4, OT5, OT6, OT7, OT8, OT9, OT10, OT11, OT12, E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, SP1, SP2, SP3, SP4, SP5, SP6]
+/$ctl/user/daw3/*/bd/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/daw3/*/bd/name	string [16]
+/$ctl/user/daw3/*/bu/$fname	string [16]
+/$ctl/user/daw3/*/bu/btn	list [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, N1, N2, N3, N4, N5, N6, N7, N8, N9, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, F1, F2, F3, F4, F5, F6, F7, F8, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, AU1, AU2, AU3, AU4, AU5, AU6, AU7, AU8, AU9, AU10, AU11, AU12, SY1, SY2, SY3, SY4, SY5, SY6, SY7, SY8, SY9, SY10, OT1, OT2, OT3, OT4, OT5, OT6, OT7, OT8, OT9, OT10, OT11, OT12, E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, SP1, SP2, SP3, SP4, SP5, SP6]
+/$ctl/user/daw3/*/bu/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/daw3/*/bu/name	string [16]
+/$ctl/user/daw4/*/bd/$fname	string [16]
+/$ctl/user/daw4/*/bd/btn	list [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, N1, N2, N3, N4, N5, N6, N7, N8, N9, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, F1, F2, F3, F4, F5, F6, F7, F8, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, AU1, AU2, AU3, AU4, AU5, AU6, AU7, AU8, AU9, AU10, AU11, AU12, SY1, SY2, SY3, SY4, SY5, SY6, SY7, SY8, SY9, SY10, OT1, OT2, OT3, OT4, OT5, OT6, OT7, OT8, OT9, OT10, OT11, OT12, E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, SP1, SP2, SP3, SP4, SP5, SP6]
+/$ctl/user/daw4/*/bd/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/daw4/*/bd/name	string [16]
+/$ctl/user/daw4/*/bu/$fname	string [16]
+/$ctl/user/daw4/*/bu/btn	list [T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, N1, N2, N3, N4, N5, N6, N7, N8, N9, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, F1, F2, F3, F4, F5, F6, F7, F8, V1, V2, V3, V4, V5, V6, V7, V8, V9, V10, V11, V12, V13, V14, V15, AU1, AU2, AU3, AU4, AU5, AU6, AU7, AU8, AU9, AU10, AU11, AU12, SY1, SY2, SY3, SY4, SY5, SY6, SY7, SY8, SY9, SY10, OT1, OT2, OT3, OT4, OT5, OT6, OT7, OT8, OT9, OT10, OT11, OT12, E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, SP1, SP2, SP3, SP4, SP5, SP6]
+/$ctl/user/daw4/*/bu/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/daw4/*/bu/name	string [16]
+/$ctl/user/gpio/*/bu/$fname	string [16]
+/$ctl/user/gpio/*/bu/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/gpio/*/bu/name	string [16]
+/$ctl/user/mode	list [USER, 2TRK, WLIVE, MGRP, SHOW]
+/$ctl/user/sel	int [1 .. 16]
+/$ctl/user/user/*/bd/$fname	string [16]
+/$ctl/user/user/*/bd/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/user/*/bd/name	string [16]
+/$ctl/user/user/*/bu/$fname	string [16]
+/$ctl/user/user/*/bu/mode	list [OFF, MUTE, SOLO, INS1, INS2, MGRP, DCAMUTE, SOF, SPILL, FXPAR, DAWBTN, DAWENC, CHPAGE, PAGE, FDRPAGE, VIEWPAGE, OTHER, GPIO, FSTART, SHOWCTL, SCENES, MIDICCT, MIDICCP, MIDINT, MIDINP, MIDIPGM, USBPR, SDRECA, SESSIONA, MARKERA, SDRECB, SESSIONB, MARKERB]
+/$ctl/user/user/*/bu/name	string [16]
+/$globals/clkrate	list [48000.0, 44100.0]
+/$globals/clksrc	list [INT, A, B, C, AES, CRD, MOD]
+/$globals/custsync/a	int [0 .. 1]
+/$globals/custsync/b	int [0 .. 1]
+/$globals/custsync/c	int [0 .. 1]
+/$globals/harmt/a	int [0 .. 1]
+/$globals/harmt/b	int [0 .. 1]
+/$globals/harmt/c	int [0 .. 1]
+/$globals/sccfg	list [AUTO, 0/32, 1/31, 2/30, 3/29, 4/28, 5/27, 6/26, 7/25, 8/24, 9/23, 10/22, 11/21, 12/20, 13/19, 14/18, 15/17, 16/16, 17/15, 18/14, 19/13, 20/12, 21/11, 22/10, 23/9, 24/8, 25/7, 26/6, 27/5, 28/4, 29/3, 30/2, 31/1, 32/0]
+/$globals/startmute	int [0 .. 1]
+/$globals/usbacfg	list [2/2, 8/8, 16/16, 32/32, 48/48]
+/$stat/A/clrerr	int [0 .. 1]
+/$stat/A/dev	string [128]
+/$stat/A/errorsc	int [0 .. 9999]
+/$stat/A/errorsu	int [0 .. 9999]
+/$stat/A/stat	list [-, OK, ERR, UPD]
+/$stat/B/clrerr	int [0 .. 1]
+/$stat/B/dev	string [128]
+/$stat/B/errorsc	int [0 .. 9999]
+/$stat/B/errorsu	int [0 .. 9999]
+/$stat/B/stat	list [-, OK, ERR, UPD]
+/$stat/C/clrerr	int [0 .. 1]
+/$stat/C/dev	string [128]
+/$stat/C/errorsc	int [0 .. 9999]
+/$stat/C/errorsu	int [0 .. 9999]
+/$stat/C/stat	list [-, OK, ERR, UPD]
+/$stat/date	string [12]
+/$stat/lock	int [0 .. 1]
+/$stat/ppm	int [-200 .. 200]
+/$stat/rmt_a	string [16]
+/$stat/rmt_b	string [16]
+/$stat/rmt_c	string [16]
+/$stat/rtcerr	int [0 .. 1]
+/$stat/sc_devices	string [128]
+/$stat/sc_dncnt	int [0 .. 32]
+/$stat/sc_stat	list [-, OK, ERR]
+/$stat/sc_upcnt	int [0 .. 32]
+/$stat/sc_uprout	string [32]
+/$stat/sip	int [0 .. 1]
+/$stat/solo	int [0 .. 1]
+/$stat/time	string [12]
+/$stat/usbstate	list [-, ERR, IDLE, BUSY]
+/$stat/usbvolname	string [20]
+/$syscfg/$cnscfg	string [64]
+/$syscfg/$cnsmdl	string [32]
+/$syscfg/$firmware	string [64]
+/$syscfg/$hwversion	string [32]
+/$syscfg/$ipapply	int [0 .. 1]
+/$syscfg/$serial	string [32]
+/$syscfg/$usbspd_act	list [FS, HS]
+/$syscfg/consolename	string [16]
+/$syscfg/eth_cfg	list [SEPARATED, SWITCHED]
+/$syscfg/gw0	int [0 .. 255]
+/$syscfg/gw1	int [0 .. 255]
+/$syscfg/gw2	int [0 .. 255]
+/$syscfg/gw3	int [0 .. 255]
+/$syscfg/ip0	int [0 .. 255]
+/$syscfg/ip1	int [0 .. 255]
+/$syscfg/ip2	int [0 .. 255]
+/$syscfg/ip3	int [0 .. 255]
+/$syscfg/ipmode	list [DHCP, STATIC]
+/$syscfg/logflags	string [256]
+/$syscfg/msk0	int [0 .. 255]
+/$syscfg/msk1	int [0 .. 255]
+/$syscfg/msk2	int [0 .. 255]
+/$syscfg/msk3	int [0 .. 255]
+/$syscfg/opt_mod	list [NONE, DANTE, WSG, ACOM]
+/$syscfg/tcplock	int [0 .. 1]
+/$syscfg/usbh_spd	list [FS, HS]
+/aux/*/$col	int [1 .. 18]
+/aux/*/$fdr	fader [-oo .. 10.0 dB], 1024 steps
+/aux/*/$icon	int [0 .. 999]
+/aux/*/$mute	int [0 .. 2]
+/aux/*/$muteovr	int [0 .. 1]
+/aux/*/$name	string [16]
+/aux/*/$solo	int [0 .. 1]
+/aux/*/$sololed	int [0 .. 2]
+/aux/*/clink	int [0 .. 1]
+/aux/*/col	int [1 .. 18]
+/aux/*/dyn/acc	lin [0 .. 100 %], 21 steps
+/aux/*/dyn/att	lin [0 .. 120 ms], 121 steps
+/aux/*/dyn/gain	lin [-6.0 .. 12.0 dB], 37 steps
+/aux/*/dyn/hld	log [1 .. 1000 ms], 121 steps
+/aux/*/dyn/mdl	list [GATE, DUCK, E88, 9000G, D241G, WAVE, PSE, CMB, RIDE, COMP, EXP, B160, B560, D241C, ECL33, 9000C, SBUS, RED3, 76LA, LA, F670, BLISS, NSTR, 2250, L100, E88C, LMT, ONEC]
+/aux/*/dyn/mix	lin [0 .. 100 %], 101 steps
+/aux/*/dyn/on	int [0 .. 1]
+/aux/*/dyn/range	lin [3.0 .. 60.0 dB], 115 steps
+/aux/*/dyn/ratio	list [1:1.5, 1:2, 1:3, 1:4, gate]
+/aux/*/dyn/rel	log [4 .. 4000 ms], 121 steps
+/aux/*/dyn/thr	lin [-80.0 .. 0.0 dB], 161 steps
+/aux/*/dynsc/$solo	int [0 .. 1]
+/aux/*/dynsc/f	log [20 .. 20k0 Hz], 901 steps
+/aux/*/dynsc/q	log [0.44 .. 10.00], 181 steps
+/aux/*/dynsc/src	list [SELF, BUS.1, BUS.2, BUS.3, BUS.4, BUS.5, BUS.6, BUS.7, BUS.8, BUS.9, BUS.10, BUS.11, BUS.12, BUS.13, BUS.14, BUS.15, BUS.16, MAIN.1, MAIN.2, MAIN.3, MAIN.4, MTX.1, MTX.2, MTX.3, MTX.4, MTX.5, MTX.6, MTX.7, MTX.8, AUX.1, AUX.2, AUX.3, AUX.4, AUX.5, AUX.6, AUX.7, AUX.8]
+/aux/*/dynsc/tap	list [BUS, DYN, PFL, AFL, EQ, INS2]
+/aux/*/dynsc/type	list [OFF, LP12, HP12, BP, NOTCH]
+/aux/*/eq/$solo	int [0 .. 1]
+/aux/*/eq/$solobd	int [1 .. 6]
+/aux/*/eq/1f	log [20.0 .. 20k00 Hz], 961 steps
+/aux/*/eq/1g	lin [-15.0 .. +15.0 dB], 301 steps
+/aux/*/eq/1q	log [0.44 .. 10.00], 181 steps
+/aux/*/eq/2f	log [20.0 .. 20k00 Hz], 961 steps
+/aux/*/eq/2g	lin [-15.0 .. +15.0 dB], 301 steps
+/aux/*/eq/2q	log [0.44 .. 10.00], 181 steps
+/aux/*/eq/3f	log [20.0 .. 20k00 Hz], 961 steps
+/aux/*/eq/3g	lin [-15.0 .. +15.0 dB], 301 steps
+/aux/*/eq/3q	log [0.44 .. 10.00], 181 steps
+/aux/*/eq/4f	log [20.0 .. 20k00 Hz], 961 steps
+/aux/*/eq/4g	lin [-15.0 .. +15.0 dB], 301 steps
+/aux/*/eq/4q	log [0.44 .. 10.00], 181 steps
+/aux/*/eq/heq	list [PEQ, SHV, CUT]
+/aux/*/eq/hf	log [20.0 .. 20k00 Hz], 961 steps
+/aux/*/eq/hg	lin [-15.0 .. +15.0 dB], 301 steps
+/aux/*/eq/hq	log [0.44 .. 10.00], 181 steps
+/aux/*/eq/leq	list [PEQ, SHV, CUT]
+/aux/*/eq/lf	log [20.0 .. 20k00 Hz], 961 steps
+/aux/*/eq/lg	lin [-15.0 .. +15.0 dB], 301 steps
+/aux/*/eq/lq	log [0.44 .. 10.00], 181 steps
+/aux/*/eq/mdl	list [STD, SOUL, E88, E84, F110, PULSAR]
+/aux/*/eq/mix	lin [0 .. 125 %], 126 steps
+/aux/*/eq/on	int [0 .. 1]
+/aux/*/fdr	fader [-oo .. 10.0 dB], 1024 steps
+/aux/*/icon	int [0 .. 999]
+/aux/*/in/conn/altgrp	list [OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES, USR, OSC, BUS, MAIN, MTX]
+/aux/*/in/conn/altin	int [1 .. 64]
+/aux/*/in/conn/grp	list [OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES, USR, OSC, BUS, MAIN, MTX]
+/aux/*/in/conn/in	int [1 .. 64]
+/aux/*/in/set/$g	lin [-3.0 .. 45.5 dB], 98 steps
+/aux/*/in/set/$mode	list [M, ST, M/S]
+/aux/*/in/set/$vph	int [0 .. 1]
+/aux/*/in/set/altsrc	int [0 .. 1]
+/aux/*/in/set/bal	lin [-9.0 .. +9.0 dB], 181 steps
+/aux/*/in/set/dly	lin [0.1 .. 150.0 m], 1500 steps
+/aux/*/in/set/dlymode	list [M, FT, MS, SMP]
+/aux/*/in/set/dlyon	int [0 .. 1]
+/aux/*/in/set/inv	int [0 .. 1]
+/aux/*/in/set/srcauto	int [0 .. 1]
+/aux/*/in/set/trim	lin [-18.0 .. +18.0 dB], 361 steps
+/aux/*/led	int [0 .. 1]
+/aux/*/main/*/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/aux/*/main/*/on	int [0 .. 1]
+/aux/*/main/*/pre	int [0 .. 1]
+/aux/*/mon	list [A, B, A+B]
+/aux/*/mute	int [0 .. 1]
+/aux/*/name	string [16]
+/aux/*/pan	lin [-100 .. +100], 201 steps
+/aux/*/preins/$stat	list [-, OK, N/A]
+/aux/*/preins/ins	list [NONE, FX1, FX2, FX3, FX4, FX5, FX6, FX7, FX8, FX9, FX10, FX11, FX12, FX13, FX14, FX15, FX16]
+/aux/*/preins/on	int [0 .. 1]
+/aux/*/send/*/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/aux/*/send/*/mode	list [PRE, POST, GRP]
+/aux/*/send/*/on	int [0 .. 1]
+/aux/*/send/*/pan	lin [-100 .. +100], 201 steps
+/aux/*/send/*/plink	int [0 .. 2]
+/aux/*/send/*/pon	int [0 .. 1]
+/aux/*/send/MX1/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/aux/*/send/MX1/mode	list [PRE, POST, GRP]
+/aux/*/send/MX1/on	int [0 .. 1]
+/aux/*/send/MX1/pan	lin [-100 .. +100], 201 steps
+/aux/*/send/MX1/plink	int [0 .. 2]
+/aux/*/send/MX1/pon	int [0 .. 1]
+/aux/*/send/MX2/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/aux/*/send/MX2/mode	list [PRE, POST, GRP]
+/aux/*/send/MX2/on	int [0 .. 1]
+/aux/*/send/MX2/pan	lin [-100 .. +100], 201 steps
+/aux/*/send/MX2/plink	int [0 .. 2]
+/aux/*/send/MX2/pon	int [0 .. 1]
+/aux/*/send/MX3/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/aux/*/send/MX3/mode	list [PRE, POST, GRP]
+/aux/*/send/MX3/on	int [0 .. 1]
+/aux/*/send/MX3/pan	lin [-100 .. +100], 201 steps
+/aux/*/send/MX3/plink	int [0 .. 2]
+/aux/*/send/MX3/pon	int [0 .. 1]
+/aux/*/send/MX4/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/aux/*/send/MX4/mode	list [PRE, POST, GRP]
+/aux/*/send/MX4/on	int [0 .. 1]
+/aux/*/send/MX4/pan	lin [-100 .. +100], 201 steps
+/aux/*/send/MX4/plink	int [0 .. 2]
+/aux/*/send/MX4/pon	int [0 .. 1]
+/aux/*/send/MX5/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/aux/*/send/MX5/mode	list [PRE, POST, GRP]
+/aux/*/send/MX5/on	int [0 .. 1]
+/aux/*/send/MX5/pan	lin [-100 .. +100], 201 steps
+/aux/*/send/MX5/plink	int [0 .. 2]
+/aux/*/send/MX5/pon	int [0 .. 1]
+/aux/*/send/MX6/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/aux/*/send/MX6/mode	list [PRE, POST, GRP]
+/aux/*/send/MX6/on	int [0 .. 1]
+/aux/*/send/MX6/pan	lin [-100 .. +100], 201 steps
+/aux/*/send/MX6/plink	int [0 .. 2]
+/aux/*/send/MX6/pon	int [0 .. 1]
+/aux/*/send/MX7/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/aux/*/send/MX7/mode	list [PRE, POST, GRP]
+/aux/*/send/MX7/on	int [0 .. 1]
+/aux/*/send/MX7/pan	lin [-100 .. +100], 201 steps
+/aux/*/send/MX7/plink	int [0 .. 2]
+/aux/*/send/MX7/pon	int [0 .. 1]
+/aux/*/send/MX8/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/aux/*/send/MX8/mode	list [PRE, POST, GRP]
+/aux/*/send/MX8/on	int [0 .. 1]
+/aux/*/send/MX8/pan	lin [-100 .. +100], 201 steps
+/aux/*/send/MX8/plink	int [0 .. 2]
+/aux/*/send/MX8/pon	int [0 .. 1]
+/aux/*/solosafe	int [0 .. 1]
+/aux/*/tags	string [80]
+/aux/*/wid	lin [-150 .. 150 %], 61 steps
+/bus/*/$col	int [1 .. 18]
+/bus/*/$fdr	fader [-oo .. 10.0 dB], 1024 steps
+/bus/*/$icon	int [0 .. 999]
+/bus/*/$mute	int [0 .. 2]
+/bus/*/$muteovr	int [0 .. 1]
+/bus/*/$name	string [16]
+/bus/*/$solo	int [0 .. 1]
+/bus/*/$sololed	int [0 .. 2]
+/bus/*/busmono	int [0 .. 1]
+/bus/*/col	int [1 .. 18]
+/bus/*/dly/dly	lin [0.1 .. 150.0 m], 1500 steps
+/bus/*/dly/mode	list [M, FT, MS, SMP]
+/bus/*/dly/on	int [0 .. 1]
+/bus/*/dyn/att	lin [0 .. 120 ms], 121 steps
+/bus/*/dyn/auto	int [0 .. 1]
+/bus/*/dyn/det	list [PEAK, RMS]
+/bus/*/dyn/env	list [LIN, LOG]
+/bus/*/dyn/gain	lin [-6.0 .. 12.0 dB], 37 steps
+/bus/*/dyn/hld	lin [1 .. 200 ms], 200 steps
+/bus/*/dyn/knee	int [0 .. 5]
+/bus/*/dyn/mdl	list [GATE, DUCK, E88, 9000G, D241G, DS902, DEQ, DEQ2, WAVE, PSE, CMB, RIDE, WARM, COMP, EXP, B160, B560, D241C, ECL33, 9000C, SBUS, RED3, 76LA, LA, F670, BLISS, NSTR, 2250, L100, E88C, LMT, ONEC]
+/bus/*/dyn/mix	lin [0 .. 100 %], 101 steps
+/bus/*/dyn/on	int [0 .. 1]
+/bus/*/dyn/ratio	list [1.1, 1.2, 1.3, 1.5, 1.7, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0,  10,  20,  50, 100]
+/bus/*/dyn/rel	log [4 .. 4000 ms], 121 steps
+/bus/*/dyn/thr	lin [-60.0 .. 0.0 dB], 121 steps
+/bus/*/dynsc/$solo	int [0 .. 1]
+/bus/*/dynsc/f	log [20 .. 20k0 Hz], 901 steps
+/bus/*/dynsc/q	log [0.44 .. 10.00], 181 steps
+/bus/*/dynsc/src	list [SELF, BUS.1, BUS.2, BUS.3, BUS.4, BUS.5, BUS.6, BUS.7, BUS.8, BUS.9, BUS.10, BUS.11, BUS.12, BUS.13, BUS.14, BUS.15, BUS.16, MAIN.1, MAIN.2, MAIN.3, MAIN.4, MTX.1, MTX.2, MTX.3, MTX.4, MTX.5, MTX.6, MTX.7, MTX.8, AUX.1, AUX.2, AUX.3, AUX.4, AUX.5, AUX.6, AUX.7, AUX.8]
+/bus/*/dynsc/tap	list [BUS, DYN, PFL, AFL, EQ, INS2]
+/bus/*/dynsc/type	list [OFF, LP12, HP12, BP, NOTCH]
+/bus/*/dynxo/$solo	int [0 .. 1]
+/bus/*/dynxo/depth	lin [-30.0 .. 30.0 dB], 121 steps
+/bus/*/dynxo/f	log [20 .. 20k0 Hz], 901 steps
+/bus/*/dynxo/q	log [0.40 .. 4.00], 121 steps
+/bus/*/dynxo/type	list [OFF, LO, HI, S6, S12, PEAK]
+/bus/*/eq/$solo	int [0 .. 1]
+/bus/*/eq/$solobd	int [1 .. 8]
+/bus/*/eq/1f	log [20.0 .. 20k00 Hz], 961 steps
+/bus/*/eq/1g	lin [-15.0 .. +15.0 dB], 301 steps
+/bus/*/eq/1q	log [0.44 .. 10.00], 181 steps
+/bus/*/eq/2f	log [20.0 .. 20k00 Hz], 961 steps
+/bus/*/eq/2g	lin [-15.0 .. +15.0 dB], 301 steps
+/bus/*/eq/2q	log [0.44 .. 10.00], 181 steps
+/bus/*/eq/3f	log [20.0 .. 20k00 Hz], 961 steps
+/bus/*/eq/3g	lin [-15.0 .. +15.0 dB], 301 steps
+/bus/*/eq/3q	log [0.44 .. 10.00], 181 steps
+/bus/*/eq/4f	log [20.0 .. 20k00 Hz], 961 steps
+/bus/*/eq/4g	lin [-15.0 .. +15.0 dB], 301 steps
+/bus/*/eq/4q	log [0.44 .. 10.00], 181 steps
+/bus/*/eq/5f	log [20.0 .. 20k00 Hz], 961 steps
+/bus/*/eq/5g	lin [-15.0 .. +15.0 dB], 301 steps
+/bus/*/eq/5q	log [0.44 .. 10.00], 181 steps
+/bus/*/eq/6f	log [20.0 .. 20k00 Hz], 961 steps
+/bus/*/eq/6g	lin [-15.0 .. +15.0 dB], 301 steps
+/bus/*/eq/6q	log [0.44 .. 10.00], 181 steps
+/bus/*/eq/heq	list [PEQ, SHV, CUT, BW6, BW12, BS12, LR12, BW18, BW24, BS24, LR24, BW48, LR48]
+/bus/*/eq/hf	log [20.0 .. 20k00 Hz], 961 steps
+/bus/*/eq/hg	lin [-15.0 .. +15.0 dB], 301 steps
+/bus/*/eq/hq	log [0.44 .. 10.00], 181 steps
+/bus/*/eq/leq	list [PEQ, SHV, CUT, BW6, BW12, BS12, LR12, BW18, BW24, BS24, LR24, BW48, LR48]
+/bus/*/eq/lf	log [20.0 .. 20k00 Hz], 961 steps
+/bus/*/eq/lg	lin [-15.0 .. +15.0 dB], 301 steps
+/bus/*/eq/lq	log [0.44 .. 10.00], 181 steps
+/bus/*/eq/mdl	list [STD, SOUL, E88, E84, F110, PULSAR, PIA]
+/bus/*/eq/mix	lin [0 .. 125 %], 126 steps
+/bus/*/eq/on	int [0 .. 1]
+/bus/*/eq/tilt	lin [-6.00 .. +6.00 dB], 49 steps
+/bus/*/fdr	fader [-oo .. 10.0 dB], 1024 steps
+/bus/*/icon	int [0 .. 999]
+/bus/*/in/set/bal	lin [-9.0 .. +9.0 dB], 181 steps
+/bus/*/in/set/inv	int [0 .. 1]
+/bus/*/in/set/trim	lin [-18.0 .. +18.0 dB], 361 steps
+/bus/*/led	int [0 .. 1]
+/bus/*/main/*/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/bus/*/main/*/on	int [0 .. 1]
+/bus/*/main/*/pre	int [0 .. 1]
+/bus/*/mon	list [A, B, A+B]
+/bus/*/mute	int [0 .. 1]
+/bus/*/name	string [16]
+/bus/*/pan	lin [-100 .. +100], 201 steps
+/bus/*/postins/$stat	list [-, OK, N/A]
+/bus/*/postins/ins	list [NONE, FX1, FX2, FX3, FX4, FX5, FX6, FX7, FX8, FX9, FX10, FX11, FX12, FX13, FX14, FX15, FX16]
+/bus/*/postins/on	int [0 .. 1]
+/bus/*/preins/$stat	list [-, OK, N/A]
+/bus/*/preins/ins	list [NONE, FX1, FX2, FX3, FX4, FX5, FX6, FX7, FX8, FX9, FX10, FX11, FX12, FX13, FX14, FX15, FX16]
+/bus/*/preins/on	int [0 .. 1]
+/bus/*/send/*/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/bus/*/send/*/on	int [0 .. 1]
+/bus/*/send/*/pre	int [0 .. 1]
+/bus/*/send/MX1/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/bus/*/send/MX1/on	int [0 .. 1]
+/bus/*/send/MX1/pre	int [0 .. 1]
+/bus/*/send/MX2/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/bus/*/send/MX2/on	int [0 .. 1]
+/bus/*/send/MX2/pre	int [0 .. 1]
+/bus/*/send/MX3/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/bus/*/send/MX3/on	int [0 .. 1]
+/bus/*/send/MX3/pre	int [0 .. 1]
+/bus/*/send/MX4/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/bus/*/send/MX4/on	int [0 .. 1]
+/bus/*/send/MX4/pre	int [0 .. 1]
+/bus/*/send/MX5/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/bus/*/send/MX5/on	int [0 .. 1]
+/bus/*/send/MX5/pre	int [0 .. 1]
+/bus/*/send/MX6/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/bus/*/send/MX6/on	int [0 .. 1]
+/bus/*/send/MX6/pre	int [0 .. 1]
+/bus/*/send/MX7/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/bus/*/send/MX7/on	int [0 .. 1]
+/bus/*/send/MX7/pre	int [0 .. 1]
+/bus/*/send/MX8/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/bus/*/send/MX8/on	int [0 .. 1]
+/bus/*/send/MX8/pre	int [0 .. 1]
+/bus/*/tags	string [80]
+/bus/*/wid	lin [-150 .. 150 %], 61 steps
+/cards/$type	list [NONE, WLIVE, WDANTE, WMADI, WDWSG]
+/cards/$ver	string [32]
+/cards/wlive/$actlink	list [IND, PAR]
+/cards/wlive/$battstate	list [NONE, GOOD, LOW]
+/cards/wlive/*/$ctl/control	list [STOP, PPAUSE, PLAY, REC]
+/cards/wlive/*/$ctl/deletemarker	int [0 .. 100]
+/cards/wlive/*/$ctl/deletesession	int [0 .. 100]
+/cards/wlive/*/$ctl/editmarker	int [0 .. 100]
+/cards/wlive/*/$ctl/formatsdcard	int [0 .. 1]
+/cards/wlive/*/$ctl/gotomarker	int [0 .. 101]
+/cards/wlive/*/$ctl/namesession	string [19]
+/cards/wlive/*/$ctl/opensession	int [0 .. 100]
+/cards/wlive/*/$ctl/setmarker	int [0 .. 1]
+/cards/wlive/*/$ctl/stime	lin [0 .. 360000000 ms], 360000000 steps
+/cards/wlive/*/$stat/errorcode	int [0 .. 34]
+/cards/wlive/*/$stat/errormessage	string [32]
+/cards/wlive/*/$stat/etime	lin [0:00:00 .. 0:00:00], 36000000 steps
+/cards/wlive/*/$stat/linkedpos	int [0 .. 100]
+/cards/wlive/*/$stat/markerlist	list []
+/cards/wlive/*/$stat/markerpos	int [0 .. 100]
+/cards/wlive/*/$stat/markers	int [0 .. 100]
+/cards/wlive/*/$stat/rate	list [44.1, 48]
+/cards/wlive/*/$stat/sdfree	lin [0:00:00 .. 0:00:00], 36000000 steps
+/cards/wlive/*/$stat/sdsize	int [0 .. 1024]
+/cards/wlive/*/$stat/sdstate	list [NONE, READY, PROTECT, ERASE, ERROR]
+/cards/wlive/*/$stat/sessionlen	lin [0:00:00 .. 0:00:00], 36000000 steps
+/cards/wlive/*/$stat/sessionlist	list [2027-01-06 00:07:16 +10, 2025-09-27 18:56:40  10, 2025-09-27 17:27:04  10]
+/cards/wlive/*/$stat/sessionpos	int [0 .. 100]
+/cards/wlive/*/$stat/sessions	int [0 .. 100]
+/cards/wlive/*/$stat/snamelist	list []
+/cards/wlive/*/$stat/start	lin [0:00:00 .. 0:00:00], 36000000 steps
+/cards/wlive/*/$stat/state	list [STOP, PPAUSE, PLAY, REC]
+/cards/wlive/*/$stat/stop	lin [0:00:00 .. 0:00:00], 36000000 steps
+/cards/wlive/*/$stat/tracks	list [32, 16, 8]
+/cards/wlive/*/cfg/playmode	list [PLAY, A->B, LOOP]
+/cards/wlive/*/cfg/rectracks	list [32, 16, 8]
+/cards/wlive/auto_play	list [KEEP, MAIN, ALT]
+/cards/wlive/auto_rec	list [KEEP, MAIN, ALT]
+/cards/wlive/auto_stop	list [KEEP, MAIN, ALT]
+/cards/wlive/autoin	list [OFF, 1, 2]
+/cards/wlive/meters	int [0 .. 1]
+/cards/wlive/sdlink	list [IND, PAR]
+/cards/wmadi/$bncstat	int [0 .. 2]
+/cards/wmadi/$sfp1stat	int [0 .. 2]
+/cards/wmadi/$sfp2stat	int [0 .. 2]
+/cards/wmadi/mode	list [SFP1, SFP2, BNC, SFP1/2, SFP1/BNC]
+/cards/wmadi/rxclock	int [0 .. 1]
+/cfg/amix/x	int [0 .. 1]
+/cfg/amix/y	int [0 .. 1]
+/cfg/dcamgrp	int [0 .. 1]
+/cfg/mainlink	list [OFF, 2, 2-3, 2-4]
+/cfg/mon/*/$lvl	fader [-oo .. 10.0 dB], 1024 steps
+/cfg/mon/*/$lvlact	fader [-oo .. 10.0 dB], 1024 steps
+/cfg/mon/*/dim	lin [40 .. 0 dB], 41 steps
+/cfg/mon/*/dirin	list [OFF, CH.1, CH.2, CH.3, CH.4, CH.5, CH.6, CH.7, CH.8, CH.9, CH.10, CH.11, CH.12, CH.13, CH.14, CH.15, CH.16, CH.17, CH.18, CH.19, CH.20, CH.21, CH.22, CH.23, CH.24, CH.25, CH.26, CH.27, CH.28, CH.29, CH.30, CH.31, CH.32, CH.33, CH.34, CH.35, CH.36, CH.37, CH.38, CH.39, CH.40, AUX.1, AUX.2, AUX.3, AUX.4, AUX.5, AUX.6, AUX.7, AUX.8, BUS.1, BUS.2, BUS.3, BUS.4, BUS.5, BUS.6, BUS.7, BUS.8, BUS.9, BUS.10, BUS.11, BUS.12, BUS.13, BUS.14, BUS.15, BUS.16, MAIN.1, MAIN.2, MAIN.3, MAIN.4, MTX.1, MTX.2, MTX.3, MTX.4, MTX.5, MTX.6, MTX.7, MTX.8]
+/cfg/mon/*/dly/m	lin [0.1 .. 100.0 m], 1000 steps
+/cfg/mon/*/dly/on	int [0 .. 1]
+/cfg/mon/*/eq/1f	log [20.0 .. 20k00 Hz], 961 steps
+/cfg/mon/*/eq/1g	lin [-15.0 .. +15.0 dB], 301 steps
+/cfg/mon/*/eq/1q	log [0.44 .. 10.00], 181 steps
+/cfg/mon/*/eq/2f	log [20.0 .. 20k00 Hz], 961 steps
+/cfg/mon/*/eq/2g	lin [-15.0 .. +15.0 dB], 301 steps
+/cfg/mon/*/eq/2q	log [0.44 .. 10.00], 181 steps
+/cfg/mon/*/eq/3f	log [20.0 .. 20k00 Hz], 961 steps
+/cfg/mon/*/eq/3g	lin [-15.0 .. +15.0 dB], 301 steps
+/cfg/mon/*/eq/3q	log [0.44 .. 10.00], 181 steps
+/cfg/mon/*/eq/4f	log [20.0 .. 20k00 Hz], 961 steps
+/cfg/mon/*/eq/4g	lin [-15.0 .. +15.0 dB], 301 steps
+/cfg/mon/*/eq/4q	log [0.44 .. 10.00], 181 steps
+/cfg/mon/*/eq/5f	log [20.0 .. 20k00 Hz], 961 steps
+/cfg/mon/*/eq/5g	lin [-15.0 .. +15.0 dB], 301 steps
+/cfg/mon/*/eq/5q	log [0.44 .. 10.00], 181 steps
+/cfg/mon/*/eq/6f	log [20.0 .. 20k00 Hz], 961 steps
+/cfg/mon/*/eq/6g	lin [-15.0 .. +15.0 dB], 301 steps
+/cfg/mon/*/eq/6q	log [0.44 .. 10.00], 181 steps
+/cfg/mon/*/eq/hsf	log [200.0 .. 20k00 Hz], 641 steps
+/cfg/mon/*/eq/hsg	lin [-15.0 .. +15.0 dB], 301 steps
+/cfg/mon/*/eq/lsf	log [20.0 .. 2k00 Hz], 641 steps
+/cfg/mon/*/eq/lsg	lin [-15.0 .. +15.0 dB], 301 steps
+/cfg/mon/*/eq/on	int [0 .. 1]
+/cfg/mon/*/eqbdtrim	lin [0 .. 24 dB], 25 steps
+/cfg/mon/*/inv	int [0 .. 1]
+/cfg/mon/*/lim	lin [-40 .. 0 dB], 41 steps
+/cfg/mon/*/pan	lin [-100 .. +100], 201 steps
+/cfg/mon/*/pfldim	lin [40 .. 0 dB], 41 steps
+/cfg/mon/*/src	list [OFF, MAIN.1, MAIN.2, MAIN.3, MAIN.4, MTX.1, MTX.2, MTX.3, MTX.4, MTX.5, MTX.6, MTX.7, MTX.8, BUS.1, BUS.2, BUS.3, BUS.4, BUS.5, BUS.6, BUS.7, BUS.8, BUS.9, BUS.10, BUS.11, BUS.12, BUS.13, BUS.14, BUS.15, BUS.16, AUX.1, AUX.2, AUX.3, AUX.4, AUX.5, AUX.6, AUX.7, AUX.8]
+/cfg/mon/*/srclvl	fader [-oo .. 10.0 dB], 1024 steps
+/cfg/mon/*/srcmix	fader [-oo .. 10.0 dB], 1024 steps
+/cfg/mon/*/tags	string [80]
+/cfg/mon/*/wid	lin [-150 .. 150 %], 61 steps
+/cfg/mtr/$scopesrc	int [1 .. 76]
+/cfg/mtr/$scopetap	list [IN, POST, FILT, PREEQ, POSTEQ, PREFDR, GATEK, DYNK, DYNXO, PRETAP, SOLO, MON.PH, MON.SPK, FXIN, FXOUT]
+/cfg/mtr/mainmtr	list [MAIN.1, MAIN.2, MAIN.3, MAIN.4, MTX.1, MTX.2, MTX.3, MTX.4, MTX.5, MTX.6, MTX.7, MTX.8, MON.PH, MON.SPK, SEL_CH]
+/cfg/mtr/mainpos	list [AUTO, PRE, POST]
+/cfg/mtr/mtrpage/bus	list [PRE, POST]
+/cfg/mtr/mtrpage/dca	list [PRE, POST]
+/cfg/mtr/mtrpage/in	list [PRE, POST]
+/cfg/mtr/mtrpage/main	list [PRE, POST]
+/cfg/mtr/mtrpage/mtx	list [PRE, POST]
+/cfg/mtr/mtrsfc/bus	list [PRE, POST]
+/cfg/mtr/mtrsfc/dca	list [PRE, POST]
+/cfg/mtr/mtrsfc/in	list [PRE, POST]
+/cfg/mtr/mtrsfc/main	list [PRE, POST]
+/cfg/mtr/mtrsfc/mtx	list [PRE, POST]
+/cfg/mtr/scopesrc	int [0 .. 76]
+/cfg/mtr/scopetap	list [IN, POST, FILT, PREEQ, POSTEQ, PREFDR, GATEK, DYNK, DYNXO, PRETAP, SOLO, MON.PH, MON.SPK]
+/cfg/rta/$dec	list [SLOW, MED, FAST]
+/cfg/rta/$det	list [PEAK, RMS]
+/cfg/rta/$src	int [1 .. 76]
+/cfg/rta/$tap	list [IN, POST, FILT, PREEQ, POSTEQ, PREFDR, GATEK, DYNK, DYNXO, PRETAP, SOLO, MON.PH, MON.SPK, FXIN, FXOUT]
+/cfg/rta/eqauto	int [0 .. 1]
+/cfg/rta/eqdecay	list [SLOW, MED, FAST]
+/cfg/rta/eqdet	list [PEAK, RMS, AVG]
+/cfg/rta/eqgain	lin [-5 .. 50 dB], 56 steps
+/cfg/rta/eqrange	list [30, 60]
+/cfg/rta/rtaauto	int [0 .. 1]
+/cfg/rta/rtadecay	list [SLOW, MED, FAST]
+/cfg/rta/rtadet	list [PEAK, RMS, AVG]
+/cfg/rta/rtagain	lin [-5 .. 50 dB], 56 steps
+/cfg/rta/rtarange	list [30, 60]
+/cfg/rta/rtasrc	int [0 .. 76]
+/cfg/rta/rtatap	list [IN, POST, FILT, PREEQ, POSTEQ, PREFDR, GATEK, DYNK, DYNXO, PRETAP, SOLO, MON.PH, MON.SPK, FXIN, FXOUT]
+/cfg/solo/$dim	int [0 .. 1]
+/cfg/solo/$flip	int [0 .. 1]
+/cfg/solo/$mono	int [0 .. 1]
+/cfg/solo/$srcsgrp	int [1 .. 13]
+/cfg/solo/$srcsin	int [1 .. 64]
+/cfg/solo/$srcsolo	int [0 .. 1]
+/cfg/solo/bustap	list [PFL, AFL]
+/cfg/solo/chtap	list [PFL, AFL]
+/cfg/solo/maintap	list [PFL, AFL]
+/cfg/solo/mode	list [LIVE, STUDIO, SIP]
+/cfg/solo/mon	list [PH, SPK, PH+SPK]
+/cfg/solo/mtxtap	list [PFL, AFL]
+/cfg/solo/mute	int [0 .. 1]
+/cfg/solo/srcsolo	list [OFF, CH39, AUX7]
+/cfg/talk/$lvl	fader [-oo .. 10.0 dB], 1024 steps
+/cfg/talk/A/$on	int [0 .. 1]
+/cfg/talk/A/B1	int [0 .. 1]
+/cfg/talk/A/B10	int [0 .. 1]
+/cfg/talk/A/B11	int [0 .. 1]
+/cfg/talk/A/B12	int [0 .. 1]
+/cfg/talk/A/B13	int [0 .. 1]
+/cfg/talk/A/B14	int [0 .. 1]
+/cfg/talk/A/B15	int [0 .. 1]
+/cfg/talk/A/B16	int [0 .. 1]
+/cfg/talk/A/B2	int [0 .. 1]
+/cfg/talk/A/B3	int [0 .. 1]
+/cfg/talk/A/B4	int [0 .. 1]
+/cfg/talk/A/B5	int [0 .. 1]
+/cfg/talk/A/B6	int [0 .. 1]
+/cfg/talk/A/B7	int [0 .. 1]
+/cfg/talk/A/B8	int [0 .. 1]
+/cfg/talk/A/B9	int [0 .. 1]
+/cfg/talk/A/M1	int [0 .. 1]
+/cfg/talk/A/M2	int [0 .. 1]
+/cfg/talk/A/M3	int [0 .. 1]
+/cfg/talk/A/M4	int [0 .. 1]
+/cfg/talk/A/MX1	int [0 .. 1]
+/cfg/talk/A/MX2	int [0 .. 1]
+/cfg/talk/A/MX3	int [0 .. 1]
+/cfg/talk/A/MX4	int [0 .. 1]
+/cfg/talk/A/MX5	int [0 .. 1]
+/cfg/talk/A/MX6	int [0 .. 1]
+/cfg/talk/A/MX7	int [0 .. 1]
+/cfg/talk/A/MX8	int [0 .. 1]
+/cfg/talk/A/busdim	lin [40 .. 0 dB], 41 steps
+/cfg/talk/A/indiv	int [0 .. 1]
+/cfg/talk/A/mode	list [AUTO, PUSH, LATCH]
+/cfg/talk/A/mondim	lin [40 .. 0 dB], 41 steps
+/cfg/talk/B/$on	int [0 .. 1]
+/cfg/talk/B/B1	int [0 .. 1]
+/cfg/talk/B/B10	int [0 .. 1]
+/cfg/talk/B/B11	int [0 .. 1]
+/cfg/talk/B/B12	int [0 .. 1]
+/cfg/talk/B/B13	int [0 .. 1]
+/cfg/talk/B/B14	int [0 .. 1]
+/cfg/talk/B/B15	int [0 .. 1]
+/cfg/talk/B/B16	int [0 .. 1]
+/cfg/talk/B/B2	int [0 .. 1]
+/cfg/talk/B/B3	int [0 .. 1]
+/cfg/talk/B/B4	int [0 .. 1]
+/cfg/talk/B/B5	int [0 .. 1]
+/cfg/talk/B/B6	int [0 .. 1]
+/cfg/talk/B/B7	int [0 .. 1]
+/cfg/talk/B/B8	int [0 .. 1]
+/cfg/talk/B/B9	int [0 .. 1]
+/cfg/talk/B/M1	int [0 .. 1]
+/cfg/talk/B/M2	int [0 .. 1]
+/cfg/talk/B/M3	int [0 .. 1]
+/cfg/talk/B/M4	int [0 .. 1]
+/cfg/talk/B/MX1	int [0 .. 1]
+/cfg/talk/B/MX2	int [0 .. 1]
+/cfg/talk/B/MX3	int [0 .. 1]
+/cfg/talk/B/MX4	int [0 .. 1]
+/cfg/talk/B/MX5	int [0 .. 1]
+/cfg/talk/B/MX6	int [0 .. 1]
+/cfg/talk/B/MX7	int [0 .. 1]
+/cfg/talk/B/MX8	int [0 .. 1]
+/cfg/talk/B/busdim	lin [40 .. 0 dB], 41 steps
+/cfg/talk/B/indiv	int [0 .. 1]
+/cfg/talk/B/mode	list [AUTO, PUSH, LATCH]
+/cfg/talk/B/mondim	lin [40 .. 0 dB], 41 steps
+/cfg/talk/assign	list [OFF, CH40, AUX8]
+/ch/*/$col	int [1 .. 18]
+/ch/*/$fdr	fader [-oo .. 10.0 dB], 1024 steps
+/ch/*/$icon	int [0 .. 999]
+/ch/*/$mute	int [0 .. 2]
+/ch/*/$muteovr	int [0 .. 1]
+/ch/*/$name	string [16]
+/ch/*/$presolo	int [0 .. 1]
+/ch/*/$solo	int [0 .. 1]
+/ch/*/$sololed	int [0 .. 2]
+/ch/*/clink	int [0 .. 1]
+/ch/*/col	int [1 .. 18]
+/ch/*/dyn/att	lin [0 .. 120 ms], 121 steps
+/ch/*/dyn/auto	int [0 .. 1]
+/ch/*/dyn/det	list [PEAK, RMS]
+/ch/*/dyn/env	list [LIN, LOG]
+/ch/*/dyn/gain	lin [-6.0 .. 12.0 dB], 37 steps
+/ch/*/dyn/hld	lin [1 .. 200 ms], 200 steps
+/ch/*/dyn/knee	int [0 .. 5]
+/ch/*/dyn/mdl	list [GATE, DUCK, E88, 9000G, D241G, DS902, DEQ, DEQ2, WAVE, PSE, CMB, RIDE, WARM, COMP, EXP, B160, B560, D241C, ECL33, 9000C, SBUS, RED3, 76LA, LA, F670, BLISS, NSTR, 2250, L100, E88C, LMT, ONEC]
+/ch/*/dyn/mix	lin [0 .. 100 %], 101 steps
+/ch/*/dyn/on	int [0 .. 1]
+/ch/*/dyn/ratio	list [1.1, 1.2, 1.3, 1.5, 1.7, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0,  10,  20,  50, 100]
+/ch/*/dyn/rel	log [4 .. 4000 ms], 121 steps
+/ch/*/dyn/thr	lin [-60.0 .. 0.0 dB], 121 steps
+/ch/*/dynsc/$solo	int [0 .. 1]
+/ch/*/dynsc/f	log [20 .. 20k0 Hz], 901 steps
+/ch/*/dynsc/q	log [0.44 .. 10.00], 181 steps
+/ch/*/dynsc/src	list [SELF, CH.1, CH.2, CH.3, CH.4, CH.5, CH.6, CH.7, CH.8, CH.9, CH.10, CH.11, CH.12, CH.13, CH.14, CH.15, CH.16, CH.17, CH.18, CH.19, CH.20, CH.21, CH.22, CH.23, CH.24, CH.25, CH.26, CH.27, CH.28, CH.29, CH.30, CH.31, CH.32, CH.33, CH.34, CH.35, CH.36, CH.37, CH.38, CH.39, CH.40]
+/ch/*/dynsc/tap	list [IN, FILT, 3, 4, 5, PFL, AFL, POST]
+/ch/*/dynsc/type	list [OFF, LP12, HP12, BP, NOTCH]
+/ch/*/dynxo/$solo	int [0 .. 1]
+/ch/*/dynxo/depth	lin [-30.0 .. 30.0 dB], 121 steps
+/ch/*/dynxo/f	log [20 .. 20k0 Hz], 901 steps
+/ch/*/dynxo/q	log [0.40 .. 4.00], 121 steps
+/ch/*/dynxo/type	list [OFF, LO, HI, S6, S12, PEAK]
+/ch/*/eq/$solo	int [0 .. 1]
+/ch/*/eq/$solobd	int [1 .. 6]
+/ch/*/eq/1f	log [20.0 .. 20k00 Hz], 961 steps
+/ch/*/eq/1g	lin [-15.0 .. +15.0 dB], 301 steps
+/ch/*/eq/1q	log [0.44 .. 10.00], 181 steps
+/ch/*/eq/2f	log [20.0 .. 20k00 Hz], 961 steps
+/ch/*/eq/2g	lin [-15.0 .. +15.0 dB], 301 steps
+/ch/*/eq/2q	log [0.44 .. 10.00], 181 steps
+/ch/*/eq/3f	log [20.0 .. 20k00 Hz], 961 steps
+/ch/*/eq/3g	lin [-15.0 .. +15.0 dB], 301 steps
+/ch/*/eq/3q	log [0.44 .. 10.00], 181 steps
+/ch/*/eq/4f	log [20.0 .. 20k00 Hz], 961 steps
+/ch/*/eq/4g	lin [-15.0 .. +15.0 dB], 301 steps
+/ch/*/eq/4q	log [0.44 .. 10.00], 181 steps
+/ch/*/eq/heq	list [PEQ, SHV]
+/ch/*/eq/hf	log [20.0 .. 20k00 Hz], 961 steps
+/ch/*/eq/hg	lin [-15.0 .. +15.0 dB], 301 steps
+/ch/*/eq/hq	log [0.44 .. 10.00], 181 steps
+/ch/*/eq/leq	list [PEQ, SHV]
+/ch/*/eq/lf	log [20.0 .. 20k00 Hz], 961 steps
+/ch/*/eq/lg	lin [-15.0 .. +15.0 dB], 301 steps
+/ch/*/eq/lq	log [0.44 .. 10.00], 181 steps
+/ch/*/eq/mdl	list [STD, SOUL, E88, E84, F110, PULSAR, MACH4]
+/ch/*/eq/mix	lin [0 .. 125 %], 126 steps
+/ch/*/eq/on	int [0 .. 1]
+/ch/*/fdr	fader [-oo .. 10.0 dB], 1024 steps
+/ch/*/flt/hc	int [0 .. 1]
+/ch/*/flt/hcf	log [50.0 .. 20k00 Hz], 833 steps
+/ch/*/flt/hcs	list [6, 12]
+/ch/*/flt/lc	int [0 .. 1]
+/ch/*/flt/lcf	log [20.0 .. 2k00 Hz], 641 steps
+/ch/*/flt/lcs	list [6, 12, 18, 24]
+/ch/*/flt/mdl	list [TILT, MAX, AP1, AP2]
+/ch/*/flt/tf	int [0 .. 1]
+/ch/*/flt/tilt	lin [-6.00 .. +6.00 dB], 49 steps
+/ch/*/gate/acc	lin [0 .. 100 %], 21 steps
+/ch/*/gate/att	lin [0 .. 120 ms], 121 steps
+/ch/*/gate/gain	lin [-6.0 .. 12.0 dB], 37 steps
+/ch/*/gate/hld	log [1 .. 1000 ms], 121 steps
+/ch/*/gate/mdl	list [GATE, DUCK, E88, 9000G, D241G, DS902, DEQ, DEQ2, WAVE, PSE, CMB, RIDE, WARM, COMP, EXP, B160, B560, D241C, ECL33, 9000C, SBUS, RED3, 76LA, LA, F670, BLISS, NSTR, 2250, L100, E88C, LMT, ONEC]
+/ch/*/gate/mix	lin [0 .. 100 %], 101 steps
+/ch/*/gate/on	int [0 .. 1]
+/ch/*/gate/range	lin [3.0 .. 60.0 dB], 115 steps
+/ch/*/gate/ratio	list [1:1.5, 1:2, 1:3, 1:4, gate]
+/ch/*/gate/rel	log [4 .. 4000 ms], 121 steps
+/ch/*/gate/thr	lin [-80.0 .. 0.0 dB], 161 steps
+/ch/*/gatesc/$solo	int [0 .. 1]
+/ch/*/gatesc/f	log [20 .. 20k0 Hz], 901 steps
+/ch/*/gatesc/q	log [0.44 .. 10.00], 181 steps
+/ch/*/gatesc/src	list [SELF, CH.1, CH.2, CH.3, CH.4, CH.5, CH.6, CH.7, CH.8, CH.9, CH.10, CH.11, CH.12, CH.13, CH.14, CH.15, CH.16, CH.17, CH.18, CH.19, CH.20, CH.21, CH.22, CH.23, CH.24, CH.25, CH.26, CH.27, CH.28, CH.29, CH.30, CH.31, CH.32, CH.33, CH.34, CH.35, CH.36, CH.37, CH.38, CH.39, CH.40]
+/ch/*/gatesc/tap	list [IN, FILT, 3, 4, 5, PFL, AFL, POST]
+/ch/*/gatesc/type	list [OFF, LP12, HP12, BP, NOTCH]
+/ch/*/icon	int [0 .. 999]
+/ch/*/in/conn/altgrp	list [OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES, USR, OSC, BUS, MAIN, MTX]
+/ch/*/in/conn/altin	int [1 .. 64]
+/ch/*/in/conn/grp	list [OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES, USR, OSC, BUS, MAIN, MTX]
+/ch/*/in/conn/in	int [1 .. 64]
+/ch/*/in/set/$g	lin [-2.5 .. 45.0 dB], 20 steps
+/ch/*/in/set/$mode	list [M, ST, M/S]
+/ch/*/in/set/$vph	int [0 .. 1]
+/ch/*/in/set/altsrc	int [0 .. 1]
+/ch/*/in/set/bal	lin [-9.0 .. +9.0 dB], 181 steps
+/ch/*/in/set/dly	lin [0.1 .. 150.0 m], 1500 steps
+/ch/*/in/set/dlymode	list [M, FT, MS, SMP]
+/ch/*/in/set/dlyon	int [0 .. 1]
+/ch/*/in/set/inv	int [0 .. 1]
+/ch/*/in/set/srcauto	int [0 .. 1]
+/ch/*/in/set/trim	lin [-18.0 .. +18.0 dB], 361 steps
+/ch/*/led	int [0 .. 1]
+/ch/*/main/*/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/ch/*/main/*/on	int [0 .. 1]
+/ch/*/main/*/pre	int [0 .. 1]
+/ch/*/mon	list [A, B, A+B]
+/ch/*/mute	int [0 .. 1]
+/ch/*/name	string [16]
+/ch/*/pan	lin [-100 .. +100], 201 steps
+/ch/*/peq/1f	log [20 .. 20k0 Hz], 960 steps
+/ch/*/peq/1g	lin [-15.0 .. +15.0 dB], 301 steps
+/ch/*/peq/1q	log [0.44 .. 10.00], 181 steps
+/ch/*/peq/2f	log [20 .. 20k0 Hz], 960 steps
+/ch/*/peq/2g	lin [-15.0 .. +15.0 dB], 301 steps
+/ch/*/peq/2q	log [0.44 .. 10.00], 181 steps
+/ch/*/peq/3f	log [20 .. 20k0 Hz], 960 steps
+/ch/*/peq/3g	lin [-15.0 .. +15.0 dB], 301 steps
+/ch/*/peq/3q	log [0.44 .. 10.00], 181 steps
+/ch/*/peq/on	int [0 .. 1]
+/ch/*/postins/$stat	list [-, OK, N/A]
+/ch/*/postins/ins	list [NONE, FX1, FX2, FX3, FX4, FX5, FX6, FX7, FX8, FX9, FX10, FX11, FX12, FX13, FX14, FX15, FX16]
+/ch/*/postins/mode	list [FX, AUTO_X, AUTO_Y]
+/ch/*/postins/on	int [0 .. 1]
+/ch/*/postins/w	lin [-12.0 .. +12.0], 241 steps
+/ch/*/preins/$stat	list [-, OK, N/A]
+/ch/*/preins/ins	list [NONE, FX1, FX2, FX3, FX4, FX5, FX6, FX7, FX8, FX9, FX10, FX11, FX12, FX13, FX14, FX15, FX16]
+/ch/*/preins/on	int [0 .. 1]
+/ch/*/proc	list [GEDI, GEID, GIED, IGED, GDEI, GDIE, GIDE, IGDE, EGDI, EGID, EIGD, IEGD, EDGI, EDIG, EIDG, IEDG, DEGI, DEIG, DIEG, IDEG, DGEI, DGIE, DIGE, IDGE]
+/ch/*/ptap	list [IN, FILT, 3, 4, 5, PFL, AFL, POST]
+/ch/*/send/*/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/ch/*/send/*/mode	list [PRE, POST, GRP]
+/ch/*/send/*/on	int [0 .. 1]
+/ch/*/send/*/pan	lin [-100 .. +100], 201 steps
+/ch/*/send/*/plink	int [0 .. 2]
+/ch/*/send/*/pon	int [0 .. 1]
+/ch/*/send/MX1/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/ch/*/send/MX1/mode	list [PRE, POST, GRP]
+/ch/*/send/MX1/on	int [0 .. 1]
+/ch/*/send/MX1/pan	lin [-100 .. +100], 201 steps
+/ch/*/send/MX1/plink	int [0 .. 2]
+/ch/*/send/MX1/pon	int [0 .. 1]
+/ch/*/send/MX2/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/ch/*/send/MX2/mode	list [PRE, POST, GRP]
+/ch/*/send/MX2/on	int [0 .. 1]
+/ch/*/send/MX2/pan	lin [-100 .. +100], 201 steps
+/ch/*/send/MX2/plink	int [0 .. 2]
+/ch/*/send/MX2/pon	int [0 .. 1]
+/ch/*/send/MX3/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/ch/*/send/MX3/mode	list [PRE, POST, GRP]
+/ch/*/send/MX3/on	int [0 .. 1]
+/ch/*/send/MX3/pan	lin [-100 .. +100], 201 steps
+/ch/*/send/MX3/plink	int [0 .. 2]
+/ch/*/send/MX3/pon	int [0 .. 1]
+/ch/*/send/MX4/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/ch/*/send/MX4/mode	list [PRE, POST, GRP]
+/ch/*/send/MX4/on	int [0 .. 1]
+/ch/*/send/MX4/pan	lin [-100 .. +100], 201 steps
+/ch/*/send/MX4/plink	int [0 .. 2]
+/ch/*/send/MX4/pon	int [0 .. 1]
+/ch/*/send/MX5/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/ch/*/send/MX5/mode	list [PRE, POST, GRP]
+/ch/*/send/MX5/on	int [0 .. 1]
+/ch/*/send/MX5/pan	lin [-100 .. +100], 201 steps
+/ch/*/send/MX5/plink	int [0 .. 2]
+/ch/*/send/MX5/pon	int [0 .. 1]
+/ch/*/send/MX6/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/ch/*/send/MX6/mode	list [PRE, POST, GRP]
+/ch/*/send/MX6/on	int [0 .. 1]
+/ch/*/send/MX6/pan	lin [-100 .. +100], 201 steps
+/ch/*/send/MX6/plink	int [0 .. 2]
+/ch/*/send/MX6/pon	int [0 .. 1]
+/ch/*/send/MX7/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/ch/*/send/MX7/mode	list [PRE, POST, GRP]
+/ch/*/send/MX7/on	int [0 .. 1]
+/ch/*/send/MX7/pan	lin [-100 .. +100], 201 steps
+/ch/*/send/MX7/plink	int [0 .. 2]
+/ch/*/send/MX7/pon	int [0 .. 1]
+/ch/*/send/MX8/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/ch/*/send/MX8/mode	list [PRE, POST, GRP]
+/ch/*/send/MX8/on	int [0 .. 1]
+/ch/*/send/MX8/pan	lin [-100 .. +100], 201 steps
+/ch/*/send/MX8/plink	int [0 .. 2]
+/ch/*/send/MX8/pon	int [0 .. 1]
+/ch/*/solosafe	int [0 .. 1]
+/ch/*/tags	string [80]
+/ch/*/tapwid	lin [-150 .. 150 %], 61 steps
+/ch/*/wid	lin [-150 .. 150 %], 61 steps
+/dca/*/$solo	int [0 .. 1]
+/dca/*/$sololed	int [0 .. 2]
+/dca/*/col	int [1 .. 18]
+/dca/*/fdr	fader [-oo .. 10.0 dB], 1024 steps
+/dca/*/icon	int [0 .. 999]
+/dca/*/led	int [0 .. 1]
+/dca/*/mon	list [A, B, A+B]
+/dca/*/mute	int [0 .. 1]
+/dca/*/name	string [16]
+/fx/*/$a_chn	int [0 .. 76]
+/fx/*/$a_pos	int [0 .. 1]
+/fx/*/$emode	list [M, ST, M/S]
+/fx/*/$esrc	int [0 .. 448]
+/fx/*/fxmix	lin [0 .. 100 %], 101 steps
+/fx/*/mdl	list [NONE, EXT, GEQ, PIA, DOUBLE, PCORR, LIMITER, DE-S2, ENHANCE, EXCITER, P-BASS, ROTARY, PHASER, PANNER, TAPE, MOOD, SUB, RACKAMP, UKROCK, ANGEL, JAZZC, DELUXE, BODY, SOUL, E88, E84, F110, PULSAR, MACH4, C5-CMB, SUB-M, V-IMG, SPKMAN, DEQ3, *EVEN*, *SOUL*, *VINTAGE*, *BUS*, *MASTER*]
+/io/altsw	int [0 .. 1]
+/io/autoaltovr	int [0 .. 1]
+/io/in/$BUS/*/col	int [1 .. 18]
+/io/in/$BUS/*/icon	int [0 .. 999]
+/io/in/$BUS/*/mode	list [M, ST, M/S]
+/io/in/$BUS/*/name	string [16]
+/io/in/$BUS/*/tags	string [80]
+/io/in/$MAIN/*/col	int [1 .. 18]
+/io/in/$MAIN/*/icon	int [0 .. 999]
+/io/in/$MAIN/*/mode	list [M, ST, M/S]
+/io/in/$MAIN/*/name	string [16]
+/io/in/$MAIN/*/tags	string [80]
+/io/in/$MON/*/col	int [1 .. 18]
+/io/in/$MON/*/icon	int [0 .. 999]
+/io/in/$MON/*/mode	list [M, ST, M/S]
+/io/in/$MON/*/name	string [16]
+/io/in/$MON/*/tags	string [80]
+/io/in/$MTX/*/col	int [1 .. 18]
+/io/in/$MTX/*/icon	int [0 .. 999]
+/io/in/$MTX/*/mode	list [M, ST, M/S]
+/io/in/$MTX/*/name	string [16]
+/io/in/$MTX/*/tags	string [80]
+/io/in/$SEND/*/col	int [1 .. 18]
+/io/in/$SEND/*/icon	int [0 .. 999]
+/io/in/$SEND/*/mode	list [M, ST, M/S]
+/io/in/$SEND/*/name	string [16]
+/io/in/$SEND/*/tags	string [80]
+/io/in/A/*/$ha	int [0 .. 4]
+/io/in/A/*/$mute	int [0 .. 2]
+/io/in/A/*/$ract	int [0 .. 1]
+/io/in/A/*/$rdest	string [7]
+/io/in/A/*/col	int [1 .. 18]
+/io/in/A/*/g	lin [-3.0 .. 45.5 dB], 98 steps
+/io/in/A/*/icon	int [0 .. 999]
+/io/in/A/*/mode	list [M, ST, M/S]
+/io/in/A/*/mute	int [0 .. 1]
+/io/in/A/*/name	string [16]
+/io/in/A/*/pol	int [0 .. 1]
+/io/in/A/*/rcvc	int [0 .. 1]
+/io/in/A/*/rmt	list [OFF, AES A, AES B, AES C]
+/io/in/A/*/tags	string [80]
+/io/in/A/*/vph	int [0 .. 1]
+/io/in/AES/*/$mute	int [0 .. 2]
+/io/in/AES/*/col	int [1 .. 18]
+/io/in/AES/*/icon	int [0 .. 999]
+/io/in/AES/*/mode	list [M, ST, M/S]
+/io/in/AES/*/mute	int [0 .. 1]
+/io/in/AES/*/name	string [16]
+/io/in/AES/*/pol	int [0 .. 1]
+/io/in/AES/*/tags	string [80]
+/io/in/AUX/*/$mute	int [0 .. 2]
+/io/in/AUX/*/col	int [1 .. 18]
+/io/in/AUX/*/icon	int [0 .. 999]
+/io/in/AUX/*/mode	list [M, ST, M/S]
+/io/in/AUX/*/mute	int [0 .. 1]
+/io/in/AUX/*/name	string [16]
+/io/in/AUX/*/pol	int [0 .. 1]
+/io/in/AUX/*/tags	string [80]
+/io/in/B/*/$ha	int [0 .. 4]
+/io/in/B/*/$mute	int [0 .. 2]
+/io/in/B/*/$ract	int [0 .. 1]
+/io/in/B/*/$rdest	string [7]
+/io/in/B/*/col	int [1 .. 18]
+/io/in/B/*/g	lin [-3.0 .. 45.5 dB], 98 steps
+/io/in/B/*/icon	int [0 .. 999]
+/io/in/B/*/mode	list [M, ST, M/S]
+/io/in/B/*/mute	int [0 .. 1]
+/io/in/B/*/name	string [16]
+/io/in/B/*/pol	int [0 .. 1]
+/io/in/B/*/rcvc	int [0 .. 1]
+/io/in/B/*/rmt	list [OFF, AES A, AES B, AES C]
+/io/in/B/*/tags	string [80]
+/io/in/B/*/vph	int [0 .. 1]
+/io/in/C/*/$ha	int [0 .. 4]
+/io/in/C/*/$mute	int [0 .. 2]
+/io/in/C/*/$ract	int [0 .. 1]
+/io/in/C/*/$rdest	string [7]
+/io/in/C/*/col	int [1 .. 18]
+/io/in/C/*/g	lin [-3.0 .. 45.5 dB], 98 steps
+/io/in/C/*/icon	int [0 .. 999]
+/io/in/C/*/mode	list [M, ST, M/S]
+/io/in/C/*/mute	int [0 .. 1]
+/io/in/C/*/name	string [16]
+/io/in/C/*/pol	int [0 .. 1]
+/io/in/C/*/rcvc	int [0 .. 1]
+/io/in/C/*/rmt	list [OFF, AES A, AES B, AES C]
+/io/in/C/*/tags	string [80]
+/io/in/C/*/vph	int [0 .. 1]
+/io/in/CRD/*/$mute	int [0 .. 2]
+/io/in/CRD/*/col	int [1 .. 18]
+/io/in/CRD/*/icon	int [0 .. 999]
+/io/in/CRD/*/mode	list [M, ST, M/S]
+/io/in/CRD/*/mute	int [0 .. 1]
+/io/in/CRD/*/name	string [16]
+/io/in/CRD/*/pol	int [0 .. 1]
+/io/in/CRD/*/tags	string [80]
+/io/in/LCL/*/$ha	int [0 .. 4]
+/io/in/LCL/*/$mute	int [0 .. 2]
+/io/in/LCL/*/$ract	int [0 .. 1]
+/io/in/LCL/*/$rdest	string [7]
+/io/in/LCL/*/col	int [1 .. 18]
+/io/in/LCL/*/g	lin [-2.5 .. 45.0 dB], 20 steps
+/io/in/LCL/*/icon	int [0 .. 999]
+/io/in/LCL/*/mode	list [M, ST, M/S]
+/io/in/LCL/*/mute	int [0 .. 1]
+/io/in/LCL/*/name	string [16]
+/io/in/LCL/*/pol	int [0 .. 1]
+/io/in/LCL/*/rcvc	int [0 .. 1]
+/io/in/LCL/*/rmt	list [OFF, AES A, AES B, AES C]
+/io/in/LCL/*/tags	string [80]
+/io/in/LCL/*/vph	int [0 .. 1]
+/io/in/MOD/*/$mute	int [0 .. 2]
+/io/in/MOD/*/col	int [1 .. 18]
+/io/in/MOD/*/icon	int [0 .. 999]
+/io/in/MOD/*/mode	list [M, ST, M/S]
+/io/in/MOD/*/mute	int [0 .. 1]
+/io/in/MOD/*/name	string [16]
+/io/in/MOD/*/pol	int [0 .. 1]
+/io/in/MOD/*/tags	string [80]
+/io/in/OSC/*/$mute	int [0 .. 2]
+/io/in/OSC/*/col	int [1 .. 18]
+/io/in/OSC/*/icon	int [0 .. 999]
+/io/in/OSC/*/mode	list [M, ST, M/S]
+/io/in/OSC/*/mute	int [0 .. 1]
+/io/in/OSC/*/name	string [16]
+/io/in/OSC/*/osc/f	log [20.0 .. 20k00 Hz], 2323 steps
+/io/in/OSC/*/osc/lvl	lin [-40.0 .. -6.0 dB], 69 steps
+/io/in/OSC/*/osc/mode	list [SINE, PINK, WHITE]
+/io/in/OSC/*/tags	string [80]
+/io/in/PLAY/*/$mute	int [0 .. 2]
+/io/in/PLAY/*/col	int [1 .. 18]
+/io/in/PLAY/*/icon	int [0 .. 999]
+/io/in/PLAY/*/mode	list [M, ST, M/S]
+/io/in/PLAY/*/mute	int [0 .. 1]
+/io/in/PLAY/*/name	string [16]
+/io/in/PLAY/*/pol	int [0 .. 1]
+/io/in/PLAY/*/tags	string [80]
+/io/in/SC/*/$mute	int [0 .. 2]
+/io/in/SC/*/col	int [1 .. 18]
+/io/in/SC/*/icon	int [0 .. 999]
+/io/in/SC/*/mode	list [M, ST, M/S]
+/io/in/SC/*/mute	int [0 .. 1]
+/io/in/SC/*/name	string [16]
+/io/in/SC/*/pol	int [0 .. 1]
+/io/in/SC/*/tags	string [80]
+/io/in/USB/*/$mute	int [0 .. 2]
+/io/in/USB/*/col	int [1 .. 18]
+/io/in/USB/*/icon	int [0 .. 999]
+/io/in/USB/*/mode	list [M, ST, M/S]
+/io/in/USB/*/mute	int [0 .. 1]
+/io/in/USB/*/name	string [16]
+/io/in/USB/*/pol	int [0 .. 1]
+/io/in/USB/*/tags	string [80]
+/io/in/USR/*/$mute	int [0 .. 2]
+/io/in/USR/*/col	int [1 .. 18]
+/io/in/USR/*/icon	int [0 .. 999]
+/io/in/USR/*/mode	list [M, ST, M/S]
+/io/in/USR/*/mute	int [0 .. 1]
+/io/in/USR/*/name	string [16]
+/io/in/USR/*/pol	int [0 .. 1]
+/io/in/USR/*/tags	string [80]
+/io/in/USR/*/user/grp	list [OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES]
+/io/in/USR/*/user/in	int [1 .. 64]
+/io/in/USR/*/user/lr	list [L+R, L, R]
+/io/in/USR/*/user/tap	list [PRE, POST]
+/io/out/A/*/grp	list [OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES, USR, OSC, BUS, MAIN, MTX, SEND, MON]
+/io/out/A/*/in	int [1 .. 64]
+/io/out/AES/*/grp	list [OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES, USR, OSC, BUS, MAIN, MTX, SEND, MON]
+/io/out/AES/*/in	int [1 .. 64]
+/io/out/AUX/*/grp	list [OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES, USR, OSC, BUS, MAIN, MTX, SEND, MON]
+/io/out/AUX/*/in	int [1 .. 64]
+/io/out/B/*/grp	list [OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES, USR, OSC, BUS, MAIN, MTX, SEND, MON]
+/io/out/B/*/in	int [1 .. 64]
+/io/out/C/*/grp	list [OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES, USR, OSC, BUS, MAIN, MTX, SEND, MON]
+/io/out/C/*/in	int [1 .. 64]
+/io/out/CRD/*/grp	list [OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES, USR, OSC, BUS, MAIN, MTX, SEND, MON]
+/io/out/CRD/*/in	int [1 .. 64]
+/io/out/LCL/*/grp	list [OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES, USR, OSC, BUS, MAIN, MTX, SEND, MON]
+/io/out/LCL/*/in	int [1 .. 64]
+/io/out/MOD/*/grp	list [OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES, USR, OSC, BUS, MAIN, MTX, SEND, MON]
+/io/out/MOD/*/in	int [1 .. 64]
+/io/out/REC/*/grp	list [OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES, USR, OSC, BUS, MAIN, MTX, SEND, MON]
+/io/out/REC/*/in	int [1 .. 64]
+/io/out/SC/*/grp	list [OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES, USR, OSC, BUS, MAIN, MTX, SEND, MON]
+/io/out/SC/*/in	int [1 .. 64]
+/io/out/USB/*/grp	list [OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES, USR, OSC, BUS, MAIN, MTX, SEND, MON]
+/io/out/USB/*/in	int [1 .. 64]
+/main/*/$col	int [1 .. 18]
+/main/*/$fdr	fader [-oo .. 10.0 dB], 1024 steps
+/main/*/$icon	int [0 .. 999]
+/main/*/$mute	int [0 .. 2]
+/main/*/$muteovr	int [0 .. 1]
+/main/*/$name	string [16]
+/main/*/$solo	int [0 .. 1]
+/main/*/$sololed	int [0 .. 2]
+/main/*/busmono	int [0 .. 1]
+/main/*/col	int [1 .. 18]
+/main/*/dly/dly	lin [0.1 .. 150.0 m], 1500 steps
+/main/*/dly/mode	list [M, FT, MS, SMP]
+/main/*/dly/on	int [0 .. 1]
+/main/*/dyn/att	lin [0 .. 120 ms], 121 steps
+/main/*/dyn/auto	int [0 .. 1]
+/main/*/dyn/det	list [PEAK, RMS]
+/main/*/dyn/env	list [LIN, LOG]
+/main/*/dyn/gain	lin [-6.0 .. 12.0 dB], 37 steps
+/main/*/dyn/hld	lin [1 .. 200 ms], 200 steps
+/main/*/dyn/knee	int [0 .. 5]
+/main/*/dyn/mdl	list [GATE, DUCK, E88, 9000G, D241G, DS902, DEQ, DEQ2, WAVE, PSE, CMB, RIDE, WARM, COMP, EXP, B160, B560, D241C, ECL33, 9000C, SBUS, RED3, 76LA, LA, F670, BLISS, NSTR, 2250, L100, E88C, LMT, ONEC]
+/main/*/dyn/mix	lin [0 .. 100 %], 101 steps
+/main/*/dyn/on	int [0 .. 1]
+/main/*/dyn/ratio	list [1.1, 1.2, 1.3, 1.5, 1.7, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0,  10,  20,  50, 100]
+/main/*/dyn/rel	log [4 .. 4000 ms], 121 steps
+/main/*/dyn/thr	lin [-60.0 .. 0.0 dB], 121 steps
+/main/*/dynsc/$solo	int [0 .. 1]
+/main/*/dynsc/f	log [20 .. 20k0 Hz], 901 steps
+/main/*/dynsc/q	log [0.44 .. 10.00], 181 steps
+/main/*/dynsc/src	list [SELF, BUS.1, BUS.2, BUS.3, BUS.4, BUS.5, BUS.6, BUS.7, BUS.8, BUS.9, BUS.10, BUS.11, BUS.12, BUS.13, BUS.14, BUS.15, BUS.16, MAIN.1, MAIN.2, MAIN.3, MAIN.4, MTX.1, MTX.2, MTX.3, MTX.4, MTX.5, MTX.6, MTX.7, MTX.8, AUX.1, AUX.2, AUX.3, AUX.4, AUX.5, AUX.6, AUX.7, AUX.8]
+/main/*/dynsc/tap	list [BUS, DYN, PFL, AFL, EQ, INS2]
+/main/*/dynsc/type	list [OFF, LP12, HP12, BP, NOTCH]
+/main/*/dynxo/$solo	int [0 .. 1]
+/main/*/dynxo/depth	lin [-30.0 .. 30.0 dB], 121 steps
+/main/*/dynxo/f	log [20 .. 20k0 Hz], 901 steps
+/main/*/dynxo/q	log [0.40 .. 4.00], 121 steps
+/main/*/dynxo/type	list [OFF, LO, HI, S6, S12, PEAK]
+/main/*/eq/$solo	int [0 .. 1]
+/main/*/eq/$solobd	int [1 .. 8]
+/main/*/eq/1f	log [20.0 .. 20k00 Hz], 961 steps
+/main/*/eq/1g	lin [-15.0 .. +15.0 dB], 301 steps
+/main/*/eq/1q	log [0.44 .. 10.00], 181 steps
+/main/*/eq/2f	log [20.0 .. 20k00 Hz], 961 steps
+/main/*/eq/2g	lin [-15.0 .. +15.0 dB], 301 steps
+/main/*/eq/2q	log [0.44 .. 10.00], 181 steps
+/main/*/eq/3f	log [20.0 .. 20k00 Hz], 961 steps
+/main/*/eq/3g	lin [-15.0 .. +15.0 dB], 301 steps
+/main/*/eq/3q	log [0.44 .. 10.00], 181 steps
+/main/*/eq/4f	log [20.0 .. 20k00 Hz], 961 steps
+/main/*/eq/4g	lin [-15.0 .. +15.0 dB], 301 steps
+/main/*/eq/4q	log [0.44 .. 10.00], 181 steps
+/main/*/eq/5f	log [20.0 .. 20k00 Hz], 961 steps
+/main/*/eq/5g	lin [-15.0 .. +15.0 dB], 301 steps
+/main/*/eq/5q	log [0.44 .. 10.00], 181 steps
+/main/*/eq/6f	log [20.0 .. 20k00 Hz], 961 steps
+/main/*/eq/6g	lin [-15.0 .. +15.0 dB], 301 steps
+/main/*/eq/6q	log [0.44 .. 10.00], 181 steps
+/main/*/eq/heq	list [PEQ, SHV, CUT, BW6, BW12, BS12, LR12, BW18, BW24, BS24, LR24, BW48, LR48]
+/main/*/eq/hf	log [20.0 .. 20k00 Hz], 961 steps
+/main/*/eq/hg	lin [-15.0 .. +15.0 dB], 301 steps
+/main/*/eq/hq	log [0.44 .. 10.00], 181 steps
+/main/*/eq/leq	list [PEQ, SHV, CUT, BW6, BW12, BS12, LR12, BW18, BW24, BS24, LR24, BW48, LR48]
+/main/*/eq/lf	log [20.0 .. 20k00 Hz], 961 steps
+/main/*/eq/lg	lin [-15.0 .. +15.0 dB], 301 steps
+/main/*/eq/lq	log [0.44 .. 10.00], 181 steps
+/main/*/eq/mdl	list [STD, SOUL, E88, E84, F110, PULSAR, PIA]
+/main/*/eq/mix	lin [0 .. 125 %], 126 steps
+/main/*/eq/on	int [0 .. 1]
+/main/*/eq/tilt	lin [-6.00 .. +6.00 dB], 49 steps
+/main/*/fdr	fader [-oo .. 10.0 dB], 1024 steps
+/main/*/icon	int [0 .. 999]
+/main/*/in/set/bal	lin [-9.0 .. +9.0 dB], 181 steps
+/main/*/in/set/inv	int [0 .. 1]
+/main/*/in/set/trim	lin [-18.0 .. +18.0 dB], 361 steps
+/main/*/led	int [0 .. 1]
+/main/*/mon	list [A, B, A+B]
+/main/*/mute	int [0 .. 1]
+/main/*/name	string [16]
+/main/*/pan	lin [-100 .. +100], 201 steps
+/main/*/postins/$stat	list [-, OK, N/A]
+/main/*/postins/ins	list [NONE, FX1, FX2, FX3, FX4, FX5, FX6, FX7, FX8, FX9, FX10, FX11, FX12, FX13, FX14, FX15, FX16]
+/main/*/postins/on	int [0 .. 1]
+/main/*/preins/$stat	list [-, OK, N/A]
+/main/*/preins/ins	list [NONE, FX1, FX2, FX3, FX4, FX5, FX6, FX7, FX8, FX9, FX10, FX11, FX12, FX13, FX14, FX15, FX16]
+/main/*/preins/on	int [0 .. 1]
+/main/*/send/MX1/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/main/*/send/MX1/on	int [0 .. 1]
+/main/*/send/MX1/pre	int [0 .. 1]
+/main/*/send/MX2/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/main/*/send/MX2/on	int [0 .. 1]
+/main/*/send/MX2/pre	int [0 .. 1]
+/main/*/send/MX3/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/main/*/send/MX3/on	int [0 .. 1]
+/main/*/send/MX3/pre	int [0 .. 1]
+/main/*/send/MX4/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/main/*/send/MX4/on	int [0 .. 1]
+/main/*/send/MX4/pre	int [0 .. 1]
+/main/*/send/MX5/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/main/*/send/MX5/on	int [0 .. 1]
+/main/*/send/MX5/pre	int [0 .. 1]
+/main/*/send/MX6/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/main/*/send/MX6/on	int [0 .. 1]
+/main/*/send/MX6/pre	int [0 .. 1]
+/main/*/send/MX7/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/main/*/send/MX7/on	int [0 .. 1]
+/main/*/send/MX7/pre	int [0 .. 1]
+/main/*/send/MX8/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/main/*/send/MX8/on	int [0 .. 1]
+/main/*/send/MX8/pre	int [0 .. 1]
+/main/*/tags	string [80]
+/main/*/wid	lin [-150 .. 150 %], 61 steps
+/mgrp/*/mute	int [0 .. 1]
+/mgrp/*/name	string [16]
+/mtx/*/$col	int [1 .. 18]
+/mtx/*/$fdr	fader [-oo .. 10.0 dB], 1024 steps
+/mtx/*/$icon	int [0 .. 999]
+/mtx/*/$mute	int [0 .. 2]
+/mtx/*/$muteovr	int [0 .. 1]
+/mtx/*/$name	string [16]
+/mtx/*/$solo	int [0 .. 1]
+/mtx/*/$sololed	int [0 .. 2]
+/mtx/*/busmono	int [0 .. 1]
+/mtx/*/col	int [1 .. 18]
+/mtx/*/dir/in	list [OFF, AES, MON.PH, MON.SPK, MON.BUS]
+/mtx/*/dir/inv	int [0 .. 1]
+/mtx/*/dir/lvl	fader [-oo .. 10.0 dB], 1024 steps
+/mtx/*/dir/on	int [0 .. 1]
+/mtx/*/dly/dly	lin [0.1 .. 150.0 m], 1500 steps
+/mtx/*/dly/mode	list [M, FT, MS, SMP]
+/mtx/*/dly/on	int [0 .. 1]
+/mtx/*/dyn/att	lin [0 .. 120 ms], 121 steps
+/mtx/*/dyn/auto	int [0 .. 1]
+/mtx/*/dyn/det	list [PEAK, RMS]
+/mtx/*/dyn/env	list [LIN, LOG]
+/mtx/*/dyn/gain	lin [-6.0 .. 12.0 dB], 37 steps
+/mtx/*/dyn/hld	lin [1 .. 200 ms], 200 steps
+/mtx/*/dyn/knee	int [0 .. 5]
+/mtx/*/dyn/mdl	list [GATE, DUCK, E88, 9000G, D241G, DS902, DEQ, DEQ2, WAVE, PSE, CMB, RIDE, WARM, COMP, EXP, B160, B560, D241C, ECL33, 9000C, SBUS, RED3, 76LA, LA, F670, BLISS, NSTR, 2250, L100, E88C, LMT, ONEC]
+/mtx/*/dyn/mix	lin [0 .. 100 %], 101 steps
+/mtx/*/dyn/on	int [0 .. 1]
+/mtx/*/dyn/ratio	list [1.1, 1.2, 1.3, 1.5, 1.7, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0,  10,  20,  50, 100]
+/mtx/*/dyn/rel	log [4 .. 4000 ms], 121 steps
+/mtx/*/dyn/thr	lin [-60.0 .. 0.0 dB], 121 steps
+/mtx/*/dynsc/$solo	int [0 .. 1]
+/mtx/*/dynsc/f	log [20 .. 20k0 Hz], 901 steps
+/mtx/*/dynsc/q	log [0.44 .. 10.00], 181 steps
+/mtx/*/dynsc/src	list [SELF, BUS.1, BUS.2, BUS.3, BUS.4, BUS.5, BUS.6, BUS.7, BUS.8, BUS.9, BUS.10, BUS.11, BUS.12, BUS.13, BUS.14, BUS.15, BUS.16, MAIN.1, MAIN.2, MAIN.3, MAIN.4, MTX.1, MTX.2, MTX.3, MTX.4, MTX.5, MTX.6, MTX.7, MTX.8, AUX.1, AUX.2, AUX.3, AUX.4, AUX.5, AUX.6, AUX.7, AUX.8]
+/mtx/*/dynsc/tap	list [BUS, DYN, PFL, AFL, EQ, INS2]
+/mtx/*/dynsc/type	list [OFF, LP12, HP12, BP, NOTCH]
+/mtx/*/dynxo/$solo	int [0 .. 1]
+/mtx/*/dynxo/depth	lin [-30.0 .. 30.0 dB], 121 steps
+/mtx/*/dynxo/f	log [20 .. 20k0 Hz], 901 steps
+/mtx/*/dynxo/q	log [0.40 .. 4.00], 121 steps
+/mtx/*/dynxo/type	list [OFF, LO, HI, S6, S12, PEAK]
+/mtx/*/eq/$solo	int [0 .. 1]
+/mtx/*/eq/$solobd	int [1 .. 8]
+/mtx/*/eq/1f	log [20.0 .. 20k00 Hz], 961 steps
+/mtx/*/eq/1g	lin [-15.0 .. +15.0 dB], 301 steps
+/mtx/*/eq/1q	log [0.44 .. 10.00], 181 steps
+/mtx/*/eq/2f	log [20.0 .. 20k00 Hz], 961 steps
+/mtx/*/eq/2g	lin [-15.0 .. +15.0 dB], 301 steps
+/mtx/*/eq/2q	log [0.44 .. 10.00], 181 steps
+/mtx/*/eq/3f	log [20.0 .. 20k00 Hz], 961 steps
+/mtx/*/eq/3g	lin [-15.0 .. +15.0 dB], 301 steps
+/mtx/*/eq/3q	log [0.44 .. 10.00], 181 steps
+/mtx/*/eq/4f	log [20.0 .. 20k00 Hz], 961 steps
+/mtx/*/eq/4g	lin [-15.0 .. +15.0 dB], 301 steps
+/mtx/*/eq/4q	log [0.44 .. 10.00], 181 steps
+/mtx/*/eq/5f	log [20.0 .. 20k00 Hz], 961 steps
+/mtx/*/eq/5g	lin [-15.0 .. +15.0 dB], 301 steps
+/mtx/*/eq/5q	log [0.44 .. 10.00], 181 steps
+/mtx/*/eq/6f	log [20.0 .. 20k00 Hz], 961 steps
+/mtx/*/eq/6g	lin [-15.0 .. +15.0 dB], 301 steps
+/mtx/*/eq/6q	log [0.44 .. 10.00], 181 steps
+/mtx/*/eq/heq	list [PEQ, SHV, CUT, BW6, BW12, BS12, LR12, BW18, BW24, BS24, LR24, BW48, LR48]
+/mtx/*/eq/hf	log [20.0 .. 20k00 Hz], 961 steps
+/mtx/*/eq/hg	lin [-15.0 .. +15.0 dB], 301 steps
+/mtx/*/eq/hq	log [0.44 .. 10.00], 181 steps
+/mtx/*/eq/leq	list [PEQ, SHV, CUT, BW6, BW12, BS12, LR12, BW18, BW24, BS24, LR24, BW48, LR48]
+/mtx/*/eq/lf	log [20.0 .. 20k00 Hz], 961 steps
+/mtx/*/eq/lg	lin [-15.0 .. +15.0 dB], 301 steps
+/mtx/*/eq/lq	log [0.44 .. 10.00], 181 steps
+/mtx/*/eq/mdl	list [STD, SOUL, E88, E84, F110, PULSAR, PIA]
+/mtx/*/eq/mix	lin [0 .. 125 %], 126 steps
+/mtx/*/eq/on	int [0 .. 1]
+/mtx/*/eq/tilt	lin [-6.00 .. +6.00 dB], 49 steps
+/mtx/*/fdr	fader [-oo .. 10.0 dB], 1024 steps
+/mtx/*/icon	int [0 .. 999]
+/mtx/*/in/set/bal	lin [-9.0 .. +9.0 dB], 181 steps
+/mtx/*/in/set/inv	int [0 .. 1]
+/mtx/*/in/set/trim	lin [-18.0 .. +18.0 dB], 361 steps
+/mtx/*/led	int [0 .. 1]
+/mtx/*/mon	list [A, B, A+B]
+/mtx/*/mute	int [0 .. 1]
+/mtx/*/name	string [16]
+/mtx/*/pan	lin [-100 .. +100], 201 steps
+/mtx/*/postins/$stat	list [-, OK, N/A]
+/mtx/*/postins/ins	list [NONE, FX1, FX2, FX3, FX4, FX5, FX6, FX7, FX8, FX9, FX10, FX11, FX12, FX13, FX14, FX15, FX16]
+/mtx/*/postins/on	int [0 .. 1]
+/mtx/*/preins/$stat	list [-, OK, N/A]
+/mtx/*/preins/ins	list [NONE, FX1, FX2, FX3, FX4, FX5, FX6, FX7, FX8, FX9, FX10, FX11, FX12, FX13, FX14, FX15, FX16]
+/mtx/*/preins/on	int [0 .. 1]
+/mtx/*/tags	string [80]
+/mtx/*/wid	lin [-150 .. 150 %], 61 steps
+/play/$actfile	string [256]
+/play/$actidx	int [0 .. 0]
+/play/$action	list [IDLE, STOP, PLAY, PAUSE, NEXT, PREV, PLAYFILE]
+/play/$actionidx	int [0 .. 0]
+/play/$actlist	string [256]
+/play/$actstate	list [STOP, PLAY, PAUSE, ERROR]
+/play/$album	string [64]
+/play/$artist	string [64]
+/play/$channels	list [1, 2, 3, 4]
+/play/$format	list [WAV, MP3, FLAC]
+/play/$playfile	string [256]
+/play/$pos	lin [0:00 .. 9:59:59], 36000 steps
+/play/$rate	list [44.1, 48]
+/play/$resolution	list [16, 24]
+/play/$song	string [64]
+/play/$songs	list []
+/play/$total	lin [0:00 .. 9:59:59], 36000 steps
+/play/repeat	int [0 .. 1]
+/rec/$actfile	string [256]
+/rec/$action	list [IDLE, STOP, REC, PAUSE, NEWFILE]
+/rec/$actstate	list [STOP, REC, PAUSE, ERROR]
+/rec/$path	string [256]
+/rec/$time	lin [0:00 .. 9:59:59], 36000 steps
+/rec/channels	list [2, 4]
+/rec/resolution	list [16, 24]
+/$ctl/layer/R/3/ofs	int [0 .. 36]
+/$ctl/layer/RCK/1/ofs	int [0 .. 36]
+/cards/wlive/1/$stat/sessionlist	list [2027-01-06 00:07:16 +10, 2025-10-27 16:31:02  10, 2025-10-26 15:49:04  10, 2025-10-25 22:34:20  10, 2025-10-25 21:05:40  10, 2025-10-25 20:32:58  10, 2025-09-27 19:26:24  10]
+/fx/1/mdl	list [NONE, EXT, HALL, ROOM, CHAMBER, PLATE, CONCERT, AMBI, V-ROOM, V-REV, V-PLATE, GATED, REVERSE, DEL/REV, SHIMMER, SPRING, DIMCRS, CHORUS, FLANGER, ST-DL, TAP-DL, TAPE-DL, OILCAN, BBD-DL, PITCH, D-PITCH, VSS3, BPLATE, GEQ, PIA, DOUBLE, PCORR, LIMITER, DE-S2, ENHANCE, EXCITER, P-BASS, ROTARY, PHASER, PANNER, TAPE, MOOD, SUB, RACKAMP, UKROCK, ANGEL, JAZZC, DELUXE, BODY, SOUL, E88, E84, F110, PULSAR, MACH4, C5-CMB, SUB-M, V-IMG, SPKMAN, DEQ3, *EVEN*, *SOUL*, *VINTAGE*, *BUS*, *MASTER*]
+/fx/2/mdl	list [NONE, EXT, HALL, ROOM, CHAMBER, PLATE, CONCERT, AMBI, V-ROOM, V-REV, V-PLATE, GATED, REVERSE, DEL/REV, SHIMMER, SPRING, DIMCRS, CHORUS, FLANGER, ST-DL, TAP-DL, TAPE-DL, OILCAN, BBD-DL, PITCH, D-PITCH, VSS3, BPLATE, GEQ, PIA, DOUBLE, PCORR, LIMITER, DE-S2, ENHANCE, EXCITER, P-BASS, ROTARY, PHASER, PANNER, TAPE, MOOD, SUB, RACKAMP, UKROCK, ANGEL, JAZZC, DELUXE, BODY, SOUL, E88, E84, F110, PULSAR, MACH4, C5-CMB, SUB-M, V-IMG, SPKMAN, DEQ3, *EVEN*, *SOUL*, *VINTAGE*, *BUS*, *MASTER*]
+/fx/3/mdl	list [NONE, EXT, HALL, ROOM, CHAMBER, PLATE, CONCERT, AMBI, V-ROOM, V-REV, V-PLATE, GATED, REVERSE, DEL/REV, SHIMMER, SPRING, DIMCRS, CHORUS, FLANGER, ST-DL, TAP-DL, TAPE-DL, OILCAN, BBD-DL, PITCH, D-PITCH, VSS3, BPLATE, GEQ, PIA, DOUBLE, PCORR, LIMITER, DE-S2, ENHANCE, EXCITER, P-BASS, ROTARY, PHASER, PANNER, TAPE, MOOD, SUB, RACKAMP, UKROCK, ANGEL, JAZZC, DELUXE, BODY, SOUL, E88, E84, F110, PULSAR, MACH4, C5-CMB, SUB-M, V-IMG, SPKMAN, DEQ3, *EVEN*, *SOUL*, *VINTAGE*, *BUS*, *MASTER*]
+/fx/4/mdl	list [NONE, EXT, HALL, ROOM, CHAMBER, PLATE, CONCERT, AMBI, V-ROOM, V-REV, V-PLATE, GATED, REVERSE, DEL/REV, SHIMMER, SPRING, DIMCRS, CHORUS, FLANGER, ST-DL, TAP-DL, TAPE-DL, OILCAN, BBD-DL, PITCH, D-PITCH, VSS3, BPLATE, GEQ, PIA, DOUBLE, PCORR, LIMITER, DE-S2, ENHANCE, EXCITER, P-BASS, ROTARY, PHASER, PANNER, TAPE, MOOD, SUB, RACKAMP, UKROCK, ANGEL, JAZZC, DELUXE, BODY, SOUL, E88, E84, F110, PULSAR, MACH4, C5-CMB, SUB-M, V-IMG, SPKMAN, DEQ3, *EVEN*, *SOUL*, *VINTAGE*, *BUS*, *MASTER*]
+/fx/5/mdl	list [NONE, EXT, HALL, ROOM, CHAMBER, PLATE, CONCERT, AMBI, V-ROOM, V-REV, V-PLATE, GATED, REVERSE, DEL/REV, SHIMMER, SPRING, DIMCRS, CHORUS, FLANGER, ST-DL, TAP-DL, TAPE-DL, OILCAN, BBD-DL, PITCH, D-PITCH, VSS3, BPLATE, GEQ, PIA, DOUBLE, PCORR, LIMITER, DE-S2, ENHANCE, EXCITER, P-BASS, ROTARY, PHASER, PANNER, TAPE, MOOD, SUB, RACKAMP, UKROCK, ANGEL, JAZZC, DELUXE, BODY, SOUL, E88, E84, F110, PULSAR, MACH4, C5-CMB, SUB-M, V-IMG, SPKMAN, DEQ3, *EVEN*, *SOUL*, *VINTAGE*, *BUS*, *MASTER*]
+/fx/6/mdl	list [NONE, EXT, HALL, ROOM, CHAMBER, PLATE, CONCERT, AMBI, V-ROOM, V-REV, V-PLATE, GATED, REVERSE, DEL/REV, SHIMMER, SPRING, DIMCRS, CHORUS, FLANGER, ST-DL, TAP-DL, TAPE-DL, OILCAN, BBD-DL, PITCH, D-PITCH, VSS3, BPLATE, GEQ, PIA, DOUBLE, PCORR, LIMITER, DE-S2, ENHANCE, EXCITER, P-BASS, ROTARY, PHASER, PANNER, TAPE, MOOD, SUB, RACKAMP, UKROCK, ANGEL, JAZZC, DELUXE, BODY, SOUL, E88, E84, F110, PULSAR, MACH4, C5-CMB, SUB-M, V-IMG, SPKMAN, DEQ3, *EVEN*, *SOUL*, *VINTAGE*, *BUS*, *MASTER*]
+/fx/7/mdl	list [NONE, EXT, HALL, ROOM, CHAMBER, PLATE, CONCERT, AMBI, V-ROOM, V-REV, V-PLATE, GATED, REVERSE, DEL/REV, SHIMMER, SPRING, DIMCRS, CHORUS, FLANGER, ST-DL, TAP-DL, TAPE-DL, OILCAN, BBD-DL, PITCH, D-PITCH, VSS3, BPLATE, GEQ, PIA, DOUBLE, PCORR, LIMITER, DE-S2, ENHANCE, EXCITER, P-BASS, ROTARY, PHASER, PANNER, TAPE, MOOD, SUB, RACKAMP, UKROCK, ANGEL, JAZZC, DELUXE, BODY, SOUL, E88, E84, F110, PULSAR, MACH4, C5-CMB, SUB-M, V-IMG, SPKMAN, DEQ3, *EVEN*, *SOUL*, *VINTAGE*, *BUS*, *MASTER*]
+/fx/8/mdl	list [NONE, EXT, HALL, ROOM, CHAMBER, PLATE, CONCERT, AMBI, V-ROOM, V-REV, V-PLATE, GATED, REVERSE, DEL/REV, SHIMMER, SPRING, DIMCRS, CHORUS, FLANGER, ST-DL, TAP-DL, TAPE-DL, OILCAN, BBD-DL, PITCH, D-PITCH, VSS3, BPLATE, GEQ, PIA, DOUBLE, PCORR, LIMITER, DE-S2, ENHANCE, EXCITER, P-BASS, ROTARY, PHASER, PANNER, TAPE, MOOD, SUB, RACKAMP, UKROCK, ANGEL, JAZZC, DELUXE, BODY, SOUL, E88, E84, F110, PULSAR, MACH4, C5-CMB, SUB-M, V-IMG, SPKMAN, DEQ3, *EVEN*, *SOUL*, *VINTAGE*, *BUS*, *MASTER*]
+/io/in/USR/1/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/1/user/in	int [1 .. 40]
+/io/in/USR/10/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/10/user/in	int [1 .. 40]
+/io/in/USR/11/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/11/user/in	int [1 .. 40]
+/io/in/USR/12/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/12/user/in	int [1 .. 40]
+/io/in/USR/13/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/13/user/in	int [1 .. 40]
+/io/in/USR/14/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/14/user/in	int [1 .. 40]
+/io/in/USR/15/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/15/user/in	int [1 .. 40]
+/io/in/USR/16/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/16/user/in	int [1 .. 40]
+/io/in/USR/17/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/17/user/in	int [1 .. 40]
+/io/in/USR/18/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/18/user/in	int [1 .. 40]
+/io/in/USR/19/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/19/user/in	int [1 .. 40]
+/io/in/USR/2/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/2/user/in	int [1 .. 40]
+/io/in/USR/20/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/20/user/in	int [1 .. 40]
+/io/in/USR/21/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/21/user/in	int [1 .. 40]
+/io/in/USR/22/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/22/user/in	int [1 .. 40]
+/io/in/USR/23/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/23/user/in	int [1 .. 40]
+/io/in/USR/24/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/24/user/in	int [1 .. 40]
+/io/in/USR/3/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/3/user/in	int [1 .. 40]
+/io/in/USR/4/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/4/user/in	int [1 .. 40]
+/io/in/USR/5/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/5/user/in	int [1 .. 40]
+/io/in/USR/6/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/6/user/in	int [1 .. 40]
+/io/in/USR/7/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/7/user/in	int [1 .. 40]
+/io/in/USR/8/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/8/user/in	int [1 .. 40]
+/io/in/USR/9/user/grp	list [OFF, CH, AUX, BUS, MAIN, MTX]
+/io/in/USR/9/user/in	int [1 .. 40]

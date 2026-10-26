@@ -3,7 +3,9 @@
 //! * [`schema`]: the WING parameter tree (names, ids, types, ranges), generated
 //!   from libwing's parameter sweep (Apache-2.0).
 //! * [`map`]: the tree mapped onto the engine, both ways, with unit
-//!   conversions; nodes without an equivalent live in a shadow store.
+//!   conversions; nodes without an equivalent answer the WING's factory
+//!   values (`data/wing_factory.tsv`) and keep what clients set.
+//! * [`host`]: the application's settings that are WING parameters.
 //! * Remote servers that answer like a WING: discovery (UDP 2222), OSC (UDP
 //!   2223) and the Native protocol (TCP 2222, meters over UDP).
 //! * WING snapshot (.snap) and show (.show) files.
@@ -12,6 +14,7 @@
 //! Maillot's "WING Remote Protocols"), libwing and the Bitfocus Companion
 //! module; no Behringer firmware or WING Edit code is used.
 
+pub mod host;
 pub mod json;
 pub mod map;
 pub mod meters;

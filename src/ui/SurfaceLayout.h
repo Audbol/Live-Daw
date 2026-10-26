@@ -3,6 +3,7 @@
 #include <juce_graphics/juce_graphics.h>
 
 #include <array>
+#include <optional>
 
 /** Surface geometry that has no component behind it: the fader strips' rows
     and the WING COMPACT's surface plan (the main component and the COMPACT's
@@ -225,6 +226,21 @@ namespace compact
     inline KeyMode keyModeFromToken (const juce::String& t)
     {
         return t == "DCA" ? KeyMode::Dca : t == "MAIN" ? KeyMode::Main : t == "USER" ? KeyMode::User : KeyMode::Bus;
+    }
+
+    /** What key `key` (0-based) puts on fader 13 when pressed [WING COMPACT]:
+        in BUS mode BUS 1-16, in MAIN MATRIX mode MAIN 1-4 on keys 1-4 and
+        MATRIX 1-8 on keys 9-16 (keys 5-8 do nothing); nothing in DCA and
+        USER mode. */
+    inline std::optional<MainFader> keyMainFader (KeyMode m, int key)
+    {
+        if (m == KeyMode::Bus && key >= 0 && key < 16)
+            return MainFader { MainFader::Bus, key + 1 };
+        if (m == KeyMode::Main && key >= 0 && key < 4)
+            return MainFader { MainFader::Main, key + 1 };
+        if (m == KeyMode::Main && key >= 8 && key < 16)
+            return MainFader { MainFader::Matrix, key - 7 };
+        return std::nullopt;
     }
 
     inline juce::String keyModeToken (KeyMode m)

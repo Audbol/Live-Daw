@@ -59,11 +59,21 @@ namespace
         return c;
     }
 
-    std::unique_ptr<ChoiceKeys> fixedChoice (juce::StringArray labels, int lit, std::vector<juce::Colour> colours = {})
+    /** The settings of features Sidecar doesn't have (a screen lock, a
+        mouse, HA remote control, ...): drawn and switched as on the console,
+        and only kept in the app settings. */
+    juce::String inertKey (const juce::String& name) { return "setup.inert." + name; }
+
+    std::unique_ptr<OnKey> inertOnKey (juce::PropertiesFile& settings, const juce::String& name, bool defaultValue = false)
     {
-        auto k = std::make_unique<ChoiceKeys> (std::move (labels), [lit] { return lit; }, nullptr, std::move (colours));
-        k->setEnabled (false);
-        return k;
+        return OnKey::forSetting (settings, inertKey (name), defaultValue);
+    }
+
+    std::unique_ptr<ChoiceKeys> inertChoice (juce::PropertiesFile& settings, const juce::String& name, juce::StringArray labels, int defaultValue)
+    {
+        const auto key = inertKey (name);
+        return std::make_unique<ChoiceKeys> (std::move (labels), [&settings, key, defaultValue] { return settings.getIntValue (key, defaultValue); },
+                                             [&settings, key] (int i) { settings.setValue (key, i); });
     }
 
     // ALT inputs and ALT-selected tiles [3.1].
@@ -528,8 +538,8 @@ namespace
                                    { "BTNS/LEDS", "btnsLeds", 90, red, true }, { "BACKLIGHT", "backlight", 25, red, true },
                                    { "METERS", "meters", 40, red, true }, { "COLOR LED", "colorLed", 25, purple, true },
                                    { "SCRIBBLE", "scribble", 60, purple, true }, { "SCR CONT", "scrCont", 50, purple, true },
-                                   { "PATCH", "patch", 0, brown, false }, { "GLOW", "glow", 0, brown, false },
-                                   { "LAMP", "lamp", 0, olive, false } };
+                                   { "PATCH", "patch", 0, brown, true }, { "GLOW", "glow", 0, brown, true },
+                                   { "LAMP", "lamp", 0, olive, true } }; // PATCH, GLOW and LAMP: only kept
             for (auto& s : specs)
             {
                 auto* t = lights.add (new LightTile (ctx, s.caption, s.id, s.value, s.tint));
@@ -541,7 +551,7 @@ namespace
             addAndMakeVisible (console);
 
             operation.addRow ("CONFIRM LIBRARY LOAD", OnKey::forSetting (ctx.settings, prefs::confirmLibraryLoad, true), 1.3f);
-            operation.addRow ("SHOW METER PAGE WHEN LOCKED", OnKey::fixed (false), 1.3f, false); // no screen lock
+            operation.addRow ("SHOW METER PAGE WHEN LOCKED", inertOnKey (ctx.settings, "meterPageWhenLocked"), 1.3f); // no screen lock: only kept
             // The status bar's title tile shows the active scene on every screen (MainDisplay reads it).
             operation.addRow ("ALWAYS SHOW ACTIVE SCENE", OnKey::forSetting (ctx.settings, uiprefs::alwaysShowScene, false), 1.3f);
             addAndMakeVisible (operation);
@@ -555,8 +565,16 @@ namespace
                                                           [this] (int i) { ctx.settings.setValue (prefs::touchFaderRes, i); }),
                             3.6f);
             options.newBox();
-            options.addRow ("MOUSE DISABLES TOUCH", OnKey::fixed (false), 1.3f, false);
-            options.addRow ("MOUSE SPEED", std::make_unique<juce::Slider> (juce::Slider::LinearHorizontal, juce::Slider::NoTextBox), 2.5f, false);
+            // [3.1] a 48 px row and a 40 px one (the slider's thumb 24 px tall).
+            // No mouse port here: both are only kept.
+            options.addRow ("MOUSE DISABLES TOUCH", inertOnKey (ctx.settings, "mouseDisablesTouch"), 1.3f, true, false, 48.0f / 52.0f);
+            {
+                auto speed = std::make_unique<juce::Slider> (juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
+                speed->setRange (0.0, 100.0, 1.0);
+                speed->setValue (ctx.settings.getDoubleValue (inertKey ("mouseSpeed"), 50.0), juce::dontSendNotification);
+                speed->onValueChange = [this, s = speed.get()] { ctx.settings.setValue (inertKey ("mouseSpeed"), s->getValue()); };
+                options.addRow ("MOUSE SPEED", std::move (speed), 2.5f, true, false, 40.0f / 52.0f);
+            }
             options.newBox();
             // USB HOST SPEED: FS records 2 channels at 16 bit, HS 4 tracks at 24 bit (the USB recorder).
             options.addRow ("USB HOST SPEED",
@@ -646,38 +664,38 @@ namespace
         void paint (juce::Graphics& g) override
         {
             // [Fig. 34] 20 px rounded cells on a 22 px pitch, dark blue (dark
-            // orange on ALT) with black numbers, under small grey captions.
+            // orange on ALT) with black numbers, under small grey captions:
+            // CHANNEL's 10 px caption 4 px down, its cells from 19 px, AUX's
+            // caption at 147 and its cells at 157 (squeezed in a short box).
             cells.clear();
-            auto r = getLocalBounds().toFloat().reduced (4.0f);
-            const float captionH = juce::jmin (wingPx (20.0f), r.getHeight() / 9.0f);
-            const float cell = juce::jmin (wingPx (22.0f), r.getWidth() / 8.0f, (r.getHeight() - captionH * 2.0f - wingPx (16.0f)) / 6.0f);
-            r.removeFromTop (wingPx (6.0f));
-            auto drawGrid = [&] (const char* caption, StripKind kind, int rows)
+            auto r = getLocalBounds().toFloat();
+            const float k = juce::jmin (wingPx (1.0f), r.getHeight() / 182.0f, r.getWidth() / 176.0f);
+            const float pitch = 22.0f * k, cellSize = 20.0f * k;
+            auto drawGrid = [&] (const char* caption, StripKind kind, int rows, float top)
             {
                 g.setColour (Dark::caption);
-                g.setFont (wingFontPx (juce::jmin (TypeScale::statusCaption * getWingScreenHeight(), captionH * 0.6f)));
-                g.drawText (caption, r.removeFromTop (captionH), juce::Justification::centred);
+                g.setFont (wingFontPx (10.0f * k));
+                g.drawText (caption, juce::Rectangle<float> (r.getX(), r.getY() + top * k - 3.0f * k, r.getWidth(), 16.0f * k), juce::Justification::centred);
                 const auto& strips = ctx.engine.getStrips (kind);
                 for (int i = 0; i < rows * 8; ++i)
                 {
-                    auto c = juce::Rectangle<float> (r.getCentreX() - cell * 4.0f + cell * (float) (i % 8), r.getY() + cell * (float) (i / 8), cell, cell)
-                                 .reduced (cell * 0.05f);
+                    auto c = juce::Rectangle<float> (r.getCentreX() - pitch * 4.0f + 1.0f * k + pitch * (float) (i % 8),
+                                                     r.getY() + (top + 15.0f) * k + pitch * (float) (i / 8), cellSize, cellSize);
                     auto* s = i < (int) strips.size() ? strips[(size_t) i].get() : nullptr;
                     const bool alt = s != nullptr && s->isUsingAltInput();
                     g.setColour (alt ? altCell : mainCell);
-                    g.fillRoundedRectangle (c, cell * 0.12f);
+                    g.fillRoundedRectangle (c, 2.0f * k);
                     if (s != nullptr)
                     {
                         g.setColour (juce::Colours::black);
-                        g.setFont (wingFontPx (c.getHeight() * 0.5f));
+                        g.setFont (wingFontPx (11.0f * k));
                         g.drawText (juce::String (s->getNumber()), c, juce::Justification::centred);
                         cells.push_back ({ c, s });
                     }
                 }
-                r.removeFromTop (cell * (float) rows + wingPx (16.0f));
             };
-            drawGrid ("CHANNEL", StripKind::Channel, 5);
-            drawGrid ("AUX", StripKind::Aux, 1);
+            drawGrid ("CHANNEL", StripKind::Channel, 5, 4.0f);
+            drawGrid ("AUX", StripKind::Aux, 1, 142.0f);
         }
 
         void mouseUp (const juce::MouseEvent& e) override
@@ -733,7 +751,7 @@ namespace
             clock.addRow ({}, std::make_unique<DropdownField> ("CLOCK RATE", [this] { return rateText(); }, [this] (DropdownField& f) { showRates (f); }), 0.0f,
                           true, false, kFieldRows);
             // The sync source is the audio interface's business.
-            clock.addRow ({}, std::make_unique<DropdownField> ("SYNC SOURCE", [] { return juce::String ("INTERNAL"); }), 0.0f, false, false, kFieldRows);
+            clock.addRow ({}, std::make_unique<DropdownField> ("SYNC SOURCE", [] { return juce::String ("INTERNAL"); }), 0.0f, true, false, kFieldRows);
             addAndMakeVisible (clock);
 
             // The global MAIN / ALT switch (used by every channel while GLOBAL
@@ -824,14 +842,14 @@ namespace
                                                                       { "SELECT FOLLOWS SOLO", uiprefs::selectFollowsSolo },
                                                                       { "BUS SoF/SPILL ACTIVATES SOLO", uiprefs::sofActivatesSolo } };
             for (auto [name, key] : soloPrefs)
-                solo.addRow (name, OnKey::forSetting (ctx.settings, key, false), 1.3f);
-            solo.addRow ("SEND PAGE ACTIVATES SOLO", OnKey::fixed (false), 1.3f, false); // not there yet
+                solo.addRow (name, OnKey::forSetting (ctx.settings, key, uiprefs::soloOptionDefault (key)), 1.3f);
+            solo.addRow ("SEND PAGE ACTIVATES SOLO", inertOnKey (ctx.settings, "sendPageActivatesSolo"), 1.3f); // only kept
             addAndMakeVisible (solo);
 
             device.addRow ({}, std::make_unique<DropdownField> ("DEVICE", [this] { return deviceName(); },
                                                                 [this] (DropdownField&) { showOverlay ("AUDIO DEVICE", std::make_unique<DeviceBody> (ctx.deviceManager)); }),
                            0.0f, true, false, kFieldRows);
-            device.addRow ({}, std::make_unique<DropdownField> ("IN/OUT", [this] { return channelsText(); }), 0.0f, false, false, kFieldRows);
+            device.addRow ({}, std::make_unique<DropdownField> ("IN/OUT", [this] { return channelsText(); }), 0.0f, true, false, kFieldRows);
             addAndMakeVisible (device);
 
             automix.addRow ("X ENABLE", OnKey::forAtomic (ctx.engine.automixEnable[0]), 1.3f);
@@ -997,12 +1015,12 @@ namespace
     public:
         explicit SurfaceTab (UiContext& c) : ctx (c)
         {
-            // The L/R meter beside the display: the monitor or a main (ui.mainMeter: 0 MONITOR, 1-4 MAIN n).
+            // The L/R meter beside the display: the monitor or a main (ui.mainMeter: 0 MONITOR, 1-4 MAIN n), and where it measures.
             metering.addRow ("MAIN METER",
                              std::make_unique<DropdownField> ("SOURCE",
                                                               [this]
                                                               {
-                                                                  const int v = juce::jlimit (0, kNumMains, ctx.settings.getIntValue ("ui.mainMeter", 0));
+                                                                  const int v = juce::jlimit (0, kNumMains, ctx.settings.getIntValue (uiprefs::mainMeter, uiprefs::mainMeterDefault));
                                                                   return v == 0 ? juce::String ("MONITOR") : "MAIN." + juce::String (v);
                                                               },
                                                               [this] (DropdownField& f)
@@ -1011,11 +1029,15 @@ namespace
                                                                   for (int i = 1; i <= kNumMains; ++i)
                                                                       items.add ("MAIN." + juce::String (i));
                                                                   auto& settings = ctx.settings;
-                                                                  popups::chooseFrom (f, items, ctx.settings.getIntValue ("ui.mainMeter", 0),
-                                                                                      [&settings] (int i) { settings.setValue ("ui.mainMeter", i); });
+                                                                  popups::chooseFrom (f, items, ctx.settings.getIntValue (uiprefs::mainMeter, uiprefs::mainMeterDefault),
+                                                                                      [&settings] (int i) { settings.setValue (uiprefs::mainMeter, i); });
                                                               }),
                              3.6f, true, false, kFieldRows);
-            metering.addRow ("MAIN METER TAP", fixedChoice ({ "AUTO", "PRE", "POST" }, 2, ChoiceKeys::autoPrePost()), 3.6f, false);
+            metering.addRow ("MAIN METER TAP",
+                             std::make_unique<ChoiceKeys> (juce::StringArray { "AUTO", "PRE", "POST" },
+                                                           [this] { return juce::jlimit (0, 2, ctx.settings.getIntValue (uiprefs::mainMeterTap, uiprefs::mainMeterTapDefault)); },
+                                                           [this] (int v) { ctx.settings.setValue (uiprefs::mainMeterTap, v); }, ChoiceKeys::autoPrePost()),
+                             3.6f);
             // PRE or POST per strip type: the METERS and VIEW screens' meters follow
             // these (METERS > SETTINGS sets them too; the surface's LED meters can
             // read them with prefs::meterPoint).
@@ -1041,7 +1063,7 @@ namespace
                                                           }),
                             3.7f);
             // The rest change how the fader strips, the channel strip and the status bar behave.
-            general.addRow ("TAP TEMPO FLASH", fixedChoice ({ "OFF", "8X", "ON" }, 2), 3.7f, false); // custom control tap keys
+            general.addRow ("TAP TEMPO FLASH", inertChoice (ctx.settings, "tapTempoFlash", { "OFF", "8X", "ON" }, 2), 3.7f); // only kept
             general.addRow ("SOF BUTTON", choiceSetting (uiprefs::sofButton, { "AUTO", "ON", "FLASH" }, 0), 3.7f);
             general.addRow ("SHOW SOF FRAME", OnKey::forSetting (ctx.settings, uiprefs::showSofFrame, true), 1.3f);
             general.addRow ("SHOW SOURCE ON SCRIBBLE", onSetting (uiprefs::sourceOnScribble, true), 1.3f);
@@ -1053,7 +1075,7 @@ namespace
 
             faders.addRow ("FADER SPEED", choiceSetting (uiprefs::faderSpeed, { "SLOW", "MED", "FAST" }, 1), 3.65f);
             faders.addRow ("ALTERNATIVE SOF MODE", onSetting (uiprefs::alternativeSof, false), 1.3f);
-            faders.addRow ("RIGHT SECTION SENDS ON FADER", onSetting (uiprefs::rightSectionSof, true), 1.3f);
+            faders.addRow ("RIGHT SECTION SENDS ON FADER", onSetting (uiprefs::rightSectionSof, uiprefs::rightSectionSofDefault), 1.3f);
             faders.addRow ("FULL FADER PAGING", onSetting (uiprefs::fullFaderPaging, false), 1.3f);
             // The COMPACT's one fader section has one (autosel_CMPCT).
             faders.addRow ("CH AUTOSELECT", std::make_unique<ToggleKeys> (ctx, juce::StringArray { "L", "C", "R" },
@@ -1064,7 +1086,7 @@ namespace
                                                                            std::vector<const char*> (std::begin (uiprefs::userLayerLink), std::end (uiprefs::userLayerLink))),
                            2.35f);
             faders.addRow ("DCA SPILL", onSetting (uiprefs::dcaSpill, false), 1.3f);
-            faders.addRow ("FADER/SCREEN LAYER LINK", OnKey::forSetting (ctx.settings, prefs::layerLink, true), 1.3f);
+            faders.addRow ("FADER/SCREEN LAYER LINK", OnKey::forSetting (ctx.settings, prefs::layerLink, prefs::layerLinkDefault), 1.3f);
             addAndMakeVisible (faders);
 
             sectionsKey.offColour = Dark::header;
@@ -1646,19 +1668,26 @@ namespace
             for (auto* port : { "AES50 A", "AES50 B", "AES50 C" })
             {
                 auto pair = std::make_unique<juce::Component>();
-                auto* a = OnKey::fixed (false).release();
-                auto* b = OnKey::fixed (false).release();
+                // No AES50 here: the keys are only kept.
+                const auto id = "ha." + juce::String (port).removeCharacters (" ");
+                auto* a = inertOnKey (ctx.settings, id + ".a").release();
+                auto* b = inertOnKey (ctx.settings, id + ".b").release();
                 pair->addAndMakeVisible (a);
                 pair->addAndMakeVisible (b);
                 pairs.add (a);
                 pairs.add (b);
                 pairLayouts.push_back ({ pair.get(), a, b });
-                ha.addRow (port, std::move (pair), kPairRows, false);
+                ha.addRow (port, std::move (pair), kPairRows);
             }
             addAndMakeVisible (ha);
             haClear.offColour = Dark::header;
             haClear.iconAbove = true;
-            enableKey (haClear, false);
+            haClear.onClick = [this]
+            {
+                for (auto* port : { "AES50A", "AES50B", "AES50C" })
+                    for (auto* side : { ".a", ".b" })
+                        ctx.settings.removeValue (inertKey (juce::String ("ha.") + port + side));
+            };
             addAndMakeVisible (haClear);
 
             // The computer's own network settings (read-only).
@@ -1667,8 +1696,9 @@ namespace
             octets.addTokens (ip, ".", {});
             while (octets.size() < 4)
                 octets.add ("0");
-            network.addCaption ("IP ADDRESS", false);
-            network.addRow ({}, std::make_unique<OctetBoxes> (octets), 0.0f, false, false, 0.85f);
+            // [Fig. 42] a row-sized caption over light grey boxes (shown, not set, here).
+            network.addCaption ("IP ADDRESS", false, 1.0f);
+            network.addRow ({}, std::make_unique<OctetBoxes> (octets), 0.0f, true, false, 0.85f);
             network.addCaption ("DEVICE NAME: " + juce::SystemStats::getComputerName().toUpperCase(), false);
             addAndMakeVisible (network);
 
@@ -1703,8 +1733,8 @@ namespace
             appliedWeb = WebRemote::Settings::load (ctx.settings); // the web remote started with the app
             refreshWebStatus();
 
-            lock.addRow ("OSC", OnKey::fixed (false), 1.3f, false, true);
-            lock.addRow ("TCP", OnKey::fixed (false), 1.3f, false, true);
+            lock.addRow ("OSC", inertOnKey (ctx.settings, "lockOsc"), 1.3f, true, true);
+            lock.addRow ("TCP", inertOnKey (ctx.settings, "lockTcp"), 1.3f, true, true);
             addAndMakeVisible (lock);
 
             // WING REMOTE (Sidecar): the settings live in the app settings.
@@ -2139,8 +2169,9 @@ namespace
             g.setColour (Dark::caption);
             g.setFont (panelTitleFont (header.getHeight()));
             g.drawText ("DAW CONTROL", header, juce::Justification::centred);
-            g.setColour (Dark::textDim.brighter (0.3f));
-            g.setFont (wingFont (TypeScale::meterScale * 1.3f));
+            // [3.1] three lines of #686868 print, 12 px caps, under the DAW CONTROL column.
+            g.setColour (juce::Colour (0xff686868));
+            g.setFont (wingFontPx (wingPx (12.5f)));
             g.drawFittedText ("All third-party DAW trademarks are the property of their respective owners. Their use neither constitutes a claim of the "
                               "trademark nor affiliation of the trademark owners with the makers of this software. Product names are mentioned solely as "
                               "a reference for compatibility.",
@@ -2187,7 +2218,9 @@ namespace
             // the 376 x 262 drawing at the right; the disclaimer at the bottom.
             auto b = getLocalBounds();
             const int gap = setupGap();
-            disclaimer = b.removeFromBottom (juce::roundToInt (wingPx (64.0f))).withTrimmedLeft (juce::roundToInt (wingPx (4.0f)));
+            disclaimer = b.removeFromBottom (juce::roundToInt (wingPx (64.0f))).withTrimmedLeft (juce::roundToInt (wingPx (4.0f)))
+                             .withTrimmedBottom (juce::roundToInt (wingPx (6.0f)));
+            disclaimer.setWidth (juce::jmin (disclaimer.getWidth(), juce::roundToInt (wingPx (752.0f))));
             auto area = b.withWidth (juce::roundToInt ((float) b.getWidth() * 760.0f / 1264.0f));
             setupPanel (daw, juce::roundToInt (wingPx (52.0f)));
             setupPanel (ports, daw.rowHeight);
@@ -2507,6 +2540,8 @@ void SetupPage::closeInitialize()
 
 void SetupPage::initialize (const state::Scope& chosen, juce::uint32 sources, bool everything)
 {
+    // Pages with console defaults of their own go back to them (ROUTING locks).
+    ctx.engine.markInitialized();
     if (everything)
     {
         // Everything: a fresh 40-channel console, as before the parts could be chosen.
@@ -2514,6 +2549,15 @@ void SetupPage::initialize (const state::Scope& chosen, juce::uint32 sources, bo
             clearFx (ctx, i);
         ctx.engine.reset();
         ctx.engine.setNumChannels (kWingChannels);
+        // The console's own settings as on a factory-initialized WING: SETUP's
+        // surface, solo, metering and lighting options, the USB recorder's
+        // RECORDER ports (OFF) and the player's REPEAT (on).
+        if (! ctx.engine.getWing().resetHostSettings().isEmpty() && ctx.layersChanged)
+            ctx.layersChanged();
+        auto& usb = ctx.engine.getUsbRecorder();
+        for (int port = 0; port < UsbRecorder::kNumChannels; ++port)
+            usb.setTap (port, {});
+        usb.setRepeat (true);
     }
     const int strips = everything ? 0 : initializeParts (ctx, chosen);
     // The source groups: the audio interface's inputs (LCL), the playback
@@ -2594,10 +2638,14 @@ std::vector<StatusKey> SetupPage::getStatusKeys()
     // CUSTOM CONTROLS and MONITORS have no keys of their own.
     if (subScreen != nullptr)
         return subScreen->getStatusKeys();
-    return {
+    // [3.1] both against the clock.
+    std::vector<StatusKey> keys {
         { "MONITORS", Icon::Monitors, false, [this] { openMonitors(); } },
         { "CC EDIT", Icon::CcEdit, false, [this] { openCustomControls (-1); } },
     };
+    for (auto& k : keys)
+        k.atRight = true;
+    return keys;
 }
 
 void SetupPage::showTab()

@@ -22,7 +22,8 @@ namespace livedaw
     Replaced plugins are destroyed on the message thread once the engine can no
     longer call them (the engine invokes the release callback from
     ld_engine_collect). Plugins run in stereo: a mono strip feeds both inputs and
-    takes the left output back. A sandboxed plugin (SandboxedPlugin) that misses a
+    takes the left output back; a plugin with a mono main bus gets both sides
+    mixed and feeds both (MonoBuses). A sandboxed plugin (SandboxedPlugin) that misses a
     block or loses its helper process is reported like one that throws; its latency
     includes the sandbox's block, so delay compensation covers it.
 
@@ -99,6 +100,8 @@ public:
     bool hasDevice (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 3); }
     /** Gain reduction of the slot's device (dB, <= 0). */
     float getMeter (int slot) const noexcept { return ld::ld_fx_meter (engine, slot); }
+    /** Live gain of a dynamic band of the slot's device (dB, signed). */
+    float getBandGain (int slot, int band) const noexcept { return ld::ld_fx_band_gain (engine, slot, band); }
     bool isFaulted (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 1); }
     bool isDoubleAssigned (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 2); }
     /** Clears the slot's fault and double assignment, and its chain's faulted plugins. */

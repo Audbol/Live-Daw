@@ -105,12 +105,12 @@ public:
 
     void runTest() override
     {
-        beginTest ("The C ABI is version 14 and both sides agree on the layout");
+        beginTest ("The C ABI is version 16 and both sides agree on the layout");
         {
-            expectEquals (ld::kAbiVersion, 14);
+            expectEquals (ld::kAbiVersion, 16);
             ld::LayoutInfo info {};
             ld::ld_layout_info (&info);
-            expectEquals ((int) info.abiVersion, 14);
+            expectEquals ((int) info.abiVersion, 16);
             const char* mismatch = ld::verifyLayout();
             expect (mismatch == nullptr, mismatch != nullptr ? juce::String (mismatch) : juce::String());
         }
@@ -219,6 +219,7 @@ public:
 
             MixerEngine engine (0);
             test::setChannels (engine, 2);
+            engine.setInputSelectGlobal (false); // per channel (a new console's is GLOBAL)
             Driver d (engine, 2, 2);
             auto& rec = engine.getRecorder();
             auto& ch2 = *engine.getChannels()[1];

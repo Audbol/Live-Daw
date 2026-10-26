@@ -133,6 +133,42 @@ fn blocks_of(token: &str) -> &'static [BlockDef] {
     }
 }
 
+/// The response in dB at `freqs` of the EQ block of an EQ device or channel
+/// strip (its EQ section as set, flat while switched off), for the screen's
+/// graph. False for other devices.
+pub(super) fn eq_response(token: &str, values: &[f32], freqs: &[f32], out: &mut [f32]) -> bool {
+    const SR: f64 = 48_000.0;
+    let Some(def) = blocks_of(token).iter().find(|d| d.kind == Kind::Eq) else {
+        return false;
+    };
+    let (Some(device), Some(model)) = (super::model_index(token).map(|i| &FX_MODELS[i]), model_index(EQ_MODELS_CH, def.token))
+    else {
+        return false;
+    };
+    let spec = &EQ_MODELS_CH[model];
+    let device_value = |i: usize| -> f32 {
+        match (device.params.get(i), values.get(i)) {
+            (Some(p), Some(v)) => p.sanitise(*v),
+            (Some(p), None) => p.default,
+            _ => 0.0,
+        }
+    };
+    let mut eq_values = [0.0f32; MAX_FX_PARAMS];
+    for (v, p) in eq_values.iter_mut().zip(spec.params) {
+        *v = match device.param_index(&format!("{}{}", def.prefix, p.id)) {
+            Some(i) => p.sanitise(device_value(i)),
+            None => p.default,
+        };
+    }
+    let on = def.on.and_then(|id| device.param_index(id)).is_none_or(|i| device_value(i) >= 0.5);
+    let mix = def.mix.and_then(|id| device.param_index(id)).map_or(100.0, device_value);
+    let d = crate::wing::eq::design(spec, &eq_values[..spec.params.len()], SR, if on { mix / 100.0 } else { 0.0 });
+    for (f, o) in freqs.iter().zip(out.iter_mut()) {
+        *o = d.response_db(f64::from(*f), SR) as f32;
+    }
+    true
+}
+
 // ---- running blocks --------------------------------------------------------------------
 
 enum Engine {

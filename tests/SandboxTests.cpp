@@ -151,6 +151,30 @@ public:
             }
         }
 
+        beginTest ("A parameter set right after loading keeps its value (the helper's values from loading don't overwrite it)");
+        {
+            juce::String error;
+            auto sandboxed = SandboxedPlugin::create (TestPluginFormat::describe (TestPluginFormat::Kind::gain), 48000.0, kBlock,
+                                                      options (2000.0), error);
+            expect (sandboxed != nullptr, error);
+            if (sandboxed != nullptr)
+            {
+                auto* gain = sandboxed->getParameters()[0];
+                gain->setValueNotifyingHost (0.35f); // as a scene recall or a remote does at once
+                const auto start = juce::Time::getMillisecondCounter();
+                while (juce::Time::getMillisecondCounter() - start < 800) // past the 300 ms a local change wins
+                {
+                    juce::Thread::sleep (20);
+                    sandboxed->supervise();
+                }
+                expectEquals (gain->getValue(), 0.35f);
+                juce::MemoryBlock state;
+                sandboxed->getStateInformation (state);
+                juce::MemoryInputStream in (state, false);
+                expectEquals (in.readFloat(), 0.35f, "the helper doesn't have it");
+            }
+        }
+
         beginTest ("The sandbox's block of latency is delay-compensated, FX MIX included");
         compensationTest();
 

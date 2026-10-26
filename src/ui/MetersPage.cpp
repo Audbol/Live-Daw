@@ -442,7 +442,7 @@ void MetersPage::paint (juce::Graphics& g)
             // [3.1] number keys 19 px square in the strip's colour, 2 in from the slot.
             const auto numberArea = juce::Rectangle<float> (s.getX() + px (2.0f * k), (float) numbers.getY(), px (19.0f * k), (float) numbers.getHeight());
             numberKey (g, numberArea, number, group.dca ? wingColour (ctx.engine.getDca (group.first + i).colour.load())
-                                                 : (strip != nullptr ? stripDisplayColour (*strip) : Colours::cyan));
+                                                 : (strip != nullptr ? strip->getColour() : Colours::cyan)); // [3.1] unpatched strips too, undimmed
 
             // LED meter: one column 7 px wide, or two of 6 a pixel apart, with peak hold.
             const bool stereo = isStereo (group, i);

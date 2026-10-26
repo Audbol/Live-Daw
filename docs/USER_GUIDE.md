@@ -14,7 +14,8 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
   mains, 8 stereo matrices, 16 DCAs, 8 mute groups and 16 FX slots. Unlike the
   hardware, the channel count is only limited by CPU and more buses can be added.
 - **Channel processing, in the WING's order:**
-  - **INPUT:** trim, balance, polarity and delay (m, ft, ms or samples).
+  - **INPUT:** trim, balance, polarity and delay (m, ft, ms or samples, converted as
+    the WING does: 0.3 m per ms, 0.1 to 150 m, at least 16 samples).
   - **FILTER:** low cut (6-24 dB/oct), high cut (6/12 dB/oct) and the tool filter
     (TILT, MAX, AP1, AP2).
   - **GATE slot and DYNAMICS slot:** each holds any of the WING's **32 dynamics models**
@@ -74,7 +75,8 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
     scaling support) shows **FIXED** with its zoom keys greyed out: collapse it
     instead. For a sandboxed plugin the zoom applies to Sidecar's panel, not to the
     plugin's own window (SHOW PLUGIN WINDOW). Zoom and collapse are saved per plugin
-    with the show.
+    with the show, and with its state in scenes and snippets: recalling one puts them
+    back (scenes stored before keep the current view).
 
   A plugin without an editor gets generic controls, and a sandboxed plugin shows SHOW
   PLUGIN WINDOW with its generic controls. The EFFECTS tile names the chain
@@ -116,9 +118,14 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
 ## The surface
 
 The window is a WING control surface and resizes to any screen, including ultrawides.
-The smallest window, 1344 x 680, still holds every section of the surface; fader
-sections set wider than 12 + 8 + 4 faders (SETUP > SURFACE) need a wider window for
-the whole custom controls and 4-Channel sections.
+The smallest window, 1280 x 640, still holds every section of the surface, so a
+1366 x 768 screen (the smallest supported) shows the whole console, maximized or not;
+fader sections set wider than 12 + 8 + 4 faders (SETUP > SURFACE) need a wider window
+for the whole custom controls and 4-Channel sections. The window first opens fitted
+to the screen. In short windows the main display keeps a legible screen (as in a
+1680 x 1000 window): the channel strip and the monitoring column narrow, and below
+about 100 px of fader travel the strips fold their meter blocks away. For the
+largest screen, show the display on its own (F10).
 The screens follow the WING's own: the same panels, keys, colours and layout, set in
 Barlow Condensed. The surface around them looks like the silver WING: a light grey
 surface with mid grey decks (monitoring, channel strip, 4-Channel, custom controls),
@@ -141,21 +148,27 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   `MAIN MATRIX`, `DCA`, `USER 1`, `USER 2` and the shift keys. The section width
   settings don't apply: it always has 12 faders.
 - **Key section:** **BUS**, **DCA**, **MAIN MATRIX** and **USER** choose what the 16
-  keys do. BUS: keys 1-16 are BUS 1-16; press for Sends on Fader to the bus, hold to
-  spill the bus. MAIN MATRIX: keys 1-4 are MAIN 1-4 and keys 5-12 MATRIX 1-8; press
-  for Sends on Fader. DCA: press to spill the DCA. USER: custom control keys; keys
-  1-8 are the USER layer, keys 9-16 the custom control layer shown, each control's
-  upper key then its lower one. **VIEW** opens CUSTOM CONTROLS. The small LCD names
-  the keys, a lit key's cell filled.
-- **Fader 13** is the main fader, MAIN 1 by default. Touch the LCD's title to put
-  another main, a matrix, DCA, channel, aux or bus on it (`/$ctl/cfg/mfdr`).
+  keys do. BUS: keys 1-16 are BUS 1-16; a press spills the bus and puts it on fader
+  13. MAIN MATRIX: keys 1-4 are MAIN 1-4 and keys 9-16 MATRIX 1-8 (keys 5-8 are
+  empty); a press puts it on fader 13. DCA: a press spills the DCA. USER: custom
+  control keys; keys 1-8 are the USER layer, keys 9-16 the custom control layer
+  shown, each control's upper key then its lower one. **VIEW** opens CUSTOM CONTROLS
+  on the USER layer (the COMPACT's USER 1-4 layers).
+- **Fader 13** is the main fader, MAIN 1 at first; the BUS and MAIN MATRIX keys put
+  another bus, main or matrix on it. It has no scribble strip, only its meter: the
+  small LCD beside it shows what fader 13 controls and what the 16 keys are, a lit
+  key's cell filled.
 - The COMPACT has no channel strip section, custom controls section, 4-Channel
   section, center or right fader section, wheel or DAW key; Sidecar leaves them out.
-  SETUP > SURFACE > CH AUTOSELECT has one key, **CMPCT**.
+  ROUTING has no AUX IN or AUX OUT group, as the COMPACT has no local aux inputs or
+  outputs. SETUP > SURFACE > CH AUTOSELECT has one key, **CMPCT**.
 - WING remote clients see a COMPACT: Sidecar answers with model `wing-compact`.
+  Fader 13, the keys' mode and CH AUTOSELECT CMPCT are `/$ctl/cfg/mfdr`, `cscmode`
+  and `autosel_CMPCT`, both ways.
 - The COMPACT has 24 local MIDAS PRO preamps where the full-size WING has 8, no local
   aux inputs and outputs, and 1x2 GPIO instead of 2x2. Sidecar's sources are its
-  audio interface's inputs either way, so this changes no routing.
+  audio interface's inputs either way, so this changes no routing; LCL 1-24 all have
+  LOCAL IN's GAIN range (-2.5 to +45 dB in 2.5 dB steps).
 
 - **Three fader sections:** left (12 faders), center (8) and right (4), each with the
   WING's layer column: **VIEW** (the section's OVERVIEW; hold for CONFIG), the layer
@@ -256,9 +269,14 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     console's: pick a channel, then its source. **MAIN / ALT** (CHANNEL INPUT) choose
     which of the channel's two inputs you patch (the ALT input, WING INPUT SELECT, can
     be a recorder playback channel). **+1 AUTO** moves on to the next channel; the
-    lock (red when locked, green when open) protects the patch. **ST** and **NONE**
-    are Sidecar's: ST pairs a channel's input with the next one, NONE clears the
-    patch. The **SOURCE GROUP** selector opens the console's group menu. Sidecar's
+    lock (red when locked, green when open) protects the patch; as on the console it
+    is locked on a new console and after INITIALIZE CONSOLE. Unlocked, **NONE**
+    (clears the patch) and **M** / **ST** / **M/S** (the pairing of the channel's
+    source: mono, stereo or mid-side with its neighbour; the channels on it follow)
+    appear; locked hides them, as on the console. Ports are named as on the WING:
+    LCL 1 ..., B 1 ..., C 1 ... (on the source tiles, HOME, SELECT MAIN INPUT, the
+    ALT list and the scribble strips' source tag); a name you give a source stays
+    its name. The **SOURCE GROUP** selector opens the console's group menu. Sidecar's
     ports sit in the groups they stand in for: **LOCAL IN** is your audio interface's
     inputs 1-48 (LCL 1 ..., 24 tiles as on the console, more for bigger interfaces;
     tiles past the interface's inputs read n/a but can be patched), inputs 49-96 and
@@ -268,7 +286,10 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     (AUX IN, AES/EBU, AES50 A, ST CONNECT, USB AUDIO, DANTE, BUS, MAIN, MATRIX, USER
     SIGNAL) can be selected and show n/a tiles, like a console without that card.
     SOURCES sets each input's source:
-    name (RENAME), colour and icon, GAIN, +48V (stored; hold the key 2 s), POL, MUTE
+    name (RENAME), colour and icon, GAIN (digital here, in the WING's range for the
+    group: LOCAL IN -2.5 to +45 dB in 2.5 dB steps, AES50 B / C -3 to +45.5 dB in
+    0.5 dB steps; WLIVE PLAY and the USB player have none, as on the WING), +48V
+    (stored; hold the key 2 s), POL, MUTE
     and MONO / STEREO / MID-SIDE pairs (a channel patched to a pair becomes stereo),
     its mute groups (TAGS), with its meter and the channels using it (as tiles under
     the tabs); channels get the source's processing first. REMOTE (stage-box preamps) and RCV
@@ -345,14 +366,12 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     DCA's panel: LIGHT and the 18 colours in a row, the icon gallery, SOLO BUS (phones
     and/or speakers: where the members' solo goes in SOLO MODE LIVE), the name field
     and the keyboard, every change applying at once; the "DCA" at a DCA column's foot
-    is yellow while the DCA is soloed), FADERS (a DCA's name opens its panel, its
+    is yellow while the DCA is soloed), FADERS (a DCA's name opens nothing, as on the console; its
     label at the foot is yellow while it's soloed; send faders of a layer, and Sends on
     Fader, show and set the send level, MUTE switching the send), SENDS (sends on faders
-    to one bus, main or matrix), CONFIG (edit any layer key by dragging channels, buses,
-    DCAs, send levels, bus-to-bus sends, FX parameters or MIDI CCs onto or between the
-    page's slots; the arrows page, one page past the end to append; NEW and DELETE /
-    RESTORE left of the slots; a **MIDI CC** fader sends its CC, 0-127, out of EXTERNAL
-    MIDI CONTROL and follows the CC coming in) and MUTE GROUPS (the eight groups'
+    to one bus, main or matrix), CONFIG (edit any layer key; see *Editing user layers*
+    below; a **MIDI CC** fader sends its CC, 0-127, out of EXTERNAL MIDI CONTROL and
+    follows the CC coming in) and MUTE GROUPS (the eight groups'
     members, a column red while its group is engaged, the group keys on the right; a
     column's header (MGRP.n over its number) opens the MUTE GROUP n window, a name
     field and the keyboard, the name changing as it's typed; touching the rest of a
@@ -362,6 +381,35 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   - **UTILITY:** system health and the event log (also on SETUP > LOG).
   - **RECORDER** (the status bar's **LIVE** card icon, red while recording): laid out
     like the WING-LIVE screens. See *Multitrack recording* below.
+- **Editing user layers** (VIEW > CONFIG): as on the WING, a layer's slots are
+  fixed, a slot can be blank, and the same channel can sit in more than one slot. A
+  blank slot is an inactive strip on the surface: a dark scribble strip, light bar
+  off, the fader doing nothing and SELECT / SOLO / MUTE unlit; on CONFIG it shows its
+  number over EMPTY. Two slots holding the same channel are two faders on that
+  channel: move one and the other follows. The page's slots sit at the bottom in
+  groups of four (as many as the section has faders); the arrows page, one page past
+  the end to add more.
+  - **Assign:** pick items in the grid (CHANNELS, BUS/MAIN, DCA, SENDS, BUS -> BUS,
+    FX, MIDI CC) and drag them onto a slot, or tap the slot: the item goes into
+    exactly that slot, replacing what was there (several items fill that slot and
+    the next ones). Nothing shifts, so you can leave gaps. An item that is already in
+    the layer is added again; its other slot keeps it.
+  - **Insert:** drop (or tap) near the boundary between two slots, where a gold bar
+    with arrow heads appears: the items go in there and the slots after it move one
+    place to the right. A blank slot at the end of the layer makes room; if the
+    layer's last slot (1024) is in use the bar turns red and the drop is refused
+    (LAYER FULL), so nothing is pushed off the end.
+  - **Move:** drag a filled slot onto another slot. Onto a blank slot it moves there;
+    onto a filled one the two swap. Dropped between two slots it is inserted there and
+    its old slot turns blank.
+  - **Slot menu:** right-click a slot (long-press on a touch screen). CLEAR SLOT
+    blanks it; INSERT EMPTY SLOT puts a blank slot before it, moving it and the slots
+    after it one place to the right. Dragging a slot off the slots blanks it too, and
+    CLEAR in the top panel blanks the whole layer.
+  - NEW copies the layer shown into a new user layer, blanks included; DELETE
+    removes a user layer (RESTORE gives an edited layer key its own faders back).
+    The layer keys other than USER 1 / USER 2 can be edited the same way. Blank
+    slots and duplicates are saved with the show; older shows load unchanged.
 - **Channel strip section** (top left): the CHANNEL STRIP DETAILS LED panel (sources,
   filters, LEVEL and GR meters, bus sends, groups) around a small screen; CHANNEL
   PROCESSING with an encoder over each of INPUT, FILTER, GATE, COMP, INSERT and MAIN
@@ -463,8 +511,8 @@ the USB key on the screen to choose another folder).
   ADD ALL with no clip selected adds the folder shown, ADD a selected clip),
   the **4-TRACK RECORDER**, the playlist keys and the **4-TRACK PLAYER** with its
   timeline on the right.
-- **Recorder:** records the RECORDER output group (four ports; MAIN 1 L/R on 1-2 by
-  default; ROUTING > OUTPUTS > group RECORDER taps any strip's output without moving
+- **Recorder:** records the RECORDER output group (four ports, OFF on a new console
+  as on the WING; ROUTING > OUTPUTS > group RECORDER taps any strip's output without moving
   its own outputs) to a 2-CH or 4-CH, 16 or 24 bit file `R_YYYYMMDD-HHMMSS.<ext>` in
   the REC PATH folder, at the console's rate. **FORMAT** (a list next to 2-CH | 4-CH)
   picks WAV, FLAC, AIFF or MP3; for MP3 a **BIT RATE** list (128 - 320 kbit/s)
@@ -623,15 +671,22 @@ and open-source projects (see below), and it is **experimental**.
   SETUP > GENERAL > CONSOLE NAME), the ports and which servers run are saved in the
   app settings, and the servers start with the app when enabled. The panel below
   shows what is listening and which clients are connected.
-- **Discovery** (UDP 2222) answers `WING?` with the console name, model `sidecar`,
-  serial and firmware `3.1-...` (Sidecar speaks the WING 3.1 parameter tree). With
-  CONSOLE MODEL COMPACT the model is `wing-compact`, as a WING COMPACT says, so WING
-  Edit and Mixing Station show a Compact; the serial `SIDECAR0001` still tells Sidecar
-  apart.
+- **Discovery** (UDP 2222) answers `WING?` with the console name, the model, serial
+  `SIDECAR0001` and firmware `3.1-...` (Sidecar speaks the WING 3.1 parameter tree).
+  The model is the WING's own: `ngc-full` for the full-size console, `wing-compact`
+  with CONSOLE MODEL COMPACT (`/$syscfg/$cnscfg`, which WING Edit reads for its ACTIVE
+  WING MODEL: `wing-fullsize` / `wing-compact`), so WING Edit and Mixing Station show
+  the right one. The
+  serial and the firmware's `sidecar` tell Sidecar apart.
 - **OSC** (UDP 2223): get and set any parameter by path or by `#id`, toggles, node
   lists, node dumps and descriptions, node strings (`/ch.1.fdr=-3,mute=1`), and the
   `/*s`, `/*S` and `/*b` subscriptions (renew every 10 s). Changes from the UI, scene
-  recalls and other clients are pushed to the subscriber. Replies and descriptions are
+  recalls and other clients are pushed to the subscribers: unlike the console, which
+  serves only the last client to subscribe, Sidecar serves every client that does, so
+  two OSC remotes don't take the event stream from each other. Events after a scene
+  recall are paced (8 per millisecond) so a phone or tablet doesn't drop them. A slow
+  Native client (a tablet on busy Wi-Fi) waits in its own queue and holds up no one
+  else. Replies and descriptions are
   formatted as a WING 3.1 formats them (checked against a factory-set console): values
   with the parameter's fixed decimals and kHz notation (`100.2`, `1k50`, `1k0`),
   running times as `0:00`, descriptions such as `lin [-15.0 .. +15.0 dB], 301 steps`,
@@ -645,8 +700,8 @@ and open-source projects (see below), and it is **experimental**.
 - **Comparing with a real WING:** `tools/wing/wing_compare.py` (Python 3.8 or newer,
   nothing to install) reads every parameter from a console over OSC, read-only, and
   reports the differences. With Sidecar's WING REMOTE enabled and a WING on the same
-  network: `python3 wing_compare.py discover` lists both (Sidecar answers with model
-  `sidecar`), then `python3 wing_compare.py compare WING_IP SIDECAR_IP` writes
+  network: `python3 wing_compare.py discover` lists both (Sidecar answers with serial
+  `SIDECAR0001`), then `python3 wing_compare.py compare WING_IP SIDECAR_IP` writes
   `wing.json`, `sidecar.json` and `report.md` to a new `wing_compare-...` folder. The
   report lists the parameters only one side has and every value, type, range and
   choice that differs, per top-level node. Initialize both consoles (or load the same
@@ -661,15 +716,21 @@ and open-source projects (see below), and it is **experimental**.
   kit's README for the steps.
 - **What is tested:** libwing's own clients (`wingprop`, `wingmon`, `wingdrive`'s
   test battery and model capture, its OSC client), and every OSC path the Bitfocus
-  Companion WING module builds that exists in the 3.1 tree. **WING Edit and WING
-  Copilot have not been tried**, so they may not work.
-- **What maps:** 88.2 % of the WING 3.1 tree's parameters (60,491 of 68,556,
-  counting every model's parameters) drive the engine: channels, aux, buses, mains
+  Companion WING module builds that exists in the 3.1 tree. Testers use **WING Edit**
+  and **Mixing Station** with it; **WING Copilot has not been tried**, so it may not work.
+- **What maps:** every parameter of the WING 3.1 tree but one answers (68,555 of
+  68,556, counting every model's parameters). 61,109 of them (89.1 %) drive the
+  engine, 73 are Sidecar's SETUP settings, and the 7,373 Sidecar has no equivalent
+  for answer what a factory-initialized WING answers (see below). Driving the engine: channels, aux, buses, mains
   and matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
   dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,
   main sends, solo, TAP WIDTH and TAP EQ), DCAs (with their SOLO BUS), mute groups, the FX rack, output
-  routing, the sources of the AES50 A/B/C and WING-LIVE card groups (name, colour,
-  icon, gain, mute, polarity, +48V, mode, mute-group tags), the oscillator (the OSC
+  routing (LOCAL OUT is A 1-8, as on ROUTING), the USB recorder's RECORDER ports
+  (`/io/out/REC/1-4`: any bus, main, matrix or source), the sources of the LOCAL IN
+  (the same ports as AES50 A), AES50 A/B/C, WING-LIVE card and USB player (`PLAY`)
+  groups (name, colour, icon, gain, mute, polarity, +48V, mode, mute-group tags),
+  the buses, mains and matrices as sources (`/io/in/$BUS`, `$MAIN`, `$MTX`: name,
+  colour, icon, tags, read only), the oscillator (the OSC
   group: its sources and `osc/mode`, `lvl`, `f`), SOLO MODE, the solo bus,
   MUTEGROUP/SIP OVERRIDE and SOURCE SOLO, talkback, both monitor paths (`/cfg/mon`:
   source, levels, DIM, PFL DIM, BAND SOLO, DIRECT IN, EQ, PAN, WIDTH, INVERT, DELAY,
@@ -686,26 +747,40 @@ and open-source projects (see below), and it is **experimental**.
   NEXT, PREV, PLAYFILE with `$playfile` relative to the USB folder, the position,
   REPEAT, REC PATH and the recording format; state, file, time and the clip's format
   read back) and the recall safes (`/$ctl/safes`: `ch`, `aux`, `bus`, `main`, `mtx`
-  are the strips' SAFE keys, `dca`, `mute`, `fx` the GLOBAL safes; lists such as
-  `1,3,5-8`). Not mapped, with no meaning in Sidecar: a DCA's monitor bus (DCA solo
-  goes to each member's monitor bus), a channel's TAP SOLO (`$presolo`: solo is
-  PFL or AFL per strip type), the player's song tags (`$artist`, `$album`, `$songs`)
-  and the safes of source and output groups, surface areas, custom controls and
-  setup. The fader sections' layers (`/$ctl/layer/L`, `C`, `R`) and the custom
+  are the strips' SAFE keys, `dca`, `mute`, `fx` the GLOBAL safes; in the console's
+  format, a `+` or a space per strip, as `+ +` for 1 and 3; lists such as `1,3,5-8`
+  are taken too). SETUP's options are Sidecar's settings, both ways: METERING's taps
+  (`/cfg/mtr/mtrpage`, `mtrsfc`: one setting per strip type for both), MAIN METER and
+  MAIN METER TAP,
+  the GENERAL, SURFACE and SOLO SYSTEM options (`/$ctl/cfg`, `/$ctl/$globals`:
+  confirm load, wheel, touch fader select and resolution, fader speed, SOF button,
+  frame and mode, autoselect, user layer link, DCA spill, solo exclusive and
+  follows, the brightness tiles, the time and date format...), MIDI REMOTE CONTROL
+  (`/$ctl/midi`) and DAW (`/$ctl/daw`: enable, connection, emulation, upper CC,
+  wheel, preset) and the rows of features Sidecar doesn't have (TAP TEMPO FLASH, SHOW
+  METER PAGE WHEN LOCKED, MOUSE DISABLES TOUCH, SEND PAGE ACTIVATES SOLO, the OSC and
+  TCP remote locks), which are only kept. `/$globals/clkrate` is the audio device's rate. Not mapped:
+  DAW CONFIGURATION (`/$ctl/daw/config`), whose 3.1 choices (CC, MSTR) can't show
+  Sidecar's MCU with extenders. The fader sections' layers (`/$ctl/layer/L`, `C`, `R`) and the custom
   controls (`/$ctl/user`) are the show's, both ways: clients select layer keys
   (`sel`), spill (`spidx`: DCA, FX, a bus's sources, automix X / Y), scroll the
   shown layer (`ofs`), name the USER keys' user layers and assign faders (`type`,
   `i`, `dst`: channels, buses, DCAs, sends, FX parameters, MIDI CCs; a default key
   becomes an edited key as on VIEW > CONFIG), and set each custom control's
   functions (`mode`), name and colour and the CC layer (`sel`); the console's
-  changes show to clients within a tenth of a second. Sidecar's layers have no
-  gaps (a fader assigned past the end is appended, OFF removes one), only the shown
-  layer has a scroll position, and a new function starts at its first target
+  changes show to clients within a tenth of a second. As on the console, a
+  layer's slots are fixed: OFF blanks a slot, and a fader assigned past the end
+  leaves blank slots before it. Only the shown layer has a scroll position, and a new function starts at its first target
   (clients can't choose it: the WING's tree only has the function). The encoding of
   fader assignments and the custom controls of `U1`-`U3` (taken as the 4-Channel
-  section's F1-F3 layers) are educated guesses. The rest (the other WING models'
-  layers, the 4-Channel and button section modes, cards, ...) is remembered so
-  clients can read back what they wrote, but does nothing.
+  section's F1-F3 layers) are educated guesses. What Sidecar has no equivalent for
+  (the cards, the console's hardware, network and status, the other WING models'
+  layers, the 4-Channel and button section modes, the input groups Sidecar doesn't
+  have (AUX, AES, SC, USB, MOD, USR), a DCA's monitor bus, a channel's TAP SOLO,
+  the player's song tags, the safes of source and output groups, bus-to-bus sends
+  the engine doesn't have, ...) starts at the factory-initialized WING's value
+  (`livedaw-wing/data/wing_factory.tsv`) and is remembered so clients can read back
+  what they wrote (read-only ones as the WING marks them), but does nothing.
   `cargo run -p livedaw-wing --example wing_coverage` prints the full report.
 - **Files:** as on the WING, select a WING snapshot (`.snap`) at INT or USB on LIBRARY >
   SNAP and press **LOAD** (or double-click it) to apply it to the console. LIBRARY > SHOW

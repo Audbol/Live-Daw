@@ -10,8 +10,15 @@ using routing::Group;
 namespace
 {
     constexpr int kTilesPerRow = 8, kTargetsPerPage = 48, kSignalsPerPage = 64;
-    // A source's GAIN and an oscillator's LEVEL (dB).
-    constexpr float kGainMin = -12.0f, kGainMax = 60.0f, kOscLevelMin = -40.0f, kOscLevelMax = -6.0f;
+    // An oscillator's LEVEL (dB). A source's GAIN takes its group's range
+    // (MixerEngine::sourceGainRange).
+    constexpr float kOscLevelMin = -40.0f, kOscLevelMax = -6.0f;
+
+    /** The GAIN range of input port `port`'s source group. */
+    MixerEngine::GainRange gainRangeOf (int port)
+    {
+        return port >= 0 ? MixerEngine::sourceGainRange (MixerEngine::sourceIndex (port)) : MixerEngine::GainRange();
+    }
 
     // ROUTING's own colours (sampled from the console's screen, firmware 3.1):
     // port labels blue for mono and olive for stereo, n/a tiles in dim blue and
@@ -452,10 +459,13 @@ public:
     {
     }
 
+    /** What dims under the menu (3.1: only the side the menu is for); empty: everything. */
+    juce::Rectangle<int> dimArea;
+
     void paint (juce::Graphics& g) override
     {
         g.setColour (Colours::scrim);
-        g.fillAll();
+        g.fillRect (dimArea.isEmpty() ? getLocalBounds() : dimArea);
         g.setColour (Colours::screenPanel);
         g.fillRect (frame());
         for (auto& [area, id] : tiles())
@@ -532,6 +542,12 @@ RoutingPage::RoutingPage (UiContext& c) : ctx (c)
 
 RoutingPage::~RoutingPage() = default;
 
+void RoutingPage::setLocked (bool shouldLock)
+{
+    if (lock.set (shouldLock))
+        repaint();
+}
+
 StatusTitle RoutingPage::getStatusTitle()
 {
     // SOURCES and OUTPUTS show the selected source or output (grey tile, its
@@ -554,6 +570,8 @@ StatusTitle RoutingPage::getStatusTitle()
         t.text = routing::info (group).name;
         t.icon = group == Group::Recorder ? Icon::UsbStick : Icon::Xlr;
     }
+    else
+        t.plainNumber = true; // 3.1: the channel's number unboxed, in black
     return t;
 }
 
@@ -644,6 +662,13 @@ Strip* RoutingPage::selectedStrip() const
     return juce::isPositiveAndBelow (selectedIndex, (int) strips.size()) ? strips[(size_t) selectedIndex].get() : nullptr;
 }
 
+int RoutingPage::patchedSourceIndex() const
+{
+    const auto* s = selectedStrip();
+    const int port = s == nullptr ? -1 : (editAlt ? s->getAltInputLeft() : s->getInputLeft());
+    return port >= 0 ? MixerEngine::sourceIndex (port) : -1;
+}
+
 void RoutingPage::select (Strip* s)
 {
     if (s == nullptr || ! s->isInput())
@@ -692,6 +717,9 @@ void RoutingPage::timerCallback()
 {
     if (ctx.engine.getStructureVersion() != layoutVersion)
         layoutTiles();
+    // INITIALIZE CONSOLE (or a reset console) locks the patch again, as the console's.
+    if (lock.update())
+        repaint();
 
     // The source meters (the page is their only reader): the group's tiles and
     // the selection. Only the meters that move are repainted: a whole page of
@@ -730,7 +758,7 @@ void RoutingPage::resized()
     // [WING px] Each side: a header box 80 tall, an 8 px gap, then the tiles in
     // a framed black box. CHANNELS and OUTPUTS split the page 544 | 712,
     // SOURCES 712 | 544 (the settings on the right).
-    for (auto* r : { &inputCaption, &mainKey, &altKey, &stereoKey, &autoKey, &lockFrame, &lockKey, &unlockKey, &prevPage, &nextPage, &leftSelector,
+    for (auto* r : { &inputCaption, &mainKey, &altKey, &monoKey, &stereoKey, &midSideKey, &autoKey, &lockFrame, &lockKey, &unlockKey, &prevPage, &nextPage, &leftSelector,
                      &rightSelector, &noneKey, &copyCaption, &srcToChKey, &chToSrcKey, &renameKey, &srcSoloKey, &meterLegend, &prevSignals, &nextSignals })
         *r = {};
 
@@ -758,20 +786,23 @@ void RoutingPage::resized()
             inputCaption = wingRect (16.0f, 8.0f, 162.0f, 16.0f);
             mainKey = wingRect (16.0f, 24.0f, 80.0f, 48.0f);
             altKey = wingRect (98.0f, 24.0f, 80.0f, 48.0f);
-            // Sidecar's ST (a channel's stereo pair of any two inputs) and the
-            // page keys of consoles with more than 40 channels.
-            stereoKey = wingRect (188.0f, 24.0f, 40.0f, 48.0f);
+            // The page keys of consoles with more than 40 channels (Sidecar's).
             if (numTargetPages() > 1)
             {
-                prevPage = wingRect (236.0f, 24.0f, 40.0f, 48.0f);
-                nextPage = wingRect (278.0f, 24.0f, 40.0f, 48.0f);
+                prevPage = wingRect (188.0f, 24.0f, 40.0f, 48.0f);
+                nextPage = wingRect (230.0f, 24.0f, 40.0f, 48.0f);
             }
+            // M | ST | M/S: the pairing of the channel's source, beside NONE
+            // (as SELECT MAIN INPUT has them); shown only while unlocked.
+            monoKey = wingRect (842.0f, 18.0f, 56.0f, 48.0f);
+            stereoKey = wingRect (900.0f, 18.0f, 56.0f, 48.0f);
+            midSideKey = wingRect (958.0f, 18.0f, 56.0f, 48.0f);
         }
         else
             leftSelector = wingRect (16.0f, 8.0f, 264.0f, 64.0f);
 
         rightSelector = wingRect (568.0f, 8.0f, 264.0f, 64.0f);
-        // NONE (clears the patch) is Sidecar's; the console has none here.
+        // NONE clears the patch (shown only while unlocked, as on the console).
         noneKey = wingRect (mode == Mode::Channels ? 1024.0f : 848.0f, 12.0f, 64.0f, 60.0f);
         if (mode == Mode::Channels)
         {
@@ -1046,10 +1077,10 @@ void routing::paintSourceTile (juce::Graphics& g, juce::Rectangle<int> area, Mix
         g.setColour (naLabel);
         g.setFont (capFont (9.5f));
         g.drawText (juce::String (index + 1), bottom.toNearestInt(), juce::Justification::centredLeft);
-        if (src != nullptr)
+        if (const auto range = gainRangeOf (port); src != nullptr && range.hasGain())
         {
             g.setColour (naText);
-            g.drawText (juce::String (src->gainDb.load(), 1) + " dB", bottom.toNearestInt(), juce::Justification::centredRight);
+            g.drawText (juce::String (range.clamp (src->gainDb.load()), 1) + " dB", bottom.toNearestInt(), juce::Justification::centredRight);
         }
         return;
     }
@@ -1115,7 +1146,8 @@ void routing::paintSourceTile (juce::Graphics& g, juce::Rectangle<int> area, Mix
         g.setColour (pairing != ld::kSourceMono ? stereoLabel : monoLabel);
         g.drawText (juce::String (routing::numberInGroup (port) + 1), bottom.toNearestInt(), juce::Justification::centredLeft);
         g.setColour (Colours::textDim);
-        g.drawText (juce::String (src->gainDb.load(), 1) + " dB", bottom.toNearestInt(), juce::Justification::centredRight);
+        if (const auto range = gainRangeOf (port); range.hasGain())
+            g.drawText (juce::String (range.clamp (src->gainDb.load()), 1) + " dB", bottom.toNearestInt(), juce::Justification::centredRight);
     }
     else
     {
@@ -1585,12 +1617,15 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g) const
     drawIconKeyBelow (g, sourcePhantomKey, Icon::Power, "+48V", src->phantom.load(), Colours::mute, phantomHold.progress());
     drawIconKeyBelow (g, sourcePolKey, Icon::Invert, "POL", src->invert.load(), Colours::gold);
     drawOutlinedKey (g, sourceMuteKey, std::nullopt, "MUTE", src->mute.load(), Colours::mute, juce::Colours::black);
-    paintLevelFader (g, sourceGainFader, src->gainDb.load(), kGainMin, kGainMax);
+    // GAIN in the group's range (0 dB near the bottom, as on the WING); none
+    // for a group the WING gives no gain.
+    if (const auto range = gainRangeOf (selectedSource); range.hasGain())
+        paintLevelFader (g, sourceGainFader, range.clamp (src->gainDb.load()), range.min, range.max);
 }
 
 void RoutingPage::paintLevelFader (juce::Graphics& g, juce::Rectangle<int> area, float value, float min, float max) const
 {
-    // GAIN (-12 .. +60 dB) or an oscillator's LEVEL (-40 .. -6 dB): in a black
+    // GAIN (the group's range) or an oscillator's LEVEL (-40 .. -6 dB): in a black
     // frame a dark fader with a black slot, the white value flag on its gold handle.
     g.setColour (juce::Colours::black);
     g.fillRect (area);
@@ -1722,9 +1757,9 @@ void RoutingPage::setSourceGainFromY (int y)
     const float pos = juce::jlimit (0.0f, 1.0f, (slot.getBottom() - (float) y) / juce::jmax (1.0f, slot.getHeight()));
     if (auto* osc = selectedOscillator())
         osc->levelDb = std::round ((kOscLevelMin + pos * (kOscLevelMax - kOscLevelMin)) * 2.0f) / 2.0f;
-    else
+    else if (const auto range = gainRangeOf (selectedSource); range.hasGain())
     {
-        const float gain = std::round ((kGainMin + pos * (kGainMax - kGainMin)) * 2.0f) / 2.0f; // 0.5 dB steps
+        const float gain = range.fromProportion (pos); // on the group's steps
         forSourcePair (ctx.engine, selectedSource, [gain] (ld::SourceParams& s) { s.gainDb = gain; });
     }
     repaint();
@@ -1792,13 +1827,20 @@ std::vector<KnobBinding> RoutingPage::getKnobs()
     }
     // A stereo / mid-side pair has one gain (the engine plays the first
     // source's): the knob sets both, as the fader and the wheel do.
-    auto gain = bindLinear ("GAIN", src->gainDb, kGainMin, kGainMax, " dB", 1, 0.0f);
-    gain.set = [&engine = ctx.engine, port = selectedSource] (float p)
+    // The group's range and steps; a group the WING gives no gain has no knob.
+    const auto range = gainRangeOf (selectedSource);
+    if (! range.hasGain())
+        return {};
+    auto gain = bindLinear ("GAIN", src->gainDb, range.min, range.max, " dB", 1, 0.0f);
+    gain.get = [src, range] { return range.toProportion (src->gainDb.load()); };
+    gain.set = [&engine = ctx.engine, port = selectedSource, range] (float p)
     {
-        const float g = kGainMin + juce::jlimit (0.0f, 1.0f, p) * (kGainMax - kGainMin);
+        const float g = range.fromProportion (p);
         forSourcePair (engine, port, [g] (ld::SourceParams& s) { s.gainDb = g; });
     };
-    gain.steps = 145.0f; // 0.5 dB steps, as the fader
+    gain.text = [src, range] { return juce::String (range.clamp (src->gainDb.load()), 1) + " dB"; };
+    gain.steps = (float) range.steps(); // as the WING: 20 (LOCAL IN) or 98 (AES50) values
+    gain.bipolar = false;               // a level: a thumb on the bar, not a selector's segments
     gain.reset = [&engine = ctx.engine, port = selectedSource] { forSourcePair (engine, port, [] (ld::SourceParams& s) { s.gainDb = 0.0f; }); };
     return { gain };
 }
@@ -1848,9 +1890,11 @@ void RoutingPage::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWh
         return;
     }
     if (mode == Mode::Sources && sourceTab == 0 && sourceGainFader.contains (e.getPosition()))
-        if (auto* src = sourceParams (selectedSource))
+        if (auto* src = sourceParams (selectedSource); src != nullptr && gainRangeOf (selectedSource).hasGain())
         {
-            const float gain = juce::jlimit (kGainMin, kGainMax, src->gainDb.load() + (w.deltaY > 0.0f ? 0.5f : -0.5f));
+            // One of the group's steps.
+            const auto range = gainRangeOf (selectedSource);
+            const float gain = range.clamp (range.clamp (src->gainDb.load()) + (w.deltaY > 0.0f ? range.step : -range.step));
             forSourcePair (ctx.engine, selectedSource, [gain] (ld::SourceParams& s) { s.gainDb = gain; });
             repaint();
         }
@@ -1864,15 +1908,21 @@ void RoutingPage::paintHeaders (juce::Graphics& g) const
     if (mode != Mode::Sources)
         g.fillRect (rightHeader);
 
-    auto* sel = selectedStrip();
     if (mode == Mode::Channels)
     {
         // CHANNEL INPUT: which input of the channel the source grid patches.
-        // Sidecar's ST pairs the channel's input with the next one.
         drawCaptionBar (g, inputCaption, "CHANNEL INPUT");
         drawKey (g, mainKey, "MAIN", ! editAlt, Colours::valueBlue);
         drawKey (g, altKey, "ALT", editAlt, Colours::valueBlue);
-        drawKey (g, stereoKey, "ST", sel != nullptr && sel->params.stereo.load(), Colours::valueBlue);
+        if (routing::showsPatchKeys (lock))
+        {
+            // The pairing of the source the channel's input (MAIN or ALT) is on.
+            const auto* src = ctx.engine.getSource (patchedSourceIndex());
+            const int pairing = src != nullptr ? (int) src->mode.load() : -1;
+            drawKey (g, monoKey, "M", pairing == ld::kSourceMono, Colours::valueBlue);
+            drawKey (g, stereoKey, "ST", pairing == ld::kSourceStereo, Colours::valueBlue);
+            drawKey (g, midSideKey, "M/S", pairing == ld::kSourceMidSide, Colours::valueBlue);
+        }
         drawKey (g, prevPage, "<", false, Colours::valueBlue);
         drawKey (g, nextPage, ">", false, Colours::valueBlue);
     }
@@ -1901,6 +1951,7 @@ void RoutingPage::paintHeaders (juce::Graphics& g) const
     // unlocked the open one green; the other stays #303030.
     g.setColour (juce::Colours::black);
     g.fillRect (lockFrame);
+    const bool locked = lock.isLocked();
     g.setColour (locked ? lockRed : Colours::screenTile);
     g.fillRect (lockKey);
     drawIcon (g, Icon::LockClosed, lockKey.toFloat().reduced ((float) lockKey.getHeight() * 0.2f), locked ? juce::Colours::black : Colours::textDim);
@@ -1909,7 +1960,8 @@ void RoutingPage::paintHeaders (juce::Graphics& g) const
     drawIcon (g, Icon::LockOpen, unlockKey.toFloat().reduced ((float) unlockKey.getHeight() * 0.2f), ! locked ? juce::Colours::black : Colours::textDim);
 
     drawSelector (g, rightSelector, mode == Mode::Channels ? inputGroup : signalGroup, "SOURCE GROUP");
-    drawIconKey (g, noneKey, Icon::ClearCircle, "NONE");
+    if (routing::showsPatchKeys (lock))
+        drawIconKey (g, noneKey, Icon::ClearCircle, "NONE");
     if (mode == Mode::Channels)
     {
         // Source customization doesn't exist yet.
@@ -1998,7 +2050,7 @@ void RoutingPage::paint (juce::Graphics& g)
         }
     }
 
-    if (locked && mode != Mode::Sources)
+    if (lock.isLocked() && mode != Mode::Sources)
     {
         g.setColour (juce::Colours::black.withAlpha (0.25f));
         g.fillRect (rightGrid);
@@ -2009,7 +2061,7 @@ void RoutingPage::paint (juce::Graphics& g)
 void RoutingPage::assignInput (int port, bool right)
 {
     auto* s = selectedStrip();
-    if (s == nullptr || locked)
+    if (s == nullptr || lock.isLocked())
         return;
     auto& p = s->params;
     if (editAlt)
@@ -2072,7 +2124,7 @@ void RoutingPage::clearOutput (int port)
 
 void RoutingPage::assignOutput (int port, const Signal& sig)
 {
-    if (locked || port < 0 || sig.channel < 0)
+    if (lock.isLocked() || port < 0 || sig.channel < 0)
         return;
     // One signal per output. A strip has one output pair, so patching it to a
     // new output moves it there (engine item E4: many outputs per signal).
@@ -2126,11 +2178,12 @@ void RoutingPage::showGroupMenu (bool rightSide)
     Group current = inputGroup;
     if (mode == Mode::Outputs)
     {
-        menu = rightSide ? routing::sourceMenu (true, true) : routing::outputMenu();
+        const bool compact = ctx.consoleModel == ConsoleModel::Compact;
+        menu = rightSide ? routing::sourceMenu (true, true, compact) : routing::outputMenu (compact);
         current = rightSide ? signalGroup : outputGroup;
     }
     else
-        menu = routing::sourceMenu (mode == Mode::Channels);
+        menu = routing::sourceMenu (mode == Mode::Channels, false, ctx.consoleModel == ConsoleModel::Compact);
     const auto box = rightSide ? rightGrid : leftGrid;
     const auto origin = juce::Point<int> ((rightSide ? rightPanel : leftPanel).getX() + px (8.0f), box.getY());
     juce::Component::SafePointer<RoutingPage> safe (this);
@@ -2147,6 +2200,10 @@ void RoutingPage::showGroupMenu (bool rightSide)
             safe->repaint();
         });
     });
+    {
+        const auto side = rightSide ? rightPanel : leftPanel;
+        groupMenu->dimArea = getLocalBounds().withLeft (side.getX() - px (4.0f)).withRight (side.getRight() + px (4.0f));
+    }
     addAndMakeVisible (*groupMenu);
     groupMenu->setBounds (getLocalBounds());
 }
@@ -2260,9 +2317,9 @@ void RoutingPage::mouseUp (const juce::MouseEvent& e)
     else if (autoKey.contains (pos))
         autoAdvance = ! autoAdvance;
     else if (lockKey.contains (pos))
-        locked = true;
+        setLocked (true);
     else if (unlockKey.contains (pos))
-        locked = false;
+        setLocked (false);
     else if (prevPage.contains (pos) || nextPage.contains (pos))
     {
         targetPage = (targetPage + (nextPage.contains (pos) ? 1 : numTargetPages() - 1)) % numTargetPages();
@@ -2280,14 +2337,15 @@ void RoutingPage::mouseUp (const juce::MouseEvent& e)
         showGroupMenu (false);
     else if (rightSelector.contains (pos))
         showGroupMenu (true);
-    else if (stereoKey.contains (pos))
+    else if (mode == Mode::Channels && (monoKey.contains (pos) || stereoKey.contains (pos) || midSideKey.contains (pos)))
     {
-        if (auto* s = selectedStrip(); s != nullptr && ! locked)
-            s->params.stereo = ! s->params.stereo.load();
+        // The channel's source pairing (its channels follow); hidden while locked.
+        if (const int index = patchedSourceIndex(); index >= 0 && routing::showsPatchKeys (lock))
+            ctx.engine.setSourceMode (index, monoKey.contains (pos) ? ld::kSourceMono : stereoKey.contains (pos) ? ld::kSourceStereo : ld::kSourceMidSide);
     }
     else if (noneKey.contains (pos))
     {
-        if (locked)
+        if (lock.isLocked())
             return;
         if (mode == Mode::Outputs)
             clearOutput (selectedPort);

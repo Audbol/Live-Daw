@@ -648,6 +648,24 @@ mod colour_tests {
         assert_eq!((b1.colour.load(Relaxed), b9.colour.load(Relaxed), b11.colour.load(Relaxed)), (10, 6, 12));
         assert!(!b1.mains[0].on.load(Relaxed) && b9.mains[0].on.load(Relaxed));
         assert_eq!(b9.fader_db.load(), 0.0);
+        // TAP "5"; matrix sends off at -oo, not linked, PRE from channels and
+        // post-fader from buses; a matrix's direct input at -oo.
+        assert_eq!(ch.tap.load(Relaxed), DEFAULT_TAP);
+        let m = &ch.matrix[0];
+        assert!(m.pre.load(Relaxed) && !m.pan_link.load(Relaxed) && !m.on.load(Relaxed));
+        assert_eq!(m.level_db.load(), livedaw_dsp::fader::FADER_MIN);
+        assert!(!b1.matrix[0].pre.load(Relaxed));
+        assert_eq!(StripParams::new(StripKind::Matrix).direct_level_db.load(), livedaw_dsp::fader::FADER_MIN);
+        // AUX 2 plays the USB player's PLAY 1/2 in stereo; AUX 1 has no input.
+        let (aux1, aux2) = (StripParams::new_in_slot(StripKind::Aux, 0), StripParams::new_in_slot(StripKind::Aux, 1));
+        assert_eq!(aux1.input_left.load(Relaxed), -1);
+        assert!(aux2.stereo.load(Relaxed));
+        assert_eq!(
+            (aux2.input_left.load(Relaxed), aux2.input_right.load(Relaxed)),
+            (livedaw_recorder::USB_PLAYER_SOURCE_BASE, livedaw_recorder::USB_PLAYER_SOURCE_BASE + 1)
+        );
+        let c = EngineControls::default();
+        assert!(c.mute_override.load(Relaxed) && c.input_select_global.load(Relaxed));
         let d = DcaParams::default();
         assert_eq!(
             (d.colour.load(Relaxed), d.led.load(Relaxed), d.fader_db.load()),
@@ -677,6 +695,14 @@ mod factory_tests {
     }
 }
 
+/// The TAP point input channels start with (an index into `TAP_POINTS`):
+/// "5", after the third block of the process order, as on a factory-set WING.
+pub const DEFAULT_TAP: i32 = 4;
+
+/// The aux channel (0-based) a factory-set WING patches to the USB player's
+/// first pair (AUX 2, PLAY 1/2).
+pub const FACTORY_PLAYER_AUX: usize = 1;
+
 /// Default WING colour per kind (buses: see `StripParams::new_in_slot`).
 pub fn default_colour(kind: StripKind) -> i32 {
     match kind {
@@ -694,13 +720,15 @@ impl StripParams {
             pre: AtomicBool::new(false),
             level_db: AtomicF32::new(0.0),
         };
+        // The WING's factory matrix sends: off at -oo without pan link, input
+        // and aux channels in PRE (TAP), buses and mains post-fader.
         let new_mtx = |_| MatrixSendParams {
             on: AtomicBool::new(false),
-            pre: AtomicBool::new(false),
+            pre: AtomicBool::new(kind.is_input()),
             ignore_mute: AtomicBool::new(false),
-            pan_link: AtomicBool::new(true),
+            pan_link: AtomicBool::new(false),
             pan_reversed: AtomicBool::new(false),
-            level_db: AtomicF32::new(0.0),
+            level_db: AtomicF32::new(livedaw_dsp::fader::FADER_MIN),
             pan: AtomicF32::new(0.0),
         };
         let p = Self {
@@ -712,7 +740,7 @@ impl StripParams {
             pre_insert: InsertParams::default(),
             post_insert: InsertParams::default(),
             process_order: AtomicI32::new(0),
-            tap: AtomicI32::new(5), // PFL
+            tap: AtomicI32::new(DEFAULT_TAP),
             fader_db: AtomicF32::new(0.0),
             pan: AtomicF32::new(0.0),
             width: AtomicF32::new(100.0),
@@ -734,7 +762,7 @@ impl StripParams {
             direct_invert: AtomicBool::new(false),
             direct_pre: AtomicBool::new(false),
             direct_source: AtomicI32::new(-1),
-            direct_level_db: AtomicF32::new(0.0),
+            direct_level_db: AtomicF32::new(livedaw_dsp::fader::FADER_MIN),
             colour: AtomicI32::new(default_colour(kind)),
             icon: AtomicI32::new(0),
             led: AtomicBool::new(true),
@@ -759,13 +787,19 @@ impl StripParams {
 
     /// A new strip in slot `index` of its kind, as on a factory-initialized
     /// WING: buses 1-8 (aux mixes) Salmon (colour 10) with the fader down;
-    /// buses 9-10 Lime (6) and 11-16 Magenta (12), at 0 dB into Main 1.
+    /// buses 9-10 Lime (6) and 11-16 Magenta (12), at 0 dB into Main 1;
+    /// AUX 2 on the USB player's PLAY 1/2 (the "2TR" pair), in stereo.
     pub fn new_in_slot(kind: StripKind, index: usize) -> Self {
         let p = Self::new(kind);
         if kind == StripKind::Bus && (8..WING_BUSES).contains(&index) {
             p.colour.store(if index < 10 { 6 } else { 12 }, Relaxed);
             p.fader_db.store(0.0);
             p.mains[0].on.store(true, Relaxed);
+        }
+        if kind == StripKind::Aux && index == FACTORY_PLAYER_AUX {
+            p.stereo.store(true, Relaxed);
+            p.input_left.store(livedaw_recorder::USB_PLAYER_SOURCE_BASE, Relaxed);
+            p.input_right.store(livedaw_recorder::USB_PLAYER_SOURCE_BASE + 1, Relaxed);
         }
         p
     }
@@ -1113,12 +1147,13 @@ impl Default for EngineControls {
             automix_enable: [AtomicBool::new(true), AtomicBool::new(true)],
             monitor_dim_db: AtomicF32::new(DEFAULT_DIM_DB),
             main_link: AtomicI32::new(0),
-            input_select_global: AtomicBool::new(false),
+            // A WING after INITIALIZE: `/io/autoaltovr` and `/$ctl/cfg/muteovr` on.
+            input_select_global: AtomicBool::new(true),
             global_alt: AtomicBool::new(false),
             solo_mode: AtomicI32::new(solo_mode::LIVE),
             solo_bus: AtomicI32::new(0),
             solo_bus_override: AtomicBool::new(false),
-            mute_override: AtomicBool::new(false),
+            mute_override: AtomicBool::new(true),
             sip_active: AtomicBool::new(false),
             talk: TalkParams::default(),
             speakers: MonitorSourceParams::default(),
@@ -1161,12 +1196,12 @@ impl EngineControls {
             enable.store(true, Relaxed);
         }
         self.main_link.store(0, Relaxed);
-        self.input_select_global.store(false, Relaxed);
+        self.input_select_global.store(true, Relaxed);
         self.global_alt.store(false, Relaxed);
         self.solo_mode.store(solo_mode::LIVE, Relaxed);
         self.solo_bus.store(0, Relaxed);
         self.solo_bus_override.store(false, Relaxed);
-        self.mute_override.store(false, Relaxed);
+        self.mute_override.store(true, Relaxed);
         self.talk.reset();
         self.speakers.reset();
         self.phones.reset();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ui/DisplayPage.h"
+#include "ui/LayerDrop.h"
 #include "ui/ScreenWidgets.h"
 #include "ui/WingPopups.h"
 
@@ -49,7 +50,9 @@ protected:
 
     void timerCallback() override;
 
-    LayerSet::Section section() const noexcept { return ctx.viewSection; }
+    bool isCompact() const noexcept { return ctx.consoleModel == ConsoleModel::Compact; }
+    /** The section shown: the WING COMPACT has only its one (the left). */
+    LayerSet::Section section() const noexcept { return ctx.consoleModel == ConsoleModel::Compact ? LayerSet::Left : ctx.viewSection; }
     juce::String currentLayerId() const;
     Layer currentLayer() const;
     /** A bank of the bank keys: "1-8" ... "DCA 9-16" and its faders. */
@@ -184,14 +187,22 @@ private:
     int lastY = 0;
 };
 
-/** CONFIG (fig. 58, [I10]): edits the fader layers. Pick items in the top grid
-    and drag them onto a slot (replaces it) or between two slots (a blue line:
-    inserts and shifts the rest), or click a slot; drag a slot away to remove
-    it, drag within the slots to reorder. Every layer key is editable: USER 1 /
-    USER 2 hold user layers, the other keys keep an edited copy in the show
-    (RESTORE gives back the generated one). The slots of the page shown sit in
-    groups of four on blue plates, their numbers under them; the arrows page,
-    one page past the end to append. */
+/** CONFIG (fig. 58, [I10]): edits the fader layers, whose slots are fixed as
+    on the WING: a slot can be blank (an inactive strip on the surface) and the
+    same fader can sit in several slots. Pick items in the top grid and drag
+    them onto a slot, or click a slot with items picked: they fill that slot
+    (and the next ones for several items), replacing what was there; an item
+    already in the layer gets another slot. Dropped near the boundary between
+    two slots (a bright bar marks it) they're inserted there and the slots
+    after it move right (refused when the layer's last slot is in use). Drag
+    a slot onto another to swap the two (onto a blank slot: move it), between
+    two to insert it there (its old slot turns blank), off the slots to blank
+    it. Right-click or long-press a slot: CLEAR SLOT, INSERT EMPTY SLOT. CLEAR
+    blanks the whole layer. Every layer key is editable: USER 1 / USER 2 hold
+    user layers, the other keys keep an edited copy in the show (RESTORE gives
+    back the generated one). The slots of the page shown sit in groups of four
+    on blue plates, their numbers under them; the arrows page, one page past
+    the end to append. */
 class ConfigViewPage final : public ViewPage
 {
 public:
@@ -208,12 +219,8 @@ protected:
     void layerChanged() override;
 
 private:
-    /** Where a drop lands: on slot `index` (replace) or before it (insert). */
-    struct DropTarget
-    {
-        int index = -1;
-        bool insert = false;
-    };
+    /** A press this long on a slot opens its menu (touch screens). */
+    static constexpr int kLongPressMs = 600;
 
     std::vector<state::FaderRef> sourceItems() const;
     /** The destinations of SENDS (every bus, main and matrix) or BUS -> BUS
@@ -226,9 +233,17 @@ private:
     juce::String userLayerId (const Layer&, bool create);
     /** Stores the layer's faders (a user layer's, or the default key's edited copy). */
     void setLayerFaders (const Layer&, const std::vector<state::FaderRef>&);
-    /** Puts `items` at layer position `index`, replacing what's there or inserting. */
-    void placeAt (const std::vector<state::FaderRef>&, int index, bool insert);
-    DropTarget dropTargetAt (juce::Point<int>) const;
+    /** Applies a slot edit (layerslots) to the layer shown; an edit that
+        returns false is refused (the layer is full) and says so. */
+    void editSlots (const std::function<bool (std::vector<state::FaderRef>&)>&);
+    /** The picked items dropped or tapped on `target` (layerslots::dropItems). */
+    void dropItemsAt (layerslots::DropTarget target);
+    void clearSlot (int index);
+    void insertEmptySlot (int index);
+    /** CLEAR SLOT / INSERT EMPTY SLOT for slot `local` of the page shown. */
+    void showSlotMenu (int local);
+    /** Where a drop at `pos` lands (layerdrop::targetAt). */
+    layerslots::DropTarget dropTargetAt (juce::Point<int>) const;
     void updateKeys();
 
     /** MIDI CC: 32 CCs of one MIDI channel at a time ("CH 1  CC 0-31"). */
@@ -247,9 +262,10 @@ private:
     juce::OwnedArray<DropdownField> fields;
     WingKey clearKey { "CLEAR", Icon::Trash }, renameKey { "RENAME", Icon::Edit }, newKey { "NEW", Icon::Plus }, deleteKey { "DELETE" };
 
-    // Dragging: from the source grid (dragSlot < 0) or from a slot.
+    // Dragging: from the source grid (dragSlot < 0) or from a filled slot.
+    // pressSlot: the page slot pressed (filled or blank), for the slot menu.
     bool dragActive = false;
-    int dragSlot = -1;
+    int dragSlot = -1, pressSlot = -1;
     juce::Point<int> dragPoint;
 };
 

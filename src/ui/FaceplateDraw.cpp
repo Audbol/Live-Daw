@@ -3,6 +3,7 @@
 #include "ui/ModelParams.h"
 
 #include <cmath>
+#include <functional>
 #include <map>
 
 namespace livedaw::ui::fp
@@ -1160,58 +1161,633 @@ namespace
     }
 
 
-    /** The magnitude (dB) of one dynamic-EQ band at `hz`: a bell, shelves or
-        flat (filter types OFF, BP, LP6, LP12, HP6, HP12). */
+    //==========================================================================
+    // Graph screens
+
+    /** The magnitude (dB) of one dynamic-EQ band at `hz`: the whole band
+        (OFF = no filter), a bell, low or high shelves (filter types OFF, BP,
+        LP6, LP12, HP6, HP12). */
     float bandDb (float hz, float f, float gain, float q, int type)
     {
-        const float x = std::log2 (hz / juce::jmax (1.0f, f));
+        // The DSP's own curves (livedaw-dsp dynamics / dyneq, analog
+        // prototypes): x + (g - 1) F(x), F the band filter at FREQ; the 12 dB
+        // shelves are second order with Butterworth poles at FREQ.
+        const float w = hz / juce::jmax (1.0f, f), w2 = w * w, w4 = w2 * w2;
+        const float g = std::pow (10.0f, gain / 20.0f), g2 = g * g;
+        const auto db = [] (float power) { return 10.0f * std::log10 (juce::jmax (1.0e-12f, power)); };
         switch (type)
         {
-            case 1: return gain / (1.0f + std::pow (x * q * 1.6f, 2.0f));                        // bell
-            case 2: case 3: return gain / (1.0f + std::exp (x * (type == 2 ? 3.0f : 6.0f)));    // low shelf
-            case 4: case 5: return gain / (1.0f + std::exp (-x * (type == 4 ? 3.0f : 6.0f)));   // high shelf
+            case 0: return gain; // full band
+            case 1:
+            {
+                // bell: (s^2 + s g/Q + 1) / (s^2 + s/Q + 1)
+                const float re = (1.0f - w2) * (1.0f - w2), wq = w / juce::jmax (0.1f, q);
+                return db ((re + g2 * wq * wq) / (re + wq * wq));
+            }
+            case 2: return db ((g2 + w2) / (1.0f + w2));        // low shelf, 6 dB/oct
+            case 3: return db ((g2 + w4) / (1.0f + w4));        // low shelf, 12 dB/oct
+            case 4: return db ((1.0f + g2 * w2) / (1.0f + w2)); // high shelf, 6 dB/oct
+            case 5: return db ((1.0f + g2 * w4) / (1.0f + w4)); // high shelf, 12 dB/oct
             default: return 0.0f;
+        }
+    }
+
+    const Colour kCurve { 0xfff0a030 }, kCurve2 { 0xff4a8af0 }, kCurve3 { 0xff60d080 }, kGridLine { 0xff3a3a3a }, kGridMain { 0xff6a6a6a },
+        kGridText { 0xff9a9a9a };
+
+    /** The screen of a graph: a bezel and a black glass. */
+    void graphScreen (juce::Graphics& g, Rectangle<float> r)
+    {
+        g.setColour (Colour (0xff3a3a3a));
+        g.fillRoundedRectangle (r.expanded (4.0f), 10.0f);
+        g.setColour (Colour (0xff030303));
+        g.fillRoundedRectangle (r, 8.0f);
+    }
+
+    /** A parameter a graph shows: its spec and value (nullptr past the end). */
+    struct GraphInput
+    {
+        const PaintContext& ctx;
+        const Element& e;
+
+        const models::Param* param (size_t k) const
+        {
+            if (ctx.spec == nullptr || k >= e.params.size())
+                return nullptr;
+            const int i = e.params[k];
+            return i >= 0 && i < (int) ctx.spec->params.size() ? &ctx.spec->params[(size_t) i] : nullptr;
+        }
+        bool has (size_t k) const { return param (k) != nullptr; }
+        float value (size_t k, float fallback = 0.0f) const { return has (k) ? ctx.value (e.params[k]) : fallback; }
+        /** 0..1 along the control's travel. */
+        float fraction (size_t k, float fallback = 0.0f) const
+        {
+            const auto* p = param (k);
+            return p != nullptr ? juce::jlimit (0.0f, 1.0f, p->toNormalised (value (k))) : fallback;
+        }
+        /** The value as a number: a choice's text ("1/2" = 0.5, "4.0", "ALL" = 100). */
+        float number (size_t k, float fallback = 0.0f) const
+        {
+            const auto* p = param (k);
+            if (p == nullptr)
+                return fallback;
+            if (p->isContinuous() || p->kind == models::ParamKind::Integer)
+                return value (k);
+            return parseNumber (consoleText (*p, value (k)), fallback);
+        }
+        juce::String text (size_t k) const
+        {
+            const auto* p = param (k);
+            return p != nullptr ? consoleText (*p, value (k)) : juce::String();
+        }
+        /** A time in ms: the value of an ms or s parameter, else the travel
+            mapped to 0..`full` ms (logarithmically from `lo` when that is > 0). */
+        float ms (size_t k, float full, float lo = 0.0f) const
+        {
+            const auto* p = param (k);
+            if (p == nullptr)
+                return 0.0f;
+            if (p->unit == "ms")
+                return value (k);
+            if (p->unit == "s")
+                return value (k) * 1000.0f;
+            return lo > 0.0f ? lo * std::pow (full / lo, fraction (k)) : fraction (k) * full;
+        }
+        /** A percentage as 0..1 (or the travel). */
+        float amount (size_t k, float fallback = 0.0f) const
+        {
+            const auto* p = param (k);
+            if (p == nullptr)
+                return fallback;
+            if (p->unit == "%")
+                return juce::jlimit (0.0f, 1.25f, value (k) / 100.0f);
+            return fraction (k);
+        }
+
+        static float parseNumber (const juce::String& s, float fallback)
+        {
+            const auto t = s.trim().upToFirstOccurrenceOf (" ", false, false);
+            if (t.containsChar ('/'))
+            {
+                const float den = t.fromFirstOccurrenceOf ("/", false, false).getFloatValue();
+                return den != 0.0f ? t.upToFirstOccurrenceOf ("/", false, false).getFloatValue() / den : fallback;
+            }
+            if (t.isEmpty() || ! (juce::CharacterFunctions::isDigit (t[0]) || t[0] == '-' || t[0] == '.'))
+                return t.equalsIgnoreCase ("ALL") || t.equalsIgnoreCase ("LIM") ? 100.0f : fallback;
+            return t.getFloatValue();
+        }
+    };
+
+    void label (juce::Graphics& g, const juce::String& s, Rectangle<float> r, juce::Justification j = juce::Justification::centred,
+                Colour c = kGridText)
+    {
+        g.setColour (c);
+        g.setFont (face (Look::Sans, 11.0f));
+        g.drawText (s, r, j, false);
+    }
+
+    /** Log frequency grid 20 Hz .. 20 kHz and a dB grid of `span` each way. */
+    void frequencyGrid (juce::Graphics& g, Rectangle<float> r, float span, float step)
+    {
+        auto xOf = [&] (float hz) { return r.getX() + r.getWidth() * std::log10 (hz / 20.0f) / 3.0f; };
+        g.setColour (kGridLine);
+        for (float dec : { 20.0f, 200.0f, 2000.0f })
+            for (int k = 1; k <= 9; ++k)
+                g.drawVerticalLine (juce::roundToInt (xOf (dec * (float) k)), r.getY(), r.getBottom());
+        for (float db = -span; db <= span + 0.01f; db += step)
+        {
+            const float y = r.getCentreY() - db / span * r.getHeight() * 0.5f;
+            g.setColour (std::abs (db) < 0.01f ? kGridMain : kGridLine);
+            g.drawHorizontalLine (juce::roundToInt (y), r.getX(), r.getRight());
+        }
+        g.setColour (kGridMain);
+        for (float hz : { 100.0f, 1000.0f, 10000.0f })
+            g.drawVerticalLine (juce::roundToInt (xOf (hz)), r.getY(), r.getBottom());
+        for (auto [hz, s] : { std::pair { 100.0f, "100" }, { 1000.0f, "1k" }, { 10000.0f, "10k" } })
+            label (g, s, { xOf (hz) + 3.0f, r.getBottom() - 16.0f, 40.0f, 14.0f }, juce::Justification::centredLeft);
+        label (g, "+" + juce::String (juce::roundToInt (span)), { r.getX() + 4.0f, r.getY() + 2.0f, 40.0f, 14.0f }, juce::Justification::centredLeft);
+        label (g, "-" + juce::String (juce::roundToInt (span)), { r.getX() + 4.0f, r.getBottom() - 16.0f, 40.0f, 14.0f },
+               juce::Justification::centredLeft);
+    }
+
+    /** A curve over the frequency grid: `db(hz)`; filled down to 0 dB when `fill`. */
+    juce::Path frequencyCurve (Rectangle<float> r, float span, const std::function<float (float)>& db)
+    {
+        juce::Path p;
+        for (int i = 0; i <= 160; ++i)
+        {
+            const float hz = 20.0f * std::pow (1000.0f, (float) i / 160.0f);
+            const float v = db (hz);
+            const float y = juce::jlimit (r.getY(), r.getBottom(), r.getCentreY() - (std::isfinite (v) ? v : 0.0f) / span * r.getHeight() * 0.5f);
+            const float x = r.getX() + r.getWidth() * (float) i / 160.0f;
+            if (i == 0)
+                p.startNewSubPath (x, y);
+            else
+                p.lineTo (x, y);
+        }
+        return p;
+    }
+
+    void fillToZero (juce::Graphics& g, const juce::Path& curve, Rectangle<float> r, Colour c)
+    {
+        juce::Path area (curve);
+        area.lineTo (r.getRight(), r.getCentreY());
+        area.lineTo (r.getX(), r.getCentreY());
+        area.closeSubPath();
+        g.setColour (c);
+        g.fillPath (area);
+    }
+
+    void drawDynEq (juce::Graphics& g, Rectangle<float> r, const GraphInput& in)
+    {
+        constexpr float span = 18.0f;
+        frequencyGrid (g, r, span, 6.0f);
+        const Colour colours[] = { kCurve, kCurve2, kCurve3 };
+        const int bands = (int) in.e.params.size() / 4;
+        for (int b = bands - 1; b >= 0; --b)
+        {
+            const size_t o = (size_t) b * 4;
+            const float f = in.value (o), gain = in.value (o + 1), q = in.value (o + 2);
+            const int type = juce::roundToInt (in.value (o + 3) - (in.has (o + 3) ? in.param (o + 3)->min : 0.0f));
+            const auto colour = colours[b % 3];
+            // The range the band moves through, then where it is now: the
+            // band's own live gain when the engine reports it, else (cuts
+            // only) the slot's gain reduction.
+            const auto full = frequencyCurve (r, span, [&] (float hz) { return bandDb (hz, f, gain, q, type); });
+            fillToZero (g, full, r, colour.withAlpha (0.16f));
+            juce::Path dashed;
+            const float dashes[] = { 6.0f, 5.0f };
+            juce::PathStrokeType (2.0f).createDashedStroke (dashed, full, dashes, 2);
+            g.setColour (colour.withAlpha (0.7f));
+            g.fillPath (dashed);
+            const float now = in.ctx.bandGain ? juce::jlimit (juce::jmin (0.0f, gain), juce::jmax (0.0f, gain), in.ctx.bandGain (b))
+                                              : (gain < 0.0f ? -juce::jmin (in.ctx.reduction, -gain) : 0.0f);
+            const auto live = frequencyCurve (r, span, [&] (float hz) { return bandDb (hz, f, now, q, type); });
+            g.setColour (colour);
+            g.strokePath (live, juce::PathStrokeType (3.0f));
+        }
+    }
+
+    /** The model's response, cached per model and values (a measured response takes a moment). */
+    void drawResponse (juce::Graphics& g, Rectangle<float> r, const GraphInput& in)
+    {
+        constexpr float span = 18.0f;
+        frequencyGrid (g, r, span, 6.0f);
+        if (in.ctx.spec == nullptr)
+            return;
+        struct Cache
+        {
+            int table = -1, model = -1;
+            std::vector<float> values, db;
+            bool ok = false;
+        };
+        static Cache cache;
+        static std::vector<float> freqs = []
+        {
+            std::vector<float> f (161);
+            for (size_t i = 0; i < f.size(); ++i)
+                f[i] = 20.0f * std::pow (1000.0f, (float) i / 160.0f);
+            return f;
+        }();
+        const auto& spec = *in.ctx.spec;
+        std::vector<float> values (spec.params.size());
+        for (size_t i = 0; i < values.size(); ++i)
+            values[i] = in.ctx.value ((int) i);
+        if (cache.table != spec.table || cache.model != spec.index || cache.values != values)
+        {
+            cache.table = spec.table;
+            cache.model = spec.index;
+            cache.values = values;
+            cache.db.assign (freqs.size(), 0.0f);
+            cache.ok = models::modelResponse (static_cast<models::Table> (spec.table), spec.index, values.data(), (int) values.size(), freqs.data(),
+                                              cache.db.data(), (int) freqs.size());
+        }
+        if (! cache.ok)
+            return;
+        auto curve = frequencyCurve (r, span, [&] (float hz)
+        {
+            const float pos = std::log10 (hz / 20.0f) / 3.0f * 160.0f;
+            const int i = juce::jlimit (0, 159, (int) pos);
+            return juce::jmap (pos - (float) i, cache.db[(size_t) i], cache.db[(size_t) i + 1]);
+        });
+        fillToZero (g, curve, r, kCurve.withAlpha (0.18f));
+        g.setColour (kCurve);
+        g.strokePath (curve, juce::PathStrokeType (3.0f));
+    }
+
+    /** A time axis 0..`window` ms with a few labelled ticks. */
+    void timeGrid (juce::Graphics& g, Rectangle<float> r, float window)
+    {
+        float step = 1.0f;
+        for (float s : { 1.0f, 2.0f, 5.0f, 10.0f, 20.0f, 50.0f, 100.0f, 200.0f, 500.0f, 1000.0f, 2000.0f, 5000.0f, 10000.0f })
+            if (window / s <= 8.0f)
+            {
+                step = s;
+                break;
+            }
+        for (float t = 0.0f; t <= window + 0.01f; t += step)
+        {
+            const float x = r.getX() + r.getWidth() * t / juce::jmax (1.0f, window);
+            g.setColour (t == 0.0f ? kGridMain : kGridLine);
+            g.drawVerticalLine (juce::roundToInt (x), r.getY(), r.getBottom());
+            if (t > 0.0f)
+                label (g, t >= 1000.0f ? juce::String (t / 1000.0f, t >= 10000.0f ? 0 : 1) + " s" : juce::String (juce::roundToInt (t)) + " ms",
+                       { x + 3.0f, r.getBottom() - 16.0f, 70.0f, 14.0f }, juce::Justification::centredLeft);
+        }
+        for (int i = 1; i < 4; ++i)
+        {
+            g.setColour (kGridLine);
+            g.drawHorizontalLine (juce::roundToInt (r.getY() + r.getHeight() * (float) i / 4.0f), r.getX(), r.getRight());
+        }
+    }
+
+    /** Echoes: a stem per tap, height = level (0 .. -48 dB). */
+    void drawTaps (juce::Graphics& g, Rectangle<float> r, const GraphInput& in)
+    {
+        struct Tap
+        {
+            float t, db;
+            int lane;
+        };
+        std::vector<Tap> taps;
+        const int variant = juce::jmax (0, in.e.choice);
+        const float full = in.e.range > 20.0f ? in.e.range : 1000.0f;
+        if (variant == 1)
+        {
+            // A row of taps over TIME after the pre-delay, levels along the slope.
+            const float time = juce::jmax (1.0f, in.ms (0, full));
+            const int n = juce::jlimit (1, 32, juce::roundToInt (in.value (1, 1.0f)));
+            const float slope = in.value (2), pre = in.ms (3, 500.0f);
+            for (int k = 1; k <= n; ++k)
+            {
+                const float along = n > 1 ? (float) (k - 1) / (float) (n - 1) : 0.0f;
+                taps.push_back ({ pre + time * (float) k / (float) n, slope >= 0.0f ? -slope * (1.0f - along) : slope * along, 0 });
+            }
+        }
+        else
+        {
+            const float time = juce::jmax (1.0f, in.ms (0, full, in.e.dbMin));
+            const float fb = juce::jlimit (0.0f, 0.97f, in.amount (1));
+            float left = time, right = time;
+            if (variant == 2)
+            {
+                const float base = time * in.number (2, 1.0f);
+                const auto pattern = in.text (3);
+                const float a = GraphInput::parseNumber (pattern.upToFirstOccurrenceOf (":", false, false), 1.0f);
+                const float b = GraphInput::parseNumber (pattern.fromFirstOccurrenceOf (":", false, false), 1.0f);
+                left = juce::jmax (1.0f, base * a);
+                right = juce::jmax (1.0f, base * b);
+            }
+            for (int lane = 0; lane < (variant == 2 ? 2 : 1); ++lane)
+            {
+                const float step = lane == 0 ? left : right;
+                float db = 0.0f;
+                for (int k = 1; k <= 24 && db > -48.0f; ++k)
+                {
+                    taps.push_back ({ step * (float) k, db, lane });
+                    db += fb > 0.0f ? 20.0f * std::log10 (fb) : -100.0f;
+                }
+            }
+        }
+        float window = 100.0f;
+        for (auto& t : taps)
+            window = juce::jmax (window, t.t * 1.08f);
+        window = juce::jmin (window, 12000.0f);
+        timeGrid (g, r, window);
+        const bool two = variant == 2;
+        for (auto& t : taps)
+        {
+            const float x = r.getX() + r.getWidth() * t.t / window;
+            if (x > r.getRight())
+                continue;
+            auto lane = two ? (t.lane == 0 ? r.withHeight (r.getHeight() * 0.5f) : r.withTrimmedTop (r.getHeight() * 0.5f)) : r;
+            lane = lane.withTrimmedBottom (two && t.lane == 0 ? 0.0f : 18.0f).reduced (0.0f, 6.0f);
+            const float h = lane.getHeight() * juce::jlimit (0.0f, 1.0f, 1.0f + t.db / 48.0f);
+            const auto colour = t.lane == 0 ? kCurve : kCurve2;
+            g.setColour (colour);
+            g.drawLine (x, lane.getBottom(), x, lane.getBottom() - h, 3.0f);
+            g.fillEllipse (Rectangle<float> (9.0f, 9.0f).withCentre ({ x, lane.getBottom() - h }));
+        }
+        if (two)
+        {
+            label (g, "L", { r.getRight() - 24.0f, r.getY() + 4.0f, 20.0f, 14.0f }, juce::Justification::centred, kCurve);
+            label (g, "R", { r.getRight() - 24.0f, r.getCentreY() + 4.0f, 20.0f, 14.0f }, juce::Justification::centred, kCurve2);
+        }
+    }
+
+    /** A reverb's envelope: pre-delay, then the tail (level 0 .. -60 dB). */
+    void drawDecay (juce::Graphics& g, Rectangle<float> r, const GraphInput& in)
+    {
+        const int variant = juce::jmax (0, in.e.choice);
+        const float pre = in.ms (0, 200.0f);
+        const float decay = juce::jmax (10.0f, in.ms (variant == 0 ? 1 : 2, 1000.0f));
+        const float window = juce::jmax (100.0f, (pre + decay * (variant == 0 ? 1.15f : 1.3f)));
+        timeGrid (g, r, window);
+        auto body = r.withTrimmedBottom (18.0f).reduced (0.0f, 8.0f);
+        auto xOf = [&] (float t) { return body.getX() + body.getWidth() * t / window; };
+        auto yOf = [&] (float db) { return body.getY() + body.getHeight() * juce::jlimit (0.0f, 1.0f, -db / 60.0f); };
+        juce::Path env;
+        env.startNewSubPath (xOf (0.0f), body.getBottom());
+        env.lineTo (xOf (pre), body.getBottom());
+        if (variant == 0)
+        {
+            for (int i = 0; i <= 60; ++i)
+            {
+                const float t = pre + decay * 1.1f * (float) i / 60.0f;
+                env.lineTo (xOf (t), yOf (-60.0f * (t - pre) / decay));
+            }
+        }
+        else
+        {
+            // Gated: a quick rise (ATTACK), held, cut at DECAY. Reverse: swells (RISE) to the cut.
+            const float shape = in.fraction (1, 0.5f);
+            const float rise = variant == 1 ? decay * (0.02f + 0.4f * shape) : decay * (0.5f + 0.5f * shape);
+            env.lineTo (xOf (pre), yOf (variant == 1 ? -30.0f : -50.0f));
+            env.lineTo (xOf (pre + rise), yOf (0.0f));
+            env.lineTo (xOf (pre + decay), yOf (variant == 1 ? -4.0f : 0.0f));
+            env.lineTo (xOf (pre + decay * 1.04f), yOf (-60.0f));
+        }
+        env.lineTo (env.getCurrentPosition().x, body.getBottom());
+        env.closeSubPath();
+        g.setGradientFill (juce::ColourGradient (kCurve.withAlpha (0.55f), body.getX(), body.getY(), kCurve.withAlpha (0.08f), body.getX(),
+                                                 body.getBottom(), false));
+        g.fillPath (env);
+        g.setColour (kCurve);
+        g.strokePath (env, juce::PathStrokeType (2.5f));
+        // Early reflections after the pre-delay.
+        if (variant == 0)
+        {
+            juce::Random rnd (3);
+            for (int k = 0; k < 8; ++k)
+            {
+                const float t = pre + decay * 0.012f * (float) (k + 1) * (1.0f + rnd.nextFloat());
+                g.setColour (kCurve2.withAlpha (0.9f));
+                g.drawVerticalLine (juce::roundToInt (xOf (t)), yOf (-60.0f * (t - pre) / decay - 2.0f), body.getBottom());
+            }
+        }
+        g.setColour (kGridText);
+        g.drawVerticalLine (juce::roundToInt (xOf (pre)), body.getY(), body.getBottom());
+        label (g, "PRE", { xOf (pre) + 3.0f, body.getY(), 40.0f, 14.0f }, juce::Justification::centredLeft);
+    }
+
+    /** One LFO cycle at `phase` (0..1): -1..1. `wave` picks the shape (choice index) or skews it (0..1, 0.5 = even). */
+    float lfoShape (float phase, int choice, float skew)
+    {
+        phase -= std::floor (phase);
+        switch (choice)
+        {
+            case 0: return 1.0f - 4.0f * std::abs (phase - 0.5f);           // TRI
+            case 1: return std::sin (kTwoPi * phase);                       // SIN
+            case 2: return 2.0f * phase - 1.0f;                             // SAW+
+            case 3: return 1.0f - 2.0f * phase;                             // SAW-
+            case 4: return phase < 0.5f ? 4.0f * phase - 1.0f : 1.0f;        // RMP
+            case 5: return phase < 0.5f ? 1.0f : -1.0f;                      // SQU
+            case 6: return std::sin (kTwoPi * std::floor (phase * 4.0f) * 0.37f + 1.3f); // RND (steps)
+            default: break;
+        }
+        // Skewed triangle-sine: the rising part takes `rise` of the cycle.
+        const float rise = juce::jlimit (0.05f, 0.95f, skew);
+        const float t = phase < rise ? phase / rise * 0.5f : 0.5f + (phase - rise) / (1.0f - rise) * 0.5f;
+        return -std::cos (kTwoPi * t);
+    }
+
+    void drawLfo (juce::Graphics& g, Rectangle<float> r, const GraphInput& in)
+    {
+        // params: speed (Hz), depth L, depth R (or -1), phase (deg), wave.
+        const float hz = juce::jmax (0.01f, in.value (0, 1.0f));
+        const float depthL = juce::jmax (0.08f, in.amount (1, 1.0f)), depthR = in.has (2) ? juce::jmax (0.08f, in.amount (2)) : depthL;
+        const float phaseOffset = in.has (3) ? in.value (3) / 360.0f : 0.0f;
+        int choice = -1;
+        float skew = 0.5f;
+        if (const auto* w = in.param (4))
+        {
+            if (w->kind == models::ParamKind::Choice)
+                choice = juce::roundToInt (in.value (4) - w->min);
+            else
+                skew = in.fraction (4, 0.5f);
+        }
+        const float window = 2.0f / hz * 1000.0f; // two cycles
+        timeGrid (g, r, window);
+        auto body = r.withTrimmedBottom (18.0f).reduced (0.0f, 8.0f);
+        g.setColour (kGridMain);
+        g.drawHorizontalLine (juce::roundToInt (body.getCentreY()), body.getX(), body.getRight());
+        for (int lane = 1; lane >= 0; --lane)
+        {
+            juce::Path p;
+            const float depth = lane == 0 ? depthL : depthR;
+            for (int i = 0; i <= 200; ++i)
+            {
+                const float ph = 2.0f * (float) i / 200.0f + (lane == 1 ? phaseOffset : 0.0f);
+                const float y = body.getCentreY() - lfoShape (ph, choice, skew) * depth * body.getHeight() * 0.45f;
+                const float x = body.getX() + body.getWidth() * (float) i / 200.0f;
+                if (i == 0)
+                    p.startNewSubPath (x, y);
+                else
+                    p.lineTo (x, y);
+            }
+            g.setColour (lane == 0 ? kCurve : kCurve2);
+            g.strokePath (p, juce::PathStrokeType (lane == 0 ? 3.0f : 2.0f));
+        }
+        label (g, "L", { body.getRight() - 40.0f, body.getY(), 16.0f, 14.0f }, juce::Justification::centred, kCurve);
+        label (g, "R", { body.getRight() - 22.0f, body.getY(), 16.0f, 14.0f }, juce::Justification::centred, kCurve2);
+    }
+
+    void drawTransfer (juce::Graphics& g, Rectangle<float> r, const GraphInput& in)
+    {
+        r = r.withSizeKeepingCentre (juce::jmin (r.getWidth(), r.getHeight()), juce::jmin (r.getWidth(), r.getHeight()));
+        constexpr float range = 60.0f;
+        g.setColour (kGridLine);
+        for (int i = 1; i < 6; ++i)
+        {
+            g.drawVerticalLine (juce::roundToInt (r.getX() + r.getWidth() * (float) i / 6.0f), r.getY(), r.getBottom());
+            g.drawHorizontalLine (juce::roundToInt (r.getY() + r.getHeight() * (float) i / 6.0f), r.getX(), r.getRight());
+        }
+        g.setColour (kGridMain);
+        g.drawLine (r.getX(), r.getBottom(), r.getRight(), r.getY(), 1.0f);
+        const bool limiter = in.e.choice == 1;
+        const float thr = limiter ? -in.value (0) : in.value (0);
+        const float ratio = limiter ? 1000.0f : juce::jmax (1.0f, in.number (1, 2.0f));
+        const float knee = limiter ? in.value (2) * 0.6f : (in.has (2) ? in.value (2) * 2.0f : 0.0f);
+        const float out = limiter ? in.value (1) : 0.0f;
+        auto curve = [&] (float x)
+        {
+            const float over = x - thr;
+            float y = x;
+            if (knee > 0.0f && std::abs (over) <= knee * 0.5f)
+                y = x + (1.0f / ratio - 1.0f) * std::pow (over + knee * 0.5f, 2.0f) / (2.0f * knee);
+            else if (over > 0.0f)
+                y = thr + over / ratio;
+            return y + out;
+        };
+        juce::Path p;
+        for (int i = 0; i <= 120; ++i)
+        {
+            const float x = -range + range * (float) i / 120.0f;
+            const float y = juce::jlimit (-range, 0.0f, curve (x));
+            const auto pt = Point<float> (r.getX() + r.getWidth() * (x + range) / range, r.getY() + r.getHeight() * -y / range);
+            if (i == 0)
+                p.startNewSubPath (pt);
+            else
+                p.lineTo (pt);
+        }
+        g.setColour (kCurve);
+        g.strokePath (p, juce::PathStrokeType (3.0f));
+        label (g, "IN", { r.getRight() - 30.0f, r.getBottom() - 16.0f, 26.0f, 14.0f });
+        label (g, "OUT", { r.getX() + 4.0f, r.getY() + 2.0f, 30.0f, 14.0f });
+    }
+
+    void drawDeEss (juce::Graphics& g, Rectangle<float> r, const GraphInput& in)
+    {
+        constexpr float span = 18.0f;
+        frequencyGrid (g, r, span, 6.0f);
+        const float f = in.value (0, 5000.0f), range = juce::jmax (0.0f, in.value (1));
+        const bool full = in.text (2).startsWithIgnoreCase ("FULL");
+        // The band the detector listens to: everything above FREQ (12 dB/oct high pass).
+        const auto band = frequencyCurve (r, span, [&] (float hz)
+        {
+            const float w4 = std::pow (hz / juce::jmax (1.0f, f), 4.0f);
+            return 6.0f * w4 / (1.0f + w4);
+        });
+        fillToZero (g, band, r, kCurve2.withAlpha (0.25f));
+        // HF ONLY: the DSP's 12 dB/oct high shelf, its corner a little under
+        // FREQ so that at the full RANGE half the cut is at FREQ.
+        const float corner = juce::jmax (1.0f, f) * std::pow (10.0f, -range * 0.25f / 20.0f);
+        auto cut = [&] (float depth)
+        {
+            return frequencyCurve (r, span, [&] (float hz)
+            {
+                if (full)
+                    return -depth;
+                const float w4 = std::pow (hz / corner, 4.0f), g2 = std::pow (10.0f, -depth / 10.0f);
+                return 10.0f * std::log10 ((1.0f + g2 * w4) / (1.0f + w4));
+            });
+        };
+        juce::Path dashed;
+        const float dashes[] = { 6.0f, 5.0f };
+        juce::PathStrokeType (2.0f).createDashedStroke (dashed, cut (range), dashes, 2);
+        g.setColour (kCurve.withAlpha (0.7f));
+        g.fillPath (dashed);
+        g.setColour (kCurve);
+        g.strokePath (cut (juce::jmin (range, in.ctx.reduction)), juce::PathStrokeType (3.0f));
+    }
+
+    void drawFilter (juce::Graphics& g, Rectangle<float> r, const GraphInput& in)
+    {
+        constexpr float span = 24.0f;
+        frequencyGrid (g, r, span, 12.0f);
+        const float f = juce::jmax (10.0f, in.value (0, 1000.0f));
+        const int type = in.has (1) ? juce::roundToInt (in.value (1) - in.param (1)->min) : 0;
+        const bool steep = in.has (2) && juce::roundToInt (in.value (2) - in.param (2)->min) == 1;
+        const float q = 0.7f + in.fraction (3) * 9.0f;
+        auto curve = frequencyCurve (r, span, [&] (float hz)
+        {
+            const float w = hz / f;
+            const float re = 1.0f - w * w, im = w / q;
+            const float den = std::sqrt (re * re + im * im);
+            float num = 1.0f;
+            switch (type)
+            {
+                case 1: num = w * w; break;
+                case 2: num = w / q; break;
+                case 3: num = std::abs (1.0f - w * w); break;
+                default: break;
+            }
+            const float db = 20.0f * std::log10 (juce::jmax (1.0e-5f, num / den));
+            return steep ? db * 2.0f : db;
+        });
+        fillToZero (g, curve, r, kCurve.withAlpha (0.16f));
+        g.setColour (kCurve);
+        g.strokePath (curve, juce::PathStrokeType (3.0f));
+    }
+
+    void drawLevels (juce::Graphics& g, Rectangle<float> r, const GraphInput& in)
+    {
+        const int n = (int) in.e.params.size();
+        if (n == 0)
+            return;
+        auto body = r.reduced (10.0f, 10.0f).withTrimmedBottom (14.0f);
+        const float w = body.getWidth() / (float) n;
+        for (int i = 0; i < n; ++i)
+        {
+            const auto* p = in.param ((size_t) i);
+            if (p == nullptr)
+                continue;
+            const bool bipolar = p->min < 0.0f && p->max > 0.0f;
+            const float pos = in.fraction ((size_t) i);
+            auto col = Rectangle<float> (body.getX() + w * (float) i, body.getY(), w, body.getHeight()).reduced (w * 0.2f, 0.0f);
+            g.setColour (kGridLine);
+            g.fillRect (col);
+            const float base = bipolar ? col.getCentreY() : col.getBottom();
+            const float top = col.getBottom() - pos * col.getHeight();
+            g.setColour (kCurve);
+            g.fillRect (Rectangle<float>::leftTopRightBottom (col.getX(), juce::jmin (base, top) - 1.0f, col.getRight(), juce::jmax (base, top) + 1.0f));
+            // The caption, or the bar's number where it doesn't fit.
+            auto caption = consoleLabel (*p).toUpperCase();
+            if (juce::GlyphArrangement::getStringWidth (face (Look::Sans, 11.0f), caption) > w - 2.0f)
+                caption = juce::String (i + 1);
+            label (g, caption, { col.getX() - 10.0f, col.getBottom() + 2.0f, col.getWidth() + 20.0f, 13.0f });
         }
     }
 
     void drawGraph (juce::Graphics& g, const Element& e, const PaintContext& ctx)
     {
         const Rectangle<float> r (e.x, e.y, e.w, e.h);
-        g.setColour (Colour (0xff3a3a3a));
-        g.fillRoundedRectangle (r.expanded (4.0f), 10.0f);
-        g.setColour (Colour (0xff030303));
-        g.fillRoundedRectangle (r, 8.0f);
+        graphScreen (g, r);
         juce::Graphics::ScopedSaveState keep (g);
         g.reduceClipRegion (r.reduced (2.0f).toNearestInt());
-        auto xOf = [&] (float hz) { return r.getX() + r.getWidth() * std::log10 (hz / 20.0f) / 3.0f; };
-        g.setColour (Colour (0xff4a4a4a));
-        for (float dec : { 20.0f, 200.0f, 2000.0f })
-            for (int k = 1; k <= 9; ++k)
-                g.drawVerticalLine (juce::roundToInt (xOf (dec * (float) k)), r.getY(), r.getBottom());
-        g.setColour (Colour (0xff8a8a8a));
-        for (float hz : { 100.0f, 1000.0f, 10000.0f })
-            g.drawVerticalLine (juce::roundToInt (xOf (hz)), r.getY(), r.getBottom());
-        g.setColour (Colour (0xff4a4a4a));
-        for (int i = 1; i < 6; ++i)
-            g.drawHorizontalLine (juce::roundToInt (r.getY() + r.getHeight() * (float) i / 6.0f), r.getX(), r.getRight());
-        const Colour colours[] = { Colour (0xffe8a020), Colour (0xff4a8af0) };
-        const int bands = (int) e.params.size() / 4;
-        for (int b = bands - 1; b >= 0; --b)
+        const auto inner = r.reduced (6.0f, 4.0f);
+        const GraphInput in { ctx, e };
+        switch (e.graph)
         {
-            auto val = [&] (int k) { return ctx.value (e.params[(size_t) (b * 4 + k)]); };
-            juce::Path curve;
-            for (int i = 0; i <= 200; ++i)
-            {
-                const float hz = 20.0f * std::pow (1000.0f, (float) i / 200.0f);
-                const float db = bandDb (hz, val (0), val (1), val (2), juce::roundToInt (val (3)));
-                const float y = r.getCentreY() - db / 18.0f * r.getHeight() * 0.5f;
-                if (i == 0)
-                    curve.startNewSubPath (xOf (hz), y);
-                else
-                    curve.lineTo (xOf (hz), y);
-            }
-            g.setColour (colours[b % 2]);
-            g.strokePath (curve, juce::PathStrokeType (3.0f));
+            case GraphKind::DynEq: drawDynEq (g, inner, in); break;
+            case GraphKind::Response: drawResponse (g, inner, in); break;
+            case GraphKind::Taps: drawTaps (g, inner, in); break;
+            case GraphKind::Decay: drawDecay (g, inner, in); break;
+            case GraphKind::Lfo: drawLfo (g, inner, in); break;
+            case GraphKind::Transfer: drawTransfer (g, inner, in); break;
+            case GraphKind::DeEss: drawDeEss (g, inner, in); break;
+            case GraphKind::Filter: drawFilter (g, inner, in); break;
+            case GraphKind::Levels: drawLevels (g, inner, in); break;
         }
     }
 

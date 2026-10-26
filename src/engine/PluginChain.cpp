@@ -1,4 +1,6 @@
 #include "engine/PluginChain.h"
+#include "engine/MonoBuses.h"
+#include "engine/PluginHost.h"
 #include "engine/SandboxedPlugin.h"
 
 #include <algorithm>
@@ -47,6 +49,7 @@ PluginChain::Member::Member (std::shared_ptr<juce::AudioPluginInstance> p) : plu
 {
     sandboxed = dynamic_cast<SandboxedPlugin*> (plugin.get());
     numChannels = juce::jmax (2, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels());
+    mono = MonoBuses::of (*plugin); // its layout is set (makeMember)
     plugin->addListener (this);
 }
 
@@ -183,7 +186,7 @@ void PluginChain::fillInPluginDescription (juce::PluginDescription& d) const
 {
     if (size() == 1)
     {
-        d = members.front()->plugin->getPluginDescription();
+        d = PluginHost::describe (*members.front()->plugin);
         return;
     }
     d = {};
@@ -207,6 +210,7 @@ void PluginChain::prepareToPlay (double sampleRate, int maxBlock)
             continue;
         m->plugin->setRateAndBufferSizeDetails (sampleRate, maxBlock);
         m->plugin->prepareToPlay (sampleRate, maxBlock);
+        m->mono = MonoBuses::of (*m->plugin);
         m->preparedRate = sampleRate;
         m->preparedBlock = maxBlock;
     }
@@ -300,11 +304,13 @@ void PluginChain::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuff
             scratch.clear (ch, 0, n); // side-chain inputs are silent
         juce::AudioBuffer<float> view (scratch.getArrayOfWritePointers(), m.numChannels, n);
         midi.clear();
+        m.mono.beforeProcessing (view);
 
         auto kind = FaultKind::none;
         try
         {
             m.plugin->processBlock (view, midi);
+            m.mono.afterProcessing (view);
         }
         catch (...)
         {
@@ -339,6 +345,7 @@ std::unique_ptr<juce::XmlElement> PluginChain::createXml() const
 {
     auto xml = std::make_unique<juce::XmlElement> (kXmlTag);
     xml->setAttribute ("name", describeMembers());
+    xml->setAttribute ("views", 1);
     for (auto& m : members)
     {
         auto* e = xml->createNewChildElement ("MEMBER");
@@ -347,7 +354,7 @@ std::unique_ptr<juce::XmlElement> PluginChain::createXml() const
             e->setAttribute ("zoom", m->view.zoom);
         if (m->view.collapsed)
             e->setAttribute ("collapsed", 1);
-        e->addChildElement (m->plugin->getPluginDescription().createXml().release());
+        e->addChildElement (PluginHost::describe (*m->plugin).createXml().release());
 
         juce::MemoryBlock data;
         try
@@ -377,6 +384,8 @@ bool PluginChain::parseXml (const juce::XmlElement& xml, std::vector<Saved>& sav
         s.bypassed = e->getBoolAttribute ("bypass");
         s.view.zoom = snapZoom (e->getIntAttribute ("zoom", 100)); // older shows: neither
         s.view.collapsed = e->getBoolAttribute ("collapsed");
+        // Chains from before `views` stored only views other than the default.
+        s.hasView = xml.getBoolAttribute ("views") || e->hasAttribute ("zoom") || e->hasAttribute ("collapsed");
         if (auto* state = e->getChildByName ("STATE"))
             if (const auto text = state->getAllSubText().trim(); text.isNotEmpty())
                 s.state.fromBase64Encoding (text);
@@ -390,7 +399,7 @@ bool PluginChain::restore (const std::vector<Saved>& saved)
     if ((int) saved.size() != size())
         return false;
     for (int i = 0; i < size(); ++i)
-        if (getMember (i).getPluginDescription().createIdentifierString() != saved[(size_t) i].description.createIdentifierString())
+        if (PluginHost::describe (getMember (i)).createIdentifierString() != PluginHost::resolveDescription (saved[(size_t) i].description).createIdentifierString())
             return false;
 
     for (int i = 0; i < size(); ++i)
@@ -399,7 +408,8 @@ bool PluginChain::restore (const std::vector<Saved>& saved)
         if (s.state.getSize() > 0)
             getMember (i).setStateInformation (s.state.getData(), (int) s.state.getSize());
         members[(size_t) i]->bypassed = s.bypassed;
-        members[(size_t) i]->view = s.view;
+        if (s.hasView)
+            members[(size_t) i]->view = s.view;
     }
     updateLatency();
     return true;

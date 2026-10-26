@@ -21,7 +21,7 @@ namespace
 
     // Measured off the console's screens (firmware 3.1): unlit text, the dim
     // print of empty cells and dark labels, the mute groups' red.
-    const juce::Colour keyText = Colours::caption, cellText { 0xff585858 }, darkLabel { 0xff0c0c0c }, groupRed { 0xfff05050 },
+    const juce::Colour keyText = Colours::caption, cellText { 0xff585858 }, darkLabel { 0xff000000 }, groupRed { 0xfff05050 },
                        engagedColumn { 0xff883838 }, slotPlate { 0xff204870 };
 
     /** `v` px of the WING's 1280 x 800 screen in px of this screen. */
@@ -163,6 +163,8 @@ namespace
 
     Target resolve (UiContext& ctx, const state::FaderRef& f)
     {
+        if (f.isEmpty())
+            return {}; // a blank slot
         if (f.dca)
         {
             Target t;
@@ -842,9 +844,11 @@ public:
             wingKey (g, k.area, k.name, on ? Dark::layer : Colours::screenTile, on ? Dark::choiceInk : keyText);
         }
         // The section's key olive, darker while a bank is shown instead of its layer [WING].
-        const char* names[] = { "LEFT", "CENTER", "RIGHT" };
+        // The WING COMPACT has one fader section: one key, COMPACT.
+        const bool compact = page.isCompact();
+        const char* names[] = { compact ? "COMPACT" : "LEFT", "CENTER", "RIGHT" };
         const auto sectionFill = shown >= 0 ? Dark::section.withMultipliedBrightness (0.55f) : Dark::section;
-        for (int i = 0; i < 3; ++i)
+        for (int i = 0; i < (compact ? 1 : 3); ++i)
         {
             const bool on = (int) page.section() == i;
             wingKey (g, sectionKeys[i], names[i], on ? sectionFill : Colours::screenTile, on ? juce::Colours::black : keyText);
@@ -873,7 +877,7 @@ public:
                 page.selectBank (k.id.getIntValue());
                 return;
             }
-        for (int i = 0; i < 3; ++i)
+        for (int i = 0; i < (page.isCompact() ? 1 : 3); ++i)
             if (sectionKeys[i].contains (pos))
             {
                 page.selectSection (static_cast<LayerSet::Section> (i));
@@ -1236,9 +1240,12 @@ namespace
             g.setColour (juce::Colours::black);
             g.setFont (font);
             g.drawText (label, badge, juce::Justification::centred, false);
+            // [3.1] only an icon of its own (the strip's or, linked, its
+            // source's): an input without one shows none (CONFIG and the
+            // assign screens: CH 1, 9-40, AUX 3-8 on a console set so).
             const float icon = juce::jmin (inner.getHeight(), wingPx (26.0f));
             if (inner.getWidth() > icon * 1.5f)
-                drawStripIcon (g, s, inner.removeFromRight (icon).withSizeKeepingCentre (icon, icon), Colours::textDim);
+                drawWingIcon (g, s.getIcon(), inner.removeFromRight (icon).withSizeKeepingCentre (icon, icon), Colours::textDim);
         }
         else
         {
@@ -1304,7 +1311,7 @@ public:
             for (int i = 0; i < n; ++i)
                 sourceTiles.push_back ({ wingRect (83.0f + 88.0f * (float) (i % 8), 79.0f + 76.0f * (float) (i / 8), 80.0f, 68.0f), i });
             frame = wingRect (76.0f, 72.0f, 710.0f, 76.0f * (float) ((n + 7) / 8) + 6.0f);
-            const auto menu = routing::sourceMenu (false);
+            const auto menu = routing::sourceMenu (false, false, ctx.consoleModel == ConsoleModel::Compact);
             for (size_t r = 0; r < menu.rows.size(); ++r)
                 for (size_t c = 0; c < menu.rows[r].size(); ++c)
                     if (menu.rows[r][c] >= 0)
@@ -1827,7 +1834,7 @@ void OverviewViewPage::paintContent (juce::Graphics& g)
                                "PH", "SPK");
             // Yellow while the DCA is soloed [WING].
             g.setColour (ctx.engine.getDca (t.dca).solo.load() ? Colours::solo : darkLabel);
-            g.setFont (capFont (20.0f, WingWeight::SemiBold));
+            g.setFont (capFont (22.0f, WingWeight::SemiBold)); // [3.1] 22 px caps
             g.drawText ("DCA", body.withTop (body.getY() + px (561.0f)).withHeight (px (32.0f)), juce::Justification::centred, false);
             continue;
         }
@@ -1871,9 +1878,9 @@ std::vector<StatusKey> OverviewViewPage::getStatusKeys()
     // Only while the page shows channels: a DCA or bus layer has the five VIEW keys.
     auto keys = ViewPage::getStatusKeys();
     const auto faders = pageFaders();
-    if (std::none_of (faders.begin(), faders.end(), [] (const state::FaderRef& f) { return ! f.dca && ! f.fxParam && ! f.midiCc && isInputKind (f.strip.kind); }))
+    if (std::none_of (faders.begin(), faders.end(), [] (const state::FaderRef& f) { return (f.isStrip() || f.send) && isInputKind (f.strip.kind); }))
         return keys;
-    const bool exclusive = ctx.settings.getBoolValue (uiprefs::exclusiveSolo, false);
+    const bool exclusive = ctx.settings.getBoolValue (uiprefs::exclusiveSolo, uiprefs::exclusiveSoloDefault);
     keys.push_back ({ "EXCL SOLO", std::nullopt, exclusive, [this, exclusive]
                       {
                           ctx.settings.setValue (uiprefs::exclusiveSolo, ! exclusive);
@@ -2066,7 +2073,7 @@ void FadersViewPage::paintContent (juce::Graphics& g)
         // A DCA's label is yellow while the DCA is soloed [WING].
         const bool dcaSolo = t.strip == nullptr && ! t.isSend() && ctx.engine.getDca (t.dca).solo.load();
         g.setColour (t.isSend() ? sendRed.brighter (0.4f) : dcaSolo ? Colours::solo : darkLabel);
-        g.setFont (capFontFit (20.0f, rows.label.getHeight() * 0.9f, WingWeight::SemiBold));
+        g.setFont (capFontFit (22.0f, rows.label.getHeight() * 1.2f, WingWeight::SemiBold)); // [3.1] 22 px caps
         g.drawFittedText (t.isSend() ? t.sendTag : bottomLabel (t), rows.label.toNearestInt(), juce::Justification::centred, 1, 0.6f);
         if (t.strip != nullptr && t.strip == selected)
         {
@@ -2131,6 +2138,8 @@ void FadersViewPage::mouseUp (const juce::MouseEvent& e)
         if (! cols[i].toFloat().contains (pos))
             continue;
         const auto t = withSendsOnFader (ctx, resolve (ctx, faders[i]));
+        if (! t.isValid())
+            return; // a blank slot (or an FX parameter / MIDI CC): nothing to press
         const auto rows = faderRows (cols[i]);
         if (rows.mute.contains (pos))
         {
@@ -2139,9 +2148,9 @@ void FadersViewPage::mouseUp (const juce::MouseEvent& e)
         }
         else if (rows.name.contains (pos) || rows.number.contains (pos))
         {
-            if (t.dca >= 0)
-                showDcaPanel (t.dca);
-            else if (t.strip != nullptr)
+            // A DCA's name opens nothing here (its LIGHT/ICON/NAME panel is
+            // reached from OVERVIEW's title, as on the console).
+            if (t.strip != nullptr)
             {
                 if (ctx.selectStrip)
                     ctx.selectStrip (t.strip);
@@ -2623,12 +2632,8 @@ void ConfigViewPage::setLayerFaders (const Layer& layer, const std::vector<state
     auto& layers = ctx.show.layers;
     if (const auto id = userLayerId (layer, true); id.isNotEmpty())
     {
-        // A user layer: empty it, then add the faders in order.
-        if (const auto* current = layers.getUserLayer (id))
-            for (const auto old = current->faders; const auto& f : old)
-                layers.removeFromUserLayer (id, f);
-        for (auto& f : faders)
-            layers.addToUserLayer (id, f);
+        // A user layer: its slots as given, blanks included.
+        layers.setUserLayerFaders (id, faders);
     }
     else
     {
@@ -2800,9 +2805,6 @@ void ConfigViewPage::layoutContent()
         fields[i]->setBounds (wingRect (388.0f + 152.0f * (float) i, 8.0f, 140.0f, 64.0f));
     clearKey.setBounds (wingRect (1018.0f, 8.0f, 64.0f, 64.0f));
     renameKey.setBounds (wingRect (1094.0f, 8.0f, 68.0f, 64.0f));
-    // A user layer's own keys (not on the console) left of the slots.
-    newKey.setBounds (wingRect (16.0f, 624.0f, 88.0f, 64.0f));
-    deleteKey.setBounds (wingRect (112.0f, 624.0f, 92.0f, 64.0f));
 
     // The page's slots, four to a blue plate, centred under the grid.
     slotAreas.clear();
@@ -2817,6 +2819,18 @@ void ConfigViewPage::layoutContent()
         slotAreas.push_back (wingRect (x0 + 376.0f * (float) (i / 4) + 4.0f + 92.0f * (float) (i % 4), 624.0f, 88.0f, 64.0f));
     slotsArea = wingRect (x0, 620.0f, platesW, 92.0f);
     hintArea = slotsArea;
+    // A user layer's own keys (not on the console) left of the slots, or
+    // above each other left of the items when the slots take the width.
+    if (x0 >= 212.0f)
+    {
+        newKey.setBounds (wingRect (16.0f, 624.0f, 88.0f, 64.0f));
+        deleteKey.setBounds (wingRect (112.0f, 624.0f, 92.0f, 64.0f));
+    }
+    else
+    {
+        newKey.setBounds (wingRect (16.0f, 468.0f, 140.0f, 64.0f));
+        deleteKey.setBounds (wingRect (16.0f, 540.0f, 140.0f, 64.0f));
+    }
 
     // The items: a kind (channels, aux, buses, mains, matrices, DCAs) starts
     // a new row, 24 px further down; rows close up when they don't fit.
@@ -2966,8 +2980,8 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
         tile (sourceTiles[i].toFloat(), items[i], sel);
     }
 
-    // The layer's slots, in groups of four framed in blue; an empty slot shows
-    // its number large and dim over EMPTY.
+    // The layer's slots, in groups of four framed in blue; a blank slot (or
+    // one past the end) shows its number large and dim over EMPTY.
     const auto layer = currentLayer();
     const auto faders = pageFaders();
     // [WING] each group of four sits on a #204870 plate, the slots' numbers
@@ -2984,7 +2998,7 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
         g.setColour (Dark::well);
         g.fillRect (r);
         const int number = page * pageSize() + (int) i + 1;
-        if (i < faders.size() && ! (dragActive && dragSlot == (int) i))
+        if (i < faders.size() && ! faders[i].isEmpty() && ! (dragActive && dragSlot == (int) i))
             tile (r, faders[i], false);
         else
         {
@@ -3001,20 +3015,34 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
                     juce::Justification::centred);
     }
 
-    // While dragging: a blue line where the items would be inserted, or a
-    // frame on the slot they'd replace.
+    // While dragging: a frame on the slot the items would land in, or a bar
+    // with arrow heads where they'd be inserted (red when the layer is full).
     if (dragActive)
         if (const auto drop = dropTargetAt (dragPoint); drop.index >= 0)
         {
             const int local = drop.index - page * pageSize();
-            g.setColour (Dark::layer.brighter (0.3f));
-            if (drop.insert && local >= 0 && local <= (int) slotAreas.size() && ! slotAreas.empty())
+            auto preview = layer.faders;
+            const bool ok = dragSlot >= 0 ? layerslots::dropSlot (preview, page * pageSize() + dragSlot, drop)
+                                          : layerslots::dropItems (preview, selectedItems, drop);
+            if (drop.insert)
             {
-                const int x = local < (int) slotAreas.size() ? slotAreas[(size_t) local].getX() - 3 : slotAreas.back().getRight() + 3;
-                g.fillRect (juce::Rectangle<int> (x - 2, slotAreas.front().getY() - 4, 4, slotAreas.front().getHeight() + 8));
+                g.setColour (ok ? Colours::gold : Colours::tapRed);
+                if (const auto bar = layerdrop::markerAt (slotAreas, local, juce::jmax (4, px (5.0f))); ! bar.isEmpty())
+                {
+                    g.fillRect (bar);
+                    const auto w = (float) juce::jmax (8, px (12.0f));
+                    const auto cx = bar.toFloat().getCentreX();
+                    juce::Path heads;
+                    heads.addTriangle (cx - w / 2, (float) bar.getY() - w * 0.6f, cx + w / 2, (float) bar.getY() - w * 0.6f, cx, (float) bar.getY());
+                    heads.addTriangle (cx - w / 2, (float) bar.getBottom() + w * 0.6f, cx + w / 2, (float) bar.getBottom() + w * 0.6f, cx, (float) bar.getBottom());
+                    g.fillPath (heads);
+                }
             }
             else if (juce::isPositiveAndBelow (local, (int) slotAreas.size()))
+            {
+                g.setColour (ok ? Dark::layer.brighter (0.3f) : Colours::tapRed);
                 g.drawRect (slotAreas[(size_t) local].expanded (2).toFloat(), 3.0f);
+            }
         }
 
     if (! layer.user && ctx.show.layers.hasDefaultOverride (section(), layer.id) && faders.empty() && page == 0)
@@ -3028,67 +3056,100 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
     // The item being dragged.
     if (dragActive)
     {
+        // Above the pointer, so the slot or the insertion bar under it shows.
         const int count = dragSlot >= 0 ? 1 : juce::jmax (1, (int) selectedItems.size());
-        auto ghost = juce::Rectangle<float> (70.0f, 34.0f).withCentre (dragPoint.toFloat());
+        const auto text = (dropTargetAt (dragPoint).insert ? "INSERT " : "") + (count > 1 ? juce::String (count) + " ITEMS" : juce::String ("1 ITEM"));
+        const auto font = wingFont (TypeScale::body, WingWeight::SemiBold);
+        const float w = juce::jmax (70.0f, juce::GlyphArrangement::getStringWidth (font, text) + 16.0f);
+        auto ghost = juce::Rectangle<float> (w, 34.0f).withCentre (dragPoint.toFloat().translated (0.0f, -(float) px (64.0f)));
         g.setColour (Dark::layer.withAlpha (0.8f));
         g.fillRect (ghost);
         g.setColour (juce::Colours::white);
-        g.setFont (wingFont (TypeScale::body, WingWeight::SemiBold));
-        g.drawText (count > 1 ? juce::String (count) + " ITEMS" : juce::String ("1 ITEM"), ghost, juce::Justification::centred);
+        g.setFont (font);
+        g.drawText (text, ghost, juce::Justification::centred);
     }
 }
 
-ConfigViewPage::DropTarget ConfigViewPage::dropTargetAt (juce::Point<int> pos) const
+layerslots::DropTarget ConfigViewPage::dropTargetAt (juce::Point<int> pos) const
 {
-    // Near the edge between two slots: insert there; over a slot: replace it.
-    for (size_t i = 0; i < slotAreas.size(); ++i)
-    {
-        const auto r = slotAreas[i].expanded (3, 6);
-        if (! r.contains (pos))
-            continue;
-        const int edge = juce::jmax (6, r.getWidth() / 5);
-        const int index = page * pageSize() + (int) i;
-        if (pos.x < r.getX() + edge)
-            return { index, true };
-        if (pos.x > r.getRight() - edge)
-            return { index + 1, true };
-        return { index, false };
-    }
-    return {};
+    return layerdrop::targetAt (slotAreas, page * pageSize(), pos);
 }
 
-void ConfigViewPage::placeAt (const std::vector<state::FaderRef>& items, int index, bool insert)
+void ConfigViewPage::editSlots (const std::function<bool (std::vector<state::FaderRef>&)>& edit)
 {
-    if (items.empty())
-        return;
     const auto layer = currentLayer();
     auto faders = layer.faders;
-    // Items already in the layer move: take them out first (shifting the target).
-    for (auto& f : items)
-        if (const auto it = std::find (faders.begin(), faders.end(), f); it != faders.end())
-        {
-            const int at = (int) (it - faders.begin());
-            if (at < index)
-                --index;
-            else if (at == index && ! insert)
-                insert = true; // dropped onto its own slot: put it back there
-            faders.erase (it);
-        }
-    index = juce::jlimit (0, (int) faders.size(), index);
-    if (! insert && index < (int) faders.size())
-        faders.erase (faders.begin() + index);
-    faders.insert (faders.begin() + index, items.begin(), items.end());
-    setLayerFaders (layer, faders);
+    if (! edit (faders))
+    {
+        // Nothing is pushed off the end of a layer: say why nothing happened.
+        popups::warn (*this, "LAYER FULL",
+                      "The last slot of \"" + layer.name + "\" (slot " + juce::String (layerslots::maxSlots())
+                          + ") is in use, so the slots can't move along. Clear a slot at the end first.");
+        return;
+    }
+    layerslots::trim (faders);
+    if (faders != layer.faders)
+        setLayerFaders (layer, faders);
+}
+
+void ConfigViewPage::dropItemsAt (layerslots::DropTarget target)
+{
+    if (! selectedItems.empty() && target.index >= 0)
+        editSlots ([this, target] (auto& faders) { return layerslots::dropItems (faders, selectedItems, target); });
+}
+
+void ConfigViewPage::clearSlot (int index)
+{
+    editSlots ([index] (auto& faders)
+    {
+        layerslots::clear (faders, index);
+        return true;
+    });
+}
+
+void ConfigViewPage::insertEmptySlot (int index)
+{
+    editSlots ([index] (auto& faders) { return layerslots::insert (faders, index, { state::FaderRef::blank() }); });
+}
+
+void ConfigViewPage::showSlotMenu (int local)
+{
+    if (! juce::isPositiveAndBelow (local, (int) slotAreas.size()))
+        return;
+    const int index = page * pageSize() + local;
+    const bool filled = ! layerslots::get (currentLayer().faders, index).isEmpty();
+    juce::StringArray items;
+    if (filled)
+        items.add ("CLEAR SLOT");
+    items.add ("INSERT EMPTY SLOT");
+    juce::Component::SafePointer<ConfigViewPage> safe (this);
+    popups::chooseFrom (anchorAt (slotAreas[(size_t) local]), items, -1, [safe, index, items] (int chosen)
+    {
+        if (safe == nullptr || ! juce::isPositiveAndBelow (chosen, items.size()))
+            return;
+        if (items[chosen] == "CLEAR SLOT")
+            safe->clearSlot (index);
+        else
+            safe->insertEmptySlot (index);
+    });
 }
 
 void ConfigViewPage::mouseDown (const juce::MouseEvent& e)
 {
     dragActive = false;
     dragSlot = -1;
+    pressSlot = -1;
     dragPoint = e.getPosition();
-    for (size_t i = 0; i < slotAreas.size() && i < pageFaders().size(); ++i)
+    // A filled slot can be dragged (a blank one has nothing to move); any
+    // slot has a menu.
+    const auto faders = pageFaders();
+    for (size_t i = 0; i < slotAreas.size(); ++i)
         if (slotAreas[i].contains (e.getPosition()))
-            dragSlot = (int) i;
+        {
+            pressSlot = (int) i;
+            if (i < faders.size() && ! faders[i].isEmpty())
+                dragSlot = (int) i;
+        }
 }
 
 void ConfigViewPage::mouseDrag (const juce::MouseEvent& e)
@@ -3113,6 +3174,7 @@ void ConfigViewPage::mouseDrag (const juce::MouseEvent& e)
                 return;
         }
         dragActive = true;
+        pressSlot = -1;
     }
     dragPoint = e.getPosition();
     repaint();
@@ -3124,24 +3186,20 @@ void ConfigViewPage::mouseUp (const juce::MouseEvent& e)
     if (dragActive)
     {
         dragActive = false;
-        const auto drop = dropTargetAt (pos);
-        const auto faders = pageFaders();
-        if (dragSlot >= 0 && juce::isPositiveAndBelow (dragSlot, (int) faders.size()))
+        const auto target = dropTargetAt (pos);
+        if (dragSlot >= 0)
         {
-            const auto layer = currentLayer();
-            if (drop.index < 0 && ! slotsArea.contains (pos))
-            {
-                // Dragged off the layer: remove the fader.
-                auto all = layer.faders;
-                all.erase (std::remove (all.begin(), all.end(), faders[(size_t) dragSlot]), all.end());
-                setLayerFaders (layer, all);
-            }
-            else if (drop.index >= 0)
-                placeAt ({ faders[(size_t) dragSlot] }, drop.index, drop.insert);
+            // A slot dragged onto another swaps with it (moves into a blank
+            // one), between two it's inserted there; off the slots it turns blank.
+            const int from = page * pageSize() + dragSlot;
+            if (target.index >= 0)
+                editSlots ([from, target] (auto& faders) { return layerslots::dropSlot (faders, from, target); });
+            else if (! slotsArea.contains (pos))
+                clearSlot (from);
         }
-        else if (drop.index >= 0)
+        else if (target.index >= 0)
         {
-            placeAt (selectedItems, drop.index, drop.insert);
+            dropItemsAt (target);
             selectedItems.clear();
         }
         dragSlot = -1;
@@ -3159,7 +3217,16 @@ void ConfigViewPage::mouseUp (const juce::MouseEvent& e)
             return;
         }
 
-    // A click on a tile toggles it; a click on a slot places the selected tiles there.
+    // A right-click or a long press on a slot: CLEAR SLOT, INSERT EMPTY SLOT.
+    if (pressSlot >= 0 && (e.mods.isPopupMenu() || e.getLengthOfMousePress() >= kLongPressMs))
+    {
+        showSlotMenu (pressSlot);
+        dragSlot = pressSlot = -1;
+        return;
+    }
+
+    // A click on a tile toggles it; a click on a slot puts the selected tiles
+    // there (near a boundary: inserts them there).
     const auto items = sourceItems();
     for (size_t i = 0; i < items.size() && i < sourceTiles.size(); ++i)
         if (sourceTiles[i].contains (pos))
@@ -3172,14 +3239,14 @@ void ConfigViewPage::mouseUp (const juce::MouseEvent& e)
             repaint();
             return;
         }
-    if (const auto drop = dropTargetAt (pos); drop.index >= 0 && ! selectedItems.empty())
+    if (const auto target = dropTargetAt (pos); target.index >= 0 && ! selectedItems.empty())
     {
-        placeAt (selectedItems, drop.index, drop.insert);
+        dropItemsAt (target);
         selectedItems.clear();
         repaint();
         return;
     }
-    dragSlot = -1;
+    dragSlot = pressSlot = -1;
 }
 
 //==============================================================================

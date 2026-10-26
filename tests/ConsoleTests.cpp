@@ -153,10 +153,13 @@ public:
             expect (src != nullptr);
             if (src == nullptr)
                 return;
+            // LOCAL IN's 2.5 dB steps: a gain off them (a show from before) plays
+            // on the nearest one, +5 dB, and loads as that.
             src->gainDb = 6.0206f;
             src->invert = true;
             rig.run (4);
-            expectWithinAbsoluteError (rig.out (0), -0.5f, 1.0e-4f);
+            const float plus5 = 0.25f * juce::Decibels::decibelsToGain (5.0f);
+            expectWithinAbsoluteError (rig.out (0), -plus5, 1.0e-4f);
             engine.setSourceName (index, "Kick In");
             engine.setSourceMode (index, ld::kSourceStereo);
             expectEquals ((int) engine.getSource (1)->mode.load(), (int) ld::kSourceStereo);
@@ -173,7 +176,7 @@ public:
             const auto result = restored.loadFromXml (*xml);
             expect (result.wasOk(), result.getErrorMessage());
             expectEquals (restoredEngine.getSourceName (index), juce::String ("Kick In"));
-            expectEquals (restoredEngine.getSource (1)->gainDb.load(), 6.0206f);
+            expectEquals (restoredEngine.getSource (1)->gainDb.load(), 5.0f);
             expect (restoredEngine.getSource (0)->invert.load());
             expectEquals ((int) restoredEngine.getChannels()[0]->getTalkTags(), (int) (ld::kTalkAOn | ld::kTalkBSolo));
             expectEquals (MixerEngine::sourcePort (MixerEngine::sourceIndex (ld::kPlaybackSourceBase + 3)), ld::kPlaybackSourceBase + 3);
@@ -375,6 +378,13 @@ public:
             expectEquals ((int) compact.localOutputs, 8);
             expectEquals ((int) compact.faders, 13);
             expectEquals ((int) compact.layerKeys, 9);
+            // The COMPACT's 24 local preamps take LOCAL IN's range, as the full size's 8 do
+            // (LCL 1-48 are the interface's first 48 ports on either model).
+            for (int lcl = 0; lcl < (int) compact.localPreamps; ++lcl)
+            {
+                const auto r = MixerEngine::sourceGainRange (lcl);
+                expect (r.min == -2.5f && r.max == 45.0f && r.step == 2.5f, "LCL " + juce::String (lcl + 1));
+            }
         }
     }
 };

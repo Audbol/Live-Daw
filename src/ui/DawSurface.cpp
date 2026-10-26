@@ -118,6 +118,8 @@ public:
         g.fillAll (surfaceColours().surface);
         auto band = [this, &g] (juce::Rectangle<int> rows, int margin, juce::Colour colour)
         {
+            if (rows.isEmpty())
+                return;
             const float left = moduleFirst ? 3.0f : 0.0f, right = (float) getWidth() - (moduleLast ? 3.0f : 0.0f);
             juce::Path p;
             p.addRoundedRectangle (left, (float) (rows.getY() - margin), right - left, (float) (rows.getHeight() + 2 * margin), 4.0f, 4.0f,
@@ -132,11 +134,12 @@ public:
         const bool active = d != nullptr && channel >= 0;
         drawLightBar (g, barArea.toFloat(), surfaceColours().silk.withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
                       active && d->isConnected (channel / DawRemote::kStrips));
-        ScribbleInfo info;
-        info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
-        info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
+        // A strip without a DAW channel shows nothing, as a blank layer slot.
+        auto info = blankScribble();
         if (active)
         {
+            info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
+            info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
             // The DAW's two lines: the value line in the middle, the track name at the bottom.
             const auto& s = d->getStrip (channel);
             info.number = juce::String (channel + 1);
@@ -147,7 +150,7 @@ public:
         drawScribble (g, lcdArea.toFloat(), info);
         drawScribbleFrame (g, lcdArea.toFloat(), true, true, info.backlight);
 
-        if (active)
+        if (active && ! meterArea.isEmpty())
         {
             // The DAW's meter on the six LEDs (red at clip / overload).
             const auto& s = d->getStrip (channel);
@@ -191,8 +194,14 @@ public:
         b.removeFromTop (5);
         key (soloKey);
         b.removeFromTop (8);
-        meterArea = b.removeFromTop (juce::jlimit (56, 100, juce::roundToInt ((float) keyH * 3.3f)));
-        b.removeFromTop (8);
+        // Short windows fold the meter away, as FaderStrip does.
+        int meterH = juce::jmin (juce::jlimit (56, 100, juce::roundToInt ((float) keyH * 3.3f)),
+                                 b.getHeight() - 8 - keyH - 6 - FaderStrip::kMinFaderTravel);
+        if (meterH < 40)
+            meterH = 0;
+        meterArea = b.removeFromTop (meterH);
+        if (meterH > 0)
+            b.removeFromTop (8);
         key (muteKey);
         b.removeFromTop (6);
         fader.setBounds (b);
@@ -374,7 +383,7 @@ void DawFaderSection::resized()
         layerKeys[9]->setBounds (c.removeFromBottom (36).withSizeKeepingCentre (c.getWidth(), 30));
     c.removeFromBottom (6);
     const int numKeys = 9;
-    const int pitch = juce::jlimit (18, 38, c.getHeight() / numKeys);
+    const int pitch = juce::jlimit (16, 38, c.getHeight() / numKeys);
     const int keyH = juce::jmin (30, pitch - juce::jmax (3, pitch / 6));
     for (int i = 0; i < juce::jmin (9, layerKeys.size()); ++i)
         layerKeys[i]->setBounds (c.removeFromTop (pitch).withSizeKeepingCentre (c.getWidth(), keyH));

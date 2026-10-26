@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 14;
+constexpr int kAbiVersion = 16;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -83,11 +83,12 @@ enum StripKindId : int32_t
     kMatrix = 4
 };
 
-/// Fader reference kinds beyond the strip kinds (0..4): DCAs, FX parameters
-/// and MIDI CCs.
+/// Fader reference kinds beyond the strip kinds (0..4): DCAs, FX parameters,
+/// MIDI CCs and blank layer slots.
 constexpr int32_t kFaderDca = 5;
 constexpr int32_t kFaderFxParam = 6;
 constexpr int32_t kFaderMidiCc = 7;
+constexpr int32_t kFaderEmpty = 8; // a blank layer slot (ABI 14)
 
 /// Tap points (index into list 1). WING names: INPUT, FILTER, TAP 3-5, PRE FDR,
 /// POST FDR, POST PROC. Only input channels choose theirs; aux, buses, mains and
@@ -576,7 +577,7 @@ struct LayoutInfo
         offCustLink,
         // ABI 13 (DCA SOLO BUS)
         offDcaMon,
-        // ABI 14 (the console model)
+        // ABI 16 (the console model)
         consoleModelInfo;
 };
 
@@ -654,7 +655,8 @@ struct StripRefC
 /// A fader on the surface: kind 0..4 = a strip, or with toKind 2..4 the send
 /// level from it to bus / main / matrix `toId`; kFaderDca = DCA (id 0..15);
 /// kFaderFxParam = FX slot `id`'s parameter `toId`; kFaderMidiCc = CC `toId`
-/// (0-127) on MIDI channel `id` (0-15). toKind is -1 when unused.
+/// (0-127) on MIDI channel `id` (0-15); kFaderEmpty = a blank slot of a
+/// layer (ABI 14). toKind is -1 when unused.
 struct FaderRefC
 {
     int32_t kind, id;
@@ -820,6 +822,9 @@ extern "C"
     bool ld_fx_set_model (const Engine*, int32_t slot, int32_t model, bool defaults);
     /** Gain reduction of a slot's device in dB (<= 0). */
     float ld_fx_meter (const Engine*, int32_t slot);
+    /** Live gain of a dynamic band of a slot's device (TRIPLE DEQ bands 0-2),
+        dB, signed (cut < 0, boost > 0); 0 for other devices. */
+    float ld_fx_band_gain (const Engine*, int32_t slot, int32_t band);
     void ld_fx_clear_flags (const Engine*, int32_t slot);
     float ld_fx_load (const Engine*, int32_t slot);
     int32_t ld_fx_num_users (const Engine*, int32_t slot);
@@ -847,6 +852,9 @@ extern "C"
     int32_t ld_strip_id (const Strip*);
     StripParams* ld_strip_params (const Strip*);
     StripMeters* ld_strip_meters (const Strip*);
+    /** Live gain of band 0-1 of the GATE (gate) or DYNAMICS slot's dynamic EQ
+        (DEQ, DEQ2), dB, signed (cut < 0, boost > 0); 0 for other models. */
+    float ld_strip_dyn_band_gain (const Strip*, bool gate, int32_t band);
     int32_t ld_strip_num_channels (const Strip*);
     bool ld_strip_is_idle (const Strip*);
     SendParams* ld_strip_send (const Strip*, int32_t slot);
@@ -880,6 +888,11 @@ extern "C"
     /** Static curve of a dynamics model (its transfer graph): the output level for each input
         level in `inDb` (dB; peak or RMS as the model detects). False for models without one. */
     bool ld_dyn_static_curve (int32_t model, const float* values, int32_t numValues, const float* inDb, float* outDb, int32_t count);
+    /** Frequency response (dB at `freqs`) of a model as set, for its front panel's graph: the
+        EQ models (tables 1, 2) and the FX devices that have one (EQ devices and the channel
+        strips' EQ sections, the graphic EQs, the speaker manager). False for the others. */
+    bool ld_model_response (int32_t table, int32_t model, const float* values, int32_t numValues, const float* freqs, float* outDb,
+                            int32_t count);
 
     // Analysis: RTA, LR vector scope, LISTEN
     AnalysisControls* ld_engine_analysis (const Engine*);
@@ -1063,9 +1076,19 @@ extern "C"
     void ld_layers_remove_user (LayerSet*, const char* id, size_t len);
     void ld_layers_rename_user (LayerSet*, const char* id, size_t len, const char* name, size_t nameLen);
     void ld_layers_move_user (LayerSet*, const char* id, size_t len, int32_t delta);
-    void ld_layers_add_to_user (LayerSet*, const char* id, size_t len, FaderRefC ref);
-    void ld_layers_remove_from_user (LayerSet*, const char* id, size_t len, FaderRefC ref);
+    /** Another copy when the layer already holds `ref`; false when it is full. */
+    bool ld_layers_add_to_user (LayerSet*, const char* id, size_t len, FaderRefC ref);
+    /** Blanks slot `index` if it holds `ref` (-1: the first slot holding it); other copies stay (ABI 15). */
+    void ld_layers_remove_from_user (LayerSet*, const char* id, size_t len, FaderRefC ref, int32_t index);
+    /** Inserts `n` faders (blanks too) before slot `index`, moving the rest right;
+        false (nothing changed) when a filled slot would go past ld_layers_max_slots(). */
+    bool ld_layers_insert_user_slots (LayerSet*, const char* id, size_t len, int32_t index, const FaderRefC* faders, int32_t n);
+    int32_t ld_layers_max_slots();
     void ld_layers_move_within_user (LayerSet*, const char* id, size_t len, int32_t index, int32_t delta);
+    void ld_layers_set_user_faders (LayerSet*, const char* id, size_t len, const FaderRefC* faders, int32_t n);
+    void ld_layers_set_user_slot (LayerSet*, const char* id, size_t len, int32_t index, FaderRefC ref);
+    void ld_layers_clear_user_slot (LayerSet*, const char* id, size_t len, int32_t index);
+    void ld_layers_swap_user_slots (LayerSet*, const char* id, size_t len, int32_t a, int32_t b);
     void ld_layers_set_override (LayerSet*, int32_t section, const char* id, size_t len, const FaderRefC* faders, int32_t n);
     void ld_layers_clear_override (LayerSet*, int32_t section, const char* id, size_t len);
     bool ld_layers_has_override (LayerSet*, int32_t section, const char* id, size_t len);
@@ -1245,7 +1268,7 @@ extern "C"
     void ld_wing_stop (LdWing*);
     bool ld_wing_running (LdWing*);
     void ld_wing_set_name (LdWing*, const char* name, size_t len);
-    /** The model the console reports (0 full size: "sidecar", 1 COMPACT: "wing-compact"),
+    /** The model the console reports (0 full size: "ngc-full", 1 COMPACT: "wing-compact"),
         at once and across restarts. */
     void ld_wing_set_model (LdWing*, int32_t model);
     /** Bound port of server 0 discovery, 1 OSC, 2 Native; -1 if not running. */
@@ -1284,6 +1307,15 @@ extern "C"
     void ld_wing_set_safes (LdWing*, uint32_t dcas, uint32_t muteGroups, uint32_t fx);
     void ld_wing_clear_safes (LdWing*);
     bool ld_wing_take_safes (LdWing*, uint32_t* dcas, uint32_t* muteGroups, uint32_t* fx);
+    /** The app settings that are WING parameters (SETUP's surface, metering, solo, MIDI and
+        DAW options): their keys, one per line. The host publishes each key's text from its
+        settings file (ld_wing_set_host_setting; keys it doesn't have read Sidecar's default)
+        and stores what clients change (ld_wing_take_host_setting: false if nothing; either
+        pointer may be null). ld_wing_clear_host_settings: no host any more. */
+    LdString* ld_wing_host_setting_keys();
+    void ld_wing_set_host_setting (LdWing*, const char* key, size_t keyLen, const char* value, size_t valueLen);
+    bool ld_wing_take_host_setting (LdWing*, LdString** key, LdString** value);
+    void ld_wing_clear_host_settings (LdWing*);
     /** Surface control (/$ctl/layer, /$ctl/user): applies the layer and custom control changes
         clients made to the show, then publishes its layers and custom controls with the upper
         custom control layer ccBank (0-15). Returns kWingSurface* flags; *requestedBank is the
@@ -1301,6 +1333,9 @@ extern "C"
     /** Source table index of an input port (hardware input or playback source), -1 if none. */
     int32_t ld_source_index (int32_t port);
     int32_t ld_source_port (int32_t index);
+    /** A source's GAIN range and step (dB), its WING group's (LOCAL IN -2.5 .. +45 in 2.5 dB
+        steps, AES50 -3 .. +45.5 in 0.5 dB steps); false (all 0) when the group has no GAIN. */
+    bool ld_source_gain_range (int32_t index, float* min, float* max, float* step);
     LdString* ld_source_name (const Engine*, int32_t index);
     void ld_source_set_name (const Engine*, int32_t index, const char* utf8, size_t len);
     /** SourceMode for the source and its pair partner (a new pair takes the first one's settings);

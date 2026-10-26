@@ -3,6 +3,7 @@
 // Sidecar hands it through shared memory and opens the plugin's editor in its own
 // window. If the plugin crashes or hangs, only this process is lost.
 
+#include "engine/MonoBuses.h"
 #include "sandbox/SandboxShared.h"
 #include "sandbox/TestPlugins.h"
 
@@ -183,7 +184,9 @@ private:
             out.writeString (plugin->getName());
             out.writeInt (plugin->getLatencySamples());
             out.writeDouble (plugin->getTailLengthSeconds());
-            out.writeBool (plugin->hasEditor());
+            // Sidecar doesn't use it (the sandbox's panel is always there), and asking
+            // a VST3 creates its editor view: LSP's crash without a display.
+            out.writeBool (true);
             const int numPrograms = juce::jmin (plugin->getNumPrograms(), 1024);
             out.writeInt (numPrograms);
             out.writeInt (plugin->getCurrentProgram());
@@ -217,12 +220,14 @@ private:
     {
         const double sampleRate = in.readDouble();
         const int blockSize = juce::jlimit (1, kMaxBlock, in.readInt());
+        int latency = 0;
         {
             const std::lock_guard<std::mutex> lock (processLock);
             plugin->releaseResources();
             prepareLocked (sampleRate, blockSize);
+            latency = plugin->getLatencySamples();
         }
-        reply (id, true, [this] (auto& out) { out.writeInt (plugin->getLatencySamples()); });
+        reply (id, true, [latency] (auto& out) { out.writeInt (latency); });
     }
 
     void prepareLocked (double sampleRate, int blockSize)
@@ -230,6 +235,7 @@ private:
         plugin->setRateAndBufferSizeDetails (sampleRate, blockSize);
         plugin->prepareToPlay (sampleRate, blockSize);
         numChannels = juce::jmax (2, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels());
+        mono = MonoBuses::of (*plugin);
         scratch.setSize (numChannels, kMaxBlock, false, true, false);
         midi.ensureSize (256);
         shared->latency.store (plugin->getLatencySamples(), std::memory_order_relaxed);
@@ -335,8 +341,12 @@ private:
         const std::lock_guard<std::mutex> lock (paramLock);
         applyParams();
         publishParams (false);
+        // A plugin may change its latency in processBlock (JUCE's LV2 host does,
+        // from the plugin's latency port): it's a plain int, read here only while
+        // no block runs. The audio thread stores it after each block.
         if (plugin != nullptr)
-            shared->latency.store (plugin->getLatencySamples(), std::memory_order_relaxed);
+            if (const std::unique_lock<std::mutex> process (processLock, std::try_to_lock); process.owns_lock())
+                shared->latency.store (plugin->getLatencySamples(), std::memory_order_relaxed);
     }
 
     //==============================================================================
@@ -382,6 +392,7 @@ private:
 
                 juce::AudioBuffer<float> view (scratch.getArrayOfWritePointers(), numChannels, n);
                 midi.clear();
+                mono.beforeProcessing (view);
                 try
                 {
                     plugin->processBlock (view, midi);
@@ -390,9 +401,11 @@ private:
                 {
                     juce::Process::terminate(); // reported to Sidecar as a crash
                 }
+                mono.afterProcessing (view);
 
                 for (int ch = 0; ch < 2; ++ch)
                     juce::FloatVectorOperations::copy (shared->output[ch], scratch.getReadPointer (ch), n);
+                shared->latency.store (plugin->getLatencySamples(), std::memory_order_relaxed);
             }
 
             shared->heartbeat.fetch_add (1, std::memory_order_relaxed);
@@ -425,7 +438,14 @@ private:
                 editor = new juce::GenericAudioProcessorEditor (p);
             setContentOwned (editor, true);
             setResizable (editor->isResizable(), false);
-            centreWithSize (getWidth(), getHeight());
+            // Within the main display's work area, title bar on screen: an
+            // editor taller or wider than a small screen shrinks if it can,
+            // else hangs off the bottom right.
+            auto area = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()->userBounds.toNearestInt().withTrimmedTop (32);
+            if (editor->isResizable())
+                setSize (juce::jmin (getWidth(), area.getWidth()), juce::jmin (getHeight(), area.getHeight()));
+            auto bounds = getBounds().withCentre (area.getCentre());
+            setBounds (bounds.withPosition (juce::jmax (area.getX(), bounds.getX()), juce::jmax (area.getY(), bounds.getY())));
             setVisible (true);
         }
 
@@ -479,6 +499,7 @@ private:
     juce::AudioBuffer<float> scratch;
     juce::MidiBuffer midi;
     int numChannels = 2;
+    MonoBuses mono;
 
     std::unique_ptr<EditorWindow> editorWindow;
     AudioThread audioThread { *this };

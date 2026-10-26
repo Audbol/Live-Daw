@@ -751,6 +751,7 @@ namespace
         d.leds (366, 160, 288, 14, "", { 20, 15, 10, 8, 6, 5, 4, 3, 2, 1 }, false, 0xffff2020);
         d.box (670, 166, 40, 0, Look::Line, 0xffd8d8d8, 0, 1.5f);
         d.text ("GAIN REDUCTION", 716, 158, 130, 16, 13, kWhite, Look::Sans, J::centredLeft);
+        d.add (Type::Graph, 64, 96, 262, 124).shows (GraphKind::DeEss, { 0, 1, 2 }); // the band it works on
         d.text ("bdx", 960, 106, 72, 40, 38, 0xffd02a20).j (J::centredRight);
         d.text ("902", 1034, 106, 80, 40, 38, kWhite).j (J::centredLeft);
         d.text ("De - Esser", 1000, 146, 120, 22, 18, kWhite);
@@ -984,8 +985,7 @@ namespace
         d.text ("Dynamic Equalizer", 80, 86, 220, 24, 20, 0xffeaeaea, Look::SansLight, J::centredLeft);
         d.box (68, 122, 557, 235, Look::Fill, 0xff382c26, 0xff6a3a2a, 2.0f);
         dynEqBand (d, 0, -1);
-        auto& gr = d.add (Type::Graph, 674, 126, 408, 227);
-        gr.params = { 6, 5, 7, 4 };
+        d.add (Type::Graph, 674, 126, 408, 227).shows (GraphKind::DynEq, { 6, 5, 7, 4 });
         return d;
     }
 
@@ -1003,8 +1003,25 @@ namespace
         d.box (68, 121, 559, 242, Look::Fill, 0xff16223a, 0xff2a3a5a, 2.0f);
         dynEqBand (d, 0, 0);
         dynEqBand (d, 9, 1);
-        auto& gr = d.add (Type::Graph, 674, 130, 410, 228);
-        gr.params = { 6, 5, 7, 4, 15, 14, 16, 13 };
+        d.add (Type::Graph, 674, 130, 410, 228).shows (GraphKind::DynEq, { 6, 5, 7, 4, 15, 14, 16, 13 });
+        return d;
+    }
+
+    Design tripleDynamicEq()
+    {
+        Design d;
+        d.panel = juce::Colour (0xff4a4a36);
+        d.texture = Texture::Brushed;
+        d.screws = false;
+        for (auto [x, y] : { std::pair { 46.0f, 87.0f }, { 1110.0f, 87.0f }, { 46.0f, 390.0f }, { 1110.0f, 390.0f } })
+            d.add (Type::Screw, x, y, 22, 22);
+        d.text ("Triple Dynamic EQ", 80, 86, 260, 26, 22, 0xffeaeaea, Look::SansLight, J::centredLeft);
+        for (int b = 0; b < 3; ++b)
+            d.key (-1, 380.0f + 79.0f * (float) b, 88, 72, 24, Look::TabKey, "DEQ " + juce::String (b + 1)).sel (b).size = 14;
+        d.box (68, 121, 559, 242, Look::Fill, 0xff2e2a1c, 0xff5a4a2a, 2.0f);
+        for (int b = 0; b < 3; ++b)
+            dynEqBand (d, 9 * b, b);
+        d.add (Type::Graph, 674, 130, 410, 228).shows (GraphKind::DynEq, { 6, 5, 7, 4, 15, 14, 16, 13, 24, 23, 25, 22 });
         return d;
     }
 
@@ -1113,7 +1130,7 @@ namespace
         under (966, 311, "kHz");
         auto tallKey = [&] (int param, float x, const char* s)
         {
-            auto& k = d.key (param, x, 138, 38, 56, Look::StackKey, s);
+            auto& k = d.key (param, x, 138, 38, 56, Look::StackKey, juce::String::fromUTF8 (s)); // the division sign
             k.colour2 = juce::Colour (0xffeeeeee);
             k.size = 15;
             d.lamp (x + 19, 215, 12, 0xffff2020, param).at (param < 0 ? 1.0f : 0.0f);
@@ -1347,7 +1364,8 @@ namespace
     /** The premium algorithmic reverbs' remote: a dot-matrix display over six
         faders, a red screen and three keys. Each key shows a layer: six of the
         model's parameters on the faders (layer 1 as the console's display). */
-    Design reverbRemote (const char* name, std::vector<std::vector<int>> layers)
+    Design reverbRemote (const char* name, std::vector<std::vector<int>> layers, GraphKind graph = GraphKind::Levels, std::vector<int> graphParams = {},
+                         int variant = -1)
     {
         Design d;
         d.panel = juce::Colour (0xffece6d6);
@@ -1381,6 +1399,8 @@ namespace
         for (int k = 1; k < 8; ++k)
             d.box (904, 206.0f + 15.5f * (float) k, 190, 0, Look::Line, 0x55d03020, 0, 1.0f);
         d.path ("M 900 330 L 1098 190 L 1098 330 Z", 0x30000000, 0.0f);
+        if (! graphParams.empty())
+            d.add (Type::Graph, 904, 194, 190, 132).shows (graph, std::move (graphParams), variant); // the screen shows the envelope
         for (int k = 0; k < 3; ++k)
         {
             if (k >= (int) layers.size())
@@ -1565,7 +1585,7 @@ namespace
         d.box (66, 160, 106, 30, Look::Fill, 0xff1f50e8);
         d.text ("REVERB", 66, 160, 106, 30, 21, kWhite, Look::SerifItalic);
         const juce::uint32 cyan = 0xff40e0f0;
-        for (auto [x, param, label, unit] : { std::tuple { 195.0f, 2, "DECAY", "S" }, { 572.0f, 4, "DAMPING", "HZ" } })
+        for (auto [x, param, label, unit] : { std::tuple { 195.0f, 2, "DECAY", "S" }, { 572.0f, 4, "DAMPING", "KHZ" } }) // DAMPING runs 1 .. 20 kHz
         {
             d.box (x, 108, 310, 100, Look::Fill, 0xff060808, 0xff2a2a2a, 2.0f);
             segmentValue (d, param, x + 10, 118, 160, 80, 58, cyan);
@@ -1712,6 +1732,8 @@ namespace
         put ("F:CHORUS", stereoChorus());
         put ("F:BPLATE", bluePlate());
         put ("F:V-PLATE", vintagePlate());
+        put ("F:DEQ3", tripleDynamicEq());
+        addDeviceDesigns (m);
         return m;
     }
 } // namespace

@@ -5,6 +5,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <array>
 #include <atomic>
 #include <functional>
 #include <vector>
@@ -68,13 +69,24 @@ class Faceplate final : public juce::Component, private juce::Timer
 public:
     Faceplate();
 
-    /** `values` must stay valid while bound (the engine's parameter block). */
-    void bind (models::Table, int model, std::atomic<float>* values, std::function<float()> meter = {});
+    /** `values` must stay valid while bound (the engine's parameter block).
+        `meter`: the gain reduction (dB, <= 0); `bandGain`: a dynamic EQ band's
+        live gain (dB, signed), for the graphs that show bands moving. */
+    void bind (models::Table, int model, std::atomic<float>* values, std::function<float()> meter = {},
+               std::function<float (int band)> bandGain = {});
     void unbind();
 
     /** A control was touched (index into the model's parameters). */
     std::function<void (int param)> onTouched;
     int getLastTouched() const noexcept { return lastTouched; }
+
+    /** Whether the bound model has a drawn panel (FaceplateDesign.h). */
+    bool hasDesign() const noexcept { return design != nullptr; }
+
+    /** The pages of a tabbed panel (1 for most), and the one shown. */
+    int getNumPages() const noexcept;
+    int getPage() const noexcept { return page; }
+    void setPage (int);
 
     /** Draws only the panel (no controls): for small thumbnails. */
     static void paintThumbnail (juce::Graphics&, juce::Rectangle<float>, models::Table, int model, const juce::String& caption);
@@ -119,6 +131,7 @@ private:
     const models::Model* spec = nullptr;
     std::atomic<float>* values = nullptr;
     std::function<float()> meterFn;
+    std::function<float (int)> bandFn;
     FaceplateStyle style;
 
     const fp::Design* design = nullptr;
@@ -131,6 +144,7 @@ private:
     juce::Rectangle<float> panelArea, displayArea, meterArea, titleArea;
     std::vector<float> shown;
     float shownMeter = 0.0f;
+    std::array<float, 3> shownBands {};
     int dragging = -1, lastTouched = -1;
     float dragStartPos = 0.0f;
 };

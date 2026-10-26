@@ -40,6 +40,7 @@ struct KnobStyle
         Fill,     // filled from the left
         Centre,   // filled from the centre, with a centre tick
         Width,    // filled either side of a centre tick, the wider the lower the value (Q)
+        Spread,   // filled either side of a centre tick, as wide as the value is far from the centre (WIDTH)
         Thumb,    // a thumb on a grey line
         Segments  // one lit segment per step (BUS 1-16, MATRIX 1-8)
     };
@@ -55,7 +56,7 @@ struct KnobStyle
 namespace KnobColours
 {
     const juce::Colour blue { 0xff4890e0 };      // levels, frequencies, BAL, PAGE
-    const juce::Colour green { 0xff40a618 };     // width
+    const juce::Colour green { 0xff40a818 };     // width
     const juce::Colour qGreen { 0xff18e460 };    // Q (EQ, key filter, crossover)
     const juce::Colour yellow { 0xffe0d400 };    // distance, AP frequency
     const juce::Colour cyan { 0xff48f0f8 };      // tilt
@@ -65,7 +66,7 @@ namespace KnobColours
     const juce::Colour timeGreen { 0xff1ed664 }; // pre-delay, multipliers, delay times
     const juce::Colour gold { 0xfff0c858 };      // selectors (BUS 13): the value and the lit segment
     const juce::Colour segmentOff { 0xff585858 };// a selector's other segments
-    const juce::Colour track { 0xff686868 };     // the grey line under a thumb
+    const juce::Colour track { 0xff707070 };     // the grey line under a thumb
 } // namespace KnobColours
 
 /** What the status bar's title tile shows for a screen. The WING shows the
@@ -88,6 +89,7 @@ struct StatusTitle
     std::optional<Icon> icon;
     juce::Colour fill {}, ink {}; // transparent: the kind's default colours
     juce::Colour iconInk {};      // a plain title's icon in its own colour (MUTE GROUPS: red)
+    bool plainNumber = false;     // Channel: the number in black print, not boxed (ROUTING > CHANNELS)
 };
 
 /** A screen of the main display. */

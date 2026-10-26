@@ -139,6 +139,10 @@ public:
     void paint (juce::Graphics&) override;
     void mouseUp (const juce::MouseEvent&) override;
 
+    /** The lock: true while the patch can't be changed (CHANNELS, OUTPUTS). */
+    bool isLocked() const noexcept { return lock.isLocked(); }
+    void setLocked (bool);
+
 private:
     using Group = routing::Group;
     class GroupMenu;
@@ -166,6 +170,9 @@ private:
     int numTargetPages() const;
     int numHardware (bool outputs) const;
     Strip* selectedStrip() const;
+    /** The source table index of the selected channel's MAIN (or, editing
+        ALT, ALT) input, -1 if none. */
+    int patchedSourceIndex() const;
     void select (Strip*);
     void layoutTiles();
     void assignInput (int port, bool right);
@@ -199,11 +206,14 @@ private:
     int selectedPort = 0, selectedSource = 0;
     StripKind selectedKind = StripKind::Channel;
     int selectedIndex = 0;
-    bool autoAdvance = false, locked = false; // the console's defaults
+    // The console's defaults: +1 AUTO off; the patch locked (the closed lock
+    // lit red), on a fresh console and after INITIALIZE CONSOLE.
+    bool autoAdvance = false;
+    routing::PatchLock lock { ctx.engine };
     bool editAlt = false; // CHANNEL INPUT MAIN / ALT: which input the source grid patches
 
     juce::Rectangle<int> leftPanel, rightPanel, leftHeader, rightHeader, leftGrid, rightGrid;
-    juce::Rectangle<int> inputCaption, mainKey, altKey, stereoKey, autoKey, lockFrame, lockKey, unlockKey, prevPage, nextPage, leftSelector,
+    juce::Rectangle<int> inputCaption, mainKey, altKey, monoKey, stereoKey, midSideKey, autoKey, lockFrame, lockKey, unlockKey, prevPage, nextPage, leftSelector,
         rightSelector, noneKey, copyCaption, srcToChKey, chToSrcKey, separator, renameKey, meterLegend, prevSignals, nextSignals;
     std::vector<std::pair<juce::Rectangle<int>, Strip*>> channelTiles;
     std::vector<juce::Rectangle<int>> leftPorts, rightPorts;

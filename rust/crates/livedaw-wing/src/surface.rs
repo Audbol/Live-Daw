@@ -11,7 +11,8 @@
 //! libwing's tree (guesses are marked):
 //!
 //! - `L`, `C`, `R` are the three fader sections (`CMPCT`, `RCK`, `EXT` and
-//!   `VRT`, the other models' surfaces, stay in the shadow store). `sel` 1-7
+//!   `VRT`, the other models' surfaces, answer the WING's factory values and
+//!   keep what a client sets). `sel` 1-7
 //!   picks a layer key in the console's order (left: CH 1-12, 13-24, 25-36,
 //!   37-40 / AUX, BUSES, USER 1, USER 2; center: DCA, MAIN, AUX, BUSES, USER 1,
 //!   USER 2; right: MAIN, DCA, CH 1-40, AUX, BUSES, USER 1, USER 2) and reads
@@ -32,9 +33,11 @@
 //!   order the tree uses elsewhere). DCA 1-16; SEND: from strip `i` (1-76) to
 //!   `dst` (buses 1-16, mains 17-20, matrices 21-28); FX: slot `i`, parameter
 //!   `dst`; MIDI: CC `i` on MIDI channel `dst`. SENDS has no equivalent.
-//!   Sidecar's layers have no gaps: a fader set past the end is appended and
-//!   OFF removes one. Changing a default key edits it (as VIEW > CONFIG does);
-//!   the USER keys change the user layers.
+//!   Slots are fixed, as on the console: OFF is a blank slot, a fader set
+//!   past the end leaves blanks before it, and nothing else moves. A layer can
+//!   hold the same fader in several slots; each reads and sets on its own.
+//!   Changing a default key edits it (as VIEW > CONFIG does); the USER keys
+//!   change the user layers.
 //! - `$spill`: the spill a section shows, read only (the console too
 //!   replaces what is set there).
 //! - `/$ctl/user/1..16/1..4`: the upper part's custom control layers;
@@ -51,7 +54,7 @@ use crate::value::Value;
 use livedaw_engine::params::{NUM_DCAS, NUM_FX};
 use livedaw_engine::{Engine, StripKind};
 use livedaw_session::custom::{CcFunction, CustomControls, FIRST_DAW_LAYER, NUM_CONTROLS, NUM_LAYERS};
-use livedaw_session::layers::{ConsoleRefs, FaderRef, Layer, LayerSet, SpillKind, NUM_SECTIONS};
+use livedaw_session::layers::{slots, ConsoleRefs, FaderRef, Layer, LayerSet, SpillKind, NUM_SECTIONS};
 use livedaw_session::refs::StripRef;
 use std::collections::VecDeque;
 
@@ -61,6 +64,15 @@ pub const KEYS: [&[&str]; NUM_SECTIONS] = [
     &["dca-1", "out-1", "aux", "bus-1", "user-1", "user-2"],
     &["out-1", "dca-1", "inputs", "aux", "bus-1", "user-1", "user-2"],
 ];
+/// The names a factory-initialized WING gives the layer keys (`N/name`;
+/// the USER keys show the user layers' own names).
+const KEY_NAMES: [&[&str]; NUM_SECTIONS] = [
+    &["CH1-12", "CH13-24", "CH25-36", "CH37-AUX", "BUSES", "", ""],
+    &["DCA", "MAIN", "AUX", "BUSES", "", ""],
+    &["MAIN", "DCA", "CH1-40", "AUX", "BUSES", "", ""],
+];
+/// `$spill/name` while a section spills nothing.
+const SPILL_NAME: &str = "SPILL";
 /// `sel` of a layer without a WING key, and of a spill.
 const SEL_NO_KEY: i32 = 8;
 const SEL_SPILL: i32 = 22;
@@ -499,7 +511,11 @@ impl Surface {
             UserF::Colour(l, c) => Value::Int(control(l, c)?.colour.max(1)),
             UserF::Mode(l, c, slot) => Value::str(control(l, c)?.modes[cc_slot_index(slot)]),
             UserF::Name(l, c) => Value::Str(control(l, c)?.name.clone()),
-            UserF::FName(l, c, slot) => Value::str(mode_long_name(slot, control(l, c)?.modes[cc_slot_index(slot)])),
+            UserF::FName(l, c, slot) => {
+                // A control not assigned has no function name, as on the console.
+                let mode = control(l, c)?.modes[cc_slot_index(slot)];
+                Value::str(if mode == "OFF" { "" } else { mode_long_name(slot, mode) })
+            }
         })
     }
 
@@ -588,6 +604,7 @@ impl Numbering {
     fn encode(&self, f: &FaderRef) -> WingFader {
         let w = |ty, i, dst| WingFader { ty, i, dst };
         match *f {
+            FaderRef::Empty => WingFader::OFF,
             FaderRef::Strip(r) => match self.number(&r) {
                 Some(n) if n <= 48 => w(T_CH, n, 1),
                 Some(n) => w(T_BUS, n - 48, 1),
@@ -666,8 +683,18 @@ pub fn publish(engine: &Engine, layers: &LayerSet, custom: &CustomControls, cc_b
     let console = ConsoleRefs::of(engine);
     let sections = std::array::from_fn(|s| {
         let defaults = layers.default_layers_for(s, &console);
-        let keys =
-            KEYS[s].iter().map(|id| defaults.iter().find(|l| l.id == *id).map(|l| num.layer(l)).unwrap_or_default()).collect();
+        let keys = KEYS[s]
+            .iter()
+            .zip(KEY_NAMES[s])
+            .map(|(id, wing_name)| {
+                let mut key = defaults.iter().find(|l| l.id == *id).map(|l| num.layer(l)).unwrap_or_default();
+                if user_key(id).is_none() {
+                    // The default layers' names are generated: answer the console's.
+                    (*wing_name).clone_into(&mut key.name);
+                }
+                key
+            })
+            .collect();
         let spill = layers.spill(s);
         let selected = layers.selected(s);
         let sel = if spill.is_some() {
@@ -683,7 +710,10 @@ pub fn publish(engine: &Engine, layers: &LayerSet, custom: &CustomControls, cc_b
             spill: spill.as_ref().map_or(0, spill_index),
             offset: layers.offset(s),
             keys,
-            spill_layer: layers.spill_layer(engine, s).map(|l| num.layer(&l)).unwrap_or_default(),
+            spill_layer: layers
+                .spill_layer(engine, s)
+                .map(|l| num.layer(&l))
+                .unwrap_or_else(|| SurfaceLayer { name: SPILL_NAME.into(), ..SurfaceLayer::default() }),
         }
     });
     let controls = (0..NUM_LAYERS)
@@ -800,15 +830,10 @@ fn apply(engine: &Engine, layers: &mut LayerSet, custom: &mut CustomControls, ed
                     l.faders
                 }
             };
+            // Fixed slots: OFF blanks the slot, a fader past the end leaves
+            // blanks before it; the other slots stay where they are.
             let mut faders = current.clone();
-            match new {
-                Some(f) if pos < faders.len() => faders[pos] = f,
-                Some(f) => faders.push(f),
-                None if pos < faders.len() => {
-                    faders.remove(pos);
-                }
-                None => {}
-            }
+            slots::set(&mut faders, pos, new.unwrap_or(FaderRef::Empty));
             if faders == current {
                 return;
             }

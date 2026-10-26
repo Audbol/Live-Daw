@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.22)
 # The version. Release builds pass the release tag (e.g. -DLIVEDAW_VERSION=v0.1.1-beta.2):
 # its numeric part becomes the CMake/JUCE version (Windows version info, Info.plist), and
 # the full string is what the app shows (about box, SETUP, log) as JUCE_APPLICATION_VERSION_STRING.
-set(LIVEDAW_DEFAULT_VERSION 0.1.4)
+set(LIVEDAW_DEFAULT_VERSION 0.1.5)
 set(LIVEDAW_VERSION "" CACHE STRING "Version to stamp, e.g. 0.1.1-beta.2 or v0.1.1-beta.2 (default: ${LIVEDAW_DEFAULT_VERSION})")
 if(LIVEDAW_VERSION)
     string(REGEX REPLACE "^[vV]" "" LIVEDAW_VERSION_STRING "${LIVEDAW_VERSION}")
@@ -219,11 +219,13 @@ target_sources(LiveDAW PRIVATE
     src/ui/Faceplate.cpp
     src/ui/FaceplateDraw.cpp
     src/ui/FaceplateDesigns.cpp
+    src/ui/FaceplateDevices.cpp
     src/ui/MeterComponent.cpp
     src/ui/PluginMenu.cpp
     src/ui/PluginChainView.cpp
     src/ui/PluginChainWindow.cpp
     src/ui/FaderStrip.cpp
+    src/ui/Scribble.cpp
     src/ui/FaderSection.cpp
     src/ui/ResponseGraph.cpp
     src/ui/DynamicsGraph.cpp
@@ -364,6 +366,7 @@ if(LIVEDAW_BUILD_TESTS)
         tests/HoldToSwitchTests.cpp
         tests/SurfaceLayoutTests.cpp
         tests/SandboxTests.cpp
+        tests/RealPluginTests.cpp
         src/sandbox/TestPlugins.cpp
         ${LIVEDAW_ENGINE_SOURCES}
         ${LIVEDAW_DAW_SOURCES})
@@ -378,4 +381,22 @@ if(LIVEDAW_BUILD_TESTS)
 
     # MIDI remote control and DAW remote control.
     target_sources(LiveDAWTests PRIVATE tests/MidiTests.cpp)
+
+    # The processing models' front panels (FX rack devices, dynamics, EQs).
+    target_sources(LiveDAWTests PRIVATE
+        tests/FaceplateTests.cpp
+        src/ui/Faceplate.cpp
+        src/ui/FaceplateDraw.cpp
+        src/ui/FaceplateDesigns.cpp
+        src/ui/FaceplateDevices.cpp
+        src/ui/ModelParams.cpp
+        src/ui/Knobs.cpp
+        src/ui/DynamicsGraph.cpp
+        src/ui/WingPopups.cpp
+        src/ui/Icons.cpp)
+
+    # The surface's scribble strip LCDs.
+    target_sources(LiveDAWTests PRIVATE
+        tests/SurfaceTests.cpp
+        src/ui/Scribble.cpp)
 endif()

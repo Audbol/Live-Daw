@@ -32,7 +32,11 @@ use std::mem::{offset_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-pub const LD_ABI_VERSION: i32 = 14;
+// ABI 14: LdFaderRef kind 8 = a blank layer slot.
+// ABI 15: ld_layers_remove_from_user takes the slot (a user layer can hold a
+// fader twice); ld_layers_add_to_user returns whether it had room.
+// ABI 16: the console model (ld_console_model_info, ld_layers_set_model, ld_wing_set_model).
+pub const LD_ABI_VERSION: i32 = 16;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -145,7 +149,7 @@ pub struct LdLayoutInfo {
     pub off_cust_link: i32,
     // ABI 13: DCA SOLO BUS
     pub off_dca_mon: i32,
-    // ABI 14: the console model (ld_console_model_info, ld_layers_set_model, ld_wing_set_model)
+    // ABI 16: the console model (ld_console_model_info, ld_layers_set_model, ld_wing_set_model)
     pub console_model_info: i32,
 }
 
@@ -492,6 +496,14 @@ pub unsafe extern "C" fn ld_fx_meter(e: *const Engine, slot: i32) -> f32 {
     engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)).map_or(0.0, |r| r.meter())
 }
 
+/// A dynamic band's live gain of a slot's built-in device (TRIPLE DEQ bands
+/// 0-2), in dB, signed: cut < 0, boost > 0. 0 for other devices.
+#[no_mangle]
+pub unsafe extern "C" fn ld_fx_band_gain(e: *const Engine, slot: i32, band: i32) -> f32 {
+    let Ok(band) = usize::try_from(band) else { return 0.0 };
+    engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)).map_or(0.0, |r| r.band_gain(band))
+}
+
 /// Message thread: the host context of slot `slot` (null if empty).
 #[no_mangle]
 pub unsafe extern "C" fn ld_fx_ctx(e: *const Engine, slot: i32) -> *mut std::ffi::c_void {
@@ -608,6 +620,14 @@ pub unsafe extern "C" fn ld_strip_params(s: *const Strip) -> *const StripParams 
 #[no_mangle]
 pub unsafe extern "C" fn ld_strip_meters(s: *const Strip) -> *const StripMeters {
     strip(s).map_or(std::ptr::null(), |s| &s.meters as *const _)
+}
+
+/// The live gain of band `band` (0-1) of the GATE (`gate`) or DYNAMICS slot's
+/// dynamic EQ (DEQ, DEQ2), in dB, signed: cut < 0, boost > 0. 0 for other models.
+#[no_mangle]
+pub unsafe extern "C" fn ld_strip_dyn_band_gain(s: *const Strip, gate: bool, band: i32) -> f32 {
+    let Ok(band) = usize::try_from(band) else { return 0.0 };
+    strip(s).map_or(0.0, |s| s.band_meters.get(gate, band))
 }
 
 #[no_mangle]

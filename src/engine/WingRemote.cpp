@@ -189,6 +189,7 @@ void WingRemote::timerCallback()
 
 void WingRemote::pump()
 {
+    pumpHostSettings();
     if (libraryShow == nullptr)
         return;
     pumpSafes();
@@ -245,6 +246,61 @@ void WingRemote::syncSurface()
     const auto changes = libraryShow->syncWingSurface (handle, surfaceBank ? surfaceBank() : 0, bank);
     if ((changes != 0 || bank >= 0) && onSurfaceChanged)
         onSurfaceChanged ((int) changes, bank);
+}
+
+void WingRemote::setHostSettings (juce::PropertiesFile* settings, std::function<void (const juce::StringArray&)> changed)
+{
+    hostSettings = settings;
+    onHostSettingsChanged = std::move (changed);
+    if (hostSettings == nullptr)
+    {
+        ld::ld_wing_clear_host_settings (handle);
+        return;
+    }
+    hostSettingKeys = juce::StringArray::fromLines (takeString (ld::ld_wing_host_setting_keys()));
+    hostSettingKeys.removeEmptyStrings();
+    pumpHostSettings();
+}
+
+void WingRemote::pumpHostSettings()
+{
+    if (hostSettings == nullptr)
+        return;
+    juce::StringArray changed;
+    ld::LdString* key = nullptr;
+    ld::LdString* value = nullptr;
+    while (ld::ld_wing_take_host_setting (handle, &key, &value))
+    {
+        const auto k = takeString (key);
+        hostSettings->setValue (k, takeString (value));
+        changed.addIfNotAlreadyThere (k);
+    }
+    if (! changed.isEmpty() && onHostSettingsChanged)
+        onHostSettingsChanged (changed);
+    // Keys the settings don't hold read Sidecar's defaults.
+    for (const auto& k : hostSettingKeys)
+        if (hostSettings->containsKey (k))
+        {
+            const Utf8 keyUtf8 (k), valueUtf8 (hostSettings->getValue (k));
+            ld::ld_wing_set_host_setting (handle, keyUtf8.data, keyUtf8.size, valueUtf8.data, valueUtf8.size);
+        }
+}
+
+juce::StringArray WingRemote::resetHostSettings()
+{
+    juce::StringArray removed;
+    if (hostSettings == nullptr)
+        return removed;
+    for (const auto& k : hostSettingKeys)
+        if (! k.startsWith ("midi.") && ! k.startsWith ("daw.") && hostSettings->containsKey (k))
+        {
+            hostSettings->removeValue (k);
+            removed.add (k);
+        }
+    // Forget what was published (and changes not taken yet), then publish the rest again.
+    ld::ld_wing_clear_host_settings (handle);
+    pumpHostSettings();
+    return removed;
 }
 
 void WingRemote::publishLibrary()

@@ -221,11 +221,22 @@ namespace uiprefs
     constexpr const char* fullScreen = "ui.fullScreen";             // bool: the window covers the screen (F11)
     constexpr const char* noticeDismissed = "ui.noticeDismissedFor"; // the app version the start-up notice was turned off for
 
-    // SOLO SYSTEM (SETUP > AUDIO).
+    // SOLO SYSTEM (SETUP > AUDIO). EXCLUSIVE SOLO and SELECT FOLLOWS SOLO
+    // start on, as on a factory-initialized WING.
     constexpr const char* exclusiveSolo = "ui.soloExclusive";
     constexpr const char* soloFollowsSelect = "ui.soloFollowsSelect";
     constexpr const char* selectFollowsSolo = "ui.selectFollowsSolo";
     constexpr const char* sofActivatesSolo = "ui.sofActivatesSolo";
+    constexpr bool exclusiveSoloDefault = true;
+    constexpr bool selectFollowsSoloDefault = true;
+    /** The default of a SOLO SYSTEM option. */
+    inline bool soloOptionDefault (const char* key) { return juce::String (key) == exclusiveSolo || juce::String (key) == selectFollowsSolo; }
+
+    // METERING (SETUP > SURFACE): the L/R meter beside the display.
+    constexpr const char* mainMeter = "ui.mainMeter";       // 0 the monitor, 1-4 MAIN n (default MAIN 1)
+    constexpr int mainMeterDefault = 1;
+    constexpr const char* mainMeterTap = "ui.mainMeterTap"; // 0 AUTO (default), 1 PRE, 2 POST
+    constexpr int mainMeterTapDefault = 0;
 
     // GENERAL (SETUP > GENERAL).
     constexpr const char* alwaysShowScene = "ui.alwaysShowScene";    // the status bar's title tile shows the active scene
@@ -242,7 +253,8 @@ namespace uiprefs
     constexpr const char* faderSpeed = "ui.faderSpeed";              // 0 SLOW, 1 MED (default), 2 FAST
     constexpr const char* fullFaderPaging = "ui.fullFaderPaging";
     constexpr const char* alternativeSof = "ui.alternativeSof";
-    constexpr const char* rightSectionSof = "ui.rightSectionSof";    // default on (ALL); off: the left and center sections only
+    constexpr const char* rightSectionSof = "ui.rightSectionSof";    // on: ALL; off (default, L/C): the left and center sections only
+    constexpr bool rightSectionSofDefault = false;
     constexpr const char* userLayerLink[2] = { "ui.userLayerLinkLC", "ui.userLayerLinkCR" };
     constexpr const char* dcaSpill = "ui.dcaSpill"; // bool: SELECT on a DCA spills it (SETUP > SURFACE)
     constexpr const char* autoSelect[3] = { "ui.autoSelectL", "ui.autoSelectC", "ui.autoSelectR" };
@@ -326,8 +338,11 @@ juce::String describeStrip (const Strip&);
 /** The strip's name, or its label ("CH 3") when it has a default name. */
 juce::String stripName (const Strip&);
 
-/** A channel input index as shown: "IN 3" ("IN 03" with pad = 2), "PLAY 5"
-    for a multitrack playback channel, "PLAYER 1" for the USB player, "OSC 1" for an oscillator. */
+/** A channel input index as the WING names its port: "LCL 3" for LOCAL IN
+    (the interface's inputs 1-48, the remote's AES50 A), "B 1" / "C 1" for
+    AES50 B / C (inputs 49-96, 97-144), "IN 145" past them; "PLAY 5" for a
+    multitrack playback channel, "PLAYER 1" for the USB player, "OSC 1" for an
+    oscillator. pad = 2: "LCL 03". */
 inline juce::String inputPortName (int input, int pad = 0)
 {
     if (const int ch = UsbRecorder::playerChannelOf (input); ch >= 0)
@@ -336,7 +351,25 @@ inline juce::String inputPortName (int input, int pad = 0)
         return MixerEngine::oscSourceName (n);
     if (const int ch = Recorder::playbackChannelOf (input); ch >= 0)
         return Recorder::playbackSourceName (ch);
+    constexpr int kBlock = 48; // ports per group (routing::kBlock)
+    if (input >= 0 && input < 3 * kBlock)
+    {
+        static const char* const prefixes[] = { "LCL ", "B ", "C " };
+        return prefixes[input / kBlock] + juce::String (input % kBlock + 1).paddedLeft ('0', pad);
+    }
     return "IN " + juce::String (input + 1).paddedLeft ('0', pad);
+}
+
+/** "LCL 3", "B 1", "PLAY 5" or "NONE" for a channel input index, as the
+    WING names its ports (stereo: "LCL 3/4"; inputPortName). */
+inline juce::String inputSourceText (int left, int right, bool stereo)
+{
+    if (left < 0)
+        return "NONE";
+    const auto l = inputPortName (left);
+    if (! stereo)
+        return l;
+    return l + "/" + inputPortName (right >= 0 ? right : left + 1).fromLastOccurrenceOf (" ", false, false);
 }
 
 /** False for an input or aux channel with neither a MAIN nor an ALT source:

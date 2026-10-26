@@ -156,7 +156,9 @@ juce::Rectangle<int> HomeScreen::layoutLevelPanel (juce::Rectangle<int> area)
 {
     if (levelPanel != nullptr)
     {
-        levelPanel->setBounds (box (area.removeFromRight (area.getWidth() * 22 / 100), "LEVEL"));
+        const auto levelArea = area.removeFromRight (area.getWidth() * 22 / 100);
+        box (levelArea, "LEVEL");
+        levelPanel->setBounds (sectionBody (levelArea, true));
         area.removeFromRight (juce::jmax (4, getParentWidth() / 160));
     }
     return area;
@@ -235,9 +237,12 @@ namespace
 
 //==============================================================================
 // Delay units: the engine stores the delay in the unit selected (M, FT, MS, SMP).
-constexpr float kSpeedOfSound = 343.0f;
-// The WING's range (`/ch/n/in/set/dly`: DIST 0.1 .. 150 m) in any unit.
-constexpr float kMinDelayM = 0.1f, kMaxDelayM = 150.0f;
+// The WING turns distance into time at 0.3 m per ms (livedaw_dsp::delay):
+// 0.1 m reads 0.3 ft, 0.3 ms and 16 samples at 48 kHz.
+constexpr float kSpeedOfSound = 300.0f;
+// The WING's range (`/ch/n/in/set/dly`: DIST 0.1 .. 150 m) in any unit; SAMPLES
+// starts at 16 at every rate.
+constexpr float kMinDelayM = 0.1f, kMaxDelayM = 150.0f, kMinDelaySamples = 16.0f;
 
 float sampleRateOf (UiContext& ctx)
 {
@@ -263,7 +268,7 @@ float msToDelay (float ms, int mode, float sr)
         case 0:  return ms * kSpeedOfSound / 1000.0f;
         case 1:  return ms * kSpeedOfSound / 1000.0f / 0.3048f;
         case 2:  return ms;
-        default: return ms * sr / 1000.0f;
+        default: return juce::jmax (kMinDelaySamples, std::round (ms * sr / 1000.0f));
     }
 }
 
@@ -288,7 +293,11 @@ KnobBinding delayBinding (UiContext& ctx, InputParams& in)
     b.label = mode <= 1 ? "DIST" : (mode == 2 ? "TIME" : "SAMPLES");
     auto range = [&ctx, &in] { return delayRange (juce::jlimit (0, 3, (int) in.delayMode.load()), sampleRateOf (ctx)); };
     b.get = [&in, range] { return juce::jlimit (0.0f, 1.0f, range().convertTo0to1 (in.delay.load())); };
-    b.set = [&in, range] (float p) { in.delay = range().convertFrom0to1 (juce::jlimit (0.0f, 1.0f, p)); };
+    b.set = [&in, range] (float p)
+    {
+        const float v = range().convertFrom0to1 (juce::jlimit (0.0f, 1.0f, p));
+        in.delay = in.delayMode.load() == 3 ? std::round (v) : v; // whole samples
+    };
     b.text = [&in] { return delayText (in.delay.load(), juce::jlimit (0, 3, (int) in.delayMode.load())); };
     b.reset = [&in, range] { in.delay = range().start; };
     b.steps = 1500.0f;
@@ -303,11 +312,19 @@ public:
 
     void paint (juce::Graphics& g) override
     {
+        // WING 3.1 (a 116 x 360 slider): the scale right-aligned in the left
+        // 36 px; the 76 px well (2 px black rim, #101010) with a 12 px black
+        // slot from 10 px under its top; the value in a tag across the well's
+        // inside, 25 tall, at the value (grey while the delay is off).
         auto r = getLocalBounds().toFloat();
         const auto b = delayBinding (ctx, in);
-        const float tagH = juce::jlimit (16.0f, screenCap (22.0f), r.getHeight() * 0.08f);
-        auto scale = r.removeFromLeft (r.getWidth() * 0.42f);
-        auto track = r.withSizeKeepingCentre (juce::jlimit (8.0f, screenCap (22.0f), r.getWidth() * 0.4f), r.getHeight() - tagH);
+        const float u = r.getWidth() / 116.0f;
+        const float tagH = juce::jmin (25.0f * u, r.getHeight() * 0.1f);
+        auto scale = r.removeFromLeft (36.0f * u);
+        r.removeFromLeft (4.0f * u);
+        const auto well = r;
+        const float rim = juce::jmax (1.0f, 2.0f * u);
+        auto track = well.withSizeKeepingCentre (12.0f * u, well.getHeight()).withTrimmedTop (10.0f * u).withTrimmedBottom (rim + tagH * 0.5f);
         const int mode = juce::jlimit (0, 3, (int) in.delayMode.load());
         const auto range = delayRange (mode, sampleRateOf (ctx));
         g.setFont (homeFont (TypeScale::caption, juce::jlimit (9.0f, screenCap (12.0f), r.getHeight() * 0.045f)));
@@ -321,18 +338,24 @@ public:
             const auto text = i == 0 ? delayText (v, mode) : juce::String (v, mode == 3 || v >= 10.0f ? 0 : 1);
             g.drawText (text, scale.withY (y - 6.0f).withHeight (12.0f).toNearestInt(), juce::Justification::centredRight);
         }
+        g.setColour (juce::Colours::black);
+        g.fillRect (well);
         g.setColour (colours::well);
+        g.fillRect (well.reduced (rim));
+        g.setColour (juce::Colours::black);
         g.fillRect (track);
         const float pos = b.get();
         const float y = track.getBottom() - track.getHeight() * pos;
-        g.setColour (in.delayOn.load() ? colours::fader : juce::Colour (0xff3a4a5a));
-        g.fillRect (track.withTop (y).reduced (track.getWidth() * 0.25f, 0.0f));
-        auto tag = juce::Rectangle<float> (juce::jmin ((float) getWidth(), juce::jmax (44.0f, tagH * 3.0f)), tagH).withCentre ({ track.getCentreX(), juce::jmin (y, track.getBottom() - tagH * 0.5f) });
-        tag.setX (juce::jlimit (0.0f, (float) getWidth() - tag.getWidth(), tag.getX()));
-        g.setColour (Colours::text);
+        if (in.delayOn.load())
+        {
+            g.setColour (colours::fader);
+            g.fillRect (track.withTop (y).reduced (track.getWidth() * 0.25f, 0.0f));
+        }
+        const auto tag = well.reduced (rim, 0.0f).withHeight (tagH).withCentre ({ well.getCentreX(), juce::jmin (y, well.getBottom() - rim - tagH * 0.5f) });
+        g.setColour (in.delayOn.load() ? Colours::text : Colours::textDim);
         g.fillRect (tag);
         g.setColour (juce::Colours::black);
-        g.setFont (homeFont (TypeScale::body, tagH * 0.75f, WingWeight::SemiBold));
+        g.setFont (homeFont (TypeScale::body, tagH * 0.75f));
         g.drawFittedText (b.text(), tag.toNearestInt(), juce::Justification::centred, 1, 0.7f);
     }
 
@@ -374,7 +397,7 @@ public:
         {
             // [I7] the chosen unit lit in the choice blue, the others light grey.
             auto* k = units.add (new IconKey (names[m], std::nullopt, colours::choice));
-            k->twoLines = true;
+            k->nameOverValue = true;
             k->offInk = colours::caption;
             k->isOn = [this, m] { return in.delayMode.load() == m; };
             k->onClick = [this, m]
@@ -391,6 +414,7 @@ public:
         }
         delayKey.setTooltip ("Delay on");
         delayKey.captionBelow = true;
+        delayKey.keySide = 48.0f;
         bindKey (delayKey, in.delayOn);
         addAndMakeVisible (delayKey);
         startTimerHz (5);
@@ -402,19 +426,19 @@ public:
 
     void resized() override
     {
-        // [I7] (WING pixels in a 288 x 408 body): the slider at the left, the
-        // four unit keys stacked from the top right (96 x 56), the 48 px DELAY
-        // key with its caption at the bottom.
-        auto b = getLocalBounds();
-        auto right = b.removeFromRight (b.getWidth() * 45 / 100);
-        slider.setBounds (b.reduced (0, 2));
-        const float v = (float) getHeight() / 408.0f;
-        auto keyCol = right.withSizeKeepingCentre (juce::jmin (right.getWidth() - 8, juce::roundToInt (96.0f * v)), right.getHeight());
-        delayKey.setBounds (keyCol.removeFromBottom (juce::roundToInt (88.0f * v)).withTrimmedTop (juce::roundToInt (8.0f * v)));
-        keyCol.removeFromTop (juce::roundToInt (16.0f * v));
-        const int h = juce::jmin (juce::roundToInt (56.0f * v), keyCol.getHeight() / 4);
-        for (auto* k : units)
-            k->setBounds (keyCol.removeFromTop (h));
+        // WING 3.1 (in the 280 x 408 body): the slider (its well at x 52-128,
+        // y 24-384, the scale left of it), the four unit keys 96 x 56 stacked
+        // at (160, 24), the 48 px DELAY key at (184, 308), its caption under it.
+        const float kx = (float) getWidth() / 280.0f, ky = (float) getHeight() / 408.0f;
+        auto at = [kx, ky] (float x, float y, float w, float h)
+        {
+            const int x0 = juce::roundToInt (x * kx), y0 = juce::roundToInt (y * ky);
+            return juce::Rectangle<int> (x0, y0, juce::roundToInt ((x + w) * kx) - x0, juce::roundToInt ((y + h) * ky) - y0);
+        };
+        slider.setBounds (at (12.0f, 24.0f, 116.0f, 360.0f));
+        for (int i = 0; i < units.size(); ++i)
+            units[i]->setBounds (at (160.0f, 24.0f + 56.0f * (float) i, 96.0f, 56.0f));
+        delayKey.setBounds (at (172.0f, 308.0f, 72.0f, 88.0f));
     }
 
 private:
@@ -485,7 +509,7 @@ public:
         g.setFont (small);
         g.drawText ("TRIM", juce::Rectangle<float> (p.getX(), r.getY(), p.getWidth() * 0.5f, p.getY() - r.getY()).toNearestInt(), juce::Justification::centredLeft);
         g.drawText ("BAL", juce::Rectangle<float> (p.getCentreX(), r.getY(), p.getWidth() * 0.5f, p.getY() - r.getY()).toNearestInt(), juce::Justification::centredRight);
-        for (int db = 18; db >= -12; db -= 6)
+        for (int db = 18; db >= -18; db -= 6)
         {
             const float y = p.getCentreY() - (float) db / 18.0f * p.getHeight() * 0.5f;
             g.setColour (Colours::caption);
@@ -520,23 +544,25 @@ public:
         const float lw = juce::jmax (1.5f, 2.0f * k);
         g.setColour (colours::fader);
         g.fillRect (x - lw * 0.5f, p.getY() - 10.0f * k, lw, tickY - p.getY());
-        g.setColour (juce::Colour (0xff686868));
+        // WING 3.1: the trim line light grey across the field, dark grey past it.
+        g.setColour (Colours::screenLine);
         g.fillRect (p.getRight(), y - lw * 0.5f, r.getRight() - p.getRight(), lw);
-        g.setColour (juce::Colours::white);
-        g.fillRect (p.getX() - 4.0f * k, y - lw * 0.5f, p.getWidth() + 4.0f * k, lw);
+        g.setColour (Colours::caption);
+        g.fillRect (p.getX(), y - lw * 0.5f, p.getWidth(), lw);
 
-        // The handles: a white disc with three lines, a blue one with three bars.
+        // The handles: a light grey disc with three lines, a blue one with three bars.
         const float hd = 38.0f * k;
         auto handle = juce::Rectangle<float> (hd, hd).withCentre ({ x, y });
-        g.setColour (juce::Colours::white);
+        g.setColour (Colours::caption);
         g.fillEllipse (handle);
         g.setColour (juce::Colours::black);
         for (int i = -1; i <= 1; ++i)
             g.fillRect (juce::Rectangle<float> (hd * 0.5f, juce::jmax (1.0f, 2.0f * k)).withCentre ({ x, y + (float) i * hd * 0.16f }));
         auto balHandle = juce::Rectangle<float> (hd, hd).withCentre ({ x, tickY });
-        g.setColour (hasBalance() ? colours::fader : juce::Colour (0xff3a4a5a));
+        // (Blue for a mono channel too, as the console shows it.)
+        g.setColour (colours::fader);
         g.fillEllipse (balHandle);
-        g.setColour (juce::Colours::white);
+        g.setColour (juce::Colours::black);
         for (int i = -1; i <= 1; ++i)
             g.fillRect (juce::Rectangle<float> (juce::jmax (1.0f, 2.0f * k), hd * 0.44f).withCentre ({ x + (float) i * hd * 0.16f, tickY }));
     }
@@ -584,27 +610,6 @@ private:
     std::tuple<float, float, bool> shown { 1.0e9f, 0.0f, false };
 };
 
-/** "IN 3", "PLAY 5" or "NONE" for a channel input index (stereo: "IN 3/4"). */
-juce::String inputSourceText (int left, int right, bool stereo)
-{
-    if (left < 0)
-        return "NONE";
-    const bool playback = Recorder::isPlaybackSource (left);
-    const bool usbPlayer = UsbRecorder::isPlayerSource (left);
-    const bool osc = MixerEngine::isOscSource (left);
-    auto number = [playback, usbPlayer, osc] (int source)
-    {
-        return juce::String ((osc         ? MixerEngine::oscChannelOf (source)
-                              : usbPlayer ? UsbRecorder::playerChannelOf (source)
-                              : playback  ? Recorder::playbackChannelOf (source)
-                                          : source) + 1);
-    };
-    const auto prefix = juce::String (osc ? "OSC " : usbPlayer ? "PLAYER " : playback ? "PLAY " : "IN ");
-    if (stereo)
-        return prefix + number (left) + "/" + number (right >= 0 ? right : left + 1);
-    return prefix + number (left);
-}
-
 /** The ALT input list: NONE, the hardware inputs and the recorder's playback channels. */
 void showAltSourceMenu (UiContext& ctx, int current, juce::Component* target, std::function<void (int)> chosen)
 {
@@ -616,7 +621,7 @@ void showAltSourceMenu (UiContext& ctx, int current, juce::Component* target, st
     const int numInputs = names.isEmpty() ? 64 : names.size();
     for (int i = 0; i < numInputs; ++i)
     {
-        items.add ("IN " + juce::String (i + 1) + (i < names.size() && names[i].isNotEmpty() ? "  " + names[i].toUpperCase() : juce::String()));
+        items.add (inputPortName (i) + (i < names.size() && names[i].isNotEmpty() ? "  " + names[i].toUpperCase() : juce::String()));
         sources.push_back (i);
     }
     for (int ch = 0; ch < Recorder::kNumPlaybackChannels; ++ch)
@@ -658,33 +663,48 @@ ld::SourceParams* inputSourceParams (MixerEngine& engine, int port)
         return engine.getSource (index & ~1);
     return src;
 }
+
+/** The GAIN range of input `port`'s source group (none without a source). */
+MixerEngine::GainRange inputGainRange (int port)
+{
+    return port >= 0 ? MixerEngine::sourceGainRange (MixerEngine::sourceIndex (port)) : MixerEngine::GainRange();
+}
 } // namespace
 
 KnobBinding inputDelayBinding (UiContext& ctx, InputParams& in) { return delayBinding (ctx, in); }
 
 KnobBinding sourceGainBinding (UiContext& ctx, Strip& strip)
 {
-    constexpr float kMin = -12.0f, kMax = 60.0f;
+    // The source group's range and steps, as the WING's (LOCAL IN -2.5 .. +45 dB
+    // in 2.5 dB steps, AES50 -3 .. +45.5 dB in 0.5 dB steps); a source the
+    // WING gives no gain reads "-".
     auto& engine = ctx.engine;
     KnobBinding b;
     b.label = "GAIN";
     b.get = [&engine, &strip]
     {
         const auto* src = inputSourceParams (engine, strip.getInputLeft());
-        return src != nullptr ? juce::jlimit (0.0f, 1.0f, (src->gainDb.load() - kMin) / (kMax - kMin)) : 0.0f;
+        return src != nullptr ? inputGainRange (strip.getInputLeft()).toProportion (src->gainDb.load()) : 0.0f;
     };
     b.set = [&engine, &strip] (float p)
     {
-        const float gain = std::round ((kMin + juce::jlimit (0.0f, 1.0f, p) * (kMax - kMin)) * 2.0f) / 2.0f;
+        const auto range = inputGainRange (strip.getInputLeft());
+        if (! range.hasGain())
+            return;
+        const float gain = range.fromProportion (p);
         forInputSource (engine, strip.getInputLeft(), [gain] (ld::SourceParams& s) { s.gainDb = gain; });
     };
     b.text = [&engine, &strip]
     {
         const auto* src = inputSourceParams (engine, strip.getInputLeft());
-        return src != nullptr ? juce::String (src->gainDb.load(), 1) + " dB" : juce::String ("-");
+        const auto range = inputGainRange (strip.getInputLeft());
+        return src != nullptr && range.hasGain() ? juce::String (range.clamp (src->gainDb.load()), 1) + " dB" : juce::String ("-");
     };
     b.reset = [&engine, &strip] { forInputSource (engine, strip.getInputLeft(), [] (ld::SourceParams& s) { s.gainDb = 0.0f; }); };
-    b.steps = (kMax - kMin) * 2.0f;
+    // The steps of the source patched when the binding is made (set() puts
+    // the gain on the current source's steps in any case).
+    const auto range = inputGainRange (strip.getInputLeft());
+    b.steps = range.hasGain() ? (float) range.steps() : 0.0f;
     return b;
 }
 
@@ -819,8 +839,9 @@ public:
         paintInputSourceTile (g, tile.toFloat(), ctx.engine, left, right, st, signal);
         if (active)
         {
-            g.setColour (juce::Colour (0xff808080));
-            g.drawRect (r, 2.0f);
+            // WING 3.1: a 4 px grey frame round the column in use.
+            g.setColour (Colours::textDim);
+            g.drawRect (r, juce::jmax (2.0f, wingPx (4.0f)));
         }
         if (alt)
             return;
@@ -837,21 +858,28 @@ public:
         g.setFont (homeFont (TypeScale::caption, (float) phantomCaption.getHeight()));
         g.drawText ("+48V", phantomCaption, juce::Justification::centred);
 
-        // GAIN (-12 .. +60 dB): a dark slot with the white value tag [D16].
+        // GAIN (the source group's range: 0 dB sits low, as on the WING),
+        // WING 3.1: a 64 px well in a 2 px black rim, the 12 px black slot
+        // from 10 px under its top, the white value tag across the well's
+        // inside (25 tall).
         auto f = gainSlider.toFloat();
-        g.setColour (colours::well);
+        const float rim = juce::jmax (1.0f, wingPx (2.0f));
+        g.setColour (juce::Colours::black);
         g.fillRect (f);
-        g.setColour (colours::outline);
-        g.drawRect (f, 1.0f);
-        const float gain = src != nullptr ? src->gainDb.load() : 0.0f;
+        g.setColour (colours::well);
+        g.fillRect (f.reduced (rim));
+        g.setColour (juce::Colours::black);
+        g.fillRect (f.withSizeKeepingCentre (wingPx (12.0f), f.getHeight()).withTrimmedTop (wingPx (10.0f)).withTrimmedBottom (rim));
+        const auto range = inputGainRange (strip.getInputLeft());
+        const float gain = src != nullptr ? range.clamp (src->gainDb.load()) : 0.0f;
         const float tagH = tagHeight();
-        const float pos = juce::jlimit (0.0f, 1.0f, (gain + 12.0f) / 72.0f);
+        const float pos = range.toProportion (gain);
         const float y = f.getBottom() - tagH * 0.5f - 2.0f - (f.getHeight() - tagH - 4.0f) * pos;
-        auto tag = juce::Rectangle<float> (juce::jmin (f.getWidth() + 18.0f, (float) getWidth() - 8.0f), tagH).withCentre ({ f.getCentreX(), y });
+        auto tag = juce::Rectangle<float> (f.getWidth() - 2.0f * rim, tagH).withCentre ({ f.getCentreX(), y });
         g.setColour (juce::Colours::white.withAlpha (alpha));
         g.fillRect (tag);
         g.setColour (juce::Colours::black);
-        g.setFont (homeFont (TypeScale::body, tagH * 0.8f, WingWeight::SemiBold));
+        g.setFont (homeFont (TypeScale::body, tagH * 0.8f));
         g.drawFittedText (juce::String (gain, 1) + " dB", tag.toNearestInt(), juce::Justification::centred, 1, 0.6f);
     }
 
@@ -903,7 +931,7 @@ public:
     std::function<void()> onSelect;
 
 private:
-    static float tagHeight() { return juce::jlimit (12.0f, screenCap (20.0f), getWingScreenHeight() * 0.036f); }
+    static float tagHeight() { return juce::jmax (12.0f, wingPx (25.0f)); }
 
     void setGainFromY (int y)
     {
@@ -911,7 +939,10 @@ private:
         const float tagH = tagHeight();
         const float span = juce::jmax (1.0f, f.getHeight() - tagH - 4.0f);
         const float pos = juce::jlimit (0.0f, 1.0f, (f.getBottom() - tagH * 0.5f - 2.0f - (float) y) / span);
-        const float gain = std::round ((pos * 72.0f - 12.0f) * 2.0f) / 2.0f; // 0.5 dB steps
+        const auto range = inputGainRange (strip.getInputLeft());
+        if (! range.hasGain())
+            return;
+        const float gain = range.fromProportion (pos); // on the group's steps
         forInputSource (ctx.engine, strip.getInputLeft(), [gain] (ld::SourceParams& s) { s.gainDb = gain; });
         repaint();
     }
@@ -977,6 +1008,7 @@ public:
         });
         groupField->icon = Icon::Xlr;
         groupField->arrowKey = true;
+        groupField->consoleMetrics = true;
         addAndMakeVisible (*groupField);
         none.offInk = colours::caption;
         none.captionBelow = true;
@@ -1278,16 +1310,15 @@ class Bracket final : public juce::Component
 public:
     void paint (juce::Graphics& g) override
     {
-        auto r = getLocalBounds().toFloat().reduced (2.0f);
-        juce::Path p;
-        p.startNewSubPath (r.getX(), r.getBottom());
-        p.lineTo (r.getX(), r.getY());
-        p.lineTo (r.getX() + r.getWidth() * 0.2f, r.getY());
-        p.startNewSubPath (r.getRight() - r.getWidth() * 0.2f, r.getY());
-        p.lineTo (r.getRight(), r.getY());
-        p.lineTo (r.getRight(), r.getBottom());
+        // WING 3.1: 4 px grey lines, 51 px in from each side at the top, then
+        // down to the bottom.
+        const auto r = getLocalBounds().toFloat();
+        const float t = juce::jmax (2.0f, wingPx (4.0f)), arm = r.getWidth() * 51.0f / 360.0f;
         g.setColour (Colours::textDim);
-        g.strokePath (p, juce::PathStrokeType (2.0f));
+        g.fillRect (r.getX(), r.getY(), arm, t);
+        g.fillRect (r.getX(), r.getY(), t, r.getHeight());
+        g.fillRect (r.getRight() - arm, r.getY(), arm, t);
+        g.fillRect (r.getRight() - t, r.getY(), t, r.getHeight());
     }
 };
 
@@ -1315,9 +1346,11 @@ public:
         auto& p = strip.params;
         pad = &make<TrimBalancePad> (p.input.trimDb, p.input.balanceDb, [this] { return strip.getNumChannels() == 2 || strip.isOutput() || strip.params.stereo.load(); });
         trimMeter.showScale = true;
+        trimMeter.monoLabel = "IN";
         addAndMakeVisible (trimMeter);
         invert = &key ("INVERT", Icon::Invert, colours::accent);
         invert->captionBelow = true;
+        invert->keySide = 48.0f;
         bindKey (*invert, p.input.invert);
 
         if (strip.isInput())
@@ -1420,7 +1453,7 @@ public:
         HomeKnob gain;
         if (strip.isInput())
             gain = { sourceGainBinding (ctx, strip), gainStyle (mainTile) };
-        std::vector<HomeKnob> k { gain, { wingTrim ("TRIM", p.input.trimDb), thumbStyle (pad) }, {}, { bal, balStyle (pad) }, {} };
+        std::vector<HomeKnob> k { gain, { wingTrim ("TRIM", p.input.trimDb), centreStyle (pad) }, {}, { bal, balStyle (pad) }, {} };
         if (delay != nullptr)
             k.push_back ({ delayBinding (ctx, p.input), distStyle (delay->getSlider()) });
         return k;
@@ -1429,12 +1462,11 @@ public:
     void resized() override
     {
         clearBoxes();
-        auto b = getLocalBounds();
-        // Fig. 62: CHANNEL INPUT about 33 % of the width, TRIM & BALANCE 41 %,
-        // FILTER over DELAY (POST) 26 %.
-        auto right = b.removeFromRight (b.getWidth() * 26 / 100);
-        auto left = b.removeFromLeft (b.getWidth() * 44 / 100);
-        auto middle = b;
+        // WING 3.1 pixels: CHANNEL INPUT 112-504, TRIM & BALANCE 512-984,
+        // FILTER (y 80-264) over DELAY (POST) 992-1272, down to 752.
+        auto left = panelAt (112.0f, 80.0f, 392.0f, 672.0f);
+        auto middle = panelAt (512.0f, 80.0f, 472.0f, 672.0f);
+        auto right = panelAt (992.0f, 80.0f, 280.0f, 672.0f);
 
         if (strip.isInput())
         {
@@ -1451,9 +1483,10 @@ public:
             const float v = (float) ci.getHeight() / 600.0f;
             bracketBox = ci.removeFromTop (juce::roundToInt (80.0f * v));
             ci.removeFromTop (gap);
-            auto keys = bracketBox.reduced (juce::roundToInt (bracketBox.getWidth() * 0.04f), juce::roundToInt (12.0f * v));
-            bracket->setBounds (keys.withTrimmedBottom (keys.getHeight() / 3));
-            inputSel->setBounds (keys.withSizeKeepingCentre (juce::roundToInt (bracketBox.getWidth() * 0.61f), keys.getHeight()));
+            // WING 3.1: MAIN | ALT 240 x 56 at (188, 164), the bracket from y 186
+            // down to 224, x 128-488.
+            bracket->setBounds (wingRect (128.0f, 186.0f, 360.0f, 38.0f));
+            inputSel->setBounds (wingRect (188.0f, 164.0f, 240.0f, 56.0f));
             auto mainCol = ci.removeFromLeft ((ci.getWidth() - gap) / 2);
             ci.removeFromLeft (gap);
             mainTile->setBounds (mainCol);
@@ -1474,7 +1507,8 @@ public:
             {
                 copyArea = channelInputBody.withTop (selTop);
                 copyCustomization->setBounds (sectionBody (copyArea, true));
-                sourceSelect->setBounds (middle.getUnion (right).withHeight (juce::roundToInt ((float) middle.getHeight() * 0.48f)));
+                // WING 3.1: the picker from x 560, y 80 down to 404.
+                sourceSelect->setBounds (wingRect (560.0f, 80.0f, 712.0f, 324.0f));
                 mainTile->setBounds (mainTile->getBounds().withBottom (selTop - gap));
             }
             // [I7] the rest of CHANNEL INPUT dims while the picker is open.
@@ -1517,27 +1551,33 @@ public:
         if (selecting)
             return;
 
-        auto tb = box (middle, "TRIM & BALANCE");
-        auto meterCol = tb.removeFromRight (juce::jmax (54, tb.getWidth() * 24 / 100));
-        invert->setBounds (meterCol.removeFromBottom (juce::jlimit (30, screenCap (52), meterCol.getHeight() / 6)).reduced (2, 0));
+        // WING 3.1 pixels: the pad's black box 276 x 552 at (544, 172); the
+        // meter (one 13 px bar at x 902, CLIP at y 176 to -60 at 500, IN under
+        // it); INVERT (48 px, its caption under it) at (884, 652).
+        box (middle, "TRIM & BALANCE");
+        pad->setBounds (wingRect (544.0f, 172.0f, 276.0f, 552.0f));
+        trimMeter.setBounds (wingRect (864.0f, 166.0f, 72.0f, 360.0f));
+        invert->setBounds (wingRect (872.0f, 652.0f, 72.0f, 84.0f));
         if (mono != nullptr)
-        {
-            meterCol.removeFromBottom (4);
-            mono->setBounds (meterCol.removeFromBottom (juce::jlimit (22, screenCap (32), meterCol.getHeight() / 7)).reduced (2, 0));
-        }
-        trimMeter.setBounds (meterCol.reduced (2, 4));
-        tb.removeFromRight (4);
-        pad->setBounds (tb);
+            mono->setBounds (wingRect (872.0f, 560.0f, 72.0f, 64.0f));
 
         if (loCut != nullptr)
         {
-            auto f = box (right.removeFromTop (juce::jmax (80, right.getHeight() * 30 / 100)), "FILTER", true);
+            auto f = box (right.removeFromTop (panelAt (992.0f, 80.0f, 280.0f, 184.0f).getHeight()), "FILTER", true);
             filterHeader = f.withY (f.getY() - panelHeaderHeight() - 4).withHeight (panelHeaderHeight());
-            layoutRow (f, { loCut, hiCut, tool }, 4);
+            // WING 3.1: 56 px keys 84 apart from x 1020, y 168, captions under them.
+            float x = 1006.0f;
+            for (auto* k : { loCut, hiCut, tool })
+            {
+                k->keySide = 56.0f;
+                k->setBounds (wingRect (x, 168.0f, 84.0f, 82.0f));
+                x += 84.0f;
+            }
         }
         if (delay != nullptr)
         {
-            delay->setBounds (box (right, strip.hasPostFaderDelay() ? "DELAY (POST)" : "DELAY"));
+            box (right, strip.hasPostFaderDelay() ? "DELAY (POST)" : "DELAY");
+            delay->setBounds (sectionBody (right, true));
         }
     }
 
@@ -2013,8 +2053,8 @@ public:
         if (! togglePanel.isEmpty())
         {
             g.fillRect (togglePanel);
-            g.setColour (Colours::text);
-            g.setFont (homeFont (TypeScale::body, (float) togglePanel.getHeight() * 0.14f));
+            g.setColour (Colours::caption);
+            g.setFont (wingFontPx (juce::jmin (wingPx (16.0f), (float) togglePanel.getHeight() * 0.11f)) /* 16 px capitals, light grey (3.1) */);
             for (auto& t : toggles)
                 if (t.keys->isVisible())
                     g.drawText (t.label, t.caption, juce::Justification::centred, false);
@@ -2099,9 +2139,13 @@ private:
         return isGate ? "GATE KEY FILTER" : "COMP KEY FILTER";
     }
 
+    bool hidesStatusKeys() const override { return page != Page::Slot; }
+
     void showPage (Page p)
     {
         page = p;
+        if (statusKeysChanged)
+            statusKeysChanged();
         if (p != Page::Slot)
             pageGraph->setStrip (&strip, p == Page::Xover ? ResponseGraph::Xover : (isGate ? ResponseGraph::GateKey : ResponseGraph::DynamicsKey));
         notifyKnobs();
@@ -2166,8 +2210,10 @@ private:
     void bindModel()
     {
         shownModel = slot.model.load();
-        face->bind (models::Dynamics, shownModel, slot.values,
-                    [this] { return -(isGate ? strip.meters.gateReductionDb.load() : strip.meters.dynReductionDb.load()); });
+        face->bind (
+            models::Dynamics, shownModel, slot.values,
+            [this] { return -(isGate ? strip.meters.gateReductionDb.load() : strip.meters.dynReductionDb.load()); },
+            [this] (int band) { return strip.getDynBandGain (isGate, band); });
         const auto& spec = models::model (models::Dynamics, shownModel);
         const int acc = spec.find ("acc");
         accent->setBinding (acc >= 0 ? bindConsoleParam (slot.values[acc], spec.params[(size_t) acc]) : KnobBinding {});
@@ -2309,8 +2355,8 @@ public:
         const auto b = bandBindings();
         k.push_back (b[3].isValid() ? HomeKnob { b[3], styleOf (KnobStyle::Bar::Segments, colours::accent, graph) } : HomeKnob {});
         k.push_back ({});
-        k.push_back ({ b[0], thumbStyle (graph) });
-        k.push_back ({ b[2], widthStyle (graph) });
+        k.push_back ({ b[0], centreStyle (graph) });
+        k.push_back ({ b[2], qStyle (graph) });
         k.push_back ({ b[1], styleOf (KnobStyle::Bar::Thumb, KnobColours::blue, graph) });
         return k;
     }
@@ -2386,7 +2432,10 @@ public:
             paintKeyBody (g, k, sel ? colours::choice : colours::keyOff);
             const auto ink = sel ? juce::Colours::black : colours::caption;
             const auto& id = bands[i];
-            auto lead = k.removeFromLeft (k.getWidth() * 0.4f);
+            // WING 3.1 (a 172 px key): the number or icon centred 43 px in,
+            // the type centred 108 px in.
+            auto typeArea = k.withTrimmedLeft (k.getWidth() * 0.45f).withWidth (k.getWidth() * 0.36f);
+            auto lead = k.removeFromLeft (k.getWidth() * 0.5f);
             juce::String type = "PEQ";
             if (id == "l" || id == "h")
             {
@@ -2396,9 +2445,28 @@ public:
                 const bool shelf = type.contains ("SH");
                 const auto icon = id == "l" ? (cut ? Icon::LowCut : (shelf ? Icon::LowShelf : Icon::Bell))
                                             : (cut ? Icon::HighCut : (shelf ? Icon::HighShelf : Icon::Bell));
-                drawIcon (g, icon, lead.reduced (lead.getHeight() * 0.22f), ink);
                 if (shelf)
+                {
+                    // The console's shelf mark: two strokes joining into one,
+                    // the join towards the band's side (low: >-, high: -<).
+                    const auto a = lead.withSizeKeepingCentre (lead.getHeight() * 0.72f, lead.getHeight() * 0.38f);
+                    const bool low = id == "l";
+                    const float x0 = low ? a.getX() : a.getRight(), x1 = low ? a.getRight() : a.getX();
+                    const float xj = x0 + (x1 - x0) * 0.5f, xs = x0 + (x1 - x0) * 0.22f;
+                    juce::Path mark;
+                    mark.startNewSubPath (x0, a.getY());
+                    mark.lineTo (xs, a.getY());
+                    mark.lineTo (xj, a.getCentreY());
+                    mark.lineTo (x1, a.getCentreY());
+                    mark.startNewSubPath (x0, a.getBottom());
+                    mark.lineTo (xs, a.getBottom());
+                    mark.lineTo (xj, a.getCentreY());
+                    g.setColour (ink);
+                    g.strokePath (mark, juce::PathStrokeType (juce::jmax (1.5f, wingPx (2.5f))));
                     type = "SHV";
+                }
+                else
+                    drawIcon (g, icon, lead.reduced (lead.getHeight() * 0.22f), ink);
             }
             else
             {
@@ -2409,7 +2477,7 @@ public:
             }
             g.setColour (ink);
             g.setFont (homeFont (TypeScale::body * 1.1f, k.getHeight() * 0.46f));
-            g.drawFittedText (type, k.toNearestInt().reduced (4, 0), juce::Justification::centred, 1, 0.7f);
+            g.drawFittedText (type, typeArea.toNearestInt(), juce::Justification::centred, 1, 0.7f);
         }
     }
 
@@ -2863,7 +2931,9 @@ public:
                 mixBox = &make<KnobBox> (bindLinear ("FX MIX", fx.params (slot).mix, 0.0f, 100.0f, " %", 0, 100.0f));
             if (slot >= 0 && model > ld::kFxExt && ! plugin)
             {
-                face->bind (models::Fx, model, fx.params (slot).values, [&fx, slot] { return fx.getMeter (slot); });
+                face->bind (
+                    models::Fx, model, fx.params (slot).values, [&fx, slot] { return fx.getMeter (slot); },
+                    [&fx, slot] (int band) { return fx.getBandGain (slot, band); });
                 face->onTouched = [this] (int param)
                 {
                     if (param / 6 != knobPage)
@@ -3187,7 +3257,8 @@ public:
         const int headerH = juce::jlimit (32, screenCap (60), getHeight() / 9);
         channelHeader = right.removeFromTop (headerH);
         right.removeFromTop (juce::jmax (4, getHeight() / 100));
-        level->setBounds (box (right, "LEVEL"));
+        box (right, "LEVEL");
+        level->setBounds (sectionBody (right, true));
 
         sendsHeader = {};
         if (hasMainSends)
@@ -4057,6 +4128,7 @@ public:
         // (input channels: /ch/n/tapwid, /ch/n/peq).
         const bool tapShaping = strip.getKind() == StripKind::Channel;
         tapWidth = &make<KnobBox> (wingWidth ("TAP WIDTH", strip.params.tapWidth));
+        tapWidth->centredRange = true;
         tapWidth->ringColour = colours::panArc;
         tapWidth->setEnabled (tapShaping);
         tapEq = &make<TapEqKey> (strip);
@@ -4577,13 +4649,16 @@ void copyStripParams (MixerEngine& engine, const Strip& src, const Strip& dst, j
             auto* from = src.sends.find (id);
             if (from == nullptr && dst.sends.find (id) == nullptr)
                 continue;
+            // A send never set copies as the factory send (off, -oo, its mode and pan link kept).
             auto& to = dst.sends[(size_t) id];
             to.enabled = from != nullptr && from->enabled.load();
-            to.panLink = from != nullptr ? from->panLink.load() : true;
+            if (from != nullptr)
+                to.panLink = from->panLink.load();
             to.ignoreMute = from != nullptr && from->ignoreMute.load();
             to.panReversed = from != nullptr && from->panReversed.load();
-            to.mode = from != nullptr ? from->mode.load() : 1;
-            to.levelDb = from != nullptr ? from->levelDb.load() : -100.0f;
+            if (from != nullptr)
+                to.mode = from->mode.load();
+            to.levelDb = from != nullptr ? from->levelDb.load() : -144.0f;
             to.pan = from != nullptr ? from->pan.load() : 0.0f;
         }
         // TAP WIDTH and TAP EQ shape what the channel's TAP-mode sends take.
@@ -4642,6 +4717,10 @@ public:
         for (int k = 1; k < kNumStripKinds; ++k)
             if (auto* s = ld::ld_engine_strip_at (engine, k, 0))
                 strips.push_back (std::make_unique<Strip> (engine, s));
+        // The factory sends to the console's buses (each bus slot has its own mode).
+        for (auto& s : strips)
+            for (int bus = 0; bus < kWingBuses; ++bus)
+                (void) s->sends[(size_t) bus];
     }
 
     ~DefaultStrips()
@@ -4691,6 +4770,7 @@ public:
         none.iconAbove = all.iconAbove = true;
         none.offColour = all.offColour = colours::tab;
         none.offInk = all.offInk = colours::caption;
+        none.frame = all.frame = colours::tab; // plain icons on the header, no key frame (3.1)
         for (int i = 0; i < kNumScopeBits; ++i)
         {
             auto* k = scopeKeys.add (new IconKey (scopeName (i) + juce::String (i == Send || i == MainBit ? juce::String::fromUTF8 (" \xe2\x96\xbe") : juce::String()),
@@ -4723,6 +4803,7 @@ public:
         updateTabs();
         // [Fig. 22] a window over the dimmed page, 788 x 654 of the 1280 x 720 page.
         setPlacement (OverlayPlacement::centred (788.0f / 1280.0f, 654.0f / 720.0f));
+        wingWindow = { 232.0f, 104.0f, 787.0f, 654.0f }; // as the 3.1 console places it
         startTimerHz (4);
     }
 
@@ -4898,7 +4979,8 @@ private:
 
     void timerCallback() override
     {
-        action.setEnabled (scope != 0 && ! destinations.empty());
+        // (3.1: the key stays lit with no destination chosen; it then does nothing.)
+        action.setEnabled (scope != 0);
     }
 
     void apply()

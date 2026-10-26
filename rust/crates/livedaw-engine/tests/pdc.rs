@@ -237,3 +237,44 @@ fn the_tap_point_decides_whether_ins_1_counts() {
     assert_eq!(peaks(&out).len(), 1, "{:?}", peaks(&out));
     assert_eq!(peaks(&out)[0].0, 40);
 }
+
+/// The WING's tap points are the nodes of the channel's chain, in its
+/// process order: IN, FILT, then "3", "4", "5" after its 1st, 2nd and 3rd
+/// block, PFL after the 4th (and so after INS 1 wherever it sits), AFL and
+/// POST. The factory "5" with GEDI sits between the dynamics and INS 1 (the
+/// HOME screen's TAP dot above INS 1).
+#[test]
+fn the_tap_points_follow_the_process_order() {
+    let rig = Rig::new(2);
+    let e = &rig.engine;
+    load(e, 0, 40);
+    let (a, b) = (e.channel_at(0).unwrap(), e.channel_at(1).unwrap());
+    a.params.pre_insert.on.store(true, Relaxed);
+    a.params.pre_insert.fx.store(0, Relaxed);
+    for s in [&a, &b] {
+        s.params.mains[0].on.store(false, Relaxed);
+        s.sends.get_or_create(1).unwrap().enabled.store(true, Relaxed);
+    }
+    e.strip_at(StripKind::Bus, 1).unwrap().params.mains[0].on.store(true, Relaxed);
+    let order = |name: &str| livedaw_dsp::wing::PROCESS_ORDERS.iter().position(|o| *o == name).unwrap() as i32;
+    // (process order, tap, INS 1's 40 samples in the TAP signal)
+    for (proc, tap, after_ins1) in [
+        ("GEDI", 4, false), // the factory TAP 5: before INS 1
+        ("GEDI", 3, false),
+        ("GEDI", 5, true), // PRE FDR
+        ("GEID", 4, true), // INS 1 third: TAP 5 follows it
+        ("GEID", 3, false),
+        ("IGED", 2, true),  // INS 1 first: TAP 3 follows it
+        ("IGED", 1, false), // FILTER: before every block
+        ("EIGD", 2, false),
+        ("EIGD", 3, true),
+    ] {
+        a.params.process_order.store(order(proc), Relaxed);
+        a.params.tap.store(tap, Relaxed);
+        let out = rig.impulse(2);
+        let want = if after_ins1 { 40 } else { 0 };
+        assert_eq!(peaks(&out).len(), 1, "{proc} tap {tap}: {:?}", peaks(&out));
+        assert_eq!(peaks(&out)[0].0, want, "{proc} tap {tap}");
+        assert_eq!(a.pdc.latency(pdc_tap::TAP), want as u32, "{proc} tap {tap}");
+    }
+}

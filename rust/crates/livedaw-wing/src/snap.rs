@@ -332,7 +332,8 @@ pub fn export_json(engine: &Engine, state: &WingState) -> Json {
         ("type".into(), Json::Str(SNAPSHOT_TYPE.into())),
         ("creator_fw".into(), Json::Str(id.firmware.clone())),
         ("creator_sn".into(), Json::Str(id.serial.clone())),
-        ("creator_model".into(), Json::Str(id.model.clone())),
+        // As WING Edit's snapshots name the model ("wing-fullsize", "wing-compact").
+        ("creator_model".into(), Json::Str(id.config.clone())),
         ("creator_version".into(), Json::Str(format!("Sidecar {}", env!("CARGO_PKG_VERSION")))),
         ("creator_name".into(), Json::Str(id.name.clone())),
         ("created".into(), Json::Str(timestamp(now))),

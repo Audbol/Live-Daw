@@ -75,7 +75,7 @@ fn discovery_replies_like_a_wing() {
     let reply = std::str::from_utf8(&buf[..n]).unwrap();
     let f: Vec<&str> = reply.split(',').collect();
     assert_eq!(f.len(), 6, "{reply}");
-    assert_eq!((f[0], f[1], f[2], f[3]), ("WING", "127.0.0.1", "TEST-DESK", "sidecar"));
+    assert_eq!((f[0], f[1], f[2], f[3]), ("WING", "127.0.0.1", "TEST-DESK", "ngc-full"));
     assert!(f[5].starts_with("3.1"));
 }
 
@@ -97,9 +97,21 @@ fn a_compact_reports_its_model() {
     let info = c.get("/?");
     assert!(matches!(&info.args[..], [Arg::Str(s)] if s.starts_with("WING,127.0.0.1,SMALL-DESK,wing-compact,")), "{info:?}");
     assert_eq!(c.get("/$syscfg/$cnsmdl").args, vec![Arg::Str("wing-compact".into())]);
+    assert_eq!(c.get("/$syscfg/$cnscfg").args, vec![Arg::Str("wing-compact".into())]);
+    // The COMPACT's surface settings are the host's (factory values until it publishes).
+    assert_eq!(c.get("/$ctl/cfg/mfdr").args[0], Arg::Str("MAIN.1".into()));
+    assert_eq!(c.get("/$ctl/cfg/cscmode").args[0], Arg::Str("BUS".into()));
+    state.set_host_setting("ui.compactMainFader", "DCA.3");
+    assert_eq!(c.get("/$ctl/cfg/mfdr").args[0], Arg::Str("DCA.3".into()));
+    c.send(&Message::new("/$ctl/cfg/cscmode", vec![Arg::Str("USER".into())]));
+    assert_eq!(c.get("/$ctl/cfg/cscmode").args[0], Arg::Str("USER".into()));
+    assert_eq!(state.take_host_setting(), Some(("ui.compactKeyMode", "USER".to_owned())));
+    c.send(&Message::new("/$ctl/cfg/autosel_CMPCT", vec![Arg::Int(1)]));
+    assert_eq!(c.get("/$ctl/cfg/autosel_CMPCT").args[0], Arg::Str("1".into()));
+    assert_eq!(state.take_host_setting(), Some(("ui.autoSelectCompact", "1".to_owned())));
     // Switching the model reaches clients at once.
     state.set_console_model(ConsoleModel::Full);
-    assert!(matches!(&c.get("/?").args[..], [Arg::Str(s)] if s.starts_with("WING,127.0.0.1,SMALL-DESK,sidecar,")));
+    assert!(matches!(&c.get("/?").args[..], [Arg::Str(s)] if s.starts_with("WING,127.0.0.1,SMALL-DESK,ngc-full,")));
 }
 
 #[test]
@@ -339,10 +351,30 @@ impl Native {
 
     /// Reads tokens until `n` request ends (or a timeout).
     fn read_until_ends(&mut self, n: usize) -> Vec<Tok> {
-        let deadline = Instant::now() + Duration::from_secs(3);
+        // Generous: under ThreadSanitizer on a shared CI runner a reply can take seconds.
+        let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             let toks = decode(&self.rx);
             if toks.iter().filter(|t| **t == Tok::End).count() >= n || Instant::now() > deadline {
+                self.rx.clear();
+                return toks;
+            }
+            let mut buf = [0u8; 65536];
+            if let Ok(k) = self.tcp.read(&mut buf) {
+                if k == 0 {
+                    return toks;
+                }
+                self.rx.extend_from_slice(&buf[..k]);
+            }
+        }
+    }
+
+    /// Reads until `want` arrives (or 20 s pass, as for `read_until_ends`).
+    fn read_until_has(&mut self, want: &Tok) -> Vec<Tok> {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let toks = decode(&self.rx);
+            if toks.contains(want) || Instant::now() > deadline {
                 self.rx.clear();
                 return toks;
             }
@@ -483,8 +515,9 @@ fn native_get_set_definitions_and_notifications() {
     assert_eq!(plain(toks), vec![Tok::Data(fdr, livedaw_wing::Value::Float(-6.5)), Tok::End]);
     assert_eq!(engine.channel_at(0).unwrap().params.fader_db.load(), -6.5);
     // The other client was told.
-    let toks = b.read_for(Duration::from_millis(300));
-    assert!(toks.contains(&Tok::Data(fdr, livedaw_wing::Value::Float(-6.5))), "{toks:?}");
+    let told = Tok::Data(fdr, livedaw_wing::Value::Float(-6.5));
+    let toks = b.read_until_has(&told);
+    assert!(toks.contains(&told), "{toks:?}");
     // Strings and enums.
     let name = id("/ch/1/name");
     let mut req = Native::select(name);
@@ -543,8 +576,9 @@ fn native_get_set_definitions_and_notifications() {
     // Engine changes reach the clients through the poller.
     b.read_for(Duration::from_millis(100));
     engine.strip_by_number(StripKind::Bus, 3).unwrap().params.fader_db.store(-20.0);
-    let toks = b.read_for(Duration::from_millis(600));
-    assert!(toks.contains(&Tok::Data(id("/bus/3/fdr"), livedaw_wing::Value::Float(-20.0))), "{toks:?}");
+    let pushed = Tok::Data(id("/bus/3/fdr"), livedaw_wing::Value::Float(-20.0));
+    let toks = b.read_until_has(&pushed);
+    assert!(toks.contains(&pushed), "{toks:?}");
 }
 
 #[test]
@@ -583,4 +617,71 @@ fn native_meters_over_udp() {
     renew.extend_from_slice(&[0xdf, 0xd1]);
     a.tcp.write_all(&renew).unwrap();
     assert!(udp.recv_from(&mut buf).is_ok());
+}
+
+/// The parameters mapped since the first coverage report, set and read
+/// through both protocols: the engine, the host's settings or the stored
+/// value change.
+#[test]
+fn osc_and_native_reach_sources_outputs_safes_and_settings() {
+    use livedaw_engine::recorder::usb::RecTap;
+    use livedaw_engine::sources::USB_PLAYER_SOURCE_INDEX;
+    let engine = Arc::new(Engine::new(0));
+    engine.set_num_channels(40);
+    let state = Arc::new(WingState::default());
+    let config =
+        Config { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), discovery_port: 0, osc_port: 0, native_port: 0, ..Config::default() };
+    let handle: Arc<dyn EngineHandle> = Arc::new(engine.clone());
+    let server = WingServer::start(handle, state.clone(), &config);
+    let c = Osc::new(&server);
+    let text = |m: Message| match m.args.first() {
+        Some(Arg::Str(s)) => s.clone(),
+        other => panic!("{other:?}"),
+    };
+
+    // OSC: LOCAL IN is A (Sidecar's ports 1-48).
+    c.send(&Message::new("/io/in/LCL/4/name", vec![Arg::Str("Gtr".into())]));
+    assert_eq!(text(c.get("/io/in/A/4/name")), "Gtr");
+    assert_eq!(engine.sources().name(3), "Gtr");
+    // The USB recorder's RECORDER ports.
+    c.send(&Message::new("/io/out/REC/1/grp", vec![Arg::Str("BUS".into())]));
+    c.send(&Message::new("/io/out/REC/1/in", vec![Arg::Int(3)]));
+    assert_eq!(text(c.get("/io/out/REC/1/grp")), "BUS");
+    assert_eq!(engine.usb().tap(0), RecTap::Strip { kind: StripKind::Bus as i32, number: 2, channel: 0 });
+    // Safes in the console's format.
+    c.send(&Message::new("/$ctl/safes/main", vec![Arg::Str(" +".into())]));
+    assert_eq!(text(c.get("/$ctl/safes/main")), " +  ");
+    assert!(engine.strip_by_number(StripKind::Main, 2).unwrap().params.recall_safe.load(Relaxed));
+    // A host setting: METERS > bus meters PRE.
+    c.send(&Message::new("/cfg/mtr/mtrpage/bus", vec![Arg::Str("PRE".into())]));
+    assert_eq!(text(c.get("/cfg/mtr/mtrpage/bus")), "PRE");
+    assert_eq!(state.take_host_setting(), Some(("setup.meterTapPre.1", "1".to_owned())));
+    // A stored factory value, kept as set.
+    assert_eq!(text(c.get("/cards/wmadi/mode")), "SFP1");
+    c.send(&Message::new("/cards/wmadi/mode", vec![Arg::Str("BNC".into())]));
+    assert_eq!(text(c.get("/cards/wmadi/mode")), "BNC");
+
+    // Native: the USB player's source name, a DAW setting, a stored value.
+    let mut a = Native::connect(&server);
+    std::thread::sleep(Duration::from_millis(150));
+    let name = id("/io/in/PLAY/1/name");
+    let mut req = Native::select(name);
+    req.push(0x7f + 3);
+    req.extend_from_slice(b"BGM");
+    req.push(0xdc);
+    a.send(&req);
+    assert!(a.read_until_ends(1).contains(&Tok::Data(name, livedaw_wing::Value::str("BGM"))));
+    assert_eq!(engine.sources().name(USB_PLAYER_SOURCE_INDEX), "BGM");
+    let conn = id("/$ctl/daw/conn");
+    let mut req = Native::select(conn);
+    req.push(0x00); // DIN
+    req.push(0xdc);
+    a.send(&req);
+    assert!(a.read_until_ends(1).contains(&Tok::Data(conn, livedaw_wing::Value::str("DIN"))));
+    assert_eq!(state.take_host_setting(), Some(("daw.conn", "0".to_owned())));
+    let vol = id("/$stat/usbvolname");
+    let mut req = Native::select(vol);
+    req.push(0xdc);
+    a.send(&req);
+    assert!(a.read_until_ends(1).contains(&Tok::Data(vol, livedaw_wing::Value::str("NO DRIVE"))));
 }

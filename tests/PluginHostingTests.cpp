@@ -1,6 +1,7 @@
 #include "TestHelpers.h"
 #include "engine/PluginHost.h"
 #include "engine/SandboxedPlugin.h"
+#include "sandbox/TestPlugins.h"
 
 using namespace livedaw;
 using livedaw::test::OfflineRig;
@@ -317,3 +318,146 @@ public:
 };
 
 static LatencyCompensationTests latencyCompensationTests;
+
+//==============================================================================
+namespace
+{
+    /** A plugin with mono main buses (no stereo layout), as LSP's "Mono" plugins:
+        it scales its one channel and leaves any other alone, as a hosted plugin
+        does with channels that aren't its own. */
+    class MonoGainPlugin final : public juce::AudioPluginInstance
+    {
+    public:
+        explicit MonoGainPlugin (float g)
+            : juce::AudioPluginInstance (BusesProperties()
+                                             .withInput ("In", juce::AudioChannelSet::mono())
+                                             .withOutput ("Out", juce::AudioChannelSet::mono())),
+              gain (g)
+        {
+        }
+
+        bool isBusesLayoutSupported (const BusesLayout& l) const override
+        {
+            return l.getMainInputChannelSet() == juce::AudioChannelSet::mono() && l.getMainOutputChannelSet() == juce::AudioChannelSet::mono();
+        }
+
+        void fillInPluginDescription (juce::PluginDescription& d) const override
+        {
+            d.name = getName();
+            d.pluginFormatName = "Fake";
+            d.fileOrIdentifier = "fake-mono";
+            d.numInputChannels = d.numOutputChannels = 1;
+        }
+
+        const juce::String getName() const override { return "Mono gain"; }
+        void prepareToPlay (double, int) override {}
+        void releaseResources() override {}
+
+        using juce::AudioPluginInstance::processBlock;
+
+        void processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&) override { buffer.applyGain (0, 0, buffer.getNumSamples(), gain); }
+
+        double getTailLengthSeconds() const override { return 0.0; }
+        bool acceptsMidi() const override { return false; }
+        bool producesMidi() const override { return false; }
+        juce::AudioProcessorEditor* createEditor() override { return nullptr; }
+        bool hasEditor() const override { return false; }
+        int getNumPrograms() override { return 1; }
+        int getCurrentProgram() override { return 0; }
+        void setCurrentProgram (int) override {}
+        const juce::String getProgramName (int) override { return {}; }
+        void changeProgramName (int, const juce::String&) override {}
+        void getStateInformation (juce::MemoryBlock&) override {}
+        void setStateInformation (const void*, int) override {}
+
+    private:
+        float gain;
+    };
+} // namespace
+
+/** Hosting fixes found with real plugins (see RealPluginTests). */
+class PluginHostingFixTests final : public juce::UnitTest
+{
+public:
+    PluginHostingFixTests() : juce::UnitTest ("Plugin hosting fixes", "LiveDAW") {}
+
+    void runTest() override
+    {
+        beginTest ("A mono plugin on a stereo channel takes both sides and feeds both (alone and in a chain)");
+        for (const bool chained : { false, true })
+        {
+            MixerEngine engine (0);
+            OfflineRig rig (engine, 2, 2);
+            test::setChannels (engine, 1);
+            auto& strip = *engine.getChannels()[0];
+            strip.params.stereo = true;
+            strip.params.inputLeft = 0;
+            strip.params.inputRight = 1;
+            rig.setInput (0, 0.4f);
+            rig.setInput (1, 0.2f);
+            rig.run (4);
+            const float dryL = rig.out (0), dryR = rig.out (1);
+            expect (dryL > 0.0f && dryR > 0.0f);
+
+            auto& fx = engine.getFx();
+            fx.setPlugin (0, std::make_unique<MonoGainPlugin> (0.5f));
+            if (chained)
+                fx.addToChain (0, std::make_unique<test::FakePlugin> (1.0f));
+            strip.params.preInsert.on = true;
+            strip.params.preInsert.fx = 0;
+            rig.run (4);
+            // Both sides get half the mono sum (0.3), relative to their dry level.
+            expectWithinAbsoluteError (rig.out (0), 0.5f * 0.3f / 0.4f * dryL, 1.0e-5f);
+            expectWithinAbsoluteError (rig.out (1), 0.5f * 0.3f / 0.2f * dryR, 1.0e-5f);
+            fx.setPlugin (0, nullptr);
+            engine.getGarbage().collectAllNow();
+        }
+
+        beginTest ("A VST3 described by the library inside its bundle (Linux instances, shows) loads from the bundle");
+        {
+            const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("sidecar-vst3-test");
+            const auto bundle = dir.getChildFile ("Some Plugin.vst3");
+            const auto library = bundle.getChildFile ("Contents").getChildFile ("x86_64-linux").getChildFile ("Some Plugin.so");
+
+            juce::PluginDescription d;
+            d.pluginFormatName = "VST3";
+            d.name = "Some Plugin";
+            d.fileOrIdentifier = library.getFullPathName();
+            expectEquals (PluginHost::resolveDescription (d).fileOrIdentifier, bundle.getFullPathName());
+            expectEquals (PluginHost::resolveDescription (d).name, d.name);
+
+            d.fileOrIdentifier = bundle.getFullPathName(); // already the bundle (a scan's)
+            expectEquals (PluginHost::resolveDescription (d).fileOrIdentifier, bundle.getFullPathName());
+            d.fileOrIdentifier = dir.getChildFile ("plain.so").getFullPathName(); // no bundle around it
+            expectEquals (PluginHost::resolveDescription (d).fileOrIdentifier, d.fileOrIdentifier);
+            d.pluginFormatName = "LV2";
+            d.fileOrIdentifier = library.getFullPathName();
+            expectEquals (PluginHost::resolveDescription (d).fileOrIdentifier, d.fileOrIdentifier);
+            d.fileOrIdentifier = "http://lsp-plug.in/plugins/lv2/comp_delay_stereo"; // not a path
+            expectEquals (PluginHost::resolveDescription (d).fileOrIdentifier, d.fileOrIdentifier);
+        }
+
+        beginTest ("A plugin Sidecar made is described by what it was made from, without asking it");
+        {
+            using sandbox::TestPluginFormat;
+            PluginHost host (nullptr);
+            host.getFormatManager().addFormat (std::make_unique<TestPluginFormat>());
+            auto requested = TestPluginFormat::describe (TestPluginFormat::Kind::gain);
+            requested.version = "9.9 (from the scan)"; // the instance itself doesn't say this
+            juce::String error;
+            auto plugin = host.createInstance (requested, 48000.0, 128, error);
+            expect (plugin != nullptr, error);
+            if (plugin != nullptr)
+            {
+                expect (plugin->getPluginDescription().version != requested.version);
+                expectEquals (PluginHost::describe (*plugin).version, requested.version);
+
+                // A plugin Sidecar didn't make (or one at a reused address) describes itself.
+                test::FakePlugin fake;
+                expectEquals (PluginHost::describe (fake).name, fake.getPluginDescription().name);
+            }
+        }
+    }
+};
+
+static PluginHostingFixTests pluginHostingFixTests;

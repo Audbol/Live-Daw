@@ -1,11 +1,31 @@
 #include "engine/PluginHost.h"
 #include "engine/PluginScanner.h"
 
+#include <map>
+#include <mutex>
+
 namespace livedaw
 {
 
 static constexpr const char* kPluginListKey = "pluginList";
 static constexpr const char* kSandboxKey = "plugins.sandbox";
+
+namespace
+{
+    /** The descriptions in-process plugins were created from, by instance (see
+        PluginHost::describe). An entry is only trusted while the instance at that
+        address has the same name (a deleted plugin's address may be reused).
+        Deleted with the app's other singletons at shutdown. */
+    struct CreatedPlugins final : private juce::DeletedAtShutdown
+    {
+        ~CreatedPlugins() override { clearSingletonInstance(); }
+
+        std::mutex lock;
+        std::map<const juce::AudioPluginInstance*, juce::PluginDescription> descriptions;
+
+        JUCE_DECLARE_SINGLETON_INLINE (CreatedPlugins, true)
+    };
+} // namespace
 
 PluginHost::PluginHost (juce::PropertiesFile* s) : settings (s)
 {
@@ -89,10 +109,34 @@ juce::String PluginHost::checkForCrashDuringPluginLoad()
     return lines[1].isNotEmpty() ? lines[1] : identifier;
 }
 
-std::unique_ptr<juce::AudioPluginInstance> PluginHost::createInstance (const juce::PluginDescription& description,
+juce::PluginDescription PluginHost::resolveDescription (const juce::PluginDescription& description)
+{
+    // On Linux a VST3 instance describes itself with the library inside its
+    // bundle (X.vst3/Contents/x86_64-linux/X.so), which no format accepts, and
+    // shows saved that: load the bundle instead.
+    if (description.pluginFormatName != "VST3" || ! juce::File::isAbsolutePath (description.fileOrIdentifier))
+        return description;
+    const juce::File file (description.fileOrIdentifier);
+    if (file.hasFileExtension (".vst3"))
+        return description;
+    for (auto dir = file.getParentDirectory(); dir != dir.getParentDirectory(); dir = dir.getParentDirectory())
+    {
+        if (dir.hasFileExtension (".vst3"))
+        {
+            auto resolved = description;
+            resolved.fileOrIdentifier = dir.getFullPathName();
+            return resolved;
+        }
+    }
+    return description;
+}
+
+std::unique_ptr<juce::AudioPluginInstance> PluginHost::createInstance (const juce::PluginDescription& requested,
                                                                        double sampleRate, int blockSize,
                                                                        juce::String& errorMessage)
 {
+    const auto description = resolveDescription (requested);
+
     if (sandboxEnabled)
     {
         // A crash while loading only takes down the helper: no marker needed.
@@ -109,7 +153,27 @@ std::unique_ptr<juce::AudioPluginInstance> PluginHost::createInstance (const juc
     auto instance = formatManager.createPluginInstance (description, sampleRate, blockSize, errorMessage);
 
     pending.deleteFile();
+    if (auto* created = instance != nullptr ? CreatedPlugins::getInstance() : nullptr)
+    {
+        const std::lock_guard<std::mutex> l (created->lock);
+        created->descriptions[instance.get()] = description;
+    }
     return instance;
+}
+
+juce::PluginDescription PluginHost::describe (const juce::AudioPluginInstance& plugin)
+{
+    if (auto* created = CreatedPlugins::getInstanceWithoutCreating())
+    {
+        const std::lock_guard<std::mutex> l (created->lock);
+        if (const auto it = created->descriptions.find (&plugin); it != created->descriptions.end())
+        {
+            if (it->second.name == plugin.getName())
+                return it->second;
+            created->descriptions.erase (it); // another plugin now lives there
+        }
+    }
+    return plugin.getPluginDescription();
 }
 
 juce::Array<juce::PluginDescription> PluginHost::getSortedTypes() const

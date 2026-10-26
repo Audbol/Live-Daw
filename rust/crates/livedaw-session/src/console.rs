@@ -478,10 +478,10 @@ fn capture_strip(s: &Strip, sections: u32, slots: &[usize]) -> Element {
                     None => {
                         // Never touched: record the defaults so a recall resets it.
                         x.set("on", 0)
-                            .set("lvl", 0)
-                            .set("mode", 0)
+                            .set("lvl", livedaw_engine::sends::DEFAULT_SEND_LEVEL_DB)
+                            .set("mode", s.sends.default_mode(slot))
                             .set("pan", 0)
-                            .set("plink", 1)
+                            .set("plink", livedaw_engine::sends::default_pan_link(s.sends.default_mode(slot)) as i32)
                             .set("prev", 0)
                             .set("ignmute", 0);
                     }
@@ -1145,6 +1145,10 @@ pub fn load_console(engine: &Engine, console: &Element, bridge: &mut dyn PluginB
     get_f(console, "outputCeilingDb", &engine.controls.output_ceiling_db);
     apply_monitor(engine, console);
     apply_input_select(engine, console);
+    if console.child("InputSelect").is_none() {
+        // Saved before INPUT SELECT: per strip, as then (a new console has it GLOBAL).
+        engine.controls.input_select_global.store(false, Relaxed);
+    }
     apply_prefs(engine, console);
     apply_rta(engine, console);
     apply_automix(engine, console);
@@ -1185,5 +1189,9 @@ pub fn load_console(engine: &Engine, console: &Element, bridge: &mut dyn PluginB
         s.params.recall_safe.store(e.bool_or("recallSafe", false), Relaxed);
     }
     crate::globals::apply(engine, console);
+    if !console.child("Solo").is_some_and(|s| s.has_attr("muteOverride")) {
+        // Saved before MUTEGROUP/SIP OVERRIDE: off, as then (a new console has it on).
+        engine.controls.mute_override.store(false, Relaxed);
+    }
     result.warnings
 }

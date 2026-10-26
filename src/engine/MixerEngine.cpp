@@ -217,6 +217,7 @@ void MixerEngine::reset()
     JUCE_ASSERT_MESSAGE_THREAD
     ld::ld_engine_reset (engine);
     syncStrips();
+    markInitialized();
 }
 
 void MixerEngine::setDcaName (int index, const juce::String& name)

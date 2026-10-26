@@ -104,12 +104,12 @@ private:
         known = now;
         if (added == nullptr)
             return;
-        if (owner.settings.getBoolValue (uiprefs::exclusiveSolo, false))
+        if (owner.settings.getBoolValue (uiprefs::exclusiveSolo, uiprefs::exclusiveSoloDefault))
         {
             clearAllBut (added);
             known = { added };
         }
-        if (owner.settings.getBoolValue (uiprefs::selectFollowsSolo, false))
+        if (owner.settings.getBoolValue (uiprefs::selectFollowsSolo, uiprefs::selectFollowsSoloDefault))
             if (auto* s = stripOf (added); s != nullptr && s != owner.getSelectedStrip())
                 owner.selectStrip (s);
     }
@@ -257,6 +257,24 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
                                           });
     engine.getWing().attachShow (&show, [this] (const juce::String& what, const state::ApplyResult& r)
                                  { logRecall (ctx, what, r); });
+    // ... and SETUP's options that are WING parameters (metering, surface, solo, MIDI, DAW).
+    engine.getWing().setHostSettings (&settings,
+                                      [this] (const juce::StringArray& keys)
+                                      {
+                                          for (const auto& k : keys)
+                                              if (k.startsWith ("midi.") || k.startsWith ("daw."))
+                                              {
+                                                  if (midiRemote != nullptr)
+                                                      midiRemote->apply (MidiRemote::Settings::load (settings));
+                                                  break;
+                                              }
+                                          if (keys.contains ("ui.selDblClick") || keys.contains ("setup.faderScreenLayerLink"))
+                                              notifyLayersChangedAsync (ctx);
+                                          // The COMPACT's fader 13 and 16 keys (/$ctl/cfg/mfdr, cscmode).
+                                          if (compactKeys != nullptr && (keys.contains (uiprefs::compactMainFader) || keys.contains (uiprefs::compactKeyMode)))
+                                              compactKeys->refresh();
+                                          repaint();
+                                      });
     for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) display.get(), (juce::Component*) monitor.get(),
                                 (juce::Component*) customControls.get(), (juce::Component*) fourChannel.get() })
         addAndMakeVisible (c);
@@ -302,6 +320,7 @@ MainComponent::~MainComponent()
     // MIDI and the WING remote's scene and surface control go first: their callbacks reach the views.
     engine.getWing().attachShow (nullptr);
     engine.getWing().setSurfaceCallbacks ({}, {});
+    engine.getWing().setHostSettings (nullptr);
     ctx.midi = nullptr;
     midiRemote.reset();
     engine.onPluginWarning = nullptr;
@@ -437,7 +456,11 @@ int MainComponent::topRowHeight() const
     // it the screen, the most important part) takes up to 8 % more.
     const float aspect = (float) getWidth() / (float) juce::jmax (1, h);
     const float wideBoost = juce::jlimit (0.0f, 0.08f, (aspect - 2.0f) * 0.06f);
-    return juce::jlimit (300, juce::jmax (300, h - 260), juce::roundToInt ((float) h * (topFraction + wideBoost)));
+    // Short windows (a 1366 x 768 laptop) keep the screen legible, as tall as
+    // the fader sections' compact layout (meters folded away) allows.
+    const int legible = juce::jlimit (300, juce::jmax (300, h - 6 - FaderStrip::kMinCompactHeight),
+                                      MainDisplay::heightForScreen (MainDisplay::kLegibleScreenHeight));
+    return juce::jlimit (legible, juce::jmax (legible, h - 260), juce::roundToInt ((float) h * (topFraction + wideBoost)));
 }
 
 MainComponent::BottomRowPlan MainComponent::planBottomRow (int total, int height) const
@@ -636,10 +659,13 @@ void MainComponent::layoutTopRow()
     // put the lower part of the custom controls there instead. Width the
     // display unit can't use is shared either side of it.
     // Windows too narrow for that keep the display wide: the channel strip at
-    // the left, the monitoring panel over the 4-Channel section at the right.
+    // the left, the monitoring panel over the 4-Channel section at the right,
+    // both narrowed (to a point) until the screen is legible.
     const auto sides = topRowSideWidths (top.getWidth());
+    const int displayW = MainDisplay::preferredWidth (top.getHeight());
+    const int legibleW = MainDisplay::preferredWidth (MainDisplay::heightForScreen (MainDisplay::kLegibleScreenHeight));
     juce::Rectangle<int> right;
-    if (top.getWidth() - sides.total() >= juce::jmin (MainDisplay::preferredWidth (top.getHeight()), top.getWidth() * 40 / 100))
+    if (top.getWidth() - sides.total() >= juce::jmin (displayW, juce::jmax (legibleW, top.getWidth() * 40 / 100)))
     {
         monitor->setBounds (top.removeFromLeft (sides.monitor));
         right = top.removeFromRight (sides.fourChannel);
@@ -647,8 +673,18 @@ void MainComponent::layoutTopRow()
     }
     else
     {
-        channelStrip->setBounds (top.removeFromLeft (juce::jlimit (330, 620, top.getWidth() * 29 / 100)));
-        right = top.removeFromRight (juce::jlimit (260, 460, top.getWidth() * 22 / 100));
+        int stripW = juce::jlimit (330, 620, top.getWidth() * 29 / 100);
+        int rightW = juce::jlimit (260, 460, top.getWidth() * 22 / 100);
+        if (const int over = stripW + rightW + displayW - top.getWidth(); over > 0)
+        {
+            const int stripSpare = stripW - kMinCompactStripWidth, rightSpare = rightW - kMinCompactRightWidth;
+            const int cut = juce::jmin (over, stripSpare + rightSpare);
+            const int stripCut = cut * stripSpare / juce::jmax (1, stripSpare + rightSpare);
+            stripW -= stripCut;
+            rightW -= cut - stripCut;
+        }
+        channelStrip->setBounds (top.removeFromLeft (stripW));
+        right = top.removeFromRight (rightW);
         monitor->setBounds (right.removeFromTop (right.getHeight() * (ccInBottomRow ? 46 : 55) / 100));
     }
     top = top.withSizeKeepingCentre (juce::jmin (top.getWidth(), MainDisplay::preferredWidth (top.getHeight())), top.getHeight());

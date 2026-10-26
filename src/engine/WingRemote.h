@@ -55,9 +55,10 @@ public:
     bool isRunning() const;
     /** Renames the console at once (discovery and connected clients). */
     void setName (const juce::String&);
-    /** The model the console reports (discovery, /? and /$syscfg/$cnsmdl): the
-        COMPACT says "wing-compact", so WING Edit and Mixing Station show a
-        Compact. At once, and across restarts. */
+    /** The model the console reports (discovery, /? and /$syscfg/$cnsmdl), as
+        the WING does: "ngc-full" for the full-size console, "wing-compact" for
+        the COMPACT, so WING Edit and Mixing Station show the right one. At
+        once, and across restarts. */
     void setConsoleModel (ConsoleModel);
 
     struct Client
@@ -116,6 +117,20 @@ public:
     /** Runs the surface exchange now (the timer does it with a show attached). */
     void syncSurface();
 
+    /** The app settings that are WING parameters (SETUP's surface, metering,
+        solo, MIDI and DAW options: /$ctl/cfg, /$ctl/$globals, /$ctl/midi,
+        /$ctl/daw, /cfg/mtr): clients read them from `settings` and their
+        changes are stored there, 10 times a second with a show attached;
+        `onChanged` then gets the keys that changed. nullptr detaches. */
+    void setHostSettings (juce::PropertiesFile* settings, std::function<void (const juce::StringArray& keys)> onChanged = {});
+    /** Runs the settings exchange now (the timer does it). */
+    void pumpHostSettings();
+    /** INITIALIZE CONSOLE: the attached settings that are WING parameters back
+        to their factory values (the keys are removed, so the app's defaults
+        apply), except the MIDI REMOTE CONTROL and DAW connection settings
+        (midi.*, daw.*). Returns the keys removed. */
+    juce::StringArray resetHostSettings();
+
     /** How much of the WING parameter tree maps onto Sidecar. */
     static juce::String coverageReport();
 
@@ -134,6 +149,9 @@ private:
     std::function<void (const juce::String&, const state::ApplyResult&)> onRecalled;
     std::function<int()> surfaceBank;
     std::function<void (int, int)> onSurfaceChanged;
+    juce::PropertiesFile* hostSettings = nullptr;
+    juce::StringArray hostSettingKeys;
+    std::function<void (const juce::StringArray&)> onHostSettingsChanged;
 
     JUCE_DECLARE_NON_COPYABLE (WingRemote)
 };

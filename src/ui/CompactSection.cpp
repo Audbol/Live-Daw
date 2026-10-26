@@ -23,17 +23,18 @@ CompactSection::CompactSection (UiContext& c) : ctx (c), fader13 (c, LayerSet::C
         k->ledState = [this, i] { return keyMode() == modes[i] ? SurfaceKey::Lit : SurfaceKey::Off; };
         addAndMakeVisible (*k);
     }
-    modeKeys[0]->setTooltip ("BUS: the 16 keys are BUS 1-16 (press: the bus's sends on the faders; hold: spill the bus)");
+    modeKeys[0]->setTooltip ("BUS: the 16 keys are BUS 1-16 (press: spill the bus and put it on fader 13)");
     modeKeys[1]->setTooltip ("DCA: the 16 keys are DCA 1-16 (press: spill the DCA onto the faders)");
-    modeKeys[2]->setTooltip ("MAIN MATRIX: keys 1-4 are MAIN 1-4, 5-12 MATRIX 1-8 (press: their sends on the faders)");
+    modeKeys[2]->setTooltip ("MAIN MATRIX: keys 1-4 are MAIN 1-4, 9-16 MATRIX 1-8 (press: put it on fader 13)");
     modeKeys[3]->setTooltip ("USER: the 16 keys are custom control keys (1-8 the USER layer, 9-16 the custom control layer shown)");
 
-    // VIEW: CUSTOM CONTROLS (CC EDIT) on the layer the USER keys show.
-    viewKey.setTooltip ("VIEW: CUSTOM CONTROLS (CC EDIT)");
+    // VIEW: CUSTOM CONTROLS on the COMPACT's USER 1-4 layers; Sidecar's
+    // closest is the USER layer (the one the USER keys 1-8 play).
+    viewKey.setTooltip ("VIEW: CUSTOM CONTROLS (CC EDIT) on the USER layer");
     viewKey.onPress = [this]
     {
         if (ctx.showCustomControls)
-            ctx.showCustomControls (keyMode() == compact::KeyMode::User || ctx.customControls == nullptr ? cc::kUserLayer : ctx.customControls->currentLayer);
+            ctx.showCustomControls (cc::kUserLayer);
         viewOpened = true;
     };
     viewKey.isActive = [this]
@@ -49,21 +50,23 @@ CompactSection::CompactSection (UiContext& c) : ctx (c), fader13 (c, LayerSet::C
         k->ledColour = Colours::keyLayer;
         k->onPress = [this, i]
         {
-            if (const auto f = keyFunctions (i).first; f.isAssigned())
+            if (const auto f = keyFunction (i); f.isAssigned())
             {
                 cc::press (ctx, f);
                 cc::release (ctx, f);
             }
-        };
-        k->onHold = [this, i]
-        {
-            if (const auto f = keyFunctions (i).second; f.isAssigned())
-                cc::press (ctx, f);
+            // A bus, main or matrix goes on fader 13 too.
+            if (const auto mf = keyMainFader (i))
+            {
+                ctx.settings.setValue (uiprefs::compactMainFader, compact::mainFaderToken (*mf));
+                refresh();
+            }
         };
         k->ledState = [this, i]
         {
-            const auto [push, hold] = keyFunctions (i);
-            return (push.isAssigned() && cc::isLit (ctx, push)) || (hold.isAssigned() && cc::isLit (ctx, hold)) ? SurfaceKey::Lit : SurfaceKey::Off;
+            const auto f = keyFunction (i);
+            const auto mf = keyMainFader (i);
+            return (f.isAssigned() && cc::isLit (ctx, f)) || (mf && *mf == getMainFader()) ? SurfaceKey::Lit : SurfaceKey::Off;
         };
         addAndMakeVisible (k);
     }
@@ -99,26 +102,20 @@ void CompactSection::setStripWidth (int w)
     }
 }
 
-std::pair<cc::Function, cc::Function> CompactSection::keyFunctions (int key) const
+cc::Function CompactSection::keyFunction (int key) const
 {
-    auto stripAt = [this] (StripKind kind, int index) -> Strip*
-    {
-        const auto& list = ctx.engine.getStrips (kind);
-        return juce::isPositiveAndBelow (index, (int) list.size()) ? list[(size_t) index].get() : nullptr;
-    };
-    auto sof = [] (Strip* s) { return s != nullptr ? cc::Function { cc::BtnSendsOnFader, cc::encodeStrip (state::StripRef::of (*s)), 0 } : cc::Function {}; };
-
     switch (keyMode())
     {
         case compact::KeyMode::Bus:
-            if (auto* bus = stripAt (StripKind::Bus, key))
-                return { sof (bus), cc::Function { cc::BtnFaderSpill, 100 + state::StripRef::of (*bus).id, 0 } };
+        {
+            const auto& buses = ctx.engine.getBuses();
+            if (juce::isPositiveAndBelow (key, (int) buses.size()))
+                return { cc::BtnFaderSpill, 100 + state::StripRef::of (*buses[(size_t) key]).id, 0 };
             break;
-        case compact::KeyMode::Main:
-            return { sof (key < kNumMains ? stripAt (StripKind::Main, key) : stripAt (StripKind::Matrix, key - kNumMains)), {} };
+        }
         case compact::KeyMode::Dca:
             if (key < kNumDcas)
-                return { cc::Function { cc::BtnFaderSpill, key, 0 }, {} };
+                return { cc::BtnFaderSpill, key, 0 };
             break;
         case compact::KeyMode::User:
         {
@@ -126,26 +123,54 @@ std::pair<cc::Function, cc::Function> CompactSection::keyFunctions (int key) con
                 break;
             const int layer = key < 8 ? cc::kUserLayer : ctx.customControls->currentLayer;
             const auto& control = ctx.customControls->get (layer, (key % 8) / 2);
-            return { key % 2 == 0 ? control.upper : control.lower, {} };
+            return key % 2 == 0 ? control.upper : control.lower;
         }
+        case compact::KeyMode::Main:
+            break;
     }
     return {};
 }
 
+Strip* CompactSection::mainFaderStrip (const compact::MainFader& mf) const
+{
+    auto at = [this] (StripKind kind, int number) -> Strip*
+    {
+        const auto& list = ctx.engine.getStrips (kind);
+        return juce::isPositiveAndBelow (number - 1, (int) list.size()) ? list[(size_t) number - 1].get() : nullptr;
+    };
+    switch (mf.group)
+    {
+        case compact::MainFader::Main:    return at (StripKind::Main, mf.number);
+        case compact::MainFader::Matrix:  return at (StripKind::Matrix, mf.number);
+        case compact::MainFader::Channel: return at (StripKind::Channel, mf.number);
+        case compact::MainFader::Aux:     return at (StripKind::Aux, mf.number);
+        case compact::MainFader::Bus:     return at (StripKind::Bus, mf.number);
+        case compact::MainFader::Off:
+        case compact::MainFader::Dca:     break;
+    }
+    return nullptr;
+}
+
+std::optional<compact::MainFader> CompactSection::keyMainFader (int key) const
+{
+    const auto mf = compact::keyMainFader (keyMode(), key);
+    return mf && mainFaderStrip (*mf) != nullptr ? mf : std::nullopt;
+}
+
 juce::String CompactSection::keyName (int key) const
 {
-    const auto f = keyFunctions (key).first;
+    if (const auto mf = keyMainFader (key))
+        if (const auto* s = mainFaderStrip (*mf))
+            return stripName (*s);
+    const auto f = keyFunction (key);
     if (! f.isAssigned())
         return {};
     switch (keyMode())
     {
-        case compact::KeyMode::Bus:
-        case compact::KeyMode::Main:
-            if (const auto* s = state::findStrip (ctx.engine, cc::decodeStrip (f.target)))
-                return stripName (*s);
-            break;
         case compact::KeyMode::Dca:  return ctx.engine.getDcaName (key);
         case compact::KeyMode::User: return cc::describe (ctx, cc::Slot::Upper, f);
+        case compact::KeyMode::Bus:
+        case compact::KeyMode::Main: break;
     }
     return {};
 }
@@ -155,30 +180,16 @@ void CompactSection::refresh()
     // Fader 13: its assignment, if the console has it.
     const auto mf = getMainFader();
     std::optional<state::FaderRef> target;
-    auto strip = [this] (StripKind kind, int number) -> std::optional<state::FaderRef>
-    {
-        const auto& list = ctx.engine.getStrips (kind);
-        if (juce::isPositiveAndBelow (number - 1, (int) list.size()))
-            return state::FaderRef::of (state::StripRef::of (*list[(size_t) number - 1]));
-        return std::nullopt;
-    };
-    switch (mf.group)
-    {
-        case compact::MainFader::Off:     break;
-        case compact::MainFader::Main:    target = strip (StripKind::Main, mf.number); break;
-        case compact::MainFader::Matrix:  target = strip (StripKind::Matrix, mf.number); break;
-        case compact::MainFader::Channel: target = strip (StripKind::Channel, mf.number); break;
-        case compact::MainFader::Aux:     target = strip (StripKind::Aux, mf.number); break;
-        case compact::MainFader::Bus:     target = strip (StripKind::Bus, mf.number); break;
-        case compact::MainFader::Dca:     target = state::FaderRef::ofDca (mf.number - 1); break;
-    }
+    if (mf.group == compact::MainFader::Dca)
+        target = state::FaderRef::ofDca (mf.number - 1);
+    else if (auto* s = mainFaderStrip (mf))
+        target = state::FaderRef::of (state::StripRef::of (*s));
     fader13.setTarget (target);
     fader13.refresh();
 
     for (int i = 0; i < keys.size(); ++i)
     {
-        const auto [push, hold] = keyFunctions (i);
-        keys[i]->setEnabled (push.isAssigned() || hold.isAssigned());
+        keys[i]->setEnabled (keyFunction (i).isAssigned() || keyMainFader (i).has_value());
         keys[i]->setTooltip (keyName (i));
     }
     shownLcd = {};
@@ -195,7 +206,13 @@ juce::String CompactSection::lcdState() const
 
 void CompactSection::timerCallback()
 {
-    // The LCD follows names, the keys' states and the custom controls.
+    // The LCD follows names, the keys' states and the custom controls; fader
+    // 13 follows its assignment (WING remote clients set /$ctl/cfg/mfdr too).
+    if (const auto mf = getMainFader(); ! (mf == shownMainFader))
+    {
+        shownMainFader = mf;
+        refresh();
+    }
     if (const auto state = lcdState(); state != shownLcd)
     {
         shownLcd = state;
@@ -233,7 +250,12 @@ void CompactSection::paint (juce::Graphics& g)
     const auto font = juce::Font (juce::FontOptions (juce::jmin (titleH * 0.62f, 14.0f), juce::Font::bold));
     g.setFont (font);
     static const char* const modeNames[] = { "BUS", "DCA", "MAIN / MTX", "USER" };
-    g.drawFittedText (compact::mainFaderName (getMainFader()), title.reduced (4.0f, 0.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
+    // What fader 13 controls: "13 MAIN 1", with its name when it has one.
+    const auto mf = getMainFader();
+    auto fader = "13 " + compact::mainFaderName (mf);
+    if (const auto* s = mainFaderStrip (mf); s != nullptr && stripName (*s) != s->getLabel())
+        fader << " " << stripName (*s).toUpperCase();
+    g.drawFittedText (fader, title.reduced (4.0f, 0.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
     g.drawFittedText (modeNames[(int) keyMode()], title.reduced (4.0f, 0.0f).toNearestInt(), juce::Justification::centredRight, 1, 0.7f);
 
     r.removeFromTop (2.0f);
@@ -264,37 +286,6 @@ void CompactSection::resized()
     for (int i = 0; i < keys.size(); ++i)
         keys[i]->setBounds (plan.keys[(size_t) i]);
     fader13.setBounds (plan.strip);
-}
-
-void CompactSection::mouseUp (const juce::MouseEvent& e)
-{
-    // Touching the LCD's title: what fader 13 controls.
-    if (lcd.withHeight (juce::jmax (16, lcd.getHeight() / 4)).contains (e.getPosition()))
-        showMainFaderMenu();
-}
-
-void CompactSection::showMainFaderMenu()
-{
-    using MF = compact::MainFader;
-    const auto current = getMainFader();
-    juce::PopupMenu menu;
-    menu.addSectionHeader ("FADER 13");
-    auto add = [&] (juce::PopupMenu& m, MF f) { m.addItem (mainFaderName (f), true, f == current, [this, f]
-                                                          {
-                                                              ctx.settings.setValue (uiprefs::compactMainFader, compact::mainFaderToken (f));
-                                                              refresh();
-                                                          }); };
-    add (menu, { MF::Off, 1 });
-    for (int g = MF::Main; g <= MF::Bus; ++g)
-    {
-        const auto group = static_cast<MF::Group> (g);
-        juce::PopupMenu sub;
-        const int n = group == MF::Channel ? juce::jmin (compact::groupSize (group), (int) ctx.engine.getChannels().size()) : compact::groupSize (group);
-        for (int i = 1; i <= n; ++i)
-            add (sub, { group, i });
-        menu.addSubMenu (compact::groupToken (group), sub, n > 0, juce::Image(), current.group == group);
-    }
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (lcd)));
 }
 
 } // namespace livedaw::ui

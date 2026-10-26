@@ -15,7 +15,7 @@ anything can be sent to any hardware output. It runs on Windows, macOS and Linux
 > SETUP > GENERAL > ABOUT, lists the differences). Don't rely on it for a critical
 > live show without testing it thoroughly first.
 
-**Status: v0.1.4 beta**, the fourth public beta: the second round of matching a real WING screen by screen, and plugin chains. Expect rough edges, and please
+**Status: v0.1.5 beta**, the fifth public beta: the third round of matching a real WING, from its factory parameter dump and screenshots. Expect rough edges, and please
 [report what you find](#reporting-problems).
 
 ## Screenshots
@@ -71,7 +71,7 @@ The [user guide](docs/USER_GUIDE.md) describes every part in detail.
   layer) and X11.
 - A multi-core CPU (strips are processed in parallel; a 40-channel console with
   processing on every channel uses a fraction of one core on a current machine),
-  and a screen of at least 1366 x 768 (larger is better).
+  and a screen of at least 1366 x 768 at 100 % scaling (larger is better).
 - An audio interface with as many inputs and outputs as you want to mix. Without one,
   the **Virtual (no hardware)** device lets you try the console.
 
@@ -126,8 +126,8 @@ for the files of each version.
    ENABLE** starts the WING network servers (UDP 2222 discovery, UDP 2223 OSC, TCP
    2222 native). Remote apps on the same network can then discover Sidecar under its
    console name. Allow Sidecar through your firewall. Tested with libwing's clients
-   and the Bitfocus Companion WING module's OSC paths; WING Edit and WING Copilot
-   have not been tried.
+   and the Bitfocus Companion WING module's OSC paths, and by testers with WING Edit
+   and Mixing Station; WING Copilot has not been tried.
 
 ## Keyboard shortcuts
 
@@ -181,10 +181,11 @@ This list matches the notice Sidecar shows at start-up.
   Delay compensation (SETUP > PLUGINS) lines up the paths into buses, mains and
   matrices up to 8192 samples; solo, monitoring, direct outs and recorder taps are
   not compensated.
-- **WING remote apps:** the WING network protocols cover 88.2 % of the WING 3.1
-  parameter tree (the rest is stored but does nothing). WING Edit and WING Copilot
-  have not been tried, and exported WING snapshots have not been loaded into a
-  console.
+- **WING remote apps:** the WING network protocols answer every parameter of the
+  WING 3.1 tree but one; 89.2 % drive the engine or Sidecar's settings, the rest
+  answers the WING's factory value and is stored but does nothing. Testers use WING
+  Edit and Mixing Station with it; WING Copilot has not been tried, and exported WING
+  snapshots have not been loaded into a console.
 - **MIDI and DAW remote control** (MCU / HUI) have not been tested with real hardware.
 - **LIBRARY:** scene and snippet files are Sidecar's own (.lsnap / .lsnip), not the
   WING's .snap / .snip, and the CLIP tab plays its clip on the USB player.

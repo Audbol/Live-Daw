@@ -53,7 +53,16 @@ pub trait FxAlgo: Send {
     fn meter(&self) -> f32 {
         0.0
     }
+
+    /// A band's live gain in dB, signed (cut < 0, boost > 0), for devices
+    /// with dynamic bands (TRIPLE DEQ); 0 otherwise.
+    fn band_gain(&self, _band: usize) -> f32 {
+        0.0
+    }
 }
+
+/// Bands [`FxAlgo::band_gain`] can report (TRIPLE DEQ has the most).
+pub const FX_BANDS: usize = 3;
 
 /// Index of a device in [`FX_MODELS`].
 pub fn model_index(token: &str) -> Option<usize> {
@@ -80,6 +89,57 @@ pub fn create(token: &str, ctx: FxContext) -> Option<Box<dyn FxAlgo>> {
         .or_else(|| utility::create(token, ctx))
         .or_else(|| eqfx::create(token, ctx))
         .or_else(|| amp::create(token, ctx))
+}
+
+/// The devices whose screen graph is their measured frequency response.
+const MEASURED: &[&str] = &["GEQ", "PIA", "SPKMAN"];
+
+/// The frequency response in dB at `freqs` of a device as set, for its
+/// screen's graph: the EQ section of the EQ devices and channel strips, and
+/// the measured response of the graphic EQs and the speaker manager (a small
+/// impulse through the device once its controls have settled). False for
+/// devices without one. Message thread (allocates).
+pub fn response(token: &str, values: &[f32], freqs: &[f32], out: &mut [f32]) -> bool {
+    if eqfx::eq_response(token, values, freqs, out) {
+        return true;
+    }
+    if !MEASURED.contains(&token) {
+        return false;
+    }
+    const SR: f32 = 48_000.0;
+    const LEN: usize = 16_384;
+    const AMP: f32 = 0.01;
+    let Some(mut dev) = model_index(token).and_then(|m| FxDevice::new(m, FxContext { sample_rate: SR, max_block: 256 })) else {
+        return false;
+    };
+    let spec = dev.spec();
+    let n = spec.params.len().min(MAX_FX_PARAMS);
+    let mut v = [0.0; MAX_FX_PARAMS];
+    spec.defaults_into(&mut v);
+    for (dst, src) in v.iter_mut().zip(values).take(n) {
+        *dst = *src;
+    }
+    // Let the parameter glides settle, then clear the state and measure.
+    let (mut l, mut r) = (vec![0.0f32; LEN], vec![0.0f32; LEN]);
+    dev.process(&v[..n], &mut l, &mut r);
+    dev.reset();
+    l.fill(0.0);
+    r.fill(0.0);
+    l[0] = AMP;
+    r[0] = AMP;
+    dev.process(&v[..n], &mut l, &mut r);
+    for (f, o) in freqs.iter().zip(out.iter_mut()) {
+        let w = std::f64::consts::TAU * f64::from(*f) / f64::from(SR);
+        let (step_re, step_im) = (w.cos(), -w.sin());
+        let (mut ph_re, mut ph_im, mut re, mut im) = (1.0f64, 0.0f64, 0.0f64, 0.0f64);
+        for x in &l {
+            re += f64::from(*x) * ph_re;
+            im += f64::from(*x) * ph_im;
+            (ph_re, ph_im) = (ph_re * step_re - ph_im * step_im, ph_re * step_im + ph_im * step_re);
+        }
+        *o = (20.0 * ((re * re + im * im).sqrt() / f64::from(AMP)).max(1e-9).log10()) as f32;
+    }
+    true
 }
 
 /// A running device: the instance plus the parameter values it last saw.
@@ -118,6 +178,11 @@ impl FxDevice {
         self.algo.meter()
     }
 
+    /// See [`FxAlgo::band_gain`].
+    pub fn band_gain(&self, band: usize) -> f32 {
+        self.algo.band_gain(band)
+    }
+
     pub fn reset(&mut self) {
         self.algo.reset();
     }
@@ -147,6 +212,33 @@ impl FxDevice {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    fn response_at(token: &str, set: &[(&str, f32)], freqs: &[f32]) -> Option<Vec<f32>> {
+        let spec = &FX_MODELS[model_index(token)?];
+        let mut v = [0.0; MAX_FX_PARAMS];
+        spec.defaults_into(&mut v);
+        for (id, x) in set {
+            v[spec.param_index(id).unwrap()] = *x;
+        }
+        let mut out = vec![0.0; freqs.len()];
+        response(token, &v[..spec.params.len()], freqs, &mut out).then_some(out)
+    }
+
+    #[test]
+    fn graphs_show_the_devices_response() {
+        // A flat graphic EQ, then one band up.
+        let flat = response_at("GEQ", &[], &[100.0, 1000.0, 10_000.0]).unwrap();
+        assert!(flat.iter().all(|db| db.abs() < 0.5), "{flat:?}");
+        let boost = response_at("GEQ", &[("1k", 12.0)], &[100.0, 1000.0]).unwrap();
+        assert!(boost[1] > 8.0 && boost[0].abs() < 1.5, "{boost:?}");
+        // The EQ section of a channel strip; off is flat.
+        let strip = response_at("*SOUL*", &[("eq_on", 1.0), ("lg", 5.0)], &[60.0, 5000.0]).unwrap();
+        assert!(strip[0] > 2.0 && strip[1].abs() < 1.5, "{strip:?}");
+        let off = response_at("*SOUL*", &[("eq_on", 0.0), ("lg", 5.0)], &[60.0]).unwrap();
+        assert!(off[0].abs() < 0.01, "{off:?}");
+        // Devices without one.
+        assert!(response_at("HALL", &[], &[1000.0]).is_none());
+    }
 
     struct Rng(u32);
 

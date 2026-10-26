@@ -164,7 +164,8 @@ unsafe fn refs_out(refs: &[StripRef], out: *mut LdStripRef, capacity: i32) -> i3
 
 /// A fader on the surface: kind 0..4 = a strip (see `LdStripRef`), or with
 /// `to_kind` 2..4 the send level from that strip to the bus, main or matrix
-/// `to_id`; 5 = DCA (id 0..15); 6 = FX slot `id`'s parameter `to_id`.
+/// `to_id`; 5 = DCA (id 0..15); 6 = FX slot `id`'s parameter `to_id`;
+/// 7 = MIDI CC `to_id` on MIDI channel `id`; 8 = a blank slot (ABI 14).
 /// `to_kind` is -1 when unused.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -184,10 +185,12 @@ impl Default for LdFaderRef {
 pub const FADER_DCA: i32 = 5;
 pub const FADER_FX_PARAM: i32 = 6;
 pub const FADER_MIDI_CC: i32 = 7;
+pub const FADER_EMPTY: i32 = 8;
 
 impl From<FaderRef> for LdFaderRef {
     fn from(f: FaderRef) -> Self {
         match f {
+            FaderRef::Empty => Self { kind: FADER_EMPTY, ..Self::default() },
             FaderRef::Strip(r) => Self { kind: r.kind as i32, id: r.id, ..Self::default() },
             FaderRef::Dca(i) => Self { kind: FADER_DCA, id: i, ..Self::default() },
             FaderRef::Send { from, to } => Self { kind: from.kind as i32, id: from.id, to_kind: to.kind as i32, to_id: to.id },
@@ -200,6 +203,7 @@ impl From<FaderRef> for LdFaderRef {
 impl LdFaderRef {
     fn to_ref(self) -> FaderRef {
         match self.kind {
+            FADER_EMPTY => FaderRef::Empty,
             FADER_DCA => FaderRef::Dca(self.id),
             FADER_FX_PARAM => FaderRef::FxParam { slot: self.id, param: self.to_id },
             FADER_MIDI_CC => FaderRef::midi_cc(self.id, self.to_id),
@@ -1460,17 +1464,80 @@ pub unsafe extern "C" fn ld_layers_move_user(l: *mut LayerSet, id: *const u8, le
     }
 }
 
+/// Adds `r` to a user layer's first blank slot or after its last (another
+/// copy when the layer already holds it); false when the layer is full.
 #[no_mangle]
-pub unsafe extern "C" fn ld_layers_add_to_user(l: *mut LayerSet, id: *const u8, len: usize, r: LdFaderRef) {
+pub unsafe extern "C" fn ld_layers_add_to_user(l: *mut LayerSet, id: *const u8, len: usize, r: LdFaderRef) -> bool {
+    layers(l).is_some_and(|l| l.add_to_user_layer(&str_arg(id, len), r.to_ref()))
+}
+
+/// Blanks slot `index` of a user layer if it holds `r`; `index` -1: the
+/// first slot holding `r`. Other copies of `r` stay (ABI 15).
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_remove_from_user(l: *mut LayerSet, id: *const u8, len: usize, r: LdFaderRef, index: i32) {
     if let Some(l) = layers(l) {
-        l.add_to_user_layer(&str_arg(id, len), r.to_ref());
+        l.remove_from_user_layer(&str_arg(id, len), &r.to_ref(), usize::try_from(index).ok());
+    }
+}
+
+/// Inserts `n` faders (blanks too) before slot `index` of a user layer; the
+/// slots from there on move right. False (nothing changed) when a filled
+/// slot would go past `ld_layers_max_slots()`.
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_insert_user_slots(
+    l: *mut LayerSet,
+    id: *const u8,
+    len: usize,
+    index: i32,
+    faders: *const LdFaderRef,
+    n: i32,
+) -> bool {
+    match (layers(l), usize::try_from(index)) {
+        (Some(l), Ok(index)) => l.insert_user_slots(&str_arg(id, len), index, &faders_arg(faders, n)),
+        _ => false,
+    }
+}
+
+/// The most slots a layer can have.
+#[no_mangle]
+pub extern "C" fn ld_layers_max_slots() -> i32 {
+    livedaw_session::layers::MAX_SLOTS as i32
+}
+
+/// Replaces a user layer's faders, blanks (`FADER_EMPTY`) included.
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_set_user_faders(
+    l: *mut LayerSet,
+    id: *const u8,
+    len: usize,
+    faders: *const LdFaderRef,
+    n: i32,
+) {
+    if let Some(l) = layers(l) {
+        l.set_user_layer_faders(&str_arg(id, len), faders_arg(faders, n));
+    }
+}
+
+/// Puts `r` in slot `index` of a user layer (replacing what was there).
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_set_user_slot(l: *mut LayerSet, id: *const u8, len: usize, index: i32, r: LdFaderRef) {
+    if let (Some(l), Ok(index)) = (layers(l), usize::try_from(index)) {
+        l.set_user_slot(&str_arg(id, len), index, r.to_ref());
     }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn ld_layers_remove_from_user(l: *mut LayerSet, id: *const u8, len: usize, r: LdFaderRef) {
-    if let Some(l) = layers(l) {
-        l.remove_from_user_layer(&str_arg(id, len), &r.to_ref());
+pub unsafe extern "C" fn ld_layers_clear_user_slot(l: *mut LayerSet, id: *const u8, len: usize, index: i32) {
+    if let (Some(l), Ok(index)) = (layers(l), usize::try_from(index)) {
+        l.clear_user_slot(&str_arg(id, len), index);
+    }
+}
+
+/// Swaps two slots of a user layer (a move when one is blank).
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_swap_user_slots(l: *mut LayerSet, id: *const u8, len: usize, a: i32, b: i32) {
+    if let (Some(l), Ok(a), Ok(b)) = (layers(l), usize::try_from(a), usize::try_from(b)) {
+        l.swap_user_slots(&str_arg(id, len), a, b);
     }
 }
 
@@ -1640,6 +1707,27 @@ mod tests {
             assert_eq!((f[1].kind, f[1].id), (FADER_DCA, 3));
             assert_eq!((f[0].to_kind, f[2].kind, f[2].id, f[2].to_kind, f[2].to_id), (-1, 0, 1, 2, 4));
             assert_eq!(take(ld_layer_list_name(list, 0)), "CH 1-2 · AUX 1-8");
+            ld_layer_list_free(list);
+
+            // Blank slots: set, swap, clear; nothing shifts.
+            ld_layers_set_user_slot(l, id.as_ptr(), id.len(), 6, LdFaderRef { kind: FADER_DCA, id: 9, ..Default::default() });
+            ld_layers_clear_user_slot(l, id.as_ptr(), id.len(), 1);
+            ld_layers_swap_user_slots(l, id.as_ptr(), id.len(), 0, 4);
+            let list = ld_layers_list(l, e, 0, 2, std::ptr::null(), 0);
+            let mut f = [LdFaderRef::default(); 8];
+            assert_eq!(ld_layer_list_faders(list, 0, f.as_mut_ptr(), 8), 7);
+            let kinds: Vec<i32> = f[..7].iter().map(|r| r.kind).collect();
+            assert_eq!(kinds, [FADER_EMPTY, FADER_EMPTY, 0, FADER_MIDI_CC, 0, FADER_EMPTY, FADER_DCA]);
+            ld_layer_list_free(list);
+            let blanks = [
+                LdFaderRef { kind: FADER_EMPTY, ..Default::default() },
+                f[6],
+                LdFaderRef { kind: FADER_EMPTY, ..Default::default() },
+            ];
+            ld_layers_set_user_faders(l, id.as_ptr(), id.len(), blanks.as_ptr(), 3);
+            let list = ld_layers_list(l, e, 0, 2, std::ptr::null(), 0);
+            assert_eq!(ld_layer_list_faders(list, 0, f.as_mut_ptr(), 8), 2, "trailing blanks dropped");
+            assert_eq!((f[0].kind, f[1].kind, f[1].id), (FADER_EMPTY, FADER_DCA, 9));
             ld_layer_list_free(list);
             assert_eq!(take(ld_layers_selected(l, 2)), "out-1");
             assert_eq!(ld_layers_effective_width(l, 1), 8);

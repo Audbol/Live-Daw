@@ -8,7 +8,8 @@ UDP 2223. It never sends anything that could change a parameter.
 
   python3 wing_compare.py discover
       Broadcasts "WING?" on UDP 2222 and lists every console that answers
-      (ip, name, model, serial, firmware). Sidecar answers with model "sidecar".
+      (ip, name, model, serial, firmware). Sidecar answers with a WING model ("ngc-full" or "wing-compact") and
+      serial "SIDECAR0001".
 
   python3 wing_compare.py dump HOST -o wing.json
       Reads the whole parameter tree of the console at HOST, read-only, and
@@ -405,7 +406,7 @@ def cmd_discover(a):
     for f in found:
         ip = f["from"] + ("" if f["ip"] in ("", f["from"]) else " (says %s)" % f["ip"])
         print("%-15s  %-20s  %-12s  %-14s  %s" % (ip, f["name"], f["model"], f["serial"], f["firmware"]))
-    print("\nSidecar answers with model 'sidecar'; a real console with its own model.")
+    print("\nSidecar answers with serial SIDECAR0001 and firmware 3.1-0-sidecar; a real console with its own.")
     return 0
 
 

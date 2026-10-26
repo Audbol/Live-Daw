@@ -220,6 +220,45 @@ pub unsafe extern "C" fn ld_dyn_static_curve(
     livedaw_dsp::wing::dynamics::static_curve(model, values, ins, outs)
 }
 
+/// # Safety
+/// `values` must point to `num_values` floats, `freqs` and `out_db` to `count` each.
+#[no_mangle]
+pub unsafe extern "C" fn ld_model_response(
+    t: i32,
+    model: i32,
+    values: *const f32,
+    num_values: i32,
+    freqs: *const f32,
+    out_db: *mut f32,
+    count: i32,
+) -> bool {
+    let (Ok(model), Ok(nv), Ok(n)) = (usize::try_from(model), usize::try_from(num_values), usize::try_from(count)) else {
+        return false;
+    };
+    if values.is_null() || freqs.is_null() || out_db.is_null() {
+        return false;
+    }
+    let Some(spec) = table(t).get(model) else { return false };
+    let values = std::slice::from_raw_parts(values, nv);
+    let freqs = std::slice::from_raw_parts(freqs, n);
+    let out = std::slice::from_raw_parts_mut(out_db, n);
+    match t {
+        1 | 2 => {
+            let mut v = [0.0; MAX_EQ_PARAMS];
+            for ((dst, p), src) in v.iter_mut().zip(spec.params).zip(values.iter().map(Some).chain(std::iter::repeat(None))) {
+                *dst = src.map_or(p.default, |x| p.sanitise(*x));
+            }
+            let d = design(spec, &v[..spec.params.len().min(MAX_EQ_PARAMS)], 48_000.0, 1.0);
+            for (f, o) in freqs.iter().zip(out.iter_mut()) {
+                *o = d.response_db(f64::from(*f), 48_000.0) as f32;
+            }
+            true
+        }
+        4 => crate::guard(false, || livedaw_dsp::wing::fx::response(spec.token, values, freqs, out)),
+        _ => false,
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn ld_list_count(l: i32) -> i32 {
     list(l).len() as i32

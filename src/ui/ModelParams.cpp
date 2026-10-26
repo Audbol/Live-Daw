@@ -31,6 +31,17 @@ juce::String consoleText (const models::Param& p, float v)
     // The TILT EQ reads to a hundredth of a dB ("0.00 dB", 3.1).
     if (p.table == models::FilterTools && p.id == "tilt")
         return juce::String (v, 2) + " dB";
+    // A RATIO picked from a list reads "2.0:1" (an expander's "1:2.0"), a tenth
+    // at least, as on the console; the list's special entries (B560's negative
+    // ratios and INF) keep their own text.
+    if (p.kind == models::ParamKind::Values && p.id.endsWith ("ratio"))
+        if (const auto shown = p.display (v); shown.containsOnly ("0123456789.") && shown.getFloatValue() > 0.0f)
+        {
+            const float r = shown.getFloatValue();
+            const bool hundredths = std::abs (r * 10.0f - std::round (r * 10.0f)) > 1.0e-3f;
+            const auto text = juce::String (r, hundredths ? 2 : 1);
+            return tokenOf (p) == "EXP" ? "1:" + text : text + ":1";
+        }
     if (! dyn && ! eq)
         return p.display (v);
     const auto token = tokenOf (p);
@@ -40,16 +51,6 @@ juce::String consoleText (const models::Param& p, float v)
         return "AUTO";
     if (dyn && token == "E88" && p.id == "hyst" && atEnd (p, v, false))
         return "EXP";
-    // The WING compressor's RATIO reads "3:1", the expander's "1:3" (Fig. 92, 93).
-    if (dyn && (token == "COMP" || token == "EXP") && p.id == "ratio" && p.kind == models::ParamKind::Values)
-    {
-        auto text = p.display (v);
-        if (text.endsWith (".00"))
-            text = text.dropLastCharacters (3);
-        else if (text.endsWith ("0") && text.contains ("."))
-            text = text.dropLastCharacters (1);
-        return token == "COMP" ? text + ":1" : "1:" + text;
-    }
     if (dyn && token == "2250" && p.id == "thr" && p.unit.isEmpty())
     {
         // The knob's 0..10 run from +10 dB down to -20 dB.

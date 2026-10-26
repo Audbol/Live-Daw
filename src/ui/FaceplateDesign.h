@@ -5,6 +5,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <functional>
+#include <map>
 #include <vector>
 
 /** Drawn front panels: a unit's layout as the console's screen shows it, in the
@@ -32,7 +33,23 @@ enum class Type
     Screw,   // panel screw; x, y = centre, w = diameter
     Display, // alphanumeric display showing parameter values
     Value,   // a parameter's value printed (7-segment / LCD); x, y, w, h = box
-    Graph    // EQ response: bands of `params` (freq, gain, q, filter type) in grid; x, y, w, h
+    Graph    // a graph screen (`graph` says which, `params` what it shows); x, y, w, h
+};
+
+/** What a Graph element draws. `params` are indices into the model's parameters. */
+enum class GraphKind
+{
+    DynEq,    // dynamic EQ bands, four params each (freq, gain, q, filter OFF/BP/LP6/LP12/HP6/HP12):
+              // the range each band can move through and where it is now (cut or boost)
+    Response, // the model's frequency response as set (models::modelResponse); no params
+    Taps,     // delay echoes. choice 0: time, feedback (repeats of one tap);
+              // 1: time, repeats, slope dB, pre-delay (a row of taps); 2: time, feedback, factor, pattern ("a:b", L and R)
+    Decay,    // reverb envelope. choice 0: pre-delay, decay (s); 1 (gated): pre-delay, attack, decay; 2 (reverse): pre-delay, rise, decay
+    Lfo,      // modulation: speed (Hz), depth, [phase deg], [wave]; L and R traces
+    Transfer, // static curve. choice 0: threshold dB, ratio, [knee]; 1 (limiter): input gain, output gain, knee
+    DeEss,    // a de-esser's band: frequency, range dB, [mode: full band when it reads FULL]; the live cut from the gain reduction
+    Filter,   // a resonant filter: base frequency, type (LP/HP/BP/NOTCH), slope (12/24), resonance 0..10
+    Levels    // a bar per param (band levels), centred when the range is bipolar
 };
 
 enum class Look
@@ -140,6 +157,7 @@ struct Element
 
     // Display: the parameters it shows; Graph: four per band (freq, gain, q, filter type)
     std::vector<int> params;
+    GraphKind graph = GraphKind::DynEq;
     int page = -1;            // shown only on this page of the panel (-1: always)
 
     // Chained setters
@@ -149,8 +167,8 @@ struct Element
     Element& scaleOf (int n, const char* labelList = "", float sw = 270.0f, bool dotMarks = true)
     {
         ticks = n;
-        labels = juce::StringArray::fromTokens (labelList, "|", "");
-        if (juce::String (labelList).isEmpty())
+        labels = juce::StringArray::fromTokens (juce::String::fromUTF8 (labelList), "|", ""); // UTF-8: the infinity sign of ratio scales
+        if (juce::String::fromUTF8 (labelList).isEmpty())
             labels.clear();
         sweep = sw;
         dots = dotMarks;
@@ -170,6 +188,13 @@ struct Element
     Element& centred (float degrees) { centre = degrees; return *this; }
     Element& banded (juce::uint32 c) { band = juce::Colour (c); return *this; }
     Element& sideways() { vertical = false; return *this; }
+    Element& shows (GraphKind g, std::vector<int> ps, int variant = -1)
+    {
+        graph = g;
+        params = std::move (ps);
+        choice = variant;
+        return *this;
+    }
 };
 
 struct Design
@@ -254,7 +279,7 @@ struct Design
     {
         auto& e = add (Type::Vu, x, y, w, h);
         e.look = look;
-        e.scale = juce::StringArray::fromTokens (labelList, "|", "");
+        e.scale = juce::StringArray::fromTokens (juce::String::fromUTF8 (labelList), "|", "");
         e.marks = std::move (at);
         e.text = cap;
         return e;
@@ -262,7 +287,7 @@ struct Design
     Element& leds (float x, float y, float w, float h, const char* labelList, std::vector<float> thresholds, bool vert, juce::uint32 colour = 0xffff3020)
     {
         auto& e = add (Type::Leds, x, y, w, h);
-        e.scale = juce::StringArray::fromTokens (labelList, "|", "");
+        e.scale = juce::StringArray::fromTokens (juce::String::fromUTF8 (labelList), "|", "");
         e.marks = std::move (thresholds);
         e.vertical = vert;
         e.colour = juce::Colour (colour);
@@ -287,12 +312,17 @@ struct Design
 /** The drawn panel of a model, or nullptr (the generic panel). */
 const Design* findDesign (models::Table, const juce::String& token);
 
+/** The panels drawn without a console screen picture to measure (FaceplateDevices.cpp):
+    the FX devices' units laid out from their parameter lists. Keys "F:" + token. */
+void addDeviceDesigns (std::map<juce::String, Design>&);
+
 /** What the painter needs to know about the bound model. */
 struct PaintContext
 {
     const models::Model* spec = nullptr;
     std::function<float (int)> value;  // a parameter's value
     float reduction = 0.0f;            // gain reduction, dB (>= 0)
+    std::function<float (int)> bandGain; // a dynamic EQ band's live gain, dB, signed (empty: unknown)
     int touched = -1;                  // the parameter last touched (value bubble)
     int page = 0;                      // the panel page shown (tabbed panels)
     bool showValue = false;
