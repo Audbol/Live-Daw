@@ -785,10 +785,20 @@ private:
                 const juce::String names[] = { "resize", "host scale (setScaleFactor)", "transform", "fixed" };
                 const auto before = view.getEditorBounds (i);
                 view.setZoom (i, 67);
-                pumpMessages (1000); // a host scale the editor doesn't follow is dropped by the view's timer
-                view.refresh();
-                const auto after = view.getEditorBounds (i);
-                const auto finalMethod = view.getZoomMethod (i);
+                // A host scale the editor doesn't follow is dropped by the view's timer, which
+                // can take a while on a busy machine: wait until it shrank or turned FIXED.
+                juce::Rectangle<int> after;
+                auto finalMethod = method;
+                for (int waited = 0; waited < 8000; waited += 250)
+                {
+                    pumpMessages (250);
+                    view.refresh();
+                    after = view.getEditorBounds (i);
+                    finalMethod = view.getZoomMethod (i);
+                    if (waited >= 750
+                        && (finalMethod == V::ZoomMethod::fixed || (after.getWidth() < before.getWidth() && after.getHeight() < before.getHeight())))
+                        break;
+                }
                 logMessage (tag + fx.getChainMember (slot, i)->getName() + ": zoom method " + names[(int) method]
                             + (finalMethod != method ? " -> " + names[(int) finalMethod] : juce::String()) + "; editor "
                             + juce::String (before.getWidth()) + " x " + juce::String (before.getHeight()) + " at 100 %, "
