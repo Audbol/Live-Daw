@@ -107,6 +107,25 @@ public:
             }
         }
 
+        beginTest ("A RATIO from a list reads as on the console (\"2.0:1\")");
+        {
+            const auto ratioText = [] (const juce::String& token, int index)
+            {
+                for (auto t : { models::Dynamics, models::Fx })
+                    if (const int m = models::findModel (t, token); m >= 0)
+                    {
+                        const auto& model = models::model (t, m);
+                        return ui::consoleText (model.params[(size_t) model.find ("ratio")], (float) index);
+                    }
+                return juce::String();
+            };
+            expectEquals (ratioText ("COMP", 5), juce::String ("2.0:1"));
+            expectEquals (ratioText ("COMP", 16), juce::String ("100.0:1"));
+            expectEquals (ratioText ("EXP", 5), juce::String ("1:2.0"));
+            expectEquals (ratioText ("9000C", 1), juce::String ("1.43:1"));
+            expectEquals (ratioText ("DEQ", 0), juce::String ("1.2:1"));
+        }
+
         beginTest ("GRAPHIC EQ: the faders (with TRIM) and the curve are on pages of their own");
         {
             const auto* geq = ui::fp::findDesign (models::Fx, "GEQ");

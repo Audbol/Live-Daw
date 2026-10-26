@@ -82,6 +82,8 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- A RATIO picked from a list reads as on the WING: "2.0:1" (an expander's "1:2.0"),
+  "1.43:1" where the list has hundredths; Sidecar showed "2.00" or "2:1".
 - VIEW > FADERS: touching a DCA's name no longer opens its LIGHT/ICON/NAME panel; as on
   the WING, that panel opens from the DCA OVERVIEW title.
 - A channel without a source no longer shows "OFF" on its scribble strip: the tag is left
