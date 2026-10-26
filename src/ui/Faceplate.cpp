@@ -281,12 +281,15 @@ Faceplate::Faceplate()
     startTimerHz (15);
 }
 
-void Faceplate::bind (models::Table t, int model, std::atomic<float>* v, std::function<float()> meter)
+void Faceplate::bind (models::Table t, int model, std::atomic<float>* v, std::function<float()> meter,
+                      std::function<float (int)> bandGain)
 {
     table = t;
     modelIndex = model;
     values = v;
     meterFn = std::move (meter);
+    bandFn = std::move (bandGain);
+    shownBands.fill (0.0f);
     spec = &models::model (t, model);
     design = fp::findDesign (t, spec->token);
     page = 0;
@@ -321,6 +324,7 @@ void Faceplate::unbind()
     design = nullptr;
     values = nullptr;
     meterFn = {};
+    bandFn = {};
     controls.clear();
     repaint();
 }
@@ -366,6 +370,16 @@ void Faceplate::timerCallback()
         shownMeter = m;
         changed = true;
     }
+    if (bandFn)
+        for (size_t b = 0; b < shownBands.size(); ++b)
+        {
+            const float g = bandFn ((int) b);
+            if (std::abs (g - shownBands[b]) > 0.1f)
+            {
+                shownBands[b] = g;
+                changed = true;
+            }
+        }
     // The value bubble of a drawn panel goes away a moment after the last touch.
     const bool bubble = design != nullptr && lastTouched >= 0
                         && (dragging >= 0 || juce::Time::getMillisecondCounter() - touchedAt < 1500);
@@ -854,6 +868,8 @@ void Faceplate::paint (juce::Graphics& g)
         ctx.spec = spec;
         ctx.value = [this] (int i) { return value (i); };
         ctx.reduction = juce::jlimit (0.0f, 40.0f, -shownMeter);
+        if (bandFn)
+            ctx.bandGain = [this] (int b) { return b >= 0 && b < (int) shownBands.size() ? shownBands[(size_t) b] : 0.0f; };
         ctx.touched = lastTouched;
         ctx.showValue = bubbleShown;
         ctx.page = page;

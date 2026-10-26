@@ -40,7 +40,7 @@ enum class Type
 enum class GraphKind
 {
     DynEq,    // dynamic EQ bands, four params each (freq, gain, q, filter OFF/BP/LP6/LP12/HP6/HP12):
-              // the range each band can move through and, for cuts, where the gain reduction has it now
+              // the range each band can move through and where it is now (cut or boost)
     Response, // the model's frequency response as set (models::modelResponse); no params
     Taps,     // delay echoes. choice 0: time, feedback (repeats of one tap);
               // 1: time, repeats, slope dB, pre-delay (a row of taps); 2: time, feedback, factor, pattern ("a:b", L and R)
@@ -322,6 +322,7 @@ struct PaintContext
     const models::Model* spec = nullptr;
     std::function<float (int)> value;  // a parameter's value
     float reduction = 0.0f;            // gain reduction, dB (>= 0)
+    std::function<float (int)> bandGain; // a dynamic EQ band's live gain, dB, signed (empty: unknown)
     int touched = -1;                  // the parameter last touched (value bubble)
     int page = 0;                      // the panel page shown (tabbed panels)
     bool showValue = false;

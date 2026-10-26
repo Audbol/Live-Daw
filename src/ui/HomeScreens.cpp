@@ -2204,8 +2204,10 @@ private:
     void bindModel()
     {
         shownModel = slot.model.load();
-        face->bind (models::Dynamics, shownModel, slot.values,
-                    [this] { return -(isGate ? strip.meters.gateReductionDb.load() : strip.meters.dynReductionDb.load()); });
+        face->bind (
+            models::Dynamics, shownModel, slot.values,
+            [this] { return -(isGate ? strip.meters.gateReductionDb.load() : strip.meters.dynReductionDb.load()); },
+            [this] (int band) { return strip.getDynBandGain (isGate, band); });
         const auto& spec = models::model (models::Dynamics, shownModel);
         const int acc = spec.find ("acc");
         accent->setBinding (acc >= 0 ? bindConsoleParam (slot.values[acc], spec.params[(size_t) acc]) : KnobBinding {});
@@ -2923,7 +2925,9 @@ public:
                 mixBox = &make<KnobBox> (bindLinear ("FX MIX", fx.params (slot).mix, 0.0f, 100.0f, " %", 0, 100.0f));
             if (slot >= 0 && model > ld::kFxExt && ! plugin)
             {
-                face->bind (models::Fx, model, fx.params (slot).values, [&fx, slot] { return fx.getMeter (slot); });
+                face->bind (
+                    models::Fx, model, fx.params (slot).values, [&fx, slot] { return fx.getMeter (slot); },
+                    [&fx, slot] (int band) { return fx.getBandGain (slot, band); });
                 face->onTouched = [this] (int param)
                 {
                     if (param / 6 != knobPage)

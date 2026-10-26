@@ -100,6 +100,8 @@ public:
     bool hasDevice (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 3); }
     /** Gain reduction of the slot's device (dB, <= 0). */
     float getMeter (int slot) const noexcept { return ld::ld_fx_meter (engine, slot); }
+    /** Live gain of a dynamic band of the slot's device (dB, signed). */
+    float getBandGain (int slot, int band) const noexcept { return ld::ld_fx_band_gain (engine, slot, band); }
     bool isFaulted (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 1); }
     bool isDoubleAssigned (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 2); }
     /** Clears the slot's fault and double assignment, and its chain's faulted plugins. */

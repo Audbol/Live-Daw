@@ -16,6 +16,7 @@
 //! rings, and the listened strip computes its LISTEN signal.
 
 use crate::analyser::{listen_mode, rta_tap, Probes, StripProbe};
+use crate::atomic::AtomicF32;
 use crate::fx::FxRack;
 use crate::keytap::{key_tap, StripKeyTaps};
 use crate::monitor::SoloPatch;
@@ -28,7 +29,7 @@ use crate::tapsend::TapShaper;
 use livedaw_dsp::biquad::{Biquad, BiquadCoeffs};
 use livedaw_dsp::delay::{delay_to_ms, DelayLine};
 use livedaw_dsp::util::*;
-use livedaw_dsp::wing::dynamics::{DynStatus, WingDynamics};
+use livedaw_dsp::wing::dynamics::{DynStatus, WingDynamics, DYN_BANDS};
 use livedaw_dsp::wing::eq::WingEq;
 use livedaw_dsp::wing::filter::WingFilter;
 use livedaw_dsp::wing::{EQ_MODELS_BUS, EQ_MODELS_CH, MAX_DYN_PARAMS, MAX_EQ_PARAMS, PROCESS_ORDERS};
@@ -221,6 +222,9 @@ pub struct Strip {
     id: i32,
     pub params: StripParams,
     pub meters: StripMeters,
+    /// The GATE and DYNAMICS slots' dynamic EQ bands: live gain in dB, signed
+    /// (outside `StripMeters`, whose layout is part of the C ABI).
+    pub band_meters: DynBandMeters,
     /// Sends to buses (channels/aux: all buses; buses 9+: buses 1-8).
     pub sends: SendBank,
     /// UI metadata (never touched by the audio thread).
@@ -240,6 +244,28 @@ pub struct Strip {
     last_solo: UnsafeCell<f32>,
 }
 
+/// Live gains of a strip's dynamic EQ bands (DEQ, DEQ2), written by the audio thread.
+#[derive(Debug, Default)]
+pub struct DynBandMeters {
+    pub gate: [AtomicF32; DYN_BANDS],
+    pub dynamics: [AtomicF32; DYN_BANDS],
+}
+
+impl DynBandMeters {
+    /// Band `band` of the GATE (`gate`) or DYNAMICS slot, dB (0 when out of range).
+    pub fn get(&self, gate: bool, band: usize) -> f32 {
+        let slot = if gate { &self.gate } else { &self.dynamics };
+        slot.get(band).map_or(0.0, AtomicF32::load)
+    }
+
+    fn store(&self, gate: bool, gains: [f32; DYN_BANDS]) {
+        let slot = if gate { &self.gate } else { &self.dynamics };
+        for (a, g) in slot.iter().zip(gains) {
+            a.store(g);
+        }
+    }
+}
+
 // SAFETY: see the thread rules above; everything shared is atomic.
 unsafe impl Sync for Strip {}
 unsafe impl Send for Strip {}
@@ -252,6 +278,7 @@ impl Strip {
             // Buses are numbered by their slot (`id`), whose factory settings differ.
             params: StripParams::new_in_slot(kind, usize::try_from(id).unwrap_or(0)),
             meters: StripMeters::default(),
+            band_meters: DynBandMeters::default(),
             sends: SendBank::for_kind(kind),
             name: Mutex::new(String::new()),
             tags: Mutex::new(String::new()),
@@ -602,6 +629,8 @@ impl Strip {
                 }
                 self.meters.gate_reduction_db.store(0.0);
                 self.meters.dyn_reduction_db.store(0.0);
+                self.band_meters.store(true, [0.0; DYN_BANDS]);
+                self.band_meters.store(false, [0.0; DYN_BANDS]);
                 self.meters.gate_active.store(false, Relaxed);
                 self.meters.dyn_active.store(false, Relaxed);
                 d.idle = true;
@@ -934,6 +963,7 @@ impl Strip {
         let running = if gate { d.gate.is_running(on) } else { d.dynamics.is_running(on) };
         if !running {
             reduction.store(0.0);
+            self.band_meters.store(gate, [0.0; DYN_BANDS]);
             active.store(false, Relaxed);
             key_db.store(-120.0);
             return;
@@ -961,6 +991,7 @@ impl Strip {
             on,
         );
         reduction.store(if on { status.gain_reduction_db } else { 0.0 });
+        self.band_meters.store(gate, if on { status.band_gain_db } else { [0.0; DYN_BANDS] });
         active.store(on && status.active, Relaxed);
         key_db.store(status.key_db);
         out_peak.fetch_max(status.out_peak);

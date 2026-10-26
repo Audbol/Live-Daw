@@ -808,6 +808,9 @@ extern "C"
     bool ld_fx_set_model (const Engine*, int32_t slot, int32_t model, bool defaults);
     /** Gain reduction of a slot's device in dB (<= 0). */
     float ld_fx_meter (const Engine*, int32_t slot);
+    /** Live gain of a dynamic band of a slot's device (TRIPLE DEQ bands 0-2),
+        dB, signed (cut < 0, boost > 0); 0 for other devices. */
+    float ld_fx_band_gain (const Engine*, int32_t slot, int32_t band);
     void ld_fx_clear_flags (const Engine*, int32_t slot);
     float ld_fx_load (const Engine*, int32_t slot);
     int32_t ld_fx_num_users (const Engine*, int32_t slot);
@@ -835,6 +838,9 @@ extern "C"
     int32_t ld_strip_id (const Strip*);
     StripParams* ld_strip_params (const Strip*);
     StripMeters* ld_strip_meters (const Strip*);
+    /** Live gain of band 0-1 of the GATE (gate) or DYNAMICS slot's dynamic EQ
+        (DEQ, DEQ2), dB, signed (cut < 0, boost > 0); 0 for other models. */
+    float ld_strip_dyn_band_gain (const Strip*, bool gate, int32_t band);
     int32_t ld_strip_num_channels (const Strip*);
     bool ld_strip_is_idle (const Strip*);
     SendParams* ld_strip_send (const Strip*, int32_t slot);

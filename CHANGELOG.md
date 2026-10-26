@@ -177,6 +177,37 @@ All notable changes to Sidecar are listed here. Versions follow
   on it that moves. With `SIDECAR_FACEPLATE_SNAPSHOT_DIR` set, it also saves every
   page as a picture. LiveDAWTests now takes one test's name as its argument
   (`LiveDAWTests Faceplates`).
+- The BDX 902 DE-ESSER and the dynamic EQs, measured with tones, sibilance bursts
+  over a low tone and level steps:
+  - BDX 902, HF mode: the cut was a high pass subtracted out of phase. It boosted
+    up to +0.6 dB just under FREQ and cut only about a third of RANGE above it. A
+    6 dB reduction took 0.4 dB off a 4-8 kHz "s". It is now a 12 dB/oct high shelf
+    that never boosts: at RANGE 12 it takes 5.2 dB off that "s" and leaves the tone
+    under it untouched.
+  - BDX 902: RANGE was only a ceiling. RANGE 6 and RANGE 12 both took 3.4 dB off the
+    same sibilance. Now it sets the depth: 3.6 dB at 6, 7.2 dB at 12. The detector
+    compares the power above FREQ with the whole signal's. It still has no
+    threshold, so a vocal 30 dB quieter is de-essed the same.
+  - BDX 902: in silence the meter read the full RANGE, because no signal counted
+    as "all sibilance". It now reads 0. The first samples of a note are no longer
+    cut by the full RANGE. The reduction no longer changes with the sample rate:
+    at 8 kHz it read -11.3, -12.0 and -11.1 dB at 44.1, 48 and 96 kHz.
+  - Dynamic EQ (DYNAMIC EQ, DUAL, the TRIPLE DEQ FX and the SPEAKER MANAGER's band):
+    the LP12 and HP12 shelves rose +0.9 dB past FREQ when cutting and dipped -2.5 dB
+    on the other side when boosting. They are now true second-order shelves that
+    move monotonically from 0 dB to the gain.
+  - The panels draw what the DSP does: the dynamic EQ bands' bells and shelves are
+    the DSP's own curves (the bell was drawn about twice as wide), and the 902
+    graph shows its detector's high pass and its HF shelf.
+  - The DYNAMIC EQ, DUAL and TRIPLE DEQ graphs show each band's live movement,
+    up as well as down. Before, a boosting band never moved, and DUAL / TRIPLE
+    drew every cutting band at the slot's largest reduction. The DSP reports each
+    band's signed gain. New C ABI functions: `ld_strip_dyn_band_gain` (GATE /
+    DYNAMICS slot, bands 0-1) and `ld_fx_band_gain` (FX slot, bands 0-2). No
+    struct layout changes, so the ABI version stays 15.
+  - The WING comparison kit's DYNAMIC EQ test had GAIN 0, so it tested nothing. It
+    now has GAIN -12. New tests: the 902 in FULL mode, DUAL DYNAMIC EQ shelves, and
+    a FILTER OFF dynamic EQ for clean ATTACK / RELEASE timing.
 
 ### Fixed
 

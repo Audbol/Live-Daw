@@ -21,7 +21,7 @@ use crate::garbage::Garbage;
 use crate::params::{FxParams, FX_EXT};
 use crate::pdc::{CompRing, MAX_PDC};
 use livedaw_dsp::util::all_finite;
-use livedaw_dsp::wing::fx::{FxContext, FxDevice};
+use livedaw_dsp::wing::fx::{FxContext, FxDevice, FX_BANDS};
 use livedaw_dsp::wing::MAX_FX_PARAMS;
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
@@ -72,6 +72,8 @@ pub struct FxRack {
     device: AtomicPtr<FxDevice>,
     /// The device's meter (gain reduction, dB), for the screen.
     meter: AtomicF32,
+    /// The device's dynamic bands' live gains (dB, signed), for the screen.
+    band_gains: [AtomicF32; FX_BANDS],
     faulted: AtomicBool,
     load: AtomicF32,
     /// Set while a strip is running the processor.
@@ -98,6 +100,7 @@ impl Default for FxRack {
             slot: AtomicPtr::new(std::ptr::null_mut()),
             device: AtomicPtr::new(std::ptr::null_mut()),
             meter: AtomicF32::new(0.0),
+            band_gains: std::array::from_fn(|_| AtomicF32::new(0.0)),
             faulted: AtomicBool::new(false),
             load: AtomicF32::new(0.0),
             busy: AtomicBool::new(false),
@@ -180,6 +183,7 @@ impl FxRack {
         let old = self.device.swap(new, AcqRel);
         self.faulted.store(false, Relaxed);
         self.meter.store(0.0);
+        self.band_gains.iter().for_each(|g| g.store(0.0));
         if !old.is_null() {
             // SAFETY: created by Box::into_raw above; now unreachable for new blocks.
             garbage.retire(RetiredDevice(unsafe { Box::from_raw(old) }));
@@ -196,6 +200,11 @@ impl FxRack {
     /// The device's meter: gain reduction in dB (<= 0).
     pub fn meter(&self) -> f32 {
         self.meter.load()
+    }
+
+    /// A dynamic band's live gain in dB, signed (TRIPLE DEQ; 0 otherwise).
+    pub fn band_gain(&self, band: usize) -> f32 {
+        self.band_gains.get(band).map_or(0.0, AtomicF32::load)
     }
 
     /// Message thread only: the host context of the processor (null if empty).
@@ -302,6 +311,9 @@ impl FxRack {
                 }
             }
             self.meter.store(dev.meter());
+            for (i, g) in self.band_gains.iter().enumerate() {
+                g.store(dev.band_gain(i));
+            }
             channels.iter().all(|c| all_finite(c))
         };
 

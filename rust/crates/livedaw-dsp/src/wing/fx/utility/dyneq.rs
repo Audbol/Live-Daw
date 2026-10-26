@@ -13,12 +13,15 @@
 //!
 //! The band is applied as `x + (g - 1) * F(x)`, where F is the band filter
 //! (identity for Flat), so the filter is never redesigned per sample and 0 dB
-//! is exactly transparent. The detector runs on the same filter output (linked
-//! across both channels).
+//! is exactly transparent. The 12 dB shelves add `(sqrt(g) - 1) * B(x)`, B a
+//! band pass with F's poles, which makes them true second-order shelves
+//! (monotonic, no bump or dip near FREQ; see `dynamics::shelf_12`). The
+//! detector runs on the filter output (linked across both channels).
 //!
 //! Triple DEQ: three such bands in series. The speaker manager uses one too.
 
 use super::{db_gain, level_db, rail, sub_blocks, Glide};
+use crate::wing::dynamics::shelf_12;
 use crate::wing::fx::blocks::{coef, Biquad, BiquadCoeffs};
 use crate::wing::fx::FxAlgo;
 use crate::wing::Params;
@@ -60,6 +63,8 @@ impl DynEqSettings {
 pub(super) struct DynEqBand {
     sr: f32,
     filter: Biquad,
+    /// LP12 / HP12: the band pass that completes the shelf.
+    shape: Biquad,
     kind: usize,
     /// ln(freq), ln(Q).
     glide: Glide<2>,
@@ -80,6 +85,7 @@ impl DynEqBand {
         let mut b = Self {
             sr,
             filter: Biquad::default(),
+            shape: Biquad::default(),
             kind: 1,
             glide: Glide::new(1000f32.ln()),
             thr: 0.0,
@@ -102,6 +108,7 @@ impl DynEqBand {
         if s.filter != self.kind {
             self.kind = s.filter;
             self.filter.reset();
+            self.shape.reset();
         }
         self.glide.tgt = [s.freq.clamp(20.0, 20_000.0).ln(), s.q.max(0.1).ln()];
         self.thr = s.thr;
@@ -130,6 +137,7 @@ impl DynEqBand {
             // Flat: the whole signal is detected and moved.
             _ => BiquadCoeffs::identity(),
         });
+        self.shape.set_coefficients(BiquadCoeffs::band_pass(sr, f, FRAC_1_SQRT_2));
     }
 
     /// Gain (dB) the band heads for at detector level `lvl_db`.
@@ -151,6 +159,7 @@ impl DynEqBand {
     pub fn process(&mut self, left: &mut [f32], right: &mut [f32]) -> f32 {
         let n = left.len().min(right.len());
         let mut lowest = 0.0f32;
+        let shelf12 = self.kind == 3 || self.kind == 5;
         sub_blocks(n, |a, b| {
             if self.glide.step() != 0 {
                 self.redesign();
@@ -164,16 +173,28 @@ impl DynEqBand {
                 let c = if want.abs() > self.gain_db.abs() { self.att } else { self.rel };
                 self.gain_db += (want - self.gain_db) * c;
                 lowest = lowest.min(self.gain_db);
-                let k = db_gain(self.gain_db) - 1.0;
-                *l += k * fl;
-                *r += k * fr;
+                if shelf12 {
+                    let (k, kb) = shelf_12(self.gain_db);
+                    *l += k * fl + kb * self.shape.tick(*l, 0);
+                    *r += k * fr + kb * self.shape.tick(*r, 1);
+                } else {
+                    let k = db_gain(self.gain_db) - 1.0;
+                    *l += k * fl;
+                    *r += k * fr;
+                }
             }
         });
         lowest
     }
 
+    /// The band's current gain (dB, signed).
+    pub fn gain_db(&self) -> f32 {
+        self.gain_db
+    }
+
     pub fn reset(&mut self) {
         self.filter.reset();
+        self.shape.reset();
         self.env = 0.0;
         self.gain_db = 0.0;
         self.snap();
@@ -232,6 +253,10 @@ impl FxAlgo for TripleDeq {
     fn meter(&self) -> f32 {
         self.meter
     }
+
+    fn band_gain(&self, band: usize) -> f32 {
+        self.bands.get(band).map_or(0.0, DynEqBand::gain_db)
+    }
 }
 
 #[cfg(test)]
@@ -264,10 +289,31 @@ mod tests {
     }
 
     #[test]
+    fn twelve_db_shelves_have_no_bump_or_dip() {
+        // Band 2 alone as an LP12 / HP12 shelf at 1 kHz, all the way to +-15 dB.
+        // Before: a cut rose +0.9 dB past FREQ, a boost dipped -2.5 dB.
+        for filt in [3.0, 5.0] {
+            for (gain, mode, amp) in [(-15.0, 1.0, 0.5), (15.0, 0.0, 0.002)] {
+                for f in [50.0, 200.0, 500.0, 1000.0, 1500.0, 2000.0, 3000.0, 4000.0, 8000.0, 16000.0] {
+                    let mut rig = Rig::new("DEQ3");
+                    rig.set("1-g", 0.0).set("3-g", 0.0);
+                    rig.set("2-filt", filt).set("2-f", 1000.0).set("2-g", gain).set("2-mode", mode);
+                    rig.set("2-thr", -20.0).set("2-ratio", 6.0);
+                    let g = rig.sine_gain_db(f, amp) * gain.signum();
+                    assert!(g > -0.05 && g < 15.05, "filter {filt}, {gain} dB: {g} dB at {f} Hz");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn low_mode_lifts_quiet_bands() {
         let mut rig = Rig::new("DEQ3");
         rig.set("2-mode", 0.0).set("2-g", 6.0).set("2-ratio", 6.0).set("2-thr", -10.0);
         let quiet = rig.sine_gain_db(2000.0, 0.01);
         assert!(quiet > 5.0, "{quiet}");
+        // The band reports its live gain, signed (the screen draws it up).
+        assert!((rig.dev.band_gain(1) - quiet).abs() < 0.3, "{}", rig.dev.band_gain(1));
+        assert!(rig.dev.band_gain(1) > 5.0 && rig.dev.band_gain(3) == 0.0);
     }
 }
