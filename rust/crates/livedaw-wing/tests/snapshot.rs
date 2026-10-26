@@ -298,7 +298,7 @@ fn console_level_settings_round_trip_through_a_snapshot() {
     c.speakers.source_mix_db.store(-18.0);
     let sources = e.sources();
     sources.set_name(10, "Bass DI");
-    sources.get(10).unwrap().gain_db.store(12.0);
+    sources.get(10).unwrap().gain_db.store(12.5); // LOCAL IN: 2.5 dB steps
     sources.get(10).unwrap().mute_groups.store(0b100, Relaxed);
     sources.get(10).unwrap().colour.store(4, Relaxed);
     sources.set_mode(20, source_mode::STEREO);
@@ -338,7 +338,7 @@ fn console_level_settings_round_trip_through_a_snapshot() {
     assert_eq!(c2.speakers.source_mix_db.load(), -18.0);
     let s2 = e2.sources();
     assert_eq!(s2.name(10), "Bass DI");
-    assert_eq!(s2.get(10).unwrap().gain_db.load(), 12.0);
+    assert_eq!(s2.get(10).unwrap().gain_db.load(), 12.5);
     assert_eq!(s2.get(10).unwrap().mute_groups.load(Relaxed), 0b100);
     assert_eq!(s2.get(10).unwrap().colour.load(Relaxed), 4);
     assert_eq!(s2.get(21).unwrap().mode.load(Relaxed), source_mode::STEREO);

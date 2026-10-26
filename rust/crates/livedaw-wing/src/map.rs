@@ -16,6 +16,7 @@
 use crate::schema::{schema, Def, ModelSource, NoModels, Node, NodeType};
 use crate::surface::{self, LayerF, Surface, SurfaceEdit, UserF};
 use crate::value::{self, Value, FADER_MAX, FADER_MIN};
+use livedaw_dsp::delay::delay_range;
 use livedaw_dsp::util::MINUS_INF_DB;
 use livedaw_dsp::wing::fx::allowed_in_slot;
 use livedaw_dsp::wing::{model_index, ModelSpec, ParamKind, DYN_MODELS, EQ_MODELS_BUS, EQ_MODELS_CH, FILTER_TOOLS, FX_MODELS};
@@ -2644,7 +2645,10 @@ impl<'a> Console<'a> {
         }
         let cv = match (node, self.binding(node)) {
             // The delay's range depends on its unit (meters, feet, ms, samples).
-            (_, Binding::Strip(_, _, SF::Dly)) => Value::Float(v.as_f32().ok_or(SetError::BadValue)?.clamp(0.0, 1000.0)),
+            // (Set below, in the strip's unit's range.)
+            (_, Binding::Strip(_, _, SF::Dly)) => {
+                Value::Float(v.as_f32().filter(|x| x.is_finite()).ok_or(SetError::BadValue)?.max(0.0))
+            }
             _ => value::quantise(def, &value::coerce(def, v).ok_or(SetError::BadValue)?),
         };
         let applied = match node {
@@ -2910,7 +2914,8 @@ impl<'a> Console<'a> {
                 let table = e.sources();
                 let p = table.get(index).ok_or(SetError::NotFound)?;
                 match sf {
-                    SrcF::Gain => set_f(&p.gain_db, v),
+                    // In the group's range and steps (LOCAL IN shares A's ports).
+                    SrcF::Gain => table.set_gain(index, v.as_f32().unwrap_or(0.0)),
                     SrcF::Phantom => set_b(&p.phantom, v),
                     SrcF::Mute => set_b(&p.mute, v),
                     SrcF::Pol => set_b(&p.invert, v),
@@ -3182,7 +3187,15 @@ impl<'a> Console<'a> {
             SF::Inv => set_b(&p.input.invert, v),
             SF::DlyOn => set_b(&p.input.delay_on, v),
             SF::DlyMode => set_item(&p.input.delay_mode, def, v),
-            SF::Dly => set_f(&p.input.delay, v),
+            SF::Dly => {
+                // 0.1 .. 150 m in the unit set (SAMPLES from 16), as the WING.
+                let rate = self.engine.sample_rate();
+                let rate = if rate > 0.0 { rate } else { 48000.0 };
+                let (lo, hi) = delay_range(p.input.delay_mode.load(Relaxed).clamp(0, 3) as usize, rate);
+                if let Some(x) = v.as_f32() {
+                    p.input.delay.store(x.clamp(lo, hi));
+                }
+            }
             SF::AltSel => set_b(&p.alt_selected, v),
             SF::Conn { alt, number } => {
                 let (left, right) = if alt { (&p.alt_input_left, &p.alt_input_right) } else { (&p.input_left, &p.input_right) };
@@ -3360,9 +3373,11 @@ impl<'a> Console<'a> {
                 }
             }
             SF::SrcGain | SF::SrcPhantom => {
-                let Some(p) = self.strip_source(kind, n, s).and_then(|i| self.engine.sources().get(i)) else { return Ok(false) };
+                let Some(i) = self.strip_source(kind, n, s) else { return Ok(false) };
+                let Some(p) = self.engine.sources().get(i) else { return Ok(false) };
                 if field == SF::SrcGain {
-                    set_f(&p.gain_db, v)
+                    // The patched source's range and steps.
+                    self.engine.sources().set_gain(i, v.as_f32().unwrap_or(0.0))
                 } else {
                     set_b(&p.phantom, v)
                 }
@@ -3899,6 +3914,20 @@ mod tests {
         c.set(node(&c, "/io/in/A/5/tags"), &Value::str("#M2,#D3,drums")).unwrap();
         c.set(node(&c, "/io/in/B/1/mute"), &Value::Int(1)).unwrap();
         c.set(node(&c, "/io/in/CRD/3/name"), &Value::str("Play 3")).unwrap();
+        // GAIN in the group's range and steps: LOCAL IN (= A 1-48 here) -2.5 ..
+        // +45 dB in 2.5 dB steps, AES50 B -3 .. +45.5 dB in 0.5 dB steps.
+        for (path, set, want) in [
+            ("/io/in/LCL/2/g", 7.0, 7.5),
+            ("/io/in/LCL/2/g", 60.0, 45.0),
+            ("/io/in/LCL/2/g", -12.0, -2.5),
+            ("/io/in/A/2/g", 6.5, 7.5),
+            ("/io/in/B/3/g", 6.5, 6.5),
+            ("/io/in/B/3/g", 60.0, 45.5),
+            ("/io/in/B/3/g", -12.0, -3.0),
+        ] {
+            c.set(node(&c, path), &Value::Float(set)).unwrap();
+            assert_eq!(c.get(node(&c, path)), Some(Value::Float(want)), "{path} {set}");
+        }
         let p = table.get(4).unwrap();
         assert_eq!(table.name(4), "Snare");
         assert_eq!((p.colour.load(Relaxed), p.icon.load(Relaxed)), (9, 14));
@@ -4052,7 +4081,8 @@ mod tests {
         c.set(node(&c, "/ch/3/in/set/$g"), &Value::Float(24.0)).unwrap();
         c.set(node(&c, "/ch/3/in/set/$vph"), &Value::Int(1)).unwrap();
         let src = e.sources().get(3).unwrap();
-        assert_eq!(src.gain_db.load(), 24.0);
+        // A 4 is LOCAL IN 4 here: the local preamps' 2.5 dB steps.
+        assert_eq!(src.gain_db.load(), 25.0);
         assert!(src.phantom.load(Relaxed));
         src.gain_db.store(10.5);
         assert_eq!(c.get(node(&c, "/ch/3/in/set/$g")), Some(Value::Float(10.5)));
@@ -4065,6 +4095,11 @@ mod tests {
         c.set(node(&c, "/ch/3/in/set/$g"), &Value::Float(30.0)).unwrap();
         assert_eq!(e.sources().get(49).unwrap().gain_db.load(), 30.0);
         assert_eq!(src.gain_db.load(), 10.5);
+        // Each group's range and steps: AES50 B -3 .. +45.5 in 0.5 dB steps.
+        c.set(node(&c, "/ch/3/in/set/$g"), &Value::Float(50.0)).unwrap();
+        assert_eq!(e.sources().get(49).unwrap().gain_db.load(), 45.5);
+        c.set(node(&c, "/ch/3/in/set/$g"), &Value::Float(-10.0)).unwrap();
+        assert_eq!(e.sources().get(49).unwrap().gain_db.load(), -3.0);
         // A source that isn't one of Sidecar's (a bus) keeps the value in the shadow store.
         c.set(node(&c, "/ch/9/in/conn/grp"), &Value::str("BUS")).unwrap();
         c.set(node(&c, "/ch/9/in/set/$g"), &Value::Float(6.0)).unwrap();

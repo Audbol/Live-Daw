@@ -81,6 +81,45 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- Source GAIN now has the WING's range and steps for the source's group, everywhere
+  it is set (HOME and INPUT knob and fader, ROUTING > SOURCES fader, knob and wheel,
+  the parameter bar, WING REMOTE `/io/in/<grp>/<n>/g` and `/ch/<n>/in/set/$g`, WING
+  snapshots, shows and scenes). It was -12 to +60 dB in 0.5 dB steps for every source.
+  - LOCAL IN (the full-size WING's own preamps; the same ports as AES50 A here):
+    -2.5 to +45 dB in 2.5 dB steps (20 values, `lin [-2.5 .. 45.0 dB], 20 steps`).
+  - AES50 B / C (and interface ports past 48): -3 to +45.5 dB in 0.5 dB steps (98
+    values, `lin [-3.0 .. 45.5 dB], 98 steps`).
+  - WLIVE PLAY, the USB player and the oscillators have no GAIN on the WING, so they
+    have none here either: they stay at 0 dB, and the GAIN control reads "-".
+  - Gains outside the range, or off its steps, move to the nearest value, also in
+    shows and scenes saved before. Sidecar's gain is still digital (it can't reach the
+    interface's preamps). The gain thumb, knob and fader follow the range, so 0 dB sits
+    near the bottom for LOCAL IN, as in the console's screenshots. C ABI:
+    `ld_source_gain_range`.
+- Channel, aux, bus, main and matrix delays convert between meters, feet, ms and
+  samples as the WING does: 0.3 m per ms (the WING's DIST range, 0.1 to 150 m, is 1/3
+  to 500 ms; Sidecar used 343 m/s), never shorter than 16 samples. 0.1 m now reads
+  0.3 ft, 0.3 ms and 16 samples at 48 kHz, and delays by 16 samples (it read and
+  delayed 14). SAMPLES starts at 16 at every rate (0.1 m is 32 samples at 96 kHz).
+  WING REMOTE takes `in/set/dly` and `dly/dly` in the unit's range: up to 24,000
+  samples at 48 kHz, where it stopped at 1,000. Saved delays keep their values; their
+  time is now the WING's.
+- ROUTING's lock starts locked (the closed lock lit red), as on the console: on a new
+  console and again after INITIALIZE CONSOLE. It started unlocked.
+- ROUTING > CHANNELS: the keys that change the patch, NONE and the new M / ST / M/S
+  (the pairing of the channel's source, as in SELECT MAIN INPUT), show only while
+  ROUTING is unlocked; locked hides them, as on the WING. They replace Sidecar's own ST
+  key, which made the channel stereo without pairing its source. OUTPUTS' NONE too.
+- Local inputs are named LCL 1, LCL 2 ... as on the WING (AES50 B / C ports B 1 ...,
+  C 1 ...), where they read IN 1 ...: on HOME's source tile, SELECT MAIN INPUT, the ALT
+  source list and the scribble strips' source tag (LCL7/8), as ROUTING and the mute
+  groups' SOURCE tab already did. Names given to sources are kept.
+- The channel TAP points are checked against the WING: they are the nodes of the
+  channel's chain in its process order (IN, FILTER, then TAP 3 / 4 / 5 after the first,
+  second and third of GATE, EQ, COMP and INS 1, PRE FDR after the fourth, POST FDR,
+  POST PROC after INS 2), so the factory TAP 5 with GEDI sits between COMP and INS 1,
+  where the WING's HOME screen draws it. The engine already took the sends, keys and
+  delay compensation from there; a new test holds it to that for every order.
 - A third pass of matching the screens to a WING (firmware 3.1), side by side with
   the console's screenshots at 1280 x 800:
   - SETUP: the settings boxes are padded as on the console (4 px, none next to a

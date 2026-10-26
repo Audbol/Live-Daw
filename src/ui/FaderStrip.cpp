@@ -331,7 +331,7 @@ juce::String scribbleSourceTag (const Strip& s, bool showSource)
         return l;
     const int right = s.getActiveInputRight() >= 0 ? s.getActiveInputRight() : left + 1;
     const auto r = inputPortName (right).removeCharacters (" ");
-    // "IN7/8" when both ports are in the same group, else both names.
+    // "LCL7/8" when both ports are in the same group, else both names.
     const auto groupL = l.trimCharactersAtEnd ("0123456789"), groupR = r.trimCharactersAtEnd ("0123456789");
     return groupL == groupR ? l + "/" + r.substring (groupR.length()) : l + "/" + r;
 }

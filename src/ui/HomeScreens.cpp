@@ -237,9 +237,12 @@ namespace
 
 //==============================================================================
 // Delay units: the engine stores the delay in the unit selected (M, FT, MS, SMP).
-constexpr float kSpeedOfSound = 343.0f;
-// The WING's range (`/ch/n/in/set/dly`: DIST 0.1 .. 150 m) in any unit.
-constexpr float kMinDelayM = 0.1f, kMaxDelayM = 150.0f;
+// The WING turns distance into time at 0.3 m per ms (livedaw_dsp::delay):
+// 0.1 m reads 0.3 ft, 0.3 ms and 16 samples at 48 kHz.
+constexpr float kSpeedOfSound = 300.0f;
+// The WING's range (`/ch/n/in/set/dly`: DIST 0.1 .. 150 m) in any unit; SAMPLES
+// starts at 16 at every rate.
+constexpr float kMinDelayM = 0.1f, kMaxDelayM = 150.0f, kMinDelaySamples = 16.0f;
 
 float sampleRateOf (UiContext& ctx)
 {
@@ -265,7 +268,7 @@ float msToDelay (float ms, int mode, float sr)
         case 0:  return ms * kSpeedOfSound / 1000.0f;
         case 1:  return ms * kSpeedOfSound / 1000.0f / 0.3048f;
         case 2:  return ms;
-        default: return ms * sr / 1000.0f;
+        default: return juce::jmax (kMinDelaySamples, std::round (ms * sr / 1000.0f));
     }
 }
 
@@ -290,7 +293,11 @@ KnobBinding delayBinding (UiContext& ctx, InputParams& in)
     b.label = mode <= 1 ? "DIST" : (mode == 2 ? "TIME" : "SAMPLES");
     auto range = [&ctx, &in] { return delayRange (juce::jlimit (0, 3, (int) in.delayMode.load()), sampleRateOf (ctx)); };
     b.get = [&in, range] { return juce::jlimit (0.0f, 1.0f, range().convertTo0to1 (in.delay.load())); };
-    b.set = [&in, range] (float p) { in.delay = range().convertFrom0to1 (juce::jlimit (0.0f, 1.0f, p)); };
+    b.set = [&in, range] (float p)
+    {
+        const float v = range().convertFrom0to1 (juce::jlimit (0.0f, 1.0f, p));
+        in.delay = in.delayMode.load() == 3 ? std::round (v) : v; // whole samples
+    };
     b.text = [&in] { return delayText (in.delay.load(), juce::jlimit (0, 3, (int) in.delayMode.load())); };
     b.reset = [&in, range] { in.delay = range().start; };
     b.steps = 1500.0f;
@@ -603,27 +610,6 @@ private:
     std::tuple<float, float, bool> shown { 1.0e9f, 0.0f, false };
 };
 
-/** "IN 3", "PLAY 5" or "NONE" for a channel input index (stereo: "IN 3/4"). */
-juce::String inputSourceText (int left, int right, bool stereo)
-{
-    if (left < 0)
-        return "NONE";
-    const bool playback = Recorder::isPlaybackSource (left);
-    const bool usbPlayer = UsbRecorder::isPlayerSource (left);
-    const bool osc = MixerEngine::isOscSource (left);
-    auto number = [playback, usbPlayer, osc] (int source)
-    {
-        return juce::String ((osc         ? MixerEngine::oscChannelOf (source)
-                              : usbPlayer ? UsbRecorder::playerChannelOf (source)
-                              : playback  ? Recorder::playbackChannelOf (source)
-                                          : source) + 1);
-    };
-    const auto prefix = juce::String (osc ? "OSC " : usbPlayer ? "PLAYER " : playback ? "PLAY " : "IN ");
-    if (stereo)
-        return prefix + number (left) + "/" + number (right >= 0 ? right : left + 1);
-    return prefix + number (left);
-}
-
 /** The ALT input list: NONE, the hardware inputs and the recorder's playback channels. */
 void showAltSourceMenu (UiContext& ctx, int current, juce::Component* target, std::function<void (int)> chosen)
 {
@@ -635,7 +621,7 @@ void showAltSourceMenu (UiContext& ctx, int current, juce::Component* target, st
     const int numInputs = names.isEmpty() ? 64 : names.size();
     for (int i = 0; i < numInputs; ++i)
     {
-        items.add ("IN " + juce::String (i + 1) + (i < names.size() && names[i].isNotEmpty() ? "  " + names[i].toUpperCase() : juce::String()));
+        items.add (inputPortName (i) + (i < names.size() && names[i].isNotEmpty() ? "  " + names[i].toUpperCase() : juce::String()));
         sources.push_back (i);
     }
     for (int ch = 0; ch < Recorder::kNumPlaybackChannels; ++ch)
@@ -677,33 +663,48 @@ ld::SourceParams* inputSourceParams (MixerEngine& engine, int port)
         return engine.getSource (index & ~1);
     return src;
 }
+
+/** The GAIN range of input `port`'s source group (none without a source). */
+MixerEngine::GainRange inputGainRange (int port)
+{
+    return port >= 0 ? MixerEngine::sourceGainRange (MixerEngine::sourceIndex (port)) : MixerEngine::GainRange();
+}
 } // namespace
 
 KnobBinding inputDelayBinding (UiContext& ctx, InputParams& in) { return delayBinding (ctx, in); }
 
 KnobBinding sourceGainBinding (UiContext& ctx, Strip& strip)
 {
-    constexpr float kMin = -12.0f, kMax = 60.0f;
+    // The source group's range and steps, as the WING's (LOCAL IN -2.5 .. +45 dB
+    // in 2.5 dB steps, AES50 -3 .. +45.5 dB in 0.5 dB steps); a source the
+    // WING gives no gain reads "-".
     auto& engine = ctx.engine;
     KnobBinding b;
     b.label = "GAIN";
     b.get = [&engine, &strip]
     {
         const auto* src = inputSourceParams (engine, strip.getInputLeft());
-        return src != nullptr ? juce::jlimit (0.0f, 1.0f, (src->gainDb.load() - kMin) / (kMax - kMin)) : 0.0f;
+        return src != nullptr ? inputGainRange (strip.getInputLeft()).toProportion (src->gainDb.load()) : 0.0f;
     };
     b.set = [&engine, &strip] (float p)
     {
-        const float gain = std::round ((kMin + juce::jlimit (0.0f, 1.0f, p) * (kMax - kMin)) * 2.0f) / 2.0f;
+        const auto range = inputGainRange (strip.getInputLeft());
+        if (! range.hasGain())
+            return;
+        const float gain = range.fromProportion (p);
         forInputSource (engine, strip.getInputLeft(), [gain] (ld::SourceParams& s) { s.gainDb = gain; });
     };
     b.text = [&engine, &strip]
     {
         const auto* src = inputSourceParams (engine, strip.getInputLeft());
-        return src != nullptr ? juce::String (src->gainDb.load(), 1) + " dB" : juce::String ("-");
+        const auto range = inputGainRange (strip.getInputLeft());
+        return src != nullptr && range.hasGain() ? juce::String (range.clamp (src->gainDb.load()), 1) + " dB" : juce::String ("-");
     };
     b.reset = [&engine, &strip] { forInputSource (engine, strip.getInputLeft(), [] (ld::SourceParams& s) { s.gainDb = 0.0f; }); };
-    b.steps = (kMax - kMin) * 2.0f;
+    // The steps of the source patched when the binding is made (set() puts
+    // the gain on the current source's steps in any case).
+    const auto range = inputGainRange (strip.getInputLeft());
+    b.steps = range.hasGain() ? (float) range.steps() : 0.0f;
     return b;
 }
 
@@ -857,9 +858,10 @@ public:
         g.setFont (homeFont (TypeScale::caption, (float) phantomCaption.getHeight()));
         g.drawText ("+48V", phantomCaption, juce::Justification::centred);
 
-        // GAIN (-12 .. +60 dB), WING 3.1: a 64 px well in a 2 px black rim,
-        // the 12 px black slot from 10 px under its top, the white value tag
-        // across the well's inside (25 tall).
+        // GAIN (the source group's range: 0 dB sits low, as on the WING),
+        // WING 3.1: a 64 px well in a 2 px black rim, the 12 px black slot
+        // from 10 px under its top, the white value tag across the well's
+        // inside (25 tall).
         auto f = gainSlider.toFloat();
         const float rim = juce::jmax (1.0f, wingPx (2.0f));
         g.setColour (juce::Colours::black);
@@ -868,9 +870,10 @@ public:
         g.fillRect (f.reduced (rim));
         g.setColour (juce::Colours::black);
         g.fillRect (f.withSizeKeepingCentre (wingPx (12.0f), f.getHeight()).withTrimmedTop (wingPx (10.0f)).withTrimmedBottom (rim));
-        const float gain = src != nullptr ? src->gainDb.load() : 0.0f;
+        const auto range = inputGainRange (strip.getInputLeft());
+        const float gain = src != nullptr ? range.clamp (src->gainDb.load()) : 0.0f;
         const float tagH = tagHeight();
-        const float pos = juce::jlimit (0.0f, 1.0f, (gain + 12.0f) / 72.0f);
+        const float pos = range.toProportion (gain);
         const float y = f.getBottom() - tagH * 0.5f - 2.0f - (f.getHeight() - tagH - 4.0f) * pos;
         auto tag = juce::Rectangle<float> (f.getWidth() - 2.0f * rim, tagH).withCentre ({ f.getCentreX(), y });
         g.setColour (juce::Colours::white.withAlpha (alpha));
@@ -936,7 +939,10 @@ private:
         const float tagH = tagHeight();
         const float span = juce::jmax (1.0f, f.getHeight() - tagH - 4.0f);
         const float pos = juce::jlimit (0.0f, 1.0f, (f.getBottom() - tagH * 0.5f - 2.0f - (float) y) / span);
-        const float gain = std::round ((pos * 72.0f - 12.0f) * 2.0f) / 2.0f; // 0.5 dB steps
+        const auto range = inputGainRange (strip.getInputLeft());
+        if (! range.hasGain())
+            return;
+        const float gain = range.fromProportion (pos); // on the group's steps
         forInputSource (ctx.engine, strip.getInputLeft(), [gain] (ld::SourceParams& s) { s.gainDb = gain; });
         repaint();
     }

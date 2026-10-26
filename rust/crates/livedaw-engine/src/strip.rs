@@ -26,7 +26,7 @@ use crate::solo::StripConsole;
 use crate::sources::osc_channel;
 use crate::tapsend::TapShaper;
 use livedaw_dsp::biquad::{Biquad, BiquadCoeffs};
-use livedaw_dsp::delay::{delay_to_ms, DelayLine};
+use livedaw_dsp::delay::{delay_samples, DelayLine};
 use livedaw_dsp::util::*;
 use livedaw_dsp::wing::dynamics::{DynStatus, WingDynamics};
 use livedaw_dsp::wing::eq::WingEq;
@@ -887,8 +887,8 @@ impl Strip {
         if !p.delay_on.load(Relaxed) {
             return;
         }
-        let ms = delay_to_ms(p.delay.load(), p.delay_mode.load(Relaxed).clamp(0, 3) as usize, d.sample_rate);
-        let samples = (ms.max(0.0) * 0.001 * d.sample_rate as f32).round() as usize;
+        // As the WING: 0.3 m per ms, at least 16 samples.
+        let samples = delay_samples(p.delay.load(), p.delay_mode.load(Relaxed).clamp(0, 3) as usize, d.sample_rate);
         let nc = d.num_channels;
         let [w0, w1] = &mut d.work;
         let mut chans: [&mut [f32]; 2] = [&mut w0[..n], &mut w1[..n]];

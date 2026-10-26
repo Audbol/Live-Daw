@@ -12,7 +12,7 @@ namespace livedaw::ui
 
 /** What a scribble strip LCD shows, laid out as the 3.x firmware draws it:
     - a top row under a rule: an input's number and its source on an
-      inverted tag ("5" | "IN5", "IN7/8"), or the kind on the tag and the
+      inverted tag ("5" | "LCL5", "LCL7/8"), or the kind on the tag and the
       number at the right ("BUS" | "1"); under Sends on Fader an outlined tag
       names the send ("> BUS 3") in place of the source (or the number);
     - the centre: the strip's WING icon, or a value in large type with a
@@ -56,7 +56,7 @@ void drawScribbleFrame (juce::Graphics&, juce::Rectangle<float> lcd, bool first,
 /** A strip's name as its scribble strip shows it: empty while it has the
     default name ("CH 3"), which the top row already says. */
 juce::String scribbleName (const Strip&);
-/** The source tag: "IN5", "IN7/8" (the ALT source while active), "OFF"
+/** The source tag: "LCL5", "LCL7/8", "B1" (the ALT source while active), "OFF"
     without a source; with SHOW SOURCE ON SCRIBBLE off "MONO" or "ST". */
 juce::String scribbleSourceTag (const Strip&, bool showSource);
 /** Fills the top row, the name and the icon for a strip. */

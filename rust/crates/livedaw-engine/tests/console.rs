@@ -487,17 +487,19 @@ fn sources_process_the_ports_before_the_channels() {
     rig.run(2);
     assert!(close(rig.out(0), 0.5, 1e-5));
 
-    // Gain and polarity of IN 1, mute of IN 2.
+    // Gain and polarity of IN 1, mute of IN 2 (LOCAL IN: 2.5 dB steps, so
+    // +6.02 dB plays as +5 dB).
     p[0].gain_db.store(6.0206);
     p[1].mute.store(true, Relaxed);
     rig.run(4);
-    assert!(close(rig.out(0), 0.5, 1e-4), "{}", rig.out(0));
+    let plus5 = 0.25 * 10f32.powf(5.0 / 20.0);
+    assert!(close(rig.out(0), plus5, 1e-4), "{}", rig.out(0));
     rig.ch(1).meters.input_peak[0].exchange(0.0);
     rig.run(2);
     assert!(close(rig.ch(1).meters.input_peak[0].exchange(0.0), 0.0, 1e-7));
     p[0].invert.store(true, Relaxed);
     rig.run(4);
-    assert!(close(rig.out(0), -0.5, 1e-4), "{}", rig.out(0));
+    assert!(close(rig.out(0), -plus5, 1e-4), "{}", rig.out(0));
     p[0].invert.store(false, Relaxed);
     p[1].mute.store(false, Relaxed);
     p[0].gain_db.store(0.0);
@@ -506,9 +508,9 @@ fn sources_process_the_ports_before_the_channels() {
 
     // A STEREO pair shares the first source's settings.
     src.set_mode(1, source_mode::STEREO);
-    p[0].gain_db.store(-6.0206);
+    p[0].gain_db.store(-2.5); // LOCAL IN's lowest
     rig.run(4);
-    assert!(close(rig.out(0), 0.25, 1e-4), "{}", rig.out(0));
+    assert!(close(rig.out(0), 0.5 * 10f32.powf(-2.5 / 20.0), 1e-4), "{}", rig.out(0));
     p[0].gain_db.store(0.0);
 
     // MID/SIDE: a stereo channel on IN 3-4 hears M + S and M - S.

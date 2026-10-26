@@ -1,9 +1,12 @@
 #include "TestHelpers.h"
 #include "ui/RoutingGroups.h"
+#include "ui/UiContext.h"
 
 using namespace livedaw;
 using livedaw::test::OfflineRig;
 namespace routing = livedaw::ui::routing;
+using livedaw::ui::inputPortName;
+using livedaw::ui::inputSourceText;
 
 /** ROUTING's port groups: the WING's groups with Sidecar's ports in the ones
     they stand in for, their labels, menus and the default patch. */
@@ -104,6 +107,88 @@ public:
             auto& main = *engine.getStrips (StripKind::Main)[0];
             expectEquals (main.params.outputLeft.load(), routing::outputAt (routing::Group::LocalOut, 0));
             expectEquals (main.params.outputRight.load(), routing::outputAt (routing::Group::LocalOut, 1));
+        }
+
+        beginTest ("The ROUTING lock starts locked, and INITIALIZE locks it again");
+        {
+            MixerEngine engine (0);
+            routing::PatchLock lock (engine);
+            expect (lock.isLocked(), "a fresh console: locked, as the WING");
+            expect (! routing::showsPatchKeys (lock), "locked: no NONE, M, ST, M/S");
+            expect (! lock.update(), "nothing initialized yet");
+            expect (lock.set (false));
+            expect (! lock.isLocked());
+            expect (! lock.update(), "unlocked stays unlocked until the console is initialized");
+            expect (! lock.isLocked());
+            expect (routing::showsPatchKeys (lock), "unlocked: NONE, M, ST, M/S");
+
+            // INITIALIZE CONSOLE (everything: a reset engine) and a partial one.
+            engine.reset();
+            expect (lock.update() && lock.isLocked());
+            lock.set (false);
+            engine.markInitialized();
+            expect (lock.update() && lock.isLocked());
+            expect (! lock.update());
+            expect (! routing::showsPatchKeys (lock));
+        }
+
+        beginTest ("Local inputs are named LCL as on the WING, AES50 B / C by their group");
+        {
+            // The HOME source tile, SELECT MAIN INPUT, the ALT list and the
+            // scribble strips' source tag use inputPortName; ROUTING and the
+            // mute groups' SOURCE tab sourceLabel: both name a port alike.
+            for (int port : { 0, 2, 47, 48, 95, 96, 143 })
+                expectEquals (inputPortName (port), routing::sourceLabel (port));
+            expectEquals (inputPortName (0), juce::String ("LCL 1"));
+            expectEquals (inputPortName (49), juce::String ("B 2"));
+            expectEquals (inputPortName (100), juce::String ("C 5"));
+            expectEquals (inputPortName (2, 2), juce::String ("LCL 03"));
+            expectEquals (inputPortName (144), juce::String ("IN 145"));
+            expectEquals (inputPortName (Recorder::playbackSource (4)), juce::String ("PLAY 5"));
+            expectEquals (inputPortName (MixerEngine::oscSource (0)), juce::String ("OSC 1"));
+            expectEquals (inputSourceText (2, 3, true), juce::String ("LCL 3/4"));
+            expectEquals (inputSourceText (48, -1, false), juce::String ("B 1"));
+            expectEquals (inputSourceText (-1, -1, false), juce::String ("NONE"));
+
+            // A name the user typed stays the source's name.
+            MixerEngine engine (0);
+            engine.setSourceName (MixerEngine::sourceIndex (0), "Kick In");
+            expectEquals (engine.getSourceName (MixerEngine::sourceIndex (0)), juce::String ("Kick In"));
+            expectEquals (inputPortName (0), juce::String ("LCL 1"));
+        }
+
+        beginTest ("Source GAIN takes the WING's range of the source's group");
+        {
+            // LOCAL IN (the full-size WING's own preamps): -2.5 .. +45 dB in 2.5 dB steps.
+            const auto local = MixerEngine::sourceGainRange (MixerEngine::sourceIndex (0));
+            expect (local.hasGain());
+            expectEquals (local.min, -2.5f);
+            expectEquals (local.max, 45.0f);
+            expectEquals (local.step, 2.5f);
+            expectEquals (local.steps(), 20);
+            expectEquals (local.clamp (60.0f), 45.0f);
+            expectEquals (local.clamp (-12.0f), -2.5f);
+            expectEquals (local.clamp (6.0f), 5.0f);
+            // 0 dB sits near the bottom of the fader, as in the WING's screenshots.
+            expectWithinAbsoluteError (local.toProportion (0.0f), 2.5f / 47.5f, 1.0e-5f);
+            expectEquals (local.fromProportion (1.0f), 45.0f);
+            expectEquals (local.fromProportion (0.0f), -2.5f);
+
+            // AES50 B / C (stage boxes): -3 .. +45.5 dB in 0.5 dB steps.
+            const auto aes = MixerEngine::sourceGainRange (MixerEngine::sourceIndex (routing::sourceAt (Group::Aes50B, 0)));
+            expectEquals (aes.min, -3.0f);
+            expectEquals (aes.max, 45.5f);
+            expectEquals (aes.steps(), 98);
+            expectEquals (aes.clamp (6.2f), 6.0f);
+
+            // No gain on the WING: the player, WLIVE PLAY and the oscillators.
+            for (int port : { UsbRecorder::playerSource (0), Recorder::playbackSource (0), MixerEngine::oscSource (0) })
+            {
+                const auto none = MixerEngine::sourceGainRange (MixerEngine::sourceIndex (port));
+                expect (! none.hasGain());
+                expectEquals (none.clamp (12.0f), 0.0f);
+            }
+            expect (! MixerEngine::sourceGainRange (-1).hasGain());
         }
     }
 };
