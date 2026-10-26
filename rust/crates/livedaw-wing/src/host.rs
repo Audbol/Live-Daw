@@ -119,6 +119,15 @@ pub const HOST_SETTINGS: &[HostSetting] = &[
     s("/$ctl/daw/ccup", "daw.ccup", "0", Enc::Bool),
     s("/$ctl/daw/disjog", "daw.disjog", "1", Enc::Bool),
     s("/$ctl/daw/preset", "daw.preset", "0", Enc::Index),
+    // SETUP rows of features Sidecar doesn't have (custom control tap keys that
+    // don't flash, a screen lock, a mouse, SEND PAGE solo, remote locks): kept
+    // as settings (`setup.inert.*`), shown and switched as on the console.
+    s("/$ctl/$globals/tapflash", "setup.inert.tapTempoFlash", "2", Enc::Index),
+    s("/$ctl/$globals/lockmtr", "setup.inert.meterPageWhenLocked", "0", Enc::Bool),
+    s("/$ctl/$globals/mousetchdis", "setup.inert.mouseDisablesTouch", "0", Enc::Bool),
+    s("/$ctl/cfg/sfdr2solo", "setup.inert.sendPageActivatesSolo", "0", Enc::Bool),
+    s("/$ctl/osc/ronly", "setup.inert.lockOsc", "0", Enc::Bool),
+    s("/$syscfg/tcplock", "setup.inert.lockTcp", "0", Enc::Bool),
 ];
 
 /// The setting of a node, by its path.

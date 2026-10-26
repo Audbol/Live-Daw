@@ -822,7 +822,7 @@ dependencies beyond the other Sidecar crates.
   value (`data/wing_factory.tsv`, written from a console dump by
   `examples/wing_factory.rs`) and live in a **shadow store** (`WingState`) so
   clients and snapshots read back what they wrote; they do nothing.
-  `map::coverage()` counts what maps (68,555 of 68,556 leaves; 61,114 engine-backed).
+  `map::coverage()` counts what maps (68,555 of 68,556 leaves; 61,108 engine-backed).
   `tests/data/wing_desc.tsv` holds the same console's descriptions, which a unit
   test compares with every parameter's.
   The console level maps too: TAP WIDTH / TAP EQ (`/ch/N/tapwid`, `peq`), `/cfg/solo`

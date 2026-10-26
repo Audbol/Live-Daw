@@ -26,6 +26,7 @@ namespace
         PluginChain::Saved single;
         if (! single.description.loadFromXml (*xml))
             return false;
+        single.hasView = xml->getStringAttribute (PluginChain::kDefaultViewAttribute) == "default"; // the default view (else from before views)
         if (state.isNotEmpty())
             single.state.fromBase64Encoding (state);
         saved = { std::move (single) };
@@ -90,6 +91,7 @@ bool Show::captureFx (void* ctx, int32_t slot, ld::LdSink* description, ld::LdSi
             plugin = fx.getChainMember (slot, 0);
 
         const auto desc = PluginHost::describe (*plugin).createXml();
+        desc->setAttribute (PluginChain::kDefaultViewAttribute, "default"); // a scene recall resets the view
         appendTo (description, desc->toString (juce::XmlElement::TextFormat().singleLine().withoutHeader()));
 
         juce::MemoryBlock data;
@@ -132,9 +134,13 @@ int32_t Show::restoreFx (void* ctx, int32_t slot, int32_t mode, const char* desc
 
             for (int i = 0; i < n; ++i)
             {
-                restoreState (*fx.getChainMember (slot, i), saved[(size_t) i].state);
-                if (saved[(size_t) i].bypassed != fx.isChainMemberBypassed (slot, i))
-                    fx.setChainMemberBypassed (slot, i, saved[(size_t) i].bypassed);
+                const auto& s = saved[(size_t) i];
+                restoreState (*fx.getChainMember (slot, i), s.state);
+                if (s.bypassed != fx.isChainMemberBypassed (slot, i))
+                    fx.setChainMemberBypassed (slot, i, s.bypassed);
+                // The plugin window's zoom and collapse go with the scene (older ones keep the current view).
+                if (s.hasView && s.view != fx.getChainMemberView (slot, i))
+                    fx.setChainMemberView (slot, i, s.view);
             }
             return 0;
         }

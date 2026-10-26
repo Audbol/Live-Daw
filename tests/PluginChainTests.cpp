@@ -513,6 +513,88 @@ public:
             engine2.getGarbage().collectAllNow();
         }
 
+        beginTest ("Scenes and snippets recall the plugin window's zoom and collapse; older scenes keep the current view");
+        {
+            PluginHost host (nullptr);
+            host.getFormatManager().addFormat (std::make_unique<TestPluginFormat>());
+            MixerEngine engine (0);
+            OfflineRig rig (engine, 1, 2);
+            Show show (engine, host);
+            auto& fx = engine.getFx();
+
+            // FX 5 a plugin on its own (the single-plugin format while its view is the default), FX 6 a chain of two.
+            fx.setPlugin (4, TestPluginFormat::create (TestPluginFormat::Kind::gain));
+            fx.setPlugin (5, TestPluginFormat::create (TestPluginFormat::Kind::gain));
+            fx.addToChain (5, TestPluginFormat::create (TestPluginFormat::Kind::gain));
+            fx.setChainMemberView (5, 0, { 67, false });
+            fx.setChainMemberView (5, 1, { 100, true });
+            show.addScene ("Zoomed");
+            expect (show.toXmlString().contains (PluginChain::kDefaultViewAttribute));
+            fx.setChainMemberView (5, 0, {});
+            fx.setChainMemberView (5, 1, { 50, false });
+            fx.setChainMemberView (4, 0, { 75, true });
+            show.addScene ("Default and 50");
+
+            expectEquals ((int) show.recallScene (0).warnings.size(), 0);
+            expectEquals (fx.getChainMemberView (5, 0).zoom, 67);
+            expect (! fx.getChainMemberView (5, 0).collapsed);
+            expect (fx.getChainMemberView (5, 1).collapsed && fx.getChainMemberView (5, 1).zoom == 100);
+            expect (fx.getChainMemberView (4, 0).isDefault(), "the plugin on its own kept its view");
+            expectEquals ((int) show.recallScene (1).warnings.size(), 0);
+            expect (fx.getChainMemberView (5, 0).isDefault(), "a default view stored in the scene isn't recalled");
+            expectEquals (fx.getChainMemberView (5, 1).zoom, 50);
+            expect (! fx.getChainMemberView (5, 1).collapsed);
+            expect (fx.getChainMemberView (4, 0).collapsed && fx.getChainMemberView (4, 0).zoom == 75);
+
+            // A snippet that recalls the slot's plugin state recalls its view as well.
+            fx.setChainMemberView (5, 0, { 85, false });
+            auto scope = state::Scope::none();
+            scope.sections = state::Inserts;
+            scope.fx = 1u << 5;
+            const int snippet = show.addSnippet (0, "FX 6", scope);
+            expect (snippet >= 0);
+            fx.setChainMemberView (5, 0, { 50, true });
+            expectEquals ((int) show.recallSnippet (0, snippet).warnings.size(), 0);
+            expectEquals (fx.getChainMemberView (5, 0).zoom, 85);
+            expect (! fx.getChainMemberView (5, 0).collapsed);
+
+            // Scenes from before views were stored: the current view stays, except
+            // where the chain stored a view other than the default (as it always did).
+            auto old = show.toXml();
+            std::function<void (juce::XmlElement&)> forget = [&forget] (juce::XmlElement& e)
+            {
+                e.removeAttribute ("views");
+                e.removeAttribute (PluginChain::kDefaultViewAttribute);
+                for (auto* child : e.getChildIterator())
+                    forget (*child);
+            };
+            forget (*old);
+            expect (! old->toString().contains (PluginChain::kDefaultViewAttribute) && ! old->toString().contains ("views="));
+
+            MixerEngine engine2 (0);
+            OfflineRig rig2 (engine2, 1, 2);
+            Show loaded (engine2, host);
+            expect (loaded.loadFromXml (*old).wasOk());
+            auto& fx2 = engine2.getFx();
+            expectEquals (fx2.getNumChainMembers (5), 2);
+            fx2.setChainMemberView (5, 0, { 75, true });
+            fx2.setChainMemberView (4, 0, { 67, false });
+            expectEquals ((int) loaded.recallScene (0).warnings.size(), 0);
+            expectEquals (fx2.getChainMemberView (5, 0).zoom, 67);
+            expectEquals (fx2.getChainMemberView (4, 0).zoom, 67); // the plugin on its own: no view stored
+            expectEquals ((int) loaded.recallScene (1).warnings.size(), 0);
+            expectEquals (fx2.getChainMemberView (5, 1).zoom, 50);
+            fx2.setChainMemberView (5, 0, { 75, true });
+            expectEquals ((int) loaded.recallScene (1).warnings.size(), 0);
+            expect (fx2.getChainMemberView (5, 0).zoom == 75 && fx2.getChainMemberView (5, 0).collapsed); // stored at the default: unknown then
+
+            for (auto* f : { &fx, &fx2 })
+                for (int slot : { 4, 5 })
+                    f->setPlugin (slot, nullptr);
+            engine.getGarbage().collectAllNow();
+            engine2.getGarbage().collectAllNow();
+        }
+
         beginTest ("The plugin window: chain bar, cards, zoom, collapse, faults, ROW and FOCUS");
         {
             using V = ui::PluginChainView;

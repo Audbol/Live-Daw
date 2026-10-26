@@ -29,10 +29,12 @@ std::vector<float> transferCurve (int model, const float* values, int count);
 /** A loaded slot's parameter values as plain floats. */
 std::vector<float> slotValues (const DynSlotParams&);
 
-/** The transfer graph as a thumbnail (HOME, the model list): black, the curve
-    orange while the slot is on (grey when off), the threshold as a white dot
-    on its line. */
+/** The transfer graph as a thumbnail (HOME): black, the curve blue while the
+    slot is on (grey when off), as the GATE and COMP screens draw it, the
+    threshold as a white dot on its line. */
 void paintTransferThumb (juce::Graphics&, juce::Rectangle<float>, int model, const float* values, bool on);
+/** The same with the curve in `curveColour` (the model list's orange). */
+void paintTransferThumb (juce::Graphics&, juce::Rectangle<float>, int model, const float* values, juce::Colour curveColour);
 
 /** A model list tile's picture for a native model: the transfer graph left,
     the ENVELOPE shape right (green), as the 3.1 model list draws them. */

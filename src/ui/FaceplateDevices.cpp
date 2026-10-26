@@ -395,6 +395,85 @@ namespace
         return u.take();
     }
 
+    /** A gated reverb (the 1980s digital reverbs' gated program): the
+        envelope (pre-delay, attack, the gate's decay) beside its graph, the
+        density of the reflections and the EQ. */
+    Design gatedReverb()
+    {
+        Kit k;
+        k.panel = 0xff23262b;
+        k.texture = Texture::Brushed;
+        k.wear = 0.5f;
+        k.ink = 0xffdcdcdc;
+        k.knob = Look::BlackDot;
+        k.valueFace = Look::Segment;
+        k.valueInk = 0xff6ae86a;
+        k.valueBg = 0xff061006;
+        k.lit = 0xff6ae86a;
+        Unit u (models::Fx, "GATED", k);
+        u.print ("GATED REVERB", { 76, 62, 400, 34 }, 26);
+        u.print ("NON-LINEAR", { 320, 66, 300, 28 }, 15, Look::Sans, 0xff9a9a9a);
+        u.section ({ 50, 112, 540, 146 }, "ENVELOPE");
+        u.controls ({ "pdel", "att", "dcy" }, { 56, 120, 528, 134 });
+        u.graph (GraphKind::Decay, { 610, 104, 496, 154 }, { "pdel", "att", "dcy" }, 1);
+        u.section ({ 50, 276, 500, 140 }, "DENSITY");
+        u.controls ({ "dens", "diff", "sprd" }, { 56, 284, 488, 128 });
+        u.section ({ 560, 276, 546, 140 }, "EQ");
+        u.controls ({ "lc", "hsf", "hsg" }, { 566, 284, 534, 128 });
+        return u.take();
+    }
+
+    /** A reverse reverb: the tail swells up (RISE) to a sudden stop; the
+        graph of the swell first, then the space and the EQ. */
+    Design reverseReverb()
+    {
+        Kit k;
+        k.panel = 0xff2b2236;
+        k.texture = Texture::Rough;
+        k.wear = 0.5f;
+        k.ink = 0xffe6def0;
+        k.knob = Look::Knurled;
+        k.cap = 0xff4a3a60;
+        k.valueFace = Look::Dot;
+        k.valueInk = 0xffd8a8ff;
+        k.valueBg = 0xff0c0810;
+        Unit u (models::Fx, "REVERSE", k);
+        u.print ("REVERSE REVERB", { 76, 62, 400, 34 }, 26);
+        u.graph (GraphKind::Decay, { 50, 104, 496, 154 }, { "pdel", "rise", "dcy" }, 2);
+        u.section ({ 566, 112, 540, 146 }, "ENVELOPE");
+        u.controls ({ "pdel", "rise", "dcy" }, { 572, 120, 528, 134 });
+        u.section ({ 50, 276, 380, 140 }, "SPACE");
+        u.controls ({ "diff", "sprd" }, { 56, 284, 368, 128 });
+        u.section ({ 440, 276, 666, 140 }, "EQ");
+        u.controls ({ "lc", "hsf", "hsg" }, { 446, 284, 654, 128 });
+        return u.take();
+    }
+
+    /** A delay into a reverb: the delay with its echoes, then the reverb it
+        feeds and how much of the delay and the input reach it. */
+    Design delayReverb()
+    {
+        Kit k;
+        k.panel = 0xff1f2a2e;
+        k.texture = Texture::Brushed;
+        k.wear = 0.5f;
+        k.ink = 0xffdce6ea;
+        k.knob = Look::BlackDome;
+        k.valueFace = Look::Dot;
+        k.valueInk = 0xff7ad8ff;
+        k.valueBg = 0xff060c10;
+        Unit u (models::Fx, "DEL/REV", k);
+        u.print ("DELAY / REVERB", { 76, 62, 400, 34 }, 26);
+        u.section ({ 50, 112, 600, 146 }, "DELAY");
+        u.controls ({ "time", "feed", "fhc", "dly" }, { 56, 120, 588, 134 });
+        u.graph (GraphKind::Taps, { 670, 104, 436, 154 }, { "time", "feed" });
+        u.section ({ 50, 276, 760, 140 }, "REVERB");
+        u.controls ({ "pdel", "size", "dcy", "damp", "rlc" }, { 56, 284, 748, 128 });
+        u.section ({ 820, 276, 286, 140 }, "SENDS");
+        u.controls ({ "d2r", "i2r" }, { 826, 284, 274, 128 });
+        return u.take();
+    }
+
     Design dimension()
     {
         Kit k;
@@ -597,7 +676,9 @@ namespace
     //==========================================================================
     // Standard devices
 
-    /** A graphic EQ: faders under the response. `o` = index of the first band. */
+    /** A graphic EQ. As on the console, the 31 faders (with TRIM) and the
+        response curve are on pages of their own: FADERS and CURVE, the GEQ
+        TYPE (STD / TRU) beside the curve it shapes. */
     Design graphicEq()
     {
         Kit k;
@@ -608,14 +689,17 @@ namespace
         k.accent = 0xffe8c040;
         Unit u (models::Fx, "GEQ", k);
         u.d.plate = { 20.0f, 46.0f, 1116.0f, 386.0f };
-        u.print ("GRAPHIC EQ", { 44, 52, 300, 30 }, 22);
-        u.graph (GraphKind::Response, { 300, 54, 690, 112 });
-        u.controls ({ "type" }, { 1000, 50, 120, 120 });
+        u.print ("GRAPHIC EQ", { 44, 54, 240, 30 }, 22);
+        u.tabs ({ "FADERS", "CURVE" }, 300, 56, 110, 28, 0xffb8c4d8);
+        // FADERS: the bands and TRIM, the whole height of the panel.
         std::vector<int> bands;
         for (int i = 1; i <= 31; ++i)
             bands.push_back (i);
-        u.faders (bands, { 36, 178, 1030, 240 }, 0xffe8c040, false);
-        u.faders ({ "TRIM" }, { 1070, 178, 56, 240 }, 0xffd8d8d8, true);
+        u.faders (bands, { 36, 104, 1030, 316 }, 0xffe8c040, false, 0);
+        u.faders ({ "TRIM" }, { 1070, 104, 56, 316 }, 0xffd8d8d8, true, 0);
+        // CURVE: the response as set, and the type.
+        u.graph (GraphKind::Response, { 44, 104, 920, 316 }, std::vector<int> {}, -1, 1);
+        u.controls ({ "type" }, { 980, 104, 140, 140 }, 0, 1);
         return u.take();
     }
 
@@ -1183,6 +1267,9 @@ void addDeviceDesigns (std::map<juce::String, Design>& m)
     put ("F:V-REV", vintageReverb());
     put ("F:SHIMMER", shimmerReverb());
     put ("F:SPRING", springReverb());
+    put ("F:GATED", gatedReverb());
+    put ("F:REVERSE", reverseReverb());
+    put ("F:DEL/REV", delayReverb());
     put ("F:DIMCRS", dimension());
     put ("F:FLANGER", stereoFlanger());
     put ("F:TAP-DL", ultratap());

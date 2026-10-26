@@ -74,7 +74,8 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
     scaling support) shows **FIXED** with its zoom keys greyed out: collapse it
     instead. For a sandboxed plugin the zoom applies to Sidecar's panel, not to the
     plugin's own window (SHOW PLUGIN WINDOW). Zoom and collapse are saved per plugin
-    with the show.
+    with the show, and with its state in scenes and snippets: recalling one puts them
+    back (scenes stored before keep the current view).
 
   A plugin without an editor gets generic controls, and a sandboxed plugin shows SHOW
   PLUGIN WINDOW with its generic controls. The EFFECTS tile names the chain
@@ -670,8 +671,8 @@ and open-source projects (see below), and it is **experimental**.
   Companion WING module builds that exists in the 3.1 tree. **WING Edit and WING
   Copilot have not been tried**, so they may not work.
 - **What maps:** every parameter of the WING 3.1 tree but one answers (68,555 of
-  68,556, counting every model's parameters). 61,114 of them (89.1 %) drive the
-  engine, 64 are Sidecar's SETUP settings, and the 7,377 Sidecar has no equivalent
+  68,556, counting every model's parameters). 61,108 of them (89.1 %) drive the
+  engine, 70 are Sidecar's SETUP settings, and the 7,377 Sidecar has no equivalent
   for answer what a factory-initialized WING answers (see below). Driving the engine: channels, aux, buses, mains
   and matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
   dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,
@@ -708,8 +709,9 @@ and open-source projects (see below), and it is **experimental**.
   frame and mode, autoselect, user layer link, DCA spill, solo exclusive and
   follows, the brightness tiles, the time and date format...), MIDI REMOTE CONTROL
   (`/$ctl/midi`) and DAW (`/$ctl/daw`: enable, connection, emulation, upper CC,
-  wheel, preset); rows Sidecar shows fixed answer its value and refuse others (TAP
-  TEMPO FLASH is ON). `/$globals/clkrate` is the audio device's rate. Not mapped:
+  wheel, preset) and the rows of features Sidecar doesn't have (TAP TEMPO FLASH, SHOW
+  METER PAGE WHEN LOCKED, MOUSE DISABLES TOUCH, SEND PAGE ACTIVATES SOLO, the OSC and
+  TCP remote locks), which are only kept. `/$globals/clkrate` is the audio device's rate. Not mapped:
   DAW CONFIGURATION (`/$ctl/daw/config`), whose 3.1 choices (CC, MSTR) can't show
   Sidecar's MCU with extenders. The fader sections' layers (`/$ctl/layer/L`, `C`, `R`) and the custom
   controls (`/$ctl/user`) are the show's, both ways: clients select layer keys

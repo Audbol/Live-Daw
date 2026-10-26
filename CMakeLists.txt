@@ -225,6 +225,7 @@ target_sources(LiveDAW PRIVATE
     src/ui/PluginChainView.cpp
     src/ui/PluginChainWindow.cpp
     src/ui/FaderStrip.cpp
+    src/ui/Scribble.cpp
     src/ui/FaderSection.cpp
     src/ui/ResponseGraph.cpp
     src/ui/DynamicsGraph.cpp
@@ -391,4 +392,9 @@ if(LIVEDAW_BUILD_TESTS)
         src/ui/DynamicsGraph.cpp
         src/ui/WingPopups.cpp
         src/ui/Icons.cpp)
+
+    # The surface's scribble strip LCDs.
+    target_sources(LiveDAWTests PRIVATE
+        tests/SurfaceTests.cpp
+        src/ui/Scribble.cpp)
 endif()
