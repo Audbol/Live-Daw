@@ -638,9 +638,6 @@ pub enum Binding {
     /// model's surface...): answers the WING's factory value
     /// ([`factory_value`]) and keeps what a client sets, as the shadow store.
     Stored,
-    /// What Sidecar does where the WING has a choice it doesn't offer (a
-    /// SETUP row Sidecar shows fixed): this item or number, other values are refused.
-    Fixed(&'static str),
     /// A host setting (index into [`crate::host::HOST_SETTINGS`]).
     Host(u8),
     /// `/$globals/clkrate`: the audio device's rate (set on Sidecar's SETUP > AUDIO).
@@ -1138,20 +1135,6 @@ pub fn bind(parts: &[&str]) -> Binding {
     }
 }
 
-/// What Sidecar shows fixed on SETUP where the WING has a setting.
-fn fixed(parts: &[&str]) -> Option<&'static str> {
-    Some(match parts {
-        // TAP TEMPO FLASH: the custom controls' tap keys always flash.
-        ["$ctl", "$globals", "tapflash"] => "ON",
-        // No screen lock, no mouse-disables-touch, no send page solo, no remote locks.
-        ["$ctl", "$globals", "lockmtr" | "mousetchdis"]
-        | ["$ctl", "cfg", "sfdr2solo"]
-        | ["$ctl", "osc", "ronly"]
-        | ["$syscfg", "tcplock"] => "0",
-        _ => return None,
-    })
-}
-
 /// A Sidecar feature this layer leaves unbound: `/$ctl/daw/config` (DAW
 /// CONFIGURATION), whose firmware 3.1 choices (CC, MSTR) can't show
 /// Sidecar's MCU + extender setups.
@@ -1159,15 +1142,13 @@ fn unbound_feature(parts: &[&str]) -> bool {
     parts == ["$ctl", "daw", "config"]
 }
 
-/// The binding of a static node: what [`bind`] finds, a host setting, a
-/// fixed choice, or the WING's factory value where Sidecar has no equivalent.
+/// The binding of a static node: what [`bind`] finds, a host setting, or the
+/// WING's factory value where Sidecar has no equivalent.
 fn bind_row(parts: &[&str]) -> Binding {
     match bind(parts) {
         Binding::None => {
             if let Some(h) = crate::host::find(&format!("/{}", parts.join("/"))) {
                 Binding::Host(h)
-            } else if let Some(v) = fixed(parts) {
-                Binding::Fixed(v)
             } else if unbound_feature(parts) {
                 Binding::None
             } else {
@@ -1908,7 +1889,6 @@ impl<'a> Console<'a> {
         Some(match bindings()[row as usize] {
             Binding::None | Binding::Stored | Binding::FxSlot(_) => return None,
             Binding::Strip(kind, n, field) => return self.get_strip(row, def, kind, n, field),
-            Binding::Fixed(text) => value::parse_display(def, text)?,
             Binding::Host(h) => return crate::host::get(self.state, h, def),
             Binding::ClockRate => {
                 let rate = e.sample_rate();
@@ -2719,11 +2699,6 @@ impl<'a> Console<'a> {
         match bindings()[row as usize] {
             Binding::None | Binding::Stored | Binding::FxSlot(_) => return Ok(false),
             Binding::Strip(kind, n, field) => return self.set_strip(row, def, kind, n, field, v),
-            Binding::Fixed(text) => {
-                if value::parse_display(def, text).as_ref() != Some(v) {
-                    return Err(SetError::Unsupported(format!("Sidecar's is fixed at {text}")));
-                }
-            }
             Binding::Host(h) => crate::host::set(self.state, h, def, v)?,
             Binding::ClockRate => {
                 if self.get_row(row, def).as_ref() != Some(v) {
@@ -4555,13 +4530,13 @@ mod tests {
         assert_eq!(cov.total, 68556, "{}", cov.report());
         // Everything answers but DAW CONFIGURATION (see `unbound_feature`).
         assert_eq!(cov.mapped, 68555, "{}", cov.report());
-        assert_eq!((cov.settings, cov.stored), (64, 7377), "{}", cov.report());
+        assert_eq!((cov.settings, cov.stored), (70, 7377), "{}", cov.report());
         for (g, (m, t)) in &cov.by_group {
             assert!(m == t || g == "/$ctl/daw", "{g}: {m} of {t}");
         }
         assert_eq!(cov.by_group["/$ctl/daw"], (14, 15));
         // The engine-backed share: everything but the settings and the stored values.
-        assert_eq!(cov.mapped - cov.settings - cov.stored, 61114);
+        assert_eq!(cov.mapped - cov.settings - cov.stored, 61108);
         let b = bindings();
         let row = |p: &str| match schema().resolve(p, &NoModels) {
             Some(Node::Row(r)) => r as usize,
@@ -4694,8 +4669,17 @@ mod tests {
         assert_eq!(get_text(&c, "/cfg/mtr/mainpos"), "AUTO");
         assert_eq!(set("/cfg/mtr/mainpos", Value::str("PRE")), Ok(Value::str("PRE")));
         assert_eq!(st.take_host_setting(), Some(("ui.mainMeterTap", "1".to_owned())));
-        // Fixed SETUP rows: what Sidecar does, nothing else.
+        // The SETUP rows of features Sidecar doesn't have are settings too (kept only).
         assert_eq!(get_text(&c, "/$ctl/$globals/tapflash"), "ON");
+        assert_eq!(set("/$ctl/$globals/tapflash", Value::str("8X")), Ok(Value::str("8X")));
+        assert_eq!(st.take_host_setting(), Some(("setup.inert.tapTempoFlash", "1".to_owned())));
+        assert_eq!(get_text(&c, "/$ctl/$globals/lockmtr"), "0");
+        st.set_host_setting("setup.inert.mouseDisablesTouch", "1");
+        assert_eq!(get_text(&c, "/$ctl/$globals/mousetchdis"), "1");
+        for path in ["/$ctl/$globals/lockmtr", "/$ctl/cfg/sfdr2solo", "/$ctl/osc/ronly", "/$syscfg/tcplock"] {
+            assert!(set(path, Value::Int(1)).is_ok(), "{path}");
+            assert!(st.take_host_setting().is_some_and(|(key, value)| key.starts_with("setup.inert.") && value == "1"), "{path}");
+        }
         // The clock rate is the audio device's.
         assert_eq!(get_text(&c, "/$globals/clkrate"), "48000.0");
         assert!(matches!(set("/$globals/clkrate", Value::Float(44100.0)), Err(SetError::Unsupported(_))));

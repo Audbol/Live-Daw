@@ -59,11 +59,21 @@ namespace
         return c;
     }
 
-    std::unique_ptr<ChoiceKeys> fixedChoice (juce::StringArray labels, int lit, std::vector<juce::Colour> colours = {})
+    /** The settings of features Sidecar doesn't have (a screen lock, a
+        mouse, HA remote control, ...): drawn and switched as on the console,
+        and only kept in the app settings. */
+    juce::String inertKey (const juce::String& name) { return "setup.inert." + name; }
+
+    std::unique_ptr<OnKey> inertOnKey (juce::PropertiesFile& settings, const juce::String& name, bool defaultValue = false)
     {
-        auto k = std::make_unique<ChoiceKeys> (std::move (labels), [lit] { return lit; }, nullptr, std::move (colours));
-        k->setEnabled (false);
-        return k;
+        return OnKey::forSetting (settings, inertKey (name), defaultValue);
+    }
+
+    std::unique_ptr<ChoiceKeys> inertChoice (juce::PropertiesFile& settings, const juce::String& name, juce::StringArray labels, int defaultValue)
+    {
+        const auto key = inertKey (name);
+        return std::make_unique<ChoiceKeys> (std::move (labels), [&settings, key, defaultValue] { return settings.getIntValue (key, defaultValue); },
+                                             [&settings, key] (int i) { settings.setValue (key, i); });
     }
 
     // ALT inputs and ALT-selected tiles [3.1].
@@ -493,8 +503,8 @@ namespace
                                    { "BTNS/LEDS", "btnsLeds", 90, red, true }, { "BACKLIGHT", "backlight", 25, red, true },
                                    { "METERS", "meters", 40, red, true }, { "COLOR LED", "colorLed", 25, purple, true },
                                    { "SCRIBBLE", "scribble", 60, purple, true }, { "SCR CONT", "scrCont", 50, purple, true },
-                                   { "PATCH", "patch", 0, brown, false }, { "GLOW", "glow", 0, brown, false },
-                                   { "LAMP", "lamp", 0, olive, false } };
+                                   { "PATCH", "patch", 0, brown, true }, { "GLOW", "glow", 0, brown, true },
+                                   { "LAMP", "lamp", 0, olive, true } }; // PATCH, GLOW and LAMP: only kept
             for (auto& s : specs)
             {
                 auto* t = lights.add (new LightTile (ctx, s.caption, s.id, s.value, s.tint));
@@ -506,7 +516,7 @@ namespace
             addAndMakeVisible (console);
 
             operation.addRow ("CONFIRM LIBRARY LOAD", OnKey::forSetting (ctx.settings, prefs::confirmLibraryLoad, true), 1.3f);
-            operation.addRow ("SHOW METER PAGE WHEN LOCKED", OnKey::fixed (false), 1.3f, false); // no screen lock
+            operation.addRow ("SHOW METER PAGE WHEN LOCKED", inertOnKey (ctx.settings, "meterPageWhenLocked"), 1.3f); // no screen lock: only kept
             // The status bar's title tile shows the active scene on every screen (MainDisplay reads it).
             operation.addRow ("ALWAYS SHOW ACTIVE SCENE", OnKey::forSetting (ctx.settings, uiprefs::alwaysShowScene, false), 1.3f);
             addAndMakeVisible (operation);
@@ -521,9 +531,15 @@ namespace
                             3.6f);
             options.newBox();
             // [3.1] a 48 px row and a 40 px one (the slider's thumb 24 px tall).
-            options.addRow ("MOUSE DISABLES TOUCH", OnKey::fixed (false), 1.3f, false, false, 48.0f / 52.0f);
-            options.addRow ("MOUSE SPEED", std::make_unique<juce::Slider> (juce::Slider::LinearHorizontal, juce::Slider::NoTextBox), 2.5f, false, false,
-                            40.0f / 52.0f);
+            // No mouse port here: both are only kept.
+            options.addRow ("MOUSE DISABLES TOUCH", inertOnKey (ctx.settings, "mouseDisablesTouch"), 1.3f, true, false, 48.0f / 52.0f);
+            {
+                auto speed = std::make_unique<juce::Slider> (juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
+                speed->setRange (0.0, 100.0, 1.0);
+                speed->setValue (ctx.settings.getDoubleValue (inertKey ("mouseSpeed"), 50.0), juce::dontSendNotification);
+                speed->onValueChange = [this, s = speed.get()] { ctx.settings.setValue (inertKey ("mouseSpeed"), s->getValue()); };
+                options.addRow ("MOUSE SPEED", std::move (speed), 2.5f, true, false, 40.0f / 52.0f);
+            }
             options.newBox();
             // USB HOST SPEED: FS records 2 channels at 16 bit, HS 4 tracks at 24 bit (the USB recorder).
             options.addRow ("USB HOST SPEED",
@@ -700,7 +716,7 @@ namespace
             clock.addRow ({}, std::make_unique<DropdownField> ("CLOCK RATE", [this] { return rateText(); }, [this] (DropdownField& f) { showRates (f); }), 0.0f,
                           true, false, kFieldRows);
             // The sync source is the audio interface's business.
-            clock.addRow ({}, std::make_unique<DropdownField> ("SYNC SOURCE", [] { return juce::String ("INTERNAL"); }), 0.0f, false, false, kFieldRows);
+            clock.addRow ({}, std::make_unique<DropdownField> ("SYNC SOURCE", [] { return juce::String ("INTERNAL"); }), 0.0f, true, false, kFieldRows);
             addAndMakeVisible (clock);
 
             // The global MAIN / ALT switch (used by every channel while GLOBAL
@@ -792,13 +808,13 @@ namespace
                                                                       { "BUS SoF/SPILL ACTIVATES SOLO", uiprefs::sofActivatesSolo } };
             for (auto [name, key] : soloPrefs)
                 solo.addRow (name, OnKey::forSetting (ctx.settings, key, uiprefs::soloOptionDefault (key)), 1.3f);
-            solo.addRow ("SEND PAGE ACTIVATES SOLO", OnKey::fixed (false), 1.3f, false); // not there yet
+            solo.addRow ("SEND PAGE ACTIVATES SOLO", inertOnKey (ctx.settings, "sendPageActivatesSolo"), 1.3f); // only kept
             addAndMakeVisible (solo);
 
             device.addRow ({}, std::make_unique<DropdownField> ("DEVICE", [this] { return deviceName(); },
                                                                 [this] (DropdownField&) { showOverlay ("AUDIO DEVICE", std::make_unique<DeviceBody> (ctx.deviceManager)); }),
                            0.0f, true, false, kFieldRows);
-            device.addRow ({}, std::make_unique<DropdownField> ("IN/OUT", [this] { return channelsText(); }), 0.0f, false, false, kFieldRows);
+            device.addRow ({}, std::make_unique<DropdownField> ("IN/OUT", [this] { return channelsText(); }), 0.0f, true, false, kFieldRows);
             addAndMakeVisible (device);
 
             automix.addRow ("X ENABLE", OnKey::forAtomic (ctx.engine.automixEnable[0]), 1.3f);
@@ -1012,7 +1028,7 @@ namespace
                                                           }),
                             3.7f);
             // The rest change how the fader strips, the channel strip and the status bar behave.
-            general.addRow ("TAP TEMPO FLASH", fixedChoice ({ "OFF", "8X", "ON" }, 2), 3.7f, false); // custom control tap keys
+            general.addRow ("TAP TEMPO FLASH", inertChoice (ctx.settings, "tapTempoFlash", { "OFF", "8X", "ON" }, 2), 3.7f); // only kept
             general.addRow ("SOF BUTTON", choiceSetting (uiprefs::sofButton, { "AUTO", "ON", "FLASH" }, 0), 3.7f);
             general.addRow ("SHOW SOF FRAME", OnKey::forSetting (ctx.settings, uiprefs::showSofFrame, true), 1.3f);
             general.addRow ("SHOW SOURCE ON SCRIBBLE", onSetting (uiprefs::sourceOnScribble, true), 1.3f);
@@ -1615,19 +1631,26 @@ namespace
             for (auto* port : { "AES50 A", "AES50 B", "AES50 C" })
             {
                 auto pair = std::make_unique<juce::Component>();
-                auto* a = OnKey::fixed (false).release();
-                auto* b = OnKey::fixed (false).release();
+                // No AES50 here: the keys are only kept.
+                const auto id = "ha." + juce::String (port).removeCharacters (" ");
+                auto* a = inertOnKey (ctx.settings, id + ".a").release();
+                auto* b = inertOnKey (ctx.settings, id + ".b").release();
                 pair->addAndMakeVisible (a);
                 pair->addAndMakeVisible (b);
                 pairs.add (a);
                 pairs.add (b);
                 pairLayouts.push_back ({ pair.get(), a, b });
-                ha.addRow (port, std::move (pair), kPairRows, false);
+                ha.addRow (port, std::move (pair), kPairRows);
             }
             addAndMakeVisible (ha);
             haClear.offColour = Dark::header;
             haClear.iconAbove = true;
-            enableKey (haClear, false);
+            haClear.onClick = [this]
+            {
+                for (auto* port : { "AES50A", "AES50B", "AES50C" })
+                    for (auto* side : { ".a", ".b" })
+                        ctx.settings.removeValue (inertKey (juce::String ("ha.") + port + side));
+            };
             addAndMakeVisible (haClear);
 
             // The computer's own network settings (read-only).
@@ -1673,8 +1696,8 @@ namespace
             appliedWeb = WebRemote::Settings::load (ctx.settings); // the web remote started with the app
             refreshWebStatus();
 
-            lock.addRow ("OSC", OnKey::fixed (false), 1.3f, false, true);
-            lock.addRow ("TCP", OnKey::fixed (false), 1.3f, false, true);
+            lock.addRow ("OSC", inertOnKey (ctx.settings, "lockOsc"), 1.3f, true, true);
+            lock.addRow ("TCP", inertOnKey (ctx.settings, "lockTcp"), 1.3f, true, true);
             addAndMakeVisible (lock);
 
             // WING REMOTE (Sidecar): the settings live in the app settings.

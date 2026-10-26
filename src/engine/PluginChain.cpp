@@ -345,6 +345,7 @@ std::unique_ptr<juce::XmlElement> PluginChain::createXml() const
 {
     auto xml = std::make_unique<juce::XmlElement> (kXmlTag);
     xml->setAttribute ("name", describeMembers());
+    xml->setAttribute ("views", 1);
     for (auto& m : members)
     {
         auto* e = xml->createNewChildElement ("MEMBER");
@@ -383,6 +384,8 @@ bool PluginChain::parseXml (const juce::XmlElement& xml, std::vector<Saved>& sav
         s.bypassed = e->getBoolAttribute ("bypass");
         s.view.zoom = snapZoom (e->getIntAttribute ("zoom", 100)); // older shows: neither
         s.view.collapsed = e->getBoolAttribute ("collapsed");
+        // Chains from before `views` stored only views other than the default.
+        s.hasView = xml.getBoolAttribute ("views") || e->hasAttribute ("zoom") || e->hasAttribute ("collapsed");
         if (auto* state = e->getChildByName ("STATE"))
             if (const auto text = state->getAllSubText().trim(); text.isNotEmpty())
                 s.state.fromBase64Encoding (text);
@@ -405,7 +408,8 @@ bool PluginChain::restore (const std::vector<Saved>& saved)
         if (s.state.getSize() > 0)
             getMember (i).setStateInformation (s.state.getData(), (int) s.state.getSize());
         members[(size_t) i]->bypassed = s.bypassed;
-        members[(size_t) i]->view = s.view;
+        if (s.hasView)
+            members[(size_t) i]->view = s.view;
     }
     updateLatency();
     return true;

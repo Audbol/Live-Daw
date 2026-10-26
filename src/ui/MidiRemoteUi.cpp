@@ -307,13 +307,17 @@ void paintUpperLcd (juce::Graphics& g, juce::Rectangle<int> area, UiContext& ctx
         cell.removeFromTop (juce::jmax (3, cell.getHeight() / 8));
         // The V-pot ring under the text: eleven LEDs and the centre dot.
         auto ringArea = cell.removeFromBottom (juce::jmax (5, cell.getHeight() / 6));
-        ScribbleInfo info;
-        info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
-        info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
-        info.tag = d->isHui() ? "HUI" : "MCU";
-        info.number = juce::String (channel + 1);
-        info.line2 = exists ? s.lower : juce::String();
-        info.name = exists ? (s.upper.isNotEmpty() ? s.upper : "CH " + juce::String (channel + 1)) : juce::String ("-");
+        // A channel the controller doesn't have: nothing, as a blank fader strip.
+        auto info = blankScribble();
+        if (exists)
+        {
+            info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
+            info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
+            info.tag = d->isHui() ? "HUI" : "MCU";
+            info.number = juce::String (channel + 1);
+            info.line2 = s.lower;
+            info.name = s.upper.isNotEmpty() ? s.upper : "CH " + juce::String (channel + 1);
+        }
         drawScribble (g, cell.toFloat(), info);
         drawScribbleFrame (g, cell.toFloat(), true, true, info.backlight);
         const int leds = DawRemote::ringLeds (s.ring);

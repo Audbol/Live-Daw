@@ -161,22 +161,30 @@ public:
     /** "output NaN/Inf", "threw an exception"... */
     static juce::String describeFault (FaultKind);
 
-    /** The chain as <PLUGINCHAIN name=..><MEMBER bypass=.. zoom=.. collapsed=..><PLUGIN ../><STATE>base64</STATE></MEMBER>..</PLUGINCHAIN>
-        (zoom and collapsed only when not the default). A member that throws while
-        saving its state is stored without one. */
+    /** The chain as <PLUGINCHAIN name=.. views=1><MEMBER bypass=.. zoom=.. collapsed=..><PLUGIN ../><STATE>base64</STATE></MEMBER>..</PLUGINCHAIN>
+        (zoom and collapsed only when not the default; `views` says every member's
+        view is stored, so a missing one is the default). A member that throws
+        while saving its state is stored without one. */
     std::unique_ptr<juce::XmlElement> createXml() const;
+    /** The attribute a single plugin's <PLUGIN> description carries when it was
+        saved with the default chain window view (a plugin with any other view is
+        saved as a chain), so a recall can put the view back. */
+    static constexpr const char* kDefaultViewAttribute = "sidecarView";
     /** A saved member (from createXml or a single <PLUGIN> description). */
     struct Saved
     {
         juce::PluginDescription description;
         bool bypassed = false;
         View view;
+        /** Whether `view` was saved (scenes and shows from before it weren't:
+            a recall then keeps the current view). */
+        bool hasView = false;
         juce::MemoryBlock state;
     };
     /** Reads a <PLUGINCHAIN> element; false if it isn't one or a member's description is unreadable. */
     static bool parseXml (const juce::XmlElement&, std::vector<Saved>& members);
 
-    /** Message thread: restores the members' states, bypass and views from `saved`
+    /** Message thread: restores the members' states, bypass and (saved) views from `saved`
         when it holds the same plugins in the same order (else false, unchanged). */
     bool restore (const std::vector<Saved>& saved);
 

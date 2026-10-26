@@ -36,7 +36,8 @@ namespace livedaw::ui
     the one it gives itself once on screen); JUCE component editors (generic controls, the sandbox's panel,
     in-process plugins) are scaled with a transform; any other native view has
     a fixed size (the zoom keys are disabled, COLLAPSE still works). Zoom and
-    collapse are kept per plugin by FxSlots (saved with the show).
+    collapse are kept per plugin by FxSlots (saved with the show and in scenes,
+    which recall them).
 
     The view takes the size its content needs, up to `maxSize`; beyond that it
     scrolls. A plugin on its own whose editor is resizable follows the view's

@@ -134,11 +134,12 @@ public:
         const bool active = d != nullptr && channel >= 0;
         drawLightBar (g, barArea.toFloat(), surfaceColours().silk.withMultipliedBrightness (uiprefs::brightness (ctx.settings, "colorLed", 25)),
                       active && d->isConnected (channel / DawRemote::kStrips));
-        ScribbleInfo info;
-        info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
-        info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
+        // A strip without a DAW channel shows nothing, as a blank layer slot.
+        auto info = blankScribble();
         if (active)
         {
+            info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
+            info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
             // The DAW's two lines: the value line in the middle, the track name at the bottom.
             const auto& s = d->getStrip (channel);
             info.number = juce::String (channel + 1);

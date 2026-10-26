@@ -26,8 +26,9 @@ All notable changes to Sidecar are listed here. Versions follow
     `WingRemote::setHostSettings`): METERING's taps (`/cfg/mtr/mtrpage`, `mtrsfc`),
     MAIN METER and MAIN METER TAP, the GENERAL, SURFACE and SOLO SYSTEM options and
     brightness tiles (`/$ctl/cfg`, `/$ctl/$globals`), MIDI REMOTE CONTROL (`/$ctl/midi`)
-    and DAW (`/$ctl/daw`). Rows Sidecar shows fixed (TAP TEMPO FLASH ON, no screen
-    lock...) answer that and refuse other values.
+    and DAW (`/$ctl/daw`). The rows of features Sidecar doesn't have (TAP TEMPO FLASH,
+    SHOW METER PAGE WHEN LOCKED, MOUSE DISABLES TOUCH, SEND PAGE ACTIVATES SOLO, the
+    OSC and TCP remote locks) are kept as settings, as SETUP keeps them.
   - What Sidecar has no equivalent for (cards, the console's hardware, network and
     status, other models' surfaces, input and output groups Sidecar doesn't have,
     bus-to-bus sends the engine doesn't have, source and output safes, the player's
@@ -120,6 +121,29 @@ All notable changes to Sidecar are listed here. Versions follow
   POST PROC after INS 2), so the factory TAP 5 with GEDI sits between COMP and INS 1,
   where the WING's HOME screen draws it. The engine already took the sends, keys and
   delay compensation from there; a new test holds it to that for every order.
+- Answers from a real WING:
+  - The surface's blank strips are blank: a blank user-layer slot, a strip past the
+    end of a layer, a strip whose target is gone, a DAW strip without a channel and
+    the 4-Channel section's LCD over such a strip show no text at all and stay unlit,
+    as on the console. (The DAW custom control section does the same for channels
+    the controller doesn't have.)
+  - SETUP draws the rows of features Sidecar doesn't have (SHOW METER PAGE WHEN
+    LOCKED, MOUSE DISABLES TOUCH, MOUSE SPEED, SEND PAGE ACTIVATES SOLO, TAP TEMPO
+    FLASH, the PATCH, GLOW and LAMP tiles, HA REMOTE, the OSC and TCP remote locks,
+    SYNC SOURCE, IN/OUT) normally instead of dimmed. Their values are kept (and
+    answer over WING REMOTE) but change nothing.
+  - The dynamics thumbnails on HOME draw the GATE and COMP transfer curves blue while
+    the gate or compressor is on and grey while it's off, as the GATE and COMP
+    screens do (they were orange). The model list keeps its orange tiles.
+  - GRAPHIC EQ (GEQ): the 31 faders with TRIM and the response curve are on pages of
+    their own (FADERS, CURVE), the GEQ TYPE beside the curve.
+  - GATED REVERB, REVERSE REVERB and DELAY/REVERB have panels of their own instead of
+    the HALL's remote: the envelope (gated or reverse) or the echoes as a graph, beside
+    sections for the envelope, the space or density and the EQ (the delay and the
+    reverb for DELAY/REVERB), in the style of the other non-remote reverbs.
+  - Scenes and snippets that recall a plugin's state also recall its zoom and
+    collapse in the plugin window. Scenes stored before keep the current view.
+
 - A third pass of matching the screens to a WING (firmware 3.1), side by side with
   the console's screenshots at 1280 x 800:
   - SETUP: the settings boxes are padded as on the console (4 px, none next to a

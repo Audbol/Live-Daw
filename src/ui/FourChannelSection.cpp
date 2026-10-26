@@ -351,8 +351,13 @@ void FourChannelSection::paint (juce::Graphics& g)
                 info.footer = channelKeys[i]->ledState() == SurfaceKey::Lit ? "ON" : "OFF";
             info.footerRow = noKey;
         }
-        info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
-        info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
+        if (info.isEmpty() && ! info.footerRow)
+            info = blankScribble(); // no strip on the fader below (a blank slot, past the end of the layer): unlit
+        else
+        {
+            info.backlight = uiprefs::brightness (ctx.settings, "scribble", 60);
+            info.contrast = uiprefs::brightness (ctx.settings, "scrCont", 50);
+        }
         drawScribble (g, cell.toFloat(), info);
         // One LCD, a fine rule between the strips.
         drawScribbleFrame (g, cell.toFloat(), i == 0, i == 3, info.backlight);

@@ -106,6 +106,67 @@ public:
                         expect (reached.count (i) == 1, m.token + ": no control for " + m.params[(size_t) i].label);
             }
         }
+
+        beginTest ("GRAPHIC EQ: the faders (with TRIM) and the curve are on pages of their own");
+        {
+            const auto* geq = ui::fp::findDesign (models::Fx, "GEQ");
+            expect (geq != nullptr);
+            if (geq != nullptr)
+            {
+                const auto& spec = models::model (models::Fx, models::findModel (models::Fx, "GEQ"));
+                std::set<int> faderPages, graphPages, typePages;
+                int faders = 0;
+                for (const auto& e : geq->elements)
+                {
+                    if (e.type == ui::fp::Type::Fader && e.param >= 0)
+                    {
+                        ++faders;
+                        faderPages.insert (e.page);
+                    }
+                    if (e.type == ui::fp::Type::Graph && e.graph == ui::fp::GraphKind::Response)
+                        graphPages.insert (e.page);
+                    if (isControl (e) && e.param == spec.find ("type"))
+                        typePages.insert (e.page);
+                }
+                expectEquals (faders, 32); // 31 bands and TRIM
+                expect (faderPages == std::set<int> { 0 }, "the faders aren't all on the first page");
+                expect (graphPages == std::set<int> { 1 }, "the curve isn't on a page of its own");
+                expect (typePages == std::set<int> { 1 });
+                ui::Faceplate face;
+                std::vector<std::atomic<float>> values (spec.params.size());
+                for (size_t i = 0; i < spec.params.size(); ++i)
+                    values[i] = spec.params[i].defaultValue;
+                face.setBounds (0, 0, 578, 240); // small: no large screen needed
+                face.bind (models::Fx, spec.index, values.data(), [] { return 0.0f; });
+                expectEquals (face.getNumPages(), 2);
+                face.setPage (1);
+                expectEquals (face.getPage(), 1);
+            }
+        }
+
+        beginTest ("GATED, REVERSE and DEL/REV have panels of their own, with their graphs");
+        {
+            const std::pair<const char*, ui::fp::GraphKind> reverbs[] = { { "GATED", ui::fp::GraphKind::Decay },
+                                                                         { "REVERSE", ui::fp::GraphKind::Decay },
+                                                                         { "DEL/REV", ui::fp::GraphKind::Taps } };
+            const auto* hall = ui::fp::findDesign (models::Fx, "HALL");
+            for (auto [token, graph] : reverbs)
+            {
+                const auto* d = ui::fp::findDesign (models::Fx, token);
+                expect (d != nullptr, token);
+                if (d == nullptr)
+                    continue;
+                bool hasGraph = false, display = false;
+                for (const auto& e : d->elements)
+                {
+                    hasGraph = hasGraph || (e.type == ui::fp::Type::Graph && e.graph == graph && ! e.params.empty());
+                    display = display || e.type == ui::fp::Type::Display; // the HALL remote's dot-matrix display
+                }
+                expect (hasGraph, juce::String (token) + " lost its graph");
+                expect (! display, juce::String (token) + " still uses the HALL's remote");
+                expect (hall == nullptr || d->panel != hall->panel, token);
+            }
+        }
     }
 
 private:

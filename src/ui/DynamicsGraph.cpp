@@ -106,6 +106,12 @@ std::vector<float> slotValues (const DynSlotParams& slot)
 
 void paintTransferThumb (juce::Graphics& g, juce::Rectangle<float> r, int model, const float* values, bool on)
 {
+    // As the GATE and COMP screens: blue while the slot is on, grey when off.
+    paintTransferThumb (g, r, model, values, on ? curveScreenOn : curveOff);
+}
+
+void paintTransferThumb (juce::Graphics& g, juce::Rectangle<float> r, int model, const float* values, juce::Colour curveColour)
+{
     g.setColour (juce::Colours::black);
     g.fillRect (r);
     const float range = transferRangeDb (model);
@@ -137,7 +143,7 @@ void paintTransferThumb (juce::Graphics& g, juce::Rectangle<float> r, int model,
         }
         g.saveState();
         g.reduceClipRegion (plot.expanded (1.0f).toNearestInt());
-        g.setColour (on ? curveOn : curveOff);
+        g.setColour (curveColour);
         g.strokePath (p, juce::PathStrokeType (juce::jmax (1.2f, r.getHeight() * 0.03f)));
         g.restoreState();
     }
@@ -151,7 +157,7 @@ void paintDynamicsTile (juce::Graphics& g, juce::Rectangle<float> r, int model, 
     g.setColour (juce::Colours::black);
     g.fillRect (r);
     auto left = r.removeFromLeft (r.getWidth() * 0.48f);
-    paintTransferThumb (g, left, model, values, on);
+    paintTransferThumb (g, left, model, values, on ? curveOn : curveOff); // the model list draws it orange [3.1]
     r.removeFromLeft (2.0f);
     const auto& spec = models::model (models::Dynamics, model);
     auto norm = [&] (const char* id)

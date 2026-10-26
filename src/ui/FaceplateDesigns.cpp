@@ -1421,10 +1421,6 @@ namespace
     Design plateRemote() { return reverbRemote ("PLATE", { { 0, 1, 2, 3, 4, 9 }, { 5, 6, 7, 8, 10 }, { 11, 12, 13, 14 } }); }
     Design concertRemote() { return reverbRemote ("CONCERT", { { 0, 1, 2, 3, 4, 9 }, { 5, 6, 7, 8, 10, 15 }, { 11, 12, 13, 14, 16 } }); }
     Design ambienceRemote() { return reverbRemote ("AMBIENCE", { { 0, 1, 2, 3, 4, 5 }, { 6, 7, 8 } }); }
-    // The gated and reverse reverbs and the delay/reverb share the remote; its screen draws their envelope / echoes.
-    Design gatedRemote() { return reverbRemote ("GATED", { { 0, 1, 2, 3, 4, 5 }, { 6, 7, 8 } }, GraphKind::Decay, { 0, 1, 2 }, 1); }
-    Design reverseRemote() { return reverbRemote ("REVERSE", { { 0, 1, 2, 3, 4 }, { 5, 6, 7 } }, GraphKind::Decay, { 0, 1, 2 }, 2); }
-    Design delayReverbRemote() { return reverbRemote ("DELAY/REV", { { 0, 1, 2, 3, 4 }, { 5, 6, 7, 8, 9, 10 } }, GraphKind::Taps, { 0, 1 }); }
 
     Design stereoDelay()
     {
@@ -1736,9 +1732,6 @@ namespace
         put ("F:CHORUS", stereoChorus());
         put ("F:BPLATE", bluePlate());
         put ("F:V-PLATE", vintagePlate());
-        put ("F:GATED", gatedRemote());
-        put ("F:REVERSE", reverseRemote());
-        put ("F:DEL/REV", delayReverbRemote());
         put ("F:DEQ3", tripleDynamicEq());
         addDeviceDesigns (m);
         return m;
