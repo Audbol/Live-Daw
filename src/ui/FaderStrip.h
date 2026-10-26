@@ -3,6 +3,7 @@
 #include "ui/Knobs.h"
 #include "ui/MeterComponent.h"
 #include "ui/Scribble.h"
+#include "ui/SurfaceLayout.h"
 #include "ui/UiContext.h"
 #include "ui/WingWidgets.h"
 
@@ -39,6 +40,14 @@ public:
     /** Where the strip sits in its module of four: the LCD and meter panels
         are rounded at the module's outer edges. */
     void setModuleEdges (bool first, bool last);
+
+    /** Without the light bar and scribble strip (the COMPACT's fader 13): the
+        strip starts with SELECT. */
+    void setScribbleShown (bool);
+    /** How far below a strip's top `stripWidth` wide its SELECT key starts
+        (the display window and the gap under it), for parts that line up
+        with the strips. */
+    static int topRowsHeight (int stripWidth);
 
     /** The meter block's rows: DYN, the six segments, GATE. */
     static constexpr int kMeterRows = 8;
@@ -105,7 +114,7 @@ private:
     juce::Slider fader;
     SurfaceKey selectKey { "SELECT" }, soloKey { "SOLO" }, muteKey { "MUTE" };
     juce::Rectangle<int> scribbleArea, barArea, lcdArea, meterArea, valueArea;
-    bool showValue = false, moduleFirst = false, moduleLast = false;
+    bool showValue = false, moduleFirst = false, moduleLast = false, scribbleShown = true;
 
     // What's drawn, to repaint only on changes.
     juce::String shownName, shownValue, shownSource;

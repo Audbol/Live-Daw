@@ -34,6 +34,7 @@ use livedaw_engine::solo::solo_mode;
 use livedaw_engine::sources::{self, source_mode, SourceParams};
 use livedaw_engine::talk::TALK_OFF;
 use livedaw_engine::{Engine, Strip, StripKind, PLAYBACK_SOURCE_BASE};
+use livedaw_session::ConsoleModel;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering::Relaxed};
@@ -46,6 +47,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub struct Identity {
     pub name: String,
     pub model: String,
+    /// `/$syscfg/$cnscfg`, the build type: WING Edit takes its ACTIVE WING
+    /// MODEL from it ("wing-fullsize", "wing-compact", "wing-rack").
+    pub config: String,
     pub serial: String,
     pub firmware: String,
 }
@@ -54,11 +58,42 @@ impl Default for Identity {
     fn default() -> Self {
         Self {
             name: "SIDECAR".into(),
-            model: "sidecar".into(),
+            // The full-size WING's own model (`$cnsmdl`, discovery).
+            model: "ngc-full".into(),
+            config: "wing-fullsize".into(),
             serial: "SIDECAR0001".into(),
             // Our tree is the WING 3.1 tree (libwing compares the leading numbers).
             firmware: "3.1-0-sidecar:release".into(),
         }
+    }
+}
+
+impl Identity {
+    /// The model a console of `model` reports (discovery, `/?`,
+    /// `/$syscfg/$cnsmdl`) as the WING family does (WING remote protocols,
+    /// `$cnsmdl`): "ngc-full" for the full-size console, "wing-compact" for
+    /// the COMPACT, so WING Edit and Mixing Station show the right model.
+    /// The serial (SIDECAR0001) and firmware (3.1-0-sidecar) still tell
+    /// Sidecar apart.
+    pub fn model_name(model: ConsoleModel) -> &'static str {
+        match model {
+            ConsoleModel::Full => "ngc-full",
+            ConsoleModel::Compact => "wing-compact",
+        }
+    }
+
+    /// The build type (`/$syscfg/$cnscfg`) of a console of `model`, as WING
+    /// Edit 3.3 names the models (and a factory-set WING answers).
+    pub fn config_name(model: ConsoleModel) -> &'static str {
+        match model {
+            ConsoleModel::Full => "wing-fullsize",
+            ConsoleModel::Compact => "wing-compact",
+        }
+    }
+
+    /// The default identity of a console of `model`.
+    pub fn of_model(model: ConsoleModel) -> Self {
+        Self { model: Self::model_name(model).into(), config: Self::config_name(model).into(), ..Self::default() }
     }
 }
 
@@ -264,6 +299,14 @@ impl WingState {
 
     pub fn identity(&self) -> Identity {
         self.identity.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// The console reports itself as `model` from now on (clients see it at
+    /// their next discovery or `/?`).
+    pub fn set_console_model(&self, model: ConsoleModel) {
+        let mut id = lock(&self.identity);
+        id.model = Identity::model_name(model).into();
+        id.config = Identity::config_name(model).into();
     }
 
     pub fn clear_shadow(&self) {
@@ -627,6 +670,8 @@ pub enum InfoF {
     Firmware,
     Serial,
     Model,
+    /// `$cnscfg`.
+    Config,
 }
 
 /// What a node of the tree is in Sidecar.
@@ -1130,6 +1175,7 @@ pub fn bind(parts: &[&str]) -> Binding {
         ["$syscfg", "$firmware"] => Binding::Info(InfoF::Firmware),
         ["$syscfg", "$serial"] => Binding::Info(InfoF::Serial),
         ["$syscfg", "$cnsmdl"] => Binding::Info(InfoF::Model),
+        ["$syscfg", "$cnscfg"] => Binding::Info(InfoF::Config),
         ["$globals", "clkrate"] => Binding::ClockRate,
         _ => Binding::None,
     }
@@ -2121,6 +2167,7 @@ impl<'a> Console<'a> {
                     InfoF::Firmware => id.firmware,
                     InfoF::Serial => id.serial,
                     InfoF::Model => id.model,
+                    InfoF::Config => id.config,
                 })
             }
             Binding::Out(block, n, number) => {
@@ -3709,6 +3756,27 @@ mod tests {
     }
 
     #[test]
+    fn the_console_model_is_in_the_identity() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let model = node(&c, "/$syscfg/$cnsmdl");
+        // The full-size console reports the WING's own model.
+        assert_eq!(c.get(model), Some(Value::str("ngc-full")));
+        let config = node(&c, "/$syscfg/$cnscfg");
+        assert_eq!(c.get(config), Some(Value::str("wing-fullsize")));
+        st.set_console_model(ConsoleModel::Compact);
+        assert_eq!(c.get(model), Some(Value::str("wing-compact")));
+        // WING Edit takes its model from the build type.
+        assert_eq!(c.get(config), Some(Value::str("wing-compact")));
+        assert_eq!(st.identity().model, "wing-compact");
+        st.set_console_model(ConsoleModel::Full);
+        assert_eq!(st.identity(), Identity::default());
+        assert_eq!(Identity::of_model(ConsoleModel::Compact).model, "wing-compact");
+        assert_eq!(Identity::of_model(ConsoleModel::Full), Identity::default());
+    }
+
+    #[test]
     fn unmapped_nodes_keep_their_values() {
         let e = engine();
         let st = WingState::default();
@@ -4530,13 +4598,14 @@ mod tests {
         assert_eq!(cov.total, 68556, "{}", cov.report());
         // Everything answers but DAW CONFIGURATION (see `unbound_feature`).
         assert_eq!(cov.mapped, 68555, "{}", cov.report());
-        assert_eq!((cov.settings, cov.stored), (70, 7377), "{}", cov.report());
+        // 73 settings: the COMPACT's mfdr, cscmode and autosel_CMPCT among them.
+        assert_eq!((cov.settings, cov.stored), (73, 7373), "{}", cov.report());
         for (g, (m, t)) in &cov.by_group {
             assert!(m == t || g == "/$ctl/daw", "{g}: {m} of {t}");
         }
         assert_eq!(cov.by_group["/$ctl/daw"], (14, 15));
         // The engine-backed share: everything but the settings and the stored values.
-        assert_eq!(cov.mapped - cov.settings - cov.stored, 61108);
+        assert_eq!(cov.mapped - cov.settings - cov.stored, 61109);
         let b = bindings();
         let row = |p: &str| match schema().resolve(p, &NoModels) {
             Some(Node::Row(r)) => r as usize,

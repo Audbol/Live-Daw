@@ -6,6 +6,7 @@
 use livedaw_engine::{Engine, StripKind};
 use livedaw_session::custom::CustomControls;
 use livedaw_session::layers::{FaderRef, LayerSet, LEFT};
+use livedaw_session::ConsoleModel;
 use livedaw_wing::map::{LibAction, Library};
 use livedaw_wing::osc::{self, Arg, Message};
 use livedaw_wing::server::{Config, EngineHandle, WingServer};
@@ -74,8 +75,43 @@ fn discovery_replies_like_a_wing() {
     let reply = std::str::from_utf8(&buf[..n]).unwrap();
     let f: Vec<&str> = reply.split(',').collect();
     assert_eq!(f.len(), 6, "{reply}");
-    assert_eq!((f[0], f[1], f[2], f[3]), ("WING", "127.0.0.1", "TEST-DESK", "sidecar"));
+    assert_eq!((f[0], f[1], f[2], f[3]), ("WING", "127.0.0.1", "TEST-DESK", "ngc-full"));
     assert!(f[5].starts_with("3.1"));
+}
+
+#[test]
+fn a_compact_reports_its_model() {
+    let engine: Arc<dyn EngineHandle> = Arc::new(Arc::new(Engine::new(0)));
+    let config = Config {
+        identity: Identity { name: "SMALL-DESK".into(), ..Identity::of_model(ConsoleModel::Compact) },
+        bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
+        discovery_port: 0,
+        osc_port: 0,
+        native_port: 0,
+        ..Config::default()
+    };
+    let state = Arc::new(WingState::default());
+    let server = WingServer::start(engine, state.clone(), &config);
+    assert!(server.status().errors.is_empty(), "{:?}", server.status().errors);
+    let c = Osc::new(&server);
+    let info = c.get("/?");
+    assert!(matches!(&info.args[..], [Arg::Str(s)] if s.starts_with("WING,127.0.0.1,SMALL-DESK,wing-compact,")), "{info:?}");
+    assert_eq!(c.get("/$syscfg/$cnsmdl").args, vec![Arg::Str("wing-compact".into())]);
+    assert_eq!(c.get("/$syscfg/$cnscfg").args, vec![Arg::Str("wing-compact".into())]);
+    // The COMPACT's surface settings are the host's (factory values until it publishes).
+    assert_eq!(c.get("/$ctl/cfg/mfdr").args[0], Arg::Str("MAIN.1".into()));
+    assert_eq!(c.get("/$ctl/cfg/cscmode").args[0], Arg::Str("BUS".into()));
+    state.set_host_setting("ui.compactMainFader", "DCA.3");
+    assert_eq!(c.get("/$ctl/cfg/mfdr").args[0], Arg::Str("DCA.3".into()));
+    c.send(&Message::new("/$ctl/cfg/cscmode", vec![Arg::Str("USER".into())]));
+    assert_eq!(c.get("/$ctl/cfg/cscmode").args[0], Arg::Str("USER".into()));
+    assert_eq!(state.take_host_setting(), Some(("ui.compactKeyMode", "USER".to_owned())));
+    c.send(&Message::new("/$ctl/cfg/autosel_CMPCT", vec![Arg::Int(1)]));
+    assert_eq!(c.get("/$ctl/cfg/autosel_CMPCT").args[0], Arg::Str("1".into()));
+    assert_eq!(state.take_host_setting(), Some(("ui.autoSelectCompact", "1".to_owned())));
+    // Switching the model reaches clients at once.
+    state.set_console_model(ConsoleModel::Full);
+    assert!(matches!(&c.get("/?").args[..], [Arg::Str(s)] if s.starts_with("WING,127.0.0.1,SMALL-DESK,ngc-full,")));
 }
 
 #[test]

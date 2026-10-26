@@ -125,6 +125,14 @@ public:
             expect (ask (sock, st.oscPort, oscGet ("/?")).contains ("TEST-WING"));
             wing.setName ("RENAMED");
             expect (ask (sock, st.oscPort, oscGet ("/?")).contains ("RENAMED"));
+            // The model, as a full-size WING or a COMPACT reports it.
+            expect (ask (sock, st.oscPort, oscGet ("/?")).contains ("RENAMED,ngc-full,"));
+            wing.setConsoleModel (ConsoleModel::Compact);
+            expect (ask (sock, st.oscPort, oscGet ("/?")).contains ("RENAMED,wing-compact,"));
+            expect (ask (sock, st.oscPort, oscGet ("/$syscfg/$cnsmdl")).contains ("wing-compact"));
+            expect (ask (sock, st.oscPort, oscGet ("/$syscfg/$cnscfg")).contains ("wing-compact")); // WING Edit's model
+            wing.setConsoleModel (ConsoleModel::Full);
+            expect (ask (sock, st.oscPort, oscGet ("/?")).contains ("RENAMED,ngc-full,"));
 
             const auto set = oscFloat ("/ch/2/fdr", -12.0f);
             sock.write ("127.0.0.1", st.oscPort, set.getData(), (int) set.getSize());

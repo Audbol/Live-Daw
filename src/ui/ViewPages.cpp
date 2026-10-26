@@ -844,9 +844,11 @@ public:
             wingKey (g, k.area, k.name, on ? Dark::layer : Colours::screenTile, on ? Dark::choiceInk : keyText);
         }
         // The section's key olive, darker while a bank is shown instead of its layer [WING].
-        const char* names[] = { "LEFT", "CENTER", "RIGHT" };
+        // The WING COMPACT has one fader section: one key, COMPACT.
+        const bool compact = page.isCompact();
+        const char* names[] = { compact ? "COMPACT" : "LEFT", "CENTER", "RIGHT" };
         const auto sectionFill = shown >= 0 ? Dark::section.withMultipliedBrightness (0.55f) : Dark::section;
-        for (int i = 0; i < 3; ++i)
+        for (int i = 0; i < (compact ? 1 : 3); ++i)
         {
             const bool on = (int) page.section() == i;
             wingKey (g, sectionKeys[i], names[i], on ? sectionFill : Colours::screenTile, on ? juce::Colours::black : keyText);
@@ -875,7 +877,7 @@ public:
                 page.selectBank (k.id.getIntValue());
                 return;
             }
-        for (int i = 0; i < 3; ++i)
+        for (int i = 0; i < (page.isCompact() ? 1 : 3); ++i)
             if (sectionKeys[i].contains (pos))
             {
                 page.selectSection (static_cast<LayerSet::Section> (i));
@@ -1309,7 +1311,7 @@ public:
             for (int i = 0; i < n; ++i)
                 sourceTiles.push_back ({ wingRect (83.0f + 88.0f * (float) (i % 8), 79.0f + 76.0f * (float) (i / 8), 80.0f, 68.0f), i });
             frame = wingRect (76.0f, 72.0f, 710.0f, 76.0f * (float) ((n + 7) / 8) + 6.0f);
-            const auto menu = routing::sourceMenu (false);
+            const auto menu = routing::sourceMenu (false, false, ctx.consoleModel == ConsoleModel::Compact);
             for (size_t r = 0; r < menu.rows.size(); ++r)
                 for (size_t c = 0; c < menu.rows[r].size(); ++c)
                     if (menu.rows[r][c] >= 0)

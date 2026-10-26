@@ -80,17 +80,21 @@ namespace
     const juce::Colour altOrange = Colours::alt;
 
     /** Independent toggle keys, each a boolean setting (CH AUTOSELECT L C R,
-        USER LAYER LINK L/C C/R): lit blue when on. */
+        USER LAYER LINK L/C C/R): lit blue when on. With `compactKeys`, the
+        WING COMPACT shows those instead (CH AUTOSELECT: its one section). */
     class ToggleKeys final : public juce::Component
     {
     public:
-        ToggleKeys (UiContext& c, juce::StringArray labels, std::vector<const char*> settingKeys)
-            : ctx (c), names (std::move (labels)), keys (std::move (settingKeys))
+        ToggleKeys (UiContext& c, juce::StringArray labels, std::vector<const char*> settingKeys,
+                    juce::StringArray compactLabels = {}, std::vector<const char*> compactSettingKeys = {})
+            : ctx (c), fullNames (std::move (labels)), fullKeys (std::move (settingKeys)),
+              compactNames (std::move (compactLabels)), compactKeys (std::move (compactSettingKeys))
         {
         }
 
         void paint (juce::Graphics& g) override
         {
+            choose();
             // [Fig. 40] separate keys, 6 px apart, each in a thin black frame.
             auto r = getLocalBounds().toFloat();
             const float gap = juce::jmax (2.0f, wingPx (6.0f));
@@ -112,6 +116,7 @@ namespace
 
         void mouseUp (const juce::MouseEvent& e) override
         {
+            choose();
             if (names.isEmpty() || ! getLocalBounds().contains (e.getPosition()))
                 return;
             const int i = juce::jlimit (0, names.size() - 1, e.x * names.size() / juce::jmax (1, getWidth()));
@@ -122,7 +127,19 @@ namespace
     private:
         bool isOn (int i) const { return i < (int) keys.size() && ctx.settings.getBoolValue (keys[(size_t) i], false); }
 
+        /** The keys of the model shown. */
+        void choose()
+        {
+            const bool compact = ctx.consoleModel == ConsoleModel::Compact && ! compactNames.isEmpty();
+            names = compact ? compactNames : fullNames;
+            keys = compact ? compactKeys : fullKeys;
+        }
+
         UiContext& ctx;
+        juce::StringArray fullNames;
+        std::vector<const char*> fullKeys;
+        juce::StringArray compactNames;
+        std::vector<const char*> compactKeys;
         juce::StringArray names;
         std::vector<const char*> keys;
     };
@@ -352,10 +369,13 @@ namespace
             for (auto* k : { &editKey, &aboutKey, &chMinus, &chPlus, &chWing, &busMinus, &busPlus, &dataKey, &showKey })
                 addAndMakeVisible (k);
             addAndMakeVisible (finishKeys);
+            addAndMakeVisible (modelKeys);
         }
 
         void update()
         {
+            // The COMPACT comes in black only.
+            finishKeys.setEnabled (ctx.consoleModel != ConsoleModel::Compact);
             enableKey (busMinus, ctx.engine.getBuses().size() > (size_t) kWingBuses);
             enableKey (chMinus, ! ctx.engine.getChannels().empty());
             enableKey (showKey, juce::File (ctx.settings.getValue ("lastShowFile")).existsAsFile());
@@ -411,6 +431,8 @@ namespace
             }
             g.setFont (wingFontFit (TypeScale::body, (float) finishRow.getHeight() * 0.55f));
             g.drawFittedText ("SURFACE FINISH", finishRow.withRight (finishKeys.getX() - 4), juce::Justification::centredLeft, 1, 0.8f);
+            g.setColour (Dark::text);
+            g.drawFittedText ("CONSOLE MODEL", modelRow.withRight (modelKeys.getX() - 4), juce::Justification::centredLeft, 1, 0.8f);
         }
 
         void resized() override
@@ -438,8 +460,8 @@ namespace
             editKey.setBounds (infoRows[0].withTrimmedLeft (infoRows[0].getWidth() - keyW).reduced (0, 2));
             aboutKey.setBounds (infoRows[2].withTrimmedLeft (infoRows[2].getWidth() - keyW).reduced (0, 2));
 
-            configCaption = config.removeFromTop (config.getHeight() / 5);
-            const int h = config.getHeight() / 3;
+            configCaption = config.removeFromTop (config.getHeight() / 6);
+            const int h = config.getHeight() / 4;
             for (auto [row, minus, value, plus] : { std::tuple { &chRow, &chMinus, &chValue, &chPlus }, std::tuple { &busRow, &busMinus, &busValue, &busPlus } })
             {
                 auto rr = config.removeFromTop (h).reduced (0, 2);
@@ -454,6 +476,8 @@ namespace
             }
             finishRow = config.removeFromTop (h).reduced (0, 2);
             finishKeys.setBounds (finishRow.withTrimmedLeft (finishRow.getWidth() - juce::jmin (finishRow.getWidth() * 62 / 100, screenCap (200))).reduced (2, 0));
+            modelRow = config.removeFromTop (h).reduced (0, 2);
+            modelKeys.setBounds (modelRow.withTrimmedLeft (modelRow.getWidth() - juce::jmin (modelRow.getWidth() * 62 / 100, screenCap (200))).reduced (2, 0));
         }
 
     private:
@@ -471,19 +495,30 @@ namespace
         UiContext& ctx;
         WingKey editKey { "EDIT", Icon::Edit }, aboutKey { "ABOUT", Icon::Info }, chMinus { "-" }, chPlus { "+" }, chWing { "WING" }, busMinus { "-" }, busPlus { "+" },
             dataKey { "DATA FOLDER", Icon::Folder }, showKey { "SHOW FOLDER", Icon::Folder };
-        juce::Rectangle<int> infoBox, dataBox, dataTitle, infoRows[4], configCaption, chRow, busRow, chValue, busValue, finishRow;
+        juce::Rectangle<int> infoBox, dataBox, dataTitle, infoRows[4], configCaption, chRow, busRow, chValue, busValue, finishRow, modelRow;
         // SURFACE FINISH: the surface view in the silver or the black WING's colours.
         ChoiceKeys finishKeys { { ConsoleLook::finishName (SurfaceFinish::Silver), ConsoleLook::finishName (SurfaceFinish::Black) },
-                                [this] { return (int) ConsoleLook::load (ctx.settings).finish; },
+                                [this] { return (int) ConsoleLook::load (ctx.settings).shownFinish(); },
                                 [this] (int i)
                                 {
                                     auto look = ConsoleLook::load (ctx.settings);
                                     look.finish = i == 1 ? SurfaceFinish::Black : SurfaceFinish::Silver;
                                     look.save (ctx.settings);
-                                    setSurfaceFinish (look.finish);
+                                    setSurfaceFinish (look.shownFinish());
                                     if (auto* top = getTopLevelComponent())
                                         top->repaint();
                                 } };
+        // CONSOLE MODEL: the full-size WING or the WING COMPACT; the surface changes at once.
+        ChoiceKeys modelKeys { { consoleModelName (ConsoleModel::Full), consoleModelName (ConsoleModel::Compact) },
+                               [this] { return (int) ctx.consoleModel; },
+                               [this] (int i)
+                               {
+                                   const auto m = i == 1 ? ConsoleModel::Compact : ConsoleModel::Full;
+                                   if (m == ctx.consoleModel || ! ctx.setConsoleModel)
+                                       return;
+                                   // The surface is rebuilt: let this key's callback return first.
+                                   juce::MessageManager::callAsync ([&c = ctx, m] { if (c.setConsoleModel) c.setConsoleModel (m); });
+                               } };
     };
 
     //==============================================================================
@@ -1042,8 +1077,10 @@ namespace
             faders.addRow ("ALTERNATIVE SOF MODE", onSetting (uiprefs::alternativeSof, false), 1.3f);
             faders.addRow ("RIGHT SECTION SENDS ON FADER", onSetting (uiprefs::rightSectionSof, uiprefs::rightSectionSofDefault), 1.3f);
             faders.addRow ("FULL FADER PAGING", onSetting (uiprefs::fullFaderPaging, false), 1.3f);
+            // The COMPACT's one fader section has one (autosel_CMPCT).
             faders.addRow ("CH AUTOSELECT", std::make_unique<ToggleKeys> (ctx, juce::StringArray { "L", "C", "R" },
-                                                                         std::vector<const char*> (std::begin (uiprefs::autoSelect), std::end (uiprefs::autoSelect))),
+                                                                         std::vector<const char*> (std::begin (uiprefs::autoSelect), std::end (uiprefs::autoSelect)),
+                                                                         juce::StringArray { "CMPCT" }, std::vector<const char*> { uiprefs::autoSelectCompact }),
                            3.6f);
             faders.addRow ("USER LAYER LINK", std::make_unique<ToggleKeys> (ctx, juce::StringArray { "L/C", "C/R" },
                                                                            std::vector<const char*> (std::begin (uiprefs::userLayerLink), std::end (uiprefs::userLayerLink))),

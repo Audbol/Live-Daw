@@ -336,6 +336,56 @@ public:
             reopened.setValue (ui::ConsoleLook::finishKey, "GOLD"); // unknown: silver
             expect (ui::ConsoleLook::load (reopened).finish == ui::SurfaceFinish::Silver);
         }
+
+        beginTest ("The console model persists in the app settings; the COMPACT is black");
+        {
+            juce::TemporaryFile file (".settings");
+            juce::PropertiesFile::Options o;
+            o.applicationName = "modeltest";
+            {
+                juce::PropertiesFile props (file.getFile(), o);
+                auto look = ui::ConsoleLook::load (props);
+                expect (look.model == ConsoleModel::Full); // the default
+                expect (look.shownFinish() == ui::SurfaceFinish::Silver);
+                look.model = ConsoleModel::Compact;
+                look.save (props);
+                expectEquals (props.getValue (ui::ConsoleLook::modelKey), juce::String ("COMPACT"));
+            }
+            juce::PropertiesFile reopened (file.getFile(), o);
+            const auto look = ui::ConsoleLook::load (reopened);
+            expect (look.model == ConsoleModel::Compact);
+            expect (look.finish == ui::SurfaceFinish::Silver);       // the setting stays ...
+            expect (look.shownFinish() == ui::SurfaceFinish::Black); // ... the COMPACT shows black
+            reopened.setValue (ui::ConsoleLook::modelKey, "RACK");   // not yet: the full-size console
+            expect (ui::ConsoleLook::load (reopened).model == ConsoleModel::Full);
+            expect (consoleModelFromName ("compact") == ConsoleModel::Compact);
+            expectEquals (consoleModelName (ConsoleModel::Compact), juce::String ("COMPACT"));
+        }
+
+        beginTest ("The console models' local I/O: 24 preamps and 1x2 GPIO on the COMPACT");
+        {
+            const auto full = consoleModelInfo (ConsoleModel::Full), compact = consoleModelInfo (ConsoleModel::Compact);
+            expectEquals ((int) full.localPreamps, 8);
+            expectEquals ((int) full.gpios, 4);
+            expectEquals ((int) full.auxInputs, 8);
+            expectEquals ((int) full.auxOutputs, 8);
+            expectEquals ((int) full.faders, 24);
+            expectEquals ((int) full.layerKeys, 7);
+            expectEquals ((int) compact.localPreamps, 24);
+            expectEquals ((int) compact.gpios, 2);
+            expectEquals ((int) compact.auxInputs, 0);
+            expectEquals ((int) compact.auxOutputs, 0);
+            expectEquals ((int) compact.localOutputs, 8);
+            expectEquals ((int) compact.faders, 13);
+            expectEquals ((int) compact.layerKeys, 9);
+            // The COMPACT's 24 local preamps take LOCAL IN's range, as the full size's 8 do
+            // (LCL 1-48 are the interface's first 48 ports on either model).
+            for (int lcl = 0; lcl < (int) compact.localPreamps; ++lcl)
+            {
+                const auto r = MixerEngine::sourceGainRange (lcl);
+                expect (r.min == -2.5f && r.max == 45.0f && r.step == 2.5f, "LCL " + juce::String (lcl + 1));
+            }
+        }
     }
 };
 

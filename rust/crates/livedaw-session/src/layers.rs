@@ -25,7 +25,16 @@
 //! channels or a strip's sends. Spill from the right section goes to the
 //! center section, everything else to the left (firmware 3.0). Ending the
 //! spill brings back the layer and the scroll position the section had.
+//!
+//! **WING COMPACT** ([`ConsoleModel::Compact`], set by the host from its app
+//! settings): the surface has one section of 12 faders (3 x 4) with the
+//! Compact's nine layer keys in a column at its left: `1-12`, `13-24`,
+//! `25-36`, `37-48 AUX IN`, `BUS MASTER`, `MAIN MATRIX`, `DCA`, `USER 1`,
+//! `USER 2` (WING remote protocols: "Compact console has 9 layers"). The left
+//! section stands for it; the center and right sections are not on the
+//! surface (their selections are kept for the full-size view).
 
+use crate::model::ConsoleModel;
 use crate::refs::StripRef;
 use crate::xml::{parse_int_prefix, Element};
 use livedaw_dsp::wing::{ParamKind, FX_MODELS};
@@ -222,6 +231,8 @@ pub const MAX_SLOTS: usize = 1024;
 pub const DEFAULT_SELECTION: [&str; NUM_SECTIONS] = ["in-1", "dca-1", "out-1"];
 /// Channels per input key on the left section (`1-12`, `13-24`, ...).
 pub const INPUT_KEY_CHANNELS: usize = 12;
+/// The WING COMPACT's faders in its fader section (3 x 4; fader 13 is apart).
+pub const COMPACT_WIDTH: i32 = 12;
 /// The ids of the USER 1 and USER 2 keys.
 pub const USER_KEYS: [&str; 2] = ["user-1", "user-2"];
 
@@ -373,6 +384,8 @@ pub struct LayerSet {
     offsets: [i32; NUM_SECTIONS],
     /// A section's spill (not saved).
     spills: [Option<Spill>; NUM_SECTIONS],
+    /// The console model the surface shows (an app setting: not saved, kept by `reset`).
+    model: ConsoleModel,
 }
 
 impl Default for LayerSet {
@@ -385,6 +398,7 @@ impl Default for LayerSet {
             overrides: Vec::new(),
             offsets: [0; NUM_SECTIONS],
             spills: [None, None, None],
+            model: ConsoleModel::Full,
         }
     }
 }
@@ -522,11 +536,25 @@ impl LayerSet {
     }
 
     pub fn effective_width(&self, section: usize) -> i32 {
-        if self.is_auto_width(section) {
+        if self.model.is_compact() && section == LEFT {
+            // The COMPACT's section is its 12 faders, whatever the width setting.
+            COMPACT_WIDTH
+        } else if self.is_auto_width(section) {
             self.fitted.get(section).copied().unwrap_or(1)
         } else {
             self.width(section)
         }
+    }
+
+    // ---- console model ---------------------------------------------------------------
+
+    /// The console model the surface shows (see the module docs).
+    pub fn model(&self) -> ConsoleModel {
+        self.model
+    }
+
+    pub fn set_model(&mut self, model: ConsoleModel) {
+        self.model = model;
     }
 
     // ---- layers ----------------------------------------------------------------------
@@ -549,6 +577,12 @@ impl LayerSet {
         let mut layers = match section {
             CENTER => vec![dca, out, aux, bus],
             RIGHT => vec![out, dca, inputs, aux, bus],
+            // [WING COMPACT] 1-12 .. 37-48 AUX IN, BUS MASTER, MAIN MATRIX, DCA.
+            _ if self.model.is_compact() => {
+                let mut keys = input_keys(&channels, &auxes, INPUT_KEY_CHANNELS);
+                keys.extend([bus, out, dca]);
+                keys
+            }
             _ => {
                 // A section wider than 12 (Auto width on a big screen) gets longer input keys.
                 let size = INPUT_KEY_CHANNELS.max(self.effective_width(section).max(1) as usize);
@@ -903,8 +937,10 @@ impl LayerSet {
     }
 
     pub fn reset(&mut self) {
-        let fitted = self.fitted; // a property of the window, not the show
-        *self = Self { fitted, ..Self::default() };
+        // The fitted widths are a property of the window and the model one of
+        // the app, not of the show.
+        let (fitted, model) = (self.fitted, self.model);
+        *self = Self { fitted, model, ..Self::default() };
     }
 }
 
@@ -976,6 +1012,43 @@ mod tests {
         assert_eq!(ids(&empty), ["in-1", "bus-1", "user-1", "user-2"]);
         assert_eq!(empty[0].name, "CH");
         assert_eq!(empty[1].name, "BUS");
+    }
+
+    #[test]
+    fn compact_layer_keys() {
+        let mut set = LayerSet::default();
+        set.set_model(ConsoleModel::Compact);
+        let console = ConsoleRefs::wing(40);
+        let left = set.default_layers_for(LEFT, &console);
+        assert_eq!(ids(&left), ["in-1", "in-2", "in-3", "in-4", "bus-1", "out-1", "dca-1", "user-1", "user-2"]);
+        assert_eq!(left.len() as i32, ConsoleModel::Compact.io().layer_keys);
+        assert_eq!(left[3].name, "CH 37-40 · AUX 1-8");
+        assert_eq!(left[5].name, "MAIN 1-4 · MTX 1-8");
+        assert_eq!(left[6].faders[15], FaderRef::Dca(15));
+        assert_eq!(ids(&set.default_layers_for(LEFT, &ConsoleRefs::wing(48)))[3], "in-4");
+
+        // Its section is its 12 faders, whatever the width setting says.
+        set.set_width(LEFT, AUTO_WIDTH);
+        set.set_fitted_width(LEFT, 30);
+        assert_eq!(set.effective_width(LEFT), COMPACT_WIDTH);
+        assert_eq!(set.default_layers_for(LEFT, &console)[0].name, "CH 1-12");
+        assert_eq!(set.effective_width(CENTER), 8);
+
+        // MAIN MATRIX and DCA are keys of the section, so they stay selected.
+        set.select(LEFT, "dca-1");
+        assert_eq!(set.find_layer_for(LEFT, &console, set.selected(LEFT)).id, "dca-1");
+
+        // The model is an app setting: a show's reset or load keeps it.
+        set.reset();
+        assert_eq!(set.model(), ConsoleModel::Compact);
+        set.from_xml(&LayerSet::default().to_xml());
+        assert_eq!(set.model(), ConsoleModel::Compact);
+
+        // Back on the full-size console the left section has its seven keys.
+        set.set_model(ConsoleModel::Full);
+        assert_eq!(set.default_layers_for(LEFT, &console).len(), 7);
+        set.set_width(LEFT, AUTO_WIDTH);
+        assert_eq!(set.effective_width(LEFT), 30);
     }
 
     #[test]

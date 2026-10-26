@@ -92,6 +92,15 @@ public:
             expectEquals (names (routing::outputMenu()),
                           juce::String ("LOCAL OUT,AUX OUT,AES/EBU OUT,AES50 A,AES50 B,AES50 C,ST CONNECT,USB AUDIO,WLIVE REC,DANTE,RECORDER"));
             expect (routing::sourceMenu (true).spacedRows == std::vector<int> { 3 });
+
+            // The WING COMPACT has no local aux inputs or outputs: no AUX IN / AUX OUT.
+            for (bool channels : { true, false })
+            {
+                const auto compact = names (routing::sourceMenu (channels, ! channels, true));
+                expect (! compact.contains ("AUX IN") && compact.startsWith ("LOCAL IN,AES/EBU IN,"), compact);
+            }
+            expectEquals (names (routing::outputMenu (true)),
+                          juce::String ("LOCAL OUT,AES/EBU OUT,AES50 A,AES50 B,AES50 C,ST CONNECT,USB AUDIO,WLIVE REC,DANTE,RECORDER"));
         }
 
         beginTest ("Default patch: each local input on its channel, MAIN 1 on LOCAL OUT 1-2");

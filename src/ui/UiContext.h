@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/ConsoleModel.h"
 #include "engine/EventLog.h"
 #include "engine/MixerEngine.h"
 #include "engine/PluginHost.h"
@@ -187,6 +188,12 @@ struct UiContext
     /** The web remote's screen mirror and its server (owned by the main
         component; SETUP > REMOTE). */
     WebMirror* web = nullptr;
+
+    /** The console model the surface shows (SETUP > GENERAL > CONSOLE; set by
+        the main component from the app settings). */
+    ConsoleModel consoleModel = ConsoleModel::Full;
+    /** Switches the model: saves it and lays the surface out again. */
+    std::function<void (ConsoleModel)> setConsoleModel;
 };
 
 /** SETUP settings that the status bar, the surface and the pages share. */
@@ -251,6 +258,13 @@ namespace uiprefs
     constexpr const char* userLayerLink[2] = { "ui.userLayerLinkLC", "ui.userLayerLinkCR" };
     constexpr const char* dcaSpill = "ui.dcaSpill"; // bool: SELECT on a DCA spills it (SETUP > SURFACE)
     constexpr const char* autoSelect[3] = { "ui.autoSelectL", "ui.autoSelectC", "ui.autoSelectR" };
+    // The WING COMPACT's CH AUTOSELECT (/$ctl/cfg/autosel_CMPCT, "Compact Layer"): its one fader section.
+    constexpr const char* autoSelectCompact = "ui.autoSelectCompact";
+    // The WING COMPACT's fader 13 (/$ctl/cfg/mfdr): "OFF", "MAIN.1" (default) .. "MAIN.4",
+    // "MTX.1" .., "DCA.1" .., "CH.1" .., "AUX.1" .., "BUS.1" ...
+    constexpr const char* compactMainFader = "ui.compactMainFader";
+    // The WING COMPACT's 16 keys (/$ctl/cfg/cscmode): "BUS" (default), "DCA", "MAIN" or "USER".
+    constexpr const char* compactKeyMode = "ui.compactKeyMode";
     constexpr const char* f1f3AsCustom = "ui.f1f3AsCustomControls";
 
     // PLUGINS (SETUP > PLUGINS).

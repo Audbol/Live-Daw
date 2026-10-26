@@ -927,6 +927,10 @@ void MonitorSection::paint (juce::Graphics& g)
         g.setFont (fontFittingWidth (font, name, logo.getWidth(), 1.0f));
         g.setColour (surfaceColours().surfacePrint.withAlpha (0.8f));
         g.drawText (name, logo, juce::Justification::centred);
+        // [WING COMPACT] the model in small spaced capitals under the name.
+        if (model == ConsoleModel::Compact)
+            drawSilk (g, logo.translated (0.0f, logo.getHeight() * 0.95f).withHeight (juce::jmax (10.0f, logo.getHeight() * 0.4f)), "C O M P A C T",
+                      juce::jlimit (8.0f, 13.0f, logo.getHeight() * 0.32f), juce::Justification::centred, surfaceColours().surfacePrintDim);
     }
 
     // The USB AUDIO/DATA and MONITORING/TALKBACK deck: each title under a
@@ -966,6 +970,15 @@ void MonitorSection::paint (juce::Graphics& g)
     drawSilk (g, below (talkB, 12), "TALK B", 9.0f);
     drawSilk (g, below (dimKey, 12), "ATTENUATE", 9.0f);
     drawSilk (g, below (monoKey, 12), "MONO", 9.0f);
+}
+
+void MonitorSection::setConsoleModel (ConsoleModel m)
+{
+    if (m != model)
+    {
+        model = m;
+        repaint();
+    }
 }
 
 void MonitorSection::resized()

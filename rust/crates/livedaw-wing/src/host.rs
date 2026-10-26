@@ -25,6 +25,8 @@ pub enum Enc {
     Int,
     /// (item index, setting text) pairs; items without a pair can't be set.
     Map(&'static [(usize, &'static str)]),
+    /// An enum's item as its own text ("MAIN.1", "BUS").
+    Item,
 }
 
 /// One setting: the WING node, the application's key, Sidecar's default and the encoding.
@@ -89,6 +91,11 @@ pub const HOST_SETTINGS: &[HostSetting] = &[
     s("/$ctl/cfg/layerlinkr", "ui.userLayerLinkCR", "0", Enc::Bool),
     s("/$ctl/cfg/dcaspill", "ui.dcaSpill", "0", Enc::Bool),
     s("/$ctl/cfg/fdrscrnlink", "setup.faderScreenLayerLink", "0", Enc::Bool),
+    // The WING COMPACT's surface (CONSOLE MODEL COMPACT): CH AUTOSELECT of its one
+    // section, what fader 13 controls and what its 16 keys do.
+    s("/$ctl/cfg/autosel_CMPCT", "ui.autoSelectCompact", "0", Enc::Bool),
+    s("/$ctl/cfg/mfdr", "ui.compactMainFader", "MAIN.1", Enc::Item),
+    s("/$ctl/cfg/cscmode", "ui.compactKeyMode", "BUS", Enc::Item),
     // SETUP > AUDIO > SOLO SYSTEM.
     s("/$ctl/cfg/soloexcl", "ui.soloExclusive", "1", Enc::Bool),
     s("/$ctl/cfg/solofsel", "ui.soloFollowsSelect", "0", Enc::Bool),
@@ -217,6 +224,10 @@ pub fn get(state: &WingState, index: u8, def: &Def) -> Option<Value> {
             let item = |t: &str| pairs.iter().find(|(_, s)| *s == t).map(|(i, _)| *i);
             item(&text).or_else(|| item(h.default)).and_then(index_value)
         }
+        Enc::Item => {
+            let item = |t: &str| def.items().iter().position(|it| it.item.eq_ignore_ascii_case(t.trim()));
+            item(&text).or_else(|| item(h.default)).and_then(index_value)
+        }
     }
 }
 
@@ -236,6 +247,10 @@ pub fn set(state: &WingState, index: u8, def: &Def, v: &Value) -> Result<(), Set
                     return Err(SetError::Unsupported(format!("Sidecar has no {item} here")));
                 }
             }
+        }
+        Enc::Item => {
+            let i = value::enum_index(def, v).ok_or(SetError::BadValue)?;
+            def.items().get(i).ok_or(SetError::BadValue)?.item.to_owned()
         }
     };
     state.change_host_value(h.key, text);

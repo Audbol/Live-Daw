@@ -136,6 +136,40 @@ frames, keys backlit lavender in black bezels and silver fader caps. The finish 
 an app preference (not saved in shows) and changes the surface at once; the
 touchscreen looks the same in both.
 
+SETUP > GENERAL > CONSOLE > CONSOLE MODEL **COMPACT** shows a WING COMPACT instead of
+the full-size WING. The surface changes at once, and the choice is an app preference
+like the finish. The COMPACT is black, so it always shows the black finish. It fits a
+1366 x 768 window.
+
+- **Top row:** the display unit (screen keys, screen, knob and CLR SOLO, the six
+  encoders) and, at its right, the panel with USB AUDIO/DATA and MONITORING/TALKBACK.
+- **Fader section:** 12 faders in three modules of four, with the COMPACT's layer
+  column: **VIEW**, `1-12`, `13-24`, `25-36`, `37-48 AUX IN`, `BUS MASTER`,
+  `MAIN MATRIX`, `DCA`, `USER 1`, `USER 2` and the shift keys. The section width
+  settings don't apply: it always has 12 faders.
+- **Key section:** **BUS**, **DCA**, **MAIN MATRIX** and **USER** choose what the 16
+  keys do. BUS: keys 1-16 are BUS 1-16; a press spills the bus and puts it on fader
+  13. MAIN MATRIX: keys 1-4 are MAIN 1-4 and keys 9-16 MATRIX 1-8 (keys 5-8 are
+  empty); a press puts it on fader 13. DCA: a press spills the DCA. USER: custom
+  control keys; keys 1-8 are the USER layer, keys 9-16 the custom control layer
+  shown, each control's upper key then its lower one. **VIEW** opens CUSTOM CONTROLS
+  on the USER layer (the COMPACT's USER 1-4 layers).
+- **Fader 13** is the main fader, MAIN 1 at first; the BUS and MAIN MATRIX keys put
+  another bus, main or matrix on it. It has no scribble strip, only its meter: the
+  small LCD beside it shows what fader 13 controls and what the 16 keys are, a lit
+  key's cell filled.
+- The COMPACT has no channel strip section, custom controls section, 4-Channel
+  section, center or right fader section, wheel or DAW key; Sidecar leaves them out.
+  ROUTING has no AUX IN or AUX OUT group, as the COMPACT has no local aux inputs or
+  outputs. SETUP > SURFACE > CH AUTOSELECT has one key, **CMPCT**.
+- WING remote clients see a COMPACT: Sidecar answers with model `wing-compact`.
+  Fader 13, the keys' mode and CH AUTOSELECT CMPCT are `/$ctl/cfg/mfdr`, `cscmode`
+  and `autosel_CMPCT`, both ways.
+- The COMPACT has 24 local MIDAS PRO preamps where the full-size WING has 8, no local
+  aux inputs and outputs, and 1x2 GPIO instead of 2x2. Sidecar's sources are its
+  audio interface's inputs either way, so this changes no routing; LCL 1-24 all have
+  LOCAL IN's GAIN range (-2.5 to +45 dB in 2.5 dB steps).
+
 - **Three fader sections:** left (12 faders), center (8) and right (4), each with the
   WING's layer column: **VIEW** (the section's OVERVIEW; hold for CONFIG), the layer
   keys (left `1-12` ... `37-40 AUX IN`, `BUS MASTER`; center `DCA`, `MAIN MATRIX`,
@@ -278,7 +312,7 @@ touchscreen looks the same in both.
     console patches its eight local inputs to channels 1-8) and MAIN 1 on LOCAL OUT
     1-2 (the console uses LOCAL OUT 7-8 and feeds buses 1-6 to 1-6).
   - **SETUP:** GENERAL (lighting, clock, console info and size, the surface's finish
-    SILVER / BLACK, OPERATION, OPTIONS),
+    SILVER / BLACK, the console model FULL / COMPACT, OPERATION, OPTIONS),
     AUDIO (clock rate, INPUT SELECT: the global MAIN / ALT switch and each channel's,
     preferences such as MAIN LINK, DCA MUTEGROUPS, MUTEGROUP/SIP OVERRIDE, GLOBAL INPUT
     SELECT OVERRIDE, SOURCE SOLO (CH39 / AUX7) and the TALKBACK channel, SOLO SYSTEM with SOLO MODE LIVE / STUDIO /
@@ -637,8 +671,13 @@ and open-source projects (see below), and it is **experimental**.
   SETUP > GENERAL > CONSOLE NAME), the ports and which servers run are saved in the
   app settings, and the servers start with the app when enabled. The panel below
   shows what is listening and which clients are connected.
-- **Discovery** (UDP 2222) answers `WING?` with the console name, model `sidecar`,
-  serial and firmware `3.1-...` (Sidecar speaks the WING 3.1 parameter tree).
+- **Discovery** (UDP 2222) answers `WING?` with the console name, the model, serial
+  `SIDECAR0001` and firmware `3.1-...` (Sidecar speaks the WING 3.1 parameter tree).
+  The model is the WING's own: `ngc-full` for the full-size console, `wing-compact`
+  with CONSOLE MODEL COMPACT (`/$syscfg/$cnscfg`, which WING Edit reads for its ACTIVE
+  WING MODEL: `wing-fullsize` / `wing-compact`), so WING Edit and Mixing Station show
+  the right one. The
+  serial and the firmware's `sidecar` tell Sidecar apart.
 - **OSC** (UDP 2223): get and set any parameter by path or by `#id`, toggles, node
   lists, node dumps and descriptions, node strings (`/ch.1.fdr=-3,mute=1`), and the
   `/*s`, `/*S` and `/*b` subscriptions (renew every 10 s). Changes from the UI, scene
@@ -661,8 +700,8 @@ and open-source projects (see below), and it is **experimental**.
 - **Comparing with a real WING:** `tools/wing/wing_compare.py` (Python 3.8 or newer,
   nothing to install) reads every parameter from a console over OSC, read-only, and
   reports the differences. With Sidecar's WING REMOTE enabled and a WING on the same
-  network: `python3 wing_compare.py discover` lists both (Sidecar answers with model
-  `sidecar`), then `python3 wing_compare.py compare WING_IP SIDECAR_IP` writes
+  network: `python3 wing_compare.py discover` lists both (Sidecar answers with serial
+  `SIDECAR0001`), then `python3 wing_compare.py compare WING_IP SIDECAR_IP` writes
   `wing.json`, `sidecar.json` and `report.md` to a new `wing_compare-...` folder. The
   report lists the parameters only one side has and every value, type, range and
   choice that differs, per top-level node. Initialize both consoles (or load the same
@@ -680,8 +719,8 @@ and open-source projects (see below), and it is **experimental**.
   Companion WING module builds that exists in the 3.1 tree. Testers use **WING Edit**
   and **Mixing Station** with it; **WING Copilot has not been tried**, so it may not work.
 - **What maps:** every parameter of the WING 3.1 tree but one answers (68,555 of
-  68,556, counting every model's parameters). 61,108 of them (89.1 %) drive the
-  engine, 70 are Sidecar's SETUP settings, and the 7,377 Sidecar has no equivalent
+  68,556, counting every model's parameters). 61,109 of them (89.1 %) drive the
+  engine, 73 are Sidecar's SETUP settings, and the 7,373 Sidecar has no equivalent
   for answer what a factory-initialized WING answers (see below). Driving the engine: channels, aux, buses, mains
   and matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
   dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,

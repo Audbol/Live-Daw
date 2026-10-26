@@ -26,7 +26,8 @@ public:
     {
         g.excludeClipRegion (owner.display->getBounds());
         g.fillAll (juce::Colours::black.withAlpha (0.45f));
-        const auto faders = owner.sections[0]->getBounds().getUnion (owner.sections[LayerSet::kNumSections - 1]->getBounds());
+        const auto faders = owner.sections[0]->getBounds().getUnion (owner.isCompact() ? owner.compactKeys->getBounds()
+                                                                                       : owner.sections[LayerSet::kNumSections - 1]->getBounds());
         auto badge = juce::Rectangle<int> (300, 64).withCentre (faders.getCentre());
         g.setColour (Colours::screenPanel.withAlpha (0.95f));
         g.fillRoundedRectangle (badge.toFloat(), 6.0f);
@@ -130,8 +131,11 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
 {
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
     setLookAndFeel (&lookAndFeel);
-    // The surface's finish (SETUP > GENERAL > CONSOLE) is an app setting.
-    setSurfaceFinish (ConsoleLook::load (settings).finish);
+    // The surface's finish and the console model (SETUP > GENERAL > CONSOLE)
+    // are app settings; the COMPACT is black.
+    const auto look = ConsoleLook::load (settings);
+    setSurfaceFinish (look.shownFinish());
+    ctx.consoleModel = look.model;
 
     // Plugin delay compensation (SETUP > PLUGINS) is an app setting, on by default.
     engine.setLatencyCompensation (settings.getBoolValue (uiprefs::latencyCompensation, true));
@@ -154,9 +158,13 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
             sel->params.solo = true;
         for (auto& sec : sections)
             sec->refreshFaders();
+        if (compactKeys != nullptr)
+            compactKeys->refresh();
     };
     ctx.getScreen = [this] { return display != nullptr ? display->getScreen() : Screen::Home; };
-    ctx.revealFader = [this] (LayerSet::Section section, const state::FaderRef& f) { sections[section]->reveal (f); };
+    // The COMPACT's faders are the left section's.
+    ctx.revealFader = [this] (LayerSet::Section section, const state::FaderRef& f) { sections[isCompact() ? LayerSet::Left : section]->reveal (f); };
+    ctx.setConsoleModel = [this] (ConsoleModel m) { applyConsoleModel (m, true); };
     ctx.takeScreenshot = [this] { saveScreenshot(); };
     ctx.setSurfaceLocked = [this] (bool locked) { setSurfaceLocked (locked); };
     ctx.isSurfaceLocked = [this] { return lockOverlay != nullptr; };
@@ -228,6 +236,8 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     for (int i = 0; i < LayerSet::kNumSections; ++i)
         sections[i] = std::make_unique<FaderSection> (ctx, static_cast<LayerSet::Section> (i));
     customControls = std::make_unique<CustomControlSection> (ctx);
+    compactKeys = std::make_unique<CompactSection> (ctx);
+    addChildComponent (*compactKeys);
     // The 4-Channel section works on the right fader section's four strips.
     fourChannel = std::make_unique<FourChannelSection> (ctx, [this] (int i) { return sections[LayerSet::Right] != nullptr ? sections[LayerSet::Right]->getStrip (i) : nullptr; });
     soloWatcher = std::make_unique<SoloWatcher> (*this);
@@ -260,6 +270,9 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
                                               }
                                           if (keys.contains ("ui.selDblClick") || keys.contains ("setup.faderScreenLayerLink"))
                                               notifyLayersChangedAsync (ctx);
+                                          // The COMPACT's fader 13 and 16 keys (/$ctl/cfg/mfdr, cscmode).
+                                          if (compactKeys != nullptr && (keys.contains (uiprefs::compactMainFader) || keys.contains (uiprefs::compactKeyMode)))
+                                              compactKeys->refresh();
                                           repaint();
                                       });
     for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) display.get(), (juce::Component*) monitor.get(),
@@ -288,6 +301,7 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     if (! engine.getChannels().empty())
         selectStrip (engine.getChannels()[0].get());
 
+    applyConsoleModel (look.model, false);
     setWantsKeyboardFocus (true);
     setSize (1680, 1000);
     refreshAll();
@@ -321,6 +335,7 @@ MainComponent::~MainComponent()
     closeAllPluginWindows();
     scannerWindow.reset();
     fourChannel.reset();
+    compactKeys.reset();
     for (auto& sec : dawSections)
         sec.reset();
     for (auto& sec : sections)
@@ -359,8 +374,12 @@ void MainComponent::selectStrip (Strip* strip)
     channelStrip->refresh();
     display->refresh();
     if (ctx.sendsOnFader)
+    {
         for (auto& sec : sections)
             sec->refreshFaders();
+        if (compactKeys != nullptr)
+            compactKeys->refresh();
+    }
 }
 
 void MainComponent::refreshAll()
@@ -395,6 +414,33 @@ void MainComponent::refreshSections()
         if (dawSections[s] != nullptr)
             dawSections[s]->setNumStrips (sections[s]->getNumStrips());
     fourChannel->refresh();
+    if (compactKeys != nullptr)
+        compactKeys->refresh();
+}
+
+void MainComponent::applyConsoleModel (ConsoleModel model, bool save)
+{
+    if (save)
+    {
+        auto look = ConsoleLook::load (settings);
+        look.model = model;
+        look.save (settings);
+        log.info ("Console model: " + consoleModelName (model));
+    }
+    const bool changed = model != ctx.consoleModel;
+    ctx.consoleModel = model;
+    // The layers (the COMPACT's section and keys), the WING remote's identity,
+    // the colours and the parts of the surface.
+    show.layers.setModel (model);
+    engine.getWing().setConsoleModel (model);
+    setSurfaceFinish (ConsoleLook::load (settings).shownFinish());
+    monitor->setConsoleModel (model);
+    if (changed && isCompact())
+        ctx.sendsOnFader = false; // its SOF is the BUS and MAIN MATRIX keys'
+    updateVisibility();
+    refreshSections();
+    resized();
+    repaint();
 }
 
 //==============================================================================
@@ -477,8 +523,56 @@ juce::Rectangle<int> MainComponent::consoleArea() const
     return all.withSizeKeepingCentre (juce::jmin (width, juce::jmax (bottomW, topW)), all.getHeight());
 }
 
+void MainComponent::placeDisplay (juce::Rectangle<int> bounds)
+{
+    // Screen only: the display takes the window (the rest keeps its layout,
+    // hidden, so restoring brings it back unchanged). Past about 1100 px of
+    // height it is laid out at that size and scaled up as a whole, so the
+    // screens keep the proportions they were drawn for (all vector drawing,
+    // so it stays sharp at 4K).
+    if (screenMaximized)
+    {
+        const auto all = getLocalBounds();
+        const float scale = juce::jmax (1.0f, (float) all.getHeight() / kMaxScreenOnlyLayoutHeight);
+        display->setTransform (juce::AffineTransform::scale (scale));
+        display->setBounds (0, 0, (int) std::ceil ((float) all.getWidth() / scale), (int) std::ceil ((float) all.getHeight() / scale));
+    }
+    else
+    {
+        display->setTransform ({});
+        display->setBounds (bounds);
+    }
+}
+
+void MainComponent::layoutCompact()
+{
+    const int topH = topRowHeight();
+    const auto plan = layout::compact::plan (getLocalBounds(), topH, MainDisplay::preferredWidth (topH));
+    monitor->setBounds (plan.panel);
+    splitter.setBounds (plan.splitter);
+    placeDisplay (plan.display);
+    sections[LayerSet::Left]->setBounds (plan.faders);
+    compactKeys->setStripWidth (plan.stripW);
+    compactKeys->setBounds (plan.keys);
+    // What the COMPACT doesn't have keeps no place on the surface.
+    for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) customControls.get(), (juce::Component*) fourChannel.get(),
+                                (juce::Component*) sections[LayerSet::Center].get(), (juce::Component*) sections[LayerSet::Right].get() })
+        c->setBounds ({});
+    for (int s = 0; s < LayerSet::kNumSections; ++s)
+        if (dawSections[s] != nullptr)
+        {
+            dawSections[s]->setBounds (sections[s]->getBounds());
+            dawSections[s]->setNumStrips (sections[s]->getNumStrips());
+        }
+}
+
 void MainComponent::layoutSections()
 {
+    if (isCompact())
+    {
+        layoutCompact();
+        return;
+    }
     auto b = consoleArea();
     b.removeFromTop (topRowHeight() + 6);
 
@@ -549,6 +643,11 @@ void MainComponent::layoutSections()
 
 void MainComponent::layoutTopRow()
 {
+    if (isCompact())
+    {
+        layoutCompact();
+        return;
+    }
     auto b = consoleArea();
     auto top = b.removeFromTop (topRowHeight());
     splitter.setBounds (b.removeFromTop (6));
@@ -594,23 +693,7 @@ void MainComponent::layoutTopRow()
         customControls->setBounds (right);
     else
         fourChannel->setBounds (right);
-    // Screen only: the display takes the window (the rest keeps its layout,
-    // hidden, so restoring brings it back unchanged). Past about 1100 px of
-    // height it is laid out at that size and scaled up as a whole, so the
-    // screens keep the proportions they were drawn for (all vector drawing,
-    // so it stays sharp at 4K).
-    if (screenMaximized)
-    {
-        const auto all = getLocalBounds();
-        const float scale = juce::jmax (1.0f, (float) all.getHeight() / kMaxScreenOnlyLayoutHeight);
-        display->setTransform (juce::AffineTransform::scale (scale));
-        display->setBounds (0, 0, (int) std::ceil ((float) all.getWidth() / scale), (int) std::ceil ((float) all.getHeight() / scale));
-    }
-    else
-    {
-        display->setTransform ({});
-        display->setBounds (top);
-    }
+    placeDisplay (top);
 }
 
 void MainComponent::resized()
@@ -863,13 +946,18 @@ void MainComponent::updateVisibility()
     // The console's parts stay alive (and keep their state) under the editor
     // and while the screen is maximized.
     const bool surface = ! editorShown && ! screenMaximized;
-    for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) monitor.get(),
-                                (juce::Component*) customControls.get(), (juce::Component*) &splitter })
+    // The COMPACT has no channel strip, custom controls, 4-Channel, center
+    // or right section; it has its key section instead.
+    const bool full = ! isCompact();
+    for (juce::Component* c : { (juce::Component*) monitor.get(), (juce::Component*) &splitter })
         c->setVisible (surface);
+    for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) customControls.get() })
+        c->setVisible (surface && full);
     display->setVisible (! editorShown);
-    fourChannel->setVisible (surface && ccInBottomRow);
-    for (auto& sec : sections)
-        sec->setVisible (surface);
+    fourChannel->setVisible (surface && ccInBottomRow && full);
+    for (int s = 0; s < LayerSet::kNumSections; ++s)
+        sections[s]->setVisible (surface && (full || s == LayerSet::Left));
+    compactKeys->setVisible (surface && ! full);
     // DAW mode's strips show themselves while the surface does (their timer).
     for (auto& sec : dawSections)
         if (sec != nullptr && ! surface)

@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 15;
+constexpr int kAbiVersion = 16;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -576,7 +576,21 @@ struct LayoutInfo
         // ABI 12 (LINK CUSTOMIZATION TO SOURCE)
         offCustLink,
         // ABI 13 (DCA SOLO BUS)
-        offDcaMon;
+        offDcaMon,
+        // ABI 16 (the console model)
+        consoleModelInfo;
+};
+
+/** A console model's surface and local I/O (ld_console_model_info). Models:
+    0 the full-size WING, 1 the WING COMPACT (2 is kept for the RACK). */
+struct ConsoleModelInfo
+{
+    int32_t faders;       // motor faders (the COMPACT's fader 13 included)
+    int32_t layerKeys;    // layer keys of the (left) fader section
+    int32_t localPreamps; // local MIDAS PRO preamps
+    int32_t localOutputs;
+    int32_t auxInputs, auxOutputs;
+    int32_t gpios;
 };
 
 struct ParamInfo
@@ -1034,6 +1048,12 @@ extern "C"
     void ld_layers_set_width (LayerSet*, int32_t section, int32_t width);
     void ld_layers_set_fitted_width (LayerSet*, int32_t section, int32_t width);
     int32_t ld_layers_effective_width (LayerSet*, int32_t section);
+    /** The console model the surface shows (0 full size, 1 COMPACT: the left section is the
+        COMPACT's 12 faders with its nine layer keys). Kept by resets and show loads. */
+    void ld_layers_set_model (LayerSet*, int32_t model);
+    int32_t ld_layers_model (LayerSet*);
+    /** A console model's surface and I/O (unknown models: the full-size console's). */
+    void ld_console_model_info (int32_t model, ConsoleModelInfo* out);
     LdString* ld_layers_selected (LayerSet*, int32_t section);
     void ld_layers_set_selected (LayerSet*, int32_t section, const char* utf8, size_t len);
     int32_t ld_layers_offset (LayerSet*, int32_t section);
@@ -1248,6 +1268,9 @@ extern "C"
     void ld_wing_stop (LdWing*);
     bool ld_wing_running (LdWing*);
     void ld_wing_set_name (LdWing*, const char* name, size_t len);
+    /** The model the console reports (0 full size: "ngc-full", 1 COMPACT: "wing-compact"),
+        at once and across restarts. */
+    void ld_wing_set_model (LdWing*, int32_t model);
     /** Bound port of server 0 discovery, 1 OSC, 2 Native; -1 if not running. */
     int32_t ld_wing_port (LdWing*, int32_t which);
     /** Tab-separated lines: "error\tmsg", "client\tnative|osc\taddr\tsubscribed\tseconds",
@@ -1438,6 +1461,7 @@ inline const char* verifyLayout()
         { info.offDcaIcon, offsetof (DcaParams, icon), "DcaParams.icon" },
         { info.offCustLink, offsetof (StripParams, custLink), "StripParams.custLink" },
         { info.offDcaMon, offsetof (DcaParams, mon), "DcaParams.mon" },
+        { info.consoleModelInfo, sizeof (ConsoleModelInfo), "ConsoleModelInfo size" },
     };
 
     if (info.abiVersion != kAbiVersion)

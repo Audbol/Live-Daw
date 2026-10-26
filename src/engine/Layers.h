@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/ConsoleModel.h"
 #include "engine/ConsoleState.h"
 
 #include <juce_core/juce_core.h>
@@ -115,6 +116,13 @@ public:
     /** How many faders fit the section right now (used when its width is Auto). */
     void setFittedWidth (Section s, int width) noexcept { ld::ld_layers_set_fitted_width (handle, s, width); }
     int getEffectiveWidth (Section s) const noexcept { return ld::ld_layers_effective_width (handle, s); }
+
+    /** The console model the surface shows: on the WING COMPACT the left
+        section is its 12 faders (whatever the width setting) with its nine
+        layer keys (1-12 .. 37-48 AUX IN, BUS MASTER, MAIN MATRIX, DCA, USER 1,
+        USER 2). An app setting: resets and show loads keep it. */
+    void setModel (ConsoleModel m) noexcept { ld::ld_layers_set_model (handle, (int32_t) m); }
+    ConsoleModel getModel() const noexcept { return ld::ld_layers_model (handle) == 1 ? ConsoleModel::Compact : ConsoleModel::Full; }
 
     /** The section's default bank containing `ref` (for "go to strip"). */
     juce::String findDefaultLayerContaining (const MixerEngine&, Section, const state::FaderRef&) const;

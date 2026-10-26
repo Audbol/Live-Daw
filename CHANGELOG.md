@@ -5,6 +5,35 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ## [Unreleased]
 
+### Added
+
+- WING COMPACT: SETUP > GENERAL > CONSOLE > CONSOLE MODEL **FULL** / **COMPACT** shows
+  the surface of a WING COMPACT instead of the full-size WING, at once. The top row is
+  the display unit with the monitoring panel at its right. Below: one fader section of
+  12 faders (three modules of four) with the COMPACT's nine layer keys (`1-12`, `13-24`,
+  `25-36`, `37-48 AUX IN`, `BUS MASTER`, `MAIN MATRIX`, `DCA`, `USER 1`, `USER 2`) and
+  the shift keys, and the key section. **BUS**, **DCA**, **MAIN MATRIX** and **USER**
+  choose what the 16 keys do. BUS: a key spills its bus and puts it on fader 13. MAIN
+  MATRIX: keys 1-4 put MAIN 1-4 on fader 13, keys 9-16 MATRIX 1-8. DCA: a key spills
+  its DCA. USER: custom control keys. **VIEW** opens CUSTOM CONTROLS on the USER layer.
+  **Fader 13** is the main fader, MAIN 1 at first; it has no scribble strip, only its
+  meter, and the small LCD beside it names it and the 16 keys. There is no channel
+  strip, custom controls, 4-Channel, center or right section, as on the console, and
+  ROUTING has no AUX IN or AUX OUT (the COMPACT has no local aux I/O). The COMPACT is
+  black: it shows the black finish. CH AUTOSELECT has one key, CMPCT. WING REMOTE:
+  `/$ctl/cfg/mfdr`, `cscmode` and `autosel_CMPCT` are fader 13, the keys' mode and CH
+  AUTOSELECT CMPCT, both ways. The model is an app preference, not saved in shows; it
+  fits a 1366 x 768 window. LCL 1-24 (the COMPACT's 24 local preamps) all take LOCAL
+  IN's GAIN range. C ABI version 16 (`ld_console_model_info`, `ld_layers_set_model`,
+  `ld_wing_set_model`): each model's local I/O (24 local preamps and 1x2 GPIO on the
+  COMPACT, 8 and 2x2 on the full size; no local aux I/O on the COMPACT).
+- WING REMOTE reports the WING's own model: discovery, `/?` and `/$syscfg/$cnsmdl` say
+  `ngc-full` for the full-size console (it said `sidecar`) and `wing-compact` for the
+  COMPACT, and `/$syscfg/$cnscfg` (where WING Edit takes its ACTIVE WING MODEL from)
+  `wing-fullsize` or `wing-compact`, so WING Edit and Mixing Station show the right
+  model. Exported snapshots name the model as WING Edit's do. The serial
+  `SIDECAR0001` and the firmware's `sidecar` still tell Sidecar apart.
+
 ## [0.1.5] - beta
 
 The third round of matching Sidecar to a real WING, from the factory parameter dump,

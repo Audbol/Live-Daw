@@ -10,7 +10,7 @@ use livedaw_session::console::{CapturedInsert, InsertMode, PluginBridge, Restore
 use livedaw_session::layers::{FaderRef, Layer, LayerSet, SpillKind};
 use livedaw_session::library::{self, FileType};
 use livedaw_session::presets::{self, PresetType};
-use livedaw_session::{ApplyResult, GlobalSafe, Scope, Show, StripRef};
+use livedaw_session::{ApplyResult, ConsoleModel, GlobalSafe, Scope, Show, StripRef};
 use std::borrow::Cow;
 use std::ffi::c_void;
 use std::path::PathBuf;
@@ -1214,6 +1214,50 @@ pub unsafe extern "C" fn ld_layers_set_fitted_width(l: *mut LayerSet, section: i
     }
 }
 
+/// The console model the surface shows (0 full size, 1 COMPACT; see
+/// `livedaw_session::model`): the COMPACT's section is the left one, 12
+/// faders with nine layer keys. An app setting, kept by resets and loads.
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_set_model(l: *mut LayerSet, model: i32) {
+    if let Some(l) = layers(l) {
+        l.set_model(ConsoleModel::from_i32(model));
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_model(l: *mut LayerSet) -> i32 {
+    layers(l).map_or(0, |l| l.model().as_i32())
+}
+
+/// A console model's surface and local I/O (`livedaw_session::ModelIo`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LdConsoleModelInfo {
+    pub faders: i32,
+    pub layer_keys: i32,
+    pub local_preamps: i32,
+    pub local_outputs: i32,
+    pub aux_inputs: i32,
+    pub aux_outputs: i32,
+    pub gpios: i32,
+}
+
+/// Fills `out` for `model` (unknown models: the full-size console's).
+#[no_mangle]
+pub unsafe extern "C" fn ld_console_model_info(model: i32, out: *mut LdConsoleModelInfo) {
+    let Some(out) = out.as_mut() else { return };
+    let io = ConsoleModel::from_i32(model).io();
+    *out = LdConsoleModelInfo {
+        faders: io.faders,
+        layer_keys: io.layer_keys,
+        local_preamps: io.local_preamps,
+        local_outputs: io.local_outputs,
+        aux_inputs: io.aux_inputs,
+        aux_outputs: io.aux_outputs,
+        gpios: io.gpios,
+    };
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn ld_layers_effective_width(l: *mut LayerSet, section: i32) -> i32 {
     layers(l).map_or(1, |l| l.effective_width(section as usize))
@@ -1566,6 +1610,30 @@ mod tests {
         let out = String::from_utf8_lossy(std::slice::from_raw_parts(ld_string_data(s), ld_string_len(s))).into_owned();
         ld_string_free(s);
         out
+    }
+
+    #[test]
+    fn console_model_through_the_c_abi() {
+        unsafe {
+            let mut info = LdConsoleModelInfo::default();
+            ld_console_model_info(1, &mut info);
+            assert_eq!((info.local_preamps, info.gpios, info.aux_inputs, info.faders, info.layer_keys), (24, 2, 0, 13, 9));
+            ld_console_model_info(0, &mut info);
+            assert_eq!((info.local_preamps, info.gpios, info.aux_inputs, info.faders, info.layer_keys), (8, 4, 8, 24, 7));
+            ld_console_model_info(1, std::ptr::null_mut());
+
+            let l = ld_layers_create();
+            assert_eq!(ld_layers_model(l), 0);
+            ld_layers_set_width(l, 0, 0);
+            ld_layers_set_model(l, 1);
+            assert_eq!((ld_layers_model(l), ld_layers_effective_width(l, 0)), (1, 12));
+            ld_layers_reset(l);
+            assert_eq!(ld_layers_model(l), 1);
+            ld_layers_set_model(l, 7); // unknown: the full-size console
+            assert_eq!(ld_layers_model(l), 0);
+            ld_layers_destroy(l);
+            assert_eq!(ld_layers_model(std::ptr::null_mut()), 0);
+        }
     }
 
     #[test]

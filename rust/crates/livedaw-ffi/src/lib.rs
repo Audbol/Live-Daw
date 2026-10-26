@@ -35,7 +35,8 @@ use std::sync::Arc;
 // ABI 14: LdFaderRef kind 8 = a blank layer slot.
 // ABI 15: ld_layers_remove_from_user takes the slot (a user layer can hold a
 // fader twice); ld_layers_add_to_user returns whether it had room.
-pub const LD_ABI_VERSION: i32 = 15;
+// ABI 16: the console model (ld_console_model_info, ld_layers_set_model, ld_wing_set_model).
+pub const LD_ABI_VERSION: i32 = 16;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -148,6 +149,8 @@ pub struct LdLayoutInfo {
     pub off_cust_link: i32,
     // ABI 13: DCA SOLO BUS
     pub off_dca_mon: i32,
+    // ABI 16: the console model (ld_console_model_info, ld_layers_set_model, ld_wing_set_model)
+    pub console_model_info: i32,
 }
 
 #[no_mangle]
@@ -234,6 +237,7 @@ pub unsafe extern "C" fn ld_layout_info(out: *mut LdLayoutInfo) {
         off_dca_icon: offset_of!(DcaParams, icon) as i32,
         off_cust_link: offset_of!(StripParams, cust_link) as i32,
         off_dca_mon: offset_of!(DcaParams, mon) as i32,
+        console_model_info: size_of::<session::LdConsoleModelInfo>() as i32,
     };
 }
 

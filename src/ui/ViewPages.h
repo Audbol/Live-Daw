@@ -50,7 +50,9 @@ protected:
 
     void timerCallback() override;
 
-    LayerSet::Section section() const noexcept { return ctx.viewSection; }
+    bool isCompact() const noexcept { return ctx.consoleModel == ConsoleModel::Compact; }
+    /** The section shown: the WING COMPACT has only its one (the left). */
+    LayerSet::Section section() const noexcept { return ctx.consoleModel == ConsoleModel::Compact ? LayerSet::Left : ctx.viewSection; }
     juce::String currentLayerId() const;
     Layer currentLayer() const;
     /** A bank of the bank keys: "1-8" ... "DCA 9-16" and its faders. */

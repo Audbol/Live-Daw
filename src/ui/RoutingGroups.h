@@ -237,12 +237,13 @@ struct Menu
 };
 
 /** The SOURCE GROUP menu: CHANNELS (`forChannels`, which also lists BUS, MAIN
-    and MATRIX) or SOURCES; with `monitor` (OUTPUTS) MONITOR and FX SEND follow. */
-inline Menu sourceMenu (bool forChannels, bool monitor = false)
+    and MATRIX) or SOURCES; with `monitor` (OUTPUTS) MONITOR and FX SEND follow.
+    The WING COMPACT (`compact`) has no local aux inputs: no AUX IN. */
+inline Menu sourceMenu (bool forChannels, bool monitor = false, bool compact = false)
 {
     auto id = [] (Group g) { return (int) g; };
     Menu m;
-    m.rows = { { id (Group::LocalIn), id (Group::AuxIn), id (Group::AesIn), id (Group::Oscillator) },
+    m.rows = { { id (Group::LocalIn), compact ? -1 : id (Group::AuxIn), id (Group::AesIn), id (Group::Oscillator) },
                { id (Group::Aes50A), id (Group::Aes50B), id (Group::Aes50C), id (Group::StConnect) },
                { id (Group::UsbAudio), id (Group::WlivePlay), id (Group::Dante), id (Group::UsbPlayer) } };
     if (forChannels)
@@ -272,11 +273,11 @@ void paintGroupTile (juce::Graphics&, juce::Rectangle<int>, Group, bool selected
     SOURCES): the number and the gain instead of the label. */
 void paintSourceTile (juce::Graphics&, juce::Rectangle<int>, MixerEngine&, Group, int index, float peak, bool marked, bool numbered = false);
 
-/** The OUTPUT GROUP menu. */
-inline Menu outputMenu()
+/** The OUTPUT GROUP menu (the WING COMPACT's without AUX OUT: it has no local aux outputs). */
+inline Menu outputMenu (bool compact = false)
 {
     auto id = [] (Group g) { return (int) g; };
-    return { { { id (Group::LocalOut), id (Group::AuxOut), id (Group::AesOut), -1 },
+    return { { { id (Group::LocalOut), compact ? -1 : id (Group::AuxOut), id (Group::AesOut), -1 },
                { id (Group::Aes50A), id (Group::Aes50B), id (Group::Aes50C), id (Group::StConnect) },
                { id (Group::UsbAudio), id (Group::WliveRec), id (Group::Dante), id (Group::Recorder) } },
              {} };
