@@ -247,6 +247,65 @@ namespace compact
     {
         return m == KeyMode::Dca ? "DCA" : m == KeyMode::Main ? "MAIN" : m == KeyMode::User ? "USER" : "BUS";
     }
+
+    /** The COMPACT's custom control key sets (/$ctl/user/U1-U4, MM, D1-D4;
+        WING manual 4.8), counted from USER 1-4. */
+    constexpr int kSetMainMatrix = 4, kFirstDcaSet = 5;
+
+    /** A key's custom control: the set and the control in it (0-3). */
+    struct KeyControl
+    {
+        int set = 0, control = 0;
+        bool operator== (const KeyControl& o) const noexcept { return set == o.set && control == o.control; }
+    };
+
+    /** The custom control key `key` (0-based) plays, if any [WING manual 4.2]:
+        in USER mode the sets U1-U4 (keys 1-4 U1, ... 13-16 U4); in MAIN MATRIX
+        mode keys 5-8, between MAIN 1-4 and MATRIX 1-8, the set M/M; in DCA
+        mode with USE DCA BUTTONS 1-16 AS CC (`dcaCustom`) the sets D1-D4. */
+    inline std::optional<KeyControl> keyControl (KeyMode m, int key, bool dcaCustom)
+    {
+        if (key < 0 || key >= kNumKeys)
+            return std::nullopt;
+        if (m == KeyMode::User)
+            return KeyControl { key / 4, key % 4 };
+        if (m == KeyMode::Main && key >= 4 && key < 8)
+            return KeyControl { kSetMainMatrix, key - 4 };
+        if (m == KeyMode::Dca && dcaCustom)
+            return KeyControl { kFirstDcaSet + key / 4, key % 4 };
+        return std::nullopt;
+    }
+
+    /** What a MAIN or MATRIX key does besides putting its main or matrix on
+        fader 13: spill it (the strips feeding it onto the faders) or Sends on
+        Fader to it (the faders show the channels' sends to it). */
+    enum class KeyAction
+    {
+        None,
+        Spill,
+        Sends
+    };
+
+    struct KeyActions
+    {
+        KeyAction press = KeyAction::None, hold = KeyAction::None;
+    };
+
+    /** A MAIN MATRIX mode key's press and hold. MAIN SPILL / MATRIX SPILL
+        (/$ctl/cfg/mainspill, mtxspill; WING manual 5.5) choose which of the two
+        spills: off, a press sends (SOF) and a hold spills; on, the other way
+        round (WING remote protocols). The factory setting is off for the mains
+        (press: SOF to the main, as the manual's 4.2 says; hold: spill) and on
+        for the matrices (hold: SOF to the matrix [a WING COMPACT's owner]).
+        Sidecar has no matrix spill: a MATRIX key's spill does nothing. */
+    inline KeyActions mainMatrixActions (int key, bool mainSpill, bool matrixSpill)
+    {
+        if (key >= 0 && key < 4)
+            return mainSpill ? KeyActions { KeyAction::Spill, KeyAction::Sends } : KeyActions { KeyAction::Sends, KeyAction::Spill };
+        if (key >= 8 && key < kNumKeys)
+            return matrixSpill ? KeyActions { KeyAction::None, KeyAction::Sends } : KeyActions { KeyAction::Sends, KeyAction::None };
+        return {};
+    }
 } // namespace compact
 
 } // namespace livedaw::ui::layout

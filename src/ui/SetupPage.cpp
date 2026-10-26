@@ -10,6 +10,7 @@
 #include "ui/ScopeWindow.h"
 #include "ui/ScreenWidgets.h"
 #include "ui/StartupNotice.h"
+#include "ui/SurfaceLayout.h"
 #include "ui/WebMirror.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>
@@ -505,6 +506,8 @@ namespace
                                     look.finish = i == 1 ? SurfaceFinish::Black : SurfaceFinish::Silver;
                                     look.save (ctx.settings);
                                     setSurfaceFinish (look.shownFinish());
+                                    // WING remote clients see the black WING as "wing-bk".
+                                    ctx.engine.getWing().setBlackFinish (look.finish == SurfaceFinish::Black);
                                     if (auto* top = getTopLevelComponent())
                                         top->repaint();
                                 } };
@@ -1068,24 +1071,42 @@ namespace
             general.addRow ("SHOW SOF FRAME", OnKey::forSetting (ctx.settings, uiprefs::showSofFrame, true), 1.3f);
             general.addRow ("SHOW SOURCE ON SCRIBBLE", onSetting (uiprefs::sourceOnScribble, true), 1.3f);
             general.addRow ("SHOW FADER VALUE ON SCRIBBLE", onSetting (uiprefs::faderValueOnScribble, false), 1.3f);
-            general.addRow ("USE F1-F3 AS CUSTOM CONTROLS", onSetting (uiprefs::f1f3AsCustom, false), 1.3f);
+            f1f3Row = &general.addRow ("USE F1-F3 AS CUSTOM CONTROLS", onSetting (uiprefs::f1f3AsCustom, false), 1.3f);
             general.addRow ("SCREEN FOLLOWS CH STRIP", OnKey::forSetting (ctx.settings, uiprefs::screenFollowsStrip, false), 1.3f);
             general.addRow ("CH STRIP TOUCH SELECT", OnKey::forSetting (ctx.settings, uiprefs::stripTouchSelect, true), 1.3f);
+            // The COMPACT's rows (WING manual 5.5, SURFACE): its DCA keys as custom controls.
+            compactRows.push_back (&general.addRow ("USE DCA BUTTONS 1-16 AS CC", compactSetting (uiprefs::compactDcaCustom, false), 1.3f));
             addAndMakeVisible (general);
 
             faders.addRow ("FADER SPEED", choiceSetting (uiprefs::faderSpeed, { "SLOW", "MED", "FAST" }, 1), 3.65f);
             faders.addRow ("ALTERNATIVE SOF MODE", onSetting (uiprefs::alternativeSof, false), 1.3f);
-            faders.addRow ("RIGHT SECTION SENDS ON FADER", onSetting (uiprefs::rightSectionSof, uiprefs::rightSectionSofDefault), 1.3f);
+            rightSofRow = &faders.addRow ("RIGHT SECTION SENDS ON FADER", onSetting (uiprefs::rightSectionSof, uiprefs::rightSectionSofDefault), 1.3f);
             faders.addRow ("FULL FADER PAGING", onSetting (uiprefs::fullFaderPaging, false), 1.3f);
             // The COMPACT's one fader section has one (autosel_CMPCT).
             faders.addRow ("CH AUTOSELECT", std::make_unique<ToggleKeys> (ctx, juce::StringArray { "L", "C", "R" },
                                                                          std::vector<const char*> (std::begin (uiprefs::autoSelect), std::end (uiprefs::autoSelect)),
                                                                          juce::StringArray { "CMPCT" }, std::vector<const char*> { uiprefs::autoSelectCompact }),
                            3.6f);
-            faders.addRow ("USER LAYER LINK", std::make_unique<ToggleKeys> (ctx, juce::StringArray { "L/C", "C/R" },
-                                                                           std::vector<const char*> (std::begin (uiprefs::userLayerLink), std::end (uiprefs::userLayerLink))),
-                           2.35f);
-            faders.addRow ("DCA SPILL", onSetting (uiprefs::dcaSpill, false), 1.3f);
+            // The COMPACT's (WING manual 5.5, FADERS): MAIN FADER is fader 13's own
+            // assignment, KEEP MAIN FADER keeps it there whatever key is pressed,
+            // MAIN / MATRIX SPILL put a MAIN key's spill and a MATRIX key's sends on
+            // the press instead of the hold.
+            compactRows.push_back (&faders.addRow ("MAIN FADER",
+                                                   std::make_unique<DropdownField> ("SOURCE",
+                                                                                    [this]
+                                                                                    {
+                                                                                        return layout::compact::mainFaderToken (
+                                                                                            layout::compact::parseMainFader (ctx.settings.getValue (uiprefs::compactMainFader, "MAIN.1")));
+                                                                                    },
+                                                                                    [this] (DropdownField& f) { chooseMainFader (f); }),
+                                                   3.6f, true, false, kFieldRows));
+            compactRows.push_back (&faders.addRow ("KEEP MAIN FADER", compactSetting (uiprefs::compactKeepMainFader, false), 1.3f));
+            compactRows.push_back (&faders.addRow ("MAIN SPILL", compactSetting (uiprefs::compactMainSpill, uiprefs::compactMainSpillDefault), 1.3f));
+            compactRows.push_back (&faders.addRow ("MATRIX SPILL", compactSetting (uiprefs::compactMatrixSpill, uiprefs::compactMatrixSpillDefault), 1.3f));
+            userLinkRow = &faders.addRow ("USER LAYER LINK", std::make_unique<ToggleKeys> (ctx, juce::StringArray { "L/C", "C/R" },
+                                                                                       std::vector<const char*> (std::begin (uiprefs::userLayerLink), std::end (uiprefs::userLayerLink))),
+                                          2.35f);
+            dcaSpillRow = &faders.addRow ("DCA SPILL", onSetting (uiprefs::dcaSpill, false), 1.3f);
             faders.addRow ("FADER/SCREEN LAYER LINK", OnKey::forSetting (ctx.settings, prefs::layerLink, prefs::layerLinkDefault), 1.3f);
             addAndMakeVisible (faders);
 
@@ -1098,8 +1119,15 @@ namespace
 
         void paint (juce::Graphics& g) override { g.fillAll (juce::Colours::black); }
 
+        void visibilityChanged() override
+        {
+            if (isVisible())
+                resized();
+        }
+
         void resized() override
         {
+            showModelRows();
             // [Fig. 40] three 416 px columns, 8 px apart.
             auto b = getLocalBounds();
             const int gap = setupGap(), w = (b.getWidth() - 2 * gap) / 3;
@@ -1205,6 +1233,54 @@ namespace
                                                  [&settings, key] (int i) { settings.setValue (key, i); });
         }
 
+        /** The rows of the console model shown: the COMPACT's, or the full-size
+            WING's (F1-F3, the right section, USER LAYER LINK); the COMPACT calls
+            DCA SPILL "DCA SELECT SPILL". */
+        void showModelRows()
+        {
+            const bool compact = ctx.consoleModel == ConsoleModel::Compact;
+            for (auto* row : compactRows)
+                (row->getParentComponent() == &general ? general : faders).setRowShown (*row, compact);
+            general.setRowShown (*f1f3Row, ! compact);
+            faders.setRowShown (*rightSofRow, ! compact);
+            faders.setRowShown (*userLinkRow, ! compact);
+            faders.setRowLabel (*dcaSpillRow, compact ? "DCA SELECT SPILL" : "DCA SPILL");
+        }
+
+        /** MAIN FADER > SOURCE: OFF, a main, a matrix or a DCA (WING manual 4.2). */
+        void chooseMainFader (DropdownField& f)
+        {
+            namespace compact = layout::compact;
+            std::vector<compact::MainFader> choices { { compact::MainFader::Off, 1 } };
+            for (auto g : { compact::MainFader::Main, compact::MainFader::Matrix, compact::MainFader::Dca })
+                for (int n = 1; n <= compact::groupSize (g); ++n)
+                    choices.push_back ({ g, n });
+            juce::StringArray items;
+            int selected = 0;
+            const auto current = compact::parseMainFader (ctx.settings.getValue (uiprefs::compactMainFader, "MAIN.1"));
+            for (size_t i = 0; i < choices.size(); ++i)
+            {
+                items.add (compact::mainFaderToken (choices[i]));
+                if (choices[i] == current)
+                    selected = (int) i;
+            }
+            popups::ListOptions options;
+            options.columns = 3;
+            options.maxRows = 10;
+            auto& settings = ctx.settings;
+            popups::chooseFrom (f, items, selected, [&settings, choices] (int i)
+            {
+                if (juce::isPositiveAndBelow (i, (int) choices.size()))
+                    settings.setValue (uiprefs::compactMainFader, compact::mainFaderToken (choices[(size_t) i]));
+            }, options);
+        }
+
+        /** An ON key for a COMPACT setting (its key section reads it). */
+        std::unique_ptr<OnKey> compactSetting (const char* key, bool defaultValue)
+        {
+            return OnKey::forSetting (ctx.settings, key, defaultValue);
+        }
+
         /** An ON key for a setting the fader strips read when they rebuild. */
         std::unique_ptr<OnKey> onSetting (const char* key, bool defaultValue)
         {
@@ -1218,6 +1294,8 @@ namespace
 
         UiContext& ctx;
         SettingsPanel metering { "METERING" }, general { "GENERAL" }, faders { "FADERS" };
+        std::vector<juce::Component*> compactRows;
+        juce::Component *f1f3Row = nullptr, *rightSofRow = nullptr, *userLinkRow = nullptr, *dcaSpillRow = nullptr;
         WingKey sectionsKey { "SECTIONS", Icon::Faders };
         OverlayHolder sections;
     };

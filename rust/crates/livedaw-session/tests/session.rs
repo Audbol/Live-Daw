@@ -1361,6 +1361,19 @@ fn spill_layers_follow_the_console() {
     let to = StripRef::new(StripKind::Bus, 3);
     assert_eq!(spill_faders(&engine, &SpillKind::Bus(3)), vec![FaderRef::Send { from: StripRef::of(&a), to }]);
 
+    // Main spill: the channels, aux and buses feeding the main, as their faders.
+    for k in [StripKind::Channel, StripKind::Aux, StripKind::Bus] {
+        for s in engine.strips(k) {
+            s.params.mains[1].on.store(false, Relaxed);
+        }
+    }
+    assert!(spill_faders(&engine, &SpillKind::Main(1)).is_empty());
+    c.params.mains[1].on.store(true, Relaxed);
+    bus.params.mains[1].on.store(true, Relaxed);
+    engine.strips(StripKind::Matrix)[0].params.mains[1].on.store(true, Relaxed);
+    assert_eq!(spill_faders(&engine, &SpillKind::Main(1)), vec![strip(&c), strip(&bus)]);
+    assert!(spill_faders(&engine, &SpillKind::Main(4)).is_empty());
+
     // A strip's sends: every bus, main and matrix.
     let sends = spill_faders(&engine, &SpillKind::Sends(StripRef::of(&a)));
     assert_eq!(sends.len(), 16 + 4 + 8);

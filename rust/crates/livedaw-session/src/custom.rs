@@ -4,17 +4,31 @@
 //! Each layer has four controls; a control is an encoder with two keys under
 //! it (`enc`, `bu`, `bd` in the console's parameter tree), a name and a colour.
 //! Layers 0-15 are the upper part's 16 layers; the console's other layers
-//! (the lower part's USER layer, the 4-Channel section's U1-U3, then the lower
-//! part's DAW 1-4 layers of DAW mode) follow. What a function does is the
+//! (the lower part's USER layer, the 4-Channel section's U1-U3, the lower
+//! part's DAW 1-4 layers of DAW mode, then the WING COMPACT's key sets)
+//! follow. What a function does is the
 //! application's business: here it is a category, a target and an option,
 //! stored as `category,target,option`.
 
 use crate::xml::{parse_int_prefix, Element};
 
-/// The upper part's layers (UP / DOWN), then USER, U1-U3 and DAW 1-4.
-pub const NUM_LAYERS: usize = 24;
+/// The upper part's layers (UP / DOWN), then USER, U1-U3, DAW 1-4 and the
+/// COMPACT's nine key sets.
+pub const NUM_LAYERS: usize = 33;
 /// The first of the four DAW layers (the lower part in DAW mode: `daw1`-`daw4`).
 pub const FIRST_DAW_LAYER: usize = 20;
+/// The WING COMPACT's key sets (`/$ctl/user/U1`-`U4`, `MM`, `D1`-`D4`; WING
+/// Edit's USER 1-4 .. USER 13-16, MAIN/MTX 5-8, DCA 1-4 .. DCA 13-16): four
+/// keys each (an upper key, a name and a colour per control, no encoder),
+/// which its 16 keys play. USER 1-4 .. 13-16 are the keys in USER mode, four
+/// sets for 16 keys; MAIN/MTX 5-8 the four keys MAIN MATRIX mode leaves free
+/// between MAIN 1-4 and MATRIX 1-8; DCA 1-4 .. 13-16 the keys in DCA mode
+/// with DCA AS CC (`/$ctl/cfg/dcacc`) on.
+pub const FIRST_COMPACT_USER_LAYER: usize = 24;
+pub const COMPACT_MAIN_MATRIX_LAYER: usize = 28;
+pub const FIRST_COMPACT_DCA_LAYER: usize = 29;
+/// How many layers the COMPACT's USER and DCA sets have each.
+pub const NUM_COMPACT_SETS: usize = 4;
 pub const NUM_CONTROLS: usize = 4;
 
 /// What a knob or key does (category 0 = not assigned).
@@ -324,5 +338,28 @@ mod tests {
         loaded.from_xml(&cc.to_xml());
         assert_eq!(loaded.control(0, 0).unwrap().upper, CcFunction { category: 12, target: 2, option: 0 });
         assert_eq!(loaded.control(16, 2).unwrap().lower, CcFunction { category: 12, target: 211, option: 0 });
+    }
+
+    #[test]
+    fn compact_key_sets_round_trip() {
+        // USER 13-16's last key, MAIN/MTX 5-8's first and DCA 1-4's.
+        let mut cc = CustomControls::default();
+        let last_user = FIRST_COMPACT_USER_LAYER + NUM_COMPACT_SETS - 1;
+        assert_eq!((last_user + 1, COMPACT_MAIN_MATRIX_LAYER + 1), (COMPACT_MAIN_MATRIX_LAYER, FIRST_COMPACT_DCA_LAYER));
+        assert_eq!(FIRST_COMPACT_DCA_LAYER + NUM_COMPACT_SETS, NUM_LAYERS);
+        {
+            let c = cc.control_mut(last_user, 3).unwrap();
+            c.upper = CcFunction { category: 10, target: 4, option: 0 };
+            c.name = "SCENE 4".into();
+            c.colour = 7;
+        }
+        cc.control_mut(COMPACT_MAIN_MATRIX_LAYER, 0).unwrap().upper = CcFunction { category: 1, target: 100_000, option: 0 };
+        cc.control_mut(FIRST_COMPACT_DCA_LAYER, 0).unwrap().upper = CcFunction { category: 3, target: 2, option: 0 };
+        assert!(cc.control(FIRST_COMPACT_DCA_LAYER + NUM_COMPACT_SETS - 1, 3).unwrap().is_default());
+        let mut loaded = CustomControls::default();
+        loaded.from_xml(&cc.to_xml());
+        assert_eq!(loaded, cc);
+        assert_eq!(loaded.control(last_user, 3).unwrap().name, "SCENE 4");
+        assert_eq!(cc.to_xml().children_named("Control").count(), 3);
     }
 }

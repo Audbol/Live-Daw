@@ -36,7 +36,8 @@ use std::sync::Arc;
 // ABI 15: ld_layers_remove_from_user takes the slot (a user layer can hold a
 // fader twice); ld_layers_add_to_user returns whether it had room.
 // ABI 16: the console model (ld_console_model_info, ld_layers_set_model, ld_wing_set_model).
-pub const LD_ABI_VERSION: i32 = 16;
+// ABI 17: ld_wing_set_black_finish ("wing-bk"); LdSpill kind 5 = a main's sources.
+pub const LD_ABI_VERSION: i32 = 17;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)

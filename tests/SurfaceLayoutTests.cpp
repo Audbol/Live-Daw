@@ -136,6 +136,43 @@ public:
                 expect (! compact::keyMainFader (KM::Dca, key) && ! compact::keyMainFader (KM::User, key));
             expect (! compact::keyMainFader (KM::Bus, 16).has_value());
         }
+
+        beginTest ("The COMPACT's custom control key sets");
+        {
+            using KM = compact::KeyMode;
+            using KC = compact::KeyControl;
+            // USER: U1 on keys 1-4 ... U4 on 13-16.
+            expect (compact::keyControl (KM::User, 0, false) == KC { 0, 0 });
+            expect (compact::keyControl (KM::User, 5, false) == KC { 1, 1 });
+            expect (compact::keyControl (KM::User, 15, false) == KC { 3, 3 });
+            // MAIN MATRIX: M/M on keys 5-8 only.
+            expect (compact::keyControl (KM::Main, 4, false) == KC { compact::kSetMainMatrix, 0 });
+            expect (compact::keyControl (KM::Main, 7, false) == KC { compact::kSetMainMatrix, 3 });
+            for (int key : { 0, 3, 8, 15 })
+                expect (! compact::keyControl (KM::Main, key, false).has_value());
+            // DCA: D1-D4 with USE DCA BUTTONS 1-16 AS CC, else the DCAs.
+            expect (! compact::keyControl (KM::Dca, 0, false).has_value());
+            expect (compact::keyControl (KM::Dca, 0, true) == KC { compact::kFirstDcaSet, 0 });
+            expect (compact::keyControl (KM::Dca, 14, true) == KC { compact::kFirstDcaSet + 3, 2 });
+            expect (! compact::keyControl (KM::Bus, 2, true).has_value());
+            expect (! compact::keyControl (KM::User, 16, false).has_value());
+        }
+
+        beginTest ("MAIN and MATRIX keys: press and hold");
+        {
+            using A = compact::KeyAction;
+            auto is = [] (compact::KeyActions a, A press, A hold) { return a.press == press && a.hold == hold; };
+            // The factory setting: MAIN pressed SOF, held spill; MATRIX held SOF.
+            expect (is (compact::mainMatrixActions (0, false, true), A::Sends, A::Spill));
+            expect (is (compact::mainMatrixActions (3, false, true), A::Sends, A::Spill));
+            expect (is (compact::mainMatrixActions (8, false, true), A::None, A::Sends));
+            expect (is (compact::mainMatrixActions (15, false, true), A::None, A::Sends));
+            // MAIN SPILL / MATRIX SPILL swap them.
+            expect (is (compact::mainMatrixActions (1, true, true), A::Spill, A::Sends));
+            expect (is (compact::mainMatrixActions (9, false, false), A::Sends, A::None));
+            // Keys 5-8 are custom controls.
+            expect (is (compact::mainMatrixActions (5, false, true), A::None, A::None));
+        }
     }
 };
 

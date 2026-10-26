@@ -165,7 +165,8 @@ public:
             Bus = 1,     // index: the bus slot
             Fx = 2,      // index: the FX slot
             Automix = 3, // index: 0 X, 1 Y
-            Sends = 4    // strip: whose sends
+            Sends = 4,   // strip: whose sends
+            Main = 5     // index: the main (0-3), the strips feeding it
         };
         Kind kind = Kind::Dca;
         int index = 0;

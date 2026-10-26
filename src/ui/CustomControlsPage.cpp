@@ -41,12 +41,15 @@ namespace
 
     Strip* stripOf (UiContext& ctx, int target) { return state::findStrip (ctx.engine, decodeStrip (target)); }
 
+    /** FADER SPILL's kinds, in the order of their codes (kind * 100 + index). */
+    constexpr int kNumSpillKinds = 6;
+
     /** FADER SPILL: the spill of a target, kind * 100 + index (custom.rs);
         SEL SENDS spills the selected strip's sends (none without one). */
     std::optional<LayerSet::Spill> spillOf (UiContext& ctx, int target)
     {
         const int kind = target / 100, index = target % 100;
-        if (! juce::isPositiveAndBelow (kind, 5) || index < 0)
+        if (! juce::isPositiveAndBelow (kind, kNumSpillKinds) || index < 0)
             return std::nullopt;
         LayerSet::Spill spill { static_cast<LayerSet::Spill::Kind> (kind), index, {} };
         if (spill.kind == LayerSet::Spill::Kind::Sends)
@@ -59,7 +62,7 @@ namespace
         }
         return spill;
     }
-    const char* const spillKindNames[] = { "DCA", "BUS", "FX", "AUTOMIX", "SEL SENDS" };
+    const char* const spillKindNames[] = { "DCA", "BUS", "FX", "AUTOMIX", "SEL SENDS", "MAIN" };
 
     /** Every strip in CHANNEL SELECT order. */
     std::vector<Strip*> allStrips (UiContext& ctx)
@@ -445,6 +448,13 @@ juce::String layerName (int layer)
 {
     if (layer == kUserLayer)
         return "USER";
+    if (layer == kCompactMainMatrixLayer)
+        return "MAIN/MTX 5-8";
+    if (isCompactLayer (layer))
+    {
+        const int first = (layer < kCompactMainMatrixLayer ? layer - kFirstCompactUserLayer : layer - kFirstCompactDcaLayer) * 4 + 1;
+        return juce::String (layer < kCompactMainMatrixLayer ? "USER " : "DCA ") + juce::String (first) + "-" + juce::String (first + 3);
+    }
     if (layer >= kFirstDawLayer)
         return "DAW " + juce::String (layer - kFirstDawLayer + 1);
     if (layer >= kFirstFourChannelLayer)
@@ -550,7 +560,7 @@ juce::String describe (UiContext& ctx, Slot s, const Function& f)
         case BtnOther:        return otherNames[juce::jlimit (0, kNumOthers - 1, f.option)];
         case BtnFaderSpill:
         {
-            const int kind = juce::jlimit (0, 4, f.target / 100), index = f.target % 100;
+            const int kind = juce::jlimit (0, kNumSpillKinds - 1, f.target / 100), index = f.target % 100;
             if (kind == 4)
                 return "SPILL SENDS";
             if (kind == 3)
@@ -653,9 +663,12 @@ void CustomControlsPage::setLayer (int l)
 {
     if (cc::isLowerLayer (layer))
     {
-        // ‹ › step through DAW 1-4; USER stays.
-        if (layer >= cc::kFirstDawLayer)
+        // ‹ › step through DAW 1-4 or the COMPACT's nine sets; USER stays.
+        if (cc::isCompactLayer (layer))
+            layer = cc::kFirstCompactUserLayer + (l - cc::kFirstCompactUserLayer + cc::kNumCompactLayers) % cc::kNumCompactLayers;
+        else if (layer >= cc::kFirstDawLayer)
             layer = cc::kFirstDawLayer + (l - cc::kFirstDawLayer + cc::kNumDawLayers) % cc::kNumDawLayers;
+        resized(); // the sets have one row of keys, the DAW layers two
         rebuildLists();
         notifyStatusKeysChanged();
         repaint();
@@ -853,8 +866,8 @@ void CustomControlsPage::rebuildLists()
                 // SPILL (kind), then which one: both set the target (the
                 // option codes are whole targets, kind * 100 + index).
                 targets.title = "SPILL";
-                const int kind = juce::jlimit (0, 4, f.target / 100);
-                for (int k = 0; k < 5; ++k)
+                const int kind = juce::jlimit (0, kNumSpillKinds - 1, f.target / 100);
+                for (int k = 0; k < kNumSpillKinds; ++k)
                 {
                     targets.rows.add (spillKindNames[k]);
                     targetCodes.push_back (k * 100 + (k == kind ? f.target % 100 : 0));
@@ -885,6 +898,12 @@ void CustomControlsPage::rebuildLists()
                         options.title = "AUTOMIX";
                         add ("GROUP X", 0);
                         add ("GROUP Y", 1);
+                        break;
+                    case 5:
+                        // A main's spill: the channels, aux and buses feeding it (spidx 57-60).
+                        options.title = "MAIN";
+                        for (auto& m : ctx.engine.getStrips (StripKind::Main))
+                            add (shortStripLabel (*m) + "\t" + (stripName (*m) != m->getLabel() ? stripName (*m).toUpperCase() : juce::String()), m->getId());
                         break;
                     default:
                         options.title = "SPILL";
@@ -1114,7 +1133,8 @@ void CustomControlsPage::resized()
     auto m = layerBody.reduced (juce::roundToInt (wingPx (12.0f)), juce::roundToInt (wingPx (12.0f)));
     const int cw = m.getWidth() / cc::kNumControls;
     const bool keysOnly = cc::isLowerLayer (layer);
-    const int rowH = m.getHeight() / (keysOnly ? 2 : 3);
+    const bool lowerKeys = cc::hasLowerKeys (layer);
+    const int rowH = m.getHeight() / (! keysOnly ? 3 : lowerKeys ? 2 : 1);
     if (! keysOnly)
     {
         // [3.1] columns 82 px wide on a 90 px pitch from x 20: the 8 px colour
@@ -1136,7 +1156,7 @@ void CustomControlsPage::resized()
         colourBars.push_back (col.removeFromTop (juce::jmax (4, rowH / 10)));
         auto rows = col;
         for (auto s : { cc::Slot::Encoder, cc::Slot::Upper, cc::Slot::Lower })
-            if (! (keysOnly && s == cc::Slot::Encoder))
+            if (! (keysOnly && s == cc::Slot::Encoder) && ! (! lowerKeys && s == cc::Slot::Lower))
                 elements.push_back ({ rows.removeFromTop (rowH - (s == cc::Slot::Encoder || (keysOnly && s == cc::Slot::Upper) ? juce::jmax (4, rowH / 10) : 0)), i, s });
     }
 }

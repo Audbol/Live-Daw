@@ -60,6 +60,11 @@ public:
         the COMPACT, so WING Edit and Mixing Station show the right one. At
         once, and across restarts. */
     void setConsoleModel (ConsoleModel);
+    /** The full-size console is the black WING (SURFACE FINISH BLACK): it
+        reports "wing-bk" (discovery, /?, $cnsmdl, $cnscfg, exported
+        snapshots) instead of "ngc-full" / "wing-fullsize". The COMPACT stays
+        "wing-compact". At once, and across restarts. */
+    void setBlackFinish (bool black);
 
     struct Client
     {

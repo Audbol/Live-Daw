@@ -106,6 +106,11 @@ void WingRemote::setConsoleModel (ConsoleModel model)
     ld::ld_wing_set_model (handle, (int32_t) model);
 }
 
+void WingRemote::setBlackFinish (bool black)
+{
+    ld::ld_wing_set_black_finish (handle, black);
+}
+
 WingRemote::Status WingRemote::getStatus() const
 {
     Status st;

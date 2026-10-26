@@ -96,6 +96,14 @@ pub const HOST_SETTINGS: &[HostSetting] = &[
     s("/$ctl/cfg/autosel_CMPCT", "ui.autoSelectCompact", "0", Enc::Bool),
     s("/$ctl/cfg/mfdr", "ui.compactMainFader", "MAIN.1", Enc::Item),
     s("/$ctl/cfg/cscmode", "ui.compactKeyMode", "BUS", Enc::Item),
+    // SETUP > SURFACE on a COMPACT (WING manual 5.5): KEEP MAIN FADER (the keys
+    // don't move fader 13); MAIN SPILL and MATRIX SPILL, which of push and hold
+    // spills a MAIN key's main and shows a MATRIX key's sends (factory: hold for
+    // both); USE DCA BUTTONS 1-16 AS CC, the DCA keys play the sets DCA 1-4 .. 13-16.
+    s("/$ctl/cfg/mfdrkeep", "ui.compactKeepMainFader", "0", Enc::Bool),
+    s("/$ctl/cfg/mainspill", "ui.compactMainSpill", "0", Enc::Bool),
+    s("/$ctl/cfg/mtxspill", "ui.compactMatrixSpill", "1", Enc::Bool),
+    s("/$ctl/cfg/dcacc", "ui.compactDcaCustom", "0", Enc::Bool),
     // SETUP > AUDIO > SOLO SYSTEM.
     s("/$ctl/cfg/soloexcl", "ui.soloExclusive", "1", Enc::Bool),
     s("/$ctl/cfg/solofsel", "ui.soloFollowsSelect", "0", Enc::Bool),

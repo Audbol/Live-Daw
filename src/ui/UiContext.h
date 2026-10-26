@@ -265,6 +265,16 @@ namespace uiprefs
     constexpr const char* compactMainFader = "ui.compactMainFader";
     // The WING COMPACT's 16 keys (/$ctl/cfg/cscmode): "BUS" (default), "DCA", "MAIN" or "USER".
     constexpr const char* compactKeyMode = "ui.compactKeyMode";
+    // SETUP > SURFACE on a COMPACT (WING manual 5.5): KEEP MAIN FADER (/$ctl/cfg/mfdrkeep, the
+    // 16 keys leave fader 13 alone); MAIN SPILL / MATRIX SPILL (mainspill, mtxspill: a MAIN key
+    // spills its main and a MATRIX key shows its sends when pressed instead of held; factory
+    // off / on, i.e. both on hold); USE DCA BUTTONS 1-16 AS CC (dcacc).
+    constexpr const char* compactKeepMainFader = "ui.compactKeepMainFader";
+    constexpr const char* compactMainSpill = "ui.compactMainSpill";
+    constexpr bool compactMainSpillDefault = false;
+    constexpr const char* compactMatrixSpill = "ui.compactMatrixSpill";
+    constexpr bool compactMatrixSpillDefault = true;
+    constexpr const char* compactDcaCustom = "ui.compactDcaCustom";
     constexpr const char* f1f3AsCustom = "ui.f1f3AsCustomControls";
 
     // PLUGINS (SETUP > PLUGINS).

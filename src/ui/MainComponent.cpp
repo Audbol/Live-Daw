@@ -270,9 +270,14 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
                                               }
                                           if (keys.contains ("ui.selDblClick") || keys.contains ("setup.faderScreenLayerLink"))
                                               notifyLayersChangedAsync (ctx);
-                                          // The COMPACT's fader 13 and 16 keys (/$ctl/cfg/mfdr, cscmode).
-                                          if (compactKeys != nullptr && (keys.contains (uiprefs::compactMainFader) || keys.contains (uiprefs::compactKeyMode)))
-                                              compactKeys->refresh();
+                                          // The COMPACT's fader 13 and 16 keys (/$ctl/cfg/mfdr, cscmode, mfdrkeep, dcacc...).
+                                          if (compactKeys != nullptr)
+                                              for (const auto& k : keys)
+                                                  if (k.startsWith ("ui.compact"))
+                                                  {
+                                                      compactKeys->refresh();
+                                                      break;
+                                                  }
                                           repaint();
                                       });
     for (juce::Component* c : { (juce::Component*) channelStrip.get(), (juce::Component*) display.get(), (juce::Component*) monitor.get(),
@@ -433,6 +438,7 @@ void MainComponent::applyConsoleModel (ConsoleModel model, bool save)
     // the colours and the parts of the surface.
     show.layers.setModel (model);
     engine.getWing().setConsoleModel (model);
+    engine.getWing().setBlackFinish (ConsoleLook::load (settings).finish == SurfaceFinish::Black);
     setSurfaceFinish (ConsoleLook::load (settings).shownFinish());
     monitor->setConsoleModel (model);
     if (changed && isCompact())
