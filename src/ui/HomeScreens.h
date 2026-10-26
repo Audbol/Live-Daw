@@ -32,6 +32,11 @@ public:
     /** The screen has a SETTINGS key in the status bar (OVERVIEW, FILTER, EQ). */
     virtual bool hasSettings() const { return false; }
 
+    /** The status bar shows none of the HOME keys (PREV CH ... COPY), as on the
+        3.1 GATE / COMP KEY FILTER and XOVER pages. */
+    virtual bool hidesStatusKeys() const { return false; }
+    std::function<void()> statusKeysChanged;
+
     /** Opens the Feed Configuration of this bus, main or matrix (set by the page). */
     std::function<void()> openFeedConfig;
 
@@ -56,6 +61,18 @@ protected:
         that opens the WING's on-screen list (W10). */
     home::ChoiceField& field (const juce::String& caption, const juce::StringArray& items, std::atomic<int32_t>& value,
                               const juce::String& noneText = {});
+
+    /** A rectangle given in WING screen pixels (1280 x 800, firmware 3.1)
+        in this screen's coordinates (the HOME page starts at y 80). */
+    juce::Rectangle<int> wingRect (float x, float y, float w, float h) const
+    {
+        const float k = getWingScreenHeight() / 800.0f;
+        const int x0 = juce::roundToInt (x * k) - getX(), y0 = juce::roundToInt ((y - 80.0f) * k) - getY();
+        return { x0, y0, juce::roundToInt ((x + w) * k) - getX() - x0, juce::roundToInt ((y + h - 80.0f) * k) - getY() - y0 };
+    }
+    /** The area to give box() for a panel drawn at these WING pixels (box()
+        insets its area by half the 8 px gap). */
+    juce::Rectangle<int> panelAt (float x, float y, float w, float h) const { return wingRect (x - 4.0f, y - 4.0f, w + 8.0f, h + 8.0f); }
 
     /** Adds a panel (drawn in paint) and returns its content area. */
     juce::Rectangle<int> box (juce::Rectangle<int> area, const juce::String& title, bool chevron = false);

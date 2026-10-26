@@ -484,13 +484,25 @@ public:
         "wingListOpen" property) the field turns grey, as on the console. */
     bool isListOpen() const { return getProperties().getWithDefault ("wingListOpen", false); }
 
+    /** The key's width: 30 of a 64 px field on the console (inside its frame). */
+    int keyWidth() const { return juce::jmin ((getHeight() * 15 + 16) / 32, getWidth() / 4); }
+
     void paint (juce::Graphics& g) override
     {
         shownValue = getValue ? getValue() : juce::String();
+        // WING 3.1 (KEY SOURCE, XOVER MODE, SOURCE GROUP): the field and its key
+        // inside one 2 px black frame, the key 30 px wide, its mark light grey;
+        // the caption (14 px capitals) 8 px under the top, the value (20 px)
+        // 8 px over the bottom.
         auto r = getLocalBounds();
-        auto key = keyHidden ? juce::Rectangle<int>() : r.removeFromRight (juce::jmin (r.getHeight() * 2 / 3, r.getWidth() / 4));
+        const float screenH = getWingScreenHeight();
+        const int rim = juce::jmax (1, juce::roundToInt (wingPx (2.0f)));
+        g.setColour (juce::Colours::black);
+        g.fillRect (r);
+        r = r.reduced (rim);
+        auto key = keyHidden ? juce::Rectangle<int>() : r.removeFromRight (keyWidth() - rim);
         if (! keyHidden)
-            r.removeFromRight (3);
+            r.removeFromRight (rim);
         const float alpha = isEnabled() ? 1.0f : 0.45f;
         const bool open = isListOpen();
         g.setColour (open ? Dark::textDim : Dark::well);
@@ -498,21 +510,22 @@ public:
         const bool lit = chevronKey && keyLit != nullptr && keyLit();
         g.setColour ((lit ? Dark::textDim : Dark::key).withAlpha (alpha));
         g.fillRect (key);
-        g.setColour (Dark::text.withAlpha (alpha));
+        g.setColour (Dark::caption.withAlpha (alpha));
         const auto kc = key.getCentre().toFloat();
         if (chevronKey && ! keyHidden)
         {
-            const float s = juce::jlimit (4.0f, screenCap (9.0f), (float) key.getHeight() * 0.16f);
+            const float s = juce::jlimit (4.0f, screenCap (9.0f), (float) key.getHeight() * 0.2f);
             juce::Path chevron;
-            chevron.startNewSubPath (kc.x - s * 0.5f, kc.y - s);
-            chevron.lineTo (kc.x + s * 0.5f, kc.y);
-            chevron.lineTo (kc.x - s * 0.5f, kc.y + s);
-            g.strokePath (chevron, juce::PathStrokeType (juce::jmax (1.5f, s * 0.3f)));
+            chevron.startNewSubPath (kc.x - s * 0.45f, kc.y - s);
+            chevron.lineTo (kc.x + s * 0.45f, kc.y);
+            chevron.lineTo (kc.x - s * 0.45f, kc.y + s);
+            g.strokePath (chevron, juce::PathStrokeType (juce::jmax (1.5f, wingPx (2.0f))));
         }
         else if (arrowKey && ! keyHidden)
         {
+            const float w = juce::jmin ((float) key.getWidth() * 0.6f, wingPx (18.0f)), h = w * 0.5f;
             juce::Path tri;
-            tri.addTriangle (kc.x - 7.0f, kc.y - 4.0f, kc.x + 7.0f, kc.y - 4.0f, kc.x, kc.y + 5.0f);
+            tri.addTriangle (kc.x - w * 0.5f, kc.y - h * 0.5f, kc.x + w * 0.5f, kc.y - h * 0.5f, kc.x, kc.y + h * 0.5f);
             g.fillPath (tri);
         }
         else if (! keyHidden)
@@ -521,28 +534,30 @@ public:
             for (int i = -1; i <= 1; ++i)
                 g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (kc.translated (0.0f, (float) i * d * 2.2f)));
         }
-        auto t = r.reduced (6, 3);
+        auto t = r.withTrimmedLeft (juce::roundToInt (wingPx (7.0f))).withTrimmedRight (3);
         if (icon.has_value())
         {
             auto ib = t.removeFromLeft (t.getHeight()).reduced (2);
             drawIcon (g, *icon, ib.toFloat(), Dark::text.withAlpha (alpha));
             t.removeFromLeft (6);
         }
-        const float screenH = getWingScreenHeight();
+        const float h = (float) t.getHeight(), k = h / 60.0f;
+        const float captionCap = juce::jmin (TypeScale::body * screenH, 14.0f * k);
+        const float valueCap = juce::jmin (TypeScale::value * screenH, 20.0f * k);
         g.setColour ((open ? Dark::text : Dark::caption).withAlpha (alpha));
         // Narrow fields (small windows) shrink the text rather than cut it.
-        g.setFont (fontFittingWidth (wingFontPx (juce::jmin (TypeScale::body * screenH, (float) t.getHeight() * 0.22f)), caption, (float) t.getWidth(), 0.6f));
-        g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 40 / 100), juce::Justification::centredLeft, 1, 0.6f);
+        g.setFont (fontFittingWidth (wingFontPx (captionCap), caption, (float) t.getWidth(), 0.6f));
+        drawLine (g, caption, t, (float) t.getY() + 8.0f * k + captionCap);
         g.setColour (Dark::text.withAlpha (alpha));
-        g.setFont (fontFittingWidth (wingFontPx (juce::jmin (TypeScale::value * screenH, (float) t.getHeight() * 0.5f)), shownValue, (float) t.getWidth(), 0.8f));
-        g.drawFittedText (shownValue, t, juce::Justification::centredLeft, 1, 0.8f);
+        g.setFont (fontFittingWidth (wingFontPx (valueCap), shownValue, (float) t.getWidth(), 0.8f));
+        drawLine (g, shownValue, t, (float) t.getBottom() - 8.0f * k);
     }
 
     void mouseUp (const juce::MouseEvent& e) override
     {
         if (! isEnabled() || ! getLocalBounds().contains (e.getPosition()))
             return;
-        if (chevronKey && onKey && e.x >= getWidth() - juce::jmin (getHeight() * 2 / 3, getWidth() / 4))
+        if (chevronKey && onKey && e.x >= getWidth() - keyWidth())
         {
             onKey();
             repaint();
@@ -553,6 +568,22 @@ public:
     }
 
 private:
+    /** One line of text on `baseline`, squeezed horizontally when it doesn't fit. */
+    static void drawLine (juce::Graphics& g, const juce::String& text, juce::Rectangle<int> area, float baseline)
+    {
+        const auto font = g.getCurrentFont();
+        const float w = juce::GlyphArrangement::getStringWidth (font, text);
+        const float avail = (float) area.getWidth();
+        if (w <= avail || w <= 0.0f)
+        {
+            g.drawSingleLineText (text, area.getX(), juce::roundToInt (baseline));
+            return;
+        }
+        juce::Graphics::ScopedSaveState state (g);
+        g.addTransform (juce::AffineTransform::scale (avail / w, 1.0f, (float) area.getX(), baseline));
+        g.drawSingleLineText (text, area.getX(), juce::roundToInt (baseline));
+    }
+
     void timerCallback() override
     {
         // What is shown is noted here too: a field that isn't painted (on a
