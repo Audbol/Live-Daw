@@ -34,6 +34,24 @@ All notable changes to Sidecar are listed here. Versions follow
   model. Exported snapshots name the model as WING Edit's do. The serial
   `SIDECAR0001` and the firmware's `sidecar` still tell Sidecar apart.
 
+### Fixed
+
+- WING Edit (tested with 3.3.4 on both console models): its model request after
+  connecting (it sets `/$syscfg/$cnsmdl` to "ModelRequest") is answered with the model,
+  and any set Sidecar refuses over the Native protocol now answers the value that
+  stands instead of nothing, so the client shows the console's value (an FX slot
+  hosting a plugin answers EXT when WING Edit picks another model for it).
+- WING Edit PC -> MIXER no longer unpatches LOCAL OUT: an output nothing feeds read
+  the factory WING's patch (LCL 3 as BUS 5 but AES50 A 3 as OFF, one port in
+  Sidecar), and writing both back left them OFF. Unpatched outputs read OFF.
+- WING remote values are on the parameter's steps, as the console reports them:
+  model defaults between two steps (HALL's decay 2.00 s, a Q of 2.00) read 2.03 s /
+  1.996 as WING Edit shows them, instead of differing from it.
+- A processing model changed in Sidecar or by another client (FX slot, GATE, EQ,
+  DYNAMICS) sends all the new model's parameters to WING remote clients, also those
+  equal to the old model's at the same position, which WING Edit otherwise left at its
+  own defaults.
+
 ## [0.1.5] - beta
 
 The third round of matching Sidecar to a real WING, from the factory parameter dump,

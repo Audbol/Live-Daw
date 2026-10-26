@@ -716,8 +716,25 @@ and open-source projects (see below), and it is **experimental**.
   kit's README for the steps.
 - **What is tested:** libwing's own clients (`wingprop`, `wingmon`, `wingdrive`'s
   test battery and model capture, its OSC client), and every OSC path the Bitfocus
-  Companion WING module builds that exists in the 3.1 tree. Testers use **WING Edit**
-  and **Mixing Station** with it; **WING Copilot has not been tried**, so it may not work.
+  Companion WING module builds that exists in the 3.1 tree. Testers use **Mixing
+  Station** with it; **WING Copilot has not been tried**, so it may not work.
+- **WING Edit 3.3.4** (Behringer's desktop editor) was tested against Sidecar on both
+  console models. What works: discovery (SETUP > CONNECT > RESCAN, or MANUAL IP
+  ADDRESS), CONNECT, SYNCHRONIZE in both directions (MIXER -> PC reads the whole
+  console; PC -> MIXER writes it back and changes nothing that was read), the ACTIVE
+  WING MODEL (`wing-fullsize` / `wing-compact`, also when CONSOLE MODEL is switched
+  while connected), and live control both ways: faders, mutes, names, colours and
+  icons (with LINK CUSTOMIZATION TO SOURCE on, the channel shows its source's), the
+  GATE / EQ / DYNAMICS models and their parameters, the FX rack (models in the
+  premium slots 1-8 and standard slots 9-16, parameters, FX MIX) and the inserts (INS
+  1 / INS 2 take an FX slot, and the engine runs it there). An FX slot hosting a
+  plugin shows as an **EXTERNAL** effect; choosing another model for it in WING Edit
+  is refused and WING Edit is told the slot is still EXT (load and remove plugins on
+  Sidecar's EFFECTS screen). Limits: WING Edit 3.3.4 knows a few hundred parameters
+  of firmware newer than 3.1 (a monitor level, StageConnect source settings, a surface
+  block); Sidecar ignores them, as a 3.1 console would. LOCAL OUT n and AES50 A n are
+  one port in Sidecar, so a WING Edit file made on a real WING that patches them
+  differently ends up with A n's patch after PC -> MIXER.
 - **What maps:** every parameter of the WING 3.1 tree but one answers (68,555 of
   68,556, counting every model's parameters). 61,109 of them (89.1 %) drive the
   engine, 73 are Sidecar's SETUP settings, and the 7,373 Sidecar has no equivalent
