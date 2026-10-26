@@ -220,12 +220,14 @@ private:
     {
         const double sampleRate = in.readDouble();
         const int blockSize = juce::jlimit (1, kMaxBlock, in.readInt());
+        int latency = 0;
         {
             const std::lock_guard<std::mutex> lock (processLock);
             plugin->releaseResources();
             prepareLocked (sampleRate, blockSize);
+            latency = plugin->getLatencySamples();
         }
-        reply (id, true, [this] (auto& out) { out.writeInt (plugin->getLatencySamples()); });
+        reply (id, true, [latency] (auto& out) { out.writeInt (latency); });
     }
 
     void prepareLocked (double sampleRate, int blockSize)
@@ -339,8 +341,12 @@ private:
         const std::lock_guard<std::mutex> lock (paramLock);
         applyParams();
         publishParams (false);
+        // A plugin may change its latency in processBlock (JUCE's LV2 host does,
+        // from the plugin's latency port): it's a plain int, read here only while
+        // no block runs. The audio thread stores it after each block.
         if (plugin != nullptr)
-            shared->latency.store (plugin->getLatencySamples(), std::memory_order_relaxed);
+            if (const std::unique_lock<std::mutex> process (processLock, std::try_to_lock); process.owns_lock())
+                shared->latency.store (plugin->getLatencySamples(), std::memory_order_relaxed);
     }
 
     //==============================================================================
@@ -399,6 +405,7 @@ private:
 
                 for (int ch = 0; ch < 2; ++ch)
                     juce::FloatVectorOperations::copy (shared->output[ch], scratch.getReadPointer (ch), n);
+                shared->latency.store (plugin->getLatencySamples(), std::memory_order_relaxed);
             }
 
             shared->heartbeat.fetch_add (1, std::memory_order_relaxed);

@@ -8,12 +8,38 @@
 
 namespace livedaw::test
 {
+/** The sends of Sidecar before it took the WING's factory sends: bus sends
+    (to the console's 16 buses) and matrix sends at 0 dB with PAN LINK on, bus
+    sends PRE (TAP), matrix sends post-fader; a matrix's direct input at 0 dB;
+    an input channel's TAP point at PFL. */
+inline void legacySends (Strip& s)
+{
+    if (s.getKind() != StripKind::Main && s.getKind() != StripKind::Matrix)
+        for (int bus = 0; bus < kWingBuses; ++bus)
+        {
+            auto& send = s.sends[(size_t) bus];
+            send.levelDb = 0.0f;
+            send.panLink = true;
+            send.mode = 0;
+        }
+    for (auto& m : s.params.matrix)
+    {
+        m.levelDb = 0.0f;
+        m.panLink = true;
+        m.pre = false;
+    }
+    s.params.directLevelDb = 0.0f;
+    s.params.tap = 5; // PFL
+}
+
 /** The fixed strips (aux, buses, mains, matrices) and the DCAs at 0 dB with
     their EQ on, buses not feeding the mains, and the monitoring of Sidecar
     before it took the WING's factory monitor settings (SOLO MODE STUDIO to
     PH+SPK, mains and matrices AFL, no PFL DIM, BAND SOLO +12 dB, talkback AUTO
-    DIM 9 dB): the console the audio tests were written for (a factory WING has
-    the faders down and the EQs off, solos LIVE to the phones). */
+    DIM 9 dB), the sends of legacySends, AUX 2 not patched, INPUT SELECT per
+    strip and MUTEGROUP/SIP OVERRIDE off: the console the audio tests were
+    written for (a factory WING has the faders down and the EQs off, solos LIVE
+    to the phones). */
 inline void unityConsole (MixerEngine& engine)
 {
     for (auto kind : { StripKind::Aux, StripKind::Bus, StripKind::Main, StripKind::Matrix })
@@ -23,7 +49,18 @@ inline void unityConsole (MixerEngine& engine)
             s->params.eq.on = true;
             if (kind == StripKind::Bus)
                 s->params.mains[0].on = false;
+            if (kind == StripKind::Aux)
+            {
+                s->params.stereo = false;
+                s->params.inputLeft = -1;
+                s->params.inputRight = -1;
+            }
+            legacySends (*s);
         }
+    for (auto& s : engine.getChannels())
+        legacySends (*s);
+    engine.inputSelectGlobal = false;
+    engine.muteOverride = false;
     for (int i = 0; i < kNumDcas; ++i)
         engine.getDca (i).faderDb = 0.0f;
     engine.soloMode = ld::kSoloStudio;
@@ -49,7 +86,10 @@ inline void setChannels (MixerEngine& engine, int count)
     engine.setNumChannels (count);
     const auto& channels = engine.getChannels();
     for (int i = before; i < (int) channels.size(); ++i)
+    {
         channels[(size_t) i]->params.faderDb = 0.0f;
+        legacySends (*channels[(size_t) i]);
+    }
 }
 
 /** Drives a MixerEngine with constant (DC) inputs and captures its outputs. */

@@ -648,13 +648,14 @@ private:
 //==============================================================================
 /** The main L/R meter right of the display: 18 segments per side,
     CLIP -1 -2 -3 -4 -6 -8 -10 -12 -15 -18 -24 -30 -36 -42 -48 -54 -60. It shows
-    the bus chosen with a right-click (MONITOR, or MAIN 1-4). */
+    the bus chosen with a right-click (MONITOR, or MAIN 1-4) at SETUP's MAIN
+    METER TAP (AUTO: the MAIN METERS tap). */
 class MainDisplay::MainMeter final : public juce::Component, private juce::Timer
 {
 public:
     explicit MainMeter (UiContext& c) : ctx (c)
     {
-        source = juce::jlimit (0, kNumMains, ctx.settings.getIntValue ("ui.mainMeter", 0));
+        source = juce::jlimit (0, kNumMains, ctx.settings.getIntValue (uiprefs::mainMeter, uiprefs::mainMeterDefault));
         startTimerHz (30);
     }
 
@@ -704,13 +705,15 @@ private:
     void choose (int s)
     {
         source = s;
-        ctx.settings.setValue ("ui.mainMeter", s);
+        ctx.settings.setValue (uiprefs::mainMeter, s);
     }
 
     void timerCallback() override
     {
         // SETUP can change the source too.
-        source = juce::jlimit (0, kNumMains, ctx.settings.getIntValue ("ui.mainMeter", source));
+        source = juce::jlimit (0, kNumMains, ctx.settings.getIntValue (uiprefs::mainMeter, source));
+        const int tap = ctx.settings.getIntValue (uiprefs::mainMeterTap, uiprefs::mainMeterTapDefault);
+        const auto point = tap == 1 ? MeterPoint::PreFader : tap == 2 ? MeterPoint::Output : prefs::meterPoint (ctx, StripKind::Main);
         bool changed = false;
         for (int ch = 0; ch < 2; ++ch)
         {
@@ -718,7 +721,7 @@ private:
             if (source == 0)
                 peak = ctx.meters.getMonitor (ch);
             else if (source - 1 < (int) ctx.engine.getMains().size())
-                peak = ctx.meters.get (ctx.engine.getMains()[(size_t) (source - 1)].get(), false, ch);
+                peak = ctx.meters.get (ctx.engine.getMains()[(size_t) (source - 1)].get(), point, ch);
             const float db = dsp::gainToDb (peak);
             if (std::abs (db - level[(size_t) ch]) > 0.3f)
             {
@@ -1618,6 +1621,24 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
         g.setColour (fill);
         g.fillRoundedRectangle (tab, corner);
         t.removeFromLeft (6.0f * k);
+        const auto icon = title.icon.has_value() ? title.icon : (source ? std::optional<Icon> (Icon::Xlr) : (layer ? std::optional<Icon> (Icon::Layers) : std::nullopt));
+        if (layer || (title.kind == StatusTitle::Kind::Text && title.prefix.isEmpty() && icon.has_value()))
+        {
+            // [3.1] the VIEW screens' "C (layers) DCA" and MUTE GROUPS: the
+            // section letter 32 px in, the icon centred 112 px in, the text from 155.
+            if (title.prefix.isNotEmpty())
+            {
+                auto prefixArea = juce::Rectangle<float> (tab.getX() + 32.0f * k, t.getY(), 60.0f * k, t.getHeight());
+                drawText (title.prefix, ink, prefixArea);
+            }
+            if (icon.has_value())
+                drawIcon (g, *icon, juce::Rectangle<float> (46.0f * k, 46.0f * k).withCentre ({ tab.getX() + 112.0f * k, tab.getCentreY() }),
+                          title.iconInk.isTransparent() ? ink : title.iconInk);
+            auto textArea = t.withLeft (tab.getX() + 155.0f * k);
+            drawText (title.text, ink, textArea);
+        }
+        else
+        {
         if (title.prefix.isNotEmpty() && title.kind == StatusTitle::Kind::Text)
         {
             // A plain title's prefix (LIBRARY: the show) is a small caption over it.
@@ -1642,7 +1663,6 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
             else
                 drawText (title.prefix, ink, prefixArea);
         }
-        const auto icon = title.icon.has_value() ? title.icon : (source ? std::optional<Icon> (Icon::Xlr) : (layer ? std::optional<Icon> (Icon::Layers) : std::nullopt));
         if (icon.has_value())
         {
             if (source)
@@ -1652,6 +1672,7 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
             t.removeFromLeft (12.0f * k);
         }
         drawText (title.text, ink, t);
+        }
     }
 
     // SHOW SOF FRAME: a frame and a SOF badge while Sends on Fader is on.

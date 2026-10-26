@@ -265,6 +265,21 @@ public:
             settings.setValue ("ui.faderSpeed", 2);
             wing.pumpHostSettings();
             expect (sysex (3, "/$ctl.$globals").contains ("fdrspd=FAST"));
+            // INITIALIZE CONSOLE: the factory values, but the MIDI and DAW connection settings stay.
+            settings.setValue ("ui.soloExclusive", false);
+            expect (sysex (2, "/cfg.mtr.mainpos=POST").isEmpty());
+            wing.pumpHostSettings();
+            expectEquals (settings.getIntValue ("ui.mainMeterTap", 0), 2);
+            const auto removed = wing.resetHostSettings();
+            expect (removed.contains ("ui.soloExclusive") && removed.contains ("ui.faderSpeed") && ! removed.contains ("daw.emul"),
+                    removed.joinIntoString (","));
+            expect (! settings.containsKey ("ui.mainMeterTap") && settings.containsKey ("daw.emul"));
+            const auto cfg = sysex (3, "/$ctl.cfg");
+            expect (cfg.contains ("soloexcl=1") && cfg.contains ("soffdr=L/C"), cfg);
+            expect (sysex (3, "/$ctl.$globals").contains ("fdrspd=MED"));
+            expect (sysex (3, "/cfg.mtr").contains ("mainmtr=MAIN.1"));
+            expect (sysex (3, "/cfg.mtr").contains ("mainpos=AUTO"));
+            expect (DawRemote::Settings::load (settings).emulation == DawRemote::Emulation::Hui);
             wing.setHostSettings (nullptr);
             dir.deleteRecursively();
         }

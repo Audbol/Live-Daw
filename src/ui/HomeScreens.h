@@ -5,6 +5,7 @@
 #include "ui/UiContext.h"
 
 #include <memory>
+#include <type_traits>
 #include <vector>
 
 namespace livedaw::ui
@@ -47,6 +48,9 @@ protected:
     T& make (Args&&... args)
     {
         auto* c = new T (std::forward<Args> (args)...);
+        // The HOME screens' fields have the 3.1 console's frame, key and type sizes.
+        if constexpr (std::is_same_v<T, home::ChoiceField>)
+            c->consoleMetrics = true;
         owned.add (c);
         addAndMakeVisible (c);
         return *c;

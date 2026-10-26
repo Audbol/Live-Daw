@@ -1002,6 +1002,7 @@ public:
         });
         groupField->icon = Icon::Xlr;
         groupField->arrowKey = true;
+        groupField->consoleMetrics = true;
         addAndMakeVisible (*groupField);
         none.offInk = colours::caption;
         none.captionBelow = true;
@@ -4638,13 +4639,16 @@ void copyStripParams (MixerEngine& engine, const Strip& src, const Strip& dst, j
             auto* from = src.sends.find (id);
             if (from == nullptr && dst.sends.find (id) == nullptr)
                 continue;
+            // A send never set copies as the factory send (off, -oo, its mode and pan link kept).
             auto& to = dst.sends[(size_t) id];
             to.enabled = from != nullptr && from->enabled.load();
-            to.panLink = from != nullptr ? from->panLink.load() : true;
+            if (from != nullptr)
+                to.panLink = from->panLink.load();
             to.ignoreMute = from != nullptr && from->ignoreMute.load();
             to.panReversed = from != nullptr && from->panReversed.load();
-            to.mode = from != nullptr ? from->mode.load() : 1;
-            to.levelDb = from != nullptr ? from->levelDb.load() : -100.0f;
+            if (from != nullptr)
+                to.mode = from->mode.load();
+            to.levelDb = from != nullptr ? from->levelDb.load() : -144.0f;
             to.pan = from != nullptr ? from->pan.load() : 0.0f;
         }
         // TAP WIDTH and TAP EQ shape what the channel's TAP-mode sends take.
@@ -4703,6 +4707,10 @@ public:
         for (int k = 1; k < kNumStripKinds; ++k)
             if (auto* s = ld::ld_engine_strip_at (engine, k, 0))
                 strips.push_back (std::make_unique<Strip> (engine, s));
+        // The factory sends to the console's buses (each bus slot has its own mode).
+        for (auto& s : strips)
+            for (int bus = 0; bus < kWingBuses; ++bus)
+                (void) s->sends[(size_t) bus];
     }
 
     ~DefaultStrips()

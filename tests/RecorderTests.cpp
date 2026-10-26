@@ -219,6 +219,7 @@ public:
 
             MixerEngine engine (0);
             test::setChannels (engine, 2);
+            engine.setInputSelectGlobal (false); // per channel (a new console's is GLOBAL)
             Driver d (engine, 2, 2);
             auto& rec = engine.getRecorder();
             auto& ch2 = *engine.getChannels()[1];

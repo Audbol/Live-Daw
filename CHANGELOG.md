@@ -23,11 +23,11 @@ All notable changes to Sidecar are listed here. Versions follow
     read only) and `/$globals/clkrate` (the audio device's rate).
   - SETUP's options are Sidecar's settings, both ways (C ABI: `ld_wing_host_setting_keys`,
     `ld_wing_set_host_setting`, `ld_wing_take_host_setting`, `ld_wing_clear_host_settings`;
-    `WingRemote::setHostSettings`): METERING's taps (`/cfg/mtr/mtrpage`, `mtrsfc`) and
-    MAIN METER, the GENERAL, SURFACE and SOLO SYSTEM options and brightness tiles
-    (`/$ctl/cfg`, `/$ctl/$globals`), MIDI REMOTE CONTROL (`/$ctl/midi`) and DAW
-    (`/$ctl/daw`). Rows Sidecar shows fixed (MAIN METER TAP POST, TAP TEMPO FLASH ON,
-    no screen lock...) answer that and refuse other values.
+    `WingRemote::setHostSettings`): METERING's taps (`/cfg/mtr/mtrpage`, `mtrsfc`),
+    MAIN METER and MAIN METER TAP, the GENERAL, SURFACE and SOLO SYSTEM options and
+    brightness tiles (`/$ctl/cfg`, `/$ctl/$globals`), MIDI REMOTE CONTROL (`/$ctl/midi`)
+    and DAW (`/$ctl/daw`). Rows Sidecar shows fixed (TAP TEMPO FLASH ON, no screen
+    lock...) answer that and refuse other values.
   - What Sidecar has no equivalent for (cards, the console's hardware, network and
     status, other models' surfaces, input and output groups Sidecar doesn't have,
     bus-to-bus sends the engine doesn't have, source and output safes, the player's
@@ -37,20 +37,82 @@ All notable changes to Sidecar are listed here. Versions follow
     strips answer the factory value too, instead of a neutral one.
   - Left unmapped: `/$ctl/daw/config`, whose 3.1 choices (CC, MSTR) can't show
     Sidecar's MCU with extenders.
-  - Defaults that deliberately stay Sidecar's (the WING's factory value in brackets):
-    MAIN METER the monitor (MAIN.1), MAIN METER TAP POST (AUTO), RIGHT SECTION SOF on
-    (L/C), EXCLUSIVE SOLO and SELECT FOLLOWS SOLO off (on), FADER/SCREEN LAYER LINK on
-    (off), the RECORDER ports on Main 1 (OFF), the USB player's sources unnamed,
-    purple, mono and without an icon ("2TR", 8, stereo, 608) and the local sources
-    without an icon (1: a local input is A's source here).
+  - A new console and INITIALIZE CONSOLE now come up as a factory-initialized WING
+    everywhere Sidecar has the setting: compared parameter by parameter with a real
+    console's dump after INITIALIZE (29,862 parameters), 178 values still differ
+    (3,506 before). What changed (Sidecar's old default in brackets):
+    - SETUP: MAIN METER MAIN.1 (the monitor); MAIN METER TAP is a setting, AUTO (the
+      MAIN METERS tap), PRE or POST, starting AUTO (fixed POST); RIGHT SECTION SENDS ON
+      FADER off, L/C (ALL); EXCLUSIVE SOLO and SELECT FOLLOWS SOLO on (off);
+      FADER/SCREEN LAYER LINK off (on).
+    - Sends: bus sends off at -oo (0 dB); from channels and aux PRE to buses 1-8, GRP to
+      buses 9-10 and POST to buses 11-16 (all PRE), PAN LINK on only for buses 9-16
+      (all); buses 9-16 send POST to buses 1-8 (PRE). Matrix sends at -oo (0 dB)
+      without PAN LINK (on), PRE from channels and aux (post-fader). A matrix's direct
+      input at -oo (0 dB). A channel's TAP point "5", after the third block of the
+      process order (PFL).
+    - AUX 2 plays the USB player's PLAY 1/2 (not patched); the player's first pair is
+      named "2TR", colour 8, icon 608, stereo (unnamed, Dark Blue, no icon, mono).
+    - The RECORDER ports OFF (Main 1 L/R on 1-2); the player's REPEAT on (off); the
+      oscillators at -6 dB (-20 dB); MUTEGROUP/SIP OVERRIDE on (off); INPUT SELECT
+      GLOBAL (`/io/autoaltovr`, per channel).
+    - The DAW layers DAW 1-4 of the custom controls are the console's (transport,
+      markers, automation, FLIP, NAME/VALUE, V-POTS, RECRDY, SCRUB, ZOOM; empty).
+    - WING remote: an unassigned custom control's `$fname` reads empty ("NOT
+      ASSIGNED"); the default layer keys answer the console's names ("CH1-12",
+      "BUSES"...), a section spilling nothing `SPILL`; `/$ctl/lib/$actidx` reads 0 with
+      no scene active (-1).
+    - INITIALIZE CONSOLE (everything) also resets SETUP's surface, solo, metering,
+      general and lighting options, the RECORDER ports and REPEAT (MIDI REMOTE
+      CONTROL and DAW keep their connection settings).
+    - Saved shows load with their own values: shows from before keep the USB player's
+      sources, the oscillators, the DAW layers, INPUT SELECT and MUTEGROUP/SIP
+      OVERRIDE as they had them.
+    - Still different: the local sources' icon (the WING gives LOCAL IN icon 1 and
+      AES50 A icon 0; they are the same sources here, kept at 0), the channels' and
+      outputs' patch (the audio interface's inputs on the channels, Main 1 on outputs
+      1-2), AUX 1 on the WING's own USB audio (no such ports here), the user layers'
+      names (USER 1, not USER1), the function names of assigned keys (`$fname`), the
+      show name, and what is the machine's (IP, names, clock) or the console's
+      hardware (fader and knob positions).
   - A unit test compares the description of every parameter a factory-set WING
     described (`tests/data/wing_desc.tsv`, 29,871 parameters) with Sidecar's; a
     protocol test sets and reads the new mappings over OSC and the native protocol.
 
 ### Changed
 
-- A third pass of matching the channel's HOME screens, ROUTING and INITIALIZE CONSOLE to
-  a WING's (firmware 3.1, measured side by side with the console's screenshots at 1280 x
+- A third pass of matching the screens to a WING (firmware 3.1), side by side with
+  the console's screenshots at 1280 x 800:
+  - SETUP: the settings boxes are padded as on the console (4 px, none next to a
+    dropdown field), ON keys are 48 x 40 in a 2 px frame 4 px under the top of their
+    row with smaller print, dropdown fields (CLOCK RATE, DEVICE, CONSOLE NAME...)
+    have the console's 2 px frame, 30 px key and caption / value sizes, MOUSE
+    DISABLES TOUCH and MOUSE SPEED have their shorter rows, MONITORS and CC EDIT sit
+    against the clock, the INPUT SELECT grid has the console's cell positions, the
+    NETWORK IP ADDRESS caption is row-sized over light boxes, and the DAW disclaimer
+    is the console's small grey print under the DAW CONTROL column.
+  - CUSTOM CONTROLS: the layer map has the console's columns (82 px on a 90 px
+    pitch), the encoder tile with a thick open ring, 40 px keys, grey captions and
+    titles, a GPIO key drawn like USER, COLOR / NAME / CLR ALL as #303030 keys in a
+    grey frame and the list's page keys as full-size triangles.
+  - LIBRARY (INT / USB) and the USB recorder's browser: folder rows with the
+    console's 32 px > key, chevron and folder sizes, the scroll column (arrows, a
+    black track and a grey thumb) right of the rows, file rows with the type chip,
+    date and time where the console has them and 20 px names, the TYPE / NAME and
+    calendar sort keys as on the console, a blue SHOW key, and files sorted by
+    name without their extension ("MARCUS DEFAULT" before "MARCUS DEFAULT 3.0").
+    The USB browser fills the rows under the list with black boxes, as on the console.
+  - USB player: the time readout is lit red with no clip chosen; the tape reels are
+    drawn as the console's (hub ring, spokes, rollers and the head).
+  - METERS: the number keys of strips without a source are no longer dimmed.
+  - VIEW screens: the status title "C (layers) DCA" and MUTE GROUPS laid out as on
+    the console; the DCA label under a DCA (OVERVIEW, FADERS) is black with 22 px
+    caps; tiles of inputs without an icon of their own (CONFIG, the assign screens)
+    show none.
+  - MONITOR: the parameter bar ends at DIST while DIRECT IN is OFF (DIR LVL shows
+    once a source is chosen); the LIMITER ring is empty at 0 dB.
+- The channel's HOME screens, ROUTING, CHANNEL INIT / COPY and INITIALIZE CONSOLE matched
+  again to a WING's (firmware 3.1, measured side by side with the console's screenshots at 1280 x
   800):
   - The block column: blocks 65 px tall at the console's 73 px pitch, the fader bar 16 px,
     the keys 68 px wide with a 44 px key in a black rim, and the console's icons for GATE,
@@ -80,8 +142,8 @@ All notable changes to Sidecar are listed here. Versions follow
   - The EQ and DYNAMICS MODEL lists and SELECT CHANNEL (KEY SOURCE) dim only the screen
     they belong to: the block column stays lit and the parameter bar goes blank. ROUTING's
     group menus dim only their own side.
-  - Shared widgets: drop-down fields have the console's black frame, 30 px key and
-    caption / value sizes; knob boxes the console's ring (open 290 degrees, dark grey,
+  - The HOME screens' drop-down fields use the console's frame, key and type sizes (as
+    SETUP's); knob boxes the console's ring (open 290 degrees, dark grey,
     filled from the start, or from the top for TRIM) and larger captions; the parameter
     bar's text and track sit as on the console, the source GAIN is a gold thumb, TRIM and
     EQ gain fill from the centre, WIDTH fills either side of the centre and the EQ's Q is

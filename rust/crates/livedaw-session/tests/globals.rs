@@ -110,6 +110,13 @@ fn console_level_state_survives_a_show_round_trip() {
     let osc = os.osc(1).unwrap();
     assert_eq!((osc.mode.load(Relaxed), osc.level_db.load(), osc.freq_hz.load()), (2, -30.0, 63.0));
     assert!(os.osc(0).unwrap().is_default());
+    // The USB player's first pair keeps its factory "2TR" customization.
+    let player = livedaw_engine::sources::USB_PLAYER_SOURCE_INDEX;
+    assert!(os.is_factory(player) && os.is_factory(player + 1));
+    assert_eq!(
+        (os.name(player), p[player].icon.load(Relaxed), p[player].mode.load(Relaxed)),
+        ("2TR".into(), 608, source_mode::STEREO)
+    );
 
     let tags = |kind, id| find_strip(&other, &StripRef::new(kind, id)).unwrap().console.talk_tags.load(Relaxed);
     let ch4 = engine.channel_at(3).unwrap().id();
@@ -118,13 +125,16 @@ fn console_level_state_survives_a_show_round_trip() {
     assert_eq!(tags(StripKind::Channel, 1), 0);
     assert_eq!(other.dca_monitor_paths(4), 2, "MON DCAs follow their names (MON A: phones)");
 
-    // Older shows (no console-level elements) load the defaults.
+    // Older shows (no console-level elements) load the defaults, and the
+    // sources they left out as they were then: the USB player plain and the
+    // oscillators at -20 dB.
     let bare = xml::parse(r#"<Console version="3"><Channels/></Console>"#).unwrap();
     console::load_console(&other, &bare, &mut NoPlugins, false);
     assert_eq!(other.controls.solo_mode.load(Relaxed), 0, "LIVE, as a WING after INITIALIZE");
     assert_eq!(other.controls.talk.assignment(), None);
     assert!(other.sources().params()[0].is_default());
-    assert!(other.sources().osc(1).unwrap().is_default());
+    assert!(other.sources().params()[player].is_default() && other.sources().name(player).is_empty());
+    assert_eq!(other.sources().osc(1).unwrap().level_db.load(), livedaw_engine::sources::OSC_LEGACY_LEVEL_DB);
     assert_eq!(other.controls.phones.output_left.load(Relaxed), -1);
 }
 

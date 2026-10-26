@@ -80,6 +80,17 @@ pub const MAX_OSC_SUBSCRIBERS: usize = 16;
 /// one go they overflow the receive buffer of the client (a phone or tablet,
 /// often on Wi-Fi) and it misses changes.
 pub const OSC_EVENTS_PER_MS: usize = 8;
+/// At most this many OSC events leave at once: where a 1 ms sleep takes
+/// longer (Windows' timer ticks at 15.6 ms by default, a busy machine), the
+/// sender catches up with bigger batches, but never more than this.
+const OSC_EVENTS_BURST: usize = 8 * OSC_EVENTS_PER_MS;
+
+/// How many OSC events may leave now, `since` the last batch.
+fn paced_batch(since: Duration) -> usize {
+    let due = since.as_micros() as usize * OSC_EVENTS_PER_MS / 1000;
+    due.clamp(OSC_EVENTS_PER_MS, OSC_EVENTS_BURST)
+}
+
 /// OSC events waiting beyond this are dropped (oldest first).
 const OSC_MAX_QUEUED: usize = 1 << 18;
 
@@ -345,6 +356,9 @@ impl Shared {
         }
         let s = schema();
         // Each format's datagrams are built once for all its subscribers.
+        // (subscriber, its datagrams)
+        type Datagrams = Arc<Vec<Arc<[u8]>>>;
+        let mut streams: Vec<(SocketAddr, Datagrams)> = Vec::with_capacity(subs.len());
         for format in [SubFormat::Binary, SubFormat::Triplet, SubFormat::Native] {
             let to: Vec<SocketAddr> = subs.iter().filter(|s| s.1 == format).map(|s| s.0).collect();
             if to.is_empty() {
@@ -374,14 +388,19 @@ impl Shared {
                     packets.push(osc::encode(&msg).into());
                 }
             }
-            let mut q = lock(&self.osc_events);
-            for addr in to {
-                q.extend(packets.iter().map(|p| (addr, p.clone())));
-            }
-            let excess = q.len().saturating_sub(OSC_MAX_QUEUED);
-            q.drain(..excess);
-            self.osc_ready.notify_one();
+            let packets = Arc::new(packets);
+            streams.extend(to.into_iter().map(|addr| (addr, packets.clone())));
         }
+        // Interleaved: each subscriber gets its next event in turn, so with
+        // several subscribers none waits for another's whole burst.
+        let longest = streams.iter().map(|(_, p)| p.len()).max().unwrap_or(0);
+        let mut q = lock(&self.osc_events);
+        for i in 0..longest {
+            q.extend(streams.iter().filter_map(|(addr, p)| p.get(i).map(|p| (*addr, p.clone()))));
+        }
+        let excess = q.len().saturating_sub(OSC_MAX_QUEUED);
+        q.drain(..excess);
+        self.osc_ready.notify_one();
     }
 
     /// Every engine-backed leaf with its value.
@@ -414,11 +433,30 @@ impl Shared {
         out
     }
 
+    /// Takes the values changes are found against, if nobody listened
+    /// before: right when a client arrives, so that a change made before the
+    /// next poll (after the client read the old value) still reaches it.
+    fn ensure_baseline(&self) {
+        if lock(&self.notify).is_some() {
+            return;
+        }
+        // A value changed meanwhile is the old one here: the next poll sends it.
+        let now = self.snapshot(&self.console());
+        let mut cache = lock(&self.notify);
+        if cache.is_none() {
+            *cache = Some(now.into_iter().collect());
+        }
+    }
+
     /// Finds what changed since the last poll and pushes it.
     pub fn poll_changes(&self) {
-        if !self.has_listeners() {
-            *lock(&self.notify) = None;
-            return;
+        {
+            // Under the lock: a client arriving now (ensure_baseline) keeps its baseline.
+            let mut cache = lock(&self.notify);
+            if !self.has_listeners() {
+                *cache = None;
+                return;
+            }
         }
         // The snapshot is taken without the lock so that it never holds up a
         // client's set. One that raced a client change may hold the old value,
@@ -472,6 +510,8 @@ impl Shared {
             }
         }
         subs.push(OscSubscription { addr, requester, format, expires: now + OSC_SUBSCRIPTION_LIFE });
+        drop(subs);
+        self.ensure_baseline();
     }
 
     pub fn status(&self) -> (Vec<ClientInfo>, u64, u64) {
@@ -682,14 +722,17 @@ fn osc_loop(sh: &Shared, sock: UdpSocket) {
 
 /// Sends the OSC events, paced (OSC_EVENTS_PER_MS).
 fn osc_send_loop(sh: &Shared, sock: UdpSocket) {
-    let mut batch = Vec::with_capacity(OSC_EVENTS_PER_MS);
+    let mut batch = Vec::with_capacity(OSC_EVENTS_BURST);
+    let mut last = Instant::now();
     while !sh.stop.load(Ordering::Relaxed) {
         let more = {
             let mut q = lock(&sh.osc_events);
             while q.is_empty() && !sh.stop.load(Ordering::Relaxed) {
                 q = sh.osc_ready.wait_timeout(q, TICK).unwrap_or_else(|e| e.into_inner()).0;
+                last = Instant::now();
             }
-            let n = q.len().min(OSC_EVENTS_PER_MS);
+            let n = q.len().min(paced_batch(last.elapsed()));
+            last = Instant::now();
             batch.extend(q.drain(..n));
             !q.is_empty()
         };
@@ -727,6 +770,7 @@ fn native_loop(sh: &Arc<Shared>, listener: TcpListener) {
                     since: Instant::now(),
                 });
                 lock(&sh.clients).push(client.clone());
+                sh.ensure_baseline();
                 let (sh2, cl2) = (sh.clone(), client.clone());
                 readers.push(spawn("wing-native-write", move || writer_loop(&sh2, &cl2, writer)));
                 let sh2 = sh.clone();
@@ -833,5 +877,48 @@ fn poll_loop(sh: &Shared) {
             sh.poll_changes();
         }
         lock(&sh.clients).retain(|c| c.alive.load(Ordering::Relaxed));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn osc_events_are_paced_by_the_time_that_passed() {
+        assert_eq!(paced_batch(Duration::ZERO), OSC_EVENTS_PER_MS);
+        assert_eq!(paced_batch(Duration::from_micros(1100)), OSC_EVENTS_PER_MS);
+        assert_eq!(paced_batch(Duration::from_millis(3)), 3 * OSC_EVENTS_PER_MS);
+        // A coarse timer (Windows: 15.6 ms) catches up, in bursts no bigger than this.
+        assert_eq!(paced_batch(Duration::from_micros(15600)), OSC_EVENTS_BURST);
+        assert_eq!(paced_batch(Duration::from_secs(1)), OSC_EVENTS_BURST);
+    }
+
+    /// A burst for several OSC subscribers (of different formats) is queued
+    /// in turns, so the last subscriber doesn't wait for everyone else's.
+    #[test]
+    fn subscribers_take_turns_in_a_burst() {
+        let engine: Arc<dyn EngineHandle> = Arc::new(Arc::new(Engine::new(0)));
+        let sh = Shared::new(engine, Arc::new(WingState::default()));
+        sh.osc_events_on.store(true, Ordering::Relaxed);
+        let addrs: Vec<SocketAddr> = (0..3).map(|i| SocketAddr::from(([127, 0, 0, 1], 9000 + i))).collect();
+        for (addr, format) in addrs.iter().zip([SubFormat::Triplet, SubFormat::Native, SubFormat::Triplet]) {
+            sh.subscribe_osc(*addr, *addr, format);
+        }
+        let c = sh.console();
+        let changes: Vec<(Node, Value)> = (1..=10)
+            .map(|ch| {
+                let n = schema().resolve(&format!("/ch/{ch}/fdr"), &c).unwrap();
+                (n, c.get(n).unwrap())
+            })
+            .collect();
+        sh.queue_osc_events(&c, &changes, Origin::None);
+        let q = lock(&sh.osc_events);
+        assert_eq!(q.len(), addrs.len() * changes.len());
+        // Each round holds one event for each subscriber.
+        let order: Vec<SocketAddr> = q.iter().map(|e| e.0).collect();
+        for (k, round) in order.chunks(addrs.len()).enumerate() {
+            assert!(addrs.iter().all(|a| round.contains(a)), "round {k}: {round:?}");
+        }
     }
 }

@@ -50,8 +50,11 @@ pub fn osc_channel(input: i32) -> Option<usize> {
     usize::try_from(n).ok().filter(|&n| n < NUM_OSCILLATORS)
 }
 
-/// The oscillators' defaults: a 1 kHz sine at -20 dBFS.
-pub const OSC_DEFAULT_LEVEL_DB: f32 = -20.0;
+/// The oscillators' defaults: a 1 kHz sine at -6 dBFS, as on a factory-set WING.
+pub const OSC_DEFAULT_LEVEL_DB: f32 = -6.0;
+/// The oscillators' level before Sidecar took the WING's (shows saved then
+/// left an oscillator at this level out).
+pub const OSC_LEGACY_LEVEL_DB: f32 = -20.0;
 pub const OSC_DEFAULT_FREQ_HZ: f32 = 1000.0;
 
 /// One oscillator's settings, shared with the UI (`ld_engine_oscillators`).
@@ -115,6 +118,33 @@ pub const SOURCE_GAIN_MAX_DB: f32 = 60.0;
 /// Default source colour (the WING's factory Dark Blue).
 pub const DEFAULT_SOURCE_COLOUR: i32 = crate::params::DEFAULT_COLOUR;
 
+/// A source's factory customization: name, colour, icon and pairing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceFactory {
+    pub name: &'static str,
+    pub colour: i32,
+    pub icon: i32,
+    pub mode: i32,
+}
+
+impl SourceFactory {
+    /// Unnamed, Dark Blue, no icon, mono: every source but the ones below.
+    pub const PLAIN: Self = Self { name: "", colour: DEFAULT_SOURCE_COLOUR, icon: 0, mode: source_mode::MONO };
+    /// The USB player's first pair on a factory-set WING (`/io/in/PLAY/1-2`):
+    /// "2TR", colour 8, icon 608, stereo.
+    pub const PLAYER_2TR: Self = Self { name: "2TR", colour: 8, icon: 608, mode: source_mode::STEREO };
+}
+
+/// The factory customization of source `index`. (The local inputs keep
+/// icon 0: they are AES50 A's ports here, whose factory icon is 0; the
+/// WING gives its LCL group icon 1.)
+pub fn source_factory(index: usize) -> SourceFactory {
+    match index.checked_sub(USB_PLAYER_SOURCE_INDEX) {
+        Some(0 | 1) => SourceFactory::PLAYER_2TR,
+        _ => SourceFactory::PLAIN,
+    }
+}
+
 /// One source's settings, shared with the UI (`ld_engine_sources`).
 #[repr(C)]
 #[derive(Debug)]
@@ -152,27 +182,32 @@ impl Default for SourceParams {
 }
 
 impl SourceParams {
-    /// INITIALIZE: back to the defaults (the pairing is left to the table).
-    fn reset(&self) {
+    /// INITIALIZE: back to the defaults `f` (the pairing is left to the table).
+    fn reset(&self, f: &SourceFactory) {
         self.gain_db.store(0.0);
         self.mute.store(false, Relaxed);
         self.invert.store(false, Relaxed);
         self.phantom.store(false, Relaxed);
-        self.colour.store(DEFAULT_SOURCE_COLOUR, Relaxed);
-        self.icon.store(0, Relaxed);
+        self.colour.store(f.colour, Relaxed);
+        self.icon.store(f.icon, Relaxed);
         self.mute_groups.store(0, Relaxed);
     }
 
-    /// True if the settings differ from the defaults (what a show stores).
-    pub fn is_default(&self) -> bool {
+    /// True if the settings are the defaults `f` (shows store the others).
+    pub fn is_default_for(&self, f: &SourceFactory) -> bool {
         self.gain_db.load() == 0.0
             && !self.mute.load(Relaxed)
             && !self.invert.load(Relaxed)
             && !self.phantom.load(Relaxed)
-            && self.mode.load(Relaxed) == source_mode::MONO
-            && self.colour.load(Relaxed) == DEFAULT_SOURCE_COLOUR
-            && self.icon.load(Relaxed) == 0
+            && self.mode.load(Relaxed) == f.mode
+            && self.colour.load(Relaxed) == f.colour
+            && self.icon.load(Relaxed) == f.icon
             && self.mute_groups.load(Relaxed) == 0
+    }
+
+    /// True if the settings are a plain source's defaults ([`SourceFactory::PLAIN`]).
+    pub fn is_default(&self) -> bool {
+        self.is_default_for(&SourceFactory::PLAIN)
     }
 
     /// Muted: its own MUTE, or one of its mute groups is engaged.
@@ -239,11 +274,13 @@ pub struct SourceTable {
 
 impl Default for SourceTable {
     fn default() -> Self {
-        Self {
+        let t = Self {
             params: (0..NUM_SOURCES).map(|_| SourceParams::default()).collect(),
             names: Mutex::new(vec![String::new(); NUM_SOURCES]),
             osc: Default::default(),
-        }
+        };
+        t.reset();
+        t
     }
 }
 
@@ -293,6 +330,13 @@ impl SourceTable {
         b.mode.store(mode, Relaxed);
     }
 
+    /// True if source `index` is at its factory settings with its factory
+    /// name (what a show leaves out).
+    pub fn is_factory(&self, index: usize) -> bool {
+        let f = source_factory(index);
+        self.params.get(index).is_some_and(|p| p.is_default_for(&f)) && self.name(index) == f.name
+    }
+
     /// INITIALIZE: the source's settings (its pair's, if paired) and name back
     /// to the defaults; the pairing stays.
     pub fn initialize(&self, index: usize) {
@@ -301,8 +345,9 @@ impl SourceTable {
         let first = pair_first(index);
         let indices = if paired { first..first + 2 } else { index..index + 1 };
         for i in indices {
-            self.params[i].reset();
-            self.set_name(i, "");
+            let f = source_factory(i);
+            self.params[i].reset(&f);
+            self.set_name(i, f.name);
             if let Some(o) = i.checked_sub(OSC_SOURCE_INDEX).and_then(|n| self.osc.get(n)) {
                 o.reset();
             }
@@ -311,12 +356,31 @@ impl SourceTable {
 
     /// Everything back to the defaults (a new console).
     pub fn reset(&self) {
-        for p in self.params.iter() {
-            p.reset();
-            p.mode.store(source_mode::MONO, Relaxed);
+        let mut names = self.names.lock().unwrap_or_else(|e| e.into_inner());
+        for (i, (p, name)) in self.params.iter().zip(names.iter_mut()).enumerate() {
+            let f = source_factory(i);
+            p.reset(&f);
+            p.mode.store(f.mode, Relaxed);
+            name.clear();
+            name.push_str(f.name);
         }
         self.osc.iter().for_each(OscParams::reset);
-        self.names.lock().unwrap_or_else(|e| e.into_inner()).iter_mut().for_each(String::clear);
+    }
+
+    /// The defaults before Sidecar took the WING's for the USB player and
+    /// the oscillators: what a show saved then left out had these values.
+    pub fn apply_legacy_defaults(&self) {
+        let plain = SourceFactory::PLAIN;
+        for i in 0..NUM_SOURCES {
+            if source_factory(i) != plain {
+                self.params[i].reset(&plain);
+                self.params[i].mode.store(plain.mode, Relaxed);
+                self.set_name(i, plain.name);
+            }
+        }
+        for o in &self.osc {
+            o.level_db.store(OSC_LEGACY_LEVEL_DB);
+        }
     }
 }
 
@@ -540,6 +604,32 @@ mod tests {
         }
         assert_eq!(source_port(NUM_SOURCES), None);
         assert_eq!(pair_first(5), 4);
+    }
+
+    #[test]
+    fn sources_start_as_a_factory_set_wing() {
+        // The USB player's first pair: "2TR", colour 8, icon 608, stereo; the
+        // rest unnamed, Dark Blue, no icon, mono; the oscillators at -6 dB.
+        let t = SourceTable::default();
+        let p = USB_PLAYER_SOURCE_INDEX;
+        for i in [p, p + 1] {
+            assert_eq!(t.name(i), "2TR");
+            let s = t.get(i).unwrap();
+            assert_eq!((s.colour.load(Relaxed), s.icon.load(Relaxed), s.mode.load(Relaxed)), (8, 608, source_mode::STEREO));
+            assert!(t.is_factory(i) && !s.is_default());
+        }
+        assert!(t.get(p + 2).unwrap().is_default() && t.name(p + 2).is_empty() && t.is_factory(0));
+        assert_eq!(t.osc(0).unwrap().level_db.load(), -6.0);
+        // INITIALIZE brings a renamed player source back.
+        t.set_name(p, "Walk-in");
+        t.get(p).unwrap().icon.store(5, Relaxed);
+        assert!(!t.is_factory(p));
+        t.initialize(p);
+        assert!(t.is_factory(p) && t.is_factory(p + 1));
+        // What shows saved before these defaults left out.
+        t.apply_legacy_defaults();
+        assert!(t.get(p).unwrap().is_default() && t.name(p).is_empty());
+        assert_eq!(t.osc(1).unwrap().level_db.load(), OSC_LEGACY_LEVEL_DB);
     }
 
     #[test]

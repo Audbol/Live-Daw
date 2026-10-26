@@ -119,6 +119,11 @@ public:
     void setHostSettings (juce::PropertiesFile* settings, std::function<void (const juce::StringArray& keys)> onChanged = {});
     /** Runs the settings exchange now (the timer does it). */
     void pumpHostSettings();
+    /** INITIALIZE CONSOLE: the attached settings that are WING parameters back
+        to their factory values (the keys are removed, so the app's defaults
+        apply), except the MIDI REMOTE CONTROL and DAW connection settings
+        (midi.*, daw.*). Returns the keys removed. */
+    juce::StringArray resetHostSettings();
 
     /** How much of the WING parameter tree maps onto Sidecar. */
     static juce::String coverageReport();

@@ -848,7 +848,7 @@ impl Show {
         if xml.has_tag("LiveDAWSession") {
             self.scenes.clear();
             self.layers.reset();
-            self.custom.reset();
+            self.custom = CustomControls::legacy();
             self.current_scene = -1;
             self.name = "Imported session".into();
             let mut converter = Converter::default();
@@ -881,7 +881,7 @@ impl Show {
         }
         match xml.child("CustomControls") {
             Some(c) => self.custom.from_xml(c),
-            None => self.custom.reset(),
+            None => self.custom = CustomControls::legacy(),
         }
         self.global_safe = xml.child("GlobalSafe").map(GlobalSafe::from_xml).unwrap_or_default();
         self.partial_scope =

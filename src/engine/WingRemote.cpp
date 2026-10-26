@@ -281,6 +281,23 @@ void WingRemote::pumpHostSettings()
         }
 }
 
+juce::StringArray WingRemote::resetHostSettings()
+{
+    juce::StringArray removed;
+    if (hostSettings == nullptr)
+        return removed;
+    for (const auto& k : hostSettingKeys)
+        if (! k.startsWith ("midi.") && ! k.startsWith ("daw.") && hostSettings->containsKey (k))
+        {
+            hostSettings->removeValue (k);
+            removed.add (k);
+        }
+    // Forget what was published (and changes not taken yet), then publish the rest again.
+    ld::ld_wing_clear_host_settings (handle);
+    pumpHostSettings();
+    return removed;
+}
+
 void WingRemote::publishLibrary()
 {
     const int current = libraryShow->getCurrentSceneIndex();

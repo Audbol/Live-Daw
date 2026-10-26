@@ -189,7 +189,7 @@ void KnobField::paint (juce::Graphics& g)
     g.strokePath (track, juce::PathStrokeType (thick));
     if (on)
     {
-        arc.addCentredArc (knob.getCentreX(), knob.getCentreY(), rad, rad, 0.0f, a0, a0 + (a1 - a0) * juce::jlimit (0.0f, 1.0f, binding.get()), true);
+        arc.addCentredArc (knob.getCentreX(), knob.getCentreY(), rad, rad, 0.0f, a0, a0 + (a1 - a0) * juce::jlimit (0.0f, 1.0f, ringFromTop ? 1.0f - binding.get() : binding.get()), true);
         g.setColour (ring);
         g.strokePath (arc, juce::PathStrokeType (thick));
     }
@@ -687,6 +687,7 @@ void MonitorsPage::showPathTab (int t)
     pflDim.setBinding (bindLinear ("PFL DIM", src.pflDimDb, 0.0f, 40.0f, " dB", 0, 12.0f));
     bandSolo.setBinding (bindLinear ("BAND SOLO", d.bandSoloDb, 0.0f, 24.0f, " dB", 0, 0.0f));
     limiter.setBinding (bindLinear ("LIMITER", d.limiterDb, -40.0f, 0.0f, " dB", 0, 0.0f));
+    limiter.ringFromTop = true;
     if (eqView != nullptr)
         eqView->setPath (showsPhones());
     repaint();
@@ -722,12 +723,14 @@ std::vector<KnobBinding> MonitorsPage::getKnobs()
     if (isEqShown())
         return eqView->knobs();
     // The parameter bar (fig. 72, firmware 3.1): SRC LEVEL, SRC MIX, PFL DIM,
-    // DIST, then the DIRECT IN level (the console has no control for it).
+    // DIST, then the DIRECT IN level (the console has no control for it),
+    // only while a DIRECT IN source is chosen: with DIRECT IN OFF the console's
+    // bar ends at DIST.
     auto& d = pathDsp();
     auto dist = bindLog ("DIST", d.delayM, 0.1f, 100.0f, " m", 0.1f);
     dist.text = [&m = d.delayM] { return juce::String (m.load(), m.load() < 10.0f ? 1 : 0) + " m"; };
     return { {}, srcLevel.getBinding(), srcMix.getBinding(), pflDim.getBinding(), dist,
-             home::wingFader ("DIR LVL", d.directLevelDb) };
+             d.directSource.load() >= 0 ? home::wingFader ("DIR LVL", d.directLevelDb) : KnobBinding {} };
 }
 
 std::vector<KnobStyle> MonitorsPage::getKnobStyles()
@@ -799,7 +802,11 @@ void MonitorsPage::chooseDirectIn()
     {
         target = i - 1;
         if (safe != nullptr)
+        {
             safe->repaint();
+            if (safe->knobsChanged)
+                safe->knobsChanged();
+        }
     }, options);
 }
 

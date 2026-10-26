@@ -193,9 +193,11 @@ fn pause_resume_and_new_file_lose_nothing() {
 #[test]
 fn rec_meters_and_taps() {
     let d = deck();
-    assert_eq!(d.tap(0), RecTap::Strip { kind: 3, number: 1, channel: 0 }, "REC 1/2 = MAIN 1 L/R");
+    for port in 0..4 {
+        assert_eq!(d.tap(port), RecTap::Off, "OFF, as on a factory-set WING");
+    }
+    d.set_tap(1, RecTap::Strip { kind: 3, number: 1, channel: 1 });
     assert_eq!(d.tap(1), RecTap::Strip { kind: 3, number: 1, channel: 1 });
-    assert_eq!(d.tap(2), RecTap::Off);
     d.set_tap(2, RecTap::Source(5));
     d.set_tap(3, RecTap::Strip { kind: 2, number: 12, channel: 1 });
     assert_eq!(d.tap(2), RecTap::Source(5));
@@ -317,6 +319,8 @@ fn pause_seek_next_and_prev() {
     let a = clip(&dir, "a.wav", 1, 4, 48000, 48000);
     let b = clip(&dir, "b.wav", 2, 4, 48000, 48000);
     let d = deck();
+    assert!(d.queue().repeat(), "REPEAT on, as on a factory-set WING");
+    d.queue().set_repeat(false);
     d.queue().set_folder(&dir);
     let ids: Vec<u64> = d.queue().entries().iter().map(|e| e.id).collect();
     assert_eq!(d.queue().entries()[0].path, a);

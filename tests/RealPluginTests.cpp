@@ -15,6 +15,14 @@ namespace
 constexpr double kRate = 48000.0;
 constexpr int kBlock = 128;
 
+// JUCE defines JUCE_CHECK_MEMORY_LEAKS only in Debug builds (to 1), so it can't be
+// used in an expression directly.
+#if defined (JUCE_CHECK_MEMORY_LEAKS) && JUCE_CHECK_MEMORY_LEAKS
+constexpr bool kLeakChecks = true;
+#else
+constexpr bool kLeakChecks = false;
+#endif
+
 bool hasDisplay()
 {
 #if JUCE_LINUX || JUCE_BSD
@@ -381,6 +389,18 @@ private:
         rig.engine.updateLatencyCompensation();
     }
 
+    /** settle(), then on until `done` holds (a slow machine, or a sanitizer
+        build, takes longer for a sandboxed plugin's latency to come round),
+        for up to `timeoutMs`. */
+    template <typename Done>
+    static void settleUntil (ToneRig& rig, Done&& done, juce::uint32 timeoutMs = 30000)
+    {
+        settle (rig);
+        const auto start = juce::Time::getMillisecondCounter();
+        while (! done() && juce::Time::getMillisecondCounter() - start < timeoutMs)
+            settle (rig);
+    }
+
     /** `others`: LV2 versions of the chain's 2nd and 3rd plugins, for the in-process
         VST3 run (see the chain test). */
     void runSuite (PluginHost& host, const LspSet& lsp, bool sandboxed, const LspSet* others)
@@ -547,8 +567,10 @@ private:
                 fx.setPlugin (3, std::move (plugin));
                 rig.insert (0, 3);
                 rig.tones = { { 1000.0, 0.05f } };
-                settle (rig); // the plugin reports its lookahead once it runs
                 const int base = sandboxed ? kBlock : 0;
+                // The plugin reports its lookahead once it runs.
+                settleUntil (rig, [&] { return fx.isFaulted (3) || (limiter->getLatencySamples() - base == 240 && fx.getLatency (3) == 240 + base); });
+                expect (! fx.isFaulted (3), tag + "the limiter's slot faulted");
                 const int reported = limiter->getLatencySamples();
                 logMessage (tag + "limiter lookahead " + paramText (*limiter, "Lookahead") + ": reports " + juce::String (reported)
                             + " samples (slot " + juce::String (fx.getLatency (3)) + ")");
@@ -569,7 +591,8 @@ private:
 
                 // A latency change (Lookahead 10 ms) is followed.
                 expect (setDisplayed (*limiter, "Lookahead", 10.0f));
-                settle (rig);
+                settleUntil (rig, [&] { return fx.isFaulted (3) || (std::abs (limiter->getLatencySamples() - base - 480) <= 1
+                                                                    && fx.getLatency (3) == limiter->getLatencySamples()); });
                 logMessage (tag + "lookahead " + paramText (*limiter, "Lookahead") + ": reports " + juce::String (limiter->getLatencySamples())
                             + ", slot " + juce::String (fx.getLatency (3)));
                 expectWithinAbsoluteError (limiter->getLatencySamples() - base, 480, 1); // the knob lands within a sample
@@ -705,7 +728,7 @@ private:
             {
                 logMessage ("No display: skipping the editors");
             }
-            else if (JUCE_CHECK_MEMORY_LEAKS && lsp.format == "VST3" && ! sandboxed
+            else if (kLeakChecks && lsp.format == "VST3" && ! sandboxed
                      && juce::SystemStats::getEnvironmentVariable ("SIDECAR_REAL_PLUGIN_VST3_EDITORS", {}).isEmpty())
             {
                 // Creating an LSP VST3 editor in-process (even with JUCE alone:

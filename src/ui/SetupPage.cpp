@@ -520,8 +520,10 @@ namespace
                                                           [this] (int i) { ctx.settings.setValue (prefs::touchFaderRes, i); }),
                             3.6f);
             options.newBox();
-            options.addRow ("MOUSE DISABLES TOUCH", OnKey::fixed (false), 1.3f, false);
-            options.addRow ("MOUSE SPEED", std::make_unique<juce::Slider> (juce::Slider::LinearHorizontal, juce::Slider::NoTextBox), 2.5f, false);
+            // [3.1] a 48 px row and a 40 px one (the slider's thumb 24 px tall).
+            options.addRow ("MOUSE DISABLES TOUCH", OnKey::fixed (false), 1.3f, false, false, 48.0f / 52.0f);
+            options.addRow ("MOUSE SPEED", std::make_unique<juce::Slider> (juce::Slider::LinearHorizontal, juce::Slider::NoTextBox), 2.5f, false, false,
+                            40.0f / 52.0f);
             options.newBox();
             // USB HOST SPEED: FS records 2 channels at 16 bit, HS 4 tracks at 24 bit (the USB recorder).
             options.addRow ("USB HOST SPEED",
@@ -611,38 +613,38 @@ namespace
         void paint (juce::Graphics& g) override
         {
             // [Fig. 34] 20 px rounded cells on a 22 px pitch, dark blue (dark
-            // orange on ALT) with black numbers, under small grey captions.
+            // orange on ALT) with black numbers, under small grey captions:
+            // CHANNEL's 10 px caption 4 px down, its cells from 19 px, AUX's
+            // caption at 147 and its cells at 157 (squeezed in a short box).
             cells.clear();
-            auto r = getLocalBounds().toFloat().reduced (4.0f);
-            const float captionH = juce::jmin (wingPx (20.0f), r.getHeight() / 9.0f);
-            const float cell = juce::jmin (wingPx (22.0f), r.getWidth() / 8.0f, (r.getHeight() - captionH * 2.0f - wingPx (16.0f)) / 6.0f);
-            r.removeFromTop (wingPx (6.0f));
-            auto drawGrid = [&] (const char* caption, StripKind kind, int rows)
+            auto r = getLocalBounds().toFloat();
+            const float k = juce::jmin (wingPx (1.0f), r.getHeight() / 182.0f, r.getWidth() / 176.0f);
+            const float pitch = 22.0f * k, cellSize = 20.0f * k;
+            auto drawGrid = [&] (const char* caption, StripKind kind, int rows, float top)
             {
                 g.setColour (Dark::caption);
-                g.setFont (wingFontPx (juce::jmin (TypeScale::statusCaption * getWingScreenHeight(), captionH * 0.6f)));
-                g.drawText (caption, r.removeFromTop (captionH), juce::Justification::centred);
+                g.setFont (wingFontPx (10.0f * k));
+                g.drawText (caption, juce::Rectangle<float> (r.getX(), r.getY() + top * k - 3.0f * k, r.getWidth(), 16.0f * k), juce::Justification::centred);
                 const auto& strips = ctx.engine.getStrips (kind);
                 for (int i = 0; i < rows * 8; ++i)
                 {
-                    auto c = juce::Rectangle<float> (r.getCentreX() - cell * 4.0f + cell * (float) (i % 8), r.getY() + cell * (float) (i / 8), cell, cell)
-                                 .reduced (cell * 0.05f);
+                    auto c = juce::Rectangle<float> (r.getCentreX() - pitch * 4.0f + 1.0f * k + pitch * (float) (i % 8),
+                                                     r.getY() + (top + 15.0f) * k + pitch * (float) (i / 8), cellSize, cellSize);
                     auto* s = i < (int) strips.size() ? strips[(size_t) i].get() : nullptr;
                     const bool alt = s != nullptr && s->isUsingAltInput();
                     g.setColour (alt ? altCell : mainCell);
-                    g.fillRoundedRectangle (c, cell * 0.12f);
+                    g.fillRoundedRectangle (c, 2.0f * k);
                     if (s != nullptr)
                     {
                         g.setColour (juce::Colours::black);
-                        g.setFont (wingFontPx (c.getHeight() * 0.5f));
+                        g.setFont (wingFontPx (11.0f * k));
                         g.drawText (juce::String (s->getNumber()), c, juce::Justification::centred);
                         cells.push_back ({ c, s });
                     }
                 }
-                r.removeFromTop (cell * (float) rows + wingPx (16.0f));
             };
-            drawGrid ("CHANNEL", StripKind::Channel, 5);
-            drawGrid ("AUX", StripKind::Aux, 1);
+            drawGrid ("CHANNEL", StripKind::Channel, 5, 4.0f);
+            drawGrid ("AUX", StripKind::Aux, 1, 142.0f);
         }
 
         void mouseUp (const juce::MouseEvent& e) override
@@ -789,7 +791,7 @@ namespace
                                                                       { "SELECT FOLLOWS SOLO", uiprefs::selectFollowsSolo },
                                                                       { "BUS SoF/SPILL ACTIVATES SOLO", uiprefs::sofActivatesSolo } };
             for (auto [name, key] : soloPrefs)
-                solo.addRow (name, OnKey::forSetting (ctx.settings, key, false), 1.3f);
+                solo.addRow (name, OnKey::forSetting (ctx.settings, key, uiprefs::soloOptionDefault (key)), 1.3f);
             solo.addRow ("SEND PAGE ACTIVATES SOLO", OnKey::fixed (false), 1.3f, false); // not there yet
             addAndMakeVisible (solo);
 
@@ -962,12 +964,12 @@ namespace
     public:
         explicit SurfaceTab (UiContext& c) : ctx (c)
         {
-            // The L/R meter beside the display: the monitor or a main (ui.mainMeter: 0 MONITOR, 1-4 MAIN n).
+            // The L/R meter beside the display: the monitor or a main (ui.mainMeter: 0 MONITOR, 1-4 MAIN n), and where it measures.
             metering.addRow ("MAIN METER",
                              std::make_unique<DropdownField> ("SOURCE",
                                                               [this]
                                                               {
-                                                                  const int v = juce::jlimit (0, kNumMains, ctx.settings.getIntValue ("ui.mainMeter", 0));
+                                                                  const int v = juce::jlimit (0, kNumMains, ctx.settings.getIntValue (uiprefs::mainMeter, uiprefs::mainMeterDefault));
                                                                   return v == 0 ? juce::String ("MONITOR") : "MAIN." + juce::String (v);
                                                               },
                                                               [this] (DropdownField& f)
@@ -976,11 +978,15 @@ namespace
                                                                   for (int i = 1; i <= kNumMains; ++i)
                                                                       items.add ("MAIN." + juce::String (i));
                                                                   auto& settings = ctx.settings;
-                                                                  popups::chooseFrom (f, items, ctx.settings.getIntValue ("ui.mainMeter", 0),
-                                                                                      [&settings] (int i) { settings.setValue ("ui.mainMeter", i); });
+                                                                  popups::chooseFrom (f, items, ctx.settings.getIntValue (uiprefs::mainMeter, uiprefs::mainMeterDefault),
+                                                                                      [&settings] (int i) { settings.setValue (uiprefs::mainMeter, i); });
                                                               }),
                              3.6f, true, false, kFieldRows);
-            metering.addRow ("MAIN METER TAP", fixedChoice ({ "AUTO", "PRE", "POST" }, 2, ChoiceKeys::autoPrePost()), 3.6f, false);
+            metering.addRow ("MAIN METER TAP",
+                             std::make_unique<ChoiceKeys> (juce::StringArray { "AUTO", "PRE", "POST" },
+                                                           [this] { return juce::jlimit (0, 2, ctx.settings.getIntValue (uiprefs::mainMeterTap, uiprefs::mainMeterTapDefault)); },
+                                                           [this] (int v) { ctx.settings.setValue (uiprefs::mainMeterTap, v); }, ChoiceKeys::autoPrePost()),
+                             3.6f);
             // PRE or POST per strip type: the METERS and VIEW screens' meters follow
             // these (METERS > SETTINGS sets them too; the surface's LED meters can
             // read them with prefs::meterPoint).
@@ -1018,7 +1024,7 @@ namespace
 
             faders.addRow ("FADER SPEED", choiceSetting (uiprefs::faderSpeed, { "SLOW", "MED", "FAST" }, 1), 3.65f);
             faders.addRow ("ALTERNATIVE SOF MODE", onSetting (uiprefs::alternativeSof, false), 1.3f);
-            faders.addRow ("RIGHT SECTION SENDS ON FADER", onSetting (uiprefs::rightSectionSof, true), 1.3f);
+            faders.addRow ("RIGHT SECTION SENDS ON FADER", onSetting (uiprefs::rightSectionSof, uiprefs::rightSectionSofDefault), 1.3f);
             faders.addRow ("FULL FADER PAGING", onSetting (uiprefs::fullFaderPaging, false), 1.3f);
             faders.addRow ("CH AUTOSELECT", std::make_unique<ToggleKeys> (ctx, juce::StringArray { "L", "C", "R" },
                                                                          std::vector<const char*> (std::begin (uiprefs::autoSelect), std::end (uiprefs::autoSelect))),
@@ -1027,7 +1033,7 @@ namespace
                                                                            std::vector<const char*> (std::begin (uiprefs::userLayerLink), std::end (uiprefs::userLayerLink))),
                            2.35f);
             faders.addRow ("DCA SPILL", onSetting (uiprefs::dcaSpill, false), 1.3f);
-            faders.addRow ("FADER/SCREEN LAYER LINK", OnKey::forSetting (ctx.settings, prefs::layerLink, true), 1.3f);
+            faders.addRow ("FADER/SCREEN LAYER LINK", OnKey::forSetting (ctx.settings, prefs::layerLink, prefs::layerLinkDefault), 1.3f);
             addAndMakeVisible (faders);
 
             sectionsKey.offColour = Dark::header;
@@ -1630,8 +1636,9 @@ namespace
             octets.addTokens (ip, ".", {});
             while (octets.size() < 4)
                 octets.add ("0");
-            network.addCaption ("IP ADDRESS", false);
-            network.addRow ({}, std::make_unique<OctetBoxes> (octets), 0.0f, false, false, 0.85f);
+            // [Fig. 42] a row-sized caption over light grey boxes (shown, not set, here).
+            network.addCaption ("IP ADDRESS", false, 1.0f);
+            network.addRow ({}, std::make_unique<OctetBoxes> (octets), 0.0f, true, false, 0.85f);
             network.addCaption ("DEVICE NAME: " + juce::SystemStats::getComputerName().toUpperCase(), false);
             addAndMakeVisible (network);
 
@@ -2102,8 +2109,9 @@ namespace
             g.setColour (Dark::caption);
             g.setFont (panelTitleFont (header.getHeight()));
             g.drawText ("DAW CONTROL", header, juce::Justification::centred);
-            g.setColour (Dark::textDim.brighter (0.3f));
-            g.setFont (wingFont (TypeScale::meterScale * 1.3f));
+            // [3.1] three lines of #686868 print, 12 px caps, under the DAW CONTROL column.
+            g.setColour (juce::Colour (0xff686868));
+            g.setFont (wingFontPx (wingPx (12.5f)));
             g.drawFittedText ("All third-party DAW trademarks are the property of their respective owners. Their use neither constitutes a claim of the "
                               "trademark nor affiliation of the trademark owners with the makers of this software. Product names are mentioned solely as "
                               "a reference for compatibility.",
@@ -2150,7 +2158,9 @@ namespace
             // the 376 x 262 drawing at the right; the disclaimer at the bottom.
             auto b = getLocalBounds();
             const int gap = setupGap();
-            disclaimer = b.removeFromBottom (juce::roundToInt (wingPx (64.0f))).withTrimmedLeft (juce::roundToInt (wingPx (4.0f)));
+            disclaimer = b.removeFromBottom (juce::roundToInt (wingPx (64.0f))).withTrimmedLeft (juce::roundToInt (wingPx (4.0f)))
+                             .withTrimmedBottom (juce::roundToInt (wingPx (6.0f)));
+            disclaimer.setWidth (juce::jmin (disclaimer.getWidth(), juce::roundToInt (wingPx (752.0f))));
             auto area = b.withWidth (juce::roundToInt ((float) b.getWidth() * 760.0f / 1264.0f));
             setupPanel (daw, juce::roundToInt (wingPx (52.0f)));
             setupPanel (ports, daw.rowHeight);
@@ -2477,6 +2487,15 @@ void SetupPage::initialize (const state::Scope& chosen, juce::uint32 sources, bo
             clearFx (ctx, i);
         ctx.engine.reset();
         ctx.engine.setNumChannels (kWingChannels);
+        // The console's own settings as on a factory-initialized WING: SETUP's
+        // surface, solo, metering and lighting options, the USB recorder's
+        // RECORDER ports (OFF) and the player's REPEAT (on).
+        if (! ctx.engine.getWing().resetHostSettings().isEmpty() && ctx.layersChanged)
+            ctx.layersChanged();
+        auto& usb = ctx.engine.getUsbRecorder();
+        for (int port = 0; port < UsbRecorder::kNumChannels; ++port)
+            usb.setTap (port, {});
+        usb.setRepeat (true);
     }
     const int strips = everything ? 0 : initializeParts (ctx, chosen);
     // The source groups: the audio interface's inputs (LCL), the playback
@@ -2557,10 +2576,14 @@ std::vector<StatusKey> SetupPage::getStatusKeys()
     // CUSTOM CONTROLS and MONITORS have no keys of their own.
     if (subScreen != nullptr)
         return subScreen->getStatusKeys();
-    return {
+    // [3.1] both against the clock.
+    std::vector<StatusKey> keys {
         { "MONITORS", Icon::Monitors, false, [this] { openMonitors(); } },
         { "CC EDIT", Icon::CcEdit, false, [this] { openCustomControls (-1); } },
     };
+    for (auto& k : keys)
+        k.atRight = true;
+    return keys;
 }
 
 void SetupPage::showTab()

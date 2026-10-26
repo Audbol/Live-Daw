@@ -1140,8 +1140,6 @@ pub fn bind(parts: &[&str]) -> Binding {
 /// What Sidecar shows fixed on SETUP where the WING has a setting.
 fn fixed(parts: &[&str]) -> Option<&'static str> {
     Some(match parts {
-        // MAIN METER TAP: the main meter reads the post-fader signal.
-        ["cfg", "mtr", "mainpos"] => "POST",
         // TAP TEMPO FLASH: the custom controls' tap keys always flash.
         ["$ctl", "$globals", "tapflash"] => "ON",
         // No screen lock, no mouse-disables-touch, no send page solo, no remote locks.
@@ -2093,7 +2091,8 @@ impl<'a> Console<'a> {
                 match lf {
                     LibF::Action => item(def, 0), // IDLE: an action is taken at once
                     LibF::ActionIndex => Value::Int(self.state.lib_index.load(Relaxed)),
-                    LibF::Current => Value::Int(lib.current),
+                    // No scene active reads 0, inside the range, as on the console.
+                    LibF::Current => Value::Int(lib.current.max(0)),
                     LibF::Active => Value::Str(lib.scene),
                     LibF::ActiveTag => Value::Int(lib.tag),
                     LibF::Show => Value::Str(lib.show),
@@ -2386,14 +2385,16 @@ impl<'a> Console<'a> {
                     SendF::Pan => f(&send.pan),
                     SendF::Pre => Value::bool(send.mode.load(Relaxed) == send_mode::PRE),
                 },
-                // Never configured: the engine's defaults.
+                // Never configured: the engine's defaults (the WING's factory send).
                 None => match sf {
                     SendF::On | SendF::Pon => Value::Int(0),
-                    SendF::Lvl => Value::Float(0.0),
-                    SendF::Mode => item(def, 0),
-                    SendF::Plink => Value::Int(1),
+                    SendF::Plink => {
+                        Value::Int(livedaw_engine::sends::default_pan_link(s.sends.default_mode(slot as usize)) as i32)
+                    }
+                    SendF::Lvl => Value::Float(db_to_wing(livedaw_engine::sends::DEFAULT_SEND_LEVEL_DB)),
+                    SendF::Mode => item(def, s.sends.default_mode(slot as usize)),
                     SendF::Pan => Value::Float(0.0),
-                    SendF::Pre => Value::Int(1),
+                    SendF::Pre => Value::bool(s.sends.default_mode(slot as usize) == send_mode::PRE),
                 },
             },
             SF::Mtx(i, sf) => {
@@ -4056,7 +4057,8 @@ mod tests {
         src.gain_db.store(10.5);
         assert_eq!(c.get(node(&c, "/ch/3/in/set/$g")), Some(Value::Float(10.5)));
         assert_eq!(c.get(node(&c, "/io/in/A/4/g")), Some(Value::Float(10.5)));
-        // The ALT input while in use.
+        // The ALT input while in use (INPUT SELECT per channel: a new console's is GLOBAL).
+        c.set(node(&c, "/io/autoaltovr"), &Value::Int(0)).unwrap();
         c.set(node(&c, "/ch/3/in/conn/altgrp"), &Value::str("B")).unwrap();
         c.set(node(&c, "/ch/3/in/conn/altin"), &Value::Int(2)).unwrap();
         c.set(node(&c, "/ch/3/in/set/altsrc"), &Value::Int(1)).unwrap();
@@ -4137,7 +4139,9 @@ mod tests {
         let c = Console::new(&e, &st);
         let ch3 = c.strip(StripKind::Channel, 3).unwrap().clone();
         let m = &ch3.params.matrix[1];
-        assert_eq!(c.get(node(&c, "/ch/3/send/MX2/plink")), Some(Value::Int(1)), "linked by default");
+        assert_eq!(c.get(node(&c, "/ch/3/send/MX2/plink")), Some(Value::Int(0)), "not linked by default, as on the WING");
+        c.set(node(&c, "/ch/3/send/MX2/plink"), &Value::Int(1)).unwrap();
+        assert!(m.pan_link.load(Relaxed));
         c.set(node(&c, "/ch/3/send/MX2/plink"), &Value::Int(0)).unwrap();
         assert!(!m.pan_link.load(Relaxed));
         c.set(node(&c, "/aux/2/send/MX8/plink"), &Value::Int(2)).unwrap();
@@ -4474,13 +4478,13 @@ mod tests {
         assert_eq!(cov.total, 68556, "{}", cov.report());
         // Everything answers but DAW CONFIGURATION (see `unbound_feature`).
         assert_eq!(cov.mapped, 68555, "{}", cov.report());
-        assert_eq!((cov.settings, cov.stored), (63, 7377), "{}", cov.report());
+        assert_eq!((cov.settings, cov.stored), (64, 7377), "{}", cov.report());
         for (g, (m, t)) in &cov.by_group {
             assert!(m == t || g == "/$ctl/daw", "{g}: {m} of {t}");
         }
         assert_eq!(cov.by_group["/$ctl/daw"], (14, 15));
         // The engine-backed share: everything but the settings and the stored values.
-        assert_eq!(cov.mapped - cov.settings - cov.stored, 61115);
+        assert_eq!(cov.mapped - cov.settings - cov.stored, 61114);
         let b = bindings();
         let row = |p: &str| match schema().resolve(p, &NoModels) {
             Some(Node::Row(r)) => r as usize,
@@ -4490,7 +4494,7 @@ mod tests {
         assert_eq!(b[row("/cards/wlive/1/$stat/state")], Binding::Stored);
         assert_eq!(b[row("/$ctl/layer/CMPCT/sel")], Binding::Stored);
         assert!(matches!(b[row("/cfg/mtr/mtrpage/in")], Binding::Host(_)));
-        assert_eq!(b[row("/cfg/mtr/mainpos")], Binding::Fixed("POST"));
+        assert!(matches!(b[row("/cfg/mtr/mainpos")], Binding::Host(_)));
     }
 
     fn get_text(c: &Console, path: &str) -> String {
@@ -4609,10 +4613,11 @@ mod tests {
         assert_eq!(get_text(&c, "/cfg/mtr/mtrpage/main"), "POST");
         assert!(crate::host::keys().contains(&"daw.preset"));
 
+        // MAIN METER TAP is a setting (AUTO, as on the console, until set).
+        assert_eq!(get_text(&c, "/cfg/mtr/mainpos"), "AUTO");
+        assert_eq!(set("/cfg/mtr/mainpos", Value::str("PRE")), Ok(Value::str("PRE")));
+        assert_eq!(st.take_host_setting(), Some(("ui.mainMeterTap", "1".to_owned())));
         // Fixed SETUP rows: what Sidecar does, nothing else.
-        assert_eq!(get_text(&c, "/cfg/mtr/mainpos"), "POST");
-        assert!(matches!(set("/cfg/mtr/mainpos", Value::str("AUTO")), Err(SetError::Unsupported(_))));
-        assert_eq!(set("/cfg/mtr/mainpos", Value::str("POST")), Ok(Value::str("POST")));
         assert_eq!(get_text(&c, "/$ctl/$globals/tapflash"), "ON");
         // The clock rate is the audio device's.
         assert_eq!(get_text(&c, "/$globals/clkrate"), "48000.0");
@@ -4663,9 +4668,9 @@ mod tests {
         set("/io/out/LCL/3/grp", Value::str("BUS"));
         assert_eq!(c.strip(StripKind::Bus, 3).unwrap().params.output_left.load(Relaxed), 2);
         assert_eq!((get_text(&c, "/io/out/A/3/grp"), get_text(&c, "/io/out/A/3/in")), ("BUS".into(), "5".into()));
-        // RECORDER ports: Main 1 by default (Sidecar's), any bus, main, matrix or source.
+        // RECORDER ports: OFF by default (as on the WING), any bus, main, matrix or source.
         let usb = e.usb();
-        assert_eq!((get_text(&c, "/io/out/REC/2/grp"), get_text(&c, "/io/out/REC/2/in")), ("MAIN".into(), "2".into()));
+        assert_eq!((get_text(&c, "/io/out/REC/2/grp"), get_text(&c, "/io/out/REC/2/in")), ("OFF".into(), "1".into()));
         set("/io/out/REC/1/in", Value::Int(3));
         set("/io/out/REC/1/grp", Value::str("MTX"));
         assert_eq!(usb.tap(0), RecTap::Strip { kind: StripKind::Matrix as i32, number: 2, channel: 0 });

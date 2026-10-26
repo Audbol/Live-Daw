@@ -58,8 +58,9 @@ pub const HOST_SETTINGS: &[HostSetting] = &[
     s("/cfg/mtr/mtrsfc/main", "setup.meterTapPre.2", "0", PRE_FLAG),
     s("/cfg/mtr/mtrsfc/mtx", "setup.meterTapPre.3", "0", PRE_FLAG),
     s("/cfg/mtr/mtrsfc/dca", "setup.meterTapPre.4", "1", PRE_FLAG),
-    // MAIN METER: 0 the monitor (SPEAKERS), 1-4 MAIN n.
-    s("/cfg/mtr/mainmtr", "ui.mainMeter", "0", Enc::Map(&[(0, "1"), (1, "2"), (2, "3"), (3, "4"), (13, "0")])),
+    // MAIN METER: 0 the monitor (SPEAKERS), 1-4 MAIN n; MAIN METER TAP: AUTO, PRE, POST.
+    s("/cfg/mtr/mainmtr", "ui.mainMeter", "1", Enc::Map(&[(0, "1"), (1, "2"), (2, "3"), (3, "4"), (13, "0")])),
+    s("/cfg/mtr/mainpos", "ui.mainMeterTap", "0", Enc::Index),
     // SETUP > GENERAL.
     s("/$ctl/$globals/cf_load", "setup.confirmLibraryLoad", "1", Enc::Bool),
     s("/$ctl/$globals/showscene", "ui.alwaysShowScene", "0", Enc::Bool),
@@ -79,7 +80,7 @@ pub const HOST_SETTINGS: &[HostSetting] = &[
     s("/$ctl/cfg/sofbutton", "ui.sofButton", "0", Enc::Index),
     s("/$ctl/cfg/sofframe", "ui.showSofFrame", "1", Enc::Bool),
     s("/$ctl/cfg/sofmode", "ui.alternativeSof", "0", Enc::Bool),
-    s("/$ctl/cfg/soffdr", "ui.rightSectionSof", "1", Enc::Index),
+    s("/$ctl/cfg/soffdr", "ui.rightSectionSof", "0", Enc::Index),
     s("/$ctl/cfg/fdrbanking", "ui.fullFaderPaging", "0", Enc::Bool),
     s("/$ctl/cfg/autosel_L", "ui.autoSelectL", "0", Enc::Bool),
     s("/$ctl/cfg/autosel_C", "ui.autoSelectC", "0", Enc::Bool),
@@ -87,11 +88,11 @@ pub const HOST_SETTINGS: &[HostSetting] = &[
     s("/$ctl/cfg/layerlinkl", "ui.userLayerLinkLC", "0", Enc::Bool),
     s("/$ctl/cfg/layerlinkr", "ui.userLayerLinkCR", "0", Enc::Bool),
     s("/$ctl/cfg/dcaspill", "ui.dcaSpill", "0", Enc::Bool),
-    s("/$ctl/cfg/fdrscrnlink", "setup.faderScreenLayerLink", "1", Enc::Bool),
+    s("/$ctl/cfg/fdrscrnlink", "setup.faderScreenLayerLink", "0", Enc::Bool),
     // SETUP > AUDIO > SOLO SYSTEM.
-    s("/$ctl/cfg/soloexcl", "ui.soloExclusive", "0", Enc::Bool),
+    s("/$ctl/cfg/soloexcl", "ui.soloExclusive", "1", Enc::Bool),
     s("/$ctl/cfg/solofsel", "ui.soloFollowsSelect", "0", Enc::Bool),
-    s("/$ctl/cfg/selfsolo", "ui.selectFollowsSolo", "0", Enc::Bool),
+    s("/$ctl/cfg/selfsolo", "ui.selectFollowsSolo", "1", Enc::Bool),
     s("/$ctl/cfg/sof2solo", "ui.sofActivatesSolo", "0", Enc::Bool),
     // SETUP > GENERAL's brightness tiles (setup.brightness.<id>, percent).
     s("/$ctl/cfg/lights/main", "setup.brightness.mainLcd", "80", Enc::Int),
