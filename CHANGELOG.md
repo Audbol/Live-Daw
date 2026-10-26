@@ -185,17 +185,33 @@ All notable changes to Sidecar are listed here. Versions follow
 - BLUE PLATE's damping readout is labelled kHz. It read HZ.
 - The infinity sign on the BDX 560 and PIA 2250 ratio scales now draws correctly.
 
-- User layers can have blank slots, as on the WING. On VIEW > CONFIG an item dragged
-  (or tapped) onto a slot now goes into exactly that slot instead of being packed to
-  the left with everything after it shifting; a filled slot dragged onto another swaps
-  with it (or moves into a blank one); dragging a slot off the slots, right-click or
-  long-press > CLEAR SLOT blanks it. A blank slot is an inactive strip on the surface
-  (dark scribble strip, light bar off, the fader and keys doing nothing), also on the
-  VIEW screens, the custom controls, Sends on Fader, spill and the remote controls.
-  Blank slots are saved with the show (as "-"); older shows load unchanged. The WING
-  remote maps a blank slot to OFF both ways (OFF used to remove the fader and shift
-  the rest). C ABI 14: `kFaderEmpty` and the user layer slot functions. CONFIG's NEW
-  and DELETE keys no longer cover the first slots of a 12-fader section.
+- User layers work like the WING's: their slots are fixed, a slot can be blank, and
+  the same channel can sit in two (or more) slots of one layer. On VIEW > CONFIG:
+  - An item dragged (or tapped) onto a slot's body goes into exactly that slot,
+    replacing what was there, instead of being packed to the left with everything
+    after it shifting. An item the layer already holds gets another slot; the first
+    copy stays where it is (it used to move).
+  - Dropped near the boundary between two slots (a gold bar with arrow heads marks
+    the spot), items are inserted there and the following slots move one place to
+    the right, as on the WING. A trailing blank slot makes room; when the layer's
+    last slot (1024) is in use the drop is refused with a LAYER FULL notice (red
+    marker) instead of losing a fader.
+  - A filled slot dragged onto another swaps with it (or moves into a blank one);
+    dragged between two slots it is inserted there and its old slot turns blank;
+    dragged off the slots it is blanked.
+  - Right-click or long-press a slot for CLEAR SLOT and INSERT EMPTY SLOT (a blank
+    slot inserted before it, the rest moving right).
+  A blank slot is an inactive strip on the surface (dark scribble strip, light bar
+  off, the fader and keys doing nothing), also on the VIEW screens, the custom
+  controls, Sends on Fader, spill and the remote controls. Two slots holding the same
+  strip are two faders on that strip and follow each other. Blank slots and
+  duplicates are saved with the show (a blank as "-"); older shows load unchanged.
+  The WING remote maps a blank slot to OFF both ways (OFF used to remove the fader and
+  shift the rest) and each copy of a fader reads and sets on its own. C ABI 15:
+  `kFaderEmpty` and the user layer slot functions (14), `ld_layers_insert_user_slots`,
+  `ld_layers_max_slots`, `ld_layers_remove_from_user` taking the slot and
+  `ld_layers_add_to_user` returning whether there was room (15). CONFIG's NEW and
+  DELETE keys no longer cover the first slots of a 12-fader section.
 
 - WING REMOTE: dropouts with Mixing Station and WING Edit, found with simulated
   clients run for minutes (a soak test, `livedaw-wing/tests/soak.rs`, now runs a

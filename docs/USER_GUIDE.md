@@ -338,24 +338,34 @@ touchscreen looks the same in both.
   - **RECORDER** (the status bar's **LIVE** card icon, red while recording): laid out
     like the WING-LIVE screens. See *Multitrack recording* below.
 - **Editing user layers** (VIEW > CONFIG): as on the WING, a layer's slots are
-  fixed and a slot can be blank. A blank slot is an inactive strip on the surface:
-  a dark scribble strip, light bar off, the fader doing nothing and SELECT / SOLO /
-  MUTE unlit; on CONFIG it shows its number over EMPTY. The page's slots sit at the
-  bottom in groups of four (as many as the section has faders); the arrows page, one
-  page past the end to add more.
+  fixed, a slot can be blank, and the same channel can sit in more than one slot. A
+  blank slot is an inactive strip on the surface: a dark scribble strip, light bar
+  off, the fader doing nothing and SELECT / SOLO / MUTE unlit; on CONFIG it shows its
+  number over EMPTY. Two slots holding the same channel are two faders on that
+  channel: move one and the other follows. The page's slots sit at the bottom in
+  groups of four (as many as the section has faders); the arrows page, one page past
+  the end to add more.
   - **Assign:** pick items in the grid (CHANNELS, BUS/MAIN, DCA, SENDS, BUS -> BUS,
     FX, MIDI CC) and drag them onto a slot, or tap the slot: the item goes into
     exactly that slot, replacing what was there (several items fill that slot and
     the next ones). Nothing shifts, so you can leave gaps. An item that is already in
-    the layer moves to the new slot, and its old slot turns blank.
+    the layer is added again; its other slot keeps it.
+  - **Insert:** drop (or tap) near the boundary between two slots, where a gold bar
+    with arrow heads appears: the items go in there and the slots after it move one
+    place to the right. A blank slot at the end of the layer makes room; if the
+    layer's last slot (1024) is in use the bar turns red and the drop is refused
+    (LAYER FULL), so nothing is pushed off the end.
   - **Move:** drag a filled slot onto another slot. Onto a blank slot it moves there;
-    onto a filled one the two swap.
-  - **Clear:** drag a slot off the slots, or right-click it (long-press on a touch
-    screen) and choose CLEAR SLOT. CLEAR in the top panel blanks the whole layer.
+    onto a filled one the two swap. Dropped between two slots it is inserted there and
+    its old slot turns blank.
+  - **Slot menu:** right-click a slot (long-press on a touch screen). CLEAR SLOT
+    blanks it; INSERT EMPTY SLOT puts a blank slot before it, moving it and the slots
+    after it one place to the right. Dragging a slot off the slots blanks it too, and
+    CLEAR in the top panel blanks the whole layer.
   - NEW copies the layer shown into a new user layer, blanks included; DELETE
     removes a user layer (RESTORE gives an edited layer key its own faders back).
     The layer keys other than USER 1 / USER 2 can be edited the same way. Blank
-    slots are saved with the show; shows from before blank slots load unchanged.
+    slots and duplicates are saved with the show; older shows load unchanged.
 - **Channel strip section** (top left): the CHANNEL STRIP DETAILS LED panel (sources,
   filters, LEVEL and GR meters, bus sends, groups) around a small screen; CHANNEL
   PROCESSING with an encoder over each of INPUT, FILTER, GATE, COMP, INSERT and MAIN

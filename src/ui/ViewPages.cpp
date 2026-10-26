@@ -3013,12 +3013,34 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
                     juce::Justification::centred);
     }
 
-    // While dragging: a frame on the slot the items would land in.
+    // While dragging: a frame on the slot the items would land in, or a bar
+    // with arrow heads where they'd be inserted (red when the layer is full).
     if (dragActive)
-        if (const int local = slotAt (dragPoint) - page * pageSize(); juce::isPositiveAndBelow (local, (int) slotAreas.size()))
+        if (const auto drop = dropTargetAt (dragPoint); drop.index >= 0)
         {
-            g.setColour (Dark::layer.brighter (0.3f));
-            g.drawRect (slotAreas[(size_t) local].expanded (2).toFloat(), 3.0f);
+            const int local = drop.index - page * pageSize();
+            auto preview = layer.faders;
+            const bool ok = dragSlot >= 0 ? layerslots::dropSlot (preview, page * pageSize() + dragSlot, drop)
+                                          : layerslots::dropItems (preview, selectedItems, drop);
+            if (drop.insert)
+            {
+                g.setColour (ok ? Colours::gold : Colours::tapRed);
+                if (const auto bar = layerdrop::markerAt (slotAreas, local, juce::jmax (4, px (5.0f))); ! bar.isEmpty())
+                {
+                    g.fillRect (bar);
+                    const auto w = (float) juce::jmax (8, px (12.0f));
+                    const auto cx = bar.toFloat().getCentreX();
+                    juce::Path heads;
+                    heads.addTriangle (cx - w / 2, (float) bar.getY() - w * 0.6f, cx + w / 2, (float) bar.getY() - w * 0.6f, cx, (float) bar.getY());
+                    heads.addTriangle (cx - w / 2, (float) bar.getBottom() + w * 0.6f, cx + w / 2, (float) bar.getBottom() + w * 0.6f, cx, (float) bar.getBottom());
+                    g.fillPath (heads);
+                }
+            }
+            else if (juce::isPositiveAndBelow (local, (int) slotAreas.size()))
+            {
+                g.setColour (ok ? Dark::layer.brighter (0.3f) : Colours::tapRed);
+                g.drawRect (slotAreas[(size_t) local].expanded (2).toFloat(), 3.0f);
+            }
         }
 
     if (! layer.user && ctx.show.layers.hasDefaultOverride (section(), layer.id) && faders.empty() && page == 0)
@@ -3032,44 +3054,60 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
     // The item being dragged.
     if (dragActive)
     {
+        // Above the pointer, so the slot or the insertion bar under it shows.
         const int count = dragSlot >= 0 ? 1 : juce::jmax (1, (int) selectedItems.size());
-        auto ghost = juce::Rectangle<float> (70.0f, 34.0f).withCentre (dragPoint.toFloat());
+        const auto text = (dropTargetAt (dragPoint).insert ? "INSERT " : "") + (count > 1 ? juce::String (count) + " ITEMS" : juce::String ("1 ITEM"));
+        const auto font = wingFont (TypeScale::body, WingWeight::SemiBold);
+        const float w = juce::jmax (70.0f, juce::GlyphArrangement::getStringWidth (font, text) + 16.0f);
+        auto ghost = juce::Rectangle<float> (w, 34.0f).withCentre (dragPoint.toFloat().translated (0.0f, -(float) px (64.0f)));
         g.setColour (Dark::layer.withAlpha (0.8f));
         g.fillRect (ghost);
         g.setColour (juce::Colours::white);
-        g.setFont (wingFont (TypeScale::body, WingWeight::SemiBold));
-        g.drawText (count > 1 ? juce::String (count) + " ITEMS" : juce::String ("1 ITEM"), ghost, juce::Justification::centred);
+        g.setFont (font);
+        g.drawText (text, ghost, juce::Justification::centred);
     }
 }
 
-int ConfigViewPage::slotAt (juce::Point<int> pos) const
+layerslots::DropTarget ConfigViewPage::dropTargetAt (juce::Point<int> pos) const
 {
-    // The whole slot (and the gap around it) is its target: slots never shift.
-    for (size_t i = 0; i < slotAreas.size(); ++i)
-        if (slotAreas[i].expanded (3, 6).contains (pos))
-            return page * pageSize() + (int) i;
-    return -1;
+    return layerdrop::targetAt (slotAreas, page * pageSize(), pos);
 }
 
-void ConfigViewPage::editSlots (const std::function<void (std::vector<state::FaderRef>&)>& edit)
+void ConfigViewPage::editSlots (const std::function<bool (std::vector<state::FaderRef>&)>& edit)
 {
     const auto layer = currentLayer();
     auto faders = layer.faders;
-    edit (faders);
+    if (! edit (faders))
+    {
+        // Nothing is pushed off the end of a layer: say why nothing happened.
+        popups::warn (*this, "LAYER FULL",
+                      "The last slot of \"" + layer.name + "\" (slot " + juce::String (layerslots::maxSlots())
+                          + ") is in use, so the slots can't move along. Clear a slot at the end first.");
+        return;
+    }
     layerslots::trim (faders);
     if (faders != layer.faders)
         setLayerFaders (layer, faders);
 }
 
-void ConfigViewPage::placeAt (const std::vector<state::FaderRef>& items, int index)
+void ConfigViewPage::dropItemsAt (layerslots::DropTarget target)
 {
-    if (! items.empty() && index >= 0)
-        editSlots ([&] (auto& faders) { layerslots::place (faders, items, index); });
+    if (! selectedItems.empty() && target.index >= 0)
+        editSlots ([this, target] (auto& faders) { return layerslots::dropItems (faders, selectedItems, target); });
 }
 
 void ConfigViewPage::clearSlot (int index)
 {
-    editSlots ([index] (auto& faders) { layerslots::clear (faders, index); });
+    editSlots ([index] (auto& faders)
+    {
+        layerslots::clear (faders, index);
+        return true;
+    });
+}
+
+void ConfigViewPage::insertEmptySlot (int index)
+{
+    editSlots ([index] (auto& faders) { return layerslots::insert (faders, index, { state::FaderRef::blank() }); });
 }
 
 void ConfigViewPage::showSlotMenu (int local)
@@ -3077,11 +3115,20 @@ void ConfigViewPage::showSlotMenu (int local)
     if (! juce::isPositiveAndBelow (local, (int) slotAreas.size()))
         return;
     const int index = page * pageSize() + local;
+    const bool filled = ! layerslots::get (currentLayer().faders, index).isEmpty();
+    juce::StringArray items;
+    if (filled)
+        items.add ("CLEAR SLOT");
+    items.add ("INSERT EMPTY SLOT");
     juce::Component::SafePointer<ConfigViewPage> safe (this);
-    popups::chooseFrom (anchorAt (slotAreas[(size_t) local]), { "CLEAR SLOT" }, -1, [safe, index] (int)
+    popups::chooseFrom (anchorAt (slotAreas[(size_t) local]), items, -1, [safe, index, items] (int chosen)
     {
-        if (safe != nullptr)
+        if (safe == nullptr || ! juce::isPositiveAndBelow (chosen, items.size()))
+            return;
+        if (items[chosen] == "CLEAR SLOT")
             safe->clearSlot (index);
+        else
+            safe->insertEmptySlot (index);
     });
 }
 
@@ -3089,12 +3136,18 @@ void ConfigViewPage::mouseDown (const juce::MouseEvent& e)
 {
     dragActive = false;
     dragSlot = -1;
+    pressSlot = -1;
     dragPoint = e.getPosition();
-    // A filled slot can be dragged (a blank one has nothing to move).
+    // A filled slot can be dragged (a blank one has nothing to move); any
+    // slot has a menu.
     const auto faders = pageFaders();
-    for (size_t i = 0; i < slotAreas.size() && i < faders.size(); ++i)
-        if (slotAreas[i].contains (e.getPosition()) && ! faders[i].isEmpty())
-            dragSlot = (int) i;
+    for (size_t i = 0; i < slotAreas.size(); ++i)
+        if (slotAreas[i].contains (e.getPosition()))
+        {
+            pressSlot = (int) i;
+            if (i < faders.size() && ! faders[i].isEmpty())
+                dragSlot = (int) i;
+        }
 }
 
 void ConfigViewPage::mouseDrag (const juce::MouseEvent& e)
@@ -3119,6 +3172,7 @@ void ConfigViewPage::mouseDrag (const juce::MouseEvent& e)
                 return;
         }
         dragActive = true;
+        pressSlot = -1;
     }
     dragPoint = e.getPosition();
     repaint();
@@ -3130,20 +3184,20 @@ void ConfigViewPage::mouseUp (const juce::MouseEvent& e)
     if (dragActive)
     {
         dragActive = false;
-        const int target = slotAt (pos);
+        const auto target = dropTargetAt (pos);
         if (dragSlot >= 0)
         {
             // A slot dragged onto another swaps with it (moves into a blank
-            // one); dragged off the slots, it turns blank.
+            // one), between two it's inserted there; off the slots it turns blank.
             const int from = page * pageSize() + dragSlot;
-            if (target >= 0)
-                editSlots ([from, target] (auto& faders) { layerslots::swap (faders, from, target); });
+            if (target.index >= 0)
+                editSlots ([from, target] (auto& faders) { return layerslots::dropSlot (faders, from, target); });
             else if (! slotsArea.contains (pos))
                 clearSlot (from);
         }
-        else if (target >= 0)
+        else if (target.index >= 0)
         {
-            placeAt (selectedItems, target);
+            dropItemsAt (target);
             selectedItems.clear();
         }
         dragSlot = -1;
@@ -3161,15 +3215,16 @@ void ConfigViewPage::mouseUp (const juce::MouseEvent& e)
             return;
         }
 
-    // A right-click or a long press on a filled slot: CLEAR SLOT.
-    if (dragSlot >= 0 && (e.mods.isPopupMenu() || e.getLengthOfMousePress() >= kLongPressMs))
+    // A right-click or a long press on a slot: CLEAR SLOT, INSERT EMPTY SLOT.
+    if (pressSlot >= 0 && (e.mods.isPopupMenu() || e.getLengthOfMousePress() >= kLongPressMs))
     {
-        showSlotMenu (dragSlot);
-        dragSlot = -1;
+        showSlotMenu (pressSlot);
+        dragSlot = pressSlot = -1;
         return;
     }
 
-    // A click on a tile toggles it; a click on a slot puts the selected tiles there.
+    // A click on a tile toggles it; a click on a slot puts the selected tiles
+    // there (near a boundary: inserts them there).
     const auto items = sourceItems();
     for (size_t i = 0; i < items.size() && i < sourceTiles.size(); ++i)
         if (sourceTiles[i].contains (pos))
@@ -3182,14 +3237,14 @@ void ConfigViewPage::mouseUp (const juce::MouseEvent& e)
             repaint();
             return;
         }
-    if (const int target = slotAt (pos); target >= 0 && ! selectedItems.empty())
+    if (const auto target = dropTargetAt (pos); target.index >= 0 && ! selectedItems.empty())
     {
-        placeAt (selectedItems, target);
+        dropItemsAt (target);
         selectedItems.clear();
         repaint();
         return;
     }
-    dragSlot = -1;
+    dragSlot = pressSlot = -1;
 }
 
 //==============================================================================

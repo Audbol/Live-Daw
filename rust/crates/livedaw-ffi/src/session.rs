@@ -1420,18 +1420,44 @@ pub unsafe extern "C" fn ld_layers_move_user(l: *mut LayerSet, id: *const u8, le
     }
 }
 
+/// Adds `r` to a user layer's first blank slot or after its last (another
+/// copy when the layer already holds it); false when the layer is full.
 #[no_mangle]
-pub unsafe extern "C" fn ld_layers_add_to_user(l: *mut LayerSet, id: *const u8, len: usize, r: LdFaderRef) {
+pub unsafe extern "C" fn ld_layers_add_to_user(l: *mut LayerSet, id: *const u8, len: usize, r: LdFaderRef) -> bool {
+    layers(l).is_some_and(|l| l.add_to_user_layer(&str_arg(id, len), r.to_ref()))
+}
+
+/// Blanks slot `index` of a user layer if it holds `r`; `index` -1: the
+/// first slot holding `r`. Other copies of `r` stay (ABI 15).
+#[no_mangle]
+pub unsafe extern "C" fn ld_layers_remove_from_user(l: *mut LayerSet, id: *const u8, len: usize, r: LdFaderRef, index: i32) {
     if let Some(l) = layers(l) {
-        l.add_to_user_layer(&str_arg(id, len), r.to_ref());
+        l.remove_from_user_layer(&str_arg(id, len), &r.to_ref(), usize::try_from(index).ok());
     }
 }
 
+/// Inserts `n` faders (blanks too) before slot `index` of a user layer; the
+/// slots from there on move right. False (nothing changed) when a filled
+/// slot would go past `ld_layers_max_slots()`.
 #[no_mangle]
-pub unsafe extern "C" fn ld_layers_remove_from_user(l: *mut LayerSet, id: *const u8, len: usize, r: LdFaderRef) {
-    if let Some(l) = layers(l) {
-        l.remove_from_user_layer(&str_arg(id, len), &r.to_ref());
+pub unsafe extern "C" fn ld_layers_insert_user_slots(
+    l: *mut LayerSet,
+    id: *const u8,
+    len: usize,
+    index: i32,
+    faders: *const LdFaderRef,
+    n: i32,
+) -> bool {
+    match (layers(l), usize::try_from(index)) {
+        (Some(l), Ok(index)) => l.insert_user_slots(&str_arg(id, len), index, &faders_arg(faders, n)),
+        _ => false,
     }
+}
+
+/// The most slots a layer can have.
+#[no_mangle]
+pub extern "C" fn ld_layers_max_slots() -> i32 {
+    livedaw_session::layers::MAX_SLOTS as i32
 }
 
 /// Replaces a user layer's faders, blanks (`FADER_EMPTY`) included.
