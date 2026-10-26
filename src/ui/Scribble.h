@@ -67,8 +67,9 @@ void drawScribbleFrame (juce::Graphics&, juce::Rectangle<float> lcd, bool first,
 /** A strip's name as its scribble strip shows it: empty while it has the
     default name ("CH 3"), which the top row already says. */
 juce::String scribbleName (const Strip&);
-/** The source tag: "LCL5", "LCL7/8", "B1" (the ALT source while active), "OFF"
-    without a source; with SHOW SOURCE ON SCRIBBLE off "MONO" or "ST". */
+/** The source tag: "LCL5", "LCL7/8", "B1" (the ALT source while active),
+    nothing without a source (as on the WING); with SHOW SOURCE ON SCRIBBLE
+    off "MONO" or "ST". */
 juce::String scribbleSourceTag (const Strip&, bool showSource);
 /** Fills the top row, the name and the icon for a strip. */
 void setScribbleStrip (ScribbleInfo&, const Strip&, bool showSource);

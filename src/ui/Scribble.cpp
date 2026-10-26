@@ -320,7 +320,7 @@ juce::String scribbleSourceTag (const Strip& s, bool showSource)
         return stereo ? "ST" : "MONO";
     const int left = s.getActiveInputLeft();
     if (left < 0)
-        return "OFF";
+        return {}; // as on the WING: no tag at all (Sidecar showed "OFF")
     const auto l = inputPortName (left).removeCharacters (" ");
     if (! stereo)
         return l;

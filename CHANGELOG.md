@@ -82,6 +82,8 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- A channel without a source no longer shows "OFF" on its scribble strip: the tag is left
+  out, as on the WING.
 - Source GAIN now has the WING's range and steps for the source's group, everywhere
   it is set (HOME and INPUT knob and fader, ROUTING > SOURCES fader, knob and wheel,
   the parameter bar, WING REMOTE `/io/in/<grp>/<n>/g` and `/ch/<n>/in/set/$g`, WING
