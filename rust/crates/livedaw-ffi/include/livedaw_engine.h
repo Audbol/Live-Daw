@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 14;
+constexpr int kAbiVersion = 15;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -1050,8 +1050,14 @@ extern "C"
     void ld_layers_remove_user (LayerSet*, const char* id, size_t len);
     void ld_layers_rename_user (LayerSet*, const char* id, size_t len, const char* name, size_t nameLen);
     void ld_layers_move_user (LayerSet*, const char* id, size_t len, int32_t delta);
-    void ld_layers_add_to_user (LayerSet*, const char* id, size_t len, FaderRefC ref);
-    void ld_layers_remove_from_user (LayerSet*, const char* id, size_t len, FaderRefC ref);
+    /** Another copy when the layer already holds `ref`; false when it is full. */
+    bool ld_layers_add_to_user (LayerSet*, const char* id, size_t len, FaderRefC ref);
+    /** Blanks slot `index` if it holds `ref` (-1: the first slot holding it); other copies stay (ABI 15). */
+    void ld_layers_remove_from_user (LayerSet*, const char* id, size_t len, FaderRefC ref, int32_t index);
+    /** Inserts `n` faders (blanks too) before slot `index`, moving the rest right;
+        false (nothing changed) when a filled slot would go past ld_layers_max_slots(). */
+    bool ld_layers_insert_user_slots (LayerSet*, const char* id, size_t len, int32_t index, const FaderRefC* faders, int32_t n);
+    int32_t ld_layers_max_slots();
     void ld_layers_move_within_user (LayerSet*, const char* id, size_t len, int32_t index, int32_t delta);
     void ld_layers_set_user_faders (LayerSet*, const char* id, size_t len, const FaderRefC* faders, int32_t n);
     void ld_layers_set_user_slot (LayerSet*, const char* id, size_t len, int32_t index, FaderRefC ref);

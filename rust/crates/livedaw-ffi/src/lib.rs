@@ -33,7 +33,9 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
 // ABI 14: LdFaderRef kind 8 = a blank layer slot.
-pub const LD_ABI_VERSION: i32 = 14;
+// ABI 15: ld_layers_remove_from_user takes the slot (a user layer can hold a
+// fader twice); ld_layers_add_to_user returns whether it had room.
+pub const LD_ABI_VERSION: i32 = 15;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)

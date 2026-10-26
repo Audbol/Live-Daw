@@ -1,5 +1,6 @@
 #include "TestHelpers.h"
 #include "engine/Show.h"
+#include "ui/LayerDrop.h"
 
 using namespace livedaw;
 
@@ -103,10 +104,11 @@ public:
             layers.addToUserLayer (id, state::FaderRef::of (state::StripRef::of (bus)));
             layers.addToUserLayer (id, state::FaderRef::ofDca (5));
             layers.addToUserLayer (id, state::FaderRef::of (state::StripRef::of (ch1)));
-            layers.addToUserLayer (id, state::FaderRef::of (state::StripRef::of (ch3))); // duplicate ignored
+            expect (layers.addToUserLayer (id, state::FaderRef::of (state::StripRef::of (ch3)))); // a second copy, as on the WING
 
             auto layer = layers.findLayer (engine, S::Center, id);
-            expectEquals ((int) layer.faders.size(), 5);
+            expectEquals ((int) layer.faders.size(), 6);
+            expect (layer.faders[5] == layer.faders[1]);
             expect (layer.faders[3].dca && layer.faders[3].dcaIndex == 5);
             auto strips = resolve (engine, layer);
             expect (strips[0] == &engine.getMain());
@@ -123,8 +125,20 @@ public:
             const auto user1 = layers.findLayer (engine, S::Left, "user-1");
             expectEquals (user1.name, juce::String ("Vocals + wedge"));
             expectEquals (LayerSet::keyLabel (user1), juce::String ("USER 1"));
-            expectEquals ((int) user1.faders.size(), 5);
+            expectEquals ((int) user1.faders.size(), 6);
             expect (layers.findLayer (engine, S::Right, "user-2").faders.empty());
+
+            // Removing one copy leaves the other.
+            const auto ch3ref = state::FaderRef::of (state::StripRef::of (ch3));
+            layers.removeFromUserLayer (id, ch3ref, 5);
+            layer = layers.findLayer (engine, S::Center, id);
+            expect (layer.faders.size() == 5 && layer.faders[1] == ch3ref);
+            layers.addToUserLayer (id, ch3ref);
+            layers.removeFromUserLayer (id, ch3ref, 0); // slot 1 doesn't hold it: nothing
+            layers.removeFromUserLayer (id, ch3ref);    // the first copy
+            layer = layers.findLayer (engine, S::Center, id);
+            expect (layer.faders.size() == 6 && layer.faders[1].isEmpty() && layer.faders[5] == ch3ref);
+            layers.setUserLayerSlot (id, 1, ch3ref);
 
             // Removed strips simply disappear from the bank.
             engine.removeStrip (&ch3);
@@ -198,13 +212,14 @@ public:
             // Several items fill the slots from the target on, replacing what's there.
             layerslots::place (f, { ch (3), ch (4) }, 4);
             expect (f[2] == ch (2) && f[4] == ch (3) && f[5] == ch (4) && isBlank (f, { 0, 1, 3, 6 }));
-            // An item already in the layer moves; its old slot turns blank.
+            // An item already in the layer gets another slot; the first copy stays.
             layerslots::place (f, { ch (2) }, 0);
-            expect (f[0] == ch (2) && f[4] == ch (3) && f[5] == ch (4) && isBlank (f, { 1, 2, 3 }));
+            expect (f[0] == ch (2) && f[2] == ch (2) && f[4] == ch (3) && f[5] == ch (4) && isBlank (f, { 1, 3 }));
             // Dropped onto its own slot: nothing changes.
             const auto before = f;
             layerslots::place (f, { ch (3) }, 4);
             expect (f == before);
+            layerslots::clear (f, 2);
             // A slot dragged onto a filled slot swaps with it; onto a blank slot it moves.
             layerslots::swap (f, 0, 5);
             expect (f[0] == ch (4) && f[5] == ch (2) && f[4] == ch (3));
@@ -215,6 +230,8 @@ public:
             layerslots::clear (f, 0);
             expect (isBlank (f, { 0 }) && f[5] == ch (2) && f[9] == ch (3));
             layerslots::clear (f, 9);
+            expectEquals ((int) f.size(), 6);
+            layerslots::set (f, layerslots::maxSlots(), ch (7));
             expectEquals ((int) f.size(), 6);
             layerslots::set (f, -1, ch (7));
             layerslots::swap (f, -1, 2);
@@ -257,6 +274,129 @@ public:
 
             // "Go to strip" never looks for a blank slot.
             expect (show.layers.findDefaultLayerContaining (engine, S::Left, blank).isEmpty());
+        }
+
+        beginTest ("CONFIG drops: on a slot, between two slots, duplicates, the layer's maximum");
+        {
+            using state::FaderRef;
+            using DT = layerslots::DropTarget;
+            const auto ch = [] (int id) { return FaderRef::of ({ StripKind::Channel, id }); };
+            const auto blank = FaderRef::blank();
+
+            // The page's slots as CONFIG lays them out, small (a 600 px wide
+            // window): 40 x 30, 4 apart, a wider gap between the groups of four.
+            std::vector<juce::Rectangle<int>> slots;
+            for (int i = 0; i < 8; ++i)
+                slots.push_back ({ 10 + 44 * i + (i / 4) * 8, 100, 40, 30 });
+            const int first = 8; // the second page
+            const auto at = [&] (int x, int y = 115) { return layerdrop::targetAt (slots, first, { x, y }); };
+            // A slot's body: that slot; its left or right quarter: insert before or after it.
+            expect (at (slots[2].getCentreX()) == DT { 10, false });
+            expect (at (slots[2].getX() + 2) == DT { 10, true });
+            expect (at (slots[2].getRight() - 2) == DT { 11, true });
+            expect (at (slots[2].getX() - 2) == DT { 10, true }); // the gap left of it
+            expect (at (slots[3].getRight() + 6) == DT { 12, true }); // the gap between the groups
+            expect (at (slots[0].getX() - 1) == DT { 8, true });
+            expect (at (slots[7].getRight()) == DT { 16, true }); // after the last on the page
+            expect (at (slots[2].getCentreX(), 300).index < 0);    // off the slots
+            expect (at (slots[2].getCentreX(), 97) == DT { 10, false });
+            // The marker sits on the boundary, taller than the slots.
+            const auto marker = layerdrop::markerAt (slots, 4, 4);
+            expect (marker.getCentreX() >= slots[3].getRight() && marker.getCentreX() <= slots[4].getX());
+            expect (marker.getY() < slots[4].getY() && marker.getBottom() > slots[4].getBottom());
+            expect (layerdrop::markerAt (slots, 9, 4).isEmpty());
+
+            // Items from the grid on a slot fill or replace exactly that slot; one
+            // already in the layer is copied, the other copy stays.
+            std::vector<FaderRef> f { ch (1), ch (2), blank, ch (3) };
+            expect (layerslots::dropItems (f, { ch (5) }, { 2, false }));
+            expect ((f == std::vector<FaderRef> { ch (1), ch (2), ch (5), ch (3) }));
+            expect (layerslots::dropItems (f, { ch (1) }, { 3, false }));
+            expect ((f == std::vector<FaderRef> { ch (1), ch (2), ch (5), ch (1) }));
+            // Between two slots they're inserted and the following slots move right.
+            expect (layerslots::dropItems (f, { ch (2) }, { 1, true }));
+            expect ((f == std::vector<FaderRef> { ch (1), ch (2), ch (2), ch (5), ch (1) }));
+            expect (layerslots::dropItems (f, { ch (7), ch (8) }, { 0, true }));
+            expect ((f == std::vector<FaderRef> { ch (7), ch (8), ch (1), ch (2), ch (2), ch (5), ch (1) }));
+            // An empty slot inserted (INSERT EMPTY SLOT) shifts too.
+            expect (layerslots::insert (f, 2, { blank }));
+            expect ((f == std::vector<FaderRef> { ch (7), ch (8), blank, ch (1), ch (2), ch (2), ch (5), ch (1) }));
+            // Past the end: just placed, blanks before it.
+            expect (layerslots::dropItems (f, { ch (9) }, { 10, true }));
+            expect (f.size() == 11 && f[10] == ch (9) && f[8].isEmpty() && f[9].isEmpty());
+            f.resize (8);
+
+            // A slot dragged: onto a slot it swaps (moves into a blank one) ...
+            expect (layerslots::dropSlot (f, 0, { 1, false }));
+            expect ((f == std::vector<FaderRef> { ch (8), ch (7), blank, ch (1), ch (2), ch (2), ch (5), ch (1) }));
+            expect (layerslots::dropSlot (f, 1, { 2, false }));
+            expect ((f == std::vector<FaderRef> { ch (8), blank, ch (7), ch (1), ch (2), ch (2), ch (5), ch (1) }));
+            // ... between two slots it's inserted there, its old slot blank.
+            expect (layerslots::dropSlot (f, 6, { 0, true }));
+            expect ((f == std::vector<FaderRef> { ch (5), ch (8), blank, ch (7), ch (1), ch (2), ch (2), blank, ch (1) }));
+            expect (layerslots::dropSlot (f, 0, { 3, true }));
+            expect ((f == std::vector<FaderRef> { blank, ch (8), blank, ch (5), ch (7), ch (1), ch (2), ch (2), blank, ch (1) }));
+            // Next to itself, or a blank slot: nothing changes.
+            const auto before = f;
+            expect (layerslots::dropSlot (f, 3, { 3, true }) && layerslots::dropSlot (f, 3, { 4, true }));
+            expect (layerslots::dropSlot (f, 2, { 5, false }) && layerslots::dropSlot (f, 3, {}));
+            expect (f == before);
+
+            // The layer's maximum: a trailing blank makes room, a filled last slot refuses.
+            const int max = layerslots::maxSlots();
+            expectEquals (max, 1024);
+            std::vector<FaderRef> full ((size_t) max - 1, ch (1));
+            expect (layerslots::dropItems (full, { ch (2) }, { 0, true }));
+            expect ((int) full.size() == max && full[0] == ch (2) && full.back() == ch (1));
+            const auto fullBefore = full;
+            expect (! layerslots::dropItems (full, { ch (3) }, { 5, true }));
+            expect (! layerslots::insert (full, 5, { blank }));
+            expect (! layerslots::dropSlot (full, 9, { 2, true })); // the whole tail moves: no room either
+            expect (full == fullBefore);
+            expect (! layerslots::dropItems (full, { ch (3), ch (4) }, { max - 1, false }));
+            expect (full == fullBefore);
+            // Moving the last slot works: its old slot is the trailing blank that makes room.
+            expect (layerslots::dropSlot (full, max - 1, { 0, true }));
+            expect ((int) full.size() == max && full[0] == ch (1) && full[1] == ch (2));
+            // Replacing a slot of a full layer is fine.
+            expect (layerslots::dropItems (full, { ch (5) }, { max - 1, false }) && full.back() == ch (5));
+
+            // The same model through the C ABI: insert, refuse when full, duplicates.
+            LayerSet layers;
+            const auto id = layers.addUserLayer ("Dup", { ch (1), blank, ch (1) });
+            expect (layers.insertUserLayerSlots (id, 1, { ch (2), blank }));
+            expect ((layers.getUserLayer (id)->faders == std::vector<FaderRef> { ch (1), ch (2), blank, blank, ch (1) }));
+            layers.setUserLayerSlot (id, max - 1, ch (3));
+            expect (! layers.insertUserLayerSlots (id, 0, { ch (4) }));
+            expect ((int) layers.getUserLayer (id)->faders.size() == max && layers.getUserLayer (id)->faders[1] == ch (2));
+        }
+
+        beginTest ("The surface shows a fader twice: both strips drive one strip");
+        {
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            engine.setNumChannels (4);
+            auto& ch2 = *engine.getChannels()[1];
+            const auto ref = state::FaderRef::of (state::StripRef::of (ch2));
+            const auto id = show.layers.addUserLayer ("Twice", { ref, state::FaderRef::blank(), ref });
+            show.layers.setSelectedLayerId (S::Left, "user-1");
+            const auto layer = show.layers.getSelectedLayer (engine, S::Left);
+            const auto a = LayerSet::surfaceTarget (layer, 0), b = LayerSet::surfaceTarget (layer, 2);
+            expect (a.has_value() && b.has_value() && *a == *b && ! LayerSet::surfaceTarget (layer, 1).has_value());
+            // Both resolve to the same strip, so a move on one shows on the other.
+            expect (state::findStrip (engine, a->strip) == &ch2 && state::findStrip (engine, b->strip) == &ch2);
+            state::findStrip (engine, a->strip)->params.faderDb = -12.5f;
+            expectWithinAbsoluteError (state::findStrip (engine, b->strip)->params.faderDb.load(), -12.5f, 1.0e-6f);
+            // Saved and loaded, both copies and the blank stay.
+            auto xml = show.toXml();
+            MixerEngine e2 (0);
+            Show loaded (e2, host);
+            expect (loaded.loadFromXml (*xml).wasOk());
+            const auto again = loaded.layers.findLayer (e2, S::Center, "user-1").faders;
+            expect (again.size() == 3 && again[0] == again[2] && again[1].isEmpty());
+            expect (show.layers.findDefaultLayerContaining (engine, S::Left, ref) == "in-1");
+            juce::ignoreUnused (id);
         }
 
         beginTest ("Spill layers, send, FX parameter and MIDI CC faders");

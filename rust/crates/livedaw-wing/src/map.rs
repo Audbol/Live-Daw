@@ -4409,6 +4409,48 @@ mod tests {
     }
 
     #[test]
+    fn surface_user_layer_with_a_fader_twice() {
+        use livedaw_session::custom::CustomControls;
+        use livedaw_session::layers::{FaderRef, LayerSet};
+        use livedaw_session::refs::StripRef;
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let (mut layers, mut custom) = (LayerSet::default(), CustomControls::default());
+        let sync = |layers: &mut LayerSet, custom: &mut CustomControls| surface::sync(&st, &e, layers, custom, 0);
+        let ch5 = FaderRef::Strip(StripRef::of(&e.strips(StripKind::Channel)[4]));
+        let ch7 = FaderRef::Strip(StripRef::of(&e.strips(StripKind::Channel)[6]));
+        let id = layers.add_user_layer("Dup", vec![ch5, FaderRef::Empty, ch5]);
+        sync(&mut layers, &mut custom);
+        let get = |p: &str| c.get(node(&c, p));
+        // Both copies read as CH 5; the blank between them is OFF.
+        for pos in [1, 3] {
+            assert_eq!(get(&format!("/$ctl/layer/L/6/{pos}/type")), Some(Value::str("CH")));
+            assert_eq!(get(&format!("/$ctl/layer/L/6/{pos}/i")), Some(Value::Int(5)));
+        }
+        assert_eq!(get("/$ctl/layer/L/6/2/type"), Some(Value::str("OFF")));
+
+        // A client puts CH 5 in the blank slot too: a third copy, the others stay.
+        let f = |p: &str, v: Value| c.set(node(&c, p), &v).unwrap();
+        f("/$ctl/layer/L/6/2/type", Value::str("CH"));
+        f("/$ctl/layer/L/6/2/i", Value::Int(5));
+        assert!(sync(&mut layers, &mut custom).layers);
+        assert_eq!(layers.user_layer(&id).unwrap().faders, vec![ch5, ch5, ch5]);
+        // OFF on one copy blanks just that slot; changing another changes just it.
+        f("/$ctl/layer/L/6/1/type", Value::str("OFF"));
+        f("/$ctl/layer/L/6/3/i", Value::Int(7));
+        assert!(sync(&mut layers, &mut custom).layers);
+        assert_eq!(layers.user_layer(&id).unwrap().faders, vec![FaderRef::Empty, ch5, ch7]);
+        assert_eq!(get("/$ctl/layer/L/6/2/i"), Some(Value::Int(5)));
+        assert_eq!(get("/$ctl/layer/L/6/3/i"), Some(Value::Int(7)));
+        // Setting a copy to what it holds changes nothing.
+        f("/$ctl/layer/L/6/2/i", Value::Int(5));
+        assert!(!sync(&mut layers, &mut custom).layers);
+        // The center's USER 1 key shows the same layer.
+        assert_eq!(get("/$ctl/layer/C/5/2/i"), Some(Value::Int(5)));
+    }
+
+    #[test]
     fn surface_custom_controls_both_ways() {
         use livedaw_session::custom::{CcFunction, CustomControls};
         use livedaw_session::layers::LayerSet;

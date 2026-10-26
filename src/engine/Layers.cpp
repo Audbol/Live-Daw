@@ -1,10 +1,14 @@
 #include "engine/Layers.h"
 
+#include <algorithm>
+
 namespace livedaw
 {
 
 namespace layerslots
 {
+    int maxSlots() { return (int) ld::ld_layers_max_slots(); }
+
     state::FaderRef get (const std::vector<state::FaderRef>& faders, int i)
     {
         return juce::isPositiveAndBelow (i, (int) faders.size()) ? faders[(size_t) i] : state::FaderRef::blank();
@@ -18,7 +22,7 @@ namespace layerslots
 
     void set (std::vector<state::FaderRef>& faders, int i, const state::FaderRef& f)
     {
-        if (i < 0)
+        if (! juce::isPositiveAndBelow (i, maxSlots()))
             return;
         if ((int) faders.size() <= i)
             faders.resize ((size_t) i + 1, state::FaderRef::blank());
@@ -37,22 +41,61 @@ namespace layerslots
         set (faders, b, fa);
     }
 
-    void place (std::vector<state::FaderRef>& faders, const std::vector<state::FaderRef>& items, int index)
+    bool place (std::vector<state::FaderRef>& faders, const std::vector<state::FaderRef>& items, int index)
     {
         if (index < 0)
-            return;
+            return false;
+        const auto count = (int) std::count_if (items.begin(), items.end(), [] (const state::FaderRef& f) { return ! f.isEmpty(); });
+        if (index + count > maxSlots())
+            return false;
         int slot = index;
         for (const auto& item : items)
-        {
-            if (item.isEmpty())
-                continue;
-            // Already elsewhere in the layer: it moves (its old slot turns blank).
-            for (int i = 0; i < (int) faders.size(); ++i)
-                if (i != slot && faders[(size_t) i] == item)
-                    faders[(size_t) i] = state::FaderRef::blank();
-            set (faders, slot++, item);
-        }
+            if (! item.isEmpty())
+                set (faders, slot++, item); // a fader held elsewhere stays there too
         trim (faders);
+        return true;
+    }
+
+    bool insert (std::vector<state::FaderRef>& faders, int index, const std::vector<state::FaderRef>& items)
+    {
+        if (index < 0)
+            return false;
+        auto out = faders;
+        if ((int) out.size() < index)
+            out.resize ((size_t) index, state::FaderRef::blank());
+        out.insert (out.begin() + index, items.begin(), items.end());
+        trim (out);
+        if ((int) out.size() > maxSlots())
+            return false;
+        faders = std::move (out);
+        return true;
+    }
+
+    bool dropItems (std::vector<state::FaderRef>& faders, const std::vector<state::FaderRef>& items, DropTarget target)
+    {
+        if (target.index < 0 || items.empty())
+            return true;
+        return target.insert ? insert (faders, target.index, items) : place (faders, items, target.index);
+    }
+
+    bool dropSlot (std::vector<state::FaderRef>& faders, int from, DropTarget target)
+    {
+        const auto item = get (faders, from);
+        if (target.index < 0 || item.isEmpty())
+            return true;
+        if (! target.insert)
+        {
+            swap (faders, from, target.index);
+            return true;
+        }
+        if (target.index == from || target.index == from + 1)
+            return true; // between itself and a neighbour: it stays
+        auto out = faders;
+        out[(size_t) from] = state::FaderRef::blank(); // its old slot turns blank...
+        if (! insert (out, target.index, { item }))   // ...and it goes in between
+            return false;
+        faders = std::move (out);
+        return true;
     }
 } // namespace layerslots
 
@@ -210,16 +253,16 @@ void LayerSet::moveUserLayer (const juce::String& id, int delta)
     ld::ld_layers_move_user (handle, u.data, u.size, delta);
 }
 
-void LayerSet::addToUserLayer (const juce::String& layerId, const state::FaderRef& ref)
+bool LayerSet::addToUserLayer (const juce::String& layerId, const state::FaderRef& ref)
 {
     const Utf8 u (layerId);
-    ld::ld_layers_add_to_user (handle, u.data, u.size, ref.toC());
+    return ld::ld_layers_add_to_user (handle, u.data, u.size, ref.toC());
 }
 
-void LayerSet::removeFromUserLayer (const juce::String& layerId, const state::FaderRef& ref)
+void LayerSet::removeFromUserLayer (const juce::String& layerId, const state::FaderRef& ref, int index)
 {
     const Utf8 u (layerId);
-    ld::ld_layers_remove_from_user (handle, u.data, u.size, ref.toC());
+    ld::ld_layers_remove_from_user (handle, u.data, u.size, ref.toC(), index);
 }
 
 void LayerSet::moveWithinUserLayer (const juce::String& layerId, int index, int delta)
@@ -253,6 +296,15 @@ void LayerSet::swapUserLayerSlots (const juce::String& layerId, int a, int b)
 {
     const Utf8 u (layerId);
     ld::ld_layers_swap_user_slots (handle, u.data, u.size, a, b);
+}
+
+bool LayerSet::insertUserLayerSlots (const juce::String& layerId, int index, const std::vector<state::FaderRef>& faders)
+{
+    const Utf8 u (layerId);
+    std::vector<ld::FaderRefC> refs;
+    for (auto& f : faders)
+        refs.push_back (f.toC());
+    return ld::ld_layers_insert_user_slots (handle, u.data, u.size, index, refs.data(), (int32_t) refs.size());
 }
 
 void LayerSet::setDefaultOverride (Section s, const juce::String& id, const std::vector<state::FaderRef>& faders)

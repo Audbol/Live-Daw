@@ -15,8 +15,9 @@
 //! `USER 2` show the first two user layers, which hold any faders (strips,
 //! DCAs, send levels and FX parameters) in any order and are saved with the
 //! show. User layers have fixed slots: a slot can be blank ([`FaderRef::Empty`],
-//! an inactive strip on the surface), and editing a slot never moves the
-//! others. A section can also fit as many faders as its space allows (width
+//! an inactive strip on the surface), the same fader can sit in several slots,
+//! and editing a slot never moves the others (inserting before a slot moves
+//! the ones after it one place to the right). A section can also fit as many faders as its space allows (width
 //! "Auto"), for big channel counts on wide screens.
 //!
 //! **Spill** puts a computed layer on a section for a while: a DCA's members,
@@ -120,8 +121,9 @@ impl From<StripRef> for FaderRef {
 const BLANK_TOKEN: &str = "-";
 
 /// Fixed-slot editing of a layer's faders: slot `i` is `faders[i]`, or blank
-/// past the end. Nothing here moves another slot; trailing blanks are dropped
-/// (the slots past the end are blank anyway).
+/// past the end. Only [`slots::insert`] moves other slots (one place to the
+/// right); trailing blanks are dropped (the slots past the end are blank
+/// anyway). A layer can hold the same fader in several slots, as on the WING.
 pub mod slots {
     use super::{FaderRef, MAX_SLOTS};
 
@@ -163,6 +165,27 @@ pub mod slots {
         let (fa, fb) = (get(faders, a), get(faders, b));
         set(faders, a, fb);
         set(faders, b, fa);
+    }
+
+    /// Inserts `items` (blanks too) before slot `i`: slot `i` and the ones
+    /// after it move `items.len()` places to the right. Blanks pushed past
+    /// [`MAX_SLOTS`] are dropped; when a filled slot would be, nothing changes
+    /// and this returns false (the layer is full).
+    pub fn insert(faders: &mut Vec<FaderRef>, i: usize, items: &[FaderRef]) -> bool {
+        if i >= MAX_SLOTS {
+            return items.iter().all(FaderRef::is_empty);
+        }
+        let mut out = faders.clone();
+        if out.len() < i {
+            out.resize(i, FaderRef::Empty);
+        }
+        out.splice(i..i, items.iter().copied());
+        trim(&mut out);
+        if out.len() > MAX_SLOTS {
+            return false;
+        }
+        *faders = out;
+        true
     }
 }
 
@@ -731,18 +754,20 @@ impl LayerSet {
         }
     }
 
-    /// Adds a fader to a user layer's first blank slot, or after its last
-    /// (no duplicates).
-    pub fn add_to_user_layer(&mut self, id: &str, f: FaderRef) {
+    /// Adds a fader to a user layer's first blank slot, or after its last.
+    /// A fader the layer already holds gets another slot (a layer can show
+    /// the same fader twice, as on the WING). False when the layer is full.
+    pub fn add_to_user_layer(&mut self, id: &str, f: FaderRef) -> bool {
         if f.is_empty() {
-            return;
+            return false;
         }
-        if let Some(l) = self.user_layer_mut(id) {
-            if !l.faders.contains(&f) {
-                let slot = l.faders.iter().position(FaderRef::is_empty).unwrap_or(l.faders.len());
-                slots::set(&mut l.faders, slot, f);
-            }
+        let Some(l) = self.user_layer_mut(id) else { return false };
+        let slot = l.faders.iter().position(FaderRef::is_empty).unwrap_or(l.faders.len());
+        if slot >= MAX_SLOTS {
+            return false;
         }
+        slots::set(&mut l.faders, slot, f);
+        true
     }
 
     /// Replaces a user layer's faders (as given: blanks and duplicates are kept).
@@ -754,14 +779,29 @@ impl LayerSet {
         }
     }
 
-    /// Blanks the slots holding `f` (the other slots stay where they are).
-    pub fn remove_from_user_layer(&mut self, id: &str, f: &FaderRef) {
-        if let Some(l) = self.user_layer_mut(id) {
-            for x in l.faders.iter_mut().filter(|x| **x == *f) {
-                *x = FaderRef::Empty;
-            }
-            slots::trim(&mut l.faders);
+    /// Blanks one slot holding `f`: slot `at` (only if it holds `f`), or
+    /// without `at` the first slot holding it. Another copy of `f` and the
+    /// other slots stay where they are.
+    pub fn remove_from_user_layer(&mut self, id: &str, f: &FaderRef, at: Option<usize>) {
+        if f.is_empty() {
+            return;
         }
+        if let Some(l) = self.user_layer_mut(id) {
+            let slot = match at {
+                Some(i) => (slots::get(&l.faders, i) == *f).then_some(i),
+                None => l.faders.iter().position(|x| x == f),
+            };
+            if let Some(i) = slot {
+                slots::clear(&mut l.faders, i);
+            }
+        }
+    }
+
+    /// Inserts `items` (blanks too) before slot `index` of a user layer,
+    /// moving the slots from there on to the right. False (nothing changed)
+    /// when a filled slot would be pushed past [`MAX_SLOTS`].
+    pub fn insert_user_slots(&mut self, id: &str, index: usize, items: &[FaderRef]) -> bool {
+        self.user_layer_mut(id).is_some_and(|l| slots::insert(&mut l.faders, index, items))
     }
 
     /// Puts `f` in slot `index` of a user layer, replacing what was there.
@@ -1049,7 +1089,7 @@ mod tests {
         set.add_to_user_layer(&b, main);
         set.add_to_user_layer(&b, main);
         set.add_to_user_layer(&b, FaderRef::Dca(2));
-        set.move_within_user_layer(&b, 0, 1);
+        set.move_within_user_layer(&b, 2, -2);
         set.move_user_layer(&b, -1);
         set.rename_user_layer(&b, "Vocals");
         assert_eq!(set.user_layers()[0].name, "Vocals");
@@ -1058,7 +1098,7 @@ mod tests {
         let mut loaded = LayerSet::default();
         loaded.from_xml(&set.to_xml());
         assert_eq!(loaded.user_layers(), set.user_layers());
-        assert_eq!(loaded.user_layers()[0].faders, vec![FaderRef::Dca(2), main]);
+        assert_eq!(loaded.user_layers()[0].faders, vec![FaderRef::Dca(2), main, main], "a duplicate is kept");
         assert_eq!(loaded.selected(CENTER), b);
         assert_eq!(loaded.selected(LEFT), "in-1");
         assert_eq!(loaded.selected(RIGHT), "out-1");
@@ -1115,7 +1155,7 @@ mod tests {
         set.clear_user_slot(&id, 6);
         assert_eq!(faders(&set), vec![e, ch(3), e, e, ch(9)]);
         // Removing a fader blanks its slot; adding fills the first blank.
-        set.remove_from_user_layer(&id, &ch(3));
+        set.remove_from_user_layer(&id, &ch(3), None);
         assert_eq!(faders(&set), vec![e, e, e, e, ch(9)]);
         set.add_to_user_layer(&id, ch(5));
         assert_eq!(faders(&set), vec![ch(5), e, e, e, ch(9)]);
@@ -1129,6 +1169,120 @@ mod tests {
         assert_eq!(faders(&set), vec![ch(5), ch(9)]);
         set.move_within_user_layer(&id, 0, -1);
         assert_eq!(faders(&set), vec![ch(5), ch(9)]);
+    }
+
+    #[test]
+    fn a_user_layer_can_hold_a_fader_twice() {
+        let mut set = LayerSet::default();
+        let e = FaderRef::Empty;
+        let id = set.add_user_layer("Dup", vec![ch(1), e, ch(2)]);
+        let faders = |set: &LayerSet| set.user_layer(&id).unwrap().faders.clone();
+
+        // Adding a fader the layer holds gives it another slot (the first blank).
+        assert!(set.add_to_user_layer(&id, ch(2)));
+        assert_eq!(faders(&set), vec![ch(1), ch(2), ch(2)]);
+        assert!(set.add_to_user_layer(&id, ch(1)));
+        assert_eq!(faders(&set), vec![ch(1), ch(2), ch(2), ch(1)]);
+        // Setting a slot to a fader held elsewhere leaves the other copy alone.
+        set.set_user_slot(&id, 5, ch(2));
+        assert_eq!(faders(&set), vec![ch(1), ch(2), ch(2), ch(1), e, ch(2)]);
+
+        // Removing one copy blanks just the slot asked for.
+        set.remove_from_user_layer(&id, &ch(2), Some(2));
+        assert_eq!(faders(&set), vec![ch(1), ch(2), e, ch(1), e, ch(2)]);
+        // A slot that doesn't hold the fader: nothing.
+        set.remove_from_user_layer(&id, &ch(2), Some(0));
+        set.remove_from_user_layer(&id, &ch(2), Some(99));
+        assert_eq!(faders(&set), vec![ch(1), ch(2), e, ch(1), e, ch(2)]);
+        // Without a slot, the first copy goes.
+        set.remove_from_user_layer(&id, &ch(1), None);
+        assert_eq!(faders(&set), vec![e, ch(2), e, ch(1), e, ch(2)]);
+        set.remove_from_user_layer(&id, &ch(2), Some(5));
+        assert_eq!(faders(&set), vec![e, ch(2), e, ch(1)], "trailing blanks dropped");
+
+        // Swapping two copies changes nothing; a copy moves into a blank slot.
+        set.set_user_slot(&id, 2, ch(2));
+        set.swap_user_slots(&id, 1, 2);
+        assert_eq!(faders(&set), vec![e, ch(2), ch(2), ch(1)]);
+        set.swap_user_slots(&id, 2, 0);
+        assert_eq!(faders(&set), vec![ch(2), ch(2), e, ch(1)]);
+
+        // Saved and loaded, duplicates and blanks stay.
+        let xml = set.to_xml();
+        assert_eq!(xml.children_named("Layer").next().unwrap().str_or("faders", ""), "ch:2,ch:2,-,ch:1");
+        let mut loaded = LayerSet::default();
+        loaded.from_xml(&xml);
+        assert_eq!(loaded.user_layers(), set.user_layers());
+        // The USER key shows both copies.
+        let user1 = loaded.default_layers_for(LEFT, &ConsoleRefs::wing(8)).into_iter().find(|l| l.id == "user-1").unwrap();
+        assert_eq!(user1.faders, vec![ch(2), ch(2), e, ch(1)]);
+        // "Go to strip" still finds the strip's own bank.
+        let engine = Engine::new(0);
+        engine.set_num_channels(8);
+        let c2 = FaderRef::Strip(StripRef::of(&engine.strips(StripKind::Channel)[1]));
+        loaded.set_user_layer_faders(&loaded.user_layers()[0].id.clone(), vec![c2, c2]);
+        assert_eq!(loaded.find_default_layer_containing(&engine, LEFT, &c2).as_deref(), Some("in-1"));
+    }
+
+    #[test]
+    fn inserting_moves_the_following_slots_right() {
+        let mut set = LayerSet::default();
+        let e = FaderRef::Empty;
+        let id = set.add_user_layer("Ins", vec![ch(1), ch(2), e, ch(3)]);
+        let faders = |set: &LayerSet| set.user_layer(&id).unwrap().faders.clone();
+
+        assert!(set.insert_user_slots(&id, 1, &[ch(9)]));
+        assert_eq!(faders(&set), vec![ch(1), ch(9), ch(2), e, ch(3)]);
+        // Several at once, a duplicate among them.
+        assert!(set.insert_user_slots(&id, 0, &[ch(3), ch(4)]));
+        assert_eq!(faders(&set), vec![ch(3), ch(4), ch(1), ch(9), ch(2), e, ch(3)]);
+        // A blank slot shifts too.
+        assert!(set.insert_user_slots(&id, 2, &[e]));
+        assert_eq!(faders(&set), vec![ch(3), ch(4), e, ch(1), ch(9), ch(2), e, ch(3)]);
+        // Past the end: blanks fill the gap, nothing moves.
+        assert!(set.insert_user_slots(&id, 10, &[ch(5)]));
+        assert_eq!(faders(&set), vec![ch(3), ch(4), e, ch(1), ch(9), ch(2), e, ch(3), e, e, ch(5)]);
+        // A blank inserted past the end changes nothing.
+        assert!(set.insert_user_slots(&id, 20, &[e]));
+        assert_eq!(faders(&set).len(), 11);
+        assert!(!set.insert_user_slots("user-none", 0, &[ch(1)]));
+    }
+
+    #[test]
+    fn inserting_respects_the_maximum() {
+        let e = FaderRef::Empty;
+        // Full up to the last slot but one, which is blank: inserting drops
+        // that trailing blank.
+        let mut full = vec![ch(1); MAX_SLOTS - 1];
+        assert!(slots::insert(&mut full, 0, &[ch(2)]));
+        assert_eq!((full.len(), full[0], full[MAX_SLOTS - 1]), (MAX_SLOTS, ch(2), ch(1)));
+        // The last slot filled: refused, nothing lost or changed.
+        let before = full.clone();
+        assert!(!slots::insert(&mut full, 5, &[ch(3)]));
+        assert!(!slots::insert(&mut full, 5, &[e]));
+        assert_eq!(full, before);
+        // Blank slots inside the layer don't make room (the shift is the whole tail)...
+        full[3] = e;
+        assert!(!slots::insert(&mut full, 0, &[ch(4)]));
+        // ...but inserting after the last filled slot just fills, and a blank
+        // at the end makes room.
+        full[MAX_SLOTS - 1] = e;
+        slots::trim(&mut full);
+        assert!(slots::insert(&mut full, 0, &[ch(4)]));
+        assert_eq!((full.len(), full[0], full[4]), (MAX_SLOTS, ch(4), e));
+        // Two items need two places.
+        let mut nearly = vec![ch(1); MAX_SLOTS - 1];
+        assert!(!slots::insert(&mut nearly, 0, &[ch(2), ch(3)]));
+        assert_eq!(nearly.len(), MAX_SLOTS - 1);
+        // Out of range.
+        assert!(!slots::insert(&mut nearly, MAX_SLOTS, &[ch(2)]));
+        assert!(slots::insert(&mut nearly, MAX_SLOTS, &[e]));
+        // A full layer takes no more adds either.
+        let mut set = LayerSet::default();
+        let id = set.add_user_layer("Full", vec![ch(1); MAX_SLOTS]);
+        assert!(!set.add_to_user_layer(&id, ch(2)));
+        assert!(!set.insert_user_slots(&id, 0, &[ch(2)]));
+        assert_eq!(set.user_layer(&id).unwrap().faders, vec![ch(1); MAX_SLOTS]);
     }
 
     #[test]

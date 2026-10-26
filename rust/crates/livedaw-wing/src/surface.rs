@@ -33,9 +33,11 @@
 //!   order the tree uses elsewhere). DCA 1-16; SEND: from strip `i` (1-76) to
 //!   `dst` (buses 1-16, mains 17-20, matrices 21-28); FX: slot `i`, parameter
 //!   `dst`; MIDI: CC `i` on MIDI channel `dst`. SENDS has no equivalent.
-//!   Sidecar's layers have no gaps: a fader set past the end is appended and
-//!   OFF removes one. Changing a default key edits it (as VIEW > CONFIG does);
-//!   the USER keys change the user layers.
+//!   Slots are fixed, as on the console: OFF is a blank slot, a fader set
+//!   past the end leaves blanks before it, and nothing else moves. A layer can
+//!   hold the same fader in several slots; each reads and sets on its own.
+//!   Changing a default key edits it (as VIEW > CONFIG does); the USER keys
+//!   change the user layers.
 //! - `$spill`: the spill a section shows, read only (the console too
 //!   replaces what is set there).
 //! - `/$ctl/user/1..16/1..4`: the upper part's custom control layers;
