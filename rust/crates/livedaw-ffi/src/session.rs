@@ -1284,7 +1284,7 @@ pub unsafe extern "C" fn ld_layers_set_offset(l: *mut LayerSet, section: i32, of
 
 /// A spill: kind 0 = DCA `index`, 1 = the sources sending to bus slot `index`,
 /// 2 = FX slot `index`'s parameters, 3 = automix group `index` (0 X, 1 Y),
-/// 4 = the sends of `strip`.
+/// 4 = the sends of `strip`, 5 = the strips feeding main `index` (ABI 17).
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct LdSpill {
@@ -1301,6 +1301,7 @@ impl LdSpill {
             2 => SpillKind::Fx(self.index),
             3 => SpillKind::Automix(self.index),
             4 => SpillKind::Sends(self.strip.to_ref()),
+            5 => SpillKind::Main(self.index),
             _ => return None,
         })
     }
@@ -1312,6 +1313,7 @@ impl LdSpill {
             SpillKind::Fx(i) => Self { kind: 2, index: i, ..Self::default() },
             SpillKind::Automix(i) => Self { kind: 3, index: i, ..Self::default() },
             SpillKind::Sends(r) => Self { kind: 4, index: 0, strip: r.into() },
+            SpillKind::Main(i) => Self { kind: 5, index: i, ..Self::default() },
         }
     }
 }

@@ -20,8 +20,9 @@
 //!   are ignored; a layer without a WING key (the center's INPUTS, a user
 //!   layer selected by itself) reads as 8.
 //! - `spidx`: 0 no spill, 1-16 DCA, 17-32 FX slot, 33-48 a bus's sources,
-//!   61 / 62 automix X / Y, 63 a strip's sends (read only: which strip is the
-//!   console's selection). Sidecar has no main or matrix spill (49-60).
+//!   57-60 the channels, aux and buses feeding a main, 61 / 62 automix X /
+//!   Y, 63 a strip's sends (read only: which strip is the console's
+//!   selection). Sidecar has no matrix spill (49-56).
 //! - `N/ofs`: the scroll position. Sidecar keeps one per section, so only the
 //!   shown layer's is read and set (the others read 0).
 //! - `N/name`: the USER keys show the first two user layers, so naming one
@@ -41,9 +42,14 @@
 //! - `$spill`: the spill a section shows, read only (the console too
 //!   replaces what is set there).
 //! - `/$ctl/user/1..16/1..4`: the upper part's custom control layers;
-//!   `user/1..4` the lower part's USER layer, `daw1..4` its DAW layers and,
-//!   a guess (the document lists them for the Compact), `U1..U3` the
-//!   4-Channel section's F1-F3 layers. `mode` of `enc`, `bu` and `bd` is the
+//!   `user/1..4` the lower part's USER layer, `daw1..4` its DAW layers.
+//!   `U1..U4`, `MM` and `D1..D4` are the WING COMPACT's key sets (WING
+//!   Edit 3.3's CC EDIT on a Compact: USER 1-4 .. USER 13-16, MAIN/MTX 5-8,
+//!   DCA 1-4 .. DCA 13-16; the document: "U1..4: User, MM: Main/Matrix,
+//!   D1..4: DCA"), four upper keys each with a colour, while the console is
+//!   a COMPACT. On the full-size console `U1..U3` stay the 4-Channel
+//!   section's F1-F3 layers (an older guess) and the others answer the
+//!   factory values. `mode` of `enc`, `bu` and `bd` is the
 //!   function; a new function starts at its first target, as on CC EDIT. A
 //!   control has one name (`enc/name`, `bu/name` where there is no encoder)
 //!   and a colour; `$fname` reads the function's name. `sel`: the upper
@@ -53,9 +59,13 @@ use crate::map::{SetError, WingState};
 use crate::value::Value;
 use livedaw_engine::params::{NUM_DCAS, NUM_FX};
 use livedaw_engine::{Engine, StripKind};
-use livedaw_session::custom::{CcFunction, CustomControls, FIRST_DAW_LAYER, NUM_CONTROLS, NUM_LAYERS};
+use livedaw_session::custom::{
+    CcFunction, CustomControls, COMPACT_MAIN_MATRIX_LAYER, FIRST_COMPACT_DCA_LAYER, FIRST_COMPACT_USER_LAYER, FIRST_DAW_LAYER,
+    NUM_COMPACT_SETS, NUM_CONTROLS, NUM_LAYERS,
+};
 use livedaw_session::layers::{slots, ConsoleRefs, FaderRef, Layer, LayerSet, SpillKind, NUM_SECTIONS};
 use livedaw_session::refs::StripRef;
+use livedaw_session::ConsoleModel;
 use std::collections::VecDeque;
 
 /// The layer keys of each section in the WING's order, as Sidecar's layer ids.
@@ -158,6 +168,8 @@ const CC_BANK_CATEGORY: i32 = 18;
 const OTHER_MODE: usize = 16;
 /// The upper part's layers (`sel`).
 const NUM_BANKS: i32 = 16;
+/// The 4-Channel section's U1 layer (the full-size console's `U1`-`U3`).
+const FOUR_CHANNEL_LAYER: usize = 17;
 
 // ---- bindings ------------------------------------------------------------------------
 
@@ -227,28 +239,37 @@ pub fn bind_layer(rest: &[&str]) -> Option<(u8, LayerF)> {
     Some((s as u8, f))
 }
 
-/// Binds `/$ctl/user/<rest>`.
+/// Binds `/$ctl/user/<rest>`. `U1`-`U4`, `MM` and `D1`-`D4` bind to the
+/// COMPACT's key sets; the full-size console reads them as before (see
+/// [`UserF::for_model`]).
 pub fn bind_user(rest: &[&str]) -> Option<UserF> {
     if rest == ["sel"] {
         return Some(UserF::Bank);
     }
     let [layer, control, tail @ ..] = rest else { return None };
+    let set =
+        |l: &str, prefix: &str| l.strip_prefix(prefix)?.parse::<usize>().ok().filter(|n| (1..=NUM_COMPACT_SETS).contains(n));
     let layer = match *layer {
         "user" => 16,
-        "U1" | "U2" | "U3" => 16 + layer[1..].parse::<usize>().ok()?,
+        "MM" => COMPACT_MAIN_MATRIX_LAYER,
         l if l.starts_with("daw") => FIRST_DAW_LAYER + l[3..].parse::<usize>().ok().filter(|n| (1..=4).contains(n))? - 1,
+        l if l.starts_with('U') => FIRST_COMPACT_USER_LAYER + set(l, "U")? - 1,
+        l if l.starts_with('D') => FIRST_COMPACT_DCA_LAYER + set(l, "D")? - 1,
         l => l.parse::<usize>().ok().filter(|n| (1..=NUM_BANKS as usize).contains(n))? - 1,
     } as u8;
     let control = control.parse::<usize>().ok().filter(|n| (1..=NUM_CONTROLS).contains(n))? as u8 - 1;
     // The name lives on the encoder where there is one (the upper part's layers).
     let name_slot = if (layer as i32) < NUM_BANKS { "enc" } else { "bu" };
+    // The lower part's layers (USER, DAW 1-4) have no colour; only they and
+    // the upper part's layers have a lower key.
+    let lower_part = layer == 16 || (FIRST_DAW_LAYER..FIRST_COMPACT_USER_LAYER).contains(&(layer as usize));
     Some(match tail {
-        ["col"] if layer != 16 && (layer as usize) < FIRST_DAW_LAYER => UserF::Colour(layer, control),
+        ["col"] if !lower_part => UserF::Colour(layer, control),
         [slot, f] => {
             let cs = match *slot {
                 "enc" if (layer as i32) < NUM_BANKS => CcSlot::Enc,
                 "bu" => CcSlot::Up,
-                "bd" if layer < 17 || layer as usize >= FIRST_DAW_LAYER => CcSlot::Down,
+                "bd" if (layer as i32) < NUM_BANKS || lower_part => CcSlot::Down,
                 _ => return None,
             };
             match *f {
@@ -260,6 +281,39 @@ pub fn bind_user(rest: &[&str]) -> Option<UserF> {
         }
         _ => return None,
     })
+}
+
+impl UserF {
+    fn layer(self) -> Option<u8> {
+        match self {
+            UserF::Bank => None,
+            UserF::Colour(l, _) | UserF::Mode(l, _, _) | UserF::Name(l, _) | UserF::FName(l, _, _) => Some(l),
+        }
+    }
+
+    fn with_layer(self, layer: u8) -> Self {
+        match self {
+            UserF::Bank => self,
+            UserF::Colour(_, c) => UserF::Colour(layer, c),
+            UserF::Mode(_, c, s) => UserF::Mode(layer, c, s),
+            UserF::Name(_, c) => UserF::Name(layer, c),
+            UserF::FName(_, c, s) => UserF::FName(layer, c, s),
+        }
+    }
+
+    /// The node on a console of `model`. The COMPACT's key sets are its own
+    /// (WING Edit's CC EDIT offers USER 1-4 .. DCA 13-16 for the COMPACT
+    /// only); the full-size console keeps what it had: `U1`-`U3` the
+    /// 4-Channel section's F1-F3 layers, `U4`, `MM` and `D1`-`D4` the factory
+    /// values (None: unbound).
+    pub fn for_model(self, model: ConsoleModel) -> Option<Self> {
+        let Some(layer) = self.layer().map(usize::from) else { return Some(self) };
+        if model == ConsoleModel::Compact || layer < FIRST_COMPACT_USER_LAYER {
+            return Some(self);
+        }
+        (layer < FIRST_COMPACT_USER_LAYER + 3)
+            .then(|| self.with_layer((layer - FIRST_COMPACT_USER_LAYER + FOUR_CHANNEL_LAYER) as u8))
+    }
 }
 
 // ---- the published surface -----------------------------------------------------------
@@ -647,6 +701,7 @@ fn spill_kind(spidx: i32, sends: Option<StripRef>) -> Option<Option<SpillKind>> 
         1..=16 => SpillKind::Dca(spidx - 1),
         17..=32 => SpillKind::Fx(spidx - 17),
         33..=48 => SpillKind::Bus(spidx - 33),
+        57..=60 => SpillKind::Main(spidx - 57),
         61 | 62 => SpillKind::Automix(spidx - 61),
         SPIDX_SENDS => SpillKind::Sends(sends?),
         _ => return None,
@@ -658,6 +713,7 @@ fn spill_index(kind: &SpillKind) -> i32 {
         SpillKind::Dca(i) => 1 + i,
         SpillKind::Fx(i) => 17 + i,
         SpillKind::Bus(i) => 33 + i,
+        SpillKind::Main(i) => 57 + i,
         SpillKind::Automix(g) => 61 + g,
         SpillKind::Sends(_) => SPIDX_SENDS,
     }

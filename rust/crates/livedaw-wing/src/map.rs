@@ -48,7 +48,7 @@ pub struct Identity {
     pub name: String,
     pub model: String,
     /// `/$syscfg/$cnscfg`, the build type: WING Edit takes its ACTIVE WING
-    /// MODEL from it ("wing-fullsize", "wing-compact", "wing-rack").
+    /// MODEL from it ("wing-fullsize", "wing-bk", "wing-compact", "wing-rack").
     pub config: String,
     pub serial: String,
     pub firmware: String,
@@ -71,31 +71,45 @@ impl Default for Identity {
 impl Identity {
     /// The model a console of `model` reports (discovery, `/?`,
     /// `/$syscfg/$cnsmdl`) as the WING family does (WING remote protocols,
-    /// `$cnsmdl`): "ngc-full" for the full-size console, "wing-compact" for
-    /// the COMPACT, so WING Edit and Mixing Station show the right model.
-    /// The serial (SIDECAR0001) and firmware (3.1-0-sidecar) still tell
-    /// Sidecar apart.
-    pub fn model_name(model: ConsoleModel) -> &'static str {
+    /// `$cnsmdl`): "ngc-full" for the full-size console, "wing-bk" for the
+    /// black one (`black`, SURFACE FINISH BLACK), "wing-compact" for the
+    /// COMPACT, so WING Edit and Mixing Station show the right model. The
+    /// serial (SIDECAR0001) and firmware (3.1-0-sidecar) still tell Sidecar
+    /// apart.
+    pub fn model_name(model: ConsoleModel, black: bool) -> &'static str {
         match model {
+            ConsoleModel::Full if black => BLACK_WING,
             ConsoleModel::Full => "ngc-full",
             ConsoleModel::Compact => "wing-compact",
         }
     }
 
     /// The build type (`/$syscfg/$cnscfg`) of a console of `model`, as WING
-    /// Edit 3.3 names the models (and a factory-set WING answers).
-    pub fn config_name(model: ConsoleModel) -> &'static str {
+    /// Edit 3.3 names the models ("wing-fullsize", "wing-bk", "wing-rack",
+    /// "wing-compact"; a factory-set silver WING answers "wing-fullsize").
+    pub fn config_name(model: ConsoleModel, black: bool) -> &'static str {
         match model {
+            ConsoleModel::Full if black => BLACK_WING,
             ConsoleModel::Full => "wing-fullsize",
             ConsoleModel::Compact => "wing-compact",
         }
     }
 
-    /// The default identity of a console of `model`.
+    /// The default identity of a console of `model` (`black`: the black
+    /// full-size WING; the COMPACT is black whatever it says).
+    pub fn of_console(model: ConsoleModel, black: bool) -> Self {
+        Self { model: Self::model_name(model, black).into(), config: Self::config_name(model, black).into(), ..Self::default() }
+    }
+
+    /// The default identity of a (silver) console of `model`.
     pub fn of_model(model: ConsoleModel) -> Self {
-        Self { model: Self::model_name(model).into(), config: Self::config_name(model).into(), ..Self::default() }
+        Self::of_console(model, false)
     }
 }
+
+/// The black full-size WING, in both `$cnsmdl` (the protocol document lists
+/// it beside "ngc-full") and `$cnscfg` (WING Edit's model list).
+const BLACK_WING: &str = "wing-bk";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ShadowKey {
@@ -198,6 +212,9 @@ pub struct WingState {
     pub(crate) surface_edits: Mutex<VecDeque<SurfaceEdit>>,
     /// The host's settings that are WING parameters (see [`crate::host`]).
     pub(crate) host: Mutex<crate::host::HostValues>,
+    /// The console model and whether the full-size console is black (the
+    /// identity and the COMPACT's own nodes follow them).
+    console: Mutex<(ConsoleModel, bool)>,
 }
 
 impl WingState {
@@ -304,9 +321,27 @@ impl WingState {
     /// The console reports itself as `model` from now on (clients see it at
     /// their next discovery or `/?`).
     pub fn set_console_model(&self, model: ConsoleModel) {
+        let black = lock(&self.console).1;
+        self.set_console(model, black);
+    }
+
+    /// The full-size console is the black WING (`black`) or the silver one
+    /// from now on: it reports "wing-bk" or "ngc-full" / "wing-fullsize".
+    pub fn set_black_finish(&self, black: bool) {
+        let model = lock(&self.console).0;
+        self.set_console(model, black);
+    }
+
+    fn set_console(&self, model: ConsoleModel, black: bool) {
+        *lock(&self.console) = (model, black);
         let mut id = lock(&self.identity);
-        id.model = Identity::model_name(model).into();
-        id.config = Identity::config_name(model).into();
+        id.model = Identity::model_name(model, black).into();
+        id.config = Identity::config_name(model, black).into();
+    }
+
+    /// The console model clients see.
+    pub fn console_model(&self) -> ConsoleModel {
+        lock(&self.console).0
     }
 
     pub fn clear_shadow(&self) {
@@ -1862,7 +1897,8 @@ impl<'a> Console<'a> {
             Node::Row(r) => match bindings()[r as usize] {
                 Binding::None | Binding::Stored => false,
                 Binding::Strip(kind, n, _) => self.strip(kind, n).is_some(),
-                Binding::Layer(..) | Binding::User(_) => self.state.surface().attached,
+                Binding::Layer(..) => self.state.surface().attached,
+                Binding::User(uf) => uf.for_model(self.state.console_model()).is_some() && self.state.surface().attached,
                 _ => true,
             },
             Node::Param { slot, index } => self.engine_param(slot, index).is_some(),
@@ -2131,6 +2167,7 @@ impl<'a> Console<'a> {
                 return if sf.attached { sf.get_layer(s, lf) } else { None };
             }
             Binding::User(uf) => {
+                let uf = uf.for_model(self.state.console_model())?;
                 let sf = self.state.surface();
                 return if sf.attached { sf.get_user(uf) } else { None };
             }
@@ -3001,13 +3038,17 @@ impl<'a> Console<'a> {
                 }
             }
             Binding::Layer(..) | Binding::User(_) => {
+                let model = self.state.console_model();
                 let mut sf = self.state.surface();
                 if !sf.attached {
                     return Ok(false);
                 }
                 let edit = match bindings()[row as usize] {
                     Binding::Layer(s, lf) => sf.set_layer(s, lf, v)?,
-                    Binding::User(uf) => sf.set_user(uf, v)?,
+                    Binding::User(uf) => match uf.for_model(model) {
+                        Some(uf) => sf.set_user(uf, v)?,
+                        None => return Ok(false),
+                    },
                     _ => None,
                 };
                 if let Some(edit) = edit {
@@ -3774,6 +3815,18 @@ mod tests {
         assert_eq!(st.identity(), Identity::default());
         assert_eq!(Identity::of_model(ConsoleModel::Compact).model, "wing-compact");
         assert_eq!(Identity::of_model(ConsoleModel::Full), Identity::default());
+
+        // The black full-size WING is "wing-bk" in both; the COMPACT stays itself.
+        st.set_black_finish(true);
+        assert_eq!((c.get(model), c.get(config)), (Some(Value::str("wing-bk")), Some(Value::str("wing-bk"))));
+        st.set_console_model(ConsoleModel::Compact);
+        assert_eq!((c.get(model), c.get(config)), (Some(Value::str("wing-compact")), Some(Value::str("wing-compact"))));
+        st.set_console_model(ConsoleModel::Full);
+        assert_eq!(st.identity().model, "wing-bk");
+        assert_eq!(Identity::of_console(ConsoleModel::Full, true).config, "wing-bk");
+        assert_eq!(Identity::of_console(ConsoleModel::Compact, true), Identity::of_model(ConsoleModel::Compact));
+        st.set_black_finish(false);
+        assert_eq!(st.identity(), Identity::default());
     }
 
     #[test]
@@ -4593,19 +4646,84 @@ mod tests {
     }
 
     #[test]
+    fn the_compact_key_sets_are_the_compacts() {
+        use livedaw_session::custom::{
+            CcFunction, CustomControls, COMPACT_MAIN_MATRIX_LAYER, FIRST_COMPACT_DCA_LAYER, FIRST_COMPACT_USER_LAYER,
+        };
+        use livedaw_session::layers::LayerSet;
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let (mut layers, mut custom) = (LayerSet::default(), CustomControls::default());
+        let mut sync = |custom: &mut CustomControls| surface::sync(&st, &e, &mut layers, custom, 0);
+        sync(&mut custom);
+        let get = |p: &str| c.get(node(&c, p));
+        let f = |p: &str, v: Value| c.set(node(&c, p), &v);
+
+        // The full-size console: U1-U3 stay the 4-Channel section's, the rest unbound.
+        assert!(c.is_mapped(node(&c, "/$ctl/user/U1/1/bu/mode")));
+        assert!(!c.is_mapped(node(&c, "/$ctl/user/U4/1/bu/mode")));
+        assert!(!c.is_mapped(node(&c, "/$ctl/user/MM/2/col")));
+        f("/$ctl/user/U1/2/bu/mode", Value::str("MUTE")).unwrap();
+        f("/$ctl/user/D1/1/bu/mode", Value::str("SOLO")).unwrap();
+        sync(&mut custom);
+        assert_eq!(custom.control(17, 1).unwrap().upper.category, 1);
+        assert!(custom.control(FIRST_COMPACT_USER_LAYER, 1).unwrap().is_default());
+        assert!(custom.control(FIRST_COMPACT_DCA_LAYER, 0).unwrap().is_default());
+
+        // A COMPACT: USER 1-4 .. 13-16, MAIN/MTX 5-8 and DCA 1-4 .. 13-16, both ways.
+        st.set_console_model(ConsoleModel::Compact);
+        for p in ["/$ctl/user/U1/1/bu/mode", "/$ctl/user/U4/4/col", "/$ctl/user/MM/2/bu/name", "/$ctl/user/D4/4/bu/$fname"] {
+            assert!(c.is_mapped(node(&c, p)), "{p}");
+        }
+        assert_eq!(get("/$ctl/user/U1/2/bu/mode"), Some(Value::str("OFF")));
+        let ctl = custom.control_mut(FIRST_COMPACT_USER_LAYER + 3, 3).unwrap();
+        ctl.upper = CcFunction { category: 10, target: 2, option: 0 };
+        ctl.name = "SONG 2".into();
+        ctl.colour = 9;
+        sync(&mut custom);
+        assert_eq!(get("/$ctl/user/U4/4/bu/mode"), Some(Value::str("SCENES")));
+        assert_eq!(get("/$ctl/user/U4/4/bu/$fname"), Some(Value::str("SCENE RECALL")));
+        assert_eq!(get("/$ctl/user/U4/4/bu/name"), Some(Value::str("SONG 2")));
+        assert_eq!(get("/$ctl/user/U4/4/col"), Some(Value::Int(9)));
+        f("/$ctl/user/MM/1/bu/mode", Value::str("MUTE")).unwrap();
+        f("/$ctl/user/MM/1/bu/name", Value::str("PA")).unwrap();
+        f("/$ctl/user/D2/3/bu/mode", Value::str("DCAMUTE")).unwrap();
+        f("/$ctl/user/D2/3/col", Value::Int(4)).unwrap();
+        assert!(sync(&mut custom).controls);
+        let mm = custom.control(COMPACT_MAIN_MATRIX_LAYER, 0).unwrap();
+        assert_eq!((mm.upper.category, mm.name.as_str()), (1, "PA"));
+        let dca = custom.control(FIRST_COMPACT_DCA_LAYER + 1, 2).unwrap();
+        assert_eq!((dca.upper.category, dca.colour), (3, 4));
+        // They have an upper key only.
+        assert!(
+            schema().resolve("/$ctl/user/U1/1/bd/mode", &NoModels).is_none() || !c.is_mapped(node(&c, "/$ctl/user/U1/1/bd/mode"))
+        );
+        assert!(
+            schema().resolve("/$ctl/user/MM/1/enc/mode", &NoModels).is_none()
+                || !c.is_mapped(node(&c, "/$ctl/user/MM/1/enc/mode"))
+        );
+        // Back to the full size: U1 is the 4-Channel layer again.
+        st.set_console_model(ConsoleModel::Full);
+        assert_eq!(get("/$ctl/user/U1/2/bu/mode"), Some(Value::str("MUTE")));
+    }
+
+    #[test]
     fn coverage_counts() {
         let cov = coverage();
         assert_eq!(cov.total, 68556, "{}", cov.report());
         // Everything answers but DAW CONFIGURATION (see `unbound_feature`).
         assert_eq!(cov.mapped, 68555, "{}", cov.report());
-        // 73 settings: the COMPACT's mfdr, cscmode and autosel_CMPCT among them.
-        assert_eq!((cov.settings, cov.stored), (73, 7373), "{}", cov.report());
+        // 77 settings: the COMPACT's mfdr, cscmode, autosel_CMPCT, mfdrkeep, mainspill,
+        // mtxspill and dcacc among them.
+        assert_eq!((cov.settings, cov.stored), (77, 7273), "{}", cov.report());
         for (g, (m, t)) in &cov.by_group {
             assert!(m == t || g == "/$ctl/daw", "{g}: {m} of {t}");
         }
         assert_eq!(cov.by_group["/$ctl/daw"], (14, 15));
         // The engine-backed share: everything but the settings and the stored values.
-        assert_eq!(cov.mapped - cov.settings - cov.stored, 61109);
+        // (The COMPACT's key sets U4, MM and D1-D4 count here: the full-size console answers their factory values.)
+        assert_eq!(cov.mapped - cov.settings - cov.stored, 61205);
         let b = bindings();
         let row = |p: &str| match schema().resolve(p, &NoModels) {
             Some(Node::Row(r)) => r as usize,

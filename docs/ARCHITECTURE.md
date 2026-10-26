@@ -212,7 +212,7 @@ views after a show load changes the console from Rust.
   engine controls are `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same
   memory as `std::atomic<float/bool/int32_t>` structs, and the UI writes them directly
   with no FFI call. Both sides describe the layout; `ld::verifyLayout()` compares the
-  two at startup and in the tests (ABI version 16), and the app refuses to run if they
+  two at startup and in the tests (ABI version 17), and the app refuses to run if they
   differ.
 - **FX slots.** The 16 slots are the WING's FX rack. Each holds one device from the
   console's FX table (`FX_MODELS`, generated like the processing models): the 26
@@ -549,8 +549,9 @@ Show
   the USER 1 / USER 2 keys, further ones get keys of their own under the shift keys. A
   reference to a removed strip is skipped.
 - **Spill** (`SpillKind`): a computed layer (id `spill`) shown by a section until it
-  ends: a DCA's members, the sources sending to a bus, an FX device's continuous
-  parameters, an automix group, a strip's sends. `spill_target` sends a spill from the
+  ends: a DCA's members, the sources sending to a bus, the strips feeding a main
+  (their own faders), an FX device's continuous parameters, an automix group, a
+  strip's sends. `spill_target` sends a spill from the
   right section to the center, the rest to the left. The layer set keeps each
   section's scroll offset, so ending a spill restores the layer and the offset; a
   layer key ends it without going back.
@@ -877,7 +878,11 @@ dependencies beyond the other Sidecar crates.
   surface at once (reads return it) and queues the edit; the host reports what
   changed (`WingRemote::setSurfaceCallbacks`: `MainComponent` reloads the custom
   controls and refreshes the fader sections). Until a show is attached the nodes are
-  shadow. The module docs list the meanings taken from the protocol document and
+  shadow. The console model and the black finish are in `WingState` too
+  (`set_console_model`, `set_black_finish`): they set the identity (`ngc-full` /
+  `wing-fullsize`, `wing-bk` for the black full-size WING, `wing-compact`) and
+  which custom control layers `U1`-`U4`, `MM` and `D1`-`D4` are. The module docs
+  list the meanings taken from the protocol document and
   the guesses (fader encoding, `U1`-`U3`). Not mapped: the Compact, Rack, EXT and
   VRT layers, the button and 4-Channel section modes, LEDs, GPIO keys, the DAW
   keys' `btn` and the mode-dependent target nodes, which libwing's tree does not
@@ -1033,8 +1038,12 @@ README's *Known limitations*; keep the three in step.
   sends, FX parameters, monitoring, mutes / solos, mute groups, sends on fader, pages,
   show control, scene recall, single actions, the USB PLAY/REC functions, DAW buttons /
   V-pots, MIDI CC / note / program change and FADER SPILL (the layer set's spills:
-  DCA, bus sources, FX slot, automix group, selected strip's sends); SD and GPIO
-  functions are listed disabled (no hardware).
+  DCA, bus sources, main sources, FX slot, automix group, selected strip's sends); SD
+  and GPIO functions are listed disabled (no hardware). Layers 24-32 are the WING
+  COMPACT's key sets (`/$ctl/user/U1`-`U4`, `MM`, `D1`-`D4`): four upper keys each,
+  played by its 16 keys in USER mode, by keys 5-8 in MAIN MATRIX mode and in DCA mode
+  with DCA AS CC on. The WING remote binds those nodes to them only while the console
+  is a COMPACT (`UserF::for_model`).
 - LIBRARY: scene and snippet files are Sidecar's XML (`.lsnap` / `.lsnip`), not the
   WING's; ADD ITEM TO SHOW is disabled; 10 content sections instead of the
   console's 17 (CONTENTS keys sharing a section light together); the SCOPE window's

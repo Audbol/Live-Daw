@@ -12,14 +12,23 @@ namespace livedaw::ui::cc
 {
 
 /** The upper part's 16 layers (UP / DOWN), then the lower part's USER layer,
-    the 4-Channel section's U1-U3 and the lower part's DAW 1-4 layers of DAW
-    mode (stored with the show, see livedaw-session/custom.rs). */
-constexpr int kNumLayers = 16, kUserLayer = 16, kFirstFourChannelLayer = 17, kNumStoredLayers = 24, kNumControls = 4;
+    the 4-Channel section's U1-U3, the lower part's DAW 1-4 layers of DAW
+    mode and the WING COMPACT's key sets (stored with the show, see
+    livedaw-session/custom.rs). */
+constexpr int kNumLayers = 16, kUserLayer = 16, kFirstFourChannelLayer = 17, kNumStoredLayers = 33, kNumControls = 4;
 constexpr int kFirstDawLayer = 20, kNumDawLayers = 4;
+/** The COMPACT's key sets (WING manual 4.8: "U1-U4: User layer buttons 1-16,
+    M/M: Main Matrix layer buttons 5-8, D1-D4: DCA layer buttons 1-16";
+    /$ctl/user/U1-U4, MM, D1-D4): four keys each, an upper key per control. */
+constexpr int kFirstCompactUserLayer = 24, kCompactMainMatrixLayer = 28, kFirstCompactDcaLayer = 29, kNumCompactLayers = 9;
 
-/** The lower part's layers (USER, DAW 1-4) have keys only. */
+/** The COMPACT's key sets: USER 1-4 .. 13-16, MAIN/MTX 5-8, DCA 1-4 .. 13-16. */
+inline bool isCompactLayer (int layer) noexcept { return layer >= kFirstCompactUserLayer && layer < kFirstCompactUserLayer + kNumCompactLayers; }
+/** The layers with keys only: the lower part's (USER, DAW 1-4) and the COMPACT's sets. */
 inline bool isLowerLayer (int layer) noexcept { return layer == kUserLayer || layer >= kFirstDawLayer; }
-/** "LAYER 3", "USER", "DAW 2". */
+/** The lower part's layers have a lower key under each upper one; the COMPACT's sets don't. */
+inline bool hasLowerKeys (int layer) noexcept { return ! isCompactLayer (layer); }
+/** "LAYER 3", "USER", "DAW 2", "USER 5-8", "MAIN/MTX 5-8", "DCA 1-4" (WING Edit's names). */
 juce::String layerName (int layer);
 
 /** The encoder of a control, or one of the two keys under it. */

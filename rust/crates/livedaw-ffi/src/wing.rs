@@ -22,6 +22,8 @@ pub struct LdWing {
     server: Option<WingServer>,
     /// The console model the identity reports (kept across restarts).
     model: ConsoleModel,
+    /// The full-size console is the black WING (reports "wing-bk").
+    black: bool,
 }
 
 unsafe fn wing<'a>(w: *mut LdWing) -> Option<&'a mut LdWing> {
@@ -53,6 +55,7 @@ pub unsafe extern "C" fn ld_wing_create(e: *const Engine) -> *mut LdWing {
             state: Arc::new(WingState::default()),
             server: None,
             model: ConsoleModel::Full,
+            black: false,
         }))
     })
 }
@@ -85,7 +88,7 @@ pub unsafe extern "C" fn ld_wing_start(
             s.stop();
         }
         let port = |p: i32| u16::try_from(p).unwrap_or(0);
-        let mut identity = Identity::of_model(w.model);
+        let mut identity = Identity::of_console(w.model, w.black);
         if !name.trim().is_empty() {
             identity.name = name.trim().to_string();
         }
@@ -142,6 +145,19 @@ pub unsafe extern "C" fn ld_wing_set_model(w: *mut LdWing, model: i32) {
     guard((), || {
         w.model = ConsoleModel::from_i32(model);
         w.state.set_console_model(w.model);
+    });
+}
+
+/// Whether the full-size console is the black WING (SURFACE FINISH BLACK):
+/// it reports "wing-bk" in discovery, `/?`, `$cnsmdl` and `$cnscfg` instead
+/// of "ngc-full" / "wing-fullsize" (the COMPACT stays "wing-compact"), at
+/// once and across restarts.
+#[no_mangle]
+pub unsafe extern "C" fn ld_wing_set_black_finish(w: *mut LdWing, black: bool) {
+    let Some(w) = wing(w) else { return };
+    guard((), || {
+        w.black = black;
+        w.state.set_black_finish(black);
     });
 }
 
@@ -572,6 +588,16 @@ mod tests {
             assert!(ld_wing_start(w, renamed.as_ptr(), renamed.len(), 0, osc, 0, 2));
             assert!(ask(&sock).contains(",wing-compact,"));
             ld_wing_set_model(w, 0);
+            assert!(ask(&sock).contains(",ngc-full,"));
+            // The black full-size WING, also after a restart; not the COMPACT.
+            ld_wing_set_black_finish(w, true);
+            assert!(ask(&sock).contains("MONITORS,wing-bk,"));
+            assert!(ld_wing_start(w, renamed.as_ptr(), renamed.len(), 0, osc, 0, 2));
+            assert!(ask(&sock).contains(",wing-bk,"));
+            ld_wing_set_model(w, 1);
+            assert!(ask(&sock).contains(",wing-compact,"));
+            ld_wing_set_model(w, 0);
+            ld_wing_set_black_finish(w, false);
             assert!(ask(&sock).contains(",ngc-full,"));
             assert!(take(ld_wing_coverage()).starts_with("WING tree coverage"));
             ld_wing_stop(w);

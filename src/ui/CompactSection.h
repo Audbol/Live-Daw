@@ -9,21 +9,30 @@ namespace livedaw::ui
 
 namespace compact = layout::compact;
 
-/** The WING COMPACT's key section, right of its fader section: BUS, DCA,
-    MAIN MATRIX and USER choose what the 16 keys do (/$ctl/cfg/cscmode), VIEW,
-    the small LCD naming the keys and what fader 13 controls, the 16 keys and
-    fader 13 (the main fader, /$ctl/cfg/mfdr; MAIN 1 by default), which has
-    no scribble strip, only its level meter.
+/** The WING COMPACT's key section, right of its fader section (the Main
+    Fader Section, WING manual 4.2, Fig. 11): BUS, DCA, MAIN MATRIX and USER
+    choose what the 16 keys do (/$ctl/cfg/cscmode), VIEW, the small LCD
+    naming the keys and what fader 13 controls, the 16 keys and fader 13 (the
+    main fader, /$ctl/cfg/mfdr; MAIN 1 by default), which has no scribble
+    strip, only its level meter.
 
-    The keys [a WING COMPACT's owner]:
+    A key selects its bus, main or matrix: fader 13 controls it until the key
+    is pressed again (or another one is), then goes back to MAIN FADER's
+    source; KEEP MAIN FADER (/$ctl/cfg/mfdrkeep) leaves fader 13 alone.
     - BUS: BUS 1-16; a press spills the bus (the sources sending to it) onto
-      the faders and puts the bus on fader 13.
-    - MAIN MATRIX: MAIN 1-4 on keys 1-4, MATRIX 1-8 on keys 9-16, keys 5-8
-      empty; a press puts the main or matrix on fader 13.
-    - DCA: DCA 1-16; a press spills the DCA's members onto the faders.
-    - USER: custom control keys: 1-8 the USER layer's (CC EDIT > USER), 9-16
-      those of the custom control layer shown (LAYER 1 ...), each control's
-      upper key then its lower one. */
+      the faders [a WING COMPACT's owner].
+    - MAIN MATRIX: MAIN 1-4 on keys 1-4, the custom control set M/M on keys
+      5-8, MATRIX 1-8 on keys 9-16. A MAIN key pressed shows the channels'
+      sends to the main on the faders (SOF), held spills the main (the
+      strips feeding it); a MATRIX key held shows the sends to the matrix.
+      MAIN SPILL / MATRIX SPILL swap press and hold (layout::compact::
+      mainMatrixActions).
+    - DCA: DCA 1-16; a press spills the DCA's members onto the faders. With
+      USE DCA BUTTONS 1-16 AS CC (/$ctl/cfg/dcacc) the keys are the custom
+      control sets D1-D4.
+    - USER: the custom control sets U1-U4 (keys 1-4 U1 ... 13-16 U4).
+    VIEW opens the FADERS screen; held, CUSTOM CONTROLS on the mode's set
+    (WING manual Table 4.4). */
 class CompactSection final : public juce::Component, private juce::Timer
 {
 public:
@@ -34,8 +43,10 @@ public:
     /** Structure, selection or settings changed: re-resolves fader 13 and the keys. */
     void refresh();
 
-    /** Fader 13's assignment, from the app settings. */
+    /** Fader 13's own assignment (MAIN FADER), from the app settings. */
     compact::MainFader getMainFader() const;
+    /** What fader 13 controls now: the selected key's bus, main or matrix, or MAIN FADER's source. */
+    compact::MainFader shownMainFader() const;
     /** The strip on fader 13 (nullptr for a DCA or OFF). */
     Strip* getMainFaderStrip() const { return fader13.getStrip(); }
 
@@ -46,13 +57,21 @@ private:
     void timerCallback() override;
     compact::KeyMode keyMode() const;
     void setKeyMode (compact::KeyMode);
-    /** Key `key`'s custom control function in the current mode (a spill, a USER key). */
+    void pressKey (int key, bool held);
+    /** A MAIN or MATRIX key's spill or sends (none for a matrix spill). */
+    cc::Function actionFunction (int key, compact::KeyAction) const;
+    /** Key `key`'s custom control in the current mode, if it plays one. */
+    std::optional<compact::KeyControl> keyControl (int key) const;
+    /** Key `key`'s function in the current mode (a spill, a custom control key). */
     cc::Function keyFunction (int key) const;
     /** What key `key` puts on fader 13, if the console has it. */
     std::optional<compact::MainFader> keyMainFader (int key) const;
     /** The strip a fader 13 assignment controls (nullptr for a DCA, OFF or one the console lacks). */
     Strip* mainFaderStrip (const compact::MainFader&) const;
+    bool keyLit (int key) const;
     juce::String keyName (int key) const;
+    /** The colour of the custom control on key `key` (transparent: none). */
+    juce::Colour keyColour (int key) const;
     juce::String lcdState() const;
 
     UiContext& ctx;
@@ -63,7 +82,9 @@ private:
     FaderStrip fader13;
     juce::Rectangle<int> lcd;
     juce::String shownLcd;
-    compact::MainFader shownMainFader;
+    compact::MainFader shownFader;
+    /** The key selected in the current mode (-1: none). */
+    int selectedKey = -1;
     bool viewOpened = false;
 };
 

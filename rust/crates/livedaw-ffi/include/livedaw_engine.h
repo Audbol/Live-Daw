@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 16;
+constexpr int kAbiVersion = 17;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -665,7 +665,7 @@ struct FaderRefC
 
 /// A spill: kind 0 = DCA `index`, 1 = the sources sending to bus slot `index`,
 /// 2 = FX slot `index`'s parameters, 3 = automix group `index` (0 X, 1 Y),
-/// 4 = the sends of `strip`.
+/// 4 = the sends of `strip`, 5 = the strips feeding main `index` (ABI 17).
 struct SpillC
 {
     int32_t kind, index;
@@ -1271,6 +1271,9 @@ extern "C"
     /** The model the console reports (0 full size: "ngc-full", 1 COMPACT: "wing-compact"),
         at once and across restarts. */
     void ld_wing_set_model (LdWing*, int32_t model);
+    /** The full-size console is the black WING: it reports "wing-bk" instead of "ngc-full"
+        and "wing-fullsize" (the COMPACT stays "wing-compact"), at once and across restarts (ABI 17). */
+    void ld_wing_set_black_finish (LdWing*, bool black);
     /** Bound port of server 0 discovery, 1 OSC, 2 Native; -1 if not running. */
     int32_t ld_wing_port (LdWing*, int32_t which);
     /** Tab-separated lines: "error\tmsg", "client\tnative|osc\taddr\tsubscribed\tseconds",

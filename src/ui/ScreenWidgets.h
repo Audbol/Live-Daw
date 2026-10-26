@@ -664,6 +664,30 @@ public:
     /** The following rows go into a new sub-box. */
     void newBox() { ++group; }
 
+    /** Shows or hides the row of `control` (rows of another console model);
+        the owner lays the panel out again. */
+    void setRowShown (juce::Component& control, bool shown)
+    {
+        for (auto& r : rows)
+            if (r.control == &control && r.hidden == shown)
+            {
+                r.hidden = ! shown;
+                control.setVisible (shown);
+                repaint();
+            }
+    }
+
+    /** Renames the row of `control`. */
+    void setRowLabel (juce::Component& control, const juce::String& label)
+    {
+        for (auto& r : rows)
+            if (r.control == &control && r.label != label)
+            {
+                r.label = label;
+                repaint();
+            }
+    }
+
     /** Height in px of a single row (set by the owner from the screen size). */
     int rowHeight = 28;
     /** The header bar and the black gap under it. */
@@ -679,17 +703,18 @@ public:
     int preferredHeight() const
     {
         int px = 0;
-        for (size_t i = 0; i < rows.size(); ++i)
+        const auto shown = shownRows();
+        for (size_t i = 0; i < shown.size(); ++i)
         {
-            px += rowPx (rows[i]);
+            px += rowPx (*shown[i]);
             // A box's padding, above its first row and below its last.
-            if (i == 0 || rows[i].group != rows[i - 1].group)
-                px += boxPad (rows[i]);
+            if (i == 0 || shown[i]->group != shown[i - 1]->group)
+                px += boxPad (*shown[i]);
             // (The last box runs to the panel's bottom: no padding counted under it.)
-            if (i + 1 < rows.size() && rows[i].group != rows[i + 1].group)
-                px += boxPad (rows[i]);
+            if (i + 1 < shown.size() && shown[i]->group != shown[i + 1]->group)
+                px += boxPad (*shown[i]);
         }
-        const int groups = rows.empty() ? 0 : rows.back().group + 1;
+        const int groups = shown.empty() ? 0 : shown.back()->group + 1;
         return (hasHeader() ? headerHeight + headerGap : 0) + px + juce::jmax (0, groups - 1) * kDarkHeaderGap;
     }
 
@@ -709,7 +734,7 @@ public:
         }
         for (auto& r : rows)
         {
-            if (r.label.isEmpty())
+            if (r.label.isEmpty() || r.hidden)
                 continue;
             auto l = r.labelArea;
             g.setColour (r.enabled ? Dark::caption : Dark::textDim.darker (0.2f));
@@ -741,8 +766,9 @@ public:
         boxes.clear();
         int lastGroup = -1, boxTop = b.getY();
         const Row* previous = nullptr;
-        for (auto& r : rows)
+        for (auto* shown : shownRows())
         {
+            auto& r = *shown;
             if (r.group != lastGroup)
             {
                 if (lastGroup >= 0)
@@ -801,7 +827,17 @@ private:
         juce::Rectangle<int> labelArea {};
         bool rightAligned = true;
         float captionScale = 0.75f;
+        bool hidden = false;
     };
+
+    std::vector<Row*> shownRows() const
+    {
+        std::vector<Row*> out;
+        for (auto& r : rows)
+            if (! r.hidden)
+                out.push_back (const_cast<Row*> (&r));
+        return out;
+    }
 
     static bool isOnKey (const Row& r) { return dynamic_cast<OnKey*> (r.control) != nullptr; }
 

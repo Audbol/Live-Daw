@@ -21,8 +21,8 @@
 //! "Auto"), for big channel counts on wide screens.
 //!
 //! **Spill** puts a computed layer on a section for a while: a DCA's members,
-//! the sources sending to a bus, an FX slot's parameters, an automix group's
-//! channels or a strip's sends. Spill from the right section goes to the
+//! the sources sending to a bus, the strips feeding a main, an FX slot's
+//! parameters, an automix group's channels or a strip's sends. Spill from the right section goes to the
 //! center section, everything else to the left (firmware 3.0). Ending the
 //! spill brings back the layer and the scroll position the section had.
 //!
@@ -38,7 +38,7 @@ use crate::model::ConsoleModel;
 use crate::refs::StripRef;
 use crate::xml::{parse_int_prefix, Element};
 use livedaw_dsp::wing::{ParamKind, FX_MODELS};
-use livedaw_engine::params::{FX_EXT, NUM_DCAS};
+use livedaw_engine::params::{FX_EXT, NUM_DCAS, NUM_MAINS};
 use livedaw_engine::{Engine, StripKind};
 use std::collections::hash_map::RandomState;
 use std::fmt;
@@ -249,6 +249,9 @@ pub enum SpillKind {
     Automix(i32),
     /// A strip's sends to the buses, mains and matrices (SELECTED CH SENDS).
     Sends(StripRef),
+    /// The channels, aux and buses feeding a main (0-based), as their own
+    /// faders (`spidx` 57-60 MAIN 1-4; the COMPACT's MAIN keys held).
+    Main(i32),
 }
 
 /// The layer id of a spill.
@@ -332,6 +335,15 @@ pub fn spill_faders(engine: &Engine, kind: &SpillKind) -> Vec<FaderRef> {
             }
             out
         }
+        SpillKind::Main(i) => {
+            let Some(index) = usize::try_from(i).ok().filter(|&i| i < NUM_MAINS) else { return Vec::new() };
+            [StripKind::Channel, StripKind::Aux, StripKind::Bus]
+                .into_iter()
+                .flat_map(|k| engine.strips(k))
+                .filter(|s| s.params.mains[index].on.load(Ordering::Relaxed))
+                .map(|s| FaderRef::Strip(StripRef::of(&s)))
+                .collect()
+        }
         SpillKind::Fx(slot) => {
             let Some(p) = usize::try_from(slot).ok().and_then(|i| engine.controls.fx.get(i)) else { return Vec::new() };
             let model = p.model_index();
@@ -359,6 +371,7 @@ fn spill_name(kind: &SpillKind) -> String {
     match kind {
         SpillKind::Dca(i) => format!("DCA {} SPILL", i + 1),
         SpillKind::Bus(i) => format!("BUS {} SPILL", i + 1),
+        SpillKind::Main(i) => format!("MAIN {} SPILL", i + 1),
         SpillKind::Fx(i) => format!("FX {} SPILL", i + 1),
         SpillKind::Automix(g) => format!("AUTO-{} SPILL", if *g == 0 { 'X' } else { 'Y' }),
         SpillKind::Sends(r) => format!("{} SENDS", r.to_string().to_uppercase().replace(':', " ")),
