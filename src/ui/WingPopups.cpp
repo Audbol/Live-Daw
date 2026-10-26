@@ -38,6 +38,24 @@ namespace
         g.drawRect (r, 1.0f);
     }
 
+    /** WING 3.1 (EQ / DYNAMICS MODEL, SELECT CHANNEL): only the screen the
+        anchor is on dims; the block column left of it stays lit and the
+        parameter bar under it goes blank. */
+    void paintScreenScrim (juce::Graphics& g, juce::Component& popup, juce::Component* anchor)
+    {
+        auto dimmed = popup.getLocalBounds();
+        if (auto* screen = anchor != nullptr ? anchor->getParentComponent() : nullptr)
+        {
+            const auto s = popup.getLocalArea (screen, screen->getLocalBounds());
+            dimmed = dimmed.withLeft (juce::jlimit (0, popup.getWidth(), s.getX()));
+            g.setColour (juce::Colours::black);
+            g.fillRect (popup.getLocalBounds().withTop (juce::jlimit (0, popup.getHeight(), s.getBottom())));
+            dimmed = dimmed.withBottom (juce::jlimit (0, popup.getHeight(), s.getBottom()));
+        }
+        g.setColour (Colours::scrim);
+        g.fillRect (dimmed);
+    }
+
     //==========================================================================
     /** What every pop-up shares: it covers its layer, owns itself (deleted when
         closed, or at shutdown), and closes as cancelled on Esc or when a key of
@@ -212,20 +230,22 @@ struct WingKeyboard::Impl
     void layout (juce::Rectangle<float> r)
     {
         keys.clear();
+        // WING 3.1 pixels of a 64 px key pitch (NAME): the field band 88 tall,
+        // the suggestions 72, the keys 328 (five rows), 4 px apart.
         const bool showSuggestions = suggestionRow || ! suggestions.isEmpty();
-        const float units = 5.2f + (fieldVisible ? 1.4f : 0.0f) + (showSuggestions ? 1.1f : 0.0f);
+        const float units = 5.125f + (fieldVisible ? 1.4375f : 0.0f) + (showSuggestions ? 1.1875f : 0.0f);
         const float u = r.getHeight() / units;
-        const float gapY = juce::jmax (2.0f, u * 0.07f);
+        const float gapY = u * 0.0625f;
 
         fieldBand = suggestionBand = {};
         if (fieldVisible)
         {
-            fieldBand = r.removeFromTop (u * 1.4f - gapY);
+            fieldBand = r.removeFromTop (u * 1.375f);
             r.removeFromTop (gapY);
         }
         if (showSuggestions)
         {
-            suggestionBand = r.removeFromTop (u * 1.1f - gapY);
+            suggestionBand = r.removeFromTop (u * 1.125f);
             r.removeFromTop (gapY);
         }
         keyBand = r;
@@ -237,10 +257,11 @@ struct WingKeyboard::Impl
         if (icon.has_value())
             textArea.removeFromLeft (field.getHeight() * 0.9f);
 
-        // Keys on a grid of 11.5 key pitches across, 8 px gaps of 64 px pitches.
-        const float margin = keyBand.getWidth() * 0.01f;
-        const auto inner = keyBand.reduced (margin, margin);
-        const float px = inner.getWidth() / 11.5f, py = inner.getHeight() / 5.0f;
+        // Keys on a grid of 11.5 key pitches across, 8 px gaps of 64 px
+        // pitches, 8 px in from the band's left and top (WING 3.1).
+        const float margin = keyBand.getWidth() * 8.0f / 752.0f;
+        const auto inner = keyBand.withTrimmedLeft (margin).withTrimmedTop (margin);
+        const float px = (inner.getWidth() - margin) / 11.5f, py = inner.getHeight() / 5.0f;
         const float gx = px * 0.125f, gy = py * 0.125f;
         auto key = [&] (Kind kind, int row, float x, float w, juce::String main = {}, juce::String shifted = {})
         {
@@ -266,11 +287,12 @@ struct WingKeyboard::Impl
         // Five suggestion keys across the suggestion band.
         if (! suggestionBand.isEmpty())
         {
-            const auto band = suggestionBand.reduced (margin, suggestionBand.getHeight() * 0.1f);
-            const float w = band.getWidth() / 5.0f;
+            // 134 px keys at a pitch of 150, 8 px in (56 of the band's 72 px).
+            const auto band = suggestionBand.reduced (margin, margin);
+            const float w = (band.getWidth() + 2.0f * gx) / 5.0f;
             for (int i = 0; i < 5; ++i)
             {
-                Key k { Kind::Suggestion, suggestions[i], {}, { band.getX() + (float) i * w, band.getY(), w - gx, band.getHeight() } };
+                Key k { Kind::Suggestion, suggestions[i], {}, { band.getX() + (float) i * w, band.getY(), w - 2.0f * gx, band.getHeight() } };
                 k.suggestion = i < suggestions.size() ? i : -1;
                 keys.push_back (k);
             }
@@ -407,7 +429,13 @@ struct WingKeyboard::Impl
             }
             if (k.kind == Kind::Suggestion && k.suggestion < 0)
                 fill = Colours::screenWell;
-            paintKey (g, k.area, fill, outline);
+            // WING 3.1: the keys in a 2 px outline, their letters light grey.
+            g.setColour (outline);
+            g.fillRect (k.area);
+            g.setColour (fill);
+            g.fillRect (k.area.reduced (juce::jmax (1.0f, wingPx (2.0f))));
+            if (ink == Colours::text)
+                ink = Colours::caption;
 
             switch (k.kind)
             {
@@ -1132,8 +1160,7 @@ namespace
 
         void paint (juce::Graphics& g) override
         {
-            g.setColour (Colours::scrim);
-            g.fillRect (getLocalBounds());
+            paintScreenScrim (g, *this, anchor);
             const auto f = frame();
             g.setColour (juce::Colour (0xff202020));
             g.fillRect (f);
@@ -1164,8 +1191,8 @@ namespace
                 if (picture)
                     g.drawImage (pictureOf (tile.id, pictureArea, g.getInternalContext().getPhysicalPixelScaleFactor()), pictureArea);
                 auto name = area.withTop (pictureArea.getBottom()).reduced (4.0f * u, 0.0f);
-                g.setColour (Colours::text);
-                g.setFont (wingFontPx (juce::jmin (TypeScale::body * screenHeight(), name.getHeight() * 0.5f)));
+                g.setColour (Colours::caption); // 13 px light grey capitals (3.1)
+                g.setFont (wingFontPx (juce::jmin (13.0f * screenHeight() / 800.0f, name.getHeight() * 0.5f)));
                 g.drawFittedText (tile.caption, name.toNearestInt(), juce::Justification::centred, 1, 0.7f);
                 if (sel)
                 {
@@ -1300,8 +1327,7 @@ namespace
 
         void paint (juce::Graphics& g) override
         {
-            g.setColour (Colours::scrim);
-            g.fillRect (getLocalBounds());
+            paintScreenScrim (g, *this, anchor);
             const float u = unit();
             const auto header = headerArea();
             g.setColour (juce::Colour (0xff202020));

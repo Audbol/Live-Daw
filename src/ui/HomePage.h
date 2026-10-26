@@ -28,6 +28,7 @@ public:
     std::vector<KnobBinding> getKnobs() override;
     std::vector<KnobStyle> getKnobStyles() override;
     std::vector<StatusKey> getStatusKeys() override;
+    bool usesKnobs() const override;
     void refresh() override;
 
     void paint (juce::Graphics&) override;
@@ -61,6 +62,7 @@ private:
     std::unique_ptr<BlockColumn> column;
     juce::OwnedArray<juce::TextButton> topTabs;
     std::unique_ptr<juce::TextButton> safeKey;
+    juce::Rectangle<int> tabBar, tabLine; // the OVERVIEW tab bar and the black line under its tabs
     std::unique_ptr<HomeScreen> content;
     std::unique_ptr<home::OverlayScreen> overlay;
     OverlayKind overlayKind = OverlayKind::None;

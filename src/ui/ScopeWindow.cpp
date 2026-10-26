@@ -218,7 +218,7 @@ void ScopeWindow::paint (juce::Graphics& g)
         g.setColour (juce::Colours::black);
         g.fillRect (box.reduced (frame));
         g.setColour (Dark::caption);
-        g.setFont (wingFontFit (TypeScale::body, (float) header.getHeight() * 0.7f, WingWeight::SemiBold));
+        g.setFont (wingFontFit (13.0f / 800.0f, (float) header.getHeight() * 0.9f, WingWeight::SemiBold)); // 13 px capitals (3.1)
         g.drawText (text, header, juce::Justification::centred);
     };
     for (auto& gr : groups)

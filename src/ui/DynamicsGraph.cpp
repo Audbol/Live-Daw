@@ -216,10 +216,12 @@ void DynTransferGraph::timerCallback()
 
 juce::Rectangle<float> DynTransferGraph::plotArea() const
 {
+    // WING 3.1 (a 552 x 480 panel): 0 dB 19 px under the top, the bottom
+    // of the range 446 px under it; the plot square, 33 px in from the left.
     auto r = getLocalBounds().toFloat();
-    const float top = juce::jmax (8.0f, r.getHeight() * 0.04f);
-    const float h = r.getHeight() - top * 2.0f;
-    const float left = r.getWidth() * 0.095f;
+    const float top = r.getHeight() * 19.0f / 480.0f;
+    const float h = r.getHeight() * 446.0f / 480.0f;
+    const float left = r.getWidth() * 33.0f / 552.0f;
     const float w = juce::jmin (h, r.getWidth() - left - r.getWidth() * 0.13f);
     return { r.getX() + left, r.getY() + top, w, h };
 }
@@ -263,7 +265,7 @@ void DynTransferGraph::paint (juce::Graphics& g)
 
     // The levels down the left, plain ticks at the right (not a meter).
     // The column fits "-60" (small windows shrink the labels rather than cut them).
-    const float labelW = plot.getX() - bounds.getX() - bounds.getWidth() * 0.03f;
+    const float labelW = plot.getX() - bounds.getX() - 4.0f;
     g.setFont (fontFittingWidth (wingFontPx (juce::jlimit (6.0f, 11.0f, pxPerDb * 1.6f)), "-60", labelW - 3.0f, 1.0f));
     const float tickX = plot.getRight() + bounds.getWidth() * 0.03f;
     const float tickW = juce::jmax (4.0f, bounds.getWidth() * 0.018f);
@@ -272,7 +274,7 @@ void DynTransferGraph::paint (juce::Graphics& g)
         const float y = yFor ((float) db);
         g.setColour (axisText);
         g.drawText (juce::String (db), juce::Rectangle<float> (bounds.getX() + 3.0f, y - 8.0f, labelW, 16.0f),
-                    juce::Justification::centredLeft, false);
+                    juce::Justification::centredRight, false);
         g.setColour (tick);
         g.fillRect (tickX, y - 1.5f, tickW, juce::jmax (2.0f, pxPerDb * 0.4f));
     }
@@ -280,8 +282,9 @@ void DynTransferGraph::paint (juce::Graphics& g)
     // The gain reduction meter along the left edge of the plot.
     {
         const float meterRange = grMeterRange (builtModel, range);
-        const float x = plot.getX() - bounds.getWidth() * 0.018f;
-        const float w = juce::jmax (3.0f, bounds.getWidth() * 0.016f);
+        // (WING 3.1: 10 px wide, 3 px inside the plot's left edge.)
+        const float x = plot.getX() + bounds.getWidth() * 3.0f / 552.0f;
+        const float w = juce::jmax (3.0f, bounds.getWidth() * 10.0f / 552.0f);
         const float top = yFor (0.0f), bottom = yFor (-meterRange);
         const float pitch = juce::jmax (2.5f, pxPerDb * 0.5f);
         const float lit = top + (bottom - top) * juce::jlimit (0.0f, 1.0f, gr / meterRange);
@@ -296,7 +299,8 @@ void DynTransferGraph::paint (juce::Graphics& g)
     const float thr = ti >= 0 ? slot.values[ti].load() : 0.0f;
     const auto handle = handleArea();
     g.setColour (slot.on.load() ? thresholdLineOn : thresholdLine);
-    g.fillRect (juce::Rectangle<float> (plot.getX(), yFor (thr) - 1.0f, handle.getX() - plot.getX(), 2.0f));
+    const float lineW = juce::jmax (2.0f, pxPerDb * 0.55f); // 3 px on the console
+    g.fillRect (juce::Rectangle<float> (plot.getX(), yFor (thr) - lineW * 0.5f, handle.getX() - plot.getX(), lineW));
 
     if (! curve.empty())
     {
@@ -304,16 +308,17 @@ void DynTransferGraph::paint (juce::Graphics& g)
         for (size_t i = 0; i < curve.size(); ++i)
         {
             const float in = -range + range * (float) i / (float) (curve.size() - 1);
-            const juce::Point<float> pt (xFor (in), yFor (juce::jmax (curve[i], -range - 2.0f)));
+            const juce::Point<float> pt (xFor (in), yFor (juce::jmax (curve[i], -range * 1.2f)));
             if (i == 0)
                 p.startNewSubPath (pt);
             else
                 p.lineTo (pt);
         }
         g.saveState();
-        g.reduceClipRegion (plot.toNearestInt());
+        // (The curve runs on to the panel's bottom edge below the range, as on the console.)
+        g.reduceClipRegion (plot.withBottom (bounds.getBottom()).toNearestInt());
         g.setColour (slot.on.load() ? curveScreenOn : curveOff);
-        g.strokePath (p, juce::PathStrokeType (juce::jmax (1.5f, pxPerDb * 0.35f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.strokePath (p, juce::PathStrokeType (lineW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         // The live level on the curve, with a fading tail of where it was.
         if (slot.on.load())
         {

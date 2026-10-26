@@ -111,6 +111,47 @@ All notable changes to Sidecar are listed here. Versions follow
     show none.
   - MONITOR: the parameter bar ends at DIST while DIRECT IN is OFF (DIR LVL shows
     once a source is chosen); the LIMITER ring is empty at 0 dB.
+- The channel's HOME screens, ROUTING, CHANNEL INIT / COPY and INITIALIZE CONSOLE matched
+  again to a WING's (firmware 3.1, measured side by side with the console's screenshots at 1280 x
+  800):
+  - The block column: blocks 65 px tall at the console's 73 px pitch, the fader bar 16 px,
+    the keys 68 px wide with a 44 px key in a black rim, and the console's icons for GATE,
+    EQ, COMP, INS and the wrench. The thumbnails fill their block as on the console: the
+    chips, LED and 11-segment meters where the console has them, the EQ curve in a plain
+    black box, MAIN with numbered main squares and a stereo meter, and SENDS with the
+    matrix sends over a black line and the bus sends in two groups. An insert with no FX
+    slot no longer shows the premium diamond. The TAP line is drawn in the blocks' grey.
+  - OVERVIEW, ICON/COLOR, NAME and TAGS: the panels, tabs (smaller text on unselected
+    tabs, the tab bar behind them), SAFE, the LEVEL panel (MUTE, SOLO, the meter's evenly
+    spaced CLIP to -60 scale, the fader well with its value tag), the MAIN ring, mains
+    squares and SOLO BUS keys, the icon gallery and colour grid, the keyboard (2 px key
+    outlines, grey letters, the console's rows) and the tag tiles are at the console's
+    positions and sizes.
+  - CHANNEL INPUT: the panels, the bracket, the MAIN column's frame and GAIN fader, the
+    TRIM & BALANCE pad (to -18 dB, a grey trim handle, a blue balance handle), the trim
+    meter with IN under it, INVERT, the FILTER keys and the DELAY panel (its well and value
+    tag, larger unit names).
+  - GATE / COMP: the transfer graph's scale and line weight as the console's, the curve
+    running on to the bottom edge; DETECTOR / AUTO ENV captions. EQ: the response graph's
+    ruler, RTA strip and grid, smaller grey rings, band lines that stop short of the
+    edges, the console's shelf mark and the band keys' layout. FILTER SETUP: the LC / HC
+    lines and rings, the slope keys' grey print.
+  - The KEY FILTER and XOVER pages show no status keys (PREV CH ... COPY), as on the
+    console. CHANNEL INIT / COPY sit where the console puts them, with an 80 px title, and
+    blank the parameter bar; their INIT / COPY key stays lit with no destination chosen.
+  - The EQ and DYNAMICS MODEL lists and SELECT CHANNEL (KEY SOURCE) dim only the screen
+    they belong to: the block column stays lit and the parameter bar goes blank. ROUTING's
+    group menus dim only their own side.
+  - The HOME screens' drop-down fields use the console's frame, key and type sizes (as
+    SETUP's); knob boxes the console's ring (open 290 degrees, dark grey,
+    filled from the start, or from the top for TRIM) and larger captions; the parameter
+    bar's text and track sit as on the console, the source GAIN is a gold thumb, TRIM and
+    EQ gain fill from the centre, WIDTH fills either side of the centre and the EQ's Q is
+    the green spread fill; the track is #707070. The HOME page ends at y 752, where the
+    parameter bar starts.
+  - ROUTING: the channel's number in the status bar unboxed on CHANNELS, the sources'
+    and outputs' title spaced as on the console. INITIALIZE CONSOLE: the group titles in
+    the console's size.
 
 ### Fixed
 

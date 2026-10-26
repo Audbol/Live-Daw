@@ -101,7 +101,7 @@ namespace
             if (word ("Q"))
                 return { KnobStyle::Bar::Width, KnobColours::qGreen };
             if (label.contains ("WIDTH"))
-                return { KnobStyle::Bar::Centre, KnobColours::green };
+                return { KnobStyle::Bar::Spread, KnobColours::green };
             if (label.contains ("TILT"))
                 return { KnobStyle::Bar::Centre, KnobColours::cyan };
             if (word ("BAL") || word ("BALANCE"))
@@ -184,13 +184,15 @@ public:
         const float thick = juce::jmax (3.0f, std::round (screenH * 0.01f));
         const float thumbH = juce::jmax (6.0f, std::round (screenH * 0.0175f));
         auto b = getLocalBounds();
-        auto bar = b.removeFromBottom (juce::roundToInt (thumbH) + 2).toFloat();
+        auto bar = b.removeFromBottom (juce::roundToInt (thumbH)).toFloat();
         const bool touched = isMouseOverOrDragging() || focused || encoderTouched;
         // The label and value share the line: the font shrinks when both
         // wouldn't fit, and the value keeps its room on the right.
         const auto label = binding.label.toUpperCase();
         const float gap = juce::jmax (4.0f, screenH * 0.01f);
         auto font = wingFontPx (juce::jmin (TypeScale::paramLabel * screenH, (float) b.getHeight() * 0.5f));
+        // The text sits just over the track (capitals 765-781 of 800 on the console).
+        b.removeFromTop (juce::roundToInt (screenH * 12.0f / 800.0f));
         const float needed = juce::GlyphArrangement::getStringWidth (font, label) + juce::GlyphArrangement::getStringWidth (font, valueText) + gap;
         if (needed * 0.85f > (float) b.getWidth() && needed > 0.0f)
             font = font.withHeight (juce::jmax (6.0f, font.getHeight() * (float) b.getWidth() / (needed * 0.85f)));
@@ -234,6 +236,17 @@ public:
                     g.setColour (Colours::text);
                     g.fillRect (bar.getCentreX() - 1.0f, y - thumbH * 0.5f, 2.0f, thumbH);
                 }
+                return;
+            }
+            case KnobStyle::Bar::Spread:
+            {
+                // WIDTH: the fill reaches as far either side as the value is from the centre.
+                line();
+                const float half = std::abs (position - 0.5f) * bar.getWidth();
+                g.setColour (colour);
+                g.fillRoundedRectangle (bar.getCentreX() - half, y - thick * 0.5f, half * 2.0f, thick, thick * 0.3f);
+                g.setColour (Colours::text);
+                g.fillRect (bar.getCentreX() - 1.0f, y - thumbH * 0.5f, 2.0f, thumbH);
                 return;
             }
             case KnobStyle::Bar::Width:
@@ -1573,7 +1586,9 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
                 const float boxW = juce::jmax (60.0f * k, juce::GlyphArrangement::getStringWidth (numberFont, label) + 18.0f * k);
                 auto box = t.removeFromLeft (boxW);
                 g.setColour (juce::Colours::black);
-                if (stripHasSource (*strip))
+                if (title.plainNumber)
+                    g.setColour (ink);
+                else if (stripHasSource (*strip))
                 {
                     g.fillRect (box);
                     g.setColour (colour); // exactly the strip's colour, dark ones too
@@ -1635,12 +1650,25 @@ void MainDisplay::paintTitleTile (juce::Graphics& g)
         }
         else if (title.prefix.isNotEmpty())
         {
-            auto prefixArea = t.removeFromLeft (juce::GlyphArrangement::getStringWidth (bigFont, title.prefix) + 14.0f * k);
-            drawText (title.prefix, ink, prefixArea);
+            // ROUTING's sources and outputs (3.1): the number centred 38 px in,
+            // the icon 56 px across centred at 111, the name from 152.
+            const float w = juce::GlyphArrangement::getStringWidth (bigFont, title.prefix) + 14.0f * k;
+            auto prefixArea = source ? t.removeFromLeft (juce::jmax (w, 70.0f * k)) : t.removeFromLeft (w);
+            if (source)
+            {
+                g.setColour (ink);
+                g.setFont (bigFont);
+                g.drawText (title.prefix, prefixArea, juce::Justification::centred, false);
+            }
+            else
+                drawText (title.prefix, ink, prefixArea);
         }
         if (icon.has_value())
         {
-            drawIcon (g, *icon, t.removeFromLeft (h).reduced (h * 0.08f), title.iconInk.isTransparent() ? ink : title.iconInk);
+            if (source)
+                drawIcon (g, *icon, t.removeFromLeft (70.0f * k).withSizeKeepingCentre (56.0f * k, 56.0f * k), title.iconInk.isTransparent() ? ink : title.iconInk);
+            else
+                drawIcon (g, *icon, t.removeFromLeft (h).reduced (h * 0.08f), title.iconInk.isTransparent() ? ink : title.iconInk);
             t.removeFromLeft (12.0f * k);
         }
         drawText (title.text, ink, t);
@@ -2002,7 +2030,8 @@ void MainDisplay::resized()
     const int statusH = juce::roundToInt ((float) s.getHeight() * 0.1f);
     statusArea = s.removeFromTop (statusH);
     const bool knobs = page (screen)->usesKnobs();
-    slotArea = knobs ? s.removeFromBottom (juce::roundToInt ((float) screenArea.getHeight() * 50.0f / 800.0f)) : juce::Rectangle<int>();
+    // The page ends at 752, where the parameter bar's slots start.
+    slotArea = knobs ? s.removeFromBottom (juce::roundToInt ((float) screenArea.getHeight() * 48.0f / 800.0f)) : juce::Rectangle<int>();
     if (! knobs)
         s.removeFromBottom (4);
     pageArea = s;

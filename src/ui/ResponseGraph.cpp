@@ -25,19 +25,6 @@ namespace
     {
         return f >= 1000.0f ? juce::String (juce::roundToInt (f / 1000.0f)) + "K" : juce::String (juce::roundToInt (f));
     }
-
-    /** An open ring handle (filled black when selected). */
-    void paintRing (juce::Graphics& g, juce::Point<float> c, float radius, juce::Colour colour, bool filled)
-    {
-        auto r = juce::Rectangle<float> (radius * 2.0f, radius * 2.0f).withCentre (c);
-        if (filled)
-        {
-            g.setColour (juce::Colours::black);
-            g.fillEllipse (r);
-        }
-        g.setColour (colour);
-        g.drawEllipse (r, juce::jmax (1.5f, radius * 0.28f));
-    }
 } // namespace
 
 void ResponseGraph::paintPianoRuler (juce::Graphics& g, juce::Rectangle<float> area, std::function<float (float)> xForHz)
@@ -120,7 +107,8 @@ ResponseGraph::RtaLayout ResponseGraph::rtaLayout() const
     else
     {
         // OFF, 1/4, 1/3, 1/2 (a strip over the curve, under the ruler), OVL/3, OVL (over it).
-        static const float fractions[] = { 0.0f, 0.25f, 1.0f / 3.0f, 0.5f, 1.0f / 3.0f, 1.0f };
+        // (1/4: 126 of the 546 px under the ruler on the 3.1 EQ screen.)
+        static const float fractions[] = { 0.0f, 0.23f, 1.0f / 3.0f, 0.5f, 1.0f / 3.0f, 1.0f };
         const int d = juce::jlimit (0, 5, display);
         l.fraction = fractions[d];
         // The full screens (EQ, FILTER SETUP, the key filter pages) put it in its own strip.
@@ -332,9 +320,11 @@ juce::Rectangle<float> ResponseGraph::plot() const
         r.removeFromTop (wingPx (139.0f));
         return r;
     }
-    const float rulerH = juce::jlimit (5.0f, screenCap (14.0f), getHeight() * 0.03f);
+    const float rulerH = juce::jmax (5.0f, juce::jmin (wingPx (14.0f), getHeight() * 0.03f)); // 14 px on the console
+    // (An RTA strip starts right under the ruler, as on the 3.1 EQ screen.)
+    const auto split = rtaLayout();
     if (ruler == Ruler::Top)
-        r.removeFromTop (rulerH + juce::jmax (4.0f, getHeight() * 0.02f));
+        r.removeFromTop (rulerH + (rtaShown && split.view >= 0 && split.split ? 0.0f : juce::jmax (4.0f, getHeight() * 0.02f)));
     else if (ruler == Ruler::Bottom)
         r.removeFromBottom (rulerH);
     if (showLabels())
@@ -444,7 +434,7 @@ void ResponseGraph::paint (juce::Graphics& g)
         g.drawHorizontalLine (juce::roundToInt (cp.getY() + (cp.getHeight() - 1.0f) * (float) i / (float) levels), cp.getX(), cp.getRight());
 
     // The piano-key ruler.
-    const float rulerH = juce::jlimit (5.0f, screenCap (14.0f), getHeight() * 0.03f);
+    const float rulerH = juce::jmax (5.0f, juce::jmin (wingPx (14.0f), getHeight() * 0.03f)); // 14 px on the console
     auto xHz = [this] (float hz) { return xForFreq (hz); };
     if (ruler == Ruler::Top)
         paintPianoRuler (g, juce::Rectangle<float> (p.getX(), bounds.getY(), p.getWidth(), rulerH), xHz);
@@ -490,15 +480,22 @@ void ResponseGraph::paint (juce::Graphics& g)
     auto line = [&] (float freq, juce::Colour colour, const juce::String& name)
     {
         const float x = xForFreq (freq);
+        // WING 3.1 (FILTER SETUP, a 420 px curve area): the name 25 px under
+        // its top, the line from 56 px under it down to the ring, an open ring
+        // 29 px across (3 px) centred 55 px over the bottom.
         const float lh = juce::jmax (15.0f, wingPx (26.0f));
         const bool under = cp.getY() > p.getY() + 1.0f;
-        const float labelY = under ? cp.getY() + lh * 0.5f + 2.0f : p.getY() - lh * 0.5f - 2.0f;
-        const float lineTop = under ? cp.getY() + lh + 4.0f : p.getY();
+        const float k = cp.getHeight() / 420.0f;
+        const float labelY = under ? cp.getY() + 25.0f * k : p.getY() - lh * 0.5f - 2.0f;
+        const float lineTop = under ? cp.getY() + 56.0f * k : p.getY();
+        const float radius = juce::jmin (ringRadius, wingPx (13.0f));
+        const juce::Point<float> ring (x, under ? cp.getBottom() - 55.0f * k : p.getBottom() - ringRadius * 3.9f);
         g.setColour (colour);
-        g.fillRect (x - 1.0f, lineTop, 2.0f, p.getBottom() - lineTop);
+        g.fillRect (x - 1.0f, lineTop, 2.0f, ring.y - radius - lineTop);
         g.setFont (wingFont (TypeScale::body));
         g.drawText (name, juce::Rectangle<float> (lh * 2.4f, lh).withCentre ({ x, labelY }), juce::Justification::centred);
-        paintRing (g, { x, p.getBottom() - ringRadius * 3.9f }, ringRadius, juce::Colours::white, true);
+        g.setColour (juce::Colours::white);
+        g.drawEllipse (juce::Rectangle<float> (radius * 2.0f, radius * 2.0f).withCentre (ring), juce::jmax (1.5f, wingPx (3.0f)));
     };
 
     if (isKeyView())
@@ -624,7 +621,8 @@ void ResponseGraph::paint (juce::Graphics& g)
     // The bands: a line from the label at the top, an open ring at the gain.
     auto& values = strip->params.eq.values;
     const bool labels = showLabels();
-    const float radius = juce::jlimit (3.5f, screenCap (10.0f), getHeight() / 34.0f);
+    // WING 3.1: open rings 26 px across (3 px), light grey, the selected one white.
+    const float radius = juce::jlimit (3.5f, wingPx (13.0f), getHeight() / 34.0f);
     for (size_t i = 0; i < bands.size(); ++i)
     {
         const auto& band = bands[i];
@@ -633,13 +631,17 @@ void ResponseGraph::paint (juce::Graphics& g)
         if (labels)
         {
             // Under an RTA strip the labels sit at the top of the curve's area [D10].
+            // (3.1: in the curve's area the name 25 px under its top, the line
+            // from 42 px under the top to 42 px over the bottom.)
             const float lh = juce::jmax (16.0f, wingPx (26.0f));
             const bool under = cp.getY() > p.getY() + 1.0f;
-            const float labelY = under ? cp.getY() + lh * 0.5f + 2.0f : p.getY() - lh * 0.5f - 2.0f;
-            const float lineTop = under ? cp.getY() + lh + 4.0f : p.getY() + 2.0f;
+            const float inset = cp.getHeight() * 42.0f / 420.0f;
+            const float labelY = under ? cp.getY() + cp.getHeight() * 25.0f / 420.0f : p.getY() - lh * 0.5f - 2.0f;
+            const float lineTop = under ? cp.getY() + inset : p.getY() + 2.0f;
+            const float lineBottom = under ? cp.getBottom() - inset : p.getBottom();
             const float lw = juce::jmax (sel ? 2.0f : 1.5f, wingPx (sel ? 2.0f : 1.5f));
             g.setColour (sel ? selectedBandColour : bandLineColour);
-            g.fillRect (juce::Rectangle<float> (lw, p.getBottom() - lineTop).withPosition (c.x - lw * 0.5f, lineTop));
+            g.fillRect (juce::Rectangle<float> (lw, lineBottom - lineTop).withPosition (c.x - lw * 0.5f, lineTop));
             g.setColour (sel ? juce::Colours::white : labelColour);
             g.setFont (wingFont (TypeScale::body, sel ? WingWeight::SemiBold : WingWeight::Medium));
             g.drawText (band.id.toUpperCase(), juce::Rectangle<float> (lh * 1.5f, lh).withCentre ({ c.x, labelY }), juce::Justification::centred);
@@ -654,7 +656,8 @@ void ResponseGraph::paint (juce::Graphics& g)
             g.fillRect (juce::Rectangle<float> (t, a * 2.0f).withCentre (c));
             continue;
         }
-        paintRing (g, c, radius, juce::Colours::white, sel);
+        g.setColour (sel ? juce::Colours::white : Colours::caption);
+        g.drawEllipse (juce::Rectangle<float> (radius * 2.0f, radius * 2.0f).withCentre (c), juce::jmax (1.5f, wingPx (3.0f)));
     }
 }
 

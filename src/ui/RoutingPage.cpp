@@ -452,10 +452,13 @@ public:
     {
     }
 
+    /** What dims under the menu (3.1: only the side the menu is for); empty: everything. */
+    juce::Rectangle<int> dimArea;
+
     void paint (juce::Graphics& g) override
     {
         g.setColour (Colours::scrim);
-        g.fillAll();
+        g.fillRect (dimArea.isEmpty() ? getLocalBounds() : dimArea);
         g.setColour (Colours::screenPanel);
         g.fillRect (frame());
         for (auto& [area, id] : tiles())
@@ -554,6 +557,8 @@ StatusTitle RoutingPage::getStatusTitle()
         t.text = routing::info (group).name;
         t.icon = group == Group::Recorder ? Icon::UsbStick : Icon::Xlr;
     }
+    else
+        t.plainNumber = true; // 3.1: the channel's number unboxed, in black
     return t;
 }
 
@@ -2147,6 +2152,10 @@ void RoutingPage::showGroupMenu (bool rightSide)
             safe->repaint();
         });
     });
+    {
+        const auto side = rightSide ? rightPanel : leftPanel;
+        groupMenu->dimArea = getLocalBounds().withLeft (side.getX() - px (4.0f)).withRight (side.getRight() + px (4.0f));
+    }
     addAndMakeVisible (*groupMenu);
     groupMenu->setBounds (getLocalBounds());
 }
