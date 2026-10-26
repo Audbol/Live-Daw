@@ -492,6 +492,14 @@ pub unsafe extern "C" fn ld_fx_meter(e: *const Engine, slot: i32) -> f32 {
     engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)).map_or(0.0, |r| r.meter())
 }
 
+/// A dynamic band's live gain of a slot's built-in device (TRIPLE DEQ bands
+/// 0-2), in dB, signed: cut < 0, boost > 0. 0 for other devices.
+#[no_mangle]
+pub unsafe extern "C" fn ld_fx_band_gain(e: *const Engine, slot: i32, band: i32) -> f32 {
+    let Ok(band) = usize::try_from(band) else { return 0.0 };
+    engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)).map_or(0.0, |r| r.band_gain(band))
+}
+
 /// Message thread: the host context of slot `slot` (null if empty).
 #[no_mangle]
 pub unsafe extern "C" fn ld_fx_ctx(e: *const Engine, slot: i32) -> *mut std::ffi::c_void {
@@ -608,6 +616,14 @@ pub unsafe extern "C" fn ld_strip_params(s: *const Strip) -> *const StripParams 
 #[no_mangle]
 pub unsafe extern "C" fn ld_strip_meters(s: *const Strip) -> *const StripMeters {
     strip(s).map_or(std::ptr::null(), |s| &s.meters as *const _)
+}
+
+/// The live gain of band `band` (0-1) of the GATE (`gate`) or DYNAMICS slot's
+/// dynamic EQ (DEQ, DEQ2), in dB, signed: cut < 0, boost > 0. 0 for other models.
+#[no_mangle]
+pub unsafe extern "C" fn ld_strip_dyn_band_gain(s: *const Strip, gate: bool, band: i32) -> f32 {
+    let Ok(band) = usize::try_from(band) else { return 0.0 };
+    strip(s).map_or(0.0, |s| s.band_meters.get(gate, band))
 }
 
 #[no_mangle]

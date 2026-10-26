@@ -12,7 +12,7 @@ the same settings (`run_all.py`), so at the console you only record the WING.
 |---|---|---|---|
 | priority 1 | 28 | about 83 min | about 24 min |
 | priority 2 | 58 | about 171 min | about 51 min |
-| priority 3 | 65 | about 192 min | about 57 min |
+| priority 3 | 68 | about 201 min | about 59 min |
 
 Priority 1 is the baseline, the WING EQ, the filters, the WING COMP and the WING GATE; stop
 whenever you like, every finished test is useful on its own. By hand counts about 2.5 minutes per
@@ -790,9 +790,10 @@ Signal `signals/tests/46_dyn_b160.wav` (dyn, 35 s), analysis: dyn.
 | `/ch/1/dyn/thr` | 0.1 | CH 1 > DYNAMICS (B160) > THR |
 | `/ch/1/dyn/comp` | 4 | CH 1 > DYNAMICS (B160) > COMP |
 
-### 47 `dyn_deq_1k`: DYNAMIC EQ: BP 1 kHz Q 2, -30 dB 3:1, 10 / 150 ms, GAIN 0, MODE high
+### 47 `dyn_deq_1k`: DYNAMIC EQ: BP 1 kHz Q 2, -30 dB 3:1, 10 / 150 ms, GAIN -12, MODE high
 
 Signal `signals/tests/47_dyn_deq_1k.wav` (dyn, 35 s), analysis: dyn.
+GAIN is the largest change: at 0 the band does nothing.
 
 | Path | Value | On the console |
 |---|---|---|
@@ -803,7 +804,7 @@ Signal `signals/tests/47_dyn_deq_1k.wav` (dyn, 35 s), analysis: dyn.
 | `/ch/1/dyn/att` | 10 | CH 1 > DYNAMICS (DEQ) > ATTACK |
 | `/ch/1/dyn/rel` | 150 | CH 1 > DYNAMICS (DEQ) > RELEASE |
 | `/ch/1/dyn/filt` | BP | CH 1 > DYNAMICS (DEQ) > FILTER |
-| `/ch/1/dyn/g` | 0 | CH 1 > DYNAMICS (DEQ) > GAIN |
+| `/ch/1/dyn/g` | -12 | CH 1 > DYNAMICS (DEQ) > GAIN |
 | `/ch/1/dyn/f` | 1000 | CH 1 > DYNAMICS (DEQ) > FREQ |
 | `/ch/1/dyn/q` | 2 | CH 1 > DYNAMICS (DEQ) > Q |
 | `/ch/1/dyn/mode` | high | CH 1 > DYNAMICS (DEQ) > MODE |
@@ -1166,6 +1167,66 @@ Signal `signals/tests/65_dyn_ds902.wav` (key, 17 s), analysis: key.
 | `/ch/1/dyn/f` | 5000 | CH 1 > DYNAMICS (DS902) > FREQ |
 | `/ch/1/dyn/range` | 6 | CH 1 > DYNAMICS (DS902) > RANGE |
 | `/ch/1/dyn/mode` | HF | CH 1 > DYNAMICS (DS902) > MODE |
+
+### 66 `dyn_ds902_full`: BDX902 DE-ESSER: 3 kHz, RANGE 12, FULL
+
+Signal `signals/tests/66_dyn_ds902_full.wav` (key, 17 s), analysis: key.
+Each tone is all signal: the cut per tone shows the detector's band.
+
+| Path | Value | On the console |
+|---|---|---|
+| `/ch/1/dyn/on` | 1 | CH 1 > DYNAMICS (COMP) on |
+| `/ch/1/dyn/mdl` | DS902 | CH 1 > DYNAMICS > model |
+| `/ch/1/dyn/f` | 3000 | CH 1 > DYNAMICS (DS902) > FREQ |
+| `/ch/1/dyn/range` | 12 | CH 1 > DYNAMICS (DS902) > RANGE |
+| `/ch/1/dyn/mode` | FULL | CH 1 > DYNAMICS (DS902) > MODE |
+
+### 67 `dyn_deq2_shelves`: DUAL DYNAMIC EQ: 1 = LP12 200 Hz -9 dB above -40 dB 10:1; 2 = HP12 5 kHz -6 dB above -40 dB 10:1
+
+Signal `signals/tests/67_dyn_deq2_shelves.wav` (key, 17 s), analysis: key.
+The shelves' shape near FREQ (no rise above 0 dB) and the two bands apart.
+
+| Path | Value | On the console |
+|---|---|---|
+| `/ch/1/dyn/on` | 1 | CH 1 > DYNAMICS (COMP) on |
+| `/ch/1/dyn/mdl` | DEQ2 | CH 1 > DYNAMICS > model |
+| `/ch/1/dyn/1-thr` | -40 | CH 1 > DYNAMICS (DEQ2) > 1-THR |
+| `/ch/1/dyn/1-ratio` | 10 | CH 1 > DYNAMICS (DEQ2) > 1-RATIO |
+| `/ch/1/dyn/1-att` | 10 | CH 1 > DYNAMICS (DEQ2) > 1-ATT |
+| `/ch/1/dyn/1-rel` | 150 | CH 1 > DYNAMICS (DEQ2) > 1-REL |
+| `/ch/1/dyn/1-filt` | LP12 | CH 1 > DYNAMICS (DEQ2) > 1-FILTER |
+| `/ch/1/dyn/1-g` | -9 | CH 1 > DYNAMICS (DEQ2) > 1-GAIN |
+| `/ch/1/dyn/1-f` | 200 | CH 1 > DYNAMICS (DEQ2) > 1-FREQ |
+| `/ch/1/dyn/1-q` | 1 | CH 1 > DYNAMICS (DEQ2) > 1-Q |
+| `/ch/1/dyn/1-mode` | high | CH 1 > DYNAMICS (DEQ2) > 1-MODE |
+| `/ch/1/dyn/2-thr` | -40 | CH 1 > DYNAMICS (DEQ2) > 2-THR |
+| `/ch/1/dyn/2-ratio` | 10 | CH 1 > DYNAMICS (DEQ2) > 2-RATIO |
+| `/ch/1/dyn/2-att` | 10 | CH 1 > DYNAMICS (DEQ2) > 2-ATT |
+| `/ch/1/dyn/2-rel` | 150 | CH 1 > DYNAMICS (DEQ2) > 2-REL |
+| `/ch/1/dyn/2-filt` | HP12 | CH 1 > DYNAMICS (DEQ2) > 2-FILTER |
+| `/ch/1/dyn/2-g` | -6 | CH 1 > DYNAMICS (DEQ2) > 2-GAIN |
+| `/ch/1/dyn/2-f` | 5000 | CH 1 > DYNAMICS (DEQ2) > 2-FREQ |
+| `/ch/1/dyn/2-q` | 1 | CH 1 > DYNAMICS (DEQ2) > 2-Q |
+| `/ch/1/dyn/2-mode` | high | CH 1 > DYNAMICS (DEQ2) > 2-MODE |
+
+### 68 `dyn_deq_flat`: DYNAMIC EQ: FILTER OFF (whole signal), -30 dB 3:1, 10 / 150 ms, GAIN -12, MODE high
+
+Signal `signals/tests/68_dyn_deq_flat.wav` (dyn, 35 s), analysis: dyn.
+ATTACK / RELEASE without a band filter's ringing (with BP the first ms after a level drop are the filter's).
+
+| Path | Value | On the console |
+|---|---|---|
+| `/ch/1/dyn/on` | 1 | CH 1 > DYNAMICS (COMP) on |
+| `/ch/1/dyn/mdl` | DEQ | CH 1 > DYNAMICS > model |
+| `/ch/1/dyn/thr` | -30 | CH 1 > DYNAMICS (DEQ) > THR |
+| `/ch/1/dyn/ratio` | 3 | CH 1 > DYNAMICS (DEQ) > RATIO |
+| `/ch/1/dyn/att` | 10 | CH 1 > DYNAMICS (DEQ) > ATTACK |
+| `/ch/1/dyn/rel` | 150 | CH 1 > DYNAMICS (DEQ) > RELEASE |
+| `/ch/1/dyn/filt` | OFF | CH 1 > DYNAMICS (DEQ) > FILTER |
+| `/ch/1/dyn/g` | -12 | CH 1 > DYNAMICS (DEQ) > GAIN |
+| `/ch/1/dyn/f` | 1000 | CH 1 > DYNAMICS (DEQ) > FREQ |
+| `/ch/1/dyn/q` | 2 | CH 1 > DYNAMICS (DEQ) > Q |
+| `/ch/1/dyn/mode` | high | CH 1 > DYNAMICS (DEQ) > MODE |
 
 ## Tolerances
 

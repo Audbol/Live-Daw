@@ -173,6 +173,35 @@ mod tests {
     }
 
     #[test]
+    fn leaves_the_low_tone_under_sibilance_alone_and_idles_in_silence() {
+        use std::f32::consts::TAU;
+        let mut rig = Rig::new("DE-S2");
+        rig.set("hi", 50.0).set("lo", 50.0);
+        let n = 48_000;
+        let tone = |f: f32, a: f32, i: usize| (TAU * f * i as f32 / 48_000.0).sin() * a;
+        let x: Vec<f32> = (0..n).map(|i| tone(200.0, 0.25, i) + tone(7000.0, 0.2, i)).collect();
+        let (mut l, mut r) = (x.clone(), x.clone());
+        rig.run(&mut l, &mut r);
+        let bin = |v: &[f32], f: f32| {
+            let (mut re, mut im) = (0.0f64, 0.0f64);
+            for (i, s) in v.iter().enumerate().skip(n / 2) {
+                let ph = std::f64::consts::TAU * f as f64 * i as f64 / 48_000.0;
+                re += *s as f64 * ph.cos();
+                im += *s as f64 * ph.sin();
+            }
+            20.0 * (re * re + im * im).sqrt().log10()
+        };
+        let low = bin(&l, 200.0) - bin(&x, 200.0);
+        let ess = bin(&l, 7000.0) - bin(&x, 7000.0);
+        assert!(low.abs() < 0.1, "200 Hz under sibilance: {low} dB");
+        assert!(ess < -3.0, "7 kHz: {ess} dB");
+        assert!(rig.dev.meter() < -3.0);
+        let (mut l, mut r) = (vec![0.0; n], vec![0.0; n]);
+        rig.run(&mut l, &mut r);
+        assert!(rig.dev.meter() > -0.1, "{} dB in silence", rig.dev.meter());
+    }
+
+    #[test]
     fn mid_side_mode_keeps_mono_mono() {
         let mut rig = Rig::new("DE-S2");
         rig.set("mode", 1.0);

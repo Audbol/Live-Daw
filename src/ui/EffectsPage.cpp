@@ -575,7 +575,9 @@ private:
         const bool device = shownModel > ld::kFxExt;
         face.setVisible (device);
         if (device)
-            face.bind (models::Fx, shownModel, fx.params (slot).values, [this] { return ctx.engine.getFx().getMeter (slot); });
+            face.bind (
+                models::Fx, shownModel, fx.params (slot).values, [this] { return ctx.engine.getFx().getMeter (slot); },
+                [this] (int band) { return ctx.engine.getFx().getBandGain (slot, band); });
         else
             face.unbind();
         openKey.setVisible (shownModel == ld::kFxExt);

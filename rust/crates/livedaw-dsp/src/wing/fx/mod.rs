@@ -53,7 +53,16 @@ pub trait FxAlgo: Send {
     fn meter(&self) -> f32 {
         0.0
     }
+
+    /// A band's live gain in dB, signed (cut < 0, boost > 0), for devices
+    /// with dynamic bands (TRIPLE DEQ); 0 otherwise.
+    fn band_gain(&self, _band: usize) -> f32 {
+        0.0
+    }
 }
+
+/// Bands [`FxAlgo::band_gain`] can report (TRIPLE DEQ has the most).
+pub const FX_BANDS: usize = 3;
 
 /// Index of a device in [`FX_MODELS`].
 pub fn model_index(token: &str) -> Option<usize> {
@@ -167,6 +176,11 @@ impl FxDevice {
 
     pub fn meter(&self) -> f32 {
         self.algo.meter()
+    }
+
+    /// See [`FxAlgo::band_gain`].
+    pub fn band_gain(&self, band: usize) -> f32 {
+        self.algo.band_gain(band)
     }
 
     pub fn reset(&mut self) {

@@ -114,7 +114,13 @@ pub struct DynStatus {
     pub key_db: f32,
     /// Peak of the slot's output in the block (linear).
     pub out_peak: f32,
+    /// The dynamic EQ's bands (DEQ, DEQ2): each band's gain at the end of the
+    /// block in dB, signed (cuts < 0, boosts > 0); 0 for other models.
+    pub band_gain_db: [f32; DYN_BANDS],
 }
+
+/// Bands [`DynStatus::band_gain_db`] reports (DEQ2 has the most).
+pub const DYN_BANDS: usize = 2;
 
 impl DynStatus {
     /// Adds a sample's reduction (dB, <= 0) and detector level.
@@ -128,7 +134,7 @@ impl DynStatus {
 
 impl Default for DynStatus {
     fn default() -> Self {
-        Self { gain_reduction_db: 0.0, active: false, key_db: MINUS_INF, out_peak: 0.0 }
+        Self { gain_reduction_db: 0.0, active: false, key_db: MINUS_INF, out_peak: 0.0, band_gain_db: [0.0; DYN_BANDS] }
     }
 }
 
@@ -1080,6 +1086,7 @@ struct Coefs {
     deq_env: f32,
     deess_att: f32,
     deess_rel: f32,
+    deess_hf_rel: f32,
     ride: f32,
     /// Level knobs (stage input/output gain, MIX, GAIN) glide with this.
     param: f32,
@@ -1102,8 +1109,9 @@ impl Coefs {
             amount_rel: coef(1000.0, sr),
             makeup: coef(1500.0, sr),
             deq_env: coef(15.0, sr),
-            deess_att: coef(1.0, sr),
-            deess_rel: coef(60.0, sr),
+            deess_att: coef(DEESS_ATTACK_MS, sr),
+            deess_rel: coef(DEESS_RELEASE_MS, sr),
+            deess_hf_rel: coef(DEESS_HF_RELEASE_MS, sr),
             ride: coef(300.0, sr),
             param: coef(10.0, sr),
             fade_step: 1.0 / (0.005 * sr),
@@ -1127,7 +1135,9 @@ pub struct WingDynamics {
     xo: Biquad,
     xo_settings: Option<XoverSettings>,
     // De-esser / dynamic EQ helpers
-    aux_filters: [Biquad; 4],
+    /// Per band: detection, processing and (12 dB shelves, the 902's HF
+    /// mode) the band pass that completes a shelf.
+    aux_filters: [Biquad; 6],
     aux_env: [f32; 4],
     aux_gain: [f32; 2],
     // Transient designer envelopes: fast, slow, sustain-fast, sustain-slow
@@ -1224,6 +1234,46 @@ fn step_toward(cur: f32, target: f32, step: f32) -> f32 {
     cur + (target - cur).clamp(-step, step)
 }
 
+// The BDX 902 (dbx 902) de-esser: the power above FREQ (12 dB/oct high pass)
+// against the whole signal's, both followed with a 1 ms attack. Sibilance
+// starts the reduction when it carries DEESS_ONSET_DB of the power and gets
+// all of RANGE DEESS_SPAN_DB later (at -3 dB: half the power above FREQ, as
+// in an "s"). Its follower lets go faster, so the reduction ends with the
+// sibilance, not with the signal.
+const DEESS_ATTACK_MS: f32 = 1.0;
+const DEESS_RELEASE_MS: f32 = 60.0;
+const DEESS_HF_RELEASE_MS: f32 = 30.0;
+const DEESS_ONSET_DB: f32 = -18.0;
+const DEESS_SPAN_DB: f32 = 15.0;
+/// Below this power (-80 dBFS) the de-esser has nothing to compare.
+const DEESS_FLOOR: f32 = 1e-8;
+
+/// Corner of the HF mode's shelf: with all of RANGE applied, half of it (in
+/// dB) is at FREQ and the rest above, the band the detector listens to.
+pub fn deess_shelf_hz(freq: f32, range_db: f32) -> f32 {
+    freq * db_to_gain(-range_db.max(0.0) * 0.25)
+}
+
+/// Share of RANGE (0..1) the 902 applies for the followed powers above FREQ
+/// and of the whole signal.
+#[inline]
+fn deess_amount(hf_power: f32, power: f32) -> f32 {
+    let ratio_db = 10.0 * (hf_power / (power + DEESS_FLOOR) + 1e-12).log10();
+    ((ratio_db - DEESS_ONSET_DB) / DEESS_SPAN_DB).clamp(0.0, 1.0)
+}
+
+/// A 12 dB/oct shelf of `gain_db` as `x + k F(x) + kb B(x)`, F the band's
+/// 12 dB low or high pass and B a band pass with the same poles (Q 0.707):
+/// zeros at FREQ * sqrt(g) (low) or FREQ / sqrt(g) (high) over Butterworth
+/// poles at FREQ, so the curve moves monotonically from 0 dB to the gain,
+/// without the bump (cut) or dip (boost) a plain `x + (g - 1) F(x)` has near
+/// FREQ. Returns (k, kb).
+#[inline]
+pub fn shelf_12(gain_db: f32) -> (f32, f32) {
+    let g = db_to_gain(gain_db);
+    (g - 1.0, g.sqrt() - 1.0)
+}
+
 impl WingDynamics {
     pub fn prepare(&mut self, sample_rate: f64) {
         self.sr = sample_rate as f32;
@@ -1305,10 +1355,13 @@ impl WingDynamics {
     fn configure_aux(&mut self, cfg: &Config) {
         let sr = self.sr as f64;
         match *cfg {
-            Config::DeEss { freq, .. } => {
-                let f = freq as f64;
-                self.aux_filters[0].set_coefficients(BiquadCoeffs::high_pass(sr, f, std::f64::consts::FRAC_1_SQRT_2));
-                self.aux_filters[1].set_coefficients(BiquadCoeffs::high_pass(sr, f, std::f64::consts::FRAC_1_SQRT_2));
+            Config::DeEss { freq, range, .. } => {
+                let q = std::f64::consts::FRAC_1_SQRT_2;
+                self.aux_filters[0].set_coefficients(BiquadCoeffs::high_pass(sr, freq as f64, q)); // detection (mono)
+                                                                                                   // HF mode: the shelf's high pass and band pass (see `deess_shelf_hz`).
+                let f = deess_shelf_hz(freq, range) as f64;
+                self.aux_filters[1].set_coefficients(BiquadCoeffs::high_pass(sr, f, q));
+                self.aux_filters[2].set_coefficients(BiquadCoeffs::band_pass(sr, f, q));
             }
             Config::DynEq(bands, n) => {
                 for (i, b) in bands.iter().take(n).enumerate() {
@@ -1321,8 +1374,10 @@ impl WingDynamics {
                         5 => BiquadCoeffs::high_pass(sr, f, std::f64::consts::FRAC_1_SQRT_2),
                         _ => BiquadCoeffs::band_pass(sr, f, q),
                     };
-                    self.aux_filters[i * 2].set_coefficients(c); // detection (mono)
-                    self.aux_filters[i * 2 + 1].set_coefficients(c); // processing (per channel)
+                    self.aux_filters[i * 3].set_coefficients(c); // detection (mono)
+                    self.aux_filters[i * 3 + 1].set_coefficients(c); // processing (per channel)
+                                                                     // A 12 dB shelf's other half (same poles): see `shelf_12`.
+                    self.aux_filters[i * 3 + 2].set_coefficients(BiquadCoeffs::band_pass(sr, f, std::f64::consts::FRAC_1_SQRT_2));
                 }
             }
             _ => {}
@@ -1474,26 +1529,35 @@ impl WingDynamics {
             }
             Config::DeEss { range, full_band, .. } => {
                 st.key_db = st.key_db.max(gain_to_db(key.abs()));
+                // No threshold (dbx 902): the share of the signal's power above
+                // FREQ sets the reduction, whatever the level (p.123).
                 let hf = self.aux_filters[0].tick(key, 0);
-                let (a, r) = (self.k.deess_att, self.k.deess_rel);
-                let follow = |env: &mut f32, v: f32| {
-                    let v = v.abs();
-                    *env = if v > *env { a * *env + (1.0 - a) * v } else { r * *env + (1.0 - r) * v };
-                };
-                follow(&mut self.aux_env[0], hf);
-                follow(&mut self.aux_env[1], key);
-                // Reduce when sibilance dominates the signal (level independent, p.123).
-                let ratio_db = gain_to_db(self.aux_env[0] + 1e-9) - gain_to_db(self.aux_env[1] + 1e-9);
-                let reduction = ((ratio_db + 8.0) * 1.5).clamp(0.0, range);
+                // The whole signal's follower takes peaks at once, the band's
+                // in DEESS_ATTACK_MS: the click at a note's start is no "s".
+                let (a, p) = (self.k.deess_att, hf * hf);
+                let env = &mut self.aux_env[0];
+                *env = smooth(*env, p, if p > *env { a } else { self.k.deess_hf_rel });
+                let (r, p) = (self.k.deess_rel, key * key);
+                let env = &mut self.aux_env[1];
+                *env = if p > *env { p } else { smooth(*env, p, r) };
+                let reduction = range * deess_amount(self.aux_env[0], self.aux_env[1]);
                 st.active |= reduction > 0.5;
                 st.gain_reduction_db = st.gain_reduction_db.max(reduction);
                 if full_band {
                     (Some(-reduction), x)
                 } else {
-                    let g = db_to_gain(-reduction);
-                    let hl = self.aux_filters[1].tick(x[0], 0);
-                    let hr = if stereo { self.aux_filters[1].tick(x[1], 1) } else { hl };
-                    (None, [x[0] + (g - 1.0) * hl, x[1] + (g - 1.0) * hr])
+                    // HF: a 12 dB/oct high shelf at FREQ, down by the reduction.
+                    let (kh, kb) = shelf_12(-reduction);
+                    let mut y = x;
+                    for (c, v) in y.iter_mut().enumerate().take(if stereo { 2 } else { 1 }) {
+                        let h = self.aux_filters[1].tick(*v, c);
+                        let bp = self.aux_filters[2].tick(*v, c);
+                        *v += kh * h + kb * bp;
+                    }
+                    if !stereo {
+                        y[1] = y[0];
+                    }
+                    (None, y)
                 }
             }
             Config::DynEq(bands, count) => {
@@ -1502,7 +1566,7 @@ impl WingDynamics {
                 let mut y = x;
                 for (i, b) in bands.iter().take(count).enumerate() {
                     // Detector: peak follower on the band (flat: the whole key).
-                    let det = if b.filter == 0 { key } else { self.aux_filters[i * 2].tick(key, 0) };
+                    let det = if b.filter == 0 { key } else { self.aux_filters[i * 3].tick(key, 0) };
                     let a = det.abs();
                     let env = &mut self.aux_env[i];
                     *env = if a > *env { a } else { rel_env * *env + (1.0 - rel_env) * a };
@@ -1512,17 +1576,19 @@ impl WingDynamics {
                     let c = if want.abs() > g.abs() { b.att } else { b.rel };
                     *g = c * *g + (1.0 - c) * want;
                     st.gain_reduction_db = st.gain_reduction_db.max(-g.min(0.0));
+                    st.band_gain_db[i] = *g;
                     st.active |= g.abs() > 0.5;
-                    let k = db_to_gain(*g) - 1.0;
                     if b.filter == 0 {
-                        y = [y[0] * (1.0 + k), y[1] * (1.0 + k)];
+                        let k = db_to_gain(*g);
+                        y = [y[0] * k, y[1] * k];
                     } else {
-                        let f = &mut self.aux_filters[i * 2 + 1];
-                        let bl = f.tick(y[0], 0);
-                        y[0] += k * bl;
-                        if stereo {
-                            let br = f.tick(y[1], 1);
-                            y[1] += k * br;
+                        // x + k F(x), and + kb B(x) for the 12 dB shelves.
+                        let shelf12 = b.filter == 3 || b.filter == 5;
+                        let (k, kb) = if shelf12 { shelf_12(*g) } else { (db_to_gain(*g) - 1.0, 0.0) };
+                        for (c, v) in y.iter_mut().enumerate().take(if stereo { 2 } else { 1 }) {
+                            let f = self.aux_filters[i * 3 + 1].tick(*v, c);
+                            let bp = if shelf12 { self.aux_filters[i * 3 + 2].tick(*v, c) } else { 0.0 };
+                            *v += k * f + kb * bp;
                         }
                     }
                 }
@@ -2215,6 +2281,247 @@ mod tests {
         let (m, v) = defaults("DEQ2");
         let input = sine(0.5, 1000.0, 4800);
         assert_eq!(run(m, &v, &input).0, input);
+    }
+
+    #[test]
+    fn dynamic_eq_reports_each_bands_signed_gain() {
+        // DEQ2: band 1 cuts 200 Hz by 6 dB, band 2 lifts 5 kHz by 4 dB; the
+        // status carries both, signed, and the reduction meter only the cut.
+        let (m, v) = model(
+            "DEQ2",
+            &[
+                ("1-filt", "BP"),
+                ("1-f", "200"),
+                ("1-thr", "-40"),
+                ("1-ratio", "10"),
+                ("1-g", "-6"),
+                ("1-mode", "high"),
+                ("2-filt", "BP"),
+                ("2-f", "5000"),
+                ("2-thr", "-40"),
+                ("2-ratio", "10"),
+                ("2-g", "4"),
+                ("2-mode", "high"),
+            ],
+        );
+        let a = sine(0.5, 200.0, 48000);
+        let b = sine(0.5, 5000.0, 48000);
+        let x: Vec<f32> = a.iter().zip(&b).map(|(p, q)| p + q).collect();
+        let (_, st) = run(m, &v, &x);
+        assert!((st.band_gain_db[0] + 6.0).abs() < 0.2 && (st.band_gain_db[1] - 4.0).abs() < 0.2, "{:?}", st.band_gain_db);
+        assert!((st.gain_reduction_db - 6.0).abs() < 0.2);
+        // DEQ (one band) fills the first; other models report none.
+        let (m, v) = model("DEQ", &[("filt", "OFF"), ("thr", "-40"), ("ratio", "10"), ("g", "5"), ("mode", "high")]);
+        let (_, st) = run(m, &v, &sine(0.5, 1000.0, 24000));
+        assert!((st.band_gain_db[0] - 5.0).abs() < 0.2 && st.band_gain_db[1] == 0.0, "{:?}", st.band_gain_db);
+        let (m, v) = defaults("COMP");
+        let (_, st) = run(m, &v, &sine(0.5, 1000.0, 24000));
+        assert_eq!(st.band_gain_db, [0.0; DYN_BANDS]);
+    }
+
+    /// Amplitude (dB) of the component at `f` in `x[a..b]` (Hann-windowed DFT bin).
+    fn bin_db(x: &[f32], f: f32, sr: f32, a: usize, b: usize) -> f32 {
+        let (mut re, mut im, mut w) = (0f64, 0f64, 0f64);
+        for (i, &v) in x.iter().enumerate().take(b).skip(a) {
+            let h = 0.5 - 0.5 * (std::f64::consts::TAU * (i - a) as f64 / (b - a) as f64).cos();
+            let ph = std::f64::consts::TAU * f as f64 * i as f64 / sr as f64;
+            re += v as f64 * ph.cos() * h;
+            im += v as f64 * ph.sin() * h;
+            w += h;
+        }
+        (20.0 * ((re * re + im * im).sqrt() * 2.0 / w).log10()) as f32
+    }
+
+    /// Steady gain (dB) at a tone of `amp_db` (peak) at sample rate `sr`.
+    fn tone_gain_at(sr: f32, m: usize, v: &[f32], amp_db: f32, f: f32) -> f32 {
+        let n = (sr * 1.0) as usize;
+        let a = db_to_gain(amp_db);
+        let x: Vec<f32> = (0..n).map(|i| (std::f32::consts::TAU * f * i as f32 / sr).sin() * a).collect();
+        let mut d = WingDynamics::default();
+        d.prepare(sr as f64);
+        let (y, _) = run_on(&mut d, m, v, &x);
+        bin_db(&y, f, sr, n / 2, n) - bin_db(&x, f, sr, n / 2, n)
+    }
+
+    /// Repeatable noise band-limited to `lo`..`hi` Hz, `rms_db` RMS.
+    fn band_noise(rms_db: f32, lo: f64, hi: f64, n: usize) -> Vec<f32> {
+        let mut f: [Biquad; 4] = Default::default();
+        f[0].set_coefficients(BiquadCoeffs::high_pass(48000.0, lo, 0.707));
+        f[1].set_coefficients(BiquadCoeffs::high_pass(48000.0, lo, 0.707));
+        f[2].set_coefficients(BiquadCoeffs::low_pass(48000.0, hi, 0.707));
+        f[3].set_coefficients(BiquadCoeffs::low_pass(48000.0, hi, 0.707));
+        let mut s: u32 = 12345;
+        let mut v: Vec<f32> = (0..n)
+            .map(|_| {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                f.iter_mut().fold((s >> 8) as f32 / (1 << 23) as f32 - 1.0, |x, b| b.tick(x, 0))
+            })
+            .collect();
+        let k = db_to_gain(rms_db) / (v.iter().map(|x| x * x).sum::<f32>() / n as f32).sqrt();
+        v.iter_mut().for_each(|x| *x *= k);
+        v
+    }
+
+    /// The 902 on a 200 Hz tone (peak `low_db`) with a burst of 4-8 kHz noise
+    /// (`sib_db` RMS) from 0.5 to 1.5 s: (200 Hz gain during the burst, the
+    /// sibilance's gain, the meter's highest reading).
+    fn deess_burst(sets: &[(&str, &str)], low_db: f32, sib_db: f32) -> (f32, f32, f32) {
+        let (m, v) = model("DS902", sets);
+        let n = 96000;
+        let low = sine(db_to_gain(low_db), 200.0, n);
+        let noise = band_noise(sib_db, 4000.0, 8000.0, n);
+        let x: Vec<f32> = (0..n).map(|i| low[i] + if (24000..72000).contains(&i) { noise[i] } else { 0.0 }).collect();
+        let mut d = WingDynamics::default();
+        d.prepare(48000.0);
+        let mut y = x.clone();
+        let mut meter = 0.0f32;
+        for chunk in y.chunks_mut(256) {
+            let st = d.process(&mut [chunk], None, m, &v, &SidechainSettings::default(), &XoverSettings::default(), 1.0, 0.0);
+            meter = meter.max(st.gain_reduction_db);
+        }
+        let low_gain = bin_db(&y, 200.0, 48000.0, 48000, 72000) - bin_db(&x, 200.0, 48000.0, 48000, 72000);
+        let g = db_to_gain(low_gain);
+        let rest: Vec<f32> = y.iter().zip(&low).map(|(o, l)| o - l * g).collect();
+        let pow = |s: &[f32]| s[48000..72000].iter().map(|v| v * v).sum::<f32>();
+        (low_gain, 10.0 * (pow(&rest) / pow(&noise)).log10(), meter)
+    }
+
+    #[test]
+    fn deesser_902_hf_mode_cuts_above_freq_and_boosts_nothing() {
+        // HF mode, RANGE 12, FREQ 5k0: pure tones (all "sibilance" above
+        // FREQ). Before: +0.58 dB at 4 kHz and only -4.2 dB at 10 kHz (a
+        // phase-mismatched x + (g - 1) HP(x)).
+        let (m, v) = model("DS902", &[("mode", "HF"), ("range", "12")]);
+        for f in [200.0, 1000.0, 2000.0, 3000.0, 4000.0, 5000.0, 7000.0] {
+            let g = tone_gain_at(48000.0, m, &v, -20.0, f);
+            assert!(g < 0.05, "{g} dB at {f} Hz");
+        }
+        assert!(tone_gain_at(48000.0, m, &v, -20.0, 200.0).abs() < 0.05);
+        let g = tone_gain_at(48000.0, m, &v, -20.0, 10000.0);
+        assert!(g < -10.5, "{g} dB at 10 kHz");
+        // FULL: everything goes down by the same amount.
+        let (m, v) = model("DS902", &[("mode", "FULL"), ("range", "12")]);
+        assert!((tone_gain_at(48000.0, m, &v, -20.0, 8000.0) + 12.0).abs() < 0.2);
+    }
+
+    #[test]
+    fn deesser_902_leaves_the_low_tone_alone_and_takes_the_sibilance() {
+        // HF: the 200 Hz tone is untouched while the "s" is reduced.
+        let (low, sib, meter) = deess_burst(&[("mode", "HF"), ("range", "12")], -12.0, -18.0);
+        assert!(low.abs() < 0.05, "low tone {low} dB");
+        assert!(sib < -4.0 && sib > -12.5, "sibilance {sib} dB");
+        assert!(meter > 6.0 && meter <= 12.0, "meter {meter}");
+        // FULL band: tone and sibilance go down together, as far as the meter says.
+        let (low, sib, meter) = deess_burst(&[("mode", "FULL"), ("range", "12")], -12.0, -18.0);
+        assert!((low - sib).abs() < 0.3 && low < -5.0, "{low} {sib}");
+        assert!((meter + low).abs() < 1.2, "meter {meter}, applied {low}");
+        // No sibilance, no reduction.
+        let (low, _, meter) = deess_burst(&[("mode", "FULL"), ("range", "12")], -12.0, -70.0);
+        assert!(low.abs() < 0.05 && meter < 0.1, "{low} {meter}");
+    }
+
+    #[test]
+    fn deesser_902_range_sets_the_depth_whatever_the_level() {
+        // Before: RANGE was only a ceiling - 6 and 12 both gave 3.4 dB here.
+        let (_, s6, _) = deess_burst(&[("mode", "FULL"), ("range", "6")], -12.0, -18.0);
+        let (_, s12, _) = deess_burst(&[("mode", "FULL"), ("range", "12")], -12.0, -18.0);
+        assert!((s12 / s6 - 2.0).abs() < 0.1, "{s6} {s12}");
+        let (_, s0, m0) = deess_burst(&[("mode", "FULL"), ("range", "0")], -12.0, -18.0);
+        assert!(s0.abs() < 0.05 && m0 == 0.0);
+        // The same vocal 30 dB quieter is de-essed the same (no threshold).
+        let (_, quiet, _) = deess_burst(&[("mode", "FULL"), ("range", "12")], -42.0, -48.0);
+        assert!((quiet - s12).abs() < 0.3, "{quiet} vs {s12}");
+    }
+
+    #[test]
+    fn deesser_902_idles_in_silence_and_on_note_starts() {
+        // Before: 12 dB of reduction on the meter in silence (0 / 0 read as
+        // "all sibilance"), and a full-range dip on the first samples of a note.
+        let (m, v) = model("DS902", &[("range", "12")]);
+        let mut d = WingDynamics::default();
+        d.prepare(48000.0);
+        let (_, st) = run_on(&mut d, m, &v, &[0.0; 4800]);
+        assert_eq!(st.gain_reduction_db, 0.0);
+        let x = sine(0.25, 200.0, 4800);
+        let (y, st) = run_on(&mut d, m, &v, &x);
+        assert!(y.iter().zip(&x).all(|(a, b)| (a - b).abs() < 1e-6));
+        assert_eq!(st.gain_reduction_db, 0.0);
+        // Denormal-level input: finite, no reduction.
+        let tiny: Vec<f32> = (0..4800).map(|i| if i % 2 == 0 { 1e-38 } else { -1e-38 }).collect();
+        let (y, st) = run_on(&mut d, m, &v, &tiny);
+        assert!(y.iter().all(|s| s.is_finite()) && st.gain_reduction_db == 0.0);
+    }
+
+    #[test]
+    fn deesser_902_same_at_every_sample_rate_and_in_stereo() {
+        // Before: 8 kHz at RANGE 12 read -11.3 / -12.0 / -11.1 dB at 44.1 / 48 / 96 kHz.
+        for mode in ["FULL", "HF"] {
+            let (m, v) = model("DS902", &[("range", "12"), ("mode", mode)]);
+            let at48 = tone_gain_at(48000.0, m, &v, -20.0, 8000.0);
+            for sr in [44100.0, 96000.0] {
+                let g = tone_gain_at(sr, m, &v, -20.0, 8000.0);
+                // (HF: the shelf's bilinear warping near 24 kHz moves it a little.)
+                assert!((g - at48).abs() < if mode == "HF" { 0.5 } else { 0.1 }, "{mode}: {g} at {sr} vs {at48}");
+            }
+            // Stereo: the same signal on both sides comes out the same on both.
+            let mut l = sine(0.3, 7000.0, 9600);
+            let mut r = l.clone();
+            let mut d = WingDynamics::default();
+            d.prepare(48000.0);
+            for (a, b) in l.chunks_mut(256).zip(r.chunks_mut(256)) {
+                d.process(&mut [a, b], None, m, &v, &SidechainSettings::default(), &XoverSettings::default(), 1.0, 0.0);
+            }
+            assert_eq!(l, r);
+        }
+    }
+
+    #[test]
+    fn dynamic_eq_12db_shelves_have_no_bump_or_dip() {
+        // Before: LP12 / HP12 at -15 dB rose +0.9 dB past FREQ, and at +15 dB
+        // dipped -2.5 dB on the other side of it.
+        for filt in ["LP12", "HP12", "LP6", "HP6"] {
+            for (gain, mode, amp) in [("-15", "high", -6.0), ("15", "low", -55.0)] {
+                let (m, v) =
+                    model("DEQ", &[("filt", filt), ("thr", "-20"), ("ratio", "10"), ("g", gain), ("f", "1000"), ("mode", mode)]);
+                let sign: f32 = gain.parse::<f32>().unwrap().signum();
+                for f in [50.0, 200.0, 500.0, 1000.0, 1500.0, 2000.0, 3000.0, 4000.0, 8000.0, 16000.0] {
+                    let g = tone_gain_at(48000.0, m, &v, amp, f) * sign;
+                    assert!(g > -0.05 && g < 15.05, "{filt} {gain}: {g} dB at {f} Hz");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn dynamic_eq_attack_and_release_follow_the_settings() {
+        // FLAT, -30 dB 10:1, GAIN -15; a 1 kHz tone jumping -50 -> -10 -> -50 dB.
+        for (att, rel) in [(10.0, 150.0), (100.0, 1000.0)] {
+            let (m, v) = model(
+                "DEQ",
+                &[
+                    ("filt", "OFF"),
+                    ("thr", "-30"),
+                    ("ratio", "10"),
+                    ("g", "-15"),
+                    ("att", &att.to_string()),
+                    ("rel", &rel.to_string()),
+                ],
+            );
+            let n = 4 * 48000;
+            let x: Vec<f32> = (0..n)
+                .map(|i| {
+                    (std::f32::consts::TAU * 1000.0 * i as f32 / 48000.0).sin()
+                        * if (48000..96000).contains(&i) { 0.316 } else { 0.003_16 }
+                })
+                .collect();
+            let (y, _) = run(m, &v, &x);
+            let g = |ms: usize| gain_to_db(rms_tail(&y[ms * 48..ms * 48 + 96]) / rms_tail(&x[ms * 48..ms * 48 + 96]));
+            // 63 % of the way (-9.5 dB) after one time constant.
+            let t_att = (1000..2000).find(|&t| g(t) < -9.45).unwrap() - 1000;
+            let t_rel = (2000..4000).find(|&t| g(t) > -5.55).unwrap() - 2000;
+            assert!((t_att as f32 - att).abs() < att * 0.25 + 2.0, "attack {t_att} ms for {att}");
+            assert!((t_rel as f32 - rel).abs() < rel * 0.25, "release {t_rel} ms for {rel}");
+        }
     }
 
     // ---- gates (p.104, p.122-125) ---------------------------------------------------------

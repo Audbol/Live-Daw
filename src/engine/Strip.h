@@ -238,6 +238,8 @@ public:
     ld::StripMeters& meters;
 
     int getNumChannels() const noexcept { return ld::ld_strip_num_channels (handle); }
+    /** Live gain of band 0-1 of the GATE / DYNAMICS slot's dynamic EQ (dB, signed). */
+    float getDynBandGain (bool gate, int band) const noexcept { return ld::ld_strip_dyn_band_gain (handle, gate, band); }
     /** The plugin latency of the strip's output in samples (its inserts plus
         what delay compensation aligned its sources to). */
     int getLatency() const noexcept { return ld::ld_strip_latency (handle); }

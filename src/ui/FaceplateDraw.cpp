@@ -1169,13 +1169,25 @@ namespace
         LP6, LP12, HP6, HP12). */
     float bandDb (float hz, float f, float gain, float q, int type)
     {
-        const float x = std::log2 (hz / juce::jmax (1.0f, f));
+        // The DSP's own curves (livedaw-dsp dynamics / dyneq, analog
+        // prototypes): x + (g - 1) F(x), F the band filter at FREQ; the 12 dB
+        // shelves are second order with Butterworth poles at FREQ.
+        const float w = hz / juce::jmax (1.0f, f), w2 = w * w, w4 = w2 * w2;
+        const float g = std::pow (10.0f, gain / 20.0f), g2 = g * g;
+        const auto db = [] (float power) { return 10.0f * std::log10 (juce::jmax (1.0e-12f, power)); };
         switch (type)
         {
-            case 0: return gain;                                                                 // full band
-            case 1: return gain / (1.0f + std::pow (x * q * 1.6f, 2.0f));                        // bell
-            case 2: case 3: return gain / (1.0f + std::exp (x * (type == 2 ? 3.0f : 6.0f)));    // low shelf
-            case 4: case 5: return gain / (1.0f + std::exp (-x * (type == 4 ? 3.0f : 6.0f)));   // high shelf
+            case 0: return gain; // full band
+            case 1:
+            {
+                // bell: (s^2 + s g/Q + 1) / (s^2 + s/Q + 1)
+                const float re = (1.0f - w2) * (1.0f - w2), wq = w / juce::jmax (0.1f, q);
+                return db ((re + g2 * wq * wq) / (re + wq * wq));
+            }
+            case 2: return db ((g2 + w2) / (1.0f + w2));        // low shelf, 6 dB/oct
+            case 3: return db ((g2 + w4) / (1.0f + w4));        // low shelf, 12 dB/oct
+            case 4: return db ((1.0f + g2 * w2) / (1.0f + w2)); // high shelf, 6 dB/oct
+            case 5: return db ((1.0f + g2 * w4) / (1.0f + w4)); // high shelf, 12 dB/oct
             default: return 0.0f;
         }
     }
@@ -1338,8 +1350,9 @@ namespace
             const float f = in.value (o), gain = in.value (o + 1), q = in.value (o + 2);
             const int type = juce::roundToInt (in.value (o + 3) - (in.has (o + 3) ? in.param (o + 3)->min : 0.0f));
             const auto colour = colours[b % 3];
-            // The range the band moves through, then where it is now (cuts show
-            // in the gain reduction meter).
+            // The range the band moves through, then where it is now: the
+            // band's own live gain when the engine reports it, else (cuts
+            // only) the slot's gain reduction.
             const auto full = frequencyCurve (r, span, [&] (float hz) { return bandDb (hz, f, gain, q, type); });
             fillToZero (g, full, r, colour.withAlpha (0.16f));
             juce::Path dashed;
@@ -1347,7 +1360,8 @@ namespace
             juce::PathStrokeType (2.0f).createDashedStroke (dashed, full, dashes, 2);
             g.setColour (colour.withAlpha (0.7f));
             g.fillPath (dashed);
-            const float now = gain < 0.0f ? -juce::jmin (in.ctx.reduction, -gain) : 0.0f;
+            const float now = in.ctx.bandGain ? juce::jlimit (juce::jmin (0.0f, gain), juce::jmax (0.0f, gain), in.ctx.bandGain (b))
+                                              : (gain < 0.0f ? -juce::jmin (in.ctx.reduction, -gain) : 0.0f);
             const auto live = frequencyCurve (r, span, [&] (float hz) { return bandDb (hz, f, now, q, type); });
             g.setColour (colour);
             g.strokePath (live, juce::PathStrokeType (3.0f));
@@ -1668,12 +1682,25 @@ namespace
         frequencyGrid (g, r, span, 6.0f);
         const float f = in.value (0, 5000.0f), range = juce::jmax (0.0f, in.value (1));
         const bool full = in.text (2).startsWithIgnoreCase ("FULL");
-        // The band the detector listens to.
-        const auto band = frequencyCurve (r, span, [&] (float hz) { return 6.0f / (1.0f + std::pow (std::log2 (hz / f) * 1.8f, 2.0f)); });
+        // The band the detector listens to: everything above FREQ (12 dB/oct high pass).
+        const auto band = frequencyCurve (r, span, [&] (float hz)
+        {
+            const float w4 = std::pow (hz / juce::jmax (1.0f, f), 4.0f);
+            return 6.0f * w4 / (1.0f + w4);
+        });
         fillToZero (g, band, r, kCurve2.withAlpha (0.25f));
+        // HF ONLY: the DSP's 12 dB/oct high shelf, its corner a little under
+        // FREQ so that at the full RANGE half the cut is at FREQ.
+        const float corner = juce::jmax (1.0f, f) * std::pow (10.0f, -range * 0.25f / 20.0f);
         auto cut = [&] (float depth)
         {
-            return frequencyCurve (r, span, [&] (float hz) { return full ? -depth : -depth / (1.0f + std::exp (-std::log2 (hz / f) * 5.0f)); });
+            return frequencyCurve (r, span, [&] (float hz)
+            {
+                if (full)
+                    return -depth;
+                const float w4 = std::pow (hz / corner, 4.0f), g2 = std::pow (10.0f, -depth / 10.0f);
+                return 10.0f * std::log10 ((1.0f + g2 * w4) / (1.0f + w4));
+            });
         };
         juce::Path dashed;
         const float dashes[] = { 6.0f, 5.0f };
