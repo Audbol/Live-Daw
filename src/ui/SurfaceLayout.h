@@ -276,9 +276,9 @@ namespace compact
         return std::nullopt;
     }
 
-    /** What a MAIN or MATRIX key does besides putting its main or matrix on
-        fader 13: spill it (the strips feeding it onto the faders) or Sends on
-        Fader to it (the faders show the channels' sends to it). */
+    /** What a BUS, MAIN or MATRIX key does besides putting its bus, main or
+        matrix on fader 13: spill it (the strips feeding it onto the faders) or
+        Sends on Fader to it (the faders show the channels' sends to it). */
     enum class KeyAction
     {
         None,
@@ -291,19 +291,22 @@ namespace compact
         KeyAction press = KeyAction::None, hold = KeyAction::None;
     };
 
-    /** A MAIN MATRIX mode key's press and hold. MAIN SPILL / MATRIX SPILL
-        (/$ctl/cfg/mainspill, mtxspill; WING manual 5.5) choose which of the two
-        spills: off, a press sends (SOF) and a hold spills; on, the other way
-        round (WING remote protocols). The factory setting is off for the mains
-        (press: SOF to the main, as the manual's 4.2 says; hold: spill) and on
-        for the matrices (hold: SOF to the matrix [a WING COMPACT's owner]).
-        Sidecar has no matrix spill: a MATRIX key's spill does nothing. */
-    inline KeyActions mainMatrixActions (int key, bool mainSpill, bool matrixSpill)
+    /** A BUS mode key's press and hold: a press Sends on Fader to the bus, a
+        hold spills it (WING manual 4.2, confirmed on a WING COMPACT). */
+    inline KeyActions busActions() { return { KeyAction::Sends, KeyAction::Spill }; }
+
+    /** A MAIN MATRIX mode key's press and hold. MAIN SPILL (/$ctl/cfg/mainspill;
+        WING manual 5.5) chooses: off, a press sends (SOF) and a hold spills; on,
+        the other way round (WING remote protocols). The factory setting is off
+        (press: SOF to the main, as the manual's 4.2 says; hold: spill). A
+        MATRIX key sends on both (manual 4.2, and a WING COMPACT's owner): Sidecar
+        has no matrix spill, so MATRIX SPILL has nothing to swap in. */
+    inline KeyActions mainMatrixActions (int key, bool mainSpill, bool /*matrixSpill*/)
     {
         if (key >= 0 && key < 4)
             return mainSpill ? KeyActions { KeyAction::Spill, KeyAction::Sends } : KeyActions { KeyAction::Sends, KeyAction::Spill };
         if (key >= 8 && key < kNumKeys)
-            return matrixSpill ? KeyActions { KeyAction::None, KeyAction::Sends } : KeyActions { KeyAction::Sends, KeyAction::None };
+            return { KeyAction::Sends, KeyAction::Sends };
         return {};
     }
 } // namespace compact

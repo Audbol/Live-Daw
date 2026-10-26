@@ -26,10 +26,10 @@ CompactSection::CompactSection (UiContext& c) : ctx (c), fader13 (c, LayerSet::C
         k->ledState = [this, i] { return keyMode() == modes[i] ? SurfaceKey::Lit : SurfaceKey::Off; };
         addAndMakeVisible (*k);
     }
-    modeKeys[0]->setTooltip ("BUS: the 16 keys are BUS 1-16 (press: spill the bus and put it on fader 13)");
+    modeKeys[0]->setTooltip ("BUS: the 16 keys are BUS 1-16 (press: sends on fader, hold: spill); fader 13 follows");
     modeKeys[1]->setTooltip ("DCA: the 16 keys are DCA 1-16 (press: spill the DCA), or the custom control sets D1-D4 (USE DCA BUTTONS 1-16 AS CC)");
     modeKeys[2]->setTooltip ("MAIN MATRIX: keys 1-4 MAIN 1-4 (press: sends on fader, hold: spill), 5-8 the custom control set M/M, "
-                             "9-16 MATRIX 1-8 (hold: sends on fader); fader 13 follows");
+                             "9-16 MATRIX 1-8 (sends on fader); fader 13 follows");
     modeKeys[3]->setTooltip ("USER: the 16 keys are the custom control sets U1-U4");
 
     // VIEW: the FADERS screen; held, CUSTOM CONTROLS on the keys' set (WING manual Table 4.4).
@@ -121,19 +121,15 @@ void CompactSection::pressKey (int key, bool held)
     }
 
     // A bus, main or matrix: the key selects it for fader 13; pressed again it
-    // lets go (and ends what the press started). BUS keys spill (held or not);
-    // MAIN and MATRIX keys do what MAIN / MATRIX SPILL give press and hold.
+    // lets go (and ends what the press started). BUS keys send on a press and
+    // spill on a hold; MAIN and MATRIX keys do what MAIN SPILL gives them.
     const bool deselect = ! held && key == selectedKey;
     selectedKey = deselect ? -1 : key;
-    cc::Function f;
-    if (keyMode() == compact::KeyMode::Bus)
-        f = keyFunction (key);
-    else
-    {
-        const auto actions = compact::mainMatrixActions (key, ctx.settings.getBoolValue (uiprefs::compactMainSpill, uiprefs::compactMainSpillDefault),
-                                                         ctx.settings.getBoolValue (uiprefs::compactMatrixSpill, uiprefs::compactMatrixSpillDefault));
-        f = actionFunction (key, held ? actions.hold : actions.press);
-    }
+    const auto actions = keyMode() == compact::KeyMode::Bus
+                             ? compact::busActions()
+                             : compact::mainMatrixActions (key, ctx.settings.getBoolValue (uiprefs::compactMainSpill, uiprefs::compactMainSpillDefault),
+                                                           ctx.settings.getBoolValue (uiprefs::compactMatrixSpill, uiprefs::compactMatrixSpillDefault));
+    const auto f = actionFunction (key, held ? actions.hold : actions.press);
     // A press turns its function on (off when deselecting); a hold toggles it.
     if (f.isAssigned() && (held || cc::isLit (ctx, f) == deselect))
     {
@@ -154,7 +150,9 @@ cc::Function CompactSection::actionFunction (int key, compact::KeyAction action)
             return { cc::BtnSendsOnFader, cc::encodeStrip (state::StripRef::of (*s)), 0 };
         return {};
     }
-    // Sidecar spills mains, not matrices.
+    // Sidecar spills buses and mains, not matrices.
+    if (mf->group == compact::MainFader::Bus)
+        return keyFunction (key);
     return mf->group == compact::MainFader::Main ? cc::Function { cc::BtnFaderSpill, mainSpillTarget (mf->number), 0 } : cc::Function {};
 }
 
@@ -223,8 +221,8 @@ bool CompactSection::keyLit (int key) const
         return true;
     if (const auto f = keyFunction (key); f.isAssigned() && cc::isLit (ctx, f))
         return true;
-    // A MAIN or MATRIX key lights while its sends or spill are on.
-    if (keyMode() == compact::KeyMode::Main && keyMainFader (key))
+    // A BUS, MAIN or MATRIX key lights while its sends or spill are on.
+    if (keyMainFader (key))
         for (auto a : { compact::KeyAction::Spill, compact::KeyAction::Sends })
             if (const auto f = actionFunction (key, a); f.isAssigned() && cc::isLit (ctx, f))
                 return true;

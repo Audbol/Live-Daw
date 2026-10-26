@@ -13,7 +13,7 @@ All notable changes to Sidecar are listed here. Versions follow
   12 faders (three modules of four) with the COMPACT's nine layer keys (`1-12`, `13-24`,
   `25-36`, `37-48 AUX IN`, `BUS MASTER`, `MAIN MATRIX`, `DCA`, `USER 1`, `USER 2`) and
   the shift keys, and the key section. **BUS**, **DCA**, **MAIN MATRIX** and **USER**
-  choose what the 16 keys do. BUS: a key spills its bus and puts it on fader 13. MAIN
+  choose what the 16 keys do. BUS: a key puts its bus on fader 13. MAIN
   MATRIX: keys 1-4 put MAIN 1-4 on fader 13, keys 9-16 MATRIX 1-8. DCA: a key spills
   its DCA. USER: custom control keys (see the key sets below).
   **Fader 13** is the main fader, MAIN 1 at first; it has no scribble strip, only its
@@ -37,12 +37,13 @@ All notable changes to Sidecar are listed here. Versions follow
   layer shown. WING REMOTE: `/$ctl/user/U1`-`U4`, `MM` and `D1`-`D4` while the console
   is a COMPACT (the full-size console keeps `U1`-`U3` as the 4-Channel section's F1-F3
   layers). Stored with the show as custom control layers 24-32.
-- WING COMPACT MAIN and MATRIX keys: a MAIN key pressed turns on Sends on Fader to the
-  main and held spills it; a MATRIX key held turns on Sends on Fader to the matrix.
-  The main or matrix still goes on fader 13. A selected key pressed again lets go:
+- WING COMPACT BUS, MAIN and MATRIX keys (WING manual 4.2, checked on a COMPACT): a
+  BUS or MAIN key pressed turns on Sends on Fader to the bus or main and held spills
+  it; a MATRIX key, pressed or held, turns on Sends on Fader to the matrix. The bus,
+  main or matrix still goes on fader 13. A selected key pressed again lets go:
   fader 13 goes back to MAIN FADER and the SOF or spill ends. SETUP > SURFACE on a
   COMPACT has MAIN FADER, KEEP MAIN FADER, MAIN SPILL and MATRIX SPILL (which of press
-  and hold spills or sends) and USE DCA BUTTONS 1-16 AS CC, and DCA SPILL reads DCA
+  and hold spills or sends; Sidecar has no matrix spill, so MATRIX SPILL is only kept) and USE DCA BUTTONS 1-16 AS CC, and DCA SPILL reads DCA
   SELECT SPILL; the full-size console's F1-F3, right section SOF and user layer link
   rows are hidden. WING REMOTE: `/$ctl/cfg/mfdrkeep`, `mainspill`, `mtxspill`, `dcacc`.
 - Main spill: the channels, aux and buses feeding a main come onto the faders, as

@@ -150,12 +150,15 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   settings don't apply: it always has 12 faders.
 - **Key section:** **BUS**, **DCA**, **MAIN MATRIX** and **USER** choose what the 16
   keys do.
-  - BUS: keys 1-16 are BUS 1-16. A press spills the bus and puts it on fader 13.
+  - BUS: keys 1-16 are BUS 1-16. A press turns on Sends on Fader to the bus; held, it
+    spills the bus (the sources sending to it come onto the faders). Either way the
+    bus goes on fader 13.
   - MAIN MATRIX: keys 1-4 are MAIN 1-4, keys 5-8 the custom control keys of the set
     M/M, keys 9-16 MATRIX 1-8. A MAIN key pressed turns on Sends on Fader to the main
     (the faders show the channels' main sends); held, it spills the main: the
-    channels, aux and buses feeding it come onto the faders. A MATRIX key held turns
-    on Sends on Fader to the matrix. Either way the main or matrix goes on fader 13.
+    channels, aux and buses feeding it come onto the faders. A MATRIX key, pressed or
+    held, turns on Sends on Fader to the matrix. Either way the main or matrix goes on
+    fader 13.
   - DCA: a press spills the DCA. With SETUP > SURFACE > USE DCA BUTTONS 1-16 AS CC
     on, the keys are the custom control keys of the sets D1-D4.
   - USER: the custom control keys of the sets U1-U4 (keys 1-4 U1, 5-8 U2, 9-12 U3,
@@ -174,8 +177,9 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   cell filled.
 - SETUP > SURFACE has the COMPACT's own rows: USE DCA BUTTONS 1-16 AS CC, MAIN FADER,
   KEEP MAIN FADER, **MAIN SPILL** (on: a MAIN key pressed spills and held turns on
-  Sends on Fader) and **MATRIX SPILL** (on, the factory setting: a MATRIX key held
-  turns on Sends on Fader; off: pressed). DCA SPILL is called DCA SELECT SPILL. The
+  Sends on Fader) and **MATRIX SPILL** (kept and answered over WING REMOTE; Sidecar
+  has no matrix spill, so a MATRIX key sends either way). DCA SPILL is called DCA
+  SELECT SPILL. The
   full-size WING's rows USE F1-F3 AS CUSTOM CONTROLS, RIGHT SECTION SENDS ON FADER and
   USER LAYER LINK are hidden.
 - The COMPACT has no channel strip section, custom controls section, 4-Channel

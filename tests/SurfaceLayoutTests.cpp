@@ -158,18 +158,20 @@ public:
             expect (! compact::keyControl (KM::User, 16, false).has_value());
         }
 
-        beginTest ("MAIN and MATRIX keys: press and hold");
+        beginTest ("BUS, MAIN and MATRIX keys: press and hold");
         {
             using A = compact::KeyAction;
             auto is = [] (compact::KeyActions a, A press, A hold) { return a.press == press && a.hold == hold; };
-            // The factory setting: MAIN pressed SOF, held spill; MATRIX held SOF.
+            // BUS: pressed SOF, held spill (a WING COMPACT's owner, manual 4.2).
+            expect (is (compact::busActions(), A::Sends, A::Spill));
+            // The factory setting: MAIN pressed SOF, held spill; MATRIX SOF either way.
             expect (is (compact::mainMatrixActions (0, false, true), A::Sends, A::Spill));
             expect (is (compact::mainMatrixActions (3, false, true), A::Sends, A::Spill));
-            expect (is (compact::mainMatrixActions (8, false, true), A::None, A::Sends));
-            expect (is (compact::mainMatrixActions (15, false, true), A::None, A::Sends));
-            // MAIN SPILL / MATRIX SPILL swap them.
+            expect (is (compact::mainMatrixActions (8, false, true), A::Sends, A::Sends));
+            expect (is (compact::mainMatrixActions (15, false, true), A::Sends, A::Sends));
+            // MAIN SPILL swaps the main's; MATRIX SPILL has no matrix spill to swap in.
             expect (is (compact::mainMatrixActions (1, true, true), A::Spill, A::Sends));
-            expect (is (compact::mainMatrixActions (9, false, false), A::Sends, A::None));
+            expect (is (compact::mainMatrixActions (9, false, false), A::Sends, A::Sends));
             // Keys 5-8 are custom controls.
             expect (is (compact::mainMatrixActions (5, false, true), A::None, A::None));
         }

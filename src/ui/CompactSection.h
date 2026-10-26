@@ -19,14 +19,15 @@ namespace compact = layout::compact;
     A key selects its bus, main or matrix: fader 13 controls it until the key
     is pressed again (or another one is), then goes back to MAIN FADER's
     source; KEEP MAIN FADER (/$ctl/cfg/mfdrkeep) leaves fader 13 alone.
-    - BUS: BUS 1-16; a press spills the bus (the sources sending to it) onto
-      the faders [a WING COMPACT's owner].
+    - BUS: BUS 1-16; a press shows the channels' sends to the bus on the
+      faders (SOF), held spills the bus (the sources sending to it) [WING
+      manual 4.2, a WING COMPACT's owner].
     - MAIN MATRIX: MAIN 1-4 on keys 1-4, the custom control set M/M on keys
       5-8, MATRIX 1-8 on keys 9-16. A MAIN key pressed shows the channels'
       sends to the main on the faders (SOF), held spills the main (the
-      strips feeding it); a MATRIX key held shows the sends to the matrix.
-      MAIN SPILL / MATRIX SPILL swap press and hold (layout::compact::
-      mainMatrixActions).
+      strips feeding it); a MATRIX key, pressed or held, shows the sends to
+      the matrix. MAIN SPILL swaps a MAIN key's press and hold (layout::
+      compact::mainMatrixActions).
     - DCA: DCA 1-16; a press spills the DCA's members onto the faders. With
       USE DCA BUTTONS 1-16 AS CC (/$ctl/cfg/dcacc) the keys are the custom
       control sets D1-D4.
