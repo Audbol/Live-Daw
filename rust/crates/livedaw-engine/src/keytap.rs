@@ -2,6 +2,17 @@
 //! the key at one of that channel's tap points (`TAP_POINTS`: IN, FILT,
 //! 3, 4, 5, PFL, AFL, POST), as a mono signal (a stereo channel's L + R / 2).
 //!
+//! Aux channels, buses, mains and matrices key their DYNAMICS from the
+//! buses, mains, matrices and aux channels instead, as the WING's
+//! `/bus/n/dynsc/src` list (SELF, BUS.1-16, MAIN.1-4, MTX.1-8, AUX.1-8),
+//! at one of the taps of `/bus/n/dynsc/tap` ([`OUTPUT_KEY_TAPS`]: BUS, DYN,
+//! PFL, AFL, EQ, INS2). `sc_source` holds such a source as
+//! [`KEY_STRIP_BASE`] × kind + index ([`KeySource`]; an older bus keyed from
+//! an input channel keeps the channel's index and taps). A key from a strip
+//! of an earlier summing stage ([`stage_of`]) takes its tap of this block;
+//! one from the same or a later stage (a bus keyed from a main, an aux from
+//! an aux) that of the previous block.
+//!
 //! The source channel writes each tap some key reads into a buffer of its
 //! own while it runs. Buffers are allocated on the message thread, only for
 //! the (channel, tap) pairs some key uses (`Engine::update_keys`, from
@@ -21,12 +32,127 @@
 //! half a reader in the same wave takes.
 
 use crate::garbage::Garbage;
-use crate::params::StripParams;
+use crate::params::{StripKind, StripParams};
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicPtr, Ordering::*};
 
-/// The tap points a key can take (`TAP_POINTS`).
-pub const NUM_KEY_TAPS: usize = 8;
+/// The tap buffers of a strip: the input channel taps (`TAP_POINTS`), then
+/// the post-fader EQ of buses, mains and matrices ([`TAP_EQ_POST`]) and
+/// INS 2 ([`TAP_INS2`]), which only the keys of `OUTPUT_KEY_TAPS` take.
+pub const NUM_KEY_TAPS: usize = 10;
+/// Buses, mains and matrices after their post-fader EQ (aux: the EQ is tap "4").
+pub const TAP_EQ_POST: usize = 8;
+/// After INS 2, before the post-fader delay (aux, without INS 2: after the fader).
+pub const TAP_INS2: usize = 9;
+
+/// Aux, bus, main and matrix key sources in `sc_source`: `KEY_STRIP_BASE *
+/// kind + index` (kind as `StripKind`, index from 0). Smaller values are
+/// input channels.
+pub const KEY_STRIP_BASE: i32 = 0x10000;
+
+/// The taps an aux, bus, main or matrix key takes from its source (WING
+/// `dynsc/tap`, in list order).
+pub const OUTPUT_KEY_TAPS: [&str; 6] = ["BUS", "DYN", "PFL", "AFL", "EQ", "INS2"];
+
+/// What a slot's `sc_source` names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeySource {
+    /// The slot keys itself.
+    SelfKey,
+    /// Input channel `n` (from 0).
+    Channel(usize),
+    /// An aux, bus, main or matrix (index from 0).
+    Strip(StripKind, usize),
+}
+
+impl KeySource {
+    pub fn from_code(code: i32) -> Self {
+        if code < 0 {
+            return Self::SelfKey;
+        }
+        if code < KEY_STRIP_BASE {
+            return Self::Channel(code as usize);
+        }
+        match StripKind::from_i32(code / KEY_STRIP_BASE) {
+            Some(kind) if kind != StripKind::Channel => Self::Strip(kind, (code % KEY_STRIP_BASE) as usize),
+            _ => Self::SelfKey,
+        }
+    }
+
+    pub fn code(self) -> i32 {
+        match self {
+            Self::SelfKey => -1,
+            Self::Channel(n) => n as i32,
+            Self::Strip(kind, i) => kind as i32 * KEY_STRIP_BASE + i as i32,
+        }
+    }
+
+    /// The WING's name ("SELF", "CH.3", "BUS.12", "MAIN.1", "MTX.2", "AUX.4").
+    pub fn wing_name(self) -> String {
+        match self {
+            Self::SelfKey => "SELF".into(),
+            Self::Channel(n) => format!("CH.{}", n + 1),
+            Self::Strip(kind, i) => format!("{}.{}", strip_prefix(kind), i + 1),
+        }
+    }
+
+    /// Parses a WING name (see `wing_name`).
+    pub fn from_wing_name(text: &str) -> Option<Self> {
+        if text == "SELF" {
+            return Some(Self::SelfKey);
+        }
+        let (prefix, n) = text.split_once('.')?;
+        let i = n.parse::<usize>().ok()?.checked_sub(1)?;
+        if prefix == "CH" {
+            return Some(Self::Channel(i));
+        }
+        let kind = [StripKind::Aux, StripKind::Bus, StripKind::Main, StripKind::Matrix]
+            .into_iter()
+            .find(|&k| strip_prefix(k) == prefix)?;
+        Some(Self::Strip(kind, i))
+    }
+}
+
+fn strip_prefix(kind: StripKind) -> &'static str {
+    match kind {
+        StripKind::Channel => "CH",
+        StripKind::Aux => "AUX",
+        StripKind::Bus => "BUS",
+        StripKind::Main => "MAIN",
+        StripKind::Matrix => "MTX",
+    }
+}
+
+/// The tap buffer a key takes: an input channel's tap point (`sc_tap` as
+/// `TAP_POINTS`) or, from an aux, bus, main or matrix, the buffer of
+/// `OUTPUT_KEY_TAPS[sc_tap]` on a strip of that kind.
+pub fn key_buffer(source: KeySource, sc_tap: i32) -> usize {
+    match source {
+        KeySource::Strip(kind, _) => match sc_tap.clamp(0, OUTPUT_KEY_TAPS.len() as i32 - 1) {
+            0 => 0,                           // BUS: the strip's input (IN)
+            1 => 2,                           // DYN: after the first block (DYNAMICS on all of them)
+            2 => 5,                           // PFL
+            3 => 6,                           // AFL
+            4 if kind == StripKind::Aux => 3, // EQ: aux run DYNAMICS, EQ, INS 1
+            4 => TAP_EQ_POST,
+            _ => TAP_INS2,
+        },
+        _ => sc_tap.clamp(0, 7) as usize,
+    }
+}
+
+/// The stage a strip runs in (`engine.rs`: 1 input and aux channels, 3
+/// buses 9+, 4 buses 1-8, 5 mains, 6 matrices). A key from a strip of an
+/// earlier stage is of this block.
+pub(crate) fn stage_of(kind: StripKind, id: i32) -> u8 {
+    match kind {
+        StripKind::Channel | StripKind::Aux => 1,
+        StripKind::Bus if id.max(0) as usize >= crate::params::BUS_TO_BUS_TARGETS => 3,
+        StripKind::Bus => 4,
+        StripKind::Main => 5,
+        StripKind::Matrix => 6,
+    }
+}
 
 /// The most stage-1 waves per block (each is one fork/join of the pool).
 pub const MAX_KEY_WAVES: u8 = 4;
@@ -164,15 +290,19 @@ impl Drop for StripKeyTaps {
 }
 
 /// The input channels a strip's GATE and DYNAMICS keys come from (-1 =
-/// none or itself): the gate runs on input channels only.
+/// none, itself or no input channel): the gate runs on input channels only.
 pub(crate) fn key_sources(p: &StripParams, has_gate: bool) -> [i32; 2] {
-    let src = |s: &crate::params::DynSlotParams| s.sc_source.load(Relaxed);
+    let src = |s: &crate::params::DynSlotParams| match KeySource::from_code(s.sc_source.load(Relaxed)) {
+        KeySource::Channel(n) => n as i32,
+        _ => -1,
+    };
     [if has_gate { src(&p.gate) } else { -1 }, src(&p.dynamics)]
 }
 
-/// The tap point a slot's key takes.
-pub(crate) fn key_tap(s: &crate::params::DynSlotParams) -> usize {
-    s.sc_tap.load(Relaxed).clamp(0, NUM_KEY_TAPS as i32 - 1) as usize
+/// A slot's key source and the tap buffer its key takes.
+pub(crate) fn key_tap(s: &crate::params::DynSlotParams) -> (KeySource, usize) {
+    let source = KeySource::from_code(s.sc_source.load(Relaxed));
+    (source, key_buffer(source, s.sc_tap.load(Relaxed)))
 }
 
 /// Stage 1's order for one block: the wave of each strip (input channels,
@@ -312,6 +442,36 @@ mod tests {
             out
         });
         s
+    }
+
+    #[test]
+    fn key_sources_round_trip_through_codes_and_wing_names() {
+        use StripKind::*;
+        for src in [
+            KeySource::SelfKey,
+            KeySource::Channel(39),
+            KeySource::Strip(Bus, 15),
+            KeySource::Strip(Main, 0),
+            KeySource::Strip(Matrix, 7),
+            KeySource::Strip(Aux, 3),
+        ] {
+            assert_eq!(KeySource::from_code(src.code()), src);
+            assert_eq!(KeySource::from_wing_name(&src.wing_name()), Some(src));
+        }
+        assert_eq!(KeySource::Strip(Bus, 11).wing_name(), "BUS.12");
+        assert_eq!(KeySource::from_wing_name("MTX.2"), Some(KeySource::Strip(Matrix, 1)));
+        assert_eq!(KeySource::from_wing_name("AUX.0"), None);
+        assert_eq!(KeySource::from_code(5), KeySource::Channel(5), "an older bus key from a channel");
+        assert_eq!(KeySource::from_code(KEY_STRIP_BASE * 9), KeySource::SelfKey);
+        // BUS, DYN, PFL, AFL, EQ, INS2; an aux's EQ is its second block.
+        let taps = |kind| (0..6).map(|t| key_buffer(KeySource::Strip(kind, 0), t)).collect::<Vec<_>>();
+        assert_eq!(taps(Bus), [0, 2, 5, 6, TAP_EQ_POST, TAP_INS2]);
+        assert_eq!(taps(Aux), [0, 2, 5, 6, 3, TAP_INS2]);
+        assert_eq!(key_buffer(KeySource::Channel(0), 7), 7);
+        assert!(
+            stage_of(Aux, 0) < stage_of(Bus, 8) && stage_of(Bus, 8) < stage_of(Bus, 7) && stage_of(Bus, 7) < stage_of(Main, 0)
+        );
+        assert!(stage_of(Main, 3) < stage_of(Matrix, 0));
     }
 
     #[test]

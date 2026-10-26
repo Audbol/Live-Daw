@@ -20,7 +20,8 @@ namespace livedaw::ui
 
     The screen keys, CLR SOLO and the blank key (ALT) also form the console's
     shortcuts: hold CLR SOLO and press UTILITY for a screenshot, hold HOME to
-    lock the surface, hold SETUP + ALT and press CLR SOLO to turn touch off
+    lock the surface (with other keys beside the display held as a password),
+    hold SETUP + ALT and press CLR SOLO to turn touch off
     (ALT + CLR SOLO turns it on again), hold ALT and turn the knob for the
     display's brightness. A right-click "holds" a key for a few seconds. */
 class MainDisplay final : public juce::Component, private juce::Timer
@@ -54,6 +55,12 @@ public:
     /** Touch off (SETUP + ALT + CLR SOLO): the screen ignores the mouse and the
         status bar shows a small X. */
     void setTouchDisabled (bool);
+
+    /** Surface lock (MainComponent, SurfaceLock): the screen, the knobs and
+        the meter ignore input, the keys beside the display only unlock;
+        with SHOW METER PAGE WHEN LOCKED the METERS screen shows meanwhile. */
+    void setLocked (bool);
+    bool isLocked() const noexcept { return locked; }
     bool isTouchDisabled() const noexcept { return touchDisabled; }
 
     /** Screen only (the main component shows nothing else): the display, its
@@ -134,7 +141,9 @@ private:
     std::unique_ptr<Highlight> highlight;
     std::unique_ptr<ChannelSelect> channelSelect;
     std::unique_ptr<FocusTracker> focusTracker;
-    std::unique_ptr<Overlay> popupLayer, touchBlocker, lcdScrim;
+    std::unique_ptr<Overlay> popupLayer, touchBlocker, lcdScrim, lockBlocker;
+    Screen screenBeforeLock = Screen::Home;
+    bool locked = false;
 
     juce::Rectangle<int> frameArea, screenArea, statusArea, slotArea, pageArea, encoderArea;
     juce::Rectangle<int> channelTab, numberBox, chipsTile, usbTile, liveTile, clockTile;

@@ -18,7 +18,7 @@
 use crate::analyser::{listen_mode, rta_tap, Probes, StripProbe};
 use crate::atomic::AtomicF32;
 use crate::fx::FxRack;
-use crate::keytap::{key_tap, StripKeyTaps};
+use crate::keytap::{key_tap, stage_of, KeySource, StripKeyTaps, TAP_EQ_POST, TAP_INS2};
 use crate::monitor::SoloPatch;
 use crate::params::{DcaParams, DynSlotParams, FxParams, StripKind, StripMeters, StripParams, NUM_MAINS, NUM_MATRICES};
 use crate::pdc::{pdc_tap, StripPdc};
@@ -70,6 +70,8 @@ pub(crate) struct ProcessContext<'a> {
     pub global_alt: bool,
     /// The input channels (for sidechain keys from other channels).
     pub channels: &'a [Arc<Strip>],
+    /// The aux, bus, main and matrix keys of aux, bus, main and matrix DYNAMICS.
+    pub key_strips: KeyStrips<'a>,
     /// KEY TAP (`keytap.rs`): the stage-1 wave of each input channel this
     /// block, and the wave this task runs in (None: a later stage, after
     /// every channel ran).
@@ -81,6 +83,30 @@ pub(crate) struct ProcessContext<'a> {
     /// SOURCE SOLO (`monitor.rs`): the host strip and the soloed source's
     /// ports, which it plays instead of its own input this block.
     pub source_solo: Option<(&'a Strip, SoloPatch)>,
+}
+
+/// The strips other than input channels a key can come from (`keytap.rs`).
+#[derive(Clone, Copy)]
+pub(crate) struct KeyStrips<'a> {
+    pub auxes: &'a [Arc<Strip>],
+    /// The buses in any order (found by id).
+    pub buses: [&'a [Arc<Strip>]; 2],
+    pub mains: &'a [Arc<Strip>],
+    pub matrices: &'a [Arc<Strip>],
+}
+
+impl<'a> KeyStrips<'a> {
+    /// The strip of `kind` with index `i` (from 0).
+    pub fn get(&self, kind: StripKind, i: usize) -> Option<&'a Strip> {
+        let found = match kind {
+            StripKind::Channel => None,
+            StripKind::Aux => self.auxes.get(i),
+            StripKind::Bus => self.buses.iter().flat_map(|b| b.iter()).find(|b| b.id() as usize == i),
+            StripKind::Main => self.mains.get(i),
+            StripKind::Matrix => self.matrices.get(i),
+        };
+        found.map(|s| s.as_ref())
+    }
 }
 
 impl ProcessContext<'_> {
@@ -809,12 +835,17 @@ impl Strip {
         // Buses, mains and matrices: the EQ is post-fader.
         if kind.is_output() {
             self.run_eq_probed(d, ctx, &probe, &mut listened, n);
+            self.tap_at(d, ctx, TAP_EQ_POST, n);
         }
 
         // INS 2 (automix is applied by the engine after all channels ran; it
         // follows the post-fader level, so the fader shapes the automix response).
         if self.post_insert_fx().is_some() {
             self.run_insert(d, ctx, n, true);
+        }
+        // The INS2 key tap of aux, bus, main and matrix keys (keytap.rs).
+        if kind != StripKind::Channel {
+            self.tap_at(d, ctx, TAP_INS2, n);
         }
         if self.automix_group().is_some() {
             let power: f32 = (0..nc).map(|ch| d.work[ch][..n].iter().map(|x| x * x).sum::<f32>()).sum::<f32>() / (n * nc) as f32;
@@ -927,9 +958,23 @@ impl Strip {
     /// Key signal for a dynamics slot into `d.key`: another channel's signal
     /// at the slot's KEY TAP (`keytap.rs`), or false (the strip keys itself).
     unsafe fn key_for(&self, d: &mut StripDsp, ctx: &ProcessContext, slot: &DynSlotParams, n: usize) -> bool {
-        let Ok(source) = usize::try_from(slot.sc_source.load(Relaxed)) else { return false };
+        let (source, buffer) = key_tap(slot);
+        let source = match source {
+            KeySource::SelfKey => return false,
+            KeySource::Channel(i) => i,
+            KeySource::Strip(kind, i) => {
+                // An aux, bus, main or matrix: this block's tap from an earlier
+                // stage, else the previous block's; silence until it has a buffer.
+                let Some(s) = ctx.key_strips.get(kind, i) else { return false };
+                let current = stage_of(kind, s.id) < stage_of(self.kind, self.id);
+                if !s.keys.read(buffer, ctx.block, current, &mut d.key[..n]) {
+                    d.key[..n].fill(0.0);
+                }
+                return true;
+            }
+        };
         let Some(ch) = ctx.channels.get(source) else { return false };
-        if ch.keys.read(key_tap(slot), ctx.block, ctx.key_is_current(source), &mut d.key[..n]) {
+        if ch.keys.read(buffer, ctx.block, ctx.key_is_current(source), &mut d.key[..n]) {
             return true;
         }
         // The tap's buffer isn't planned yet (`Engine::update_keys`): the channel's input.

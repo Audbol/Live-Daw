@@ -124,7 +124,7 @@ private:
     std::unique_ptr<OnKey> sendLevels;
     std::unique_ptr<MonitorEqView> eqView;
     juce::Component anchor;
-    std::array<float, 2> shownPeak {}, phonesPeak {};
+    std::array<float, 2> shownPeak {};
     float limiterGr = 0.0f, shownGr = 0.0f;
     juce::String shownEq;
     std::vector<double> eqKeyFreqs;

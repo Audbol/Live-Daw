@@ -33,6 +33,35 @@ All notable changes to Sidecar are listed here. Versions follow
   `wing-fullsize` or `wing-compact`, so WING Edit and Mixing Station show the right
   model. Exported snapshots name the model as WING Edit's do. The serial
   `SIDECAR0001` and the firmware's `sidecar` still tell Sidecar apart.
+- SOLO SAFE on Channel Home (manual 5.5, Fig. 37-39): the MAIN panel follows SOLO MODE.
+  LIVE shows SOLO BUS; STUDIO the mains 1-4 in a row with their PRE badges; SIP the
+  SOLO SAFE locks on input and aux channels. A closed lock keeps SIP from muting the
+  channel. WING REMOTE: `/aux/n/solosafe` too.
+- Dynamics KEY SOURCE on aux, buses, mains and matrices, as on the WING: SELF or any of
+  BUS 1-16, MAIN 1-4, MTX 1-8, AUX 1-8, at the KEY TAP BUS, DYN, PRE FDR, POST FDR, EQ
+  or INS 2 (the engine keys them; a key from a strip that runs later in the block is
+  one block late). WING REMOTE: `dynsc/src` and `dynsc/tap` of aux, buses, mains and
+  matrices, both ways.
+- MAIN METER SOURCE (SETUP > SURFACE and the meter's right-click) has every source of
+  the manual: MAIN 1-4, MTX 1-8, PHONES, SPEAKERS and SEL CH (the selected strip, at its
+  kind's meter tap with AUTO). WING REMOTE: every `/cfg/mtr/mainmtr` item.
+- Surface lock as in the manual (chapter 10): hold HOME to lock the surface and the
+  touchscreen; other keys beside the display held with HOME are the password, and only
+  HOME with the same keys unlocks. SHOW METER PAGE WHEN LOCKED works: METERS shows while
+  locked. Ctrl+L is HOME alone. WING REMOTE: `/$ctl/$globals/lockmtr` and the read-only
+  lock string `/$ctl/$stat/cnslock`.
+- Tap tempo on the INS 1 / INS 2 screens of HOME, as on EFFECTS: the blank key taps
+  the TIME of the delay the insert holds.
+
+### Changed
+
+- SEL DBL CLICK = BUSFX opens INS 1 on mains and matrices too (it did on buses only),
+  and INS 2 when INS 1 has no FX (manual 5.5 p. 48).
+- The blank key's LED blinks at the tempo while it can tap one (manual 5.5 p. 48); it
+  was lit steadily.
+- Surface lock: holding HOME (or Ctrl+L) now also locks the touchscreen and the
+  display's knobs, leaving only the keys beside the display to unlock (it locked the
+  surface only).
 
 ## [0.1.5] - beta
 

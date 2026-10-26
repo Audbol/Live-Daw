@@ -341,12 +341,15 @@ void FaderStrip::pressSelect()
         return;
 
     // SELECT on the selected strip again (SETUP > GENERAL > SEL DBL CLICK):
-    // 0 = Channel Home, 1 = INS1 for buses (Channel Home otherwise), 2 = nothing.
+    // 0 = Channel Home, 1 = BUSFX: INS1 on buses, mains and matrices, INS2
+    // when INS1 has no FX (Strip::busFxInsert, manual 5.5 p. 48), Channel
+    // Home otherwise; 2 = nothing.
     if (ctx.getSelectedStrip && ctx.getSelectedStrip() == strip)
     {
         const int mode = ctx.settings.getIntValue ("ui.selDblClick", 1);
+        const int insert = mode == 1 ? strip->busFxInsert() : 0;
         if (mode != 2 && ctx.showHomeTab)
-            ctx.showHomeTab (mode == 1 && strip->isBus() ? HomeTab::PreInsert : HomeTab::Home);
+            ctx.showHomeTab (insert == 1 ? HomeTab::PreInsert : insert == 2 ? HomeTab::PostInsert : HomeTab::Home);
         return;
     }
     if (ctx.selectStrip)

@@ -4,6 +4,7 @@
 use livedaw_dsp::wing::{model_index, DYN_MODELS};
 mod common;
 use common::{set_channels, unity_console};
+use livedaw_engine::keytap::{KeySource, NUM_KEY_TAPS, TAP_EQ_POST, TAP_INS2};
 use livedaw_engine::params::StripKind;
 use livedaw_engine::{Engine, Strip};
 use std::sync::atomic::Ordering::Relaxed;
@@ -232,4 +233,64 @@ fn an_idle_source_keys_silence() {
     rig.run(200);
     assert!(rig.ch(0).is_idle());
     assert!(rig.out(0).abs() < 0.01, "{}", rig.out(0));
+}
+
+/// Keys `s`'s DYNAMICS (on, the GATE model, whose key meter reads the plain
+/// key) from `source` at the output tap `tap` (`OUTPUT_KEY_TAPS`).
+fn key_dynamics(s: &Strip, source: KeySource, tap: i32) {
+    let d = &s.params.dynamics;
+    d.set_model(model_index(DYN_MODELS, "GATE").unwrap());
+    d.on.store(true, Relaxed);
+    d.sc_source.store(source.code(), Relaxed);
+    d.sc_tap.store(tap, Relaxed);
+}
+
+#[test]
+fn aux_buses_mains_and_matrices_key_from_buses_mains_matrices_and_aux() {
+    let mut rig = Rig::new(2, 2, 2);
+    set_channels(&rig.engine, 2);
+    let strip = |kind, i| rig.engine.strip_at(kind, i).unwrap();
+    // Channel 2 feeds Bus 1 (and Main 1).
+    rig.ch(1).sends.get_or_create(0).unwrap().enabled.store(true, Relaxed);
+    let (bus1, bus2, main1) = (strip(StripKind::Bus, 0), strip(StripKind::Bus, 1), strip(StripKind::Main, 0));
+    let (mtx1, aux1) = (strip(StripKind::Matrix, 0), strip(StripKind::Aux, 0));
+    key_dynamics(&bus2, KeySource::Strip(StripKind::Bus, 0), 3); // BUS.1 AFL
+    key_dynamics(&main1, KeySource::Strip(StripKind::Bus, 0), 2); // BUS.1 PFL
+    key_dynamics(&mtx1, KeySource::Strip(StripKind::Main, 0), 0); // MAIN.1 BUS
+    key_dynamics(&aux1, KeySource::Strip(StripKind::Bus, 0), 5); // BUS.1 INS2
+    aux1.params.input_left.store(0, Relaxed); // patched (silent), so it isn't idle
+    rig.engine.collect();
+    assert!(bus1.keys.has(5) && bus1.keys.has(6) && bus1.keys.has(TAP_INS2) && main1.keys.has(0));
+    assert!(!bus1.keys.has(TAP_EQ_POST) && !rig.ch(1).keys.has(0), "only the taps keys take");
+
+    let key_db = |s: &Strip| s.meters.dyn_key_db.load();
+    rig.run(20);
+    for s in [&bus2, &main1, &mtx1, &aux1] {
+        assert!(key_db(s) < -99.0, "{:?}: {}", s.kind(), key_db(s));
+    }
+    // Bus 1 gets signal. A main or matrix runs after the bus or main it keys
+    // from: this block's tap. Bus 2 (the same stage) and the aux (an earlier
+    // one) take Bus 1's tap of the previous block.
+    rig.inputs[1].fill(0.5);
+    rig.run(1);
+    assert!(key_db(&main1) > -30.0 && key_db(&mtx1) > -30.0, "{} {}", key_db(&main1), key_db(&mtx1));
+    assert!(key_db(&bus2) < -99.0 && key_db(&aux1) < -99.0, "{} {}", key_db(&bus2), key_db(&aux1));
+    rig.run(1);
+    assert!(key_db(&bus2) > -30.0 && key_db(&aux1) > -30.0, "{} {}", key_db(&bus2), key_db(&aux1));
+
+    // Bus 1's fader down: AFL and INS2 (post-fader) go quiet, PFL keys on.
+    bus1.params.fader_db.store(-144.0);
+    rig.run(10);
+    assert!(key_db(&bus2) < -99.0 && key_db(&aux1) < -99.0, "{} {}", key_db(&bus2), key_db(&aux1));
+    assert!(key_db(&main1) > -30.0, "{}", key_db(&main1));
+
+    // A bus's EQ tap is after its post-fader EQ; back to SELF retires the buffers.
+    bus2.params.dynamics.sc_tap.store(4, Relaxed);
+    rig.engine.collect();
+    assert!(bus1.keys.has(TAP_EQ_POST) && !bus1.keys.has(6));
+    for s in [&bus2, &main1, &mtx1, &aux1] {
+        s.params.dynamics.sc_source.store(-1, Relaxed);
+    }
+    rig.engine.collect();
+    assert!((0..NUM_KEY_TAPS).all(|t| !bus1.keys.has(t) && !main1.keys.has(t)));
 }

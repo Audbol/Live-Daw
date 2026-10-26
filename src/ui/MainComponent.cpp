@@ -34,7 +34,7 @@ public:
         drawIcon (g, Icon::LockClosed, badge.removeFromLeft (64).reduced (14).toFloat(), Colours::yellow);
         g.setColour (Colours::text);
         g.setFont (juce::FontOptions (20.0f, juce::Font::bold));
-        g.drawText ("SURFACE LOCKED  (Ctrl+L)", badge, juce::Justification::centredLeft);
+        g.drawText ("LOCKED: HOLD HOME", badge, juce::Justification::centredLeft);
     }
 
 private:
@@ -166,8 +166,9 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     ctx.revealFader = [this] (LayerSet::Section section, const state::FaderRef& f) { sections[isCompact() ? LayerSet::Left : section]->reveal (f); };
     ctx.setConsoleModel = [this] (ConsoleModel m) { applyConsoleModel (m, true); };
     ctx.takeScreenshot = [this] { saveScreenshot(); };
-    ctx.setSurfaceLocked = [this] (bool locked) { setSurfaceLocked (locked); };
-    ctx.isSurfaceLocked = [this] { return lockOverlay != nullptr; };
+    ctx.holdHomeLock = [this] (const juce::String& held) { holdHomeLock (held); };
+    settings.setValue (uiprefs::surfaceLock, juce::String()); // a restart unlocks, as on the console
+    ctx.isSurfaceLocked = [this] { return surfaceLock.isLocked(); };
     ctx.newShow = [this] { newShow(); };
     ctx.openShow = [this] { openShow(); };
     ctx.saveShow = [this] (bool saveAs) { saveShow (saveAs); };
@@ -792,7 +793,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         }
         if (c == 'l' || k == 'l')
         {
-            setSurfaceLocked (lockOverlay == nullptr);
+            holdHomeLock (SurfaceLock::homeOnly()); // as holding HOME alone
             return true;
         }
     }
@@ -820,20 +821,30 @@ void MainComponent::saveScreenshot()
         log.warning ("Couldn't save the screenshot to " + file.getFullPathName());
 }
 
-void MainComponent::setSurfaceLocked (bool locked)
+void MainComponent::holdHomeLock (const juce::String& held)
 {
-    if (locked == (lockOverlay != nullptr))
+    const auto result = surfaceLock.holdHome (held);
+    if (result == SurfaceLock::Result::WrongCode)
+    {
+        log.info ("Surface stays locked: hold HOME with the keys it was locked with");
         return;
+    }
+    const bool locked = result == SurfaceLock::Result::Locked;
     if (locked)
     {
         lockOverlay = std::make_unique<LockOverlay> (*this);
         addAndMakeVisible (*lockOverlay);
         lockOverlay->setBounds (getLocalBounds());
+        lockOverlay->setVisible (! editorShown);
     }
     else
     {
         lockOverlay.reset();
     }
+    // The touchscreen and the display's knobs too (SHOW METER PAGE WHEN LOCKED there).
+    display->setLocked (locked);
+    // The WING remote's /$ctl/$stat/cnslock.
+    settings.setValue (uiprefs::surfaceLock, surfaceLock.getCode());
     log.info (locked ? "Surface locked" : "Surface unlocked");
 }
 

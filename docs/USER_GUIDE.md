@@ -22,7 +22,11 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
     (gate, ducker, Even 88, Soul 9000, 160 VCA, LA leveler, 1176-style, Fair Kid,
     Bus comp, NSTR, limiters, de-esser...), with sidechain filter and source
     (KEY SOURCE: the strip itself or any input channel, taken at the KEY TAP: IN,
-    FILT, 3, 4, 5, PFL, AFL or POST), and a crossover band on the dynamics slot.
+    FILT, 3, 4, 5, PFL, AFL or POST), and a crossover band on the dynamics slot. Aux,
+    buses, mains and matrices key their DYNAMICS from the strip itself or any bus,
+    main, matrix or aux, as on the WING, taken at BUS, DYN, PRE FDR, POST FDR, EQ or
+    INS 2. A key from a strip that runs later in the block (a bus keyed by a main) is
+    one audio block late.
   - **EQ:** the 6-band WING EQ (8 bands on buses) or the analog models (SOUL, E88,
     E84, F110, PULSAR, MACH4, PIA on buses), with blend/mix.
   - **PRE INSERT and POST INSERT** use the 16 FX slots; the post insert can also join
@@ -189,7 +193,9 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   scribble strip (one backlight colour on every strip; number,
   source ports or mono, icon, the name on an inverted bar), SELECT, SOLO, the meter
   block (DYN LED, a stereo six-segment input meter, GATE LED), MUTE and the fader with
-  its printed scale. SELECT on the selected strip again opens its HOME screen. MUTE
+  its printed scale. SELECT on the selected strip again opens its HOME screen. With
+  SETUP > SURFACE > SEL DBL CLICK **BUSFX** (the default), a bus, main or matrix opens
+  its INS 1 screen instead, or INS 2 when INS 1 has no FX. MUTE
   flashes while a mute group, a DCA mute or SIP mutes the strip; with MUTEGROUP/SIP
   OVERRIDE, pressing it unmutes the strip until that mute changes.
 - **SOF FLIP (Sends on Fader):** select a bus, main or matrix and the input faders set
@@ -197,9 +203,19 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
 - Surface keys act on a press; keys with a second function act on **hold** (half a
   second, or right-click): slot on/off, VIEW for CONFIG, the shift keys.
 - **Main display**, a 16:10 screen with the seven screen keys on its left (over its
-  full height) and, on its right, **CLR SOLO**, the main L/R meter (right-click: MONITOR
-  or MAIN 1-4), the knob for fine adjustments of the last touched control and the
-  blank key. **Screen only** (F10, Ctrl+Shift+F, the maximize key under the right-hand
+  full height) and, on its right, **CLR SOLO**, the main L/R meter, the knob for fine
+  adjustments of the last touched control and the blank key. The meter shows the MAIN
+  METER SOURCE of SETUP > SURFACE (or a right-click on it): MAIN 1-4, MTX 1-8, PHONES,
+  SPEAKERS or SEL CH (the selected strip). The blank key taps the tempo of a delay
+  open on EFFECTS or on an INS 1 / INS 2 screen: the time between two taps becomes its
+  TIME. Its LED blinks at that tempo while it can tap, and is lit where the screen
+  gives it another function.
+  - **Surface lock:** hold **HOME** to lock the surface and the touchscreen; the audio
+    and the remotes go on. Hold other keys beside the display together with HOME (or
+    right-click them just before) and they become the password: only HOME with the
+    same keys unlocks. Ctrl+L is HOME alone. With SETUP > GENERAL > SHOW METER PAGE
+    WHEN LOCKED, the METERS screen shows while locked. Restarting Sidecar unlocks.
+  - **Screen only** (F10, Ctrl+Shift+F, the maximize key under the right-hand
   column or a double-click on an empty part of the status bar; Esc returns) shows just
   the display with its keys and knobs, as large as the window allows; **F11** makes the
   window full screen. Both work together and are remembered.
@@ -217,7 +233,9 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     and the wrench to drag the slots and the TAP point), the **OVERVIEW** (INPUT,
     FILTER, LEVEL, EQ and MAIN panels; INPUT has the source's +48V and GAIN; as on
     the console, hold the +48V key for 2 s to switch it: it fills up meanwhile, and a
-    tap does nothing),
+    tap does nothing; MAIN follows the SOLO MODE: SOLO BUS in LIVE, the mains in a row
+    with their PRE badges in STUDIO, and in SIP the **SOLO SAFE** locks on input and aux
+    channels: closed, SIP never mutes the channel),
     **ICON/COLOR**, **NAME**, **TAGS** (DCAs, mute groups, the talk tags TALK ON / TALK
     SOLO for both talk keys, A or B) and the **SAFE** key. As on a factory-initialized
     WING the faders start at -oo (buses 9-16 at 0 dB), the EQs off, and channels and
@@ -750,15 +768,16 @@ and open-source projects (see below), and it is **experimental**.
   are the strips' SAFE keys, `dca`, `mute`, `fx` the GLOBAL safes; in the console's
   format, a `+` or a space per strip, as `+ +` for 1 and 3; lists such as `1,3,5-8`
   are taken too). SETUP's options are Sidecar's settings, both ways: METERING's taps
-  (`/cfg/mtr/mtrpage`, `mtrsfc`: one setting per strip type for both), MAIN METER and
-  MAIN METER TAP,
+  (`/cfg/mtr/mtrpage`, `mtrsfc`: one setting per strip type for both), MAIN METER
+  (`/cfg/mtr/mainmtr`: every source) and MAIN METER TAP,
   the GENERAL, SURFACE and SOLO SYSTEM options (`/$ctl/cfg`, `/$ctl/$globals`:
   confirm load, wheel, touch fader select and resolution, fader speed, SOF button,
   frame and mode, autoselect, user layer link, DCA spill, solo exclusive and
-  follows, the brightness tiles, the time and date format...), MIDI REMOTE CONTROL
+  follows, the brightness tiles, the time and date format, SHOW METER PAGE WHEN
+  LOCKED...), the surface lock's string (`/$ctl/$stat/cnslock`, read only), MIDI REMOTE CONTROL
   (`/$ctl/midi`) and DAW (`/$ctl/daw`: enable, connection, emulation, upper CC,
-  wheel, preset) and the rows of features Sidecar doesn't have (TAP TEMPO FLASH, SHOW
-  METER PAGE WHEN LOCKED, MOUSE DISABLES TOUCH, SEND PAGE ACTIVATES SOLO, the OSC and
+  wheel, preset) and the rows of features Sidecar doesn't have (TAP TEMPO FLASH,
+  MOUSE DISABLES TOUCH, SEND PAGE ACTIVATES SOLO, the OSC and
   TCP remote locks), which are only kept. `/$globals/clkrate` is the audio device's rate. Not mapped:
   DAW CONFIGURATION (`/$ctl/daw/config`), whose 3.1 choices (CC, MSTR) can't show
   Sidecar's MCU with extenders. The fader sections' layers (`/$ctl/layer/L`, `C`, `R`) and the custom

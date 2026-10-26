@@ -60,6 +60,10 @@ constexpr int32_t kUsbPlayerSourceBase = 0x20000;
     (n < kNumOscillators); ld_engine_oscillators holds their settings. */
 constexpr int kNumOscillators = 2;
 constexpr int32_t kOscSourceBase = 0x30000;
+/** DYNAMICS KEY SOURCE of aux, buses, mains and matrices (DynSlotParams::scSource):
+    kKeyStripBase * kind (StripKindId) + index; they take one of kNumOutputKeyTaps taps. */
+constexpr int32_t kKeyStripBase = 0x10000;
+constexpr int kNumOutputKeyTaps = 6;
 /** RECORDER tap codes (ld_usb_rec_tap): -1 off, 0.. an input index (a source),
     kUsbTapStripBase + kind * 0x100000 + (number - 1) * 2 + channel a strip. */
 constexpr int32_t kUsbTapStripBase = 0x01000000;
@@ -138,7 +142,11 @@ struct DynSlotParams
     std::atomic<float> mix, gain;
     std::atomic<int32_t> scFilter; // list 2
     std::atomic<float> scFreq, scQ;
-    std::atomic<int32_t> scSource, scTap; // source -1 = self, else channel index
+    // scSource: -1 = self, else a channel index (input channels' list), or
+    // kKeyStripBase * kind + index for an aux, bus, main or matrix (the list
+    // of aux, buses, mains and matrices). scTap: list 1 from a channel, else
+    // BUS, DYN, PFL, AFL, EQ, INS2 (kNumOutputKeyTaps).
+    std::atomic<int32_t> scSource, scTap;
     std::atomic<int32_t> xoKind; // list 3
     std::atomic<float> xoFreq, xoQ, xoDepth;
 };

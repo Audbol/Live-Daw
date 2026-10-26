@@ -142,7 +142,7 @@ On macOS, use Cmd instead of Ctrl.
 | Ctrl+O | Open a show |
 | Ctrl+G | Recall the next scene |
 | Ctrl+E | Open / close the multitrack editor |
-| Ctrl+L | Lock / unlock the surface |
+| Ctrl+L | Lock / unlock the surface and the touchscreen (as holding HOME alone) |
 | Ctrl+P | Save a screenshot of the display to `Documents/Sidecar/screens` |
 
 Surface keys with a second function act on a long press (half a second) or a
