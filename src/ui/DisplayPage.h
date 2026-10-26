@@ -118,6 +118,10 @@ public:
         button when editing delay effects". Its LED is lit while this returns true. */
     virtual bool hasBlankKeyFunction() const { return false; }
     virtual void blankKeyPressed() {}
+    /** While the blank key taps a tempo (TapTempo): whether its LED is lit
+        at `nowMs`, as it "always blinks when it can be used for Tap Tempo"
+        (manual 5.5 p. 48); nothing while it doesn't. */
+    virtual std::optional<bool> blankKeyBlink (double /*nowMs*/) const { return std::nullopt; }
 
     /** The status bar's title tile for this screen. */
     virtual StatusTitle getStatusTitle() { return {}; }

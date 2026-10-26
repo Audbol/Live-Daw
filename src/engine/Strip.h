@@ -150,6 +150,15 @@ public:
     // What the WING gives each strip type (Operation Manual, chapter 6).
     /** INS 2 (the post insert): every type but aux. */
     bool hasPostInsert() const noexcept { return kind != StripKind::Aux; }
+    /** SEL DBL CLICK = BUSFX (manual 5.5 p. 48): "opens the INS1 ... screen on
+        Buses, Mains and Matrices (or INS2 if INS1 is unused)"; input and aux
+        channels open Channel Home. 1 = INS 1, 2 = INS 2, 0 = Channel Home. */
+    int busFxInsert() const noexcept
+    {
+        if (kind != StripKind::Bus && kind != StripKind::Main && kind != StripKind::Matrix)
+            return 0;
+        return params.preInsert.fx.load() < 0 ? 2 : 1;
+    }
     /** Automix X/Y (in INS 2): the input channels only. */
     bool hasAutomix() const noexcept { return kind == StripKind::Channel; }
     /** The automix group the strip is a member of (0 X, 1 Y; -1 none): INS 2

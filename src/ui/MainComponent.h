@@ -10,6 +10,7 @@
 #include "ui/LookAndFeel.h"
 #include "ui/MainDisplay.h"
 #include "ui/MeterBank.h"
+#include "ui/SurfaceLock.h"
 #include "ui/SurfaceSections.h"
 #include "ui/UiContext.h"
 
@@ -67,7 +68,8 @@ private:
 
     void selectStrip (Strip*);
     void saveScreenshot();
-    void setSurfaceLocked (bool);
+    /** Hold HOME (with the keys of `held`): locks or unlocks the surface (SurfaceLock). */
+    void holdHomeLock (const juce::String& held);
     Strip* getSelectedStrip() const;
     void refreshAll();
     void refreshSections();
@@ -162,6 +164,7 @@ private:
     std::unique_ptr<DawFaderSection> dawSections[LayerSet::kNumSections]; // the fader sections in DAW mode
     bool ccInBottomRow = true; // else docked under the monitoring panel
     std::unique_ptr<LockOverlay> lockOverlay;
+    SurfaceLock surfaceLock;
     std::unique_ptr<SoloWatcher> soloWatcher;
     ResizerBar splitter { false };
     float topFraction = 0.52f;

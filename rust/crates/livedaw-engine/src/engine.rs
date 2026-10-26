@@ -45,7 +45,7 @@ use crate::analyser::{rta_tap, Analyser, Probes};
 use crate::denormals::ScopedNoDenormals;
 use crate::fx::{FxRack, InsertCallbacks};
 use crate::garbage::Garbage;
-use crate::keytap::{key_sources, key_tap, KeySchedule};
+use crate::keytap::{key_sources, key_tap, KeySchedule, KeySource};
 use crate::monitor::{direct_source, MonitorPathDsp, SoloPatch, BAND_SOLO_MAX_DB};
 use crate::params::*;
 use crate::pdc::{pdc_tap, PdcState, MAX_PDC};
@@ -53,7 +53,7 @@ use crate::pool::WorkerPool;
 use crate::sends::{send_mode, MAX_BUSES};
 use crate::solo::{self, solo_mode, SoloBlock};
 use crate::sources::{SourceDsp, SourceTable};
-use crate::strip::{source_ptr, ProcessContext, Strip};
+use crate::strip::{source_ptr, KeyStrips, ProcessContext, Strip};
 use crate::talk::{TalkBlock, TalkGains, TalkRamps};
 use livedaw_dsp::util::*;
 use livedaw_dsp::wing::fx::{allowed_in_slot, FxContext, FxDevice};
@@ -776,24 +776,31 @@ impl Engine {
         self.pdc.limited.store(limited, Relaxed);
     }
 
-    /// Message thread: gives every input channel a buffer for each tap point
-    /// some GATE or DYNAMICS key takes from it (KEY SOURCE + KEY TAP, whether
-    /// the slot is on or not), and retires the others (`keytap.rs`). Called
-    /// by `collect`.
+    /// Message thread: gives every strip a buffer for each tap point some
+    /// GATE or DYNAMICS key takes from it (KEY SOURCE + KEY TAP, whether the
+    /// slot is on or not), and retires the others (`keytap.rs`). Called by
+    /// `collect`.
     pub fn update_keys(&self) {
         let st = self.lock();
-        let mut masks = vec![0u32; st.channels.len()];
+        let mut masks: Vec<(&Arc<Strip>, u32)> = st.all().map(|s| (s, 0)).collect();
         for s in st.all() {
             let p = &s.params;
-            let sources = key_sources(p, s.kind() == StripKind::Channel);
-            for (slot, src) in [&p.gate, &p.dynamics].into_iter().zip(sources) {
-                if let Some(m) = usize::try_from(src).ok().and_then(|i| masks.get_mut(i)) {
-                    *m |= 1 << key_tap(slot);
+            // The gate runs on input channels only.
+            let slots: &[&DynSlotParams] = if s.kind() == StripKind::Channel { &[&p.gate, &p.dynamics] } else { &[&p.dynamics] };
+            for slot in slots {
+                let (source, buffer) = key_tap(slot);
+                let src = match source {
+                    KeySource::SelfKey => None,
+                    KeySource::Channel(i) => st.channels.get(i),
+                    KeySource::Strip(kind, i) => st.list(kind).iter().find(|t| t.id() as usize == i),
+                };
+                if let Some(m) = src.and_then(|src| masks.iter_mut().find(|(t, _)| Arc::ptr_eq(t, src))) {
+                    m.1 |= 1 << buffer;
                 }
             }
         }
-        for (ch, mask) in st.channels.iter().zip(masks) {
-            ch.keys.plan(mask, st.device.block_size, &self.garbage);
+        for (s, mask) in masks {
+            s.keys.plan(mask, st.device.block_size, &self.garbage);
         }
     }
 
@@ -1145,6 +1152,12 @@ impl Engine {
             input_select_global,
             global_alt,
             channels: &topo.channels,
+            key_strips: KeyStrips {
+                auxes: &topo.auxes,
+                buses: [&topo.lower_buses, &topo.upper_buses],
+                mains: &topo.mains,
+                matrices: &topo.matrices,
+            },
             key_waves,
             wave,
             block,

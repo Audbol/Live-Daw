@@ -27,6 +27,8 @@ pub enum Enc {
     Map(&'static [(usize, &'static str)]),
     /// An enum's item as its own text ("MAIN.1", "BUS").
     Item,
+    /// A string node's text as is.
+    Text,
 }
 
 /// One setting: the WING node, the application's key, Sidecar's default and the encoding.
@@ -45,6 +47,25 @@ const fn s(path: &'static str, key: &'static str, default: &'static str, enc: En
 /// PRE (item 0) / POST as a "PRE" flag.
 const PRE_FLAG: Enc = Enc::Map(&[(0, "1"), (1, "0")]);
 
+/// `/cfg/mtr/mainmtr` items to `ui.mainMeter` (MeterBank.h's `mainmeter`).
+const MAIN_METER: &[(usize, &str)] = &[
+    (0, "1"),
+    (1, "2"),
+    (2, "3"),
+    (3, "4"),
+    (4, "5"),
+    (5, "6"),
+    (6, "7"),
+    (7, "8"),
+    (8, "9"),
+    (9, "10"),
+    (10, "11"),
+    (11, "12"),
+    (12, "13"),
+    (13, "0"),
+    (14, "14"),
+];
+
 /// Every bridged setting. Several nodes can share a key: the WING sets the
 /// METERS screen's and the surface's meter taps apart, Sidecar has one tap
 /// per strip type for both.
@@ -60,8 +81,10 @@ pub const HOST_SETTINGS: &[HostSetting] = &[
     s("/cfg/mtr/mtrsfc/main", "setup.meterTapPre.2", "0", PRE_FLAG),
     s("/cfg/mtr/mtrsfc/mtx", "setup.meterTapPre.3", "0", PRE_FLAG),
     s("/cfg/mtr/mtrsfc/dca", "setup.meterTapPre.4", "1", PRE_FLAG),
-    // MAIN METER: 0 the monitor (SPEAKERS), 1-4 MAIN n; MAIN METER TAP: AUTO, PRE, POST.
-    s("/cfg/mtr/mainmtr", "ui.mainMeter", "1", Enc::Map(&[(0, "1"), (1, "2"), (2, "3"), (3, "4"), (13, "0")])),
+    // MAIN METER SOURCE (manual 5.5 p. 47; MAIN.1-4, MTX.1-8, MON.PH, MON.SPK, SEL_CH):
+    // 0 the speakers, 1-4 MAIN n, 5-12 MTX n, 13 the phones, 14 the selected strip.
+    // MAIN METER TAP: AUTO, PRE, POST.
+    s("/cfg/mtr/mainmtr", "ui.mainMeter", "1", Enc::Map(MAIN_METER)),
     s("/cfg/mtr/mainpos", "ui.mainMeterTap", "0", Enc::Index),
     // SETUP > GENERAL.
     s("/$ctl/$globals/cf_load", "setup.confirmLibraryLoad", "1", Enc::Bool),
@@ -134,11 +157,16 @@ pub const HOST_SETTINGS: &[HostSetting] = &[
     s("/$ctl/daw/ccup", "daw.ccup", "0", Enc::Bool),
     s("/$ctl/daw/disjog", "daw.disjog", "1", Enc::Bool),
     s("/$ctl/daw/preset", "daw.preset", "0", Enc::Index),
+    // Surface lock (manual chapter 10, hold HOME): SHOW METER PAGE WHEN LOCKED,
+    // and the lock string (read-only: '1' for each key held to lock, chars 1-7
+    // the keys left of the display from HOME, 18-19 those right of it; empty
+    // while unlocked). The host keeps it while it runs.
+    s("/$ctl/$globals/lockmtr", "ui.meterPageWhenLocked", "0", Enc::Bool),
+    s("/$ctl/$stat/cnslock", "ui.surfaceLock", "", Enc::Text),
     // SETUP rows of features Sidecar doesn't have (custom control tap keys that
-    // don't flash, a screen lock, a mouse, SEND PAGE solo, remote locks): kept
-    // as settings (`setup.inert.*`), shown and switched as on the console.
+    // don't flash, a mouse, SEND PAGE solo, remote locks): kept as settings
+    // (`setup.inert.*`), shown and switched as on the console.
     s("/$ctl/$globals/tapflash", "setup.inert.tapTempoFlash", "2", Enc::Index),
-    s("/$ctl/$globals/lockmtr", "setup.inert.meterPageWhenLocked", "0", Enc::Bool),
     s("/$ctl/$globals/mousetchdis", "setup.inert.mouseDisablesTouch", "0", Enc::Bool),
     s("/$ctl/cfg/sfdr2solo", "setup.inert.sendPageActivatesSolo", "0", Enc::Bool),
     s("/$ctl/osc/ronly", "setup.inert.lockOsc", "0", Enc::Bool),
@@ -236,6 +264,7 @@ pub fn get(state: &WingState, index: u8, def: &Def) -> Option<Value> {
             let item = |t: &str| def.items().iter().position(|it| it.item.eq_ignore_ascii_case(t.trim()));
             item(&text).or_else(|| item(h.default)).and_then(index_value)
         }
+        Enc::Text => Some(Value::Str(text)),
     }
 }
 
@@ -260,6 +289,10 @@ pub fn set(state: &WingState, index: u8, def: &Def, v: &Value) -> Result<(), Set
             let i = value::enum_index(def, v).ok_or(SetError::BadValue)?;
             def.items().get(i).ok_or(SetError::BadValue)?.item.to_owned()
         }
+        Enc::Text => match v {
+            Value::Str(s) => s.clone(),
+            _ => return Err(SetError::BadValue),
+        },
     };
     state.change_host_value(h.key, text);
     Ok(())

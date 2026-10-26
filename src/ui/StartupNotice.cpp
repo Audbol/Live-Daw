@@ -34,7 +34,7 @@ juce::String text()
            "Delay compensation (SETUP > PLUGINS) lines up the paths into buses, mains and matrices "
            "up to 8192 samples; solo, monitoring, direct outs and recorder taps are not compensated.\n"
            "- WING remote apps: the WING network protocols answer every parameter of the WING 3.1 "
-           "tree but one; 89.2 % drive the engine or the settings (the rest is stored but does "
+           "tree but one; 89.4 % drive the engine or the settings (the rest is stored but does "
            "nothing). Testers use WING Edit and Mixing Station with it; WING Copilot has not been "
            "tried, and exported WING snapshots have not been loaded into a console.\n"
            "- MIDI and DAW remote control (MCU / HUI) have not been tested with real hardware.\n"

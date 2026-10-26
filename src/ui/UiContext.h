@@ -139,9 +139,11 @@ struct UiContext
     /** Saves the main display as a PNG in Documents/Sidecar/screens (on the
         console: hold CLR SOLO, press UTILITY). */
     std::function<void()> takeScreenshot;
-    /** Surface lock (on the console: hold HOME): every control but the main
-        display ignores input. */
-    std::function<void (bool locked)> setSurfaceLocked;
+    /** Surface lock (manual chapter 10: hold HOME, with any other keys beside
+        the display as the password; `held` is their SurfaceLock::code): locks,
+        or unlocks with the same keys. Locked, the surface and the touchscreen
+        ignore input; only the keys beside the display stay live. */
+    std::function<void (const juce::String& held)> holdHomeLock;
     std::function<bool()> isSurfaceLocked;
 
     // Multitrack recording: the session the recorder screen, the editor and
@@ -233,13 +235,17 @@ namespace uiprefs
     inline bool soloOptionDefault (const char* key) { return juce::String (key) == exclusiveSolo || juce::String (key) == selectFollowsSolo; }
 
     // METERING (SETUP > SURFACE): the L/R meter beside the display.
-    constexpr const char* mainMeter = "ui.mainMeter";       // 0 the monitor, 1-4 MAIN n (default MAIN 1)
+    constexpr const char* mainMeter = "ui.mainMeter";       // mainmeter (MeterBank.h): 0 the speakers, 1-4 MAIN n (default MAIN 1), 5-12 MTX, 13 the phones, 14 SEL CH
     constexpr int mainMeterDefault = 1;
     constexpr const char* mainMeterTap = "ui.mainMeterTap"; // 0 AUTO (default), 1 PRE, 2 POST
     constexpr int mainMeterTapDefault = 0;
 
     // GENERAL (SETUP > GENERAL).
     constexpr const char* alwaysShowScene = "ui.alwaysShowScene";    // the status bar's title tile shows the active scene
+    constexpr const char* meterPageWhenLocked = "ui.meterPageWhenLocked"; // SHOW METER PAGE WHEN LOCKED (default off)
+    /** The surface lock string while locked (SurfaceLock::code; WING
+        `/$ctl/$stat/cnslock`), empty while unlocked. Cleared at startup. */
+    constexpr const char* surfaceLock = "ui.surfaceLock";
     constexpr const char* useCursorWheel = "ui.useCursorWheel";      // the CC section's arrows and wheel edit the screen
     constexpr const char* touchFaderSelect = "ui.touchFaderSelect";  // a touched on-screen fader goes on the knob right of the display
 

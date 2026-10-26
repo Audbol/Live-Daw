@@ -3,6 +3,7 @@
 #include "ui/HomeWidgets.h"
 #include "ui/Icons.h"
 #include "ui/PaintHash.h"
+#include "ui/SurfaceLock.h"
 #include "ui/WingPopups.h"
 
 namespace livedaw::ui
@@ -388,6 +389,9 @@ public:
     bool backlit = false;
     std::optional<Icon> icon; // printed instead of the text (the maximize key)
     std::function<void()> onPress, onHold;
+    /** Polled by the key itself (`pollAt` Hz): its light, when the key keeps it itself. */
+    std::function<bool()> litState;
+    void pollAt (int hz) { startTimerHz (hz); }
 
     /** Held down, or held with a right-click in the last few seconds. */
     bool isHeld() const { return isDown() || juce::Time::getMillisecondCounter() < latchedUntil; }
@@ -511,6 +515,8 @@ private:
             shownLatched = latched;
             repaint();
         }
+        if (litState != nullptr)
+            setToggleState (litState(), juce::dontSendNotification);
     }
 
     juce::uint32 downAt = 0, latchedUntil = 0;
@@ -648,14 +654,15 @@ private:
 //==============================================================================
 /** The main L/R meter right of the display: 18 segments per side,
     CLIP -1 -2 -3 -4 -6 -8 -10 -12 -15 -18 -24 -30 -36 -42 -48 -54 -60. It shows
-    the bus chosen with a right-click (MONITOR, or MAIN 1-4) at SETUP's MAIN
-    METER TAP (AUTO: the MAIN METERS tap). */
+    SETUP's MAIN METER SOURCE (manual 5.5 p. 47: a main, a matrix, the phones,
+    the speakers or the selected channel; also chosen with a right-click) at
+    its MAIN METER TAP (AUTO: the meter tap of that kind of strip). */
 class MainDisplay::MainMeter final : public juce::Component, private juce::Timer
 {
 public:
     explicit MainMeter (UiContext& c) : ctx (c)
     {
-        source = juce::jlimit (0, kNumMains, ctx.settings.getIntValue (uiprefs::mainMeter, uiprefs::mainMeterDefault));
+        source = juce::jlimit (0, mainmeter::kNumSources - 1, ctx.settings.getIntValue (uiprefs::mainMeter, uiprefs::mainMeterDefault));
         startTimerHz (30);
     }
 
@@ -693,12 +700,9 @@ public:
     {
         if (! e.mods.isPopupMenu() && e.getNumberOfClicks() < 2)
             return;
-        juce::StringArray items { "MONITOR" };
-        for (int i = 1; i <= kNumMains; ++i)
-            items.add ("MAIN " + juce::String (i));
         popups::ListOptions options;
         options.caption = "MAIN METER";
-        popups::chooseFrom (*this, items, source, [this] (int i) { choose (i); }, options);
+        popups::chooseFrom (*this, mainmeter::names(), mainmeter::listIndex (source), [this] (int i) { choose (mainmeter::settingAt (i)); }, options);
     }
 
 private:
@@ -708,20 +712,39 @@ private:
         ctx.settings.setValue (uiprefs::mainMeter, s);
     }
 
+    /** The strip the source meters (a main, a matrix or the selected strip), or nullptr. */
+    const Strip* sourceStrip() const
+    {
+        using namespace mainmeter;
+        auto at = [] (const auto& list, int i) -> const Strip* { return juce::isPositiveAndBelow (i, (int) list.size()) ? list[(size_t) i].get() : nullptr; };
+        if (source == kSelectedChannel)
+            return ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr;
+        if (source >= kFirstMain && source < kFirstMatrix)
+            return at (ctx.engine.getMains(), source - kFirstMain);
+        if (source >= kFirstMatrix && source < kPhones)
+            return at (ctx.engine.getStrips (StripKind::Matrix), source - kFirstMatrix);
+        return nullptr;
+    }
+
     void timerCallback() override
     {
         // SETUP can change the source too.
-        source = juce::jlimit (0, kNumMains, ctx.settings.getIntValue (uiprefs::mainMeter, source));
+        source = juce::jlimit (0, mainmeter::kNumSources - 1, ctx.settings.getIntValue (uiprefs::mainMeter, source));
+        const auto* strip = sourceStrip();
+        // AUTO: the METERING tap of the source's kind of strip (manual 5.5 p. 47).
         const int tap = ctx.settings.getIntValue (uiprefs::mainMeterTap, uiprefs::mainMeterTapDefault);
-        const auto point = tap == 1 ? MeterPoint::PreFader : tap == 2 ? MeterPoint::Output : prefs::meterPoint (ctx, StripKind::Main);
+        const auto point = tap == 1 ? MeterPoint::PreFader : tap == 2 ? MeterPoint::Output
+                                                                     : prefs::meterPoint (ctx, strip != nullptr ? strip->getKind() : StripKind::Main);
         bool changed = false;
         for (int ch = 0; ch < 2; ++ch)
         {
             float peak = 0.0f;
-            if (source == 0)
+            if (source == mainmeter::kSpeakers)
                 peak = ctx.meters.getMonitor (ch);
-            else if (source - 1 < (int) ctx.engine.getMains().size())
-                peak = ctx.meters.get (ctx.engine.getMains()[(size_t) (source - 1)].get(), point, ch);
+            else if (source == mainmeter::kPhones)
+                peak = ctx.meters.getPhones (ch);
+            else if (strip != nullptr)
+                peak = ctx.meters.get (strip, point, strip->getNumChannels() > 1 ? ch : 0); // a mono strip on both sides
             const float db = dsp::gainToDb (peak);
             if (std::abs (db - level[(size_t) ch]) > 0.3f)
             {
@@ -944,10 +967,22 @@ public:
     {
         Popups,
         Blocker,
-        Scrim
+        Scrim,
+        Lock // the surface lock: blocks all but `holes` (the keys beside the display) and shows a badge at `badge`
     };
 
-    explicit Overlay (Kind k) : kind (k) { setInterceptsMouseClicks (kind == Kind::Blocker, kind == Kind::Popups); }
+    explicit Overlay (Kind k) : kind (k) { setInterceptsMouseClicks (kind == Kind::Blocker || kind == Kind::Lock, kind == Kind::Popups); }
+
+    std::vector<juce::Rectangle<int>> holes;
+    juce::Rectangle<int> badge;
+
+    bool hitTest (int x, int y) override
+    {
+        for (auto& h : holes)
+            if (h.contains (x, y))
+                return false;
+        return juce::Component::hitTest (x, y);
+    }
 
     ~Overlay() override
     {
@@ -962,6 +997,16 @@ public:
     {
         if (kind == Kind::Scrim && alpha > 0.002f)
             g.fillAll (juce::Colours::black.withAlpha (alpha));
+        if (kind == Kind::Lock && ! badge.isEmpty())
+        {
+            auto r = badge.toFloat();
+            g.setColour (Colours::screenPanel.withAlpha (0.9f));
+            g.fillRoundedRectangle (r, 4.0f);
+            drawIcon (g, Icon::LockClosed, r.removeFromLeft (r.getHeight()).reduced (r.getHeight() * 0.18f), Colours::yellow);
+            g.setColour (Colours::text);
+            g.setFont (juce::FontOptions (r.getHeight() * 0.5f, juce::Font::bold));
+            g.drawText ("LOCKED", r, juce::Justification::centred);
+        }
     }
 
 private:
@@ -1002,11 +1047,20 @@ MainDisplay::MainDisplay (UiContext& c) : ctx (c)
         b->onPress = [this, s] { screenKeyPressed (s); };
         addAndMakeVisible (b);
     }
-    // Hold HOME: surface lock.
+    // Hold HOME: surface lock (manual chapter 10). The keys beside the display
+    // held with it (or right-clicked just before) are the password.
     screenButtons[0]->onHold = [this]
     {
-        if (ctx.setSurfaceLocked && ctx.isSurfaceLocked)
-            ctx.setSurfaceLocked (! ctx.isSurfaceLocked());
+        std::array<bool, SurfaceLock::kLeftKeys> left {};
+        for (int i = 1; i < SurfaceLock::kLeftKeys && i < screenButtons.size(); ++i)
+            left[(size_t) i] = screenButtons[i]->isHeld();
+        const auto held = SurfaceLock::code (left, clearSoloKey->isHeld(), blankKey->isHeld());
+        for (auto* k : screenButtons)
+            k->releaseHold();
+        clearSoloKey->releaseHold();
+        blankKey->releaseHold();
+        if (ctx.holdHomeLock)
+            ctx.holdHomeLock (held);
     };
 
     for (int i = 0; i < 6; ++i)
@@ -1072,7 +1126,16 @@ MainDisplay::MainDisplay (UiContext& c) : ctx (c)
     addAndMakeVisible (*contextKnob);
     blankKey = std::make_unique<ConsoleKey> ("");
     blankKey->led = true;
-    blankKey->onPress = [this] { page (screen)->blankKeyPressed(); };
+    blankKey->onPress = [this] { if (! locked) page (screen)->blankKeyPressed(); };
+    // Its LED: lit where the screen gives it a function, blinking at the tempo
+    // where it taps one (manual 5.5 p. 48), polled often enough to keep time.
+    blankKey->litState = [this]
+    {
+        auto* p = page (screen);
+        const auto tempo = p->blankKeyBlink (juce::Time::getMillisecondCounterHiRes());
+        return tempo ? *tempo : p->hasBlankKeyFunction();
+    };
+    blankKey->pollAt (40);
     addAndMakeVisible (*blankKey);
     // Under the right-hand column, level with the touch encoders: only the
     // screen (and its keys and knobs) in the window, or back (also F10, a
@@ -1100,6 +1163,8 @@ MainDisplay::MainDisplay (UiContext& c) : ctx (c)
     popupLayer = std::make_unique<Overlay> (Overlay::Kind::Popups);
     addAndMakeVisible (*popupLayer);
     touchBlocker = std::make_unique<Overlay> (Overlay::Kind::Blocker);
+    lockBlocker = std::make_unique<Overlay> (Overlay::Kind::Lock);
+    addChildComponent (*lockBlocker);
     addChildComponent (*touchBlocker);
     lcdScrim = std::make_unique<Overlay> (Overlay::Kind::Scrim);
     lcdScrim->setInterceptsMouseClicks (false, false);
@@ -1179,6 +1244,9 @@ void MainDisplay::showHomeTab (HomeTab t)
 
 void MainDisplay::screenKeyPressed (Screen s)
 {
+    // Locked, the keys only serve to unlock (hold HOME).
+    if (locked)
+        return;
     if (s == Screen::Utility)
     {
         utilityPressed();
@@ -1209,6 +1277,8 @@ void MainDisplay::utilityPressed()
 
 void MainDisplay::clearSoloPressed()
 {
+    if (locked)
+        return;
     // SETUP + ALT + CLR SOLO: touch off; ALT + CLR SOLO: touch on again.
     if (blankKey->isHeld())
     {
@@ -1220,6 +1290,31 @@ void MainDisplay::clearSoloPressed()
         return;
     }
     clearSolo();
+}
+
+void MainDisplay::setLocked (bool shouldLock)
+{
+    if (shouldLock == locked)
+        return;
+    locked = shouldLock;
+    // SHOW METER PAGE WHEN LOCKED (manual 5.5 p. 43): METERS while locked,
+    // then back to the screen the lock found.
+    if (locked)
+    {
+        screenBeforeLock = screen;
+        if (ctx.settings.getBoolValue (uiprefs::meterPageWhenLocked, false))
+            showScreen (Screen::Meters);
+    }
+    else if (screen == Screen::Meters && ctx.settings.getBoolValue (uiprefs::meterPageWhenLocked, false))
+    {
+        showScreen (screenBeforeLock);
+    }
+    TransientPopups::closeAll();
+    lockBlocker->setVisible (locked);
+    if (locked)
+        lockBlocker->toFront (false);
+    lcdScrim->toFront (false);
+    resized();
 }
 
 void MainDisplay::setTouchDisabled (bool off)
@@ -1479,11 +1574,10 @@ void MainDisplay::timerCallback()
         repaint (statusArea);
     }
 
-    // CLR SOLO blinks while anything is soloed; the blank key's LED shows
-    // whether the screen gives it a function, UTILITY's likewise.
+    // CLR SOLO blinks while anything is soloed; the blank key keeps its own
+    // LED (litState); UTILITY lights where the screen gives it a function.
     blink = ! blink;
     clearSoloKey->setToggleState (ctx.engine.anySoloActive.load() && blink, juce::dontSendNotification);
-    blankKey->setToggleState (page (screen)->hasBlankKeyFunction(), juce::dontSendNotification);
     screenButtons[(int) std::size (screens) - 1]->setToggleState (page (screen)->hasUtilityFunction(), juce::dontSendNotification);
     applyLighting();
 }
@@ -2045,6 +2139,15 @@ void MainDisplay::resized()
     for (auto* child : popupLayer->getChildren())
         child->setBounds (popupLayer->getLocalBounds());
     touchBlocker->setBounds (screenArea);
+    // The lock blocks the screen, the knobs and the meter; the keys stay live.
+    lockBlocker->setBounds (getLocalBounds());
+    lockBlocker->holes.clear();
+    for (auto* k : screenButtons)
+        lockBlocker->holes.push_back (k->getBounds());
+    for (juce::Component* k : { (juce::Component*) clearSoloKey.get(), (juce::Component*) blankKey.get(), (juce::Component*) maximizeKey.get() })
+        lockBlocker->holes.push_back (k->getBounds());
+    lockBlocker->badge = juce::Rectangle<int> (juce::jmax (80, screenArea.getWidth() / 6), juce::jmax (20, screenArea.getHeight() / 16))
+                             .withCentre ({ screenArea.getCentreX(), screenArea.getBottom() - screenArea.getHeight() / 10 });
     lcdScrim->setBounds (screenArea.expanded (5));
 
     layoutStatusBar();

@@ -142,7 +142,7 @@ On macOS, use Cmd instead of Ctrl.
 | Ctrl+O | Open a show |
 | Ctrl+G | Recall the next scene |
 | Ctrl+E | Open / close the multitrack editor |
-| Ctrl+L | Lock / unlock the surface |
+| Ctrl+L | Lock / unlock the surface and the touchscreen (as holding HOME alone) |
 | Ctrl+P | Save a screenshot of the display to `Documents/Sidecar/screens` |
 
 Surface keys with a second function act on a long press (half a second) or a
@@ -182,7 +182,7 @@ This list matches the notice Sidecar shows at start-up.
   matrices up to 8192 samples; solo, monitoring, direct outs and recorder taps are
   not compensated.
 - **WING remote apps:** the WING network protocols answer every parameter of the
-  WING 3.1 tree but one; 89.2 % drive the engine or Sidecar's settings, the rest
+  WING 3.1 tree but one; 89.4 % drive the engine or Sidecar's settings, the rest
   answers the WING's factory value and is stored but does nothing. Testers use WING
   Edit and Mixing Station with it; WING Copilot has not been tried, and exported WING
   snapshots have not been loaded into a console.

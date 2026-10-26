@@ -5,6 +5,7 @@
 #include "ui/RoutingGroups.h"
 #include "ui/ScreenWidgets.h"
 #include "ui/ShowPanel.h"
+#include "ui/TapTempo.h"
 #include "ui/WingPopups.h"
 
 #include <memory>
@@ -31,6 +32,7 @@ public:
     /** The blank key beside the display taps the tempo of a delay open in the editor. */
     bool hasBlankKeyFunction() const override { return tapParam() >= 0; }
     void blankKeyPressed() override;
+    std::optional<bool> blankKeyBlink (double nowMs) const override;
 
     /** Shows slot `slot` in the device editor (-1 = back to the rack). */
     void editSlot (int slot);
@@ -45,7 +47,7 @@ private:
     UiContext& ctx;
     juce::OwnedArray<Tile> tiles;
     std::unique_ptr<Editor> editor;
-    double lastTap = 0.0;
+    TapTempo tapTempo;
     juce::Rectangle<int> rack, premiumLabel, standardLabel;
     juce::Image metal; // the rack's background at its size
 };
