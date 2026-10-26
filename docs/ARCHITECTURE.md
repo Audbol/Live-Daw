@@ -910,7 +910,19 @@ dependencies beyond the other Sidecar crates.
   libwing's own clients when `LIBWING_TOOLS` is set (`tools/wing/libwing_tools.sh`),
   and `tools/wing/check_companion.py` checks the Companion module's paths.
 
-Limits: WING Edit and WING Copilot are untested. One output patch per strip (the WING
+- **WING Edit** (3.3.4, tested; `tests/wingedit.rs` replays what it does). It takes
+  the model from discovery, reads the whole console with `ROOT DATA?` (MIXER -> PC),
+  sets `/$syscfg/$cnsmdl` to "ModelRequest" once after connecting (a refused Native
+  set answers the value that stands, so it gets the model back) and follows `$cnscfg`
+  notifications. PC -> MIXER writes every value back in tree order, a model before
+  its parameters, so `set` switches models at once (the device is built later by
+  `collect`). Floats read on their nearest step (an engine default between steps would
+  read differently in WING Edit, which snaps). A slot whose model changed pushes all
+  the new model's parameters (`Shared::slot_models`), as WING Edit starts a model from
+  its own defaults. An output nobody patched reads OFF, so LCL n and A n (one port)
+  agree in the round trip.
+
+Limits: WING Copilot is untested. One output patch per strip (the WING
 can send a source to many outputs; extra ones are kept in the shadow store). Input
 groups other than AES50 A/B/C, CRD and OSC collapse onto the port with the same number
 (their source settings stay in the shadow store). A talkback channel other than
@@ -1018,7 +1030,7 @@ README's *Known limitations*; keep the three in step.
 - The MP3 encoder is basic: constant bit rate, no bit reservoir, a simple masking
   model.
 - MIDI and DAW remote control (MCU / HUI) have not been tried with real hardware;
-  the WING remote has not been tried with WING Edit or WING Copilot, and exported
+  the WING remote has been tried with WING Edit 3.3.4 but not WING Copilot, and exported
   snapshots have not been loaded into a console.
 - Plugins run inside the mixer process by default. Bad output and exceptions are
   contained, but a plugin that segfaults takes the app down (safe mode then recovers

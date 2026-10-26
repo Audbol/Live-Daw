@@ -10,7 +10,7 @@ use crate::map::{bindings, Binding, Console, Identity, SetError, WingState};
 use crate::meters::{self, Meter};
 use crate::native::{self, MeterRequest, Session};
 use crate::osc::{self, Arg, Effect, Message, SubFormat};
-use crate::schema::{schema, Node};
+use crate::schema::{schema, ModelSource, Node};
 use crate::value::Value;
 use livedaw_engine::Engine;
 use std::collections::{HashMap, VecDeque};
@@ -218,6 +218,8 @@ pub struct Shared {
     pub state: Arc<WingState>,
     /// Last values pushed to subscribers (None while nobody listens).
     notify: Mutex<Option<HashMap<Node, Value>>>,
+    /// The model of each processing slot at the last poll (see `poll_changes`).
+    slot_models: Mutex<Vec<Option<usize>>>,
     /// Bumped (under `notify`) by every client change; see `poll_changes`.
     generation: AtomicU64,
     clients: Mutex<Vec<Arc<NativeClient>>>,
@@ -258,6 +260,7 @@ impl Shared {
             engine,
             state,
             notify: Mutex::new(None),
+            slot_models: Mutex::default(),
             generation: AtomicU64::new(0),
             clients: Mutex::default(),
             osc_subs: Mutex::default(),
@@ -463,17 +466,30 @@ impl Shared {
         // so it is dropped and the next poll tries again.
         let generation = self.generation.load(Ordering::Acquire);
         let c = self.console();
+        // Taken first: a model that changes meanwhile is pushed in full next time.
+        let models: Vec<Option<usize>> = (0..schema().slots.len()).map(|i| c.active_model(i as u16)).collect();
         let now = self.snapshot(&c);
         let mut cache = lock(&self.notify);
         if self.generation.load(Ordering::Acquire) != generation {
             return;
         }
+        // A slot whose model changed sends all of the new model's parameters,
+        // also those that happen to equal the old model's at the same
+        // position: a client (WING Edit) starts the new model from its own
+        // defaults, which needn't be Sidecar's.
+        let renewed: Vec<bool> = {
+            let mut last = lock(&self.slot_models);
+            let renewed = models.iter().enumerate().map(|(i, m)| last.get(i).is_some_and(|old| old != m)).collect();
+            *last = models;
+            renewed
+        };
         match cache.as_mut() {
             None => *cache = Some(now.into_iter().collect()),
             Some(map) => {
                 let mut changes = Vec::new();
                 for (n, v) in now {
-                    if map.get(&n) != Some(&v) {
+                    let forced = matches!(n, Node::Param { slot, .. } if renewed.get(slot as usize) == Some(&true));
+                    if forced || map.get(&n) != Some(&v) {
                         map.insert(n, v.clone());
                         changes.push((n, v));
                     }

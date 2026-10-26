@@ -3,11 +3,12 @@
 //! without the app.
 //!
 //! cargo run -p livedaw-wing --example wing_emulator -- [--name NAME] [--osc PORT]
-//!     [--native PORT] [--discovery PORT] [--bind IP] [--snap FILE]
+//!     [--native PORT] [--discovery PORT] [--bind IP] [--snap FILE] [--compact]
 
 use livedaw_engine::Engine;
+use livedaw_session::ConsoleModel;
 use livedaw_wing::server::{Config, EngineHandle, WingServer};
-use livedaw_wing::{snap, WingState};
+use livedaw_wing::{snap, Identity, WingState};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,6 +25,10 @@ fn main() {
             "--discovery" => config.discovery_port = next().parse().expect("port"),
             "--bind" => config.bind = next().parse().expect("IP address"),
             "--snap" => snap_file = Some(next()),
+            "--compact" => {
+                let name = std::mem::take(&mut config.identity.name);
+                config.identity = Identity { name, ..Identity::of_model(ConsoleModel::Compact) };
+            }
             other => {
                 eprintln!("unknown argument {other}");
                 std::process::exit(2);

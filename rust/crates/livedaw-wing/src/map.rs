@@ -1953,7 +1953,13 @@ impl<'a> Console<'a> {
             }
         };
         if let Some(v) = mapped {
-            return Some(v);
+            // On the parameter's nearest step, as the console reports it (and
+            // WING Edit shows it): an engine default between two steps (a HALL
+            // decay of 2.00 s) would otherwise read 2.00 here and 2.03 there.
+            return Some(match self.binding(node) {
+                Binding::Strip(_, _, SF::Dly) => v,
+                _ => value::quantise(def, &v),
+            });
         }
         if let Some(v) = self.shadow_key(node).and_then(|k| self.state.shadow_get(k)) {
             return Some(v);
@@ -2215,7 +2221,11 @@ impl<'a> Console<'a> {
                     None => match self.shadow_pair(row, "grp", "in") {
                         // A source Sidecar can't route, as set; else OFF with the number set.
                         Some((sg, sk)) => (unroutable_group(row, &sg).unwrap_or("OFF"), sk),
-                        None => return None,
+                        // Nothing feeds this output and nobody set it: OFF, not the
+                        // factory WING's patch (LCL 3 BUS 5 and A 3 OFF are the same
+                        // port here, and the engine doesn't route it). WING Edit
+                        // writes both back on PC -> MIXER, so they must agree.
+                        None => ("OFF", 1),
                     },
                 };
                 if number {
@@ -4103,7 +4113,9 @@ mod tests {
         assert!(table.get(index).unwrap().mute.load(Relaxed));
         assert_eq!(table.name(index), "Noise");
         assert_eq!(c.get(node(&c, "/io/in/OSC/2/osc/mode")), Some(Value::str("PINK")));
-        assert_eq!(c.get(node(&c, "/io/in/OSC/1/osc/f")), Some(Value::Float(1000.0)));
+        // On its nearest step, as a factory-set WING answers (999.992).
+        let f = c.get(node(&c, "/io/in/OSC/1/osc/f")).and_then(|v| v.as_f32()).unwrap();
+        assert!((f - 999.992).abs() < 0.001, "{f}");
         // MODE pairs OSC 1 and 2.
         c.set(node(&c, "/io/in/OSC/1/mode"), &Value::str("ST")).unwrap();
         assert_eq!(table.get(sources::OSC_SOURCE_INDEX).unwrap().mode.load(Relaxed), source_mode::STEREO);

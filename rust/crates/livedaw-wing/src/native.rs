@@ -366,7 +366,16 @@ impl Session {
                 _ => v,
             };
             drop(c);
-            let _ = shared.apply_set(n, &v, self.origin);
+            if shared.apply_set(n, &v, self.origin).is_err() {
+                // A refused set (read-only, out of the list...) answers the
+                // value that stands, so the client shows it instead of what it
+                // asked for. WING Edit asks for the model this way: it sets
+                // `/$syscfg/$cnsmdl` to "ModelRequest" right after connecting
+                // and takes the model from the reply.
+                if let Some(v) = shared.console().get(n) {
+                    encode_data(&mut self.out, schema().id(n), &v);
+                }
+            }
         }
     }
 
