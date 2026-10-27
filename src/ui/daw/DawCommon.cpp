@@ -196,6 +196,53 @@ void askForText (juce::Component* parent, const juce::String& title, const juce:
     }), true);
 }
 
+juce::String importModeName (daw::Session::ImportMode m)
+{
+    switch (m)
+    {
+        case daw::Session::ImportMode::KeepInPlace: return "KEEP IN PLACE";
+        case daw::Session::ImportMode::Ask: return "ASK EACH TIME";
+        case daw::Session::ImportMode::Copy: break;
+    }
+    return "COPY TO PROJECT";
+}
+
+void importAudio (juce::Component* parent, daw::Session& session, const juce::Array<juce::File>& files, daw::int64 trackId, daw::int64 position)
+{
+    using Mode = daw::Session::ImportMode;
+    if (files.isEmpty())
+        return;
+    if (session.getImportMode() != Mode::Ask)
+    {
+        session.importFiles (files, trackId, position);
+        return;
+    }
+    const auto& p = session.getProject();
+    const auto audio = p.hasFolder() ? p.getAudioFolder().getFullPathName() : session.getProjectsFolder().getFullPathName();
+    const auto what = files.size() == 1 ? "\"" + files[0].getFileName() + "\"" : juce::String (files.size()) + " files";
+    auto* w = new juce::AlertWindow ("IMPORT AUDIO",
+                                     "Import " + what + ":\n\n"
+                                         "KEEP IN PLACE: the clips play the files where they are, nothing is copied (a file at another "
+                                         "sample rate, with more than two channels or in a compressed format still gets a converted copy).\n\n"
+                                         "COPY TO PROJECT: every file is converted into the project's Audio folder (" + audio + ").",
+                                     juce::MessageBoxIconType::QuestionIcon, parent);
+    auto remember = std::make_shared<juce::ToggleButton> ("Remember my choice (FILE > Import)");
+    remember->setSize (360, 26);
+    w->addCustomComponent (remember.get());
+    w->addButton ("KEEP IN PLACE", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("COPY TO PROJECT", 2);
+    w->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([&session, files, trackId, position, remember] (int r)
+    {
+        if (r == 0)
+            return;
+        const bool keep = r == 1;
+        if (remember->getToggleState())
+            session.setImportMode (keep ? Mode::KeepInPlace : Mode::Copy);
+        session.importFiles (files, trackId, position, keep);
+    }), true);
+}
+
 //==============================================================================
 void DawEditorState::refresh()
 {

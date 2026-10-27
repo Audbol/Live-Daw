@@ -40,11 +40,21 @@ public:
     //==============================================================================
     // Projects
 
-    /** Where new projects go: <documents>/Sidecar/Recordings. */
+    /** Where new projects go unless the user chose another folder:
+        <documents>/Sidecar/Recordings. */
     static juce::File getDefaultFolder();
     /** Overrides the default folder (tests). */
     void setDefaultFolder (const juce::File& f) { defaultFolder = f; }
+    /** Where new projects (and their recordings) go: the folder chosen in the
+        editor's FILE menu (daw.projectsFolder; another drive, for instance),
+        otherwise the default folder. */
     juce::File getProjectsFolder() const;
+    /** FILE > Projects folder: an empty File goes back to the default. Kept in
+        the app settings; existing projects stay where they are. */
+    void setProjectsFolder (const juce::File&);
+    /** Whether the user chose a projects folder (not the default). */
+    bool hasCustomProjectsFolder() const;
+    static constexpr const char* projectsFolderKey = "daw.projectsFolder";
 
     /** A new, untitled project at the engine's rate (it gets a folder when
         first saved, recorded into or imported into). */
@@ -192,9 +202,42 @@ public:
     //==============================================================================
     // Import / export (one job at a time, on a worker thread)
 
+    /** IMPORT (the editor's FILE menu, daw.importMode): COPY TO PROJECT
+        converts every file into the project's Audio folder; KEEP IN PLACE
+        references a file where it is when the project can play it as it is
+        (see whyNotInPlace) and copies only the others; ASK EACH TIME lets the
+        editor ask on every import. */
+    enum class ImportMode
+    {
+        Copy = 0,
+        KeepInPlace = 1,
+        Ask = 2
+    };
+    ImportMode getImportMode() const;
+    void setImportMode (ImportMode);
+    static constexpr const char* importModeKey = "daw.importMode";
+
     /** Imports files as clips at `position`, the first on `trackId` (0: a new
-        track) and each further one on the next track (added as needed). */
-    void importFiles (const juce::Array<juce::File>&, int64 trackId, int64 position);
+        track) and each further one on the next track (added as needed).
+        `keepInPlace` overrides the IMPORT setting (ASK EACH TIME without it
+        copies). */
+    void importFiles (const juce::Array<juce::File>&, int64 trackId, int64 position, std::optional<bool> keepInPlace = std::nullopt);
+    /** COLLECT FILES INTO PROJECT: copies every file the clips play from
+        outside the project's folder into its Audio folder, repoints the clips
+        (one undoable action) and saves, so the folder can be moved or archived
+        on its own. Offline files are left as they are (and reported). */
+    void collectFiles();
+    /** Clips playing files outside the project's folder (KEEP IN PLACE). */
+    int getNumReferencedFiles() const;
+
+    /** A clip's file is missing (a drive unplugged, a file moved): the clip
+        shows OFFLINE and plays silence. Checked again about once a second;
+        playback picks the file up when it comes back. */
+    bool isOffline (const ClipData&) const;
+    /** Distinct missing files of the project's clips. */
+    juce::StringArray getOfflineFiles() const;
+    /** Checks every clip's file now (normally on the timer). */
+    void checkOfflineFiles();
     /** Renders every track to <folder>/<nn> <name><ext> in `format`. */
     void exportTracks (const juce::File& folder, AudioFileFormat format = AudioFileFormat::wav (32));
 
@@ -233,6 +276,8 @@ public:
     std::function<void (const juce::String&, bool)> onMessage;
     /** Called after a project was opened, created or cleared. */
     std::function<void()> onProjectReplaced;
+    /** A clip's file went offline or came back (repaint the clips). */
+    std::function<void()> onOfflineChanged;
 
     /** Pushes the playlist and loop to the recorder now (tests). */
     void pushPlaylistNow();
@@ -255,6 +300,11 @@ private:
     AudioFileFormat recordFormat, exportFormat;
     Project project;
     juce::File defaultFolder;
+    // Files of the clips -> exists (refreshed on the timer).
+    mutable std::map<juce::String, bool> fileExists;
+    juce::uint32 lastOfflineCheck = 0;
+    ImportMode importMode = ImportMode::Copy; // without settings
+    void reportOffline();
 
     bool playlistDirty = true, gesture = false;
     juce::uint32 lastPush = 0, lastAutosave = 0;

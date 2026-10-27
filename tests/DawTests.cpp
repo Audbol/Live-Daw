@@ -65,6 +65,7 @@ public:
         testSaveLoad();
         testTakes();
         testImportAndRender();
+        testKeepInPlace();
         testFormats();
         testSessionSetups();
         testPlayModesAndAutoInput();
@@ -692,6 +693,198 @@ private:
             expectWithinAbsoluteError (o.getMagnitude (0, 24000, 12000), 0.25f, 0.01f);
             expect (o.getMagnitude (0, 12000, 2000) < 0.05f); // the fade starts at zero
             expectEquals (o.getMagnitude (0, 36000, 12000), 0.0f);
+        }
+    }
+
+    void testKeepInPlace()
+    {
+        beginTest ("IMPORT: KEEP IN PLACE references what plays as it is, copies the rest and says why");
+        {
+            TempFolder temp;
+            juce::AudioFormatManager formats;
+            formats.registerFormat (new EngineMp3AudioFormat(), false);
+            formats.registerBasicFormats();
+            const auto library = temp.folder.getChildFile ("Library"); // the samples drive
+            auto writeIn = [&library] (const juce::String& fileName, AudioFileFormat format, double rate, int channels)
+            {
+                const auto f = library.getChildFile (fileName);
+                library.createDirectory();
+                auto w = AudioFileWriter::create (f, channels, rate, format);
+                std::vector<std::vector<float>> data ((size_t) channels, std::vector<float> ((size_t) rate / 4));
+                for (auto& ch : data)
+                    for (size_t i = 0; i < ch.size(); ++i)
+                        ch[i] = 0.3f * (float) std::sin ((double) i * 0.05);
+                std::vector<const float*> ptrs;
+                for (auto& ch : data)
+                    ptrs.push_back (ch.data());
+                w->write (ptrs.data(), channels, (int) rate / 4);
+                w->finalize();
+                return f;
+            };
+            expectEquals (khzText (44100.0), juce::String ("44.1"));
+            expectEquals (khzText (48000.0), juce::String ("48"));
+            expectEquals (khzText (88200.0), juce::String ("88.2"));
+
+            int64 length = 0;
+            int channels = 0;
+            expectEquals (whyNotInPlace (formats, writeIn ("a.flac", AudioFileFormat::flac (24), 48000.0, 2), 48000.0, &length, &channels),
+                          juce::String());
+            expectEquals (length, (int64) 12000);
+            expectEquals (channels, 2);
+            expectEquals (whyNotInPlace (formats, writeIn ("a.aif", AudioFileFormat::aiff (24), 48000.0, 1), 48000.0), juce::String());
+            expectEquals (whyNotInPlace (formats, writeIn ("b.wav", AudioFileFormat::wav (16), 44100.0, 2), 48000.0),
+                          juce::String ("resampled copy: 44.1 kHz file in a 48 kHz project"));
+            expectEquals (whyNotInPlace (formats, writeIn ("c.wav", AudioFileFormat::wav (24), 48000.0, 4), 48000.0),
+                          juce::String ("copy of the first two channels: 4-channel file"));
+            expect (whyNotInPlace (formats, writeIn ("d.mp3", AudioFileFormat::mp3 (192), 48000.0, 2), 48000.0).startsWith ("decoded copy"));
+            library.getChildFile ("e.wav").replaceWithText ("not audio");
+            expect (whyNotInPlace (formats, library.getChildFile ("e.wav"), 48000.0).startsWith ("converted copy"));
+        }
+
+        beginTest ("KEEP IN PLACE: referenced files survive save, Save As, going offline and COLLECT FILES; the settings persist");
+        {
+            TempFolder temp;
+            MixerEngine engine (0);
+            constexpr int kBlock = 128;
+            engine.prepareOffline (48000.0, kBlock, 2, 2);
+            auto& recorder = engine.getRecorder();
+            const auto settingsFile = temp.folder.getChildFile ("test.settings");
+            juce::PropertiesFile::Options options;
+            juce::PropertiesFile settings (settingsFile, options);
+            Session session (recorder, &settings);
+            session.setDefaultFolder (temp.folder.getChildFile ("Projects"));
+            auto& p = session.getProject();
+            juce::StringArray messages;
+            session.onMessage = [&messages] (const juce::String& m, bool) { messages.add (m); };
+            auto wait = [&session]
+            {
+                for (int i = 0; i < 2000 && session.isBusy(); ++i)
+                    test::pumpMessages (5);
+                test::pumpMessages (5);
+            };
+            auto said = [&messages] (const juce::String& text) { return messages.joinIntoString ("\n").contains (text); };
+            std::vector<float> in0 (kBlock), out0 (kBlock), out1 (kBlock);
+            auto run = [&] (int blocks)
+            {
+                for (int b = 0; b < blocks; ++b)
+                {
+                    recorder.waitForDisk();
+                    const float* ins[] = { in0.data(), in0.data() };
+                    float* outs[] = { out0.data(), out1.data() };
+                    engine.processBlock (ins, 2, outs, 2, kBlock);
+                }
+            };
+
+            // The settings: COPY TO PROJECT by default; IMPORT and the projects folder persist.
+            expect (session.getImportMode() == Session::ImportMode::Copy);
+            session.setImportMode (Session::ImportMode::Ask);
+            const auto elsewhere = temp.folder.getChildFile ("Other drive");
+            elsewhere.createDirectory();
+            session.setProjectsFolder (elsewhere);
+            expect (session.getProjectsFolder() == elsewhere && session.hasCustomProjectsFolder());
+            settings.saveIfNeeded();
+            {
+                juce::PropertiesFile reread (settingsFile, options);
+                expectEquals (reread.getIntValue (Session::importModeKey), (int) Session::ImportMode::Ask);
+                expectEquals (reread.getValue (Session::projectsFolderKey), elsewhere.getFullPathName());
+            }
+            // A chosen folder that isn't there (a drive unplugged) isn't created anew.
+            session.setProjectsFolder (temp.folder.getChildFile ("Unplugged/Projects"));
+            expect (session.ensureFolder().failed());
+            expect (! temp.folder.getChildFile ("Unplugged").exists());
+            session.setProjectsFolder (elsewhere);
+            expect (session.ensureFolder().wasOk());
+            expect (p.getFolder().isAChildOf (elsewhere));
+            session.setProjectsFolder ({});
+            expect (! session.hasCustomProjectsFolder() && session.getProjectsFolder() == temp.folder.getChildFile ("Projects"));
+            session.setImportMode (Session::ImportMode::KeepInPlace);
+
+            const auto library = temp.folder.getChildFile ("Library");
+            const auto kick = writeSine (library.getChildFile ("kick.wav"), 48000.0, 0.5, 2);
+            const auto pad = writeSine (library.getChildFile ("pad.wav"), 44100.0, 0.5, 1);
+            session.importFiles ({ kick, pad }, 0, 0);
+            wait();
+            expectEquals (p.getNumTracks(), 2);
+            const auto kickTrack = p.getTrackData (0).id, padTrack = p.getTrackData (1).id;
+            auto kickClip = p.getClips (kickTrack)[0];
+            const auto padClip = p.getClips (padTrack)[0];
+            expect (p.resolve (kickClip.file) == kick, "the original is referenced");
+            expect (juce::File::isAbsolutePath (kickClip.file));
+            expectEquals (kickClip.length, (int64) 24000);
+            expect (p.resolve (padClip.file).isAChildOf (p.getAudioFolder()), "a 44.1 kHz file gets a copy");
+            expectEquals (padClip.length, (int64) 24000);
+            expect (said ("pad: resampled copy: 44.1 kHz file in a 48 kHz project"));
+            expect (said ("Imported 2 files (1 kept in place, 1 copied into the project)"));
+            expectEquals (p.getAudioFolder().getNumberOfChildFiles (juce::File::findFiles), 1, "no duplicate of the referenced file");
+            expectEquals (session.getNumReferencedFiles(), 1);
+            expect (! session.isOffline (kickClip));
+            expectEquals ((int) p.buildPlaylist()[0].clips.size(), 1);
+
+            // ASK's COPY TO PROJECT copies a file that could stay.
+            session.importFiles ({ kick }, 0, 48000, false);
+            wait();
+            expectEquals (p.getNumTracks(), 3);
+            expect (p.resolve (p.getClips (p.getTrackData (2).id)[0].file).isAChildOf (p.getAudioFolder()));
+            p.beginEdit ("remove");
+            p.removeTrack (p.getTrackData (2).id);
+
+            // Saving keeps the absolute path; Save As elsewhere keeps both clips playing.
+            expect (session.save().wasOk());
+            expect (p.getFile().loadFileAsString().contains (kick.getFullPathName()));
+            const auto oldAudio = p.getAudioFolder();
+            expect (session.saveAs (temp.folder.getChildFile ("Projects/Moved")).wasOk());
+            expect (p.resolve (p.getClips (kickTrack)[0].file) == kick);
+            expect (p.resolve (p.getClips (padTrack)[0].file).isAChildOf (oldAudio));
+            expectEquals ((int) p.buildPlaylist()[0].clips.size() + (int) p.buildPlaylist()[1].clips.size(), 2);
+            expectEquals (session.getNumReferencedFiles(), 2);
+
+            // The drive goes away: the clip is offline, left out of playback, which keeps running.
+            const auto unplugged = temp.folder.getChildFile ("unplugged.wav");
+            expect (kick.moveFileTo (unplugged));
+            session.checkOfflineFiles();
+            expect (session.isOffline (p.getClips (kickTrack)[0]));
+            expectEquals (session.getOfflineFiles().size(), 1);
+            expect (said ("OFFLINE: " + kick.getFullPathName()));
+            session.pushPlaylistNow();
+            expect (p.buildPlaylist()[0].clips.empty());
+            session.locate (0);
+            session.play();
+            run (300);
+            expect (session.isRolling(), "playback goes on");
+            expect (session.getPosition() > 0);
+            session.stop();
+
+            // A project with a missing file loads with the clip offline (not dropped).
+            expect (session.save().wasOk());
+            const auto projectFile = p.getFile();
+            session.newProject();
+            messages.clear();
+            expect (session.openProject (projectFile).wasOk());
+            expectEquals ((int) p.getClips (kickTrack).size(), 1);
+            expect (p.resolve (p.getClips (kickTrack)[0].file) == kick);
+            expect (session.isOffline (p.getClips (kickTrack)[0]));
+            expect (said ("OFFLINE: 1 file is missing"));
+
+            // It comes back.
+            expect (unplugged.moveFileTo (kick));
+            session.checkOfflineFiles();
+            expect (! session.isOffline (p.getClips (kickTrack)[0]));
+            expect (said ("Back online: " + kick.getFullPathName()));
+
+            // COLLECT FILES copies both files from outside into the Audio folder and repoints the clips.
+            session.collectFiles();
+            wait();
+            expectEquals (session.getNumReferencedFiles(), 0);
+            const auto collected = p.resolve (p.getClips (kickTrack)[0].file);
+            expect (collected.isAChildOf (p.getAudioFolder()) && ! juce::File::isAbsolutePath (p.getClips (kickTrack)[0].file));
+            expectEquals (collected.getSize(), kick.getSize());
+            expect (kick.existsAsFile(), "the original stays");
+            expect (p.resolve (p.getClips (padTrack)[0].file).isAChildOf (p.getAudioFolder()));
+            expect (! p.isDirty(), "saved");
+            expect (said ("Collected 2 files"));
+            // Undo points the clips back to the originals.
+            p.undoLast();
+            expect (p.resolve (p.getClips (kickTrack)[0].file) == kick);
         }
     }
 

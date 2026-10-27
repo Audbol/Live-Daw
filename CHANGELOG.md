@@ -7,6 +7,17 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Added
 
+- Multitrack editor: **FILE > Import: COPY TO PROJECT / KEEP IN PLACE / ASK EACH
+  TIME** (kept in the app settings). KEEP IN PLACE plays imported WAV, AIFF and FLAC
+  files where they are (another drive, a sample library) instead of copying them to
+  the project's drive; a file the project can't play as it is (another sample rate,
+  more than two channels, MP3 or another compressed format) still gets a converted
+  copy, and the event log says why for each. ASK EACH TIME asks on every import and
+  drop, with *Remember my choice*. Clips whose file is missing show **OFFLINE** and
+  play silence without stopping playback, and play again when the file is back.
+  **FILE > Collect files into project** copies the files from outside the project's
+  folder into it and repoints the clips. **FILE > Projects folder** chooses where new
+  projects and their recordings go (the default stays `Documents/Sidecar/Recordings`).
 - WING COMPACT: SETUP > GENERAL > CONSOLE > CONSOLE MODEL **FULL** / **COMPACT** shows
   the surface of a WING COMPACT instead of the full-size WING, at once. The top row is
   the display unit with the monitoring panel at its right. Below: one fader section of

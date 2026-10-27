@@ -2,6 +2,8 @@
 #include "engine/AppPaths.h"
 #include "engine/MixerEngine.h"
 
+#include <set>
+
 namespace livedaw::daw
 {
 
@@ -13,6 +15,7 @@ namespace
     constexpr const char* recentKey = "daw.recentProjects";
     constexpr const char* recordFormatKey = "daw.recordFormat";
     constexpr const char* exportFormatKey = "daw.exportFormat";
+    constexpr juce::uint32 kOfflineCheckMs = 1000;
     constexpr int kMaxRecent = 10;
 
     class JobThread final : public juce::Thread
@@ -75,8 +78,41 @@ juce::File Session::getDefaultFolder()
 
 juce::File Session::getProjectsFolder() const
 {
+    if (hasCustomProjectsFolder())
+        return juce::File (settings->getValue (projectsFolderKey));
     return defaultFolder != juce::File() ? defaultFolder : getDefaultFolder();
 }
+
+bool Session::hasCustomProjectsFolder() const
+{
+    return settings != nullptr && juce::File::isAbsolutePath (settings->getValue (projectsFolderKey));
+}
+
+void Session::setProjectsFolder (const juce::File& f)
+{
+    if (settings == nullptr)
+    {
+        defaultFolder = f;
+        return;
+    }
+    if (f == juce::File())
+        settings->removeValue (projectsFolderKey);
+    else
+        settings->setValue (projectsFolderKey, f.getFullPathName());
+    message ("New projects and their recordings go to " + getProjectsFolder().getFullPathName());
+}
+
+namespace
+{
+    /** A chosen projects folder on a drive that isn't there isn't created anew. */
+    juce::Result checkProjectsFolder (const juce::File& folder, bool custom)
+    {
+        if (custom && ! folder.isDirectory())
+            return juce::Result::fail ("The projects folder " + folder.getFullPathName()
+                                       + " isn't available (is its drive connected?). Choose another one in FILE > Projects folder.");
+        return juce::Result::ok();
+    }
+} // namespace
 
 void Session::newProject()
 {
@@ -91,6 +127,9 @@ juce::Result Session::createProject (const juce::String& name, const juce::File&
     const auto clean = juce::File::createLegalFileName (name.trim());
     if (clean.isEmpty())
         return juce::Result::fail ("The project needs a name");
+    if (parent == juce::File())
+        if (auto r = checkProjectsFolder (getProjectsFolder(), hasCustomProjectsFolder()); r.failed())
+            return r;
     const auto folder = (parent != juce::File() ? parent : getProjectsFolder()).getChildFile (clean);
     if (folder.getChildFile (clean + Project::fileExtension).exists())
         return juce::Result::fail ("A project called \"" + clean + "\" already exists");
@@ -120,6 +159,10 @@ juce::Result Session::openProject (const juce::File& file, bool restoreAutosave)
         autosaveFile.deleteFile();
     addRecent (project.getFile());
     message ((restore ? "Restored the unsaved changes of " : "Opened project ") + file.getFullPathName());
+    if (const auto offline = getOfflineFiles(); ! offline.isEmpty())
+        message ("OFFLINE: " + juce::String (offline.size()) + (offline.size() == 1 ? " file is" : " files are")
+                     + " missing (is the drive connected?); their clips play silence until it's back: " + offline.joinIntoString (", "),
+                 true);
     if (! rateMatches())
         message ("The project runs at " + juce::String (project.getSampleRate() / 1000.0, 1) + " kHz but the console at "
                      + juce::String (recorder.getSampleRate() / 1000.0, 1) + " kHz: playback runs at the wrong speed",
@@ -158,6 +201,8 @@ juce::Result Session::ensureFolder()
 {
     if (project.hasFolder())
         return juce::Result::ok();
+    if (auto r = checkProjectsFolder (getProjectsFolder(), hasCustomProjectsFolder()); r.failed())
+        return r;
     const auto base = "Session " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H%M%S");
     auto folder = getProjectsFolder().getChildFile (base);
     for (int i = 2; folder.exists(); ++i)
@@ -697,7 +742,21 @@ void Session::runJob (const juce::String& name, std::function<void (const std::a
     worker->startThread();
 }
 
-void Session::importFiles (const juce::Array<juce::File>& files, int64 trackId, int64 position)
+Session::ImportMode Session::getImportMode() const
+{
+    if (settings == nullptr)
+        return importMode;
+    return static_cast<ImportMode> (juce::jlimit (0, 2, settings->getIntValue (importModeKey, 0)));
+}
+
+void Session::setImportMode (ImportMode m)
+{
+    importMode = m;
+    if (settings != nullptr)
+        settings->setValue (importModeKey, (int) m);
+}
+
+void Session::importFiles (const juce::Array<juce::File>& files, int64 trackId, int64 position, std::optional<bool> keepInPlace)
 {
     if (files.isEmpty())
         return;
@@ -713,23 +772,24 @@ void Session::importFiles (const juce::Array<juce::File>& files, int64 trackId, 
     }
     const auto folder = project.getAudioFolder();
     const double rate = project.getSampleRate();
+    const bool keep = keepInPlace.value_or (getImportMode() == ImportMode::KeepInPlace);
     std::weak_ptr<bool> token = alive;
-    runJob ("IMPORT", [this, files, folder, rate, trackId, position, token] (const std::atomic<bool>& stop, std::atomic<float>& progress)
+    runJob ("IMPORT", [this, files, folder, rate, keep, trackId, position, token] (const std::atomic<bool>& stop, std::atomic<float>& progress)
     {
         std::vector<ImportResult> results;
         for (int i = 0; i < files.size() && ! stop.load(); ++i)
-            results.push_back (importAudioFile (formats, files[i], folder, rate, stop, [&progress, i, n = files.size()] (float p)
+            results.push_back (importOrReference (formats, files[i], folder, rate, keep, stop, [&progress, i, n = files.size()] (float p)
             {
                 progress = ((float) i + p) / (float) n;
             }));
 
-        juce::MessageManager::callAsync ([this, token, results, trackId, position]
+        juce::MessageManager::callAsync ([this, token, results, keep, trackId, position]
         {
             if (token.expired())
                 return;
             project.beginEdit ("Import audio");
             int index = project.indexOfTrack (trackId);
-            int placed = 0;
+            int placed = 0, referenced = 0;
             for (auto& r : results)
             {
                 if (r.result.failed())
@@ -737,6 +797,8 @@ void Session::importFiles (const juce::Array<juce::File>& files, int64 trackId, 
                     message ("Import: " + r.result.getErrorMessage(), true);
                     continue;
                 }
+                if (r.copyReason.isNotEmpty())
+                    message ("Import: " + r.name + ": " + r.copyReason);
                 if (index < 0 || index >= project.getNumTracks())
                 {
                     TrackData t;
@@ -751,22 +813,189 @@ void Session::importFiles (const juce::Array<juce::File>& files, int64 trackId, 
                 if (project.getClips (track.id).empty() && track.stereo != (r.numChannels > 1))
                     project.setTrackProperty (track.id, ids::stereo, r.numChannels > 1);
                 ClipData c;
-                c.file = project.storedPath (r.file);
+                c.file = project.storedPath (r.file); // a referenced file outside the folder: its absolute path
                 c.fileLength = r.length;
                 c.length = r.length;
                 c.numChannels = r.numChannels;
                 c.start = position;
                 c.name = r.name;
                 project.addClip (track.id, c);
+                fileExists[r.file.getFullPathName()] = true;
                 if (placed == 0)
                     selectedTrack = track.id;
                 ++placed;
+                if (r.referenced)
+                    ++referenced;
                 ++index;
             }
             if (placed > 0)
-                message ("Imported " + juce::String (placed) + (placed == 1 ? " file" : " files"));
+            {
+                juce::String text = "Imported " + juce::String (placed) + (placed == 1 ? " file" : " files");
+                if (keep)
+                    text << " (" << referenced << " kept in place, " << (placed - referenced) << " copied into the project)";
+                message (text);
+            }
         });
     });
+}
+
+int Session::getNumReferencedFiles() const
+{
+    std::set<juce::String> files;
+    for (const auto& t : project.getTracks())
+        for (const auto& c : project.getClips (t.id))
+            if (const auto f = project.resolve (c.file); ! project.hasFolder() || ! f.isAChildOf (project.getFolder()))
+                files.insert (f.getFullPathName());
+    return (int) files.size();
+}
+
+void Session::collectFiles()
+{
+    if (busy)
+    {
+        message ("Wait for the " + jobName.toLowerCase() + " to finish", true);
+        return;
+    }
+    if (auto r = ensureFolder(); r.failed())
+    {
+        message (r.getErrorMessage(), true);
+        return;
+    }
+    // Every file outside the project's folder, once.
+    std::vector<juce::File> sources;
+    juce::StringArray offline;
+    juce::int64 bytes = 0;
+    for (const auto& t : project.getTracks())
+        for (const auto& c : project.getClips (t.id))
+        {
+            const auto f = project.resolve (c.file);
+            if (f.isAChildOf (project.getFolder()) || std::find (sources.begin(), sources.end(), f) != sources.end()
+                || offline.contains (f.getFullPathName()))
+                continue;
+            if (! f.existsAsFile())
+            {
+                offline.add (f.getFullPathName());
+                continue;
+            }
+            sources.push_back (f);
+            bytes += f.getSize();
+        }
+    for (auto& f : offline)
+        message ("Collect files: " + f + " is offline (missing); its clips still point to it", true);
+    if (sources.empty())
+    {
+        if (offline.isEmpty())
+            message ("Collect files: every file is already in the project's folder");
+        return;
+    }
+    const auto folder = project.getAudioFolder();
+    folder.createDirectory();
+    if (const auto available = folder.getBytesFreeOnVolume(); available > 0 && available < bytes + (64 << 20))
+    {
+        message ("Collect files: not enough space on the project's drive (" + juce::File::descriptionOfSizeInBytes (bytes) + " needed, "
+                     + juce::File::descriptionOfSizeInBytes (available) + " free)",
+                 true);
+        return;
+    }
+    std::weak_ptr<bool> token = alive;
+    runJob ("COLLECT FILES", [this, sources, folder, token] (const std::atomic<bool>& stop, std::atomic<float>& progress)
+    {
+        std::vector<std::pair<juce::File, juce::File>> copied; // source, copy
+        juce::StringArray errors;
+        juce::int64 copiedBytes = 0;
+        for (size_t i = 0; i < sources.size() && ! stop.load(); ++i)
+        {
+            const auto& src = sources[i];
+            const auto dest = uniqueAudioFile (folder, src.getFileNameWithoutExtension(), src.getFileExtension());
+            dest.create(); // reserve the name
+            auto r = copyFile (src, dest, stop, [&progress, i, n = sources.size()] (float p)
+            {
+                progress = ((float) i + p) / (float) n;
+            });
+            if (r.failed())
+                errors.add (src.getFullPathName() + ": " + r.getErrorMessage());
+            else
+            {
+                copied.emplace_back (src, dest);
+                copiedBytes += dest.getSize();
+            }
+        }
+        juce::MessageManager::callAsync ([this, token, copied, errors, folder, copiedBytes]
+        {
+            if (token.expired())
+                return;
+            for (auto& e : errors)
+                message ("Collect files: " + e, true);
+            if (copied.empty())
+                return;
+            project.beginEdit ("Collect files");
+            for (const auto& t : project.getTracks())
+                for (const auto& c : project.getClips (t.id))
+                {
+                    const auto f = project.resolve (c.file);
+                    for (auto& [src, dest] : copied)
+                        if (f == src)
+                        {
+                            project.setClipProperty (c.id, ids::file, project.storedPath (dest));
+                            fileExists[dest.getFullPathName()] = true;
+                            break;
+                        }
+                }
+            message ("Collected " + juce::String ((int) copied.size()) + (copied.size() == 1 ? " file" : " files") + " ("
+                     + juce::File::descriptionOfSizeInBytes (copiedBytes) + ") into " + folder.getFullPathName());
+            if (project.hasFolder())
+                if (auto r = project.save(); r.failed())
+                    message ("Couldn't save the project after collecting its files: " + r.getErrorMessage(), true);
+        });
+    });
+}
+
+bool Session::isOffline (const ClipData& c) const
+{
+    const auto key = project.resolve (c.file).getFullPathName();
+    auto it = fileExists.find (key);
+    if (it == fileExists.end())
+        it = fileExists.emplace (key, juce::File::isAbsolutePath (key) && juce::File (key).existsAsFile()).first;
+    return ! it->second;
+}
+
+juce::StringArray Session::getOfflineFiles() const
+{
+    juce::StringArray list;
+    for (const auto& t : project.getTracks())
+        for (const auto& c : project.getClips (t.id))
+            if (isOffline (c))
+                list.addIfNotAlreadyThere (project.resolve (c.file).getFullPathName());
+    return list;
+}
+
+void Session::checkOfflineFiles()
+{
+    lastOfflineCheck = juce::Time::getMillisecondCounter();
+    std::map<juce::String, bool> now;
+    for (const auto& t : project.getTracks())
+        for (const auto& c : project.getClips (t.id))
+        {
+            const auto key = project.resolve (c.file).getFullPathName();
+            if (now.find (key) == now.end())
+                now[key] = juce::File::isAbsolutePath (key) && juce::File (key).existsAsFile();
+        }
+    juce::StringArray gone, back;
+    for (auto& [key, exists] : now)
+        if (const auto it = fileExists.find (key); it != fileExists.end() && it->second != exists)
+            (exists ? back : gone).add (key);
+    const bool changed = now != fileExists;
+    fileExists = std::move (now);
+    if (! gone.isEmpty())
+        message ("OFFLINE: " + gone.joinIntoString (", ") + (gone.size() == 1 ? " is" : " are")
+                     + " missing (a drive unplugged?); the clips play silence until it's back",
+                 true);
+    if (! back.isEmpty())
+        message ("Back online: " + back.joinIntoString (", "));
+    if (! gone.isEmpty() || ! back.isEmpty())
+        playlistDirty = true; // the playlist leaves missing files out
+    if (changed && onOfflineChanged)
+        onOfflineChanged();
 }
 
 void Session::exportTracks (const juce::File& folder, AudioFileFormat format)
@@ -850,6 +1079,8 @@ void Session::projectChanged()
 void Session::projectReplaced()
 {
     playlistDirty = true;
+    fileExists.clear();
+    checkOfflineFiles();
     selectedTrack = 0;
     clipboard.clear();
     pushPlaylistNow();
@@ -946,6 +1177,9 @@ void Session::timerCallback()
 
     if (playlistDirty && (! gesture || now - lastPush > kGesturePushMs))
         pushPlaylistNow();
+
+    if (now - lastOfflineCheck > kOfflineCheckMs)
+        checkOfflineFiles();
 
     if (now - lastAutosave > kAutosaveMs)
         autosave();
