@@ -170,6 +170,121 @@ ImportResult importAudioFile (juce::AudioFormatManager& formats, const juce::Fil
 }
 
 //==============================================================================
+juce::String khzText (double sampleRate)
+{
+    const double k = sampleRate / 1000.0;
+    return std::abs (k - std::round (k)) < 1.0e-6 ? juce::String ((int) std::round (k)) : juce::String (k, 1);
+}
+
+juce::String whyNotInPlace (juce::AudioFormatManager& formats, const juce::File& source, double sampleRate, int64* length, int* numChannels)
+{
+    // The recorder's player (the engine's readers) must read it as it is.
+    const auto ext = source.getFileExtension().trimCharactersAtStart (".").toUpperCase();
+    const auto engine = AudioFileReader::open (source);
+    if (engine == nullptr || engine->getLength() <= 0 || engine->getSampleRate() <= 0.0)
+        return "converted copy: the player can't read " + (ext.isNotEmpty() ? ext + " files" : juce::String ("this file")) + " as they are";
+    if (engine->getType() == AudioFileFormat::Type::Mp3)
+        return "decoded copy: MP3 is decoded once, so it plays sample-accurately and light on the disk thread";
+
+    const bool resample = std::abs (engine->getSampleRate() - sampleRate) > 0.5;
+    const bool manyChannels = engine->getNumChannels() > 2;
+    if (resample || manyChannels)
+    {
+        juce::String what = resample ? "resampled copy" : "copy";
+        if (manyChannels)
+            what << " of the first two channels";
+        juce::String file;
+        if (resample)
+            file << khzText (engine->getSampleRate()) << " kHz ";
+        if (manyChannels)
+            file << engine->getNumChannels() << "-channel ";
+        file << "file";
+        if (resample)
+            file << " in a " << khzText (sampleRate) << " kHz project";
+        return what + ": " + file;
+    }
+
+    // The editor's waveforms and the export read it through JUCE: they must agree.
+    std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (source));
+    if (reader == nullptr || (int64) reader->lengthInSamples != engine->getLength() || (int) reader->numChannels != engine->getNumChannels())
+        return "converted copy: the waveform reader and the player disagree about this " + (ext.isNotEmpty() ? ext + " " : juce::String()) + "file";
+
+    if (length != nullptr)
+        *length = engine->getLength();
+    if (numChannels != nullptr)
+        *numChannels = engine->getNumChannels();
+    return {};
+}
+
+ImportResult importOrReference (juce::AudioFormatManager& formats, const juce::File& source, const juce::File& folder, double sampleRate,
+                                bool keepInPlace, const std::atomic<bool>& cancel, std::function<void (float)> progress)
+{
+    if (! keepInPlace)
+        return importAudioFile (formats, source, folder, sampleRate, cancel, std::move (progress));
+    int64 length = 0;
+    int channels = 1;
+    const auto why = whyNotInPlace (formats, source, sampleRate, &length, &channels);
+    if (why.isNotEmpty())
+    {
+        auto r = importAudioFile (formats, source, folder, sampleRate, cancel, std::move (progress));
+        r.copyReason = why;
+        return r;
+    }
+    ImportResult r;
+    r.name = source.getFileNameWithoutExtension();
+    r.file = source;
+    r.length = length;
+    r.numChannels = channels;
+    r.referenced = true;
+    if (progress)
+        progress (1.0f);
+    return r;
+}
+
+juce::Result copyFile (const juce::File& source, const juce::File& dest, const std::atomic<bool>& cancel, std::function<void (float)> progress)
+{
+    juce::FileInputStream in (source);
+    if (! in.openedOk())
+        return juce::Result::fail ("Can't read " + source.getFullPathName());
+    dest.getParentDirectory().createDirectory();
+    dest.deleteFile();
+    auto fail = [&dest] (const juce::String& message)
+    {
+        dest.deleteFile();
+        return juce::Result::fail (message);
+    };
+    {
+        juce::FileOutputStream out (dest);
+        if (! out.openedOk())
+            return fail ("Can't write " + dest.getFullPathName());
+        const auto total = juce::jmax<juce::int64> (1, in.getTotalLength());
+        juce::HeapBlock<char> buffer (1 << 20);
+        juce::int64 done = 0;
+        for (;;)
+        {
+            if (cancel.load())
+                return fail ("Cancelled");
+            const int n = in.read (buffer.get(), 1 << 20);
+            if (n < 0)
+                return fail ("Read error in " + source.getFullPathName());
+            if (n == 0)
+                break;
+            if (! out.write (buffer.get(), (size_t) n))
+                return fail ("Write error (disk full?)");
+            done += n;
+            if (progress)
+                progress ((float) ((double) done / (double) total));
+        }
+        out.flush();
+        if (out.getStatus().failed())
+            return fail ("Write error (disk full?)");
+    }
+    if (dest.getSize() != source.getSize())
+        return fail ("The copy of " + source.getFileName() + " is incomplete");
+    return juce::Result::ok();
+}
+
+//==============================================================================
 juce::Result renderTrack (juce::AudioFormatManager& formats, const std::vector<RenderClip>& clips, float trackGainDb, int numChannels,
                           double sampleRate, int64 length, const juce::File& dest, const std::atomic<bool>& cancel,
                           std::function<void (float)> progress, AudioFileFormat format)

@@ -637,6 +637,10 @@ a WING with a WING-LIVE card, and edits them in a DAW-style editor.
   holding `<name>.ldproj` and the `Audio` folder. Recording into an unsaved project
   creates a dated one. Projects autosave every 30 s; unsaved changes are offered
   back when the project is opened next. The last project reopens at start-up.
+  **FILE > Projects folder** in the editor puts new projects (and so their
+  recordings) in another folder, on another drive for instance (Choose..., or back to
+  the Default); existing projects stay where they are. A chosen folder whose drive
+  isn't connected is not created anew: Sidecar asks for another one.
 - **Recorder screen** (status-bar **LIVE** icon, or MULTI TRANSP > VIEW): the PLAYER
   (armed channels, rate, meters of the armed tracks, the red time, transport with the
   marker keys, free disk and record time left, timeline), the SESSIONS (click to open;
@@ -678,9 +682,29 @@ a WING with a WING-LIVE card, and edits them in a DAW-style editor.
     gain line or alt + wheel for clip gain. Moves snap to the grid, clip edges,
     markers and the playhead (hold shift to place freely). Overlapping clips are
     summed, and overlaps get crossfades automatically (FILE menu option).
-  - **Import:** FILE > Import or drop files from the desktop (WAV, AIFF, FLAC, MP3...):
-    converted to WAV at the project's rate in its Audio folder, placed at the playhead
-    (or where dropped), on the selected track and the ones below.
+  - **Import:** FILE > Import or drop files from the desktop (WAV, AIFF, FLAC, MP3...),
+    placed at the playhead (or where dropped), on the selected track and the ones
+    below. **FILE > Import** chooses what happens to the files:
+    - **COPY TO PROJECT** (the default): each file is converted to WAV at the
+      project's rate in its Audio folder.
+    - **KEEP IN PLACE**: the clips play the files where they are (a sample library on
+      another drive, say), nothing is copied. This works for WAV, AIFF and FLAC files
+      at the project's rate with one or two channels. Any other file still gets a
+      converted copy, and the event log says why for each one ("pad: resampled copy:
+      44.1 kHz file in a 48 kHz project"; MP3 and other compressed files get a
+      decoded copy, files with more than two channels a copy of the first two).
+    - **ASK EACH TIME**: every import asks KEEP IN PLACE or COPY TO PROJECT;
+      *Remember my choice* makes that the setting.
+
+    A referenced file keeps its full path in the project, so Save As to another
+    folder keeps it playing. If it goes missing (a drive unplugged, a file moved),
+    its clips show **OFFLINE** (hatched red, with the path) and play silence while
+    the rest plays on; they play again as soon as the file is back. **FILE > Collect
+    files into project** copies every file the clips play from outside the project's
+    folder into its Audio folder and points the clips to the copies (the originals
+    stay; undoable), so the project folder can be moved or archived on its own.
+    Recordings always go into the project's Audio folder, and Sidecar never writes
+    to a referenced file.
   - **Export:** FILE > Export tracks renders every track (clip gains, fades, track
     gain) from the start of the timeline into the project's Export folder, as WAV
     (32-bit float, 24, 16), AIFF (24, 16), FLAC (24, 16) or MP3 (320 - 128 kbit/s).

@@ -115,16 +115,16 @@ namespace dawfiles
         });
     }
 
-    void importWithChooser (juce::Component*, daw::Session& session, std::unique_ptr<juce::FileChooser>& chooser)
+    void importWithChooser (juce::Component* parent, daw::Session& session, std::unique_ptr<juce::FileChooser>& chooser)
     {
         chooser = std::make_unique<juce::FileChooser> ("Import audio", juce::File::getSpecialLocation (juce::File::userMusicDirectory),
                                                        daw::importWildcard (session.getFormats()));
         chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles
                                   | juce::FileBrowserComponent::canSelectMultipleItems,
-                              [&session] (const juce::FileChooser& fc)
+                              [parent, &session] (const juce::FileChooser& fc)
         {
             if (! fc.getResults().isEmpty())
-                session.importFiles (fc.getResults(), session.selectedTrack, session.getPosition());
+                importAudio (parent, session, fc.getResults(), session.selectedTrack, session.getPosition());
         });
     }
 
@@ -148,6 +148,49 @@ namespace dawfiles
         }));
     }
 
+    void chooseProjectsFolder (juce::Component* parent, daw::Session& session, std::unique_ptr<juce::FileChooser>& chooser)
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Projects folder (new projects and their recordings)", session.getProjectsFolder());
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                              [parent, &session] (const juce::FileChooser& fc)
+        {
+            const auto folder = fc.getResult();
+            if (folder == juce::File())
+                return;
+            if (! folder.isDirectory() || ! folder.hasWriteAccess())
+            {
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Projects folder",
+                                                        "Can't write to " + folder.getFullPathName() + ".", "OK", parent);
+                return;
+            }
+            session.setProjectsFolder (folder);
+        });
+    }
+
+    void collectFiles (juce::Component* parent, daw::Session& session)
+    {
+        const int n = session.getNumReferencedFiles();
+        if (n == 0)
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Collect files",
+                                                    "Every file of the project is already in its folder.", "OK", parent);
+            return;
+        }
+        const auto& p = session.getProject();
+        juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Collect files into project",
+                                            "Copy the " + juce::String (n) + (n == 1 ? " file" : " files")
+                                                + " the clips play from outside the project's folder into "
+                                                + (p.hasFolder() ? p.getAudioFolder().getFullPathName() : juce::String ("its Audio folder"))
+                                                + " and point the clips to the copies? The originals stay where they are. "
+                                                  "Afterwards the project folder can be moved or archived on its own.",
+                                            "COLLECT", "CANCEL", parent,
+                                            juce::ModalCallbackFunction::create ([&session] (int r)
+        {
+            if (r != 0)
+                session.collectFiles();
+        }));
+    }
+
     void showMenu (juce::Component* target, daw::Session& session, std::unique_ptr<juce::FileChooser>& chooser)
     {
         auto* parent = target->getTopLevelComponent();
@@ -168,6 +211,13 @@ namespace dawfiles
         m.addItem ("Show the project folder", session.getProject().hasFolder(), false, [&session] { session.getProject().getFolder().revealToUser(); });
         m.addSeparator();
         m.addItem ("Import audio...   (Ctrl+I)", [parent, &session, &chooser] { importWithChooser (parent, session, chooser); });
+        juce::PopupMenu imports;
+        for (const auto mode : { daw::Session::ImportMode::Copy, daw::Session::ImportMode::KeepInPlace, daw::Session::ImportMode::Ask })
+            imports.addItem (importModeName (mode), true, session.getImportMode() == mode, [&session, mode] { session.setImportMode (mode); });
+        m.addSubMenu ("Import: " + importModeName (session.getImportMode()), imports);
+        const int referenced = session.getNumReferencedFiles();
+        m.addItem ("Collect files into project" + (referenced > 0 ? "   (" + juce::String (referenced) + " outside)" : juce::String()),
+                   referenced > 0 && ! session.isBusy(), false, [parent, &session] { collectFiles (parent, session); });
         juce::PopupMenu exports;
         for (const auto& f : AudioFileFormat::exportChoices())
             exports.addItem (f.describe() + "...", true, f == session.getExportFormat(), [parent, &session, f] { exportTracks (parent, session, f); });
@@ -180,6 +230,17 @@ namespace dawfiles
                              f == session.getRecordFormat(), [&session, f] { session.setRecordFormat (f); });
         }
         m.addSubMenu ("Record format: " + session.getRecordFormat().describe(), formats);
+        juce::PopupMenu folders;
+        folders.addItem ("Choose...", [parent, &session, &chooser] { chooseProjectsFolder (parent, session, chooser); });
+        folders.addItem ("Default (" + daw::Session::getDefaultFolder().getFullPathName() + ")", session.hasCustomProjectsFolder(),
+                         ! session.hasCustomProjectsFolder(), [&session] { session.setProjectsFolder ({}); });
+        folders.addItem ("Show it", [&session]
+        {
+            const auto f = session.getProjectsFolder();
+            if (f.isDirectory() || (! session.hasCustomProjectsFolder() && f.createDirectory()))
+                f.revealToUser();
+        });
+        m.addSubMenu ("Projects folder: " + session.getProjectsFolder().getFullPathName(), folders);
         m.addSeparator();
         m.addItem ("Crossfade overlaps automatically", true, session.autoCrossfade, [&session] { session.autoCrossfade = ! session.autoCrossfade; });
         m.addItem ("Recording replaces what it covers", true, session.replaceOnRecord, [&session] { session.replaceOnRecord = ! session.replaceOnRecord; });
@@ -542,6 +603,7 @@ DawEditor::DawEditor (UiContext& c, daw::Session& s)
     };
     state.status = [this] (const juce::String& m) { status (m); };
     waves.onChange = [this] { lanes.repaint(); };
+    session.onOfflineChanged = [this] { lanes.repaint(); };
 
     topBar = std::make_unique<TopBar> (*this);
     addAndMakeVisible (*topBar);
@@ -568,6 +630,7 @@ DawEditor::DawEditor (UiContext& c, daw::Session& s)
 DawEditor::~DawEditor()
 {
     session.getProject().removeListener (this);
+    session.onOfflineChanged = nullptr;
     vblank.reset();
 }
 
@@ -747,7 +810,7 @@ void DawEditor::filesDropped (const juce::StringArray& files, int x, int y)
     for (auto& f : files)
         if (daw::canImport (session.getFormats(), juce::File (f)))
             list.add (juce::File (f));
-    session.importFiles (list, 0, session.getPosition());
+    importAudio (getTopLevelComponent(), session, list, 0, session.getPosition());
 }
 
 bool DawEditor::keyPressed (const juce::KeyPress& key)

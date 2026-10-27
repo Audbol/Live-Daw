@@ -283,4 +283,13 @@ void showColourMenu (int current, juce::Component* target, std::function<void (i
 void askForText (juce::Component* parent, const juce::String& title, const juce::String& label, const juce::String& initial,
                  std::function<void (const juce::String&)> done);
 
+/** Imports files as clips (FILE > Import audio, files dropped on the editor):
+    with IMPORT: ASK EACH TIME it first asks over `parent` whether to keep the
+    files in place or copy them into the project ("Remember my choice" sets the
+    IMPORT setting). */
+void importAudio (juce::Component* parent, daw::Session&, const juce::Array<juce::File>&, daw::int64 trackId, daw::int64 position);
+
+/** "COPY TO PROJECT", "KEEP IN PLACE", "ASK EACH TIME". */
+juce::String importModeName (daw::Session::ImportMode);
+
 } // namespace livedaw::ui

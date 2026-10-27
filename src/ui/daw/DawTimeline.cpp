@@ -513,9 +513,11 @@ void DawLanes::paintClip (juce::Graphics& g, int row, const daw::ClipData& c, ju
         }
     }
 
-    // Waveform: only the part being repainted.
+    // Waveform: only the part being repainted. An offline clip (its file
+    // missing: a drive unplugged) shows so instead, and plays silence.
     const auto file = state.project.resolve (c.file);
-    auto* thumb = waves.get (file);
+    const bool offline = state.session.isOffline (c);
+    auto* thumb = offline ? nullptr : waves.get (file);
     const auto visible = wave.getIntersection (g.getClipBounds().toFloat()).reduced (0.0f, 1.0f);
     if (thumb != nullptr && visible.getWidth() > 0.0f)
     {
@@ -535,11 +537,25 @@ void DawLanes::paintClip (juce::Graphics& g, int row, const daw::ClipData& c, ju
             g.drawText ("...", wave.reduced (6.0f, 2.0f).toNearestInt(), juce::Justification::centredLeft);
         }
     }
-    else if (thumb == nullptr && wave.getWidth() > 60.0f)
+    else if (thumb == nullptr)
     {
-        g.setColour (DawColours::record);
-        g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-        g.drawFittedText ("FILE MISSING: " + c.file, wave.reduced (6.0f, 2.0f).toNearestInt(), juce::Justification::centredLeft, 2);
+        // Diagonal hatching over the clip, then the reason.
+        {
+            juce::Graphics::ScopedSaveState save (g);
+            g.reduceClipRegion (wave.toNearestInt());
+            g.setColour (DawColours::record.withAlpha (0.28f));
+            const auto shown = wave.getIntersection (g.getClipBounds().toFloat());
+            const float from = wave.getX() + 9.0f * std::floor ((shown.getX() - wave.getHeight() - wave.getX()) / 9.0f);
+            for (float x = from; x < shown.getRight(); x += 9.0f)
+                g.drawLine (x, wave.getBottom(), x + wave.getHeight(), wave.getY(), 1.5f);
+        }
+        if (wave.getWidth() > 40.0f)
+        {
+            g.setColour (DawColours::record);
+            g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
+            g.drawFittedText ((wave.getWidth() > 160.0f ? "OFFLINE - FILE MISSING: " : "OFFLINE ") + file.getFullPathName(),
+                              wave.reduced (6.0f, 2.0f).toNearestInt(), juce::Justification::centredLeft, 2);
+        }
     }
 
     paintFades (g, c, r, wave, hovered || selected);
@@ -1181,7 +1197,7 @@ void DawLanes::filesDropped (const juce::StringArray& files, int x, int y)
             list.add (juce::File (f));
     const int row = state.rowAt (y);
     const auto at = snapPosition (state.sampleAt ((float) x), false, false);
-    state.session.importFiles (list, row >= 0 ? state.rows[(size_t) row].id : 0, at);
+    importAudio (getTopLevelComponent(), state.session, list, row >= 0 ? state.rows[(size_t) row].id : 0, at);
 }
 
 } // namespace livedaw::ui
