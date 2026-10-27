@@ -1116,7 +1116,7 @@ void RoutingPage::paintChannelTile (juce::Graphics& g, juce::Rectangle<int> area
     {
         drawStripIcon (g, s, r.reduced (r.getWidth() * 0.18f, r.getHeight() * 0.08f).translated (0.0f, r.getHeight() * 0.04f), iconGrey);
         // The port's label, never the source's name (manual Fig. 30, [3.1]: "PLAY 1/2" under "2TR").
-        const auto text = stereo ? routing::pairLabel (port, portRight >= 0 ? portRight : port + 1) : routing::sourceLabel (port);
+        const auto text = routing::channelTileLabel (port, portRight, stereo);
         g.setColour (! sourcePresent (port) ? naLabel : stereo ? stereoLabel : monoLabel);
         g.setFont (fontFittingWidth (g.getCurrentFont(), text, label.getWidth() - 2.0f, 0.7f));
         g.drawFittedText (text, label.toNearestInt().reduced (1, 0), juce::Justification::centredTop, 1, 0.7f);
