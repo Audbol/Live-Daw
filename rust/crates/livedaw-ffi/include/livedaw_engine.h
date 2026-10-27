@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 18;
+constexpr int kAbiVersion = 19;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -60,6 +60,19 @@ constexpr int32_t kUsbPlayerSourceBase = 0x20000;
     (n < kNumOscillators); ld_engine_oscillators holds their settings. */
 constexpr int kNumOscillators = 2;
 constexpr int32_t kOscSourceBase = 0x30000;
+/** ABI 19, the strip sources (manual 2.6): a bus, main or matrix as a
+    channel's source, input kStripSourceBase + n: the WING's $BUS (n 0-31, a
+    bus slot * 2 + side), $MAIN (32-39) and $MTX (40-55) signals
+    (ld_strip_source_input). A channel hears them one block late. */
+constexpr int32_t kStripSourceBase = 0x40000;
+constexpr int kNumStripSources = 2 * (kWingBuses + kNumMains + kNumMatrices);
+/** ABI 19, the USER SIGNAL group (USR): USR n is input kUsrSourceBase + n - 1;
+    USR 1-24 user signals (ld_engine_user_signals), USR 25-56 user patches
+    (ld_engine_user_patches). */
+constexpr int32_t kUsrSourceBase = 0x50000;
+constexpr int kNumUserSignals = 24;
+constexpr int kNumUserPatches = 32;
+constexpr int kNumUsrSources = kNumUserSignals + kNumUserPatches;
 /** DYNAMICS KEY SOURCE of aux, buses, mains and matrices (DynSlotParams::scSource):
     kKeyStripBase * kind (StripKindId) + index; they take one of kNumOutputKeyTaps taps. */
 constexpr int32_t kKeyStripBase = 0x10000;
@@ -222,8 +235,9 @@ struct StripParams
 
     std::atomic<uint32_t> dcaMask, muteGroupMask;
 
-    // Matrices: direct input from a channel.
-    std::atomic<bool> directOn, directInvert, directPre;
+    // Matrices: DIRECT IN (manual 6.4). ABI 19: directSource is a
+    // MatrixDirectInput (before, an input channel), no PRE.
+    std::atomic<bool> directOn, directInvert;
     std::atomic<int32_t> directSource;
     std::atomic<float> directLevelDb;
 
@@ -339,9 +353,39 @@ enum SourceMode : int32_t
     kSourceMidSide = 2
 };
 
-/** Sources: hardware ports 0..kNumHwSources-1, the playback channels, the USB PLAYER, then the oscillators. */
+/** Sources: hardware ports 0..kNumHwSources-1, the playback channels, the USB
+    PLAYER, the oscillators, then the USR group (ABI 19). */
 constexpr int kNumHwSources = 576;
-constexpr int kNumSources = kNumHwSources + kNumPlaybackChannels + kUsbChannels + kNumOscillators;
+constexpr int kNumSources = kNumHwSources + kNumPlaybackChannels + kUsbChannels + kNumOscillators + kNumUsrSources;
+/** ABI 19: hardware outputs the output patch can feed (ld_engine_output_patch). */
+constexpr int kNumPatchOutputs = kNumHwSources;
+
+/** ABI 19: a matrix's DIRECT IN (StripParams::directSource, /mtx/n/dir/in). */
+enum MatrixDirectInput : int32_t
+{
+    kDirectOff = 0,
+    kDirectAes = 1,      // the AES/EBU input: not on Sidecar (silent)
+    kDirectPhones = 2,   // MON.PH
+    kDirectSpeakers = 3, // MON.SPK
+    kDirectSoloBus = 4,  // MON.BUS
+    kNumMatrixDirectInputs = 5
+};
+
+/** ABI 19, a user signal (USR 1-24; ld_engine_user_signals): a mono copy of a
+    strip. group: 0 OFF, 1 CH, 2 AUX, 3 BUS, 4 MAIN, 5 MTX; number 1-based (a
+    bus by its number); side 0 L+R, 1 L, 2 R; post: POST (else PRE, the tap point). */
+struct UserSignalParams
+{
+    std::atomic<int32_t> group, number, side;
+    std::atomic<bool> post;
+};
+
+/** ABI 19, a user patch (USR 25-56; ld_engine_user_patches): the external
+    source it copies (a port, playback channel or USB PLAYER input), -1 OFF. */
+struct UserPatchParams
+{
+    std::atomic<int32_t> source;
+};
 /** OscParams::mode. */
 enum OscMode : int32_t
 {
@@ -586,7 +630,9 @@ struct LayoutInfo
         // ABI 13 (DCA SOLO BUS)
         offDcaMon,
         // ABI 16 (the console model)
-        consoleModelInfo;
+        consoleModelInfo,
+        // ABI 19 (routing: matrix DIRECT IN, USR sources)
+        offDirectSource, userSignal, offUserSignalPost, userPatch;
 };
 
 /** A console model's surface and local I/O (ld_console_model_info). Models:
@@ -1386,6 +1432,24 @@ extern "C"
     /** Monitor paths (bit 0 = SPEAKERS, bit 1 = PHONES) DCA `dca` controls (named MON A: PHONES, MON B: SPEAKERS, MON LVL). */
     uint32_t ld_engine_dca_monitor_paths (const Engine*, int32_t dca);
 
+    // Routing (ABI 19; livedaw-engine routing.rs, sources.rs)
+    /** USR 1-24: what each user signal copies (*count entries, shared memory). */
+    UserSignalParams* ld_engine_user_signals (const Engine*, int32_t* count);
+    /** USR 25-56: the external source each user patch copies (*count entries). */
+    UserPatchParams* ld_engine_user_patches (const Engine*, int32_t* count);
+    /** User patch n (0-based) to an external source (an input index); anything else is OFF. */
+    void ld_source_set_user_patch (const Engine*, int32_t n, int32_t source);
+    /** The source each hardware output plays besides the strips routed there (-1 none; *count entries). */
+    std::atomic<int32_t>* ld_engine_output_patch (const Engine*, int32_t* count);
+    /** Message thread: `source` (an input index; a bus, main or matrix signal goes to that
+        strip's output) to output `port`, replacing what fed it. False when it can't. */
+    bool ld_engine_route_output_source (const Engine*, int32_t port, int32_t source);
+    /** Message thread: nothing feeds output `port` (strips, monitor paths and sources are cleared). */
+    void ld_engine_clear_output (const Engine*, int32_t port);
+    /** The input index of a bus, main or matrix signal (StripKind, 0-based number (a bus's slot),
+        side 0 L / 1 R); -1 for none (a bus past the WING's 16, a channel). */
+    int32_t ld_strip_source_input (int32_t kind, int32_t number, int32_t side);
+
     // Monitor path processing and SOURCE SOLO (ABI 8; settings in EngineControls::monitor)
     /** DIRECT IN name ("CH.12", "AUX.6", "MTX.3"; "OFF"). */
     LdString* ld_monitor_direct_name (int32_t index);
@@ -1491,6 +1555,10 @@ inline const char* verifyLayout()
         { info.offCustLink, offsetof (StripParams, custLink), "StripParams.custLink" },
         { info.offDcaMon, offsetof (DcaParams, mon), "DcaParams.mon" },
         { info.consoleModelInfo, sizeof (ConsoleModelInfo), "ConsoleModelInfo size" },
+        { info.offDirectSource, offsetof (StripParams, directSource), "StripParams.directSource" },
+        { info.userSignal, sizeof (UserSignalParams), "UserSignalParams size" },
+        { info.offUserSignalPost, offsetof (UserSignalParams, post), "UserSignalParams.post" },
+        { info.userPatch, sizeof (UserPatchParams), "UserPatchParams size" },
     };
 
     if (info.abiVersion != kAbiVersion)

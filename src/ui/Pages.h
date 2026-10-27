@@ -156,12 +156,14 @@ private:
         Outputs
     };
 
-    /** A signal that can feed an output: a strip's left or right channel, or
-        the monitor (strip == nullptr, channel 0-3). Channel -1: an n/a tile. */
+    /** A signal that can feed an output: a strip's left or right channel,
+        the monitor (strip == nullptr, channel 0-3) or a source (`source`, an
+        input index, manual 5.4 OUTPUTS). Channel -1: an n/a tile. */
     struct Signal
     {
         Strip* strip = nullptr;
         int channel = 0;
+        int source = -1;
     };
 
     void timerCallback() override;
@@ -248,6 +250,18 @@ private:
     /** The selected source's oscillator (OSC 1 / 2; a pair's is OSC 1's), else nullptr. */
     ld::OscParams* selectedOscillator() const;
     void showOscFreqMenu();
+    /** The selected USR source: a user signal (USR 1-24) or a user patch (USR 25-56), else nullptr. */
+    ld::UserSignalParams* selectedUserSignal() const;
+    ld::UserPatchParams* selectedUserPatch() const;
+    /** What the selected user signal / patch copies ("CH 3", "BUS 12", "LCL 5", "OFF"). */
+    juce::String userSourceText() const;
+    /** USER SIGNAL's SOURCE: the group, then the strip (a user signal) or the port (a user patch). */
+    void showUserSourceMenu();
+    /** Applies `set` to every selected source (with each one's pair partner) and its table index. */
+    void forSelectedSources (const std::function<void (int index, ld::SourceParams&)>& set);
+    /** SOURCES: the tiles from the drag's first to `tile` are selected (manual 5.4: "Touch and drag to select multiple Sources"). */
+    void dragSelectTo (int tile);
+    bool isSelectedSource (int port) const;
 
     int sourceTab = 0; // SETTINGS, ICON/COLOR, TAGS
     std::array<juce::Rectangle<int>, 3> sourceTabKeys, sourceModeKeys;
@@ -260,6 +274,15 @@ private:
     // +48V and POL, LEVEL in place of GAIN.
     std::array<juce::Rectangle<int>, 3> oscModeKeys;
     juce::Rectangle<int> oscFreqField, oscLevelFader;
+    // A USR source: L+R / L / R in the REMOTE column and TAP (PRE / POST) in
+    // place of RCV CUST (user signals), SOURCE in place of +48V.
+    std::array<juce::Rectangle<int>, 3> userSideKeys;
+    juce::Rectangle<int> userTapKey, userSourceField;
+    // SOURCES' selection: the sources besides selectedSource that parameter
+    // changes also go to, and the tile a drag started on (-1 none).
+    std::vector<int> selectedSources;
+    int dragStartTile = -1;
+    bool dragSelected = false;
     /** The GAIN fader, or an OSC source's LEVEL fader. */
     juce::Rectangle<int> levelFader() const;
     std::vector<std::pair<juce::Rectangle<int>, int>> sourceColourCells, sourceIconCells;

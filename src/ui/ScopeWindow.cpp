@@ -46,7 +46,8 @@ namespace
     /** INITIALIZE CONSOLE's SOURCE and OUTPUT groups (the console's names). */
     const char* const sourceNames[] = { "LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "MOD", "PLAY", "AES", "USR", "OSC" };
     const char* const outputNames[] = { "LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "MOD", "REC", "AES" };
-    constexpr juce::uint32 kSidecarSources = ScopeWindow::SourceLocal | ScopeWindow::SourceCard | ScopeWindow::SourcePlayer | ScopeWindow::SourceOsc;
+    constexpr juce::uint32 kSidecarSources =
+        ScopeWindow::SourceLocal | ScopeWindow::SourceCard | ScopeWindow::SourcePlayer | ScopeWindow::SourceUser | ScopeWindow::SourceOsc;
 
     constexpr juce::uint32 kConsoleTile = 1;
 } // namespace

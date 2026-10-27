@@ -191,7 +191,7 @@ public:
             test::setChannels (engine, 1);
             auto& ch = *engine.getChannels()[0];
             ch.params.inputLeft = MixerEngine::oscSource (1);
-            expectEquals (MixerEngine::sourceIndex (MixerEngine::oscSource (1)), ld::kNumSources - 1);
+            expectEquals (MixerEngine::sourceIndex (MixerEngine::oscSource (1)), ld::kNumSources - ld::kNumUsrSources - 1);
             auto* osc = engine.getOscillator (1);
             expect (osc != nullptr && engine.getOscillator (2) == nullptr);
             if (osc == nullptr)

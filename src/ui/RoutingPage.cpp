@@ -446,6 +446,39 @@ namespace
         g.setColour (Colours::gold);
         g.drawRect (area.toFloat().expanded (wingPx (4.0f)), juce::jmax (2.0f, wingPx (3.0f)));
     }
+
+    /** The strip a bus, main or matrix signal comes from (nullptr for other sources, a missing bus). */
+    Strip* stripOfSignal (MixerEngine& engine, int source, int* side = nullptr)
+    {
+        StripKind kind = StripKind::Bus;
+        int number = 0, s = 0;
+        if (! routing::stripOfSource (source, kind, number, s))
+            return nullptr;
+        if (side != nullptr)
+            *side = s;
+        for (auto& strip : engine.getStrips (kind))
+            if (strip->getNumber() - 1 == number) // a bus by its slot
+                return strip.get();
+        return nullptr;
+    }
+
+    /** A source's colour: its own (SOURCES > ICON/COLOR), a strip signal's strip's. */
+    juce::Colour sourceColour (MixerEngine& engine, int source)
+    {
+        if (auto* s = stripOfSignal (engine, source))
+            return stripDisplayColour (*s);
+        const auto* src = sourceSettings (engine, source);
+        return wingColour (src != nullptr ? src->colour.load() : 1);
+    }
+
+    /** A source is one side of a stereo signal: a pair (STEREO, MID/SIDE), a strip's L or R. */
+    bool sourcePaired (MixerEngine& engine, int source)
+    {
+        if (MixerEngine::isStripSource (source))
+            return true;
+        const auto* src = sourceSettings (engine, source);
+        return src != nullptr && src->mode.load() != ld::kSourceMono;
+    }
 } // namespace
 
 //==============================================================================
@@ -560,7 +593,8 @@ StatusTitle RoutingPage::getStatusTitle()
         t.prefix = juce::String (routing::numberInGroup (selectedSource) + 1);
         const auto custom = ctx.engine.getSourceName (MixerEngine::sourceIndex (selectedSource));
         t.text = custom.isNotEmpty() ? custom.toUpperCase() : juce::String (routing::info (group).name);
-        t.icon = group == Group::Oscillator ? Icon::Sine : group == Group::WlivePlay ? Icon::Waveform : group == Group::UsbPlayer ? Icon::UsbStick : Icon::Xlr;
+        t.icon = group == Group::Oscillator ? Icon::Sine : group == Group::WlivePlay ? Icon::Waveform : group == Group::UsbPlayer ? Icon::UsbStick
+               : group == Group::UserSignal ? Icon::Link : Icon::Xlr;
     }
     else if (mode == Mode::Outputs)
     {
@@ -628,16 +662,23 @@ std::vector<RoutingPage::Signal> RoutingPage::signals() const
         addStrips (StripKind::Main);
     else if (signalGroup == Group::Matrix)
         addStrips (StripKind::Matrix);
-    else if (signalGroup == Group::UserSignal)
-    {
-        addStrips (StripKind::Channel);
-        addStrips (StripKind::Aux);
-    }
     else if (signalGroup == Group::Monitor)
         for (int ch = 0; ch < kMonitorSignals; ++ch)
             list.push_back ({ nullptr, ch });
-    else // inputs can't feed outputs directly here, and there are no FX sends
+    else if (signalGroup == Group::FxSend) // no FX sends here
         list.assign ((size_t) routing::info (signalGroup).size, Signal { nullptr, -1 });
+    else
+    {
+        // Any source straight to an output (manual 5.4 OUTPUTS, chapter 2:
+        // "sent directly from any input to any output"); USER SIGNAL's
+        // user signals and user patches too. Sidecar's missing ports are n/a.
+        const int count = routing::tileCount (signalGroup, numHardware (false));
+        for (int i = 0; i < count; ++i)
+        {
+            const int source = routing::sourceAt (signalGroup, i);
+            list.push_back (source >= 0 ? Signal { nullptr, 0, source } : Signal { nullptr, -1 });
+        }
+    }
     return list;
 }
 
@@ -694,6 +735,13 @@ void RoutingPage::setMode (Mode m)
 {
     mode = m;
     groupMenu.reset();
+    // SOURCES has no BUS, MAIN or MATRIX group (their signals have no source
+    // settings): back to LOCAL IN when CHANNELS showed one.
+    if (m == Mode::Sources && (inputGroup == Group::Bus || inputGroup == Group::Main || inputGroup == Group::Matrix))
+    {
+        inputGroup = Group::LocalIn;
+        selectSource (routing::sourceAt (inputGroup, 0));
+    }
     if (auto* s = selectedStrip(); s == nullptr || ! s->isInput())
     {
         selectedKind = StripKind::Channel;
@@ -942,6 +990,8 @@ RoutingPage::Signal RoutingPage::feederOf (int port) const
     {
         // A RECORDER port taps a strip's output (the USB recorder's own patch).
         const auto tap = ctx.engine.getUsbRecorder().getTap (port - routing::kRecorderPortBase);
+        if (tap.kind == UsbRecorder::Tap::Kind::Source && tap.source >= 0)
+            return { nullptr, 0, tap.source };
         if (tap.kind != UsbRecorder::Tap::Kind::Strip)
             return { nullptr, -1 };
         auto& strips = ctx.engine.getStrips (tap.stripKind);
@@ -953,6 +1003,8 @@ RoutingPage::Signal RoutingPage::feederOf (int port) const
         }
         return { nullptr, -1 };
     }
+    if (const int source = ctx.engine.getOutputSource (port); source >= 0)
+        return { nullptr, 0, source };
     for (int k = 0; k < kNumStripKinds; ++k)
         for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
         {
@@ -971,6 +1023,8 @@ juce::String RoutingPage::signalLabel (const Signal& sig) const
 {
     if (sig.channel < 0)
         return {};
+    if (sig.source >= 0) // a source: its name, else its label ("LCL 3", "USR 2")
+        return sourceName (sig.source);
     if (sig.strip == nullptr) // PHONES L / R, SPKR L / R: separate outputs
         return juce::String (sig.channel < 2 ? "PHONES" : "SPKR") + (sig.channel % 2 == 0 ? " L" : " R");
     // "BUS 1L", "MAIN 1R", "MTX 2L", "CH 3", "AUX 1L".
@@ -1060,6 +1114,38 @@ void routing::paintSourceTile (juce::Graphics& g, juce::Rectangle<int> area, Mix
     // the label (CHANNELS: "LCL 3", blue or olive for a pair; SOURCES: the
     // number in blue and the gain). A port the interface lacks reads n/a.
     const int port = routing::sourceAt (group, index);
+    if (int side = 0; auto* strip = stripOfSignal (engine, port, &side))
+    {
+        // A bus, main or matrix signal (manual 2.6): the strip's colour, name
+        // and icon, its output meter, "BUS 12L" (olive: one side of a stereo signal).
+        auto r = area.toFloat();
+        auto band = r.removeFromTop (r.getHeight() * 16.0f / 68.0f);
+        g.setColour (stripDisplayColour (*strip));
+        g.fillRect (band);
+        if (hasCustomName (*strip))
+        {
+            g.setColour (juce::Colours::black);
+            g.setFont (fontFittingWidth (capFont (9.0f), stripName (*strip).toUpperCase(), band.getWidth() - 4.0f, 0.7f));
+            g.drawFittedText (stripName (*strip).toUpperCase(), band.toNearestInt().reduced (2, 0), juce::Justification::centred, 1, 0.7f);
+        }
+        g.setColour (Colours::screenTile);
+        g.fillRect (r);
+        const float u = r.getWidth() / 80.0f, v = r.getHeight() / 52.0f;
+        drawMiniMeter (g, juce::Rectangle<float> (r.getX() + 72.0f * u, r.getY() + 2.0f * v, 4.0f * u, 46.0f * v), 0.0f);
+        const auto iconArea = juce::Rectangle<float> (r.getX() + 6.0f * u, r.getY() + 4.0f * v, 30.0f * u, 30.0f * v);
+        drawStripIcon (g, *strip, iconArea.withSizeKeepingCentre (juce::jmin (iconArea.getWidth(), iconArea.getHeight()), juce::jmin (iconArea.getWidth(), iconArea.getHeight())),
+                       iconGrey);
+        auto bottom = juce::Rectangle<float> (r.getX() + 4.0f * u, r.getY() + 36.0f * v, 66.0f * u, 14.0f * v);
+        g.setFont (capFont (9.5f));
+        g.setColour (stereoLabel);
+        const auto label = numbered ? juce::String (index + 1) : routing::sourceLabel (port);
+        g.setFont (fontFittingWidth (g.getCurrentFont(), label, bottom.getWidth(), 0.7f));
+        g.drawText (label, bottom.toNearestInt(), numbered ? juce::Justification::centredLeft : juce::Justification::centred);
+        juce::ignoreUnused (side);
+        if (marked)
+            drawSelection (g, area);
+        return;
+    }
     const auto* src = port >= 0 ? sourceSettings (engine, port) : nullptr;
     const int colour = src != nullptr ? src->colour.load() : 1;
     const bool playback = group == Group::WlivePlay || group == Group::UsbPlayer;
@@ -1120,7 +1206,7 @@ void routing::paintSourceTile (juce::Graphics& g, juce::Rectangle<int> area, Mix
             drawChip (g, chip48.withLeft (chip48.getX() - 6.0f * u), types[juce::jlimit (0, 2, o != nullptr ? (int) o->mode.load() : 0)], Colours::chipOff,
                       juce::Colours::black);
         }
-        else
+        else if (group != Group::UserSignal) // the USR sources have no +48 V
             drawChip (g, chip48, "48", src->phantom.load() ? Colours::mute : Colours::chipOff, juce::Colours::black);
         drawChip (g, chip48.translated (0.0f, 14.0f * v), "M", src->mute.load() ? Colours::mute : Colours::chipOff, juce::Colours::black);
     }
@@ -1168,7 +1254,10 @@ void RoutingPage::paintOutputTile (juce::Graphics& g, juce::Rectangle<int> area,
     const int port = routing::outputAt (group, index);
     const auto feeder = port >= 0 ? feederOf (port) : Signal { nullptr, -1 };
     const bool present = port >= 0 && (routing::isRecorderPort (port) || port < numHardware (true));
-    const auto colour = feeder.channel < 0 ? wingColour (1) : feeder.strip != nullptr ? feeder.strip->getColour() : Colours::lime;
+    const auto colour = feeder.channel < 0         ? wingColour (1)
+                        : feeder.strip != nullptr  ? feeder.strip->getColour()
+                        : feeder.source >= 0       ? sourceColour (ctx.engine, feeder.source)
+                                                   : Colours::lime;
     if (! present)
     {
         paintNaTile (g, area, colour, feeder.channel >= 0 ? signalLabel (feeder) : juce::String (routing::info (group).prefix) + " " + juce::String (index + 1),
@@ -1196,7 +1285,8 @@ void RoutingPage::paintOutputTile (juce::Graphics& g, juce::Rectangle<int> area,
                 juce::Justification::centredRight);
     if (feeder.channel >= 0)
     {
-        const bool stereo = feeder.strip == nullptr || feeder.strip->isOutput() || feeder.strip->params.stereo.load();
+        const bool stereo = feeder.source >= 0 ? sourcePaired (ctx.engine, feeder.source)
+                                               : feeder.strip == nullptr || feeder.strip->isOutput() || feeder.strip->params.stereo.load();
         const auto text = signalLabel (feeder);
         auto label = juce::Rectangle<float> (r.getX(), r.getY() + 38.0f * v, r.getWidth(), 15.0f * v);
         g.setColour (stereo ? stereoLabel : monoLabel);
@@ -1215,6 +1305,12 @@ void RoutingPage::paintSignal (juce::Graphics& g, juce::Rectangle<int> area, con
     {
         paintNaTile (g, area, wingColour (1), juce::String (routing::info (signalGroup).prefix) + " " + juce::String (index + 1), 16.0f / 68.0f, true,
                      false);
+        return;
+    }
+    // A source (an input group, USER SIGNAL): its tile as CHANNELS shows it.
+    if (sig.source >= 0)
+    {
+        routing::paintSourceTile (g, area, ctx.engine, signalGroup, index, 0.0f, marked, false);
         return;
     }
     const auto colour = sig.strip != nullptr ? stripDisplayColour (*sig.strip) : Colours::lime;
@@ -1270,22 +1366,6 @@ ld::SourceParams* RoutingPage::sourceParams (int port) const
     return sourceSettings (ctx.engine, port);
 }
 
-namespace
-{
-    /** Applies `set` to the source of `port` and, when paired, its partner. */
-    void forSourcePair (MixerEngine& engine, int port, const std::function<void (ld::SourceParams&)>& set)
-    {
-        const int index = MixerEngine::sourceIndex (port);
-        auto* src = engine.getSource (index);
-        if (src == nullptr)
-            return;
-        const bool paired = src->mode.load() != ld::kSourceMono;
-        for (int i : { paired ? (index & ~1) : index, paired ? (index | 1) : -1 })
-            if (auto* s = engine.getSource (i))
-                set (*s);
-    }
-} // namespace
-
 void RoutingPage::layoutSourcePanel()
 {
     // [WING px, page coordinates] The SOURCES settings (fig. 31): the tabs, the
@@ -1329,6 +1409,12 @@ void RoutingPage::layoutSourcePanel()
         oscModeKeys[(size_t) i] = remoteKeys[(size_t) i + 1];
     oscFreqField = wingRect (1140.0f, 184.0f, 122.0f, 64.0f);
     oscLevelFader = sourceGainFader;
+    // A USR source (no gain, no +48V): SOURCE in place of +48V; a user signal
+    // has L+R / L / R in the REMOTE column and TAP (PRE / POST) in place of RCV CUST.
+    for (int i = 0; i < 3; ++i)
+        userSideKeys[(size_t) i] = remoteKeys[(size_t) i + 1];
+    userTapKey = rcvKey;
+    userSourceField = wingRect (1126.0f, 184.0f, 138.0f, 64.0f);
 
     // TAGS: the 8 mute groups the source belongs to (2 x 4).
     {
@@ -1545,12 +1631,41 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g) const
 
     // REMOTE (the AES50 stage boxes' preamps) and RCV CUST don't exist here:
     // OFF stays lit, the other keys are drawn dim. An oscillator puts its type
-    // (SINE / PINK / WHITE) in this column.
+    // (SINE / PINK / WHITE) in this column, a user signal its side (L+R / L /
+    // R) and its TAP; the USR sources have no preamp.
     const auto* osc = selectedOscillator();
+    const auto* user = selectedUserSignal();
+    const bool usr = MixerEngine::isUsrSource (selectedSource);
     g.setColour (Dark::caption);
     g.setFont (capFont (9.0f));
-    g.drawText (osc != nullptr ? "TYPE" : "REMOTE", remoteBox.withHeight (px (20.0f)), juce::Justification::centred);
-    if (osc != nullptr)
+    g.drawText (osc != nullptr ? "TYPE" : user != nullptr ? "L / R" : usr ? "" : "REMOTE", remoteBox.withHeight (px (20.0f)), juce::Justification::centred);
+    if (usr)
+    {
+        if (user != nullptr)
+        {
+            const char* sides[] = { "L+R", "L", "R" };
+            for (int i = 0; i < 3; ++i)
+            {
+                const bool on = user->side.load() == i;
+                auto k = userSideKeys[(size_t) i];
+                g.setColour (on ? Colours::choice : juce::Colours::black);
+                g.fillRect (k);
+                g.setColour (on ? juce::Colours::black : Dark::text);
+                g.setFont (capFont (11.0f));
+                g.drawText (sides[i], k, juce::Justification::centred);
+            }
+            // TAP: PRE (the strip's tap point) or POST, manual 2.6.
+            const bool post = user->post.load();
+            g.setColour (Colours::choice);
+            g.fillRect (userTapKey);
+            g.setColour (juce::Colours::black);
+            g.setFont (capFont (8.0f));
+            g.drawText ("TAP", userTapKey.withHeight (userTapKey.getHeight() / 3), juce::Justification::centred);
+            g.setFont (capFont (12.0f, WingWeight::SemiBold));
+            g.drawText (post ? "POST" : "PRE", userTapKey.withTrimmedTop (userTapKey.getHeight() / 3), juce::Justification::centred);
+        }
+    }
+    else if (osc != nullptr)
     {
         const char* types[] = { "SINE", "PINK", "WHITE" };
         for (int i = 0; i < 3; ++i)
@@ -1584,15 +1699,35 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g) const
             g.drawText (remote[i], caption.toNearestInt(), juce::Justification::centredTop);
         }
     }
-    g.setColour (juce::Colours::black);
-    g.fillRect (rcvKey);
+    if (! usr)
     {
+        g.setColour (juce::Colours::black);
+        g.fillRect (rcvKey);
         auto f = rcvKey.toFloat();
         auto caption = f.removeFromBottom (f.getHeight() * 0.3f);
         drawIcon (g, Icon::KeyboardEdit, f.reduced (f.getHeight() * 0.16f), Colours::textDim);
         g.setColour (Colours::textDim);
         g.setFont (capFont (9.0f));
         g.drawText ("RCV CUST", caption.toNearestInt(), juce::Justification::centredTop);
+    }
+
+    if (usr)
+    {
+        // What the user signal or patch copies (manual 2.6); POL and MUTE as
+        // any source's, no gain or +48V (the WING's USR group has none).
+        g.setColour (Colours::screenWell);
+        g.fillRect (userSourceField);
+        auto f = userSourceField.reduced (px (6.0f), px (4.0f));
+        g.setColour (Dark::caption);
+        g.setFont (capFont (9.0f));
+        g.drawText ("SOURCE", f.removeFromTop (f.getHeight() / 3), juce::Justification::centredLeft);
+        const auto text = userSourceText();
+        g.setColour (text == "OFF" ? Dark::textDim : Dark::text);
+        g.setFont (fontFittingWidth (capFont (14.0f, WingWeight::SemiBold), text, (float) f.getWidth(), 0.7f));
+        g.drawText (text, f, juce::Justification::centredLeft);
+        drawIconKeyBelow (g, sourcePolKey, Icon::Invert, "POL", src->invert.load(), Colours::gold);
+        drawOutlinedKey (g, sourceMuteKey, std::nullopt, "MUTE", src->mute.load(), Colours::mute, juce::Colours::black);
+        return;
     }
 
     if (osc != nullptr)
@@ -1727,6 +1862,7 @@ void RoutingPage::paintSourceTags (juce::Graphics& g) const
 void RoutingPage::selectSource (int port)
 {
     selectedSource = port;
+    selectedSources.clear(); // a touch selects one source; a drag selects more
     // A source solo follows the selection (firmware 1.12).
     if (ctx.engine.isSourceSoloActive())
         ctx.engine.setSourceSoloPort (port);
@@ -1760,7 +1896,8 @@ void RoutingPage::setSourceGainFromY (int y)
     else if (const auto range = gainRangeOf (selectedSource); range.hasGain())
     {
         const float gain = range.fromProportion (pos); // on the group's steps
-        forSourcePair (ctx.engine, selectedSource, [gain] (ld::SourceParams& s) { s.gainDb = gain; });
+        // Every selected source, in its own group's range.
+        forSelectedSources ([gain] (int i, ld::SourceParams& s) { s.gainDb = MixerEngine::sourceGainRange (i).clamp (gain); });
     }
     repaint();
 }
@@ -1778,6 +1915,186 @@ ld::OscParams* RoutingPage::selectedOscillator() const
     // A pair runs on OSC 1's settings.
     const auto* src = ctx.engine.getSource (MixerEngine::sourceIndex (selectedSource));
     return ctx.engine.getOscillator (src != nullptr && src->mode.load() != ld::kSourceMono ? 0 : n);
+}
+
+ld::UserSignalParams* RoutingPage::selectedUserSignal() const
+{
+    return ctx.engine.getUserSignal (MixerEngine::usrChannelOf (selectedSource));
+}
+
+ld::UserPatchParams* RoutingPage::selectedUserPatch() const
+{
+    const int n = MixerEngine::usrChannelOf (selectedSource);
+    return n >= ld::kNumUserSignals ? ctx.engine.getUserPatch (n - ld::kNumUserSignals) : nullptr;
+}
+
+namespace
+{
+    /** A user signal's SOURCE groups (/io/in/USR/n/user/grp) and their strips. */
+    constexpr StripKind kUserKinds[] = { StripKind::Channel, StripKind::Aux, StripKind::Bus, StripKind::Main, StripKind::Matrix };
+    const char* const kUserGroups[] = { "OFF", "CH", "AUX", "BUS", "MAIN", "MTX" };
+    /** The groups a user patch copies from (the WING's LCL ... AES that Sidecar has). */
+    constexpr routing::Group kPatchGroups[] = { Group::LocalIn, Group::Aes50B, Group::Aes50C, Group::WlivePlay, Group::UsbPlayer };
+} // namespace
+
+juce::String RoutingPage::userSourceText() const
+{
+    if (const auto* u = selectedUserSignal())
+    {
+        const int group = u->group.load();
+        if (! juce::isPositiveAndBelow (group - 1, (int) std::size (kUserKinds)))
+            return "OFF";
+        return juce::String (kUserGroups[group]) + " " + juce::String (u->number.load());
+    }
+    if (const auto* p = selectedUserPatch())
+        return p->source.load() >= 0 ? sourceName (p->source.load()) : juce::String ("OFF");
+    return {};
+}
+
+void RoutingPage::showUserSourceMenu()
+{
+    // Two lists, as the WING's SOURCE GROUP then its number: a user signal's
+    // group (OFF, CH ... MTX) then the strip; a user patch's group then the port.
+    juce::Component::SafePointer<RoutingPage> safe (this);
+    auto& anchorComp = anchorAt (userSourceField);
+    if (auto* u = selectedUserSignal())
+    {
+        juce::StringArray groups;
+        for (auto* gname : kUserGroups)
+            groups.add (gname);
+        popups::ListOptions options;
+        options.caption = "SOURCE GROUP";
+        popups::chooseFrom (anchorComp, groups, u->group.load(), [safe, u] (int group)
+        {
+            if (safe == nullptr || group < 0)
+                return;
+            if (group == 0)
+            {
+                u->group = 0;
+                safe->repaint();
+                return;
+            }
+            juce::MessageManager::callAsync ([safe, u, group]
+            {
+                if (safe == nullptr)
+                    return;
+                const auto kind = kUserKinds[(size_t) group - 1];
+                juce::StringArray items;
+                std::vector<int> numbers;
+                for (auto& s : safe->ctx.engine.getStrips (kind))
+                {
+                    items.add (shortStripLabel (*s));
+                    numbers.push_back (s->getNumber());
+                }
+                const int current = u->group.load() == group ? (int) (std::find (numbers.begin(), numbers.end(), u->number.load()) - numbers.begin()) : -1;
+                popups::ListOptions list;
+                list.columns = items.size() > 30 ? 4 : items.size() > 12 ? 2 : 1;
+                list.caption = kUserGroups[group];
+                popups::chooseFrom (safe->anchorAt (safe->userSourceField), items, current, [safe, u, group, numbers] (int i)
+                {
+                    if (safe == nullptr || ! juce::isPositiveAndBelow (i, (int) numbers.size()))
+                        return;
+                    u->number = numbers[(size_t) i];
+                    u->group = group;
+                    safe->repaint();
+                }, list);
+            });
+        }, options);
+        return;
+    }
+    const int n = MixerEngine::usrChannelOf (selectedSource) - ld::kNumUserSignals;
+    if (selectedUserPatch() == nullptr)
+        return;
+    juce::StringArray groups { "OFF" };
+    for (auto g : kPatchGroups)
+        groups.add (routing::info (g).name);
+    popups::ListOptions options;
+    options.caption = "SOURCE GROUP";
+    const int patched = selectedUserPatch()->source.load();
+    int current = 0;
+    for (int i = 0; i < (int) std::size (kPatchGroups); ++i)
+        if (patched >= 0 && routing::groupOfSource (patched) == kPatchGroups[(size_t) i])
+            current = i + 1;
+    popups::chooseFrom (anchorComp, groups, current, [safe, n] (int group)
+    {
+        if (safe == nullptr || group < 0)
+            return;
+        if (group == 0)
+        {
+            safe->ctx.engine.setUserPatch (n, -1);
+            safe->repaint();
+            return;
+        }
+        juce::MessageManager::callAsync ([safe, n, group]
+        {
+            if (safe == nullptr)
+                return;
+            const auto g = kPatchGroups[(size_t) group - 1];
+            juce::StringArray items;
+            std::vector<int> ports;
+            for (int i = 0; i < routing::tileCount (g, safe->numHardware (false)); ++i)
+                if (const int port = routing::sourceAt (g, i); port >= 0)
+                {
+                    items.add (safe->sourceName (port));
+                    ports.push_back (port);
+                }
+            const auto* p = safe->ctx.engine.getUserPatch (n);
+            const int now = p != nullptr ? (int) (std::find (ports.begin(), ports.end(), p->source.load()) - ports.begin()) : -1;
+            popups::ListOptions list;
+            list.columns = items.size() > 30 ? 4 : items.size() > 12 ? 2 : 1;
+            list.caption = routing::info (g).name;
+            popups::chooseFrom (safe->anchorAt (safe->userSourceField), items, now, [safe, n, ports] (int i)
+            {
+                if (safe == nullptr || ! juce::isPositiveAndBelow (i, (int) ports.size()))
+                    return;
+                safe->ctx.engine.setUserPatch (n, ports[(size_t) i]);
+                safe->repaint();
+            }, list);
+        });
+    }, options);
+}
+
+bool RoutingPage::isSelectedSource (int port) const
+{
+    return port == selectedSource || std::find (selectedSources.begin(), selectedSources.end(), port) != selectedSources.end();
+}
+
+void RoutingPage::forSelectedSources (const std::function<void (int, ld::SourceParams&)>& set)
+{
+    // The selected source and the others a drag selected (manual 5.4:
+    // "Parameter changes are applied to all selected Sources"); a pair's
+    // partner with each, as one source's settings.
+    std::vector<int> ports { selectedSource };
+    for (int p : selectedSources)
+        if (p != selectedSource)
+            ports.push_back (p);
+    std::vector<int> done;
+    for (int port : ports)
+    {
+        const int index = MixerEngine::sourceIndex (port);
+        auto* src = ctx.engine.getSource (index);
+        if (src == nullptr)
+            continue;
+        const bool paired = src->mode.load() != ld::kSourceMono;
+        for (int i : { paired ? (index & ~1) : index, paired ? (index | 1) : -1 })
+            if (auto* s = ctx.engine.getSource (i); s != nullptr && std::find (done.begin(), done.end(), i) == done.end())
+            {
+                done.push_back (i);
+                set (i, *s);
+            }
+    }
+}
+
+void RoutingPage::dragSelectTo (int tile)
+{
+    if (dragStartTile < 0 || tile < 0)
+        return;
+    selectedSources.clear();
+    for (int i = juce::jmin (dragStartTile, tile); i <= juce::jmax (dragStartTile, tile); ++i)
+        if (const int port = routing::sourceAt (inputGroup, i); port >= 0)
+            selectedSources.push_back (port);
+    dragSelected = dragSelected || tile != dragStartTile;
+    repaint();
 }
 
 void RoutingPage::showOscFreqMenu()
@@ -1833,15 +2150,22 @@ std::vector<KnobBinding> RoutingPage::getKnobs()
         return {};
     auto gain = bindLinear ("GAIN", src->gainDb, range.min, range.max, " dB", 1, 0.0f);
     gain.get = [src, range] { return range.toProportion (src->gainDb.load()); };
-    gain.set = [&engine = ctx.engine, port = selectedSource, range] (float p)
+    // Every selected source takes it (manual 5.4), each in its group's range.
+    juce::Component::SafePointer<RoutingPage> safe (this);
+    gain.set = [safe, range] (float p)
     {
         const float g = range.fromProportion (p);
-        forSourcePair (engine, port, [g] (ld::SourceParams& s) { s.gainDb = g; });
+        if (safe != nullptr)
+            safe->forSelectedSources ([g] (int i, ld::SourceParams& s) { s.gainDb = MixerEngine::sourceGainRange (i).clamp (g); });
     };
     gain.text = [src, range] { return juce::String (range.clamp (src->gainDb.load()), 1) + " dB"; };
     gain.steps = (float) range.steps(); // as the WING: 20 (LOCAL IN) or 98 (AES50) values
     gain.bipolar = false;               // a level: a thumb on the bar, not a selector's segments
-    gain.reset = [&engine = ctx.engine, port = selectedSource] { forSourcePair (engine, port, [] (ld::SourceParams& s) { s.gainDb = 0.0f; }); };
+    gain.reset = [safe]
+    {
+        if (safe != nullptr)
+            safe->forSelectedSources ([] (int, ld::SourceParams& s) { s.gainDb = 0.0f; });
+    };
     return { gain };
 }
 
@@ -1850,10 +2174,17 @@ void RoutingPage::mouseDown (const juce::MouseEvent& e)
     draggingGain = mode == Mode::Sources && sourceTab == 0 && levelFader().contains (e.getPosition()) && sourceParams (selectedSource) != nullptr;
     if (draggingGain)
         setSourceGainFromY (e.y);
+    // SOURCES: a drag over the tiles selects several sources (manual 5.4).
+    dragStartTile = -1;
+    dragSelected = false;
+    if (mode == Mode::Sources)
+        for (size_t i = 0; i < leftPorts.size(); ++i)
+            if (leftPorts[i].contains (e.getPosition()) && routing::sourceAt (inputGroup, (int) i) >= 0)
+                dragStartTile = (int) i;
     // +48V switches when held (kPhantomHoldSeconds), as on the console; an
     // oscillator has FREQ there.
-    if (mode == Mode::Sources && sourceTab == 0 && selectedOscillator() == nullptr && sourceParams (selectedSource) != nullptr
-        && sourcePhantomKey.contains (e.getPosition()))
+    if (mode == Mode::Sources && sourceTab == 0 && selectedOscillator() == nullptr && ! MixerEngine::isUsrSource (selectedSource)
+        && sourceParams (selectedSource) != nullptr && sourcePhantomKey.contains (e.getPosition()))
         phantomHold.press();
 }
 
@@ -1861,6 +2192,16 @@ void RoutingPage::mouseDrag (const juce::MouseEvent& e)
 {
     if (draggingGain)
         setSourceGainFromY (e.y);
+    if (dragStartTile >= 0)
+        for (size_t i = 0; i < leftPorts.size(); ++i)
+            if (leftPorts[i].contains (e.getPosition()) && ((int) i != dragStartTile || dragSelected))
+            {
+                if (! dragSelected)
+                    selectSource (routing::sourceAt (inputGroup, dragStartTile)); // the first tile's settings show
+                dragSelectTo ((int) i);
+                notifyStatusKeysChanged();
+                notifyKnobsChanged();
+            }
     if (! sourcePhantomKey.contains (e.getPosition()))
         phantomHold.release();
 }
@@ -1870,7 +2211,7 @@ void RoutingPage::switchPhantom()
     if (const auto* src = sourceParams (selectedSource))
     {
         const bool on = ! src->phantom.load();
-        forSourcePair (ctx.engine, selectedSource, [on] (ld::SourceParams& s) { s.phantom = on; });
+        forSelectedSources ([on] (int, ld::SourceParams& s) { s.phantom = on; });
     }
     repaint();
     notifyStatusKeysChanged();
@@ -1895,7 +2236,7 @@ void RoutingPage::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWh
             // One of the group's steps.
             const auto range = gainRangeOf (selectedSource);
             const float gain = range.clamp (range.clamp (src->gainDb.load()) + (w.deltaY > 0.0f ? range.step : -range.step));
-            forSourcePair (ctx.engine, selectedSource, [gain] (ld::SourceParams& s) { s.gainDb = gain; });
+            forSelectedSources ([gain] (int i, ld::SourceParams& s) { s.gainDb = MixerEngine::sourceGainRange (i).clamp (gain); });
             repaint();
         }
 }
@@ -2034,7 +2375,7 @@ void RoutingPage::paint (juce::Graphics& g)
         for (size_t i = 0; i < leftPorts.size(); ++i)
         {
             const int port = routing::sourceAt (inputGroup, (int) i);
-            paintSourceTile (g, leftPorts[i], inputGroup, (int) i, port >= 0 && port == selectedSource, (int) i);
+            paintSourceTile (g, leftPorts[i], inputGroup, (int) i, port >= 0 && isSelectedSource (port), (int) i);
         }
         paintSourcePanel (g);
     }
@@ -2046,7 +2387,8 @@ void RoutingPage::paint (juce::Graphics& g)
         for (size_t i = 0; i < signalTiles.size(); ++i)
         {
             const auto& [area, sig] = signalTiles[i];
-            paintSignal (g, area, sig, signalPage * kSignalsPerPage + (int) i, sig.channel >= 0 && feeder.channel >= 0 && feeder.strip == sig.strip && feeder.channel == sig.channel);
+            const bool feeds = sig.channel >= 0 && feeder.channel >= 0 && feeder.strip == sig.strip && feeder.channel == sig.channel && feeder.source == sig.source;
+            paintSignal (g, area, sig, signalPage * kSignalsPerPage + (int) i, feeds);
         }
     }
 
@@ -2074,6 +2416,15 @@ void RoutingPage::assignInput (int port, bool right)
     }
     else if (right)
         p.inputRight = port;
+    else if (MixerEngine::isStripSource (port))
+    {
+        // A bus, main or matrix is a stereo source (the WING's $BUS... mode ST):
+        // the channel takes its L and R, in stereo.
+        const int first = port - (port - ld::kStripSourceBase) % 2;
+        p.inputLeft = first;
+        p.inputRight = first + 1;
+        p.stereo = true;
+    }
     else if (auto* src = sourceParams (port); src != nullptr && src->mode.load() != ld::kSourceMono)
     {
         // A stereo or mid/side source: the channel takes the pair, in stereo.
@@ -2109,17 +2460,8 @@ void RoutingPage::clearOutput (int port)
         ctx.engine.getUsbRecorder().saveSettings (ctx.settings);
         return;
     }
-    for (int k = 0; k < kNumStripKinds; ++k)
-        for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
-        {
-            if (s->params.outputLeft.load() == port)
-                s->params.outputLeft = -1;
-            if (s->params.outputRight.load() == port)
-                s->params.outputRight = -1;
-        }
-    for (int ch = 0; ch < kMonitorSignals; ++ch)
-        if (monitorOutput (ctx.engine, ch).load() == port)
-            monitorOutput (ctx.engine, ch) = -1;
+    // Strips, the monitor paths and a source patched there.
+    ctx.engine.clearOutput (port);
 }
 
 void RoutingPage::assignOutput (int port, const Signal& sig)
@@ -2132,7 +2474,12 @@ void RoutingPage::assignOutput (int port, const Signal& sig)
     if (routing::isRecorderPort (port))
     {
         UsbRecorder::Tap tap;
-        if (sig.strip != nullptr)
+        if (sig.source >= 0)
+        {
+            tap.kind = UsbRecorder::Tap::Kind::Source;
+            tap.source = sig.source;
+        }
+        else if (sig.strip != nullptr)
         {
             tap.kind = UsbRecorder::Tap::Kind::Strip;
             tap.stripKind = sig.strip->getKind();
@@ -2145,6 +2492,8 @@ void RoutingPage::assignOutput (int port, const Signal& sig)
         ctx.engine.getUsbRecorder().setTap (port - routing::kRecorderPortBase, tap);
         ctx.engine.getUsbRecorder().saveSettings (ctx.settings);
     }
+    else if (sig.source >= 0)
+        ctx.engine.routeOutputSource (port, sig.source); // replaces what fed the output
     else
     {
         clearOutput (port);
@@ -2246,6 +2595,15 @@ void RoutingPage::mouseUp (const juce::MouseEvent& e)
         draggingGain = false;
         return;
     }
+    // The end of a drag over the source tiles: the selection stays (a touch selects one again).
+    const bool dragged = dragSelected;
+    dragStartTile = -1;
+    dragSelected = false;
+    if (dragged)
+    {
+        repaint();
+        return;
+    }
     if (mode == Mode::Sources && rightPanel.contains (pos))
     {
         // The SOURCES settings panel.
@@ -2256,21 +2614,45 @@ void RoutingPage::mouseUp (const juce::MouseEvent& e)
                 repaint();
                 return;
             }
-        const int index = MixerEngine::sourceIndex (selectedSource);
         auto* src = sourceParams (selectedSource);
         if (src == nullptr)
             return;
-        // A stereo or mid/side pair shares its settings: set both sources.
+        // A stereo or mid/side pair shares its settings: set both sources;
+        // and every selected source (manual 5.4).
         auto flip = [this, src] (std::atomic<bool> ld::SourceParams::*field)
         {
             const bool on = ! (src->*field).load();
-            forSourcePair (ctx.engine, selectedSource, [field, on] (ld::SourceParams& s) { (s.*field) = on; });
+            forSelectedSources ([field, on] (int, ld::SourceParams& s) { (s.*field) = on; });
+        };
+        // The selected sources' table indices (each source once, not its pair partner).
+        auto selectedIndices = [this]
+        {
+            std::vector<int> out { MixerEngine::sourceIndex (selectedSource) };
+            for (int p : selectedSources)
+                if (p != selectedSource)
+                    out.push_back (MixerEngine::sourceIndex (p));
+            return out;
         };
         if (sourceTab == 0)
         {
             auto* osc = selectedOscillator();
+            auto* user = selectedUserSignal();
+            const bool usr = MixerEngine::isUsrSource (selectedSource);
             if (sourceInitKey.contains (pos))
-                ctx.engine.initializeSource (index);
+            {
+                for (int i : selectedIndices())
+                    ctx.engine.initializeSource (i);
+            }
+            else if (usr && userSourceField.contains (pos))
+                showUserSourceMenu();
+            else if (user != nullptr && userTapKey.contains (pos))
+                user->post = ! user->post.load();
+            else if (user != nullptr && std::any_of (userSideKeys.begin(), userSideKeys.end(), [pos] (auto k) { return k.contains (pos); }))
+            {
+                for (int i = 0; i < 3; ++i)
+                    if (userSideKeys[(size_t) i].contains (pos))
+                        user->side = i;
+            }
             else if (osc != nullptr && oscFreqField.contains (pos))
                 showOscFreqMenu();
             else if (osc != nullptr && ! sourceMuteKey.contains (pos))
@@ -2285,26 +2667,28 @@ void RoutingPage::mouseUp (const juce::MouseEvent& e)
                 flip (&ld::SourceParams::mute);
             for (int m = 0; m < 3; ++m)
                 if (sourceModeKeys[(size_t) m].contains (pos))
-                    ctx.engine.setSourceMode (index, m);
+                    for (int i : selectedIndices())
+                        ctx.engine.setSourceMode (i, m);
         }
         else if (sourceTab == 2)
         {
             for (auto& [cell, group] : sourceTagCells)
                 if (cell.contains (pos))
                 {
+                    // The group on (or off) for every selected source, as for the first.
                     const auto bit = 1u << group;
-                    const auto mask = src->muteGroups.load() ^ bit;
-                    forSourcePair (ctx.engine, selectedSource, [mask] (ld::SourceParams& s) { s.muteGroups = mask; });
+                    const bool on = (src->muteGroups.load() & bit) == 0;
+                    forSelectedSources ([bit, on] (int, ld::SourceParams& s) { s.muteGroups = on ? (s.muteGroups.load() | bit) : (s.muteGroups.load() & ~bit); });
                 }
         }
         else
         {
             for (auto& [cell, colour] : sourceColourCells)
                 if (cell.contains (pos))
-                    forSourcePair (ctx.engine, selectedSource, [c = colour] (ld::SourceParams& s) { s.colour = c; });
+                    forSelectedSources ([c = colour] (int, ld::SourceParams& s) { s.colour = c; });
             for (auto& [cell, icon] : sourceIconCells)
                 if (cell.contains (pos))
-                    forSourcePair (ctx.engine, selectedSource, [i = icon] (ld::SourceParams& s) { s.icon = i; });
+                    forSelectedSources ([i = icon] (int, ld::SourceParams& s) { s.icon = i; });
         }
         repaint();
         notifyStatusKeysChanged();

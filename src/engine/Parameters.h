@@ -20,8 +20,9 @@ constexpr int kNumMuteGroups = ld::kNumMuteGroups;
 constexpr int kNumFx = ld::kNumFx;
 constexpr int kWingChannels = ld::kWingChannels;
 constexpr int kWingBuses = ld::kWingBuses;
-/** Buses 9+ can feed buses 1-8. */
-constexpr int kBusToBusTargets = 8;
+/** Bus slot `from` can send to bus slot `to`: any other bus (manual 5.10,
+    BUS → BUS "from Bus 1-16 to BUS 1-16"; livedaw-engine routing.rs). */
+constexpr bool busFeedsBus (int from, int to) noexcept { return from != to; }
 /** The filter frequencies of a new or INITed channel (the engine's defaults),
     which the LO CUT / HI CUT controls reset to: 100 Hz and 10 kHz on the
     console's steps (100.2 Hz, 10k02 Hz). */

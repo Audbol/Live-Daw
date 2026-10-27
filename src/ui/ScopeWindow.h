@@ -44,6 +44,7 @@ public:
         SourceLocal = 1 << 0,    // LCL: the audio interface's inputs
         SourceCard = 1 << 7,     // CRD: the multitrack playback channels
         SourcePlayer = 1 << 9,   // PLAY: the USB player
+        SourceUser = 1 << 11,    // USR: the user signals and user patches
         SourceOsc = 1 << 12      // OSC: the oscillators
     };
     juce::uint32 getSourceGroups() const noexcept { return sourceGroups; }
