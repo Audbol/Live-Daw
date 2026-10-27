@@ -1,4 +1,5 @@
 #include "ui/CompactSection.h"
+#include "ui/MidiRemoteUi.h"
 
 namespace livedaw::ui
 {
@@ -11,8 +12,9 @@ namespace
     // The LCD's colours [photos of a WING COMPACT]: a colour screen, white on blue.
     const juce::Colour lcdBlue { 0xff1d7fd8 }, lcdDim { 0xff0b2c4c };
 
-    /** The FADER SPILL target of MAIN `n` (1-based; custom.rs: kind 5). */
+    /** The FADER SPILL target of MAIN `n` and MATRIX `n` (1-based; custom.rs: kinds 5, 6). */
     constexpr int mainSpillTarget (int n) { return 500 + n - 1; }
+    constexpr int matrixSpillTarget (int n) { return 600 + n - 1; }
 } // namespace
 
 CompactSection::CompactSection (UiContext& c) : ctx (c), fader13 (c, LayerSet::Center)
@@ -22,14 +24,25 @@ CompactSection::CompactSection (UiContext& c) : ctx (c), fader13 (c, LayerSet::C
         auto& k = modeKeys[i];
         k = std::make_unique<SurfaceKey> (modeLabels[i]);
         k->ledColour = Colours::keyLayer;
-        k->onPress = [this, i] { setKeyMode (modes[i]); };
-        k->ledState = [this, i] { return keyMode() == modes[i] ? SurfaceKey::Lit : SurfaceKey::Off; };
+        // In DAW mode the four keys pick the DAW layers DAW 1-4.
+        k->onPress = [this, i]
+        {
+            if (dawKeys())
+            {
+                dawLayer = i;
+                refresh();
+            }
+            else
+                setKeyMode (modes[i]);
+        };
+        k->ledState = [this, i] { return (dawKeys() ? dawLayer == i : keyMode() == modes[i]) ? SurfaceKey::Lit : SurfaceKey::Off; };
         addAndMakeVisible (*k);
     }
-    modeKeys[0]->setTooltip ("BUS: the 16 keys are BUS 1-16 (press: sends on fader, hold: spill); fader 13 follows");
-    modeKeys[1]->setTooltip ("DCA: the 16 keys are DCA 1-16 (press: spill the DCA), or the custom control sets D1-D4 (USE DCA BUTTONS 1-16 AS CC)");
-    modeKeys[2]->setTooltip ("MAIN MATRIX: keys 1-4 MAIN 1-4 (press: sends on fader, hold: spill), 5-8 the custom control set M/M, "
-                             "9-16 MATRIX 1-8 (sends on fader); fader 13 follows");
+    modeKeys[0]->setTooltip ("BUS: the 16 keys are BUS 1-16 (press: sends on fader, hold: spill; BUS SPILL swaps them); fader 13 follows");
+    modeKeys[1]->setTooltip ("DCA: the 16 keys are DCA 1-16 (press: the DCA on fader 13, or its spill with DCA SPILL ON SELECT), "
+                             "or the custom control sets D1-D4 (USE DCA BUTTONS 1-16 AS CC)");
+    modeKeys[2]->setTooltip ("MAIN MATRIX: keys 1-4 MAIN 1-4, 5-8 the custom control set M/M, 9-16 MATRIX 1-8 (press and hold: "
+                             "sends on fader or spill, as MAIN SPILL and MATRIX SPILL say); fader 13 follows");
     modeKeys[3]->setTooltip ("USER: the 16 keys are the custom control sets U1-U4");
 
     // VIEW: the FADERS screen; held, CUSTOM CONTROLS on the keys' set (WING manual Table 4.4).
@@ -45,7 +58,7 @@ CompactSection::CompactSection (UiContext& c) : ctx (c), fader13 (c, LayerSet::C
         const auto m = keyMode();
         const int set = m == compact::KeyMode::Main ? compact::kSetMainMatrix : m == compact::KeyMode::Dca ? compact::kFirstDcaSet : 0;
         if (ctx.showCustomControls)
-            ctx.showCustomControls (cc::kFirstCompactUserLayer + set);
+            ctx.showCustomControls (dawKeys() ? cc::kFirstDawLayer + dawLayer : cc::kFirstCompactUserLayer + set);
         viewOpened = true;
     };
     viewKey.isActive = [this]
@@ -62,6 +75,19 @@ CompactSection::CompactSection (UiContext& c) : ctx (c), fader13 (c, LayerSet::C
         k->ledColour = Colours::keyLayer;
         k->onPress = [this, i] { pressKey (i, false); };
         k->onHold = [this, i] { pressKey (i, true); };
+        // DAW mode: the DAW layer's keys act while held (DAW BUTTONS push).
+        k->onDownUp = [this, i] (bool down)
+        {
+            if (! dawKeys())
+                return;
+            if (const auto f = keyFunction (i); f.isAssigned())
+            {
+                if (down)
+                    cc::press (ctx, f);
+                else
+                    cc::release (ctx, f);
+            }
+        };
         k->ledState = [this, i] { return keyLit (i) ? SurfaceKey::Lit : SurfaceKey::Off; };
         addAndMakeVisible (k);
     }
@@ -113,8 +139,22 @@ void CompactSection::setStripWidth (int w)
     }
 }
 
+bool CompactSection::dawKeys() const
+{
+    return midiui::dawModeOn (ctx);
+}
+
+std::optional<std::pair<int, cc::Slot>> CompactSection::dawKeyControl (int key) const
+{
+    if (! dawKeys() || key < 0 || key >= 2 * cc::kNumControls)
+        return std::nullopt;
+    return std::pair<int, cc::Slot> { key % cc::kNumControls, key < cc::kNumControls ? cc::Slot::Upper : cc::Slot::Lower };
+}
+
 void CompactSection::pressKey (int key, bool held)
 {
+    if (dawKeys())
+        return; // onDownUp plays the DAW layer's keys
     const auto mf = keyMainFader (key);
     if (! mf)
     {
@@ -136,11 +176,19 @@ void CompactSection::pressKey (int key, bool held)
 
     // A bus, main or matrix: the key selects it for fader 13; pressed again it
     // lets go (and ends what the press started). BUS keys send on a press and
-    // spill on a hold; MAIN and MATRIX keys do what MAIN SPILL gives them.
+    // spill on a hold, MAIN and MATRIX keys too, each as its BUS / MAIN / MATRIX
+    // SPILL setting says. A DCA key (DCA SPILL ON SELECT off) shows its DCA on
+    // fader 13 and is the DCA fader 13's SELECT assigns to.
     const bool deselect = ! held && key == selectedKey;
     selectedKey = deselect ? -1 : key;
+    if (keyMode() == compact::KeyMode::Dca)
+    {
+        assignDca = key;
+        refresh();
+        return;
+    }
     const auto actions = keyMode() == compact::KeyMode::Bus
-                             ? compact::busActions()
+                             ? compact::busActions (ctx.settings.getBoolValue (uiprefs::compactBusSpill, uiprefs::compactBusSpillDefault))
                              : compact::mainMatrixActions (key, ctx.settings.getBoolValue (uiprefs::compactMainSpill, uiprefs::compactMainSpillDefault),
                                                            ctx.settings.getBoolValue (uiprefs::compactMatrixSpill, uiprefs::compactMatrixSpillDefault));
     const auto f = actionFunction (key, held ? actions.hold : actions.press);
@@ -164,19 +212,35 @@ cc::Function CompactSection::actionFunction (int key, compact::KeyAction action)
             return { cc::BtnSendsOnFader, cc::encodeStrip (state::StripRef::of (*s)), 0 };
         return {};
     }
-    // Sidecar spills buses and mains, not matrices.
-    if (mf->group == compact::MainFader::Bus)
-        return keyFunction (key);
-    return mf->group == compact::MainFader::Main ? cc::Function { cc::BtnFaderSpill, mainSpillTarget (mf->number), 0 } : cc::Function {};
+    switch (mf->group)
+    {
+        case compact::MainFader::Bus:    return keyFunction (key);
+        case compact::MainFader::Main:   return { cc::BtnFaderSpill, mainSpillTarget (mf->number), 0 };
+        case compact::MainFader::Matrix: return { cc::BtnFaderSpill, matrixSpillTarget (mf->number), 0 };
+        case compact::MainFader::Off:
+        case compact::MainFader::Dca:
+        case compact::MainFader::Channel:
+        case compact::MainFader::Aux:    break;
+    }
+    return {};
 }
 
 std::optional<compact::KeyControl> CompactSection::keyControl (int key) const
 {
+    if (dawKeys())
+        return std::nullopt;
     return compact::keyControl (keyMode(), key, ctx.settings.getBoolValue (uiprefs::compactDcaCustom, false));
 }
 
 cc::Function CompactSection::keyFunction (int key) const
 {
+    if (dawKeys())
+    {
+        const auto dk = dawKeyControl (key);
+        if (! dk || ctx.customControls == nullptr)
+            return {};
+        return ctx.customControls->get (cc::kFirstDawLayer + dawLayer, dk->first).slot (dk->second);
+    }
     if (const auto kc = keyControl (key))
     {
         if (ctx.customControls == nullptr)
@@ -193,7 +257,8 @@ cc::Function CompactSection::keyFunction (int key) const
             break;
         }
         case compact::KeyMode::Dca:
-            if (key < kNumDcas)
+            // DCA SPILL ON SELECT: a press spills the DCA (else it goes on fader 13).
+            if (key < kNumDcas && ctx.settings.getBoolValue (uiprefs::dcaSpill, false))
                 return { cc::BtnFaderSpill, key, 0 };
             break;
         case compact::KeyMode::Main:
@@ -225,7 +290,13 @@ Strip* CompactSection::mainFaderStrip (const compact::MainFader& mf) const
 
 std::optional<compact::MainFader> CompactSection::keyMainFader (int key) const
 {
-    const auto mf = compact::keyMainFader (keyMode(), key);
+    if (dawKeys())
+        return std::nullopt;
+    const bool dcaShow = keyMode() == compact::KeyMode::Dca && ! ctx.settings.getBoolValue (uiprefs::dcaSpill, false)
+                         && ! ctx.settings.getBoolValue (uiprefs::compactDcaCustom, false);
+    const auto mf = compact::keyMainFader (keyMode(), key, dcaShow);
+    if (mf && mf->group == compact::MainFader::Dca)
+        return mf->number <= kNumDcas ? mf : std::nullopt;
     return mf && mainFaderStrip (*mf) != nullptr ? mf : std::nullopt;
 }
 
@@ -245,9 +316,24 @@ bool CompactSection::keyLit (int key) const
 
 juce::String CompactSection::keyName (int key) const
 {
+    if (const auto dk = dawKeyControl (key))
+    {
+        // The upper key shows the control's name, else what the key does.
+        if (ctx.customControls == nullptr)
+            return {};
+        const auto& c = ctx.customControls->get (cc::kFirstDawLayer + dawLayer, dk->first);
+        if (dk->second == cc::Slot::Upper && c.name.isNotEmpty())
+            return c.name.removeCharacters ("|*").trim();
+        const auto& f = c.slot (dk->second);
+        return f.isAssigned() ? cc::describe (ctx, dk->second, f) : juce::String();
+    }
     if (const auto mf = keyMainFader (key))
+    {
+        if (mf->group == compact::MainFader::Dca)
+            return ctx.engine.getDcaName (mf->number - 1);
         if (const auto* s = mainFaderStrip (*mf))
             return stripName (*s);
+    }
     if (const auto kc = keyControl (key))
     {
         if (ctx.customControls == nullptr)
@@ -297,7 +383,7 @@ void CompactSection::refresh()
 
 juce::String CompactSection::lcdState() const
 {
-    juce::String s = compact::mainFaderToken (shownMainFader()) + "|" + compact::keyModeToken (keyMode());
+    juce::String s = compact::mainFaderToken (shownMainFader()) + "|" + compact::keyModeToken (keyMode()) + (dawKeys() ? "|DAW" + juce::String (dawLayer) : "");
     for (int i = 0; i < keys.size(); ++i)
         s << "|" << keyName (i) << (keys[i]->isShownLit() ? "*" : "") << keyColour (i).toString();
     return s;
@@ -352,7 +438,8 @@ void CompactSection::paint (juce::Graphics& g)
     if (const auto* s = mainFaderStrip (mf); s != nullptr && stripName (*s) != s->getLabel())
         fader << " " << stripName (*s).toUpperCase();
     g.drawFittedText (fader, title.reduced (4.0f, 0.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
-    g.drawFittedText (modeNames[(int) keyMode()], title.reduced (4.0f, 0.0f).toNearestInt(), juce::Justification::centredRight, 1, 0.7f);
+    g.drawFittedText (dawKeys() ? "DAW " + juce::String (dawLayer + 1) : juce::String (modeNames[(int) keyMode()]), title.reduced (4.0f, 0.0f).toNearestInt(),
+                      juce::Justification::centredRight, 1, 0.7f);
 
     r.removeFromTop (2.0f);
     const float cellW = r.getWidth() / 2.0f, cellH = r.getHeight() / (float) (layout::compact::kNumKeys / 2);

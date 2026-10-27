@@ -1977,6 +1977,12 @@ void MainDisplay::showFxSendOutputs (int slot)
     routing->showFxSends (slot);
 }
 
+void MainDisplay::showRoutingTab (int tab)
+{
+    showScreen (Screen::Routing);
+    routing->showTab (tab);
+}
+
 void MainDisplay::mouseUp (const juce::MouseEvent& e)
 {
     if (e.eventComponent != this)

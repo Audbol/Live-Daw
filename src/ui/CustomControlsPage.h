@@ -54,7 +54,7 @@ struct Control
 {
     Function encoder, upper, lower;
     juce::String name;
-    int colour = 0; // WING colour 1-18, 0 = none
+    int colour = 0; // WING colour 1-18 with its light on; -18..-1 the colour with the light off; 0 = none
 
     Function& slot (Slot s) { return s == Slot::Encoder ? encoder : s == Slot::Upper ? upper : lower; }
     const Function& slot (Slot s) const { return s == Slot::Encoder ? encoder : s == Slot::Upper ? upper : lower; }
@@ -100,6 +100,7 @@ enum EncoderCategory
     EncMonitoring,
     EncDawVpot,
     EncMidiCc,
+    EncLighting, // OTHER (the WING's lighting controls): the option is LAMP, GLOW, PATCH BRIGHTNESS
     kNumEncoderCategories
 };
 
@@ -128,6 +129,8 @@ enum ButtonCategory
     BtnInsertPost,   // CH INSERT POST ON/OFF (INS2)
     BtnFxParameter,  // FX PAR: the target is the FX slot, the option the parameter (-1: MIX)
     BtnOverviewPage, // OVERVIEW PAGE (VIEWPAGE): the target is the area, the option the bank
+    BtnFaderStart,   // FADER START (FSTART): the target is the strip; lit while its fader is up
+    BtnDawVpot,      // DAW V-POTS (DAWENC): the target is the rotary (custom.rs DAW_VPOT_KEY_CATEGORY)
     kNumButtonCategories
 };
 
@@ -172,6 +175,11 @@ enum OtherFunction
     banks: 0-8 the section's layer keys, from kFirstOverviewBank its fixed
     banks (1-8 ... DCA 9-16; the WING's bank 1-21). */
 constexpr int kNumOverviewAreas = 7, kFirstOverviewBank = 9;
+/** DAW V-POTS keys' rotaries: M1P-M8P, E1P-E16P (pushed while held), M1-M8,
+    E1-E16 (a step clockwise per press), JOG. */
+constexpr int kNumDawVpotKeys = 49, kFirstDawVpotTurn = 24;
+/** A DAW V-POTS key's rotary as the WING names it ("M1P", "E16", "JOG"). */
+juce::String dawVpotKeyCode (int target);
 /** The fader section an OVERVIEW PAGE area shows (VRT: the COMPACT's VIRTUAL). */
 LayerSet::Section overviewSection (int area) noexcept;
 

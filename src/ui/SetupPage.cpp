@@ -840,7 +840,8 @@ namespace
                                                                       { "BUS SoF/SPILL ACTIVATES SOLO", uiprefs::sofActivatesSolo } };
             for (auto [name, key] : soloPrefs)
                 solo.addRow (name, OnKey::forSetting (ctx.settings, key, uiprefs::soloOptionDefault (key)), 1.3f);
-            solo.addRow ("SEND PAGE ACTIVATES SOLO", inertOnKey (ctx.settings, "sendPageActivatesSolo"), 1.3f); // only kept
+            // VIEW > SENDS solos the destination chosen (sfdr2solo).
+            solo.addRow ("SEND PAGE ACTIVATES SOLO", OnKey::forSetting (ctx.settings, uiprefs::sendPageActivatesSolo, false), 1.3f);
             addAndMakeVisible (solo);
 
             device.addRow ({}, std::make_unique<DropdownField> ("DEVICE", [this] { return deviceName(); },
@@ -1076,15 +1077,17 @@ namespace
             faders.addRow ("ALTERNATIVE SOF MODE", onSetting (uiprefs::alternativeSof, false), 1.3f);
             rightSofRow = &faders.addRow ("RIGHT SECTION SENDS ON FADER", onSetting (uiprefs::rightSectionSof, uiprefs::rightSectionSofDefault), 1.3f);
             faders.addRow ("FULL FADER PAGING", onSetting (uiprefs::fullFaderPaging, false), 1.3f);
+            faders.addRow ("FADER/SCREEN LAYER LINK", OnKey::forSetting (ctx.settings, prefs::layerLink, prefs::layerLinkDefault), 1.3f);
             // The COMPACT's one fader section has one (autosel_CMPCT).
             faders.addRow ("CH AUTOSELECT", std::make_unique<ToggleKeys> (ctx, juce::StringArray { "L", "C", "R" },
                                                                          std::vector<const char*> (std::begin (uiprefs::autoSelect), std::end (uiprefs::autoSelect)),
                                                                          juce::StringArray { "CMPCT" }, std::vector<const char*> { uiprefs::autoSelectCompact }),
                            3.6f);
-            // The COMPACT's (WING manual 5.5, FADERS): MAIN FADER is fader 13's own
-            // assignment, KEEP MAIN FADER keeps it there whatever key is pressed,
-            // MAIN / MATRIX SPILL put a MAIN key's spill and a MATRIX key's sends on
-            // the press instead of the hold.
+            // The COMPACT's (WING manual 5.5, FADERS, in its order): MAIN FADER is fader
+            // 13's own assignment, KEEP MAIN FADER keeps it there whatever key is pressed,
+            // DCA SPILL ON SELECT spills a DCA key's DCA on a press (else the DCA goes on
+            // fader 13), BUS / MAIN / MATRIX SPILL put a key's spill on the press and its
+            // sends on the hold, DCA SELECT SPILL spills a DCA strip on its SELECT.
             compactRows.push_back (&faders.addRow ("MAIN FADER",
                                                    std::make_unique<DropdownField> ("SOURCE",
                                                                                     [this]
@@ -1095,13 +1098,15 @@ namespace
                                                                                     [this] (DropdownField& f) { chooseMainFader (f); }),
                                                    3.6f, true, false, kFieldRows));
             compactRows.push_back (&faders.addRow ("KEEP MAIN FADER", compactSetting (uiprefs::compactKeepMainFader, false), 1.3f));
-            compactRows.push_back (&faders.addRow ("MAIN SPILL", compactSetting (uiprefs::compactMainSpill, uiprefs::compactMainSpillDefault), 1.3f));
-            compactRows.push_back (&faders.addRow ("MATRIX SPILL", compactSetting (uiprefs::compactMatrixSpill, uiprefs::compactMatrixSpillDefault), 1.3f));
+            compactRows.push_back (&faders.addRow ("DCA SPILL ON SELECT", compactSetting (uiprefs::dcaSpill, false), 1.3f));
             userLinkRow = &faders.addRow ("USER LAYER LINK", std::make_unique<ToggleKeys> (ctx, juce::StringArray { "L/C", "C/R" },
                                                                                        std::vector<const char*> (std::begin (uiprefs::userLayerLink), std::end (uiprefs::userLayerLink))),
                                           2.35f);
             dcaSpillRow = &faders.addRow ("DCA SPILL", onSetting (uiprefs::dcaSpill, false), 1.3f);
-            faders.addRow ("FADER/SCREEN LAYER LINK", OnKey::forSetting (ctx.settings, prefs::layerLink, prefs::layerLinkDefault), 1.3f);
+            compactRows.push_back (&faders.addRow ("BUS SPILL", compactSetting (uiprefs::compactBusSpill, uiprefs::compactBusSpillDefault), 1.3f));
+            compactRows.push_back (&faders.addRow ("MAIN SPILL", compactSetting (uiprefs::compactMainSpill, uiprefs::compactMainSpillDefault), 1.3f));
+            compactRows.push_back (&faders.addRow ("MATRIX SPILL", compactSetting (uiprefs::compactMatrixSpill, uiprefs::compactMatrixSpillDefault), 1.3f));
+            compactRows.push_back (&faders.addRow ("DCA SELECT SPILL", compactSetting (uiprefs::compactDcaSelectSpill, false), 1.3f));
             addAndMakeVisible (faders);
 
             sectionsKey.offColour = Dark::header;
@@ -1228,8 +1233,7 @@ namespace
         }
 
         /** The rows of the console model shown: the COMPACT's, or the full-size
-            WING's (F1-F3, the right section, USER LAYER LINK); the COMPACT calls
-            DCA SPILL "DCA SELECT SPILL". */
+            WING's (F1-F3, the right section, USER LAYER LINK, DCA SPILL). */
         void showModelRows()
         {
             const bool compact = ctx.consoleModel == ConsoleModel::Compact;
@@ -1238,7 +1242,7 @@ namespace
             general.setRowShown (*f1f3Row, ! compact);
             faders.setRowShown (*rightSofRow, ! compact);
             faders.setRowShown (*userLinkRow, ! compact);
-            faders.setRowLabel (*dcaSpillRow, compact ? "DCA SELECT SPILL" : "DCA SPILL");
+            faders.setRowShown (*dcaSpillRow, ! compact);
         }
 
         /** MAIN FADER > SOURCE: OFF, a main, a matrix or a DCA (WING manual 4.2). */

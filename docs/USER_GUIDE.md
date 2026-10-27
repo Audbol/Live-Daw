@@ -190,15 +190,18 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   keys do.
   - BUS: keys 1-16 are BUS 1-16. A press turns on Sends on Fader to the bus; held, it
     spills the bus (the sources sending to it come onto the faders). Either way the
-    bus goes on fader 13.
+    bus goes on fader 13. SETUP > SURFACE > BUS SPILL swaps press and hold.
   - MAIN MATRIX: keys 1-4 are MAIN 1-4, keys 5-8 the custom control keys of the set
     M/M, keys 9-16 MATRIX 1-8. A MAIN key pressed turns on Sends on Fader to the main
     (the faders show the channels' main sends); held, it spills the main: the
-    channels, aux and buses feeding it come onto the faders. A MATRIX key, pressed or
-    held, turns on Sends on Fader to the matrix. Either way the main or matrix goes on
-    fader 13.
-  - DCA: a press spills the DCA. With SETUP > SURFACE > USE DCA BUTTONS 1-16 AS CC
-    on, the keys are the custom control keys of the sets D1-D4.
+    channels, aux and buses feeding it come onto the faders (MAIN SPILL swaps them). A
+    MATRIX key pressed spills the matrix: the channels, aux, buses and mains sending to
+    it come onto the faders as their send levels; held, it turns on Sends on Fader to
+    the matrix (MATRIX SPILL, on at first as on a factory-set WING, off swaps them).
+    Either way the main or matrix goes on fader 13.
+  - DCA: a press puts the DCA on fader 13; with SETUP > SURFACE > DCA SPILL ON SELECT
+    it spills the DCA instead. With USE DCA BUTTONS 1-16 AS CC on, the keys are the
+    custom control keys of the sets D1-D4.
   - USER: the custom control keys of the sets U1-U4 (keys 1-4 U1, 5-8 U2, 9-12 U3,
     13-16 U4).
   - A key pressed again lets its bus, main or matrix go: fader 13 goes back to MAIN
@@ -215,7 +218,9 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   custom control and use the knob to the right of the main display". **DAW
   LAYER** (CC EDIT > OTHER) is the COMPACT's way into DAW remote control: assign it
   to a key, and that key switches DAW mode on and off as the full-size WING's DAW key
-  does.
+  does. In DAW mode the keys BUS, DCA, MAIN MATRIX and USER pick the DAW layers DAW 1-4
+  (the LCD reads DAW n), keys 1-4 play the layer's upper keys and keys 5-8 its lower
+  keys (as long as they're held), and VIEW held opens the layer on CC EDIT.
 - **Fader 13** is the main fader: SETUP > SURFACE > MAIN FADER > SOURCE (OFF, a main,
   a matrix or a DCA), MAIN 1 at first. The BUS and MAIN MATRIX keys put another bus,
   main or matrix on it while their key is selected. KEEP MAIN FADER leaves it on MAIN
@@ -223,12 +228,12 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   LCD beside it shows what fader 13 controls and what the 16 keys are, a lit key's
   cell filled.
 - SETUP > SURFACE has the COMPACT's own rows: USE DCA BUTTONS 1-16 AS CC, MAIN FADER,
-  KEEP MAIN FADER, **MAIN SPILL** (on: a MAIN key pressed spills and held turns on
-  Sends on Fader) and **MATRIX SPILL** (kept and answered over WING REMOTE; Sidecar
-  has no matrix spill, so a MATRIX key sends either way). DCA SPILL is called DCA
-  SELECT SPILL. The
-  full-size WING's rows USE F1-F3 AS CUSTOM CONTROLS, RIGHT SECTION SENDS ON FADER and
-  USER LAYER LINK are hidden.
+  KEEP MAIN FADER, **DCA SPILL ON SELECT** (a DCA key's press spills the DCA instead of
+  putting it on fader 13), **BUS SPILL**, **MAIN SPILL** and **MATRIX SPILL** (on: the
+  key's press spills and its hold turns on Sends on Fader; off: the other way round)
+  and **DCA SELECT SPILL** (SELECT on a DCA strip spills it). The full-size WING's rows
+  USE F1-F3 AS CUSTOM CONTROLS, RIGHT SECTION SENDS ON FADER, USER LAYER LINK and DCA
+  SPILL are hidden.
 - The COMPACT has no channel strip section, custom controls section, 4-Channel
   section, center or right fader section, wheel or DAW key; Sidecar leaves them out.
 - The VIEW screens show the COMPACT's two sections at the foot of the layer column:
@@ -241,8 +246,9 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   outputs. SETUP > SURFACE > CH AUTOSELECT has one key, **CMPCT**.
 - WING remote clients see a COMPACT: Sidecar answers with model `wing-compact`.
   Fader 13, the keys' mode and CH AUTOSELECT CMPCT are `/$ctl/cfg/mfdr`, `cscmode`
-  and `autosel_CMPCT`, both ways; KEEP MAIN FADER, MAIN SPILL, MATRIX SPILL and USE
-  DCA BUTTONS 1-16 AS CC are `mfdrkeep`, `mainspill`, `mtxspill` and `dcacc`. The
+  and `autosel_CMPCT`, both ways; KEEP MAIN FADER, DCA SPILL ON SELECT, BUS, MAIN and
+  MATRIX SPILL and USE DCA BUTTONS 1-16 AS CC are `mfdrkeep`, `dcaspill`, `busspill`,
+  `mainspill`, `mtxspill` and `dcacc` (DCA SELECT SPILL has no node). The
   key sets are `/$ctl/user/U1`-`U4`, `MM` and `D1`-`D4`, so WING Edit and Mixing
   Station see and set them (on the full-size WING too, as WING Edit lists them there),
   and the virtual layers are `/$ctl/layer/VRT/1`-`8`.
@@ -262,11 +268,13 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   parameters**.
 - **Spill** puts a computed layer on a section: a DCA's members (DCA SPILL in SETUP >
   SURFACE, then SELECT on the DCA), a strip's sends (SPILL on BUS / MATRIX SENDS), the
-  channels, aux and buses feeding a main (FADER SPILL > MAIN on a CC key) or an FX
-  device's parameters (FX SPILL on the insert screens; MUTE sets a parameter to its
-  default, an EQ gain to 0 dB). Spill from the right section goes to the center
-  section, everything else to the left; the same key again brings back the layer and
-  its scroll position.
+  channels, aux and buses feeding a main (FADER SPILL > MAIN on a CC key), the sends of
+  the strips sending to a matrix (FADER SPILL > MTX) or an FX device's parameters (FX
+  SPILL on the insert screens; MUTE sets a parameter to its default, an EQ gain to
+  0 dB). Spill from the right section goes to the center section, a FADER SPILL key
+  to its AREA (LEFT, CENTER or RIGHT), everything else to the left; the same key again
+  brings back the layer and its scroll position. With SETUP > AUDIO > BUS SoF/SPILL
+  ACTIVATES SOLO a bus, main or matrix spilled is soloed.
 - **Fader strips** follow the WING's: a colour light bar (the strip's colour), the
   scribble strip (one backlight colour on every strip; number,
   source ports or mono, icon, the name on an inverted bar), SELECT, SOLO, the meter
@@ -278,6 +286,9 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   OVERRIDE, pressing it unmutes the strip until that mute changes.
 - **SOF FLIP (Sends on Fader):** select a bus, main or matrix and the input faders set
   their send to it; select an input and the bus, main and matrix faders set its sends.
+  With SETUP > SURFACE > ALTERNATIVE SOF MODE, hold SOF FLIP for this standard SOF,
+  hold a strip's SELECT for the alternative one (its destination stays), and press SOF
+  FLIP to end either (manual 4.9).
 - Surface keys act on a press; keys with a second function act on **hold** (half a
   second, or right-click): slot on/off, VIEW for CONFIG, the shift keys.
 - **Main display**, a 16:10 screen with the seven screen keys on its left (over its
@@ -458,9 +469,10 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     PRE or POST its EQ as EQ/RTA SETTINGS' RTA SOURCE says), the DIST slider (0.1-100 m,
     linear) with INVERT and DELAY, LIMITER with its gain reduction beside the meter, and
     the level; laid out as on a WING with firmware 3.1) and
-    CC EDIT (also SETUP pressed twice): the custom
-    control layers, a function list and the target lists, COLOR, CLR ALL and NAME,
-    saved with the show. The function lists follow WING Edit's order. Keys also have
+    CC EDIT (also SETUP pressed twice): the custom control layers, a function list and
+    the target lists, COLOR (NONE turns the control's light off and keeps its colour,
+    as COLOR > LIGHT), CLR ALL and NAME, saved with the show. The function lists
+    follow WING Edit's order. Keys also have
     **CH INSERT PRE / POST ON/OFF** (a strip's INS 1 / INS 2), **FX PAR** (an FX
     slot's parameter or MIX: a press toggles a switch or steps a list; held, the
     encoder above it sets it; on a delay's TIME the key taps the tempo and flashes as
@@ -471,8 +483,15 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     (the monitoring path), MONITOR DIM / MONO / SWAP / MUTE, FADER -oo / -10 dB /
     0 dB, AUTOMIX X / Y, CHANNEL PREV / NEXT, CH / BUS / MAIN / MTX SOLO TAP (PFL /
     AFL, lit for AFL), CH / BUS / MAIN / MTX / DCA METER TAP (PRE / POST, lit for
-    POST), and Sidecar's CC BANK UP / DOWN and SOF OFF. MONITORING encoders also set
-    PHONES LEVEL.
+    POST), and Sidecar's CC BANK UP / DOWN and SOF OFF. **FADER START** lights while
+    its strip's fader is up (the console's fader start contact), **DAW V-POTS** on a
+    key pushes a V-pot while held or turns it (or the jog wheel) a step per press,
+    FADER SPILL has an **AREA** (the section it spills to), GLOBAL PAGE has SOURCE SETUP,
+    OUTPUT ROUTING and USB PLAY/REC, USB PLAY/REC has TOGGLE PLAY/STOP and PLAY/PAUSE.
+    Encoders: MONITORING sets the PHONES, SPEAKERS or TALKBACK level (or Sidecar's DIM
+    AMOUNT), OTHER the LAMP, GLOW or PATCH brightness of SETUP > GENERAL. A control
+    without a name shows its function as the console names it ("1 MUTE", "B1 SOF",
+    "1 FDR", "SEND B1", "FX3 TIME", "TALK A", "SCN GO", "CC 1:7").
   - **LIBRARY:** a file browser with the locations INT (`Documents/Sidecar/Library`),
     USB (a folder of your choice) and SHOW (the show's scenes and snippets: tags, SKIP,
     LINK, REMOVE, RENAME, UP / DOWN), with FOLDER, RENAME, DELETE and sorting. Tabs:
@@ -500,8 +519,10 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     and the keyboard, every change applying at once; the "DCA" at a DCA column's foot
     is yellow while the DCA is soloed), FADERS (a DCA's name opens nothing, as on the console; its
     label at the foot is yellow while it's soloed; send faders of a layer, and Sends on
-    Fader, show and set the send level, MUTE switching the send), SENDS (sends on faders
-    to one bus, main or matrix), CONFIG (edit any layer key; see *Editing user layers*
+    Fader, show and set the send level, MUTE switching the send; AUTO RIDER in the COMP
+    slot shows its square, lit while it rides), SENDS (sends on faders to one bus, main
+    or matrix; with SETUP > AUDIO > SEND PAGE ACTIVATES SOLO the destination chosen is
+    soloed), CONFIG (edit any layer key; see *Editing user layers*
     below; a **MIDI CC** fader sends its CC, 0-127, out of EXTERNAL MIDI CONTROL and
     follows the CC coming in; with SENDS or BUS -> BUS, **SOURCE CUSTOMIZATION** /
     **BUS CUSTOMIZATION** choose whether the send faders assigned show their source's
@@ -913,8 +934,8 @@ and open-source projects (see below), and it is **experimental**.
   differently ends up with A n's patch after PC -> MIXER.
 - **What maps:** every parameter of the WING 3.1 tree but one answers (79,325 of
   79,326, counting every processing model's parameters and every custom control
-  mode's function nodes). 73,664 of them (92.9 %) drive the engine or the show, 85
-  are Sidecar's SETUP settings, and the 5,576 Sidecar has no equivalent for answer what a factory-initialized WING answers (see below). Driving the engine: channels, aux, buses, mains
+  mode's function nodes). 73,764 of them (93.0 %) drive the engine or the show, 89
+  are Sidecar's SETUP settings, and the 5,472 Sidecar has no equivalent for answer what a factory-initialized WING answers (see below). Driving the engine: channels, aux, buses, mains
   and matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
   dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,
   main sends, solo, TAP WIDTH and TAP EQ, every bus's sends to the other buses, the
@@ -962,19 +983,20 @@ and open-source projects (see below), and it is **experimental**.
   LOCKED...), the surface lock's string (`/$ctl/$stat/cnslock`, read only), MIDI REMOTE CONTROL
   (`/$ctl/midi`) and DAW (`/$ctl/daw`: enable, connection, emulation, upper CC,
   wheel, preset) and the rows of features Sidecar doesn't have (MOUSE DISABLES
-  TOUCH, SEND PAGE ACTIVATES SOLO, the OSC and
-  TCP remote locks), which are only kept. `/$globals/clkrate` is the audio device's rate. Not mapped:
+  TOUCH, the OSC and TCP remote locks), which are only kept. `/$globals/clkrate` is the audio device's rate. Not mapped:
   DAW CONFIGURATION (`/$ctl/daw/config`), whose 3.1 choices (CC, MSTR) can't show
   Sidecar's MCU with extenders. The fader sections' layers (`/$ctl/layer/L`, `C`, `R`) and the custom
   controls (`/$ctl/user`) are the show's, both ways: clients select layer keys
-  (`sel`), spill (`spidx`: DCA, FX, a bus's sources, automix X / Y), scroll the
+  (`sel`), spill (`spidx`: DCA, FX, a bus's sources, a matrix's, a main's, automix X
+  / Y), scroll the
   shown layer (`ofs`), name the USER keys' user layers and assign faders (`type`,
   `i`, `dst`: channels, buses, DCAs, sends, FX parameters, MIDI CCs; a default key
   becomes an edited key as on VIEW > CONFIG), and set each custom control's
   functions (`mode`) with their targets and options (the mode's own nodes, as WING
   Edit's CC EDIT sets them: `ch`, `fx` / `par`, `other` / `CCBK`, `area` / `bank`,
   `pg`, `tgt`, `btn`, `send`, `mgrp`, `dca`, `tag`, `action`, `usbpr`, MIDI `ch` /
-  `cc` / `note`), name and colour and the CC layer (`sel`); the console's
+  `cc` / `note`, `enc`), name and colour and the CC layer (`sel`); `$fname` reads
+  each function's name as the console writes it ("|1 MUTE", "|DAW STOP"); the console's
   changes show to clients within a tenth of a second. As on the console, a
   layer's slots are fixed: OFF blanks a slot, and a fader assigned past the end
   leaves blank slots before it. Only the shown layer has a scroll position, and a new

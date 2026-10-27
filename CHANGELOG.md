@@ -14,8 +14,9 @@ All notable changes to Sidecar are listed here. Versions follow
   `25-36`, `37-48 AUX IN`, `BUS MASTER`, `MAIN MATRIX`, `DCA`, `USER 1`, `USER 2`) and
   the shift keys, and the key section. **BUS**, **DCA**, **MAIN MATRIX** and **USER**
   choose what the 16 keys do. BUS: a key puts its bus on fader 13. MAIN
-  MATRIX: keys 1-4 put MAIN 1-4 on fader 13, keys 9-16 MATRIX 1-8. DCA: a key spills
-  its DCA. USER: custom control keys (see the key sets below).
+  MATRIX: keys 1-4 put MAIN 1-4 on fader 13, keys 9-16 MATRIX 1-8. DCA: a key puts
+  its DCA on fader 13 or spills it (DCA SPILL ON SELECT). USER: custom control keys
+  (see the key sets below).
   **Fader 13** is the main fader, MAIN 1 at first; it has no scribble strip, only its
   meter, and the small LCD beside it names it and the 16 keys. There is no channel
   strip, custom controls, 4-Channel, center or right section, as on the console, and
@@ -39,13 +40,14 @@ All notable changes to Sidecar are listed here. Versions follow
   layers). Stored with the show as custom control layers 24-32.
 - WING COMPACT BUS, MAIN and MATRIX keys (WING manual 4.2, checked on a COMPACT): a
   BUS or MAIN key pressed turns on Sends on Fader to the bus or main and held spills
-  it; a MATRIX key, pressed or held, turns on Sends on Fader to the matrix. The bus,
-  main or matrix still goes on fader 13. A selected key pressed again lets go:
-  fader 13 goes back to MAIN FADER and the SOF or spill ends. SETUP > SURFACE on a
-  COMPACT has MAIN FADER, KEEP MAIN FADER, MAIN SPILL and MATRIX SPILL (which of press
-  and hold spills or sends; Sidecar has no matrix spill, so MATRIX SPILL is only kept) and USE DCA BUTTONS 1-16 AS CC, and DCA SPILL reads DCA
-  SELECT SPILL; the full-size console's F1-F3, right section SOF and user layer link
-  rows are hidden. WING REMOTE: `/$ctl/cfg/mfdrkeep`, `mainspill`, `mtxspill`, `dcacc`.
+  it; a MATRIX key spills or sends as MATRIX SPILL says (see the matrix spill below).
+  The bus, main or matrix still goes on fader 13. A selected key pressed again lets
+  go: fader 13 goes back to MAIN FADER and the SOF or spill ends. SETUP > SURFACE on a
+  COMPACT has MAIN FADER, KEEP MAIN FADER, DCA SPILL ON SELECT, BUS, MAIN and MATRIX
+  SPILL (which of press and hold spills or sends), DCA SELECT SPILL and USE DCA
+  BUTTONS 1-16 AS CC; the full-size console's F1-F3, right section SOF, user layer
+  link and DCA SPILL rows are hidden. WING REMOTE: `/$ctl/cfg/mfdrkeep`, `busspill`,
+  `mainspill`, `mtxspill`, `dcaspill`, `dcacc`.
 - Main spill: the channels, aux and buses feeding a main come onto the faders, as
   their own faders. On the COMPACT's MAIN keys (held), as FADER SPILL > MAIN on any
   custom control key, and as `/$ctl/layer/<L|C|R>/spidx` 57-60 (MAIN 1-4) on both
@@ -211,6 +213,54 @@ All notable changes to Sidecar are listed here. Versions follow
   `/$ctl/safes/source/*` and `output/*` of those groups set them (they were only
   stored). C ABI version 21: `ld_engine_io_safe`, `ld_engine_set_io_safe`.
 
+- Matrix spill (WING manual 5.5, BUS/MAIN/MATRIX SPILL): the channels, aux, buses and
+  mains sending to a matrix come onto the faders as their send levels to it (MUTE
+  switches the send), as a bus's spill shows its sources. On the COMPACT's MATRIX keys,
+  as FADER SPILL > MTX 1-8 on any custom control key, and as `/$ctl/layer/<L|C|R>/spidx`
+  49-56 on both models. BUS SoF/SPILL ACTIVATES SOLO solos a bus, main or matrix
+  spilled, as it did for Sends on Fader. C ABI version 22: spill kind 6.
+- WING COMPACT SETUP > SURFACE (manual 5.5, FADERS, in its order): **DCA SPILL ON
+  SELECT** (`/$ctl/cfg/dcaspill`, "1: push->dca spill, 0: push->dca show"): on, a DCA
+  key's press spills the DCA; off (the factory setting), it puts the DCA on fader 13
+  and selects it for the DCA assignment with fader 13's SELECT. **BUS SPILL**
+  (`/$ctl/cfg/busspill`, new), **MAIN SPILL** and **MATRIX SPILL**: on, a key's press
+  spills its bus, main or matrix and a hold turns on Sends on Fader; off, the other way
+  round. MATRIX SPILL now works (Sidecar had no matrix spill): on, as a factory-set
+  WING has it, a MATRIX key pressed spills the matrix. **DCA SELECT SPILL**: a DCA
+  strip's SELECT spills it (Sidecar's own setting; the WING tree has no node for it).
+- WING COMPACT in DAW mode (DAW LAYER on a custom control key): the four mode keys
+  BUS, DCA, MAIN MATRIX and USER pick the DAW layers DAW 1-4 and the LCD reads DAW n;
+  keys 1-4 play the layer's upper keys and keys 5-8 its lower keys (as long as held:
+  DAW BUTTONS push), named on the LCD. VIEW held opens the DAW layer on CC EDIT.
+- Custom controls: **FADER START** (WING `FSTART`): a key on a channel, aux, bus, main
+  or matrix that lights while its fader is up (the fader start contact); **DAW
+  V-POTS** on a key (`DAWENC`): M1-M8 / EXT1-16 pushed while the key is held, turned a
+  step clockwise per press, or the jog wheel; the encoders' **OTHER**: LAMP, GLOW and
+  PATCH BRIGHTNESS (SETUP > GENERAL's tiles, now also `/$ctl/cfg/lights/lamp`, `glow`,
+  `patch`); MONITORING's **TALKBACK** level; USB PLAY/REC's **TOGGLE PLAY/STOP** and
+  **TOGGLE PLAY/PAUSE**; GLOBAL PAGE's **SOURCE SETUP**, **OUTPUT ROUTING** (ROUTING's
+  SOURCES and OUTPUTS; CHANNEL INPUTS opens CHANNELS) and **USB PLAY/REC**; FADER
+  SPILL's **AREA** (LEFT, CENTER or RIGHT: the section it spills to; it always spilled
+  to the left). WING REMOTE: modes FSTART, DAWENC and the encoders' OTHER, `pg` SRC,
+  OUTS, 2TRK, `area` and `tgt` MTX1-8 of FADER SPILL, both ways (the toggles are newer
+  than the 3.1 tree: they read as PLAY).
+- Custom controls: a control's light (WING manual 4.8: "ensure COLOR → LIGHT is
+  enabled"): CC EDIT's COLOR > NONE turns it off and keeps the colour, a colour turns
+  it on. WING REMOTE: `/$ctl/user/.../led` (it was only stored); `col` keeps the light
+  as it is.
+- WING REMOTE: `$fname` of every custom control key and encoder reads the function's
+  name as the console writes it (WING Edit 3.3.4's offline console; the factory DAW
+  layers match the dump of a real WING): "|1 MUTE", "|B1 |SOF", "|DCA1 > L", "|FX3
+  MIX", "|DAW STOP", "|DAW *TIME", "|1 |HOME", "|FDR L/1", "TALK A", "|SCN GO", "CC
+  1:7", "|1 FDR", "SEND |B1". It read the function's long name ("CH MUTE").
+- SETUP > AUDIO > **SEND PAGE ACTIVATES SOLO** works (`/$ctl/cfg/sfdr2solo`, "only
+  applicable from the SENDS page"): choosing a destination on VIEW > SENDS solos it.
+  It was only kept.
+- ALTERNATIVE SOF MODE as in the manual (4.9 p. 28): SOF FLIP held starts the standard
+  SOF on the selected channel, a press ends either SOF mode (SELECT held still starts
+  the alternative one). Before, a press switched SOF in both modes.
+- VIEW > FADERS: AUTO RIDER in the COMP slot shows its square, lit while it rides
+  (manual 5.8 p. 63).
 ### Changed
 
 - F1-F3 of the 4-Channel section with USE F1-F3 AS CUSTOM CONTROLS mirror the custom
@@ -242,6 +292,16 @@ All notable changes to Sidecar are listed here. Versions follow
   `ld_engine_route_output_source`, `ld_engine_clear_output`, `ld_strip_source_input`;
   `kNumSources` grows by the 56 USR sources.
 
+- The custom controls' LCD text for a control without a name is the console's function
+  name (as WING Edit shows it): "1 MUTE", "B1 SOF", "1 FDR", "SEND B1", "1 -> B1", "FX3
+  TIME", "DCA", "MGRP MGRP.2", "FDR L/1", "VIEW C/3", "SCN GO", "SCENE 4", "TALK A",
+  "MON DIM", "PL PLAY", "CC 1:7" (they read "CH1 FADER", "SOF BUS1", "TALKBACK A" ...).
+  CC EDIT's lists follow WING Edit's names and order: CH PAGE (DYNAMICS before EQ),
+  GLOBAL PAGE (EFFECTS, METERS, CHANNEL INPUTS, SOURCE SETUP ... FADER LAYER, Sidecar's
+  HOME last), SHOW CONTROL (PREV SCENE ...), USB PLAY/REC (STOP (PLAYER), PLAY (PLAYER)
+  ...), MONITORING (PHONES, SPEAKERS, TALKBACK, then Sidecar's DIM AMOUNT) and FADER
+  SPILL (AREA, then one TARGET list: DCA, FX, BUS, MAIN, MTX, AUTOMIX, the selected
+  channel).
 ### Fixed
 
 - WING REMOTE: a processing or FX model changed right after a client connected (before
@@ -269,6 +329,9 @@ All notable changes to Sidecar are listed here. Versions follow
   DYNAMICS) sends all the new model's parameters to WING remote clients, also those
   equal to the old model's at the same position, which WING Edit otherwise left at its
   own defaults.
+- A bus's spill and a strip's sends (SPILL on BUS SENDS, FADER SPILL > SEL CH) list
+  every bus sending to every other bus, as the engine has had since any bus feeds any
+  bus; they still listed only buses 9-16 into buses 1-8.
 
 ## [0.1.5] - beta
 

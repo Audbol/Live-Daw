@@ -5,11 +5,42 @@ namespace livedaw::ui
 
 void toggleSpill (UiContext& ctx, std::optional<LayerSet::Section> origin, const LayerSet::Spill& spill)
 {
+    toggleSpillAt (ctx, LayerSet::spillTarget (origin), spill);
+}
+
+void toggleSpillAt (UiContext& ctx, LayerSet::Section target, const LayerSet::Spill& spill)
+{
     auto& layers = ctx.show.layers;
+    // The COMPACT has one fader section.
+    if (ctx.consoleModel == ConsoleModel::Compact)
+        target = LayerSet::Left;
     if (const auto section = layers.findSpill (spill))
         layers.endSpill (*section); // the section's layer and position come back
     else
-        layers.startSpill (LayerSet::spillTarget (origin), spill);
+    {
+        layers.startSpill (target, spill);
+        // BUS SoF/SPILL ACTIVATES SOLO (manual 5.5 p. 46): a bus, main or
+        // matrix spilled is soloed, as Sends on Fader solos its destination.
+        if (ctx.settings.getBoolValue (uiprefs::sofActivatesSolo, false))
+        {
+            using K = LayerSet::Spill::Kind;
+            Strip* soloed = nullptr;
+            if (spill.kind == K::Bus)
+            {
+                for (auto& b : ctx.engine.getBuses())
+                    if (b->getId() == spill.index)
+                        soloed = b.get();
+            }
+            else if (spill.kind == K::Main || spill.kind == K::Matrix)
+            {
+                const auto& list = ctx.engine.getStrips (spill.kind == K::Main ? StripKind::Main : StripKind::Matrix);
+                if (juce::isPositiveAndBelow (spill.index, (int) list.size()))
+                    soloed = list[(size_t) spill.index].get();
+            }
+            if (soloed != nullptr)
+                soloed->params.solo = true;
+        }
+    }
     notifyLayersChangedAsync (ctx);
 }
 
@@ -78,12 +109,31 @@ FaderSection::FaderSection (UiContext& c, LayerSet::Section s) : ctx (c), sectio
                 return SurfaceKey::Blink;
             return SurfaceKey::Lit;
         };
-        sofKey.onPress = [this]
+        // With ALTERNATIVE SOF MODE a press only ends either SOF mode and the
+        // standard SOF starts with a hold (manual 4.9 p. 28: "Activate the
+        // standard SOF mode by selecting the desired channel and holding the
+        // SOF FLIP button ... Exit both SOF modes by pressing the SOF FLIP
+        // button"); without it a press (or hold) switches SOF on and off.
+        auto setSof = [this] (bool on)
         {
-            ctx.sendsOnFader = ! ctx.sendsOnFader;
+            ctx.sendsOnFader = on;
             ctx.sofDestination.reset();
             if (ctx.sofChanged)
                 ctx.sofChanged();
+        };
+        sofKey.onPress = [this, setSof]
+        {
+            if (! ctx.settings.getBoolValue (uiprefs::alternativeSof, false))
+                setSof (! ctx.sendsOnFader);
+            else if (ctx.sendsOnFader)
+                setSof (false);
+        };
+        sofKey.onHold = [this, setSof]
+        {
+            if (! ctx.settings.getBoolValue (uiprefs::alternativeSof, false))
+                setSof (! ctx.sendsOnFader);
+            else
+                setSof (true);
         };
         addAndMakeVisible (sofKey);
     }

@@ -49,7 +49,7 @@ use std::sync::Arc;
 // ABI 21: FxParams::send_left / send_right (the EXT device's outboard insert:
 // FX SEND outputs), ld_engine_set_io_latency, source and output recall safes
 // (ld_engine_io_safe, ld_engine_set_io_safe).
-pub const LD_ABI_VERSION: i32 = 21;
+pub const LD_ABI_VERSION: i32 = 22;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)

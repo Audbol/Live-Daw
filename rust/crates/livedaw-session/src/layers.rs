@@ -43,7 +43,7 @@ use crate::model::ConsoleModel;
 use crate::refs::StripRef;
 use crate::xml::{parse_int_prefix, Element};
 use livedaw_dsp::wing::{ParamKind, FX_MODELS};
-use livedaw_engine::params::{FX_EXT, NUM_DCAS, NUM_MAINS};
+use livedaw_engine::params::{FX_EXT, NUM_DCAS, NUM_MAINS, NUM_MATRICES};
 use livedaw_engine::{Engine, StripKind};
 use std::collections::hash_map::RandomState;
 use std::fmt;
@@ -297,6 +297,10 @@ pub enum SpillKind {
     /// The channels, aux and buses feeding a main (0-based), as their own
     /// faders (`spidx` 57-60 MAIN 1-4; the COMPACT's MAIN keys held).
     Main(i32),
+    /// The send levels of the channels, aux, buses and mains sending to a
+    /// matrix (0-based), as faders (`spidx` 49-56 MTX 1-8; the COMPACT's
+    /// MATRIX keys as MATRIX SPILL says).
+    Matrix(i32),
 }
 
 /// The layer id of a spill.
@@ -324,8 +328,8 @@ pub fn spill_target(origin: Option<usize>) -> usize {
 fn bus_can_send(from: &StripRef, to_slot: i32) -> bool {
     match from.kind {
         StripKind::Channel | StripKind::Aux => true,
-        // Buses 9 and up feed buses 1-8.
-        StripKind::Bus => from.id >= 8 && (0..8).contains(&to_slot),
+        // Any bus feeds any other bus (WING manual 5.10, BUS -> BUS).
+        StripKind::Bus => from.id != to_slot,
         _ => false,
     }
 }
@@ -389,6 +393,16 @@ pub fn spill_faders(engine: &Engine, kind: &SpillKind) -> Vec<FaderRef> {
                 .map(|s| FaderRef::Strip(StripRef::of(&s)))
                 .collect()
         }
+        SpillKind::Matrix(i) => {
+            let Some(index) = usize::try_from(i).ok().filter(|&i| i < NUM_MATRICES) else { return Vec::new() };
+            let Some(to) = engine.strips(StripKind::Matrix).get(index).map(|m| StripRef::of(m)) else { return Vec::new() };
+            [StripKind::Channel, StripKind::Aux, StripKind::Bus, StripKind::Main]
+                .into_iter()
+                .flat_map(|k| engine.strips(k))
+                .filter(|s| s.params.matrix[index].on.load(Ordering::Relaxed))
+                .map(|s| FaderRef::Send { from: StripRef::of(&s), to })
+                .collect()
+        }
         SpillKind::Fx(slot) => {
             let Some(p) = usize::try_from(slot).ok().and_then(|i| engine.controls.fx.get(i)) else { return Vec::new() };
             let model = p.model_index();
@@ -417,6 +431,7 @@ fn spill_name(kind: &SpillKind) -> String {
         SpillKind::Dca(i) => format!("DCA {} SPILL", i + 1),
         SpillKind::Bus(i) => format!("BUS {} SPILL", i + 1),
         SpillKind::Main(i) => format!("MAIN {} SPILL", i + 1),
+        SpillKind::Matrix(i) => format!("MTX {} SPILL", i + 1),
         SpillKind::Fx(i) => format!("FX {} SPILL", i + 1),
         SpillKind::Automix(g) => format!("AUTO-{} SPILL", if *g == 0 { 'X' } else { 'Y' }),
         SpillKind::Sends(r) => format!("{} SENDS", r.to_string().to_uppercase().replace(':', " ")),
@@ -1524,6 +1539,37 @@ mod tests {
         assert_eq!((set.spill(CENTER), set.selected(CENTER)), (None, "out-1"));
         set.select(CENTER, SPILL_ID);
         assert_eq!(set.selected(CENTER), "out-1");
+    }
+
+    #[test]
+    fn matrix_and_bus_spills_show_the_sends_switched_on() {
+        let e = Engine::new(0);
+        e.set_num_channels(8);
+        let chans = e.strips(StripKind::Channel);
+        let buses = e.strips(StripKind::Bus);
+        let mains = e.strips(StripKind::Main);
+        let mtx = e.strips(StripKind::Matrix);
+        assert!(buses.len() >= 4 && !mains.is_empty() && mtx.len() >= 3);
+        // MTX 3: channel 2, bus 4 and main 1 send to it (CH 5 only has a send off).
+        for s in [&chans[1], &buses[3], &mains[0]] {
+            s.params.matrix[2].on.store(true, Ordering::Relaxed);
+        }
+        let to = StripRef::of(&mtx[2]);
+        let send = |s: &livedaw_engine::Strip| FaderRef::Send { from: StripRef::of(s), to };
+        assert_eq!(spill_faders(&e, &SpillKind::Matrix(2)), vec![send(&chans[1]), send(&buses[3]), send(&mains[0])]);
+        assert!(spill_faders(&e, &SpillKind::Matrix(8)).is_empty());
+        assert_eq!(spill_name(&SpillKind::Matrix(2)), "MTX 3 SPILL");
+
+        // Any bus feeds any other bus: bus 2 sending to bus 1 joins bus 1's spill.
+        let b1 = buses[0].id();
+        buses[1].sends.get_or_create(b1 as usize).unwrap().enabled.store(true, Ordering::Relaxed);
+        let bus1 = spill_faders(&e, &SpillKind::Bus(b1));
+        assert_eq!(bus1, vec![FaderRef::Send { from: StripRef::of(&buses[1]), to: StripRef::of(&buses[0]) }]);
+        // ... and bus 2's sends list every other bus, not itself.
+        let sends = spill_faders(&e, &SpillKind::Sends(StripRef::of(&buses[1])));
+        let to_buses: Vec<_> =
+            sends.iter().filter(|f| matches!(f, FaderRef::Send { to, .. } if to.kind == StripKind::Bus)).collect();
+        assert_eq!(to_buses.len(), buses.len() - 1);
     }
 
     #[test]

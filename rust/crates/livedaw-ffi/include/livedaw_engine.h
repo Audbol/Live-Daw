@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 21;
+constexpr int kAbiVersion = 22;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -741,7 +741,8 @@ struct FaderRefC
 
 /// A spill: kind 0 = DCA `index`, 1 = the sources sending to bus slot `index`,
 /// 2 = FX slot `index`'s parameters, 3 = automix group `index` (0 X, 1 Y),
-/// 4 = the sends of `strip`, 5 = the strips feeding main `index` (ABI 17).
+/// 4 = the sends of `strip`, 5 = the strips feeding main `index` (ABI 17),
+/// 6 = the strips sending to matrix `index` (ABI 22).
 struct SpillC
 {
     int32_t kind, index;

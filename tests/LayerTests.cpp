@@ -503,6 +503,17 @@ public:
             layers.setSelectedLayerId (S::Left, "in-2"); // a layer key ends the spill
             expect (! layers.getSpill (S::Left).has_value());
 
+            // A matrix's spill (ABI 22, spill kind 6): the sends of the strips sending to it.
+            engine.getChannels()[2]->params.matrix[1].on = true;
+            const LayerSet::Spill mtx2 { LayerSet::Spill::Kind::Matrix, 1, {} };
+            layers.startSpill (S::Left, mtx2);
+            expect (layers.getSpill (S::Left).has_value() && *layers.getSpill (S::Left) == mtx2);
+            const auto mtxSpill = layers.getSelectedLayer (engine, S::Left);
+            expectEquals ((int) mtxSpill.faders.size(), 1);
+            expect (mtxSpill.faders[0].send && mtxSpill.faders[0].strip == state::StripRef::of (*engine.getChannels()[2])
+                    && mtxSpill.faders[0].to.kind == StripKind::Matrix && mtxSpill.faders[0].to.id == 1);
+            expect (layers.endSpill (S::Left));
+
             // Send, FX parameter and MIDI CC faders in a user layer survive the C ABI and a show round trip.
             const auto send = state::FaderRef::ofSend (ch1, { StripKind::Matrix, 2 });
             const auto fxp = state::FaderRef::ofFxParam (4, 7);
