@@ -11,9 +11,16 @@
 //! widen mono sources too. DEEP makes STEREOIZE more pronounced: twice the
 //! amount, reaching down to 100 Hz instead of 250 Hz. GAIN is the output
 //! level.
+//!
+//! Readouts (the screen's meters and scope; the slot meters the input and
+//! output L/R): 0 the output's mid and 1 its side level (linear peaks), 2 the
+//! output's correlation (-1..1 over about 300 ms; 0 in silence), then
+//! [`SCOPE_POINTS`] points of the LF VECTOR SCOPE (side, mid pairs from 3 on:
+//! the output below 500 Hz, one point every 1.5 ms, oldest first).
 
-use crate::wing::fx::blocks::{db_to_gain, DelayLine, Noise, OnePole, Smoothed};
-use crate::wing::fx::FxAlgo;
+use crate::wing::fx::blocks::{coef, db_to_gain, DelayLine, Noise, OnePole, Smoothed};
+use crate::wing::fx::meters::PeakMeter;
+use crate::wing::fx::{FxAlgo, FX_READOUTS};
 use crate::wing::Params;
 
 /// Velvet filter: length and pulse density.
@@ -23,6 +30,10 @@ const VELVET_DENSITY: f32 = 1200.0;
 const REFLECTIONS: [(f32, f32); 4] = [(7.3, 0.55), (11.9, -0.45), (17.1, 0.35), (23.7, -0.28)];
 /// ... and of the side signal (the ambience already there).
 const AMBIENCE_TAPS: [(f32, f32); 2] = [(11.0, 0.5), (17.0, -0.35)];
+
+/// Points of the LF vector scope in the readouts.
+pub(crate) const SCOPE_POINTS: usize = 20;
+const SCOPE_MS: f32 = 1.5;
 
 pub(crate) struct VelvetImager {
     mid_line: DelayLine,
@@ -41,6 +52,17 @@ pub(crate) struct VelvetImager {
     velvet: Smoothed,
     deep: Smoothed,
     gain: Smoothed,
+    // The screen: mid / side levels, correlation and the scope.
+    mid_meter: PeakMeter,
+    side_meter: PeakMeter,
+    /// Running means of L*R, L^2 and R^2.
+    corr: [f32; 3],
+    corr_coef: f32,
+    scope_lp: [OnePole; 2],
+    scope: [(f32, f32); SCOPE_POINTS],
+    scope_pos: usize,
+    scope_every: usize,
+    scope_count: usize,
     primed: bool,
 }
 
@@ -79,7 +101,35 @@ impl VelvetImager {
             velvet: sm(1.0),
             deep: sm(0.0),
             gain: sm(1.0),
+            mid_meter: PeakMeter::new(sr),
+            side_meter: PeakMeter::new(sr),
+            corr: [0.0; 3],
+            corr_coef: coef(300.0 / 4.6, sr),
+            scope_lp: [OnePole::new(500.0, sr), OnePole::new(500.0, sr)],
+            scope: [(0.0, 0.0); SCOPE_POINTS],
+            scope_pos: 0,
+            scope_every: ((SCOPE_MS * 0.001 * sr) as usize).max(1),
+            scope_count: 0,
             primed: false,
+        }
+    }
+
+    /// The meters, correlation and scope for one output sample.
+    #[inline]
+    fn measure(&mut self, l: f32, r: f32) {
+        let (mid, side) = (0.5 * (l + r), 0.5 * (l - r));
+        self.mid_meter.tick(mid);
+        self.side_meter.tick(side);
+        let k = self.corr_coef;
+        for (c, x) in self.corr.iter_mut().zip([l * r, l * l, r * r]) {
+            *c += (x - *c) * k;
+        }
+        let (sm, ss) = (self.scope_lp[0].lp(mid), self.scope_lp[1].lp(side));
+        self.scope_count += 1;
+        if self.scope_count >= self.scope_every {
+            self.scope_count = 0;
+            self.scope[self.scope_pos] = (ss, sm);
+            self.scope_pos = (self.scope_pos + 1) % SCOPE_POINTS;
         }
     }
 
@@ -135,6 +185,20 @@ impl FxAlgo for VelvetImager {
 
             *l = (mid + s) * gain;
             *r = (mid - s) * gain;
+            self.measure(*l, *r);
+        }
+    }
+
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[0] = self.mid_meter.level();
+        out[1] = self.side_meter.level();
+        let [lr, ll, rr] = self.corr;
+        let norm = (ll * rr).sqrt();
+        out[2] = if norm > 1e-10 { (lr / norm).clamp(-1.0, 1.0) } else { 0.0 };
+        for k in 0..SCOPE_POINTS {
+            let (x, y) = self.scope[(self.scope_pos + k) % SCOPE_POINTS];
+            out[3 + 2 * k] = x;
+            out[4 + 2 * k] = y;
         }
     }
 
@@ -144,6 +208,11 @@ impl FxAlgo for VelvetImager {
         self.synth_hp.reset();
         self.deep_hp.reset();
         self.synth_lp.reset();
+        self.mid_meter.reset();
+        self.side_meter.reset();
+        self.corr = [0.0; 3];
+        self.scope_lp.iter_mut().for_each(OnePole::reset);
+        self.scope = [(0.0, 0.0); SCOPE_POINTS];
         for s in self.smoothers() {
             s.snap(s.target);
         }
@@ -168,6 +237,58 @@ mod tests {
                 assert!(((l[i] + r[i]) - (l0[i] + r0[i])).abs() < 1e-5, "mode {mode}: sample {i}");
             }
         }
+    }
+
+    fn readouts(rig: &Rig) -> [f32; crate::wing::fx::FX_READOUTS] {
+        let mut r = [0.0; crate::wing::fx::FX_READOUTS];
+        rig.dev.readouts(&mut r);
+        r
+    }
+
+    #[test]
+    fn width_gain_and_the_meters() {
+        use std::f32::consts::TAU;
+        let n = 24_000;
+        let l0: Vec<f32> = (0..n).map(|i| (TAU * 200.0 * i as f32 / 48_000.0).sin() * 0.5).collect();
+        let r0: Vec<f32> = (0..n).map(|i| (TAU * 200.0 * i as f32 / 48_000.0 + 1.0).sin() * 0.3).collect();
+        let run = |set: &[(&str, f32)]| {
+            let mut rig = Rig::new("V-IMG");
+            rig.set("st", 0.0);
+            for (id, v) in set {
+                rig.set(id, *v);
+            }
+            let (mut l, mut r) = (l0.clone(), r0.clone());
+            rig.run(&mut l, &mut r);
+            (l, r, readouts(&rig))
+        };
+        // MS-WIDTH -1: mono (side gone, correlation +1); +1: double side.
+        let (l, r, ro) = run(&[("wid", -1.0)]);
+        assert!(l.iter().zip(&r).skip(4800).all(|(a, b)| (a - b).abs() < 1e-3));
+        assert!(ro[1] < 1e-3 && ro[0] > 0.2 && ro[2] > 0.99, "{:?}", &ro[..3]);
+        let (_, _, wide) = run(&[("wid", 1.0)]);
+        let (_, _, same) = run(&[("wid", 0.0)]);
+        assert!((wide[1] / same[1] - 2.0).abs() < 0.1 && (wide[0] - same[0]).abs() < 1e-3);
+        assert!(wide[2] < same[2], "wider is less correlated");
+        // Opposite polarity reads -1.
+        let mut rig = Rig::new("V-IMG");
+        rig.set("st", 0.0);
+        let (mut l, mut r): (Vec<f32>, Vec<f32>) = (l0.clone(), l0.iter().map(|x| -x).collect());
+        rig.run(&mut l, &mut r);
+        assert!(readouts(&rig)[2] < -0.99);
+        // GAIN.
+        let (l, _, _) = run(&[("g", 6.0)]);
+        let (l1, _, _) = run(&[]);
+        let peak = |v: &[f32]| v[4800..].iter().fold(0.0f32, |a, x| a.max(x.abs()));
+        assert!((20.0 * (peak(&l) / peak(&l1)).log10() - 6.0).abs() < 0.2);
+        // The scope: a mono signal draws a vertical line (side 0), mid moving.
+        let mut rig = Rig::new("V-IMG");
+        rig.set("st", 0.0);
+        let (mut l, mut r) = (l0.clone(), l0.clone());
+        rig.run(&mut l, &mut r);
+        let ro = readouts(&rig);
+        let pts: Vec<(f32, f32)> = (0..super::SCOPE_POINTS).map(|k| (ro[3 + 2 * k], ro[4 + 2 * k])).collect();
+        assert!(pts.iter().all(|p| p.0.abs() < 1e-4));
+        assert!(pts.iter().map(|p| p.1.abs()).fold(0.0, f32::max) > 0.1);
     }
 
     #[test]

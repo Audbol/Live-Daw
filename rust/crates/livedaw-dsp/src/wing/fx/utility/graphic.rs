@@ -447,6 +447,32 @@ mod tests {
     }
 
     #[test]
+    fn trim_and_gain_set_the_level_and_bands_jump_without_clicks() {
+        let mut rig = Rig::new("GEQ");
+        rig.set("TRIM", -6.0);
+        assert!((rig.sine_gain_db(1000.0, 0.05) + 6.0).abs() < 0.2);
+        let mut rig = Rig::new("PIA");
+        rig.set("g", 6.0);
+        assert!((rig.sine_gain_db(300.0, 0.05) - 6.0).abs() < 0.3);
+        // A fader thrown from -15 to +15 mid-signal glides: no sample-to-sample jump.
+        for kind in [0.0, 1.0] {
+            let mut rig = Rig::new("GEQ");
+            rig.set("type", kind);
+            let n = 24_000;
+            let x: Vec<f32> = (0..n).map(|i| (std::f32::consts::TAU * 1000.0 * i as f32 / 48_000.0).sin() * 0.1).collect();
+            let (mut l, mut r) = (x.clone(), x.clone());
+            let k = rig.dev.spec().param_index("1k").unwrap();
+            for (j, (a, b)) in l.chunks_mut(256).zip(r.chunks_mut(256)).enumerate() {
+                rig.values[k] = if j < 40 { -15.0 } else { 15.0 };
+                rig.dev.process(&rig.values, a, b);
+            }
+            let step = l.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+            // A 1 kHz sine at +15 dB moves at most 0.56 * 2 pi / 48 per sample.
+            assert!(step < 0.09, "type {kind}: {step}");
+        }
+    }
+
+    #[test]
     fn pia_mix_scales_the_bands() {
         let mut rig = Rig::new("PIA");
         rig.set("1k", 12.0);

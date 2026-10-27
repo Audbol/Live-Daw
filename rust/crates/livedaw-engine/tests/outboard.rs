@@ -203,3 +203,27 @@ fn return_groups_map_like_the_remote_patch() {
     assert_eq!(ext_return_input("PLAY", 2), Some(livedaw_engine::USB_PLAYER_SOURCE_BASE + 1));
     assert_eq!(ext_return_input("PLAY", 9), None);
 }
+
+#[test]
+fn the_send_and_return_meters_show_the_trimmed_send_and_the_return() {
+    let mut rig = Rig::new(1, 0);
+    rig.gear = 0.25;
+    rig.outboard(ext::MODE_STEREO);
+    let e = &rig.engine;
+    e.controls.fx[0].values[ext::TRIM].store(-6.0);
+    let fx = e.fx(0).unwrap();
+    // The impulse leaves at -6 dB and comes back through the gear (x 0.25) a block later.
+    rig.impulse(1);
+    let send = fx.level(0);
+    assert!((send - 0.501_187).abs() < 1e-3 && (fx.level(1) - send).abs() < 1e-6, "send {send}");
+    assert!(fx.level(2) < 1e-6, "nothing back yet: {}", fx.level(2));
+    rig.impulse(2);
+    // The return is in (0.25 x 0.5 = 0.125, fallen a little since); the send has fallen too.
+    let ret = fx.level(2);
+    assert!(ret > 0.12 && ret <= 0.126, "return {ret}");
+    assert!(fx.level(0) < 0.502 && fx.level(0) > 0.45, "send fell to {}", fx.level(0));
+    // Bypassed, the slot meters its signal passing through (silence here).
+    e.controls.fx[0].bypass.store(true, Relaxed);
+    rig.impulse(1);
+    assert!((fx.level(0) - fx.level(2)).abs() < 1e-6);
+}

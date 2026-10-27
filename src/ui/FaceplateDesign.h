@@ -24,8 +24,8 @@ enum class Type
     Toggle,  // bat-lever switch; x, y = centre, w = nut diameter
     Key,     // push key (look decides the style); x, y, w, h = rectangle
     Fader,   // vertical fader; x, y, w, h = slot area (cap travels inside); sideways(): horizontal
-    Vu,      // needle meter showing the gain reduction; x, y, w, h = face
-    Leds,    // a row or column of LEDs showing the gain reduction
+    Vu,      // needle meter showing the gain reduction (or, with `meter`, a live readout); x, y, w, h = face
+    Leds,    // a row or column of LEDs showing the gain reduction (or, with `meter`, a live readout)
     Lamp,    // round indicator; x, y = centre, w = diameter
     Text,    // static print; x, y, w, h = box
     Path,    // decorative SVG path (text = path data)
@@ -34,7 +34,8 @@ enum class Type
     Display, // alphanumeric display showing parameter values
     Value,   // a parameter's value printed (7-segment / LCD); x, y, w, h = box. Unbound (param -1)
              // with `params`: a readout of the control last touched (params[0] until one is)
-    Graph    // a graph screen (`graph` says which, `params` what it shows); x, y, w, h
+    Graph,   // a graph screen (`graph` says which, `params` what it shows); x, y, w, h
+    Bar      // a level bar (readout `meter`, a level) rising over x, y, w, h from dbMin to dbMax (colour)
 };
 
 /** What a Graph element draws. `params` are indices into the model's parameters. */
@@ -52,8 +53,24 @@ enum class GraphKind
     DeEss,    // a de-esser's band: frequency, range dB, [mode: full band when it reads FULL]; the live cut from the gain reduction
     Filter,   // a resonant filter: base frequency, type (LP/HP/BP/NOTCH), slope (12/24), resonance 0..10
     Levels,   // a bar per param (band levels), centred when the range is bipolar
-    Bands     // a multiband compressor's five bands: threshold offsets 1-5, then the band selected (filled)
+    Bands,    // a multiband compressor's five bands (C5-COMBINATOR): params band gains 1-5, then the band
+              // selected (filled); `meter` its first readout (5 reductions, 5 SBC makeups, the
+              // third-octave spectrum and the bands' levels follow): band tops at gain + reduction +
+              // makeup, the input's spectrum behind
+    Correlation, // a correlation meter: a row of segments from -1 to +1, the one at the readout `meter` lit
+    Scope     // a vector scope: `meter` the first of rd::kScopePoints (side, mid) pairs
 };
+
+/** The live readouts a meter element shows (`Element::meter`): the FX slot's own
+    levels, then its device's readouts (ld_fx_readouts; each device documents its
+    layout in its Rust module). */
+namespace rd
+{
+    constexpr int InL = 0, InR = 1, OutL = 2, OutR = 3; // the slot's levels (linear)
+    constexpr int Dev = 4;                              // the device's first readout
+    constexpr int kCount = 4 + 48;                      // ld::kFxLevels + ld::kFxReadouts
+    constexpr int kScopePoints = 20;                    // VELVET IMAGER's scope points
+} // namespace rd
 
 enum class Look
 {
@@ -157,6 +174,10 @@ struct Element
     int unitAt = 0;
 
     // Meters
+    int meter = -1;          // the live readout shown (rd::), -1: the gain reduction (PaintContext::reduction)
+    bool level = false;      // the readout is a level (linear): shown in dB (Vu, Leds, Lamp: lit at `range` dB and up)
+                             // else a reduction in dB (<= 0; Lamp: lit at `range` dB of reduction and more)
+    float factor = 1.0f;     // Value: shows the parameter's value times this (a band's frequency from TUNE)
     juce::StringArray scale; // Vu labels / LED captions
     std::vector<float> marks; // Vu label positions (gain reduction dB) / LED thresholds
     float range = 20.0f;     // Vu: dB at the end of the scale
@@ -200,6 +221,8 @@ struct Element
     Element& centred (float degrees) { centre = degrees; return *this; }
     Element& banded (juce::uint32 c) { band = juce::Colour (c); return *this; }
     Element& sideways() { vertical = false; return *this; }
+    /** Shows live readout `i` (rd::), a level (linear) or a reduction (dB). */
+    Element& reads (int i, bool isLevel = false) { meter = i; level = isLevel; return *this; }
     Element& unitSide (int side, float sz) { unitAt = side; labelSize = sz; return *this; }
     /** A ladder LED: lit while lo <= value < hi; a click sets `set`. */
     Element& lights (float lo, float hi, float set) { marks = { lo, hi, set }; return *this; }
@@ -345,6 +368,8 @@ struct PaintContext
     const models::Model* spec = nullptr;
     std::function<float (int)> value;  // a parameter's value
     float reduction = 0.0f;            // gain reduction, dB (>= 0)
+    std::function<float (int)> readout; // a live readout as the device reports it (rd::; empty: none)
+    std::function<float (int)> levelDb; // a level readout in dB with the meters' ballistics (empty: none)
     std::function<float (int)> bandGain; // a dynamic EQ band's live gain, dB, signed (empty: unknown)
     int touched = -1;                  // the parameter last touched (value bubble)
     int page = 0;                      // the panel page shown (tabbed panels)
@@ -352,8 +377,20 @@ struct PaintContext
     bool thumbnail = false;            // small: skip fine detail
 };
 
-/** Paints the design in frame coordinates (the caller sets the transform). */
+/** Paints the design in frame coordinates (the caller sets the transform). Elements
+    outside the graphics' clip are skipped, so repainting a meter is cheap. */
 void paintDesign (juce::Graphics&, const Design&, const PaintContext&);
+
+/** Whether an element shows something live (a meter, LEDs, a graph of activity):
+    what has to be repainted when the readouts move. */
+bool isLive (const Element&);
+
+/** The frame area an element paints (for repainting a live one). */
+juce::Rectangle<float> paintArea (const Element&);
+
+/** The value a meter element shows: the readout's level in dB (`level`), or its
+    reduction as a positive number of dB (the gain reduction without `meter`). */
+float meterValue (const Element&, const PaintContext&);
 
 /** A console value text as a 7-segment display shows it: the number ("5k02 Hz"
     reads "5.02") and its unit ("kHz"; ms and s in capitals). */

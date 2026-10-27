@@ -308,6 +308,84 @@ public:
             values[(size_t) band] = 2.0f;
             expectEquals (face.pageFromParameter(), 1);
         }
+
+        beginTest ("The dynamics, EQ and utility devices' meters show the live readouts, and repainting only them paints what a full repaint does");
+        {
+            namespace fp = ui::fp;
+            for (const char* token : { "C5-CMB", "LIMITER", "DE-S2", "ENHANCE", "P-BASS", "TAPE", "SUB-M", "V-IMG", "SPKMAN", "*EVEN*", "*SOUL*",
+                                       "*VINTAGE*", "*BUS*", "*MASTER*" })
+            {
+                const auto& spec = models::model (models::Fx, models::findModel (models::Fx, token));
+                const auto* design = fp::findDesign (models::Fx, token);
+                expect (design != nullptr, token);
+                if (design == nullptr)
+                    continue;
+                std::vector<float> values (spec.params.size());
+                for (size_t i = 0; i < spec.params.size(); ++i)
+                    values[i] = spec.params[i].defaultValue;
+                if (const int on = spec.find ("dyneq"); on >= 0)
+                    values[(size_t) on] = 1.0f; // SPEAKER MANAGER: the live curve shows with DYN EQ on
+                if (const int g = spec.find ("deqg"); g >= 0)
+                    values[(size_t) g] = -9.0f;
+                int pages = 1;
+                for (const auto& e : design->elements)
+                    pages = juce::jmax (pages, e.page + 1, e.type == fp::Type::Key && e.look == fp::Look::TabKey ? e.choice + 1 : 0);
+                int live = 0;
+                for (int page = 0; page < pages; ++page)
+                {
+                    // Idle readouts, then busy ones: levels at -6 dBFS, reductions of 8 dB, a correlation, a scope.
+                    const auto paint = [&] (juce::Image& img, bool busy, juce::Rectangle<int> clip)
+                    {
+                        juce::Graphics g (img);
+                        if (! clip.isEmpty())
+                            g.reduceClipRegion (clip);
+                        fp::PaintContext ctx;
+                        ctx.spec = &spec;
+                        ctx.value = [&] (int i) { return values[(size_t) i]; };
+                        ctx.page = page;
+                        ctx.readout = [busy] (int i) { return ! busy ? 0.0f : (i < fp::rd::Dev ? 0.5f : -6.0f - (float) (i % 5)); };
+                        ctx.levelDb = [busy] (int) { return busy ? -6.0f : -150.0f; };
+                        fp::paintDesign (g, *design, ctx);
+                    };
+                    juce::Image idle (juce::Image::RGB, (int) fp::kFrameW, (int) fp::kFrameH, true);
+                    juce::Image busy (juce::Image::RGB, (int) fp::kFrameW, (int) fp::kFrameH, true);
+                    paint (idle, false, {});
+                    paint (busy, true, {});
+                    juce::Image patched = idle.createCopy();
+                    juce::RectangleList<int> areas;
+                    for (const auto& e : design->elements)
+                        if ((e.page < 0 || e.page == page) && fp::isLive (e))
+                        {
+                            expect (e.meter < fp::rd::kCount, juce::String (token) + ": readout out of range");
+                            if (e.meter >= 0)
+                                ++live;
+                            areas.addWithoutMerging (fp::paintArea (e).getSmallestIntegerContainer());
+                        }
+                    for (const auto& r : areas)
+                        paint (patched, true, r);
+                    int moved = 0, wrong = 0;
+                    for (int y = 0; y < idle.getHeight(); ++y)
+                        for (int x = 0; x < idle.getWidth(); ++x)
+                        {
+                            moved += idle.getPixelAt (x, y) != busy.getPixelAt (x, y) ? 1 : 0;
+                            // Gradients and textures may round a level apart where a clip starts: not a difference.
+                            const auto a = patched.getPixelAt (x, y), b = busy.getPixelAt (x, y);
+                            if (std::abs ((int) a.getRed() - (int) b.getRed()) > 2 || std::abs ((int) a.getGreen() - (int) b.getGreen()) > 2
+                                || std::abs ((int) a.getBlue() - (int) b.getBlue()) > 2)
+                            {
+                                if (wrong < 3)
+                                    logMessage (juce::String (token) + " p" + juce::String (page + 1) + " diff at " + juce::String (x) + "," + juce::String (y) + " "
+                                                + patched.getPixelAt (x, y).toDisplayString (true) + " vs " + busy.getPixelAt (x, y).toDisplayString (true));
+                                ++wrong;
+                            }
+                        }
+                    if (! areas.isEmpty())
+                        expect (moved > 20, juce::String (token) + " page " + juce::String (page + 1) + ": the meters don't move");
+                    expectEquals (wrong, 0, juce::String (token) + " page " + juce::String (page + 1) + ": a partial repaint differs from a full one");
+                }
+                expect (live > 0, juce::String (token) + ": no meter reads a live readout");
+            }
+        }
     }
 
 private:

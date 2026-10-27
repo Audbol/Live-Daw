@@ -30,6 +30,18 @@
 //! the console's millisecond parameters say "ms", and the WING counts insert
 //! latency in samples, manual 6.6 table 6.2; the manual's p. 164 says ms); the
 //! delay compensation and the FX MIX's dry delay use it as they use a plugin's.
+//! A built-in device with a latency of its own (the PRECISION LIMITER's
+//! look-ahead) is compensated the same way.
+//!
+//! Meters: every slot measures its input and output (`level`: the signal the
+//! device or plugin gets and gives back before FX MIX; for the outboard
+//! insert, its FX SEND after TRIM and its RETURN), and copies its device's
+//! readouts (`FxAlgo::readouts`: gain reductions, band levels, a scope...)
+//! after each block, for the device's screen. Levels are linear peaks that
+//! fall at the meters' 60 dB/s, so a screen that polls them sees what a
+//! meter fed every sample would show. A slot that doesn't run (bypassed,
+//! auto-bypassed, no device yet) meters its signal as passing through and
+//! reports idle readouts.
 
 use crate::atomic::AtomicF32;
 use crate::garbage::Garbage;
@@ -37,7 +49,8 @@ use crate::params::{ext, FxParams, FX_EXT};
 use crate::pdc::{CompRing, MAX_PDC};
 use crate::strip::source_ptr;
 use livedaw_dsp::util::{all_finite, db_to_gain};
-use livedaw_dsp::wing::fx::{FxContext, FxDevice, FX_BANDS};
+use livedaw_dsp::wing::fx::meters::FALL_DB_PER_S;
+use livedaw_dsp::wing::fx::{FxContext, FxDevice, FX_BANDS, FX_READOUTS};
 use livedaw_dsp::wing::MAX_FX_PARAMS;
 use livedaw_recorder::{PLAYBACK_SOURCE_BASE, USB_CHANNELS, USB_PLAYER_SOURCE_BASE};
 use std::cell::UnsafeCell;
@@ -112,6 +125,9 @@ pub(crate) struct FxInputs<'a> {
     pub playback: &'a [*const f32],
 }
 
+/// The slot's levels (`FxRack::level`): input left/right, output left/right.
+pub const FX_LEVELS: usize = 4;
+
 /// Wrapper so a retired slot can go to the garbage collector.
 struct RetiredSlot(#[allow(dead_code)] Box<Slot>);
 
@@ -126,6 +142,14 @@ pub struct FxRack {
     meter: AtomicF32,
     /// The device's dynamic bands' live gains (dB, signed), for the screen.
     band_gains: [AtomicF32; FX_BANDS],
+    /// Input L/R and output L/R levels (linear, falling peaks).
+    levels: [AtomicF32; FX_LEVELS],
+    /// The device's readouts (`FxAlgo::readouts`), for the screen.
+    readouts: [AtomicF32; FX_READOUTS],
+    /// Set while `readouts` hold something other than the idle values.
+    readouts_live: AtomicBool,
+    /// The installed device's latency in samples (fixed per instance).
+    device_latency: AtomicU32,
     faulted: AtomicBool,
     load: AtomicF32,
     /// Set while a strip is running the processor.
@@ -160,6 +184,10 @@ impl Default for FxRack {
             device: AtomicPtr::new(std::ptr::null_mut()),
             meter: AtomicF32::new(0.0),
             band_gains: std::array::from_fn(|_| AtomicF32::new(0.0)),
+            levels: std::array::from_fn(|_| AtomicF32::new(0.0)),
+            readouts: std::array::from_fn(|_| AtomicF32::new(0.0)),
+            readouts_live: AtomicBool::new(false),
+            device_latency: AtomicU32::new(0),
             faulted: AtomicBool::new(false),
             load: AtomicF32::new(0.0),
             busy: AtomicBool::new(false),
@@ -210,10 +238,13 @@ impl FxRack {
         self.is_outboard(params) && ext_return_of(params).is_some()
     }
 
-    /// The slot's latency as the screens show it: its plugin's, or the
-    /// outboard insert's (0 otherwise).
+    /// The slot's latency as the screens show it: its plugin's, the
+    /// outboard insert's, or its built-in device's (0 otherwise).
     pub fn latency(&self, params: &FxParams) -> u32 {
-        if self.is_loaded() {
+        let model = params.model.load(Relaxed);
+        if model != FX_EXT as i32 {
+            self.device_info().filter(|(m, _)| *m as i32 == model).map_or(0, |_| self.device_latency.load(Relaxed))
+        } else if self.is_loaded() {
             self.reported_latency()
         } else if self.outboard_returns(params) {
             self.outboard_latency(params)
@@ -246,11 +277,11 @@ impl FxRack {
         }
     }
 
-    /// The latency the slot adds to a strip now: the plugin's or the outboard
-    /// insert's while it runs (EXT, not bypassed, not auto-bypassed); built-in
-    /// devices have none.
+    /// The latency the slot adds to a strip now: the plugin's, the outboard
+    /// insert's or the built-in device's while it runs (not bypassed, not
+    /// auto-bypassed).
     pub fn effective_latency(&self, params: &FxParams) -> u32 {
-        let running = params.model.load(Relaxed) == FX_EXT as i32 && !params.bypass.load(Relaxed) && !self.is_faulted();
+        let running = !params.bypass.load(Relaxed) && !self.is_faulted();
         if running {
             self.latency(params)
         } else {
@@ -286,11 +317,13 @@ impl FxRack {
 
     /// Message thread: installs (or removes, with None) the built-in device.
     pub fn set_device(&self, device: Option<Box<FxDevice>>, garbage: &Garbage) {
+        self.device_latency.store(device.as_ref().map_or(0, |d| d.latency()), Relaxed);
         let new = device.map_or(std::ptr::null_mut(), Box::into_raw);
         let old = self.device.swap(new, AcqRel);
         self.faulted.store(false, Relaxed);
         self.meter.store(0.0);
         self.band_gains.iter().for_each(|g| g.store(0.0));
+        self.readouts.iter().for_each(|g| g.store(0.0));
         if !old.is_null() {
             // SAFETY: created by Box::into_raw above; now unreachable for new blocks.
             garbage.retire(RetiredDevice(unsafe { Box::from_raw(old) }));
@@ -312,6 +345,53 @@ impl FxRack {
     /// A dynamic band's live gain in dB, signed (TRIPLE DEQ; 0 otherwise).
     pub fn band_gain(&self, band: usize) -> f32 {
         self.band_gains.get(band).map_or(0.0, AtomicF32::load)
+    }
+
+    /// The slot's level `i` (0/1 input left/right, 2/3 output left/right;
+    /// linear, a peak falling at 60 dB/s): what its device or plugin gets
+    /// and gives back (before FX MIX), or the outboard insert's FX SEND and
+    /// RETURN.
+    pub fn level(&self, i: usize) -> f32 {
+        self.levels.get(i).map_or(0.0, AtomicF32::load)
+    }
+
+    /// The device's readout `i` (`FxAlgo::readouts`; 0 when idle).
+    pub fn readout(&self, i: usize) -> f32 {
+        self.readouts.get(i).map_or(0.0, AtomicF32::load)
+    }
+
+    /// Meters `x` into level `i` (one writer: the task running the slot).
+    fn meter_level(&self, i: usize, x: &[f32], fall: f32) {
+        let peak = x.iter().fold(0.0f32, |a, v| a.max(v.abs()));
+        let prev = self.levels[i].load() * fall.powi(x.len() as i32);
+        let level = if peak >= prev {
+            peak
+        } else if prev < 1e-9 {
+            0.0
+        } else {
+            prev
+        };
+        self.levels[i].store(if level.is_finite() { level } else { 0.0 });
+    }
+
+    /// Meters `channels` (1 or 2) into levels `first` and `first + 1`.
+    fn meter_channels(&self, first: usize, channels: &[&mut [f32]], fall: f32) {
+        if let Some(c0) = channels.first() {
+            self.meter_level(first, c0, fall);
+            self.meter_level(first + 1, channels.get(1).map_or(&c0[..], |c| &c[..]), fall);
+        }
+    }
+
+    /// A slot that passes its signal through: its input is its output, its
+    /// device's readouts idle.
+    fn meter_passthrough(&self, channels: &[&mut [f32]], fall: f32) {
+        self.meter_channels(0, channels, fall);
+        self.meter_channels(2, channels, fall);
+        if self.readouts_live.swap(false, Relaxed) {
+            self.readouts.iter().for_each(|g| g.store(0.0));
+            self.band_gains.iter().for_each(|g| g.store(0.0));
+            self.meter.store(0.0);
+        }
     }
 
     /// Message thread only: the host context of the processor (null if empty).
@@ -366,6 +446,8 @@ impl FxRack {
         block: u64,
     ) {
         let n = channels.first().map_or(0, |c| c.len());
+        // The meters' fall per sample (60 dB/s).
+        let fall = (-FALL_DB_PER_S / 20.0 * std::f32::consts::LN_10 / (sample_rate as f32).max(1.0)).exp();
         let model = params.model.load(Relaxed);
         let plugin = self.slot.load(Acquire);
         let device = self.device.load(Acquire);
@@ -377,7 +459,11 @@ impl FxRack {
             // thread swaps the new one in: pass through meanwhile.
             !device.is_null() && (*device).model() as i32 == model
         };
-        if n == 0 || !runnable || params.bypass.load(Relaxed) || self.faulted.load(Relaxed) {
+        if n == 0 {
+            return;
+        }
+        if !runnable || params.bypass.load(Relaxed) || self.faulted.load(Relaxed) {
+            self.meter_passthrough(channels, fall);
             return;
         }
         // One strip per slot per block; a second one passes through.
@@ -402,8 +488,15 @@ impl FxRack {
         }
 
         let mut returned = true;
+        if !outboard {
+            self.meter_channels(0, channels, fall);
+        }
         let ok = if outboard {
             returned = self.run_outboard(channels, params, inputs, block);
+            // The FX SEND is the outboard insert's input.
+            let send = &*self.send.get();
+            self.meter_level(0, &send[0][..n], fall);
+            self.meter_level(1, &send[1][..n], fall);
             channels.iter().all(|c| all_finite(c))
         } else if model == FX_EXT as i32 {
             let cb = (*plugin).cb;
@@ -434,15 +527,24 @@ impl FxRack {
             for (i, g) in self.band_gains.iter().enumerate() {
                 g.store(dev.band_gain(i));
             }
+            let mut readouts = [0.0f32; FX_READOUTS];
+            dev.readouts(&mut readouts);
+            for (a, v) in self.readouts.iter().zip(readouts) {
+                a.store(if v.is_finite() { v } else { 0.0 });
+            }
+            self.readouts_live.store(true, Relaxed);
             channels.iter().all(|c| all_finite(c))
         };
+        // The output: the device's or plugin's, the RETURN (or, without one,
+        // the signal passing through).
+        self.meter_channels(2, channels, fall);
 
         let mix = params.mix.load() / 100.0;
         // The dry history follows every block, so a MIX change finds it in time.
         let latency = match model == FX_EXT as i32 {
             true if outboard => self.outboard_latency(params) as usize,
             true => self.latency.load(Relaxed) as usize,
-            false => 0,
+            false => self.device_latency.load(Relaxed) as usize,
         };
         let dry_ring = (*self.dry_ring.get()).as_deref();
         if let Some(ring) = dry_ring.filter(|_| latency > 0) {

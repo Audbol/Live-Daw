@@ -2,6 +2,7 @@
 
 #include "engine/Models.h"
 #include "ui/LookAndFeel.h"
+#include "ui/MeterBallistics.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -71,9 +72,13 @@ public:
 
     /** `values` must stay valid while bound (the engine's parameter block).
         `meter`: the gain reduction (dB, <= 0); `bandGain`: a dynamic EQ band's
-        live gain (dB, signed), for the graphs that show bands moving. */
+        live gain (dB, signed), for the graphs that show bands moving;
+        `readouts`: fills the live meters (fp::rd: an FX slot's levels and its
+        device's readouts, FxSlots::getReadouts) and returns how many. The
+        meters are polled ~30 times a second and only what moves is repainted. */
+    using ReadoutsFn = std::function<int (float* out, int n)>;
     void bind (models::Table, int model, std::atomic<float>* values, std::function<float()> meter = {},
-               std::function<float (int band)> bandGain = {});
+               std::function<float (int band)> bandGain = {}, ReadoutsFn readouts = {});
     void unbind();
 
     /** A control was touched (index into the model's parameters). */
@@ -120,6 +125,10 @@ private:
 
     void timerCallback() override;
     void layoutControls();
+    /** Polls the live readouts; true if a shown meter moved. */
+    bool pollReadouts();
+    /** Repaints the live elements of a drawn panel (meters, graphs of activity). */
+    void repaintLive();
     int controlAt (juce::Point<float>) const;
     float value (int param) const;
     void setValue (int param, float v);
@@ -134,6 +143,7 @@ private:
     std::atomic<float>* values = nullptr;
     std::function<float()> meterFn;
     std::function<float (int)> bandFn;
+    ReadoutsFn readoutsFn;
     FaceplateStyle style;
 
     const fp::Design* design = nullptr;
@@ -147,6 +157,12 @@ private:
     std::vector<float> shown;
     float shownMeter = 0.0f;
     std::array<float, 3> shownBands {};
+    /** The live readouts (fp::rd::kCount) as polled, the levels with the meters' ballistics (dB),
+        what was last painted, and when they were polled. */
+    std::vector<float> readouts, levelDb, paintedReadouts;
+    std::vector<meters::Ballistics> ballistics;
+    juce::uint32 polledAt = 0;
+    bool reductionMoved = false; // the gain reduction or a band gain moved since the last repaint
     int dragging = -1, lastTouched = -1;
     float dragStartPos = 0.0f;
 };

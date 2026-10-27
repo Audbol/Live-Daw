@@ -10,10 +10,14 @@
 //! with linked detection; in M/S mode LOW and HIGH act on the mid channel and
 //! LOW (S) and HIGH (S) on the side. The reduction is a dynamic cut of the
 //! band only (signal plus a scaled band-pass of itself).
+//!
+//! Readouts (the activity LEDs beside the knobs): 0 LOW's and 1 HIGH's
+//! reduction (dB, <= 0; in M/S mode the mid's), 2 LOW (S)'s and 3 HIGH (S)'s
+//! (the side's; 0 in stereo mode, where those knobs do nothing).
 
 use super::{db_gain, level_db};
 use crate::wing::fx::blocks::{coef, Biquad, BiquadCoeffs};
-use crate::wing::fx::FxAlgo;
+use crate::wing::fx::{FxAlgo, FX_READOUTS};
 use crate::wing::Params;
 
 /// [female, male] centre of the lower filter, and the higher filter's centre.
@@ -153,6 +157,16 @@ impl FxAlgo for DeEsser {
     fn meter(&self) -> f32 {
         self.meter
     }
+
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        // [band][path]; in stereo mode both paths are linked: LOW and HIGH show the deeper.
+        let [[lo0, lo1], [hi0, hi1]] = self.red;
+        if self.ms {
+            out[..4].copy_from_slice(&[-lo0, -hi0, -lo1, -hi1]);
+        } else {
+            out[..4].copy_from_slice(&[-lo0.max(lo1), -hi0.max(hi1), 0.0, 0.0]);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -199,6 +213,62 @@ mod tests {
         let (mut l, mut r) = (vec![0.0; n], vec![0.0; n]);
         rig.run(&mut l, &mut r);
         assert!(rig.dev.meter() > -0.1, "{} dB in silence", rig.dev.meter());
+    }
+
+    fn readouts(rig: &Rig) -> [f32; crate::wing::fx::FX_READOUTS] {
+        let mut r = [0.0; crate::wing::fx::FX_READOUTS];
+        rig.dev.readouts(&mut r);
+        r
+    }
+
+    #[test]
+    fn each_knob_works_its_own_band() {
+        // LOW alone takes the lower sibilance band (6.5 kHz female, 5 kHz male), not 9.5 kHz.
+        let cut = |set: &[(&str, f32)], freq: f32| {
+            let mut rig = Rig::new("DE-S2");
+            rig.set("lo", 1.0).set("hi", 1.0).set("los", 1.0).set("his", 1.0);
+            for (id, v) in set {
+                rig.set(id, *v);
+            }
+            let g = rig.sine_gain_db(freq, 0.3);
+            (g, readouts(&rig))
+        };
+        let (g, r) = cut(&[("lo", 50.0)], 6500.0);
+        assert!(g < -6.0 && r[0] < -6.0 && r[1] > -1.0, "{g} {:?}", &r[..4]);
+        let (g, _) = cut(&[("lo", 50.0)], 11_000.0);
+        assert!(g > -3.0, "LOW at 11 kHz: {g}");
+        let (g, r) = cut(&[("hi", 50.0)], 9500.0);
+        assert!(g < -6.0 && r[1] < -6.0 && r[0] > -1.0, "{g} {:?}", &r[..4]);
+        // MALE moves the lower band down: 4.6 kHz is cut more.
+        let (female, _) = cut(&[("lo", 50.0), ("gdr", 0.0)], 4600.0);
+        let (male, _) = cut(&[("lo", 50.0), ("gdr", 1.0)], 4600.0);
+        assert!(male < female - 2.0, "male {male} vs female {female}");
+        // 1 is (nearly) off.
+        let (g, r) = cut(&[], 7000.0);
+        assert!(g > -1.0 && r[..4].iter().all(|x| *x > -1.0), "{g}");
+    }
+
+    #[test]
+    fn mid_side_knobs_work_the_side() {
+        use std::f32::consts::TAU;
+        // Sibilance on the side only (L = -R): in M/S mode only LOW (S) / HIGH (S) touch it.
+        let run = |set: &[(&str, f32)]| {
+            let mut rig = Rig::new("DE-S2");
+            rig.set("mode", 1.0).set("lo", 1.0).set("hi", 1.0).set("los", 1.0).set("his", 1.0);
+            for (id, v) in set {
+                rig.set(id, *v);
+            }
+            let n = 48_000;
+            let x: Vec<f32> = (0..n).map(|i| (TAU * 7000.0 * i as f32 / 48_000.0).sin() * 0.3).collect();
+            let (mut l, mut r): (Vec<f32>, Vec<f32>) = (x.clone(), x.iter().map(|v| -v).collect());
+            rig.run(&mut l, &mut r);
+            let rms = |v: &[f32]| (v.iter().map(|s| s * s).sum::<f32>() / v.len() as f32).sqrt();
+            (20.0 * (rms(&l[n / 2..]) / rms(&x[n / 2..])).log10(), readouts(&rig))
+        };
+        let (mid_only, r) = run(&[("lo", 50.0), ("hi", 50.0)]);
+        assert!(mid_only > -1.0 && r[0] > -1.0, "{mid_only}");
+        let (side, r) = run(&[("los", 50.0), ("his", 50.0)]);
+        assert!(side < -6.0 && r[2] < -3.0, "{side} {:?}", &r[..4]);
     }
 
     #[test]

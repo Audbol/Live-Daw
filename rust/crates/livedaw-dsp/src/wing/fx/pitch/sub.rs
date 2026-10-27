@@ -2,7 +2,8 @@
 //! bass (P-BASS).
 
 use super::super::blocks::{db_to_gain, fast_tanh, Biquad, BiquadCoeffs, DcBlock, Envelope, Smoothed};
-use super::super::{FxAlgo, FxContext};
+use super::super::meters::PeakMeter;
+use super::super::{FxAlgo, FxContext, FX_READOUTS};
 use super::{add_mix, chain, fader_gain, SMOOTH_MS};
 use crate::wing::Params;
 
@@ -157,6 +158,7 @@ struct SubBand {
     div: Divider,
     shape: [Biquad; 2],
     level: Smoothed,
+    meter: Option<PeakMeter>,
 }
 
 /// The Midas SUB MONSTER subharmonic synthesizer. Five bands a fifth apart
@@ -167,6 +169,9 @@ struct SubBand {
 /// a round tone by band-passes at the band frequency). The BAND faders set
 /// each tone's level; MIX balances the dry signal and the generated sub (both
 /// at full level at 50 %).
+///
+/// Readouts 0-4 (the green bars in the faders' slots): each band's generated
+/// tone after its fader (linear peaks).
 pub(super) struct SubMonster {
     sr: f32,
     freq: f32,
@@ -184,6 +189,7 @@ impl SubMonster {
             let mut b = SubBand::default();
             b.env.set(3.0, 0.0, 80.0, sr);
             b.level = Smoothed::new(0.0, SMOOTH_MS, sr);
+            b.meter = Some(PeakMeter::new(sr));
             b
         };
         let mut s = Self {
@@ -237,8 +243,11 @@ impl FxAlgo for SubMonster {
                 let (q, _) = b.div.tick(x, 0.2 * env + 1e-6);
                 // Keep the band filters running even when muted, so a band
                 // fades in without a transient.
-                let y = chain(&mut b.shape, q * env, 0);
-                sub += y * level;
+                let y = chain(&mut b.shape, q * env, 0) * level;
+                if let Some(m) = &mut b.meter {
+                    m.tick(y * 1.4);
+                }
+                sub += y;
             }
             let sub = self.dc.tick(sub * 1.4);
             let (dry, wet) = (self.dry.tick(), self.wet.tick());
@@ -256,6 +265,9 @@ impl FxAlgo for SubMonster {
                 f.reset();
             }
             b.level.snap(b.level.target);
+            if let Some(m) = &mut b.meter {
+                m.reset();
+            }
         }
         self.dc.reset();
         self.dry.snap(self.dry.target);
@@ -263,6 +275,12 @@ impl FxAlgo for SubMonster {
         if self.freq != self.freq_target {
             self.freq = self.freq_target;
             self.tune();
+        }
+    }
+
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        for (o, b) in out.iter_mut().zip(&self.bands) {
+            *o = b.meter.as_ref().map_or(0.0, PeakMeter::level);
         }
     }
 }
@@ -278,6 +296,9 @@ impl FxAlgo for SubMonster {
 /// attenuates the original low band to make up for the added loudness; SOLO
 /// outputs only the band below X/O FREQ (the material the harmonics are made
 /// from), as the console's manual describes.
+///
+/// Readouts (its two meters): 0 the low band after BASS GAIN, 1 the added
+/// harmonics after INTENSITY (linear peaks).
 pub(super) struct PsychoBass {
     sr: f32,
     xf: f32,
@@ -291,6 +312,8 @@ pub(super) struct PsychoBass {
     bass: Smoothed,
     /// 1 = normal output, 0 = SOLO.
     normal: Smoothed,
+    low_meter: PeakMeter,
+    harm_meter: PeakMeter,
 }
 
 impl PsychoBass {
@@ -310,6 +333,8 @@ impl PsychoBass {
             int: Smoothed::new(0.0, SMOOTH_MS, sr),
             bass: Smoothed::new(0.0, SMOOTH_MS, sr),
             normal: Smoothed::new(1.0, SMOOTH_MS, sr),
+            low_meter: PeakMeter::new(sr),
+            harm_meter: PeakMeter::new(sr),
         };
         s.tune();
         s
@@ -362,6 +387,8 @@ impl FxAlgo for PsychoBass {
             let h = self.h_lp.tick(chain(&mut self.h_hp, h, 0), 0) * 2.5;
             let (int, bass, normal) = (self.int.tick(), self.bass.tick(), self.normal.tick());
             let fx = h * int;
+            self.low_meter.tick(bass * low[0].abs().max(low[1].abs()));
+            self.harm_meter.tick(fx);
             // LR4 bands sum flat with the high band's polarity as is.
             let solo = 1.0 - normal;
             *l = normal * (high[0] + low[0] * bass + fx) + solo * low[0];
@@ -375,6 +402,8 @@ impl FxAlgo for PsychoBass {
         }
         self.h_lp.reset();
         self.env.reset();
+        self.low_meter.reset();
+        self.harm_meter.reset();
         self.int.snap(self.int.target);
         self.bass.snap(self.bass.target);
         self.normal.snap(self.normal.target);
@@ -382,5 +411,10 @@ impl FxAlgo for PsychoBass {
             self.xf = self.xf_target;
             self.tune();
         }
+    }
+
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[0] = self.low_meter.level();
+        out[1] = self.harm_meter.level();
     }
 }

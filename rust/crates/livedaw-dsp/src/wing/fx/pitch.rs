@@ -64,6 +64,18 @@ impl<T: FxAlgo> FxAlgo for Primed<T> {
     fn reset(&mut self) {
         self.algo.reset();
     }
+
+    fn meter(&self) -> f32 {
+        self.algo.meter()
+    }
+
+    fn readouts(&self, out: &mut [f32; super::FX_READOUTS]) {
+        self.algo.readouts(out);
+    }
+
+    fn latency(&self) -> u32 {
+        self.algo.latency()
+    }
 }
 
 /// Parameter smoothing time (ms).
@@ -898,6 +910,87 @@ mod tests {
         assert!(level_at(&l[12_000..], 1000.0, sr) < 0.01);
         let (l, _) = render("P-BASS", &[("solo", 1.0)], &sine(30.0, 1.0, 0.5, sr), sr);
         assert!(level_at(&l[24_000..], 30.0, sr) > 0.4);
+    }
+
+    #[test]
+    fn psycho_bass_meters_show_the_low_band_and_the_harmonics() {
+        let sr = 48_000.0;
+        let model = model_index("P-BASS").unwrap();
+        let spec = &FX_MODELS[model];
+        let mut dev = FxDevice::new(model, FxContext { sample_rate: sr, max_block: 256 }).unwrap();
+        let mut values = [0.0; MAX_FX_PARAMS];
+        spec.defaults_into(&mut values);
+        values[spec.param_index("int").unwrap()] = 0.0;
+        values[spec.param_index("bass").unwrap()] = 0.0;
+        let mut read = |input: &[f32], values: &[f32]| {
+            let (mut l, mut r) = (input.to_vec(), input.to_vec());
+            dev.process(values, &mut l, &mut r);
+            let mut ro = [0.0; super::super::FX_READOUTS];
+            dev.readouts(&mut ro);
+            [ro[0], ro[1]]
+        };
+        // A 50 Hz tone: the low band reads its level, the harmonics show up.
+        let low = read(&sine(50.0, 1.0, 0.5, sr), &values);
+        assert!(low[0] > 0.25 && low[0] < 0.55 && low[1] > 0.05, "{low:?}");
+        // A 2 kHz tone: nothing below X/O, no harmonics.
+        let high = read(&sine(2000.0, 1.0, 0.5, sr), &values);
+        assert!(high[0] < 0.02 && high[1] < 0.02, "{high:?}");
+        // BASS GAIN -60 dB: the low band's meter drops.
+        values[spec.param_index("bass").unwrap()] = -60.0;
+        let cut = read(&sine(50.0, 1.0, 0.5, sr), &values);
+        assert!(cut[0] < 0.01, "{cut:?}");
+    }
+
+    #[test]
+    fn sub_octaver_range_and_sub_monster_tune_and_mix() {
+        let sr = 48_000.0;
+        // RANGE HIGH tracks a high guitar note, LOW (for bass) filters it out of its tracker.
+        let input = sine(500.0, 1.5, 0.5, sr);
+        let (low, _) = render("SUB", &[("oct1", 100.0), ("rng", 0.0)], &input, sr);
+        let (high, _) = render("SUB", &[("oct1", 100.0), ("rng", 2.0)], &input, sr);
+        let (a, b) = (level_at(&high[36_000..], 250.0, sr), level_at(&low[36_000..], 250.0, sr));
+        assert!(a > 0.05 && a > 4.0 * b, "high {a}, low {b}");
+        // TUNE moves band 3: at 67.5 Hz it follows 135 Hz content.
+        let (l, _) =
+            render("SUB-M", &[("bd1", 0.0), ("bd2", 0.0), ("bd3", 100.0), ("freq", 67.5)], &sine(135.0, 1.5, 0.5, sr), sr);
+        assert!(level_at(&l[36_000..], 67.5, sr) > 0.1, "{}", level_at(&l[36_000..], 67.5, sr));
+        // The band meters: band 3 tracks, band 5 (fader down) reads nothing.
+        let model = model_index("SUB-M").unwrap();
+        let spec = &FX_MODELS[model];
+        let mut dev = FxDevice::new(model, FxContext { sample_rate: sr, max_block: 256 }).unwrap();
+        let mut values = [0.0; MAX_FX_PARAMS];
+        spec.defaults_into(&mut values);
+        values[spec.param_index("bd3").unwrap()] = 100.0;
+        values[spec.param_index("bd5").unwrap()] = 0.0;
+        let (mut l, mut r) = (sine(110.0, 1.0, 0.5, sr), sine(110.0, 1.0, 0.5, sr));
+        dev.process(&values, &mut l, &mut r);
+        let mut ro = [0.0; super::super::FX_READOUTS];
+        dev.readouts(&mut ro);
+        assert!(ro[2] > 0.05 && ro[4] == 0.0, "{:?}", &ro[..5]);
+        // MIX 0: the dry signal alone.
+        let x = sine(110.0, 1.0, 0.5, sr);
+        let (l, _) = render("SUB-M", &[("mix", 0.0)], &x, sr);
+        let (sub, dry) = (level_at(&l[24_000..], 55.0, sr), level_at(&l[24_000..], 110.0, sr));
+        assert!(sub < 0.02 && (dry - 0.5).abs() < 0.02, "{sub} {dry}"); // (the 55 Hz bin leaks a little of 110 Hz)
+    }
+
+    #[test]
+    fn double_vocal_mix_and_modes() {
+        let sr = 48_000.0;
+        let mut input = vec![0.0; 24_000];
+        input[100] = 1.0;
+        // MIX 0: only the dry signal.
+        let (l, _) = render("DOUBLE", &[("mix", 0.0)], &input, sr);
+        let late: f32 = l[580..2500].iter().map(|v| v * v).sum();
+        assert!(late < 1e-4, "{late}");
+        // Every MODE adds doubles; SPREAD 0 keeps them centred (L = R).
+        for mode in 0..5 {
+            let (l, r) = render("DOUBLE", &[("mode", mode as f32), ("mix", 100.0), ("sprd", 0.0)], &input, sr);
+            let late: f32 = l[580..4000].iter().map(|v| v * v).sum();
+            assert!(late > 0.01, "mode {mode}: {late}");
+            let diff: f32 = l.iter().zip(&r).map(|(a, b)| (a - b).abs()).sum();
+            assert!(diff < 0.05, "mode {mode}: spread 0 differs by {diff}");
+        }
     }
 
     #[test]
