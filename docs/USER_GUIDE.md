@@ -35,8 +35,17 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
     WING: 0 dB on both sides at centre, the near side rising to +3 dB and the far side
     falling to off at the edge (a stereo channel's pan is a balance: unity at centre,
     the far side turned down).
-- **Buses 9+ feed buses 1-8**, matrices take the mains and a **direct input** from any
-  channel (invert it for a mix-minus).
+- **Every bus feeds every other bus** (BUS → BUS, as the WING's 16): a bus runs after
+  the buses sending to it, so a chain arrives in the same block; a loop (Bus 3 → Bus 7 →
+  Bus 3) is cut at its lowest bus, whose loop send takes the previous audio block (the
+  WING delays every bus to bus send by 8 samples). Matrices take the mains and a
+  **DIRECT INPUT**: OFF, AES (no AES/EBU input here: silent), the PHONES (MON.PH), the
+  SPEAKERS (MON.SPK) or the solo bus (MON.BUS), a block late, with its level and
+  INVERT.
+- **Buses, mains and matrices are channel sources** (ROUTING > CHANNELS, groups BUS,
+  MAIN, MATRIX), a block late; **user signals** copy any strip and **user patches** any
+  port (ROUTING > SOURCES, USER SIGNAL); any source plays on an output without a
+  channel (ROUTING > OUTPUTS).
 - **FX rack:** 16 slots, used by any strip's insert, each holding one of the WING's
   devices:
   - **26 premium effects** (slots 1-8): 16 reverbs (hall, room, chamber, plate,
@@ -100,7 +109,8 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
   delays the other sources summed into the same bus, main or matrix by the
   difference, so parallel paths stay in time: a channel going to Main 1 directly and
   through a bus with a plugin arrives once, not twice. The compensation follows the
-  bus stages (buses 9-16 into buses 1-8, buses into mains, mains into matrices) and
+  bus stages (buses into the buses they feed, buses into mains, mains into matrices;
+  a bus send closing a loop and the other block-late paths aren't compensated) and
   the tap of each send (an insert counts only once the send's tap point is past it).
   A plugin's FX MIX delays its dry signal by the plugin's latency too. It is on by
   default; **SETUP > PLUGINS > DELAY COMPENSATION** turns it off, and the panel
@@ -310,10 +320,17 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     tiles past the interface's inputs read n/a but can be patched), inputs 49-96 and
     97-144 are **AES50 B** / **C** (as the WING remote protocol numbers them),
     **WLIVE PLAY** the multitrack recorder's 64 playback channels (PLAY 1 ...),
-    **USB PLAYER** the USB player and **OSCILLATOR** OSC 1 / 2. The other groups
-    (AUX IN, AES/EBU, AES50 A, ST CONNECT, USB AUDIO, DANTE, BUS, MAIN, MATRIX, USER
-    SIGNAL) can be selected and show n/a tiles, like a console without that card.
-    SOURCES sets each input's source:
+    **USB PLAYER** the USB player and **OSCILLATOR** OSC 1 / 2. **BUS**, **MAIN** and
+    **MATRIX** hold the strips as sources (manual 2.6), two tiles each (BUS 1L, BUS 1R
+    ...) in the strip's colour with its name and icon: a touch patches the strip to the
+    channel in stereo. The channel hears it one audio block later (the WING: 38
+    samples); a channel sending to the bus it listens to is a feedback loop, as on the
+    console. **USER SIGNAL** holds USR 1-56 (below). The other groups (AUX IN,
+    AES/EBU, AES50 A, ST CONNECT, USB AUDIO, DANTE) can be selected and show n/a
+    tiles, like a console without that card.
+    SOURCES sets each input's source (drag over the tiles to select several: every
+    change then goes to all of them, each GAIN in its group's range; the first one's
+    settings show, and a touch selects one again):
     name (RENAME), colour and icon, GAIN (digital here, in the WING's range for the
     group: LOCAL IN -2.5 to +45 dB in 2.5 dB steps, AES50 B / C -3 to +45.5 dB in
     0.5 dB steps; WLIVE PLAY and the USB player have none, as on the WING), +48V
@@ -331,12 +348,27 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     (-40 to -6 dBFS, the sine's peak; the noises have the same RMS) in place of +48V,
     POL and GAIN; MUTE switches it off. STEREO pairs OSC 1 and 2 on OSC 1's settings
     (the sine in phase on both sides, the noises uncorrelated), MID/SIDE decodes them
-    as for other sources. The settings are saved with the show. OUTPUTS works
+    as for other sources. The settings are saved with the show. The **USER SIGNAL**
+    group (manual 2.6): USR 1-24 are **user signals**, USR 25-56 **user patches**.
+    Selecting one on SOURCES shows SOURCE in place of +48V (click: the group, then
+    the strip or port), POL and MUTE (no gain, as on the WING); a user signal also has
+    L+R / L / R (which side of a stereo strip; L+R mixes both at half; a mono channel
+    is the same either way) in the REMOTE column and TAP **PRE** (the strip's tap
+    point) / **POST** (after its processing: an input channel before its pan, a bus,
+    main or matrix its output) in place of RCV CUST. A user signal copies CH 1-40, AUX,
+    BUS, MAIN or MTX; channels patched to it hear it a block late, outputs at once. A
+    user patch copies a LOCAL IN, AES50, WLIVE PLAY or USB PLAYER port, in the same
+    block: two adjacent USR sources set to STEREO or MID/SIDE make a pair from any two
+    ports, each with its own gain on its port and its own polarity. OUTPUTS works
     output-first: pick an output (OUTPUT GROUP **LOCAL OUT** is the interface's
     outputs; **RECORDER** taps a signal for the USB recorder), then the signal feeding
     it from the source group: **BUS**, **MAIN**, **MATRIX** (each L / R), **MONITOR**
-    (PHONES 1L / 1R, SPEAKERS 2L / 2R) or **USER SIGNAL** (the channels' and aux
-    channels' own outputs). Defaults: every interface input on its channel (the
+    (PHONES 1L / 1R, SPEAKERS 2L / 2R), **USER SIGNAL** (USR 1-56) or any input group
+    (LOCAL IN, AES50 B / C, OSCILLATOR, WLIVE PLAY, USB PLAYER: the source after its
+    gain, mute and polarity, straight to the output, as the manual's "route any
+    Source to any digital or analog output"). An output has one signal: patching one
+    replaces what fed it. Direct outs of channels from older shows still play and show
+    on their outputs (user signals now make them). Defaults: every interface input on its channel (the
     console patches its eight local inputs to channels 1-8) and MAIN 1 on LOCAL OUT
     1-2 (the console uses LOCAL OUT 7-8 and feeds buses 1-6 to 1-6).
   - **SETUP:** GENERAL (lighting, clock, console info and size, the surface's finish

@@ -1146,7 +1146,7 @@ public:
         {
             case StripKind::Bus:
             {
-                if (&src == &target || (src.isBus() && ! (src.getId() >= kBusToBusTargets && target.getId() < kBusToBusTargets)))
+                if (&src == &target || (src.isBus() && ! busFeedsBus (src.getId(), target.getId())))
                 {
                     possible = false;
                     return false;

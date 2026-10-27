@@ -129,7 +129,7 @@ namespace
         switch (to.getKind())
         {
             case StripKind::Bus:
-                if (from.isInput() || (from.isBus() && from.getId() >= kBusToBusTargets && to.getId() < kBusToBusTargets))
+                if (from.isInput() || (from.isBus() && busFeedsBus (from.getId(), to.getId())))
                 {
                     auto& send = from.sends[(size_t) to.getId()];
                     t.sendLevel = &send.levelDb;
@@ -2225,8 +2225,8 @@ bool SendsViewPage::canSend (const Strip& s) const
         return false;
     switch (dest->getKind())
     {
-        // Inputs feed every bus, buses 9 and up feed buses 1-8.
-        case StripKind::Bus:    return s.isInput() || (s.isBus() && s.getId() >= kBusToBusTargets && dest->getId() < kBusToBusTargets);
+        // Inputs feed every bus, and every bus every other bus (manual 5.10).
+        case StripKind::Bus:    return s.isInput() || (s.isBus() && busFeedsBus (s.getId(), dest->getId()));
         case StripKind::Main:   return s.isInput() || s.isBus();
         case StripKind::Matrix: return s.getKind() != StripKind::Matrix;
         case StripKind::Channel:
@@ -2658,11 +2658,12 @@ void ConfigViewPage::updateKeys()
 
 std::vector<state::StripRef> ConfigViewPage::destinations (bool busToBus) const
 {
-    // Inputs send to every bus, main and matrix; buses 9+ to buses 1-8, every bus to the mains and matrices.
+    // Inputs send to every bus, main and matrix; a bus to every other bus,
+    // the mains and the matrices (BUS → BUS, manual 5.10).
+    juce::ignoreUnused (busToBus);
     std::vector<state::StripRef> out;
     for (auto& b : ctx.engine.getStrips (StripKind::Bus))
-        if (! busToBus || b->getId() < kBusToBusTargets)
-            out.push_back (state::StripRef::of (*b));
+        out.push_back (state::StripRef::of (*b));
     for (auto k : { StripKind::Main, StripKind::Matrix })
         for (auto& s : ctx.engine.getStrips (k))
             out.push_back (state::StripRef::of (*s));
@@ -2753,7 +2754,7 @@ std::vector<state::FaderRef> ConfigViewPage::sourceItems() const
         }
         else
             for (auto& b : ctx.engine.getStrips (StripKind::Bus))
-                if (! (to.kind == StripKind::Bus && (b->getId() < kBusToBusTargets || b->getId() == to.id)))
+                if (! (to.kind == StripKind::Bus && ! busFeedsBus (b->getId(), to.id)))
                     items.push_back (state::FaderRef::ofSend (state::StripRef::of (*b), to));
         return items;
     }

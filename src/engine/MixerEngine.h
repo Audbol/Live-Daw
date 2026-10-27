@@ -25,10 +25,14 @@ namespace livedaw
     Signal flow per audio block (all in Rust):
       1. channels and aux channels read their inputs and run their chains (parallel)
       2. automix groups X/Y share gain between their channels
-      3. buses sum the sends feeding them (buses 9+ first, they can feed 1-8) (parallel)
-      4. the 4 mains sum their sends, the 8 matrices their sends + direct inputs
+      3. buses sum the sends feeding them, a bus after the buses sending to it (parallel)
+      4. the 4 mains sum their sends, the 8 matrices their sends + DIRECT IN;
+         the user signals copy their strips
       5. solo (PFL/AFL) builds the monitor bus, or the monitor follows Main 1
-      6. mains, buses, matrices, direct outs and monitor go to the hardware outputs
+      6. mains, buses, matrices, direct outs, monitor and the sources patched
+         to outputs go to the hardware outputs
+    Signals from later in the chain (a bus as a channel's source, a bus send
+    closing a loop, the monitor as a matrix's DIRECT IN) arrive a block late.
 
     DCAs (16) and mute groups (8) act on any strip; the 16 FX slots hold the
     plugins the strips' inserts use. The number of channels is only limited by
@@ -303,6 +307,50 @@ public:
     }
 
     //==============================================================================
+    // Routing beyond the strips' own patch (ABI 18; manual 2.6 and 5.4).
+
+    /** The strip sources: a bus, main or matrix as a channel's source (input
+        stripSource (kind, number, side); a bus by its slot). -1 when the strip
+        has none (input and aux channels, buses past the WING's 16). */
+    static int stripSource (StripKind kind, int number, int side) noexcept { return ld::ld_strip_source_input ((int32_t) kind, number, side); }
+    static constexpr bool isStripSource (int input) noexcept
+    {
+        return input >= ld::kStripSourceBase && input < ld::kStripSourceBase + ld::kNumStripSources;
+    }
+    /** The USER SIGNAL group: USR n (0-based: 0-23 user signals, 24-55 user patches) is input usrSource (n). */
+    static constexpr int usrSource (int n) noexcept { return ld::kUsrSourceBase + n; }
+    static constexpr int usrChannelOf (int input) noexcept
+    {
+        return input >= ld::kUsrSourceBase && input < ld::kUsrSourceBase + ld::kNumUsrSources ? input - ld::kUsrSourceBase : -1;
+    }
+    static constexpr bool isUsrSource (int input) noexcept { return usrChannelOf (input) >= 0; }
+    /** USR 1-24: what each user signal copies; USR 25-56: each user patch's source. */
+    ld::UserSignalParams* getUserSignal (int n) const noexcept
+    {
+        return juce::isPositiveAndBelow (n, numUserSignals) ? userSignals + n : nullptr;
+    }
+    ld::UserPatchParams* getUserPatch (int n) const noexcept
+    {
+        return juce::isPositiveAndBelow (n, numUserPatches) ? userPatches + n : nullptr;
+    }
+    /** User patch n (0-based) to an external source (a port, playback channel or USB PLAYER); else OFF. */
+    void setUserPatch (int n, int source) const noexcept { ld::ld_source_set_user_patch (engine, n, source); }
+
+    /** ROUTING > OUTPUTS for sources: the source on hardware output `port` (-1 none). */
+    int getOutputSource (int port) const noexcept
+    {
+        return juce::isPositiveAndBelow (port, numPatchOutputs) ? outputPatch[port].load() : -1;
+    }
+    /** `source` (an input index; a bus, main or matrix signal moves that strip's
+        output there) to output `port`, replacing whatever fed it. */
+    bool routeOutputSource (int port, int source) const noexcept { return ld::ld_engine_route_output_source (engine, port, source); }
+    /** Nothing feeds output `port` any more (strips, monitor paths, sources). */
+    void clearOutput (int port) const noexcept { ld::ld_engine_clear_output (engine, port); }
+
+    /** A matrix's DIRECT IN names (ld::MatrixDirectInput): OFF, AES, MON.PH, MON.SPK, MON.BUS. */
+    static juce::String matrixDirectName (int index);
+
+    //==============================================================================
     // Monitor path processing and SOURCE SOLO (ABI 8, saved with the show;
     // scenes recall the paths with ROUTING). monitor.paths[0] = SPEAKERS,
     // [1] = PHONES: DIRECT IN, BAND SOLO, EQ, PAN / WIDTH, INVERT, DELAY, LIMITER.
@@ -435,6 +483,12 @@ private:
     int numSources = 0;
     ld::OscParams* oscillators = nullptr;
     int numOscillators = 0;
+    ld::UserSignalParams* userSignals = nullptr;
+    int numUserSignals = 0;
+    ld::UserPatchParams* userPatches = nullptr;
+    int numUserPatches = 0;
+    std::atomic<int32_t>* outputPatch = nullptr;
+    int numPatchOutputs = 0;
     std::array<juce::uint32, 2> talkPressMs {};
     std::array<bool, 2> talkEndsOnRelease {};
 

@@ -23,9 +23,13 @@ namespace livedaw::ui::routing
       name for ports 1-48, which LOCAL IN already shows, so it reads n/a.
     - OSCILLATOR: OSC 1 / 2. WLIVE PLAY: the multitrack recorder's 64
       playback channels (PLAY 1 ...). USB PLAYER: the USB deck's 4 channels.
-    - Outputs: RECORDER taps any signal for the USB recorder. BUS, MAIN,
-      MATRIX and MONITOR feed outputs as on the console; USER SIGNAL holds
-      the channels' and aux channels' own outputs.
+    - BUS, MAIN and MATRIX: the strips' signals (BUS 1L, BUS 1R ...), as a
+      channel's source (manual 2.6; a block late) and on outputs.
+    - USER SIGNAL: USR 1-24, the user signals (copies of a strip), and USR
+      25-56, the user patches (copies of an external source); manual 2.6.
+    - Outputs: RECORDER taps any signal for the USB recorder. Any source
+      group feeds outputs as on the console (manual 5.4 OUTPUTS), with
+      MONITOR's PHONES and SPEAKERS.
 
     The other groups (AUX IN, AES/EBU, ST CONNECT, USB AUDIO, DANTE, ...) can
     be selected and show their tiles n/a, as the console shows a missing card. */
@@ -83,7 +87,7 @@ inline GroupInfo info (Group g)
         case Group::Bus:        return { "BUS", "BUS", 32 };
         case Group::Main:       return { "MAIN", "MAIN", 8 };
         case Group::Matrix:     return { "MATRIX", "MTX", 16 };
-        case Group::UserSignal: return { "USER SIGNAL", "USR", 24 };
+        case Group::UserSignal: return { "USER SIGNAL", "USR", ld::kNumUsrSources };
         case Group::Monitor:    return { "MONITOR", "MON", 4 };
         case Group::FxSend:     return { "FX SEND", "FX", 32 };
         case Group::LocalOut:   return { "LOCAL OUT", "LCL", 8 };
@@ -126,7 +130,37 @@ inline int sourceAt (Group g, int index)
         return index < Recorder::kNumPlaybackChannels ? Recorder::playbackSource (index) : -1;
     if (g == Group::UsbPlayer)
         return index < UsbRecorder::kNumChannels ? UsbRecorder::playerSource (index) : -1;
+    // A bus, main or matrix signal (2k = strip k+1 L, 2k+1 = R; buses by slot).
+    if (g == Group::Bus || g == Group::Main || g == Group::Matrix)
+    {
+        const auto kind = g == Group::Bus ? StripKind::Bus : g == Group::Main ? StripKind::Main : StripKind::Matrix;
+        return index < info (g).size ? MixerEngine::stripSource (kind, index / 2, index % 2) : -1;
+    }
+    if (g == Group::UserSignal)
+        return index < ld::kNumUsrSources ? MixerEngine::usrSource (index) : -1;
     return -1;
+}
+
+/** A strip signal's strip (kind and 0-based number, a bus by its slot) and side; false for other inputs. */
+inline bool stripOfSource (int source, StripKind& kind, int& number, int& side)
+{
+    if (! MixerEngine::isStripSource (source))
+        return false;
+    int n = source - ld::kStripSourceBase;
+    kind = StripKind::Bus;
+    if (n >= 2 * kWingBuses)
+    {
+        n -= 2 * kWingBuses;
+        kind = StripKind::Main;
+        if (n >= 2 * kNumMains)
+        {
+            n -= 2 * kNumMains;
+            kind = StripKind::Matrix;
+        }
+    }
+    number = n / 2;
+    side = n % 2;
+    return true;
 }
 
 /** The output port of tile `index` of an output group, or -1 (n/a). */
@@ -144,6 +178,12 @@ inline int outputAt (Group g, int index)
 /** The input group a source belongs to. */
 inline Group groupOfSource (int source)
 {
+    StripKind kind = StripKind::Bus;
+    int n = 0, side = 0;
+    if (stripOfSource (source, kind, n, side))
+        return kind == StripKind::Bus ? Group::Bus : kind == StripKind::Main ? Group::Main : Group::Matrix;
+    if (MixerEngine::isUsrSource (source))
+        return Group::UserSignal;
     if (MixerEngine::isOscSource (source))
         return Group::Oscillator;
     if (Recorder::isPlaybackSource (source))
@@ -156,6 +196,12 @@ inline Group groupOfSource (int source)
 /** The number of a source within its group (0-based). */
 inline int numberInGroup (int source)
 {
+    StripKind kind = StripKind::Bus;
+    int number = 0, side = 0;
+    if (stripOfSource (source, kind, number, side))
+        return 2 * number + side;
+    if (const int n = MixerEngine::usrChannelOf (source); n >= 0)
+        return n;
     if (const int n = MixerEngine::oscChannelOf (source); n >= 0)
         return n;
     if (const int n = Recorder::playbackChannelOf (source); n >= 0)
@@ -165,17 +211,26 @@ inline int numberInGroup (int source)
     return source % kBlock;
 }
 
-/** A source as its tile labels it: "LCL 3", "B 1", "OSC 1", "PLAY 5", "PLAYER 2" (empty for none). */
+/** A source as its tile labels it: "LCL 3", "B 1", "OSC 1", "PLAY 5", "PLAYER 2",
+    "USR 3", a strip's signal "BUS 12L", "MTX 2R" (empty for none). */
 inline juce::String sourceLabel (int source)
 {
     if (source < 0)
         return {};
+    StripKind kind = StripKind::Bus;
+    int number = 0, side = 0;
+    if (stripOfSource (source, kind, number, side))
+        return juce::String (info (groupOfSource (source)).prefix) + " " + juce::String (number + 1) + (side == 0 ? "L" : "R");
     return juce::String (info (groupOfSource (source)).prefix) + " " + juce::String (numberInGroup (source) + 1);
 }
 
-/** A stereo pair as a channel tile labels it: "LCL 1/2", "PLAY 3/4". */
+/** A stereo pair as a channel tile labels it: "LCL 1/2", "PLAY 3/4"; a strip's L and R "BUS 12". */
 inline juce::String pairLabel (int left, int right)
 {
+    StripKind kind = StripKind::Bus;
+    int number = 0, side = 0;
+    if (stripOfSource (left, kind, number, side) && side == 0 && right == left + 1)
+        return juce::String (info (groupOfSource (left)).prefix) + " " + juce::String (number + 1);
     return sourceLabel (left) + "/" + juce::String (numberInGroup (right) + 1);
 }
 

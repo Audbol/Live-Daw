@@ -14,6 +14,7 @@ use livedaw_engine::params::{
     DynSlotParams, EqBlockParams, InsertParams, MatrixSendParams, StripParams, FX_EXT, FX_NONE, NUM_DCAS, NUM_FX,
     NUM_MUTE_GROUPS, WING_BUSES,
 };
+use livedaw_engine::routing::{bus_feeds_bus, matrix_direct, MATRIX_DIRECT_INPUTS};
 use livedaw_engine::{Engine, Strip, StripKind, MAX_BUSES};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering::Relaxed};
@@ -460,8 +461,8 @@ fn capture_strip(s: &Strip, sections: u32, slots: &[usize]) -> Element {
             }
             let sends = e.add_new("Sends");
             for &slot in slots {
-                if kind == StripKind::Bus && (s.id() as usize) < 8 || kind == StripKind::Bus && slot >= 8 {
-                    continue; // buses 9+ feed buses 1-8 only
+                if kind == StripKind::Bus && !bus_feeds_bus(s.id() as usize, slot) {
+                    continue; // a bus feeds every other bus (manual 5.10), not itself
                 }
                 let x = sends.add_new("S");
                 x.set("slot", slot);
@@ -492,11 +493,12 @@ fn capture_strip(s: &Strip, sections: u32, slots: &[usize]) -> Element {
             capture_tap(&mut e, p);
         }
         if kind == StripKind::Matrix {
+            // DIRECT IN by the WING's name (`in`, manual 6.4); `src` was a channel before.
             let d = e.add_new("Dir");
             put_b(d, "on", &p.direct_on);
             put_b(d, "inv", &p.direct_invert);
-            put_b(d, "pre", &p.direct_pre);
-            put_i(d, "src", &p.direct_source);
+            let choice = (p.direct_source.load(Relaxed).max(0) as usize).min(MATRIX_DIRECT_INPUTS.len() - 1);
+            d.set("in", MATRIX_DIRECT_INPUTS[choice]);
             put_f(d, "lvl", &p.direct_level_db);
         }
     }
@@ -601,6 +603,41 @@ fn get_matrix_pan_link(e: &Element, ms: &MatrixSendParams) {
     let linked = e.bool_or("plink", e.double_or("pan", f64::from(ms.pan.load())) == 0.0);
     ms.pan_link.store(linked, Relaxed);
     ms.pan_reversed.store(e.bool_or("prev", false), Relaxed);
+}
+
+/// A matrix DIRECT IN saved before it took the WING's choices (`src`: an
+/// input channel's index, `pre`: its PFL, else its panned output). The WING
+/// sends a channel to a matrix with the channel's matrix send, so it becomes
+/// that: on, at the direct input's level, PRE (TAP) or post-fader with PAN
+/// LINK (the panned output, as before), unless the send is already in use.
+/// A polarity flip (a mix-minus) can't come along: it is reported.
+fn apply_legacy_direct_input(engine: &Engine, mtx: &Strip, d: &Element, warnings: &mut Vec<String>) {
+    let p = &mtx.params;
+    p.direct_source.store(matrix_direct::OFF, Relaxed);
+    let was_on = p.direct_on.swap(false, Relaxed);
+    let Ok(ch) = usize::try_from(d.int_or("src", -1)) else { return };
+    if !was_on {
+        return;
+    }
+    let (number, mtx_number) = (ch + 1, mtx.id() + 1);
+    let Some(channel) = engine.channel_at(ch) else {
+        warnings.push(format!("MTX {mtx_number}: the direct input from CH {number} was dropped (no such channel)"));
+        return;
+    };
+    let Some(ms) = channel.params.matrix.get(mtx.id().max(0) as usize) else { return };
+    if ms.on.load(Relaxed) {
+        warnings.push(format!("MTX {mtx_number}: the direct input from CH {number} was dropped (its matrix send is in use)"));
+        return;
+    }
+    ms.on.store(true, Relaxed);
+    ms.level_db.store(p.direct_level_db.load());
+    ms.pre.store(d.bool_or("pre", false), Relaxed);
+    ms.pan_link.store(true, Relaxed);
+    ms.pan_reversed.store(false, Relaxed);
+    if p.direct_invert.swap(false, Relaxed) {
+        warnings
+            .push(format!("MTX {mtx_number}: the direct input from CH {number} is now CH {number}'s matrix send, not inverted"));
+    }
 }
 
 /// IGNORE CHANNEL MUTE. Shows from before the flag had pre-fader sends that
@@ -874,6 +911,7 @@ pub fn capture(engine: &Engine, sections: u32, only: Option<&[StripRef]>, bridge
         if sections & section::ROUTING != 0 {
             capture_monitor(engine, &mut state, false);
             capture_input_select(engine, &mut state);
+            crate::globals::capture_routing(engine, &mut state);
         }
         if sections & section::FADER != 0 {
             capture_dcas(engine, &mut state, sections & section::NAME != 0);
@@ -1018,9 +1056,14 @@ fn apply_strip(
         if let Some(d) = e.child("Dir") {
             get_b(d, "on", &p.direct_on);
             get_b(d, "inv", &p.direct_invert);
-            get_b(d, "pre", &p.direct_pre);
-            get_i(d, "src", &p.direct_source);
             get_f(d, "lvl", &p.direct_level_db);
+            match d.attr("in") {
+                Some(name) => {
+                    let choice = MATRIX_DIRECT_INPUTS.iter().position(|x| *x == name).unwrap_or(0);
+                    p.direct_source.store(choice as i32, Relaxed);
+                }
+                None => apply_legacy_direct_input(engine, s, d, &mut result.warnings),
+            }
         }
     }
     if let Some(o) = e.child("Fdr").filter(|_| sections & FADER != 0) {
@@ -1080,6 +1123,7 @@ pub fn apply(
         }
         if effective & section::ROUTING != 0 {
             apply_input_select(engine, state);
+            crate::globals::apply_routing(engine, state);
         }
         if effective & section::FADER != 0 {
             apply_dcas(engine, state, &mut fades);
@@ -1115,6 +1159,7 @@ pub fn save_console(engine: &Engine, bridge: &mut dyn PluginBridge) -> Element {
     put_f(&mut console, "outputCeilingDb", &engine.controls.output_ceiling_db);
     capture_monitor(engine, &mut console, true);
     capture_input_select(engine, &mut console);
+    crate::globals::capture_routing(engine, &mut console);
     capture_prefs(engine, &mut console);
     capture_rta(engine, &mut console);
     capture_automix(engine, &mut console);
@@ -1145,6 +1190,7 @@ pub fn load_console(engine: &Engine, console: &Element, bridge: &mut dyn PluginB
     get_f(console, "outputCeilingDb", &engine.controls.output_ceiling_db);
     apply_monitor(engine, console);
     apply_input_select(engine, console);
+    crate::globals::apply_routing(engine, console);
     if console.child("InputSelect").is_none() {
         // Saved before INPUT SELECT: per strip, as then (a new console has it GLOBAL).
         engine.controls.input_select_global.store(false, Relaxed);

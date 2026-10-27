@@ -54,8 +54,91 @@ public:
             expectEquals (routing::sourceLabel (UsbRecorder::playerSource (1)), juce::String ("PLAYER 2"));
             expectEquals (routing::pairLabel (Recorder::playbackSource (2), Recorder::playbackSource (3)), juce::String ("PLAY 3/4"));
             // Groups Sidecar doesn't have can be shown but not patched.
-            for (auto g : { Group::AuxIn, Group::AesIn, Group::StConnect, Group::UsbAudio, Group::Dante, Group::Bus, Group::UserSignal })
+            for (auto g : { Group::AuxIn, Group::AesIn, Group::StConnect, Group::UsbAudio, Group::Dante, Group::FxSend })
                 expectEquals (routing::sourceAt (g, 0), -1);
+        }
+
+        beginTest ("BUS, MAIN and MATRIX as sources; USER SIGNAL's user signals and patches (manual 2.6)");
+        {
+            // Two tiles per strip, L and R; buses by slot.
+            expectEquals (routing::sourceAt (Group::Bus, 0), MixerEngine::stripSource (StripKind::Bus, 0, 0));
+            expectEquals (routing::sourceAt (Group::Bus, 23), MixerEngine::stripSource (StripKind::Bus, 11, 1));
+            expectEquals (routing::sourceAt (Group::Bus, 32), -1);
+            expectEquals (routing::sourceAt (Group::Main, 7), MixerEngine::stripSource (StripKind::Main, 3, 1));
+            expectEquals (routing::sourceAt (Group::Matrix, 2), MixerEngine::stripSource (StripKind::Matrix, 1, 0));
+            expectEquals (MixerEngine::stripSource (StripKind::Bus, 16, 0), -1); // past the WING's 16
+            expectEquals (MixerEngine::stripSource (StripKind::Channel, 0, 0), -1);
+            const int bus12r = routing::sourceAt (Group::Bus, 23);
+            expectEquals (routing::sourceLabel (bus12r), juce::String ("BUS 12R"));
+            expectEquals (routing::sourceLabel (routing::sourceAt (Group::Matrix, 2)), juce::String ("MTX 2L"));
+            expect (routing::groupOfSource (bus12r) == Group::Bus);
+            expect (routing::groupOfSource (routing::sourceAt (Group::Main, 0)) == Group::Main);
+            expectEquals (routing::pairLabel (bus12r - 1, bus12r), juce::String ("BUS 12"));
+            expectEquals (inputPortName (bus12r), juce::String ("BUS 12R"));
+            expectEquals (inputSourceText (bus12r - 1, -1, true), juce::String ("BUS 12"));
+            expectEquals (MixerEngine::sourceIndex (bus12r), -1); // no source settings of their own
+
+            // USR 1-24 user signals, 25-56 user patches: sources with settings.
+            expectEquals (routing::info (Group::UserSignal).size, 56);
+            expectEquals (routing::sourceAt (Group::UserSignal, 0), MixerEngine::usrSource (0));
+            expectEquals (routing::sourceAt (Group::UserSignal, 55), MixerEngine::usrSource (55));
+            expectEquals (routing::sourceAt (Group::UserSignal, 56), -1);
+            expectEquals (routing::sourceLabel (MixerEngine::usrSource (24)), juce::String ("USR 25"));
+            expectEquals (inputPortName (MixerEngine::usrSource (2)), juce::String ("USR 3"));
+            expect (routing::groupOfSource (MixerEngine::usrSource (30)) == Group::UserSignal);
+            expectEquals (MixerEngine::sourceIndex (MixerEngine::usrSource (55)), ld::kNumSources - 1);
+            expect (! MixerEngine::sourceGainRange (MixerEngine::sourceIndex (MixerEngine::usrSource (0))).hasGain());
+            expectEquals (MixerEngine::matrixDirectName (ld::kDirectSoloBus), juce::String ("MON.BUS"));
+            expectEquals (MixerEngine::matrixDirectName (-1), juce::String ("OFF"));
+        }
+
+        beginTest ("ROUTING > OUTPUTS: a source straight to an output; a bus as a channel's source");
+        {
+            MixerEngine engine (0);
+            OfflineRig rig (engine, 2, 8);
+            test::setChannels (engine, 2);
+            auto& main = engine.getMain();
+            main.params.outputLeft = -1;
+            main.params.outputRight = -1;
+            rig.setInput (1, 0.25f);
+            // LCL 2 on output 5 (chapter 2: "from any input to any output directly").
+            expect (engine.routeOutputSource (5, 1));
+            expectEquals (engine.getOutputSource (5), 1);
+            rig.run();
+            expectWithinAbsoluteError (rig.out (5), 0.25f, 1.0e-5f);
+            // One source per output: Bus 3 L there instead.
+            auto& bus3 = *engine.getBuses()[2];
+            expect (engine.routeOutputSource (5, MixerEngine::stripSource (StripKind::Bus, 2, 0)));
+            expectEquals (engine.getOutputSource (5), -1);
+            expectEquals (bus3.params.outputLeft.load(), 5);
+            engine.clearOutput (5);
+            expectEquals (bus3.params.outputLeft.load(), -1);
+
+            // CH 1 on Bus 3 L (a block late), its direct out on output 6.
+            auto& ch1 = *engine.getChannels()[0];
+            ch1.params.inputLeft = MixerEngine::stripSource (StripKind::Bus, 2, 0);
+            ch1.params.outputLeft = 6;
+            auto& ch2 = *engine.getChannels()[1];
+            ch2.params.inputLeft = 1;
+            ch2.sends[2].enabled = true;
+            rig.run();
+            expectWithinAbsoluteError (rig.out (6), 0.25f * test::kCentre, 1.0e-5f);
+
+            // USR 1 copies CH 2 (PRE) onto output 7.
+            auto* user = engine.getUserSignal (0);
+            expect (user != nullptr && engine.getUserSignal (ld::kNumUserSignals) == nullptr);
+            if (user == nullptr)
+                return;
+            user->group = 1;
+            user->number = 2;
+            engine.routeOutputSource (7, MixerEngine::usrSource (0));
+            rig.run();
+            expectWithinAbsoluteError (rig.out (7), 0.25f, 1.0e-5f);
+            // USR 25 copies LCL 2.
+            engine.setUserPatch (0, 1);
+            expectEquals (engine.getUserPatch (0)->source.load(), 1);
+            engine.setUserPatch (1, MixerEngine::oscSource (0)); // not an external source: OFF
+            expectEquals (engine.getUserPatch (1)->source.load(), -1);
         }
 
         beginTest ("Outputs: LOCAL OUT, AES50 B / C and the RECORDER's taps");

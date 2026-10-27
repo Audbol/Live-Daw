@@ -159,7 +159,7 @@ void FaderStrip::refresh()
             switch (to.getKind())
             {
                 case StripKind::Bus:
-                    if (from.isInput() || (from.isBus() && from.getId() >= kBusToBusTargets && to.getId() < kBusToBusTargets))
+                    if (from.isInput() || (from.isBus() && busFeedsBus (from.getId(), to.getId())))
                     {
                         auto& s = from.sends[(size_t) to.getId()];
                         return SendTarget { &s.levelDb, &s.enabled, tag };

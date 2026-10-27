@@ -361,13 +361,15 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 /// 1-48 = ports 49-96, C = 97-144. LCL is Sidecar's LOCAL IN / LOCAL OUT,
 /// ROUTING's name for ports 1-48: LCL n is A n. The recorder's 64 playback
 /// channels are the WING-LIVE card (CRD), the USB player's four channels the
-/// PLAY group, the two oscillators the OSC group. On import, other input
-/// groups (AUX, SC, USB, MOD, AES, USR) land on the port of the same number;
-/// the internal BUS/MAIN/MTX sources have no equivalent.
+/// PLAY group, the two oscillators the OSC group, USR 1-56 the user signals
+/// and user patches (manual 2.6), BUS / MAIN / MTX n the strips' signals
+/// (2k-1 = left of strip k, 2k = right). On import, the other input groups
+/// (AUX, SC, USB, MOD, AES) land on the port of the same number.
 pub mod port {
     use super::PLAYBACK_SOURCE_BASE;
-    use livedaw_engine::sources::{osc_channel, NUM_OSCILLATORS, OSC_SOURCE_BASE};
-    use livedaw_engine::{USB_CHANNELS, USB_PLAYER_SOURCE_BASE};
+    use livedaw_engine::routing::{strip_source, strip_source_input};
+    use livedaw_engine::sources::{osc_channel, usr_channel, NUM_OSCILLATORS, NUM_USR_SOURCES, OSC_SOURCE_BASE, USR_SOURCE_BASE};
+    use livedaw_engine::{StripKind, USB_CHANNELS, USB_PLAYER_SOURCE_BASE};
 
     pub const BLOCK: i32 = 48;
     pub const BLOCKS: [&str; 3] = ["A", "B", "C"];
@@ -382,6 +384,17 @@ pub mod port {
         }
         if let Some(n) = livedaw_engine::recorder::usb_player_channel(src) {
             return Some(("PLAY", n as i32 + 1));
+        }
+        if let Some(n) = usr_channel(src) {
+            return Some(("USR", n as i32 + 1));
+        }
+        if let Some((kind, number, side)) = strip_source(src) {
+            let group = match kind {
+                StripKind::Bus => "BUS",
+                StripKind::Main => "MAIN",
+                _ => "MTX",
+            };
+            return Some((group, 2 * number as i32 + side as i32 + 1));
         }
         if src >= PLAYBACK_SOURCE_BASE {
             let n = src - PLAYBACK_SOURCE_BASE;
@@ -402,7 +415,16 @@ pub mod port {
             "CRD" => (n <= 64).then_some(PLAYBACK_SOURCE_BASE + n - 1),
             "OSC" => (n <= NUM_OSCILLATORS as i32).then_some(OSC_SOURCE_BASE + n - 1),
             "PLAY" => (n <= USB_CHANNELS as i32).then_some(USB_PLAYER_SOURCE_BASE + n - 1),
-            "LCL" | "AUX" | "SC" | "USB" | "MOD" | "AES" | "USR" => Some(n - 1),
+            "USR" => (n <= NUM_USR_SOURCES as i32).then_some(USR_SOURCE_BASE + n - 1),
+            "BUS" | "MAIN" | "MTX" => {
+                let kind = match group {
+                    "BUS" => StripKind::Bus,
+                    "MAIN" => StripKind::Main,
+                    _ => StripKind::Matrix,
+                };
+                Some(strip_source_input(kind, (n - 1) as usize / 2, (n - 1) as usize % 2)).filter(|s| *s >= 0)
+            }
+            "LCL" | "AUX" | "SC" | "USB" | "MOD" | "AES" => Some(n - 1),
             _ => None,
         }
     }
@@ -417,10 +439,11 @@ pub mod port {
 
     /// Input groups whose sources are Sidecar's sources (ROUTING > SOURCES):
     /// LOCAL IN (the same ports as AES50 A), the AES50 ports, the WING-LIVE
-    /// card, the USB player and the oscillators. The other groups only share
-    /// port numbers with them here (for patches from WING snapshots): their
-    /// source settings are stored as set.
-    pub const SOURCE_GROUPS: [&str; 7] = ["LCL", "A", "B", "C", "CRD", "PLAY", "OSC"];
+    /// card, the USB player, the oscillators and the USR group (user signals
+    /// and user patches). The other groups only share port numbers with them
+    /// here (for patches from WING snapshots): their source settings are
+    /// stored as set.
+    pub const SOURCE_GROUPS: [&str; 8] = ["LCL", "A", "B", "C", "CRD", "PLAY", "OSC", "USR"];
 
     /// Output groups that are Sidecar's outputs: LOCAL OUT (ports 1-8 here, as
     /// A 1-8) and the AES50 blocks.
@@ -549,6 +572,8 @@ pub enum SF {
     DirOn,
     DirLvl,
     DirInv,
+    /// Matrix DIRECT IN (`dir/in`: OFF, AES, MON.PH, MON.SPK, MON.BUS).
+    DirIn,
     /// TAP WIDTH and TAP EQ (the WING's PRE EQ, `/ch/N/peq`): band 0-2.
     TapWidth,
     TapEqOn,
@@ -691,6 +716,17 @@ pub enum SrcF {
     Mode,
 }
 
+/// `/io/in/USR/<n>/user/...`: what a user signal (USR 1-24: `grp` CH .. MTX,
+/// `in`, `lr`, `tap`) or a user patch (USR 25-56: `grp` LCL .. AES, `in`)
+/// copies (manual 2.6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UsrF {
+    Grp,
+    In,
+    Lr,
+    Tap,
+}
+
 /// `/io/in/OSC/<n>/osc/...`: an oscillator's settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OscF {
@@ -749,6 +785,8 @@ pub enum Binding {
     Mon(u8, MonF),
     /// A source of `port::SOURCE_GROUPS`.
     Source(&'static str, u16, SrcF),
+    /// USR source (0-based: 0-23 user signals, 24-55 user patches): what it copies.
+    UserSrc(u8, UsrF),
     /// Oscillator (0-based) settings.
     Osc(u8, OscF),
     /// RTA settings: false = HOME (`rta*`), true = EQ (`eq*`).
@@ -996,8 +1034,8 @@ fn strip_field(kind: StripKind, n: u16, rest: &[&str]) -> Option<SF> {
                             _ => return None,
                         },
                     )
-                } else if kind == Bus && n >= 9 && b <= 8 {
-                    // Buses 9+ feed buses 1-8 (the engine's bus-to-bus sends).
+                } else if kind == Bus && livedaw_engine::routing::bus_feeds_bus(n as usize - 1, b as usize - 1) {
+                    // Any bus feeds any other bus (manual 5.10, BUS → BUS).
                     SF::Send(
                         b - 1,
                         match *f {
@@ -1030,6 +1068,7 @@ fn strip_field(kind: StripKind, n: u16, rest: &[&str]) -> Option<SF> {
         ["dir", "on"] if kind == Matrix => SF::DirOn,
         ["dir", "lvl"] if kind == Matrix => SF::DirLvl,
         ["dir", "inv"] if kind == Matrix => SF::DirInv,
+        ["dir", "in"] if kind == Matrix => SF::DirIn,
         _ => return None,
     })
 }
@@ -1185,6 +1224,16 @@ pub fn bind(parts: &[&str]) -> Binding {
             };
             match (number(n, 2 * wing_strips(kind)), field) {
                 (Some(n), Some(f)) => Binding::StripSource(kind, n, f),
+                _ => Binding::None,
+            }
+        }
+        ["io", "in", "USR", n, "user", f] => {
+            let signal = |n: u16| (n as usize) <= sources::NUM_USER_SIGNALS;
+            match (number(n, sources::NUM_USR_SOURCES as u16), *f) {
+                (Some(n), "grp") => Binding::UserSrc(n as u8 - 1, UsrF::Grp),
+                (Some(n), "in") => Binding::UserSrc(n as u8 - 1, UsrF::In),
+                (Some(n), "lr") if signal(n) => Binding::UserSrc(n as u8 - 1, UsrF::Lr),
+                (Some(n), "tap") if signal(n) => Binding::UserSrc(n as u8 - 1, UsrF::Tap),
                 _ => Binding::None,
             }
         }
@@ -2197,6 +2246,22 @@ impl<'a> Console<'a> {
                     SrcF::Mode => return None,
                 }
             }
+            Binding::UserSrc(i, uf) => match e.sources().user_signals().get(i as usize) {
+                Some(u) => match uf {
+                    UsrF::Grp => item(def, u.group.load(Relaxed)),
+                    UsrF::In => Value::Int(u.number.load(Relaxed)),
+                    UsrF::Lr => item(def, u.side.load(Relaxed)),
+                    UsrF::Tap => item(def, u.post.load(Relaxed) as i32),
+                },
+                None => {
+                    let (g, k) = self.user_patch_pair(row, i as usize - sources::NUM_USER_SIGNALS);
+                    if uf == UsrF::In {
+                        Value::Int(k)
+                    } else {
+                        Value::str(g)
+                    }
+                }
+            },
             Binding::Info(info) => {
                 let id = self.state.identity();
                 Value::Str(match info {
@@ -2209,14 +2274,7 @@ impl<'a> Console<'a> {
             }
             Binding::Out(block, n, number) => {
                 let port = port::output_port(block as usize, n as i32);
-                let (g, k) = match self.output_source(port) {
-                    Some(gk) => gk,
-                    None => match self.shadow_pair(row, "grp", "in") {
-                        // A source Sidecar can't route, as set; else OFF with the number set.
-                        Some((sg, sk)) => (unroutable_group(row, &sg).unwrap_or("OFF"), sk),
-                        None => return None,
-                    },
-                };
+                let (g, k) = self.out_pair(row, port)?;
                 if number {
                     Value::Int(k)
                 } else {
@@ -2273,7 +2331,12 @@ impl<'a> Console<'a> {
             }
         }
         let c = &self.engine.controls;
-        (1..=4).find(|&k| monitor_output(c, k).load(Relaxed) == port).map(|k| ("MON", k))
+        if let Some(k) = (1..=4).find(|&k| monitor_output(c, k).load(Relaxed) == port) {
+            return Some(("MON", k));
+        }
+        // A source patched straight to the output (ROUTING > OUTPUTS).
+        let src = self.engine.output_patch().get(port);
+        port::source_to_wing(src).filter(|_| src >= 0)
     }
 
     /// The input patch of a strip as the WING shows it. Sidecar stores one
@@ -2485,6 +2548,7 @@ impl<'a> Console<'a> {
             SF::DirOn => b(&p.direct_on),
             SF::DirLvl => lvl(&p.direct_level_db),
             SF::DirInv => b(&p.direct_invert),
+            SF::DirIn => item(def, p.direct_source.load(Relaxed)),
             SF::TapWidth => f(&p.tap_width),
             SF::TapEqOn => b(&p.tap_eq.on),
             SF::TapEq(band, tf) => {
@@ -2991,6 +3055,26 @@ impl<'a> Console<'a> {
                     SrcF::MuteState | SrcF::Mode => return Err(SetError::ReadOnly),
                 }
             }
+            Binding::UserSrc(i, uf) => match e.sources().user_signals().get(i as usize) {
+                Some(u) => match uf {
+                    UsrF::Grp => set_item(&u.group, def, v),
+                    UsrF::In => u.number.store(v.as_i32().unwrap_or(1).max(1), Relaxed),
+                    UsrF::Lr => set_item(&u.side, def, v),
+                    UsrF::Tap => u.post.store(value::enum_index(def, v) == Some(1), Relaxed),
+                },
+                None => {
+                    let n = i as usize - sources::NUM_USER_SIGNALS;
+                    let (cur_g, cur_n) = self.user_patch_pair(row, n);
+                    let (g, k) = if uf == UsrF::In { (cur_g.to_owned(), v.as_i32().unwrap_or(1)) } else { (str_of(v), cur_n) };
+                    e.sources().set_user_patch(n, port::wing_to_source(&g, k).unwrap_or(-1));
+                    // Keep the pair as set (an OFF patch's number, LCL n beside A n).
+                    for (name, val) in [("grp", Value::Str(g)), ("in", Value::Int(k))] {
+                        if let Some(r) = self.sibling(row, name) {
+                            self.state.shadow_set(ShadowKey::Row(r), val);
+                        }
+                    }
+                }
+            },
             Binding::RtaShown(_) | Binding::FxAssign(..) => return Err(SetError::ReadOnly),
             Binding::Osc(n, of) => {
                 let o = e.sources().osc(n as usize).ok_or(SetError::NotFound)?;
@@ -3062,7 +3146,7 @@ impl<'a> Console<'a> {
             Binding::Out(block, n, number) => {
                 let port = port::output_port(block as usize, n as i32);
                 let (cur_g, cur_n) = self
-                    .output_source(port)
+                    .out_pair(row, port)
                     .map(|(g, k)| (g.to_owned(), k))
                     .or_else(|| self.shadow_pair(row, "grp", "in"))
                     .unwrap_or(("OFF".into(), 1));
@@ -3157,6 +3241,41 @@ impl<'a> Console<'a> {
         }
     }
 
+    /// What feeds output `port` as its `/io/out/../grp`, `in` (`row`, either)
+    /// show it: a source as set while it names the routed one (LCL 5 is A 5
+    /// here, SC 7 is port 7), else what Sidecar routes there; a source
+    /// Sidecar can't route as set; else OFF with the number set. None:
+    /// nothing set and nothing routed.
+    fn out_pair(&self, row: u16, port: i32) -> Option<(&'static str, i32)> {
+        Some(match (self.output_source(port), self.shadow_pair(row, "grp", "in")) {
+            (Some(gk), Some((sg, sk)))
+                if unroutable_group(row, &sg).is_some()
+                    && port::wing_to_source(&sg, sk).is_some_and(|s| s >= 0 && port::wing_to_source(gk.0, gk.1) == Some(s)) =>
+            {
+                (unroutable_group(row, &sg).unwrap_or(gk.0), sk)
+            }
+            (Some(gk), _) => gk,
+            (None, Some((sg, sk))) => (unroutable_group(row, &sg).unwrap_or("OFF"), sk),
+            (None, None) => return None,
+        })
+    }
+
+    /// What user patch `n` (0-based) copies as the WING's (group, number):
+    /// the pair as set while it still names the patched source (LCL 5 and
+    /// A 5 are one port here), else the source's own name; OFF keeps the
+    /// number set.
+    fn user_patch_pair(&self, row: u16, n: usize) -> (&'static str, i32) {
+        let src = self.engine.sources().user_patches().get(n).map_or(-1, |p| p.source.load(Relaxed));
+        let shadow =
+            self.shadow_pair(row, "grp", "in").and_then(|(g, k)| def_items_find(self.sibling(row, "grp"), &g).map(|g| (g, k)));
+        match (shadow, port::source_to_wing(src)) {
+            (Some((g, k)), _) if src >= 0 && port::wing_to_source(g, k) == Some(src) => (g, k),
+            (Some((_, k)), _) if src < 0 => ("OFF", k),
+            (_, Some(gk)) => gk,
+            _ => ("OFF", 1),
+        }
+    }
+
     fn shadow_pair(&self, row: u16, gname: &str, nname: &str) -> Option<(String, i32)> {
         let g = self.sibling(row, gname).and_then(|r| self.state.shadow_get(ShadowKey::Row(r)))?;
         let n = self.sibling(row, nname).and_then(|r| self.state.shadow_get(ShadowKey::Row(r)))?;
@@ -3164,7 +3283,8 @@ impl<'a> Console<'a> {
     }
 
     /// Routes `group`/`n` (BUS, MAIN, MTX: 2k-1 = left of strip k, 2k = right;
-    /// MON 1/2) to hardware output `port`. False if Sidecar can't.
+    /// MON 1-4; any input group's source) to hardware output `port`. False if
+    /// Sidecar can't.
     fn route_output(&self, port: i32, group: &str, n: i32) -> bool {
         let c = &self.engine.controls;
         let target: Option<(&Arc<Strip>, bool)> = match group {
@@ -3173,34 +3293,31 @@ impl<'a> Console<'a> {
             "MTX" => self.matrices.get(((n - 1) / 2) as usize).map(|s| (s, n % 2 == 0)),
             _ => None,
         };
-        let known = target.is_some() || group == "OFF" || (group == "MON" && (1..=4).contains(&n));
+        // Any source Sidecar has (manual 5.4 OUTPUTS: "route any Source to
+        // any digital or analog output"): a port, a playback channel, the USB
+        // player, an oscillator, a user signal or patch.
+        let source = match (group, target) {
+            ("BUS" | "MAIN" | "MTX" | "MON" | "OFF", _) | (_, Some(_)) => None,
+            _ => port::wing_to_source(group, n).filter(|s| *s >= 0),
+        };
+        let known = target.is_some() || source.is_some() || group == "OFF" || (group == "MON" && (1..=4).contains(&n));
         if !known {
             return false;
         }
         // One source per output, as on the console.
-        for s in self.buses.iter().flatten().chain(&self.mains).chain(&self.matrices) {
-            for o in [&s.params.output_left, &s.params.output_right] {
-                if o.load(Relaxed) == port {
-                    o.store(-1, Relaxed);
-                }
-            }
-        }
-        for k in 1..=4 {
-            let o = monitor_output(c, k);
-            if o.load(Relaxed) == port {
-                o.store(-1, Relaxed);
-            }
-        }
-        match (group, target) {
-            (_, Some((s, right))) => {
+        self.engine.clear_output(port);
+        match (group, target, source) {
+            (_, Some((s, right)), _) => {
                 if right { &s.params.output_right } else { &s.params.output_left }.store(port, Relaxed);
             }
-            ("MON", None) => monitor_output(c, n).store(port, Relaxed),
+            (_, _, Some(src)) => {
+                self.engine.route_output_source(port, src);
+            }
+            ("MON", None, None) => monitor_output(c, n).store(port, Relaxed),
             _ => {}
         }
         true
     }
-
     fn set_fx_model(&self, i: usize, v: &Value) -> Result<(), SetError> {
         let c = &self.engine.controls;
         let p = c.fx.get(i).ok_or(SetError::NotFound)?;
@@ -3402,6 +3519,7 @@ impl<'a> Console<'a> {
             SF::DirOn => set_b(&p.direct_on, v),
             SF::DirLvl => set_lvl(&p.direct_level_db, v),
             SF::DirInv => set_b(&p.direct_invert, v),
+            SF::DirIn => set_item(&p.direct_source, def, v),
             SF::TapWidth => set_f(&p.tap_width, v),
             SF::TapEqOn => set_b(&p.tap_eq.on, v),
             SF::TapEq(band, tf) => {
@@ -3487,8 +3605,10 @@ fn str_of(v: &Value) -> String {
     }
 }
 
-/// A shadowed group of `row`'s (grp, in) pair, if Sidecar can't route it
-/// (else the engine's state wins: a stale shadow must not show).
+/// A shadowed group of `row`'s (grp, in) pair that is an input group, not
+/// the strips', the monitor's or OFF (those always show the engine's state:
+/// a stale shadow must not show); the caller checks it still names the
+/// routed source.
 fn unroutable_group(row: u16, group: &str) -> Option<&'static str> {
     if matches!(group, "BUS" | "MAIN" | "MTX" | "MON" | "OFF") {
         return None;
@@ -3756,6 +3876,85 @@ mod tests {
         assert!(matches!(c.set(node(&c, "/fx/12/mdl"), &Value::str("HALL")), Err(SetError::Unsupported(_) | SetError::BadValue)));
     }
 
+    /// The routing nodes: USR sources and what they copy, sources on outputs,
+    /// matrix `dir/in`, sends between any two buses.
+    #[test]
+    fn user_signals_patches_outputs_direct_in_and_bus_sends() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let set = |p: &str, v: Value| c.set(node(&c, p), &v).unwrap();
+        let get = |p: &str| c.get(node(&c, p)).unwrap();
+        let t = e.sources();
+        // USR 2: Bus 12 R, POST.
+        set("/io/in/USR/2/user/grp", Value::str("BUS"));
+        set("/io/in/USR/2/user/in", Value::Int(12));
+        set("/io/in/USR/2/user/lr", Value::str("R"));
+        set("/io/in/USR/2/user/tap", Value::str("POST"));
+        let u = &t.user_signals()[1];
+        assert_eq!(u.strip(), Some((StripKind::Bus, 12)));
+        assert!(u.post.load(Relaxed) && u.side.load(Relaxed) == sources::user_side::RIGHT);
+        assert_eq!((get("/io/in/USR/2/user/grp"), get("/io/in/USR/2/user/tap")), (Value::str("BUS"), Value::str("POST")));
+        // Its source settings: pairing (which copies USR 1's settings), name, polarity.
+        set("/io/in/USR/1/mode", Value::str("ST"));
+        set("/io/in/USR/2/name", Value::str("B12 R"));
+        set("/io/in/USR/2/pol", Value::Int(1));
+        assert_eq!(t.name(sources::USR_SOURCE_INDEX + 1), "B12 R");
+        assert!(t.get(sources::USR_SOURCE_INDEX + 1).unwrap().invert.load(Relaxed));
+        assert_eq!(t.get(sources::USR_SOURCE_INDEX).unwrap().mode.load(Relaxed), source_mode::STEREO);
+        assert!(c.is_mapped(node(&c, "/io/in/USR/56/user/grp")));
+        assert!(schema().resolve("/io/in/USR/30/user/lr", &NoModels).is_none());
+        // USR 26: LCL 5 (port 5, shown as set); CRD 3 = playback 3.
+        set("/io/in/USR/26/user/grp", Value::str("LCL"));
+        set("/io/in/USR/26/user/in", Value::Int(5));
+        assert_eq!(t.user_patches()[1].source.load(Relaxed), 4);
+        assert_eq!((get("/io/in/USR/26/user/grp"), get("/io/in/USR/26/user/in")), (Value::str("LCL"), Value::Int(5)));
+        set("/io/in/USR/27/user/grp", Value::str("CRD"));
+        set("/io/in/USR/27/user/in", Value::Int(3));
+        assert_eq!(t.user_patches()[2].source.load(Relaxed), PLAYBACK_SOURCE_BASE + 2);
+        t.set_user_patch(2, 50); // changed elsewhere: shows the source's own name
+        assert_eq!((get("/io/in/USR/27/user/grp"), get("/io/in/USR/27/user/in")), (Value::str("B"), Value::Int(3)));
+        set("/io/in/USR/27/user/grp", Value::str("OFF"));
+        assert_eq!(t.user_patches()[2].source.load(Relaxed), -1);
+
+        // Outputs take any source (manual 5.4): A 3 <- SC 7 (port 7, shown as
+        // set), A 4 <- OSC 2, A 5 <- USR 2; then BUS 3 replaces SC 7.
+        set("/io/out/A/3/grp", Value::str("SC"));
+        set("/io/out/A/3/in", Value::Int(7));
+        assert_eq!(e.output_patch().get(2), 6);
+        assert_eq!((get("/io/out/A/3/grp"), get("/io/out/A/3/in")), (Value::str("SC"), Value::Int(7)));
+        set("/io/out/A/4/in", Value::Int(2));
+        set("/io/out/A/4/grp", Value::str("OSC"));
+        assert_eq!(e.output_patch().get(3), sources::OSC_SOURCE_BASE + 1);
+        set("/io/out/A/5/in", Value::Int(2));
+        set("/io/out/A/5/grp", Value::str("USR"));
+        assert_eq!(e.output_patch().get(4), sources::USR_SOURCE_BASE + 1);
+        e.output_patch().set(4, sources::USR_SOURCE_BASE + 5); // set elsewhere
+        assert_eq!((get("/io/out/A/5/grp"), get("/io/out/A/5/in")), (Value::str("USR"), Value::Int(6)));
+        set("/io/out/A/3/grp", Value::str("BUS"));
+        assert_eq!(e.output_patch().get(2), -1);
+        assert_eq!(c.strip(StripKind::Bus, 4).unwrap().params.output_left.load(Relaxed), 2, "BUS 7 = Bus 4 L");
+        set("/io/out/A/3/grp", Value::str("OFF"));
+        assert_eq!(c.strip(StripKind::Bus, 4).unwrap().params.output_left.load(Relaxed), -1);
+
+        // Matrix DIRECT IN.
+        set("/mtx/3/dir/in", Value::str("MON.SPK"));
+        let m3 = c.strip(StripKind::Matrix, 3).unwrap();
+        assert_eq!(m3.params.direct_source.load(Relaxed), livedaw_engine::routing::matrix_direct::SPEAKERS);
+        assert_eq!(get("/mtx/3/dir/in"), Value::str("MON.SPK"));
+
+        // Bus 3 -> Bus 12 and Bus 16 -> Bus 1 (any bus to any other).
+        set("/bus/3/send/12/on", Value::Int(1));
+        set("/bus/3/send/12/lvl", Value::Float(-4.0));
+        set("/bus/16/send/1/pre", Value::Int(1));
+        let b3 = c.strip(StripKind::Bus, 3).unwrap();
+        let send = b3.sends.find(11).unwrap();
+        assert!(send.enabled.load(Relaxed) && send.level_db.load() == -4.0);
+        let b16 = c.strip(StripKind::Bus, 16).unwrap();
+        assert_eq!(b16.sends.find(0).unwrap().mode.load(Relaxed), send_mode::PRE);
+        assert_eq!(c.binding(node(&c, "/bus/5/send/5/on")), Binding::Stored, "not to itself");
+    }
+
     #[test]
     fn levels_and_routing() {
         let e = engine();
@@ -3771,10 +3970,20 @@ mod tests {
         assert_eq!(c.strip(StripKind::Channel, 1).unwrap().params.input_left.load(Relaxed), 50);
         c.set(node(&c, "/ch/2/in/conn/grp"), &Value::str("CRD")).unwrap();
         assert_eq!(c.get(node(&c, "/ch/2/in/conn/grp")), Some(Value::str("CRD")));
-        // An internal source isn't routable but reads back.
+        // A bus as a source (manual 2.6): BUS 4 (the number kept) = Bus 2 R; USR 3 a user signal.
         c.set(node(&c, "/ch/4/in/conn/grp"), &Value::str("BUS")).unwrap();
         assert_eq!(c.get(node(&c, "/ch/4/in/conn/grp")), Some(Value::str("BUS")));
-        assert_eq!(c.strip(StripKind::Channel, 4).unwrap().params.input_left.load(Relaxed), -1);
+        let input = |n: u16| c.strip(StripKind::Channel, n).unwrap().params.input_left.load(Relaxed);
+        assert_eq!(input(4), livedaw_engine::routing::strip_source_input(StripKind::Bus, 1, 1));
+        c.set(node(&c, "/ch/4/in/conn/in"), &Value::Int(16)).unwrap();
+        assert_eq!(input(4), livedaw_engine::routing::strip_source_input(StripKind::Bus, 7, 1));
+        c.set(node(&c, "/ch/5/in/conn/grp"), &Value::str("MTX")).unwrap();
+        c.set(node(&c, "/ch/5/in/conn/in"), &Value::Int(3)).unwrap();
+        assert_eq!(input(5), livedaw_engine::routing::strip_source_input(StripKind::Matrix, 1, 0));
+        assert_eq!(c.get(node(&c, "/ch/5/in/conn/in")), Some(Value::Int(3)));
+        c.set(node(&c, "/ch/6/in/conn/grp"), &Value::str("USR")).unwrap();
+        c.set(node(&c, "/ch/6/in/conn/in"), &Value::Int(3)).unwrap();
+        assert_eq!(input(6), sources::USR_SOURCE_BASE + 2);
         // Outputs: A 7/8 = Main 2 L/R.
         // (The number first: each strip has one output pair here, so MAIN with
         // the default number 1 would move Main 1 there.)
@@ -4716,14 +4925,16 @@ mod tests {
         assert_eq!(cov.mapped, 68555, "{}", cov.report());
         // 77 settings: the COMPACT's mfdr, cscmode, autosel_CMPCT, mfdrkeep, mainspill,
         // mtxspill and dcacc among them.
-        assert_eq!((cov.settings, cov.stored), (77, 7273), "{}", cov.report());
+        assert_eq!((cov.settings, cov.stored), (77, 6185), "{}", cov.report());
         for (g, (m, t)) in &cov.by_group {
             assert!(m == t || g == "/$ctl/daw", "{g}: {m} of {t}");
         }
         assert_eq!(cov.by_group["/$ctl/daw"], (14, 15));
         // The engine-backed share: everything but the settings and the stored values.
         // (The COMPACT's key sets U4, MM and D1-D4 count here: the full-size console answers their factory values.)
-        assert_eq!(cov.mapped - cov.settings - cov.stored, 61205);
+        // (The routing: every bus to every other bus, USR 1-56 and their
+        // user/..., the matrices' dir/in.)
+        assert_eq!(cov.mapped - cov.settings - cov.stored, 62293);
         let b = bindings();
         let row = |p: &str| match schema().resolve(p, &NoModels) {
             Some(Node::Row(r)) => r as usize,
@@ -4762,7 +4973,7 @@ mod tests {
             ("/fx/1/$emode", "ST"),
             ("/$ctl/$globals/mousespd", "1.77"),
             ("/$ctl/layer/CMPCT/sel", "1"),
-            ("/bus/1/send/2/lvl", "-oo"),
+            ("/bus/1/send/1/lvl", "-oo"), // a bus to itself
             ("/ch/1/$presolo", "0"),
             ("/cards/wlive/2/$stat/sessionlist", "2027-01-06 00:07:16 +10"),
         ] {
@@ -4790,7 +5001,7 @@ mod tests {
                 }
             }
         }
-        assert!(checked > 7000, "{checked}");
+        assert!(checked > 5900, "{checked}");
         // Unbound parameters answer the factory value too (where the strip is missing).
         let e8 = Engine::new(0);
         e8.set_num_channels(8);
