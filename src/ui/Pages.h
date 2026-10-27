@@ -85,12 +85,6 @@ private:
         juce::Rectangle<int> header, body;
     };
 
-    struct Hold
-    {
-        float level = 0.0f;
-        int frames = 0;
-    };
-
     void timerCallback() override;
     static float unitsOf (const std::vector<Group*>&);
     void layoutRow (int headerY, float k, std::vector<Group*> left, std::vector<Group*> centre, std::vector<Group*> right);
@@ -98,7 +92,14 @@ private:
     juce::Rectangle<int> numberRow (const Group&) const;
     juce::Rectangle<int> muteRow (const Group&) const;
     juce::Rectangle<float> slot (const Group&, int index) const;
+    /** A strip's level / peak hold on the meter scale (0..1). */
     float levelOf (const Group&, int index, int channel) const;
+    float holdOf (const Group&, int index, int channel) const;
+    /** A strip's (or DCA's) linear level, or its peak hold. */
+    float peakOf (const Group&, int index, int channel, bool hold) const;
+    /** What a strip's meter shows (segments lit, peak hold), to repaint only meters that moved. */
+    juce::int64 meterSignature (const Group&, int index) const;
+    juce::Rectangle<int> meterArea (const Group&, int index) const;
     bool isStereo (const Group&, int index) const;
     bool isMuted (const Group&, int index) const;
     Strip* stripOf (const Group&, int index) const;
@@ -117,7 +118,8 @@ private:
     int page = 0;
     std::vector<int> laidOutCounts;
     juce::uint64 shownHash = 0;
-    std::unordered_map<const void*, Hold> holds;
+    std::vector<juce::int64> shownMeters; // meterSignature per strip, in paint order
+    bool hashing = false;                 // paintHash runs: the meters are left out
 };
 
 /** ROUTING (manual 5.4), switched with the status-bar keys CHANNELS, SOURCES
