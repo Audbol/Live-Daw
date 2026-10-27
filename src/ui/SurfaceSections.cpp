@@ -1057,12 +1057,13 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
         };
         k->onTalk = [this, i] (bool down)
         {
-            if (down)
-                return;
             if (upperIsDaw())
-                midiui::pressUpperKey (ctx, i, false);
-            else
-                cc::release (ctx, ccFunction (currentLayer(), i));
+            {
+                if (! down)
+                    midiui::pressUpperKey (ctx, i, false);
+                return;
+            }
+            holdKey (i % cc::kNumControls, ccFunction (currentLayer(), i), down);
         };
         k->ledState = [this, i] { return upperIsDaw() ? midiui::upperKeyLed (ctx, i) : cc::ledState (ctx, ccFunction (currentLayer(), i)); };
         addAndMakeVisible (k);
@@ -1090,7 +1091,10 @@ CustomControlSection::CustomControlSection (UiContext& c) : ctx (c)
         k->onPress = [this, i] { pressLowerKey (i); };
         k->onTalk = [this, i] (bool down)
         {
-            if (const int l = lowerCcLayer(); l >= 0 && ! down)
+            // USER: the encoder of the column above it; the DAW layers release only.
+            if (const int l = lowerCcLayer(); l == cc::kUserLayer && ! compact)
+                holdKey (i % cc::kNumControls, ccFunction (l, i), down);
+            else if (l >= 0 && ! down)
                 cc::release (ctx, ccFunction (l, i));
         };
         k->ledState = [this, i]
@@ -1371,7 +1375,8 @@ void CustomControlSection::bindCustomControls()
     {
         const auto control = ctx.customControls != nullptr ? ctx.customControls->get (shownCcLayer, i) : cc::Control {};
         const bool daw = upperIsDaw();
-        encoders[i].setBinding (daw ? midiui::bindUpperVpot (ctx, i) : cc::bindEncoder (ctx, control.encoder));
+        if (i != heldColumn)
+            encoders[i].setBinding (daw ? midiui::bindUpperVpot (ctx, i) : cc::bindEncoder (ctx, control.encoder));
         for (int row = 0; row < 2; ++row)
         {
             auto* k = upperKeys[row * cc::kNumControls + i];
@@ -1384,6 +1389,26 @@ void CustomControlSection::bindCustomControls()
         setLowerLayer (lowerLayer);
     shownState = {};
     repaint();
+}
+
+void CustomControlSection::holdKey (int column, const cc::Function& f, bool down)
+{
+    if (! down)
+    {
+        cc::release (ctx, f);
+        if (heldColumn == column)
+        {
+            heldColumn = -1;
+            bindCustomControls(); // the encoder's own function again
+        }
+        return;
+    }
+    if (auto b = cc::bindHeldKey (ctx, f); b.isValid() && juce::isPositiveAndBelow (column, cc::kNumControls))
+    {
+        heldColumn = column;
+        encoders[column].setBinding (b);
+        repaint (upperLcd);
+    }
 }
 
 int CustomControlSection::lowerCcLayer() const

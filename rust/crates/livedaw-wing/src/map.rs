@@ -1678,6 +1678,13 @@ pub struct Console<'a> {
 impl ModelSource for Console<'_> {
     fn active_model(&self, slot: u16) -> Option<usize> {
         let s = schema();
+        // A custom control's mode (shadow while no host publishes the show).
+        if let Some(mode) = s.cc_mode_row(slot) {
+            return match self.get(Node::Row(mode))? {
+                Value::Str(token) => s.model_index(slot, &token),
+                _ => None,
+            };
+        }
         let row = s.slots[slot as usize].row;
         let token = match bindings()[row as usize] {
             Binding::Strip(kind, n, SF::Slot(blk)) => {
@@ -1948,10 +1955,22 @@ impl<'a> Console<'a> {
                 Binding::None | Binding::Stored => false,
                 Binding::Strip(kind, n, _) => self.strip(kind, n).is_some(),
                 Binding::Layer(..) => self.state.surface().attached,
-                Binding::User(uf) => uf.for_model(self.state.console_model()).is_some() && self.state.surface().attached,
+                Binding::User(_) => self.state.surface().attached,
                 _ => true,
             },
-            Node::Param { slot, index } => self.engine_param(slot, index).is_some(),
+            Node::Param { slot, index } => match self.cc_param(slot) {
+                Some(_) => self.state.surface().attached,
+                None => self.engine_param(slot, index).is_some(),
+            },
+        }
+    }
+
+    /// A custom control key's or encoder's slot (`/$ctl/user/.../bu`, `bd`,
+    /// `enc`; see surface.rs): the layer, control and slot of its `mode`.
+    fn cc_param(&self, slot: u16) -> Option<(u8, u8, surface::CcSlot)> {
+        match bindings()[schema().cc_mode_row(slot)? as usize] {
+            Binding::User(UserF::Mode(l, c, cs)) => Some((l, c, cs)),
+            _ => None,
         }
     }
 
@@ -1997,9 +2016,19 @@ impl<'a> Console<'a> {
         let mapped = match node {
             Node::Root => None,
             Node::Row(r) => self.get_row(r, def),
-            Node::Param { slot, index } => {
-                self.engine_param(slot, index).map(|(values, spec, i)| param_to_wing(&spec.params[i], def, values[i].load()))
-            }
+            Node::Param { slot, index } => match self.cc_param(slot) {
+                Some((l, c, cs)) => {
+                    let sf = self.state.surface();
+                    if sf.attached {
+                        sf.get_cc_param(l, c, cs, index).and_then(|v| value::coerce(def, &v))
+                    } else {
+                        None
+                    }
+                }
+                None => {
+                    self.engine_param(slot, index).map(|(values, spec, i)| param_to_wing(&spec.params[i], def, values[i].load()))
+                }
+            },
         };
         if let Some(v) = mapped {
             // On the parameter's nearest step, as the console reports it (and
@@ -2223,7 +2252,6 @@ impl<'a> Console<'a> {
                 return if sf.attached { sf.get_layer(s, lf) } else { None };
             }
             Binding::User(uf) => {
-                let uf = uf.for_model(self.state.console_model())?;
                 let sf = self.state.surface();
                 return if sf.attached { sf.get_user(uf) } else { None };
             }
@@ -2787,13 +2815,24 @@ impl<'a> Console<'a> {
         let applied = match node {
             Node::Root => return Err(SetError::NotFound),
             Node::Row(r) => self.set_row(r, def, &cv)?,
-            Node::Param { slot, index } => match self.engine_param(slot, index) {
-                Some((values, spec, i)) => {
+            Node::Param { slot, index } => match (self.cc_param(slot), self.engine_param(slot, index)) {
+                (Some((l, c, cs)), _) => {
+                    let mut sf = self.state.surface();
+                    if !sf.attached {
+                        false
+                    } else if let Some(edit) = sf.set_cc_param(l, c, cs, index, &cv)? {
+                        self.state.push_surface_edit(edit);
+                        true
+                    } else {
+                        false // kept as set (no equivalent here)
+                    }
+                }
+                (None, Some((values, spec, i))) => {
                     let x = param_from_wing(&spec.params[i], def, &cv).ok_or(SetError::BadValue)?;
                     values[i].store(x);
                     true
                 }
-                None => false,
+                (None, None) => false,
             },
         };
         if !applied {
@@ -3127,17 +3166,13 @@ impl<'a> Console<'a> {
                 }
             }
             Binding::Layer(..) | Binding::User(_) => {
-                let model = self.state.console_model();
                 let mut sf = self.state.surface();
                 if !sf.attached {
                     return Ok(false);
                 }
                 let edit = match bindings()[row as usize] {
                     Binding::Layer(s, lf) => sf.set_layer(s, lf, v)?,
-                    Binding::User(uf) => match uf.for_model(model) {
-                        Some(uf) => sf.set_user(uf, v)?,
-                        None => return Ok(false),
-                    },
+                    Binding::User(uf) => sf.set_user(uf, v)?,
                     _ => None,
                 };
                 if let Some(edit) = edit {
@@ -3698,7 +3733,8 @@ pub fn coverage() -> Coverage {
     let mut cov = Coverage::default();
     for (r, row) in s.rows.iter().enumerate() {
         let def = &s.defs[row.def as usize];
-        if !def.is_leaf() {
+        // The sweep's custom control function rows are the slots' parameters now.
+        if !def.is_leaf() || s.is_detached(r as u16) {
             continue;
         }
         let parts = s.row_parts(r as u16);
@@ -3715,7 +3751,7 @@ pub fn coverage() -> Coverage {
             _ => {}
         }
     }
-    for slot in &s.slots {
+    for (si, slot) in s.slots.iter().enumerate() {
         let parts = s.row_parts(slot.row);
         let tables: Option<&[ModelSpec]> = match b[slot.row as usize] {
             Binding::Strip(kind, _, SF::Slot(blk)) => Some(match blk {
@@ -3729,7 +3765,23 @@ pub fn coverage() -> Coverage {
         };
         let mut key = group_pattern(&parts);
         key.push_str("/<models>");
+        // A custom control's function nodes answer from the show's custom
+        // controls (the GPIOs' keep what a client sets).
+        let mode = s.cc_mode_row(si as u16).map(|r| b[r as usize]);
+        let custom_control = matches!(mode, Some(Binding::User(_)));
+        let stored = mode == Some(Binding::Stored);
         for m in &s.families[slot.family as usize].models {
+            if custom_control || stored {
+                for _ in &m.params {
+                    let e = cov.by_group.entry(key.clone()).or_default();
+                    e.0 += 1;
+                    e.1 += 1;
+                    cov.total += 1;
+                    cov.mapped += 1;
+                    cov.stored += stored as usize;
+                }
+                continue;
+            }
             let spec = tables.and_then(|t| model_index(t, m.token).map(|i| &t[i]));
             for p in &m.params {
                 let e = cov.by_group.entry(key.clone()).or_default();
@@ -4853,7 +4905,7 @@ mod tests {
         f("/$ctl/user/user/2/bu/name", Value::str("Band")).unwrap();
         f("/$ctl/user/5/2/bd/mode", Value::str("MIDICCT")).unwrap();
         f("/$ctl/user/U2/1/bu/mode", Value::str("SCENES")).unwrap();
-        assert!(matches!(f("/$ctl/user/1/2/bu/mode", Value::str("INS1")), Err(SetError::Unsupported(_))));
+        assert!(matches!(f("/$ctl/user/1/2/bu/mode", Value::str("FSTART")), Err(SetError::Unsupported(_))));
         assert_eq!(f("/$ctl/user/1/1/enc/$fname", Value::str("x")), Err(SetError::ReadOnly));
         f("/$ctl/user/sel", Value::Int(9)).unwrap();
         let r = sync(&mut custom, 2);
@@ -4870,7 +4922,7 @@ mod tests {
             CcFunction { category: 14, target: 2, option: 60 },
             "keeps channel and number"
         );
-        assert_eq!(custom.control(18, 0).unwrap().upper, CcFunction { category: 10, target: 1, option: 0 });
+        assert_eq!(custom.control(25, 0).unwrap().upper, CcFunction { category: 10, target: 1, option: 0 }, "U2: USER 5-8");
         assert_eq!(get("/$ctl/user/sel"), Value::Int(9));
         // The same function again changes nothing.
         f("/$ctl/user/1/1/enc/mode", Value::str("FDR")).unwrap();
@@ -4892,23 +4944,23 @@ mod tests {
         let get = |p: &str| c.get(node(&c, p));
         let f = |p: &str, v: Value| c.set(node(&c, p), &v);
 
-        // The full-size console: U1-U3 stay the 4-Channel section's, the rest unbound.
-        assert!(c.is_mapped(node(&c, "/$ctl/user/U1/1/bu/mode")));
-        assert!(!c.is_mapped(node(&c, "/$ctl/user/U4/1/bu/mode")));
-        assert!(!c.is_mapped(node(&c, "/$ctl/user/MM/2/col")));
-        f("/$ctl/user/U1/2/bu/mode", Value::str("MUTE")).unwrap();
-        f("/$ctl/user/D1/1/bu/mode", Value::str("SOLO")).unwrap();
-        sync(&mut custom);
-        assert_eq!(custom.control(17, 1).unwrap().upper.category, 1);
-        assert!(custom.control(FIRST_COMPACT_USER_LAYER, 1).unwrap().is_default());
-        assert!(custom.control(FIRST_COMPACT_DCA_LAYER, 0).unwrap().is_default());
-
-        // A COMPACT: USER 1-4 .. 13-16, MAIN/MTX 5-8 and DCA 1-4 .. 13-16, both ways.
-        st.set_console_model(ConsoleModel::Compact);
-        for p in ["/$ctl/user/U1/1/bu/mode", "/$ctl/user/U4/4/col", "/$ctl/user/MM/2/bu/name", "/$ctl/user/D4/4/bu/$fname"] {
-            assert!(c.is_mapped(node(&c, p)), "{p}");
+        // USER 1-4 .. 13-16, MAIN/MTX 5-8 and DCA 1-4 .. 13-16 on either
+        // model (the full-size WING's F1-F3 play layers 1-3: it has no U1-U3
+        // of its own), both ways.
+        for model in [ConsoleModel::Full, ConsoleModel::Compact] {
+            st.set_console_model(model);
+            for p in ["/$ctl/user/U1/1/bu/mode", "/$ctl/user/U4/4/col", "/$ctl/user/MM/2/bu/name", "/$ctl/user/D4/4/bu/$fname"] {
+                assert!(c.is_mapped(node(&c, p)), "{p}");
+            }
         }
-        assert_eq!(get("/$ctl/user/U1/2/bu/mode"), Some(Value::str("OFF")));
+        st.set_console_model(ConsoleModel::Full);
+        f("/$ctl/user/U1/2/bu/mode", Value::str("MUTE")).unwrap();
+        sync(&mut custom);
+        assert_eq!(custom.control(FIRST_COMPACT_USER_LAYER, 1).unwrap().upper.category, 1);
+        assert!(custom.control(17, 1).unwrap().is_default(), "no layer of the 4-Channel section's own");
+
+        st.set_console_model(ConsoleModel::Compact);
+        assert_eq!(get("/$ctl/user/U1/2/bu/mode"), Some(Value::str("MUTE")));
         let ctl = custom.control_mut(FIRST_COMPACT_USER_LAYER + 3, 3).unwrap();
         ctl.upper = CcFunction { category: 10, target: 2, option: 0 };
         ctl.name = "SONG 2".into();
@@ -4916,17 +4968,19 @@ mod tests {
         sync(&mut custom);
         assert_eq!(get("/$ctl/user/U4/4/bu/mode"), Some(Value::str("SCENES")));
         assert_eq!(get("/$ctl/user/U4/4/bu/$fname"), Some(Value::str("SCENE RECALL")));
+        assert_eq!(get("/$ctl/user/U4/4/bu/tag"), Some(Value::Int(2)));
         assert_eq!(get("/$ctl/user/U4/4/bu/name"), Some(Value::str("SONG 2")));
         assert_eq!(get("/$ctl/user/U4/4/col"), Some(Value::Int(9)));
         f("/$ctl/user/MM/1/bu/mode", Value::str("MUTE")).unwrap();
         f("/$ctl/user/MM/1/bu/name", Value::str("PA")).unwrap();
         f("/$ctl/user/D2/3/bu/mode", Value::str("DCAMUTE")).unwrap();
+        f("/$ctl/user/D2/3/bu/dca", Value::Int(7)).unwrap();
         f("/$ctl/user/D2/3/col", Value::Int(4)).unwrap();
         assert!(sync(&mut custom).controls);
         let mm = custom.control(COMPACT_MAIN_MATRIX_LAYER, 0).unwrap();
         assert_eq!((mm.upper.category, mm.name.as_str()), (1, "PA"));
         let dca = custom.control(FIRST_COMPACT_DCA_LAYER + 1, 2).unwrap();
-        assert_eq!((dca.upper.category, dca.colour), (3, 4));
+        assert_eq!((dca.upper, dca.colour), (CcFunction { category: 3, target: 6, option: 0 }, 4));
         // They have an upper key only.
         assert!(
             schema().resolve("/$ctl/user/U1/1/bd/mode", &NoModels).is_none() || !c.is_mapped(node(&c, "/$ctl/user/U1/1/bd/mode"))
@@ -4935,29 +4989,208 @@ mod tests {
             schema().resolve("/$ctl/user/MM/1/enc/mode", &NoModels).is_none()
                 || !c.is_mapped(node(&c, "/$ctl/user/MM/1/enc/mode"))
         );
-        // Back to the full size: U1 is the 4-Channel layer again.
-        st.set_console_model(ConsoleModel::Full);
-        assert_eq!(get("/$ctl/user/U1/2/bu/mode"), Some(Value::str("MUTE")));
+    }
+
+    #[test]
+    fn custom_control_functions_have_their_own_nodes() {
+        use livedaw_session::custom::{
+            other, CcFunction, CustomControls, CC_BANK_CATEGORY, FX_PARAMETER_CATEGORY, INSERT_POST_CATEGORY,
+            INSERT_PRE_CATEGORY, OTHER_CATEGORY, OVERVIEW_PAGE_CATEGORY,
+        };
+        use livedaw_session::layers::LayerSet;
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let (mut layers, mut custom) = (LayerSet::default(), CustomControls::default());
+        let mut sync = |custom: &mut CustomControls| surface::sync(&st, &e, &mut layers, custom, 0);
+        sync(&mut custom);
+        let get = |p: &str| c.get(node(&c, p));
+        let f = |p: &str, v: Value| c.set(node(&c, p), &v);
+        let s = schema();
+        let ch = |n: usize| StripKind::Channel as i32 * 100_000 + e.strips(StripKind::Channel)[n - 1].id();
+
+        // The mode's nodes come and go with it; their ids are the WING's
+        // (WING Edit's: one per position, as the processing models').
+        assert!(s.resolve("/$ctl/user/1/2/bu/ch", &c).is_none());
+        f("/$ctl/user/1/2/bu/mode", Value::str("INS1")).unwrap();
+        let ch_node = node(&c, "/$ctl/user/1/2/bu/ch");
+        assert!(matches!(ch_node, Node::Param { index: 1, .. }));
+        assert_eq!(s.id(ch_node), 0x247d9df8);
+        assert_eq!(s.by_id(0x247d9df8, &c), Some(ch_node));
+        assert!(c.is_mapped(ch_node));
+        assert_eq!(get("/$ctl/user/1/2/bu/ch"), Some(Value::Int(1)), "a new function starts at CH 1");
+        f("/$ctl/user/1/2/bu/ch", Value::Int(5)).unwrap();
+        f("/$ctl/user/1/2/bd/mode", Value::str("INS2")).unwrap();
+        f("/$ctl/user/1/2/bd/ch", Value::Int(41)).unwrap(); // AUX 1
+                                                            // FX PAR on a key: FX 3's MIX, then its parameter 4.
+        f("/$ctl/user/2/1/bu/mode", Value::str("FXPAR")).unwrap();
+        f("/$ctl/user/2/1/bu/fx", Value::str("FX3")).unwrap();
+        assert_eq!(get("/$ctl/user/2/1/bu/par"), Some(Value::Int(41)), "MIX");
+        f("/$ctl/user/2/1/bd/mode", Value::str("FXPAR")).unwrap();
+        f("/$ctl/user/2/1/bd/fx", Value::str("FX9")).unwrap();
+        f("/$ctl/user/2/1/bd/par", Value::Int(4)).unwrap();
+        // OTHER: DAW LAYER, CC BANK 5, TALKBACK B.
+        f("/$ctl/user/user/1/bu/mode", Value::str("OTHER")).unwrap();
+        f("/$ctl/user/user/1/bu/other", Value::str("DAWSW")).unwrap();
+        f("/$ctl/user/U2/3/bu/mode", Value::str("OTHER")).unwrap();
+        f("/$ctl/user/U2/3/bu/other", Value::str("CCBANK")).unwrap();
+        f("/$ctl/user/U2/3/bu/CCBK", Value::str("5")).unwrap();
+        f("/$ctl/user/D1/1/bu/mode", Value::str("OTHER")).unwrap();
+        f("/$ctl/user/D1/1/bu/other", Value::str("TBB")).unwrap();
+        // OVERVIEW PAGE: the right section's bank 3.
+        f("/$ctl/user/3/4/bu/mode", Value::str("VIEWPAGE")).unwrap();
+        f("/$ctl/user/3/4/bu/area", Value::str("R")).unwrap();
+        f("/$ctl/user/3/4/bu/bank", Value::Int(3)).unwrap();
+        // An encoder: a fixed send to BUS 7 from CH 9; a send to a main is refused.
+        f("/$ctl/user/4/1/enc/mode", Value::str("FSND")).unwrap();
+        f("/$ctl/user/4/1/enc/ch", Value::Int(9)).unwrap();
+        f("/$ctl/user/4/1/enc/send", Value::str("BUS7")).unwrap();
+        assert!(matches!(f("/$ctl/user/4/1/enc/send", Value::str("MAIN2")), Err(SetError::Unsupported(_))));
+        assert!(sync(&mut custom).controls);
+
+        let fx3 = custom.control(1, 0).unwrap();
+        assert_eq!(fx3.upper, CcFunction { category: FX_PARAMETER_CATEGORY, target: 2, option: -1 });
+        assert_eq!(fx3.lower, CcFunction { category: FX_PARAMETER_CATEGORY, target: 8, option: 3 });
+        let ins = custom.control(0, 1).unwrap();
+        assert_eq!(ins.upper, CcFunction { category: INSERT_PRE_CATEGORY, target: ch(5), option: 0 });
+        assert_eq!(ins.lower.category, INSERT_POST_CATEGORY);
+        assert_eq!(ins.lower.target, StripKind::Aux as i32 * 100_000 + e.strips(StripKind::Aux)[0].id());
+        assert_eq!(
+            custom.control(16, 0).unwrap().upper,
+            CcFunction { category: OTHER_CATEGORY, target: 0, option: other::DAW_LAYER }
+        );
+        assert_eq!(custom.control(25, 2).unwrap().upper, CcFunction { category: CC_BANK_CATEGORY, target: 0, option: 4 });
+        assert_eq!(custom.control(29, 0).unwrap().upper.option, other::TALKBACK_B);
+        assert_eq!(custom.control(2, 3).unwrap().upper, CcFunction { category: OVERVIEW_PAGE_CATEGORY, target: 2, option: 2 });
+        assert_eq!(custom.control(3, 0).unwrap().encoder, CcFunction { category: 5, target: ch(9), option: 6 });
+
+        // ... and they read back from the show, after the next publish too.
+        sync(&mut custom);
+        assert_eq!(get("/$ctl/user/1/2/bu/ch"), Some(Value::Int(5)));
+        assert_eq!(get("/$ctl/user/1/2/bd/ch"), Some(Value::Int(41)));
+        assert_eq!(get("/$ctl/user/2/1/bd/fx"), Some(Value::str("FX9")));
+        assert_eq!(get("/$ctl/user/2/1/bd/par"), Some(Value::Int(4)));
+        assert_eq!(get("/$ctl/user/user/1/bu/other"), Some(Value::str("DAWSW")));
+        assert_eq!(get("/$ctl/user/U2/3/bu/mode"), Some(Value::str("OTHER")));
+        assert_eq!(get("/$ctl/user/U2/3/bu/other"), Some(Value::str("CCBANK")));
+        assert_eq!(get("/$ctl/user/U2/3/bu/CCBK"), Some(Value::str("5")));
+        assert_eq!(get("/$ctl/user/3/4/bu/area"), Some(Value::str("R")));
+        assert_eq!(get("/$ctl/user/4/1/enc/send"), Some(Value::str("BUS7")));
+        assert_eq!(get("/$ctl/user/1/2/bu/$fname"), Some(Value::str("CH INSERT PRE ON/OFF")));
+        // The factory DAW layers' DAWBTN: btn, the same node as the sweep's.
+        assert_eq!(get("/$ctl/user/daw1/1/bu/btn"), Some(Value::str("T1")));
+        assert_eq!(get("/$ctl/user/daw1/1/bd/btn"), Some(Value::str("T4")));
+        assert!(matches!(node(&c, "/$ctl/user/daw1/1/bu/btn"), Node::Param { index: 1, .. }));
+        f("/$ctl/user/daw1/1/bu/btn", Value::str("AU4")).unwrap();
+        sync(&mut custom);
+        assert_eq!(
+            custom.control(20, 0).unwrap().upper,
+            CcFunction { category: 13, target: 5, option: 20 + 9 + 16 + 8 + 15 + 3 }
+        );
+        // The children of a key: its mode, name and function name, then the mode's nodes.
+        let names: Vec<String> =
+            s.children(node(&c, "/$ctl/user/2/1/bd"), &c).into_iter().map(|n| s.name(n, &c).into_owned()).collect();
+        assert_eq!(names, ["mode", "name", "$fname", "fx", "par"]);
+
+        // Without a show the nodes keep what a client sets.
+        surface::detach(&st);
+        f("/$ctl/user/5/1/bu/mode", Value::str("FXPAR")).unwrap();
+        f("/$ctl/user/5/1/bu/par", Value::Int(12)).unwrap();
+        assert_eq!(get("/$ctl/user/5/1/bu/par"), Some(Value::Int(12)));
+    }
+
+    #[test]
+    fn the_virtual_section_is_the_compacts_virtual_layers() {
+        use livedaw_session::custom::CustomControls;
+        use livedaw_session::layers::{LayerSet, VIRTUAL_SECTION};
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let (mut layers, mut custom) = (LayerSet::default(), CustomControls::default());
+        layers.set_model(ConsoleModel::Compact);
+        let mut sync = |layers: &mut LayerSet| surface::sync(&st, &e, layers, &mut custom, 0);
+        sync(&mut layers);
+        let get = |p: &str| c.get(node(&c, p));
+        let f = |p: &str, v: Value| c.set(node(&c, p), &v);
+        // Empty and unnamed at first, as on the console.
+        assert_eq!(get("/$ctl/layer/VRT/1/name"), Some(Value::str("")));
+        assert_eq!(get("/$ctl/layer/VRT/1/1/type"), Some(Value::str("OFF")));
+        assert_eq!(get("/$ctl/layer/VRT/sel"), Some(Value::Int(1)));
+        // A client names and fills layer 3 and selects it.
+        f("/$ctl/layer/VRT/3/name", Value::str("Drums")).unwrap();
+        f("/$ctl/layer/VRT/3/2/type", Value::str("CH")).unwrap();
+        f("/$ctl/layer/VRT/3/2/i", Value::Int(5)).unwrap();
+        f("/$ctl/layer/VRT/sel", Value::Int(3)).unwrap();
+        f("/$ctl/layer/VRT/3/ofs", Value::Int(8)).unwrap();
+        assert!(sync(&mut layers).layers);
+        let vrt = layers.virtual_layer(2).unwrap();
+        assert_eq!(vrt.name, "Drums");
+        assert_eq!(vrt.faders.len(), 2);
+        assert!(vrt.faders[0].is_empty());
+        assert_eq!(layers.selected(VIRTUAL_SECTION), "vrt-3");
+        assert_eq!(layers.offset(VIRTUAL_SECTION), 8);
+        assert_eq!(get("/$ctl/layer/VRT/3/2/i"), Some(Value::Int(5)));
+        assert_eq!(get("/$ctl/layer/VRT/3/ofs"), Some(Value::Int(8)));
+        // The full-size console keeps the layers, but has no virtual section.
+        layers.set_model(ConsoleModel::Full);
+        sync(&mut layers);
+        assert_eq!(get("/$ctl/layer/VRT/3/name"), Some(Value::str("Drums")));
+        assert_eq!(get("/$ctl/layer/VRT/sel"), Some(Value::Int(1)));
+        f("/$ctl/layer/VRT/sel", Value::Int(5)).unwrap();
+        sync(&mut layers);
+        assert_eq!(layers.selected(VIRTUAL_SECTION), "vrt-3");
+    }
+
+    #[test]
+    fn sends_the_tree_cant_tell_apart_survive_a_write_back() {
+        use livedaw_session::custom::CustomControls;
+        use livedaw_session::layers::{FaderRef, LayerSet};
+        use livedaw_session::refs::StripRef;
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let (mut layers, mut custom) = (LayerSet::default(), CustomControls::default());
+        let ch1 = StripRef::of(&e.strips(StripKind::Channel)[0]);
+        let bus2 = StripRef::of(&e.strips(StripKind::Bus)[1]);
+        let faders = vec![FaderRef::SelSend { to: bus2, bus_custom: false }, FaderRef::BusSend { from: ch1, to: bus2 }];
+        layers.add_user_layer("Sends", faders.clone());
+        let mut sync = |layers: &mut LayerSet| surface::sync(&st, &e, layers, &mut custom, 0);
+        sync(&mut layers);
+        // The selected channel's send reads OFF, the BUS CUSTOMIZATION send as a SEND.
+        let get = |p: &str| c.get(node(&c, p)).unwrap();
+        assert_eq!(get("/$ctl/layer/L/6/1/type"), Value::str("OFF"));
+        assert_eq!(get("/$ctl/layer/L/6/2/type"), Value::str("SEND"));
+        // A client writing back what it read (WING Edit's PC -> MIXER) changes nothing.
+        for pos in 1..=2 {
+            for f in ["type", "i", "dst"] {
+                let path = format!("/$ctl/layer/L/6/{pos}/{f}");
+                c.set(node(&c, &path), &get(&path)).unwrap();
+            }
+        }
+        assert!(!sync(&mut layers).layers);
+        assert_eq!(layers.user_layers()[0].faders, faders);
     }
 
     #[test]
     fn coverage_counts() {
         let cov = coverage();
-        assert_eq!(cov.total, 68556, "{}", cov.report());
+        // The custom controls' function nodes (10,800: every mode's of every
+        // key and encoder) are the schema's model parameters.
+        assert_eq!(cov.total, 79326, "{}", cov.report());
         // Everything answers but DAW CONFIGURATION (see `unbound_feature`).
-        assert_eq!(cov.mapped, 68555, "{}", cov.report());
+        assert_eq!(cov.mapped, 79325, "{}", cov.report());
         // 85 settings: the COMPACT's mfdr, cscmode, autosel_CMPCT, mfdrkeep, mainspill,
         // mtxspill and dcacc and the surface lock (cnslock) among them.
-        assert_eq!((cov.settings, cov.stored), (85, 6141), "{}", cov.report());
+        // (The GPIOs' 188 function nodes are stored; the virtual section VRT maps.)
+        assert_eq!((cov.settings, cov.stored), (85, 5667), "{}", cov.report());
         for (g, (m, t)) in &cov.by_group {
             assert!(m == t || g == "/$ctl/daw", "{g}: {m} of {t}");
         }
         assert_eq!(cov.by_group["/$ctl/daw"], (14, 15));
         // The engine-backed share: everything but the settings and the stored values.
-        // (The COMPACT's key sets U4, MM and D1-D4 count here: the full-size console answers their factory values.)
-        // (The routing: every bus to every other bus, USR 1-56 and their
-        // user/..., the matrices' dir/in.)
-        assert_eq!(cov.mapped - cov.settings - cov.stored, 62329);
+        // (The COMPACT's key sets count here on either model; the routing: every
+        // bus to every other bus, USR 1-56 and their user/..., the matrices' dir/in.)
+        assert_eq!(cov.mapped - cov.settings - cov.stored, 73573);
         let b = bindings();
         let row = |p: &str| match schema().resolve(p, &NoModels) {
             Some(Node::Row(r)) => r as usize,
@@ -5024,7 +5257,7 @@ mod tests {
                 }
             }
         }
-        assert!(checked > 5900, "{checked}");
+        assert!(checked > 5200, "{checked}");
         // Unbound parameters answer the factory value too (where the strip is missing).
         let e8 = Engine::new(0);
         e8.set_num_channels(8);

@@ -56,6 +56,9 @@ FaderStrip::FaderStrip (UiContext& c, LayerSet::Section s) : ctx (c), section (s
     selectKey.onPress = [this] { pressSelect(); };
     selectKey.ledState = [this]
     {
+        // The COMPACT's DCA assignment: lit on the DCA's members.
+        if (ctx.compactDcaAssign >= 0 && section == LayerSet::Left && strip != nullptr)
+            return ((strip->params.dcaMask.load() >> ctx.compactDcaAssign) & 1u) != 0 ? SurfaceKey::Lit : SurfaceKey::Off;
         // A DCA's SELECT lights while it spills (DCA SPILL).
         if (dca >= 0)
             return isSpilling (ctx, { LayerSet::Spill::Kind::Dca, dca, {} }) ? SurfaceKey::Lit : SurfaceKey::Off;
@@ -120,6 +123,8 @@ void FaderStrip::setTarget (std::optional<state::FaderRef> t)
 void FaderStrip::refresh()
 {
     strip = nullptr;
+    custom = nullptr;
+    followedSelection = nullptr;
     dca = -1;
     send.reset();
     fxp.reset();
@@ -138,6 +143,13 @@ void FaderStrip::refresh()
         }
         else if (target->midiCc)
             midi = MidiTarget { target->midiChannel, target->cc };
+        else if (target->selected)
+        {
+            // The selected channel's send (CONFIG's "S" item): the selection, when it can send.
+            followedSelection = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr;
+            if (followedSelection != nullptr && (followedSelection->isInput() || followedSelection->isBus()))
+                strip = followedSelection;
+        }
         else
             strip = state::findStrip (ctx.engine, target->strip); // a send fader: its source
     }
@@ -189,9 +201,14 @@ void FaderStrip::refresh()
         auto* dest = sendFader ? state::findStrip (ctx.engine, target->to) : nullptr;
         if (sendFader)
         {
-            // A send fader of a layer or spill: the source's send to its destination.
+            // A send fader of a layer or spill: the source's send to its
+            // destination; with BUS CUSTOMIZATION it looks like the destination.
             if (dest != nullptr && (send = sendOf (*strip, *dest)))
-                send->tag = "> " + send->tag;
+            {
+                send->tag = (target->selected ? "S > " : "> ") + send->tag;
+                if (target->busCustom)
+                    custom = dest;
+            }
         }
         else if (sel != nullptr && sel != strip)
         {
@@ -340,6 +357,15 @@ void FaderStrip::pressSelect()
     if (strip == nullptr)
         return;
 
+    // The COMPACT's DCA assignment (WING manual 4.2 p. 16): with the main
+    // fader section's SELECT held, a strip's SELECT puts it in the DCA or
+    // takes it out.
+    if (ctx.compactDcaAssign >= 0 && section == LayerSet::Left && ! (target && target->send))
+    {
+        strip->params.dcaMask = strip->params.dcaMask.load() ^ (1u << ctx.compactDcaAssign);
+        return;
+    }
+
     // SELECT on the selected strip again (SETUP > GENERAL > SEL DBL CLICK):
     // 0 = Channel Home, 1 = BUSFX: INS1 on buses, mains and matrices, INS2
     // when INS1 has no FX (Strip::busFxInsert, manual 5.5 p. 48), Channel
@@ -361,7 +387,8 @@ ScribbleInfo FaderStrip::scribbleInfo() const
     ScribbleInfo info;
     if (strip != nullptr)
     {
-        setScribbleStrip (info, *strip, ctx.settings.getBoolValue (uiprefs::sourceOnScribble, true));
+        // (A send with BUS CUSTOMIZATION: its destination's.)
+        setScribbleStrip (info, custom != nullptr ? *custom : *strip, ctx.settings.getBoolValue (uiprefs::sourceOnScribble, true));
     }
     else if (dca >= 0)
     {
@@ -412,6 +439,10 @@ ScribbleInfo FaderStrip::scribbleInfo() const
 
 void FaderStrip::timerCallback()
 {
+    // The selected channel's send follows the selection.
+    if (target && target->selected && (ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr) != followedSelection)
+        refresh();
+
     if ((faderParam() != nullptr || midi) && ! fader.isMouseButtonDown())
     {
         const double v = faderPosition();
@@ -435,13 +466,14 @@ void FaderStrip::timerCallback()
     {
         gate = strip->meters.gateActive.load();
         dyn = strip->meters.dynActive.load();
-        name = stripName (*strip);
+        // The look: the strip's, or a BUS CUSTOMIZATION send's destination's.
+        const auto& look = custom != nullptr ? *custom : *strip;
+        name = stripName (look);
         // The light bar goes off on a channel without a source (firmware 1.10).
-        light = strip->params.led.load() && stripHasSource (*strip);
-        colour = strip->getColourIndex();
+        light = look.params.led.load() && stripHasSource (look);
+        colour = look.getColourIndex();
         // The source tag (ALT source switches, SHOW SOURCE ON SCRIBBLE) and the icon.
-        source = scribbleSourceTag (*strip, ctx.settings.getBoolValue (uiprefs::sourceOnScribble, true)) + "|"
-                 + juce::String (strip->getIcon());
+        source = scribbleSourceTag (look, ctx.settings.getBoolValue (uiprefs::sourceOnScribble, true)) + "|" + juce::String (look.getIcon());
 
         // Input level, like the console's strip meters.
         const int channels = juce::jlimit (1, 2, strip->getNumChannels());

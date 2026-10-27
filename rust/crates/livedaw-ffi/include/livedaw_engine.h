@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 19;
+constexpr int kAbiVersion = 20;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -106,6 +106,8 @@ constexpr int32_t kFaderDca = 5;
 constexpr int32_t kFaderFxParam = 6;
 constexpr int32_t kFaderMidiCc = 7;
 constexpr int32_t kFaderEmpty = 8; // a blank layer slot (ABI 14)
+constexpr int32_t kFaderSelSend = 9; // the selected channel's send to toKind / toId (ABI 20)
+constexpr int32_t kFaderBusCustom = 1; // FaderRefC.flags: a send fader with its destination's customization (ABI 20)
 
 /// Tap points (index into list 1). WING names: INPUT, FILTER, TAP 3-5, PRE FDR,
 /// POST FDR, POST PROC. Only input channels choose theirs; aux, buses, mains and
@@ -632,7 +634,9 @@ struct LayoutInfo
         // ABI 16 (the console model)
         consoleModelInfo,
         // ABI 19 (routing: matrix DIRECT IN, USR sources)
-        offDirectSource, userSignal, offUserSignalPost, userPatch;
+        offDirectSource, userSignal, offUserSignalPost, userPatch,
+        // ABI 20 (FaderRefC.flags, kFaderSelSend)
+        faderRef;
 };
 
 /** A console model's surface and local I/O (ld_console_model_info). Models:
@@ -710,11 +714,14 @@ struct StripRefC
 /// level from it to bus / main / matrix `toId`; kFaderDca = DCA (id 0..15);
 /// kFaderFxParam = FX slot `id`'s parameter `toId`; kFaderMidiCc = CC `toId`
 /// (0-127) on MIDI channel `id` (0-15); kFaderEmpty = a blank slot of a
-/// layer (ABI 14). toKind is -1 when unused.
+/// layer (ABI 14); kFaderSelSend = the selected channel's send to `toKind` /
+/// `toId` (ABI 20). toKind is -1 when unused. `flags` kFaderBusCustom: a send
+/// fader shows its destination's name, colour and icon (ABI 20).
 struct FaderRefC
 {
     int32_t kind, id;
     int32_t toKind = -1, toId = 0;
+    int32_t flags = 0;
 };
 
 /// A spill: kind 0 = DCA `index`, 1 = the sources sending to bus slot `index`,
@@ -1559,6 +1566,7 @@ inline const char* verifyLayout()
         { info.userSignal, sizeof (UserSignalParams), "UserSignalParams size" },
         { info.offUserSignalPost, offsetof (UserSignalParams, post), "UserSignalParams.post" },
         { info.userPatch, sizeof (UserPatchParams), "UserPatchParams size" },
+        { info.faderRef, sizeof (FaderRefC), "FaderRefC size" },
     };
 
     if (info.abiVersion != kAbiVersion)

@@ -7,12 +7,21 @@
 //! are children of their slot on the console (`/ch/1/gate/thr`) and change
 //! with the slot's model, so they are stored per slot family ("templates") and
 //! resolved through a [`ModelSource`] that knows each slot's active model.
+//!
+//! The custom controls' keys and encoders (`/$ctl/user/.../bu`, `bd`, `enc`)
+//! work the same way: their `mode` is the model, and the function's targets
+//! and options (`ch`, `fx`, `par`, `other`, ...; WING remote protocols, the
+//! "<OSC b_pattern>" and "<OSC e_pattern>" tables) are its parameters, one id
+//! per position for every mode. The sweep caught only the modes its console
+//! had set, so those slots are added here from `data/wing_cc_ids.tsv` and the
+//! protocol document's tables ([`Schema::cc_mode_row`]).
 
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
 static BLOB: &[u8] = include_bytes!("../data/wing_tree.bin");
+static CC_IDS: &str = include_str!("../data/wing_cc_ids.tsv");
 
 /// "No parent": the row is a child of the root.
 pub const NO_PARENT: u16 = 0xffff;
@@ -170,6 +179,194 @@ pub struct Slot {
     pub ids: Vec<u32>,
 }
 
+/// A custom control function node (WING remote protocols, the
+/// "<OSC b_pattern>" / "<OSC e_pattern>" tables).
+struct CcNode {
+    name: &'static str,
+    long: &'static str,
+    values: CcValues,
+}
+
+enum CcValues {
+    Int(i32, i32),
+    Items(&'static [&'static str]),
+    /// ("FX", 16): FX1 .. FX16; a count of 0 is the prefix itself.
+    Numbered(&'static [(&'static str, i32)]),
+    /// The DAW BUTTONS command list of `/$ctl/user/daw1/1/bu/btn`.
+    DawButtons,
+}
+
+const fn cc(name: &'static str, long: &'static str, values: CcValues) -> CcNode {
+    CcNode { name, long, values }
+}
+
+const CC_CH: CcNode = cc("ch", "CHANNEL", CcValues::Int(1, 76));
+const CC_FX: CcNode = cc("fx", "FX", CcValues::Numbered(&[("FX", 16)]));
+/// 1-40 an FX parameter, 41 the FX's MIX.
+const CC_PAR: CcNode = cc("par", "PARAMETER", CcValues::Int(1, 41));
+const CC_AREA: CcNode = cc("area", "AREA", CcValues::Items(&["L", "C", "R", "CMPCT", "RCK", "EXT", "VRT"]));
+const CC_BANK: CcNode = cc("bank", "BANK", CcValues::Int(1, 21));
+const CC_MIDI_CH: CcNode = cc("ch", "MIDI CHANNEL", CcValues::Int(1, 16));
+const CC_MIDI_CC: CcNode = cc("cc", "CC", CcValues::Int(0, 127));
+const CC_MIDI_NOTE: CcNode = cc("note", "NOTE", CcValues::Int(0, 127));
+const CC_MIDI_VAL: CcNode = cc("val", "VALUE", CcValues::Int(0, 127));
+const CC_SEND: CcNode = cc("send", "SEND", CcValues::Numbered(&[("BUS", 16), ("MAIN", 4), ("MTX", 8)]));
+const CC_SD_REC: CcNode = cc(
+    "sdrec",
+    "SD RECORDER",
+    CcValues::Items(&[
+        "STOP",
+        "PLAY",
+        "REC",
+        "PAUSE",
+        "PLAYSTOP",
+        "PLAYPAUSE",
+        "ADD",
+        "PREV",
+        "NEXT",
+        "PLAYMARKER",
+        "GOMARKER",
+        "SELSESSION",
+        "PREV_S",
+        "NEXT_S",
+    ]),
+);
+const CC_SESSION: CcNode = cc("session", "SESSION", CcValues::Numbered(&[("S", 20)]));
+const CC_MARKER: CcNode = cc("marker", "MARKER", CcValues::Numbered(&[("M", 20)]));
+
+/// DAWENC's rotaries: pushed, then turned.
+const CC_DAW_ROTARY: &[&str] = &[
+    "M1P", "M2P", "M3P", "M4P", "M5P", "M6P", "M7P", "M8P", "E1P", "E2P", "E3P", "E4P", "E5P", "E6P", "E7P", "E8P", "E9P",
+    "E10P", "E11P", "E12P", "E13P", "E14P", "E15P", "E16P", "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "E1", "E2", "E3",
+    "E4", "E5", "E6", "E7", "E8", "E9", "E10", "E11", "E12", "E13", "E14", "E15", "E16", "JOG",
+];
+
+/// The keys' function nodes by `mode` (`bu`, `bd`).
+const CC_KEY_NODES: &[(&str, &[CcNode])] = &[
+    ("MUTE", &[CC_CH]),
+    ("SOLO", &[CC_CH]),
+    ("INS1", &[CC_CH]),
+    ("INS2", &[CC_CH]),
+    ("MGRP", &[cc("mgrp", "MUTE GROUP", CcValues::Numbered(&[("MGRP.", 8)]))]),
+    ("DCAMUTE", &[cc("dca", "DCA", CcValues::Int(1, 16))]),
+    ("SOF", &[CC_CH]),
+    (
+        "SPILL",
+        &[
+            cc("area", "AREA", CcValues::Items(&["L", "C", "R"])),
+            cc(
+                "tgt",
+                "TARGET",
+                CcValues::Numbered(&[
+                    ("DCA", 16),
+                    ("FX", 16),
+                    ("BUS", 16),
+                    ("MAIN", 4),
+                    ("MTX", 8),
+                    ("AUTOX", 0),
+                    ("AUTOY", 0),
+                    ("SELCH", 0),
+                    ("ACTCH", 0),
+                ]),
+            ),
+        ],
+    ),
+    ("FXPAR", &[CC_FX, CC_PAR]),
+    ("DAWBTN", &[cc("btn", "DAW BUTTON", CcValues::DawButtons)]),
+    ("DAWENC", &[cc("enc", "DAW ROTARY", CcValues::Items(CC_DAW_ROTARY))]),
+    (
+        "CHPAGE",
+        &[
+            CC_CH,
+            cc(
+                "pg",
+                "PAGE",
+                CcValues::Items(&["HOME", "INPUT", "FILT", "GATE", "DYN", "EQ", "INS1", "INS2", "MAIN", "SEND", "SND.EQ"]),
+            ),
+        ],
+    ),
+    (
+        "PAGE",
+        &[cc(
+            "pg",
+            "PAGE",
+            CcValues::Items(&[
+                "FX", "MTRS", "CHINS", "SRC", "OUTS", "SETUP", "LIB", "CUSTCTL", "MON", "2TRK", "WLIVE", "MIXV", "FDRV", "SENDV",
+                "MGRP", "LAYER",
+            ]),
+        )],
+    ),
+    ("FDRPAGE", &[CC_AREA, CC_BANK]),
+    ("VIEWPAGE", &[CC_AREA, CC_BANK]),
+    (
+        "OTHER",
+        &[
+            cc(
+                "other",
+                "OTHER",
+                CcValues::Items(&[
+                    "TBA", "TBB", "ALTSRC", "DAWSW", "MONA", "MONB", "MONAB", "MONDIM", "MONMONO", "MONSWAP", "MONMUTE",
+                    "FDROFF", "FDR-10DB", "FDR0DB", "AUTOX", "AUTOY", "CHPREV", "CHNEXT", "CHSOLO", "BUSSOLO", "MAINSOLO",
+                    "MTXSOLO", "CHMTR", "BUSMTR", "MAINMTR", "MTXMTR", "DCAMTR", "CCBANK",
+                ]),
+            ),
+            cc(
+                "CCBK",
+                "CC BANK",
+                CcValues::Items(&[
+                    "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "-1", "+1",
+                ]),
+            ),
+        ],
+    ),
+    (
+        "GPIO",
+        &[cc(
+            "GPIO",
+            "GPIO",
+            CcValues::Items(&["A", "B", "C", "D", "A-P", "B-P", "C-P", "D-P", "2S", "5S", "10S", "15S", "20S", "25S", "30S"]),
+        )],
+    ),
+    ("FSTART", &[CC_CH]),
+    ("SHOWCTL", &[cc("action", "ACTION", CcValues::Items(&["GO", "PREV", "NEXT", "GOPREV", "GONEXT"]))]),
+    ("SCENES", &[cc("tag", "SCENE TAG", CcValues::Int(1, 128))]),
+    ("MIDICCT", &[CC_MIDI_CH, CC_MIDI_CC, CC_MIDI_VAL]),
+    ("MIDICCP", &[CC_MIDI_CH, CC_MIDI_CC, CC_MIDI_VAL]),
+    ("MIDINT", &[CC_MIDI_CH, CC_MIDI_NOTE, CC_MIDI_VAL]),
+    ("MIDINP", &[CC_MIDI_CH, CC_MIDI_NOTE, CC_MIDI_VAL]),
+    ("MIDIPGM", &[CC_MIDI_CH, cc("note", "PROGRAM", CcValues::Int(1, 128))]),
+    (
+        "USBPR",
+        &[cc(
+            "usbpr",
+            "USB PLAY/REC",
+            CcValues::Items(&["PSTOP", "PLAY", "PPAUSE", "PNEXT", "PPREV", "RSTOP", "RECORD", "RPAUSE", "RNEW"]),
+        )],
+    ),
+    ("SDRECA", &[CC_SD_REC]),
+    ("SESSIONA", &[CC_SESSION]),
+    ("MARKERA", &[CC_MARKER]),
+    ("SDRECB", &[CC_SD_REC]),
+    ("SESSIONB", &[CC_SESSION]),
+    ("MARKERB", &[CC_MARKER]),
+];
+
+/// The encoders' function nodes by `mode` (`enc`).
+const CC_ENCODER_NODES: &[(&str, &[CcNode])] = &[
+    ("FDR", &[CC_CH]),
+    ("PAN", &[CC_CH]),
+    ("DCA", &[cc("dca", "DCA", CcValues::Int(1, 16))]),
+    ("SSND", &[CC_SEND]),
+    ("FSND", &[cc("ch", "CHANNEL", CcValues::Int(1, 48)), CC_SEND]),
+    ("FX", &[CC_FX, CC_PAR]),
+    ("DAWMCU", &[cc("mcuenc", "DAW ROTARY", CcValues::Numbered(&[("M", 8), ("E", 16), ("JOG", 0)]))]),
+    ("MON", &[cc("mon", "MONITOR", CcValues::Items(&["A", "B"]))]),
+    ("OTHER", &[cc("other", "OTHER", CcValues::Items(&["BRILAMP", "BRIGLOW", "BRIPATCH"]))]),
+    ("MIDICC", &[CC_MIDI_CH, CC_MIDI_CC, CC_MIDI_VAL]),
+    ("SD A", &[cc("sdarec", "SD-A RECORDER", CcValues::Items(&["POS", "MARKER", "SESSION"]))]),
+    ("SD B", &[cc("sdbrec", "SD-B RECORDER", CcValues::Items(&["POS", "MARKER", "SESSION"]))]),
+];
+
 /// A node of the tree. Model parameters are addressed by their slot and
 /// position, which is also how the console numbers them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -209,6 +406,11 @@ pub struct Schema {
     root_children: Vec<u16>,
     slot_of_row: HashMap<u16, u16>,
     by_id: HashMap<u32, IdTarget>,
+    /// The custom controls' slots: their `mode` row.
+    cc_mode_rows: HashMap<u16, u16>,
+    /// The sweep's own rows of custom control function nodes (now the
+    /// slots' parameters): kept for their row numbers, no longer children.
+    detached: std::collections::HashSet<u16>,
 }
 
 /// The tree (parsed once).
@@ -386,9 +588,138 @@ impl Schema {
                 }
             }
         }
-        let mut s = Schema { enums, defs, rows, families, slots, children, root_children, slot_of_row, by_id };
+        let mut s = Schema {
+            enums,
+            defs,
+            rows,
+            families,
+            slots,
+            children,
+            root_children,
+            slot_of_row,
+            by_id,
+            cc_mode_rows: HashMap::new(),
+            detached: Default::default(),
+        };
         s.fix_sweep();
+        s.add_cc_slots();
         Some(s)
+    }
+
+    /// The custom controls' function nodes as model parameters (see the
+    /// module docs): a family for the keys and one for the encoders, whose
+    /// models are the `mode` items, and a slot per key and encoder.
+    fn add_cc_slots(&mut self) {
+        let row = |s: &Schema, path: &str| match s.resolve(path, &NoModels) {
+            Some(Node::Row(r)) => Some(r),
+            _ => None,
+        };
+        let (Some(key_mode), Some(enc_mode), Some(daw_btn)) =
+            (row(self, "/$ctl/user/1/1/bu/mode"), row(self, "/$ctl/user/1/1/enc/mode"), row(self, "/$ctl/user/daw1/1/bu/btn"))
+        else {
+            return;
+        };
+        let daw_btn_def = self.rows[daw_btn as usize].def;
+        let family = |s: &mut Schema, mode_row: u16, table: &[(&str, &[CcNode])]| {
+            // (Not Def::items: the tree isn't there yet.)
+            let list = s.defs[s.rows[mode_row as usize].def as usize].enum_list.map_or(0, usize::from);
+            let modes: Vec<&'static str> =
+                s.enums.get(list).map(|l| l.items.iter().map(|i| i.item).collect()).unwrap_or_default();
+            let models = modes
+                .into_iter()
+                .map(|token| {
+                    let nodes = table.iter().find(|(t, _)| *t == token).map_or(&[][..], |(_, n)| *n);
+                    let params = nodes
+                        .iter()
+                        .enumerate()
+                        .map(|(i, n)| ModelParam { name: n.name, index: i as u16 + 1, def: s.cc_def(n, daw_btn_def) })
+                        .collect();
+                    Model { token, params }
+                })
+                .collect();
+            s.families.push(Family { models });
+            (s.families.len() - 1) as u16
+        };
+        let keys = family(self, key_mode, CC_KEY_NODES);
+        let encoders = family(self, enc_mode, CC_ENCODER_NODES);
+        for line in CC_IDS.lines().filter(|l| !l.starts_with('#')) {
+            let mut fields = line.split('\t');
+            let Some(slot_row) = fields.next().and_then(|p| row(self, p)) else { continue };
+            let ids: Vec<u32> = fields.filter_map(|f| u32::from_str_radix(f.trim(), 16).ok()).collect();
+            let Some(mode_row) = self.child(Node::Row(slot_row), "mode", &NoModels).and_then(|n| match n {
+                Node::Row(r) => Some(r),
+                _ => None,
+            }) else {
+                continue;
+            };
+            let is_encoder = self.rows[slot_row as usize].name == Some("enc");
+            // The sweep's function nodes give way to the slot's parameters.
+            let rows = &self.rows;
+            let detached: Vec<u16> = self.children[slot_row as usize]
+                .iter()
+                .copied()
+                .filter(|&c| !matches!(rows[c as usize].name, Some("mode" | "name" | "$fname")))
+                .collect();
+            self.children[slot_row as usize].retain(|c| !detached.contains(c));
+            self.detached.extend(detached);
+            let slot = self.slots.len() as u16;
+            for (k, &id) in ids.iter().enumerate() {
+                self.by_id.insert(id, IdTarget::Param { slot, index: k as u8 + 1 });
+            }
+            self.slots.push(Slot { row: slot_row, family: if is_encoder { encoders } else { keys }, ids });
+            self.slot_of_row.insert(slot_row, slot);
+            self.cc_mode_rows.insert(slot, mode_row);
+        }
+    }
+
+    /// The definition of a custom control function node.
+    fn cc_def(&mut self, n: &CcNode, daw_btn_def: u16) -> u16 {
+        let def = |ty, long_name| Def {
+            ty,
+            unit: unit::NONE,
+            read_only: false,
+            long_name,
+            min: 0.0,
+            max: 0.0,
+            steps: 0,
+            min_int: 0,
+            max_int: 0,
+            max_len: 0,
+            enum_list: None,
+        };
+        let items: Vec<&'static str> = match n.values {
+            CcValues::DawButtons => return daw_btn_def,
+            CcValues::Int(min, max) => {
+                self.defs.push(Def { min_int: min, max_int: max, ..def(NodeType::Int, n.long) });
+                return (self.defs.len() - 1) as u16;
+            }
+            CcValues::Items(items) => items.to_vec(),
+            CcValues::Numbered(lists) => lists
+                .iter()
+                .flat_map(|&(prefix, count)| match count {
+                    0 => vec![prefix],
+                    _ => (1..=count).map(|i| &*Box::leak(format!("{prefix}{i}").into_boxed_str())).collect(),
+                })
+                .collect(),
+        };
+        self.enums.push(EnumList {
+            float: false,
+            items: items.into_iter().map(|item| EnumItem { item, value: 0.0, long: item }).collect(),
+        });
+        self.defs.push(Def { enum_list: Some((self.enums.len() - 1) as u16), ..def(NodeType::StrEnum, n.long) });
+        (self.defs.len() - 1) as u16
+    }
+
+    /// A custom control key's or encoder's slot: its `mode` row (None for
+    /// every other slot).
+    pub fn cc_mode_row(&self, slot: u16) -> Option<u16> {
+        self.cc_mode_rows.get(&slot).copied()
+    }
+
+    /// True for the sweep's own custom control function rows, which the
+    /// custom control slots' parameters replace (they are no node's child).
+    pub fn is_detached(&self, row: u16) -> bool {
+        self.detached.contains(&row)
     }
 
     /// Corrects what the parameter sweep caught in a state the console

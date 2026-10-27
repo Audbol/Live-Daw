@@ -115,6 +115,40 @@ All notable changes to Sidecar are listed here. Versions follow
   lock string `/$ctl/$stat/cnslock`.
 - Tap tempo on the INS 1 / INS 2 screens of HOME, as on EFFECTS: the blank key taps
   the TIME of the delay the insert holds.
+- Custom controls: the OTHER functions WING Edit lists that were missing: TALKBACK A /
+  B (as the TALK keys), GLOBAL MAIN/ALT (manual 5.5 p. 44), **DAW LAYER** (DAW remote
+  control on / off; on the COMPACT, which has no DAW key, the way into DAW mode, manual
+  4.8 p. 27), MONITOR PHONES / SPEAKERS / PH+SPK, CH / BUS / MAIN / MTX SOLO TAP (PFL /
+  AFL) and CH / BUS / MAIN / MTX / DCA METER TAP (PRE / POST). CC EDIT lists the
+  functions and OTHER in WING Edit's order. MONITORING encoders can set PHONES LEVEL.
+- Custom control keys: **CH INSERT PRE / POST ON/OFF** (a strip's INS 1 / INS 2),
+  **FX PAR** (an FX slot's parameter or MIX; a press toggles a switch or steps a list)
+  and **OVERVIEW PAGE** (the OVERVIEW screen of a section on a layer key or bank).
+  Holding a key with a parameter gives it to the encoder above (on the COMPACT, the
+  knob right of the display; manual 4.8 p. 25). An FX PAR key on a delay's TIME taps
+  the tempo, and SETUP > GENERAL > TAP TEMPO FLASH works: OFF, 8X (eight beats after
+  the time changes) or ON. It was only kept.
+- WING COMPACT DCA assignment from the surface (manual 4.2 p. 16): press a DCA key,
+  hold fader 13's SELECT and press the strips' SELECT keys to put them in the DCA or
+  take them out; meanwhile those keys light on the DCA's members.
+- WING COMPACT VIRTUAL section (manual 5.7 p. 61, Fig. 55): the VIEW screens have
+  COMPACT and VIRTUAL at the foot of the layer column. VIRTUAL has eight layers of its
+  own, eight faders wide, empty and unnamed at first; CONFIG fills and renames them.
+  Saved with the show; the full-size console keeps them. WING REMOTE:
+  `/$ctl/layer/VRT/1-8` (names and faders; `sel` and `ofs` on the COMPACT).
+- VIEW > CONFIG with SENDS or BUS -> BUS: **SOURCE CUSTOMIZATION** / **BUS
+  CUSTOMIZATION** (manual 5.10 p. 66, Fig. 60): send faders assigned show their
+  source's or their destination's name, colour and icon, on the surface and the
+  screens. SENDS starts with the **S** item (Fig. 59), the selected channel's send to
+  the destination, which follows the selection. C ABI version 20 (`FaderRefC.flags`,
+  `kFaderSelSend`).
+- WING REMOTE: the custom controls' function nodes (`ch`, `fx`, `par`, `other`, `CCBK`,
+  `area`, `bank`, `pg`, `tgt`, `btn`, `send`, `mgrp`, `dca`, `tag`, `action`, `usbpr`,
+  the MIDI keys' `ch`, `cc`, `note`) are the show's, both ways, with the WING's node ids
+  (one per position for every mode, captured from WING Edit 3.3.4), so WING Edit's CC
+  EDIT shows and sets a function's target and option; before, only its mode. The new
+  key functions are its INS1, INS2, FXPAR and VIEWPAGE modes and OTHER's TBA, TBB,
+  ALTSRC, DAWSW, MONA, MONB, MONAB, CHSOLO ... DCAMTR.
 - Recorder **SETTINGS** (status bar, as on the WING-LIVE screen, manual 8.1 p. 85-86):
   **SHOW METERS** shows or hides the meters of the armed tracks, and **AUTO INPUT
   SELECT** with **[STOP] / [PLAY] / [RECORD] INPUT** (KEEP, MAIN or ALT): when the
@@ -151,6 +185,12 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- F1-F3 of the 4-Channel section with USE F1-F3 AS CUSTOM CONTROLS mirror the custom
+  control layers 1-3 (encoders and upper keys), as the manual describes (5.5 p. 48);
+  they were three layers of their own. Shows saved before move those assignments to
+  layers 1-3 where those controls are free. WING REMOTE: `/$ctl/user/U1`-`U4`, `MM`
+  and `D1`-`D4` are the COMPACT's key sets on the full-size console too (WING Edit
+  lists them there); `U1`-`U3` were the F1-F3 layers.
 - SEL DBL CLICK = BUSFX opens INS 1 on mains and matrices too (it did on buses only),
   and INS 2 when INS 1 has no FX (manual 5.5 p. 48).
 - The blank key's LED blinks at the tempo while it can tap one (manual 5.5 p. 48); it
@@ -176,6 +216,9 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Fixed
 
+- The factory DAW layers (DAW 1-4: STOP, PLAY, CYCLE, RECORD ...) show on the surface
+  and on CC EDIT; the custom controls read from the show left out the controls still
+  at their factory assignment, and the next edit saved them empty.
 - ROUTING: the bus, main and matrix tiles (CHANNELS, SELECT MAIN INPUT) and the signal
   tiles on OUTPUTS have live meters, as the input tiles already had: a strip signal
   meters the strip's output, a source its peak, PHONES / SPEAKERS the monitor paths.

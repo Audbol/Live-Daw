@@ -36,6 +36,9 @@ public:
     juce::Rectangle<int> getScribbleArea() const noexcept { return scribbleArea; }
     /** The strip this fader controls (nullptr for a DCA or an empty position). */
     Strip* getStrip() const noexcept { return strip; }
+    /** SELECT goes down (true) and up (false): the COMPACT's main fader
+        section's SELECT, held for a DCA assignment (CompactSection). */
+    void setSelectHeld (std::function<void (bool down)> handler) { selectKey.onDownUp = std::move (handler); }
 
     /** Where the strip sits in its module of four: the LCD and meter panels
         are rounded at the module's outer edges. */
@@ -106,6 +109,11 @@ private:
     const LayerSet::Section section;
     std::optional<state::FaderRef> target;
     Strip* strip = nullptr;
+    /** The strip whose name, colour and icon the scribble strip shows: a
+        send fader's destination with BUS CUSTOMIZATION, else `strip`. */
+    Strip* custom = nullptr;
+    /** A selected channel's send fader: the selection it follows. */
+    Strip* followedSelection = nullptr;
     int dca = -1;
     std::optional<SendTarget> send;
     std::optional<ParamTarget> fxp;

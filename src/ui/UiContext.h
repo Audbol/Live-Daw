@@ -167,6 +167,17 @@ struct UiContext
     std::function<void (int layer)> showCustomControls;
     /** Opens the MONITORS screen on SETUP (its MONITORS key, the monitoring VIEW key). */
     std::function<void()> showMonitors;
+    /** A custom control's OVERVIEW PAGE: the OVERVIEW screen of area `area`
+        (the WING's L, C, R, CMPCT, RCK, EXT, VRT) on bank `bank` (0-based:
+        the section's layer keys 0-6, its fixed banks from 8). Set by the
+        main component. */
+    std::function<void (int area, int bank)> showOverviewPage;
+
+    /** The WING COMPACT's DCA assignment (WING manual 4.2 p. 16: a DCA key
+        pressed, the main fader section's SELECT held, then the channels'
+        SELECT keys): the DCA (0-15) the SELECT keys assign to while the main
+        SELECT is held, else -1. Set by the COMPACT's key section. */
+    int compactDcaAssign = -1;
 
     /** The CC section's cursor keys and wheel with USE CRSR/WHEEL on: the main
         display moves its focus frame (dx, dy) or turns the focused control.
@@ -282,6 +293,9 @@ namespace uiprefs
     constexpr bool compactMatrixSpillDefault = true;
     constexpr const char* compactDcaCustom = "ui.compactDcaCustom";
     constexpr const char* f1f3AsCustom = "ui.f1f3AsCustomControls";
+    // SETUP > GENERAL > TAP TEMPO FLASH: 0 OFF, 1 8X, 2 ON (default). Kept under the key it had
+    // while the row was inert (the WING remote's /$ctl/$globals/tapflash uses it).
+    constexpr const char* tapTempoFlash = "setup.inert.tapTempoFlash";
 
     // PLUGINS (SETUP > PLUGINS).
     constexpr const char* latencyCompensation = "engine.latencyCompensation"; // bool, default true: plugin delay compensation

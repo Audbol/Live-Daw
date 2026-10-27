@@ -12,10 +12,13 @@ namespace livedaw::ui::cc
 {
 
 /** The upper part's 16 layers (UP / DOWN), then the lower part's USER layer,
-    the 4-Channel section's U1-U3, the lower part's DAW 1-4 layers of DAW
-    mode and the WING COMPACT's key sets (stored with the show, see
-    livedaw-session/custom.rs). */
-constexpr int kNumLayers = 16, kUserLayer = 16, kFirstFourChannelLayer = 17, kNumStoredLayers = 33, kNumControls = 4;
+    three legacy layers, the lower part's DAW 1-4 layers of DAW mode and the
+    WING COMPACT's key sets (stored with the show, see livedaw-session/
+    custom.rs). The 4-Channel section's F1-F3 play layers 1-3 (WING manual 5.5
+    p. 48: "mirrors the Custom Control layers 1-3 ... F1 opens the 4 knobs and
+    top row of 4 buttons of the first layer"); older shows kept them on the
+    legacy layers 17-19, which loading moves to layers 1-3. */
+constexpr int kNumLayers = 16, kUserLayer = 16, kLegacyFourChannelLayer = 17, kNumStoredLayers = 33, kNumControls = 4;
 constexpr int kFirstDawLayer = 20, kNumDawLayers = 4;
 /** The COMPACT's key sets (WING manual 4.8: "U1-U4: User layer buttons 1-16,
     M/M: Main Matrix layer buttons 5-8, D1-D4: DCA layer buttons 1-16";
@@ -120,11 +123,65 @@ enum ButtonCategory
     BtnUsbPlayer,
     BtnSdRecorder,
     BtnGpio,
-    BtnCcBank, // 3.0.6: the option is the upper part's layer (CC bank) to show
+    BtnCcBank,       // 3.0.6: the option is the upper part's layer (CC bank) to show
+    BtnInsertPre,    // CH INSERT PRE ON/OFF (WING INS1): the target is the strip
+    BtnInsertPost,   // CH INSERT POST ON/OFF (INS2)
+    BtnFxParameter,  // FX PAR: the target is the FX slot, the option the parameter (-1: MIX)
+    BtnOverviewPage, // OVERVIEW PAGE (VIEWPAGE): the target is the area, the option the bank
     kNumButtonCategories
 };
 
+/** OTHER's functions (the option; custom.rs `other`). CC EDIT lists them in
+    WING Edit's order (otherOrder()). */
+enum OtherFunction
+{
+    OtherMonitorDim,
+    OtherMonitorMono,
+    OtherMonitorSwap,
+    OtherMonitorMute,
+    OtherFaderOff,
+    OtherFaderMinus10,
+    OtherFader0,
+    OtherAutomixX,
+    OtherAutomixY,
+    OtherChannelPrev,
+    OtherChannelNext,
+    OtherCcBankUp,
+    OtherCcBankDown,
+    OtherSofOff,
+    OtherTalkbackA,
+    OtherTalkbackB,
+    OtherGlobalMainAlt,
+    OtherDawLayer,
+    OtherMonitorPhones,
+    OtherMonitorSpeakers,
+    OtherMonitorPhonesSpeakers,
+    OtherChSoloTap,  // CH, BUS, MAIN, MTX SOLO TAP: PFL / AFL
+    OtherBusSoloTap,
+    OtherMainSoloTap,
+    OtherMtxSoloTap,
+    OtherChMeterTap, // CH, BUS, MAIN, MTX, DCA METER TAP: PRE / POST
+    OtherBusMeterTap,
+    OtherMainMeterTap,
+    OtherMtxMeterTap,
+    OtherDcaMeterTap,
+    kNumOtherFunctions
+};
+
+/** The OVERVIEW PAGE areas (the WING's L, C, R, CMPCT, RCK, EXT, VRT) and
+    banks: 0-8 the section's layer keys, from kFirstOverviewBank its fixed
+    banks (1-8 ... DCA 9-16; the WING's bank 1-21). */
+constexpr int kNumOverviewAreas = 7, kFirstOverviewBank = 9;
+/** The fader section an OVERVIEW PAGE area shows (VRT: the COMPACT's VIRTUAL). */
+LayerSet::Section overviewSection (int area) noexcept;
+
 int numCategories (Slot);
+/** The FUNCTION list's rows, as categories: WING Edit's order (CH MUTE, CH
+    SOLO, CH INSERT PRE ...), Sidecar's own (CC BANK) after OTHER. */
+std::vector<int> categoryOrder (Slot);
+/** OTHER's functions in WING Edit's order (TALKBACK A, TALKBACK B, GLOBAL
+    MAIN/ALT, DAW LAYER, MONITOR PHONES ...), Sidecar's own at the end. */
+const std::vector<int>& otherOrder();
 juce::String categoryName (Slot, int category);
 /** False for the functions this console can't do yet (drawn disabled). */
 bool categoryAvailable (Slot, int category);
@@ -137,12 +194,22 @@ state::StripRef decodeStrip (int target) noexcept;
 
 /** The knob binding of an encoder function (invalid when it does nothing). */
 KnobBinding bindEncoder (UiContext&, const Function&);
+/** What the encoder over a key sets while the key is held (WING manual 4.8
+    p. 25: "hold down the button and turn the knob directly above it"; on
+    the COMPACT the knob right of the main display): an FX PAR key's
+    parameter; invalid for the other functions. */
+KnobBinding bindHeldKey (UiContext&, const Function&);
 /** A key press. */
 void press (UiContext&, const Function&);
 /** A key released (the push functions: DAW BUTTONS, MIDI CC / NOTE PUSH). */
 void release (UiContext&, const Function&);
-/** A key's LED as SurfaceKey::Led (0 off, 1 lit, 2 blinking: DAW LEDs blink). */
+/** A key's LED as SurfaceKey::Led (0 off, 1 lit, 2 blinking: DAW LEDs
+    blink). An FX PAR key on a delay's TIME taps the tempo and flashes with it
+    as SETUP > GENERAL > TAP TEMPO FLASH says (OFF, 8X: eight beats after the
+    TIME changes, ON). */
 int ledState (UiContext&, const Function&);
+/** TAP TEMPO FLASH (manual 5.5 p. 47): 0 OFF, 1 8X, 2 ON (the default). */
+int tapTempoFlash (UiContext&);
 /** Whether a key's LED is lit. */
 bool isLit (UiContext&, const Function&);
 /** "CH1 FADER", "SCN GO", "TALK A"... */
@@ -198,8 +265,9 @@ private:
     cc::Control control() const;
     cc::Function function() const;
     void store (const cc::Function&);
-    /** The targets (list 1) and options (list 2) of the selected function. */
-    std::vector<int> targetCodes, optionCodes;
+    /** The FUNCTION list's categories (categoryOrder()), the targets (list 1)
+        and options (list 2) of the selected function. */
+    std::vector<int> categoryCodes, targetCodes, optionCodes;
     bool targetIsOption = false; // the first sub-list holds the options (no targets)
 
     UiContext& ctx;

@@ -44,7 +44,9 @@ use std::sync::Arc;
 // ld_engine_user_signals ...), the output patch (ld_engine_output_patch,
 // ld_engine_route_output_source, ld_engine_clear_output), strip sources
 // (ld_strip_source_input); kNumSources grows by the 56 USR sources.
-pub const LD_ABI_VERSION: i32 = 19;
+// ABI 20: LdFaderRef gains `flags` (bit 0: BUS CUSTOMIZATION of a send fader)
+// and kind 9 = the selected channel's send; the layout info checks its size.
+pub const LD_ABI_VERSION: i32 = 20;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -164,6 +166,8 @@ pub struct LdLayoutInfo {
     pub user_signal: i32,
     pub off_user_signal_post: i32,
     pub user_patch: i32,
+    // ABI 20: send faders with BUS CUSTOMIZATION, the selected channel's send
+    pub fader_ref: i32,
 }
 
 #[no_mangle]
@@ -255,6 +259,7 @@ pub unsafe extern "C" fn ld_layout_info(out: *mut LdLayoutInfo) {
         user_signal: size_of::<UserSignalParams>() as i32,
         off_user_signal_post: offset_of!(UserSignalParams, post) as i32,
         user_patch: size_of::<UserPatchParams>() as i32,
+        fader_ref: size_of::<session::LdFaderRef>() as i32,
     };
 }
 

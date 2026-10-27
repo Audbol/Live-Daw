@@ -25,7 +25,10 @@ namespace livedaw::ui
 
     The 48 V keys switch only when held for 2 s, as the console's. Holding
     F1-F3 picks the bus it sends to. With USE F1-F3 AS CUSTOM CONTROLS
-    (SETUP > SURFACE) they're custom control layers U1-U3 instead. */
+    (SETUP > SURFACE) they mirror the custom control layers 1-3 instead (WING
+    manual 5.5 p. 48: "F1 opens the 4 knobs and top row of 4 buttons of the
+    first layer"): the encoders and upper keys of the CC section's layers,
+    and a key held lets its encoder set what it switches (FX PAR, 4.8). */
 class FourChannelSection final : public juce::Component, private juce::Timer
 {
 public:
@@ -59,7 +62,8 @@ private:
     int busOf (int fKey) const;
     void chooseBus (int fKey);
     juce::String modeCaption() const;
-    /** USE F1-F3 AS CUSTOM CONTROLS in an F mode: the control on encoder i of U1-U3, else nullptr. */
+    /** USE F1-F3 AS CUSTOM CONTROLS in an F mode: the control on encoder i of
+        custom control layer 1-3, else nullptr. */
     const cc::Control* customControl (int i) const;
 
     UiContext& ctx;
@@ -67,6 +71,8 @@ private:
     int mode = Gain;
     bool alternate = false; // FILTER: high cut, PAN: width
     juce::OwnedArray<SurfaceKey> modeKeys, channelKeys;
+    /** A custom control key held (its encoder sets the key's parameter), or -1. */
+    int heldKey = -1;
     DisplayKnob knobs[4];
     std::array<Strip*, 4> strips {};
     juce::Rectangle<int> panel, keyPanel, lcd, knobPanel, heading;

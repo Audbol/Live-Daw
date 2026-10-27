@@ -2,6 +2,7 @@
 #include "engine/Models.h"
 #include "ui/CustomControlsPage.h"
 #include "ui/FaderStrip.h"
+#include "ui/SurfaceSections.h"
 #include "ui/WingPopups.h"
 
 namespace livedaw::ui
@@ -63,8 +64,32 @@ FourChannelSection::FourChannelSection (UiContext& c, std::function<Strip* (int)
     {
         knobs[i].setHardware (true);
         addAndMakeVisible (knobs[i]);
-        auto* k = channelKeys.add (new SurfaceKey());
+        auto* k = new TalkKey();
+        channelKeys.add (k);
         k->shape = SurfaceKey::Shape::Square;
+        // A custom control key: released (DAW and MIDI push keys, TALKBACK);
+        // held, the encoder above it sets its parameter (WING manual 4.8 p. 25).
+        k->onTalk = [this, i] (bool down)
+        {
+            const auto* control = customControl (i);
+            if (control == nullptr)
+                return;
+            if (! down)
+            {
+                cc::release (ctx, control->upper);
+                if (heldKey == i)
+                {
+                    heldKey = -1;
+                    bind();
+                }
+                return;
+            }
+            if (auto b = cc::bindHeldKey (ctx, control->upper); b.isValid())
+            {
+                heldKey = i;
+                knobs[i].setBinding (b);
+            }
+        };
         k->onPress = [this, i]
         {
             if (const auto* control = customControl (i))
@@ -107,10 +132,10 @@ FourChannelSection::FourChannelSection (UiContext& c, std::function<Strip* (int)
         };
         // As the console's, +48V switches only when the key is held.
         k->switchesOnHold = [this, i] { return mode == Gain && customControl (i) == nullptr; };
-        k->ledState = [this, i]
+        k->ledState = [this, i]() -> int
         {
             if (const auto* control = customControl (i))
-                return cc::isLit (ctx, control->upper) ? SurfaceKey::Lit : SurfaceKey::Off;
+                return cc::ledState (ctx, control->upper);
             auto* s = strips[(size_t) i];
             if (s == nullptr)
                 return SurfaceKey::Off;
@@ -150,7 +175,7 @@ int FourChannelSection::busOf (int fKey) const
 void FourChannelSection::chooseBus (int fKey)
 {
     if (ctx.settings.getBoolValue (uiprefs::f1f3AsCustom, false))
-        return; // U1-U3: CC EDIT assigns them
+        return; // custom control layers 1-3: CC EDIT assigns them
     juce::StringArray items;
     for (auto& b : ctx.engine.getBuses())
         items.add (shortStripLabel (*b) + "  " + stripName (*b).toUpperCase());
@@ -187,10 +212,10 @@ void FourChannelSection::refresh()
 
 const cc::Control* FourChannelSection::customControl (int i) const
 {
-    // USE F1-F3 AS CUSTOM CONTROLS: F1-F3 are the custom control layers U1-U3.
+    // USE F1-F3 AS CUSTOM CONTROLS: F1-F3 mirror the custom control layers 1-3.
     if (mode < F1 || mode > F3 || ctx.customControls == nullptr || ! ctx.settings.getBoolValue (uiprefs::f1f3AsCustom, false))
         return nullptr;
-    return &ctx.customControls->get (cc::kFirstFourChannelLayer + mode - F1, i);
+    return &ctx.customControls->get (mode - F1, i);
 }
 
 void FourChannelSection::bind()
@@ -201,7 +226,8 @@ void FourChannelSection::bind()
         KnobBinding b;
         if (const auto* c = customControl (i))
         {
-            knobs[i].setBinding (cc::bindEncoder (ctx, c->encoder));
+            if (heldKey != i)
+                knobs[i].setBinding (cc::bindEncoder (ctx, c->encoder));
             channelKeys[i]->setEnabled (c->upper.isAssigned());
             continue;
         }
@@ -250,7 +276,7 @@ juce::String FourChannelSection::modeCaption() const
         case F2:
         case F3:
             if (ctx.settings.getBoolValue (uiprefs::f1f3AsCustom, false))
-                return "U" + juce::String (mode - F1 + 1);
+                return "CC" + juce::String (mode - F1 + 1);
             return "B" + juce::String (busOf (mode - F1) + 1);
         default:     return {};
     }
@@ -258,7 +284,7 @@ juce::String FourChannelSection::modeCaption() const
 
 void FourChannelSection::timerCallback()
 {
-    // Custom control layers U1-U3 follow CC EDIT.
+    // Custom control layers 1-3 follow CC EDIT.
     if (ctx.customControls != nullptr && ctx.customControls->getRevision() != shownCcRevision)
     {
         shownCcRevision = ctx.customControls->getRevision();
@@ -326,7 +352,7 @@ void FourChannelSection::paint (juce::Graphics& g)
         {
             // A custom control layer: the layer, the encoder's value large
             // with the control's name, and its key.
-            info.tag = "U" + juce::String (mode - F1 + 1);
+            info.tag = "CC" + juce::String (mode - F1 + 1);
             info.tagFirst = true;
             info.number = juce::String (i + 1);
             const auto& b = knobs[i].getBinding();

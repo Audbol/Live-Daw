@@ -31,8 +31,13 @@
 //! Compact's nine layer keys in a column at its left: `1-12`, `13-24`,
 //! `25-36`, `37-48 AUX IN`, `BUS MASTER`, `MAIN MATRIX`, `DCA`, `USER 1`,
 //! `USER 2` (WING remote protocols: "Compact console has 9 layers"). The left
-//! section stands for it; the center and right sections are not on the
-//! surface (their selections are kept for the full-size view).
+//! section stands for it; the right section is not on the surface. The
+//! center section is the COMPACT's **VIRTUAL** section (WING manual 5.7
+//! p. 61, Fig. 55: "additional virtual fader layers ... Rename and populate
+//! these layers on the CONFIG screen"): eight layers of their own (`vrt-1` ..
+//! `vrt-8`, `/$ctl/layer/VRT/1..8`), empty and unnamed at first, eight
+//! faders wide, which only the screens show. The full-size console keeps
+//! them (as the console does: all layers can be prepared on any model).
 
 use crate::model::ConsoleModel;
 use crate::refs::StripRef;
@@ -53,6 +58,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// CC sent out of EXTERNAL MIDI CONTROL ("midi:0.7": MIDI channel 1, CC 7; the
 /// WING's layer node type MIDI). `Empty` is a blank slot of a user layer (or
 /// an edited layer key): an inactive strip, saved as "-".
+///
+/// A send fader shows its source's name, colour and icon, or with BUS
+/// CUSTOMIZATION its destination's ([`FaderRef::BusSend`], "bsend:ch:3>bus:0";
+/// WING manual 5.10 p. 66, Fig. 60); [`FaderRef::SelSend`] is the selected
+/// channel's send to the destination (the "S" item, Fig. 59; "ssend:bus:0",
+/// "ssendb:bus:0" with BUS CUSTOMIZATION).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FaderRef {
     Empty,
@@ -61,6 +72,16 @@ pub enum FaderRef {
     Send {
         from: StripRef,
         to: StripRef,
+    },
+    /// A send fader with the destination's customization.
+    BusSend {
+        from: StripRef,
+        to: StripRef,
+    },
+    /// The selected strip's send to `to` (follows the selection).
+    SelSend {
+        to: StripRef,
+        bus_custom: bool,
     },
     FxParam {
         slot: i32,
@@ -95,6 +116,16 @@ impl FaderRef {
             let (from, to) = rest.split_once('>').unwrap_or((rest, ""));
             return FaderRef::Send { from: StripRef::parse(from), to: StripRef::parse(to) };
         }
+        if let Some(rest) = s.strip_prefix("bsend:") {
+            let (from, to) = rest.split_once('>').unwrap_or((rest, ""));
+            return FaderRef::BusSend { from: StripRef::parse(from), to: StripRef::parse(to) };
+        }
+        if let Some(to) = s.strip_prefix("ssendb:") {
+            return FaderRef::SelSend { to: StripRef::parse(to), bus_custom: true };
+        }
+        if let Some(to) = s.strip_prefix("ssend:") {
+            return FaderRef::SelSend { to: StripRef::parse(to), bus_custom: false };
+        }
         if let Some(rest) = s.strip_prefix("fxp:") {
             let (slot, param) = rest.split_once('.').unwrap_or((rest, "0"));
             return FaderRef::FxParam { slot: parse_int_prefix(slot), param: parse_int_prefix(param) };
@@ -114,6 +145,8 @@ impl fmt::Display for FaderRef {
             FaderRef::Strip(r) => r.fmt(f),
             FaderRef::Dca(i) => write!(f, "dca:{i}"),
             FaderRef::Send { from, to } => write!(f, "send:{from}>{to}"),
+            FaderRef::BusSend { from, to } => write!(f, "bsend:{from}>{to}"),
+            FaderRef::SelSend { to, bus_custom } => write!(f, "{}:{to}", if *bus_custom { "ssendb" } else { "ssend" }),
             FaderRef::FxParam { slot, param } => write!(f, "fxp:{slot}.{param}"),
             FaderRef::MidiCc { channel, cc } => write!(f, "midi:{channel}.{cc}"),
         }
@@ -235,6 +268,18 @@ pub const INPUT_KEY_CHANNELS: usize = 12;
 pub const COMPACT_WIDTH: i32 = 12;
 /// The ids of the USER 1 and USER 2 keys.
 pub const USER_KEYS: [&str; 2] = ["user-1", "user-2"];
+/// The COMPACT's virtual layers (see the module docs): the center section's
+/// keys while the console is a COMPACT.
+pub const NUM_VIRTUAL_LAYERS: usize = 8;
+pub const VIRTUAL_KEYS: [&str; NUM_VIRTUAL_LAYERS] = ["vrt-1", "vrt-2", "vrt-3", "vrt-4", "vrt-5", "vrt-6", "vrt-7", "vrt-8"];
+/// The section holding them, and its faders per page (`/$ctl/layer/VRT/N/ofs` 0-8).
+pub const VIRTUAL_SECTION: usize = CENTER;
+pub const VIRTUAL_WIDTH: i32 = 8;
+
+/// Virtual layer `id`'s index (0-7).
+pub fn virtual_index(id: &str) -> Option<usize> {
+    VIRTUAL_KEYS.iter().position(|k| *k == id)
+}
 
 /// What a section spills (see the module docs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -399,6 +444,8 @@ pub struct LayerSet {
     spills: [Option<Spill>; NUM_SECTIONS],
     /// The console model the surface shows (an app setting: not saved, kept by `reset`).
     model: ConsoleModel,
+    /// The virtual layers' names (empty: an unnamed layer, as on the console).
+    virtual_names: [String; NUM_VIRTUAL_LAYERS],
 }
 
 impl Default for LayerSet {
@@ -412,6 +459,7 @@ impl Default for LayerSet {
             offsets: [0; NUM_SECTIONS],
             spills: [None, None, None],
             model: ConsoleModel::Full,
+            virtual_names: Default::default(),
         }
     }
 }
@@ -552,6 +600,8 @@ impl LayerSet {
         if self.model.is_compact() && section == LEFT {
             // The COMPACT's section is its 12 faders, whatever the width setting.
             COMPACT_WIDTH
+        } else if self.model.is_compact() && section == VIRTUAL_SECTION {
+            VIRTUAL_WIDTH
         } else if self.is_auto_width(section) {
             self.fitted.get(section).copied().unwrap_or(1)
         } else {
@@ -572,8 +622,18 @@ impl LayerSet {
 
     // ---- layers ----------------------------------------------------------------------
 
+    /// Virtual layer `index` (0-7; see the module docs), on any model.
+    pub fn virtual_layer(&self, index: usize) -> Option<Layer> {
+        let id = VIRTUAL_KEYS.get(index)?;
+        let faders = self.overrides.iter().find(|o| o.section == VIRTUAL_SECTION && o.id == *id).map(|o| o.faders.clone());
+        Some(Layer { id: (*id).into(), name: self.virtual_names[index].clone(), faders: faders.unwrap_or_default(), user: false })
+    }
+
     /// The section's layer keys, top to bottom (see the module docs).
     pub fn default_layers_for(&self, section: usize, console: &ConsoleRefs) -> Vec<Layer> {
+        if self.model.is_compact() && section == VIRTUAL_SECTION {
+            return (0..NUM_VIRTUAL_LAYERS).filter_map(|i| self.virtual_layer(i)).collect();
+        }
         let channels: Vec<Labelled> = labelled(&console.channels, "CH").collect();
         let auxes: Vec<Labelled> = labelled(&console.auxes, "AUX").collect();
         let buses: Vec<Labelled> = labelled(&console.buses, "BUS").collect();
@@ -786,8 +846,11 @@ impl LayerSet {
         self.user_layers.retain(|l| l.id != id);
     }
 
+    /// Renames a user layer, or a virtual layer (`vrt-1` .. `vrt-8`).
     pub fn rename_user_layer(&mut self, id: &str, name: &str) {
-        if let Some(l) = self.user_layer_mut(id) {
+        if let Some(i) = virtual_index(id) {
+            name.clone_into(&mut self.virtual_names[i]);
+        } else if let Some(l) = self.user_layer_mut(id) {
             l.name = name.into();
         }
     }
@@ -918,6 +981,9 @@ impl LayerSet {
         for o in &self.overrides {
             xml.add_new("Override").set("section", o.section).set("id", &o.id).set("faders", faders_to_string(&o.faders));
         }
+        for (i, name) in self.virtual_names.iter().enumerate().filter(|(_, n)| !n.is_empty()) {
+            xml.add_new("Virtual").set("index", i + 1).set("name", name);
+        }
         xml
     }
 
@@ -946,6 +1012,11 @@ impl LayerSet {
         for e in xml.children_named("Override") {
             let section = usize::try_from(parse_int_prefix(e.str_or("section", "-1"))).unwrap_or(NUM_SECTIONS);
             self.set_default_override(section, e.str_or("id", ""), faders_from_string(e.str_or("faders", "")));
+        }
+        for e in xml.children_named("Virtual") {
+            if let Some(name) = usize::try_from(e.int_or("index", 0) - 1).ok().and_then(|i| self.virtual_names.get_mut(i)) {
+                e.str_or("name", "").clone_into(name);
+            }
         }
     }
 
@@ -1453,5 +1524,50 @@ mod tests {
         assert_eq!((set.spill(CENTER), set.selected(CENTER)), (None, "out-1"));
         set.select(CENTER, SPILL_ID);
         assert_eq!(set.selected(CENTER), "out-1");
+    }
+
+    #[test]
+    fn the_compacts_virtual_layers() {
+        let console = ConsoleRefs::wing(40);
+        let mut set = LayerSet::default();
+        // The full-size console's center section is its own.
+        assert_eq!(set.default_layers_for(CENTER, &console)[0].id, "dca-1");
+        set.set_model(ConsoleModel::Compact);
+        let vrt = set.default_layers_for(VIRTUAL_SECTION, &console);
+        assert_eq!(ids(&vrt), VIRTUAL_KEYS);
+        assert!(vrt.iter().all(|l| l.name.is_empty() && l.faders.is_empty() && !l.user));
+        assert_eq!(set.effective_width(VIRTUAL_SECTION), VIRTUAL_WIDTH);
+
+        // CONFIG populates and renames them; they are saved with the show.
+        set.set_default_override(VIRTUAL_SECTION, "vrt-3", vec![ch(4), FaderRef::Empty, FaderRef::Dca(2)]);
+        set.rename_user_layer("vrt-3", "Drums");
+        let layer = set.find_layer_for(VIRTUAL_SECTION, &console, "vrt-3");
+        assert_eq!((layer.name.as_str(), layer.faders.len()), ("Drums", 3));
+        let mut loaded = LayerSet::default();
+        loaded.from_xml(&set.to_xml());
+        loaded.set_model(ConsoleModel::Compact);
+        assert_eq!(loaded.virtual_layer(2), set.virtual_layer(2));
+        assert_eq!(loaded.virtual_layer(2).unwrap().name, "Drums");
+        // On the full size they are kept, not shown.
+        loaded.set_model(ConsoleModel::Full);
+        assert_eq!(loaded.virtual_layer(2).unwrap().faders[2], FaderRef::Dca(2));
+        assert_ne!(loaded.default_layers_for(CENTER, &console)[0].id, "vrt-1");
+        loaded.reset();
+        assert!(loaded.virtual_layer(2).unwrap().name.is_empty());
+    }
+
+    #[test]
+    fn send_faders_with_bus_customization_and_the_selected_channel() {
+        let bus = StripRef::new(StripKind::Bus, 3);
+        for f in [
+            FaderRef::BusSend { from: StripRef::new(StripKind::Channel, 2), to: bus },
+            FaderRef::SelSend { to: bus, bus_custom: false },
+            FaderRef::SelSend { to: StripRef::new(StripKind::Matrix, 1), bus_custom: true },
+        ] {
+            assert_eq!(FaderRef::parse(&f.to_string()), f, "{f}");
+        }
+        assert_eq!(FaderRef::SelSend { to: bus, bus_custom: true }.to_string(), "ssendb:bus:3");
+        let layer = vec![FaderRef::SelSend { to: bus, bus_custom: false }, ch(1)];
+        assert_eq!(faders_from_string(&faders_to_string(&layer)), layer);
     }
 }
