@@ -234,6 +234,8 @@ pub struct Shared {
     next_id: AtomicU64,
     osc_messages: AtomicU64,
     native_bytes: AtomicU64,
+    /// The meter stream's levels (ballistics), moved on once per frame.
+    meter_clock: Mutex<meters::MeterClock>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -272,6 +274,7 @@ impl Shared {
             next_id: AtomicU64::new(1),
             osc_messages: AtomicU64::new(0),
             native_bytes: AtomicU64::new(0),
+            meter_clock: Mutex::new(meters::MeterClock::default()),
         }
     }
 
@@ -507,15 +510,21 @@ impl Shared {
     fn send_meters(&self, sock: &UdpSocket) {
         let clients: Vec<Arc<NativeClient>> = lock(&self.clients).clone();
         let now = Instant::now();
-        let mut c = None;
+        let mut ticked = None;
         for cl in clients {
             let sub = lock(&cl.meters);
             let Some(port) = sub.port else { continue };
             if sub.meters.is_empty() || sub.expires < now {
                 continue;
             }
-            let c = c.get_or_insert_with(|| self.console());
-            let words = meters::frame_words(c, &sub.meters);
+            // The levels move on once per frame, for all subscribers.
+            let (c, clock) = ticked.get_or_insert_with(|| {
+                let c = self.console();
+                let mut clock = lock(&self.meter_clock);
+                clock.tick(c.engine, now);
+                (c, clock)
+            });
+            let words = meters::frame_words(c, clock, &sub.meters);
             let _ = sock.send_to(&meters::datagram(sub.report_id, &words), SocketAddr::new(cl.peer.ip(), port));
         }
     }
@@ -888,8 +897,12 @@ fn client_loop(sh: &Shared, client: Arc<NativeClient>, mut stream: TcpStream) {
 fn poll_loop(sh: &Shared) {
     let meter_sock = UdpSocket::bind("0.0.0.0:0").ok();
     let mut tick = 0u64;
+    // Meter frames on a fixed grid (the console's ~50 ms), however long the
+    // work in between takes.
+    let mut next = Instant::now();
     while !sh.stop.load(Ordering::Relaxed) {
-        std::thread::sleep(Duration::from_millis(50));
+        next = meters::next_tick(next, Instant::now(), meters::METER_PERIOD);
+        std::thread::sleep(next.saturating_duration_since(Instant::now()));
         tick += 1;
         if let Some(sock) = &meter_sock {
             sh.send_meters(sock);

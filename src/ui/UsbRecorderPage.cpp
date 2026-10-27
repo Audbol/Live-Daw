@@ -1,4 +1,5 @@
 #include "ui/UsbRecorderPage.h"
+#include "ui/MeterBallistics.h"
 #include "ui/ScreenWidgets.h"
 #include "ui/WingPopups.h"
 
@@ -7,6 +8,9 @@ namespace livedaw::ui
 
 namespace
 {
+    /** The page's timer (meters, reels). */
+    constexpr int kTimerHz = 20;
+
     // The USB screen's colours (firmware 3.1).
     const juce::Colour panelGrey { 0xff202020 };
     const juce::Colour keyGrey { 0xff303030 };     // an enabled key, framed #c0c0c0
@@ -316,7 +320,7 @@ UsbRecorderPage::UsbRecorderPage (UiContext& c) : ctx (c)
 {
     usb().loadSettings (ctx.settings);
     reload();
-    startTimerHz (20);
+    startTimerHz (kTimerHz);
 }
 
 UsbRecorderPage::~UsbRecorderPage() = default;
@@ -986,11 +990,12 @@ void UsbRecorderPage::layout()
 void UsbRecorderPage::timerCallback()
 {
     auto& u = usb();
-    // Meters: the peak since the last read, falling 1.5 dB per tick.
+    // Meters: the peak since the last read, falling as every meter does (MeterBallistics.h).
+    constexpr float fall = meters::kReleaseDbPerSecond / (float) kTimerHz;
     for (int ch = 0; ch < 4; ++ch)
     {
-        recLevels[(size_t) ch] = juce::jmax (u.getRecLevel (ch), recLevels[(size_t) ch] - 1.5f);
-        playLevels[(size_t) ch] = juce::jmax (u.getPlayLevel (ch), playLevels[(size_t) ch] - 1.5f);
+        recLevels[(size_t) ch] = juce::jmax (u.getRecLevel (ch), recLevels[(size_t) ch] - fall);
+        playLevels[(size_t) ch] = juce::jmax (u.getPlayLevel (ch), playLevels[(size_t) ch] - fall);
     }
     // The reels turn while the transports run.
     const auto rec = u.getRecState();

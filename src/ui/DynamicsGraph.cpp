@@ -1,6 +1,7 @@
 #include "ui/DynamicsGraph.h"
 
 #include "ui/LookAndFeel.h"
+#include "ui/MeterBallistics.h"
 
 #include <algorithm>
 #include <cmath>
@@ -205,7 +206,7 @@ void DynTransferGraph::timerCallback()
     gr = newGr > gr ? newGr : gr * 0.8f + newGr * 0.2f;
     key = newKey > key ? newKey : key * 0.6f + newKey * 0.4f;
     const float outDb = peak > 0.0f ? 20.0f * std::log10 (peak) : -120.0f;
-    out = outDb > out ? outDb : juce::jmax (outDb, out - 1.5f);
+    out = outDb > out ? outDb : juce::jmax (outDb, out - meters::kReleaseDbPerSecond / 30.0f); // the meters' fall, at 30 Hz
     // The tail follows the dot a few frames behind.
     std::move_backward (trail.begin(), trail.end() - 1, trail.end());
     trail[0] = key;

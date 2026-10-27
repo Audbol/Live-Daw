@@ -786,15 +786,16 @@ void RoutingPage::timerCallback()
         for (size_t i = 0; i < grid.size(); ++i)
         {
             const int source = routing::sourceAt (inputGroup, (int) i);
-            auto* src = source >= 0 ? ctx.engine.getSource (MixerEngine::sourceIndex (source)) : nullptr;
-            float peak = src != nullptr ? src->peak.exchange (0.0f) : 0.0f;
+            const int index = source >= 0 ? MixerEngine::sourceIndex (source) : -1;
+            auto* src = index >= 0 ? ctx.engine.getSource (index) : nullptr;
+            float peak = src != nullptr ? ctx.meters.getSource (index) : 0.0f;
             // A bus, main or matrix signal meters its strip's output.
             if (int side = 0; src == nullptr && source >= 0)
                 if (const auto* strip = stripOfSignal (ctx.engine, source, &side))
                     peak = ctx.meters.get (strip, MeterPoint::Output, side);
             auto& shown = sourcePeaks[i];
             const float before = shown;
-            shown = juce::jmax (peak, shown * 0.5f);
+            shown = peak; // the meter bank's ballistics, as every other meter
             if (moved (before, shown))
                 repaint (grid[i]);
             if (source == selectedSource && source >= 0)
@@ -813,7 +814,7 @@ void RoutingPage::timerCallback()
         {
             auto& shown = signalPeaks[i];
             const float before = shown;
-            shown = juce::jmax (signalLevel (signalTiles[i].second), shown * 0.5f);
+            shown = signalLevel (signalTiles[i].second);
             if (std::abs (juce::Decibels::gainToDecibels (before, -60.0f) - juce::Decibels::gainToDecibels (shown, -60.0f)) > 0.5f)
                 repaint (signalTiles[i].first);
         }
@@ -1348,8 +1349,7 @@ float RoutingPage::signalLevel (const Signal& sig) const
     {
         if (int side = 0; const auto* strip = stripOfSignal (ctx.engine, sig.source, &side))
             return ctx.meters.get (strip, MeterPoint::Output, side);
-        auto* src = ctx.engine.getSource (MixerEngine::sourceIndex (sig.source));
-        return src != nullptr ? src->peak.exchange (0.0f) : 0.0f;
+        return ctx.meters.getSource (MixerEngine::sourceIndex (sig.source));
     }
     if (sig.strip != nullptr)
         return ctx.meters.get (sig.strip, MeterPoint::Output, sig.channel % 2);

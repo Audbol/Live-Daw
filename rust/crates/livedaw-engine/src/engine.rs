@@ -50,6 +50,7 @@
 //! drops it (and any removed strips) once the audio thread is done with it.
 
 use crate::analyser::{rta_tap, Analyser, Probes};
+use crate::atomic::AtomicF32;
 use crate::denormals::ScopedNoDenormals;
 use crate::fx::{FxRack, InsertCallbacks};
 use crate::garbage::Garbage;
@@ -255,6 +256,9 @@ pub struct Engine {
     names: Mutex<GroupNames>,
     audio: UnsafeCell<AudioState>,
     pub controls: EngineControls,
+    /// The monitor paths' output peaks (SPEAKERS, PHONES; L/R) for the WING
+    /// remote's meter stream, which takes them (the UI takes `controls`').
+    pub monitor_remote_peaks: [[AtomicF32; 2]; 2],
     fx: Box<[FxRack]>,
     recorder: Recorder,
     /// The USB recorder / player (USB PLAYER sources, RECORDER outputs).
@@ -335,6 +339,7 @@ impl Engine {
                 monitor_returns_live: [false; 3],
             }),
             controls: EngineControls::default(),
+            monitor_remote_peaks: Default::default(),
             fx: (0..NUM_FX).map(|_| FxRack::default()).collect(),
             recorder: Recorder::new(),
             usb: UsbDeck::new(),
@@ -1643,8 +1648,11 @@ impl Engine {
                 l.fill(0.0);
                 rr.fill(0.0);
             }
-            peak[0].fetch_max(peak_level(l));
-            peak[1].fetch_max(peak_level(rr));
+            let (pl, pr) = (peak_level(l), peak_level(rr));
+            peak[0].fetch_max(pl);
+            peak[1].fetch_max(pr);
+            self.monitor_remote_peaks[path][0].fetch_max(pl);
+            self.monitor_remote_peaks[path][1].fetch_max(pr);
             // The path as a matrix DIRECT IN (MON.PH / MON.SPK) next block.
             let pair = if path == 1 { 0 } else { 1 };
             if a.monitor_returns_live[pair] {

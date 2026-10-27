@@ -1,5 +1,6 @@
 #include "dsp/DspUtils.h"
 #include "ui/Icons.h"
+#include "ui/MeterBallistics.h"
 #include "ui/PaintHash.h"
 #include "ui/Pages.h"
 
@@ -28,16 +29,10 @@ namespace
     const juce::Colour litYellow { 0xfff8c430 };
 
     /** The console's meter scale: CLIP, -6, -12, -24, -36, -48, -60 evenly spaced. */
-    float meterPos (float db)
-    {
-        static constexpr float marks[] = { -60.0f, -48.0f, -36.0f, -24.0f, -12.0f, -6.0f, 0.0f };
-        if (db <= marks[0])
-            return 0.0f;
-        for (size_t i = 1; i < std::size (marks); ++i)
-            if (db <= marks[i])
-                return ((float) (i - 1) + (db - marks[i - 1]) / (marks[i] - marks[i - 1])) / 6.0f;
-        return 1.0f;
-    }
+    float meterPos (float db) { return meters::scalePos (db); }
+
+    /** The segments lit at scale position `level` (a segment lights when the level reaches its middle). */
+    int segmentsLit (float level) { return juce::jlimit (0, kSegments, (int) std::floor (level * (float) kSegments + 0.5f)); }
 
     /** A group's width in WING pixels (at 23 per strip). */
     float groupWidth (int count) { return kGroupPad * 2.0f + kSlot * (float) juce::jmax (4, count); }
@@ -164,31 +159,47 @@ void MetersPage::timerCallback()
     if (counts != laidOutCounts)
         resized();
 
-    // Peak hold: about a second, then fall.
-    for (auto& group : groups)
-        for (int i = 0; i < group.count; ++i)
-            for (int ch = 0; ch < 2; ++ch)
-            {
-                const auto* key = static_cast<const char*> (group.dca ? (const void*) &ctx.engine.getDca (group.first + i)
-                                                                      : (const void*) stripOf (group, i)) + ch;
-                auto& h = holds[key];
-                const float level = levelOf (group, i, ch);
-                if (level >= h.level)
-                {
-                    h.level = level;
-                    h.frames = 25;
-                }
-                else if (--h.frames < 0)
-                    h.level = juce::jmax (level, h.level - 0.02f);
-            }
-    // Only when a segment, a key or the title changes (idle meters cost nothing).
     if (! isShowing())
         return;
-    if (const auto hash = paintHash (*this); hash != shownHash)
+    // The meters repaint strip by strip, only where a segment or the peak
+    // hold moved; the rest of the page (keys, names, mutes) only when its
+    // drawing changes (the hash leaves the meters out).
+    size_t n = 0;
+    for (auto& group : groups)
+        for (int i = 0; i < group.count; ++i, ++n)
+        {
+            const auto sig = meterSignature (group, i);
+            if (n >= shownMeters.size())
+                shownMeters.resize (n + 1, -1);
+            if (sig != shownMeters[n])
+            {
+                shownMeters[n] = sig;
+                repaint (meterArea (group, i));
+            }
+        }
+    hashing = true;
+    const auto hash = paintHash (*this);
+    hashing = false;
+    if (hash != shownHash)
     {
         shownHash = hash;
         repaint();
     }
+}
+
+juce::int64 MetersPage::meterSignature (const Group& group, int index) const
+{
+    juce::int64 sig = isStereo (group, index) ? 1 : 0;
+    for (int ch = 0; ch < 2; ++ch)
+        sig = sig * 4096 + segmentsLit (levelOf (group, index, ch)) * 64 + segmentsLit (holdOf (group, index, ch));
+    return sig;
+}
+
+juce::Rectangle<int> MetersPage::meterArea (const Group& group, int index) const
+{
+    const auto s = slot (group, index);
+    return juce::Rectangle<float> (s.getX(), (float) group.body.getY() + py (kMeterTop) - 2.0f, s.getWidth(), py (kMeterBottom - kMeterTop) + 4.0f)
+        .getSmallestIntegerContainer();
 }
 
 float MetersPage::unitsOf (const std::vector<Group*>& items)
@@ -340,11 +351,22 @@ bool MetersPage::isMuted (const Group& group, int index) const
 
 float MetersPage::levelOf (const Group& group, int index, int channel) const
 {
+    return meterPos (dsp::gainToDb (peakOf (group, index, channel, false)));
+}
+
+float MetersPage::holdOf (const Group& group, int index, int channel) const
+{
+    return meterPos (dsp::gainToDb (peakOf (group, index, channel, true)));
+}
+
+float MetersPage::peakOf (const Group& group, int index, int channel, bool hold) const
+{
+    auto read = [this, hold] (const Strip* s, MeterPoint point, int ch) { return hold ? ctx.meters.getHold (s, point, ch) : ctx.meters.get (s, point, ch); };
     // PRE or POST as SETTINGS says for the kind of strip.
     if (! group.dca)
     {
         auto* s = stripOf (group, index);
-        return s != nullptr ? meterPos (dsp::gainToDb (ctx.meters.get (s, prefs::meterPoint (ctx, s->getKind()), channel))) : 0.0f;
+        return s != nullptr ? read (s, prefs::meterPoint (ctx, s->getKind()), channel) : 0.0f;
     }
 
     // A DCA shows the loudest of its members, before or after their faders.
@@ -354,8 +376,8 @@ float MetersPage::levelOf (const Group& group, int index, int channel) const
     for (auto kind : { StripKind::Channel, StripKind::Aux, StripKind::Bus, StripKind::Main, StripKind::Matrix })
         for (auto& s : ctx.engine.getStrips (kind))
             if ((s->params.dcaMask.load() & bit) != 0)
-                peak = juce::jmax (peak, ctx.meters.get (s.get(), point, channel));
-    return meterPos (dsp::gainToDb (peak));
+                peak = juce::jmax (peak, read (s.get(), point, channel));
+    return peak;
 }
 
 void MetersPage::paintScale (juce::Graphics& g, juce::Rectangle<int> column, const Group& reference) const
@@ -445,23 +467,21 @@ void MetersPage::paint (juce::Graphics& g)
                                                  : (strip != nullptr ? strip->getColour() : Colours::cyan)); // [3.1] unpatched strips too, undimmed
 
             // LED meter: one column 7 px wide, or two of 6 a pixel apart, with peak hold.
+            // (Left out of the page's hash: the timer repaints meters strip by strip.)
             const bool stereo = isStereo (group, i);
             const float colW = px ((stereo ? 6.0f : 7.0f) * k), gap = px (k);
             const float total = stereo ? colW * 2.0f + gap : colW;
             float x = numberArea.getCentreX() - total / 2.0f;
-            for (int ch = 0; ch < (stereo ? 2 : 1); ++ch, x += colW + gap)
+            for (int ch = 0; ch < (stereo ? 2 : 1) && ! hashing; ++ch, x += colW + gap)
             {
-                const float level = levelOf (group, i, ch);
-                const auto* key = static_cast<const char*> (group.dca ? (const void*) &ctx.engine.getDca (group.first + i) : (const void*) strip) + ch;
-                const auto hold = holds.find (key);
-                const int holdSeg = hold != holds.end() && hold->second.level > 0.0f ? juce::jmin (kSegments - 1, (int) (hold->second.level * (float) kSegments)) : -1;
+                const int lit = segmentsLit (levelOf (group, i, ch));
+                const int holdSeg = segmentsLit (holdOf (group, i, ch)) - 1;
                 for (int seg = 0; seg < kSegments; ++seg)
                 {
                     const float pos = ((float) seg + 0.5f) / (float) kSegments;
-                    const bool lit = level >= pos;
                     // [3.1] green, yellow from -18 dB, red at the top.
                     juce::Colour c = segmentOff;
-                    if (lit)
+                    if (seg < lit)
                         c = pos > meterPos (-0.5f) ? Colours::mute : (pos > meterPos (-18.0f) ? litYellow : litGreen);
                     else if (seg == holdSeg)
                         c = Colours::amber; // the peak-hold dash
