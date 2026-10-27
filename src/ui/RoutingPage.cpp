@@ -593,7 +593,8 @@ StatusTitle RoutingPage::getStatusTitle()
         t.prefix = juce::String (routing::numberInGroup (selectedSource) + 1);
         const auto custom = ctx.engine.getSourceName (MixerEngine::sourceIndex (selectedSource));
         t.text = custom.isNotEmpty() ? custom.toUpperCase() : juce::String (routing::info (group).name);
-        t.icon = group == Group::Oscillator ? Icon::Sine : group == Group::WlivePlay ? Icon::Waveform : group == Group::UsbPlayer ? Icon::UsbStick : Icon::Xlr;
+        t.icon = group == Group::Oscillator ? Icon::Sine : group == Group::WlivePlay ? Icon::Waveform : group == Group::UsbPlayer ? Icon::UsbStick
+               : group == Group::UserSignal ? Icon::Link : Icon::Xlr;
     }
     else if (mode == Mode::Outputs)
     {
@@ -734,6 +735,13 @@ void RoutingPage::setMode (Mode m)
 {
     mode = m;
     groupMenu.reset();
+    // SOURCES has no BUS, MAIN or MATRIX group (their signals have no source
+    // settings): back to LOCAL IN when CHANNELS showed one.
+    if (m == Mode::Sources && (inputGroup == Group::Bus || inputGroup == Group::Main || inputGroup == Group::Matrix))
+    {
+        inputGroup = Group::LocalIn;
+        selectSource (routing::sourceAt (inputGroup, 0));
+    }
     if (auto* s = selectedStrip(); s == nullptr || ! s->isInput())
     {
         selectedKind = StripKind::Channel;
