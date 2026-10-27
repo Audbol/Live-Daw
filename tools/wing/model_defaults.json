@@ -74,6 +74,7 @@
   "FX:E88": {"mix": 100, "lf": 2, "lg": 0, "lq": "LOW", "lt": "SHELV", "lmf": 3, "lmg": 0, "lmq": 5, "hmf": 5, "hmg": 0, "hmq": 5, "hf": 7, "hg": 0, "hq": "LOW", "ht": "SHELV"},
   "FX:ENHANCE": {"stlvl": 0, "lmf": 0, "mlvl": 0, "st": 0, "m": 0, "bass": 0, "mid": 0, "high": 0, "g": 0, "solo": false, "bassf": 15, "midq": 15, "highf": 25},
   "FX:EXCITER": {"tune": 3467.368896, "peak": 28, "zero": 24, "tmb": 14, "hrm": 30, "mix": 30, "solo": false},
+  "FX:EXT": {"emode": "ST", "lat": 45},
   "FX:F110": {"mix": 100, "peq": true, "lmf": 7, "lmg": 0, "lmq": 5, "lmf3": false, "hmf": 3, "hmg": 0, "hmq": 5, "hmf3": false, "shv": true, "lf": "56", "lg": 0, "hf": "10k", "hg": 0, "g": 0},
   "FX:FLANGER": {"lc": 79.34211731, "hc": 15171.55566, "flc": 120.6835251, "fhc": 11508.7998, "mix": 50, "dlyl": 4.199999809, "dlyr": 4.199999809, "depl": 80, "depr": 80, "phase": 180, "spd": 0.322827131, "feed": 70},
   "FX:GATED": {"pdel": 8, "att": 6, "dcy": 0.30139643, "dens": 22, "diff": 30, "sprd": 60, "lc": 79.34211731, "hsf": 5023.773438, "hsg": -12},

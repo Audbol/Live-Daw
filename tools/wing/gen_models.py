@@ -67,7 +67,8 @@ def default_for(key, pid, r):
         return Exact(d)
     if key in MODEL_DEFAULTS and key != "FX:EXT":
         raise SystemExit(f"no default for {key}/{pid}")
-    # EXT (WING Edit's are a console's I/O): the start of each range.
+    # EXT's RETURN group and input (WING Edit's are a console's I/O) and TRIM: the
+    # start of each range; its FX MODE and LATENCY are the console's (model_defaults.json).
     if t == "fader level":
         return 0.0
     if items:

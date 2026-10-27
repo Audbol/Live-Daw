@@ -213,6 +213,9 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Changed
 
+- A new EXTERNAL (EXT) effect starts at FX MODE ST and LATENCY 45, as on the WING (checked
+  by a WING owner and in WING Edit 3.3.4); it started at M and 0. A plugin hosted in the
+  slot still uses its own reported latency.
 - Every processing and FX model starts with the WING's own defaults: 98 of the 113
   models (all but the WING GATE, WING COMPRESSOR, WING EQ and a few others) started
   with values of our own. The defaults are what WING Edit 3.3.4, which runs the

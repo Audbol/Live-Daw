@@ -4222,7 +4222,7 @@ pub static FX_MODELS: &[ModelSpec] = &[
                 min: 0.0,
                 max: 2.0,
                 steps: 3,
-                default: 0.0,
+                default: 1.0,
             },
             ParamSpec {
                 id: "lat",
@@ -4232,7 +4232,7 @@ pub static FX_MODELS: &[ModelSpec] = &[
                 min: 0.0,
                 max: 800.0,
                 steps: 801,
-                default: 0.0,
+                default: 45.0,
             },
             ParamSpec {
                 id: "trim",

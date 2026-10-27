@@ -859,7 +859,8 @@ mod tests {
             ld_fx_set(e, 2, &cb);
             ld_fx_set_latency(e, 2, 256);
             assert_eq!(ld_fx_latency(e, 2), 256);
-            // An outboard insert: a block (512 here) plus the interface's latency.
+            // An outboard insert: a block (512 here) plus the interface's latency
+            // plus LATENCY (a new EXT starts at the console's 45).
             let fx3 = &(*ld_engine_controls(e)).fx[3];
             assert!(ld_fx_set_model(e, 3, 1, true));
             fx3.values[livedaw_engine::params::ext::SOURCE].store(1.0);
@@ -868,7 +869,7 @@ mod tests {
             fx3.values[livedaw_engine::params::ext::GROUP].store(1.0); // LCL
             ld_engine_set_io_latency(e, 30);
             assert!(ld_fx_state(e, 3, 5));
-            assert_eq!(ld_fx_latency(e, 3), 512 + 30);
+            assert_eq!(ld_fx_latency(e, 3), 512 + 30 + 45);
             ld_engine_set_io_safe(e, 1, 7, true);
             assert!(ld_engine_io_safe(e, 1, 7) && ld_engine_io_safe(e, 1, -1) && !ld_engine_io_safe(e, 0, -1));
             let ch = ld_engine_strip_at(e, 0, 0);

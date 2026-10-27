@@ -56,6 +56,8 @@ impl Rig {
         p.values[ext::GROUP].store(3.0); // A
         p.values[ext::INPUT].store((RETURN + 1) as f32); // A 2
         p.values[ext::MODE].store(mode as f32);
+        // No LATENCY of the gear's own (a new EXT starts at the console's 45).
+        p.values[ext::LATENCY].store(0.0);
         p.send_left.store(SEND_L, Relaxed);
         p.send_right.store(SEND_R, Relaxed);
         let ch = e.channel_at(0).unwrap();
