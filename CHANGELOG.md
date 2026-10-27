@@ -511,7 +511,6 @@ All notable changes to Sidecar are listed here. Versions follow
 - SUB MONSTER's readouts under the faders show each band's frequency (from TUNE), as on
   the plug-in, instead of the fader levels.
 - TAPE MACHINE's VU scale reached past the end of its arc (+1 to +3 off the meter).
-
 - WING REMOTE (Native, TCP 2222): a client that was reading and sending normally
   (WING Edit) could be disconnected at random on Windows. The server read and wrote
   each connection with socket timeouts (100 ms reads, 10 s writes), and on Windows a
