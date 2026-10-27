@@ -1,5 +1,4 @@
 #include "ui/FaceplateDesign.h"
-#include "ui/MeterBallistics.h"
 #include "ui/LookAndFeel.h"
 #include "ui/ModelParams.h"
 
@@ -1037,12 +1036,10 @@ namespace
         g.strokePath (facePath, juce::PathStrokeType (1.0f));
     }
 
-    /** `value`: the gain reduction (a mark lights from its dB of reduction),
-        a level in dB from the meter's `ref` or a live value (a mark lights
-        from its value). */
+    /** LEDs lit by `value`: a reduction (dB, lit at each mark > 0 it reaches) or,
+        for a level element, a level in dB (lit at each mark it reaches). */
     void drawLeds (juce::Graphics& g, const Element& e, float value)
     {
-        const bool reduction = e.feed == Feed::Reduction;
         const int n = (int) e.marks.size();
         if (n == 0)
             return;
@@ -1052,7 +1049,7 @@ namespace
             const float t = n == 1 ? 0.5f : (float) i / (float) (n - 1);
             const Point<float> c = e.vertical ? Point<float> (e.x + e.w * 0.5f, e.y + e.h * t) : Point<float> (e.x + e.w * t, e.y + e.h * 0.5f);
             const float mark = e.marks[(size_t) i];
-            const bool lit = reduction ? value >= mark && mark > 0.0f : value >= mark;
+            const bool lit = e.level ? value >= mark : (value >= mark && mark > 0.0f);
             const Colour colour = i < (int) e.ledColours.size() ? Colour (e.ledColours[(size_t) i]) : e.colour;
             if (e.dots)
                 drawLed (g, c, d * 0.5f, colour, lit);
@@ -1081,6 +1078,20 @@ namespace
                     g.drawText (e.scale[i], Rectangle<float> (40.0f, 16.0f).withCentre (c.translated (0.0f, -d * 1.2f)), juce::Justification::centred);
             }
         }
+    }
+
+    /** A level bar: `db` on a linear scale from dbMin (empty) to dbMax (full). */
+    void drawBar (juce::Graphics& g, const Element& e, float db)
+    {
+        const Rectangle<float> r (e.x, e.y, e.w, e.h);
+        const float t = e.dbMax > e.dbMin ? juce::jlimit (0.0f, 1.0f, (db - e.dbMin) / (e.dbMax - e.dbMin)) : 0.0f;
+        if (t <= 0.0f)
+            return;
+        const auto bar = e.vertical ? r.withTrimmedTop (r.getHeight() * (1.0f - t)) : r.withWidth (r.getWidth() * t);
+        g.setColour (e.colour.withAlpha (0.3f));
+        g.fillRect (bar.expanded (1.5f, 0.0f));
+        g.setColour (e.colour);
+        g.fillRect (bar);
     }
 
     void drawFader (juce::Graphics& g, const Element& e, float pos)
@@ -1230,8 +1241,9 @@ namespace
         }
         g.setColour (e.colour2);
         g.fillRect (r);
-        // A value derived from the parameter (SUB MONSTER's band frequencies from the tune).
-        auto text = e.times != 1.0f ? juce::String (v * e.times, 1) + (p.unit.isNotEmpty() ? " " + p.unit : juce::String()) : consoleText (p, v);
+        // A value derived from the parameter (`factor`: SUB MONSTER's band frequencies from
+        // TUNE) can lie outside its range: printed as it is, not clamped to the range.
+        auto text = e.factor != 1.0f ? juce::String (v, 1) + (p.unit.isNotEmpty() ? " " + p.unit : juce::String()) : consoleText (p, v);
         if (e.look == Look::Segment)
         {
             const auto [number, unit] = segmentText (text);
@@ -1531,6 +1543,12 @@ namespace
         std::vector<float> values (spec.params.size());
         for (size_t i = 0; i < values.size(); ++i)
             values[i] = in.ctx.value ((int) i);
+        // A dynamic EQ band drawn on top (params: freq, gain, q, filter, on; `meter` its live
+        // gain): the response is measured without it, then shown as set and as it is now.
+        const bool dynBand = in.e.params.size() >= 5 && in.has (4);
+        const bool dynOn = dynBand && in.value (4) >= 0.5f;
+        if (dynBand)
+            values[(size_t) in.e.params[4]] = in.param (4)->min;
         if (cache.table != spec.table || cache.model != spec.index || cache.values != values)
         {
             cache.table = spec.table;
@@ -1542,12 +1560,29 @@ namespace
         }
         if (! cache.ok)
             return;
-        auto curve = frequencyCurve (r, span, [&] (float hz)
+        const auto measured = [&] (float hz)
         {
             const float pos = std::log10 (hz / 20.0f) / 3.0f * 160.0f;
             const int i = juce::jlimit (0, 159, (int) pos);
             return juce::jmap (pos - (float) i, cache.db[(size_t) i], cache.db[(size_t) i + 1]);
-        });
+        };
+        if (dynOn)
+        {
+            const float f = in.value (0), gain = in.value (1), q = in.value (2);
+            const int type = juce::roundToInt (in.value (3) - in.param (3)->min);
+            const float now = in.e.meter >= 0 && in.ctx.readout ? juce::jlimit (juce::jmin (0.0f, gain), juce::jmax (0.0f, gain), in.ctx.readout (in.e.meter))
+                                                                : 0.0f;
+            // As set (blue), and where the band is now (the live curve, orange).
+            const auto set = frequencyCurve (r, span, [&] (float hz) { return measured (hz) + bandDb (hz, f, gain, q, type); });
+            g.setColour (kCurve2);
+            g.strokePath (set, juce::PathStrokeType (3.0f));
+            const auto live = frequencyCurve (r, span, [&] (float hz) { return measured (hz) + bandDb (hz, f, now, q, type); });
+            fillToZero (g, live, r, kCurve.withAlpha (0.18f));
+            g.setColour (kCurve);
+            g.strokePath (live, juce::PathStrokeType (3.0f));
+            return;
+        }
+        auto curve = frequencyCurve (r, span, measured);
         fillToZero (g, curve, r, kCurve.withAlpha (0.18f));
         g.setColour (kCurve);
         g.strokePath (curve, juce::PathStrokeType (3.0f));
@@ -1673,10 +1708,10 @@ namespace
         auto fill = env;
         fill.closeSubPath();
         g.fillPath (fill);
-        if (in.ctx.feed)
+        if (in.e.meter >= 0 && in.ctx.readout)
         {
-            // The envelope follower now: the shape filled up to its level.
-            const float level = juce::jlimit (0.0f, 1.0f, in.ctx.feed (Feed::Envelope, false));
+            // The envelope follower now (readout 0..1): the shape filled up to its level.
+            const float level = juce::jlimit (0.0f, 1.0f, in.ctx.readout (in.e.meter));
             g.saveState();
             g.reduceClipRegion (fill);
             g.setColour (green.withAlpha (0.55f));
@@ -1805,11 +1840,11 @@ namespace
             }
             g.setColour (lane == 0 ? kCurve : kCurve2);
             g.strokePath (p, juce::PathStrokeType (lane == 0 ? 3.0f : 2.0f));
-            if (in.ctx.feed)
+            if (in.e.meter >= 0 && in.ctx.readout)
             {
-                // Where the LFO is now (in the first of the two cycles drawn).
-                // The lane draws phase 2t (+ the offset) at t along the width.
-                const float ph = in.ctx.feed (lane == 0 ? Feed::LfoL : Feed::LfoR, false);
+                // Where the LFO is now (readouts: its position 0..1, left then right), in the
+                // first of the two cycles drawn; the lane draws phase 2t (+ the offset) at t.
+                const float ph = in.ctx.readout (in.e.meter + lane);
                 const float u = ph - (lane == 1 ? phaseOffset : 0.0f);
                 const float x = body.getX() + body.getWidth() * 0.5f * (u - std::floor (u));
                 const float y = body.getCentreY() - lfoShape (ph, choice, skew) * depth * body.getHeight() * 0.45f;
@@ -1957,11 +1992,17 @@ namespace
         }
     }
 
-    /** A multiband compressor's bands (the C5-COMBINATOR's screen): five
-        coloured band shapes rising to each band's threshold offset, the
-        selected band filled; a dB scale from +10 to -20. */
+    /** A multiband compressor's bands (the C5-COMBINATOR's screen, Fig. 113):
+        five coloured band shapes whose tops sit at each band's gain as it is
+        now (n-GAIN plus its live gain reduction and SBC makeup), the selected
+        band filled, the input's third-octave spectrum behind them; a dB scale
+        from +10 to -20. The band edges sit where the crossovers do at WIDTH 0
+        (120 Hz, 500 Hz, 2 kHz, 7 kHz), the spectrum on that frequency axis. */
     void drawBands (juce::Graphics& g, Rectangle<float> r, const GraphInput& in)
     {
+        constexpr int kSpectrum = 30;               // third octaves from 25 Hz (C5's readouts 10-39)
+        const float edges[] = { 0.0f, 0.19f, 0.37f, 0.57f, 0.75f, 1.0f };
+        const float edgeHz[] = { 20.0f, 120.0f, 500.0f, 2000.0f, 7000.0f, 20000.0f };
         auto body = r.withTrimmedLeft (26.0f).reduced (4.0f, 8.0f);
         const auto yOf = [&body] (float db) { return body.getY() + (10.0f - db) / 30.0f * body.getHeight(); };
         g.setFont (face (Look::Sans, 11.0f));
@@ -1979,13 +2020,38 @@ namespace
             g.drawVerticalLine (juce::roundToInt (body.getX() + body.getWidth() * (float) k / 10.0f), body.getY(), body.getBottom());
         }
         const Colour colours[] = { Colour (0xffff6a60), Colour (0xfff0a040), Colour (0xffc080f0), Colour (0xff9a80ff), Colour (0xff40d0e0) };
-        const float edges[] = { 0.0f, 0.19f, 0.37f, 0.57f, 0.75f, 1.0f };
         const int selected = in.has (5) ? juce::roundToInt (in.value (5) - in.param (5)->min) : -1;
         const float slant = body.getWidth() * 0.025f;
+        const bool live = in.e.meter >= 0 && static_cast<bool> (in.ctx.readout);
+        if (live)
+        {
+            // The spectrum: thin bars, 0 dBFS at the top line, -60 dBFS at the bottom.
+            const auto xOfHz = [&] (float hz)
+            {
+                int k = 0;
+                while (k < 4 && hz > edgeHz[k + 1])
+                    ++k;
+                const float t = std::log (juce::jlimit (edgeHz[k], edgeHz[k + 1], hz) / edgeHz[k]) / std::log (edgeHz[k + 1] / edgeHz[k]);
+                return body.getX() + body.getWidth() * (edges[k] + t * (edges[k + 1] - edges[k]));
+            };
+            g.setColour (Colour (0xff8a96c8).withAlpha (0.8f));
+            for (int k = 0; k < kSpectrum; ++k)
+            {
+                const float level = in.ctx.readout (in.e.meter + 10 + k);
+                if (level <= 1.0e-6f)
+                    continue;
+                const float db = 20.0f * std::log10 (level);
+                const float top = juce::jmap (juce::jlimit (-60.0f, 0.0f, db), -60.0f, 0.0f, body.getBottom(), body.getY());
+                const float hz = 1000.0f * std::pow (2.0f, ((float) k - 16.0f) / 3.0f);
+                const float x = xOfHz (hz);
+                g.fillRect (Rectangle<float>::leftTopRightBottom (x - 1.5f, top, x + 1.5f, body.getBottom()));
+            }
+        }
         for (int b = 0; b < 5; ++b)
         {
             const float x0 = body.getX() + body.getWidth() * edges[b], x1 = body.getX() + body.getWidth() * edges[b + 1];
-            const float top = yOf (juce::jlimit (-20.0f, 10.0f, in.value ((size_t) b)));
+            const float now = live ? in.ctx.readout (in.e.meter + b) + in.ctx.readout (in.e.meter + 5 + b) : 0.0f;
+            const float top = yOf (juce::jlimit (-20.0f, 10.0f, in.value ((size_t) b) + now));
             juce::Path shape;
             shape.startNewSubPath (b == 0 ? x0 : x0 - slant, body.getBottom());
             shape.lineTo (b == 0 ? x0 : x0 + slant, top);
@@ -2001,9 +2067,53 @@ namespace
         }
     }
 
+    /** A correlation meter: segments from -1 to +1, the centre one grey, the one at the reading lit. */
+    void drawCorrelation (juce::Graphics& g, const Element& e, const PaintContext& ctx)
+    {
+        const int n = e.ticks > 1 ? e.ticks : 40;
+        const float c = e.meter >= 0 && ctx.readout ? juce::jlimit (-1.0f, 1.0f, ctx.readout (e.meter)) : 0.0f;
+        const int lit = juce::roundToInt ((c + 1.0f) * 0.5f * (float) (n - 1));
+        const float step = e.w / (float) n;
+        for (int k = 0; k < n; ++k)
+        {
+            const auto seg = Rectangle<float> (e.x + step * (float) k + step * 0.2f, e.y, step * 0.55f, e.h);
+            g.setColour (k == lit ? e.colour : (k == n / 2 ? Colour (0xff9a9a9a) : e.colour2));
+            g.fillRect (seg);
+        }
+    }
+
+    /** A vector scope: the readouts' (side, mid) points, mid up, scaled to the loudest. */
+    void drawScope (juce::Graphics& g, const Element& e, const PaintContext& ctx)
+    {
+        if (e.meter < 0 || ! ctx.readout)
+            return;
+        float peak = 0.0f;
+        for (int k = 0; k < rd::kScopePoints; ++k)
+            peak = juce::jmax (peak, std::abs (ctx.readout (e.meter + 2 * k)), std::abs (ctx.readout (e.meter + 2 * k + 1)));
+        if (peak < 1.0e-5f)
+            return;
+        const auto c = Point<float> (e.x + e.w * 0.5f, e.y + e.h * 0.5f);
+        // Quiet signals stay small (scaled as if at least -26 dBFS).
+        const float scale = 0.45f * juce::jmin (e.w, e.h) / juce::jmax (peak, 0.05f);
+        g.setColour (e.colour);
+        for (int k = 0; k < rd::kScopePoints; ++k)
+        {
+            const float side = ctx.readout (e.meter + 2 * k), mid = ctx.readout (e.meter + 2 * k + 1);
+            g.fillRect (Rectangle<float> (3.0f, 3.0f).withCentre (c.translated (side * scale, -mid * scale)));
+        }
+    }
+
     void drawGraph (juce::Graphics& g, const Element& e, const PaintContext& ctx)
     {
         const Rectangle<float> r (e.x, e.y, e.w, e.h);
+        if (e.graph == GraphKind::Correlation)
+            return drawCorrelation (g, e, ctx);
+        if (e.graph == GraphKind::Scope)
+        {
+            juce::Graphics::ScopedSaveState keep (g);
+            g.reduceClipRegion (r.toNearestInt());
+            return drawScope (g, e, ctx);
+        }
         graphScreen (g, r);
         juce::Graphics::ScopedSaveState keep (g);
         g.reduceClipRegion (r.reduced (2.0f).toNearestInt());
@@ -2021,6 +2131,8 @@ namespace
             case GraphKind::Filter: drawFilter (g, inner, in); break;
             case GraphKind::Levels: drawLevels (g, inner, in); break;
             case GraphKind::Bands: drawBands (g, inner, in); break;
+            case GraphKind::Correlation:
+            case GraphKind::Scope: break;
         }
     }
 
@@ -2035,44 +2147,6 @@ namespace
         g.setColour (Colour (0xfff5e14a));
         g.drawRoundedRectangle (b, 5.0f, 1.5f);
         g.drawText (text, b, juce::Justification::centred);
-    }
-    /** Generously, where an element can paint (its scale, labels, shadow,
-        housing); empty when unknown (paths). */
-    Rectangle<float> paintBounds (const Element& e)
-    {
-        const Rectangle<float> r (e.x, e.y, e.w, e.h);
-        switch (e.type)
-        {
-            case Type::Knob: return Rectangle<float> (e.w * 3.6f + 80.0f, e.w * 3.6f + 80.0f).withCentre ({ e.x, e.y });
-            case Type::Toggle:
-            case Type::Lamp:
-            case Type::Screw: return Rectangle<float> (e.w * 4.0f + 20.0f, e.w * 4.0f + 20.0f).withCentre ({ e.x, e.y });
-            case Type::Vu: return r.expanded (50.0f).withTrimmedBottom (-(e.housing + e.h));
-            case Type::Leds: return r.expanded (80.0f);
-            case Type::Key:
-            case Type::Fader:
-            case Type::Text:
-            case Type::Box:
-            case Type::Display:
-            case Type::Value:
-            case Type::Graph: return r.expanded (24.0f + e.size);
-            case Type::Path: break;
-        }
-        return {};
-    }
-
-    /** A meter's reading for its feed: the gain reduction, a level in dB
-        from the meter's `ref` (a Vu reads it as the reduction it would show,
-        so 0 sits at `ref` and the needle rises with the level), or the live
-        value itself. At rest without live values. */
-    float meterValue (const Element& e, const PaintContext& ctx, bool vu)
-    {
-        if (e.feed == Feed::Reduction)
-            return ctx.reduction;
-        if (! isLevelFeed (e.feed))
-            return ctx.feed ? ctx.feed (e.feed, vu) : 0.0f;
-        const float db = ctx.feed ? ctx.feed (e.feed, vu) : meters::kFloorDb;
-        return vu ? e.ref - db : db - e.ref;
     }
 } // namespace
 
@@ -2118,6 +2192,7 @@ juce::Rectangle<float> hitArea (const Element& e)
         case Type::Graph:
         case Type::Vu:
         case Type::Leds:
+        case Type::Bar:
         case Type::Text:
         case Type::Path:
         case Type::Box:
@@ -2125,6 +2200,75 @@ juce::Rectangle<float> hitArea (const Element& e)
         case Type::Display: break;
     }
     return {};
+}
+
+float meterValue (const Element& e, const PaintContext& ctx)
+{
+    if (e.meter < 0)
+        return ctx.reduction;
+    if (e.level)
+        return ctx.levelDb ? ctx.levelDb (e.meter) : -150.0f;
+    return ctx.readout ? juce::jmax (0.0f, -ctx.readout (e.meter)) : 0.0f;
+}
+
+bool isLive (const Element& e)
+{
+    switch (e.type)
+    {
+        case Type::Vu:
+        case Type::Leds:
+        case Type::Bar: return true;
+        case Type::Lamp: return e.meter >= 0;
+        case Type::Graph:
+            return e.meter >= 0 || e.graph == GraphKind::DynEq || e.graph == GraphKind::DeEss;
+        case Type::Knob:
+        case Type::Toggle:
+        case Type::Key:
+        case Type::Fader:
+        case Type::Text:
+        case Type::Path:
+        case Type::Box:
+        case Type::Screw:
+        case Type::Display:
+        case Type::Value: return false;
+    }
+    return false;
+}
+
+juce::Rectangle<float> paintArea (const Element& e)
+{
+    switch (e.type)
+    {
+        case Type::Vu: return Rectangle<float> (e.x, e.y, e.w, e.h).expanded (30.0f, 30.0f).withTrimmedBottom (-e.housing - e.w * 0.5f);
+        case Type::Leds:
+        {
+            // The LEDs and their captions beside or above them.
+            const float d = e.vertical ? e.w : e.h;
+            return Rectangle<float> (e.x, e.y, e.w, e.h).expanded (d + 46.0f, d * 1.6f + 12.0f);
+        }
+        case Type::Lamp: return Rectangle<float> (e.w * 2.2f, e.w * 2.2f).withCentre ({ e.x, e.y });
+        case Type::Text:
+            if (e.centre != 0.0f) // turned print: anywhere round its box
+                break;
+            return Rectangle<float> (e.x, e.y, e.w, e.h).expanded (6.0f + e.size);
+        case Type::Graph:
+        case Type::Bar:
+        case Type::Display:
+        case Type::Box: return Rectangle<float> (e.x, e.y, e.w, e.h).expanded (8.0f);
+        case Type::Value: return Rectangle<float> (e.x, e.y, e.w, e.h).expanded (e.look == Look::Wheel ? 24.0f : 8.0f);
+        case Type::Knob:
+        {
+            // The knob, its scale and the labels round it.
+            const float r = e.w * 0.5f * juce::jmax (1.6f, e.labelRadius + 0.4f, e.tickRadius + 0.3f) + e.labelSize * 2.0f;
+            return Rectangle<float> (r * 2.0f, r * 2.0f).withCentre ({ e.x, e.y });
+        }
+        case Type::Fader: return Rectangle<float> (e.x, e.y, e.w, e.h).expanded (24.0f);
+        case Type::Toggle:
+        case Type::Key: return hitArea (e).expanded (12.0f);
+        case Type::Screw: return Rectangle<float> (e.w * 1.6f, e.w * 1.6f).withCentre ({ e.x, e.y });
+        case Type::Path: break;
+    }
+    return { 0.0f, 0.0f, kFrameW, kFrameH };
 }
 
 bool elementOn (const Element& e, const models::Param& p, float value)
@@ -2198,15 +2342,18 @@ void paintDesign (juce::Graphics& g, const Design& d, const PaintContext& ctx)
     };
 
     const Element* bubbleAt = nullptr;
+    // Repainting a meter: only what overlaps the clip (in frame coordinates).
+    const auto clip = g.getClipBounds().toFloat();
     for (const auto& e : d.elements)
     {
         if (e.page >= 0 && e.page != ctx.page)
             continue;
-        if (e.param >= 0 && e.param == ctx.touched && bubbleAt == nullptr && e.type != Type::Value && paramOf (e) != nullptr)
-            bubbleAt = &e;
-        // A meter repaints only its own area: skip what lies outside it.
-        if (const auto area = paintBounds (e); ! area.isEmpty() && ! g.clipRegionIntersects (area.getSmallestIntegerContainer()))
+        if (e.type != Type::Path && ! paintArea (e).intersects (clip))
+        {
+            if (paramOf (e) != nullptr && e.param == ctx.touched && bubbleAt == nullptr && e.type != Type::Value)
+                bubbleAt = &e;
             continue;
+        }
         const auto* p = paramOf (e);
         const float v = p != nullptr ? ctx.value (e.param) : 0.0f;
         switch (e.type)
@@ -2217,19 +2364,20 @@ void paintDesign (juce::Graphics& g, const Design& d, const PaintContext& ctx)
                 drawKey (g, e, e.look == Look::TabKey ? e.choice == ctx.page : (p != nullptr ? elementOn (e, *p, v) : e.fixed > 0.5f));
                 break;
             case Type::Lamp:
-                if (e.feed == Feed::Note)
-                    drawLed (g, { e.x, e.y }, e.w * 0.5f, e.colour, ctx.feed && juce::roundToInt (ctx.feed (Feed::Note, false)) == e.choice);
-                else
-                    drawLed (g, { e.x, e.y }, e.w * 0.5f, e.colour, p != nullptr ? elementOn (e, *p, v) : e.fixed > 0.5f);
+                drawLed (g, { e.x, e.y }, e.w * 0.5f, e.colour,
+                         e.meter >= 0 ? (e.choice >= 0 && ! e.level ? ctx.readout && juce::roundToInt (ctx.readout (e.meter)) == e.choice + 1
+                                                                    : meterValue (e, ctx) >= e.range)
+                                      : (p != nullptr ? elementOn (e, *p, v) : e.fixed > 0.5f));
                 break;
             case Type::Fader: drawFader (g, e, p != nullptr ? controlPosition (*p, v) : e.fixed); break;
             case Type::Vu:
                 if (e.look == Look::PanWindow)
-                    drawPanWindow (g, e, ctx.feed ? ctx.feed (e.feed, true) : 0.0f);
+                    drawPanWindow (g, e, e.meter >= 0 && ctx.readout ? ctx.readout (e.meter) : 0.0f);
                 else
-                    drawVu (g, e, meterValue (e, ctx, true));
+                    drawVu (g, e, e.level ? -meterValue (e, ctx) : meterValue (e, ctx));
                 break;
-            case Type::Leds: drawLeds (g, e, meterValue (e, ctx, false)); break;
+            case Type::Leds: drawLeds (g, e, meterValue (e, ctx)); break;
+            case Type::Bar: drawBar (g, e, meterValue (e, ctx)); break;
             case Type::Text: drawText (g, e); break;
             case Type::Box: drawBox (g, e); break;
             case Type::Screw: drawScrew (g, { e.x, e.y }, e.w * 0.5f, d.panel); break;
@@ -2237,7 +2385,7 @@ void paintDesign (juce::Graphics& g, const Design& d, const PaintContext& ctx)
             case Type::Graph: drawGraph (g, e, ctx); break;
             case Type::Value:
                 if (p != nullptr)
-                    drawValueBox (g, e, *p, v);
+                    drawValueBox (g, e, *p, v * e.factor);
                 else if (! e.params.empty() && ctx.spec != nullptr)
                 {
                     // A readout: the control last touched, else the first it names.
@@ -2257,6 +2405,8 @@ void paintDesign (juce::Graphics& g, const Design& d, const PaintContext& ctx)
                 break;
             }
         }
+        if (p != nullptr && e.param == ctx.touched && bubbleAt == nullptr && e.type != Type::Value)
+            bubbleAt = &e;
     }
     if (ctx.thumbnail && d.badge.isNotEmpty())
     {
@@ -2290,29 +2440,6 @@ void paintDesign (juce::Graphics& g, const Design& d, const PaintContext& ctx)
         const auto& p = ctx.spec->params[(size_t) bubbleAt->param];
         drawBubble (g, hitArea (*bubbleAt), consoleText (p, ctx.value (bubbleAt->param)));
     }
-}
-
-bool isLive (const Element& e)
-{
-    if (e.type == Type::Vu || e.type == Type::Leds)
-        return e.feed != Feed::Reduction;
-    if (e.type == Type::Lamp)
-        return e.feed == Feed::Note;
-    if (e.type == Type::Graph)
-        return (e.graph == GraphKind::Decay && e.choice == 3) || e.graph == GraphKind::Lfo;
-    return false;
-}
-
-juce::Rectangle<float> liveArea (const Element& e)
-{
-    const Rectangle<float> r (e.x, e.y, e.w, e.h);
-    if (e.type == Type::Vu)
-        return r.expanded (8.0f); // the face and needle (the housing doesn't move)
-    if (e.type == Type::Leds)
-        return r.expanded (e.vertical ? e.w : e.h);
-    if (e.type == Type::Lamp)
-        return Rectangle<float> (e.w * 3.0f, e.w * 3.0f).withCentre ({ e.x, e.y });
-    return r.expanded (2.0f);
 }
 
 } // namespace livedaw::ui::fp

@@ -30,9 +30,18 @@
 //!
 //! A block whose ON switch is off passes the signal through; switching
 //! crossfades over 10 ms (EQ blocks fade their gains instead). `meter()` shows
-//! the deepest gain reduction of the running dynamics blocks.
+//! the deepest gain reduction of the running dynamics blocks. A block with a
+//! latency (the mastering chain's limiter look-ahead) keeps it while switched
+//! off, so the strip's latency never changes.
+//!
+//! Readouts (each section's meters): 0-3 each block's gain reduction in
+//! signal order (dB, <= 0; 0 for EQ blocks and blocks switched off), then the
+//! readouts of the standard FX blocks, one after the other in signal order
+//! ([`fx_readout_count`] each: *MASTER*'s tape VU at 4, the enhancer's two
+//! VUs at 5-6, the limiter's reduction and auto gain at 7-8).
 
-use super::{FxAlgo, FxContext};
+use super::blocks::DelayLine;
+use super::{FxAlgo, FxContext, FX_READOUTS};
 use crate::wing::dynamics::{SidechainSettings, WingDynamics, XoverSettings};
 use crate::wing::eq::WingEq;
 use crate::wing::{model_index, ModelSpec, Params, DYN_MODELS, EQ_MODELS_CH, FX_MODELS, MAX_FX_PARAMS};
@@ -115,6 +124,18 @@ const MASTERING: &[BlockDef] = &[
     block(Kind::Fx, "ENHANCE", "e_", Some("e_on")),
     block(Kind::Fx, "LIMITER", "l_", Some("l_on")),
 ];
+
+/// Blocks a strip has at most (their reductions are readouts 0-3).
+const MAX_BLOCKS: usize = 4;
+
+/// How many readouts a standard FX block reports (its device's layout).
+pub(super) fn fx_readout_count(token: &str) -> usize {
+    match token {
+        "TAPE" => 1,
+        "ENHANCE" | "LIMITER" => 2,
+        _ => 0,
+    }
+}
 
 fn blocks_of(token: &str) -> &'static [BlockDef] {
     match token {
@@ -204,6 +225,13 @@ struct Block {
     fade: f32,
     /// Gain reduction of the last block in dB (>= 0).
     reduction: f32,
+    /// The block's latency in samples, and the delay that keeps it while
+    /// the block is switched off (left, right).
+    latency: usize,
+    delay: [DelayLine; 2],
+    /// Readouts of a standard FX block: how many, and where they start.
+    readouts: usize,
+    readout_at: usize,
 }
 
 impl Block {
@@ -237,6 +265,10 @@ impl Block {
             })
             .collect();
         let index = |id: Option<&str>| id.and_then(|id| device.param_index(id));
+        let latency = match &engine {
+            Engine::Fx(algo) => algo.latency() as usize,
+            _ => 0,
+        };
         Some(Self {
             spec,
             engine,
@@ -250,6 +282,10 @@ impl Block {
             makeup_db: 0.0,
             fade: 1.0,
             reduction: 0.0,
+            latency,
+            delay: [DelayLine::new(latency + 1), DelayLine::new(latency + 1)],
+            readouts: if def.kind == Kind::Fx { fx_readout_count(def.token) } else { 0 },
+            readout_at: 0,
         })
     }
 
@@ -293,7 +329,14 @@ struct Strip {
 
 impl Strip {
     fn new(device: &'static ModelSpec, defs: &[BlockDef], ctx: FxContext) -> Option<Self> {
-        let blocks = defs.iter().map(|d| Block::new(device, d, ctx)).collect::<Option<Vec<_>>>()?;
+        let mut blocks = defs.iter().map(|d| Block::new(device, d, ctx)).collect::<Option<Vec<_>>>()?;
+        debug_assert!(blocks.len() <= MAX_BLOCKS);
+        let mut at = MAX_BLOCKS;
+        for b in &mut blocks {
+            b.readout_at = at;
+            at += b.readouts;
+        }
+        debug_assert!(at <= FX_READOUTS);
         Some(Self {
             blocks,
             dry_l: vec![0.0; ctx.max_block],
@@ -314,8 +357,27 @@ impl Strip {
                 continue;
             }
             let target = if blk.enabled { 1.0 } else { 0.0 };
+            let (dl, dr) = (&mut self.dry_l[..n], &mut self.dry_r[..n]);
+            if blk.latency > 0 {
+                // The dry path keeps the block's latency (fed always, so it's ready when switching).
+                for (x, d) in left.iter().zip(dl.iter_mut()) {
+                    blk.delay[0].push(*x);
+                    *d = blk.delay[0].tap(blk.latency);
+                }
+                for (x, d) in right.iter().zip(dr.iter_mut()) {
+                    blk.delay[1].push(*x);
+                    *d = blk.delay[1].tap(blk.latency);
+                }
+            } else {
+                dl.copy_from_slice(left);
+                dr.copy_from_slice(right);
+            }
             if blk.fade == 0.0 && target == 0.0 {
                 blk.reduction = 0.0;
+                if blk.latency > 0 {
+                    left.copy_from_slice(dl);
+                    right.copy_from_slice(dr);
+                }
                 continue;
             }
             if blk.fade == 1.0 && target == 1.0 {
@@ -325,9 +387,6 @@ impl Strip {
                     // Coming back from bypass: start from a clean state.
                     blk.engine.reset();
                 }
-                let (dl, dr) = (&mut self.dry_l[..n], &mut self.dry_r[..n]);
-                dl.copy_from_slice(left);
-                dr.copy_from_slice(right);
                 blk.run(left, right);
                 let step = if target > blk.fade { self.fade_step } else { -self.fade_step };
                 for (((l, r), x), y) in left.iter_mut().zip(right.iter_mut()).zip(dl.iter()).zip(dr.iter()) {
@@ -388,12 +447,30 @@ impl FxAlgo for Strip {
             blk.engine.reset();
             blk.fade = if blk.enabled { 1.0 } else { 0.0 };
             blk.reduction = 0.0;
+            blk.delay.iter_mut().for_each(DelayLine::clear);
         }
         self.meter = 0.0;
     }
 
     fn meter(&self) -> f32 {
         self.meter
+    }
+
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        for (o, blk) in out.iter_mut().zip(&self.blocks) {
+            *o = -blk.reduction * blk.fade;
+        }
+        for blk in self.blocks.iter().filter(|b| b.readouts > 0 && b.fade > 0.0) {
+            if let Engine::Fx(algo) = &blk.engine {
+                let mut own = [0.0f32; FX_READOUTS];
+                algo.readouts(&mut own);
+                out[blk.readout_at..blk.readout_at + blk.readouts].copy_from_slice(&own[..blk.readouts]);
+            }
+        }
+    }
+
+    fn latency(&self) -> u32 {
+        self.blocks.iter().map(|b| b.latency as u32).sum()
     }
 }
 
@@ -532,7 +609,9 @@ mod tests {
             let x = noise(4800);
             let (mut l, mut r) = (x.clone(), x.clone());
             rig.run(&mut l, &mut r);
-            assert_eq!(l, x, "{token}");
+            // *MASTER* keeps its limiter's look-ahead while it's off.
+            let lat = rig.dev.latency() as usize;
+            assert_eq!(&l[lat..], &x[..x.len() - lat], "{token}");
         }
 
         // The Soul gate closes on a quiet signal once switched on.
@@ -563,6 +642,48 @@ mod tests {
         let peak = l.iter().chain(&r).fold(0.0f32, |a, v| a.max(v.abs()));
         assert!(peak <= 10f32.powf(-1.0 / 20.0) * 1.0001, "{peak}");
         assert!(rig.dev.meter() < -6.0);
+    }
+
+    fn readouts(rig: &Rig) -> [f32; FX_READOUTS] {
+        let mut r = [0.0; FX_READOUTS];
+        rig.dev.readouts(&mut r);
+        r
+    }
+
+    #[test]
+    fn each_section_meters_its_own_reduction() {
+        // *SOUL*: the compressor (block 2) reduces a hot tone, the gate (block 0) is open, the EQ shows none.
+        let mut rig = Rig::new("*SOUL*");
+        rig.set("g_on", 1.0).set("d_on", 1.0).set("d_thr", -30.0);
+        rig.sine_gain_db(300.0, 0.5);
+        let r = readouts(&rig);
+        assert!(r[2] < -3.0 && r[0] > -0.5 && r[1] == 0.0, "{:?}", &r[..4]);
+        // The gate closing on a quiet tone shows on block 0.
+        let mut rig = Rig::new("*SOUL*");
+        rig.set("g_on", 1.0).set("d_on", 0.0);
+        rig.sine_gain_db(300.0, 0.001);
+        let r = readouts(&rig);
+        assert!(r[0] < -10.0 && r[2] == 0.0, "{:?}", &r[..4]);
+        // *VINTAGE*: the 1176 (block 0) and the leveler (block 2) apart.
+        let mut rig = Rig::new("*VINTAGE*");
+        rig.set("d_on", 1.0).set("d_in", 0.0).set("l_on", 0.0);
+        rig.sine_gain_db(200.0, 0.5);
+        let r = readouts(&rig);
+        assert!(r[0] < -3.0 && r[2] == 0.0, "{:?}", &r[..4]);
+        // *MASTER*: the limiter's reduction at 7 (and block 3), the tape's VU at 4, the enhancer's VUs at 5-6.
+        let mut rig = Rig::new("*MASTER*");
+        rig.set("l_gin", 12.0).set("l_again", 0.0).set("t_on", 1.0).set("e_on", 1.0).set("l_on", 1.0);
+        rig.sine_gain_db(100.0, 0.9);
+        let r = readouts(&rig);
+        assert!(r[7] < -6.0 && (r[3] - r[7]).abs() < 0.5, "{:?}", &r[..9]);
+        assert!(r[4] > 0.5 && r[6] > 0.5 && r[5] < 1e-3, "{:?}", &r[..9]);
+        // A section switched off reads idle.
+        let mut rig = Rig::new("*MASTER*");
+        rig.set("l_on", 0.0).set("l_gin", 12.0);
+        rig.sine_gain_db(100.0, 0.9);
+        let r = readouts(&rig);
+        assert!(r[3] == 0.0 && r[7] == 0.0, "{:?}", &r[..9]);
+        assert_eq!(rig.dev.latency(), 48);
     }
 
     #[test]

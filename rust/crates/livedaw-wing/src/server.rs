@@ -61,11 +61,24 @@ pub const OSC_SUBSCRIPTION_LIFE: Duration = Duration::from_secs(12);
 pub const METER_LIFE: Duration = Duration::from_secs(6);
 /// A Native client that sends nothing for this long is dropped (the console
 /// uses 10 s; clients send a keep-alive every 7 s).
+///
+/// The Native sockets have no read or write timeouts: the poll thread
+/// (`watch_clients`) times both rules and shuts a connection down, which ends
+/// its blocked read or write. On Windows a send or receive that times out
+/// (SO_SNDTIMEO / SO_RCVTIMEO) leaves the connection "in an indeterminate
+/// state" (Winsock documentation), and its errors don't map as on Unix (a
+/// blocking call interrupted is WSAEINTR, which std leaves uncategorised),
+/// so a timeout could drop a healthy client.
 pub const NATIVE_IDLE: Duration = Duration::from_secs(12);
 /// A Native client whose connection takes nothing for this long is dropped.
 /// Its data waits in its own queue meanwhile: a slow client (a tablet on
 /// Wi-Fi) never holds up the other clients, the OSC server or the meters.
 pub const NATIVE_WRITE_STALL: Duration = Duration::from_secs(10);
+/// The writer hands the socket this much at a time, so that a stall is timed
+/// from the last progress (`NATIVE_WRITE_STALL`), not from a big send's start.
+const NATIVE_WRITE_CHUNK: usize = 64 << 10;
+/// Recent disconnects kept for `Status::disconnects`.
+const DISCONNECTS_KEPT: usize = 32;
 /// A Native client with this much data waiting is dropped.
 pub const NATIVE_MAX_QUEUED: usize = 32 << 20;
 /// A Native client's requests are read only while less than this waits for it
@@ -145,6 +158,77 @@ pub struct ClientInfo {
     pub seconds: u64,
 }
 
+/// Why the server closed a Native client's connection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CloseReason {
+    /// The client closed it (end of stream).
+    ClientClosed,
+    /// Reading failed: the error's kind and text.
+    ReadError(ErrorKind, String),
+    /// Nothing from the client for `NATIVE_IDLE`.
+    Idle,
+    /// The connection took nothing for `NATIVE_WRITE_STALL`.
+    WriteStalled,
+    /// Writing failed.
+    WriteError(ErrorKind, String),
+    /// More than `NATIVE_MAX_QUEUED` waited for the client.
+    QueueFull,
+    /// The server stopped.
+    Stopped,
+}
+
+impl std::fmt::Display for CloseReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CloseReason::ClientClosed => write!(f, "the client closed the connection"),
+            CloseReason::ReadError(k, e) => write!(f, "read error ({k:?}): {e}"),
+            CloseReason::Idle => write!(f, "nothing from the client for {} s", NATIVE_IDLE.as_secs()),
+            CloseReason::WriteStalled => write!(f, "the client took nothing for {} s", NATIVE_WRITE_STALL.as_secs()),
+            CloseReason::WriteError(k, e) => write!(f, "write error ({k:?}): {e}"),
+            CloseReason::QueueFull => write!(f, "more than {} MB waited for the client", NATIVE_MAX_QUEUED >> 20),
+            CloseReason::Stopped => write!(f, "the server stopped"),
+        }
+    }
+}
+
+/// A Native connection that ended, and why.
+#[derive(Clone, Debug)]
+pub struct Disconnect {
+    pub peer: SocketAddr,
+    pub reason: CloseReason,
+    /// How long the connection lasted.
+    pub after: Duration,
+}
+
+/// What a read on a Native connection means for it.
+#[derive(Debug, PartialEq, Eq)]
+enum ReadOutcome {
+    Data(usize),
+    /// Nothing yet; read again.
+    Again,
+    Closed(CloseReason),
+}
+
+/// Winsock's "interrupted blocking call", which std reports as uncategorised.
+const WSAEINTR: i32 = 10004;
+
+/// Errors a read or write on a connection just tries again after: a timeout
+/// (WouldBlock on Unix, TimedOut on Windows) or an interruption (Interrupted
+/// on Unix, WSAEINTR on Windows).
+fn transient(e: &std::io::Error) -> bool {
+    matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted)
+        || (cfg!(windows) && e.raw_os_error() == Some(WSAEINTR))
+}
+
+fn classify_read(r: std::io::Result<usize>) -> ReadOutcome {
+    match r {
+        Ok(0) => ReadOutcome::Closed(CloseReason::ClientClosed),
+        Ok(n) => ReadOutcome::Data(n),
+        Err(e) if transient(&e) => ReadOutcome::Again,
+        Err(e) => ReadOutcome::Closed(CloseReason::ReadError(e.kind(), e.to_string())),
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Status {
     pub discovery: Option<SocketAddr>,
@@ -154,6 +238,8 @@ pub struct Status {
     pub errors: Vec<String>,
     pub osc_messages: u64,
     pub native_bytes: u64,
+    /// The Native connections that ended lately and why (oldest first).
+    pub disconnects: Vec<Disconnect>,
 }
 
 struct OscSubscription {
@@ -182,7 +268,14 @@ struct NativeClient {
     ready: Condvar,
     meters: Mutex<MeterSub>,
     alive: AtomicBool,
+    /// Why it was closed (the first reason given).
+    reason: Mutex<Option<CloseReason>>,
     since: Instant,
+    /// When the client last sent something (µs since `since`).
+    heard: AtomicU64,
+    /// When the writer handed the socket its current chunk (µs since
+    /// `since`, plus one; 0 while it isn't writing).
+    writing: AtomicU64,
 }
 
 impl NativeClient {
@@ -194,7 +287,7 @@ impl NativeClient {
         let mut out = lock(&self.out);
         if out.len() + bytes.len() > NATIVE_MAX_QUEUED {
             drop(out);
-            self.close();
+            self.close(CloseReason::QueueFull);
             return;
         }
         out.extend_from_slice(bytes);
@@ -205,10 +298,35 @@ impl NativeClient {
         lock(&self.out).len()
     }
 
-    fn close(&self) {
+    /// Closes the connection (if still open) for `reason`. The shutdown ends
+    /// the client's blocked read and write.
+    fn close(&self, reason: CloseReason) {
+        lock(&self.reason).get_or_insert(reason);
         self.alive.store(false, Ordering::Relaxed);
         let _ = self.stream.shutdown(std::net::Shutdown::Both);
         self.ready.notify_all();
+    }
+
+    fn micros(&self, at: Instant) -> u64 {
+        at.saturating_duration_since(self.since).as_micros() as u64
+    }
+
+    fn heard_now(&self) {
+        self.heard.store(self.micros(Instant::now()), Ordering::Relaxed);
+    }
+
+    /// The rule this client breaks at `now`, if any: idle, or a write stalled.
+    fn overdue(&self, now: Instant) -> Option<CloseReason> {
+        let now = self.micros(now);
+        let heard = self.heard.load(Ordering::Relaxed);
+        if now.saturating_sub(heard) > NATIVE_IDLE.as_micros() as u64 {
+            return Some(CloseReason::Idle);
+        }
+        let writing = self.writing.load(Ordering::Relaxed);
+        if writing != 0 && now.saturating_sub(writing - 1) > NATIVE_WRITE_STALL.as_micros() as u64 {
+            return Some(CloseReason::WriteStalled);
+        }
+        None
     }
 }
 
@@ -236,6 +354,8 @@ pub struct Shared {
     native_bytes: AtomicU64,
     /// The meter stream's levels (ballistics), moved on once per frame.
     meter_clock: Mutex<meters::MeterClock>,
+    /// The Native connections that ended lately (`Status::disconnects`).
+    disconnects: Mutex<VecDeque<Disconnect>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -275,6 +395,7 @@ impl Shared {
             osc_messages: AtomicU64::new(0),
             native_bytes: AtomicU64::new(0),
             meter_clock: Mutex::new(meters::MeterClock::default()),
+            disconnects: Mutex::default(),
         }
     }
 
@@ -544,6 +665,33 @@ impl Shared {
         self.ensure_baseline();
     }
 
+    /// Closes the Native clients that broke the idle or the write-stall rule.
+    fn watch_clients(&self) {
+        let now = Instant::now();
+        let clients: Vec<Arc<NativeClient>> = lock(&self.clients).clone();
+        for cl in clients {
+            if let Some(reason) = cl.overdue(now) {
+                cl.close(reason);
+            }
+        }
+    }
+
+    /// Notes that `client`'s connection is gone (its reader's last act).
+    fn forget(&self, client: &NativeClient) {
+        lock(&self.clients).retain(|c| c.id != client.id);
+        let reason = lock(&client.reason).clone().unwrap_or(CloseReason::Stopped);
+        let mut d = lock(&self.disconnects);
+        if d.len() >= DISCONNECTS_KEPT {
+            d.pop_front();
+        }
+        d.push_back(Disconnect { peer: client.peer, reason, after: client.since.elapsed() });
+    }
+
+    /// The Native connections that ended lately and why, oldest first.
+    pub fn disconnects(&self) -> Vec<Disconnect> {
+        lock(&self.disconnects).iter().cloned().collect()
+    }
+
     pub fn status(&self) -> (Vec<ClientInfo>, u64, u64) {
         let now = Instant::now();
         let mut out = Vec::new();
@@ -674,13 +822,14 @@ impl WingServer {
         s.clients = clients;
         s.osc_messages = osc;
         s.native_bytes = native;
+        s.disconnects = self.shared.disconnects();
         s
     }
 
     pub fn stop(&mut self) {
         self.shared.stop.store(true, Ordering::Relaxed);
         for cl in lock(&self.shared.clients).iter() {
-            cl.close();
+            cl.close(CloseReason::Stopped);
         }
         for t in self.threads.drain(..) {
             let _ = t.join();
@@ -788,7 +937,7 @@ fn native_loop(sh: &Arc<Shared>, listener: TcpListener) {
                 }
                 let (Ok(writer), Ok(control)) = (stream.try_clone(), stream.try_clone()) else { continue };
                 let _ = stream.set_nodelay(true);
-                let _ = writer.set_write_timeout(Some(NATIVE_WRITE_STALL));
+                // No read or write timeouts (see NATIVE_IDLE): watch_clients times both.
                 let client = Arc::new(NativeClient {
                     id: sh.next_id.fetch_add(1, Ordering::Relaxed),
                     peer,
@@ -797,7 +946,10 @@ fn native_loop(sh: &Arc<Shared>, listener: TcpListener) {
                     ready: Condvar::new(),
                     meters: Mutex::new(MeterSub { port: None, report_id: 0, meters: Vec::new(), expires: Instant::now() }),
                     alive: AtomicBool::new(true),
+                    reason: Mutex::new(None),
                     since: Instant::now(),
+                    heard: AtomicU64::new(0),
+                    writing: AtomicU64::new(0),
                 });
                 lock(&sh.clients).push(client.clone());
                 sh.ensure_baseline();
@@ -810,6 +962,11 @@ fn native_loop(sh: &Arc<Shared>, listener: TcpListener) {
             Err(_) => std::thread::sleep(TICK),
         }
         readers.retain(|t| !t.is_finished());
+    }
+    // Their reads block without a timeout: a client accepted while the
+    // server was stopping is closed here, or its reader would never end.
+    for cl in lock(&sh.clients).iter() {
+        cl.close(CloseReason::Stopped);
     }
     for t in readers {
         let _ = t.join();
@@ -830,12 +987,31 @@ fn writer_loop(sh: &Shared, client: &NativeClient, mut stream: TcpStream) {
             }
             std::mem::swap(&mut *out, &mut buf);
         }
-        // write_all finishes partial sends; one that stalls for
-        // NATIVE_WRITE_STALL means the client is gone.
-        if stream.write_all(&buf).is_err() {
-            client.close();
-            return;
+        // A chunk at a time; one the connection takes nothing of for
+        // NATIVE_WRITE_STALL means the client is gone (watch_clients).
+        let mut sent = 0;
+        while sent < buf.len() {
+            client.writing.store(client.micros(Instant::now()) + 1, Ordering::Relaxed);
+            let end = buf.len().min(sent + NATIVE_WRITE_CHUNK);
+            match stream.write(&buf[sent..end]) {
+                Ok(0) => {
+                    client.close(CloseReason::WriteError(ErrorKind::WriteZero, "the connection took nothing".into()));
+                    return;
+                }
+                Ok(n) => sent += n,
+                Err(e) if transient(&e) => {
+                    if !client.alive.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                Err(e) => {
+                    client.close(CloseReason::WriteError(e.kind(), e.to_string()));
+                    return;
+                }
+            }
         }
+        client.writing.store(0, Ordering::Relaxed);
         buf.clear();
         if buf.capacity() > 1 << 20 {
             buf = Vec::new();
@@ -844,21 +1020,25 @@ fn writer_loop(sh: &Shared, client: &NativeClient, mut stream: TcpStream) {
 }
 
 fn client_loop(sh: &Shared, client: Arc<NativeClient>, mut stream: TcpStream) {
-    let _ = stream.set_read_timeout(Some(TICK));
     let mut session = Session::new(Origin::Native(client.id));
     let mut buf = vec![0u8; 16384];
-    let mut last = Instant::now();
+    client.heard_now();
     while !sh.stop.load(Ordering::Relaxed) && client.alive.load(Ordering::Relaxed) {
         if client.queued() > NATIVE_READ_PAUSE {
             // Let the client catch up before answering more; it isn't idle meanwhile.
             std::thread::sleep(Duration::from_millis(10));
-            last = Instant::now();
+            client.heard_now();
             continue;
         }
-        match stream.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                last = Instant::now();
+        // Blocks until data, the client closing, or close() (watch_clients, stop).
+        match classify_read(stream.read(&mut buf)) {
+            ReadOutcome::Closed(reason) => {
+                client.close(reason);
+                break;
+            }
+            ReadOutcome::Again => std::thread::sleep(Duration::from_millis(1)),
+            ReadOutcome::Data(n) => {
+                client.heard_now();
                 sh.native_bytes.fetch_add(n as u64, Ordering::Relaxed);
                 session.feed(sh, &buf[..n]);
                 if !session.out.is_empty() {
@@ -882,16 +1062,10 @@ fn client_loop(sh: &Shared, client: Arc<NativeClient>, mut stream: TcpStream) {
                     }
                 }
             }
-            Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted) => {
-                if last.elapsed() > NATIVE_IDLE {
-                    break;
-                }
-            }
-            Err(_) => break,
         }
     }
-    client.close();
-    lock(&sh.clients).retain(|c| c.id != client.id);
+    client.close(CloseReason::Stopped);
+    sh.forget(&client);
 }
 
 fn poll_loop(sh: &Shared) {
@@ -910,6 +1084,7 @@ fn poll_loop(sh: &Shared) {
         if tick % 2 == 0 {
             sh.poll_changes();
         }
+        sh.watch_clients();
         lock(&sh.clients).retain(|c| c.alive.load(Ordering::Relaxed));
     }
 }
@@ -954,5 +1129,111 @@ mod tests {
         for (k, round) in order.chunks(addrs.len()).enumerate() {
             assert!(addrs.iter().all(|a| round.contains(a)), "round {k}: {round:?}");
         }
+    }
+
+    /// A timeout or an interruption (each platform's kind of it) is read
+    /// again; only the end of the stream or a real error closes a client.
+    #[test]
+    fn read_errors_are_told_apart() {
+        use std::io::Error;
+        assert_eq!(classify_read(Ok(5)), ReadOutcome::Data(5));
+        assert_eq!(classify_read(Ok(0)), ReadOutcome::Closed(CloseReason::ClientClosed));
+        // Unix's timeout, Windows' timeout (WSAETIMEDOUT), an interrupted call.
+        for kind in [ErrorKind::WouldBlock, ErrorKind::TimedOut, ErrorKind::Interrupted] {
+            assert_eq!(classify_read(Err(Error::from(kind))), ReadOutcome::Again, "{kind:?}");
+        }
+        // Windows' interrupted blocking call, which std leaves uncategorised.
+        let wsaeintr = classify_read(Err(Error::from_raw_os_error(WSAEINTR)));
+        if cfg!(windows) {
+            assert_eq!(wsaeintr, ReadOutcome::Again);
+        }
+        for kind in [ErrorKind::ConnectionReset, ErrorKind::ConnectionAborted, ErrorKind::BrokenPipe] {
+            match classify_read(Err(Error::from(kind))) {
+                ReadOutcome::Closed(CloseReason::ReadError(k, _)) => assert_eq!(k, kind),
+                other => panic!("{kind:?}: {other:?}"),
+            }
+        }
+    }
+
+    /// A connected pair: the server's end and the client's.
+    fn pair() -> (TcpStream, TcpStream) {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(l.local_addr().unwrap()).unwrap();
+        (l.accept().unwrap().0, client)
+    }
+
+    fn native_client(stream: TcpStream) -> NativeClient {
+        NativeClient {
+            id: 1,
+            peer: stream.peer_addr().unwrap(),
+            stream,
+            out: Mutex::default(),
+            ready: Condvar::new(),
+            meters: Mutex::new(MeterSub { port: None, report_id: 0, meters: Vec::new(), expires: Instant::now() }),
+            alive: AtomicBool::new(true),
+            reason: Mutex::new(None),
+            since: Instant::now(),
+            heard: AtomicU64::new(0),
+            writing: AtomicU64::new(0),
+        }
+    }
+
+    /// The idle and write-stall rules are timed by the server, not by socket
+    /// timeouts: a client that reads and sends is never overdue, one that
+    /// stops is, for the rule it broke; the first reason given is kept.
+    #[test]
+    fn overdue_clients_are_named_for_the_rule_they_broke() {
+        let (server_end, _client_end) = pair();
+        let cl = native_client(server_end);
+        let t = cl.since;
+        cl.heard.store(cl.micros(t + Duration::from_secs(5)), Ordering::Relaxed);
+        assert_eq!(cl.overdue(t + Duration::from_secs(5) + NATIVE_IDLE), None);
+        assert_eq!(cl.overdue(t + Duration::from_secs(6) + NATIVE_IDLE), Some(CloseReason::Idle));
+        // Writing a chunk since 1 s, heard from lately.
+        cl.writing.store(cl.micros(t + Duration::from_secs(1)) + 1, Ordering::Relaxed);
+        cl.heard.store(cl.micros(t + Duration::from_secs(11)), Ordering::Relaxed);
+        assert_eq!(cl.overdue(t + Duration::from_millis(1000) + NATIVE_WRITE_STALL), None);
+        assert_eq!(cl.overdue(t + Duration::from_millis(1100) + NATIVE_WRITE_STALL), Some(CloseReason::WriteStalled));
+        cl.writing.store(0, Ordering::Relaxed);
+        assert_eq!(cl.overdue(t + Duration::from_secs(12)), None);
+        cl.close(CloseReason::WriteStalled);
+        cl.close(CloseReason::ClientClosed);
+        assert_eq!(*lock(&cl.reason), Some(CloseReason::WriteStalled));
+        assert!(!cl.alive.load(Ordering::Relaxed));
+    }
+
+    /// The server reports why each Native connection ended, and stops
+    /// promptly with clients connected (their reads have no timeout).
+    #[test]
+    fn disconnects_are_reported_with_their_reason() {
+        let engine: Arc<dyn EngineHandle> = Arc::new(Arc::new(Engine::new(0)));
+        let config =
+            Config { bind: IpAddr::V4(Ipv4Addr::LOCALHOST), discovery: false, osc: false, native_port: 0, ..Config::default() };
+        let mut server = WingServer::start(engine, Arc::new(WingState::default()), &config);
+        let to = server.status().native.unwrap();
+        let wait = |server: &WingServer, what: &dyn Fn(&Status) -> bool| {
+            let until = Instant::now() + Duration::from_secs(20);
+            while !what(&server.status()) {
+                assert!(Instant::now() < until, "{:?}", server.status());
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let gone = TcpStream::connect(to).unwrap();
+        let gone_addr = gone.local_addr().unwrap();
+        let stays = TcpStream::connect(to).unwrap();
+        let stays_addr = stays.local_addr().unwrap();
+        wait(&server, &|s| s.clients.len() == 2);
+        drop(gone);
+        wait(&server, &|s| s.disconnects.iter().any(|d| d.peer == gone_addr));
+        let d = server.status().disconnects;
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert_eq!(d[0].reason, CloseReason::ClientClosed);
+        assert_eq!(server.status().clients.len(), 1);
+        let started = Instant::now();
+        server.stop();
+        assert!(started.elapsed() < Duration::from_secs(5), "stop took {:?}", started.elapsed());
+        let d = server.shared().disconnects();
+        assert!(d.iter().any(|d| d.peer == stays_addr && d.reason == CloseReason::Stopped), "{d:?}");
+        drop(stays);
     }
 }

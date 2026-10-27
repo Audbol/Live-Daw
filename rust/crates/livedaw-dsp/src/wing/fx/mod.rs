@@ -16,6 +16,7 @@
 //! characteristic sound; they are not circuit-level emulations.
 
 pub mod blocks;
+pub mod meters;
 
 mod amp;
 mod delay;
@@ -62,65 +63,42 @@ pub trait FxAlgo: Send {
         0.0
     }
 
-    /// A live value for the panel's meters and graphs (see [`FxLive`]); 0
-    /// for what the device doesn't have. Audio thread, cheap.
-    fn live(&self, _what: FxLive) -> f32 {
-        0.0
+    /// The live values the device's screen shows (meters, gain-reduction
+    /// bars, band levels, a scope...): the device writes the ones it has into
+    /// `out` (each device documents its layout; the rest stay 0). Called on
+    /// the audio thread after each block; must not allocate.
+    ///
+    /// Conventions: 0 is every readout's idle value. Levels are linear
+    /// (peaks that rise at once and fall at [`meters::FALL_DB_PER_S`], or VU
+    /// levels relative to 0 VU, see [`meters`]); gain reductions are dB
+    /// (<= 0) following the processor's own envelope.
+    fn readouts(&self, _out: &mut [f32; FX_READOUTS]) {}
+
+    /// The delay the device adds to the signal, in samples (a limiter's
+    /// look-ahead), fixed for the instance's lifetime. The slot delays FX
+    /// MIX's dry signal by it and reports it to the delay compensation.
+    fn latency(&self) -> u32 {
+        0
     }
 }
 
-/// What a device reports live for its panel (read by the screen while it
-/// runs): its LFO's position so the LFO graph moves with it, its envelope
-/// follower, the one moving part of its unit's front, band levels and the
-/// note it hears.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(i32)]
-pub enum FxLive {
-    /// The modulation's position in its cycle, 0..1 (left / first voice;
-    /// ROTARY: the horn's angle).
-    LfoPhase = 0,
-    /// The right / second voice's position, 0..1 (ROTARY: the drum's angle).
-    LfoPhase2 = 1,
-    /// The envelope follower, 0..1 (PHASER, TREMOLO/PANNER and MOOD's ENV
-    /// modulation).
-    Envelope = 2,
-    /// The unit's needle: TREMOLO/PANNER's L-C-R position (-1..1), ROTARY's
-    /// horn speed (Hz), PITCH FIX's correction (cents).
-    Needle = 3,
-    /// Band levels, linear (SUB MONSTER's five harmonics).
-    Band1 = 4,
-    Band2 = 5,
-    Band3 = 6,
-    Band4 = 7,
-    Band5 = 8,
-    /// The note heard, 0 = C .. 11 = B, -1 for none (PITCH FIX's target).
-    Note = 9,
-}
-
-/// The number of [`FxLive`] values.
-pub const FX_LIVE: usize = 10;
-
-impl FxLive {
-    pub const ALL: [FxLive; FX_LIVE] = [
-        FxLive::LfoPhase,
-        FxLive::LfoPhase2,
-        FxLive::Envelope,
-        FxLive::Needle,
-        FxLive::Band1,
-        FxLive::Band2,
-        FxLive::Band3,
-        FxLive::Band4,
-        FxLive::Band5,
-        FxLive::Note,
-    ];
-
-    pub fn from_index(i: usize) -> Option<Self> {
-        Self::ALL.get(i).copied()
-    }
+/// The readout layout of the modulation devices (CHORUS, FLANGER, DIMCRS,
+/// PHASER, TREMOLO/PANNER, MOOD, ROTARY): the LFO's position in its cycle
+/// (0..1) for the left / first voice and the right / second one, the
+/// envelope follower (0..1) and the unit's needle (TREMOLO/PANNER's L-C-R
+/// position -1..1, ROTARY's horn speed in Hz).
+pub mod readout {
+    pub const LFO_L: usize = 0;
+    pub const LFO_R: usize = 1;
+    pub const ENVELOPE: usize = 2;
+    pub const NEEDLE: usize = 3;
 }
 
 /// Bands [`FxAlgo::band_gain`] can report (TRIPLE DEQ has the most).
 pub const FX_BANDS: usize = 3;
+
+/// Readouts [`FxAlgo::readouts`] can report.
+pub const FX_READOUTS: usize = 48;
 
 /// Index of a device in [`FX_MODELS`].
 pub fn model_index(token: &str) -> Option<usize> {
@@ -241,9 +219,14 @@ impl FxDevice {
         self.algo.band_gain(band)
     }
 
-    /// See [`FxAlgo::live`].
-    pub fn live(&self, what: FxLive) -> f32 {
-        self.algo.live(what)
+    /// See [`FxAlgo::readouts`].
+    pub fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        self.algo.readouts(out);
+    }
+
+    /// See [`FxAlgo::latency`].
+    pub fn latency(&self) -> u32 {
+        self.algo.latency()
     }
 
     pub fn reset(&mut self) {
@@ -333,6 +316,14 @@ pub(crate) mod tests {
         assert!(bad.is_none(), "{token}: {what}: non-finite or runaway output");
     }
 
+    /// The screen's readouts are always finite (and the meter's a reduction).
+    fn assert_readouts(token: &str, what: &str, dev: &FxDevice) {
+        let mut r = [0.0; FX_READOUTS];
+        dev.readouts(&mut r);
+        assert!(r.iter().all(|x| x.is_finite() && x.abs() < 1e6), "{token}: {what}: readouts {r:?}");
+        assert!(dev.meter() <= 0.0 && dev.meter().is_finite(), "{token}: {what}: meter {}", dev.meter());
+    }
+
     /// The checks every device must pass (used by each family's tests).
     pub(crate) fn check_device(token: &str) {
         let model = model_index(token).unwrap_or_else(|| panic!("{token}: not in FX_MODELS"));
@@ -371,6 +362,7 @@ pub(crate) mod tests {
                 }
                 let input: Vec<f32> = (0..secs(0.15)).map(|_| rng.sample() * 0.9).collect();
                 assert_sane(token, "random settings", &run(&mut dev, &values, &input, &mut rng));
+                assert_readouts(token, "random settings", &dev);
             }
             for pos in [0.0, 1.0] {
                 let mut values = defaults;

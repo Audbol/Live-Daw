@@ -7,18 +7,31 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Added
 
-- **The meters on the effects' pages move with the effect** (reverbs, delays,
-  modulation, pitch): VINTAGE ROOM's INPUTS / OUTPUTS ladders, DIMENSION CRS's OUTPUT
-  ladder, TAPE DELAY's two VUs (input L / R), VINTAGE PLATE's VU, STEREO DELAY's level
-  tube, DUAL PITCH's output LEDs, PSYCHO BASS's two VUs (output L / R), SUB MONSTER's
-  band levels in the fader slots, TREMOLO/PANNER's L-C-R needle, the envelope graphs
-  of PHASER and TREMOLO/PANNER (filled to the envelope's level) and PITCH FIX's LED
-  over the note it hears. Levels use the screens' meter ballistics (needles swing a
-  little slower, like a VU); only the meters repaint. The slot reports its input and
-  output peaks and its device's LFO, envelope, needle, band and note values (C ABI 23:
-  `ld_fx_io_peaks`, `ld_fx_live`); an LFO graph shows where the LFO is.
+- **The meters on the reverb, delay, modulation and pitch pages move with the
+  effect**: VINTAGE ROOM's INPUTS / OUTPUTS ladders, DIMENSION CRS's OUTPUT ladder,
+  TAPE DELAY's two VUs (the record level onto each tape), VINTAGE PLATE's VU (the
+  drive into the plate), STEREO DELAY's level tube, DUAL PITCH's output LEDs,
+  TREMOLO/PANNER's L-C-R needle, the envelope graphs of PHASER and TREMOLO/PANNER
+  (filled to the envelope's level) and PITCH FIX's LED over the note it hears, through
+  the FX slots' readouts (`ld_fx_readouts`). The modulation devices report their LFO's
+  position, envelope and needle; an LFO graph shows where the LFO is.
 - Tap tempo also sets OILCAN DELAY's TIME dial and BBD DELAY's DELAY dial (their
   delay time from the taps); the pitch devices' DELAY no longer takes the tap.
+- **Live meters on the FX pages** (dynamics, EQ and utility devices, channel strips,
+  EXTERNAL): C5-COMBINATOR's band screen shows each band at its gain as it is now
+  (n-GAIN plus its live gain reduction and SBC makeup) over the input's third-octave
+  spectrum; 2-BAND DEESSER's band LEDs light while their band de-esses; ULTRA ENHANCER's
+  STEREO and MONO VUs, PSYCHO BASS's low-band and harmonics meters, TAPE MACHINE's
+  record-level VU, SUB MONSTER's band meters, VELVET IMAGER's input / output / mid-side
+  LED meters, correlation bar and LF vector scope, SPEAKER MANAGER's live DYN EQ curve
+  (as set in blue, as it is now in orange) and the EXTERNAL EFFECT's SEND and RETURN
+  meters all follow the signal. Each channel-strip section's meter shows its own
+  block (the gate, the compressor, the 1176, the leveler...), the mastering strip's
+  tape VU, enhancer VUs and limiter LEDs their units'. Levels move with the app's
+  meter ballistics (full peak at once, 60 dB/s down); gain reduction meters follow the
+  processor. The pages poll ~30 times a second and repaint only the meters that move.
+- C ABI 23: `ld_fx_readouts` (an FX slot's input/output levels and its device's
+  readouts); `ld_fx_latency` includes a built-in device's own latency.
 
 - Multitrack editor: **FILE > Import: COPY TO PROJECT / KEEP IN PLACE / ASK EACH
   TIME** (kept in the app settings). KEEP IN PLACE plays imported WAV, AIFF and FLAC
@@ -514,6 +527,26 @@ All notable changes to Sidecar are listed here. Versions follow
 - The effects no longer slow down on silent tails where nothing else flushes
   denormal numbers (offline renders, the model response graphs).
 
+- PRECISION LIMITER: its 1 ms look-ahead is now reported as the slot's latency (delay
+  compensation) and FX MIX delays the dry signal by it; below 100 % MIX the dry and
+  limited signals combed. The mastering strip keeps the look-ahead when its limiter is
+  switched off, so its latency never changes.
+- EXCITER: TIMBRE toward positive (even harmonics) generated odd harmonics like the
+  negative side, so it hardly changed the sound; it now adds even harmonics.
+- SUB MONSTER's readouts under the faders show each band's frequency (from TUNE), as on
+  the plug-in, instead of the fader levels.
+- TAPE MACHINE's VU scale reached past the end of its arc (+1 to +3 off the meter).
+- WING REMOTE (Native, TCP 2222): a client that was reading and sending normally
+  (WING Edit) could be disconnected at random on Windows. The server read and wrote
+  each connection with socket timeouts (100 ms reads, 10 s writes), and on Windows a
+  receive or send that times out leaves the connection in an undefined state, with
+  errors std doesn't map as on Unix (an interrupted blocking call is WSAEINTR, which
+  the server took for a broken connection). The connections now have no socket
+  timeouts: the server times the idle rule (12 s) and the stalled-write rule (10 s of
+  no progress) itself and shuts a connection down to end it, and only the end of the
+  stream or a real error closes a client. The server also keeps why each Native
+  connection ended (`Status::disconnects`: the client closed it, idle, write stalled,
+  queue full, read or write error, server stopped).
 - ETERNAL BLISS compressed a steady tone far less than its curve at short releases (at
   its default RELEASE 102 ms, 0.3 dB instead of 2 dB at 3 dB over the threshold): its
   constant-rate release climbed back through every trough of the waveform. The

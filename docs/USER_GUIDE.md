@@ -381,13 +381,18 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     strip (PRE/POST) and ON; a device inserted nowhere is shown dimmed. Tapping a slot opens the
     device on its **faceplate**, drawn like the hardware it recreates (a LARC remote
     for the vintage reverbs, a black 1176-style limiter with its VU meter...). The
-    meters on a faceplate show the slot live: VINTAGE ROOM's INPUTS / OUTPUTS,
-    DIMENSION CRS's OUTPUT, TAPE DELAY's VUs (input L / R; 0 VU = -18 dBFS), VINTAGE
-    PLATE's VU, STEREO DELAY's tube, DUAL PITCH's and PSYCHO BASS's outputs, SUB
-    MONSTER's band levels, TREMOLO/PANNER's L-C-R needle, the envelope of PHASER and
-    TREMOLO/PANNER filling their envelope graph, and PITCH FIX's LED over the note it
-    hears. They fall as the screens' meters do and stay dark while the slot is
-    bypassed. The
+    meters on a page show the device's live signal: gain reduction, the C5-COMBINATOR's
+    bands moving over the input's spectrum, the de-esser's band LEDs, the enhancer's,
+    psycho bass's and tape machine's VUs, the velvet imager's meters, correlation and
+    scope, the speaker manager's live DYN EQ curve, each channel-strip section's own
+    reduction, the EXTERNAL EFFECT's SEND and RETURN; levels move like every other
+    meter (see *How the meters move*). The PRECISION LIMITER's 1 ms look-ahead is
+    compensated (delay compensation and FX MIX). On the reverbs, delays, modulation
+    and pitch devices: VINTAGE ROOM's INPUTS / OUTPUTS, DIMENSION CRS's OUTPUT, TAPE
+    DELAY's record-level VUs (0 VU = -18 dBFS), VINTAGE PLATE's VU, STEREO DELAY's
+    tube, DUAL PITCH's output LEDs, TREMOLO/PANNER's L-C-R needle, the envelope of
+    PHASER and TREMOLO/PANNER filling their envelope graph, and PITCH FIX's LED over
+    the note it hears. The
     device list shows a tile per device: NONE and EXTERNAL (a plugin or an outboard
     insert, see *Outboard inserts*) first, then the
     tabs **FX1-8** (the premium devices, slots 1-8 only), **STD** and **CH** (the EQs and

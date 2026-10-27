@@ -22,10 +22,17 @@
 //! compression in one band doesn't tilt the spectrum; SBC SPEED sets how fast
 //! that makeup follows. GAIN is the output level and MIX blends with the
 //! (phase-matched) dry signal. BAND SELECT and the band solo are UI only.
+//!
+//! Readouts (the screen's band display): 0-4 each band's gain reduction (dB,
+//! <= 0; 0 while the band is bypassed), 5-9 each band's SBC makeup (dB,
+//! signed), 10-39 the input's spectrum in third octaves from 25 Hz to 20 kHz
+//! ([`spectrum_hz`](crate::wing::fx::meters::spectrum_hz); linear peaks), 40-44 each band's output level (linear
+//! peak).
 
 use super::{db_gain, power_db, slow_coef, Cascade, Glide};
 use crate::wing::fx::blocks::{coef, db_to_gain, BiquadCoeffs, Smoothed};
-use crate::wing::fx::FxAlgo;
+use crate::wing::fx::meters::{PeakMeter, Spectrum, SPECTRUM_BANDS};
+use crate::wing::fx::{FxAlgo, FX_READOUTS};
 use crate::wing::Params;
 use std::f64::consts::FRAC_1_SQRT_2;
 
@@ -94,8 +101,19 @@ pub(crate) struct Combinator {
     gain: Smoothed,
     mix: Smoothed,
     meter: f32,
+    /// The screen's readouts: band reductions and SBC makeups at the end of
+    /// the last chunk, the input's spectrum and the bands' output levels.
+    shown_gr: [f32; BANDS],
+    shown_sbc: [f32; BANDS],
+    spectrum: Spectrum,
+    band_level: [PeakMeter; BANDS],
     primed: bool,
 }
+
+/// Where the readouts start (see the module's documentation).
+const RD_SBC: usize = BANDS;
+const RD_SPECTRUM: usize = 2 * BANDS;
+const RD_LEVEL: usize = RD_SPECTRUM + SPECTRUM_BANDS;
 
 impl Combinator {
     pub(crate) fn new(sr: f32) -> Self {
@@ -121,6 +139,10 @@ impl Combinator {
             gain: sm(1.0),
             mix: sm(1.0),
             meter: 0.0,
+            shown_gr: [0.0; BANDS],
+            shown_sbc: [0.0; BANDS],
+            spectrum: Spectrum::new(sr),
+            band_level: [PeakMeter::new(sr); BANDS],
             primed: false,
         };
         c.xover.tgt = XOVER_HZ.map(f32::ln);
@@ -232,6 +254,8 @@ impl Combinator {
                 let want = if self.sbc_on { 0.5 * (avg - *g) * a } else { 0.0 };
                 s.sbc += (want - s.sbc) * self.sbc_coef;
                 deepest = deepest.min(*g);
+                self.shown_gr[b] = *g;
+                self.shown_sbc[b] = s.sbc;
                 *g += s.sbc;
             }
 
@@ -239,8 +263,10 @@ impl Combinator {
             for b in 0..BANDS {
                 let (xl, xr) = (bl[b][i], br[b][i]);
                 let g = db_gain(gr[b]) * self.makeup[b].tick();
-                wl += xl * g;
-                wr += xr * g;
+                let (yl, yr) = (xl * g, xr * g);
+                self.band_level[b].tick(yl.abs().max(yr.abs()));
+                wl += yl;
+                wr += yr;
                 dl += xl;
                 dr += xr;
             }
@@ -297,6 +323,11 @@ impl FxAlgo for Combinator {
     fn process(&mut self, left: &mut [f32], right: &mut [f32]) {
         let mut deepest = 0.0f32;
         for (l, r) in left.chunks_mut(CHUNK).zip(right.chunks_mut(CHUNK)) {
+            let mut mono = [0.0f32; CHUNK];
+            for ((m, a), b) in mono.iter_mut().zip(l.iter()).zip(r.iter()) {
+                *m = 0.5 * (a + b);
+            }
+            self.spectrum.process(&mono[..l.len()]);
             deepest = deepest.min(self.process_chunk(l, r));
         }
         self.meter = deepest;
@@ -308,6 +339,10 @@ impl FxAlgo for Combinator {
         self.reset_filters();
         self.state = [BandState::default(); BANDS];
         self.meter = 0.0;
+        self.shown_gr = [0.0; BANDS];
+        self.shown_sbc = [0.0; BANDS];
+        self.spectrum.reset();
+        self.band_level.iter_mut().for_each(PeakMeter::reset);
         for s in self.smoothers() {
             s.snap(s.target);
         }
@@ -315,6 +350,15 @@ impl FxAlgo for Combinator {
 
     fn meter(&self) -> f32 {
         self.meter
+    }
+
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[..BANDS].copy_from_slice(&self.shown_gr);
+        out[RD_SBC..RD_SBC + BANDS].copy_from_slice(&self.shown_sbc);
+        self.spectrum.levels(&mut out[RD_SPECTRUM..RD_SPECTRUM + SPECTRUM_BANDS]);
+        for (o, m) in out[RD_LEVEL..RD_LEVEL + BANDS].iter_mut().zip(&self.band_level) {
+            *o = m.level();
+        }
     }
 }
 
@@ -363,6 +407,95 @@ mod tests {
         rig.set("ratio", 9.0).set("thr", -20.0).set("sbcon", 0.0).set("byp_3", 1.0).set("gain_3", 2.0);
         let g = rig.sine_gain_db(1000.0, 0.7);
         assert!((g - 2.0).abs() < 0.5, "{g}");
+    }
+
+    fn readouts(rig: &Rig) -> [f32; FX_READOUTS] {
+        let mut r = [0.0; FX_READOUTS];
+        rig.dev.readouts(&mut r);
+        r
+    }
+
+    #[test]
+    fn readouts_show_the_band_that_works() {
+        use crate::wing::fx::meters::spectrum_hz;
+        // A loud 1 kHz tone: band 3 compresses, the others don't; the spectrum
+        // and the band levels show it at 1 kHz, in band 3.
+        for (freq, band) in [(60.0f32, 0usize), (1000.0, 2), (10_000.0, 4)] {
+            let mut rig = Rig::new("C5-CMB");
+            rig.set("ratio", 9.0).set("thr", -20.0).set("sbcon", 0.0);
+            rig.sine_gain_db(freq, 0.7);
+            let r = readouts(&rig);
+            for (b, gr) in r[..BANDS].iter().enumerate() {
+                if b == band {
+                    assert!(*gr < -6.0, "{freq} Hz: band {b} GR {gr}");
+                } else {
+                    assert!(*gr > -0.5, "{freq} Hz: band {b} GR {gr}");
+                }
+            }
+            let spec = &r[RD_SPECTRUM..RD_SPECTRUM + SPECTRUM_BANDS];
+            let top = (0..SPECTRUM_BANDS).max_by(|a, b| spec[*a].total_cmp(&spec[*b])).unwrap();
+            assert!((spectrum_hz(top) / freq).log2().abs() < 0.2, "{freq} Hz: spectrum peaks at {}", spectrum_hz(top));
+            let lv = &r[RD_LEVEL..RD_LEVEL + BANDS];
+            let loudest = (0..BANDS).max_by(|a, b| lv[*a].total_cmp(&lv[*b])).unwrap();
+            assert_eq!(loudest, band, "{freq} Hz: {lv:?}");
+        }
+        // Silence: the readouts fall back to idle (in RELEASE; AUTO lengthens it).
+        let mut rig = Rig::new("C5-CMB");
+        rig.set("ratio", 9.0).set("thr", -20.0).set("arel", 0.0);
+        rig.sine_gain_db(1000.0, 0.7);
+        let (mut l, mut r) = (vec![0.0; 96_000], vec![0.0; 96_000]);
+        rig.run(&mut l, &mut r);
+        let ro = readouts(&rig);
+        assert!(ro[..BANDS].iter().all(|g| *g > -0.5), "{:?}", &ro[..BANDS]);
+        assert!(ro[RD_SPECTRUM..].iter().all(|v| *v < 1e-3));
+        // A bypassed band shows no reduction.
+        let mut rig = Rig::new("C5-CMB");
+        rig.set("ratio", 9.0).set("thr", -20.0).set("byp_3", 1.0);
+        rig.sine_gain_db(1000.0, 0.7);
+        assert!(readouts(&rig)[2] > -0.1);
+    }
+
+    #[test]
+    fn threshold_ratio_and_band_offsets_set_the_reduction() {
+        let gr = |set: &[(&str, f32)]| {
+            let mut rig = Rig::new("C5-CMB");
+            rig.set("sbcon", 0.0).set("ratio", 5.0).set("thr", -20.0);
+            for (id, v) in set {
+                rig.set(id, *v);
+            }
+            rig.sine_gain_db(1000.0, 0.5);
+            readouts(&rig)[2]
+        };
+        let base = gr(&[]);
+        assert!(base < -2.0, "{base}");
+        assert!(gr(&[("thr", -30.0)]) < base - 3.0);
+        assert!(gr(&[("ratio", 9.0)]) < base - 1.0);
+        // Band 3's own offset deepens it; another band's doesn't.
+        assert!(gr(&[("thr_3", -10.0)]) < base - 3.0);
+        assert!((gr(&[("thr_1", -10.0)]) - base).abs() < 0.3);
+        // Below the threshold nothing happens.
+        assert!(gr(&[("thr", 0.0)]) > -0.2);
+    }
+
+    #[test]
+    fn attack_gain_and_mix() {
+        // Attack 0 grabs a burst within a few ms, attack 20 lets it through.
+        let early = |att: f32| {
+            let mut rig = Rig::new("C5-CMB");
+            rig.set("sbcon", 0.0).set("ratio", 9.0).set("thr", -30.0).set("att", att);
+            let x: Vec<f32> = (0..240).map(|i| (std::f32::consts::TAU * 1000.0 * i as f32 / 48_000.0).sin() * 0.7).collect();
+            let (mut l, mut r) = (x.clone(), x);
+            rig.run(&mut l, &mut r);
+            readouts(&rig)[2]
+        };
+        assert!(early(0.0) < early(20.0) - 3.0, "{} vs {}", early(0.0), early(20.0));
+        // GAIN is the output level; MIX 0 is the dry signal however hard it compresses.
+        let mut rig = Rig::new("C5-CMB");
+        rig.set("thr", 0.0).set("gain", 6.0);
+        assert!((rig.sine_gain_db(500.0, 0.05) - 6.0).abs() < 0.5);
+        let mut rig = Rig::new("C5-CMB");
+        rig.set("thr", -40.0).set("ratio", 9.0).set("mix", 0.0);
+        assert!(rig.sine_gain_db(1000.0, 0.5).abs() < 0.3);
     }
 
     #[test]

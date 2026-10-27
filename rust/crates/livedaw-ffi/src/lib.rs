@@ -19,6 +19,8 @@ pub mod usb;
 pub mod web;
 pub mod wing;
 
+use livedaw_dsp::wing::fx::FX_READOUTS;
+use livedaw_engine::fx::FX_LEVELS;
 use livedaw_engine::monitor::{MonitorControls, MonitorDspParams};
 use livedaw_engine::params::{
     DcaParams, DynSlotParams, EqBlockParams, FilterParams, FxParams, InputParams, InsertParams, MainSendParams, MatrixSendParams,
@@ -49,9 +51,6 @@ use std::sync::Arc;
 // ABI 21: FxParams::send_left / send_right (the EXT device's outboard insert:
 // FX SEND outputs), ld_engine_set_io_latency, source and output recall safes
 // (ld_engine_io_safe, ld_engine_set_io_safe).
-// ABI 23: the FX panels' meters: ld_fx_io_peaks (a slot's input and output
-// peaks) and ld_fx_live (its device's LFO, envelope, needle, band and note
-// readouts).
 pub const LD_ABI_VERSION: i32 = 23;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
@@ -538,28 +537,26 @@ pub unsafe extern "C" fn ld_fx_band_gain(e: *const Engine, slot: i32, band: i32)
     engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)).map_or(0.0, |r| r.band_gain(band))
 }
 
-/// The input and output peaks of slot `slot` since the last call, linear,
-/// into `out[0..4]` (in L, in R, out L, out R); taking them resets them (one
-/// reader: the slot's panel). False (zeros) for a bad slot.
+/// Any thread (ABI 23): a slot's live meters for its device's screen, into
+/// `out` (up to `n` values; returns how many were written): first its
+/// levels (input L, input R, output L, output R: what its device or plugin
+/// gets and gives back before FX MIX, or the outboard insert's FX SEND after
+/// TRIM and its RETURN; linear peaks falling at 60 dB/s), then its device's
+/// readouts (`FxAlgo::readouts`, LD_FX_READOUTS of them, laid out per device:
+/// gain reductions in dB, band levels, a scope...; 0 = idle).
 #[no_mangle]
-pub unsafe extern "C" fn ld_fx_io_peaks(e: *const Engine, slot: i32, out: *mut f32) -> bool {
-    if out.is_null() {
-        return false;
+pub unsafe extern "C" fn ld_fx_readouts(e: *const Engine, slot: i32, out: *mut f32, n: i32) -> i32 {
+    let Some(rack) = engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)) else { return 0 };
+    if out.is_null() || n <= 0 {
+        return 0;
     }
-    let peaks = engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)).map(|r| r.take_io_peaks());
-    let out = std::slice::from_raw_parts_mut(out, 4);
-    out.copy_from_slice(&peaks.unwrap_or([0.0; 4]));
-    peaks.is_some()
-}
-
-/// A live value of slot `slot`'s device for its panel: `what` 0 = LFO
-/// position (0..1), 1 = second LFO position, 2 = envelope (0..1), 3 = needle,
-/// 4-8 = band levels 1-5 (linear), 9 = the note heard (0 = C .. 11, -1 none).
-/// 0 for anything else.
-#[no_mangle]
-pub unsafe extern "C" fn ld_fx_live(e: *const Engine, slot: i32, what: i32) -> f32 {
-    let Some(what) = usize::try_from(what).ok().and_then(livedaw_dsp::wing::fx::FxLive::from_index) else { return 0.0 };
-    engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)).map_or(0.0, |r| r.live(what))
+    let total = (FX_LEVELS + FX_READOUTS).min(n as usize);
+    // SAFETY: the caller provides `n` floats at `out`.
+    let out = std::slice::from_raw_parts_mut(out, total);
+    for (i, o) in out.iter_mut().enumerate() {
+        *o = if i < FX_LEVELS { rack.level(i) } else { rack.readout(i - FX_LEVELS) };
+    }
+    total as i32
 }
 
 /// Message thread: the host context of slot `slot` (null if empty).
@@ -618,8 +615,9 @@ pub unsafe extern "C" fn ld_fx_set_latency(e: *const Engine, slot: i32, samples:
     }
 }
 
-/// The latency of slot `slot`: its plugin's as reported, or its outboard
-/// insert's round trip plus LATENCY (0 otherwise).
+/// The latency of slot `slot`: its plugin's as reported, its outboard
+/// insert's round trip plus LATENCY, or its built-in device's (ABI 23: the
+/// PRECISION LIMITER's look-ahead; 0 otherwise).
 #[no_mangle]
 pub unsafe extern "C" fn ld_fx_latency(e: *const Engine, slot: i32) -> i32 {
     let Some(e) = engine(e) else { return 0 };
@@ -913,6 +911,17 @@ mod tests {
             assert_eq!(ld_engine_pdc_total(e), 0);
             ld_fx_set(e, 2, std::ptr::null());
             assert_eq!(ld_fx_latency(e, 2), 0);
+            // A built-in device's own latency (ABI 23): the PRECISION LIMITER's 1 ms look-ahead.
+            let lim = livedaw_dsp::wing::model_index(livedaw_dsp::wing::FX_MODELS, "LIMITER").unwrap();
+            assert!(ld_fx_set_model(e, 4, lim as i32, true));
+            assert_eq!(ld_fx_latency(e, 4), (ld_engine_sample_rate(e) / 1000.0).ceil() as i32);
+            // Its meters (ABI 23): 4 levels, then the readouts; idle before it runs.
+            let mut m = [1.0f32; 64];
+            assert_eq!(ld_fx_readouts(e, 4, m.as_mut_ptr(), 64), (FX_LEVELS + FX_READOUTS) as i32);
+            assert!(m[..FX_LEVELS + FX_READOUTS].iter().all(|v| *v == 0.0) && m[FX_LEVELS + FX_READOUTS] == 1.0);
+            assert_eq!(ld_fx_readouts(e, 4, m.as_mut_ptr(), 2), 2);
+            assert_eq!(ld_fx_readouts(e, 99, m.as_mut_ptr(), 64), 0);
+            assert_eq!(ld_fx_readouts(e, 4, std::ptr::null_mut(), 64), 0);
             ld_engine_destroy(e);
         }
     }

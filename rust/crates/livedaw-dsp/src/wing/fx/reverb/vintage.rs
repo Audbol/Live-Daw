@@ -19,7 +19,8 @@ use super::lexicon::mod_rate;
 use super::parts::{fader, hash01, pole, rate, run, sign, spread, Decay, Param, Pos, Taps, Voice};
 use super::space::{Config, Settings, Space};
 use crate::wing::fx::blocks::{db_to_gain, DelayLine};
-use crate::wing::fx::{FxAlgo, FxContext};
+use crate::wing::fx::meters::VuMeter;
+use crate::wing::fx::{FxAlgo, FxContext, FX_READOUTS};
 use crate::wing::{colour, Params};
 
 /// Early reflections per side in V-ROOM.
@@ -293,6 +294,8 @@ pub(super) struct VintagePlate {
     z: [f32; 2],
     a_tilt: f32,
     a: f32,
+    /// The drive into the plate (its VU, readout 0: a VU level, 0 VU at -18 dBFS).
+    vu: VuMeter,
     clock: usize,
     primed: bool,
 }
@@ -318,6 +321,7 @@ impl VintagePlate {
             z: [0.0; 2],
             a_tilt: pole(1000.0, sr),
             a: rate(40.0, sr),
+            vu: VuMeter::new(sr, -18.0),
             clock: 0,
             primed: false,
         }
@@ -359,6 +363,11 @@ impl FxAlgo for VintagePlate {
     fn reset(&mut self) {
         self.space.clear();
         self.z = [0.0; 2];
+        self.vu.reset();
+    }
+
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[0] = self.vu.level();
     }
 }
 
@@ -384,6 +393,7 @@ impl Voice for VintagePlate {
 
     #[inline]
     fn tick(&mut self, xl: f32, xr: f32) -> (f32, f32) {
+        self.vu.tick(0.5 * (xl + xr));
         let (tl, tr) = self.space.tank(xl, xr);
         let (gl, gh) = self.gains;
         let mut out = [tl, tr];

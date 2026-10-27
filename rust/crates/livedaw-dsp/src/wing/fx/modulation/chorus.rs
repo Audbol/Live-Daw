@@ -3,7 +3,8 @@
 
 use super::shared::{advance, loop_limit, ms, sine_tri, CutFilter};
 use crate::wing::fx::blocks::{shape, DelayLine, Smoothed, Svf, Wave};
-use crate::wing::fx::{FxAlgo, FxContext, FxLive};
+use crate::wing::fx::readout::{LFO_L, LFO_R};
+use crate::wing::fx::{FxAlgo, FxContext, FX_READOUTS};
 use crate::wing::Params;
 
 /// Triangle with rounded turning points (no sudden pitch flip at the ends).
@@ -131,13 +132,10 @@ impl FxAlgo for Dimension {
         }
     }
 
-    fn live(&self, what: FxLive) -> f32 {
-        match what {
-            FxLive::LfoPhase => self.phase,
-            // The second line sweeps the other way.
-            FxLive::LfoPhase2 => (self.phase + 0.5).rem_euclid(1.0),
-            _ => 0.0,
-        }
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[LFO_L] = self.phase;
+        // The second line sweeps the other way.
+        out[LFO_R] = (self.phase + 0.5).rem_euclid(1.0);
     }
 
     fn reset(&mut self) {
@@ -259,12 +257,9 @@ impl FxAlgo for Chorus {
         }
     }
 
-    fn live(&self, what: FxLive) -> f32 {
-        match what {
-            FxLive::LfoPhase => self.phase,
-            FxLive::LfoPhase2 => (self.phase + self.offset.value).rem_euclid(1.0),
-            _ => 0.0,
-        }
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[LFO_L] = self.phase;
+        out[LFO_R] = (self.phase + self.offset.value).rem_euclid(1.0);
     }
 
     fn reset(&mut self) {
@@ -376,12 +371,9 @@ impl FxAlgo for Flanger {
         }
     }
 
-    fn live(&self, what: FxLive) -> f32 {
-        match what {
-            FxLive::LfoPhase => self.phase,
-            FxLive::LfoPhase2 => (self.phase + self.offset.value).rem_euclid(1.0),
-            _ => 0.0,
-        }
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[LFO_L] = self.phase;
+        out[LFO_R] = (self.phase + self.offset.value).rem_euclid(1.0);
     }
 
     fn reset(&mut self) {

@@ -612,9 +612,9 @@ namespace
         for (int i = 0; i < 9; ++i)
             d.text (scale[i], 160, 139.0f + 23.4f * (float) i, 30, 12, 9, kPaper);
         // The inputs and outputs, 0 dB on the scale at -12 dBFS (+12 is full scale).
-        const std::vector<float> scaleDb { 12, 6, 0, -12, -24, -36, -48, -60, -72 }, scaleY { 145, 168.4f, 191.8f, 215.2f, 238.6f, 262, 285.4f, 308.8f, 332.2f };
-        for (auto [x, feed] : { std::pair { 110.0f, Feed::InL }, { 138.0f, Feed::InR }, { 207.0f, Feed::OutL }, { 235.0f, Feed::OutR } })
-            d.ladder (feed, -12.0f, x, 20, 145, 335, 21, scaleDb, scaleY, 0xff50e040);
+        const std::vector<float> scaleDb { 0, -6, -12, -24, -36, -48, -60, -72, -84 }, scaleY { 145, 168.4f, 191.8f, 215.2f, 238.6f, 262, 285.4f, 308.8f, 332.2f };
+        for (auto [x, level] : { std::pair { 110.0f, rd::InL }, { 138.0f, rd::InR }, { 207.0f, rd::OutL }, { 235.0f, rd::OutR } })
+            d.ladder (level, x, 20, 145, 335, 21, scaleDb, scaleY, 0xff50e040);
         for (float x : { 110.0f, 138.0f, 207.0f, 235.0f })
             d.text (x < 125.0f || (x > 200.0f && x < 220.0f) ? "L" : "R", x - 10, 345, 20, 14, 11, kPaper);
         // Tiles: value window, unit, caption bar.
@@ -747,7 +747,8 @@ namespace
         label (d, "OUTPUT", 285, 108, 14, grey);
         label (d, "dB", 285, 128, 12, grey);
         d.box (275, 152, 20, 210, Look::Fill, 0xff0c0c0c);
-        d.ladder (Feed::Out, -12.0f, 285, 12, 159, 352.8f, 20, { 12, 6, 0, -12, -24, -36, -48, -60, -72 },
+        // The output, 0 dB on the scale at -12 dBFS (+12 is full scale).
+        d.ladder (rd::OutL, 285, 12, 159, 352.8f, 20, { 0, -6, -12, -24, -36, -48, -60, -72, -84 },
                   { 145, 171.5f, 198, 224.5f, 251, 277.5f, 304, 330.5f, 357 }, 0xffe02020);
         const char* scale[] = { "+12", "+6", "0", "-12", "-24", "-36", "-48", "-60", "-72" };
         for (int i = 0; i < 9; ++i)
@@ -919,7 +920,7 @@ namespace
         knob ("wf", 978, "FLUTTER", "MIN", "%", "MAX");
         d.box (428, 165, 290, 195, Look::Fill, 0xff111213, 0xff2a2a2a, 2.0f);
         for (float x : { 432.0f, 578.0f })
-            d.vu (x, 168, 136, 72, Look::VuWhite, "20|10|7|5|3|0|3", { 20, 10, 7, 5, 3, 0, -3 }, "VU").fed (x < 500.0f ? Feed::InL : Feed::InR, -18.0f);
+            d.vu (x, 168, 136, 72, Look::VuWhite, "20|10|7|5|3|0|3", { 20, 10, 7, 5, 3, 0, -3 }, "VU").reads (rd::Dev + (x < 500.0f ? 0 : 1), true).vuZero = 0.75f;
         d.lamp (462, 302, 12, 0xffff2020).at (1.0f);
         for (float x : { 535.0f, 615.0f })
             d.knob (-1, x, 302, 62, Look::ChromeSmall).at (0.3f);
@@ -1071,11 +1072,11 @@ namespace
         ends (d, 633, 254, 26, "20", "400", 11, ink, "Hz");
         d.box (602, 268, 63, 124, Look::Fill, 0xff9a9c9e, 0xff6a6a6a, 1.5f);
         // The output, left and right: red at the top, then yellow and green.
-        for (auto [x, feed] : { std::pair { 618.0f, Feed::OutL }, { 645.0f, Feed::OutR } })
+        for (auto [x, level] : { std::pair { 618.0f, rd::OutL }, { 645.0f, rd::OutR } })
         {
             auto& m = d.leds (x - 8, 282, 16, 100, "", { -1, -4, -8, -14, -24, -40 }, true, 0xff40d040);
             m.ledColours = { 0xffd02020, 0xffd02020, 0xfff0e030, 0xff40d040, 0xff40d040, 0xff40d040 };
-            m.fed (feed);
+            m.reads (level, true);
         }
         return d;
     }
@@ -1172,8 +1173,10 @@ namespace
         pageTab (d, 1, 308, 85, 92, 26, "DYN EQ", 0xffd0d4da);
         pageTab (d, 2, 404, 85, 74, 26, "LIMITER", 0xffd0d4da);
         d.box (70, 120, 556, 270, Look::Line, 0xff3a4a62, 0, 1.5f);
+        // The response as set; with DYN EQ on, the band as set (blue) and where it is now (orange, readout 0).
         auto& g = d.add (Type::Graph, 675, 125, 410, 225);
-        g.shows (GraphKind::Response, {});
+        g.shows (GraphKind::Response, { p ("deqf"), p ("deqg"), p ("deqq"), p ("deqfilt"), p ("dyneq") });
+        g.reads (rd::Dev + 0);
         int page = 0;
         const auto knob = [&] (int param, float cx, float cy, float dia, const char* caption, bool value = true)
         {
@@ -1409,7 +1412,7 @@ namespace
             key.inv(); // lit while the note is corrected to (switch off)
             // The note heard lights its LED.
             auto& heard = d.lamp (k.x + 42, 326, 9, 0xff40e0ff);
-            heard.feed = Feed::Note;
+            heard.reads (rd::Dev + 1); // the note heard + 1
             heard.choice = (int) (&k - keys);
         }
         return d;
@@ -1443,7 +1446,7 @@ namespace
         d.lamp (307, 342, 10, 0xffff2020, p ("again"));
         // Gain reduction: a column of LEDs, 0 at the top.
         d.box (513, 126, 34, 228, Look::Fill, 0xff16181a, 0xff6a6e72, 1.5f);
-        d.leds (517, 130, 26, 220, "", { 0.5f, 1, 1.5f, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 }, true, 0xff40a8ff).dots = false;
+        d.leds (517, 130, 26, 220, "", { 0.5f, 1, 1.5f, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 }, true, 0xff40a8ff).reads (rd::Dev + 0).dots = false;
         for (int i = 0; i <= 6; ++i)
             label (d, juce::String (i * 2), 500, 133.0f + 36.0f * (float) i, 10, ink);
         label (d, "REDUCTION", 530, 368, 11, ink);
@@ -1469,8 +1472,10 @@ namespace
         big ("hi", 505, 235, 120, "HIGH", 320);
         big ("los", 820, 320, 82, "LOW (SIDE)", 180);
         big ("his", 970, 320, 82, "HIGH (SIDE)", 180);
+        // Each knob's LED lights while its band reduces (readouts 0-3: LOW, HIGH, LOW (S), HIGH (S)), from 1 dB.
+        int band = 0;
         for (auto [x, y] : { std::pair { 262.0f, 320.0f }, { 548.0f, 320.0f }, { 868.0f, 190.0f }, { 1020.0f, 190.0f } })
-            d.lamp (x, y, 9, 0xff40d040).at (0.0f);
+            d.lamp (x, y, 9, 0xff40d040).reads (rd::Dev + band++).range = 1.0f;
         label (d, "FEMALE", 360, 160, 13, 0xffeeeeee);
         d.key (p ("gdr"), 348, 183, 24, 24, Look::LedKey, "", 0xfff0e030).sel (0);
         d.key (p ("gdr"), 348, 250, 24, 24, Look::LedKey, "", 0xff40b0ff).sel (1);
@@ -1490,8 +1495,10 @@ namespace
         auto d = figurePanel (0xff707276, Texture::Brushed, 1.0f);
         screwsAt (d, { { 48, 87 }, { 1108, 87 }, { 48, 382 }, { 1108, 382 } }, 18);
         d.text ("C5-COMBINATOR", 880, 80, 236, 30, 22, 0xff161616, Look::SerifBold, J::centredRight).kerning (0.1f);
+        // The bands at their gains as they are now (n-GAIN + live reduction + SBC), the input's spectrum behind.
         auto& g = d.add (Type::Graph, 80, 128, 404, 222);
-        g.shows (GraphKind::Bands, { p ("thr_1"), p ("thr_2"), p ("thr_3"), p ("thr_4"), p ("thr_5"), p ("bandsel") });
+        g.shows (GraphKind::Bands, { p ("gain_1"), p ("gain_2"), p ("gain_3"), p ("gain_4"), p ("gain_5"), p ("bandsel") });
+        g.reads (rd::Dev);
         // Touch a band on the screen: it is the band selected, the row below shows it.
         const float edges[] = { 0.0f, 0.19f, 0.37f, 0.57f, 0.75f, 1.0f };
         for (int b = 0; b < 5; ++b)
@@ -1584,12 +1591,16 @@ namespace
         knob ("mlvl", 842, 310, "LEVEL", "-100", nullptr, "100");
         knob ("m", 948, 310, "PAN", "L", nullptr, "R");
         knob ("g", 1060, 310, "GAIN", "-12", "dB", "12");
+        // VU meters: STEREO (side, readout 0) and MONO (mid, readout 1), 0 VU at -18 dBFS.
+        int vu = 0;
         for (float cx : { 612.0f, 892.0f })
         {
             d.box (cx - 66, 122, 132, 132, Look::Fill, 0xff0e0c0a);
-            d.vu (cx - 56, 132, 112, 62, Look::VuCream, "20|10|7|5|3|1|0", { 20, 10, 7, 5, 3, 1, 0 }, "VU");
+            auto& m = d.vu (cx - 56, 132, 112, 62, Look::VuCream, "-20|-10|-5|-3|0|+3", { 20, 10, 5, 3, 0, -3 }, "VU");
+            m.reads (rd::Dev + vu++, true);
+            m.vuZero = 0.68f;
         }
-        d.lamp (1062, 136, 8, 0xff8a9a30).at (0.0f);
+        d.lamp (1062, 136, 8, 0xff8a9a30, p ("solo"));
         d.key (p ("solo"), 1032, 160, 58, 58, Look::RoundKey, "", 0xffe0e0e0);
         label (d, "SOLO", 1060, 234, 13, ink);
         return d;
@@ -1634,11 +1645,13 @@ namespace
         screwsAt (d, { { 46, 85 }, { 1108, 85 }, { 46, 388 }, { 1108, 388 } }, 14);
         d.box (110, 102, 935, 155, Look::Fill, 0xff07090e);
         const juce::uint32 blue = 0xff5a6af0, ink = 0xffa8aec0;
+        // Left: the band below X/O after BASS GAIN (readout 0); right: the harmonics added (readout 1); dBFS.
+        int vu = 0;
         for (float x : { 178.0f, 708.0f })
         {
-            auto& m = d.vu (x, 112, 270, 136, Look::VuWhite, "0|0.01|0.1|1|10|100|200", { 20, 14, 8, 3, 1, 0, -2 }, "dB");
+            auto& m = d.vu (x, 112, 270, 136, Look::VuWhite, "-60|-40|-30|-20|-10|0|+3", { 60, 40, 30, 20, 10, 0, -3 }, "dB");
             m.colour = juce::Colour (blue);
-            m.fed (x < 400.0f ? Feed::OutL : Feed::OutR, -18.0f);
+            m.reads (rd::Dev + vu++, true).linearDb (-60.0f, 3.0f);
         }
         label (d, "P S Y C H O", 578, 167, 22, 0xff7a7acc, Look::Serif).kerning (0.15f);
         label (d, "BASS", 578, 193, 17, blue);
@@ -1717,6 +1730,7 @@ namespace
         label (d, "ENVELOPE", 918, 98, 22, 0xffeec4a8).kerning (0.05f);
         auto& g = d.add (Type::Graph, 846, 140, 172, 100);
         g.shows (GraphKind::Decay, { p ("att"), p ("hld"), p ("rel") }, 3);
+        g.reads (rd::Dev + 2); // the envelope follower fills the shape
         for (auto [id, cx, caption, hi] : { std::tuple { "att", 840.0f, "ATTACK", "1000" }, { "hld", 932.0f, "HOLD", "2000" }, { "rel", 1020.0f, "RELEASE", "1000" } })
         {
             d.knob (p (id), cx, 330, 52, Look::BlackSkirt);
@@ -1774,7 +1788,7 @@ namespace
         auto& needle = d.add (Type::Vu, 395, 117, 88, 220);
         needle.look = Look::PanWindow;
         needle.colour = juce::Colour (0xff1a1a1a);
-        needle.fed (Feed::Needle);
+        needle.reads (rd::Dev + 3); // the device's NEEDLE readout
         d.text ("L  C  R", 395, 340, 88, 22, 12, 0xffeeeeee);
         lfoAndEnvelope (d, p, juce::String::fromUTF8 ("-180\xc2\xb0"), p ("wave"));
         return d;
@@ -1808,7 +1822,10 @@ namespace
             label (d, caption, cx - 10, 356, 13, ink);
         }
         d.box (468, 272, 220, 84, Look::Fill, 0xff7a7c7e);
-        d.vu (472, 276, 212, 76, Look::VuAmber, "-20|-10|-7|-5|-3|-1|0|+1|+2|+3", { 20, 10, 7, 5, 3, 1, 0, -1, -2, -3 }, "VU");
+        // The record level onto the tape (readout 0; 0 VU at -14 dBFS RMS, past it the tape compresses).
+        auto& vu = d.vu (472, 276, 212, 76, Look::VuAmber, "-20|-10|-7|-5|-3|-1|0|+1|+2|+3", { 20, 10, 7, 5, 3, 1, 0, -1, -2, -3 }, "VU");
+        vu.reads (rd::Dev + 0, true);
+        vu.vuZero = 0.68f;
         scaled (d, p ("drv"), 795, 318, 50, Look::Chrome, 0, nullptr, 0, nullptr, nullptr, nullptr, ink);
         label (d, "10dB", 795, 274, 12, ink);
         label (d, "-5dB", 748, 338, 12, ink);
@@ -1938,16 +1955,14 @@ namespace
             for (int k = 0; k < 7; ++k)
                 d.box (cx - 24, 157.0f + 27.0f * (float) k, 48, 0, Look::Line, 0x90ffffff, 0, 2.0f);
             d.box (cx - 3, 142, 6, 192, Look::Fill, 0xff0a0a0a);
-            // The band's level glows green in the slot, beside the fader's track.
-            std::vector<float> marks;
-            for (int k = 0; k < 24; ++k)
-                marks.push_back (std::pow (10.0f, (-40.0f * (float) k / 23.0f) / 20.0f) * 0.5f);
-            auto& level = d.leds (cx + 14, 146, 6, 184, "", marks, true, 0xff40e060);
-            level.dots = false;
-            level.fed ((Feed) ((int) Feed::Band1 + b));
+            // The band's generated tone (readout b), green in the slot.
+            auto& bar = d.add (Type::Bar, cx - 2, 144, 4, 188);
+            bar.reads (rd::Dev + b, true).linearDb (-48.0f, 0.0f);
+            bar.colour = juce::Colour (0xff28d048);
             d.fader (p (("bd" + std::to_string (b + 1)).c_str()), cx - 46, 140, 92, 196, 0xffeceef0);
-            // The band's frequency (Fig. 161: 27.3 / 41.0 / 61.5 / 92.3 / 138.4 Hz at TUNE 61.5).
-            readout (p ("freq"), cx, 355).times = std::pow (1.5f, (float) (b - 2));
+            // Under it, the band's frequency: TUNE (band 3) a fifth apart.
+            readout (p ("freq"), cx, 355);
+            d.elements.back().factor = std::pow (1.5f, (float) (b - 2));
         }
         d.knob (p ("freq"), 845, 293, 70, Look::WhiteDome);
         label (d, "Tune", 845, 238, 14, ink);
@@ -1967,20 +1982,24 @@ namespace
         const juce::uint32 ink = 0xfff2e6ea, cap = 0xffd8c4ca;
         label (d, "velvet", 578, 100, 30, 0xffd0a0b0, Look::SansLight);
         label (d, "IMAGER", 580, 126, 18, cap).kerning (0.25f);
-        const auto meter = [&] (float x, const char* l, const char* r)
+        // LED columns: 14 amber segments each, 0 dBFS at the top.
+        const auto meter = [&] (float x, const char* l, const char* r, int left, int right)
         {
             d.box (x, 166, 54, 160, Look::Fill, 0xff1a1416, 0xff3a2a2e, 1.5f);
             for (int c = 0; c < 2; ++c)
-                for (int k = 0; k < 14; ++k)
-                    d.box (x + 6 + 23.0f * (float) c, 172.0f + 10.8f * (float) k, 19, 7, Look::Fill, k >= 5 ? 0xffe8a030 : 0xff3a2a20);
+            {
+                auto& m = d.leds (x + 6 + 23.0f * (float) c, 175.5f, 19, 140.4f, "", { 0, -3, -6, -9, -12, -15, -18, -21, -24, -30, -36, -42, -48, -54 }, true,
+                                  0xffe8a030);
+                m.reads (c == 0 ? left : right, true).dots = false;
+            }
             d.text (l, x - 4, 330, 32, 12, 9, cap);
             d.text (r, x + 26, 330, 32, 12, 9, cap);
         };
         label (d, "INPUT", 115, 151, 12, cap);
-        meter (88, "LEFT", "RIGHT");
+        meter (88, "LEFT", "RIGHT", rd::InL, rd::InR);
         label (d, "OUTPUT", 1013, 151, 12, cap);
-        meter (955, "LEFT", "RIGHT");
-        meter (1018, "MID", "SIDE");
+        meter (955, "LEFT", "RIGHT", rd::OutL, rd::OutR);
+        meter (1018, "MID", "SIDE", rd::Dev + 0, rd::Dev + 1);
         const auto knob = [&] (const char* id, float cx, const char* top, const char* lo, const char* hi, const char* caption)
         {
             d.knob (p (id), cx, 228, 66, Look::BlackDot);
@@ -1992,8 +2011,11 @@ namespace
         knob ("st", 400, "50", "0", "100", "STEREOIZE");
         knob ("g", 750, "0", "-6", "6", "GAIN");
         d.box (505, 155, 150, 150, Look::Fill, 0xff050505, 0xff2a2a2a, 2.0f);
-        for (int i = 0; i < 60; ++i)
-            d.box (575.0f + 6.0f * std::sin ((float) i * 1.7f), 175.0f + 1.9f * (float) i, 2, 2, Look::Fill, 0xffe8a030);
+        // The output below 500 Hz, mid up and side across (readouts 3 on).
+        auto& scope = d.add (Type::Graph, 507, 157, 146, 146);
+        scope.shows (GraphKind::Scope, {});
+        scope.reads (rd::Dev + 3);
+        scope.colour = juce::Colour (0xffe8a030);
         label (d, "LF VECTOR SCOPE", 580, 316, 11, cap);
         label (d, "MODE", 870, 151, 12, cap);
         d.key (p ("mode"), 843, 160, 54, 30, Look::LitSquare, "K-Stereo", 0xffe8b030).sel (0).size = 11;
@@ -2002,8 +2024,13 @@ namespace
         d.key (p ("deep"), 843, 273, 54, 30, Look::LitSquare, "On", 0xffe8b030).size = 11;
         label (d, "CORRELATION", 580, 343, 11, cap);
         d.box (316, 360, 528, 24, Look::Fill, 0xff1a1012, 0xff3a2a2e, 1.5f);
-        for (int k = 0; k < 40; ++k)
-            d.box (322.0f + 13.0f * (float) k, 365, 7, 14, Look::Fill, k == 33 ? 0xffe8a030 : (k == 20 ? 0xff9a9a9a : 0xff3a2c30));
+        // The output's correlation (readout 2), -1 to +1.
+        auto& corr = d.add (Type::Graph, 320, 365, 520, 14);
+        corr.shows (GraphKind::Correlation, {});
+        corr.reads (rd::Dev + 2);
+        corr.ticks = 40;
+        corr.colour = juce::Colour (0xffe8a030);
+        corr.colour2 = juce::Colour (0xff3a2c30);
         label (d, "-1", 298, 372, 13, ink);
         label (d, "+1", 862, 372, 13, ink);
         return d;
@@ -2215,6 +2242,7 @@ namespace
         const char* prefix;  // the section's ids: prefix + the unit's id ("" for the EQ)
         juce::uint32 tint;   // its colour in the FX menu's collage
         std::vector<std::pair<const char*, const char*>> renames = {}; // unit id -> strip id (no prefix)
+        int readouts = -1;   // where the unit's own readouts start among the strip's (standard FX units)
     };
 
     /** Copies a unit's elements onto page `page`, its parameters renamed to the strip's. */
@@ -2245,6 +2273,12 @@ namespace
             auto e = src;
             e.page = page;
             e.param = toStrip (src.param);
+            // The meters: a unit's gain reduction is its block's (readout = the section's
+            // index, in signal order), its own readouts move to where the strip has them.
+            if (e.meter < 0 && (e.type == Type::Vu || e.type == Type::Leds))
+                e.meter = rd::Dev + page;
+            else if (e.meter >= rd::Dev)
+                e.meter = sec.readouts >= 0 ? e.meter + sec.readouts : -1;
             for (auto& p : e.params)
                 p = toStrip (p);
             d.elements.push_back (e);
@@ -2327,7 +2361,9 @@ namespace
                                  // The Even channel's compressor / limiter: teal, a VU over the two sections.
                                  auto& plate = u.d.box (30, 56, 1096, 368, Look::Fill, 0xff1e5a60);
                                  plate.page = page;
-                                 u.d.vu (440, 74, 276, 110, Look::VuWhite, "20|10|7|5|3|1|0", { 20, 10, 7, 5, 3, 1, 0 }, "GR").page = page;
+                                 auto& gr = u.d.vu (440, 74, 276, 110, Look::VuWhite, "20|10|7|5|3|1|0", { 20, 10, 7, 5, 3, 1, 0 }, "GR");
+                                 gr.page = page;
+                                 gr.reads (rd::Dev + page); // the comp/limiter block's reduction
                                  u.print ("COMPRESSOR / LIMITER", { 760, 380, 340, 30 }, 18, Look::SansLight, 0xffd8f0f0, J::centredRight).page = page;
                                  u.section ({ 50, 206, 500, 168 }, "LIMITER", page);
                                  u.controls ({ "d_lon", "d_lthr", "d_lrec", "d_lfast" }, { 56, 216, 488, 152 }, 0, page);
@@ -2359,8 +2395,8 @@ namespace
     Design masteringChannel (const std::map<juce::String, Design>& made)
     {
         return channelStrip (made, "*MASTER*",
-                             { { "TAPE", "F:TAPE", "t_", 0xffc04040 }, { "EQ4", "F:MACH4", "", 0xff6a8a70 }, { "ENHANCER", "F:ENHANCE", "e_", 0xffc8c030 },
-                               { "LIMITER", "F:LIMITER", "l_", 0xffb0c8f0 } });
+                             { { "TAPE", "F:TAPE", "t_", 0xffc04040, {}, 4 }, { "EQ4", "F:MACH4", "", 0xff6a8a70 },
+                               { "ENHANCER", "F:ENHANCE", "e_", 0xffc8c030, {}, 5 }, { "LIMITER", "F:LIMITER", "l_", 0xffb0c8f0, {}, 7 } });
     }
 
     //==========================================================================

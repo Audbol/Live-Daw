@@ -19,11 +19,14 @@
 //! feed-forward stereo-linked limiter at LIM THR, on peaks or RMS (LIMRMS),
 //! with RELEASE. `meter()` shows the deeper of the limiter's and the dynamic
 //! EQ's reductions.
+//!
+//! Readouts (the screen's live curve): 0 the dynamic EQ band's live gain (dB,
+//! signed; 0 while DYN EQ is off), 1 the limiter's reduction (dB, <= 0).
 
 use super::dyneq::{DynEqBand, DynEqSettings};
 use super::{db_gain, level_db, power_db, push_cut, sub_blocks, Cascade, Design, Glide};
 use crate::wing::fx::blocks::{coef, BiquadCoeffs, DelayLine, Smoothed};
-use crate::wing::fx::FxAlgo;
+use crate::wing::fx::{FxAlgo, FX_READOUTS};
 use crate::wing::Params;
 
 const SPEED_OF_SOUND: f32 = 343.0;
@@ -280,6 +283,11 @@ impl FxAlgo for SpeakerManager {
     fn meter(&self) -> f32 {
         self.meter
     }
+
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[0] = self.dyn_eq.gain_db() * self.dyn_on.value;
+        out[1] = self.lim_gr.min(0.0) * self.lim_on.value;
+    }
 }
 
 #[cfg(test)]
@@ -333,6 +341,48 @@ mod tests {
             assert!((ii / qq - 1.0).abs() < 0.01, "{freq} Hz: levels {ii} vs {qq}");
             assert!((iq / (ii * qq).sqrt()).abs() < 0.03, "{freq} Hz: not in quadrature");
         }
+    }
+
+    fn readouts(rig: &Rig) -> [f32; crate::wing::fx::FX_READOUTS] {
+        let mut r = [0.0; crate::wing::fx::FX_READOUTS];
+        rig.dev.readouts(&mut r);
+        r
+    }
+
+    #[test]
+    fn filters_tilt_invert_and_the_live_readouts() {
+        // LP at 2 kHz (LR24) cuts 10 kHz; TILT +6 at 1 kHz: lows -3, highs +3.
+        let mut rig = Rig::new("SPKMAN");
+        rig.set("lpf", 2000.0).set("lptype", 8.0);
+        assert!(rig.sine_gain_db(10_000.0, 0.1) < -20.0);
+        let mut rig = Rig::new("SPKMAN");
+        rig.set("tiltg", 6.0);
+        assert!((rig.sine_gain_db(50.0, 0.1) + 3.0).abs() < 0.5);
+        let mut rig = Rig::new("SPKMAN");
+        rig.set("tiltg", 6.0);
+        assert!((rig.sine_gain_db(15_000.0, 0.1) - 3.0).abs() < 0.5);
+        // INVERT flips the polarity.
+        let mut rig = Rig::new("SPKMAN");
+        rig.set("invert", 1.0);
+        let (mut l, mut r) = (vec![0.5f32; 4800], vec![0.5f32; 4800]);
+        rig.run(&mut l, &mut r);
+        assert!((l[4000] + 0.5).abs() < 1e-3);
+        // The DYN EQ band cutting a loud 1 kHz tone: its live gain reads negative, bounded by GAIN.
+        let mut rig = Rig::new("SPKMAN");
+        rig.set("dyneq", 1.0).set("deqg", -9.0).set("deqthr", -30.0).set("deqatt", 5.0);
+        let g = rig.sine_gain_db(1000.0, 0.5);
+        let r = readouts(&rig);
+        assert!(r[0] < -3.0 && r[0] >= -9.01 && g < -3.0, "{:?} {g}", &r[..2]);
+        // Off: idle.
+        let mut rig = Rig::new("SPKMAN");
+        rig.set("dyneq", 0.0).set("deqg", -9.0).set("deqthr", -30.0);
+        rig.sine_gain_db(1000.0, 0.5);
+        assert_eq!(readouts(&rig)[0], 0.0);
+        // The limiter's reduction.
+        let mut rig = Rig::new("SPKMAN");
+        rig.set("lim", 1.0).set("limthr", -12.0).set("limrms", 0.0);
+        rig.sine_gain_db(1000.0, 0.9);
+        assert!(readouts(&rig)[1] < -8.0);
     }
 
     #[test]

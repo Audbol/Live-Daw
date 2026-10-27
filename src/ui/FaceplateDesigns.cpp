@@ -1469,7 +1469,7 @@ namespace
         for (int i = 0; i < 7; ++i)
             d.text (sc[i], 925, ys[i] - 8, 46, 16, 13, i < 3 ? 0xffb02020 : ink);
         // The input level in the tube: 0 at the top is full scale.
-        d.ladder (Feed::In, 0.0f, 962, 8, 168, 330, 30, { 0, -3, -6, -12, -24, -36, -48 }, { ys[0], ys[1], ys[2], ys[3], ys[4], ys[5], ys[6] }, 0xffe02818);
+        d.ladder (rd::InL, 962, 8, 168, 330, 30, { 0, -3, -6, -12, -24, -36, -48 }, { ys[0], ys[1], ys[2], ys[3], ys[4], ys[5], ys[6] }, 0xffe02818);
         auto small = [&] (int param, float cx, float cy, const char* lo, const char* unit, const char* hi, const char* caption)
         {
             d.knob (param, cx, cy, 72, Look::BlackSkirt).scaleOf (2, "", 280).radii (1.15f, 1.0f).scol (ink);
@@ -1675,10 +1675,10 @@ namespace
         d.knob (3, 713, 261, 110, Look::Chicken).scaleOf (31, "", 260, false).radii (0.95f, 1.0f).scol (ink);
         d.text ("DARK", 612, 308, 50, 16, 13, ink);
         d.text ("BRIGHT", 760, 308, 56, 16, 13, ink);
-        // The drive into the plate (0 VU at -18 dBFS).
+        // The drive into the plate (0 VU at -18 dBFS RMS).
         auto& vu = d.vu (885, 171, 175, 95, Look::VuCream, "-20|-10|-7|-5|-3|-1|0|+1|+2|+3", { 20, 10, 7, 5, 3, 1, 0, -1, -2, -3 }, "");
         vu.vuZero = 0.75f;
-        vu.fed (Feed::In, -18.0f);
+        vu.reads (rd::Dev + 0, true); // the device's VU (readout 0)
         return d;
     }
 

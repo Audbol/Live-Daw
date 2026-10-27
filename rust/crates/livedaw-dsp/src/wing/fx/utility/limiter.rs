@@ -18,11 +18,15 @@
 //! averaged over the attack length. Every averaged value is at most the gain
 //! the delayed sample needs, so the output never exceeds full scale, and the
 //! averaging turns each reduction into a smooth ramp that ends on the peak.
-//! The audio is delayed by the longest attack (1 ms), a fixed latency.
+//! The audio is delayed by the longest attack (1 ms), a fixed latency the
+//! device reports (the slot compensates it).
+//!
+//! Readouts: 0 the gain reduction (dB, <= 0: the gain the limiter applies
+//! now), 1 AUTO GAIN's correction (dB, signed).
 
 use super::{db_gain, power_db};
 use crate::wing::fx::blocks::{coef, db_to_gain, fast_tanh, gain_to_db, DelayLine, Smoothed};
-use crate::wing::fx::FxAlgo;
+use crate::wing::fx::{FxAlgo, FX_READOUTS};
 use crate::wing::Params;
 
 pub(crate) struct PrecisionLimiter {
@@ -245,6 +249,15 @@ impl FxAlgo for PrecisionLimiter {
     fn meter(&self) -> f32 {
         self.reduction_db
     }
+
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[0] = self.reduction_db;
+        out[1] = self.agc_db;
+    }
+
+    fn latency(&self) -> u32 {
+        self.look as u32
+    }
 }
 
 #[cfg(test)]
@@ -285,6 +298,78 @@ mod tests {
             let g = 20.0 * (rms(&l[n - 48_000..]) / rms(&x[n - 48_000..])).log10();
             assert!((g - expect).abs() < 1.0, "{amp}: {g} dB");
         }
+    }
+
+    #[test]
+    fn release_sets_the_recovery_and_readouts_follow() {
+        // A loud burst, then a quiet tone: the gain comes back in about RELEASE.
+        let recovery = |rel: f32| {
+            let mut rig = Rig::new("LIMITER");
+            rig.set("gin", 12.0).set("gout", 0.0).set("rel", rel).set("again", 0.0).set("knee", 0.0);
+            let n = 48_000 * 6;
+            let mut l: Vec<f32> =
+                (0..n).map(|i| (TAU * 200.0 * i as f32 / 48_000.0).sin() * if i < 9600 { 0.9 } else { 0.05 }).collect();
+            let mut r = l.clone();
+            rig.run(&mut l[..9600], &mut r[..9600]);
+            let mut ro = [0.0; crate::wing::fx::FX_READOUTS];
+            rig.dev.readouts(&mut ro);
+            assert!(ro[0] < -6.0, "readout {}", ro[0]);
+            assert_eq!(ro[0], rig.dev.meter());
+            // Blocks until the reduction is under 1 dB.
+            let mut t = 0;
+            for (a, b) in l[9600..].chunks_mut(256).zip(r[9600..].chunks_mut(256)) {
+                rig.dev.process(&rig.values, a, b);
+                t += 256;
+                if rig.dev.meter() > -1.0 {
+                    break;
+                }
+            }
+            t as f32 / 48.0
+        };
+        let (fast, slow) = (recovery(20.0), recovery(2000.0));
+        // RELEASE is the recovery's time constant: from 11 dB to 1 dB takes about 1.9 of them.
+        assert!((30.0..60.0).contains(&fast) && (3200.0..4400.0).contains(&slow), "{fast} ms vs {slow} ms");
+    }
+
+    #[test]
+    fn reports_its_look_ahead_as_latency() {
+        let rig = Rig::new("LIMITER");
+        assert_eq!(rig.dev.latency(), 48);
+        let mut rig = Rig::new("LIMITER");
+        // The AUTO GAIN readout shows the correction.
+        rig.set("again", 1.0);
+        let n = 48_000 * 4;
+        let mut l: Vec<f32> = (0..n).map(|i| (TAU * 440.0 * i as f32 / 48_000.0).sin() * 0.01).collect();
+        let mut r = l.clone();
+        rig.run(&mut l, &mut r);
+        let mut ro = [0.0; crate::wing::fx::FX_READOUTS];
+        rig.dev.readouts(&mut ro);
+        assert!(ro[1] > 6.0, "{}", ro[1]);
+    }
+
+    #[test]
+    fn out_gain_and_squeeze_do_what_they_say() {
+        // OUT GAIN sets the output peak level; SQUEEZE rounds peaks (less reduction for the same input).
+        for gout in [-12.0f32, -3.0] {
+            let mut rig = Rig::new("LIMITER");
+            rig.set("gin", 12.0).set("gout", gout).set("knee", 0.0).set("again", 0.0);
+            let n = 24_000;
+            let mut l: Vec<f32> = (0..n).map(|i| (TAU * 200.0 * i as f32 / 48_000.0).sin() * 0.9).collect();
+            let mut r = l.clone();
+            rig.run(&mut l, &mut r);
+            let peak = l[n / 2..].iter().fold(0.0f32, |a, x| a.max(x.abs()));
+            assert!((20.0 * peak.log10() - gout).abs() < 0.3, "{gout}: {peak}");
+        }
+        let gr = |sqz: f32| {
+            let mut rig = Rig::new("LIMITER");
+            rig.set("gin", 12.0).set("sqz", sqz).set("knee", 0.0).set("again", 0.0);
+            let n = 24_000;
+            let mut l: Vec<f32> = (0..n).map(|i| (TAU * 200.0 * i as f32 / 48_000.0).sin() * 0.9).collect();
+            let mut r = l.clone();
+            rig.run(&mut l, &mut r);
+            rig.dev.meter()
+        };
+        assert!(gr(100.0) > gr(0.0) + 1.0, "{} vs {}", gr(100.0), gr(0.0));
     }
 
     #[test]

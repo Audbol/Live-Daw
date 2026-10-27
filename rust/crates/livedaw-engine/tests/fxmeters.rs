@@ -1,10 +1,10 @@
-//! The FX panels' live readouts: an FX slot's input and output peaks
-//! (`FxRack::take_io_peaks`, the meters on its panel) and its device's live
-//! values (`FxRack::live`: LFO positions, envelope, needle, band levels, note).
+//! The FX slots' meters for the device screens: the slot's input and output
+//! levels (`FxRack::level`) and its device's readouts (`FxRack::readout`),
+//! and a device's own latency (the PRECISION LIMITER's look-ahead) in the
+//! slot's latency, the delay compensation and FX MIX's dry path.
 
 mod common;
 use common::{set_channels, unity_console};
-use livedaw_dsp::wing::fx::FxLive;
 use livedaw_dsp::wing::{model_index, FX_MODELS};
 use livedaw_engine::Engine;
 use std::sync::atomic::Ordering::Relaxed;
@@ -21,90 +21,91 @@ fn engine() -> Arc<Engine> {
     engine
 }
 
-/// Runs `blocks` blocks of `signal` (a function of the sample index) into input 1.
-fn run(engine: &Engine, from: usize, blocks: usize, signal: impl Fn(usize) -> f32) {
+/// FX `slot` running `token` on channel 1's PRE insert.
+fn insert(engine: &Engine, slot: usize, token: &str) {
+    assert!(engine.set_fx_model(slot, model_index(FX_MODELS, token).unwrap(), true));
+    let ch = engine.channel_at(0).unwrap();
+    ch.params.pre_insert.on.store(true, Relaxed);
+    ch.params.pre_insert.fx.store(slot as i32, Relaxed);
+}
+
+fn set(engine: &Engine, slot: usize, id: &str, v: f32) {
+    let m = engine.controls.fx[slot].model.load(Relaxed) as usize;
+    let i = FX_MODELS[m].param_index(id).unwrap();
+    engine.controls.fx[slot].values[i].store(v);
+}
+
+/// Runs `blocks` blocks of `signal` into input 1; returns Main 1 left of the last block.
+fn run(engine: &Engine, blocks: usize, signal: impl Fn(usize) -> f32) -> Vec<f32> {
     let mut input = vec![0.0f32; BLOCK];
     let mut outs = [vec![0.0f32; BLOCK], vec![0.0f32; BLOCK]];
     for b in 0..blocks {
         for (i, x) in input.iter_mut().enumerate() {
-            *x = signal((from + b) * BLOCK + i);
+            *x = signal(b * BLOCK + i);
         }
         let ins = [input.as_ptr()];
         let o: Vec<*mut f32> = outs.iter_mut().map(|v| v.as_mut_ptr()).collect();
         unsafe { engine.process(&ins, &o, BLOCK) };
     }
+    outs[0].clone()
 }
 
-fn sine(amp: f32) -> impl Fn(usize) -> f32 {
-    move |i| amp * (std::f32::consts::TAU * 440.0 * i as f32 / SR).sin()
-}
-
-/// Channel 1 through FX slot 1 running `token`.
-fn through(engine: &Engine, token: &str) {
-    assert!(engine.set_fx_model(0, model_index(FX_MODELS, token).unwrap(), true));
-    let ch = engine.channel_at(0).unwrap();
-    ch.params.pre_insert.on.store(true, Relaxed);
-    ch.params.pre_insert.fx.store(0, Relaxed);
+fn sine(freq: f32, amp: f32) -> impl Fn(usize) -> f32 {
+    move |i| amp * (std::f32::consts::TAU * freq * i as f32 / SR).sin()
 }
 
 #[test]
-fn a_slot_reports_what_goes_in_and_out() {
+fn combinator_meters_follow_the_signal() {
     let engine = engine();
-    through(&engine, "HALL");
-    let rack = engine.fx(0).unwrap();
-    run(&engine, 0, 40, sine(0.5));
-    let p = rack.take_io_peaks();
-    // A mono channel: the same input on both sides, the reverb's output (mixed at FX MIX) out.
-    assert!((p[0] - 0.5).abs() < 0.01 && (p[1] - 0.5).abs() < 0.01, "input peaks {p:?}");
-    assert!(p[2] > 0.01 && p[3] > 0.01, "output peaks {p:?}");
-    // Taking them resets them; silence reads 0 in, the tail still out.
-    assert_eq!(rack.take_io_peaks()[0], 0.0);
-    run(&engine, 40, 4, |_| 0.0);
-    let q = rack.take_io_peaks();
-    assert!(q[0] == 0.0 && q[2] > 0.0, "silence in, tail out: {q:?}");
-    // Bypassed, nothing runs: no readings.
-    engine.controls.fx[0].bypass.store(true, Relaxed);
-    run(&engine, 44, 4, sine(0.5));
-    assert_eq!(rack.take_io_peaks(), [0.0; 4]);
+    insert(&engine, 9, "C5-CMB");
+    set(&engine, 9, "thr", -30.0);
+    set(&engine, 9, "sbcon", 0.0);
+    run(&engine, 100, sine(1000.0, 0.5));
+    let fx = engine.fx(9).unwrap();
+    // Band 3 (1 kHz) compresses; the input level is the tone's.
+    assert!(fx.readout(2) < -3.0, "band 3: {}", fx.readout(2));
+    assert!(fx.readout(0) > -0.5 && fx.readout(4) > -0.5);
+    assert!((fx.level(0) - 0.5).abs() < 0.02, "in {}", fx.level(0));
+    assert!(fx.level(2) < fx.level(0), "out {} under in {}", fx.level(2), fx.level(0));
+    // Bypassed: idle readouts, the levels show the signal passing.
+    engine.controls.fx[9].bypass.store(true, Relaxed);
+    run(&engine, 4, sine(1000.0, 0.5));
+    assert_eq!(fx.readout(2), 0.0);
+    assert!((fx.level(2) - fx.level(0)).abs() < 1e-6);
+    // Silence: the levels fall at 60 dB/s (half a second: about -30 dB).
+    run(&engine, (0.5 * SR) as usize / BLOCK, |_| 0.0);
+    let db = 20.0 * fx.level(0).log10();
+    assert!((-36.0..-26.0).contains(&db), "{db}");
 }
 
 #[test]
-fn the_device_reports_its_lfo_envelope_and_needle() {
+fn limiter_look_ahead_is_its_latency() {
     let engine = engine();
-    through(&engine, "PANNER");
-    let m = model_index(FX_MODELS, "PANNER").unwrap();
-    let p = &engine.controls.fx[0];
-    let set = |id: &str, v: f32| p.values[FX_MODELS[m].param_index(id).unwrap()].store(v);
-    set("spd", 2.0);
-    set("phase", 180.0);
-    set("depth", 100.0);
-    let rack = engine.fx(0).unwrap();
-    // The LFO turns at SPEED: 2 Hz is 1/24 of a cycle per 256-sample block... measured over half a second.
-    run(&engine, 0, 2, sine(0.5));
-    let start = rack.live(FxLive::LfoPhase);
-    let blocks = (0.5 * SR) as usize / BLOCK;
-    let mut needle = (f32::MAX, f32::MIN);
-    let mut turned = 0.0;
-    let mut last = start;
-    for b in 0..blocks {
-        run(&engine, 2 + b, 1, sine(0.5));
-        let ph = rack.live(FxLive::LfoPhase);
-        turned += (ph - last).rem_euclid(1.0);
-        last = ph;
-        let n = rack.live(FxLive::Needle);
-        needle = (needle.0.min(n), needle.1.max(n));
-    }
-    let secs = (blocks * BLOCK) as f32 / SR;
-    assert!((turned / secs - 2.0).abs() < 0.05, "LFO at {} Hz", turned / secs);
-    // PHASE 180: the right LFO half a cycle on; the needle swings L to R.
-    let off = (rack.live(FxLive::LfoPhase2) - rack.live(FxLive::LfoPhase)).rem_euclid(1.0);
-    assert!((off - 0.5).abs() < 0.01, "right LFO {off} cycles on");
-    assert!(needle.0 < -0.8 && needle.1 > 0.8, "needle {needle:?}");
-    // The envelope follows the input.
-    assert!(rack.live(FxLive::Envelope) > 0.3);
-    run(&engine, 200, 200, |_| 0.0);
-    assert!(rack.live(FxLive::Envelope) < 0.01);
-    // A device without these reads 0; switching device clears them.
-    assert!(engine.set_fx_model(0, model_index(FX_MODELS, "HALL").unwrap(), true));
-    assert_eq!(engine.fx(0).unwrap().live(FxLive::LfoPhase), 0.0);
+    insert(&engine, 9, "LIMITER");
+    let fx = engine.fx(9).unwrap();
+    let p = &engine.controls.fx[9];
+    assert_eq!(fx.latency(p), 48);
+    assert_eq!(fx.effective_latency(p), 48);
+    p.bypass.store(true, Relaxed);
+    assert_eq!(fx.effective_latency(p), 0);
+    p.bypass.store(false, Relaxed);
+    // FX MIX 50 % on a quiet 500 Hz tone (no limiting): the dry half is
+    // delayed with the wet half, so they add up instead of cancelling.
+    set(&engine, 9, "again", 0.0);
+    set(&engine, 9, "gout", 0.0);
+    p.mix.store(50.0);
+    engine.collect();
+    let out = run(&engine, 40, sine(500.0, 0.1));
+    let peak = out.iter().fold(0.0f32, |a, x| a.max(x.abs()));
+    p.bypass.store(true, Relaxed);
+    let dry = run(&engine, 40, sine(500.0, 0.1));
+    p.bypass.store(false, Relaxed);
+    let dry_peak = dry.iter().fold(0.0f32, |a, x| a.max(x.abs()));
+    assert!((peak / dry_peak - 1.0).abs() < 0.02, "{peak} vs {dry_peak}");
+    // The GR readout shows a hot signal's reduction.
+    set(&engine, 9, "gin", 18.0);
+    p.mix.store(100.0);
+    run(&engine, 40, sine(500.0, 0.5));
+    assert!(fx.readout(0) < -10.0, "{}", fx.readout(0));
+    assert_eq!(fx.readout(0), fx.meter());
 }

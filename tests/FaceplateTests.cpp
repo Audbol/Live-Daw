@@ -1,4 +1,6 @@
+#include "engine/MixerEngine.h"
 #include "engine/Models.h"
+#include "ui/MeterBallistics.h"
 #include "ui/Faceplate.h"
 #include "ui/FaceplateDesign.h"
 #include "ui/LookAndFeel.h"
@@ -330,13 +332,13 @@ public:
                 int live = 0;
                 for (const auto& e : d->elements)
                 {
-                    if (e.type == Type::Vu || e.type == Type::Leds)
-                        expect (e.feed != Feed::Reduction, juce::String (token) + ": a meter waiting for a gain reduction");
+                    if (e.type == Type::Vu || e.type == Type::Leds || e.type == Type::Bar)
+                        expect (e.meter >= 0, juce::String (token) + ": a meter waiting for a gain reduction");
                     if (! isLive (e))
                         continue;
                     ++live;
                     // Drawn at rest and with a loud, moving signal, its area differs.
-                    const auto area = liveArea (e).getSmallestIntegerContainer().getIntersection ({ 0, 0, (int) kFrameW, (int) kFrameH });
+                    const auto area = paintArea (e).getSmallestIntegerContainer().getIntersection ({ 0, 0, (int) kFrameW, (int) kFrameH });
                     auto render = [&] (bool loud)
                     {
                         juce::Image image (juce::Image::RGB, (int) kFrameW, (int) kFrameH, true);
@@ -345,17 +347,12 @@ public:
                         ctx.spec = &m;
                         ctx.value = [&m] (int i) { return m.params[(size_t) i].defaultValue; };
                         ctx.page = juce::jmax (0, e.page);
-                        const float note = (float) e.choice; // a note lamp: its own note heard
-                        ctx.feed = [loud, note] (Feed f, bool)
-                        {
-                            if (isLevelFeed (f))
-                                return loud ? -3.0f : -100.0f;
-                            if (f == Feed::Note)
-                                return loud ? note : -1.0f;
-                            if (f == Feed::Needle)
-                                return loud ? 0.9f : 0.0f;
-                            return loud ? 0.6f : 0.0f;
-                        };
+                        // Levels at -3 dBFS, the device's values (LFO, envelope, needle) at 0.6,
+                        // a note lamp's own note heard (readout: note + 1).
+                        const float note = (float) (e.choice + 1);
+                        const bool noteLamp = e.type == Type::Lamp && e.choice >= 0;
+                        ctx.levelDb = [loud] (int) { return loud ? -3.0f : -150.0f; };
+                        ctx.readout = [loud, note, noteLamp] (int) { return ! loud ? 0.0f : (noteLamp ? note : 0.6f); };
                         paintDesign (g, *d, ctx);
                         return image.getClippedImage (area).createCopy();
                     };
@@ -375,12 +372,8 @@ public:
                     PaintContext ctx;
                     ctx.spec = &m;
                     ctx.value = [&m] (int i) { return m.params[(size_t) i].defaultValue; };
-                    ctx.feed = [] (Feed f, bool)
-                    {
-                        if (isLevelFeed (f))
-                            return f == Feed::InR || f == Feed::OutR ? -9.0f : -3.0f;
-                        return f == Feed::Note ? 9.0f : (f == Feed::Needle ? 0.6f : 0.4f);
-                    };
+                    ctx.levelDb = [] (int i) { return i == rd::InR || i == rd::OutR || i == rd::Dev + 1 ? -9.0f : -3.0f; };
+                    ctx.readout = [] (int i) { return i == rd::Dev + 1 ? 10.0f : 0.4f; };
                     paintDesign (g, *d, ctx);
                     auto file = juce::File (snapshots).getChildFile ("live_" + m.token.retainCharacters ("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") + ".png");
                     file.deleteFile();
@@ -388,19 +381,155 @@ public:
                     juce::PNGImageFormat().writeImageToStream (image, out);
                 }
             }
-            // A bound panel with the slot's feeds knows it has live meters; without a slot it has none.
-            const auto& vroom = models::model (models::Fx, models::findModel (models::Fx, "V-ROOM"));
-            std::vector<std::atomic<float>> values (vroom.params.size());
-            for (size_t i = 0; i < vroom.params.size(); ++i)
-                values[i] = vroom.params[i].defaultValue;
-            ui::Faceplate face;
-            face.setBounds (0, 0, 1156, 479);
-            face.bind (models::Fx, vroom.index, values.data(), [] { return 0.0f; });
-            expect (! face.hasLiveMeters());
-            face.setLiveFeeds ([] { return std::array<float, 4> { 0.5f, 0.5f, 0.2f, 0.2f }; }, [] (int) { return 0.0f; });
-            expect (face.hasLiveMeters());
-            face.bind (models::Fx, vroom.index, values.data(), [] { return 0.0f; });
-            expect (! face.hasLiveMeters(), "binding again drops the old slot's feeds");
+        }
+
+        beginTest ("The FX devices' meters show the live readouts, and repainting only them paints what a full repaint does");
+        {
+            namespace fp = ui::fp;
+            for (const char* token : { "C5-CMB", "LIMITER", "DE-S2", "ENHANCE", "P-BASS", "TAPE", "SUB-M", "V-IMG", "SPKMAN", "*EVEN*", "*SOUL*",
+                                       "*VINTAGE*", "*BUS*", "*MASTER*", "V-ROOM", "DIMCRS", "TAPE-DL", "V-PLATE", "ST-DL", "D-PITCH", "PANNER" })
+            {
+                const auto& spec = models::model (models::Fx, models::findModel (models::Fx, token));
+                const auto* design = fp::findDesign (models::Fx, token);
+                expect (design != nullptr, token);
+                if (design == nullptr)
+                    continue;
+                std::vector<float> values (spec.params.size());
+                for (size_t i = 0; i < spec.params.size(); ++i)
+                    values[i] = spec.params[i].defaultValue;
+                if (const int on = spec.find ("dyneq"); on >= 0)
+                    values[(size_t) on] = 1.0f; // SPEAKER MANAGER: the live curve shows with DYN EQ on
+                if (const int g = spec.find ("deqg"); g >= 0)
+                    values[(size_t) g] = -9.0f;
+                int pages = 1;
+                for (const auto& e : design->elements)
+                    pages = juce::jmax (pages, e.page + 1, e.type == fp::Type::Key && e.look == fp::Look::TabKey ? e.choice + 1 : 0);
+                int live = 0;
+                for (int page = 0; page < pages; ++page)
+                {
+                    // Idle readouts, then busy ones: levels at -6 dBFS, reductions of 8 dB, a correlation, a scope.
+                    const auto paint = [&] (juce::Image& img, bool busy, juce::Rectangle<int> clip)
+                    {
+                        juce::Graphics g (img);
+                        if (! clip.isEmpty())
+                            g.reduceClipRegion (clip);
+                        fp::PaintContext ctx;
+                        ctx.spec = &spec;
+                        ctx.value = [&] (int i) { return values[(size_t) i]; };
+                        ctx.page = page;
+                        ctx.readout = [busy] (int i) { return ! busy ? 0.0f : (i < fp::rd::Dev ? 0.5f : -6.0f - (float) (i % 5)); };
+                        ctx.levelDb = [busy] (int) { return busy ? -6.0f : -150.0f; };
+                        fp::paintDesign (g, *design, ctx);
+                    };
+                    juce::Image idle (juce::Image::RGB, (int) fp::kFrameW, (int) fp::kFrameH, true);
+                    juce::Image busy (juce::Image::RGB, (int) fp::kFrameW, (int) fp::kFrameH, true);
+                    paint (idle, false, {});
+                    paint (busy, true, {});
+                    juce::Image patched = idle.createCopy();
+                    juce::RectangleList<int> areas;
+                    for (const auto& e : design->elements)
+                        if ((e.page < 0 || e.page == page) && fp::isLive (e))
+                        {
+                            expect (e.meter < fp::rd::kCount, juce::String (token) + ": readout out of range");
+                            if (e.meter >= 0)
+                                ++live;
+                            areas.addWithoutMerging (fp::paintArea (e).getSmallestIntegerContainer());
+                        }
+                    for (const auto& r : areas)
+                        paint (patched, true, r);
+                    int moved = 0, wrong = 0;
+                    for (int y = 0; y < idle.getHeight(); ++y)
+                        for (int x = 0; x < idle.getWidth(); ++x)
+                        {
+                            moved += idle.getPixelAt (x, y) != busy.getPixelAt (x, y) ? 1 : 0;
+                            // Gradients and textures may round a level apart where a clip starts: not a difference.
+                            const auto a = patched.getPixelAt (x, y), b = busy.getPixelAt (x, y);
+                            if (std::abs ((int) a.getRed() - (int) b.getRed()) > 2 || std::abs ((int) a.getGreen() - (int) b.getGreen()) > 2
+                                || std::abs ((int) a.getBlue() - (int) b.getBlue()) > 2)
+                            {
+                                if (wrong < 3)
+                                    logMessage (juce::String (token) + " p" + juce::String (page + 1) + " diff at " + juce::String (x) + "," + juce::String (y) + " "
+                                                + patched.getPixelAt (x, y).toDisplayString (true) + " vs " + busy.getPixelAt (x, y).toDisplayString (true));
+                                ++wrong;
+                            }
+                        }
+                    if (! areas.isEmpty())
+                        expect (moved > 20, juce::String (token) + " page " + juce::String (page + 1) + ": the meters don't move");
+                    expectEquals (wrong, 0, juce::String (token) + " page " + juce::String (page + 1) + ": a partial repaint differs from a full one");
+                }
+                expect (live > 0, juce::String (token) + ": no meter reads a live readout");
+            }
+        }
+
+        beginTest ("C5-COMBINATOR's page shows the engine's live readouts (a tone through FX 10 on channel 1)");
+        {
+            // The page's path end to end: the engine's device, ld_fx_readouts, the panel. With
+            // SIDECAR_FX_METER_SHOT set (a .png path), the page is saved with the signal running.
+            MixerEngine engine (0);
+            engine.setNumChannels (1);
+            constexpr int kBlock = 256;
+            engine.prepareOffline (48000.0, kBlock, 1, 2);
+            auto& fx = engine.getFx();
+            const auto& spec = models::model (models::Fx, models::findModel (models::Fx, "C5-CMB"));
+            expect (fx.setModel (9, spec.index));
+            auto& v = fx.params (9).values;
+            v[spec.find ("thr")] = -30.0f;
+            v[spec.find ("sbcon")] = 0.0f;
+            v[spec.find ("gain_3")] = 3.0f;
+            auto& ch = *engine.getChannels()[0];
+            ch.params.inputLeft = 0;
+            ch.params.inputRight = 0;
+            ch.params.faderDb = 0.0f;
+            ch.params.preInsert.on = true;
+            ch.params.preInsert.fx = 9;
+            std::vector<float> in (kBlock), out0 (kBlock), out1 (kBlock);
+            for (int b = 0; b < 48000 / kBlock; ++b)
+            {
+                for (int i = 0; i < kBlock; ++i)
+                {
+                    const double t = (double) (b * kBlock + i) / 48000.0;
+                    in[(size_t) i] = (float) (0.4 * std::sin (juce::MathConstants<double>::twoPi * 1000.0 * t)
+                                              + 0.2 * std::sin (juce::MathConstants<double>::twoPi * 90.0 * t));
+                }
+                const float* ins[] = { in.data() };
+                float* outs[] = { out0.data(), out1.data() };
+                engine.processBlock (ins, 1, outs, 2, kBlock);
+            }
+            std::vector<float> r ((size_t) ui::fp::rd::kCount);
+            expectEquals (fx.getReadouts (9, r.data(), (int) r.size()), ui::fp::rd::kCount);
+            expect (r[ui::fp::rd::InL] > 0.4f, "the slot's input level: " + juce::String (r[ui::fp::rd::InL]));
+            expect (r[ui::fp::rd::Dev + 2] < -3.0f, "band 3 compresses: " + juce::String (r[ui::fp::rd::Dev + 2]));
+            expect (r[ui::fp::rd::Dev + 1] > -0.5f, "band 2 doesn't");
+            expect (r[ui::fp::rd::Dev + 10 + 16] > 0.1f, "the spectrum shows 1 kHz");
+
+            const auto shot = juce::SystemStats::getEnvironmentVariable ("SIDECAR_FX_METER_SHOT", {});
+            if (shot.isNotEmpty())
+            {
+                ui::ConsoleLookAndFeel lf;
+                juce::LookAndFeel::setDefaultLookAndFeel (&lf);
+                std::vector<std::atomic<float>> values (spec.params.size());
+                for (size_t i = 0; i < spec.params.size(); ++i)
+                    values[i] = v[i].load();
+                juce::Image image (juce::Image::RGB, 1280, 640, true);
+                {
+                    juce::Graphics g (image);
+                    g.fillAll (juce::Colour (0xff101010));
+                    const float k = 1280.0f / ui::fp::kFrameW;
+                    g.addTransform (juce::AffineTransform::scale (k).translated (0.0f, (640.0f - ui::fp::kFrameH * k) * 0.5f));
+                    ui::fp::PaintContext ctx;
+                    ctx.spec = &spec;
+                    ctx.value = [&] (int i) { return values[(size_t) i].load(); };
+                    ctx.page = juce::roundToInt (values[(size_t) spec.find ("bandsel")].load() - spec.params[(size_t) spec.find ("bandsel")].min);
+                    ctx.readout = [&] (int i) { return r[(size_t) i]; };
+                    ctx.levelDb = [&] (int i) { return dsp::gainToDb (std::abs (r[(size_t) i])); };
+                    ui::fp::paintDesign (g, *ui::fp::findDesign (models::Fx, "C5-CMB"), ctx);
+                }
+                juce::File file (shot);
+                file.deleteFile();
+                juce::FileOutputStream os (file);
+                juce::PNGImageFormat().writeImageToStream (image, os);
+                juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
+            }
         }
     }
 

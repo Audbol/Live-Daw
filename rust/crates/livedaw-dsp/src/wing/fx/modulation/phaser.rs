@@ -2,7 +2,8 @@
 
 use super::shared::{advance, loop_limit, tri_sine_square, Morph};
 use crate::wing::fx::blocks::{coef, Envelope, Smoothed};
-use crate::wing::fx::{FxAlgo, FxContext, FxLive};
+use crate::wing::fx::readout::{ENVELOPE, LFO_L, LFO_R};
+use crate::wing::fx::{FxAlgo, FxContext, FX_READOUTS};
 use crate::wing::Params;
 use std::f32::consts::PI;
 
@@ -155,13 +156,10 @@ impl FxAlgo for Phaser {
         }
     }
 
-    fn live(&self, what: FxLive) -> f32 {
-        match what {
-            FxLive::LfoPhase => self.phase,
-            FxLive::LfoPhase2 => (self.phase + self.offset.value).rem_euclid(1.0),
-            FxLive::Envelope => self.env.env.clamp(0.0, 1.0),
-            _ => 0.0,
-        }
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[LFO_L] = self.phase;
+        out[LFO_R] = (self.phase + self.offset.value).rem_euclid(1.0);
+        out[ENVELOPE] = self.env.env.clamp(0.0, 1.0);
     }
 
     fn reset(&mut self) {

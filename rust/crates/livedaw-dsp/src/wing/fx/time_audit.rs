@@ -4,7 +4,8 @@
 //! sample, feedback, LFO rates, pitch intervals, modes, MIX, stereo, clicks on
 //! jumps, tails), and the live readouts the panels' meters show.
 
-use super::{model_index, FxContext, FxDevice, FxLive};
+use super::readout::{LFO_R, NEEDLE};
+use super::{model_index, FxContext, FxDevice, FX_READOUTS};
 use crate::wing::{ParamKind, FX_MODELS, MAX_FX_PARAMS};
 
 pub(crate) const SR: f32 = 48_000.0;
@@ -60,8 +61,11 @@ impl Rig {
         l.iter().zip(&r).map(|(a, b)| 0.5 * (a + b)).collect()
     }
 
-    pub fn live(&self, what: FxLive) -> f32 {
-        self.dev.live(what)
+    /// The device's readout `i` (FxAlgo::readouts).
+    pub fn readout(&self, i: usize) -> f32 {
+        let mut r = [0.0; FX_READOUTS];
+        self.dev.readouts(&mut r);
+        r[i]
     }
 }
 
@@ -797,7 +801,7 @@ fn panner_pans_and_lfos_offset_the_sides() {
     let mut needles = Vec::new();
     for _ in 0..50 {
         rig.run(&input[..secs(0.01)], &input[..secs(0.01)]);
-        needles.push(rig.live(FxLive::Needle));
+        needles.push(rig.readout(NEEDLE));
     }
     assert!(needles.iter().any(|&n| n < -0.8) && needles.iter().any(|&n| n > 0.8), "needle swing {needles:?}");
 }
@@ -840,11 +844,11 @@ fn pitch_fix_corrects_to_the_scale() {
         let mut rig = Rig::new("PCORR", &[("amnt", 100.0), ("spd", 100.0)]);
         rig.set(set);
         let out = rig.mono(&input);
-        (dominant(&out[secs(1.0)..], 400.0, 500.0), rig.live(FxLive::Note), rig.live(FxLive::Needle))
+        (dominant(&out[secs(1.0)..], 400.0, 500.0), rig.readout(1), rig.readout(0))
     };
     let (fixed, note, cents) = out_hz(&[]);
     assert!((fixed / 440.0 - 1.0).abs() < 0.004, "corrected to {fixed} Hz");
-    assert_eq!(note, 9.0, "the note heard is A");
+    assert_eq!(note, 10.0, "the note heard is A (readout: note + 1)");
     assert!((cents + 40.0).abs() < 6.0, "correction {cents} cents");
     let (kept, _, _) = out_hz(&[("sw_a", 1.0)]);
     assert!((kept / hz - 1.0).abs() < 0.004, "A disabled: {kept} Hz, want {hz}");
@@ -876,7 +880,7 @@ fn octavers_add_the_octaves_below() {
             &[("freq", 50.0), ("mix", 100.0), ("bd1", 0.0), ("bd2", 0.0), ("bd4", 0.0), ("bd5", 0.0), ("bd3", v)],
         );
         let out = rig.mono(&input);
-        (tone(&out[secs(0.5)..], 50.0), rig.live(FxLive::Band3))
+        (tone(&out[secs(0.5)..], 50.0), rig.readout(2))
     };
     let ((on, live_on), (off, live_off)) = (band3(100.0), band3(0.0));
     assert!(on > 10.0 * off.max(1e-5), "BAND 3 at 100 % adds 50 Hz ({on} vs {off})");
@@ -1086,15 +1090,15 @@ fn rotary_speeds_and_ramps() {
         // 1.25-1.75 s after the switch (from its angle's progress).
         let mut horn_at = None;
         let mut drum_turned = 0.0;
-        let mut last = rig.live(FxLive::LfoPhase2);
+        let mut last = rig.readout(LFO_R);
         for k in 1..=200 {
             rig.mono(&input);
-            let a = rig.live(FxLive::LfoPhase2);
+            let a = rig.readout(LFO_R);
             if (25..35).contains(&k) {
                 drum_turned += (a - last).rem_euclid(1.0);
             }
             last = a;
-            if horn_at.is_none() && rig.live(FxLive::Needle) > 0.9 * 6.0 {
+            if horn_at.is_none() && rig.readout(NEEDLE) > 0.9 * 6.0 {
                 horn_at = Some(k as f32 * 0.05);
             }
         }
@@ -1115,5 +1119,5 @@ fn rotary_speeds_and_ramps() {
     for _ in 0..200 {
         rig.mono(&input);
     }
-    assert!(rig.live(FxLive::Needle) < 0.05, "horn still at {} Hz after STOP", rig.live(FxLive::Needle));
+    assert!(rig.readout(NEEDLE) < 0.05, "horn still at {} Hz after STOP", rig.readout(NEEDLE));
 }

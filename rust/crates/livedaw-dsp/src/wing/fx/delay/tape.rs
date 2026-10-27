@@ -1,8 +1,9 @@
 //! TAPE-DL: a Roland RE-201 Space Echo style tape delay.
 
 use crate::wing::fx::blocks::{fast_tanh, DelayLine, Lfo, OnePole, Smoothed, Svf, Wave};
+use crate::wing::fx::meters::VuMeter;
 use crate::wing::fx::modulation::shared::{ms, Glide};
-use crate::wing::fx::{FxAlgo, FxContext};
+use crate::wing::fx::{FxAlgo, FxContext, FX_READOUTS};
 use crate::wing::Params;
 use std::f32::consts::TAU;
 
@@ -20,6 +21,8 @@ const SUSTAIN_MAX: f32 = 1.08;
 /// DRIVE 100 % = +18 dB into the tape.
 const DRIVE_DB: f32 = 18.0;
 const HEADROOM: f32 = 1.3;
+/// The VUs' 0 VU.
+const VU_ZERO_DBFS: f32 = -18.0;
 
 /// Tape Delay (Roland RE-201 Space Echo).
 ///
@@ -49,6 +52,8 @@ pub(super) struct TapeDelay {
     depth: [f32; 3],
     lp: [Svf; 2],
     hp: [OnePole; 2],
+    /// The record level onto each channel's tape (its VU).
+    vu: [VuMeter; 2],
     primed: bool,
 }
 
@@ -84,6 +89,7 @@ impl TapeDelay {
             depth: [swing(WOW), swing(FLUTTER), ms(DRIFT.1, sr)],
             lp,
             hp: [OnePole::new(HEAD_HP_HZ, sr); 2],
+            vu: std::array::from_fn(|_| VuMeter::new(sr, VU_ZERO_DBFS)),
             primed: false,
         }
     }
@@ -125,14 +131,26 @@ impl FxAlgo for TapeDelay {
             for (ch, x) in [l, r].into_iter().enumerate() {
                 let y = self.lines[ch].tap_hermite(d);
                 let y = self.hp[ch].hp(self.lp[ch].tick(y).lp);
-                let rec = HEADROOM * fast_tanh(pre * (*x + fb * y) / HEADROOM) * post;
+                let into = pre * (*x + fb * y);
+                self.vu[ch].tick(into);
+                let rec = HEADROOM * fast_tanh(into / HEADROOM) * post;
                 self.lines[ch].push(rec);
                 *x = y;
             }
         }
     }
 
+    /// Readouts 0 / 1: the record level onto the left / right tape (the two
+    /// VUs; VU levels, 0 VU at -18 dBFS).
+    fn readouts(&self, out: &mut [f32; FX_READOUTS]) {
+        out[0] = self.vu[0].level();
+        out[1] = self.vu[1].level();
+    }
+
     fn reset(&mut self) {
+        for v in &mut self.vu {
+            v.reset();
+        }
         for l in &mut self.lines {
             l.clear();
         }

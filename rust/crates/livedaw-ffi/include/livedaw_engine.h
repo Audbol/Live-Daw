@@ -29,6 +29,9 @@ static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_l
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
 constexpr int kAbiVersion = 23;
+/** ABI 23: ld_fx_readouts gives the slot levels (in L, in R, out L, out R) then the device's readouts. */
+constexpr int kFxLevels = 4;
+constexpr int kFxReadouts = 48;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -909,14 +912,13 @@ extern "C"
     /** Live gain of a dynamic band of a slot's device (TRIPLE DEQ bands 0-2),
         dB, signed (cut < 0, boost > 0); 0 for other devices. */
     float ld_fx_band_gain (const Engine*, int32_t slot, int32_t band);
-    /** ABI 23: the input and output peaks (linear) of a slot since the last call into
-        out[0..4] (in L, in R, out L, out R); taking them resets them (one reader). */
-    bool ld_fx_io_peaks (const Engine*, int32_t slot, float* out);
-    /** ABI 23: a live value of a slot's device for its panel: 0 = LFO position 0..1,
-        1 = second LFO position, 2 = envelope 0..1, 3 = needle (TREMOLO L-C-R -1..1,
-        ROTARY horn Hz, PITCH FIX cents), 4-8 = band levels 1-5 (linear), 9 = note heard
-        (0 = C .. 11 = B, -1 none). */
-    float ld_fx_live (const Engine*, int32_t slot, int32_t what);
+    /** Any thread (ABI 23): the slot's live meters for its device's screen into `out`
+        (up to `n`; returns how many): kFxLevels levels (input L, input R, output L,
+        output R: what its device or plugin gets and gives back before FX MIX, or the
+        outboard insert's FX SEND after TRIM and its RETURN; linear peaks falling at
+        60 dB/s), then kFxReadouts device readouts (FxAlgo::readouts, laid out per
+        device: gain reductions in dB, band levels, a scope...; 0 = idle). */
+    int32_t ld_fx_readouts (const Engine*, int32_t slot, float* out, int32_t n);
     void ld_fx_clear_flags (const Engine*, int32_t slot);
     float ld_fx_load (const Engine*, int32_t slot);
     int32_t ld_fx_num_users (const Engine*, int32_t slot);
@@ -926,7 +928,8 @@ extern "C"
     // arrive together (capped at kMaxPdc samples).
     /** Any thread: the latency (samples) slot `slot`'s plugin reports; reset by ld_fx_set. */
     void ld_fx_set_latency (const Engine*, int32_t slot, int32_t samples);
-    /** The slot's latency: its plugin's, or its outboard insert's round trip plus LATENCY. */
+    /** The slot's latency: its plugin's, its outboard insert's round trip plus LATENCY, or
+        (ABI 23) its built-in device's (the PRECISION LIMITER's look-ahead). */
     int32_t ld_fx_latency (const Engine*, int32_t slot);
     /** Any thread (ABI 21): the interface's reported input + output latency in samples
         (an outboard insert's round trip is one block plus this). */

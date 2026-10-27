@@ -277,6 +277,17 @@ views after a show load changes the console from Rust.
   with no FFI call. Both sides describe the layout; `ld::verifyLayout()` compares the
   two at startup and in the tests (ABI version 23), and the app refuses to run if they
   differ.
+- **FX meters (ABI 23).** A device reports its screen's live values with
+  `FxAlgo::readouts` (48 floats laid out per device, documented in each device's
+  module; 0 = idle; levels linear peaks falling 60 dB/s or VU levels, reductions in dB
+  following the processor's envelope; helpers in `livedaw-dsp/src/wing/fx/meters.rs`).
+  `FxRack` copies them into atomics after each block and meters the slot's input and
+  output (FX SEND and RETURN for the outboard insert) with the same fall, so screens
+  poll any time (`ld_fx_readouts`). The faceplates bind an element to a readout
+  (`fp::Element::meter`, `fp::rd`), poll at 30 Hz with `meters::Ballistics` and
+  repaint only the live elements that moved (`paintDesign` culls the rest).
+  `FxAlgo::latency` (the PRECISION LIMITER's look-ahead) feeds the slot's latency, the
+  delay compensation and FX MIX's dry delay.
 - **FX slots.** The 16 slots are the WING's FX rack. Each holds one device from the
   console's FX table (`FX_MODELS`, generated like the processing models): the 26
   premium effects (reverbs, chorus/flanger/phaser, delays, pitch; slots 1-8 only), the
