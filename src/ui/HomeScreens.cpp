@@ -2872,6 +2872,8 @@ public:
             const int slot = ins.fx.load();
             if (slot >= 0 && ctx.engine.getFx().hasPlugin (slot) && ctx.openPluginEditor)
                 ctx.openPluginEditor (slot);
+            else if (slot >= 0 && ctx.engine.getFx().isOutboard (slot) && ctx.editFx)
+                ctx.editFx (slot); // the EXTERNAL EFFECT page
         };
         face = &make<Faceplate>();
         hint = &label ({}, 15.0f, colours::dim);
@@ -2946,6 +2948,9 @@ public:
             return k;
         if (fx.hasPlugin (slot))
             return { { bindLinear ("FX MIX", fx.params (slot).mix, 0.0f, 100.0f, " %", 0, 100.0f), styleOf (KnobStyle::Bar::Fill, KnobColours::blue, mixBox) } };
+        if (fx.isOutboard (slot))
+            return { { bindLinear ("TRIM", fx.params (slot).values[ld::ext::kTrim], -18.0f, 18.0f, " dB", 1, 0.0f), styleOf (KnobStyle::Bar::Auto, {}, nullptr) },
+                     { bindLinear ("FX MIX", fx.params (slot).mix, 0.0f, 100.0f, " %", 0, 100.0f), styleOf (KnobStyle::Bar::Fill, KnobColours::blue, mixBox) } };
         const auto& spec = models::model (models::Fx, fx.getModel (slot));
         for (int i = knobPage * 6; i < juce::jmin ((int) spec.params.size(), knobPage * 6 + 6); ++i)
             k.push_back ({ bindConsoleParam (fx.params (slot).values[i], spec.params[(size_t) i]), styleOf (KnobStyle::Bar::Auto, {}, face) });
@@ -2958,19 +2963,23 @@ public:
         auto& fx = ctx.engine.getFx();
         const int model = slot >= 0 ? fx.getModel (slot) : -1;
         const bool plugin = slot >= 0 && fx.hasPlugin (slot);
+        const bool outboard = slot >= 0 && fx.isOutboard (slot);
         // Channels joining or leaving a group (here, on their own INS 2, from a
         // scene or a remote) and added or removed channels rebuild the list.
         if (automix() != shownAutomix || automixMembers() != shownMembers)
             rebuildAutomix();
-        if (slot != shownSlot || model != shownModel || plugin != shownPlugin)
+        if (slot != shownSlot || model != shownModel || plugin != shownPlugin || outboard != shownOutboard)
         {
             shownSlot = slot;
             shownModel = model;
             shownPlugin = plugin;
+            shownOutboard = outboard;
             knobPage = 0;
             typeText = "NONE";
             if (plugin)
                 typeText = fx.getPlugin (slot)->getName().toUpperCase();
+            else if (outboard)
+                typeText = "EXTERNAL (OUTBOARD)";
             else if (model > ld::kFxExt)
                 typeText = models::model (models::Fx, model).name.toUpperCase();
             // [3.1] the keys stay lit as long as they show (RESET of an empty slot does nothing).
@@ -2999,7 +3008,10 @@ public:
             else
                 face->unbind();
             // [3.1] without a slot or a device the page below the rows is empty.
-            hint->setText (plugin ? "Plugin: open its editor." : juce::String(), juce::dontSendNotification);
+            hint->setText (plugin     ? "Plugin: open its editor."
+                           : outboard ? "Outboard insert, return " + fx.returnLabel (slot) + ": open it on EFFECTS."
+                                      : juce::String(),
+                           juce::dontSendNotification);
             resized();
             repaint();
             notifyKnobs();
@@ -3065,8 +3077,8 @@ public:
         reset->setBounds (span (r2, 904.0f, 968.0f));
         spill->setBounds (span (r2, 988.0f, 1144.0f));
 
-        openEditor->setVisible (shownPlugin);
-        if (shownPlugin)
+        openEditor->setVisible (shownPlugin || shownOutboard);
+        if (shownPlugin || shownOutboard)
             openEditor->setBounds (b.withSizeKeepingCentre (juce::jmin (screenCap (200), b.getWidth()), 40));
         hint->setBounds (b.withTrimmedTop (b.getHeight() / 2 + 24).withHeight (24));
         face->setBounds (b);
@@ -3095,7 +3107,7 @@ private:
     juce::Rectangle<int> header, row2;
     juce::String typeText { "NONE" };
     int shownSlot = -2, shownModel = -2, knobPage = 0;
-    bool shownPlugin = false, shownAutomix = false;
+    bool shownPlugin = false, shownOutboard = false, shownAutomix = false;
 };
 
 //==============================================================================

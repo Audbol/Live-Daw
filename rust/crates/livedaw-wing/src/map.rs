@@ -25,7 +25,7 @@ use livedaw_engine::atomic::AtomicF32;
 use livedaw_engine::keytap::KeySource;
 use livedaw_engine::monitor::{MonitorDspParams, MONITOR_EQ_BANDS};
 use livedaw_engine::params::{
-    DynSlotParams, EngineControls, InsertParams, MonitorSourceParams, StripParams, FX_EXT, FX_NONE, NUM_DCAS, NUM_FX,
+    ext, DynSlotParams, EngineControls, InsertParams, MonitorSourceParams, StripParams, FX_EXT, FX_NONE, NUM_DCAS, NUM_FX,
     NUM_MUTE_GROUPS,
 };
 use livedaw_engine::recorder::codec::FileFormat;
@@ -851,7 +851,19 @@ pub enum SafeF {
     Dcas,
     MuteGroups,
     Fx,
+    /// `/$ctl/safes/source/<group>` of a group with Sidecar's sources
+    /// (`SAFE_SOURCE_GROUPS`); the engine's source safes.
+    Source(u8),
+    /// `/$ctl/safes/output/<group>` of a group with Sidecar's outputs
+    /// (`SAFE_OUTPUT_GROUPS`); the engine's output safes.
+    Output(u8),
 }
+
+/// The source groups whose safes are Sidecar's sources, and their items on
+/// the WING (`/$ctl/safes/source/*`); the other groups are only kept.
+const SAFE_SOURCE_GROUPS: [(&str, u16); 7] = [("LCL", 24), ("A", 48), ("B", 48), ("C", 48), ("CRD", 64), ("PLAY", 4), ("OSC", 2)];
+/// The output groups whose safes are Sidecar's outputs (`/$ctl/safes/output/*`).
+const SAFE_OUTPUT_GROUPS: [(&str, u16); 4] = [("LCL", 8), ("A", 48), ("B", 48), ("C", 48)];
 
 /// `/$ctl/lib/...`: `$action`, `$actionidx`, `$actidx`, `$active`, `$activeid`, `$actshow`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1137,6 +1149,15 @@ pub fn bind(parts: &[&str]) -> Binding {
             "fx" => Binding::Safe(SafeF::Fx),
             k => strip_kind(k).map_or(Binding::None, |kind| Binding::Safe(SafeF::Strips(kind))),
         },
+        // Source and output safes of the groups Sidecar has (G5.6.3).
+        ["$ctl", "safes", "source", g] => match SAFE_SOURCE_GROUPS.iter().position(|(n, _)| n == g) {
+            Some(i) => Binding::Safe(SafeF::Source(i as u8)),
+            None => Binding::Stored,
+        },
+        ["$ctl", "safes", "output", g] => match SAFE_OUTPUT_GROUPS.iter().position(|(n, _)| n == g) {
+            Some(i) => Binding::Safe(SafeF::Output(i as u8)),
+            None => Binding::Stored,
+        },
         ["$ctl", "lib", f] => match *f {
             "$action" => Binding::Lib(LibF::Action),
             "$actionidx" => Binding::Lib(LibF::ActionIndex),
@@ -1342,6 +1363,24 @@ fn safe_count(sf: SafeF) -> u16 {
         SafeF::Dcas => NUM_DCAS as u16,
         SafeF::MuteGroups => NUM_MUTE_GROUPS as u16,
         SafeF::Fx => NUM_FX as u16,
+        SafeF::Source(g) => SAFE_SOURCE_GROUPS[g as usize].1,
+        SafeF::Output(g) => SAFE_OUTPUT_GROUPS[g as usize].1,
+    }
+}
+
+/// The engine flag behind item `n` (1-based) of a source or output safes
+/// list: (outputs?, index) - a source table index or an output port.
+fn io_safe_index(sf: SafeF, n: u16) -> Option<(bool, usize)> {
+    match sf {
+        SafeF::Source(g) => {
+            let port = port::wing_to_source(SAFE_SOURCE_GROUPS[g as usize].0, i32::from(n))?;
+            Some((false, livedaw_engine::sources::source_index(port)?))
+        }
+        SafeF::Output(g) => {
+            let block = port::out_block(SAFE_OUTPUT_GROUPS[g as usize].0)?;
+            usize::try_from(port::output_port(block, i32::from(n))).ok().map(|p| (true, p))
+        }
+        _ => None,
     }
 }
 
@@ -2369,6 +2408,14 @@ impl<'a> Console<'a> {
         if let Some(k) = (1..=4).find(|&k| monitor_output(c, k).load(Relaxed) == port) {
             return Some(("MON", k));
         }
+        // FX SEND 2i+1 / 2i+2: FX slot i+1's outboard insert send.
+        for (i, f) in c.fx.iter().enumerate() {
+            for (side, o) in [&f.send_left, &f.send_right].into_iter().enumerate() {
+                if o.load(Relaxed) == port {
+                    return Some(("SEND", 2 * i as i32 + side as i32 + 1));
+                }
+            }
+        }
         // A source patched straight to the output (ROUTING > OUTPUTS).
         let src = self.engine.output_patch().get(port);
         port::source_to_wing(src).filter(|_| src >= 0)
@@ -2627,11 +2674,12 @@ impl<'a> Console<'a> {
         source_of(g, u16::try_from(k).ok()?)
     }
 
-    /// FX slot `i` holds a device that runs (a model, or EXT with a plugin) and hasn't faulted.
+    /// FX slot `i` holds a device that runs (a model, EXT with a plugin, or
+    /// EXT as an outboard insert with a RETURN) and hasn't faulted.
     fn fx_runs(&self, i: usize) -> bool {
         let (Some(p), Some(rack)) = (self.engine.controls.fx.get(i), self.engine.fx(i)) else { return false };
         let model = p.model_index();
-        model != FX_NONE && (model != FX_EXT || rack.is_loaded()) && !rack.is_faulted()
+        model != FX_NONE && (model != FX_EXT || rack.is_loaded() || rack.outboard_returns(p)) && !rack.is_faulted()
     }
 
     fn get_play(&self, def: &Def, pf: PlayF) -> Option<Value> {
@@ -2764,6 +2812,16 @@ impl<'a> Console<'a> {
             SafeF::Dcas => u64::from(g.dcas),
             SafeF::MuteGroups => u64::from(g.mute_groups),
             SafeF::Fx => u64::from(g.fx),
+            SafeF::Source(_) | SafeF::Output(_) => {
+                let s = self.engine.io_safes();
+                (1..=safe_count(sf))
+                    .filter(|&n| match io_safe_index(sf, n) {
+                        Some((false, i)) => s.sources.get(i),
+                        Some((true, i)) => s.outputs.get(i),
+                        None => false,
+                    })
+                    .fold(0, |m, n| m | 1 << (n - 1))
+            }
         }
     }
 
@@ -2774,6 +2832,17 @@ impl<'a> Console<'a> {
             for n in 1..=max {
                 if let Some(st) = self.strip(kind, n) {
                     st.params.recall_safe.store(mask & (1 << (n - 1)) != 0, Relaxed);
+                }
+            }
+            return;
+        }
+        if matches!(sf, SafeF::Source(_) | SafeF::Output(_)) {
+            let s = self.engine.io_safes();
+            for n in 1..=max {
+                match io_safe_index(sf, n) {
+                    Some((false, i)) => s.sources.set(i, mask & (1 << (n - 1)) != 0),
+                    Some((true, i)) => s.outputs.set(i, mask & (1 << (n - 1)) != 0),
+                    None => {}
                 }
             }
             return;
@@ -3332,18 +3401,21 @@ impl<'a> Console<'a> {
             "MTX" => self.matrices.get(((n - 1) / 2) as usize).map(|s| (s, n % 2 == 0)),
             _ => None,
         };
+        // FX SEND n: FX slot (n+1)/2's outboard insert send (manual 11.11 p. 164).
+        let send = (group == "SEND").then(|| c.fx.get(((n - 1) / 2) as usize)).flatten().filter(|_| n >= 1);
         // Any source Sidecar has (manual 5.4 OUTPUTS: "route any Source to
         // any digital or analog output"): a port, a playback channel, the USB
         // player, an oscillator, a user signal or patch.
         let source = match (group, target) {
-            ("BUS" | "MAIN" | "MTX" | "MON" | "OFF", _) | (_, Some(_)) => None,
+            ("BUS" | "MAIN" | "MTX" | "MON" | "OFF" | "SEND", _) | (_, Some(_)) => None,
             _ => port::wing_to_source(group, n).filter(|s| *s >= 0),
         };
-        let known = target.is_some() || source.is_some() || group == "OFF" || (group == "MON" && (1..=4).contains(&n));
+        let known =
+            target.is_some() || source.is_some() || send.is_some() || group == "OFF" || (group == "MON" && (1..=4).contains(&n));
         if !known {
             return false;
         }
-        // One source per output, as on the console.
+        // One source per output, as on the console (an FX SEND too).
         self.engine.clear_output(port);
         match (group, target, source) {
             (_, Some((s, right)), _) => {
@@ -3353,7 +3425,11 @@ impl<'a> Console<'a> {
                 self.engine.route_output_source(port, src);
             }
             ("MON", None, None) => monitor_output(c, n).store(port, Relaxed),
-            _ => {}
+            _ => {
+                if let Some(f) = send {
+                    if n % 2 == 0 { &f.send_right } else { &f.send_left }.store(port, Relaxed);
+                }
+            }
         }
         true
     }
@@ -3376,6 +3452,11 @@ impl<'a> Console<'a> {
         }
         // The message thread builds the device (ld_engine_collect).
         p.set_model(model, true);
+        if model == FX_EXT {
+            // The WING's EXTERNAL is the outboard insert (manual 11.11 p. 164);
+            // plugins are loaded on Sidecar's EFFECTS screen.
+            p.values[ext::SOURCE].store(ext::SOURCE_OUTBOARD);
+        }
         Ok(())
     }
 
@@ -3787,8 +3868,8 @@ pub fn coverage() -> Coverage {
                 let e = cov.by_group.entry(key.clone()).or_default();
                 e.1 += 1;
                 cov.total += 1;
-                // A parameter our model doesn't have (a page selector, EXT's
-                // hardware send) keeps what a client sets.
+                // A parameter our model doesn't have (a page selector) keeps
+                // what a client sets.
                 let stored = spec.is_some_and(|sp| sp.param_index(p.name).is_none());
                 if spec.is_some() {
                     e.0 += 1;
@@ -4451,6 +4532,61 @@ mod tests {
     }
 
     #[test]
+    fn ext_is_the_outboard_insert() {
+        // Manual 11.11 p. 164: SEND (FX SEND on ROUTING > OUTPUTS), TRIM,
+        // FX MODE, RETURN, LATENCY; /fx/N/EXT/* in the remote tree.
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let p = &e.controls.fx[1];
+        c.set(node(&c, "/fx/2/mdl"), &Value::str("EXT")).unwrap();
+        assert!(p.ext_outboard(), "the remote's EXT is the outboard insert");
+        for (path, v) in [
+            ("/fx/2/egrp", Value::str("A")),
+            ("/fx/2/ein", Value::Int(3)),
+            ("/fx/2/emode", Value::str("M/S")),
+            ("/fx/2/lat", Value::Int(5)),
+            ("/fx/2/trim", Value::Float(-3.0)),
+        ] {
+            c.set(node(&c, path), &v).unwrap();
+            assert_eq!(c.get(node(&c, path)), Some(v), "{path}");
+            assert!(c.is_mapped(node(&c, path)), "{path}");
+        }
+        assert_eq!(p.values[ext::GROUP].load(), 3.0);
+        assert_eq!(p.values[ext::INPUT].load(), 3.0);
+        assert_eq!(p.values[ext::MODE].load(), 2.0);
+        assert_eq!(p.values[ext::LATENCY].load(), 5.0);
+        assert_eq!(p.values[ext::TRIM].load(), -3.0);
+        assert_eq!(livedaw_engine::fx::ext_return_of(p), Some(2));
+        assert_eq!(livedaw_engine::fx::ext_return_input("A", 7), port::wing_to_source("A", 7));
+        for g in livedaw_engine::fx::EXT_RETURN_GROUPS.into_iter().filter(|g| *g != "OFF") {
+            for n in [1, 2, 48, 64] {
+                assert_eq!(livedaw_engine::fx::ext_return_input(g, n), port::wing_to_source(g, n), "{g} {n}");
+            }
+        }
+
+        // SEND: an output patched to FX SEND 3 / 4 (slot 2's left / right).
+        c.set(node(&c, "/io/out/A/5/grp"), &Value::str("SEND")).unwrap();
+        c.set(node(&c, "/io/out/A/5/in"), &Value::Int(3)).unwrap();
+        c.set(node(&c, "/io/out/B/2/grp"), &Value::str("SEND")).unwrap();
+        c.set(node(&c, "/io/out/B/2/in"), &Value::Int(4)).unwrap();
+        assert_eq!((p.send_left.load(Relaxed), p.send_right.load(Relaxed)), (4, 49));
+        assert_eq!(c.get(node(&c, "/io/out/LCL/5/grp")), Some(Value::str("SEND")));
+        assert_eq!(c.get(node(&c, "/io/out/B/2/in")), Some(Value::Int(4)));
+        // One source per output: MAIN 1 L on A 5 takes it from the send.
+        c.set(node(&c, "/io/out/A/5/grp"), &Value::str("MAIN")).unwrap();
+        c.set(node(&c, "/io/out/A/5/in"), &Value::Int(1)).unwrap();
+        assert_eq!(p.send_left.load(Relaxed), -1);
+        assert_eq!(e.main(0).unwrap().params.output_left.load(Relaxed), 4);
+
+        // The insert runs with a RETURN; without one the slot reads N/A.
+        c.set(node(&c, "/ch/1/preins/ins"), &Value::str("FX2")).unwrap();
+        assert_eq!(c.get(node(&c, "/ch/1/preins/$stat")), Some(Value::str("OK")));
+        c.set(node(&c, "/fx/2/egrp"), &Value::str("OFF")).unwrap();
+        assert_eq!(c.get(node(&c, "/ch/1/preins/$stat")), Some(Value::str("N/A")));
+    }
+
+    #[test]
     fn channel_source_gain_and_phantom() {
         let e = engine();
         let st = WingState::default();
@@ -4704,10 +4840,26 @@ mod tests {
         st.set_safes(Safes { attached: true, mute_groups: 0b101, ..Safes::default() });
         assert_eq!(c.get(node(&c, "/$ctl/safes/mute")), Some(Value::str("+ +     ")));
         assert_eq!(c.get(node(&c, "/$ctl/safes/dca")), Some(Value::str(" ".repeat(16))));
-        // Source safes: Sidecar has none; stored as set.
+        // Source and output safes (G5.6.3): the engine's, by Sidecar source
+        // and output port. LCL n and A n are the same port here.
         let source = node(&c, "/$ctl/safes/source/A");
-        assert!(!c.is_mapped(source));
+        assert!(c.is_mapped(source));
         assert_eq!(c.get(source), Some(Value::str(" ".repeat(48))));
+        c.set(source, &Value::str("+ +")).unwrap();
+        let io = e.io_safes();
+        assert!(io.sources.get(0) && !io.sources.get(1) && io.sources.get(2));
+        assert_eq!(c.get(node(&c, "/$ctl/safes/source/LCL")), Some(Value::Str(format!("+ +{}", " ".repeat(21)))));
+        c.set(node(&c, "/$ctl/safes/source/OSC"), &Value::str(" +")).unwrap();
+        let osc2 = livedaw_engine::sources::source_index(livedaw_engine::sources::OSC_SOURCE_BASE + 1).unwrap();
+        assert!(io.sources.get(osc2));
+        c.set(node(&c, "/$ctl/safes/output/B"), &Value::str("2")).unwrap();
+        assert!(io.outputs.get(49) && io.outputs.indices().len() == 1);
+        assert_eq!(c.get(node(&c, "/$ctl/safes/output/B")), Some(Value::Str(format!(" +{}", " ".repeat(46)))));
+        // Groups Sidecar doesn't have are only kept.
+        let usb = node(&c, "/$ctl/safes/source/USB");
+        assert!(!c.is_mapped(usb));
+        c.set(usb, &Value::str("+")).unwrap();
+        assert_eq!(c.get(usb), Some(Value::str("+")));
         assert_eq!(number_list(0b1110_1011), "1,2,4,6-8");
         assert_eq!(parse_number_list("0-3, 7-99", 8), 0b1100_0111);
     }
@@ -5181,8 +5333,7 @@ mod tests {
         assert_eq!(cov.mapped, 79325, "{}", cov.report());
         // 85 settings: the COMPACT's mfdr, cscmode, autosel_CMPCT, mfdrkeep, mainspill,
         // mtxspill and dcacc and the surface lock (cnslock) among them.
-        // (The GPIOs' 188 function nodes are stored; the virtual section VRT maps.)
-        assert_eq!((cov.settings, cov.stored), (85, 5667), "{}", cov.report());
+        assert_eq!((cov.settings, cov.stored), (85, 5576), "{}", cov.report());
         for (g, (m, t)) in &cov.by_group {
             assert!(m == t || g == "/$ctl/daw", "{g}: {m} of {t}");
         }
@@ -5190,7 +5341,7 @@ mod tests {
         // The engine-backed share: everything but the settings and the stored values.
         // (The COMPACT's key sets count here on either model; the routing: every
         // bus to every other bus, USR 1-56 and their user/..., the matrices' dir/in.)
-        assert_eq!(cov.mapped - cov.settings - cov.stored, 73573);
+        assert_eq!(cov.mapped - cov.settings - cov.stored, 73664);
         let b = bindings();
         let row = |p: &str| match schema().resolve(p, &NoModels) {
             Some(Node::Row(r)) => r as usize,

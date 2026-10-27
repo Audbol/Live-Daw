@@ -1488,6 +1488,9 @@ bool LibraryPage::anyGlobalSafe() const
 {
     if (ctx.show.hasGlobalSafes())
         return true;
+    // Safe sources and outputs (the engine's, G5.6.3).
+    if (ld::ld_engine_io_safe (ctx.engine.getHandle(), 0, -1) || ld::ld_engine_io_safe (ctx.engine.getHandle(), 1, -1))
+        return true;
     for (int k = 0; k < kNumStripKinds; ++k)
         for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
             if (s->params.recallSafe.load())

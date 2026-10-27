@@ -40,7 +40,7 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
     ─ PAN / WIDTH ─ INVERT ─ DELAY ─► level (+ MON DCAs) · DIM · mute · talk MON DIM
     · MONO / SWAP (on the selected path) ─► LIMITER ─► its outputs
  every strip ─► its hardware outputs; the output patch: sources (ports, USR ...) straight
-    to outputs ─► output protection (safety clip)
+    to outputs; each outboard insert's FX SEND ─► output protection (safety clip)
  RECORDER 1-4 (the USB recorder) tap strip outputs or sources after stage 6
 
  bus / main / matrix strip:
@@ -267,13 +267,14 @@ views after a show load changes the console from Rust.
   engine controls are `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same
   memory as `std::atomic<float/bool/int32_t>` structs, and the UI writes them directly
   with no FFI call. Both sides describe the layout; `ld::verifyLayout()` compares the
-  two at startup and in the tests (ABI version 20), and the app refuses to run if they
+  two at startup and in the tests (ABI version 21), and the app refuses to run if they
   differ.
 - **FX slots.** The 16 slots are the WING's FX rack. Each holds one device from the
   console's FX table (`FX_MODELS`, generated like the processing models): the 26
   premium effects (reverbs, chorus/flanger/phaser, delays, pitch; slots 1-8 only), the
   32 standard effects (EQs, dynamics, enhancers, amps, utilities) and the 5 channel
-  strips, or **EXT**, a VST3/AU/LV2 plugin.
+  strips, or **EXT**: a VST3/AU/LV2 plugin, or with SOURCE OUTBOARD the WING's
+  EXTERNAL effect, an outboard insert (below).
   - Built-in devices live in `livedaw-dsp/src/wing/fx` (one module per family, shared
     building blocks in `blocks.rs`). A device is an `FxAlgo`: it is created on the
     message thread (allocating its buffers for the sample rate and block size), then
@@ -311,6 +312,27 @@ views after a show load changes the console from Rust.
     assigned. The engine measures each slot's load.
   - Devices are stereo. A mono strip feeds both inputs and takes the average of the
     two outputs back.
+  - **Outboard inserts** (`fx.rs`, WING manual 11.11 p. 164). EXT's parameters are
+    the WING's `/fx/N/EXT/*` (`egrp`, `ein`, `emode`, `lat`, `trim`, generated with
+    the other models) plus Sidecar's `src` (PLUGIN / OUTBOARD; `params::ext`). An EXT
+    slot without a plugin and with SOURCE OUTBOARD writes its input, at TRIM and in
+    FX MODE (mono sum, L/R, or mid/side), into a send buffer of its own, stamps it
+    with the block, and puts the RETURN in its place: the processed source of
+    `egrp`/`ein` and, STEREO or MID/SIDE, the next one (`ext_return_input`, the same
+    mapping as the remote's patch), decoded back to L/R. The output stage adds each
+    slot's send of this block to the ports in `FxParams::send_left` / `send_right`
+    (ABI 21; WING FX SEND 2n-1 / 2n, ROUTING > OUTPUTS), like a strip's outputs. No
+    allocation or lock: the buffers are sized in `prepare`. The send leaves in this
+    block and can only return in a later one, so the slot's latency is the round
+    trip (`Engine::set_io_latency`: one block plus the interface's reported input
+    and output latency, `ld_engine_set_io_latency` from `MixerEngine`) plus LATENCY
+    in samples (the tree's `lat` has no unit, unlike the console's ms parameters);
+    `effective_latency` gives it to the delay compensation and the FX MIX's dry
+    ring as a plugin's. Without a RETURN the slot passes its signal through
+    (the send still goes out) and adds no latency. Installing a plugin sets SOURCE
+    PLUGIN and keeps the other EXT values; a slot with a plugin always runs the
+    plugin. Remote clients see the slot as EXT either way; their `mdl` EXT makes an
+    outboard insert (`livedaw-wing` `set_fx_model`).
 - **Plugin delay compensation** (`livedaw-engine/src/pdc.rs`). `FxSlots` passes each
   plugin's `getLatencySamples()` to its slot (`ld_fx_set_latency`, an atomic store,
   also from the plugin's latency-change notification). On the message thread,
@@ -323,8 +345,13 @@ views after a show load changes the console from Rust.
   each sample twice so any window is contiguous, and is allocated by the plan only
   where a delay is needed (retired when none is). Input channels write their rings
   after automix, the others right after they run. A slot's FX MIX delays its dry
-  copy by the plugin's latency from a ring of its own.
-- **FX in sessions.** A slot saves its device and parameter values. Plugins are
+  copy by the plugin's latency from a ring of its own. An outboard insert's latency
+  is its round trip plus LATENCY.
+- **FX in sessions.** A slot saves its device and parameter values (EXT's too, beside
+  a plugin) and its FX SEND outputs (`sendL` / `sendR`; FX presets drop them). An
+  EXT slot with SOURCE OUTBOARD recalls like a built-in device (in safe mode too);
+  shows from before the outboard insert have no `src`, so their EXT slots stay
+  plugin slots. Plugins are
   reached through a *plugin bridge* implemented by `Show`: capture a slot (description
   XML + base64 state), restore one (state only, or by creating the plugin on show load)
   and clear one.
@@ -585,6 +612,18 @@ Show
 - FX slots recall their built-in device and its parameters. A plugin's state is
   recalled only when the same plugin is already in that slot; recalls never
   instantiate or remove plugins, and a premium device is refused in slots 9-16.
+- Scenes capture the sources with ROUTING (as `<Sources>`, the console-wide part
+  show files keep; `globals::apply_scene_sources`): listed sources take their
+  settings, the others go back to the factory's; scenes without the element leave
+  the sources alone.
+- **Source and output safes** (`livedaw-engine/src/iosafes.rs`, G5.6.3) are the
+  engine's, like the strips' recall safe: bit sets by source table index and output
+  port, saved with the console (`<IoSafes>`), cleared by `Engine::reset`, set from
+  GLOBAL SAFE (`ld_engine_set_io_safe`) and the remote (`/$ctl/safes/source/*`,
+  `output/*`). A recall that respects recall safes (scene LOAD, GO; not RESTORE,
+  NO GLOB or snippets) skips safe sources, and `console::apply` snapshots every
+  output patch (strips, monitor paths, FX SEND) first and afterwards puts back any
+  patch that moved onto or off a safe output.
 - Show files are XML. Saving writes a temporary file, verifies it, renames it over the
   show and keeps the previous version as `.bak`; loading falls back to the `.bak` if
   the show is damaged.

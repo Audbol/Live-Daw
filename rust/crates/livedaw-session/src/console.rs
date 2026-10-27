@@ -11,7 +11,7 @@ use livedaw_dsp::wing::{model_index, ModelSpec, DYN_MODELS, EQ_MODELS_BUS, EQ_MO
 use livedaw_engine::analyser::RtaViewSettings;
 use livedaw_engine::atomic::AtomicF32;
 use livedaw_engine::params::{
-    DynSlotParams, EqBlockParams, InsertParams, MatrixSendParams, StripParams, FX_EXT, FX_NONE, NUM_DCAS, NUM_FX,
+    ext, DynSlotParams, EqBlockParams, InsertParams, MatrixSendParams, StripParams, FX_EXT, FX_NONE, NUM_DCAS, NUM_FX,
     NUM_MUTE_GROUPS, WING_BUSES,
 };
 use livedaw_engine::routing::{bus_feeds_bus, matrix_direct, MATRIX_DIRECT_INPUTS};
@@ -807,11 +807,12 @@ pub(crate) fn capture_fx_slot(engine: &Engine, i: usize, bridge: &mut dyn Plugin
     put_f(&mut x, "mix", &p.mix);
     let model = p.model_index();
     x.set("mdl", FX_MODELS[model].token);
-    if model != FX_EXT {
-        put_model_params(&mut x, &FX_MODELS[model], &p.values);
-        return x;
-    }
-    if !engine.fx(i).is_some_and(|r| r.is_loaded()) {
+    // FX SEND (the outboard insert's outputs; ROUTING > OUTPUTS).
+    put_i(&mut x, "sendL", &p.send_left);
+    put_i(&mut x, "sendR", &p.send_right);
+    // EXT's parameters too: the outboard insert, and the SOURCE.
+    put_model_params(&mut x, &FX_MODELS[model], &p.values);
+    if model != FX_EXT || !engine.fx(i).is_some_and(|r| r.is_loaded()) {
         return x;
     }
     let Some(captured) = bridge.capture_fx(i) else { return x };
@@ -852,6 +853,9 @@ pub(crate) fn apply_fx_slot(
     let (Some(p), Some(rack)) = (engine.controls.fx.get(i), engine.fx(i)) else { return };
     get_b(x, "bypass", &p.bypass);
     get_f(x, "mix", &p.mix);
+    // Saved before FX SEND: leave the current outputs.
+    get_i(x, "sendL", &p.send_left);
+    get_i(x, "sendR", &p.send_right);
 
     // Shows from before the FX rack hold plugins only.
     let saved = match x.attr("mdl") {
@@ -861,8 +865,12 @@ pub(crate) fn apply_fx_slot(
     };
     let current = p.model_index();
     let recall = mode == Some(InsertMode::StateOnly);
+    // The EXT device as an outboard insert recalls like a built-in device.
+    let outboard = saved == FX_EXT
+        && plugin_element(x).is_none()
+        && x.children_named("P").any(|e| e.attr("n") == Some("src") && e.double_or("v", 0.0) >= 0.5);
 
-    if saved != FX_EXT {
+    if saved != FX_EXT || outboard {
         if current == FX_EXT && rack.is_loaded() {
             if recall {
                 warnings.push(format!("FX {}: a plugin is loaded, {} not recalled", i + 1, FX_MODELS[saved].name));
@@ -887,6 +895,11 @@ pub(crate) fn apply_fx_slot(
     }
     let state = x.child("State").map(Element::text).unwrap_or_default();
     match bridge.restore_fx(i, mode, &desc.to_compact(), &state) {
+        Ok(()) if p.model_index() == FX_EXT => {
+            // The EXT device's other settings (an outboard insert's, kept for later).
+            get_model_params(x, FX_MODELS, FX_EXT, &p.values, |_| {});
+            p.values[ext::SOURCE].store(ext::SOURCE_PLUGIN);
+        }
         Ok(()) => {}
         Err(RestoreError::Mismatch) => warnings.push(format!("FX {}: expected {name}, not recalled", i + 1)),
         Err(RestoreError::Failed(msg)) => warnings.push(format!("FX {}: {name} ({msg})", i + 1)),
@@ -911,6 +924,8 @@ pub fn capture(engine: &Engine, sections: u32, only: Option<&[StripRef]>, bridge
         if sections & section::ROUTING != 0 {
             capture_monitor(engine, &mut state, false);
             capture_input_select(engine, &mut state);
+            // The sources (the scope's SOURCE groups, manual 5.6 p. 55).
+            crate::globals::capture_sources(engine, &mut state);
             crate::globals::capture_routing(engine, &mut state);
         }
         if sections & section::FADER != 0 {
@@ -1098,6 +1113,8 @@ pub fn apply(
     let mut result = ApplyResult::default();
     let captured = state.int_or("sections", section::ALL as i32) as u32;
     let effective = sections & captured;
+    // Safe outputs keep their patch (GLOBAL SAFE, G5.6.3).
+    let outputs_before = (respect_recall_safe && engine.io_safes().outputs.any()).then(|| output_patches(engine, &index));
 
     for e in state.children_named("Strip") {
         let r = StripRef::parse(e.str_or("ref", ""));
@@ -1123,6 +1140,7 @@ pub fn apply(
         }
         if effective & section::ROUTING != 0 {
             apply_input_select(engine, state);
+            crate::globals::apply_scene_sources(engine, state, respect_recall_safe);
             crate::globals::apply_routing(engine, state);
         }
         if effective & section::FADER != 0 {
@@ -1136,7 +1154,55 @@ pub fn apply(
             apply_automix(engine, state);
         }
     }
+    if let Some(before) = outputs_before {
+        keep_safe_outputs(engine, &index, &before);
+    }
     result
+}
+
+/// Every output patch of the console, in a fixed order: each strip's left and
+/// right output, the monitor paths' and each FX slot's FX SEND.
+fn for_each_output(engine: &Engine, index: &StripIndex, mut f: impl FnMut(&AtomicI32)) {
+    for s in &index.strips {
+        f(&s.params.output_left);
+        f(&s.params.output_right);
+    }
+    let c = &engine.controls;
+    for o in [&c.monitor_output_left, &c.monitor_output_right, &c.phones.output_left, &c.phones.output_right] {
+        f(o);
+    }
+    for p in &c.fx {
+        f(&p.send_left);
+        f(&p.send_right);
+    }
+}
+
+fn output_patches(engine: &Engine, index: &StripIndex) -> Vec<i32> {
+    let mut v = Vec::new();
+    for_each_output(engine, index, |o| v.push(o.load(Relaxed)));
+    v
+}
+
+/// After a recall: a patch that moved onto or off a safe output goes back,
+/// so every safe output keeps the signal it had (a signal whose former output
+/// the recall gave to another one is left unpatched).
+fn keep_safe_outputs(engine: &Engine, index: &StripIndex, before: &[i32]) {
+    let safes = &engine.io_safes().outputs;
+    let safe = |port: i32| usize::try_from(port).is_ok_and(|p| safes.get(p));
+    let after = output_patches(engine, index);
+    if after.len() != before.len() {
+        return;
+    }
+    let restore: Vec<bool> = before.iter().zip(&after).map(|(&b, &a)| b != a && (safe(b) || safe(a))).collect();
+    let mut k = 0;
+    for_each_output(engine, index, |o| {
+        if restore[k] {
+            let old = before[k];
+            let taken = !safe(old) && old >= 0 && after.iter().zip(&restore).any(|(&a, &r)| !r && a == old);
+            o.store(if taken { -1 } else { old }, Relaxed);
+        }
+        k += 1;
+    });
 }
 
 // ---- full console (show files) ----------------------------------------------------------
@@ -1176,6 +1242,10 @@ pub fn save_console(engine: &Engine, bridge: &mut dyn PluginBridge) -> Element {
         }
     }
     crate::globals::capture(engine, &mut console);
+    let io = engine.io_safes();
+    if io.any() {
+        console.add_new("IoSafes").set("sources", io.sources.to_ranges()).set("outputs", io.outputs.to_ranges());
+    }
     console
 }
 
@@ -1235,6 +1305,10 @@ pub fn load_console(engine: &Engine, console: &Element, bridge: &mut dyn PluginB
         s.params.recall_safe.store(e.bool_or("recallSafe", false), Relaxed);
     }
     crate::globals::apply(engine, console);
+    if let Some(x) = console.child("IoSafes") {
+        engine.io_safes().sources.set_ranges(x.str_or("sources", ""));
+        engine.io_safes().outputs.set_ranges(x.str_or("outputs", ""));
+    }
     if !console.child("Solo").is_some_and(|s| s.has_attr("muteOverride")) {
         // Saved before MUTEGROUP/SIP OVERRIDE: off, as then (a new console has it on).
         engine.controls.mute_override.store(false, Relaxed);

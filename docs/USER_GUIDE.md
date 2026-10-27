@@ -63,7 +63,30 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
     five guitar/bass amps, body resonance, stereo imager and speaker manager.
   - **5 channel strips:** EVEN, SOUL, VINTAGE, BUS and MASTER.
   - **EXT:** a **VST3, AU (macOS) or LV2 (Linux) plugin**, or a **chain of up to 8
-    plugins** in series (see *Plugin chains*).
+    plugins** in series (see *Plugin chains*), or the WING's **EXTERNAL** effect: an
+    **outboard insert** through your interface's outputs and inputs (see *Outboard
+    inserts*).
+- **Outboard inserts** (WING manual 11.11, EXTERNAL): the EXT device's **SOURCE**
+  key chooses **PLUGIN** or **OUTBOARD** (the FX slot menu has **Outboard insert
+  (SEND / RETURN)** too). An outboard slot sends what its strip inserts to its **FX
+  SEND** and takes its **RETURN** back in its place. Its page, **EXTERNAL EFFECT**,
+  is laid out as the console's: **SEND** shows the two outputs FX SEND is patched to
+  (tap it for ROUTING > OUTPUTS, source group FX SEND: slot n's send is FX SEND 2n-1
+  / 2n, shown as FX nL / nR) and **TRIM** (the send level, -18 to +18 dB); **FX MODE**
+  **MONO** (one send and one return input, on both sides), **STEREO** (two each) or
+  **MID/SIDE** (sends mid and side, decodes the return back to left and right);
+  **RETURN** the input the gear comes back on (tap it: LCL, A, B, C, CRD or PLAY and
+  the first input; STEREO and MID/SIDE take it and the next one; OFF passes the
+  signal through, the send still going out), with the round trip under it; and
+  **LATENCY** (0-800 samples; the WING tree gives no unit and counts insert latency in
+  samples, the manual says ms). The return can only come back in the next audio
+  block, so the slot's latency is one block plus the latency your interface reports
+  both ways, plus LATENCY for the gear's own delay or what the interface doesn't report; delay
+  compensation and the FX MIX's dry signal use it as a plugin's. Measure the round
+  trip and set LATENCY if the direct and returned signals don't line up. The return
+  source's GAIN, MUTE and pairing (ROUTING > SOURCES) apply. Shows and scenes keep
+  the EXT settings and the FX SEND outputs (FX presets leave the outputs out); an
+  EXT slot from an older show is a plugin slot, as before.
 - **Plugin chains:** an EXT slot can run several plugins one after the other, and
   shows them in one window (OPEN EDITOR, or tapping a plugin slot).
   - **Chain bar** across the top: **IN ▸ plugin ▸ plugin ▸ … ▸ OUT**, then **+**
@@ -116,7 +139,8 @@ with or endorsed by Behringer or Music Tribe; "WING" is their trademark.
   bus stages (buses into the buses they feed, buses into mains, mains into matrices;
   a bus send closing a loop and the other block-late paths aren't compensated) and
   the tap of each send (an insert counts only once the send's tap point is past it).
-  A plugin's FX MIX delays its dry signal by the plugin's latency too. It is on by
+  A plugin's FX MIX delays its dry signal by the plugin's latency too; an outboard
+  insert counts as a plugin with its round trip as latency. It is on by
   default; **SETUP > PLUGINS > DELAY COMPENSATION** turns it off, and the panel
   below shows the total compensation (the longest path the console is aligned to)
   and each loaded plugin's latency (a chain's is the sum of its plugins' that aren't
@@ -327,7 +351,8 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     strip (PRE/POST) and ON; a device inserted nowhere is shown dimmed. Tapping a slot opens the
     device on its **faceplate**, drawn like the hardware it recreates (a LARC remote
     for the vintage reverbs, a black 1176-style limiter with its VU meter...). The
-    device list shows a tile per device: NONE and EXTERNAL (a plugin) first, then the
+    device list shows a tile per device: NONE and EXTERNAL (a plugin or an outboard
+    insert, see *Outboard inserts*) first, then the
     tabs **FX1-8** (the premium devices, slots 1-8 only), **STD** and **CH** (the EQs and
     channel strips), in the console's order. The GATE, EQ and
     DYNAMICS screens show their model's faceplate too.
@@ -397,7 +422,8 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     output-first: pick an output (OUTPUT GROUP **LOCAL OUT** is the interface's
     outputs; **RECORDER** taps a signal for the USB recorder), then the signal feeding
     it from the source group: **BUS**, **MAIN**, **MATRIX** (each L / R), **MONITOR**
-    (PHONES 1L / 1R, SPEAKERS 2L / 2R), **USER SIGNAL** (USR 1-56) or any input group
+    (PHONES 1L / 1R, SPEAKERS 2L / 2R), **FX SEND** (FX 1L ... FX 16R: the FX
+    slots' outboard insert sends), **USER SIGNAL** (USR 1-56) or any input group
     (LOCAL IN, AES50 B / C, OSCILLATOR, WLIVE PLAY, USB PLAYER: the source after its
     gain, mute and polarity, straight to the output, as the manual's "route any
     Source to any digital or analog output"). An output has one signal: patching one
@@ -669,7 +695,9 @@ the USB key on the screen to choose another folder).
 - A **scene** is a console snapshot with a **recall scope**: the sections (Name,
   Routing, Input, Gate, EQ, Dynamics, Inserts, Sends, Fader, DCA/Mute), which strips,
   DCAs, mute groups and FX slots, and the console settings (monitor setup, INPUT
-  SELECT, automix enables); an optional **fade time**, and notes. A fade glides the
+  SELECT, automix enables; with Routing, the sources: their name, GAIN, MUTE,
+  polarity, pairing and look, as the WING's SOURCE groups); an optional **fade
+  time**, and notes. A fade glides the
   continuous values: channel, aux, bus, main, matrix and DCA faders, pan and width,
   and the send levels and pans (bus, main and matrix sends). Levels move along the
   fader's travel, as a moving fader would (a fade up from -oo is heard from the start),
@@ -678,7 +706,13 @@ the USB key on the screen to choose another folder).
   a fader or knob that is fading (on the surface, the screen, from MIDI, a DAW or a
   WING remote) takes it out of the fade: it stays where you put it while the rest
   carries on. A new recall finishes a running fade first. **Recall-safe** strips and the **GLOBAL safes** (DCAs, mute groups, FX
-  slots, sections, console settings) are skipped. **PARTIAL LOAD** recalls a chosen
+  slots, sections, console settings, and the **SOURCE** and **OUTPUT** groups) are
+  skipped. GLOBAL's SOURCE and OUTPUT tiles (LCL, A, B, C, and CRD, PLAY and OSC for
+  sources; dimly lit when only part of a group is safe) protect sources and output
+  patches: a safe source keeps its settings and name, a safe output keeps the signal
+  that feeds it (a strip, the monitor or an FX SEND). They belong to the console,
+  like the strips' SAFE keys: saved with the show and cleared by a new one. Scenes
+  saved before sources were recalled leave them alone. **PARTIAL LOAD** recalls a chosen
   scope (**NO GLOB** ignores the safes), **RESTORE** all of the scene, **PARTIAL
   UPDATE** stores a chosen scope into it; both partial keys keep their last scope. Use
   **GO >** and **<** (or `Ctrl+G`) to step through scenes during a show.
@@ -870,15 +904,17 @@ and open-source projects (see below), and it is **experimental**.
   1 / INS 2 take an FX slot, and the engine runs it there). An FX slot hosting a
   plugin shows as an **EXTERNAL** effect; choosing another model for it in WING Edit
   is refused and WING Edit is told the slot is still EXT (load and remove plugins on
-  Sidecar's EFFECTS screen). Limits: WING Edit 3.3.4 knows a few hundred parameters
+  Sidecar's EFFECTS screen). Choosing EXTERNAL for another slot in WING Edit makes it
+  an outboard insert, and WING Edit's EXTERNAL EFFECT editor drives it: TRIM, FX MODE,
+  LATENCY, the RETURN source window, and SEND shows the outputs patched to its FX SEND. Limits: WING Edit 3.3.4 knows a few hundred parameters
   of firmware newer than 3.1 (a monitor level, StageConnect source settings, a surface
   block); Sidecar ignores them, as a 3.1 console would. LOCAL OUT n and AES50 A n are
   one port in Sidecar, so a WING Edit file made on a real WING that patches them
   differently ends up with A n's patch after PC -> MIXER.
 - **What maps:** every parameter of the WING 3.1 tree but one answers (79,325 of
   79,326, counting every processing model's parameters and every custom control
-  mode's function nodes). 73,573 of them (92.7 %) drive the engine or the show, 85
-  are Sidecar's SETUP settings, and the 5,667 Sidecar has no equivalent for answer what a factory-initialized WING answers (see below). Driving the engine: channels, aux, buses, mains
+  mode's function nodes). 73,664 of them (92.9 %) drive the engine or the show, 85
+  are Sidecar's SETUP settings, and the 5,576 Sidecar has no equivalent for answer what a factory-initialized WING answers (see below). Driving the engine: channels, aux, buses, mains
   and matrices (name, colour, icon, input and ALT patch, trim, filters, gate, EQ and
   dynamics models with all their parameters, inserts, fader, mute, pan, width, sends,
   main sends, solo, TAP WIDTH and TAP EQ, every bus's sends to the other buses, the
@@ -907,9 +943,16 @@ and open-source projects (see below), and it is **experimental**.
   NEXT, PREV, PLAYFILE with `$playfile` relative to the USB folder, the position,
   REPEAT, REC PATH and the recording format; state, file, time and the clip's format
   read back) and the recall safes (`/$ctl/safes`: `ch`, `aux`, `bus`, `main`, `mtx`
-  are the strips' SAFE keys, `dca`, `mute`, `fx` the GLOBAL safes; in the console's
-  format, a `+` or a space per strip, as `+ +` for 1 and 3; lists such as `1,3,5-8`
-  are taken too). SETUP's options are Sidecar's settings, both ways: METERING's taps
+  are the strips' SAFE keys, `dca`, `mute`, `fx` the GLOBAL safes, `source/LCL`,
+  `A`, `B`, `C`, `CRD`, `PLAY`, `OSC` and `output/LCL`, `A`, `B`, `C` the safe
+  sources and outputs; in the console's format, a `+` or a space per item, as `+ +`
+  for 1 and 3; lists such as `1,3,5-8` are taken too). The EXTERNAL effect is the
+  outboard insert: selecting `EXT` as an FX slot's `mdl` makes it one, its
+  `egrp` / `ein` (RETURN), `emode` (FX MODE), `lat` (LATENCY) and `trim` drive it, and
+  an output patched to `SEND` n (`/io/out/../grp`, `in`) carries FX slot (n+1)/2's
+  send; WING Edit's EXTERNAL EFFECT editor works on it. A slot holding a plugin
+  reads as EXT too, and a remote can't replace its plugin. SETUP's options are
+  Sidecar's settings, both ways: METERING's taps
   (`/cfg/mtr/mtrpage`, `mtrsfc`: one setting per strip type for both), MAIN METER
   (`/cfg/mtr/mainmtr`: every source) and MAIN METER TAP,
   the GENERAL, SURFACE and SOLO SYSTEM options (`/$ctl/cfg`, `/$ctl/$globals`:
@@ -940,7 +983,7 @@ and open-source projects (see below), and it is **experimental**.
   (the cards, the console's hardware, network and status, the other WING models'
   layers, the 4-Channel and button section modes, the input groups Sidecar doesn't
   have (AUX, AES, SC, USB, MOD, USR), a DCA's monitor bus, a channel's TAP SOLO,
-  the player's song tags, the safes of source and output groups, bus-to-bus sends
+  the player's song tags, the safes of source and output groups Sidecar doesn't have, bus-to-bus sends
   the engine doesn't have, ...) starts at the factory-initialized WING's value
   (`livedaw-wing/data/wing_factory.tsv`) and is remembered so clients can read back
   what they wrote (read-only ones as the WING marks them), but does nothing.

@@ -15,14 +15,31 @@
 //! A plugin's reported latency (`set_latency`) feeds the plugin delay
 //! compensation (`pdc.rs`); with a wet/dry MIX below 100 % the dry signal is
 //! delayed by the same amount so the two stay in time.
+//!
+//! The EXT device with SOURCE OUTBOARD (and no plugin) is the WING's EXTERNAL
+//! effect (manual 11.11 p. 164, Fig. 169): an outboard insert. The slot sends
+//! its input, at TRIM, in FX MODE (MONO, STEREO or MID/SIDE) to its FX SEND
+//! (the hardware outputs ROUTING > OUTPUTS patches to it, `FxParams::send_left`
+//! / `send_right`, written by the engine's output stage), and returns the
+//! RETURN inputs (a source and, STEREO or MID/SIDE, its neighbour) in its
+//! place. Without a RETURN it passes its signal through. The send leaves in
+//! this block and comes back at the earliest in the next one, so the slot's
+//! latency is the round trip Sidecar knows (one block plus the interface's
+//! reported input and output latency, `set_round_trip`) plus LATENCY (the
+//! outboard gear's own, in samples: the tree's `lat` is a unitless 0-800 where
+//! the console's millisecond parameters say "ms", and the WING counts insert
+//! latency in samples, manual 6.6 table 6.2; the manual's p. 164 says ms); the
+//! delay compensation and the FX MIX's dry delay use it as they use a plugin's.
 
 use crate::atomic::AtomicF32;
 use crate::garbage::Garbage;
-use crate::params::{FxParams, FX_EXT};
+use crate::params::{ext, FxParams, FX_EXT};
 use crate::pdc::{CompRing, MAX_PDC};
-use livedaw_dsp::util::all_finite;
+use crate::strip::source_ptr;
+use livedaw_dsp::util::{all_finite, db_to_gain};
 use livedaw_dsp::wing::fx::{FxContext, FxDevice, FX_BANDS};
 use livedaw_dsp::wing::MAX_FX_PARAMS;
+use livedaw_recorder::{PLAYBACK_SOURCE_BASE, USB_CHANNELS, USB_PLAYER_SOURCE_BASE};
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU64, Ordering::*};
@@ -60,6 +77,41 @@ impl Drop for Slot {
     }
 }
 
+/// The EXT device's RETURN groups (`egrp`), as the console lists them.
+pub const EXT_RETURN_GROUPS: [&str; 12] = ["OFF", "LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "MOD", "PLAY", "AES"];
+
+/// Inputs per AES50 block on the WING's patch (A 1-48 = ports 1-48, B = 49-96, C = 97-144).
+const WING_BLOCK: i32 = 48;
+
+/// The input (a hardware port, playback channel or USB PLAYER channel) of the
+/// outboard RETURN `group` / `n` (1-based), None for OFF or an input Sidecar
+/// doesn't have. As the remote's patch (`livedaw_wing::map::port`): LCL n is A
+/// n, the WING-LIVE card (CRD) the recorder's playback channels, the other
+/// groups the port of the same number.
+pub fn ext_return_input(group: &str, n: i32) -> Option<i32> {
+    let n = n.max(1);
+    match group {
+        "A" | "LCL" | "AUX" | "SC" | "USB" | "MOD" | "AES" => Some(n - 1),
+        "B" => Some(WING_BLOCK + n - 1),
+        "C" => Some(2 * WING_BLOCK + n - 1),
+        "CRD" => (n <= 64).then_some(PLAYBACK_SOURCE_BASE + n - 1),
+        "PLAY" => (n <= USB_CHANNELS as i32).then_some(USB_PLAYER_SOURCE_BASE + n - 1),
+        _ => None,
+    }
+}
+
+/// The RETURN of an EXT slot's parameters (`ext::GROUP`, `ext::INPUT`).
+pub fn ext_return_of(params: &FxParams) -> Option<i32> {
+    let g = params.values[ext::GROUP].load().round().max(0.0) as usize;
+    ext_return_input(EXT_RETURN_GROUPS.get(g)?, params.values[ext::INPUT].load().round() as i32)
+}
+
+/// The inputs an outboard RETURN reads: the processed sources of this block.
+pub(crate) struct FxInputs<'a> {
+    pub hw: &'a [*const f32],
+    pub playback: &'a [*const f32],
+}
+
 /// Wrapper so a retired slot can go to the garbage collector.
 struct RetiredSlot(#[allow(dead_code)] Box<Slot>);
 
@@ -88,6 +140,13 @@ pub struct FxRack {
     /// The dry signal's history, to delay it by the plugin's latency in a
     /// wet/dry mix (claiming task only; allocated in `prepare`).
     dry_ring: UnsafeCell<Option<Box<CompRing>>>,
+    /// The outboard insert's FX SEND (claiming task; read by the output stage
+    /// once every strip ran) and the block it was written in.
+    send: UnsafeCell<[Vec<f32>; 2]>,
+    send_block: AtomicU64,
+    /// The round trip through the interface in samples (one block plus its
+    /// reported input and output latency).
+    round_trip: AtomicU32,
 }
 
 // SAFETY: `dry` is only used by the task that holds `busy`; everything else is atomic.
@@ -109,6 +168,9 @@ impl Default for FxRack {
             dry: UnsafeCell::new([Vec::new(), Vec::new()]),
             latency: AtomicU32::new(0),
             dry_ring: UnsafeCell::new(None),
+            send: UnsafeCell::new([Vec::new(), Vec::new()]),
+            send_block: AtomicU64::new(0),
+            round_trip: AtomicU32::new(0),
         }
     }
 }
@@ -118,11 +180,55 @@ impl FxRack {
     /// The audio thread must not be processing (device stopped).
     pub(crate) unsafe fn prepare(&self, max_block: usize) {
         let dry = &mut *self.dry.get();
-        for d in dry.iter_mut() {
+        for d in dry.iter_mut().chain((*self.send.get()).iter_mut()) {
             d.clear();
             d.resize(max_block, 0.0);
         }
+        self.send_block.store(0, Relaxed);
         *self.dry_ring.get() = Some(Box::new(CompRing::new(max_block)));
+    }
+
+    /// The round trip of an outboard insert through the interface, in samples
+    /// (the engine sets it: one block plus the reported I/O latency).
+    pub fn set_round_trip(&self, samples: u32) {
+        self.round_trip.store(samples, Relaxed);
+    }
+
+    /// The outboard insert's latency in samples: the round trip plus LATENCY.
+    pub fn outboard_latency(&self, params: &FxParams) -> u32 {
+        let extra = params.values[ext::LATENCY].load().clamp(0.0, 800.0).round() as u32;
+        self.round_trip.load(Relaxed) + extra
+    }
+
+    /// The slot is an outboard insert (EXT, SOURCE OUTBOARD, no plugin).
+    pub fn is_outboard(&self, params: &FxParams) -> bool {
+        params.ext_outboard() && !self.is_loaded()
+    }
+
+    /// An outboard insert with a RETURN (it replaces the signal).
+    pub fn outboard_returns(&self, params: &FxParams) -> bool {
+        self.is_outboard(params) && ext_return_of(params).is_some()
+    }
+
+    /// The slot's latency as the screens show it: its plugin's, or the
+    /// outboard insert's (0 otherwise).
+    pub fn latency(&self, params: &FxParams) -> u32 {
+        if self.is_loaded() {
+            self.reported_latency()
+        } else if self.outboard_returns(params) {
+            self.outboard_latency(params)
+        } else {
+            0
+        }
+    }
+
+    /// Output stage (audio thread, after every strip ran): side `side` of the
+    /// FX SEND written in `block`, if the slot ran as an outboard insert then.
+    pub(crate) unsafe fn send(&self, side: usize, n: usize, block: u64) -> Option<&[f32]> {
+        if self.send_block.load(Acquire) != block {
+            return None;
+        }
+        (*self.send.get()).get(side).and_then(|s| s.get(..n))
     }
 
     /// Message thread (or any): the plugin's latency in samples, as reported
@@ -140,12 +246,13 @@ impl FxRack {
         }
     }
 
-    /// The latency the slot adds to a strip now: the plugin's while it runs
-    /// (EXT, not bypassed, not auto-bypassed); built-in devices have none.
+    /// The latency the slot adds to a strip now: the plugin's or the outboard
+    /// insert's while it runs (EXT, not bypassed, not auto-bypassed); built-in
+    /// devices have none.
     pub fn effective_latency(&self, params: &FxParams) -> u32 {
         let running = params.model.load(Relaxed) == FX_EXT as i32 && !params.bypass.load(Relaxed) && !self.is_faulted();
         if running {
-            self.reported_latency()
+            self.latency(params)
         } else {
             0
         }
@@ -248,14 +355,23 @@ impl FxRack {
     /// (for double-assignment detection).
     ///
     /// # Safety
-    /// `channels` are 1 or 2 slices of equal length <= the prepared block size.
-    pub(crate) unsafe fn process(&self, channels: &mut [&mut [f32]], sample_rate: f64, params: &FxParams, block: u64) {
+    /// `channels` are 1 or 2 slices of equal length <= the prepared block size;
+    /// `inputs`' non-null pointers hold at least as many samples.
+    pub(crate) unsafe fn process(
+        &self,
+        channels: &mut [&mut [f32]],
+        sample_rate: f64,
+        params: &FxParams,
+        inputs: &FxInputs,
+        block: u64,
+    ) {
         let n = channels.first().map_or(0, |c| c.len());
         let model = params.model.load(Relaxed);
         let plugin = self.slot.load(Acquire);
         let device = self.device.load(Acquire);
+        let outboard = model == FX_EXT as i32 && plugin.is_null() && params.ext_outboard();
         let runnable = if model == FX_EXT as i32 {
-            !plugin.is_null()
+            !plugin.is_null() || outboard
         } else {
             // A device for another model is still in place until the message
             // thread swaps the new one in: pass through meanwhile.
@@ -285,7 +401,11 @@ impl FxRack {
             dry[c][..n].copy_from_slice(data);
         }
 
-        let ok = if model == FX_EXT as i32 {
+        let mut returned = true;
+        let ok = if outboard {
+            returned = self.run_outboard(channels, params, inputs, block);
+            channels.iter().all(|c| all_finite(c))
+        } else if model == FX_EXT as i32 {
             let cb = (*plugin).cb;
             let mut ptrs: [*mut f32; 2] = [std::ptr::null_mut(); 2];
             for (c, data) in channels.iter_mut().enumerate().take(2) {
@@ -319,12 +439,18 @@ impl FxRack {
 
         let mix = params.mix.load() / 100.0;
         // The dry history follows every block, so a MIX change finds it in time.
-        let latency = if model == FX_EXT as i32 { self.latency.load(Relaxed) as usize } else { 0 };
+        let latency = match model == FX_EXT as i32 {
+            true if outboard => self.outboard_latency(params) as usize,
+            true => self.latency.load(Relaxed) as usize,
+            false => 0,
+        };
         let dry_ring = (*self.dry_ring.get()).as_deref();
         if let Some(ring) = dry_ring.filter(|_| latency > 0) {
             ring.write(&dry[0][..n], &dry[if channels.len() > 1 { 1 } else { 0 }][..n]);
         }
-        if !ok {
+        if !returned {
+            // An outboard insert without a RETURN passes its signal through.
+        } else if !ok {
             // Keep the dry signal; the slot stays bypassed until the fault is cleared.
             for (c, data) in channels.iter_mut().enumerate().take(2) {
                 data.copy_from_slice(&dry[c][..n]);
@@ -346,6 +472,65 @@ impl FxRack {
         let load = (start.elapsed().as_secs_f64() * sample_rate / n as f64) as f32;
         self.load.store(0.9 * self.load.load() + 0.1 * load);
         self.busy.store(false, Release);
+    }
+
+    /// The outboard insert (claiming task): sends `channels` at TRIM in FX
+    /// MODE to the FX SEND and puts the RETURN in their place. False (signal
+    /// left alone) without a RETURN.
+    unsafe fn run_outboard(&self, channels: &mut [&mut [f32]], params: &FxParams, inputs: &FxInputs, block: u64) -> bool {
+        let n = channels.first().map_or(0, |c| c.len());
+        let send = &mut *self.send.get();
+        if send[0].len() < n {
+            return false;
+        }
+        let v = |i: usize| params.values[i].load();
+        let mode = v(ext::MODE).round() as i32;
+        let gain = db_to_gain(v(ext::TRIM).clamp(-18.0, 18.0));
+        let stereo = channels.len() > 1;
+        {
+            let [s0, s1] = send;
+            for k in 0..n {
+                let l = channels[0][k];
+                let r = if stereo { channels[1][k] } else { l };
+                let (a, b) = match mode {
+                    ext::MODE_MONO => (0.5 * (l + r), 0.5 * (l + r)),
+                    ext::MODE_MID_SIDE => (0.5 * (l + r), 0.5 * (l - r)),
+                    _ => (l, r),
+                };
+                s0[k] = a * gain;
+                s1[k] = b * gain;
+            }
+        }
+        self.send_block.store(block, Release);
+
+        let Some(first) = ext_return_of(params) else { return false };
+        let input = |port: i32| source_ptr(inputs.hw, inputs.playback, port).map(|p| std::slice::from_raw_parts(p, n));
+        let a = input(first);
+        let b = if mode == ext::MODE_MONO { a } else { input(first + 1) };
+        let at = |x: Option<&[f32]>, k: usize| x.map_or(0.0, |x| x[k]);
+        let decode = |k: usize| {
+            let (x, y) = (at(a, k), at(b, k));
+            match mode {
+                ext::MODE_MONO => (x, x),
+                ext::MODE_MID_SIDE => (x + y, x - y),
+                _ => (x, y),
+            }
+        };
+        match channels {
+            [left, right, ..] => {
+                for (k, (l, r)) in left.iter_mut().zip(right.iter_mut()).enumerate() {
+                    (*l, *r) = decode(k);
+                }
+            }
+            [mono] => {
+                for (k, y) in mono.iter_mut().enumerate() {
+                    let (l, r) = decode(k);
+                    *y = 0.5 * (l + r);
+                }
+            }
+            [] => {}
+        }
+        true
     }
 
     /// Message thread: forgets a double assignment once it has been fixed.

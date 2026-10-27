@@ -144,6 +144,9 @@ public:
     /** The lock: true while the patch can't be changed (CHANNELS, OUTPUTS). */
     bool isLocked() const noexcept { return lock.isLocked(); }
     void setLocked (bool);
+    /** OUTPUTS with the FX SEND source group, at FX slot `slot`'s send (the
+        EXTERNAL EFFECT's SEND, manual 11.11 p. 164). */
+    void showFxSends (int slot);
 
 private:
     using Group = routing::Group;
@@ -157,13 +160,15 @@ private:
     };
 
     /** A signal that can feed an output: a strip's left or right channel,
-        the monitor (strip == nullptr, channel 0-3) or a source (`source`, an
-        input index, manual 5.4 OUTPUTS). Channel -1: an n/a tile. */
+        the monitor (strip == nullptr, channel 0-3), a source (`source`, an
+        input index, manual 5.4 OUTPUTS) or an FX slot's FX SEND (`fx` the
+        slot, channel 0 / 1 the side). Channel -1: an n/a tile. */
     struct Signal
     {
         Strip* strip = nullptr;
         int channel = 0;
         int source = -1;
+        int fx = -1;
     };
 
     void timerCallback() override;

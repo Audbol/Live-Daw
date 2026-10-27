@@ -28,7 +28,7 @@ static_assert (sizeof (std::atomic<float>) == 4 && std::atomic<float>::is_always
 static_assert (sizeof (std::atomic<bool>) == 1 && std::atomic<bool>::is_always_lock_free);
 static_assert (sizeof (std::atomic<int32_t>) == 4 && std::atomic<int32_t>::is_always_lock_free);
 
-constexpr int kAbiVersion = 20;
+constexpr int kAbiVersion = 21;
 constexpr int kMaxBuses = 16384;
 constexpr int kNumMains = 4;
 constexpr int kNumMatrices = 8;
@@ -44,9 +44,20 @@ constexpr int kMaxToolParams = 2;
 constexpr int kMaxFxParams = 36;
 /** The WING colour (1..18) of a new channel, source and DCA: Dark Blue. */
 constexpr int kDefaultColour = 1;
-/** FX slot models (indices into model table 4): an empty slot, and EXT (a plugin). */
+/** FX slot models (indices into model table 4): an empty slot, and EXT (a
+    plugin, or with SOURCE OUTBOARD the console's outboard insert). */
 constexpr int kFxNone = 0;
 constexpr int kFxExt = 1;
+/** The EXT device's parameters (FxParams::values): the WING's /fx/N/EXT parameters, then SOURCE. */
+namespace ext
+{
+    constexpr int kGroup = 0;   // RETURN group: OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES
+    constexpr int kInput = 1;   // RETURN's first input, 1-64
+    constexpr int kMode = 2;    // FX MODE: MONO, STEREO, MID/SIDE
+    constexpr int kLatency = 3; // LATENCY, samples (beyond one block and the interface's latency)
+    constexpr int kTrim = 4;    // TRIM, dB (the send level)
+    constexpr int kSource = 5;  // SOURCE: 0 PLUGIN, 1 OUTBOARD
+} // namespace ext
 /** The recorder's mono playback channels: input index kPlaybackSourceBase + n
     (in inputLeft/Right, altInputLeft/Right, record ports) is playback channel n. */
 constexpr int kNumPlaybackChannels = 64;
@@ -307,6 +318,8 @@ struct FxParams
     /** Index into the FX table (kFxNone, kFxExt or a built-in device). */
     std::atomic<int32_t> model;
     std::atomic<float> values[kMaxFxParams];
+    /** ABI 21: the hardware outputs fed by the slot's FX SEND (WING FX SEND 2n-1 / 2n; -1 none). */
+    std::atomic<int32_t> sendLeft, sendRight;
 };
 
 // ---- console level (ABI 7) ---------------------------------------------------
@@ -636,7 +649,9 @@ struct LayoutInfo
         // ABI 19 (routing: matrix DIRECT IN, USR sources)
         offDirectSource, userSignal, offUserSignalPost, userPatch,
         // ABI 20 (FaderRefC.flags, kFaderSelSend)
-        faderRef;
+        faderRef,
+        // ABI 21 (FX SEND outputs)
+        offFxSendLeft;
 };
 
 /** A console model's surface and local I/O (ld_console_model_info). Models:
@@ -876,7 +891,8 @@ extern "C"
     void ld_fx_replace (const Engine*, int32_t slot, const InsertCallbacks* callbacks);
     void* ld_fx_ctx (const Engine*, int32_t slot);
     /** what: 0 = a plugin is loaded, 1 = faulted (auto-bypassed), 2 = double-assigned,
-        3 = a built-in device is running. */
+        3 = a built-in device is running, 4 = an outboard insert (EXT, SOURCE OUTBOARD,
+        no plugin), 5 = an outboard insert with a RETURN. */
     bool ld_fx_state (const Engine*, int32_t slot, int32_t what);
     /** Selects a slot's device (FX table index), creating it now; `defaults` resets its
         settings. False if not allowed there (premium devices need slots 1-8). */
@@ -895,7 +911,15 @@ extern "C"
     // arrive together (capped at kMaxPdc samples).
     /** Any thread: the latency (samples) slot `slot`'s plugin reports; reset by ld_fx_set. */
     void ld_fx_set_latency (const Engine*, int32_t slot, int32_t samples);
+    /** The slot's latency: its plugin's, or its outboard insert's round trip plus LATENCY. */
     int32_t ld_fx_latency (const Engine*, int32_t slot);
+    /** Any thread (ABI 21): the interface's reported input + output latency in samples
+        (an outboard insert's round trip is one block plus this). */
+    void ld_engine_set_io_latency (const Engine*, int32_t samples);
+    /** Recall safes (ABI 21, GLOBAL SAFE): kind 0 = a source (its table index), 1 = a
+        hardware output port; index -1 asks whether any of the kind is safe. */
+    bool ld_engine_io_safe (const Engine*, int32_t kind, int32_t index);
+    void ld_engine_set_io_safe (const Engine*, int32_t kind, int32_t index, bool safe);
     /** DELAY COMPENSATION on / off (default on). */
     void ld_engine_set_pdc (const Engine*, bool on);
     bool ld_engine_pdc (const Engine*);
@@ -1567,6 +1591,7 @@ inline const char* verifyLayout()
         { info.offUserSignalPost, offsetof (UserSignalParams, post), "UserSignalParams.post" },
         { info.userPatch, sizeof (UserPatchParams), "UserPatchParams size" },
         { info.faderRef, sizeof (FaderRefC), "FaderRefC size" },
+        { info.offFxSendLeft, offsetof (FxParams, sendLeft), "FxParams.sendLeft" },
     };
 
     if (info.abiVersion != kAbiVersion)

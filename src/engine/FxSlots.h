@@ -91,11 +91,26 @@ public:
     int getModel (int slot) const noexcept { return params (slot).model.load(); }
     /** Selects a built-in device (removing a plugin first). False if not allowed in the slot. */
     bool setModel (int slot, int model);
+
+    //==============================================================================
+    // The EXT device's outboard insert (WING manual 11.11 p. 164, Fig. 169): with
+    // SOURCE OUTBOARD and no plugin, the slot sends its input (TRIM, FX MODE) to
+    // its FX SEND outputs (params().sendLeft / sendRight, patched on ROUTING >
+    // OUTPUTS) and returns the RETURN inputs, delayed for LATENCY plus the
+    // interface's round trip like a plugin's latency.
+
+    /** EXT with SOURCE OUTBOARD (removing a plugin first; the EXT settings stay). */
+    void setOutboard (int slot);
+    bool isOutboard (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 4); }
+    /** An outboard insert with a RETURN (it runs; without one it passes through). */
+    bool hasReturn (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 5); }
+    /** The RETURN as the console shows it: "LCL 3/4", "A 5", "OFF". */
+    juce::String returnLabel (int slot) const;
     /** Whether `model` may run in `slot` (premium devices need slots 1-8). */
     static bool isAllowed (int model, int slot);
 
-    /** The slot is in use (a plugin or a built-in device). */
-    bool isLoaded (int slot) const noexcept { return hasPlugin (slot) || getModel (slot) > ld::kFxExt; }
+    /** The slot is in use (a plugin, an outboard insert or a built-in device). */
+    bool isLoaded (int slot) const noexcept { return hasPlugin (slot) || isOutboard (slot) || getModel (slot) > ld::kFxExt; }
     bool hasPlugin (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 0); }
     bool hasDevice (int slot) const noexcept { return ld::ld_fx_state (engine, slot, 3); }
     /** Gain reduction of the slot's device (dB, <= 0). */
@@ -110,7 +125,7 @@ public:
     float getLoad (int slot) const noexcept { return ld::ld_fx_load (engine, slot); }
     /** Number of strip inserts using the slot. */
     int getNumUsers (int slot) const noexcept { return ld::ld_fx_num_users (engine, slot); }
-    /** The latency the slot's plugin reports, in samples (0 without one). */
+    /** The slot's latency in samples: its plugin's, or its outboard insert's (0 otherwise). */
     int getLatency (int slot) const noexcept { return ld::ld_fx_latency (engine, slot); }
 
     /** Message thread: passes every plugin's current latency to the engine (a

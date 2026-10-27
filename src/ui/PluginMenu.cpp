@@ -192,6 +192,16 @@ void showFxSlotMenu (UiContext& ctx, int slot, juce::Component* target)
     }
     menu.addSubMenu (existing != nullptr ? "Replace with" : "Load plugin (EXT)", plugins, ! types.isEmpty());
     menu.addItem ("Scan for plugins...", [&ctx] { if (ctx.showPluginScanner) ctx.showPluginScanner(); });
+    // The WING's EXTERNAL: outboard gear through FX SEND outputs and RETURN inputs (manual 11.11 p. 164).
+    menu.addSeparator();
+    menu.addItem ("Outboard insert (SEND / RETURN)", true, fx.isOutboard (slot), [&ctx, slot]
+    {
+        if (ctx.engine.getFx().hasPlugin (slot))
+            clearFx (ctx, slot); // closes the plugin's editor first
+        ctx.engine.getFx().setOutboard (slot);
+        if (ctx.editFx)
+            ctx.editFx (slot);
+    });
 
     auto options = juce::PopupMenu::Options();
     if (target != nullptr)
@@ -290,6 +300,8 @@ void showFxProcessorWindow (UiContext& ctx, juce::Component& over, int current, 
         }
         if (auto* plugin = fx.getPlugin (i))
             slot.caption = plugin->getName().toUpperCase();
+        else if (fx.isOutboard (i))
+            slot.caption = "OUTBOARD " + fx.returnLabel (i);
         else if (fx.getModel (i) > ld::kFxExt)
             slot.caption = models::model (models::Fx, fx.getModel (i)).name.toUpperCase();
         slots.push_back (slot);
@@ -304,6 +316,8 @@ void showFxProcessorWindow (UiContext& ctx, juce::Component& over, int current, 
             const int model = rack.getModel (i);
             if (rack.hasPlugin (i))
                 Faceplate::paintThumbnail (g, r, models::Fx, ld::kFxExt, "PLUGIN");
+            else if (rack.isOutboard (i))
+                Faceplate::paintThumbnail (g, r, models::Fx, ld::kFxExt, "OUTBOARD");
             else if (model > ld::kFxExt)
                 Faceplate::paintThumbnail (g, r, models::Fx, model, {});
             else
@@ -319,7 +333,7 @@ void clickFxSlot (UiContext& ctx, int slot, juce::Component* target)
     auto& fx = ctx.engine.getFx();
     if (fx.getPlugin (slot) != nullptr && ctx.openPluginEditor)
         ctx.openPluginEditor (slot);
-    else if (fx.getModel (slot) > ld::kFxExt && ctx.editFx)
+    else if ((fx.getModel (slot) > ld::kFxExt || fx.isOutboard (slot)) && ctx.editFx)
         ctx.editFx (slot);
     else
         showFxDeviceMenu (ctx, slot, target, [&ctx, slot] { if (ctx.editFx) ctx.editFx (slot); });

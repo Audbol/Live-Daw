@@ -93,7 +93,8 @@ pub fn capture_fx(engine: &Engine, bridge: &mut dyn PluginBridge, slot: usize, n
     }
     let mut preset = root(PresetType::Fx, name);
     let mut x = console::capture_fx_slot(engine, slot, bridge);
-    x.attrs.retain(|(k, _)| k != "i");
+    // The slot's FX SEND outputs are routing, not part of the device.
+    x.attrs.retain(|(k, _)| !matches!(k.as_str(), "i" | "sendL" | "sendR"));
     preset.add(x);
     Some(preset)
 }

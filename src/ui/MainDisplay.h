@@ -34,6 +34,8 @@ public:
     void showHomeTab (HomeTab);
     /** EFFECTS, with slot `slot` open in the device editor. */
     void editFx (int slot);
+    /** ROUTING > OUTPUTS with the FX SEND group, at slot `slot`. */
+    void showFxSendOutputs (int slot);
     /** OVERVIEW of section `s` on a layer key or fixed bank (a custom
         control's OVERVIEW PAGE; see ViewPage::showOverviewBank). */
     void showOverviewPage (LayerSet::Section s, int bank);

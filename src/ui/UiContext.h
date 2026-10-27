@@ -103,6 +103,8 @@ struct UiContext
     std::function<void (int slot)> openPluginEditor;
     /** Opens FX slot `slot` on the EFFECTS screen's device editor. */
     std::function<void (int slot)> editFx;
+    /** ROUTING > OUTPUTS on FX slot `slot`'s FX SEND (the outboard insert's SEND). */
+    std::function<void (int slot)> showFxSendOutputs;
     std::function<void (juce::AudioProcessor*)> pluginRemoved;
     std::function<void()> showPluginScanner;
 

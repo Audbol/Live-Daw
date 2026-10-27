@@ -665,8 +665,13 @@ std::vector<RoutingPage::Signal> RoutingPage::signals() const
     else if (signalGroup == Group::Monitor)
         for (int ch = 0; ch < kMonitorSignals; ++ch)
             list.push_back ({ nullptr, ch });
-    else if (signalGroup == Group::FxSend) // no FX sends here
-        list.assign ((size_t) routing::info (signalGroup).size, Signal { nullptr, -1 });
+    else if (signalGroup == Group::FxSend)
+    {
+        // FX SEND 2n-1 / 2n: FX slot n's outboard insert send (EXT, manual 11.11 p. 164).
+        for (int slot = 0; slot < kNumFx; ++slot)
+            for (int side = 0; side < 2; ++side)
+                list.push_back ({ nullptr, side, -1, slot });
+    }
     else
     {
         // Any source straight to an output (manual 5.4 OUTPUTS, chapter 2:
@@ -1033,13 +1038,33 @@ RoutingPage::Signal RoutingPage::feederOf (int port) const
     for (int ch = 0; ch < kMonitorSignals; ++ch)
         if (monitorOutput (ctx.engine, ch).load() == port)
             return { nullptr, ch };
+    for (int slot = 0; slot < kNumFx; ++slot)
+    {
+        auto& p = ctx.engine.getFx().params (slot);
+        if (p.sendLeft.load() == port)
+            return { nullptr, 0, -1, slot };
+        if (p.sendRight.load() == port)
+            return { nullptr, 1, -1, slot };
+    }
     return { nullptr, -1 };
+}
+
+void RoutingPage::showFxSends (int slot)
+{
+    setMode (Mode::Outputs);
+    signalGroup = Group::FxSend;
+    signalPage = juce::jlimit (0, juce::jmax (0, (2 * kNumFx - 1) / kSignalsPerPage), 2 * slot / kSignalsPerPage);
+    layoutTiles();
+    notifyStatusKeysChanged();
+    repaint();
 }
 
 juce::String RoutingPage::signalLabel (const Signal& sig) const
 {
     if (sig.channel < 0)
         return {};
+    if (sig.fx >= 0) // "FX 3L": FX SEND 5
+        return "FX " + juce::String (sig.fx + 1) + (sig.channel == 0 ? "L" : "R");
     if (sig.source >= 0) // a source: its name, else its label ("LCL 3", "USR 2")
         return sourceName (sig.source);
     if (sig.strip == nullptr) // PHONES L / R, SPKR L / R: separate outputs
@@ -1353,7 +1378,9 @@ void RoutingPage::paintSignal (juce::Graphics& g, juce::Rectangle<int> area, con
     auto strip = r.removeFromTop (r.getHeight() * 16.0f / 68.0f);
     g.setColour (colour);
     g.fillRect (strip);
-    const auto name = sig.strip != nullptr ? (hasCustomName (*sig.strip) ? stripName (*sig.strip).toUpperCase() : juce::String()) : monitorSignalName (sig.channel);
+    const auto name = sig.strip != nullptr ? (hasCustomName (*sig.strip) ? stripName (*sig.strip).toUpperCase() : juce::String())
+                      : sig.fx >= 0        ? (ctx.engine.getFx().isOutboard (sig.fx) ? juce::String ("OUTBOARD") : juce::String())
+                                           : monitorSignalName (sig.channel);
     if (name.isNotEmpty())
     {
         g.setColour (juce::Colours::black);
@@ -1368,7 +1395,9 @@ void RoutingPage::paintSignal (juce::Graphics& g, juce::Rectangle<int> area, con
 
     const bool stereo = sig.strip == nullptr || sig.strip->isOutput() || sig.strip->params.stereo.load();
     juce::String number;
-    if (sig.strip == nullptr)
+    if (sig.fx >= 0)
+        number = juce::String (sig.fx + 1) + (sig.channel == 0 ? "L" : "R");
+    else if (sig.strip == nullptr)
         number = monitorSignalNumber (sig.channel);
     else
         number = (sig.strip->getKind() == StripKind::Aux ? "A" : "") + juce::String (sig.strip->getNumber()) + (stereo ? (sig.channel == 0 ? "L" : "R") : "");
@@ -1385,7 +1414,8 @@ void RoutingPage::paintSignal (juce::Graphics& g, juce::Rectangle<int> area, con
         g.drawEllipse (juce::Rectangle<float> (d, d).withCentre ({ r.getX() + 32.0f * u, y }), juce::jmax (1.0f, wingPx (1.5f)));
         g.drawLine (r.getX() + 10.0f * u + d / 2.0f, y, r.getX() + 32.0f * u - d / 2.0f, y, juce::jmax (1.0f, wingPx (1.5f)));
     }
-    const char* chip = sig.strip == nullptr                            ? "MON"
+    const char* chip = sig.fx >= 0                                     ? "FX"
+                       : sig.strip == nullptr                          ? "MON"
                        : sig.strip->isBus()                            ? "BUS"
                        : sig.strip->getKind() == StripKind::Main       ? "MAIN"
                        : sig.strip->getKind() == StripKind::Matrix     ? "MTX"
@@ -2423,7 +2453,8 @@ void RoutingPage::paint (juce::Graphics& g)
         for (size_t i = 0; i < signalTiles.size(); ++i)
         {
             const auto& [area, sig] = signalTiles[i];
-            const bool feeds = sig.channel >= 0 && feeder.channel >= 0 && feeder.strip == sig.strip && feeder.channel == sig.channel && feeder.source == sig.source;
+            const bool feeds = sig.channel >= 0 && feeder.channel >= 0 && feeder.strip == sig.strip && feeder.channel == sig.channel
+                               && feeder.source == sig.source && feeder.fx == sig.fx;
             paintSignal (g, area, sig, signalPage * kSignalsPerPage + (int) i, feeds, i < signalPeaks.size() ? signalPeaks[i] : 0.0f);
         }
     }
@@ -2496,7 +2527,7 @@ void RoutingPage::clearOutput (int port)
         ctx.engine.getUsbRecorder().saveSettings (ctx.settings);
         return;
     }
-    // Strips, the monitor paths and a source patched there.
+    // Strips, the monitor paths, a source and an FX SEND patched there.
     ctx.engine.clearOutput (port);
 }
 
@@ -2507,6 +2538,8 @@ void RoutingPage::assignOutput (int port, const Signal& sig)
     // One signal per output. A strip has one output pair, so patching it to a
     // new output moves it there (engine item E4: many outputs per signal).
     // The RECORDER ports tap the signal instead, leaving its outputs alone.
+    if (routing::isRecorderPort (port) && sig.fx >= 0)
+        return; // the USB recorder taps strips only
     if (routing::isRecorderPort (port))
     {
         UsbRecorder::Tap tap;
@@ -2533,7 +2566,9 @@ void RoutingPage::assignOutput (int port, const Signal& sig)
     else
     {
         clearOutput (port);
-        if (sig.strip == nullptr)
+        if (sig.fx >= 0)
+            (sig.channel == 0 ? ctx.engine.getFx().params (sig.fx).sendLeft : ctx.engine.getFx().params (sig.fx).sendRight) = port;
+        else if (sig.strip == nullptr)
             monitorOutput (ctx.engine, sig.channel) = port;
         else
             (sig.channel == 0 ? sig.strip->params.outputLeft : sig.strip->params.outputRight) = port;

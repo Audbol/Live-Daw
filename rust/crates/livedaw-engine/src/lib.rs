@@ -11,6 +11,7 @@ pub mod engine;
 pub mod fft;
 pub mod fx;
 pub mod garbage;
+pub mod iosafes;
 pub mod keytap;
 pub mod listen;
 pub mod monitor;
