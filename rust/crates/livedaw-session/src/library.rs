@@ -11,7 +11,9 @@
 //! adds to the show and never touches the console: the scene or snippet holds
 //! strip references, and a recall skips strips the console doesn't have.
 
-use crate::show::{read_scene, read_snippet, scene_to_xml, snippet_to_xml, write_atomically, Show};
+use crate::presets::{self, PresetType};
+use crate::refs::StripRef;
+use crate::show::{read_scene, read_snippet, scene_to_xml, snippet_to_xml, write_atomically, SceneItem, Show};
 use crate::xml::{self, Element};
 use crate::{refs::refs_from_string, Scene, Snippet};
 use std::fs;
@@ -138,6 +140,57 @@ pub fn import_snippet(show: &mut Show, file: &Element, scene: i32) -> Result<i32
     }
     let snippet = parse_snippet(file.child("Snippet").ok_or("The file holds no snippet")?);
     Ok(show.insert_snippet(scene, snippet))
+}
+
+/// The audio files a clip scene can play (as the CLIP tab lists them).
+pub const CLIP_EXTENSIONS: &[&str] = &["wav", "wave", "flac", "aif", "aiff", "aifc", "mp3"];
+
+/// ADD ITEM TO SHOW (manual 5.6 p. 52): a snippet file, an audio clip, an FX
+/// preset (loading into FX slot `fx_slot`, 0-based) or a channel preset
+/// (loading onto `strip`) as a show item, with its name (the file's). A
+/// scene file is imported as a scene instead ([`import_scene`]); a show
+/// can't be added.
+pub fn item_from_file(path: &Path, fx_slot: usize, strip: StripRef) -> Result<(SceneItem, String), String> {
+    let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let extension = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let item = match extension.as_str() {
+        SNIPPET_EXTENSION => {
+            let file = load(path)?;
+            match info(&file) {
+                Some(i) if i.kind == FileType::Snippet => {}
+                _ => return Err("Not a snippet file".into()),
+            }
+            SceneItem::Snippet(parse_snippet(file.child("Snippet").ok_or("The file holds no snippet")?))
+        }
+        presets::FX_EXTENSION | presets::CHANNEL_EXTENSION => {
+            let preset = presets::load(path)?;
+            match presets::info(&preset).map(|i| i.kind) {
+                Some(PresetType::Fx) if fx_slot < livedaw_engine::params::NUM_FX => SceneItem::Fx { preset, slot: fx_slot },
+                Some(PresetType::Fx) => return Err(format!("FX {} doesn't exist", fx_slot + 1)),
+                Some(PresetType::Channel) => SceneItem::Channel { preset, strip },
+                None => return Err("Not a Sidecar preset".into()),
+            }
+        }
+        e if CLIP_EXTENSIONS.contains(&e) => {
+            if !path.is_file() {
+                return Err(format!("{} doesn't exist", path.display()));
+            }
+            SceneItem::Clip(path.to_path_buf())
+        }
+        SCENE_EXTENSION => return Err("A scene file is imported as a scene".into()),
+        _ => return Err("This file can't be added to a show".into()),
+    };
+    Ok((item, name))
+}
+
+/// A scene or snippet file's scene or snippet, for loading it onto the
+/// console without adding it to the show (the STARTUP folder).
+pub fn read_file(file: &Element) -> Result<Result<Scene, Snippet>, String> {
+    match info(file).map(|i| i.kind) {
+        Some(FileType::Scene) => Ok(Ok(parse_scene(file.child("Scene").ok_or("The file holds no scene")?))),
+        Some(FileType::Snippet) => Ok(Err(parse_snippet(file.child("Snippet").ok_or("The file holds no snippet")?))),
+        None => Err("Not a Sidecar scene or snippet file".into()),
+    }
 }
 
 // ---- files -------------------------------------------------------------------------------

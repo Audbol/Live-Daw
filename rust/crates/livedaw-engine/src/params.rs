@@ -31,8 +31,6 @@ pub const FX_EXT: usize = 1;
 /// The WING's channel and bus counts (this console can grow beyond them).
 pub const WING_CHANNELS: usize = 40;
 pub const WING_BUSES: usize = 16;
-/// Buses this console can feed from other buses (buses 9+ into buses 1-8).
-pub const BUS_TO_BUS_TARGETS: usize = 8;
 
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -447,11 +445,11 @@ pub struct StripParams {
     /// Bit n = member of mute group n+1.
     pub mute_group_mask: AtomicU32,
 
-    /// Matrices: direct input from an input channel.
+    /// Matrices: DIRECT IN (manual 6.4; `/mtx/n/dir`), added to the matrix's sum.
     pub direct_on: AtomicBool,
     pub direct_invert: AtomicBool,
-    pub direct_pre: AtomicBool,
-    /// Index of the input channel (-1 = none).
+    /// ABI 19: index into `routing::MATRIX_DIRECT_INPUTS` (OFF, AES, MON.PH,
+    /// MON.SPK, MON.BUS); before, an input channel's index.
     pub direct_source: AtomicI32,
     pub direct_level_db: AtomicF32,
 
@@ -760,8 +758,7 @@ impl StripParams {
             mute_group_mask: AtomicU32::new(0),
             direct_on: AtomicBool::new(false),
             direct_invert: AtomicBool::new(false),
-            direct_pre: AtomicBool::new(false),
-            direct_source: AtomicI32::new(-1),
+            direct_source: AtomicI32::new(crate::routing::matrix_direct::OFF),
             direct_level_db: AtomicF32::new(livedaw_dsp::fader::FADER_MIN),
             colour: AtomicI32::new(default_colour(kind)),
             icon: AtomicI32::new(0),

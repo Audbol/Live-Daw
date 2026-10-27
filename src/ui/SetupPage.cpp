@@ -2633,7 +2633,8 @@ void SetupPage::initialize (const state::Scope& chosen, juce::uint32 sources, bo
     }
     const int strips = everything ? 0 : initializeParts (ctx, chosen);
     // The source groups: the audio interface's inputs (LCL), the playback
-    // channels (CRD), the USB player (PLAY) and the oscillators (OSC).
+    // channels (CRD), the USB player (PLAY), the USER SIGNAL group (USR: also
+    // what each copies, back to OFF) and the oscillators (OSC).
     int sourceCount = 0;
     for (int i = 0; i < ctx.engine.getNumSources(); ++i)
     {
@@ -2641,10 +2642,23 @@ void SetupPage::initialize (const state::Scope& chosen, juce::uint32 sources, bo
         const auto group = Recorder::isPlaybackSource (port)    ? ScopeWindow::SourceCard
                            : UsbRecorder::isPlayerSource (port) ? ScopeWindow::SourcePlayer
                            : MixerEngine::isOscSource (port)    ? ScopeWindow::SourceOsc
+                           : MixerEngine::isUsrSource (port)    ? ScopeWindow::SourceUser
                                                                 : ScopeWindow::SourceLocal;
         if ((sources & (juce::uint32) group) != 0)
         {
             ctx.engine.initializeSource (i);
+            if (const int n = MixerEngine::usrChannelOf (port); n >= 0)
+            {
+                if (auto* u = ctx.engine.getUserSignal (n))
+                {
+                    u->group = 0;
+                    u->number = 1;
+                    u->side = 0;
+                    u->post = false;
+                }
+                else
+                    ctx.engine.setUserPatch (n - ld::kNumUserSignals, -1);
+            }
             ++sourceCount;
         }
     }

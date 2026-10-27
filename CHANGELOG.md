@@ -58,6 +58,44 @@ All notable changes to Sidecar are listed here. Versions follow
   Edit's name for the black WING) in all of them, and the finish changes it at once.
   Exported snapshots name the model as WING Edit's do. The serial
   `SIDECAR0001` and the firmware's `sidecar` still tell Sidecar apart.
+- Inputs straight to outputs (WING manual 2 and 5.4 OUTPUTS: "route any Source to any
+  digital or analog output"): on ROUTING > OUTPUTS every source group feeds outputs,
+  LOCAL IN, AES50, OSCILLATOR, WLIVE PLAY, USB PLAYER and USER SIGNAL included, without
+  a channel. The output plays the source after its gain, mute and polarity. An output
+  has one source: a source replaces the strip or monitor path there, and the other way
+  round. The RECORDER ports tap sources too. Saved with the show and recalled by scenes
+  with ROUTING (`<Patch>`); WING REMOTE: `/io/out/<grp>/<n>/grp` and `in` take every
+  input group.
+- Buses, mains and matrices as channel sources (WING manual 2.6, "All Buses, Mains and
+  Matrices can be selected as the Source for all Input and Aux channels"): ROUTING >
+  CHANNELS' BUS, MAIN and MATRIX groups show two tiles per strip (BUS 1L, BUS 1R ...)
+  with the strip's colour, name and icon; a touch patches the strip in stereo. The
+  channel hears it one audio block later (the WING: 38 samples): a channel that sends
+  to the bus it listens to is a feedback loop through that delay, as on the console.
+  WING REMOTE: `/ch/<n>/in/conn/grp` BUS, MAIN, MTX (number 2k-1 = strip k L, 2k = R).
+- User Signals and User Patches, the WING's USER SIGNAL group (WING manual 2.6): USR
+  1-24 copy an input channel, aux, bus, main or matrix, PRE (its tap point) or POST
+  (after its processing), its L, R or both mixed (L+R); USR 25-56 copy an external
+  source (a port, a playback channel, the USB player), so two ports from anywhere make a
+  stereo or mid/side source with their own gain and polarity. Both are sources: MUTE,
+  POL, name, colour, icon, tags and pairs (STEREO, MID/SIDE). ROUTING > SOURCES' USER
+  SIGNAL group sets them: SOURCE (the group, then the strip or port), L+R / L / R and
+  TAP PRE / POST. Channels patch them on CHANNELS (a user signal a block late; a user
+  patch in the same block), outputs on OUTPUTS (in the same block). WING REMOTE:
+  `/io/in/USR/<n>/user/grp`, `in`, `lr`, `tap` and the sources' `name`, `col`, `icon`,
+  `mute`, `pol`, `tags`, `mode`. Saved with the show (their settings with the sources).
+- ROUTING > SOURCES selects several sources by dragging over their tiles (WING manual
+  5.4: "Touch and drag to select multiple Sources. Parameter changes are applied to all
+  selected Sources"): GAIN (each in its group's range), +48V, POL, MUTE, MONO / STEREO /
+  MID/SIDE, INITIALIZE, colour, icon and mute groups go to all of them; the first one's
+  settings show. A touch selects one source again.
+- Bus to bus from any bus to any other bus (WING manual 5.10, BUS → BUS "from Bus 1-16
+  to BUS 1-16"): the sends of every bus on HOME, SENDS, the fader strips' sends on
+  fader and CONFIG's BUS → BUS. The engine runs a bus after the buses sending to it, so
+  a chain (Bus 2 → Bus 5 → Bus 1) arrives in the same block; a loop (Bus 3 → Bus 7 →
+  Bus 3) is cut at its lowest bus, whose loop send takes the previous block (the WING:
+  8 samples on every bus to bus send). WING REMOTE: `/bus/<n>/send/<m>/on`, `lvl`,
+  `pre` for every pair but a bus to itself.
 - SOLO SAFE on Channel Home (manual 5.5, Fig. 37-39): the MAIN panel follows SOLO MODE.
   LIVE shows SOLO BUS; STUDIO the mains 1-4 in a row with their PRE badges; SIP the
   SOLO SAFE locks on input and aux channels. A closed lock keeps SIP from muting the
@@ -102,7 +140,7 @@ All notable changes to Sidecar are listed here. Versions follow
   CUSTOMIZATION** (manual 5.10 p. 66, Fig. 60): send faders assigned show their
   source's or their destination's name, colour and icon, on the surface and the
   screens. SENDS starts with the **S** item (Fig. 59), the selected channel's send to
-  the destination, which follows the selection. C ABI version 18 (`FaderRefC.flags`,
+  the destination, which follows the selection. C ABI version 20 (`FaderRefC.flags`,
   `kFaderSelSend`).
 - WING REMOTE: the custom controls' function nodes (`ch`, `fx`, `par`, `other`, `CCBK`,
   `area`, `bank`, `pg`, `tgt`, `btn`, `send`, `mgrp`, `dca`, `tag`, `action`, `usbpr`,
@@ -111,6 +149,39 @@ All notable changes to Sidecar are listed here. Versions follow
   EDIT shows and sets a function's target and option; before, only its mode. The new
   key functions are its INS1, INS2, FXPAR and VIEWPAGE modes and OTHER's TBA, TBB,
   ALTSRC, DAWSW, MONA, MONB, MONAB, CHSOLO ... DCAMTR.
+- Recorder **SETTINGS** (status bar, as on the WING-LIVE screen, manual 8.1 p. 85-86):
+  **SHOW METERS** shows or hides the meters of the armed tracks, and **AUTO INPUT
+  SELECT** with **[STOP] / [PLAY] / [RECORD] INPUT** (KEEP, MAIN or ALT): when the
+  recorder stops, plays or records, the global MAIN / ALT switch goes to MAIN or ALT.
+  The channels follow it while INPUT SELECT is GLOBAL, as VIRTUAL SOUNDCHECK sets it,
+  so a virtual soundcheck can hear the recording on PLAY and the band on STOP and
+  RECORD. The switch happens before the first sample is recorded. WING REMOTE:
+  `/cards/wlive/meters`, `autoin`, `auto_stop`, `auto_play`, `auto_rec`.
+- Recorder **MODE A->B** (manual 8.1 fig. 75): MODE now steps PLAY (yellow), A->B
+  (blue) and LOOP (green). A->B plays from the range's start and stops exactly at its
+  end. The knobs under the display set the range (START and END, the loop borders in
+  LOOP). The mode is kept in the project; older projects play as before. WING REMOTE:
+  `/cards/wlive/1/cfg/playmode` (and `2`). C ABI version 18: `ld_rec_set_range`.
+- Shows hold files as scenes (manual 5.6 p. 52, fig. 45): a snippet, an audio clip, an
+  FX preset or a channel preset. **ADD ITEM TO SHOW** (SHOW tab; also **ADD** in the
+  status bar) adds the file selected at INT or USB after the selected scene. A scene
+  file comes in as a scene; an FX preset loads into the FX tab's slot, a channel
+  preset onto the selected strip. **SAVE + ADD** on SNIP, FX and CHAN saves and adds
+  in one go (on SNAP, SAVE already adds the scene). Recalling such a scene (GO, GO
+  NEXT, a tag, MIDI, a WING remote) loads the file: the snippet (with the scene's
+  fade), the preset, or the clip on the USB player. The scene list shows the type
+  (SNIP, WAV, FX, CHAN) and, once renamed, the file's name. The show keeps the
+  snippet and presets in itself and the clip's path. The SHOW tab shows the files
+  that can be added normally. Older shows load unchanged; older Sidecar versions see
+  such scenes as empty. C ABI version 18: `ld_scene_item_kind`, `ld_scene_item_text`,
+  `ld_show_add_item`, `ld_show_add_snippet_scene`, `ld_show_take_clips`.
+- **STARTUP** files (manual 5.6 p. 52 and chapter 10): a show, scene and snippet whose
+  names start with `STARTUP` in the library's `STARTUP` folder
+  (`Documents/Sidecar/Library/STARTUP`) load when Sidecar starts: the show first
+  (Sidecar's `.lshow`, else a WING `.show`), then the scene (`.lsnap`, else a WING
+  `.snap`) and the snippet (`.lsnip`). Holding SHIFT while Sidecar starts (the WING:
+  holding LIBRARY) or `--no-startup` skips them. C ABI version 18:
+  `ld_show_apply_library`.
 
 ### Changed
 
@@ -120,7 +191,6 @@ All notable changes to Sidecar are listed here. Versions follow
   layers 1-3 where those controls are free. WING REMOTE: `/$ctl/user/U1`-`U4`, `MM`
   and `D1`-`D4` are the COMPACT's key sets on the full-size console too (WING Edit
   lists them there); `U1`-`U3` were the F1-F3 layers.
-
 - SEL DBL CLICK = BUSFX opens INS 1 on mains and matrices too (it did on buses only),
   and INS 2 when INS 1 has no FX (manual 5.5 p. 48).
 - The blank key's LED blinks at the tempo while it can tap one (manual 5.5 p. 48); it
@@ -128,12 +198,31 @@ All notable changes to Sidecar are listed here. Versions follow
 - Surface lock: holding HOME (or Ctrl+L) now also locks the touchscreen and the
   display's knobs, leaving only the keys beside the display to unlock (it locked the
   surface only).
+- A matrix's DIRECT INPUT takes the WING's choices (WING manual 6.4: "AES/EBU, Phones,
+  Speakers or Solo bus"): OFF, AES (no AES/EBU input here: silent), MON.PH, MON.SPK,
+  MON.BUS, a block late (the monitor runs after the matrices), with ON, LEVEL and
+  INVERT; PRE is gone. WING REMOTE: `/mtx/<n>/dir/in`. Shows and scenes saved before,
+  whose direct input took a channel, give that channel a matrix send to the matrix
+  instead (on, at the direct input's level, PRE or post-fader with PAN LINK) when the
+  send is free; an inverted one (a mix-minus) loads not inverted, with a warning.
+- ROUTING > OUTPUTS' USER SIGNAL group holds USR 1-56 (before: the channels' own
+  outputs). Channels' direct outs from older shows still play and show on their
+  outputs; new ones are made with user signals.
+- C ABI version 19: `StripParams::directPre` is gone and `directSource` is the matrix
+  DIRECT IN choice; `UserSignalParams`, `UserPatchParams`, `ld_engine_user_signals`,
+  `ld_engine_user_patches`, `ld_source_set_user_patch`, `ld_engine_output_patch`,
+  `ld_engine_route_output_source`, `ld_engine_clear_output`, `ld_strip_source_input`;
+  `kNumSources` grows by the 56 USR sources.
 
 ### Fixed
 
 - The factory DAW layers (DAW 1-4: STOP, PLAY, CYCLE, RECORD ...) show on the surface
   and on CC EDIT; the custom controls read from the show left out the controls still
   at their factory assignment, and the next edit saved them empty.
+- ROUTING: the bus, main and matrix tiles (CHANNELS, SELECT MAIN INPUT) and the signal
+  tiles on OUTPUTS have live meters, as the input tiles already had: a strip signal
+  meters the strip's output, a source its peak, PHONES / SPEAKERS the monitor paths.
+  Their meters were drawn but stayed empty.
 - WING Edit (tested with 3.3.4 on both console models): its model request after
   connecting (it sets `/$syscfg/$cnsmdl` to "ModelRequest") is answered with the model,
   and any set Sidecar refuses over the Native protocol now answers the value that

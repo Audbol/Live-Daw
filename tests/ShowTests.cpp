@@ -655,6 +655,107 @@ public:
             dir.deleteRecursively();
         }
 
+        beginTest ("Shows hold clips, snippets and FX / CHAN presets as scenes (ADD ITEM TO SHOW, SAVE + ADD)");
+        {
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            test::setChannels (engine, 2);
+            auto& a = *engine.getChannels()[0];
+            auto& b = *engine.getChannels()[1];
+            const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("LiveDAWShowItemsTest");
+            dir.deleteRecursively();
+            dir.createDirectory();
+
+            // A clip (a short WAV) and a channel preset.
+            const auto clip = dir.getChildFile ("Walk in.wav");
+            {
+                juce::WavAudioFormat wav;
+                std::unique_ptr<juce::OutputStream> stream (clip.createOutputStream().release());
+                auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions().withSampleRate (48000.0).withNumChannels (2).withBitsPerSample (24));
+                expect (writer != nullptr);
+                juce::AudioBuffer<float> buf (2, 4800);
+                buf.clear();
+                writer->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
+            }
+            a.params.faderDb = -14.0f;
+            const auto preset = dir.getChildFile (juce::String ("Vox") + Show::channelPresetExtension);
+            expect (show.saveChannelPreset (state::StripRef::of (a), state::Fader, preset, "Vox").wasOk());
+            expect (Show::canAddToShow (clip) && Show::canAddToShow (preset) && ! Show::canAddToShow (dir.getChildFile ("x.lshow")));
+
+            expectEquals (show.addScene ("Snap"), 0);
+            juce::String error;
+            expectEquals (show.addItem (clip, -1, 0, state::StripRef::of (b), error), 1);
+            expectEquals (show.addItem (preset, -1, 0, state::StripRef::of (b), error), 2);
+            expectEquals (show.addItem (dir.getChildFile ("none.lfx"), -1, 0, state::StripRef::of (b), error), -1);
+            expect (error.isNotEmpty());
+            const auto clipScene = show.getScene (1);
+            expect (clipScene && clipScene->item == Show::ItemKind::Clip && clipScene->name == "Walk in" && clipScene->origin == "Walk in");
+            expect (juce::File (clipScene->target) == clip);
+            expect (show.getScene (2)->item == Show::ItemKind::Channel);
+
+            // Recalling them: the preset loads onto its strip, the clip plays on the USB player.
+            b.params.faderDb = 0.0f;
+            show.recallScene (2);
+            expectEquals (b.params.faderDb.load(), -14.0f);
+            show.recallScene (1);
+            expect (engine.getUsbRecorder().getCurrentFile() == clip);
+            engine.getUsbRecorder().stop();
+
+            // SAVE + ADD on SNIP: a snippet scene of its own; it survives a show file.
+            a.params.faderDb = -30.0f;
+            const auto down = state::Scope::only (state::Fader, { state::StripRef::of (a) });
+            expectEquals (show.addSnippetScene ("Down", &down, false, 1), 1);
+            expect (show.getScene (1)->item == Show::ItemKind::Snippet);
+            expectEquals (show.addSnippet (1, "x", state::Scope::only (state::Fader, { state::StripRef::of (a) })), -1);
+            auto xml = show.toXml();
+            MixerEngine engine2 (0);
+            Show loaded (engine2, host);
+            expect (loaded.loadFromXml (*xml).wasOk());
+            test::setChannels (engine2, 2);
+            expectEquals (loaded.getNumScenes(), 4);
+            engine2.getChannels()[0]->params.faderDb = 0.0f;
+            loaded.recallScene (1);
+            expectEquals (engine2.getChannels()[0]->params.faderDb.load(), -30.0f);
+            dir.deleteRecursively();
+        }
+
+        beginTest ("STARTUP files load at start-up");
+        {
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            test::setChannels (engine, 2);
+            auto& a = *engine.getChannels()[0];
+            const auto library = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("LiveDAWStartupTest");
+            library.deleteRecursively();
+            const auto folder = Show::startupFolder (library);
+            folder.createDirectory();
+
+            // A show with a scene, and a snippet that lowers channel 1.
+            a.params.faderDb = -5.0f;
+            show.setName ("Opener");
+            expectEquals (show.addScene ("Start"), 0);
+            a.params.faderDb = -40.0f;
+            expectEquals (show.addSnippet (0, "Quiet", state::Scope::only (state::Fader, { state::StripRef::of (a) })), 0);
+            a.params.faderDb = -5.0f;
+            expect (show.saveToFile (folder.getChildFile (juce::String ("STARTUP_opener") + Show::fileExtension)).wasOk());
+            expect (show.exportSnippet (0, 0, folder.getChildFile (juce::String ("STARTUP") + Show::snippetFileExtension)).wasOk());
+            // Not named STARTUP*: ignored.
+            expect (show.exportScene (0, folder.getChildFile (juce::String ("other") + Show::sceneFileExtension)).wasOk());
+
+            MixerEngine engine2 (0);
+            Show fresh (engine2, host);
+            const auto r = fresh.loadStartupFolder (folder, false);
+            expect (r.showFile == folder.getChildFile (juce::String ("STARTUP_opener") + Show::fileExtension));
+            expectEquals (r.loaded.size(), 2);
+            expect (r.errors.isEmpty(), r.errors.joinIntoString ("; "));
+            expectEquals (fresh.getNumScenes(), 1);
+            expectEquals (engine2.getChannels()[0]->params.faderDb.load(), -40.0f, "the snippet after the show");
+            expect (fresh.loadStartupFolder (library.getChildFile ("missing"), false).loaded.isEmpty());
+            library.deleteRecursively();
+        }
+
         beginTest ("Custom controls: the cache sees the factory DAW layers; F1-F3 of older shows move to layers 1-3");
         {
             MixerEngine engine (0);

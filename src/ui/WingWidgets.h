@@ -39,6 +39,15 @@ public:
     std::function<bool()> isOn;
     juce::Colour offColour = Colours::screenKey;
 
+    void setOnColour (juce::Colour c)
+    {
+        if (c != onColour)
+        {
+            onColour = c;
+            repaint();
+        }
+    }
+
     void setIcon (std::optional<Icon> keyIcon)
     {
         icon = keyIcon;

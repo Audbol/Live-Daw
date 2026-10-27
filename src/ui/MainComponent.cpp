@@ -195,6 +195,19 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
         else
             log.info (text);
     };
+    // AUTO INPUT SELECT (manual 8.1 p. 85-86): the recorder's stop, play and
+    // record status switch the global MAIN / ALT (the channels following it:
+    // INPUT SELECT GLOBAL, as VIRTUAL SOUNDCHECK sets it).
+    recording->onTransportModeChanged = [this] (daw::Session::TransportMode mode)
+    {
+        if (const auto alt = daw::Session::autoInputFor (&settings, mode); alt && *alt != engine.isGlobalAlt())
+        {
+            engine.setGlobalAlt (*alt);
+            static const char* const names[] = { "STOP", "PLAY", "RECORD" };
+            log.info (juce::String ("AUTO INPUT SELECT (") + names[(int) mode] + "): the channels listen to their " + (*alt ? "ALT" : "MAIN") + " inputs"
+                      + (engine.isInputSelectGlobal() ? juce::String() : juce::String (" (INPUT SELECT is not GLOBAL: no channel follows)")));
+        }
+    };
     ctx.recording = recording.get();
     ctx.showEditor = [this] (bool shown) { showEditor (shown); };
     ctx.isEditorShown = [this] { return editorShown; };
@@ -270,6 +283,9 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
                                                       midiRemote->apply (MidiRemote::Settings::load (settings));
                                                   break;
                                               }
+                                          // The recorder's MODE from a client (/cards/wlive/1/cfg/playmode).
+                                          if (keys.contains (daw::Session::playModeKey) && recording != nullptr)
+                                              recording->setPlayMode ((daw::Session::PlayMode) juce::jlimit (0, 2, settings.getIntValue (daw::Session::playModeKey)));
                                           if (keys.contains ("ui.selDblClick") || keys.contains ("setup.faderScreenLayerLink"))
                                               notifyLayersChangedAsync (ctx);
                                           // The COMPACT's fader 13 and 16 keys (/$ctl/cfg/mfdr, cscmode, mfdrkeep, dcacc...).

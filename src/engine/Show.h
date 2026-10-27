@@ -26,6 +26,10 @@ namespace livedaw
       Snippet  - a partial snapshot that belongs to a scene: chosen strips x chosen
                  sections. Fire it on its own, or mark it to fire automatically
                  straight after its scene is recalled.
+      Item     - as on the WING (manual 5.6 p. 52, fig. 45), a scene can also be
+                 a file added to the show: a snippet, an audio clip (played on
+                 the USB player), an FX preset (into an FX slot) or a channel
+                 preset (onto a strip). Recalling it loads the file.
 
     Scene and snippet recall never create or destroy channels or plugins, so
     recalling during a show can't cause dropouts.
@@ -39,9 +43,22 @@ class Show final : private juce::Timer
     ld::Show* handle; // declared before `layers`, which views the show's layer set
 
 public:
+    /** What a scene is: a console snapshot, or a file added to the show. */
+    enum class ItemKind
+    {
+        Snapshot,
+        Snippet,
+        Clip,
+        Fx,
+        Channel
+    };
+
     /** A copy of a scene's settings (change them with the setters below). */
     struct Scene
     {
+        ItemKind item = ItemKind::Snapshot;
+        juce::String origin; // an item's file name as added (shown with its type once renamed)
+        juce::String target; // where an item loads: the clip's path, "FX 3", "ch:4"
         juce::String name, notes;
         juce::uint32 scope = 0;
         double fadeSeconds = 0.0;
@@ -113,6 +130,37 @@ public:
     state::ApplyResult recallPrevious();
     /** Recalls the first non-skipped scene tagged `tag` (nothing if none). */
     state::ApplyResult recallSceneByTag (int tag);
+
+    //==============================================================================
+    // Show items (manual 5.6 p. 52): ADD ITEM TO SHOW and SAVE + ADD
+
+    /** The file types ADD ITEM TO SHOW takes: scene and snippet files, clips, FX and channel presets. */
+    static bool canAddToShow (const juce::File&);
+    /** ADD ITEM TO SHOW: a scene file is imported; a snippet file, clip, FX preset (loading into FX
+        slot `fxSlot`, 0-based) or channel preset (loading onto `strip`) becomes a scene of its own,
+        named after the file, at `index` (-1: appended). Its index, or -1 with `error`. */
+    int addItem (const juce::File&, int index, int fxSlot, const state::StripRef& strip, juce::String& error);
+    /** SAVE + ADD on SNIP: a snippet as a scene of its own at `index` (recorded: the parameters REC /
+        STOP recorded within `scope`, nullptr = all; else what `scope` covers). -1 if nothing to save. */
+    int addSnippetScene (const juce::String& snippetName, const state::Scope* scope, bool recorded, int index);
+
+    //==============================================================================
+    // STARTUP (manual 5.6 p. 52 and chapter 10): files named STARTUP* in the STARTUP folder
+
+    /** Loads a scene or snippet file onto the console without adding it to the show. */
+    state::ApplyResult applyLibraryFile (const juce::File&, juce::String& error);
+
+    struct StartupResult
+    {
+        juce::File showFile;           // the STARTUP show opened (Sidecar's), if any
+        juce::StringArray loaded, errors;
+    };
+    /** The STARTUP folder: <library>/STARTUP. */
+    static juce::File startupFolder (const juce::File& libraryFolder) { return libraryFolder.getChildFile ("STARTUP"); }
+    /** Loads the folder's STARTUP* files: a show first (Sidecar's .lshow, else a WING .show whose
+        snapshots become scenes), then a scene file (.lsnap, or a WING .snap) and a snippet file
+        (.lsnip) onto the console; of each type the first by name. */
+    StartupResult loadStartupFolder (const juce::File& folder, bool loadPlugins);
 
     //==============================================================================
     // Scopes beyond sections, GLOBAL safes, PARTIAL LOAD / UPDATE, RESTORE

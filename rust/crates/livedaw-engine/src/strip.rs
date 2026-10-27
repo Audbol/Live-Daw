@@ -22,9 +22,10 @@ use crate::keytap::{key_tap, stage_of, KeySource, StripKeyTaps, TAP_EQ_POST, TAP
 use crate::monitor::SoloPatch;
 use crate::params::{DcaParams, DynSlotParams, FxParams, StripKind, StripMeters, StripParams, NUM_MAINS, NUM_MATRICES};
 use crate::pdc::{pdc_tap, StripPdc};
+use crate::routing::{return_tap, strip_source_slot, ReturnRing};
 use crate::sends::SendBank;
 use crate::solo::StripConsole;
-use crate::sources::osc_channel;
+use crate::sources::{internal, osc_channel, usr_channel};
 use crate::tapsend::TapShaper;
 use livedaw_dsp::biquad::{Biquad, BiquadCoeffs};
 use livedaw_dsp::delay::{delay_samples, DelayLine};
@@ -33,9 +34,9 @@ use livedaw_dsp::wing::dynamics::{DynStatus, WingDynamics, DYN_BANDS};
 use livedaw_dsp::wing::eq::WingEq;
 use livedaw_dsp::wing::filter::WingFilter;
 use livedaw_dsp::wing::{EQ_MODELS_BUS, EQ_MODELS_CH, MAX_DYN_PARAMS, MAX_EQ_PARAMS, PROCESS_ORDERS};
-use livedaw_recorder::{playback_channel, usb_player_channel, NUM_PLAYBACK_CHANNELS, USB_CHANNELS};
+use livedaw_recorder::{playback_channel, usb_player_channel};
 use std::cell::UnsafeCell;
-use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 
 /// Tap points (TAP_POINTS order). WING names: INPUT, FILTER, TAP 3/4/5 (after
@@ -89,8 +90,10 @@ pub(crate) struct ProcessContext<'a> {
 #[derive(Clone, Copy)]
 pub(crate) struct KeyStrips<'a> {
     pub auxes: &'a [Arc<Strip>],
-    /// The buses in any order (found by id).
-    pub buses: [&'a [Arc<Strip>]; 2],
+    /// The buses by slot (found by id), and the wave each runs in this block
+    /// (`routing::BusSchedule`, same order).
+    pub buses: &'a [Arc<Strip>],
+    pub bus_waves: &'a [u16],
     pub mains: &'a [Arc<Strip>],
     pub matrices: &'a [Arc<Strip>],
 }
@@ -101,11 +104,22 @@ impl<'a> KeyStrips<'a> {
         let found = match kind {
             StripKind::Channel => None,
             StripKind::Aux => self.auxes.get(i),
-            StripKind::Bus => self.buses.iter().flat_map(|b| b.iter()).find(|b| b.id() as usize == i),
+            StripKind::Bus => self.buses.iter().find(|b| b.id() as usize == i),
             StripKind::Main => self.mains.get(i),
             StripKind::Matrix => self.matrices.get(i),
         };
         found.map(|s| s.as_ref())
+    }
+
+    /// The stage strip (`kind`, `id`) runs in this block (`keytap::stage_of`).
+    pub fn stage(&self, kind: StripKind, id: i32) -> u32 {
+        let wave = match kind {
+            StripKind::Bus => {
+                self.buses.iter().position(|b| b.id() == id).and_then(|i| self.bus_waves.get(i)).copied().unwrap_or(0)
+            }
+            _ => 0,
+        };
+        stage_of(kind, wave)
     }
 }
 
@@ -251,7 +265,7 @@ pub struct Strip {
     /// The GATE and DYNAMICS slots' dynamic EQ bands: live gain in dB, signed
     /// (outside `StripMeters`, whose layout is part of the C ABI).
     pub band_meters: DynBandMeters,
-    /// Sends to buses (channels/aux: all buses; buses 9+: buses 1-8).
+    /// Sends to buses (channels/aux: all buses; buses: every other bus).
     pub sends: SendBank,
     /// UI metadata (never touched by the audio thread).
     name: Mutex<String>,
@@ -264,10 +278,31 @@ pub struct Strip {
     pub pdc: StripPdc,
     /// Input channels: the taps other strips' keys read (`keytap.rs`).
     pub keys: StripKeyTaps,
+    /// Buses, mains and matrices: their output and tap one block late, for
+    /// the readers that run before them (`routing.rs`).
+    returns: StripReturns,
     dsp: UnsafeCell<StripDsp>,
     last_main: [UnsafeCell<[f32; 2]>; NUM_MAINS],
     last_mtx: [UnsafeCell<[f32; 2]>; NUM_MATRICES],
     last_solo: UnsafeCell<f32>,
+}
+
+/// A bus's, main's or matrix's signals read one block late: a channel
+/// patched to it, a bus send that closes a loop (`routing.rs`). The ring
+/// holds OUT L/R then TAP L/R (`return_tap`) and is only written while some
+/// reader wants that signal.
+struct StripReturns {
+    ring: UnsafeCell<ReturnRing>,
+    /// Audio thread, per return tap: a reader asked for it this block, and
+    /// its ring holds the signal.
+    wanted: [AtomicBool; 2],
+    live: [AtomicBool; 2],
+}
+
+impl Default for StripReturns {
+    fn default() -> Self {
+        Self { ring: UnsafeCell::new(ReturnRing::default()), wanted: Default::default(), live: Default::default() }
+    }
 }
 
 /// Live gains of a strip's dynamic EQ bands (DEQ, DEQ2), written by the audio thread.
@@ -311,6 +346,7 @@ impl Strip {
             console: StripConsole::default(),
             pdc: StripPdc::default(),
             keys: StripKeyTaps::default(),
+            returns: StripReturns::default(),
             dsp: UnsafeCell::new(StripDsp::new()),
             last_main: Default::default(),
             last_mtx: Default::default(),
@@ -455,12 +491,67 @@ impl Strip {
         p.write(pdc_tap::OUT, d.out(0, n), d.out(1, n));
     }
 
+    /// Audio thread, before the block's stages: a reader wants return tap
+    /// `tap` (`return_tap`) of this bus, main or matrix this block.
+    pub(crate) fn want_return(&self, tap: usize) {
+        if let Some(w) = self.returns.wanted.get(tap) {
+            w.store(true, Relaxed);
+        }
+    }
+
+    /// Audio thread, after every reader said what it wants and before any
+    /// stage runs: the wanted taps' rings are written this block (one that
+    /// starts now starts silent), the others aren't.
+    pub(crate) unsafe fn commit_returns(&self) {
+        let r = &self.returns;
+        for tap in 0..2 {
+            let wanted = r.wanted[tap].swap(false, Relaxed);
+            if wanted && !r.live[tap].load(Relaxed) {
+                let ring = &*r.ring.get();
+                ring.clear(2 * tap);
+                ring.clear(2 * tap + 1);
+            }
+            r.live[tap].store(wanted, Relaxed);
+        }
+    }
+
+    /// Owning task, after the strip ran: this block into the wanted return
+    /// rings, at the return clock's position `pos`.
+    pub(crate) unsafe fn write_returns(&self, pos: usize, n: usize) {
+        let r = &self.returns;
+        let ring = &*r.ring.get();
+        let d = self.dsp();
+        if r.live[return_tap::OUT].load(Relaxed) {
+            ring.write(0, pos, d.out(0, n));
+            ring.write(1, pos, d.out(1, n));
+        }
+        if r.live[return_tap::TAP].load(Relaxed) {
+            ring.write(2, pos, d.tap_signal(0, n));
+            ring.write(3, pos, d.tap_signal(1, n));
+        }
+    }
+
+    /// Return tap `tap`, side `ch`, one block late (None unless wanted this block).
+    pub(crate) unsafe fn read_return(&self, tap: usize, ch: usize, pos: usize, n: usize) -> Option<&[f32]> {
+        let r = &self.returns;
+        if !r.live.get(tap)?.load(Relaxed) {
+            return None;
+        }
+        (*r.ring.get()).read(2 * tap + ch.min(1), pos, n)
+    }
+
     /// # Safety
     /// The audio thread must not be able to reach this strip (device stopped or
     /// strip not yet published).
     pub(crate) unsafe fn prepare(&self, sample_rate: f64, max_block: usize) {
         self.pdc.drop_rings(); // sized for the old block size; the next plan rebuilds them
         self.keys.drop_all();
+        if self.kind.is_output() {
+            *self.returns.ring.get() = ReturnRing::new(4, max_block);
+            for live in &self.returns.live {
+                live.store(false, Relaxed);
+            }
+        }
         let d = &mut *self.dsp.get();
         d.sample_rate = sample_rate;
         d.max_block = max_block.max(1);
@@ -966,7 +1057,7 @@ impl Strip {
                 // An aux, bus, main or matrix: this block's tap from an earlier
                 // stage, else the previous block's; silence until it has a buffer.
                 let Some(s) = ctx.key_strips.get(kind, i) else { return false };
-                let current = stage_of(kind, s.id) < stage_of(self.kind, self.id);
+                let current = ctx.key_strips.stage(kind, s.id) < ctx.key_strips.stage(self.kind, self.id);
                 if !s.keys.read(buffer, ctx.block, current, &mut d.key[..n]) {
                     d.key[..n].fill(0.0);
                 }
@@ -1137,15 +1228,21 @@ impl Strip {
 
 /// The buffer of input source `index`: hardware input `index`, playback
 /// channel `index - PLAYBACK_SOURCE_BASE`, USB PLAYER channel `index -
-/// USB_PLAYER_SOURCE_BASE` or oscillator `index - OSC_SOURCE_BASE` (after
-/// the playback channels in `playback`, in that order). None = not connected.
+/// USB_PLAYER_SOURCE_BASE`, oscillator `index - OSC_SOURCE_BASE`, USR
+/// source `index - USR_SOURCE_BASE` or strip source `index -
+/// STRIP_SOURCE_BASE` (in `playback`, laid out as `sources::internal`).
+/// None = not connected.
 pub(crate) fn source_ptr(hw: &[*const f32], playback: &[*const f32], index: i32) -> Option<*const f32> {
     let p = if let Some(n) = playback_channel(index) {
-        playback.get(n)
+        playback.get(internal::PLAYBACK + n)
     } else if let Some(n) = usb_player_channel(index) {
-        playback.get(NUM_PLAYBACK_CHANNELS + n)
+        playback.get(internal::USB + n)
     } else if let Some(n) = osc_channel(index) {
-        playback.get(NUM_PLAYBACK_CHANNELS + USB_CHANNELS + n)
+        playback.get(internal::OSC + n)
+    } else if let Some(n) = usr_channel(index) {
+        playback.get(internal::USR + n)
+    } else if let Some(n) = strip_source_slot(index) {
+        playback.get(internal::STRIP + n)
     } else {
         hw.get(usize::try_from(index).ok()?)
     };

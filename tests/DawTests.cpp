@@ -66,6 +66,7 @@ public:
         testImportAndRender();
         testFormats();
         testSessionSetups();
+        testPlayModesAndAutoInput();
     }
 
 private:
@@ -848,6 +849,75 @@ private:
 
             session.armAll (false);
             expectEquals (session.getNumArmed(), 0);
+        }
+    }
+
+    void testPlayModesAndAutoInput()
+    {
+        beginTest ("MODE A->B stops at the range's end; AUTO INPUT SELECT follows the transport");
+        {
+            TempFolder temp;
+            MixerEngine engine (0);
+            constexpr int kBlock = 128;
+            engine.prepareOffline (48000.0, kBlock, 2, 2);
+            auto& recorder = engine.getRecorder();
+            juce::PropertiesFile::Options options;
+            juce::PropertiesFile settings (temp.folder.getChildFile ("test.settings"), options);
+            Session session (recorder, &settings);
+            session.setDefaultFolder (temp.folder);
+            auto& p = session.getProject();
+            std::vector<Session::TransportMode> modes;
+            session.onTransportModeChanged = [&modes] (Session::TransportMode m) { modes.push_back (m); };
+
+            std::vector<float> in0 (kBlock), out0 (kBlock), out1 (kBlock);
+            auto run = [&] (int blocks)
+            {
+                for (int b = 0; b < blocks; ++b)
+                {
+                    recorder.waitForDisk();
+                    const float* ins[] = { in0.data(), in0.data() };
+                    float* outs[] = { out0.data(), out1.data() };
+                    engine.processBlock (ins, 2, outs, 2, kBlock);
+                }
+            };
+
+            // A new project plays on (PLAY); the MODE follows into the settings for the WING remote.
+            expect (session.getPlayMode() == Session::PlayMode::Play);
+            p.setLoop (4800, 9600);
+            session.setPlayMode (Session::PlayMode::AToB);
+            expect (p.isAToBOn() && ! p.isLoopOn());
+            expectEquals (settings.getIntValue (Session::playModeKey), 1);
+
+            // A->B plays from A and stops exactly at B.
+            session.locate (0);
+            session.play();
+            expect (modes.size() == 1 && modes[0] == Session::TransportMode::Play);
+            for (int i = 0; i < 400 && session.getState() != Recorder::State::Stopped; ++i)
+                run (1);
+            expect (session.getState() == Recorder::State::Stopped);
+            expectEquals ((int) session.getPosition(), 9600);
+
+            // LOOP (the editor's loop key too) clears A->B.
+            session.setLoopEnabled (true);
+            expect (session.getPlayMode() == Session::PlayMode::Loop && ! p.isAToBOn());
+            expectEquals (settings.getIntValue (Session::playModeKey), 2);
+            session.setPlayMode (Session::PlayMode::Play);
+            session.play();
+            session.stop();
+            expect (modes.back() == Session::TransportMode::Stop);
+
+            // AUTO INPUT SELECT: OFF does nothing; then STOP -> MAIN, PLAY -> ALT, RECORD keeps.
+            using TM = Session::TransportMode;
+            expect (! Session::autoInputFor (&settings, TM::Play).has_value());
+            settings.setValue (Session::autoInputModeKeys[0], 1);
+            settings.setValue (Session::autoInputModeKeys[1], 2);
+            settings.setValue (Session::autoInputModeKeys[2], juce::var (0));
+            expect (! Session::autoInputFor (&settings, TM::Play).has_value(), "AUTO INPUT SELECT is OFF");
+            settings.setValue (Session::autoInputKey, 1);
+            expect (Session::autoInputFor (&settings, TM::Play) == std::optional<bool> (true));
+            expect (Session::autoInputFor (&settings, TM::Stop) == std::optional<bool> (false));
+            expect (! Session::autoInputFor (&settings, TM::Record).has_value(), "KEEP");
+            expect (! Session::autoInputFor (nullptr, TM::Play).has_value());
         }
     }
 };

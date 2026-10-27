@@ -155,6 +155,27 @@ fn play_and_locate_are_sample_accurate() {
 }
 
 #[test]
+fn a_to_b_stops_exactly_at_b() {
+    // The WING-LIVE's MODE A->B (manual 8.1, fig. 75): playback stops at the stop point.
+    let dir = temp_dir("atob");
+    let file = ramp_file(&dir, 100_000);
+    let mut d = Driver::new();
+    d.rec.set_playlist(&Playlist { tracks: vec![PlaybackTrack::new(0, 1, vec![Clip::new(&file, 0, 100_000)])] });
+    d.rec.set_range(LoopRange::a_to_b(10_000, 13_000));
+    d.rec.locate(10_000);
+    d.rec.play();
+    d.roll(0);
+    d.run(20, 0);
+    assert_eq!(d.rec.state(), TransportState::Stopped);
+    assert_eq!(d.rec.position(), 13_000, "stopped on B");
+    let last = rolling(&d.chunks).last().unwrap();
+    assert_eq!(last.pos + last.samples.len() as i64, 13_000, "the last chunk ends on B");
+    assert_eq!(rolling(&d.chunks).map(|c| c.samples.len()).sum::<usize>(), 3_000, "A to B, once");
+    drop(d);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
 fn the_loop_wraps_on_a_chunk_boundary() {
     let dir = temp_dir("loop");
     let file = ramp_file(&dir, 100_000);

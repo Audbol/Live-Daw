@@ -1627,3 +1627,122 @@ fn plugin_chains_are_saved_loaded_and_recalled_whole() {
     let preset = presets::capture_fx(&engine, &mut bridge, 2, "Chain").unwrap();
     assert_eq!(presets::info(&preset).unwrap().detail, "A + B");
 }
+
+// ---- show items: snippets, clips, FX and channel presets as scenes (manual 5.6 p. 52) -----
+
+#[test]
+fn shows_hold_snippets_clips_and_presets_as_scenes() {
+    use livedaw_dsp::wing::FX_MODELS;
+    use livedaw_session::library;
+    use livedaw_session::presets;
+    use livedaw_session::show::item_kind;
+    let fx = |t: &str| model_index(FX_MODELS, t).unwrap();
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    set_channels(&engine, 4);
+    let (a, b) = (ch(&engine, 0), ch(&engine, 1));
+    let dir = std::env::temp_dir().join(format!("livedaw-items-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // The files: an FX preset, a channel preset, a snippet and a clip.
+    assert!(engine.set_fx_model(1, fx("HALL"), true));
+    engine.controls.fx[1].param("dcy").unwrap().store(4.5);
+    presets::save(&dir.join("Hall.lfx"), &presets::capture_fx(&engine, &mut np, 1, "Hall").unwrap()).unwrap();
+    a.params.eq.on.store(true, Relaxed);
+    a.params.fader_db.store(-12.0);
+    presets::save(
+        &dir.join("Vox.lchn"),
+        &presets::capture_channel(&engine, &mut np, &StripRef::of(&a), section::FADER, "Vox").unwrap(),
+    )
+    .unwrap();
+    let mut show = Show::new();
+    show.add_scene(&engine, &mut np, "Snap", -1);
+    a.params.fader_db.store(-3.0);
+    show.add_snippet(&engine, &mut np, 0, "Up", section::FADER, vec![StripRef::of(&a)]);
+    library::export(&show, 0, 0, &dir.join("Vocal up.lsnip")).unwrap();
+    std::fs::write(dir.join("R_1.wav"), b"RIFF").unwrap();
+
+    // ADD ITEM TO SHOW: each becomes a scene named after its file.
+    let target = StripRef::of(&b);
+    for (i, file) in ["Hall.lfx", "Vox.lchn", "Vocal up.lsnip", "R_1.wav"].iter().enumerate() {
+        let (item, name) = library::item_from_file(&dir.join(file), 6, target).unwrap();
+        assert_eq!(show.add_item(item, &name, -1), i as i32 + 1);
+    }
+    assert!(library::item_from_file(&dir.join("x.lshow"), 0, target).is_err(), "a show can't be added");
+    assert!(library::item_from_file(&dir.join("missing.wav"), 0, target).is_err());
+    let kinds: Vec<_> = show.scenes().iter().map(|s| s.item_kind()).collect();
+    assert_eq!(kinds, [item_kind::SNAPSHOT, item_kind::FX, item_kind::CHANNEL, item_kind::SNIPPET, item_kind::CLIP]);
+    assert_eq!(show.scene(1).unwrap().item.as_ref().unwrap().target(), "FX 7");
+    assert_eq!((show.scene(3).unwrap().name.as_str(), show.scene(3).unwrap().origin.as_str()), ("Vocal up", "Vocal up"));
+    // Item scenes hold no snapshot and no snippets.
+    assert_eq!(show.add_snippet(&engine, &mut np, 3, "x", section::FADER, vec![StripRef::of(&a)]), -1);
+    show.store_scene(&engine, &mut np, 3);
+    assert!(show.scene(3).unwrap().state.is_none());
+
+    // Through a show file (old Sidecar versions see scenes without a state).
+    show.scene_mut(4).unwrap().name = "Walk-in".into();
+    let (e2, mut loaded) = round_trip(&engine, &show);
+    set_channels(&e2, 4);
+    assert_eq!(
+        loaded.scene(4).map(|s| (s.name.as_str(), s.origin.as_str(), s.item_kind())),
+        Some(("Walk-in", "R_1", item_kind::CLIP))
+    );
+
+    // Recalling them loads the files: the FX preset into its slot, the
+    // channel preset onto its strip, the snippet, and the clip for the host.
+    let r = loaded.recall_scene(&e2, &mut np, 1);
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert_eq!((e2.controls.fx[6].model_index(), e2.controls.fx[6].param("dcy").unwrap().load()), (fx("HALL"), 4.5));
+    loaded.recall_scene(&e2, &mut np, 2);
+    assert_eq!(ch(&e2, 1).params.fader_db.load(), -12.0);
+    loaded.recall_scene(&e2, &mut np, 3);
+    assert_eq!(ch(&e2, 0).params.fader_db.load(), -3.0);
+    assert!(loaded.take_pending_clips().is_empty());
+    loaded.recall_next(&e2, &mut np);
+    assert_eq!(loaded.current_scene(), 4);
+    assert_eq!(loaded.take_pending_clips(), [dir.join("R_1.wav")]);
+    assert!(loaded.take_pending_clips().is_empty(), "taken once");
+    // RESTORE loads an item too; PARTIAL LOAD has nothing to load.
+    ch(&e2, 0).params.fader_db.store(0.0);
+    loaded.recall_scene_with(&e2, &mut np, 3, Some(&Scope::console(section::ALL)), false);
+    assert_eq!(ch(&e2, 0).params.fader_db.load(), 0.0);
+    loaded.recall_scene_with(&e2, &mut np, 3, None, false);
+    assert_eq!(ch(&e2, 0).params.fader_db.load(), -3.0);
+
+    // SAVE + ADD on the SNIP tab: a snippet scene of its own.
+    ch(&e2, 2).params.fader_db.store(-20.0);
+    let scope = Scope::strips(section::FADER, vec![StripRef::of(&ch(&e2, 2))]);
+    let i = loaded.add_snippet_scene(&e2, &mut np, "Ch3 down", Some(&scope), false, 1);
+    assert_eq!((i, loaded.scene(1).unwrap().item_kind()), (1, item_kind::SNIPPET));
+    ch(&e2, 2).params.fader_db.store(0.0);
+    loaded.recall_scene(&e2, &mut np, 1);
+    assert_eq!(ch(&e2, 2).params.fader_db.load(), -20.0);
+    assert_eq!(loaded.add_snippet_scene(&e2, &mut np, "none", None, true, -1), -1, "nothing recorded");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn startup_scene_and_snippet_files_load_without_joining_the_show() {
+    use livedaw_session::library;
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    set_channels(&engine, 2);
+    let a = ch(&engine, 0);
+    let mut show = Show::new();
+    a.params.fader_db.store(-6.0);
+    show.add_scene(&engine, &mut np, "Start", -1);
+    show.add_snippet(&engine, &mut np, 0, "Mute", section::FADER, vec![StripRef::of(&a)]);
+    let scene = library::scene_file(&show, 0).unwrap();
+    let snippet = library::snippet_file(&show, 0, 0).unwrap();
+
+    let mut other = Show::new();
+    a.params.fader_db.store(0.0);
+    let Ok(Ok(sc)) = library::read_file(&scene) else { panic!("a scene file") };
+    other.apply_scene(&engine, &mut np, &sc);
+    assert_eq!(a.params.fader_db.load(), -6.0);
+    a.params.fader_db.store(0.0);
+    let Ok(Err(sn)) = library::read_file(&snippet) else { panic!("a snippet file") };
+    Show::apply_snippet(&engine, &mut np, &sn);
+    assert_eq!(a.params.fader_db.load(), -6.0);
+    assert_eq!((other.num_scenes(), other.current_scene()), (0, -1));
+}

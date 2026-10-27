@@ -105,12 +105,12 @@ public:
 
     void runTest() override
     {
-        beginTest ("The C ABI is version 17 and both sides agree on the layout");
+        beginTest ("The C ABI is version 19 and both sides agree on the layout");
         {
-            expectEquals (ld::kAbiVersion, 18);
+            expectEquals (ld::kAbiVersion, 20);
             ld::LayoutInfo info {};
             ld::ld_layout_info (&info);
-            expectEquals ((int) info.abiVersion, 18);
+            expectEquals ((int) info.abiVersion, 20);
             const char* mismatch = ld::verifyLayout();
             expect (mismatch == nullptr, mismatch != nullptr ? juce::String (mismatch) : juce::String());
         }

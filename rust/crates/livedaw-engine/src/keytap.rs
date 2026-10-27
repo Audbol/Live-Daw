@@ -141,16 +141,16 @@ pub fn key_buffer(source: KeySource, sc_tap: i32) -> usize {
     }
 }
 
-/// The stage a strip runs in (`engine.rs`: 1 input and aux channels, 3
-/// buses 9+, 4 buses 1-8, 5 mains, 6 matrices). A key from a strip of an
-/// earlier stage is of this block.
-pub(crate) fn stage_of(kind: StripKind, id: i32) -> u8 {
+/// The stage a strip runs in (`engine.rs`: the input and aux channels, then
+/// the buses in their waves of this block (`routing::BusSchedule`, `bus_wave`:
+/// a bus runs after the buses sending to it), the mains, the matrices). A key
+/// from a strip of an earlier stage is of this block.
+pub(crate) fn stage_of(kind: StripKind, bus_wave: u16) -> u32 {
     match kind {
         StripKind::Channel | StripKind::Aux => 1,
-        StripKind::Bus if id.max(0) as usize >= crate::params::BUS_TO_BUS_TARGETS => 3,
-        StripKind::Bus => 4,
-        StripKind::Main => 5,
-        StripKind::Matrix => 6,
+        StripKind::Bus => 2 + bus_wave as u32,
+        StripKind::Main => u32::MAX - 1,
+        StripKind::Matrix => u32::MAX,
     }
 }
 
@@ -469,7 +469,7 @@ mod tests {
         assert_eq!(taps(Aux), [0, 2, 5, 6, 3, TAP_INS2]);
         assert_eq!(key_buffer(KeySource::Channel(0), 7), 7);
         assert!(
-            stage_of(Aux, 0) < stage_of(Bus, 8) && stage_of(Bus, 8) < stage_of(Bus, 7) && stage_of(Bus, 7) < stage_of(Main, 0)
+            stage_of(Aux, 0) < stage_of(Bus, 0) && stage_of(Bus, 0) < stage_of(Bus, 1) && stage_of(Bus, 15) < stage_of(Main, 0)
         );
         assert!(stage_of(Main, 3) < stage_of(Matrix, 0));
     }

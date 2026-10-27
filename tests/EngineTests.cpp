@@ -290,11 +290,14 @@ public:
             rig.run();
             expectWithinAbsoluteError (rig.out (4), 0.75f * kCentre, 1.0e-4f);
 
+            // DIRECT IN MON.SPK (manual 6.4), inverted: the SPEAKERS (Main 1) cancel Main 1.
+            engine.monitorLevelDb = 0.0f;
             mtx.params.directOn = true;
-            mtx.params.directSource = 1;
+            mtx.params.directLevelDb = 0.0f;
+            mtx.params.directSource = ld::kDirectSpeakers;
             mtx.params.directInvert = true;
             rig.run();
-            expectWithinAbsoluteError (rig.out (4), 0.5f * kCentre, 1.0e-4f);
+            expectWithinAbsoluteError (rig.out (4), 0.0f, 1.0e-4f);
         }
 
         beginTest ("Buses beyond the WING's 16");

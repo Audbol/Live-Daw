@@ -184,8 +184,10 @@ This list matches the notice Sidecar shows at start-up.
   matrices up to 8192 samples; solo, monitoring, direct outs and recorder taps are
   not compensated.
 - **WING remote apps:** the WING network protocols answer every parameter of the
-  WING 3.1 tree but one; 89.4 % drive the engine or Sidecar's settings, the rest
-  answers the WING's factory value and is stored but does nothing. WING Edit 3.3.4
+  WING 3.1 tree but one; 92.9 % drive the engine or Sidecar's settings (of 79,326,
+  counting every processing model's parameters and every custom control mode's
+  function nodes); the rest answers the WING's factory value and is stored but does
+  nothing. WING Edit 3.3.4
   works with it (sync both ways, live control, FX, processing models, inserts; a
   plugin's FX slot shows as an EXTERNAL effect); the parameters WING Edit knows from
   firmware newer than 3.1 are ignored. WING Copilot has not been tried, and exported

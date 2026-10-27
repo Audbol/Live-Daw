@@ -232,7 +232,7 @@ fn upper_buses_feed_buses_1_to_8() {
 }
 
 #[test]
-fn matrix_takes_mains_and_mix_minus_direct_input() {
+fn matrix_takes_mains_and_a_monitor_path_as_direct_input() {
     let mut rig = Rig::new(2, 2, 6);
     set_channels(&rig.engine, 2);
     rig.ch(1).params.input_left.store(1, Relaxed);
@@ -245,12 +245,15 @@ fn matrix_takes_mains_and_mix_minus_direct_input() {
     rig.run(20);
     assert!(close(rig.out(4), 0.75 * CENTRE, 1e-4));
 
-    // Mix-minus: subtract channel 2 (post fader, panned) with the direct input.
+    // DIRECT IN MON.SPK, inverted: the SPEAKERS (Main 1 at 0 dB) cancel Main 1.
+    let c = &rig.engine.controls;
+    c.monitor_level_db.store(0.0);
     mtx.params.direct_on.store(true, Relaxed);
-    mtx.params.direct_source.store(1, Relaxed);
+    mtx.params.direct_level_db.store(0.0);
+    mtx.params.direct_source.store(livedaw_engine::routing::matrix_direct::SPEAKERS, Relaxed);
     mtx.params.direct_invert.store(true, Relaxed);
     rig.run(20);
-    assert!(close(rig.out(4), 0.5 * CENTRE, 1e-4), "{}", rig.out(4));
+    assert!(close(rig.out(4), 0.0, 1e-4), "{}", rig.out(4));
 }
 
 #[test]

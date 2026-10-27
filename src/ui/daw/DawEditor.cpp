@@ -423,7 +423,7 @@ public:
         {
             case Recorder::State::Stopped:   return "STOP";
             case Recorder::State::Starting:  return "STARTING";
-            case Recorder::State::Playing:   return session.isLoopEnabled() ? "PLAY LOOP" : "PLAY";
+            case Recorder::State::Playing:   return session.isLoopEnabled() ? "PLAY LOOP" : session.getPlayMode() == daw::Session::PlayMode::AToB ? "PLAY A->B" : "PLAY";
             case Recorder::State::Recording: return "RECORD";
         }
         return {};

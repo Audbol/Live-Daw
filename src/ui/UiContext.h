@@ -381,6 +381,22 @@ inline juce::String inputPortName (int input, int pad = 0)
         return MixerEngine::oscSourceName (n);
     if (const int ch = Recorder::playbackChannelOf (input); ch >= 0)
         return Recorder::playbackSourceName (ch);
+    // The USER SIGNAL group and the strips' signals (manual 2.6): "USR 3", "BUS 12L", "MTX 2R".
+    if (const int n = MixerEngine::usrChannelOf (input); n >= 0)
+        return "USR " + juce::String (n + 1).paddedLeft ('0', pad);
+    if (MixerEngine::isStripSource (input))
+    {
+        int n = input - ld::kStripSourceBase;
+        const char* prefix = "BUS ";
+        if (n >= 2 * kWingBuses)
+        {
+            n -= 2 * kWingBuses;
+            prefix = n >= 2 * kNumMains ? "MTX " : "MAIN ";
+            if (n >= 2 * kNumMains)
+                n -= 2 * kNumMains;
+        }
+        return prefix + juce::String (n / 2 + 1) + (n % 2 == 0 ? "L" : "R");
+    }
     constexpr int kBlock = 48; // ports per group (routing::kBlock)
     if (input >= 0 && input < 3 * kBlock)
     {
@@ -399,6 +415,9 @@ inline juce::String inputSourceText (int left, int right, bool stereo)
     const auto l = inputPortName (left);
     if (! stereo)
         return l;
+    // A bus, main or matrix's L and R: "BUS 12".
+    if (MixerEngine::isStripSource (left) && (left - ld::kStripSourceBase) % 2 == 0 && (right < 0 || right == left + 1))
+        return l.dropLastCharacters (1);
     return l + "/" + inputPortName (right >= 0 ? right : left + 1).fromLastOccurrenceOf (" ", false, false);
 }
 
