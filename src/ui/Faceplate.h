@@ -87,6 +87,8 @@ public:
     int getNumPages() const noexcept;
     int getPage() const noexcept { return page; }
     void setPage (int);
+    /** The page a parameter picks (a tab bound to one, e.g. a band select), or -1. */
+    int pageFromParameter() const;
 
     /** Draws only the panel (no controls): for small thumbnails. */
     static void paintThumbnail (juce::Graphics&, juce::Rectangle<float>, models::Table, int model, const juce::String& caption);

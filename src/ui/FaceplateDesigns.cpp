@@ -1401,6 +1401,9 @@ namespace
         d.path ("M 900 330 L 1098 190 L 1098 330 Z", 0x30000000, 0.0f);
         if (! graphParams.empty())
             d.add (Type::Graph, 904, 194, 190, 132).shows (graph, std::move (graphParams), variant); // the screen shows the envelope
+        // In the FX menu and the rack the screen shows the program's letters (WING 3.1).
+        d.badge = juce::String (name).substring (0, 2);
+        d.badgeArea = { 900, 190, 198, 140 };
         for (int k = 0; k < 3; ++k)
         {
             if (k >= (int) layers.size())

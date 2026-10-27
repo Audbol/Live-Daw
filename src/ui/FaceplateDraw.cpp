@@ -5,6 +5,8 @@
 #include <cmath>
 #include <functional>
 #include <map>
+#include <tuple>
+#include <utility>
 
 namespace livedaw::ui::fp
 {
@@ -586,6 +588,42 @@ namespace
                 g.fillEllipse (circle (polar (c, r * 0.9f, a), r * 0.06f));
                 break;
             }
+            case lookIndex (Look::ArcRing):
+            {
+                // A flat screen knob: a grey track, the value as a coloured arc, a white pointer.
+                const float half = rad (e.sweep) * 0.5f, mid = rad (e.centre);
+                juce::Path track, value;
+                track.addCentredArc (c.x, c.y, r * 0.9f, r * 0.9f, 0.0f, mid - half, mid + half, true);
+                value.addCentredArc (c.x, c.y, r * 0.9f, r * 0.9f, 0.0f, mid - half, a, true);
+                g.setColour (Colour (0xff4c545a));
+                g.strokePath (track, juce::PathStrokeType (r * 0.07f));
+                g.setColour (e.colour);
+                g.strokePath (value, juce::PathStrokeType (r * 0.07f));
+                pointerLine (g, c, r * 0.05f, r * 0.62f, a, juce::jmax (2.0f, r * 0.08f), Colour (0xfff4f4f4));
+                break;
+            }
+            case lookIndex (Look::BarKnob):
+            {
+                shadow (g, c, r);
+                juce::ColourGradient body (Colour (0xff3a3a3a), c.x - r * 0.5f, c.y - r, Colour (0xff040404), c.x + r * 0.4f, c.y + r, false);
+                g.setGradientFill (body);
+                g.fillEllipse (circle (c, r));
+                g.setColour (juce::Colours::white.withAlpha (0.14f));
+                g.drawEllipse (circle (c, r - 0.8f), 1.0f);
+                // The bar: along the pointer, a raised ridge with a lit edge.
+                juce::Path bar;
+                bar.addRoundedRectangle (-r * 0.3f, -r * 1.0f, r * 0.6f, r * 2.0f, r * 0.26f);
+                const auto t = juce::AffineTransform::rotation (a).translated (c);
+                g.setColour (juce::Colours::black.withAlpha (0.55f));
+                g.fillPath (bar, t.translated (r * 0.06f, r * 0.12f));
+                juce::ColourGradient bg (Colour (0xff4a4a4a), c.x - r * 0.4f, c.y - r * 0.6f, Colour (0xff080808), c.x + r * 0.4f, c.y + r * 0.7f, false);
+                g.setGradientFill (bg);
+                g.fillPath (bar, t);
+                g.setColour (juce::Colours::white.withAlpha (0.2f));
+                g.strokePath (bar, juce::PathStrokeType (1.0f), t);
+                pointerLine (g, c, r * 0.5f, r * 0.9f, a, juce::jmax (2.0f, r * 0.09f), Colour (0xfff4f4f4));
+                break;
+            }
             case lookIndex (Look::BlackDot):
             {
                 shadow (g, c, r);
@@ -792,8 +830,24 @@ namespace
             }
             case lookIndex (Look::Hidden):
                 break;
+            case lookIndex (Look::PianoKey):
+            {
+                // Lit: the key's colour; unlit (the note left out): dimmed.
+                g.setColour (juce::Colours::black.withAlpha (0.6f));
+                g.fillRoundedRectangle (r.translated (1.5f, 2.5f), 4.0f);
+                const auto fill = on ? e.colour : e.colour.darker (0.7f);
+                juce::ColourGradient kg (fill.brighter (0.15f), r.getX(), r.getY(), fill.darker (0.2f), r.getX(), r.getBottom(), false);
+                g.setGradientFill (kg);
+                g.fillRoundedRectangle (r, 4.0f);
+                g.setColour (e.colour2.withAlpha (on ? 1.0f : 0.45f));
+                g.setFont (face (Look::Sans, e.size));
+                g.drawText (e.text, r, juce::Justification::centred);
+                break;
+            }
             case lookIndex (Look::TabKey):
             {
+                if (e.text.isEmpty())
+                    break; // an invisible tab: a touch area (a band on a graph)
                 const auto base = e.colour2.isOpaque() && e.colour2 != Colour (0xff000000) ? e.colour2 : Colour (0xffcfcfcf);
                 juce::ColourGradient kg (on ? base.darker (0.15f) : base.brighter (0.1f), r.getX(), r.getY(), on ? base.darker (0.5f) : base.darker (0.3f),
                                          r.getX(), r.getBottom(), false);
@@ -1009,6 +1063,21 @@ namespace
 
     void drawFader (juce::Graphics& g, const Element& e, float pos)
     {
+        if (! e.vertical)
+        {
+            // Sideways: drawn as a vertical fader turned a quarter (minimum on the left).
+            juce::Graphics::ScopedSaveState keep (g);
+            const auto c = Rectangle<float> (e.x, e.y, e.w, e.h).getCentre();
+            g.addTransform (juce::AffineTransform::rotation (kPi * 0.5f, c.x, c.y));
+            auto upright = e;
+            upright.vertical = true;
+            upright.x = c.x - e.h * 0.5f;
+            upright.y = c.y - e.w * 0.5f;
+            upright.w = e.h;
+            upright.h = e.w;
+            drawFader (g, upright, pos); // a quarter turn clockwise: the top (maximum) comes to the right
+            return;
+        }
         const Rectangle<float> r (e.x, e.y, e.w, e.h);
         const float capH = juce::jmin (e.w * 0.55f, 26.0f);
         auto slot = r.withSizeKeepingCentre (juce::jmax (4.0f, e.w * 0.08f), r.getHeight() - capH);
@@ -1072,6 +1141,17 @@ namespace
                 }
                 break;
             }
+            case lookIndex (Look::Plate):
+            {
+                Design unit;
+                unit.plate = r;
+                unit.panel = e.colour;
+                unit.texture = static_cast<Texture> (e.choice);
+                unit.wear = e.fixed;
+                unit.screws = e.vertical;
+                drawPlate (g, unit, false);
+                break;
+            }
             case lookIndex (Look::Line):
                 g.setColour (e.colour);
                 if (e.h <= 0.0f || e.w <= 0.0f)
@@ -1105,14 +1185,49 @@ namespace
 
     void drawValueBox (juce::Graphics& g, const Element& e, const models::Param& p, float v)
     {
-        const Rectangle<float> r (e.x, e.y, e.w, e.h);
+        Rectangle<float> r (e.x, e.y, e.w, e.h);
+        if (e.look == Look::Wheel)
+        {
+            // A round window: the entry picked in the middle, its neighbours fading above and below.
+            g.setColour (e.colour2);
+            g.fillEllipse (r.withSizeKeepingCentre (juce::jmin (r.getWidth(), r.getHeight()) + 30.0f, juce::jmin (r.getWidth(), r.getHeight()) + 30.0f));
+            const int n = juce::jmax (1, p.choices.size()), at = juce::jlimit (0, n - 1, juce::roundToInt (v - p.min));
+            const float row = r.getHeight() / 8.0f;
+            for (int k = -3; k <= 3; ++k)
+            {
+                const int i = at + k;
+                if (i < 0 || i >= n)
+                    continue;
+                const float fade = 1.0f - 0.27f * (float) std::abs (k);
+                g.setColour (k == 0 ? e.band : e.colour.withAlpha (fade));
+                g.setFont (face (Look::Sans, e.size * (k == 0 ? 1.1f : (1.0f - 0.08f * (float) std::abs (k)))));
+                g.drawText (p.choices[i].trim(), Rectangle<float> (r.getX(), r.getCentreY() + row * ((float) k - 0.5f), r.getWidth(), row),
+                            juce::Justification::centred);
+            }
+            return;
+        }
         g.setColour (e.colour2);
         g.fillRect (r);
         auto text = consoleText (p, v);
         if (e.look == Look::Segment)
-            text = text.upToFirstOccurrenceOf (" ", false, false);
+        {
+            const auto [number, unit] = segmentText (text);
+            text = e.unitAt != 0 ? number : text.upToFirstOccurrenceOf (" ", false, false);
+            if (e.unitAt != 0 && unit.isNotEmpty())
+            {
+                // The unit in small print beside the digits, at the top.
+                auto side = e.unitAt == 1 ? r.removeFromLeft (e.labelSize * 2.6f) : r.removeFromRight (e.labelSize * 2.6f);
+                g.setColour (e.colour);
+                g.setFont (face (Look::Sans, e.labelSize));
+                g.drawText (unit, side.reduced (2.0f, 4.0f), juce::Justification::topLeft);
+            }
+        }
         g.setColour (e.colour.withAlpha (0.12f));
-        g.setFont (face (e.look, e.size));
+        auto font = face (e.look, e.size);
+        // A longer text than the window was sized for shrinks to fit ("0.30" in a "5.0" window).
+        if (const float tw = juce::GlyphArrangement::getStringWidth (font, text), room = r.getWidth() - 8.0f; tw > room && tw > 0.0f)
+            font = face (e.look, e.size * room / tw);
+        g.setFont (font);
         if (e.look == Look::Segment)
         {
             // Unlit segments behind the digits: every digit position shows an 8.
@@ -1516,8 +1631,36 @@ namespace
     }
 
     /** A reverb's envelope: pre-delay, then the tail (level 0 .. -60 dB). */
+    /** An envelope follower's shape: ATTACK up, HOLD, RELEASE down (ms), in green as on the console. */
+    void drawEnvelope (juce::Graphics& g, Rectangle<float> r, const GraphInput& in)
+    {
+        const float att = in.ms (0, 1000.0f), hold = in.ms (1, 2000.0f), rel = in.ms (2, 1000.0f);
+        const float total = juce::jmax (1.0f, att + hold + rel);
+        auto body = r.reduced (6.0f, 8.0f);
+        const auto xOf = [&] (float t) { return body.getX() + body.getWidth() * (0.08f + 0.84f * t / total); };
+        juce::Path env;
+        env.startNewSubPath (body.getX(), body.getBottom());
+        env.lineTo (xOf (0.0f), body.getBottom());
+        env.lineTo (xOf (att), body.getY());
+        env.lineTo (xOf (att + hold), body.getY());
+        env.lineTo (xOf (att + hold + rel), body.getBottom());
+        env.lineTo (body.getRight(), body.getBottom());
+        const Colour green (0xff30e050);
+        g.setColour (green.withAlpha (0.25f));
+        auto fill = env;
+        fill.closeSubPath();
+        g.fillPath (fill);
+        g.setColour (green);
+        g.strokePath (env, juce::PathStrokeType (3.0f));
+    }
+
     void drawDecay (juce::Graphics& g, Rectangle<float> r, const GraphInput& in)
     {
+        if (in.e.choice == 3)
+        {
+            drawEnvelope (g, r, in);
+            return;
+        }
         const int variant = juce::jmax (0, in.e.choice);
         const float pre = in.ms (0, 200.0f);
         const float decay = juce::jmax (10.0f, in.ms (variant == 0 ? 1 : 2, 1000.0f));
@@ -1769,6 +1912,50 @@ namespace
         }
     }
 
+    /** A multiband compressor's bands (the C5-COMBINATOR's screen): five
+        coloured band shapes rising to each band's threshold offset, the
+        selected band filled; a dB scale from +10 to -20. */
+    void drawBands (juce::Graphics& g, Rectangle<float> r, const GraphInput& in)
+    {
+        auto body = r.withTrimmedLeft (26.0f).reduced (4.0f, 8.0f);
+        const auto yOf = [&body] (float db) { return body.getY() + (10.0f - db) / 30.0f * body.getHeight(); };
+        g.setFont (face (Look::Sans, 11.0f));
+        for (int db = 10; db >= -20; db -= 5)
+        {
+            g.setColour (db == 0 ? kGridMain : kGridLine);
+            g.drawHorizontalLine (juce::roundToInt (yOf ((float) db)), body.getX(), body.getRight());
+            g.setColour (kGridText);
+            g.drawText ((db > 0 ? "+" : "") + juce::String (db), Rectangle<float> (r.getX(), yOf ((float) db) - 7.0f, 26.0f, 14.0f),
+                        juce::Justification::centredRight);
+        }
+        for (int k = 1; k < 10; ++k)
+        {
+            g.setColour (kGridLine);
+            g.drawVerticalLine (juce::roundToInt (body.getX() + body.getWidth() * (float) k / 10.0f), body.getY(), body.getBottom());
+        }
+        const Colour colours[] = { Colour (0xffff6a60), Colour (0xfff0a040), Colour (0xffc080f0), Colour (0xff9a80ff), Colour (0xff40d0e0) };
+        const float edges[] = { 0.0f, 0.19f, 0.37f, 0.57f, 0.75f, 1.0f };
+        const int selected = in.has (5) ? juce::roundToInt (in.value (5) - in.param (5)->min) : -1;
+        const float slant = body.getWidth() * 0.025f;
+        for (int b = 0; b < 5; ++b)
+        {
+            const float x0 = body.getX() + body.getWidth() * edges[b], x1 = body.getX() + body.getWidth() * edges[b + 1];
+            const float top = yOf (juce::jlimit (-20.0f, 10.0f, in.value ((size_t) b)));
+            juce::Path shape;
+            shape.startNewSubPath (b == 0 ? x0 : x0 - slant, body.getBottom());
+            shape.lineTo (b == 0 ? x0 : x0 + slant, top);
+            shape.lineTo (b == 4 ? x1 : x1 - slant, top);
+            shape.lineTo (b == 4 ? x1 : x1 + slant, body.getBottom());
+            if (b == selected)
+            {
+                g.setColour (colours[b].withAlpha (0.25f));
+                g.fillPath (shape);
+            }
+            g.setColour (colours[b]);
+            g.strokePath (shape, juce::PathStrokeType (2.0f));
+        }
+    }
+
     void drawGraph (juce::Graphics& g, const Element& e, const PaintContext& ctx)
     {
         const Rectangle<float> r (e.x, e.y, e.w, e.h);
@@ -1788,6 +1975,7 @@ namespace
             case GraphKind::DeEss: drawDeEss (g, inner, in); break;
             case GraphKind::Filter: drawFilter (g, inner, in); break;
             case GraphKind::Levels: drawLevels (g, inner, in); break;
+            case GraphKind::Bands: drawBands (g, inner, in); break;
         }
     }
 
@@ -1806,6 +1994,23 @@ namespace
 } // namespace
 
 //==============================================================================
+std::pair<juce::String, juce::String> segmentText (const juce::String& text)
+{
+    int i = 0;
+    while (i < text.length() && juce::String ("0123456789.+-k").containsChar (text[i]))
+        ++i;
+    auto number = text.substring (0, i);
+    auto unit = text.substring (i).trim();
+    if (number.containsChar ('k'))
+    {
+        number = number.replaceCharacter ('k', '.');
+        unit = "k" + unit;
+    }
+    if (unit == "ms" || unit == "s")
+        unit = unit.toUpperCase();
+    return { number, unit };
+}
+
 float controlPosition (const models::Param& p, float value)
 {
     return juce::jlimit (0.0f, 1.0f, p.toNormalised (value));
@@ -1841,6 +2046,8 @@ juce::Rectangle<float> hitArea (const Element& e)
 
 bool elementOn (const Element& e, const models::Param& p, float value)
 {
+    if (e.type == Type::Lamp && e.marks.size() >= 2)
+        return value >= e.marks[0] && value < e.marks[1];
     const int v = juce::roundToInt (value);
     if (e.choice >= 0)
         return v == juce::roundToInt (p.min) + e.choice || (e.alsoOn >= 0 && v == juce::roundToInt (p.min) + e.alsoOn);
@@ -1850,6 +2057,8 @@ bool elementOn (const Element& e, const models::Param& p, float value)
 
 float clickValue (const Element& e, const models::Param& p, float value)
 {
+    if (e.type == Type::Lamp && e.marks.size() >= 3)
+        return e.marks[2];
     const float lo = juce::jmin (p.min, p.max), hi = juce::jmax (p.min, p.max);
     const bool twoState = juce::roundToInt (hi - lo) == 1;
     if (e.choice >= 0 && ! twoState)
@@ -1860,6 +2069,36 @@ float clickValue (const Element& e, const models::Param& p, float value)
 
 void paintDesign (juce::Graphics& g, const Design& d, const PaintContext& ctx)
 {
+    if (ctx.thumbnail && d.collage.size() > 1 && ctx.page >= 0)
+    {
+        // The pages side by side in slanted slices, each tinted, white lines between (the FX menu's CH tiles).
+        const auto r = d.plate;
+        const int n = (int) d.collage.size();
+        const float slant = r.getHeight() * 0.18f, w = r.getWidth() / (float) n;
+        const auto xAt = [&] (int i, bool top) { return i == 0 ? r.getX() - 1.0f : (i == n ? r.getRight() + 1.0f : r.getX() + w * (float) i + (top ? slant : -slant)); };
+        for (int i = 0; i < n; ++i)
+        {
+            juce::Path slice;
+            slice.addQuadrilateral (xAt (i, true), r.getY(), xAt (i + 1, true), r.getY(), xAt (i + 1, false), r.getBottom(), xAt (i, false), r.getBottom());
+            juce::Graphics::ScopedSaveState keep (g);
+            g.reduceClipRegion (slice);
+            // The slice shows the middle of its page.
+            g.addTransform (juce::AffineTransform::translation ((float) i * w + w * 0.5f - r.getWidth() * 0.5f, 0.0f));
+            auto page = ctx;
+            page.page = i;
+            page.thumbnail = true;
+            auto bare = d;
+            bare.collage.clear();
+            bare.backdrop = false;
+            paintDesign (g, bare, page);
+            g.setColour (d.collage[(size_t) i].withAlpha (0.5f));
+            g.fillRect (r);
+        }
+        g.setColour (juce::Colours::white);
+        for (int i = 1; i < n; ++i)
+            g.drawLine (xAt (i, true), r.getY(), xAt (i, false), r.getBottom(), r.getHeight() * 0.025f);
+        return;
+    }
     if (d.backdrop)
     {
         g.drawImage (backdropImage (g.getInternalContext().getPhysicalPixelScaleFactor()), { 0.0f, 0.0f, kFrameW, kFrameH },
@@ -1901,6 +2140,13 @@ void paintDesign (juce::Graphics& g, const Design& d, const PaintContext& ctx)
             case Type::Value:
                 if (p != nullptr)
                     drawValueBox (g, e, *p, v);
+                else if (! e.params.empty() && ctx.spec != nullptr)
+                {
+                    // A readout: the control last touched, else the first it names.
+                    const int shown = ctx.touched >= 0 && ctx.touched < (int) ctx.spec->params.size() ? ctx.touched : e.params.front();
+                    if (shown >= 0 && shown < (int) ctx.spec->params.size())
+                        drawValueBox (g, e, ctx.spec->params[(size_t) shown], ctx.value (shown));
+                }
                 break;
             case Type::Path:
             {
@@ -1915,6 +2161,33 @@ void paintDesign (juce::Graphics& g, const Design& d, const PaintContext& ctx)
         }
         if (p != nullptr && e.param == ctx.touched && bubbleAt == nullptr && e.type != Type::Value)
             bubbleAt = &e;
+    }
+    if (ctx.thumbnail && d.badge.isNotEmpty())
+    {
+        const auto r = d.badgeArea;
+        g.setColour (Colour (0xff2a0806));
+        g.fillRect (r);
+        g.setColour (Colour (0xff36d8d0));
+        g.setFont (face (Look::Sans, r.getHeight() * 0.8f));
+        g.drawText (d.badge, r.reduced (6.0f, 0.0f), juce::Justification::centred, false);
+    }
+    // The knob selected (last touched) is framed by corner brackets, as on the console.
+    if (bubbleAt != nullptr && bubbleAt->type == Type::Knob && ! ctx.thumbnail)
+    {
+        const auto box = Rectangle<float> (bubbleAt->w * 1.3f, bubbleAt->w * 1.3f).withCentre ({ bubbleAt->x, bubbleAt->y });
+        const float len = box.getWidth() * 0.2f;
+        juce::Path corners;
+        for (auto [cx, cy, dx, dy] : { std::tuple { box.getX(), box.getY(), 1.0f, 1.0f }, { box.getRight(), box.getY(), -1.0f, 1.0f },
+                                       { box.getX(), box.getBottom(), 1.0f, -1.0f }, { box.getRight(), box.getBottom(), -1.0f, -1.0f } })
+        {
+            corners.startNewSubPath (cx + dx * len, cy);
+            corners.lineTo (cx, cy);
+            corners.lineTo (cx, cy + dy * len);
+        }
+        g.setColour (juce::Colours::black.withAlpha (0.5f));
+        g.strokePath (corners, juce::PathStrokeType (4.0f));
+        g.setColour (Colour (0xfff0f0f0));
+        g.strokePath (corners, juce::PathStrokeType (2.0f));
     }
     if (ctx.showValue && bubbleAt != nullptr)
     {

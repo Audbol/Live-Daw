@@ -263,6 +263,30 @@ All notable changes to Sidecar are listed here. Versions follow
   (manual 5.8 p. 63).
 ### Changed
 
+- FX pages measured from the manual's figures of the console's pages (chapter 11) and a
+  real WING's EFFECTS screens: GATED and REVERSE REVERB (the WING digital reverb with its
+  LCD, red value display and bar knobs), DELAY/REVERB ("Dual FX"), SHIMMER, SPRING,
+  VINTAGE ROOM (value tiles round the data wheel), VINTAGE REVERB (levers and LED ladders
+  you click), VSS3 (TC ICON remote: six faders, the preset wheel and the MAIN / ER / TAIL /
+  MOD layers), DIMENSION CRS, STEREO FLANGER, ULTRATAP, TAPE DELAY, OILCAN, BBD, STEREO and
+  DUAL PITCH, GRAPHIC EQ (TRUE CURVE switch on both pages), PIA 560, DOUBLE VOCAL, PITCH FIX
+  (note keys), PRECISION LIMITER, 2-BAND DEESSER, C5-COMBINATOR (band screen; touch a band
+  to edit it), ULTRA ENHANCER, EXCITER, PSYCHO BASS, ROTARY, PHASER and TREMOLO/PANNER
+  (attack-hold-release graph), TAPE MACHINE, MOOD FILTER, SUB OCTAVER, SUB MONSTER, VELVET
+  IMAGER, SPEAKER MANAGER (FILTER / DYN EQ / LIMITER), the five guitar amps and BODYREZ.
+- The channel strips (EVEN, SOUL, VINTAGE, BUS CHANNEL, MASTERING) show each section as the
+  unit it recreates (Even 88 gate, SOUL 9000, 76 limiter, Pulsar, LA leveler, Warmth, Bus
+  comp, Tape, Mach EQ4, Enhancer, Precision limiter), a tab per section; their FX menu
+  tiles are tinted collages of those panels, as on the console.
+- The FX menu's HALL, ROOM, CHAMBER, PLATE, CONCERT and AMBIENCE tiles show the program's
+  letters ("HA", "RO"...) and EXTERNAL shows the EXTERNAL EFFECT page, as on a WING.
+- The EXTERNAL EFFECT page follows Fig. 169: SEND, FX MODE (MONO / STEREO / MID/SIDE rows,
+  the mode in use green), RETURN, the meters' scales either side.
+- An FX rack tile shows the control a WING shows: REVERSE RISE, DELAY/REVERB TIME, SPEAKER
+  MANAGER TILT F, PRECISION LIMITER SQUEEZE, ROTARY SPD CTL, TAPE MACHINE DRIVE, PITCH FIX
+  AMOUNT.
+- The knob last touched on an FX page is framed by corner brackets, as on the console.
+
 - A new EXTERNAL (EXT) effect starts at FX MODE ST and LATENCY 45, as on the WING (checked
   by a WING owner and in WING Edit 3.3.4); it started at M and 0. A plugin hosted in the
   slot still uses its own reported latency.
