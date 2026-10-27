@@ -216,6 +216,9 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Fixed
 
+- WING REMOTE: a processing or FX model changed right after a client connected (before
+  the first change poll) now sends all of the new model's parameters, as later changes
+  do; parameters that happened to equal the old model's could be left out.
 - The factory DAW layers (DAW 1-4: STOP, PLAY, CYCLE, RECORD ...) show on the surface
   and on CC EDIT; the custom controls read from the show left out the controls still
   at their factory assignment, and the next edit saved them empty.

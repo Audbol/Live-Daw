@@ -104,6 +104,15 @@ impl Client {
         }
     }
 
+    /// Returns once the server answered a get: the session is registered and
+    /// changes from now on reach it (a fixed pause was too short on CI).
+    fn settle(&mut self) {
+        self.send(&[0xd7]);
+        self.send(&id("/ch/1/fdr").to_be_bytes());
+        self.send(&[0xdc]);
+        self.read_until(|_, ends| ends >= 1);
+    }
+
     /// `ROOT DATA?`: the whole console, as WING Edit's MIXER -> PC asks for it.
     fn dump(&mut self) -> Vec<(u32, Value)> {
         self.read_for(Duration::from_millis(300));
@@ -326,7 +335,7 @@ fn the_model_request_is_answered() {
 fn a_model_switch_reaches_connected_clients() {
     let (_e, st, server) = start(ConsoleModel::Full);
     let mut edit = Client::connect(&server);
-    edit.read_for(Duration::from_millis(300));
+    edit.settle();
     st.set_console_model(ConsoleModel::Compact);
     let want = (id("/$syscfg/$cnscfg"), Value::str("wing-compact"));
     let (vals, _) = edit.read_until(|v, _| v.contains(&want));
@@ -341,7 +350,7 @@ fn a_new_model_sends_all_its_parameters() {
     let (e, st, server) = start(ConsoleModel::Full);
     let c = Console::new(&e, &st);
     let mut edit = Client::connect(&server);
-    edit.read_for(Duration::from_millis(300));
+    edit.settle();
     let s = schema();
     // A model whose parameters include one equal to the default model's at
     // the same position (same id, same value): a plain change list skips it.

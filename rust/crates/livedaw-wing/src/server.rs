@@ -444,10 +444,15 @@ impl Shared {
             return;
         }
         // A value changed meanwhile is the old one here: the next poll sends it.
-        let now = self.snapshot(&self.console());
+        // The slots' models are taken with it (first), so that a model changed
+        // before that poll counts as renewed and sends all its parameters.
+        let c = self.console();
+        let models: Vec<Option<usize>> = (0..schema().slots.len()).map(|i| c.active_model(i as u16)).collect();
+        let now = self.snapshot(&c);
         let mut cache = lock(&self.notify);
         if cache.is_none() {
             *cache = Some(now.into_iter().collect());
+            *lock(&self.slot_models) = models;
         }
     }
 
