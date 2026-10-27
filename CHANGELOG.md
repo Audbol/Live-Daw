@@ -234,6 +234,19 @@ All notable changes to Sidecar are listed here. Versions follow
 - PITCH FIX: a note key switched on disables that note (the console starts with all
   keys off and every note corrected); it was the other way round. Shows and FX presets
   saved before keep the notes they corrected.
+- Meters: one set of ballistics for every level meter (screens, fader strip and
+  channel strip LEDs, the main meter, ROUTING's tiles, the USB recorder, the dynamics
+  graph's output, the remote meter stream): the full peak at once, a 24 dB/s fall and
+  a 1 s peak hold (METERS screen) that then falls at the same rate. Before, most
+  meters fell about 180 dB/s (a click barely showed on the surface) while the METERS
+  screen's hold and the recorder fell at their own rates, so one signal read
+  differently on different meters.
+- The fader strips' LED meters follow SETUP > SURFACE > METERING (pre- or post-fader
+  per kind of strip, manual 5.5) instead of always showing the input, and DCA strips
+  meter their loudest member (as the METERS screen).
+- The METERS screen repaints only the strips whose meter moved, not the whole page.
+- The HOME thumbnails' meters use the screens' meter scale (CLIP, -6, -12, -24 ... -60).
+
 - F1-F3 of the 4-Channel section with USE F1-F3 AS CUSTOM CONTROLS mirror the custom
   control layers 1-3 (encoders and upper keys), as the manual describes (5.5 p. 48);
   they were three layers of their own. Shows saved before move those assignments to
@@ -269,6 +282,16 @@ All notable changes to Sidecar are listed here. Versions follow
   its default RELEASE 102 ms, 0.3 dB instead of 2 dB at 3 dB over the threshold): its
   constant-rate release climbed back through every trough of the waveform. The
   detector now holds a peak for 10 ms before releasing.
+- WING REMOTE meters: the stream sent the latest UI meter window's raw peak (peaks
+  between two frames were missed, levels flickered) and, without the app's meters
+  running (the headless `wing_emulator`), every level stuck at its highest peak. The
+  stream now has its own peaks and the meters' ballistics, on a fixed 50 ms frame
+  clock (it drifted to about 19 frames a second). DCA meters send pre- and post-fader
+  levels (they sent post four times), gate and dynamics keys their detector levels,
+  the WING gate's gain reduction its 60 dB scale (protocol document, Meter Data), the
+  monitor meters PHONES as MON 1 and SPEAKERS as MON 2, and FX meters their dynamic
+  bands' gains instead of a dB value read as a level.
+
 - WING REMOTE: a processing or FX model changed right after a client connected (before
   the first change poll) now sends all of the new model's parameters, as later changes
   do; parameters that happened to equal the old model's could be left out.

@@ -2,6 +2,7 @@
 #include "dsp/DspUtils.h"
 #include "engine/MidiRemote.h"
 #include "engine/Models.h"
+#include "ui/ScreenWidgets.h"
 
 #include <optional>
 
@@ -475,11 +476,14 @@ void FaderStrip::timerCallback()
         // The source tag (ALT source switches, SHOW SOURCE ON SCRIBBLE) and the icon.
         source = scribbleSourceTag (look, ctx.settings.getBoolValue (uiprefs::sourceOnScribble, true)) + "|" + juce::String (look.getIcon());
 
-        // Input level, like the console's strip meters.
+        // The level before or after the fader, as SETUP > SURFACE > METERING
+        // sets for the kind of strip (manual 5.5 p. 47: "the individual LED
+        // meters on each channel can be set to pre- or post-fader").
         const int channels = juce::jlimit (1, 2, strip->getNumChannels());
+        const auto point = prefs::meterPoint (ctx, strip->getKind());
         for (int ch = 0; ch < 2; ++ch)
         {
-            const float db = dsp::gainToDb (ctx.meters.get (strip, true, juce::jmin (ch, channels - 1)));
+            const float db = dsp::gainToDb (ctx.meters.get (strip, point, juce::jmin (ch, channels - 1)));
             lit[(size_t) ch] = leds::countLit (kMeterThresholds, kMeterSegments, db);
         }
     }
@@ -490,6 +494,17 @@ void FaderStrip::timerCallback()
         light = d.led.load();
         colour = d.colour.load();
         source = juce::String (d.icon.load()); // repaints when the icon changes
+        // DCA METERS: the loudest member, before or after its fader (as the METERS screen).
+        const uint32_t bit = 1u << (uint32_t) dca;
+        const auto point = prefs::meterTapPre (ctx, 4) ? MeterPoint::PreFader : MeterPoint::Output;
+        std::array<float, 2> peak {};
+        for (int k = 0; k < kNumStripKinds; ++k)
+            for (auto& s : ctx.engine.getStrips (static_cast<StripKind> (k)))
+                if ((s->params.dcaMask.load() & bit) != 0)
+                    for (int ch = 0; ch < 2; ++ch)
+                        peak[(size_t) ch] = juce::jmax (peak[(size_t) ch], ctx.meters.get (s.get(), point, ch));
+        for (int ch = 0; ch < 2; ++ch)
+            lit[(size_t) ch] = leds::countLit (kMeterThresholds, kMeterSegments, dsp::gainToDb (peak[(size_t) ch]));
     }
     else if (midi)
         light = true;
@@ -580,8 +595,8 @@ void FaderStrip::paint (juce::Graphics& g)
         drawScribbleFrame (g, lcdArea.toFloat(), moduleFirst, moduleLast, info.backlight);
     }
 
-    // Meter block: DYN LED, two 6-segment columns (input level), GATE LED.
-    if (strip != nullptr && ! meterArea.isEmpty())
+    // Meter block: DYN LED, two 6-segment columns (the level), GATE LED; a DCA's columns only.
+    if ((strip != nullptr || dca >= 0) && ! meterArea.isEmpty())
     {
         auto m = meterArea.toFloat();
         const float rowH = m.getHeight() / (float) kMeterRows;
@@ -600,7 +615,7 @@ void FaderStrip::paint (juce::Graphics& g)
         barLed (kMeterRows - 1, shownGate, Colours::ledGate);
 
         auto columns = juce::Rectangle<float> (m.getCentreX() - pairW * 0.5f, m.getY() + rowH, pairW, rowH * kMeterSegments);
-        const bool stereo = strip->getNumChannels() > 1;
+        const bool stereo = strip == nullptr || strip->getNumChannels() > 1;
         auto colourFor = [bright] (int i) { return leds::meterColour (kMeterThresholds[i]).withMultipliedBrightness (bright); };
         leds::drawColumn (g, columns.removeFromLeft (ledW), kMeterSegments, shownLit[0], colourFor);
         leds::drawColumn (g, columns.removeFromRight (ledW), kMeterSegments, stereo ? shownLit[1] : shownLit[0], colourFor);

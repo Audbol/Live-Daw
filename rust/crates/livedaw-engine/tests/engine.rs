@@ -1010,6 +1010,28 @@ fn trim_and_pre_fader_meters() {
     assert!(m.output_peak[0].load() < 1e-6);
 }
 
+/// The WING remote's meter stream has its own copy of the input, pre-fader
+/// and output peaks: taking the UI's leaves them, and taking them leaves the UI's.
+#[test]
+fn remote_meter_peaks_are_a_second_reader() {
+    let mut rig = Rig::new(0, 1, 2);
+    set_channels(&rig.engine, 1);
+    let ch = rig.ch(0);
+    rig.set_input(0, 0.25);
+    ch.params.input.trim_db.store(6.0206);
+    ch.params.fader_db.store(0.0);
+    rig.run(20);
+    let [input, pre, output] = ch.remote_peaks.take();
+    assert!(close(input[0], 0.25, 1e-5), "{input:?}");
+    assert!(close(pre[0], 0.5, 1e-4), "{pre:?}");
+    assert!(output[0] > 0.1, "{output:?}");
+    // The UI's peaks are still there, and the remote's were taken.
+    assert!(close(ch.meters.input_peak[0].exchange(0.0), 0.25, 1e-5));
+    assert_eq!(ch.remote_peaks.take()[0][0], 0.0);
+    rig.run(2);
+    assert!(close(ch.remote_peaks.take()[0][0], 0.25, 1e-5));
+}
+
 #[test]
 fn monitor_dim_mute_mono_and_swap() {
     let mut rig = Rig::new(0, 1, 4);

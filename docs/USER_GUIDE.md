@@ -274,8 +274,10 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
 - **Fader strips** follow the WING's: a colour light bar (the strip's colour), the
   scribble strip (one backlight colour on every strip; number,
   source ports or mono, icon, the name on an inverted bar), SELECT, SOLO, the meter
-  block (DYN LED, a stereo six-segment input meter, GATE LED), MUTE and the fader with
-  its printed scale. SELECT on the selected strip again opens its HOME screen. With
+  block (DYN LED, a stereo six-segment meter, GATE LED), MUTE and the fader with
+  its printed scale. The meter reads before or after the fader as SETUP > SURFACE >
+  METERING sets for the kind of strip (PRE for channels and DCAs, POST for the others
+  at first); a DCA's shows its loudest member. SELECT on the selected strip again opens its HOME screen. With
   SETUP > SURFACE > SEL DBL CLICK **BUSFX** (the default), a bus, main or matrix opens
   its INS 1 screen instead, or INS 2 when INS 1 has no FX. MUTE
   flashes while a mute group, a DCA mute or SIP mutes the strip; with MUTEGROUP/SIP
@@ -366,6 +368,13 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     MATRICES and DCAS, as on the console: PRE for channels and DCAs, POST for the others
     at first (the same settings as SETUP > SURFACE > METERING). A group's header opens
     its section's FADERS screen. Bigger consoles page.
+  - **How the meters move:** every level meter (the screens, the fader strips' and the
+    channel strip's LEDs, the main meter, ROUTING's tiles, the remote meter stream)
+    reads the sample peak and moves the same way: a peak shows in full at once (even a
+    single click), the level then falls 24 dB a second (from 0 dB to below -60 dB in
+    2.5 s), and the peak-hold dash of the METERS screen stays 1 s before falling at the
+    same rate. A meter's top segment (CLIP, red) lights from -0.1 dBFS (0 dBFS on the
+    screens). Gain reduction meters show the processor's own gain.
   - **ROUTING** (status-bar keys CHANNELS / SOURCES / OUTPUTS), laid out as the
     console's: pick a channel, then its source. **MAIN / ALT** (CHANNEL INPUT) choose
     which of the channel's two inputs you patch (the ALT input, WING INPUT SELECT, can
@@ -874,7 +883,14 @@ and open-source projects (see below), and it is **experimental**.
   snapshot) on the nearest of the parameter's steps, so a Q of 1.00 reads back
   0.9979702 and 100 Hz on the TAP EQ 99.68543.
 - **Native protocol** (TCP 2222): node definitions and data, set/get by id, navigation,
-  change notifications to every connected client, and meters over UDP.
+  change notifications to every connected client, and meters over UDP: a frame every
+  50 ms, as the console, with the levels as Sidecar's meters show them (the full peak
+  at once, a 24 dB/s fall: WING Edit draws the stream's values as they come, so the
+  console's stream carries its meters' ballistics). Channel, aux, bus, main and matrix
+  meters (V1 and V2), DCAs (the loudest member before and after its fader), the
+  monitor (solo as SPEAKERS, MON 1 = PHONES, MON 2 = SPEAKERS) and FX band gains; the
+  WING gate's gain reduction on its 60 dB scale, the other models' on 20 dB. Source,
+  output and RTA meters read silence.
 - **Comparing with a real WING:** `tools/wing/wing_compare.py` (Python 3.8 or newer,
   nothing to install) reads every parameter from a console over OSC, read-only, and
   reports the differences. With Sidecar's WING REMOTE enabled and a WING on the same

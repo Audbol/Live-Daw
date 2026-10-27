@@ -265,6 +265,9 @@ pub struct Strip {
     /// The GATE and DYNAMICS slots' dynamic EQ bands: live gain in dB, signed
     /// (outside `StripMeters`, whose layout is part of the C ABI).
     pub band_meters: DynBandMeters,
+    /// The same peaks as `meters` for a second reader, the WING remote's
+    /// meter stream (the UI takes `meters`' peaks; outside the C ABI).
+    pub remote_peaks: RemotePeaks,
     /// Sends to buses (channels/aux: all buses; buses: every other bus).
     pub sends: SendBank,
     /// UI metadata (never touched by the audio thread).
@@ -327,6 +330,24 @@ impl DynBandMeters {
     }
 }
 
+/// Peaks (linear, max since the last [`RemotePeaks::take`]) at the points
+/// the WING's meter stream reports: the input, pre-fader (PFL) and output.
+/// One reader (the remote's meter clock) takes them; the UI has its own.
+#[derive(Debug, Default)]
+pub struct RemotePeaks {
+    pub input: [AtomicF32; 2],
+    pub pre_fader: [AtomicF32; 2],
+    pub output: [AtomicF32; 2],
+}
+
+impl RemotePeaks {
+    /// Takes the peaks since the last take: (input, pre-fader, output) L/R.
+    pub fn take(&self) -> [[f32; 2]; 3] {
+        let t = |a: &[AtomicF32; 2]| [a[0].exchange(0.0), a[1].exchange(0.0)];
+        [t(&self.input), t(&self.pre_fader), t(&self.output)]
+    }
+}
+
 // SAFETY: see the thread rules above; everything shared is atomic.
 unsafe impl Sync for Strip {}
 unsafe impl Send for Strip {}
@@ -340,6 +361,7 @@ impl Strip {
             params: StripParams::new_in_slot(kind, usize::try_from(id).unwrap_or(0)),
             meters: StripMeters::default(),
             band_meters: DynBandMeters::default(),
+            remote_peaks: RemotePeaks::default(),
             sends: SendBank::for_kind(kind),
             name: Mutex::new(String::new()),
             tags: Mutex::new(String::new()),
@@ -707,7 +729,9 @@ impl Strip {
                 }
                 None => dst.fill(0.0),
             }
-            self.meters.input_peak[ch].fetch_max(peak_level(dst));
+            let peak = peak_level(dst);
+            self.meters.input_peak[ch].fetch_max(peak);
+            self.remote_peaks.input[ch].fetch_max(peak);
         }
     }
 
@@ -765,7 +789,9 @@ impl Strip {
             }
         } else {
             for ch in 0..d.num_channels {
-                self.meters.input_peak[ch].fetch_max(peak_level(&d.work[ch][..n]));
+                let peak = peak_level(&d.work[ch][..n]);
+                self.meters.input_peak[ch].fetch_max(peak);
+                self.remote_peaks.input[ch].fetch_max(peak);
             }
         }
 
@@ -903,7 +929,9 @@ impl Strip {
         // buses, mains and matrices, the METERS screen).
         for ch in 0..nc {
             d.pfl[ch][..n].copy_from_slice(&d.work[ch][..n]);
-            self.meters.pfl_peak[ch].fetch_max(peak_level(&d.pfl[ch][..n]));
+            let peak = peak_level(&d.pfl[ch][..n]);
+            self.meters.pfl_peak[ch].fetch_max(peak);
+            self.remote_peaks.pre_fader[ch].fetch_max(peak);
         }
         self.tap_at(d, ctx, tap::PFL, n);
 
@@ -1201,8 +1229,11 @@ impl Strip {
             }
         }
 
-        self.meters.output_peak[0].fetch_max(peak_level(o0));
-        self.meters.output_peak[1].fetch_max(peak_level(o1));
+        let (p0, p1) = (peak_level(o0), peak_level(o1));
+        self.meters.output_peak[0].fetch_max(p0);
+        self.meters.output_peak[1].fetch_max(p1);
+        self.remote_peaks.output[0].fetch_max(p0);
+        self.remote_peaks.output[1].fetch_max(p1);
     }
 
     /// Engine automix pass: scales everything after INS 2 (where automix sits)

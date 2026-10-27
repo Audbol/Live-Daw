@@ -780,7 +780,12 @@ blinking LEDs.
   3.1 tile grid (`ModelSelector::chooseDynamics`).
 - Views poll the shared atomics on timers (4-25 Hz); meters read `MeterBank`, the one
   reader of the engine's "peak since last read" meters (input, post-trim, pre-fader
-  and output).
+  and output, the monitor paths, the ROUTING sources). It moves every meter on at
+  40 Hz with the time that passed, through `MeterBallistics.h` (the full peak at once,
+  24 dB/s fall, 1 s peak hold), so all views of a signal read the same; the views
+  never smooth on their own. The WING remote's meter stream is the second reader:
+  the engine keeps a copy of the strips' input, pre-fader and output peaks and of the
+  monitor paths (`RemotePeaks`, `Engine::monitor_remote_peaks`, outside the C ABI).
 
 ### Multitrack projects, the editor and the recorder screen
 
@@ -1006,7 +1011,9 @@ dependencies beyond the other Sidecar crates.
   touching the audio thread, and every thread runs under `catch_unwind`. A client's
   change is applied and pushed to the other clients at once; the poller diffs the
   mapped leaves every 100 ms to push changes made elsewhere (UI, scene recalls) and
-  sends meters every 50 ms. It takes its snapshot without blocking client sets and
+  sends meters on a fixed 50 ms grid: `meters::MeterClock` takes the remote peaks
+  once per frame and applies the same ballistics as `MeterBallistics.h` (clients
+  such as WING Edit draw the words as they come). It takes its snapshot without blocking client sets and
   drops a snapshot that raced one (generation counter).
 - **Files** (`snap.rs`, `json.rs`). Snapshot import sets each value through the same
   mapping (models first, input group before number), keeps unmapped values in the

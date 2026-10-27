@@ -4,6 +4,7 @@
 #include "ui/FaderStrip.h"
 #include "ui/HomeIcons.h"
 #include "ui/Icons.h"
+#include "ui/MeterBallistics.h"
 #include "ui/MeterComponent.h"
 #include "ui/ResponseGraph.h"
 #include "ui/WingPopups.h"
@@ -1939,7 +1940,7 @@ private:
                 const float mw = meterArea.getWidth() / (float) n;
                 for (int ch = 0; ch < n; ++ch)
                 {
-                    const float level = MeterComponent::dbToProportion (dsp::gainToDb (page.ctx.meters.get (strip, true, ch)));
+                    const float level = meters::scalePos (dsp::gainToDb (page.ctx.meters.get (strip, true, ch)));
                     miniMeter (g, meterArea.removeFromLeft (mw).withTrimmedRight (n > 1 ? 1.0f : 0.0f), level, Colours::meterGreen);
                 }
                 auto cell = [&at] (int col, int row) { return at (5.0f + 30.0f * (float) col, 5.0f + 20.0f * (float) row, 25.0f, 15.0f); };
@@ -2088,7 +2089,7 @@ private:
                     chip (g, at (5.0f, 45.0f, 56.0f, 15.0f), "DLY", p.input.delayOn.load());
                 for (int ch = 0; ch < 2; ++ch)
                 {
-                    const float level = MeterComponent::dbToProportion (dsp::gainToDb (page.ctx.meters.get (strip, false, ch)));
+                    const float level = meters::scalePos (dsp::gainToDb (page.ctx.meters.get (strip, false, ch)));
                     miniMeter (g, at (67.0f + 13.0f * (float) ch, 6.0f, 10.0f, 53.0f), level, Colours::meterGreen);
                 }
                 return;

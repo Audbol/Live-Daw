@@ -593,7 +593,7 @@ fn native_get_set_definitions_and_notifications() {
 fn native_meters_over_udp() {
     let (engine, server) = start();
     let mut a = Native::connect(&server);
-    engine.channel_at(0).unwrap().meters.input_peak[0].store(0.5);
+    let ch1 = engine.channel_at(0).unwrap();
     let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
     udp.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
     let port = udp.local_addr().unwrap().port();
@@ -616,8 +616,30 @@ fn native_meters_over_udp() {
     assert_eq!(u16::from_be_bytes([buf[0], buf[1]]), 7);
     // channel (8) + main (8) + RTA (120) words.
     assert_eq!((n - 4) / 2, 8 + 8 + 120);
-    let input_l = i16::from_be_bytes([buf[4], buf[5]]);
+    let word = |buf: &[u8], i: usize| i16::from_be_bytes([buf[4 + 2 * i], buf[5 + 2 * i]]);
+    // A peak at -6 dB shows in full on a following frame (the meter clock
+    // takes the peaks once per frame; the first frame may predate the store).
+    ch1.remote_peaks.input[0].store(0.5);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut input_l = i16::MIN;
+    while Instant::now() < deadline && (input_l as f32 / 256.0 + 6.02).abs() >= 0.1 {
+        udp.recv_from(&mut buf).unwrap();
+        input_l = word(&buf, 0);
+    }
     assert!((input_l as f32 / 256.0 + 6.02).abs() < 0.1, "{input_l}");
+    // Then it falls at the meters' release rate, frame by frame, to "-oo"
+    // (-6 to -128 dB at 24 dB/s: 5 s, about 100 frames; fewer on a slow machine).
+    let (mut last, mut frames) = (input_l, 0);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while last != i16::MIN && Instant::now() < deadline {
+        udp.recv_from(&mut buf).unwrap();
+        let w = word(&buf, 0);
+        assert!(w <= last, "the level rose without a peak: {last} -> {w}");
+        last = w;
+        frames += 1;
+    }
+    assert_eq!(last, i16::MIN);
+    assert!(frames > 10, "fell in {frames} frames");
     // Renewal keeps it going.
     let mut renew = vec![0xdf, 0xd3, 0xd4];
     renew.extend(esc(7u16.to_be_bytes()));

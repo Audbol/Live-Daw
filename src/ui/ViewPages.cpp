@@ -2,6 +2,7 @@
 #include "dsp/DspUtils.h"
 #include "engine/Models.h"
 #include "ui/CustomControlsPage.h"
+#include "ui/MeterBallistics.h"
 #include "ui/HomeIcons.h"
 #include "ui/HomeWidgets.h"
 #include "ui/PaintHash.h"
@@ -95,16 +96,7 @@ namespace
     }
 
     /** The console's meter scale: CLIP, -6, -12, -24, -36, -48, -60 evenly spaced. */
-    float meterPos (float db)
-    {
-        static constexpr float marks[] = { -60.0f, -48.0f, -36.0f, -24.0f, -12.0f, -6.0f, 0.0f };
-        if (db <= marks[0])
-            return 0.0f;
-        for (size_t i = 1; i < std::size (marks); ++i)
-            if (db <= marks[i])
-                return ((float) (i - 1) + (db - marks[i - 1]) / (marks[i] - marks[i - 1])) / 6.0f;
-        return 1.0f;
-    }
+    float meterPos (float db) { return meters::scalePos (db); }
 
     /** What a fader of a layer is: a strip or a DCA, with its name, colour and
         label; a send fader (WING 3.0.5: a layer's send, or Sends on Fader) also

@@ -282,6 +282,8 @@ fn monitor_paths_have_their_own_source_level_dim_and_keys() {
     assert!(rig.out(4).abs() < 1e-7 && close(rig.out(2), 0.5, 1e-5));
     c.monitor_mute.store(false, Relaxed);
     assert!(c.phones.peak[0].exchange(0.0) > 0.0);
+    // The remote meter stream's copy (SPEAKERS, PHONES) is a reader of its own.
+    assert!(rig.engine.monitor_remote_peaks[1][0].exchange(0.0) > 0.0);
 }
 
 #[test]
