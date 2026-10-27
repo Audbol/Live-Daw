@@ -1153,9 +1153,9 @@ namespace
                                                            [this] { return juce::jlimit (0, 2, ctx.settings.getIntValue (uiprefs::mainMeterTap, uiprefs::mainMeterTapDefault)); },
                                                            [this] (int v) { ctx.settings.setValue (uiprefs::mainMeterTap, v); }, ChoiceKeys::autoPrePost()),
                              3.6f);
-            // PRE or POST per strip type: the METERS and VIEW screens' meters follow
-            // these (METERS > SETTINGS sets them too; the surface's LED meters can
-            // read them with prefs::meterPoint).
+            // PRE or POST per strip type: the surface's LED meters, the VIEW screens'
+            // meters and the main meter's AUTO follow these (prefs::meterPoint; PRE is
+            // after TRIM, before the EQ). METERS > SETTINGS has its own.
             for (int i = 0; i < prefs::kNumMeterTaps; ++i)
                 metering.addRow (prefs::meterTapNames[i],
                                  std::make_unique<ChoiceKeys> (juce::StringArray { "PRE", "POST" }, [this, i] { return prefs::meterTapPre (ctx, i) ? 0 : 1; },

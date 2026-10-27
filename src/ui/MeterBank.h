@@ -55,10 +55,11 @@ namespace mainmeter
 /** Reads every strip's peak meters once per frame (the engine's peaks are
     "max since last read", so only one reader may take them) and moves a meter
     per signal on with the shared ballistics (MeterBallistics.h: the full peak
-    at once, a 24 dB/s fall, a 1 s peak hold), so every view of a signal reads
-    the same: the raw input, after trim (the INPUT screen's meter), pre-fader
-    (the METERS screen, "PRE" meter settings) and the output ("POST"), the
-    monitor paths and the ROUTING sources. Message thread only. */
+    at once, a 60 dB/s fall; a 1 s peak hold only the METERS screen draws), so
+    every view of a signal reads the same: the raw input, after trim (the
+    INPUT screen's and the channel strip's LEVEL meter, the "PRE" meter
+    settings), pre-fader (PFL) and the output ("POST"), the monitor paths and
+    the ROUTING sources. Message thread only. */
 class MeterBank final : private juce::Timer
 {
 public:

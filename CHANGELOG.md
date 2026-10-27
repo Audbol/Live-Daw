@@ -393,14 +393,26 @@ All notable changes to Sidecar are listed here. Versions follow
   saved before keep the notes they corrected.
 - Meters: one set of ballistics for every level meter (screens, fader strip and
   channel strip LEDs, the main meter, ROUTING's tiles, the USB recorder, the dynamics
-  graph's output, the remote meter stream): the full peak at once, a 24 dB/s fall and
-  a 1 s peak hold (METERS screen) that then falls at the same rate. Before, most
-  meters fell about 180 dB/s (a click barely showed on the surface) while the METERS
-  screen's hold and the recorder fell at their own rates, so one signal read
+  graph's output, the remote meter stream), as a WING owner measured on their console:
+  the full peak at once and a 60 dB/s fall (a steady -6 dB tone pulled out leaves the
+  strip LEDs dark in 0.9 s; the console: "about 1 second, maybe less"), with no peak
+  hold on the strips or the main meter (after a drum hit they fall straight away) and
+  no clip hold on the surface (CLIP goes out at once). Only the METERS screen holds a
+  peak for 1 s (its dash, red for a held CLIP), then falls at the same rate. Before,
+  most meters fell about 180 dB/s (a click barely showed on the surface) while the
+  METERS screen's hold and the recorder fell at their own rates, so one signal read
   differently on different meters.
-- The fader strips' LED meters follow SETUP > SURFACE > METERING (pre- or post-fader
-  per kind of strip, manual 5.5) instead of always showing the input, and DCA strips
-  meter their loudest member (as the METERS screen).
+- The fader strips' LED meters follow SETUP > SURFACE > METERING instead of always
+  showing the input, and DCA strips meter their loudest member (as the METERS
+  screen). PRE is after TRIM and before the EQ and dynamics (on a WING, TRIM moves a
+  PRE strip meter and the EQ does not), POST after the fader; the same PRE for METERS
+  > SETTINGS, the main meter's MAIN METER TAP, the VIEW screens and the remote
+  stream's DCA meters. The channel strip's LEVEL meter is after TRIM (it read the raw
+  input).
+- Meter colours: the main meter has no yellow (it was yellow from -4 to -1 dB): green
+  below -18 dB, orange from -18 dB, red at CLIP, as the strip LEDs. The MONITOR
+  screen's level meter takes the METERS screen's colours (green, amber from -18 dB
+  instead of yellow from -12 dB).
 - The METERS screen repaints only the strips whose meter moved, not the whole page.
 - The HOME thumbnails' meters use the screens' meter scale (CLIP, -6, -12, -24 ... -60).
 

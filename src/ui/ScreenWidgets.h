@@ -87,12 +87,17 @@ namespace prefs
         i = juce::jlimit (0, kNumMeterTaps - 1, i);
         return ctx.settings.getBoolValue (meterTapKey (i), meterTapDefaultPre[i]);
     }
-    /** Where a strip type's meters measure (aux channels follow CHANNEL METERS; DCA METERS is index 4). */
-    inline MeterPoint meterPoint (UiContext& ctx, StripKind kind)
+    /** What a METERING tap measures: PRE is after TRIM and before the
+        processing (on a WING, TRIM moves a PRE strip meter and the EQ does
+        not), POST after the fader. */
+    constexpr MeterPoint tapPoint (bool pre) noexcept { return pre ? MeterPoint::Trim : MeterPoint::Output; }
+    /** The METERING setting (0-3) of a kind of strip; aux channels follow CHANNEL METERS. DCA METERS is index 4. */
+    constexpr int meterTapIndex (StripKind kind) noexcept
     {
-        const int i = kind == StripKind::Bus ? 1 : kind == StripKind::Main ? 2 : kind == StripKind::Matrix ? 3 : 0;
-        return meterTapPre (ctx, i) ? MeterPoint::PreFader : MeterPoint::Output;
+        return kind == StripKind::Bus ? 1 : kind == StripKind::Main ? 2 : kind == StripKind::Matrix ? 3 : 0;
     }
+    /** Where a strip type's surface meters measure. */
+    inline MeterPoint meterPoint (UiContext& ctx, StripKind kind) { return tapPoint (meterTapPre (ctx, meterTapIndex (kind))); }
     /** METERS > SETTINGS: the METERS screen's own PRE or POST per strip type
         (the WING's /cfg/mtr/mtrpage; the surface's are /cfg/mtr/mtrsfc), with
         the same factory settings. */
@@ -102,11 +107,8 @@ namespace prefs
         i = juce::jlimit (0, kNumMeterTaps - 1, i);
         return ctx.settings.getBoolValue (meterPageTapKey (i), meterTapDefaultPre[i]);
     }
-    inline MeterPoint meterPagePoint (UiContext& ctx, StripKind kind)
-    {
-        const int i = kind == StripKind::Bus ? 1 : kind == StripKind::Main ? 2 : kind == StripKind::Matrix ? 3 : 0;
-        return meterPageTapPre (ctx, i) ? MeterPoint::PreFader : MeterPoint::Output;
-    }
+    /** Where a strip type's METERS screen meters measure (PRE as the surface's: after TRIM). */
+    inline MeterPoint meterPagePoint (UiContext& ctx, StripKind kind) { return tapPoint (meterPageTapPre (ctx, meterTapIndex (kind))); }
 
     inline bool confirmLoad (UiContext& ctx) { return ctx.settings.getBoolValue (confirmLibraryLoad, true); }
     inline int faderResolution (UiContext& ctx) { return ctx.settings.getIntValue (touchFaderRes, 2); }

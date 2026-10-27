@@ -65,6 +65,11 @@ namespace Colours
     const juce::Colour meterYellow { 0xffe8d23a };
     const juce::Colour meterOrange { 0xfff0641e };
     const juce::Colour meterRed { 0xffe8413a };
+    // The screens' level meters (METERS, MONITOR; a firmware 3.1 METERS screen):
+    // green below -18 dB, this amber from -18 dB, the mute red at CLIP. The
+    // surface's LEDs are green and meterOrange (no yellow, a WING owner).
+    const juce::Colour meterScreenGreen { 0xff00bc38 };
+    const juce::Colour meterScreenAmber { 0xfff8c430 };
 
     // Control surface hardware, the same in both finishes (the rest is in
     // SurfacePalette).
