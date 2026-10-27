@@ -891,7 +891,7 @@ namespace
         knob ("slp", 1015, 320, 64, Look::BarKnob, 0, "SLOPE", 258);
         ends (d, 1015, 360, 26, "-24", "24", 11, ink, "dB");
         auto& g = d.add (Type::Graph, 635, 110, 440, 120);
-        g.shows (GraphKind::Taps, { p ("time"), p ("rep"), p ("slp"), p ("pdel") }, 1);
+        g.shows (GraphKind::Taps, { p ("time"), p ("rep"), p ("slp"), p ("pdel"), p ("fact") }, 1);
         return d;
     }
 

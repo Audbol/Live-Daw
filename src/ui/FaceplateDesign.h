@@ -44,7 +44,7 @@ enum class GraphKind
               // the range each band can move through and where it is now (cut or boost)
     Response, // the model's frequency response as set (models::modelResponse); no params
     Taps,     // delay echoes. choice 0: time, feedback (repeats of one tap);
-              // 1: time, repeats, slope dB, pre-delay (a row of taps); 2: time, feedback, factor, pattern ("a:b", L and R)
+              // 1: time, repeats, slope dB, pre-delay, [factor] (a row of taps over time x factor); 2: time, feedback, factor, pattern ("a:b", L and R)
     Decay,    // reverb envelope. choice 0: pre-delay, decay (s); 1 (gated): pre-delay, attack, decay; 2 (reverse): pre-delay, rise, decay
               // 3: an envelope follower's attack, hold, release (ms)
     Lfo,      // modulation: speed (Hz), depth, [phase deg], [wave]; L and R traces

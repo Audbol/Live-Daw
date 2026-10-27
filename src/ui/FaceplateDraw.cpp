@@ -1592,8 +1592,8 @@ namespace
         const float full = in.e.range > 20.0f ? in.e.range : 1000.0f;
         if (variant == 1)
         {
-            // A row of taps over TIME after the pre-delay, levels along the slope.
-            const float time = juce::jmax (1.0f, in.ms (0, full));
+            // A row of taps over TIME (x FACTOR) after the pre-delay, levels along the slope.
+            const float time = juce::jmax (1.0f, in.ms (0, full) * (in.has (4) ? in.number (4, 1.0f) : 1.0f));
             const int n = juce::jlimit (1, 32, juce::roundToInt (in.value (1, 1.0f)));
             const float slope = in.value (2), pre = in.ms (3, 500.0f);
             for (int k = 1; k <= n; ++k)

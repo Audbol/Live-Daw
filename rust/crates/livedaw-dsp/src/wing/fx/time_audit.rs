@@ -1036,3 +1036,84 @@ fn tails_end_cleanly() {
     }
     assert!(slow.is_empty(), "denormal slowdowns: {slow:?}");
 }
+
+#[test]
+fn every_choice_sounds_different() {
+    // Each item of a list (MODE, TYPE, WAVE, FACTOR, PATTERN, ER TYPE...)
+    // sounds different from the one before it.
+    let (l, r) = probe();
+    let mut same = Vec::new();
+    for token in AUDITED {
+        let spec = &FX_MODELS[model_index(token).unwrap()];
+        for p in spec.params.iter().filter(|p| matches!(p.kind, ParamKind::Choice(_))) {
+            if exempt(token, p.id) {
+                continue;
+            }
+            let ctx: Vec<_> = context(token, p.id).iter().copied().filter(|(id, _)| spec.param_index(id).is_some()).collect();
+            let render = |v: f32| {
+                let mut rig = Rig::new(token, &ctx);
+                rig.set(&[(p.id, v)]);
+                rig.run(&l, &r)
+            };
+            let n = (p.hi() - p.lo()).round() as usize;
+            let mut prev = render(p.lo());
+            for k in 1..=n {
+                let next = render(p.lo() + k as f32);
+                let d = difference(&prev, &next);
+                if d < 1e-3 {
+                    same.push(format!("{token} {} items {} and {} ({d:.1e})", p.id, k - 1, k));
+                }
+                prev = next;
+            }
+        }
+    }
+    assert!(same.is_empty(), "list items that sound the same: {same:?}");
+}
+
+#[test]
+fn rotary_speeds_and_ramps() {
+    // SPD CTL SLOW -> FAST: the horn spins up in a fraction of a second at
+    // HORN ACCEL 100 % and takes seconds at 0 %; the heavy drum follows its
+    // own DRUM ACCEL; STOP lets both coast to a halt.
+    let input = sine(500.0, 0.2, secs(0.05));
+    let spin_up = |hac: f32, dac: f32| {
+        let mut rig = Rig::new("ROTARY", &[("sw", 1.0), ("lo", 0.8), ("hi", 6.0), ("hac", hac), ("dac", dac)]);
+        for _ in 0..40 {
+            rig.mono(&input);
+        }
+        rig.set(&[("sw", 2.0)]);
+        // Time until the horn reaches 90 % of FAST, and the drum's speed
+        // 1.25-1.75 s after the switch (from its angle's progress).
+        let mut horn_at = None;
+        let mut drum_turned = 0.0;
+        let mut last = rig.live(FxLive::LfoPhase2);
+        for k in 1..=200 {
+            rig.mono(&input);
+            let a = rig.live(FxLive::LfoPhase2);
+            if (25..35).contains(&k) {
+                drum_turned += (a - last).rem_euclid(1.0);
+            }
+            last = a;
+            if horn_at.is_none() && rig.live(FxLive::Needle) > 0.9 * 6.0 {
+                horn_at = Some(k as f32 * 0.05);
+            }
+        }
+        (horn_at.unwrap_or(f32::MAX), drum_turned / (10.0 * 0.05))
+    };
+    let (fast_horn, _) = spin_up(100.0, 80.0);
+    let (slow_horn, _) = spin_up(0.0, 80.0);
+    assert!(fast_horn < 0.5 && slow_horn > 2.0 * fast_horn, "horn reaches FAST in {fast_horn} s (100 %) / {slow_horn} s (0 %)");
+    let (_, drum_quick) = spin_up(100.0, 100.0);
+    let (_, drum_slow) = spin_up(100.0, 0.0);
+    assert!(drum_quick > 2.0 * drum_slow, "drum 1.5 s on: {drum_quick} Hz (100 %) vs {drum_slow} Hz (0 %)");
+    // STOP: the horn coasts down to standing still.
+    let mut rig = Rig::new("ROTARY", &[("sw", 2.0), ("hac", 100.0)]);
+    for _ in 0..40 {
+        rig.mono(&input);
+    }
+    rig.set(&[("sw", 0.0)]);
+    for _ in 0..200 {
+        rig.mono(&input);
+    }
+    assert!(rig.live(FxLive::Needle) < 0.05, "horn still at {} Hz after STOP", rig.live(FxLive::Needle));
+}
