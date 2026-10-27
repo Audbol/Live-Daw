@@ -33,7 +33,7 @@
 
 use livedaw_engine::Engine;
 use livedaw_wing::osc::{self, Arg, Message};
-use livedaw_wing::server::{ClientKind, Config, EngineHandle, WingServer};
+use livedaw_wing::server::{ClientKind, Config, EngineHandle, Shared, WingServer};
 use livedaw_wing::{schema, Identity, WingState};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -558,23 +558,44 @@ fn native_reply_timeout() -> Duration {
     slack_ms(2000)
 }
 
+/// Why the connection from `local` ended, as the server tells it (it notes
+/// the reason when the connection's reader ends, so this waits a little).
+fn server_reason(server: &Shared, local: Option<SocketAddr>) -> String {
+    let Some(local) = local else { return "(no local address)".into() };
+    let until = Instant::now() + slack_ms(2000);
+    loop {
+        if let Some(d) = server.disconnects().into_iter().rev().find(|d| d.peer == local) {
+            return format!("server: {} after {:.3} s", d.reason, d.after.as_secs_f64());
+        }
+        if Instant::now() > until {
+            return "the server has not closed it".into();
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn native_client(
     to: SocketAddr,
     secs: f64,
     stop: Arc<AtomicBool>,
     t0: Instant,
     moves_from: Arc<Mutex<Option<Instant>>>,
+    server: Arc<Shared>,
 ) -> Report {
     let mut r = Report::new("Native (WING Edit)");
     let tcp = TcpStream::connect(to).unwrap();
     tcp.set_nodelay(true).unwrap();
+    let local = tcp.local_addr().ok();
+    // Reads block (no timeout, which on Windows leaves a socket in an
+    // undefined state); the end of the run shuts the connection down.
     let mut rd = tcp.try_clone().unwrap();
-    rd.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
     let mut w = tcp;
     let (tx, rx) = channel::<(Instant, Tok)>();
     let closed = Arc::new(AtomicBool::new(false));
+    let read_error: Arc<Mutex<Option<String>>> = Arc::default();
     let rx_stop = stop.clone();
     let rx_closed = closed.clone();
+    let rx_error = read_error.clone();
     let reader = std::thread::spawn(move || {
         let mut dec = Decoder::default();
         let mut buf = vec![0u8; 65536];
@@ -582,6 +603,7 @@ fn native_client(
         while !rx_stop.load(Relaxed) {
             match rd.read(&mut buf) {
                 Ok(0) => {
+                    *rx_error.lock().unwrap() = Some("end of stream".into());
                     rx_closed.store(true, Relaxed);
                     break;
                 }
@@ -592,8 +614,9 @@ fn native_client(
                         let _ = tx.send((now, t));
                     }
                 }
-                Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
-                Err(_) => {
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => {
+                    *rx_error.lock().unwrap() = Some(format!("{e} ({:?}, OS error {:?})", e.kind(), e.raw_os_error()));
                     rx_closed.store(true, Relaxed);
                     break;
                 }
@@ -725,7 +748,8 @@ fn native_client(
     *watch_from.lock().unwrap() = Some(Instant::now() + Duration::from_millis(500));
     while Instant::now() < end && !stop.load(Relaxed) {
         if closed.load(Relaxed) {
-            r.problem(t0, "the server closed the connection".into());
+            let read = read_error.lock().unwrap().clone().unwrap_or_default();
+            r.problem(t0, format!("the connection ended (read: {read}; {})", server_reason(&server, local)));
             break;
         }
         if last_renew.elapsed() >= Duration::from_secs(3) {
@@ -781,6 +805,7 @@ fn native_client(
     r.notes.push(lat_walk.summary("tree walk requests"));
     r.notes.push(lat_poll.summary("keep-alive gets"));
     stop.store(true, Relaxed);
+    let _ = w.shutdown(std::net::Shutdown::Both);
     let _ = reader.join();
     let m = meters.join().unwrap();
     r.problems.extend(m.problems.into_iter().map(|p| format!("{p} (meters)")));
@@ -825,9 +850,10 @@ fn meter_receiver(
 /// A client that only shows meters (a meter bridge, or a remote's meter view
 /// left open): the protocol document's subscription and renewal every 3 s,
 /// libwing's bare keep-alive (`df d1`) every 7 s, nothing else.
-fn meter_client(to: SocketAddr, secs: f64, stop: Arc<AtomicBool>, t0: Instant) -> Report {
+fn meter_client(to: SocketAddr, secs: f64, stop: Arc<AtomicBool>, t0: Instant, server: Arc<Shared>) -> Report {
     let mut r = Report::new("Native (meters only)");
     let mut tcp = TcpStream::connect(to).unwrap();
+    let local = tcp.local_addr().ok();
     tcp.set_nodelay(true).unwrap();
     let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
     udp.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
@@ -850,8 +876,8 @@ fn meter_client(to: SocketAddr, secs: f64, stop: Arc<AtomicBool>, t0: Instant) -
         if last_renew.elapsed() >= Duration::from_secs(3) {
             let mut renew = vec![0xdf, 0xd3, 0xd4];
             renew.extend(escaped(&0x22u32.to_be_bytes()));
-            if tcp.write_all(&renew).is_err() {
-                r.problem(t0, "the connection was closed".into());
+            if let Err(e) = tcp.write_all(&renew) {
+                r.problem(t0, format!("the connection was closed (write: {e}; {})", server_reason(&server, local)));
                 break;
             }
             last_renew = Instant::now();
@@ -861,7 +887,7 @@ fn meter_client(to: SocketAddr, secs: f64, stop: Arc<AtomicBool>, t0: Instant) -
             last_keep = Instant::now();
         }
         if let Ok(0) = tcp.read(&mut sink) {
-            r.problem(t0, "the server closed the connection".into());
+            r.problem(t0, format!("the server closed the connection ({})", server_reason(&server, local)));
             break;
         }
     }
@@ -887,9 +913,10 @@ fn escaped_tail(v: &[u8], skip: usize) -> Vec<u8> {
 /// CI) it may take longer, as long as the data keeps coming: how fast a
 /// reader this slow gets data depends on the TCP stack (macOS's delayed ACKs
 /// halve it) and on the machine's load.
-fn slow_client(to: SocketAddr, secs: f64, t0: Instant, strict: bool) -> Report {
+fn slow_client(to: SocketAddr, secs: f64, t0: Instant, strict: bool, server: Arc<Shared>) -> Report {
     let mut r = Report::new("Native (slow link)");
     let mut tcp = TcpStream::connect(to).unwrap();
+    let local = tcp.local_addr().ok();
     tcp.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
     for _ in 0..4 {
         let _ = tcp.write_all(&[0xdf, 0xd1, 0xda, 0xdc]);
@@ -910,7 +937,10 @@ fn slow_client(to: SocketAddr, secs: f64, t0: Instant, strict: bool) -> Report {
         }
         match tcp.read(&mut buf[..12800]) {
             Ok(0) => {
-                r.problem(t0, format!("the server closed the connection after {bytes} bytes"));
+                r.problem(
+                    t0,
+                    format!("the server closed the connection after {bytes} bytes ({})", server_reason(&server, local)),
+                );
                 return r;
             }
             Ok(n) => {
@@ -921,7 +951,7 @@ fn slow_client(to: SocketAddr, secs: f64, t0: Instant, strict: bool) -> Report {
             }
             Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
             Err(e) => {
-                r.problem(t0, format!("{e} after {bytes} bytes"));
+                r.problem(t0, format!("{e} after {bytes} bytes ({})", server_reason(&server, local)));
                 return r;
             }
         }
@@ -940,9 +970,10 @@ fn slow_client(to: SocketAddr, secs: f64, t0: Instant, strict: bool) -> Report {
 }
 
 /// A client that asks for everything and never reads.
-fn stalled_client(to: SocketAddr, stop: Arc<AtomicBool>) -> Report {
+fn stalled_client(to: SocketAddr, stop: Arc<AtomicBool>, server: Arc<Shared>) -> Report {
     let mut r = Report::new("Native (stalled)");
     let mut tcp = TcpStream::connect(to).unwrap();
+    let local = tcp.local_addr().ok();
     tcp.set_write_timeout(Some(Duration::from_millis(200))).unwrap();
     let mut asked = 0;
     while !stop.load(Relaxed) {
@@ -954,6 +985,9 @@ fn stalled_client(to: SocketAddr, stop: Arc<AtomicBool>) -> Report {
         std::thread::sleep(Duration::from_millis(500));
     }
     r.notes.push(format!("asked for the whole tree {asked} times, read nothing"));
+    if let Some(d) = local.and_then(|l| server.disconnects().into_iter().find(|d| d.peer == l)) {
+        r.notes.push(format!("the server dropped it after {:.1} s: {}", d.after.as_secs_f64(), d.reason));
+    }
     r
 }
 
@@ -1156,25 +1190,25 @@ fn soak(secs: f64, workers: Option<usize>, stalled: bool, strict: bool) -> Vec<R
     let native = {
         let (to, stop) = (st.native.unwrap(), Arc::new(AtomicBool::new(false)));
         let s2 = stop.clone();
-        let mf = moves_from.clone();
-        (std::thread::spawn(move || native_client(to, secs, s2, t0, mf)), stop)
+        let (mf, sh) = (moves_from.clone(), server.shared().clone());
+        (std::thread::spawn(move || native_client(to, secs, s2, t0, mf, sh)), stop)
     };
     let sweep = {
         let to = st.osc.unwrap();
         std::thread::spawn(move || sweeper(to, secs, Arc::new(AtomicBool::new(false)), t0))
     };
     let meter_only = {
-        let to = st.native.unwrap();
-        std::thread::spawn(move || meter_client(to, secs, Arc::new(AtomicBool::new(false)), t0))
+        let (to, sh) = (st.native.unwrap(), server.shared().clone());
+        std::thread::spawn(move || meter_client(to, secs, Arc::new(AtomicBool::new(false)), t0, sh))
     };
     let slow = {
-        let to = st.native.unwrap();
-        std::thread::spawn(move || slow_client(to, secs, t0, strict))
+        let (to, sh) = (st.native.unwrap(), server.shared().clone());
+        std::thread::spawn(move || slow_client(to, secs, t0, strict, sh))
     };
     let stall_stop = Arc::new(AtomicBool::new(false));
     let stall = stalled.then(|| {
-        let (to, s2) = (st.native.unwrap(), stall_stop.clone());
-        std::thread::spawn(move || stalled_client(to, s2))
+        let (to, s2, sh) = (st.native.unwrap(), stall_stop.clone(), server.shared().clone());
+        std::thread::spawn(move || stalled_client(to, s2, sh))
     });
     for o in osc {
         reports.push(o.join().unwrap());
