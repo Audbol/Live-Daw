@@ -16,6 +16,7 @@ namespace
     const juce::Colour overviewGridColour { 0xff505450 };
     const juce::Colour bandLineColour { 0xff585858 };
     const juce::Colour labelColour { 0xffc0c0c0 };
+    const juce::Colour bandLabelColour { 0xff707070 }; // an EQ band's name while not selected [3.1]
     const juce::Colour dimLabelColour { 0xff707070 };
     const juce::Colour allPassColour { 0xffe0d400 };
     const juce::Colour keyCurveColour { 0xff18e460 }; // GATE KEY FILTER (the crossover is blue)
@@ -642,7 +643,7 @@ void ResponseGraph::paint (juce::Graphics& g)
             const float lw = juce::jmax (sel ? 2.0f : 1.5f, wingPx (sel ? 2.0f : 1.5f));
             g.setColour (sel ? selectedBandColour : bandLineColour);
             g.fillRect (juce::Rectangle<float> (lw, lineBottom - lineTop).withPosition (c.x - lw * 0.5f, lineTop));
-            g.setColour (sel ? juce::Colours::white : labelColour);
+            g.setColour (sel ? juce::Colours::white : bandLabelColour);
             g.setFont (wingFont (TypeScale::body, sel ? WingWeight::SemiBold : WingWeight::Medium));
             g.drawText (band.id.toUpperCase(), juce::Rectangle<float> (lh * 1.5f, lh).withCentre ({ c.x, labelY }), juce::Justification::centred);
         }

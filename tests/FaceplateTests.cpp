@@ -107,7 +107,7 @@ public:
             }
         }
 
-        beginTest ("A RATIO from a list reads as on the console (\"2.0:1\")");
+        beginTest ("A RATIO from a list reads as on the console's parameter bar (\"3:1\", \"2.5:1\")");
         {
             const auto ratioText = [] (const juce::String& token, int index)
             {
@@ -119,9 +119,11 @@ public:
                     }
                 return juce::String();
             };
-            expectEquals (ratioText ("COMP", 5), juce::String ("2.0:1"));
-            expectEquals (ratioText ("COMP", 16), juce::String ("100.0:1"));
-            expectEquals (ratioText ("EXP", 5), juce::String ("1:2.0"));
+            expectEquals (ratioText ("COMP", 5), juce::String ("2:1"));
+            expectEquals (ratioText ("COMP", 6), juce::String ("2.5:1"));
+            expectEquals (ratioText ("COMP", 7), juce::String ("3:1")); // the WING COMPRESSOR's default [3.1 screenshot]
+            expectEquals (ratioText ("COMP", 16), juce::String ("100:1"));
+            expectEquals (ratioText ("EXP", 5), juce::String ("1:2"));
             expectEquals (ratioText ("9000C", 1), juce::String ("1.43:1"));
             expectEquals (ratioText ("DEQ", 0), juce::String ("1.2:1"));
         }

@@ -802,8 +802,12 @@ namespace
                 g.setFont (wingFontPx (juce::jmin (TypeScale::caption * screenHeight(), (float) captionArea.getHeight() * 0.4f)));
                 g.drawFittedText (options.caption, captionArea.reduced (rowHeight / 3, 0), juce::Justification::centredLeft, 1, 0.8f);
             }
-            const auto font = wingFontPx (juce::jmin (TypeScale::body * screenHeight() * 1.15f, (float) rowHeight * 0.32f));
-            g.setFont (font);
+            // WING 3.1 (a 60 px row pitch): rows #101010 behind 2 px black lines,
+            // the chosen one gold 2 px inside its row, the names in 14 px light
+            // grey capitals 8 px in, all in a 2 px #707070 frame.
+            const float k = screenHeight() / 800.0f;
+            const int inset = juce::jmax (1, juce::roundToInt (2.0f * k));
+            g.setFont (listFont());
             for (int c = 0; c < options.columns; ++c)
                 for (int r = 0; r < visibleRows; ++r)
                 {
@@ -816,10 +820,15 @@ namespace
                         continue;
                     }
                     const bool current = index == selected, hot = index == hover && ! current;
-                    g.setColour (current ? Colours::gold : (hot ? Colours::screenKey : Colours::screenWell));
+                    g.setColour (hot ? Colours::screenKey : Colours::screenWell);
                     g.fillRect (row);
-                    g.setColour (current ? juce::Colours::black : (isDisabled (index) ? Colours::chipOff : Colours::text));
-                    g.drawFittedText (items[index], row.reduced (rowHeight / 4, 0), juce::Justification::centredLeft, 1, 0.8f);
+                    if (current)
+                    {
+                        g.setColour (Colours::gold);
+                        g.fillRect (row.reduced (inset));
+                    }
+                    g.setColour (current ? juce::Colours::black : (isDisabled (index) ? Colours::chipOff : juce::Colour (0xffc0c0c0)));
+                    g.drawFittedText (items[index], row.withTrimmedLeft (juce::roundToInt (8.0f * k)).withTrimmedRight (inset * 2), juce::Justification::centredLeft, 1, 0.8f);
                 }
             if (! scrollBar.isEmpty())
             {
@@ -846,9 +855,12 @@ namespace
                 g.setColour (Colours::textDim);
                 g.fillRect (track.withY (thumbY).withHeight (thumbH));
             }
-            g.setColour (Colours::textDim);
-            g.drawRect (list, 1);
+            g.setColour (juce::Colour (0xff707070));
+            g.drawRect (list, frameWidth());
         }
+
+        int frameWidth() const { return juce::jmax (1, juce::roundToInt (2.0f * screenHeight() / 800.0f)); }
+        juce::Font listFont() const { return wingFontPx (juce::jmin (TypeScale::body * screenHeight(), (float) rowHeight * 0.3f)); }
 
         void mouseMove (const juce::MouseEvent& e) override
         {
@@ -992,18 +1004,19 @@ namespace
             visibleRows = juce::jlimit (1, maxRows, numRows);
             const bool scrolls = numRows > visibleRows;
 
-            const auto font = wingFontPx (juce::jmin (TypeScale::body * screenH * 1.15f, (float) rowHeight * 0.32f));
+            const auto font = listFont();
             float textW = 0.0f;
             for (auto& s : items)
                 textW = juce::jmax (textW, juce::GlyphArrangement::getStringWidth (font, s));
             const auto anchorArea = anchor != nullptr ? getLocalArea (anchor, anchor->getLocalBounds()) : bounds.withSizeKeepingCentre (200, 40);
             const int scrollW = scrolls ? juce::roundToInt ((float) rowHeight * 0.6f) : 0;
             columnWidth = juce::jmax (juce::roundToInt (textW) + rowHeight, rowHeight * 2);
-            if (options.columns == 1)
-                columnWidth = juce::jmax (columnWidth, anchorArea.getWidth() - scrollW);
+            if (options.columns == 1) // as wide as the field, frame and all [3.1]
+                columnWidth = juce::jmax (columnWidth, anchorArea.getWidth() - scrollW - 2 * frameWidth());
             columnWidth = juce::jmin (columnWidth, (bounds.getWidth() - 8 - scrollW) / options.columns);
-            const int w = columnWidth * options.columns + scrollW + 2;
-            const int h = captionH + visibleRows * rowHeight + 2;
+            const int frame = frameWidth();
+            const int w = columnWidth * options.columns + scrollW + frame * 2;
+            const int h = captionH + visibleRows * rowHeight + frame * 2;
 
             juce::Rectangle<int> r;
             if (anchorArea.getBottom() + 2 + h <= bounds.getBottom())
@@ -1015,7 +1028,7 @@ namespace
             else
                 r = { anchorArea.getRight() + 2, bounds.getBottom() - h, w, h };
             list = r.constrainedWithin (bounds);
-            auto inner = list.reduced (1);
+            auto inner = list.reduced (frame);
             captionArea = inner.removeFromTop (captionH);
             scrollBar = scrolls ? inner.removeFromRight (scrollW) : juce::Rectangle<int>();
             body = inner;
@@ -1190,7 +1203,8 @@ namespace
                 const auto pictureArea = juce::Rectangle<float> (area.getX() + 8.0f * u, area.getY() + 8.0f * u, area.getWidth() - 16.0f * u, 48.0f * u);
                 if (picture)
                     g.drawImage (pictureOf (tile.id, pictureArea, g.getInternalContext().getPhysicalPixelScaleFactor()), pictureArea);
-                auto name = area.withTop (pictureArea.getBottom()).reduced (4.0f * u, 0.0f);
+                // (The name's middle 2 px over the middle of the strip under the picture, 3.1.)
+                auto name = area.withTop (pictureArea.getBottom()).withTrimmedBottom (3.0f * u).reduced (4.0f * u, 0.0f);
                 g.setColour (Colours::caption); // 13 px light grey capitals (3.1)
                 g.setFont (wingFontPx (juce::jmin (13.0f * screenHeight() / 800.0f, name.getHeight() * 0.5f)));
                 g.drawFittedText (tile.caption, name.toNearestInt(), juce::Justification::centred, 1, 0.7f);
@@ -1339,10 +1353,11 @@ namespace
             g.setFont (wingFontPx (14.0f * u));
             g.drawText (noneText, none, juce::Justification::centred, false);
             g.setColour (Colours::text);
-            g.setFont (wingFontPx (18.0f * u));
+            // (3.1: the title in 20 px capitals, CLOSE in 15.5 px ones.)
+            g.setFont (wingFontPx (20.0f * u));
             g.drawText (title, header, juce::Justification::centred, false);
             auto close = closeKey();
-            g.setFont (wingFontPx (14.0f * u));
+            g.setFont (wingFontPx (15.5f * u));
             g.drawText ("CLOSE", close.withTrimmedRight (40.0f * u), juce::Justification::centredRight, false);
             drawIcon (g, Icon::Check, close.removeFromRight (34.0f * u).withSizeKeepingCentre (34.0f * u, 34.0f * u), Colours::text);
 
@@ -1485,9 +1500,12 @@ namespace
         {
             if (over.getWidth() > screenWidth * 0.95f)
                 page = over.withTrimmedLeft (over.getWidth() * 96.0f / 1280.0f).withWidth (over.getWidth() * 1160.0f / 1280.0f);
+            // WING pixels are square: a page shorter than 708 px (a HOME slot
+            // screen over the parameter bar) doesn't squash the window; on the
+            // console INS's SELECT FX PROCESSOR sits where EFFECTS has it [3.1].
             ux = page.getWidth() / 1160.0f;
-            uy = page.getHeight() / 708.0f;
-            u = juce::jmin (ux, uy);
+            uy = ux;
+            u = ux;
         }
 
         /** A rectangle given in WING pixels from the page's top left. */
@@ -1682,9 +1700,9 @@ namespace
             g.setColour (Colours::caption);
             g.setFont (wingFontPx (10.0f * u));
             g.drawText ("NONE", units.at (56.0f, 124.0f, 80.0f, 20.0f), juce::Justification::centred, false);
-            g.setFont (wingFontPx (19.0f * u));
+            g.setFont (wingFontPx (20.0f * u));
             g.drawText ("SELECT FX PROCESSOR", units.at (300.0f, 80.0f, 560.0f, 64.0f), juce::Justification::centred, false);
-            g.setFont (wingFontPx (13.5f * u));
+            g.setFont (wingFontPx (14.5f * u));
             g.drawText ("CLOSE", units.at (900.0f, 80.0f, 140.0f, 64.0f), juce::Justification::centredRight, false);
             drawIcon (g, Icon::Check, units.at (1055.0f, 96.0f, 32.0f, 32.0f), Colours::caption);
 
@@ -1693,12 +1711,12 @@ namespace
 
             // The groups' captions, centred under their two columns.
             g.setColour (Colours::textDim);
-            const auto font = wingFontPx (13.0f * u);
+            const auto font = wingFontPx (14.5f * u); // (3.1: 14.5 px capitals, the diamond 26 px wide)
             g.setFont (font);
             const float premiumW = juce::GlyphArrangement::getStringWidth (font, "PREMIUM FX");
             const auto premium = units.at (56.0f, 536.0f, 517.0f, 26.0f);
             const float x0 = premium.getCentreX() - (premiumW + 33.0f * u) * 0.5f;
-            drawIcon (g, Icon::Premium, juce::Rectangle<float> (x0, premium.getY() + 4.0f * u, 26.0f * u, 18.0f * u), Colours::textDim);
+            drawIcon (g, Icon::Premium, juce::Rectangle<float> (x0, premium.getY() + 1.0f * u, 26.0f * u, 24.0f * u), Colours::textDim);
             g.drawText ("PREMIUM FX", juce::Rectangle<float> (x0 + 33.0f * u, premium.getY(), premiumW + 4.0f, premium.getHeight()),
                         juce::Justification::centredLeft, false);
             g.drawText ("STANDARD FX", units.at (586.0f, 536.0f, 517.0f, 26.0f), juce::Justification::centred, false);

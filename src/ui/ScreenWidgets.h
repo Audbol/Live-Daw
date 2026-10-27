@@ -563,17 +563,21 @@ public:
         const auto kc = key.getCentre().toFloat();
         if (chevronKey && ! keyHidden)
         {
-            const float s = juce::jlimit (4.0f, screenCap (9.0f), (float) key.getHeight() * 0.16f);
+            // WING 3.1 (a 64 px field): a light grey ">" 14 px wide and 24 tall, 3 px strokes.
+            const float s = juce::jmax (4.0f, 12.0f * u);
             juce::Path chevron;
-            chevron.startNewSubPath (kc.x - s * 0.5f, kc.y - s);
-            chevron.lineTo (kc.x + s * 0.5f, kc.y);
-            chevron.lineTo (kc.x - s * 0.5f, kc.y + s);
-            g.strokePath (chevron, juce::PathStrokeType (juce::jmax (1.5f, s * 0.3f)));
+            chevron.startNewSubPath (kc.x - s * 7.0f / 12.0f, kc.y - s);
+            chevron.lineTo (kc.x + s * 7.0f / 12.0f, kc.y);
+            chevron.lineTo (kc.x - s * 7.0f / 12.0f, kc.y + s);
+            g.setColour (juce::Colour (0xffc0c0c0).withAlpha (alpha));
+            g.strokePath (chevron, juce::PathStrokeType (juce::jmax (1.5f, 3.0f * u)));
         }
         else if (arrowKey && ! keyHidden)
         {
+            // WING 3.1 (a 64 px field): a light grey triangle 20 px wide and 11 tall.
             juce::Path tri;
-            tri.addTriangle (kc.x - 7.0f, kc.y - 4.0f, kc.x + 7.0f, kc.y - 4.0f, kc.x, kc.y + 5.0f);
+            tri.addTriangle (kc.x - 10.0f * u, kc.y - 6.0f * u, kc.x + 10.0f * u, kc.y - 6.0f * u, kc.x, kc.y + 5.0f * u);
+            g.setColour (juce::Colour (0xffc0c0c0).withAlpha (alpha));
             g.fillPath (tri);
         }
         else if (! keyHidden)
@@ -597,7 +601,7 @@ public:
             g.setFont (fontFittingWidth (wingFontPx (14.0f * u), caption, (float) tc.getWidth(), 0.6f));
             g.drawFittedText (caption, tc.withY (r.getY() + juce::roundToInt (2.0f * u)).withHeight (juce::roundToInt (26.0f * u)), juce::Justification::centredLeft, 1, 0.6f);
             g.setColour (Dark::text.withAlpha (alpha));
-            g.setFont (fontFittingWidth (wingFontPx (20.0f * u), shownValue, (float) tc.getWidth(), 0.8f));
+            g.setFont (fontFittingWidth (wingFontPx (20.0f * u, WingWeight::SemiBold), shownValue, (float) tc.getWidth(), 0.8f));
             g.drawFittedText (shownValue, tc.withY (r.getY() + juce::roundToInt (24.0f * u)).withHeight (juce::roundToInt (36.0f * u)), juce::Justification::centredLeft, 1, 0.8f);
             return;
         }
@@ -606,7 +610,9 @@ public:
         g.setFont (fontFittingWidth (wingFontPx (juce::jmin (TypeScale::body * screenH, (float) t.getHeight() * 0.22f)), caption, (float) t.getWidth(), 0.6f));
         g.drawFittedText (caption, t.removeFromTop (t.getHeight() * 40 / 100), juce::Justification::centredLeft, 1, 0.6f);
         g.setColour (Dark::text.withAlpha (alpha));
-        g.setFont (fontFittingWidth (wingFontPx (juce::jmin (TypeScale::value * screenH, (float) t.getHeight() * 0.5f)), shownValue, (float) t.getWidth(), 0.8f));
+        // The value in the console's heavier weight (its captions are lighter).
+        g.setFont (fontFittingWidth (wingFontPx (juce::jmin (TypeScale::value * screenH, (float) t.getHeight() * 0.5f), WingWeight::SemiBold), shownValue,
+                                     (float) t.getWidth(), 0.8f));
         g.drawFittedText (shownValue, t, juce::Justification::centredLeft, 1, 0.8f);
     }
 

@@ -109,7 +109,12 @@ enum class Icon
     Spill,         // SPILL (a fader with arrows)
     // The main display's frame
     Maximize,      // four corners pointing out: the screen fills the window
-    Restore        // four corners pointing in: back to the surface
+    Restore,       // four corners pointing in: back to the surface
+    // CHANNEL INIT / COPY scope keys (3.1)
+    Plug,          // CONN: a plug on its cable
+    FilterBand,    // FILTER: low cut, flat top, high cut
+    FaderCap,      // FDR: a fader cap on its slot
+    PanKnob        // PAN: a knob with its pointer
 };
 
 /** Draws `icon` fitted into `area` (stroked or filled as the icon needs). */

@@ -240,7 +240,7 @@ inline KnobStyle widthStyle (juce::Component* t = nullptr) { return styleOf (Kno
 inline KnobStyle qStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Width, KnobColours::qGreen, t); }
 inline KnobStyle thumbStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Thumb, KnobColours::white, t); }
 inline KnobStyle balStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Thumb, KnobColours::blue, t); }
-inline KnobStyle distStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Fill, KnobColours::yellow, t); }
+inline KnobStyle distStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Fill, KnobColours::distYellow, t); }
 // The source GAIN: a gold thumb, as on the console's HOME and CHANNEL INPUT bars.
 inline KnobStyle gainStyle (juce::Component* t = nullptr) { return styleOf (KnobStyle::Bar::Thumb, KnobColours::gold, t); }
 // TRIM and EQ gain: white from the centre (only the centre tick at 0 dB).
@@ -249,13 +249,85 @@ inline KnobStyle toolStyle (juce::Component* t = nullptr, juce::Colour c = colou
 
 /** The 3.1 key: a flat fill inside a black frame (the frame shows on the grey
     panels, not on the black page). */
-inline void paintKeyBody (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour fill, juce::Colour frame = juce::Colours::black)
+inline void paintKeyBody (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour fill, juce::Colour frame = juce::Colours::black, float frameWingPx = 0.0f)
 {
     g.setColour (frame);
     g.fillRoundedRectangle (r, 2.5f);
-    const float inset = frame == juce::Colours::black ? juce::jlimit (1.0f, 2.0f, r.getHeight() * 0.04f) : 1.0f;
+    // WING 3.1: a black frame of about a 20th of the key's height (2 px on
+    // 48-52 px keys, 3 px on 56-64 px keys), or as given (the slot's ON: 4 px).
+    const float inset = frameWingPx > 0.0f ? juce::jmax (1.0f, wingPx (frameWingPx))
+                        : frame == juce::Colours::black ? juce::jlimit (1.0f, juce::jmax (1.0f, wingPx (4.0f)), r.getHeight() * 0.05f)
+                                                        : 1.0f;
     g.setColour (fill.isTransparent() ? colours::panel : fill);
     g.fillRoundedRectangle (r.reduced (inset), 1.5f);
+}
+
+/** The block keys' icons as the 3.1 console draws them, in WING pixels
+    of the 44 px key: GATE a line rising to a knee, EQ two bells, COMP a
+    slanted F, INS a bar over ^ v, the wrench in outline. Returns false
+    (drawing nothing) for other icons. */
+inline bool paintHomeBlockIcon (juce::Graphics& g, Icon icon, juce::Rectangle<float> key, juce::Colour ink)
+{
+    const float u = key.getWidth() / 44.0f;
+    auto pt = [&key, u] (float x, float y) { return juce::Point<float> (key.getX() + x * u, key.getY() + y * u); };
+    const juce::PathStrokeType stroke (2.2f * u, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+    juce::Path p;
+    auto line = [&p, &pt] (std::initializer_list<juce::Point<float>> points)
+    {
+        bool first = true;
+        for (auto q : points)
+        {
+            const auto at = pt (q.x, q.y);
+            if (first)
+                p.startNewSubPath (at);
+            else
+                p.lineTo (at);
+            first = false;
+        }
+    };
+    if (icon == Icon::Gate)
+        line ({ { 16.5f, 34.5f }, { 16.5f, 20.0f }, { 29.0f, 9.5f } });
+    else if (icon == Icon::Compressor)
+    {
+        line ({ { 13.0f, 34.5f }, { 17.5f, 20.0f }, { 31.0f, 9.5f } });
+        line ({ { 15.0f, 28.0f }, { 31.0f, 17.0f } });
+    }
+    else if (icon == Icon::Eq)
+    {
+        p.startNewSubPath (pt (6.0f, 29.0f));
+        for (float x0 : { 6.0f, 21.5f })
+        {
+            p.cubicTo (pt (x0 + 5.0f, 29.0f), pt (x0 + 4.0f, 15.0f), pt (x0 + 8.0f, 15.0f));
+            p.cubicTo (pt (x0 + 12.0f, 15.0f), pt (x0 + 11.0f, 29.0f), pt (x0 + 15.5f, 29.0f));
+        }
+    }
+    else if (icon == Icon::Insert)
+    {
+        line ({ { 9.0f, 15.0f }, { 35.5f, 15.0f } });
+        line ({ { 8.5f, 29.5f }, { 13.8f, 22.0f }, { 19.0f, 29.5f } });
+        line ({ { 24.5f, 22.0f }, { 30.0f, 29.5f }, { 35.5f, 22.0f } });
+    }
+    else if (icon == Icon::Wrench)
+    {
+        // A spanner from bottom left to top right, its jaw open to the right.
+        p.startNewSubPath (pt (6.5f, 32.0f));
+        p.lineTo (pt (18.5f, 20.0f));
+        p.cubicTo (pt (16.0f, 14.0f), pt (20.0f, 7.0f), pt (27.5f, 6.5f));
+        p.lineTo (pt (29.0f, 8.0f));
+        p.lineTo (pt (25.5f, 12.5f));
+        p.lineTo (pt (28.5f, 16.0f));
+        p.lineTo (pt (33.5f, 12.0f));
+        p.lineTo (pt (35.5f, 13.5f));
+        p.cubicTo (pt (35.5f, 21.0f), pt (29.0f, 26.5f), pt (23.5f, 24.5f));
+        p.lineTo (pt (11.5f, 36.5f));
+        p.cubicTo (pt (10.0f, 38.0f), pt (5.0f, 34.0f), pt (6.5f, 32.0f));
+        p.closeSubPath();
+    }
+    else
+        return false;
+    g.setColour (ink);
+    g.strokePath (p, stroke);
+    return true;
 }
 
 //==============================================================================
@@ -282,6 +354,11 @@ public:
     juce::Colour offColour = colours::keyOff;
     juce::Colour offInk = colours::dim;  // the text of an unlit key
     juce::Colour frame = juce::Colours::black;  // keyboard-style keys: #484848
+    float frameWingPx = 0.0f;                   // the frame's width in WING px (0: from the key's height)
+    float textCentreX = 0.0f;                   // an icon key's text centred at this share of its width (0: left, after the icon)
+    /** iconAbove keys of CHANNEL INIT / COPY (3.1): the block keys' icons, a
+        small icon over a SemiBold caption, the black frame only while off. */
+    bool scopeStyle = false;
 
     void setIcon (std::optional<Icon> i)
     {
@@ -369,7 +446,7 @@ public:
             fill = (fill.isTransparent() ? colours::panel : fill).brighter (0.07f);
         if (! isEnabled() && on)
             fill = fill.darker (0.45f);
-        paintKeyBody (g, r, fill, frame);
+        paintKeyBody (g, r, fill, scopeStyle && on ? fill : frame, frameWingPx);
         if (hold != nullptr)
             paintHoldProgress (g, r.reduced (1.5f), hold->progress(), on ? offColour : onColour);
         const auto ink = on ? juce::Colours::black : (isEnabled() ? offInk : colours::dim.withAlpha (0.55f));
@@ -397,6 +474,20 @@ public:
                               0.7f);
             return;
         }
+        if (keyText.isEmpty() && *icon == Icon::ChevronRight)
+        {
+            // The ">" key of a field (INS's beside FX PROCESSOR, TAP EQ) as the
+            // fields draw theirs: 14 x 24 px with 3 px strokes in a 64 px key [3.1].
+            const float k = r.getHeight() / 64.0f;
+            const auto c = r.getCentre();
+            juce::Path chevron;
+            chevron.startNewSubPath (c.x - 7.0f * k, c.y - 12.0f * k);
+            chevron.lineTo (c.x + 7.0f * k, c.y);
+            chevron.lineTo (c.x - 7.0f * k, c.y + 12.0f * k);
+            g.setColour (ink);
+            g.strokePath (chevron, juce::PathStrokeType (juce::jmax (1.5f, 3.0f * k)));
+            return;
+        }
         if (keyText.isEmpty())
         {
             // (A narrow key, INS's > beside FX PROCESSOR, keeps a usable icon.)
@@ -408,8 +499,23 @@ public:
             auto iconBox = r.removeFromRight (juce::jmin (r.getHeight(), r.getWidth() * 0.4f)).reduced (r.getHeight() * 0.12f);
             drawIcon (g, *icon, iconBox, ink);
             g.setColour (ink);
-            g.setFont (fontFittingWidth (homeFont (TypeScale::body, r.getHeight() * 0.46f), keyText, r.getWidth() - 4.0f, 0.8f));
+            // (CLOSE: 15.5 px capitals on the console, a little over the body text.)
+            g.setFont (fontFittingWidth (homeFont (TypeScale::body * 1.1f, r.getHeight() * 0.5f), keyText, r.getWidth() - 4.0f, 0.8f));
             g.drawFittedText (keyText, r.toNearestInt().reduced (4, 0), juce::Justification::centredRight, 1, 0.8f);
+            return;
+        }
+        if (iconAbove && scopeStyle)
+        {
+            // WING 3.1 (a 52 px key): the icon about 22 px across centred 17 px
+            // down, the caption in 12 px SemiBold capitals at the bottom.
+            const float k = r.getHeight() / 52.0f;
+            const auto iconBox = juce::Rectangle<float> (22.0f * k, 22.0f * k).withCentre ({ r.getCentreX(), r.getY() + 17.0f * k });
+            if (! paintHomeBlockIcon (g, *icon, iconBox.expanded (4.0f * k), ink)) // (the block keys' art at 2/3 size)
+                drawIcon (g, *icon, iconBox, ink);
+            g.setColour (ink);
+            const auto label = r.withTop (r.getY() + 32.0f * k).withHeight (18.0f * k);
+            g.setFont (fontFittingWidth (wingFontPx (12.0f * k, WingWeight::SemiBold), keyText, label.getWidth() - 4.0f, 0.8f));
+            g.drawFittedText (keyText, label.toNearestInt(), juce::Justification::centred, 1, 0.8f);
             return;
         }
         if (iconAbove)
@@ -421,9 +527,21 @@ public:
             g.drawFittedText (keyText, label.toNearestInt().reduced (1, 0), juce::Justification::centredTop, 1, 0.8f);
             return;
         }
+        const auto whole = r;
         auto iconBox = r.removeFromLeft (juce::jmin (r.getHeight(), r.getWidth() * 0.4f)).reduced (r.getHeight() * 0.2f);
+        if (textCentreX > 0.0f) // (TOOL FILTER: the icon 30 px across, centred 41 px into the 168 px key; INIT 28 px, 32 px into 144 [3.1])
+            iconBox = juce::Rectangle<float> (whole.getHeight() * 0.46f, whole.getHeight() * 0.46f)
+                          .withCentre ({ whole.getX() + whole.getWidth() * 0.235f, whole.getCentreY() });
         drawIcon (g, *icon, iconBox, ink);
         g.setColour (ink);
+        if (textCentreX > 0.0f)
+        {
+            const float cx = whole.getX() + whole.getWidth() * textCentreX;
+            const float half = juce::jmin (cx - r.getX(), whole.getRight() - cx) - 2.0f;
+            g.setFont (fontFittingWidth (homeFont (TypeScale::body, r.getHeight() * 0.46f), keyText, half * 2.0f, 0.8f));
+            g.drawFittedText (keyText, juce::Rectangle<float> (cx - half, r.getY(), half * 2.0f, r.getHeight()).toNearestInt(), juce::Justification::centred, 1, 0.8f);
+            return;
+        }
         // Narrow keys (small windows) shrink the label rather than cut it.
         g.setFont (fontFittingWidth (homeFont (TypeScale::body, r.getHeight() * 0.46f), keyText, r.getWidth() - 4.0f, 0.8f));
         g.drawFittedText (keyText, r.toNearestInt().reduced (2, 0), juce::Justification::centredLeft, 1, 0.8f);
@@ -1085,7 +1203,7 @@ public:
             r.removeFromTop (r.getHeight() * 0.4f);
         }
         g.setColour (enabled ? valueColour : colours::dim);
-        g.setFont (homeFont (TypeScale::value, r.getHeight() * 0.9f));
+        g.setFont (homeFont (TypeScale::value, r.getHeight() * 0.9f, WingWeight::SemiBold));
         g.drawFittedText (binding.text ? binding.text() : juce::String ("--"), r.toNearestInt(), juce::Justification::topLeft, 1, 0.7f);
     }
 

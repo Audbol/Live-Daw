@@ -102,7 +102,8 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
 
     /** Paints the shape in `area` (also for the model list's tiles). */
-    static void paintShape (juce::Graphics&, juce::Rectangle<float> area, float attack, float hold, float release, bool on, bool handles);
+    /** `thumb`: the model list's miniature (black, small handles) [3.1]. */
+    static void paintShape (juce::Graphics&, juce::Rectangle<float> area, float attack, float hold, float release, bool on, bool handles, bool thumb = false);
 
 private:
     void timerCallback() override;
