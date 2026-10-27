@@ -747,54 +747,65 @@ namespace
 
         void paint (juce::Graphics& g) override
         {
+            // [Fig. 35] in WING px of the 925 x 404 body: two 454 px panels (a
+            // 2 px #4a4a4a frame, a 24 px #484848 caption bar, black inside);
+            // 52 px cells on a 56 px pitch from 6 px in and 31 px down, the
+            // rows in pairs (a few px more between pairs), the aux row 84 px
+            // under the last; "CH" 10 px caps over a rule, the number 14 px.
             cells.clear();
-            auto r = getLocalBounds().toFloat().reduced (6.0f, 4.0f);
-            const float k = juce::jmin (r.getWidth() / 980.0f, r.getHeight() / 380.0f);
+            const auto r = getLocalBounds().toFloat();
+            const float k = juce::jmin (r.getWidth() / 925.0f, r.getHeight() / 404.0f);
+            auto at = [&] (float x, float y, float w, float h) { return juce::Rectangle<float> (r.getX() + x * k, r.getY() + y * k, w * k, h * k); };
+            static constexpr float rowTop[] = { 0.0f, 56.0f, 117.0f, 172.0f, 232.0f };
+            const juce::Colour frame { 0xff4a4a4a }, captionBar { 0xff484848 }, mainCell { 0xff4891e0 }, cellInk { 0xff000620 }, offCell { 0xff202020 },
+                offNumber { 0xff6f6f6f }, offCaption { 0xff3c3c3c };
             for (int panel = 0; panel < 2; ++panel)
             {
-                // [Fig. 35] two 480 px panels with a caption bar, 8 x 56 px cells
-                // ("CH" over the number), the aux row 14 px below.
-                auto p = juce::Rectangle<float> (r.getX() + (float) panel * r.getWidth() * 0.5f, r.getY(), r.getWidth() * 0.5f, r.getHeight()).reduced (4.0f * k, 0.0f);
-                g.setColour (Dark::body);
+                const float px0 = panel == 0 ? 0.0f : 472.0f;
+                const auto p = at (px0, 0.0f, 454.0f, 404.0f);
+                g.setColour (frame);
                 g.fillRect (p);
-                auto bar = p.removeFromTop (22.0f * k);
-                g.setColour (Dark::header);
+                g.setColour (juce::Colours::black);
+                g.fillRect (p.reduced (2.0f * k));
+                const auto bar = at (px0 + 2.0f, 3.0f, 450.0f, 24.0f);
+                g.setColour (captionBar);
                 g.fillRect (bar);
                 g.setColour (Dark::caption);
-                g.setFont (wingFontPx (12.0f * k));
+                g.setFont (wingFontPx (12.5f * k));
                 g.drawText (panel == 0 ? "MAIN/ALT INPUT" : "GLOBAL INPUT SELECT ENABLE", bar, juce::Justification::centred);
-                p.reduce (4.0f * k, 6.0f * k);
-                const float pitchX = p.getWidth() / 8.0f, pitchY = juce::jmin (48.0f * k, (p.getHeight() - 14.0f * k) / 6.0f);
-                layoutInputCells (ctx, p, pitchX, pitchY, 14.0f * k,
-                                  [&] (juce::Rectangle<float> c, const Strip* s, StripKind kind)
-                                  {
-                                      c = c.reduced (2.0f * k);
-                                      juce::Colour fill = Dark::key, ink = Dark::textDim;
-                                      if (s != nullptr && panel == 0)
-                                      {
-                                          fill = s->isAltSelected() ? Dark::orange : Dark::choice;
-                                          ink = juce::Colours::black;
-                                          if (! s->canSwitchInput())
-                                              fill = fill.darker (0.6f);
-                                      }
-                                      else if (s != nullptr && s->isSrcAuto())
-                                      {
-                                          fill = Dark::gold;
-                                          ink = juce::Colours::black;
-                                      }
-                                      g.setColour (fill);
-                                      g.fillRoundedRectangle (c, 3.0f * k);
-                                      if (s == nullptr)
-                                          return;
-                                      // Channels without an ALT source show their number dimmed.
-                                      g.setColour (panel == 0 && ! s->hasAltInput() ? ink.withAlpha (0.55f) : ink);
-                                      g.setFont (wingFontPx (10.0f * k));
-                                      auto text = c.reduced (4.0f * k, 2.0f * k);
-                                      g.drawText (kind == StripKind::Aux ? "AUX" : "CH", text.removeFromTop (text.getHeight() * 0.42f), juce::Justification::topLeft);
-                                      g.setFont (wingFontPx (16.0f * k));
-                                      g.drawText (juce::String (s->getNumber()), text, juce::Justification::bottomLeft);
-                                      cells.push_back ({ c, s, panel });
-                                  });
+                for (auto kind : { StripKind::Channel, StripKind::Aux })
+                {
+                    const auto& strips = ctx.engine.getStrips (kind);
+                    const int rows = kind == StripKind::Channel ? 5 : 1;
+                    for (int i = 0; i < rows * 8; ++i)
+                    {
+                        const float top = 31.0f + (kind == StripKind::Channel ? rowTop[i / 8] : 316.0f);
+                        const auto c = at (px0 + 6.0f + 56.0f * (float) (i % 8), top, 52.0f, 52.0f);
+                        const Strip* s = i < (int) strips.size() ? strips[(size_t) i].get() : nullptr;
+                        juce::Colour fill = offCell, ink = offNumber, caption = offCaption, rule = juce::Colours::black;
+                        if (s != nullptr && (panel == 0 || s->isSrcAuto()))
+                        {
+                            fill = panel == 1 ? Dark::gold : s->isAltSelected() ? Dark::orange : mainCell;
+                            if (panel == 0 && ! s->canSwitchInput())
+                                fill = fill.darker (0.6f);
+                            ink = caption = cellInk;
+                            rule = cellInk.withAlpha (0.8f);
+                        }
+                        g.setColour (fill);
+                        g.fillRoundedRectangle (c, 3.0f * k);
+                        if (s == nullptr)
+                            continue;
+                        g.setColour (caption);
+                        g.setFont (wingFontPx (10.0f * k, WingWeight::SemiBold));
+                        g.drawText (kind == StripKind::Aux ? "AUX" : "CH", c.withHeight (20.0f * k).translated (0.0f, 1.0f * k), juce::Justification::centred);
+                        g.setColour (rule);
+                        g.fillRect (c.getX() + 4.0f * k, c.getY() + 19.0f * k, c.getWidth() - 8.0f * k, juce::jmax (1.0f, 2.0f * k));
+                        g.setColour (ink);
+                        g.setFont (wingFontPx (14.0f * k, WingWeight::SemiBold));
+                        g.drawText (juce::String (s->getNumber()), c.withTrimmedTop (22.0f * k).translated (0.0f, -1.0f * k), juce::Justification::centred);
+                        cells.push_back ({ c, s, panel });
+                    }
+                }
             }
         }
 
@@ -848,7 +859,7 @@ namespace
     class AudioTab final : public juce::Component, private juce::Timer
     {
     public:
-        AudioTab (UiContext& c, std::function<void (const juce::String&, std::unique_ptr<juce::Component>)> overlay)
+        AudioTab (UiContext& c, std::function<void (const juce::String&, std::unique_ptr<juce::Component>, OverlayPlacement)> overlay)
             : ctx (c), showOverlay (std::move (overlay))
         {
             clock.addRow ({}, std::make_unique<DropdownField> ("CLOCK RATE", [this] { return rateText(); }, [this] (DropdownField& f) { showRates (f); }), 0.0f,
@@ -864,7 +875,7 @@ namespace
                                                                  [this] (int i) { ctx.engine.setGlobalAlt (i == 1); }, std::vector<juce::Colour> { Colours::valueBlue, altOrange }),
                                 0.0f, true, false, kFieldRows);
             inputSelect.newBox();
-            inputSelect.addRow ({}, std::make_unique<InputSelectGrid> (ctx, [this] { showOverlay ("INPUT SELECT", std::make_unique<InputSelectWindow> (ctx)); }), 0.0f, true, false, 4.0f);
+            inputSelect.addRow ({}, std::make_unique<InputSelectGrid> (ctx, [this] { showOverlay ("INPUT SELECT", std::make_unique<InputSelectWindow> (ctx), OverlayPlacement::centred (937.0f / 1280.0f, 480.0f / 720.0f)); }), 0.0f, true, false, 4.0f);
             addAndMakeVisible (inputSelect);
 
             prefsPanel.addRow ("MAIN LINK",
@@ -952,7 +963,7 @@ namespace
             addAndMakeVisible (solo);
 
             device.addRow ({}, std::make_unique<DropdownField> ("DEVICE", [this] { return deviceName(); },
-                                                                [this] (DropdownField&) { showOverlay ("AUDIO DEVICE", std::make_unique<DeviceBody> (ctx.deviceManager)); }),
+                                                                [this] (DropdownField&) { showOverlay ("AUDIO DEVICE", std::make_unique<DeviceBody> (ctx.deviceManager), OverlayPlacement::fullPage()); }),
                            0.0f, true, false, kFieldRows);
             device.addRow ({}, std::make_unique<DropdownField> ("IN/OUT", [this] { return channelsText(); }), 0.0f, true, false, kFieldRows);
             addAndMakeVisible (device);
@@ -1103,7 +1114,7 @@ namespace
         }
 
         UiContext& ctx;
-        std::function<void (const juce::String&, std::unique_ptr<juce::Component>)> showOverlay;
+        std::function<void (const juce::String&, std::unique_ptr<juce::Component>, OverlayPlacement)> showOverlay;
         SettingsPanel clock { "AUDIO CLOCK" }, inputSelect { "INPUT SELECT" }, prefsPanel { "PREFERENCES" }, solo { "SOLO SYSTEM" },
             device { "AUDIO DEVICE" }, automix { "AUTOMIX" };
         juce::Slider* ceiling = nullptr;
@@ -2604,7 +2615,7 @@ SetupPage::SetupPage (UiContext& c) : ctx (c)
     tabRow.onChange = [this] (int) { showTab(); };
     addAndMakeVisible (tabRow);
 
-    auto overlay = [this] (const juce::String& title, std::unique_ptr<juce::Component> body) { overlays.show (*this, title, std::move (body)); };
+    auto overlay = [this] (const juce::String& title, std::unique_ptr<juce::Component> body, OverlayPlacement where) { overlays.show (*this, title, std::move (body), where); };
     general = std::make_unique<GeneralTab> (ctx);
     pages.push_back (general.get());
     pages.push_back (ownedPages.add (new AudioTab (ctx, overlay)));

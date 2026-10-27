@@ -2585,6 +2585,7 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
     {
         static const char* captions[] = { "SENDS", "BUS -> BUS", "FX", "MIDI CC" };
         auto* f = fields.add (new DropdownField (captions[i], [this, i] { return fieldText (i); }, [this, i] (DropdownField& field) { chooseField (i, field); }));
+        f->consoleMetrics = true; // [3.1] 14 px caption, 20 px value
         addAndMakeVisible (f);
     }
     for (auto* k : { &clearKey, &renameKey, &newKey, &deleteKey })

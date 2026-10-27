@@ -59,6 +59,12 @@ public:
     /** The ink while the key is lit (black by default; white on a dark fill such as red). */
     juce::Colour onInk = juce::Colours::black;
     bool outlined = false;
+    /** An outlined key's frame (LIBRARY [3.1]: 1 px #c0c0c0, black while disabled). */
+    juce::Colour outlineColour = Colours::textDim;
+    float outlineWidth = 1.5f;
+    bool blackFrameWhenDisabled = false;
+    /** No fill or frame while off: print on the panel (LIBRARY's ADD ITEM TO SHOW, EDIT TAG). */
+    bool frameless = false;
     /** Icon above a small label (the library's FOLDER / RENAME / DELETE keys). */
     bool iconAbove = false;
 
@@ -73,10 +79,14 @@ public:
             fill = fill.brighter (0.06f);
         if (! isEnabled())
             fill = fill.darker (0.4f);
-        g.setColour (fill);
-        g.fillRect (r);
-        g.setColour (outlined && ! on ? Colours::textDim : juce::Colours::black);
-        g.drawRect (r, outlined ? 1.5f : 1.0f);
+        if (! frameless || on || down)
+        {
+            g.setColour (fill);
+            g.fillRect (r);
+            const bool grey = outlined && ! on && (isEnabled() || ! blackFrameWhenDisabled);
+            g.setColour (grey ? outlineColour : juce::Colours::black);
+            g.drawRect (r, outlined ? outlineWidth : 1.0f);
+        }
         const auto ink = on ? onInk
                             : (! isEnabled() ? Colours::textDim.darker (0.3f) : (isOn != nullptr && ! outlined ? Colours::textDim : Colours::caption));
         if (iconAbove && icon.has_value())

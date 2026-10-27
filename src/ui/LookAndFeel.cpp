@@ -692,7 +692,7 @@ void drawChip (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& 
     g.setColour (fill);
     g.fillRoundedRectangle (r, 2.0f);
     g.setColour (textColour);
-    g.setFont (fontFittingWidth (wingFontPx (juce::jlimit (5.0f, screenCap (12.0f), r.getHeight() * 0.56f)), text, r.getWidth() - 2.0f));
+    g.setFont (fontFittingWidth (wingFontPx (juce::jlimit (5.0f, screenCap (12.0f), r.getHeight() * 0.62f)), text, r.getWidth() - 2.0f));
     g.drawFittedText (text, r.toNearestInt(), juce::Justification::centred, 1, 0.75f);
 }
 

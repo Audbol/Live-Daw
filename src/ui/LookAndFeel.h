@@ -158,7 +158,7 @@ enum class WingWeight
 
 namespace TypeScale
 {
-    constexpr float tab = 0.025f;           // selected tab text (unselected 0.0212)
+    constexpr float tab = 0.025f;           // selected tab text (unselected 0.0175)
     constexpr float header = 0.025f;        // panel header titles
     constexpr float value = 0.025f;         // knob-box values ("0.0 dB")
     constexpr float caption = 0.0175f;      // knob-box captions

@@ -207,7 +207,7 @@ void routing::drawGroupIcon (juce::Graphics& g, Group group, juce::Rectangle<flo
             g.fillRect (band);
             g.restoreState();
             g.setColour (c);
-            text (name, 0.53f, 0.26f, 0.08f, 0.44f);
+            text (name, 0.53f, 0.26f, 0.1f, 0.44f);
             return;
         }
         case Group::UserSignal:
@@ -304,7 +304,7 @@ namespace
             drawIcon (g, *icon, ib.translated (wingPx (6.0f), 0.0f), ink);
         }
         g.setColour (ink);
-        g.setFont (capFont (13.0f));
+        g.setFont (capFont (14.0f));
         g.drawFittedText (text, f.toNearestInt().reduced (4, 0), juce::Justification::centred, 1, 0.8f);
     }
 
@@ -322,7 +322,7 @@ namespace
         paintHoldProgress (g, key.toFloat(), hold, on ? Colours::screenTile : onColour);
         drawIcon (g, icon, key.toFloat().reduced ((float) key.getHeight() * 0.24f), on ? juce::Colours::black : Dark::caption);
         g.setColour (on ? onColour : Dark::caption.withAlpha (0.8f));
-        g.setFont (capFont (13.0f));
+        g.setFont (capFont (14.0f));
         g.drawText (caption, key.withY (key.getBottom() + px (6.0f)).withHeight (px (24.0f)).expanded (px (16.0f), 0), juce::Justification::centred);
     }
 
@@ -361,16 +361,17 @@ namespace
         r.removeFromRight (px (2.0f));
         g.setColour (Colours::screenPanel);
         g.fillRect (r);
-        auto ib = r.removeFromLeft (r.getHeight()).reduced (px (6.0f));
+        // [3.1] the icon 46 px across, "SOURCE GROUP" 14 px caps, the name 20 px.
+        auto ib = r.removeFromLeft (r.getHeight()).reduced (px (2.0f));
         drawGroupIcon (g, group, ib.toFloat(), Dark::caption);
         r.removeFromLeft (px (4.0f));
         g.setColour (Dark::caption);
         const auto name = juce::String (routing::info (group).name);
-        g.setFont (fontFittingWidth (capFont (12.5f), caption, (float) r.getWidth(), 0.8f));
-        g.drawText (caption, r.withHeight (r.getHeight() * 44 / 100).translated (0, px (2.0f)), juce::Justification::bottomLeft);
+        g.setFont (fontFittingWidth (capFont (14.0f), caption, (float) r.getWidth(), 0.8f));
+        g.drawText (caption, r.withHeight (r.getHeight() * 44 / 100).translated (0, -px (1.0f)), juce::Justification::bottomLeft);
         g.setColour (Dark::text);
-        g.setFont (fontFittingWidth (capFont (19.0f, WingWeight::SemiBold), name, (float) r.getWidth(), 0.7f));
-        g.drawText (name, r.withTrimmedTop (r.getHeight() * 44 / 100), juce::Justification::centredLeft);
+        g.setFont (fontFittingWidth (capFont (20.0f, WingWeight::SemiBold), name, (float) r.getWidth(), 0.7f));
+        g.drawText (name, r.withTrimmedTop (r.getHeight() * 44 / 100).translated (0, -px (3.0f)), juce::Justification::centredLeft);
     }
 
     /** The mini meter of a tile: a column of segments, `pos` (0..1) lit. */
@@ -444,7 +445,7 @@ namespace
     void drawSelection (juce::Graphics& g, juce::Rectangle<int> area)
     {
         g.setColour (Colours::gold);
-        g.drawRect (area.toFloat().expanded (wingPx (4.0f)), juce::jmax (2.0f, wingPx (3.0f)));
+        g.drawRect (area.toFloat().expanded (wingPx (4.0f)), juce::jmax (2.0f, wingPx (4.0f)));
     }
 
     /** The strip a bus, main or matrix signal comes from (nullptr for other sources, a missing bus). */
@@ -611,7 +612,7 @@ StatusTitle RoutingPage::getStatusTitle()
 
 std::vector<StatusKey> RoutingPage::getStatusKeys()
 {
-    return { { "CHANNELS", Icon::Faders, mode == Mode::Channels, [this] { setMode (Mode::Channels); } },
+    return { { "CHANNELS", Icon::ChannelFaders, mode == Mode::Channels, [this] { setMode (Mode::Channels); } },
              { "SOURCES", Icon::SourcesIn, mode == Mode::Sources, [this] { setMode (Mode::Sources); } },
              { "OUTPUTS", Icon::OutputsOut, mode == Mode::Outputs, [this] { setMode (Mode::Outputs); } } };
 }
@@ -1114,9 +1115,8 @@ void RoutingPage::paintChannelTile (juce::Graphics& g, juce::Rectangle<int> area
     if (port >= 0)
     {
         drawStripIcon (g, s, r.reduced (r.getWidth() * 0.18f, r.getHeight() * 0.08f).translated (0.0f, r.getHeight() * 0.04f), iconGrey);
-        auto text = sourceName (port);
-        if (stereo && sourceName (port) == routing::sourceLabel (port))
-            text = routing::pairLabel (port, portRight >= 0 ? portRight : port + 1);
+        // The port's label, never the source's name (manual Fig. 30, [3.1]: "PLAY 1/2" under "2TR").
+        const auto text = stereo ? routing::pairLabel (port, portRight >= 0 ? portRight : port + 1) : routing::sourceLabel (port);
         g.setColour (! sourcePresent (port) ? naLabel : stereo ? stereoLabel : monoLabel);
         g.setFont (fontFittingWidth (g.getCurrentFont(), text, label.getWidth() - 2.0f, 0.7f));
         g.drawFittedText (text, label.toNearestInt().reduced (1, 0), juce::Justification::centredTop, 1, 0.7f);
@@ -1669,7 +1669,7 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g) const
                     g.fillRect (juce::Rectangle<float> (lw, d).withCentre (glyph.getCentre()));
                 }
             }
-            g.setFont (capFont (13.0f));
+            g.setFont (capFont (14.5f));
             g.drawText (modes[i], k.withTrimmedLeft (px (96.0f)), juce::Justification::centredLeft);
         }
     }
@@ -1797,7 +1797,7 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g) const
         g.setColour (text == "OFF" ? Dark::textDim : Dark::text);
         g.setFont (fontFittingWidth (capFont (14.0f, WingWeight::SemiBold), text, (float) f.getWidth(), 0.7f));
         g.drawText (text, f, juce::Justification::centredLeft);
-        drawIconKeyBelow (g, sourcePolKey, Icon::Invert, "POL", src->invert.load(), Colours::gold);
+        drawIconKeyBelow (g, sourcePolKey, Icon::Polarity, "POL", src->invert.load(), Colours::gold);
         drawOutlinedKey (g, sourceMuteKey, std::nullopt, "MUTE", src->mute.load(), Colours::mute, juce::Colours::black);
         return;
     }
@@ -1822,7 +1822,7 @@ void RoutingPage::paintSourceSettings (juce::Graphics& g) const
     }
 
     drawIconKeyBelow (g, sourcePhantomKey, Icon::Power, "+48V", src->phantom.load(), Colours::mute, phantomHold.progress());
-    drawIconKeyBelow (g, sourcePolKey, Icon::Invert, "POL", src->invert.load(), Colours::gold);
+    drawIconKeyBelow (g, sourcePolKey, Icon::Polarity, "POL", src->invert.load(), Colours::gold);
     drawOutlinedKey (g, sourceMuteKey, std::nullopt, "MUTE", src->mute.load(), Colours::mute, juce::Colours::black);
     // GAIN in the group's range (0 dB near the bottom, as on the WING); none
     // for a group the WING gives no gain.
@@ -1853,7 +1853,7 @@ void RoutingPage::paintLevelFader (juce::Graphics& g, juce::Rectangle<int> area,
     g.setColour (Colours::text);
     g.fillRect (flag);
     g.setColour (juce::Colours::black);
-    g.setFont (capFont (10.0f));
+    g.setFont (capFont (12.0f));
     g.drawFittedText (juce::String (value, 1) + " dB", flag.toNearestInt(), juce::Justification::centred, 1, 0.6f);
 }
 
@@ -2238,7 +2238,7 @@ std::vector<KnobBinding> RoutingPage::getKnobs()
         if (safe != nullptr)
             safe->forSelectedSources ([] (int, ld::SourceParams& s) { s.gainDb = 0.0f; });
     };
-    return { gain };
+    return { {}, {}, {}, {}, {}, gain }; // [3.1] GAIN in the last slot
 }
 
 void RoutingPage::mouseDown (const juce::MouseEvent& e)
@@ -2464,12 +2464,7 @@ void RoutingPage::paint (juce::Graphics& g)
             paintSignal (g, area, sig, signalPage * kSignalsPerPage + (int) i, feeds, i < signalPeaks.size() ? signalPeaks[i] : 0.0f);
         }
     }
-
-    if (lock.isLocked() && mode != Mode::Sources)
-    {
-        g.setColour (juce::Colours::black.withAlpha (0.25f));
-        g.fillRect (rightGrid);
-    }
+    // Locked, the console keeps the right grid as it is (no dimming) [3.1].
 }
 
 //==============================================================================

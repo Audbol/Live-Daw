@@ -1056,7 +1056,8 @@ void UsbRecorderPage::paintKey (juce::Graphics& g, juce::Rectangle<int> area, co
     auto content = r.reduced (r.getHeight() * 0.2f, r.getHeight() * 0.12f);
     if (icon)
     {
-        const float s = text.isEmpty() ? juce::jmin (content.getWidth(), content.getHeight()) * 0.6f : content.getHeight() * 0.66f;
+        // [3.1] the transport glyphs about 30 px (a 64 px key), the arrows 24.
+        const float s = text.isEmpty() ? juce::jmin (content.getWidth(), content.getHeight()) * 0.8f : content.getHeight() * 0.95f;
         auto iconBox = text.isEmpty() ? content.withSizeKeepingCentre (s, s) : content.removeFromLeft (content.getHeight()).withSizeKeepingCentre (s, s);
         icon (g, iconBox, ink);
     }
@@ -1325,7 +1326,7 @@ void UsbRecorderPage::paintRecorder (juce::Graphics& g)
         g.setColour (lit ? Dark::choice : keyGrey);
         g.fillRect (r);
         g.setColour (lit ? juce::Colours::black : (enabled ? Colours::caption : keyOffInk));
-        g.setFont (font ((float) r.getHeight() * 0.4f));
+        g.setFont (font ((float) r.getHeight() * 0.32f)); // [3.1] 14 px caps
         g.drawFittedText (text, r.reduced (2, 0), juce::Justification::centred, 1, 0.7f);
     };
     const bool mp3 = u.getRecFileType() == AudioFileFormat::Type::Mp3;
@@ -1380,7 +1381,7 @@ void UsbRecorderPage::paintRecorder (juce::Graphics& g)
     const bool recording = state == UsbRecorder::RecState::Recording;
     const bool paused = state == UsbRecorder::RecState::Paused;
     paintKey (g, recKeyAreas[0], "REC", [recording] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c)
-    { recordDot (gr, r.expanded (r.getWidth() * 0.2f), recording ? recRed : c); }, ! recording);
+    { recordDot (gr, r, recording ? recRed : c); }, ! recording);
     paintKey (g, recKeyAreas[1], "PAUSE", [] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c) { drawIcon (gr, Icon::Pause, r, c); },
               u.isRecording(), paused, Colours::gold);
     paintKey (g, recKeyAreas[2], "STOP", [] (juce::Graphics& gr, juce::Rectangle<float> r, juce::Colour c) { drawIcon (gr, Icon::Stop, r, c); },

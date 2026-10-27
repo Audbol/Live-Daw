@@ -192,11 +192,18 @@ public:
     juce::StringArray faceLines;
     /** The icon alone, filling the key (LIBRARY's sort-by-date key). */
     bool iconOnly = false;
+    /** [3.1] a black face while unlit (LIBRARY's INT / USB / SHOW and date keys). */
+    bool blackFace = false;
 
     void paintButton (juce::Graphics& g, bool over, bool down) override
     {
         const bool lit = isLit != nullptr && isLit();
         auto r = getLocalBounds().toFloat().reduced (1.0f);
+        if (blackFace && ! lit)
+        {
+            g.setColour (juce::Colours::black);
+            g.fillRect (r);
+        }
         if (lit || over || down)
         {
             g.setColour (lit ? litColour : Dark::key.withAlpha (down ? 0.9f : 0.5f));
@@ -233,8 +240,9 @@ public:
             drawIcon (g, icon, r.reduced (r.getHeight() * 0.14f), c);
             return;
         }
-        auto label = r.removeFromBottom (r.getHeight() * 0.34f);
-        drawIcon (g, icon, r.reduced (r.getHeight() * 0.1f), c);
+        // [3.1] the icon about 30 px across over a 10 px caption (a 56 px key).
+        auto label = r.removeFromBottom (r.getHeight() * 0.32f);
+        drawIcon (g, icon, r.withSizeKeepingCentre (r.getHeight() * 1.05f, r.getHeight() * 1.05f).translated (0.0f, r.getHeight() * 0.04f), c);
         g.setColour (c);
         g.setFont (wingFontPx (juce::jmin (TypeScale::statusCaption * getWingScreenHeight(), label.getHeight() * 0.62f)));
         g.drawFittedText (caption ? caption() : getButtonText(), label.toNearestInt().reduced (1, 0), juce::Justification::centredTop, 1, 0.7f);
@@ -336,7 +344,7 @@ public:
                 g.fillRect (r.withHeight (juce::jmax (2.0f, std::round (r.getHeight() * 0.07f))));
             }
             g.setColour (sel ? t.colour : (t.enabled ? Dark::textDim : Dark::textDim.withAlpha (0.4f)));
-            const float cap = (sel ? TypeScale::tab : TypeScale::tab * 0.85f) * getWingScreenHeight();
+            const float cap = (sel ? TypeScale::tab : TypeScale::tab * 0.7f) * getWingScreenHeight(); // [3.1] unselected 14 px caps, selected 20
             g.setFont (wingFontPx (juce::jmin (cap, r.getHeight() * 0.38f)));
             g.drawFittedText (t.name, r.toNearestInt().reduced (4, 0), juce::Justification::centred, 1, 0.8f);
         }
@@ -933,11 +941,14 @@ public:
             g.fillRect (r);
         }
         const auto ink = isEnabled() ? Colours::caption : Colours::textDim;
-        auto box = r.removeFromRight (juce::jmin (r.getHeight(), r.getWidth() * 0.4f)).reduced (r.getHeight() * 0.14f);
+        // [3.1] a 32 px box at the key's right (48 px key), the caption 16 px left of it.
+        const float side = juce::jmin (r.getHeight() * 0.68f, r.getWidth() * 0.3f);
+        auto box = r.removeFromRight (side).withSizeKeepingCentre (side, side);
         drawIcon (g, Icon::Check, box, ink);
+        r.removeFromRight (side * 0.5f);
         g.setColour (ink);
         g.setFont (wingFontPx (juce::jmin (TypeScale::body * getWingScreenHeight(), r.getHeight() * 0.32f)));
-        g.drawFittedText (getButtonText(), r.toNearestInt().reduced (2, 0), juce::Justification::centredRight, 1, 0.8f);
+        g.drawFittedText (getButtonText(), r.toNearestInt(), juce::Justification::centredRight, 1, 0.8f);
     }
 };
 
@@ -1020,7 +1031,7 @@ public:
     {
         auto b = windowArea();
         auto bar = b.removeFromTop (windowTitleHeight (b.getHeight()));
-        closeKey.setBounds (bar.removeFromRight (juce::jmin (bar.getHeight() * 3, bar.getWidth() / 3)).reduced (4, 6));
+        closeKey.setBounds (bar.removeFromRight (juce::jmin (bar.getHeight() * 3, bar.getWidth() / 3)).withTrimmedRight (bar.getHeight() / 5).reduced (4, bar.getHeight() / 8)); // [3.1] the box 16 px from the right
         b.removeFromTop (6);
         if (content != nullptr)
             content->setBounds (placement.floats() ? b.reduced (6, 0).withTrimmedBottom (6) : b);
