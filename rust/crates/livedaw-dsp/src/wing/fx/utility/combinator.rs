@@ -354,13 +354,13 @@ mod tests {
     #[test]
     fn compresses_loud_bands() {
         let mut rig = Rig::new("C5-CMB");
-        rig.set("ratio", 9.0); // 4:1
+        rig.set("ratio", 9.0).set("thr", -20.0).set("sbcon", 0.0); // 4:1
         let g = rig.sine_gain_db(1000.0, 0.7);
         assert!(g < -6.0, "{g}");
         assert!(rig.dev.meter() < -6.0);
         // Band 3's compression disabled: the same tone passes (its makeup still applies).
         let mut rig = Rig::new("C5-CMB");
-        rig.set("ratio", 9.0).set("byp_3", 1.0).set("gain_3", 2.0);
+        rig.set("ratio", 9.0).set("thr", -20.0).set("sbcon", 0.0).set("byp_3", 1.0).set("gain_3", 2.0);
         let g = rig.sine_gain_db(1000.0, 0.7);
         assert!((g - 2.0).abs() < 0.5, "{g}");
     }
@@ -369,10 +369,10 @@ mod tests {
     fn sbc_evens_out_the_reduction() {
         // A loud tone in band 3 only: SBC gives half its reduction back.
         let mut plain = Rig::new("C5-CMB");
-        plain.set("ratio", 9.0);
+        plain.set("ratio", 9.0).set("thr", -20.0).set("sbcon", 0.0);
         let without = plain.sine_gain_db(1000.0, 0.7);
         let mut sbc = Rig::new("C5-CMB");
-        sbc.set("ratio", 9.0).set("sbcon", 1.0).set("sbc", 10.0);
+        sbc.set("ratio", 9.0).set("thr", -20.0).set("sbcon", 1.0).set("sbc", 10.0);
         let with = sbc.sine_gain_db(1000.0, 0.7);
         assert!(with > without + 2.0, "{with} vs {without}");
     }

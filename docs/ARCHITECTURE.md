@@ -242,8 +242,12 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
 `rust/crates/livedaw-dsp/src/wing/models_gen.rs` holds the WING's model tables: the 32
 dynamics models, the channel and bus EQ models, the filter tools, the 24 process
 orders and the tap points. `tools/wing/gen_models.py` generates the file from libwing's
-parameter map (`propmap.jsonl`, WING firmware 3.1). Each model is a list of parameters
-(id, kind, range, unit, choices, default). A block stores its values as a flat array
+parameter map (`propmap.jsonl`, WING firmware 3.1) and the console's defaults in
+`tools/wing/model_defaults.json` (what WING Edit 3.3.4, which runs the console's
+firmware, saves for each model selected without parameters). Each model is a list of
+parameters (id, kind, range, unit, choices, default). `ParamSpec::display` writes a
+value as the console does: the parameter's fixed decimals, kHz with the k as the
+decimal point, times in ms. A block stores its values as a flat array
 of atomics in table order (`DynSlotParams.values`, `EqBlockParams.values`), and
 choosing a model loads its defaults. The DSP recreates each model from its controls,
 ranges and behaviour; nothing is circuit-modelled. The C++ side and the UI read the

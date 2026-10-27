@@ -1521,6 +1521,32 @@ fn fx_presets_round_trip_into_any_slot() {
 }
 
 #[test]
+fn pitch_fix_keys_from_older_files_keep_their_notes() {
+    // PITCH FIX's note keys used to enable a note when on; now on disables it.
+    use livedaw_dsp::wing::FX_MODELS;
+    use livedaw_session::presets;
+    let engine = Engine::new(0);
+    let pcorr = model_index(FX_MODELS, "PCORR").unwrap();
+    assert!(engine.set_fx_model(4, pcorr, true));
+    assert_eq!(engine.controls.fx[4].param("sw_c").unwrap().load(), 0.0, "every note corrected at first");
+    engine.controls.fx[4].param("sw_a").unwrap().store(1.0);
+    let preset = presets::capture_fx(&engine, &mut NoPlugins, 4, "Fix").unwrap();
+    // A file of this version loads as it was saved ...
+    presets::apply_fx(&engine, &mut NoPlugins, &preset, 6).unwrap();
+    let key = |slot: usize, id: &str| engine.controls.fx[slot].param(id).unwrap().load();
+    assert_eq!((key(6, "sw_a"), key(6, "sw_c")), (1.0, 0.0));
+    // ... an older one (no `keys` attribute) flips its keys: A was the one note left on.
+    let mut old = preset.clone();
+    for c in &mut old.children {
+        if let xml::Node::Element(e) = c {
+            e.attrs.retain(|(k, _)| k != "keys");
+        }
+    }
+    presets::apply_fx(&engine, &mut NoPlugins, &old, 7).unwrap();
+    assert_eq!((key(7, "sw_a"), key(7, "sw_c")), (0.0, 1.0));
+}
+
+#[test]
 fn channel_presets_load_onto_other_strips_within_their_scope() {
     use livedaw_session::presets;
     let engine = Engine::new(0);

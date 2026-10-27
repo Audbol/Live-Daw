@@ -417,8 +417,9 @@ fn a_plugin_slot_is_an_external_effect() {
     assert!(d.is_empty(), "{d:?}");
 }
 
-/// Engine defaults between two steps read on the step, as the console (and
-/// WING Edit, which snaps to the steps) shows them: HALL's decay is 2.03 s.
+/// Engine values between two steps read on the step, as the console (and
+/// WING Edit, which snaps to the steps) shows them: a HALL decay of 2.00 s
+/// (set from Sidecar's own controls) reads 2.03 s.
 #[test]
 fn defaults_read_on_their_step() {
     let e = engine();
@@ -426,6 +427,8 @@ fn defaults_read_on_their_step() {
     let c = Console::new(&e, &st);
     let s = schema();
     c.set(s.resolve("/fx/1/mdl", &c).unwrap(), &Value::str("HALL")).unwrap();
+    let spec = &livedaw_dsp::wing::FX_MODELS[e.controls.fx[0].model_index()];
+    e.controls.fx[0].values[spec.param_index("dcy").unwrap()].store(2.0);
     let dcy = c.get(s.resolve("/fx/1/dcy", &c).unwrap()).and_then(|v| v.as_f32()).unwrap();
     // 0.2 s * 25^(72/100): step 72 of 101.
     assert!((dcy - 0.2 * 25f32.powf(0.72)).abs() < 1e-3, "{dcy}");

@@ -493,11 +493,11 @@ mod tests {
             }
         }
         let mut rig = Rig::new("SOUL");
-        rig.set("lmg", 5.0).set("lmf", 5.0);
+        rig.set("lmg", 5.0).set("lmf", 5.0).set("lmf3", 0.0);
         let full = rig.sine_gain_db(700.0, 0.05);
         assert!(full >= 10.0, "{full}");
         let mut rig = Rig::new("SOUL");
-        rig.set("lmg", 5.0).set("lmf", 5.0).set("mix", 50.0);
+        rig.set("lmg", 5.0).set("lmf", 5.0).set("lmf3", 0.0).set("mix", 50.0);
         let half = rig.sine_gain_db(700.0, 0.05);
         assert!((half - full / 2.0).abs() < 1.0, "{half} vs {full}");
         let mut rig = Rig::new("E84");
@@ -542,13 +542,13 @@ mod tests {
 
         // The bus compressor's GAIN is its makeup.
         let mut rig = Rig::new("*BUS*");
-        rig.set("d_gain", 6.0).set("d_thr", 0.0);
+        rig.set("d_on", 1.0).set("d_gain", 6.0).set("d_thr", 0.0);
         let g = rig.sine_gain_db(1000.0, 0.01);
         assert!((g - 6.0).abs() < 0.2, "{g}");
 
         // The Vintage channel's 1176 compresses a hot signal.
         let mut rig = Rig::new("*VINTAGE*");
-        rig.set("d_in", 0.0);
+        rig.set("d_on", 1.0).set("d_in", 0.0);
         rig.sine_gain_db(200.0, 0.5);
         assert!(rig.dev.meter() < -3.0);
     }
@@ -556,7 +556,7 @@ mod tests {
     #[test]
     fn mastering_limiter_holds_the_ceiling() {
         let mut rig = Rig::new("*MASTER*");
-        rig.set("l_gin", 12.0).set("l_gout", -1.0);
+        rig.set("l_gin", 12.0).set("l_gout", -1.0).set("l_again", 0.0);
         let x: Vec<f32> = (0..48_000).map(|i| (TAU * 100.0 * i as f32 / 48_000.0).sin() * 0.9).collect();
         let (mut l, mut r) = (x.clone(), x.clone());
         rig.run(&mut l, &mut r);

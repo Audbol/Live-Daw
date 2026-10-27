@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn echo_at_delay_and_band_limited() {
-        let (mut dev, v) = device("BBD-DL", &[("fb", 0.0)]);
+        let (mut dev, v) = device("BBD-DL", &[("fb", 0.0), ("dly", 40.0)]);
         let (l, _) = impulse(&mut dev, &v, 0.5);
         let t = 20.0 * 30f32.powf(0.4) * 0.001 * SR;
         let (i, p) = peak(&l, 10, l.len());

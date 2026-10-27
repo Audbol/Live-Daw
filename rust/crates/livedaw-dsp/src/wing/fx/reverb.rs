@@ -172,8 +172,9 @@ mod tests {
         let small = band_rt("HALL", &[("size", 30.0)], 700.0, 1400.0);
         let big = band_rt("HALL", &[("size", 100.0)], 700.0, 1400.0);
         assert!(big > 1.3 * small, "SIZE 30 -> 100: {small} -> {big} s");
-        let mid = band_rt("V-ROOM", &[("dcy", 2.0), ("hmult", 0.3)], 700.0, 1400.0);
-        let top = band_rt("V-ROOM", &[("dcy", 2.0), ("hmult", 0.3)], 6000.0, 12000.0);
+        let vroom = [("dcy", 2.0), ("hmult", 0.3), ("hc", 12_000.0), ("dens", 20.0)];
+        let mid = band_rt("V-ROOM", &vroom, 700.0, 1400.0);
+        let top = band_rt("V-ROOM", &vroom, 6000.0, 12000.0);
         assert!(top < 0.6 * mid, "HI MULT 0.3: mids {mid} s, highs {top} s");
     }
 

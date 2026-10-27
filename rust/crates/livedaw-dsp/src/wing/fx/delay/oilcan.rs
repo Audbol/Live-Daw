@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn echo_arrives_after_time() {
-        let (mut dev, v) = device("OILCAN", &[]);
+        let (mut dev, v) = device("OILCAN", &[("time", 5.0), ("wb", 5.0)]);
         let (l, r) = impulse(&mut dev, &v, 1.0);
         let t = (dial_log(5.0, TIME_MS.0, TIME_MS.1) * 0.001 * SR) as usize;
         assert!(peak(&l, 0, t - t / 20).1 < 1e-3, "nothing before the first repeat");

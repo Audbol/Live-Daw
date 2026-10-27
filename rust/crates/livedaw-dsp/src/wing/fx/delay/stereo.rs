@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn echo_lands_at_time() {
         let open = [("feed", 0.0), ("lc", 20.0), ("hc", 20_000.0)];
-        let (mut dev, v) = device("ST-DL", &open);
+        let (mut dev, v) = device("ST-DL", &[open[0], open[1], open[2], ("time", 375.0)]);
         let (l, r) = impulse(&mut dev, &v, 1.0);
         let at = (0.375 * SR) as usize;
         let (i, p) = peak(&l, 100, l.len());
@@ -160,7 +160,8 @@ mod tests {
         assert!(peak(&l, 0, at - 200).1 < 1e-3, "nothing before the echo");
 
         // FACTOR 1/2 and PATTERN 1/2:1 with a 10 ms OFFSET on the right.
-        let (mut dev, v) = device("ST-DL", &[open[0], open[1], open[2], ("fact", 2.0), ("pat", 0.0), ("offs", 10.0)]);
+        let (mut dev, v) =
+            device("ST-DL", &[open[0], open[1], open[2], ("time", 375.0), ("fact", 2.0), ("pat", 0.0), ("offs", 10.0)]);
         let (l, r) = impulse(&mut dev, &v, 1.0);
         assert!(peak(&l, 100, l.len()).0.abs_diff((0.09375 * SR) as usize) <= 3);
         assert!(peak(&r, 100, r.len()).0.abs_diff((0.1975 * SR) as usize) <= 3);
