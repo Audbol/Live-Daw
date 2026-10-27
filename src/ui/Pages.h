@@ -200,7 +200,10 @@ private:
     void paintChannelTile (juce::Graphics&, juce::Rectangle<int>, Strip&, bool selected) const;
     void paintSourceTile (juce::Graphics&, juce::Rectangle<int>, Group, int index, bool marked, int slot) const;
     void paintOutputTile (juce::Graphics&, juce::Rectangle<int>, Group, int index, bool selected) const;
-    void paintSignal (juce::Graphics&, juce::Rectangle<int>, const Signal&, int index, bool marked) const;
+    void paintSignal (juce::Graphics&, juce::Rectangle<int>, const Signal&, int index, bool marked, float peak) const;
+    /** A signal's level now (linear): a source's peak (OUTPUTS reads them while
+        it shows), a strip's output, a monitor path's. */
+    float signalLevel (const Signal&) const;
     void paintSourcePanel (juce::Graphics&) const;
 
     UiContext& ctx;
@@ -290,6 +293,7 @@ private:
     juce::Rectangle<int> srcSoloKey;
     std::vector<std::pair<juce::Rectangle<int>, int>> sourceTagCells;
     std::vector<float> sourcePeaks; // per tile of the source grid, decaying
+    std::vector<float> signalPeaks; // per signal tile of OUTPUTS, decaying
     float selectedSourcePeak = 0.0f;
     int refreshTicks = 0;
     bool draggingGain = false;

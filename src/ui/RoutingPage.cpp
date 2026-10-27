@@ -782,7 +782,11 @@ void RoutingPage::timerCallback()
         {
             const int source = routing::sourceAt (inputGroup, (int) i);
             auto* src = source >= 0 ? ctx.engine.getSource (MixerEngine::sourceIndex (source)) : nullptr;
-            const float peak = src != nullptr ? src->peak.exchange (0.0f) : 0.0f;
+            float peak = src != nullptr ? src->peak.exchange (0.0f) : 0.0f;
+            // A bus, main or matrix signal meters its strip's output.
+            if (int side = 0; src == nullptr && source >= 0)
+                if (const auto* strip = stripOfSignal (ctx.engine, source, &side))
+                    peak = ctx.meters.get (strip, MeterPoint::Output, side);
             auto& shown = sourcePeaks[i];
             const float before = shown;
             shown = juce::jmax (peak, shown * 0.5f);
@@ -794,6 +798,19 @@ void RoutingPage::timerCallback()
                     repaint (sourceMeter);
                 selectedSourcePeak = shown;
             }
+        }
+    }
+    // OUTPUTS: the signal tiles' meters, the same way.
+    if (mode == Mode::Outputs)
+    {
+        signalPeaks.resize (signalTiles.size(), 0.0f);
+        for (size_t i = 0; i < signalTiles.size(); ++i)
+        {
+            auto& shown = signalPeaks[i];
+            const float before = shown;
+            shown = juce::jmax (signalLevel (signalTiles[i].second), shown * 0.5f);
+            if (std::abs (juce::Decibels::gainToDecibels (before, -60.0f) - juce::Decibels::gainToDecibels (shown, -60.0f)) > 0.5f)
+                repaint (signalTiles[i].first);
         }
     }
     // Everything else twice a second (patches, names and keys changed elsewhere).
@@ -1131,7 +1148,8 @@ void routing::paintSourceTile (juce::Graphics& g, juce::Rectangle<int> area, Mix
         g.setColour (Colours::screenTile);
         g.fillRect (r);
         const float u = r.getWidth() / 80.0f, v = r.getHeight() / 52.0f;
-        drawMiniMeter (g, juce::Rectangle<float> (r.getX() + 72.0f * u, r.getY() + 2.0f * v, 4.0f * u, 46.0f * v), 0.0f);
+        drawMiniMeter (g, juce::Rectangle<float> (r.getX() + 72.0f * u, r.getY() + 2.0f * v, 4.0f * u, 46.0f * v),
+                       juce::jlimit (0.0f, 1.0f, (juce::Decibels::gainToDecibels (peak, -60.0f) + 60.0f) / 60.0f));
         const auto iconArea = juce::Rectangle<float> (r.getX() + 6.0f * u, r.getY() + 4.0f * v, 30.0f * u, 30.0f * v);
         drawStripIcon (g, *strip, iconArea.withSizeKeepingCentre (juce::jmin (iconArea.getWidth(), iconArea.getHeight()), juce::jmin (iconArea.getWidth(), iconArea.getHeight())),
                        iconGrey);
@@ -1297,7 +1315,24 @@ void RoutingPage::paintOutputTile (juce::Graphics& g, juce::Rectangle<int> area,
         drawSelection (g, area);
 }
 
-void RoutingPage::paintSignal (juce::Graphics& g, juce::Rectangle<int> area, const Signal& sig, int index, bool marked) const
+float RoutingPage::signalLevel (const Signal& sig) const
+{
+    if (sig.channel < 0)
+        return 0.0f;
+    if (sig.source >= 0)
+    {
+        if (int side = 0; const auto* strip = stripOfSignal (ctx.engine, sig.source, &side))
+            return ctx.meters.get (strip, MeterPoint::Output, side);
+        auto* src = ctx.engine.getSource (MixerEngine::sourceIndex (sig.source));
+        return src != nullptr ? src->peak.exchange (0.0f) : 0.0f;
+    }
+    if (sig.strip != nullptr)
+        return ctx.meters.get (sig.strip, MeterPoint::Output, sig.channel % 2);
+    // PHONES L / R (0, 1), SPEAKERS L / R (2, 3).
+    return sig.channel < 2 ? ctx.meters.getPhones (sig.channel) : ctx.meters.getMonitor (sig.channel - 2);
+}
+
+void RoutingPage::paintSignal (juce::Graphics& g, juce::Rectangle<int> area, const Signal& sig, int index, bool marked, float peak) const
 {
     // [WING 80 x 68] The signal's colour strip over its number ("1L"), a mini
     // meter, the stereo link glyph and the group chip in the signal's colour.
@@ -1310,7 +1345,7 @@ void RoutingPage::paintSignal (juce::Graphics& g, juce::Rectangle<int> area, con
     // A source (an input group, USER SIGNAL): its tile as CHANNELS shows it.
     if (sig.source >= 0)
     {
-        routing::paintSourceTile (g, area, ctx.engine, signalGroup, index, 0.0f, marked, false);
+        routing::paintSourceTile (g, area, ctx.engine, signalGroup, index, peak, marked, false);
         return;
     }
     const auto colour = sig.strip != nullptr ? stripDisplayColour (*sig.strip) : Colours::lime;
@@ -1328,7 +1363,8 @@ void RoutingPage::paintSignal (juce::Graphics& g, juce::Rectangle<int> area, con
     g.setColour (Colours::screenTile);
     g.fillRect (r);
     const float u = r.getWidth() / 80.0f, v = r.getHeight() / 52.0f;
-    drawMiniMeter (g, juce::Rectangle<float> (r.getX() + 70.0f * u, r.getY() + 4.0f * v, 4.0f * u, 26.0f * v), 0.0f);
+    drawMiniMeter (g, juce::Rectangle<float> (r.getX() + 70.0f * u, r.getY() + 4.0f * v, 4.0f * u, 26.0f * v),
+                   juce::jlimit (0.0f, 1.0f, (juce::Decibels::gainToDecibels (peak, -60.0f) + 60.0f) / 60.0f));
 
     const bool stereo = sig.strip == nullptr || sig.strip->isOutput() || sig.strip->params.stereo.load();
     juce::String number;
@@ -2388,7 +2424,7 @@ void RoutingPage::paint (juce::Graphics& g)
         {
             const auto& [area, sig] = signalTiles[i];
             const bool feeds = sig.channel >= 0 && feeder.channel >= 0 && feeder.strip == sig.strip && feeder.channel == sig.channel && feeder.source == sig.source;
-            paintSignal (g, area, sig, signalPage * kSignalsPerPage + (int) i, feeds);
+            paintSignal (g, area, sig, signalPage * kSignalsPerPage + (int) i, feeds, i < signalPeaks.size() ? signalPeaks[i] : 0.0f);
         }
     }
 

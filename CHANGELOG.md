@@ -176,6 +176,10 @@ All notable changes to Sidecar are listed here. Versions follow
 
 ### Fixed
 
+- ROUTING: the bus, main and matrix tiles (CHANNELS, SELECT MAIN INPUT) and the signal
+  tiles on OUTPUTS have live meters, as the input tiles already had: a strip signal
+  meters the strip's output, a source its peak, PHONES / SPEAKERS the monitor paths.
+  Their meters were drawn but stayed empty.
 - WING Edit (tested with 3.3.4 on both console models): its model request after
   connecting (it sets `/$syscfg/$cnsmdl` to "ModelRequest") is answered with the model,
   and any set Sidecar refuses over the Native protocol now answers the value that
