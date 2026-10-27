@@ -145,7 +145,7 @@ public:
                     expectEquals (values[i], spec.params[i].defaultValue, juce::String (token) + " " + spec.params[i].id);
                 const auto paint = [m] (const float* v)
                 {
-                    juce::Image img (juce::Image::ARGB, 120, 60, true);
+                    juce::Image img (juce::Image::ARGB, 120, 60, true, juce::SoftwareImageType());
                     juce::Graphics g (img);
                     if (v == nullptr)
                         ui::ModelSelector::paintDynamicsModelTile (g, img.getBounds().toFloat(), m);
@@ -341,19 +341,23 @@ public:
                     const auto area = paintArea (e).getSmallestIntegerContainer().getIntersection ({ 0, 0, (int) kFrameW, (int) kFrameH });
                     auto render = [&] (bool loud)
                     {
-                        juce::Image image (juce::Image::RGB, (int) kFrameW, (int) kFrameH, true);
-                        juce::Graphics g (image);
-                        PaintContext ctx;
-                        ctx.spec = &m;
-                        ctx.value = [&m] (int i) { return m.params[(size_t) i].defaultValue; };
-                        ctx.page = juce::jmax (0, e.page);
-                        // Levels at -3 dBFS, the device's values (LFO, envelope, needle) at 0.6,
-                        // a note lamp's own note heard (readout: note + 1).
-                        const float note = (float) (e.choice + 1);
-                        const bool noteLamp = e.type == Type::Lamp && e.choice >= 0;
-                        ctx.levelDb = [loud] (int) { return loud ? -3.0f : -150.0f; };
-                        ctx.readout = [loud, note, noteLamp] (int) { return ! loud ? 0.0f : (noteLamp ? note : 0.6f); };
-                        paintDesign (g, *d, ctx);
+                        // A software image, read once its Graphics is gone: on Windows a native
+                        // image is Direct2D's, drawn only when its Graphics ends.
+                        juce::Image image (juce::Image::RGB, (int) kFrameW, (int) kFrameH, true, juce::SoftwareImageType());
+                        {
+                            juce::Graphics g (image);
+                            PaintContext ctx;
+                            ctx.spec = &m;
+                            ctx.value = [&m] (int i) { return m.params[(size_t) i].defaultValue; };
+                            ctx.page = juce::jmax (0, e.page);
+                            // Levels at -3 dBFS, the device's values (LFO, envelope, needle) at 0.6,
+                            // a note lamp's own note heard (readout: note + 1).
+                            const float note = (float) (e.choice + 1);
+                            const bool noteLamp = e.type == Type::Lamp && e.choice >= 0;
+                            ctx.levelDb = [loud] (int) { return loud ? -3.0f : -150.0f; };
+                            ctx.readout = [loud, note, noteLamp] (int) { return ! loud ? 0.0f : (noteLamp ? note : 0.6f); };
+                            paintDesign (g, *d, ctx);
+                        }
                         return image.getClippedImage (area).createCopy();
                     };
                     const auto quiet = render (false), loud = render (true);
@@ -367,7 +371,7 @@ public:
                 if (snapshots.isNotEmpty() && live > 0)
                 {
                     // For review: the panel with a loud signal (-3 dBFS, A heard, needle right).
-                    juce::Image image (juce::Image::RGB, (int) kFrameW, (int) kFrameH, true);
+                    juce::Image image (juce::Image::RGB, (int) kFrameW, (int) kFrameH, true, juce::SoftwareImageType());
                     juce::Graphics g (image);
                     PaintContext ctx;
                     ctx.spec = &m;
@@ -421,8 +425,8 @@ public:
                         ctx.levelDb = [busy] (int) { return busy ? -6.0f : -150.0f; };
                         fp::paintDesign (g, *design, ctx);
                     };
-                    juce::Image idle (juce::Image::RGB, (int) fp::kFrameW, (int) fp::kFrameH, true);
-                    juce::Image busy (juce::Image::RGB, (int) fp::kFrameW, (int) fp::kFrameH, true);
+                    juce::Image idle (juce::Image::RGB, (int) fp::kFrameW, (int) fp::kFrameH, true, juce::SoftwareImageType());
+                    juce::Image busy (juce::Image::RGB, (int) fp::kFrameW, (int) fp::kFrameH, true, juce::SoftwareImageType());
                     paint (idle, false, {});
                     paint (busy, true, {});
                     juce::Image patched = idle.createCopy();
@@ -510,7 +514,7 @@ public:
                 std::vector<std::atomic<float>> values (spec.params.size());
                 for (size_t i = 0; i < spec.params.size(); ++i)
                     values[i] = v[i].load();
-                juce::Image image (juce::Image::RGB, 1280, 640, true);
+                juce::Image image (juce::Image::RGB, 1280, 640, true, juce::SoftwareImageType());
                 {
                     juce::Graphics g (image);
                     g.fillAll (juce::Colour (0xff101010));
@@ -547,7 +551,7 @@ private:
         for (int page = 0; page < face.getNumPages(); ++page)
         {
             face.setPage (page);
-            juce::Image image (juce::Image::RGB, 1280, 800, true);
+            juce::Image image (juce::Image::RGB, 1280, 800, true, juce::SoftwareImageType());
             {
                 juce::Graphics g (image);
                 g.fillAll (juce::Colour (0xff101010));

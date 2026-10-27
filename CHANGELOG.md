@@ -520,6 +520,10 @@ All notable changes to Sidecar are listed here. Versions follow
   channel).
 ### Fixed
 
+- On Windows, stopping the WING remote (or quitting) with WING Edit or another
+  Native client connected took two minutes: a shutdown doesn't end a blocked
+  receive there. The Native reader on Windows now doesn't block and looks for
+  data every 2 ms, and a write's stall is timed from its last progress.
 - Turning a LO CUT / HI CUT on STEREO PITCH, DUAL PITCH, STEREO DELAY, ULTRATAP,
   CHORUS, FLANGER or OILCAN clicked (the filters jumped once per block); they glide
   smoothly now. GATED REVERB's DENSITY, the pitch devices' DELAY (a bend now, like a

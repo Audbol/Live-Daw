@@ -64,7 +64,8 @@ pub const METER_LIFE: Duration = Duration::from_secs(6);
 ///
 /// The Native sockets have no read or write timeouts: the poll thread
 /// (`watch_clients`) times both rules and shuts a connection down, which ends
-/// its blocked read or write. On Windows a send or receive that times out
+/// its blocked read or write (on Windows the reader doesn't block: a shutdown
+/// doesn't end a receive there). On Windows a send or receive that times out
 /// (SO_SNDTIMEO / SO_RCVTIMEO) leaves the connection "in an indeterminate
 /// state" (Winsock documentation), and its errors don't map as on Unix (a
 /// blocking call interrupted is WSAEINTR, which std leaves uncategorised),
@@ -855,6 +856,9 @@ fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> JoinHandle<()> {
 }
 
 const TICK: Duration = Duration::from_millis(100);
+/// How often a Native reader with nothing to read looks again (Windows, where
+/// its socket doesn't block, and after an interrupted read).
+const READ_POLL: Duration = Duration::from_millis(2);
 
 fn discovery_loop(sh: &Shared, sock: UdpSocket) {
     let _ = sock.set_read_timeout(Some(TICK));
@@ -938,6 +942,12 @@ fn native_loop(sh: &Arc<Shared>, listener: TcpListener) {
                 let (Ok(writer), Ok(control)) = (stream.try_clone(), stream.try_clone()) else { continue };
                 let _ = stream.set_nodelay(true);
                 // No read or write timeouts (see NATIVE_IDLE): watch_clients times both.
+                // On Windows a shutdown doesn't end a blocked receive (it returns only
+                // when the half-closed connection is reset, 120 s later), so there the
+                // socket doesn't block and the reader polls (see READ_POLL).
+                if cfg!(windows) {
+                    let _ = stream.set_nonblocking(true);
+                }
                 let client = Arc::new(NativeClient {
                     id: sh.next_id.fetch_add(1, Ordering::Relaxed),
                     peer,
@@ -990,15 +1000,19 @@ fn writer_loop(sh: &Shared, client: &NativeClient, mut stream: TcpStream) {
         // A chunk at a time; one the connection takes nothing of for
         // NATIVE_WRITE_STALL means the client is gone (watch_clients).
         let mut sent = 0;
+        client.writing.store(client.micros(Instant::now()) + 1, Ordering::Relaxed);
         while sent < buf.len() {
-            client.writing.store(client.micros(Instant::now()) + 1, Ordering::Relaxed);
             let end = buf.len().min(sent + NATIVE_WRITE_CHUNK);
             match stream.write(&buf[sent..end]) {
                 Ok(0) => {
                     client.close(CloseReason::WriteError(ErrorKind::WriteZero, "the connection took nothing".into()));
                     return;
                 }
-                Ok(n) => sent += n,
+                Ok(n) => {
+                    sent += n;
+                    // Progress: the stall is timed from here (a retry isn't progress).
+                    client.writing.store(client.micros(Instant::now()) + 1, Ordering::Relaxed);
+                }
                 Err(e) if transient(&e) => {
                     if !client.alive.load(Ordering::Relaxed) {
                         return;
@@ -1030,13 +1044,14 @@ fn client_loop(sh: &Shared, client: Arc<NativeClient>, mut stream: TcpStream) {
             client.heard_now();
             continue;
         }
-        // Blocks until data, the client closing, or close() (watch_clients, stop).
+        // Blocks until data, the client closing, or close() (watch_clients, stop);
+        // on Windows it doesn't block (see native_loop).
         match classify_read(stream.read(&mut buf)) {
             ReadOutcome::Closed(reason) => {
                 client.close(reason);
                 break;
             }
-            ReadOutcome::Again => std::thread::sleep(Duration::from_millis(1)),
+            ReadOutcome::Again => std::thread::sleep(READ_POLL),
             ReadOutcome::Data(n) => {
                 client.heard_now();
                 sh.native_bytes.fetch_add(n as u64, Ordering::Relaxed);
