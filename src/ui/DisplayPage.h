@@ -58,7 +58,9 @@ namespace KnobColours
     const juce::Colour blue { 0xff4890e0 };      // levels, frequencies, BAL, PAGE
     const juce::Colour green { 0xff40a818 };     // width
     const juce::Colour qGreen { 0xff18e460 };    // Q (EQ, key filter, crossover)
-    const juce::Colour yellow { 0xffe0d400 };    // distance, AP frequency
+    const juce::Colour yellow { 0xffe0d400 };    // AP frequency
+    const juce::Colour distYellow { 0xffe0e400 };// DIST (the delay) [3.1]
+    const juce::Colour dynYellow { 0xfff8c430 }; // dynamics RATIO and KNEE [3.1]
     const juce::Colour cyan { 0xff48f0f8 };      // tilt
     const juce::Colour white { 0xfff8f8f8 };     // trim, pan, EQ gain
     const juce::Colour orange { 0xfff8a008 };    // preamp gain, MAXER
