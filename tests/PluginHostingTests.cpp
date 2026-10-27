@@ -348,6 +348,7 @@ public:
         p.values[ld::ext::kGroup] = 3.0f; // A
         p.values[ld::ext::kInput] = 2.0f;
         p.values[ld::ext::kMode] = 1.0f; // STEREO
+        p.values[ld::ext::kLatency] = 0.0f; // the gear adds none (a new EXT starts at the console's 45)
         p.sendLeft = 2;
         p.sendRight = 3;
         expect (fx.hasReturn (0));
