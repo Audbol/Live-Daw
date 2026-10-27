@@ -9,7 +9,21 @@ void toggleSpill (UiContext& ctx, std::optional<LayerSet::Section> origin, const
     if (const auto section = layers.findSpill (spill))
         layers.endSpill (*section); // the section's layer and position come back
     else
+    {
         layers.startSpill (LayerSet::spillTarget (origin), spill);
+        // BUS SoF/SPILL ACTIVATES SOLO (manual 5.5 p. 46-47): spilling a bus or
+        // main solos it, as Sends on Fader does.
+        if (ctx.settings.getBoolValue (uiprefs::sofActivatesSolo, false))
+        {
+            const Strip* s = nullptr;
+            if (spill.kind == LayerSet::Spill::Kind::Bus)
+                s = ctx.engine.getBusInSlot (spill.index);
+            else if (spill.kind == LayerSet::Spill::Kind::Main && juce::isPositiveAndBelow (spill.index, (int) ctx.engine.getStrips (StripKind::Main).size()))
+                s = ctx.engine.getStrips (StripKind::Main)[(size_t) spill.index].get();
+            if (s != nullptr)
+                s->params.solo = true;
+        }
+    }
     notifyLayersChangedAsync (ctx);
 }
 

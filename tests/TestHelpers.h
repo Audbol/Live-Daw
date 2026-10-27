@@ -59,7 +59,6 @@ inline void unityConsole (MixerEngine& engine)
         }
     for (auto& s : engine.getChannels())
         legacySends (*s);
-    engine.inputSelectGlobal = false;
     engine.muteOverride = false;
     for (int i = 0; i < kNumDcas; ++i)
         engine.getDca (i).faderDb = 0.0f;

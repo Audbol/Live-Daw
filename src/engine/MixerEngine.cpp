@@ -69,7 +69,7 @@ MixerEngine::MixerEngine (int numWorkerThreads)
       anySoloActive (controls.anySoloActive),
       muteGroups (controls.muteGroups),
       automixEnable (controls.automixEnable),
-      inputSelectGlobal (controls.inputSelectGlobal),
+      inputSelectOverride (controls.inputSelectOverride),
       globalAlt (controls.globalAlt),
       dcaMuteGroups (controls.dcaMuteGroups),
       mainLink (controls.mainLink),

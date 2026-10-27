@@ -93,6 +93,20 @@ namespace prefs
         const int i = kind == StripKind::Bus ? 1 : kind == StripKind::Main ? 2 : kind == StripKind::Matrix ? 3 : 0;
         return meterTapPre (ctx, i) ? MeterPoint::PreFader : MeterPoint::Output;
     }
+    /** METERS > SETTINGS: the METERS screen's own PRE or POST per strip type
+        (the WING's /cfg/mtr/mtrpage; the surface's are /cfg/mtr/mtrsfc), with
+        the same factory settings. */
+    inline juce::String meterPageTapKey (int i) { return "setup.meterPageTapPre." + juce::String (i); }
+    inline bool meterPageTapPre (UiContext& ctx, int i)
+    {
+        i = juce::jlimit (0, kNumMeterTaps - 1, i);
+        return ctx.settings.getBoolValue (meterPageTapKey (i), meterTapDefaultPre[i]);
+    }
+    inline MeterPoint meterPagePoint (UiContext& ctx, StripKind kind)
+    {
+        const int i = kind == StripKind::Bus ? 1 : kind == StripKind::Main ? 2 : kind == StripKind::Matrix ? 3 : 0;
+        return meterPageTapPre (ctx, i) ? MeterPoint::PreFader : MeterPoint::Output;
+    }
 
     inline bool confirmLoad (UiContext& ctx) { return ctx.settings.getBoolValue (confirmLibraryLoad, true); }
     inline int faderResolution (UiContext& ctx) { return ctx.settings.getIntValue (touchFaderRes, 2); }

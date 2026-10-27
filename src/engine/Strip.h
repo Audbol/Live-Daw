@@ -211,20 +211,37 @@ public:
         params.altInputRight.store (right < 0 ? -1 : right);
     }
 
-    /** The strip's own MAIN / ALT switch (it decides unless INPUT SELECT is global). */
+    /** The strip's MAIN / ALT switch (`/ch/n/in/set/altsrc`). setAltSelected
+        always sets it (recalls, the global switch); switchInput() is the
+        channel's own key. */
     bool isAltSelected() const noexcept { return params.altSelected.load(); }
     void setAltSelected (bool alt) const noexcept { params.altSelected.store (alt); }
 
-    /** True if the strip listens to its ALT input now: it has one and ALT is
-        selected (MixerEngine::inputSelectGlobal ? globalAlt : isAltSelected()). */
-    bool isUsingAltInput() const noexcept
+    /** INPUT SELECT GLOBAL: the strip is in GLOBAL INPUT SELECT ENABLE
+        (SETUP > AUDIO > INPUT SELECT, `/ch/n/in/set/srcauto`), so the global
+        MAIN / ALT switch (MixerEngine::setGlobalAlt) and AUTO INPUT SELECT
+        switch it. Input and aux channels only. */
+    bool isSrcAuto() const noexcept { return isInput() && params.srcAuto.load(); }
+    void setSrcAuto (bool global) const noexcept { params.srcAuto.store (global && isInput()); }
+
+    /** The strip's own MAIN / ALT key can be used: on an INDIVIDUAL strip
+        always, on a GLOBAL one only with GLOBAL INPUT SELECT OVERRIDE. */
+    bool canSwitchInput() const noexcept
     {
-        if (! hasAltInput())
-            return false;
-        if (controls != nullptr && controls->inputSelectGlobal.load())
-            return controls->globalAlt.load();
-        return isAltSelected();
+        return isInput() && (! isSrcAuto() || controls == nullptr || controls->inputSelectOverride.load());
     }
+    /** The strip's own MAIN / ALT key: false (nothing changes) when canSwitchInput() isn't. */
+    bool switchInput (bool alt) const noexcept
+    {
+        if (! canSwitchInput())
+            return false;
+        setAltSelected (alt);
+        return true;
+    }
+
+    /** True if the strip listens to its ALT input now: it has one and its
+        switch is on ALT. */
+    bool isUsingAltInput() const noexcept { return hasAltInput() && isAltSelected(); }
 
     /** The source in use (MAIN or ALT). */
     int getActiveInputLeft() const noexcept { return isUsingAltInput() ? getAltInputLeft() : getInputLeft(); }

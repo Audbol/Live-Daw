@@ -1390,18 +1390,12 @@ public:
         if (strip.isInput())
         {
             bracket = &make<Bracket>();
-            // MAIN / ALT: the channel's own switch, or the console's global one
-            // when INPUT SELECT is GLOBAL.
-            auto& engine = ctx.engine;
-            inputSel = &make<Segmented> (juce::StringArray { "MAIN", "ALT" },
-                                         [this, &engine] { return (engine.isInputSelectGlobal() ? engine.isGlobalAlt() : strip.isAltSelected()) ? 1 : 0; },
-                                         [this, &engine] (int i)
-                                         {
-                                             if (engine.isInputSelectGlobal())
-                                                 engine.setGlobalAlt (i == 1);
-                                             else
-                                                 strip.setAltSelected (i == 1);
-                                         });
+            // MAIN / ALT: the channel's own switch. A GLOBAL channel follows
+            // the global MAIN / ALT switch and is locked here unless GLOBAL
+            // INPUT SELECT OVERRIDE is on (manual 5.5 p. 45).
+            inputSel = &make<Segmented> (juce::StringArray { "MAIN", "ALT" }, [this] { return strip.isAltSelected() ? 1 : 0; },
+                                         [this] (int i) { strip.switchInput (i == 1); });
+            inputSel->isEnabledAt = [this] (int) { return strip.canSwitchInput(); };
             // 3.1: MAIN lights blue, ALT orange.
             inputSel->colourAt = [] (int i) { return i == 1 ? colours::alt : colours::fader; };
             mainTile = &make<InputSourcePanel> (ctx, strip, false);
@@ -1417,8 +1411,9 @@ public:
             inputSelectLabel->offInk = colours::caption;
             inputSelectLabel->frame = colours::panel;
             inputSelectLabel->onClick = [this] { if (ctx.showScreen) ctx.showScreen (Screen::Setup); };
-            selectMode = &make<Segmented> (juce::StringArray { "INDIVIDUAL", "GLOBAL" }, [&engine] { return engine.isInputSelectGlobal() ? 1 : 0; },
-                                           [&engine] (int i) { engine.setInputSelectGlobal (i == 1); });
+            // The channel in SETUP > AUDIO's GLOBAL INPUT SELECT ENABLE (manual 6.1 p. 68-69).
+            selectMode = &make<Segmented> (juce::StringArray { "INDIVIDUAL", "GLOBAL" }, [this] { return strip.isSrcAuto() ? 1 : 0; },
+                                           [this] (int i) { strip.setSrcAuto (i == 1); });
             // INDIVIDUAL lights blue, GLOBAL gold (1.11's MANUAL | AUTO were orange).
             selectMode->colourAt = [] (int i) { return i == 1 ? colours::accent : colours::choice; };
             selectMode->vertical = true;
@@ -4628,6 +4623,7 @@ void copyStripParams (MixerEngine& engine, const Strip& src, const Strip& dst, j
         d.altInputLeft = s.altInputLeft.load();
         d.altInputRight = s.altInputRight.load();
         d.altSelected = s.altSelected.load();
+        d.srcAuto = s.srcAuto.load();
     }
     if (has (Config))
     {

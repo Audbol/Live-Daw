@@ -764,6 +764,21 @@ impl Engine {
         solo::press_mute(&self.controls, s);
     }
 
+    /// Message thread: the global MAIN / ALT switch (SETUP > AUDIO > INPUT
+    /// SELECT, WING `/io/altsw`): stores it and switches every input and aux
+    /// channel in GLOBAL INPUT SELECT ENABLE (`src_auto`) to MAIN or ALT. The
+    /// other channels keep their own switch.
+    pub fn set_global_alt(&self, alt: bool) {
+        self.controls.global_alt.store(alt, Relaxed);
+        for kind in [StripKind::Channel, StripKind::Aux] {
+            for s in self.strips(kind) {
+                if s.params.src_auto.load(Relaxed) {
+                    s.params.alt_selected.store(alt, Relaxed);
+                }
+            }
+        }
+    }
+
     pub fn mute_group_name(&self, i: usize) -> String {
         self.names.lock().unwrap_or_else(|e| e.into_inner()).mute_groups.get(i).cloned().unwrap_or_default()
     }
@@ -1153,7 +1168,6 @@ impl Engine {
         let hw = &hw;
         let playback = SharedPtrs(a.sources.playback_ptrs());
         let playback = &playback;
-        let alt = (self.controls.input_select_global.load(Relaxed), self.controls.global_alt.load(Relaxed));
         let groups = GroupState {
             mute_groups: self.controls.mute_groups.load(Relaxed),
             dca_mute_groups: self.controls.dca_mute_groups.load(Relaxed),
@@ -1175,7 +1189,7 @@ impl Engine {
             key_sources(&s.params, s.kind() == StripKind::Channel)
         });
         let schedule = &*topo.key_schedule.get();
-        let ctx_of = |hw, wave| self.context(topo, hw, playback.get(), alt, &groups, block, probes, schedule.waves(), wave);
+        let ctx_of = |hw, wave| self.context(topo, hw, playback.get(), &groups, block, probes, schedule.waves(), wave);
         let ctx_of = &ctx_of;
         for w in 0..schedule.num_waves() {
             let strips = schedule.wave(w);
@@ -1277,9 +1291,8 @@ impl Engine {
                 }
             }
         };
-        let (global, alt) = (self.controls.input_select_global.load(Relaxed), self.controls.global_alt.load(Relaxed));
         for s in topo.inputs() {
-            let (l, r) = s.active_inputs(global, alt);
+            let (l, r) = s.active_inputs();
             want(l);
             want(if r < 0 && l >= 0 && s.params.stereo.load(Relaxed) { l + 1 } else { r });
         }
@@ -1350,7 +1363,6 @@ impl Engine {
         topo: &'a Topology,
         hw: &'a [*const f32],
         playback: &'a [*const f32],
-        (input_select_global, global_alt): (bool, bool),
         g: &GroupState<'a>,
         block: u64,
         probes: &'a Probes,
@@ -1367,8 +1379,6 @@ impl Engine {
             main_link_db: g.main_link_db,
             hw_inputs: hw,
             playback,
-            input_select_global,
-            global_alt,
             channels: &topo.channels,
             key_strips: KeyStrips {
                 auxes: &topo.auxes,

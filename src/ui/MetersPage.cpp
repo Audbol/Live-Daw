@@ -65,8 +65,8 @@ public:
         addAndMakeVisible (closeKey);
         for (int i = 0; i < prefs::kNumMeterTaps; ++i)
             addAndMakeVisible (keys.add (new ChoiceKeys (
-                { "PRE", "POST" }, [this, i] { return prefs::meterTapPre (page.ctx, i) ? 0 : 1; },
-                [this, i] (int v) { page.ctx.settings.setValue (prefs::meterTapKey (i), v == 0); }, ChoiceKeys::prePost())));
+                { "PRE", "POST" }, [this, i] { return prefs::meterPageTapPre (page.ctx, i) ? 0 : 1; },
+                [this, i] (int v) { page.ctx.settings.setValue (prefs::meterPageTapKey (i), v == 0); }, ChoiceKeys::prePost())));
     }
 
     void paint (juce::Graphics& g) override
@@ -344,12 +344,12 @@ float MetersPage::levelOf (const Group& group, int index, int channel) const
     if (! group.dca)
     {
         auto* s = stripOf (group, index);
-        return s != nullptr ? meterPos (dsp::gainToDb (ctx.meters.get (s, prefs::meterPoint (ctx, s->getKind()), channel))) : 0.0f;
+        return s != nullptr ? meterPos (dsp::gainToDb (ctx.meters.get (s, prefs::meterPagePoint (ctx, s->getKind()), channel))) : 0.0f;
     }
 
     // A DCA shows the loudest of its members, before or after their faders.
     const uint32_t bit = 1u << (uint32_t) (group.first + index);
-    const auto point = prefs::meterTapPre (ctx, 4) ? MeterPoint::PreFader : MeterPoint::Output;
+    const auto point = prefs::meterPageTapPre (ctx, 4) ? MeterPoint::PreFader : MeterPoint::Output;
     float peak = 0.0f;
     for (auto kind : { StripKind::Channel, StripKind::Aux, StripKind::Bus, StripKind::Main, StripKind::Matrix })
         for (auto& s : ctx.engine.getStrips (kind))

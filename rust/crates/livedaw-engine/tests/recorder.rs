@@ -241,7 +241,7 @@ fn a_playback_impulse_through_an_alt_input_records_at_its_timeline_position() {
     assert!((v - 1.0).abs() < 1e-3, "pre-fader: unity ({v})");
     assert_eq!(pre_samples[1][k], pre_samples[0][k], "a mono strip's tap feeds both channels");
 
-    assert!(ch1.uses_alt_input(false, false) && !ch2.uses_alt_input(false, false));
+    assert!(ch1.uses_alt_input() && !ch2.uses_alt_input());
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -276,21 +276,36 @@ fn alt_select_individual_or_global() {
     a.params.alt_selected.store(true, Relaxed);
     b.params.alt_selected.store(true, Relaxed);
     check(&mut rig, [0.4, 0.2, 0.2], "individual: A on ALT; B has no ALT source");
-    c.input_select_global.store(true, Relaxed);
-    check(&mut rig, [0.1, 0.2, 0.2], "global MAIN overrides the strips' switches");
-    c.global_alt.store(true, Relaxed);
-    check(&mut rig, [0.4, 0.2, 0.1], "global ALT: every strip with an ALT source");
-    a.params.alt_selected.store(false, Relaxed);
-    check(&mut rig, [0.4, 0.2, 0.1], "still global");
-    c.input_select_global.store(false, Relaxed);
-    check(&mut rig, [0.1, 0.2, 0.2], "back to individual");
 
-    assert!(!a.uses_alt_input(false, true) && a.uses_alt_input(true, true) && !a.uses_alt_input(true, false));
+    // The global switch only switches the channels in GLOBAL INPUT SELECT ENABLE.
+    engine.set_global_alt(false);
+    check(&mut rig, [0.4, 0.2, 0.2], "no channel is GLOBAL: the switch changes nothing");
+    a.params.src_auto.store(true, Relaxed);
+    aux.params.src_auto.store(true, Relaxed);
+    check(&mut rig, [0.4, 0.2, 0.2], "enabling a channel doesn't switch it");
+    engine.set_global_alt(true);
+    assert!(c.global_alt.load(Relaxed));
+    check(&mut rig, [0.4, 0.2, 0.1], "global ALT: A and AUX 1");
+    engine.set_global_alt(false);
+    check(&mut rig, [0.1, 0.2, 0.2], "global MAIN: A and AUX 1 back on MAIN");
+    assert!(b.params.alt_selected.load(Relaxed), "B (INDIVIDUAL) kept its own switch");
+
+    // GLOBAL INPUT SELECT OVERRIDE (on after INITIALIZE) lets a GLOBAL channel's own key switch it.
+    assert!(c.input_select_override.load(Relaxed));
+    assert!(a.can_switch_input(true) && !a.can_switch_input(false), "without the override a GLOBAL channel is locked");
+    assert!(b.can_switch_input(false), "an INDIVIDUAL one isn't");
+    a.params.alt_selected.store(true, Relaxed);
+    check(&mut rig, [0.4, 0.2, 0.2], "A switched by hand");
+    engine.set_global_alt(false);
+    check(&mut rig, [0.1, 0.2, 0.2], "the global switch switches it back");
+
     let bus = rig.engine.strip_at(StripKind::Bus, 0).unwrap();
     bus.params.alt_input_left.store(1, Relaxed);
     bus.params.alt_selected.store(true, Relaxed);
-    assert!(!bus.uses_alt_input(false, false), "only input and aux channels have ALT inputs");
-    assert_eq!(a.active_inputs(true, true), (2, -1));
+    assert!(!bus.uses_alt_input(), "only input and aux channels have ALT inputs");
+    assert!(!bus.can_switch_input(true));
+    a.params.alt_selected.store(true, Relaxed);
+    assert_eq!(a.active_inputs(), (2, -1));
 }
 
 #[test]

@@ -66,9 +66,6 @@ pub(crate) struct ProcessContext<'a> {
     /// The recorder's playback channels (input `PLAYBACK_SOURCE_BASE + n`),
     /// then the USB PLAYER's (input `USB_PLAYER_SOURCE_BASE + n`).
     pub playback: &'a [*const f32],
-    /// INPUT SELECT: every input strip follows `global_alt` (else its own switch).
-    pub input_select_global: bool,
-    pub global_alt: bool,
     /// The input channels (for sidechain keys from other channels).
     pub channels: &'a [Arc<Strip>],
     /// The aux, bus, main and matrix keys of aux, bus, main and matrix DYNAMICS.
@@ -414,18 +411,25 @@ impl Strip {
     }
 
     /// Input and aux channels: the strip takes its ALT input now - it has one,
-    /// and ALT is selected (globally with INPUT SELECT global, else on the strip).
-    pub fn uses_alt_input(&self, input_select_global: bool, global_alt: bool) -> bool {
+    /// and its MAIN / ALT switch is on ALT. (The global MAIN / ALT switch sets
+    /// the switches of the strips in GLOBAL INPUT SELECT ENABLE:
+    /// `Engine::set_global_alt`.)
+    pub fn uses_alt_input(&self) -> bool {
         let p = &self.params;
-        self.kind.is_input()
-            && p.alt_input_left.load(Relaxed) >= 0
-            && if input_select_global { global_alt } else { p.alt_selected.load(Relaxed) }
+        self.kind.is_input() && p.alt_input_left.load(Relaxed) >= 0 && p.alt_selected.load(Relaxed)
+    }
+
+    /// The strip's own MAIN / ALT switch can be used (WING SETUP > AUDIO):
+    /// always on a strip set to INDIVIDUAL, and on a GLOBAL one (`src_auto`)
+    /// only with GLOBAL INPUT SELECT OVERRIDE (`/io/autoaltovr`).
+    pub fn can_switch_input(&self, input_select_override: bool) -> bool {
+        self.kind.is_input() && (input_select_override || !self.params.src_auto.load(Relaxed))
     }
 
     /// The input sources (left, right) in use: MAIN or ALT.
-    pub fn active_inputs(&self, input_select_global: bool, global_alt: bool) -> (i32, i32) {
+    pub fn active_inputs(&self) -> (i32, i32) {
         let p = &self.params;
-        if self.uses_alt_input(input_select_global, global_alt) {
+        if self.uses_alt_input() {
             (p.alt_input_left.load(Relaxed), p.alt_input_right.load(Relaxed))
         } else {
             (p.input_left.load(Relaxed), p.input_right.load(Relaxed))
@@ -678,7 +682,7 @@ impl Strip {
         let (left, mut right, stereo) = match ctx.source_solo {
             Some((host, patch)) if std::ptr::eq(host, self) => (patch.left, patch.right, patch.stereo),
             _ => {
-                let (l, r) = self.active_inputs(ctx.input_select_global, ctx.global_alt);
+                let (l, r) = self.active_inputs();
                 (l, r, p.stereo.load(Relaxed))
             }
         };
@@ -1069,7 +1073,7 @@ impl Strip {
             return true;
         }
         // The tap's buffer isn't planned yet (`Engine::update_keys`): the channel's input.
-        let ptr = ctx.source(ch.active_inputs(ctx.input_select_global, ctx.global_alt).0);
+        let ptr = ctx.source(ch.active_inputs().0);
         match ptr {
             Some(src) => d.key[..n].copy_from_slice(std::slice::from_raw_parts(src, n)),
             None => d.key[..n].fill(0.0),

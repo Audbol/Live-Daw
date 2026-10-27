@@ -9,6 +9,11 @@
 #include <memory>
 #include <optional>
 
+namespace livedaw
+{
+class MixerEngine;
+}
+
 namespace livedaw::daw
 {
 
@@ -114,9 +119,18 @@ public:
 
     /** AUTO INPUT SELECT (the recorder's SETTINGS, manual 8.1 p. 85-86, WING
         /cards/wlive/autoin, auto_stop, auto_play, auto_rec): what the stop,
-        play or record status asks of the global MAIN / ALT switch, from the
-        app settings: nothing (OFF, or KEEP), MAIN (false) or ALT (true). */
+        play or record status asks of the channels in GLOBAL INPUT SELECT
+        ENABLE routed to or from the recorder (isRoutedToRecorder), from the app
+        settings: nothing (OFF, or KEEP), MAIN (false) or ALT (true). */
     static std::optional<bool> autoInputFor (const juce::PropertiesFile*, TransportMode);
+    /** A channel AUTO INPUT SELECT switches (the WING: on WLIVE REC or WLIVE
+        PLAY): its MAIN or ALT input is a playback channel, or a track
+        records its strip or its MAIN input's port (`mainInputPort`). */
+    bool isRoutedToRecorder (StripKind kind, int number, int mainInputPort, int altInputPort) const;
+    /** AUTO INPUT SELECT on a change to `mode`: switches the GLOBAL input and
+        aux channels routed to or from the recorder to what the settings ask.
+        Returns how many channels it switched. */
+    int applyAutoInput (MixerEngine&, TransportMode) const;
     static constexpr const char* autoInputKey = "recorder.autoInput";
     /** KEEP (0), MAIN (1) or ALT (2) per status. */
     static constexpr const char* autoInputModeKeys[3] = { "recorder.autoStop", "recorder.autoPlay", "recorder.autoRec" };

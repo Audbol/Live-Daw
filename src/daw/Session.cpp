@@ -1,5 +1,6 @@
 #include "daw/Session.h"
 #include "engine/AppPaths.h"
+#include "engine/MixerEngine.h"
 
 namespace livedaw::daw
 {
@@ -324,6 +325,39 @@ std::optional<bool> Session::autoInputFor (const juce::PropertiesFile* settings,
         case 2: return true;
         default: return std::nullopt;
     }
+}
+
+bool Session::isRoutedToRecorder (StripKind kind, int number, int mainInputPort, int altInputPort) const
+{
+    if (Recorder::isPlaybackSource (mainInputPort) || Recorder::isPlaybackSource (altInputPort))
+        return true;
+    for (auto& t : project.getTracks())
+    {
+        if (t.source.kind == Recorder::Source::Kind::HardwareInput)
+        {
+            if (mainInputPort >= 0 && (mainInputPort == t.source.port || (t.stereo && mainInputPort == t.source.port + 1)))
+                return true;
+        }
+        else if (t.source.stripKind == kind && t.source.stripNumber == number)
+            return true;
+    }
+    return false;
+}
+
+int Session::applyAutoInput (MixerEngine& engine, TransportMode mode) const
+{
+    const auto alt = autoInputFor (settings, mode);
+    if (! alt)
+        return 0;
+    int switched = 0;
+    for (auto kind : { StripKind::Channel, StripKind::Aux })
+        for (auto& s : engine.getStrips (kind))
+            if (s->isSrcAuto() && s->isAltSelected() != *alt && isRoutedToRecorder (kind, s->getNumber(), s->getInputLeft(), s->getAltInputLeft()))
+            {
+                s->setAltSelected (*alt);
+                ++switched;
+            }
+    return switched;
 }
 
 Session::PlayMode Session::getPlayMode() const

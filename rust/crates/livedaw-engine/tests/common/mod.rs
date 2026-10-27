@@ -69,7 +69,6 @@ pub fn unity_console(e: &Engine) {
     for ch in e.strips(StripKind::Channel) {
         legacy_sends(&ch);
     }
-    e.controls.input_select_global.store(false, Relaxed);
     e.controls.mute_override.store(false, Relaxed);
     for d in &e.controls.dcas {
         d.fader_db.store(0.0);

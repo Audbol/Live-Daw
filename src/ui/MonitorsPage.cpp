@@ -768,9 +768,10 @@ juce::String MonitorsPage::talkChannelName() const
 
 void MonitorsPage::chooseSource()
 {
-    // What the path plays without a solo: MAIN.1-4, MTX.1-8, BUS.1-16, AUX.1-8.
+    // What the path plays without a solo: OFF (only the solo bus), MAIN.1-4,
+    // MTX.1-8, BUS.1-16, AUX.1-8 (the WING's /cfg/mon/n/src).
     auto& target = pathSource().source;
-    juce::StringArray items;
+    juce::StringArray items { "OFF" };
     for (int i = 0; i < ld::kNumMonitorSources; ++i)
         items.add (MixerEngine::monitorSourceName (i));
     popups::ListOptions options;
@@ -778,9 +779,9 @@ void MonitorsPage::chooseSource()
     options.caption = "SOURCE";
     anchor.setBounds (sourceField);
     juce::Component::SafePointer<MonitorsPage> safe (this);
-    popups::chooseFrom (anchor, items, target.load(), [safe, &target] (int i)
+    popups::chooseFrom (anchor, items, juce::jmax (-1, target.load()) + 1, [safe, &target] (int i)
     {
-        target = i;
+        target = i - 1;
         if (safe != nullptr)
             safe->repaint();
     }, options);

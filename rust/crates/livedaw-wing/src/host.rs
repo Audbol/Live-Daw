@@ -66,16 +66,15 @@ const MAIN_METER: &[(usize, &str)] = &[
     (14, "14"),
 ];
 
-/// Every bridged setting. Several nodes can share a key: the WING sets the
-/// METERS screen's and the surface's meter taps apart, Sidecar has one tap
-/// per strip type for both.
+/// Every bridged setting.
 pub const HOST_SETTINGS: &[HostSetting] = &[
-    // SETUP > SURFACE > METERING (prefs::meterTapKey): CHANNEL, BUS, MAIN, MATRIX, DCA.
-    s("/cfg/mtr/mtrpage/in", "setup.meterTapPre.0", "1", PRE_FLAG),
-    s("/cfg/mtr/mtrpage/bus", "setup.meterTapPre.1", "0", PRE_FLAG),
-    s("/cfg/mtr/mtrpage/main", "setup.meterTapPre.2", "0", PRE_FLAG),
-    s("/cfg/mtr/mtrpage/mtx", "setup.meterTapPre.3", "0", PRE_FLAG),
-    s("/cfg/mtr/mtrpage/dca", "setup.meterTapPre.4", "1", PRE_FLAG),
+    // METERS > SETTINGS (prefs::meterPageTapKey) and SETUP > SURFACE > METERING
+    // (prefs::meterTapKey, the surface's meters): CHANNEL, BUS, MAIN, MATRIX, DCA.
+    s("/cfg/mtr/mtrpage/in", "setup.meterPageTapPre.0", "1", PRE_FLAG),
+    s("/cfg/mtr/mtrpage/bus", "setup.meterPageTapPre.1", "0", PRE_FLAG),
+    s("/cfg/mtr/mtrpage/main", "setup.meterPageTapPre.2", "0", PRE_FLAG),
+    s("/cfg/mtr/mtrpage/mtx", "setup.meterPageTapPre.3", "0", PRE_FLAG),
+    s("/cfg/mtr/mtrpage/dca", "setup.meterPageTapPre.4", "1", PRE_FLAG),
     s("/cfg/mtr/mtrsfc/in", "setup.meterTapPre.0", "1", PRE_FLAG),
     s("/cfg/mtr/mtrsfc/bus", "setup.meterTapPre.1", "0", PRE_FLAG),
     s("/cfg/mtr/mtrsfc/main", "setup.meterTapPre.2", "0", PRE_FLAG),

@@ -241,9 +241,40 @@ All notable changes to Sidecar are listed here. Versions follow
   `ld_engine_user_patches`, `ld_source_set_user_patch`, `ld_engine_output_patch`,
   `ld_engine_route_output_source`, `ld_engine_clear_output`, `ld_strip_source_input`;
   `kNumSources` grows by the 56 USR sources.
+- INPUT SELECT works as on the WING (manual 5.5 p. 44-45, 6.1 p. 68-69): each input
+  and aux channel is **INDIVIDUAL** or **GLOBAL** on its own (HOME > INPUT's
+  INDIVIDUAL / GLOBAL, or the new **INPUT SELECT** window that SETUP > AUDIO's channel
+  grid opens, fig. 35: MAIN/ALT INPUT switches a channel, GLOBAL INPUT SELECT ENABLE
+  puts it under the global switch). The global **MAIN / ALT** switch (SETUP > AUDIO,
+  the GLOBAL MAIN/ALT custom control) switches the GLOBAL channels and leaves the
+  others. **GLOBAL INPUT SELECT OVERRIDE** (on, as after INITIALIZE) lets a GLOBAL
+  channel's own MAIN / ALT still switch it; off, only the global switch does. Before,
+  INDIVIDUAL / GLOBAL was one choice for the whole console (shown as the override):
+  GLOBAL made every channel follow the switch. AUTO INPUT SELECT switches the GLOBAL
+  channels routed to or from the recorder (a playback channel as MAIN or ALT input, or
+  a track recording the channel or its input), as the WING does on WLIVE REC / PLAY;
+  VIRTUAL SOUNDCHECK puts its channels in GLOBAL INPUT SELECT ENABLE on ALT and gives
+  them back as they were. Shows save each channel's choice, which scenes recall with
+  ROUTING (CONN), and the override with the preferences (scenes leave it). Shows and
+  scenes saved before load as they sounded: with INPUT SELECT GLOBAL every input and
+  aux channel GLOBAL on the switch's MAIN / ALT, else every one INDIVIDUAL.
+  WING REMOTE: `/ch/<n>/in/set/srcauto` and `/aux/<n>/in/set/srcauto` (only stored
+  before), `/io/autoaltovr` is GLOBAL INPUT SELECT OVERRIDE, `/io/altsw` switches the
+  GLOBAL channels (only when it changes, so a client's sync leaves them), and `altsrc`
+  sets the switch as it stands (the override locks the console's keys). C ABI version
+  22: `StripParams::srcAuto`, `EngineControls::inputSelectOverride` (was
+  `inputSelectGlobal`), `ld_engine_set_global_alt`.
+- METERS > SETTINGS has its own PRE / POST per strip type, as the WING's METERS screen
+  (`/cfg/mtr/mtrpage`); SETUP > SURFACE > METERING keeps the surface's meters and the
+  main meter's AUTO (`/cfg/mtr/mtrsfc`). They were one setting; the METERS screen
+  starts at the console's factory taps.
+- The PHONES and SPEAKERS **SOURCE** list starts with **OFF** (the WING's
+  `/cfg/mon/<n>/src`): the path then plays only solos and its DIRECT IN.
 
 ### Fixed
 
+- BUS SoF/SPILL ACTIVATES SOLO solos a bus or main when it is spilled (manual 5.5
+  p. 46-47); only Sends on Fader did.
 - WING REMOTE: a processing or FX model changed right after a client connected (before
   the first change poll) now sends all of the new model's parameters, as later changes
   do; parameters that happened to equal the old model's could be left out.

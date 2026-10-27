@@ -543,6 +543,7 @@ pub enum SF {
     DlyMode,
     Dly,
     AltSel,
+    SrcAuto,
     Mode,
     /// Input patch: ALT input, and number (else group).
     Conn {
@@ -629,7 +630,7 @@ pub enum CtlF {
     AutomixX,
     AutomixY,
     GlobalAlt,
-    InputSelectGlobal,
+    InputSelectOverride,
     StartupMainMute,
     AnySolo,
     /// `/cfg/solo/mode`, `mon` (the solo bus), `mute`; `/$ctl/cfg/muteovr`; `/$stat/sip`.
@@ -933,6 +934,7 @@ fn strip_field(kind: StripKind, n: u16, rest: &[&str]) -> Option<SF> {
         ["in", "set", "dlymode"] if input => SF::DlyMode,
         ["in", "set", "dly"] if input => SF::Dly,
         ["in", "set", "altsrc"] if input => SF::AltSel,
+        ["in", "set", "srcauto"] if input => SF::SrcAuto,
         ["in", "set", "$mode"] if input => SF::Mode,
         ["in", "conn", f] if input => match *f {
             "grp" => SF::Conn { alt: false, number: false },
@@ -1222,7 +1224,7 @@ pub fn bind(parts: &[&str]) -> Binding {
         ["cfg", "amix", "x"] => Binding::Ctl(CtlF::AutomixX),
         ["cfg", "amix", "y"] => Binding::Ctl(CtlF::AutomixY),
         ["io", "altsw"] => Binding::Ctl(CtlF::GlobalAlt),
-        ["io", "autoaltovr"] => Binding::Ctl(CtlF::InputSelectGlobal),
+        ["io", "autoaltovr"] => Binding::Ctl(CtlF::InputSelectOverride),
         ["io", "out", "REC", n, f @ ("grp" | "in")] => {
             number(n, livedaw_engine::USB_CHANNELS as u16).map_or(Binding::Stored, |n| Binding::RecOut(n as u8 - 1, *f == "in"))
         }
@@ -2152,7 +2154,7 @@ impl<'a> Console<'a> {
                 CtlF::AutomixX => b(&c.automix_enable[0]),
                 CtlF::AutomixY => b(&c.automix_enable[1]),
                 CtlF::GlobalAlt => b(&c.global_alt),
-                CtlF::InputSelectGlobal => b(&c.input_select_global),
+                CtlF::InputSelectOverride => b(&c.input_select_override),
                 CtlF::StartupMainMute => b(&c.startup_main_mute),
                 CtlF::AnySolo => b(&c.any_solo_active),
                 CtlF::SoloMode => item(def, c.solo_mode.load(Relaxed)),
@@ -2509,6 +2511,7 @@ impl<'a> Console<'a> {
             SF::DlyMode => item(def, p.input.delay_mode.load(Relaxed)),
             SF::Dly => f(&p.input.delay),
             SF::AltSel => b(&p.alt_selected),
+            SF::SrcAuto => b(&p.src_auto),
             SF::Mode => Value::str(if p.stereo.load(Relaxed) { "ST" } else { "M" }),
             SF::Conn { alt, number } => {
                 let (g, k) = self.conn_pair(row, p, alt);
@@ -2668,8 +2671,7 @@ impl<'a> Console<'a> {
     }
 
     fn strip_source(&self, kind: StripKind, n: u16, s: &Strip) -> Option<usize> {
-        let c = &self.engine.controls;
-        let alt = s.uses_alt_input(c.input_select_global.load(Relaxed), c.global_alt.load(Relaxed));
+        let alt = s.uses_alt_input();
         let (g, k) = self.conn_pair(*conn_rows().get(&(kind, n))?, &s.params, alt);
         source_of(g, u16::try_from(k).ok()?)
     }
@@ -3023,8 +3025,13 @@ impl<'a> Console<'a> {
                 CtlF::MonitorSwap => set_b(&c.monitor_swap, v),
                 CtlF::AutomixX => set_b(&c.automix_enable[0], v),
                 CtlF::AutomixY => set_b(&c.automix_enable[1], v),
-                CtlF::GlobalAlt => set_b(&c.global_alt, v),
-                CtlF::InputSelectGlobal => set_b(&c.input_select_global, v),
+                // Only a change switches the GLOBAL channels (a sync writing the same value leaves them).
+                CtlF::GlobalAlt => {
+                    if v.as_bool() != c.global_alt.load(Relaxed) {
+                        self.engine.set_global_alt(v.as_bool());
+                    }
+                }
+                CtlF::InputSelectOverride => set_b(&c.input_select_override, v),
                 CtlF::StartupMainMute => set_b(&c.startup_main_mute, v),
                 CtlF::AnySolo | CtlF::SipActive => return Err(SetError::ReadOnly),
                 CtlF::SoloMode => set_item(&c.solo_mode, def, v),
@@ -3496,7 +3503,11 @@ impl<'a> Console<'a> {
                     p.input.delay.store(x.clamp(lo, hi));
                 }
             }
+            // Remote clients set the switch as it stands, also on a GLOBAL channel
+            // without GLOBAL INPUT SELECT OVERRIDE (a sync writes every channel's);
+            // the override locks the console's own keys.
             SF::AltSel => set_b(&p.alt_selected, v),
+            SF::SrcAuto => set_b(&p.src_auto, v),
             SF::Conn { alt, number } => {
                 let (left, right) = if alt { (&p.alt_input_left, &p.alt_input_right) } else { (&p.input_left, &p.input_right) };
                 let gname = if alt { "altgrp" } else { "grp" };
@@ -4587,6 +4598,46 @@ mod tests {
     }
 
     #[test]
+    fn input_select_global_enable_switch_and_override() {
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let get = |p: &str| c.get(node(&c, p));
+        // A WING after INITIALIZE: every channel INDIVIDUAL, the switch on MAIN, the override on.
+        assert_eq!(get("/ch/1/in/set/srcauto"), Some(Value::Int(0)));
+        assert_eq!(get("/aux/8/in/set/srcauto"), Some(Value::Int(0)));
+        assert_eq!((get("/io/altsw"), get("/io/autoaltovr")), (Some(Value::Int(0)), Some(Value::Int(1))));
+        for p in ["/ch/2/in/set/srcauto", "/aux/3/in/set/srcauto"] {
+            c.set(node(&c, p), &Value::Int(1)).unwrap();
+            assert_eq!(get(p), Some(Value::Int(1)));
+        }
+        let (ch2, ch3, aux3) = (e.channel_at(1).unwrap(), e.channel_at(2).unwrap(), e.strip_at(StripKind::Aux, 2).unwrap());
+        assert!(ch2.params.src_auto.load(Relaxed) && aux3.params.src_auto.load(Relaxed));
+        // The global switch switches the GLOBAL channels only.
+        c.set(node(&c, "/io/altsw"), &Value::Int(1)).unwrap();
+        assert_eq!(get("/ch/2/in/set/altsrc"), Some(Value::Int(1)));
+        assert_eq!(get("/aux/3/in/set/altsrc"), Some(Value::Int(1)));
+        assert_eq!(get("/ch/3/in/set/altsrc"), Some(Value::Int(0)));
+        assert!(!ch3.params.alt_selected.load(Relaxed));
+        // GLOBAL INPUT SELECT OVERRIDE locks the console's keys only: a client sets
+        // a GLOBAL channel's switch as it stands (a sync writes every channel's).
+        c.set(node(&c, "/io/autoaltovr"), &Value::Int(0)).unwrap();
+        assert!(!e.controls.input_select_override.load(Relaxed));
+        c.set(node(&c, "/ch/2/in/set/altsrc"), &Value::Int(0)).unwrap();
+        assert_eq!(get("/ch/2/in/set/altsrc"), Some(Value::Int(0)));
+        assert!(!ch2.can_switch_input(false) && ch3.can_switch_input(false));
+        c.set(node(&c, "/ch/3/in/set/altsrc"), &Value::Int(1)).unwrap();
+        assert!(ch3.params.alt_selected.load(Relaxed));
+        c.set(node(&c, "/io/altsw"), &Value::Int(0)).unwrap();
+        assert!(!aux3.params.alt_selected.load(Relaxed) && ch3.params.alt_selected.load(Relaxed));
+        assert_eq!(get("/io/altsw"), Some(Value::Int(0)));
+        // Writing the value that stands (a client's sync) switches nothing.
+        aux3.params.alt_selected.store(true, Relaxed);
+        c.set(node(&c, "/io/altsw"), &Value::Int(0)).unwrap();
+        assert!(aux3.params.alt_selected.load(Relaxed));
+    }
+
+    #[test]
     fn channel_source_gain_and_phantom() {
         let e = engine();
         let st = WingState::default();
@@ -4603,8 +4654,7 @@ mod tests {
         src.gain_db.store(10.5);
         assert_eq!(c.get(node(&c, "/ch/3/in/set/$g")), Some(Value::Float(10.5)));
         assert_eq!(c.get(node(&c, "/io/in/A/4/g")), Some(Value::Float(10.5)));
-        // The ALT input while in use (INPUT SELECT per channel: a new console's is GLOBAL).
-        c.set(node(&c, "/io/autoaltovr"), &Value::Int(0)).unwrap();
+        // The ALT input while in use.
         c.set(node(&c, "/ch/3/in/conn/altgrp"), &Value::str("B")).unwrap();
         c.set(node(&c, "/ch/3/in/conn/altin"), &Value::Int(2)).unwrap();
         c.set(node(&c, "/ch/3/in/set/altsrc"), &Value::Int(1)).unwrap();
@@ -5333,7 +5383,7 @@ mod tests {
         assert_eq!(cov.mapped, 79325, "{}", cov.report());
         // 85 settings: the COMPACT's mfdr, cscmode, autosel_CMPCT, mfdrkeep, mainspill,
         // mtxspill and dcacc and the surface lock (cnslock) among them.
-        assert_eq!((cov.settings, cov.stored), (85, 5576), "{}", cov.report());
+        assert_eq!((cov.settings, cov.stored), (85, 5528), "{}", cov.report());
         for (g, (m, t)) in &cov.by_group {
             assert!(m == t || g == "/$ctl/daw", "{g}: {m} of {t}");
         }
@@ -5341,7 +5391,7 @@ mod tests {
         // The engine-backed share: everything but the settings and the stored values.
         // (The COMPACT's key sets count here on either model; the routing: every
         // bus to every other bus, USR 1-56 and their user/..., the matrices' dir/in.)
-        assert_eq!(cov.mapped - cov.settings - cov.stored, 73664);
+        assert_eq!(cov.mapped - cov.settings - cov.stored, 73712);
         let b = bindings();
         let row = |p: &str| match schema().resolve(p, &NoModels) {
             Some(Node::Row(r)) => r as usize,
@@ -5433,14 +5483,17 @@ mod tests {
         st.set_host_setting("ui.dateFormat", "DD-MM-YYYY");
         st.set_host_setting("daw.on", "true");
         st.set_host_setting("not.a.wing.setting", "1");
+        assert_eq!(get_text(&c, "/cfg/mtr/mtrsfc/bus"), "PRE");
+        assert_eq!(get_text(&c, "/cfg/mtr/mtrpage/bus"), "POST", "the METERS screen has its own tap");
+        st.set_host_setting("setup.meterPageTapPre.1", "1");
         assert_eq!(get_text(&c, "/cfg/mtr/mtrpage/bus"), "PRE");
-        assert_eq!(get_text(&c, "/cfg/mtr/mtrsfc/bus"), "PRE", "one tap for the METERS screen and the surface");
         assert_eq!(get_text(&c, "/$ctl/cfg/seldblclick"), "HOME");
         assert_eq!(get_text(&c, "/$ctl/$globals/datefmt"), "DMY");
         assert_eq!(get_text(&c, "/$ctl/daw/on"), "1");
         // A client's changes reach the host as its settings.
         let set = |p: &str, v: Value| c.set(node(&c, p), &v);
         set("/cfg/mtr/mtrsfc/main", Value::str("PRE")).unwrap();
+        set("/cfg/mtr/mtrpage/dca", Value::str("POST")).unwrap();
         set("/$ctl/cfg/seldblclick", Value::str("OFF")).unwrap();
         set("/$ctl/midi/enscenes", Value::str("USB")).unwrap();
         set("/$ctl/cfg/lights/meters", Value::Int(70)).unwrap();
@@ -5450,7 +5503,7 @@ mod tests {
         set("/cfg/mtr/mainmtr", Value::str("MTX.2")).unwrap();
         // The host's own value doesn't undo a change it hasn't taken.
         st.set_host_setting("setup.meterTapPre.2", "0");
-        assert_eq!(get_text(&c, "/cfg/mtr/mtrpage/main"), "PRE");
+        assert_eq!(get_text(&c, "/cfg/mtr/mtrsfc/main"), "PRE");
         let mut taken = Vec::new();
         while let Some(kv) = st.take_host_setting() {
             taken.push(kv);
@@ -5460,6 +5513,7 @@ mod tests {
             taken,
             [
                 ("setup.meterTapPre.2", "1"),
+                ("setup.meterPageTapPre.4", "0"),
                 ("ui.selDblClick", "2"),
                 ("midi.enscenes", "2"),
                 ("setup.brightness.meters", "70"),
@@ -5468,7 +5522,7 @@ mod tests {
             ]
         );
         st.set_host_setting("setup.meterTapPre.2", "0");
-        assert_eq!(get_text(&c, "/cfg/mtr/mtrpage/main"), "POST");
+        assert_eq!(get_text(&c, "/cfg/mtr/mtrsfc/main"), "POST");
         assert!(crate::host::keys().contains(&"daw.preset"));
         for (item, setting) in [("MON.PH", "13"), ("MON.SPK", "0"), ("SEL_CH", "14"), ("MTX.8", "12")] {
             st.set_host_setting("ui.mainMeter", setting);

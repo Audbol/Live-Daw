@@ -53,9 +53,13 @@ Rust; audio devices, plugin hosting and the UI are C++ with JUCE.
   the recorder's 64 playback channels (`PLAYBACK_SOURCE_BASE` + n, valid wherever a
   hardware input index is: strip inputs, ALT inputs, sidechain keys, record ports).
   Each has a MAIN (`input_left`/`input_right`) and an ALT source (`alt_input_left`/
-  `alt_input_right`, -1 = none). It uses ALT when it has one and
-  `input_select_global ? global_alt : alt_selected` (WING INPUT SELECT, manual
-  p. 44-45, 68-69; here one console-wide INDIVIDUAL / GLOBAL choice). A switch
+  `alt_input_right`, -1 = none). It uses ALT when it has one and its own switch
+  `alt_selected` is on ALT (WING INPUT SELECT, manual p. 44-45, 68-69). The audio
+  thread reads only that switch: the global MAIN / ALT switch
+  (`Engine::set_global_alt`, `/io/altsw`) sets the switches of the strips in GLOBAL
+  INPUT SELECT ENABLE (`src_auto`, ABI 22) on the message thread; the console's keys
+  refuse a GLOBAL strip's own switch unless GLOBAL INPUT SELECT OVERRIDE
+  (`input_select_override`, `/io/autoaltovr`; `Strip::can_switch_input`). A switch
   between MAIN and ALT is instant (no crossfade).
 - The order follows the WING Operation Manual (chapter 6). Input channels choose their
   process order and tap point (`TAP_POINTS`: INPUT, FILTER, TAP 3-5, PRE FDR, POST FDR,
@@ -267,7 +271,7 @@ views after a show load changes the console from Rust.
   engine controls are `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same
   memory as `std::atomic<float/bool/int32_t>` structs, and the UI writes them directly
   with no FFI call. Both sides describe the layout; `ld::verifyLayout()` compares the
-  two at startup and in the tests (ABI version 21), and the app refuses to run if they
+  two at startup and in the tests (ABI version 22), and the app refuses to run if they
   differ.
 - **FX slots.** The 16 slots are the WING's FX rack. Each holds one device from the
   console's FX table (`FX_MODELS`, generated like the processing models): the 26
@@ -817,10 +821,12 @@ blinking LEDs.
   (PLAYER, SESSIONS, MARKERS, the tracks to arm, RECORD ALL CHANNELS and VIRTUAL
   SOUNDCHECK), opened from the status bar's LIVE card tile or MULTI TRANSP's VIEW.
   VIRTUAL SOUNDCHECK sets each channel's ALT input to the playback channel of the
-  track recording it (`Session::virtualSoundcheckRoutes`) and switches INPUT SELECT
-  to GLOBAL ALT. ROUTING (MAIN / ALT keys, PLAY source groups), HOME > INPUT (ALT
-  tile, MAIN / ALT, INDIVIDUAL / GLOBAL) and SETUP > AUDIO (INPUT SELECT grid, GLOBAL
-  INPUT SELECT OVERRIDE) edit the ALT inputs.
+  track recording it (`Session::virtualSoundcheckRoutes`), puts those channels in
+  GLOBAL INPUT SELECT ENABLE and switches them to ALT (OFF restores them). AUTO INPUT
+  SELECT (`MainComponent`, on the session's transport changes) switches the GLOBAL
+  channels routed to or from the recorder. ROUTING (MAIN / ALT keys, PLAY source
+  groups), HOME > INPUT (ALT tile, MAIN / ALT, INDIVIDUAL / GLOBAL) and SETUP > AUDIO
+  (the INPUT SELECT window, GLOBAL INPUT SELECT OVERRIDE) edit the ALT inputs.
 
 ## Stability mechanisms
 

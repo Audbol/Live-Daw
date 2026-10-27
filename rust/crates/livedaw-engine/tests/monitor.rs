@@ -159,6 +159,27 @@ fn direct_in_mixes_any_strip_into_one_path() {
 }
 
 #[test]
+fn source_off_plays_only_solos_and_direct_in() {
+    let mut rig = Rig::new(2);
+    two_channels(&mut rig, 0.25, 0.5);
+    rig.run(4, PH);
+    assert!(close(rig.last(PH), 0.25, 1e-5), "MAIN.1 by default");
+    // PHONES SOURCE OFF (the WING's /cfg/mon/n/src OFF): silent, the SPEAKERS keep MAIN.1.
+    rig.engine.controls.phones.source.source.store(-1, Relaxed);
+    rig.run(8, PH);
+    assert!(close(rig.last(PH), 0.0, 1e-6) && close(rig.last(SPK), 0.25, 1e-5), "{}", rig.last(PH));
+    // A solo and DIRECT IN still play there.
+    rig.phones().direct_source.store(direct_index(StripKind::Channel, 1), Relaxed);
+    rig.run(8, PH);
+    assert!(close(rig.last(PH), 0.5, 1e-4), "{}", rig.last(PH));
+    rig.phones().direct_source.store(-1, Relaxed);
+    rig.engine.controls.solo_bus.store(0, Relaxed);
+    rig.ch(0).params.solo.store(true, Relaxed);
+    rig.run(8, PH);
+    assert!(close(rig.last(PH), 0.25, 1e-4), "PFL of channel 1: {}", rig.last(PH));
+}
+
+#[test]
 fn eq_shapes_only_its_path() {
     let mut rig = Rig::new(1);
     set_channels(&rig.engine, 1);
