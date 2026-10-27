@@ -491,6 +491,10 @@ void MixerEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     // message thread for AudioDeviceManager.
     prepare (device->getCurrentSampleRate(), device->getCurrentBufferSizeSamples(),
              device->getActiveInputChannels(), device->getActiveOutputChannels());
+    // An outboard insert's round trip (EXT, manual 11.11 p. 164): a block plus
+    // the latency the interface reports both ways.
+    ld::ld_engine_set_io_latency (engine, juce::jmax (0, device->getInputLatencyInSamples())
+                                              + juce::jmax (0, device->getOutputLatencyInSamples()));
 
     deviceRunning = true;
     garbage.setDeviceRunning (true);

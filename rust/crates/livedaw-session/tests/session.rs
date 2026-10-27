@@ -1746,3 +1746,113 @@ fn startup_scene_and_snippet_files_load_without_joining_the_show() {
     assert_eq!(a.params.fader_db.load(), -6.0);
     assert_eq!((other.num_scenes(), other.current_scene()), (0, -1));
 }
+
+// ---- the EXT device's outboard insert, source and output safes ---------------------
+
+#[test]
+fn outboard_inserts_save_load_and_recall() {
+    use livedaw_engine::params::{ext, FX_EXT, FX_NONE};
+    let engine = Engine::new(0);
+    let mut host = FakeHost::default();
+    // FX 2: an outboard insert (RETURN B 3 / 4, STEREO, 2 ms, -4 dB), FX SEND on ports 5 / 6.
+    assert!(engine.set_fx_model(1, FX_EXT, true));
+    let p = &engine.controls.fx[1];
+    for (i, v) in
+        [(ext::SOURCE, 1.0), (ext::GROUP, 4.0), (ext::INPUT, 3.0), (ext::MODE, 1.0), (ext::LATENCY, 2.0), (ext::TRIM, -4.0)]
+    {
+        p.values[i].store(v);
+    }
+    p.send_left.store(4, Relaxed);
+    p.send_right.store(5, Relaxed);
+    // FX 3: a plugin, whose EXT settings are kept beside it.
+    host.load(&engine, 2, "Comp", "one");
+    engine.controls.fx[2].values[ext::TRIM].store(3.0);
+
+    let mut show = Show::new();
+    show.add_scene(&engine, &mut Bridge { host: &mut host, engine: &engine }, "A", -1);
+    let text = show.to_xml(&engine, &mut Bridge { host: &mut host, engine: &engine }).to_document();
+    let e2 = Engine::new(0);
+    let mut host2 = FakeHost::default();
+    let mut loaded = Show::new();
+    let warnings = loaded.load_from_text(&e2, &mut Bridge { host: &mut host2, engine: &e2 }, &text, true).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let q = &e2.controls.fx[1];
+    assert!(q.ext_outboard() && !e2.fx(1).unwrap().is_loaded());
+    assert_eq!((q.values[ext::GROUP].load(), q.values[ext::INPUT].load(), q.values[ext::LATENCY].load()), (4.0, 3.0, 2.0));
+    assert_eq!((q.send_left.load(Relaxed), q.send_right.load(Relaxed)), (4, 5));
+    let plugin = &e2.controls.fx[2];
+    assert!(!plugin.ext_outboard() && host2.plugins[&2].0 == "Comp");
+    assert_eq!(plugin.values[ext::TRIM].load(), 3.0);
+
+    // Safe mode loads the outboard insert (it needs no plugin).
+    let e3 = Engine::new(0);
+    let mut host3 = FakeHost::default();
+    Show::new().load_from_text(&e3, &mut Bridge { host: &mut host3, engine: &e3 }, &text, false).unwrap();
+    assert!(e3.controls.fx[1].ext_outboard());
+    assert_eq!(e3.controls.fx[2].model_index(), FX_NONE);
+
+    // A recall brings the outboard insert back, but never replaces a plugin.
+    e2.set_fx_model(1, FX_NONE, true);
+    q.send_left.store(-1, Relaxed);
+    let r = loaded.recall_scene(&e2, &mut Bridge { host: &mut host2, engine: &e2 }, 0);
+    assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+    assert!(q.ext_outboard() && q.values[ext::TRIM].load() == -4.0 && q.send_left.load(Relaxed) == 4);
+    host2.load(&e2, 1, "Other", "x");
+    let r = loaded.recall_scene(&e2, &mut Bridge { host: &mut host2, engine: &e2 }, 0);
+    assert_eq!(r.warnings, vec!["FX 2: a plugin is loaded, External not recalled".to_string()]);
+    assert!(host2.plugins.contains_key(&1));
+
+    // Shows from before the outboard insert: an EXT slot is a plugin slot.
+    let old = text.replace("n=\"src\" v=\"1\"", "n=\"x\" v=\"1\"");
+    let e4 = Engine::new(0);
+    Show::new().load_from_text(&e4, &mut NoPlugins, &old, true).unwrap();
+    assert!(!e4.controls.fx[1].ext_outboard());
+}
+
+#[test]
+fn scenes_recall_sources_and_skip_safe_sources_and_outputs() {
+    let engine = Engine::new(0);
+    let mut np = NoPlugins;
+    set_channels(&engine, 2);
+    let sources = engine.sources();
+    sources.set_gain(0, 10.0);
+    sources.set_name(1, "KICK");
+    let main = engine.main(0).unwrap();
+    main.params.output_left.store(0, Relaxed);
+    main.params.output_right.store(1, Relaxed);
+    engine.controls.fx[0].send_left.store(6, Relaxed);
+    let mut show = Show::new();
+    show.add_scene(&engine, &mut np, "A", -1);
+    show.scene_mut(0).unwrap().scope = section::ALL;
+
+    // Everything changes; source 1 and output 1 are safe.
+    sources.set_gain(0, 20.0);
+    sources.set_gain(2, 5.0);
+    sources.set_name(1, "SNARE");
+    main.params.output_left.store(8, Relaxed);
+    main.params.output_right.store(9, Relaxed);
+    engine.controls.fx[0].send_left.store(0, Relaxed); // onto the safe output
+    engine.io_safes().sources.set(0, true);
+    engine.io_safes().outputs.set(0, true);
+    show.recall_scene(&engine, &mut np, 0);
+    assert_eq!(sources.get(0).unwrap().gain_db.load(), 20.0, "source 1 is safe");
+    assert_eq!(sources.name(1), "KICK");
+    assert_eq!(sources.get(2).unwrap().gain_db.load(), 0.0, "back to the factory's");
+    // Output 1 keeps FX 1's send; Main 1 R goes back to output 2.
+    assert_eq!(engine.controls.fx[0].send_left.load(Relaxed), 0);
+    assert_eq!(main.params.output_left.load(Relaxed), 8, "its old output is safe");
+    assert_eq!(main.params.output_right.load(Relaxed), 1);
+
+    // RESTORE ignores the safes.
+    show.recall_scene_with(&engine, &mut np, 0, None, false);
+    assert_eq!(sources.get(0).unwrap().gain_db.load(), 10.0);
+    assert_eq!(main.params.output_left.load(Relaxed), 0);
+    assert_eq!(engine.controls.fx[0].send_left.load(Relaxed), 6);
+
+    // The safes are the console's: saved with the show, cleared by a new one.
+    let (e2, _) = round_trip(&engine, &show);
+    assert!(e2.io_safes().sources.get(0) && e2.io_safes().outputs.get(0));
+    assert_eq!(e2.io_safes().sources.indices().len(), 1);
+    show.clear(&engine, 2);
+    assert!(!engine.io_safes().any());
+}

@@ -28,6 +28,29 @@ pub const NUM_FX: usize = 16;
 /// hosted by the application).
 pub const FX_NONE: usize = 0;
 pub const FX_EXT: usize = 1;
+
+/// The EXT device's parameters (`FX_MODELS[FX_EXT]`: the WING's `/fx/N/EXT/*`
+/// in its order, then Sidecar's SOURCE). Manual 11.11 p. 164, Fig. 169.
+pub mod ext {
+    /// RETURN's input group (`egrp`: OFF, LCL, AUX, A, B, C, SC, USB, CRD, MOD, PLAY, AES).
+    pub const GROUP: usize = 0;
+    /// RETURN's first input (`ein`, 1-64).
+    pub const INPUT: usize = 1;
+    /// FX MODE (`emode`): MONO, STEREO, MID/SIDE.
+    pub const MODE: usize = 2;
+    /// LATENCY (`lat`, samples; see `fx.rs`): the dry signal's delay beyond the round trip
+    /// Sidecar knows (one block and the interface's reported latencies).
+    pub const LATENCY: usize = 3;
+    /// TRIM (`trim`): the send level, dB.
+    pub const TRIM: usize = 4;
+    /// SOURCE (`src`, Sidecar's own): 0 PLUGIN (a plugin hosted in the slot), 1 OUTBOARD.
+    pub const SOURCE: usize = 5;
+    pub const MODE_MONO: i32 = 0;
+    pub const MODE_STEREO: i32 = 1;
+    pub const MODE_MID_SIDE: i32 = 2;
+    pub const SOURCE_PLUGIN: f32 = 0.0;
+    pub const SOURCE_OUTBOARD: f32 = 1.0;
+}
 /// The WING's channel and bus counts (this console can grow beyond them).
 pub const WING_CHANNELS: usize = 40;
 pub const WING_BUSES: usize = 16;
@@ -880,6 +903,11 @@ pub struct FxParams {
     pub model: AtomicI32,
     /// The device's parameters, in its table order.
     pub values: [AtomicF32; MAX_FX_PARAMS],
+    /// ABI 19: the hardware outputs the slot's FX SEND feeds (WING FX SEND
+    /// 2i+1 / 2i+2, ROUTING > OUTPUTS; -1 = none), as a strip's outputs. The
+    /// EXT device's outboard insert sends there (manual 11.11 p. 164, SEND).
+    pub send_left: AtomicI32,
+    pub send_right: AtomicI32,
 }
 
 impl Default for FxParams {
@@ -889,6 +917,8 @@ impl Default for FxParams {
             mix: AtomicF32::new(100.0),
             model: AtomicI32::new(FX_NONE as i32),
             values: std::array::from_fn(|_| AtomicF32::new(0.0)),
+            send_left: AtomicI32::new(-1),
+            send_right: AtomicI32::new(-1),
         }
     }
 }
@@ -915,6 +945,12 @@ impl FxParams {
     /// A parameter of the current device by its console id ("dcy").
     pub fn param(&self, id: &str) -> Option<&AtomicF32> {
         self.values.get(FX_MODELS[self.model_index()].param_index(id)?)
+    }
+
+    /// The EXT device with SOURCE OUTBOARD (`ext::SOURCE`): without a plugin in
+    /// the slot, the console's outboard insert.
+    pub fn ext_outboard(&self) -> bool {
+        self.model_index() == FX_EXT && self.values[ext::SOURCE].load() >= 0.5
     }
 
     pub fn values_snapshot(&self, out: &mut [f32; MAX_FX_PARAMS]) {
@@ -1221,6 +1257,8 @@ impl EngineControls {
             f.bypass.store(false, Relaxed);
             f.mix.store(100.0);
             f.set_model(FX_NONE, true);
+            f.send_left.store(-1, Relaxed);
+            f.send_right.store(-1, Relaxed);
         }
     }
 }

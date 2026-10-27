@@ -431,6 +431,16 @@ impl SourceTable {
         }
     }
 
+    /// Source `index` back to its factory settings, pairing and name (a scene
+    /// that holds the sources and leaves this one out).
+    pub fn reset_source(&self, index: usize) {
+        let Some(p) = self.params.get(index) else { return };
+        let f = source_factory(index);
+        p.reset(&f);
+        p.mode.store(f.mode, Relaxed);
+        self.set_name(index, f.name);
+    }
+
     /// Everything back to the defaults (a new console).
     pub fn reset(&self) {
         let mut names = self.names.lock().unwrap_or_else(|e| e.into_inner());

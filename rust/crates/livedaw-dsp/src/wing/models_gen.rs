@@ -4156,11 +4156,78 @@ pub static PROCESS_ORDERS: &[&str] = &[
 ];
 /// Pre-fader tap points for bus sends, console order.
 pub static TAP_POINTS: &[&str] = &["IN", "FILT", "3", "4", "5", "PFL", "AFL", "POST"];
-/// The FX rack's devices, console order: NONE, EXT (here: a VST3/AU/LV2 plugin), the
-/// premium devices (FX slots 1-8 only), the standard devices and the channel strips.
+/// The FX rack's devices, console order: NONE, EXT (an outboard insert through a
+/// hardware output and input, or here a VST3/AU/LV2 plugin), the premium devices (FX
+/// slots 1-8 only), the standard devices and the channel strips.
 pub static FX_MODELS: &[ModelSpec] = &[
     ModelSpec { token: "NONE", name: "None", category: ModelCategory::FxNone, params: &[] },
-    ModelSpec { token: "EXT", name: "External (Plugin)", category: ModelCategory::FxExternal, params: &[] },
+    ModelSpec {
+        token: "EXT",
+        name: "External",
+        category: ModelCategory::FxExternal,
+        params: &[
+            ParamSpec {
+                id: "egrp",
+                label: "EXT GRP",
+                unit: "",
+                kind: ParamKind::Choice(&["OFF", "LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "MOD", "PLAY", "AES"]),
+                min: 0.0,
+                max: 11.0,
+                steps: 12,
+                default: 0.0,
+            },
+            ParamSpec {
+                id: "ein",
+                label: "EXT IN",
+                unit: "",
+                kind: ParamKind::Int,
+                min: 1.0,
+                max: 64.0,
+                steps: 64,
+                default: 1.0,
+            },
+            ParamSpec {
+                id: "emode",
+                label: "EXT MODE",
+                unit: "",
+                kind: ParamKind::Choice(&["M", "ST", "M/S"]),
+                min: 0.0,
+                max: 2.0,
+                steps: 3,
+                default: 0.0,
+            },
+            ParamSpec {
+                id: "lat",
+                label: "LATENCY",
+                unit: "",
+                kind: ParamKind::Int,
+                min: 0.0,
+                max: 800.0,
+                steps: 801,
+                default: 0.0,
+            },
+            ParamSpec {
+                id: "trim",
+                label: "TRIM",
+                unit: "dB",
+                kind: ParamKind::Linear,
+                min: -18.0,
+                max: 18.0,
+                steps: 361,
+                default: 0.0,
+            },
+            ParamSpec {
+                id: "src",
+                label: "SOURCE",
+                unit: "",
+                kind: ParamKind::Choice(&["PLUGIN", "OUTBOARD"]),
+                min: 0.0,
+                max: 1.0,
+                steps: 2,
+                default: 0.0,
+            },
+        ],
+    },
     ModelSpec {
         token: "HALL",
         name: "Hall Reverb",

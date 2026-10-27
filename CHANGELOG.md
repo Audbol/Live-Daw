@@ -110,6 +110,34 @@ All notable changes to Sidecar are listed here. Versions follow
   `.snap`) and the snippet (`.lsnip`). Holding SHIFT while Sidecar starts (the WING:
   holding LIBRARY) or `--no-startup` skips them. C ABI version 18:
   `ld_show_apply_library`.
+- **Outboard inserts**: the WING's EXTERNAL effect (manual 11.11 p. 164, Fig. 169).
+  The EXT device keeps hosting plugins and gets a **SOURCE**, **PLUGIN** or
+  **OUTBOARD** (also in the FX slot menu: *Outboard insert (SEND / RETURN)*). An
+  outboard slot sends its strip's insert signal to its **FX SEND** at **TRIM** in
+  **FX MODE** MONO, STEREO or MID/SIDE, and returns the **RETURN** inputs (LCL, A, B,
+  C, CRD or PLAY; the next input too in STEREO and MID/SIDE) in its place. Its
+  latency, one audio block plus the interface's reported input and output latency
+  plus **LATENCY** (samples, the gear's own), is compensated like a plugin's, and FX MIX
+  delays the dry signal by it. Without a RETURN it passes the signal through. The
+  EFFECTS editor shows the EXTERNAL EFFECT page as the console's (SEND opens ROUTING >
+  OUTPUTS). ROUTING > OUTPUTS gets the **FX SEND** source group (FX 1L ... FX 16R,
+  the WING's FX SEND 1-32), which showed n/a tiles. Shows, scenes and FX presets keep
+  the settings (presets without the outputs); EXT slots of older shows stay plugin
+  slots. WING REMOTE: `/fx/N/EXT/egrp`, `ein`, `emode`, `lat` and `trim` drive it
+  (they were only stored), selecting `EXT` as `mdl` makes an outboard insert, and
+  outputs patched to `SEND` n carry slot (n+1)/2's send, so WING Edit's EXTERNAL
+  EFFECT editor works on it; a slot hosting a plugin still reads as EXT and keeps its
+  plugin. C ABI version 19: `FxParams::sendLeft` / `sendRight`,
+  `ld_engine_set_io_latency`, `ld_fx_state` 4 / 5 (outboard insert, with a RETURN);
+  `ld_fx_latency` gives an outboard insert's latency.
+- Source and output **GLOBAL safes** take effect (manual 5.6 p. 54-55): GLOBAL's
+  SOURCE (LCL, A, B, C, CRD, PLAY, OSC) and OUTPUT (LCL, A, B, C) tiles, dimly lit
+  when part of a group is safe, keep safe sources' settings and names and safe
+  outputs' patches when a scene is loaded (RESTORE, NO GLOB and snippets ignore
+  them). Scenes now recall the sources with ROUTING (scenes saved before leave them
+  alone). The safes are the console's, saved with the show; WING REMOTE
+  `/$ctl/safes/source/*` and `output/*` of those groups set them (they were only
+  stored). C ABI version 19: `ld_engine_io_safe`, `ld_engine_set_io_safe`.
 
 ### Changed
 

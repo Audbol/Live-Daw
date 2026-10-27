@@ -39,7 +39,10 @@ use std::sync::Arc;
 // ABI 17: ld_wing_set_black_finish ("wing-bk"); LdSpill kind 5 = a main's sources.
 // ABI 18: show items (ld_scene_item_*, ld_show_add_item, ld_show_add_snippet_scene,
 // ld_show_take_clips, ld_show_apply_library) and ld_rec_set_range (MODE A->B).
-pub const LD_ABI_VERSION: i32 = 18;
+// ABI 19: FxParams::send_left / send_right (the EXT device's outboard insert:
+// FX SEND outputs), ld_engine_set_io_latency, source and output recall safes
+// (ld_engine_io_safe, ld_engine_set_io_safe).
+pub const LD_ABI_VERSION: i32 = 19;
 
 fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
@@ -154,6 +157,8 @@ pub struct LdLayoutInfo {
     pub off_dca_mon: i32,
     // ABI 16: the console model (ld_console_model_info, ld_layers_set_model, ld_wing_set_model)
     pub console_model_info: i32,
+    // ABI 19: an FX slot's FX SEND outputs
+    pub off_fx_send_left: i32,
 }
 
 #[no_mangle]
@@ -241,6 +246,7 @@ pub unsafe extern "C" fn ld_layout_info(out: *mut LdLayoutInfo) {
         off_cust_link: offset_of!(StripParams, cust_link) as i32,
         off_dca_mon: offset_of!(DcaParams, mon) as i32,
         console_model_info: size_of::<session::LdConsoleModelInfo>() as i32,
+        off_fx_send_left: offset_of!(FxParams, send_left) as i32,
     };
 }
 
@@ -514,14 +520,20 @@ pub unsafe extern "C" fn ld_fx_ctx(e: *const Engine, slot: i32) -> *mut std::ffi
 }
 
 /// what: 0 = a plugin is loaded, 1 = faulted, 2 = double-assigned, 3 = a
-/// built-in device is running.
+/// built-in device is running, 4 = an outboard insert (EXT, SOURCE OUTBOARD,
+/// no plugin), 5 = an outboard insert with a RETURN.
 #[no_mangle]
 pub unsafe extern "C" fn ld_fx_state(e: *const Engine, slot: i32, what: i32) -> bool {
-    let Some(r) = engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)) else { return false };
+    let Some(e) = engine(e) else { return false };
+    let (Some(r), Some(p)) = (e.fx(slot.max(0) as usize).filter(|_| slot >= 0), e.controls.fx.get(slot.max(0) as usize)) else {
+        return false;
+    };
     match what {
         0 => r.is_loaded(),
         1 => r.is_faulted(),
         2 => r.is_double_assigned(),
+        4 => r.is_outboard(p),
+        5 => r.outboard_returns(p),
         _ => r.has_device(),
     }
 }
@@ -557,10 +569,50 @@ pub unsafe extern "C" fn ld_fx_set_latency(e: *const Engine, slot: i32, samples:
     }
 }
 
-/// The latency reported for slot `slot`'s plugin (0 without one).
+/// The latency of slot `slot`: its plugin's as reported, or its outboard
+/// insert's round trip plus LATENCY (0 otherwise).
 #[no_mangle]
 pub unsafe extern "C" fn ld_fx_latency(e: *const Engine, slot: i32) -> i32 {
-    engine(e).and_then(|e| e.fx(slot.max(0) as usize).filter(|_| slot >= 0)).map_or(0, |r| r.reported_latency() as i32)
+    let Some(e) = engine(e) else { return 0 };
+    match (e.fx(slot.max(0) as usize).filter(|_| slot >= 0), e.controls.fx.get(slot.max(0) as usize)) {
+        (Some(r), Some(p)) => r.latency(p) as i32,
+        _ => 0,
+    }
+}
+
+/// Any thread (ABI 19): the audio interface's reported input + output latency
+/// in samples, part of an outboard insert's round trip (with one block).
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_set_io_latency(e: *const Engine, samples: i32) {
+    if let Some(e) = engine(e) {
+        e.set_io_latency(samples.max(0) as u32);
+    }
+}
+
+/// Recall safes of sources and outputs (ABI 19, GLOBAL SAFE): `kind` 0 = a
+/// source (its table index, `sources::source_index`), 1 = a hardware output
+/// port. -1 as the index: any of that kind is safe.
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_io_safe(e: *const Engine, kind: i32, index: i32) -> bool {
+    let Some(e) = engine(e) else { return false };
+    let s = e.io_safes();
+    match (kind, usize::try_from(index)) {
+        (0, Ok(i)) => s.sources.get(i),
+        (1, Ok(i)) => s.outputs.get(i),
+        (0, Err(_)) => s.sources.any(),
+        (1, Err(_)) => s.outputs.any(),
+        _ => false,
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn ld_engine_set_io_safe(e: *const Engine, kind: i32, index: i32, safe: bool) {
+    let (Some(e), Ok(i)) = (engine(e), usize::try_from(index)) else { return };
+    match kind {
+        0 => e.io_safes().sources.set(i, safe),
+        1 => e.io_safes().outputs.set(i, safe),
+        _ => {}
+    }
 }
 
 /// DELAY COMPENSATION on / off (default on); takes effect with the next plan.
@@ -785,6 +837,18 @@ mod tests {
             ld_fx_set(e, 2, &cb);
             ld_fx_set_latency(e, 2, 256);
             assert_eq!(ld_fx_latency(e, 2), 256);
+            // An outboard insert: a block (512 here) plus the interface's latency.
+            let fx3 = &(*ld_engine_controls(e)).fx[3];
+            assert!(ld_fx_set_model(e, 3, 1, true));
+            fx3.values[livedaw_engine::params::ext::SOURCE].store(1.0);
+            assert!(ld_fx_state(e, 3, 4) && !ld_fx_state(e, 3, 5));
+            assert_eq!(ld_fx_latency(e, 3), 0, "no RETURN");
+            fx3.values[livedaw_engine::params::ext::GROUP].store(1.0); // LCL
+            ld_engine_set_io_latency(e, 30);
+            assert!(ld_fx_state(e, 3, 5));
+            assert_eq!(ld_fx_latency(e, 3), 512 + 30);
+            ld_engine_set_io_safe(e, 1, 7, true);
+            assert!(ld_engine_io_safe(e, 1, 7) && ld_engine_io_safe(e, 1, -1) && !ld_engine_io_safe(e, 0, -1));
             let ch = ld_engine_strip_at(e, 0, 0);
             let p = &*ld_strip_params(ch);
             p.pre_insert.on.store(true, std::sync::atomic::Ordering::Relaxed);

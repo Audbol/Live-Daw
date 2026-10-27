@@ -345,11 +345,37 @@ bool FxSlots::setModel (int slot, int model)
     return ld::ld_fx_set_model (engine, slot, model, true);
 }
 
+void FxSlots::setOutboard (int slot)
+{
+    if (! juce::isPositiveAndBelow (slot, kNumFx))
+        return;
+    if (hasPlugin (slot))
+        setPlugin (slot, nullptr); // the slot's EXT settings stay
+    if (getModel (slot) != ld::kFxExt)
+        ld::ld_fx_set_model (engine, slot, ld::kFxExt, true);
+    params (slot).values[ld::ext::kSource] = 1.0f;
+}
+
+juce::String FxSlots::returnLabel (int slot) const
+{
+    // The RETURN (manual Fig. 169, "LCL 3/4"): the group and its input(s).
+    static const char* const groups[] = { "OFF", "LCL", "AUX", "A", "B", "C", "SC", "USB", "CRD", "MOD", "PLAY", "AES" };
+    const auto& v = params (slot).values;
+    const int g = juce::jlimit (0, (int) std::size (groups) - 1, juce::roundToInt (v[ld::ext::kGroup].load()));
+    if (g == 0)
+        return "OFF";
+    const int n = juce::jlimit (1, 64, juce::roundToInt (v[ld::ext::kInput].load()));
+    const bool pair = juce::roundToInt (v[ld::ext::kMode].load()) != 0;
+    return juce::String (groups[g]) + " " + juce::String (n) + (pair ? "/" + juce::String (n + 1) : juce::String());
+}
+
 juce::String FxSlots::describe (int slot) const
 {
     juce::String s ("FX " + juce::String (slot + 1));
     if (auto* p = getPlugin (slot))
         s << ": " << p->getName();
+    else if (isOutboard (slot))
+        s << ": External (outboard, return " << returnLabel (slot) << ")";
     else if (const int m = getModel (slot); m > ld::kFxExt)
         s << ": " << models::model (models::Fx, m).name;
     return s;

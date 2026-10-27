@@ -15,7 +15,7 @@ use crate::xml::{fmt_f32, Element};
 use livedaw_engine::atomic::AtomicF32;
 use livedaw_engine::monitor::MonitorDspParams;
 use livedaw_engine::params::MonitorSourceParams;
-use livedaw_engine::sources::{source_mode, SourceParams};
+use livedaw_engine::sources::{source_mode, SourceParams, NUM_SOURCES, OSC_SOURCE_INDEX};
 use livedaw_engine::talk::talk_tag;
 use livedaw_engine::Engine;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering::Relaxed};
@@ -184,8 +184,9 @@ fn apply_talk(engine: &Engine, parent: &Element) {
 const SOURCE_DEFAULTS_ATTR: &str = "factory";
 const SOURCE_DEFAULTS_WING: &str = "wing";
 
-/// Sources that differ from their factory settings and name.
-fn capture_sources(engine: &Engine, parent: &mut Element) {
+/// Sources that differ from their factory settings and name (show files,
+/// and scenes with ROUTING: the scope's SOURCE groups).
+pub(crate) fn capture_sources(engine: &Engine, parent: &mut Element) {
     let table = engine.sources();
     let e = parent.add_new("Sources");
     e.set(SOURCE_DEFAULTS_ATTR, SOURCE_DEFAULTS_WING);
@@ -256,6 +257,53 @@ fn apply_sources(engine: &Engine, parent: &Element) {
         get_i(x, "mode", &o.mode);
         get_f(x, "level", &o.level_db);
         get_f(x, "freq", &o.freq_hz);
+    }
+}
+
+/// A scene's sources (from [`capture_sources`]): the listed ones take their
+/// settings and name, the others go back to the factory's. With
+/// `respect_safes`, safe sources (GLOBAL SAFE's SOURCE groups) are left alone
+/// (manual 5.6 p. 54-55: global safes protect them from a LOAD). Scenes
+/// saved before they held the sources change none.
+pub(crate) fn apply_scene_sources(engine: &Engine, parent: &Element, respect_safes: bool) {
+    let Some(e) = parent.child("Sources") else { return };
+    let table = engine.sources();
+    let safes = &engine.io_safes().sources;
+    let kept = |i: usize| respect_safes && safes.get(i);
+    let mut listed = vec![None; NUM_SOURCES];
+    for x in e.children_named("Source") {
+        if let Some(slot) = usize::try_from(x.int_or("i", -1)).ok().and_then(|i| listed.get_mut(i)) {
+            *slot = Some(x);
+        }
+    }
+    for (i, x) in listed.iter().enumerate() {
+        if kept(i) {
+            continue;
+        }
+        let Some(p) = table.get(i) else { continue };
+        match x {
+            Some(x) => {
+                table.set_name(i, x.str_or("name", ""));
+                apply_source(x, p);
+                p.mode.store(x.int_or("mode", source_mode::MONO).clamp(0, 2), Relaxed);
+            }
+            None if !table.is_factory(i) => table.reset_source(i),
+            None => {}
+        }
+    }
+    table.clamp_gains();
+    for (n, o) in table.oscillators().iter().enumerate() {
+        if kept(OSC_SOURCE_INDEX + n) {
+            continue;
+        }
+        match e.children_named("Osc").find(|x| x.int_or("i", -1) == n as i32) {
+            Some(x) => {
+                get_i(x, "mode", &o.mode);
+                get_f(x, "level", &o.level_db);
+                get_f(x, "freq", &o.freq_hz);
+            }
+            None => o.reset(),
+        }
     }
 }
 

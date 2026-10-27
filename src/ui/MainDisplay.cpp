@@ -1964,6 +1964,13 @@ void MainDisplay::editFx (int slot)
     effects->editSlot (slot);
 }
 
+void MainDisplay::showFxSendOutputs (int slot)
+{
+    // [manual 11.11 p. 164] the EXTERNAL EFFECT's SEND opens ROUTING > OUTPUTS.
+    showScreen (Screen::Routing);
+    routing->showFxSends (slot);
+}
+
 void MainDisplay::mouseUp (const juce::MouseEvent& e)
 {
     if (e.eventComponent != this)

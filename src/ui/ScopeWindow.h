@@ -2,6 +2,8 @@
 
 #include "ui/ScreenWidgets.h"
 
+#include <set>
+
 namespace livedaw::ui
 {
 
@@ -95,6 +97,10 @@ private:
     bool hasStrip (const state::StripRef&) const;
     void toggleStrip (const state::StripRef&, bool on);
     juce::uint32* maskOf (Kind);
+    /** A SOURCE / OUTPUT tile's group (its index in the group list). */
+    static int groupOf (const Tile&);
+    /** GLOBAL SAFE: how many of a SOURCE / OUTPUT group's items are safe. */
+    int ioSafeCount (const Tile&) const;
 
     UiContext& ctx;
     Mode mode;
@@ -102,6 +108,8 @@ private:
     state::Scope selection;
     bool noGlobal = false;
     juce::uint32 sourceGroups = 0;
+    /** GLOBAL SAFE: the safe sources (table indices) and outputs (ports), written back on SAVE. */
+    std::set<int> safeSources, safeOutputs;
     std::vector<Tile> tiles;
     std::vector<Group> groups;
     juce::Rectangle<int> titleArea, configHeader, contentsHeader, configBox, contentsBox;

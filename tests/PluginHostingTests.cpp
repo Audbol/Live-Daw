@@ -320,6 +320,95 @@ public:
 static LatencyCompensationTests latencyCompensationTests;
 
 //==============================================================================
+/** The EXT device's outboard insert (WING manual 11.11 p. 164) beside plugin
+    hosting: FX SEND out, RETURN back, compensated like a plugin's latency. */
+class OutboardInsertTests final : public juce::UnitTest
+{
+public:
+    OutboardInsertTests() : juce::UnitTest ("Outboard inserts", "LiveDAW") {}
+
+    void runTest() override
+    {
+        constexpr int n = OfflineRig::kBlock;
+        MixerEngine engine (0);
+        OfflineRig rig (engine, 3, 4); // in 1: the source, ins 2-3: the gear's return; outs 3-4: FX SEND
+        engine.outputProtection = false;
+        test::setChannels (engine, 2);
+        for (auto& ch : engine.getChannels())
+            ch->params.inputLeft = 0;
+        for (auto& aux : engine.getStrips (StripKind::Aux))
+            aux->params.inputLeft = aux->params.inputRight = -1;
+        auto& fx = engine.getFx();
+
+        beginTest ("SOURCE OUTBOARD makes the EXT device an outboard insert");
+        fx.setOutboard (0);
+        expect (fx.isOutboard (0) && fx.isLoaded (0) && ! fx.hasPlugin (0));
+        expect (! fx.hasReturn (0));
+        auto& p = fx.params (0);
+        p.values[ld::ext::kGroup] = 3.0f; // A
+        p.values[ld::ext::kInput] = 2.0f;
+        p.values[ld::ext::kMode] = 1.0f; // STEREO
+        p.sendLeft = 2;
+        p.sendRight = 3;
+        expect (fx.hasReturn (0));
+        expectEquals (fx.returnLabel (0), juce::String ("A 2/3"));
+        expectEquals (fx.getLatency (0), n); // one block: the offline rig reports no I/O latency
+        expect (fx.describe (0).contains ("outboard"));
+        auto& ch1 = *engine.getChannels()[0];
+        ch1.params.preInsert.on = true;
+        ch1.params.preInsert.fx = 0;
+
+        beginTest ("The send goes out, the return comes back a block later, in time with the direct path");
+        engine.updateLatencyCompensation();
+        std::vector<std::vector<float>> in (3, std::vector<float> ((size_t) n, 0.0f)), out (4, std::vector<float> ((size_t) n, 0.0f));
+        auto block = [&]
+        {
+            // The gear: what left on outputs 3-4 comes back on inputs 2-3 in the next block.
+            in[1] = out[2];
+            in[2] = out[3];
+            const float* ins[] = { in[0].data(), in[1].data(), in[2].data() };
+            float* outs[] = { out[0].data(), out[1].data(), out[2].data(), out[3].data() };
+            engine.processBlock (ins, 3, outs, 4, n);
+        };
+        for (int b = 0; b < 2 * MixerEngine::kMaxCompensation / n + 4; ++b)
+            block();
+        std::vector<std::pair<int, float>> main, send;
+        for (int b = 0; b < 4; ++b)
+        {
+            in[0][0] = b == 0 ? 1.0f : 0.0f;
+            block();
+            for (int i = 0; i < n; ++i)
+            {
+                if (std::abs (out[0][(size_t) i]) > 1.0e-4f)
+                    main.push_back ({ b * n + i, out[0][(size_t) i] });
+                if (std::abs (out[2][(size_t) i]) > 1.0e-4f)
+                    send.push_back ({ b * n + i, out[2][(size_t) i] });
+            }
+        }
+        expectEquals ((int) send.size(), 1);
+        expectEquals ((int) main.size(), 1);
+        if (main.size() == 1)
+        {
+            expectEquals (main[0].first, n);
+            expectWithinAbsoluteError (main[0].second, 2.0f * livedaw::test::kCentre, 1.0e-4f);
+        }
+        expectEquals (engine.getTotalCompensation(), n);
+
+        beginTest ("Loading a plugin makes it a plugin slot again; OUTBOARD removes the plugin");
+        fx.setPlugin (0, std::make_unique<LatencyPlugin> (10));
+        expect (fx.hasPlugin (0) && ! fx.isOutboard (0));
+        expectEquals (p.values[ld::ext::kSource].load(), 0.0f);
+        expectEquals (p.values[ld::ext::kGroup].load(), 3.0f, "the outboard settings stay");
+        expectEquals (fx.getLatency (0), 10);
+        fx.setOutboard (0);
+        engine.getGarbage().collectAllNow();
+        expect (fx.isOutboard (0) && ! fx.hasPlugin (0));
+    }
+};
+
+static OutboardInsertTests outboardInsertTests;
+
+//==============================================================================
 namespace
 {
     /** A plugin with mono main buses (no stereo layout), as LSP's "Mono" plugins:

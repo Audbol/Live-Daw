@@ -147,6 +147,7 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     ctx.showHomeTab = [this] (HomeTab tab) { display->showHomeTab (tab); };
     ctx.openPluginEditor = [this] (int slot) { openPluginEditor (slot); };
     ctx.editFx = [this] (int slot) { display->editFx (slot); };
+    ctx.showFxSendOutputs = [this] (int slot) { display->showFxSendOutputs (slot); };
     ctx.pluginRemoved = [this] (juce::AudioProcessor* p) { closePluginWindowsFor (p); };
     ctx.showPluginScanner = [this] { showPluginScanner(); };
     ctx.structureChanged = [this] { refreshAll(); };

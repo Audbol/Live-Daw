@@ -45,6 +45,7 @@ use crate::analyser::{rta_tap, Analyser, Probes};
 use crate::denormals::ScopedNoDenormals;
 use crate::fx::{FxRack, InsertCallbacks};
 use crate::garbage::Garbage;
+use crate::iosafes::IoSafes;
 use crate::keytap::{key_sources, key_tap, KeySchedule, KeySource};
 use crate::monitor::{direct_source, MonitorPathDsp, SoloPatch, BAND_SOLO_MAX_DB};
 use crate::params::*;
@@ -253,6 +254,11 @@ pub struct Engine {
     dca_monitor: AtomicU32,
     /// Plugin delay compensation: the setting and the plan's status.
     pdc: PdcState,
+    /// The audio interface's reported input + output latency in samples (the
+    /// host's), for an outboard insert's round trip.
+    io_latency: AtomicU32,
+    /// Recall safes of sources and outputs (GLOBAL SAFE, `iosafes.rs`).
+    io_safes: IoSafes,
 }
 
 // SAFETY: `audio` is only touched by the audio thread (process) or by prepare
@@ -316,11 +322,14 @@ impl Engine {
             talk_ramps: TalkRamps::default(),
             dca_monitor: AtomicU32::new(0),
             pdc: PdcState::default(),
+            io_latency: AtomicU32::new(0),
+            io_safes: IoSafes::default(),
         };
         // SAFETY: not published yet, no audio callback.
         unsafe {
             for f in engine.fx.iter() {
                 f.prepare(DEFAULT_BLOCK);
+                f.set_round_trip(DEFAULT_BLOCK as u32);
             }
             (*engine.audio.get()).sources.prepare(0, DEFAULT_BLOCK, DEFAULT_SAMPLE_RATE);
         }
@@ -490,6 +499,7 @@ impl Engine {
         self.controls.reset();
         self.analysis.reset();
         self.sources.reset();
+        self.io_safes.clear();
         let mut names = self.names.lock().unwrap_or_else(|e| e.into_inner());
         *names = GroupNames::default();
         self.update_monitor_dcas(&names);
@@ -818,13 +828,14 @@ impl Engine {
     }
 
     /// Message thread: installs (or removes, with None) the plugin of FX slot
-    /// `i`. Installing a plugin makes the slot an EXT slot; removing it empties
-    /// an EXT slot.
+    /// `i`. Installing a plugin makes the slot an EXT slot with SOURCE PLUGIN
+    /// (an outboard insert's settings stay); removing it empties an EXT slot.
     pub fn set_fx_plugin(&self, i: usize, cb: Option<InsertCallbacks>) {
         let (Some(rack), Some(params)) = (self.fx.get(i), self.controls.fx.get(i)) else { return };
         rack.set(cb, &self.garbage);
         if cb.is_some() {
-            self.set_fx_model(i, FX_EXT, true);
+            self.set_fx_model(i, FX_EXT, params.model_index() != FX_EXT);
+            params.values[ext::SOURCE].store(ext::SOURCE_PLUGIN);
         } else if params.model_index() == FX_EXT {
             self.set_fx_model(i, FX_NONE, true);
         }
@@ -916,6 +927,29 @@ impl Engine {
             self.install_fx_device(i, rack, params.model_index());
         }
         self.pool.set_block_duration_hint(sample_rate, block_size);
+        self.update_round_trip();
+    }
+
+    /// Any thread: the interface's reported input and output latency in
+    /// samples (`AudioIODevice::getInputLatencyInSamples` + output), part of
+    /// an outboard insert's round trip.
+    pub fn set_io_latency(&self, samples: u32) {
+        self.io_latency.store(samples, Relaxed);
+        self.update_round_trip();
+    }
+
+    /// An outboard insert's send leaves in one block and comes back at the
+    /// earliest in the next: the round trip is a block plus the interface's latency.
+    fn update_round_trip(&self) {
+        let trip = (self.block_size() as u32).saturating_add(self.io_latency.load(Relaxed));
+        for f in self.fx.iter() {
+            f.set_round_trip(trip);
+        }
+    }
+
+    /// Recall safes of sources and outputs.
+    pub fn io_safes(&self) -> &IoSafes {
+        &self.io_safes
     }
 
     pub fn sample_rate(&self) -> f64 {
@@ -1457,6 +1491,19 @@ impl Engine {
         add_to(c.monitor_output_right.load(Relaxed), &speakers[1][..n]);
         add_to(c.phones.output_left.load(Relaxed), &phones[0][..n]);
         add_to(c.phones.output_right.load(Relaxed), &phones[1][..n]);
+
+        // FX SEND: the outboard inserts that ran this block.
+        let block = a.block_counter;
+        for (rack, p) in self.fx.iter().zip(c.fx.iter()) {
+            for (side, port) in [&p.send_left, &p.send_right].into_iter().enumerate() {
+                let port = port.load(Relaxed);
+                if port >= 0 {
+                    if let Some(send) = rack.send(side, n, block) {
+                        add_to(port, send);
+                    }
+                }
+            }
+        }
     }
 
     unsafe fn protect_outputs(&self, a: &AudioState, n: usize) {

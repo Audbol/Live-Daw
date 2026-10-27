@@ -111,7 +111,8 @@ public:
         const auto b = getLocalBounds().toFloat();
         const int model = fx.getModel (slot);
         const bool device = model > ld::kFxExt;
-        const bool loaded = fx.hasPlugin (slot) || device;
+        const bool outboard = fx.isOutboard (slot);
+        const bool loaded = fx.hasPlugin (slot) || device || outboard;
         const auto user = loaded ? findUser (ctx.engine, slot) : FxUser {};
         const bool inUse = user.strip != nullptr;
 
@@ -191,12 +192,17 @@ public:
             auto label = deviceArea.reduced (12.0f, 6.0f);
             g.setColour (juce::Colours::white);
             g.setFont (wingFontFit (TypeScale::value, label.getHeight() * 0.42f, WingWeight::SemiBold));
-            g.drawFittedText (plugin != nullptr ? plugin->getName().toUpperCase() : juce::String ("FX " + juce::String (slot + 1)),
-                              label.removeFromTop (label.getHeight() * 0.62f).toNearestInt(), juce::Justification::centredBottom, 1);
+            // An outboard insert (EXTERNAL EFFECT) shows its RETURN.
+            const auto title = plugin != nullptr ? plugin->getName().toUpperCase()
+                               : outboard        ? juce::String ("OUTBOARD")
+                                                 : juce::String ("FX " + juce::String (slot + 1));
+            const auto subtitle = plugin != nullptr ? PluginHost::describe (*plugin).manufacturerName.toUpperCase()
+                                  : outboard        ? "RETURN " + fx.returnLabel (slot)
+                                                    : juce::String ("EXT");
+            g.drawFittedText (title, label.removeFromTop (label.getHeight() * 0.62f).toNearestInt(), juce::Justification::centredBottom, 1);
             g.setColour (juce::Colour (0xffc8c8c8));
             g.setFont (wingFontFit (TypeScale::caption, label.getHeight() * 0.7f));
-            g.drawFittedText (plugin != nullptr ? PluginHost::describe (*plugin).manufacturerName.toUpperCase() : juce::String ("EXT"),
-                              label.toNearestInt(), juce::Justification::centredTop, 1);
+            g.drawFittedText (subtitle, label.toNearestInt(), juce::Justification::centredTop, 1);
         }
 
         const float level = inUse && ! params.bypass.load()
@@ -384,6 +390,8 @@ private:
         juce::String sig;
         sig << model << '|' << (juce::pointer_sized_int) fx.getPlugin (slot) << '|' << (int) params.bypass.load() << '|' << params.mix.load() << '|'
             << (int) fx.isFaulted (slot) << (int) fx.isDoubleAssigned (slot) << fx.getNumFaultedChainMembers (slot);
+        if (fx.isOutboard (slot))
+            sig << "|OB " << fx.returnLabel (slot);
         if (model > ld::kFxExt)
         {
             const auto& spec = models::model (models::Fx, model);
@@ -440,6 +448,9 @@ public:
         for (juce::Component* comp : { (juce::Component*) &backKey, (juce::Component*) &deviceField, (juce::Component*) &onKey,
                                        (juce::Component*) &mix, (juce::Component*) &face, (juce::Component*) &openKey, (juce::Component*) &pluginKey })
             addAndMakeVisible (comp);
+        for (juce::Component* comp : { (juce::Component*) &sourceKeys, (juce::Component*) &modeKeys, (juce::Component*) &trimBox, (juce::Component*) &latencyBox })
+            addChildComponent (comp);
+        modeKeys.vertical = true;
         startTimerHz (6);
     }
 
@@ -447,6 +458,12 @@ public:
     {
         slot = juce::jlimit (0, kNumFx - 1, s);
         mix.setBinding (bindLinear ("FX MIX", ctx.engine.getFx().params (slot).mix, 0.0f, 100.0f, " %", 0, 100.0f));
+        auto& v = ctx.engine.getFx().params (slot).values;
+        trimBox.setBinding (bindLinear ("TRIM", v[ld::ext::kTrim], -18.0f, 18.0f, " dB", 1, 0.0f));
+        trimBox.centredRange = true;
+        auto lat = bindLinear ("LATENCY", v[ld::ext::kLatency], 0.0f, 800.0f, " smp", 0, 0.0f);
+        lat.steps = 801.0f;
+        latencyBox.setBinding (lat);
         deviceField.setCaption ("FX " + juce::String (slot + 1) + (slot < 8 ? "  PREMIUM" : "  STANDARD"));
         rebind();
     }
@@ -458,6 +475,17 @@ public:
         std::vector<KnobBinding> k;
         auto& fx = ctx.engine.getFx();
         const int model = fx.getModel (slot);
+        if (fx.isOutboard (slot))
+        {
+            // The EXTERNAL EFFECT's continuous controls: TRIM, LATENCY and the slot's MIX.
+            auto& v = fx.params (slot).values;
+            k.push_back (bindLinear ("TRIM", v[ld::ext::kTrim], -18.0f, 18.0f, " dB", 1, 0.0f));
+            auto lat = bindLinear ("LATENCY", v[ld::ext::kLatency], 0.0f, 800.0f, " smp", 0, 0.0f);
+            lat.steps = 801.0f;
+            k.push_back (lat);
+            k.push_back (bindLinear ("FX" + juce::String (slot + 1) + " MIX", fx.params (slot).mix, 0.0f, 100.0f, "%", 0, 100.0f));
+            return k;
+        }
         if (model <= ld::kFxExt)
         {
             k.push_back (bindLinear ("FX" + juce::String (slot + 1) + " MIX", fx.params (slot).mix, 0.0f, 100.0f, "%", 0, 100.0f));
@@ -513,6 +541,10 @@ public:
             g.setFont (wingFont (TypeScale::value * 1.2f, WingWeight::SemiBold));
             g.drawText ("SELECT A DEVICE", body.withTop ((int) circle.getBottom() + 10).withHeight (30), juce::Justification::centredTop);
         }
+        else if (model == ld::kFxExt && fx.isOutboard (slot))
+        {
+            paintOutboard (g);
+        }
         else if (model == ld::kFxExt)
         {
             g.setColour (Colours::screenPanel);
@@ -559,12 +591,18 @@ public:
         openKey.setBounds (keys.removeFromLeft (220));
         keys.removeFromLeft (10);
         pluginKey.setBounds (keys.removeFromLeft (220));
+        layoutOutboard();
     }
 
     void mouseUp (const juce::MouseEvent& e) override
     {
-        if (ctx.engine.getFx().getModel (slot) == ld::kFxNone && body.contains (e.getPosition()))
+        auto& fx = ctx.engine.getFx();
+        if (fx.getModel (slot) == ld::kFxNone && body.contains (e.getPosition()))
             showFxDeviceMenu (ctx, slot, this, [this] { rebind(); }, this);
+        else if (fx.isOutboard (slot) && sendArea.contains (e.getPosition()) && ctx.showFxSendOutputs)
+            ctx.showFxSendOutputs (slot); // [Fig. 169] SEND opens ROUTING > OUTPUTS
+        else if (fx.isOutboard (slot) && returnArea.contains (e.getPosition()))
+            chooseReturn();
     }
 
 private:
@@ -580,9 +618,15 @@ private:
                 [this] (int band) { return ctx.engine.getFx().getBandGain (slot, band); });
         else
             face.unbind();
-        openKey.setVisible (shownModel == ld::kFxExt);
-        pluginKey.setVisible (shownModel == ld::kFxExt);
+        shownOutboard = fx.isOutboard (slot);
+        openKey.setVisible (shownModel == ld::kFxExt && ! shownOutboard);
+        pluginKey.setVisible (shownModel == ld::kFxExt && ! shownOutboard);
         openKey.setEnabled (fx.hasPlugin (slot));
+        sourceKeys.setVisible (shownModel == ld::kFxExt);
+        modeKeys.setVisible (shownOutboard);
+        trimBox.setVisible (shownOutboard);
+        latencyBox.setVisible (shownOutboard);
+        layoutOutboard();
         deviceField.repaint();
         page6 = 0;
         page.notifyKnobsChanged();
@@ -591,15 +635,177 @@ private:
 
     void timerCallback() override
     {
-        if (ctx.engine.getFx().getModel (slot) != shownModel)
+        auto& fx = ctx.engine.getFx();
+        if (fx.getModel (slot) != shownModel || fx.isOutboard (slot) != shownOutboard)
             rebind();
-        openKey.setEnabled (ctx.engine.getFx().hasPlugin (slot));
+        openKey.setEnabled (fx.hasPlugin (slot));
         repaint (header);
+        if (shownOutboard)
+            repaint (body); // the SEND and RETURN meters, the patch
+    }
+
+    //==============================================================================
+    // The EXTERNAL EFFECT page (manual 11.11 p. 164, Fig. 169): SEND (the
+    // outputs patched to the slot's FX SEND, with TRIM), FX MODE, RETURN (the
+    // source the gear comes back on) and LATENCY, with the meters either side.
+
+    void layoutOutboard()
+    {
+        auto b = body.reduced (16);
+        sourceKeys.setBounds (b.removeFromTop (40).withWidth (juce::jmin (360, b.getWidth())));
+        b.removeFromTop (12);
+        outboardPanel = b;
+        const int w = b.getWidth() / 3;
+        auto send = b.removeFromLeft (w).reduced (8, 0);
+        auto mode = b.removeFromLeft (w).reduced (8, 0);
+        auto ret = b.reduced (8, 0);
+        sendArea = send.withTrimmedTop (30).withTrimmedBottom (send.getHeight() / 2);
+        trimBox.setBounds (send.withTrimmedTop (send.getHeight() / 2 + 6).withSizeKeepingCentre (juce::jmin (send.getWidth() - 40, 180), 64));
+        modeKeys.setBounds (mode.withTrimmedTop (30).withHeight (juce::jmin (150, mode.getHeight() - 30)).reduced (juce::jmax (0, (mode.getWidth() - 200) / 2), 0));
+        returnArea = ret.withTrimmedTop (30).withTrimmedBottom (ret.getHeight() / 2).withSizeKeepingCentre (juce::jmin (ret.getWidth() - 60, 150), juce::jmax (60, ret.getHeight() / 2 - 30));
+        latencyBox.setBounds (ret.withTrimmedTop (ret.getHeight() / 2 + 6).withSizeKeepingCentre (juce::jmin (ret.getWidth() - 40, 180), 64));
+    }
+
+    /** The outputs patched to FX SEND side `side`, as the console names them ("LCL 7"). */
+    juce::String sendOutput (int side) const
+    {
+        auto& p = ctx.engine.getFx().params (slot);
+        const int port = (side == 0 ? p.sendLeft : p.sendRight).load();
+        if (port < 0)
+            return "-";
+        const int block = port / 48, n = port % 48 + 1;
+        return juce::String (block == 0 ? "LCL" : block == 1 ? "B" : block == 2 ? "C" : "OUT") + " " + juce::String (block <= 2 ? n : port + 1);
+    }
+
+    void paintOutboard (juce::Graphics& g)
+    {
+        auto& fx = ctx.engine.getFx();
+        g.setColour (Colours::screenPanel);
+        g.fillRect (body);
+        auto b = outboardPanel;
+        g.setColour (Colours::text);
+        g.setFont (wingFont (TypeScale::statusTitle, WingWeight::SemiBold));
+        g.drawText ("EXTERNAL EFFECT", b.withHeight (28).translated (0, -30).withTrimmedLeft (sourceKeys.getWidth() + 16), juce::Justification::centredLeft, false);
+
+        const int w = b.getWidth() / 3;
+        const char* titles[] = { "SEND", "FX MODE", "RETURN" };
+        for (int i = 0; i < 3; ++i)
+        {
+            // [Fig. 169] each section framed by corner marks, its title on top.
+            auto s = juce::Rectangle<int> (b.getX() + i * w, b.getY(), w, b.getHeight()).reduced (8, 0);
+            g.setColour (Colours::textDim);
+            const int c = 12;
+            g.drawLine ((float) s.getX(), (float) s.getY() + 6, (float) s.getX() + c, (float) s.getY() + 6, 2.0f);
+            g.drawLine ((float) s.getX(), (float) s.getY() + 6, (float) s.getX(), (float) s.getY() + 6 + c, 2.0f);
+            g.drawLine ((float) s.getRight() - c, (float) s.getY() + 6, (float) s.getRight(), (float) s.getY() + 6, 2.0f);
+            g.drawLine ((float) s.getRight(), (float) s.getY() + 6, (float) s.getRight(), (float) s.getY() + 6 + c, 2.0f);
+            g.setColour (Colours::text);
+            g.setFont (wingFont (TypeScale::body, WingWeight::SemiBold));
+            g.drawText (titles[i], s.withHeight (14).translated (0, 0), juce::Justification::centred, false);
+        }
+
+        // SEND: the two outputs the FX SEND is patched to (tap: ROUTING > OUTPUTS).
+        {
+            auto s = sendArea;
+            const int half = s.getWidth() / 2;
+            for (int side = 0; side < 2; ++side)
+            {
+                auto cell = juce::Rectangle<int> (s.getX() + side * half, s.getY(), half, s.getHeight()).reduced (6, 4);
+                const auto out = sendOutput (side);
+                g.setColour (out == "-" ? Colours::textDim : Colours::text);
+                g.setFont (wingFont (TypeScale::body, WingWeight::SemiBold));
+                g.drawFittedText (out.upToFirstOccurrenceOf (" ", false, false), cell.removeFromTop (18), juce::Justification::centred, 1);
+                const float d = (float) juce::jmin (cell.getWidth(), cell.getHeight()) * 0.7f;
+                auto circle = juce::Rectangle<float> (d, d).withCentre (cell.toFloat().getCentre());
+                g.setColour (Colours::screenTile);
+                g.fillEllipse (circle);
+                g.setColour (out == "-" ? Colours::textDim : Colours::text);
+                g.drawEllipse (circle, 2.0f);
+                g.setFont (wingFont (TypeScale::value, WingWeight::SemiBold));
+                g.drawFittedText (out == "-" ? juce::String ("-") : out.fromFirstOccurrenceOf (" ", false, false), circle.toNearestInt(),
+                                  juce::Justification::centred, 1);
+            }
+            g.setColour (Colours::caption);
+            g.setFont (wingFont (TypeScale::caption));
+            g.drawFittedText ("FX SEND " + juce::String (2 * slot + 1) + " / " + juce::String (2 * slot + 2), s.withTrimmedTop (s.getHeight()).withHeight (16),
+                              juce::Justification::centred, 1);
+        }
+
+        // RETURN: the source tile (tap: choose the inputs).
+        {
+            auto r = returnArea.toFloat();
+            g.setColour (Colours::screenTile);
+            g.fillRect (r);
+            g.setColour (fx.hasReturn (slot) ? Colours::valueBlue : Colours::textDim);
+            g.fillRect (r.withHeight (juce::jmax (8.0f, r.getHeight() * 0.18f)));
+            drawIcon (g, Icon::Xlr, r.reduced (r.getWidth() * 0.3f, r.getHeight() * 0.28f), juce::Colours::white);
+            g.setColour (fx.hasReturn (slot) ? Colours::gold : Colours::textDim);
+            g.setFont (wingFont (TypeScale::body, WingWeight::SemiBold));
+            g.drawFittedText (fx.returnLabel (slot), r.removeFromBottom (r.getHeight() * 0.25f).toNearestInt(), juce::Justification::centred, 1);
+            g.setColour (Colours::caption);
+            g.setFont (wingFont (TypeScale::caption));
+            g.drawFittedText ("ROUND TRIP " + juce::String (fx.getLatency (slot)) + " SAMPLES", returnArea.withTrimmedTop (returnArea.getHeight()).withHeight (16),
+                              juce::Justification::centred, 1);
+        }
+    }
+
+    /** RETURN: the console inputs the outboard gear comes back on. */
+    void chooseReturn()
+    {
+        auto& v = ctx.engine.getFx().params (slot).values;
+        juce::PopupMenu menu;
+        menu.addSectionHeader ("RETURN (FX " + juce::String (slot + 1) + ")");
+        menu.addItem ("OFF", [&v] { v[ld::ext::kGroup] = 0.0f; });
+        // The groups that are Sidecar's inputs (the others share their port numbers).
+        struct Group
+        {
+            const char* name;
+            int index, count;
+        };
+        static constexpr Group groups[] = { { "LCL", 1, 48 }, { "A", 3, 48 }, { "B", 4, 48 }, { "C", 5, 48 }, { "CRD", 8, 64 }, { "PLAY", 10, 4 } };
+        const int current = juce::roundToInt (v[ld::ext::kGroup].load()), in = juce::roundToInt (v[ld::ext::kInput].load());
+        for (const auto& grp : groups)
+        {
+            juce::PopupMenu sub;
+            for (int n = 1; n <= grp.count; ++n)
+                sub.addItem (juce::String (grp.name) + " " + juce::String (n), true, current == grp.index && in == n, [&v, gi = grp.index, n]
+                {
+                    v[ld::ext::kGroup] = (float) gi;
+                    v[ld::ext::kInput] = (float) n;
+                });
+            menu.addSubMenu (grp.name, sub, true, nullptr, current == grp.index);
+        }
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (returnArea)));
     }
 
     UiContext& ctx;
     EffectsPage& page;
     int slot = 0, shownModel = -1, page6 = 0;
+    bool shownOutboard = false;
+    juce::Rectangle<int> outboardPanel, sendArea, returnArea;
+    /** SOURCE: a plugin in the slot, or the console's outboard insert. */
+    home::Segmented sourceKeys { juce::StringArray { "PLUGIN", "OUTBOARD" }, [this] { return ctx.engine.getFx().isOutboard (slot) ? 1 : 0; },
+                                 [this] (int i)
+                                 {
+                                     auto& fx = ctx.engine.getFx();
+                                     if (i == 1 && ! fx.isOutboard (slot))
+                                     {
+                                         if (fx.hasPlugin (slot))
+                                             clearFx (ctx, slot); // closes its editor first
+                                         fx.setOutboard (slot);
+                                     }
+                                     else if (i == 0 && fx.isOutboard (slot))
+                                     {
+                                         fx.params (slot).values[ld::ext::kSource] = 0.0f;
+                                         showFxSlotMenu (ctx, slot, &sourceKeys); // load one
+                                     }
+                                     rebind();
+                                 } };
+    /** FX MODE (Fig. 169): MONO, STEREO, MID/SIDE. */
+    home::Segmented modeKeys { juce::StringArray { "MONO", "STEREO", "MID/SIDE" },
+                               [this] { return juce::roundToInt (ctx.engine.getFx().params (slot).values[ld::ext::kMode].load()); },
+                               [this] (int i) { ctx.engine.getFx().params (slot).values[ld::ext::kMode] = (float) i; } };
+    home::KnobBox trimBox { KnobBinding {} }, latencyBox { KnobBinding {} };
     Faceplate face;
     WingKey backKey { "RACK", Icon::ChevronLeft }, onKey { "ON" }, openKey { "OPEN EDITOR", Icon::Edit },
         pluginKey { "LOAD / REPLACE", Icon::Folder };

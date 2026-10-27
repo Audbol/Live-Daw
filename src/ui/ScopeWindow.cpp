@@ -49,6 +49,32 @@ namespace
     constexpr juce::uint32 kSidecarSources = ScopeWindow::SourceLocal | ScopeWindow::SourceCard | ScopeWindow::SourcePlayer | ScopeWindow::SourceOsc;
 
     constexpr juce::uint32 kConsoleTile = 1;
+
+    /** GLOBAL SAFE's SOURCE and OUTPUT groups (G5.6.3): the engine's safes
+        behind group `group` (its index in sourceNames / outputNames): source
+        table indices or output ports. Empty for groups Sidecar doesn't have.
+        LCL and A are the same ports here, as on the remote's patch. */
+    std::vector<int> ioItems (bool outputs, int group)
+    {
+        std::vector<int> items;
+        auto ports = [&items] (int first, int count, bool sourceIndex)
+        {
+            for (int n = 0; n < count; ++n)
+                items.push_back (sourceIndex ? MixerEngine::sourceIndex (first + n) : first + n);
+        };
+        const juce::String name (outputs ? outputNames[group] : sourceNames[group]);
+        const int block = name == "LCL" || name == "A" ? 0 : name == "B" ? 1 : name == "C" ? 2 : -1;
+        if (block >= 0)
+            ports (block * 48, 48, ! outputs);
+        else if (! outputs && name == "CRD")
+            ports (ld::kPlaybackSourceBase, ld::kNumPlaybackChannels, true);
+        else if (! outputs && name == "PLAY")
+            ports (ld::kUsbPlayerSourceBase, ld::kUsbChannels, true);
+        else if (! outputs && name == "OSC")
+            ports (ld::kOscSourceBase, ld::kNumOscillators, true);
+        items.erase (std::remove (items.begin(), items.end(), -1), items.end());
+        return items;
+    }
 } // namespace
 
 ScopeWindow::ScopeWindow (UiContext& c, Mode m, juce::String t, state::Scope initial)
@@ -62,6 +88,15 @@ ScopeWindow::ScopeWindow (UiContext& c, Mode m, juce::String t, state::Scope ini
     }
     cancelKey.iconAbove = false;
     noGlobKey.setVisible (mode == Mode::PartialLoad);
+    if (mode == Mode::Global)
+    {
+        // The source and output safes are the engine's; SAVE writes them back.
+        for (const bool outputs : { false, true })
+            for (int g = 0; g < (int) (outputs ? std::size (outputNames) : std::size (sourceNames)); ++g)
+                for (const int i : ioItems (outputs, g))
+                    if (ld::ld_engine_io_safe (ctx.engine.getHandle(), outputs ? 1 : 0, i))
+                        (outputs ? safeOutputs : safeSources).insert (i);
+    }
     if (mode == Mode::Initialize)
     {
         saveKey.setButtonText ("INIT");
@@ -107,6 +142,11 @@ ScopeWindow::ScopeWindow (UiContext& c, Mode m, juce::String t, state::Scope ini
                 selection.strips.clear();
             }
         }
+        if (mode == Mode::Global)
+            for (const bool outputs : { false, true })
+                for (int g = 0; g < (int) (outputs ? std::size (outputNames) : std::size (sourceNames)); ++g)
+                    for (const int i : ioItems (outputs, g))
+                        ld::ld_engine_set_io_safe (ctx.engine.getHandle(), outputs ? 1 : 0, i, (outputs ? safeOutputs : safeSources).count (i) > 0);
         if (onSave)
             onSave (selection, noGlobal);
     };
@@ -161,10 +201,28 @@ bool ScopeWindow::isActive (const Tile& t) const
         // INITIALIZE CONSOLE resets strips, groups, FX and sources, not the console-wide settings.
         case Kind::Config:  return t.bits == kConsoleTile && mode != Mode::Initialize;
         case Kind::Content: return t.bits != kBlank;
-        case Kind::Source:  return (t.bits & kSidecarSources) != 0;
-        case Kind::Output:  return false;
+        case Kind::Source:  return mode == Mode::Global ? ! ioItems (false, groupOf (t)).empty() : (t.bits & kSidecarSources) != 0;
+        case Kind::Output:  return mode == Mode::Global && ! ioItems (true, groupOf (t)).empty();
     }
     return false;
+}
+
+int ScopeWindow::groupOf (const Tile& t)
+{
+    for (int i = 0; i < 32; ++i)
+        if (t.bits == (1u << i))
+            return i;
+    return 0;
+}
+
+int ScopeWindow::ioSafeCount (const Tile& t) const
+{
+    const bool outputs = t.kind == Kind::Output;
+    const auto& set = outputs ? safeOutputs : safeSources;
+    int n = 0;
+    for (const int i : ioItems (outputs, groupOf (t)))
+        n += set.count (i) > 0 ? 1 : 0;
+    return n;
 }
 
 bool ScopeWindow::isSelected (const Tile& t) const
@@ -176,8 +234,11 @@ bool ScopeWindow::isSelected (const Tile& t) const
         case Kind::MuteGroup: return (selection.muteGroups & t.bits) != 0;
         case Kind::Fx:        return (selection.fx & t.bits) != 0;
         case Kind::Config:    return t.bits == kConsoleTile && selection.console;
-        case Kind::Source:    return (sourceGroups & t.bits) != 0;
-        case Kind::Output:    return false;
+        case Kind::Source:
+        case Kind::Output:
+            if (mode == Mode::Global) // every source / output of the group is safe
+                return ioSafeCount (t) > 0 && ioSafeCount (t) == (int) ioItems (t.kind == Kind::Output, groupOf (t)).size();
+            return t.kind == Kind::Source && (sourceGroups & t.bits) != 0;
         case Kind::Content:
             if (t.bits == kNoneKey || t.bits == kAllKey || t.bits == kBlank)
                 return false;
@@ -188,6 +249,16 @@ bool ScopeWindow::isSelected (const Tile& t) const
 
 void ScopeWindow::toggle (const Tile& t, bool on)
 {
+    if (mode == Mode::Global && (t.kind == Kind::Source || t.kind == Kind::Output))
+    {
+        auto& set = t.kind == Kind::Output ? safeOutputs : safeSources;
+        for (const int i : ioItems (t.kind == Kind::Output, groupOf (t)))
+            if (on)
+                set.insert (i);
+            else
+                set.erase (i);
+        return;
+    }
     if (t.kind == Kind::Strip)
         toggleStrip (t.strip, on);
     else if (t.kind == Kind::Config && t.bits == kConsoleTile)
@@ -241,6 +312,8 @@ void ScopeWindow::paint (juce::Graphics& g)
         juce::Colour fill = tileOff;
         if (on)
             fill = t.kind == Kind::Content ? tileYellow : (t.kind == Kind::Config ? configLit : tileBlue);
+        else if (mode == Mode::Global && (t.kind == Kind::Source || t.kind == Kind::Output) && ioSafeCount (t) > 0)
+            fill = tileBlue.darker (0.9f); // [manual 5.6 p. 54] part of the group: dimly lit
         g.setColour (fill);
         g.fillRoundedRectangle (r, wingPx (3.0f));
         auto ink = on ? juce::Colours::black : (active ? Dark::textDim.brighter (0.25f) : Dark::textDim.withAlpha (0.35f));
@@ -348,7 +421,7 @@ void ScopeWindow::resized()
     // Middle column.
     const int pitchY = Y (168.0f) - Y (112.0f);
     titleArea = {};
-    if (mode == Mode::Initialize)
+    if (mode == Mode::Initialize || mode == Mode::Global)
     {
         addGroup ("SOURCE", 530.0f, Y (84.0f), (int) std::size (sourceNames), pitchY, [] (int i, juce::Rectangle<int> area)
         {
@@ -360,6 +433,7 @@ void ScopeWindow::resized()
         addGroup ("OUTPUT", 530.0f, Y (245.0f), (int) std::size (outputNames), pitchY, [] (int i, juce::Rectangle<int> area)
         {
             Tile t { Kind::Output, area, "OUT", outputNames[i] };
+            t.bits = 1u << i;
             t.dropdown = true;
             return t;
         });

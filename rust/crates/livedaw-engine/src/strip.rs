@@ -17,7 +17,7 @@
 
 use crate::analyser::{listen_mode, rta_tap, Probes, StripProbe};
 use crate::atomic::AtomicF32;
-use crate::fx::FxRack;
+use crate::fx::{FxInputs, FxRack};
 use crate::keytap::{key_tap, stage_of, KeySource, StripKeyTaps, TAP_EQ_POST, TAP_INS2};
 use crate::monitor::SoloPatch;
 use crate::params::{DcaParams, DynSlotParams, FxParams, StripKind, StripMeters, StripParams, NUM_MAINS, NUM_MATRICES};
@@ -1066,7 +1066,9 @@ impl Strip {
         let nc = d.num_channels;
         let [w0, w1] = &mut d.work;
         let mut chans: [&mut [f32]; 2] = [&mut w0[..n], &mut w1[..n]];
-        rack.process(&mut chans[..nc], d.sample_rate, fxp, ctx.block);
+        // An outboard insert's RETURN reads the block's processed sources.
+        let inputs = FxInputs { hw: ctx.hw_inputs, playback: ctx.playback };
+        rack.process(&mut chans[..nc], d.sample_rate, fxp, &inputs, ctx.block);
     }
 
     fn run_output_stage(&self, d: &mut StripDsp, n: usize) {

@@ -37,7 +37,8 @@ anything can be sent to any hardware output. It runs on Windows, macOS and Linux
   WING's tap points.
 - **An FX rack** with the WING's devices: 26 premium effects (reverbs, delays,
   chorus, pitch...), 32 standard effects (EQs, dynamics, amps, modulation...), 5
-  channel strips, and VST3, AU (macOS) and LV2 (Linux) plugins.
+  channel strips, VST3, AU (macOS) and LV2 (Linux) plugins, and the WING's EXTERNAL
+  effect: outboard gear inserted through your interface's outputs and inputs.
 - **The WING surface on screen:** three fader sections with layers, user layers and
   spill, the main display with the WING's screens (HOME, EFFECTS, METERS, ROUTING,
   SETUP, LIBRARY, VIEW, UTILITY), the channel strip, monitoring, 4-Channel and custom
@@ -184,12 +185,13 @@ This list matches the notice Sidecar shows at start-up.
   matrices up to 8192 samples; solo, monitoring, direct outs and recorder taps are
   not compensated.
 - **WING remote apps:** the WING network protocols answer every parameter of the
-  WING 3.1 tree but one; 89.4 % drive the engine or Sidecar's settings, the rest
+  WING 3.1 tree but one; 89.6 % drive the engine or Sidecar's settings, the rest
   answers the WING's factory value and is stored but does nothing. WING Edit 3.3.4
-  works with it (sync both ways, live control, FX, processing models, inserts; a
-  plugin's FX slot shows as an EXTERNAL effect); the parameters WING Edit knows from
-  firmware newer than 3.1 are ignored. WING Copilot has not been tried, and exported
-  WING snapshots have not been loaded into a console.
+  works with it (sync both ways, live control, FX, processing models, inserts, the
+  EXTERNAL effect as an outboard insert; a plugin's FX slot shows as an EXTERNAL
+  effect); the parameters WING Edit knows from firmware newer than 3.1 are ignored.
+  WING Copilot has not been tried, and exported WING snapshots have not been loaded
+  into a console.
 - **MIDI and DAW remote control** (MCU / HUI) have not been tested with real hardware.
 - **LIBRARY:** scene and snippet files are Sidecar's own (.lsnap / .lsnip), not the
   WING's .snap / .snip, and the CLIP tab plays its clip on the USB player.

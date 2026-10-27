@@ -280,7 +280,7 @@ print("pub static TAP_POINTS: &[&str] = &[" + ", ".join(rust_str(m) for m in mod
 # FX rack (the 16 FX slots). Names as the console's documentation shows them.
 
 FX_NAMES = {
-    "NONE": "None", "EXT": "External (Plugin)",
+    "NONE": "None", "EXT": "External",
     "HALL": "Hall Reverb", "ROOM": "Room Reverb", "CHAMBER": "Chamber Reverb", "PLATE": "Plate Reverb",
     "CONCERT": "Concert Reverb", "AMBI": "Ambience", "V-ROOM": "Vintage Room", "V-REV": "Vintage Reverb",
     "V-PLATE": "Vintage Plate", "GATED": "Gated Reverb", "REVERSE": "Reverse Reverb", "DEL/REV": "Delay/Reverb",
@@ -417,12 +417,20 @@ def fx_category(m):
 
 
 fx_models = model_items("/fx/1/mdl")
-print("/// The FX rack's devices, console order: NONE, EXT (here: a VST3/AU/LV2 plugin), the")
-print("/// premium devices (FX slots 1-8 only), the standard devices and the channel strips.")
+print("/// The FX rack's devices, console order: NONE, EXT (an outboard insert through a")
+print("/// hardware output and input, or here a VST3/AU/LV2 plugin), the premium devices (FX")
+print("/// slots 1-8 only), the standard devices and the channel strips.")
 print("pub static FX_MODELS: &[ModelSpec] = &[")
+# EXT's SOURCE (Sidecar's, not the console's): a plugin hosted in the slot, or the
+# console's outboard insert (manual 11.11 p. 164: SEND, TRIM, FX MODE, RETURN, LATENCY).
+EXT_SOURCE = (
+    '        ParamSpec { id: "src", label: "SOURCE", unit: "", '
+    'kind: ParamKind::Choice(&["PLUGIN", "OUTBOARD"]), min: 0.0, max: 1.0, steps: 2, default: 0.0 },'
+)
 for m in fx_models:
-    # EXT's own parameters route a hardware insert; here EXT is a plugin and has none.
-    params = [] if m in ("NONE", "EXT") else emit_params("/fx/1/", m, defaults_key="FX:" + m)
+    params = [] if m == "NONE" else emit_params("/fx/1/", m, defaults_key="FX:" + m)
+    if m == "EXT":
+        params.append(EXT_SOURCE)
     print(f"    ModelSpec {{ token: {rust_str(m)}, name: {rust_str(FX_NAMES.get(m, m))}, category: {fx_category(m)}, params: &[")
     for p in params:
         print(p)
