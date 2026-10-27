@@ -25,4 +25,4 @@ pub use layers::{FaderRef, Layer, LayerSet};
 pub use model::{ConsoleModel, ModelIo};
 pub use refs::StripRef;
 pub use scope::{GlobalSafe, RecordedChanges, Scope};
-pub use show::{Scene, Show, Snippet};
+pub use show::{Scene, SceneItem, Show, Snippet};

@@ -6,6 +6,7 @@
 #include "engine/Show.h"
 #include "engine/VirtualAudioDevice.h"
 #include "ui/MainComponent.h"
+#include "ui/ShowPanel.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>
 
@@ -241,6 +242,27 @@ public:
                 log.warning (result.getErrorMessage());
         }
 
+        // STARTUP (manual 5.6 p. 52, chapter 10): STARTUP* files in the
+        // library's STARTUP folder load now. The WING skips them while LIBRARY
+        // is held at power-up; here SHIFT held while Sidecar starts, or
+        // --no-startup on the command line.
+        juce::File startupShow;
+        const auto startupFolder = Show::startupFolder (ui::ShowPanel::libraryFolder());
+        if (startupFolder.isDirectory())
+        {
+            if (commandLine.contains ("--no-startup") || juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown())
+                log.info ("STARTUP files skipped");
+            else
+            {
+                const auto startup = show->loadStartupFolder (startupFolder, ! safeMode);
+                for (const auto& f : startup.loaded)
+                    log.info ("STARTUP: loaded " + f);
+                for (const auto& e : startup.errors)
+                    log.warning ("STARTUP: " + e);
+                startupShow = startup.showFile;
+            }
+        }
+
         if (engine->getChannels().empty())
             engine->setNumChannels (kDefaultChannelCount);
 
@@ -271,8 +293,11 @@ public:
         auto* main = new ui::MainComponent (deviceManager, *engine, *pluginHost, *show, log, settings);
         mainComponent = main;
         mainWindow = std::make_unique<MainWindow> (getApplicationName(), main, settings.getValue ("ui.windowState"));
-        main->setShowFile (juce::File (settings.getValue ("lastShowFile")).existsAsFile()
-                               ? juce::File (settings.getValue ("lastShowFile")) : juce::File());
+        if (startupShow != juce::File())
+            main->setShowFile (startupShow);
+        else
+            main->setShowFile (juce::File (settings.getValue ("lastShowFile")).existsAsFile()
+                                   ? juce::File (settings.getValue ("lastShowFile")) : juce::File());
 
         if (settings.getBoolValue (ui::uiprefs::fullScreen, false))
             main->setFullScreen (true);

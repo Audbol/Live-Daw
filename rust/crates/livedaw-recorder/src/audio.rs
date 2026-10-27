@@ -3,7 +3,7 @@
 //!
 //! 1. [`Recorder::begin_chunk`] - takes the commands of the message thread,
 //!    starts rolling once the reader has primed, may shorten the chunk (at the
-//!    loop end and at a pending ring switch, so every chunk is contiguous on
+//!    loop end or the A->B stop point and at a pending ring switch, so every chunk is contiguous on
 //!    the timeline) and fills the playback buffers for it;
 //! 2. [`Recorder::write_record_stream`] for each of [`Recorder::record_streams`]
 //!    (hardware inputs at the start of the chunk, strip taps after the strips);
@@ -480,7 +480,15 @@ impl AudioSide {
         }
         if self.chunk_rolling {
             self.seq += n as i64;
+            let from = self.position;
             self.position = self.loop_range.advance(self.position, n as u64);
+            // MODE A->B: playback stops on B (begin_chunk ended the chunk there).
+            if self.loop_range.reaches_stop(from, self.position)
+                && self.state == TransportState::Playing
+                && self.after == After::Nothing
+            {
+                self.after = After::Stop { pos: None };
+            }
             let play_fill = match self.active {
                 // SAFETY: consumer side of the active slot.
                 Some(slot) => {

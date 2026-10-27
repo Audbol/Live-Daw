@@ -212,7 +212,7 @@ views after a show load changes the console from Rust.
   engine controls are `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same
   memory as `std::atomic<float/bool/int32_t>` structs, and the UI writes them directly
   with no FFI call. Both sides describe the layout; `ld::verifyLayout()` compares the
-  two at startup and in the tests (ABI version 17), and the app refuses to run if they
+  two at startup and in the tests (ABI version 18), and the app refuses to run if they
   differ.
 - **FX slots.** The 16 slots are the WING's FX rack. Each holds one device from the
   console's FX table (`FX_MODELS`, generated like the processing models): the 26
@@ -480,7 +480,9 @@ Show
  ├─ GlobalSafe  DCAs, mute groups, FX slots, sections, console settings
  ├─ PartialScope  the scope PARTIAL LOAD / UPDATE last used
  └─ Scene[]     State (all sections) + recall scope + fade time + notes
-     └─ Snippet[]   State (each strip with its own sections) + scope + "fire with scene"
+     ├─ Snippet[]   State (each strip with its own sections) + scope + "fire with scene"
+     └─ Item        or, instead of a State: a file added to the show (a snippet, a clip's
+                    path, an FX preset + slot, a channel preset + strip)
 ```
 
 - `livedaw-session/src/scope.rs`: a `Scope` is sections + strips (or all) + DCA,
@@ -500,6 +502,9 @@ Show
   `<Scene>` and its snippets) and snippet files (`.lsnip`, a `<LiveDAWSnippet>` with
   one `<Snippet>`), written and read by the same functions as the show file's scene
   list. Importing inserts into the show and never touches the console.
+  `item_from_file` makes a show item of a snippet, clip or preset file (ADD ITEM TO
+  SHOW); `read_file` hands a scene or snippet to `Show::apply_scene` /
+  `apply_snippet` for the STARTUP folder, which loads without joining the show.
 
 - The console also keeps the console-level state of `livedaw-session/src/globals.rs`:
   SOLO MODE, the solo bus, MUTEGROUP/SIP OVERRIDE and SOURCE SOLO, talkback, the
@@ -1057,7 +1062,10 @@ README's *Known limitations*; keep the three in step.
   with DCA AS CC on. The WING remote binds those nodes to them only while the console
   is a COMPACT (`UserF::for_model`).
 - LIBRARY: scene and snippet files are Sidecar's XML (`.lsnap` / `.lsnip`), not the
-  WING's; ADD ITEM TO SHOW is disabled; 10 content sections instead of the
+  WING's; files added to a show (ADD ITEM TO SHOW, SAVE + ADD) are `SceneItem`s
+  of their scene (`livedaw-session/show.rs`): the snippet and presets are kept in
+  the show, a clip by its path (`take_pending_clips` after each recall; the C++
+  `Show` plays it on the USB player); 10 content sections instead of the
   console's 17 (CONTENTS keys sharing a section light together); the SCOPE window's
   SFC, PREFS and L / C / R tiles (surface and preferences in scenes) are disabled; the
   CLIP tab drives the USB player rather than a player of its own. SEND MIDI is a

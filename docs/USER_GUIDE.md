@@ -512,7 +512,15 @@ a WING with a WING-LIVE card, and edits them in a DAW-style editor.
     channel and INPUT SELECT switches to GLOBAL ALT, so the band's recording plays
     through the console; press again to go back to the live inputs;
   - **EDIT** (status bar, header) opens the editor. The knobs move the position and
-    the loop.
+    the range (START, END).
+  - **MODE** (next to the transport) steps PLAY, A->B and LOOP. PLAY plays on. A->B
+    plays from the range's start and stops at its end. LOOP plays the range again and
+    again. The mode is kept in the project.
+  - **SETTINGS** (status bar): **SHOW METERS** shows or hides the meters. **AUTO
+    INPUT SELECT** with **[STOP] / [PLAY] / [RECORD] INPUT** (KEEP, MAIN or ALT)
+    switches the global MAIN / ALT when the recorder stops, plays or records. The
+    channels follow it while INPUT SELECT is GLOBAL (VIRTUAL SOUNDCHECK sets it).
+    For a virtual soundcheck: STOP and RECORD on MAIN, PLAY on ALT.
   - **Record format** (the header's format key, or FILE > Record format in the
     editor): WAV 32-bit float (the default), WAV / AIFF / FLAC 24-bit, or MP3 320 /
     256 / 192 / 128 kbit/s (MP3 needs 32, 44.1 or 48 kHz). Takes get the format's
@@ -618,6 +626,21 @@ the USB key on the screen to choose another folder).
 - **Presets** are files: an FX slot's device and settings (`.lfx`, loads into any slot)
   and a strip's settings with a scope (`.lchn`, loads onto another strip of the same
   family; UPDATE SCOPE changes what it loads).
+- **Files in a show.** As on the WING, a scene can also be a file: a snippet, an audio
+  clip, an FX preset or a channel preset. **ADD ITEM TO SHOW** (SHOW tab, or **ADD**
+  in the status bar) adds the file selected at INT or USB after the selected scene.
+  An FX preset loads into the slot chosen on the FX tab, a channel preset onto the
+  selected strip. A scene file comes in as a scene. **SAVE + ADD** on SNIP, FX and
+  CHAN saves and adds in one go (on SNAP, SAVE already adds the scene). Recalling the
+  scene loads the file: the snippet, the preset, or the clip on the USB player (patch
+  the USB PLAYER sources to hear it). The list shows the type (SNIP, WAV, FX, CHAN);
+  a renamed one also shows its file's name. The show keeps the snippet and presets;
+  a clip stays where it is.
+- **STARTUP.** A show, scene and snippet whose names start with `STARTUP` (for
+  example `STARTUP_gig.lshow`, `STARTUP.lsnip`) in `Documents/Sidecar/Library/STARTUP`
+  load when Sidecar starts: the show first, then the scene and the snippet. WING
+  `.show` and `.snap` files work too. Hold SHIFT while Sidecar starts (the WING:
+  LIBRARY) or start it with `--no-startup` to skip them.
 - Recalling a scene or snippet never creates or destroys channels or plugins, so it
   can't cause a dropout. Built-in FX devices and their settings are recalled.
 - Shows from earlier Sidecar versions are converted when they load: channels stay

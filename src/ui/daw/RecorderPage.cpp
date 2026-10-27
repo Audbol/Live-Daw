@@ -27,6 +27,17 @@ namespace
         return gb >= 10.0 ? juce::String (juce::roundToInt (gb)) + " GB" : juce::String (gb, 1) + " GB";
     }
 
+    /** MODE as the WING-LIVE shows it (fig. 75): PLAY yellow, A->B blue, LOOP green. */
+    const char* modeText (daw::Session::PlayMode m)
+    {
+        return m == daw::Session::PlayMode::Loop ? "LOOP" : m == daw::Session::PlayMode::AToB ? "A->B" : "PLAY";
+    }
+
+    juce::Colour modeColour (daw::Session::PlayMode m)
+    {
+        return m == daw::Session::PlayMode::Loop ? Colours::green : m == daw::Session::PlayMode::AToB ? Colours::valueBlue : Colours::gold;
+    }
+
     void paintPanelHeader (juce::Graphics& g, juce::Rectangle<int> r, const juce::String& title)
     {
         g.setColour (Dark::header);
@@ -215,6 +226,100 @@ private:
 };
 
 //==============================================================================
+/** SETTINGS of the recorder screen (the WING-LIVE's, manual 8.1 p. 85-86)
+    over the dimmed page: SHOW METERS, AUTO INPUT SELECT and the [STOP] /
+    [PLAY] / [RECORD] INPUT choices KEEP, MAIN, ALT. With AUTO INPUT SELECT on,
+    the recorder's status switches the global MAIN / ALT (SETUP > AUDIO > INPUT
+    SELECT), which the channels follow while INPUT SELECT is GLOBAL (VIRTUAL
+    SOUNDCHECK sets it). Sidecar has one recorder, so AUTO INPUT SELECT is
+    OFF or ON (the WING picks SD card 1 or 2). */
+class RecorderPage::Settings final : public juce::Component
+{
+public:
+    explicit Settings (RecorderPage& p) : page (p)
+    {
+        auto& settings = page.ctx.settings;
+        closeKey.onClick = [this] { page.showSettings (false); };
+        addAndMakeVisible (closeKey);
+        auto add = [this] (const juce::String& name, ChoiceKeys* keys)
+        {
+            names.add (name);
+            addAndMakeVisible (rows.add (keys));
+        };
+        add ("SHOW METERS", new ChoiceKeys ({ "OFF", "ON" }, [&settings] { return settings.getBoolValue (daw::Session::showMetersKey, true) ? 1 : 0; },
+                                            [&settings] (int v) { settings.setValue (daw::Session::showMetersKey, v == 1); }));
+        add ("AUTO INPUT SELECT", new ChoiceKeys ({ "OFF", "ON" }, [&settings] { return settings.getIntValue (daw::Session::autoInputKey, 0) != 0 ? 1 : 0; },
+                                                  [&settings] (int v) { settings.setValue (daw::Session::autoInputKey, v); }));
+        const char* const statusNames[] = { "[ STOP ]  INPUT", "[ PLAY ]  INPUT", "[ RECORD ]  INPUT" };
+        for (int i = 0; i < 3; ++i)
+        {
+            const auto* key = daw::Session::autoInputModeKeys[i];
+            add (statusNames[i], new ChoiceKeys ({ "KEEP", "MAIN", "ALT" }, [&settings, key] { return juce::jlimit (0, 2, settings.getIntValue (key, 0)); },
+                                                 [&settings, key] (int v) { settings.setValue (key, v); },
+                                                 std::vector<juce::Colour> { Colours::gold, Colours::valueBlue, juce::Colour (0xffe07020) }));
+        }
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.setColour (Colours::scrim);
+        g.fillAll();
+        const auto w = window();
+        g.setColour (juce::Colours::black);
+        g.fillRect (w);
+        paintWindowTitle (g, w, "SETTINGS", true);
+        g.setColour (Colours::screenPanel);
+        g.fillRect (body());
+        g.setColour (Colours::caption);
+        g.setFont (wingFontFit (TypeScale::body, (float) rowHeight() * 0.42f));
+        const int x = body().getX() + 12;
+        for (int i = 0; i < rows.size(); ++i)
+            g.drawFittedText (names[i], juce::Rectangle<int> (x, rows[i]->getY(), rows[i]->getX() - x - 8, rows[i]->getHeight()),
+                              juce::Justification::centredLeft, 1, 0.7f);
+        // The channels follow the global switch only with INPUT SELECT GLOBAL.
+        g.setColour (Colours::textDim);
+        g.setFont (wingFontFit (TypeScale::statusCaption, (float) rowHeight() * 0.32f));
+        g.drawFittedText ("AUTO INPUT SELECT SWITCHES THE GLOBAL MAIN / ALT (SETUP > AUDIO): THE CHANNELS FOLLOW IT WITH INPUT SELECT GLOBAL.",
+                          body().withTop (rows.getLast()->getBottom() + 4).reduced (12, 2), juce::Justification::topLeft, 2, 0.8f);
+    }
+
+    void resized() override
+    {
+        const auto w = window();
+        closeKey.setBounds (w.withHeight (titleH()).removeFromRight (w.getWidth() / 4).reduced (juce::jmax (2, titleH() / 8)));
+        auto b = body().reduced (8, 6);
+        const int keysW = b.getWidth() * 55 / 100;
+        for (auto* row : rows)
+        {
+            row->setBounds (b.removeFromTop (rowHeight()).removeFromRight (keysW).reduced (0, rowHeight() / 10));
+            b.removeFromTop (rowHeight() / 6);
+        }
+    }
+
+    void mouseUp (const juce::MouseEvent& e) override
+    {
+        // Touching the dimmed page closes the window.
+        if (! window().contains (e.getPosition()))
+            page.showSettings (false);
+    }
+
+private:
+    juce::Rectangle<int> window() const
+    {
+        const auto b = getLocalBounds();
+        return b.withSizeKeepingCentre (juce::jmin (b.getWidth() - 16, screenCap (520)), juce::jmin (b.getHeight() - 16, screenCap (420)));
+    }
+    int titleH() const { return juce::jlimit (20, screenCap (52), window().getHeight() / 7); }
+    juce::Rectangle<int> body() const { return window().withTrimmedTop (titleH() + 4); }
+    int rowHeight() const { return juce::jlimit (16, screenCap (48), (body().getHeight() - 40) / 6); }
+
+    RecorderPage& page;
+    CloseKey closeKey;
+    juce::StringArray names;
+    juce::OwnedArray<ChoiceKeys> rows;
+};
+
+//==============================================================================
 RecorderPage::RecorderPage (UiContext& c, daw::Session& s) : ctx (c), session (s)
 {
     sessions = std::make_unique<SessionList> (*this);
@@ -253,9 +358,9 @@ RecorderPage::RecorderPage (UiContext& c, daw::Session& s) : ctx (c), session (s
     recordKey.isOn = [this] { return session.isRecording(); };
     recordKey.setTooltip ("Record the armed tracks");
     recordKey.iconColour = Dark::pre;
-    modeKey.onClick = [this] { session.setLoopEnabled (! session.isLoopEnabled()); };
-    modeKey.isOn = [this] { return session.isLoopEnabled(); };
-    modeKey.setTooltip ("MODE: PLAY or LOOP (the loop range is set in the editor's ruler or with the knobs)");
+    modeKey.onClick = [this] { cycleMode(); };
+    modeKey.isOn = [] { return true; };
+    modeKey.setTooltip ("MODE: PLAY, A->B (plays from the range's start and stops at its end) or LOOP (the range is set with the knobs or in the editor's ruler)");
 
     for (auto* k : { &newKey, &saveKey, &editKey, &formatKey, &allChannelsKey, &soundcheckKey, &armAllKey, &disarmKey, &pagePrev, &pageNext })
     {
@@ -340,7 +445,35 @@ RecorderPage::~RecorderPage() = default;
 
 std::vector<StatusKey> RecorderPage::getStatusKeys()
 {
-    return { { "EDIT", Icon::Waveform, false, [this] { if (ctx.showEditor) ctx.showEditor (true); } } };
+    // SETTINGS at the top right corner, as on the WING-LIVE screen (manual 8.1 p. 85).
+    StatusKey settingsKey { "SETTINGS", Icon::Gear, settings != nullptr && settings->isVisible(),
+                            [this] { showSettings (settings == nullptr || ! settings->isVisible()); } };
+    settingsKey.atRight = true;
+    return { { "EDIT", Icon::Waveform, false, [this] { if (ctx.showEditor) ctx.showEditor (true); } }, settingsKey };
+}
+
+void RecorderPage::showSettings (bool show)
+{
+    if (show && settings == nullptr)
+    {
+        settings = std::make_unique<Settings> (*this);
+        addChildComponent (*settings);
+    }
+    if (settings != nullptr)
+    {
+        settings->setBounds (getLocalBounds());
+        settings->setVisible (show);
+        settings->toFront (false);
+    }
+    notifyStatusKeysChanged();
+}
+
+void RecorderPage::cycleMode()
+{
+    using M = daw::Session::PlayMode;
+    const auto m = session.getPlayMode();
+    session.setPlayMode (m == M::Play ? M::AToB : m == M::AToB ? M::Loop : M::Play);
+    modeKey.repaint();
 }
 
 std::vector<KnobBinding> RecorderPage::getKnobs()
@@ -357,8 +490,9 @@ std::vector<KnobBinding> RecorderPage::getKnobs()
     position.reset = [this] { session.locate (0); };
     knobs.push_back (position);
 
+    // The range: MODE A->B's start and stop points, LOOP's borders (fig. 75).
     KnobBinding loopStart;
-    loopStart.label = "LOOP IN";
+    loopStart.label = "START";
     loopStart.get = [&p, lengthOf] { return (float) juce::jlimit (0.0, 1.0, (double) p.getLoopStart() / lengthOf()); };
     loopStart.set = [&p, lengthOf] (float v)
     {
@@ -369,7 +503,7 @@ std::vector<KnobBinding> RecorderPage::getKnobs()
     knobs.push_back (loopStart);
 
     KnobBinding loopEnd;
-    loopEnd.label = "LOOP OUT";
+    loopEnd.label = "END";
     loopEnd.get = [&p, lengthOf] { return (float) juce::jlimit (0.0, 1.0, (double) p.getLoopEnd() / lengthOf()); };
     loopEnd.set = [&p, lengthOf] (float v)
     {
@@ -381,10 +515,10 @@ std::vector<KnobBinding> RecorderPage::getKnobs()
 
     KnobBinding mode;
     mode.label = "MODE";
-    mode.steps = 2.0f;
-    mode.get = [this] { return session.isLoopEnabled() ? 1.0f : 0.0f; };
-    mode.set = [this] (float v) { session.setLoopEnabled (v > 0.5f); };
-    mode.text = [this] { return juce::String (session.isLoopEnabled() ? "LOOP" : "PLAY"); };
+    mode.steps = 3.0f;
+    mode.get = [this] { return (float) session.getPlayMode() / 2.0f; };
+    mode.set = [this] (float v) { session.setPlayMode ((daw::Session::PlayMode) juce::jlimit (0, 2, juce::roundToInt (v * 2.0f))); };
+    mode.text = [this] { return juce::String (modeText (session.getPlayMode())); };
     knobs.push_back (mode);
     return knobs;
 }
@@ -555,6 +689,8 @@ void RecorderPage::resized()
     }
     enableKey (pagePrev, trackPage > 0);
     enableKey (pageNext, trackPage < numTrackPages() - 1);
+    if (settings != nullptr)
+        settings->setBounds (getLocalBounds());
 }
 
 //==============================================================================
@@ -602,14 +738,17 @@ void RecorderPage::paintPlayer (juce::Graphics& g)
     g.setFont (wingFontFit (TypeScale::statusCaption * 1.2f, (float) chips.getHeight() * 0.8f));
     g.drawFittedText (project.getName().toUpperCase(), chips.reduced (8, 0), juce::Justification::centredLeft, 1, 0.7f);
 
-    // Meters of the armed tracks.
+    // Meters of the armed tracks (hidden with SETTINGS > SHOW METERS off).
     g.setColour (Dark::well);
     g.fillRect (meterArea);
     std::vector<std::pair<daw::int64, int>> armed;
     for (auto& t : project.getTracks())
         if (t.arm)
             armed.push_back ({ t.id, t.stereo ? 2 : 1 });
-    if (armed.empty())
+    if (! ctx.settings.getBoolValue (daw::Session::showMetersKey, true))
+    {
+    }
+    else if (armed.empty())
     {
         g.setColour (Dark::textDim);
         g.setFont (wingFont (TypeScale::statusCaption * 1.2f));
@@ -680,7 +819,8 @@ void RecorderPage::paintPlayer (juce::Graphics& g)
     {
         const float x1 = tl.getX() + (float) ((double) project.getLoopStart() / len) * tl.getWidth();
         const float x2 = tl.getX() + (float) ((double) project.getLoopEnd() / len) * tl.getWidth();
-        g.setColour (Dark::choice.withAlpha (project.isLoopOn() ? 0.6f : 0.25f));
+        const auto mode = session.getPlayMode();
+        g.setColour ((mode == daw::Session::PlayMode::Play ? Dark::choice : modeColour (mode)).withAlpha (mode != daw::Session::PlayMode::Play ? 0.6f : 0.25f));
         g.fillRect (x1, tl.getY(), x2 - x1, tl.getHeight());
     }
     const float px = tl.getX() + (float) juce::jlimit (0.0, 1.0, (double) session.getPosition() / len) * tl.getWidth();
@@ -865,7 +1005,8 @@ void RecorderPage::virtualSoundcheck()
 void RecorderPage::timerCallback()
 {
     auto& project = session.getProject();
-    modeKey.setButtonText (session.isLoopEnabled() ? "LOOP" : "PLAY");
+    modeKey.setButtonText (modeText (session.getPlayMode()));
+    modeKey.setOnColour (modeColour (session.getPlayMode()));
     if (const auto format = session.getRecordFormat().shortName(); formatKey.getButtonText() != format)
         formatKey.setButtonText (format); // changed in the editor's menu
     if (soundcheckKey.isEnabled() != canVirtualSoundcheck())

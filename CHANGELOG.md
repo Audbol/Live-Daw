@@ -77,6 +77,39 @@ All notable changes to Sidecar are listed here. Versions follow
   lock string `/$ctl/$stat/cnslock`.
 - Tap tempo on the INS 1 / INS 2 screens of HOME, as on EFFECTS: the blank key taps
   the TIME of the delay the insert holds.
+- Recorder **SETTINGS** (status bar, as on the WING-LIVE screen, manual 8.1 p. 85-86):
+  **SHOW METERS** shows or hides the meters of the armed tracks, and **AUTO INPUT
+  SELECT** with **[STOP] / [PLAY] / [RECORD] INPUT** (KEEP, MAIN or ALT): when the
+  recorder stops, plays or records, the global MAIN / ALT switch goes to MAIN or ALT.
+  The channels follow it while INPUT SELECT is GLOBAL, as VIRTUAL SOUNDCHECK sets it,
+  so a virtual soundcheck can hear the recording on PLAY and the band on STOP and
+  RECORD. The switch happens before the first sample is recorded. WING REMOTE:
+  `/cards/wlive/meters`, `autoin`, `auto_stop`, `auto_play`, `auto_rec`.
+- Recorder **MODE A->B** (manual 8.1 fig. 75): MODE now steps PLAY (yellow), A->B
+  (blue) and LOOP (green). A->B plays from the range's start and stops exactly at its
+  end. The knobs under the display set the range (START and END, the loop borders in
+  LOOP). The mode is kept in the project; older projects play as before. WING REMOTE:
+  `/cards/wlive/1/cfg/playmode` (and `2`). C ABI version 18: `ld_rec_set_range`.
+- Shows hold files as scenes (manual 5.6 p. 52, fig. 45): a snippet, an audio clip, an
+  FX preset or a channel preset. **ADD ITEM TO SHOW** (SHOW tab; also **ADD** in the
+  status bar) adds the file selected at INT or USB after the selected scene. A scene
+  file comes in as a scene; an FX preset loads into the FX tab's slot, a channel
+  preset onto the selected strip. **SAVE + ADD** on SNIP, FX and CHAN saves and adds
+  in one go (on SNAP, SAVE already adds the scene). Recalling such a scene (GO, GO
+  NEXT, a tag, MIDI, a WING remote) loads the file: the snippet (with the scene's
+  fade), the preset, or the clip on the USB player. The scene list shows the type
+  (SNIP, WAV, FX, CHAN) and, once renamed, the file's name. The show keeps the
+  snippet and presets in itself and the clip's path. The SHOW tab shows the files
+  that can be added normally. Older shows load unchanged; older Sidecar versions see
+  such scenes as empty. C ABI version 18: `ld_scene_item_kind`, `ld_scene_item_text`,
+  `ld_show_add_item`, `ld_show_add_snippet_scene`, `ld_show_take_clips`.
+- **STARTUP** files (manual 5.6 p. 52 and chapter 10): a show, scene and snippet whose
+  names start with `STARTUP` in the library's `STARTUP` folder
+  (`Documents/Sidecar/Library/STARTUP`) load when Sidecar starts: the show first
+  (Sidecar's `.lshow`, else a WING `.show`), then the scene (`.lsnap`, else a WING
+  `.snap`) and the snippet (`.lsnip`). Holding SHIFT while Sidecar starts (the WING:
+  holding LIBRARY) or `--no-startup` skips them. C ABI version 18:
+  `ld_show_apply_library`.
 
 ### Changed
 

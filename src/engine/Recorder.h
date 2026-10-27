@@ -85,6 +85,15 @@ public:
 
     /** Playback wraps from `end` to `start` while enabled (not while recording). */
     void setLoop (int64_t start, int64_t end, bool enabled);
+    /** The WING-LIVE's MODE (manual 8.1 fig. 75): PLAY plays on, A->B stops
+        exactly at `end`, LOOP wraps from `end` to `start` (neither while recording). */
+    enum class PlayMode
+    {
+        Play,
+        AToB,
+        Loop
+    };
+    void setRange (int64_t start, int64_t end, PlayMode);
     bool isLoopEnabled() const;
     int64_t getLoopStart() const;
     int64_t getLoopEnd() const;

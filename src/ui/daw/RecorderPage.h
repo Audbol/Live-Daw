@@ -9,13 +9,15 @@ namespace livedaw::ui
 
 /** The recorder screen, laid out like the WING-LIVE SD card screens (manual
     chapter 8, figs. 74 and 75): the PLAYER (armed channels and rate, meters,
-    the red time, the transport with the marker keys, the disk and record time
-    left, the timeline), the SESSIONS (projects in the recordings folder: open,
+    the red time, the transport with the marker keys and MODE PLAY / A->B /
+    LOOP, the disk and record time left, the timeline), the SESSIONS (projects in the recordings folder: open,
     rename, delete) and the MARKERS of the open session (jump, update,
     delete). Below: the tracks to arm and the one-click setups RECORD ALL
     CHANNELS and VIRTUAL SOUNDCHECK. EDIT (status bar) opens the multitrack
-    editor; the format key in the header picks the record format. The knobs
-    under the display move the position and the loop. */
+    editor; the format key in the header picks the record format; SETTINGS
+    (status bar) holds SHOW METERS and AUTO INPUT SELECT (manual 8.1 p. 85-86).
+    The knobs under the display move the position and the range's start and
+    end (the A->B points, the loop borders). */
 class RecorderPage final : public DisplayPage, private juce::Timer
 {
 public:
@@ -33,6 +35,10 @@ public:
 
     class SessionList;
     class MarkerList;
+    class Settings;
+
+    /** SETTINGS: shows or hides the window. */
+    void showSettings (bool show);
 
 private:
     void timerCallback() override;
@@ -57,6 +63,8 @@ private:
     std::unique_ptr<SessionList> sessions;
     std::unique_ptr<MarkerList> markers;
     std::unique_ptr<juce::FileChooser> chooser;
+    std::unique_ptr<Settings> settings;
+    void cycleMode();
 
     WingKey stopKey { {}, Icon::Stop }, playKey { {}, Icon::Play }, prevKey { {}, Icon::MarkerPrev }, nextKey { {}, Icon::MarkerNext },
         addMarkerKey { {}, Icon::MarkerAdd }, recordKey { {}, Icon::Record, Dark::pre }, modeKey { "PLAY", std::nullopt, Dark::choice };

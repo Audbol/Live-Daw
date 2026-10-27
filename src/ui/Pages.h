@@ -383,6 +383,15 @@ private:
     void importFile (const juce::File&);
     /** The WING snapshot (.snap) selected at INT / USB, if any. */
     juce::File selectedWingSnapshot() const;
+    /** ADD ITEM TO SHOW (and the status bar's ADD, manual 5.6 p. 52): the file
+        selected at INT / USB goes into the show after the selected scene. */
+    void addItemToShow();
+    /** Adds `file` to the show after the selected scene (an FX preset into FX
+        slot `fxSlot`, a channel preset onto `strip`, else the selected strip)
+        and selects it; the log says what happened. */
+    void addToShow (const juce::File& file, int fxSlot, std::optional<state::StripRef> strip = std::nullopt);
+    /** The scene index a new scene takes: after the selected one (-1: appended). */
+    int insertionIndex() const;
     /** Applies a WING snapshot (.snap) to the console, or adds a WING show's
         (.show) snapshots as scenes; the log gets what could not be applied. */
     void applyWingFile (const juce::File&);

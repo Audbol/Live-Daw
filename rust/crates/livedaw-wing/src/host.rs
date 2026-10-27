@@ -163,6 +163,18 @@ pub const HOST_SETTINGS: &[HostSetting] = &[
     // while unlocked). The host keeps it while it runs.
     s("/$ctl/$globals/lockmtr", "ui.meterPageWhenLocked", "0", Enc::Bool),
     s("/$ctl/$stat/cnslock", "ui.surfaceLock", "", Enc::Text),
+    // The recorder screen's SETTINGS (the WING-LIVE's, manual 8.1 p. 85-86):
+    // SHOW METERS, AUTO INPUT SELECT (OFF, 1, 2: Sidecar has one recorder,
+    // both cards read back as 1) with the [STOP] / [PLAY] / [RECORD] INPUT
+    // choices KEEP, MAIN, ALT; and the player's MODE PLAY, A->B, LOOP (fig.
+    // 75), one for both cards.
+    s("/cards/wlive/meters", "recorder.showMeters", "1", Enc::Bool),
+    s("/cards/wlive/autoin", "recorder.autoInput", "0", Enc::Map(&[(0, "0"), (1, "1"), (2, "1")])),
+    s("/cards/wlive/auto_stop", "recorder.autoStop", "0", Enc::Index),
+    s("/cards/wlive/auto_play", "recorder.autoPlay", "0", Enc::Index),
+    s("/cards/wlive/auto_rec", "recorder.autoRec", "0", Enc::Index),
+    s("/cards/wlive/1/cfg/playmode", "recorder.playMode", "0", Enc::Index),
+    s("/cards/wlive/2/cfg/playmode", "recorder.playMode", "0", Enc::Index),
     // SETUP rows of features Sidecar doesn't have (custom control tap keys that
     // don't flash, a mouse, SEND PAGE solo, remote locks): kept as settings
     // (`setup.inert.*`), shown and switched as on the console.
@@ -296,4 +308,45 @@ pub fn set(state: &WingState, index: u8, def: &Def, v: &Value) -> Result<(), Set
     };
     state.change_host_value(h.key, text);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::map::{Console, WingState};
+    use crate::schema::schema;
+    use crate::value::{self, Value};
+    use livedaw_engine::Engine;
+
+    fn text(c: &Console, path: &str) -> String {
+        let n = schema().resolve(path, c).unwrap_or_else(|| panic!("{path}"));
+        value::display(c.def(n).unwrap(), &c.get(n).unwrap())
+    }
+
+    #[test]
+    fn recorder_settings_are_host_settings() {
+        // The WING-LIVE SETTINGS (manual 8.1 p. 85-86) and the cards' MODE.
+        let e = Engine::new(0);
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        assert_eq!(text(&c, "/cards/wlive/autoin"), "OFF");
+        assert_eq!(text(&c, "/cards/wlive/auto_play"), "KEEP");
+        assert_eq!(text(&c, "/cards/wlive/meters"), "1");
+        assert_eq!(text(&c, "/cards/wlive/1/cfg/playmode"), "PLAY");
+        st.set_host_setting("recorder.autoInput", "1");
+        st.set_host_setting("recorder.autoPlay", "2");
+        st.set_host_setting("recorder.playMode", "1");
+        assert_eq!(text(&c, "/cards/wlive/autoin"), "1");
+        assert_eq!(text(&c, "/cards/wlive/auto_play"), "ALT");
+        assert_eq!(text(&c, "/cards/wlive/1/cfg/playmode"), "A->B");
+        assert_eq!(text(&c, "/cards/wlive/2/cfg/playmode"), "A->B", "one mode for both cards");
+
+        let set = |p: &str, v: &str| c.set(schema().resolve(p, &c).unwrap(), &Value::str(v));
+        set("/cards/wlive/autoin", "2").unwrap();
+        set("/cards/wlive/auto_rec", "MAIN").unwrap();
+        set("/cards/wlive/2/cfg/playmode", "LOOP").unwrap();
+        let taken: Vec<_> = std::iter::from_fn(|| st.take_host_setting()).collect();
+        let taken: Vec<(&str, &str)> = taken.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        assert_eq!(taken, [("recorder.autoInput", "1"), ("recorder.autoRec", "1"), ("recorder.playMode", "2")]);
+        assert_eq!(text(&c, "/cards/wlive/autoin"), "1", "card 2 reads back as Sidecar's one recorder");
+    }
 }

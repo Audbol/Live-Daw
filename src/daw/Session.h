@@ -7,6 +7,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 
 namespace livedaw::daw
 {
@@ -91,6 +92,36 @@ public:
     void jumpToMarker (bool forward);
     void setLoopEnabled (bool);
     bool isLoopEnabled() const { return project.isLoopOn(); }
+    /** MODE: PLAY, A->B (from the loop range's start, stopping at its end) or
+        LOOP, as the WING-LIVE (manual 8.1 fig. 75). Kept in the project; the
+        app settings' recorder.playMode follows it for the WING remote
+        (/cards/wlive/1/cfg/playmode). */
+    using PlayMode = Recorder::PlayMode;
+    PlayMode getPlayMode() const;
+    void setPlayMode (PlayMode);
+    static constexpr const char* playModeKey = "recorder.playMode";
+
+    /** The transport as AUTO INPUT SELECT sees it (manual 8.1 p. 85-86). */
+    enum class TransportMode
+    {
+        Stop,
+        Play,
+        Record
+    };
+    TransportMode getTransportMode() const;
+    /** Called on the message thread when getTransportMode() changes. */
+    std::function<void (TransportMode)> onTransportModeChanged;
+
+    /** AUTO INPUT SELECT (the recorder's SETTINGS, manual 8.1 p. 85-86, WING
+        /cards/wlive/autoin, auto_stop, auto_play, auto_rec): what the stop,
+        play or record status asks of the global MAIN / ALT switch, from the
+        app settings: nothing (OFF, or KEEP), MAIN (false) or ALT (true). */
+    static std::optional<bool> autoInputFor (const juce::PropertiesFile*, TransportMode);
+    static constexpr const char* autoInputKey = "recorder.autoInput";
+    /** KEEP (0), MAIN (1) or ALT (2) per status. */
+    static constexpr const char* autoInputModeKeys[3] = { "recorder.autoStop", "recorder.autoPlay", "recorder.autoRec" };
+    /** SHOW METERS: the recorder screen shows the meters of the armed tracks. */
+    static constexpr const char* showMetersKey = "recorder.showMeters";
     /** Adds a marker at the play position. */
     int64 addMarkerAtPosition();
     /** False when the project's rate differs from the engine's (playback would
@@ -214,6 +245,9 @@ private:
     bool playlistDirty = true, gesture = false;
     juce::uint32 lastPush = 0, lastAutosave = 0;
     juce::uint32 lastLoopHash = 0;
+    TransportMode shownTransport = TransportMode::Stop;
+    void checkTransportMode();
+    void publishPlayMode();
 
     // The recording in progress: record track index -> track id.
     std::map<int, int64> recordTracks;

@@ -281,7 +281,12 @@ void Session::play()
     if (! rateMatches())
         message ("The project's sample rate differs from the console's: playback runs at the wrong speed", true);
     pushPlaylistNow();
+    // A->B plays from A (unless the position is already between A and B).
+    if (getPlayMode() == PlayMode::AToB && project.getLoopEnd() > project.getLoopStart() && ! isRolling())
+        if (const auto pos = getPosition(); pos < project.getLoopStart() || pos >= project.getLoopEnd())
+            recorder.locate (project.getLoopStart());
     recorder.play();
+    checkTransportMode();
 }
 
 void Session::stop()
@@ -289,6 +294,57 @@ void Session::stop()
     recordRequested = false;
     recorder.stop();
     collectTakes();
+    checkTransportMode();
+}
+
+Session::TransportMode Session::getTransportMode() const
+{
+    if (isRecording())
+        return TransportMode::Record;
+    return recorder.getState() == Recorder::State::Stopped ? TransportMode::Stop : TransportMode::Play;
+}
+
+void Session::checkTransportMode()
+{
+    const auto mode = getTransportMode();
+    if (mode == shownTransport)
+        return;
+    shownTransport = mode;
+    if (onTransportModeChanged)
+        onTransportModeChanged (mode);
+}
+
+std::optional<bool> Session::autoInputFor (const juce::PropertiesFile* settings, TransportMode mode)
+{
+    if (settings == nullptr || settings->getIntValue (autoInputKey, 0) == 0)
+        return std::nullopt;
+    switch (settings->getIntValue (autoInputModeKeys[(int) mode], 0))
+    {
+        case 1: return false;
+        case 2: return true;
+        default: return std::nullopt;
+    }
+}
+
+Session::PlayMode Session::getPlayMode() const
+{
+    if (project.isLoopOn())
+        return PlayMode::Loop;
+    return project.isAToBOn() ? PlayMode::AToB : PlayMode::Play;
+}
+
+void Session::setPlayMode (PlayMode mode)
+{
+    project.setLoopOn (mode == PlayMode::Loop);
+    project.setAToBOn (mode == PlayMode::AToB);
+    pushPlaylistNow();
+    publishPlayMode();
+}
+
+void Session::publishPlayMode()
+{
+    if (settings != nullptr)
+        settings->setValue (playModeKey, (int) getPlayMode());
 }
 
 void Session::togglePlay()
@@ -360,6 +416,8 @@ juce::Result Session::record()
     }
     recordTracks = map;
     recordRequested = true;
+    // AUTO INPUT SELECT switches before the first sample is recorded.
+    checkTransportMode();
     recordStart = recorder.getPosition();
     peaks.clear();
     for (auto& rt : list)
@@ -406,8 +464,7 @@ void Session::jumpToMarker (bool forward)
 
 void Session::setLoopEnabled (bool on)
 {
-    project.setLoopOn (on);
-    pushPlaylistNow();
+    setPlayMode (on ? PlayMode::Loop : PlayMode::Play);
 }
 
 int64 Session::addMarkerAtPosition()
@@ -762,6 +819,7 @@ void Session::projectReplaced()
     selectedTrack = 0;
     clipboard.clear();
     pushPlaylistNow();
+    publishPlayMode();
     if (onProjectReplaced)
         onProjectReplaced();
 }
@@ -769,9 +827,9 @@ void Session::projectReplaced()
 void Session::pushPlaylistNow()
 {
     recorder.setPlaylist (project.buildPlaylist());
-    const bool loop = project.isLoopOn() && project.getLoopEnd() > project.getLoopStart();
-    recorder.setLoop (project.getLoopStart(), project.getLoopEnd(), loop);
-    lastLoopHash = (juce::uint32) (project.getLoopStart() * 31 + project.getLoopEnd() * 7 + (loop ? 1 : 0));
+    const auto mode = project.getLoopEnd() > project.getLoopStart() ? getPlayMode() : PlayMode::Play;
+    recorder.setRange (project.getLoopStart(), project.getLoopEnd(), mode);
+    lastLoopHash = (juce::uint32) (project.getLoopStart() * 31 + project.getLoopEnd() * 7 + (juce::uint32) mode);
     playlistDirty = false;
     lastPush = juce::Time::getMillisecondCounter();
 }
@@ -837,6 +895,8 @@ void Session::timerCallback()
     const auto now = juce::Time::getMillisecondCounter();
     if (recordRequested && recorder.getState() == Recorder::State::Stopped)
         recordRequested = false;
+    // A->B stops at B, a recording can end on its own (a full disk), a remote stops it.
+    checkTransportMode();
     collectTakes();
     if (isRecording())
     {

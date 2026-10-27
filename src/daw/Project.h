@@ -36,6 +36,7 @@ namespace ids
     LIVEDAW_DAW_ID (loopStart)
     LIVEDAW_DAW_ID (loopEnd)
     LIVEDAW_DAW_ID (loopOn)
+    LIVEDAW_DAW_ID (abOn)
 
     LIVEDAW_DAW_ID (colour)
     LIVEDAW_DAW_ID (stereo)
@@ -225,6 +226,11 @@ public:
     void setLoop (int64 start, int64 end);
     /** Not undoable (a transport switch, saved with the project). */
     void setLoopOn (bool);
+    /** MODE A->B (the WING-LIVE's, manual 8.1 fig. 75): playback stops at the
+        loop range's end. Not undoable, saved with the project (projects
+        without it play on). */
+    bool isAToBOn() const;
+    void setAToBOn (bool);
 
     /** Samples per beat / bar at the project's tempo and rate. */
     double samplesPerBeat() const;
