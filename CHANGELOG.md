@@ -486,6 +486,17 @@ All notable changes to Sidecar are listed here. Versions follow
   channel).
 ### Fixed
 
+- WING REMOTE (Native, TCP 2222): a client that was reading and sending normally
+  (WING Edit) could be disconnected at random on Windows. The server read and wrote
+  each connection with socket timeouts (100 ms reads, 10 s writes), and on Windows a
+  receive or send that times out leaves the connection in an undefined state, with
+  errors std doesn't map as on Unix (an interrupted blocking call is WSAEINTR, which
+  the server took for a broken connection). The connections now have no socket
+  timeouts: the server times the idle rule (12 s) and the stalled-write rule (10 s of
+  no progress) itself and shuts a connection down to end it, and only the end of the
+  stream or a real error closes a client. The server also keeps why each Native
+  connection ended (`Status::disconnects`: the client closed it, idle, write stalled,
+  queue full, read or write error, server stopped).
 - ETERNAL BLISS compressed a steady tone far less than its curve at short releases (at
   its default RELEASE 102 ms, 0.3 dB instead of 2 dB at 3 dB over the threshold): its
   constant-rate release climbed back through every trough of the waveform. The
