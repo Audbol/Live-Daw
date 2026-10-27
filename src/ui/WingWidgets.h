@@ -374,6 +374,8 @@ public:
     }
 
     std::function<void()> onPress, onHold;
+    /** The key goes down (true) and up again (false), besides onPress / onHold. */
+    std::function<void (bool down)> onDownUp;
     std::function<int()> ledState;
     std::function<bool()> switchesOnHold;
     juce::Colour ledColour = Colours::ledYellow;
@@ -577,6 +579,13 @@ public:
         TransientPopups::closeAll();
         pressed = false;
         holdDone = false;
+        if (onDownUp != nullptr)
+        {
+            juce::Component::SafePointer<SurfaceKey> safe (this);
+            onDownUp (true);
+            if (safe == nullptr)
+                return;
+        }
         if (switchesOnHold != nullptr && switchesOnHold())
         {
             guardedPress.press();
@@ -608,6 +617,13 @@ public:
         guardedPress.release();
         const bool shortPress = pressed && ! holdDone && getLocalBounds().contains (e.getPosition());
         pressed = false;
+        if (onDownUp != nullptr && isEnabled())
+        {
+            juce::Component::SafePointer<SurfaceKey> safe (this);
+            onDownUp (false);
+            if (safe == nullptr)
+                return;
+        }
         if (shortPress)
             fire (onPress);
     }

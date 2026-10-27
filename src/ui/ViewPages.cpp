@@ -1,6 +1,7 @@
 #include "ui/ViewPages.h"
 #include "dsp/DspUtils.h"
 #include "engine/Models.h"
+#include "ui/CustomControlsPage.h"
 #include "ui/HomeIcons.h"
 #include "ui/HomeWidgets.h"
 #include "ui/PaintHash.h"
@@ -59,7 +60,7 @@ namespace
         g.fillRoundedRectangle (f.reduced (wingPx (2.0f)), wingPx (2.0f));
         g.setColour (ink);
         g.setFont (capFont (cap));
-        g.drawFittedText (text, r.reduced (px (4.0f), 0), juce::Justification::centred, 1, 0.7f);
+        g.drawFittedText (text, r.reduced (px (4.0f), 0), juce::Justification::centred, text.containsChar ('\n') ? 2 : 1, 0.7f);
     }
 
     /** A screen font on the console's type scale (TypeScale), no taller than
@@ -115,9 +116,14 @@ namespace
         std::atomic<float>* sendLevel = nullptr;
         std::atomic<bool>* sendOn = nullptr;
         juce::String sendTag; // "> BUS 3", "< CH 5"
+        /** A send fader with BUS CUSTOMIZATION: its destination, whose name,
+            colour and icon it shows (manual 5.10, Fig. 60). */
+        Strip* custom = nullptr;
 
         bool isValid() const noexcept { return strip != nullptr || dca >= 0; }
         bool isSend() const noexcept { return sendLevel != nullptr; }
+        /** The strip whose name, colour and icon the fader shows. */
+        Strip* look() const noexcept { return custom != nullptr ? custom : strip; }
     };
 
     /** The send from `from` to `to` (an input or bus to a bus, main or
@@ -174,10 +180,19 @@ namespace
         if (f.fxParam || f.midiCc)
             return {}; // FX parameters and MIDI CCs have no strip view here
         Target t;
-        t.strip = state::findStrip (ctx.engine, f.strip); // a send: its source
+        // A send: its source (the selected strip for the "S" send, Fig. 59).
+        auto* sel = ctx.getSelectedStrip ? ctx.getSelectedStrip() : nullptr;
+        t.strip = f.selected ? sel : state::findStrip (ctx.engine, f.strip);
         if (f.send && t.strip != nullptr)
+        {
             if (auto* to = state::findStrip (ctx.engine, f.to); to != nullptr && sendBetween (*t.strip, *to, t))
-                t.sendTag = "> " + sendTagOf (*to);
+            {
+                t.sendTag = (f.selected ? "S > " : "> ") + sendTagOf (*to);
+                t.custom = f.busCustom ? to : nullptr;
+            }
+            else if (f.selected)
+                t = {}; // the selection can't send there
+        }
         return t;
     }
 
@@ -202,21 +217,21 @@ namespace
 
     juce::Colour colourOf (UiContext& ctx, const Target& t)
     {
-        return t.strip != nullptr ? stripDisplayColour (*t.strip) : wingColour (ctx.engine.getDca (t.dca).colour.load());
+        return t.look() != nullptr ? stripDisplayColour (*t.look()) : wingColour (ctx.engine.getDca (t.dca).colour.load());
     }
 
     /** The name shown in the name bar (empty for default names, as on the console). */
     juce::String barName (UiContext& ctx, const Target& t)
     {
-        if (t.strip != nullptr)
-            return stripName (*t.strip) != t.strip->getLabel() ? stripName (*t.strip).toUpperCase() : juce::String();
+        if (const auto* s = t.look())
+            return stripName (*s) != s->getLabel() ? stripName (*s).toUpperCase() : juce::String();
         const auto name = ctx.engine.getDcaName (t.dca);
         return name.removeCharacters (" .").equalsIgnoreCase ("DCA" + juce::String (t.dca + 1)) ? juce::String() : name.toUpperCase();
     }
 
     juce::String numberOf (const Target& t)
     {
-        return t.strip != nullptr ? shortStripLabel (*t.strip) : "D" + juce::String (t.dca + 1);
+        return t.look() != nullptr ? shortStripLabel (*t.look()) : "D" + juce::String (t.dca + 1);
     }
 
     std::atomic<float>& faderOf (UiContext& ctx, const Target& t)
@@ -249,8 +264,8 @@ namespace
         g.setFont (capFontFit (20.0f, inner.getHeight() * 0.9f, WingWeight::SemiBold));
         const auto number = numberOf (t);
         g.drawFittedText (number, inner.toNearestInt(), juce::Justification::centredLeft, 1, 0.7f);
-        if (t.strip != nullptr && inner.getWidth() > inner.getHeight() * 2.2f)
-            drawStripIcon (g, *t.strip, inner.removeFromRight (inner.getHeight()).reduced (1.0f), Dark::textDim);
+        if (t.look() != nullptr && inner.getWidth() > inner.getHeight() * 2.2f)
+            drawStripIcon (g, *t.look(), inner.removeFromRight (inner.getHeight()).reduced (1.0f), Dark::textDim);
     }
 
     void block (juce::Graphics& g, juce::Rectangle<float> r)
@@ -752,6 +767,9 @@ namespace
             for (auto [id, label] : keys)
                 if (l.id == id)
                     return label;
+        // A virtual layer: its name, an empty key until it has one (manual Fig. 55).
+        if (LayerSet::isVirtualLayer (l.id))
+            return l.name.toUpperCase();
         return (l.user ? l.name.toUpperCase() : LayerSet::keyLabel (l)).replaceCharacter ('\n', ' ');
     }
 
@@ -785,7 +803,7 @@ public:
         auto& layers = page.ctx.show.layers;
         std::vector<Layer> right = layers.getDefaultLayers (page.ctx.engine, page.section());
         const auto& user = layers.getUserLayers();
-        for (size_t i = 2; i < user.size(); ++i)
+        for (size_t i = 2; i < user.size() && ! page.isVirtual(); ++i)
             right.push_back (user[i]); // user layers without a USER key
         for (int i = 0; i < 3; ++i)
             sectionKeys[i] = at (rightX, kSectionTop + kColumnStep * (float) i, 88.0f, kColumnKeyH);
@@ -831,7 +849,7 @@ public:
         g.setColour (Colours::screenPanel);
         g.fillRect (wingRect (0.0f, 0.0f, colW, kColumnPanelH));
         g.fillRect (wingRect (0.0f, kPagerTop, colW, kPagerH));
-        const auto current = page.currentLayerId();
+        const auto current = page.currentLayer().id; // (an unknown id shows as the first key)
         const int shown = page.shownBank();
         for (auto& k : keys)
         {
@@ -844,11 +862,11 @@ public:
             wingKey (g, k.area, k.name, on ? Dark::layer : Colours::screenTile, on ? Dark::choiceInk : keyText);
         }
         // The section's key olive, darker while a bank is shown instead of its layer [WING].
-        // The WING COMPACT has one fader section: one key, COMPACT.
+        // The WING COMPACT has its fader section and the VIRTUAL one (manual Fig. 55).
         const bool compact = page.isCompact();
-        const char* names[] = { compact ? "COMPACT" : "LEFT", "CENTER", "RIGHT" };
+        const char* names[] = { compact ? "COMPACT" : "LEFT", compact ? "VIRTUAL" : "CENTER", "RIGHT" };
         const auto sectionFill = shown >= 0 ? Dark::section.withMultipliedBrightness (0.55f) : Dark::section;
-        for (int i = 0; i < (compact ? 1 : 3); ++i)
+        for (int i = 0; i < (compact ? 2 : 3); ++i)
         {
             const bool on = (int) page.section() == i;
             wingKey (g, sectionKeys[i], names[i], on ? sectionFill : Colours::screenTile, on ? juce::Colours::black : keyText);
@@ -877,7 +895,7 @@ public:
                 page.selectBank (k.id.getIntValue());
                 return;
             }
-        for (int i = 0; i < (page.isCompact() ? 1 : 3); ++i)
+        for (int i = 0; i < (page.isCompact() ? 2 : 3); ++i)
             if (sectionKeys[i].contains (pos))
             {
                 page.selectSection (static_cast<LayerSet::Section> (i));
@@ -935,9 +953,12 @@ StatusTitle ViewPage::getStatusTitle()
     StatusTitle t;
     t.kind = StatusTitle::Kind::Layer;
     const char letters[] = { 'L', 'C', 'R' };
-    t.prefix = juce::String::charToString ((juce::juce_wchar) letters[juce::jlimit (0, 2, (int) section())]);
+    t.prefix = juce::String::charToString ((juce::juce_wchar) (isVirtual() ? 'V' : letters[juce::jlimit (0, 2, (int) section())]));
     const auto all = banks();
-    t.text = juce::isPositiveAndBelow (shownBank(), (int) all.size()) ? all[(size_t) shownBank()].title : columnLabel (currentLayer());
+    const auto layer = currentLayer();
+    t.text = juce::isPositiveAndBelow (shownBank(), (int) all.size()) ? all[(size_t) shownBank()].title : columnLabel (layer);
+    if (t.text.isEmpty() && LayerSet::isVirtualLayer (layer.id))
+        t.text = "VIRTUAL " + layer.id.fromFirstOccurrenceOf ("-", false, false); // an unnamed virtual layer
     t.icon = Icon::Layers;
     return t;
 }
@@ -987,12 +1008,13 @@ Layer ViewPage::currentLayer() const
     return ctx.show.layers.findLayer (ctx.engine, section(), currentLayerId());
 }
 
-std::vector<ViewPage::Bank> ViewPage::banks() const
+std::vector<ViewBank> viewBanks (UiContext& ctx)
 {
     // Each kind in banks of eight ("1-8" ... "33-40", "AUX", "BUS 1-8", ...),
     // the mains and matrices one group, then the DCAs.
+    using Bank = ViewBank;
     std::vector<Bank> out;
-    auto addStrips = [this, &out] (StripKind kind, const juce::String& prefix, const juce::String& titlePrefix, int group)
+    auto addStrips = [&ctx, &out] (StripKind kind, const juce::String& prefix, const juce::String& titlePrefix, int group)
     {
         auto& strips = ctx.engine.getStrips (kind);
         const int n = (int) strips.size();
@@ -1079,6 +1101,24 @@ void ViewPage::selectLayer (const juce::String& id)
     page = 0;
     layerChanged();
     column->rebuild();
+    repaint();
+}
+
+void ViewPage::showOverviewBank (LayerSet::Section s, int index)
+{
+    ctx.viewSection = s;
+    page = 0;
+    resized();
+    if (index >= cc::kFirstOverviewBank)
+    {
+        selectBank (juce::jlimit (0, (int) banks().size() - 1, index - cc::kFirstOverviewBank));
+        return;
+    }
+    // A layer key of the section (USER 1 / USER 2 too); one it lacks changes nothing.
+    const auto keys = ctx.show.layers.getDefaultLayers (ctx.engine, section());
+    if (juce::isPositiveAndBelow (index, (int) keys.size()))
+        selectLayer (keys[(size_t) index].id);
+    layerChanged();
     repaint();
 }
 
@@ -2552,7 +2592,8 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
     renameKey.onClick = [this]
     {
         const auto layer = currentLayer();
-        const auto id = userLayerId (layer, true);
+        // A user layer, or one of the COMPACT's virtual layers (manual 5.7: "Rename and populate these layers on the CONFIG screen").
+        const auto id = LayerSet::isVirtualLayer (layer.id) ? layer.id : userLayerId (layer, true);
         if (id.isEmpty())
             return;
         popups::TextOptions options;
@@ -2560,7 +2601,8 @@ ConfigViewPage::ConfigViewPage (UiContext& c) : ViewPage (c, Screen::Config)
         juce::Component::SafePointer<ConfigViewPage> safe (this);
         popups::editText (*this, "LAYER NAME", layer.name, [safe, id] (const juce::String& text)
         {
-            if (safe == nullptr || text.trim().isEmpty())
+            // (A virtual layer may go back to no name.)
+            if (safe == nullptr || (text.trim().isEmpty() && ! LayerSet::isVirtualLayer (id)))
                 return;
             safe->ctx.show.layers.renameUserLayer (id, text.trim());
             notifyLayersChangedAsync (safe->ctx);
@@ -2649,7 +2691,7 @@ void ConfigViewPage::updateKeys()
 {
     const auto layer = currentLayer();
     enableKey (clearKey, ! layer.faders.empty());
-    enableKey (renameKey, layer.user || layer.id == "user-1" || layer.id == "user-2");
+    enableKey (renameKey, layer.user || layer.id == "user-1" || layer.id == "user-2" || LayerSet::isVirtualLayer (layer.id));
     const auto userId = userLayerId (layer, false);
     enableKey (deleteKey, (userId.isNotEmpty() && ! isBlankUserKeyLayer (ctx.show.layers, userId))
                               || ctx.show.layers.hasDefaultOverride (section(), layer.id));
@@ -2747,14 +2789,16 @@ std::vector<state::FaderRef> ConfigViewPage::sourceItems() const
         const auto to = dests[(size_t) i];
         if (category == 3)
         {
+            // First the "S" item: the selected channel's send (manual 5.10 p. 65, Fig. 59).
+            items.push_back (state::FaderRef::ofSelectedSend (to, busCustomization));
             for (auto k : { StripKind::Channel, StripKind::Aux })
                 for (auto& s : ctx.engine.getStrips (k))
-                    items.push_back (state::FaderRef::ofSend (state::StripRef::of (*s), to));
+                    items.push_back (state::FaderRef::ofSend (state::StripRef::of (*s), to).withBusCustomization (busCustomization));
         }
         else
             for (auto& b : ctx.engine.getStrips (StripKind::Bus))
                 if (! (to.kind == StripKind::Bus && (b->getId() < kBusToBusTargets || b->getId() == to.id)))
-                    items.push_back (state::FaderRef::ofSend (state::StripRef::of (*b), to));
+                    items.push_back (state::FaderRef::ofSend (state::StripRef::of (*b), to).withBusCustomization (busCustomization));
         return items;
     }
     if (category == 6)
@@ -2805,6 +2849,11 @@ void ConfigViewPage::layoutContent()
         fields[i]->setBounds (wingRect (388.0f + 152.0f * (float) i, 8.0f, 140.0f, 64.0f));
     clearKey.setBounds (wingRect (1018.0f, 8.0f, 64.0f, 64.0f));
     renameKey.setBounds (wingRect (1094.0f, 8.0f, 68.0f, 64.0f));
+    // With SENDS or BUS -> BUS: SOURCE / BUS CUSTOMIZATION, one above the
+    // other left of the items (manual Fig. 60).
+    const bool sends = category == 3 || category == 4;
+    sourceCustomKey = sends ? wingRect (16.0f, 126.0f, 140.0f, 64.0f) : juce::Rectangle<int>();
+    busCustomKey = sends ? wingRect (16.0f, 194.0f, 140.0f, 64.0f) : juce::Rectangle<int>();
 
     // The page's slots, four to a blue plate, centred under the grid.
     slotAreas.clear();
@@ -2836,7 +2885,8 @@ void ConfigViewPage::layoutContent()
     // a new row, 24 px further down; rows close up when they don't fit.
     sourceTiles.clear();
     const auto items = sourceItems();
-    auto kindOf = [] (const state::FaderRef& f) { return f.dca ? -1 : (f.send ? 100 : (int) f.strip.kind); };
+    // (The "S" send stands apart, on its own row.)
+    auto kindOf = [] (const state::FaderRef& f) { return f.dca ? -1 : f.selected ? 101 : (f.send ? 100 : (int) f.strip.kind); };
     struct Place
     {
         int row, col, gaps;
@@ -2881,6 +2931,14 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
         g.setColour (Colours::yellow);
         g.drawRect (fields[category - 3]->getBounds().expanded (2), 2);
     }
+    // SOURCE / BUS CUSTOMIZATION: the active one blue (manual Fig. 60).
+    if (! sourceCustomKey.isEmpty())
+        for (auto [area, bus] : { std::pair { sourceCustomKey, false }, std::pair { busCustomKey, true } })
+        {
+            const bool on = busCustomization == bus;
+            wingKey (g, area, bus ? "BUS\nCUSTOMIZATION" : "SOURCE\nCUSTOMIZATION", on ? Dark::layer : Colours::screenTile,
+                     on ? Dark::choiceInk : Dark::text, 13.0f);
+        }
 
     auto tile = [this, &g] (juce::Rectangle<float> r, const state::FaderRef& f, bool highlighted)
     {
@@ -2921,6 +2979,36 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
             }
             return;
         }
+        if (f.selected)
+        {
+            // The selected channel's send: the selection's name bar, a white
+            // "S" box and the destination (fig. 59).
+            const auto t = resolve (ctx, f);
+            auto* to = state::findStrip (ctx.engine, f.to);
+            auto bar = r.removeFromTop (r.getHeight() * 0.36f);
+            const auto* look = f.busCustom ? to : t.strip;
+            paintNameBar (g, bar, look != nullptr ? stripDisplayColour (*look) : Colours::screenTile,
+                          look != nullptr ? stripName (*look).toUpperCase() : juce::String ("SELECTED"));
+            g.setColour (blockFill);
+            g.fillRect (r);
+            auto inner = r.reduced (3.0f, 3.0f);
+            auto box = inner.removeFromLeft (juce::jmin (inner.getHeight() * 1.2f, inner.getWidth() * 0.4f));
+            g.setColour (juce::Colours::white);
+            g.fillRect (box);
+            g.setColour (juce::Colours::black);
+            g.setFont (viewFont (TypeScale::value, box.getHeight() * 0.85f));
+            g.drawText ("S", box, juce::Justification::centred);
+            g.setColour (Dark::textDim);
+            g.setFont (viewFont (TypeScale::value, inner.getHeight() * 0.8f));
+            g.drawFittedText (juce::String::fromUTF8 ("\xe2\x96\xb8 ") + (to != nullptr ? shortStripLabel (*to) : juce::String ("?")),
+                              inner.reduced (3.0f, 0.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.6f);
+            if (highlighted)
+            {
+                g.setColour (Colours::yellow);
+                g.drawRect (bar.getUnion (r).expanded (1.0f), 2.0f);
+            }
+            return;
+        }
         const auto t = resolve (ctx, f);
         if (! t.isValid())
             return;
@@ -2953,9 +3041,12 @@ void ConfigViewPage::paintContent (juce::Graphics& g)
         auto inner = r.reduced (3.0f, 1.0f);
         if (f.send)
         {
-            // A send level: the source with an "S > B4" mark (fig. 59).
+            // A send level: the source with an "S > B4" mark (with BUS
+            // CUSTOMIZATION the destination, marked from its source).
             auto* to = state::findStrip (ctx.engine, f.to);
-            const auto mark = "S>" + (to != nullptr ? shortStripLabel (*to) : juce::String ("?"));
+            auto* from = state::findStrip (ctx.engine, f.strip);
+            const auto mark = f.busCustom ? "<" + (from != nullptr ? shortStripLabel (*from) : juce::String ("?"))
+                                          : "S>" + (to != nullptr ? shortStripLabel (*to) : juce::String ("?"));
             g.setColour (Colours::solo);
             g.setFont (viewFont (TypeScale::caption, inner.getHeight() * 0.6f));
             g.drawFittedText (mark, inner.removeFromRight (inner.getWidth() * 0.5f).toNearestInt(), juce::Justification::centredRight, 1, 0.6f);
@@ -3207,6 +3298,16 @@ void ConfigViewPage::mouseUp (const juce::MouseEvent& e)
         return;
     }
 
+    for (auto [area, bus] : { std::pair { sourceCustomKey, false }, std::pair { busCustomKey, true } })
+        if (area.contains (pos))
+        {
+            // The picked send items follow the customization chosen.
+            busCustomization = bus;
+            for (auto& item : selectedItems)
+                item = item.withBusCustomization (bus);
+            repaint();
+            return;
+        }
     for (size_t i = 0; i < categoryKeys.size(); ++i)
         if (categoryKeys[i].contains (pos))
         {

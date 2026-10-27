@@ -654,6 +654,38 @@ public:
             expectEquals (a.params.faderDb.load(), -9.0f);
             dir.deleteRecursively();
         }
+
+        beginTest ("Custom controls: the cache sees the factory DAW layers; F1-F3 of older shows move to layers 1-3");
+        {
+            MixerEngine engine (0);
+            PluginHost host (nullptr);
+            Show show (engine, host);
+            // Every assigned control, the factory DAW layers' too (DAW 1's STOP).
+            auto controls = juce::parseXML (show.getCustomControlsXml());
+            expect (controls != nullptr && controls->getIntAttribute ("layout") == 2 && ! controls->hasAttribute ("factory"));
+            bool stop = false;
+            if (controls != nullptr)
+                for (auto* e : controls->getChildWithTagNameIterator ("Control"))
+                    stop = stop || (e->getIntAttribute ("layer") == 20 && e->getStringAttribute ("name") == "STOP");
+            expect (stop, show.getCustomControlsXml());
+
+            // Written back as the cache writes it: nothing changes.
+            const auto before = show.getCustomControlsXml();
+            expect (show.setCustomControlsXml (before));
+            expectEquals (show.getCustomControlsXml(), before);
+
+            // An older show: F1's layer (17) assigned, layer 1 free.
+            expect (show.setCustomControlsXml (R"(<CustomControls><Control layer="17" index="2" name="VERB" colour="3" enc="6,4,-1" bu="21,4,-1" bd="0,0,0"/></CustomControls>)"));
+            controls = juce::parseXML (show.getCustomControlsXml());
+            bool moved = false, left = false;
+            if (controls != nullptr)
+                for (auto* e : controls->getChildWithTagNameIterator ("Control"))
+                {
+                    moved = moved || (e->getIntAttribute ("layer") == 0 && e->getIntAttribute ("index") == 2 && e->getStringAttribute ("name") == "VERB");
+                    left = left || e->getIntAttribute ("layer") == 17;
+                }
+            expect (moved && ! left, show.getCustomControlsXml());
+        }
     }
 };
 

@@ -70,13 +70,6 @@ namespace
         return OnKey::forSetting (settings, inertKey (name), defaultValue);
     }
 
-    std::unique_ptr<ChoiceKeys> inertChoice (juce::PropertiesFile& settings, const juce::String& name, juce::StringArray labels, int defaultValue)
-    {
-        const auto key = inertKey (name);
-        return std::make_unique<ChoiceKeys> (std::move (labels), [&settings, key, defaultValue] { return settings.getIntValue (key, defaultValue); },
-                                             [&settings, key] (int i) { settings.setValue (key, i); });
-    }
-
     // ALT inputs and ALT-selected tiles [3.1].
     const juce::Colour altOrange = Colours::alt;
 
@@ -1066,7 +1059,8 @@ namespace
                                                           }),
                             3.7f);
             // The rest change how the fader strips, the channel strip and the status bar behave.
-            general.addRow ("TAP TEMPO FLASH", inertChoice (ctx.settings, "tapTempoFlash", { "OFF", "8X", "ON" }, 2), 3.7f); // only kept
+            // How a custom control key tapping a delay's TIME flashes (cc::ledState; manual 5.5 p. 47).
+            general.addRow ("TAP TEMPO FLASH", choiceSetting (uiprefs::tapTempoFlash, { "OFF", "8X", "ON" }, 2), 3.7f);
             general.addRow ("SOF BUTTON", choiceSetting (uiprefs::sofButton, { "AUTO", "ON", "FLASH" }, 0), 3.7f);
             general.addRow ("SHOW SOF FRAME", OnKey::forSetting (ctx.settings, uiprefs::showSofFrame, true), 1.3f);
             general.addRow ("SHOW SOURCE ON SCRIBBLE", onSetting (uiprefs::sourceOnScribble, true), 1.3f);

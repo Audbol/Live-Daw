@@ -212,7 +212,7 @@ views after a show load changes the console from Rust.
   engine controls are `#[repr(C)]` blocks of atomics owned by Rust. C++ sees the same
   memory as `std::atomic<float/bool/int32_t>` structs, and the UI writes them directly
   with no FFI call. Both sides describe the layout; `ld::verifyLayout()` compares the
-  two at startup and in the tests (ABI version 17), and the app refuses to run if they
+  two at startup and in the tests (ABI version 18), and the app refuses to run if they
   differ.
 - **FX slots.** The 16 slots are the WING's FX rack. Each holds one device from the
   console's FX table (`FX_MODELS`, generated like the processing models): the 26
@@ -880,13 +880,18 @@ dependencies beyond the other Sidecar crates.
   controls and refreshes the fader sections). Until a show is attached the nodes are
   shadow. The console model and the black finish are in `WingState` too
   (`set_console_model`, `set_black_finish`): they set the identity (`ngc-full` /
-  `wing-fullsize`, `wing-bk` for the black full-size WING, `wing-compact`) and
-  which custom control layers `U1`-`U4`, `MM` and `D1`-`D4` are. The module docs
-  list the meanings taken from the protocol document and
-  the guesses (fader encoding, `U1`-`U3`). Not mapped: the Compact, Rack, EXT and
-  VRT layers, the button and 4-Channel section modes, LEDs, GPIO keys, the DAW
-  keys' `btn` and the mode-dependent target nodes, which libwing's tree does not
-  list.
+  `wing-fullsize`, `wing-bk` for the black full-size WING, `wing-compact`).
+  `U1`-`U4`, `MM` and `D1`-`D4` are the COMPACT's key sets on either model, and
+  `VRT` the virtual layers. A key's or encoder's mode-dependent nodes (its
+  function's targets and options: `ch`, `fx`, `par`, `other` ...) share one id per
+  position across the modes, like the processing models' parameters: `schema.rs`
+  adds those slots (a family for the keys and one for the encoders, the modes as
+  models, the nodes from the protocol document's tables) from
+  `data/wing_cc_ids.tsv`, ids captured from WING Edit, since libwing's sweep only
+  caught the modes its console had set; `surface.rs` maps them to the show's
+  functions. The module docs list the meanings taken from the protocol document
+  and the guesses (fader encoding). Not mapped: the Compact's, Rack's and EXT
+  layers, the button and 4-Channel section modes, LEDs and GPIO keys.
 - **Servers** (`server.rs`, `osc.rs`, `native.rs`, `meters.rs`). Plain `std::net`
   threads, started and stopped from the app: discovery (UDP), OSC (UDP), the native
   protocol (TCP, one thread per client, up to 16; meters as UDP datagrams) and a

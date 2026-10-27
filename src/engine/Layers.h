@@ -101,6 +101,13 @@ public:
 
     static constexpr int kNumSections = 3;
     static constexpr int kAutoWidth = 0;
+    /** The WING COMPACT's VIRTUAL section (WING manual 5.7 p. 61, Fig. 55):
+        eight layers of its own ("vrt-1" .. "vrt-8", empty and unnamed at
+        first; renameUserLayer() names them), only on the screens. The
+        full-size console keeps them. */
+    static constexpr Section kVirtualSection = Center;
+    static constexpr int kNumVirtualLayers = 8;
+    static bool isVirtualLayer (const juce::String& id) { return id.startsWith ("vrt-"); }
     static constexpr int kWingWidths[kNumSections] = { 12, 8, 4 };
 
     /** A standalone layer set. */

@@ -174,11 +174,13 @@ pub struct LdFaderRef {
     pub id: i32,
     pub to_kind: i32,
     pub to_id: i32,
+    /// ABI 18: [`FADER_BUS_CUSTOM`].
+    pub flags: i32,
 }
 
 impl Default for LdFaderRef {
     fn default() -> Self {
-        Self { kind: 0, id: 0, to_kind: -1, to_id: 0 }
+        Self { kind: 0, id: 0, to_kind: -1, to_id: 0, flags: 0 }
     }
 }
 
@@ -186,6 +188,10 @@ pub const FADER_DCA: i32 = 5;
 pub const FADER_FX_PARAM: i32 = 6;
 pub const FADER_MIDI_CC: i32 = 7;
 pub const FADER_EMPTY: i32 = 8;
+/// ABI 18: the selected channel's send to `to_kind` / `to_id` (WING manual Fig. 59).
+pub const FADER_SEL_SEND: i32 = 9;
+/// ABI 18, `flags`: a send fader shows its destination's name, colour and icon.
+pub const FADER_BUS_CUSTOM: i32 = 1;
 
 impl From<FaderRef> for LdFaderRef {
     fn from(f: FaderRef) -> Self {
@@ -193,9 +199,21 @@ impl From<FaderRef> for LdFaderRef {
             FaderRef::Empty => Self { kind: FADER_EMPTY, ..Self::default() },
             FaderRef::Strip(r) => Self { kind: r.kind as i32, id: r.id, ..Self::default() },
             FaderRef::Dca(i) => Self { kind: FADER_DCA, id: i, ..Self::default() },
-            FaderRef::Send { from, to } => Self { kind: from.kind as i32, id: from.id, to_kind: to.kind as i32, to_id: to.id },
-            FaderRef::FxParam { slot, param } => Self { kind: FADER_FX_PARAM, id: slot, to_kind: -1, to_id: param },
-            FaderRef::MidiCc { channel, cc } => Self { kind: FADER_MIDI_CC, id: channel, to_kind: -1, to_id: cc },
+            FaderRef::Send { from, to } => {
+                Self { kind: from.kind as i32, id: from.id, to_kind: to.kind as i32, to_id: to.id, flags: 0 }
+            }
+            FaderRef::BusSend { from, to } => {
+                Self { kind: from.kind as i32, id: from.id, to_kind: to.kind as i32, to_id: to.id, flags: FADER_BUS_CUSTOM }
+            }
+            FaderRef::SelSend { to, bus_custom } => Self {
+                kind: FADER_SEL_SEND,
+                id: 0,
+                to_kind: to.kind as i32,
+                to_id: to.id,
+                flags: if bus_custom { FADER_BUS_CUSTOM } else { 0 },
+            },
+            FaderRef::FxParam { slot, param } => Self { kind: FADER_FX_PARAM, id: slot, to_kind: -1, to_id: param, flags: 0 },
+            FaderRef::MidiCc { channel, cc } => Self { kind: FADER_MIDI_CC, id: channel, to_kind: -1, to_id: cc, flags: 0 },
         }
     }
 }
@@ -207,11 +225,20 @@ impl LdFaderRef {
             FADER_DCA => FaderRef::Dca(self.id),
             FADER_FX_PARAM => FaderRef::FxParam { slot: self.id, param: self.to_id },
             FADER_MIDI_CC => FaderRef::midi_cc(self.id, self.to_id),
+            FADER_SEL_SEND => {
+                let to = StripRef::new(StripKind::from_i32(self.to_kind).unwrap_or(StripKind::Bus), self.to_id);
+                FaderRef::SelSend { to, bus_custom: self.flags & FADER_BUS_CUSTOM != 0 }
+            }
             _ => {
                 let from = LdStripRef { kind: self.kind, id: self.id }.to_ref();
                 match StripKind::from_i32(self.to_kind) {
                     Some(k @ (StripKind::Bus | StripKind::Main | StripKind::Matrix)) => {
-                        FaderRef::Send { from, to: StripRef::new(k, self.to_id) }
+                        let to = StripRef::new(k, self.to_id);
+                        if self.flags & FADER_BUS_CUSTOM != 0 {
+                            FaderRef::BusSend { from, to }
+                        } else {
+                            FaderRef::Send { from, to }
+                        }
                     }
                     _ => FaderRef::Strip(from),
                 }
@@ -1151,10 +1178,12 @@ pub unsafe extern "C" fn ld_show_import_library(
 
 // ---- layers ------------------------------------------------------------------------------
 
-/// The show's custom control assignments as a `<CustomControls>` element.
+/// The show's custom control assignments as a `<CustomControls>` element
+/// listing every assigned control (the factory DAW layers' too), as the
+/// application writes them back.
 #[no_mangle]
 pub unsafe extern "C" fn ld_show_custom_controls(s: *mut LdShow) -> *mut LdString {
-    LdString::new(show(s).map(|s| s.show.custom.to_xml().to_compact()).unwrap_or_default())
+    LdString::new(show(s).map(|s| s.show.custom.to_full_xml().to_compact()).unwrap_or_default())
 }
 
 /// Replaces the custom control assignments (false: not a `<CustomControls>` element).
@@ -1662,12 +1691,12 @@ mod tests {
             ld_scene_set_tag(s, 0, 12);
 
             let refs = [LdStripRef { kind: 0, id: 1 }];
-            let send = LdFaderRef { kind: 0, id: 1, to_kind: 2, to_id: 4 };
+            let send = LdFaderRef { kind: 0, id: 1, to_kind: 2, to_id: 4, ..Default::default() };
             let faders = [
                 LdFaderRef { kind: 0, id: 1, ..Default::default() },
                 LdFaderRef { kind: FADER_DCA, id: 3, ..Default::default() },
                 send,
-                LdFaderRef { kind: FADER_MIDI_CC, id: 2, to_kind: -1, to_id: 11 },
+                LdFaderRef { kind: FADER_MIDI_CC, id: 2, to_kind: -1, to_id: 11, ..Default::default() },
             ];
             assert_eq!(ld_show_add_snippet(s, e, 0, b"S".as_ptr(), 1, 1 << 8, refs.as_ptr(), 1), 0);
             let mut out = [LdStripRef::default(); 4];
@@ -1708,6 +1737,21 @@ mod tests {
             assert_eq!((f[3].kind, f[3].id, f[3].to_id), (FADER_MIDI_CC, 2, 11));
             assert_eq!((f[1].kind, f[1].id), (FADER_DCA, 3));
             assert_eq!((f[0].to_kind, f[2].kind, f[2].id, f[2].to_kind, f[2].to_id), (-1, 0, 1, 2, 4));
+            assert_eq!(f[2].flags, 0);
+            // ABI 18: a send with BUS CUSTOMIZATION and the selected channel's send.
+            let sends = [
+                LdFaderRef { kind: 0, id: 1, to_kind: 2, to_id: 4, flags: FADER_BUS_CUSTOM },
+                LdFaderRef { kind: FADER_SEL_SEND, to_kind: 4, to_id: 2, ..Default::default() },
+                LdFaderRef { kind: FADER_SEL_SEND, to_kind: 2, to_id: 0, flags: FADER_BUS_CUSTOM, ..Default::default() },
+            ];
+            let sends_id = take(ld_layers_add_user(l, b"S".as_ptr(), 1, sends.as_ptr(), 3));
+            assert!(show(s).unwrap().show.layers.user_layer(&sends_id).is_some_and(|l| l.faders
+                == [
+                    FaderRef::BusSend { from: StripRef::new(StripKind::Channel, 1), to: StripRef::new(StripKind::Bus, 4) },
+                    FaderRef::SelSend { to: StripRef::new(StripKind::Matrix, 2), bus_custom: false },
+                    FaderRef::SelSend { to: StripRef::new(StripKind::Bus, 0), bus_custom: true },
+                ]));
+            ld_layers_remove_user(l, sends_id.as_ptr(), sends_id.len());
             assert_eq!(take(ld_layer_list_name(list, 0)), "CH 1-2 · AUX 1-8");
             ld_layer_list_free(list);
 

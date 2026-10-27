@@ -144,6 +144,7 @@ MainComponent::MainComponent (juce::AudioDeviceManager& dm, MixerEngine& e, Plug
     ctx.selectStrip = [this] (Strip* strip) { selectStrip (strip); };
     ctx.getSelectedStrip = [this] { return getSelectedStrip(); };
     ctx.showScreen = [this] (Screen screen) { display->showScreen (screen); };
+    ctx.showOverviewPage = [this] (int area, int bank) { display->showOverviewPage (cc::overviewSection (area), bank); };
     ctx.showHomeTab = [this] (HomeTab tab) { display->showHomeTab (tab); };
     ctx.openPluginEditor = [this] (int slot) { openPluginEditor (slot); };
     ctx.editFx = [this] (int slot) { display->editFx (slot); };

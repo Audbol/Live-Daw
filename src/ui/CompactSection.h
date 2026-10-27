@@ -30,7 +30,12 @@ namespace compact = layout::compact;
       compact::mainMatrixActions).
     - DCA: DCA 1-16; a press spills the DCA's members onto the faders. With
       USE DCA BUTTONS 1-16 AS CC (/$ctl/cfg/dcacc) the keys are the custom
-      control sets D1-D4.
+      control sets D1-D4. A DCA key pressed, then fader 13's SELECT held:
+      the fader section's SELECT keys put their strips in the DCA or take
+      them out (lit on its members) until SELECT is let go (manual 4.2 p. 16).
+    A custom control key with a parameter (FX PAR) gives it to the knob right
+    of the display (manual 4.8 p. 25: "hold down the custom control and use
+    the knob to the right of the main display").
     - USER: the custom control sets U1-U4 (keys 1-4 U1 ... 13-16 U4).
     VIEW opens the FADERS screen; held, CUSTOM CONTROLS on the mode's set
     (WING manual Table 4.4). */
@@ -86,6 +91,8 @@ private:
     compact::MainFader shownFader;
     /** The key selected in the current mode (-1: none). */
     int selectedKey = -1;
+    /** The DCA key last pressed in DCA mode (the DCA fader 13's SELECT assigns to), or -1. */
+    int assignDca = -1;
     bool viewOpened = false;
 };
 

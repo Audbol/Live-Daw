@@ -169,10 +169,19 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     13-16 U4).
   - A key pressed again lets its bus, main or matrix go: fader 13 goes back to MAIN
     FADER, and Sends on Fader or the spill ends.
+  - DCA assignment, as on the console: press a DCA key, hold fader 13's SELECT,
+    and press the SELECT keys of the strips to put in the DCA (or take out; the
+    layer keys still work meanwhile). While SELECT is held, the strips' SELECT
+    keys light on the DCA's members.
 - **VIEW** opens the FADERS screen. Hold it for CUSTOM CONTROLS on the keys' set (USER
   1-4 in USER mode, MAIN/MTX 5-8 in MAIN MATRIX mode, DCA 1-4 in DCA mode); ‹ › step
   through the nine sets. Each set has four keys, each with a function, a name and a
-  colour. The colour shows beside the key's name on the LCD.
+  colour. The colour shows beside the key's name on the LCD. A key with a parameter
+  (FX PAR) also hands it to the knob right of the display, as the COMPACT's "hold the
+  custom control and use the knob to the right of the main display". **DAW
+  LAYER** (CC EDIT > OTHER) is the COMPACT's way into DAW remote control: assign it
+  to a key, and that key switches DAW mode on and off as the full-size WING's DAW key
+  does.
 - **Fader 13** is the main fader: SETUP > SURFACE > MAIN FADER > SOURCE (OFF, a main,
   a matrix or a DCA), MAIN 1 at first. The BUS and MAIN MATRIX keys put another bus,
   main or matrix on it while their key is selected. KEEP MAIN FADER leaves it on MAIN
@@ -188,6 +197,12 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   USER LAYER LINK are hidden.
 - The COMPACT has no channel strip section, custom controls section, 4-Channel
   section, center or right fader section, wheel or DAW key; Sidecar leaves them out.
+- The VIEW screens show the COMPACT's two sections at the foot of the layer column:
+  **COMPACT** (the fader section) and **VIRTUAL**, which only the screens have (WING
+  manual 5.7): eight layers of its own, eight faders wide, empty and unnamed at first
+  (the empty keys in the column). Fill them on VIEW > CONFIG and name them with
+  RENAME, then mix them on FADERS or OVERVIEW. They are saved with the show, and the
+  full-size WING keeps them.
   ROUTING has no AUX IN or AUX OUT group, as the COMPACT has no local aux inputs or
   outputs. SETUP > SURFACE > CH AUTOSELECT has one key, **CMPCT**.
 - WING remote clients see a COMPACT: Sidecar answers with model `wing-compact`.
@@ -195,7 +210,8 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   and `autosel_CMPCT`, both ways; KEEP MAIN FADER, MAIN SPILL, MATRIX SPILL and USE
   DCA BUTTONS 1-16 AS CC are `mfdrkeep`, `mainspill`, `mtxspill` and `dcacc`. The
   key sets are `/$ctl/user/U1`-`U4`, `MM` and `D1`-`D4`, so WING Edit and Mixing
-  Station see and set them.
+  Station see and set them (on the full-size WING too, as WING Edit lists them there),
+  and the virtual layers are `/$ctl/layer/VRT/1`-`8`.
 - The COMPACT has 24 local MIDAS PRO preamps where the full-size WING has 8, no local
   aux inputs and outputs, and 1x2 GPIO instead of 2x2. Sidecar's sources are its
   audio interface's inputs either way, so this changes no routing; LCL 1-24 all have
@@ -386,7 +402,19 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     the level; laid out as on a WING with firmware 3.1) and
     CC EDIT (also SETUP pressed twice): the custom
     control layers, a function list and the target lists, COLOR, CLR ALL and NAME,
-    saved with the show.
+    saved with the show. The function lists follow WING Edit's order. Keys also have
+    **CH INSERT PRE / POST ON/OFF** (a strip's INS 1 / INS 2), **FX PAR** (an FX
+    slot's parameter or MIX: a press toggles a switch or steps a list; held, the
+    encoder above it sets it; on a delay's TIME the key taps the tempo and flashes as
+    SETUP > GENERAL > TAP TEMPO FLASH says: OFF, 8X for eight beats after the time
+    changes, or ON), **OVERVIEW PAGE** (the OVERVIEW screen of a section on a layer
+    key or bank) and the whole OTHER list: TALKBACK A / B (as the TALK keys), GLOBAL
+    MAIN/ALT (the global input switch), DAW LAYER, MONITOR PHONES / SPEAKERS / PH+SPK
+    (the monitoring path), MONITOR DIM / MONO / SWAP / MUTE, FADER -oo / -10 dB /
+    0 dB, AUTOMIX X / Y, CHANNEL PREV / NEXT, CH / BUS / MAIN / MTX SOLO TAP (PFL /
+    AFL, lit for AFL), CH / BUS / MAIN / MTX / DCA METER TAP (PRE / POST, lit for
+    POST), and Sidecar's CC BANK UP / DOWN and SOF OFF. MONITORING encoders also set
+    PHONES LEVEL.
   - **LIBRARY:** a file browser with the locations INT (`Documents/Sidecar/Library`),
     USB (a folder of your choice) and SHOW (the show's scenes and snippets: tags, SKIP,
     LINK, REMOVE, RENAME, UP / DOWN), with FOLDER, RENAME, DELETE and sorting. Tabs:
@@ -417,7 +445,11 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
     Fader, show and set the send level, MUTE switching the send), SENDS (sends on faders
     to one bus, main or matrix), CONFIG (edit any layer key; see *Editing user layers*
     below; a **MIDI CC** fader sends its CC, 0-127, out of EXTERNAL MIDI CONTROL and
-    follows the CC coming in) and MUTE GROUPS (the eight groups'
+    follows the CC coming in; with SENDS or BUS -> BUS, **SOURCE CUSTOMIZATION** /
+    **BUS CUSTOMIZATION** choose whether the send faders assigned show their source's
+    or their destination's name, colour and icon, and the **S** item (a white S box,
+    the selected channel's name over it) is the selected channel's send to the
+    destination: on the surface it follows the selection) and MUTE GROUPS (the eight groups'
     members, a column red while its group is engaged, the group keys on the right; a
     column's header (MGRP.n over its number) opens the MUTE GROUP n window, a name
     field and the keyboard, the name changing as it's typed; touching the rest of a
@@ -479,7 +511,12 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   and PAN keys give the four strips of the right fader section an encoder and a key
   each (trim and the source's +48V, switched by holding the key 2 s; gate / comp
   threshold and on; low / high cut; bus sends; pan / width and MAIN 1), with their
-  scribble strips on a four-way LCD.
+  scribble strips on a four-way LCD. With SETUP > SURFACE > USE F1-F3 AS CUSTOM
+  CONTROLS, F1-F3 mirror the custom control layers 1-3, as on the console: F1 gives
+  the four encoders and the four upper keys of layer 1, F2 of layer 2, F3 of layer 3
+  (CC EDIT assigns them; the LCD reads CC1-CC3). Shows saved by earlier versions,
+  which kept F1-F3 on layers of their own, move those assignments to layers 1-3
+  where those controls are free.
 - **Custom controls** (between the center and right sections): the upper part's 16
   layers of four encoders and eight keys (assigned on CC EDIT; UP / DOWN; names and
   colours on the LCD), the lower layers **USER** (eight assignable keys), **2-TRACK
@@ -490,7 +527,8 @@ like the finish. The COMPACT is black, so it always shows the black finish. It f
   groups) and **SHOW CNTRL** (scene back, GO, SCENES; the wheel picks the scene GO
   recalls); the **DAW** key switches DAW remote control on and off (held, or with DAW
   control off: the multitrack editor). With USE CRSR/WHEEL the arrows and the wheel
-  edit the display.
+  edit the display. Holding a key with a parameter (FX PAR) gives it to the encoder
+  above the key until it is let go (WING manual 4.8).
 
 ## Multitrack recording
 
@@ -822,8 +860,8 @@ and open-source projects (see below), and it is **experimental**.
   follows, the brightness tiles, the time and date format, SHOW METER PAGE WHEN
   LOCKED...), the surface lock's string (`/$ctl/$stat/cnslock`, read only), MIDI REMOTE CONTROL
   (`/$ctl/midi`) and DAW (`/$ctl/daw`: enable, connection, emulation, upper CC,
-  wheel, preset) and the rows of features Sidecar doesn't have (TAP TEMPO FLASH,
-  MOUSE DISABLES TOUCH, SEND PAGE ACTIVATES SOLO, the OSC and
+  wheel, preset) and the rows of features Sidecar doesn't have (MOUSE DISABLES
+  TOUCH, SEND PAGE ACTIVATES SOLO, the OSC and
   TCP remote locks), which are only kept. `/$globals/clkrate` is the audio device's rate. Not mapped:
   DAW CONFIGURATION (`/$ctl/daw/config`), whose 3.1 choices (CC, MSTR) can't show
   Sidecar's MCU with extenders. The fader sections' layers (`/$ctl/layer/L`, `C`, `R`) and the custom
@@ -832,13 +870,15 @@ and open-source projects (see below), and it is **experimental**.
   shown layer (`ofs`), name the USER keys' user layers and assign faders (`type`,
   `i`, `dst`: channels, buses, DCAs, sends, FX parameters, MIDI CCs; a default key
   becomes an edited key as on VIEW > CONFIG), and set each custom control's
-  functions (`mode`), name and colour and the CC layer (`sel`); the console's
+  functions (`mode`) with their targets and options (the mode's own nodes, as WING
+  Edit's CC EDIT sets them: `ch`, `fx` / `par`, `other` / `CCBK`, `area` / `bank`,
+  `pg`, `tgt`, `btn`, `send`, `mgrp`, `dca`, `tag`, `action`, `usbpr`, MIDI `ch` /
+  `cc` / `note`), name and colour and the CC layer (`sel`); the console's
   changes show to clients within a tenth of a second. As on the console, a
   layer's slots are fixed: OFF blanks a slot, and a fader assigned past the end
-  leaves blank slots before it. Only the shown layer has a scroll position, and a new function starts at its first target
-  (clients can't choose it: the WING's tree only has the function). The encoding of
-  fader assignments and the custom controls of `U1`-`U3` (taken as the 4-Channel
-  section's F1-F3 layers) are educated guesses. What Sidecar has no equivalent for
+  leaves blank slots before it. Only the shown layer has a scroll position, and a new
+  function starts at its first target. The encoding of fader assignments is an
+  educated guess. What Sidecar has no equivalent for
   (the cards, the console's hardware, network and status, the other WING models'
   layers, the 4-Channel and button section modes, the input groups Sidecar doesn't
   have (AUX, AES, SC, USB, MOD, USR), a DCA's monitor bus, a channel's TAP SOLO,

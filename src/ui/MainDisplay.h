@@ -34,6 +34,9 @@ public:
     void showHomeTab (HomeTab);
     /** EFFECTS, with slot `slot` open in the device editor. */
     void editFx (int slot);
+    /** OVERVIEW of section `s` on a layer key or fixed bank (a custom
+        control's OVERVIEW PAGE; see ViewPage::showOverviewBank). */
+    void showOverviewPage (LayerSet::Section s, int bank);
     Screen getScreen() const noexcept { return screen; }
 
     /** Selection or structure changed. */
