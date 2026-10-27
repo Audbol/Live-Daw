@@ -36,6 +36,8 @@ public:
     void editFx (int slot);
     /** ROUTING > OUTPUTS with the FX SEND group, at slot `slot`. */
     void showFxSendOutputs (int slot);
+    /** ROUTING on its CHANNELS (0), SOURCES (1) or OUTPUTS (2) tab. */
+    void showRoutingTab (int tab);
     /** OVERVIEW of section `s` on a layer key or fixed bank (a custom
         control's OVERVIEW PAGE; see ViewPage::showOverviewBank). */
     void showOverviewPage (LayerSet::Section s, int bank);

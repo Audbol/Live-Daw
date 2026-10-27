@@ -5091,7 +5091,7 @@ mod tests {
         sync(&mut custom, 2);
         let get = |p: &str| c.get(node(&c, p)).unwrap();
         assert_eq!(get("/$ctl/user/5/2/enc/mode"), Value::str("MIDICC"));
-        assert_eq!(get("/$ctl/user/5/2/enc/$fname"), Value::str("MIDI CC"));
+        assert_eq!(get("/$ctl/user/5/2/enc/$fname"), Value::str("CC 1:7"));
         assert_eq!(get("/$ctl/user/5/2/bd/mode"), Value::str("MIDINP"));
         assert_eq!(get("/$ctl/user/5/2/bu/mode"), Value::str("OTHER"), "CC BANK");
         assert_eq!(get("/$ctl/user/5/2/enc/name"), Value::str("Synth"));
@@ -5103,11 +5103,12 @@ mod tests {
         f("/$ctl/user/1/1/enc/mode", Value::str("FDR")).unwrap();
         f("/$ctl/user/1/1/enc/name", Value::str("Lead")).unwrap();
         f("/$ctl/user/1/1/col", Value::Int(11)).unwrap();
+        f("/$ctl/user/1/1/led", Value::Int(1)).unwrap();
         f("/$ctl/user/user/2/bu/mode", Value::str("MUTE")).unwrap();
         f("/$ctl/user/user/2/bu/name", Value::str("Band")).unwrap();
         f("/$ctl/user/5/2/bd/mode", Value::str("MIDICCT")).unwrap();
         f("/$ctl/user/U2/1/bu/mode", Value::str("SCENES")).unwrap();
-        assert!(matches!(f("/$ctl/user/1/2/bu/mode", Value::str("FSTART")), Err(SetError::Unsupported(_))));
+        assert!(matches!(f("/$ctl/user/1/2/bu/mode", Value::str("SESSIONA")), Err(SetError::Unsupported(_))));
         assert_eq!(f("/$ctl/user/1/1/enc/$fname", Value::str("x")), Err(SetError::ReadOnly));
         f("/$ctl/user/sel", Value::Int(9)).unwrap();
         let r = sync(&mut custom, 2);
@@ -5169,7 +5170,7 @@ mod tests {
         ctl.colour = 9;
         sync(&mut custom);
         assert_eq!(get("/$ctl/user/U4/4/bu/mode"), Some(Value::str("SCENES")));
-        assert_eq!(get("/$ctl/user/U4/4/bu/$fname"), Some(Value::str("SCENE RECALL")));
+        assert_eq!(get("/$ctl/user/U4/4/bu/$fname"), Some(Value::str("|SCENE 2")));
         assert_eq!(get("/$ctl/user/U4/4/bu/tag"), Some(Value::Int(2)));
         assert_eq!(get("/$ctl/user/U4/4/bu/name"), Some(Value::str("SONG 2")));
         assert_eq!(get("/$ctl/user/U4/4/col"), Some(Value::Int(9)));
@@ -5178,6 +5179,7 @@ mod tests {
         f("/$ctl/user/D2/3/bu/mode", Value::str("DCAMUTE")).unwrap();
         f("/$ctl/user/D2/3/bu/dca", Value::Int(7)).unwrap();
         f("/$ctl/user/D2/3/col", Value::Int(4)).unwrap();
+        f("/$ctl/user/D2/3/led", Value::Int(1)).unwrap();
         assert!(sync(&mut custom).controls);
         let mm = custom.control(COMPACT_MAIN_MATRIX_LAYER, 0).unwrap();
         assert_eq!((mm.upper.category, mm.name.as_str()), (1, "PA"));
@@ -5278,7 +5280,7 @@ mod tests {
         assert_eq!(get("/$ctl/user/U2/3/bu/CCBK"), Some(Value::str("5")));
         assert_eq!(get("/$ctl/user/3/4/bu/area"), Some(Value::str("R")));
         assert_eq!(get("/$ctl/user/4/1/enc/send"), Some(Value::str("BUS7")));
-        assert_eq!(get("/$ctl/user/1/2/bu/$fname"), Some(Value::str("CH INSERT PRE ON/OFF")));
+        assert_eq!(get("/$ctl/user/1/2/bu/$fname"), Some(Value::str("|5 INS1")));
         // The factory DAW layers' DAWBTN: btn, the same node as the sweep's.
         assert_eq!(get("/$ctl/user/daw1/1/bu/btn"), Some(Value::str("T1")));
         assert_eq!(get("/$ctl/user/daw1/1/bd/btn"), Some(Value::str("T4")));
@@ -5299,6 +5301,132 @@ mod tests {
         f("/$ctl/user/5/1/bu/mode", Value::str("FXPAR")).unwrap();
         f("/$ctl/user/5/1/bu/par", Value::Int(12)).unwrap();
         assert_eq!(get("/$ctl/user/5/1/bu/par"), Some(Value::Int(12)));
+    }
+
+    #[test]
+    fn fader_start_daw_vpot_keys_lighting_encoders_and_function_names() {
+        use livedaw_session::custom::{
+            CcFunction, CustomControls, DAW_VPOT_KEY_CATEGORY, ENCODER_LIGHTING_CATEGORY, FADER_SPILL_CATEGORY,
+            FADER_START_CATEGORY,
+        };
+        use livedaw_session::layers::LayerSet;
+        let e = engine();
+        let st = WingState::default();
+        let c = Console::new(&e, &st);
+        let (mut layers, mut custom) = (LayerSet::default(), CustomControls::default());
+        let mut sync = |custom: &mut CustomControls| surface::sync(&st, &e, &mut layers, custom, 0);
+        sync(&mut custom);
+        let get = |p: &str| c.get(node(&c, p)).unwrap();
+        let f = |p: &str, v: Value| c.set(node(&c, p), &v);
+        let mtx3 = StripKind::Matrix as i32 * 100_000 + e.strips(StripKind::Matrix)[2].id();
+
+        // FADER START on MTX 3 (strip 71), DAW V-POTS M7 turned on a key, a
+        // matrix spill, and the encoders' OTHER (GLOW BRIGHTNESS).
+        f("/$ctl/user/1/1/bu/mode", Value::str("FSTART")).unwrap();
+        f("/$ctl/user/1/1/bu/ch", Value::Int(71)).unwrap();
+        f("/$ctl/user/1/1/bd/mode", Value::str("DAWENC")).unwrap();
+        f("/$ctl/user/1/1/bd/enc", Value::str("M7")).unwrap();
+        f("/$ctl/user/1/2/bu/mode", Value::str("SPILL")).unwrap();
+        f("/$ctl/user/1/2/bu/tgt", Value::str("MTX4")).unwrap();
+        f("/$ctl/user/1/2/bu/area", Value::str("R")).unwrap();
+        f("/$ctl/user/1/2/enc/mode", Value::str("OTHER")).unwrap();
+        f("/$ctl/user/1/2/enc/other", Value::str("BRIGLOW")).unwrap();
+        assert!(sync(&mut custom).controls);
+        let c1 = custom.control(0, 0).unwrap();
+        assert_eq!(c1.upper, CcFunction { category: FADER_START_CATEGORY, target: mtx3, option: 0 });
+        assert_eq!(c1.lower, CcFunction { category: DAW_VPOT_KEY_CATEGORY, target: 24 + 6, option: 0 });
+        let c2 = custom.control(0, 1).unwrap();
+        assert_eq!(c2.upper, CcFunction { category: FADER_SPILL_CATEGORY, target: 603, option: 2 });
+        assert_eq!(c2.encoder, CcFunction { category: ENCODER_LIGHTING_CATEGORY, target: 0, option: 1 });
+        assert_eq!(get("/$ctl/user/1/1/bu/ch"), Value::Int(71));
+        assert_eq!(get("/$ctl/user/1/1/bd/enc"), Value::str("M7"));
+        assert_eq!(get("/$ctl/user/1/2/bu/tgt"), Value::str("MTX4"));
+        assert_eq!(get("/$ctl/user/1/2/enc/other"), Value::str("BRIGLOW"));
+
+        // The function names, as the console writes them (WING Edit 3.3.4).
+        assert_eq!(get("/$ctl/user/1/1/bu/$fname"), Value::str("|MX3 START"));
+        assert_eq!(get("/$ctl/user/1/1/bd/$fname"), Value::str("|DAW M7"));
+        assert_eq!(get("/$ctl/user/1/2/bu/$fname"), Value::str("|MTX4 > R"));
+        assert_eq!(get("/$ctl/user/1/2/enc/$fname"), Value::str("GLOW"));
+        assert_eq!(get("/$ctl/user/1/3/bu/$fname"), Value::str(""), "not assigned");
+        // The factory DAW layers (the dump of a factory-initialized WING).
+        for (path, name) in [
+            ("daw1/1/bu", "|DAW STOP"),
+            ("daw1/1/bd", "|DAW REWIND"),
+            ("daw1/2/bd", "|DAW FAST FWD"),
+            ("daw1/3/bd", "|DAW *TIME"),
+            ("daw1/4/bd", "|DAW UNDO"),
+            ("daw3/3/bd", "|DAW READ/OFF"),
+            ("daw4/1/bu", "|DAW *NAME"),
+            ("daw4/2/bd", "|DAW V-POTS"),
+            ("daw4/3/bd", "|DAW RECRDY"),
+            ("daw4/4/bu", "|DAW ZOOM"),
+        ] {
+            assert_eq!(get(&format!("/$ctl/user/{path}/$fname")), Value::str(name), "{path}");
+        }
+        for (mode, field, value, name) in [
+            ("MUTE", "ch", Value::Int(1), "|1 MUTE"),
+            ("SOLO", "ch", Value::Int(51), "|B3 SOLO"),
+            ("SOF", "ch", Value::Int(49), "|B1 |SOF"),
+            ("INS1", "ch", Value::Int(41), "|A1 INS1"),
+            ("MGRP", "mgrp", Value::str("MGRP.8"), "|MGRP MGRP.8"),
+            ("DCAMUTE", "dca", Value::Int(2), "|DCA "),
+            ("FXPAR", "fx", Value::str("FX3"), "|FX3 MIX"),
+            ("CHPAGE", "ch", Value::Int(49), "|B1 |HOME"),
+            ("FDRPAGE", "area", Value::str("L"), "|FDR L/1"),
+            ("VIEWPAGE", "area", Value::str("C"), "|VIEW C/1"),
+            ("OTHER", "other", Value::str("TBA"), "TALK A"),
+            ("OTHER", "other", Value::str("FDROFF"), "FDR -oo"),
+            ("SHOWCTL", "action", Value::str("GONEXT"), "|SCN GONEXT"),
+            ("SCENES", "tag", Value::Int(1), "|SCENE 1"),
+            ("MIDICCP", "cc", Value::Int(7), "CC 1:7"),
+            ("MIDIPGM", "ch", Value::Int(2), "PGM 2:8"), // a MIDI key keeps its number (CC 7: program 8)
+            ("USBPR", "usbpr", Value::str("RSTOP"), "|REC STOP"),
+            ("DAWBTN", "btn", Value::str("OT4"), "|DAW *TIME"),
+            ("PAGE", "pg", Value::str("SRC"), "SRC"),
+            ("PAGE", "pg", Value::str("2TRK"), "2TRK"),
+        ] {
+            f("/$ctl/user/2/1/bu/mode", Value::str(mode)).unwrap();
+            f(&format!("/$ctl/user/2/1/bu/{field}"), value).unwrap();
+            sync(&mut custom);
+            assert_eq!(get("/$ctl/user/2/1/bu/$fname"), Value::str(name), "{mode}");
+        }
+        // GLOBAL PAGE's SRC, OUTS and 2TRK are ROUTING's SOURCES, OUTPUTS and the USB recorder.
+        for (pg, option) in [("CHINS", 3), ("SRC", 14), ("OUTS", 15), ("2TRK", 16)] {
+            f("/$ctl/user/2/1/bu/pg", Value::str(pg)).unwrap();
+            sync(&mut custom);
+            assert_eq!(custom.control(1, 0).unwrap().upper.option, option, "{pg}");
+            assert_eq!(get("/$ctl/user/2/1/bu/pg"), Value::str(pg));
+        }
+        for (mode, name) in
+            [("FDR", "|1 FDR"), ("PAN", "|1 PAN"), ("SSND", "SEND |B1"), ("FSND", "|1 -> B1"), ("MIDICC", "CC 1:0")]
+        {
+            f("/$ctl/user/2/2/enc/mode", Value::str(mode)).unwrap();
+            sync(&mut custom);
+            assert_eq!(get("/$ctl/user/2/2/enc/$fname"), Value::str(name), "{mode}");
+        }
+
+        // COLOR > LIGHT (`led`): the colour stays while the light is off.
+        f("/$ctl/user/3/1/col", Value::Int(5)).unwrap();
+        sync(&mut custom);
+        assert_eq!((custom.control(2, 0).unwrap().colour, get("/$ctl/user/3/1/led")), (-5, Value::Int(0)));
+        f("/$ctl/user/3/1/led", Value::Int(1)).unwrap();
+        sync(&mut custom);
+        assert_eq!(custom.control(2, 0).unwrap().colour, 5);
+        f("/$ctl/user/U2/1/led", Value::Int(1)).unwrap();
+        f("/$ctl/user/3/1/led", Value::Int(0)).unwrap();
+        sync(&mut custom);
+        assert_eq!((custom.control(2, 0).unwrap().colour, get("/$ctl/user/3/1/col")), (-5, Value::Int(5)));
+        assert_eq!(custom.control(25, 0).unwrap().colour, 1, "a light on without a colour: colour 1");
+        // spidx 49-56: a matrix's spill, both ways.
+        use livedaw_session::layers::{SpillKind, LEFT};
+        f("/$ctl/layer/L/spidx", Value::Int(51)).unwrap();
+        surface::sync(&st, &e, &mut layers, &mut custom, 0);
+        assert_eq!(layers.spill(LEFT), Some(SpillKind::Matrix(2)));
+        assert_eq!(get("/$ctl/layer/L/$spill/name"), Value::str("MTX 3 SPILL"));
+        layers.start_spill(LEFT, SpillKind::Matrix(7));
+        surface::sync(&st, &e, &mut layers, &mut custom, 0);
+        assert_eq!(get("/$ctl/layer/L/spidx"), Value::Int(56));
     }
 
     #[test]
@@ -5381,9 +5509,9 @@ mod tests {
         assert_eq!(cov.total, 79326, "{}", cov.report());
         // Everything answers but DAW CONFIGURATION (see `unbound_feature`).
         assert_eq!(cov.mapped, 79325, "{}", cov.report());
-        // 85 settings: the COMPACT's mfdr, cscmode, autosel_CMPCT, mfdrkeep, mainspill,
+        // 89 settings: the COMPACT's mfdr, cscmode, autosel_CMPCT, mfdrkeep, busspill, mainspill,
         // mtxspill and dcacc and the surface lock (cnslock) among them.
-        assert_eq!((cov.settings, cov.stored), (85, 5528), "{}", cov.report());
+        assert_eq!((cov.settings, cov.stored), (89, 5424), "{}", cov.report());
         for (g, (m, t)) in &cov.by_group {
             assert!(m == t || g == "/$ctl/daw", "{g}: {m} of {t}");
         }
@@ -5391,7 +5519,7 @@ mod tests {
         // The engine-backed share: everything but the settings and the stored values.
         // (The COMPACT's key sets count here on either model; the routing: every
         // bus to every other bus, USR 1-56 and their user/..., the matrices' dir/in.)
-        assert_eq!(cov.mapped - cov.settings - cov.stored, 73712);
+        assert_eq!(cov.mapped - cov.settings - cov.stored, 73812);
         let b = bindings();
         let row = |p: &str| match schema().resolve(p, &NoModels) {
             Some(Node::Row(r)) => r as usize,
@@ -5458,7 +5586,7 @@ mod tests {
                 }
             }
         }
-        assert!(checked > 5200, "{checked}");
+        assert!(checked > 5100, "{checked}");
         // Unbound parameters answer the factory value too (where the strip is missing).
         let e8 = Engine::new(0);
         e8.set_num_channels(8);

@@ -349,8 +349,10 @@ void FaderStrip::bindControls()
 void FaderStrip::pressSelect()
 {
     // DCA SPILL: selecting a DCA shows its strips on the left section (the
-    // center for a DCA on the right section); again ends the spill.
-    if (dca >= 0 && ctx.settings.getBoolValue (uiprefs::dcaSpill, false))
+    // center for a DCA on the right section); again ends the spill. The
+    // COMPACT's is DCA SELECT SPILL (its DCA SPILL ON SELECT is the DCA keys').
+    const auto* spillKey = ctx.consoleModel == ConsoleModel::Compact ? uiprefs::compactDcaSelectSpill : uiprefs::dcaSpill;
+    if (dca >= 0 && ctx.settings.getBoolValue (spillKey, false))
     {
         toggleSpill (ctx, section, { LayerSet::Spill::Kind::Dca, dca, {} });
         return;

@@ -2076,11 +2076,18 @@ void FadersViewPage::paintContent (juce::Graphics& g)
                 {
                     auto bar = gr.removeFromTop (gr.getHeight() / (k == 0 ? 2.0f : 1.0f)).reduced (0.0f, 1.0f);
                     auto& slot = k == 0 ? s.params.gate : s.params.dynamics;
-                    const bool isGate = models::model (models::Dynamics, slot.model.load()).token == "GATE";
+                    const auto& token = models::model (models::Dynamics, slot.model.load()).token;
+                    const bool isGate = token == "GATE";
                     auto square = bar.removeFromLeft (bar.getHeight());
                     if (k == 0 && isGate)
                     {
                         g.setColour (slot.on.load() && ! s.meters.gateActive.load() ? Colours::meterGreen : Colours::screenPanel);
+                        g.fillRect (square.reduced (1.0f));
+                    }
+                    // AUTO RIDER in the COMP slot: a square shows while it rides (manual 5.8 p. 63).
+                    if (k == 1 && token == "RIDE")
+                    {
+                        g.setColour (slot.on.load() && std::abs (s.meters.dynReductionDb.load()) > 0.1f ? Colours::meterGreen : Colours::screenPanel);
                         g.fillRect (square.reduced (1.0f));
                     }
                     bar.removeFromLeft (2.0f);
@@ -2235,6 +2242,15 @@ std::vector<SendsViewPage::Destination> SendsViewPage::destinations() const
         for (int i = 0; i < kNumMatrices; ++i)
             d.push_back ({ StripKind::Matrix, i });
     return d;
+}
+
+void SendsViewPage::destinationChosen()
+{
+    // SEND PAGE ACTIVATES SOLO (SETUP > AUDIO, /$ctl/cfg/sfdr2solo: "only
+    // applicable from the SENDS page"): the destination chosen is soloed.
+    if (ctx.settings.getBoolValue (uiprefs::sendPageActivatesSolo, false))
+        if (auto* dest = destinationStrip())
+            dest->params.solo = true;
 }
 
 SendsViewPage::Destination SendsViewPage::destination() const
@@ -2459,6 +2475,7 @@ void SendsViewPage::mouseUp (const juce::MouseEvent& e)
         {
             group = (int) i;
             chosen = 0;
+            destinationChosen();
             repaint();
             return;
         }
@@ -2466,6 +2483,7 @@ void SendsViewPage::mouseUp (const juce::MouseEvent& e)
         if (destTiles[i].contains (pos) && i < destinations().size())
         {
             chosen = (int) i;
+            destinationChosen();
             repaint();
             return;
         }

@@ -149,6 +149,8 @@ public:
     /** OUTPUTS with the FX SEND source group, at FX slot `slot`'s send (the
         EXTERNAL EFFECT's SEND, manual 11.11 p. 164). */
     void showFxSends (int slot);
+    /** CHANNELS (0), SOURCES (1) or OUTPUTS (2). */
+    void showTab (int tab);
 
 private:
     using Group = routing::Group;

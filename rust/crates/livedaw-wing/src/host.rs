@@ -119,10 +119,13 @@ pub const HOST_SETTINGS: &[HostSetting] = &[
     s("/$ctl/cfg/mfdr", "ui.compactMainFader", "MAIN.1", Enc::Item),
     s("/$ctl/cfg/cscmode", "ui.compactKeyMode", "BUS", Enc::Item),
     // SETUP > SURFACE on a COMPACT (WING manual 5.5): KEEP MAIN FADER (the keys
-    // don't move fader 13); MAIN SPILL and MATRIX SPILL, which of push and hold
-    // spills a MAIN key's main and shows a MATRIX key's sends (factory: hold for
-    // both); USE DCA BUTTONS 1-16 AS CC, the DCA keys play the sets DCA 1-4 .. 13-16.
+    // don't move fader 13); BUS, MAIN and MATRIX SPILL, whether a key's press
+    // spills (and its hold turns on Sends on Fader) or the other way round
+    // (factory: BUS and MAIN send on a press, MATRIX spills); USE DCA BUTTONS
+    // 1-16 AS CC, the DCA keys play the sets DCA 1-4 .. 13-16. DCA SPILL ON
+    // SELECT is `dcaspill` above (a DCA key's press spills, else it shows the DCA).
     s("/$ctl/cfg/mfdrkeep", "ui.compactKeepMainFader", "0", Enc::Bool),
+    s("/$ctl/cfg/busspill", "ui.compactBusSpill", "0", Enc::Bool),
     s("/$ctl/cfg/mainspill", "ui.compactMainSpill", "0", Enc::Bool),
     s("/$ctl/cfg/mtxspill", "ui.compactMatrixSpill", "1", Enc::Bool),
     s("/$ctl/cfg/dcacc", "ui.compactDcaCustom", "0", Enc::Bool),
@@ -140,6 +143,11 @@ pub const HOST_SETTINGS: &[HostSetting] = &[
     s("/$ctl/cfg/lights/rgbleds", "setup.brightness.colorLed", "25", Enc::Int),
     s("/$ctl/cfg/lights/chlcds", "setup.brightness.scribble", "60", Enc::Int),
     s("/$ctl/cfg/lights/chlcdctr", "setup.brightness.scrCont", "50", Enc::Int),
+    // PATCH, GLOW and LAMP (no such lights here: kept, and the encoders'
+    // OTHER BRIPATCH, BRIGLOW, BRILAMP set them).
+    s("/$ctl/cfg/lights/patch", "setup.brightness.patch", "0", Enc::Int),
+    s("/$ctl/cfg/lights/glow", "setup.brightness.glow", "0", Enc::Int),
+    s("/$ctl/cfg/lights/lamp", "setup.brightness.lamp", "0", Enc::Int),
     // SETUP > REMOTE > MIDI REMOTE CONTROL: OFF, DIN, USB.
     s("/$ctl/midi/enchctl", "midi.enchctl", "0", Enc::Index),
     s("/$ctl/midi/enfxctl", "midi.enfxctl", "0", Enc::Index),
@@ -174,9 +182,10 @@ pub const HOST_SETTINGS: &[HostSetting] = &[
     s("/cards/wlive/auto_rec", "recorder.autoRec", "0", Enc::Index),
     s("/cards/wlive/1/cfg/playmode", "recorder.playMode", "0", Enc::Index),
     s("/cards/wlive/2/cfg/playmode", "recorder.playMode", "0", Enc::Index),
-    // SETUP rows of features Sidecar doesn't have (custom control tap keys that
-    // don't flash, a mouse, SEND PAGE solo, remote locks): kept as settings
-    // (`setup.inert.*`), shown and switched as on the console.
+    // Under the keys they had while their rows did nothing (`setup.inert.*`):
+    // TAP TEMPO FLASH, SEND PAGE ACTIVATES SOLO (VIEW > SENDS solos the
+    // destination chosen); and features Sidecar doesn't have (a mouse, remote
+    // locks), kept as settings, shown and switched as on the console.
     s("/$ctl/$globals/tapflash", "setup.inert.tapTempoFlash", "2", Enc::Index),
     s("/$ctl/$globals/mousetchdis", "setup.inert.mouseDisablesTouch", "0", Enc::Bool),
     s("/$ctl/cfg/sfdr2solo", "setup.inert.sendPageActivatesSolo", "0", Enc::Bool),

@@ -21,14 +21,16 @@ namespace compact = layout::compact;
     source; KEEP MAIN FADER (/$ctl/cfg/mfdrkeep) leaves fader 13 alone.
     - BUS: BUS 1-16; a press shows the channels' sends to the bus on the
       faders (SOF), held spills the bus (the sources sending to it) [WING
-      manual 4.2, a WING COMPACT's owner].
+      manual 4.2, a WING COMPACT's owner]; BUS SPILL swaps them.
     - MAIN MATRIX: MAIN 1-4 on keys 1-4, the custom control set M/M on keys
       5-8, MATRIX 1-8 on keys 9-16. A MAIN key pressed shows the channels'
       sends to the main on the faders (SOF), held spills the main (the
-      strips feeding it); a MATRIX key, pressed or held, shows the sends to
-      the matrix. MAIN SPILL swaps a MAIN key's press and hold (layout::
-      compact::mainMatrixActions).
-    - DCA: DCA 1-16; a press spills the DCA's members onto the faders. With
+      strips feeding it); MAIN SPILL swaps them. A MATRIX key does what
+      MATRIX SPILL says: on (the factory setting), a press spills the matrix
+      (the strips sending to it) and a hold shows its sends; off, the other
+      way round (layout::compact::mainMatrixActions).
+    - DCA: DCA 1-16; a press puts the DCA on fader 13, or with DCA SPILL ON
+      SELECT (/$ctl/cfg/dcaspill) spills its members onto the faders. With
       USE DCA BUTTONS 1-16 AS CC (/$ctl/cfg/dcacc) the keys are the custom
       control sets D1-D4. A DCA key pressed, then fader 13's SELECT held:
       the fader section's SELECT keys put their strips in the DCA or take
@@ -64,7 +66,7 @@ private:
     compact::KeyMode keyMode() const;
     void setKeyMode (compact::KeyMode);
     void pressKey (int key, bool held);
-    /** A MAIN or MATRIX key's spill or sends (none for a matrix spill). */
+    /** A BUS, MAIN or MATRIX key's spill or sends. */
     cc::Function actionFunction (int key, compact::KeyAction) const;
     /** Key `key`'s custom control in the current mode, if it plays one. */
     std::optional<compact::KeyControl> keyControl (int key) const;
@@ -75,6 +77,11 @@ private:
     /** The strip a fader 13 assignment controls (nullptr for a DCA, OFF or one the console lacks). */
     Strip* mainFaderStrip (const compact::MainFader&) const;
     bool keyLit (int key) const;
+    /** DAW remote control is on: the mode keys pick DAW 1-4, keys 1-4 are the
+        layer's upper keys and keys 5-8 its lower keys. */
+    bool dawKeys() const;
+    /** Key `key`'s control (0-3) and key in the DAW layer, in DAW mode. */
+    std::optional<std::pair<int, cc::Slot>> dawKeyControl (int key) const;
     juce::String keyName (int key) const;
     /** The colour of the custom control on key `key` (transparent: none). */
     juce::Colour keyColour (int key) const;
@@ -93,6 +100,8 @@ private:
     int selectedKey = -1;
     /** The DCA key last pressed in DCA mode (the DCA fader 13's SELECT assigns to), or -1. */
     int assignDca = -1;
+    /** In DAW mode (DAW LAYER on a custom control key): the DAW layer the keys play (0-3, DAW 1-4). */
+    int dawLayer = 0;
     bool viewOpened = false;
 };
 

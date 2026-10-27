@@ -27,12 +27,21 @@ namespace
     const HomeTab pageTabs[] = { HomeTab::Home, HomeTab::Input, HomeTab::Filter, HomeTab::Gate, HomeTab::Eq, HomeTab::Dynamics,
                                  HomeTab::PreInsert, HomeTab::PostInsert, HomeTab::Main, HomeTab::Sends };
     const char* const pageNames[] = { "HOME", "INPUT", "FILTER", "GATE", "EQ", "DYNAMICS", "INSERT PRE", "INSERT POST", "MAIN", "SENDS" };
-    const Screen globalScreens[] = { Screen::Home, Screen::Effects, Screen::Meters, Screen::Routing, Screen::Setup, Screen::Library,
-                                     Screen::Overview, Screen::Faders, Screen::Sends, Screen::Config, Screen::MuteGroups, Screen::Recorder };
-    const char* const globalNames[] = { "HOME", "EFFECTS", "METERS", "ROUTING", "SETUP", "LIBRARY", "MIXER VIEW", "FADER VIEW", "SENDS VIEW",
-                                        "FADER LAYER", "MUTE GROUPS", "WING LIVE", "CUSTOM CONTROLS", "MONITOR" };
-    constexpr int kNumGlobalPages = 14;
-    const char* const showControls[] = { "SCENE GO", "PREV", "NEXT", "GO PREV", "GO NEXT" };
+    // GLOBAL PAGE, by code (append-only; custom.rs): 3 is ROUTING's CHANNELS (the
+    // WING's CHANNEL INPUTS), 14 / 15 its SOURCES / OUTPUTS, 16 the USB recorder.
+    const Screen globalScreens[] = { Screen::Home,  Screen::Effects, Screen::Meters,     Screen::Routing,  Screen::Setup,      Screen::Library,
+                                     Screen::Overview, Screen::Faders, Screen::Sends,   Screen::Config,   Screen::MuteGroups, Screen::Recorder,
+                                     Screen::Setup, Screen::Setup,   Screen::Routing,    Screen::Routing,  Screen::UsbRecorder };
+    const char* const globalNames[] = { "HOME",          "EFFECTS",        "METERS",       "CHANNEL INPUTS", "SETUP",         "LIBRARY",
+                                        "MIXER VIEW",    "FADER VIEW",     "SENDS VIEW",   "FADER LAYER",    "MUTE GROUPS",   "WING LIVE",
+                                        "CUSTOM CONTROLS", "MONITOR",      "SOURCE SETUP", "OUTPUT ROUTING", "USB PLAY/REC" };
+    constexpr int kNumGlobalPages = 17;
+    /** CC EDIT's PAGE list in WING Edit's order (FX, MTRS, CHINS, SRC, OUTS, SETUP,
+        LIB, CUSTCTL, MON, 2TRK, WLIVE, MIXV, FDRV, SENDV, MGRP, LAYER), Sidecar's HOME last. */
+    constexpr int globalOrder[] = { 1, 2, 3, 14, 15, 4, 5, 12, 13, 16, 11, 6, 7, 8, 10, 9, 0 };
+    static_assert (std::size (globalScreens) == kNumGlobalPages && std::size (globalNames) == kNumGlobalPages
+                   && std::size (globalOrder) == kNumGlobalPages);
+    const char* const showControls[] = { "SCENE GO", "PREV SCENE", "NEXT SCENE", "GO PREV SCENE", "GO NEXT SCENE" };
     // OTHER, by code (OtherFunction; WING Edit's names).
     const char* const otherNames[] = { "MONITOR DIM",      "MONITOR MONO",   "MONITOR SWAP",    "MONITOR MUTE",   "FADER -oo",
                                        "FADER -10 dB",     "FADER 0 dB",     "AUTOMIX X",       "AUTOMIX Y",      "CHANNEL PREV",
@@ -42,9 +51,16 @@ namespace
                                        "CH METER TAP",     "BUS METER TAP",  "MAIN METER TAP",  "MTX METER TAP",  "DCA METER TAP" };
     constexpr int kNumOthers = kNumOtherFunctions;
     static_assert (std::size (otherNames) == kNumOthers);
-    // MONITORING (encoders): MONITOR LEVEL (the speakers), DIM AMOUNT, PHONES LEVEL.
-    const char* const monitorNames[] = { "MONITOR LEVEL", "DIM AMOUNT", "PHONES LEVEL" };
-    constexpr int kNumMonitorFunctions = 3;
+    // MONITORING (encoders), by code: the speakers' (MONITOR) level, DIM AMOUNT
+    // (Sidecar's), the PHONES level and the TALKBACK level; CC EDIT lists them
+    // in WING Edit's order (PHONES, SPEAKERS, TALKBACK), DIM AMOUNT last.
+    const char* const monitorNames[] = { "SPEAKERS", "DIM AMOUNT", "PHONES", "TALKBACK" };
+    constexpr int kNumMonitorFunctions = 4;
+    constexpr int monitorOrder[] = { 2, 0, 3, 1 };
+    // OTHER (encoders): the WING's lighting controls (BRILAMP, BRIGLOW, BRIPATCH).
+    const char* const lightingNames[] = { "LAMP BRIGHTNESS", "GLOW BRIGHTNESS", "PATCH BRIGHTNESS" };
+    const char* const lightingIds[] = { "lamp", "glow", "patch" };
+    constexpr int kNumLightingFunctions = 3;
     // OVERVIEW PAGE's areas (the WING's L, C, R, CMPCT, RCK, EXT, VRT).
     const char* const areaNames[kNumOverviewAreas] = { "LEFT", "CENTER", "RIGHT", "COMPACT", "RACK", "EXTENDER", "VIRTUAL" };
 
@@ -82,6 +98,19 @@ namespace
                && TapTempo::timeParam (ctx.engine.getFx().getModel (f.target)) == f.option;
     }
 
+    /** A DAW V-POTS key: a pushed rotary is pushed while the key is held, a
+        turned one turns a step clockwise per press. */
+    void pressDawVpot (UiContext& ctx, int target, bool down)
+    {
+        auto* d = midiui::daw (ctx);
+        if (d == nullptr || ! juce::isPositiveAndBelow (target, kNumDawVpotKeys))
+            return;
+        if (target < kFirstDawVpotTurn)
+            d->pressVpotFunction (target, down);
+        else if (down)
+            d->turnVpotFunction (target == kNumDawVpotKeys - 1 ? DawRemote::kNumVpotFunctions - 1 : target - kFirstDawVpotTurn, 1);
+    }
+
     /** Per FX slot: the taps, and when its TIME last changed (TAP TEMPO FLASH 8X). */
     struct TapState
     {
@@ -95,13 +124,19 @@ namespace
         return states[(size_t) juce::jlimit (0, kNumFx - 1, slot)];
     }
     // USB PLAY/REC: the USB recorder / player's keys (the option).
-    const char* const usbNames[] = { "PLAY", "PAUSE", "STOP", "PREV", "NEXT", "REC", "REC PAUSE", "REC STOP", "NEW FILE", "REPEAT" };
-    constexpr int kNumUsbFunctions = 10;
+    // By code (append-only; custom.rs USB_PLAY_REC_FUNCTIONS), WING Edit's names.
+    const char* const usbNames[] = { "PLAY (PLAYER)", "PAUSE (PLAYER)", "STOP (PLAYER)", "PREV (PLAYER)", "NEXT (PLAYER)", "RECORD",
+                                     "REC PAUSE",     "REC STOP",       "REC NEW FILE",  "REPEAT",        "TOGGLE PLAY/STOP", "TOGGLE PLAY/PAUSE" };
+    constexpr int kNumUsbFunctions = 12;
+    static_assert (std::size (usbNames) == kNumUsbFunctions);
+    /** CC EDIT's list in WING Edit's order (PSTOP, PLAY, PPAUSE, PPLST, PPLPS, PNEXT,
+        PPREV, RSTOP, RECORD, RPAUSE, RNEW), Sidecar's REPEAT last. */
+    constexpr int usbOrder[] = { 2, 0, 1, 10, 11, 4, 3, 7, 5, 6, 8, 9 };
 
     Strip* stripOf (UiContext& ctx, int target) { return state::findStrip (ctx.engine, decodeStrip (target)); }
 
     /** FADER SPILL's kinds, in the order of their codes (kind * 100 + index). */
-    constexpr int kNumSpillKinds = 6;
+    constexpr int kNumSpillKinds = 7;
 
     /** FADER SPILL: the spill of a target, kind * 100 + index (custom.rs);
         SEL SENDS spills the selected strip's sends (none without one). */
@@ -121,7 +156,6 @@ namespace
         }
         return spill;
     }
-    const char* const spillKindNames[] = { "DCA", "BUS", "FX", "AUTOMIX", "SEL SENDS", "MAIN" };
 
     /** Every strip in CHANNEL SELECT order. */
     std::vector<Strip*> allStrips (UiContext& ctx)
@@ -167,7 +201,7 @@ void Assignments::reload()
             c.upper = parseFunction (e->getStringAttribute ("bu"));
             c.lower = parseFunction (e->getStringAttribute ("bd"));
             c.name = e->getStringAttribute ("name");
-            c.colour = juce::jlimit (0, 18, e->getIntAttribute ("colour"));
+            c.colour = juce::jlimit (-18, 18, e->getIntAttribute ("colour"));
         }
     ++revision;
 }
@@ -227,11 +261,13 @@ int numCategories (Slot s)
 juce::String categoryName (Slot s, int category)
 {
     static const char* const encoders[] = { "NOT ASSIGNED", "FADER", "PAN", "DCA FADER", "SEL BUS SEND", "FIXED BUS SEND",
-                                            "FX PARAMETER", "MONITORING", "DAW V-POTS", "MIDI CC" };
+                                            "FX PARAMETER", "MONITORING", "DAW V-POTS", "MIDI CC", "OTHER" };
+    static_assert (std::size (encoders) == kNumEncoderCategories);
     static const char* const buttons[] = { "NOT ASSIGNED", "MUTE", "SOLO", "DCA MUTE", "MGRP", "SENDS ON FDR", "CH PAGE", "GLOBAL PAGE",
                                            "FADER PAGE", "SHOW CONTROL", "SCENE RECALL", "OTHER", "FADER SPILL", "DAW BUTTONS",
                                            "MIDI CC/NOTE/PGM", "USB PLAY/REC", "SD RECORDER", "GPIO", "CC BANK",
-                                           "CH INSERT PRE ON/OFF", "CH INSERT POST ON/OFF", "FX PAR", "OVERVIEW PAGE" };
+                                           "CH INSERT PRE ON/OFF", "CH INSERT POST ON/OFF", "FX PAR", "OVERVIEW PAGE",
+                                           "FADER START", "DAW V-POTS" };
     static_assert (std::size (buttons) == kNumButtonCategories);
     if (s == Slot::Encoder)
         return juce::isPositiveAndBelow (category, (int) std::size (encoders)) ? encoders[category] : "";
@@ -240,13 +276,13 @@ juce::String categoryName (Slot s, int category)
 
 std::vector<int> categoryOrder (Slot s)
 {
-    // WING Edit 3.3's FUNCTION lists (its DAW V-POTS on a key, FADER START and
-    // the SD recorders' sessions and markers aren't here).
+    // WING Edit 3.3's FUNCTION lists (the SD recorders' sessions and markers aren't here).
     if (s == Slot::Encoder)
-        return { EncNone, EncFader, EncPan, EncDcaFader, EncSelBusSend, EncFixedBusSend, EncFxParameter, EncDawVpot, EncMonitoring, EncMidiCc };
-    return { BtnNone,        BtnMute,        BtnSolo,        BtnInsertPre,    BtnInsertPost, BtnMuteGroup,   BtnDcaMute,     BtnSendsOnFader,
-             BtnFaderSpill,  BtnFxParameter, BtnDawButtons,  BtnChannelPage,  BtnGlobalPage, BtnFaderPage,   BtnOverviewPage, BtnOther,
-             BtnCcBank,      BtnGpio,        BtnShowControl, BtnSceneRecall,  BtnMidi,       BtnUsbPlayer,   BtnSdRecorder };
+        return { EncNone, EncFader, EncPan, EncDcaFader, EncSelBusSend, EncFixedBusSend, EncFxParameter, EncDawVpot, EncMonitoring, EncLighting, EncMidiCc };
+    return { BtnNone,        BtnMute,        BtnSolo,        BtnInsertPre,    BtnInsertPost,  BtnMuteGroup,   BtnDcaMute,    BtnSendsOnFader,
+             BtnFaderSpill,  BtnFxParameter, BtnDawButtons,  BtnDawVpot,      BtnChannelPage, BtnGlobalPage,  BtnFaderPage,  BtnOverviewPage,
+             BtnOther,       BtnCcBank,      BtnGpio,        BtnFaderStart,   BtnShowControl, BtnSceneRecall, BtnMidi,       BtnUsbPlayer,
+             BtnSdRecorder };
 }
 
 const std::vector<int>& otherOrder()
@@ -307,7 +343,8 @@ juce::Colour categoryColour (Slot s, int category)
         case BtnSendsOnFader: return salmon;
         case BtnFaderSpill:   return spillRed;
         case BtnFxParameter:  return fxMagenta;
-        case BtnDawButtons:   return dawGold;
+        case BtnDawButtons:
+        case BtnDawVpot:      return dawGold;
         default:              return juce::Colours::black;
     }
 }
@@ -358,6 +395,8 @@ KnobBinding bindEncoder (UiContext& ctx, const Function& f)
         case EncMonitoring:
             if (f.option == 2)
                 return bindLinear ("PHONES", ctx.engine.phones.levelDb, -60.0f, 10.0f, " dB", 1, 0.0f);
+            if (f.option == 3)
+                return bindLinear ("TALKBACK", ctx.engine.talk.levelDb, -60.0f, 10.0f, " dB", 1, 0.0f);
             return f.option == 1 ? bindLinear ("DIM", ctx.engine.monitorDimDb, 0.0f, 40.0f, " dB", 0, 20.0f)
                                  : bindLinear ("MONITOR", ctx.engine.monitorLevelDb, -60.0f, 10.0f, " dB", 1, 0.0f);
         case EncDawVpot:
@@ -366,10 +405,35 @@ KnobBinding bindEncoder (UiContext& ctx, const Function& f)
             break;
         case EncMidiCc:
             return midiui::bindMidiCc (ctx, juce::jlimit (0, 15, f.target), juce::jlimit (0, 127, f.option));
+        case EncLighting:
+        {
+            // SETUP > GENERAL's LAMP, GLOW and PATCH tiles (percent).
+            const int option = juce::jlimit (0, kNumLightingFunctions - 1, f.option);
+            const auto key = juce::String (prefs::brightnessPrefix) + lightingIds[option];
+            auto* settings = &ctx.settings;
+            KnobBinding b;
+            b.label = lightingNames[option];
+            b.get = [settings, key] { return (float) juce::jlimit (0, 100, settings->getIntValue (key, 0)) / 100.0f; };
+            b.set = [settings, key] (float v) { settings->setValue (key, juce::roundToInt (juce::jlimit (0.0f, 1.0f, v) * 100.0f)); };
+            b.text = [settings, key] { return juce::String (juce::jlimit (0, 100, settings->getIntValue (key, 0))) + " %"; };
+            b.reset = [settings, key] { settings->setValue (key, juce::var (0)); };
+            b.steps = 100.0f;
+            return b;
+        }
         default:
             break;
     }
     return {};
+}
+
+juce::String dawVpotKeyCode (int target)
+{
+    target = juce::jlimit (0, kNumDawVpotKeys - 1, target);
+    if (target == kNumDawVpotKeys - 1)
+        return "JOG";
+    const bool push = target < kFirstDawVpotTurn;
+    const int n = push ? target : target - kFirstDawVpotTurn;
+    return (n < 8 ? "M" + juce::String (n + 1) : "E" + juce::String (n - 7)) + (push ? "P" : "");
 }
 
 KnobBinding bindHeldKey (UiContext& ctx, const Function& f)
@@ -410,6 +474,9 @@ void press (UiContext& ctx, const Function& f)
             }
             break;
         }
+        case BtnDawVpot:
+            pressDawVpot (ctx, f.target, true);
+            break;
         case BtnOverviewPage:
             if (ctx.showOverviewPage)
                 ctx.showOverviewPage (juce::jlimit (0, kNumOverviewAreas - 1, f.target), juce::jmax (0, f.option));
@@ -457,7 +524,12 @@ void press (UiContext& ctx, const Function& f)
             else if (f.option == 13 && ctx.showMonitors)
                 ctx.showMonitors();
             else if (ctx.showScreen && juce::isPositiveAndBelow (f.option, (int) std::size (globalScreens)))
+            {
                 ctx.showScreen (globalScreens[f.option]);
+                // ROUTING's CHANNELS, SOURCES or OUTPUTS.
+                if (globalScreens[f.option] == Screen::Routing && ctx.showRoutingTab)
+                    ctx.showRoutingTab (f.option == 14 ? 1 : f.option == 15 ? 2 : 0);
+            }
             break;
         case BtnFaderPage:
         {
@@ -483,9 +555,10 @@ void press (UiContext& ctx, const Function& f)
             logRecall (ctx, "scene #" + juce::String (f.target), ctx.show.recallSceneByTag (f.target));
             break;
         case BtnFaderSpill:
-            // On the left section (as the screens' SPILL keys); again: back.
+            // On the AREA's section (LEFT, CENTER, RIGHT; the COMPACT's one
+            // section); again: back.
             if (const auto spill = spillOf (ctx, f.target))
-                toggleSpill (ctx, std::nullopt, *spill);
+                toggleSpillAt (ctx, f.option == 1 ? LayerSet::Center : f.option == 2 ? LayerSet::Right : LayerSet::Left, *spill);
             break;
         case BtnDawButtons:
             midiui::pressDawCommand (ctx, f.option, true);
@@ -583,6 +656,19 @@ void press (UiContext& ctx, const Function& f)
                         ctx.log.warning ("USB recorder: " + r.getErrorMessage());
                     break;
                 case 9: usb.setRepeat (! usb.getRepeat()); break;
+                // TOGGLE PLAY/STOP and TOGGLE PLAY/PAUSE (WING PPLST, PPLPS).
+                case 10:
+                    if (usb.getPlayState() == UsbRecorder::PlayState::Stopped)
+                        UsbRecorderPage::pressPlay (ctx);
+                    else
+                        usb.stop();
+                    break;
+                case 11:
+                    if (usb.getPlayState() == UsbRecorder::PlayState::Stopped)
+                        UsbRecorderPage::pressPlay (ctx);
+                    else
+                        usb.togglePlayPause();
+                    break;
                 default: break;
             }
             break;
@@ -605,6 +691,8 @@ void release (UiContext& ctx, const Function& f)
 {
     if (f.category == BtnDawButtons)
         midiui::pressDawCommand (ctx, f.option, false);
+    else if (f.category == BtnDawVpot)
+        pressDawVpot (ctx, f.target, false);
     else if (f.category == BtnMidi)
         midiui::pressMidiKey (ctx, f.target, f.option, false);
     else if (f.category == BtnOther && (f.option == OtherTalkbackA || f.option == OtherTalkbackB))
@@ -675,7 +763,9 @@ bool isLit (UiContext& ctx, const Function& f)
                 return ctx.sendsOnFader && ctx.sofDestination.has_value() && *ctx.sofDestination == state::StripRef::of (*s);
             break;
         case BtnGlobalPage:
-            return juce::isPositiveAndBelow (f.option, (int) std::size (globalScreens)) && ctx.getScreen && ctx.getScreen() == globalScreens[f.option];
+            // CUSTOM CONTROLS and MONITOR are SETUP tabs: not lit.
+            return juce::isPositiveAndBelow (f.option, (int) std::size (globalScreens)) && f.option != 12 && f.option != 13 && ctx.getScreen
+                   && ctx.getScreen() == globalScreens[f.option];
         case BtnFaderSpill:
             if (const auto spill = spillOf (ctx, f.target))
                 return isSpilling (ctx, *spill);
@@ -696,6 +786,11 @@ bool isLit (UiContext& ctx, const Function& f)
                 return ctx.engine.getFx().params (f.target).values[f.option].load() >= 0.5f;
             break;
         case BtnOverviewPage: return ctx.getScreen && ctx.getScreen() == Screen::Overview;
+        case BtnFaderStart:
+            // The fader start contact: closed while the fader is up.
+            if (auto* s = stripOf (ctx, f.target))
+                return s->params.faderDb.load() > -144.0f;
+            break;
         case BtnOther:
             switch (f.option)
             {
@@ -735,6 +830,8 @@ bool isLit (UiContext& ctx, const Function& f)
                 case 5: return usb.getRecState() == UsbRecorder::RecState::Recording;
                 case 6: return usb.getRecState() == UsbRecorder::RecState::Paused;
                 case 9: return usb.getRepeat();
+                case 10:
+                case 11: return usb.getPlayState() == UsbRecorder::PlayState::Playing;
                 default: return false;
             }
         }
@@ -749,65 +846,95 @@ juce::String describe (UiContext& ctx, Slot s, const Function& f)
 {
     if (! f.isAssigned())
         return {};
+    // As the console names its functions on the LCD (WING Edit 3.3.4's
+    // offline console; the WING remote's $fname without the `|` marks):
+    // "1 MUTE", "B1 SOF", "1 FDR", "SEND B1", "FX3 TIME", "TALK A", "SCN GO".
     auto strip = [&ctx, &f]
     {
         auto* st = stripOf (ctx, f.target);
-        return st != nullptr ? st->getLabel().removeCharacters (" ") : juce::String ("--");
+        return st != nullptr ? shortStripLabel (*st) : juce::String ("--");
     };
+    auto dcaName = [&ctx] (int i) { return ("DCA " + ctx.engine.getDcaName (juce::jlimit (0, kNumDcas - 1, i)).toUpperCase()).trimEnd(); };
+    auto fx = [&ctx, &f]
+    {
+        const auto* p = fxParamOf (ctx, f.target, f.option);
+        return "FX" + juce::String (f.target + 1) + " " + (p != nullptr ? p->label.toUpperCase() : juce::String (f.option < 0 ? "MIX" : "N/A"));
+    };
+    auto midi = [] (const juce::String& kind, int channel, int number) { return kind + " " + juce::String (channel + 1) + ":" + juce::String (number); };
     if (s == Slot::Encoder)
     {
+        static const char* const monitorShort[] = { "SPEAKERS", "DIM", "PHONES", "TALKBACK" };
+        static const char* const lightingShort[] = { "LAMP", "GLOW", "PATCH" };
         switch (f.category)
         {
-            case EncFader:        return strip() + " FADER";
+            case EncFader:        return strip() + " FDR";
             case EncPan:          return strip() + " PAN";
-            case EncDcaFader:     return "DCA" + juce::String (f.target + 1);
-            case EncSelBusSend:   return "SEL>B" + juce::String (f.target + 1);
-            case EncFixedBusSend: return strip() + ">B" + juce::String (f.option + 1);
-            case EncFxParameter:  return "FX" + juce::String (f.target + 1) + (f.option < 0 ? " MIX" : " P" + juce::String (f.option + 1));
-            case EncMonitoring:   return monitorNames[juce::jlimit (0, kNumMonitorFunctions - 1, f.option)];
-            case EncDawVpot:      return DawRemote::vpotFunctionName (f.target).replace ("V-POT ", "VPOT ").replace ("JOG WHEEL", "JOG");
-            case EncMidiCc:       return midiui::describeMidiCc (f.target, f.option);
+            case EncDcaFader:     return dcaName (f.target);
+            case EncSelBusSend:   return "SEND B" + juce::String (f.target + 1);
+            case EncFixedBusSend: return strip() + " -> B" + juce::String (f.option + 1);
+            case EncFxParameter:  return fx();
+            case EncMonitoring:   return monitorShort[juce::jlimit (0, kNumMonitorFunctions - 1, f.option)];
+            case EncDawVpot:      return "DAW " + (f.target >= DawRemote::kNumVpotFunctions - 1 ? juce::String ("JOG") : dawVpotKeyCode (kFirstDawVpotTurn + f.target));
+            case EncMidiCc:       return midi ("CC", f.target, f.option);
+            case EncLighting:     return lightingShort[juce::jlimit (0, kNumLightingFunctions - 1, f.option)];
             default:              return categoryName (s, f.category);
         }
     }
+    static const char* const pageTokens[] = { "HOME", "INPUT", "FILT", "GATE", "EQ", "DYN", "INS1", "INS2", "MAIN", "SEND" };
+    static const char* const globalTokens[] = { "FX",  "FX",  "MTRS", "CHINS", "SETUP", "LIB", "MIXV", "FDRV", "SENDV",
+                                                "LAYER", "MGRP", "WLIVE", "CUSTCTL", "MON", "SRC", "OUTS", "2TRK" };
+    static_assert (std::size (globalTokens) == kNumGlobalPages);
+    static const char* const showTokens[] = { "GO", "PREV", "NEXT", "GOPREV", "GONEXT" };
+    static const char* const otherShort[] = { "MON DIM", "MON MONO", "MON SWAP", "MON MUTE", "FDR -oo", "FDR -10 dB", "FDR 0 dB", "AUTO X",
+                                              "AUTO Y", "CH -1", "CH +1", "CC +1", "CC -1", "SOF OFF", "TALK A", "TALK B", "MAIN ALT", "DAW",
+                                              "MON PH", "MON SPK", "MON PH+SPK", "CH SOLO", "BUS SOLO", "MAIN SOLO", "MTX SOLO", "CH MTR",
+                                              "BUS MTR", "MAIN MTR", "MTX MTR", "DCA MTR" };
+    static_assert (std::size (otherShort) == kNumOthers);
+    static const char* const usbShort[] = { "PL PLAY", "PL PAUSE", "PL STOP",  "PL PREV",  "PL NEXT",  "REC REC",
+                                            "REC PAUSE", "REC STOP", "REC NEW", "REPEAT", "PL PL/ST", "PL PL/PA" };
+    static_assert (std::size (usbShort) == kNumUsbFunctions);
+    static const char* const areas[kNumOverviewAreas] = { "L", "C", "R", "CMPCT", "RCK", "EXT", "VRT" };
     switch (f.category)
     {
         case BtnMute:         return strip() + " MUTE";
         case BtnSolo:         return strip() + " SOLO";
-        case BtnDcaMute:      return "DCA" + juce::String (f.target + 1) + " MUTE";
-        case BtnMuteGroup:    return ctx.engine.getMuteGroupName (juce::jlimit (0, kNumMuteGroups - 1, f.target));
-        case BtnSendsOnFader: return "SOF " + strip();
-        case BtnChannelPage:  return strip() + " " + pageNames[juce::jlimit (0, (int) std::size (pageNames) - 1, f.option)];
-        case BtnGlobalPage:   return globalNames[juce::jlimit (0, kNumGlobalPages - 1, f.option)];
-        case BtnFaderPage:    return juce::String ("LCR")[juce::jlimit (0, 2, f.target)] + juce::String (" LAYER ") + juce::String (f.option + 1);
-        case BtnShowControl:  return juce::String ("SCN ") + showControls[juce::jlimit (0, 4, f.option)];
-        case BtnSceneRecall:  return "SCENE #" + juce::String (f.target);
-        case BtnOther:        return otherNames[juce::jlimit (0, kNumOthers - 1, f.option)];
+        case BtnDcaMute:      return dcaName (f.target);
+        case BtnMuteGroup:    return "MGRP MGRP." + juce::String (juce::jlimit (0, kNumMuteGroups - 1, f.target) + 1);
+        case BtnSendsOnFader: return strip() + " SOF";
+        case BtnChannelPage:  return strip() + " " + pageTokens[juce::jlimit (0, (int) std::size (pageTokens) - 1, f.option)];
+        case BtnGlobalPage:   return globalTokens[juce::jlimit (0, kNumGlobalPages - 1, f.option)];
+        case BtnFaderPage:    return "FDR " + juce::String (areas[juce::jlimit (0, 2, f.target)]) + "/" + juce::String (f.option + 1);
+        case BtnShowControl:  return juce::String ("SCN ") + showTokens[juce::jlimit (0, 4, f.option)];
+        case BtnSceneRecall:  return "SCENE " + juce::String (juce::jmax (1, f.target));
+        case BtnOther:        return otherShort[juce::jlimit (0, kNumOthers - 1, f.option)];
         case BtnFaderSpill:
         {
+            // The target, then the section it spills to: "DCA1 > L".
             const int kind = juce::jlimit (0, kNumSpillKinds - 1, f.target / 100), index = f.target % 100;
-            if (kind == 4)
-                return "SPILL SENDS";
+            static const char* const targets[] = { "DCA", "BUS", "FX", "AUTO", "SELCH", "MAIN", "MTX" };
+            juce::String target = targets[kind];
             if (kind == 3)
-                return juce::String ("SPILL AM ") + (index == 0 ? "X" : "Y");
-            return juce::String ("SPILL ") + spillKindNames[kind] + juce::String (index + 1);
+                target << (index == 0 ? "X" : "Y");
+            else if (kind != 4)
+                target << (index + 1);
+            static const char* const areaTokens[] = { "L", "C", "R", "CMPCT" };
+            return target + " > " + areaTokens[juce::jlimit (0, 3, f.option)];
         }
         case BtnDawButtons:   return midiui::describeDawCommand (ctx, f.option);
-        case BtnMidi:         return midiui::describeMidiKey (f.target, f.option);
-        case BtnUsbPlayer:    return juce::String ("USB ") + usbNames[juce::jlimit (0, kNumUsbFunctions - 1, f.option)];
-        case BtnCcBank:       return "CC BANK " + juce::String (f.option + 1);
+        case BtnMidi:
+        {
+            const int type = f.target / 16;
+            static const char* const kinds[] = { "CC", "CC", "NOTE", "NOTE", "PGM" };
+            return midi (kinds[juce::jlimit (0, 4, type)], f.target % 16, type == 4 ? f.option + 1 : f.option);
+        }
+        case BtnUsbPlayer:    return usbShort[juce::jlimit (0, kNumUsbFunctions - 1, f.option)];
+        case BtnCcBank:       return "CC " + juce::String (f.option + 1);
         case BtnInsertPre:    return strip() + " INS1";
         case BtnInsertPost:   return strip() + " INS2";
-        case BtnFxParameter:
-        {
-            const auto* p = fxParamOf (ctx, f.target, f.option);
-            return "FX" + juce::String (f.target + 1) + " " + (p != nullptr ? p->label.toUpperCase() : juce::String (f.option < 0 ? "MIX" : "--"));
-        }
-        case BtnOverviewPage:
-        {
-            static const char* const areas[kNumOverviewAreas] = { "L", "C", "R", "CMPCT", "RCK", "EXT", "VRT" };
-            return juce::String ("VIEW ") + areas[juce::jlimit (0, kNumOverviewAreas - 1, f.target)] + " " + juce::String (f.option + 1);
-        }
+        case BtnFaderStart:   return strip() + " START";
+        case BtnDawVpot:      return "DAW " + dawVpotKeyCode (f.target);
+        case BtnFxParameter:  return fx();
+        case BtnOverviewPage: return "VIEW " + juce::String (areas[juce::jlimit (0, kNumOverviewAreas - 1, f.target)]) + "/" + juce::String (f.option + 1);
         default:              return categoryName (s, f.category);
     }
 }
@@ -1030,7 +1157,15 @@ void CustomControlsPage::rebuildLists()
                 addNumbered (options, optionCodes, "BUS", "BUS ", buses);
                 break;
             case EncFxParameter: addFxParameters(); break;
-            case EncMonitoring: addNames (options, optionCodes, "OTHER", monitorNames, kNumMonitorFunctions); break;
+            case EncMonitoring:
+                options.title = "MONITORS";
+                for (int code : monitorOrder)
+                {
+                    options.rows.add (monitorNames[code]);
+                    optionCodes.push_back (code);
+                }
+                break;
+            case EncLighting: addNames (options, optionCodes, "OTHER", lightingNames, kNumLightingFunctions); break;
             case EncDawVpot:
                 targets.title = "V-POT";
                 for (int i = 0; i < DawRemote::kNumVpotFunctions; ++i)
@@ -1057,7 +1192,19 @@ void CustomControlsPage::rebuildLists()
         {
             case BtnMute:
             case BtnSolo:
+            case BtnFaderStart:
             case BtnInsertPre: addStrips (false); break;
+            case BtnDawVpot:
+                // WING Edit's DAW V-POT list: the V-pots pushed, then turned, then the jog wheel.
+                targets.title = "DAW V-POT";
+                for (int i = 0; i < kNumDawVpotKeys; ++i)
+                {
+                    const int n = i < kFirstDawVpotTurn ? i : i - kFirstDawVpotTurn;
+                    const auto pot = "V-POT " + (n < 8 ? "M" + juce::String (n + 1) : "EXT" + juce::String (n - 7));
+                    targets.rows.add (i == kNumDawVpotKeys - 1 ? juce::String ("JOG WHEEL") : pot + (i < kFirstDawVpotTurn ? " (PUSH)" : " (TURN)"));
+                    targetCodes.push_back (i);
+                }
+                break;
             case BtnInsertPost: addStrips (false, true); break; // aux channels have no INS 2
             case BtnFxParameter: addFxParameters(); break;
             case BtnOverviewPage:
@@ -1110,9 +1257,22 @@ void CustomControlsPage::rebuildLists()
                 break;
             case BtnChannelPage:
                 addStrips (false);
-                addNames (options, optionCodes, "PAGE", pageNames, (int) std::size (pageNames));
+                // WING Edit's order: DYNAMICS before EQ.
+                options.title = "PAGE";
+                for (int code : { 0, 1, 2, 3, 5, 4, 6, 7, 8, 9 })
+                {
+                    options.rows.add (pageNames[code]);
+                    optionCodes.push_back (code);
+                }
                 break;
-            case BtnGlobalPage: addNames (options, optionCodes, "PAGE", globalNames, kNumGlobalPages); break;
+            case BtnGlobalPage:
+                options.title = "PAGE";
+                for (int code : globalOrder)
+                {
+                    options.rows.add (globalNames[code]);
+                    optionCodes.push_back (code);
+                }
+                break;
             case BtnFaderPage:
             {
                 static const char* const sections[] = { "LEFT", "CENTER", "RIGHT" };
@@ -1148,53 +1308,40 @@ void CustomControlsPage::rebuildLists()
                 break;
             case BtnFaderSpill:
             {
-                // SPILL (kind), then which one: both set the target (the
-                // option codes are whole targets, kind * 100 + index).
-                targets.title = "SPILL";
-                const int kind = juce::jlimit (0, kNumSpillKinds - 1, f.target / 100);
-                for (int k = 0; k < kNumSpillKinds; ++k)
+                // WING Edit's AREA (the section it spills to: the option) and
+                // TARGET (kind * 100 + index: the target), DCA 1-16, FX 1-16, the
+                // buses, MAIN 1-4, MTX 1-8, AUTOMIX X / Y, the selected channel.
+                targets.title = "AREA";
+                const bool compactConsole = ctx.consoleModel == ConsoleModel::Compact;
+                for (int i = 0; i < 4; ++i)
                 {
-                    targets.rows.add (spillKindNames[k]);
-                    targetCodes.push_back (k * 100 + (k == kind ? f.target % 100 : 0));
+                    targets.rows.add (areaNames[i]);
+                    targetCodes.push_back (i);
+                    targets.enabled.push_back (compactConsole ? i == 3 : i < 3);
                 }
-                auto add = [this, &options, kind] (const juce::String& row, int item)
+                options.title = "TARGET";
+                auto add = [&options, this] (const juce::String& row, int code)
                 {
                     options.rows.add (row);
-                    optionCodes.push_back (kind * 100 + item);
+                    optionCodes.push_back (code);
                 };
-                switch (kind)
-                {
-                    case 0:
-                        options.title = "DCA";
-                        for (int i = 0; i < kNumDcas; ++i)
-                            add (juce::String (i + 1) + "   " + ctx.engine.getDcaName (i).toUpperCase(), i);
-                        break;
-                    case 1:
-                        options.title = "BUS";
-                        for (auto& b : ctx.engine.getBuses())
-                            add (shortStripLabel (*b) + "\t" + (stripName (*b) != b->getLabel() ? stripName (*b).toUpperCase() : juce::String()), b->getId());
-                        break;
-                    case 2:
-                        options.title = "EFFECT PROCESSOR";
-                        for (int i = 0; i < kNumFx; ++i)
-                            add ("FX" + juce::String (i + 1) + "   " + models::model (models::Fx, ctx.engine.getFx().getModel (i)).name.toUpperCase(), i);
-                        break;
-                    case 3:
-                        options.title = "AUTOMIX";
-                        add ("GROUP X", 0);
-                        add ("GROUP Y", 1);
-                        break;
-                    case 5:
-                        // A main's spill: the channels, aux and buses feeding it (spidx 57-60).
-                        options.title = "MAIN";
-                        for (auto& m : ctx.engine.getStrips (StripKind::Main))
-                            add (shortStripLabel (*m) + "\t" + (stripName (*m) != m->getLabel() ? stripName (*m).toUpperCase() : juce::String()), m->getId());
-                        break;
-                    default:
-                        options.title = "SPILL";
-                        add ("SELECTED CHANNEL'S SENDS", 0);
-                        break;
-                }
+                for (int i = 0; i < kNumDcas; ++i)
+                    add ("DCA " + juce::String (i + 1) + "   " + ctx.engine.getDcaName (i).toUpperCase(), i);
+                for (int i = 0; i < kNumFx; ++i)
+                    add ("FX " + juce::String (i + 1) + "   " + models::model (models::Fx, ctx.engine.getFx().getModel (i)).name.toUpperCase(), 200 + i);
+                auto stripRow = [] (const Strip& st) { return shortStripLabel (st) + "\t" + (stripName (st) != st.getLabel() ? stripName (st).toUpperCase() : juce::String()); };
+                for (auto& b : ctx.engine.getBuses())
+                    add (stripRow (*b), 100 + b->getId());
+                // A main's spill: the channels, aux and buses feeding it (spidx 57-60).
+                for (auto& m : ctx.engine.getStrips (StripKind::Main))
+                    add (stripRow (*m), 500 + m->getId());
+                // A matrix's spill: the sends of the strips sending to it (spidx 49-56).
+                const auto& matrices = ctx.engine.getStrips (StripKind::Matrix);
+                for (size_t i = 0; i < matrices.size(); ++i)
+                    add (stripRow (*matrices[i]), 600 + (int) i);
+                add ("AUTOMIX X", 300);
+                add ("AUTOMIX Y", 301);
+                add ("SELECTED CHANNEL SENDS", 400);
                 break;
             }
             case BtnDawButtons:
@@ -1240,7 +1387,14 @@ void CustomControlsPage::rebuildLists()
                 }
                 break;
             }
-            case BtnUsbPlayer: addNames (options, optionCodes, "USB PLAY/REC", usbNames, kNumUsbFunctions); break;
+            case BtnUsbPlayer:
+                options.title = "USB PLAY/REC";
+                for (int code : usbOrder)
+                {
+                    options.rows.add (usbNames[code]);
+                    optionCodes.push_back (code);
+                }
+                break;
             case BtnCcBank:
                 options.title = "CC BANK";
                 for (int i = 0; i < kNumLayers; ++i)
@@ -1252,10 +1406,12 @@ void CustomControlsPage::rebuildLists()
             default: break;
         }
     }
+    // FADER SPILL: the AREA list holds the option, the TARGET list the target.
+    const bool spill = slot != Slot::Encoder && f.category == BtnFaderSpill;
     for (size_t i = 0; i < targetCodes.size(); ++i)
-        if (targetCodes[i] == f.target)
+        if (targetCodes[i] == (spill ? f.option : f.target))
             targets.selected = (int) i;
-    const int optionValue = slot != Slot::Encoder && f.category == BtnFaderSpill ? f.target : f.option;
+    const int optionValue = spill ? f.target : f.option;
     for (size_t i = 0; i < optionCodes.size(); ++i)
         if (optionCodes[i] == optionValue)
             options.selected = (int) i;
@@ -1322,7 +1478,7 @@ void CustomControlsPage::choose (int list, int row)
             const auto& enabled = lists[1].enabled;
             while (first < enabled.size() && first + 1 < targetCodes.size() && ! enabled[first])
                 ++first;
-            (targetIsOption ? g.option : g.target) = targetCodes[first];
+            (targetIsOption || (slot != Slot::Encoder && category == BtnFaderSpill) ? g.option : g.target) = targetCodes[first];
             store (g);
             rebuildLists();
         }
@@ -1334,7 +1490,10 @@ void CustomControlsPage::choose (int list, int row)
         return;
     if (const auto& enabled = lists[list].enabled; juce::isPositiveAndBelow (row, (int) enabled.size()) && ! enabled[(size_t) row])
         return;
-    (isTarget || (slot != Slot::Encoder && f.category == BtnFaderSpill) ? f.target : f.option) = codes[(size_t) row];
+    if (slot != Slot::Encoder && f.category == BtnFaderSpill)
+        (list == 1 ? f.option : f.target) = codes[(size_t) row]; // AREA, TARGET
+    else
+        (isTarget ? f.target : f.option) = codes[(size_t) row];
     if (slot != Slot::Encoder && f.category == BtnDawButtons && isTarget)
     {
         // A new group: its first command.
@@ -1706,12 +1865,13 @@ void CustomControlsPage::mouseUp (const juce::MouseEvent& e)
         anchor.setBounds (colourKey);
         juce::Component::SafePointer<CustomControlsPage> safe (this);
         const int l = layer, i = index;
-        popups::chooseFrom (anchor, items, control().colour, [safe, l, i] (int colour)
+        // NONE turns the light off and keeps the colour (the WING's COLOR > LIGHT).
+        popups::chooseFrom (anchor, items, juce::jmax (0, control().colour), [safe, l, i] (int colour)
         {
             if (safe == nullptr)
                 return;
             auto c = safe->assignments.get (l, i);
-            c.colour = colour;
+            c.colour = colour > 0 ? colour : -std::abs (c.colour);
             safe->assignments.set (l, i, c);
             if (safe->ctx.customControlsChanged)
                 safe->ctx.customControlsChanged();

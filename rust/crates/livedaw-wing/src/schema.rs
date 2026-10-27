@@ -235,7 +235,7 @@ const CC_SESSION: CcNode = cc("session", "SESSION", CcValues::Numbered(&[("S", 2
 const CC_MARKER: CcNode = cc("marker", "MARKER", CcValues::Numbered(&[("M", 20)]));
 
 /// DAWENC's rotaries: pushed, then turned.
-const CC_DAW_ROTARY: &[&str] = &[
+pub(crate) const CC_DAW_ROTARY: &[&str] = &[
     "M1P", "M2P", "M3P", "M4P", "M5P", "M6P", "M7P", "M8P", "E1P", "E2P", "E3P", "E4P", "E5P", "E6P", "E7P", "E8P", "E9P",
     "E10P", "E11P", "E12P", "E13P", "E14P", "E15P", "E16P", "M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8", "E1", "E2", "E3",
     "E4", "E5", "E6", "E7", "E8", "E9", "E10", "E11", "E12", "E13", "E14", "E15", "E16", "JOG",

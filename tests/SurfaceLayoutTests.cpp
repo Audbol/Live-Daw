@@ -135,6 +135,11 @@ public:
             for (int key = 0; key < 16; ++key)
                 expect (! compact::keyMainFader (KM::Dca, key) && ! compact::keyMainFader (KM::User, key));
             expect (! compact::keyMainFader (KM::Bus, 16).has_value());
+            // DCA SPILL ON SELECT off (/$ctl/cfg/dcaspill "0: push->dca show"): a DCA key
+            // puts its DCA on fader 13.
+            expect (compact::keyMainFader (KM::Dca, 0, true) == MF { MF::Dca, 1 });
+            expect (compact::keyMainFader (KM::Dca, 15, true) == MF { MF::Dca, 16 });
+            expect (! compact::keyMainFader (KM::User, 0, true).has_value());
         }
 
         beginTest ("The COMPACT's custom control key sets");
@@ -162,16 +167,19 @@ public:
         {
             using A = compact::KeyAction;
             auto is = [] (compact::KeyActions a, A press, A hold) { return a.press == press && a.hold == hold; };
-            // BUS: pressed SOF, held spill (a WING COMPACT's owner, manual 4.2).
+            // BUS SPILL off (the factory setting): pressed SOF, held spill (a WING
+            // COMPACT's owner, manual 4.2); on, the other way round (busspill).
             expect (is (compact::busActions(), A::Sends, A::Spill));
-            // The factory setting: MAIN pressed SOF, held spill; MATRIX SOF either way.
+            expect (is (compact::busActions (false), A::Sends, A::Spill));
+            expect (is (compact::busActions (true), A::Spill, A::Sends));
+            // MAIN SPILL off: a MAIN key pressed SOF, held spill; on, swapped.
             expect (is (compact::mainMatrixActions (0, false, true), A::Sends, A::Spill));
             expect (is (compact::mainMatrixActions (3, false, true), A::Sends, A::Spill));
-            expect (is (compact::mainMatrixActions (8, false, true), A::Sends, A::Sends));
-            expect (is (compact::mainMatrixActions (15, false, true), A::Sends, A::Sends));
-            // MAIN SPILL swaps the main's; MATRIX SPILL has no matrix spill to swap in.
             expect (is (compact::mainMatrixActions (1, true, true), A::Spill, A::Sends));
-            expect (is (compact::mainMatrixActions (9, false, false), A::Sends, A::Sends));
+            // MATRIX SPILL (on at first, mtxspill "1: push->mtx spill, hold->mtx send").
+            expect (is (compact::mainMatrixActions (8, false, true), A::Spill, A::Sends));
+            expect (is (compact::mainMatrixActions (15, true, true), A::Spill, A::Sends));
+            expect (is (compact::mainMatrixActions (9, false, false), A::Sends, A::Spill));
             // Keys 5-8 are custom controls.
             expect (is (compact::mainMatrixActions (5, false, true), A::None, A::None));
         }

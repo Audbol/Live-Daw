@@ -1060,6 +1060,12 @@ void RoutingPage::showFxSends (int slot)
     repaint();
 }
 
+void RoutingPage::showTab (int tab)
+{
+    setMode (tab == 1 ? Mode::Sources : tab == 2 ? Mode::Outputs : Mode::Channels);
+    notifyStatusKeysChanged();
+}
+
 juce::String RoutingPage::signalLabel (const Signal& sig) const
 {
     if (sig.channel < 0)

@@ -173,7 +173,8 @@ public:
             Fx = 2,      // index: the FX slot
             Automix = 3, // index: 0 X, 1 Y
             Sends = 4,   // strip: whose sends
-            Main = 5     // index: the main (0-3), the strips feeding it
+            Main = 5,    // index: the main (0-3), the strips feeding it
+            Matrix = 6   // index: the matrix (0-7), the sends of the strips feeding it (ABI 22)
         };
         Kind kind = Kind::Dca;
         int index = 0;

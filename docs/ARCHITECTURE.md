@@ -661,7 +661,8 @@ Show
   reference to a removed strip is skipped.
 - **Spill** (`SpillKind`): a computed layer (id `spill`) shown by a section until it
   ends: a DCA's members, the sources sending to a bus, the strips feeding a main
-  (their own faders), an FX device's continuous parameters, an automix group, a
+  (their own faders), the sends of the strips sending to a matrix, an FX device's
+  continuous parameters, an automix group, a
   strip's sends. `spill_target` sends a spill from the
   right section to the center, the rest to the left. The layer set keeps each
   section's scroll offset, so ending a spill restores the layer and the offset; a
@@ -949,7 +950,7 @@ dependencies beyond the other Sidecar crates.
   value (`data/wing_factory.tsv`, written from a console dump by
   `examples/wing_factory.rs`) and live in a **shadow store** (`WingState`) so
   clients and snapshots read back what they wrote; they do nothing.
-  `map::coverage()` counts what maps (79,325 of 79,326 leaves, the processing models' and the custom control modes' parameters counted; 73,573 engine- or show-backed).
+  `map::coverage()` counts what maps (79,325 of 79,326 leaves, the processing models' and the custom control modes' parameters counted; 73,764 engine- or show-backed).
   `tests/data/wing_desc.tsv` holds the same console's descriptions, which a unit
   test compares with every parameter's.
   The console level maps too: TAP WIDTH / TAP EQ (`/ch/N/tapwid`, `peq`), `/cfg/solo`
@@ -1175,7 +1176,8 @@ README's *Known limitations*; keep the three in step.
   sends, FX parameters, monitoring, mutes / solos, mute groups, sends on fader, pages,
   show control, scene recall, single actions, the USB PLAY/REC functions, DAW buttons /
   V-pots, MIDI CC / note / program change and FADER SPILL (the layer set's spills:
-  DCA, bus sources, main sources, FX slot, automix group, selected strip's sends); SD
+  DCA, bus sources, main sources, matrix sources, FX slot, automix group, selected
+  strip's sends, with the section it spills to), fader start, DAW V-POTS on a key; SD
   and GPIO functions are listed disabled (no hardware). Layers 24-32 are the WING
   COMPACT's key sets (`/$ctl/user/U1`-`U4`, `MM`, `D1`-`D4`): four upper keys each,
   played by its 16 keys in USER mode, by keys 5-8 in MAIN MATRIX mode and in DCA mode

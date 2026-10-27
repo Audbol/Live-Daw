@@ -69,7 +69,8 @@ pub struct CcControl {
     pub upper: CcFunction,
     pub lower: CcFunction,
     pub name: String,
-    /// The WING colour (1-18), 0 = none.
+    /// The WING colour (1-18) with its light on (`led`); the colour negated
+    /// with the light off (COLOR > LIGHT, the colour kept); 0 = none.
     pub colour: i32,
 }
 
@@ -258,7 +259,7 @@ impl CustomControls {
                     upper: CcFunction::parse(e.str_or("bu", "")),
                     lower: CcFunction::parse(e.str_or("bd", "")),
                     name: e.str_or("name", "").to_owned(),
-                    colour: e.int_or("colour", 0).clamp(0, 18),
+                    colour: e.int_or("colour", 0).clamp(-18, 18),
                 };
             }
         }
@@ -270,15 +271,28 @@ impl CustomControls {
 
 /// Button category 12, FADER SPILL: the target is the spill, kind * 100 +
 /// index (kinds as the layer set's spills: 0 DCA, 1 the sources of bus slot
-/// `index`, 2 FX slot, 3 automix group X / Y, 4 the selected strip's sends);
-/// lit while a fader section spills it.
+/// `index`, 2 FX slot, 3 automix group X / Y, 4 the selected strip's sends,
+/// 5 the strips feeding a main, 6 the strips sending to a matrix); lit while
+/// a fader section spills it.
 pub const FADER_SPILL_CATEGORY: i32 = 12;
 
 /// Button category 15, USB PLAY/REC (the USB recorder / player): the option
 /// is the key, in this order.
 pub const USB_PLAY_REC_CATEGORY: i32 = 15;
-pub const USB_PLAY_REC_FUNCTIONS: [&str; 10] =
-    ["PLAY", "PAUSE", "STOP", "PREV", "NEXT", "REC", "REC PAUSE", "REC STOP", "NEW FILE", "REPEAT"];
+pub const USB_PLAY_REC_FUNCTIONS: [&str; 12] = [
+    "PLAY",
+    "PAUSE",
+    "STOP",
+    "PREV",
+    "NEXT",
+    "REC",
+    "REC PAUSE",
+    "REC STOP",
+    "NEW FILE",
+    "REPEAT",
+    "TOGGLE PLAY/STOP",
+    "TOGGLE PLAY/PAUSE",
+];
 
 /// Button category 18, CC BANK (WING 3.0.6: a CC key switches the custom
 /// controls bank): the option is the upper part's layer to show, 0-15 (lit
@@ -333,6 +347,21 @@ pub const FX_PARAMETER_CATEGORY: i32 = 21;
 /// (0-6: L, C, R, CMPCT, RCK, EXT, VRT), the option the bank (0-20, the
 /// WING's 1-21: the section's layer keys 1-7, then its fixed banks).
 pub const OVERVIEW_PAGE_CATEGORY: i32 = 22;
+/// Button category 23, FADER START (`FSTART`): the target is the strip (as
+/// MUTE's). The key lights while the strip's fader is up (above -oo): a
+/// fader start contact for a GPIO or a playback device.
+pub const FADER_START_CATEGORY: i32 = 23;
+/// Button category 24, DAW V-POTS on a key (`DAWENC`): the target is the
+/// rotary, in the WING's list order: 0-7 M1P-M8P and 8-23 E1P-E16P (the
+/// master unit's and the extenders' V-pots pushed while the key is held),
+/// 24-31 M1-M8, 32-47 E1-E16 (turned one step clockwise per press) and 48
+/// JOG.
+pub const DAW_VPOT_KEY_CATEGORY: i32 = 24;
+/// How many rotaries DAW V-POTS keys have.
+pub const NUM_DAW_VPOT_KEYS: i32 = 49;
+/// Encoder category 10, OTHER (the WING's lighting controls): the option is
+/// 0 LAMP, 1 GLOW, 2 PATCH BRIGHTNESS (SETUP > GENERAL's tiles).
+pub const ENCODER_LIGHTING_CATEGORY: i32 = 10;
 
 #[cfg(test)]
 mod tests {

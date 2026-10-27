@@ -24,9 +24,9 @@
 //!   are ignored; a layer without a WING key (the center's INPUTS, a user
 //!   layer selected by itself) reads as 8.
 //! - `spidx`: 0 no spill, 1-16 DCA, 17-32 FX slot, 33-48 a bus's sources,
-//!   57-60 the channels, aux and buses feeding a main, 61 / 62 automix X /
-//!   Y, 63 a strip's sends (read only: which strip is the console's
-//!   selection). Sidecar has no matrix spill (49-56).
+//!   49-56 the strips sending to a matrix, 57-60 the channels, aux and
+//!   buses feeding a main, 61 / 62 automix X / Y, 63 a strip's sends (read
+//!   only: which strip is the console's selection).
 //! - `N/ofs`: the scroll position. Sidecar keeps one per section, so only the
 //!   shown layer's is read and set (the others read 0).
 //! - `N/name`: the USER keys show the first two user layers, so naming one
@@ -66,13 +66,16 @@
 //!   answers 0-15).
 
 use crate::map::{SetError, WingState};
+use crate::schema::CC_DAW_ROTARY;
 use crate::value::Value;
+use livedaw_dsp::wing::FX_MODELS;
 use livedaw_engine::params::{NUM_DCAS, NUM_FX};
 use livedaw_engine::{Engine, StripKind};
 use livedaw_session::custom::{
-    daw_command_group, other, CcFunction, CustomControls, CC_BANK_CATEGORY, COMPACT_MAIN_MATRIX_LAYER, FADER_SPILL_CATEGORY,
-    FIRST_COMPACT_DCA_LAYER, FIRST_COMPACT_USER_LAYER, FIRST_DAW_LAYER, FX_PARAMETER_CATEGORY, INSERT_POST_CATEGORY,
-    INSERT_PRE_CATEGORY, NUM_COMPACT_SETS, NUM_CONTROLS, NUM_LAYERS, OTHER_CATEGORY, OVERVIEW_PAGE_CATEGORY, USER_LAYER,
+    daw_command_group, other, CcFunction, CustomControls, CC_BANK_CATEGORY, COMPACT_MAIN_MATRIX_LAYER, DAW_VPOT_KEY_CATEGORY,
+    ENCODER_LIGHTING_CATEGORY, FADER_SPILL_CATEGORY, FADER_START_CATEGORY, FIRST_COMPACT_DCA_LAYER, FIRST_COMPACT_USER_LAYER,
+    FIRST_DAW_LAYER, FX_PARAMETER_CATEGORY, INSERT_POST_CATEGORY, INSERT_PRE_CATEGORY, NUM_COMPACT_SETS, NUM_CONTROLS,
+    NUM_LAYERS, OTHER_CATEGORY, OVERVIEW_PAGE_CATEGORY, USER_LAYER,
 };
 use livedaw_session::layers::{
     slots, ConsoleRefs, FaderRef, Layer, LayerSet, SpillKind, NUM_SECTIONS, NUM_VIRTUAL_LAYERS, VIRTUAL_KEYS, VIRTUAL_SECTION,
@@ -140,7 +143,7 @@ const ENC_MODES: [ModeRow<i32>; 13] = [
     ("FX", "FX PARAMETER", Some(6)),
     ("DAWMCU", "DAW V-POTS", Some(8)),
     ("MON", "MONITORING", Some(7)),
-    ("OTHER", "OTHER", None),
+    ("OTHER", "OTHER", Some(ENCODER_LIGHTING_CATEGORY)),
     ("MIDICC", "MIDI CC", Some(9)),
     ("SD A", "SD-1 RECORDER", None),
     ("SD B", "SD-2 RECORDER", None),
@@ -160,14 +163,14 @@ const BTN_MODES: [ModeRow<(i32, i32)>; 33] = [
     ("SPILL", "FADER SPILL", Some((12, -1))),
     ("FXPAR", "FX PAR", Some((FX_PARAMETER_CATEGORY, -1))),
     ("DAWBTN", "DAW BUTTONS", Some((13, -1))),
-    ("DAWENC", "DAW V-POTS", None),
+    ("DAWENC", "DAW V-POTS", Some((DAW_VPOT_KEY_CATEGORY, -1))),
     ("CHPAGE", "CH PAGE", Some((6, -1))),
     ("PAGE", "GLOBAL PAGE", Some((7, -1))),
     ("FDRPAGE", "FADER PAGE", Some((8, -1))),
     ("VIEWPAGE", "OVERVIEW PAGE", Some((OVERVIEW_PAGE_CATEGORY, -1))),
     ("OTHER", "OTHER", Some((11, -1))),
     ("GPIO", "GPIO", Some((17, -1))),
-    ("FSTART", "FADER START", None),
+    ("FSTART", "FADER START", Some((FADER_START_CATEGORY, -1))),
     ("SHOWCTL", "SHOW CONTROL", Some((9, -1))),
     ("SCENES", "SCENE RECALL", Some((10, -1))),
     ("MIDICCT", "MIDI CC (TOGGLE)", Some((MIDI_CATEGORY, 0))),
@@ -225,6 +228,8 @@ pub enum CcSlot {
 pub enum UserF {
     Bank,
     Colour(u8, u8),
+    /// The control's light (COLOR > LIGHT).
+    Led(u8, u8),
     Mode(u8, u8, CcSlot),
     Name(u8, u8),
     FName(u8, u8, CcSlot),
@@ -291,6 +296,7 @@ pub fn bind_user(rest: &[&str]) -> Option<UserF> {
     };
     Some(match tail {
         ["col"] if !lower_part => UserF::Colour(layer, control),
+        ["led"] if !lower_part => UserF::Led(layer, control),
         [slot] => UserF::Slot(layer, control, slot_of(slot)?),
         [slot, f] => {
             let cs = match *slot {
@@ -379,6 +385,16 @@ pub struct Surface {
     pub cc_bank: i32,
     /// The strips' WING numbers (custom control functions name strips 1-76).
     num: Numbering,
+    /// What the functions' names (`$fname`) need: the DCAs' names and each FX
+    /// slot's parameter labels.
+    names: FnameNames,
+}
+
+/// The console's names a function's name (`$fname`) shows.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct FnameNames {
+    dcas: Vec<String>,
+    fx_params: Vec<Vec<&'static str>>,
 }
 
 /// A change a client made, for the host to apply to the show.
@@ -460,15 +476,6 @@ fn cc_slot_index(slot: CcSlot) -> usize {
         CcSlot::Up => 1,
         CcSlot::Down => 2,
     }
-}
-
-fn mode_long_name(slot: CcSlot, mode: &str) -> &'static str {
-    let found = if slot == CcSlot::Enc {
-        ENC_MODES.iter().find(|m| m.0 == mode).map(|m| m.1)
-    } else {
-        BTN_MODES.iter().find(|m| m.0 == mode).map(|m| m.1)
-    };
-    found.unwrap_or("NOT ASSIGNED")
 }
 
 impl Surface {
@@ -571,13 +578,16 @@ impl Surface {
         let control = |l: u8, c: u8| self.controls.get(l as usize).and_then(|l| l.get(c as usize));
         Some(match f {
             UserF::Bank => Value::Int(self.cc_bank + 1),
-            UserF::Colour(l, c) => Value::Int(control(l, c)?.colour.max(1)),
+            UserF::Colour(l, c) => Value::Int(control(l, c)?.colour.abs().max(1)),
+            UserF::Led(l, c) => Value::Int(i32::from(control(l, c)?.colour > 0)),
             UserF::Mode(l, c, slot) => Value::str(control(l, c)?.modes[cc_slot_index(slot)]),
             UserF::Name(l, c) => Value::Str(control(l, c)?.name.clone()),
             UserF::FName(l, c, slot) => {
-                // A control not assigned has no function name, as on the console.
-                let mode = control(l, c)?.modes[cc_slot_index(slot)];
-                Value::str(if mode == "OFF" { "" } else { mode_long_name(slot, mode) })
+                // What the LCD shows for the function, as the console names it
+                // (a control not assigned has none).
+                let control = control(l, c)?;
+                let i = cc_slot_index(slot);
+                Value::Str(fname(&self.num, &self.names, slot, control.modes[i], &control.functions[i]))
             }
             UserF::Slot(..) => return None,
         })
@@ -590,15 +600,32 @@ impl Surface {
             self.cc_bank = bank;
             return Ok(Some(SurfaceEdit::Bank(bank)));
         }
-        let (UserF::Colour(l, c) | UserF::Mode(l, c, _) | UserF::Name(l, c) | UserF::FName(l, c, _)) = f else {
+        let (UserF::Colour(l, c) | UserF::Led(l, c) | UserF::Mode(l, c, _) | UserF::Name(l, c) | UserF::FName(l, c, _)) = f
+        else {
             return Err(SetError::NotFound);
         };
         let (layer, index) = (l as usize, c as usize);
         let num = &self.num;
         let control = self.controls.get_mut(layer).and_then(|l| l.get_mut(index)).ok_or(SetError::NotFound)?;
         Ok(Some(match f {
+            // A colour keeps the light as it is; the light keeps the colour. A
+            // control without either reads LIGHT off and colour 1, and keeps
+            // none when a client writes those back.
             UserF::Colour(..) => {
-                control.colour = v.as_i32().unwrap_or(1).clamp(1, 18);
+                let colour = v.as_i32().unwrap_or(1).clamp(1, 18);
+                if control.colour == 0 && colour == 1 {
+                    return Ok(None);
+                }
+                control.colour = if control.colour > 0 { colour } else { -colour };
+                SurfaceEdit::Colour { layer, index, colour: control.colour }
+            }
+            UserF::Led(..) => {
+                let on = v.as_i32().unwrap_or(0) != 0;
+                if control.colour == 0 && !on {
+                    return Ok(None);
+                }
+                let colour = control.colour.abs().max(1);
+                control.colour = if on { colour } else { -colour };
                 SurfaceEdit::Colour { layer, index, colour: control.colour }
             }
             UserF::Mode(_, _, slot) => {
@@ -696,15 +723,21 @@ fn strip_target(num: &Numbering, n: i32) -> Result<i32, SetError> {
 /// CH PAGE: Sidecar's pages (HOME, INPUT, FILTER, GATE, EQ, DYNAMICS,
 /// INSERT PRE, INSERT POST, MAIN, SENDS) as the WING's `pg` items.
 const CH_PAGES: [&str; 10] = ["HOME", "INPUT", "FILT", "GATE", "EQ", "DYN", "INS1", "INS2", "MAIN", "SEND"];
-/// GLOBAL PAGE: Sidecar's screens (HOME, EFFECTS, METERS, ROUTING, SETUP,
-/// LIBRARY, MIXER, FADER and SENDS VIEW, FADER LAYER, MUTE GROUPS, WING
-/// LIVE, CUSTOM CONTROLS, MONITOR) as `pg` items; HOME has none (answers FX).
-const GLOBAL_PAGES: [&str; 14] =
-    ["FX", "FX", "MTRS", "CHINS", "SETUP", "LIB", "MIXV", "FDRV", "SENDV", "LAYER", "MGRP", "WLIVE", "CUSTCTL", "MON"];
+/// GLOBAL PAGE: Sidecar's screens (HOME, EFFECTS, METERS, ROUTING's
+/// CHANNELS, SETUP, LIBRARY, MIXER, FADER and SENDS VIEW, FADER LAYER, MUTE
+/// GROUPS, WING LIVE, CUSTOM CONTROLS, MONITOR, ROUTING's SOURCES and
+/// OUTPUTS, the USB recorder) as `pg` items; HOME has none (answers FX).
+const GLOBAL_PAGES: [&str; 17] = [
+    "FX", "FX", "MTRS", "CHINS", "SETUP", "LIB", "MIXV", "FDRV", "SENDV", "LAYER", "MGRP", "WLIVE", "CUSTCTL", "MON", "SRC",
+    "OUTS", "2TRK",
+];
 const SHOW_ACTIONS: [&str; 5] = ["GO", "PREV", "NEXT", "GOPREV", "GONEXT"];
 /// USB PLAY/REC: Sidecar's keys (PLAY, PAUSE, STOP, PREV, NEXT, REC, REC
-/// PAUSE, REC STOP, NEW FILE, REPEAT) as `usbpr` items (REPEAT has none).
-const USB_KEYS: [&str; 10] = ["PLAY", "PPAUSE", "PSTOP", "PPREV", "PNEXT", "RECORD", "RPAUSE", "RSTOP", "RNEW", "PLAY"];
+/// PAUSE, REC STOP, NEW FILE, REPEAT, TOGGLE PLAY/STOP, TOGGLE PLAY/PAUSE)
+/// as `usbpr` items (REPEAT has none; the toggles, WING Edit 3.3's PPLST and
+/// PPLPS, are newer than the 3.1 tree).
+const USB_KEYS: [&str; 12] =
+    ["PLAY", "PPAUSE", "PSTOP", "PPREV", "PNEXT", "RECORD", "RPAUSE", "RSTOP", "RNEW", "PLAY", "PLAY", "PLAY"];
 const AREAS: [&str; 7] = ["L", "C", "R", "CMPCT", "RCK", "EXT", "VRT"];
 /// OTHER: Sidecar's functions (custom.rs `other`) as `other` items (SOF
 /// OFF has none: TBA).
@@ -713,8 +746,11 @@ const OTHER_ITEMS: [&str; other::COUNT as usize] = [
     "CCBANK", "TBA", "TBA", "TBB", "ALTSRC", "DAWSW", "MONA", "MONB", "MONAB", "CHSOLO", "BUSSOLO", "MAINSOLO", "MTXSOLO",
     "CHMTR", "BUSMTR", "MAINMTR", "MTXMTR", "DCAMTR",
 ];
-/// MON: Sidecar's options (MONITOR LEVEL, DIM AMOUNT, PHONES LEVEL) as `mon`.
-const MONITOR_ITEMS: [&str; 3] = ["B", "B", "A"];
+/// The encoders' OTHER: LAMP, GLOW and PATCH BRIGHTNESS (the option).
+const LIGHTING_ITEMS: [&str; 3] = ["BRILAMP", "BRIGLOW", "BRIPATCH"];
+/// MON: Sidecar's options (MONITOR LEVEL, DIM AMOUNT, PHONES LEVEL,
+/// TALKBACK) as `mon` (the 3.1 tree has no item for the talk level).
+const MONITOR_ITEMS: [&str; 4] = ["B", "B", "A", "B"];
 
 fn midi_type(mode: &str) -> Option<i32> {
     BTN_MODES.iter().find(|m| m.0 == mode).and_then(|m| m.2).filter(|(cat, _)| *cat == MIDI_CATEGORY).map(|(_, sub)| sub)
@@ -723,11 +759,12 @@ fn midi_type(mode: &str) -> Option<i32> {
 fn key_param(num: &Numbering, mode: &str, f: &CcFunction, index: u8) -> Option<Value> {
     let item = |s: &str| Some(Value::str(s));
     Some(match (mode, index) {
-        ("MUTE" | "SOLO" | "INS1" | "INS2" | "SOF", 1) => Value::Int(strip_number(num, f.target)),
+        ("MUTE" | "SOLO" | "INS1" | "INS2" | "SOF" | "FSTART", 1) => Value::Int(strip_number(num, f.target)),
+        ("DAWENC", 1) => return item(CC_DAW_ROTARY.get(f.target as usize).copied().unwrap_or("M1P")),
         ("MGRP", 1) => Value::Str(format!("MGRP.{}", f.target + 1)),
         ("DCAMUTE", 1) => Value::Int(f.target + 1),
-        // Sidecar spills to the left section (as the screens' SPILL keys).
-        ("SPILL", 1) => return item("L"),
+        // The section it spills to (the option: L, C, R, CMPCT).
+        ("SPILL", 1) => return item(AREAS.get(f.option as usize).copied().unwrap_or("L")),
         ("SPILL", 2) => {
             let (kind, i) = (f.target / 100, f.target % 100 + 1);
             Value::Str(match kind {
@@ -736,6 +773,7 @@ fn key_param(num: &Numbering, mode: &str, f: &CcFunction, index: u8) -> Option<V
                 2 => format!("FX{i}"),
                 3 => (if i == 1 { "AUTOX" } else { "AUTOY" }).into(),
                 4 => "SELCH".into(),
+                6 => format!("MTX{i}"),
                 _ => format!("MAIN{i}"),
             })
         }
@@ -788,7 +826,8 @@ fn set_key_param(num: &Numbering, mode: &str, f: CcFunction, index: u8, v: &Valu
     let with_option = |option| Ok(Some(CcFunction { option, ..f }));
     let position = |list: &[&str]| list.iter().position(|i| *i == text(v)).map(|i| i as i32);
     match (mode, index) {
-        ("MUTE" | "SOLO" | "INS1" | "INS2" | "SOF" | "CHPAGE", 1) => with_target(strip_target(num, int)?),
+        ("MUTE" | "SOLO" | "INS1" | "INS2" | "SOF" | "CHPAGE" | "FSTART", 1) => with_target(strip_target(num, int)?),
+        ("DAWENC", 1) => with_target(position(CC_DAW_ROTARY).ok_or(SetError::BadValue)?),
         ("MGRP", 1) => with_target(numbered(v, "MGRP.").filter(|n| (1..=8).contains(n)).ok_or(SetError::BadValue)? - 1),
         ("DCAMUTE", 1) => with_target(int.clamp(1, 16) - 1),
         ("SPILL", 2) => {
@@ -802,11 +841,17 @@ fn set_key_param(num: &Numbering, mode: &str, f: CcFunction, index: u8, v: &Valu
                 _ if t.starts_with("FX") => 200 + n("FX").ok_or(SetError::BadValue)?,
                 _ if t.starts_with("BUS") => 100 + n("BUS").ok_or(SetError::BadValue)?,
                 _ if t.starts_with("MAIN") => 500 + n("MAIN").ok_or(SetError::BadValue)?,
-                // Sidecar has no matrix spill, and no spill of the active channel.
+                _ if t.starts_with("MTX") => 600 + n("MTX").ok_or(SetError::BadValue)?,
+                // Sidecar has no spill of the active channel.
                 _ => return Err(unsupported()),
             };
-            Ok(Some(CcFunction { category: FADER_SPILL_CATEGORY, target, option: 0 }))
+            Ok(Some(CcFunction { category: FADER_SPILL_CATEGORY, target, ..f }))
         }
+        // The section it spills to: the left, center or right section, or the COMPACT's.
+        ("SPILL", 1) => match position(&AREAS[..4]) {
+            Some(area) => with_option(area),
+            None => Err(unsupported()),
+        },
         ("FXPAR", 1) => with_target(numbered(v, "FX").filter(|n| (1..=16).contains(n)).ok_or(SetError::BadValue)? - 1),
         ("FXPAR", 2) => with_option(if int >= 41 { -1 } else { int.max(1) - 1 }),
         ("DAWBTN", 1) => {
@@ -815,11 +860,7 @@ fn set_key_param(num: &Numbering, mode: &str, f: CcFunction, index: u8, v: &Valu
             Ok(Some(CcFunction { target: daw_command_group(option), option, ..f }))
         }
         ("CHPAGE", 2) => with_option(if text(v) == "SND.EQ" { 9 } else { position(&CH_PAGES).ok_or(SetError::BadValue)? }),
-        ("PAGE", 1) => match text(v).as_str() {
-            "SRC" | "OUTS" => with_option(3),
-            "2TRK" => Err(unsupported()),
-            _ => with_option(position(&GLOBAL_PAGES[1..]).ok_or(SetError::BadValue)? + 1),
-        },
+        ("PAGE", 1) => with_option(position(&GLOBAL_PAGES[1..]).ok_or(SetError::BadValue)? + 1),
         ("FDRPAGE", 1) => match text(v).as_str() {
             "L" | "CMPCT" => with_target(0),
             "C" | "VRT" => with_target(1),
@@ -884,6 +925,7 @@ fn encoder_param(num: &Numbering, mode: &str, f: &CcFunction, index: u8) -> Opti
             _ => "JOG".into(),
         }),
         ("MON", 1) => Value::str(MONITOR_ITEMS.get(f.option as usize).copied().unwrap_or("B")),
+        ("OTHER", 1) => Value::str(LIGHTING_ITEMS.get(f.option as usize).copied().unwrap_or("BRILAMP")),
         ("MIDICC", 1) => Value::Int(f.target + 1),
         ("MIDICC", 2) => Value::Int(f.option),
         _ => return None,
@@ -914,10 +956,168 @@ fn set_encoder_param(num: &Numbering, mode: &str, f: CcFunction, index: u8, v: &
                 _ => return Err(SetError::BadValue),
             })
         }
+        // What the function already reads changes nothing (DIM AMOUNT and
+        // TALKBACK read as B).
+        ("MON", 1) if MONITOR_ITEMS.get(f.option as usize) == Some(&text(v).as_str()) => Ok(None),
         ("MON", 1) => with_option(if text(v) == "A" { 2 } else { 0 }),
+        ("OTHER", 1) => with_option(LIGHTING_ITEMS.iter().position(|i| *i == text(v)).ok_or(SetError::BadValue)? as i32),
         ("MIDICC", 1) => with_target(int.clamp(1, 16) - 1),
         ("MIDICC", 2) => with_option(int.clamp(0, 127)),
         _ => Ok(None),
+    }
+}
+
+// ---- function names ($fname) ---------------------------------------------------------
+
+/// The DAW BUTTONS commands' short names (T1 .. SP6, in order), as the
+/// console's function names show them ("|DAW STOP"; WING Edit 3.3.4).
+const DAW_BUTTON_NAMES: [&str; 118] = [
+    "STOP", "PLAY", "RECORD", "REWIND", "FAST FWD", "MARKER", "NUDGE", "CYCLE", "DROP", "REPLACE", "SCRUB", "SHUTTLE", "RTZ",
+    "END", "IN", "OUT", "PRE", "POST", "ONLINE", "QPUNCH", // T1-T20
+    "UP", "DOWN", "LEFT", "RIGHT", "ZOOM", "BK <", "BK >", "CH <", "CH >", // N1-N9
+    "*TRACK", "*SEND", "*PAN", "*PLUG-IN", "*EQ", "*INST", "*SEND A", "*SEND B", "*SEND C", "*SEND D", "*SEND E", "*INPUT",
+    "*OUTPUT", "*ASSIGN", "*SHIFT", "*MUTE", // A1-A16
+    "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", // F1-F8
+    "GLOBAL", "MIDI", "INPUTS", "AUDIO", "INSTR", "AUX", "BUSES", "OUTPUTS", "USER", "MIX", "EDIT", "TRANSP", "MEMLOC", "STATUS",
+    "ALT", // V1-V15
+    "READ/OFF", "WRITE", "TRIM", "TOUCH", "LATCH", "OFF", "FADER", "PAN", "MUTE", "SEND", "S.MUTE", "PLUG-IN", // AU1-AU12
+    "SHIFT", "OPTION", "CTRL", "ALT", "SAVE", "UNDO", "CANCEL", "ENTER", "E-MODE", "E-TOOL", // SY1-SY10
+    "FLIP", "GROUP", "*NAME", "*TIME", "CLICK", "SOLO", "FSW A", "FSW B", "DEFAULT", "SUSPEND", "BYPASS",
+    "RECALL", // OT1-OT12
+    "CUT", "COPY", "PASTE", "SEPAR", "CAPTURE", "DELETE", "ASSIGN", "COMPARE", "BYPASS", "INS/PAR", // E1-E10
+    "F-TOUCH", "V-POTS", "RECRDY", "AUTO", "V-SEL", "INSERT", // SP1-SP6
+];
+
+/// OTHER's short names by Sidecar's code (custom.rs `other`; SOF OFF is
+/// Sidecar's own, the CC BANK steps are the console's "CC +1" / "CC -1").
+const OTHER_NAMES: [&str; other::COUNT as usize] = [
+    "MON DIM",
+    "MON MONO",
+    "MON SWAP",
+    "MON MUTE",
+    "FDR -oo",
+    "FDR -10 dB",
+    "FDR 0 dB",
+    "AUTO X",
+    "AUTO Y",
+    "CH -1",
+    "CH +1",
+    "CC +1",
+    "CC -1",
+    "SOF OFF",
+    "TALK A",
+    "TALK B",
+    "MAIN ALT",
+    "DAW",
+    "MON PH",
+    "MON SPK",
+    "MON PH+SPK",
+    "CH SOLO",
+    "BUS SOLO",
+    "MAIN SOLO",
+    "MTX SOLO",
+    "CH MTR",
+    "BUS MTR",
+    "MAIN MTR",
+    "MTX MTR",
+    "DCA MTR",
+];
+
+/// MONITORING's names by Sidecar's option (MONITOR LEVEL, DIM AMOUNT,
+/// PHONES LEVEL, TALKBACK; WING Edit: PHONES, SPEAKERS, TALKBACK).
+const MONITOR_NAMES: [&str; 4] = ["SPEAKERS", "DIM", "PHONES", "TALKBACK"];
+
+/// The USB PLAY/REC keys' names by `usbpr` item (Sidecar's REPEAT has none).
+fn usb_name(item: &str) -> &'static str {
+    match item {
+        "PSTOP" => "|PL STOP",
+        "PLAY" => "|PL PLAY",
+        "PPAUSE" => "|PL PAUSE",
+        "PNEXT" => "|PL NEXT",
+        "PPREV" => "|PL PREV",
+        "RSTOP" => "|REC STOP",
+        "RECORD" => "|REC REC",
+        "RPAUSE" => "|REC PAUSE",
+        "RNEW" => "|REC NEW",
+        _ => "",
+    }
+}
+
+/// A strip as the function names show it: "1"-"40", "A1"-"A8", "B1"-"B16",
+/// "M1"-"M4", "MX1"-"MX8".
+fn strip_short(n: i32) -> String {
+    match n {
+        1..=40 => n.to_string(),
+        41..=48 => format!("A{}", n - 40),
+        49..=64 => format!("B{}", n - 48),
+        65..=68 => format!("M{}", n - 64),
+        _ => format!("MX{}", n - 68),
+    }
+}
+
+/// What a key or encoder does, as the console names it (`$fname`, the LCD's
+/// text for a control without a name; a leading `|` inverts it). The forms
+/// are the console's (WING Edit 3.3.4's offline console and its string
+/// table): "|1 MUTE", "|B1 |SOF", "|DCA1 > L", "|FX3 TIME", "|DAW STOP",
+/// "|1 |HOME", "|FDR L/1", "TALK A", "|SCN GO", "CC 1:7", "SEND |B1".
+fn fname(num: &Numbering, names: &FnameNames, slot: CcSlot, mode: &str, f: &CcFunction) -> String {
+    let s = || strip_short(strip_number(num, f.target));
+    let dca = |i: i32| names.dcas.get(i as usize).cloned().unwrap_or_default();
+    let fx = |slot: i32, param: i32| {
+        let label = if param < 0 {
+            "MIX".to_owned()
+        } else {
+            names.fx_params.get(slot as usize).and_then(|p| p.get(param as usize)).map_or("N/A".into(), |l| l.to_uppercase())
+        };
+        format!("|FX{} {label}", slot + 1)
+    };
+    let item = |v: Option<Value>| match v {
+        Some(Value::Str(t)) => t,
+        Some(v) => v.as_i32().unwrap_or(0).to_string(),
+        None => String::new(),
+    };
+    if slot == CcSlot::Enc {
+        return match mode {
+            "FDR" => format!("|{} FDR", s()),
+            "PAN" => format!("|{} PAN", s()),
+            "DCA" => format!("|DCA {}", dca(f.target)),
+            "SSND" => format!("SEND |B{}", f.target + 1),
+            "FSND" => format!("|{} -> B{}", s(), f.option + 1),
+            "FX" => fx(f.target, f.option),
+            "DAWMCU" => format!("|DAW {}", item(encoder_param(num, mode, f, 1))),
+            "MON" => MONITOR_NAMES.get(f.option as usize).copied().unwrap_or("SPEAKERS").to_owned(),
+            "OTHER" => ["LAMP", "GLOW", "PATCH"].get(f.option as usize).copied().unwrap_or("LAMP").to_owned(),
+            "MIDICC" => format!("CC {}:{}", f.target + 1, f.option),
+            _ => String::new(),
+        };
+    }
+    match mode {
+        "MUTE" | "SOLO" | "INS1" | "INS2" => format!("|{} {mode}", s()),
+        "SOF" => format!("|{} |SOF", s()),
+        "FSTART" => format!("|{} START", s()),
+        "MGRP" => format!("|MGRP MGRP.{}", f.target + 1),
+        "DCAMUTE" => format!("|DCA {}", dca(f.target)),
+        "SPILL" => format!("|{} > {}", item(key_param(num, mode, f, 2)), item(key_param(num, mode, f, 1))),
+        "FXPAR" => fx(f.target, f.option),
+        "DAWBTN" => format!("|DAW {}", DAW_BUTTON_NAMES.get(f.option as usize).copied().unwrap_or("")),
+        "DAWENC" => format!("|DAW {}", item(key_param(num, mode, f, 1))),
+        "CHPAGE" => format!("|{} |{}", s(), item(key_param(num, mode, f, 2))),
+        "PAGE" => item(key_param(num, mode, f, 1)),
+        "FDRPAGE" | "VIEWPAGE" => {
+            format!("|{} {}/{}", if mode == "FDRPAGE" { "FDR" } else { "VIEW" }, item(key_param(num, mode, f, 1)), f.option + 1)
+        }
+        "OTHER" if f.category == CC_BANK_CATEGORY => format!("CC {}", f.option + 1),
+        "OTHER" => OTHER_NAMES.get(f.option as usize).copied().unwrap_or("").to_owned(),
+        "SHOWCTL" => format!("|SCN {}", item(key_param(num, mode, f, 1))),
+        "SCENES" => format!("|SCENE {}", f.target.max(1)),
+        "MIDICCT" | "MIDICCP" => format!("CC {}:{}", f.target % 16 + 1, f.option.clamp(0, 127)),
+        "MIDINT" | "MIDINP" => format!("NOTE {}:{}", f.target % 16 + 1, f.option.clamp(0, 127)),
+        "MIDIPGM" => format!("PGM {}:{}", f.target % 16 + 1, f.option.clamp(0, 127) + 1),
+        "USBPR" if f.option == 9 => "REPEAT".to_owned(),
+        "USBPR" if f.option == 10 => "|PL PL/ST".to_owned(),
+        "USBPR" if f.option == 11 => "|PL PL/PA".to_owned(),
+        "USBPR" => usb_name(&item(key_param(num, mode, f, 1))).to_owned(),
+        _ => String::new(),
     }
 }
 
@@ -1004,6 +1204,7 @@ fn spill_kind(spidx: i32, sends: Option<StripRef>) -> Option<Option<SpillKind>> 
         1..=16 => SpillKind::Dca(spidx - 1),
         17..=32 => SpillKind::Fx(spidx - 17),
         33..=48 => SpillKind::Bus(spidx - 33),
+        49..=56 => SpillKind::Matrix(spidx - 49),
         57..=60 => SpillKind::Main(spidx - 57),
         61 | 62 => SpillKind::Automix(spidx - 61),
         SPIDX_SENDS => SpillKind::Sends(sends?),
@@ -1016,6 +1217,7 @@ fn spill_index(kind: &SpillKind) -> i32 {
         SpillKind::Dca(i) => 1 + i,
         SpillKind::Fx(i) => 17 + i,
         SpillKind::Bus(i) => 33 + i,
+        SpillKind::Matrix(i) => 49 + i,
         SpillKind::Main(i) => 57 + i,
         SpillKind::Automix(g) => 61 + g,
         SpillKind::Sends(_) => SPIDX_SENDS,
@@ -1091,7 +1293,16 @@ pub fn publish(engine: &Engine, layers: &LayerSet, custom: &CustomControls, cc_b
             })
         })
         .collect();
-    Surface { attached: true, sections, controls, cc_bank: cc_bank.clamp(0, NUM_BANKS - 1), num }
+    let names = FnameNames {
+        dcas: (0..NUM_DCAS).map(|i| engine.dca_name(i)).collect(),
+        fx_params: engine
+            .controls
+            .fx
+            .iter()
+            .map(|p| FX_MODELS.get(p.model_index()).map(|m| m.params.iter().map(|ps| ps.label).collect()).unwrap_or_default())
+            .collect(),
+    };
+    Surface { attached: true, sections, controls, cc_bank: cc_bank.clamp(0, NUM_BANKS - 1), num, names }
 }
 
 /// `/$ctl/layer/VRT`: the virtual layers, and on a COMPACT its VIRTUAL
@@ -1154,7 +1365,7 @@ fn new_function(num: &Numbering, slot: CcSlot, mode: &str, old: CcFunction) -> O
     let (target, option) = match cat {
         // MUTE, SOLO, CH PAGE, INSERT PRE / POST: CH 1; SENDS ON FDR: the
         // first bus; SCENE RECALL: #1; FX PAR: FX 1's MIX.
-        1 | 2 | 6 | INSERT_PRE_CATEGORY | INSERT_POST_CATEGORY => (first_strip(StripKind::Channel), 0),
+        1 | 2 | 6 | INSERT_PRE_CATEGORY | INSERT_POST_CATEGORY | FADER_START_CATEGORY => (first_strip(StripKind::Channel), 0),
         FX_PARAMETER_CATEGORY => (0, -1),
         5 => (first_strip(StripKind::Bus), 0),
         10 => (1, 0),

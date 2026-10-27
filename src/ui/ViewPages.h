@@ -192,6 +192,8 @@ private:
     std::vector<Destination> destinations() const;
     Destination destination() const;
     Strip* destinationStrip() const;
+    /** A destination was chosen: SEND PAGE ACTIVATES SOLO solos it. */
+    void destinationChosen();
     bool canSend (const Strip&) const;
     /** The send level and on flag from `source` to the destination (nullptr: can't send). */
     std::atomic<float>* sendLevel (Strip& source, bool create) const;

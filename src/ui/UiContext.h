@@ -105,6 +105,8 @@ struct UiContext
     std::function<void (int slot)> editFx;
     /** ROUTING > OUTPUTS on FX slot `slot`'s FX SEND (the outboard insert's SEND). */
     std::function<void (int slot)> showFxSendOutputs;
+    /** ROUTING's CHANNELS (0), SOURCES (1) or OUTPUTS (2) tab (a GLOBAL PAGE key). */
+    std::function<void (int tab)> showRoutingTab;
     std::function<void (juce::AudioProcessor*)> pluginRemoved;
     std::function<void()> showPluginScanner;
 
@@ -242,6 +244,9 @@ namespace uiprefs
     constexpr const char* soloFollowsSelect = "ui.soloFollowsSelect";
     constexpr const char* selectFollowsSolo = "ui.selectFollowsSolo";
     constexpr const char* sofActivatesSolo = "ui.sofActivatesSolo";
+    // SEND PAGE ACTIVATES SOLO (/$ctl/cfg/sfdr2solo): VIEW > SENDS solos its destination. Kept
+    // under the key it had while the row was inert.
+    constexpr const char* sendPageActivatesSolo = "setup.inert.sendPageActivatesSolo";
     constexpr bool exclusiveSoloDefault = true;
     constexpr bool selectFollowsSoloDefault = true;
     /** The default of a SOLO SYSTEM option. */
@@ -285,9 +290,15 @@ namespace uiprefs
     // The WING COMPACT's 16 keys (/$ctl/cfg/cscmode): "BUS" (default), "DCA", "MAIN" or "USER".
     constexpr const char* compactKeyMode = "ui.compactKeyMode";
     // SETUP > SURFACE on a COMPACT (WING manual 5.5): KEEP MAIN FADER (/$ctl/cfg/mfdrkeep, the
-    // 16 keys leave fader 13 alone); MAIN SPILL / MATRIX SPILL (mainspill, mtxspill: a MAIN key
-    // spills its main and a MATRIX key shows its sends when pressed instead of held; factory
-    // off / on, i.e. both on hold); USE DCA BUTTONS 1-16 AS CC (dcacc).
+    // 16 keys leave fader 13 alone); BUS / MAIN / MATRIX SPILL (busspill, mainspill, mtxspill:
+    // on, a key's press spills its bus, main or matrix and a hold turns on Sends on Fader; off
+    // the other way round; factory off, off, on); USE DCA BUTTONS 1-16 AS CC (dcacc). DCA SPILL
+    // ON SELECT is the full-size console's DCA SPILL setting (dcaSpill, /$ctl/cfg/dcaspill: "1:
+    // push->dca spill, 0: push->dca show"); DCA SELECT SPILL, a DCA strip's SELECT spills it,
+    // has no node (compactDcaSelectSpill).
+    constexpr const char* compactBusSpill = "ui.compactBusSpill";
+    constexpr bool compactBusSpillDefault = false;
+    constexpr const char* compactDcaSelectSpill = "ui.compactDcaSelectSpill";
     constexpr const char* compactKeepMainFader = "ui.compactKeepMainFader";
     constexpr const char* compactMainSpill = "ui.compactMainSpill";
     constexpr bool compactMainSpillDefault = false;
@@ -322,6 +333,8 @@ namespace uiprefs
     from `origin` goes to (the center for the right section, else the left;
     no origin: the left), and refreshes the fader sections. */
 void toggleSpill (UiContext&, std::optional<LayerSet::Section> origin, const LayerSet::Spill&);
+/** As toggleSpill, on section `target` (a FADER SPILL key's AREA). */
+void toggleSpillAt (UiContext&, LayerSet::Section target, const LayerSet::Spill&);
 /** Whether a section spills `spill`. */
 bool isSpilling (UiContext&, const LayerSet::Spill&);
 

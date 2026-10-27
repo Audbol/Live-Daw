@@ -230,12 +230,16 @@ namespace compact
 
     /** What key `key` (0-based) puts on fader 13 when pressed [WING COMPACT]:
         in BUS mode BUS 1-16, in MAIN MATRIX mode MAIN 1-4 on keys 1-4 and
-        MATRIX 1-8 on keys 9-16 (keys 5-8 do nothing); nothing in DCA and
-        USER mode. */
-    inline std::optional<MainFader> keyMainFader (KeyMode m, int key)
+        MATRIX 1-8 on keys 9-16 (keys 5-8 do nothing); in DCA mode DCA 1-16
+        when a press shows the DCA rather than spilling it (`dcaShow`: DCA
+        SPILL ON SELECT off, /$ctl/cfg/dcaspill "0: push->dca show");
+        nothing in USER mode. */
+    inline std::optional<MainFader> keyMainFader (KeyMode m, int key, bool dcaShow = false)
     {
         if (m == KeyMode::Bus && key >= 0 && key < 16)
             return MainFader { MainFader::Bus, key + 1 };
+        if (m == KeyMode::Dca && dcaShow && key >= 0 && key < 16)
+            return MainFader { MainFader::Dca, key + 1 };
         if (m == KeyMode::Main && key >= 0 && key < 4)
             return MainFader { MainFader::Main, key + 1 };
         if (m == KeyMode::Main && key >= 8 && key < 16)
@@ -291,22 +295,31 @@ namespace compact
         KeyAction press = KeyAction::None, hold = KeyAction::None;
     };
 
-    /** A BUS mode key's press and hold: a press Sends on Fader to the bus, a
-        hold spills it (WING manual 4.2, confirmed on a WING COMPACT). */
-    inline KeyActions busActions() { return { KeyAction::Sends, KeyAction::Spill }; }
+    /** A key's press and hold under its BUS, MAIN or MATRIX SPILL setting
+        (WING manual 5.5: "when active, Spill mode is activated automatically
+        when selecting a Bus, Main or Matrix with the 16 buttons"; the remote
+        protocols' /$ctl/cfg/busspill, mainspill, mtxspill "1: push->spill,
+        hold->send, 0: push->send, hold->spill"). */
+    inline KeyActions spillActions (bool spill)
+    {
+        return spill ? KeyActions { KeyAction::Spill, KeyAction::Sends } : KeyActions { KeyAction::Sends, KeyAction::Spill };
+    }
 
-    /** A MAIN MATRIX mode key's press and hold. MAIN SPILL (/$ctl/cfg/mainspill;
-        WING manual 5.5) chooses: off, a press sends (SOF) and a hold spills; on,
-        the other way round (WING remote protocols). The factory setting is off
-        (press: SOF to the main, as the manual's 4.2 says; hold: spill). A
-        MATRIX key sends on both (manual 4.2, and a WING COMPACT's owner): Sidecar
-        has no matrix spill, so MATRIX SPILL has nothing to swap in. */
-    inline KeyActions mainMatrixActions (int key, bool mainSpill, bool /*matrixSpill*/)
+    /** A BUS mode key's press and hold: BUS SPILL off (the factory setting),
+        a press Sends on Fader to the bus and a hold spills it (WING manual 4.2,
+        confirmed on a WING COMPACT); on, the other way round. */
+    inline KeyActions busActions (bool busSpill = false) { return spillActions (busSpill); }
+
+    /** A MAIN MATRIX mode key's press and hold: MAIN SPILL for keys 1-4 (off
+        at first: a press sends, a hold spills the main), MATRIX SPILL for keys
+        9-16 (on at first, as a factory-set WING has it: a press spills the
+        matrix, the strips sending to it, and a hold sends). */
+    inline KeyActions mainMatrixActions (int key, bool mainSpill, bool matrixSpill)
     {
         if (key >= 0 && key < 4)
-            return mainSpill ? KeyActions { KeyAction::Spill, KeyAction::Sends } : KeyActions { KeyAction::Sends, KeyAction::Spill };
+            return spillActions (mainSpill);
         if (key >= 8 && key < kNumKeys)
-            return { KeyAction::Sends, KeyAction::Sends };
+            return spillActions (matrixSpill);
         return {};
     }
 } // namespace compact
